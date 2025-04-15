@@ -2,33 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManagerPrivate",
+                               "resource://gre/modules/AddonManager.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManagerPrivate",
-                                  "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "GMPInstallManager",
+                               "resource://gre/modules/GMPInstallManager.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "AddonRepository",
-                                  "resource://gre/modules/addons/AddonRepository.jsm");
+ChromeUtils.defineModuleGetter(this, "EventDispatcher",
+                               "resource://gre/modules/Messaging.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "GMPInstallManager",
-                                  "resource://gre/modules/GMPInstallManager.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "EventDispatcher",
-                                  "resource://gre/modules/Messaging.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
-
-function getPref(func, preference, defaultValue) {
-  try {
-    return Services.prefs[func](preference);
-  } catch (e) {}
-  return defaultValue;
-}
+ChromeUtils.defineModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 
 // -----------------------------------------------------------------------
 // Add-on auto-update management service
@@ -48,7 +34,7 @@ AddonUpdateService.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsITimerCallback]),
 
   notify: function aus_notify(aTimer) {
-    if (aTimer && !getPref("getBoolPref", PREF_ADDON_UPDATE_ENABLED, true))
+    if (aTimer && !Services.prefs.getBoolPref(PREF_ADDON_UPDATE_ENABLED, true))
       return;
 
     // If we already auto-upgraded and installed new versions, ignore this check
@@ -60,7 +46,7 @@ AddonUpdateService.prototype = {
     let gmp = new GMPInstallManager();
     gmp.simpleCheckAndInstall().catch(() => {});
 
-    let interval = 1000 * getPref("getIntPref", PREF_ADDON_UPDATE_INTERVAL, 86400);
+    let interval = 1000 * Services.prefs.getIntPref(PREF_ADDON_UPDATE_INTERVAL, 86400);
     EventDispatcher.instance.sendRequest({
       type: "Gecko:ScheduleRun",
       action: "update-addons",

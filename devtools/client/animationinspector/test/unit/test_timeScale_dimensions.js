@@ -5,8 +5,7 @@
 
 "use strict";
 
-const Cu = Components.utils;
-const {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {TimeScale} = require("devtools/client/animationinspector/utils");
 
 const TEST_ENDDELAY_X = [{
@@ -34,13 +33,13 @@ const TEST_ENDDELAY_X = [{
 }];
 
 function run_test() {
-  do_print("Test calculating endDelayX");
+  info("Test calculating endDelayX");
 
   // Be independent of possible prior tests
   TimeScale.reset();
 
   for (let {desc, animations, expectedEndDelayX} of TEST_ENDDELAY_X) {
-    do_print(`Adding animations: ${desc}`);
+    info(`Adding animations: ${desc}`);
 
     for (let state of animations) {
       TimeScale.addAnimation(state);

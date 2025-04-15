@@ -37,7 +37,7 @@ private:
 class nsImageBoxFrame final : public nsLeafBoxFrame
 {
 public:
-  typedef mozilla::image::DrawResult DrawResult;
+  typedef mozilla::image::ImgDrawResult ImgDrawResult;
   typedef mozilla::layers::ImageContainer ImageContainer;
   typedef mozilla::layers::LayerManager LayerManager;
 
@@ -88,15 +88,15 @@ public:
   virtual ~nsImageBoxFrame();
 
   already_AddRefed<imgIContainer> GetImageContainerForPainting(const nsPoint& aPt,
-                                                               DrawResult& aDrawResult,
+                                                               ImgDrawResult& aDrawResult,
                                                                Maybe<nsPoint>& aAnchorPoint,
                                                                nsRect& aDest);
 
-  DrawResult PaintImage(gfxContext& aRenderingContext,
+  ImgDrawResult PaintImage(gfxContext& aRenderingContext,
                         const nsRect& aDirtyRect,
                         nsPoint aPt, uint32_t aFlags);
 
-  DrawResult CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
+  ImgDrawResult CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
                                      mozilla::wr::IpcResourceUpdateQueue& aResources,
                                      const mozilla::layers::StackingContextHelper& aSc,
                                      mozilla::layers::WebRenderLayerManager* aManager,
@@ -155,6 +155,10 @@ public:
                                        nsDisplayListBuilder* aBuilder) override;
   virtual already_AddRefed<imgIContainer> GetImage() override;
   virtual nsRect GetDestRect() const override;
+  virtual void UpdateDrawResult(mozilla::image::ImgDrawResult aResult) override
+  {
+    nsDisplayItemGenericImageGeometry::UpdateDrawResult(this, aResult);
+  }
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder,
                            bool* aSnap) const override
   {

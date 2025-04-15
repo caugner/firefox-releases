@@ -29,8 +29,6 @@
 #include "gfxWindowsPlatform.h"
 #endif
 
-#include "cairo.h"
-
 using namespace mozilla;
 using namespace mozilla::gfx;
 using namespace mozilla::unicode;
@@ -814,14 +812,11 @@ gfxTextRun::AccumulatePartialLigatureMetrics(gfxFont *aFont, Range aRange,
     // Where we are going to start "drawing" relative to our left baseline origin
     gfxFloat origin = IsRightToLeft() ? metrics.mAdvanceWidth - data.mPartAdvance : 0;
     ClipPartialLigature(this, &bboxLeft, &bboxRight, origin, &data);
-    metrics.mBoundingBox.x = bboxLeft;
-    metrics.mBoundingBox.width = bboxRight - bboxLeft;
+    metrics.mBoundingBox.SetBoxX(bboxLeft, bboxRight);
 
     // mBoundingBox is now relative to the left baseline origin for the entire
     // ligature. Shift it left.
-    metrics.mBoundingBox.x -=
-        IsRightToLeft() ? metrics.mAdvanceWidth - (data.mPartAdvance + data.mPartWidth)
-            : data.mPartAdvance;
+    metrics.mBoundingBox.MoveByX(-(IsRightToLeft() ? metrics.mAdvanceWidth - (data.mPartAdvance + data.mPartWidth) : data.mPartAdvance));
     metrics.mAdvanceWidth = data.mPartWidth;
 
     aMetrics->CombineWith(metrics, IsRightToLeft());
@@ -1688,7 +1683,6 @@ gfxTextRun::FetchGlyphExtents(DrawTarget* aRefDrawTarget)
         uint32_t start = run.mCharacterOffset;
         uint32_t end = i + 1 < runCount ?
             glyphRuns[i + 1].mCharacterOffset : GetLength();
-        bool fontIsSetup = false;
         uint32_t j;
         gfxGlyphExtents *extents = font->GetOrCreateGlyphExtents(mAppUnitsPerDevUnit);
 
@@ -1700,13 +1694,6 @@ gfxTextRun::FetchGlyphExtents(DrawTarget* aRefDrawTarget)
                 if (needsGlyphExtents) {
                     uint32_t glyphIndex = glyphData->GetSimpleGlyph();
                     if (!extents->IsGlyphKnown(glyphIndex)) {
-                        if (!fontIsSetup) {
-                            if (!font->SetupCairoFont(aRefDrawTarget)) {
-                                NS_WARNING("failed to set up font for glyph extents");
-                                break;
-                            }
-                            fontIsSetup = true;
-                        }
 #ifdef DEBUG_TEXT_RUN_STORAGE_METRICS
                         ++gGlyphExtentsSetupEagerSimple;
 #endif
@@ -1726,13 +1713,6 @@ gfxTextRun::FetchGlyphExtents(DrawTarget* aRefDrawTarget)
                 for (uint32_t k = 0; k < glyphCount; ++k, ++details) {
                     uint32_t glyphIndex = details->mGlyphID;
                     if (!extents->IsGlyphKnownWithTightExtents(glyphIndex)) {
-                        if (!fontIsSetup) {
-                            if (!font->SetupCairoFont(aRefDrawTarget)) {
-                                NS_WARNING("failed to set up font for glyph extents");
-                                break;
-                            }
-                            fontIsSetup = true;
-                        }
 #ifdef DEBUG_TEXT_RUN_STORAGE_METRICS
                         ++gGlyphExtentsSetupEagerTight;
 #endif
@@ -2180,8 +2160,12 @@ gfxFontGroup::IsInvalidChar(char16_t ch)
     if (ch <= 0x9f) {
         return true;
     }
+    // Word-separating format/bidi control characters are not shaped as part
+    // of words.
     return (((ch & 0xFF00) == 0x2000 /* Unicode control character */ &&
-             (ch == 0x200B/*ZWSP*/ || ch == 0x2028/*LSEP*/ || ch == 0x2029/*PSEP*/)) ||
+             (ch == 0x200B/*ZWSP*/ || ch == 0x2028/*LSEP*/ ||
+              ch == 0x2029/*PSEP*/ || ch == 0x2060/*WJ*/)) ||
+            ch == 0xfeff/*ZWNBSP*/ ||
             IsBidiControl(ch));
 }
 
@@ -2932,13 +2916,7 @@ gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh, uint32_t aNextCh,
                 // fallback within the family to handle cases where some faces
                 // such as Italic or Black have reduced character sets compared
                 // to the family's Regular face.
-                gfxFontEntry* fe = firstFont->GetFontEntry();
-                if (!fe->IsNormalStyle()) {
-                    // If style/weight/stretch was not Normal, see if we can
-                    // fall back to a next-best face (e.g. Arial Black -> Bold,
-                    // or Arial Narrow -> Regular).
-                    font = FindFallbackFaceForChar(mFonts[0].Family(), aCh);
-                }
+                font = FindFallbackFaceForChar(mFonts[0].Family(), aCh);
             }
             if (font) {
                 *aMatchType = gfxTextRange::kFontGroup;
@@ -3049,8 +3027,7 @@ gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh, uint32_t aNextCh,
             // fallback to handle styles with reduced character sets (see
             // also above).
             fe = ff.FontEntry();
-            if (!fe->mIsUserFontContainer && !fe->IsUserFont() &&
-                !fe->IsNormalStyle()) {
+            if (!fe->mIsUserFontContainer && !fe->IsUserFont()) {
                 font = FindFallbackFaceForChar(ff.Family(), aCh);
                 if (font) {
                     *aMatchType = gfxTextRange::kFontGroup;
@@ -3073,7 +3050,7 @@ gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh, uint32_t aNextCh,
         return nullptr;
 
     // 2. search pref fonts
-    gfxFont* font = WhichPrefFontSupportsChar(aCh);
+    gfxFont* font = WhichPrefFontSupportsChar(aCh, aNextCh);
     if (font) {
         *aMatchType = gfxTextRange::kPrefsFallback;
         return font;
@@ -3200,10 +3177,25 @@ void gfxFontGroup::ComputeRanges(nsTArray<gfxTextRange>& aRanges,
             // on a per-character basis using the UTR50 orientation property.
             switch (GetVerticalOrientation(ch)) {
             case VERTICAL_ORIENTATION_U:
-            case VERTICAL_ORIENTATION_Tr:
             case VERTICAL_ORIENTATION_Tu:
                 orient = ShapedTextFlags::TEXT_ORIENT_VERTICAL_UPRIGHT;
                 break;
+            case VERTICAL_ORIENTATION_Tr: {
+                // We check for a vertical presentation form first as that's
+                // likely to be cheaper than inspecting lookups to see if the
+                // 'vert' feature is going to handle this character, and if the
+                // presentation form is available then it will be used as
+                // fallback if needed, so it's OK if the feature is missing.
+                uint32_t v = gfxHarfBuzzShaper::GetVerticalPresentationForm(ch);
+                orient = (!font ||
+                          (v && font->HasCharacter(v)) ||
+                          font->FeatureWillHandleChar(aRunScript,
+                                                      HB_TAG('v','e','r','t'),
+                                                      ch))
+                         ? ShapedTextFlags::TEXT_ORIENT_VERTICAL_UPRIGHT
+                         : ShapedTextFlags::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT;
+                break;
+            }
             case VERTICAL_ORIENTATION_R:
                 orient = ShapedTextFlags::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT;
                 break;
@@ -3354,12 +3346,22 @@ gfxFontGroup::ContainsUserFont(const gfxUserFontEntry* aUserFont)
 }
 
 gfxFont*
-gfxFontGroup::WhichPrefFontSupportsChar(uint32_t aCh)
+gfxFontGroup::WhichPrefFontSupportsChar(uint32_t aCh, uint32_t aNextCh)
 {
-    // get the pref font list if it hasn't been set up already
-    uint32_t unicodeRange = FindCharUnicodeRange(aCh);
+    eFontPrefLang charLang;
     gfxPlatformFontList* pfl = gfxPlatformFontList::PlatformFontList();
-    eFontPrefLang charLang = pfl->GetFontPrefLangFor(unicodeRange);
+
+    EmojiPresentation emoji = GetEmojiPresentation(aCh);
+    if ((emoji != EmojiPresentation::TextOnly &&
+         (aNextCh == kVariationSelector16 ||
+          (emoji == EmojiPresentation::EmojiDefault &&
+           aNextCh != kVariationSelector15)))) {
+        charLang = eFontPrefLang_Emoji;
+    } else {
+        // get the pref font list if it hasn't been set up already
+        uint32_t unicodeRange = FindCharUnicodeRange(aCh);
+        charLang = pfl->GetFontPrefLangFor(unicodeRange);
+    }
 
     // if the last pref font was the first family in the pref list, no need to recheck through a list of families
     if (mLastPrefFont && charLang == mLastPrefLang &&
@@ -3418,20 +3420,15 @@ gfxFontGroup::WhichPrefFontSupportsChar(uint32_t aCh)
                 return prefFont;
             }
 
-            // If we requested a styled font (bold and/or italic), and the char
-            // was not available, check the regular face as well.
-            if (!fe->IsNormalStyle()) {
-                // If style/weight/stretch was not Normal, see if we can
-                // fall back to a next-best face (e.g. Arial Black -> Bold,
-                // or Arial Narrow -> Regular).
-                gfxFont* prefFont = FindFallbackFaceForChar(family, aCh);
-                if (prefFont) {
-                    mLastPrefFamily = family;
-                    mLastPrefFont = prefFont;
-                    mLastPrefLang = charLang;
-                    mLastPrefFirstFont = (i == 0 && j == 0);
-                    return prefFont;
-                }
+            // If the char was not available, see if we can fall back to an
+            // alternative face in the same family.
+            gfxFont* prefFont = FindFallbackFaceForChar(family, aCh);
+            if (prefFont) {
+                mLastPrefFamily = family;
+                mLastPrefFont = prefFont;
+                mLastPrefLang = charLang;
+                mLastPrefFirstFont = (i == 0 && j == 0);
+                return prefFont;
             }
         }
     }

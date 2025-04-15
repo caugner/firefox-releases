@@ -3,8 +3,8 @@
 
 "use strict";
 
-Cu.import("resource://testing-common/httpd.js");
-Cu.import("resource:///modules/experiments/Experiments.jsm");
+ChromeUtils.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource:///modules/experiments/Experiments.jsm");
 
 const SEC_IN_ONE_DAY  = 24 * 60 * 60;
 const MS_IN_ONE_DAY   = SEC_IN_ONE_DAY * 1000;
@@ -33,7 +33,7 @@ add_task(async function test_setup() {
   let port = gHttpServer.identity.primaryPort;
   gHttpRoot = "http://localhost:" + port + "/";
   gHttpServer.registerDirectory("/", do_get_cwd());
-  do_register_cleanup(() => gHttpServer.stop(() => {}));
+  registerCleanupFunction(() => gHttpServer.stop(() => {}));
 
   patchPolicy(gPolicy, {
     updatechannel: () => "nightly",

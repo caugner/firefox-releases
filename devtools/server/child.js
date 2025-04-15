@@ -11,20 +11,17 @@ try {
 
   // Encapsulate in its own scope to allows loading this frame script more than once.
   (function () {
-    const Cu = Components.utils;
-    const { require } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+    const { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 
     const DevToolsUtils = require("devtools/shared/DevToolsUtils");
     const { dumpn } = DevToolsUtils;
     const { DebuggerServer, ActorPool } = require("devtools/server/main");
 
-    if (!DebuggerServer.initialized) {
-      DebuggerServer.init();
-    }
+    DebuggerServer.init();
     // We want a special server without any root actor and only tab actors.
     // We are going to spawn a ContentActor instance in the next few lines,
     // it is going to act like a root actor without being one.
-    DebuggerServer.registerActors({ root: false, browser: false, tab: true });
+    DebuggerServer.registerActors({ tab: true });
 
     let connections = new Map();
 
@@ -53,7 +50,7 @@ try {
           const { WebExtensionChildActor } = require("devtools/server/actors/webextension");
           actor = new WebExtensionChildActor(conn, chromeGlobal, prefix, addonId);
         } else {
-          const { ContentActor } = require("devtools/server/actors/childtab");
+          const { ContentActor } = require("devtools/server/actors/content");
           actor = new ContentActor(conn, chromeGlobal, prefix);
         }
 

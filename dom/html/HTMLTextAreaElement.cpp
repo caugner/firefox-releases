@@ -24,7 +24,6 @@
 #include "nsIConstraintValidation.h"
 #include "nsIControllers.h"
 #include "nsIDocument.h"
-#include "nsIDOMHTMLFormElement.h"
 #include "nsIFormControlFrame.h"
 #include "nsIFormControl.h"
 #include "nsIForm.h"
@@ -63,6 +62,7 @@ HTMLTextAreaElement::HTMLTextAreaElement(already_AddRefed<mozilla::dom::NodeInfo
     mCanShowInvalidUI(true),
     mCanShowValidUI(true),
     mIsPreviewEnabled(false),
+    mAutocompleteAttrState(nsContentUtils::eAutocompleteAttrState_Unknown),
     mState(this)
 {
   AddMutationObserver(this);
@@ -424,6 +424,7 @@ bool
 HTMLTextAreaElement::ParseAttribute(int32_t aNamespaceID,
                                     nsAtom* aAttribute,
                                     const nsAString& aValue,
+                                    nsIPrincipal* aMaybeScriptedPrincipal,
                                     nsAttrValue& aResult)
 {
   if (aNamespaceID == kNameSpaceID_None) {
@@ -436,10 +437,13 @@ HTMLTextAreaElement::ParseAttribute(int32_t aNamespaceID,
     } else if (aAttribute == nsGkAtoms::rows) {
       aResult.ParseIntWithFallback(aValue, DEFAULT_ROWS_TEXTAREA);
       return true;
+    } else if (aAttribute == nsGkAtoms::autocomplete) {
+      aResult.ParseAtomArray(aValue);
+      return true;
     }
   }
   return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aResult);
+                                              aMaybeScriptedPrincipal, aResult);
 }
 
 void
@@ -784,8 +788,7 @@ nsresult
 HTMLTextAreaElement::Reset()
 {
   nsAutoString resetVal;
-  IgnoredErrorResult res;
-  GetDefaultValue(resetVal, res);
+  GetDefaultValue(resetVal, IgnoreErrors());
   SetValueChanged(false);
 
   nsresult rv = SetValueInternal(resetVal,
@@ -886,8 +889,7 @@ HTMLTextAreaElement::RestoreState(nsPresState* aState)
   }
 
   if (aState->IsDisabledSet() && !aState->GetDisabled()) {
-    IgnoredErrorResult rv;
-    SetDisabled(false, rv);
+    SetDisabled(false, IgnoreErrors());
   }
 
   return false;
@@ -986,33 +988,26 @@ HTMLTextAreaElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
 }
 
 void
-HTMLTextAreaElement::CharacterDataChanged(nsIDocument* aDocument,
-                                          nsIContent* aContent,
-                                          CharacterDataChangeInfo* aInfo)
+HTMLTextAreaElement::CharacterDataChanged(nsIContent* aContent,
+                                          const CharacterDataChangeInfo&)
 {
   ContentChanged(aContent);
 }
 
 void
-HTMLTextAreaElement::ContentAppended(nsIDocument* aDocument,
-                                     nsIContent* aContainer,
-                                     nsIContent* aFirstNewContent)
+HTMLTextAreaElement::ContentAppended(nsIContent* aFirstNewContent)
 {
   ContentChanged(aFirstNewContent);
 }
 
 void
-HTMLTextAreaElement::ContentInserted(nsIDocument* aDocument,
-                                     nsIContent* aContainer,
-                                     nsIContent* aChild)
+HTMLTextAreaElement::ContentInserted(nsIContent* aChild)
 {
   ContentChanged(aChild);
 }
 
 void
-HTMLTextAreaElement::ContentRemoved(nsIDocument* aDocument,
-                                    nsIContent* aContainer,
-                                    nsIContent* aChild,
+HTMLTextAreaElement::ContentRemoved(nsIContent* aChild,
                                     nsIContent* aPreviousSibling)
 {
   ContentChanged(aChild);
@@ -1060,6 +1055,9 @@ HTMLTextAreaElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
       if (aName == nsGkAtoms::readonly || aName == nsGkAtoms::disabled) {
         UpdateBarredFromConstraintValidation();
       }
+    } else if (aName == nsGkAtoms::autocomplete) {
+      // Clear the cached @autocomplete attribute state.
+      mAutocompleteAttrState = nsContentUtils::eAutocompleteAttrState_Unknown;
     } else if (aName == nsGkAtoms::maxlength) {
       UpdateTooLongValidityState();
     } else if (aName == nsGkAtoms::minlength) {
@@ -1304,8 +1302,7 @@ HTMLTextAreaElement::GetRows()
 NS_IMETHODIMP_(void)
 HTMLTextAreaElement::GetDefaultValueFromContent(nsAString& aValue)
 {
-  IgnoredErrorResult rv;
-  GetDefaultValue(aValue, rv);
+  GetDefaultValue(aValue, IgnoreErrors());
 }
 
 NS_IMETHODIMP_(bool)
@@ -1367,6 +1364,16 @@ JSObject*
 HTMLTextAreaElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
   return HTMLTextAreaElementBinding::Wrap(aCx, this, aGivenProto);
+}
+
+void
+HTMLTextAreaElement::GetAutocomplete(DOMString& aValue)
+{
+  const nsAttrValue* attributeVal = GetParsedAttr(nsGkAtoms::autocomplete);
+
+  mAutocompleteAttrState =
+    nsContentUtils::SerializeAutocompleteAttribute(attributeVal, aValue,
+                                                   mAutocompleteAttrState);
 }
 
 } // namespace dom

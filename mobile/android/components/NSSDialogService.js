@@ -2,15 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const Ci = Components.interfaces;
-const Cu = Components.utils;
-const Cc = Components.classes;
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "Prompt",
-                                  "resource://gre/modules/Prompt.jsm");
+ChromeUtils.defineModuleGetter(this, "Prompt",
+                               "resource://gre/modules/Prompt.jsm");
 
 // -----------------------------------------------------------------------
 // NSS Dialog Service
@@ -92,8 +88,7 @@ NSSDialogs.prototype = {
                                   ], aCtx);
 
       prompt.addCheckbox({ id: "trustSSL", label: this.getString("downloadCert.trustSSL"), checked: false })
-            .addCheckbox({ id: "trustEmail", label: this.getString("downloadCert.trustEmail"), checked: false })
-            .addCheckbox({ id: "trustSign", label: this.getString("downloadCert.trustObjSign"), checked: false });
+            .addCheckbox({ id: "trustEmail", label: this.getString("downloadCert.trustEmail"), checked: false });
       let response = this.showPrompt(prompt);
 
       // they hit the "view cert" button, so show the cert and try again
@@ -107,7 +102,6 @@ NSSDialogs.prototype = {
       aTrust.value = Ci.nsIX509CertDB.UNTRUSTED;
       if (response.trustSSL) aTrust.value |= Ci.nsIX509CertDB.TRUSTED_SSL;
       if (response.trustEmail) aTrust.value |= Ci.nsIX509CertDB.TRUSTED_EMAIL;
-      if (response.trustSign) aTrust.value |= Ci.nsIX509CertDB.TRUSTED_OBJSIGN;
       return true;
     }
   },
@@ -264,7 +258,7 @@ NSSDialogs.prototype = {
         this.viewCertDetails(certDetailsList[selectedIndex.value], ctx);
         continue;
       } else if (response.button == 0 /* buttons[0] */) {
-        if (response.rememberBox == true) {
+        if (response.rememberBox) {
           let caud = ctx.QueryInterface(Ci.nsIClientAuthUserDecision);
           if (caud) {
             caud.rememberClientAuthCertificate = true;

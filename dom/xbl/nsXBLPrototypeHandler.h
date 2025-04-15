@@ -8,6 +8,7 @@
 #define nsXBLPrototypeHandler_h__
 
 #include "mozilla/EventForwards.h"
+#include "mozilla/MemoryReporting.h"
 #include "nsAtom.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
@@ -21,7 +22,6 @@
 class nsIDOMEvent;
 class nsIContent;
 class nsIDOMUIEvent;
-class nsIDOMKeyEvent;
 class nsIDOMMouseEvent;
 class nsIObjectInputStream;
 class nsIObjectOutputStream;
@@ -34,6 +34,7 @@ struct IgnoreModifierState;
 namespace dom {
 class AutoJSAPI;
 class EventTarget;
+class KeyboardEvent;
 } // namespace dom
 
 namespace layers {
@@ -64,6 +65,12 @@ enum XBLReservedKey : uint8_t
   XBLReservedKey_Unset = 2,
 };
 
+namespace mozilla {
+namespace dom {
+class Element;
+}
+}
+
 class nsXBLPrototypeHandler
 {
   typedef mozilla::IgnoreModifierState IgnoreModifierState;
@@ -83,7 +90,7 @@ public:
                         uint32_t aLineNumber);
 
   // This constructor is used only by XUL key handlers (e.g., <key>)
-  explicit nsXBLPrototypeHandler(nsIContent* aKeyElement, XBLReservedKey aReserved);
+  explicit nsXBLPrototypeHandler(mozilla::dom::Element* aKeyElement, XBLReservedKey aReserved);
 
   // This constructor is used for handlers loaded from the cache
   explicit nsXBLPrototypeHandler(nsXBLPrototypeBinding* aBinding);
@@ -107,7 +114,7 @@ public:
   }
 
   // if aCharCode is not zero, it is used instead of the charCode of aKeyEvent.
-  bool KeyEventMatched(nsIDOMKeyEvent* aKeyEvent,
+  bool KeyEventMatched(mozilla::dom::KeyboardEvent* aKeyEvent,
                        uint32_t aCharCode,
                        const IgnoreModifierState& aIgnoreModifierState);
 
@@ -121,7 +128,7 @@ public:
     return MouseEventMatched(aEvent);
   }
 
-  already_AddRefed<nsIContent> GetHandlerElement();
+  already_AddRefed<mozilla::dom::Element> GetHandlerElement();
 
   void AppendHandlerText(const nsAString& aText);
 
@@ -166,6 +173,8 @@ public:
   nsresult Read(nsIObjectInputStream* aStream);
   nsresult Write(nsIObjectOutputStream* aStream);
 
+  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
 public:
   static uint32_t gRefCnt;
 
@@ -180,7 +189,7 @@ protected:
   already_AddRefed<nsIController> GetController(mozilla::dom::EventTarget* aTarget);
 
   inline int32_t GetMatchingKeyCode(const nsAString& aKeyName);
-  void ConstructPrototype(nsIContent* aKeyElement,
+  void ConstructPrototype(mozilla::dom::Element* aKeyElement,
                           const char16_t* aEvent=nullptr, const char16_t* aPhase=nullptr,
                           const char16_t* aAction=nullptr, const char16_t* aCommand=nullptr,
                           const char16_t* aKeyCode=nullptr, const char16_t* aCharCode=nullptr,
@@ -189,7 +198,7 @@ protected:
                           const char16_t* aPreventDefault=nullptr,
                           const char16_t* aAllowUntrusted=nullptr);
 
-  void ReportKeyConflict(const char16_t* aKey, const char16_t* aModifiers, nsIContent* aElement, const char *aMessageName);
+  void ReportKeyConflict(const char16_t* aKey, const char16_t* aModifiers, mozilla::dom::Element* aElement, const char *aMessageName);
   void GetEventType(nsAString& type);
   bool ModifiersMatchMask(nsIDOMUIEvent* aEvent,
                           const IgnoreModifierState& aIgnoreModifierState);

@@ -30,9 +30,9 @@ function test_source_maps() {
   gThreadClient.addOneTimeListener("newSource", function (event, packet) {
     let sourceClient = gThreadClient.source(packet.source);
     sourceClient.source(function ({error, source}) {
-      do_check_true(!error, "should be able to grab the source");
-      do_check_eq(source, "foo",
-                  "Should load the source from the sourcesContent field");
+      Assert.ok(!error, "should be able to grab the source");
+      Assert.equal(source, "foo",
+                   "Should load the source from the sourcesContent field");
       finishClient(gClient);
     });
   });
@@ -46,6 +46,6 @@ function test_source_maps() {
     mappings: "AACA",
     sourcesContent: ["foo"]
   });
-  Components.utils.evalInSandbox(code, gDebuggee, "1.8",
-                                 "http://example.com/foo.js", 1);
+  Cu.evalInSandbox(code, gDebuggee, "1.8",
+                   "http://example.com/foo.js", 1);
 }

@@ -11,7 +11,7 @@
 const Services = require("Services");
 const { Cc, Ci, Cu } = require("chrome");
 const { DebuggerServer, ActorPool } = require("devtools/server/main");
-const { ThreadActor } = require("devtools/server/actors/script");
+const { ThreadActor } = require("devtools/server/actors/thread");
 const { ObjectActor, LongStringActor, createValueGrip, stringIsLong } = require("devtools/server/actors/object");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const ErrorDocs = require("devtools/server/actors/errordocs");
@@ -40,6 +40,11 @@ if (isWorker) {
   loader.lazyRequireGetter(this, "ConsoleServiceListener", "devtools/server/actors/webconsole/listeners", true);
   loader.lazyRequireGetter(this, "ConsoleReflowListener", "devtools/server/actors/webconsole/listeners", true);
   loader.lazyRequireGetter(this, "ContentProcessListener", "devtools/server/actors/webconsole/listeners", true);
+  loader.lazyRequireGetter(this, "DocumentEventsListener", "devtools/server/actors/webconsole/listeners", true);
+}
+
+function isObject(value) {
+  return Object(value) === value;
 }
 
 /**
@@ -64,6 +69,7 @@ function WebConsoleActor(connection, parentActor) {
   this.dbg = this.parentActor.makeDebugger();
 
   this._netEvents = new Map();
+  this._networkEventActorsByURL = new Map();
   this._gripDepth = 0;
   this._listeners = new Set();
   this._lastConsoleInputEvaluation = undefined;
@@ -80,7 +86,6 @@ function WebConsoleActor(connection, parentActor) {
   }
 
   this.traits = {
-    customNetworkRequest: !this._parentIsContentActor,
     evaluateJSAsync: true,
     transferredResponseSize: true,
     selectedObjectActor: true, // 44+
@@ -120,12 +125,22 @@ WebConsoleActor.prototype =
 
   /**
    * Holds a map between nsIChannel objects and NetworkEventActors for requests
-   * created with sendHTTPRequest.
+   * created with sendHTTPRequest or found via the network listener.
    *
    * @private
    * @type Map
    */
   _netEvents: null,
+
+  /**
+   * Holds a map from URL to NetworkEventActors for requests noticed by the network
+   * listener.  Requests are added when they start, so the actor might not yet have all
+   * data for the request until it has completed.
+   *
+   * @private
+   * @type Map
+   */
+  _networkEventActorsByURL: null,
 
   /**
    * Holds a set of all currently registered listeners.
@@ -146,16 +161,6 @@ WebConsoleActor.prototype =
    * @type object
    */
   traits: null,
-
-  /**
-   * Boolean getter that tells if the parent actor is a ContentActor.
-   *
-   * @private
-   * @type boolean
-   */
-  get _parentIsContentActor() {
-    return this.parentActor.constructor.name == "ContentActor";
-  },
 
   /**
    * The window or sandbox we work with.
@@ -443,8 +448,7 @@ WebConsoleActor.prototype =
    *         Debuggee value for |value|.
    */
   makeDebuggeeValue: function (value, useObjectGlobal) {
-    let isObject = Object(value) === value;
-    if (useObjectGlobal && isObject) {
+    if (useObjectGlobal && isObject(value)) {
       try {
         let global = Cu.getGlobalForObject(value);
         let dbgGlobal = this.dbg.makeGlobalObjectReference(global);
@@ -572,7 +576,16 @@ WebConsoleActor.prototype =
     let window = !this.parentActor.isRootActor ? this.window : null;
     let messageManager = null;
 
-    if (this._parentIsContentActor) {
+    // Check if the actor is running in a child process (but only if
+    // Services.appinfo exists, to prevent onStartListeners to fail
+    // when the target is a Worker).
+    let processBoundary = Services.appinfo && (
+      Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT
+    );
+
+    // Retrieve a message manager from the parent actor if this actor is
+    // not currently running in the main process.
+    if (processBoundary) {
       messageManager = this.parentActor.messageManager;
     }
 
@@ -614,8 +627,6 @@ WebConsoleActor.prototype =
             this.stackTraceCollector = new StackTraceCollector({ window });
             this.stackTraceCollector.init();
 
-            let processBoundary = Services.appinfo.processType !=
-                                  Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT;
             if (messageManager && processBoundary) {
               // Start a network monitor in the parent process to listen to
               // most requests than happen in parent
@@ -677,6 +688,16 @@ WebConsoleActor.prototype =
           }
           if (!this.contentProcessListener) {
             this.contentProcessListener = new ContentProcessListener(this);
+          }
+          startedListeners.push(listener);
+          break;
+        case "DocumentEvents":
+          // Workers don't support this message type
+          if (isWorker) {
+            break;
+          }
+          if (!this.documentEventsListener) {
+            this.documentEventsListener = new DocumentEventsListener(this);
           }
           startedListeners.push(listener);
           break;
@@ -769,6 +790,13 @@ WebConsoleActor.prototype =
           if (this.contentProcessListener) {
             this.contentProcessListener.destroy();
             this.contentProcessListener = null;
+          }
+          stoppedListeners.push(listener);
+          break;
+        case "DocumentEvents":
+          if (this.documentEventsListener) {
+            this.documentEventsListener.destroy();
+            this.documentEventsListener = null;
           }
           stoppedListeners.push(listener);
           break;
@@ -1320,17 +1348,25 @@ WebConsoleActor.prototype =
       let objActor = this.getActorByID(options.bindObjectActor ||
                                        options.selectedObjectActor);
       if (objActor) {
-        let jsObj = objActor.obj.unsafeDereference();
-        // If we use the makeDebuggeeValue method of jsObj's own global, then
-        // we'll get a D.O that sees jsObj as viewed from its own compartment -
-        // that is, without wrappers. The evalWithBindings call will then wrap
-        // jsObj appropriately for the evaluation compartment.
-        let global = Cu.getGlobalForObject(jsObj);
-        let _dbgWindow = dbg.makeGlobalObjectReference(global);
-        bindSelf = dbgWindow.makeDebuggeeValue(jsObj);
+        let jsVal = objActor.rawValue();
 
-        if (options.bindObjectActor) {
-          dbgWindow = _dbgWindow;
+        if (isObject(jsVal)) {
+          // If we use the makeDebuggeeValue method of jsVal's own global, then
+          // we'll get a D.O that sees jsVal as viewed from its own compartment -
+          // that is, without wrappers. The evalWithBindings call will then wrap
+          // jsVal appropriately for the evaluation compartment.
+          bindSelf = dbgWindow.makeDebuggeeValue(jsVal);
+          if (options.bindObjectActor) {
+            let global = Cu.getGlobalForObject(jsVal);
+            try {
+              let _dbgWindow = dbg.makeGlobalObjectReference(global);
+              dbgWindow = _dbgWindow;
+            } catch (err) {
+              // The above will throw if `global` is invisible to debugger.
+            }
+          }
+        } else {
+          bindSelf = jsVal;
         }
       }
     }
@@ -1621,6 +1657,8 @@ WebConsoleActor.prototype =
     let actor = this.getNetworkEventActor(event.channelId);
     actor.init(event);
 
+    this._networkEventActorsByURL.set(actor._request.url, actor);
+
     let packet = {
       from: this.actorID,
       type: "networkEvent",
@@ -1652,6 +1690,18 @@ WebConsoleActor.prototype =
     actor = new NetworkEventActor(this);
     this._actorPool.addActor(actor);
     return actor;
+  },
+
+  /**
+   * Get the NetworkEventActor for a given URL that may have been noticed by the network
+   * listener.  Requests are added when they start, so the actor might not yet have all
+   * data for the request until it has completed.
+   *
+   * @param string url
+   *        The URL of the request to search for.
+   */
+  getNetworkEventActorForURL(url) {
+    return this._networkEventActorsByURL.get(url);
   },
 
   /**
@@ -1936,6 +1986,7 @@ function NetworkEventActor(webConsoleActor) {
   };
 
   this._timings = {};
+  this._stackTrace = {};
 
   // Keep track of LongStringActors owned by this NetworkEventActor.
   this._longStringActors = new Set();
@@ -1980,6 +2031,9 @@ NetworkEventActor.prototype =
     }
     this._longStringActors = new Set();
 
+    if (this._request.url) {
+      this.parent._networkEventActorsByURL.delete(this._request.url);
+    }
     if (this.channel) {
       this.parent._netEvents.delete(this.channel);
     }
@@ -2008,12 +2062,21 @@ NetworkEventActor.prototype =
     this._fromCache = networkEvent.fromCache;
     this._fromServiceWorker = networkEvent.fromServiceWorker;
 
+    // Stack trace info isn't sent automatically. The client
+    // needs to request it explicitly using getStackTrace
+    // packet.
+    this._stackTrace = networkEvent.cause.stacktrace;
+    delete networkEvent.cause.stacktrace;
+    networkEvent.cause.stacktraceAvailable =
+      !!(this._stackTrace && this._stackTrace.length);
+
     for (let prop of ["method", "url", "httpVersion", "headersSize"]) {
       this._request[prop] = networkEvent[prop];
     }
 
     this._discardRequestBody = networkEvent.discardRequestBody;
     this._discardResponseBody = networkEvent.discardResponseBody;
+    this._truncated = false;
     this._private = networkEvent.private;
   },
 
@@ -2126,6 +2189,19 @@ NetworkEventActor.prototype =
       timings: this._timings,
       totalTime: this._totalTime,
       offsets: this._offsets
+    };
+  },
+
+  /**
+   * The "getStackTrace" packet type handler.
+   *
+   * @return object
+   *         The response packet - stack trace.
+   */
+  onGetStackTrace: function () {
+    return {
+      from: this.actorID,
+      stacktrace: this._stackTrace,
     };
   },
 
@@ -2302,10 +2378,14 @@ NetworkEventActor.prototype =
    *
    * @param object content
    *        The response content.
-   * @param boolean discardedResponseBody
-   *        Tells if the response content was recorded or not.
+   * @param object
+   *        - boolean discardedResponseBody
+   *          Tells if the response content was recorded or not.
+   *        - boolean truncated
+   *          Tells if the some of the response content is missing.
    */
-  addResponseContent: function (content, discardedResponseBody) {
+  addResponseContent: function (content, {discardResponseBody, truncated}) {
+    this._truncated = truncated;
     this._response.content = content;
     content.text = this.parent._createStringGrip(content.text);
     if (typeof content.text == "object") {
@@ -2320,7 +2400,7 @@ NetworkEventActor.prototype =
       contentSize: content.size,
       encoding: content.encoding,
       transferredSize: content.transferredSize,
-      discardResponseBody: discardedResponseBody,
+      discardResponseBody,
     };
 
     this.conn.send(packet);
@@ -2377,4 +2457,5 @@ NetworkEventActor.prototype.requestTypes =
   "getResponseContent": NetworkEventActor.prototype.onGetResponseContent,
   "getEventTimings": NetworkEventActor.prototype.onGetEventTimings,
   "getSecurityInfo": NetworkEventActor.prototype.onGetSecurityInfo,
+  "getStackTrace": NetworkEventActor.prototype.onGetStackTrace,
 };

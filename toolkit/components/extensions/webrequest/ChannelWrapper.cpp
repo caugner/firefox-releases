@@ -130,6 +130,18 @@ ChannelWrapper::RedirectTo(nsIURI* aURI, ErrorResult& aRv)
 }
 
 void
+ChannelWrapper::UpgradeToSecure(ErrorResult& aRv)
+{
+  nsresult rv = NS_ERROR_UNEXPECTED;
+  if (nsCOMPtr<nsIHttpChannel> chan = MaybeHttpChannel()) {
+    rv = chan->UpgradeToSecure();
+  }
+  if (NS_FAILED(rv)) {
+    aRv.Throw(rv);
+  }
+}
+
+void
 ChannelWrapper::SetSuspended(bool aSuspended, ErrorResult& aRv)
 {
   if (aSuspended != mSuspended) {
@@ -277,11 +289,11 @@ ChannelWrapper::GetResponseHeaders(nsTArray<dom::MozHTTPHeader>& aRetVal, ErrorR
 }
 
 void
-ChannelWrapper::SetRequestHeader(const nsCString& aHeader, const nsCString& aValue, ErrorResult& aRv)
+ChannelWrapper::SetRequestHeader(const nsCString& aHeader, const nsCString& aValue, bool aMerge, ErrorResult& aRv)
 {
   nsresult rv = NS_ERROR_UNEXPECTED;
   if (nsCOMPtr<nsIHttpChannel> chan = MaybeHttpChannel()) {
-    rv = chan->SetRequestHeader(aHeader, aValue, false);
+    rv = chan->SetRequestHeader(aHeader, aValue, aMerge);
   }
   if (NS_FAILED(rv)) {
     aRv.Throw(rv);
@@ -289,7 +301,7 @@ ChannelWrapper::SetRequestHeader(const nsCString& aHeader, const nsCString& aVal
 }
 
 void
-ChannelWrapper::SetResponseHeader(const nsCString& aHeader, const nsCString& aValue, ErrorResult& aRv)
+ChannelWrapper::SetResponseHeader(const nsCString& aHeader, const nsCString& aValue, bool aMerge, ErrorResult& aRv)
 {
   nsresult rv = NS_ERROR_UNEXPECTED;
   if (nsCOMPtr<nsIHttpChannel> chan = MaybeHttpChannel()) {
@@ -299,7 +311,7 @@ ChannelWrapper::SetResponseHeader(const nsCString& aHeader, const nsCString& aVa
         mContentTypeHdr = aValue;
       }
     } else {
-      rv = chan->SetResponseHeader(aHeader, aValue, false);
+      rv = chan->SetResponseHeader(aHeader, aValue, aMerge);
     }
   }
   if (NS_FAILED(rv)) {
@@ -363,14 +375,9 @@ ChannelWrapper::IsSystemLoad() const
 }
 
 bool
-ChannelWrapper::GetCanModify(ErrorResult& aRv) const
+ChannelWrapper::CanModify() const
 {
-  nsCOMPtr<nsIURI> uri = FinalURI();
-  nsAutoCString spec;
-  if (uri) {
-    uri->GetSpec(spec);
-  }
-  if (!uri || AddonManagerWebAPI::IsValidSite(uri)) {
+  if (WebExtensionPolicy::IsRestrictedURI(FinalURLInfo())) {
     return false;
   }
 
@@ -380,10 +387,9 @@ ChannelWrapper::GetCanModify(ErrorResult& aRv) const
         return false;
       }
 
-      if (prin->GetIsCodebasePrincipal() &&
-          (NS_FAILED(prin->GetURI(getter_AddRefs(uri))) ||
-           AddonManagerWebAPI::IsValidSite(uri))) {
-          return false;
+      auto* docURI = DocumentURLInfo();
+      if (docURI && WebExtensionPolicy::IsRestrictedURI(*docURI)) {
+        return false;
       }
     }
   }
@@ -635,7 +641,7 @@ ChannelWrapper::RegisterTraceableChannel(const WebExtensionPolicy& aAddon, nsITa
 {
   // We can't attach new listeners after the response has started, so don't
   // bother registering anything.
-  if (mResponseStarted) {
+  if (mResponseStarted || !CanModify()) {
     return;
   }
 

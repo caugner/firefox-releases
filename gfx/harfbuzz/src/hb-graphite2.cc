@@ -80,7 +80,7 @@ static const void *hb_graphite2_get_table (const void *data, unsigned int tag, s
     p->tag = tag;
 
     /* TODO Not thread-safe, but fairly harmless.
-     * We can do the double-chcked pointer cmpexch thing here. */
+     * We can do the double-checked pointer cmpexch thing here. */
     p->next = face_data->tlist;
     face_data->tlist = p;
   }
@@ -307,6 +307,8 @@ _hb_graphite2_shape (hb_shape_plan_t    *shape_plan,
     curradv = gr_slot_origin_X(gr_seg_first_slot(seg));
     clusters[0].advance = gr_seg_advance_X(seg) - curradv;
   }
+  else
+    clusters[0].advance = 0;
   for (is = gr_seg_first_slot (seg), ic = 0; is; is = gr_slot_next_in_segment (is), ic++)
   {
     unsigned int before = gr_slot_before (is);
@@ -332,7 +334,10 @@ _hb_graphite2_shape (hb_shape_plan_t    *shape_plan,
       if (HB_DIRECTION_IS_BACKWARD(buffer->props.direction))
         c->advance = curradv - gr_slot_origin_X(is);
       else
-        clusters[ci].advance = gr_slot_origin_X(is) - curradv;
+      {
+        c->advance = 0;
+        clusters[ci].advance += gr_slot_origin_X(is) - curradv;
+      }
       ci++;
       curradv = gr_slot_origin_X(is);
     }
@@ -345,7 +350,7 @@ _hb_graphite2_shape (hb_shape_plan_t    *shape_plan,
   if (HB_DIRECTION_IS_BACKWARD(buffer->props.direction))
     clusters[ci].advance += curradv;
   else
-    clusters[ci].advance = gr_seg_advance_X(seg) - curradv;
+    clusters[ci].advance += gr_seg_advance_X(seg) - curradv;
   ci++;
 
   for (unsigned int i = 0; i < ci; ++i)
@@ -355,7 +360,6 @@ _hb_graphite2_shape (hb_shape_plan_t    *shape_plan,
       hb_glyph_info_t *info = &buffer->info[clusters[i].base_glyph + j];
       info->codepoint = gids[clusters[i].base_glyph + j];
       info->cluster = clusters[i].cluster;
-      info->mask = HB_GLYPH_FLAG_UNSAFE_TO_BREAK;
       info->var1.i32 = clusters[i].advance;     // all glyphs in the cluster get the same advance
     }
   }
@@ -410,6 +414,8 @@ _hb_graphite2_shape (hb_shape_plan_t    *shape_plan,
 
   if (feats) gr_featureval_destroy (feats);
   gr_seg_destroy (seg);
+
+  buffer->unsafe_to_break_all ();
 
   return true;
 }

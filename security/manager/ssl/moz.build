@@ -66,7 +66,6 @@ EXPORTS += [
     'nsNSSCertificate.h',
     'nsNSSComponent.h',
     'nsNSSHelper.h',
-    'nsNSSShutDown.h',
     'nsRandomGenerator.h',
     'nsSecurityHeaderParser.h',
     'NSSErrorsService.h',
@@ -114,7 +113,6 @@ UNIFIED_SOURCES += [
     'nsNSSErrors.cpp',
     'nsNSSIOLayer.cpp',
     'nsNSSModule.cpp',
-    'nsNSSShutDown.cpp',
     'nsNSSVersion.cpp',
     'nsNTLMAuthModule.cpp',
     'nsPK11TokenDB.cpp',
@@ -188,7 +186,7 @@ if not CONFIG['MOZ_SYSTEM_NSS']:
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
-if CONFIG['GNU_CXX']:
+if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
     CXXFLAGS += [
         '-Wextra',
         # -Wextra enables this warning, but it's too noisy to be useful.

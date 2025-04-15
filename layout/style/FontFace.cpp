@@ -13,12 +13,14 @@
 #include "mozilla/dom/TypedArray.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "mozilla/CycleCollectedJSContext.h"
+#include "mozilla/ServoCSSParser.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/ServoUtils.h"
 #include "nsCSSFontFaceRule.h"
 #include "nsCSSParser.h"
 #include "nsIDocument.h"
 #include "nsStyleUtil.h"
+#include "StylePrefs.h"
 
 namespace mozilla {
 namespace dom {
@@ -34,7 +36,7 @@ class FontFaceBufferSource : public gfxFontFaceBufferSource
 public:
   explicit FontFaceBufferSource(FontFace* aFontFace)
     : mFontFace(aFontFace) {}
-  virtual void TakeBuffer(uint8_t*& aBuffer, uint32_t& aLength);
+  virtual void TakeBuffer(uint8_t*& aBuffer, uint32_t& aLength) override;
 
 private:
   RefPtr<FontFace> mFontFace;
@@ -344,6 +346,21 @@ FontFace::SetFeatureSettings(const nsAString& aValue, ErrorResult& aRv)
 }
 
 void
+FontFace::GetVariationSettings(nsString& aResult)
+{
+  mFontFaceSet->FlushUserFontSet();
+  GetDesc(eCSSFontDesc_FontVariationSettings, eCSSProperty_font_variation_settings,
+          aResult);
+}
+
+void
+FontFace::SetVariationSettings(const nsAString& aValue, ErrorResult& aRv)
+{
+  mFontFaceSet->FlushUserFontSet();
+  SetDescriptor(eCSSFontDesc_FontVariationSettings, aValue, aRv);
+}
+
+void
 FontFace::GetDisplay(nsString& aResult)
 {
   mFontFaceSet->FlushUserFontSet();
@@ -513,8 +530,6 @@ FontFace::ParseDescriptor(nsCSSFontDesc aDescID,
                           const nsAString& aString,
                           nsCSSValue& aResult)
 {
-  nsCSSParser parser;
-
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(mParent);
   nsCOMPtr<nsIPrincipal> principal = global->PrincipalOrNull();
 
@@ -522,6 +537,13 @@ FontFace::ParseDescriptor(nsCSSFontDesc aDescID,
   nsCOMPtr<nsIURI> docURI = window->GetDocumentURI();
   nsCOMPtr<nsIURI> base = window->GetDocBaseURI();
 
+  if (mFontFaceSet->Document()->IsStyledByServo()) {
+    RefPtr<URLExtraData> url = new URLExtraData(base, docURI, principal);
+    return ServoCSSParser::ParseFontDescriptor(aDescID, aString, url, aResult);
+  }
+
+#ifdef MOZ_OLD_STYLE
+  nsCSSParser parser;
   if (!parser.ParseFontFaceDescriptor(aDescID, aString,
                                       docURI, // aSheetURL
                                       base,
@@ -532,6 +554,9 @@ FontFace::ParseDescriptor(nsCSSFontDesc aDescID,
   }
 
   return true;
+#else
+  MOZ_CRASH("old style system disabled");
+#endif
 }
 
 void
@@ -591,6 +616,10 @@ FontFace::SetDescriptors(const nsAString& aFamily,
       !ParseDescriptor(eCSSFontDesc_FontFeatureSettings,
                        aDescriptors.mFeatureSettings,
                        mDescriptors->mFontFeatureSettings) ||
+      (StylePrefs::sFontVariationsEnabled &&
+       !ParseDescriptor(eCSSFontDesc_FontVariationSettings,
+                        aDescriptors.mVariationSettings,
+                        mDescriptors->mFontVariationSettings)) ||
       !ParseDescriptor(eCSSFontDesc_Display,
                        aDescriptors.mDisplay,
                        mDescriptors->mDisplay)) {

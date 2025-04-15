@@ -7,7 +7,7 @@
 #ifndef GFX_FRAMEMETRICS_H
 #define GFX_FRAMEMETRICS_H
 
-#include <stdint.h>                     // for uint32_t, uint64_t
+#include <stdint.h>                     // for uint8_t, uint32_t, uint64_t
 #include "Units.h"                      // for CSSRect, CSSPixel, etc
 #include "mozilla/DefineEnum.h"         // for MOZ_DEFINE_ENUM
 #include "mozilla/HashFunctions.h"      // for HashGeneric
@@ -16,10 +16,12 @@
 #include "mozilla/gfx/Rect.h"           // for RoundedIn
 #include "mozilla/gfx/ScaleFactor.h"    // for ScaleFactor
 #include "mozilla/gfx/Logging.h"        // for Log
+#include "mozilla/layers/LayersTypes.h" // for ScrollDirection
 #include "mozilla/StaticPtr.h"          // for StaticAutoPtr
 #include "mozilla/TimeStamp.h"          // for TimeStamp
 #include "nsString.h"
 #include "nsStyleCoord.h"               // for nsStyleCoord
+#include "PLDHashTable.h"               // for PLDHashNumber
 
 namespace IPC {
 template <typename T> struct ParamTraits;
@@ -172,15 +174,15 @@ public:
     CSSRect scrollableRect = mScrollableRect;
     CSSSize compSize = CalculateCompositedSizeInCssPixels();
     if (scrollableRect.Width() < compSize.width) {
-      scrollableRect.x = std::max(0.f,
-                                  scrollableRect.x - (compSize.width - scrollableRect.Width()));
-      scrollableRect.SetWidth(compSize.width);
+      scrollableRect.SetRectX(std::max(0.f,
+                                       scrollableRect.X() - (compSize.width - scrollableRect.Width())),
+                              compSize.width);
     }
 
     if (scrollableRect.Height() < compSize.height) {
-      scrollableRect.y = std::max(0.f,
-                                  scrollableRect.y - (compSize.height - scrollableRect.Height()));
-      scrollableRect.SetHeight(compSize.height);
+      scrollableRect.SetRectY(std::max(0.f,
+                                       scrollableRect.Y() - (compSize.height - scrollableRect.Height())),
+                              compSize.height);
     }
 
     return scrollableRect;
@@ -721,6 +723,32 @@ struct ScrollSnapInfo {
   nsTArray<nsPoint> mScrollSnapCoordinates;
 };
 
+MOZ_DEFINE_ENUM_CLASS_WITH_BASE(
+  OverscrollBehavior, uint8_t, (
+    Auto,
+    Contain,
+    None
+));
+
+struct OverscrollBehaviorInfo {
+  OverscrollBehaviorInfo()
+    : mBehaviorX(OverscrollBehavior::Auto)
+    , mBehaviorY(OverscrollBehavior::Auto)
+  {}
+
+  // Construct from StyleOverscrollBehavior values.
+  static OverscrollBehaviorInfo FromStyleConstants(StyleOverscrollBehavior aBehaviorX,
+                                                   StyleOverscrollBehavior aBehaviorY);
+
+  bool operator==(const OverscrollBehaviorInfo& aOther) const {
+    return mBehaviorX == aOther.mBehaviorX &&
+           mBehaviorY == aOther.mBehaviorY;
+  }
+
+  OverscrollBehavior mBehaviorX;
+  OverscrollBehavior mBehaviorY;
+};
+
 /**
  * A clip that applies to a layer, that may be scrolled by some of the
  * scroll frames associated with the layer.
@@ -793,10 +821,10 @@ public:
     , mPageScrollAmount(0, 0)
     , mScrollClip()
     , mHasScrollgrab(false)
-    , mAllowVerticalScrollWithWheel(false)
     , mIsLayersIdRoot(false)
     , mUsesContainerScrolling(false)
     , mForceDisableApz(false)
+    , mOverscrollBehavior()
   {}
 
   bool operator==(const ScrollMetadata& aOther) const
@@ -810,10 +838,11 @@ public:
            mPageScrollAmount == aOther.mPageScrollAmount &&
            mScrollClip == aOther.mScrollClip &&
            mHasScrollgrab == aOther.mHasScrollgrab &&
-           mAllowVerticalScrollWithWheel == aOther.mAllowVerticalScrollWithWheel &&
            mIsLayersIdRoot == aOther.mIsLayersIdRoot &&
            mUsesContainerScrolling == aOther.mUsesContainerScrolling &&
-           mForceDisableApz == aOther.mForceDisableApz;
+           mForceDisableApz == aOther.mForceDisableApz &&
+           mDisregardedDirection == aOther.mDisregardedDirection &&
+           mOverscrollBehavior == aOther.mOverscrollBehavior;
   }
 
   bool operator!=(const ScrollMetadata& aOther) const
@@ -898,12 +927,6 @@ public:
   bool GetHasScrollgrab() const {
     return mHasScrollgrab;
   }
-  bool AllowVerticalScrollWithWheel() const {
-    return mAllowVerticalScrollWithWheel;
-  }
-  void SetAllowVerticalScrollWithWheel(bool aValue) {
-    mAllowVerticalScrollWithWheel = aValue;
-  }
   void SetIsLayersIdRoot(bool aValue) {
     mIsLayersIdRoot = aValue;
   }
@@ -921,6 +944,23 @@ public:
   }
   bool IsApzForceDisabled() const {
     return mForceDisableApz;
+  }
+
+  // For more details about the concept of a disregarded direction, refer to the
+  // code which defines mDisregardedDirection.
+  Maybe<ScrollDirection> GetDisregardedDirection() const {
+    return mDisregardedDirection;
+  }
+  void
+  SetDisregardedDirection(const Maybe<ScrollDirection>& aValue) {
+    mDisregardedDirection = aValue;
+  }
+
+  void SetOverscrollBehavior(const OverscrollBehaviorInfo& aOverscrollBehavior) {
+    mOverscrollBehavior = aOverscrollBehavior;
+  }
+  const OverscrollBehaviorInfo& GetOverscrollBehavior() const {
+    return mOverscrollBehavior;
   }
 
 private:
@@ -957,9 +997,6 @@ private:
   // Whether or not this frame is for an element marked 'scrollgrab'.
   bool mHasScrollgrab:1;
 
-  // Whether or not the frame can be vertically scrolled with a mouse wheel.
-  bool mAllowVerticalScrollWithWheel:1;
-
   // Whether these framemetrics are for the root scroll frame (root element if
   // we don't have a root scroll frame) for its layers id.
   bool mIsLayersIdRoot:1;
@@ -972,13 +1009,24 @@ private:
   // scrollframe.
   bool mForceDisableApz:1;
 
+  // The disregarded direction means the direction which is disregarded anyway,
+  // even if the scroll frame overflows in that direction and the direction is
+  // specified as scrollable. This could happen in some scenarios, for instance,
+  // a single-line text control frame should disregard wheel scroll in
+  // its block-flow direction even if it overflows in that direction.
+  Maybe<ScrollDirection> mDisregardedDirection;
+
+  // The overscroll behavior for this scroll frame.
+  OverscrollBehaviorInfo mOverscrollBehavior;
+
   // WARNING!!!!
   //
   // When adding new fields to ScrollMetadata, the following places should be
   // updated to include them (as needed):
-  //    ScrollMetadata::operator ==
-  //    AsyncPanZoomController::NotifyLayersUpdated
-  //    The ParamTraits specialization in GfxMessageUtils.h
+  //    1. ScrollMetadata::operator ==
+  //    2. AsyncPanZoomController::NotifyLayersUpdated
+  //    3. The ParamTraits specialization in GfxMessageUtils.h and/or
+  //       LayersMessageUtils.h
   //
   // Please add new fields above this comment.
 };

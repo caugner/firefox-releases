@@ -74,12 +74,12 @@ class nsOptionEventGrabberWrapper : public nsDisplayWrapper
 public:
   nsOptionEventGrabberWrapper() {}
   virtual nsDisplayItem* WrapList(nsDisplayListBuilder* aBuilder,
-                                  nsIFrame* aFrame, nsDisplayList* aList) {
-    return new (aBuilder) nsDisplayOptionEventGrabber(aBuilder, aFrame, aList);
+                                  nsIFrame* aFrame, nsDisplayList* aList) override {
+    return MakeDisplayItem<nsDisplayOptionEventGrabber>(aBuilder, aFrame, aList);
   }
   virtual nsDisplayItem* WrapItem(nsDisplayListBuilder* aBuilder,
-                                  nsDisplayItem* aItem) {
-    return new (aBuilder) nsDisplayOptionEventGrabber(aBuilder, aItem->Frame(), aItem);
+                                  nsDisplayItem* aItem) override {
+    return MakeDisplayItem<nsDisplayOptionEventGrabber>(aBuilder, aItem->Frame(), aItem);
   }
 };
 
@@ -154,8 +154,8 @@ nsSelectsAreaFrame::BuildDisplayListInternal(nsDisplayListBuilder*   aBuilder,
     // we can't just associate the display item with the list frame,
     // because then the list's scrollframe won't clip it (the scrollframe
     // only clips contained descendants).
-    aLists.Outlines()->AppendNewToTop(new (aBuilder)
-      nsDisplayListFocus(aBuilder, this));
+    aLists.Outlines()->AppendToTop(
+      MakeDisplayItem<nsDisplayListFocus>(aBuilder, this));
   }
 }
 

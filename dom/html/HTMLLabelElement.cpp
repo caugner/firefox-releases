@@ -12,6 +12,7 @@
 #include "mozilla/MouseEvents.h"
 #include "mozilla/dom/HTMLLabelElementBinding.h"
 #include "nsFocusManager.h"
+#include "nsContentUtils.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsQueryObject.h"
 #include "mozilla/dom/ShadowRoot.h"
@@ -32,10 +33,6 @@ HTMLLabelElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)
 {
   return HTMLLabelElementBinding::Wrap(aCx, this, aGivenProto);
 }
-
-// nsISupports
-
-NS_IMPL_ISUPPORTS_INHERITED0(HTMLLabelElement, nsGenericHTMLElement)
 
 // nsIDOMHTMLLabelElement
 
@@ -237,19 +234,14 @@ HTMLLabelElement::GetLabeledElement() const
 
   // We have a @for. The id has to be linked to an element in the same tree
   // and this element should be a labelable form control.
-  nsINode* root = SubtreeRoot();
-  ShadowRoot* shadow = ShadowRoot::FromNode(root);
   Element* element = nullptr;
 
-  if (shadow) {
-    element = shadow->GetElementById(elementId);
+  if (ShadowRoot* shadowRoot = GetContainingShadow()) {
+    element = shadowRoot->GetElementById(elementId);
+  } else if (nsIDocument* doc = GetUncomposedDoc()) {
+    element = doc->GetElementById(elementId);
   } else {
-    nsIDocument* doc = GetUncomposedDoc();
-    if (doc) {
-      element = doc->GetElementById(elementId);
-    } else {
-      element = nsContentUtils::MatchElementId(root->AsContent(), elementId);
-    }
+    element = nsContentUtils::MatchElementId(SubtreeRoot()->AsContent(), elementId);
   }
 
   if (element && element->IsLabelable()) {

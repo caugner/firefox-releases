@@ -35,6 +35,13 @@ TextEditUtils::IsBody(nsIDOMNode* aNode)
   return EditorBase::NodeIsType(aNode, nsGkAtoms::body);
 }
 
+bool
+TextEditUtils::IsBody(nsINode* aNode)
+{
+  MOZ_ASSERT(aNode);
+  return aNode->IsHTMLElement(nsGkAtoms::body);
+}
+
 /**
  * IsBreak() returns true if aNode is an html break node.
  */
@@ -80,13 +87,14 @@ bool
 TextEditUtils::HasMozAttr(nsIDOMNode* aNode)
 {
   MOZ_ASSERT(aNode);
-  nsCOMPtr<nsIDOMElement> element = do_QueryInterface(aNode);
+  nsCOMPtr<Element> element = do_QueryInterface(aNode);
   if (!element) {
     return false;
   }
-  nsAutoString typeAttrVal;
-  nsresult rv = element->GetAttribute(NS_LITERAL_STRING("type"), typeAttrVal);
-  return NS_SUCCEEDED(rv) && typeAttrVal.LowerCaseEqualsLiteral("_moz");
+  return element->AttrValueIs(kNameSpaceID_None,
+                              nsGkAtoms::type,
+                              NS_LITERAL_STRING("_moz"),
+                              eIgnoreCase);
 }
 
 /******************************************************************************

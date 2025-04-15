@@ -1,19 +1,17 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource://services-common/async.js");
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://services-sync/engines.js");
-Cu.import("resource://services-sync/engines/bookmarks.js");
-Cu.import("resource://services-sync/service.js");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://testing-common/services/sync/utils.js");
-Cu.import("resource://services-sync/bookmark_validator.js");
+ChromeUtils.import("resource://services-common/async.js");
+ChromeUtils.import("resource://services-sync/engines.js");
+ChromeUtils.import("resource://services-sync/engines/bookmarks.js");
+ChromeUtils.import("resource://services-sync/service.js");
+ChromeUtils.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://services-sync/bookmark_validator.js");
 
+const BookmarksToolbarTitle = "toolbar";
 const bms = PlacesUtils.bookmarks;
 
 add_task(async function setup() {
-  initTestLogging("Trace");
   await Service.engineManager.unregister("bookmarks");
 });
 
@@ -21,22 +19,18 @@ async function sharedSetup() {
   let engine = new BookmarksEngine(Service);
   await engine.initialize();
   let store = engine._store;
-
-  store._log.level = Log.Level.Trace;
-  engine._log.level = Log.Level.Trace;
-
   let server = await serverForFoo(engine);
   await SyncTestingInfrastructure(server);
 
   let collection = server.user("foo").collection("bookmarks");
 
-  Svc.Obs.notify("weave:engine:start-tracking"); // We skip usual startup...
+  engine._tracker.start(); // We skip usual startup...
 
   return { engine, store, server, collection };
 }
 
 async function cleanup(engine, server) {
-  Svc.Obs.notify("weave:engine:stop-tracking");
+  await engine._tracker.stop();
   let promiseStartOver = promiseOneObserver("weave:service:start-over:finish");
   await Service.startOver();
   await promiseStartOver;
@@ -72,9 +66,7 @@ async function createBookmark(parentId, url, title, index = bms.DEFAULT_INDEX) {
 }
 
 function getServerRecord(collection, id) {
-  let wbo = collection.get({ full: true, ids: [id] });
-  // Whew - lots of json strings inside strings.
-  return JSON.parse(JSON.parse(JSON.parse(JSON.parse(wbo)[0]).payload).ciphertext);
+  return collection.cleartext(id);
 }
 
 async function promiseNoLocalItem(guid) {
@@ -108,15 +100,15 @@ async function validate(collection, expectedFailures = []) {
     (isInExpectedFailures(elt) ? expected : unexpected).push(elt);
   }
   if (unexpected.length || expected.length != expectedFailures.length) {
-    do_print("Validation failed:");
-    do_print(JSON.stringify(summary));
+    info("Validation failed:");
+    info(JSON.stringify(summary));
     // print the entire validator output as it has IDs etc.
-    do_print(JSON.stringify(problems, undefined, 2));
-    do_print("Expected: " + JSON.stringify(expectedFailures, undefined, 2));
+    info(JSON.stringify(problems, undefined, 2));
+    info("Expected: " + JSON.stringify(expectedFailures, undefined, 2));
     // All server records and the entire bookmark tree.
-    do_print("Server records:\n" + JSON.stringify(collection.payloads(), undefined, 2));
+    info("Server records:\n" + JSON.stringify(collection.payloads(), undefined, 2));
     let tree = await PlacesUtils.promiseBookmarksTree("", { includeItemIds: true });
-    do_print("Local bookmark tree:\n" + JSON.stringify(tree, undefined, 2));
+    info("Local bookmark tree:\n" + JSON.stringify(tree, undefined, 2));
     ok(false);
   }
 }
@@ -172,13 +164,13 @@ add_task(async function test_dupe_bookmark() {
 
     // We should have logically deleted the dupe record.
     equal(collection.count(), 7);
-    ok(getServerRecord(collection, bmk1_guid).deleted);
+    ok(collection.cleartext(bmk1_guid).deleted);
     // and physically removed from the local store.
     await promiseNoLocalItem(bmk1_guid);
     // Parent should still only have 1 item.
     equal((await getFolderChildrenIDs(folder1_id)).length, 1);
     // The parent record on the server should now reference the new GUID and not the old.
-    let serverRecord = getServerRecord(collection, folder1_guid);
+    let serverRecord = collection.cleartext(folder1_guid);
     ok(!serverRecord.children.includes(bmk1_guid));
     ok(serverRecord.children.includes(newGUID));
 
@@ -204,7 +196,7 @@ add_task(async function test_dupe_reparented_bookmark() {
     // Another parent folder *with the same name*
     let {id: folder2_id, guid: folder2_guid } = await createFolder(bms.toolbarFolder, "Folder 1");
 
-    do_print(`folder1_guid=${folder1_guid}, folder2_guid=${folder2_guid}, bmk1_guid=${bmk1_guid}`);
+    info(`folder1_guid=${folder1_guid}, folder2_guid=${folder2_guid}, bmk1_guid=${bmk1_guid}`);
 
     await engine.sync();
 
@@ -233,7 +225,7 @@ add_task(async function test_dupe_reparented_bookmark() {
 
     // We should have logically deleted the dupe record.
     equal(collection.count(), 8);
-    ok(getServerRecord(collection, bmk1_guid).deleted);
+    ok(collection.cleartext(bmk1_guid).deleted);
     // and physically removed from the local store.
     await promiseNoLocalItem(bmk1_guid);
     // The original folder no longer has the item
@@ -242,12 +234,12 @@ add_task(async function test_dupe_reparented_bookmark() {
     equal((await getFolderChildrenIDs(folder2_id)).length, 1);
 
     // The record for folder1 on the server should reference neither old or new GUIDs.
-    let serverRecord1 = getServerRecord(collection, folder1_guid);
+    let serverRecord1 = collection.cleartext(folder1_guid);
     ok(!serverRecord1.children.includes(bmk1_guid));
     ok(!serverRecord1.children.includes(newGUID));
 
     // The record for folder2 on the server should only reference the new new GUID.
-    let serverRecord2 = getServerRecord(collection, folder2_guid);
+    let serverRecord2 = collection.cleartext(folder2_guid);
     ok(!serverRecord2.children.includes(bmk1_guid));
     ok(serverRecord2.children.includes(newGUID));
 
@@ -270,7 +262,7 @@ add_task(async function test_dupe_reparented_locally_changed_bookmark() {
     // Another parent folder *with the same name*
     let {id: folder2_id, guid: folder2_guid } = await createFolder(bms.toolbarFolder, "Folder 1");
 
-    do_print(`folder1_guid=${folder1_guid}, folder2_guid=${folder2_guid}, bmk1_guid=${bmk1_guid}`);
+    info(`folder1_guid=${folder1_guid}, folder2_guid=${folder2_guid}, bmk1_guid=${bmk1_guid}`);
 
     await engine.sync();
 
@@ -293,7 +285,7 @@ add_task(async function test_dupe_reparented_locally_changed_bookmark() {
 
     let deltaSeconds = 500;
     let newWBO = collection.insert(newGUID, encryptPayload(to_apply), Date.now() / 1000 + deltaSeconds);
-    do_print(`new duplicate of ${bmk1_guid} is ${newGUID}`);
+    info(`new duplicate of ${bmk1_guid} is ${newGUID}`);
 
     // Make a change to the bookmark that's a dupe, and set the modification
     // time further in the future than the incoming record. This will cause
@@ -314,7 +306,7 @@ add_task(async function test_dupe_reparented_locally_changed_bookmark() {
 
     // We should have logically deleted the dupe record.
     equal(collection.count(), 8);
-    ok(getServerRecord(collection, bmk1_guid).deleted);
+    ok(collection.cleartext(bmk1_guid).deleted);
     // and physically removed from the local store.
     await promiseNoLocalItem(bmk1_guid);
     // The original folder still has the item
@@ -323,12 +315,12 @@ add_task(async function test_dupe_reparented_locally_changed_bookmark() {
     equal((await getFolderChildrenIDs(folder2_id)).length, 0);
 
     // The record for folder1 on the server should reference only the GUID.
-    let serverRecord1 = getServerRecord(collection, folder1_guid);
+    let serverRecord1 = collection.cleartext(folder1_guid);
     ok(!serverRecord1.children.includes(bmk1_guid));
     ok(serverRecord1.children.includes(newGUID));
 
     // The record for folder2 on the server should reference nothing.
-    let serverRecord2 = getServerRecord(collection, folder2_guid);
+    let serverRecord2 = collection.cleartext(folder2_guid);
     ok(!serverRecord2.children.includes(bmk1_guid));
     ok(!serverRecord2.children.includes(newGUID));
 
@@ -352,7 +344,7 @@ add_task(async function test_dupe_reparented_to_earlier_appearing_parent_bookmar
     // One more folder we'll use later.
     let {guid: folder2_guid} = await createFolder(bms.toolbarFolder, "A second folder");
 
-    do_print(`folder1=${folder1_guid}, bmk1=${bmk1_guid} folder2=${folder2_guid}`);
+    info(`folder1=${folder1_guid}, bmk1=${bmk1_guid} folder2=${folder2_guid}`);
 
     await engine.sync();
 
@@ -429,7 +421,7 @@ add_task(async function test_dupe_reparented_to_later_appearing_parent_bookmark(
     // One more folder we'll use later.
     let {guid: folder2_guid} = await createFolder(bms.toolbarFolder, "A second folder");
 
-    do_print(`folder1=${folder1_guid}, bmk1=${bmk1_guid} folder2=${folder2_guid}`);
+    info(`folder1=${folder1_guid}, bmk1=${bmk1_guid} folder2=${folder2_guid}`);
 
     await engine.sync();
 
@@ -506,7 +498,7 @@ add_task(async function test_dupe_reparented_to_future_arriving_parent_bookmark(
     // One more folder we'll use later.
     let {guid: folder2_guid} = await createFolder(bms.toolbarFolder, "A second folder");
 
-    do_print(`folder1=${folder1_guid}, bmk1=${bmk1_guid} folder2=${folder2_guid}`);
+    info(`folder1=${folder1_guid}, bmk1=${bmk1_guid} folder2=${folder2_guid}`);
 
     await engine.sync();
 
@@ -537,14 +529,14 @@ add_task(async function test_dupe_reparented_to_future_arriving_parent_bookmark(
 
     // We should have logically deleted the dupe record.
     equal(collection.count(), 8);
-    ok(getServerRecord(collection, bmk1_guid).deleted);
+    ok(collection.cleartext(bmk1_guid).deleted);
     // and physically removed from the local store.
     await promiseNoLocalItem(bmk1_guid);
     // The intended parent doesn't exist, so it remains in the original folder
     equal((await getFolderChildrenIDs(folder1_id)).length, 1);
 
     // The record for folder1 on the server should reference the new GUID.
-    let serverRecord1 = getServerRecord(collection, folder1_guid);
+    let serverRecord1 = collection.cleartext(folder1_guid);
     ok(!serverRecord1.children.includes(bmk1_guid));
     ok(serverRecord1.children.includes(newGUID));
 
@@ -558,6 +550,8 @@ add_task(async function test_dupe_reparented_to_future_arriving_parent_bookmark(
     let expected = [
       // We haven't fixed the incoming record that referenced the missing parent.
       { name: "orphans", count: 1 },
+      // And it's parent still points at it
+      { name: "parentChildMismatches", count: 1 },
     ];
     await validate(collection, expected);
 
@@ -609,6 +603,7 @@ add_task(async function test_dupe_reparented_to_future_arriving_parent_bookmark(
       //   the server record.
       // Hence, newGUID is a child of both those server records :(
       { name: "multipleParents", count: 1 },
+      { name: "parentChildMismatches", count: 1 },
     ];
     await validate(collection, expected);
 
@@ -638,7 +633,7 @@ add_task(async function test_dupe_empty_folder() {
       id: newFolderGUID,
       type: "folder",
       title: "Folder 1",
-      parentName: "Bookmarks Toolbar",
+      parentName: BookmarksToolbarTitle,
       parentid: "toolbar",
       children: [],
     }), Date.now() / 1000 + 500);
@@ -652,7 +647,7 @@ add_task(async function test_dupe_empty_folder() {
     // Collection now has one additional record - the logically deleted dupe.
     equal(collection.count(), 6);
     // original folder should be logically deleted.
-    ok(getServerRecord(collection, folder1_guid).deleted);
+    ok(collection.cleartext(folder1_guid).deleted);
     await promiseNoLocalItem(folder1_guid);
   } finally {
     await cleanup(engine, server);

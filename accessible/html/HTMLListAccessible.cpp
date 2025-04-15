@@ -21,8 +21,6 @@ using namespace mozilla::a11y;
 // HTMLListAccessible
 ////////////////////////////////////////////////////////////////////////////////
 
-NS_IMPL_ISUPPORTS_INHERITED0(HTMLListAccessible, HyperTextAccessible)
-
 role
 HTMLListAccessible::NativeRole()
 {
@@ -55,8 +53,6 @@ HTMLLIAccessible::
   }
 }
 
-NS_IMPL_ISUPPORTS_INHERITED0(HTMLLIAccessible, HyperTextAccessible)
-
 void
 HTMLLIAccessible::Shutdown()
 {
@@ -87,8 +83,8 @@ HTMLLIAccessible::Bounds() const
 
   nsIntRect bulletRect = mBullet->Bounds();
 
-  rect.width += rect.x - bulletRect.x;
-  rect.x = bulletRect.x; // Move x coordinate of list item over to cover bullet as well
+  // Move x coordinate of list item over to cover bullet as well
+  rect.SetLeftEdge(bulletRect.X());
   return rect;
 }
 

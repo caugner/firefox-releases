@@ -9,25 +9,9 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 from taskgraph.transforms.base import TransformSequence
 
+PHASES = ['build', 'promote', 'push', 'ship']
+
 transforms = TransformSequence()
-
-
-def _get_product(job_or_task):
-    # Find the product.
-    # XXX Once shipping-product is set for nightly builds as well, we can get
-    # rid of this function.
-    product = job_or_task.get('shipping-product', job_or_task.get('product'))
-    if 'payload' in job_or_task:
-        product = product or job_or_task['payload'].get(
-            'product',
-            job_or_task['payload'].get('properties', {}).get('product')
-        )
-
-    if 'run' in job_or_task:
-        product = product or job_or_task['run'].get('product')
-    if 'extra' in job_or_task:
-        product = product or job_or_task['extra'].get('product')
-    return product
 
 
 @transforms.add
@@ -35,7 +19,8 @@ def add_dependencies(config, jobs):
     for job in jobs:
         dependencies = {}
         # Add any kind_dependencies_tasks with matching product as dependencies
-        product = _get_product(job)
+        product = job.get('shipping-product')
+        phase = job.get('shipping-phase')
         if product is None:
             continue
 
@@ -52,8 +37,18 @@ def add_dependencies(config, jobs):
                 # Skip old-id
                 if 'old-id' in dep_task.label:
                     continue
+            # We can only depend on tasks in the current or previous phases
+            dep_phase = dep_task.attributes.get('shipping_phase')
+            if dep_phase and PHASES.index(dep_phase) > PHASES.index(phase):
+                continue
+
+            if dep_task.attributes.get("build_platform") and \
+               job.get("attributes", {}).get("build_platform"):
+                if dep_task.attributes["build_platform"] != job["attributes"]["build_platform"]:
+                    continue
             # Add matching product tasks to deps
-            if _get_product(dep_task.task) == product:
+            if dep_task.task.get('shipping-product') == product or \
+                    dep_task.attributes.get('shipping_product') == product:
                 dependencies[dep_task.label] = dep_task.label
 
         job.setdefault('dependencies', {}).update(dependencies)

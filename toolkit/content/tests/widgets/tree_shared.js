@@ -19,7 +19,7 @@ var columns_hiertree =
 ];
 
 // XXXndeakin still to add some tests for:
-//   cycler columns, checkbox cells, progressmeter cells
+//   cycler columns, checkbox cells
 
 // this test function expects a tree to have 8 rows in it when it isn't
 // expanded. The tree should only display four rows at a time. If editable,
@@ -104,7 +104,7 @@ function testtag_tree(treeid, treerowinfoid, seltype, columnstype, testid) {
 
   tree.startEditing(1, ecolumn);
   var inputField = tree.inputField;
-  is(inputField instanceof Components.interfaces.nsIDOMXULTextBoxElement, true, testid + "inputField");
+  is(inputField instanceof Ci.nsIDOMXULTextBoxElement, true, testid + "inputField");
   inputField.value = "Changed Value";
   tree.stopEditing(true);
   is(tree.view.getCellText(1, ecolumn), "Changed Value", testid + "edit cell accept");
@@ -208,7 +208,7 @@ function testtag_tree_TreeSelection(tree, testid, multiple) {
   testid += " selection ";
 
   var selection = tree.view.selection;
-  is(selection instanceof Components.interfaces.nsITreeSelection, true,
+  is(selection instanceof Ci.nsITreeSelection, true,
                 testid + "selection is a TreeSelection");
   is(selection.single, !multiple, testid + "single");
 
@@ -644,7 +644,7 @@ function testtag_tree_UI_editing(tree, testid, rowInfo) {
     tree.view.selection.currentColumn = ecolumn;
     tree.currentIndex = rowIndex;
 
-    const isMac = (navigator.platform.indexOf("Mac") >= 0);
+    const isMac = (navigator.platform.includes("Mac"));
     const StartEditingKey = isMac ? "RETURN" : "F2";
     sendKey(StartEditingKey);
     is(tree.editingColumn, ecolumn, "Should be editing tree cell now");
@@ -873,7 +873,7 @@ function testtag_tree_TreeView(tree, testid, rowInfo) {
   var columns = tree.columns;
   var view = tree.view;
 
-  is(view instanceof Components.interfaces.nsITreeView, true, testid + "view is a TreeView");
+  is(view instanceof Ci.nsITreeView, true, testid + "view is a TreeView");
   is(view.rowCount, rowInfo.rows.length, testid + "rowCount");
 
   testtag_tree_TreeView_rows(tree, testid, rowInfo, 0);
@@ -913,7 +913,6 @@ function testtag_tree_TreeView_rows(tree, testid, rowInfo, startRow) {
     isEditable(row, cell) { return cell.editable; },
     isSelectable(row, cell) { return cell.selectable; },
     getImageSrc(row, cell) { return cell.image; },
-    getProgressMode(row, cell) { return cell.mode; }
   };
 
   var failedMethods = { };

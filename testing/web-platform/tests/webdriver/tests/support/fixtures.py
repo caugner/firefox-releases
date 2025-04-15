@@ -1,19 +1,17 @@
+from __future__ import print_function
+
 import json
 import os
 import urlparse
 import re
 
 import webdriver
-import mozlog
 
-from tests.support.asserts import assert_error
 from tests.support.http_request import HTTPRequest
-from tests.support import merge_dictionaries
+from tests.support.wait import wait
 
 default_host = "http://127.0.0.1"
 default_port = "4444"
-
-logger = mozlog.get_default_logger()
 
 
 def ignore_exceptions(f):
@@ -21,7 +19,7 @@ def ignore_exceptions(f):
         try:
             return f(*args, **kwargs)
         except webdriver.error.WebDriverException as e:
-            logger.warning("Ignored exception %s" % e)
+            print("Ignored exception %s" % e, file=sys.stderr)
     inner.__name__ = f.__name__
     return inner
 
@@ -188,8 +186,6 @@ def new_session(configuration, request):
         _session = webdriver.Session(configuration["host"],
                                      configuration["port"],
                                      capabilities=None)
-        # TODO: merge in some capabilities from the confguration capabilities
-        # since these might be needed to start the browser
         value = _session.send_command("POST", "session", body=body)
         # Don't set the global session until we are sure this succeeded
         _current_session = _session
@@ -201,6 +197,16 @@ def new_session(configuration, request):
     request.addfinalizer(end)
 
     return create_session
+
+
+def add_browser_capabilites(configuration):
+    def update_capabilities(capabilities):
+        # Make sure there aren't keys in common.
+        assert not set(configuration["capabilities"]).intersection(set(capabilities))
+        result = dict(configuration["capabilities"])
+        result.update(capabilities)
+        return result
+    return update_capabilities
 
 
 def url(server_config):
@@ -246,8 +252,14 @@ def create_dialog(session):
         session.send_session_command("POST",
                                      "execute/async",
                                      {"script": spawn, "args": []})
+        wait(session,
+             lambda s: s.send_session_command("GET", "alert/text") == text,
+             "modal has not appeared",
+             timeout=15,
+             ignored_exceptions=webdriver.NoSuchAlertException)
 
     return create_dialog
+
 
 def clear_all_cookies(session):
     """Removes all cookies associated with the current active document"""

@@ -12,13 +12,11 @@
   */
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetter(this, "Downloads",
-                                  "resource://gre/modules/Downloads.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesTestUtils",
-                                  "resource://testing-common/PlacesTestUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "Downloads",
+                               "resource://gre/modules/Downloads.jsm");
 
 function setup() {
-  gPrefService.setBoolPref("browser.altClickSave", true);
+  Services.prefs.setBoolPref("browser.altClickSave", true);
 
   let testPage =
     "data:text/html," +
@@ -38,9 +36,9 @@ async function clean_up() {
     await download.finalize(true);
   }
   // Remove download history.
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
 
-  gPrefService.clearUserPref("browser.altClickSave");
+  Services.prefs.clearUserPref("browser.altClickSave");
   await BrowserTestUtils.removeTab(gBrowser.selectedTab);
 }
 

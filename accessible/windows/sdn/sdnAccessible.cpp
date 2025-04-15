@@ -12,8 +12,7 @@
 #include "nsAttrName.h"
 #include "nsCoreUtils.h"
 #include "nsIAccessibleTypes.h"
-#include "nsIDOMHTMLElement.h"
-#include "nsIDOMCSSStyleDeclaration.h"
+#include "nsICSSDeclaration.h"
 #include "nsNameSpaceManager.h"
 #include "nsServiceManagerUtils.h"
 #include "nsWinUtils.h"
@@ -90,20 +89,15 @@ sdnAccessible::get_nodeInfo(BSTR __RPC_FAR* aNodeName,
   if (IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
-  nsCOMPtr<nsIDOMNode> DOMNode(do_QueryInterface(mNode));
-
-  uint16_t nodeType = 0;
-  DOMNode->GetNodeType(&nodeType);
+  uint16_t nodeType = mNode->NodeType();
   *aNodeType = static_cast<unsigned short>(nodeType);
 
   if (*aNodeType !=  NODETYPE_TEXT) {
-    nsAutoString nodeName;
-    DOMNode->GetNodeName(nodeName);
-    *aNodeName = ::SysAllocString(nodeName.get());
+    *aNodeName = ::SysAllocString(mNode->NodeName().get());
   }
 
   nsAutoString nodeValue;
-  DOMNode->GetNodeValue(nodeValue);
+  mNode->GetNodeValue(nodeValue);
   *aNodeValue = ::SysAllocString(nodeValue.get());
 
   *aNameSpaceID = mNode->IsContent()
@@ -231,12 +225,11 @@ sdnAccessible::get_computedStyle(unsigned short aMaxStyleProperties,
   if (mNode->IsNodeOfType(nsINode::eDOCUMENT))
     return S_FALSE;
 
-  nsCOMPtr<nsIDOMCSSStyleDeclaration> cssDecl =
+  nsCOMPtr<nsICSSDeclaration> cssDecl =
     nsWinUtils::GetComputedStyleDeclaration(mNode->AsContent());
   NS_ENSURE_TRUE(cssDecl, E_FAIL);
 
-  uint32_t length = 0;
-  cssDecl->GetLength(&length);
+  uint32_t length = cssDecl->Length();
 
   uint32_t index = 0, realIndex = 0;
   for (index = realIndex = 0; index < length && realIndex < aMaxStyleProperties;
@@ -244,7 +237,8 @@ sdnAccessible::get_computedStyle(unsigned short aMaxStyleProperties,
     nsAutoString property, value;
 
     // Ignore -moz-* properties.
-    if (NS_SUCCEEDED(cssDecl->Item(index, property)) && property.CharAt(0) != '-')
+    cssDecl->Item(index, property);
+    if (property.CharAt(0) != '-')
       cssDecl->GetPropertyValue(property, value);  // Get property value
 
     if (!value.IsEmpty()) {
@@ -274,7 +268,7 @@ sdnAccessible::get_computedStyleForProperties(unsigned short aNumStyleProperties
   if (mNode->IsNodeOfType(nsINode::eDOCUMENT))
     return S_FALSE;
 
-  nsCOMPtr<nsIDOMCSSStyleDeclaration> cssDecl =
+  nsCOMPtr<nsICSSDeclaration> cssDecl =
     nsWinUtils::GetComputedStyleDeclaration(mNode->AsContent());
   NS_ENSURE_TRUE(cssDecl, E_FAIL);
 
@@ -413,7 +407,7 @@ sdnAccessible::get_childAt(unsigned aChildIndex,
   if (IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
-  nsINode* resultNode = mNode->GetChildAt(aChildIndex);
+  nsINode* resultNode = mNode->GetChildAt_Deprecated(aChildIndex);
   if (resultNode) {
     *aNode = static_cast<ISimpleDOMNode*>(new sdnAccessible(resultNode));
     (*aNode)->AddRef();

@@ -4,18 +4,14 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["CustomizeMode"];
-
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+var EXPORTED_SYMBOLS = ["CustomizeMode"];
 
 const kPrefCustomizationDebug = "browser.uiCustomization.debug";
 const kPaletteId = "customization-palette";
 const kDragDataTypePrefix = "text/toolbarwrapper-id/";
 const kSkipSourceNodePref = "browser.uiCustomization.skipSourceNodeCheck";
-const kToolbarVisibilityBtn = "customization-toolbar-visibility-button";
 const kDrawInTitlebarPref = "browser.tabs.drawInTitlebar";
 const kExtraDragSpacePref = "browser.tabs.extraDragSpace";
-const kMaxTransitionDurationMs = 2000;
 const kKeepBroadcastAttributes = "keepbroadcastattributeswhencustomizing";
 
 const kPanelItemContextMenu = "customizationPanelItemContextMenu";
@@ -25,24 +21,24 @@ const kDownloadAutohideCheckboxId = "downloads-button-autohide-checkbox";
 const kDownloadAutohidePanelId = "downloads-button-autohide-panel";
 const kDownloadAutoHidePref = "browser.download.autohideButton";
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource:///modules/CustomizableUI.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/AddonManager.jsm");
-Cu.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource:///modules/CustomizableUI.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 Cu.importGlobalProperties(["CSS"]);
 
-XPCOMUtils.defineLazyModuleGetter(this, "DragPositionManager",
-                                  "resource:///modules/DragPositionManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "BrowserUITelemetry",
-                                  "resource:///modules/BrowserUITelemetry.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
-                                  "resource://gre/modules/BrowserUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "LightweightThemeManager",
-                                  "resource://gre/modules/LightweightThemeManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "SessionStore",
-                                  "resource:///modules/sessionstore/SessionStore.jsm");
+ChromeUtils.defineModuleGetter(this, "DragPositionManager",
+                               "resource:///modules/DragPositionManager.jsm");
+ChromeUtils.defineModuleGetter(this, "BrowserUITelemetry",
+                               "resource:///modules/BrowserUITelemetry.jsm");
+ChromeUtils.defineModuleGetter(this, "BrowserUtils",
+                               "resource://gre/modules/BrowserUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "LightweightThemeManager",
+                               "resource://gre/modules/LightweightThemeManager.jsm");
+ChromeUtils.defineModuleGetter(this, "SessionStore",
+                               "resource:///modules/sessionstore/SessionStore.jsm");
 XPCOMUtils.defineLazyGetter(this, "gWidgetsBundle", function() {
   const kUrl = "chrome://browser/locale/customizableui/customizableWidgets.properties";
   return Services.strings.createBundle(kUrl);
@@ -53,7 +49,7 @@ XPCOMUtils.defineLazyPreferenceGetter(this, "gCosmeticAnimationsEnabled",
 let gDebug;
 XPCOMUtils.defineLazyGetter(this, "log", () => {
   let scope = {};
-  Cu.import("resource://gre/modules/Console.jsm", scope);
+  ChromeUtils.import("resource://gre/modules/Console.jsm", scope);
   gDebug = Services.prefs.getBoolPref(kPrefCustomizationDebug, false);
   let consoleOptions = {
     maxLogLevel: gDebug ? "all" : "log",
@@ -279,16 +275,6 @@ CustomizeMode.prototype = {
         });
       }
 
-      let toolbarVisibilityBtn = document.getElementById(kToolbarVisibilityBtn);
-      let togglableToolbars = window.getTogglableToolbars();
-      if (togglableToolbars.length == 0) {
-        toolbarVisibilityBtn.setAttribute("hidden", "true");
-      } else {
-        toolbarVisibilityBtn.removeAttribute("hidden");
-      }
-
-      this.updateLWTStyling();
-
       CustomizableUI.dispatchToolboxEvent("beforecustomization", {}, window);
       CustomizableUI.notifyStartCustomizing(this.window);
 
@@ -323,8 +309,6 @@ CustomizeMode.prototype = {
         toolbar.setAttribute("customizing", true);
 
       await this._doTransition(true);
-
-      Services.obs.addObserver(this, "lightweight-theme-window-updated");
 
       // Let everybody in this window know that we're about to customize.
       CustomizableUI.dispatchToolboxEvent("customizationstarting", {}, window);
@@ -397,8 +381,6 @@ CustomizeMode.prototype = {
 
     this._handler.isExitingCustomizeMode = true;
 
-    this._removeExtraToolbarsIfEmpty();
-
     this._teardownDownloadAutoHideToggle();
 
     CustomizableUI.removeListener(this);
@@ -421,9 +403,6 @@ CustomizeMode.prototype = {
       await this.depopulatePalette();
 
       await this._doTransition(false);
-      this.updateLWTStyling({});
-
-      Services.obs.removeObserver(this, "lightweight-theme-window-updated");
 
       if (this.browser.selectedTab == gTab) {
         if (gTab.linkedBrowser.currentURI.spec == "about:blank") {
@@ -526,26 +505,6 @@ CustomizeMode.prototype = {
     return Promise.resolve();
   },
 
-  updateLWTStyling(aData) {
-    let docElement = this.document.documentElement;
-    if (!aData) {
-      let lwt = docElement._lightweightTheme;
-      aData = lwt.getData();
-    }
-    let headerURL = aData && aData.headerURL;
-    if (!headerURL) {
-      docElement.removeAttribute("customization-lwtheme");
-      return;
-    }
-    docElement.setAttribute("customization-lwtheme", "true");
-
-    let deck = this.document.getElementById("tab-view-deck");
-    let toolboxRect = this.window.gNavToolbox.getBoundingClientRect();
-    let height = toolboxRect.bottom;
-    deck.style.setProperty("--toolbox-rect-height", `${height}`);
-    deck.style.setProperty("--toolbox-rect-height-with-unit", `${height}px`);
-  },
-
   _getCustomizableChildForNode(aNode) {
     // NB: adjusted from _getCustomizableParent to keep that method fast
     // (it's used during drags), and avoid multiple DOM loops
@@ -569,7 +528,7 @@ CustomizeMode.prototype = {
 
     while (aNode && aNode.parentNode) {
       let parent = aNode.parentNode;
-      if (areas.indexOf(parent.id) != -1) {
+      if (areas.includes(parent.id)) {
         return aNode;
       }
       aNode = parent;
@@ -608,9 +567,15 @@ CustomizeMode.prototype = {
         resolve();
       }
 
-      animationNode.classList.add("animate-out");
-      animationNode.ownerGlobal.gNavToolbox.addEventListener("customizationending", cleanupCustomizationExit);
-      animationNode.addEventListener("animationend", cleanupWidgetAnimationEnd);
+      // Wait until the next frame before setting the class to ensure
+      // we do start the animation.
+      this.window.requestAnimationFrame(() => {
+        this.window.requestAnimationFrame(() => {
+          animationNode.classList.add("animate-out");
+          animationNode.ownerGlobal.gNavToolbox.addEventListener("customizationending", cleanupCustomizationExit);
+          animationNode.addEventListener("animationend", cleanupWidgetAnimationEnd);
+        });
+      });
     });
   },
 
@@ -893,14 +858,6 @@ CustomizeMode.prototype = {
       wrapper.setAttribute("flex", aNode.getAttribute("flex"));
     }
 
-    if (aPlace == "panel") {
-      if (aNode.classList.contains(CustomizableUI.WIDE_PANEL_CLASS)) {
-        wrapper.setAttribute("haswideitem", "true");
-      } else if (wrapper.hasAttribute("haswideitem")) {
-        wrapper.removeAttribute("haswideitem");
-      }
-    }
-
     let removable = aPlace == "palette" || CustomizableUI.isWidgetRemovable(aNode);
     wrapper.setAttribute("removable", removable);
 
@@ -915,7 +872,7 @@ CustomizeMode.prototype = {
       contextMenuAttrName = "contextmenu";
     }
     let currentContextMenu = aNode.getAttribute(contextMenuAttrName);
-    let contextMenuForPlace = aPlace == "panel" ?
+    let contextMenuForPlace = aPlace == "menu-panel" ?
                                 kPanelItemContextMenu :
                                 kPaletteItemContextMenu;
     if (aPlace != "toolbar") {
@@ -999,7 +956,7 @@ CustomizeMode.prototype = {
       toolbarItem.setAttribute(contextAttrName, wrappedContext);
       toolbarItem.removeAttribute("wrapped-contextAttrName");
       toolbarItem.removeAttribute("wrapped-context");
-    } else if (place == "panel") {
+    } else if (place == "menu-panel") {
       toolbarItem.setAttribute("context", kPanelItemContextMenu);
     }
 
@@ -1107,18 +1064,6 @@ CustomizeMode.prototype = {
     })().catch(log.error);
   },
 
-  _removeExtraToolbarsIfEmpty() {
-    let toolbox = this.window.gNavToolbox;
-    for (let child of toolbox.children) {
-      if (child.hasAttribute("customindex")) {
-        let placements = CustomizableUI.getWidgetIdsInArea(child.id);
-        if (!placements.length) {
-          CustomizableUI.removeExtraToolbar(child.id);
-        }
-      }
-    }
-  },
-
   persistCurrentSets(aSetBeforePersisting) {
     let document = this.document;
     let toolbars = document.querySelectorAll("toolbar[customizable='true'][currentset]");
@@ -1194,7 +1139,6 @@ CustomizeMode.prototype = {
       toolbar.removeAttribute("customizing");
     }
     this._onUIChange();
-    this.updateLWTStyling();
   },
 
   onWidgetMoved(aWidgetId, aArea, aOldPosition, aNewPosition) {
@@ -1642,12 +1586,6 @@ CustomizeMode.prototype = {
           this._updateDragSpaceCheckbox();
         }
         break;
-      case "lightweight-theme-window-updated":
-        if (aSubject == this.window) {
-          aData = JSON.parse(aData);
-          this.updateLWTStyling(aData);
-        }
-        break;
     }
   },
 
@@ -1767,7 +1705,7 @@ CustomizeMode.prototype = {
       if (this._customizing && !this._transitioning) {
         item.hidden = true;
         DragPositionManager.start(this.window);
-        let canUsePrevSibling = placeForItem == "toolbar" || placeForItem == "panel";
+        let canUsePrevSibling = placeForItem == "toolbar" || placeForItem == "menu-panel";
         if (item.nextSibling) {
           this._setDragActive(item.nextSibling, "before", draggedItem.id, placeForItem);
           this._dragOverItem = item.nextSibling;
@@ -1823,7 +1761,7 @@ CustomizeMode.prototype = {
       return;
     }
 
-    let targetAreaType = CustomizableUI.getAreaType(targetArea.id);
+    let targetAreaType = CustomizableUI.getPlaceForItem(targetArea);
     let targetNode = this._getDragOverNode(aEvent, targetArea, targetAreaType, draggedItemId);
 
     // We need to determine the place that the widget is being dropped in
@@ -2168,11 +2106,6 @@ CustomizeMode.prototype = {
       return;
     }
 
-    // getPlaceForItem and getAreaType return different things. Hack-around
-    // rather than having to update every. single. consumer. (and break add-ons)
-    if (aAreaType == "panel") {
-      aAreaType = "menu-panel";
-    }
     if (aItem.getAttribute("dragover") != aValue) {
       aItem.setAttribute("dragover", aValue);
 
@@ -2260,8 +2193,7 @@ CustomizeMode.prototype = {
     let originArea = this._getCustomizableParent(draggedWrapper);
     let positionManager = DragPositionManager.getManagerForArea(targetArea);
     let draggedSize = this._getDragItemSize(aDragOverNode, aDraggedItem);
-    let isWide = aDraggedItem.classList.contains(CustomizableUI.WIDE_PANEL_CLASS);
-    positionManager.insertPlaceholder(targetArea, aDragOverNode, isWide, draggedSize,
+    positionManager.insertPlaceholder(targetArea, aDragOverNode, draggedSize,
                                       originArea == targetArea);
   },
 
@@ -2344,10 +2276,6 @@ CustomizeMode.prototype = {
     if (!expectedParent.contains(aEvent.target)) {
       return expectedParent;
     }
-    // Our tests are stupid. Cope:
-    if (!aEvent.clientX && !aEvent.clientY) {
-      return aEvent.target;
-    }
     // Offset the drag event's position with the offset to the center of
     // the thing we're dragging
     let dragX = aEvent.clientX - this._dragOffset.x;
@@ -2371,7 +2299,7 @@ CustomizeMode.prototype = {
       dragX -= bounds.left;
       dragY -= bounds.top;
       // Find the closest node:
-      targetNode = positionManager.find(aAreaElement, dragX, dragY, aDraggedItemId);
+      targetNode = positionManager.find(aAreaElement, dragX, dragY);
     }
     return targetNode || aEvent.target;
   },
@@ -2488,7 +2416,8 @@ CustomizeMode.prototype = {
         panelOnTheLeft = true;
       }
     } else {
-      await BrowserUtils.promiseLayoutFlushed(doc, "display", () => {});
+      await this.window.promiseDocumentFlushed(() => {});
+
       if (!this._customizing || !this._wantToBeInCustomizeMode) {
         return;
       }

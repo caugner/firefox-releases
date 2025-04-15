@@ -2,10 +2,10 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-Components.utils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
-const { Services } = Components.utils.import("resource://gre/modules/Services.jsm", {});
-const { L10nRegistry } = Components.utils.import("resource://gre/modules/L10nRegistry.jsm", {});
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm", {});
+const { L10nRegistry } = ChromeUtils.import("resource://gre/modules/L10nRegistry.jsm", {});
 
 const ID = "langpack-und@test.mozilla.org";
 
@@ -35,9 +35,9 @@ add_task(async function() {
   equal(L10nRegistry.getAvailableLocales().includes("und"), false);
   equal(Services.locale.getAvailableLocales().includes("und"), false);
 
-  let [{addon}, ] = await Promise.all([
+  let [, {addon}] = await Promise.all([
+    promiseLangpackStartup(),
     promiseInstallFile(do_get_addon("langpack_1"), true),
-    promiseLangpackStartup()
   ]);
 
   // Now make sure that `und` locale is available.
@@ -50,8 +50,12 @@ add_task(async function() {
   equal(L10nRegistry.getAvailableLocales().includes("und"), false);
   equal(Services.locale.getAvailableLocales().includes("und"), false);
 
-  addon.userDisabled = false;
-  await promiseLangpackStartup();
+  // This quirky code here allows us to handle a scenario where enabling the
+  // addon is synchronous or asynchronous.
+  await Promise.all([
+    promiseLangpackStartup(),
+    (() => { addon.userDisabled = false; })()
+  ]);
 
   // After re-enabling it, the `und` locale is available again.
   equal(L10nRegistry.getAvailableLocales().includes("und"), true);
@@ -69,9 +73,9 @@ add_task(async function() {
  * correct strings available in the language pack.
  */
 add_task(async function() {
-  let [{addon}, ] = await Promise.all([
+  let [, {addon}] = await Promise.all([
+    promiseLangpackStartup(),
     promiseInstallFile(do_get_addon("langpack_1"), true),
-    promiseLangpackStartup()
   ]);
 
   {
@@ -110,11 +114,11 @@ add_task(async function() {
  * gets upgraded.
  */
 add_task(async function() {
-  let [{addon}, ] = await Promise.all([
+  let [, {addon}] = await Promise.all([
+    promiseLangpackStartup(),
     promiseInstallFile(do_get_addon("langpack_1"), true),
-    promiseLangpackStartup()
   ]);
-  do_check_true(addon.isActive);
+  Assert.ok(addon.isActive);
 
   await promiseShutdownManager();
 
@@ -124,8 +128,8 @@ add_task(async function() {
   await promiseStartupManager(true);
 
   addon = await promiseAddonByID(ID);
-  do_check_false(addon.isActive);
-  do_check_true(addon.appDisabled);
+  Assert.ok(!addon.isActive);
+  Assert.ok(addon.appDisabled);
 
   addon.uninstall();
 });

@@ -76,6 +76,7 @@ using namespace mozilla::net;
  ******************************************************************************/
 
 static StaticRefPtr<nsCookieService> gCookieService;
+bool nsCookieService::sSameSiteEnabled = false;
 
 // XXX_hack. See bug 178993.
 // This is a hack to hide HttpOnly cookies from older browsers
@@ -610,7 +611,6 @@ nsCookieService::nsCookieService()
  , mMonitor("CookieThread")
  , mInitializedDBStates(false)
  , mInitializedDBConn(false)
- , mAccumulatedWaitTelemetry(false)
 {
 }
 
@@ -1431,7 +1431,6 @@ nsCookieService::TryInitDB(bool aRecreateDB)
       gCookieService->ImportCookies(oldCookieFile);
       oldCookieFile->Remove(false);
       gCookieService->mDBState = initialState;
-      Telemetry::Accumulate(Telemetry::MOZ_SQLITE_COOKIES_OLD_SCHEMA, 0);
     });
 
   NS_DispatchToMainThread(runnable);
@@ -1450,10 +1449,6 @@ nsCookieService::InitDBConn()
     return;
   }
 
-  if (!mAccumulatedWaitTelemetry) {
-    mAccumulatedWaitTelemetry = true;
-    Telemetry::Accumulate(Telemetry::MOZ_SQLITE_COOKIES_BLOCK_MAIN_THREAD_MS, 0);
-  }
   for (uint32_t i = 0; i < mReadArray.Length(); ++i) {
     CookieDomainTuple& tuple = mReadArray[i];
     RefPtr<nsCookie> cookie = nsCookie::Create(tuple.cookie->name,
@@ -1488,9 +1483,10 @@ nsCookieService::InitDBConn()
   mInitializedDBConn = true;
 
   COOKIE_LOGSTRING(LogLevel::Debug, ("InitDBConn(): mInitializedDBConn = true"));
+  mEndInitDBConn = mozilla::TimeStamp::Now();
 
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
-  if (os && !mReadArray.IsEmpty()) {
+  if (os) {
     os->NotifyObservers(nullptr, "cookie-db-read", nullptr);
     mReadArray.Clear();
   }
@@ -2045,8 +2041,11 @@ nsCookieService::GetCookieStringCommon(nsIURI *aHostURI,
     NS_GetOriginAttributes(aChannel, attrs);
   }
 
+  bool isSafeTopLevelNav = NS_IsSafeTopLevelNav(aChannel);
+  bool isSameSiteForeign = NS_IsSameSiteForeign(aChannel, aHostURI);
   nsAutoCString result;
-  GetCookieStringInternal(aHostURI, isForeign, aHttpBound, attrs, result);
+  GetCookieStringInternal(aHostURI, isForeign, isSafeTopLevelNav, isSameSiteForeign,
+                          aHttpBound, attrs, result);
   *aCookie = result.IsEmpty() ? nullptr : ToNewCString(result);
   return NS_OK;
 }
@@ -2298,7 +2297,8 @@ nsCookieService::NotifyThirdParty(nsIURI *aHostURI, bool aIsAccepted, nsIChannel
 void
 nsCookieService::NotifyChanged(nsISupports     *aSubject,
                                const char16_t *aData,
-                               bool aOldCookieIsSession)
+                               bool aOldCookieIsSession,
+                               bool aFromHttp)
 {
   const char* topic = mDBState == mPrivateDBState ?
       "private-cookie-changed" : "cookie-changed";
@@ -2761,6 +2761,8 @@ nsCookieService::EnsureReadComplete(bool aInitDBConn)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
+  bool isAccumulated = false;
+
   if (!mInitializedDBStates) {
     TimeStamp startBlockTime = TimeStamp::Now();
     MonitorAutoLock lock(mMonitor);
@@ -2768,12 +2770,32 @@ nsCookieService::EnsureReadComplete(bool aInitDBConn)
     while (!mInitializedDBStates) {
       mMonitor.Wait();
     }
-    Telemetry::AccumulateTimeDelta(Telemetry::MOZ_SQLITE_COOKIES_BLOCK_MAIN_THREAD_MS,
+    Telemetry::AccumulateTimeDelta(Telemetry::MOZ_SQLITE_COOKIES_BLOCK_MAIN_THREAD_MS_V2,
                                    startBlockTime);
-    mAccumulatedWaitTelemetry = true;
+    Telemetry::Accumulate(Telemetry::MOZ_SQLITE_COOKIES_TIME_TO_BLOCK_MAIN_THREAD_MS, 0);
+    isAccumulated = true;
+  } else if (!mEndInitDBConn.IsNull()) {
+    // We didn't block main thread, and here comes the first cookie request.
+    // Collect how close we're going to block main thread.
+    Telemetry::Accumulate(Telemetry::MOZ_SQLITE_COOKIES_TIME_TO_BLOCK_MAIN_THREAD_MS,
+                          (TimeStamp::Now() - mEndInitDBConn).ToMilliseconds());
+    // Nullify the timestamp so wo don't accumulate this telemetry probe again.
+    mEndInitDBConn = TimeStamp();
+    isAccumulated = true;
+  } else if (!mInitializedDBConn && aInitDBConn) {
+    // A request comes while we finished cookie thread task and InitDBConn is
+    // on the way from cookie thread to main thread. We're very close to block
+    // main thread.
+    Telemetry::Accumulate(Telemetry::MOZ_SQLITE_COOKIES_TIME_TO_BLOCK_MAIN_THREAD_MS, 0);
+    isAccumulated = true;
   }
+
   if (!mInitializedDBConn && aInitDBConn && mDefaultDBState) {
     InitDBConn();
+    if (isAccumulated) {
+      // Nullify the timestamp so wo don't accumulate this telemetry probe again.
+      mEndInitDBConn = TimeStamp();
+    }
   }
 }
 
@@ -3019,6 +3041,9 @@ nsCookieService::ImportCookies(nsIFile *aCookieFile)
     }
   }
 
+  if (mDefaultDBState->cookieCount - originalCookieCount > 0) {
+    Telemetry::Accumulate(Telemetry::MOZ_SQLITE_COOKIES_OLD_SCHEMA, 0);
+  }
 
   COOKIE_LOGSTRING(LogLevel::Debug, ("ImportCookies(): %" PRIu32 " cookies imported",
     mDefaultDBState->cookieCount));
@@ -3043,6 +3068,18 @@ nsCookieService::DomainMatches(nsCookie* aCookie,
   // host = "mail.google.com", cookie domain = ".google.com".
   return aCookie->RawHost() == aHost ||
       (aCookie->IsDomain() && StringEndsWith(aHost, aCookie->Host()));
+}
+
+bool
+nsCookieService::IsSameSiteEnabled()
+{
+  static bool prefInitialized = false;
+  if (!prefInitialized) {
+    Preferences::AddBoolVarCache(&sSameSiteEnabled,
+                                 "network.cookie.same-site.enabled", false);
+    prefInitialized = true;
+  }
+  return sSameSiteEnabled;
 }
 
 bool
@@ -3082,6 +3119,8 @@ nsCookieService::PathMatches(nsCookie* aCookie,
 void
 nsCookieService::GetCookiesForURI(nsIURI *aHostURI,
                                   bool aIsForeign,
+                                  bool aIsSafeTopLevelNav,
+                                  bool aIsSameSiteForeign,
                                   bool aHttpBound,
                                   const OriginAttributes& aOriginAttrs,
                                   nsTArray<nsCookie*>& aCookieList)
@@ -3171,6 +3210,21 @@ nsCookieService::GetCookiesForURI(nsIURI *aHostURI,
     if (cookie->IsSecure() && !isSecure)
       continue;
 
+    int32_t sameSiteAttr = 0;
+    cookie->GetSameSite(&sameSiteAttr);
+    if (aIsSameSiteForeign && IsSameSiteEnabled()) {
+      // it if's a cross origin request and the cookie is same site only (strict)
+      // don't send it
+      if (sameSiteAttr == nsICookie2::SAMESITE_STRICT) {
+        continue;
+      }
+      // if it's a cross origin request, the cookie is same site lax, but it's not
+      // a top-level navigation, don't send it
+      if (sameSiteAttr == nsICookie2::SAMESITE_LAX && !aIsSafeTopLevelNav) {
+        continue;
+      }
+    }
+
     // if the cookie is httpOnly and it's not going directly to the HTTP
     // connection, don't send it
     if (cookie->IsHttpOnly() && !aHttpBound)
@@ -3238,12 +3292,15 @@ nsCookieService::GetCookiesForURI(nsIURI *aHostURI,
 void
 nsCookieService::GetCookieStringInternal(nsIURI *aHostURI,
                                          bool aIsForeign,
+                                         bool aIsSafeTopLevelNav,
+                                         bool aIsSameSiteForeign,
                                          bool aHttpBound,
                                          const OriginAttributes& aOriginAttrs,
                                          nsCString &aCookieString)
 {
   AutoTArray<nsCookie*, 8> foundCookieList;
-  GetCookiesForURI(aHostURI, aIsForeign, aHttpBound, aOriginAttrs, foundCookieList);
+  GetCookiesForURI(aHostURI, aIsForeign, aIsSafeTopLevelNav, aIsSameSiteForeign,
+                   aHttpBound, aOriginAttrs, foundCookieList);
 
   nsCookie* cookie;
   for (uint32_t i = 0; i < foundCookieList.Length(); ++i) {
@@ -3418,6 +3475,34 @@ nsCookieService::CanSetCookie(nsIURI*             aHostURI,
     Telemetry::Accumulate(Telemetry::COOKIE_LEAVE_SECURE_ALONE,
                           BLOCKED_SECURE_SET_FROM_HTTP);
     return newCookie;
+  }
+
+  // If the new cookie is same-site but in a cross site context,
+  // browser must ignore the cookie.
+  if ((aCookieAttributes.sameSite != nsICookie2::SAMESITE_UNSET) &&
+      aThirdPartyUtil &&
+      IsSameSiteEnabled()) {
+
+    // Do not treat loads triggered by web extensions as foreign
+    bool addonAllowsLoad = false;
+    if (aChannel) {
+      nsCOMPtr<nsIURI> channelURI;
+      NS_GetFinalChannelURI(aChannel, getter_AddRefs(channelURI));
+      nsCOMPtr<nsILoadInfo> loadInfo = aChannel->GetLoadInfo();
+      addonAllowsLoad = loadInfo &&
+        BasePrincipal::Cast(loadInfo->TriggeringPrincipal())->
+          AddonAllowsLoad(channelURI);
+    }
+
+    if (!addonAllowsLoad) {
+      bool isThirdParty = false;
+      nsresult rv = aThirdPartyUtil->IsThirdPartyChannel(aChannel, aHostURI, &isThirdParty);
+      if (NS_FAILED(rv) || isThirdParty) {
+        COOKIE_LOGFAILURE(SET_COOKIE, aHostURI, savedCookieHeader,
+                          "failed the samesite tests");
+        return newCookie;
+      }
+    }
   }
 
   aSetCookie = true;
@@ -3624,7 +3709,7 @@ nsCookieService::AddInternal(const nsCookieKey &aKey,
       if (aCookie->Expiry() <= currentTime) {
         COOKIE_LOGFAILURE(SET_COOKIE, aHostURI, aCookieHeader,
           "previously stored cookie was deleted");
-        NotifyChanged(oldCookie, u"deleted");
+        NotifyChanged(oldCookie, u"deleted", oldCookieIsSession, aFromHttp);
         return;
       }
 
@@ -3698,7 +3783,7 @@ nsCookieService::AddInternal(const nsCookieKey &aKey,
     NotifyChanged(purgedList, u"batch-deleted");
   }
 
-  NotifyChanged(aCookie, foundCookie ? u"changed" : u"added", oldCookieIsSession);
+  NotifyChanged(aCookie, foundCookie ? u"changed" : u"added", oldCookieIsSession, aFromHttp);
 }
 
 /******************************************************************************
@@ -3860,6 +3945,7 @@ nsCookieService::ParseAttributes(nsDependentCString &aCookieHeader,
   static const char kHttpOnly[]  = "httponly";
   static const char kSameSite[]       = "samesite";
   static const char kSameSiteLax[]    = "lax";
+  static const char kSameSiteStrict[]    = "strict";
 
   nsACString::const_char_iterator tempBegin, tempEnd;
   nsACString::const_char_iterator cookieStart, cookieEnd;
@@ -3921,7 +4007,7 @@ nsCookieService::ParseAttributes(nsDependentCString &aCookieHeader,
     else if (tokenString.LowerCaseEqualsLiteral(kSameSite)) {
       if (tokenValue.LowerCaseEqualsLiteral(kSameSiteLax)) {
         aCookieAttributes.sameSite = nsICookie2::SAMESITE_LAX;
-      } else {
+      } else if (tokenValue.LowerCaseEqualsLiteral(kSameSiteStrict)) {
         aCookieAttributes.sameSite = nsICookie2::SAMESITE_STRICT;
       }
     }
@@ -4460,8 +4546,8 @@ nsCookieService::PurgeCookies(int64_t aCurrentTimeInUsec)
         removedList->AppendElement(cookie);
         COOKIE_LOGEVICTED(cookie, "Cookie expired");
 
-        // remove from list; do not increment our iterator unless we're the last
-        // in the list already.
+        // remove from list; do not increment our iterator, but stop if we're
+        // done already.
         gCookieService->RemoveCookieFromList(iter, paramsArray);
         if (i == --length) {
           break;

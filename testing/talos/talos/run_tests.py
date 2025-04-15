@@ -37,15 +37,11 @@ def useBaseTestDefaults(base, tests):
     return tests
 
 
-def buildCommandLine(test):
-    """build firefox command line options for tp tests"""
-
+def set_tp_preferences(test, browser_config):
     # sanity check pageloader values
     # mandatory options: tpmanifest, tpcycles
     if test['tpcycles'] not in range(1, 1000):
         raise TalosError('pageloader cycles must be int 1 to 1,000')
-    if test.get('tpdelay') and test['tpdelay'] not in range(1, 10000):
-        raise TalosError('pageloader delay must be int 1 to 10,000')
     if 'tpmanifest' not in test:
         raise TalosError("tpmanifest not found in test: %s" % test)
 
@@ -57,24 +53,27 @@ def buildCommandLine(test):
             if test[cycle_var] > 2:
                 test[cycle_var] = 2
 
-    # build pageloader command from options
-    url = ['-tp', test['tpmanifest']]
-    CLI_bool_options = ['tpchrome', 'tpmozafterpaint', 'tpnoisy', 'tprender',
-                        'tploadnocache', 'tpscrolltest', 'fnbpaint']
-    CLI_options = ['tpcycles', 'tppagecycles', 'tpdelay', 'tptimeout']
+    CLI_bool_options = ['tpchrome', 'tphero', 'tpmozafterpaint', 'tploadnocache', 'tpscrolltest',
+                        'fnbpaint']
+    CLI_options = ['tpcycles', 'tppagecycles', 'tptimeout', 'tpmanifest']
     for key in CLI_bool_options:
-        if test.get(key):
-            url.append('-%s' % key)
+        _pref_name = "talos.%s" % key
+        if key in test:
+            test['preferences'][_pref_name] = test.get(key)
+        else:
+            # current test doesn't use this setting, remove it from our prefs
+            if _pref_name in test['preferences']:
+                del test['preferences'][_pref_name]
 
     for key in CLI_options:
         value = test.get(key)
+        _pref_name = "talos.%s" % key
         if value:
-            url.extend(['-%s' % key, str(value)])
-
-    # XXX we should actually return the list but since we abuse
-    # the url as a command line flag to pass to firefox all over the place
-    # will just make a string for now
-    return ' '.join(url)
+            test['preferences'][_pref_name] = value
+        else:
+            # current test doesn't use this setting, remove it from our prefs
+            if _pref_name in test['preferences']:
+                del test['preferences'][_pref_name]
 
 
 def setup_webserver(webserver):
@@ -92,21 +91,30 @@ def run_tests(config, browser_config):
     tests = config['tests']
     tests = useBaseTestDefaults(config.get('basetest', {}), tests)
     paths = ['profile_path', 'tpmanifest', 'extensions', 'setup', 'cleanup']
+
     for test in tests:
         # Check for profile_path, tpmanifest and interpolate based on Talos
         # root https://bugzilla.mozilla.org/show_bug.cgi?id=727711
         # Build command line from config
         for path in paths:
             if test.get(path):
-                test[path] = utils.interpolate(test[path])
+                if path == 'extensions':
+                    for _index, _ext in enumerate(test['extensions']):
+                        test['extensions'][_index] = utils.interpolate(_ext)
+                else:
+                    test[path] = utils.interpolate(test[path])
         if test.get('tpmanifest'):
             test['tpmanifest'] = \
                 os.path.normpath('file:/%s' % (urllib.quote(test['tpmanifest'],
                                                '/\\t:\\')))
-        if not test.get('url'):
-            # build 'url' for tptest
-            test['url'] = buildCommandLine(test)
-        test['url'] = utils.interpolate(test['url'])
+            test['preferences']['talos.tpmanifest'] = test['tpmanifest']
+
+        # if using firstNonBlankPaint, set test preference for it
+        # so that the browser pref will be turned on (in ffsetup)
+        if test.get('fnbpaint', False):
+            LOG.info("Test is using firstNonBlankPaint, browser pref will be turned on")
+            test['preferences']['dom.performance.time_to_non_blank_paint.enabled'] = True
+
         test['setup'] = utils.interpolate(test['setup'])
         test['cleanup'] = utils.interpolate(test['cleanup'])
 
@@ -119,14 +127,21 @@ def run_tests(config, browser_config):
     if browser_config['develop']:
         browser_config['extra_args'] = '--no-remote'
 
-    # if using firstNonBlankPaint, must turn on pref for it
-    if test.get('fnbpaint', False):
-        LOG.info("Using firstNonBlankPaint, so turning on pref for it")
-        browser_config['preferences']['dom.performance.time_to_non_blank_paint.enabled'] = True
-
     # Pass subtests filter argument via a preference
     if browser_config['subtests']:
         browser_config['preferences']['talos.subtests'] = browser_config['subtests']
+
+    # If --code-coverage files are expected, set flag in browser config so ffsetup knows
+    # that it needs to delete any ccov files resulting from browser initialization
+    # NOTE: This is only supported in production; local setup of ccov folders and
+    # data collection not supported yet, so if attempting to run with --code-coverage
+    # flag locally, that is not supported yet
+    if config.get('code_coverage', False):
+        if browser_config['develop']:
+            raise TalosError('Aborting: talos --code-coverage flag is only '
+                             'supported in production')
+        else:
+            browser_config['code_coverage'] = True
 
     # set defaults
     testdate = config.get('testdate', '')
@@ -192,12 +207,7 @@ def run_tests(config, browser_config):
 
     # legacy still required for perfherder data
     talos_results.add_extra_option('e10s')
-
-    # stylo is another option for testing
-    if config['enable_stylo']:
-        talos_results.add_extra_option('stylo')
-    if config['disable_stylo']:
-        talos_results.add_extra_option('stylo_disabled')
+    talos_results.add_extra_option('stylo')
 
     # measuring the difference of a a certain thread level
     if config.get('stylothreads', 0) > 0:
@@ -234,6 +244,7 @@ def run_tests(config, browser_config):
                                          str(scripts_path))
 
     testname = None
+
     # run the tests
     timer = utils.Timer()
     LOG.suite_start(tests=[test['name'] for test in tests])
@@ -241,6 +252,11 @@ def run_tests(config, browser_config):
         for test in tests:
             testname = test['name']
             LOG.test_start(testname)
+
+            if not test.get('url'):
+                # set browser prefs for pageloader test setings (doesn't use cmd line args / url)
+                test['url'] = None
+                set_tp_preferences(test, browser_config)
 
             mytest = TTest()
 

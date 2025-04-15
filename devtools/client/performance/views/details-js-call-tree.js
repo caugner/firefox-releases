@@ -9,7 +9,7 @@
 /**
  * CallTree view containing profiler call tree, controlled by DetailsView.
  */
-var JsCallTreeView = Heritage.extend(DetailsSubview, {
+var JsCallTreeView = extend(DetailsSubview, {
 
   rerenderPrefs: [
     "invert-call-tree",
@@ -81,7 +81,7 @@ var JsCallTreeView = Heritage.extend(DetailsSubview, {
     this.optimizationsElement.classList.add("hidden");
   },
 
-  _onFocus: function (_, treeItem) {
+  _onFocus: function (treeItem) {
     let showOptimizations = PerformanceController.getOption("show-jit-optimizations");
     let frameNode = treeItem.frame;
     let optimizationSites = frameNode && frameNode.hasOptimizations()

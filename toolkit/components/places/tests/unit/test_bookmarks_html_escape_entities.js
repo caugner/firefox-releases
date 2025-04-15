@@ -7,6 +7,8 @@
 
 const DESCRIPTION_ANNO = "bookmarkProperties/description";
 
+Cu.importGlobalProperties(["XMLHttpRequest"]);
+
 add_task(async function() {
   // Removes bookmarks.html if the file already exists.
   let HTMLFile = OS.Path.join(OS.Constants.Path.profileDir, "bookmarks.html");
@@ -36,8 +38,7 @@ add_task(async function() {
 
   // Check there are no unescaped entities in the html file.
   let xml = await new Promise((resolve, reject) => {
-    let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"]
-                .createInstance(Ci.nsIXMLHttpRequest);
+    let xhr = new XMLHttpRequest();
     xhr.onload = () => {
       try {
         resolve(xhr.responseXML);
@@ -60,7 +61,7 @@ add_task(async function() {
     switch (current.nodeType) {
       case Ci.nsIDOMNode.ELEMENT_NODE:
         for (let {name, value} of current.attributes) {
-          do_print("Found attribute: " + name);
+          info("Found attribute: " + name);
           // Check tags, keyword, postData and charSet.
           if (["tags", "last_charset", "shortcuturl", "post_data"].includes(name)) {
             Assert.equal(value, unescaped, `Attribute ${name} should be complete`);
@@ -70,7 +71,7 @@ add_task(async function() {
         break;
       case Ci.nsIDOMNode.TEXT_NODE:
         // Check Title and description.
-        if (!current.data.startsWith("\n") && !current.data.includes("Bookmarks")) {
+        if (!current.data.startsWith("\n") && current.data.includes("test")) {
           Assert.equal(current.data.trim(), unescaped, "Text node should be complete");
           checksCount--;
         }

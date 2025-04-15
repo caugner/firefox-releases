@@ -1,8 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Components.utils.import("resource://gre/modules/Services.jsm");
-Components.utils.import("resource://gre/modules/CertUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/CertUtils.jsm");
 
 const PREF_PREFIX = "certutils.certs.";
 
@@ -26,14 +26,14 @@ function attributes_match(aCert, aExpected) {
 }
 
 function test_results(aCerts, aExpected) {
-  do_check_eq(aCerts.length, aExpected.length);
+  Assert.equal(aCerts.length, aExpected.length);
 
   for (var i = 0; i < aCerts.length; i++) {
     if (!attributes_match(aCerts[i], aExpected[i])) {
       dump("Attributes for certificate " + (i + 1) + " did not match expected attributes\n");
       dump("Saw: " + aCerts[i].toSource() + "\n");
       dump("Expected: " + aExpected[i].toSource() + "\n");
-      do_check_true(false);
+      Assert.ok(false);
     }
   }
 }

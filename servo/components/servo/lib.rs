@@ -192,7 +192,6 @@ impl<Window> Servo<Window> where Window: WindowMethods + 'static {
                 resource_override_path: Some(resource_path),
                 enable_aa: opts.enable_text_antialiasing,
                 debug_flags: debug_flags,
-                enable_batcher: opts.webrender_batch,
                 debug: opts.webrender_debug,
                 recorder: recorder,
                 precache_shaders: opts.precache_shaders,
@@ -204,7 +203,8 @@ impl<Window> Servo<Window> where Window: WindowMethods + 'static {
         };
 
         let webrender_api = webrender_api_sender.create_api();
-        let webrender_document = webrender_api.add_document(window.framebuffer_size());
+        let wr_document_layer = 0; //TODO
+        let webrender_document = webrender_api.add_document(window.framebuffer_size(), wr_document_layer);
 
         // Important that this call is done in a single-threaded fashion, we
         // can't defer it after `create_constellation` has started.
@@ -311,10 +311,6 @@ impl<Window> Servo<Window> where Window: WindowMethods + 'static {
                 }
             }
 
-            WindowEvent::TouchpadPressure(cursor, pressure, stage) => {
-                self.compositor.on_touchpad_pressure_event(cursor, pressure, stage);
-            }
-
             WindowEvent::KeyEvent(ch, key, state, modifiers) => {
                 let msg = ConstellationMsg::KeyEvent(ch, key, state, modifiers);
                 if let Err(e) = self.constellation_chan.send(msg) {
@@ -395,6 +391,22 @@ impl<Window> Servo<Window> where Window: WindowMethods + 'static {
                     }
                 },
 
+                (EmbedderMsg::GetScreenSize(top_level_browsing_context, send),
+                 ShutdownState::NotShuttingDown) => {
+                    let rect = self.compositor.window.screen_size(top_level_browsing_context);
+                    if let Err(e) = send.send(rect) {
+                        warn!("Sending response to get screen size failed ({}).", e);
+                    }
+                },
+
+                (EmbedderMsg::GetScreenAvailSize(top_level_browsing_context, send),
+                 ShutdownState::NotShuttingDown) => {
+                    let rect = self.compositor.window.screen_avail_size(top_level_browsing_context);
+                    if let Err(e) = send.send(rect) {
+                        warn!("Sending response to get screen available size failed ({}).", e);
+                    }
+                },
+
                 (EmbedderMsg::AllowNavigation(top_level_browsing_context,
                                               url,
                                               response_chan),
@@ -445,6 +457,11 @@ impl<Window> Servo<Window> where Window: WindowMethods + 'static {
                     // TODO(pcwalton): Specify which frame's load completed.
                     self.compositor.window.load_end(top_level_browsing_context);
                 },
+                (EmbedderMsg::Panic(top_level_browsing_context, reason, backtrace),
+                 ShutdownState::NotShuttingDown) => {
+                    self.compositor.window.handle_panic(top_level_browsing_context, reason, backtrace);
+                },
+
             }
         }
     }
@@ -549,23 +566,31 @@ fn create_constellation(user_agent: Cow<'static, str>,
 
     // GLContext factory used to create WebGL Contexts
     let gl_factory = if opts::get().should_use_osmesa() {
-        GLContextFactory::current_osmesa_handle().unwrap()
+        GLContextFactory::current_osmesa_handle()
     } else {
-        GLContextFactory::current_native_handle(&compositor_proxy).unwrap()
+        GLContextFactory::current_native_handle(&compositor_proxy)
     };
 
     // Initialize WebGL Thread entry point.
-    let (webgl_threads, image_handler, output_handler) = WebGLThreads::new(gl_factory,
-                                                                           window_gl,
-                                                                           webrender_api_sender.clone(),
-                                                                           webvr_compositor.map(|c| c as Box<_>));
-    // Set webrender external image handler for WebGL textures
-    webrender.set_external_image_handler(image_handler);
+    let webgl_threads = gl_factory.map(|factory| {
+        let (webgl_threads, image_handler, output_handler) =
+            WebGLThreads::new(
+                factory,
+                window_gl,
+                webrender_api_sender.clone(),
+                webvr_compositor.map(|c| c as Box<_>),
+            );
 
-    // Set DOM to texture handler, if enabled.
-    if let Some(output_handler) = output_handler {
-        webrender.set_output_image_handler(output_handler);
-    }
+        // Set webrender external image handler for WebGL textures
+        webrender.set_external_image_handler(image_handler);
+
+        // Set DOM to texture handler, if enabled.
+        if let Some(output_handler) = output_handler {
+            webrender.set_output_image_handler(output_handler);
+        }
+
+        webgl_threads
+    });
 
     let initial_state = InitialConstellationState {
         compositor_proxy,

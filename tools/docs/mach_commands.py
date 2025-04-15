@@ -5,6 +5,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import os
+import platform
 import sys
 
 from mach.decorators import (
@@ -13,9 +14,12 @@ from mach.decorators import (
     CommandProvider,
 )
 
+import which
 import mozhttpd
 
 from mozbuild.base import MachCommandBase
+
+here = os.path.abspath(os.path.dirname(__file__))
 
 
 @CommandProvider
@@ -42,9 +46,13 @@ class Documentation(MachCommandBase):
                      help='Upload generated files to S3')
     def build_docs(self, what=None, format=None, outdir=None, auto_open=True,
                    http=None, archive=False, upload=False):
+        try:
+            jsdoc = which.which('jsdoc')
+        except which.WhichError:
+            return die('jsdoc not found - please install from npm.')
+
         self._activate_virtualenv()
-        self.virtualenv_manager.install_pip_package('sphinx_rtd_theme==0.1.6')
-        self.virtualenv_manager.install_pip_package('recommonmark==0.4.0')
+        self.virtualenv_manager.install_pip_requirements(os.path.join(here, 'requirements.txt'))
 
         import sphinx
         import webbrowser
@@ -168,3 +176,4 @@ def die(msg, exit_code=1):
     msg = '%s: %s' % (sys.argv[0], msg)
     print(msg, file=sys.stderr)
     return exit_code
+

@@ -12,7 +12,6 @@ Services.scriptloader.loadSubScript(
   this);
 
 const FRAME_SCRIPT_URL = CHROME_URL_ROOT + "doc_frame_script.js";
-const COMMON_FRAME_SCRIPT_URL = "chrome://devtools/content/shared/frame-script-utils.js";
 const TAB_NAME = "animationinspector";
 const ANIMATION_L10N =
   new LocalizationHelper("devtools/client/locales/animationinspector.properties");
@@ -56,8 +55,7 @@ addTab = function (url) {
     let browser = tab.linkedBrowser;
     info("Loading the helper frame script " + FRAME_SCRIPT_URL);
     browser.messageManager.loadFrameScript(FRAME_SCRIPT_URL, false);
-    info("Loading the helper frame script " + COMMON_FRAME_SCRIPT_URL);
-    browser.messageManager.loadFrameScript(COMMON_FRAME_SCRIPT_URL, false);
+    loadFrameScriptUtils(browser);
     return tab;
   });
 };
@@ -596,9 +594,13 @@ function isPassingThrough(pathSegList, x, y) {
  * @return <stop> element.
  */
 function findStopElement(svgEl, offset) {
-  return [...svgEl.querySelectorAll("stop")].find(stopEl => {
-    return stopEl.getAttribute("offset") == offset;
-  });
+  for (const stopEl of svgEl.querySelectorAll("stop")) {
+    if (offset <= parseFloat(stopEl.getAttribute("offset"))) {
+      return stopEl;
+    }
+  }
+
+  return null;
 }
 
 /*

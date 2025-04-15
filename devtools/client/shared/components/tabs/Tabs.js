@@ -7,8 +7,9 @@
 "use strict";
 
 define(function (require, exports, module) {
-  const React = require("devtools/client/shared/vendor/react");
-  const { Component, DOM } = React;
+  const { Component } = require("devtools/client/shared/vendor/react");
+  const dom = require("devtools/client/shared/vendor/react-dom-factories");
+  const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
   const { findDOMNode } = require("devtools/client/shared/vendor/react-dom");
 
   /**
@@ -34,26 +35,26 @@ define(function (require, exports, module) {
   class Tabs extends Component {
     static get propTypes() {
       return {
-        className: React.PropTypes.oneOfType([
-          React.PropTypes.array,
-          React.PropTypes.string,
-          React.PropTypes.object
+        className: PropTypes.oneOfType([
+          PropTypes.array,
+          PropTypes.string,
+          PropTypes.object
         ]),
-        tabActive: React.PropTypes.number,
-        onMount: React.PropTypes.func,
-        onBeforeChange: React.PropTypes.func,
-        onAfterChange: React.PropTypes.func,
-        children: React.PropTypes.oneOfType([
-          React.PropTypes.array,
-          React.PropTypes.element
+        tabActive: PropTypes.number,
+        onMount: PropTypes.func,
+        onBeforeChange: PropTypes.func,
+        onAfterChange: PropTypes.func,
+        children: PropTypes.oneOfType([
+          PropTypes.array,
+          PropTypes.element
         ]).isRequired,
-        showAllTabsMenu: React.PropTypes.bool,
-        onAllTabsMenuClick: React.PropTypes.func,
+        showAllTabsMenu: PropTypes.bool,
+        onAllTabsMenuClick: PropTypes.func,
 
         // Set true will only render selected panel on DOM. It's complete
         // opposite of the created array, and it's useful if panels content
         // is unpredictable and update frequently.
-        renderOnlySelected: React.PropTypes.bool,
+        renderOnlySelected: PropTypes.bool,
       };
     }
 
@@ -71,14 +72,15 @@ define(function (require, exports, module) {
       this.state = {
         tabActive: props.tabActive,
 
-        // This array is used to store an information whether a tab
-        // at specific index has already been created (e.g. selected
-        // at least once).
-        // If yes, it's rendered even if not currently selected.
-        // This is because in some cases we don't want to re-create
-        // tab content when it's being unselected/selected.
-        // E.g. in case of an iframe being used as a tab-content
-        // we want the iframe to stay in the DOM.
+        // This array is used to store an object containing information on whether a tab
+        // at a specified index has already been created (e.g. selected at least once) and
+        // the tab id. An example of the object structure is the following:
+        // [{ isCreated: true, tabId: "ruleview" }, { isCreated: false, tabId: "foo" }].
+        // If the tab at the specified index has already been created, it's rendered even
+        // if not currently selected. This is because in some cases we don't want
+        // to re-create tab content when it's being unselected/selected.
+        // E.g. in case of an iframe being used as a tab-content we want the iframe to
+        // stay in the DOM.
         created: [],
 
         // True if tabs can't fit into available horizontal space.
@@ -115,24 +117,46 @@ define(function (require, exports, module) {
 
     componentWillReceiveProps(nextProps) {
       let { children, tabActive } = nextProps;
+      let panels = children.filter(panel => panel);
+      let created = [...this.state.created];
 
-      // Check type of 'tabActive' props to see if it's valid
-      // (it's 0-based index).
+      // If the children props has changed due to an addition or removal of a tab,
+      // update the state's created array with the latest tab ids and whether or not
+      // the tab is already created.
+      if (this.state.created.length != panels.length) {
+        created = panels.map(panel => {
+          // Get whether or not the tab has already been created from the previous state.
+          let createdEntry = this.state.created.find(entry => {
+            return entry && entry.tabId === panel.props.id;
+          });
+          let isCreated = !!createdEntry && createdEntry.isCreated;
+          let tabId = panel.props.id;
+
+          return {
+            isCreated,
+            tabId,
+          };
+        });
+      }
+
+      // Check type of 'tabActive' props to see if it's valid (it's 0-based index).
       if (typeof tabActive === "number") {
-        let panels = children.filter((panel) => panel);
-
         // Reset to index 0 if index overflows the range of panel array
         tabActive = (tabActive < panels.length && tabActive >= 0) ?
           tabActive : 0;
 
-        let created = [...this.state.created];
-        created[tabActive] = true;
+        created[tabActive] = Object.assign({}, created[tabActive], {
+          isCreated: true,
+        });
 
         this.setState({
-          created,
           tabActive,
         });
       }
+
+      this.setState({
+        created,
+      });
     }
 
     componentWillUnmount() {
@@ -208,11 +232,13 @@ define(function (require, exports, module) {
       }
 
       let created = [...this.state.created];
-      created[index] = true;
+      created[index] = Object.assign({}, created[index], {
+        isCreated: true,
+      });
 
       let newState = Object.assign({}, this.state, {
+        created,
         tabActive: index,
-        created: created
       });
 
       this.setState(newState, () => {
@@ -267,16 +293,17 @@ define(function (require, exports, module) {
           // left and right arrow keys.
           // See also `onKeyDown()` event handler.
           return (
-            DOM.li({
+            dom.li({
               className,
               key: index,
               ref,
               role: "presentation",
             },
-              DOM.span({className: "devtools-tab-line"}),
-              DOM.a({
+              dom.span({className: "devtools-tab-line"}),
+              dom.a({
                 id: id ? id + "-tab" : "tab-" + index,
                 tabIndex: isTabSelected ? 0 : -1,
+                title,
                 "aria-controls": id ? id + "-panel" : "panel-" + index,
                 "aria-selected": isTabSelected,
                 role: "tab",
@@ -284,7 +311,7 @@ define(function (require, exports, module) {
               },
                 title,
                 badge && !isTabSelected && showBadge() ?
-                  DOM.span({ className: "tab-badge" }, badge)
+                  dom.span({ className: "tab-badge" }, badge)
                   :
                   null
               )
@@ -295,15 +322,15 @@ define(function (require, exports, module) {
       // Display the menu only if there is not enough horizontal
       // space for all tabs (and overflow happened).
       let allTabsMenu = this.state.overflow ? (
-        DOM.div({
+        dom.div({
           className: "all-tabs-menu",
           onClick: this.props.onAllTabsMenuClick,
         })
       ) : null;
 
       return (
-        DOM.nav({className: "tabs-navigation"},
-          DOM.ul({className: "tabs-menu", role: "tablist"},
+        dom.nav({className: "tabs-navigation"},
+          dom.ul({className: "tabs-menu", role: "tablist"},
             tabs
           ),
           allTabsMenu
@@ -334,6 +361,8 @@ define(function (require, exports, module) {
           }
 
           let id = tab.props.id;
+          let isCreated = this.state.created[index] &&
+            this.state.created[index].isCreated;
 
           // Use 'visibility:hidden' + 'height:0' for hiding content of non-selected
           // tab. It's faster than 'display:none' because it avoids triggering frame
@@ -351,21 +380,21 @@ define(function (require, exports, module) {
           let panel = tab.panel || tab;
 
           return (
-            DOM.div({
+            dom.div({
               id: id ? id + "-panel" : "panel-" + index,
-              key: index,
+              key: id,
               style: style,
               className: selected ? "tab-panel-box" : "tab-panel-box hidden",
               role: "tabpanel",
               "aria-labelledby": id ? id + "-tab" : "tab-" + index,
             },
-              (selected || this.state.created[index]) ? panel : null
+              (selected || isCreated) ? panel : null
             )
           );
         });
 
       return (
-        DOM.div({className: "panels"},
+        dom.div({className: "panels"},
           panels
         )
       );
@@ -373,7 +402,7 @@ define(function (require, exports, module) {
 
     render() {
       return (
-        DOM.div({ className: ["tabs", this.props.className].join(" ") },
+        dom.div({ className: ["tabs", this.props.className].join(" ") },
           this.renderMenuItems(),
           this.renderPanels()
         )
@@ -387,16 +416,18 @@ define(function (require, exports, module) {
   class Panel extends Component {
     static get propTypes() {
       return {
-        title: React.PropTypes.string.isRequired,
-        children: React.PropTypes.oneOfType([
-          React.PropTypes.array,
-          React.PropTypes.element
+        id: PropTypes.string.isRequired,
+        className: PropTypes.string,
+        title: PropTypes.string.isRequired,
+        children: PropTypes.oneOfType([
+          PropTypes.array,
+          PropTypes.element
         ]).isRequired
       };
     }
 
     render() {
-      return DOM.div({className: "tab-panel"},
+      return dom.div({className: "tab-panel"},
         this.props.children
       );
     }

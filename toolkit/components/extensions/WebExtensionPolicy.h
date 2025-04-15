@@ -25,6 +25,7 @@ namespace extensions {
 using dom::WebExtensionInit;
 using dom::WebExtensionLocalizeCallback;
 
+class DocInfo;
 class WebExtensionContentScript;
 
 class WebExtensionPolicy final : public nsISupports
@@ -59,9 +60,16 @@ public:
 
   Result<nsString, nsresult> GetURL(const nsAString& aPath) const;
 
+  void RegisterContentScript(WebExtensionContentScript& script,
+                             ErrorResult& aRv);
+
+  void UnregisterContentScript(const WebExtensionContentScript& script,
+                               ErrorResult& aRv);
+
   bool CanAccessURI(const URLInfo& aURI, bool aExplicit = false) const
   {
-    return mHostPermissions && mHostPermissions->Matches(aURI, aExplicit);
+    return (!IsRestrictedURI(aURI) &&
+            mHostPermissions && mHostPermissions->Matches(aURI, aExplicit));
   }
 
   bool IsPathWebAccessible(const nsAString& aPath) const
@@ -77,6 +85,9 @@ public:
   {
     return mPermissions->Contains(aPermission);
   }
+
+  static bool IsRestrictedDoc(const DocInfo& aDoc);
+  static bool IsRestrictedURI(const URLInfo& aURI);
 
   nsCString BackgroundPageHTML() const;
 
@@ -99,7 +110,6 @@ public:
   {
     aCSP = mContentSecurityPolicy;
   }
-
 
   already_AddRefed<MatchPatternSet> AllowedOrigins()
   {
@@ -138,6 +148,12 @@ public:
 
   static already_AddRefed<WebExtensionPolicy>
   GetByURI(dom::GlobalObject& aGlobal, nsIURI* aURI);
+
+  static bool
+  IsRestrictedURI(dom::GlobalObject& aGlobal, const URLInfo& aURI)
+  {
+    return IsRestrictedURI(aURI);
+  }
 
 
   static bool UseRemoteWebExtensions(dom::GlobalObject& aGlobal);

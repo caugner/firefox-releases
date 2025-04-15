@@ -3,18 +3,21 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-// React & Redux
-const React = require("devtools/client/shared/vendor/react");
+const { createElement, createFactory } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const ReactDOM = require("devtools/client/shared/vendor/react-dom");
 const { Provider } = require("devtools/client/shared/vendor/react-redux");
 
 const actions = require("devtools/client/webconsole/new-console-output/actions/index");
 const { createContextMenu } = require("devtools/client/webconsole/new-console-output/utils/context-menu");
 const { configureStore } = require("devtools/client/webconsole/new-console-output/store");
+const { isPacketPrivate } = require("devtools/client/webconsole/new-console-output/utils/messages");
+const { getAllMessagesById, getMessage } = require("devtools/client/webconsole/new-console-output/selectors/messages");
 
-const EventEmitter = require("devtools/shared/old-event-emitter");
-const ConsoleOutput = React.createFactory(require("devtools/client/webconsole/new-console-output/components/ConsoleOutput"));
-const FilterBar = React.createFactory(require("devtools/client/webconsole/new-console-output/components/FilterBar"));
+const EventEmitter = require("devtools/shared/event-emitter");
+const ConsoleOutput = createFactory(require("devtools/client/webconsole/new-console-output/components/ConsoleOutput"));
+const FilterBar = createFactory(require("devtools/client/webconsole/new-console-output/components/FilterBar"));
+const SideBar = createFactory(require("devtools/client/webconsole/new-console-output/components/SideBar"));
 
 let store = null;
 
@@ -87,8 +90,8 @@ NewConsoleOutputWrapper.prototype = {
           }]));
         },
         hudProxy: hud.proxy,
-        openLink: url => {
-          hud.owner.openLink(url);
+        openLink: (url, e) => {
+          hud.owner.openLink(url, e);
         },
         createElement: nodename => {
           return this.document.createElement(nodename);
@@ -96,6 +99,14 @@ NewConsoleOutputWrapper.prototype = {
         getLongString: (grip) => {
           return hud.proxy.webConsoleClient.getString(grip);
         },
+        requestData(id, type) {
+          return hud.proxy.networkDataProvider.requestData(id, type);
+        },
+        onViewSource(frame) {
+          if (hud && hud.owner && hud.owner.viewSource) {
+            hud.owner.viewSource(frame.url, frame.line);
+          }
+        }
       };
 
       // Set `openContextMenu` this way so, `serviceContainer` variable
@@ -115,15 +126,27 @@ NewConsoleOutputWrapper.prototype = {
             ? messageVariable.textContent : null;
 
         // Retrieve closes actor id from the DOM.
-        let actorEl = target.closest("[data-link-actor-id]");
+        let actorEl = target.closest("[data-link-actor-id]") ||
+                      target.querySelector("[data-link-actor-id]");
         let actor = actorEl ? actorEl.dataset.linkActorId : null;
 
+        let rootObjectInspector = target.closest(".object-inspector");
+        let rootActor = rootObjectInspector ?
+                        rootObjectInspector.querySelector("[data-link-actor-id]") : null;
+        let rootActorId = rootActor ? rootActor.dataset.linkActorId : null;
+
+        let sidebarTogglePref = store.getState().prefs.sidebarToggle;
+        let openSidebar = sidebarTogglePref ? (messageId) => {
+          store.dispatch(actions.showObjectInSidebar(rootActorId, messageId));
+        } : null;
+
         let menu = createContextMenu(this.jsterm, this.parentNode,
-          { actor, clipboardText, variableText, message, serviceContainer });
+          { actor, clipboardText, variableText, message,
+            serviceContainer, openSidebar, rootActorId });
 
         // Emit the "menu-open" event for testing.
         menu.once("open", () => this.emit("menu-open"));
-        menu.popup(screenX, screenY, this.toolbox);
+        menu.popup(screenX, screenY, { doc: this.owner.chromeWindow.document });
 
         return menu;
       };
@@ -175,43 +198,54 @@ NewConsoleOutputWrapper.prototype = {
         });
       }
 
-      let childComponent = ConsoleOutput({
+      let consoleOutput = ConsoleOutput({
         serviceContainer,
         onFirstMeaningfulPaint: resolve
       });
 
       let filterBar = FilterBar({
+        hidePersistLogsCheckbox: this.jsterm.hud.isBrowserConsole,
         serviceContainer: {
           attachRefToHud
         }
       });
 
-      let provider = React.createElement(
+      let sideBar = SideBar({
+        serviceContainer,
+      });
+
+      let provider = createElement(
         Provider,
         { store },
-        React.DOM.div(
+        dom.div(
           {className: "webconsole-output-wrapper"},
           filterBar,
-          childComponent
-      ));
+          consoleOutput,
+          sideBar
+        ));
       this.body = ReactDOM.render(provider, this.parentNode);
 
       this.jsterm.focus();
     });
   },
 
-  dispatchMessageAdd: function (message, waitForResponse) {
+  dispatchMessageAdd: function (packet, waitForResponse) {
     // Wait for the message to render to resolve with the DOM node.
     // This is just for backwards compatibility with old tests, and should
     // be removed once it's not needed anymore.
     // Can only wait for response if the action contains a valid message.
     let promise;
-    if (waitForResponse) {
+    // Also, do not expect any update while the panel is in background.
+    if (waitForResponse && document.visibilityState === "visible") {
+      const timeStampToMatch = packet.message
+        ? packet.message.timeStamp
+        : packet.timestamp;
+
       promise = new Promise(resolve => {
         let jsterm = this.jsterm;
-        jsterm.hud.on("new-messages", function onThisMessage(e, messages) {
+        jsterm.hud.on("new-messages", function onThisMessage(messages) {
           for (let m of messages) {
-            if (m.timeStamp === message.timestamp) {
+            if (m.timeStamp === timeStampToMatch) {
               resolve(m.node);
               jsterm.hud.off("new-messages", onThisMessage);
               return;
@@ -223,7 +257,7 @@ NewConsoleOutputWrapper.prototype = {
       promise = Promise.resolve();
     }
 
-    this.batchedMessagesAdd(message);
+    this.batchedMessagesAdd(packet);
     return promise;
   },
 
@@ -232,7 +266,56 @@ NewConsoleOutputWrapper.prototype = {
   },
 
   dispatchMessagesClear: function () {
+    // We might still have pending message additions and updates when the clear action is
+    // triggered, so we need to flush them to make sure we don't have unexpected behavior
+    // in the ConsoleOutput.
+    this.queuedMessageAdds = [];
+    this.queuedMessageUpdates = [];
+    this.queuedRequestUpdates = [];
     store.dispatch(actions.messagesClear());
+  },
+
+  dispatchPrivateMessagesClear: function () {
+    // We might still have pending private message additions when the private messages
+    // clear action is triggered. We need to remove any private-window-issued packets from
+    // the queue so they won't appear in the output.
+
+    // For (network) message updates, we need to check both messages queue and the state
+    // since we can receive updates even if the message isn't rendered yet.
+    const messages = [...getAllMessagesById(store.getState()).values()];
+    this.queuedMessageUpdates = this.queuedMessageUpdates.filter(({networkInfo}) => {
+      const { actor } = networkInfo;
+
+      const queuedNetworkMessage = this.queuedMessageAdds.find(p => p.actor === actor);
+      if (queuedNetworkMessage && isPacketPrivate(queuedNetworkMessage)) {
+        return false;
+      }
+
+      const requestMessage = messages.find(message => actor === message.actor);
+      if (requestMessage && requestMessage.private === true) {
+        return false;
+      }
+
+      return true;
+    });
+
+    // For (network) requests updates, we can check only the state, since there must be a
+    // user interaction to get an update (i.e. the network message is displayed and thus
+    // in the state).
+    this.queuedRequestUpdates = this.queuedRequestUpdates.filter(({id}) => {
+      const requestMessage = getMessage(store.getState(), id);
+      if (requestMessage && requestMessage.private === true) {
+        return false;
+      }
+
+      return true;
+    });
+
+    // Finally we clear the messages queue. This needs to be done here since we use it to
+    // clean the other queues.
+    this.queuedMessageAdds = this.queuedMessageAdds.filter(p => !isPacketPrivate(p));
+
+    store.dispatch(actions.privateMessagesClear());
   },
 
   dispatchTimestampsToggle: function (enabled) {
@@ -247,7 +330,7 @@ NewConsoleOutputWrapper.prototype = {
     // to count with that.
     const NUMBER_OF_NETWORK_UPDATE = 8;
     let expectedLength = NUMBER_OF_NETWORK_UPDATE;
-    if (res.networkInfo.updates.indexOf("requestPostData") != -1) {
+    if (res.networkInfo.updates.includes("requestPostData")) {
       expectedLength++;
     }
 
@@ -258,6 +341,10 @@ NewConsoleOutputWrapper.prototype = {
 
   dispatchRequestUpdate: function (id, data) {
     this.batchedRequestUpdates({ id, data });
+  },
+
+  dispatchSidebarClose: function () {
+    store.dispatch(actions.sidebarClose());
   },
 
   batchedMessageUpdates: function (info) {

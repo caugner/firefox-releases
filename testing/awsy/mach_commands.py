@@ -82,6 +82,10 @@ class MachCommands(MachCommandBase):
         if 'disable_stylo' in kwargs and kwargs['disable_stylo']:
             os.environ['STYLO_FORCE_DISABLED'] = '1'
 
+        if 'enable_webrender' in kwargs and kwargs['enable_webrender']:
+            os.environ['MOZ_WEBRENDER'] = '1'
+            os.environ['MOZ_ACCELERATED'] = '1'
+
         runtime_testvars = {}
         for arg in ('webRootDir', 'pageManifest', 'resultsDir', 'entities', 'iterations',
                     'perTabPause', 'settleWaitTime', 'maxTabs', 'dmd'):
@@ -144,32 +148,10 @@ class MachCommands(MachCommandBase):
 
         # Setup DMD env vars if necessary.
         if kwargs['dmd']:
-            dmd_params = []
-
             bin_dir = os.path.dirname(binary)
-            lib_name = self.substs['DLL_PREFIX'] + 'dmd' + self.substs['DLL_SUFFIX']
-            dmd_lib = os.path.join(bin_dir, lib_name)
-            if not os.path.exists(dmd_lib):
-                print("Please build with |--enable-dmd| to use DMD.")
-                return 1
 
-            env_vars = {
-                "Darwin": {
-                    "DYLD_INSERT_LIBRARIES": dmd_lib,
-                    "LD_LIBRARY_PATH": bin_dir,
-                },
-                "Linux": {
-                    "LD_PRELOAD": dmd_lib,
-                    "LD_LIBRARY_PATH": bin_dir,
-                },
-                "WINNT": {
-                    "MOZ_REPLACE_MALLOC_LIB": dmd_lib,
-                },
-            }
-
-            arch = self.substs['OS_ARCH']
-            for k, v in env_vars[arch].iteritems():
-                os.environ[k] = v
+            if 'DMD' not in os.environ:
+                os.environ['DMD'] = '1'
 
             # Also add the bin dir to the python path so we can use dmd.py
             if bin_dir not in sys.path:
@@ -242,6 +224,9 @@ class MachCommands(MachCommandBase):
     @CommandArgument('--single-stylo-traversal', group='AWSY', action='store_true',
                      dest='single_stylo_traversal', default=False,
                      help='Set STYLO_THREADS=1.')
+    @CommandArgument('--enable-webrender', group='AWSY', action='store_true',
+                     dest='enable_webrender', default=False,
+                     help='Enable WebRender.')
     @CommandArgument('--dmd', group='AWSY', action='store_true',
                      dest='dmd', default=False,
                      help='Enable DMD during testing. Requires a DMD-enabled build.')

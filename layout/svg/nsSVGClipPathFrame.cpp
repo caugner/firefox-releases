@@ -9,7 +9,7 @@
 
 // Keep others in (case-insensitive) order:
 #include "AutoReferenceChainGuard.h"
-#include "DrawResult.h"
+#include "ImgDrawResult.h"
 #include "gfxContext.h"
 #include "mozilla/dom/SVGClipPathElement.h"
 #include "nsGkAtoms.h"
@@ -41,7 +41,7 @@ nsSVGClipPathFrame::ApplyClipPath(gfxContext& aContext,
 {
   MOZ_ASSERT(IsTrivial(), "Caller needs to use GetClipMask");
 
-  DrawTarget& aDrawTarget = *aContext.GetDrawTarget();
+  const DrawTarget* drawTarget = aContext.GetDrawTarget();
 
   // No need for AutoReferenceChainGuard since simple clip paths by definition
   // don't reference another clip path.
@@ -68,7 +68,7 @@ nsSVGClipPathFrame::ApplyClipPath(gfxContext& aContext,
         aContext.SetMatrixDouble(newMatrix);
         FillRule clipRule =
           nsSVGUtils::ToFillRule(pathFrame->StyleSVG()->mClipRule);
-        clipPath = pathElement->GetOrBuildPath(aDrawTarget, clipRule);
+        clipPath = pathElement->GetOrBuildPath(drawTarget, clipRule);
       }
     }
   }

@@ -300,9 +300,6 @@ VRServiceTest::VRServiceTest(nsPIDOMWindowInner* aWindow)
   vm->SendCreateVRTestSystem();
 }
 
-VRServiceTest::~VRServiceTest()
-{}
-
 void
 VRServiceTest::Shutdown()
 {
@@ -318,9 +315,7 @@ VRServiceTest::AttachVRDisplay(const nsAString& aID, ErrorResult& aRv)
     return nullptr;
   }
 
-  nsCOMPtr<nsIGlobalObject> go = do_QueryInterface(mWindow);
-
-  RefPtr<Promise> p = Promise::Create(go, aRv);
+  RefPtr<Promise> p = Promise::Create(mWindow->AsGlobal(), aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
@@ -338,9 +333,7 @@ VRServiceTest::AttachVRController(const nsAString& aID, ErrorResult& aRv)
     return nullptr;
   }
 
-  nsCOMPtr<nsIGlobalObject> go = do_QueryInterface(mWindow);
-
-  RefPtr<Promise> p = Promise::Create(go, aRv);
+  RefPtr<Promise> p = Promise::Create(mWindow->AsGlobal(), aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }

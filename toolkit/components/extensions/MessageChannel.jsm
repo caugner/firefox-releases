@@ -1,7 +1,8 @@
+/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set sts=2 sw=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 "use strict";
 
 /**
@@ -96,15 +97,13 @@
  *
  */
 
-this.EXPORTED_SYMBOLS = ["MessageChannel"];
+var EXPORTED_SYMBOLS = ["MessageChannel"];
 
 /* globals MessageChannel */
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/ExtensionUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const {
   MessageManagerProxy,
@@ -974,7 +973,8 @@ this.MessageChannel = {
           // Error objects are not structured-clonable, so just copy
           // over the important properties.
           for (let key of ["fileName", "filename", "lineNumber",
-                           "columnNumber", "message", "stack", "result"]) {
+                           "columnNumber", "message", "stack", "result",
+                           "mozWebExtLocation"]) {
             if (key in error) {
               response.error[key] = error[key];
             }
@@ -982,10 +982,13 @@ this.MessageChannel = {
         }
 
         target.sendAsyncMessage(MESSAGE_RESPONSE, response);
-      }).then(cleanup, e => {
-        cleanup();
-        Cu.reportError(e);
-      });
+      })
+      .then(
+        cleanup,
+        e => {
+          cleanup();
+          Cu.reportError(e);
+        });
   },
 
   /**

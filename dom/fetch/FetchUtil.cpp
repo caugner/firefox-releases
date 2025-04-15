@@ -274,7 +274,8 @@ class WorkerStreamOwner final : public WorkerHolder
 
 public:
   explicit WorkerStreamOwner(nsIAsyncInputStream* aStream)
-    : WorkerHolder(WorkerHolder::Behavior::AllowIdleShutdownStart)
+    : WorkerHolder("WorkerStreamOwner",
+                   WorkerHolder::Behavior::AllowIdleShutdownStart)
     , mStream(aStream)
   {}
 
@@ -283,7 +284,7 @@ public:
   {
     auto self = MakeUnique<WorkerStreamOwner>(aStream);
 
-    if (!self->HoldWorker(aWorker, workers::Closing)) {
+    if (!self->HoldWorker(aWorker, Closing)) {
       return nullptr;
     }
 
@@ -315,7 +316,7 @@ public:
 
   // WorkerHolder:
 
-  bool Notify(workers::Status aStatus) override
+  bool Notify(WorkerStatus aStatus) override
   {
     if (!mStream) {
       return true;
@@ -407,7 +408,7 @@ public:
   static bool Start(nsIInputStream* aStream,
                     JS::StreamConsumer* aConsumer,
                     nsIGlobalObject* aGlobal,
-                    workers::WorkerPrivate* aMaybeWorker)
+                    WorkerPrivate* aMaybeWorker)
   {
     nsresult rv;
 
@@ -530,7 +531,7 @@ FetchUtil::StreamResponseToJS(JSContext* aCx,
                               JS::HandleObject aObj,
                               JS::MimeType aMimeType,
                               JS::StreamConsumer* aConsumer,
-                              workers::WorkerPrivate* aMaybeWorker)
+                              WorkerPrivate* aMaybeWorker)
 {
   MOZ_ASSERT(!aMaybeWorker == NS_IsMainThread());
 
@@ -563,6 +564,23 @@ FetchUtil::StreamResponseToJS(JSContext* aCx,
 
   if (response->BodyUsed()) {
     return ThrowException(aCx, JSMSG_RESPONSE_ALREADY_CONSUMED);
+  }
+
+  switch (aMimeType) {
+    case JS::MimeType::Wasm:
+      nsAutoString url;
+      response->GetUrl(url);
+
+      IgnoredErrorResult result;
+      nsCString sourceMapUrl;
+      response->GetInternalHeaders()->Get(NS_LITERAL_CSTRING("SourceMap"), sourceMapUrl, result);
+      if (NS_WARN_IF(result.Failed())) {
+        return ThrowException(aCx, JSMSG_ERROR_CONSUMING_RESPONSE);
+      }
+      NS_ConvertUTF16toUTF8 urlUTF8(url);
+      aConsumer->noteResponseURLs(urlUTF8.get(),
+                                  sourceMapUrl.IsVoid() ? nullptr : sourceMapUrl.get());
+      break;
   }
 
   RefPtr<InternalResponse> ir = response->GetInternalResponse();

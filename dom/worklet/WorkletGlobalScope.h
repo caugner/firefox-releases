@@ -54,8 +54,8 @@ public:
     return GetWrapper();
   }
 
-  Console*
-  GetConsole(ErrorResult& aRv);
+  already_AddRefed<Console>
+  GetConsole(JSContext* aCx, ErrorResult& aRv);
 
   void
   Dump(const Optional<nsAString>& aString) const;

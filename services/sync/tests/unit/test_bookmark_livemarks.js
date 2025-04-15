@@ -1,12 +1,12 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://services-sync/record.js");
-Cu.import("resource://services-sync/engines.js");
-Cu.import("resource://services-sync/engines/bookmarks.js");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://services-sync/service.js");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://services-sync/record.js");
+ChromeUtils.import("resource://services-sync/engines.js");
+ChromeUtils.import("resource://services-sync/engines/bookmarks.js");
+ChromeUtils.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://services-sync/service.js");
 
 const DESCRIPTION_ANNO = "bookmarkProperties/description";
 
@@ -59,12 +59,6 @@ function makeLivemark(p, mintGUID) {
   return b;
 }
 
-add_task(async function setup() {
-  initTestLogging("Trace");
-  Log.repository.getLogger("Sync.Engine.Bookmarks").level = Log.Level.Trace;
-  Log.repository.getLogger("Sync.Store.Bookmarks").level  = Log.Level.Trace;
-});
-
 add_task(async function test_livemark_descriptions() {
   let engine = new BookmarksEngine(Service);
   await engine.initialize();
@@ -106,7 +100,7 @@ add_task(async function test_livemark_invalid() {
 
   await store.create(lateParentRec);
   let recInfo = await PlacesUtils.bookmarks.fetch(lateParentRec.id);
-  do_check_eq(recInfo.parentGuid, PlacesUtils.bookmarks.unfiledGuid);
+  Assert.equal(recInfo.parentGuid, PlacesUtils.bookmarks.unfiledGuid);
 
   _("No feed URI, which is invalid. Will be skipped.");
   let noFeedURIRec = makeLivemark(record631361.payload, true);
@@ -114,7 +108,7 @@ add_task(async function test_livemark_invalid() {
   await store.create(noFeedURIRec);
   // No exception, but no creation occurs.
   let noFeedURIItem = await PlacesUtils.bookmarks.fetch(noFeedURIRec.id);
-  do_check_null(noFeedURIItem);
+  Assert.equal(null, noFeedURIItem);
 
   _("Parent is a Livemark. Will be skipped.");
   let lmParentRec = makeLivemark(record631361.payload, true);
@@ -122,7 +116,7 @@ add_task(async function test_livemark_invalid() {
   await store.create(lmParentRec);
   // No exception, but no creation occurs.
   let lmParentItem = await PlacesUtils.bookmarks.fetch(lmParentRec.id);
-  do_check_null(lmParentItem);
+  Assert.equal(null, lmParentItem);
 
   await engine.finalize();
 });

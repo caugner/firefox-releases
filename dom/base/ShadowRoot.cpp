@@ -11,11 +11,11 @@
 #include "ChildIterator.h"
 #include "nsContentUtils.h"
 #include "nsDOMClassInfoID.h"
-#include "nsIDOMHTMLElement.h"
 #include "nsIStyleSheetLinkingElement.h"
 #include "mozilla/dom/Element.h"
-#include "mozilla/dom/HTMLContentElement.h"
+#include "mozilla/dom/HTMLSlotElement.h"
 #include "nsXBLPrototypeBinding.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 
@@ -26,8 +26,7 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(ShadowRoot)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(ShadowRoot,
                                                   DocumentFragment)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleSheetList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAssociatedBinding)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMStyleSheets)
   for (auto iter = tmp->mIdentifierMap.ConstIter(); !iter.Done();
        iter.Next()) {
     iter.Get()->Traverse(&cb);
@@ -38,8 +37,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(ShadowRoot)
   if (tmp->GetHost()) {
     tmp->GetHost()->RemoveMutationObserver(tmp);
   }
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mStyleSheetList)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAssociatedBinding)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDOMStyleSheets)
   tmp->mIdentifierMap.Clear();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END_INHERITED(DocumentFragment)
 
@@ -51,16 +49,15 @@ NS_INTERFACE_MAP_END_INHERITING(DocumentFragment)
 NS_IMPL_ADDREF_INHERITED(ShadowRoot, DocumentFragment)
 NS_IMPL_RELEASE_INHERITED(ShadowRoot, DocumentFragment)
 
-ShadowRoot::ShadowRoot(Element* aElement, bool aClosed,
-                       already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
-                       nsXBLPrototypeBinding* aProtoBinding)
+ShadowRoot::ShadowRoot(Element* aElement, ShadowRootMode aMode,
+                       already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
   : DocumentFragment(aNodeInfo)
-  , mProtoBinding(aProtoBinding)
-  , mInsertionPointChanged(false)
+  , DocumentOrShadowRoot(*this)
+  , mMode(aMode)
+  , mServoStyles(Servo_AuthorStyles_Create())
   , mIsComposedDocParticipant(false)
 {
   SetHost(aElement);
-  mMode = aClosed ? ShadowRootMode::Closed : ShadowRootMode::Open;
 
   // Nodes in a shadow tree should never store a value
   // in the subtree root pointer, nodes in the shadow tree
@@ -81,8 +78,7 @@ ShadowRoot::ShadowRoot(Element* aElement, bool aClosed,
 ShadowRoot::~ShadowRoot()
 {
   if (auto* host = GetHost()) {
-    // mHost may have been unlinked or a new ShadowRoot may have been
-    // created, making this one obsolete.
+    // mHost may have been unlinked.
     host->RemoveMutationObserver(this);
   }
 
@@ -98,36 +94,157 @@ ShadowRoot::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
   return mozilla::dom::ShadowRootBinding::Wrap(aCx, this, aGivenProto);
 }
 
-ShadowRoot*
-ShadowRoot::FromNode(nsINode* aNode)
+void
+ShadowRoot::CloneInternalDataFrom(ShadowRoot* aOther)
 {
-  if (aNode->IsInShadowTree() && !aNode->GetParentNode()) {
-    MOZ_ASSERT(aNode->NodeType() == nsIDOMNode::DOCUMENT_FRAGMENT_NODE,
-               "ShadowRoot is a document fragment.");
-    return static_cast<ShadowRoot*>(aNode);
+  size_t sheetCount = aOther->SheetCount();
+  for (size_t i = 0; i < sheetCount; ++i) {
+    StyleSheet* sheet = aOther->SheetAt(i);
+    if (sheet->IsApplicable()) {
+      RefPtr<StyleSheet> clonedSheet =
+        sheet->Clone(nullptr, nullptr, nullptr, nullptr);
+      if (clonedSheet) {
+        AppendStyleSheet(*clonedSheet.get());
+        Servo_AuthorStyles_AppendStyleSheet(mServoStyles.get(),
+                                            clonedSheet->AsServo());
+      }
+    }
+  }
+}
+
+void
+ShadowRoot::AddSlot(HTMLSlotElement* aSlot)
+{
+  MOZ_ASSERT(aSlot);
+
+  // Note that if name attribute missing, the slot is a default slot.
+  nsAutoString name;
+  aSlot->GetName(name);
+
+  nsTArray<HTMLSlotElement*>* currentSlots = mSlotMap.LookupOrAdd(name);
+  MOZ_ASSERT(currentSlots);
+
+  HTMLSlotElement* oldSlot = currentSlots->SafeElementAt(0);
+
+  TreeOrderComparator comparator;
+  currentSlots->InsertElementSorted(aSlot, comparator);
+
+  HTMLSlotElement* currentSlot = currentSlots->ElementAt(0);
+  if (currentSlot != aSlot) {
+    return;
   }
 
-  return nullptr;
+  bool doEnqueueSlotChange = false;
+  if (oldSlot && oldSlot != currentSlot) {
+    // Move assigned nodes from old slot to new slot.
+    const nsTArray<RefPtr<nsINode>>& assignedNodes = oldSlot->AssignedNodes();
+    while (assignedNodes.Length() > 0) {
+      nsINode* assignedNode = assignedNodes[0];
+
+      oldSlot->RemoveAssignedNode(assignedNode);
+      currentSlot->AppendAssignedNode(assignedNode);
+      doEnqueueSlotChange = true;
+    }
+
+    if (doEnqueueSlotChange) {
+      oldSlot->EnqueueSlotChangeEvent();
+      currentSlot->EnqueueSlotChangeEvent();
+    }
+  } else {
+    // Otherwise add appropriate nodes to this slot from the host.
+    for (nsIContent* child = GetHost()->GetFirstChild();
+         child;
+         child = child->GetNextSibling()) {
+      nsAutoString slotName;
+      if (child->IsElement()) {
+        child->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::slot, slotName);
+      }
+      if (child->IsSlotable() && slotName.Equals(name)) {
+        currentSlot->AppendAssignedNode(child);
+        doEnqueueSlotChange = true;
+      }
+    }
+
+    if (doEnqueueSlotChange) {
+      currentSlot->EnqueueSlotChangeEvent();
+    }
+  }
+}
+
+void
+ShadowRoot::RemoveSlot(HTMLSlotElement* aSlot)
+{
+  MOZ_ASSERT(aSlot);
+
+  nsAutoString name;
+  aSlot->GetName(name);
+
+  SlotArray* currentSlots = mSlotMap.Get(name);
+  MOZ_DIAGNOSTIC_ASSERT(currentSlots && currentSlots->Contains(aSlot),
+                        "Slot to deregister wasn't found?");
+  if (currentSlots->Length() == 1) {
+    MOZ_ASSERT(currentSlots->ElementAt(0) == aSlot);
+    mSlotMap.Remove(name);
+
+    if (!aSlot->AssignedNodes().IsEmpty()) {
+      aSlot->ClearAssignedNodes();
+      aSlot->EnqueueSlotChangeEvent();
+    }
+
+    return;
+  }
+
+  const bool wasFirstSlot = currentSlots->ElementAt(0) == aSlot;
+  currentSlots->RemoveElement(aSlot);
+
+  // Move assigned nodes from removed slot to the next slot in
+  // tree order with the same name.
+  if (!wasFirstSlot) {
+    return;
+  }
+
+  HTMLSlotElement* replacementSlot = currentSlots->ElementAt(0);
+  const nsTArray<RefPtr<nsINode>>& assignedNodes = aSlot->AssignedNodes();
+  bool slottedNodesChanged = !assignedNodes.IsEmpty();
+  while (!assignedNodes.IsEmpty()) {
+    nsINode* assignedNode = assignedNodes[0];
+
+    aSlot->RemoveAssignedNode(assignedNode);
+    replacementSlot->AppendAssignedNode(assignedNode);
+  }
+
+  if (slottedNodesChanged) {
+    aSlot->EnqueueSlotChangeEvent();
+    replacementSlot->EnqueueSlotChangeEvent();
+  }
 }
 
 void
 ShadowRoot::StyleSheetChanged()
 {
-  mProtoBinding->FlushSkinSheets();
+  // FIXME(emilio): This is not needed to handle sheet additions / removals,
+  // only for CSSOM mutations, we should distinguish both.
+  Servo_AuthorStyles_ForceDirty(mServoStyles.get());
+  // FIXME(emilio): Similarly, we should notify of the particular mutation to
+  // the rule map, instead of this...
+  mStyleRuleMap.reset(nullptr);
 
-  if (nsIPresShell* shell = OwnerDoc()->GetShell()) {
-    OwnerDoc()->BeginUpdate(UPDATE_STYLE);
-    shell->RecordShadowStyleChange(this);
-    OwnerDoc()->EndUpdate(UPDATE_STYLE);
+  nsIDocument* doc = OwnerDoc();
+  if (nsIPresShell* shell = doc->GetShell()) {
+    doc->BeginUpdate(UPDATE_STYLE);
+    shell->RecordShadowStyleChange(*this);
+    doc->EndUpdate(UPDATE_STYLE);
   }
 }
 
+
 void
-ShadowRoot::InsertSheet(StyleSheet* aSheet,
-                        nsIContent* aLinkingContent)
+ShadowRoot::InsertSheet(StyleSheet* aSheet, nsIContent* aLinkingContent)
 {
   nsCOMPtr<nsIStyleSheetLinkingElement>
     linkingElement = do_QueryInterface(aLinkingContent);
+
+  // FIXME(emilio, bug 1410578): <link> should probably also be allowed here.
   MOZ_ASSERT(linkingElement, "The only styles in a ShadowRoot should come "
                              "from <style>.");
 
@@ -135,15 +252,19 @@ ShadowRoot::InsertSheet(StyleSheet* aSheet,
 
   // Find the correct position to insert into the style sheet list (must
   // be in tree order).
-  for (size_t i = 0; i <= mProtoBinding->SheetCount(); i++) {
-    if (i == mProtoBinding->SheetCount()) {
-      mProtoBinding->AppendStyleSheet(aSheet);
+  for (size_t i = 0; i <= SheetCount(); i++) {
+    if (i == SheetCount()) {
+      AppendStyleSheet(*aSheet);
+      Servo_AuthorStyles_AppendStyleSheet(mServoStyles.get(), aSheet->AsServo());
       break;
     }
 
-    nsINode* sheetOwningNode = mProtoBinding->StyleSheetAt(i)->GetOwnerNode();
+    StyleSheet* sheet = SheetAt(i);
+    nsINode* sheetOwningNode = sheet->GetOwnerNode();
     if (nsContentUtils::PositionIsBefore(aLinkingContent, sheetOwningNode)) {
-      mProtoBinding->InsertStyleSheetAt(i, aSheet);
+      InsertSheetAt(i, *aSheet);
+      Servo_AuthorStyles_InsertStyleSheetBefore(
+        mServoStyles.get(), aSheet->AsServo(), sheet->AsServo());
       break;
     }
   }
@@ -156,42 +277,12 @@ ShadowRoot::InsertSheet(StyleSheet* aSheet,
 void
 ShadowRoot::RemoveSheet(StyleSheet* aSheet)
 {
-  mProtoBinding->RemoveStyleSheet(aSheet);
+  DocumentOrShadowRoot::RemoveSheet(*aSheet);
+  Servo_AuthorStyles_RemoveStyleSheet(mServoStyles.get(), aSheet->AsServo());
 
   if (aSheet->IsApplicable()) {
     StyleSheetChanged();
   }
-}
-
-Element*
-ShadowRoot::GetElementById(const nsAString& aElementId)
-{
-  nsIdentifierMapEntry *entry = mIdentifierMap.GetEntry(aElementId);
-  return entry ? entry->GetIdElement() : nullptr;
-}
-
-already_AddRefed<nsContentList>
-ShadowRoot::GetElementsByTagName(const nsAString& aTagName)
-{
-  return NS_GetContentList(this, kNameSpaceID_Unknown, aTagName);
-}
-
-already_AddRefed<nsContentList>
-ShadowRoot::GetElementsByTagNameNS(const nsAString& aNamespaceURI,
-                                   const nsAString& aLocalName)
-{
-  int32_t nameSpaceId = kNameSpaceID_Wildcard;
-
-  if (!aNamespaceURI.EqualsLiteral("*")) {
-    nsresult rv =
-      nsContentUtils::NameSpaceManager()->RegisterNameSpace(aNamespaceURI,
-                                                            nameSpaceId);
-    NS_ENSURE_SUCCESS(rv, nullptr);
-  }
-
-  NS_ASSERTION(nameSpaceId != kNameSpaceID_Unknown, "Unexpected namespace ID!");
-
-  return NS_GetContentList(this, nameSpaceId, aLocalName);
 }
 
 void
@@ -215,191 +306,141 @@ ShadowRoot::RemoveFromIdTable(Element* aElement, nsAtom* aId)
   }
 }
 
-already_AddRefed<nsContentList>
-ShadowRoot::GetElementsByClassName(const nsAString& aClasses)
+nsresult
+ShadowRoot::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
-  return nsContentUtils::GetElementsByClassName(this, aClasses);
-}
+  aVisitor.mCanHandle = true;
+  aVisitor.mRootOfClosedTree = IsClosed();
+  // Inform that we're about to exit the current scope.
+  aVisitor.mRelatedTargetRetargetedInCurrentScope = false;
 
-void
-ShadowRoot::AddInsertionPoint(HTMLContentElement* aInsertionPoint)
-{
-  TreeOrderComparator comparator;
-  mInsertionPoints.InsertElementSorted(aInsertionPoint, comparator);
-}
+  // https://dom.spec.whatwg.org/#ref-for-get-the-parent%E2%91%A6
+  if (!aVisitor.mEvent->mFlags.mComposed) {
+    nsCOMPtr<nsIContent> originalTarget =
+      do_QueryInterface(aVisitor.mEvent->mOriginalTarget);
+    if (originalTarget->GetContainingShadow() == this) {
+      // If we do stop propagation, we still want to propagate
+      // the event to chrome (nsPIDOMWindow::GetParentTarget()).
+      // The load event is special in that we don't ever propagate it
+      // to chrome.
+      nsCOMPtr<nsPIDOMWindowOuter> win = OwnerDoc()->GetWindow();
+      EventTarget* parentTarget = win && aVisitor.mEvent->mMessage != eLoad
+        ? win->GetParentTarget() : nullptr;
 
-void
-ShadowRoot::RemoveInsertionPoint(HTMLContentElement* aInsertionPoint)
-{
-  mInsertionPoints.RemoveElement(aInsertionPoint);
-}
-
-void
-ShadowRoot::RemoveDestInsertionPoint(nsIContent* aInsertionPoint,
-                                     nsTArray<nsIContent*>& aDestInsertionPoints)
-{
-  // Remove the insertion point from the destination insertion points.
-  //
-  // Note that while it sounds tempting to just remove all the insertion points
-  // after it too, since they're usually after in tree position, it may not be
-  // the case when we're redistributing after new insertion points have been
-  // bound to the tree before aInsertionPoint, see bug 1409088.
-  int32_t index = aDestInsertionPoints.IndexOf(aInsertionPoint);
-
-  // It's possible that we already removed the insertion point while processing
-  // other insertion point removals / fallback content redistribution (which
-  // does DestInsertionPoints().Clear()).
-  if (index >= 0) {
-    aDestInsertionPoints.RemoveElementAt(index);
-  }
-}
-
-void
-ShadowRoot::DistributionChanged()
-{
-  // FIXME(emilio): We could be more granular in a bunch of cases.
-  auto* host = GetHost();
-  if (!host || !host->IsInComposedDoc()) {
-    return;
-  }
-
-  auto* shell = OwnerDoc()->GetShell();
-  if (!shell) {
-    return;
-  }
-
-  shell->DestroyFramesForAndRestyle(host);
-}
-
-const HTMLContentElement*
-ShadowRoot::DistributeSingleNode(nsIContent* aContent)
-{
-  // Find the insertion point to which the content belongs.
-  HTMLContentElement* foundInsertionPoint = nullptr;
-  for (HTMLContentElement* insertionPoint : mInsertionPoints) {
-    if (insertionPoint->Match(aContent)) {
-      if (insertionPoint->MatchedNodes().Contains(aContent)) {
-        // Node is already matched into the insertion point. We are done.
-        return insertionPoint;
-      }
-
-      // Matching may cause the insertion point to drop fallback content.
-      if (insertionPoint->MatchedNodes().IsEmpty() &&
-          insertionPoint->HasChildren()) {
-        // This match will cause the insertion point to drop all fallback
-        // content and used matched nodes instead. Give up on the optimization
-        // and just distribute all nodes.
-        DistributeAllNodes();
-        MOZ_ASSERT(insertionPoint->MatchedNodes().Contains(aContent));
-        return insertionPoint;
-      }
-      foundInsertionPoint = insertionPoint;
-      break;
+      aVisitor.SetParentTarget(parentTarget, true);
+      return NS_OK;
     }
   }
 
-  if (!foundInsertionPoint) {
+  nsIContent* shadowHost = GetHost();
+  aVisitor.SetParentTarget(shadowHost, false);
+
+  nsCOMPtr<nsIContent> content(do_QueryInterface(aVisitor.mEvent->mTarget));
+  if (content && content->GetBindingParent() == shadowHost) {
+    aVisitor.mEventTargetAtParent = shadowHost;
+  }
+
+  return NS_OK;
+}
+
+const HTMLSlotElement*
+ShadowRoot::AssignSlotFor(nsIContent* aContent)
+{
+  nsAutoString slotName;
+  // Note that if slot attribute is missing, assign it to the first default
+  // slot, if exists.
+  if (aContent->IsElement()) {
+    aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::slot, slotName);
+  }
+
+  nsTArray<HTMLSlotElement*>* slots = mSlotMap.Get(slotName);
+  if (!slots) {
     return nullptr;
   }
 
-  // Find the index into the insertion point.
-  nsCOMArray<nsIContent>& matchedNodes = foundInsertionPoint->MatchedNodes();
-  // Find the appropriate position in the matched node list for the
-  // newly distributed content.
-  bool isIndexFound = false;
-  ExplicitChildIterator childIterator(GetHost());
-  for (uint32_t i = 0; i < matchedNodes.Length(); i++) {
-    // Seek through the host's explicit children until the inserted content
-    // is found or when the current matched node is reached.
-    if (childIterator.Seek(aContent, matchedNodes[i])) {
-      // aContent was found before the current matched node.
-      foundInsertionPoint->InsertMatchedNode(i, aContent);
-      isIndexFound = true;
+  HTMLSlotElement* slot = slots->ElementAt(0);
+  MOZ_ASSERT(slot);
+
+  // Find the appropriate position in the assigned node list for the
+  // newly assigned content.
+  const nsTArray<RefPtr<nsINode>>& assignedNodes = slot->AssignedNodes();
+  nsIContent* currentContent = GetHost()->GetFirstChild();
+  Maybe<uint32_t> insertionIndex;
+  for (uint32_t i = 0; i < assignedNodes.Length(); i++) {
+    // Seek through the host's explicit children until the
+    // assigned content is found.
+    while (currentContent && currentContent != assignedNodes[i]) {
+      if (currentContent == aContent) {
+        insertionIndex.emplace(i);
+        break;
+      }
+
+      currentContent = currentContent->GetNextSibling();
+    }
+
+    if (insertionIndex) {
       break;
     }
   }
 
-  if (!isIndexFound) {
-    // We have still not found an index in the insertion point,
-    // thus it must be at the end.
-    MOZ_ASSERT(childIterator.Seek(aContent, nullptr),
-               "Trying to match a node that is not a candidate to be matched");
-    foundInsertionPoint->AppendMatchedNode(aContent);
+  if (insertionIndex) {
+    slot->InsertAssignedNode(*insertionIndex, aContent);
+  } else {
+    slot->AppendAssignedNode(aContent);
   }
 
-  return foundInsertionPoint;
+  return slot;
 }
 
-const HTMLContentElement*
-ShadowRoot::RemoveDistributedNode(nsIContent* aContent)
+const HTMLSlotElement*
+ShadowRoot::UnassignSlotFor(nsIContent* aNode, const nsAString& aSlotName)
 {
-  // Find insertion point containing the content and remove the node.
-  for (HTMLContentElement* insertionPoint : mInsertionPoints) {
-    if (!insertionPoint->MatchedNodes().Contains(aContent)) {
-      continue;
-    }
-
-    // Removing the matched node may cause the insertion point to use
-    // fallback content.
-    if (insertionPoint->MatchedNodes().Length() == 1 &&
-        insertionPoint->HasChildren()) {
-      // Removing the matched node will cause fallback content to be
-      // used instead. Give up optimization and distribute all nodes.
-      DistributeAllNodes();
-      return insertionPoint;
-    }
-
-    insertionPoint->RemoveMatchedNode(aContent);
-    return insertionPoint;
+  // Find the insertion point to which the content belongs. Note that if slot
+  // attribute is missing, unassign it from the first default slot, if exists.
+  nsTArray<HTMLSlotElement*>* slots = mSlotMap.Get(aSlotName);
+  if (!slots) {
+    return nullptr;
   }
 
-  return nullptr;
+  HTMLSlotElement* slot = slots->ElementAt(0);
+  MOZ_ASSERT(slot);
+
+  if (!slot->AssignedNodes().Contains(aNode)) {
+    return nullptr;
+  }
+
+  slot->RemoveAssignedNode(aNode);
+  return slot;
 }
 
-void
-ShadowRoot::DistributeAllNodes()
+bool
+ShadowRoot::MaybeReassignElement(Element* aElement,
+                                 const nsAttrValue* aOldValue)
 {
-  // Create node pool.
-  nsTArray<nsIContent*> nodePool;
-  ExplicitChildIterator childIterator(GetHost());
-  for (nsIContent* content = childIterator.GetNextChild(); content;
-       content = childIterator.GetNextChild()) {
-    nodePool.AppendElement(content);
-  }
+  nsIContent* parent = aElement->GetParent();
+  if (parent && parent == GetHost()) {
+    const HTMLSlotElement* oldSlot = UnassignSlotFor(aElement,
+      aOldValue ? aOldValue->GetStringValue() : EmptyString());
+    const HTMLSlotElement* newSlot = AssignSlotFor(aElement);
 
-  nsTArray<ShadowRoot*> shadowsToUpdate;
-
-  for (HTMLContentElement* insertionPoint : mInsertionPoints) {
-    insertionPoint->ClearMatchedNodes();
-    // Assign matching nodes from node pool.
-    for (uint32_t j = 0; j < nodePool.Length(); j++) {
-      if (insertionPoint->Match(nodePool[j])) {
-        insertionPoint->AppendMatchedNode(nodePool[j]);
-        nodePool.RemoveElementAt(j--);
+    if (oldSlot != newSlot) {
+      if (oldSlot) {
+        oldSlot->EnqueueSlotChangeEvent();
       }
-    }
-
-    // Keep track of instances where the content insertion point is distributed
-    // (parent of insertion point has a ShadowRoot).
-    nsIContent* insertionParent = insertionPoint->GetParent();
-    MOZ_ASSERT(insertionParent, "The only way for an insertion point to be in the"
-                                "mInsertionPoints array is to be a descendant of a"
-                                "ShadowRoot, in which case, it should have a parent");
-
-    // If the parent of the insertion point has a ShadowRoot, the nodes distributed
-    // to the insertion point must be reprojected to the insertion points of the
-    // parent's ShadowRoot.
-    ShadowRoot* parentShadow = insertionParent->GetShadowRoot();
-    if (parentShadow && !shadowsToUpdate.Contains(parentShadow)) {
-      shadowsToUpdate.AppendElement(parentShadow);
+      if (newSlot) {
+        newSlot->EnqueueSlotChangeEvent();
+      }
+      return true;
     }
   }
 
-  for (ShadowRoot* shadow : shadowsToUpdate) {
-    shadow->DistributeAllNodes();
-  }
+  return false;
+}
 
-  DistributionChanged();
+Element*
+ShadowRoot::GetActiveElement()
+{
+  return GetRetargetedFocusedElement();
 }
 
 void
@@ -414,93 +455,19 @@ ShadowRoot::SetInnerHTML(const nsAString& aInnerHTML, ErrorResult& aError)
   SetInnerHTMLInternal(aInnerHTML, aError);
 }
 
-Element*
-ShadowRoot::Host()
-{
-  nsIContent* host = GetHost();
-  MOZ_ASSERT(host && host->IsElement(),
-             "ShadowRoot host should always be an element, "
-             "how else did we create this ShadowRoot?");
-  return host->AsElement();
-}
-
-bool
-ShadowRoot::ApplyAuthorStyles()
-{
-  return mProtoBinding->InheritsStyle();
-}
-
 void
-ShadowRoot::SetApplyAuthorStyles(bool aApplyAuthorStyles)
-{
-  mProtoBinding->SetInheritsStyle(aApplyAuthorStyles);
-
-  nsIPresShell* shell = OwnerDoc()->GetShell();
-  if (shell) {
-    OwnerDoc()->BeginUpdate(UPDATE_STYLE);
-    shell->RecordShadowStyleChange(this);
-    OwnerDoc()->EndUpdate(UPDATE_STYLE);
-  }
-}
-
-StyleSheetList*
-ShadowRoot::StyleSheets()
-{
-  if (!mStyleSheetList) {
-    mStyleSheetList = new ShadowRootStyleSheetList(this);
-  }
-
-  return mStyleSheetList;
-}
-
-/**
- * Returns whether the web components pool population algorithm
- * on the host would contain |aContent|. This function ignores
- * insertion points in the pool, thus should only be used to
- * test nodes that have not yet been distributed.
- */
-bool
-ShadowRoot::IsPooledNode(nsIContent* aContent) const
-{
-  if (nsContentUtils::IsContentInsertionPoint(aContent)) {
-    // Insertion points never end up in the pool.
-    return false;
-  }
-
-  auto* host = GetHost();
-  auto* container = aContent->GetParent();
-  if (container == host && !aContent->IsRootOfAnonymousSubtree()) {
-    // Children of the host will end up in the pool. We check to ensure
-    // that the content is in the same anonymous tree as the container
-    // because anonymous content may report its container as the host
-    // but it may not be in the host's child list.
-    return true;
-  }
-
-  if (auto* content = HTMLContentElement::FromContentOrNull(container)) {
-    // Fallback content will end up in pool if its parent is a child of the host.
-    return content->IsInsertionPoint() &&
-           content->MatchedNodes().IsEmpty() &&
-           container->GetParentNode() == host;
-  }
-
-  return false;
-}
-
-void
-ShadowRoot::AttributeChanged(nsIDocument* aDocument,
-                             Element* aElement,
+ShadowRoot::AttributeChanged(Element* aElement,
                              int32_t aNameSpaceID,
                              nsAtom* aAttribute,
                              int32_t aModType,
                              const nsAttrValue* aOldValue)
 {
-  if (!IsPooledNode(aElement)) {
+  if (aNameSpaceID != kNameSpaceID_None || aAttribute != nsGkAtoms::slot) {
     return;
   }
 
   // Attributes may change insertion point matching, find its new distribution.
-  if (!RedistributeElement(aElement)) {
+  if (!MaybeReassignElement(aElement, aOldValue)) {
     return;
   }
 
@@ -513,140 +480,92 @@ ShadowRoot::AttributeChanged(nsIDocument* aDocument,
     return;
   }
 
+  // FIXME(emilio): We could be more granular in a bunch of cases.
   shell->DestroyFramesForAndRestyle(aElement);
 }
 
-bool
-ShadowRoot::RedistributeElement(Element* aElement)
-{
-  auto* oldInsertionPoint = RemoveDistributedNode(aElement);
-  auto* newInsertionPoint = DistributeSingleNode(aElement);
-
-  if (oldInsertionPoint == newInsertionPoint) {
-    if (oldInsertionPoint) {
-      if (auto* shadow = oldInsertionPoint->GetParent()->GetShadowRoot()) {
-        return shadow->RedistributeElement(aElement);
-      }
-    }
-
-    return false;
-  }
-
-  while (oldInsertionPoint) {
-    // Handle the case where the parent of the insertion point has a ShadowRoot.
-    // The node distributed into the insertion point must be reprojected to the
-    // insertion points of the parent's ShadowRoot.
-    auto* shadow = oldInsertionPoint->GetParent()->GetShadowRoot();
-    if (!shadow) {
-      break;
-    }
-
-    oldInsertionPoint = shadow->RemoveDistributedNode(aElement);
-  }
-
-  while (newInsertionPoint) {
-    // Handle the case where the parent of the insertion point has a ShadowRoot.
-    // The node distributed into the insertion point must be reprojected to the
-    // insertion points of the parent's ShadowRoot.
-    auto* shadow = newInsertionPoint->GetParent()->GetShadowRoot();
-    if (!shadow) {
-      break;
-    }
-
-    newInsertionPoint = shadow->DistributeSingleNode(aElement);
-  }
-
-  return true;
-}
-
 void
-ShadowRoot::ContentAppended(nsIDocument* aDocument,
-                            nsIContent* aContainer,
-                            nsIContent* aFirstNewContent)
+ShadowRoot::ContentAppended(nsIContent* aFirstNewContent)
 {
   for (nsIContent* content = aFirstNewContent;
        content;
        content = content->GetNextSibling()) {
-    ContentInserted(aDocument, aContainer, aFirstNewContent);
+    ContentInserted(content);
   }
 }
 
 void
-ShadowRoot::ContentInserted(nsIDocument* aDocument,
-                            nsIContent* aContainer,
-                            nsIContent* aChild)
+ShadowRoot::ContentInserted(nsIContent* aChild)
 {
-  if (mInsertionPointChanged) {
-    DistributeAllNodes();
-    mInsertionPointChanged = false;
+  // Check to ensure that the child not an anonymous subtree root because
+  // even though its parent could be the host it may not be in the host's child
+  // list.
+  if (aChild->IsRootOfAnonymousSubtree()) {
     return;
   }
 
-  // Add insertion point to destination insertion points of fallback content.
-  if (nsContentUtils::IsContentInsertionPoint(aContainer)) {
-    HTMLContentElement* content = HTMLContentElement::FromContent(aContainer);
-    if (content && content->MatchedNodes().IsEmpty()) {
-      aChild->DestInsertionPoints().AppendElement(aContainer);
-    }
+  if (!aChild->IsSlotable()) {
+    return;
   }
 
-  // Watch for new nodes added to the pool because the node
-  // may need to be added to an insertion point.
-  if (IsPooledNode(aChild)) {
-    auto* insertionPoint = DistributeSingleNode(aChild);
-    while (insertionPoint) {
-      // Handle the case where the parent of the insertion point has a ShadowRoot.
-      // The node distributed into the insertion point must be reprojected to the
-      // insertion points of the parent's ShadowRoot.
-      auto* parentShadow = insertionPoint->GetParent()->GetShadowRoot();
-      if (!parentShadow) {
-        break;
-      }
-
-      insertionPoint = parentShadow->DistributeSingleNode(aChild);
+  if (aChild->GetParent() == GetHost()) {
+    if (const HTMLSlotElement* slot = AssignSlotFor(aChild)) {
+      slot->EnqueueSlotChangeEvent();
     }
+    return;
+  }
+
+  // If parent's root is a shadow root, and parent is a slot whose assigned
+  // nodes is the empty list, then run signal a slot change for parent.
+  HTMLSlotElement* slot = HTMLSlotElement::FromContentOrNull(aChild->GetParent());
+  if (slot && slot->GetContainingShadow() == this &&
+      slot->AssignedNodes().IsEmpty()) {
+    slot->EnqueueSlotChangeEvent();
   }
 }
 
 void
-ShadowRoot::ContentRemoved(nsIDocument* aDocument,
-                           nsIContent* aContainer,
-                           nsIContent* aChild,
-                           nsIContent* aPreviousSibling)
+ShadowRoot::ContentRemoved(nsIContent* aChild, nsIContent* aPreviousSibling)
 {
-  if (mInsertionPointChanged) {
-    DistributeAllNodes();
-    mInsertionPointChanged = false;
+  // Check to ensure that the child not an anonymous subtree root because
+  // even though its parent could be the host it may not be in the host's child
+  // list.
+ if (aChild->IsRootOfAnonymousSubtree()) {
     return;
   }
 
-  // Clear destination insertion points for removed
-  // fallback content.
-  if (nsContentUtils::IsContentInsertionPoint(aContainer)) {
-    HTMLContentElement* content = HTMLContentElement::FromContent(aContainer);
-    if (content && content->MatchedNodes().IsEmpty()) {
-      aChild->DestInsertionPoints().Clear();
-    }
+  if (!aChild->IsSlotable()) {
+    return;
   }
 
-  // Watch for node that is removed from the pool because
-  // it may need to be removed from an insertion point.
-  if (IsPooledNode(aChild)) {
-    auto* insertionPoint = RemoveDistributedNode(aChild);
-    while (insertionPoint) {
-      // Handle the case where the parent of the insertion point has a
-      // ShadowRoot.
-      //
-      // The removed node needs to be removed from the insertion points of the
-      // parent's ShadowRoot.
-      auto* parentShadow = insertionPoint->GetParent()->GetShadowRoot();
-      if (!parentShadow) {
-        break;
-      }
-
-      insertionPoint = parentShadow->RemoveDistributedNode(aChild);
+  if (aChild->GetParent() == GetHost()) {
+    nsAutoString slotName;
+    if (aChild->IsElement()) {
+      aChild->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::slot, slotName);
     }
+    if (const HTMLSlotElement* slot = UnassignSlotFor(aChild, slotName)) {
+      slot->EnqueueSlotChangeEvent();
+    }
+    return;
   }
+
+  // If parent's root is a shadow root, and parent is a slot whose assigned
+  // nodes is the empty list, then run signal a slot change for parent.
+  HTMLSlotElement* slot = HTMLSlotElement::FromContentOrNull(aChild->GetParent());
+  if (slot && slot->GetContainingShadow() == this &&
+      slot->AssignedNodes().IsEmpty()) {
+    slot->EnqueueSlotChangeEvent();
+  }
+}
+
+ServoStyleRuleMap&
+ShadowRoot::ServoStyleRuleMap()
+{
+  if (!mStyleRuleMap) {
+    mStyleRuleMap = MakeUnique<mozilla::ServoStyleRuleMap>();
+  }
+  mStyleRuleMap->EnsureTable(*this);
+  return *mStyleRuleMap;
 }
 
 nsresult
@@ -654,40 +573,5 @@ ShadowRoot::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
                   bool aPreallocateChildren) const
 {
   *aResult = nullptr;
-  return NS_ERROR_DOM_DATA_CLONE_ERR;
+  return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
 }
-
-NS_IMPL_CYCLE_COLLECTION_INHERITED(ShadowRootStyleSheetList, StyleSheetList,
-                                   mShadowRoot)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ShadowRootStyleSheetList)
-NS_INTERFACE_MAP_END_INHERITING(StyleSheetList)
-
-NS_IMPL_ADDREF_INHERITED(ShadowRootStyleSheetList, StyleSheetList)
-NS_IMPL_RELEASE_INHERITED(ShadowRootStyleSheetList, StyleSheetList)
-
-ShadowRootStyleSheetList::ShadowRootStyleSheetList(ShadowRoot* aShadowRoot)
-  : mShadowRoot(aShadowRoot)
-{
-}
-
-ShadowRootStyleSheetList::~ShadowRootStyleSheetList()
-{
-}
-
-StyleSheet*
-ShadowRootStyleSheetList::IndexedGetter(uint32_t aIndex, bool& aFound)
-{
-  aFound = aIndex < mShadowRoot->mProtoBinding->SheetCount();
-  if (!aFound) {
-    return nullptr;
-  }
-  return mShadowRoot->mProtoBinding->StyleSheetAt(aIndex);
-}
-
-uint32_t
-ShadowRootStyleSheetList::Length()
-{
-  return mShadowRoot->mProtoBinding->SheetCount();
-}
-

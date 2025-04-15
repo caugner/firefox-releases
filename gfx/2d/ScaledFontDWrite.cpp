@@ -11,6 +11,20 @@
 #include "Logging.h"
 #include "mozilla/webrender/WebRenderTypes.h"
 
+#include "dwrite_3.h"
+
+// Currently, we build with WINVER=0x601 (Win7), which means newer
+// declarations in dwrite_3.h will not be visible. Also, we don't
+// yet have the Fall Creators Update SDK available on build machines,
+// so even with updated WINVER, some of the interfaces we need would
+// not be present.
+// To work around this, until the build environment is updated,
+// we #include an extra header that contains copies of the relevant
+// classes/interfaces we need.
+#if !defined(__MINGW32__) && WINVER < 0x0A00
+#include "dw-extra.h"
+#endif
+
 using namespace std;
 
 #ifdef USE_SKIA
@@ -196,7 +210,9 @@ ScaledFontDWrite::CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *a
 }
 
 void
-ScaledFontDWrite::GetGlyphDesignMetrics(const uint16_t* aGlyphs, uint32_t aNumGlyphs, GlyphMetrics* aGlyphMetrics)
+ScaledFontDWrite::GetGlyphDesignMetrics(const uint16_t* aGlyphs,
+                                        uint32_t aNumGlyphs,
+                                        GlyphMetrics* aGlyphMetrics)
 {
   DWRITE_FONT_METRICS fontMetrics;
   mFontFace->GetMetrics(&fontMetrics);
@@ -204,16 +220,20 @@ ScaledFontDWrite::GetGlyphDesignMetrics(const uint16_t* aGlyphs, uint32_t aNumGl
   vector<DWRITE_GLYPH_METRICS> metrics(aNumGlyphs);
   mFontFace->GetDesignGlyphMetrics(aGlyphs, aNumGlyphs, &metrics.front());
 
-  Float designUnitCorrection = 1.f / fontMetrics.designUnitsPerEm;
+  Float scaleFactor = mSize / fontMetrics.designUnitsPerEm;
 
   for (uint32_t i = 0; i < aNumGlyphs; i++) {
-    aGlyphMetrics[i].mXBearing = metrics[i].leftSideBearing * designUnitCorrection * mSize;
-    aGlyphMetrics[i].mXAdvance = metrics[i].advanceWidth * designUnitCorrection * mSize;
-    aGlyphMetrics[i].mYBearing = metrics[i].topSideBearing * designUnitCorrection * mSize;
-    aGlyphMetrics[i].mYAdvance = metrics[i].advanceHeight * designUnitCorrection * mSize;
-    aGlyphMetrics[i].mWidth = (metrics[i].advanceHeight - metrics[i].topSideBearing - metrics[i].bottomSideBearing) *
-                              designUnitCorrection * mSize;
-    aGlyphMetrics[i].mHeight = (metrics[i].topSideBearing - metrics[i].verticalOriginY) * designUnitCorrection * mSize;
+    aGlyphMetrics[i].mXBearing = metrics[i].leftSideBearing * scaleFactor;
+    aGlyphMetrics[i].mXAdvance = metrics[i].advanceWidth * scaleFactor;
+    aGlyphMetrics[i].mYBearing = (metrics[i].topSideBearing -
+                                  metrics[i].verticalOriginY) * scaleFactor;
+    aGlyphMetrics[i].mYAdvance = metrics[i].advanceHeight * scaleFactor;
+    aGlyphMetrics[i].mWidth = (metrics[i].advanceWidth -
+                               metrics[i].leftSideBearing -
+                               metrics[i].rightSideBearing) * scaleFactor;
+    aGlyphMetrics[i].mHeight = (metrics[i].advanceHeight -
+                                metrics[i].topSideBearing -
+                                metrics[i].bottomSideBearing) * scaleFactor;
   }
 }
 
@@ -372,11 +392,59 @@ UnscaledFontDWrite::GetWRFontDescriptor(WRFontDescriptorOutput aCb, void* aBaton
   return true;
 }
 
+// Helper for ScaledFontDWrite::GetFontInstanceData: if the font has variation
+// axes, get their current values into the aOutput vector.
+static void
+GetVariationsFromFontFace(IDWriteFontFace* aFace,
+                          std::vector<FontVariation>* aOutput)
+{
+  RefPtr<IDWriteFontFace5> ff5;
+  aFace->QueryInterface(__uuidof(IDWriteFontFace5), (void**)getter_AddRefs(ff5));
+  if (!ff5 || !ff5->HasVariations()) {
+    return;
+  }
+
+  uint32_t count = ff5->GetFontAxisValueCount();
+  if (!count) {
+    return;
+  }
+
+  RefPtr<IDWriteFontResource> res;
+  if (FAILED(ff5->GetFontResource(getter_AddRefs(res)))) {
+    return;
+  }
+
+  std::vector<DWRITE_FONT_AXIS_VALUE> values(count);
+  if (FAILED(ff5->GetFontAxisValues(values.data(), count))) {
+    return;
+  }
+
+  aOutput->reserve(count);
+  for (uint32_t i = 0; i < count; i++) {
+    DWRITE_FONT_AXIS_ATTRIBUTES attr = res->GetFontAxisAttributes(i);
+    if (attr & DWRITE_FONT_AXIS_ATTRIBUTES_VARIABLE) {
+      float v = values[i].value;
+      uint32_t t = TRUETYPE_TAG(uint8_t(values[i].axisTag),
+                                uint8_t(values[i].axisTag >> 8),
+                                uint8_t(values[i].axisTag >> 16),
+                                uint8_t(values[i].axisTag >> 24));
+      aOutput->push_back(FontVariation{uint32_t(t), float(v)});
+    }
+  }
+}
+
 bool
 ScaledFontDWrite::GetFontInstanceData(FontInstanceDataOutput aCb, void* aBaton)
 {
   InstanceData instance(this);
-  aCb(reinterpret_cast<uint8_t*>(&instance), sizeof(instance), nullptr, 0, aBaton);
+
+  // If the font has variations, get the list of axis values.
+  std::vector<FontVariation> variations;
+  GetVariationsFromFontFace(mFontFace, &variations);
+
+  aCb(reinterpret_cast<uint8_t*>(&instance), sizeof(instance),
+      variations.data(), variations.size(), aBaton);
+
   return true;
 }
 
@@ -385,22 +453,70 @@ ScaledFontDWrite::GetWRFontInstanceOptions(Maybe<wr::FontInstanceOptions>* aOutO
                                            Maybe<wr::FontInstancePlatformOptions>* aOutPlatformOptions,
                                            std::vector<FontVariation>* aOutVariations)
 {
-  AntialiasMode aaMode = GetDefaultAAMode();
-  if (aaMode != AntialiasMode::SUBPIXEL) {
-    wr::FontInstanceOptions options;
-    options.render_mode =
-      aaMode == AntialiasMode::NONE ? wr::FontRenderMode::Mono : wr::FontRenderMode::Alpha;
-    options.subpx_dir = wr::SubpixelDirection::Horizontal;
-    options.synthetic_italics = false;
-    options.bg_color = wr::ToColorU(Color());
-    *aOutOptions = Some(options);
+  wr::FontInstanceOptions options;
+  options.render_mode = wr::ToFontRenderMode(GetDefaultAAMode());
+  options.subpx_dir = wr::SubpixelDirection::Horizontal;
+  options.flags = 0;
+  if (mFontFace->GetSimulations() & DWRITE_FONT_SIMULATIONS_BOLD) {
+    options.flags |= wr::FontInstanceFlags::SYNTHETIC_BOLD;
+  }
+  if (UseEmbeddedBitmaps()) {
+    options.flags |= wr::FontInstanceFlags::EMBEDDED_BITMAPS;
+  }
+  if (ForceGDIMode()) {
+    options.flags |= wr::FontInstanceFlags::FORCE_GDI;
+  }
+  options.bg_color = wr::ToColorU(Color());
+  *aOutOptions = Some(options);
+  return true;
+}
+
+// Helper for UnscaledFontDWrite::CreateScaledFont: create a clone of the
+// given IDWriteFontFace, with specified variation-axis values applied.
+// Returns nullptr in case of failure.
+static already_AddRefed<IDWriteFontFace5>
+CreateFaceWithVariations(IDWriteFontFace* aFace,
+                         const FontVariation* aVariations,
+                         uint32_t aNumVariations)
+{
+  auto makeDWriteAxisTag = [](uint32_t aTag) {
+    return DWRITE_MAKE_FONT_AXIS_TAG((aTag >> 24) & 0xff,
+                                     (aTag >> 16) & 0xff,
+                                     (aTag >> 8) & 0xff,
+                                     aTag & 0xff);
+  };
+
+  RefPtr<IDWriteFontFace5> ff5;
+  aFace->QueryInterface(__uuidof(IDWriteFontFace5), (void**)getter_AddRefs(ff5));
+  if (!ff5) {
+    return nullptr;
   }
 
-  wr::FontInstancePlatformOptions platformOptions;
-  platformOptions.use_embedded_bitmap = UseEmbeddedBitmaps();
-  platformOptions.force_gdi_rendering = ForceGDIMode();
-  *aOutPlatformOptions = Some(platformOptions);
-  return true;
+  DWRITE_FONT_SIMULATIONS sims = aFace->GetSimulations();
+  RefPtr<IDWriteFontResource> res;
+  if (FAILED(ff5->GetFontResource(getter_AddRefs(res)))) {
+    return nullptr;
+  }
+
+  std::vector<DWRITE_FONT_AXIS_VALUE> fontAxisValues;
+  fontAxisValues.reserve(aNumVariations);
+  for (uint32_t i = 0; i < aNumVariations; i++) {
+    DWRITE_FONT_AXIS_VALUE axisValue = {
+      makeDWriteAxisTag(aVariations[i].mTag),
+      aVariations[i].mValue
+    };
+    fontAxisValues.push_back(axisValue);
+  }
+
+  RefPtr<IDWriteFontFace5> newFace;
+  if (FAILED(res->CreateFontFace(sims,
+                                 fontAxisValues.data(),
+                                 fontAxisValues.size(),
+                                 getter_AddRefs(newFace)))) {
+    return nullptr;
+  }
+
+  return newFace.forget();
 }
 
 already_AddRefed<ScaledFont>
@@ -415,10 +531,24 @@ UnscaledFontDWrite::CreateScaledFont(Float aGlyphSize,
     return nullptr;
   }
 
+  IDWriteFontFace* face = mFontFace;
+
+  // If variations are required, we create a separate IDWriteFontFace5 with
+  // the requested settings applied.
+  RefPtr<IDWriteFontFace5> ff5;
+  if (aNumVariations) {
+    ff5 = CreateFaceWithVariations(mFontFace, aVariations, aNumVariations);
+    if (ff5) {
+      face = ff5;
+    } else {
+      gfxWarning() << "Failed to create IDWriteFontFace5 with variations.";
+    }
+  }
+
   const ScaledFontDWrite::InstanceData *instanceData =
     reinterpret_cast<const ScaledFontDWrite::InstanceData*>(aInstanceData);
   RefPtr<ScaledFontBase> scaledFont =
-    new ScaledFontDWrite(mFontFace, this, aGlyphSize,
+    new ScaledFontDWrite(face, this, aGlyphSize,
                          instanceData->mUseEmbeddedBitmap,
                          instanceData->mForceGDIMode,
                          nullptr,

@@ -4,19 +4,17 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["CustomizableUI"];
+var EXPORTED_SYMBOLS = ["CustomizableUI"];
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
-  PanelWideWidgetTracker: "resource:///modules/PanelWideWidgetTracker.jsm",
   SearchWidgetTracker: "resource:///modules/SearchWidgetTracker.jsm",
   CustomizableWidgets: "resource:///modules/CustomizableWidgets.jsm",
   DeferredTask: "resource://gre/modules/DeferredTask.jsm",
+  PanelMultiView: "resource:///modules/PanelMultiView.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.jsm",
   LightweightThemeManager: "resource://gre/modules/LightweightThemeManager.jsm",
@@ -59,7 +57,7 @@ const kSubviewEvents = [
  * The current version. We can use this to auto-add new default widgets as necessary.
  * (would be const but isn't because of testing purposes)
  */
-var kVersion = 13;
+var kVersion = 14;
 
 /**
  * Buttons removed from built-ins by version they were removed. kVersion must be
@@ -160,14 +158,19 @@ var gUIStateBeforeReset = {
   autoTouchMode: null,
 };
 
-var gDefaultPanelPlacements = null;
+XPCOMUtils.defineLazyPreferenceGetter(this, "gDebuggingEnabled", kPrefCustomizationDebug, false,
+  (pref, oldVal, newVal) => {
+    if (typeof log != "undefined") {
+      log.maxLogLevel = newVal ? "all" : "log";
+    }
+  }
+);
 
 XPCOMUtils.defineLazyGetter(this, "log", () => {
   let scope = {};
-  Cu.import("resource://gre/modules/Console.jsm", scope);
-  let debug = Services.prefs.getBoolPref(kPrefCustomizationDebug, false);
+  ChromeUtils.import("resource://gre/modules/Console.jsm", scope);
   let consoleOptions = {
-    maxLogLevel: debug ? "all" : "log",
+    maxLogLevel: gDebuggingEnabled ? "all" : "log",
     prefix: "CustomizableUI",
   };
   return new scope.ConsoleAPI(consoleOptions);
@@ -245,6 +248,13 @@ var CustomizableUIInternal = {
     }, true);
 
     SearchWidgetTracker.init();
+  },
+
+  get _builtinAreas() {
+    return new Set([
+      ...this._builtinToolbars,
+      CustomizableUI.AREA_FIXED_OVERFLOW_PANEL,
+    ]);
   },
 
   get _builtinToolbars() {
@@ -462,6 +472,15 @@ var CustomizableUIInternal = {
         }
       }
     }
+
+    // Remove unsupported custom toolbar saved placements
+    if (currentVersion < 14 && gSavedState.placements) {
+      for (let area in gSavedState.placements) {
+        if (!this._builtinAreas.has(area)) {
+          delete gSavedState.placements[area];
+        }
+      }
+    }
   },
 
   /**
@@ -498,7 +517,7 @@ var CustomizableUIInternal = {
       let widget = gPalette.get(widgetId);
       if (!widget || widget.source !== CustomizableUI.SOURCE_BUILTIN ||
           !widget.defaultArea || !widget._introducedInVersion ||
-          savedPlacements.indexOf(widget.id) !== -1) {
+          savedPlacements.includes(widget.id)) {
         continue;
       }
       defaultWidgetIndex = defaultPlacements.indexOf(widget.id);
@@ -598,7 +617,7 @@ var CustomizableUIInternal = {
     }
     // Sanity check type:
     let allTypes = [CustomizableUI.TYPE_TOOLBAR, CustomizableUI.TYPE_MENU_PANEL];
-    if (allTypes.indexOf(props.get("type")) == -1) {
+    if (!allTypes.includes(props.get("type"))) {
       throw new Error("Invalid area type " + props.get("type"));
     }
 
@@ -689,10 +708,9 @@ var CustomizableUIInternal = {
 
     // If this area is not registered, try to do it automatically:
     if (!areaProperties) {
-      // If there's no defaultset attribute and this isn't a legacy extra toolbar,
-      // we assume that we should wait for registerArea to be called:
-      if (!aToolbar.hasAttribute("defaultset") &&
-          !aToolbar.hasAttribute("customindex")) {
+      // If there's no default set attribute at all, we assume that we should
+      // wait for registerArea to be called:
+      if (!aToolbar.hasAttribute("defaultset")) {
         if (!gPendingBuildAreas.has(area)) {
           gPendingBuildAreas.set(area, new Map());
         }
@@ -913,7 +931,7 @@ var CustomizableUIInternal = {
     let currentContextMenu = aNode.getAttribute("context") ||
                              aNode.getAttribute("contextmenu");
     let contextMenuForPlace =
-      (forcePanel || "panel" == CustomizableUI.getPlaceForItem(aAreaNode)) ?
+      (forcePanel || "menu-panel" == CustomizableUI.getPlaceForItem(aAreaNode)) ?
       kPanelItemContextMenu :
       null;
     if (contextMenuForPlace && !currentContextMenu) {
@@ -1623,14 +1641,14 @@ var CustomizableUIInternal = {
       if (areaType != CustomizableUI.TYPE_MENU_PANEL) {
         let wrapper = this.wrapWidget(aWidget.id).forWindow(ownerWindow);
 
-        let hasMultiView = !!aNode.closest("photonpanelmultiview,panelmultiview");
+        let hasMultiView = !!aNode.closest("panelmultiview");
         if (wrapper && !hasMultiView && wrapper.anchor) {
           this.hidePanelForNode(aNode);
           anchor = wrapper.anchor;
         }
       }
 
-      ownerWindow.PanelUI.showSubView(aWidget.viewId, anchor, area, aEvent);
+      ownerWindow.PanelUI.showSubView(aWidget.viewId, anchor, aEvent);
     }
   },
 
@@ -1649,10 +1667,7 @@ var CustomizableUIInternal = {
   },
 
   _getPanelForNode(aNode) {
-    let panel = aNode;
-    while (panel && panel.localName != "panel")
-      panel = panel.parentNode;
-    return panel;
+    return aNode.closest("panel");
   },
 
   /*
@@ -1762,7 +1777,7 @@ var CustomizableUIInternal = {
   hidePanelForNode(aNode) {
     let panel = this._getPanelForNode(aNode);
     if (panel) {
-      panel.hidePopup();
+      PanelMultiView.hidePopup(panel);
     }
   },
 
@@ -1787,38 +1802,18 @@ var CustomizableUIInternal = {
       }
     }
 
-    // We can't use event.target because we might have passed a panelview
-    // anonymous content boundary as well, and so target points to the
-    // panelmultiview in that case. Unfortunately, this means we get
-    // anonymous child nodes instead of the real ones, so looking for the
-    // 'stoooop, don't close me' attributes is more involved.
+    // We can't use event.target because we might have passed an anonymous
+    // content boundary as well, and so target points to the outer element in
+    // that case. Unfortunately, this means we get anonymous child nodes instead
+    // of the real ones, so looking for the 'stoooop, don't close me' attributes
+    // is more involved.
     let target = aEvent.originalTarget;
-    let closemenu = "auto";
-    let widgetType = "button";
     while (target.parentNode && target.localName != "panel") {
-      closemenu = target.getAttribute("closemenu");
-      widgetType = target.getAttribute("widget-type");
-      if (closemenu == "none" || closemenu == "single" ||
-          widgetType == "view") {
-        break;
-      }
-      target = target.parentNode;
-    }
-    if (closemenu == "none" || widgetType == "view") {
-      return;
-    }
-
-    if (closemenu == "single") {
-      let panel = this._getPanelForNode(target);
-      let multiview = panel.querySelector("photonpanelmultiview,panelmultiview");
-      if (multiview.showingSubView) {
-        if (multiview.instance.panelViews) {
-          multiview.goBack();
-        } else {
-          multiview.showMainView();
-        }
+      if (target.getAttribute("closemenu") == "none" ||
+          target.getAttribute("widget-type") == "view") {
         return;
       }
+      target = target.parentNode;
     }
 
     // If we get here, we can actually hide the popup:
@@ -2642,8 +2637,6 @@ var CustomizableUIInternal = {
       gUIStateBeforeReset.newElementCount = gNewElementCount;
     } catch (e) { }
 
-    this._resetExtraToolbars();
-
     Services.prefs.clearUserPref(kPrefCustomizationState);
     Services.prefs.clearUserPref(kPrefDrawInTitlebar);
     Services.prefs.clearUserPref(kPrefExtraDragSpace);
@@ -2663,28 +2656,6 @@ var CustomizableUIInternal = {
     // Restore the state for each area to its defaults
     for (let [areaId, ] of gAreas) {
       this.restoreStateForArea(areaId);
-    }
-  },
-
-  _resetExtraToolbars(aFilter = null) {
-    let firstWindow = true; // Only need to unregister and persist once
-    for (let [win, ] of gBuildWindows) {
-      let toolbox = win.gNavToolbox;
-      for (let child of toolbox.children) {
-        let matchesFilter = !aFilter || aFilter == child.id;
-        if (child.hasAttribute("customindex") && matchesFilter) {
-          let toolbarId = "toolbar" + child.getAttribute("customindex");
-          toolbox.toolbarset.removeAttribute(toolbarId);
-          if (firstWindow) {
-            win.document.persist(toolbox.toolbarset.id, toolbarId);
-            // We have to unregister it properly to ensure we don't kill
-            // XUL widgets which might be in here
-            this.unregisterArea(child.id, true);
-          }
-          child.remove();
-        }
-      }
-      firstWindow = false;
     }
   },
 
@@ -2753,10 +2724,6 @@ var CustomizableUIInternal = {
     Object.getOwnPropertyNames(gUIStateBeforeReset).forEach((prop) => {
       gUIStateBeforeReset[prop] = null;
     });
-  },
-
-  removeExtraToolbar(aToolbarId) {
-    this._resetExtraToolbars(aToolbarId);
   },
 
   /**
@@ -2873,7 +2840,7 @@ var CustomizableUIInternal = {
         let removableOrDefault = (itemNodeOrItem) => {
           let item = (itemNodeOrItem && itemNodeOrItem.id) || itemNodeOrItem;
           let isRemovable = this.isWidgetRemovable(itemNodeOrItem);
-          let isInDefault = defaultPlacements.indexOf(item) != -1;
+          let isInDefault = defaultPlacements.includes(item);
           return isRemovable || isInDefault;
         };
         // Toolbars have a currentSet property which also deals correctly with overflown
@@ -2960,12 +2927,7 @@ var CustomizableUIInternal = {
 };
 Object.freeze(CustomizableUIInternal);
 
-this.CustomizableUI = {
-  /**
-   * Constant reference to the ID of the menu panel.
-   * DEPRECATED.
-   */
-  AREA_PANEL: "PanelUI-contents",
+var CustomizableUI = {
   /**
    * Constant reference to the ID of the navigation toolbar.
    */
@@ -3018,15 +2980,6 @@ this.CustomizableUI = {
    * (e.g. by add-ons or other items not part of the builtin widget set).
    */
   SOURCE_EXTERNAL: "external",
-
-  /**
-   * The class used to distinguish items that span the entire menu panel.
-   */
-  WIDE_PANEL_CLASS: "panel-wide-item",
-  /**
-   * The (constant) number of columns in the menu panel.
-   */
-  PANEL_COLUMN_COUNT: 3,
 
   /**
    * Constant indicating the reason the event was fired was a window closing
@@ -3906,7 +3859,7 @@ this.CustomizableUI = {
       if (node.localName == "toolbar")
         place = "toolbar";
       else if (node.id == CustomizableUI.AREA_FIXED_OVERFLOW_PANEL)
-        place = "panel";
+        place = "menu-panel";
       else if (node.id == "customization-palette")
         place = "palette";
 
@@ -3930,6 +3883,86 @@ this.CustomizableUI = {
    */
   createSpecialWidget(aId, aDocument) {
     return CustomizableUIInternal.createSpecialWidget(aId, aDocument);
+  },
+
+  /**
+   * Fills a submenu with menu items.
+   * @param aMenuItems the menu items to display.
+   * @param aSubview   the subview to fill.
+   */
+  fillSubviewFromMenuItems(aMenuItems, aSubview) {
+    let attrs = ["oncommand", "onclick", "label", "key", "disabled",
+                 "command", "observes", "hidden", "class", "origin",
+                 "image", "checked", "style"];
+
+    let doc = aSubview.ownerDocument;
+    let fragment = doc.createDocumentFragment();
+    for (let menuChild of aMenuItems) {
+      if (menuChild.hidden)
+        continue;
+
+      let subviewItem;
+      if (menuChild.localName == "menuseparator") {
+        // Don't insert duplicate or leading separators. This can happen if there are
+        // menus (which we don't copy) above the separator.
+        if (!fragment.lastChild || fragment.lastChild.localName == "menuseparator") {
+          continue;
+        }
+        subviewItem = doc.createElementNS(kNSXUL, "menuseparator");
+      } else if (menuChild.localName == "menuitem") {
+        subviewItem = doc.createElementNS(kNSXUL, "toolbarbutton");
+        CustomizableUI.addShortcut(menuChild, subviewItem);
+
+        let item = menuChild;
+        if (!item.hasAttribute("onclick")) {
+          subviewItem.addEventListener("click", event => {
+            let newEvent = new doc.defaultView.MouseEvent(event.type, event);
+            item.dispatchEvent(newEvent);
+          });
+        }
+
+        if (!item.hasAttribute("oncommand")) {
+          subviewItem.addEventListener("command", event => {
+            let newEvent = doc.createEvent("XULCommandEvent");
+            newEvent.initCommandEvent(
+              event.type, event.bubbles, event.cancelable, event.view,
+              event.detail, event.ctrlKey, event.altKey, event.shiftKey,
+              event.metaKey, event.sourceEvent, 0);
+            item.dispatchEvent(newEvent);
+          });
+        }
+      } else {
+        continue;
+      }
+      for (let attr of attrs) {
+        let attrVal = menuChild.getAttribute(attr);
+        if (attrVal)
+          subviewItem.setAttribute(attr, attrVal);
+      }
+      // We do this after so the .subviewbutton class doesn't get overriden.
+      if (menuChild.localName == "menuitem") {
+        subviewItem.classList.add("subviewbutton");
+      }
+      fragment.appendChild(subviewItem);
+    }
+    aSubview.appendChild(fragment);
+  },
+
+  /**
+   * A helper function for clearing subviews.
+   * @param aSubview the subview to clear.
+   */
+  clearSubview(aSubview) {
+    let parent = aSubview.parentNode;
+    // We'll take the container out of the document before cleaning it out
+    // to avoid reflowing each time we remove something.
+    parent.removeChild(aSubview);
+
+    while (aSubview.firstChild) {
+      aSubview.firstChild.remove();
+    }
+
+    parent.appendChild(aSubview);
   },
 };
 Object.freeze(this.CustomizableUI);
@@ -4294,7 +4327,7 @@ OverflowableToolbar.prototype = {
         if (aEvent.target == this._chevron) {
           this._onClickChevron(aEvent);
         } else {
-          this._panel.hidePopup();
+          PanelMultiView.hidePopup(this._panel);
         }
         break;
       case "customizationstarting":
@@ -4306,7 +4339,7 @@ OverflowableToolbar.prototype = {
         }
         break;
       case "dragend":
-        this._panel.hidePopup();
+        PanelMultiView.hidePopup(this._panel);
         break;
       case "popuphiding":
         this._onPanelHiding(aEvent);
@@ -4323,35 +4356,35 @@ OverflowableToolbar.prototype = {
     return new Promise(resolve => {
       let doc = this._panel.ownerDocument;
       this._panel.hidden = false;
-      let photonView = this._panel.querySelector("photonpanelmultiview");
-      let contextMenu;
-      if (photonView) {
-        let mainViewId = photonView.getAttribute("mainViewId");
-        let mainView = doc.getElementById(mainViewId);
-        contextMenu = doc.getElementById(mainView.getAttribute("context"));
-      } else {
-        contextMenu = doc.getElementById(this._panel.getAttribute("context"));
-      }
+      let multiview = this._panel.querySelector("panelmultiview");
+      let mainViewId = multiview.getAttribute("mainViewId");
+      let mainView = doc.getElementById(mainViewId);
+      let contextMenu = doc.getElementById(mainView.getAttribute("context"));
       gELS.addSystemEventListener(contextMenu, "command", this, true);
       let anchor = doc.getAnonymousElementByAttribute(this._chevron, "class", "toolbarbutton-icon");
       // Ensure we update the gEditUIVisible flag when opening the popup, in
       // case the edit controls are in it.
       this._panel.addEventListener("popupshowing", () => doc.defaultView.updateEditUIVisibility(), {once: true});
-      this._panel.openPopup(anchor || this._chevron, { triggerEvent: aEvent });
+      PanelMultiView.openPopup(this._panel, anchor || this._chevron, {
+        triggerEvent: aEvent,
+      }).catch(Cu.reportError);
       this._chevron.open = true;
 
       this._panel.addEventListener("popupshown", () => {
         this._panel.addEventListener("dragover", this);
         this._panel.addEventListener("dragend", this);
-        resolve();
+        // Wait until the next tick to resolve so all popupshown
+        // handlers have a chance to run before our promise resolution
+        // handlers do.
+        Services.tm.dispatchToMainThread(resolve);
       }, {once: true});
     });
   },
 
   _onClickChevron(aEvent) {
     if (this._chevron.open) {
-      this._panel.hidePopup();
       this._chevron.open = false;
+      PanelMultiView.hidePopup(this._panel);
     } else if (this._panel.state != "hiding" && !this._chevron.disabled) {
       this.show(aEvent);
     }
@@ -4643,7 +4676,7 @@ OverflowableToolbar.prototype = {
       }
       this._hideTimeoutId = window.setTimeout(() => {
         if (!this._panel.firstChild.matches(":hover")) {
-          this._panel.hidePopup();
+          PanelMultiView.hidePopup(this._panel);
         }
       }, OVERFLOW_PANEL_HIDE_DELAY_MS);
     });

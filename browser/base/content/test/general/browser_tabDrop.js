@@ -53,6 +53,45 @@ add_task(async function() {
                 data: "mochi.test/11\nTITLE11"}]], 1);
 });
 
+// Warn when too many URLs are dropped.
+add_task(async function multiple_tabs_under_max() {
+  let urls = [];
+  for (let i = 0; i < 5; i++) {
+    urls.push("mochi.test/multi" + i);
+  }
+  await dropText(urls.join("\n"), 5);
+});
+add_task(async function multiple_tabs_over_max_accept() {
+  await pushPrefs(["browser.tabs.maxOpenBeforeWarn", 4]);
+
+  let confirmPromise = BrowserTestUtils.promiseAlertDialog("accept");
+
+  let urls = [];
+  for (let i = 0; i < 5; i++) {
+    urls.push("mochi.test/accept" + i);
+  }
+  await dropText(urls.join("\n"), 5, true);
+
+  await confirmPromise;
+
+  await popPrefs();
+});
+add_task(async function multiple_tabs_over_max_cancel() {
+  await pushPrefs(["browser.tabs.maxOpenBeforeWarn", 4]);
+
+  let confirmPromise = BrowserTestUtils.promiseAlertDialog("cancel");
+
+  let urls = [];
+  for (let i = 0; i < 5; i++) {
+    urls.push("mochi.test/cancel" + i);
+  }
+  await dropText(urls.join("\n"), 0, true);
+
+  await confirmPromise;
+
+  await popPrefs();
+});
+
 function dropText(text, expectedTabOpenCount = 0) {
   return drop([[{type: "text/plain", data: text}]], expectedTabOpenCount);
 }
@@ -60,10 +99,8 @@ function dropText(text, expectedTabOpenCount = 0) {
 async function drop(dragData, expectedTabOpenCount = 0) {
   let dragDataString = JSON.stringify(dragData);
   info(`Starting test for datagData:${dragDataString}; expectedTabOpenCount:${expectedTabOpenCount}`);
-  let scriptLoader = Cc["@mozilla.org/moz/jssubscript-loader;1"].
-                     getService(Ci.mozIJSSubScriptLoader);
   let EventUtils = {};
-  scriptLoader.loadSubScript("chrome://mochikit/content/tests/SimpleTest/EventUtils.js", EventUtils);
+  Services.scriptloader.loadSubScript("chrome://mochikit/content/tests/SimpleTest/EventUtils.js", EventUtils);
 
   let awaitDrop = BrowserTestUtils.waitForEvent(gBrowser.tabContainer, "drop");
   let actualTabOpenCount = 0;

@@ -3,20 +3,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const {classes: Cc, interfaces: Ci, utils: Cu, manager: Cm} = Components;
+const Cm = Components.manager;
 
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://gre/modules/Preferences.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://gre/modules/Preferences.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-const XMLHttpRequest = Components.Constructor("@mozilla.org/xmlextras/xmlhttprequest;1");
+ChromeUtils.defineModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
-
-Cu.importGlobalProperties(["TextDecoder"]);
+Cu.importGlobalProperties(["TextDecoder", "XMLHttpRequest"]);
 
 // Define our prefs
 const PREF_CLIENT_ID = "asanreporter.clientid";
@@ -31,12 +29,37 @@ logger.addAppender(new Log.ConsoleAppender(new Log.BasicFormatter()));
 logger.addAppender(new Log.DumpAppender(new Log.BasicFormatter()));
 logger.level = Preferences.get(PREF_LOG_LEVEL, Log.Level.Info);
 
+this.TabCrashObserver = {
+  init() {
+    if (this.initialized)
+      return;
+    this.initialized = true;
+
+    Services.obs.addObserver(this, "ipc:content-shutdown");
+  },
+
+  observe(aSubject, aTopic, aData) {
+    if (aTopic == "ipc:content-shutdown") {
+        aSubject.QueryInterface(Ci.nsIPropertyBag2);
+        if (!aSubject.get("abnormal")) {
+          return;
+        }
+        processDirectory("/tmp");
+    }
+  },
+};
+
 function install(aData, aReason) {}
 
 function uninstall(aData, aReason) {}
 
 function startup(aData, aReason) {
   logger.info("Starting up...");
+
+  // Install a handler to observe tab crashes, so we can report those right
+  // after they happen instead of relying on the user to restart the browser.
+  TabCrashObserver.init();
+
   // We could use OS.Constants.Path.tmpDir here, but unfortunately there is
   // no way in C++ to get the same value *prior* to xpcom initialization.
   // Since ASan needs its options, including the "log_path" option already
@@ -62,7 +85,7 @@ function processDirectory(pathString) {
   iterator.forEach(
     (entry) => {
       if (entry.name.indexOf("ff_asan_log.") == 0
-        && entry.name.indexOf("submitted") < 0) {
+        && !entry.name.includes("submitted")) {
         results.push(entry);
       }
     }

@@ -6,21 +6,17 @@
 
 /* exported logger */
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
+var EXPORTED_SYMBOLS = [];
 
-this.EXPORTED_SYMBOLS = [];
-
-Cu.import("resource://gre/modules/AddonManager.jsm");
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
 /* globals AddonManagerPrivate*/
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const URI_EXTENSION_STRINGS  = "chrome://mozapps/locale/extensions/extensions.properties";
 const LIST_UPDATED_TOPIC     = "plugins-list-updated";
 const FLASH_MIME_TYPE        = "application/x-shockwave-flash";
 
-Cu.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
 const LOGGER_ID = "addons.plugins";
 
 // Create a new logger for use by the Addons Plugin Provider
@@ -57,10 +53,12 @@ var PluginProvider = {
         if (!plugin)
           return;
 
-        let libLabel = aSubject.getElementById("pluginLibraries");
+        let document = aSubject.getElementById("addon-options").contentDocument;
+
+        let libLabel = document.getElementById("pluginLibraries");
         libLabel.textContent = plugin.pluginLibraries.join(", ");
 
-        let typeLabel = aSubject.getElementById("pluginMimeTypes"), types = [];
+        let typeLabel = document.getElementById("pluginMimeTypes"), types = [];
         for (let type of plugin.pluginMimeTypes) {
           let extras = [type.description.trim(), type.suffixes].
                        filter(x => x).join(": ");
@@ -68,7 +66,7 @@ var PluginProvider = {
         }
         typeLabel.textContent = types.join(",\n");
         let showProtectedModePref = canDisableFlashProtectedMode(plugin);
-        aSubject.getElementById("pluginEnableProtectedMode")
+        document.getElementById("pluginEnableProtectedMode")
           .setAttribute("collapsed", showProtectedModePref ? "" : "true");
       });
       break;
@@ -116,7 +114,7 @@ var PluginProvider = {
    *         A callback to pass an array of Addons to
    */
   getAddonsByTypes(aTypes, aCallback) {
-    if (aTypes && aTypes.indexOf("plugin") < 0) {
+    if (aTypes && !aTypes.includes("plugin")) {
       aCallback([]);
       return;
     }
@@ -379,16 +377,12 @@ PluginWrapper.prototype = {
 
   get blocklistState() {
     let { tags: [tag] } = pluginFor(this);
-    let bs = Cc["@mozilla.org/extensions/blocklist;1"].
-             getService(Ci.nsIBlocklistService);
-    return bs.getPluginBlocklistState(tag);
+    return tag.blocklistState;
   },
 
   get blocklistURL() {
     let { tags: [tag] } = pluginFor(this);
-    let bs = Cc["@mozilla.org/extensions/blocklist;1"].
-             getService(Ci.nsIBlocklistService);
-    return bs.getPluginBlocklistURL(tag);
+    return Services.blocklist.getPluginBlocklistURL(tag);
   },
 
   get size() {
@@ -478,7 +472,7 @@ PluginWrapper.prototype = {
       if (path.startsWith(dir.path))
         return AddonManager.SCOPE_USER;
     } catch (e) {
-      if (!e.result || e.result != Components.results.NS_ERROR_FAILURE)
+      if (!e.result || e.result != Cr.NS_ERROR_FAILURE)
         throw e;
       // Do nothing: missing "Home".
     }
@@ -525,7 +519,7 @@ PluginWrapper.prototype = {
   },
 
   get optionsType() {
-    return AddonManager.OPTIONS_TYPE_INLINE;
+    return AddonManager.OPTIONS_TYPE_INLINE_BROWSER;
   },
 
   get optionsURL() {

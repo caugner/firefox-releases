@@ -8,6 +8,7 @@
 
 #include "nsCSSValue.h"
 
+#include "mozilla/CORSMode.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/ServoTypes.h"
@@ -20,12 +21,15 @@
 #include "imgIRequest.h"
 #include "imgRequestProxy.h"
 #include "nsIDocument.h"
+#include "nsIURIMutator.h"
 #include "nsCSSProps.h"
 #include "nsNetUtil.h"
 #include "nsPresContext.h"
 #include "nsStyleUtil.h"
 #include "nsDeviceContext.h"
+#ifdef MOZ_OLD_STYLE
 #include "nsStyleSet.h"
+#endif
 #include "nsContentUtils.h"
 
 using namespace mozilla;
@@ -382,16 +386,6 @@ nsCSSValue::GetPossiblyStaticImageValue(nsIDocument* aDocument,
     return do_AddRef(req);
   }
   return nsContentUtils::GetStaticRequest(aDocument, req);
-}
-
-nscoord nsCSSValue::GetFixedLength(nsPresContext* aPresContext) const
-{
-  MOZ_ASSERT(mUnit == eCSSUnit_PhysicalMillimeter,
-             "not a fixed length unit");
-
-  float inches = mValue.mFloat / MM_PER_INCH_FLOAT;
-  return NSToCoordFloorClamped(inches *
-    float(aPresContext->DeviceContext()->AppUnitsPerPhysicalInch()));
 }
 
 nscoord nsCSSValue::GetPixelLength() const
@@ -901,11 +895,14 @@ nsCSSValue::GetCalcValue() const
   return result;
 }
 
-void nsCSSValue::StartImageLoad(nsIDocument* aDocument) const
+void nsCSSValue::StartImageLoad(nsIDocument* aDocument,
+                                mozilla::CORSMode aCORSMode) const
 {
   MOZ_ASSERT(eCSSUnit_URL == mUnit, "Not a URL value!");
   mozilla::css::ImageValue* image =
-      mozilla::css::ImageValue::CreateFromURLValue(mValue.mURL, aDocument);
+      mozilla::css::ImageValue::CreateFromURLValue(mValue.mURL,
+                                                   aDocument,
+                                                   aCORSMode);
 
   nsCSSValue* writable = const_cast<nsCSSValue*>(this);
   writable->SetImageValue(image);
@@ -1275,7 +1272,11 @@ nsCSSValue::AppendAlignJustifyValueToString(int32_t aValue, nsAString& aResult)
     aValue &= ~legacy;
     aResult.AppendLiteral("legacy ");
   }
+  // Don't serialize the 'unsafe' keyword; it's the default.
   auto overflowPos = aValue & (NS_STYLE_ALIGN_SAFE | NS_STYLE_ALIGN_UNSAFE);
+  if (MOZ_UNLIKELY(overflowPos == NS_STYLE_ALIGN_SAFE)) {
+    aResult.AppendLiteral("safe ");
+  }
   aValue &= ~overflowPos;
   MOZ_ASSERT(!(aValue & NS_STYLE_ALIGN_FLAG_BITS),
              "unknown bits in align/justify value");
@@ -1293,12 +1294,6 @@ nsCSSValue::AppendAlignJustifyValueToString(int32_t aValue, nsAString& aResult)
   }
   const auto& kwtable(nsCSSProps::kAlignAllKeywords);
   AppendASCIItoUTF16(nsCSSProps::ValueToKeyword(aValue, kwtable), aResult);
-  // Don't serialize the 'unsafe' keyword; it's the default.
-  if (MOZ_UNLIKELY(overflowPos == NS_STYLE_ALIGN_SAFE)) {
-    aResult.Append(' ');
-    AppendASCIItoUTF16(nsCSSProps::ValueToKeyword(overflowPos, kwtable),
-                       aResult);
-  }
 }
 
 /**
@@ -2064,7 +2059,6 @@ nsCSSValue::AppendToString(nsCSSPropertyID aProperty,
 
     case eCSSUnit_Inch:         aResult.AppendLiteral("in");   break;
     case eCSSUnit_Millimeter:   aResult.AppendLiteral("mm");   break;
-    case eCSSUnit_PhysicalMillimeter: aResult.AppendLiteral("mozmm");   break;
     case eCSSUnit_Centimeter:   aResult.AppendLiteral("cm");   break;
     case eCSSUnit_Point:        aResult.AppendLiteral("pt");   break;
     case eCSSUnit_Pica:         aResult.AppendLiteral("pc");   break;
@@ -2249,7 +2243,6 @@ nsCSSValue::SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
     // Float: nothing extra to measure.
     case eCSSUnit_Percent:
     case eCSSUnit_Number:
-    case eCSSUnit_PhysicalMillimeter:
     case eCSSUnit_ViewportWidth:
     case eCSSUnit_ViewportHeight:
     case eCSSUnit_ViewportMin:
@@ -2918,7 +2911,7 @@ css::URLValueData::GetUTF16String() const
     nsDependentCSubstring rust = GetRustString();
     nsString converted = NS_ConvertUTF8toUTF16(rust);
     Servo_ReleaseArcStringData(&mStrings.mRustString);
-    mStrings.mString = converted;
+    new (&mStrings) RustOrGeckoString(converted);
     mUsingRustString = false;
   }
   return mStrings.mString;
@@ -3021,8 +3014,13 @@ css::URLValueData::ResolveLocalRef(nsIURI* aURI) const
     nsCString ref;
     mURI->GetRef(ref);
 
-    aURI->Clone(getter_AddRefs(result));
-    result->SetRef(ref);
+    nsresult rv = NS_MutateURI(aURI)
+                    .SetRef(ref)
+                    .Finalize(result);
+    if (NS_FAILED(rv)) {
+      // If setting the ref failed, just return a clone.
+      aURI->Clone(getter_AddRefs(result));
+    }
   }
 
   return result.forget();
@@ -3122,44 +3120,59 @@ css::URLValue::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
 
 css::ImageValue::ImageValue(nsIURI* aURI, const nsAString& aString,
                             already_AddRefed<URLExtraData> aExtraData,
-                            nsIDocument* aDocument)
+                            nsIDocument* aDocument,
+                            CORSMode aCORSMode)
   : URLValueData(do_AddRef(new PtrHolder<nsIURI>("URLValueData::mURI", aURI)),
                  aString, Move(aExtraData))
 {
+  mCORSMode = aCORSMode;
   Initialize(aDocument);
 }
 
 css::ImageValue::ImageValue(nsIURI* aURI, ServoRawOffsetArc<RustString> aString,
                             already_AddRefed<URLExtraData> aExtraData,
-                            nsIDocument* aDocument)
+                            nsIDocument* aDocument,
+                            CORSMode aCORSMode)
   : URLValueData(do_AddRef(new PtrHolder<nsIURI>("URLValueData::mURI", aURI)),
                  aString, Move(aExtraData))
 {
+  mCORSMode = aCORSMode;
   Initialize(aDocument);
 }
 
 css::ImageValue::ImageValue(const nsAString& aString,
-                            already_AddRefed<URLExtraData> aExtraData)
+                            already_AddRefed<URLExtraData> aExtraData,
+                            CORSMode aCORSMode)
   : URLValueData(aString, Move(aExtraData))
 {
+  mCORSMode = aCORSMode;
 }
 
 css::ImageValue::ImageValue(ServoRawOffsetArc<RustString> aString,
-                            already_AddRefed<URLExtraData> aExtraData)
+                            already_AddRefed<URLExtraData> aExtraData,
+                            CORSMode aCORSMode)
   : URLValueData(aString, Move(aExtraData))
 {
+  mCORSMode = aCORSMode;
 }
 
 /*static*/ css::ImageValue*
-css::ImageValue::CreateFromURLValue(URLValue* aUrl, nsIDocument* aDocument)
+css::ImageValue::CreateFromURLValue(URLValue* aUrl,
+                                    nsIDocument* aDocument,
+                                    CORSMode aCORSMode)
 {
   if (aUrl->mUsingRustString) {
     return new css::ImageValue(aUrl->GetURI(),
                                Servo_CloneArcStringData(&aUrl->mStrings.mRustString),
-                               do_AddRef(aUrl->mExtraData), aDocument);
+                               do_AddRef(aUrl->mExtraData),
+                               aDocument,
+                               aCORSMode);
   }
-  return new css::ImageValue(aUrl->GetURI(), aUrl->mStrings.mString,
-                             do_AddRef(aUrl->mExtraData), aDocument);
+  return new css::ImageValue(aUrl->GetURI(),
+                             aUrl->mStrings.mString,
+                             do_AddRef(aUrl->mExtraData),
+                             aDocument,
+                             aCORSMode);
 }
 
 void
@@ -3178,9 +3191,11 @@ css::ImageValue::Initialize(nsIDocument* aDocument)
   if (!mLoadedImage) {
     loadingDoc->StyleImageLoader()->LoadImage(GetURI(),
                                               mExtraData->GetPrincipal(),
-                                              mExtraData->GetReferrer(), this);
+                                              mExtraData->GetReferrer(),
+                                              this,
+                                              mCORSMode);
 
-     mLoadedImage = true;
+    mLoadedImage = true;
   }
 
   aDocument->StyleImageLoader()->MaybeRegisterCSSImage(this);

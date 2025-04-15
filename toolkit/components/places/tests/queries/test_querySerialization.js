@@ -234,11 +234,11 @@ const querySwitches = [
       if (q1Folders.length !== q2Folders.length)
         return false;
       for (let i = 0; i < q1Folders.length; i++) {
-        if (q2Folders.indexOf(q1Folders[i]) < 0)
+        if (!q2Folders.includes(q1Folders[i]))
           return false;
       }
       for (let i = 0; i < q2Folders.length; i++) {
-        if (q1Folders.indexOf(q2Folders[i]) < 0)
+        if (!q1Folders.includes(q2Folders[i]))
           return false;
       }
       return true;
@@ -266,11 +266,11 @@ const querySwitches = [
       if (q1Tags.length !== q2Tags.length)
         return false;
       for (let i = 0; i < q1Tags.length; i++) {
-        if (q2Tags.indexOf(q1Tags[i]) < 0)
+        if (!q2Tags.includes(q1Tags[i]))
           return false;
       }
       for (let i = 0; i < q2Tags.length; i++) {
-        if (q1Tags.indexOf(q2Tags[i]) < 0)
+        if (!q1Tags.includes(q2Tags[i]))
           return false;
       }
       return true;
@@ -320,11 +320,11 @@ const querySwitches = [
       if (q1Trans.length !== q2Trans.length)
         return false;
       for (let i = 0; i < q1Trans.length; i++) {
-        if (q2Trans.indexOf(q1Trans[i]) < 0)
+        if (!q2Trans.includes(q1Trans[i]))
           return false;
       }
       for (let i = 0; i < q2Trans.length; i++) {
-        if (q1Trans.indexOf(q2Trans[i]) < 0)
+        if (!q1Trans.includes(q2Trans[i]))
           return false;
       }
       return true;
@@ -381,9 +381,6 @@ const queryOptionSwitches = [
       function(aQuery, aQueryOptions) {
         aQueryOptions.resultType = aQueryOptions.RESULTS_AS_URI;
       },
-      function(aQuery, aQueryOptions) {
-        aQueryOptions.resultType = aQueryOptions.RESULTS_AS_FULL_VISIT;
-      }
     ]
   },
   // excludeItems
@@ -743,7 +740,7 @@ function serializeDeserialize(aQueryArr, aQueryOptions) {
   opts2 = opts2.value;
 
   // The two sets of queries cannot be the same if their lengths differ.
-  do_check_eq(aQueryArr.length, queryArr2.length);
+  Assert.equal(aQueryArr.length, queryArr2.length);
 
   // Although the query serialization code as it is written now practically
   // ensures that queries appear in the query string in the same order they
@@ -761,10 +758,10 @@ function serializeDeserialize(aQueryArr, aQueryOptions) {
     if (j < queryArr2.length)
       queryArr2.splice(j, 1);
   }
-  do_check_eq(queryArr2.length, 0);
+  Assert.equal(queryArr2.length, 0);
 
   // Finally check the query options objects.
-  do_check_true(queryObjsEqual(queryOptionSwitches, aQueryOptions, opts2));
+  Assert.ok(queryObjsEqual(queryOptionSwitches, aQueryOptions, opts2));
 }
 
 /**

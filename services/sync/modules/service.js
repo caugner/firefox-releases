@@ -2,12 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-this.EXPORTED_SYMBOLS = ["Service"];
-
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cr = Components.results;
-var Cu = Components.utils;
+var EXPORTED_SYMBOLS = ["Service"];
 
 // How long before refreshing the cluster
 const CLUSTER_BACKOFF = 5 * 60 * 1000; // 5 minutes
@@ -18,28 +13,27 @@ const PBKDF2_KEY_BYTES = 16;
 const CRYPTO_COLLECTION = "crypto";
 const KEYS_WBO = "keys";
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://services-common/async.js");
-Cu.import("resource://services-common/utils.js");
-Cu.import("resource://services-sync/constants.js");
-Cu.import("resource://services-sync/engines.js");
-Cu.import("resource://services-sync/engines/clients.js");
-Cu.import("resource://services-sync/main.js");
-Cu.import("resource://services-sync/policies.js");
-Cu.import("resource://services-sync/record.js");
-Cu.import("resource://services-sync/resource.js");
-Cu.import("resource://services-sync/stages/enginesync.js");
-Cu.import("resource://services-sync/stages/declined.js");
-Cu.import("resource://services-sync/status.js");
-Cu.import("resource://services-sync/telemetry.js");
-Cu.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://services-common/async.js");
+ChromeUtils.import("resource://services-common/utils.js");
+ChromeUtils.import("resource://services-sync/constants.js");
+ChromeUtils.import("resource://services-sync/engines.js");
+ChromeUtils.import("resource://services-sync/engines/clients.js");
+ChromeUtils.import("resource://services-sync/main.js");
+ChromeUtils.import("resource://services-sync/policies.js");
+ChromeUtils.import("resource://services-sync/record.js");
+ChromeUtils.import("resource://services-sync/resource.js");
+ChromeUtils.import("resource://services-sync/stages/enginesync.js");
+ChromeUtils.import("resource://services-sync/stages/declined.js");
+ChromeUtils.import("resource://services-sync/status.js");
+ChromeUtils.import("resource://services-sync/telemetry.js");
+ChromeUtils.import("resource://services-sync/util.js");
 
 function getEngineModules() {
   let result = {
     Addons: {module: "addons.js", symbol: "AddonsEngine"},
-    Bookmarks: {module: "bookmarks.js", symbol: "BookmarksEngine"},
     Form: {module: "forms.js", symbol: "FormEngine"},
     History: {module: "history.js", symbol: "HistoryEngine"},
     Password: {module: "passwords.js", symbol: "PasswordEngine"},
@@ -59,6 +53,10 @@ function getEngineModules() {
       symbol: "CreditCardsEngine",
     };
   }
+  result.Bookmarks = {
+    module: "bookmarks.js",
+    symbol: "BookmarksEngine",
+  };
   return result;
 }
 
@@ -69,6 +67,7 @@ XPCOMUtils.defineLazyGetter(this, "browserSessionID", Utils.makeGUID);
 
 function Sync11Service() {
   this._notify = Utils.notify("weave:service:");
+  Utils.defineLazyIDProperty(this, "syncID", "services.sync.client.syncID");
 }
 Sync11Service.prototype = {
 
@@ -80,7 +79,7 @@ Sync11Service.prototype = {
   storageURL: null,
   metaURL: null,
   cryptoKeyURL: null,
-  // The cluster URL comes via the ClusterManager object, which in the FxA
+  // The cluster URL comes via the identity object, which in the FxA
   // world is ebbedded in the token returned from the token server.
   _clusterURL: null,
 
@@ -93,15 +92,6 @@ Sync11Service.prototype = {
     }
     this._clusterURL = value;
     this._updateCachedURLs();
-  },
-
-  get syncID() {
-    // Generate a random syncID id we don't have one
-    let syncID = Svc.Prefs.get("client.syncID", "");
-    return syncID == "" ? this.syncID = Utils.makeGUID() : syncID;
-  },
-  set syncID(value) {
-    Svc.Prefs.set("client.syncID", value);
   },
 
   get isLoggedIn() { return this._loggedIn; },
@@ -132,10 +122,8 @@ Sync11Service.prototype = {
   },
 
   get userBaseURL() {
-    if (!this._clusterManager) {
-      return null;
-    }
-    return this._clusterManager.getUserBaseURL();
+    // The user URL is the cluster URL.
+    return this.clusterURL;
   },
 
   _updateCachedURLs: function _updateCachedURLs() {
@@ -292,15 +280,14 @@ Sync11Service.prototype = {
     this.identity = Status._authManager;
     this.collectionKeys = new CollectionKeyManager();
 
+    this.scheduler = new SyncScheduler(this);
     this.errorHandler = new ErrorHandler(this);
 
     this._log = Log.repository.getLogger("Sync.Service");
-    this._log.level =
-      Log.Level[Svc.Prefs.get("log.logger.service.main")];
+    this._log.manageLevelFromPref("services.sync.log.logger.service.main");
 
     this._log.info("Loading Weave " + WEAVE_VERSION);
 
-    this._clusterManager = this.identity.createClusterManager(this);
     this.recordManager = new RecordManager(this);
 
     this.enabled = true;
@@ -322,8 +309,6 @@ Sync11Service.prototype = {
     Svc.Obs.add("fxaccounts:device_disconnected", this);
     Services.prefs.addObserver(PREFS_BRANCH + "engine.", this);
 
-    this.scheduler = new SyncScheduler(this);
-
     if (!this.enabled) {
       this._log.info("Firefox Sync disabled.");
     }
@@ -332,7 +317,7 @@ Sync11Service.prototype = {
 
     let status = this._checkSetup();
     if (status != STATUS_DISABLED && status != CLIENT_NOT_CONFIGURED) {
-      Svc.Obs.notify("weave:engine:start-tracking");
+      this._startTracking();
     }
 
     // Send an event now that Weave service is ready.  We don't do this
@@ -401,7 +386,7 @@ Sync11Service.prototype = {
       }
       let ns = {};
       try {
-        Cu.import(module, ns);
+        ChromeUtils.import(module, ns);
         if (!(symbol in ns)) {
           this._log.warn("Could not find exported engine instance: " + symbol);
           continue;
@@ -419,9 +404,7 @@ Sync11Service.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
                                          Ci.nsISupportsWeakReference]),
 
-  // nsIObserver
-
-  observe: function observe(subject, topic, data) {
+  observe(subject, topic, data) {
     switch (topic) {
       // Ideally this observer should be in the SyncScheduler, but it would require
       // some work to know about the sync specific engines. We should move this there once it does.
@@ -433,7 +416,7 @@ Sync11Service.prototype = {
           // Sync in the background (it's fine not to wait on the returned promise
           // because sync() has a lock).
           // [] = clients collection only
-          this.sync([]).catch(e => {
+          this.sync({why: "collection_changed", engines: []}).catch(e => {
             this._log.error(e);
           });
         }
@@ -441,24 +424,34 @@ Sync11Service.prototype = {
       case "fxaccounts:device_disconnected":
         data = JSON.parse(data);
         if (!data.isLocalDevice) {
-          Async.promiseSpinningly(this.clientsEngine.updateKnownStaleClients());
+          // Refresh the known stale clients list in the background.
+          this.clientsEngine.updateKnownStaleClients().catch(e => {
+            this._log.error(e);
+          });
         }
         break;
       case "weave:service:setup-complete":
         let status = this._checkSetup();
-        if (status != STATUS_DISABLED && status != CLIENT_NOT_CONFIGURED)
-            Svc.Obs.notify("weave:engine:start-tracking");
+        if (status != STATUS_DISABLED && status != CLIENT_NOT_CONFIGURED) {
+          this._startTracking();
+        }
         break;
       case "nsPref:changed":
-        if (this._ignorePrefObserver)
+        if (this._ignorePrefObserver) {
           return;
-        let engine = data.slice((PREFS_BRANCH + "engine.").length);
+        }
+        const engine = data.slice((PREFS_BRANCH + "engine.").length);
+        if (engine.includes(".")) {
+          // A sub-preference of the engine was changed. For example
+          // `services.sync.engine.bookmarks.validation.percentageChance`.
+          return;
+        }
         this._handleEngineStatusChanged(engine);
         break;
     }
   },
 
-  _handleEngineStatusChanged: function handleEngineDisabled(engine) {
+  _handleEngineStatusChanged(engine) {
     this._log.trace("Status for " + engine + " engine changed.");
     if (Svc.Prefs.get("engineStatusChanged." + engine, false)) {
       // The enabled status being changed back to what it was before.
@@ -467,6 +460,31 @@ Sync11Service.prototype = {
       // Remember that the engine status changed locally until the next sync.
       Svc.Prefs.set("engineStatusChanged." + engine, true);
     }
+  },
+
+  _startTracking() {
+    const engines = [this.clientsEngine, ...this.engineManager.getAll()];
+    for (let engine of engines) {
+      try {
+        engine.startTracking();
+      } catch (e) {
+        this._log.error(`Could not start ${engine.name} engine tracker`, e);
+      }
+    }
+    // This is for TPS. We should try to do better.
+    Svc.Obs.notify("weave:service:tracking-started");
+  },
+
+  async _stopTracking() {
+    const engines = [this.clientsEngine, ...this.engineManager.getAll()];
+    for (let engine of engines) {
+      try {
+        await engine.stopTracking();
+      } catch (e) {
+        this._log.error(`Could not stop ${engine.name} engine tracker`, e);
+      }
+    }
+    Svc.Obs.notify("weave:service:tracking-stopped");
   },
 
   /**
@@ -495,7 +513,7 @@ Sync11Service.prototype = {
       throw ex;
     }
 
-    // Always check for errors; this is also where we look for X-Weave-Alert.
+    // Always check for errors.
     this.errorHandler.checkServerError(info);
     if (!info.success) {
       this._log.error("Aborting sync: failed to get collections.");
@@ -616,23 +634,27 @@ Sync11Service.prototype = {
     return payloadMax;
   },
 
-  async verifyLogin(allow40XRecovery = true) {
-    if (!this.identity.username) {
-      this._log.warn("No username in verifyLogin.");
-      this.status.login = LOGIN_FAILED_NO_USERNAME;
-      return false;
-    }
+  getMemcacheMaxRecordPayloadSize() {
+    // Collections stored in memcached ("tabs", "clients" or "meta") have a
+    // different max size than ones stored in the normal storage server db.
+    // In practice, the real limit here is 1M (bug 1300451 comment 40), but
+    // there's overhead involved that is hard to calculate on the client, so we
+    // use 512k to be safe (at the recommendation of the server team). Note
+    // that if the server reports a lower limit (via info/configuration), we
+    // respect that limit instead. See also bug 1403052.
+    return Math.min(512 * 1024, this.getMaxRecordPayloadSize());
+  },
 
+  async verifyLogin(allow40XRecovery = true) {
     // Attaching auth credentials to a request requires access to
     // passwords, which means that Resource.get can throw MP-related
     // exceptions!
     // So we ask the identity to verify the login state after unlocking the
     // master password (ie, this call is expected to prompt for MP unlock
     // if necessary) while we still have control.
-    let unlockedState = await this.identity.unlockAndVerifyAuthState();
-    this._log.debug("Fetching unlocked auth state returned " + unlockedState);
-    if (unlockedState != STATUS_OK) {
-      this.status.login = unlockedState;
+    this.status.login = await this.identity.unlockAndVerifyAuthState();
+    this._log.debug("Fetching unlocked auth state returned " + this.status.login);
+    if (this.status.login != STATUS_OK) {
       return false;
     }
 
@@ -640,7 +662,7 @@ Sync11Service.prototype = {
       // Make sure we have a cluster to verify against.
       // This is a little weird, if we don't get a node we pretend
       // to succeed, since that probably means we just don't have storage.
-      if (this.clusterURL == "" && !this._clusterManager.setCluster()) {
+      if (this.clusterURL == "" && !(await this.identity.setCluster())) {
         this.status.sync = NO_SYNC_NODE_FOUND;
         return true;
       }
@@ -679,16 +701,13 @@ Sync11Service.prototype = {
 
         case 404:
           // Check that we're verifying with the correct cluster
-          if (allow40XRecovery && this._clusterManager.setCluster()) {
+          if (allow40XRecovery && (await this.identity.setCluster())) {
             return await this.verifyLogin(false);
           }
 
           // We must have the right cluster, but the server doesn't expect us.
-          // The implications of this depend on the identity being used - for
-          // the legacy identity, it's an authoritatively "incorrect password",
-          // (ie, LOGIN_FAILED_LOGIN_REJECTED) but for FxA it probably means
-          // "transient error fetching auth token".
-          this.status.login = this.identity.loginStatusFromVerification404();
+          // For FxA this almost certainly means "transient error fetching token".
+          this.status.login = LOGIN_FAILED_NETWORK_ERROR;
           return false;
 
         default:
@@ -764,13 +783,14 @@ Sync11Service.prototype = {
 
   async startOver() {
     this._log.trace("Invoking Service.startOver.");
-    Svc.Obs.notify("weave:engine:stop-tracking");
+    await this._stopTracking();
     this.status.resetSync();
 
     // Deletion doesn't make sense if we aren't set up yet!
     if (this.clusterURL != "") {
       // Clear client-specific data from the server, including disabled engines.
-      for (let engine of [this.clientsEngine].concat(this.engineManager.getAll())) {
+      const engines = [this.clientsEngine, ...this.engineManager.getAll()];
+      for (let engine of engines) {
         try {
           await engine.removeClientData();
         } catch (ex) {
@@ -786,8 +806,8 @@ Sync11Service.prototype = {
     // possible, so let's fake for the CLIENT_NOT_CONFIGURED status for now
     // by emptying the passphrase (we still need the password).
     this._log.info("Service.startOver dropping sync key and logging out.");
-    this.identity.resetSyncKeyBundle();
-    this.status.login = LOGIN_FAILED_NO_PASSPHRASE;
+    this.identity.resetCredentials();
+    this.status.login = LOGIN_FAILED_NO_USERNAME;
     this.logout();
     Svc.Obs.notify("weave:service:start-over");
 
@@ -810,7 +830,6 @@ Sync11Service.prototype = {
       this.identity.finalize();
       this.status.__authManager = null;
       this.identity = Status._authManager;
-      this._clusterManager = this.identity.createClusterManager(this);
       Svc.Obs.notify("weave:service:start-over:finish");
     } catch (err) {
       this._log.error("startOver failed to re-initialize the identity manager", err);
@@ -823,26 +842,18 @@ Sync11Service.prototype = {
   async login() {
     async function onNotify() {
       this._loggedIn = false;
-      if (Services.io.offline) {
+      if (this.scheduler.offline) {
         this.status.login = LOGIN_FAILED_NETWORK_ERROR;
         throw new Error("Application is offline, login should not be called");
       }
-
-      this._log.info("Logging in the user.");
-      // Just let any errors bubble up - they've more context than we do!
-      try {
-        await this.identity.ensureLoggedIn();
-      } finally {
-        this._checkSetup(); // _checkSetup has a side effect of setting the right state.
-      }
-
-      this._updateCachedURLs();
 
       this._log.info("User logged in successfully - verifying login.");
       if (!(await this.verifyLogin())) {
         // verifyLogin sets the failure states here.
         throw new Error(`Login failed: ${this.status.login}`);
       }
+
+      this._updateCachedURLs();
 
       this._loggedIn = true;
 
@@ -897,8 +908,8 @@ Sync11Service.prototype = {
 
   // Stuff we need to do after login, before we can really do
   // anything (e.g. key setup).
-  async _remoteSetup(infoResponse) {
-    if (!(await this._fetchServerConfiguration())) {
+  async _remoteSetup(infoResponse, fetchConfig = true) {
+    if (fetchConfig && !(await this._fetchServerConfiguration())) {
       return false;
     }
 
@@ -1033,7 +1044,7 @@ Sync11Service.prototype = {
    */
   _shouldLogin: function _shouldLogin() {
     return this.enabled &&
-           !Services.io.offline &&
+           !this.scheduler.offline &&
            !this.isLoggedIn &&
            Async.isAppReady();
   },
@@ -1053,7 +1064,7 @@ Sync11Service.prototype = {
       reason = kSyncNotConfigured;
     else if (Status.service == STATUS_DISABLED || !this.enabled)
       reason = kSyncWeaveDisabled;
-    else if (Services.io.offline)
+    else if (this.scheduler.offline)
       reason = kSyncNetworkOffline;
     else if (this.status.minimumNextSync > Date.now())
       reason = kSyncBackoffNotMet;
@@ -1065,15 +1076,16 @@ Sync11Service.prototype = {
     else if (!Async.isAppReady())
       reason = kFirefoxShuttingDown;
 
-    if (ignore && ignore.indexOf(reason) != -1)
+    if (ignore && ignore.includes(reason))
       return "";
 
     return reason;
   },
 
-  async sync(engineNamesToSync) {
+  async sync({engines, why} = {}) {
     let dateStr = Utils.formatTimestamp(new Date());
     this._log.debug("User-Agent: " + Utils.userAgent);
+    await this.promiseInitialized;
     this._log.info(`Starting sync at ${dateStr} in browser session ${browserSessionID}`);
     return this._catch(async function() {
       // Make sure we're logged in.
@@ -1086,22 +1098,22 @@ Sync11Service.prototype = {
       } else {
         this._log.trace("In sync: no need to login.");
       }
-      await this._lockedSync(engineNamesToSync);
+      await this._lockedSync(engines, why);
     })();
   },
 
   /**
    * Sync up engines with the server.
    */
-  async _lockedSync(engineNamesToSync) {
+  async _lockedSync(engineNamesToSync, why) {
     return this._lock("service.js: sync",
-                      this._notify("sync", "", async function onNotify() {
+                      this._notify("sync", JSON.stringify({why}), async function onNotify() {
 
       let histogram = Services.telemetry.getHistogramById("WEAVE_START_COUNT");
       histogram.add(1);
 
       let synchronizer = new EngineSynchronizer(this);
-      await synchronizer.sync(engineNamesToSync); // Might throw!
+      await synchronizer.sync(engineNamesToSync, why); // Might throw!
 
       histogram = Services.telemetry.getHistogramById("WEAVE_COMPLETE_SUCCESS_COUNT");
       histogram.add(1);
@@ -1277,7 +1289,7 @@ Sync11Service.prototype = {
       // Clear out any service data
       await this.resetService();
 
-      engines = [this.clientsEngine].concat(this.engineManager.getAll());
+      engines = [this.clientsEngine, ...this.engineManager.getAll()];
     } else {
       // Convert the array of names into engines
       engines = this.engineManager.get(engines);
@@ -1351,7 +1363,7 @@ Sync11Service.prototype = {
         // Clear out any service data
         await this.resetService();
 
-        engines = [this.clientsEngine].concat(this.engineManager.getAll());
+        engines = [this.clientsEngine, ...this.engineManager.getAll()];
       } else {
         // Convert the array of names into engines
         engines = this.engineManager.get(engines);
@@ -1369,7 +1381,7 @@ Sync11Service.prototype = {
   },
 };
 
-this.Service = new Sync11Service();
+var Service = new Sync11Service();
 this.Service.promiseInitialized = new Promise(resolve => {
   this.Service.onStartup().then(resolve);
 });

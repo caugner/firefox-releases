@@ -4,45 +4,49 @@
 
 "use strict";
 
-const { DOM: dom, createClass, createFactory, PropTypes, addons } =
-  require("devtools/client/shared/vendor/react");
+const { PureComponent, createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 
 const { getStr } = require("../utils/l10n");
 const Types = require("../types");
-const DPRSelector = createFactory(require("./DprSelector"));
+const DevicePixelRatioSelector = createFactory(require("./DevicePixelRatioSelector"));
 const NetworkThrottlingSelector = createFactory(require("./NetworkThrottlingSelector"));
+const ReloadConditions = createFactory(require("./ReloadConditions"));
 
-module.exports = createClass({
-  displayName: "GlobalToolbar",
-
-  propTypes: {
-    devices: PropTypes.shape(Types.devices).isRequired,
-    displayPixelRatio: Types.pixelRatio.value.isRequired,
-    networkThrottling: PropTypes.shape(Types.networkThrottling).isRequired,
-    screenshot: PropTypes.shape(Types.screenshot).isRequired,
-    selectedDevice: PropTypes.string.isRequired,
-    selectedPixelRatio: PropTypes.shape(Types.pixelRatio).isRequired,
-    touchSimulation: PropTypes.shape(Types.touchSimulation).isRequired,
-    onChangeNetworkThrottling: PropTypes.func.isRequired,
-    onChangePixelRatio: PropTypes.func.isRequired,
-    onChangeTouchSimulation: PropTypes.func.isRequired,
-    onExit: PropTypes.func.isRequired,
-    onScreenshot: PropTypes.func.isRequired,
-  },
-
-  mixins: [ addons.PureRenderMixin ],
+class GlobalToolbar extends PureComponent {
+  static get propTypes() {
+    return {
+      devices: PropTypes.shape(Types.devices).isRequired,
+      displayPixelRatio: Types.pixelRatio.value.isRequired,
+      networkThrottling: PropTypes.shape(Types.networkThrottling).isRequired,
+      reloadConditions: PropTypes.shape(Types.reloadConditions).isRequired,
+      screenshot: PropTypes.shape(Types.screenshot).isRequired,
+      selectedDevice: PropTypes.string.isRequired,
+      selectedPixelRatio: PropTypes.shape(Types.pixelRatio).isRequired,
+      touchSimulation: PropTypes.shape(Types.touchSimulation).isRequired,
+      onChangeNetworkThrottling: PropTypes.func.isRequired,
+      onChangePixelRatio: PropTypes.func.isRequired,
+      onChangeReloadCondition: PropTypes.func.isRequired,
+      onChangeTouchSimulation: PropTypes.func.isRequired,
+      onExit: PropTypes.func.isRequired,
+      onScreenshot: PropTypes.func.isRequired,
+    };
+  }
 
   render() {
     let {
       devices,
       displayPixelRatio,
       networkThrottling,
+      reloadConditions,
       screenshot,
       selectedDevice,
       selectedPixelRatio,
       touchSimulation,
       onChangeNetworkThrottling,
       onChangePixelRatio,
+      onChangeReloadCondition,
       onChangeTouchSimulation,
       onExit,
       onScreenshot,
@@ -68,12 +72,16 @@ module.exports = createClass({
         networkThrottling,
         onChangeNetworkThrottling,
       }),
-      DPRSelector({
+      DevicePixelRatioSelector({
         devices,
         displayPixelRatio,
         selectedDevice,
         selectedPixelRatio,
         onChangePixelRatio,
+      }),
+      ReloadConditions({
+        reloadConditions,
+        onChangeReloadCondition,
       }),
       dom.button({
         id: "global-touch-simulation-button",
@@ -96,6 +104,7 @@ module.exports = createClass({
         onClick: onExit,
       })
     );
-  },
+  }
+}
 
-});
+module.exports = GlobalToolbar;

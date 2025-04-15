@@ -155,6 +155,7 @@ public:
 
   nsAtom* Scheme() const;
   const nsCString& Host() const;
+  const nsAtom* HostAtom() const;
   const nsString& Path() const;
   const nsString& FilePath() const;
   const nsString& Spec() const;
@@ -170,6 +171,7 @@ private:
 
   mutable RefPtr<nsAtom> mScheme;
   mutable nsCString mHost;
+  mutable RefPtr<nsAtom> mHostAtom;
 
   mutable nsString mPath;
   mutable nsString mFilePath;
@@ -283,6 +285,11 @@ private:
   // The glob against which the URL path must match. If null, the path is
   // ignored entirely. If non-null, the path must match this glob.
   RefPtr<MatchGlob> mPath;
+
+ public:
+  // A quick way to check if a particular URL matches <all_urls> without
+  // actually instantiating a MatchPattern
+  static bool MatchesAllURLs(const URLInfo& aURL);
 };
 
 

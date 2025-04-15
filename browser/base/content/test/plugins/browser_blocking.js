@@ -1,6 +1,6 @@
 var gTestRoot = getRootDirectory(gTestPath).replace("chrome://mochitests/content/", "http://127.0.0.1:8888/");
 var gTestBrowser = null;
-var gPluginHost = Components.classes["@mozilla.org/plugin/host;1"].getService(Components.interfaces.nsIPluginHost);
+var gPluginHost = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
 
 function updateAllTestPlugins(aState) {
   setTestPluginEnabledState(aState, "Test Plug-in");
@@ -32,12 +32,6 @@ add_task(async function() {
 
   // Prime the content process
   await promiseTabLoadEvent(gBrowser.selectedTab, "data:text/html,<html>hi</html>");
-
-  // Make sure the blocklist service(s) are running
-  Components.classes["@mozilla.org/extensions/blocklist;1"]
-            .getService(Components.interfaces.nsIBlocklistService);
-  let exmsg = await promiseInitContentBlocklistSvc(gBrowser.selectedBrowser);
-  ok(!exmsg, "exception: " + exmsg);
 });
 
 // Tests a vulnerable, updatable plugin
@@ -70,7 +64,7 @@ add_task(async function() {
       "Test 18a, Plugin should have an update link");
   });
 
-  let promise = waitForEvent(gBrowser.tabContainer, "TabOpen", null, true);
+  let promise = BrowserTestUtils.waitForEvent(gBrowser.tabContainer, "TabOpen", true);
 
   await ContentTask.spawn(gTestBrowser, {}, async function() {
     let doc = content.document;
@@ -79,14 +73,14 @@ add_task(async function() {
     let bounds = updateLink.getBoundingClientRect();
     let left = (bounds.left + bounds.right) / 2;
     let top = (bounds.top + bounds.bottom) / 2;
-    let utils = content.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
-                       .getInterface(Components.interfaces.nsIDOMWindowUtils);
+    let utils = content.QueryInterface(Ci.nsIInterfaceRequestor)
+                       .getInterface(Ci.nsIDOMWindowUtils);
     utils.sendMouseEvent("mousedown", left, top, 0, 1, 0, false, 0, 0);
     utils.sendMouseEvent("mouseup", left, top, 0, 1, 0, false, 0, 0);
   });
   await promise;
 
-  promise = waitForEvent(gBrowser.tabContainer, "TabClose", null, true);
+  promise = BrowserTestUtils.waitForEvent(gBrowser.tabContainer, "TabClose", true);
   gBrowser.removeCurrentTab();
   await promise;
 });
@@ -194,8 +188,8 @@ add_task(async function() {
     let bounds = plugin.getBoundingClientRect();
     let left = (bounds.left + bounds.right) / 2;
     let top = (bounds.top + bounds.bottom) / 2;
-    let utils = content.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
-                       .getInterface(Components.interfaces.nsIDOMWindowUtils);
+    let utils = content.QueryInterface(Ci.nsIInterfaceRequestor)
+                       .getInterface(Ci.nsIDOMWindowUtils);
     utils.sendMouseEvent("mousedown", left, top, 0, 1, 0, false, 0, 0);
     utils.sendMouseEvent("mouseup", left, top, 0, 1, 0, false, 0, 0);
   });
@@ -313,4 +307,3 @@ add_task(async function() {
     Assert.ok(!objLoadingContent.activated, "Plugin should not be activated.");
   });
 });
-

@@ -2,17 +2,35 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const {classes: Cc, utils: Cu, interfaces: Ci, manager: Cm} = Components;
+const Cm = Components.manager;
 Cm.QueryInterface(Ci.nsIServiceManager);
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 let firstPaintNotification = "widget-first-paint";
 // widget-first-paint fires much later than expected on Linux.
 if (AppConstants.platform == "linux")
   firstPaintNotification = "xul-window-visible";
+
+let win, canvas;
+let paints = [];
+let afterPaintListener = () => {
+  let width, height;
+  canvas.width = width = win.innerWidth;
+  canvas.height = height = win.innerHeight;
+  if (width < 1 || height < 1)
+    return;
+  let ctx = canvas.getContext("2d", {alpha: false, willReadFrequently: true});
+
+  ctx.drawWindow(win, 0, 0, width, height, "white",
+                 ctx.DRAWWINDOW_DO_NOT_FLUSH | ctx.DRAWWINDOW_DRAW_VIEW |
+                 ctx.DRAWWINDOW_ASYNC_DECODE_IMAGES |
+                 ctx.DRAWWINDOW_USE_WIDGET_LAYERS);
+  paints.push({data: ctx.getImageData(0, 0, width, height).data,
+               width, height});
+};
 
 /**
   * The startupRecorder component observes notifications at various stages of
@@ -83,6 +101,16 @@ startupRecorder.prototype = {
 
     Services.obs.removeObserver(this, topic);
 
+    if (topic == firstPaintNotification &&
+        Services.prefs.getBoolPref("browser.startup.record", false)) {
+      win = Services.wm.getMostRecentWindow("navigator:browser");
+      canvas = win.document.createElementNS("http://www.w3.org/1999/xhtml",
+                                            "canvas");
+      canvas.mozOpaque = true;
+      afterPaintListener();
+      win.addEventListener("MozAfterPaint", afterPaintListener);
+    }
+
     if (topic == "sessionstore-windows-restored") {
       if (!Services.prefs.getBoolPref("browser.startup.record", false)) {
         this._resolve();
@@ -107,6 +135,10 @@ startupRecorder.prototype = {
         this.record("before becoming idle");
         Services.obs.removeObserver(this, "image-drawing");
         Services.obs.removeObserver(this, "image-loading");
+        win.removeEventListener("MozAfterPaint", afterPaintListener);
+        win = null;
+        this.data.frames = paints;
+        paints = null;
         this._resolve();
         this._resolve = null;
       });

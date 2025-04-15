@@ -3,21 +3,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* eslint-env browser */
-/* globals DebuggerClient, DebuggerServer, Telemetry */
+/* globals Telemetry */
 
 "use strict";
 
-const { loader } = Components.utils.import(
+const { loader } = ChromeUtils.import(
   "resource://devtools/shared/Loader.jsm", {});
-const { BrowserLoader } = Components.utils.import(
+const { BrowserLoader } = ChromeUtils.import(
   "resource://devtools/client/shared/browser-loader.js", {});
-const { Services } = Components.utils.import(
+const { Services } = ChromeUtils.import(
   "resource://gre/modules/Services.jsm", {});
 
-loader.lazyRequireGetter(this, "DebuggerClient",
-  "devtools/shared/client/debugger-client", true);
-loader.lazyRequireGetter(this, "DebuggerServer",
-  "devtools/server/main", true);
 loader.lazyRequireGetter(this, "Telemetry",
   "devtools/client/shared/telemetry");
 
@@ -28,34 +24,28 @@ const { require } = BrowserLoader({
 
 const { createFactory } = require("devtools/client/shared/vendor/react");
 const { render, unmountComponentAtNode } = require("devtools/client/shared/vendor/react-dom");
+const EventEmitter = require("devtools/shared/event-emitter");
 
 const AboutDebuggingApp = createFactory(require("./components/Aboutdebugging"));
+const { createClient } = require("./modules/connect");
 
 var AboutDebugging = {
-  init() {
+  async init() {
     if (!Services.prefs.getBoolPref("devtools.enabled", true)) {
       // If DevTools are disabled, navigate to about:devtools.
       window.location = "about:devtools?reason=AboutDebugging";
       return;
     }
 
-    if (!DebuggerServer.initialized) {
-      DebuggerServer.init();
-    }
-    DebuggerServer.allowChromeProcess = true;
-    // We want a full featured server for about:debugging. Especially the
-    // "browser actors" like addons.
-    DebuggerServer.registerActors({ root: true, browser: true, tab: true });
+    let {connect, client} = await createClient();
 
-    this.client = new DebuggerClient(DebuggerServer.connectPipe());
+    this.client = client;
+    await this.client.connect();
 
-    this.client.connect().then(() => {
-      let client = this.client;
-      let telemetry = new Telemetry();
+    let telemetry = new Telemetry();
 
-      render(AboutDebuggingApp({ client, telemetry }),
-        document.querySelector("#body"));
-    });
+    render(AboutDebuggingApp({ client, connect, telemetry }),
+      document.querySelector("#body"));
   },
 
   destroy() {
@@ -67,6 +57,9 @@ var AboutDebugging = {
     }
   },
 };
+
+// Used to track async requests in tests.  See bug 1444424 for better ideas.
+EventEmitter.decorate(AboutDebugging);
 
 window.addEventListener("DOMContentLoaded", function () {
   AboutDebugging.init();

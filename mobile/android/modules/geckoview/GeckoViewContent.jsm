@@ -4,16 +4,14 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["GeckoViewContent"];
+var EXPORTED_SYMBOLS = ["GeckoViewContent"];
 
-const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
-
-Cu.import("resource://gre/modules/GeckoViewModule.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/GeckoViewModule.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "dump", () =>
-    Cu.import("resource://gre/modules/AndroidLog.jsm",
-              {}).AndroidLog.d.bind(null, "ViewContent"));
+    ChromeUtils.import("resource://gre/modules/AndroidLog.jsm",
+                       {}).AndroidLog.d.bind(null, "ViewContent"));
 
 function debug(aMsg) {
   // dump(aMsg);
@@ -39,7 +37,11 @@ class GeckoViewContent extends GeckoViewModule {
     this.window.addEventListener("MozDOMFullScreen:Exited", this,
                                  /* capture */ true, /* untrusted */ false);
 
-    this.eventDispatcher.registerListener(this, "GeckoViewContent:ExitFullScreen");
+    this.eventDispatcher.registerListener(this, [
+        "GeckoViewContent:ExitFullScreen",
+        "GeckoView:ZoomToInput",
+    ]);
+
     this.messageManager.addMessageListener("GeckoView:DOMFullscreenExit", this);
     this.messageManager.addMessageListener("GeckoView:DOMFullscreenRequest", this);
   }
@@ -51,8 +53,19 @@ class GeckoViewContent extends GeckoViewModule {
       case "GeckoViewContent:ExitFullScreen":
         this.messageManager.sendAsyncMessage("GeckoView:DOMFullscreenExited");
         break;
+      case "GeckoView:ZoomToInput":
+        this.messageManager.sendAsyncMessage(aEvent);
+        break;
       case "GeckoView:SetActive":
-        this.browser.docShellIsActive = aData.active;
+        if (aData.active) {
+          this.browser.setAttribute("primary", "true");
+          this.browser.focus();
+          this.browser.docShellIsActive = true;
+        } else {
+          this.browser.removeAttribute("primary");
+          this.browser.docShellIsActive = false;
+          this.browser.blur();
+        }
         break;
     }
   }
@@ -62,7 +75,12 @@ class GeckoViewContent extends GeckoViewModule {
                                     /* capture */ true);
     this.window.removeEventListener("MozDOMFullScreen:Exited", this,
                                     /* capture */ true);
-    this.eventDispatcher.unregisterListener(this, "GeckoViewContent:ExitFullScreen");
+
+    this.eventDispatcher.unregisterListener(this, [
+        "GeckoViewContent:ExitFullScreen",
+        "GeckoView:ZoomToInput",
+    ]);
+
     this.messageManager.removeMessageListener("GeckoView:DOMFullscreenExit", this);
     this.messageManager.removeMessageListener("GeckoView:DOMFullscreenRequest", this);
   }

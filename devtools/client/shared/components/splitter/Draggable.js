@@ -4,9 +4,10 @@
 
 "use strict";
 
-const React = require("devtools/client/shared/vendor/react");
+const { Component } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const ReactDOM = require("devtools/client/shared/vendor/react-dom");
-const { Component, DOM: dom, PropTypes } = React;
 
 class Draggable extends Component {
   static get propTypes() {
@@ -51,6 +52,7 @@ class Draggable extends Component {
 
   render() {
     return dom.div({
+      role: "presentation",
       style: this.props.style,
       className: this.props.className,
       onMouseDown: this.startDragging

@@ -797,10 +797,10 @@ nsGIFDecoder2::FinishImageDescriptor(const char* aData)
   IntRect frameRect;
 
   // Get image offsets with respect to the screen origin.
-  frameRect.x = LittleEndian::readUint16(aData + 0);
-  frameRect.y = LittleEndian::readUint16(aData + 2);
-  frameRect.SetWidth(LittleEndian::readUint16(aData + 4));
-  frameRect.SetHeight(LittleEndian::readUint16(aData + 6));
+  frameRect.SetRect(LittleEndian::readUint16(aData + 0),
+                    LittleEndian::readUint16(aData + 2),
+                    LittleEndian::readUint16(aData + 4),
+                    LittleEndian::readUint16(aData + 6));
 
   if (!mGIFStruct.images_decoded) {
     // Work around GIF files where
@@ -880,7 +880,8 @@ nsGIFDecoder2::FinishImageDescriptor(const char* aData)
   }
 
   // Clear state from last image.
-  mGIFStruct.pixels_remaining = frameRect.Width() * frameRect.Height();
+  mGIFStruct.pixels_remaining =
+    int64_t(frameRect.Width()) * int64_t(frameRect.Height());
 
   if (haveLocalColorTable) {
     // We have a local color table, so prepare to read it into the palette of
@@ -960,8 +961,11 @@ nsGIFDecoder2::ReadImageDataBlock(const char* aData)
 
   // Initialize the LZW decoder.
   mGIFStruct.datasize = uint8_t(aData[0]);
+  if (mGIFStruct.datasize > MAX_LZW_BITS) {
+    return Transition::TerminateFailure();
+  }
   const int clearCode = ClearCode();
-  if (mGIFStruct.datasize > MAX_LZW_BITS || clearCode >= MAX_BITS) {
+  if (clearCode >= MAX_BITS) {
     return Transition::TerminateFailure();
   }
 

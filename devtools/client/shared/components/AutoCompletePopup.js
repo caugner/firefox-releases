@@ -4,7 +4,9 @@
 
 "use strict";
 
-const { DOM: dom, Component, PropTypes } = require("devtools/client/shared/vendor/react");
+const { Component } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 
 class AutocompletePopup extends Component {
   static get propTypes() {
@@ -49,7 +51,7 @@ class AutocompletePopup extends Component {
 
   computeState({ autocompleteProvider, filter }) {
     let list = autocompleteProvider(filter);
-    let selectedIndex = list.length == 1 ? 0 : -1;
+    let selectedIndex = list.length > 0 ? 0 : -1;
 
     return { list, selectedIndex };
   }

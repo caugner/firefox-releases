@@ -6,12 +6,12 @@
 // the common JS files used by safebrowsing and url-classifier into a
 // single component.
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
 const G_GDEBUG = false;
 
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
+const PREF_DISABLE_TEST_BACKOFF = "browser.safebrowsing.provider.test.disableBackoff";
 /**
  * Partially applies a function to a particular "this object" and zero or
  * more arguments. The result is a new function with some arguments of the first
@@ -83,7 +83,7 @@ this.RequestBackoff =
 function RequestBackoff(maxErrors, retryIncrement,
                         maxRequests, requestPeriod,
                         timeoutIncrement, maxTimeout,
-                        tolerance) {
+                        tolerance, provider = null) {
   this.MAX_ERRORS_ = maxErrors;
   this.RETRY_INCREMENT_ = retryIncrement;
   this.MAX_REQUESTS_ = maxRequests;
@@ -98,6 +98,17 @@ function RequestBackoff(maxErrors, retryIncrement,
   this.numErrors_ = 0;
   this.errorTimeout_ = 0;
   this.nextRequestTime_ = 0;
+
+  // For test provider, we will disable backoff if preference is set to false.
+  if (provider === "test") {
+    this.canMakeRequestDefault = this.canMakeRequest;
+    this.canMakeRequest = function() {
+      if (Services.prefs.getBoolPref(PREF_DISABLE_TEST_BACKOFF, true)) {
+        return true;
+      }
+      return this.canMakeRequestDefault();
+    };
+  }
 };
 
 /**
@@ -175,7 +186,8 @@ RequestBackoff.prototype.isErrorStatus = function(status) {
 // since both listmanager and hashcompleter would use it.
 // Note that |maxRequests| and |requestPeriod| is still configurable
 // to throttle pending requests.
-function RequestBackoffV4(maxRequests, requestPeriod) {
+function RequestBackoffV4(maxRequests, requestPeriod,
+                          provider = null) {
   let rand = Math.random();
   let retryInterval = Math.floor(15 * 60 * 1000 * (rand + 1)); // 15 ~ 30 min.
   let backoffInterval = Math.floor(30 * 60 * 1000 * (rand + 1)); // 30 ~ 60 min.
@@ -186,7 +198,8 @@ function RequestBackoffV4(maxRequests, requestPeriod) {
                 requestPeriod /* request time, 60 min */,
               backoffInterval /* backoff interval, 60 min */,
           24 * 60 * 60 * 1000 /* max backoff, 24hr */,
-                         1000 /* tolerance of 1 sec */);
+                         1000 /* tolerance of 1 sec */,
+                     provider /* provider name */);
 }
 
 // Expose this whole component.

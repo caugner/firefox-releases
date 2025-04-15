@@ -76,11 +76,11 @@ add_task(async function() {
     let actual = await extension.awaitMessage(event);
     if (expected.text) {
       is(actual.text, expected.text,
-        `Expected "${event}" to have fired with text: "${expected.text}".`);
+         `Expected "${event}" to have fired with text: "${expected.text}".`);
     }
     if (expected.disposition) {
       is(actual.disposition, expected.disposition,
-        `Expected "${event}" to have fired with disposition: "${expected.disposition}".`);
+         `Expected "${event}" to have fired with disposition: "${expected.disposition}".`);
     }
   }
 
@@ -111,12 +111,12 @@ add_task(async function() {
   async function startInputSession(indexToWaitFor) {
     gURLBar.focus();
     gURLBar.value = keyword;
-    EventUtils.synthesizeKey(" ", {});
+    EventUtils.sendString(" ");
     await expectEvent("on-input-started-fired");
     // Always use a different input at every invokation, so that
     // waitForAutocompleteResultAt can distinguish different cases.
     let char = ((inputSessionSerial++) % 10).toString();
-    EventUtils.synthesizeKey(char, {});
+    EventUtils.sendString(char);
 
     await expectEvent("on-input-changed-fired", {text: char});
     // Wait for the autocomplete search. Note that we cannot wait for the search
@@ -131,58 +131,52 @@ add_task(async function() {
     gURLBar.focus();
 
     // Start an input session by typing in <keyword><space>.
-    for (let letter of keyword) {
-      EventUtils.synthesizeKey(letter, {});
-    }
-    EventUtils.synthesizeKey(" ", {});
+    EventUtils.sendString(keyword + " ");
     await expectEvent("on-input-started-fired");
 
     // Test canceling the input before any changed events fire.
-    EventUtils.synthesizeKey("VK_BACK_SPACE", {});
+    EventUtils.synthesizeKey("KEY_Backspace");
     await expectEvent("on-input-cancelled-fired");
 
-    EventUtils.synthesizeKey(" ", {});
+    EventUtils.sendString(" ");
     await expectEvent("on-input-started-fired");
 
     // Test submitting the input before any changed events fire.
-    EventUtils.synthesizeKey("VK_RETURN", {});
+    EventUtils.synthesizeKey("KEY_Enter");
     await expectEvent("on-input-entered-fired");
 
     gURLBar.focus();
 
     // Start an input session by typing in <keyword><space>.
-    for (let letter of keyword) {
-      EventUtils.synthesizeKey(letter, {});
-    }
-    EventUtils.synthesizeKey(" ", {});
+    EventUtils.sendString(keyword + " ");
     await expectEvent("on-input-started-fired");
 
     // We should expect input changed events now that the keyword is active.
-    EventUtils.synthesizeKey("b", {});
+    EventUtils.sendString("b");
     await expectEvent("on-input-changed-fired", {text: "b"});
 
-    EventUtils.synthesizeKey("c", {});
+    EventUtils.sendString("c");
     await expectEvent("on-input-changed-fired", {text: "bc"});
 
-    EventUtils.synthesizeKey("VK_BACK_SPACE", {});
+    EventUtils.synthesizeKey("KEY_Backspace");
     await expectEvent("on-input-changed-fired", {text: "b"});
 
     // Even though the input is <keyword><space> We should not expect an
     // input started event to fire since the keyword is active.
-    EventUtils.synthesizeKey("VK_BACK_SPACE", {});
+    EventUtils.synthesizeKey("KEY_Backspace");
     await expectEvent("on-input-changed-fired", {text: ""});
 
     // Make the keyword inactive by hitting backspace.
-    EventUtils.synthesizeKey("VK_BACK_SPACE", {});
+    EventUtils.synthesizeKey("KEY_Backspace");
     await expectEvent("on-input-cancelled-fired");
 
     // Activate the keyword by typing a space.
     // Expect onInputStarted to fire.
-    EventUtils.synthesizeKey(" ", {});
+    EventUtils.sendString(" ");
     await expectEvent("on-input-started-fired");
 
     // onInputChanged should fire even if a space is entered.
-    EventUtils.synthesizeKey(" ", {});
+    EventUtils.sendString(" ");
     await expectEvent("on-input-changed-fired", {text: " "});
 
     // The active session should cancel if the input blurs.
@@ -205,10 +199,10 @@ add_task(async function() {
     let item = gURLBar.popup.richlistbox.children[0];
 
     is(item.getAttribute("title"), expectedText,
-      `Expected heuristic result to have title: "${expectedText}".`);
+       `Expected heuristic result to have title: "${expectedText}".`);
 
     is(item.getAttribute("displayurl"), `${keyword} ${text}`,
-      `Expected heuristic result to have displayurl: "${keyword} ${text}".`);
+       `Expected heuristic result to have displayurl: "${keyword} ${text}".`);
 
     let promiseEvent = expectEvent("on-input-entered-fired", {
       text,
@@ -222,9 +216,7 @@ add_task(async function() {
     await startInputSession(suggestionIndex);
 
     // Select the suggestion.
-    for (let i = 0; i < suggestionIndex; i++) {
-      EventUtils.synthesizeKey("VK_DOWN", {});
-    }
+    EventUtils.synthesizeKey("KEY_ArrowDown", {repeat: suggestionIndex});
 
     let promiseEvent = expectEvent("on-input-entered-fired", {
       text: expectedText,
@@ -250,10 +242,10 @@ add_task(async function() {
 
       ok(!!item, "Expected item to exist");
       is(item.getAttribute("title"), description,
-        `Expected suggestion to have title: "${description}".`);
+         `Expected suggestion to have title: "${description}".`);
 
       is(item.getAttribute("displayurl"), `${keyword} ${content}`,
-        `Expected suggestion to have displayurl: "${keyword} ${content}".`);
+         `Expected suggestion to have displayurl: "${keyword} ${content}".`);
     }
 
     let text = await startInputSession(info.suggestions.length - 1);

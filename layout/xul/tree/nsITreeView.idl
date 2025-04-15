@@ -115,15 +115,6 @@ interface nsITreeView : nsISupports
   AString getImageSrc(in long row, in nsITreeColumn col);
 
   /**
-   * The progress mode for a given cell. This method is only called for
-   * columns of type |progressmeter|.
-   */
-  const short PROGRESS_NORMAL = 1;
-  const short PROGRESS_UNDETERMINED = 2;
-  const short PROGRESS_NONE = 3;
-  long getProgressMode(in long row, in nsITreeColumn col);
-
-  /**
    * The value for a given cell. This method is only called for columns
    * of type other than |text|.
    */
@@ -201,15 +192,4 @@ interface nsITreeView : nsISupports
    * A command API that can be used to invoke commands on a specific cell.
    */
   void performActionOnCell(in wstring action, in long row, in nsITreeColumn col);
-};
-
-/**
- * The following interface is not scriptable and MUST NEVER BE MADE scriptable.
- * Native treeviews implement it, and we use this to check whether a treeview
- * is native (and therefore suitable for use by untrusted content).
- */
-[uuid(46c90265-6553-41ae-8d39-7022e7d09145)]
-interface nsINativeTreeView : nsITreeView
-{
-  [noscript] void ensureNative();
 };

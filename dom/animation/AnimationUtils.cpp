@@ -49,6 +49,16 @@ AnimationUtils::GetCurrentRealmDocument(JSContext* aCx)
   return win->GetDoc();
 }
 
+/* static */ nsIDocument*
+AnimationUtils::GetDocumentFromGlobal(JSObject* aGlobalObject)
+{
+  nsGlobalWindowInner* win = xpc::WindowOrNull(aGlobalObject);
+  if (!win) {
+    return nullptr;
+  }
+  return win->GetDoc();
+}
+
 /* static */ bool
 AnimationUtils::IsOffscreenThrottlingEnabled()
 {
@@ -62,27 +72,6 @@ AnimationUtils::IsOffscreenThrottlingEnabled()
   }
 
   return sOffscreenThrottlingEnabled;
-}
-
-/* static */ bool
-AnimationUtils::IsCoreAPIEnabled()
-{
-  static bool sCoreAPIEnabled;
-  static bool sPrefCached = false;
-
-  if (!sPrefCached) {
-    sPrefCached = true;
-    Preferences::AddBoolVarCache(&sCoreAPIEnabled,
-                                 "dom.animations-api.core.enabled");
-  }
-
-  return sCoreAPIEnabled;
-}
-
-/* static */ bool
-AnimationUtils::IsCoreAPIEnabledForCaller(dom::CallerType aCallerType)
-{
-  return IsCoreAPIEnabled() || aCallerType == dom::CallerType::System;
 }
 
 /* static */ bool

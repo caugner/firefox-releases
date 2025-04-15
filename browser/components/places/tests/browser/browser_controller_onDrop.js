@@ -17,7 +17,7 @@ add_task(async function setup() {
     sandbox.restore();
     delete window.sinon;
     await PlacesUtils.bookmarks.eraseEverything();
-    await PlacesTestUtils.clearHistory();
+    await PlacesUtils.history.clear();
   });
 
   sandbox.stub(PlacesUIUtils, "getTransactionForData");
@@ -59,11 +59,6 @@ add_task(async function setup() {
 
 async function run_drag_test(startBookmarkIndex, insertionIndex, newParentGuid,
                              expectedInsertionIndex, expectTransactionCreated = true) {
-  if (!PlacesUIUtils.useAsyncTransactions) {
-    Assert.ok(true, "Skipping test as async transactions are turned off");
-    return;
-  }
-
   if (!newParentGuid) {
     newParentGuid = PlacesUtils.bookmarks.unfiledGuid;
   }
@@ -75,13 +70,13 @@ async function run_drag_test(startBookmarkIndex, insertionIndex, newParentGuid,
   let dragBookmark = bookmarks[startBookmarkIndex];
 
   await withSidebarTree("bookmarks", async (tree) => {
-    tree.selectItems([PlacesUtils.unfiledBookmarksFolderId]);
+    tree.selectItems([PlacesUtils.bookmarks.unfiledGuid]);
     PlacesUtils.asContainer(tree.selectedNode).containerOpen = true;
 
     // Simulating a drag-drop with a tree view turns out to be really difficult
     // as you can't get a node for the source/target. Hence, we fake the
     // insertion point and drag data and call the function direct.
-    let ip = new InsertionPoint({
+    let ip = new PlacesInsertionPoint({
       parentId: await PlacesUtils.promiseItemId(PlacesUtils.bookmarks.unfiledGuid),
       parentGuid: newParentGuid,
       index: insertionIndex,
@@ -122,13 +117,11 @@ async function run_drag_test(startBookmarkIndex, insertionIndex, newParentGuid,
 
     Assert.deepEqual(args[0], JSON.parse(bookmarkWithId),
       "Should have called getTransactionForData with the correct unwrapped bookmark");
-    Assert.equal(args[1], PlacesUtils.TYPE_X_MOZ_PLACE,
-      "Should have called getTransactionForData with the correct flavor");
-    Assert.equal(args[2], newParentGuid,
+    Assert.equal(args[1], newParentGuid,
       "Should have called getTransactionForData with the correct parent guid");
-    Assert.equal(args[3], expectedInsertionIndex,
+    Assert.equal(args[2], expectedInsertionIndex,
       "Should have called getTransactionForData with the correct index");
-    Assert.equal(args[4], false,
+    Assert.equal(args[3], false,
       "Should have called getTransactionForData with a move");
   });
 }

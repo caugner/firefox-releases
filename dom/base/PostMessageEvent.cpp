@@ -55,11 +55,6 @@ PostMessageEvent::~PostMessageEvent()
 NS_IMETHODIMP
 PostMessageEvent::Run()
 {
-  MOZ_ASSERT(mTargetWindow->IsOuterWindow(),
-             "should have been passed an outer window!");
-  MOZ_ASSERT(!mSource || mSource->IsOuterWindow(),
-             "should have been passed an outer window!");
-
   // Note: We don't init this AutoJSAPI with targetWindow, because we do not
   // want exceptions during message deserialization to trigger error events on
   // targetWindow.
@@ -82,8 +77,6 @@ PostMessageEvent::Run()
       targetWindow->IsClosedOrClosing())
     return NS_OK;
 
-  MOZ_ASSERT(targetWindow->IsInnerWindow(),
-             "we ordered an inner window!");
   JSAutoCompartment ac(cx, targetWindow->GetWrapper());
 
   // Ensure that any origin which might have been provided is the origin of this
@@ -202,11 +195,8 @@ PostMessageEvent::Dispatch(nsGlobalWindowInner* aTargetWindow, Event* aEvent)
   // happen because then untrusted content can call postMessage on a chrome
   // window if it can get a reference to it.
 
-  nsIPresShell *shell = aTargetWindow->GetExtantDoc()->GetShell();
-  RefPtr<nsPresContext> presContext;
-  if (shell) {
-    presContext = shell->GetPresContext();
-  }
+  RefPtr<nsPresContext> presContext =
+    aTargetWindow->GetExtantDoc()->GetPresContext();
 
   aEvent->SetTrusted(mTrustedCaller);
   WidgetEvent* internalEvent = aEvent->WidgetEventPtr();

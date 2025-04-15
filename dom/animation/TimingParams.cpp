@@ -10,10 +10,12 @@
 #include "mozilla/dom/AnimatableBinding.h"
 #include "mozilla/dom/KeyframeAnimationOptionsBinding.h"
 #include "mozilla/dom/KeyframeEffectBinding.h"
-#include "mozilla/ServoBindings.h"
+#include "mozilla/ServoCSSParser.h"
 #include "nsCSSParser.h" // For nsCSSParser
 #include "nsIDocument.h"
+#ifdef MOZ_OLD_STYLE
 #include "nsRuleNode.h"
+#endif
 
 namespace mozilla {
 
@@ -119,11 +121,8 @@ TimingParams::ParseEasing(const nsAString& aEasing,
 
   if (aDocument->IsStyledByServo()) {
     nsTimingFunction timingFunction;
-    // FIXME this is using the wrong base uri (bug 1343919)
-    RefPtr<URLExtraData> data = new URLExtraData(aDocument->GetDocumentURI(),
-                                                 aDocument->GetDocumentURI(),
-                                                 aDocument->NodePrincipal());
-    if (!Servo_ParseEasing(&aEasing, data, &timingFunction)) {
+    RefPtr<URLExtraData> url = ServoCSSParser::GetURLExtraData(aDocument);
+    if (!ServoCSSParser::ParseEasing(aEasing, url, timingFunction)) {
       aRv.ThrowTypeError<dom::MSG_INVALID_EASING_ERROR>(aEasing);
       return Nothing();
     }
@@ -135,6 +134,7 @@ TimingParams::ParseEasing(const nsAString& aEasing,
     return Some(ComputedTimingFunction(timingFunction));
   }
 
+#ifdef MOZ_OLD_STYLE
   nsCSSValue value;
   nsCSSParser parser;
   parser.ParseLonghandProperty(eCSSProperty_animation_timing_function,
@@ -185,6 +185,10 @@ TimingParams::ParseEasing(const nsAString& aEasing,
   }
 
   aRv.ThrowTypeError<dom::MSG_INVALID_EASING_ERROR>(aEasing);
+#else
+  MOZ_CRASH("old style system disabled");
+#endif
+
   return Nothing();
 }
 

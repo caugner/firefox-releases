@@ -48,6 +48,14 @@ public:
 
   void StartLayout() { MediaDocument::StartLayout(); }
 
+  virtual void Destroy() override
+  {
+    if (mStreamListener) {
+      mStreamListener->DropDocumentRef();
+    }
+    MediaDocument::Destroy();
+  }
+
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(PluginDocument, MediaDocument)
 protected:
   ~PluginDocument() override;
@@ -214,7 +222,7 @@ PluginDocument::CreateSyntheticPluginDocument()
   RefPtr<mozilla::dom::NodeInfo> nodeInfo;
   nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::embed, nullptr,
                                            kNameSpaceID_XHTML,
-                                           nsIDOMNode::ELEMENT_NODE);
+                                           nsINode::ELEMENT_NODE);
   rv = NS_NewHTMLElement(getter_AddRefs(mPluginContent), nodeInfo.forget(),
                          NOT_FROM_PARSER);
   NS_ENSURE_SUCCESS(rv, rv);

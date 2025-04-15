@@ -59,6 +59,7 @@ ServoMediaRule::Clone() const
   return nullptr;
 }
 
+#ifdef MOZ_OLD_STYLE
 /* virtual */ bool
 ServoMediaRule::UseForPresentation(nsPresContext* aPresContext,
                                    nsMediaQueryResultCacheKey& aKey)
@@ -68,6 +69,7 @@ ServoMediaRule::UseForPresentation(nsPresContext* aPresContext,
   MOZ_ASSERT_UNREACHABLE("Shouldn't be calling UseForPresentation");
   return false;
 }
+#endif
 
 /* virtual */ void
 ServoMediaRule::SetStyleSheet(StyleSheet* aSheet)
@@ -91,22 +93,21 @@ ServoMediaRule::List(FILE* out, int32_t aIndent) const
 }
 #endif
 
-// nsIDOMCSSConditionRule methods
-
-NS_IMETHODIMP
+void
 ServoMediaRule::GetConditionText(nsAString& aConditionText)
 {
-  return Media()->GetMediaText(aConditionText);
+  Media()->GetMediaText(aConditionText);
 }
 
-NS_IMETHODIMP
-ServoMediaRule::SetConditionText(const nsAString& aConditionText)
+void
+ServoMediaRule::SetConditionText(const nsAString& aConditionText,
+                                 ErrorResult& aRv)
 {
-  return Media()->SetMediaText(aConditionText);
+  Media()->SetMediaText(aConditionText);
 }
 
 /* virtual */ void
-ServoMediaRule::GetCssTextImpl(nsAString& aCssText) const
+ServoMediaRule::GetCssText(nsAString& aCssText) const
 {
   Servo_MediaRule_GetCssText(mRawRule, &aCssText);
 }

@@ -16,8 +16,8 @@ use selectors::parser::SelectorParseErrorKind;
 use servo_url::ServoUrl;
 use std::cmp::Ordering;
 use std::f32::consts::PI;
-use std::fmt;
-use style_traits::{ToCss, ParseError, StyleParseErrorKind};
+use std::fmt::{self, Write};
+use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
 use values::{Either, None_};
 #[cfg(feature = "gecko")]
 use values::computed::{Context, Position as ComputedPosition, ToComputedValue};
@@ -31,14 +31,14 @@ use values::generics::position::Position as GenericPosition;
 use values::specified::{Angle, Color, Length, LengthOrPercentage};
 use values::specified::{Number, NumberOrPercentage, Percentage, RGBAColor};
 use values::specified::position::{LegacyPosition, Position, PositionComponent, Side, X, Y};
-use values::specified::url::SpecifiedUrl;
+use values::specified::url::SpecifiedImageUrl;
 
 /// A specified image layer.
 pub type ImageLayer = Either<None_, Image>;
 
 /// Specified values for an image according to CSS-IMAGES.
 /// <https://drafts.csswg.org/css-images/#image-values>
-pub type Image = GenericImage<Gradient, MozImageRect, SpecifiedUrl>;
+pub type Image = GenericImage<Gradient, MozImageRect, SpecifiedImageUrl>;
 
 /// Specified values for a CSS gradient.
 /// <https://drafts.csswg.org/css-images/#gradients>
@@ -124,16 +124,11 @@ pub type ColorStop = GenericColorStop<RGBAColor, LengthOrPercentage>;
 
 /// Specified values for `moz-image-rect`
 /// -moz-image-rect(<uri>, top, right, bottom, left);
-pub type MozImageRect = GenericMozImageRect<NumberOrPercentage, SpecifiedUrl>;
+pub type MozImageRect = GenericMozImageRect<NumberOrPercentage, SpecifiedImageUrl>;
 
 impl Parse for Image {
-    #[cfg_attr(not(feature = "gecko"), allow(unused_mut))]
     fn parse<'i, 't>(context: &ParserContext, input: &mut Parser<'i, 't>) -> Result<Image, ParseError<'i>> {
-        if let Ok(mut url) = input.try(|input| SpecifiedUrl::parse(context, input)) {
-            #[cfg(feature = "gecko")]
-            {
-                url.build_image_value();
-            }
+        if let Ok(url) = input.try(|input| SpecifiedImageUrl::parse(context, input)) {
             return Ok(GenericImage::Url(url));
         }
         if let Ok(gradient) = input.try(|i| Gradient::parse(context, i)) {
@@ -145,11 +140,7 @@ impl Parse for Image {
                 return Ok(GenericImage::PaintWorklet(paint_worklet));
             }
         }
-        if let Ok(mut image_rect) = input.try(|input| MozImageRect::parse(context, input)) {
-            #[cfg(feature = "gecko")]
-            {
-                image_rect.url.build_image_value();
-            }
+        if let Ok(image_rect) = input.try(|input| MozImageRect::parse(context, input)) {
             return Ok(GenericImage::Rect(Box::new(image_rect)));
         }
         Ok(GenericImage::Element(Image::parse_element(input)?))
@@ -161,7 +152,8 @@ impl Image {
     /// for insertion in the cascade.
     #[cfg(feature = "servo")]
     pub fn for_cascade(url: ServoUrl) -> Self {
-        GenericImage::Url(SpecifiedUrl::for_cascade(url))
+        use values::CssUrl;
+        GenericImage::Url(CssUrl::for_cascade(url))
     }
 
     /// Parses a `-moz-element(# <element-id>)`.
@@ -261,8 +253,10 @@ impl Parse for Gradient {
 }
 
 impl Gradient {
-    fn parse_webkit_gradient_argument<'i, 't>(context: &ParserContext, input: &mut Parser<'i, 't>)
-                                              -> Result<Self, ParseError<'i>> {
+    fn parse_webkit_gradient_argument<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>> {
         type Point = GenericPosition<Component<X>, Component<Y>>;
 
         #[derive(Clone, Copy)]
@@ -518,10 +512,11 @@ impl Gradient {
 impl GradientKind {
     /// Parses a linear gradient.
     /// CompatMode can change during `-moz-` prefixed gradient parsing if it come across a `to` keyword.
-    fn parse_linear<'i, 't>(context: &ParserContext,
-                            input: &mut Parser<'i, 't>,
-                            compat_mode: &mut CompatMode)
-                            -> Result<Self, ParseError<'i>> {
+    fn parse_linear<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        compat_mode: &mut CompatMode,
+    ) -> Result<Self, ParseError<'i>> {
         let direction = if let Ok(d) = input.try(|i| LineDirection::parse(context, i, compat_mode)) {
             input.expect_comma()?;
             d
@@ -534,10 +529,11 @@ impl GradientKind {
         Ok(GenericGradientKind::Linear(direction))
     }
 
-    fn parse_radial<'i, 't>(context: &ParserContext,
-                            input: &mut Parser<'i, 't>,
-                            compat_mode: &mut CompatMode)
-                            -> Result<Self, ParseError<'i>> {
+    fn parse_radial<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        compat_mode: &mut CompatMode,
+    ) -> Result<Self, ParseError<'i>> {
         let (shape, position, angle, moz_position) = match *compat_mode {
             CompatMode::Modern => {
                 let shape = input.try(|i| EndingShape::parse(context, i, *compat_mode));
@@ -655,8 +651,13 @@ impl GenericsLineDirection for LineDirection {
         }
     }
 
-    fn to_css<W>(&self, dest: &mut W, compat_mode: CompatMode) -> fmt::Result
-        where W: fmt::Write
+    fn to_css<W>(
+        &self,
+        dest: &mut CssWriter<W>,
+        compat_mode: CompatMode,
+    ) -> fmt::Result
+    where
+        W: Write,
     {
         match *self {
             LineDirection::Angle(angle) => {
@@ -702,13 +703,16 @@ impl GenericsLineDirection for LineDirection {
 }
 
 impl LineDirection {
-    fn parse<'i, 't>(context: &ParserContext,
-                     input: &mut Parser<'i, 't>,
-                     compat_mode: &mut CompatMode)
-                     -> Result<Self, ParseError<'i>> {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        compat_mode: &mut CompatMode,
+    ) -> Result<Self, ParseError<'i>> {
         let mut _angle = if *compat_mode == CompatMode::Moz {
             input.try(|i| Angle::parse(context, i)).ok()
         } else {
+            // Gradients allow unitless zero angles as an exception, see:
+            // https://github.com/w3c/csswg-drafts/issues/1162
             if let Ok(angle) = input.try(|i| Angle::parse_with_unitless(context, i)) {
                 return Ok(LineDirection::Angle(angle));
             }
@@ -780,10 +784,11 @@ impl ToComputedValue for GradientPosition {
 }
 
 impl EndingShape {
-    fn parse<'i, 't>(context: &ParserContext,
-                     input: &mut Parser<'i, 't>,
-                     compat_mode: CompatMode)
-                     -> Result<Self, ParseError<'i>> {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        compat_mode: CompatMode,
+    ) -> Result<Self, ParseError<'i>> {
         if let Ok(extent) = input.try(|i| ShapeExtent::parse_with_compat_mode(i, compat_mode)) {
             if input.try(|i| i.expect_ident_matching("circle")).is_ok() {
                 return Ok(GenericEndingShape::Circle(Circle::Extent(extent)));
@@ -861,9 +866,10 @@ impl EndingShape {
 }
 
 impl ShapeExtent {
-    fn parse_with_compat_mode<'i, 't>(input: &mut Parser<'i, 't>,
-                                      compat_mode: CompatMode)
-                                      -> Result<Self, ParseError<'i>> {
+    fn parse_with_compat_mode<'i, 't>(
+        input: &mut Parser<'i, 't>,
+        compat_mode: CompatMode,
+    ) -> Result<Self, ParseError<'i>> {
         match Self::parse(input)? {
             ShapeExtent::Contain | ShapeExtent::Cover if compat_mode == CompatMode::Modern => {
                 Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
@@ -876,8 +882,10 @@ impl ShapeExtent {
 }
 
 impl GradientItem {
-    fn parse_comma_separated<'i, 't>(context: &ParserContext, input: &mut Parser<'i, 't>)
-                                     -> Result<Vec<Self>, ParseError<'i>> {
+    fn parse_comma_separated<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Vec<Self>, ParseError<'i>> {
         let mut seen_stop = false;
         let items = input.parse_comma_separated(|input| {
             if seen_stop {
@@ -928,7 +936,7 @@ impl Parse for MozImageRect {
         input.try(|i| i.expect_function_matching("-moz-image-rect"))?;
         input.parse_nested_block(|i| {
             let string = i.expect_url_or_string()?;
-            let url = SpecifiedUrl::parse_from_string(string.as_ref().to_owned(), context)?;
+            let url = SpecifiedImageUrl::parse_from_string(string.as_ref().to_owned(), context)?;
             i.expect_comma()?;
             let top = NumberOrPercentage::parse_non_negative(context, i)?;
             i.expect_comma()?;
@@ -937,14 +945,7 @@ impl Parse for MozImageRect {
             let bottom = NumberOrPercentage::parse_non_negative(context, i)?;
             i.expect_comma()?;
             let left = NumberOrPercentage::parse_non_negative(context, i)?;
-
-            Ok(MozImageRect {
-                url: url,
-                top: top,
-                right: right,
-                bottom: bottom,
-                left: left,
-            })
+            Ok(MozImageRect { url, top, right, bottom, left })
         })
     }
 }

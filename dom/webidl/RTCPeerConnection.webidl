@@ -68,12 +68,10 @@ dictionary RTCAnswerOptions : RTCOfferAnswerOptions {
 };
 
 dictionary RTCOfferOptions : RTCOfferAnswerOptions {
-  long    offerToReceiveVideo;
-  long    offerToReceiveAudio;
+  boolean offerToReceiveVideo;
+  boolean offerToReceiveAudio;
   boolean iceRestart = false;
 };
-
-interface RTCDataChannel;
 
 [Pref="media.peerconnection.enabled",
  JSImplementation="@mozilla.org/dom/peerconnection;1",
@@ -113,9 +111,9 @@ interface RTCPeerConnection : EventTarget  {
   attribute DOMString id;
 
   RTCConfiguration      getConfiguration ();
-  [UnsafeInPrerendering, Deprecated="RTCPeerConnectionGetStreams"]
+  [Deprecated="RTCPeerConnectionGetStreams"]
   sequence<MediaStream> getLocalStreams ();
-  [UnsafeInPrerendering, Deprecated="RTCPeerConnectionGetStreams"]
+  [Deprecated="RTCPeerConnectionGetStreams"]
   sequence<MediaStream> getRemoteStreams ();
   void addStream (MediaStream stream);
 
@@ -128,9 +126,23 @@ interface RTCPeerConnection : EventTarget  {
                         MediaStream... moreStreams);
   void removeTrack(RTCRtpSender sender);
 
+  RTCRtpTransceiver addTransceiver((MediaStreamTrack or DOMString) trackOrKind,
+                                   optional RTCRtpTransceiverInit init);
+
   sequence<RTCRtpSender> getSenders();
   sequence<RTCRtpReceiver> getReceivers();
+  sequence<RTCRtpTransceiver> getTransceivers();
 
+  // test-only: for testing getContributingSources
+  [ChromeOnly]
+  DOMHighResTimeStamp mozGetNowInRtpSourceReferenceTime();
+  // test-only: for testing getContributingSources
+  [ChromeOnly]
+  void mozInsertAudioLevelForContributingSource(RTCRtpReceiver receiver,
+                                                unsigned long source,
+                                                DOMHighResTimeStamp timestamp,
+                                                boolean hasLevel,
+                                                byte level);
   [ChromeOnly]
   void mozAddRIDExtension(RTCRtpReceiver receiver, unsigned short extensionId);
   [ChromeOnly]

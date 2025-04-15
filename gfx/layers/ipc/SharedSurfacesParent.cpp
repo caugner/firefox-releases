@@ -1,6 +1,6 @@
-/* vim: set ts=2 sw=2 et tw=80: */
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -42,6 +42,19 @@ SharedSurfacesParent::Shutdown()
 }
 
 /* static */ already_AddRefed<DataSourceSurface>
+SharedSurfacesParent::Get(const wr::ExternalImageId& aId)
+{
+  MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+  if (!sInstance) {
+    return nullptr;
+  }
+
+  RefPtr<SourceSurfaceSharedDataWrapper> surface;
+  sInstance->mSurfaces.Get(wr::AsUint64(aId), getter_AddRefs(surface));
+  return surface.forget();
+}
+
+/* static */ already_AddRefed<DataSourceSurface>
 SharedSurfacesParent::Acquire(const wr::ExternalImageId& aId)
 {
   MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
@@ -56,7 +69,6 @@ SharedSurfacesParent::Acquire(const wr::ExternalImageId& aId)
     DebugOnly<bool> rv = surface->AddConsumer();
     MOZ_ASSERT(!rv);
   }
-
   return surface.forget();
 }
 

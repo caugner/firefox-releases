@@ -38,12 +38,12 @@ public:
 
   // Get an integer that increments every time we process pending restyles.
   // The value is never 0.
-  uint32_t GetRestyleGeneration() const { return mRestyleGeneration; }
+  uint64_t GetRestyleGeneration() const { return mRestyleGeneration; }
   // Unlike GetRestyleGeneration, which means the actual restyling count,
   // GetUndisplayedRestyleGeneration represents any possible DOM changes that
   // can cause restyling. This is needed for getComputedStyle to work with
   // non-styled (e.g. display: none) elements.
-  uint32_t GetUndisplayedRestyleGeneration() const {
+  uint64_t GetUndisplayedRestyleGeneration() const {
     return mUndisplayedRestyleGeneration;
   }
 
@@ -159,14 +159,13 @@ public:
                       nsIContent* aFollowingSibling);
 
   // Restyling for a ContentInserted (notification after insertion) or
-  // for a CharacterDataChanged.  |aContainer| must be non-null; when
+  // for some CharacterDataChanged.  |aContainer| must be non-null; when
   // the container is null, no work is needed.
   void RestyleForInsertOrChange(nsINode* aContainer, nsIContent* aChild);
 
-  // Restyling for a ContentAppended (notification after insertion) or
-  // for a CharacterDataChanged.  |aContainer| must be non-null; when
-  // the container is null, no work is needed.
-  void RestyleForAppend(nsIContent* aContainer, nsIContent* aFirstNewContent);
+  // Restyle for a CharacterDataChanged notification. In practice this can only
+  // affect :empty / :-moz-only-whitespace / :-moz-first-node / :-moz-last-node.
+  void CharacterDataChanged(nsIContent*, const CharacterDataChangeInfo&);
 
   MOZ_DECL_STYLO_METHODS(GeckoRestyleManager, ServoRestyleManager)
 
@@ -223,6 +222,7 @@ protected:
   }
 
   void RestyleForEmptyChange(Element* aContainer);
+  void MaybeRestyleForEdgeChildChange(Element* aContainer, nsIContent* aChangedChild);
 
   void ContentStateChangedInternal(Element* aElement,
                                    EventStates aStateMask,
@@ -263,8 +263,8 @@ protected:
 
 private:
   nsPresContext* mPresContext; // weak, can be null after Disconnect().
-  uint32_t mRestyleGeneration;
-  uint32_t mUndisplayedRestyleGeneration;
+  uint64_t mRestyleGeneration;
+  uint64_t mUndisplayedRestyleGeneration;
   uint32_t mHoverGeneration;
 
   // Used to keep track of frames that have been destroyed during

@@ -269,6 +269,14 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id)
     case Bug1155608:
       APPEND_DEVICE(0x2e22); /* IntelG45_1 */
       break;
+    case Bug1447141:
+      APPEND_DEVICE(0x9991);
+      APPEND_DEVICE(0x9993);
+      APPEND_DEVICE(0x9996);
+      APPEND_DEVICE(0x9998);
+      APPEND_DEVICE(0x9901);
+      APPEND_DEVICE(0x990b);
+      break;
     case Bug1207665:
       APPEND_DEVICE(0xa001); /* Intel Media Accelerator 3150 */
       APPEND_DEVICE(0xa002);
@@ -306,6 +314,10 @@ const nsAString& GfxDriverInfo::GetDeviceVendor(DeviceVendor id)
     DECLARE_VENDOR_ID(VendorAMD, "0x1022");
     DECLARE_VENDOR_ID(VendorATI, "0x1002");
     DECLARE_VENDOR_ID(VendorMicrosoft, "0x1414");
+    DECLARE_VENDOR_ID(VendorParallels, "0x1ab8");
+    // Choose an arbitrary Qualcomm PCI VENdor ID for now.
+    // TODO: This should be "QCOM" when Windows device ID parsing is reworked.
+    DECLARE_VENDOR_ID(VendorQualcomm, "0x5143");
     // Suppress a warning.
     DECLARE_VENDOR_ID(DeviceVendorMax, "");
   }

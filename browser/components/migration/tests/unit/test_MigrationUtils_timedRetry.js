@@ -1,7 +1,7 @@
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetter(this, "OS",
-                                  "resource://gre/modules/osfile.jsm");
+ChromeUtils.defineModuleGetter(this, "OS",
+                               "resource://gre/modules/osfile.jsm");
 
 let tmpFile = FileUtils.getDir("TmpD", [], true);
 let dbConn;
@@ -10,7 +10,7 @@ add_task(async function setup() {
   tmpFile.append("TestDB");
   dbConn = await Sqlite.openConnection({ path: tmpFile.path });
 
-  do_register_cleanup(() => {
+  registerCleanupFunction(() => {
     dbConn.close();
     OS.File.remove(tmpFile.path);
   });

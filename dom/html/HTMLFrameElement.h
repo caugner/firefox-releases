@@ -23,7 +23,8 @@ public:
                             FromParser aFromParser = NOT_FROM_PARSER);
 
   // nsISupports
-  NS_DECL_ISUPPORTS_INHERITED
+  NS_INLINE_DECL_REFCOUNTING_INHERITED(HTMLFrameElement,
+                                       nsGenericHTMLFrameElement)
 
   NS_IMPL_FROMCONTENT_HTML_WITH_TAG(HTMLFrameElement, frame)
 
@@ -31,6 +32,7 @@ public:
   virtual bool ParseAttribute(int32_t aNamespaceID,
                               nsAtom* aAttribute,
                               const nsAString& aValue,
+                              nsIPrincipal* aMaybeScriptedPrincipal,
                               nsAttrValue& aResult) override;
   virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
                          bool aPreallocateChildren) const override;
@@ -51,7 +53,7 @@ public:
   }
   void SetLongDesc(const nsAString& aLongDesc, ErrorResult& aError)
   {
-    SetAttrHelper(nsGkAtoms::longdesc, aLongDesc);
+    SetHTMLAttr(nsGkAtoms::longdesc, aLongDesc);
   }
 
   void GetMarginHeight(DOMString& aMarginHeight) const
@@ -99,7 +101,7 @@ public:
     SetHTMLAttr(nsGkAtoms::scrolling, aScrolling, aError);
   }
 
-  void GetSrc(nsString& aSrc, nsIPrincipal*)
+  void GetSrc(nsString& aSrc)
   {
     GetURIAttr(nsGkAtoms::src, nullptr, aSrc);
   }

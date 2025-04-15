@@ -38,14 +38,14 @@ function synthesizeNativeMouseMove(aElement) {
   let x = win.mozInnerScreenX + (rect.left + rect.right) / 2;
   let y = win.mozInnerScreenY + (rect.top + rect.bottom) / 2;
 
-  // Wait for the mouseup event to occur before continuing.
+  // Wait for the mousemove event to occur before continuing.
   return new Promise((resolve, reject) => {
     function eventOccurred(e) {
-      aElement.removeEventListener("mouseover", eventOccurred, true);
-      resolve();
+      aElement.removeEventListener("mousemove", eventOccurred, true);
+      SimpleTest.executeSoon(resolve);
     }
 
-    aElement.addEventListener("mouseover", eventOccurred, true);
+    aElement.addEventListener("mousemove", eventOccurred, true);
 
     utils.sendNativeMouseEvent(x * scale, y * scale, msg, 0, null);
   });
@@ -94,7 +94,7 @@ add_task(async function test_notext() {
 
   promise = promiseEvent(searchPopup, "popuphidden");
   info("Closing search panel");
-  EventUtils.synthesizeKey("VK_ESCAPE", {});
+  EventUtils.synthesizeKey("KEY_Escape");
   await promise;
 });
 

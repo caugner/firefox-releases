@@ -4,16 +4,17 @@
 
 "use strict";
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "PrivateBrowsingUtils",
+                               "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
-let { getChromeWindow } = Cu.import("resource:///modules/syncedtabs/util.js", {});
+let { getChromeWindow } = ChromeUtils.import("resource:///modules/syncedtabs/util.js", {});
 
-let log = Cu.import("resource://gre/modules/Log.jsm", {})
+let log = ChromeUtils.import("resource://gre/modules/Log.jsm", {})
             .Log.repository.getLogger("Sync.RemoteTabs");
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "TabListView"
 ];
 
@@ -46,7 +47,6 @@ function TabListView(window, props) {
   this.tabsFilter = this._doc.querySelector(".tabsFilter");
   this.clearFilter = this._doc.querySelector(".textbox-search-clear");
   this.searchBox = this._doc.querySelector(".search-box");
-  this.searchIcon = this._doc.querySelector(".textbox-search-icon");
 
   this.container = this._doc.createElement("div");
 
@@ -179,7 +179,6 @@ TabListView.prototype = {
     this.tabsFilter.addEventListener("focus", this.onFilterFocus.bind(this));
     this.tabsFilter.addEventListener("blur", this.onFilterBlur.bind(this));
     this.clearFilter.addEventListener("click", this.onClearFilter.bind(this));
-    this.searchIcon.addEventListener("click", this.onFilterFocus.bind(this));
   },
 
   // These listeners have to be re-created every time since we re-create the list
@@ -524,8 +523,10 @@ TabListView.prototype = {
     while (el) {
       let show = false;
       if (showTabOptions) {
-        if (el.getAttribute("id") != "syncedTabsOpenAllInTabs" &&
-            el.getAttribute("id") != "syncedTabsManageDevices") {
+        if (el.getAttribute("id") == "syncedTabsOpenSelectedInPrivateWindow") {
+          show = PrivateBrowsingUtils.enabled;
+        } else if (el.getAttribute("id") != "syncedTabsOpenAllInTabs" &&
+                   el.getAttribute("id") != "syncedTabsManageDevices") {
           show = true;
         }
       } else if (el.getAttribute("id") == "syncedTabsOpenAllInTabs") {

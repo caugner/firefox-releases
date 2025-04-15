@@ -7,11 +7,9 @@
 "use strict";
 
 // React & Redux
-const {
-  createFactory,
-  DOM: dom,
-  PropTypes
-} = require("devtools/client/shared/vendor/react");
+const { createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const GripMessageBody = require("devtools/client/webconsole/new-console-output/components/GripMessageBody");
 const ConsoleTable = createFactory(require("devtools/client/webconsole/new-console-output/components/ConsoleTable"));
 const {isGroupType, l10n} = require("devtools/client/webconsole/new-console-output/utils/messages");
@@ -53,6 +51,7 @@ function ConsoleApiCall(props) {
     timeStamp,
     parameters,
     messageText,
+    prefix,
     userProvidedStyles,
   } = message;
 
@@ -76,6 +75,11 @@ function ConsoleApiCall(props) {
     messageBody = dom.span({className: "cm-variable"}, "console.table()");
   } else if (parameters) {
     messageBody = formatReps(messageBodyConfig);
+    if (prefix) {
+      messageBody.unshift(dom.span({
+        className: "console-message-prefix"
+      }, `${prefix}: `));
+    }
   } else {
     messageBody = messageText;
   }
@@ -119,6 +123,7 @@ function ConsoleApiCall(props) {
     indent,
     timeStamp,
     timestampsVisible,
+    parameters,
   });
 }
 
@@ -153,11 +158,14 @@ function formatReps(options = {}) {
       .reduce((arr, v, i) => {
         // We need to interleave a space if we are not on the last element AND
         // if we are not between 2 messages with user provided style.
-        const needSpace = i + 1 < parameters.length &&
-          (!userProvidedStyles || !userProvidedStyles[i] || !userProvidedStyles[i + 1]);
+        const needSpace = i + 1 < parameters.length && (
+          !userProvidedStyles
+          || userProvidedStyles[i] === undefined
+          || userProvidedStyles[i + 1] === undefined
+        );
 
         return needSpace
-          ? arr.concat(v, dom.span({}, " "))
+          ? arr.concat(v, " ")
           : arr.concat(v);
       }, [])
   );

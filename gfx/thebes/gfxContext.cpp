@@ -50,24 +50,6 @@ PatternFromState::operator mozilla::gfx::Pattern&()
     return *state.pattern->GetPattern(mContext->mDT, state.patternTransformChanged ? &state.patternTransform : nullptr);
   }
 
-  if (state.sourceSurface) {
-    Matrix transform = state.surfTransform;
-
-    if (state.patternTransformChanged) {
-      Matrix mat = mContext->GetDTTransform();
-      if (!mat.Invert()) {
-        mPattern = new (mColorPattern.addr())
-        ColorPattern(Color()); // transparent black to paint nothing
-        return *mPattern;
-      }
-      transform = transform * state.patternTransform * mat;
-    }
-
-    mPattern = new (mSurfacePattern.addr())
-    SurfacePattern(state.sourceSurface, ExtendMode::CLAMP, transform);
-    return *mPattern;
-  }
-
   mPattern = new (mColorPattern.addr())
   ColorPattern(state.color);
   return *mPattern;
@@ -247,7 +229,24 @@ void
 gfxContext::Fill(const Pattern& aPattern)
 {
   AUTO_PROFILER_LABEL("gfxContext::Fill", GRAPHICS);
-  FillAzure(aPattern, 1.0f);
+  AzureState &state = CurrentState();
+
+  CompositionOp op = GetOp();
+
+  if (mPathIsRect) {
+    MOZ_ASSERT(!mTransformChanged);
+
+    if (op == CompositionOp::OP_SOURCE) {
+      // Emulate cairo operator source which is bound by mask!
+      mDT->ClearRect(mRect);
+      mDT->FillRect(mRect, aPattern, DrawOptions(1.0f));
+    } else {
+      mDT->FillRect(mRect, aPattern, DrawOptions(1.0f, op, state.aaMode));
+    }
+  } else {
+    EnsurePath();
+    mDT->Fill(mPath, aPattern, DrawOptions(1.0f, op, state.aaMode));
+  }
 }
 
 void
@@ -462,23 +461,23 @@ gfxContext::CurrentAntialiasMode() const
 }
 
 void
-gfxContext::SetDash(gfxFloat *dashes, int ndash, gfxFloat offset)
+gfxContext::SetDash(const Float *dashes, int ndash, Float offset)
 {
   CURRENTSTATE_CHANGED()
   AzureState &state = CurrentState();
 
   state.dashPattern.SetLength(ndash);
   for (int i = 0; i < ndash; i++) {
-    state.dashPattern[i] = Float(dashes[i]);
+    state.dashPattern[i] = dashes[i];
   }
   state.strokeOptions.mDashLength = ndash;
-  state.strokeOptions.mDashOffset = Float(offset);
+  state.strokeOptions.mDashOffset = offset;
   state.strokeOptions.mDashPattern = ndash ? state.dashPattern.Elements()
                                            : nullptr;
 }
 
 bool
-gfxContext::CurrentDash(FallibleTArray<gfxFloat>& dashes, gfxFloat* offset) const
+gfxContext::CurrentDash(FallibleTArray<Float>& dashes, Float* offset) const
 {
   const AzureState &state = CurrentState();
   int count = state.strokeOptions.mDashLength;
@@ -487,28 +486,26 @@ gfxContext::CurrentDash(FallibleTArray<gfxFloat>& dashes, gfxFloat* offset) cons
     return false;
   }
 
-  for (int i = 0; i < count; i++) {
-    dashes[i] = state.dashPattern[i];
-  }
+  dashes = state.dashPattern;
 
   *offset = state.strokeOptions.mDashOffset;
 
   return true;
 }
 
-gfxFloat
+Float
 gfxContext::CurrentDashOffset() const
 {
   return CurrentState().strokeOptions.mDashOffset;
 }
 
 void
-gfxContext::SetLineWidth(gfxFloat width)
+gfxContext::SetLineWidth(Float width)
 {
-  CurrentState().strokeOptions.mLineWidth = Float(width);
+  CurrentState().strokeOptions.mLineWidth = width;
 }
 
-gfxFloat
+Float
 gfxContext::CurrentLineWidth() const
 {
   return CurrentState().strokeOptions.mLineWidth;
@@ -554,13 +551,13 @@ gfxContext::CurrentLineJoin() const
 }
 
 void
-gfxContext::SetMiterLimit(gfxFloat limit)
+gfxContext::SetMiterLimit(Float limit)
 {
   CURRENTSTATE_CHANGED()
-  CurrentState().strokeOptions.mMiterLimit = Float(limit);
+  CurrentState().strokeOptions.mMiterLimit = limit;
 }
 
-gfxFloat
+Float
 gfxContext::CurrentMiterLimit() const
 {
   return CurrentState().strokeOptions.mMiterLimit;
@@ -621,7 +618,7 @@ gfxContext::GetClipExtents(ClipExtentsSpace aSpace) const
 {
   Rect rect = GetAzureDeviceSpaceClipBounds();
 
-  if (rect.width == 0 || rect.height == 0) {
+  if (rect.IsZeroArea()) {
     return gfxRect(0, 0, 0, 0);
   }
 
@@ -693,8 +690,6 @@ gfxContext::SetColor(const Color& aColor)
 {
   CURRENTSTATE_CHANGED()
   CurrentState().pattern = nullptr;
-  CurrentState().sourceSurfCairo = nullptr;
-  CurrentState().sourceSurface = nullptr;
   CurrentState().color = ToDeviceColor(aColor);
 }
 
@@ -703,17 +698,12 @@ gfxContext::SetDeviceColor(const Color& aColor)
 {
   CURRENTSTATE_CHANGED()
   CurrentState().pattern = nullptr;
-  CurrentState().sourceSurfCairo = nullptr;
-  CurrentState().sourceSurface = nullptr;
   CurrentState().color = aColor;
 }
 
 bool
 gfxContext::GetDeviceColor(Color& aColorOut)
 {
-  if (CurrentState().sourceSurface) {
-    return false;
-  }
   if (CurrentState().pattern) {
     return CurrentState().pattern->GetSolidColor(aColorOut);
   }
@@ -723,26 +713,9 @@ gfxContext::GetDeviceColor(Color& aColorOut)
 }
 
 void
-gfxContext::SetSource(gfxASurface *surface, const gfxPoint& offset)
-{
-  CURRENTSTATE_CHANGED()
-  CurrentState().surfTransform = Matrix(1.0f, 0, 0, 1.0f, Float(offset.x), Float(offset.y));
-  CurrentState().pattern = nullptr;
-  CurrentState().patternTransformChanged = false;
-  // Keep the underlying cairo surface around while we keep the
-  // sourceSurface.
-  CurrentState().sourceSurfCairo = surface;
-  CurrentState().sourceSurface =
-  gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(mDT, surface);
-  CurrentState().color = Color(0, 0, 0, 0);
-}
-
-void
 gfxContext::SetPattern(gfxPattern *pattern)
 {
   CURRENTSTATE_CHANGED()
-  CurrentState().sourceSurfCairo = nullptr;
-  CurrentState().sourceSurface = nullptr;
   CurrentState().patternTransformChanged = false;
   CurrentState().pattern = pattern;
 }
@@ -755,8 +728,6 @@ gfxContext::GetPattern()
   AzureState &state = CurrentState();
   if (state.pattern) {
     pat = state.pattern;
-  } else if (state.sourceSurface) {
-    NS_ASSERTION(false, "Ugh, this isn't good.");
   } else {
     pat = new gfxPattern(state.color);
   }
@@ -787,38 +758,16 @@ gfxContext::Mask(SourceSurface *surface, float alpha, const Point& offset)
 }
 
 void
-gfxContext::Paint(gfxFloat alpha)
+gfxContext::Paint(Float alpha)
 {
   AUTO_PROFILER_LABEL("gfxContext::Paint", GRAPHICS);
-
-  AzureState &state = CurrentState();
-
-  if (state.sourceSurface && !state.sourceSurfCairo &&
-      !state.patternTransformChanged)
-  {
-    // This is the case where a PopGroupToSource has been done and this
-    // paint is executed without changing the transform or the source.
-    Matrix oldMat = mDT->GetTransform();
-
-    IntSize surfSize = state.sourceSurface->GetSize();
-
-    mDT->SetTransform(Matrix::Translation(-state.deviceOffset.x,
-                                          -state.deviceOffset.y));
-
-    mDT->DrawSurface(state.sourceSurface,
-                     Rect(state.sourceSurfaceDeviceOffset, Size(surfSize.width, surfSize.height)),
-                     Rect(Point(), Size(surfSize.width, surfSize.height)),
-                     DrawSurfaceOptions(), DrawOptions(alpha, GetOp()));
-    mDT->SetTransform(oldMat);
-    return;
-  }
 
   Matrix mat = mDT->GetTransform();
   mat.Invert();
   Rect paintRect = mat.TransformBounds(Rect(Point(0, 0), Size(mDT->GetSize())));
 
   mDT->FillRect(paintRect, PatternFromState(this),
-                DrawOptions(Float(alpha), GetOp()));
+                DrawOptions(alpha, GetOp()));
 }
 
 void
@@ -834,7 +783,7 @@ gfxContext::PushGroupAndCopyBackground(gfxContentType content, Float aOpacity, S
   if (mDT->GetFormat() != SurfaceFormat::B8G8R8X8) {
     gfxRect clipRect = GetClipExtents(gfxContext::eDeviceSpace);
     clipRect.RoundOut();
-    clipExtents = IntRect::Truncate(clipRect.x, clipRect.y, clipRect.width, clipRect.height);
+    clipExtents = IntRect::Truncate(clipRect.X(), clipRect.Y(), clipRect.Width(), clipRect.Height());
   }
   bool pushOpaqueWithCopiedBG = (mDT->GetFormat() == SurfaceFormat::B8G8R8X8 ||
                                  mDT->GetOpaqueRect().Contains(clipExtents)) &&
@@ -955,29 +904,6 @@ gfxContext::EnsurePathBuilder()
   mPathIsRect = false;
 }
 
-void
-gfxContext::FillAzure(const Pattern& aPattern, Float aOpacity)
-{
-  AzureState &state = CurrentState();
-
-  CompositionOp op = GetOp();
-
-  if (mPathIsRect) {
-    MOZ_ASSERT(!mTransformChanged);
-
-    if (op == CompositionOp::OP_SOURCE) {
-      // Emulate cairo operator source which is bound by mask!
-      mDT->ClearRect(mRect);
-      mDT->FillRect(mRect, aPattern, DrawOptions(aOpacity));
-    } else {
-      mDT->FillRect(mRect, aPattern, DrawOptions(aOpacity, op, state.aaMode));
-    }
-  } else {
-    EnsurePath();
-    mDT->Fill(mPath, aPattern, DrawOptions(aOpacity, op, state.aaMode));
-  }
-}
-
 CompositionOp
 gfxContext::GetOp()
 {
@@ -988,12 +914,6 @@ gfxContext::GetOp()
   AzureState &state = CurrentState();
   if (state.pattern) {
     if (state.pattern->IsOpaque()) {
-      return CompositionOp::OP_OVER;
-    } else {
-      return CompositionOp::OP_SOURCE;
-    }
-  } else if (state.sourceSurface) {
-    if (state.sourceSurface->GetFormat() == SurfaceFormat::B8G8R8X8) {
       return CompositionOp::OP_OVER;
     } else {
       return CompositionOp::OP_SOURCE;
@@ -1023,7 +943,7 @@ gfxContext::ChangeTransform(const Matrix &aNewMatrix, bool aUpdatePatternTransfo
 {
   AzureState &state = CurrentState();
 
-  if (aUpdatePatternTransform && (state.pattern || state.sourceSurface)
+  if (aUpdatePatternTransform && (state.pattern)
       && !state.patternTransformChanged) {
     state.patternTransform = GetDTTransform();
     state.patternTransformChanged = true;

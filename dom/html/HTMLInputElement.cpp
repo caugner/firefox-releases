@@ -11,13 +11,13 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/Date.h"
 #include "mozilla/dom/Directory.h"
+#include "mozilla/dom/DOMPrefs.h"
 #include "mozilla/dom/HTMLFormSubmission.h"
 #include "mozilla/dom/FileSystemUtils.h"
 #include "mozilla/dom/GetFilesHelper.h"
 #include "nsAttrValueInlines.h"
 #include "nsCRTGlue.h"
 
-#include "nsIDOMHTMLInputElement.h"
 #include "nsITextControlElement.h"
 #include "nsIDOMNSEditableElement.h"
 #include "nsIRadioVisitor.h"
@@ -34,7 +34,6 @@
 #include "nsRepeatService.h"
 #include "nsContentCID.h"
 #include "nsIComponentManager.h"
-#include "nsIDOMHTMLFormElement.h"
 #include "mozilla/dom/ProgressEvent.h"
 #include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
@@ -57,14 +56,12 @@
 #include "nsPresState.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMNodeList.h"
-#include "nsIDOMHTMLCollection.h"
 #include "nsLinebreakConverter.h" //to strip out carriage returns
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
 #include "nsLayoutUtils.h"
 #include "nsVariant.h"
 
-#include "nsIDOMMutationEvent.h"
 #include "mozilla/ContentEvents.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventStates.h"
@@ -259,13 +256,13 @@ public:
   {
     nsresult rv = NS_OK;
     rv = nsContentUtils::DispatchTrustedEvent(mInputElement->OwnerDoc(),
-                                              static_cast<nsIDOMHTMLInputElement*>(mInputElement.get()),
+                                              static_cast<Element*>(mInputElement.get()),
                                               NS_LITERAL_STRING("input"), true,
                                               false);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "DispatchTrustedEvent failed");
 
     rv = nsContentUtils::DispatchTrustedEvent(mInputElement->OwnerDoc(),
-                                              static_cast<nsIDOMHTMLInputElement*>(mInputElement.get()),
+                                              static_cast<Element*>(mInputElement.get()),
                                               NS_LITERAL_STRING("change"), true,
                                               false);
 
@@ -686,7 +683,7 @@ HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
   RefPtr<DispatchChangeEventCallback> dispatchChangeEventCallback =
     new DispatchChangeEventCallback(mInput);
 
-  if (IsWebkitDirPickerEnabled() &&
+  if (DOMPrefs::WebkitBlinkDirectoryPickerEnabled() &&
       mInput->HasAttr(kNameSpaceID_None, nsGkAtoms::webkitdirectory)) {
     ErrorResult error;
     GetFilesHelper* helper = mInput->GetOrCreateGetFilesHelper(true, error);
@@ -748,8 +745,7 @@ nsColorPickerShownCallback::UpdateInternal(const nsAString& aColor,
     mInput->GetValue(oldValue, CallerType::System);
   }
 
-  IgnoredErrorResult rv;
-  mInput->SetValue(aColor, CallerType::System, rv);
+  mInput->SetValue(aColor, CallerType::System, IgnoreErrors());
 
   if (!aTrustedUpdate) {
     nsAutoString newValue;
@@ -762,7 +758,7 @@ nsColorPickerShownCallback::UpdateInternal(const nsAString& aColor,
   if (valueChanged) {
     mValueChanged = true;
     return nsContentUtils::DispatchTrustedEvent(mInput->OwnerDoc(),
-                                                static_cast<nsIDOMHTMLInputElement*>(mInput.get()),
+                                                static_cast<Element*>(mInput.get()),
                                                 NS_LITERAL_STRING("input"), true,
                                                 false);
   }
@@ -796,7 +792,7 @@ nsColorPickerShownCallback::Done(const nsAString& aColor)
 
   if (mValueChanged) {
     rv = nsContentUtils::DispatchTrustedEvent(mInput->OwnerDoc(),
-                                              static_cast<nsIDOMHTMLInputElement*>(mInput.get()),
+                                              static_cast<Element*>(mInput.get()),
                                               NS_LITERAL_STRING("change"), true,
                                               false);
   }
@@ -1088,7 +1084,7 @@ UploadLastDir::Observe(nsISupports* aSubject, char const* aTopic, char16_t const
 
 #ifdef ACCESSIBILITY
 //Helper method
-static nsresult FireEventForAccessibility(nsIDOMHTMLInputElement* aTarget,
+static nsresult FireEventForAccessibility(HTMLInputElement* aTarget,
                                           nsPresContext* aPresContext,
                                           EventMessage aEventMessage);
 #endif
@@ -1550,23 +1546,11 @@ HTMLInputElement::AfterClearForm(bool aUnbindOrDelete)
   }
 }
 
-// nsIDOMHTMLInputElement
-
-NS_IMETHODIMP
-HTMLInputElement::GetForm(nsIDOMHTMLFormElement** aForm)
-{
-  return nsGenericHTMLFormElementWithState::GetForm(aForm);
-}
-
-NS_IMPL_ACTION_ATTR(HTMLInputElement, FormAction, formaction)
-NS_IMPL_STRING_ATTR(HTMLInputElement, Name, name)
-NS_IMPL_BOOL_ATTR(HTMLInputElement, ReadOnly, readonly)
-
-NS_IMETHODIMP
+void
 HTMLInputElement::GetAutocomplete(nsAString& aValue)
 {
   if (!DoesAutocompleteApply()) {
-    return NS_OK;
+    return;
   }
 
   aValue.Truncate();
@@ -1575,7 +1559,6 @@ HTMLInputElement::GetAutocomplete(nsAString& aValue)
   mAutocompleteAttrState =
     nsContentUtils::SerializeAutocompleteAttribute(attributeVal, aValue,
                                                    mAutocompleteAttrState);
-  return NS_OK;
 }
 
 void
@@ -1632,13 +1615,6 @@ HTMLInputElement::Height()
   return GetWidthHeightForImage(mCurrentRequest).height;
 }
 
-NS_IMETHODIMP
-HTMLInputElement::GetIndeterminate(bool* aValue)
-{
-  *aValue = Indeterminate();
-  return NS_OK;
-}
-
 void
 HTMLInputElement::SetIndeterminateInternal(bool aValue,
                                            bool aShouldInvalidate)
@@ -1655,11 +1631,10 @@ HTMLInputElement::SetIndeterminateInternal(bool aValue,
   UpdateState(true);
 }
 
-NS_IMETHODIMP
+void
 HTMLInputElement::SetIndeterminate(bool aValue)
 {
   SetIndeterminateInternal(aValue, true);
-  return NS_OK;
 }
 
 uint32_t
@@ -1887,35 +1862,19 @@ HTMLInputElement::GetList() const
   return static_cast<nsGenericHTMLElement*>(element);
 }
 
-NS_IMETHODIMP
-HTMLInputElement::GetList(nsIDOMHTMLElement** aValue)
-{
-  *aValue = nullptr;
-
-  RefPtr<nsGenericHTMLElement> element = GetList();
-  if (!element) {
-    return NS_OK;
-  }
-
-  element.forget(aValue);
-  return NS_OK;
-}
-
 void
 HTMLInputElement::SetValue(Decimal aValue, CallerType aCallerType)
 {
   MOZ_ASSERT(!aValue.isInfinity(), "aValue must not be Infinity!");
 
   if (aValue.isNaN()) {
-    IgnoredErrorResult rv;
-    SetValue(EmptyString(), aCallerType, rv);
+    SetValue(EmptyString(), aCallerType, IgnoreErrors());
     return;
   }
 
   nsAutoString value;
   mInputType->ConvertNumberToString(aValue, value);
-  IgnoredErrorResult rv;
-  SetValue(value, aCallerType, rv);
+  SetValue(value, aCallerType, IgnoreErrors());
 }
 
 Nullable<Date>
@@ -2426,7 +2385,7 @@ HTMLInputElement::OpenDateTimePicker(const DateTimeValue& aInitialValue)
 
   mDateTimeInputBoxValue = new DateTimeValue(aInitialValue);
   nsContentUtils::DispatchChromeEvent(OwnerDoc(),
-                                      static_cast<nsIDOMHTMLInputElement*>(this),
+                                      static_cast<Element*>(this),
                                       NS_LITERAL_STRING("MozOpenDateTimePicker"),
                                       true, true);
 }
@@ -2440,7 +2399,7 @@ HTMLInputElement::UpdateDateTimePicker(const DateTimeValue& aValue)
 
   mDateTimeInputBoxValue = new DateTimeValue(aValue);
   nsContentUtils::DispatchChromeEvent(OwnerDoc(),
-                                      static_cast<nsIDOMHTMLInputElement*>(this),
+                                      static_cast<Element*>(this),
                                       NS_LITERAL_STRING("MozUpdateDateTimePicker"),
                                       true, true);
 }
@@ -2453,7 +2412,7 @@ HTMLInputElement::CloseDateTimePicker()
   }
 
   nsContentUtils::DispatchChromeEvent(OwnerDoc(),
-                                      static_cast<nsIDOMHTMLInputElement*>(this),
+                                      static_cast<Element*>(this),
                                       NS_LITERAL_STRING("MozCloseDateTimePicker"),
                                       true, true);
 }
@@ -2547,7 +2506,7 @@ HTMLInputElement::SetUserInput(const nsAString& aValue)
   }
 
   nsContentUtils::DispatchTrustedEvent(OwnerDoc(),
-                                       static_cast<nsIDOMHTMLInputElement*>(this),
+                                       static_cast<Element*>(this),
                                        NS_LITERAL_STRING("input"), true,
                                        true);
 
@@ -2747,7 +2706,7 @@ HTMLInputElement::GetDisplayFileName(nsAString& aValue) const
 
   if (mFileData->mFilesOrDirectories.IsEmpty()) {
     if ((IsDirPickerEnabled() && Allowdirs()) ||
-        (IsWebkitDirPickerEnabled() &&
+        (DOMPrefs::WebkitBlinkDirectoryPickerEnabled() &&
          HasAttr(kNameSpaceID_None, nsGkAtoms::webkitdirectory))) {
       nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
                                          "NoDirSelected", value);
@@ -2840,7 +2799,7 @@ HTMLInputElement::MozSetDndFilesAndDirectories(const nsTArray<OwningFileOrDirect
   RefPtr<DispatchChangeEventCallback> dispatchChangeEventCallback =
     new DispatchChangeEventCallback(this);
 
-  if (IsWebkitDirPickerEnabled() &&
+  if (DOMPrefs::WebkitBlinkDirectoryPickerEnabled() &&
       HasAttr(kNameSpaceID_None, nsGkAtoms::webkitdirectory)) {
     ErrorResult rv;
     GetFilesHelper* helper = GetOrCreateGetFilesHelper(true /* recursionFlag */,
@@ -2922,7 +2881,7 @@ HTMLInputElement::GetFiles()
   }
 
   if (IsDirPickerEnabled() && Allowdirs() &&
-      (!IsWebkitDirPickerEnabled() ||
+      (!DOMPrefs::WebkitBlinkDirectoryPickerEnabled() ||
        !HasAttr(kNameSpaceID_None, nsGkAtoms::webkitdirectory))) {
     return nullptr;
   }
@@ -3128,13 +3087,6 @@ HTMLInputElement::SetValueChanged(bool aValueChanged)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-HTMLInputElement::GetChecked(bool* aChecked)
-{
-  *aChecked = Checked();
-  return NS_OK;
-}
-
 void
 HTMLInputElement::SetCheckedChanged(bool aCheckedChanged)
 {
@@ -3170,11 +3122,10 @@ HTMLInputElement::SetCheckedChangedInternal(bool aCheckedChanged)
   }
 }
 
-NS_IMETHODIMP
+void
 HTMLInputElement::SetChecked(bool aChecked)
 {
   DoSetChecked(aChecked, true, true);
-  return NS_OK;
 }
 
 void
@@ -3223,14 +3174,13 @@ void
 HTMLInputElement::RadioSetChecked(bool aNotify)
 {
   // Find the selected radio button so we can deselect it
-  nsCOMPtr<nsIDOMHTMLInputElement> currentlySelected = GetSelectedRadioButton();
+  HTMLInputElement* currentlySelected = GetSelectedRadioButton();
 
   // Deselect the currently selected radio button
   if (currentlySelected) {
     // Pass true for the aNotify parameter since the currently selected
     // button is already in the document.
-    static_cast<HTMLInputElement*>(currentlySelected.get())
-      ->SetCheckedInternal(false, true);
+    currentlySelected->SetCheckedInternal(false, true);
   }
 
   // Let the group know that we are now the One True Radio Button
@@ -3267,7 +3217,7 @@ HTMLInputElement::GetRadioGroupContainer() const
   return static_cast<nsDocument*>(GetUncomposedDoc());
 }
 
-already_AddRefed<nsIDOMHTMLInputElement>
+HTMLInputElement*
 HTMLInputElement::GetSelectedRadioButton() const
 {
   nsIRadioGroupContainer* container = GetRadioGroupContainer();
@@ -3278,8 +3228,8 @@ HTMLInputElement::GetSelectedRadioButton() const
   nsAutoString name;
   GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
 
-  nsCOMPtr<nsIDOMHTMLInputElement> selected = container->GetCurrentRadioButton(name);
-  return selected.forget();
+  HTMLInputElement* selected = container->GetCurrentRadioButton(name);
+  return selected;
 }
 
 nsresult
@@ -3646,7 +3596,7 @@ HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
             aVisitor.mItemFlags |= NS_ORIGINAL_INDETERMINATE_VALUE;
           }
 
-          GetChecked(&originalCheckedValue);
+          originalCheckedValue = Checked();
           DoSetChecked(!originalCheckedValue, true, true);
           mCheckedIsToggled = true;
         }
@@ -3654,8 +3604,8 @@ HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 
       case NS_FORM_INPUT_RADIO:
         {
-          nsCOMPtr<nsIDOMHTMLInputElement> selectedRadioButton = GetSelectedRadioButton();
-          aVisitor.mItemData = selectedRadioButton;
+          HTMLInputElement* selectedRadioButton = GetSelectedRadioButton();
+          aVisitor.mItemData = static_cast<Element*>(selectedRadioButton);
 
           originalCheckedValue = mChecked;
           if (!originalCheckedValue) {
@@ -4000,7 +3950,7 @@ HTMLInputElement::SetValueOfRangeForUserEvent(Decimal aValue)
 
   if (GetValueAsDecimal() != oldValue) {
     nsContentUtils::DispatchTrustedEvent(OwnerDoc(),
-                                         static_cast<nsIDOMHTMLInputElement*>(this),
+                                         static_cast<Element*>(this),
                                          NS_LITERAL_STRING("input"), true,
                                          false);
   }
@@ -4098,7 +4048,7 @@ HTMLInputElement::StepNumberControlForUserEvent(int32_t aDirection)
                            nsTextEditorState::eSetValue_Notify);
 
   nsContentUtils::DispatchTrustedEvent(OwnerDoc(),
-                                       static_cast<nsIDOMHTMLInputElement*>(this),
+                                       static_cast<Element*>(this),
                                        NS_LITERAL_STRING("input"), true,
                                        false);
 }
@@ -4136,7 +4086,7 @@ HTMLInputElement::ShouldPreventDOMActivateDispatch(EventTarget* aOriginalTarget)
     return false;
   }
 
-  nsCOMPtr<nsIContent> target = do_QueryInterface(aOriginalTarget);
+  nsCOMPtr<Element> target = do_QueryInterface(aOriginalTarget);
   if (!target) {
     return false;
   }
@@ -4173,7 +4123,7 @@ HTMLInputElement::MaybeInitPickers(EventChainPostVisitor& aVisitor)
     if (target &&
         target->FindFirstNonChromeOnlyAccessContent() == this &&
         ((IsDirPickerEnabled() && Allowdirs()) ||
-         (IsWebkitDirPickerEnabled() &&
+         (DOMPrefs::WebkitBlinkDirectoryPickerEnabled() &&
           HasAttr(kNameSpaceID_None, nsGkAtoms::webkitdirectory)))) {
       type = FILE_PICKER_DIRECTORY;
     }
@@ -4289,8 +4239,9 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
       // selected btn to TRUE. if it is a checkbox then set it to its
       // original value
       if (oldType == NS_FORM_INPUT_RADIO) {
-        nsCOMPtr<nsIDOMHTMLInputElement> selectedRadioButton =
-          do_QueryInterface(aVisitor.mItemData);
+        nsCOMPtr<nsIContent> content = do_QueryInterface(aVisitor.mItemData);
+        HTMLInputElement* selectedRadioButton =
+          HTMLInputElement::FromContentOrNull(content);
         if (selectedRadioButton) {
           selectedRadioButton->SetChecked(true);
         }
@@ -4309,11 +4260,11 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
     } else {
       // Fire input event and then change event.
       nsContentUtils::DispatchTrustedEvent<InternalEditorInputEvent>
-        (OwnerDoc(), static_cast<nsIDOMHTMLInputElement*>(this),
+        (OwnerDoc(), static_cast<Element*>(this),
          eEditorInput, true, false);
 
       nsContentUtils::DispatchTrustedEvent<WidgetEvent>
-        (OwnerDoc(), static_cast<nsIDOMHTMLInputElement*>(this),
+        (OwnerDoc(), static_cast<Element*>(this),
          eFormChange, true, false);
 #ifdef ACCESSIBILITY
       // Fire an event to notify accessibility
@@ -4324,8 +4275,9 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
         FireEventForAccessibility(this, aVisitor.mPresContext,
                                   eFormRadioStateChange);
         // Fire event for the previous selected radio.
-        nsCOMPtr<nsIDOMHTMLInputElement> previous =
-          do_QueryInterface(aVisitor.mItemData);
+        nsCOMPtr<nsIContent> content = do_QueryInterface(aVisitor.mItemData);
+        HTMLInputElement* previous =
+          HTMLInputElement::FromContentOrNull(content);
         if (previous) {
           FireEventForAccessibility(previous, aVisitor.mPresContext,
                                     eFormRadioStateChange);
@@ -4701,8 +4653,7 @@ HTMLInputElement::PostHandleEventForRangeThumb(EventChainPostVisitor& aVisitor)
 {
   MOZ_ASSERT(mType == NS_FORM_INPUT_RANGE);
 
-  if ((nsEventStatus_eConsumeNoDefault == aVisitor.mEventStatus &&
-       !MozInputRangeIgnorePreventDefault()) ||
+  if (nsEventStatus_eConsumeNoDefault == aVisitor.mEventStatus ||
       !(aVisitor.mEvent->mClass == eMouseEventClass ||
         aVisitor.mEvent->mClass == eTouchEventClass ||
         aVisitor.mEvent->mClass == eKeyboardEventClass)) {
@@ -5636,21 +5587,6 @@ HTMLInputElement::IsDateTimeTypeSupported(uint8_t aDateTimeInputType)
 }
 
 /* static */ bool
-HTMLInputElement::IsWebkitDirPickerEnabled()
-{
-  static bool sWebkitDirPickerEnabled = false;
-  static bool sWebkitDirPickerPrefCached = false;
-  if (!sWebkitDirPickerPrefCached) {
-    sWebkitDirPickerPrefCached = true;
-    Preferences::AddBoolVarCache(&sWebkitDirPickerEnabled,
-                                 "dom.webkitBlink.dirPicker.enabled",
-                                 false);
-  }
-
-  return sWebkitDirPickerEnabled;
-}
-
-/* static */ bool
 HTMLInputElement::IsWebkitFileSystemEnabled()
 {
   static bool sWebkitFileSystemEnabled = false;
@@ -5754,6 +5690,7 @@ bool
 HTMLInputElement::ParseAttribute(int32_t aNamespaceID,
                                  nsAtom* aAttribute,
                                  const nsAString& aValue,
+                                 nsIPrincipal* aMaybeScriptedPrincipal,
                                  nsAttrValue& aResult)
 {
   // We can't make these static_asserts because kInputDefaultType and
@@ -5826,7 +5763,7 @@ HTMLInputElement::ParseAttribute(int32_t aNamespaceID,
   }
 
   return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aResult);
+                                              aMaybeScriptedPrincipal, aResult);
 }
 
 void
@@ -6055,7 +5992,7 @@ HTMLInputElement::GetControllers(ErrorResult& aRv)
   return mControllers;
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLInputElement::GetControllers(nsIControllers** aResult)
 {
   NS_ENSURE_ARG_POINTER(aResult);
@@ -6249,13 +6186,13 @@ HTMLInputElement::SetSelectionDirection(const nsAString& aDirection, ErrorResult
 
 #ifdef ACCESSIBILITY
 /*static*/ nsresult
-FireEventForAccessibility(nsIDOMHTMLInputElement* aTarget,
+FireEventForAccessibility(HTMLInputElement* aTarget,
                           nsPresContext* aPresContext,
                           EventMessage aEventMessage)
 {
-  nsCOMPtr<mozilla::dom::Element> element = do_QueryInterface(aTarget);
+  Element* element = static_cast<Element*>(aTarget);
   return nsContentUtils::DispatchTrustedEvent<WidgetEvent>
-    (element->OwnerDoc(), aTarget, aEventMessage, true, true);
+    (element->OwnerDoc(), element, aEventMessage, true, true);
 }
 #endif
 
@@ -6559,7 +6496,7 @@ HTMLInputElement::IntrinsicState() const
     }
 
     if (mType == NS_FORM_INPUT_RADIO) {
-      nsCOMPtr<nsIDOMHTMLInputElement> selected = GetSelectedRadioButton();
+      HTMLInputElement* selected = GetSelectedRadioButton();
       bool indeterminate = !selected && !mChecked;
 
       if (indeterminate) {
@@ -6615,7 +6552,7 @@ HTMLInputElement::IntrinsicState() const
 
   if (PlaceholderApplies() &&
       HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder) &&
-      IsValueEmpty()) {
+      ShouldShowPlaceholder()) {
     state |= NS_EVENT_STATE_PLACEHOLDERSHOWN;
   }
 
@@ -6624,6 +6561,24 @@ HTMLInputElement::IntrinsicState() const
   }
 
   return state;
+}
+
+bool
+HTMLInputElement::ShouldShowPlaceholder() const
+{
+  MOZ_ASSERT(PlaceholderApplies());
+
+  if (!IsValueEmpty()) {
+    return false;
+  }
+
+  // For number controls, even though the (sanitized) value is empty, there may
+  // be text in the anon text control.
+  if (nsNumberControlFrame* frame = do_QueryFrame(GetPrimaryFrame())) {
+    return frame->AnonTextControlIsEmpty();
+  }
+
+  return true;
 }
 
 void
@@ -6702,8 +6657,7 @@ HTMLInputElement::RestoreState(nsPresState* aState)
   }
 
   if (aState->IsDisabledSet() && !aState->GetDisabled()) {
-    IgnoredErrorResult ignored;
-    SetDisabled(false, ignored);
+    SetDisabled(false, IgnoreErrors());
   }
 
   return restoredCheckedState;
@@ -6955,46 +6909,6 @@ HTMLInputElement::IsMutable() const
 }
 
 bool
-HTMLInputElement::DoesReadOnlyApply() const
-{
-  switch (mType)
-  {
-    case NS_FORM_INPUT_HIDDEN:
-    case NS_FORM_INPUT_BUTTON:
-    case NS_FORM_INPUT_IMAGE:
-    case NS_FORM_INPUT_RESET:
-    case NS_FORM_INPUT_SUBMIT:
-    case NS_FORM_INPUT_RADIO:
-    case NS_FORM_INPUT_FILE:
-    case NS_FORM_INPUT_CHECKBOX:
-    case NS_FORM_INPUT_RANGE:
-    case NS_FORM_INPUT_COLOR:
-      return false;
-#ifdef DEBUG
-    case NS_FORM_INPUT_TEXT:
-    case NS_FORM_INPUT_PASSWORD:
-    case NS_FORM_INPUT_SEARCH:
-    case NS_FORM_INPUT_TEL:
-    case NS_FORM_INPUT_EMAIL:
-    case NS_FORM_INPUT_URL:
-    case NS_FORM_INPUT_NUMBER:
-    case NS_FORM_INPUT_DATE:
-    case NS_FORM_INPUT_TIME:
-    case NS_FORM_INPUT_MONTH:
-    case NS_FORM_INPUT_WEEK:
-    case NS_FORM_INPUT_DATETIME_LOCAL:
-      return true;
-    default:
-      MOZ_ASSERT_UNREACHABLE("Unexpected input type in DoesReadOnlyApply()");
-      return true;
-#else // DEBUG
-    default:
-      return true;
-#endif // DEBUG
-  }
-}
-
-bool
 HTMLInputElement::DoesRequiredApply() const
 {
   switch (mType)
@@ -7041,7 +6955,7 @@ HTMLInputElement::PlaceholderApplies() const
     return false;
   }
 
-  return IsSingleLineTextControl(false);
+  return IsSingleLineTextOrNumberControl(false);
 }
 
 bool
@@ -7251,7 +7165,7 @@ HTMLInputElement::UpdateValueMissingValidityStateForRadio(bool aIgnoreSelf)
              "This should be called only for radio input types");
 
   bool notify = mDoneCreating;
-  nsCOMPtr<nsIDOMHTMLInputElement> selection = GetSelectedRadioButton();
+  HTMLInputElement* selection = GetSelectedRadioButton();
 
   aIgnoreSelf = aIgnoreSelf || !IsMutable();
 

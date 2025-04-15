@@ -18,6 +18,9 @@ var docURL   = "";
 var progressParams = null;
 
 function ellipseString(aStr, doFront) {
+  if (!aStr)
+    return "";
+
   if (aStr.length > 3 && (aStr.substr(0, 3) == "..." || aStr.substr(aStr.length - 4, 3) == "..."))
     return aStr;
 
@@ -35,7 +38,7 @@ function ellipseString(aStr, doFront) {
 var progressListener = {
 
   onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
-    if (aStateFlags & Components.interfaces.nsIWebProgressListener.STATE_STOP)
+    if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP)
       window.close();
   },
 
@@ -64,9 +67,9 @@ var progressListener = {
   },
 
   QueryInterface(iid) {
-    if (iid.equals(Components.interfaces.nsIWebProgressListener) || iid.equals(Components.interfaces.nsISupportsWeakReference))
+    if (iid.equals(Ci.nsIWebProgressListener) || iid.equals(Ci.nsISupportsWeakReference))
       return this;
-    throw Components.results.NS_NOINTERFACE;
+    throw Cr.NS_NOINTERFACE;
   }
 };
 
@@ -74,7 +77,7 @@ function onLoad() {
   // Set global variables.
   printProgress = window.arguments[0];
   if (window.arguments[1]) {
-    progressParams = window.arguments[1].QueryInterface(Components.interfaces.nsIPrintProgressParams);
+    progressParams = window.arguments[1].QueryInterface(Ci.nsIPrintProgressParams);
     if (progressParams) {
       docTitle = ellipseString(progressParams.docTitle, false);
       docURL   = ellipseString(progressParams.docURL, true);

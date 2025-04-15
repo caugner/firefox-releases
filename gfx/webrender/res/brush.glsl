@@ -5,41 +5,63 @@
 #ifdef WR_VERTEX_SHADER
 
 void brush_vs(
+    VertexInfo vi,
     int prim_address,
-    vec2 local_pos,
     RectWithSize local_rect,
-    ivec2 user_data
+    ivec3 user_data,
+    PictureTask pic_task
 );
 
-// Whether this brush is being drawn on a Picture
-// task (new) or an alpha batch task (legacy).
-// Can be removed once everything uses pictures.
-#define BRUSH_FLAG_USES_PICTURE     (1 << 0)
+#define VECS_PER_BRUSH_PRIM                 2
+#define VECS_PER_SEGMENT                    2
+
+#define BRUSH_FLAG_PERSPECTIVE_INTERPOLATION    1
 
 struct BrushInstance {
     int picture_address;
     int prim_address;
-    int clip_node_id;
+    int clip_chain_rect_index;
     int scroll_node_id;
     int clip_address;
     int z;
+    int segment_index;
+    int edge_mask;
     int flags;
-    ivec2 user_data;
+    ivec3 user_data;
 };
 
 BrushInstance load_brush() {
-	BrushInstance bi;
+    BrushInstance bi;
 
-    bi.picture_address = aData0.x;
+    bi.picture_address = aData0.x & 0xffff;
+    bi.clip_address = aData0.x >> 16;
     bi.prim_address = aData0.y;
-    bi.clip_node_id = aData0.z / 65536;
-    bi.scroll_node_id = aData0.z % 65536;
-    bi.clip_address = aData0.w;
-    bi.z = aData1.x;
-    bi.flags = aData1.y;
-    bi.user_data = aData1.zw;
+    bi.clip_chain_rect_index = aData0.z >> 16;
+    bi.scroll_node_id = aData0.z & 0xffff;
+    bi.z = aData0.w;
+    bi.segment_index = aData1.x & 0xffff;
+    bi.edge_mask = (aData1.x >> 16) & 0xff;
+    bi.flags = (aData1.x >> 24);
+    bi.user_data = aData1.yzw;
 
     return bi;
+}
+
+struct BrushPrimitive {
+    RectWithSize local_rect;
+    RectWithSize local_clip_rect;
+};
+
+BrushPrimitive fetch_brush_primitive(int address, int clip_chain_rect_index) {
+    vec4 data[2] = fetch_from_resource_cache_2(address);
+
+    RectWithSize clip_chain_rect = fetch_clip_chain_rect(clip_chain_rect_index);
+    RectWithSize brush_clip_rect = RectWithSize(data[1].xy, data[1].zw);
+    RectWithSize clip_rect = intersect_rects(clip_chain_rect, brush_clip_rect);
+
+    BrushPrimitive prim = BrushPrimitive(RectWithSize(data[0].xy, data[0].zw), clip_rect);
+
+    return prim;
 }
 
 void main(void) {
@@ -49,43 +71,87 @@ void main(void) {
     // Load the geometry for this brush. For now, this is simply the
     // local rect of the primitive. In the future, this will support
     // loading segment rects, and other rect formats (glyphs).
-    PrimitiveGeometry geom = fetch_primitive_geometry(brush.prim_address);
+    BrushPrimitive brush_prim =
+        fetch_brush_primitive(brush.prim_address, brush.clip_chain_rect_index);
 
-    vec2 device_pos, local_pos;
-    RectWithSize local_rect = geom.local_rect;
+    // Fetch the segment of this brush primitive we are drawing.
+    int segment_address = brush.prim_address +
+                          VECS_PER_BRUSH_PRIM +
+                          VECS_PER_SPECIFIC_BRUSH +
+                          brush.segment_index * VECS_PER_SEGMENT;
 
-    if ((brush.flags & BRUSH_FLAG_USES_PICTURE) != 0) {
-        // Fetch the dynamic picture that we are drawing on.
-        PictureTask pic_task = fetch_picture_task(brush.picture_address);
+    vec4[2] segment_data = fetch_from_resource_cache_2(segment_address);
+    RectWithSize local_segment_rect = RectWithSize(segment_data[0].xy, segment_data[0].zw);
 
-        local_pos = local_rect.p0 + aPosition.xy * local_rect.size;
+    VertexInfo vi;
 
-        // Right now - pictures only support local positions. In the future, this
-        // will be expanded to support transform picture types (the common kind).
-        device_pos = pic_task.target_rect.p0 + uDevicePixelRatio * (local_pos - pic_task.content_origin);
+    // Fetch the dynamic picture that we are drawing on.
+    PictureTask pic_task = fetch_picture_task(brush.picture_address);
+    ClipArea clip_area = fetch_clip_area(brush.clip_address);
 
-        // Write the final position transformed by the orthographic device-pixel projection.
-        gl_Position = uTransform * vec4(device_pos, 0.0, 1.0);
-    } else {
-        AlphaBatchTask alpha_task = fetch_alpha_batch_task(brush.picture_address);
-        Layer layer = fetch_layer(brush.clip_node_id, brush.scroll_node_id);
-        ClipArea clip_area = fetch_clip_area(brush.clip_address);
+    if (pic_task.pic_kind_and_raster_mode > 0.0) {
+        vec2 local_pos = local_segment_rect.p0 + aPosition.xy * local_segment_rect.size;
 
-        // Write the normal vertex information out.
-        // TODO(gw): Support transform types in brushes. For now,
-        //           the old cache image shader didn't support
-        //           them yet anyway, so we're not losing any
-        //           existing functionality.
-        VertexInfo vi = write_vertex(
-            geom.local_rect,
-            geom.local_clip_rect,
-            float(brush.z),
-            layer,
-            alpha_task,
-            geom.local_rect
+        vec2 device_pos = uDevicePixelRatio * local_pos;
+
+        vec2 final_pos = device_pos +
+                         pic_task.common_data.task_rect.p0 -
+                         uDevicePixelRatio * pic_task.content_origin;
+
+#ifdef WR_FEATURE_ALPHA_PASS
+        write_clip(
+            vec2(0.0),
+            clip_area
+        );
+#endif
+
+        vi = VertexInfo(
+            local_pos,
+            device_pos,
+            1.0,
+            device_pos
         );
 
-        local_pos = vi.local_pos;
+        // Write the final position transformed by the orthographic device-pixel projection.
+        gl_Position = uTransform * vec4(final_pos, 0.0, 1.0);
+    } else {
+        ClipScrollNode scroll_node = fetch_clip_scroll_node(brush.scroll_node_id);
+
+        // Write the normal vertex information out.
+        if (scroll_node.is_axis_aligned) {
+            vi = write_vertex(
+                local_segment_rect,
+                brush_prim.local_clip_rect,
+                float(brush.z),
+                scroll_node,
+                pic_task,
+                brush_prim.local_rect
+            );
+
+            // TODO(gw): vLocalBounds may be referenced by
+            //           the fragment shader when running in
+            //           the alpha pass, even on non-transformed
+            //           items. For now, just ensure it has no
+            //           effect. We can tidy this up as we move
+            //           more items to be brush shaders.
+#ifdef WR_FEATURE_ALPHA_PASS
+            vLocalBounds = vec4(vec2(-1000000.0), vec2(1000000.0));
+#endif
+        } else {
+            bvec4 edge_mask = notEqual(brush.edge_mask & ivec4(1, 2, 4, 8), ivec4(0));
+            bool do_perspective_interpolation = (brush.flags & BRUSH_FLAG_PERSPECTIVE_INTERPOLATION) != 0;
+
+            vi = write_transform_vertex(
+                local_segment_rect,
+                brush_prim.local_rect,
+                brush_prim.local_clip_rect,
+                mix(vec4(0.0), vec4(1.0), edge_mask),
+                float(brush.z),
+                scroll_node,
+                pic_task,
+                do_perspective_interpolation
+            );
+        }
 
         // For brush instances in the alpha pass, always write
         // out clip information.
@@ -103,10 +169,11 @@ void main(void) {
 
     // Run the specific brush VS code to write interpolators.
     brush_vs(
-        brush.prim_address + VECS_PER_PRIM_HEADER,
-        local_pos,
-        local_rect,
-        brush.user_data
+        vi,
+        brush.prim_address + VECS_PER_BRUSH_PRIM,
+        brush_prim.local_rect,
+        brush.user_data,
+        pic_task
     );
 }
 #endif

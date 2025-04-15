@@ -80,7 +80,8 @@ EnsureSurfaceStoredRecording(DrawEventRecorderPrivate *aRecorder, SourceSurface 
 class SourceSurfaceRecording : public SourceSurface
 {
 public:
-  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(SourceSurfaceRecording)
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(SourceSurfaceRecording, override)
+
   SourceSurfaceRecording(IntSize aSize, SurfaceFormat aFormat, DrawEventRecorderPrivate *aRecorder)
     : mSize(aSize), mFormat(aFormat), mRecorder(aRecorder)
   {
@@ -93,10 +94,10 @@ public:
     mRecorder->RecordEvent(RecordedSourceSurfaceDestruction(ReferencePtr(this)));
   }
 
-  virtual SurfaceType GetType() const { return SurfaceType::RECORDING; }
-  virtual IntSize GetSize() const { return mSize; }
-  virtual SurfaceFormat GetFormat() const { return mFormat; }
-  virtual already_AddRefed<DataSourceSurface> GetDataSurface() { return nullptr; }
+  virtual SurfaceType GetType() const override { return SurfaceType::RECORDING; }
+  virtual IntSize GetSize() const override { return mSize; }
+  virtual SurfaceFormat GetFormat() const override { return mFormat; }
+  virtual already_AddRefed<DataSourceSurface> GetDataSurface() override { return nullptr; }
 
   IntSize mSize;
   SurfaceFormat mFormat;
@@ -124,9 +125,9 @@ public:
   Init(uint8_t *aData, IntSize aSize, int32_t aStride, SurfaceFormat aFormat)
   {
     //XXX: do we need to ensure any alignment here?
-    auto data = MakeUnique<uint8_t[]>(aStride * aSize.height * BytesPerPixel(aFormat));
+    auto data = MakeUnique<uint8_t[]>(aStride * aSize.height);
     if (data) {
-      memcpy(data.get(), aData, aStride * aSize.height * BytesPerPixel(aFormat));
+      memcpy(data.get(), aData, aStride * aSize.height);
       RefPtr<DataSourceSurfaceRecording> surf = new DataSourceSurfaceRecording(Move(data), aSize, aStride, aFormat);
       return surf.forget();
     }
@@ -149,7 +150,8 @@ public:
 class GradientStopsRecording : public GradientStops
 {
 public:
-  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GradientStopsRecording)
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GradientStopsRecording, override)
+
   explicit GradientStopsRecording(DrawEventRecorderPrivate *aRecorder)
     : mRecorder(aRecorder)
   {
@@ -162,7 +164,7 @@ public:
     mRecorder->RecordEvent(RecordedGradientStopsDestruction(ReferencePtr(this)));
   }
 
-  virtual BackendType GetBackendType() const { return BackendType::RECORDING; }
+  virtual BackendType GetBackendType() const override { return BackendType::RECORDING; }
 
   RefPtr<DrawEventRecorderPrivate> mRecorder;
 };
@@ -249,9 +251,6 @@ DrawTargetRecording::DrawTargetRecording(const DrawTargetRecording *aDT,
   , mFinalDT(aDT->mFinalDT)
   , mSize(aSize)
 {
-  mRecorder->RecordEvent(RecordedCreateSimilarDrawTarget(this,
-                                                         aSize,
-                                                         aFormat));
   mFormat = aFormat;
 }
 
@@ -358,6 +357,7 @@ DrawTargetRecording::FillGlyphs(ScaledFont *aFont,
 	}
 	mRecorder->AddStoredObject(unscaledFont);
       }
+      mRecorder->RecordEvent(RecordedScaledFontCreation(aFont, unscaledFont));
     }
     RecordingFontUserData *userData = new RecordingFontUserData;
     userData->refPtr = aFont;
@@ -527,6 +527,23 @@ DrawTargetRecording::PushLayer(bool aOpaque, Float aOpacity,
 }
 
 void
+DrawTargetRecording::PushLayerWithBlend(bool aOpaque, Float aOpacity,
+                                        SourceSurface* aMask,
+                                        const Matrix& aMaskTransform,
+                                        const IntRect& aBounds,
+                                        bool aCopyBackground,
+                                        CompositionOp aCompositionOp)
+{
+  if (aMask) {
+    EnsureSurfaceStoredRecording(mRecorder, aMask, "PushLayer");
+  }
+
+  mRecorder->RecordEvent(RecordedPushLayerWithBlend(this, aOpaque, aOpacity, aMask,
+                                           aMaskTransform, aBounds,
+                                           aCopyBackground, aCompositionOp));
+}
+
+void
 DrawTargetRecording::PopLayer()
 {
   mRecorder->RecordEvent(RecordedPopLayer(static_cast<DrawTarget*>(this)));
@@ -565,7 +582,18 @@ already_AddRefed<DrawTarget>
 DrawTargetRecording::CreateSimilarDrawTarget(const IntSize &aSize, SurfaceFormat aFormat) const
 {
   RefPtr<DrawTarget> similarDT = new DrawTargetRecording(this, aSize, aFormat);
+  mRecorder->RecordEvent(RecordedCreateSimilarDrawTarget(similarDT.get(),
+                                                         aSize,
+                                                         aFormat));
   return similarDT.forget();
+}
+
+RefPtr<DrawTarget>
+DrawTargetRecording::CreateClippedDrawTarget(const IntSize& aMaxSize, const Matrix& aTransform, SurfaceFormat aFormat) const
+{
+  RefPtr<DrawTarget> similarDT = new DrawTargetRecording(this, aMaxSize, aFormat);
+  mRecorder->RecordEvent(RecordedCreateClippedDrawTarget(similarDT.get(), aMaxSize, aTransform, aFormat));
+  return similarDT;
 }
 
 already_AddRefed<PathBuilder>

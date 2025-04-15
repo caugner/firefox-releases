@@ -3,14 +3,16 @@
 // The ext-* files are imported into the same scopes.
 /* import-globals-from ext-toolkit.js */
 
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
-                                  "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManagerPrivate",
-                                  "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionParent",
-                                  "resource://gre/modules/ExtensionParent.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Services",
-                                  "resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManager",
+                               "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManagerPrivate",
+                               "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "ExtensionParent",
+                               "resource://gre/modules/ExtensionParent.jsm");
+ChromeUtils.defineModuleGetter(this, "Services",
+                               "resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "DevToolsShim",
+                               "chrome://devtools-shim/content/DevToolsShim.jsm");
 
 this.runtime = class extends ExtensionAPI {
   getAPI(context) {
@@ -135,6 +137,15 @@ this.runtime = class extends ExtensionAPI {
 
           extension.uninstallURL = url;
           return Promise.resolve();
+        },
+
+        // This function is not exposed to the extension js code and it is only
+        // used by the alert function redefined into the background pages to be
+        // able to open the BrowserConsole from the main process.
+        openBrowserConsole() {
+          if (AppConstants.platform !== "android") {
+            DevToolsShim.openBrowserConsole();
+          }
         },
       },
     };

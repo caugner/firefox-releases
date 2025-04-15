@@ -9,8 +9,11 @@
 #ifndef nsCSSParser_h___
 #define nsCSSParser_h___
 
+#ifdef MOZ_OLD_STYLE
+
 #include "mozilla/Attributes.h"
 #include "mozilla/css/Loader.h"
+#include "mozilla/css/SheetLoadData.h"
 
 #include "nsCSSPropertyID.h"
 #include "nsCSSScanner.h"
@@ -72,6 +75,7 @@ public:
    * @param aSheetPrincipal the principal of the stylesheet.  This must match
    *                        the principal of the sheet passed to the
    *                        constructor.
+   * @param aLoadData the SheetLoadData for this sheet, if applicable.
    * @param aLineNumber the line number of the first line of the sheet.
    * @param aReusableSheets style sheets that can be reused by an @import.
    *                        This can be nullptr.
@@ -80,6 +84,7 @@ public:
                       nsIURI*          aSheetURL,
                       nsIURI*          aBaseURI,
                       nsIPrincipal*    aSheetPrincipal,
+                      mozilla::css::SheetLoadData* aLoadData,
                       uint32_t         aLineNumber,
                       mozilla::css::LoaderReusableStyleSheets* aReusableSheets =
                         nullptr);
@@ -342,16 +347,29 @@ public:
   bool IsValueValidForProperty(const nsCSSPropertyID aPropID,
                                const nsAString&    aPropValue);
 
-  // Return the default value to be used for -moz-control-character-visibility,
-  // from preferences (cached by our Startup(), so that both nsStyleText and
-  // nsRuleNode can have fast access to it).
-  static uint8_t ControlCharVisibilityDefault();
-
 protected:
   // This is a CSSParserImpl*, but if we expose that type name in this
   // header, we can't put the type definition (in nsCSSParser.cpp) in
   // the anonymous namespace.
   void* mImpl;
 };
+
+#else
+
+namespace mozilla {
+namespace css {
+class Loader;
+} // namespace css
+} // namespace mozilla
+
+// Define this dummy class so there are fewer call sites to change when the old
+// style system code is compiled out.
+class nsCSSParser
+{
+public:
+  explicit nsCSSParser(mozilla::css::Loader* aLoader = nullptr) {}
+};
+
+#endif
 
 #endif /* nsCSSParser_h___ */

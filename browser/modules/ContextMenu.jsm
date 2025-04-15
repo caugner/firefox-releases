@@ -6,18 +6,15 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["ContextMenu"];
-
-const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
+var EXPORTED_SYMBOLS = ["ContextMenu"];
 
 Cu.importGlobalProperties(["URL"]);
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
-  E10SUtils: "resource:///modules/E10SUtils.jsm",
-  CastingApps: "resource:///modules/CastingApps.jsm",
+  E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   PlacesUIUtils: "resource:///modules/PlacesUIUtils.jsm",
   findCssSelector: "resource://gre/modules/css-selector.js",
@@ -30,7 +27,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 
 XPCOMUtils.defineLazyGetter(this, "PageMenuChild", () => {
   let tmp = {};
-  Cu.import("resource://gre/modules/PageMenu.jsm", tmp);
+  ChromeUtils.import("resource://gre/modules/PageMenu.jsm", tmp);
   return new tmp.PageMenuChild();
 });
 
@@ -105,7 +102,8 @@ const messageListeners = {
   },
 
   "ContextMenu:ReloadFrame": function(aMessage) {
-    this.getTarget(aMessage).ownerDocument.location.reload();
+    let forceReload = aMessage.objects && aMessage.objects.forceReload;
+    this.getTarget(aMessage).ownerDocument.location.reload(forceReload);
   },
 
   "ContextMenu:ReloadImage": function(aMessage) {
@@ -234,10 +232,8 @@ class ContextMenu {
     this.global = global;
     this.content = global.content;
 
-    Cc["@mozilla.org/eventlistenerservice;1"]
-      .getService(Ci.nsIEventListenerService)
-      .addSystemEventListener(global, "contextmenu",
-                              this._handleContentContextMenu.bind(this), false);
+    Services.els.addSystemEventListener(global, "contextmenu",
+                                        this._handleContentContextMenu.bind(this), false);
 
     Object.keys(messageListeners).forEach(key =>
       global.addMessageListener(key, messageListeners[key].bind(this))
@@ -272,7 +268,7 @@ class ContextMenu {
     if (href) {
       // Handle SVG links:
       if (typeof href == "object" && href.animVal) {
-        return href.animVal;
+        return this._makeURLAbsolute(this.context.link.baseURI, href.animVal);
       }
 
       return href;
@@ -455,8 +451,7 @@ class ContextMenu {
       return true;
     }
 
-    let request = aTarget.QueryInterface(Ci.nsIImageLoadingContent)
-                         .getRequest(Ci.nsIImageLoadingContent.CURRENT_REQUEST);
+    let request = aTarget.getRequest(Ci.nsIImageLoadingContent.CURRENT_REQUEST);
 
     if (!request) {
       return true;
@@ -466,22 +461,27 @@ class ContextMenu {
   }
 
   /**
-   * Retrieve the array of CSS selectors corresponding to the provided node. The first item
-   * of the array is the selector of the node in its owner document. Additional items are
-   * used if the node is inside a frame, each representing the CSS selector for finding the
-   * frame element in its parent document.
+   * Retrieve the array of CSS selectors corresponding to the provided node.
+   *
+   * The selectors are ordered starting with the root document and ending with the deepest
+   * nested frame. Additional items are used if the node is inside a frame, each
+   * representing the CSS selector for finding the frame element in its parent document.
    *
    * This format is expected by DevTools in order to handle the Inspect Node context menu
    * item.
    *
    * @param  {aNode}
    *         The node for which the CSS selectors should be computed
-   * @return {Array} array of css selectors (strings).
+   * @return {Array}
+   *         An array of CSS selectors to find the target node. Several selectors can be
+   *         needed if the element is nested in frames and not directly in the root
+   *         document. The selectors are ordered starting with the root document and
+   *         ending with the deepest nested frame.
    */
   _getNodeSelectors(aNode) {
     let selectors = [];
     while (aNode) {
-      selectors.push(findCssSelector(aNode));
+      selectors.unshift(findCssSelector(aNode));
       aNode = aNode.ownerGlobal.frameElement;
     }
 
@@ -540,13 +540,13 @@ class ContextMenu {
     let contentDisposition = null;
     if (aEvent.target.nodeType == Ci.nsIDOMNode.ELEMENT_NODE &&
         aEvent.target instanceof Ci.nsIImageLoadingContent &&
-        aEvent.target.currentURI) {
+        aEvent.target.currentRequestFinalURI) {
       disableSetDesktopBg = this._disableSetDesktopBackground(aEvent.target);
 
       try {
         let imageCache = Cc["@mozilla.org/image/tools;1"].getService(Ci.imgITools)
                                                          .getImgCacheForDocument(doc);
-        let props = imageCache.findEntryProperties(aEvent.target.currentURI, doc);
+        let props = imageCache.findEntryProperties(aEvent.target.currentRequestFinalURI, doc);
 
         try {
           contentType = props.get("type", Ci.nsISupportsCString).data;
@@ -582,8 +582,7 @@ class ContextMenu {
     if (isRemote) {
       editFlags = SpellCheckHelper.isEditable(aEvent.target, this.content);
 
-      if (editFlags &
-          (SpellCheckHelper.EDITABLE | SpellCheckHelper.CONTENTEDITABLE)) {
+      if (editFlags & SpellCheckHelper.SPELLCHECKABLE) {
         spellInfo = InlineSpellCheckerContent.initContextMenu(aEvent, editFlags, this.global);
       }
 
@@ -693,7 +692,7 @@ class ContextMenu {
     context.target = cleanTarget;
 
     if (context.link) {
-      context.link = { href: context.link.href };
+      context.link = { href: context.linkURL };
     }
 
     delete context.linkURI;
@@ -751,7 +750,7 @@ class ContextMenu {
     context.onCompletedImage    = false;
     context.onCTPPlugin         = false;
     context.onDRMMedia          = false;
-    context.onEditableArea      = false;
+    context.onEditable          = false;
     context.onImage             = false;
     context.onKeywordField      = false;
     context.onLink              = false;
@@ -762,6 +761,7 @@ class ContextMenu {
     context.onNumeric           = false;
     context.onPassword          = false;
     context.onSaveableLink      = false;
+    context.onSpellcheckable    = false;
     context.onTextInput         = false;
     context.onVideo             = false;
 
@@ -809,7 +809,7 @@ class ContextMenu {
     // nsDocumentViewer::GetInImage. Make sure to update both if this is
     // changed.
     if (context.target instanceof Ci.nsIImageLoadingContent &&
-        context.target.currentURI) {
+        context.target.currentRequestFinalURI) {
       context.onImage = true;
 
       context.imageInfo = {
@@ -831,7 +831,7 @@ class ContextMenu {
         context.onCompletedImage = true;
       }
 
-      context.mediaURL = context.target.currentURI.spec;
+      context.mediaURL = context.target.currentRequestFinalURI.spec;
 
       const descURL = context.target.getAttribute("longdesc");
 
@@ -875,10 +875,13 @@ class ContextMenu {
     } else if (editFlags & (SpellCheckHelper.INPUT | SpellCheckHelper.TEXTAREA)) {
       context.onTextInput = (editFlags & SpellCheckHelper.TEXTINPUT) !== 0;
       context.onNumeric = (editFlags & SpellCheckHelper.NUMERIC) !== 0;
-      context.onEditableArea = (editFlags & SpellCheckHelper.EDITABLE) !== 0;
+      context.onEditable = (editFlags & SpellCheckHelper.EDITABLE) !== 0;
       context.onPassword = (editFlags & SpellCheckHelper.PASSWORD) !== 0;
+      context.onSpellcheckable = (editFlags & SpellCheckHelper.SPELLCHECKABLE) !== 0;
 
-      if (context.onEditableArea) {
+      // This is guaranteed to be an input or textarea because of the condition above,
+      // so the no-children flag is always correct. We deal with contenteditable elsewhere.
+      if (context.onSpellcheckable) {
         context.shouldInitInlineSpellCheckerUINoChildren = true;
       }
 
@@ -1010,9 +1013,9 @@ class ContextMenu {
     }
 
     // if the document is editable, show context menu like in text inputs
-    if (!context.onEditableArea) {
+    if (!context.onEditable) {
       if (editFlags & SpellCheckHelper.CONTENTEDITABLE) {
-        // If this._onEditableArea is false but editFlags is CONTENTEDITABLE, then
+        // If this.onEditable is false but editFlags is CONTENTEDITABLE, then
         // the document itself must be editable.
         context.onTextInput       = true;
         context.onKeywordField    = false;
@@ -1024,7 +1027,8 @@ class ContextMenu {
         context.inSrcdocFrame     = false;
         context.hasBGImage        = false;
         context.isDesignMode      = true;
-        context.onEditableArea    = true;
+        context.onEditable        = true;
+        context.onSpellcheckable  = true;
         context.shouldInitInlineSpellCheckerUIWithChildren = true;
       }
     }

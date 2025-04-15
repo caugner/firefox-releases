@@ -63,10 +63,8 @@ function runTools(target) {
 function getClient() {
   let deferred = defer();
 
-  if (!DebuggerServer.initialized) {
-    DebuggerServer.init();
-    DebuggerServer.addBrowserActors();
-  }
+  DebuggerServer.init();
+  DebuggerServer.registerAllActors();
 
   let transport = DebuggerServer.connectPipe();
   let client = new DebuggerClient(transport);
@@ -77,7 +75,7 @@ function getClient() {
 function getTarget(client) {
   let deferred = defer();
 
-  client.listTabs(tabList => {
+  client.listTabs().then(tabList => {
     let target = TargetFactory.forRemoteTab({
       client: client,
       form: tabList.tabs[tabList.selected],

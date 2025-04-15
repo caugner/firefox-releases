@@ -1,5 +1,4 @@
 import os
-import sys
 
 config = {
     #########################################################################
@@ -8,8 +7,6 @@ config = {
     # note: overridden by MOZHARNESS_ACTIONS in TaskCluster tasks
     'default_actions': [
         'clobber',
-        'clone-tools',
-        'checkout-sources',
         'build',
         'update',  # decided by query_is_nightly()
     ],
@@ -27,12 +24,7 @@ config = {
     ],
     'enable_check_test': False,
     'vcs_share_base': '/builds/hg-shared',
-    'objdir': 'obj-firefox/',
-    'tooltool_script': ["/builds/tooltool.py"],
-    'tooltool_bootstrap': "setup.sh",
     'enable_count_ctors': False,
-    'enable_talos_sendchange': False,
-    'enable_unittest_sendchange': False,
     #########################################################################
 
 
@@ -44,14 +36,11 @@ config = {
     'env': {
         'MOZBUILD_STATE_PATH': os.path.join(os.getcwd(), '.mozbuild'),
         'HG_SHARE_BASE_DIR': '/builds/hg-shared',
-        'MOZ_OBJDIR': 'obj-firefox',
+        'MOZ_OBJDIR': '%(abs_obj_dir)s',
         'TINDERBOX_OUTPUT': '1',
         'TOOLTOOL_CACHE': '/builds/worker/tooltool-cache',
         'TOOLTOOL_HOME': '/builds',
         'MOZ_CRASHREPORTER_NO_REPORT': '1',
-        'CCACHE_DIR': '/builds/ccache',
-        'CCACHE_COMPRESS': '1',
-        'CCACHE_UMASK': '002',
         'LC_ALL': 'C',
         ## 64 bit specific
         'PATH': '/usr/local/bin:/usr/lib64/ccache:/bin:\
@@ -59,18 +48,12 @@ config = {
 /tools/python27-mercurial/bin:/home/cltbld/bin',
         ##
     },
-    'upload_env': {
-        # stage_server is dictated from build_pool_specifics.py
-        'UPLOAD_HOST': '%(stage_server)s',
-        'UPLOAD_USER': '%(stage_username)s',
-        'UPLOAD_SSH_KEY': '/Users/cltbld/.ssh/%(stage_ssh_key)s',
-        'UPLOAD_TO_TEMP': '1',
-    },
     "check_test_env": {
         'MINIDUMP_STACKWALK': '%(abs_tools_dir)s/breakpad/linux64/minidump_stackwalk',
         'MINIDUMP_SAVE_PATH': '%(base_work_dir)s/minidumps',
     },
-    'src_mozconfig': 'browser/config/mozconfigs/macosx64/nightly',
+    'mozconfig_platform': 'macosx64',
+    'mozconfig_variant': 'nightly',
     'artifact_flag_build_variant_in_try': 'cross-artifact',
     #########################################################################
 }

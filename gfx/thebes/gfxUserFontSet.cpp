@@ -58,7 +58,7 @@ public:
         return p;
     }
 
-    bool WriteRaw(const void* data, size_t length) {
+    bool WriteRaw(const void* data, size_t length) override {
         if ((mOff + length > mLength) ||
             (mLength > std::numeric_limits<size_t>::max() - mOff)) {
             if (mLength == mLimit) {
@@ -80,7 +80,7 @@ public:
         return true;
     }
 
-    bool Seek(off_t position) {
+    bool Seek(off_t position) override {
         if (position < 0) {
             return false;
         }
@@ -91,7 +91,7 @@ public:
         return true;
     }
 
-    off_t Tell() const {
+    off_t Tell() const override {
         return mOff;
     }
 
@@ -108,6 +108,7 @@ gfxUserFontEntry::gfxUserFontEntry(gfxUserFontSet* aFontSet,
              int32_t aStretch,
              uint8_t aStyle,
              const nsTArray<gfxFontFeature>& aFeatureSettings,
+             const nsTArray<gfxFontVariation>& aVariationSettings,
              uint32_t aLanguageOverride,
              gfxCharacterMap* aUnicodeRanges,
              uint8_t aFontDisplay)
@@ -128,6 +129,7 @@ gfxUserFontEntry::gfxUserFontEntry(gfxUserFontSet* aFontSet,
     mStretch = aStretch;
     mStyle = aStyle;
     mFeatureSettings.AppendElements(aFeatureSettings);
+    mVariationSettings.AppendElements(aVariationSettings);
     mLanguageOverride = aLanguageOverride;
     mCharacterMap = aUnicodeRanges;
 }
@@ -146,6 +148,7 @@ gfxUserFontEntry::Matches(const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
                           int32_t aStretch,
                           uint8_t aStyle,
                           const nsTArray<gfxFontFeature>& aFeatureSettings,
+                          const nsTArray<gfxFontVariation>& aVariationSettings,
                           uint32_t aLanguageOverride,
                           gfxCharacterMap* aUnicodeRanges,
                           uint8_t aFontDisplay)
@@ -154,6 +157,7 @@ gfxUserFontEntry::Matches(const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
            mStretch == aStretch &&
            mStyle == aStyle &&
            mFeatureSettings == aFeatureSettings &&
+           mVariationSettings == aVariationSettings &&
            mLanguageOverride == aLanguageOverride &&
            mSrcList == aFontFaceSrcList &&
            mFontDisplay == aFontDisplay &&
@@ -180,6 +184,8 @@ public:
         mCheckOTLTables = gfxPrefs::ValidateOTLTables();
         // Whether to preserve Variation tables in downloaded fonts
         mKeepVariationTables = gfxPrefs::KeepVariationTables();
+        // Whether to preserve color bitmap glyphs
+        mKeepColorBitmaps = gfxPrefs::KeepColorBitmaps();
     }
 
     virtual ots::TableAction GetTableAction(uint32_t aTag) override {
@@ -196,10 +202,15 @@ public:
               aTag == TRUETYPE_TAG('g', 'v', 'a', 'r') ||
               aTag == TRUETYPE_TAG('H', 'V', 'A', 'R') ||
               aTag == TRUETYPE_TAG('M', 'V', 'A', 'R') ||
+              aTag == TRUETYPE_TAG('S', 'T', 'A', 'T') ||
               aTag == TRUETYPE_TAG('V', 'V', 'A', 'R'))) ||
             aTag == TRUETYPE_TAG('S', 'V', 'G', ' ') ||
             aTag == TRUETYPE_TAG('C', 'O', 'L', 'R') ||
-            aTag == TRUETYPE_TAG('C', 'P', 'A', 'L')) {
+            aTag == TRUETYPE_TAG('C', 'P', 'A', 'L') ||
+            (mKeepColorBitmaps &&
+             (aTag == TRUETYPE_TAG('C', 'B', 'D', 'T') ||
+              aTag == TRUETYPE_TAG('C', 'B', 'L', 'C'))) ||
+            false) {
             return ots::TABLE_ACTION_PASSTHRU;
         }
         return ots::TABLE_ACTION_DEFAULT;
@@ -232,6 +243,7 @@ private:
     nsTHashtable<nsCStringHashKey> mWarningsIssued;
     bool mCheckOTLTables;
     bool mKeepVariationTables;
+    bool mKeepColorBitmaps;
 };
 
 // Call the OTS library to sanitize an sfnt before attempting to use it.
@@ -510,6 +522,7 @@ gfxUserFontEntry::DoLoadNextSrc(bool aForceAsync)
                      NS_ConvertUTF16toUTF8(mFamilyName).get(),
                      uint32_t(mFontSet->mGeneration)));
                 fe->mFeatureSettings.AppendElements(mFeatureSettings);
+                fe->mVariationSettings.AppendElements(mVariationSettings);
                 fe->mLanguageOverride = mLanguageOverride;
                 fe->mFamilyName = mFamilyName;
                 // For src:local(), we don't care whether the request is from
@@ -712,7 +725,7 @@ gfxUserFontEntry::LoadPlatformFont(const uint8_t* aFontData, uint32_t& aLength)
 
     // Because platform font activation code may replace the name table
     // in the font with a synthetic one, we save the original name so that
-    // it can be reported via the nsIDOMFontFace API.
+    // it can be reported via the InspectorUtils API.
     nsAutoString originalFullName;
 
     // Call the OTS sanitizer; this will also decode WOFF to sfnt
@@ -778,7 +791,7 @@ gfxUserFontEntry::LoadPlatformFont(const uint8_t* aFontData, uint32_t& aLength)
     if (fe) {
         fe->mComputedSizeOfUserFont = computedSize;
 
-        // Save a copy of the metadata block (if present) for nsIDOMFontFace
+        // Save a copy of the metadata block (if present) for InspectorUtils
         // to use if required. Ownership of the metadata block will be passed
         // to the gfxUserFontData record below.
         FallibleTArray<uint8_t> metadata;
@@ -797,6 +810,7 @@ gfxUserFontEntry::LoadPlatformFont(const uint8_t* aFontData, uint32_t& aLength)
         // copy OpenType feature/language settings from the userfont entry to the
         // newly-created font entry
         fe->mFeatureSettings.AppendElements(mFeatureSettings);
+        fe->mVariationSettings.AppendElements(mVariationSettings);
         fe->mLanguageOverride = mLanguageOverride;
         fe->mFamilyName = mFamilyName;
         StoreUserFontData(fe, mFontSet->GetPrivateBrowsing(), originalFullName,
@@ -935,6 +949,7 @@ gfxUserFontSet::FindOrCreateUserFontEntry(
                                int32_t aStretch,
                                uint8_t aStyle,
                                const nsTArray<gfxFontFeature>& aFeatureSettings,
+                               const nsTArray<gfxFontVariation>& aVariationSettings,
                                uint32_t aLanguageOverride,
                                gfxCharacterMap* aUnicodeRanges,
                                uint8_t aFontDisplay)
@@ -951,13 +966,14 @@ gfxUserFontSet::FindOrCreateUserFontEntry(
     if (family) {
         entry = FindExistingUserFontEntry(family, aFontFaceSrcList, aWeight,
                                           aStretch, aStyle,
-                                          aFeatureSettings, aLanguageOverride,
+                                          aFeatureSettings, aVariationSettings,
+                                          aLanguageOverride,
                                           aUnicodeRanges, aFontDisplay);
     }
 
     if (!entry) {
       entry = CreateUserFontEntry(aFontFaceSrcList, aWeight, aStretch,
-                                  aStyle, aFeatureSettings,
+                                  aStyle, aFeatureSettings, aVariationSettings,
                                   aLanguageOverride, aUnicodeRanges,
                                   aFontDisplay);
       entry->mFamilyName = aFamilyName;
@@ -973,6 +989,7 @@ gfxUserFontSet::CreateUserFontEntry(
                                int32_t aStretch,
                                uint8_t aStyle,
                                const nsTArray<gfxFontFeature>& aFeatureSettings,
+                               const nsTArray<gfxFontVariation>& aVariationSettings,
                                uint32_t aLanguageOverride,
                                gfxCharacterMap* aUnicodeRanges,
                                uint8_t aFontDisplay)
@@ -980,7 +997,7 @@ gfxUserFontSet::CreateUserFontEntry(
 
     RefPtr<gfxUserFontEntry> userFontEntry =
         new gfxUserFontEntry(this, aFontFaceSrcList, aWeight,
-                              aStretch, aStyle, aFeatureSettings,
+                              aStretch, aStyle, aFeatureSettings, aVariationSettings,
                               aLanguageOverride, aUnicodeRanges, aFontDisplay);
     return userFontEntry.forget();
 }
@@ -993,6 +1010,7 @@ gfxUserFontSet::FindExistingUserFontEntry(
                                int32_t aStretch,
                                uint8_t aStyle,
                                const nsTArray<gfxFontFeature>& aFeatureSettings,
+                               const nsTArray<gfxFontVariation>& aVariationSettings,
                                uint32_t aLanguageOverride,
                                gfxCharacterMap* aUnicodeRanges,
                                uint8_t aFontDisplay)
@@ -1011,7 +1029,8 @@ gfxUserFontSet::FindExistingUserFontEntry(
             static_cast<gfxUserFontEntry*>(fontList[i].get());
         if (!existingUserFontEntry->Matches(aFontFaceSrcList,
                                             aWeight, aStretch, aStyle,
-                                            aFeatureSettings, aLanguageOverride,
+                                            aFeatureSettings, aVariationSettings,
+                                            aLanguageOverride,
                                             aUnicodeRanges, aFontDisplay)) {
             continue;
         }
@@ -1178,6 +1197,7 @@ gfxUserFontSet::UserFontCache::Entry::KeyEquals(const KeyTypePointer aKey) const
         mFontEntry->mWeight           != fe->mWeight          ||
         mFontEntry->mStretch          != fe->mStretch         ||
         mFontEntry->mFeatureSettings  != fe->mFeatureSettings ||
+        mFontEntry->mVariationSettings != fe->mVariationSettings ||
         mFontEntry->mLanguageOverride != fe->mLanguageOverride ||
         mFontEntry->mFamilyName       != fe->mFamilyName) {
         return false;

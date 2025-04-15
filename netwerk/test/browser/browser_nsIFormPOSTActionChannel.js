@@ -3,8 +3,8 @@
  * should be able to accept form POST.
  */
 
-Components.utils.import("resource://gre/modules/Services.jsm");
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const SCHEME = "x-bug1241377";
 
@@ -33,10 +33,10 @@ CustomProtocolHandler.prototype = {
            Ci.nsIProtocolHandler.URI_IS_LOCAL_RESOURCE;
   },
   newURI: function(aSpec, aOriginCharset, aBaseURI) {
-    var uri = Cc["@mozilla.org/network/standard-url;1"].
-              createInstance(Ci.nsIURI);
-    uri.spec = aSpec;
-    return uri;
+    return Cc["@mozilla.org/network/standard-url-mutator;1"]
+             .createInstance(Ci.nsIURIMutator)
+             .setSpec(aSpec)
+             .finalize()
   },
   newChannel2: function(aURI, aLoadInfo) {
     return new CustomChannel(aURI, aLoadInfo);

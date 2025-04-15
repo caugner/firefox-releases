@@ -648,18 +648,27 @@ public:
 /**
  * Use this macro to implement the AddRef method for a given <i>_class</i>
  * @param _class The name of the class implementing the method
+ * @param _name The class name to be passed to XPCOM leak checking
  */
-#define NS_IMPL_ADDREF(_class)                                                \
+#define NS_IMPL_NAMED_ADDREF(_class, _name)                                   \
 NS_IMETHODIMP_(MozExternalRefCountType) _class::AddRef(void)                  \
 {                                                                             \
   MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING(_class)                                  \
   MOZ_ASSERT(int32_t(mRefCnt) >= 0, "illegal refcnt");                        \
+  MOZ_ASSERT(_name != nullptr, "Must specify a name");                        \
   if (!mRefCnt.isThreadSafe)                                                  \
     NS_ASSERT_OWNINGTHREAD(_class);                                           \
   nsrefcnt count = ++mRefCnt;                                                 \
-  NS_LOG_ADDREF(this, count, #_class, sizeof(*this));                         \
+  NS_LOG_ADDREF(this, count, _name, sizeof(*this));                           \
   return count;                                                               \
 }
+
+/**
+ * Use this macro to implement the AddRef method for a given <i>_class</i>
+ * @param _class The name of the class implementing the method
+ */
+#define NS_IMPL_ADDREF(_class)                                                \
+  NS_IMPL_NAMED_ADDREF(_class, #_class)
 
 /**
  * Use this macro to implement the AddRef method for a given <i>_class</i>
@@ -680,12 +689,13 @@ NS_IMETHODIMP_(MozExternalRefCountType) _class::AddRef(void)                  \
  * Use this macro to implement the Release method for a given
  * <i>_class</i>.
  * @param _class The name of the class implementing the method
+ * @param _name The class name to be passed to XPCOM leak checking
  * @param _destroy A statement that is executed when the object's
  *   refcount drops to zero.
  *
  * For example,
  *
- *   NS_IMPL_RELEASE_WITH_DESTROY(Foo, Destroy(this))
+ *   NS_IMPL_RELEASE_WITH_DESTROY(Foo, "Foo", Destroy(this))
  *
  * will cause
  *
@@ -695,14 +705,15 @@ NS_IMETHODIMP_(MozExternalRefCountType) _class::AddRef(void)                  \
  * allows for arbitrary teardown activity to occur (e.g., deallocation
  * of object allocated with placement new).
  */
-#define NS_IMPL_RELEASE_WITH_DESTROY(_class, _destroy)                        \
+#define NS_IMPL_NAMED_RELEASE_WITH_DESTROY(_class, _name, _destroy)           \
 NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void)                 \
 {                                                                             \
   MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                            \
+  MOZ_ASSERT(_name != nullptr, "Must specify a name");                        \
   if (!mRefCnt.isThreadSafe)                                                  \
     NS_ASSERT_OWNINGTHREAD(_class);                                           \
   nsrefcnt count = --mRefCnt;                                                 \
-  NS_LOG_RELEASE(this, count, #_class);                                       \
+  NS_LOG_RELEASE(this, count, _name);                                         \
   if (count == 0) {                                                           \
     mRefCnt = 1; /* stabilize */                                              \
     _destroy;                                                                 \
@@ -710,6 +721,9 @@ NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void)                 \
   }                                                                           \
   return count;                                                               \
 }
+
+#define NS_IMPL_RELEASE_WITH_DESTROY(_class, _destroy)                        \
+  NS_IMPL_NAMED_RELEASE_WITH_DESTROY(_class, #_class, _destroy)
 
 /**
  * Use this macro to implement the Release method for a given <i>_class</i>
@@ -726,6 +740,9 @@ NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void)                 \
  */
 #define NS_IMPL_RELEASE(_class) \
   NS_IMPL_RELEASE_WITH_DESTROY(_class, delete (this))
+
+#define NS_IMPL_NAMED_RELEASE(_class, _name)                                  \
+  NS_IMPL_NAMED_RELEASE_WITH_DESTROY(_class, _name, delete (this))
 
 /**
  * Use this macro to implement the Release method for a given <i>_class</i>
@@ -809,6 +826,21 @@ NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void)                 \
 NS_IMETHODIMP_(void) _class::DeleteCycleCollectable(void)                     \
 {                                                                             \
   delete this;                                                                \
+}
+
+#define NS_IMPL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_RELEASE(_class)            \
+NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void)                \
+{                                                                            \
+  MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                           \
+  NS_ASSERT_OWNINGTHREAD(_class);                                            \
+  nsISupports *base = NS_CYCLE_COLLECTION_CLASSNAME(_class)::Upcast(this);   \
+  nsrefcnt count = mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>(base); \
+  NS_LOG_RELEASE(this, count, #_class);                                      \
+  return count;                                                              \
+}                                                                            \
+NS_IMETHODIMP_(void) _class::DeleteCycleCollectable(void)                    \
+{                                                                            \
+  delete this;                                                               \
 }
 
 // _LAST_RELEASE can be useful when certain resources should be released
@@ -1085,26 +1117,42 @@ public:                                                                       \
 /**
  * These macros can be used in conjunction with NS_DECL_ISUPPORTS_INHERITED
  * to implement the nsISupports methods, forwarding the invocations to a
- * superclass that already implements nsISupports.
+ * superclass that already implements nsISupports. Don't do anything for
+ * subclasses of Runnable because it deals with subclass logging in its own
+ * way, using the mName field.
  *
  * Note that I didn't make these inlined because they're virtual methods.
  */
 
+namespace mozilla {
+class Runnable;
+} // namespace mozilla
+
+#define NS_IMPL_ADDREF_INHERITED_GUTS(Class, Super)                           \
+  MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING(Class)                                   \
+  nsrefcnt r = Super::AddRef();                                               \
+  if (!mozilla::IsConvertible<Class*, mozilla::Runnable*>::value) {           \
+    NS_LOG_ADDREF(this, r, #Class, sizeof(*this));                            \
+  }                                                                           \
+  return r /* Purposefully no trailing semicolon */
+
 #define NS_IMPL_ADDREF_INHERITED(Class, Super)                                \
 NS_IMETHODIMP_(MozExternalRefCountType) Class::AddRef(void)                   \
 {                                                                             \
-  MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING(Class)                                   \
-  nsrefcnt r = Super::AddRef();                                               \
-  NS_LOG_ADDREF(this, r, #Class, sizeof(*this));                              \
-  return r;                                                                   \
+  NS_IMPL_ADDREF_INHERITED_GUTS(Class, Super);                                \
 }
+
+#define NS_IMPL_RELEASE_INHERITED_GUTS(Class, Super)                          \
+  nsrefcnt r = Super::Release();                                              \
+  if (!mozilla::IsConvertible<Class*, mozilla::Runnable*>::value) {           \
+    NS_LOG_RELEASE(this, r, #Class);                                          \
+  }                                                                           \
+  return r /* Purposefully no trailing semicolon */
 
 #define NS_IMPL_RELEASE_INHERITED(Class, Super)                               \
 NS_IMETHODIMP_(MozExternalRefCountType) Class::Release(void)                  \
 {                                                                             \
-  nsrefcnt r = Super::Release();                                              \
-  NS_LOG_RELEASE(this, r, #Class);                                            \
-  return r;                                                                   \
+  NS_IMPL_RELEASE_INHERITED_GUTS(Class, Super);                               \
 }
 
 /**
@@ -1156,6 +1204,8 @@ NS_IMETHODIMP_(MozExternalRefCountType) Class::Release(void)                  \
   NS_IMPL_RELEASE(aClass)                                                     \
   NS_IMPL_QUERY_INTERFACE(aClass, __VA_ARGS__)
 
+// When possible, prefer NS_INLINE_DECL_REFCOUNTING_INHERITED to
+// NS_IMPL_ISUPPORTS_INHERITED0.
 #define NS_IMPL_ISUPPORTS_INHERITED0(aClass, aSuper)                          \
     NS_INTERFACE_TABLE_HEAD(aClass)                                           \
     NS_INTERFACE_TABLE_TAIL_INHERITING(aSuper)                                \
@@ -1166,6 +1216,25 @@ NS_IMETHODIMP_(MozExternalRefCountType) Class::Release(void)                  \
   NS_IMPL_QUERY_INTERFACE_INHERITED(aClass, aSuper, __VA_ARGS__)              \
   NS_IMPL_ADDREF_INHERITED(aClass, aSuper)                                    \
   NS_IMPL_RELEASE_INHERITED(aClass, aSuper)
+
+/**
+ * A macro to declare and implement addref/release for a class that does not
+ * need to QI to any interfaces other than the ones its parent class QIs to.
+ * This can be a no-op when we're not building with refcount logging, because in
+ * that case there's no real reason to have a separate addref/release on this
+ * class.
+ */
+#if defined(NS_BUILD_REFCNT_LOGGING)
+#define NS_INLINE_DECL_REFCOUNTING_INHERITED(Class, Super)      \
+  NS_IMETHOD_(MozExternalRefCountType) AddRef() override {      \
+    NS_IMPL_ADDREF_INHERITED_GUTS(Class, Super);                \
+  }                                                             \
+  NS_IMETHOD_(MozExternalRefCountType) Release() override {     \
+    NS_IMPL_RELEASE_INHERITED_GUTS(Class, Super);               \
+  }
+#else // NS_BUILD_REFCNT_LOGGING
+#define NS_INLINE_DECL_REFCOUNTING_INHERITED(Class, Super)
+#endif // NS_BUILD_REFCNT_LOGGINGx
 
 /*
  * Macro to glue together a QI that starts with an interface table
@@ -1178,14 +1247,6 @@ NS_IMETHODIMP_(MozExternalRefCountType) Class::Release(void)                  \
 
 
 ///////////////////////////////////////////////////////////////////////////////
-/**
- *
- * Threadsafe implementations of the ISupports convenience macros.
- *
- * @note  These are not available when linking against the standalone glue,
- *        because the implementation requires PR_ symbols.
- */
-#define NS_INTERFACE_MAP_END_THREADSAFE NS_IMPL_QUERY_TAIL_GUTS
 
 /**
  * Macro to generate nsIClassInfo methods for classes which do not have

@@ -18,6 +18,7 @@
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/EnumeratedArray.h"
 #include "mozilla/LinkedList.h"
+#include "mozilla/MediaFeatureChange.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ServoTypes.h"
 #include "mozilla/SheetType.h"
@@ -110,7 +111,7 @@ class nsStyleSet final
 
   void AddSizeOfIncludingThis(nsWindowSizes& aSizes) const;
 
-  void Init(nsPresContext* aPresContext, nsBindingManager* aBindingManager);
+  void Init(nsPresContext* aPresContext);
 
   nsRuleNode* GetRuleTree() { return mRuleTree; }
 
@@ -341,12 +342,32 @@ class nsStyleSet final
   // Free all of the data associated with this style set.
   void Shutdown();
 
+  void RuleAdded(mozilla::CSSStyleSheet& aSheet, mozilla::css::Rule&)
+  {
+    SheetChanged(aSheet);
+  }
+
+  void RuleRemoved(mozilla::CSSStyleSheet& aSheet, mozilla::css::Rule&)
+  {
+    SheetChanged(aSheet);
+  }
+
+  void RuleChanged(mozilla::CSSStyleSheet& aSheet, mozilla::css::Rule*)
+  {
+    SheetChanged(aSheet);
+  }
+
   // Notes that a style sheet has changed.
-  void RecordStyleSheetChange(mozilla::CSSStyleSheet* aStyleSheet,
-                              mozilla::StyleSheet::ChangeType);
+  void RecordStyleSheetChange(mozilla::CSSStyleSheet* aSheet,
+                              mozilla::StyleSheet::ChangeType)
+  {
+    SheetChanged(*aSheet);
+  }
+
+  void SheetChanged(mozilla::CSSStyleSheet&);
 
   // Notes that style sheets have changed in a shadow root.
-  void RecordShadowStyleChange(mozilla::dom::ShadowRoot* aShadowRoot);
+  void RecordShadowStyleChange(mozilla::dom::ShadowRoot& aShadowRoot);
 
   bool StyleSheetsHaveChanged() const
   {
@@ -393,7 +414,7 @@ class nsStyleSet final
    * the characteristics of the medium, and return restyle hint needed
    * for the change.
    */
-  nsRestyleHint MediumFeaturesChanged(bool aViewportChanged);
+  nsRestyleHint MediumFeaturesChanged(mozilla::MediaFeatureChangeReason);
 
   // APIs to manipulate the style sheet lists.  The sheets in each
   // list are stored with the most significant sheet last.
@@ -410,8 +431,12 @@ class nsStyleSet final
                                   mozilla::CSSStyleSheet* aReferenceSheet);
 
   // Enable/Disable entire author style level (Doc, ScopedDoc & PresHint levels)
-  bool GetAuthorStyleDisabled() const;
-  nsresult SetAuthorStyleDisabled(bool aStyleDisabled);
+  bool GetAuthorStyleDisabled() const
+  {
+    return mAuthorStyleDisabled;
+  }
+
+  void SetAuthorStyleDisabled(bool aStyleDisabled);
 
   int32_t SheetCount(mozilla::SheetType aType) const {
     return mSheets[aType].Length();
@@ -450,16 +475,6 @@ class nsStyleSet final
     --mRootStyleContextCount;
   }
 
-  // Return whether the rule tree has cached data such that we need to
-  // do dynamic change handling for changes that change the results of
-  // media queries or require rebuilding all style data.
-  // We don't care whether we have cached rule processors or whether
-  // they have cached rule cascades; getting the rule cascades again in
-  // order to do rule matching will get the correct rule cascade.
-  bool HasCachedStyleData() const {
-    return (mRuleTree && mRuleTree->TreeHasCachedData()) || mRootStyleContextCount > 0;
-  }
-
   // Notify the style set that a rulenode is no longer in use, or was
   // just created and is not in use yet.
   static const uint32_t kGCInterval = 300;
@@ -496,11 +511,6 @@ class nsStyleSet final
   // to drop any nsCSSSelector pointers it has.
   void ClearSelectors();
 
-  // Returns whether aSheetType represents a level of the cascade that uses
-  // CSSStyleSheets.  See gCSSSheetTypes in nsStyleSet.cpp for the list
-  // of CSS sheet types.
-  static bool IsCSSSheetType(mozilla::SheetType aSheetType);
-
   void SetUsesViewportUnits(bool aValue) {
     mUsesViewportUnits = aValue;
   }
@@ -519,7 +529,7 @@ private:
   nsresult DirtyRuleProcessors(mozilla::SheetType aType);
 
   // Update the rule processor list after a change to the style sheet list.
-  nsresult GatherRuleProcessors(mozilla::SheetType aType);
+  void GatherRuleProcessors(mozilla::SheetType aType);
 
   void AddImportantRules(nsRuleNode* aCurrLevelNode,
                          nsRuleNode* aLastPrevLevelNode,

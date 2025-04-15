@@ -322,7 +322,7 @@ public:
    * Returns true if this scroll frame might be scrolled
    * asynchronously by the compositor.
    */
-  virtual bool MayBeAsynchronouslyScrolled() = 0;
+  virtual bool IsMaybeAsynchronouslyScrolled() = 0;
 
   /**
    * Same as the above except doesn't take into account will-change budget,
@@ -447,6 +447,13 @@ public:
    * Notify this scroll frame that it can be zoomed by APZ.
    */
   virtual void SetZoomableByAPZ(bool aZoomable) = 0;
+
+  /**
+   * Mark this scroll frame as having out-of-flow content inside a CSS filter.
+   * Such content will move incorrectly during async-scrolling; to mitigate
+   * this, paint skipping is disabled for such scroll frames.
+   */
+  virtual void SetHasOutOfFlowContentInsideFilter() = 0;
 
   /**
    * Whether or not this frame uses containerful scrolling.

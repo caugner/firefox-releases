@@ -5,9 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const Ci = Components.interfaces;
-const Cu = Components.utils;
-
 const DBG_STRINGS_URI = "devtools/client/locales/debugger.properties";
 const LAZY_EMPTY_DELAY = 150; // ms
 const SCROLL_PAGE_SIZE_DEFAULT = 0;
@@ -16,15 +13,16 @@ const PAGE_SIZE_MAX_JUMPS = 30;
 const SEARCH_ACTION_MAX_DELAY = 300; // ms
 const ITEM_FLASH_DURATION = 300; // ms
 
-const { require } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {XPCOMUtils} = require("resource://gre/modules/XPCOMUtils.jsm");
-const EventEmitter = require("devtools/shared/old-event-emitter");
+const EventEmitter = require("devtools/shared/event-emitter");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const Services = require("Services");
 const { getSourceNames } = require("devtools/client/shared/source-utils");
 const promise = require("promise");
 const defer = require("devtools/shared/defer");
-const { Heritage, ViewHelpers, setNamedTimeout } =
+const { extend } = require("devtools/shared/extend");
+const { ViewHelpers, setNamedTimeout } =
   require("devtools/client/shared/widgets/view-helpers");
 const { Task } = require("devtools/shared/task");
 const nodeConstants = require("devtools/shared/dom-node-constants");
@@ -83,14 +81,12 @@ this.VariablesView = function VariablesView(aParentNode, aFlags = {}) {
   this._appendEmptyNotice();
 
   this._onSearchboxInput = this._onSearchboxInput.bind(this);
-  this._onSearchboxKeyPress = this._onSearchboxKeyPress.bind(this);
-  this._onViewKeyPress = this._onViewKeyPress.bind(this);
+  this._onSearchboxKeyDown = this._onSearchboxKeyDown.bind(this);
   this._onViewKeyDown = this._onViewKeyDown.bind(this);
 
   // Create an internal scrollbox container.
   this._list = this.document.createElement("scrollbox");
   this._list.setAttribute("orient", "vertical");
-  this._list.addEventListener("keypress", this._onViewKeyPress);
   this._list.addEventListener("keydown", this._onViewKeyDown);
   this._parent.appendChild(this._list);
 
@@ -194,9 +190,7 @@ VariablesView.prototype = {
     let currList = this._list = this.document.createElement("scrollbox");
 
     this.window.setTimeout(() => {
-      prevList.removeEventListener("keypress", this._onViewKeyPress);
       prevList.removeEventListener("keydown", this._onViewKeyDown);
-      currList.addEventListener("keypress", this._onViewKeyPress);
       currList.addEventListener("keydown", this._onViewKeyDown);
       currList.setAttribute("orient", "vertical");
 
@@ -459,7 +453,7 @@ VariablesView.prototype = {
     searchbox.setAttribute("type", "search");
     searchbox.setAttribute("flex", "1");
     searchbox.addEventListener("command", this._onSearchboxInput);
-    searchbox.addEventListener("keypress", this._onSearchboxKeyPress);
+    searchbox.addEventListener("keydown", this._onSearchboxKeyDown);
 
     container.appendChild(searchbox);
     ownerNode.insertBefore(container, this._parent);
@@ -476,7 +470,7 @@ VariablesView.prototype = {
     }
     this._searchboxContainer.remove();
     this._searchboxNode.removeEventListener("command", this._onSearchboxInput);
-    this._searchboxNode.removeEventListener("keypress", this._onSearchboxKeyPress);
+    this._searchboxNode.removeEventListener("keydown", this._onSearchboxKeyDown);
 
     this._searchboxContainer = null;
     this._searchboxNode = null;
@@ -505,9 +499,9 @@ VariablesView.prototype = {
   },
 
   /**
-   * Listener handling the searchbox key press event.
+   * Listener handling the searchbox keydown event.
    */
-  _onSearchboxKeyPress: function (e) {
+  _onSearchboxKeyDown: function (e) {
     switch (e.keyCode) {
       case KeyCodes.DOM_VK_RETURN:
         this._onSearchboxInput();
@@ -813,15 +807,25 @@ VariablesView.prototype = {
   },
 
   /**
-   * Listener handling a key press event on the view.
+   * Listener handling a key down event on the view.
    */
-  _onViewKeyPress: function (e) {
+  _onViewKeyDown: function (e) {
     let item = this.getFocusedItem();
 
     // Prevent scrolling when pressing navigation keys.
     ViewHelpers.preventScrolling(e);
 
     switch (e.keyCode) {
+      case KeyCodes.DOM_VK_C:
+        // Copy current selection to clipboard.
+        if (e.ctrlKey || e.metaKey) {
+          let item = this.getFocusedItem();
+          clipboardHelper.copyString(
+            item._nameString + item.separatorStr + item._valueString
+          );
+        }
+        return;
+
       case KeyCodes.DOM_VK_UP:
         // Always rewind focus.
         this.focusPrevItem(true);
@@ -898,21 +902,6 @@ VariablesView.prototype = {
       case KeyCodes.DOM_VK_INSERT:
         item._onAddProperty(e);
         return;
-    }
-  },
-
-  /**
-   * Listener handling a key down event on the view.
-   */
-  _onViewKeyDown: function (e) {
-    if (e.keyCode == KeyCodes.DOM_VK_C) {
-      // Copy current selection to clipboard.
-      if (e.ctrlKey || e.metaKey) {
-        let item = this.getFocusedItem();
-        clipboardHelper.copyString(
-          item._nameString + item.separatorStr + item._valueString
-        );
-      }
     }
   },
 
@@ -1075,7 +1064,7 @@ VariablesView.NON_SORTABLE_CLASSES = [
  *        The class of the object.
  */
 VariablesView.isSortable = function (aClassName) {
-  return VariablesView.NON_SORTABLE_CLASSES.indexOf(aClassName) == -1;
+  return !VariablesView.NON_SORTABLE_CLASSES.includes(aClassName);
 };
 
 /**
@@ -2179,7 +2168,7 @@ function Variable(aScope, aName, aDescriptor, aOptions) {
   this.setGrip(aDescriptor.value);
 }
 
-Variable.prototype = Heritage.extend(Scope.prototype, {
+Variable.prototype = extend(Scope.prototype, {
   /**
    * Whether this Variable should be prefetched when it is remoted.
    */
@@ -3072,7 +3061,7 @@ function Property(aVar, aName, aDescriptor, aOptions) {
   Variable.call(this, aVar, aName, aDescriptor, aOptions);
 }
 
-Property.prototype = Heritage.extend(Variable.prototype, {
+Property.prototype = extend(Variable.prototype, {
   /**
    * The class name applied to this property's target element.
    */
@@ -3160,7 +3149,7 @@ VariablesView.prototype.commitHierarchy = function () {
 
 // Some variables are likely to contain a very large number of properties.
 // It would be a bad idea to re-expand them or perform expensive operations.
-VariablesView.prototype.commitHierarchyIgnoredItems = Heritage.extend(null, {
+VariablesView.prototype.commitHierarchyIgnoredItems = extend(null, {
   "window": true,
   "this": true
 });
@@ -4018,9 +4007,9 @@ Editable.prototype = {
       input.selectionStart++;
     }
 
-    this._onKeypress = this._onKeypress.bind(this);
+    this._onKeydown = this._onKeydown.bind(this);
     this._onBlur = this._onBlur.bind(this);
-    input.addEventListener("keypress", this._onKeypress);
+    input.addEventListener("keydown", this._onKeydown);
     input.addEventListener("blur", this._onBlur);
 
     this._prevExpandable = this._variable.twisty;
@@ -4036,7 +4025,7 @@ Editable.prototype = {
    * state.
    */
   deactivate: function () {
-    this._input.removeEventListener("keypress", this._onKeypress);
+    this._input.removeEventListener("keydown", this._onKeydown);
     this._input.removeEventListener("blur", this.deactivate);
     this._input.parentNode.replaceChild(this.label, this._input);
     this._input = null;
@@ -4089,7 +4078,7 @@ Editable.prototype = {
   /**
    * Event handler for when the input receives a key press.
    */
-  _onKeypress: function (e) {
+  _onKeydown: function (e) {
     e.stopPropagation();
 
     switch (e.keyCode) {
@@ -4116,7 +4105,7 @@ function EditableName(aVariable, aOptions) {
 
 EditableName.create = Editable.create;
 
-EditableName.prototype = Heritage.extend(Editable.prototype, {
+EditableName.prototype = extend(Editable.prototype, {
   className: "element-name-input",
 
   get label() {
@@ -4138,7 +4127,7 @@ function EditableValue(aVariable, aOptions) {
 
 EditableValue.create = Editable.create;
 
-EditableValue.prototype = Heritage.extend(Editable.prototype, {
+EditableValue.prototype = extend(Editable.prototype, {
   className: "element-value-input",
 
   get label() {
@@ -4160,7 +4149,7 @@ function EditableNameAndValue(aVariable, aOptions) {
 
 EditableNameAndValue.create = Editable.create;
 
-EditableNameAndValue.prototype = Heritage.extend(EditableName.prototype, {
+EditableNameAndValue.prototype = extend(EditableName.prototype, {
   _reset: function (e) {
     // Hide the Variable or Property if the user presses escape.
     this._variable.remove();

@@ -4,10 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
-Components.utils.import("resource://gre/modules/BrowserUtils.jsm");
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
-Components.utils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+ChromeUtils.import("resource://gre/modules/BrowserUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   SpellCheckHelper: "resource://gre/modules/InlineSpellChecker.jsm",
@@ -16,6 +16,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.jsm",
   ContextualIdentityService: "resource://gre/modules/ContextualIdentityService.jsm",
   DevToolsShim: "chrome://devtools-shim/content/DevToolsShim.jsm",
+  NetUtil: "resource://gre/modules/NetUtil.jsm",
 });
 
 var gContextMenuContentData = null;
@@ -116,7 +117,8 @@ nsContextMenu.prototype = {
         onVideo: this.onVideo,
         onAudio: this.onAudio,
         onCanvas: this.onCanvas,
-        onEditableArea: this.onEditableArea,
+        onEditable: this.onEditable,
+        onSpellcheckable: this.onSpellcheckable,
         onPassword: this.onPassword,
         srcUrl: this.mediaURL,
         frameUrl: gContextMenuContentData ? gContextMenuContentData.docLocation : undefined,
@@ -133,8 +135,8 @@ nsContextMenu.prototype = {
     this.isFrameImage = document.getElementById("isFrameImage");
     this.ellipsis = "\u2026";
     try {
-      this.ellipsis = gPrefService.getComplexValue("intl.ellipsis",
-                                                   Ci.nsIPrefLocalizedString).data;
+      this.ellipsis = Services.prefs.getComplexValue("intl.ellipsis",
+                                                     Ci.nsIPrefLocalizedString).data;
     } catch (e) { }
 
     // Reset after "on-build-contextmenu" notification in case selection was
@@ -196,7 +198,7 @@ nsContextMenu.prototype = {
     this.onCompletedImage    = context.onCompletedImage;
     this.onCTPPlugin         = context.onCTPPlugin;
     this.onDRMMedia          = context.onDRMMedia;
-    this.onEditableArea      = context.onEditableArea;
+    this.onEditable          = context.onEditable;
     this.onImage             = context.onImage;
     this.onKeywordField      = context.onKeywordField;
     this.onLink              = context.onLink;
@@ -207,6 +209,7 @@ nsContextMenu.prototype = {
     this.onNumeric           = context.onNumeric;
     this.onPassword          = context.onPassword;
     this.onSaveableLink      = context.onSaveableLink;
+    this.onSpellcheckable    = context.onSpellcheckable;
     this.onTextInput         = context.onTextInput;
     this.onVideo             = context.onVideo;
 
@@ -356,7 +359,7 @@ nsContextMenu.prototype = {
     var isWindowPrivate = PrivateBrowsingUtils.isWindowPrivate(window);
     var showContainers = Services.prefs.getBoolPref("privacy.userContext.enabled");
     this.showItem("context-openlink", shouldShow && !isWindowPrivate);
-    this.showItem("context-openlinkprivate", shouldShow);
+    this.showItem("context-openlinkprivate", shouldShow && PrivateBrowsingUtils.enabled);
     this.showItem("context-openlinkintab", shouldShow && !inContainer);
     this.showItem("context-openlinkincontainertab", shouldShow && inContainer);
     this.showItem("context-openlinkinusercontext-menu", shouldShow && !isWindowPrivate && showContainers);
@@ -433,7 +436,8 @@ nsContextMenu.prototype = {
                        this.onLink || this.onTextInput);
 
     var showInspect = this.inTabBrowser &&
-                      gPrefService.getBoolPref("devtools.inspector.enabled", true);
+                      Services.prefs.getBoolPref("devtools.inspector.enabled", true) &&
+                      !Services.prefs.getBoolPref("devtools.policy.disabled", false);
 
     this.showItem("context-viewsource", shouldShow);
     this.showItem("context-viewinfo", shouldShow);
@@ -449,7 +453,8 @@ nsContextMenu.prototype = {
     // and only works if we have a shell service.
     var haveSetDesktopBackground = false;
 
-    if (AppConstants.HAVE_SHELL_SERVICE) {
+    if (AppConstants.HAVE_SHELL_SERVICE &&
+        Services.policies.isAllowed("setDesktopBackground")) {
       // Only enable Set as Desktop Background if we can get the shell service.
       var shell = getShellService();
       if (shell)
@@ -580,7 +585,7 @@ nsContextMenu.prototype = {
       let count = InlineSpellCheckerUI.addDictionaryListToMenu(dictMenu, dictSep);
       this.showItem(dictSep, count > 0);
       this.showItem("spell-add-dictionaries-main", false);
-    } else if (this.onEditableArea) {
+    } else if (this.onSpellcheckable) {
       // when there is no spellchecker but we might be able to spellcheck
       // add the add to dictionaries item. This will ensure that people
       // with no dictionaries will be able to download them
@@ -756,7 +761,7 @@ nsContextMenu.prototype = {
                    referrerURI: gContextMenuContentData.documentURIObject,
                    referrerPolicy: gContextMenuContentData.referrerPolicy,
                    frameOuterWindowID: gContextMenuContentData.frameOuterWindowID,
-                   noReferrer: this.linkHasNoReferrer };
+                   noReferrer: this.linkHasNoReferrer || this.onPlainTextLink };
     for (let p in extra) {
       params[p] = extra[p];
     }
@@ -832,9 +837,10 @@ nsContextMenu.prototype = {
   },
 
   // Reload clicked-in frame.
-  reloadFrame() {
+  reloadFrame(aEvent) {
+    let forceReload = aEvent.shiftKey;
     this.browser.messageManager.sendAsyncMessage("ContextMenu:ReloadFrame",
-                                                 null, { target: this.target });
+                                                 null, { target: this.target, forceReload });
   },
 
   // Open clicked-in frame in its own window.
@@ -862,17 +868,21 @@ nsContextMenu.prototype = {
 
   // View Partial Source
   viewPartialSource(aContext) {
-    let inWindow = !Services.prefs.getBoolPref("view_source.tab");
-    let openSelectionFn = inWindow ? null : function() {
+    let {browser} = this;
+    let openSelectionFn = function() {
       let tabBrowser = gBrowser;
       // In the case of popups, we need to find a non-popup browser window.
-      if (!tabBrowser || !window.toolbar.visible) {
+      // We might also not have a tabBrowser reference (if this isn't in a
+      // a tabbrowser scope) or might have a fake/stub tabbrowser reference
+      // (in the sidebar). Deal with those cases:
+      if (!tabBrowser || !tabBrowser.loadOneTab || !window.toolbar.visible) {
         // This returns only non-popup browser windows by default.
         let browserWindow = RecentWindow.getMostRecentBrowserWindow();
         tabBrowser = browserWindow.gBrowser;
       }
+      let relatedToCurrent = gBrowser && gBrowser.selectedBrowser == browser;
       let tab = tabBrowser.loadOneTab("about:blank", {
-        relatedToCurrent: true,
+        relatedToCurrent,
         inBackground: false,
         triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
       });
@@ -880,7 +890,7 @@ nsContextMenu.prototype = {
     };
 
     let target = aContext == "mathml" ? this.target : null;
-    top.gViewSourceUtils.viewPartialSourceInBrowser(gBrowser.selectedBrowser, target, openSelectionFn);
+    top.gViewSourceUtils.viewPartialSourceInBrowser(browser, target, openSelectionFn);
   },
 
   // Open new "view source" window with the frame's URL.
@@ -1009,8 +1019,10 @@ nsContextMenu.prototype = {
       mm.removeMessageListener("ContextMenu:SetAsDesktopBackground:Result",
                                onMessage);
 
-      if (message.data.disable)
+      if (message.data.disable ||
+          !Services.policies.isAllowed("setDesktopBackground")) {
         return;
+      }
 
       let image = document.createElementNS("http://www.w3.org/1999/xhtml", "img");
       image.src = message.data.dataUrl;
@@ -1023,9 +1035,7 @@ nsContextMenu.prototype = {
       if (AppConstants.platform == "macosx") {
         // On Mac, the Set Desktop Background window is not modal.
         // Don't open more than one Set Desktop Background window.
-        const wm = Cc["@mozilla.org/appshell/window-mediator;1"].
-                   getService(Ci.nsIWindowMediator);
-        let dbWin = wm.getMostRecentWindow("Shell:SetDesktopBackground");
+        let dbWin = Services.wm.getMostRecentWindow("Shell:SetDesktopBackground");
         if (dbWin) {
           dbWin.gSetBackground.init(image, imageName);
           dbWin.focus();
@@ -1078,20 +1088,14 @@ nsContextMenu.prototype = {
         // some other error occured; notify the user...
         if (!Components.isSuccessCode(aRequest.status)) {
           try {
-            const sbs = Cc["@mozilla.org/intl/stringbundle;1"].
-                        getService(Ci.nsIStringBundleService);
-            const bundle = sbs.createBundle(
+            const bundle = Services.strings.createBundle(
                     "chrome://mozapps/locale/downloads/downloads.properties");
 
             const title = bundle.GetStringFromName("downloadErrorAlertTitle");
             const msg = bundle.GetStringFromName("downloadErrorGeneric");
 
-            const promptSvc = Cc["@mozilla.org/embedcomp/prompt-service;1"].
-                              getService(Ci.nsIPromptService);
-            const wm = Cc["@mozilla.org/appshell/window-mediator;1"].
-                       getService(Ci.nsIWindowMediator);
-            let window = wm.getOuterWindowWithId(windowID);
-            promptSvc.alert(window, title, msg);
+            let window = Services.wm.getOuterWindowWithId(windowID);
+            Services.prompt.alert(window, title, msg);
           } catch (ex) {}
           return;
         }
@@ -1153,20 +1157,17 @@ nsContextMenu.prototype = {
     };
 
     // setting up a new channel for 'right click - save link as ...'
-    // ideally we should use:
-    // * doc            - as the loadingNode, and/or
-    // * this.principal - as the loadingPrincipal
-    // for now lets use systemPrincipal to bypass mixedContentBlocker
-    // checks after redirects, see bug: 1136055
     var channel = NetUtil.newChannel({
                     uri: makeURI(linkURL),
-                    loadUsingSystemPrincipal: true
+                    loadingPrincipal: this.principal,
+                    contentPolicyType: Ci.nsIContentPolicy.TYPE_SAVEAS_DOWNLOAD,
+                    securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS,
                   });
 
     if (linkDownload)
       channel.contentDispositionFilename = linkDownload;
     if (channel instanceof Ci.nsIPrivateBrowsingChannel) {
-      let docIsPrivate = PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser);
+      let docIsPrivate = PrivateBrowsingUtils.isBrowserPrivate(this.browser);
       channel.setPrivate(docIsPrivate);
     }
     channel.notificationCallbacks = new callbacks();
@@ -1189,7 +1190,7 @@ nsContextMenu.prototype = {
 
     // fallback to the old way if we don't see the headers quickly
     var timeToWait =
-      gPrefService.getIntPref("browser.download.saveLinkAsFilenameTimeout");
+      Services.prefs.getIntPref("browser.download.saveLinkAsFilenameTimeout");
     var timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
     timer.initWithCallback(new timerCallback(), timeToWait,
                            timer.TYPE_ONE_SHOT);
@@ -1275,10 +1276,8 @@ nsContextMenu.prototype = {
     // Let's try to unescape it using a character set
     // in case the address is not ASCII.
     try {
-      const textToSubURI = Cc["@mozilla.org/intl/texttosuburi;1"].
-                           getService(Ci.nsITextToSubURI);
-      addresses = textToSubURI.unEscapeURIForUI(gContextMenuContentData.charSet,
-                                                addresses);
+      addresses = Services.textToSubURI.unEscapeURIForUI(gContextMenuContentData.charSet,
+                                                         addresses);
     } catch (ex) {
       // Do nothing.
     }
@@ -1393,19 +1392,18 @@ nsContextMenu.prototype = {
 
     var locale = "-";
     try {
-      locale = gPrefService.getComplexValue("intl.accept_languages",
-                                            Ci.nsIPrefLocalizedString).data;
+      locale = Services.prefs.getComplexValue("intl.accept_languages",
+                                              Ci.nsIPrefLocalizedString).data;
     } catch (e) { }
 
     var version = "-";
     try {
-      version = Cc["@mozilla.org/xre/app-info;1"].
-                getService(Ci.nsIXULAppInfo).version;
+      version = Services.appinfo.version;
     } catch (e) { }
 
     uri = uri.replace(/%LOCALE%/, escape(locale)).replace(/%VERSION%/, version);
 
-    var newWindowPref = gPrefService.getIntPref("browser.link.open_newwindow");
+    var newWindowPref = Services.prefs.getIntPref("browser.link.open_newwindow");
     var where = newWindowPref == 3 ? "tab" : "window";
 
     openUILinkIn(uri, where);
@@ -1414,7 +1412,7 @@ nsContextMenu.prototype = {
   bookmarkThisPage: function CM_bookmarkThisPage() {
     window.top.PlacesCommandHook
               .bookmarkPage(this.browser, true)
-              .catch(Components.utils.reportError);
+              .catch(Cu.reportError);
   },
 
   bookmarkLink: function CM_bookmarkLink() {
@@ -1433,7 +1431,7 @@ nsContextMenu.prototype = {
                                                 uri.spec,
                                                 message.data.title,
                                                 message.data.description)
-                                  .catch(Components.utils.reportError);
+                                  .catch(Cu.reportError);
     };
     mm.addMessageListener("ContextMenu:BookmarkFrame:Result", onMessage);
 

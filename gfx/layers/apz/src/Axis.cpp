@@ -5,10 +5,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "Axis.h"
+
 #include <math.h>                       // for fabsf, pow, powf
 #include <algorithm>                    // for max
+
+#include "APZCTreeManager.h"            // for APZCTreeManager
 #include "AsyncPanZoomController.h"     // for AsyncPanZoomController
-#include "mozilla/layers/APZCTreeManager.h" // for APZCTreeManager
 #include "mozilla/layers/APZThreadUtils.h" // for AssertOnControllerThread
 #include "FrameMetrics.h"               // for FrameMetrics
 #include "mozilla/Attributes.h"         // for final
@@ -491,6 +493,21 @@ const FrameMetrics& Axis::GetFrameMetrics() const {
   return mAsyncPanZoomController->GetFrameMetrics();
 }
 
+const ScrollMetadata& Axis::GetScrollMetadata() const {
+  return mAsyncPanZoomController->GetScrollMetadata();
+}
+
+bool Axis::OverscrollBehaviorAllowsHandoff() const {
+  // Scroll handoff is a "non-local" overscroll behavior, so it's allowed
+  // with "auto" and disallowed with "contain" and "none".
+  return GetOverscrollBehavior() == OverscrollBehavior::Auto;
+}
+
+bool Axis::OverscrollBehaviorAllowsOverscrollEffect() const {
+  // An overscroll effect is a "local" overscroll behavior, so it's allowed
+  // with "auto" and "contain" and disallowed with "none".
+  return GetOverscrollBehavior() != OverscrollBehavior::None;
+}
 
 AxisX::AxisX(AsyncPanZoomController* aAsyncPanZoomController)
   : Axis(aAsyncPanZoomController)
@@ -510,7 +527,7 @@ ParentLayerCoord AxisX::GetRectLength(const ParentLayerRect& aRect) const
 
 ParentLayerCoord AxisX::GetRectOffset(const ParentLayerRect& aRect) const
 {
-  return aRect.x;
+  return aRect.X();
 }
 
 CSSToParentLayerScale AxisX::GetScaleForAxis(const CSSToParentLayerScale2D& aScale) const
@@ -526,6 +543,11 @@ ScreenPoint AxisX::MakePoint(ScreenCoord aCoord) const
 const char* AxisX::Name() const
 {
   return "X";
+}
+
+OverscrollBehavior AxisX::GetOverscrollBehavior() const
+{
+  return GetScrollMetadata().GetOverscrollBehavior().mBehaviorX;
 }
 
 AxisY::AxisY(AsyncPanZoomController* aAsyncPanZoomController)
@@ -546,7 +568,7 @@ ParentLayerCoord AxisY::GetRectLength(const ParentLayerRect& aRect) const
 
 ParentLayerCoord AxisY::GetRectOffset(const ParentLayerRect& aRect) const
 {
-  return aRect.y;
+  return aRect.Y();
 }
 
 CSSToParentLayerScale AxisY::GetScaleForAxis(const CSSToParentLayerScale2D& aScale) const
@@ -562,6 +584,11 @@ ScreenPoint AxisY::MakePoint(ScreenCoord aCoord) const
 const char* AxisY::Name() const
 {
   return "Y";
+}
+
+OverscrollBehavior AxisY::GetOverscrollBehavior() const
+{
+  return GetScrollMetadata().GetOverscrollBehavior().mBehaviorY;
 }
 
 } // namespace layers

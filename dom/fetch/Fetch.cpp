@@ -11,7 +11,6 @@
 #include "nsIDocument.h"
 #include "nsIGlobalObject.h"
 #include "nsIStreamLoader.h"
-#include "nsIThreadRetargetableRequest.h"
 
 #include "nsCharSeparatedTokenizer.h"
 #include "nsDOMString.h"
@@ -38,7 +37,6 @@
 #include "mozilla/dom/Response.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/URLSearchParams.h"
-#include "mozilla/dom/workers/ServiceWorkerManager.h"
 #include "mozilla/Telemetry.h"
 
 #include "BodyExtractor.h"
@@ -46,15 +44,13 @@
 #include "InternalRequest.h"
 #include "InternalResponse.h"
 
-#include "WorkerPrivate.h"
-#include "WorkerRunnable.h"
-#include "WorkerScope.h"
-#include "Workers.h"
+#include "mozilla/dom/WorkerCommon.h"
+#include "mozilla/dom/WorkerPrivate.h"
+#include "mozilla/dom/WorkerRunnable.h"
+#include "mozilla/dom/WorkerScope.h"
 
 namespace mozilla {
 namespace dom {
-
-using namespace workers;
 
 namespace {
 
@@ -170,12 +166,12 @@ class WorkerNotifier final : public WorkerHolder
 
 public:
   explicit WorkerNotifier(WorkerFetchResolver* aResolver)
-    : WorkerHolder(AllowIdleShutdownStart)
+    : WorkerHolder("WorkerNotifier", AllowIdleShutdownStart)
     , mResolver(aResolver)
   {}
 
   bool
-  Notify(Status aStatus) override;
+  Notify(WorkerStatus aStatus) override;
 };
 
 class WorkerFetchResolver final : public FetchDriverObserver
@@ -191,7 +187,7 @@ class WorkerFetchResolver final : public FetchDriverObserver
 public:
   // Returns null if worker is shutting down.
   static already_AddRefed<WorkerFetchResolver>
-  Create(workers::WorkerPrivate* aWorkerPrivate, Promise* aPromise,
+  Create(WorkerPrivate* aWorkerPrivate, Promise* aPromise,
          AbortSignal* aSignal, FetchObserver* aObserver)
   {
     MOZ_ASSERT(aWorkerPrivate);
@@ -291,7 +287,6 @@ public:
 
     if (mSignalProxy) {
       mSignalProxy->Shutdown();
-      mSignalProxy = nullptr;
     }
 
     mWorkerHolder = nullptr;
@@ -334,16 +329,18 @@ class MainThreadFetchResolver final : public FetchDriverObserver
   RefPtr<Response> mResponse;
   RefPtr<FetchObserver> mFetchObserver;
   RefPtr<AbortSignal> mSignal;
+  const bool mMozErrors;
 
   nsCOMPtr<nsILoadGroup> mLoadGroup;
 
   NS_DECL_OWNINGTHREAD
 public:
   MainThreadFetchResolver(Promise* aPromise, FetchObserver* aObserver,
-                          AbortSignal* aSignal)
+                          AbortSignal* aSignal, bool aMozErrors)
     : mPromise(aPromise)
     , mFetchObserver(aObserver)
     , mSignal(aSignal)
+    , mMozErrors(aMozErrors)
   {}
 
   void
@@ -384,13 +381,19 @@ private:
 class MainThreadFetchRunnable : public Runnable
 {
   RefPtr<WorkerFetchResolver> mResolver;
+  const ClientInfo mClientInfo;
+  const Maybe<ServiceWorkerDescriptor> mController;
   RefPtr<InternalRequest> mRequest;
 
 public:
   MainThreadFetchRunnable(WorkerFetchResolver* aResolver,
+                          const ClientInfo& aClientInfo,
+                          const Maybe<ServiceWorkerDescriptor>& aController,
                           InternalRequest* aRequest)
     : Runnable("dom::MainThreadFetchRunnable")
     , mResolver(aResolver)
+    , mClientInfo(aClientInfo)
+    , mController(aController)
     , mRequest(aRequest)
   {
     MOZ_ASSERT(mResolver);
@@ -420,12 +423,17 @@ public:
       // We don't track if a worker is spawned from a tracking script for now,
       // so pass false as the last argument to FetchDriver().
       fetch = new FetchDriver(mRequest, principal, loadGroup,
-                              workerPrivate->MainThreadEventTarget(), false);
+                              workerPrivate->MainThreadEventTarget(),
+                              workerPrivate->GetPerformanceStorage(),
+                              false);
       nsAutoCString spec;
       if (proxy->GetWorkerPrivate()->GetBaseURI()) {
         proxy->GetWorkerPrivate()->GetBaseURI()->GetAsciiSpec(spec);
       }
       fetch->SetWorkerScript(spec);
+
+      fetch->SetClientInfo(mClientInfo);
+      fetch->SetController(mController);
     }
 
     RefPtr<AbortSignal> signal = mResolver->GetAbortSignalForMainThread();
@@ -464,7 +472,7 @@ FetchRequest(nsIGlobalObject* aGlobal, const RequestOrUSVString& aInput,
   GlobalObject global(cx, jsGlobal);
 
   RefPtr<Request> request = Request::Constructor(global, aInput, aInit, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
+  if (aRv.Failed()) {
     return nullptr;
   }
 
@@ -518,10 +526,12 @@ FetchRequest(nsIGlobalObject* aGlobal, const RequestOrUSVString& aInput,
     Telemetry::Accumulate(Telemetry::FETCH_IS_MAINTHREAD, 1);
 
     RefPtr<MainThreadFetchResolver> resolver =
-      new MainThreadFetchResolver(p, observer, signal);
+      new MainThreadFetchResolver(p, observer, signal, request->MozErrors());
     RefPtr<FetchDriver> fetch =
       new FetchDriver(r, principal, loadGroup,
-                      aGlobal->EventTargetFor(TaskCategory::Other), isTrackingFetch);
+                      aGlobal->EventTargetFor(TaskCategory::Other),
+                      nullptr, // PerformanceStorage
+                      isTrackingFetch);
     fetch->SetDocument(doc);
     resolver->SetLoadGroup(loadGroup);
     aRv = fetch->Fetch(signal, resolver);
@@ -547,7 +557,8 @@ FetchRequest(nsIGlobalObject* aGlobal, const RequestOrUSVString& aInput,
     }
 
     RefPtr<MainThreadFetchRunnable> run =
-      new MainThreadFetchRunnable(resolver, r);
+      new MainThreadFetchRunnable(resolver, worker->GetClientInfo(),
+                                  worker->GetController(), r);
     worker->DispatchToMainThread(run.forget());
   }
 
@@ -571,6 +582,11 @@ MainThreadFetchResolver::OnResponseAvailableInternal(InternalResponse* aResponse
   } else {
     if (mFetchObserver) {
       mFetchObserver->SetState(FetchState::Errored);
+    }
+
+    if (mMozErrors) {
+      mPromise->MaybeReject(aResponse->GetErrorCode());
+      return;
     }
 
     ErrorResult result;
@@ -761,7 +777,7 @@ public:
 };
 
 bool
-WorkerNotifier::Notify(Status aStatus)
+WorkerNotifier::Notify(WorkerStatus aStatus)
 {
   if (mResolver) {
     // This will nullify this object.
@@ -852,7 +868,7 @@ WorkerFetchResolver::FlushConsoleReport()
     return;
   }
 
-  workers::WorkerPrivate* worker = mPromiseProxy->GetWorkerPrivate();
+  WorkerPrivate* worker = mPromiseProxy->GetWorkerPrivate();
   if (!worker) {
     mReporter->FlushReportsToConsole(0);
     return;
@@ -860,13 +876,7 @@ WorkerFetchResolver::FlushConsoleReport()
 
   if (worker->IsServiceWorker()) {
     // Flush to service worker
-    RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
-    if (!swm) {
-      mReporter->FlushReportsToConsole(0);
-      return;
-    }
-
-    swm->FlushReportsToAllClients(worker->ServiceWorkerScope(), mReporter);
+    mReporter->FlushReportsToConsoleForServiceWorkerScope(worker->ServiceWorkerScope());
     return;
   }
 
@@ -904,14 +914,14 @@ ExtractByteStreamFromBody(const fetch::OwningBodyInit& aBodyInit,
 
   if (aBodyInit.IsBlob()) {
     Blob& blob = aBodyInit.GetAsBlob();
-    BodyExtractor<nsIXHRSendable> body(&blob);
+    BodyExtractor<const Blob> body(&blob);
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }
 
   if (aBodyInit.IsFormData()) {
     FormData& formData = aBodyInit.GetAsFormData();
-    BodyExtractor<nsIXHRSendable> body(&formData);
+    BodyExtractor<const FormData> body(&formData);
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }
@@ -924,7 +934,7 @@ ExtractByteStreamFromBody(const fetch::OwningBodyInit& aBodyInit,
 
   if (aBodyInit.IsURLSearchParams()) {
     URLSearchParams& usp = aBodyInit.GetAsURLSearchParams();
-    BodyExtractor<nsIXHRSendable> body(&usp);
+    BodyExtractor<const URLSearchParams> body(&usp);
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }
@@ -958,13 +968,13 @@ ExtractByteStreamFromBody(const fetch::BodyInit& aBodyInit,
   }
 
   if (aBodyInit.IsBlob()) {
-    BodyExtractor<nsIXHRSendable> body(&aBodyInit.GetAsBlob());
+    BodyExtractor<const Blob> body(&aBodyInit.GetAsBlob());
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }
 
   if (aBodyInit.IsFormData()) {
-    BodyExtractor<nsIXHRSendable> body(&aBodyInit.GetAsFormData());
+    BodyExtractor<const FormData> body(&aBodyInit.GetAsFormData());
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }
@@ -976,7 +986,7 @@ ExtractByteStreamFromBody(const fetch::BodyInit& aBodyInit,
   }
 
   if (aBodyInit.IsURLSearchParams()) {
-    BodyExtractor<nsIXHRSendable> body(&aBodyInit.GetAsURLSearchParams());
+    BodyExtractor<const URLSearchParams> body(&aBodyInit.GetAsURLSearchParams());
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }
@@ -1014,13 +1024,13 @@ ExtractByteStreamFromBody(const fetch::ResponseBodyInit& aBodyInit,
   }
 
   if (aBodyInit.IsBlob()) {
-    BodyExtractor<nsIXHRSendable> body(&aBodyInit.GetAsBlob());
+    BodyExtractor<const Blob> body(&aBodyInit.GetAsBlob());
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }
 
   if (aBodyInit.IsFormData()) {
-    BodyExtractor<nsIXHRSendable> body(&aBodyInit.GetAsFormData());
+    BodyExtractor<const FormData> body(&aBodyInit.GetAsFormData());
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }
@@ -1032,7 +1042,7 @@ ExtractByteStreamFromBody(const fetch::ResponseBodyInit& aBodyInit,
   }
 
   if (aBodyInit.IsURLSearchParams()) {
-    BodyExtractor<nsIXHRSendable> body(&aBodyInit.GetAsURLSearchParams());
+    BodyExtractor<const URLSearchParams> body(&aBodyInit.GetAsURLSearchParams());
     return body.GetAsStream(aStream, &aContentLength, aContentTypeWithCharset,
                             charset);
   }

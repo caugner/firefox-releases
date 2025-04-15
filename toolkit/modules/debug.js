@@ -8,7 +8,11 @@
 // This file contains functions that are useful for debugging purposes from
 // within JavaScript code.
 
-this.EXPORTED_SYMBOLS = ["NS_ASSERT"];
+var EXPORTED_SYMBOLS = ["NS_ASSERT"];
+
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "Services",
+                               "resource://gre/modules/Services.jsm");
 
 var gTraceOnAssert = false;
 
@@ -29,14 +33,12 @@ var gTraceOnAssert = false;
  * @param message   a string to be displayed upon failure of the assertion
  */
 
-this.NS_ASSERT = function NS_ASSERT(condition, message) {
+function NS_ASSERT(condition, message) {
   if (condition)
     return;
 
   var releaseBuild = true;
-  var defB = Components.classes["@mozilla.org/preferences-service;1"]
-                       .getService(Components.interfaces.nsIPrefService)
-                       .getDefaultBranch(null);
+  var defB = Services.prefs.getDefaultBranch(null);
   try {
     switch (defB.getCharPref("app.update.channel")) {
       case "nightly":
@@ -50,7 +52,7 @@ this.NS_ASSERT = function NS_ASSERT(condition, message) {
   var assertionText = "ASSERT: " + message + "\n";
 
   // Report the error to the console
-  Components.utils.reportError(assertionText);
+  Cu.reportError(assertionText);
 
   if (releaseBuild) {
     return;
@@ -77,4 +79,4 @@ this.NS_ASSERT = function NS_ASSERT(condition, message) {
   }
 
   dump(assertionText + stackText);
-};
+}

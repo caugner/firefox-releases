@@ -18,6 +18,7 @@
 #include "nsAutoPtr.h"
 #include "nsNetUtil.h"
 
+#include "nsExceptionHandler.h"
 #include "nsIMemoryInfoDumper.h"
 #include "nsIMemoryReporter.h"
 #include "nsIObserverService.h"
@@ -38,7 +39,6 @@
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "nsCycleCollector.h"
 #include "jsapi.h"
-#include "jsprf.h"
 #include "js/MemoryMetrics.h"
 #include "mozilla/dom/GeneratedAtomList.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -59,10 +59,6 @@
 #include "nsIInputStream.h"
 #include "nsIXULRuntime.h"
 #include "nsJSPrincipals.h"
-
-#ifdef MOZ_CRASHREPORTER
-#include "nsExceptionHandler.h"
-#endif
 
 #ifdef XP_WIN
 #include <windows.h>
@@ -85,6 +81,10 @@ const char* const XPCJSRuntime::mStrings[] = {
     "value",                // IDX_VALUE
     "QueryInterface",       // IDX_QUERY_INTERFACE
     "Components",           // IDX_COMPONENTS
+    "Cc",                   // IDX_CC
+    "Ci",                   // IDX_CI
+    "Cr",                   // IDX_CR
+    "Cu",                   // IDX_CU
     "wrappedJSObject",      // IDX_WRAPPED_JSOBJECT
     "Object",               // IDX_OBJECT
     "Function",             // IDX_FUNCTION
@@ -105,7 +105,8 @@ const char* const XPCJSRuntime::mStrings[] = {
     "columnNumber",         // IDX_COLUMNNUMBER
     "stack",                // IDX_STACK
     "message",              // IDX_MESSAGE
-    "lastIndex"             // IDX_LASTINDEX
+    "lastIndex",            // IDX_LASTINDEX
+    "then"                  // IDX_THEN
 };
 
 /***************************************************************************/
@@ -170,9 +171,6 @@ CompartmentPrivate::CompartmentPrivate(JSCompartment* c)
     : wantXrays(false)
     , allowWaivers(true)
     , isWebExtensionContentScript(false)
-    , hasInterposition(false)
-    , waiveInterposition(false)
-    , addonCallInterposition(false)
     , allowCPOWs(false)
     , isContentXBLCompartment(false)
     , isAddonCompartment(false)
@@ -655,9 +653,7 @@ void XPCJSRuntime::TraceNativeBlackRoots(JSTracer* trc)
             roots->TraceJSAll(trc);
     }
 
-    JSContext* cx = XPCJSContext::Get()->Context();
-    dom::TraceBlackJS(trc, JS_GetGCParameter(cx, JSGC_NUMBER),
-                      nsXPConnect::XPConnect()->IsShuttingDown());
+    dom::TraceBlackJS(trc, nsXPConnect::XPConnect()->IsShuttingDown());
 }
 
 void XPCJSRuntime::TraceAdditionalNativeGrayRoots(JSTracer* trc)
@@ -754,9 +750,7 @@ XPCJSRuntime::GCSliceCallback(JSContext* cx,
     if (!self)
         return;
 
-#ifdef MOZ_CRASHREPORTER
     CrashReporter::SetGarbageCollecting(progress == JS::GC_CYCLE_BEGIN);
-#endif
 
     if (self->mPrevGCSliceCallback)
         (*self->mPrevGCSliceCallback)(cx, progress, desc);
@@ -1832,10 +1826,6 @@ ReportCompartmentStats(const JS::CompartmentStats& cStats,
         cStats.nonSyntacticLexicalScopesTable,
         "The non-syntactic lexical scopes table.");
 
-    ZCREPORT_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("template-literal-map"),
-        cStats.templateLiteralMap,
-        "The template literal registry.");
-
     ZCREPORT_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("jit-compartment"),
         cStats.jitCompartment,
         "The JIT compartment.");
@@ -1844,6 +1834,10 @@ ReportCompartmentStats(const JS::CompartmentStats& cStats,
         cStats.privateData,
         "Extra data attached to the compartment by XPConnect, including "
         "its wrapped-js.");
+
+    ZCREPORT_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("script-counts-map"),
+        cStats.scriptCountsMap,
+        "Profiling-related information for scripts.");
 
     if (sundriesGCHeap > 0) {
         // We deliberately don't use ZCREPORT_GC_BYTES here.
@@ -2591,9 +2585,6 @@ AccumulateTelemetryCallback(int id, uint32_t sample, const char* key)
       case JS_TELEMETRY_GC_ANIMATION_MS:
         Telemetry::Accumulate(Telemetry::GC_ANIMATION_MS, sample);
         break;
-      case JS_TELEMETRY_GC_MAX_PAUSE_MS:
-        Telemetry::Accumulate(Telemetry::GC_MAX_PAUSE_MS, sample);
-        break;
       case JS_TELEMETRY_GC_MAX_PAUSE_MS_2:
         Telemetry::Accumulate(Telemetry::GC_MAX_PAUSE_MS_2, sample);
         break;
@@ -2662,9 +2653,6 @@ AccumulateTelemetryCallback(int id, uint32_t sample, const char* key)
         break;
       case JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT:
         Telemetry::Accumulate(Telemetry::JS_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT, sample);
-        break;
-      case JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_ADDONS:
-        Telemetry::Accumulate(Telemetry::JS_DEPRECATED_LANGUAGE_EXTENSIONS_IN_ADDONS, sample);
         break;
       case JS_TELEMETRY_ADDON_EXCEPTIONS:
         Telemetry::Accumulate(Telemetry::JS_TELEMETRY_ADDON_EXCEPTIONS, nsDependentCString(key), sample);
@@ -2824,7 +2812,7 @@ ReadSourceFromFilename(JSContext* cx, const char* filename, char16_t** src, size
 // the source for a chrome JS function. See the comment in the XPCJSRuntime
 // constructor.
 class XPCJSSourceHook: public js::SourceHook {
-    bool load(JSContext* cx, const char* filename, char16_t** src, size_t* length) {
+    bool load(JSContext* cx, const char* filename, char16_t** src, size_t* length) override {
         *src = nullptr;
         *length = 0;
 
@@ -2906,6 +2894,7 @@ XPCJSRuntime::Initialize(JSContext* cx)
     JS_AddWeakPointerCompartmentCallback(cx, WeakPointerCompartmentCallback, this);
     JS_SetWrapObjectCallbacks(cx, &WrapObjectCallbacks);
     js::SetPreserveWrapperCallback(cx, PreserveWrapper);
+    JS_InitReadPrincipalsCallback(cx, nsJSPrincipals::ReadPrincipals);
     JS_SetAccumulateTelemetryCallback(cx, AccumulateTelemetryCallback);
     JS_SetSetUseCounterCallback(cx, SetUseCounterCallback);
     js::SetWindowProxyClass(cx, &OuterWindowProxyClass);

@@ -148,6 +148,33 @@ public:
                            IdleRequestCallback& callback,
                            const IdleRequestOptions& options,
                            ErrorResult& aRv);
+
+  static void GetRecentJSDevError(GlobalObject& aGlobal,
+                                  JS::MutableHandleValue aRetval,
+                                  ErrorResult& aRv);
+
+  static void ClearRecentJSDevError(GlobalObject& aGlobal);
+
+  static void Import(const GlobalObject& aGlobal,
+                     const nsAString& aResourceURI,
+                     const Optional<JS::Handle<JSObject*>>& aTargetObj,
+                     JS::MutableHandle<JSObject*> aRetval,
+                     ErrorResult& aRv);
+
+  static void DefineModuleGetter(const GlobalObject& global,
+                                 JS::Handle<JSObject*> target,
+                                 const nsAString& id,
+                                 const nsAString& resourceURI,
+                                 ErrorResult& aRv);
+
+  static void
+  GetCallerLocation(const GlobalObject& global, nsIPrincipal* principal,
+                    JS::MutableHandle<JSObject*> aRetval);
+
+  static void
+  CreateError(const GlobalObject& global, const nsAString& message,
+              JS::Handle<JSObject*> stack,
+              JS::MutableHandle<JSObject*> aRetVal, ErrorResult& aRv);
 };
 
 } // namespace dom

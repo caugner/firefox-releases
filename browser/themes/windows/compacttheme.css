@@ -31,10 +31,6 @@
   }
 }
 
-#toolbar-menubar {
-  text-shadow: none !important;
-}
-
 @media (-moz-os-version: windows-win7) {
   @media (-moz-windows-default-theme) {
     /* Always show light toolbar elements on aero surface. */
@@ -122,23 +118,21 @@
     display: none !important;
   }
 
-  /* Use default window colors when in non-maximized mode */
-  #tabbrowser-tabs,
+  /* Use default window colors */
   #TabsToolbar,
-  #browser-panel,
-  #titlebar-content {
-    background: transparent;
+  #navigator-toolbox {
+    background-color: transparent;
   }
 
   /* Use proper menu text styling in Win7 classic mode (copied from browser.css) */
   @media (-moz-windows-compositor: 0),
          (-moz-windows-default-theme: 0) {
-    :root[tabsintitlebar]:not([inFullscreen]) {
-      --titlebar-text-color: CaptionText;
+    :root[tabsintitlebar]:not([inFullscreen]) .titlebar-color {
+      color: CaptionText;
     }
 
-    :root[tabsintitlebar]:not([inFullscreen]):-moz-window-inactive {
-      --titlebar-text-color: InactiveCaptionText;
+    :root[tabsintitlebar]:not([inFullscreen]) .titlebar-color:-moz-window-inactive {
+      color: InactiveCaptionText;
     }
 
     #main-window[tabsintitlebar] #main-menubar > menu {
@@ -150,28 +144,10 @@
 /* Restored windows get an artificial border on windows, because the lwtheme background
  * overlaps the regular window border. That isn't the case for us, so we avoid painting
  * over the native border with our custom borders: */
-#browser-panel {
+#navigator-toolbox {
   /* These are !important to avoid specificity-wars with the selectors that add borders here. */
   background-image: none !important;
   border-top: none !important;
+  box-shadow: none !important;
+  padding-top: 0 !important;
 }
-
-@media (-moz-os-version: windows-win10) {
-  .titlebar-button:-moz-lwtheme {
-    -moz-context-properties: stroke;
-    stroke: currentColor;
-  }
-  #titlebar-min:-moz-lwtheme {
-    list-style-image: url(chrome://browser/skin/window-controls/minimize.svg);
-  }
-  #titlebar-max:-moz-lwtheme {
-    list-style-image: url(chrome://browser/skin/window-controls/maximize.svg);
-  }
-  :root[sizemode="maximized"] #titlebar-max:-moz-lwtheme {
-    list-style-image: url(chrome://browser/skin/window-controls/restore.svg);
-  }
-  #titlebar-close:-moz-lwtheme {
-    list-style-image: url(chrome://browser/skin/window-controls/close.svg);
-  }
-}
-

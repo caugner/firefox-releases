@@ -22,7 +22,6 @@
 #include "nsServiceManagerUtils.h"
 #include "nsUnicharUtils.h"
 #include "nsIDOMElement.h"
-#include "nsIWordBreaker.h"
 #include "nsCRT.h"
 #include "nsRange.h"
 #include "nsContentUtils.h"
@@ -32,7 +31,7 @@
 using namespace mozilla;
 
 // Yikes!  Casting a char to unichar can fill with ones!
-#define CHAR_TO_UNICHAR(c) ((char16_t)(const unsigned char)c)
+#define CHAR_TO_UNICHAR(c) ((char16_t)(unsigned char)c)
 
 static NS_DEFINE_CID(kCContentIteratorCID, NS_CONTENTITERATOR_CID);
 static NS_DEFINE_CID(kCPreContentIteratorCID, NS_PRECONTENTITERATOR_CID);
@@ -471,6 +470,7 @@ NS_IMPL_CYCLE_COLLECTION(nsFind, mLastBlockParent, mIterNode, mIterator)
 nsFind::nsFind()
   : mFindBackward(false)
   , mCaseSensitive(false)
+  , mWordBreaker(nullptr)
   , mIterOffset(0)
 {
 }
@@ -487,8 +487,8 @@ DumpNode(nsIDOMNode* aNode)
     printf(">>>> Node: NULL\n");
     return;
   }
-  nsAutoString nodeName;
-  aNode->GetNodeName(nodeName);
+  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
+  nsString nodeName = node->NodeName();
   nsCOMPtr<nsIContent> textContent(do_QueryInterface(aNode));
   if (textContent && textContent->IsNodeOfType(nsINode::eTEXT)) {
     nsAutoString newText;
@@ -839,16 +839,6 @@ nsFind::IsBlockNode(nsIContent* aContent)
 }
 
 bool
-nsFind::IsTextNode(nsIDOMNode* aNode)
-{
-  uint16_t nodeType;
-  aNode->GetNodeType(&nodeType);
-
-  return nodeType == nsIDOMNode::TEXT_NODE ||
-         nodeType == nsIDOMNode::CDATA_SECTION_NODE;
-}
-
-bool
 nsFind::IsVisibleNode(nsIDOMNode* aDOMNode)
 {
   nsCOMPtr<nsIContent> content(do_QueryInterface(aDOMNode));
@@ -909,17 +899,18 @@ nsFind::SkipNode(nsIContent* aContent)
 nsresult
 nsFind::GetBlockParent(nsIDOMNode* aNode, nsIDOMNode** aParent)
 {
-  while (aNode) {
-    nsCOMPtr<nsIDOMNode> parent;
-    nsresult rv = aNode->GetParentNode(getter_AddRefs(parent));
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsCOMPtr<nsIContent> content(do_QueryInterface(parent));
-    if (content && IsBlockNode(content)) {
-      *aParent = parent;
+  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
+  // non-nsCOMPtr temporary so we don't keep addrefing/releasing as we
+  // go up the tree.
+  nsINode* curNode = node;
+  while (curNode) {
+    nsIContent* parent = curNode->GetParent();
+    if (parent && IsBlockNode(parent)) {
+      *aParent = parent->AsDOMNode();
       NS_ADDREF(*aParent);
       return NS_OK;
     }
-    aNode = parent;
+    curNode = parent;
   }
   return NS_ERROR_FAILURE;
 }

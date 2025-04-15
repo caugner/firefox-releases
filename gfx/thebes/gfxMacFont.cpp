@@ -36,17 +36,34 @@ gfxMacFont::gfxMacFont(const RefPtr<UnscaledFontMac>& aUnscaledFont,
 {
     mApplySyntheticBold = aNeedsBold;
 
-    if (mVariationFont && aFontStyle->variationSettings.Length() > 0) {
+    if (mVariationFont && (!aFontStyle->variationSettings.IsEmpty() ||
+                           !aFontEntry->mVariationSettings.IsEmpty())) {
         CGFontRef baseFont = aUnscaledFont->GetFont();
         if (!baseFont) {
             mIsValid = false;
             return;
         }
+
+        // Probably one of the lists of variations, either from the @font-face
+        // descriptor or from the property, will be empty. So skip merging them
+        // unless really necessary.
+        const nsTArray<gfxFontVariation>* vars;
+        AutoTArray<gfxFontVariation,4> mergedSettings;
+        if (aFontStyle->variationSettings.IsEmpty()) {
+            vars = &aFontEntry->mVariationSettings;
+        } else if (aFontEntry->mVariationSettings.IsEmpty()) {
+            vars = &aFontStyle->variationSettings;
+        } else {
+            gfxFontUtils::MergeVariations(aFontEntry->mVariationSettings,
+                                          aFontStyle->variationSettings,
+                                          &mergedSettings);
+            vars = &mergedSettings;
+        }
+
         mCGFont =
-            UnscaledFontMac::CreateCGFontWithVariations(
-                baseFont,
-                aFontStyle->variationSettings.Length(),
-                aFontStyle->variationSettings.Elements());
+            UnscaledFontMac::CreateCGFontWithVariations(baseFont,
+                                                        vars->Length(),
+                                                        vars->Elements());
         if (!mCGFont) {
           ::CFRetain(baseFont);
           mCGFont = baseFont;
@@ -84,24 +101,6 @@ gfxMacFont::gfxMacFont(const RefPtr<UnscaledFontMac>& aUnscaledFont,
     cairo_matrix_t sizeMatrix, ctm;
     cairo_matrix_init_identity(&ctm);
     cairo_matrix_init_scale(&sizeMatrix, mAdjustedSize, mAdjustedSize);
-
-    // synthetic oblique by skewing via the font matrix
-    bool needsOblique = mFontEntry != nullptr &&
-                        mFontEntry->IsUpright() &&
-                        mStyle.style != NS_FONT_STYLE_NORMAL &&
-                        mStyle.allowSyntheticStyle;
-
-    if (needsOblique) {
-        cairo_matrix_t style;
-        cairo_matrix_init(&style,
-                          1,                //xx
-                          0,                //yx
-                          -1 * OBLIQUE_SKEW_FACTOR, //xy
-                          1,                //yy
-                          0,                //x0
-                          0);               //y0
-        cairo_matrix_multiply(&sizeMatrix, &sizeMatrix, &style);
-    }
 
     cairo_font_options_t *fontOptions = cairo_font_options_create();
 
@@ -526,7 +525,8 @@ gfxMacFont::GetScaledFont(DrawTarget *aTarget)
                                                 GetUnscaledFont(),
                                                 GetAdjustedSize(),
                                                 Color::FromABGR(mFontSmoothingBackgroundColor),
-                                                !mStyle.useGrayscaleAntialiasing);
+                                                !mStyle.useGrayscaleAntialiasing,
+                                                IsSyntheticBold());
         if (!mAzureScaledFont) {
             return nullptr;
         }

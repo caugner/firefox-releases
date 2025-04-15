@@ -19,12 +19,9 @@ function startTest() {
   let browser = gBrowser.getBrowserForTab(tab);
 
   function loadURL(url, flags, func) {
-    browser.addEventListener("load", function loadListener(e) {
-      if (browser.currentURI.spec != url)
-        return;
-      browser.removeEventListener(e.type, loadListener, true);
+    BrowserTestUtils.browserLoaded(browser, false, url).then(() => {
       func();
-    }, true);
+    });
     browser.loadURIWithFlags(url, flags, null, null, null);
   }
 
@@ -39,7 +36,7 @@ function startTest() {
         ok(browser.contentPrincipal.equals(pagePrincipal), url + " should inherit principal");
 
         // Now load the URL and disallow inheriting the principal
-        let webNav = Components.interfaces.nsIWebNavigation;
+        let webNav = Ci.nsIWebNavigation;
         loadURL(url, webNav.LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL, function () {
           let newPrincipal = browser.contentPrincipal;
           ok(newPrincipal, "got inner principal");

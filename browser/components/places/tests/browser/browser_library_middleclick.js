@@ -7,7 +7,7 @@
  * Tests middle-clicking items in the Library.
  */
 
-const URIs = ["about:license", "about:"];
+const URIs = ["about:license", "about:mozilla"];
 
 var gLibrary = null;
 var gTests = [];
@@ -29,7 +29,7 @@ add_task(async function test_setup() {
 
   registerCleanupFunction(async () => {
     // We must close "Other Bookmarks" ready for other tests.
-    gLibrary.PlacesOrganizer.selectLeftPaneQuery("UnfiledBookmarks");
+    gLibrary.PlacesOrganizer.selectLeftPaneBuiltIn("UnfiledBookmarks");
     gLibrary.PlacesOrganizer._places.selectedNode.containerOpen = false;
 
     await PlacesUtils.bookmarks.eraseEverything();
@@ -53,7 +53,7 @@ gTests.push({
     });
 
     // Select unsorted bookmarks root in the left pane.
-    gLibrary.PlacesOrganizer.selectLeftPaneQuery("UnfiledBookmarks");
+    gLibrary.PlacesOrganizer.selectLeftPaneBuiltIn("UnfiledBookmarks");
     Assert.notEqual(gLibrary.PlacesOrganizer._places.selectedNode, null,
       "We correctly have selection in the Library left pane");
 
@@ -72,7 +72,7 @@ gTests.push({
 //
 gTests.push({
   desc: "Open a folder in tabs.",
-  URIs: ["about:buildconfig", "about:"],
+  URIs: ["about:buildconfig", "about:mozilla"],
   _bookmarks: null,
 
   async setup() {
@@ -81,7 +81,7 @@ gTests.push({
       return {
         title: "Title",
         url,
-      }
+      };
     });
 
     this._bookmarks = await PlacesUtils.bookmarks.insertTree({
@@ -94,7 +94,7 @@ gTests.push({
     });
 
     // Select unsorted bookmarks root in the left pane.
-    gLibrary.PlacesOrganizer.selectLeftPaneQuery("UnfiledBookmarks");
+    gLibrary.PlacesOrganizer.selectLeftPaneBuiltIn("UnfiledBookmarks");
     isnot(gLibrary.PlacesOrganizer._places.selectedNode, null,
           "We correctly have selection in the Library left pane");
     // Get our bookmark in the right pane.
@@ -112,7 +112,7 @@ gTests.push({
 
 gTests.push({
   desc: "Open a query in tabs.",
-  URIs: ["about:buildconfig", "about:"],
+  URIs: ["about:buildconfig", "about:mozilla"],
   _bookmarks: null,
   _query: null,
 
@@ -121,7 +121,7 @@ gTests.push({
       return {
         title: "Title",
         url,
-      }
+      };
     });
 
     this._bookmarks = await PlacesUtils.bookmarks.insertTree({
@@ -149,10 +149,8 @@ gTests.push({
       url: queryString,
     });
 
-    gLibrary.PlacesOrganizer.selectLeftPaneQuery("Query");
-
     // Select unsorted bookmarks root in the left pane.
-    gLibrary.PlacesOrganizer.selectLeftPaneQuery("UnfiledBookmarks");
+    gLibrary.PlacesOrganizer.selectLeftPaneBuiltIn("UnfiledBookmarks");
     isnot(gLibrary.PlacesOrganizer._places.selectedNode, null,
           "We correctly have selection in the Library left pane");
     // Get our bookmark in the right pane.

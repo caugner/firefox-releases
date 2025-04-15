@@ -13,6 +13,8 @@
 #include "nsThreadUtils.h"
 #include "nsCOMPtr.h"
 #include "mozilla/Logging.h"
+#include "mozilla/NonBlockingAsyncInputStream.h"
+#include "mozilla/SlicedInputStream.h"
 #include "GeckoProfiler.h"
 #include "nsIStreamListener.h"
 #include "nsILoadGroup.h"
@@ -332,6 +334,12 @@ nsInputStreamPump::AsyncRead(nsIStreamListener *listener, nsISupports *ctxt)
 
     if (nonBlocking) {
         mAsyncStream = do_QueryInterface(mStream);
+        if (!mAsyncStream) {
+            rv = NonBlockingAsyncInputStream::Create(mStream.forget(),
+                                                     getter_AddRefs(mAsyncStream));
+            if (NS_WARN_IF(NS_FAILED(rv))) return rv;
+        }
+        MOZ_ASSERT(mAsyncStream);
     }
 
     if (!mAsyncStream) {
@@ -660,13 +668,9 @@ nsInputStreamPump::OnStateStop()
     mMutex.AssertCurrentThreadIn();
 
     if (!NS_IsMainThread()) {
-        // Hopefully temporary hack: OnStateStop should only run on the main
-        // thread, but we're seeing some rare off-main-thread calls. For now
-        // just redispatch to the main thread in release builds, and crash in
-        // debug builds.
-        MOZ_ASSERT(NS_IsMainThread(),
-                   "OnStateStop should only be called on the main thread.");
-        nsresult rv = NS_DispatchToMainThread(
+        // This method can be called on a different thread if nsInputStreamPump
+        // is used off the main-thread.
+        nsresult rv = mLabeledMainThreadTarget->Dispatch(
           NewRunnableMethod("nsInputStreamPump::CallOnStateStop",
                             this,
                             &nsInputStreamPump::CallOnStateStop));

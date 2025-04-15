@@ -7,7 +7,7 @@
 #include "WorkletGlobalScope.h"
 #include "mozilla/dom/WorkletGlobalScopeBinding.h"
 #include "mozilla/dom/Console.h"
-#include "nsContentUtils.h"
+#include "mozilla/dom/DOMPrefs.h"
 
 namespace mozilla {
 namespace dom {
@@ -54,23 +54,24 @@ WorkletGlobalScope::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto
   return nullptr;
 }
 
-Console*
-WorkletGlobalScope::GetConsole(ErrorResult& aRv)
+already_AddRefed<Console>
+WorkletGlobalScope::GetConsole(JSContext* aCx, ErrorResult& aRv)
 {
   if (!mConsole) {
-    mConsole = Console::Create(mWindow, aRv);
+    mConsole = Console::Create(aCx, mWindow, aRv);
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
     }
   }
 
-  return mConsole;
+  RefPtr<Console> console = mConsole;
+  return console.forget();
 }
 
 void
 WorkletGlobalScope::Dump(const Optional<nsAString>& aString) const
 {
-  if (!nsContentUtils::DOMWindowDumpEnabled()) {
+  if (!DOMPrefs::DumpEnabled()) {
     return;
   }
 

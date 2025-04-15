@@ -5,6 +5,10 @@
 #include <shlobj.h>
 #include <stdio.h>
 #include <commdlg.h>
+#define SECURITY_WIN32
+#include <security.h>
+#include <wininet.h>
+#include <schnlsp.h>
 
 #include "mozilla/WindowsVersion.h"
 #include "nsWindowsDllInterceptor.h"
@@ -440,8 +444,147 @@ bool TestPrintDlgW(void* aFunc)
   return true;
 }
 
+bool TestInternetConnectA(void* aFunc)
+{
+  auto patchedInternetConnectA =
+    reinterpret_cast<decltype(&InternetConnectA)>(aFunc);
+  return patchedInternetConnectA(0, 0, 0, 0, 0, 0, 0, 0) == 0;
+}
+
+HINTERNET sInternet = 0;
+
+bool TestInternetOpenA(void* aFunc)
+{
+  auto patchedInternetOpenA =
+    reinterpret_cast<decltype(&InternetOpenA)>(aFunc);
+  sInternet = patchedInternetOpenA(0, 0, 0, 0, 0);
+  return sInternet != 0;
+}
+
+bool TestInternetCloseHandle(void* aFunc)
+{
+  auto patchedInternetCloseHandle =
+    reinterpret_cast<decltype(&InternetCloseHandle)>(aFunc);
+  return patchedInternetCloseHandle(sInternet);
+}
+
+bool TestInternetQueryDataAvailable(void* aFunc)
+{
+  auto patchedInternetQueryDataAvailable =
+    reinterpret_cast<decltype(&InternetQueryDataAvailable)>(aFunc);
+  return patchedInternetQueryDataAvailable(0, 0, 0, 0) == FALSE;
+}
+
+bool TestInternetReadFile(void* aFunc)
+{
+  auto patchedInternetReadFile =
+    reinterpret_cast<decltype(&InternetReadFile)>(aFunc);
+  return patchedInternetReadFile(0, 0, 0, 0) == FALSE;
+}
+
+bool TestInternetWriteFile(void* aFunc)
+{
+  auto patchedInternetWriteFile =
+    reinterpret_cast<decltype(&InternetWriteFile)>(aFunc);
+  return patchedInternetWriteFile(0, 0, 0, 0) == FALSE;
+}
+
+bool TestInternetSetOptionA(void* aFunc)
+{
+  auto patchedInternetSetOptionA =
+    reinterpret_cast<decltype(&InternetSetOptionA)>(aFunc);
+  return patchedInternetSetOptionA(0, 0, 0, 0) == FALSE;
+}
+
+bool TestHttpAddRequestHeadersA(void* aFunc)
+{
+  auto patchedHttpAddRequestHeadersA =
+    reinterpret_cast<decltype(&HttpAddRequestHeadersA)>(aFunc);
+  return patchedHttpAddRequestHeadersA(0, 0, 0, 0) == FALSE;
+}
+
+bool TestHttpOpenRequestA(void* aFunc)
+{
+  auto patchedHttpOpenRequestA =
+    reinterpret_cast<decltype(&HttpOpenRequestA)>(aFunc);
+  return patchedHttpOpenRequestA(0, 0, 0, 0, 0, 0, 0, 0) == 0;
+}
+
+bool TestHttpQueryInfoA(void* aFunc)
+{
+  auto patchedHttpQueryInfoA =
+    reinterpret_cast<decltype(&HttpQueryInfoA)>(aFunc);
+  return patchedHttpQueryInfoA(0, 0, 0, 0, 0) == FALSE;
+}
+
+bool TestHttpSendRequestA(void* aFunc)
+{
+  auto patchedHttpSendRequestA =
+    reinterpret_cast<decltype(&HttpSendRequestA)>(aFunc);
+  return patchedHttpSendRequestA(0, 0, 0, 0, 0) == FALSE;
+}
+
+bool TestHttpSendRequestExA(void* aFunc)
+{
+  auto patchedHttpSendRequestExA =
+    reinterpret_cast<decltype(&HttpSendRequestExA)>(aFunc);
+  return patchedHttpSendRequestExA(0, 0, 0, 0, 0) == FALSE;
+}
+
+bool TestHttpEndRequestA(void* aFunc)
+{
+  auto patchedHttpEndRequestA =
+    reinterpret_cast<decltype(&HttpEndRequestA)>(aFunc);
+  return patchedHttpEndRequestA(0, 0, 0, 0) == FALSE;
+}
+
+bool TestInternetQueryOptionA(void* aFunc)
+{
+  auto patchedInternetQueryOptionA =
+    reinterpret_cast<decltype(&InternetQueryOptionA)>(aFunc);
+  return patchedInternetQueryOptionA(0, 0, 0, 0) == FALSE;
+}
+
+bool TestInternetErrorDlg(void* aFunc)
+{
+  auto patchedInternetErrorDlg =
+    reinterpret_cast<decltype(&InternetErrorDlg)>(aFunc);
+  return patchedInternetErrorDlg(0, 0, 0, 0, 0) == ERROR_INVALID_HANDLE;
+}
+
+CredHandle sCredHandle;
+
+bool TestAcquireCredentialsHandleA(void* aFunc)
+{
+  auto patchedAcquireCredentialsHandleA =
+    reinterpret_cast<decltype(&AcquireCredentialsHandleA)>(aFunc);
+  SCHANNEL_CRED cred;
+  memset(&cred, 0, sizeof(cred));
+  cred.dwVersion = SCHANNEL_CRED_VERSION;
+  return patchedAcquireCredentialsHandleA(0, UNISP_NAME, SECPKG_CRED_OUTBOUND,
+                                          0, &cred, 0, 0, &sCredHandle, 0) == S_OK;
+}
+
+bool TestQueryCredentialsAttributesA(void* aFunc)
+{
+  auto patchedQueryCredentialsAttributesA =
+    reinterpret_cast<decltype(&QueryCredentialsAttributesA)>(aFunc);
+  return patchedQueryCredentialsAttributesA(&sCredHandle, 0, 0) == SEC_E_UNSUPPORTED_FUNCTION;
+}
+
+bool TestFreeCredentialsHandle(void* aFunc)
+{
+  auto patchedFreeCredentialsHandle =
+    reinterpret_cast<decltype(&FreeCredentialsHandle)>(aFunc);
+  return patchedFreeCredentialsHandle(&sCredHandle) == S_OK;
+}
+
 int main()
 {
+  // We disable this part of the test because the code coverage instrumentation
+  // injects code in rotatePayload in a way that WindowsDllInterceptor doesn't
+  // understand.
+#ifndef MOZ_CODE_COVERAGE
   payload initial = { 0x12345678, 0xfc4e9d31, 0x87654321 };
   payload p0, p1;
   ZeroMemory(&p0, sizeof(p0));
@@ -494,6 +637,7 @@ int main()
     printf("TEST-UNEXPECTED-FAIL | WindowsDllInterceptor | Original function didn't return the right information\n");
     return 1;
   }
+#endif
 
   if (TestHook(TestGetWindowInfo, "user32.dll", "GetWindowInfo") &&
 #ifdef _WIN64
@@ -514,8 +658,11 @@ int main()
       TestHook(TestNtWriteFile, "ntdll.dll", "NtWriteFile") &&
       TestHook(TestNtWriteFileGather, "ntdll.dll", "NtWriteFileGather") &&
       TestHook(TestNtQueryFullAttributesFile, "ntdll.dll", "NtQueryFullAttributesFile") &&
+#ifndef MOZ_ASAN
       // Bug 733892: toolkit/crashreporter/nsExceptionHandler.cpp
+      // This fails on ASan because the ASan runtime already hooked this function
       TestHook(TestSetUnhandledExceptionFilter, "kernel32.dll", "SetUnhandledExceptionFilter") &&
+#endif
 #ifdef _M_IX86
       // Bug 670967: xpcom/base/AvailableMemoryTracker.cpp
       TestHook(TestVirtualAlloc, "kernel32.dll", "VirtualAlloc") &&
@@ -528,7 +675,6 @@ int main()
       TestDetour("user32.dll", "CreateWindowExW") &&
       TestHook(TestInSendMessageEx, "user32.dll", "InSendMessageEx") &&
       TestHook(TestImmGetContext, "imm32.dll", "ImmGetContext") &&
-      // TestHook("imm32.dll", "ImmReleaseContext") &&    // see Bug 1316415
       TestHook(TestImmGetCompositionStringW, "imm32.dll", "ImmGetCompositionStringW") &&
       TestHook(TestImmSetCandidateWindow, "imm32.dll", "ImmSetCandidateWindow") &&
       TestHook(TestImmNotifyIME, "imm32.dll", "ImmNotifyIME") &&
@@ -548,6 +694,26 @@ int main()
       TestHook(TestSetCursorPos, "user32.dll", "SetCursorPos") &&
       TestHook(TestTlsAlloc, "kernel32.dll", "TlsAlloc") &&
       TestHook(TestTlsFree, "kernel32.dll", "TlsFree") &&
+
+      TestHook(TestInternetOpenA, "wininet.dll", "InternetOpenA") &&
+      TestHook(TestInternetCloseHandle, "wininet.dll", "InternetCloseHandle") &&
+      TestHook(TestInternetConnectA, "wininet.dll", "InternetConnectA") &&
+      TestHook(TestInternetQueryDataAvailable, "wininet.dll", "InternetQueryDataAvailable") &&
+      TestHook(TestInternetReadFile, "wininet.dll", "InternetReadFile") &&
+      TestHook(TestInternetWriteFile, "wininet.dll", "InternetWriteFile") &&
+      TestHook(TestInternetSetOptionA, "wininet.dll", "InternetSetOptionA") &&
+      TestHook(TestHttpAddRequestHeadersA, "wininet.dll", "HttpAddRequestHeadersA") &&
+      TestHook(TestHttpOpenRequestA, "wininet.dll", "HttpOpenRequestA") &&
+      TestHook(TestHttpQueryInfoA, "wininet.dll", "HttpQueryInfoA") &&
+      TestHook(TestHttpSendRequestA, "wininet.dll", "HttpSendRequestA") &&
+      TestHook(TestHttpSendRequestExA, "wininet.dll", "HttpSendRequestExA") &&
+      TestHook(TestHttpEndRequestA, "wininet.dll", "HttpEndRequestA") &&
+      TestHook(TestInternetQueryOptionA, "wininet.dll", "InternetQueryOptionA") &&
+
+      TestHook(TestAcquireCredentialsHandleA, "sspicli.dll", "AcquireCredentialsHandleA") &&
+      TestHook(TestQueryCredentialsAttributesA, "sspicli.dll", "QueryCredentialsAttributesA") &&
+      TestHook(TestFreeCredentialsHandle, "sspicli.dll", "FreeCredentialsHandle") &&
+
       TestDetour("kernel32.dll", "BaseThreadInitThunk") &&
       TestDetour("ntdll.dll", "LdrLoadDll")) {
     printf("TEST-PASS | WindowsDllInterceptor | all checks passed\n");

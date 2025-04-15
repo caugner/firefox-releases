@@ -78,25 +78,13 @@ private:
                             const nsACString& aGUID, uint16_t aReason,  \
                             uint32_t aTransitionType) __VA_ARGS__;
 
-// The internal version has an output aAdded parameter, it is incremented by
-// query nodes when the visited uri belongs to them. If no such query exists,
-// the history result creates a new query node dynamically.
+// The internal version is used by query nodes.
 #define NS_DECL_BOOKMARK_HISTORY_OBSERVER_INTERNAL                      \
-  NS_DECL_BOOKMARK_HISTORY_OBSERVER_BASE()                              \
-  NS_IMETHOD OnVisit(nsIURI* aURI, int64_t aVisitId, PRTime aTime,      \
-                     int64_t aSessionId, int64_t aReferringId,          \
-                     uint32_t aTransitionType, const nsACString& aGUID, \
-                     bool aHidden, uint32_t* aAdded);
+  NS_DECL_BOOKMARK_HISTORY_OBSERVER_BASE()
 
 // The external version is used by results.
 #define NS_DECL_BOOKMARK_HISTORY_OBSERVER_EXTERNAL(...)                 \
-  NS_DECL_BOOKMARK_HISTORY_OBSERVER_BASE(__VA_ARGS__)                   \
-  NS_IMETHOD OnVisit(nsIURI* aURI, int64_t aVisitId, PRTime aTime,      \
-                     int64_t aSessionId, int64_t aReferringId,          \
-                     uint32_t aTransitionType, const nsACString& aGUID, \
-                     bool aHidden, uint32_t aVisitCount,                \
-                     uint32_t aTyped, const nsAString& aLastKnownTitle) \
-                     __VA_ARGS__;
+  NS_DECL_BOOKMARK_HISTORY_OBSERVER_BASE(__VA_ARGS__)
 
 // nsNavHistoryResult
 //
@@ -124,16 +112,25 @@ public:
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSINAVHISTORYRESULT
-  NS_DECL_BOOKMARK_HISTORY_OBSERVER_EXTERNAL(override)
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsNavHistoryResult, nsINavHistoryResult)
+  NS_DECL_BOOKMARK_HISTORY_OBSERVER_EXTERNAL(override)
+  NS_IMETHOD OnVisits(nsIVisitData** aVisits,
+                      uint32_t aVisitsCount) override;
 
   void AddHistoryObserver(nsNavHistoryQueryResultNode* aNode);
   void AddBookmarkFolderObserver(nsNavHistoryFolderResultNode* aNode, int64_t aFolder);
   void AddAllBookmarksObserver(nsNavHistoryQueryResultNode* aNode);
+  void AddMobilePrefsObserver(nsNavHistoryQueryResultNode* aNode);
   void RemoveHistoryObserver(nsNavHistoryQueryResultNode* aNode);
   void RemoveBookmarkFolderObserver(nsNavHistoryFolderResultNode* aNode, int64_t aFolder);
   void RemoveAllBookmarksObserver(nsNavHistoryQueryResultNode* aNode);
+  void RemoveMobilePrefsObserver(nsNavHistoryQueryResultNode* aNode);
   void StopObserving();
+
+  nsresult OnVisit(nsIURI* aURI, int64_t aVisitId, PRTime aTime,
+                   uint32_t aTransitionType, const nsACString& aGUID,
+                   bool aHidden, uint32_t aVisitCount,
+                   const nsAString& aLastKnownTitle);
 
 public:
   // two-stage init, use NewHistoryResult to construct
@@ -162,10 +159,12 @@ public:
   bool mIsHistoryObserver;
   bool mIsBookmarkFolderObserver;
   bool mIsAllBookmarksObserver;
+  bool mIsMobilePrefObserver;
 
   typedef nsTArray< RefPtr<nsNavHistoryQueryResultNode> > QueryObserverList;
   QueryObserverList mHistoryObservers;
   QueryObserverList mAllBookmarksObservers;
+  QueryObserverList mMobilePrefObservers;
 
   typedef nsTArray< RefPtr<nsNavHistoryFolderResultNode> > FolderObserverList;
   nsDataHashtable<nsTrimInt64HashKey, FolderObserverList*> mBookmarkFolderObservers;
@@ -185,6 +184,10 @@ public:
 
   ContainerObserverList mRefreshParticipants;
   void requestRefresh(nsNavHistoryContainerResultNode* aContainer);
+
+  void OnMobilePrefChanged();
+
+  static void OnMobilePrefChangedCallback(const char* prefName, void* closure);
 
 protected:
   virtual ~nsNavHistoryResult();
@@ -295,13 +298,16 @@ public:
                            const nsACString &aOldValue,
                            uint16_t aSource);
 
+  virtual nsresult OnMobilePrefChanged(bool newValue) {
+    return NS_OK;
+  };
+
 protected:
   virtual ~nsNavHistoryResultNode() {}
 
 public:
 
   nsNavHistoryResult* GetResult();
-  nsNavHistoryQueryOptions* GetGeneratingOptions();
 
   // These functions test the type. We don't use a virtual function since that
   // would take a vtable slot for every one of (potentially very many) nodes.
@@ -476,9 +482,18 @@ public:
   // Filled in by the result type generator in nsNavHistory.
   nsCOMArray<nsNavHistoryResultNode> mChildren;
 
+  // mOriginalOptions is the options object used to _define_ this specific
+  // container node. It may differ from mOptions, that is the options used
+  // to _fill_ this container node, because mOptions may be modified by
+  // the direct parent of this container node, see SetAsParentOfNode. For
+  // example, if the parent has excludeItems, options will have it too, even if
+  // originally this object was not defined with that option.
+  nsCOMPtr<nsNavHistoryQueryOptions> mOriginalOptions;
   nsCOMPtr<nsNavHistoryQueryOptions> mOptions;
 
   void FillStats();
+  // Sets this container as parent of aNode, propagating the appropriate options.
+  void SetAsParentOfNode(nsNavHistoryResultNode* aNode);
   nsresult ReverseUpdateStats(int32_t aAccessCountChange);
 
   // Sorting methods.
@@ -523,12 +538,6 @@ public:
   static int32_t SortComparison_VisitCountGreater(nsNavHistoryResultNode* a,
                                                   nsNavHistoryResultNode* b,
                                                   void* closure);
-  static int32_t SortComparison_KeywordLess(nsNavHistoryResultNode* a,
-                                            nsNavHistoryResultNode* b,
-                                            void* closure);
-  static int32_t SortComparison_KeywordGreater(nsNavHistoryResultNode* a,
-                                               nsNavHistoryResultNode* b,
-                                               void* closure);
   static int32_t SortComparison_AnnotationLess(nsNavHistoryResultNode* a,
                                                nsNavHistoryResultNode* b,
                                                void* closure);
@@ -566,6 +575,9 @@ public:
   // returns the index of the given node, -1 if not found
   int32_t FindChild(nsNavHistoryResultNode* aNode)
     { return mChildren.IndexOf(aNode); }
+
+  nsNavHistoryResultNode* FindChildByGuid(const nsACString& guid,
+                                          int32_t* nodeIndex);
 
   nsresult InsertChildAt(nsNavHistoryResultNode* aNode, int32_t aIndex);
   nsresult InsertSortedChild(nsNavHistoryResultNode* aNode,
@@ -633,12 +645,21 @@ public:
   NS_IMETHOD GetHasChildren(bool* aHasChildren) override;
   NS_DECL_NSINAVHISTORYQUERYRESULTNODE
 
+  virtual nsresult OnMobilePrefChanged(bool newValue) override;
+
   bool CanExpand();
   bool IsContainersQuery();
 
   virtual nsresult OpenContainer() override;
 
   NS_DECL_BOOKMARK_HISTORY_OBSERVER_INTERNAL
+
+  // The internal version has an output aAdded parameter, it is incremented by
+  // query nodes when the visited uri belongs to them. If no such query exists,
+  // the history result creates a new query node dynamically.
+  nsresult OnVisit(nsIURI* aURI, int64_t aVisitId, PRTime aTime,
+                   uint32_t aTransitionType, bool aHidden,
+                   uint32_t* aAdded);
   virtual void OnRemoving() override;
 
 public:
@@ -764,7 +785,7 @@ class nsNavHistorySeparatorResultNode : public nsNavHistoryResultNode
 public:
   nsNavHistorySeparatorResultNode();
 
-  NS_IMETHOD GetType(uint32_t* type)
+  NS_IMETHOD GetType(uint32_t* type) override
     { *type = nsNavHistoryResultNode::RESULT_TYPE_SEPARATOR; return NS_OK; }
 };
 

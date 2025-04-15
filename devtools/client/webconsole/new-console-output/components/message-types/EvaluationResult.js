@@ -7,10 +7,8 @@
 "use strict";
 
 // React & Redux
-const {
-  createFactory,
-  PropTypes
-} = require("devtools/client/shared/vendor/react");
+const { createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const Message = createFactory(require("devtools/client/webconsole/new-console-output/components/Message"));
 const GripMessageBody = require("devtools/client/webconsole/new-console-output/components/GripMessageBody");
 
@@ -46,7 +44,7 @@ function EvaluationResult(props) {
   } = message;
 
   let messageBody;
-  if (message.messageText) {
+  if (typeof message.messageText !== "undefined" && message.messageText !== null) {
     if (typeof message.messageText === "string") {
       messageBody = message.messageText;
     } else if (

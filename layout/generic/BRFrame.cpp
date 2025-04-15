@@ -32,7 +32,7 @@ public:
 
   friend nsIFrame* ::NS_NewBRFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
-  virtual ContentOffsets CalcContentOffsetsFromFramePoint(nsPoint aPoint) override;
+  ContentOffsets CalcContentOffsetsFromFramePoint(const nsPoint& aPoint) override;
 
   virtual FrameSearchResult PeekOffsetNoAmount(bool aForward, int32_t* aOffset) override;
   virtual FrameSearchResult
@@ -217,12 +217,12 @@ BRFrame::GetLogicalBaseline(mozilla::WritingMode aWritingMode) const
   return mAscent;
 }
 
-nsIFrame::ContentOffsets BRFrame::CalcContentOffsetsFromFramePoint(nsPoint aPoint)
+nsIFrame::ContentOffsets BRFrame::CalcContentOffsetsFromFramePoint(const nsPoint& aPoint)
 {
   ContentOffsets offsets;
   offsets.content = mContent->GetParent();
   if (offsets.content) {
-    offsets.offset = offsets.content->IndexOf(mContent);
+    offsets.offset = offsets.content->ComputeIndexOf(mContent);
     offsets.secondaryOffset = offsets.offset;
     offsets.associate = CARET_ASSOCIATE_AFTER;
   }

@@ -2,10 +2,10 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionPreferencesManager",
-                                  "resource://gre/modules/ExtensionPreferencesManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
-                                  "resource://gre/modules/Preferences.jsm");
+ChromeUtils.defineModuleGetter(this, "ExtensionPreferencesManager",
+                               "resource://gre/modules/ExtensionPreferencesManager.jsm");
+ChromeUtils.defineModuleGetter(this, "Preferences",
+                               "resource://gre/modules/Preferences.jsm");
 
 const {
   createAppInfo,
@@ -29,6 +29,8 @@ add_task(async function test_browser_settings() {
     "image.animation_mode": "none",
     "permissions.default.desktop-notification": PERM_UNKNOWN_ACTION,
     "ui.context_menus.after_mouseup": false,
+    "browser.tabs.loadBookmarksInTabs": false,
+    "browser.search.openintab": false,
   };
 
   async function background() {
@@ -50,7 +52,7 @@ add_task(async function test_browser_settings() {
     Preferences.set(pref, PREFS[pref]);
   }
 
-  do_register_cleanup(() => {
+  registerCleanupFunction(() => {
     // Reset the prefs.
     for (let pref in PREFS) {
       Preferences.reset(pref);
@@ -68,11 +70,11 @@ add_task(async function test_browser_settings() {
   await promiseStartupManager();
   await extension.startup();
 
-  async function testSetting(setting, value, expected) {
+  async function testSetting(setting, value, expected, expectedValue = value) {
     extension.sendMessage("set", setting, value);
     let data = await extension.awaitMessage("settingData");
-    equal(data.value, value,
-          `The ${setting} setting has the expected value.`);
+    deepEqual(data.value, expectedValue,
+              `The ${setting} setting has the expected value.`);
     equal(data.levelOfControl, "controlled_by_this_extension",
           `The ${setting} setting has the expected levelOfControl.`);
     for (let pref in expected) {
@@ -128,7 +130,7 @@ add_task(async function test_browser_settings() {
   // This setting is a no-op on Android.
   if (AppConstants.platform === "android") {
     await testNoOpSetting("contextMenuShowEvent", "mouseup",
-      {"ui.context_menus.after_mouseup": false});
+                          {"ui.context_menus.after_mouseup": false});
   } else {
     await testSetting(
       "contextMenuShowEvent", "mouseup",
@@ -137,13 +139,28 @@ add_task(async function test_browser_settings() {
 
   // "mousedown" is also a no-op on Windows.
   if (["android", "win"].includes(AppConstants.platform)) {
-    await testNoOpSetting("contextMenuShowEvent", "mousedown",
+    await testNoOpSetting(
+      "contextMenuShowEvent", "mousedown",
       {"ui.context_menus.after_mouseup": AppConstants.platform === "win"});
   } else {
     await testSetting(
       "contextMenuShowEvent", "mousedown",
       {"ui.context_menus.after_mouseup": false});
   }
+
+  await testSetting(
+    "openBookmarksInNewTabs", true,
+    {"browser.tabs.loadBookmarksInTabs": true});
+  await testSetting(
+    "openBookmarksInNewTabs", false,
+    {"browser.tabs.loadBookmarksInTabs": false});
+
+  await testSetting(
+    "openSearchResultsInNewTabs", true,
+    {"browser.search.openintab": true});
+  await testSetting(
+    "openSearchResultsInNewTabs", false,
+    {"browser.search.openintab": false});
 
   await extension.unload();
   await promiseShutdownManager();

@@ -19,12 +19,6 @@
 #include <gtk/gtk.h>
 #include <algorithm>
 
-#if (MOZ_WIDGET_GTK == 2)
-#ifdef __cplusplus
-extern "C" {
-#endif /* __cplusplus */
-#endif
-
 /*** type definitions ***/
 typedef struct {
   guint8 active;
@@ -38,6 +32,7 @@ typedef struct {
   guint8 depressed;
   gint32 curpos; /* curpos and maxpos are used for scrollbars */
   gint32 maxpos;
+  gint32 scale;  /* actual widget scale */
 } GtkWidgetState;
 
 /**
@@ -57,6 +52,11 @@ struct MozGtkSize {
   {
     MozGtkSize result = *this;
     return result += aBorder;
+  }
+  bool operator<(const MozGtkSize &aOther) const
+  {
+    return (width < aOther.width && height <= aOther.height) ||
+           (width <= aOther.width && height < aOther.height);
   }
   void Include(MozGtkSize aOther)
   {
@@ -89,6 +89,22 @@ typedef struct {
   MozGtkSize minSizeWithBorder;
   GtkBorder borderAndPadding;
 } ToggleGTKMetrics;
+
+typedef struct {
+  MozGtkSize minSizeWithBorderMargin;
+  GtkBorder  buttonMargin;
+  gint iconXPosition;
+  gint iconYPosition;
+  bool visible;
+  bool firstButton;
+  bool lastButton;
+} ToolbarButtonGTKMetrics;
+
+#define TOOLBAR_BUTTONS 3
+typedef struct {
+  bool initialized;
+  ToolbarButtonGTKMetrics button[TOOLBAR_BUTTONS];
+} ToolbarGTKMetrics;
 
 typedef enum {
   MOZ_GTK_STEPPER_DOWN        = 1 << 0,
@@ -175,6 +191,7 @@ typedef enum {
   MOZ_GTK_SCALE_THUMB_HORIZONTAL,
   MOZ_GTK_SCALE_THUMB_VERTICAL,
   /* Paints a GtkSpinButton */
+  MOZ_GTK_INNER_SPIN_BUTTON,
   MOZ_GTK_SPINBUTTON,
   MOZ_GTK_SPINBUTTON_UP,
   MOZ_GTK_SPINBUTTON_DOWN,
@@ -303,10 +320,19 @@ typedef enum {
   MOZ_GTK_HEADER_BAR,
   /* Paints a GtkHeaderBar in maximized state */
   MOZ_GTK_HEADER_BAR_MAXIMIZED,
-  /* Paints GtkHeaderBar title buttons */
+  /* Paints GtkHeaderBar title buttons.
+   * Keep the order here as MOZ_GTK_HEADER_BAR_BUTTON_* are processed
+   * as an array from MOZ_GTK_HEADER_BAR_BUTTON_CLOSE to the last one.
+   */
   MOZ_GTK_HEADER_BAR_BUTTON_CLOSE,
   MOZ_GTK_HEADER_BAR_BUTTON_MINIMIZE,
   MOZ_GTK_HEADER_BAR_BUTTON_MAXIMIZE,
+
+  /* MOZ_GTK_HEADER_BAR_BUTTON_MAXIMIZE_RESTORE is a state of
+   * MOZ_GTK_HEADER_BAR_BUTTON_MAXIMIZE button and it's used as
+   * an icon placeholder only.
+   */
+  MOZ_GTK_HEADER_BAR_BUTTON_MAXIMIZE_RESTORE,
 
   MOZ_GTK_WIDGET_NODE_COUNT
 } WidgetNodeType;
@@ -334,38 +360,22 @@ void moz_gtk_refresh();
  */
 gint moz_gtk_shutdown();
 
-#if (MOZ_WIDGET_GTK == 2)
-/**
- * Retrieves the colormap to use for drawables passed to moz_gtk_widget_paint.
- */
-GdkColormap* moz_gtk_widget_get_colormap();
-#endif
-
 /*** Widget drawing ***/
-#if (MOZ_WIDGET_GTK == 2)
 /**
  * Paint a widget in the current theme.
  * widget:    a constant giving the widget to paint
  * drawable:  the drawable to paint to;
  *            it's colormap must be moz_gtk_widget_get_colormap().
  * rect:      the bounding rectangle for the widget
- * cliprect:  a clipprect rectangle for this painting operation
  * state:     the state of the widget.  ignored for some widgets.
  * flags:     widget-dependant flags; see the WidgetNodeType definition.
  * direction: the text direction, to draw the widget correctly LTR and RTL.
  */
 gint
-moz_gtk_widget_paint(WidgetNodeType widget, GdkDrawable* drawable,
-                     GdkRectangle* rect, GdkRectangle* cliprect,
-                     GtkWidgetState* state, gint flags,
-                     GtkTextDirection direction);
-#else
-gint
 moz_gtk_widget_paint(WidgetNodeType widget, cairo_t *cr,
                      GdkRectangle* rect,
                      GtkWidgetState* state, gint flags,
                      GtkTextDirection direction);
-#endif
 
 
 /*** Widget metrics ***/
@@ -393,7 +403,7 @@ gint moz_gtk_get_widget_border(WidgetNodeType widget, gint* left, gint* top,
  * returns:    MOZ_GTK_SUCCESS if there was no error, an error code otherwise
  */
 gint
-moz_gtk_get_tab_border(gint* left, gint* top, gint* right, gint* bottom, 
+moz_gtk_get_tab_border(gint* left, gint* top, gint* right, gint* bottom,
                        GtkTextDirection direction, GtkTabFlags flags,
                        WidgetNodeType widget);
 
@@ -428,7 +438,7 @@ gint
 moz_gtk_radio_get_metrics(gint* indicator_size, gint* indicator_spacing);
 
 /** Get the extra size for the focus ring for outline:auto.
- * widget:             [IN]  the widget to get the focus metrics for    
+ * widget:             [IN]  the widget to get the focus metrics for
  * focus_h_width:      [OUT] the horizontal width
  * focus_v_width:      [OUT] the vertical width
  *
@@ -486,9 +496,12 @@ moz_gtk_get_scalethumb_metrics(GtkOrientation orient, gint* thumb_length, gint* 
 
 /**
  * Get the metrics in GTK pixels for a scrollbar.
+ * aOrientation:     [IN] the scrollbar orientation
+ * aActive:          [IN] Metricts for scrollbar with mouse pointer over it.
+ *
  */
 const ScrollbarGTKMetrics*
-GetScrollbarMetrics(GtkOrientation aOrientation);
+GetScrollbarMetrics(GtkOrientation aOrientation, bool aActive = false);
 
 /**
  * Get the desired size of a dropdown arrow button
@@ -573,10 +586,24 @@ gint moz_gtk_splitter_get_metrics(gint orientation, gint* size);
 gint
 moz_gtk_get_tab_thickness(WidgetNodeType aNodeType);
 
-#if (MOZ_WIDGET_GTK == 2)
-#ifdef __cplusplus
-}
-#endif /* __cplusplus */
-#endif
+
+/**
+ * Get ToolbarButtonGTKMetrics for recent theme.
+ */
+const ToolbarButtonGTKMetrics*
+GetToolbarButtonMetrics(WidgetNodeType aWidgetType);
+
+/**
+ * Get toolbar button layout.
+ * aButtonLayout:  [IN][OUT] An array which will be filled by WidgetNodeType
+ *                           references to visible titlebar buttons.
+                             Must contains at least TOOLBAR_BUTTONS entries.
+ * aMaxButtonNums: [IN] Allocated aButtonLayout entries. Must be at least
+                        TOOLBAR_BUTTONS wide.
+ *
+ * returns:    Number of returned entries at aButtonLayout.
+ */
+int
+GetGtkHeaderBarButtonLayout(WidgetNodeType* aButtonLayout, int aMaxButtonNums);
 
 #endif

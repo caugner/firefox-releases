@@ -1,8 +1,13 @@
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionSettingsStore",
-                                  "resource://gre/modules/ExtensionSettingsStore.jsm");
+/* eslint-env webextensions */
+
+const PROXY_PREF = "network.proxy.type";
+
+ChromeUtils.defineModuleGetter(this, "ExtensionSettingsStore",
+                               "resource://gre/modules/ExtensionSettingsStore.jsm");
 XPCOMUtils.defineLazyServiceGetter(this, "aboutNewTabService",
                                    "@mozilla.org/browser/aboutnewtab-service;1",
                                    "nsIAboutNewTabService");
+XPCOMUtils.defineLazyPreferenceGetter(this, "proxyType", PROXY_PREF);
 
 const TEST_DIR = gTestPath.substr(0, gTestPath.lastIndexOf("/"));
 const CHROME_URL_ROOT = TEST_DIR + "/";
@@ -46,19 +51,35 @@ function waitForMutation(target, opts, cb) {
   });
 }
 
-function waitForMessageChange(messageId, cb) {
-  return waitForMutation(
-    // eslint-disable-next-line mozilla/no-cpows-in-tests
-    gBrowser.contentDocument.getElementById(messageId),
-    { attributes: true, attributeFilter: ["hidden"] }, cb);
+function waitForMessageChange(element, cb, opts = { attributes: true, attributeFilter: ["hidden"] }) {
+  return waitForMutation(element, opts, cb);
 }
 
-function waitForMessageHidden(messageId) {
-  return waitForMessageChange(messageId, target => target.hidden);
+// eslint-disable-next-line mozilla/no-cpows-in-tests
+function getElement(id, doc = gBrowser.contentDocument) {
+  return doc.getElementById(id);
 }
 
-function waitForMessageShown(messageId) {
-  return waitForMessageChange(messageId, target => !target.hidden);
+function waitForMessageHidden(messageId, doc) {
+  return waitForMessageChange(getElement(messageId, doc), target => target.hidden);
+}
+
+function waitForMessageShown(messageId, doc) {
+  return waitForMessageChange(getElement(messageId, doc), target => !target.hidden);
+}
+
+function waitForEnableMessage(messageId, doc) {
+  return waitForMessageChange(
+    getElement(messageId, doc),
+    target => target.classList.contains("extension-controlled-disabled"),
+    { attributeFilter: ["class"], attributes: true });
+}
+
+function waitForMessageContent(messageId, content, doc) {
+  return waitForMessageChange(
+    getElement(messageId, doc),
+    target => target.textContent === content,
+    { childList: true });
 }
 
 add_task(async function testExtensionControlledHomepage() {
@@ -85,20 +106,31 @@ add_task(async function testExtensionControlledHomepage() {
   let controlledLabel = controlledContent.querySelector("description");
   is(homepagePref(), extensionHomepage, "homepage is set by extension");
   // There are two spaces before "set_homepage" because it's " <image /> set_homepage".
-  is(controlledLabel.textContent, "An extension,  set_homepage, controls your home page.",
+  is(controlledLabel.textContent, "An extension,  set_homepage, is controlling your home page.",
      "The user is notified that an extension is controlling the homepage");
   is(controlledContent.hidden, false, "The extension controlled row is hidden");
   is(doc.getElementById("browserHomePage").disabled, true, "The homepage input is disabled");
 
   // Disable the extension.
+  let enableMessageShown = waitForEnableMessage(controlledContent.id);
   doc.getElementById("disableHomePageExtension").click();
+  await enableMessageShown;
 
-  await waitForMessageHidden("browserHomePageExtensionContent");
+  // The user is notified how to enable the extension.
+  is(controlledLabel.textContent, "To enable the extension go to  Add-ons in the  menu.",
+     "The user is notified of how to enable the extension again");
 
+  // The user can dismiss the enable instructions.
+  let hidden = waitForMessageHidden("browserHomePageExtensionContent");
+  controlledLabel.querySelector("image:last-of-type").click();
+  await hidden;
+
+  // The homepage elements are reset to their original state.
   is(homepagePref(), originalHomepagePref, "homepage is set back to default");
   is(doc.getElementById("browserHomePage").disabled, false, "The homepage input is enabled");
   is(controlledContent.hidden, true, "The extension controlled row is hidden");
 
+  // Cleanup the add-on and tab.
   let addon = await AddonManager.getAddonByID("@set_homepage");
   // Enable the extension so we get the UNINSTALL event, which is needed by
   // ExtensionPreferencesManager to clean up properly.
@@ -107,7 +139,6 @@ add_task(async function testExtensionControlledHomepage() {
   await waitForMessageShown("browserHomePageExtensionContent");
   // Do the uninstall now that the enable code has been run.
   addon.uninstall();
-
   await BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
@@ -204,7 +235,7 @@ add_task(async function testPrefLockedHomepage() {
   // Uninstall the add-on.
   let addon = await AddonManager.getAddonByID("@set_homepage");
   addon.uninstall();
-  await waitForMessageHidden(controlledContent.id);
+  await waitForEnableMessage(controlledContent.id);
 
   // Check that everything is now enabled again.
   is(getHomepage(), originalHomepage, "The reported homepage is reset to original value");
@@ -265,18 +296,29 @@ add_task(async function testExtensionControlledNewTab() {
   let controlledLabel = controlledContent.querySelector("description");
   ok(aboutNewTabService.newTabURL.startsWith("moz-extension:"), "new tab url is set by extension");
   // There are two spaces before "set_newtab" because it's " <image /> set_newtab".
-  is(controlledLabel.textContent, "An extension,  set_newtab, controls your New Tab page.",
+  is(controlledLabel.textContent, "An extension,  set_newtab, is controlling your New Tab page.",
      "The user is notified that an extension is controlling the new tab page");
   is(controlledContent.hidden, false, "The extension controlled row is hidden");
 
   // Disable the extension.
   doc.getElementById("disableNewTabExtension").click();
 
-  await waitForMessageHidden("browserNewTabExtensionContent");
+  // Verify the user is notified how to enable the extension.
+  await waitForEnableMessage(controlledContent.id);
+  is(controlledLabel.textContent, "To enable the extension go to  Add-ons in the  menu.",
+     "The user is notified of how to enable the extension again");
 
+  // Verify the enable message can be dismissed.
+  let hidden = waitForMessageHidden(controlledContent.id);
+  let dismissButton = controlledLabel.querySelector("image:last-of-type");
+  dismissButton.click();
+  await hidden;
+
+  // Ensure the New Tab page has been reset and there is no message.
   ok(!aboutNewTabService.newTabURL.startsWith("moz-extension:"), "new tab page is set back to default");
   is(controlledContent.hidden, true, "The extension controlled row is shown");
 
+  // Cleanup the tab and add-on.
   await BrowserTestUtils.removeTab(gBrowser.selectedTab);
   let addon = await AddonManager.getAddonByID("@set_newtab");
   addon.uninstall();
@@ -295,8 +337,8 @@ add_task(async function testExtensionControlledDefaultSearch() {
     permissions: [],
     chrome_settings_overrides: {
       search_provider: {
-        name: "Yahoo",
-        search_url: "https://search.yahoo.com/yhs/search?p=%s&ei=UTF-8&hspart=mozilla&hsimp=yhs-002",
+        name: "DuckDuckGo",
+        search_url: "https://duckduckgo.com/?q={searchTerms}",
         is_default: true,
       },
     }
@@ -402,6 +444,9 @@ add_task(async function testExtensionControlledHomepageUninstalledAddon() {
      "The homepage_override is not set");
   await checkHomepageEnabled();
 
+  // Disarm any pending writes before we modify the JSONFile directly.
+  await ExtensionSettingsStore._reloadFile(false);
+
   // Write out a bad store file.
   let storeData = {
     prefs: {
@@ -432,7 +477,7 @@ add_task(async function testExtensionControlledHomepageUninstalledAddon() {
   await checkHomepageEnabled();
 
   // Remove the bad store file that we used.
-  await OS.File.remove(storePath)
+  await OS.File.remove(storePath);
 
   // Reload the ExtensionSettingsStore again so it clears the data we added.
   // Don't finalize the current store since it will write out the bad data.
@@ -440,4 +485,342 @@ add_task(async function testExtensionControlledHomepageUninstalledAddon() {
 
   is(ExtensionSettingsStore.getSetting("prefs", "homepage_override"), null,
      "The ExtensionSettingsStore is left empty.");
+});
+
+add_task(async function testExtensionControlledTrackingProtection() {
+  const TP_UI_PREF = "privacy.trackingprotection.ui.enabled";
+  const TP_PREF = "privacy.trackingprotection.enabled";
+  const TP_DEFAULT = false;
+  const EXTENSION_ID = "@set_tp";
+  const CONTROLLED_LABEL_ID = {
+    new: "trackingProtectionExtensionContentLabel",
+    old: "trackingProtectionPBMExtensionContentLabel"
+  };
+  const CONTROLLED_BUTTON_ID = "trackingProtectionExtensionContentButton";
+
+  let tpEnabledPref = () => Services.prefs.getBoolPref(TP_PREF);
+
+  await SpecialPowers.pushPrefEnv(
+    {"set": [[TP_PREF, TP_DEFAULT], [TP_UI_PREF, true]]});
+
+  function background() {
+    browser.privacy.websites.trackingProtectionMode.set({value: "always"});
+  }
+
+  function verifyState(isControlled) {
+    is(tpEnabledPref(), isControlled, "TP pref is set to the expected value.");
+
+    let controlledLabel = doc.getElementById(CONTROLLED_LABEL_ID[uiType]);
+
+    is(controlledLabel.hidden, !isControlled, "The extension controlled row's visibility is as expected.");
+    is(controlledButton.hidden, !isControlled, "The disable extension button's visibility is as expected.");
+    if (isControlled) {
+      let controlledDesc = controlledLabel.querySelector("description");
+      // There are two spaces before "set_tp" because it's " <image /> set_tp".
+      is(controlledDesc.textContent, "An extension,  set_tp, is controlling tracking protection.",
+         "The user is notified that an extension is controlling TP.");
+    }
+
+    if (uiType === "new") {
+      for (let element of doc.querySelectorAll("#trackingProtectionRadioGroup > radio")) {
+        is(element.disabled, isControlled, "TP controls are enabled.");
+      }
+      is(doc.querySelector("#trackingProtectionDesc > label").disabled,
+         isControlled,
+         "TP control label is enabled.");
+    } else {
+      is(doc.getElementById("trackingProtectionPBM").disabled,
+         isControlled,
+         "TP control is enabled.");
+      is(doc.getElementById("trackingProtectionPBMLabel").disabled,
+         isControlled,
+         "TP control label is enabled.");
+    }
+  }
+
+  async function disableViaClick() {
+    let labelId = CONTROLLED_LABEL_ID[uiType];
+    let controlledLabel = doc.getElementById(labelId);
+
+    let enableMessageShown = waitForEnableMessage(labelId);
+    doc.getElementById("disableTrackingProtectionExtension").click();
+    await enableMessageShown;
+
+    // The user is notified how to enable the extension.
+    let controlledDesc = controlledLabel.querySelector("description");
+    is(controlledDesc.textContent, "To enable the extension go to  Add-ons in the  menu.",
+       "The user is notified of how to enable the extension again");
+
+    // The user can dismiss the enable instructions.
+    let hidden = waitForMessageHidden(labelId);
+    controlledLabel.querySelector("image:last-of-type").click();
+    await hidden;
+  }
+
+  async function reEnableExtension(addon) {
+    let controlledMessageShown = waitForMessageShown(CONTROLLED_LABEL_ID[uiType]);
+    addon.userDisabled = false;
+    await controlledMessageShown;
+  }
+
+  let uiType = "new";
+
+  await openPreferencesViaOpenPreferencesAPI("panePrivacy", {leaveOpen: true});
+  // eslint-disable-next-line mozilla/no-cpows-in-tests
+  let doc = gBrowser.contentDocument;
+
+  is(gBrowser.currentURI.spec, "about:preferences#privacy",
+   "#privacy should be in the URI for about:preferences");
+
+  let controlledButton = doc.getElementById(CONTROLLED_BUTTON_ID);
+
+  verifyState(false);
+
+  // Install an extension that sets Tracking Protection.
+  let extension = ExtensionTestUtils.loadExtension({
+    useAddonManager: "permanent",
+    manifest: {
+      name: "set_tp",
+      applications: {gecko: {id: EXTENSION_ID}},
+      permissions: ["privacy"],
+    },
+    background,
+  });
+
+  let messageShown = waitForMessageShown(CONTROLLED_LABEL_ID[uiType]);
+  await extension.startup();
+  await messageShown;
+  let addon = await AddonManager.getAddonByID(EXTENSION_ID);
+
+  verifyState(true);
+
+  await disableViaClick();
+
+  verifyState(false);
+
+  // Switch to the "old" Tracking Protection UI.
+  uiType = "old";
+  Services.prefs.setBoolPref(TP_UI_PREF, false);
+
+  verifyState(false);
+
+  await reEnableExtension(addon);
+
+  verifyState(true);
+
+  await disableViaClick();
+
+  verifyState(false);
+
+  // Enable the extension so we get the UNINSTALL event, which is needed by
+  // ExtensionPreferencesManager to clean up properly.
+  // TODO: BUG 1408226
+  await reEnableExtension(addon);
+
+  await extension.unload();
+
+  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
+});
+
+add_task(async function testExtensionControlledProxyConfig() {
+  const proxySvc = Ci.nsIProtocolProxyService;
+  const PROXY_DEFAULT = proxySvc.PROXYCONFIG_SYSTEM;
+  const EXTENSION_ID = "@set_proxy";
+  const CONTROLLED_SECTION_ID = "proxyExtensionContent";
+  const CONTROLLED_BUTTON_ID = "disableProxyExtension";
+  const CONNECTION_SETTINGS_DESC_ID = "connectionSettingsDescription";
+  const PANEL_URL = "chrome://browser/content/preferences/connection.xul";
+
+  await SpecialPowers.pushPrefEnv({"set": [[PROXY_PREF, PROXY_DEFAULT]]});
+
+  function background() {
+    browser.proxy.settings.set({value: {proxyType: "none"}});
+  }
+
+  function expectedConnectionSettingsMessage(doc, isControlled) {
+    let brandShortName = doc.getElementById("bundleBrand").getString("brandShortName");
+    return isControlled ?
+      `An extension,  set_proxy, is controlling how ${brandShortName} connects to the internet.` :
+      `Configure how ${brandShortName} connects to the internet.`;
+  }
+
+  function connectionSettingsMessagePromise(doc, isControlled) {
+    return waitForMessageContent(
+      CONNECTION_SETTINGS_DESC_ID,
+      expectedConnectionSettingsMessage(doc, isControlled)
+    );
+  }
+
+  function verifyState(doc, isControlled) {
+    let isPanel = doc.getElementById(CONTROLLED_BUTTON_ID);
+    let brandShortName = doc.getElementById("bundleBrand").getString("brandShortName");
+    is(proxyType === proxySvc.PROXYCONFIG_DIRECT, isControlled,
+      "Proxy pref is set to the expected value.");
+
+    if (isPanel) {
+      let controlledSection = doc.getElementById(CONTROLLED_SECTION_ID);
+
+      is(controlledSection.hidden, !isControlled, "The extension controlled row's visibility is as expected.");
+      if (isPanel) {
+        is(doc.getElementById(CONTROLLED_BUTTON_ID).hidden, !isControlled,
+           "The disable extension button's visibility is as expected.");
+      }
+      if (isControlled) {
+        let controlledDesc = controlledSection.querySelector("description");
+        // There are two spaces before "set_proxy" because it's " <image /> set_proxy".
+        is(controlledDesc.textContent, `An extension,  set_proxy, is controlling how ${brandShortName} connects to the internet.`,
+          "The user is notified that an extension is controlling proxy settings.");
+      }
+      function getProxyControls() {
+        let controlGroup = doc.getElementById("networkProxyType");
+        let manualControlContainer = controlGroup.querySelector("grid");
+        return {
+          manualControls: [
+            ...manualControlContainer.querySelectorAll("label"),
+            ...manualControlContainer.querySelectorAll("textbox"),
+            ...manualControlContainer.querySelectorAll("checkbox"),
+            ...doc.querySelectorAll("#networkProxySOCKSVersion > radio")],
+          pacControls: [doc.getElementById("networkProxyAutoconfigURL")],
+          otherControls: [
+            ...controlGroup.querySelectorAll(":scope > radio"),
+            ...doc.querySelectorAll("#ConnectionsDialogPane > checkbox")],
+        };
+      }
+      let controlState = isControlled ? "disabled" : "enabled";
+      let controls = getProxyControls();
+      for (let element of controls.manualControls) {
+        let disabled = isControlled || proxyType !== proxySvc.PROXYCONFIG_MANUAL;
+        is(element.disabled, disabled, `Proxy controls are ${controlState}.`);
+      }
+      for (let element of controls.pacControls) {
+        let disabled = isControlled || proxyType !== proxySvc.PROXYCONFIG_PAC;
+        is(element.disabled, disabled, `Proxy controls are ${controlState}.`);
+      }
+      for (let element of controls.otherControls) {
+        is(element.disabled, isControlled, `Proxy controls are ${controlState}.`);
+      }
+    } else {
+      is(doc.getElementById(CONNECTION_SETTINGS_DESC_ID).textContent,
+         expectedConnectionSettingsMessage(doc, isControlled),
+         "The connection settings description is as expected.");
+    }
+  }
+
+  async function disableViaClick() {
+    let sectionId = CONTROLLED_SECTION_ID;
+    let controlledSection = panelDoc.getElementById(sectionId);
+
+    let enableMessageShown = waitForEnableMessage(sectionId, panelDoc);
+    panelDoc.getElementById(CONTROLLED_BUTTON_ID).click();
+    await enableMessageShown;
+
+    // The user is notified how to enable the extension.
+    let controlledDesc = controlledSection.querySelector("description");
+    is(controlledDesc.textContent, "To enable the extension go to  Add-ons in the  menu.",
+       "The user is notified of how to enable the extension again");
+
+    // The user can dismiss the enable instructions.
+    let hidden = waitForMessageHidden(sectionId, panelDoc);
+    controlledSection.querySelector("image:last-of-type").click();
+    return hidden;
+  }
+
+  async function reEnableExtension(addon) {
+    let messageChanged = connectionSettingsMessagePromise(mainDoc, true);
+    addon.userDisabled = false;
+    await messageChanged;
+  }
+
+  async function openProxyPanel() {
+    let panel = await openAndLoadSubDialog(PANEL_URL);
+    let closingPromise = waitForEvent(panel.document.documentElement, "dialogclosing");
+    ok(panel, "Proxy panel opened.");
+    return {panel, closingPromise};
+  }
+
+  async function closeProxyPanel(panelObj) {
+    panelObj.panel.document.documentElement.cancelDialog();
+    let panelClosingEvent = await panelObj.closingPromise;
+    ok(panelClosingEvent, "Proxy panel closed.");
+  }
+
+  await openPreferencesViaOpenPreferencesAPI("paneGeneral", {leaveOpen: true});
+  // eslint-disable-next-line mozilla/no-cpows-in-tests
+  let mainDoc = gBrowser.contentDocument;
+
+  is(gBrowser.currentURI.spec, "about:preferences#general",
+   "#general should be in the URI for about:preferences");
+
+  verifyState(mainDoc, false);
+
+  // Open the connections panel.
+  let panelObj = await openProxyPanel();
+  let panelDoc = panelObj.panel.document;
+
+  verifyState(panelDoc, false);
+
+  await closeProxyPanel(panelObj);
+
+  verifyState(mainDoc, false);
+
+  // Install an extension that controls proxy settings.
+  let extension = ExtensionTestUtils.loadExtension({
+    useAddonManager: "permanent",
+    manifest: {
+      name: "set_proxy",
+      applications: {gecko: {id: EXTENSION_ID}},
+      permissions: ["proxy"],
+    },
+    background,
+  });
+
+  let messageChanged = connectionSettingsMessagePromise(mainDoc, true);
+  await extension.startup();
+  await messageChanged;
+  let addon = await AddonManager.getAddonByID(EXTENSION_ID);
+
+  verifyState(mainDoc, true);
+  messageChanged = connectionSettingsMessagePromise(mainDoc, false);
+
+  panelObj = await openProxyPanel();
+  panelDoc = panelObj.panel.document;
+
+  verifyState(panelDoc, true);
+
+  await disableViaClick();
+
+  verifyState(panelDoc, false);
+
+  await closeProxyPanel(panelObj);
+  await messageChanged;
+
+  verifyState(mainDoc, false);
+
+  await reEnableExtension(addon);
+
+  verifyState(mainDoc, true);
+  messageChanged = connectionSettingsMessagePromise(mainDoc, false);
+
+  panelObj = await openProxyPanel();
+  panelDoc = panelObj.panel.document;
+
+  verifyState(panelDoc, true);
+
+  await disableViaClick();
+
+  verifyState(panelDoc, false);
+
+  await closeProxyPanel(panelObj);
+  await messageChanged;
+
+  verifyState(mainDoc, false);
+
+  // Enable the extension so we get the UNINSTALL event, which is needed by
+  // ExtensionPreferencesManager to clean up properly.
+  // TODO: BUG 1408226
+  await reEnableExtension(addon);
+
+  await extension.unload();
+
+  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });

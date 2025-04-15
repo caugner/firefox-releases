@@ -5,13 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "gfxCrashReporterUtils.h"
-
-#if defined(MOZ_CRASHREPORTER)
-#define MOZ_GFXFEATUREREPORTER 1
-#endif
-
-#ifdef MOZ_GFXFEATUREREPORTER
-#include "gfxCrashReporterUtils.h"
 #include <string.h>                     // for strcmp
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT_HELPER2
 #include "mozilla/Services.h"           // for GetObserverService
@@ -104,7 +97,7 @@ private:
 };
 
 void
-ScopedGfxFeatureReporter::WriteAppNote(char statusChar)
+ScopedGfxFeatureReporter::WriteAppNote(char statusChar, int32_t statusNumber)
 {
   StaticMutexAutoLock al(gFeaturesAlreadyReportedMutex);
 
@@ -115,9 +108,16 @@ ScopedGfxFeatureReporter::WriteAppNote(char statusChar)
   }
 
   nsAutoCString featureString;
-  featureString.AppendPrintf("%s%c ",
-                             mFeature,
-                             statusChar);
+  if (statusNumber == 0) {
+    featureString.AppendPrintf("%s%c ",
+                               mFeature,
+                               statusChar);
+  } else {
+    featureString.AppendPrintf("%s%c%d ",
+                               mFeature,
+                               statusChar,
+                               statusNumber);
+  }
 
   if (!gFeaturesAlreadyReported->Contains(featureString)) {
     gFeaturesAlreadyReported->AppendElement(featureString);
@@ -137,13 +137,3 @@ ScopedGfxFeatureReporter::AppNote(const nsACString& aMessage)
 }
   
 } // end namespace mozilla
-
-#else
-
-namespace mozilla {
-void ScopedGfxFeatureReporter::WriteAppNote(char) {}
-void ScopedGfxFeatureReporter::AppNote(const nsACString&) {}
-  
-} // namespace mozilla
-
-#endif

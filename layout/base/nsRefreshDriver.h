@@ -22,9 +22,9 @@
 #include "nsTObserverArray.h"
 #include "nsClassHashtable.h"
 #include "nsHashKeys.h"
+#include "mozilla/AnimationEventDispatcher.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
-#include "GeckoProfiler.h"
 #include "mozilla/layers/TransactionIdAllocator.h"
 
 class nsPresContext;
@@ -155,20 +155,27 @@ public:
   void RemoveImageRequest(imgIRequest* aRequest);
 
   /**
+   * Add / remove presshells which have pending resize event.
+   */
+  void AddResizeEventFlushObserver(nsIPresShell* aShell)
+  {
+    NS_ASSERTION(!mResizeEventFlushObservers.Contains(aShell),
+                 "Double-adding resize event flush observer");
+    mResizeEventFlushObservers.AppendElement(aShell);
+    EnsureTimerStarted();
+  }
+
+  void RemoveResizeEventFlushObserver(nsIPresShell* aShell)
+  {
+    mResizeEventFlushObservers.RemoveElement(aShell);
+  }
+
+  /**
    * Add / remove presshells that we should flush style and layout on
    */
   bool AddStyleFlushObserver(nsIPresShell* aShell) {
     NS_ASSERTION(!mStyleFlushObservers.Contains(aShell),
                  "Double-adding style flush observer");
-    // We only get the cause for the first observer each frame because capturing
-    // a stack is expensive. This is still useful if (1) you're trying to remove
-    // all flushes for a particial frame or (2) the costly flush is triggered
-    // near the call site where the first observer is triggered.
-#ifdef MOZ_GECKO_PROFILER
-    if (!mStyleCause) {
-      mStyleCause = profiler_get_backtrace();
-    }
-#endif
     bool appended = mStyleFlushObservers.AppendElement(aShell) != nullptr;
     EnsureTimerStarted();
 
@@ -180,15 +187,6 @@ public:
   bool AddLayoutFlushObserver(nsIPresShell* aShell) {
     NS_ASSERTION(!IsLayoutFlushObserver(aShell),
                  "Double-adding layout flush observer");
-#ifdef MOZ_GECKO_PROFILER
-    // We only get the cause for the first observer each frame because capturing
-    // a stack is expensive. This is still useful if (1) you're trying to remove
-    // all flushes for a particial frame or (2) the costly flush is triggered
-    // near the call site where the first observer is triggered.
-    if (!mReflowCause) {
-      mReflowCause = profiler_get_backtrace();
-    }
-#endif
     bool appended = mLayoutFlushObservers.AppendElement(aShell) != nullptr;
     EnsureTimerStarted();
     return appended;
@@ -245,6 +243,24 @@ public:
    * targets any node in aDocument.
    */
   void CancelPendingEvents(nsIDocument* aDocument);
+
+  /**
+   * Queue new animation events to dispatch in next tick.
+   */
+  void ScheduleAnimationEventDispatch(
+    mozilla::AnimationEventDispatcher* aDispatcher)
+  {
+    NS_ASSERTION(!mAnimationEventFlushObservers.Contains(aDispatcher),
+                 "Double-adding animation event flush observer");
+    mAnimationEventFlushObservers.AppendElement(aDispatcher);
+    EnsureTimerStarted();
+  }
+
+  /**
+   * Cancel all pending animation events associated with |aDispatcher|.
+   */
+  void CancelPendingAnimationEvents(
+    mozilla::AnimationEventDispatcher* aDispatcher);
 
   /**
    * Schedule a frame visibility update "soon", subject to the heuristics and
@@ -388,6 +404,7 @@ private:
   void DispatchPendingEvents();
   void DispatchAnimationEvents();
   void RunFrameRequestCallbacks(mozilla::TimeStamp aNowTime);
+  void UpdateIntersectionObservations();
   void Tick(int64_t aNowEpoch, mozilla::TimeStamp aNowTime);
 
   enum EnsureTimerStartedFlags {
@@ -399,8 +416,9 @@ private:
   void EnsureTimerStarted(EnsureTimerStartedFlags aFlags = eNone);
   void StopTimer();
 
+  bool HasObservers() const;
   uint32_t ObserverCount() const;
-  uint32_t ImageRequestCount() const;
+  bool HasImageRequests() const;
   ObserverArray& ArrayFor(mozilla::FlushType aFlushType);
   // Trigger a refresh immediately, if haven't been disconnected or frozen.
   void DoRefresh();
@@ -419,11 +437,6 @@ private:
 
   mozilla::RefreshDriverTimer* ChooseTimer() const;
   mozilla::RefreshDriverTimer* mActiveTimer;
-
-#ifdef MOZ_GECKO_PROFILER
-  UniqueProfilerBacktrace mReflowCause;
-  UniqueProfilerBacktrace mStyleCause;
-#endif
 
   // nsPresContext passed in constructor and unset in Disconnect.
   mozilla::WeakPtr<nsPresContext> mPresContext;
@@ -494,6 +507,7 @@ private:
     nsCOMPtr<nsIDOMEvent> mEvent;
   };
 
+  AutoTArray<nsIPresShell*, 16> mResizeEventFlushObservers;
   AutoTArray<nsIPresShell*, 16> mStyleFlushObservers;
   AutoTArray<nsIPresShell*, 16> mLayoutFlushObservers;
   // nsTArray on purpose, because we want to be able to swap.
@@ -501,6 +515,8 @@ private:
   nsTArray<nsIDocument*> mThrottledFrameRequestCallbackDocs;
   nsTObserverArray<nsAPostRefreshObserver*> mPostRefreshObservers;
   nsTArray<PendingEvent> mPendingEvents;
+  AutoTArray<mozilla::AnimationEventDispatcher*, 16>
+    mAnimationEventFlushObservers;
 
   void BeginRefreshingImages(RequestTable& aEntries,
                              mozilla::TimeStamp aDesired);

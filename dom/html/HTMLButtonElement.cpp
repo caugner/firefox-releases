@@ -9,7 +9,6 @@
 #include "HTMLFormSubmissionConstants.h"
 #include "mozilla/dom/HTMLButtonElementBinding.h"
 #include "mozilla/dom/HTMLFormSubmission.h"
-#include "nsIDOMHTMLFormElement.h"
 #include "nsAttrValueInlines.h"
 #include "nsGkAtoms.h"
 #include "nsIPresShell.h"
@@ -155,6 +154,7 @@ bool
 HTMLButtonElement::ParseAttribute(int32_t aNamespaceID,
                                   nsAtom* aAttribute,
                                   const nsAString& aValue,
+                                  nsIPrincipal* aMaybeScriptedPrincipal,
                                   nsAttrValue& aResult)
 {
   if (aNamespaceID == kNameSpaceID_None) {
@@ -172,7 +172,7 @@ HTMLButtonElement::ParseAttribute(int32_t aNamespaceID,
   }
 
   return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aResult);
+                                              aMaybeScriptedPrincipal, aResult);
 }
 
 bool
@@ -462,8 +462,7 @@ bool
 HTMLButtonElement::RestoreState(nsPresState* aState)
 {
   if (aState && aState->IsDisabledSet() && !aState->GetDisabled()) {
-    IgnoredErrorResult rv;
-    SetDisabled(false, rv);
+    SetDisabled(false, IgnoreErrors());
   }
 
   return false;

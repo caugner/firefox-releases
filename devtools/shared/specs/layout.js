@@ -22,20 +22,18 @@ const layoutSpec = generateActorSpec({
   typeName: "layout",
 
   methods: {
-    getAllFlexbox: {
+    getCurrentFlexbox: {
       request: {
-        rootNode: Arg(0, "domnode"),
-        traverseFrames: Arg(1, "nullable:boolean")
+        node: Arg(0, "domnode"),
       },
       response: {
-        flexboxes: RetVal("array:flexbox")
+        flexbox: RetVal("nullable:flexbox")
       }
     },
 
-    getAllGrids: {
+    getGrids: {
       request: {
-        rootNode: Arg(0, "domnode"),
-        traverseFrames: Arg(1, "nullable:boolean")
+        rootNode: Arg(0, "domnode")
       },
       response: {
         grids: RetVal("array:grid")

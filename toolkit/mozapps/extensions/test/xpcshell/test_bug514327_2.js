@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-
 const nsIBLS = Ci.nsIBlocklistService;
 
 // Finds the test nsIPluginTag
@@ -24,9 +21,8 @@ function run_test() {
   copyBlocklistToProfile(do_get_file("data/test_bug514327_2.xml"));
 
   var blocklist = Cc["@mozilla.org/extensions/blocklist;1"].getService(nsIBLS);
-  var prefs = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefBranch);
 
-  prefs.setBoolPref("plugin.load_flash_only", false);
+  Services.prefs.setBoolPref("plugin.load_flash_only", false);
 
   var plugin = get_test_plugintag();
   if (!plugin)
@@ -34,8 +30,8 @@ function run_test() {
 
   // run the code after the blocklist is closed
   Services.obs.notifyObservers(null, "addon-blocklist-closed");
-  do_execute_soon(function() {
+  executeSoon(function() {
     // should be marked as outdated by the blocklist
-    do_check_true(blocklist.getPluginBlocklistState(plugin, "1", "1.9") == nsIBLS.STATE_OUTDATED);
+    Assert.ok(blocklist.getPluginBlocklistState(plugin, "1", "1.9") == nsIBLS.STATE_OUTDATED);
   });
 }

@@ -43,16 +43,16 @@
 const TP_CMDLINE_CONTRACTID     = "@mozilla.org/commandlinehandler/general-startup;1?type=tp";
 const TP_CMDLINE_CLSID          = Components.ID("{8AF052F5-8EFE-4359-8266-E16498A82E8B}");
 const CATMAN_CONTRACTID         = "@mozilla.org/categorymanager;1";
-const nsISupports               = Components.interfaces.nsISupports;
+const nsISupports               = Ci.nsISupports;
 
-const nsICategoryManager        = Components.interfaces.nsICategoryManager;
-const nsICommandLine            = Components.interfaces.nsICommandLine;
-const nsICommandLineHandler     = Components.interfaces.nsICommandLineHandler;
-const nsIComponentRegistrar     = Components.interfaces.nsIComponentRegistrar;
-const nsISupportsString         = Components.interfaces.nsISupportsString;
-const nsIWindowWatcher          = Components.interfaces.nsIWindowWatcher;
+const nsICategoryManager        = Ci.nsICategoryManager;
+const nsICommandLine            = Ci.nsICommandLine;
+const nsICommandLineHandler     = Ci.nsICommandLineHandler;
+const nsIComponentRegistrar     = Ci.nsIComponentRegistrar;
+const nsISupportsString         = Ci.nsISupportsString;
+const nsIWindowWatcher          = Ci.nsIWindowWatcher;
 
-Components.utils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 function PageLoaderCmdLineHandler() {}
 PageLoaderCmdLineHandler.prototype =
@@ -65,75 +65,32 @@ PageLoaderCmdLineHandler.prototype =
     if (nsICommandLineHandler && iid.equals(nsICommandLineHandler))
       return this;
 
-    throw Components.results.NS_ERROR_NO_INTERFACE;
+    throw Cr.NS_ERROR_NO_INTERFACE;
   },
 
   /* nsICommandLineHandler */
   handle: function handler_handle(cmdLine) {
     var args = {};
-    try {
-      var uristr = cmdLine.handleFlagWithParam("tp", false);
-      if (uristr == null)
-        return;
-      try {
-        args.manifest = cmdLine.resolveURI(uristr).spec;
-      } catch (e) {
-        return;
-      }
 
-      args.numCycles = cmdLine.handleFlagWithParam("tpcycles", false);
-      args.numPageCycles = cmdLine.handleFlagWithParam("tppagecycles", false);
-      args.startIndex = cmdLine.handleFlagWithParam("tpstart", false);
-      args.endIndex = cmdLine.handleFlagWithParam("tpend", false);
-      args.filter = cmdLine.handleFlagWithParam("tpfilter", false);
-      args.useBrowserChrome = cmdLine.handleFlag("tpchrome", false);
-      args.doRender = cmdLine.handleFlag("tprender", false);
-      args.width = cmdLine.handleFlagWithParam("tpwidth", false);
-      args.height = cmdLine.handleFlagWithParam("tpheight", false);
-      args.profilinginfo = cmdLine.handleFlagWithParam("tpprofilinginfo", false);
-      args.offline = cmdLine.handleFlag("tpoffline", false);
-      args.noisy = cmdLine.handleFlag("tpnoisy", false);
-      args.timeout = cmdLine.handleFlagWithParam("tptimeout", false);
-      args.delay = cmdLine.handleFlagWithParam("tpdelay", false);
-      args.noForceCC = cmdLine.handleFlag("tpnoforcecc", false);
-      args.mozafterpaint = cmdLine.handleFlag("tpmozafterpaint", false);
-      args.fnbpaint = cmdLine.handleFlag("fnbpaint", false);
-      args.loadnocache = cmdLine.handleFlag("tploadnocache", false);
-      args.scrolltest = cmdLine.handleFlag("tpscrolltest", false);
-    } catch (e) {
+    var tpmanifest = Services.prefs.getCharPref("talos.tpmanifest", null);
+    if (tpmanifest == null) {
+      // pageloader tests as well as startup tests use this pageloader add-on; pageloader tests
+      // pass in a 'tpmanifest' which has been set to the talos.tpmanifest pref; startup tests
+      // don't use 'tpmanifest' but pass in the test page which is forwarded onto the Firefox cmd
+      // line. If this is a startup test exit here as we don't need a pageloader window etc.
       return;
     }
 
     let chromeURL = "chrome://pageloader/content/pageloader.xul";
 
     args.wrappedJSObject = args;
+
     Services.ww.openWindow(null, chromeURL, "_blank",
                             "chrome,dialog=no,all", args);
 
     // Don't pass command line to the default app processor
     cmdLine.preventDefault = true;
   },
-
-  helpInfo:
-  "  -tp <file>             Run pageload perf tests on given manifest\n" +
-  "  -tpfilter str          Only include pages from manifest that contain str (regexp)\n" +
-  "  -tpcycles n            Loop through pages n times\n" +
-  "  -tppagecycles n        Loop through each page n times before going onto the next page\n" +
-  "  -tpstart n             Start at index n in the manifest\n" +
-  "  -tpend n               End with index n in the manifest\n" +
-  "  -tpchrome              Test with normal browser chrome\n" +
-  "  -tprender              Run render-only benchmark for each page\n" +
-  "  -tpwidth width         Width of window\n" +
-  "  -tpheight height       Height of window\n" +
-  "  -tbprofilinginfo       A JSON object describing profiler settings\n" +
-  "  -tpoffline             Force offline mode\n" +
-  "  -tpnoisy               Dump the name of the last loaded page to console\n" +
-  "  -tptimeout             Max amount of time given for a page to load, quit if exceeded\n" +
-  "  -tpdelay               Amount of time to wait between each pageload\n" +
-  "  -tpnoforcecc           Don't force cycle collection between each pageload\n" +
-  "  -tpmozafterpaint       Measure Time after recieving MozAfterPaint event instead of load event\n" +
-  "  -fnbpaint  Measure time after a first non-blank paint has occurred\n" +
-  "  -tpscrolltest          Unknown\n"
 };
 
 
@@ -141,7 +98,7 @@ var PageLoaderCmdLineFactory =
 {
   createInstance(outer, iid) {
     if (outer != null) {
-      throw Components.results.NS_ERROR_NO_AGGREGATION;
+      throw Cr.NS_ERROR_NO_AGGREGATION;
     }
 
     return new PageLoaderCmdLineHandler().QueryInterface(iid);
@@ -150,7 +107,7 @@ var PageLoaderCmdLineFactory =
 
 function NSGetFactory(cid) {
   if (!cid.equals(TP_CMDLINE_CLSID))
-    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
+    throw Cr.NS_ERROR_NOT_IMPLEMENTED;
 
   return PageLoaderCmdLineFactory;
 }
@@ -167,7 +124,7 @@ var PageLoaderCmdLineModule =
                                     location,
                                     type);
 
-    var catman = Components.classes[CATMAN_CONTRACTID].getService(nsICategoryManager);
+    var catman = Cc[CATMAN_CONTRACTID].getService(nsICategoryManager);
     catman.addCategoryEntry("command-line-handler",
                             "m-tp",
                             TP_CMDLINE_CONTRACTID, true, true);
@@ -177,7 +134,7 @@ var PageLoaderCmdLineModule =
     compMgr = compMgr.QueryInterface(nsIComponentRegistrar);
 
     compMgr.unregisterFactoryLocation(TP_CMDLINE_CLSID, fileSpec);
-    var catman = Components.classes[CATMAN_CONTRACTID].getService(nsICategoryManager);
+    var catman = Cc[CATMAN_CONTRACTID].getService(nsICategoryManager);
     catman.deleteCategoryEntry("command-line-handler",
                                "m-tp", true);
   },

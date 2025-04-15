@@ -6,9 +6,7 @@
 
 const {Ci} = require("chrome");
 const Services = require("Services");
-const promise = require("promise");
 const defer = require("devtools/shared/defer");
-const {Task} = require("devtools/shared/task");
 const protocol = require("devtools/shared/protocol");
 const {LongStringActor} = require("devtools/server/actors/string");
 const {fetch} = require("devtools/shared/DevToolsUtils");
@@ -16,6 +14,7 @@ const {mediaRuleSpec, styleSheetSpec,
        styleSheetsSpec} = require("devtools/shared/specs/stylesheets");
 const {
   addPseudoClassLock, removePseudoClassLock } = require("devtools/server/actors/highlighters/utils/markup");
+const InspectorUtils = require("InspectorUtils");
 
 loader.lazyRequireGetter(this, "CssLogic", "devtools/shared/inspector/css-logic");
 loader.lazyRequireGetter(this, "addPseudoClassLock",
@@ -23,8 +22,6 @@ loader.lazyRequireGetter(this, "addPseudoClassLock",
 loader.lazyRequireGetter(this, "removePseudoClassLock",
   "devtools/server/actors/highlighters/utils/markup", true);
 loader.lazyRequireGetter(this, "loadSheet", "devtools/shared/layout/utils", true);
-
-loader.lazyServiceGetter(this, "DOMUtils", "@mozilla.org/inspector/dom-utils;1", "inIDOMUtils");
 
 var TRANSITION_PSEUDO_CLASS = ":-moz-styleeditor-transitioning";
 var TRANSITION_DURATION_MS = 500;
@@ -83,8 +80,8 @@ var MediaRuleActor = protocol.ActorClassWithSpec(mediaRuleSpec, {
 
     this._matchesChange = this._matchesChange.bind(this);
 
-    this.line = DOMUtils.getRuleLine(mediaRule);
-    this.column = DOMUtils.getRuleColumn(mediaRule);
+    this.line = InspectorUtils.getRuleLine(mediaRule);
+    this.column = InspectorUtils.getRuleColumn(mediaRule);
 
     try {
       this.mql = this.window.matchMedia(mediaRule.media.mediaText);
@@ -175,7 +172,7 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
   get safeHref() {
     let href = this.href;
     if (!href) {
-      if (this.ownerNode instanceof Ci.nsIDOMHTMLDocument) {
+      if (this.ownerNode.nodeType == this.ownerNode.DOCUMENT_NODE) {
         href = this.ownerNode.location.href;
       } else if (this.ownerNode.ownerDocument &&
                  this.ownerNode.ownerDocument.location) {
@@ -238,27 +235,11 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
   },
 
   /**
-   * Test whether all the rules in this sheet have associated source.
-   * @return {Boolean} true if all the rules have source; false if
-   *         some rule was created via CSSOM.
+   * Test whether this sheet has been modified by CSSOM.
+   * @return {Boolean} true if changed by CSSOM.
    */
-  allRulesHaveSource: function () {
-    let rules;
-    try {
-      rules = this.rawSheet.cssRules;
-    } catch (e) {
-      // sheet isn't loaded yet
-      return true;
-    }
-
-    for (let i = 0; i < rules.length; i++) {
-      let rule = rules[i];
-      if (DOMUtils.getRelativeRuleLine(rule) === 0) {
-        return false;
-      }
-    }
-
-    return true;
+  hasRulesModifiedByCSSOM: function () {
+    return InspectorUtils.hasRulesModifiedByCSSOM(this.rawSheet);
   },
 
   /**
@@ -276,11 +257,11 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
     }
 
     if (rules) {
-      return promise.resolve(rules);
+      return Promise.resolve(rules);
     }
 
     if (!this.ownerNode) {
-      return promise.resolve([]);
+      return Promise.resolve([]);
     }
 
     if (this._cssRules) {
@@ -317,7 +298,7 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
 
     let docHref;
     if (this.ownerNode) {
-      if (this.ownerNode instanceof Ci.nsIDOMHTMLDocument) {
+      if (this.ownerNode.nodeType == this.ownerNode.DOCUMENT_NODE) {
         docHref = this.ownerNode.location.href;
       } else if (this.ownerNode.ownerDocument && this.ownerNode.ownerDocument.location) {
         docHref = this.ownerNode.ownerDocument.location.href;
@@ -388,20 +369,20 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
    */
   _getText: function () {
     if (typeof this.text === "string") {
-      return promise.resolve(this.text);
+      return Promise.resolve(this.text);
     }
 
     let cssText = modifiedStyleSheets.get(this.rawSheet);
     if (cssText !== undefined) {
       this.text = cssText;
-      return promise.resolve(cssText);
+      return Promise.resolve(cssText);
     }
 
     if (!this.href) {
       // this is an inline <style> sheet
       let content = this.ownerNode.textContent;
       this.text = content;
-      return promise.resolve(content);
+      return Promise.resolve(content);
     }
 
     return this.fetchStylesheet(this.href).then(({ content }) => {
@@ -422,7 +403,13 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
    *           - contentType: the content type of the document
    *         If an error occurs, the promise is rejected with that error.
    */
-  fetchStylesheet: Task.async(function* (href) {
+  async fetchStylesheet(href) {
+    // Check if network monitor observed this load, and if so, use that.
+    let result = this.fetchStylesheetFromNetworkMonitor(href);
+    if (result) {
+      return result;
+    }
+
     let options = {
       loadFromCache: true,
       policy: Ci.nsIContentPolicy.TYPE_INTERNAL_STYLESHEET,
@@ -442,9 +429,8 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
       options.principal = this.ownerDocument.nodePrincipal;
     }
 
-    let result;
     try {
-      result = yield fetch(this.href, options);
+      result = await fetch(this.href, options);
     } catch (e) {
       // The list of excluded protocols can be missing some protocols, try to use the
       // system principal if the first fetch failed.
@@ -452,11 +438,60 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
         ` using system principal instead.`);
       options.window = undefined;
       options.principal = undefined;
-      result = yield fetch(this.href, options);
+      result = await fetch(this.href, options);
     }
 
     return result;
-  }),
+  },
+
+  /**
+   * Try to locate the console actor if it exists via our parent actor (the tab).
+   */
+  get _consoleActor() {
+    if (this.parentActor.exited) {
+      return null;
+    }
+    let form = this.parentActor.form();
+    return this.conn._getOrCreateActor(form.consoleActor);
+  },
+
+  /**
+   * Try to fetch the stylesheet text from the network monitor.  If it was enabled during
+   * the load, it should have a copy of the text saved.
+   *
+   * @param string href
+   *        The URL of the sheet to fetch.
+   */
+  fetchStylesheetFromNetworkMonitor(href) {
+    let consoleActor = this._consoleActor;
+    if (!consoleActor) {
+      return null;
+    }
+    let request = consoleActor.getNetworkEventActorForURL(href);
+    if (!request) {
+      return null;
+    }
+    let content = request._response.content;
+    if (request._discardResponseBody || request._truncated || !content) {
+      return null;
+    }
+    if (content.text.type != "longString") {
+      // For short strings, the text is available directly.
+      return {
+        content: content.text,
+        contentType: content.mimeType,
+      };
+    }
+    // For long strings, look up the actor that holds the full text.
+    let longStringActor = this.conn._getOrCreateActor(content.text.actor);
+    if (!longStringActor) {
+      return null;
+    }
+    return {
+      content: longStringActor.rawValue(),
+      contentType: content.mimeType,
+    };
+  },
 
   /**
    * Protocol method to get the media rules for the stylesheet.
@@ -476,7 +511,7 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
       let mediaRules = [];
       for (let i = 0; i < rules.length; i++) {
         let rule = rules[i];
-        if (rule.type != Ci.nsIDOMCSSRule.MEDIA_RULE) {
+        if (rule.type != CSSRule.MEDIA_RULE) {
           continue;
         }
         let actor = new MediaRuleActor(rule, this);
@@ -501,7 +536,7 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
       if (sheet.cssRules) {
         let rules = sheet.cssRules;
         if (rules.length
-            && rules.item(0).type == Ci.nsIDOMCSSRule.CHARSET_RULE) {
+            && rules.item(0).type == CSSRule.CHARSET_RULE) {
           return rules.item(0).encoding;
         }
       }
@@ -517,7 +552,7 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
       // step 4 (1 of 2): charset of referring stylesheet.
       let parentSheet = sheet.parentStyleSheet;
       if (parentSheet && parentSheet.cssRules &&
-          parentSheet.cssRules[0].type == Ci.nsIDOMCSSRule.CHARSET_RULE) {
+          parentSheet.cssRules[0].type == CSSRule.CHARSET_RULE) {
         return parentSheet.cssRules[0].encoding;
       }
 
@@ -540,13 +575,15 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
    *         'kind' - either UPDATE_PRESERVING_RULES or UPDATE_GENERAL
    */
   update: function (text, transition, kind = UPDATE_GENERAL) {
-    DOMUtils.parseStyleSheet(this.rawSheet, text);
+    InspectorUtils.parseStyleSheet(this.rawSheet, text);
 
     modifiedStyleSheets.set(this.rawSheet, text);
 
     this.text = text;
 
-    this._notifyPropertyChanged("ruleCount");
+    if (kind != UPDATE_PRESERVING_RULES) {
+      this._notifyPropertyChanged("ruleCount");
+    }
 
     if (transition) {
       this._startTransition(kind);
@@ -687,15 +724,15 @@ var StyleSheetsActor = protocol.ActorClassWithSpec(styleSheetsSpec, {
    * Protocol method for getting a list of StyleSheetActors representing
    * all the style sheets in this document.
    */
-  getStyleSheets: Task.async(function* () {
+  async getStyleSheets() {
     let actors = [];
 
     for (let win of this.parentActor.windows) {
-      let sheets = yield this._addStyleSheets(win);
+      let sheets = await this._addStyleSheets(win);
       actors = actors.concat(sheets);
     }
     return actors;
-  }),
+  },
 
   /**
    * Check if we should be showing this stylesheet.
@@ -744,14 +781,15 @@ var StyleSheetsActor = protocol.ActorClassWithSpec(styleSheetsSpec, {
    *         Promise that resolves to an array of StyleSheetActors
    */
   _addStyleSheets: function (win) {
-    return Task.spawn(function* () {
+    return (async function () {
       let doc = win.document;
       // We have to set this flag in order to get the
       // StyleSheetApplicableStateChanged events.  See Document.webidl.
       doc.styleSheetChangeEventsEnabled = true;
 
       let isChrome = Services.scriptSecurityManager.isSystemPrincipal(doc.nodePrincipal);
-      let styleSheets = isChrome ? DOMUtils.getAllStyleSheets(doc) : doc.styleSheets;
+      let styleSheets =
+        isChrome ? InspectorUtils.getAllStyleSheets(doc) : doc.styleSheets;
       let actors = [];
       for (let i = 0; i < styleSheets.length; i++) {
         let sheet = styleSheets[i];
@@ -763,11 +801,11 @@ var StyleSheetsActor = protocol.ActorClassWithSpec(styleSheetsSpec, {
         actors.push(actor);
 
         // Get all sheets, including imported ones
-        let imports = yield this._getImported(doc, actor);
+        let imports = await this._getImported(doc, actor);
         actors = actors.concat(imports);
       }
       return actors;
-    }.bind(this));
+    }.bind(this))();
   },
 
   /**
@@ -781,13 +819,13 @@ var StyleSheetsActor = protocol.ActorClassWithSpec(styleSheetsSpec, {
    *         A promise that resolves with an array of StyleSheetActors
    */
   _getImported: function (doc, styleSheet) {
-    return Task.spawn(function* () {
-      let rules = yield styleSheet.getCSSRules();
+    return (async function () {
+      let rules = await styleSheet.getCSSRules();
       let imported = [];
 
       for (let i = 0; i < rules.length; i++) {
         let rule = rules[i];
-        if (rule.type == Ci.nsIDOMCSSRule.IMPORT_RULE) {
+        if (rule.type == CSSRule.IMPORT_RULE) {
           // With the Gecko style system, the associated styleSheet may be null
           // if it has already been seen because an import cycle for the same
           // URL.  With Stylo, the styleSheet will exist (which is correct per
@@ -802,16 +840,16 @@ var StyleSheetsActor = protocol.ActorClassWithSpec(styleSheetsSpec, {
           imported.push(actor);
 
           // recurse imports in this stylesheet as well
-          let children = yield this._getImported(doc, actor);
+          let children = await this._getImported(doc, actor);
           imported = imported.concat(children);
-        } else if (rule.type != Ci.nsIDOMCSSRule.CHARSET_RULE) {
+        } else if (rule.type != CSSRule.CHARSET_RULE) {
           // @import rules must precede all others except @charset
           break;
         }
       }
 
       return imported;
-    }.bind(this));
+    }.bind(this))();
   },
 
   /**

@@ -19,11 +19,11 @@
 #include "mozilla/layers/AsyncCompositionManager.h" // for ViewTransform
 #include "mozilla/layers/GeckoContentController.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
-#include "mozilla/layers/APZCTreeManager.h"
 #include "mozilla/layers/LayerMetricsWrapper.h"
 #include "mozilla/layers/APZThreadUtils.h"
 #include "mozilla/TypedEnumBits.h"
 #include "mozilla/UniquePtr.h"
+#include "apz/src/APZCTreeManager.h"
 #include "apz/src/AsyncPanZoomController.h"
 #include "apz/src/HitTestingTreeNode.h"
 #include "base/task.h"
@@ -172,7 +172,10 @@ private:
 
 class TestAPZCTreeManager : public APZCTreeManager {
 public:
-  explicit TestAPZCTreeManager(MockContentControllerDelayed* aMcc) : mcc(aMcc) {}
+  explicit TestAPZCTreeManager(MockContentControllerDelayed* aMcc)
+    : APZCTreeManager(0)
+    , mcc(aMcc)
+  {}
 
   RefPtr<InputQueue> GetInputQueue() const {
     return mInputQueue;
@@ -214,7 +217,7 @@ public:
   }
 
   nsEventStatus ReceiveInputEvent(const InputData& aEvent, uint64_t* aOutInputBlockId) {
-    return GetInputQueue()->ReceiveInputEvent(this, !mWaitForMainThread, aEvent, aOutInputBlockId);
+    return GetInputQueue()->ReceiveInputEvent(this, TargetConfirmationFlags{!mWaitForMainThread}, aEvent, aOutInputBlockId);
   }
 
   void ContentReceivedInputBlock(uint64_t aInputBlockId, bool aPreventDefault) {
@@ -262,16 +265,23 @@ public:
     EXPECT_EQ(FLING, mState);
   }
 
+  void AssertStateIsSmoothScroll() const {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    EXPECT_EQ(SMOOTH_SCROLL, mState);
+  }
+
+  void AssertNotAxisLocked() const {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    EXPECT_EQ(PANNING, mState);
+  }
+
   void AssertAxisLocked(ScrollDirection aDirection) const {
     RecursiveMutexAutoLock lock(mRecursiveMutex);
     switch (aDirection) {
-    case ScrollDirection::NONE:
-      EXPECT_EQ(PANNING, mState);
-      break;
-    case ScrollDirection::HORIZONTAL:
+    case ScrollDirection::eHorizontal:
       EXPECT_EQ(PANNING_LOCKED_X, mState);
       break;
-    case ScrollDirection::VERTICAL:
+    case ScrollDirection::eVertical:
       EXPECT_EQ(PANNING_LOCKED_Y, mState);
       break;
     }

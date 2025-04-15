@@ -6,13 +6,13 @@
  */
 
 const { UnsubmittedCrashHandler } =
-  Cu.import("resource:///modules/ContentCrashHandlers.jsm", {});
+  ChromeUtils.import("resource:///modules/ContentCrashHandlers.jsm", {});
 const { FileUtils } =
-  Cu.import("resource://gre/modules/FileUtils.jsm", {});
+  ChromeUtils.import("resource://gre/modules/FileUtils.jsm", {});
 const { makeFakeAppDir }  =
-  Cu.import("resource://testing-common/AppData.jsm", {});
+  ChromeUtils.import("resource://testing-common/AppData.jsm", {});
 const { OS } =
-  Cu.import("resource://gre/modules/osfile.jsm", {});
+  ChromeUtils.import("resource://gre/modules/osfile.jsm", {});
 
 const DAY = 24 * 60 * 60 * 1000; // milliseconds
 const SERVER_URL = "http://example.com/browser/toolkit/crashreporter/test/browser/crashreport.sjs";
@@ -194,7 +194,7 @@ add_task(async function setup() {
   }
 
   let env = Cc["@mozilla.org/process/environment;1"]
-              .getService(Components.interfaces.nsIEnvironment);
+              .getService(Ci.nsIEnvironment);
   let oldServerURL = env.get("MOZ_CRASHREPORTER_URL");
   env.set("MOZ_CRASHREPORTER_URL", SERVER_URL);
 
@@ -284,8 +284,8 @@ add_task(async function test_other_ignored() {
   Assert.ok(notification, "There should be a notification");
 
   // Dismiss notification, creating the .dmp.ignore file
-  let anonyNodes = document.getAnonymousNodes(notification)[0];
-  let closeButton = anonyNodes.querySelector(".close-icon");
+  let closeButton =
+    document.getAnonymousElementByAttribute(notification, "anonid", "close-button");
   closeButton.click();
   gNotificationBox.removeNotification(notification, true);
   await waitForIgnoredReports(toIgnore);
@@ -476,8 +476,8 @@ add_task(async function test_can_ignore() {
   Assert.ok(notification, "There should be a notification");
 
   // Dismiss the notification by clicking on the "X" button.
-  let anonyNodes = document.getAnonymousNodes(notification)[0];
-  let closeButton = anonyNodes.querySelector(".close-icon");
+  let closeButton =
+    document.getAnonymousElementByAttribute(notification, "anonid", "close-button");
   closeButton.click();
   // We'll not wait for the notification to finish its transition -
   // we'll just remove it right away.
@@ -550,8 +550,8 @@ add_task(async function test_shutdown_while_not_showing() {
   Assert.ok(notification, "There should be a notification");
 
   // Dismiss the notification by clicking on the "X" button.
-  let anonyNodes = document.getAnonymousNodes(notification)[0];
-  let closeButton = anonyNodes.querySelector(".close-icon");
+  let closeButton =
+    document.getAnonymousElementByAttribute(notification, "anonid", "close-button");
   closeButton.click();
   // We'll not wait for the notification to finish its transition -
   // we'll just remove it right away.

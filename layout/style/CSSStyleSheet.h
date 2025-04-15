@@ -20,7 +20,7 @@
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsTArrayForwardDeclare.h"
-#include "nsString.h"
+#include "nsStringFwd.h"
 #include "mozilla/CORSMode.h"
 #include "nsCycleCollectionParticipant.h"
 #include "mozilla/net/ReferrerPolicy.h"
@@ -119,12 +119,6 @@ public:
     dom::CSSImportRule* aCloneOwnerRule,
     nsIDocument* aCloneDocument,
     nsINode* aCloneOwningNode) const final;
-
-  void SetModifiedByChildRule() {
-    NS_ASSERTION(mDirty,
-                 "sheet must be marked dirty before handing out child rules");
-    DidDirty();
-  }
 
   nsresult AddRuleProcessor(nsCSSRuleProcessor* aProcessor);
   nsresult DropRuleProcessor(nsCSSRuleProcessor* aProcessor);

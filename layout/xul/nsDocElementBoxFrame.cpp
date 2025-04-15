@@ -21,6 +21,7 @@
 #include "nsContentCreatorFunctions.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/FromParser.h"
 
 //#define DEBUG_REFLOW
 
@@ -94,11 +95,11 @@ nsDocElementBoxFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   RefPtr<NodeInfo> nodeInfo;
   nodeInfo = nodeInfoManager->GetNodeInfo(nsGkAtoms::popupgroup,
                                           nullptr, kNameSpaceID_XUL,
-                                          nsIDOMNode::ELEMENT_NODE);
+                                          nsINode::ELEMENT_NODE);
   NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   nsresult rv = NS_NewXULElement(getter_AddRefs(mPopupgroupContent),
-                                 nodeInfo.forget());
+                                 nodeInfo.forget(), dom::NOT_FROM_PARSER);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!aElements.AppendElement(mPopupgroupContent))
@@ -107,10 +108,11 @@ nsDocElementBoxFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   // create the top-secret default tooltip node. shhhhh!
   nodeInfo = nodeInfoManager->GetNodeInfo(nsGkAtoms::tooltip, nullptr,
                                           kNameSpaceID_XUL,
-                                          nsIDOMNode::ELEMENT_NODE);
+                                          nsINode::ELEMENT_NODE);
   NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
-  rv = NS_NewXULElement(getter_AddRefs(mTooltipContent), nodeInfo.forget());
+  rv = NS_NewXULElement(getter_AddRefs(mTooltipContent), nodeInfo.forget(),
+                        dom::NOT_FROM_PARSER);
   NS_ENSURE_SUCCESS(rv, rv);
 
   mTooltipContent->SetAttr(kNameSpaceID_None, nsGkAtoms::_default,

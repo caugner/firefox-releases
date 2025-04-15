@@ -24,7 +24,7 @@
 #include "nsISupportsImpl.h"
 #include "nsStyledElement.h"
 #include "nsSVGClass.h"
-#include "nsIDOMSVGElement.h"
+#include "nsIDOMElement.h"
 #include "SVGContentUtils.h"
 #include "gfxMatrix.h"
 
@@ -46,10 +46,6 @@ namespace dom {
 class SVGSVGElement;
 class SVGViewportElement;
 
-static const unsigned short SVG_UNIT_TYPE_UNKNOWN           = 0;
-static const unsigned short SVG_UNIT_TYPE_USERSPACEONUSE    = 1;
-static const unsigned short SVG_UNIT_TYPE_OBJECTBOUNDINGBOX = 2;
-
 } // namespace dom
 
 class SVGAnimatedNumberList;
@@ -70,7 +66,7 @@ struct nsSVGEnumMapping;
 typedef nsStyledElement nsSVGElementBase;
 
 class nsSVGElement : public nsSVGElementBase    // nsIContent
-                   , public nsIDOMSVGElement
+                   , public nsIDOMElement
 {
 protected:
   explicit nsSVGElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
@@ -105,9 +101,6 @@ public:
                               nsIContent* aBindingParent,
                               bool aCompileEventHandlers) override;
 
-  virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsAtom* aAttribute,
-                             bool aNotify) override;
-
   virtual nsChangeHint GetAttributeChangeHint(const nsAtom* aAttribute,
                                               int32_t aModType) const override;
 
@@ -119,8 +112,10 @@ public:
    */
   virtual void NodeInfoChanged(nsIDocument* aOldDoc) override;
 
+#ifdef MOZ_OLD_STYLE
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker) override;
   void WalkAnimatedContentStyleRules(nsRuleWalker* aRuleWalker);
+#endif
 
   NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
 
@@ -137,9 +132,7 @@ public:
   static const MappedAttributeEntry sLightingEffectsMap[];
   static const MappedAttributeEntry sMaskMap[];
 
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_DECL_NSIDOMSVGELEMENT
+  NS_DECL_NSIDOMELEMENT
 
   NS_IMPL_FROMCONTENT(nsSVGElement, kNameSpaceID_SVG)
 
@@ -319,7 +312,7 @@ public:
   }
 
   virtual void ClearAnyCachedPath() {}
-  virtual nsIDOMNode* AsDOMNode() final override { return this; }
+  nsIDOMNode* AsDOMNode() final { return this; }
   virtual bool IsTransformable() { return false; }
 
   // WebIDL
@@ -336,26 +329,23 @@ public:
 protected:
   virtual JSObject* WrapNode(JSContext *cx, JS::Handle<JSObject*> aGivenProto) override;
 
-#ifdef DEBUG
   // We define BeforeSetAttr here and mark it final to ensure it is NOT used
   // by SVG elements.
   // This is because we're not currently passing the correct value for aValue to
   // BeforeSetAttr since it would involve allocating extra SVG value types.
   // See the comment in nsSVGElement::WillChangeValue.
-  virtual nsresult BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                 const nsAttrValueOrString* aValue,
-                                 bool aNotify) override final
-  {
-    return nsSVGElementBase::BeforeSetAttr(aNamespaceID, aName, aValue, aNotify);
-  }
-#endif // DEBUG
+  nsresult BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                         const nsAttrValueOrString* aValue,
+                         bool aNotify) final;
   virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
                                 const nsAttrValue* aValue,
                                 const nsAttrValue* aOldValue,
                                 nsIPrincipal* aSubjectPrincipal,
                                 bool aNotify) override;
   virtual bool ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
-                                const nsAString& aValue, nsAttrValue& aResult) override;
+                                const nsAString& aValue,
+                                nsIPrincipal* aMaybeScriptedPrincipal,
+                                nsAttrValue& aResult) override;
   static nsresult ReportAttributeParseFailure(nsIDocument* aDocument,
                                               nsAtom* aAttribute,
                                               const nsAString& aValue);

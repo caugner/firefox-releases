@@ -8,12 +8,10 @@ var addonIDs = ["test_bug393285_1@tests.mozilla.org",
                 "test_bug393285_3a@tests.mozilla.org",
                 "test_bug393285_4@tests.mozilla.org"];
 
-var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-
 const URI_EXTENSION_BLOCKLIST_DIALOG = "chrome://mozapps/content/extensions/blocklist.xul";
 
-Cu.import("resource://testing-common/httpd.js");
-Cu.import("resource://testing-common/MockRegistrar.jsm");
+ChromeUtils.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
 var testserver = new HttpServer();
 testserver.start(-1);
 gPort = testserver.identity.primaryPort;
@@ -28,7 +26,7 @@ profileDir.append("extensions");
 var WindowWatcher = {
   openWindow(parent, url, name, features, args) {
     // Should be called to list the newly blocklisted items
-    do_check_eq(url, URI_EXTENSION_BLOCKLIST_DIALOG);
+    Assert.equal(url, URI_EXTENSION_BLOCKLIST_DIALOG);
 
     // Simulate auto-disabling any softblocks
     var list = args.wrappedJSObject.list;
@@ -57,7 +55,7 @@ function load_blocklist(aFile, aCallback) {
   Services.obs.addObserver(function observer() {
     Services.obs.removeObserver(observer, "blocklist-updated");
 
-    do_execute_soon(aCallback);
+    executeSoon(aCallback);
   }, "blocklist-updated");
 
   Services.prefs.setCharPref("extensions.blocklist.url", "http://localhost:" +
@@ -126,7 +124,7 @@ function run_test() {
 
   AddonManager.getAddonsByIDs(addonIDs, function(addons) {
     for (let addon of addons) {
-      do_check_eq(addon.blocklistState, Ci.nsIBlocklistService.STATE_NOT_BLOCKED);
+      Assert.equal(addon.blocklistState, Ci.nsIBlocklistService.STATE_NOT_BLOCKED);
     }
     run_test_1();
   });
@@ -136,18 +134,15 @@ function run_test_1() {
   load_blocklist("test_bug393285.xml", function() {
     restartManager();
 
-    var blocklist = Cc["@mozilla.org/extensions/blocklist;1"]
-                    .getService(Ci.nsIBlocklistService);
-
     AddonManager.getAddonsByIDs(addonIDs,
                                function([a1, a2, a3, a4]) {
       // No info in blocklist, shouldn't be blocked
-      do_check_false(blocklist.isAddonBlocklisted(a1, null, null));
+      Assert.ok(!Services.blocklist.isAddonBlocklisted(a1, null, null));
 
       // All these should be blocklisted for the current app.
-      do_check_true(blocklist.isAddonBlocklisted(a2, null, null));
-      do_check_true(blocklist.isAddonBlocklisted(a3, null, null));
-      do_check_true(blocklist.isAddonBlocklisted(a4, null, null));
+      Assert.ok(Services.blocklist.isAddonBlocklisted(a2, null, null));
+      Assert.ok(Services.blocklist.isAddonBlocklisted(a3, null, null));
+      Assert.ok(Services.blocklist.isAddonBlocklisted(a4, null, null));
 
       end_test();
     });

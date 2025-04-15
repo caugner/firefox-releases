@@ -22,8 +22,6 @@ HTMLLIElement::~HTMLLIElement()
 {
 }
 
-NS_IMPL_ISUPPORTS_INHERITED0(HTMLLIElement, nsGenericHTMLElement)
-
 NS_IMPL_ELEMENT_CLONE(HTMLLIElement)
 
 // values that are handled case-insensitively
@@ -49,6 +47,7 @@ bool
 HTMLLIElement::ParseAttribute(int32_t aNamespaceID,
                               nsAtom* aAttribute,
                               const nsAString& aValue,
+                              nsIPrincipal* aMaybeScriptedPrincipal,
                               nsAttrValue& aResult)
 {
   if (aNamespaceID == kNameSpaceID_None) {
@@ -63,7 +62,7 @@ HTMLLIElement::ParseAttribute(int32_t aNamespaceID,
   }
 
   return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aResult);
+                                              aMaybeScriptedPrincipal, aResult);
 }
 
 void

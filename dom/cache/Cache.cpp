@@ -17,6 +17,7 @@
 #include "mozilla/dom/cache/CacheChild.h"
 #include "mozilla/dom/cache/CacheWorkerHolder.h"
 #include "mozilla/dom/cache/ReadStream.h"
+#include "mozilla/dom/DOMPrefs.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Unused.h"
@@ -26,8 +27,6 @@ namespace mozilla {
 namespace dom {
 namespace cache {
 
-using mozilla::dom::workers::GetCurrentThreadWorkerPrivate;
-using mozilla::dom::workers::WorkerPrivate;
 using mozilla::ipc::PBackgroundChild;
 
 namespace {
@@ -517,29 +516,6 @@ Cache::Keys(JSContext* aCx, const Optional<RequestOrUSVString>& aRequest,
   return ExecuteOp(args, aRv);
 }
 
-// static
-bool
-Cache::PrefEnabled(JSContext* aCx, JSObject* aObj)
-{
-  using mozilla::dom::workers::WorkerPrivate;
-  using mozilla::dom::workers::GetWorkerPrivateFromContext;
-
-  // If we're on the main thread, then check the pref directly.
-  if (NS_IsMainThread()) {
-    bool enabled = false;
-    Preferences::GetBool("dom.caches.enabled", &enabled);
-    return enabled;
-  }
-
-  // Otherwise check the pref via the work private helper
-  WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(aCx);
-  if (!workerPrivate) {
-    return false;
-  }
-
-  return workerPrivate->DOMCachesEnabled();
-}
-
 nsISupports*
 Cache::GetParentObject() const
 {
@@ -654,7 +630,7 @@ Cache::AddAll(const GlobalObject& aGlobal,
     new FetchHandler(mActor->GetWorkerHolder(), this,
                      Move(aRequestList), promise);
 
-  RefPtr<Promise> fetchPromise = Promise::All(aGlobal, fetchList, aRv);
+  RefPtr<Promise> fetchPromise = Promise::All(aGlobal.Context(), fetchList, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }

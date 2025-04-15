@@ -121,7 +121,7 @@ public:
    * The result is stored in aCombined. If the result would be infinite
    * (because one or both of the clips does no clipping), returns false.
    */
-  bool ComputeRegionInClips(DisplayItemClip* aOldClip,
+  bool ComputeRegionInClips(const DisplayItemClip* aOldClip,
                             const nsPoint& aShift,
                             nsRegion* aCombined) const;
 
@@ -168,7 +168,7 @@ public:
     return mClipRect;
   }
 
-  void MoveBy(nsPoint aPoint);
+  void MoveBy(const nsPoint& aPoint);
 
   nsCString ToString() const;
 

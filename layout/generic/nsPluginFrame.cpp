@@ -280,7 +280,7 @@ nsPluginFrame::PrepForDrawing(nsIWidget *aWidget)
 
   if (mWidget) {
     // Disallow windowed plugins in popups
-    nsIFrame* rootFrame = rpc->PresShell()->FrameManager()->GetRootFrame();
+    nsIFrame* rootFrame = rpc->PresShell()->GetRootFrame();
     nsIWidget* parentWidget = rootFrame->GetNearestWidget();
     if (!parentWidget || nsLayoutUtils::GetDisplayRootFrame(this) != rootFrame) {
       return NS_ERROR_FAILURE;
@@ -632,7 +632,7 @@ nsPluginFrame::CallSetWindow(bool aCheckIsHidden)
   if (!rootPC)
     return NS_ERROR_FAILURE;
   int32_t appUnitsPerDevPixel = presContext->AppUnitsPerDevPixel();
-  nsIFrame* rootFrame = rootPC->PresShell()->FrameManager()->GetRootFrame();
+  nsIFrame* rootFrame = rootPC->PresShell()->GetRootFrame();
   nsRect bounds = GetContentRectRelativeToSelf() + GetOffsetToCrossDoc(rootFrame);
   nsIntRect intBounds = bounds.ToNearestPixels(appUnitsPerDevPixel);
 
@@ -771,7 +771,9 @@ nsPluginFrame::IsHidden(bool aCheckVisibilityStyle) const
     // compatibility w/ 4.x and IE so we don't create a non-painting
     // widget in layout. See bug 188959.
     nsAutoString hidden;
-    if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::hidden, hidden) &&
+    if (mContent->AsElement()->GetAttr(kNameSpaceID_None,
+                                       nsGkAtoms::hidden,
+                                       hidden) &&
        (hidden.IsEmpty() ||
         (!hidden.LowerCaseEqualsLiteral("false") &&
          !hidden.LowerCaseEqualsLiteral("no") &&
@@ -792,7 +794,7 @@ nsPluginFrame::GetRemoteTabChromeOffset()
       if (nsCOMPtr<nsPIDOMWindowOuter> topWindow = window->GetTop()) {
         dom::TabChild* tc = dom::TabChild::GetFrom(topWindow);
         if (tc) {
-          offset += tc->GetChromeDisplacement();
+          offset += tc->GetChromeOffset();
         }
       }
     }
@@ -833,25 +835,18 @@ nsPluginFrame::GetWindowOriginInPixels(bool aWindowless)
 }
 
 void
-nsPluginFrame::DidReflow(nsPresContext*            aPresContext,
-                         const ReflowInput*  aReflowInput,
-                         nsDidReflowStatus         aStatus)
+nsPluginFrame::DidReflow(nsPresContext*     aPresContext,
+                         const ReflowInput* aReflowInput)
 {
   // Do this check before calling the superclass, as that clears
   // NS_FRAME_FIRST_REFLOW
-  if (aStatus == nsDidReflowStatus::FINISHED &&
-      (GetStateBits() & NS_FRAME_FIRST_REFLOW)) {
+  if (GetStateBits() & NS_FRAME_FIRST_REFLOW) {
     nsCOMPtr<nsIObjectLoadingContent> objContent(do_QueryInterface(mContent));
     NS_ASSERTION(objContent, "Why not an object loading content?");
     objContent->HasNewFrame(this);
   }
 
-  nsFrame::DidReflow(aPresContext, aReflowInput, aStatus);
-
-  // The view is created hidden; once we have reflowed it and it has been
-  // positioned then we show it.
-  if (aStatus != nsDidReflowStatus::FINISHED)
-    return;
+  nsFrame::DidReflow(aPresContext, aReflowInput);
 
   if (HasView()) {
     nsView* view = GetView();
@@ -1192,9 +1187,9 @@ nsPluginFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
   // determine if we are printing
   if (type == nsPresContext::eContext_Print) {
-    aLists.Content()->AppendNewToTop(new (aBuilder)
-      nsDisplayGeneric(aBuilder, this, PaintPrintPlugin, "PrintPlugin",
-                       DisplayItemType::TYPE_PRINT_PLUGIN));
+    aLists.Content()->AppendToTop(
+      MakeDisplayItem<nsDisplayGeneric>(aBuilder, this, PaintPrintPlugin, "PrintPlugin",
+                                        DisplayItemType::TYPE_PRINT_PLUGIN));
   } else {
     LayerState state = GetLayerState(aBuilder, nullptr);
     if (state == LAYER_INACTIVE &&
@@ -1204,12 +1199,12 @@ nsPluginFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     if (aBuilder->IsPaintingToWindow() &&
         state == LAYER_ACTIVE &&
         IsTransparentMode()) {
-      aLists.Content()->AppendNewToTop(new (aBuilder)
-        nsDisplayPluginReadback(aBuilder, this));
+      aLists.Content()->AppendToTop(
+        MakeDisplayItem<nsDisplayPluginReadback>(aBuilder, this));
     }
 
-    aLists.Content()->AppendNewToTop(new (aBuilder)
-      nsDisplayPlugin(aBuilder, this));
+    aLists.Content()->AppendToTop(
+      MakeDisplayItem<nsDisplayPlugin>(aBuilder, this));
   }
 }
 
@@ -1314,9 +1309,7 @@ nsPluginFrame::PrintPlugin(gfxContext& aRenderingContext,
 
   // XXX Nav 4.x always sent a SetWindow call after print. Should we do the same?
   // XXX Calling DidReflow here makes no sense!!!
-  nsDidReflowStatus status = nsDidReflowStatus::FINISHED; // should we use a special status?
-  frame->DidReflow(presContext,
-                   nullptr, status);  // DidReflow will take care of it
+  frame->DidReflow(presContext, nullptr);  // DidReflow will take care of it
 }
 
 nsRect

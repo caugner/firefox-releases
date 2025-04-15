@@ -572,8 +572,12 @@ DOMMediaStream::CurrentTime()
   if (!mPlaybackStream) {
     return 0.0;
   }
+  // The value of a MediaStream's CurrentTime will always advance forward; it will never
+  // reset (even if one rewinds a video.) Therefore we can use a single Random Seed
+  // initialized at the same time as the object.
   return nsRFPService::ReduceTimePrecisionAsSecs(mPlaybackStream->
-    StreamTimeToSeconds(mPlaybackStream->GetCurrentTime() - mLogicalStreamStartTime));
+    StreamTimeToSeconds(mPlaybackStream->GetCurrentTime() - mLogicalStreamStartTime),
+    GetRandomTimelineSeed());
 }
 
 already_AddRefed<Promise>
@@ -974,7 +978,7 @@ DOMMediaStream::InitOwnedStreamCommon(MediaStreamGraph* aGraph)
   MOZ_ASSERT(!mPlaybackStream, "Owned stream must be initialized before playback stream");
 
   mOwnedStream = aGraph->CreateTrackUnionStream();
-  mOwnedStream->SetAutofinish(true);
+  mOwnedStream->QueueSetAutofinish(true);
   mOwnedStream->RegisterUser();
   if (mInputStream) {
     mOwnedPort = mOwnedStream->AllocateInputPort(mInputStream);
@@ -989,7 +993,7 @@ void
 DOMMediaStream::InitPlaybackStreamCommon(MediaStreamGraph* aGraph)
 {
   mPlaybackStream = aGraph->CreateTrackUnionStream();
-  mPlaybackStream->SetAutofinish(true);
+  mPlaybackStream->QueueSetAutofinish(true);
   mPlaybackStream->RegisterUser();
   if (mOwnedStream) {
     mPlaybackPort = mPlaybackStream->AllocateInputPort(mOwnedStream);
@@ -1204,6 +1208,7 @@ DOMMediaStream::CloneDOMTrack(MediaStreamTrack& aTrack,
   NotifyTrackAdded(newTrack);
 
   newTrack->SetEnabled(aTrack.Enabled());
+  newTrack->SetMuted(aTrack.Muted());
   newTrack->SetReadyState(aTrack.ReadyState());
 
   if (aTrack.Ended()) {
@@ -1464,9 +1469,6 @@ nsresult
 DOMMediaStream::DispatchTrackEvent(const nsAString& aName,
                                    const RefPtr<MediaStreamTrack>& aTrack)
 {
-  MOZ_ASSERT(aName == NS_LITERAL_STRING("addtrack"),
-             "Only 'addtrack' is supported at this time");
-
   MediaStreamTrackEventInit init;
   init.mTrack = aTrack;
 

@@ -758,7 +758,7 @@ logging::MsgBegin(const char* aTitle, const char* aMsgText, ...)
   uint32_t mins = (PR_IntervalToSeconds(time) / 60) % 60;
   uint32_t secs = PR_IntervalToSeconds(time) % 60;
   uint32_t msecs = PR_IntervalToMilliseconds(time) % 1000;
-  printf("; %02d:%02d.%03d", mins, secs, msecs);
+  printf("; %02u:%02u.%03u", mins, secs, msecs);
 
   printf("\n  {\n");
 }
@@ -834,7 +834,7 @@ logging::Node(const char* aDescr, nsINode* aNode)
   }
 
   nsINode* parentNode = aNode->GetParentNode();
-  int32_t idxInParent = parentNode ? parentNode->IndexOf(aNode) : - 1;
+  int32_t idxInParent = parentNode ? parentNode->ComputeIndexOf(aNode) : - 1;
 
   if (aNode->IsNodeOfType(nsINode::eTEXT)) {
     printf("%s: %p, text node, idx in parent: %d\n",

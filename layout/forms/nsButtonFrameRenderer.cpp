@@ -60,13 +60,14 @@ nsButtonFrameRenderer::GetFrame()
 }
 
 void
-nsButtonFrameRenderer::SetDisabled(bool aDisabled, bool notify)
+nsButtonFrameRenderer::SetDisabled(bool aDisabled, bool aNotify)
 {
+  Element* element = mFrame->GetContent()->AsElement();
   if (aDisabled)
-    mFrame->GetContent()->SetAttr(kNameSpaceID_None, nsGkAtoms::disabled, EmptyString(),
-                                  notify);
+    element->SetAttr(kNameSpaceID_None, nsGkAtoms::disabled, EmptyString(),
+                     aNotify);
   else
-    mFrame->GetContent()->UnsetAttr(kNameSpaceID_None, nsGkAtoms::disabled, notify);
+    element->UnsetAttr(kNameSpaceID_None, nsGkAtoms::disabled, aNotify);
 }
 
 bool
@@ -293,6 +294,17 @@ nsDisplayButtonBorder::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& 
                                                mozilla::layers::WebRenderLayerManager* aManager,
                                                nsDisplayListBuilder* aDisplayListBuilder)
 {
+  // This is really a combination of paint box shadow inner +
+  // paint border.
+  nsRect buttonRect = nsRect(ToReferenceFrame(), mFrame->GetSize());
+  bool snap;
+  nsRegion visible = GetBounds(aDisplayListBuilder, &snap);
+  nsDisplayBoxShadowInner::CreateInsetBoxShadowWebRenderCommands(aBuilder,
+                                                                 aSc,
+                                                                 visible,
+                                                                 mFrame,
+                                                                 buttonRect);
+
   bool borderIsEmpty = false;
   Maybe<nsCSSBorderRenderer> br =
   nsCSSRendering::CreateBorderRenderer(mFrame->PresContext(),
@@ -304,25 +316,8 @@ nsDisplayButtonBorder::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& 
                                        &borderIsEmpty,
                                        mFrame->GetSkipSides());
   if (!br) {
-    if (borderIsEmpty) {
-      return true;
-    }
-    return false;
+    return borderIsEmpty;
   }
-  if (!br->CanCreateWebRenderCommands()) {
-    return false;
-  }
-
-  // This is really a combination of paint box shadow inner +
-  // paint border.
-  nsRect buttonRect = nsRect(ToReferenceFrame(), mFrame->GetSize());
-  bool snap;
-  nsRegion visible = GetBounds(aDisplayListBuilder, &snap);
-  nsDisplayBoxShadowInner::CreateInsetBoxShadowWebRenderCommands(aBuilder,
-                                                                 aSc,
-                                                                 visible,
-                                                                 mFrame,
-                                                                 buttonRect);
 
   br->CreateWebRenderCommands(this, aBuilder, aResources, aSc);
 
@@ -355,7 +350,7 @@ nsDisplayButtonBorder::Paint(nsDisplayListBuilder* aBuilder,
   nsRect r = nsRect(ToReferenceFrame(), mFrame->GetSize());
 
   // draw the border and background inside the focus and outline borders
-  DrawResult result =
+  ImgDrawResult result =
     mBFR->PaintBorder(aBuilder, pc, *aCtx, mVisibleRect, r);
 
   nsDisplayItemGenericImageGeometry::UpdateDrawResult(this, result);
@@ -435,7 +430,7 @@ void nsDisplayButtonForeground::Paint(nsDisplayListBuilder* aBuilder,
     nsRect r = nsRect(ToReferenceFrame(), mFrame->GetSize());
 
     // Draw the -moz-focus-inner border
-    DrawResult result =
+    ImgDrawResult result =
       mBFR->PaintInnerFocusBorder(aBuilder, presContext, *aCtx, mVisibleRect, r);
 
     nsDisplayItemGenericImageGeometry::UpdateDrawResult(this, result);
@@ -469,13 +464,7 @@ nsDisplayButtonForeground::CreateWebRenderCommands(mozilla::wr::DisplayListBuild
   }
 
   if (!br) {
-    if (borderIsEmpty) {
-      return true;
-    }
-    return false;
-  }
-  if (!br->CanCreateWebRenderCommands()) {
-    return false;
+    return borderIsEmpty;
   }
 
   br->CreateWebRenderCommands(this, aBuilder, aResources, aSc);
@@ -488,8 +477,8 @@ nsButtonFrameRenderer::DisplayButton(nsDisplayListBuilder* aBuilder,
                                      nsDisplayList* aForeground)
 {
   if (mFrame->StyleEffects()->mBoxShadow) {
-    aBackground->AppendNewToTop(new (aBuilder)
-      nsDisplayButtonBoxShadowOuter(aBuilder, this));
+    aBackground->AppendToTop(
+      MakeDisplayItem<nsDisplayButtonBoxShadowOuter>(aBuilder, this));
   }
 
   nsRect buttonRect = mFrame->GetRectRelativeToSelf();
@@ -497,14 +486,14 @@ nsButtonFrameRenderer::DisplayButton(nsDisplayListBuilder* aBuilder,
   nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
     aBuilder, mFrame, buttonRect, aBackground);
 
-  aBackground->AppendNewToTop(new (aBuilder)
-    nsDisplayButtonBorder(aBuilder, this));
+  aBackground->AppendToTop(
+    MakeDisplayItem<nsDisplayButtonBorder>(aBuilder, this));
 
   // Only display focus rings if we actually have them. Since at most one
   // button would normally display a focus ring, most buttons won't have them.
   if (mInnerFocusStyle && mInnerFocusStyle->StyleBorder()->HasBorder()) {
-    aForeground->AppendNewToTop(new (aBuilder)
-      nsDisplayButtonForeground(aBuilder, this));
+    aForeground->AppendToTop(
+      MakeDisplayItem<nsDisplayButtonForeground>(aBuilder, this));
   }
   return NS_OK;
 }
@@ -522,7 +511,7 @@ nsButtonFrameRenderer::GetButtonInnerFocusRect(const nsRect& aRect, nsRect& aRes
   aResult.Inflate(innerFocusPadding);
 }
 
-DrawResult
+ImgDrawResult
 nsButtonFrameRenderer::PaintInnerFocusBorder(
   nsDisplayListBuilder* aBuilder,
   nsPresContext* aPresContext,
@@ -539,7 +528,7 @@ nsButtonFrameRenderer::PaintInnerFocusBorder(
                          ? PaintBorderFlags::SYNC_DECODE_IMAGES
                          : PaintBorderFlags();
 
-  DrawResult result = DrawResult::SUCCESS;
+  ImgDrawResult result = ImgDrawResult::SUCCESS;
 
   if (mInnerFocusStyle) {
     GetButtonInnerFocusRect(aRect, rect);
@@ -578,7 +567,7 @@ nsButtonFrameRenderer::CreateInnerFocusBorderRenderer(
   return Nothing();
 }
 
-DrawResult
+ImgDrawResult
 nsButtonFrameRenderer::PaintBorder(
   nsDisplayListBuilder* aBuilder,
   nsPresContext* aPresContext,
@@ -597,7 +586,7 @@ nsButtonFrameRenderer::PaintBorder(
   nsCSSRendering::PaintBoxShadowInner(aPresContext, aRenderingContext,
                                       mFrame, buttonRect);
 
-  DrawResult result =
+  ImgDrawResult result =
     nsCSSRendering::PaintBorder(aPresContext, aRenderingContext, mFrame,
                                 aDirtyRect, buttonRect, context, borderFlags);
 

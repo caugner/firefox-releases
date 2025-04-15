@@ -8,23 +8,16 @@
 #define mozilla_layers_APZUtils_h
 
 #include <stdint.h>                     // for uint32_t
+#include "FrameMetrics.h"
 #include "LayersTypes.h"
 #include "UnitTransforms.h"
+#include "mozilla/gfx/CompositorHitTestInfo.h"
 #include "mozilla/gfx/Point.h"
+#include "mozilla/EnumSet.h"
 #include "mozilla/FloatingPoint.h"
 
 namespace mozilla {
 namespace layers {
-
-enum HitTestResult {
-  HitNothing,
-  HitLayer,
-  HitLayerTouchActionNone,
-  HitLayerTouchActionPanX,
-  HitLayerTouchActionPanY,
-  HitLayerTouchActionPanXY,
-  HitDispatchToContentRegion,
-};
 
 enum CancelAnimationFlags : uint32_t {
   Default = 0x0,             /* Cancel all animations */
@@ -41,6 +34,8 @@ operator|(CancelAnimationFlags a, CancelAnimationFlags b)
   return static_cast<CancelAnimationFlags>(static_cast<int>(a)
                                          | static_cast<int>(b));
 }
+
+typedef EnumSet<ScrollDirection> ScrollDirections;
 
 enum class ScrollSource {
   // scrollTo() or something similar.
@@ -82,6 +77,42 @@ CompleteAsyncTransform(const AsyncTransformComponentMatrix& aMatrix)
   return ViewAs<AsyncTransformMatrix>(aMatrix,
       PixelCastJustification::MultipleAsyncTransforms);
 }
+
+struct TargetConfirmationFlags {
+  explicit TargetConfirmationFlags(bool aTargetConfirmed)
+    : mTargetConfirmed(aTargetConfirmed)
+    , mRequiresTargetConfirmation(false)
+  {}
+
+  explicit TargetConfirmationFlags(gfx::CompositorHitTestInfo aHitTestInfo)
+    : mTargetConfirmed(aHitTestInfo != gfx::CompositorHitTestInfo::eInvisibleToHitTest &&
+                       !(aHitTestInfo & gfx::CompositorHitTestInfo::eDispatchToContent))
+    , mRequiresTargetConfirmation(aHitTestInfo & gfx::CompositorHitTestInfo::eRequiresTargetConfirmation)
+  {}
+
+  bool mTargetConfirmed : 1;
+  bool mRequiresTargetConfirmation : 1;
+};
+
+namespace apz {
+
+/**
+ * Initializes the global state used in AsyncPanZoomController.
+ * This is normally called when it is first needed in the constructor
+ * of APZCTreeManager, but can be called manually to force it to be
+ * initialized earlier.
+ */
+void InitializeGlobalState();
+
+/**
+ * See AsyncPanZoomController::CalculatePendingDisplayPort. This
+ * function simply delegates to that one, so that non-layers code
+ * never needs to include AsyncPanZoomController.h
+ */
+const ScreenMargin CalculatePendingDisplayPort(const FrameMetrics& aFrameMetrics,
+                                               const ParentLayerPoint& aVelocity);
+
+} // namespace apz
 
 } // namespace layers
 } // namespace mozilla

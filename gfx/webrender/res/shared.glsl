@@ -8,19 +8,16 @@
 #extension GL_OES_EGL_image_external_essl3 : require
 #endif
 
+#ifdef WR_FEATURE_DUAL_SOURCE_BLENDING
+#extension GL_ARB_explicit_attrib_location : require
+#endif
+
 #include base
 
-// The textureLod() doesn't support samplerExternalOES for WR_FEATURE_TEXTURE_EXTERNAL.
-// https://www.khronos.org/registry/OpenGL/extensions/OES/OES_EGL_image_external_essl3.txt
-//
-// The textureLod() doesn't support sampler2DRect for WR_FEATURE_TEXTURE_RECT, too.
-//
-// Use texture() instead.
 #if defined(WR_FEATURE_TEXTURE_EXTERNAL) || defined(WR_FEATURE_TEXTURE_RECT) || defined(WR_FEATURE_TEXTURE_2D)
 #define TEX_SAMPLE(sampler, tex_coord) texture(sampler, tex_coord.xy)
 #else
-// In normal case, we use textureLod(). We haven't used the lod yet. So, we always pass 0.0 now.
-#define TEX_SAMPLE(sampler, tex_coord) textureLod(sampler, tex_coord, 0.0)
+#define TEX_SAMPLE(sampler, tex_coord) texture(sampler, tex_coord)
 #endif
 
 //======================================================================================
@@ -46,7 +43,12 @@
     // Uniform inputs
 
     // Fragment shader outputs
-    out vec4 oFragColor;
+    #ifdef WR_FEATURE_DUAL_SOURCE_BLENDING
+        layout(location = 0, index = 0) out vec4 oFragColor;
+        layout(location = 0, index = 1) out vec4 oFragBlend;
+    #else
+        out vec4 oFragColor;
+    #endif
 #endif
 
 //======================================================================================

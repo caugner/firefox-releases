@@ -134,15 +134,6 @@ public:
                   const nsACString &hostRoute, uint16_t portRoute,
                   nsIProxyInfo *proxyInfo);
 
-    // Alternative Init method for when the IP-address of the host
-    // has been pre-resolved using a alternative means (e.g. FlyWeb service
-    // info).
-    nsresult InitPreResolved(const char **socketTypes, uint32_t typeCount,
-                             const nsACString &host, uint16_t port,
-                             const nsACString &hostRoute, uint16_t portRoute,
-                             nsIProxyInfo *proxyInfo,
-                             const mozilla::net::NetAddr* addr);
-
     // this method instructs the socket transport to use an already connected
     // socket with the given address.
     nsresult InitWithConnectedSocket(PRFileDesc *socketFD,
@@ -154,23 +145,25 @@ public:
                                      const NetAddr* aAddr,
                                      nsISupports* aSecInfo);
 
+#ifdef XP_UNIX
     // This method instructs the socket transport to open a socket
     // connected to the given Unix domain address. We can only create
     // unlayered, simple, stream sockets.
     nsresult InitWithFilename(const char *filename);
+#endif
 
     // nsASocketHandler methods:
     void OnSocketReady(PRFileDesc *, int16_t outFlags) override;
     void OnSocketDetached(PRFileDesc *) override;
     void IsLocal(bool *aIsLocal) override;
-    void OnKeepaliveEnabledPrefChange(bool aEnabled) override final;
+    void OnKeepaliveEnabledPrefChange(bool aEnabled) final;
 
     // called when a socket event is handled
     void OnSocketEvent(uint32_t type, nsresult status, nsISupports *param);
 
     uint64_t ByteCountReceived() override { return mInput.ByteCount(); }
     uint64_t ByteCountSent() override { return mOutput.ByteCount(); }
-    static void CloseSocket(PRFileDesc *aFd, nsSocketTransportService *aSTS);
+    static void CloseSocket(PRFileDesc *aFd, bool aTelemetryEnabled);
     static void SendPRBlockingTelemetry(PRIntervalTime aStart,
         Telemetry::HistogramID aIDNormal,
         Telemetry::HistogramID aIDShutdown,
@@ -350,7 +343,6 @@ private:
     NetAddr                 mSelfAddr; // getsockname()
     Atomic<bool, Relaxed>   mNetAddrIsSet;
     Atomic<bool, Relaxed>   mSelfAddrIsSet;
-    Atomic<bool, Relaxed>   mNetAddrPreResolved;
 
     nsAutoPtr<NetAddr>      mBindAddr;
 

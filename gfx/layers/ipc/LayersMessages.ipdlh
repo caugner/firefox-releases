@@ -71,7 +71,6 @@ struct OpCreatePaintedLayer    { LayerHandle layer; };
 struct OpCreateContainerLayer  { LayerHandle layer; };
 struct OpCreateImageLayer      { LayerHandle layer; };
 struct OpCreateColorLayer      { LayerHandle layer; };
-struct OpCreateTextLayer       { LayerHandle layer; };
 struct OpCreateBorderLayer       { LayerHandle layer; };
 struct OpCreateCanvasLayer     { LayerHandle layer; };
 struct OpCreateRefLayer        { LayerHandle layer; };
@@ -242,6 +241,15 @@ struct Animation {
   nsCSSPropertyID property;
   AnimationData data;
   float playbackRate;
+  // When performing an asynchronous update to the playbackRate, |playbackRate|
+  // above is the updated playbackRate while |previousPlaybackRate| is the
+  // existing playbackRate. This is used by AnimationInfo to update the
+  // startTime based on the 'readyTime' (timestamp at the end of painting)
+  // and is not used beyond that point.
+  //
+  // It is set to numeric_limits<float>::quiet_NaN() when no asynchronous update
+  // to the playbackRate is being performed.
+  float previousPlaybackRate;
   // This is used in the transformed progress calculation.
   TimingFunction easingFunction;
   uint8_t iterationComposite;
@@ -295,9 +303,6 @@ struct GlyphArray
   Glyph[] glyphs;
 };
 
-// XXX - Bas - Hack warning! This is using a raw pointer to a ScaledFont*
-// and won't work with e10s.
-struct TextLayerAttributes      { IntRect bounds; GlyphArray[] glyphs; uintptr_t scaledFont; };
 struct ColorLayerAttributes     { LayerColor color; IntRect bounds; };
 struct CanvasLayerAttributes    { SamplingFilter samplingFilter; IntRect bounds; };
 struct RefLayerAttributes {
@@ -318,7 +323,6 @@ union SpecificLayerAttributes {
   ContainerLayerAttributes;
   ColorLayerAttributes;
   CanvasLayerAttributes;
-  TextLayerAttributes;
   RefLayerAttributes;
   ImageLayerAttributes;
   BorderLayerAttributes;
@@ -389,8 +393,8 @@ struct TexturedTileDescriptor {
   PTexture texture;
   MaybeTexture textureOnWhite;
   IntRect updateRect;
-  ReadLockDescriptor sharedLock;
-  ReadLockDescriptor sharedLockOnWhite;
+  bool readLocked;
+  bool readLockedOnWhite;
   bool wasPlaceholder;
 };
 
@@ -435,11 +439,11 @@ struct OpRemoveTexture {
 
 struct TimedTexture {
   PTexture texture;
-  ReadLockHandle sharedLock;
   TimeStamp timeStamp;
   IntRect picture;
   uint32_t frameID;
   uint32_t producerID;
+  bool readLocked;
 };
 
 /**
@@ -459,8 +463,8 @@ struct OpUseTexture {
 struct OpUseComponentAlphaTextures {
   PTexture textureOnBlack;
   PTexture textureOnWhite;
-  ReadLockHandle sharedLockBlack;
-  ReadLockHandle sharedLockWhite;
+  bool readLockedBlack;
+  bool readLockedWhite;
 };
 
 union MaybeRegion {
@@ -497,7 +501,6 @@ union Edit {
   OpCreateContainerLayer;
   OpCreateImageLayer;
   OpCreateColorLayer;
-  OpCreateTextLayer;
   OpCreateBorderLayer;
   OpCreateCanvasLayer;
   OpCreateRefLayer;

@@ -61,7 +61,8 @@ protected:
 };
 
 
-class nsJSURI : public mozilla::net::nsSimpleURI
+class nsJSURI final
+    : public mozilla::net::nsSimpleURI
 {
 public:
     using mozilla::net::nsSimpleURI::Read;
@@ -81,6 +82,7 @@ public:
     // nsIURI overrides
     virtual mozilla::net::nsSimpleURI* StartClone(RefHandlingEnum refHandlingMode,
                                                   const nsACString& newRef) override;
+    NS_IMETHOD Mutate(nsIURIMutator * *_retval) override;
 
     // nsISerializable overrides
     NS_IMETHOD Read(nsIObjectInputStream* aStream) override;
@@ -92,7 +94,7 @@ public:
     // Override the nsIClassInfo method GetClassIDNoAlloc to make sure our
     // nsISerializable impl works right.
     NS_IMETHOD GetClassIDNoAlloc(nsCID *aClassIDNoAlloc) override;
-    //NS_IMETHOD QueryInterface( const nsIID& aIID, void** aInstancePtr );
+    //NS_IMETHOD QueryInterface( const nsIID& aIID, void** aInstancePtr ) override;
 
 protected:
     virtual ~nsJSURI() {}
@@ -100,8 +102,28 @@ protected:
     virtual nsresult EqualsInternal(nsIURI* other,
                                     RefHandlingEnum refHandlingMode,
                                     bool* result) override;
+    bool Deserialize(const mozilla::ipc::URIParams&);
+
 private:
     nsCOMPtr<nsIURI> mBaseURI;
+
+public:
+    class Mutator final
+        : public nsIURIMutator
+        , public BaseURIMutator<nsJSURI>
+    {
+        NS_DECL_ISUPPORTS
+        NS_FORWARD_SAFE_NSIURISETTERS_RET(mURI)
+        NS_DEFINE_NSIMUTATOR_COMMON
+
+        explicit Mutator() { }
+    private:
+        virtual ~Mutator() { }
+
+        friend class nsJSURI;
+    };
+
+    friend BaseURIMutator<nsJSURI>;
 };
 
 #endif /* nsJSProtocolHandler_h___ */

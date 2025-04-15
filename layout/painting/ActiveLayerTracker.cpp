@@ -11,6 +11,7 @@
 #include "mozilla/gfx/Matrix.h"
 #include "mozilla/EffectSet.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/RuleNodeCacheConditions.h"
 #include "gfx2DGlue.h"
 #include "nsExpirationTracker.h"
 #include "nsContainerFrame.h"
@@ -95,7 +96,7 @@ public:
   nsExpirationState mState;
 
   // Previous scale due to the CSS transform property.
-  Maybe<gfxSize> mPreviousTransformScale;
+  Maybe<Size> mPreviousTransformScale;
 
   // The scroll frame during for which we most recently received a call to
   // NotifyAnimatedFromScrollHandler.
@@ -124,7 +125,7 @@ public:
     AgeAllGenerations();
   }
 
-  virtual void NotifyExpired(LayerActivity* aObject);
+  virtual void NotifyExpired(LayerActivity* aObject) override;
 
 public:
   WeakFrame mCurrentScrollHandlerFrame;
@@ -248,7 +249,8 @@ static void
 IncrementScaleRestyleCountIfNeeded(nsIFrame* aFrame, LayerActivity* aActivity)
 {
   const nsStyleDisplay* display = aFrame->StyleDisplay();
-  if (!display->mSpecifiedTransform) {
+  RefPtr<nsCSSValueSharedList> transformList = display->GetCombinedTransform();
+  if (!transformList) {
     // The transform was removed.
     aActivity->mPreviousTransformScale = Nothing();
     IncrementMutationCount(&aActivity->mRestyleCounts[LayerActivity::ACTIVITY_SCALE]);
@@ -261,7 +263,7 @@ IncrementScaleRestyleCountIfNeeded(nsIFrame* aFrame, LayerActivity* aActivity)
   bool dummyBool;
   nsStyleTransformMatrix::TransformReferenceBox refBox(aFrame);
   Matrix4x4 transform =
-    nsStyleTransformMatrix::ReadTransforms(display->mSpecifiedTransform->mHead,
+    nsStyleTransformMatrix::ReadTransforms(transformList->mHead,
                                            aFrame->StyleContext(),
                                            presContext,
                                            dummy, refBox,
@@ -275,7 +277,7 @@ IncrementScaleRestyleCountIfNeeded(nsIFrame* aFrame, LayerActivity* aActivity)
     return;
   }
 
-  gfxSize scale = ThebesMatrix(transform2D).ScaleFactors(true);
+  Size scale = transform2D.ScaleFactors(true);
   if (aActivity->mPreviousTransformScale == Some(scale)) {
     return;  // Nothing changed.
   }

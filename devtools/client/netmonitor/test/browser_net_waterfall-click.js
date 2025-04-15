@@ -7,30 +7,26 @@
  * Test that clicking on the waterfall opens the timing sidebar panel.
  */
 
-add_task(function* () {
-  let { tab, monitor } = yield initNetMonitor(CONTENT_TYPE_WITHOUT_CACHE_URL);
+add_task(async function () {
+  let { tab, monitor } = await initNetMonitor(CONTENT_TYPE_WITHOUT_CACHE_URL);
   let { document } = monitor.panelWin;
 
-  yield performRequestsAndWait();
-
-  let wait = waitForDOM(document, "#timings-panel");
-  let timing = document.querySelectorAll(".requests-list-timings")[0];
+  let onAllEvents = waitForNetworkEvents(monitor, CONTENT_TYPE_WITHOUT_CACHE_REQUESTS);
+  await ContentTask.spawn(tab.linkedBrowser, {}, async function () {
+    content.wrappedJSObject.performRequests();
+  });
+  await onAllEvents;
 
   info("Clicking waterfall and waiting for panel update.");
-  EventUtils.synthesizeMouseAtCenter(timing, {}, monitor.panelWin);
+  let wait = waitForDOM(document, "#timings-panel");
 
-  yield wait;
+  EventUtils.sendMouseEvent({ type: "mousedown" },
+    document.querySelectorAll(".requests-list-timings")[0]);
+
+  await wait;
 
   ok(document.querySelector("#timings-tab[aria-selected=true]"),
      "Timings tab is selected.");
 
   return teardown(monitor);
-
-  function* performRequestsAndWait() {
-    let onAllEvents = waitForNetworkEvents(monitor, CONTENT_TYPE_WITHOUT_CACHE_REQUESTS);
-    yield ContentTask.spawn(tab.linkedBrowser, {}, function* () {
-      content.wrappedJSObject.performRequests();
-    });
-    yield onAllEvents;
-  }
 });

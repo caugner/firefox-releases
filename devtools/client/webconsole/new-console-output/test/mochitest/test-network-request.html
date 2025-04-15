@@ -7,7 +7,7 @@
     <meta charset="utf-8">
     <title>Console HTTP test page</title>
     <script type="text/javascript">
-      /* exported testXhrGet, testXhrWarn, testXhrPost */
+      /* exported testXhrGet, testXhrWarn, testXhrPost, testXhrPostSlowResponse */
       "use strict";
 
       function makeXhr(method, url, requestBody, callback) {
@@ -26,11 +26,15 @@
       }
 
       function testXhrWarn(callback) {
-        makeXhr("get", "http://example.com/browser/devtools/client/netmonitor/test/sjs_cors-test-server.sjs", null, callback);
+        makeXhr("get", "sjs_cors-test-server.sjs", null, callback);
       }
 
       function testXhrPost(callback) {
         makeXhr("post", "test-data.json", "Hello world!", callback);
+      }
+
+      function testXhrPostSlowResponse(callback) {
+        makeXhr("post", "sjs_slow-response-test-server.sjs", "Hello world!", callback);
       }
     </script>
   </head>
@@ -38,7 +42,7 @@
     <h1>Heads Up Display HTTP Logging Testpage</h1>
     <h2>This page is used to test the HTTP logging.</h2>
 
-    <form action="https://example.com/browser/devtools/client/webconsole/test/test-network-request.html" method="post">
+    <form action="test-network-request.html" method="post">
       <input name="name" type="text" value="foo bar"><br>
       <input name="age" type="text" value="144"><br>
     </form>

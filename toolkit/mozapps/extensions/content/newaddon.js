@@ -4,12 +4,8 @@
 
 /* exported cancelClicked, continueClicked, initialize, restartClicked, unload */
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
-
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/AddonManager.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
 
 var gAddon = null;
 
@@ -124,9 +120,7 @@ function restartClicked() {
 
   window.close();
 
-  let appStartup = Components.classes["@mozilla.org/toolkit/app-startup;1"].
-                   getService(Components.interfaces.nsIAppStartup);
-  appStartup.quit(Ci.nsIAppStartup.eAttemptQuit | Ci.nsIAppStartup.eRestart);
+  Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit | Ci.nsIAppStartup.eRestart);
 }
 
 function cancelClicked() {

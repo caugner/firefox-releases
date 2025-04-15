@@ -4,10 +4,8 @@
 
 'use strict';
 
-const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
-
-Cu.import('resource://gre/modules/XPCOMUtils.jsm');
-Cu.import('resource://gre/modules/Services.jsm');
+ChromeUtils.import('resource://gre/modules/XPCOMUtils.jsm');
+ChromeUtils.import('resource://gre/modules/Services.jsm');
 
 var pcs;
 
@@ -16,7 +14,7 @@ function makeJointSuccess(names) {
   let funcs = {}, successCount = 0;
   names.forEach(function(name) {
     funcs[name] = function() {
-      do_print('got expected: ' + name);
+      info('got expected: ' + name);
       if (++successCount === names.length)
         run_next_test();
     };
@@ -390,7 +388,7 @@ function run_test() {
 
   Services.prefs.setBoolPref("dom.presentation.tcp_server.debug", true);
 
-  do_register_cleanup(() => {
+  registerCleanupFunction(() => {
     Services.prefs.clearUserPref("dom.presentation.tcp_server.debug");
   });
 

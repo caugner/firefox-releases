@@ -25,13 +25,13 @@
 #include "nsCaret.h"
 #include "nsContentUtils.h"
 #include "nsGkAtoms.h"
-#include "nsIDOMSVGLength.h"
 #include "nsISelection.h"
 #include "nsQuickSort.h"
 #include "SVGObserverUtils.h"
 #include "nsSVGOuterSVGFrame.h"
 #include "nsSVGPaintServerFrame.h"
 #include "mozilla/dom/SVGRect.h"
+#include "mozilla/dom/SVGTextContentElementBinding.h"
 #include "nsSVGIntegrationUtils.h"
 #include "nsSVGUtils.h"
 #include "nsTArray.h"
@@ -53,6 +53,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using namespace mozilla::dom::SVGTextContentElementBinding;
 using namespace mozilla::gfx;
 using namespace mozilla::image;
 
@@ -2734,7 +2735,7 @@ public:
     aRun.GetClipEdges(mVisIStartEdge, mVisIEndEdge);
   }
 
-  NS_DISPLAY_DECL_NAME("SVGText", TYPE_TEXT)
+  NS_DISPLAY_DECL_NAME("SVGCharClip", TYPE_SVG_CHAR_CLIP)
 };
 
 // -----------------------------------------------------------------------------
@@ -3202,8 +3203,8 @@ SVGTextFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     return;
   }
   DisplayOutline(aBuilder, aLists);
-  aLists.Content()->AppendNewToTop(
-    new (aBuilder) nsDisplaySVGText(aBuilder, this));
+  aLists.Content()->AppendToTop(
+    MakeDisplayItem<nsDisplaySVGText>(aBuilder, this));
 }
 
 nsresult
@@ -3337,44 +3338,33 @@ SVGTextFrame::ScheduleReflowSVGNonDisplayText(nsIPresShell::IntrinsicDirty aReas
 NS_IMPL_ISUPPORTS(SVGTextFrame::MutationObserver, nsIMutationObserver)
 
 void
-SVGTextFrame::MutationObserver::ContentAppended(nsIDocument* aDocument,
-                                                nsIContent* aContainer,
-                                                nsIContent* aFirstNewContent)
+SVGTextFrame::MutationObserver::ContentAppended(nsIContent* aFirstNewContent)
 {
   mFrame->NotifyGlyphMetricsChange();
 }
 
 void
-SVGTextFrame::MutationObserver::ContentInserted(
-                                        nsIDocument* aDocument,
-                                        nsIContent* aContainer,
-                                        nsIContent* aChild)
+SVGTextFrame::MutationObserver::ContentInserted(nsIContent* aChild)
 {
   mFrame->NotifyGlyphMetricsChange();
 }
 
 void
-SVGTextFrame::MutationObserver::ContentRemoved(
-                                       nsIDocument *aDocument,
-                                       nsIContent* aContainer,
-                                       nsIContent* aChild,
-                                       nsIContent* aPreviousSibling)
+SVGTextFrame::MutationObserver::ContentRemoved(nsIContent* aChild,
+                                               nsIContent* aPreviousSibling)
 {
   mFrame->NotifyGlyphMetricsChange();
 }
 
 void
-SVGTextFrame::MutationObserver::CharacterDataChanged(
-                                                 nsIDocument* aDocument,
-                                                 nsIContent* aContent,
-                                                 CharacterDataChangeInfo* aInfo)
+SVGTextFrame::MutationObserver::CharacterDataChanged(nsIContent* aContent,
+                                                     const CharacterDataChangeInfo&)
 {
   mFrame->NotifyGlyphMetricsChange();
 }
 
 void
 SVGTextFrame::MutationObserver::AttributeChanged(
-                                                nsIDocument* aDocument,
                                                 mozilla::dom::Element* aElement,
                                                 int32_t aNameSpaceID,
                                                 nsAtom* aAttribute,
@@ -3423,9 +3413,8 @@ SVGTextFrame::HandleAttributeChangeInDescendant(Element* aElement,
 }
 
 void
-SVGTextFrame::FindCloserFrameForSelection(
-                                 nsPoint aPoint,
-                                 nsIFrame::FrameWithDistance* aCurrentBestFrame)
+SVGTextFrame::FindCloserFrameForSelection(const nsPoint& aPoint,
+                                          FrameWithDistance* aCurrentBestFrame)
 {
   if (GetStateBits() & NS_FRAME_IS_NONDISPLAY) {
     return;
@@ -4344,8 +4333,9 @@ SVGTextFrame::GetStartPositionOfChar(nsIContent* aContent,
   // We need to return the start position of the whole glyph.
   uint32_t startIndex = it.GlyphStartTextElementCharIndex();
 
-  NS_ADDREF(*aResult =
-    new DOMSVGPoint(ToPoint(mPositions[startIndex].mPosition)));
+  RefPtr<DOMSVGPoint> point =
+    new DOMSVGPoint(ToPoint(mPositions[startIndex].mPosition));
+  point.forget(aResult);
   return NS_OK;
 }
 
@@ -4389,7 +4379,8 @@ SVGTextFrame::GetEndPositionOfChar(nsIContent* aContent,
     Matrix::Translation(ToPoint(mPositions[startIndex].mPosition));
   Point p = m.TransformPoint(Point(advance / mFontSizeScaleFactor, 0));
 
-  NS_ADDREF(*aResult = new DOMSVGPoint(p));
+  RefPtr<DOMSVGPoint> point = new DOMSVGPoint(p);
+  point.forget(aResult);
   return NS_OK;
 }
 
@@ -4456,7 +4447,8 @@ SVGTextFrame::GetExtentOfChar(nsIContent* aContent,
   // Transform the glyph's rect into user space.
   gfxRect r = m.TransformBounds(glyphRect);
 
-  NS_ADDREF(*aResult = new dom::SVGRect(aContent, r.x, r.y, r.width, r.height));
+  RefPtr<dom::SVGRect> rect = new dom::SVGRect(aContent, r.x, r.y, r.width, r.height);
+  rect.forget(aResult);
   return NS_OK;
 }
 
@@ -4581,15 +4573,22 @@ SVGTextFrame::ResolvePositionsForNode(nsIContent* aContent,
   }
 
   if (aContent->IsSVGElement(nsGkAtoms::textPath)) {
-    // <textPath> elements are as if they are specified with x="0" y="0", but
-    // only if they actually have some text content.
+    // <textPath> elements behave as if they have x="0" y="0" on them, but only
+    // if there is not a value for the coordinates that got inherited from a
+    // parent.  We skip this if there is no text content, so that empty
+    // <textPath>s don't interrupt the layout of text in the parent element.
     if (HasTextContent(aContent)) {
       if (MOZ_UNLIKELY(aIndex >= mPositions.Length())) {
         MOZ_ASSERT_UNREACHABLE("length of mPositions does not match characters "
                                "found by iterating content");
         return false;
       }
-      mPositions[aIndex].mPosition = gfxPoint();
+      if (!mPositions[aIndex].IsXSpecified()) {
+        mPositions[aIndex].mPosition.x = 0.0;
+      }
+      if (!mPositions[aIndex].IsYSpecified()) {
+        mPositions[aIndex].mPosition.y = 0.0;
+      }
       mPositions[aIndex].mStartOfChunk = true;
     }
   } else if (!aContent->IsSVGElement(nsGkAtoms::a)) {
@@ -5291,10 +5290,10 @@ SVGTextFrame::DoGlyphPositioning()
     float actualTextLength =
       static_cast<float>(presContext->AppUnitsToGfxUnits(frameLength) * factor);
 
-    RefPtr<SVGAnimatedEnumeration> lengthAdjustEnum = element->LengthAdjust();
-    uint16_t lengthAdjust = lengthAdjustEnum->AnimVal();
+    uint16_t lengthAdjust =
+      element->EnumAttributes()[SVGTextContentElement::LENGTHADJUST].GetAnimValue();
     switch (lengthAdjust) {
-      case SVG_LENGTHADJUST_SPACINGANDGLYPHS:
+      case LENGTHADJUST_SPACINGANDGLYPHS:
         // Scale the glyphs and their positions.
         if (actualTextLength > 0) {
           mLengthAdjustScaleFactor = expectedTextLength / actualTextLength;
@@ -5302,7 +5301,7 @@ SVGTextFrame::DoGlyphPositioning()
         break;
 
       default:
-        MOZ_ASSERT(lengthAdjust == SVG_LENGTHADJUST_SPACING);
+        MOZ_ASSERT(lengthAdjust == LENGTHADJUST_SPACING);
         // Just add space between each glyph.
         int32_t adjustableSpaces = 0;
         for (uint32_t i = 1; i < mPositions.Length(); i++) {
@@ -5531,7 +5530,7 @@ SVGTextFrame::DoReflow()
                "does not get styled");
 
   kid->Reflow(presContext, desiredSize, reflowInput, status);
-  kid->DidReflow(presContext, &reflowInput, nsDidReflowStatus::FINISHED);
+  kid->DidReflow(presContext, &reflowInput);
   kid->SetSize(wm, desiredSize.Size(wm));
 
   RemoveStateBits(NS_STATE_SVG_TEXT_IN_REFLOW);

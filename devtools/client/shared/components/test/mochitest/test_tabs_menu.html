@@ -13,7 +13,6 @@ Test all-tabs menu.
   <link rel="stylesheet" type="text/css" href="chrome://mochikit/content/tests/SimpleTest/test.css">
   <link rel="stylesheet" type="text/css" href="resource://devtools/client/themes/variables.css">
   <link rel="stylesheet" type="text/css" href="resource://devtools/client/themes/common.css">
-  <link rel="stylesheet" type="text/css" href="resource://devtools/client/themes/light-theme.css">
   <link rel="stylesheet" type="text/css" href="resource://devtools/client/shared/components/tabs/Tabs.css">
   <link rel="stylesheet" type="text/css" href="resource://devtools/client/shared/components/tabs/TabBar.css">
   <link rel="stylesheet" type="text/css" href="resource://devtools/client/inspector/components/side-panel.css">
@@ -26,7 +25,8 @@ Test all-tabs menu.
 window.onload = Task.async(function* () {
   try {
     const ReactDOM = browserRequire("devtools/client/shared/vendor/react-dom");
-    const { Component, createFactory, DOM } = browserRequire("devtools/client/shared/vendor/react");
+    const { Component, createFactory } = browserRequire("devtools/client/shared/vendor/react");
+    const dom = require("devtools/client/shared/vendor/react-dom-factories");
     const Tabbar = createFactory(browserRequire("devtools/client/shared/components/tabs/TabBar"));
 
     // Create container for the TabBar. Set smaller width
@@ -47,7 +47,7 @@ window.onload = Task.async(function* () {
 
     class TabPanelClass extends Component {
       render() {
-        return DOM.div({}, "content");
+        return dom.div({}, "content");
       }
     }
 

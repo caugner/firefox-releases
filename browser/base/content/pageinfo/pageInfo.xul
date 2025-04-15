@@ -9,6 +9,10 @@
 <!DOCTYPE window [
   <!ENTITY % pageInfoDTD SYSTEM "chrome://browser/locale/pageInfo.dtd">
   %pageInfoDTD;
+#ifdef XP_MACOSX
+  <!ENTITY % baseMenuOverlayDTD SYSTEM "chrome://browser/locale/baseMenuOverlay.dtd">
+  %baseMenuOverlayDTD;
+#endif
 ]>
 
 #ifdef XP_MACOSX
@@ -45,10 +49,6 @@
     <command id="cmd_help"      oncommand="doHelpButton();"/>
     <command id="cmd_copy"      oncommand="doCopy();"/>
     <command id="cmd_selectall" oncommand="doSelectAll();"/>
-
-    <!-- permissions tab -->
-    <command id="cmd_pluginsDef"    oncommand="onCheckboxClick('plugins');"/>
-    <command id="cmd_pluginsToggle" oncommand="onPluginRadioClick(event);"/>
   </commandset>
 
   <keyset id="pageInfoKeySet">
@@ -69,7 +69,7 @@
     <menuitem id="menu_copy"      label="&copy.label;"      command="cmd_copy"      accesskey="&copy.accesskey;"/>
   </menupopup>
 
-  <windowdragbox id="topBar" class="viewGroupWrapper">
+  <vbox id="topBar">
     <radiogroup id="viewGroup" class="chromeclass-toolbar" orient="horizontal">
       <radio id="generalTab"  label="&generalTab;"  accesskey="&generalTab.accesskey;"
            oncommand="showTab('general');"/>
@@ -82,7 +82,7 @@
       <radio id="securityTab" label="&securityTab;" accesskey="&securityTab.accesskey;"
            oncommand="showTab('security');"/>
     </radiogroup>
-  </windowdragbox>
+  </vbox>
 
   <deck id="mainDeck" flex="1">
     <!-- General page information -->
@@ -168,23 +168,23 @@
       <tree id="imagetree" onselect="onImageSelect();" contextmenu="picontext"
             ondragstart="onBeginLinkDrag(event,'image-address','image-alt')">
         <treecols>
-          <treecol sortSeparators="true" primary="true" persist="width" flex="10"
+          <treecol primary="true" persist="width" flex="10"
                         width="10" id="image-address" label="&mediaAddress;"
                         onclick="gImageView.onPageMediaSort('image-address');"/>
           <splitter class="tree-splitter"/>
-          <treecol sortSeparators="true" persist="hidden width" flex="2"
+          <treecol persist="hidden width" flex="2"
                         width="2"  id="image-type"    label="&mediaType;"
                         onclick="gImageView.onPageMediaSort('image-type');"/>
           <splitter class="tree-splitter"/>
-          <treecol sortSeparators="true" hidden="true" persist="hidden width" flex="2"
+          <treecol hidden="true" persist="hidden width" flex="2"
                         width="2"  id="image-size"  label="&mediaSize;" value="size"
                         onclick="gImageView.onPageMediaSort('image-size');"/>
           <splitter class="tree-splitter"/>
-          <treecol sortSeparators="true" hidden="true" persist="hidden width" flex="4"
+          <treecol hidden="true" persist="hidden width" flex="4"
                         width="4"  id="image-alt"    label="&mediaAltHeader;"
                         onclick="gImageView.onPageMediaSort('image-alt');"/>
           <splitter class="tree-splitter"/>
-          <treecol sortSeparators="true" hidden="true" persist="hidden width" flex="1"
+          <treecol hidden="true" persist="hidden width" flex="1"
                         width="1"  id="image-count"    label="&mediaCount;"
                         onclick="gImageView.onPageMediaSort('image-count');"/>
         </treecols>
@@ -245,7 +245,7 @@
                   icon="save" id="imagesaveasbutton"
                   oncommand="saveMedia();"/>
         </hbox>
-        <vbox id="imagecontainerbox" class="inset iframe" flex="1" pack="center">
+        <vbox id="imagecontainerbox" flex="1" pack="center">
           <hbox id="theimagecontainer" pack="center">
             <image id="thepreviewimage"/>
           </hbox>
@@ -278,23 +278,7 @@
                  crop="end" flex="1"/>
       </hbox>
 
-      <vbox id="permList" flex="1">
-        <vbox class="permission" id="perm-plugins-row">
-          <label class="permissionLabel" id="permPluginsLabel"
-                 value="&permPlugins;" control="pluginsRadioGroup"/>
-          <hbox id="permPluginTemplate" role="group" aria-labelledby="permPluginsLabel" align="baseline">
-            <label class="permPluginTemplateLabel"/>
-            <spacer flex="1"/>
-            <radiogroup class="permPluginTemplateRadioGroup" orient="horizontal" command="cmd_pluginsToggle">
-              <radio class="permPluginTemplateRadioDefault" label="&permUseDefault;"/>
-              <radio class="permPluginTemplateRadioAsk" label="&permAskAlways;"/>
-              <radio class="permPluginTemplateRadioAllow" label="&permAllow;"/>
-              <radio class="permPluginTemplateRadioHide" label="&permHide;"/>
-              <radio class="permPluginTemplateRadioBlock" label="&permBlock;"/>
-            </radiogroup>
-          </hbox>
-        </vbox>
-      </vbox>
+      <vbox id="permList" flex="1"/>
       <hbox pack="end">
         <button command="cmd_help" label="&helpButton.label;" dlgtype="help"/>
       </hbox>

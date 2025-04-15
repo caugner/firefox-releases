@@ -12,11 +12,12 @@
 #include "nsCSSProps.h"
 
 class nsAtom;
-class nsPresContext;
+class nsIDocument;
 class nsCSSValue;
+class nsStaticAtom;
 
 struct nsMediaFeature;
-typedef void (*nsMediaFeatureValueGetter)(nsPresContext* aPresContext,
+typedef void (*nsMediaFeatureValueGetter)(nsIDocument* aDocument,
                                           const nsMediaFeature* aFeature,
                                           nsCSSValue& aResult);
 
@@ -85,6 +86,10 @@ struct nsMediaFeature
 class nsMediaFeatures
 {
 public:
+  static void InitSystemMetrics();
+  static void FreeSystemMetrics();
+  static void Shutdown();
+
   // Terminated with an entry whose mName is null.
   static const nsMediaFeature features[];
 };

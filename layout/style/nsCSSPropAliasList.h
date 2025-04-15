@@ -44,6 +44,11 @@ CSS_PROP_ALIAS(word-wrap,
                overflow_wrap,
                WordWrap,
                "")
+CSS_PROP_ALIAS(-moz-transform,
+               _moz_transform,
+               transform,
+               MozTransform,
+               "layout.css.prefixes.transforms")
 CSS_PROP_ALIAS(-moz-transform-origin,
                _moz_transform_origin,
                transform_origin,
@@ -259,6 +264,11 @@ CSS_PROP_ALIAS(-moz-column-rule-width,
                column_rule_width,
                MozColumnRuleWidth,
                "")
+CSS_PROP_ALIAS(-moz-column-span,
+               _moz_column_span,
+               column_span,
+               MozColumnSpan,
+               "layout.css.column-span.enabled")
 CSS_PROP_ALIAS(-moz-column-width,
                _moz_column_width,
                column_width,

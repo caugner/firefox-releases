@@ -7,13 +7,12 @@
  * Tests if the clear button empties the request menu.
  */
 
-add_task(function* () {
-  let { tab, monitor } = yield initNetMonitor(SIMPLE_URL);
+add_task(async function () {
+  let { tab, monitor } = await initNetMonitor(SIMPLE_URL);
   info("Starting test... ");
 
   let { document, store, windowRequire } = monitor.panelWin;
   let Actions = windowRequire("devtools/client/netmonitor/src/actions/index");
-  let { EVENTS } = windowRequire("devtools/client/netmonitor/src/constants");
   let detailsPanelToggleButton = document.querySelector(".network-details-panel-toggle");
   let clearButton = document.querySelector(".requests-list-clear-button");
 
@@ -23,9 +22,9 @@ add_task(function* () {
   assertNoRequestState();
 
   // Load one request and assert it shows up in the list
-  let networkEvent = monitor.panelWin.once(EVENTS.NETWORK_EVENT);
+  let onMonitorUpdated = waitForAllRequestsFinished(monitor);
   tab.linkedBrowser.reload();
-  yield networkEvent;
+  await onMonitorUpdated;
 
   assertSingleRequestState();
 
@@ -34,9 +33,9 @@ add_task(function* () {
   assertNoRequestState();
 
   // Load a second request and make sure they still show up
-  networkEvent = monitor.panelWin.once(EVENTS.NETWORK_EVENT);
+  onMonitorUpdated = waitForAllRequestsFinished(monitor);
   tab.linkedBrowser.reload();
-  yield networkEvent;
+  await onMonitorUpdated;
 
   assertSingleRequestState();
 

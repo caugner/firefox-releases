@@ -3,14 +3,12 @@
 
 "use strict";
 
-var {classes: Cc, interfaces: Ci, utils: Cu} = Components;
-
-Cu.import("resource://gre/modules/osfile.jsm", this);
-Cu.import("resource://gre/modules/Services.jsm", this);
-Cu.import("resource://gre/modules/Timer.jsm");
-Cu.import("resource://testing-common/AppData.jsm", this);
-Cu.import("resource://testing-common/CrashManagerTest.jsm", this);
-var bsp = Cu.import("resource://gre/modules/CrashManager.jsm", {});
+ChromeUtils.import("resource://gre/modules/osfile.jsm", this);
+ChromeUtils.import("resource://gre/modules/Services.jsm", this);
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
+ChromeUtils.import("resource://testing-common/AppData.jsm", this);
+ChromeUtils.import("resource://testing-common/CrashManagerTest.jsm", this);
+var bsp = ChromeUtils.import("resource://gre/modules/CrashManager.jsm", {});
 
 add_task(async function test_instantiation() {
   Assert.ok(!bsp.gCrashManager, "CrashManager global instance not initially defined.");
@@ -142,7 +140,7 @@ add_task(async function test_addCrash_quitting() {
                 Ci.nsICrashService.CRASH_TYPE_CRASH, firstCrashId);
 
   // Spin the event loop so that the minidump analyzer is launched
-  await new Promise((resolve) => { do_execute_soon(resolve); });
+  await new Promise((resolve) => { executeSoon(resolve); });
 
   // Pretend we're quitting
   let obs = cs.QueryInterface(Ci.nsIObserver);

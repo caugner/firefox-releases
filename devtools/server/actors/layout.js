@@ -4,12 +4,14 @@
 
 "use strict";
 
+const { Cu } = require("chrome");
 const { Actor, ActorClassWithSpec } = require("devtools/shared/protocol");
 const { flexboxSpec, gridSpec, layoutSpec } = require("devtools/shared/specs/layout");
 const nodeFilterConstants = require("devtools/shared/dom-node-filter-constants");
 const { getStringifiableFragments } =
   require("devtools/server/actors/utils/css-grid-utils");
 
+loader.lazyRequireGetter(this, "nodeConstants", "devtools/shared/dom-node-constants");
 loader.lazyRequireGetter(this, "CssLogic", "devtools/server/css-logic", true);
 
 /**
@@ -29,7 +31,7 @@ const FlexboxActor = ActorClassWithSpec(flexboxSpec, {
    * @param  {LayoutActor} layoutActor
    *         The LayoutActor instance.
    * @param  {DOMNode} containerEl
-   *         The flexbox container element.
+   *         The flex container element.
    */
   initialize(layoutActor, containerEl) {
     Actor.prototype.initialize.call(this, layoutActor.conn);
@@ -100,9 +102,14 @@ const GridActor = ActorClassWithSpec(gridSpec, {
     let gridFragments = this.containerEl.getGridFragments();
     this.gridFragments = getStringifiableFragments(gridFragments);
 
+    // Record writing mode and text direction for use by the grid outline.
+    let { direction, writingMode } = CssLogic.getComputedStyle(this.containerEl);
+
     let form = {
       actor: this.actorID,
+      direction,
       gridFragments: this.gridFragments,
+      writingMode,
     };
 
     // If the WalkerActor already knows the container element, then also return its
@@ -135,124 +142,101 @@ const LayoutActor = ActorClassWithSpec(layoutSpec, {
   },
 
   /**
-   * Returns an array of FlexboxActor objects for all the flexbox containers found by
-   * iterating below the given rootNode.
+   * Returns the flex container found by iterating on the given selected node. The current
+   * node can be a flex container or flex item. If it is a flex item, returns the parent
+   * flex container. Otherwise, return null if the current or parent node is not a flex
+   * container.
    *
-   * @param  {Node|NodeActor} rootNode
-   *         The root node to start iterating at.
-   * @return {Array} An array of FlexboxActor objects.
+   * @param  {Node|NodeActor} node
+   *         The node to start iterating at.
+   * @return {FlexboxActor|Null} The FlexboxActor of the flex container of the give node.
+   * Otherwise, returns null.
    */
-  getFlexbox(rootNode) {
-    let flexboxes = [];
-
-    if (!rootNode) {
-      return flexboxes;
+  getCurrentFlexbox(node) {
+    if (isNodeDead(node)) {
+      return null;
     }
 
-    let treeWalker = this.walker.getDocumentWalker(rootNode,
+    // Given node can either be a Node or a NodeActor.
+    if (node.rawNode) {
+      node = node.rawNode;
+    }
+
+    let treeWalker = this.walker.getDocumentWalker(node,
       nodeFilterConstants.SHOW_ELEMENT);
+    let currentNode = treeWalker.currentNode;
+    let displayType = this.walker.getNode(currentNode).displayType;
 
-    while (treeWalker.nextNode()) {
-      let currentNode = treeWalker.currentNode;
-      let computedStyle = CssLogic.getComputedStyle(currentNode);
-
-      if (!computedStyle) {
-        continue;
-      }
-
-      if (computedStyle.display == "inline-flex" || computedStyle.display == "flex") {
-        let flexboxActor = new FlexboxActor(this, currentNode);
-        flexboxes.push(flexboxActor);
-      }
+    if (!displayType) {
+      return null;
     }
 
-    return flexboxes;
+    // Check if the current node is a flex container.
+    if (displayType == "inline-flex" || displayType == "flex") {
+      return new FlexboxActor(this, treeWalker.currentNode);
+    }
+
+    // Otherwise, check if this is a flex item or the parent node is a flex container.
+    while ((currentNode = treeWalker.parentNode())) {
+      if (!currentNode) {
+        break;
+      }
+
+      displayType = this.walker.getNode(currentNode).displayType;
+
+      switch (displayType) {
+        case "inline-flex":
+        case "flex":
+          return new FlexboxActor(this, currentNode);
+        case "contents":
+          // Continue walking up the tree since the parent node is a content element.
+          continue;
+      }
+
+      break;
+    }
+
+    return null;
   },
 
   /**
-   * Returns an array of FlexboxActor objects for all existing flexbox containers found by
-   * iterating below the given rootNode and optionally including nested frames.
+   * Returns an array of GridActor objects for all the grid elements contained in the
+   * given root node.
    *
-   * @param  {NodeActor} rootNode
-   * @param  {Boolean} traverseFrames
-   *         Whether or not we should iterate through nested frames.
-   * @return {Array} An array of FlexboxActor objects.
-   */
-  getAllFlexbox(rootNode, traverseFrames) {
-    let flexboxes = [];
-
-    if (!rootNode) {
-      return flexboxes;
-    }
-
-    if (!traverseFrames) {
-      return this.getFlexbox(rootNode.rawNode);
-    }
-
-    for (let {document} of this.tabActor.windows) {
-      flexboxes = [...flexboxes, ...this.getFlexbox(document.documentElement)];
-    }
-
-    return flexboxes;
-  },
-
-  /**
-   * Returns an array of GridActor objects for all the grid containers found by iterating
-   * below the given rootNode.
-   *
-   * @param  {Node|NodeActor} rootNode
-   *         The root node to start iterating at.
+   * @param  {Node|NodeActor} node
+   *         The root node for grid elements
    * @return {Array} An array of GridActor objects.
    */
-  getGrids(rootNode) {
-    let grids = [];
-
-    if (!rootNode) {
-      return grids;
+  getGrids(node) {
+    if (isNodeDead(node)) {
+      return [];
     }
 
-    let treeWalker = this.walker.getDocumentWalker(rootNode,
-      nodeFilterConstants.SHOW_ELEMENT);
-
-    while (treeWalker.nextNode()) {
-      let currentNode = treeWalker.currentNode;
-
-      if (currentNode.getGridFragments && currentNode.getGridFragments().length > 0) {
-        let gridActor = new GridActor(this, currentNode);
-        grids.push(gridActor);
-      }
+    // Root node can either be a Node or a NodeActor.
+    if (node.rawNode) {
+      node = node.rawNode;
     }
 
-    return grids;
-  },
-
-  /**
-   * Returns an array of GridActor objects for all existing grid containers found by
-   * iterating below the given rootNode and optionally including nested frames.
-   *
-   * @param  {NodeActor} rootNode
-   * @param  {Boolean} traverseFrames
-   *         Whether or not we should iterate through nested frames.
-   * @return {Array} An array of GridActor objects.
-   */
-  getAllGrids(rootNode, traverseFrames) {
-    let grids = [];
-
-    if (!rootNode) {
-      return grids;
+    // Root node can be a #document object, which does not support getElementsWithGrid.
+    if (node.nodeType === nodeConstants.DOCUMENT_NODE) {
+      node = node.documentElement;
     }
 
-    if (!traverseFrames) {
-      return this.getGrids(rootNode.rawNode);
+    let gridElements = node.getElementsWithGrid();
+    let gridActors = gridElements.map(n => new GridActor(this, n));
+
+    let frames = node.querySelectorAll("iframe, frame");
+    for (let frame of frames) {
+      gridActors = gridActors.concat(this.getGrids(frame.contentDocument));
     }
 
-    for (let {document} of this.tabActor.windows) {
-      grids = [...grids, ...this.getGrids(document.documentElement)];
-    }
-
-    return grids;
+    return gridActors;
   },
 });
+
+function isNodeDead(node) {
+  return !node || (node.rawNode && Cu.isDeadWrapper(node.rawNode));
+}
 
 exports.FlexboxActor = FlexboxActor;
 exports.GridActor = GridActor;

@@ -33,8 +33,14 @@ nsWindow::NativePtr<mozilla::widget::GeckoEditableSupport>::sName[] =
         "GeckoEditableSupport";
 
 enum {
+    AKEYCODE_dummy, // Avoid enum without declarations.
+
     // These keycode masks are not defined in android/keycodes.h:
-#if __ANDROID_API__ < 13
+    // Note that the NDK unified headers always define these constants, so we
+    // need to ensure we're _not_ using unified headers, by checking for the
+    // absence of __ANDROID_API_X__ macros (e.g. __ANDROID_API_L__), which are
+    // only defined by the unified headers.
+#if __ANDROID_API__ < 13 && !defined(__ANDROID_API_I__)
     AKEYCODE_ESCAPE             = 111,
     AKEYCODE_FORWARD_DEL        = 112,
     AKEYCODE_CTRL_LEFT          = 113,
@@ -129,18 +135,18 @@ enum {
     AKEYCODE_BUTTON_15          = 202,
     AKEYCODE_BUTTON_16          = 203,
 #endif
-#if __ANDROID_API__ < 14
+#if __ANDROID_API__ < 14 && !defined(__ANDROID_API_I__)
     AKEYCODE_LANGUAGE_SWITCH    = 204,
     AKEYCODE_MANNER_MODE        = 205,
     AKEYCODE_3D_MODE            = 206,
 #endif
-#if __ANDROID_API__ < 15
+#if __ANDROID_API__ < 15 && !defined(__ANDROID_API_J__)
     AKEYCODE_CONTACTS           = 207,
     AKEYCODE_CALENDAR           = 208,
     AKEYCODE_MUSIC              = 209,
     AKEYCODE_CALCULATOR         = 210,
 #endif
-#if __ANDROID_API__ < 16
+#if __ANDROID_API__ < 16 && !defined(__ANDROID_API_J__)
     AKEYCODE_ZENKAKU_HANKAKU    = 211,
     AKEYCODE_EISU               = 212,
     AKEYCODE_MUHENKAN           = 213,
@@ -151,18 +157,18 @@ enum {
     AKEYCODE_KANA               = 218,
     AKEYCODE_ASSIST             = 219,
 #endif
-#if __ANDROID_API__ < 18
+#if __ANDROID_API__ < 18 && !defined(__ANDROID_API_J_MR2__)
     AKEYCODE_BRIGHTNESS_DOWN    = 220,
     AKEYCODE_BRIGHTNESS_UP      = 221,
 #endif
-#if __ANDROID_API__ < 19
+#if __ANDROID_API__ < 19 && !defined(__ANDROID_API_K__)
     AKEYCODE_MEDIA_AUDIO_TRACK  = 222,
 #endif
-#if __ANDROID_API__ < 20
+#if __ANDROID_API__ < 20 && !defined(__ANDROID_API_L__)
     AKEYCODE_SLEEP              = 223,
     AKEYCODE_WAKEUP             = 224,
 #endif
-#if __ANDROID_API__ < 21
+#if __ANDROID_API__ < 21 && !defined(__ANDROID_API_L__)
     AKEYCODE_PAIRING                       = 225,
     AKEYCODE_MEDIA_TOP_MENU                = 226,
     AKEYCODE_11                            = 227,
@@ -199,13 +205,17 @@ enum {
     AKEYCODE_TV_TIMER_PROGRAMMING          = 258,
     AKEYCODE_HELP                          = 259,
 #endif
-#if __ANDROID_API__ < 23
+#if __ANDROID_API__ < 23 && !defined(__ANDROID_API_M__)
     AKEYCODE_NAVIGATE_PREVIOUS  = 260,
     AKEYCODE_NAVIGATE_NEXT      = 261,
     AKEYCODE_NAVIGATE_IN        = 262,
     AKEYCODE_NAVIGATE_OUT       = 263,
+    AKEYCODE_MEDIA_SKIP_FORWARD  = 272,
+    AKEYCODE_MEDIA_SKIP_BACKWARD = 273,
+    AKEYCODE_MEDIA_STEP_FORWARD  = 274,
+    AKEYCODE_MEDIA_STEP_BACKWARD = 275,
 #endif
-#if __ANDROID_API__ < 24
+#if __ANDROID_API__ < 24 && !defined(__ANDROID_API_N__)
     AKEYCODE_STEM_PRIMARY       = 264,
     AKEYCODE_STEM_1             = 265,
     AKEYCODE_STEM_2             = 266,
@@ -214,20 +224,12 @@ enum {
     AKEYCODE_DPAD_DOWN_LEFT     = 269,
     AKEYCODE_DPAD_UP_RIGHT      = 270,
     AKEYCODE_DPAD_DOWN_RIGHT    = 271,
-#endif
-#if __ANDROID_API__ < 23
-    AKEYCODE_MEDIA_SKIP_FORWARD  = 272,
-    AKEYCODE_MEDIA_SKIP_BACKWARD = 273,
-    AKEYCODE_MEDIA_STEP_FORWARD  = 274,
-    AKEYCODE_MEDIA_STEP_BACKWARD = 275,
-#endif
-#if __ANDROID_API__ < 24
     AKEYCODE_SOFT_SLEEP         = 276,
     AKEYCODE_CUT                = 277,
     AKEYCODE_COPY               = 278,
     AKEYCODE_PASTE              = 279,
 #endif
-#if __ANDROID_API__ < 25
+#if __ANDROID_API__ < 25 && !defined(__ANDROID_API_N_MR1__)
     AKEYCODE_SYSTEM_NAVIGATION_UP    = 280,
     AKEYCODE_SYSTEM_NAVIGATION_DOWN  = 281,
     AKEYCODE_SYSTEM_NAVIGATION_LEFT  = 282,
@@ -536,15 +538,15 @@ ConvertAndroidColor(uint32_t aArgb)
 
 static jni::ObjectArray::LocalRef
 ConvertRectArrayToJavaRectFArray(const nsTArray<LayoutDeviceIntRect>& aRects,
-                                 const LayoutDeviceIntPoint& aOffset,
                                  const CSSToLayoutDeviceScale aScale)
 {
     const size_t length = aRects.Length();
     auto rects = jni::ObjectArray::New<sdk::RectF>(length);
 
     for (size_t i = 0; i < length; i++) {
-        LayoutDeviceIntRect tmp = aRects[i] + aOffset;
+        const LayoutDeviceIntRect& tmp = aRects[i];
 
+        // Character bounds in CSS units.
         auto rect = sdk::RectF::New(tmp.x / aScale.scale, tmp.y / aScale.scale,
                                     (tmp.x + tmp.width) / aScale.scale,
                                     (tmp.y + tmp.height) / aScale.scale);
@@ -620,6 +622,11 @@ GeckoEditableSupport::OnKeyEvent(int32_t aAction, int32_t aKeyCode,
     InitKeyEvent(event, aAction, aKeyCode, aScanCode, aMetaState, aTime,
                  aDomPrintableKeyValue, aRepeatCount, aFlags);
 
+    if (nsIWidget::UsePuppetWidgets()) {
+        // Don't use native key bindings.
+        event.PreventNativeKeyBindings();
+    }
+
     if (aIsSynthesizedImeKey) {
         // Keys synthesized by Java IME code are saved in the mIMEKeyEvents
         // array until the next IME_REPLACE_TEXT event, at which point
@@ -645,13 +652,14 @@ GeckoEditableSupport::OnKeyEvent(int32_t aAction, int32_t aKeyCode,
     InitKeyEvent(pressEvent, aAction, aKeyCode, aScanCode, aKeyPressMetaState,
                  aTime, aDomPrintableKeyValue, aRepeatCount, aFlags);
 
+    if (nsIWidget::UsePuppetWidgets()) {
+        // Don't use native key bindings.
+        pressEvent.PreventNativeKeyBindings();
+    }
+
     if (aIsSynthesizedImeKey) {
         mIMEKeyEvents.AppendElement(
                 UniquePtr<WidgetEvent>(pressEvent.Duplicate()));
-    } else if (nsIWidget::UsePuppetWidgets()) {
-        // Don't use native key bindings.
-        pressEvent.PreventNativeKeyBindings();
-        dispatcher->MaybeDispatchKeypressEvents(pressEvent, status);
     } else {
         dispatcher->MaybeDispatchKeypressEvents(pressEvent, status);
     }
@@ -915,7 +923,6 @@ GeckoEditableSupport::UpdateCompositionRects()
 
     auto rects = ConvertRectArrayToJavaRectFArray(
             textRects.mReply.mRectArray,
-            widget->WidgetToScreenOffset(),
             widget->GetDefaultScale());
 
     mEditable->UpdateCompositionRects(rects);
@@ -927,7 +934,7 @@ GeckoEditableSupport::OnImeSynchronize()
     if (!mIMEMaskEventsCount) {
         FlushIMEChanges();
     }
-    mEditable->NotifyIME(GeckoEditableListener::NOTIFY_IME_REPLY_EVENT);
+    mEditable->NotifyIME(EditableListener::NOTIFY_IME_REPLY_EVENT);
 }
 
 void
@@ -988,10 +995,6 @@ GeckoEditableSupport::OnImeReplaceText(int32_t aStart, int32_t aEnd,
                 if (event->mMessage != eKeyPress) {
                     mDispatcher->DispatchKeyboardEvent(
                             event->mMessage, *event, status);
-                } else if (nsIWidget::UsePuppetWidgets()) {
-                    // Don't use native key bindings.
-                    event->PreventNativeKeyBindings();
-                    mDispatcher->MaybeDispatchKeypressEvents(*event, status);
                 } else {
                     mDispatcher->MaybeDispatchKeypressEvents(*event, status);
                 }
@@ -1176,13 +1179,12 @@ GeckoEditableSupport::OnImeUpdateComposition(int32_t aStart, int32_t aEnd,
 void
 GeckoEditableSupport::OnImeRequestCursorUpdates(int aRequestMode)
 {
-    if (aRequestMode == java::GeckoEditableClient::ONE_SHOT) {
+    if (aRequestMode == EditableClient::ONE_SHOT) {
         UpdateCompositionRects();
         return;
     }
 
-    mIMEMonitorCursor =
-            (aRequestMode == java::GeckoEditableClient::START_MONITOR);
+    mIMEMonitorCursor = (aRequestMode == EditableClient::START_MONITOR);
 }
 
 void
@@ -1208,7 +1210,7 @@ GeckoEditableSupport::NotifyIME(TextEventDispatcher* aTextEventDispatcher,
             ALOGIME("IME: REQUEST_TO_COMMIT_COMPOSITION");
 
             RemoveComposition(COMMIT_IME_COMPOSITION);
-            AsyncNotifyIME(GeckoEditableListener::
+            AsyncNotifyIME(EditableListener::
                            NOTIFY_IME_TO_COMMIT_COMPOSITION);
             break;
         }
@@ -1217,7 +1219,7 @@ GeckoEditableSupport::NotifyIME(TextEventDispatcher* aTextEventDispatcher,
             ALOGIME("IME: REQUEST_TO_CANCEL_COMPOSITION");
 
             RemoveComposition(CANCEL_IME_COMPOSITION);
-            AsyncNotifyIME(GeckoEditableListener::
+            AsyncNotifyIME(EditableListener::
                            NOTIFY_IME_TO_CANCEL_COMPOSITION);
             break;
         }
@@ -1240,7 +1242,7 @@ GeckoEditableSupport::NotifyIME(TextEventDispatcher* aTextEventDispatcher,
                 }
 
                 mEditable->NotifyIME(
-                        GeckoEditableListener::NOTIFY_IME_OF_TOKEN);
+                        EditableListener::NOTIFY_IME_OF_TOKEN);
 
                 if (mIsRemote) {
                     if (!mEditableAttached) {
@@ -1263,7 +1265,7 @@ GeckoEditableSupport::NotifyIME(TextEventDispatcher* aTextEventDispatcher,
                 mIMEMonitorCursor = false;
 
                 mEditable->NotifyIME(
-                        GeckoEditableListener::NOTIFY_IME_OF_FOCUS);
+                        EditableListener::NOTIFY_IME_OF_FOCUS);
             });
             break;
         }
@@ -1272,7 +1274,7 @@ GeckoEditableSupport::NotifyIME(TextEventDispatcher* aTextEventDispatcher,
             ALOGIME("IME: NOTIFY_IME_OF_BLUR");
 
             if (!mIMEMaskEventsCount) {
-                mEditable->NotifyIME(GeckoEditableListener::NOTIFY_IME_OF_BLUR);
+                mEditable->NotifyIME(EditableListener::NOTIFY_IME_OF_BLUR);
                 OnRemovedFrom(mDispatcher);
             }
 
@@ -1340,10 +1342,6 @@ GeckoEditableSupport::WillDispatchKeyboardEvent(
 NS_IMETHODIMP_(IMENotificationRequests)
 GeckoEditableSupport::GetIMENotificationRequests()
 {
-    // While a plugin has focus, Listener doesn't need any notifications.
-    if (GetInputContext().mIMEState.mEnabled == IMEState::PLUGIN) {
-      return IMENotificationRequests();
-    }
     return IMENotificationRequests(IMENotificationRequests::NOTIFY_TEXT_CHANGE);
 }
 
@@ -1359,10 +1357,10 @@ GeckoEditableSupport::SetInputContext(const InputContext& aContext,
 
     mInputContext = aContext;
 
-    if (mInputContext.mIMEState.mEnabled == IMEState::ENABLED &&
+    if (mInputContext.mIMEState.mEnabled != IMEState::DISABLED &&
         aAction.UserMightRequestOpenVKB()) {
         // Don't reset keyboard when we should simply open the vkb
-        mEditable->NotifyIME(GeckoEditableListener::NOTIFY_IME_OPEN_VKB);
+        mEditable->NotifyIME(EditableListener::NOTIFY_IME_OPEN_VKB);
         return;
     }
 
@@ -1372,8 +1370,13 @@ GeckoEditableSupport::SetInputContext(const InputContext& aContext,
     mIMEUpdatingContext = true;
 
     RefPtr<GeckoEditableSupport> self(this);
-    bool isUserAction = aAction.IsHandlingUserInput() || aContext.mHasHandledUserInput;
-    nsAppShell::PostEvent([this, self, isUserAction] {
+    const bool inPrivateBrowsing = mInputContext.mInPrivateBrowsing;
+    const bool isUserAction = aAction.IsHandlingUserInput() || aContext.mHasHandledUserInput;
+    const int32_t flags =
+            (inPrivateBrowsing ? EditableListener::IME_FLAG_PRIVATE_BROWSING : 0) |
+            (isUserAction ? EditableListener::IME_FLAG_USER_ACTION : 0);
+
+    nsAppShell::PostEvent([this, self, flags] {
         nsCOMPtr<nsIWidget> widget = GetWidget();
 
         mIMEUpdatingContext = false;
@@ -1384,8 +1387,7 @@ GeckoEditableSupport::SetInputContext(const InputContext& aContext,
                                     mInputContext.mHTMLInputType,
                                     mInputContext.mHTMLInputInputmode,
                                     mInputContext.mActionHint,
-                                    mInputContext.mInPrivateBrowsing,
-                                    isUserAction);
+                                    flags);
     });
 }
 

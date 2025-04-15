@@ -12,8 +12,10 @@
 #include "mozilla/dom/NodeInfo.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/DataTransfer.h"
+#include "mozilla/dom/DOMPrefs.h"
 #include "mozilla/dom/HTMLButtonElement.h"
 #include "mozilla/dom/HTMLInputElement.h"
+#include "mozilla/dom/MutationEventBinding.h"
 #include "mozilla/Preferences.h"
 #include "nsNodeInfoManager.h"
 #include "nsContentCreatorFunctions.h"
@@ -24,7 +26,6 @@
 #include "mozilla/dom/FileList.h"
 #include "nsIDOMDragEvent.h"
 #include "nsIDOMFileList.h"
-#include "nsIDOMMutationEvent.h"
 #include "nsTextNode.h"
 
 using namespace mozilla;
@@ -110,15 +111,13 @@ MakeAnonButton(nsIDocument* aDoc, const char* labelKey,
     HTMLButtonElement::FromContentOrNull(button);
 
   if (!aAccessKey.IsEmpty()) {
-    IgnoredErrorResult ignored;
-    buttonElement->SetAccessKey(aAccessKey, ignored);
+    buttonElement->SetAccessKey(aAccessKey, IgnoreErrors());
   }
 
   // Both elements are given the same tab index so that the user can tab
   // to the file control at the correct index, and then between the two
   // buttons.
-  IgnoredErrorResult ignored;
-  buttonElement->SetTabIndex(aInputElement->TabIndex(), ignored);
+  buttonElement->SetTabIndex(aInputElement->TabIndex(), IgnoreErrors());
 
   return button.forget();
 }
@@ -145,7 +144,7 @@ nsFileControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   RefPtr<NodeInfo> nodeInfo;
   nodeInfo = doc->NodeInfoManager()->GetNodeInfo(nsGkAtoms::label, nullptr,
                                                  kNameSpaceID_XUL,
-                                                 nsIDOMNode::ELEMENT_NODE);
+                                                 nsINode::ELEMENT_NODE);
   NS_TrustedNewXULElement(getter_AddRefs(mTextContent), nodeInfo.forget());
   // NOTE: SetIsNativeAnonymousRoot() has to be called before setting any
   // attribute.
@@ -257,8 +256,10 @@ nsFileControlFrame::DnDListener::HandleEvent(nsIDOMEvent* aEvent)
   }
 
 
-  nsCOMPtr<nsIContent> content = mFrame->GetContent();
-  bool supportsMultiple = content && content->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple);
+  RefPtr<HTMLInputElement> inputElement =
+    HTMLInputElement::FromContent(mFrame->GetContent());
+  bool supportsMultiple =
+    inputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple);
   if (!CanDropTheseFiles(dataTransfer, supportsMultiple)) {
     dataTransfer->SetDropEffect(NS_LITERAL_STRING("none"));
     aEvent->StopPropagation();
@@ -277,11 +278,6 @@ nsFileControlFrame::DnDListener::HandleEvent(nsIDOMEvent* aEvent)
     aEvent->StopPropagation();
     aEvent->PreventDefault();
 
-    NS_ASSERTION(content, "The frame has no content???");
-
-    HTMLInputElement* inputElement = HTMLInputElement::FromContent(content);
-    NS_ASSERTION(inputElement, "No input element for this file upload control frame!");
-
     nsCOMPtr<nsIDOMFileList> fileList;
     dataTransfer->GetFiles(getter_AddRefs(fileList));
 
@@ -292,7 +288,7 @@ nsFileControlFrame::DnDListener::HandleEvent(nsIDOMEvent* aEvent)
 
     nsTArray<OwningFileOrDirectory> array;
     if (webkitDir) {
-      AppendBlobImplAsDirectory(array, webkitDir, content);
+      AppendBlobImplAsDirectory(array, webkitDir, inputElement);
       inputElement->MozSetDndFilesAndDirectories(array);
     } else {
       bool blinkFileSystemEnabled =
@@ -306,7 +302,7 @@ nsFileControlFrame::DnDListener::HandleEvent(nsIDOMEvent* aEvent)
             File* file = files->Item(i);
             if (file) {
               if (file->Impl() && file->Impl()->IsDirectory()) {
-                AppendBlobImplAsDirectory(array, file->Impl(), content);
+                AppendBlobImplAsDirectory(array, file->Impl(), inputElement);
               } else {
                 OwningFileOrDirectory* element = array.AppendElement();
                 element->SetAsFile() = file;
@@ -333,10 +329,12 @@ nsFileControlFrame::DnDListener::HandleEvent(nsIDOMEvent* aEvent)
         inputElement->SetFiles(fileList, true);
       }
 
-      nsContentUtils::DispatchTrustedEvent(content->OwnerDoc(), content,
+      nsContentUtils::DispatchTrustedEvent(inputElement->OwnerDoc(),
+                                           static_cast<nsINode*>(inputElement),
                                            NS_LITERAL_STRING("input"), true,
                                            false);
-      nsContentUtils::DispatchTrustedEvent(content->OwnerDoc(), content,
+      nsContentUtils::DispatchTrustedEvent(inputElement->OwnerDoc(),
+                                           static_cast<nsINode*>(inputElement),
                                            NS_LITERAL_STRING("change"), true,
                                            false);
     }
@@ -354,7 +352,7 @@ nsFileControlFrame::DnDListener::GetBlobImplForWebkitDirectory(nsIDOMFileList* a
   HTMLInputElement* inputElement =
     HTMLInputElement::FromContent(mFrame->GetContent());
   bool webkitDirPicker =
-    Preferences::GetBool("dom.webkitBlink.dirPicker.enabled", false) &&
+    DOMPrefs::WebkitBlinkDirectoryPickerEnabled() &&
     inputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::webkitdirectory);
   if (!webkitDirPicker) {
     return NS_OK;
@@ -450,11 +448,11 @@ nsFileControlFrame::AttributeChanged(int32_t  aNameSpaceID,
                                      int32_t  aModType)
 {
   if (aNameSpaceID == kNameSpaceID_None && aAttribute == nsGkAtoms::tabindex) {
-    if (aModType == nsIDOMMutationEvent::REMOVAL) {
+    if (aModType == MutationEventBinding::REMOVAL) {
       mBrowseFilesOrDirs->UnsetAttr(aNameSpaceID, aAttribute, true);
     } else {
       nsAutoString value;
-      mContent->GetAttr(aNameSpaceID, aAttribute, value);
+      mContent->AsElement()->GetAttr(aNameSpaceID, aAttribute, value);
       mBrowseFilesOrDirs->SetAttr(aNameSpaceID, aAttribute, value, true);
     }
   }

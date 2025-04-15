@@ -1,7 +1,4 @@
-Cu.import("resource://gre/modules/NetUtil.jsm");
-
-var Cc = Components.classes;
-var Ci = Components.interfaces;
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 var listener = {
   expect_failure: false,
@@ -10,7 +7,7 @@ var listener = {
         iid.equals(Ci.nsIUnicharStreamLoaderObserver)) {
       return this;
     }
-    throw Components.results.NS_ERROR_NO_INTERFACE;
+    throw Cr.NS_ERROR_NO_INTERFACE;
   },
   onDetermineCharset : function onDetermineCharset(loader, context, data)
   {
@@ -20,11 +17,11 @@ var listener = {
   {
     try {
       if (this.expect_failure)
-        do_check_false(Components.isSuccessCode(status));
+        Assert.ok(!Components.isSuccessCode(status));
       else
-        do_check_eq(status, Components.results.NS_OK);
-      do_check_eq(data, "");
-      do_check_neq(loader.channel, null);
+        Assert.equal(status, Cr.NS_OK);
+      Assert.equal(data, "");
+      Assert.notEqual(loader.channel, null);
       tests[current_test++]();
     } finally {
       do_test_finished();

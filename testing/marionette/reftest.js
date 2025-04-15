@@ -4,15 +4,13 @@
 
 "use strict";
 
-const {interfaces: Ci, utils: Cu} = Components;
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://gre/modules/Preferences.jsm");
 
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://gre/modules/Preferences.jsm");
-
-Cu.import("chrome://marionette/content/assert.js");
-Cu.import("chrome://marionette/content/capture.js");
+ChromeUtils.import("chrome://marionette/content/assert.js");
+ChromeUtils.import("chrome://marionette/content/capture.js");
 const {InvalidArgumentError} =
-    Cu.import("chrome://marionette/content/error.js", {});
+    ChromeUtils.import("chrome://marionette/content/error.js", {});
 
 this.EXPORTED_SYMBOLS = ["reftest"];
 
@@ -69,7 +67,7 @@ reftest.Runner = class {
    *     String enum representing when screenshots should be taken
    */
   async setup(urlCount, screenshotMode) {
-    this.parentWindow =  assert.window(this.driver.getCurrentWindow());
+    this.parentWindow =  assert.open(this.driver.getCurrentWindow());
 
     this.screenshotMode = SCREENSHOT_MODE[screenshotMode] ||
         SCREENSHOT_MODE.unexpected;

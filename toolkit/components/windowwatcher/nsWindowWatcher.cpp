@@ -32,7 +32,6 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMChromeWindow.h"
-#include "nsIDOMModalContentWindow.h"
 #include "nsIPrompt.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIScreen.h"
@@ -853,7 +852,8 @@ nsWindowWatcher::OpenWindowInternal(mozIDOMWindowProxy* aParent,
                                      sizeSpec.PositionSpecified(),
                                      sizeSpec.SizeSpecified(),
                                      uriToLoad, name, features, aForceNoOpener,
-                                     &windowIsNew, getter_AddRefs(newWindow));
+                                     aLoadInfo, &windowIsNew,
+                                     getter_AddRefs(newWindow));
 
         if (NS_SUCCEEDED(rv)) {
           GetWindowTreeItem(newWindow, getter_AddRefs(newDocShellItem));
@@ -1457,15 +1457,6 @@ nsWindowWatcher::AddWindow(mozIDOMWindowProxy* aWindow, nsIWebBrowserChrome* aCh
   if (!aWindow) {
     return NS_ERROR_INVALID_ARG;
   }
-
-#ifdef DEBUG
-  {
-    nsCOMPtr<nsPIDOMWindowOuter> win(do_QueryInterface(aWindow));
-
-    NS_ASSERTION(win->IsOuterWindow(),
-                 "Uh, the active window must be an outer window!");
-  }
-#endif
 
   {
     nsWatcherWindowEntry* info;
@@ -2275,10 +2266,8 @@ nsWindowWatcher::SizeOpenedWindow(nsIDocShellTreeOwner* aTreeOwner,
   if (aParent && aOpenerFullZoom.isNothing()) {
     nsCOMPtr<nsPIDOMWindowOuter> piWindow = nsPIDOMWindowOuter::From(aParent);
     if (nsIDocument* doc = piWindow->GetDoc()) {
-      if (nsIPresShell* shell = doc->GetShell()) {
-        if (nsPresContext* presContext = shell->GetPresContext()) {
-          openerZoom = presContext->GetFullZoom();
-        }
+      if (nsPresContext* presContext = doc->GetPresContext()) {
+        openerZoom = presContext->GetFullZoom();
       }
     }
   }

@@ -40,6 +40,7 @@
 #include "nsIFile.h"
 #include "nsCRT.h"
 #include "nsINetworkPredictor.h"
+#include "nsReadableUtils.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/nsMixedContentBlocker.h"
 
@@ -296,9 +297,9 @@ private:
       surfacePathPrefix.AppendLiteral("x");
       surfacePathPrefix.AppendInt(counter.Key().Size().height);
 
-      if (counter.Values().SharedHandles() > 0) {
-        surfacePathPrefix.AppendLiteral(", shared:");
-        surfacePathPrefix.AppendInt(uint32_t(counter.Values().SharedHandles()));
+      if (counter.Values().ExternalHandles() > 0) {
+        surfacePathPrefix.AppendLiteral(", external:");
+        surfacePathPrefix.AppendInt(uint32_t(counter.Values().ExternalHandles()));
       }
 
       if (counter.Type() == SurfaceMemoryCounterType::NORMAL) {
@@ -311,6 +312,48 @@ private:
           surfacePathPrefix.AppendLiteral(", flags:");
           surfacePathPrefix.AppendInt(uint32_t(counter.Key().Flags()),
                                       /* aRadix = */ 16);
+        }
+
+        if (counter.Key().SVGContext()) {
+          const SVGImageContext& context = counter.Key().SVGContext().ref();
+          surfacePathPrefix.AppendLiteral(", svgContext:[ ");
+          if (context.GetViewportSize()) {
+            const CSSIntSize& size = context.GetViewportSize().ref();
+            surfacePathPrefix.AppendLiteral("viewport=(");
+            surfacePathPrefix.AppendInt(size.width);
+            surfacePathPrefix.AppendLiteral("x");
+            surfacePathPrefix.AppendInt(size.height);
+            surfacePathPrefix.AppendLiteral(") ");
+          }
+          if (context.GetPreserveAspectRatio()) {
+            nsAutoString aspect;
+            context.GetPreserveAspectRatio()->ToString(aspect);
+            surfacePathPrefix.AppendLiteral("preserveAspectRatio=(");
+            LossyAppendUTF16toASCII(aspect, surfacePathPrefix);
+            surfacePathPrefix.AppendLiteral(") ");
+          }
+          if (context.GetContextPaint()) {
+            const SVGEmbeddingContextPaint* paint = context.GetContextPaint();
+            surfacePathPrefix.AppendLiteral("contextPaint=(");
+            if (paint->GetFill()) {
+              surfacePathPrefix.AppendLiteral(" fill=");
+              surfacePathPrefix.AppendInt(paint->GetFill()->ToABGR(), 16);
+            }
+            if (paint->GetFillOpacity()) {
+              surfacePathPrefix.AppendLiteral(" fillOpa=");
+              surfacePathPrefix.AppendFloat(paint->GetFillOpacity());
+            }
+            if (paint->GetStroke()) {
+              surfacePathPrefix.AppendLiteral(" stroke=");
+              surfacePathPrefix.AppendInt(paint->GetStroke()->ToABGR(), 16);
+            }
+            if (paint->GetStrokeOpacity()) {
+              surfacePathPrefix.AppendLiteral(" strokeOpa=");
+              surfacePathPrefix.AppendFloat(paint->GetStrokeOpacity());
+            }
+            surfacePathPrefix.AppendLiteral(" ) ");
+          }
+          surfacePathPrefix.AppendLiteral("]");
         }
       } else if (counter.Type() == SurfaceMemoryCounterType::COMPOSITING) {
         surfacePathPrefix.AppendLiteral(", compositing frame");
@@ -577,14 +620,14 @@ ShouldLoadCachedImage(imgRequest* aImgRequest,
    * Cached images are keyed off of the first uri in a redirect chain.
    * Hence content policies don't get a chance to test the intermediate hops
    * or the final desitnation.  Here we test the final destination using
-   * mCurrentURI off of the imgRequest and passing it into content policies.
+   * mFinalURI off of the imgRequest and passing it into content policies.
    * For Mixed Content Blocker, we do an additional check to determine if any
    * of the intermediary hops went through an insecure redirect with the
    * mHadInsecureRedirect flag
    */
   bool insecureRedirect = aImgRequest->HadInsecureRedirect();
   nsCOMPtr<nsIURI> contentLocation;
-  aImgRequest->GetCurrentURI(getter_AddRefs(contentLocation));
+  aImgRequest->GetFinalURI(getter_AddRefs(contentLocation));
   nsresult rv;
 
   int16_t decision = nsIContentPolicy::REJECT_REQUEST;
@@ -640,19 +683,6 @@ ShouldLoadCachedImage(imgRequest* aImgRequest,
         return false;
       }
     }
-  }
-
-  bool sendPriming = false;
-  bool mixedContentWouldBlock = false;
-  rv = nsMixedContentBlocker::GetHSTSPrimingFromRequestingContext(contentLocation,
-      aLoadingContext, &sendPriming, &mixedContentWouldBlock);
-  if (NS_FAILED(rv)) {
-    return false;
-  }
-  if (sendPriming && mixedContentWouldBlock) {
-    // if either of the securty checks above would cause a priming request, we
-    // can't load this image from the cache, so go ahead and return false here
-    return false;
   }
 
   return true;
@@ -776,6 +806,7 @@ NewImageChannel(nsIChannel** aResult,
                                               aTriggeringPrincipal,
                                               securityFlags,
                                               aPolicyType,
+                                              nullptr,   // PerformanceStorage
                                               nullptr,   // loadGroup
                                               callbacks,
                                               aLoadFlags);
@@ -807,6 +838,7 @@ NewImageChannel(nsIChannel** aResult,
                        nsContentUtils::GetSystemPrincipal(),
                        securityFlags,
                        aPolicyType,
+                       nullptr,   // PerformanceStorage
                        nullptr,   // loadGroup
                        callbacks,
                        aLoadFlags);
@@ -887,8 +919,8 @@ NewImageChannel(nsIChannel** aResult,
   return NS_OK;
 }
 
-static uint32_t
-SecondsFromPRTime(PRTime prTime)
+/* static */ uint32_t
+imgCacheEntry::SecondsFromPRTime(PRTime prTime)
 {
   return uint32_t(int64_t(prTime) / int64_t(PR_USEC_PER_SEC));
 }
@@ -1736,7 +1768,7 @@ imgLoader::ValidateRequestWithNewChannel(imgRequest* request,
       // In the mean time, we must defer notifications because we are added to
       // the imgRequest's proxy list, and we can get extra notifications
       // resulting from methods such as StartDecoding(). See bug 579122.
-      proxy->SetNotificationsDeferred(true);
+      proxy->MarkValidating();
 
       // Attach the proxy without notifying
       request->GetValidator()->AddProxy(proxy);
@@ -1802,7 +1834,7 @@ imgLoader::ValidateRequestWithNewChannel(imgRequest* request,
   // In the mean time, we must defer notifications because we are added to
   // the imgRequest's proxy list, and we can get extra notifications
   // resulting from methods such as StartDecoding(). See bug 579122.
-  req->SetNotificationsDeferred(true);
+  req->MarkValidating();
 
   // Add the proxy without notifying
   hvc->AddProxy(req);
@@ -1838,13 +1870,11 @@ imgLoader::ValidateEntry(imgCacheEntry* aEntry,
 {
   LOG_SCOPE(gImgLog, "imgLoader::ValidateEntry");
 
-  bool hasExpired;
-  uint32_t expirationTime = aEntry->GetExpiryTime();
-  if (expirationTime <= SecondsFromPRTime(PR_Now())) {
-    hasExpired = true;
-  } else {
-    hasExpired = false;
-  }
+  // If the expiration time is zero, then the request has not gotten far enough
+  // to know when it will expire.
+  uint32_t expiryTime = aEntry->GetExpiryTime();
+  bool hasExpired = expiryTime != 0 &&
+                    expiryTime <= imgCacheEntry::SecondsFromPRTime(PR_Now());
 
   nsresult rv;
 
@@ -1861,7 +1891,8 @@ imgLoader::ValidateEntry(imgCacheEntry* aEntry,
       if (NS_SUCCEEDED(rv)) {
         // nsIFile uses millisec, NSPR usec
         fileLastMod *= 1000;
-        hasExpired = SecondsFromPRTime((PRTime)fileLastMod) > lastModTime;
+        hasExpired =
+          imgCacheEntry::SecondsFromPRTime((PRTime)fileLastMod) > lastModTime;
       }
     }
   }
@@ -2689,8 +2720,8 @@ imgLoader::GetMimeTypeFromContent(const char* aContents,
                                   nsACString& aContentType)
 {
   /* Is it a GIF? */
-  if (aLength >= 6 && (!nsCRT::strncmp(aContents, "GIF87a", 6) ||
-                       !nsCRT::strncmp(aContents, "GIF89a", 6))) {
+  if (aLength >= 6 && (!strncmp(aContents, "GIF87a", 6) ||
+                       !strncmp(aContents, "GIF89a", 6))) {
     aContentType.AssignLiteral(IMAGE_GIF);
 
   /* or a PNG? */
@@ -2727,7 +2758,7 @@ imgLoader::GetMimeTypeFromContent(const char* aContents,
              ((unsigned char) aContents[4])==0x00 ) {
     aContentType.AssignLiteral(IMAGE_ART);
 
-  } else if (aLength >= 2 && !nsCRT::strncmp(aContents, "BM", 2)) {
+  } else if (aLength >= 2 && !strncmp(aContents, "BM", 2)) {
     aContentType.AssignLiteral(IMAGE_BMP);
 
   // ICOs always begin with a 2-byte 0 followed by a 2-byte 1.
@@ -2905,13 +2936,45 @@ imgCacheValidator::AddProxy(imgRequestProxy* aProxy)
   // the network.
   aProxy->AddToLoadGroup();
 
-  mProxies.AppendObject(aProxy);
+  mProxies.AppendElement(aProxy);
 }
 
 void
 imgCacheValidator::RemoveProxy(imgRequestProxy* aProxy)
 {
-  mProxies.RemoveObject(aProxy);
+  mProxies.RemoveElement(aProxy);
+}
+
+void
+imgCacheValidator::UpdateProxies()
+{
+  // We have finished validating the request, so we can safely take ownership
+  // of the proxy list. imgRequestProxy::SyncNotifyListener can mutate the list
+  // if imgRequestProxy::CancelAndForgetObserver is called by its owner. Note
+  // that any potential notifications should still be suppressed in
+  // imgRequestProxy::ChangeOwner because we haven't cleared the validating
+  // flag yet, and thus they will remain deferred.
+  AutoTArray<RefPtr<imgRequestProxy>, 4> proxies(Move(mProxies));
+
+  for (auto& proxy : proxies) {
+    // First update the state of all proxies before notifying any of them
+    // to ensure a consistent state (e.g. in case the notification causes
+    // other proxies to be touched indirectly.)
+    MOZ_ASSERT(proxy->IsValidating());
+    MOZ_ASSERT(proxy->NotificationsDeferred(),
+               "Proxies waiting on cache validation should be "
+               "deferring notifications!");
+    if (mNewRequest) {
+      proxy->ChangeOwner(mNewRequest);
+    }
+    proxy->ClearValidating();
+  }
+
+  for (auto& proxy : proxies) {
+    // Notify synchronously, because we're already in OnStartRequest, an
+    // asynchronously-called function.
+    proxy->SyncNotifyListener();
+  }
 }
 
 /** nsIRequestObserver methods **/
@@ -2942,34 +3005,20 @@ imgCacheValidator::OnStartRequest(nsIRequest* aRequest, nsISupports* ctxt)
     nsCOMPtr<nsIURI> channelURI;
     channel->GetURI(getter_AddRefs(channelURI));
 
-    nsCOMPtr<nsIURI> currentURI;
-    mRequest->GetCurrentURI(getter_AddRefs(currentURI));
+    nsCOMPtr<nsIURI> finalURI;
+    mRequest->GetFinalURI(getter_AddRefs(finalURI));
 
     bool sameURI = false;
-    if (channelURI && currentURI) {
-      channelURI->Equals(currentURI, &sameURI);
+    if (channelURI && finalURI) {
+      channelURI->Equals(finalURI, &sameURI);
     }
 
     if (isFromCache && sameURI) {
-      uint32_t count = mProxies.Count();
-      for (int32_t i = count-1; i>=0; i--) {
-        imgRequestProxy* proxy = static_cast<imgRequestProxy*>(mProxies[i]);
-
-        // Proxies waiting on cache validation should be deferring
-        // notifications. Undefer them.
-        MOZ_ASSERT(proxy->NotificationsDeferred(),
-                   "Proxies waiting on cache validation should be "
-                   "deferring notifications!");
-        proxy->SetNotificationsDeferred(false);
-
-        // Notify synchronously, because we're already in OnStartRequest, an
-        // asynchronously-called function.
-        proxy->SyncNotifyListener();
-      }
-
       // We don't need to load this any more.
       aRequest->Cancel(NS_BINDING_ABORTED);
 
+      // Clear the validator before updating the proxies. The notifications may
+      // clone an existing request, and its state could be inconsistent.
       mRequest->SetLoadId(context);
       mRequest->SetValidator(nullptr);
 
@@ -2978,6 +3027,7 @@ imgCacheValidator::OnStartRequest(nsIRequest* aRequest, nsISupports* ctxt)
       mNewRequest = nullptr;
       mNewEntry = nullptr;
 
+      UpdateProxies();
       return NS_OK;
     }
   }
@@ -3004,6 +3054,8 @@ imgCacheValidator::OnStartRequest(nsIRequest* aRequest, nsISupports* ctxt)
   // Doom the old request's cache entry
   mRequest->RemoveFromCache();
 
+  // Clear the validator before updating the proxies. The notifications may
+  // clone an existing request, and its state could be inconsistent.
   mRequest->SetValidator(nullptr);
   mRequest = nullptr;
 
@@ -3024,17 +3076,7 @@ imgCacheValidator::OnStartRequest(nsIRequest* aRequest, nsISupports* ctxt)
   // changes the caching behaviour for imgRequests.
   mImgLoader->PutIntoCache(mNewRequest->CacheKey(), mNewEntry);
 
-  uint32_t count = mProxies.Count();
-  for (int32_t i = count-1; i>=0; i--) {
-    imgRequestProxy* proxy = static_cast<imgRequestProxy*>(mProxies[i]);
-    proxy->ChangeOwner(mNewRequest);
-
-    // Notify synchronously, because we're already in OnStartRequest, an
-    // asynchronously-called function.
-    proxy->SetNotificationsDeferred(false);
-    proxy->SyncNotifyListener();
-  }
-
+  UpdateProxies();
   mNewRequest = nullptr;
   mNewEntry = nullptr;
 

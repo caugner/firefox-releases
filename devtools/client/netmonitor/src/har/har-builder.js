@@ -13,9 +13,11 @@ const {
   getUrlQuery,
   parseQueryString,
 } = require("../utils/request-utils");
-
+const { buildHarLog } = require("./har-builder-utils");
 const L10N = new LocalizationHelper("devtools/client/locales/har.properties");
-const HAR_VERSION = "1.1";
+const {
+  TIMING_KEYS
+} = require("../constants");
 
 /**
  * This object is responsible for building HAR file. See HAR spec:
@@ -51,39 +53,25 @@ HarBuilder.prototype = {
    * @returns {Promise} A promise that resolves to the HAR object when
    * the entire build process is done.
    */
-  build: function () {
+  build: async function () {
     this.promises = [];
 
     // Build basic structure for data.
-    let log = this.buildLog();
+    let log = buildHarLog(appInfo);
 
     // Build entries.
     for (let file of this._options.items) {
-      log.entries.push(this.buildEntry(log, file));
+      log.log.entries.push(await this.buildEntry(log.log, file));
     }
 
     // Some data needs to be fetched from the backend during the
     // build process, so wait till all is done.
-    return Promise.all(this.promises).then(() => ({ log }));
+    await Promise.all(this.promises);
+
+    return log;
   },
 
   // Helpers
-
-  buildLog: function () {
-    return {
-      version: HAR_VERSION,
-      creator: {
-        name: appInfo.name,
-        version: appInfo.version
-      },
-      browser: {
-        name: appInfo.name,
-        version: appInfo.version
-      },
-      pages: [],
-      entries: [],
-    };
-  },
 
   buildPage: function (file) {
     let page = {};
@@ -110,18 +98,39 @@ HarBuilder.prototype = {
     return page;
   },
 
-  buildEntry: function (log, file) {
+  buildEntry: async function (log, file) {
     let page = this.getPage(log, file);
 
     let entry = {};
     entry.pageref = page.id;
     entry.startedDateTime = dateToJSON(new Date(file.startedMillis));
-    entry.time = file.endedMillis - file.startedMillis;
 
-    entry.request = this.buildRequest(file);
-    entry.response = this.buildResponse(file);
+    let eventTimings = file.eventTimings;
+    if (!eventTimings && this._options.requestData) {
+      eventTimings = await this._options.requestData(file.id, "eventTimings");
+    }
+
+    entry.request = await this.buildRequest(file);
+    entry.response = await this.buildResponse(file);
     entry.cache = this.buildCache(file);
-    entry.timings = file.eventTimings ? file.eventTimings.timings : {};
+    entry.timings = eventTimings ? eventTimings.timings : {};
+
+    // Calculate total time by summing all timings. Note that
+    // `file.totalTime` can't be used since it doesn't have to
+    // correspond to plain summary of individual timings.
+    // With TCP Fast Open and TLS early data sending data can
+    // start at the same time as connect (we can send data on
+    // TCP syn packet). Also TLS handshake can carry application
+    // data thereby overlapping a sending data period and TLS
+    // handshake period.
+    entry.time = TIMING_KEYS.reduce((sum, type) => {
+      let time = entry.timings[type];
+      return (typeof time != "undefined") ? (sum + time) : sum;
+    }, 0);
+
+    // Security state isn't part of HAR spec, and so create
+    // custom field that needs to use '_' prefix.
+    entry._securityState = file.securityState;
 
     if (file.remoteAddress) {
       entry.serverIPAddress = file.remoteAddress;
@@ -147,36 +156,45 @@ HarBuilder.prototype = {
       onLoad: -1
     };
 
+    let getTimingMarker = this._options.getTimingMarker;
+    if (getTimingMarker) {
+      timings.onContentLoad = getTimingMarker("firstDocumentDOMContentLoadedTimestamp");
+      timings.onLoad = getTimingMarker("firstDocumentLoadTimestamp");
+    }
+
     return timings;
   },
 
-  buildRequest: function (file) {
+  buildRequest: async function (file) {
+    // When using HarAutomation, HarCollector will automatically fetch requestHeaders
+    // and requestCookies, but when we use it from netmonitor, FirefoxDataProvider
+    // should fetch it itself lazily, via requestData.
+
+    let requestHeaders = file.requestHeaders;
+    if (!requestHeaders && this._options.requestData) {
+      requestHeaders = await this._options.requestData(file.id, "requestHeaders");
+    }
+
+    let requestCookies = file.requestCookies;
+    if (!requestCookies && this._options.requestData) {
+      requestCookies = await this._options.requestData(file.id, "requestCookies");
+    }
+
     let request = {
       bodySize: 0
     };
-
     request.method = file.method;
     request.url = file.url;
     request.httpVersion = file.httpVersion || "";
-
-    request.headers = this.buildHeaders(file.requestHeaders);
+    request.headers = this.buildHeaders(requestHeaders);
     request.headers = this.appendHeadersPostData(request.headers, file);
-    request.cookies = this.buildCookies(file.requestCookies);
-
+    request.cookies = this.buildCookies(requestCookies);
     request.queryString = parseQueryString(getUrlQuery(file.url)) || [];
+    request.headersSize = requestHeaders.headersSize;
+    request.postData = await this.buildPostData(file);
 
-    if (file.requestPostData) {
-      request.postData = this.buildPostData(file);
-    }
-
-    request.headersSize = file.requestHeaders.headersSize;
-
-    // Set request body size, but make sure the body is fetched
-    // from the backend.
-    if (file.requestPostData) {
-      this.fetchData(file.requestPostData.postData.text).then(value => {
-        request.bodySize = value.length;
-      });
+    if (request.postData && request.postData.text) {
+      request.bodySize = request.postData.text.length;
     }
 
     return request;
@@ -216,7 +234,7 @@ HarBuilder.prototype = {
       return [];
     }
 
-    return this.buildNameValuePairs(input.cookies);
+    return this.buildNameValuePairs(input.cookies || input);
   },
 
   buildNameValuePairs: function (entries) {
@@ -241,52 +259,79 @@ HarBuilder.prototype = {
     return result;
   },
 
-  buildPostData: function (file) {
-    let postData = {
-      mimeType: findValue(file.requestHeaders.headers, "content-type"),
-      params: [],
-      text: ""
-    };
+  buildPostData: async function (file) {
+    // When using HarAutomation, HarCollector will automatically fetch requestPostData
+    // and requestHeaders, but when we use it from netmonitor, FirefoxDataProvider
+    // should fetch it itself lazily, via requestData.
+    let requestPostData = file.requestPostData;
+    let requestHeaders = file.requestHeaders;
+    let requestHeadersFromUploadStream;
 
-    if (!file.requestPostData) {
-      return postData;
+    if (!requestPostData && this._options.requestData) {
+      let payload = await this._options.requestData(file.id, "requestPostData");
+      requestPostData = payload.requestPostData;
+      requestHeadersFromUploadStream = payload.requestHeadersFromUploadStream;
     }
 
-    if (file.requestPostData.postDataDiscarded) {
+    if (!requestPostData.postData.text) {
+      return undefined;
+    }
+
+    if (!requestHeaders && this._options.requestData) {
+      requestHeaders = await this._options.requestData(file.id, "requestHeaders");
+    }
+
+    let postData = {
+      mimeType: findValue(requestHeaders.headers, "content-type"),
+      params: [],
+      text: requestPostData.postData.text,
+    };
+
+    if (requestPostData.postDataDiscarded) {
       postData.comment = L10N.getStr("har.requestBodyNotIncluded");
       return postData;
     }
 
-    // Load request body from the backend.
-    this.fetchData(file.requestPostData.postData.text).then(postDataText => {
-      postData.text = postDataText;
+    // If we are dealing with URL encoded body, parse parameters.
+    if (CurlUtils.isUrlEncodedRequest({
+      headers: requestHeaders.headers,
+      postDataText: postData.text,
+    })) {
+      postData.mimeType = "application/x-www-form-urlencoded";
+      // Extract form parameters and produce nice HAR array.
+      let formDataSections = await getFormDataSections(
+        requestHeaders,
+        requestHeadersFromUploadStream,
+        requestPostData,
+        this._options.getString,
+      );
 
-      // If we are dealing with URL encoded body, parse parameters.
-      let { headers } = file.requestHeaders;
-      if (CurlUtils.isUrlEncodedRequest({ headers, postDataText })) {
-        postData.mimeType = "application/x-www-form-urlencoded";
-
-        // Extract form parameters and produce nice HAR array.
-        getFormDataSections(
-          file.requestHeaders,
-          file.requestHeadersFromUploadStream,
-          file.requestPostData,
-          this._options.getString,
-        ).then(formDataSections => {
-          formDataSections.forEach(section => {
-            let paramsArray = parseQueryString(section);
-            if (paramsArray) {
-              postData.params = [...postData.params, ...paramsArray];
-            }
-          });
-        });
-      }
-    });
+      formDataSections.forEach((section) => {
+        let paramsArray = parseQueryString(section);
+        if (paramsArray) {
+          postData.params = [...postData.params, ...paramsArray];
+        }
+      });
+    }
 
     return postData;
   },
 
-  buildResponse: function (file) {
+  buildResponse: async function (file) {
+    // When using HarAutomation, HarCollector will automatically fetch responseHeaders
+    // and responseCookies, but when we use it from netmonitor, FirefoxDataProvider
+    // should fetch it itself lazily, via requestData.
+
+    let responseHeaders = file.responseHeaders;
+    if (!responseHeaders && this._options.requestData) {
+      responseHeaders = await this._options.requestData(file.id, "responseHeaders");
+    }
+
+    let responseCookies = file.responseCookies;
+    if (!responseCookies && this._options.requestData) {
+      responseCookies = await this._options.requestData(file.id, "responseCookies");
+    }
+
     let response = {
       status: 0
     };
@@ -295,15 +340,12 @@ HarBuilder.prototype = {
     if (file.status) {
       response.status = parseInt(file.status, 10);
     }
-
-    let responseHeaders = file.responseHeaders;
-
     response.statusText = file.statusText || "";
     response.httpVersion = file.httpVersion || "";
 
     response.headers = this.buildHeaders(responseHeaders);
-    response.cookies = this.buildCookies(file.responseCookies);
-    response.content = this.buildContent(file);
+    response.cookies = this.buildCookies(responseCookies);
+    response.content = await this.buildContent(file);
 
     let headers = responseHeaders ? responseHeaders.headers : null;
     let headersSize = responseHeaders ? responseHeaders.headersSize : -1;
@@ -323,13 +365,19 @@ HarBuilder.prototype = {
     return response;
   },
 
-  buildContent: function (file) {
+  buildContent: async function (file) {
     let content = {
       mimeType: file.mimeType,
       size: -1
     };
 
+    // When using HarAutomation, HarCollector will automatically fetch responseContent,
+    // but when we use it from netmonitor, FirefoxDataProvider should fetch it itself
+    // lazily, via requestData.
     let responseContent = file.responseContent;
+    if (!responseContent && this._options.requestData) {
+      responseContent = await this._options.requestData(file.id, "responseContent");
+    }
     if (responseContent && responseContent.content) {
       content.size = responseContent.content.size;
       content.encoding = responseContent.content.encoding;

@@ -20,6 +20,7 @@ const {
   VIEW_NODE_PROPERTY_TYPE,
   VIEW_NODE_VALUE_TYPE,
   VIEW_NODE_IMAGE_URL_TYPE,
+  VIEW_NODE_FONT_TYPE,
 } = require("devtools/client/inspector/shared/node-types");
 const StyleInspectorMenu = require("devtools/client/inspector/shared/style-inspector-menu");
 const TooltipsOverlay = require("devtools/client/inspector/shared/tooltips-overlay");
@@ -183,8 +184,8 @@ function CssComputedView(inspector, document, pageStyle) {
 
   this.shortcuts = new KeyShortcuts({ window: this.styleWindow });
   this._onShortcut = this._onShortcut.bind(this);
-  this.shortcuts.on("CmdOrCtrl+F", this._onShortcut);
-  this.shortcuts.on("Escape", this._onShortcut);
+  this.shortcuts.on("CmdOrCtrl+F", event => this._onShortcut("CmdOrCtrl+F", event));
+  this.shortcuts.on("Escape", event => this._onShortcut("Escape", event));
   this.styleDocument.addEventListener("copy", this._onCopy);
   this.styleDocument.addEventListener("mousedown", this.focusWindow);
   this.element.addEventListener("click", this._onClick);
@@ -304,6 +305,7 @@ CssComputedView.prototype = {
    * @param {DOMNode} node
    *        The node which we want information about
    * @return {Object} The type information object contains the following props:
+   * - view {String} Always "computed" to indicate the computed view.
    * - type {String} One of the VIEW_NODE_XXX_TYPE const in
    *   client/inspector/shared/node-types
    * - value {Object} Depends on the type of the node
@@ -373,6 +375,23 @@ CssComputedView.prototype = {
         value: node.textContent
       };
     }
+    if (classes.contains("computed-font-family")) {
+      if (propertyView) {
+        value = {
+          property: parent.querySelector(
+            ".computed-property-name").firstChild.textContent,
+          value: node.parentNode.textContent
+        };
+      } else if (propertyContent) {
+        let view = propertyContent.previousSibling;
+        value = {
+          property: view.querySelector(".computed-property-name").firstChild.textContent,
+          value: node.parentNode.textContent
+        };
+      } else {
+        return null;
+      }
+    }
 
     // Get the type
     if (classes.contains("computed-property-name")) {
@@ -380,6 +399,8 @@ CssComputedView.prototype = {
     } else if (classes.contains("computed-property-value") ||
                classes.contains("computed-other-property-value")) {
       type = VIEW_NODE_VALUE_TYPE;
+    } else if (classes.contains("computed-font-family")) {
+      type = VIEW_NODE_FONT_TYPE;
     } else if (isHref) {
       type = VIEW_NODE_IMAGE_URL_TYPE;
       value.url = node.href;
@@ -387,7 +408,11 @@ CssComputedView.prototype = {
       return null;
     }
 
-    return {type, value};
+    return {
+      view: "computed",
+      type,
+      value,
+    };
   },
 
   _createPropertyViews: function () {
@@ -893,8 +918,8 @@ PropertyView.prototype = {
     let searchTerm = this.tree.searchField.value.toLowerCase();
     let isValidSearchTerm = searchTerm.trim().length > 0;
     if (isValidSearchTerm &&
-        this.name.toLowerCase().indexOf(searchTerm) === -1 &&
-        this.value.toLowerCase().indexOf(searchTerm) === -1) {
+        !this.name.toLowerCase().includes(searchTerm) &&
+        !this.value.toLowerCase().includes(searchTerm)) {
       return false;
     }
 
@@ -950,14 +975,14 @@ PropertyView.prototype = {
       window: this.tree.styleWindow,
       target: this.element
     });
-    this.shortcuts.on("F1", (name, event) => {
+    this.shortcuts.on("F1", event => {
       this.mdnLinkClick(event);
       // Prevent opening the options panel
       event.preventDefault();
       event.stopPropagation();
     });
-    this.shortcuts.on("Return", (name, event) => this.onMatchedToggle(event));
-    this.shortcuts.on("Space", (name, event) => this.onMatchedToggle(event));
+    this.shortcuts.on("Return", this.onMatchedToggle);
+    this.shortcuts.on("Space", this.onMatchedToggle);
 
     let nameContainer = doc.createElementNS(HTML_NS, "span");
     nameContainer.className = "computed-property-name-container";
@@ -1055,7 +1080,8 @@ PropertyView.prototype = {
       {
         colorSwatchClass: "computed-colorswatch",
         colorClass: "computed-color",
-        urlClass: "theme-link"
+        urlClass: "theme-link",
+        fontFamilyClass: "computed-font-family",
         // No need to use baseURI here as computed URIs are never relative.
       });
     this.valueNode.innerHTML = "";
@@ -1329,6 +1355,7 @@ SelectorView.prototype = {
         colorSwatchClass: "computed-colorswatch",
         colorClass: "computed-color",
         urlClass: "theme-link",
+        fontFamilyClass: "computed-font-family",
         baseURI: this.selectorInfo.rule.href
       }
     );

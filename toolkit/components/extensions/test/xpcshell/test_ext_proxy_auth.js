@@ -1,11 +1,6 @@
 "use strict";
 
-const XMLHttpRequest = Components.Constructor("@mozilla.org/xmlextras/xmlhttprequest;1", "nsIXMLHttpRequest");
-
-Services.prefs.setBoolPref("network.auth.non-web-content-triggered-resources-http-auth-allow", true);
-do_register_cleanup(() => {
-  Services.prefs.clearUserPref("network.auth.non-web-content-triggered-resources-http-auth-allow");
-});
+Cu.importGlobalProperties(["XMLHttpRequest"]);
 
 const proxy = createHttpServer();
 

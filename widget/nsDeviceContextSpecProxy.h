@@ -30,7 +30,7 @@ public:
   NS_IMETHOD Init(nsIWidget* aWidget, nsIPrintSettings* aPrintSettings,
                  bool aIsPrintPreview) final;
 
-  virtual already_AddRefed<PrintTarget> MakePrintTarget() final;
+  already_AddRefed<PrintTarget> MakePrintTarget() final;
 
   NS_IMETHOD GetDrawEventRecorder(mozilla::gfx::DrawEventRecorder** aDrawEventRecorder) final;
 
@@ -54,16 +54,11 @@ public:
 private:
   ~nsDeviceContextSpecProxy() {}
 
-  nsresult CreateUniqueTempPath(nsACString& aFilePath);
-
   nsCOMPtr<nsIPrintSettings> mPrintSettings;
   nsCOMPtr<nsIPrintSession> mPrintSession;
   nsCOMPtr<nsIDeviceContextSpec> mRealDeviceContextSpec;
   RefPtr<mozilla::layout::RemotePrintJobChild> mRemotePrintJob;
   RefPtr<mozilla::layout::DrawEventRecorderPRFileDesc> mRecorder;
-  nsCOMPtr<nsIFile> mRecordingDir;
-  nsCOMPtr<nsIUUIDGenerator> mUuidGenerator;
-  nsCString mRecordingFileName;
 };
 
 #endif // nsDeviceContextSpecProxy_h

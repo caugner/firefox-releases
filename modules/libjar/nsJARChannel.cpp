@@ -204,17 +204,13 @@ nsJARChannel::nsJARChannel()
     mBlockRemoteFiles = Preferences::GetBool("network.jar.block-remote-files", false);
 
     // hold an owning reference to the jar handler
-    NS_ADDREF(gJarHandler);
+    mJarHandler = gJarHandler;
 }
 
 nsJARChannel::~nsJARChannel()
 {
     NS_ReleaseOnMainThreadSystemGroup("nsJARChannel::mLoadInfo",
                                       mLoadInfo.forget());
-
-    // release owning reference to the jar handler
-    nsJARProtocolHandler *handler = gJarHandler;
-    NS_RELEASE(handler); // nullptr parameter
 }
 
 NS_IMPL_ISUPPORTS_INHERITED(nsJARChannel,
@@ -394,7 +390,7 @@ nsJARChannel::OpenLocalFile()
                                  getter_AddRefs(input));
     if (NS_SUCCEEDED(rv)) {
         // Create input stream pump and call AsyncRead as a block.
-        rv = NS_NewInputStreamPump(getter_AddRefs(mPump), input);
+        rv = NS_NewInputStreamPump(getter_AddRefs(mPump), input.forget());
         if (NS_SUCCEEDED(rv))
             rv = mPump->AsyncRead(this, nullptr);
     }
@@ -820,6 +816,7 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
         rv = NS_NewChannelInternal(getter_AddRefs(channel),
                                    mJarBaseURI,
                                    mLoadInfo,
+                                   nullptr, // PerformanceStorage
                                    mLoadGroup,
                                    mCallbacks,
                                    loadFlags);
@@ -1070,7 +1067,7 @@ nsJARChannel::OnDownloadComplete(MemoryDownloader* aDownloader,
         rv = CreateJarInput(nullptr, getter_AddRefs(input));
         if (NS_SUCCEEDED(rv)) {
             // create input stream pump
-            rv = NS_NewInputStreamPump(getter_AddRefs(mPump), input);
+            rv = NS_NewInputStreamPump(getter_AddRefs(mPump), input.forget());
             if (NS_SUCCEEDED(rv))
                 rv = mPump->AsyncRead(this, nullptr);
         }

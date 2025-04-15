@@ -4,29 +4,28 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = [ "LoginManagerContent",
-                          "LoginFormFactory",
-                          "UserAutoCompleteResult" ];
+var EXPORTED_SYMBOLS = [ "LoginManagerContent",
+                         "LoginFormFactory",
+                         "UserAutoCompleteResult" ];
 
-const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
 const PASSWORD_INPUT_ADDED_COALESCING_THRESHOLD_MS = 1;
 const AUTOCOMPLETE_AFTER_RIGHT_CLICK_THRESHOLD_MS = 400;
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
-Cu.import("resource://gre/modules/PromiseUtils.jsm");
-Cu.import("resource://gre/modules/Timer.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+ChromeUtils.import("resource://gre/modules/PromiseUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "DeferredTask", "resource://gre/modules/DeferredTask.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FormLikeFactory",
-                                  "resource://gre/modules/FormLikeFactory.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "LoginRecipesContent",
-                                  "resource://gre/modules/LoginRecipes.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "LoginHelper",
-                                  "resource://gre/modules/LoginHelper.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "InsecurePasswordUtils",
-                                  "resource://gre/modules/InsecurePasswordUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "DeferredTask", "resource://gre/modules/DeferredTask.jsm");
+ChromeUtils.defineModuleGetter(this, "FormLikeFactory",
+                               "resource://gre/modules/FormLikeFactory.jsm");
+ChromeUtils.defineModuleGetter(this, "LoginRecipesContent",
+                               "resource://gre/modules/LoginRecipes.jsm");
+ChromeUtils.defineModuleGetter(this, "LoginHelper",
+                               "resource://gre/modules/LoginHelper.jsm");
+ChromeUtils.defineModuleGetter(this, "InsecurePasswordUtils",
+                               "resource://gre/modules/InsecurePasswordUtils.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "gNetUtil",
                                    "@mozilla.org/network/util;1",
@@ -474,7 +473,7 @@ var LoginManagerContent = {
          * Keeps track of filled fields and values.
          */
         fillsByRootElement: new WeakMap(),
-        loginFormRootElements: new Set(),
+        loginFormRootElements: new WeakSet(),
       };
       this.loginFormStateByDocument.set(document, loginFormState);
     }
@@ -491,10 +490,10 @@ var LoginManagerContent = {
     // Returns true if this window or any subframes have insecure login forms.
     let hasInsecureLoginForms = (thisWindow) => {
       let doc = thisWindow.document;
-      let hasLoginForm = this.stateForDocument(doc).loginFormRootElements.size > 0;
-      // Ignores window.opener, because it's not relevant for indicating
-      // form security. See InsecurePasswordUtils docs for details.
-      return (hasLoginForm && !thisWindow.isSecureContextIfOpenerIgnored) ||
+      let rootElsWeakSet = this.stateForDocument(doc).loginFormRootElements;
+      let hasLoginForm = ChromeUtils.nondeterministicGetWeakSetKeys(rootElsWeakSet)
+                                    .filter(el => el.isConnected).length > 0;
+      return (hasLoginForm && !thisWindow.isSecureContext) ||
              Array.some(thisWindow.frames,
                         frame => hasInsecureLoginForms(frame));
     };
@@ -619,7 +618,7 @@ var LoginManagerContent = {
     var acInputField = event.target;
 
     // This is probably a bit over-conservatative.
-    if (!(acInputField.ownerDocument instanceof Ci.nsIDOMHTMLDocument))
+    if (ChromeUtils.getClassName(acInputField.ownerDocument) != "HTMLDocument")
       return;
 
     if (!LoginHelper.isUsernameFieldType(acInputField))
@@ -882,11 +881,17 @@ var LoginManagerContent = {
    */
   _onNavigation(aDocument) {
     let state = this.stateForDocument(aDocument);
-    let loginFormRootElements = state.loginFormRootElements;
-    log("_onNavigation: state:", state, "loginFormRootElements size:", loginFormRootElements.size,
+    let rootElsWeakSet = state.loginFormRootElements;
+    let weakLoginFormRootElements = ChromeUtils.nondeterministicGetWeakSetKeys(rootElsWeakSet);
+
+    log("_onNavigation: state:", state, "loginFormRootElements approx size:", weakLoginFormRootElements.length,
         "document:", aDocument);
 
-    for (let formRoot of state.loginFormRootElements) {
+    for (let formRoot of weakLoginFormRootElements) {
+      if (!formRoot.isConnected) {
+        continue;
+      }
+
       if (formRoot instanceof Ci.nsIDOMHTMLFormElement) {
         // For now only perform capture upon navigation for FormLike's without
         // a <form> to avoid capture from both an earlyformsubmit and
@@ -1442,7 +1447,7 @@ function UserAutoCompleteResult(aSearchString, matchingLogins, {isSecure, messag
   this.matchCount = matchingLogins.length + this._showInsecureFieldWarning;
   this._messageManager = messageManager;
   this._stringBundle = Services.strings.createBundle("chrome://passwordmgr/locale/passwordmgr.properties");
-  this._dateAndTimeFormatter = Services.intl.createDateTimeFormat(undefined, { dateStyle: "medium" });
+  this._dateAndTimeFormatter = new Services.intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
   this._isPasswordField = isPasswordField;
 

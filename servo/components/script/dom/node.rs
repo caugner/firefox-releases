@@ -164,10 +164,7 @@ bitflags! {
                  to be reachable with using sequential focus navigation."]
         const SEQUENTIALLY_FOCUSABLE = 1 << 3;
 
-        /// Whether any ancestor is a fragmentation container
-        const CAN_BE_FRAGMENTED = 1 << 4;
-
-        // There's a free bit here.
+        // There are two free bits here.
 
         #[doc = "Specifies whether the parser has set an associated form owner for \
                  this element. Only applicable for form-associatable elements."]
@@ -481,6 +478,19 @@ impl Node {
         }
 
         self.flags.set(flags);
+    }
+
+    // FIXME(emilio): This and the function below should move to Element.
+    pub fn note_dirty_descendants(&self) {
+        debug_assert!(self.is_in_doc());
+
+        for ancestor in self.inclusive_ancestors() {
+            if ancestor.get_flag(NodeFlags::HAS_DIRTY_DESCENDANTS) {
+                return;
+            }
+
+            ancestor.set_flag(NodeFlags::HAS_DIRTY_DESCENDANTS, true);
+        }
     }
 
     pub fn has_dirty_descendants(&self) -> bool {
@@ -1130,7 +1140,7 @@ impl LayoutNodeHelpers for LayoutDom<Node> {
         }
 
         if let Some(area) = self.downcast::<HTMLTextAreaElement>() {
-            return unsafe { area.get_value_for_layout() };
+            return unsafe { area.value_for_layout() };
         }
 
         panic!("not text!")
@@ -1324,7 +1334,7 @@ impl TreeIterator {
             }
             self.depth -= 1;
         }
-        debug_assert!(self.depth == 0);
+        debug_assert_eq!(self.depth, 0);
         self.current = None;
         Some(current)
     }
@@ -1801,7 +1811,7 @@ impl Node {
                                              is_html_doc, None,
                                              None, DocumentActivity::Inactive,
                                              DocumentSource::NotFromParser, loader,
-                                             None, None);
+                                             None, None, Default::default());
                 DomRoot::upcast::<Node>(document)
             },
             NodeTypeId::Element(..) => {
@@ -2499,7 +2509,7 @@ impl VirtualMethods for Node {
         if let Some(list) = self.child_list.get() {
             list.as_children_list().children_changed(mutation);
         }
-        self.owner_doc().content_and_heritage_changed(self, NodeDamage::OtherNodeDamage);
+        self.owner_doc().content_and_heritage_changed(self);
     }
 
     // This handles the ranges mentioned in steps 2-3 when removing a node.
@@ -2731,6 +2741,8 @@ impl Into<LayoutElementType> for ElementTypeId {
     #[inline(always)]
     fn into(self) -> LayoutElementType {
         match self {
+            ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLBRElement) =>
+                LayoutElementType::HTMLBRElement,
             ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLCanvasElement) =>
                 LayoutElementType::HTMLCanvasElement,
             ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLIFrameElement) =>
@@ -2741,6 +2753,8 @@ impl Into<LayoutElementType> for ElementTypeId {
                 LayoutElementType::HTMLInputElement,
             ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLObjectElement) =>
                 LayoutElementType::HTMLObjectElement,
+            ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLParagraphElement) =>
+                LayoutElementType::HTMLParagraphElement,
             ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLTableCellElement(_)) =>
                 LayoutElementType::HTMLTableCellElement,
             ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLTableColElement) =>

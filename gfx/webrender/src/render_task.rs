@@ -2,67 +2,55 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{ClipId, DeviceIntPoint, DeviceIntRect, DeviceIntSize};
-use api::{ColorF, FilterOp, LayerPoint, MixBlendMode};
-use api::{LayerRect, PipelineId};
-use clip::{ClipSource, ClipSourcesWeakHandle, ClipStore};
+use api::{DeviceIntPoint, DeviceIntRect, DeviceIntSize, ImageDescriptor, ImageFormat};
+use api::{DeviceSize, PremultipliedColorF};
+use box_shadow::{BoxShadowCacheKey};
+use clip::{ClipSource, ClipStore, ClipWorkItem};
 use clip_scroll_tree::CoordinateSystemId;
-use gpu_cache::GpuCacheHandle;
-use gpu_types::{ClipScrollNodeIndex};
-use internal_types::HardwareCompositeOp;
-use prim_store::PrimitiveIndex;
-use std::{cmp, usize, f32, i32};
-use std::rc::Rc;
+use device::TextureFilter;
+use gpu_cache::{GpuCache, GpuCacheAddress, GpuCacheHandle};
+use gpu_types::{ImageSource, PictureType, RasterizationSpace};
+use internal_types::{FastHashMap, SavedTargetIndex, SourceTexture};
+use picture::ContentOrigin;
+use prim_store::{PrimitiveIndex, ImageCacheKey};
+#[cfg(feature = "debugger")]
+use print_tree::{PrintTreePrinter};
+use resource_cache::{CacheItem, ResourceCache};
+use std::{cmp, ops, usize, f32, i32};
+use texture_cache::{TextureCache, TextureCacheHandle};
 use tiling::{RenderPass, RenderTargetIndex};
-use tiling::{RenderTargetKind, StackingContextIndex};
+use tiling::{RenderTargetKind};
 
 const FLOATS_PER_RENDER_TASK_INFO: usize = 12;
 pub const MAX_BLUR_STD_DEVIATION: f32 = 4.0;
 pub const MIN_DOWNSCALING_RT_SIZE: i32 = 128;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct RenderTaskId(pub u32); // TODO(gw): Make private when using GPU cache!
 
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct RenderTaskAddress(pub u32);
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct RenderTaskTree {
     pub tasks: Vec<RenderTask>,
     pub task_data: Vec<RenderTaskData>,
-}
-
-pub type ClipChain = Option<Rc<ClipChainNode>>;
-
-#[derive(Debug)]
-pub struct ClipChainNode {
-    pub work_item: ClipWorkItem,
-    pub prev: ClipChain,
-}
-
-struct ClipChainNodeIter {
-    current: ClipChain,
-}
-
-impl Iterator for ClipChainNodeIter {
-    type Item = Rc<ClipChainNode>;
-
-    fn next(&mut self) -> ClipChain {
-        let previous = self.current.clone();
-        self.current = match self.current {
-            Some(ref item) => item.prev.clone(),
-            None => return None,
-        };
-        previous
-    }
+    next_saved: SavedTargetIndex,
 }
 
 impl RenderTaskTree {
-    pub fn new() -> RenderTaskTree {
+    pub fn new() -> Self {
         RenderTaskTree {
             tasks: Vec::new(),
             task_data: Vec::new(),
+            next_saved: SavedTargetIndex(0),
         }
     }
 
@@ -95,10 +83,11 @@ impl RenderTaskTree {
 
         // Sanity check - can be relaxed if needed
         match task.location {
-            RenderTaskLocation::Fixed => {
+            RenderTaskLocation::Fixed(..) => {
                 debug_assert!(pass_index == passes.len() - 1);
             }
-            RenderTaskLocation::Dynamic(..) => {
+            RenderTaskLocation::Dynamic(..) |
+            RenderTaskLocation::TextureCache(..) => {
                 debug_assert!(pass_index < passes.len() - 1);
             }
         }
@@ -117,182 +106,135 @@ impl RenderTaskTree {
         pass.add_render_task(id, task.get_dynamic_size(), task.target_kind());
     }
 
-    pub fn get(&self, id: RenderTaskId) -> &RenderTask {
-        &self.tasks[id.0 as usize]
-    }
-
-    pub fn get_mut(&mut self, id: RenderTaskId) -> &mut RenderTask {
-        &mut self.tasks[id.0 as usize]
-    }
-
     pub fn get_task_address(&self, id: RenderTaskId) -> RenderTaskAddress {
-        let task = &self.tasks[id.0 as usize];
-        match task.kind {
-            RenderTaskKind::Alias(alias_id) => RenderTaskAddress(alias_id.0),
-            _ => RenderTaskAddress(id.0),
-        }
+        RenderTaskAddress(id.0)
     }
 
     pub fn build(&mut self) {
-        for task in &mut self.tasks {
+        for task in &self.tasks {
             self.task_data.push(task.write_task_data());
         }
     }
+
+    pub fn save_target(&mut self) -> SavedTargetIndex {
+        let id = self.next_saved;
+        self.next_saved.0 += 1;
+        id
+    }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum RenderTaskKey {
-    /// Draw the alpha mask for a shared clip.
-    CacheMask(ClipId),
+impl ops::Index<RenderTaskId> for RenderTaskTree {
+    type Output = RenderTask;
+    fn index(&self, id: RenderTaskId) -> &RenderTask {
+        &self.tasks[id.0 as usize]
+    }
+}
+
+impl ops::IndexMut<RenderTaskId> for RenderTaskTree {
+    fn index_mut(&mut self, id: RenderTaskId) -> &mut RenderTask {
+        &mut self.tasks[id.0 as usize]
+    }
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub enum RenderTaskLocation {
-    Fixed,
+    Fixed(DeviceIntRect),
     Dynamic(Option<(DeviceIntPoint, RenderTargetIndex)>, DeviceIntSize),
+    TextureCache(SourceTexture, i32, DeviceIntRect),
 }
 
 #[derive(Debug)]
-pub enum AlphaRenderItem {
-    Primitive(ClipScrollNodeIndex, ClipScrollNodeIndex, PrimitiveIndex, i32),
-    Blend(StackingContextIndex, RenderTaskId, FilterOp, i32),
-    Composite(
-        StackingContextIndex,
-        RenderTaskId,
-        RenderTaskId,
-        MixBlendMode,
-        i32,
-    ),
-    SplitComposite(StackingContextIndex, RenderTaskId, GpuCacheHandle, i32),
-    HardwareComposite(
-        StackingContextIndex,
-        RenderTaskId,
-        HardwareCompositeOp,
-        DeviceIntPoint,
-        i32,
-        DeviceIntSize,
-    ),
-}
-
-#[derive(Debug)]
-pub struct AlphaRenderTask {
-    pub screen_origin: DeviceIntPoint,
-    pub items: Vec<AlphaRenderItem>,
-    // If this render task is a registered frame output, this
-    // contains the pipeline ID it maps to.
-    pub frame_output_pipeline_id: Option<PipelineId>,
-}
-
-#[derive(Debug, Copy, Clone)]
-#[repr(C)]
-pub enum MaskSegment {
-    // This must match the SEGMENT_ values in clip_shared.glsl!
-    All = 0,
-    TopLeftCorner,
-    TopRightCorner,
-    BottomLeftCorner,
-    BottomRightCorner,
-}
-
-#[derive(Debug, Copy, Clone)]
-#[repr(C)]
-pub enum MaskGeometryKind {
-    Default, // Draw the entire rect
-    CornersOnly, // Draw the corners (simple axis aligned mask)
-             // TODO(gw): Add more types here (e.g. 4 rectangles outside the inner rect)
-}
-
-#[derive(Debug, Clone)]
-pub struct ClipWorkItem {
-    pub scroll_node_id: ClipScrollNodeIndex,
-    pub clip_sources: ClipSourcesWeakHandle,
-    pub coordinate_system_id: CoordinateSystemId,
-}
-
-impl ClipWorkItem {
-    fn get_geometry_kind(
-        &self,
-        clip_store: &ClipStore,
-        prim_coordinate_system_id: CoordinateSystemId
-    ) -> MaskGeometryKind {
-        let clips = clip_store
-            .get_opt(&self.clip_sources)
-            .expect("bug: clip handle should be valid")
-            .clips();
-        let mut rounded_rect_count = 0;
-
-        for &(ref clip, _) in clips {
-            match *clip {
-                ClipSource::Rectangle(..) => {
-                    if self.has_compatible_coordinate_system(prim_coordinate_system_id) {
-                        return MaskGeometryKind::Default;
-                    }
-                },
-                ClipSource::RoundedRectangle(..) => {
-                    rounded_rect_count += 1;
-                }
-                ClipSource::Image(..) | ClipSource::BorderCorner(..) => {
-                    return MaskGeometryKind::Default;
-                }
-            }
-        }
-
-        if rounded_rect_count == 1 {
-            MaskGeometryKind::CornersOnly
-        } else {
-            MaskGeometryKind::Default
-        }
-    }
-
-    fn has_compatible_coordinate_system(&self, other_id: CoordinateSystemId) -> bool {
-        self.coordinate_system_id == other_id
-    }
-}
-
-#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct CacheMaskTask {
     actual_rect: DeviceIntRect,
-    inner_rect: DeviceIntRect,
     pub clips: Vec<ClipWorkItem>,
-    pub geometry_kind: MaskGeometryKind,
     pub coordinate_system_id: CoordinateSystemId,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct ClipRegionTask {
+    pub clip_data_address: GpuCacheAddress,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct PictureTask {
     pub prim_index: PrimitiveIndex,
     pub target_kind: RenderTargetKind,
-    pub content_origin: LayerPoint,
-    pub color: ColorF,
+    pub content_origin: ContentOrigin,
+    pub color: PremultipliedColorF,
+    pub pic_type: PictureType,
+    pub uv_rect_handle: GpuCacheHandle,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct BlurTask {
     pub blur_std_deviation: f32,
     pub target_kind: RenderTargetKind,
-    pub regions: Vec<LayerRect>,
-    pub color: ColorF,
-    pub scale_factor: f32,
+    pub color: PremultipliedColorF,
+    pub uv_rect_handle: GpuCacheHandle,
+}
+
+impl BlurTask {
+    #[cfg(feature = "debugger")]
+    fn print_with<T: PrintTreePrinter>(&self, pt: &mut T) {
+        pt.add_item(format!("std deviation: {}", self.blur_std_deviation));
+        pt.add_item(format!("target: {:?}", self.target_kind));
+    }
+}
+
+// Where the source data for a blit task can be found.
+#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub enum BlitSource {
+    Image {
+        key: ImageCacheKey,
+    },
+    RenderTask {
+        task_id: RenderTaskId,
+    },
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct BlitTask {
+    pub source: BlitSource,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct RenderTaskData {
     pub data: [f32; FLOATS_PER_RENDER_TASK_INFO],
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub enum RenderTaskKind {
-    Alpha(AlphaRenderTask),
     Picture(PictureTask),
     CacheMask(CacheMaskTask),
+    ClipRegion(ClipRegionTask),
     VerticalBlur(BlurTask),
     HorizontalBlur(BlurTask),
     Readback(DeviceIntRect),
-    Alias(RenderTaskId),
     Scaling(RenderTargetKind),
+    Blit(BlitTask),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub enum ClearMode {
     // Applicable to color and alpha targets.
     Zero,
@@ -303,157 +245,183 @@ pub enum ClearMode {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct RenderTask {
-    pub cache_key: Option<RenderTaskKey>,
     pub location: RenderTaskLocation,
     pub children: Vec<RenderTaskId>,
     pub kind: RenderTaskKind,
     pub clear_mode: ClearMode,
+    pub saved_index: Option<SavedTargetIndex>,
 }
 
 impl RenderTask {
-    pub fn new_alpha_batch(
-        screen_origin: DeviceIntPoint,
-        location: RenderTaskLocation,
-        frame_output_pipeline_id: Option<PipelineId>,
-    ) -> RenderTask {
-        RenderTask {
-            cache_key: None,
-            children: Vec::new(),
-            location,
-            kind: RenderTaskKind::Alpha(AlphaRenderTask {
-                screen_origin,
-                items: Vec::new(),
-                frame_output_pipeline_id,
-            }),
-            clear_mode: ClearMode::Transparent,
-        }
-    }
-
-    pub fn new_dynamic_alpha_batch(
-        rect: &DeviceIntRect,
-        frame_output_pipeline_id: Option<PipelineId>,
-    ) -> RenderTask {
-        let location = RenderTaskLocation::Dynamic(None, rect.size);
-        Self::new_alpha_batch(rect.origin, location, frame_output_pipeline_id)
-    }
-
     pub fn new_picture(
-        size: DeviceIntSize,
+        location: RenderTaskLocation,
         prim_index: PrimitiveIndex,
         target_kind: RenderTargetKind,
-        content_origin: LayerPoint,
-        color: ColorF,
+        content_origin: ContentOrigin,
+        color: PremultipliedColorF,
         clear_mode: ClearMode,
-    ) -> RenderTask {
+        children: Vec<RenderTaskId>,
+        pic_type: PictureType,
+    ) -> Self {
         RenderTask {
-            cache_key: None,
-            children: Vec::new(),
-            location: RenderTaskLocation::Dynamic(None, size),
+            children,
+            location,
             kind: RenderTaskKind::Picture(PictureTask {
                 prim_index,
                 target_kind,
                 content_origin,
                 color,
+                pic_type,
+                uv_rect_handle: GpuCacheHandle::new(),
             }),
             clear_mode,
+            saved_index: None,
         }
     }
 
-    pub fn new_readback(screen_rect: DeviceIntRect) -> RenderTask {
+    pub fn new_readback(screen_rect: DeviceIntRect) -> Self {
         RenderTask {
-            cache_key: None,
             children: Vec::new(),
             location: RenderTaskLocation::Dynamic(None, screen_rect.size),
             kind: RenderTaskKind::Readback(screen_rect),
             clear_mode: ClearMode::Transparent,
+            saved_index: None,
+        }
+    }
+
+    pub fn new_blit(
+        size: DeviceIntSize,
+        source: BlitSource,
+    ) -> Self {
+        let mut children = Vec::new();
+
+        // If this blit uses a render task as a source,
+        // ensure it's added as a child task. This will
+        // ensure it gets allocated in the correct pass
+        // and made available as an input when this task
+        // executes.
+        if let BlitSource::RenderTask { task_id } = source {
+            children.push(task_id);
+        }
+
+        RenderTask {
+            children,
+            location: RenderTaskLocation::Dynamic(None, size),
+            kind: RenderTaskKind::Blit(BlitTask {
+                source,
+            }),
+            clear_mode: ClearMode::Transparent,
+            saved_index: None,
         }
     }
 
     pub fn new_mask(
-        key: Option<ClipId>,
-        task_rect: DeviceIntRect,
-        raw_clips: ClipChain,
-        extra_clip: ClipChain,
-        prim_rect: DeviceIntRect,
-        clip_store: &ClipStore,
-        is_axis_aligned: bool,
+        outer_rect: DeviceIntRect,
+        clips: Vec<ClipWorkItem>,
         prim_coordinate_system_id: CoordinateSystemId,
-    ) -> Option<RenderTask> {
-        // Filter out all the clip instances that don't contribute to the result
-        let mut current_coordinate_system_id = prim_coordinate_system_id;
-        let mut inner_rect = Some(task_rect);
-        let clips: Vec<_> = ClipChainNodeIter { current: raw_clips }
-            .chain(ClipChainNodeIter { current: extra_clip })
-            .filter_map(|node| {
-                let work_item = node.work_item.clone();
+        clip_store: &mut ClipStore,
+        gpu_cache: &mut GpuCache,
+        resource_cache: &mut ResourceCache,
+        render_tasks: &mut RenderTaskTree,
+    ) -> Self {
+        let mut children = Vec::new();
 
-                // FIXME(1828): This is a workaround until we can fix the inconsistency between
-                // the shader and the CPU code around how inner_rects are handled.
-                if !node.work_item.has_compatible_coordinate_system(current_coordinate_system_id) {
-                    current_coordinate_system_id = node.work_item.coordinate_system_id;
-                    inner_rect = None;
-                    return Some(work_item)
-                }
+        // Step through the clip sources that make up this mask. If we find
+        // any box-shadow clip sources, request that image from the render
+        // task cache. This allows the blurred box-shadow rect to be cached
+        // in the texture cache across frames.
+        // TODO(gw): Consider moving this logic outside this function, especially
+        //           as we add more clip sources that depend on render tasks.
+        // TODO(gw): If this ever shows up in a profile, we could pre-calculate
+        //           whether a ClipSources contains any box-shadows and skip
+        //           this iteration for the majority of cases.
+        for clip_item in &clips {
+            let clip_sources = clip_store.get_opt_mut(&clip_item.clip_sources).expect("bug");
+            for &mut (ref mut clip, _) in &mut clip_sources.clips {
+                match *clip {
+                    ClipSource::BoxShadow(ref mut info) => {
+                        let (cache_size, cache_key) = info.cache_key
+                            .as_ref()
+                            .expect("bug: no cache key set")
+                            .clone();
+                        let blur_radius_dp = cache_key.blur_radius_dp as f32;
+                        let clip_data_address = gpu_cache.get_address(&info.clip_data_handle);
 
-                let clip_info = clip_store
-                    .get_opt(&node.work_item.clip_sources)
-                    .expect("bug: clip item should exist");
-                debug_assert!(clip_info.is_masking());
+                        // Request a cacheable render task with a blurred, minimal
+                        // sized box-shadow rect.
+                        info.cache_item = resource_cache.request_render_task(
+                            RenderTaskCacheKey {
+                                size: cache_size,
+                                kind: RenderTaskCacheKeyKind::BoxShadow(cache_key),
+                            },
+                            gpu_cache,
+                            render_tasks,
+                            |render_tasks| {
+                                // Draw the rounded rect.
+                                let mask_task = RenderTask::new_rounded_rect_mask(
+                                    cache_size,
+                                    clip_data_address,
+                                );
 
-                match clip_info.bounds.inner {
-                    Some(ref inner) if !inner.device_rect.is_empty() => {
-                        inner_rect = inner_rect.and_then(|r| r.intersection(&inner.device_rect));
-                        if inner.device_rect.contains_rect(&task_rect) {
-                            return None;
-                        }
+                                let mask_task_id = render_tasks.add(mask_task);
+
+                                // Blur it
+                                let blur_render_task = RenderTask::new_blur(
+                                    blur_radius_dp,
+                                    mask_task_id,
+                                    render_tasks,
+                                    RenderTargetKind::Alpha,
+                                    ClearMode::Zero,
+                                    PremultipliedColorF::TRANSPARENT,
+                                );
+
+                                let root_task_id = render_tasks.add(blur_render_task);
+                                children.push(root_task_id);
+
+                                (root_task_id, false)
+                            }
+                        );
                     }
-                    _ => inner_rect = None,
+                    ClipSource::Rectangle(..) |
+                    ClipSource::RoundedRectangle(..) |
+                    ClipSource::Image(..) |
+                    ClipSource::BorderCorner(..) => {}
                 }
-
-                Some(work_item)
-            })
-            .collect();
-
-        // Nothing to do, all clips are irrelevant for this case
-        if clips.is_empty() {
-            return None;
-        }
-
-
-        // TODO(gw): This optimization is very conservative for now.
-        //           For now, only draw optimized geometry if it is
-        //           a single aligned rect mask with rounded corners.
-        //           In the future, we'll expand this to handle the
-        //           more complex types of clip mask geometry.
-        let mut geometry_kind = MaskGeometryKind::Default;
-        if let Some(inner_rect) = inner_rect {
-            // If the inner rect completely contains the primitive
-            // rect, then this mask can't affect the primitive.
-            if inner_rect.contains_rect(&prim_rect) {
-                return None;
-            }
-            if is_axis_aligned && clips.len() == 1 {
-                geometry_kind = clips[0].get_geometry_kind(clip_store, prim_coordinate_system_id);
             }
         }
 
-        Some(RenderTask {
-            cache_key: key.map(RenderTaskKey::CacheMask),
-            children: Vec::new(),
-            location: RenderTaskLocation::Dynamic(None, task_rect.size),
+        RenderTask {
+            children,
+            location: RenderTaskLocation::Dynamic(None, outer_rect.size),
             kind: RenderTaskKind::CacheMask(CacheMaskTask {
-                actual_rect: task_rect,
-                inner_rect: inner_rect.unwrap_or(DeviceIntRect::zero()),
+                actual_rect: outer_rect,
                 clips,
-                geometry_kind,
                 coordinate_system_id: prim_coordinate_system_id,
             }),
             clear_mode: ClearMode::One,
-        })
+            saved_index: None,
+        }
     }
 
-    // Construct a render task to apply a blur to a primitive. 
+    pub fn new_rounded_rect_mask(
+        size: DeviceIntSize,
+        clip_data_address: GpuCacheAddress,
+    ) -> Self {
+        RenderTask {
+            children: Vec::new(),
+            location: RenderTaskLocation::Dynamic(None, size),
+            kind: RenderTaskKind::ClipRegion(ClipRegionTask {
+                clip_data_address,
+            }),
+            clear_mode: ClearMode::One,
+            saved_index: None,
+        }
+    }
+
+    // Construct a render task to apply a blur to a primitive.
     // The render task chain that is constructed looks like:
     //
     //    PrimitiveCacheTask: Draw the primitives.
@@ -476,13 +444,12 @@ impl RenderTask {
         src_task_id: RenderTaskId,
         render_tasks: &mut RenderTaskTree,
         target_kind: RenderTargetKind,
-        regions: &[LayerRect],
         clear_mode: ClearMode,
-        color: ColorF,
-    ) -> RenderTask {
+        color: PremultipliedColorF,
+    ) -> Self {
         // Adjust large std deviation value.
         let mut adjusted_blur_std_deviation = blur_std_deviation;
-        let blur_target_size = render_tasks.get(src_task_id).get_dynamic_size();
+        let blur_target_size = render_tasks[src_task_id].get_dynamic_size();
         let mut adjusted_blur_target_size = blur_target_size;
         let mut downscaling_src_task_id = src_task_id;
         let mut scale_factor = 1.0;
@@ -497,40 +464,37 @@ impl RenderTask {
             let downscaling_task = RenderTask::new_scaling(
                 target_kind,
                 downscaling_src_task_id,
-                adjusted_blur_target_size
+                adjusted_blur_target_size,
             );
             downscaling_src_task_id = render_tasks.add(downscaling_task);
         }
-        scale_factor = blur_target_size.width as f32 / adjusted_blur_target_size.width as f32;
 
         let blur_task_v = RenderTask {
-            cache_key: None,
             children: vec![downscaling_src_task_id],
             location: RenderTaskLocation::Dynamic(None, adjusted_blur_target_size),
             kind: RenderTaskKind::VerticalBlur(BlurTask {
                 blur_std_deviation: adjusted_blur_std_deviation,
                 target_kind,
-                regions: regions.to_vec(),
                 color,
-                scale_factor,
+                uv_rect_handle: GpuCacheHandle::new(),
             }),
             clear_mode,
+            saved_index: None,
         };
 
         let blur_task_v_id = render_tasks.add(blur_task_v);
 
         let blur_task_h = RenderTask {
-            cache_key: None,
             children: vec![blur_task_v_id],
             location: RenderTaskLocation::Dynamic(None, adjusted_blur_target_size),
             kind: RenderTaskKind::HorizontalBlur(BlurTask {
                 blur_std_deviation: adjusted_blur_std_deviation,
                 target_kind,
-                regions: regions.to_vec(),
                 color,
-                scale_factor,
+                uv_rect_handle: GpuCacheHandle::new(),
             }),
             clear_mode,
+            saved_index: None,
         };
 
         blur_task_h
@@ -540,9 +504,8 @@ impl RenderTask {
         target_kind: RenderTargetKind,
         src_task_id: RenderTaskId,
         target_size: DeviceIntSize,
-    ) -> RenderTask {
+    ) -> Self {
         RenderTask {
-            cache_key: None,
             children: vec![src_task_id],
             location: RenderTaskLocation::Dynamic(None, target_size),
             kind: RenderTaskKind::Scaling(target_kind),
@@ -550,32 +513,7 @@ impl RenderTask {
                 RenderTargetKind::Color => ClearMode::Transparent,
                 RenderTargetKind::Alpha => ClearMode::One,
             },
-        }
-    }
-
-    pub fn as_alpha_batch_mut<'a>(&'a mut self) -> &'a mut AlphaRenderTask {
-        match self.kind {
-            RenderTaskKind::Alpha(ref mut task) => task,
-            RenderTaskKind::Picture(..) |
-            RenderTaskKind::CacheMask(..) |
-            RenderTaskKind::VerticalBlur(..) |
-            RenderTaskKind::Readback(..) |
-            RenderTaskKind::HorizontalBlur(..) |
-            RenderTaskKind::Alias(..) |
-            RenderTaskKind::Scaling(..) => unreachable!(),
-        }
-    }
-
-    pub fn as_alpha_batch<'a>(&'a self) -> &'a AlphaRenderTask {
-        match self.kind {
-            RenderTaskKind::Alpha(ref task) => task,
-            RenderTaskKind::Picture(..) |
-            RenderTaskKind::CacheMask(..) |
-            RenderTaskKind::VerticalBlur(..) |
-            RenderTaskKind::Readback(..) |
-            RenderTaskKind::HorizontalBlur(..) |
-            RenderTaskKind::Alias(..) |
-            RenderTaskKind::Scaling(..) => unreachable!(),
+            saved_index: None,
         }
     }
 
@@ -591,159 +529,150 @@ impl RenderTask {
         //           more type-safe. Although, it will always need
         //           to be kept in sync with the GLSL code anyway.
 
-        match self.kind {
-            RenderTaskKind::Alpha(ref task) => {
-                let (target_rect, target_index) = self.get_target_rect();
-                RenderTaskData {
-                    data: [
-                        target_rect.origin.x as f32,
-                        target_rect.origin.y as f32,
-                        target_rect.size.width as f32,
-                        target_rect.size.height as f32,
-                        task.screen_origin.x as f32,
-                        task.screen_origin.y as f32,
-                        target_index.0 as f32,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                    ],
-                }
-            }
+        let (data1, data2) = match self.kind {
             RenderTaskKind::Picture(ref task) => {
-                let (target_rect, target_index) = self.get_target_rect();
-                RenderTaskData {
-                    data: [
-                        target_rect.origin.x as f32,
-                        target_rect.origin.y as f32,
-                        target_rect.size.width as f32,
-                        target_rect.size.height as f32,
-                        target_index.0 as f32,
-                        task.content_origin.x,
-                        task.content_origin.y,
-                        0.0,
-                        task.color.r,
-                        task.color.g,
-                        task.color.b,
-                        task.color.a,
-                    ],
-                }
+                (
+                    // Note: has to match `PICTURE_TYPE_*` in shaders
+                    // TODO(gw): Instead of using the sign of the picture
+                    //           type here, we should consider encoding it
+                    //           as a set of flags that get casted here
+                    //           and in the shader. This is a bit tidier
+                    //           and allows for future expansion of flags.
+                    match task.content_origin {
+                        ContentOrigin::Local(point) => [
+                            point.x, point.y, task.pic_type as u32 as f32,
+                        ],
+                        ContentOrigin::Screen(point) => [
+                            point.x as f32, point.y as f32, -(task.pic_type as u32 as f32),
+                        ],
+                    },
+                    task.color.to_array()
+                )
             }
             RenderTaskKind::CacheMask(ref task) => {
-                let (target_rect, target_index) = self.get_target_rect();
-                RenderTaskData {
-                    data: [
-                        target_rect.origin.x as f32,
-                        target_rect.origin.y as f32,
-                        (target_rect.origin.x + target_rect.size.width) as f32,
-                        (target_rect.origin.y + target_rect.size.height) as f32,
+                (
+                    [
                         task.actual_rect.origin.x as f32,
                         task.actual_rect.origin.y as f32,
-                        target_index.0 as f32,
-                        0.0,
-                        task.inner_rect.origin.x as f32,
-                        task.inner_rect.origin.y as f32,
-                        (task.inner_rect.origin.x + task.inner_rect.size.width) as f32,
-                        (task.inner_rect.origin.y + task.inner_rect.size.height) as f32,
+                        RasterizationSpace::Screen as i32 as f32,
                     ],
-                }
+                    [0.0; 4],
+                )
             }
-            RenderTaskKind::VerticalBlur(ref task_info) |
-            RenderTaskKind::HorizontalBlur(ref task_info) => {
-                let (target_rect, target_index) = self.get_target_rect();
-                RenderTaskData {
-                    data: [
-                        target_rect.origin.x as f32,
-                        target_rect.origin.y as f32,
-                        target_rect.size.width as f32,
-                        target_rect.size.height as f32,
-                        target_index.0 as f32,
-                        task_info.blur_std_deviation,
-                        task_info.scale_factor,
+            RenderTaskKind::ClipRegion(..) => {
+                (
+                    [
                         0.0,
-                        task_info.color.r,
-                        task_info.color.g,
-                        task_info.color.b,
-                        task_info.color.a,
+                        0.0,
+                        RasterizationSpace::Local as i32 as f32,
                     ],
-                }
+                    [0.0; 4],
+                )
+            }
+            RenderTaskKind::VerticalBlur(ref task) |
+            RenderTaskKind::HorizontalBlur(ref task) => {
+                (
+                    [
+                        task.blur_std_deviation,
+                        0.0,
+                        0.0,
+                    ],
+                    task.color.to_array()
+                )
             }
             RenderTaskKind::Readback(..) |
-            RenderTaskKind::Scaling(..) => {
-                let (target_rect, target_index) = self.get_target_rect();
-                RenderTaskData {
-                    data: [
-                        target_rect.origin.x as f32,
-                        target_rect.origin.y as f32,
-                        target_rect.size.width as f32,
-                        target_rect.size.height as f32,
-                        target_index.0 as f32,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                    ],
-                }
+            RenderTaskKind::Scaling(..) |
+            RenderTaskKind::Blit(..) => {
+                (
+                    [0.0; 3],
+                    [0.0; 4],
+                )
             }
-            RenderTaskKind::Alias(..) => RenderTaskData { data: [0.0; 12] },
+        };
+
+        let (target_rect, target_index) = self.get_target_rect();
+
+        RenderTaskData {
+            data: [
+                target_rect.origin.x as f32,
+                target_rect.origin.y as f32,
+                target_rect.size.width as f32,
+                target_rect.size.height as f32,
+                target_index.0 as f32,
+                data1[0],
+                data1[1],
+                data1[2],
+                data2[0],
+                data2[1],
+                data2[2],
+                data2[3],
+            ]
         }
     }
 
-    pub fn inflate(&mut self, device_radius: i32) {
+    pub fn get_texture_handle(&self) -> &GpuCacheHandle {
         match self.kind {
-            RenderTaskKind::Alpha(ref mut info) => {
-                match self.location {
-                    RenderTaskLocation::Fixed => {
-                        panic!("bug: inflate only supported for dynamic tasks");
-                    }
-                    RenderTaskLocation::Dynamic(_, ref mut size) => {
-                        size.width += device_radius * 2;
-                        size.height += device_radius * 2;
-                        info.screen_origin.x -= device_radius;
-                        info.screen_origin.y -= device_radius;
-                    }
-                }
+            RenderTaskKind::Picture(ref info) => {
+                &info.uv_rect_handle
             }
-
+            RenderTaskKind::VerticalBlur(ref info) |
+            RenderTaskKind::HorizontalBlur(ref info) => {
+                &info.uv_rect_handle
+            }
+            RenderTaskKind::ClipRegion(..) |
             RenderTaskKind::Readback(..) |
-            RenderTaskKind::CacheMask(..) |
-            RenderTaskKind::VerticalBlur(..) |
-            RenderTaskKind::HorizontalBlur(..) |
-            RenderTaskKind::Picture(..) |
-            RenderTaskKind::Alias(..) |
-            RenderTaskKind::Scaling(..) => {
-                panic!("bug: inflate only supported for alpha tasks");
+            RenderTaskKind::Scaling(..) |
+            RenderTaskKind::Blit(..) |
+            RenderTaskKind::CacheMask(..) => {
+                panic!("texture handle not supported for this task kind");
             }
         }
     }
 
     pub fn get_dynamic_size(&self) -> DeviceIntSize {
         match self.location {
-            RenderTaskLocation::Fixed => DeviceIntSize::zero(),
+            RenderTaskLocation::Fixed(..) => DeviceIntSize::zero(),
             RenderTaskLocation::Dynamic(_, size) => size,
+            RenderTaskLocation::TextureCache(_, _, rect) => rect.size,
         }
     }
 
     pub fn get_target_rect(&self) -> (DeviceIntRect, RenderTargetIndex) {
         match self.location {
-            RenderTaskLocation::Fixed => (DeviceIntRect::zero(), RenderTargetIndex(0)),
-            RenderTaskLocation::Dynamic(origin_and_target_index, size) => {
-                let (origin, target_index) =
-                    origin_and_target_index.expect("Should have been allocated by now!");
+            RenderTaskLocation::Fixed(rect) => {
+                (rect, RenderTargetIndex(0))
+            }
+            // Previously, we only added render tasks after the entire
+            // primitive chain was determined visible. This meant that
+            // we could assert any render task in the list was also
+            // allocated (assigned to passes). Now, we add render
+            // tasks earlier, and the picture they belong to may be
+            // culled out later, so we can't assert that the task
+            // has been allocated.
+            // Render tasks that are created but not assigned to
+            // passes consume a row in the render task texture, but
+            // don't allocate any space in render targets nor
+            // draw any pixels.
+            // TODO(gw): Consider some kind of tag or other method
+            //           to mark a task as unused explicitly. This
+            //           would allow us to restore this debug check.
+            RenderTaskLocation::Dynamic(Some((origin, target_index)), size) => {
                 (DeviceIntRect::new(origin, size), target_index)
+            }
+            RenderTaskLocation::Dynamic(None, _) => {
+                (DeviceIntRect::zero(), RenderTargetIndex(0))
+            }
+            RenderTaskLocation::TextureCache(_, layer, rect) => {
+                (rect, RenderTargetIndex(layer as usize))
             }
         }
     }
 
     pub fn target_kind(&self) -> RenderTargetKind {
         match self.kind {
-            RenderTaskKind::Alpha(..) |
             RenderTaskKind::Readback(..) => RenderTargetKind::Color,
 
+            RenderTaskKind::ClipRegion(..) |
             RenderTaskKind::CacheMask(..) => {
                 RenderTargetKind::Alpha
             }
@@ -761,8 +690,8 @@ impl RenderTask {
                 task_info.target_kind
             }
 
-            RenderTaskKind::Alias(..) => {
-                panic!("BUG: target_kind() called on invalidated task");
+            RenderTaskKind::Blit(..) => {
+                RenderTargetKind::Color
             }
         }
     }
@@ -775,28 +704,273 @@ impl RenderTask {
     // if we decide that is useful.
     pub fn is_shared(&self) -> bool {
         match self.kind {
-            RenderTaskKind::Alpha(..) |
             RenderTaskKind::Picture(..) |
             RenderTaskKind::VerticalBlur(..) |
             RenderTaskKind::Readback(..) |
             RenderTaskKind::HorizontalBlur(..) |
-            RenderTaskKind::Scaling(..) => false,
+            RenderTaskKind::Scaling(..) |
+            RenderTaskKind::ClipRegion(..) |
+            RenderTaskKind::Blit(..) => false,
 
-            RenderTaskKind::CacheMask(..) => true,
-
-            RenderTaskKind::Alias(..) => {
-                panic!("BUG: is_shared() called on aliased task");
-            }
+            // TODO(gw): For now, we've disabled the shared clip mask
+            //           optimization. It's of dubious value in the
+            //           future once we start to cache clip tasks anyway.
+            //           I have left shared texture support here though,
+            //           just in case we want it in the future.
+            RenderTaskKind::CacheMask(..) => false,
         }
     }
 
-    pub fn set_alias(&mut self, id: RenderTaskId) {
-        debug_assert!(self.cache_key.is_some());
-        // TODO(gw): We can easily handle invalidation of tasks that
-        //           contain children in the future. Since we don't
-        //           have any cases of that yet, just assert to simplify
-        //           the current implementation.
-        debug_assert!(self.children.is_empty());
-        self.kind = RenderTaskKind::Alias(id);
+    pub fn prepare_for_render(
+        &mut self,
+        gpu_cache: &mut GpuCache,
+    ) {
+        let (target_rect, target_index) = self.get_target_rect();
+
+        let (cache_handle, color) = match self.kind {
+            RenderTaskKind::HorizontalBlur(ref mut info) |
+            RenderTaskKind::VerticalBlur(ref mut info) => {
+                (&mut info.uv_rect_handle, info.color)
+            }
+            RenderTaskKind::Picture(ref mut info) => {
+                (&mut info.uv_rect_handle, info.color)
+            }
+            RenderTaskKind::Readback(..) |
+            RenderTaskKind::Scaling(..) |
+            RenderTaskKind::Blit(..) |
+            RenderTaskKind::ClipRegion(..) |
+            RenderTaskKind::CacheMask(..) => {
+                return;
+            }
+        };
+
+        if let Some(mut request) = gpu_cache.request(cache_handle) {
+            let image_source = ImageSource {
+                p0: target_rect.origin.to_f32(),
+                p1: target_rect.bottom_right().to_f32(),
+                color,
+                texture_layer: target_index.0 as f32,
+                user_data: [0.0; 3],
+            };
+            image_source.write_gpu_blocks(&mut request);
+        }
     }
+
+    #[cfg(feature = "debugger")]
+    pub fn print_with<T: PrintTreePrinter>(&self, pt: &mut T, tree: &RenderTaskTree) -> bool {
+        match self.kind {
+            RenderTaskKind::Picture(ref task) => {
+                pt.new_level(format!("Picture of {:?}", task.prim_index));
+                pt.add_item(format!("kind: {:?}", task.target_kind));
+            }
+            RenderTaskKind::CacheMask(ref task) => {
+                pt.new_level(format!("CacheMask with {} clips", task.clips.len()));
+                pt.add_item(format!("rect: {:?}", task.actual_rect));
+            }
+            RenderTaskKind::ClipRegion(..) => {
+                pt.new_level("ClipRegion".to_owned());
+            }
+            RenderTaskKind::VerticalBlur(ref task) => {
+                pt.new_level("VerticalBlur".to_owned());
+                task.print_with(pt);
+            }
+            RenderTaskKind::HorizontalBlur(ref task) => {
+                pt.new_level("HorizontalBlur".to_owned());
+                task.print_with(pt);
+            }
+            RenderTaskKind::Readback(ref rect) => {
+                pt.new_level("Readback".to_owned());
+                pt.add_item(format!("rect: {:?}", rect));
+            }
+            RenderTaskKind::Scaling(ref kind) => {
+                pt.new_level("Scaling".to_owned());
+                pt.add_item(format!("kind: {:?}", kind));
+            }
+            RenderTaskKind::Blit(ref task) => {
+                pt.new_level("Blit".to_owned());
+                pt.add_item(format!("source: {:?}", task.source));
+            }
+        }
+
+        pt.add_item(format!("clear to: {:?}", self.clear_mode));
+
+        for &child_id in &self.children {
+            if tree[child_id].print_with(pt, tree) {
+                pt.add_item(format!("self: {:?}", child_id))
+            }
+        }
+
+        pt.end_level();
+        true
+    }
+
+    /// Mark this render task for keeping the results alive up until the end of the frame.
+    pub fn mark_for_saving(&mut self) {
+        match self.location {
+            RenderTaskLocation::Fixed(..) |
+            RenderTaskLocation::Dynamic(..) => {
+                self.saved_index = Some(SavedTargetIndex::PENDING);
+            }
+            RenderTaskLocation::TextureCache(..) => {
+                panic!("Unable to mark a permanently cached task for saving!");
+            }
+        }
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub enum RenderTaskCacheKeyKind {
+    BoxShadow(BoxShadowCacheKey),
+    Image(ImageCacheKey),
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct RenderTaskCacheKey {
+    pub size: DeviceIntSize,
+    pub kind: RenderTaskCacheKeyKind,
+}
+
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+struct RenderTaskCacheEntry {
+    handle: TextureCacheHandle,
+}
+
+// A cache of render tasks that are stored in the texture
+// cache for usage across frames.
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub struct RenderTaskCache {
+    entries: FastHashMap<RenderTaskCacheKey, RenderTaskCacheEntry>,
+}
+
+impl RenderTaskCache {
+    pub fn new() -> Self {
+        RenderTaskCache {
+            entries: FastHashMap::default(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub fn begin_frame(
+        &mut self,
+        texture_cache: &mut TextureCache,
+    ) {
+        // Drop any items from the cache that have been
+        // evicted from the texture cache.
+        //
+        // This isn't actually necessary for the texture
+        // cache to be able to evict old render tasks.
+        // It will evict render tasks as required, since
+        // the access time in the texture cache entry will
+        // be stale if this task hasn't been requested
+        // for a while.
+        //
+        // Nonetheless, we should remove stale entries
+        // from here so that this hash map doesn't
+        // grow indefinitely!
+        self.entries.retain(|_, value| {
+            texture_cache.is_allocated(&value.handle)
+        });
+    }
+
+    pub fn request_render_task<F>(
+        &mut self,
+        key: RenderTaskCacheKey,
+        texture_cache: &mut TextureCache,
+        gpu_cache: &mut GpuCache,
+        render_tasks: &mut RenderTaskTree,
+        mut f: F,
+    ) -> CacheItem where F: FnMut(&mut RenderTaskTree) -> (RenderTaskId, bool) {
+        // Get the texture cache handle for this cache key,
+        // or create one.
+        let cache_entry = self.entries
+                              .entry(key)
+                              .or_insert(RenderTaskCacheEntry {
+                                  handle: TextureCacheHandle::new(),
+                              });
+
+        // Check if this texture cache handle is valie.
+        if texture_cache.request(&mut cache_entry.handle, gpu_cache) {
+            // Invoke user closure to get render task chain
+            // to draw this into the texture cache.
+            let (render_task_id, is_opaque) = f(render_tasks);
+            let render_task = &mut render_tasks[render_task_id];
+
+            // Select the right texture page to allocate from.
+            let image_format = match render_task.target_kind() {
+                RenderTargetKind::Color => ImageFormat::BGRA8,
+                RenderTargetKind::Alpha => ImageFormat::R8,
+            };
+
+            // Find out what size to alloc in the texture cache.
+            let size = match render_task.location {
+                RenderTaskLocation::Fixed(..) |
+                RenderTaskLocation::TextureCache(..) => {
+                    panic!("BUG: dynamic task was expected");
+                }
+                RenderTaskLocation::Dynamic(_, size) => size,
+            };
+
+            // TODO(gw): Support color tasks in the texture cache,
+            //           and perhaps consider if we can determine
+            //           if some tasks are opaque as an optimization.
+            let descriptor = ImageDescriptor::new(
+                size.width as u32,
+                size.height as u32,
+                image_format,
+                is_opaque,
+            );
+
+            // Allocate space in the texture cache, but don't supply
+            // and CPU-side data to be uploaded.
+            texture_cache.update(
+                &mut cache_entry.handle,
+                descriptor,
+                TextureFilter::Linear,
+                None,
+                [0.0; 3],
+                None,
+                gpu_cache,
+            );
+
+            // Get the allocation details in the texture cache, and store
+            // this in the render task. The renderer will draw this
+            // task into the appropriate layer and rect of the texture
+            // cache on this frame.
+            let (texture_id, texture_layer, uv_rect) =
+                texture_cache.get_cache_location(&cache_entry.handle);
+
+            render_task.location = RenderTaskLocation::TextureCache(
+                texture_id,
+                texture_layer,
+                uv_rect.to_i32()
+            );
+        }
+
+        // Finally, return the texture cache handle that we know
+        // is now up to date.
+        texture_cache.get(&cache_entry.handle)
+    }
+}
+
+// TODO(gw): Rounding the content rect here to device pixels is not
+// technically correct. Ideally we should ceil() here, and ensure that
+// the extra part pixel in the case of fractional sizes is correctly
+// handled. For now, just use rounding which passes the existing
+// Gecko tests.
+// Note: zero-square tasks are prohibited in WR task tree, so
+// we ensure each dimension to be at least the length of 1 after rounding.
+pub fn to_cache_size(size: DeviceSize) -> DeviceIntSize {
+    DeviceIntSize::new(
+        1.max(size.width.round() as i32),
+        1.max(size.height.round() as i32),
+    )
 }

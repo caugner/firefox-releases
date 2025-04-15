@@ -5,14 +5,10 @@
 
 "use strict";
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
+var EXPORTED_SYMBOLS = ["ProcessHangMonitor"];
 
-this.EXPORTED_SYMBOLS = ["ProcessHangMonitor"];
-
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 /**
  * This JSM is responsible for observing content process hang reports
@@ -299,7 +295,7 @@ var ProcessHangMonitor = {
         return true;
       }
       return false;
-    }
+    };
 
     // If there are any script hangs for browsers that are in this window
     // that is closing, we can stop them now.

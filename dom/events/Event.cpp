@@ -14,6 +14,7 @@
 #include "mozilla/EventStateManager.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/dom/Performance.h"
+#include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
@@ -33,7 +34,6 @@
 #include "nsLayoutUtils.h"
 #include "nsPIWindowRoot.h"
 #include "nsRFPService.h"
-#include "WorkerPrivate.h"
 
 namespace mozilla {
 namespace dom {
@@ -153,18 +153,12 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Event)
     tmp->mEvent->mTarget = nullptr;
     tmp->mEvent->mCurrentTarget = nullptr;
     tmp->mEvent->mOriginalTarget = nullptr;
+    tmp->mEvent->mRelatedTarget = nullptr;
+    tmp->mEvent->mOriginalRelatedTarget = nullptr;
     switch (tmp->mEvent->mClass) {
-      case eMouseEventClass:
-      case eMouseScrollEventClass:
-      case eWheelEventClass:
-      case eSimpleGestureEventClass:
-      case ePointerEventClass:
-        tmp->mEvent->AsMouseEventBase()->relatedTarget = nullptr;
-        break;
       case eDragEventClass: {
         WidgetDragEvent* dragEvent = tmp->mEvent->AsDragEvent();
         dragEvent->mDataTransfer = nullptr;
-        dragEvent->relatedTarget = nullptr;
         break;
       }
       case eClipboardEventClass:
@@ -172,9 +166,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Event)
         break;
       case eMutationEventClass:
         tmp->mEvent->AsMutationEvent()->mRelatedNode = nullptr;
-        break;
-      case eFocusEventClass:
-        tmp->mEvent->AsFocusEvent()->mRelatedTarget = nullptr;
         break;
       default:
         break;
@@ -191,21 +182,13 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Event)
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEvent->mTarget)
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEvent->mCurrentTarget)
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEvent->mOriginalTarget)
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEvent->mRelatedTarget)
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEvent->mOriginalRelatedTarget);
     switch (tmp->mEvent->mClass) {
-      case eMouseEventClass:
-      case eMouseScrollEventClass:
-      case eWheelEventClass:
-      case eSimpleGestureEventClass:
-      case ePointerEventClass:
-        NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mEvent->relatedTarget");
-        cb.NoteXPCOMChild(tmp->mEvent->AsMouseEventBase()->relatedTarget);
-        break;
       case eDragEventClass: {
         WidgetDragEvent* dragEvent = tmp->mEvent->AsDragEvent();
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mEvent->mDataTransfer");
         cb.NoteXPCOMChild(dragEvent->mDataTransfer);
-        NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mEvent->relatedTarget");
-        cb.NoteXPCOMChild(dragEvent->relatedTarget);
         break;
       }
       case eClipboardEventClass:
@@ -215,10 +198,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Event)
       case eMutationEventClass:
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mEvent->mRelatedNode");
         cb.NoteXPCOMChild(tmp->mEvent->AsMutationEvent()->mRelatedNode);
-        break;
-      case eFocusEventClass:
-        NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mEvent->mRelatedTarget");
-        cb.NoteXPCOMChild(tmp->mEvent->AsFocusEvent()->mRelatedTarget);
         break;
       default:
         break;
@@ -267,10 +246,27 @@ Event::GetTarget(nsIDOMEventTarget** aTarget)
   return NS_OK;
 }
 
+bool
+Event::IsSrcElementEnabled(JSContext* /* unused */, JSObject* /* unused */)
+{
+  // Not a pref, because that's a pain on workers.
+#ifdef NIGHTLY_BUILD
+  return true;
+#else
+  return false;
+#endif
+}
+
 EventTarget*
 Event::GetCurrentTarget() const
 {
   return mEvent->GetCurrentDOMEventTarget();
+}
+
+void
+Event::ComposedPath(nsTArray<RefPtr<EventTarget>>& aPath)
+{
+  EventDispatcher::GetComposedPathFor(mEvent, aPath);
 }
 
 NS_IMETHODIMP
@@ -351,7 +347,7 @@ bool
 Event::Init(mozilla::dom::EventTarget* aGlobal)
 {
   if (!mIsMainThreadEvent) {
-    return workers::IsCurrentThreadRunningChromeWorker();
+    return IsCurrentThreadRunningChromeWorker();
   }
   bool trusted = false;
   nsCOMPtr<nsPIDOMWindowInner> w = do_QueryInterface(aGlobal);
@@ -359,9 +355,9 @@ Event::Init(mozilla::dom::EventTarget* aGlobal)
     nsCOMPtr<nsIDocument> d = w->GetExtantDoc();
     if (d) {
       trusted = nsContentUtils::IsChromeDoc(d);
-      nsIPresShell* s = d->GetShell();
-      if (s) {
-        InitPresContextData(s->GetPresContext());
+      nsPresContext* presContext = d->GetPresContext();
+      if (presContext) {
+        InitPresContextData(presContext);
       }
     }
   }
@@ -560,19 +556,11 @@ Event::EnsureWebAccessibleRelatedTarget(EventTarget* aRelatedTarget)
   nsCOMPtr<EventTarget> relatedTarget = aRelatedTarget;
   if (relatedTarget) {
     nsCOMPtr<nsIContent> content = do_QueryInterface(relatedTarget);
-    nsCOMPtr<nsIContent> currentTarget =
-      do_QueryInterface(mEvent->mCurrentTarget);
 
     if (content && content->ChromeOnlyAccess() &&
         !nsContentUtils::CanAccessNativeAnon()) {
       content = content->FindFirstNonChromeOnlyAccessContent();
       relatedTarget = do_QueryInterface(content);
-    }
-
-    nsIContent* shadowRelatedTarget =
-      GetShadowRelatedTarget(currentTarget, content);
-    if (shadowRelatedTarget) {
-      relatedTarget = shadowRelatedTarget;
     }
 
     if (relatedTarget) {
@@ -1107,10 +1095,15 @@ Event::DefaultPrevented(CallerType aCallerType) const
 }
 
 double
-Event::TimeStampImpl() const
+Event::TimeStamp()
 {
   if (!sReturnHighResTimeStamp) {
-    return static_cast<double>(mEvent->mTime);
+    // In the situation where you have set a very old, not-very-supported
+    // non-default preference, we will always reduce the precision,
+    // regardless of system principal or not.
+    // The timestamp is absolute, so we supply a zero context mix-in.
+    double ret = static_cast<double>(mEvent->mTime);
+    return nsRFPService::ReduceTimePrecisionAsMSecs(ret, 0);
   }
 
   if (mEvent->mTimeStamp.IsNull()) {
@@ -1132,43 +1125,24 @@ Event::TimeStampImpl() const
       return 0.0;
     }
 
-    return perf->GetDOMTiming()->TimeStampToDOMHighRes(mEvent->mTimeStamp);
+    double ret = perf->GetDOMTiming()->TimeStampToDOMHighRes(mEvent->mTimeStamp);
+    MOZ_ASSERT(mOwner->PrincipalOrNull());
+    if (nsContentUtils::IsSystemPrincipal(mOwner->PrincipalOrNull()))
+      return ret;
+
+    return nsRFPService::ReduceTimePrecisionAsMSecs(ret,
+      perf->GetRandomTimelineSeed());
   }
 
-  workers::WorkerPrivate* workerPrivate =
-    workers::GetCurrentThreadWorkerPrivate();
+  WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
   MOZ_ASSERT(workerPrivate);
 
-  return workerPrivate->TimeStampToDOMHighRes(mEvent->mTimeStamp);
-}
+  double ret = workerPrivate->TimeStampToDOMHighRes(mEvent->mTimeStamp);
+  if (workerPrivate->UsesSystemPrincipal())
+    return ret;
 
-double
-Event::TimeStamp() const
-{
-  return nsRFPService::ReduceTimePrecisionAsMSecs(TimeStampImpl());
-}
-
-bool
-Event::GetPreventDefault() const
-{
-  nsCOMPtr<nsPIDOMWindowInner> win(do_QueryInterface(mOwner));
-  if (win) {
-    if (nsIDocument* doc = win->GetExtantDoc()) {
-      doc->WarnOnceAbout(nsIDocument::eGetPreventDefault);
-    }
-  }
-  // GetPreventDefault() is legacy and Gecko specific method.  Although,
-  // the result should be same as defaultPrevented, we don't need to break
-  // backward compatibility of legacy method.  Let's behave traditionally.
-  return DefaultPrevented();
-}
-
-NS_IMETHODIMP
-Event::GetPreventDefault(bool* aReturn)
-{
-  NS_ENSURE_ARG_POINTER(aReturn);
-  *aReturn = GetPreventDefault();
-  return NS_OK;
+  return nsRFPService::ReduceTimePrecisionAsMSecs(ret,
+    workerPrivate->GetRandomTimelineSeed());
 }
 
 NS_IMETHODIMP
@@ -1257,44 +1231,6 @@ Event::SetOwner(EventTarget* aOwner)
   nsCOMPtr<nsPIWindowRoot> root = do_QueryInterface(aOwner);
   MOZ_ASSERT(root, "Unexpected EventTarget!");
 #endif
-}
-
-// static
-nsIContent*
-Event::GetShadowRelatedTarget(nsIContent* aCurrentTarget,
-                              nsIContent* aRelatedTarget)
-{
-  if (!aCurrentTarget || !aRelatedTarget) {
-    return nullptr;
-  }
-
-  // Walk up the ancestor node trees of the related target until
-  // we encounter the node tree of the current target in order
-  // to find the adjusted related target. Walking up the tree may
-  // not find a common ancestor node tree if the related target is in
-  // an ancestor tree, but in that case it does not need to be adjusted.
-  ShadowRoot* currentTargetShadow = aCurrentTarget->GetContainingShadow();
-  if (!currentTargetShadow) {
-    return nullptr;
-  }
-
-  nsIContent* relatedTarget = aCurrentTarget;
-  while (relatedTarget) {
-    ShadowRoot* ancestorShadow = relatedTarget->GetContainingShadow();
-    if (currentTargetShadow == ancestorShadow) {
-      return relatedTarget;
-    }
-
-    // Didn't find the ancestor tree, thus related target does not have to
-    // adjusted.
-    if (!ancestorShadow) {
-      return nullptr;
-    }
-
-    relatedTarget = ancestorShadow->GetHost();
-  }
-
-  return nullptr;
 }
 
 void

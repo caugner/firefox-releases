@@ -44,7 +44,7 @@ const gTestcases = {
     sizing: null,
     notext: null,
   },
-}
+};
 
 
 add_task(async function() {
@@ -80,7 +80,7 @@ add_task(async function() {
 
       let expectations = testcases[testcaseId];
 
-      Assert.ok(overlay.classList.contains("visible") == true,
+      Assert.ok(overlay.classList.contains("visible"),
                 `The expected visibility is correct in ${testcaseId}`);
 
       Assert.ok(overlay.getAttribute("sizing") == expectations.sizing,

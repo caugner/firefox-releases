@@ -3,13 +3,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {
-  Component,
-  createFactory,
-  DOM: dom,
-  PropTypes
-} = require("devtools/client/shared/vendor/react");
-const { connect } = require("devtools/client/shared/vendor/react-redux");
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const { connect } = require("devtools/client/shared/redux/visibility-handler-connect");
 const {initialize} = require("devtools/client/webconsole/new-console-output/actions/ui");
 
 const {
@@ -33,7 +30,7 @@ class ConsoleOutput extends Component {
     return {
       initialized: PropTypes.bool.isRequired,
       messages: PropTypes.object.isRequired,
-      messagesUi: PropTypes.object.isRequired,
+      messagesUi: PropTypes.array.isRequired,
       serviceContainer: PropTypes.shape({
         attachRefToHud: PropTypes.func.isRequired,
         openContextMenu: PropTypes.func.isRequired,
@@ -96,13 +93,17 @@ class ConsoleOutput extends Component {
     //   and we are already scrolled to the bottom
     // - the number of messages in the store changed
     //   and the new message is an evaluation result.
+    const isNewMessageEvaluationResult = messagesDelta > 0 &&
+      [...nextProps.messages.values()][nextProps.messages.size - 1].type
+        === MESSAGE_TYPE.RESULT;
+
     this.shouldScrollBottom =
       (
         !this.props.initialized &&
         nextProps.initialized &&
         isScrolledToBottom(lastChild, outputNode)
       ) ||
-      (messagesDelta > 0 && nextProps.messages.last().type === MESSAGE_TYPE.RESULT) ||
+      (isNewMessageEvaluationResult) ||
       (visibleMessagesDelta > 0 && isScrolledToBottom(lastChild, outputNode));
   }
 

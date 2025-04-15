@@ -8,7 +8,7 @@ const TEST_URL = "http://adapt.mozilla.org/";
 const SEARCH_STRING = "adapt";
 const SUGGEST_TYPES = ["history", "bookmark", "openpage"];
 
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const PLACES_AUTOCOMPLETE_FEEDBACK_UPDATED_TOPIC =
   "places-autocomplete-feedback-updated";
@@ -53,7 +53,7 @@ AutoCompleteInput.prototype = {
           iid.equals(Ci.nsIAutoCompletePopup))
         return this;
 
-      throw Components.results.NS_ERROR_NO_INTERFACE;
+      throw Cr.NS_ERROR_NO_INTERFACE;
     }
   },
 
@@ -64,7 +64,7 @@ AutoCompleteInput.prototype = {
         iid.equals(Ci.nsIAutoCompleteInput))
       return this;
 
-    throw Components.results.NS_ERROR_NO_INTERFACE;
+    throw Cr.NS_ERROR_NO_INTERFACE;
   }
 };
 
@@ -77,9 +77,9 @@ function check_results() {
     controller.input = input;
 
     input.onSearchComplete = function() {
-      do_check_eq(controller.searchStatus,
-                  Ci.nsIAutoCompleteController.STATUS_COMPLETE_NO_MATCH);
-      do_check_eq(controller.matchCount, 0);
+      Assert.equal(controller.searchStatus,
+                   Ci.nsIAutoCompleteController.STATUS_COMPLETE_NO_MATCH);
+      Assert.equal(controller.matchCount, 0);
 
       PlacesUtils.bookmarks.eraseEverything().then(() => {
         cleanup();

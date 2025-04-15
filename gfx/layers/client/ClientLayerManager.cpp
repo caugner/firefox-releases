@@ -103,15 +103,10 @@ ClientLayerManager::ClientLayerManager(nsIWidget* aWidget)
   , mNeedsComposite(false)
   , mQueuedAsyncPaints(false)
   , mPaintSequenceNumber(0)
-  , mDeviceResetSequenceNumber(0)
   , mForwarder(new ShadowLayerForwarder(this))
 {
   MOZ_COUNT_CTOR(ClientLayerManager);
   mMemoryPressureObserver = new MemoryPressureObserver(this);
-
-  if (XRE_IsContentProcess()) {
-    mDeviceResetSequenceNumber = CompositorBridgeChild::Get()->DeviceResetSequenceNumber();
-  }
 }
 
 
@@ -230,31 +225,11 @@ bool
 ClientLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
 {
   // Wait for any previous async paints to complete before starting to paint again.
-  GetCompositorBridgeChild()->FlushAsyncPaints();
-  if (PaintThread::Get()) {
-    PaintThread::Get()->BeginLayerTransaction();
-  }
+  FlushAsyncPaints();
 
   MOZ_ASSERT(mForwarder, "ClientLayerManager::BeginTransaction without forwarder");
   if (!mForwarder->IPCOpen()) {
     gfxCriticalNote << "ClientLayerManager::BeginTransaction with IPC channel down. GPU process may have died.";
-    return false;
-  }
-
-  if (XRE_IsContentProcess() &&
-      mForwarder->DeviceCanReset() &&
-      mDeviceResetSequenceNumber != CompositorBridgeChild::Get()->DeviceResetSequenceNumber())
-  {
-    // The compositor has informed this process that a device reset occurred,
-    // but it has not finished informing each TabChild of its new
-    // TextureFactoryIdentifier. Until then, it's illegal to paint. Note that
-    // it is also illegal to request a new TIF synchronously, because we're
-    // not guaranteed the UI process has finished acquiring new compositors
-    // for each widget.
-    //
-    // Note that we only do this for accelerated backends, since we do not
-    // perform resets on basic compositors.
-    gfxCriticalNote << "Discarding a paint since a device reset has not yet been acknowledged.";
     return false;
   }
 
@@ -283,7 +258,7 @@ ClientLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
     orientation = currentConfig.orientation();
   }
   LayoutDeviceIntRect targetBounds = mWidget->GetNaturalBounds();
-  targetBounds.x = targetBounds.y = 0;
+  targetBounds.MoveTo(0, 0);
   mForwarder->BeginTransaction(targetBounds.ToUnknownRect(), mTargetRotation,
                                orientation);
 
@@ -439,7 +414,7 @@ ClientLayerManager::EndTransaction(DrawPaintedLayerCallback aCallback,
   if (mTransactionIncomplete) {
     // If the previous transaction was incomplete then we may have buffer operations
     // running on the paint thread that haven't finished yet
-    GetCompositorBridgeChild()->FlushAsyncPaints();
+    FlushAsyncPaints();
   }
 
   if (mWidget) {
@@ -475,7 +450,7 @@ ClientLayerManager::EndEmptyTransaction(EndTransactionFlags aFlags)
   if (mTransactionIncomplete) {
     // If the previous transaction was incomplete then we may have buffer operations
     // running on the paint thread that haven't finished yet
-    GetCompositorBridgeChild()->FlushAsyncPaints();
+    FlushAsyncPaints();
   }
 
   if (!EndTransactionInternal(nullptr, nullptr, aFlags)) {
@@ -515,9 +490,18 @@ ClientLayerManager::GetCompositorBridgeChild()
 }
 
 void
+ClientLayerManager::FlushAsyncPaints()
+{
+  CompositorBridgeChild* cbc = GetCompositorBridgeChild();
+  if (cbc) {
+    cbc->FlushAsyncPaints();
+  }
+}
+
+void
 ClientLayerManager::ScheduleComposite()
 {
-  mForwarder->Composite();
+  mForwarder->ScheduleComposite();
 }
 
 void
@@ -653,7 +637,7 @@ ClientLayerManager::MakeSnapshotIfRequired()
           RefPtr<DataSourceSurface> surf = GetSurfaceForDescriptor(outSnapshot);
           DrawTarget* dt = mShadowTarget->GetDrawTarget();
 
-          Rect dstRect(bounds.x, bounds.y, bounds.Width(), bounds.Height());
+          Rect dstRect(bounds.X(), bounds.Y(), bounds.Width(), bounds.Height());
           Rect srcRect(0, 0, bounds.Width(), bounds.Height());
 
           gfx::Matrix rotate =
@@ -697,14 +681,9 @@ ClientLayerManager::WaitOnTransactionProcessed()
   }
 }
 void
-ClientLayerManager::UpdateTextureFactoryIdentifier(const TextureFactoryIdentifier& aNewIdentifier,
-                                                   uint64_t aDeviceResetSeqNo)
+ClientLayerManager::UpdateTextureFactoryIdentifier(const TextureFactoryIdentifier& aNewIdentifier)
 {
-  MOZ_ASSERT_IF(XRE_IsContentProcess(),
-                aDeviceResetSeqNo == CompositorBridgeChild::Get()->DeviceResetSequenceNumber());
-
   mForwarder->IdentifyTextureHost(aNewIdentifier);
-  mDeviceResetSequenceNumber = aDeviceResetSeqNo;
 }
 
 void

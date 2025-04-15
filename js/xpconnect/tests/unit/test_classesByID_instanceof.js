@@ -1,38 +1,38 @@
 function testActual(SimpleURIClassByID)
 {
   var simpleURI =
-    Components.classes["@mozilla.org/network/simple-uri;1"].createInstance();
+    Cc["@mozilla.org/network/simple-uri;1"].createInstance();
 
-  do_check_eq(simpleURI instanceof SimpleURIClassByID, true);
+  Assert.equal(simpleURI instanceof SimpleURIClassByID, true);
 }
 
 function testInherited(SimpleURIClassByID)
 {
   var simpleURI =
-    Components.classes["@mozilla.org/network/simple-uri;1"].createInstance();
+    Cc["@mozilla.org/network/simple-uri;1"].createInstance();
 
   var inherited = Object.create(simpleURI);
 
-  do_check_eq(inherited instanceof SimpleURIClassByID, true);
+  Assert.equal(inherited instanceof SimpleURIClassByID, true);
 }
 
 function testInheritedCrossGlobal(SimpleURIClassByID)
 {
   var simpleURI =
-    Components.classes["@mozilla.org/network/simple-uri;1"].createInstance();
+    Cc["@mozilla.org/network/simple-uri;1"].createInstance();
 
-  var sb = new Components.utils.Sandbox(this, { wantComponents: true });
+  var sb = new Cu.Sandbox(this, { wantComponents: true });
   var inheritedCross = sb.Object.create(simpleURI);
 
-  do_check_eq(inheritedCross instanceof SimpleURIClassByID, true);
+  Assert.equal(inheritedCross instanceof SimpleURIClassByID, true);
 }
 
 function testCrossGlobalArbitraryGetPrototype(SimpleURIClassByID)
 {
   var simpleURI =
-    Components.classes["@mozilla.org/network/simple-uri;1"].createInstance();
+    Cc["@mozilla.org/network/simple-uri;1"].createInstance();
 
-  var sb = new Components.utils.Sandbox(this, { wantComponents: true });
+  var sb = new Cu.Sandbox(this, { wantComponents: true });
   var firstLevel = Object.create(simpleURI);
 
   var obj = { shouldThrow: false };
@@ -61,12 +61,12 @@ function testCrossGlobalArbitraryGetPrototype(SimpleURIClassByID)
     err = e;
   }
 
-  do_check_eq(threw, true);
-  do_check_eq(err, 42);
+  Assert.equal(threw, true);
+  Assert.equal(err, 42);
 
   obj.shouldThrow = false;
 
-  do_check_eq(thirdLevel instanceof SimpleURIClassByID, true);
+  Assert.equal(thirdLevel instanceof SimpleURIClassByID, true);
 }
 
 function run_test() {

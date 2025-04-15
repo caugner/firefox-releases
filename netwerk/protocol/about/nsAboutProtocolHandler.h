@@ -10,6 +10,7 @@
 #include "nsSimpleNestedURI.h"
 #include "nsWeakReference.h"
 #include "mozilla/Attributes.h"
+#include "nsIURIMutator.h"
 
 class nsIURI;
 
@@ -52,7 +53,9 @@ private:
 
 
 // Class to allow us to propagate the base URI to about:blank correctly
-class nsNestedAboutURI : public nsSimpleNestedURI {
+class nsNestedAboutURI final
+    : public nsSimpleNestedURI
+{
 public:
     nsNestedAboutURI(nsIURI* aInnerURI, nsIURI* aBaseURI)
         : nsSimpleNestedURI(aInnerURI)
@@ -65,16 +68,18 @@ public:
     virtual ~nsNestedAboutURI() {}
 
     // Override QI so we can QI to our CID as needed
-    NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
+    NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr) override;
 
     // Override StartClone(), the nsISerializable methods, and
     // GetClassIDNoAlloc; this last is needed to make our nsISerializable impl
     // work right.
     virtual nsSimpleURI* StartClone(RefHandlingEnum aRefHandlingMode,
-                                    const nsACString& newRef);
-    NS_IMETHOD Read(nsIObjectInputStream* aStream);
-    NS_IMETHOD Write(nsIObjectOutputStream* aStream);
-    NS_IMETHOD GetClassIDNoAlloc(nsCID *aClassIDNoAlloc);
+                                    const nsACString& newRef) override;
+    NS_IMETHOD Mutate(nsIURIMutator * *_retval) override;
+
+    NS_IMETHOD Read(nsIObjectInputStream* aStream) override;
+    NS_IMETHOD Write(nsIObjectOutputStream* aStream) override;
+    NS_IMETHOD GetClassIDNoAlloc(nsCID *aClassIDNoAlloc) override;
 
     nsIURI* GetBaseURI() const {
         return mBaseURI;
@@ -82,6 +87,59 @@ public:
 
 protected:
     nsCOMPtr<nsIURI> mBaseURI;
+
+public:
+    class Mutator final
+        : public nsIURIMutator
+        , public BaseURIMutator<nsNestedAboutURI>
+    {
+        NS_DECL_ISUPPORTS
+        NS_FORWARD_SAFE_NSIURISETTERS_RET(mURI)
+
+        explicit Mutator() { }
+    private:
+        virtual ~Mutator() { }
+
+        MOZ_MUST_USE NS_IMETHOD
+        Deserialize(const mozilla::ipc::URIParams& aParams) override
+        {
+            return InitFromIPCParams(aParams);
+        }
+
+        MOZ_MUST_USE NS_IMETHOD
+        Read(nsIObjectInputStream* aStream) override
+        {
+            return InitFromInputStream(aStream);
+        }
+
+        MOZ_MUST_USE NS_IMETHOD
+        Finalize(nsIURI** aURI) override
+        {
+            mURI->mMutable = false;
+            mURI.forget(aURI);
+            return NS_OK;
+        }
+
+        MOZ_MUST_USE NS_IMETHOD
+        SetSpec(const nsACString& aSpec, nsIURIMutator** aMutator) override
+        {
+            if (aMutator) {
+                NS_ADDREF(*aMutator = this);
+            }
+            return InitFromSpec(aSpec);
+        }
+
+        void ResetMutable()
+        {
+            if (mURI) {
+                mURI->mMutable = true;
+            }
+        }
+
+        friend class nsNestedAboutURI;
+    };
+
+    friend BaseURIMutator<nsNestedAboutURI>;
 };
 
 } // namespace net

@@ -10,8 +10,7 @@
 #include "2D.h"
 #include "RecordedEvent.h"
 #include "RecordingTypes.h"
-#include <ostream>
-#include <fstream>
+#include "mozilla/FStream.h"
 
 #include <unordered_set>
 #include <unordered_map>
@@ -25,10 +24,11 @@ class PathRecording;
 class DrawEventRecorderPrivate : public DrawEventRecorder
 {
 public:
-  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(DrawEventRecorderPrivate)
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(DrawEventRecorderPrivate, override)
+
   DrawEventRecorderPrivate();
   virtual ~DrawEventRecorderPrivate() { }
-  virtual void Finish() { ClearResources(); }
+  virtual void Finish() override { ClearResources(); }
   virtual void FlushItem(IntRect) { }
   void DetatchResources() {
     // The iteration is a bit awkward here because our iterator will
@@ -128,9 +128,10 @@ protected:
 
 class DrawEventRecorderFile : public DrawEventRecorderPrivate
 {
+  using char_type = filesystem::Path::value_type;
 public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(DrawEventRecorderFile, override)
-  explicit DrawEventRecorderFile(const char *aFilename);
+  explicit DrawEventRecorderFile(const char_type* aFilename);
   ~DrawEventRecorderFile();
 
   void RecordEvent(const RecordedEvent &aEvent) override;
@@ -145,7 +146,7 @@ public:
    * objects it has recorded. This can be used with Close, so that a recording
    * can be processed in chunks. The file must not already be open.
    */
-  void OpenNew(const char *aFilename);
+  void OpenNew(const char_type* aFilename);
 
   /**
    * Closes the file so that it can be processed. The recorder does NOT forget
@@ -157,7 +158,7 @@ public:
 private:
   void Flush() override;
 
-  std::ofstream mOutputStream;
+  mozilla::OFStream mOutputStream;
 };
 
 typedef std::function<void(MemStream &aStream, std::vector<RefPtr<UnscaledFont>> &aUnscaledFonts)> SerializeResourcesFn;

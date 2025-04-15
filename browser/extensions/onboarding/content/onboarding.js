@@ -6,8 +6,7 @@
 
 "use strict";
 
-const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const ONBOARDING_CSS_URL = "resource://onboarding/onboarding.css";
 const ABOUT_HOME_URL = "about:home";
@@ -19,6 +18,7 @@ const BRAND_SHORT_NAME = Services.strings
                      .createBundle("chrome://branding/locale/brand.properties")
                      .GetStringFromName("brandShortName");
 const PROMPT_COUNT_PREF = "browser.onboarding.notification.prompt-count";
+const NOTIFICATION_FINISHED_PREF = "browser.onboarding.notification.finished";
 const ONBOARDING_DIALOG_ID = "onboarding-overlay-dialog";
 const ONBOARDING_MIN_WIDTH_PX = 960;
 const SPEECH_BUBBLE_MIN_WIDTH_PX = 1130;
@@ -26,6 +26,62 @@ const SPEECH_BUBBLE_NEWTOUR_STRING_ID = "onboarding.overlay-icon-tooltip2";
 const SPEECH_BUBBLE_UPDATETOUR_STRING_ID = "onboarding.overlay-icon-tooltip-updated2";
 const ICON_STATE_WATERMARK = "watermark";
 const ICON_STATE_DEFAULT = "default";
+
+/**
+ * Helper function to create the tour description UI element.
+ */
+function createOnboardingTourDescription(div, title, description) {
+  let doc = div.ownerDocument;
+  let section = doc.createElement("section");
+  section.className = "onboarding-tour-description";
+
+  let h1 = doc.createElement("h1");
+  h1.setAttribute("data-l10n-id", title);
+  section.appendChild(h1);
+
+  let p = doc.createElement("p");
+  p.setAttribute("data-l10n-id", description);
+  section.appendChild(p);
+
+  div.appendChild(section);
+  return section;
+}
+
+/**
+ * Helper function to create the tour content UI element.
+ */
+function createOnboardingTourContent(div, imageSrc) {
+  let doc = div.ownerDocument;
+  let section = doc.createElement("section");
+  section.className = "onboarding-tour-content";
+
+  let img = doc.createElement("img");
+  img.setAttribute("src", imageSrc);
+  img.setAttribute("role", "presentation");
+  section.appendChild(img);
+
+  div.appendChild(section);
+  return section;
+}
+
+/**
+ * Helper function to create the tour button UI element.
+ */
+function createOnboardingTourButton(div, buttonId, l10nId, buttonElementTagName = "button") {
+  let doc = div.ownerDocument;
+  let aside = doc.createElement("aside");
+  aside.className = "onboarding-tour-button-container";
+
+  let button = doc.createElement(buttonElementTagName);
+  button.id = buttonId;
+  button.className = "onboarding-tour-action-button";
+  button.setAttribute("data-l10n-id", l10nId);
+  aside.appendChild(button);
+
+  div.appendChild(aside);
+  return aside;
+}
+
 /**
  * Add any number of tours, key is the tourId, value should follow the format below
  * "tourId": { // The short tour id which could be saved in pref
@@ -43,7 +99,6 @@ const ICON_STATE_DEFAULT = "default";
  *   // Return a div appended with elements for this tours.
  *   // Each tour should contain the following 3 sections in the div:
  *   // .onboarding-tour-description, .onboarding-tour-content, .onboarding-tour-button-container.
- *   // Add onboarding-no-button css class in the div if this tour does not need a button container.
  *   // If there was a .onboarding-tour-action-button present and was clicked, tour would be marked as completed.
  *   getPage() {},
  * },
@@ -61,18 +116,13 @@ var onboardingTourset = {
     },
     getPage(win) {
       let div = win.document.createElement("div");
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-private-browsing.title2"></h1>
-          <p data-l10n-id="onboarding.tour-private-browsing.description3"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <img src="resource://onboarding/img/figure_private.svg" role="presentation"/>
-        </section>
-        <aside class="onboarding-tour-button-container">
-          <button id="onboarding-tour-private-browsing-button" class="onboarding-tour-action-button" data-l10n-id="onboarding.tour-private-browsing.button"></button>
-        </aside>
-      `;
+
+      createOnboardingTourDescription(div,
+        "onboarding.tour-private-browsing.title2", "onboarding.tour-private-browsing.description3");
+      createOnboardingTourContent(div, "resource://onboarding/img/figure_private.svg");
+      createOnboardingTourButton(div,
+        "onboarding-tour-private-browsing-button", "onboarding.tour-private-browsing.button");
+
       return div;
     },
   },
@@ -88,18 +138,13 @@ var onboardingTourset = {
     },
     getPage(win) {
       let div = win.document.createElement("div");
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-addons.title2"></h1>
-          <p data-l10n-id="onboarding.tour-addons.description2"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <img src="resource://onboarding/img/figure_addons.svg" role="presentation"/>
-        </section>
-        <aside class="onboarding-tour-button-container">
-          <button id="onboarding-tour-addons-button" class="onboarding-tour-action-button" data-l10n-id="onboarding.tour-addons.button"></button>
-        </aside>
-      `;
+
+      createOnboardingTourDescription(div,
+        "onboarding.tour-addons.title2", "onboarding.tour-addons.description2");
+      createOnboardingTourContent(div, "resource://onboarding/img/figure_addons.svg");
+      createOnboardingTourButton(div,
+        "onboarding-tour-addons-button", "onboarding.tour-addons.button");
+
       return div;
     },
   },
@@ -115,18 +160,13 @@ var onboardingTourset = {
     },
     getPage(win) {
       let div = win.document.createElement("div");
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-customize.title2"></h1>
-          <p data-l10n-id="onboarding.tour-customize.description2"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <img src="resource://onboarding/img/figure_customize.svg" role="presentation"/>
-        </section>
-        <aside class="onboarding-tour-button-container">
-          <button id="onboarding-tour-customize-button" class="onboarding-tour-action-button" data-l10n-id="onboarding.tour-customize.button"></button>
-        </aside>
-      `;
+
+      createOnboardingTourDescription(div,
+        "onboarding.tour-customize.title2", "onboarding.tour-customize.description2");
+      createOnboardingTourContent(div, "resource://onboarding/img/figure_customize.svg");
+      createOnboardingTourButton(div,
+        "onboarding-tour-customize-button", "onboarding.tour-customize.button");
+
       return div;
     },
   },
@@ -147,21 +187,31 @@ var onboardingTourset = {
       let setFromPanel = bundle.GetStringFromName("onboarding.tour-default-browser.button");
       let isDefaultMessage = bundle.GetStringFromName("onboarding.tour-default-browser.is-default.message");
       let isDefault2ndMessage = bundle.formatStringFromName("onboarding.tour-default-browser.is-default.2nd-message", [BRAND_SHORT_NAME], 1);
-      // eslint-disable-next-line no-unsanitized/property
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-default-browser.title2"></h1>
-          <p data-l10n-id="onboarding.tour-default-browser.description2"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <img src="resource://onboarding/img/figure_default.svg" role="presentation"/>
-        </section>
-        <aside class="onboarding-tour-button-container">
-          <button id="onboarding-tour-default-browser-button" class="onboarding-tour-action-button"
-            data-bg="${setFromBackGround}" data-panel="${setFromPanel}"></button>
-          <div id="onboarding-tour-is-default-browser-msg" class="onboarding-hidden">${isDefaultMessage}<br/>${isDefault2ndMessage}</div>
-        </aside>
-      `;
+
+      createOnboardingTourDescription(div,
+        "onboarding.tour-default-browser.title2", "onboarding.tour-default-browser.description2");
+      createOnboardingTourContent(div, "resource://onboarding/img/figure_default.svg");
+
+      let aside = win.document.createElement("aside");
+      aside.className = "onboarding-tour-button-container";
+      div.appendChild(aside);
+
+      let button = win.document.createElement("button");
+      button.id = "onboarding-tour-default-browser-button";
+      button.className = "onboarding-tour-action-button";
+      button.setAttribute("data-bg", setFromBackGround);
+      button.setAttribute("data-panel", setFromPanel);
+      aside.appendChild(button);
+
+      let isDefaultBrowserMsg = win.document.createElement("div");
+      isDefaultBrowserMsg.id = "onboarding-tour-is-default-browser-msg";
+      isDefaultBrowserMsg.className = "onboarding-hidden";
+      aside.appendChild(isDefaultBrowserMsg);
+      isDefaultBrowserMsg.append(isDefaultMessage);
+
+      let br = win.document.createElement("br");
+      isDefaultBrowserMsg.appendChild(br);
+      isDefaultBrowserMsg.append(isDefault2ndMessage);
 
       div.addEventListener("beforeshow", () => {
         win.document.dispatchEvent(new Event("Agent:CanSetDefaultBrowserInBackground"));
@@ -184,34 +234,77 @@ var onboardingTourset = {
       const STATE_LOGOUT = "logged-out";
       const STATE_LOGIN = "logged-in";
       let div = win.document.createElement("div");
-      div.classList.add("onboarding-no-button");
       div.dataset.loginState = STATE_LOGOUT;
       // The email validation pattern used in the form comes from IETF rfc5321,
       // which is identical to server-side checker of Firefox Account. See
       // discussion in https://bugzilla.mozilla.org/show_bug.cgi?id=1378770#c6
       // for detail.
       let emailRegex = "^[\\w.!#$%&’*+\\/=?^`{|}~-]{1,64}@[a-z\\d](?:[a-z\\d-]{0,253}[a-z\\d])?(?:\\.[a-z\\d](?:[a-z\\d-]{0,253}[a-z\\d])?)+$";
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-sync.title2" class="show-on-logged-out"></h1>
-          <p data-l10n-id="onboarding.tour-sync.description2" class="show-on-logged-out"></p>
-          <h1 data-l10n-id="onboarding.tour-sync.logged-in.title" class="show-on-logged-in"></h1>
-          <p data-l10n-id="onboarding.tour-sync.logged-in.description" class="show-on-logged-in"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <form class="show-on-logged-out">
-            <h3 data-l10n-id="onboarding.tour-sync.form.title"></h3>
-            <p data-l10n-id="onboarding.tour-sync.form.description"></p>
-            <input id="onboarding-tour-sync-email-input" type="email" required="true"></input><br />
-            <button id="onboarding-tour-sync-button" class="onboarding-tour-action-button" data-l10n-id="onboarding.tour-sync.button"></button>
-          </form>
-          <img src="resource://onboarding/img/figure_sync.svg" role="presentation"/>
-        </section>
-      `;
-      let emailInput = div.querySelector("#onboarding-tour-sync-email-input");
-      emailInput.placeholder =
+
+      let description = createOnboardingTourDescription(div,
+        "onboarding.tour-sync.title2", "onboarding.tour-sync.description2");
+
+      description.querySelector("h1").className = "show-on-logged-out";
+      description.querySelector("p").className = "show-on-logged-out";
+
+      let h1LoggedIn = win.document.createElement("h1");
+      h1LoggedIn.setAttribute("data-l10n-id", "onboarding.tour-sync.logged-in.title");
+      h1LoggedIn.className = "show-on-logged-in";
+      description.appendChild(h1LoggedIn);
+
+      let pLoggedIn = win.document.createElement("p");
+      pLoggedIn.setAttribute("data-l10n-id", "onboarding.tour-sync.logged-in.description");
+      pLoggedIn.className = "show-on-logged-in";
+      description.appendChild(pLoggedIn);
+
+      let content = win.document.createElement("section");
+      content.className = "onboarding-tour-content";
+      div.appendChild(content);
+
+      let form = win.document.createElement("form");
+      form.className = "show-on-logged-out";
+      content.appendChild(form);
+
+      let h3 = win.document.createElement("h3");
+      h3.setAttribute("data-l10n-id", "onboarding.tour-sync.form.title");
+      form.appendChild(h3);
+
+      let p = win.document.createElement("p");
+      p.setAttribute("data-l10n-id", "onboarding.tour-sync.form.description");
+      form.appendChild(p);
+
+      let input = win.document.createElement("input");
+      input.id = "onboarding-tour-sync-email-input";
+      input.setAttribute("required", "true");
+      input.setAttribute("type", "email");
+      input.placeholder =
         bundle.GetStringFromName("onboarding.tour-sync.email-input.placeholder");
-      emailInput.pattern = emailRegex;
+      input.pattern = emailRegex;
+      form.appendChild(input);
+
+      let br = win.document.createElement("br");
+      form.appendChild(br);
+
+      let button = win.document.createElement("button");
+      button.id = "onboarding-tour-sync-button";
+      button.className = "onboarding-tour-action-button";
+      button.setAttribute("data-l10n-id", "onboarding.tour-sync.button");
+      form.appendChild(button);
+
+      let img = win.document.createElement("img");
+      img.setAttribute("src", "resource://onboarding/img/figure_sync.svg");
+      img.setAttribute("role", "presentation");
+      content.appendChild(img);
+
+      let aside = win.document.createElement("aside");
+      aside.className = "onboarding-tour-button-container show-on-logged-in";
+      div.appendChild(aside);
+
+      let connectDeviceButton = win.document.createElement("button");
+      connectDeviceButton.id = "onboarding-tour-sync-connect-device-button";
+      connectDeviceButton.className = "onboarding-tour-action-button";
+      connectDeviceButton.setAttribute("data-l10n-id", "onboarding.tour-sync.connect-device.button");
+      aside.appendChild(connectDeviceButton);
 
       div.addEventListener("beforeshow", () => {
         function loginStatusListener(msg) {
@@ -237,18 +330,13 @@ var onboardingTourset = {
     },
     getPage(win) {
       let div = win.document.createElement("div");
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-library.title"></h1>
-          <p data-l10n-id="onboarding.tour-library.description2"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <img src="resource://onboarding/img/figure_library.svg" role="presentation"/>
-        </section>
-        <aside class="onboarding-tour-button-container">
-          <button id="onboarding-tour-library-button" class="onboarding-tour-action-button" data-l10n-id="onboarding.tour-library.button2"></button>
-        </aside>
-      `;
+
+      createOnboardingTourDescription(div,
+        "onboarding.tour-library.title", "onboarding.tour-library.description2");
+      createOnboardingTourContent(div, "resource://onboarding/img/figure_library.svg");
+      createOnboardingTourButton(div,
+        "onboarding-tour-library-button", "onboarding.tour-library.button2");
+
       return div;
     },
   },
@@ -264,18 +352,13 @@ var onboardingTourset = {
     },
     getPage(win, bundle) {
       let div = win.document.createElement("div");
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-singlesearch.title"></h1>
-          <p data-l10n-id="onboarding.tour-singlesearch.description"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <img src="resource://onboarding/img/figure_singlesearch.svg" role="presentation"/>
-        </section>
-        <aside class="onboarding-tour-button-container">
-          <button id="onboarding-tour-singlesearch-button" class="onboarding-tour-action-button" data-l10n-id="onboarding.tour-singlesearch.button"></button>
-        </aside>
-      `;
+
+      createOnboardingTourDescription(div,
+        "onboarding.tour-singlesearch.title", "onboarding.tour-singlesearch.description");
+      createOnboardingTourContent(div, "resource://onboarding/img/figure_singlesearch.svg");
+      createOnboardingTourButton(div,
+        "onboarding-tour-singlesearch-button", "onboarding.tour-singlesearch.button");
+
       return div;
     },
   },
@@ -292,15 +375,11 @@ var onboardingTourset = {
     },
     getPage(win, bundle) {
       let div = win.document.createElement("div");
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-performance.title"></h1>
-          <p data-l10n-id="onboarding.tour-performance.description"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <img src="resource://onboarding/img/figure_performance.svg" role="presentation"/>
-        </section>
-      `;
+
+      createOnboardingTourDescription(div,
+        "onboarding.tour-performance.title", "onboarding.tour-performance.description");
+      createOnboardingTourContent(div, "resource://onboarding/img/figure_performance.svg");
+
       return div;
     },
   },
@@ -318,19 +397,20 @@ var onboardingTourset = {
       let div = win.document.createElement("div");
       // Screenshot tour opens the screenshot page directly, see below a#onboarding-tour-screenshots-button.
       // The screenshots page should be responsible for highlighting the Screenshots button
-      div.innerHTML = `
-        <section class="onboarding-tour-description">
-          <h1 data-l10n-id="onboarding.tour-screenshots.title"></h1>
-          <p data-l10n-id="onboarding.tour-screenshots.description"></p>
-        </section>
-        <section class="onboarding-tour-content">
-          <img src="resource://onboarding/img/figure_screenshots.svg" role="presentation"/>
-        </section>
-        <aside class="onboarding-tour-button-container">
-          <a id="onboarding-tour-screenshots-button" class="onboarding-tour-action-button" data-l10n-id="onboarding.tour-screenshots.button"
-             href="https://screenshots.firefox.com/#tour" target="_blank"></a>
-        </aside>
-      `;
+
+      createOnboardingTourDescription(div,
+        "onboarding.tour-screenshots.title", "onboarding.tour-screenshots.description");
+      createOnboardingTourContent(div, "resource://onboarding/img/figure_screenshots.svg");
+
+      let aside = createOnboardingTourButton(div,
+                                             "onboarding-tour-screenshots-button",
+                                             "onboarding.tour-screenshots.button",
+                                             "a");
+
+      let button = aside.querySelector("a");
+      button.setAttribute("href", "https://screenshots.firefox.com/#tour");
+      button.setAttribute("target", "_blank");
+
       return div;
     },
   },
@@ -356,7 +436,7 @@ function telemetry(data) {
 
 function registerNewTelemetrySession(data) {
   telemetry(Object.assign(data, {
-    event: "onboarding-register-session",
+    type: "onboarding-register-session",
   }));
 }
 
@@ -395,36 +475,53 @@ class Onboarding {
 
     this._loadJS(UITOUR_JS_URI);
 
-    this._window.addEventListener("resize", this);
-
-    // Destroy on unloading. This is to ensure we remove all the stuff we left.
-    // No any leak out there.
-    this._window.addEventListener("unload", () => this.destroy());
-
     this.uiInitialized = false;
-    this._resizeTimerId =
-      this._window.requestIdleCallback(() => this._resizeUI());
+    let doc = this._window.document;
+    if (doc.hidden) {
+      // When the preloaded-browser feature is on,
+      // it would preload a hidden about:newtab in the background.
+      // We don't want to show onboarding experience in that hidden state.
+      let onVisible = () => {
+        if (!doc.hidden) {
+          doc.removeEventListener("visibilitychange", onVisible);
+          this._startUI();
+        }
+      };
+      doc.addEventListener("visibilitychange", onVisible);
+    } else {
+      this._startUI();
+    }
+  }
+
+  _startUI() {
     registerNewTelemetrySession({
       page: this._window.location.href,
       session_key: this._session_key,
       tour_type: this._tourType,
     });
+
+    this._window.addEventListener("beforeunload", this);
+    this._window.addEventListener("unload", this);
+    this._window.addEventListener("resize", this);
+    this._resizeTimerId =
+      this._window.requestIdleCallback(() => this._resizeUI());
+    // start log the onboarding-session when the tab is visible
     telemetry({
-      event: "onboarding-session-begin",
+      type: "onboarding-session-begin",
       session_key: this._session_key,
     });
   }
 
   _resizeUI() {
-    let width = this._window.document.body.getBoundingClientRect().width;
-    if (width < ONBOARDING_MIN_WIDTH_PX) {
+    this._windowWidth = this._window.document.body.getBoundingClientRect().width;
+    if (this._windowWidth < ONBOARDING_MIN_WIDTH_PX) {
       // Don't show the overlay UI before we get to a better, responsive design.
       this.destroy();
       return;
     }
 
     this._initUI();
-    if (this._isFirstSession && width >= SPEECH_BUBBLE_MIN_WIDTH_PX) {
+    if (this._isFirstSession && this._windowWidth >= SPEECH_BUBBLE_MIN_WIDTH_PX) {
       this._overlayIcon.classList.add("onboarding-speech-bubble");
     } else {
       this._overlayIcon.classList.remove("onboarding-speech-bubble");
@@ -447,6 +544,7 @@ class Onboarding {
 
     this._overlay = this._renderOverlay();
     this._overlay.addEventListener("click", this);
+    this._overlay.addEventListener("keydown", this);
     this._overlay.addEventListener("keypress", this);
     body.appendChild(this._overlay);
 
@@ -456,30 +554,17 @@ class Onboarding {
     this._onIconStateChange(Services.prefs.getStringPref("browser.onboarding.state", ICON_STATE_DEFAULT));
 
     // Doing tour notification takes some effort. Let's do it on idle.
-    this._window.requestIdleCallback(() => this._initNotification());
+    this._window.requestIdleCallback(() => this.showNotification());
   }
 
   _getTourIDList() {
     let tours = Services.prefs.getStringPref(`browser.onboarding.${this._tourType}tour`, "");
-    return tours.split(",").filter(tourId => tourId !== "").map(tourId => tourId.trim());
-  }
-
-  _initNotification() {
-    let doc = this._window.document;
-    if (doc.hidden) {
-      // When the preloaded-browser feature is on,
-      // it would preload a hidden about:newtab in the background.
-      // We don't want to show notification in that hidden state.
-      let onVisible = () => {
-        if (!doc.hidden) {
-          doc.removeEventListener("visibilitychange", onVisible);
-          this.showNotification();
-        }
-      };
-      doc.addEventListener("visibilitychange", onVisible);
-    } else {
-      this.showNotification();
-    }
+    return tours.split(",").filter(tourId => {
+      if (tourId === "sync" && !Services.prefs.getBoolPref("identity.fxaccounts.enabled")) {
+        return false;
+      }
+      return tourId !== "";
+    }).map(tourId => tourId.trim());
   }
 
   _initPrefObserver() {
@@ -531,6 +616,78 @@ class Onboarding {
            this._tours[0];
   }
 
+  /*
+   * Return currently showing tour navigation item
+   */
+  get _activeTourId() {
+    // We are doing lazy load so there might be no items.
+    if (!this._tourItems) {
+      return "";
+    }
+
+    let tourItem = this._tourItems.find(item => item.classList.contains("onboarding-active"));
+    return tourItem ? tourItem.id : "";
+  }
+
+  /**
+   * Return current logo state as "logo" or "watermark".
+   */
+  get _logoState() {
+    return this._overlayIcon.classList.contains("onboarding-watermark") ?
+      "watermark" : "logo";
+  }
+
+  /**
+   * Return current speech bubble state as "bubble", "dot" or "hide".
+   */
+  get _bubbleState() {
+    let state;
+    if (this._overlayIcon.classList.contains("onboarding-watermark")) {
+      state = "hide";
+    } else if (this._overlayIcon.classList.contains("onboarding-speech-bubble")) {
+      state = "bubble";
+    } else {
+      state = "dot";
+    }
+    return state;
+  }
+
+  /**
+   * Return current notification state as "show", "hide" or "finished".
+   */
+  get _notificationState() {
+    if (this._notificationCachedState === "finished") {
+      return this._notificationCachedState;
+    }
+
+    if (Services.prefs.getBoolPref(NOTIFICATION_FINISHED_PREF, false)) {
+      this._notificationCachedState = "finished";
+    } else if (this._notification) {
+      this._notificationCachedState = "show";
+    } else {
+      // we know it is in the hidden state if there's no notification bar
+      this._notificationCachedState = "hide";
+    }
+
+    return this._notificationCachedState;
+  }
+
+  /**
+   * Return current notification prompt count.
+   */
+  get _notificationPromptCount() {
+    return Services.prefs.getIntPref(PROMPT_COUNT_PREF, 0);
+  }
+
+  /**
+   * Return current screen width and round it up to the nearest 50 pixels.
+   * Collecting rounded values reduces the risk that this could be used to
+   * derive a unique user identifier
+   */
+  get _windowWidthRounded() {
+    return Math.round(this._windowWidth / 50) * 50;
+  }
+
   handleClick(target) {
     let { id, classList } = target;
     // Only containers receive pointer events in onboarding tour tab list,
@@ -541,6 +698,14 @@ class Onboarding {
 
     switch (id) {
       case "onboarding-overlay-button":
+        telemetry({
+          type: "onboarding-logo-click",
+          bubble_state: this._bubbleState,
+          logo_state: this._logoState,
+          notification_state: this._notificationState,
+          session_key: this._session_key,
+          width: this._windowWidthRounded,
+        });
         this.showOverlay();
         this.gotoPage(this._firstUncompleteTour.id);
         break;
@@ -554,42 +719,73 @@ class Onboarding {
       // that means clicking outside the tour content area.
       // Let's toggle the overlay.
       case "onboarding-overlay":
+        let eventName = id === "onboarding-overlay-close-btn" ?
+          "overlay-close-button-click" : "overlay-close-outside-click";
+        telemetry({
+          type: eventName,
+          current_tour_id: this._activeTourId,
+          session_key: this._session_key,
+          target_tour_id: this._activeTourId,
+          width: this._windowWidthRounded,
+        });
         this.hideOverlay();
         break;
       case "onboarding-notification-close-btn":
-        let tour_id = this._notificationBar.dataset.targetTourId;
-        this.hideNotification();
-        this._removeTourFromNotificationQueue(tour_id);
+        let currentTourId = this._notificationBar.dataset.targetTourId;
+        // should trigger before notification-session event is sent
         telemetry({
-          event: "notification-close-button-click",
-          tour_id,
+          type: "notification-close-button-click",
+          bubble_state: this._bubbleState,
+          current_tour_id: currentTourId,
+          logo_state: this._logoState,
+          notification_impression: this._notificationPromptCount,
+          notification_state: this._notificationState,
           session_key: this._session_key,
+          target_tour_id: currentTourId,
+          width: this._windowWidthRounded,
         });
+        this.hideNotification();
+        this._removeTourFromNotificationQueue(currentTourId);
         break;
       case "onboarding-notification-action-btn":
         let tourId = this._notificationBar.dataset.targetTourId;
+        telemetry({
+          type: "notification-cta-click",
+          bubble_state: this._bubbleState,
+          current_tour_id: tourId,
+          logo_state: this._logoState,
+          notification_impression: this._notificationPromptCount,
+          notification_state: this._notificationState,
+          session_key: this._session_key,
+          target_tour_id: tourId,
+          width: this._windowWidthRounded,
+        });
         this.showOverlay();
         this.gotoPage(tourId);
-        telemetry({
-          event: "notification-cta-click",
-          tour_id: tourId,
-          session_key: this._session_key,
-        });
         this._removeTourFromNotificationQueue(tourId);
         break;
     }
     if (classList.contains("onboarding-tour-item")) {
+      telemetry({
+        type: "overlay-nav-click",
+        current_tour_id: this._activeTourId,
+        session_key: this._session_key,
+        target_tour_id: id,
+        width: this._windowWidthRounded,
+      });
       this.gotoPage(id);
       // Keep focus (not visible) on current item for potential keyboard
       // navigation.
       target.focus();
     } else if (classList.contains("onboarding-tour-action-button")) {
-      let activeItem = this._tourItems.find(item => item.classList.contains("onboarding-active"));
-      this.setToursCompleted([ activeItem.id ]);
+      let activeTourId = this._activeTourId;
+      this.setToursCompleted([ activeTourId ]);
       telemetry({
-        event: "overlay-cta-click",
-        tour_id: activeItem.id,
+        type: "overlay-cta-click",
+        current_tour_id: activeTourId,
         session_key: this._session_key,
+        target_tour_id: activeTourId,
+        width: this._windowWidthRounded,
       });
     }
   }
@@ -623,18 +819,8 @@ class Onboarding {
     return next;
   }
 
-  handleKeypress(event) {
+  handleKeydown(event) {
     let { target, key, shiftKey } = event;
-
-    if (target === this._overlayIcon) {
-      if ([" ", "Enter"].includes(key)) {
-        // Remember that the dialog was opened with a keyboard.
-        this._overlayIcon.dataset.keyboardFocus = true;
-        this.handleClick(target);
-        event.preventDefault();
-      }
-      return;
-    }
 
     // Currently focused item could be tab container if previous navigation was done
     // via mouse.
@@ -643,15 +829,6 @@ class Onboarding {
     }
     let targetIndex;
     switch (key) {
-      case " ":
-      case "Enter":
-        // Assume that the handle function should be identical for keyboard
-        // activation if there is a click handler for the target.
-        if (target.classList.contains("onboarding-tour-item")) {
-          this.handleClick(target);
-          target.focus();
-        }
-        break;
       case "ArrowUp":
         // Go to and focus on the previous tab if it's available.
         targetIndex = this._tourItems.indexOf(target);
@@ -688,12 +865,67 @@ class Onboarding {
     event.stopPropagation();
   }
 
+  handleKeypress(event) {
+    let { target, key } = event;
+
+    if (target === this._overlayIcon) {
+      if ([" ", "Enter"].includes(key)) {
+        // Remember that the dialog was opened with a keyboard.
+        this._overlayIcon.dataset.keyboardFocus = true;
+        this.handleClick(target);
+        event.preventDefault();
+      }
+      return;
+    }
+
+    // Currently focused item could be tab container if previous navigation was done
+    // via mouse.
+    if (target.classList.contains("onboarding-tour-item-container")) {
+      target = target.firstChild;
+    }
+    switch (key) {
+      case " ":
+      case "Enter":
+        // Assume that the handle function should be identical for keyboard
+        // activation if there is a click handler for the target.
+        if (target.classList.contains("onboarding-tour-item")) {
+          this.handleClick(target);
+          target.focus();
+        }
+        break;
+      default:
+        break;
+    }
+    event.stopPropagation();
+  }
+
   handleEvent(evt) {
     switch (evt.type) {
+      case "beforeunload":
+        // To make sure the telemetry pings are sent,
+        // we send "onboarding-session-end" ping as well as
+        // "overlay-session-end" and "notification-session-end" ping
+        // (by hiding the overlay and notificaiton) on beforeunload.
+        this.hideOverlay();
+        this.hideNotification();
+        telemetry({
+          type: "onboarding-session-end",
+          session_key: this._session_key,
+        });
+        break;
+      case "unload":
+        // Notice: Cannot do `destroy` on beforeunload, must do on unload.
+        // Otherwise, we would hit the docShell leak in the test.
+        // See Bug 1413830#c190 and Bug 1429652 for details.
+        this.destroy();
+        break;
       case "resize":
         this._window.cancelIdleCallback(this._resizeTimerId);
         this._resizeTimerId =
           this._window.requestIdleCallback(() => this._resizeUI());
+        break;
+      case "keydown":
+        this.handleKeydown(evt);
         break;
       case "keypress":
         this.handleKeypress(evt);
@@ -716,16 +948,18 @@ class Onboarding {
 
     this._clearPrefObserver();
     this._overlayIcon.remove();
-    this._overlay.remove();
+    if (this._overlay) {
+      // send overlay-session telemetry
+      this.hideOverlay();
+      this._overlay.remove();
+    }
     if (this._notificationBar) {
+      // send notification-session telemetry
+      this.hideNotification();
       this._notificationBar.remove();
     }
     this._tourItems = this._tourPages =
     this._overlayIcon = this._overlay = this._notificationBar = null;
-    telemetry({
-      event: "onboarding-session-end",
-      session_key: this._session_key,
-    });
   }
 
   _onIconStateChange(state) {
@@ -746,20 +980,26 @@ class Onboarding {
       this._loadTours(this._tours);
     }
 
-    this.hideNotification();
-    this.toggleModal(this._overlay.classList.toggle("onboarding-opened"));
-    telemetry({
-      event: "overlay-session-begin",
-      session_key: this._session_key
-    });
+    if (this._overlay && !this._overlay.classList.contains("onboarding-opened")) {
+      this.hideNotification();
+      this._overlay.classList.add("onboarding-opened");
+      this.toggleModal(true);
+      telemetry({
+        type: "overlay-session-begin",
+        session_key: this._session_key,
+      });
+    }
   }
 
   hideOverlay() {
-    this.toggleModal(this._overlay.classList.toggle("onboarding-opened"));
-    telemetry({
-      event: "overlay-session-end",
-      session_key: this._session_key,
-    });
+    if (this._overlay && this._overlay.classList.contains("onboarding-opened")) {
+      this._overlay.classList.remove("onboarding-opened");
+      this.toggleModal(false);
+      telemetry({
+        type: "overlay-session-end",
+        session_key: this._session_key,
+      });
+    }
   }
 
   /**
@@ -797,6 +1037,10 @@ class Onboarding {
     }
   }
 
+  /**
+   * Switch to proper tour.
+   * @param {String} tourId specify which tour should be switched.
+   */
   gotoPage(tourId) {
     let targetPageId = `${tourId}-page`;
     for (let page of this._tourPages) {
@@ -812,9 +1056,10 @@ class Onboarding {
         tab.classList.add("onboarding-active");
         tab.setAttribute("aria-selected", true);
         telemetry({
-          event: "overlay-nav-click",
-          tour_id: tourId,
+          type: "overlay-current-tour",
+          current_tour_id: tourId,
           session_key: this._session_key,
+          width: this._windowWidthRounded,
         });
 
         // Some tours should complete instantly upon showing.
@@ -923,9 +1168,8 @@ class Onboarding {
   }
 
   _isTimeForNextTourNotification(lastTourChangeTime) {
-    let promptCount = Services.prefs.getIntPref("browser.onboarding.notification.prompt-count", 0);
     let maxCount = Services.prefs.getIntPref("browser.onboarding.notification.max-prompt-count-per-tour");
-    if (promptCount >= maxCount) {
+    if (this._notificationPromptCount >= maxCount) {
       return true;
     }
 
@@ -978,7 +1222,7 @@ class Onboarding {
   }
 
   showNotification() {
-    if (Services.prefs.getBoolPref("browser.onboarding.notification.finished", false)) {
+    if (this._notificationState === "finished") {
       return;
     }
 
@@ -986,6 +1230,7 @@ class Onboarding {
     if (this._muteNotificationOnFirstSession(lastTime)) {
       return;
     }
+
     // After the notification mute on the 1st session,
     // we don't want to show the speech bubble by default
     this._overlayIcon.classList.remove("onboarding-speech-bubble");
@@ -1011,7 +1256,7 @@ class Onboarding {
     if (queue.length == 0) {
       sendMessageToChrome("set-prefs", [
         {
-          name: "browser.onboarding.notification.finished",
+          name: NOTIFICATION_FINISHED_PREF,
           value: true
         },
         {
@@ -1043,6 +1288,7 @@ class Onboarding {
     this._window.document.body.appendChild(this._notificationBar);
 
     let params = [];
+    let promptCount = 1;
     if (startQueueLength != queue.length) {
       // We just change tour so update the time, the count and the queue
       params.push({
@@ -1051,23 +1297,35 @@ class Onboarding {
       });
       params.push({
         name: PROMPT_COUNT_PREF,
-        value: 1
+        value: promptCount
       });
       params.push({
         name: "browser.onboarding.notification.tour-ids-queue",
         value: queue.join(",")
       });
     } else {
-      let promptCount = Services.prefs.getIntPref(PROMPT_COUNT_PREF, 0);
+      promptCount = this._notificationPromptCount + 1;
       params.push({
         name: PROMPT_COUNT_PREF,
-        value: promptCount + 1
+        value: promptCount
       });
     }
     sendMessageToChrome("set-prefs", params);
     telemetry({
-      event: "notification-session-begin",
+      type: "notification-session-begin",
       session_key: this._session_key
+    });
+    // since set-perfs is async, pass promptCount directly to avoid gathering the wrong
+    // notification_impression.
+    telemetry({
+      type: "notification-appear",
+      bubble_state: this._bubbleState,
+      current_tour_id: targetTourId,
+      logo_state: this._logoState,
+      notification_impression: promptCount,
+      notification_state: this._notificationState,
+      session_key: this._session_key,
+      width: this._windowWidthRounded,
     });
   }
 
@@ -1076,8 +1334,7 @@ class Onboarding {
       if (this._notificationBar.classList.contains("onboarding-opened")) {
         this._notificationBar.classList.remove("onboarding-opened");
         telemetry({
-          event: "notification-session-end",
-          tour_id: this._notificationBar.dataset.targetTourId,
+          type: "notification-session-end",
           session_key: this._session_key,
         });
       }
@@ -1089,23 +1346,43 @@ class Onboarding {
     footer.id = "onboarding-notification-bar";
     footer.setAttribute("aria-live", "polite");
     footer.setAttribute("aria-labelledby", "onboarding-notification-tour-title");
-    // We use `innerHTML` for more friendly reading.
-    // The security should be fine because this is not from an external input.
-    footer.innerHTML = `
-      <section id="onboarding-notification-message-section" role="presentation">
-        <div id="onboarding-notification-tour-icon" role="presentation"></div>
-        <div id="onboarding-notification-body" role="presentation">
-          <h1 id="onboarding-notification-tour-title"></h1>
-          <p id="onboarding-notification-tour-message"></p>
-        </div>
-        <button id="onboarding-notification-action-btn" class="onboarding-action-button"></button>
-      </section>
-      <button id="onboarding-notification-close-btn" class="onboarding-close-btn"></button>
-    `;
 
-    let closeBtn = footer.querySelector("#onboarding-notification-close-btn");
-    closeBtn.setAttribute("title",
+    let section = this._window.document.createElement("section");
+    section.id = "onboarding-notification-message-section";
+    section.setAttribute("role", "presentation");
+    footer.appendChild(section);
+
+    let icon = this._window.document.createElement("div");
+    icon.id = "onboarding-notification-tour-icon";
+    icon.setAttribute("role", "presentation");
+    section.appendChild(icon);
+
+    let onboardingNotificationBody = this._window.document.createElement("div");
+    onboardingNotificationBody.id = "onboarding-notification-body";
+    onboardingNotificationBody.setAttribute("role", "presentation");
+    section.appendChild(onboardingNotificationBody);
+
+    let title = this._window.document.createElement("h1");
+    title.id = "onboarding-notification-tour-title";
+    onboardingNotificationBody.appendChild(title);
+
+    let message = this._window.document.createElement("p");
+    message.id = "onboarding-notification-tour-message";
+    onboardingNotificationBody.appendChild(message);
+
+    let actionButton = this._window.document.createElement("button");
+    actionButton.id = "onboarding-notification-action-btn";
+    actionButton.className = "onboarding-action-button";
+    section.appendChild(actionButton);
+
+    let closeButton = this._window.document.createElement("button");
+    closeButton.id = "onboarding-notification-close-btn";
+    closeButton.className = "onboarding-close-btn";
+    footer.appendChild(closeButton);
+
+    closeButton.setAttribute("title",
       this._bundle.GetStringFromName("onboarding.notification-close-button-tooltip"));
+
     return footer;
   }
 
@@ -1113,7 +1390,7 @@ class Onboarding {
     this.setToursCompleted(this._tours.map(tour => tour.id));
     sendMessageToChrome("set-prefs", [
       {
-        name: "browser.onboarding.notification.finished",
+        name: NOTIFICATION_FINISHED_PREF,
         value: true
       },
       {
@@ -1122,43 +1399,57 @@ class Onboarding {
       }
     ]);
     telemetry({
-      event: "overlay-skip-tour",
-      session_key: this._session_key
+      type: "overlay-skip-tour",
+      current_tour_id: this._activeTourId,
+      session_key: this._session_key,
+      width: this._windowWidthRounded,
     });
   }
 
   _renderOverlay() {
     let div = this._window.document.createElement("div");
     div.id = "onboarding-overlay";
-    // We use `innerHTML` for more friendly reading.
-    // The security should be fine because this is not from an external input.
-    div.innerHTML = `
-      <div role="dialog" tabindex="-1" aria-labelledby="onboarding-header">
-        <header id="onboarding-header"></header>
-        <nav>
-          <ul id="onboarding-tour-list" role="tablist"></ul>
-        </nav>
-        <footer id="onboarding-footer"></footer>
-        <button id="onboarding-overlay-close-btn" class="onboarding-close-btn"></button>
-      </div>
-    `;
 
-    this._dialog = div.querySelector(`[role="dialog"]`);
+    this._dialog = this._window.document.createElement("div");
+    this._dialog.setAttribute("role", "dialog");
+    this._dialog.setAttribute("tabindex", "-1");
+    this._dialog.setAttribute("aria-labelledby", "onboarding-header");
     this._dialog.id = ONBOARDING_DIALOG_ID;
-    div.querySelector("#onboarding-header").textContent =
-      this._bundle.GetStringFromName("onboarding.overlay-title2");
+    div.appendChild(this._dialog);
+
+    let header = this._window.document.createElement("header");
+    header.id = "onboarding-header";
+    header.textContent = this._bundle.GetStringFromName("onboarding.overlay-title2");
+    this._dialog.appendChild(header);
+
+    let nav = this._window.document.createElement("nav");
+    this._dialog.appendChild(nav);
+
+    let tourList = this._window.document.createElement("ul");
+    tourList.id = "onboarding-tour-list";
+    tourList.setAttribute("role", "tablist");
+    nav.appendChild(tourList);
+
+    let footer = this._window.document.createElement("footer");
+    footer.id = "onboarding-footer";
+    this._dialog.appendChild(footer);
+
+    let button = this._window.document.createElement("button");
+    button.id = "onboarding-overlay-close-btn";
+    button.className = "onboarding-close-btn";
+    button.setAttribute("title",
+      this._bundle.GetStringFromName("onboarding.overlay-close-button-tooltip"));
+    this._dialog.appendChild(button);
+
     // support show/hide skip tour button via pref
     if (!Services.prefs.getBoolPref("browser.onboarding.skip-tour-button.hide", false)) {
-      let footer = div.querySelector("#onboarding-footer");
       let skipButton = this._window.document.createElement("button");
       skipButton.id = "onboarding-skip-tour-button";
       skipButton.classList.add("onboarding-action-button");
       skipButton.textContent = this._bundle.GetStringFromName("onboarding.skip-tour-button-label");
       footer.appendChild(skipButton);
     }
-    let closeBtn = div.querySelector("#onboarding-overlay-close-btn");
-    closeBtn.setAttribute("title",
-      this._bundle.GetStringFromName("onboarding.overlay-close-button-tooltip"));
+
     return div;
   }
 

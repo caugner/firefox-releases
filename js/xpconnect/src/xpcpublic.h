@@ -18,7 +18,7 @@
 #include "nsIGlobalObject.h"
 #include "nsPIDOMWindow.h"
 #include "nsWrapperCache.h"
-#include "nsStringGlue.h"
+#include "nsString.h"
 #include "nsTArray.h"
 #include "mozilla/dom/JSSlots.h"
 #include "mozilla/fallible.h"
@@ -254,6 +254,17 @@ xpc_TryUnmarkWrappedGrayObject(nsISupports* aWrappedJS);
 extern void
 xpc_UnmarkSkippableJSHolders();
 
+// Defined in XPCDebug.cpp.
+extern bool
+xpc_DumpJSStack(bool showArgs, bool showLocals, bool showThisProps);
+
+// Return a newly-allocated string containing a representation of the
+// current JS stack. Defined in XPCDebug.cpp.
+extern JS::UniqueChars
+xpc_PrintJSStack(JSContext* cx, bool showArgs, bool showLocals,
+                 bool showThisProps);
+
+
 // readable string conversions, static methods and members only
 class XPCStringConvert
 {
@@ -277,6 +288,19 @@ public:
         if (!str) {
             return false;
         }
+        rval.setString(str);
+        return true;
+    }
+
+    static inline bool
+    StringLiteralToJSVal(JSContext* cx, const char16_t* literal, uint32_t length,
+                         JS::MutableHandleValue rval)
+    {
+        bool ignored;
+        JSString* str = JS_NewMaybeExternalString(cx, literal, length,
+                                                  &sLiteralFinalizer, &ignored);
+        if (!str)
+            return false;
         rval.setString(str);
         return true;
     }
@@ -356,28 +380,33 @@ inline
 bool NonVoidStringToJsval(JSContext* cx, mozilla::dom::DOMString& str,
                           JS::MutableHandleValue rval)
 {
-    if (!str.HasStringBuffer()) {
-        // It's an actual XPCOM string
-        return NonVoidStringToJsval(cx, str.AsAString(), rval);
-    }
-
-    uint32_t length = str.StringBufferLength();
-    if (length == 0) {
+    if (str.IsEmpty()) {
         rval.set(JS_GetEmptyStringValue(cx));
         return true;
     }
 
-    nsStringBuffer* buf = str.StringBuffer();
-    bool shared;
-    if (!XPCStringConvert::StringBufferToJSVal(cx, buf, length, rval,
-                                               &shared)) {
-        return false;
+    if (str.HasStringBuffer()) {
+        uint32_t length = str.StringBufferLength();
+        nsStringBuffer* buf = str.StringBuffer();
+        bool shared;
+        if (!XPCStringConvert::StringBufferToJSVal(cx, buf, length, rval,
+                                                   &shared)) {
+            return false;
+        }
+        if (shared) {
+            // JS now needs to hold a reference to the buffer
+            str.RelinquishBufferOwnership();
+        }
+        return true;
     }
-    if (shared) {
-        // JS now needs to hold a reference to the buffer
-        str.RelinquishBufferOwnership();
+
+    if (str.HasLiteral()) {
+        return XPCStringConvert::StringLiteralToJSVal(cx, str.Literal(),
+                                                      str.LiteralLength(), rval);
     }
-    return true;
+
+    // It's an actual XPCOM string
+    return NonVoidStringToJsval(cx, str.AsAString(), rval);
 }
 
 MOZ_ALWAYS_INLINE
@@ -648,10 +677,16 @@ AreNonLocalConnectionsDisabled()
 inline bool
 IsInAutomation()
 {
-    const char* prefName =
-      "security.turn_off_all_security_so_that_viruses_can_take_over_this_computer";
-    return mozilla::Preferences::GetBool(prefName) &&
-        AreNonLocalConnectionsDisabled();
+    static bool sAutomationPrefIsSet;
+    static bool sPrefCacheAdded = false;
+    if (!sPrefCacheAdded) {
+        mozilla::Preferences::AddBoolVarCache(
+          &sAutomationPrefIsSet,
+          "security.turn_off_all_security_so_that_viruses_can_take_over_this_computer",
+          false);
+        sPrefCacheAdded = true;
+    }
+    return sAutomationPrefIsSet && AreNonLocalConnectionsDisabled();
 }
 
 void

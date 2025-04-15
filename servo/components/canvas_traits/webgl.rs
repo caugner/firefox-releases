@@ -63,6 +63,8 @@ pub struct WebGLCreateContextResult {
     pub limits: GLLimits,
     /// How the WebGLContext is shared with WebRender.
     pub share_mode: WebGLContextShareMode,
+    /// The GLSL version supported by the context.
+    pub glsl_version: WebGLSLVersion
 }
 
 #[derive(Clone, Copy, Deserialize, MallocSizeOf, Serialize)]
@@ -82,6 +84,15 @@ pub enum WebGLVersion {
     /// https://www.khronos.org/registry/webgl/specs/latest/2.0/
     /// Conforms closely to the OpenGL ES 3.0 API
     WebGL2,
+}
+
+/// Defines the GLSL version supported by the WebGL backend contexts.
+#[derive(Clone, Copy, Deserialize, Eq, MallocSizeOf, PartialEq, Serialize)]
+pub struct WebGLSLVersion {
+    /// Major GLSL version
+    pub major: u32,
+    /// Minor GLSL version
+    pub minor: u32,
 }
 
 /// Helper struct to send WebGLCommands to a specific WebGLContext.
@@ -196,6 +207,7 @@ pub enum WebGLCommand {
     GetBufferParameter(u32, u32, WebGLSender<WebGLResult<WebGLParameter>>),
     GetExtensions(WebGLSender<String>),
     GetParameter(u32, WebGLSender<WebGLResult<WebGLParameter>>),
+    GetTexParameter(u32, u32, WebGLSender<WebGLResult<WebGLParameter>>),
     GetProgramParameter(WebGLProgramId, u32, WebGLSender<WebGLResult<WebGLParameter>>),
     GetShaderParameter(WebGLShaderId, u32, WebGLSender<WebGLResult<WebGLParameter>>),
     GetShaderPrecisionFormat(u32, u32, WebGLSender<WebGLResult<(i32, i32, i32)>>),
@@ -466,6 +478,7 @@ impl fmt::Debug for WebGLCommand {
             GetBufferParameter(..) => "GetBufferParameter",
             GetExtensions(..) => "GetExtensions",
             GetParameter(..) => "GetParameter",
+            GetTexParameter(..) => "GetTexParameter",
             GetProgramParameter(..) => "GetProgramParameter",
             GetShaderParameter(..) => "GetShaderParameter",
             GetShaderPrecisionFormat(..) => "GetShaderPrecisionFormat",

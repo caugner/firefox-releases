@@ -25,7 +25,6 @@
 #include "nsIDocument.h"
 #include "nsIDOMComment.h"
 #include "nsIDOMNode.h"
-#include "nsIDOMStyleSheet.h"
 #include "nsUnicharUtils.h"
 #include "nsCRT.h"
 #include "nsXPCOMCIDInternal.h"
@@ -70,7 +69,7 @@ nsStyleLinkElement::Traverse(nsCycleCollectionTraversalCallback &cb)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleSheet);
 }
 
-NS_IMETHODIMP
+void
 nsStyleLinkElement::SetStyleSheet(StyleSheet* aStyleSheet)
 {
   if (mStyleSheet) {
@@ -84,37 +83,30 @@ nsStyleLinkElement::SetStyleSheet(StyleSheet* aStyleSheet)
       mStyleSheet->SetOwningNode(node);
     }
   }
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP_(StyleSheet*)
+StyleSheet*
 nsStyleLinkElement::GetStyleSheet()
 {
   return mStyleSheet;
 }
 
-NS_IMETHODIMP
+void
 nsStyleLinkElement::InitStyleLinkElement(bool aDontLoadStyle)
 {
   mDontLoadStyle = aDontLoadStyle;
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsStyleLinkElement::SetEnableUpdates(bool aEnableUpdates)
 {
   mUpdatesEnabled = aEnableUpdates;
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsStyleLinkElement::GetCharset(nsAString& aCharset)
 {
-  // descendants have to implement this themselves
-  return NS_ERROR_NOT_IMPLEMENTED;
+  aCharset.Truncate();
 }
 
 /* virtual */ void
@@ -153,8 +145,6 @@ static uint32_t ToLinkMask(const nsAString& aLink)
     return nsStyleLinkElement::ePRECONNECT;
   else if (aLink.EqualsLiteral("preload"))
     return nsStyleLinkElement::ePRELOAD;
-  else if (aLink.EqualsLiteral("prerender"))
-    return nsStyleLinkElement::ePRERENDER;
   else
     return 0;
 }
@@ -237,12 +227,7 @@ nsStyleLinkElement::CheckPreloadAttrs(const nsAttrValue& aAs,
   if (!aMedia.IsEmpty()) {
     RefPtr<MediaList> mediaList = MediaList::Create(aDocument->GetStyleBackendType(),
                                                     aMedia);
-    nsIPresShell* shell = aDocument->GetShell();
-    if (!shell) {
-      return false;
-    }
-
-    nsPresContext* presContext = shell->GetPresContext();
+    nsPresContext* presContext = aDocument->GetPresContext();
     if (!presContext) {
       return false;
     }
@@ -315,7 +300,7 @@ nsStyleLinkElement::CheckPreloadAttrs(const nsAttrValue& aAs,
   return false;
 }
 
-NS_IMETHODIMP
+nsresult
 nsStyleLinkElement::UpdateStyleSheet(nsICSSLoaderObserver* aObserver,
                                      bool* aWillNotify,
                                      bool* aIsAlternate,
@@ -353,7 +338,7 @@ IsScopedStyleElement(nsIContent* aContent)
   // if it is scoped.
   return (aContent->IsHTMLElement(nsGkAtoms::style) ||
           aContent->IsSVGElement(nsGkAtoms::style)) &&
-         aContent->HasAttr(kNameSpaceID_None, nsGkAtoms::scoped) &&
+         aContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::scoped) &&
          aContent->OwnerDoc()->IsScopedStyleEnabled();
 }
 
@@ -430,7 +415,11 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument* aOldDocument,
     if (mStyleSheet->IsServo()) {
       // XXXheycam ServoStyleSheets don't support <style scoped>.
     } else {
+#ifdef MOZ_OLD_STYLE
       oldScopeElement = mStyleSheet->AsGecko()->GetScopeElement();
+#else
+      MOZ_CRASH("old style system disabled");
+#endif
     }
   }
 
@@ -538,21 +527,25 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument* aOldDocument,
 
     MOZ_ASSERT(thisContent->NodeInfo()->NameAtom() != nsGkAtoms::link,
                "<link> is not 'inline', and needs different CSP checks");
-    if (!nsStyleUtil::CSPAllowsInlineStyle(thisContent,
+    MOZ_ASSERT(thisContent->IsElement());
+    if (!nsStyleUtil::CSPAllowsInlineStyle(thisContent->AsElement(),
                                            thisContent->NodePrincipal(),
+                                           triggeringPrincipal,
                                            doc->GetDocumentURI(),
                                            mLineNumber, text, &rv))
       return rv;
 
     // Parse the style sheet.
     rv = doc->CSSLoader()->
-      LoadInlineStyle(thisContent, text, mLineNumber, title, media,
-                      referrerPolicy, scopeElement, aObserver, &doneLoading,
-                      &isAlternate);
-  }
-  else {
+      LoadInlineStyle(thisContent, text, triggeringPrincipal, mLineNumber,
+                      title, media, referrerPolicy, scopeElement,
+                      aObserver, &doneLoading, &isAlternate);
+  } else {
     nsAutoString integrity;
-    thisContent->GetAttr(kNameSpaceID_None, nsGkAtoms::integrity, integrity);
+    if (thisContent->IsElement()) {
+      thisContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::integrity,
+                                        integrity);
+    }
     if (!integrity.IsEmpty()) {
       MOZ_LOG(SRILogHelper::GetSriLog(), mozilla::LogLevel::Debug,
               ("nsStyleLinkElement::DoUpdateStyleSheet, integrity=%s",
@@ -598,6 +591,7 @@ nsStyleLinkElement::UpdateStyleSheetScopedness(bool aIsNowScoped)
     return;
   }
 
+#ifdef MOZ_OLD_STYLE
   CSSStyleSheet* sheet = mStyleSheet->AsGecko();
 
   nsCOMPtr<nsIContent> thisContent = do_QueryInterface(this);
@@ -636,4 +630,7 @@ nsStyleLinkElement::UpdateStyleSheetScopedness(bool aIsNowScoped)
   if (newScopeElement) {
     newScopeElement->SetIsElementInStyleScopeFlagOnSubtree(true);
   }
+#else
+  MOZ_CRASH("old style system disabled");
+#endif
 }

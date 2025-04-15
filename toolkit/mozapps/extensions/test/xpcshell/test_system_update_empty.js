@@ -1,6 +1,6 @@
 // Tests that system add-on upgrades work.
 
-Components.utils.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://testing-common/httpd.js");
 
 BootstrapMonitor.init();
 
@@ -139,7 +139,7 @@ const TESTS = {
 add_task(async function() {
   for (let setupName of Object.keys(TEST_CONDITIONS)) {
     for (let testName of Object.keys(TESTS)) {
-        do_print("Running test " + setupName + " " + testName);
+        info("Running test " + setupName + " " + testName);
 
         let setup = TEST_CONDITIONS[setupName];
         let test = TESTS[testName];

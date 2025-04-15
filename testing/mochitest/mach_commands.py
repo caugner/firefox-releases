@@ -68,13 +68,6 @@ test path(s):
 Please check spelling and make sure the named tests exist.
 '''.lstrip()
 
-NOW_RUNNING = '''
-######
-### Now running mochitest-{}.
-######
-'''
-
-
 SUPPORTED_APPS = ['firefox', 'android']
 
 parser = None
@@ -240,7 +233,8 @@ def setup_argument_parser():
         # be done in this admittedly awkward place because
         # MochitestArgumentParser initialization fails if no device is found.
         from mozrunner.devices.android_device import verify_android_device
-        verify_android_device(build_obj, install=True, xre=True)
+        # verify device and xre
+        verify_android_device(build_obj, install=False, xre=True)
 
     global parser
     parser = MochitestArgumentParser()
@@ -286,6 +280,8 @@ class MachCommands(MachCommandBase):
              parser=setup_argument_parser)
     def run_mochitest_general(self, flavor=None, test_objects=None, resolve_tests=True, **kwargs):
         from mochitest_options import ALL_FLAVORS
+        from mozlog.commandline import setup_logging
+        from mozlog.handlers import StreamHandler
 
         buildapp = None
         for app in SUPPORTED_APPS:
@@ -303,6 +299,16 @@ class MachCommands(MachCommandBase):
                     break
         else:
             flavors = [f for f, v in ALL_FLAVORS.iteritems() if buildapp in v['enabled_apps']]
+
+        if not kwargs.get('log'):
+            # Create shared logger
+            default_format = self._mach_context.settings['test']['format']
+            default_level = self._mach_context.settings['test']['level']
+            kwargs['log'] = setup_logging('mach-mochitest', kwargs, {default_format: sys.stdout},
+                                          {'level': default_level})
+            for handler in kwargs['log'].handlers:
+                if isinstance(handler, StreamHandler):
+                    handler.formatter.inner.summary_on_shutdown = True
 
         from mozbuild.controller.building import BuildDriver
         self._ensure_state_subdir_exists('.')
@@ -389,7 +395,14 @@ class MachCommands(MachCommandBase):
 
         if buildapp == 'android':
             from mozrunner.devices.android_device import grant_runtime_permissions
-            grant_runtime_permissions(self)
+            from mozrunner.devices.android_device import verify_android_device
+            app = kwargs.get('app')
+            if not app:
+                app = self.substs["ANDROID_PACKAGE_NAME"]
+
+            # verify installation
+            verify_android_device(self, install=True, xre=False, app=app)
+            grant_runtime_permissions(self, app)
             run_mochitest = mochitest.run_android_test
         else:
             run_mochitest = mochitest.run_desktop_test
@@ -397,10 +410,6 @@ class MachCommands(MachCommandBase):
         overall = None
         for (flavor, subsuite), tests in sorted(suites.items()):
             fobj = ALL_FLAVORS[flavor]
-            msg = fobj['aliases'][0]
-            if subsuite:
-                msg = '{} with subsuite {}'.format(msg, subsuite)
-            print(NOW_RUNNING.format(msg))
 
             harness_args = kwargs.copy()
             harness_args['subsuite'] = subsuite
@@ -419,7 +428,10 @@ class MachCommands(MachCommandBase):
             if result == -1:
                 break
 
-        # TODO consolidate summaries from all suites
+        # Only shutdown the logger if we created it
+        if kwargs['log'].name == 'mach-mochitest':
+            kwargs['log'].shutdown()
+
         return overall
 
 
@@ -460,7 +472,13 @@ class RobocopCommands(MachCommandBase):
             return 1
 
         from mozrunner.devices.android_device import grant_runtime_permissions, get_adb_path
-        grant_runtime_permissions(self)
+        from mozrunner.devices.android_device import verify_android_device
+        # verify installation
+        app = kwargs.get('app')
+        if not app:
+            app = self.substs["ANDROID_PACKAGE_NAME"]
+        verify_android_device(self, install=True, xre=False, app=app)
+        grant_runtime_permissions(self, app)
 
         if not kwargs['adbPath']:
             kwargs['adbPath'] = get_adb_path(self)

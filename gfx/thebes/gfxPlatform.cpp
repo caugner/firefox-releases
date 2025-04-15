@@ -7,6 +7,7 @@
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/ISurfaceAllocator.h"     // for GfxMemoryImageReporter
+#include "mozilla/layers/SharedSurfacesParent.h"
 #include "mozilla/webrender/RenderThread.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/webrender/webrender_ffi.h"
@@ -70,6 +71,7 @@
 #include "gfxGradientCache.h"
 #include "gfxUtils.h" // for NextPowerOfTwo
 
+#include "nsExceptionHandler.h"
 #include "nsUnicodeRange.h"
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
@@ -77,9 +79,6 @@
 #include "nsIScreenManager.h"
 #include "FrameMetrics.h"
 #include "MainThreadUtils.h"
-#ifdef MOZ_CRASHREPORTER
-#include "nsExceptionHandler.h"
-#endif
 
 #include "nsWeakReference.h"
 
@@ -93,10 +92,6 @@
 #include "GLContext.h"
 #include "GLContextProvider.h"
 #include "mozilla/gfx/Logging.h"
-
-#ifdef MOZ_WIDGET_ANDROID
-#include "TexturePoolOGL.h"
-#endif
 
 #ifdef USE_SKIA
 # ifdef __GNUC__
@@ -298,12 +293,9 @@ void CrashStatsLogForwarder::UpdateCrashReport()
     message << logAnnotation << Get<0>(it) << "]" << Get<1>(it) << " (t=" << Get<2>(it) << ") ";
   }
 
-#ifdef MOZ_CRASHREPORTER
   nsCString reportString(message.str().c_str());
   nsresult annotated = CrashReporter::AnnotateCrashReport(mCrashCriticalKey, reportString);
-#else
-  nsresult annotated = NS_ERROR_NOT_IMPLEMENTED;
-#endif
+
   if (annotated != NS_OK) {
     printf("Crash Annotation %s: %s",
            mCrashCriticalKey.get(), message.str().c_str());
@@ -314,7 +306,8 @@ class LogForwarderEvent : public Runnable
 {
   ~LogForwarderEvent() override = default;
 
-  NS_DECL_ISUPPORTS_INHERITED
+public:
+  NS_INLINE_DECL_REFCOUNTING_INHERITED(LogForwarderEvent, Runnable)
 
   explicit LogForwarderEvent(const nsCString& aMessage)
     : mozilla::Runnable("LogForwarderEvent")
@@ -339,8 +332,6 @@ class LogForwarderEvent : public Runnable
 protected:
   nsCString mMessage;
 };
-
-NS_IMPL_ISUPPORTS_INHERITED0(LogForwarderEvent, Runnable);
 
 void CrashStatsLogForwarder::Log(const std::string& aString)
 {
@@ -372,7 +363,8 @@ class CrashTelemetryEvent : public Runnable
 {
   ~CrashTelemetryEvent() override = default;
 
-  NS_DECL_ISUPPORTS_INHERITED
+public:
+  NS_INLINE_DECL_REFCOUNTING_INHERITED(CrashTelemetryEvent, Runnable)
 
   explicit CrashTelemetryEvent(uint32_t aReason)
     : mozilla::Runnable("CrashTelemetryEvent")
@@ -389,8 +381,6 @@ class CrashTelemetryEvent : public Runnable
 protected:
   uint32_t mReason;
 };
-
-NS_IMPL_ISUPPORTS_INHERITED0(CrashTelemetryEvent, Runnable);
 
 void
 CrashStatsLogForwarder::CrashAction(LogReason aReason)
@@ -576,7 +566,7 @@ void RecordingPrefChanged(const char *aPrefName, void *aClosure)
     nsAutoString prefFileName;
     nsresult rv = Preferences::GetString("gfx.2d.recordingfile", prefFileName);
     if (NS_SUCCEEDED(rv)) {
-      fileName.Append(NS_ConvertUTF16toUTF8(prefFileName));
+      CopyUTF16toUTF8(prefFileName, fileName);
     } else {
       nsCOMPtr<nsIFile> tmpFile;
       if (NS_FAILED(NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(tmpFile)))) {
@@ -588,12 +578,21 @@ void RecordingPrefChanged(const char *aPrefName, void *aClosure)
       if (NS_FAILED(rv))
         return;
 
+#ifdef XP_WIN
+      rv = tmpFile->GetPath(prefFileName);
+      CopyUTF16toUTF8(prefFileName, fileName);
+#else
       rv = tmpFile->GetNativePath(fileName);
+#endif
       if (NS_FAILED(rv))
         return;
     }
 
+#ifdef XP_WIN
+    gPlatform->mRecorder = Factory::CreateEventRecorderForFile(prefFileName.BeginReading());
+#else
     gPlatform->mRecorder = Factory::CreateEventRecorderForFile(fileName.BeginReading());
+#endif
     printf_stderr("Recording to %s\n", fileName.get());
     Factory::SetGlobalEventRecorder(gPlatform->mRecorder);
   } else {
@@ -607,19 +606,21 @@ void
 WebRenderDebugPrefChangeCallback(const char* aPrefName, void*)
 {
   int32_t flags = 0;
+#define GFX_WEBRENDER_DEBUG(suffix, bit)                          \
+  if (Preferences::GetBool(WR_DEBUG_PREF suffix, false)) {        \
+    flags |= (bit);                                             \
+  }
+
   // TODO: It would be nice to get the bit patterns directly from the rust code.
-  if (Preferences::GetBool(WR_DEBUG_PREF".profiler", false)) {
-    flags |= (1 << 0);
-  }
-  if (Preferences::GetBool(WR_DEBUG_PREF".render-targets", false)) {
-    flags |= (1 << 1);
-  }
-  if (Preferences::GetBool(WR_DEBUG_PREF".texture-cache", false)) {
-    flags |= (1 << 2);
-  }
-  if (Preferences::GetBool(WR_DEBUG_PREF".alpha-primitives", false)) {
-    flags |= (1 << 3);
-  }
+  GFX_WEBRENDER_DEBUG(".profiler",           1 << 0)
+  GFX_WEBRENDER_DEBUG(".render-targets",     1 << 1)
+  GFX_WEBRENDER_DEBUG(".texture-cache",      1 << 2)
+  GFX_WEBRENDER_DEBUG(".gpu-time-queries",   1 << 3)
+  GFX_WEBRENDER_DEBUG(".gpu-sample-queries", 1 << 4)
+  GFX_WEBRENDER_DEBUG(".disable-batching",   1 << 5)
+  GFX_WEBRENDER_DEBUG(".epochs",             1 << 6)
+  GFX_WEBRENDER_DEBUG(".compact-profiler",   1 << 7)
+#undef GFX_WEBRENDER_DEBUG
 
   gfx::gfxVars::SetWebRenderDebugFlags(flags);
 }
@@ -683,11 +684,11 @@ gfxPlatform::Init()
       nsCOMPtr<nsIFile> file;
       nsresult rv = NS_GetSpecialDirectory(NS_GRE_DIR, getter_AddRefs(file));
       if (NS_FAILED(rv)) {
-        gfxVars::SetGREDirectory(nsCString());
+        gfxVars::SetGREDirectory(nsString());
       } else {
-        nsAutoCString nativePath;
-        file->GetNativePath(nativePath);
-        gfxVars::SetGREDirectory(nsCString(nativePath));
+        nsAutoString path;
+        file->GetPath(path);
+        gfxVars::SetGREDirectory(nsString(path));
       }
     }
 
@@ -775,10 +776,6 @@ gfxPlatform::Init()
 #  endif
 #endif
 
-#ifdef MOZ_GL_DEBUG
-    GLContext::StaticInit();
-#endif
-
     InitLayersIPC();
 
     gPlatform->PopulateScreenInfo();
@@ -827,11 +824,6 @@ gfxPlatform::Init()
     Preferences::AddStrongObservers(gPlatform->mFontPrefsObserver, kObservedPrefs);
 
     GLContext::PlatformStartup();
-
-#ifdef MOZ_WIDGET_ANDROID
-    // Texture pool init
-    TexturePoolOGL::Init();
-#endif
 
     Preferences::RegisterCallbackAndCall(RecordingPrefChanged, "gfx.2d.recording");
 
@@ -985,11 +977,6 @@ gfxPlatform::Shutdown()
 
     gPlatform->mVsyncSource = nullptr;
 
-#ifdef MOZ_WIDGET_ANDROID
-    // Shut down the texture pool
-    TexturePoolOGL::Shutdown();
-#endif
-
     // Shut down the default GL context provider.
     GLContextProvider::Shutdown();
 
@@ -1042,6 +1029,7 @@ gfxPlatform::InitLayersIPC()
   } else if (XRE_IsParentProcess()) {
     if (gfxVars::UseWebRender()) {
       wr::RenderThread::Start();
+      layers::SharedSurfacesParent::Initialize();
     }
 
     layers::CompositorThreadHolder::Start();
@@ -1075,7 +1063,10 @@ gfxPlatform::ShutdownLayersIPC()
         // This has to happen after shutting down the child protocols.
         layers::CompositorThreadHolder::Shutdown();
         gfx::VRListenerThreadHolder::Shutdown();
-        if (gfxVars::UseWebRender()) {
+        // There is a case that RenderThread exists when gfxVars::UseWebRender() is false.
+        // This could happen when WebRender was fallbacked to compositor.
+        if (wr::RenderThread::Get()) {
+          layers::SharedSurfacesParent::Shutdown();
           wr::RenderThread::ShutDown();
 
           Preferences::UnregisterCallback(WebRenderDebugPrefChangeCallback, WR_DEBUG_PREF);
@@ -2186,10 +2177,21 @@ gfxPlatform::FlushFontAndWordCaches()
 /* static */ void
 gfxPlatform::ForceGlobalReflow()
 {
-    // modify a preference that will trigger reflow everywhere
-    static const char kPrefName[] = "font.internaluseonly.changed";
-    bool fontInternalChange = Preferences::GetBool(kPrefName, false);
-    Preferences::SetBool(kPrefName, !fontInternalChange);
+    MOZ_ASSERT(NS_IsMainThread());
+    if (XRE_IsParentProcess()) {
+        // Modify a preference that will trigger reflow everywhere (in all
+        // content processes, as well as the parent).
+        static const char kPrefName[] = "font.internaluseonly.changed";
+        bool fontInternalChange = Preferences::GetBool(kPrefName, false);
+        Preferences::SetBool(kPrefName, !fontInternalChange);
+    } else {
+        // Send a notification that will be observed by PresShells in this
+        // process only.
+        nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
+        if (obs) {
+            obs->NotifyObservers(nullptr, "font-info-updated", nullptr);
+        }
+    }
 }
 
 void
@@ -2480,10 +2482,23 @@ gfxPlatform::InitCompositorAccelerationPrefs()
   }
 }
 
+/*static*/ bool
+gfxPlatform::WebRenderPrefEnabled()
+{
+  return gfxPrefs::WebRenderAll() || gfxPrefs::WebRenderEnabledDoNotUseDirectly();
+}
+
+/*static*/ bool
+gfxPlatform::WebRenderEnvvarEnabled()
+{
+  const char* env = PR_GetEnv("MOZ_WEBRENDER");
+  return (env && *env == '1');
+}
+
 void
 gfxPlatform::InitWebRenderConfig()
 {
-  bool prefEnabled = Preferences::GetBool("gfx.webrender.enabled", false);
+  bool prefEnabled = WebRenderPrefEnabled();
 
   ScopedGfxFeatureReporter reporter("WR", prefEnabled);
   if (!XRE_IsParentProcess()) {
@@ -2505,11 +2520,8 @@ gfxPlatform::InitWebRenderConfig()
 
   if (prefEnabled) {
     featureWebRender.UserEnable("Enabled by pref");
-  } else {
-    const char* env = PR_GetEnv("MOZ_WEBRENDER");
-    if (env && *env == '1') {
-      featureWebRender.UserEnable("Enabled by envvar");
-    }
+  } else if (WebRenderEnvvarEnabled()) {
+    featureWebRender.UserEnable("Enabled by envvar");
   }
 
   // HW_COMPOSITING being disabled implies interfacing with the GPU might break
@@ -2557,6 +2569,10 @@ gfxPlatform::InitWebRenderConfig()
   }
 #endif
 
+  if (Preferences::GetBool("gfx.webrender.program-binary", false)) {
+    gfx::gfxVars::SetUseWebRenderProgramBinary(gfxConfig::IsEnabled(Feature::WEBRENDER));
+  }
+
 #ifdef MOZ_WIDGET_ANDROID
   featureWebRender.ForceDisable(
     FeatureStatus::Unavailable,
@@ -2582,13 +2598,14 @@ gfxPlatform::InitOMTPConfig()
   ScopedGfxFeatureReporter reporter("OMTP");
 
   FeatureState& omtp = gfxConfig::GetFeature(Feature::OMTP);
+  int32_t paintWorkerCount = PaintThread::CalculatePaintWorkerCount();
 
   if (!XRE_IsParentProcess()) {
     // The parent process runs through all the real decision-making code
     // later in this function. For other processes we still want to report
     // the state of the feature for crash reports.
     if (gfxVars::UseOMTP()) {
-      reporter.SetSuccessful();
+      reporter.SetSuccessful(paintWorkerCount);
     }
     return;
   }
@@ -2596,7 +2613,7 @@ gfxPlatform::InitOMTPConfig()
   omtp.SetDefaultFromPref(
     "layers.omtp.enabled",
     true,
-    Preferences::GetDefaultBool("layers.omtp.enabled", false));
+    Preferences::GetBool("layers.omtp.enabled", false, PrefValueKind::Default));
 
   if (mContentBackend == BackendType::CAIRO) {
     omtp.ForceDisable(FeatureStatus::Broken, "OMTP is not supported when using cairo",
@@ -2606,14 +2623,14 @@ gfxPlatform::InitOMTPConfig()
   if (InSafeMode()) {
     omtp.ForceDisable(FeatureStatus::Blocked, "OMTP blocked by safe-mode",
                       NS_LITERAL_CSTRING("FEATURE_FAILURE_COMP_SAFEMODE"));
-  } else if (gfxPrefs::LayersTilesEnabled()) {
-    omtp.ForceDisable(FeatureStatus::Blocked, "OMTP does not yet support tiling",
+  } else if (gfxPlatform::UsesTiling() && gfxPrefs::TileEdgePaddingEnabled()) {
+    omtp.ForceDisable(FeatureStatus::Blocked, "OMTP does not yet support tiling with edge padding",
                       NS_LITERAL_CSTRING("FEATURE_FAILURE_OMTP_TILING"));
   }
 
   if (omtp.IsEnabled()) {
     gfxVars::SetUseOMTP(true);
-    reporter.SetSuccessful();
+    reporter.SetSuccessful(paintWorkerCount);
   }
 }
 
@@ -2676,6 +2693,12 @@ gfxPlatform::UsesOffMainThreadCompositing()
   }
 
   return result;
+}
+
+bool
+gfxPlatform::UsesTiling() const
+{
+  return gfxPrefs::LayersTilesEnabled();
 }
 
 /***

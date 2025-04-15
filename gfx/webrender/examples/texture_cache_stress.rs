@@ -10,6 +10,7 @@ extern crate webrender;
 mod boilerplate;
 
 use boilerplate::{Example, HandyDandyRectBuilder};
+use gleam::gl;
 use std::mem;
 use webrender::api::*;
 
@@ -20,7 +21,7 @@ struct ImageGenerator {
 }
 
 impl ImageGenerator {
-    fn new() -> ImageGenerator {
+    fn new() -> Self {
         ImageGenerator {
             next_pattern: 0,
             patterns: [
@@ -62,10 +63,7 @@ impl webrender::ExternalImageHandler for ImageGenerator {
     fn lock(&mut self, _key: ExternalImageId, channel_index: u8) -> webrender::ExternalImage {
         self.generate_image(channel_index as u32);
         webrender::ExternalImage {
-            u0: 0.0,
-            v0: 0.0,
-            u1: 1.0,
-            v1: 1.0,
+            uv: TexelRect::new(0.0, 0.0, 1.0, 1.0),
             source: webrender::ExternalImageSource::RawData(&self.current_image),
         }
     }
@@ -86,7 +84,7 @@ impl Example for App {
         api: &RenderApi,
         builder: &mut DisplayListBuilder,
         resources: &mut ResourceUpdates,
-        _layout_size: LayoutSize,
+        _framebuffer_size: DeviceUintSize,
         _pipeline_id: PipelineId,
         _document_id: DocumentId,
     ) {
@@ -146,6 +144,7 @@ impl Example for App {
                 image_size,
                 LayoutSize::zero(),
                 ImageRendering::Auto,
+                AlphaType::PremultipliedAlpha,
                 *key,
             );
         }
@@ -161,6 +160,7 @@ impl Example for App {
                 image_size,
                 LayoutSize::zero(),
                 ImageRendering::Auto,
+                AlphaType::PremultipliedAlpha,
                 image_key,
             );
         }
@@ -176,6 +176,7 @@ impl Example for App {
             image_size,
             LayoutSize::zero(),
             ImageRendering::Auto,
+            AlphaType::PremultipliedAlpha,
             swap_key,
         );
         self.swap_index = 1 - self.swap_index;
@@ -185,12 +186,19 @@ impl Example for App {
 
     fn on_event(
         &mut self,
-        event: glutin::Event,
+        event: glutin::WindowEvent,
         api: &RenderApi,
         _document_id: DocumentId,
     ) -> bool {
         match event {
-            glutin::Event::KeyboardInput(glutin::ElementState::Pressed, _, Some(key)) => {
+            glutin::WindowEvent::KeyboardInput {
+                input: glutin::KeyboardInput {
+                    state: glutin::ElementState::Pressed,
+                    virtual_keycode: Some(key),
+                    ..
+                },
+                ..
+            } => {
                 let mut updates = ResourceUpdates::new();
 
                 match key {
@@ -241,7 +249,7 @@ impl Example for App {
                         let image_data = ExternalImageData {
                             id: ExternalImageId(0),
                             channel_index: size as u8,
-                            image_type: ExternalImageType::ExternalBuffer,
+                            image_type: ExternalImageType::Buffer,
                         };
 
                         updates.add_image(
@@ -283,8 +291,12 @@ impl Example for App {
         false
     }
 
-    fn get_external_image_handler(&self) -> Option<Box<webrender::ExternalImageHandler>> {
-        Some(Box::new(ImageGenerator::new()))
+    fn get_image_handlers(
+        &mut self,
+        _gl: &gl::Gl,
+    ) -> (Option<Box<webrender::ExternalImageHandler>>,
+          Option<Box<webrender::OutputImageHandler>>) {
+        (Some(Box::new(ImageGenerator::new())), None)
     }
 }
 

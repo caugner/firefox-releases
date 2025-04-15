@@ -53,6 +53,7 @@ using namespace mozilla::dom;
 
 static nsOfflineCacheUpdateService *gOfflineCacheUpdateService = nullptr;
 static bool sAllowOfflineCache = true;
+static bool sAllowInsecureOfflineCache = true;
 
 nsTHashtable<nsCStringHashKey>* nsOfflineCacheUpdateService::mAllowedDomains = nullptr;
 
@@ -252,10 +253,14 @@ nsOfflineCacheUpdateService::nsOfflineCacheUpdateService()
     Preferences::AddBoolVarCache(&sAllowOfflineCache,
                                  "browser.cache.offline.enable",
                                  true);
+    Preferences::AddBoolVarCache(&sAllowInsecureOfflineCache,
+                                 "browser.cache.offline.insecure.enable",
+                                 true);
 }
 
 nsOfflineCacheUpdateService::~nsOfflineCacheUpdateService()
 {
+    MOZ_ASSERT(gOfflineCacheUpdateService == this);
     gOfflineCacheUpdateService = nullptr;
 
     delete mAllowedDomains;
@@ -300,11 +305,9 @@ nsOfflineCacheUpdateService::GetInstance()
 {
     if (!gOfflineCacheUpdateService) {
         auto serv = MakeRefPtr<nsOfflineCacheUpdateService>();
-        gOfflineCacheUpdateService = serv.get();
-        if (NS_FAILED(serv->Init())) {
-            gOfflineCacheUpdateService = nullptr;
-            return nullptr;
-        }
+        if (NS_FAILED(serv->Init()))
+            serv = nullptr;
+        MOZ_ASSERT(gOfflineCacheUpdateService == serv.get());
         return serv.forget();
     }
 
@@ -634,6 +637,10 @@ OfflineAppPermForPrincipal(nsIPrincipal *aPrincipal,
         if (!match) {
             return NS_OK;
         }
+    } else {
+        if (!sAllowInsecureOfflineCache) {
+            return NS_OK;
+        }
     }
 
     nsAutoCString domain;
@@ -703,6 +710,29 @@ nsOfflineCacheUpdateService::AllowOfflineApp(nsIPrincipal *aPrincipal)
 
     if (!sAllowOfflineCache) {
         return NS_ERROR_NOT_AVAILABLE;
+    }
+
+    if (!sAllowInsecureOfflineCache) {
+        nsCOMPtr<nsIURI> uri;
+        aPrincipal->GetURI(getter_AddRefs(uri));
+
+        if (!uri) {
+            return NS_ERROR_NOT_AVAILABLE;
+        }
+
+        nsCOMPtr<nsIURI> innerURI = NS_GetInnermostURI(uri);
+        if (!innerURI) {
+            return NS_ERROR_NOT_AVAILABLE;
+        }
+
+        // if http then we should prevent this cache
+        bool match;
+        rv = innerURI->SchemeIs("http", &match);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        if (match) {
+            return NS_ERROR_NOT_AVAILABLE;
+        }
     }
 
     if (GeckoProcessType_Default != XRE_GetProcessType()) {

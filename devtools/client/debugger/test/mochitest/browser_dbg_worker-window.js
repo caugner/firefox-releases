@@ -5,7 +5,7 @@
 
 // The following "connectionClosed" rejection should not be left uncaught. This
 // test has been whitelisted until the issue is fixed.
-Cu.import("resource://testing-common/PromiseTestUtils.jsm", this);
+ChromeUtils.import("resource://testing-common/PromiseTestUtils.jsm", this);
 PromiseTestUtils.expectUncaughtRejection(/[object Object]/);
 
 var TAB_URL = EXAMPLE_URL + "doc_WorkerActor.attachThread-tab.html";
@@ -15,7 +15,7 @@ add_task(function* () {
   yield pushPrefs(["devtools.scratchpad.enabled", true]);
 
   DebuggerServer.init();
-  DebuggerServer.addBrowserActors();
+  DebuggerServer.registerAllActors();
 
   let client = new DebuggerClient(DebuggerServer.connectPipe());
   yield connect(client);

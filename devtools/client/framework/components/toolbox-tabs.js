@@ -3,10 +3,11 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {DOM, Component, createFactory, PropTypes} = require("devtools/client/shared/vendor/react");
-
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const {findDOMNode} = require("devtools/client/shared/vendor/react-dom");
-const {button, div} = DOM;
+const {button, div} = dom;
 
 const Menu = require("devtools/client/framework/menu");
 const MenuItem = require("devtools/client/framework/menu-item");
@@ -19,7 +20,7 @@ class ToolboxTabs extends Component {
       currentToolId: PropTypes.string,
       focusButton: PropTypes.func,
       focusedButton: PropTypes.string,
-      highlightedTool: PropTypes.string,
+      highlightedTools: PropTypes.object,
       panelDefinitions: PropTypes.array,
       selectTool: PropTypes.func,
       toolbox: PropTypes.object,
@@ -87,16 +88,17 @@ class ToolboxTabs extends Component {
       currentToolId,
       focusButton,
       focusedButton,
-      highlightedTool,
+      highlightedTools,
       panelDefinitions,
       selectTool,
     } = this.props;
 
     let tabs = panelDefinitions.map(panelDefinition => ToolboxTab({
+      key: panelDefinition.id,
       currentToolId,
       focusButton,
       focusedButton,
-      highlightedTool,
+      highlightedTools,
       panelDefinition,
       selectTool,
     }));

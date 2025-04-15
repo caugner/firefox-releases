@@ -7,7 +7,6 @@
 #include "base/basictypes.h"
 
 #include "jsfriendapi.h"
-#include "jswrapper.h"
 
 #include "nsAutoPtr.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -28,6 +27,7 @@
 #include "nsWrapperCacheInlines.h"
 #include "js/GCHashTable.h"
 #include "js/TracingAPI.h"
+#include "js/Wrapper.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/dom/ScriptSettings.h"
 
@@ -1894,10 +1894,8 @@ nsNPObjWrapper::OnDestroy(NPObject *npobj)
     static_cast<NPObjWrapperHashEntry*>(sNPObjWrappers->Search(npobj));
 
   if (entry && entry->mJSObj) {
-    // Found a live NPObject wrapper, null out its JSObjects' private
-    // data.
-
-    js::SetProxyPrivate(entry->mJSObj, JS::PrivateValue(nullptr));
+    // Found an NPObject wrapper, null out its JSObjects' private data.
+    js::SetProxyPrivate(entry->mJSObj.unbarrieredGetPtr(), JS::PrivateValue(nullptr));
 
     // Remove the npobj from the hash now that it went away.
     sNPObjWrappers->RawRemove(entry);
@@ -1953,7 +1951,7 @@ nsNPObjWrapper::GetNewOrUsed(NPP npp, JSContext *cx, NPObject *npobj)
 
   if (entry->mJSObj) {
     // Found a NPObject wrapper. First check it is still alive.
-    JSObject* obj = entry->mJSObj;
+    JSObject* obj = entry->mJSObj.unbarrieredGetPtr();
     if (js::gc::EdgeNeedsSweepUnbarriered(&obj)) {
       // The object is dead (finalization will happen at a later time). By the
       // time we leave this function, this entry will either be updated with a
@@ -2073,7 +2071,8 @@ nsJSNPRuntime::OnPluginDestroy(NPP npp)
           free(npobj);
         }
 
-        js::SetProxyPrivate(entry->mJSObj, JS::PrivateValue(nullptr));
+        js::SetProxyPrivate(entry->mJSObj.unbarrieredGetPtr(),
+                            JS::PrivateValue(nullptr));
 
         sNPObjWrappers = tmp;
 

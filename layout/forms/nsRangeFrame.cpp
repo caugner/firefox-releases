@@ -246,7 +246,7 @@ nsDisplayRangeFocusRing::Paint(nsDisplayListBuilder* aBuilder,
                          ? PaintBorderFlags::SYNC_DECODE_IMAGES
                          : PaintBorderFlags();
 
-  DrawResult result =
+  ImgDrawResult result =
     nsCSSRendering::PaintBorder(mFrame->PresContext(), *aCtx, mFrame,
                                 mVisibleRect, GetBounds(aBuilder, &unused),
                                 styleContext, flags);
@@ -304,8 +304,8 @@ nsRangeFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     return; // the native theme displays its own visual indication of focus
   }
 
-  aLists.Content()->AppendNewToTop(
-    new (aBuilder) nsDisplayRangeFocusRing(aBuilder, this));
+  aLists.Content()->AppendToTop(
+    MakeDisplayItem<nsDisplayRangeFocusRing>(aBuilder, this));
 }
 
 void

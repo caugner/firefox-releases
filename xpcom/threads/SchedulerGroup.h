@@ -7,8 +7,10 @@
 #ifndef mozilla_SchedulerGroup_h
 #define mozilla_SchedulerGroup_h
 
+#include "mozilla/AbstractEventQueue.h"
 #include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/LinkedList.h"
+#include "mozilla/Queue.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
@@ -24,6 +26,7 @@ class nsISerialEventTarget;
 namespace mozilla {
 class AbstractThread;
 namespace dom {
+class DocGroup;
 class TabGroup;
 }
 
@@ -111,11 +114,13 @@ public:
   {
   public:
     Runnable(already_AddRefed<nsIRunnable>&& aRunnable,
-             SchedulerGroup* aGroup);
+             SchedulerGroup* aGroup,
+             dom::DocGroup* aDocGroup);
 
     bool GetAffectedSchedulerGroups(SchedulerGroupSet& aGroups) override;
 
     SchedulerGroup* Group() const { return mGroup; }
+    dom::DocGroup* DocGroup() const;
 
     NS_IMETHOD GetName(nsACString& aName) override;
 
@@ -134,6 +139,7 @@ public:
 
     nsCOMPtr<nsIRunnable> mRunnable;
     RefPtr<SchedulerGroup> mGroup;
+    RefPtr<dom::DocGroup> mDocGroup;
   };
   friend class Runnable;
 
@@ -168,7 +174,30 @@ public:
   };
   static void SetValidatingAccess(ValidationType aType);
 
+  struct EpochQueueEntry
+  {
+    nsCOMPtr<nsIRunnable> mRunnable;
+    uintptr_t mEpochNumber;
+
+    EpochQueueEntry(already_AddRefed<nsIRunnable> aRunnable, uintptr_t aEpoch)
+      : mRunnable(aRunnable)
+      , mEpochNumber(aEpoch)
+    {
+    }
+  };
+
+  using RunnableEpochQueue = Queue<EpochQueueEntry, 32>;
+
+  RunnableEpochQueue& GetQueue(mozilla::EventPriority aPriority)
+  {
+    return mEventQueues[size_t(aPriority)];
+  }
+
 protected:
+  nsresult DispatchWithDocGroup(TaskCategory aCategory,
+                                already_AddRefed<nsIRunnable>&& aRunnable,
+                                dom::DocGroup* aDocGroup);
+
   static nsresult InternalUnlabeledDispatch(TaskCategory aCategory,
                                             already_AddRefed<Runnable>&& aRunnable);
 
@@ -185,7 +214,8 @@ protected:
   static SchedulerGroup* FromEventTarget(nsIEventTarget* aEventTarget);
 
   nsresult LabeledDispatch(TaskCategory aCategory,
-                           already_AddRefed<nsIRunnable>&& aRunnable);
+                           already_AddRefed<nsIRunnable>&& aRunnable,
+                           dom::DocGroup* aDocGroup);
 
   void CreateEventTargets(bool aNeedValidation);
 
@@ -203,6 +233,7 @@ protected:
 
   nsCOMPtr<nsISerialEventTarget> mEventTargets[size_t(TaskCategory::Count)];
   RefPtr<AbstractThread> mAbstractThreads[size_t(TaskCategory::Count)];
+  RunnableEpochQueue mEventQueues[size_t(mozilla::EventPriority::Count)];
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(SchedulerGroup::Runnable, NS_SCHEDULERGROUPRUNNABLE_IID);

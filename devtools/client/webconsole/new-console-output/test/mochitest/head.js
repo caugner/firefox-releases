@@ -2,31 +2,45 @@
 /* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
-/* import-globals-from ../../../../framework/test/shared-head.js */
-/* exported WCUL10n, openNewTabAndConsole, waitForMessages, waitForMessage, waitFor,
-   findMessage, openContextMenu, hideContextMenu, loadDocument, hasFocus,
-   waitForNodeMutation, testOpenInDebugger, checkClickOnNode, jstermSetValueAndComplete,
-   openDebugger, openConsole */
+/* import-globals-from ../../../../shared/test/shared-head.js */
+/* eslint no-unused-vars: [2, {"vars": "local"}] */
 
 "use strict";
+
+// Import helpers registering the test-actor in remote targets
+Services.scriptloader.loadSubScript(
+  "chrome://mochitests/content/browser/devtools/client/shared/test/test-actor-registry.js",
+  this);
 
 // shared-head.js handles imports, constants, and utility functions
 // Load the shared-head file first.
 Services.scriptloader.loadSubScript(
-  "chrome://mochitests/content/browser/devtools/client/framework/test/shared-head.js",
+  "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
   this);
 
 var {HUDService} = require("devtools/client/webconsole/hudservice");
 var WCUL10n = require("devtools/client/webconsole/webconsole-l10n");
+const DOCS_GA_PARAMS = `?${new URLSearchParams({
+  "utm_source": "mozilla",
+  "utm_medium": "firefox-console-errors",
+  "utm_campaign": "default"
+})}`;
+const STATUS_CODES_GA_PARAMS = `?${new URLSearchParams({
+  "utm_source": "mozilla",
+  "utm_medium": "devtools-webconsole",
+  "utm_campaign": "default"
+})}`;
 
-Services.prefs.setBoolPref("devtools.webconsole.new-frontend-enabled", true);
-registerCleanupFunction(function* () {
-  Services.prefs.clearUserPref("devtools.webconsole.new-frontend-enabled");
+const wcActions = require("devtools/client/webconsole/new-console-output/actions/index");
+
+Services.prefs.setBoolPref("devtools.browserconsole.new-frontend-enabled", true);
+registerCleanupFunction(async function () {
+  Services.prefs.clearUserPref("devtools.browserconsole.new-frontend-enabled");
   Services.prefs.clearUserPref("devtools.webconsole.ui.filterbar");
 
   // Reset all filter prefs between tests. First flushPrefEnv in case one of the
   // filter prefs has been pushed for the test
-  yield SpecialPowers.flushPrefEnv();
+  await SpecialPowers.flushPrefEnv();
   Services.prefs.getChildList("devtools.webconsole.filter").forEach(pref => {
     Services.prefs.clearUserPref(pref);
   });
@@ -35,7 +49,7 @@ registerCleanupFunction(function* () {
     if (browserConsole.jsterm) {
       browserConsole.jsterm.clearOutput(true);
     }
-    yield HUDService.toggleBrowserConsole();
+    await HUDService.toggleBrowserConsole();
   }
 });
 
@@ -64,6 +78,26 @@ async function openNewTabAndConsole(url, clearJstermHistory = true) {
 }
 
 /**
+ * Subscribe to the store and log out stringinfied versions of messages.
+ * This is a helper function for debugging, to make is easier to see what
+ * happened during the test in the log.
+ *
+ * @param object hud
+ */
+function logAllStoreChanges(hud) {
+  const store = hud.ui.newConsoleOutput.getStore();
+  // Adding logging each time the store is modified in order to check
+  // the store state in case of failure.
+  store.subscribe(() => {
+    const messages = [...store.getState().messages.messagesById.values()];
+    const debugMessages = messages.map(({id, type, parameters, messageText}) => {
+      return {id, type, parameters, messageText};
+    });
+    info("messages : " + JSON.stringify(debugMessages));
+  });
+}
+
+/**
  * Wait for messages in the web console output, resolving once they are received.
  *
  * @param object options
@@ -76,7 +110,7 @@ function waitForMessages({ hud, messages }) {
   return new Promise(resolve => {
     const matchedMessages = [];
     hud.ui.on("new-messages",
-      function messagesReceived(e, newMessages) {
+      function messagesReceived(newMessages) {
         for (let message of messages) {
           if (message.matched) {
             continue;
@@ -103,6 +137,31 @@ function waitForMessages({ hud, messages }) {
           }
         }
       });
+  });
+}
+
+/**
+ * Wait for a message with the provided text and showing the provided repeat count.
+ *
+ * @param {Object} hud : the webconsole
+ * @param {String} text : text included in .message-body
+ * @param {Number} repeat : expected repeat count in .message-repeats
+ */
+function waitForRepeatedMessage(hud, text, repeat) {
+  return waitFor(() => {
+    // Wait for a message matching the provided text.
+    let node = findMessage(hud, text);
+    if (!node) {
+      return false;
+    }
+
+    // Check if there is a repeat node with the expected count.
+    let repeatNode = node.querySelector(".message-repeats");
+    if (repeatNode && parseInt(repeatNode.textContent, 10) === repeat) {
+      return node;
+    }
+
+    return false;
   });
 }
 
@@ -145,6 +204,7 @@ async function waitFor(condition, message = "waitFor", interval = 10, maxTries =
  *        A substring that can be found in the message.
  * @param selector [optional]
  *        The selector to use in finding the message.
+ * @return {Node} the node corresponding the found message
  */
 function findMessage(hud, text, selector = ".message") {
   const elements = findMessages(hud, text, selector);
@@ -184,7 +244,8 @@ async function openContextMenu(hud, element) {
   let onConsoleMenuOpened = hud.ui.newConsoleOutput.once("menu-open");
   synthesizeContextMenuEvent(element);
   await onConsoleMenuOpened;
-  return hud.ui.newConsoleOutput.toolbox.doc.getElementById("webconsole-menu");
+  const doc = hud.ui.newConsoleOutput.owner.chromeWindow.document;
+  return doc.getElementById("webconsole-menu");
 }
 
 /**
@@ -196,7 +257,8 @@ async function openContextMenu(hud, element) {
  * @return promise
  */
 function hideContextMenu(hud) {
-  let popup = hud.ui.newConsoleOutput.toolbox.doc.getElementById("webconsole-menu");
+  const doc = hud.ui.newConsoleOutput.owner.chromeWindow.document;
+  let popup = doc.getElementById("webconsole-menu");
   if (!popup) {
     return Promise.resolve();
   }
@@ -207,10 +269,8 @@ function hideContextMenu(hud) {
 }
 
 function loadDocument(url, browser = gBrowser.selectedBrowser) {
-  return new Promise(resolve => {
-    browser.addEventListener("load", resolve, {capture: true, once: true});
-    BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
-  });
+  BrowserTestUtils.loadURI(browser, url);
+  return BrowserTestUtils.browserLoaded(browser);
 }
 
 /**
@@ -295,16 +355,40 @@ function hasFocus(node) {
  * @param {Integer} caretIndexOffset : A number that will be added to value.length
  *                  when setting the caret. A negative number will place the caret
  *                  in (end - offset) position. Default to 0 (caret set at the end)
+ * @param {Integer} completionType : One of the following jsterm property
+ *                   - COMPLETE_FORWARD
+ *                   - COMPLETE_BACKWARD
+ *                   - COMPLETE_HINT_ONLY
+ *                   - COMPLETE_PAGEUP
+ *                   - COMPLETE_PAGEDOWN
+ *                  Will default to COMPLETE_HINT_ONLY.
  * @returns {Promise} resolves when the jsterm is completed.
  */
-function jstermSetValueAndComplete(jsterm, value, caretIndexOffset = 0) {
+function jstermSetValueAndComplete(jsterm, value, caretIndexOffset = 0, completionType) {
   const {inputNode} = jsterm;
   inputNode.value = value;
   let index = value.length + caretIndexOffset;
   inputNode.setSelectionRange(index, index);
 
+  return jstermComplete(jsterm, completionType);
+}
+
+/**
+ * Fires a completion request on the jsterm with the specified completionType
+ *
+ * @param {JsTerm} jsterm
+ * @param {Integer} completionType : One of the following jsterm property
+ *                   - COMPLETE_FORWARD
+ *                   - COMPLETE_BACKWARD
+ *                   - COMPLETE_HINT_ONLY
+ *                   - COMPLETE_PAGEUP
+ *                   - COMPLETE_PAGEDOWN
+ *                  Will default to COMPLETE_HINT_ONLY.
+ * @returns {Promise} resolves when the jsterm is completed.
+ */
+function jstermComplete(jsterm, completionType = jsterm.COMPLETE_HINT_ONLY) {
   const updated = jsterm.once("autocomplete-updated");
-  jsterm.complete(jsterm.COMPLETE_HINT_ONLY);
+  jsterm.complete(completionType);
   return updated;
 }
 
@@ -363,4 +447,292 @@ async function openConsole(tab) {
   let target = TargetFactory.forTab(tab || gBrowser.selectedTab);
   const toolbox = await gDevTools.showToolbox(target, "webconsole");
   return toolbox.getCurrentPanel().hud;
-};
+}
+
+/**
+ * Close the Web Console for the given tab.
+ *
+ * @param nsIDOMElement [tab]
+ *        Optional tab element for which you want close the Web Console.
+ *        Defaults to current selected tab.
+ * @return object
+ *         A promise that is resolved once the web console is closed.
+ */
+async function closeConsole(tab = gBrowser.selectedTab) {
+  let target = TargetFactory.forTab(tab);
+  let toolbox = gDevTools.getToolbox(target);
+  if (toolbox) {
+    await toolbox.destroy();
+  }
+}
+
+/**
+ * Fake clicking a link and return the URL we would have navigated to.
+ * This function should be used to check external links since we can't access
+ * network in tests.
+ * This can also be used to test that a click will not be fired.
+ *
+ * @param ElementNode element
+ *        The <a> element we want to simulate click on.
+ * @param Object clickEventProps
+ *        The custom properties which would be used to dispatch a click event
+ * @returns Promise
+ *          A Promise that is resolved when the link click simulation occured or
+ *          when the click is not dispatched.
+ *          The promise resolves with an object that holds the following properties
+ *          - link: url of the link or null(if event not fired)
+ *          - where: "tab" if tab is active or "tabshifted" if tab is inactive
+ *            or null(if event not fired)
+ */
+function simulateLinkClick(element, clickEventProps) {
+  // Override openUILinkIn to prevent navigating.
+  let oldOpenUILinkIn = window.openUILinkIn;
+
+  const onOpenLink = new Promise((resolve) => {
+    window.openUILinkIn = function (link, where) {
+      window.openUILinkIn = oldOpenUILinkIn;
+      resolve({link: link, where});
+    };
+
+    if (clickEventProps) {
+      // Click on the link using the event properties.
+      element.dispatchEvent(clickEventProps);
+    } else {
+      // Click on the link.
+      element.click();
+    }
+  });
+
+  // Declare a timeout Promise that we can use to make sure openUILinkIn was not called.
+  let timeoutId;
+  const onTimeout = new Promise(function (resolve) {
+    timeoutId = setTimeout(() => {
+      window.openUILinkIn = oldOpenUILinkIn;
+      timeoutId = null;
+      resolve({link: null, where: null});
+    }, 1000);
+  });
+
+  onOpenLink.then(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  });
+  return Promise.race([onOpenLink, onTimeout]);
+}
+
+/**
+ * Open a new browser window and return a promise that resolves when the new window has
+ * fired the "browser-delayed-startup-finished" event.
+ *
+ * @returns Promise
+ *          A Promise that resolves when the window is ready.
+ */
+function openNewBrowserWindow() {
+  let win = OpenBrowserWindow();
+  return new Promise(resolve => {
+    Services.obs.addObserver(function observer(subject, topic) {
+      if (win == subject) {
+        Services.obs.removeObserver(observer, topic);
+        resolve(win);
+      }
+    }, "browser-delayed-startup-finished");
+  });
+}
+
+/**
+ * Open a network request logged in the webconsole in the netmonitor panel.
+ *
+ * @param {Object} toolbox
+ * @param {Object} hud
+ * @param {String} url
+ *        URL of the request as logged in the netmonitor.
+ * @param {String} urlInConsole
+ *        (optional) Use if the logged URL in webconsole is different from the real URL.
+ */
+async function openMessageInNetmonitor(toolbox, hud, url, urlInConsole) {
+  // By default urlInConsole should be the same as the complete url.
+  urlInConsole = urlInConsole || url;
+
+  let message = await waitFor(() => findMessage(hud, urlInConsole));
+
+  let onNetmonitorSelected = toolbox.once("netmonitor-selected", (event, panel) => {
+    return panel;
+  });
+
+  let menuPopup = await openContextMenu(hud, message);
+  let openInNetMenuItem = menuPopup.querySelector("#console-menu-open-in-network-panel");
+  ok(openInNetMenuItem, "open in network panel item is enabled");
+  openInNetMenuItem.click();
+
+  const {panelWin} = await onNetmonitorSelected;
+  ok(true, "The netmonitor panel is selected when clicking on the network message");
+
+  let { store, windowRequire } = panelWin;
+  let nmActions = windowRequire("devtools/client/netmonitor/src/actions/index");
+  let { getSelectedRequest } =
+    windowRequire("devtools/client/netmonitor/src/selectors/index");
+
+  store.dispatch(nmActions.batchEnable(false));
+
+  await waitUntil(() => {
+    const selected = getSelectedRequest(store.getState());
+    return selected && selected.url === url;
+  });
+
+  ok(true, "The attached url is correct.");
+}
+
+function selectNode(hud, node) {
+  let outputContainer = hud.ui.outputNode.querySelector(".webconsole-output");
+
+  // We must first blur the input or else we can't select anything.
+  outputContainer.ownerDocument.activeElement.blur();
+
+  let selection = outputContainer.ownerDocument.getSelection();
+  let range = document.createRange();
+  range.selectNodeContents(node);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  return selection;
+}
+
+async function waitForBrowserConsole() {
+  return new Promise(resolve => {
+    Services.obs.addObserver(function observer(subject) {
+      Services.obs.removeObserver(observer, "web-console-created");
+      subject.QueryInterface(Ci.nsISupportsString);
+
+      let hud = HUDService.getBrowserConsole();
+      ok(hud, "browser console is open");
+      is(subject.data, hud.hudId, "notification hudId is correct");
+
+      executeSoon(() => resolve(hud));
+    }, "web-console-created");
+  });
+}
+
+/**
+ * Get the state of a console filter.
+ *
+ * @param {Object} hud
+ */
+async function getFilterState(hud) {
+  const filterBar = await setFilterBarVisible(hud, true);
+  const buttons = filterBar.querySelectorAll("button");
+  const result = { };
+
+  for (let button of buttons) {
+    let classes = new Set(button.classList.values());
+    let checked = classes.has("checked");
+
+    classes.delete("devtools-button");
+    classes.delete("checked");
+
+    let category = classes.values().next().value;
+
+    result[category] = checked;
+  }
+
+  return result;
+}
+
+/**
+ * Set the state of a console filter.
+ *
+ * @param {Object} hud
+ * @param {Object} settings
+ *        Category settings in the following format:
+ *          {
+ *            error: true,
+ *            warn: true,
+ *            log: true,
+ *            info: true,
+ *            debug: true,
+ *            css: false,
+ *            netxhr: false,
+ *            net: false
+ *          }
+ */
+async function setFilterState(hud, settings) {
+  const filterBar = await setFilterBarVisible(hud, true);
+
+  for (let category in settings) {
+    let setActive = settings[category];
+    let button = filterBar.querySelector(`.${category}`);
+
+    if (!button) {
+      ok(false, `setFilterState() called with a category of ${category}, ` +
+                `which doesn't exist.`);
+    }
+
+    info(`Setting the ${category} category to ${setActive ? "checked" : "disabled"}`);
+
+    let isChecked = button.classList.contains("checked");
+
+    if (setActive !== isChecked) {
+      button.click();
+
+      await waitFor(() => {
+        return button.classList.contains("checked") === setActive;
+      });
+    }
+  }
+}
+
+/**
+ * Set the visibility of the filter bar.
+ *
+ * @param {Object} hud
+ * @param {Boolean} state
+ *        Set filter bar visibility
+ */
+async function setFilterBarVisible(hud, state) {
+  info(`Setting the filter bar visibility to ${state}`);
+
+  const outputNode = hud.ui.outputNode;
+  const toolbar = await waitFor(() => {
+    return outputNode.querySelector(".webconsole-filterbar-primary");
+  });
+  let filterBar = outputNode.querySelector(".webconsole-filterbar-secondary");
+
+  // Show filter bar if state is true
+  if (state) {
+    if (!filterBar) {
+      // Click the filter icon to show the filter bar.
+      toolbar.querySelector(".devtools-filter-icon").click();
+      filterBar = await waitFor(() => {
+        return outputNode.querySelector(".webconsole-filterbar-secondary");
+      });
+    }
+    return filterBar;
+  }
+
+  // Hide filter bar if it is visible.
+  if (filterBar) {
+    // Click the filter icon to hide the filter bar.
+    toolbar.querySelector(".devtools-filter-icon").click();
+    await waitFor(() => {
+      return !outputNode.querySelector(".webconsole-filterbar-secondary");
+    });
+  }
+
+  return null;
+}
+
+/**
+ * Reset the filters at the end of a test that has changed them. This is
+ * important when using the `--verify` test option as when it is used you need
+ * to manually reset the filters.
+ *
+ * The css, netxhr and net filters are disabled by default.
+ *
+ * @param {Object} hud
+ */
+async function resetFilters(hud) {
+  info("Resetting filters to their default state");
+
+  const store = hud.ui.newConsoleOutput.getStore();
+  store.dispatch(wcActions.filtersClear());
+}

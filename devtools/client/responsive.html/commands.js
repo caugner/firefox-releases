@@ -4,16 +4,13 @@
 
 "use strict";
 
-const { Cc, Ci } = require("chrome");
+const Services = require("Services");
 
 loader.lazyRequireGetter(this, "ResponsiveUIManager", "devtools/client/responsive.html/manager", true);
 
-const BRAND_SHORT_NAME = Cc["@mozilla.org/intl/stringbundle;1"]
-                           .getService(Ci.nsIStringBundleService)
-                           .createBundle("chrome://branding/locale/brand.properties")
-                           .GetStringFromName("brandShortName");
+const BRAND_SHORT_NAME = Services.strings.createBundle("chrome://branding/locale/brand.properties")
+                                 .GetStringFromName("brandShortName");
 
-const Services = require("Services");
 const osString = Services.appinfo.OS;
 const l10n = require("gcli/l10n");
 
@@ -92,9 +89,9 @@ exports.items = [
   }
 ];
 
-function* resize(args, context) {
+async function resize(args, context) {
   let browserWindow = context.environment.chromeWindow;
-  yield ResponsiveUIManager.handleGcliCommand(browserWindow,
+  await ResponsiveUIManager.handleGcliCommand(browserWindow,
                                               browserWindow.gBrowser.selectedTab,
                                               this.name,
                                               args);

@@ -43,13 +43,28 @@ public:
   NS_IMETHOD_(MozExternalRefCountType) AddRef() override = 0;
   NS_IMETHOD_(MozExternalRefCountType) Release() override = 0;
 
-  NS_DECL_NSICSSDECLARATION
-  using nsICSSDeclaration::GetLength;
+  /**
+   * Method analogous to CSSStyleDeclaration::GetPropertyValue,
+   * which obeys all the same restrictions.
+   */
+  virtual nsresult GetPropertyValue(const nsCSSPropertyID aPropID,
+                                    nsAString& aValue);
+
+  /**
+   * Method analogous to CSSStyleDeclaration::SetProperty.  This
+   * method does NOT allow setting a priority (the priority will
+   * always be set to default priority).
+   */
+  virtual nsresult SetPropertyValue(const nsCSSPropertyID aPropID,
+                                    const nsAString& aValue,
+                                    nsIPrincipal* aSubjectPrincipal);
 
   // Require subclasses to implement |GetParentRule|.
   //NS_DECL_NSIDOMCSSSTYLEDECLARATION
-  NS_IMETHOD GetCssText(nsAString & aCssText) override;
-  NS_IMETHOD SetCssText(const nsAString & aCssText) override;
+  void GetCssText(nsAString & aCssText) override;
+  void SetCssText(const nsAString & aCssText,
+                  nsIPrincipal* aSubjectPrincipal,
+                  mozilla::ErrorResult& aRv) override;
   NS_IMETHOD GetPropertyValue(const nsAString & propertyName,
                               nsAString & _retval) override;
   virtual already_AddRefed<mozilla::dom::CSSValue>
@@ -58,12 +73,13 @@ public:
   using nsICSSDeclaration::GetPropertyCSSValue;
   NS_IMETHOD RemoveProperty(const nsAString & propertyName,
                             nsAString & _retval) override;
-  NS_IMETHOD GetPropertyPriority(const nsAString & propertyName,
-                                 nsAString & _retval) override;
-  NS_IMETHOD SetProperty(const nsAString & propertyName,
-                         const nsAString & value, const nsAString & priority) override;
-  NS_IMETHOD GetLength(uint32_t *aLength) override;
-  NS_IMETHOD GetParentRule(nsIDOMCSSRule * *aParentRule) override = 0;
+  void GetPropertyPriority(const nsAString & propertyName,
+                           nsAString & aPriority) override;
+  NS_IMETHOD SetProperty(const nsAString& propertyName,
+                         const nsAString& value,
+                         const nsAString& priority,
+                         nsIPrincipal* aSubjectPrincipal) override;
+  uint32_t Length() override;
 
   // WebIDL interface for CSS2Properties
 #define CSS_PROP_PUBLIC_OR_PRIVATE(publicname_, privatename_) publicname_
@@ -76,9 +92,10 @@ public:
   }                                                                          \
                                                                              \
   void                                                                       \
-  Set##method_(const nsAString& aValue, mozilla::ErrorResult& rv)            \
+  Set##method_(const nsAString& aValue, nsIPrincipal* aSubjectPrincipal,     \
+               mozilla::ErrorResult& rv)                                     \
   {                                                                          \
-    rv = SetPropertyValue(eCSSProperty_##id_, aValue);                       \
+    rv = SetPropertyValue(eCSSProperty_##id_, aValue, aSubjectPrincipal);    \
   }
 
 #define CSS_PROP_LIST_EXCLUDE_INTERNAL
@@ -101,6 +118,31 @@ public:
   virtual void IndexedGetter(uint32_t aIndex, bool& aFound, nsAString& aPropName) override;
 
   virtual JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
+
+  // Information needed to parse a declaration for Servo side.
+  // Put this in public so other Servo parsing functions can reuse this.
+  struct MOZ_STACK_CLASS ServoCSSParsingEnvironment
+  {
+    RefPtr<mozilla::URLExtraData> mUrlExtraData;
+    nsCompatibility mCompatMode;
+    mozilla::css::Loader* mLoader;
+
+    ServoCSSParsingEnvironment(mozilla::URLExtraData* aUrlData,
+                               nsCompatibility aCompatMode,
+                               mozilla::css::Loader* aLoader)
+      : mUrlExtraData(aUrlData)
+      , mCompatMode(aCompatMode)
+      , mLoader(aLoader)
+    {}
+
+    ServoCSSParsingEnvironment(already_AddRefed<mozilla::URLExtraData> aUrlData,
+                               nsCompatibility aCompatMode,
+                               mozilla::css::Loader* aLoader)
+      : mUrlExtraData(aUrlData)
+      , mCompatMode(aCompatMode)
+      , mLoader(aLoader)
+    {}
+  };
 
 protected:
   // The reason for calling GetCSSDeclaration.
@@ -149,31 +191,21 @@ protected:
                                          "performance overhead (see bug 649163)") mCSSLoader;
   };
 
-  // Information neded to parse a declaration for Servo side.
-  struct MOZ_STACK_CLASS ServoCSSParsingEnvironment
-  {
-    mozilla::URLExtraData* mUrlExtraData;
-    nsCompatibility mCompatMode;
-    mozilla::css::Loader* mLoader;
-
-    ServoCSSParsingEnvironment(mozilla::URLExtraData* aUrlData,
-                               nsCompatibility aCompatMode,
-                               mozilla::css::Loader* aLoader)
-      : mUrlExtraData(aUrlData)
-      , mCompatMode(aCompatMode)
-      , mLoader(aLoader)
-    {}
-  };
-
   // On failure, mPrincipal should be set to null in aCSSParseEnv.
   // If mPrincipal is null, the other members may not be set to
   // anything meaningful.
-  virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv) = 0;
+  // If aSubjectPrincipal is passed, it should be the subject principal of the
+  // scripted caller that initiated the parser.
+  virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv,
+                                        nsIPrincipal* aSubjectPrincipal = nullptr) = 0;
 
   // mUrlExtraData returns URL data for parsing url values in
   // CSS. Returns nullptr on failure. If mUrlExtraData is nullptr,
   // mCompatMode may not be set to anything meaningful.
-  virtual ServoCSSParsingEnvironment GetServoCSSParsingEnvironment() const = 0;
+  // If aSubjectPrincipal is passed, it should be the subject principal of the
+  // scripted caller that initiated the parser.
+  virtual ServoCSSParsingEnvironment
+  GetServoCSSParsingEnvironment(nsIPrincipal* aSubjectPrincipal = nullptr) const = 0;
 
   // An implementation for GetCSSParsingEnvironment for callers wrapping
   // an css::Rule.
@@ -187,11 +219,13 @@ protected:
 
   nsresult ParsePropertyValue(const nsCSSPropertyID aPropID,
                               const nsAString& aPropValue,
-                              bool aIsImportant);
+                              bool aIsImportant,
+                              nsIPrincipal* aSubjectPrincipal);
 
   nsresult ParseCustomPropertyValue(const nsAString& aPropertyName,
                                     const nsAString& aPropValue,
-                                    bool aIsImportant);
+                                    bool aIsImportant,
+                                    nsIPrincipal* aSubjectPrincipal);
 
   nsresult RemovePropertyInternal(nsCSSPropertyID aPropID);
   nsresult RemovePropertyInternal(const nsAString& aProperty);
@@ -201,7 +235,8 @@ protected:
 
 private:
   template<typename GeckoFunc, typename ServoFunc>
-  inline nsresult ModifyDeclaration(GeckoFunc aGeckoFunc, ServoFunc aServoFunc);
+  inline nsresult ModifyDeclaration(nsIPrincipal* aSubjectPrincipal,
+                                    GeckoFunc aGeckoFunc, ServoFunc aServoFunc);
 };
 
 #endif // nsDOMCSSDeclaration_h___

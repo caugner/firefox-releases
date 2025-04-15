@@ -9,10 +9,11 @@
 
 use cssparser::RGBA;
 use std::f32::consts::PI;
-use std::fmt;
-use style_traits::ToCss;
+use std::fmt::{self, Write};
+use style_traits::{CssWriter, ToCss};
 use values::{Either, None_};
-use values::computed::{Angle, ComputedUrl, Context, Length, LengthOrPercentage, NumberOrPercentage, ToComputedValue};
+use values::computed::{Angle, ComputedImageUrl, Context};
+use values::computed::{Length, LengthOrPercentage, NumberOrPercentage, ToComputedValue};
 #[cfg(feature = "gecko")]
 use values::computed::Percentage;
 use values::computed::position::Position;
@@ -28,7 +29,7 @@ pub type ImageLayer = Either<None_, Image>;
 
 /// Computed values for an image according to CSS-IMAGES.
 /// <https://drafts.csswg.org/css-images/#image-values>
-pub type Image = GenericImage<Gradient, MozImageRect, ComputedUrl>;
+pub type Image = GenericImage<Gradient, MozImageRect, ComputedImageUrl>;
 
 /// Computed values for a CSS gradient.
 /// <https://drafts.csswg.org/css-images/#gradients>
@@ -76,7 +77,7 @@ pub type GradientItem = GenericGradientItem<RGBA, LengthOrPercentage>;
 pub type ColorStop = GenericColorStop<RGBA, LengthOrPercentage>;
 
 /// Computed values for `-moz-image-rect(...)`.
-pub type MozImageRect = GenericMozImageRect<NumberOrPercentage, ComputedUrl>;
+pub type MozImageRect = GenericMozImageRect<NumberOrPercentage, ComputedImageUrl>;
 
 impl GenericLineDirection for LineDirection {
     fn points_downwards(&self, compat_mode: CompatMode) -> bool {
@@ -99,8 +100,13 @@ impl GenericLineDirection for LineDirection {
         }
     }
 
-    fn to_css<W>(&self, dest: &mut W, compat_mode: CompatMode) -> fmt::Result
-        where W: fmt::Write
+    fn to_css<W>(
+        &self,
+        dest: &mut CssWriter<W>,
+        compat_mode: CompatMode,
+    ) -> fmt::Result
+    where
+        W: Write,
     {
         match *self {
             LineDirection::Angle(ref angle) => angle.to_css(dest),

@@ -6,8 +6,8 @@
 
 "use strict";
 
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Services", "resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "Services", "resource://gre/modules/Services.jsm");
 
 this.EXPORTED_SYMBOLS = ["AppConstants"];
 
@@ -24,6 +24,13 @@ this.AppConstants = Object.freeze({
 
   RELEASE_OR_BETA:
 #ifdef RELEASE_OR_BETA
+  true,
+#else
+  false,
+#endif
+
+  EARLY_BETA_OR_EARLIER:
+#ifdef EARLY_BETA_OR_EARLIER
   true,
 #else
   false,
@@ -231,13 +238,6 @@ this.AppConstants = Object.freeze({
 
   MOZ_ALLOW_LEGACY_EXTENSIONS:
 #ifdef MOZ_ALLOW_LEGACY_EXTENSIONS
-  true,
-#else
-  false,
-#endif
-
-  INSTALL_COMPACT_THEMES:
-#ifdef INSTALL_COMPACT_THEMES
   true,
 #else
   false,

@@ -4,18 +4,16 @@
 
 "use strict";
 
-var { classes: Cc, interfaces: Ci, utils: Cu } = Components;
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Troubleshoot.jsm");
+ChromeUtils.import("resource://gre/modules/ResetProfile.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Troubleshoot.jsm");
-Cu.import("resource://gre/modules/ResetProfile.jsm");
-Cu.import("resource://gre/modules/AppConstants.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
-                                  "resource://gre/modules/PluralForm.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesDBUtils",
-                                  "resource://gre/modules/PlacesDBUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "PluralForm",
+                               "resource://gre/modules/PluralForm.jsm");
+ChromeUtils.defineModuleGetter(this, "PlacesDBUtils",
+                               "resource://gre/modules/PlacesDBUtils.jsm");
 
 window.addEventListener("load", function onload(event) {
   try {
@@ -103,6 +101,26 @@ var snapshotFormatters = {
       `content = ${data.styloResult} (${styloReason}), ` +
       `chrome = ${data.styloChromeResult} (${styloChromeReason})`;
 
+    if (Services.policies) {
+      let policiesText = "";
+      switch (data.policiesStatus) {
+        case Services.policies.INACTIVE:
+          policiesText = strings.GetStringFromName("policies.inactive");
+          break;
+
+        case Services.policies.ACTIVE:
+          policiesText = strings.GetStringFromName("policies.active");
+          break;
+
+        default:
+          policiesText = strings.GetStringFromName("policies.error");
+          break;
+      }
+      $("policies-status").textContent = policiesText;
+    } else {
+      $("policies-status-row").hidden = true;
+    }
+
     let keyGoogleFound = data.keyGoogleFound ? "found" : "missing";
     $("key-google-box").textContent = strings.GetStringFromName(keyGoogleFound);
 
@@ -181,6 +199,18 @@ var snapshotFormatters = {
         $.new("td", extension.id),
       ]);
     }));
+  },
+
+  securitySoftware: function securitySoftware(data) {
+    if (!AppConstants.isPlatformAndVersionAtLeast("win", "6.2")) {
+      $("security-software-title").hidden = true;
+      $("security-software-table").hidden = true;
+      return;
+    }
+
+    $("security-software-antivirus").textContent = data.registeredAntiVirus;
+    $("security-software-antispyware").textContent = data.registeredAntiSpyware;
+    $("security-software-firewall").textContent = data.registeredFirewall;
   },
 
   features: function features(data) {
@@ -457,7 +487,9 @@ var snapshotFormatters = {
     addRowFromKey("features", "webgl2Extensions");
     addRowFromKey("features", "supportsHardwareH264", "hardwareH264");
     addRowFromKey("features", "direct2DEnabled", "#Direct2D");
+    addRowFromKey("features", "usesTiling");
     addRowFromKey("features", "offMainThreadPaintEnabled");
+    addRowFromKey("features", "offMainThreadPaintWorkerCount");
 
     if ("directWriteEnabled" in data) {
       let message = data.directWriteEnabled;
@@ -901,9 +933,7 @@ function copyRawDataToClipboard(button) {
       transferable.init(getLoadContext());
       transferable.addDataFlavor("text/unicode");
       transferable.setTransferData("text/unicode", str, str.data.length * 2);
-      Cc["@mozilla.org/widget/clipboard;1"].
-        getService(Ci.nsIClipboard).
-        setData(transferable, null, Ci.nsIClipboard.kGlobalClipboard);
+      Services.clipboard.setData(transferable, null, Ci.nsIClipboard.kGlobalClipboard);
       if (AppConstants.platform == "android") {
         // Present a toast notification.
         let message = {
@@ -953,9 +983,7 @@ function copyContentsToClipboard() {
   transferable.setTransferData("text/unicode", ssText, dataText.length * 2);
 
   // Store the data into the clipboard.
-  let clipboard = Cc["@mozilla.org/widget/clipboard;1"]
-                    .getService(Ci.nsIClipboard);
-  clipboard.setData(transferable, null, clipboard.kGlobalClipboard);
+  Services.clipboard.setData(transferable, null, Services.clipboard.kGlobalClipboard);
 
   if (AppConstants.platform == "android") {
     // Present a toast notification.
@@ -1178,6 +1206,10 @@ function populateActionBox() {
   if (!Services.appinfo.inSafeMode && AppConstants.platform !== "android") {
     $("safe-mode-box").style.display = "block";
     $("action-box").style.display = "block";
+
+    if (Services.policies && !Services.policies.isAllowed("safeMode")) {
+      $("restart-in-safe-mode-button").setAttribute("disabled", "true");
+    }
   }
 }
 
@@ -1212,10 +1244,15 @@ function setupEventListeners() {
     });
     $("verify-place-integrity-button").addEventListener("click", function(event) {
       PlacesDBUtils.checkAndFixDatabase().then((tasksStatusMap) => {
-        let msg = PlacesDBUtils.getLegacyLog(tasksStatusMap).join("\n");
+        let logs = [];
+        for (let [key, value] of tasksStatusMap) {
+          logs.push(`> Task: ${key}`);
+          let prefix = value.succeeded ? "+ " : "- ";
+          logs = logs.concat(value.logs.map(m => `${prefix}${m}`));
+        }
         $("verify-place-result").style.display = "block";
         $("verify-place-result").classList.remove("no-copy");
-        $("verify-place-result").textContent = msg;
+        $("verify-place-result").textContent = logs.join("\n");
       });
     });
   }

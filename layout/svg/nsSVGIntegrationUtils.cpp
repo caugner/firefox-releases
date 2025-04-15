@@ -28,7 +28,9 @@
 #include "mozilla/gfx/Point.h"
 #include "nsCSSRendering.h"
 #include "mozilla/Unused.h"
+#ifdef MOZ_OLD_STYLE
 #include "mozilla/GeckoRestyleManager.h"
+#endif
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -504,7 +506,7 @@ PaintMaskSurface(const PaintFramesParams& aParams,
         nsCSSRendering::PaintStyleImageLayerWithSC(params, *maskContext, aSC,
                                               *aParams.frame->StyleBorder());
     } else {
-      aParams.imgParams.result &= DrawResult::NOT_READY;
+      aParams.imgParams.result &= ImgDrawResult::NOT_READY;
     }
   }
 }
@@ -581,7 +583,7 @@ CreateAndPaintMaskSurface(const PaintFramesParams& aParams,
                    aSC, aMaskFrames, maskSurfaceMatrix,
                    aOffsetToUserSpace);
 
-  if (aParams.imgParams.result != DrawResult::SUCCESS) {
+  if (aParams.imgParams.result != ImgDrawResult::SUCCESS) {
     // Now we know the status of mask resource since we used it while painting.
     // According to the return value of PaintMaskSurface, we know whether mask
     // resource is resolvable or not.
@@ -653,7 +655,7 @@ struct EffectOffsets {
   gfxPoint offsetToUserSpaceInDevPx;
 };
 
-EffectOffsets
+static EffectOffsets
 ComputeEffectOffset(nsIFrame* aFrame, const PaintFramesParams& aParams)
 {
   EffectOffsets result;

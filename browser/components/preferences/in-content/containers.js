@@ -4,8 +4,8 @@
 
 /* import-globals-from preferences.js */
 
-Components.utils.import("resource://gre/modules/AppConstants.jsm");
-Components.utils.import("resource://gre/modules/ContextualIdentityService.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/ContextualIdentityService.jsm");
 
 const containersBundle = Services.strings.createBundle("chrome://browser/locale/preferences/containers.properties");
 
@@ -17,8 +17,10 @@ let gContainersPane = {
   init() {
     this._list = document.getElementById("containersView");
 
-    document.getElementById("backContainersLink").addEventListener("click", function() {
-      gotoPref("general");
+    document.getElementById("backContainersLink").addEventListener("click", function(event) {
+      if (event.button == 0) {
+        gotoPref("general");
+      }
     });
 
     this._rebuildView();

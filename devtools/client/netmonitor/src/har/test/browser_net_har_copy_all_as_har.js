@@ -6,30 +6,31 @@
 /**
  * Basic tests for exporting Network panel content into HAR format.
  */
-add_task(function* () {
+add_task(async function () {
   // Disable tcp fast open, because it is setting a response header indicator
   // (bug 1352274). TCP Fast Open is not present on all platforms therefore the
   // number of response headers will vary depending on the platform.
   Services.prefs.setBoolPref("network.tcp.tcp_fastopen_enable", false);
-  let { tab, monitor } = yield initNetMonitor(SIMPLE_URL);
+  let { tab, monitor } = await initNetMonitor(SIMPLE_URL);
 
   info("Starting test... ");
 
   let { connector, store, windowRequire } = monitor.panelWin;
   let Actions = windowRequire("devtools/client/netmonitor/src/actions/index");
   let RequestListContextMenu = windowRequire(
-    "devtools/client/netmonitor/src/request-list-context-menu");
-  let { getLongString, getTabTarget } = connector;
+    "devtools/client/netmonitor/src/widgets/RequestListContextMenu");
+  let { getSortedRequests } = windowRequire(
+    "devtools/client/netmonitor/src/selectors/index");
 
   store.dispatch(Actions.batchEnable(false));
 
   let wait = waitForNetworkEvents(monitor, 1);
   tab.linkedBrowser.reload();
-  yield wait;
+  await wait;
 
-  let contextMenu = new RequestListContextMenu({ getTabTarget, getLongString });
+  let contextMenu = new RequestListContextMenu({ connector });
 
-  yield contextMenu.copyAllAsHar();
+  await contextMenu.copyAllAsHar(getSortedRequests(store.getState()));
 
   let jsonString = SpecialPowers.getClipboardData("text/unicode");
   let har = JSON.parse(jsonString);
@@ -41,7 +42,12 @@ add_task(function* () {
   is(har.log.pages.length, 1, "There must be one page");
   is(har.log.entries.length, 1, "There must be one request");
 
+  let page = har.log.pages[0];
+  ok("onContentLoad" in page.pageTimings, "There must be onContentLoad time");
+  ok("onLoad" in page.pageTimings, "There must be onLoad time");
+
   let entry = har.log.entries[0];
+  ok(entry.time > 0, "Check the total time");
   is(entry.request.method, "GET", "Check the method");
   is(entry.request.url, SIMPLE_URL, "Check the URL");
   is(entry.request.headers.length, 9, "Check number of request headers");

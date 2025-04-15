@@ -114,7 +114,7 @@ impl nsCSSValue {
             nsCSSUnit::eCSSUnit_Calc => {
                 LengthOrPercentage::Calc(bindings::Gecko_CSSValue_GetCalc(self).into())
             },
-            x => panic!("The unit should not be {:?}", x),
+            _ => panic!("Unexpected unit"),
         }
     }
 
@@ -124,7 +124,7 @@ impl nsCSSValue {
             nsCSSUnit::eCSSUnit_Pixel => {
                 Length::new(bindings::Gecko_CSSValue_GetNumber(self))
             },
-            x => panic!("The unit should not be {:?}", x),
+            _ => panic!("Unexpected unit"),
         }
     }
 
@@ -205,9 +205,14 @@ impl nsCSSValue {
         self.set_int_internal(value.into(), nsCSSUnit::eCSSUnit_Enumerated);
     }
 
+    /// Set to a number value
+    pub fn set_number(&mut self, number: f32) {
+        unsafe { bindings::Gecko_CSSValue_SetFloat(self, number, nsCSSUnit::eCSSUnit_Number) }
+    }
+
     /// Set to a url value
     pub fn set_url(&mut self, url: &SpecifiedUrl) {
-        unsafe { bindings::Gecko_CSSValue_SetURL(self, url.for_ffi()) }
+        unsafe { bindings::Gecko_CSSValue_SetURL(self, url.url_value.get()) }
     }
 
     /// Set to an array of given length
@@ -226,9 +231,7 @@ impl nsCSSValue {
     /// Panics if the unit is not `eCSSUnit_Degree` `eCSSUnit_Grad`, `eCSSUnit_Turn`
     /// or `eCSSUnit_Radian`.
     pub fn get_angle(&self) -> Angle {
-        unsafe {
-            Angle::from_gecko_values(self.float_unchecked(), self.mUnit)
-        }
+        Angle::from_gecko_values(self.float_unchecked(), self.mUnit)
     }
 
     /// Sets Angle value to this nsCSSValue.
@@ -409,4 +412,12 @@ impl IndexMut<usize> for nsCSSValue_Array {
 pub trait ToNsCssValue {
     /// Convert
     fn convert(self, nscssvalue: &mut nsCSSValue);
+}
+
+impl<T: ToNsCssValue> From<T> for nsCSSValue {
+    fn from(value: T) -> nsCSSValue {
+        let mut result = nsCSSValue::null();
+        value.convert(&mut result);
+        result
+    }
 }

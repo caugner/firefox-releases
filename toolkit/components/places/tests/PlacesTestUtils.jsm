@@ -1,21 +1,19 @@
 "use strict";
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "PlacesTestUtils",
 ];
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-
 Cu.importGlobalProperties(["URL"]);
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
-                                  "resource://gre/modules/PlacesUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "TestUtils",
-                                  "resource://testing-common/TestUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "PlacesUtils",
+                               "resource://gre/modules/PlacesUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "TestUtils",
+                               "resource://testing-common/TestUtils.jsm");
 
-this.PlacesTestUtils = Object.freeze({
+var PlacesTestUtils = Object.freeze({
   /**
    * Asynchronously adds visits to a page.
    *
@@ -54,7 +52,8 @@ this.PlacesTestUtils = Object.freeze({
     let lastStoredVisit;
     for (let place of places) {
       let info = {url: place.uri};
-      info.title = (typeof place.title === "string") ? place.title : "test visit for " + info.url.spec ;
+      let spec = place.uri instanceof Ci.nsIURI ? place.uri.spec : new URL(place.uri).href;
+      info.title = "title" in place ? place.title : "test visit for " + spec ;
       if (typeof place.referrer == "string") {
         place.referrer = Services.io.newURI(place.referrer);
       } else if (place.referrer && place.referrer instanceof URL) {
@@ -129,19 +128,6 @@ this.PlacesTestUtils = Object.freeze({
       }));
     }
     await Promise.all(faviconPromises);
-  },
-
-  /**
-   * Clear all history.
-   *
-   * @return {Promise}
-   * @resolves When history was cleared successfully.
-   * @rejects JavaScript exception.
-   *
-   * @deprecated New consumers should directly use PlacesUtils.history.clear().
-   */
-  clearHistory() {
-    return PlacesUtils.history.clear();
   },
 
   /**
@@ -354,5 +340,43 @@ this.PlacesTestUtils = Object.freeze({
       });
       PlacesUtils[type].addObserver(proxifiedObserver);
     });
+  },
+
+  /**
+   * A debugging helper that dumps the contents of an SQLite table.
+   *
+   * @param {Sqlite.OpenedConnection} db
+   *        The mirror database connection.
+   * @param {String} table
+   *        The table name.
+   */
+  async dumpTable(db, table) {
+    let rows = await db.execute(`SELECT * FROM ${table}`);
+    dump(`Table ${table} contains ${rows.length} rows\n`);
+
+    let results = [];
+    for (let row of rows) {
+      let numColumns = row.numEntries;
+      let rowValues = [];
+      for (let i = 0; i < numColumns; ++i) {
+        switch (row.getTypeOfIndex(i)) {
+          case Ci.mozIStorageValueArray.VALUE_TYPE_NULL:
+            rowValues.push("NULL");
+            break;
+          case Ci.mozIStorageValueArray.VALUE_TYPE_INTEGER:
+            rowValues.push(row.getInt64(i));
+            break;
+          case Ci.mozIStorageValueArray.VALUE_TYPE_FLOAT:
+            rowValues.push(row.getDouble(i));
+            break;
+          case Ci.mozIStorageValueArray.VALUE_TYPE_TEXT:
+            rowValues.push(JSON.stringify(row.getString(i)));
+            break;
+        }
+      }
+      results.push(rowValues.join("\t"));
+    }
+    results.push("\n");
+    dump(results.join("\n"));
   },
 });

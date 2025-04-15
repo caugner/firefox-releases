@@ -7,15 +7,10 @@
 
 "use strict";
 
-const {Cc, Ci} = require("chrome");
+const Services = require("Services");
 
 // eslint-disable-next-line
 const JQUERY_LIVE_REGEX = /return typeof \w+.*.event\.triggered[\s\S]*\.event\.(dispatch|handle).*arguments/;
-
-loader.lazyGetter(this, "eventListenerService", () => {
-  return Cc["@mozilla.org/eventlistenerservice;1"]
-           .getService(Ci.nsIEventListenerService);
-});
 
 var parsers = [
   {
@@ -170,15 +165,15 @@ var parsers = [
 
       if (node.nodeName.toLowerCase() === "html") {
         let winListeners =
-          eventListenerService.getListenerInfoFor(node.ownerGlobal) || [];
+          Services.els.getListenerInfoFor(node.ownerGlobal) || [];
         let docElementListeners =
-          eventListenerService.getListenerInfoFor(node) || [];
+          Services.els.getListenerInfoFor(node) || [];
         let docListeners =
-          eventListenerService.getListenerInfoFor(node.parentNode) || [];
+          Services.els.getListenerInfoFor(node.parentNode) || [];
 
         listeners = [...winListeners, ...docElementListeners, ...docListeners];
       } else {
-        listeners = eventListenerService.getListenerInfoFor(node) || [];
+        listeners = Services.els.getListenerInfoFor(node) || [];
       }
 
       for (let listener of listeners) {
@@ -191,7 +186,7 @@ var parsers = [
     },
     getListeners: function (node) {
       let handlers = [];
-      let listeners = eventListenerService.getListenerInfoFor(node);
+      let listeners = Services.els.getListenerInfoFor(node);
 
       // The Node actor's getEventListenerInfo knows that when an html tag has
       // been passed we need the window object so we don't need to account for
@@ -271,7 +266,11 @@ function reactGetListeners(node, boolOnEventFound) {
   function getProps() {
     for (let key of Object.keys(node)) {
       if (key.startsWith("__reactInternalInstance$")) {
-        return node[key]._currentElement.props;
+        let value = node[key];
+        if (value.memoizedProps) {
+          return value.memoizedProps; // React 16
+        }
+        return value._currentElement.props; // React 15
       }
     }
     return null;

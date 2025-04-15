@@ -3,15 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var Ci = Components.interfaces;
-var Cc = Components.classes;
-var Cr = Components.results;
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 function loadUtilsScript() {
-  var loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].
-               getService(Ci.mozIJSSubScriptLoader);
   /* import-globals-from ../../contentAreaUtils.js */
-  loader.loadSubScript("chrome://global/content/contentAreaUtils.js");
+  Services.scriptloader.loadSubScript("chrome://global/content/contentAreaUtils.js");
 }
 
 function test_urlSecurityCheck() {

@@ -6,10 +6,12 @@
 #ifndef GFX_FONT_UTILS_H
 #define GFX_FONT_UTILS_H
 
+#include "gfxFontVariations.h"
 #include "gfxPlatform.h"
 #include "nsComponentManagerUtils.h"
 #include "nsTArray.h"
 #include "mozilla/Likely.h"
+#include "mozilla/Encoding.h"
 #include "mozilla/EndianUtils.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/UniquePtr.h"
@@ -999,6 +1001,31 @@ public:
                                     nsTArray<uint16_t> &aGlyphs,
                                     nsTArray<mozilla::gfx::Color> &aColors);
 
+    // Helper used to implement gfxFontEntry::GetVariationInstances for
+    // platforms where the native font APIs don't provide the info we want
+    // in a convenient form.
+    // (Not used on platforms -- currently, freetype -- where the font APIs
+    // expose variation instance details directly.)
+    static void
+    GetVariationInstances(gfxFontEntry* aFontEntry,
+                          nsTArray<gfxFontVariationInstance>& aInstances);
+
+    // Merge a list of font-variation-settings from a font entry and a list
+    // from a gfxFontStyle, to get a combined collection of settings that can
+    // be used to instantiate a font.
+    static void
+    MergeVariations(const nsTArray<gfxFontVariation>& aEntrySettings,
+                    const nsTArray<gfxFontVariation>& aStyleSettings,
+                    nsTArray<gfxFontVariation>* aMerged);
+
+    // Helper used by MergeVariations, and other code that wants to check
+    // whether an array of variation settings includes a particular tag.
+    struct VariationTagComparator {
+        bool Equals(const gfxFontVariation& aVariation, uint32_t aTag) const {
+            return aVariation.mTag == aTag;
+        }
+    };
+
 protected:
     friend struct MacCharsetMappingComparator;
 
@@ -1006,24 +1033,24 @@ protected:
     ReadNames(const char *aNameData, uint32_t aDataLen, uint32_t aNameID,
               int32_t aLangID, int32_t aPlatformID, nsTArray<nsString>& aNames);
 
-    // convert opentype name-table platform/encoding/language values to a charset name
-    // we can use to convert the name data to unicode, or "" if data is UTF16BE
-    static const char*
+    // convert opentype name-table platform/encoding/language values to an
+    // Encoding object we can use to convert the name data to unicode
+    static const mozilla::Encoding*
     GetCharsetForFontName(uint16_t aPlatform, uint16_t aScript, uint16_t aLanguage);
 
     struct MacFontNameCharsetMapping {
-        uint16_t    mEncoding;
+        uint16_t    mScript;
         uint16_t    mLanguage;
-        const char *mCharsetName;
+        const mozilla::Encoding* mEncoding;
 
         bool operator<(const MacFontNameCharsetMapping& rhs) const {
-            return (mEncoding < rhs.mEncoding) ||
-                   ((mEncoding == rhs.mEncoding) && (mLanguage < rhs.mLanguage));
+            return (mScript < rhs.mScript) ||
+                   ((mScript == rhs.mScript) && (mLanguage < rhs.mLanguage));
         }
     };
     static const MacFontNameCharsetMapping gMacFontNameCharsets[];
-    static const char* gISOFontNameCharsets[];
-    static const char* gMSFontNameCharsets[];
+    static const mozilla::Encoding* gISOFontNameCharsets[];
+    static const mozilla::Encoding* gMSFontNameCharsets[];
 };
 
 #endif /* GFX_FONT_UTILS_H */

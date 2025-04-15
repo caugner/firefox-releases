@@ -23,7 +23,7 @@ add_task(async function() {
 
       onBeginUpdateBatch() { },
       onEndUpdateBatch() { },
-      onVisit() { },
+      onVisits() { },
       onDeleteURI() { },
       onClearHistory() { },
       onPageChanged() { },
@@ -46,6 +46,6 @@ add_task(async function() {
     Assert.equal(args.newtitle, content.document.title, "Title after pushstate.");
   });
 
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
   gBrowser.removeTab(tab);
 });

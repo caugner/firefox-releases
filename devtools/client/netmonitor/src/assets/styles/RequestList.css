@@ -65,10 +65,6 @@
 .requests-list-contents {
   display: table-row-group;
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  right: 0;
   overflow-x: hidden;
   overflow-y: auto;
   --timings-scale: 1;
@@ -78,7 +74,6 @@
 .requests-list-column {
   display: table-cell;
   cursor: default;
-  text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -103,6 +98,10 @@
   z-index: 1;
   width: 100%;
   padding: 0;
+}
+
+.theme-firebug .requests-list-headers-wrapper {
+  padding: 0 !important;
 }
 
 .requests-list-headers {
@@ -213,7 +212,7 @@
 /* Status column */
 
 .requests-list-status {
-  width: 8%;
+  min-width: 70px;
    /* Don't ellipsize status codes */
   text-overflow: initial;
 }
@@ -224,7 +223,35 @@
 
 .requests-list-status-code {
   margin-inline-start: 3px;
-  width: 3em;
+  padding: 0 2px;
+  border-radius: 3px;
+  font-family: var(--monospace-font-family);
+  /* prevent status code from having full line height width from .request-list-item */
+  line-height: normal;
+}
+
+.status-code[data-code^="1"] {
+  background-color: var(--status-code-color-1xx);
+}
+
+.status-code[data-code^="2"] {
+  background-color: var(--status-code-color-2xx);
+}
+
+.status-code[data-code^="3"] {
+  background-color: var(--status-code-color-3xx);
+}
+
+.status-code[data-code^="4"] {
+  background-color: var(--status-code-color-4xx);
+}
+
+.status-code[data-code^="5"] {
+  background-color: var(--status-code-color-5xx);
+}
+
+.status-code:not([data-code^="3"]) {
+  color: var(--theme-body-background);
 }
 
 .requests-list-status-icon {
@@ -251,16 +278,16 @@
 }
 
 .requests-list-status-icon[data-code^="1"] {
-  background-color: var(--theme-highlight-blue);
+  background-color: var(--status-code-color-1xx);
 }
 
 .requests-list-status-icon[data-code^="2"] {
-  background-color: var(--theme-highlight-green);
+  background-color: var(--status-code-color-2xx);
 }
 
 /* 3xx are triangles */
 .requests-list-status-icon[data-code^="3"] {
-  background-color: transparent;
+  background-color: var(--status-code-color-3xx);
   width: 0;
   height: 0;
   border-left: 5px solid transparent;
@@ -271,12 +298,12 @@
 
 /* 4xx and 5xx are squares - error codes */
 .requests-list-status-icon[data-code^="4"] {
-  background-color: var(--theme-highlight-red);
+  background-color: var(--status-code-color-4xx);
   border-radius: 0; /* squares */
 }
 
 .requests-list-status-icon[data-code^="5"] {
-  background-color: var(--theme-highlight-pink);
+  background-color: var(--status-code-color-5xx);
   border-radius: 0;
   transform: rotate(45deg);
 }
@@ -284,7 +311,7 @@
 /* Method column */
 
 .requests-list-method {
-  width: 8%;
+  min-width: 85px;
 }
 
 .theme-firebug .requests-list-method {
@@ -294,20 +321,11 @@
 /* File column */
 
 .requests-list-file {
-  width: 22%;
+  width: 40%;
 }
 
 .requests-list-file.requests-list-column {
   text-align: start;
-}
-
-.requests-list-icon {
-  background: transparent;
-  width: 15px;
-  height: 15px;
-  margin: 0 4px;
-  outline: 1px solid var(--table-splitter-color);
-  vertical-align: top;
 }
 
 /* Protocol column */
@@ -334,12 +352,6 @@
   width: 8%;
 }
 
-/* Domain column */
-
-.requests-list-domain {
-  width: 13%;
-}
-
 /* Start Time column */
 
 .requests-list-start-time {
@@ -360,18 +372,26 @@
 
 /* Duration column */
 
-.requests-list-duration {
+.requests-list-duration-time {
   width: 8%;
 }
 
 /* Latency column */
 
-.requests-list-latency {
+.requests-list-latency-time {
   width: 8%;
 }
 
+/* Response header columns */
+
 .requests-list-response-header {
-  width: 13%;
+  width: 10%;
+}
+
+/* Domain column */
+
+.requests-list-domain {
+  width: 30%;
 }
 
 .requests-list-domain.requests-list-column {
@@ -383,7 +403,7 @@
   width: 16px;
   height: 16px;
   margin: 0 4px;
-  vertical-align: top;
+  vertical-align: text-bottom;
 }
 
 .request-list-item.selected .requests-security-state-icon {
@@ -419,7 +439,7 @@
 /* Cause column */
 
 .requests-list-cause {
-  width: 9%;
+  min-width: 75px;
 }
 
 .requests-list-cause-stack {
@@ -438,19 +458,19 @@
 /* Type column */
 
 .requests-list-type {
-  width: 6%;
+  min-width: 65px;
 }
 
 /* Transferred column */
 
 .requests-list-transferred {
-  width: 9%;
+  min-width: 110px;
 }
 
 /* Size column */
 
 .requests-list-size {
-  width: 7%;
+  min-width: 80px;
 }
 
 .theme-firebug .requests-list-size {
@@ -461,9 +481,9 @@
 /* Waterfall column */
 
 .requests-list-waterfall {
-  width: 20vw;
-  max-width: 20vw;
-  min-width: 20vw;
+  width: 25vw;
+  max-width: 25vw;
+  min-width: 25vw;
   background-repeat: repeat-y;
   background-position: left center;
   /* Background created on a <canvas> in js. */
@@ -526,9 +546,6 @@
 }
 
 .requests-list-timings {
-  display: flex;
-  flex: none;
-  align-items: center;
   transform: scaleX(var(--timings-scale));
 }
 
@@ -586,6 +603,7 @@
   white-space: nowrap;
   /* This node should not be scaled - apply a reversed transformation */
   transform: scaleX(var(--timings-rev-scale));
+  text-align: left;
 }
 
 .requests-list-timings-total:dir(ltr) {
@@ -600,8 +618,14 @@
 
 .request-list-item {
   position: relative;
+/*
   display: table-row;
+  Bug 1431132: Disabling this rule is surprising as we no longer have "rows".
+  But this helps preventing reflowing the whole requests list anytime we append
+  a new request/row.
+*/
   height: 24px;
+  line-height: 24px;
 }
 
 .request-list-item.selected {

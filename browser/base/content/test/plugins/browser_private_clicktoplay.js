@@ -4,9 +4,9 @@ const gHttpTestRoot = rootDir.replace("chrome://mochitests/content/", "http://12
 
 var gTestBrowser = null;
 var gNextTest = null;
-var gPluginHost = Components.classes["@mozilla.org/plugin/host;1"].getService(Components.interfaces.nsIPluginHost);
+var gPluginHost = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
 
-Components.utils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 var gPrivateWindow = null;
 var gPrivateBrowser = null;
@@ -67,7 +67,7 @@ add_task(async function test1b() {
   popupNotification.reshow();
 
   await promiseShown;
-  is(gPrivateWindow.PopupNotifications.panel.firstChild.checkbox.hidden, true, "'Remember' checkbox should be hidden in private windows")
+  is(gPrivateWindow.PopupNotifications.panel.firstChild.checkbox.hidden, true, "'Remember' checkbox should be hidden in private windows");
 
   gPrivateWindow.close();
   BrowserTestUtils.loadURI(gTestBrowser, gHttpTestRoot + "plugin_test.html");

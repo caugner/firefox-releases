@@ -35,6 +35,8 @@ import android.nfc.NfcEvent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Parcel;
+import android.os.Parcelable;
 import android.os.StrictMode;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -81,7 +83,6 @@ import org.mozilla.gecko.bookmarks.BookmarkEditFragment;
 import org.mozilla.gecko.bookmarks.BookmarkUtils;
 import org.mozilla.gecko.bookmarks.EditBookmarkTask;
 import org.mozilla.gecko.cleanup.FileCleanupController;
-import org.mozilla.gecko.dawn.DawnHelper;
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.SuggestedSites;
@@ -96,7 +97,6 @@ import org.mozilla.gecko.extensions.ExtensionPermissionsHelper;
 import org.mozilla.gecko.firstrun.FirstrunAnimationContainer;
 import org.mozilla.gecko.gfx.DynamicToolbarAnimator;
 import org.mozilla.gecko.gfx.DynamicToolbarAnimator.PinReason;
-import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
 import org.mozilla.gecko.home.BrowserSearch;
 import org.mozilla.gecko.home.HomeBanner;
 import org.mozilla.gecko.home.HomeConfig;
@@ -173,6 +173,7 @@ import org.mozilla.gecko.widget.AnchoredPopup;
 import org.mozilla.gecko.widget.AnimatedProgressBar;
 import org.mozilla.gecko.widget.GeckoActionProvider;
 import org.mozilla.gecko.widget.SplashScreen;
+import org.mozilla.geckoview.GeckoSession;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -186,6 +187,7 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 import static org.mozilla.gecko.mma.MmaDelegate.NEW_TAB;
@@ -196,7 +198,6 @@ public class BrowserApp extends GeckoApp
                                    BookmarkEditFragment.Callbacks,
                                    BrowserSearch.OnEditSuggestionListener,
                                    BrowserSearch.OnSearchListener,
-                                   DynamicToolbarAnimator.MetricsListener,
                                    DynamicToolbarAnimator.ToolbarChromeProxy,
                                    LayoutInflater.Factory,
                                    LightweightTheme.OnChangeListener,
@@ -216,6 +217,8 @@ public class BrowserApp extends GeckoApp
     private static final String SWITCHBOARD_SERVER = "https://firefox.settings.services.mozilla.com/v1/buckets/fennec/collections/experiments/records";
 
     private static final String STATE_ABOUT_HOME_TOP_PADDING = "abouthome_top_padding";
+    private static final String STATE_ADDON_MENU_ITEM_CACHE = "menuitems_cache";
+    private static final String STATE_BROWSER_ACTION_ITEM_CACHE = "browseractions_cache";
 
     private static final String BROWSER_SEARCH_TAG = "browser_search";
 
@@ -234,6 +237,11 @@ public class BrowserApp extends GeckoApp
     @RobocopTarget
     public static final String EXTRA_SKIP_STARTPANE = "skipstartpane";
     private static final String EOL_NOTIFIED = "eol_notified";
+
+    /**
+     * Be aware of {@link org.mozilla.gecko.fxa.EnvironmentUtils.GECKO_PREFS_FIRSTRUN_UUID}.
+     */
+    private static final String FIRSTRUN_UUID = "firstrun_uuid";
 
     private BrowserSearch mBrowserSearch;
     private View mBrowserSearchContainer;
@@ -274,7 +282,7 @@ public class BrowserApp extends GeckoApp
     // See: Bug 1358554
     private boolean mShowingToolbarChromeForActionBar;
 
-    private static class MenuItemInfo {
+    private static class MenuItemInfo implements Parcelable {
         public int id;
         public String label;
         public boolean checkable;
@@ -283,10 +291,79 @@ public class BrowserApp extends GeckoApp
         public boolean visible = true;
         public int parent;
         public boolean added;   // So we can re-add after a locale change.
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            dest.writeInt(id);
+            dest.writeString(label);
+            dest.writeInt(checkable ? 1 : 0);
+            dest.writeInt(checked ? 1 : 0);
+            dest.writeInt(enabled ? 1 : 0);
+            dest.writeInt(visible ? 1 : 0);
+            dest.writeInt(parent);
+            dest.writeInt(added ? 1 : 0);
+        }
+
+        public static final Parcelable.Creator<MenuItemInfo> CREATOR
+                = new Parcelable.Creator<MenuItemInfo>() {
+            @Override
+            public MenuItemInfo createFromParcel(Parcel source) {
+                return new MenuItemInfo(source);
+            }
+
+            @Override
+            public MenuItemInfo[] newArray(int size) {
+                return new MenuItemInfo[size];
+            }
+        };
+
+        private MenuItemInfo(Parcel source) {
+            id = source.readInt();
+            label = source.readString();
+            checkable = source.readInt() != 0;
+            checked = source.readInt() != 0;
+            enabled = source.readInt() != 0;
+            visible = source.readInt() != 0;
+            parent = source.readInt();
+            added = source.readInt() != 0;
+        }
+
+        public MenuItemInfo() { }
     }
 
     private static class BrowserActionItemInfo extends MenuItemInfo {
         public String uuid;
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            super.writeToParcel(dest, flags);
+            dest.writeString(uuid);
+        }
+
+        public static final Parcelable.Creator<BrowserActionItemInfo> CREATOR
+                = new Parcelable.Creator<BrowserActionItemInfo>() {
+            @Override
+            public BrowserActionItemInfo createFromParcel(Parcel source) {
+                return new BrowserActionItemInfo(source);
+            }
+
+            @Override
+            public BrowserActionItemInfo[] newArray(int size) {
+                return new BrowserActionItemInfo[size];
+            }
+        };
+
+        private BrowserActionItemInfo(Parcel source) {
+            super(source);
+            uuid = source.readString();
+        }
+
+        public BrowserActionItemInfo() { }
     }
 
     // The types of guest mode dialogs we show.
@@ -437,7 +514,6 @@ public class BrowserApp extends GeckoApp
             case PAGE_SHOW:
                 tab.loadFavicon();
                 break;
-
             case UNSELECTED:
                 // We receive UNSELECTED immediately after the SELECTED listeners run
                 // so we are ensured that the unselectedTabEditingText has not changed.
@@ -445,6 +521,9 @@ public class BrowserApp extends GeckoApp
                     // Copy to avoid constructing new objects.
                     tab.getEditingState().copyFrom(mLastTabEditingState);
                 }
+                break;
+            case START_EDITING:
+                enterEditingMode();
                 break;
         }
 
@@ -623,17 +702,6 @@ public class BrowserApp extends GeckoApp
 
         showSplashScreen = true;
 
-        boolean supported = HardwareUtils.isSupportedSystem();
-        if (supported) {
-            GeckoLoader.loadMozGlue(appContext);
-            supported = GeckoLoader.neonCompatible();
-        }
-        if (!supported) {
-            // This build does not support the Android version of the device; Exit early.
-            super.onCreate(savedInstanceState);
-            return;
-        }
-
         final SafeIntent intent = new SafeIntent(getIntent());
         final boolean isInAutomation = IntentUtils.getIsInAutomationFromEnvironment(intent);
 
@@ -652,6 +720,10 @@ public class BrowserApp extends GeckoApp
         app.prepareLightweightTheme();
 
         super.onCreate(savedInstanceState);
+
+        if (mIsAbortingAppLaunch) {
+          return;
+        }
 
         initSwitchboard(this, intent, isInAutomation);
         initTelemetryUploader(isInAutomation);
@@ -683,6 +755,14 @@ public class BrowserApp extends GeckoApp
                 return false;
             }
         });
+
+        // If the activity is being restored, the add-ons menu item cache only needs restoring if
+        // Gecko is already running. Otherwise, we'll simply catch the corresponding events when
+        // Gecko and the add-ons are starting up.
+        if (savedInstanceState != null && mIsRestoringActivity) {
+            mAddonMenuItemsCache = savedInstanceState.getParcelableArrayList(STATE_ADDON_MENU_ITEM_CACHE);
+            mBrowserActionItemsCache = savedInstanceState.getParcelableArrayList(STATE_BROWSER_ACTION_ITEM_CACHE);
+        }
 
         app.getLightweightTheme().addListener(this);
 
@@ -1067,8 +1147,13 @@ public class BrowserApp extends GeckoApp
                     }
                 }
 
-                // Don't bother trying again to show the v1 minimal first run.
-                prefs.edit().putBoolean(FirstrunAnimationContainer.PREF_FIRSTRUN_ENABLED, false).apply();
+                prefs.edit()
+                        // Don't bother trying again to show the v1 minimal first run.
+                        .putBoolean(FirstrunAnimationContainer.PREF_FIRSTRUN_ENABLED, false)
+                        // Generate a unique identify for the current first run.
+                        // See Bug 1429735 for why we care to do this.
+                        .putString(FIRSTRUN_UUID, UUID.randomUUID().toString())
+                        .apply();
 
                 // We have no intention of stopping this session. The FIRSTRUN session
                 // ends when the browsing session/activity has ended. All events
@@ -1135,11 +1220,9 @@ public class BrowserApp extends GeckoApp
     public void onAttachedToWindow() {
         final SafeIntent intent = new SafeIntent(getIntent());
 
-        // We can't show the first run experience until Gecko has finished initialization (bug 1077583).
-        checkFirstrun(this, intent);
-
         if (!IntentUtils.getIsInAutomationFromEnvironment(intent)) {
-            DawnHelper.conditionallyNotifyDawn(this);
+            // We can't show the first run experience until Gecko has finished initialization (bug 1077583).
+            checkFirstrun(this, intent);
         }
     }
 
@@ -1268,6 +1351,8 @@ public class BrowserApp extends GeckoApp
         for (final BrowserAppDelegate delegate : delegates) {
             delegate.onStart(this);
         }
+
+        MmaDelegate.track(MmaDelegate.RESUMED_FROM_BACKGROUND);
     }
 
     @Override
@@ -1670,7 +1755,6 @@ public class BrowserApp extends GeckoApp
         mDoorHangerPopup.setOnVisibilityChangeListener(this);
 
         if (mLayerView != null) {
-            mLayerView.getDynamicToolbarAnimator().addMetricsListener(this);
             mLayerView.getDynamicToolbarAnimator().setToolbarChromeProxy(this);
         }
         setDynamicToolbarEnabled(mDynamicToolbar.isEnabled());
@@ -1689,17 +1773,6 @@ public class BrowserApp extends GeckoApp
     public void onDoorHangerShow() {
         mDynamicToolbar.setVisible(true, VisibilityTransition.ANIMATE);
         super.onDoorHangerShow();
-    }
-
-    @Override
-    public void onMetricsChanged(ImmutableViewportMetrics aMetrics) {
-        if (isHomePagerVisible() || mBrowserChrome == null) {
-            return;
-        }
-
-        if (mFormAssistPopup != null) {
-            mFormAssistPopup.onMetricsChanged(aMetrics);
-        }
     }
 
     // ToolbarChromeProxy inteface
@@ -1752,7 +1825,7 @@ public class BrowserApp extends GeckoApp
 
         if (mLayerView != null && height != mToolbarHeight) {
             mToolbarHeight = height;
-            mLayerView.setMaxToolbarHeight(height);
+            mLayerView.getDynamicToolbarAnimator().setMaxToolbarHeight(height);
             mDynamicToolbar.setVisible(true, VisibilityTransition.IMMEDIATE);
         }
     }
@@ -2142,7 +2215,7 @@ public class BrowserApp extends GeckoApp
                  *
                  * This depends on the current channel: Release and Beta both direct to
                  * the Google Play Store. If updating is enabled, Aurora, Nightly, and
-                 * custom builds open about:, which provides an update interface.
+                 * custom builds open about:firefox, which provides an update interface.
                  *
                  * If updating is not enabled, this simply logs an error.
                  */
@@ -2154,7 +2227,7 @@ public class BrowserApp extends GeckoApp
                 }
 
                 if (AppConstants.MOZ_UPDATER) {
-                    Tabs.getInstance().loadUrlInTab(AboutPages.UPDATER);
+                    Tabs.getInstance().loadUrlInTab(AboutPages.FIREFOX);
                     break;
                 }
 
@@ -2433,6 +2506,15 @@ public class BrowserApp extends GeckoApp
         super.onSaveInstanceState(outState);
         mDynamicToolbar.onSaveInstanceState(outState);
         outState.putInt(STATE_ABOUT_HOME_TOP_PADDING, mHomeScreenContainer.getPaddingTop());
+
+        // The various add-on UI item caches and event listeners should really live somewhere based
+        // on the Application, so that their lifetime more closely matches that of Gecko itself, as
+        // GeckoView-based activities can start Gecko (and therefore add-ons) while BrowserApp isn't
+        // even running.
+        // For now we'll only guard against the case where BrowserApp is destroyed and later re-
+        // created while Gecko keeps running throughout, and leave the full solution to bug 1414084.
+        outState.putParcelableArrayList(STATE_ADDON_MENU_ITEM_CACHE, mAddonMenuItemsCache);
+        outState.putParcelableArrayList(STATE_BROWSER_ACTION_ITEM_CACHE, mBrowserActionItemsCache);
     }
 
     /**
@@ -2667,9 +2749,11 @@ public class BrowserApp extends GeckoApp
 
                 final String keywordUrl = db.getUrlForKeyword(getContentResolver(), keyword);
 
-                // If there isn't a bookmark keyword, load the url. This may result in a query
-                // using the default search engine.
-                if (TextUtils.isEmpty(keywordUrl)) {
+                // If there isn't a bookmark keyword, or if there is no search query
+                // within the keywordURL, yet one is provided, load the url.
+                // This may result in a query using the default search engine.
+                if (TextUtils.isEmpty(keywordUrl) ||
+                        (!TextUtils.isEmpty(keywordSearch) && !StringUtils.queryExists(keywordUrl))) {
                     Tabs.getInstance().loadUrl(url, Tabs.LOADURL_USER_ENTERED);
                     Telemetry.sendUIEvent(TelemetryContract.Event.LOAD_URL, TelemetryContract.Method.ACTIONBAR, "user");
                     return;
@@ -2840,6 +2924,7 @@ public class BrowserApp extends GeckoApp
         super.onLocaleReady(locale);
 
         HomePanelsManager.getInstance().onLocaleReady(locale);
+        mBrowserToolbar.onLocaleReady(locale);
 
         if (mMenu != null) {
             mMenu.clear();
@@ -3513,7 +3598,7 @@ public class BrowserApp extends GeckoApp
             super.closeOptionsMenu();
     }
 
-    @Override // GeckoView.ContentListener
+    @Override // GeckoView.ContentDelegate
     public void onFullScreen(final GeckoSession session, final boolean fullscreen) {
         super.onFullScreen(session, fullscreen);
 
@@ -3552,6 +3637,7 @@ public class BrowserApp extends GeckoApp
         final MenuItem historyList = aMenu.findItem(R.id.history_list);
         final MenuItem saveAsPDF = aMenu.findItem(R.id.save_as_pdf);
         final MenuItem print = aMenu.findItem(R.id.print);
+        final MenuItem viewPageSource = aMenu.findItem(R.id.view_page_source);
         final MenuItem charEncoding = aMenu.findItem(R.id.char_encoding);
         final MenuItem findInPage = aMenu.findItem(R.id.find_in_page);
         final MenuItem desktopMode = aMenu.findItem(R.id.desktop_mode);
@@ -3580,6 +3666,7 @@ public class BrowserApp extends GeckoApp
             saveAsPDF.setEnabled(false);
             print.setEnabled(false);
             findInPage.setEnabled(false);
+            viewPageSource.setEnabled(false);
 
             // NOTE: Use MenuUtils.safeSetEnabled because some actions might
             // be on the BrowserToolbar context menu.
@@ -3742,8 +3829,10 @@ public class BrowserApp extends GeckoApp
         print.setEnabled(allowPDF);
         print.setVisible(Versions.feature19Plus);
 
-        // Disable find in page for about:home, since it won't work on Java content.
-        findInPage.setEnabled(!isAboutHome(tab));
+        // Disable find in page and view source for about:home, since it won't work on Java content.
+        final boolean notInAboutHome = !isAboutHome(tab);
+        findInPage.setEnabled(notInAboutHome);
+        viewPageSource.setEnabled(notInAboutHome);
 
         charEncoding.setVisible(GeckoPreferences.getCharEncodingState());
 
@@ -3939,6 +4028,13 @@ public class BrowserApp extends GeckoApp
             Telemetry.sendUIEvent(TelemetryContract.Event.SAVE, TelemetryContract.Method.MENU, "print");
             PrintHelper.printPDF(this);
             return true;
+        }
+
+        if (itemId == R.id.view_page_source) {
+            tab = Tabs.getInstance().getSelectedTab();
+            final GeckoBundle args = new GeckoBundle(1);
+            args.putInt("tabId", tab.getId());
+            getAppEventDispatcher().dispatch("Tab:ViewSource", args);
         }
 
         if (itemId == R.id.settings) {
@@ -4383,7 +4479,7 @@ public class BrowserApp extends GeckoApp
 
             // If the toolbar is dynamic and not currently showing, just show the real toolbar
             // and keep the animated snapshot hidden
-            if (mDynamicToolbar.isEnabled() && toolbar.getCurrentToolbarHeight() == 0) {
+            if (mDynamicToolbar.isEnabled() && !isToolbarChromeVisible()) {
                 toggleToolbarChrome(true);
                 mShowingToolbarChromeForActionBar = true;
             }

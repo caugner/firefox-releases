@@ -32,7 +32,7 @@ export USE_ELF_HACK ELF_HACK_FLAGS
 # Override the value of OMNIJAR_NAME from config.status with the value
 # set earlier in this file.
 
-stage-package: multilocale.json locale-manifest.in $(MOZ_PKG_MANIFEST) $(MOZ_PKG_MANIFEST_DEPS)
+stage-package: multilocale.txt locale-manifest.in $(MOZ_PKG_MANIFEST) $(MOZ_PKG_MANIFEST_DEPS)
 	OMNIJAR_NAME=$(OMNIJAR_NAME) \
 	NO_PKG_FILES="$(NO_PKG_FILES)" \
 	$(PYTHON) $(MOZILLA_DIR)/toolkit/mozapps/installer/packager.py $(DEFINES) $(ACDEFINES) \
@@ -46,7 +46,7 @@ stage-package: multilocale.json locale-manifest.in $(MOZ_PKG_MANIFEST) $(MOZ_PKG
 		$(if $(JARLOG_DIR),$(addprefix --jarlog ,$(wildcard $(JARLOG_FILE_AB_CD)))) \
 		$(if $(OPTIMIZEJARS),--optimizejars) \
 		$(addprefix --compress ,$(JAR_COMPRESSION)) \
-		$(MOZ_PKG_MANIFEST) $(DIST) $(DIST)/$(MOZ_PKG_DIR)$(if $(MOZ_PKG_MANIFEST),,$(_BINPATH)) \
+		$(MOZ_PKG_MANIFEST) '$(DIST)' '$(DIST)'/$(MOZ_PKG_DIR)$(if $(MOZ_PKG_MANIFEST),,$(_BINPATH)) \
 		$(if $(filter omni,$(MOZ_PACKAGER_FORMAT)),$(if $(NON_OMNIJAR_FILES),--non-resource $(NON_OMNIJAR_FILES)))
 	$(PYTHON) $(MOZILLA_DIR)/toolkit/mozapps/installer/find-dupes.py $(DEFINES) $(ACDEFINES) $(MOZ_PKG_DUPEFLAGS) $(DIST)/$(MOZ_PKG_DIR)
 ifndef MOZ_IS_COMM_TOPDIR
@@ -71,11 +71,19 @@ ifdef MOZ_CODE_COVERAGE
 	@echo 'Generating chrome-map for coverage data...'
 	$(topsrcdir)/mach build-backend -b ChromeMap
 	@echo 'Packaging code coverage data...'
-	# Package code coverage gcno tree
-	@echo 'Packaging code coverage data...'
 	$(RM) $(CODE_COVERAGE_ARCHIVE_BASENAME).zip
 	$(PYTHON) -mmozbuild.codecoverage.packager \
 		--output-file='$(DIST)/$(PKG_PATH)$(CODE_COVERAGE_ARCHIVE_BASENAME).zip'
+endif
+ifdef ENABLE_MOZSEARCH_PLUGIN
+	@echo 'Generating mozsearch index tarball...'
+	$(RM) $(MOZSEARCH_ARCHIVE_BASENAME).zip
+	cd $(topobjdir)/mozsearch_index && \
+          zip -r5D '$(ABS_DIST)/$(PKG_PATH)$(MOZSEARCH_ARCHIVE_BASENAME).zip' .
+	@echo 'Generating mozsearch rust-analysis tarball...'
+	$(RM) $(MOZSEARCH_RUST_ANALYSIS_BASENAME).zip
+	cd $(topobjdir)/ && \
+          find . -type d -name save-analysis | xargs zip -r5D '$(ABS_DIST)/$(PKG_PATH)$(MOZSEARCH_RUST_ANALYSIS_BASENAME).zip'
 endif
 ifeq (Darwin, $(OS_ARCH))
 ifdef MOZ_ASAN
@@ -115,7 +123,7 @@ make-buildinfo-file:
 	$(PYTHON) $(MOZILLA_DIR)/toolkit/mozapps/installer/informulate.py \
 		$(MOZ_BUILDINFO_FILE) \
 		BUILDID=$(BUILDID) \
-		$(addprefix MOZ_SOURCE_REPO=,MOZ_SOURCE_REPO=$(shell awk '$$2 == "MOZ_SOURCE_REPO" {print $$3}' $(DEPTH)/source-repo.h)) \
+		$(addprefix MOZ_SOURCE_REPO=,$(shell awk '$$2 == "MOZ_SOURCE_REPO" {print $$3}' $(DEPTH)/source-repo.h)) \
 		MOZ_SOURCE_STAMP=$(shell awk '$$2 == "MOZ_SOURCE_STAMP" {print $$3}' $(DEPTH)/source-repo.h) \
 		MOZ_PKG_PLATFORM=$(MOZ_PKG_PLATFORM)
 	echo "buildID=$(BUILDID)" > $(MOZ_BUILDID_INFO_TXT_FILE)
@@ -196,23 +204,23 @@ BASE_PATH:=@RESPATH@
 MULTILOCALE_DIR = $(DIST)/$(RESPATH)/res
 endif
 
-# This version of the target uses MOZ_CHROME_MULTILOCALE to build multilocale.json
+# This version of the target uses MOZ_CHROME_MULTILOCALE to build multilocale.txt
 # and places it in dist/bin/res - it should be used when packaging a build.
-multilocale.json: LOCALES?=$(MOZ_CHROME_MULTILOCALE)
-multilocale.json:
-	$(call py_action,file_generate,$(MOZILLA_DIR)/toolkit/locales/gen_multilocale.py main $(MULTILOCALE_DIR)/multilocale.json $(MDDEPDIR)/multilocale.json.pp $(ALL_LOCALES))
+multilocale.txt: LOCALES?=$(MOZ_CHROME_MULTILOCALE)
+multilocale.txt:
+	$(call py_action,file_generate,$(MOZILLA_DIR)/toolkit/locales/gen_multilocale.py main '$(MULTILOCALE_DIR)/multilocale.txt' $(MDDEPDIR)/multilocale.txt.pp $(ALL_LOCALES))
 
-# This version of the target uses AB_CD to build multilocale.json and places it
+# This version of the target uses AB_CD to build multilocale.txt and places it
 # in the $(XPI_NAME)/res dir - it should be used when repackaging a build.
-multilocale.json-%: LOCALES?=$(AB_CD)
-multilocale.json-%: MULTILOCALE_DIR=$(DIST)/xpi-stage/$(XPI_NAME)/res
-multilocale.json-%:
-	$(call py_action,file_generate,$(MOZILLA_DIR)/toolkit/locales/gen_multilocale.py main $(MULTILOCALE_DIR)/multilocale.json $(MDDEPDIR)/multilocale.json.pp $(ALL_LOCALES))
+multilocale.txt-%: LOCALES?=$(AB_CD)
+multilocale.txt-%: MULTILOCALE_DIR=$(DIST)/xpi-stage/$(XPI_NAME)/res
+multilocale.txt-%:
+	$(call py_action,file_generate,$(MOZILLA_DIR)/toolkit/locales/gen_multilocale.py main '$(MULTILOCALE_DIR)/multilocale.txt' $(MDDEPDIR)/multilocale.txt.pp $(ALL_LOCALES))
 
 locale-manifest.in: LOCALES?=$(MOZ_CHROME_MULTILOCALE)
 locale-manifest.in: $(GLOBAL_DEPS) FORCE
 	printf '\n[multilocale]\n' > $@
-	printf '$(BASE_PATH)/res/multilocale.json\n' >> $@
+	printf '$(BASE_PATH)/res/multilocale.txt\n' >> $@
 	for LOCALE in $(ALL_LOCALES) ;\
 	do \
 	  for ENTRY in $(MOZ_CHROME_LOCALE_ENTRIES) ;\

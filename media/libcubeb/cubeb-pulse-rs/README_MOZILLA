@@ -5,4 +5,4 @@ Makefile.in build files for the Mozilla build system.
 
 The cubeb-pulse-rs git repository is: https://github.com/djg/cubeb-pulse-rs.git
 
-The git commit ID used was 2e22e5359000f11c47346c54b34182bb350fe9d3 (2017-09-26 15:30:09 +1300)
+The git commit ID used was 22cdde3e573303649a77e48a19f7ca2c4d308047 (2018-03-06 10:39:46 +1000)

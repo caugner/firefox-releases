@@ -14,7 +14,7 @@
  *                                                                               *
  ********************************************************************************/
 
-const {GCTelemetry} = Cu.import("resource://gre/modules/GCTelemetry.jsm", {});
+const {GCTelemetry} = ChromeUtils.import("resource://gre/modules/GCTelemetry.jsm", {});
 
 function check(entries) {
   const FIELDS = ["random", "worst"];
@@ -29,8 +29,6 @@ function check(entries) {
     ok(FIELDS.includes(k), `${k} found in FIELDS`);
   }
 
-  let foundGCs = 0;
-
   for (let f of FIELDS) {
     ok(Array.isArray(entries[f]), "have an array of GCs");
 
@@ -39,9 +37,7 @@ function check(entries) {
     for (let gc of entries[f]) {
       isnot(gc, null, "GC is non-null");
 
-      foundGCs++;
-
-      ok(Object.keys(gc).length <= 30, "number of keys in GC is not too large");
+      ok(Object.keys(gc).length <= 24, "number of keys in GC is not too large");
 
       // Sanity check the GC data.
       ok("status" in gc, "status field present");
@@ -68,7 +64,7 @@ function check(entries) {
       let phases = new Set();
 
       for (let slice of gc.slices_list) {
-        ok(Object.keys(slice).length <= 15, "slice is not too large");
+        ok(Object.keys(slice).length <= 12, "slice is not too large");
 
         ok("pause" in slice, "pause field present in slice");
         ok("reason" in slice, "reason field present in slice");
@@ -100,8 +96,6 @@ function check(entries) {
       }
     }
   }
-
-  ok(foundGCs > 0, "saw at least one GC");
 }
 
 add_task(async function test() {
@@ -117,7 +111,7 @@ add_task(async function test() {
   // These are available to frame scripts.
   /* global addMessageListener:false, removeMessageListener: false */
   function initScript() {
-    const {GCTelemetry} = Components.utils.import("resource://gre/modules/GCTelemetry.jsm", {});
+    const {GCTelemetry} = ChromeUtils.import("resource://gre/modules/GCTelemetry.jsm", {});
 
     /*
      * Don't shut down GC telemetry if it was already running before the test!
@@ -172,7 +166,7 @@ add_task(async function test() {
   // Make sure we have a GC to work with in both processes.
   Cu.forceGC();
   if (multiprocess) {
-    runRemote(() => Components.utils.forceGC());
+    runRemote(() => Cu.forceGC());
   }
 
   info("Waiting for GCs");

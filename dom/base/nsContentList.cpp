@@ -7,7 +7,7 @@
 /*
  * nsBaseContentList is a basic list of content nodes; nsContentList
  * is a commonly used NodeList implementation (used for
- * getElementsByTagName, some properties on nsIDOMHTMLDocument, etc).
+ * getElementsByTagName, some properties on HTMLDocument/Document, etc).
  */
 
 #include "nsContentList.h"
@@ -26,9 +26,6 @@
 #include "jsfriendapi.h"
 #include <algorithm>
 #include "mozilla/dom/NodeInfoInlines.h"
-
-// Form related includes
-#include "nsIDOMHTMLFormElement.h"
 
 #include "PLDHashTable.h"
 
@@ -77,10 +74,6 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsBaseContentList)
   return nsCCUncollectableMarker::sGeneration && tmp->HasKnownLiveWrapper();
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
-
-#define NS_CONTENT_LIST_INTERFACES(_class)                                    \
-    NS_INTERFACE_TABLE_ENTRY(_class, nsINodeList)                             \
-    NS_INTERFACE_TABLE_ENTRY(_class, nsIDOMNodeList)
 
 // QueryInterface implementation for nsBaseContentList
 NS_INTERFACE_TABLE_HEAD(nsBaseContentList)
@@ -177,13 +170,6 @@ nsEmptyContentList::GetLength(uint32_t* aLength)
 
 NS_IMETHODIMP
 nsEmptyContentList::Item(uint32_t aIndex, nsIDOMNode** aReturn)
-{
-  *aReturn = nullptr;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsEmptyContentList::NamedItem(const nsAString& aName, nsIDOMNode** aReturn)
 {
   *aReturn = nullptr;
   return NS_OK;
@@ -517,8 +503,7 @@ nsContentList::WrapObject(JSContext *cx, JS::Handle<JSObject*> aGivenProto)
 }
 
 NS_IMPL_ISUPPORTS_INHERITED(nsContentList, nsBaseContentList,
-                            nsIHTMLCollection, nsIDOMHTMLCollection,
-                            nsIMutationObserver)
+                            nsIHTMLCollection, nsIMutationObserver)
 
 uint32_t
 nsContentList::Length(bool aDoFlush)
@@ -570,10 +555,10 @@ nsContentList::NamedItem(const nsAString& aName, bool aDoFlush)
     // XXX Should this pass eIgnoreCase?
     if (content &&
         ((content->IsHTMLElement() &&
-          content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name,
-                               name, eCaseMatters)) ||
-         content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::id,
-                              name, eCaseMatters))) {
+          content->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name,
+                                            name, eCaseMatters)) ||
+         content->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::id,
+                                           name, eCaseMatters))) {
       return content->AsElement();
     }
   }
@@ -683,20 +668,6 @@ nsContentList::Item(uint32_t aIndex, nsIDOMNode** aReturn)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsContentList::NamedItem(const nsAString& aName, nsIDOMNode** aReturn)
-{
-  nsIContent *content = NamedItem(aName, true);
-
-  if (content) {
-    return CallQueryInterface(content, aReturn);
-  }
-
-  *aReturn = nullptr;
-
-  return NS_OK;
-}
-
 Element*
 nsContentList::GetElementAt(uint32_t aIndex)
 {
@@ -710,8 +681,9 @@ nsContentList::Item(uint32_t aIndex)
 }
 
 void
-nsContentList::AttributeChanged(nsIDocument *aDocument, Element* aElement,
-                                int32_t aNameSpaceID, nsAtom* aAttribute,
+nsContentList::AttributeChanged(Element* aElement,
+                                int32_t aNameSpaceID,
+                                nsAtom* aAttribute,
                                 int32_t aModType,
                                 const nsAttrValue* aOldValue)
 {
@@ -742,24 +714,24 @@ nsContentList::AttributeChanged(nsIDocument *aDocument, Element* aElement,
 }
 
 void
-nsContentList::ContentAppended(nsIDocument* aDocument, nsIContent* aContainer,
-                               nsIContent* aFirstNewContent)
+nsContentList::ContentAppended(nsIContent* aFirstNewContent)
 {
-  NS_PRECONDITION(aContainer, "Can't get at the new content if no container!");
+  nsIContent* container = aFirstNewContent->GetParent();
+  NS_PRECONDITION(container, "Can't get at the new content if no container!");
 
   /*
    * If the state is LIST_DIRTY then we have no useful information in our list
    * and we want to put off doing work as much as possible.
    *
-   * Also, if aContainer is anonymous from our point of view, we know that we
+   * Also, if container is anonymous from our point of view, we know that we
    * can't possibly be matching any of the kids.
    *
    * Optimize out also the common case when just one new node is appended and
    * it doesn't match us.
    */
   if (mState == LIST_DIRTY ||
-      !nsContentUtils::IsInSameAnonymousTree(mRootNode, aContainer) ||
-      !MayContainRelevantNodes(aContainer) ||
+      !nsContentUtils::IsInSameAnonymousTree(mRootNode, container) ||
+      !MayContainRelevantNodes(container) ||
       (!aFirstNewContent->HasChildren() &&
        !aFirstNewContent->GetNextSibling() &&
        !MatchSelf(aFirstNewContent))) {
@@ -775,7 +747,7 @@ nsContentList::ContentAppended(nsIDocument* aDocument, nsIContent* aContainer,
    * already have.
    */
 
-  int32_t count = aContainer->GetChildCount();
+  int32_t count = container->GetChildCount();
 
   if (count > 0) {
     uint32_t ourCount = mElements.Length();
@@ -826,7 +798,7 @@ nsContentList::ContentAppended(nsIDocument* aDocument, nsIContent* aContainer,
     if (mDeep) {
       for (nsIContent* cur = aFirstNewContent;
            cur;
-           cur = cur->GetNextNode(aContainer)) {
+           cur = cur->GetNextNode(container)) {
         if (cur->IsElement() && Match(cur->AsElement())) {
           mElements.AppendElement(cur);
         }
@@ -844,15 +816,13 @@ nsContentList::ContentAppended(nsIDocument* aDocument, nsIContent* aContainer,
 }
 
 void
-nsContentList::ContentInserted(nsIDocument *aDocument,
-                               nsIContent* aContainer,
-                               nsIContent* aChild)
+nsContentList::ContentInserted(nsIContent* aChild)
 {
-  // Note that aContainer can be null here if we are inserting into
-  // the document itself; any attempted optimizations to this method
-  // should deal with that.
+  // Note that aChild->GetParentNode() can be null here if we are inserting into
+  // the document itself; any attempted optimizations to this method should deal
+  // with that.
   if (mState != LIST_DIRTY &&
-      MayContainRelevantNodes(NODE_FROM(aContainer, aDocument)) &&
+      MayContainRelevantNodes(aChild->GetParentNode()) &&
       nsContentUtils::IsInSameAnonymousTree(mRootNode, aChild) &&
       MatchSelf(aChild)) {
     SetDirty();
@@ -862,16 +832,11 @@ nsContentList::ContentInserted(nsIDocument *aDocument,
 }
 
 void
-nsContentList::ContentRemoved(nsIDocument *aDocument,
-                              nsIContent* aContainer,
-                              nsIContent* aChild,
+nsContentList::ContentRemoved(nsIContent* aChild,
                               nsIContent* aPreviousSibling)
 {
-  // Note that aContainer can be null here if we are removing from
-  // the document itself; any attempted optimizations to this method
-  // should deal with that.
   if (mState != LIST_DIRTY &&
-      MayContainRelevantNodes(NODE_FROM(aContainer, aDocument)) &&
+      MayContainRelevantNodes(aChild->GetParentNode()) &&
       nsContentUtils::IsInSameAnonymousTree(mRootNode, aChild) &&
       MatchSelf(aChild)) {
     SetDirty();
@@ -1139,8 +1104,7 @@ nsCachableElementsByNameNodeList::WrapObject(JSContext *cx, JS::Handle<JSObject*
 }
 
 void
-nsCachableElementsByNameNodeList::AttributeChanged(nsIDocument* aDocument,
-                                                   Element* aElement,
+nsCachableElementsByNameNodeList::AttributeChanged(Element* aElement,
                                                    int32_t aNameSpaceID,
                                                    nsAtom* aAttribute,
                                                    int32_t aModType,
@@ -1152,7 +1116,7 @@ nsCachableElementsByNameNodeList::AttributeChanged(nsIDocument* aDocument,
     return;
   }
 
-  nsCacheableFuncStringContentList::AttributeChanged(aDocument, aElement,
+  nsCacheableFuncStringContentList::AttributeChanged(aElement,
                                                      aNameSpaceID, aAttribute,
                                                      aModType, aOldValue);
 }
@@ -1176,7 +1140,7 @@ nsLabelsNodeList::WrapObject(JSContext *cx, JS::Handle<JSObject*> aGivenProto)
 }
 
 void
-nsLabelsNodeList::AttributeChanged(nsIDocument* aDocument, Element* aElement,
+nsLabelsNodeList::AttributeChanged(Element* aElement,
                                    int32_t aNameSpaceID, nsAtom* aAttribute,
                                    int32_t aModType,
                                    const nsAttrValue* aOldValue)
@@ -1196,24 +1160,21 @@ nsLabelsNodeList::AttributeChanged(nsIDocument* aDocument, Element* aElement,
 }
 
 void
-nsLabelsNodeList::ContentAppended(nsIDocument* aDocument,
-                                  nsIContent* aContainer,
-                                  nsIContent* aFirstNewContent)
+nsLabelsNodeList::ContentAppended(nsIContent* aFirstNewContent)
 {
+  nsIContent* container = aFirstNewContent->GetParent();
   // If a labelable element is moved to outside or inside of
   // nested associated labels, we're gonna have to modify
   // the content list.
   if (mState != LIST_DIRTY ||
-      nsContentUtils::IsInSameAnonymousTree(mRootNode, aContainer)) {
+      nsContentUtils::IsInSameAnonymousTree(mRootNode, container)) {
     SetDirty();
     return;
   }
 }
 
 void
-nsLabelsNodeList::ContentInserted(nsIDocument* aDocument,
-                                  nsIContent* aContainer,
-                                  nsIContent* aChild)
+nsLabelsNodeList::ContentInserted(nsIContent* aChild)
 {
   // If a labelable element is moved to outside or inside of
   // nested associated labels, we're gonna have to modify
@@ -1226,9 +1187,7 @@ nsLabelsNodeList::ContentInserted(nsIDocument* aDocument,
 }
 
 void
-nsLabelsNodeList::ContentRemoved(nsIDocument* aDocument,
-                                 nsIContent* aContainer,
-                                 nsIContent* aChild,
+nsLabelsNodeList::ContentRemoved(nsIContent* aChild,
                                  nsIContent* aPreviousSibling)
 {
   // If a labelable element is removed, we're gonna have to clean

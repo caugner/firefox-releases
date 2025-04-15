@@ -3,9 +3,9 @@
 
 "use strict";
 
-Cu.import("resource://gre/modules/Promise.jsm");
-Cu.import("resource:///modules/experiments/Experiments.jsm");
-Cu.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://gre/modules/Promise.jsm");
+ChromeUtils.import("resource:///modules/experiments/Experiments.jsm");
+ChromeUtils.import("resource://testing-common/httpd.js");
 
 var gDataRoot;
 var gHttpServer;
@@ -26,7 +26,7 @@ add_task(function test_setup() {
     res.processAsync();
     res.finish();
   });
-  do_register_cleanup(() => gHttpServer.stop(() => {}));
+  registerCleanupFunction(() => gHttpServer.stop(() => {}));
 
   Services.prefs.setBoolPref("experiments.enabled", true);
   Services.prefs.setCharPref("experiments.manifest.uri",

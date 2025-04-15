@@ -5,7 +5,8 @@
 // Tests the dialog used for loading PKCS #11 modules.
 
 const { MockRegistrar } =
-  Cu.import("resource://testing-common/MockRegistrar.jsm", {});
+  ChromeUtils.import("resource://testing-common/MockRegistrar.jsm", {});
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm", {});
 
 const gMockPKCS11ModuleDB = {
   addModuleCallCount: 0,
@@ -95,9 +96,7 @@ var gMockPromptServiceCID =
 var gMockFilePicker = SpecialPowers.MockFilePicker;
 gMockFilePicker.init(window);
 
-var gTempFile = Cc["@mozilla.org/file/directory_service;1"]
-                  .getService(Ci.nsIProperties)
-                  .get("TmpD", Ci.nsIFile);
+var gTempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
 gTempFile.append("browser_loadPKCS11Module_ui-fakeModule");
 
 registerCleanupFunction(() => {
@@ -122,7 +121,7 @@ function openLoadModuleDialog() {
   let win = window.openDialog("chrome://pippki/content/load_device.xul", "", "");
   return new Promise(resolve => {
     win.addEventListener("load", function() {
-      resolve(win);
+      executeSoon(() => resolve(win));
     }, {once: true});
   });
 }

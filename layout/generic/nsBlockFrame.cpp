@@ -23,6 +23,7 @@
 #include "BlockReflowInput.h"
 #include "nsBulletFrame.h"
 #include "nsFontMetrics.h"
+#include "nsGenericHTMLElement.h"
 #include "nsLineBox.h"
 #include "nsLineLayout.h"
 #include "nsPlaceholderFrame.h"
@@ -42,9 +43,6 @@
 #include "nsError.h"
 #include "nsIScrollableFrame.h"
 #include <algorithm>
-#ifdef ACCESSIBILITY
-#include "nsIDOMHTMLDocument.h"
-#endif
 #include "nsLayoutUtils.h"
 #include "nsDisplayList.h"
 #include "nsCSSAnonBoxes.h"
@@ -55,6 +53,7 @@
 #include "nsISelection.h"
 #include "mozilla/dom/HTMLDetailsElement.h"
 #include "mozilla/dom/HTMLSummaryElement.h"
+#include "mozilla/RestyleManagerInlines.h"
 #include "mozilla/ServoRestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/StyleSetHandle.h"
@@ -452,16 +451,6 @@ nsBlockFrame::GetFrameName(nsAString& aResult) const
 }
 #endif
 
-#ifdef DEBUG
-nsFrameState
-nsBlockFrame::GetDebugStateBits() const
-{
-  // We don't want to include our cursor flag in the bits the
-  // regression tester looks at
-  return nsContainerFrame::GetDebugStateBits() & ~NS_BLOCK_HAS_LINE_CURSOR;
-}
-#endif
-
 void
 nsBlockFrame::InvalidateFrame(uint32_t aDisplayItemKey)
 {
@@ -759,7 +748,7 @@ nsBlockFrame::GetMinISize(gfxContext *aRenderingContext)
           // behavior for calc(10%-3px).
           const nsStyleCoord &indent = StyleText()->mTextIndent;
           if (indent.ConvertsToLength())
-            data.mCurrentLine += nsRuleNode::ComputeCoordPercentCalc(indent, 0);
+            data.mCurrentLine += indent.ComputeCoordPercentCalc(0);
         }
         // XXX Bug NNNNNN Should probably handle percentage text-indent.
 
@@ -932,7 +921,7 @@ nsBlockFrame::GetPrefWidthTightBounds(gfxContext* aRenderingContext,
           // behavior for calc(10%-3px).
           const nsStyleCoord &indent = StyleText()->mTextIndent;
           if (indent.ConvertsToLength()) {
-            data.mCurrentLine += nsRuleNode::ComputeCoordPercentCalc(indent, 0);
+            data.mCurrentLine += indent.ComputeCoordPercentCalc(0);
           }
         }
         // XXX Bug NNNNNN Should probably handle percentage text-indent.
@@ -3073,8 +3062,8 @@ IsNonAutoNonZeroBSize(const nsStyleCoord& aCoord)
     // both nscoord_MAX and 0, and it's zero both ways, then it's a zero
     // length, percent, or combination thereof.  Test > 0 so we clamp
     // negative calc() results to 0.
-    return nsRuleNode::ComputeCoordPercentCalc(aCoord, nscoord_MAX) > 0 ||
-           nsRuleNode::ComputeCoordPercentCalc(aCoord, 0) > 0;
+    return aCoord.ComputeCoordPercentCalc(nscoord_MAX) > 0 ||
+           aCoord.ComputeCoordPercentCalc(0) > 0;
   }
   MOZ_ASSERT(false, "unexpected unit for height or min-height");
   return true;
@@ -4147,11 +4136,7 @@ nsBlockFrame::ReflowInlineFrame(BlockReflowInput& aState,
                                 nsIFrame* aFrame,
                                 LineReflowStatus* aLineReflowStatus)
 {
-  if (!aFrame) { // XXX change to MOZ_ASSERT(aFrame)
-    NS_ERROR("why call me?");
-    return;
-  }
-
+  MOZ_ASSERT(aFrame);
   *aLineReflowStatus = LineReflowStatus::OK;
 
 #ifdef NOISY_FIRST_LETTER
@@ -4169,7 +4154,7 @@ nsBlockFrame::ReflowInlineFrame(BlockReflowInput& aState,
 
   // Reflow the inline frame
   nsReflowStatus frameReflowStatus;
-  bool           pushedFrame;
+  bool pushedFrame;
   aLineLayout.ReflowFrame(aFrame, frameReflowStatus, nullptr, pushedFrame);
 
   if (frameReflowStatus.NextInFlowNeedsReflow()) {
@@ -6397,8 +6382,7 @@ nsBlockFrame::ReflowFloat(BlockReflowInput& aState,
                                                NS_FRAME_NO_MOVE_VIEW);
   }
   // Pass floatRS so the frame hierarchy can be used (redoFloatRS has the same hierarchy)
-  aFloat->DidReflow(aState.mPresContext, &floatRS,
-                    nsDidReflowStatus::FINISHED);
+  aFloat->DidReflow(aState.mPresContext, &floatRS);
 
 #ifdef NOISY_FLOAT
   printf("end ReflowFloat %p, sized to %d,%d\n",
@@ -6833,16 +6817,10 @@ nsBlockFrame::AccessibleType()
       return a11y::eNoType;
     }
 
-    nsCOMPtr<nsIDOMHTMLDocument> htmlDoc =
-      do_QueryInterface(mContent->GetComposedDoc());
-    if (htmlDoc) {
-      nsCOMPtr<nsIDOMHTMLElement> body;
-      htmlDoc->GetBody(getter_AddRefs(body));
-      if (SameCOMIdentity(body, mContent)) {
-        // Don't create accessible objects for the body, they are redundant with
-        // the nsDocAccessible object created with the document node
-        return a11y::eNoType;
-      }
+    if (mContent == mContent->OwnerDoc()->GetBody()) {
+      // Don't create accessible objects for the body, they are redundant with
+      // the nsDocAccessible object created with the document node
+      return a11y::eNoType;
     }
 
     // Not a bullet, treat as normal HTML container
@@ -7248,8 +7226,7 @@ nsBlockFrame::ReflowBullet(nsIFrame* aBulletFrame,
                                         aMetrics.ISize(wm),
                                         aMetrics.BSize(wm)),
                         aState.ContainerSize());
-  aBulletFrame->DidReflow(aState.mPresContext, &aState.mReflowInput,
-                          nsDidReflowStatus::FINISHED);
+  aBulletFrame->DidReflow(aState.mPresContext, &aState.mReflowInput);
 }
 
 // This is used to scan frames for any float placeholders, add their

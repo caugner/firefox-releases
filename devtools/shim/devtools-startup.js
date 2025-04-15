@@ -21,7 +21,6 @@
 
 "use strict";
 
-const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 const kDebuggerPrefs = [
   "devtools.debugger.remote-enabled",
   "devtools.chrome.enabled"
@@ -33,15 +32,17 @@ const TOOLBAR_VISIBLE_PREF = "devtools.toolbar.visible";
 
 const DEVTOOLS_ENABLED_PREF = "devtools.enabled";
 
-const { XPCOMUtils } = Cu.import("resource://gre/modules/XPCOMUtils.jsm", {});
-XPCOMUtils.defineLazyModuleGetter(this, "Services",
-                                  "resource://gre/modules/Services.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
-                                  "resource://gre/modules/AppConstants.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "CustomizableUI",
-                                  "resource:///modules/CustomizableUI.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "CustomizableWidgets",
-                                  "resource:///modules/CustomizableWidgets.jsm");
+const DEVTOOLS_POLICY_DISABLED_PREF = "devtools.policy.disabled";
+
+const { XPCOMUtils } = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm", {});
+ChromeUtils.defineModuleGetter(this, "Services",
+                               "resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "AppConstants",
+                               "resource://gre/modules/AppConstants.jsm");
+ChromeUtils.defineModuleGetter(this, "CustomizableUI",
+                               "resource:///modules/CustomizableUI.jsm");
+ChromeUtils.defineModuleGetter(this, "CustomizableWidgets",
+                               "resource:///modules/CustomizableWidgets.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "StartupBundle", function () {
   const url = "chrome://devtools-shim/locale/startup.properties";
@@ -193,46 +194,68 @@ DevToolsStartup.prototype = {
    */
   developerToggleCreated: false,
 
+  isDisabledByPolicy: function () {
+    return Services.prefs.getBoolPref(DEVTOOLS_POLICY_DISABLED_PREF, false);
+  },
+
   handle: function (cmdLine) {
-    let consoleFlag = cmdLine.handleFlag("jsconsole", false);
-    let debuggerFlag = cmdLine.handleFlag("jsdebugger", false);
-    let devtoolsFlag = cmdLine.handleFlag("devtools", false);
+    let flags = this.readCommandLineFlags(cmdLine);
 
     // handle() can be called after browser startup (e.g. opening links from other apps).
     let isInitialLaunch = cmdLine.state == Ci.nsICommandLine.STATE_INITIAL_LAUNCH;
     if (isInitialLaunch) {
       // Execute only on first launch of this browser instance.
-      let hasDevToolsFlag = consoleFlag || devtoolsFlag || debuggerFlag;
+      let hasDevToolsFlag = flags.console || flags.devtools || flags.debugger;
       this.setupEnabledPref(hasDevToolsFlag);
 
       // Store devtoolsFlag to check it later in onWindowReady.
-      this.devtoolsFlag = devtoolsFlag;
+      this.devtoolsFlag = flags.devtools;
       // Only top level Firefox Windows fire a browser-delayed-startup-finished event
       Services.obs.addObserver(this.onWindowReady, "browser-delayed-startup-finished");
+
+      if (AppConstants.MOZ_DEV_EDITION && !this.isDisabledByPolicy()) {
+        // On DevEdition, the developer toggle is displayed by default in the navbar area
+        // and should be created before the first paint.
+        this.hookDeveloperToggle();
+      }
 
       // Update menu items when devtools.enabled changes.
       Services.prefs.addObserver(DEVTOOLS_ENABLED_PREF, this.onEnabledPrefChanged);
     }
 
-    if (consoleFlag) {
+    if (flags.console) {
       this.handleConsoleFlag(cmdLine);
     }
-    if (debuggerFlag) {
+    if (flags.debugger) {
       this.handleDebuggerFlag(cmdLine);
     }
 
-    let debuggerServerFlag;
+    if (flags.debuggerServer) {
+      this.handleDebuggerServerFlag(cmdLine, flags.debuggerServer);
+    }
+  },
+
+  readCommandLineFlags(cmdLine) {
+    // All command line flags are disabled if DevTools are disabled by policy.
+    if (this.isDisabledByPolicy()) {
+      return { console: false, debugger: false, devtools: false, debuggerServer: false };
+    }
+
+    let console = cmdLine.handleFlag("jsconsole", false);
+    let debuggerFlag = cmdLine.handleFlag("jsdebugger", false);
+    let devtools = cmdLine.handleFlag("devtools", false);
+
+    let debuggerServer;
     try {
-      debuggerServerFlag =
+      debuggerServer =
         cmdLine.handleFlagWithParam("start-debugger-server", false);
     } catch (e) {
       // We get an error if the option is given but not followed by a value.
       // By catching and trying again, the value is effectively optional.
-      debuggerServerFlag = cmdLine.handleFlag("start-debugger-server", false);
+      debuggerServer = cmdLine.handleFlag("start-debugger-server", false);
     }
-    if (debuggerServerFlag) {
-      this.handleDebuggerServerFlag(cmdLine, debuggerServerFlag);
-    }
+
+    return { console, debugger: debuggerFlag, devtools, debuggerServer };
   },
 
   /**
@@ -240,6 +263,11 @@ DevToolsStartup.prototype = {
    * top-level window.
    */
   onWindowReady(window) {
+    if (this.isDisabledByPolicy()) {
+      this.removeDevToolsMenus(window);
+      return;
+    }
+
     this.hookWindow(window);
 
     if (Services.prefs.getBoolPref(TOOLBAR_VISIBLE_PREF, false)) {
@@ -256,6 +284,14 @@ DevToolsStartup.prototype = {
     }
 
     JsonView.initialize();
+  },
+
+  removeDevToolsMenus(window) {
+    // This will hide the "Tools > Web Developer" menu.
+    window.document.getElementById("webDeveloperMenu").setAttribute("hidden", "true");
+    // This will hide the "Web Developer" item in the hamburger menu.
+    window.document.getElementById("appMenu-developer-button").setAttribute("hidden",
+      "true");
   },
 
   onFirstWindowReady(window) {
@@ -297,10 +333,7 @@ DevToolsStartup.prototype = {
     // In some situations (e.g. starting Firefox with --jsconsole) DevTools will be
     // initialized before the first browser-delayed-startup-finished event is received.
     // We use a dedicated flag because we still need to hook the developer toggle.
-    if (!this.developerToggleCreated) {
-      this.hookDeveloperToggle();
-      this.developerToggleCreated = true;
-    }
+    this.hookDeveloperToggle();
 
     // The developer menu hook only needs to be added if devtools have not been
     // initialized yet.
@@ -329,6 +362,10 @@ DevToolsStartup.prototype = {
    * initDevTools, from onViewShowing is also calling browser-menu.
    */
   hookDeveloperToggle() {
+    if (this.developerToggleCreated) {
+      return;
+    }
+
     let id = "developer-button";
     let widget = CustomizableUI.getWidget(id);
     if (widget && widget.provider == CustomizableUI.PROVIDER_API) {
@@ -340,9 +377,6 @@ DevToolsStartup.prototype = {
       viewId: "PanelUI-developer",
       shortcutId: "key_toggleToolbox",
       tooltiptext: "developer-button.tooltiptext2",
-      defaultArea: AppConstants.MOZ_DEV_EDITION ?
-                     CustomizableUI.AREA_NAVBAR :
-                     CustomizableUI.AREA_PANEL,
       onViewShowing: (event) => {
         if (Services.prefs.getBoolPref(DEVTOOLS_ENABLED_PREF)) {
           // If DevTools are enabled, initialize DevTools to create all menuitems in the
@@ -363,18 +397,20 @@ DevToolsStartup.prototype = {
         itemsToDisplay.push(doc.getElementById("goOfflineMenuitem"));
 
         let developerItems = doc.getElementById("PanelUI-developerItems");
-        // Import private helpers from CustomizableWidgets
-        let { clearSubview, fillSubviewFromMenuItems } =
-          Cu.import("resource:///modules/CustomizableWidgets.jsm", {});
-        clearSubview(developerItems);
-        fillSubviewFromMenuItems(itemsToDisplay, developerItems);
+        CustomizableUI.clearSubview(developerItems);
+        CustomizableUI.fillSubviewFromMenuItems(itemsToDisplay, developerItems);
       },
       onInit(anchor) {
         // Since onBeforeCreated already bails out when initialized, we can call
         // it right away.
         this.onBeforeCreated(anchor.ownerDocument);
       },
-      onBeforeCreated(doc) {
+      onBeforeCreated: (doc) => {
+        // The developer toggle needs the "key_toggleToolbox" <key> element.
+        // In DEV EDITION, the toggle is added before 1st paint and hookKeyShortcuts() is
+        // not called yet when CustomizableUI creates the widget.
+        this.hookKeyShortcuts(doc.defaultView);
+
         // Bug 1223127, CUI should make this easier to do.
         if (doc.getElementById("PanelUI-developerItems")) {
           return;
@@ -389,6 +425,8 @@ DevToolsStartup.prototype = {
     };
     CustomizableUI.createWidget(item);
     CustomizableWidgets.push(item);
+
+    this.developerToggleCreated = true;
   },
 
   /*
@@ -508,6 +546,13 @@ DevToolsStartup.prototype = {
 
   hookKeyShortcuts(window) {
     let doc = window.document;
+
+    // hookKeyShortcuts can be called both from hookWindow and from the developer toggle
+    // onBeforeCreated. Make sure shortcuts are only added once per window.
+    if (doc.getElementById("devtoolsKeyset")) {
+      return;
+    }
+
     let keyset = doc.createElement("keyset");
     keyset.setAttribute("id", "devtoolsKeyset");
 
@@ -581,7 +626,7 @@ DevToolsStartup.prototype = {
     }
 
     this.initialized = true;
-    let { require } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+    let { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
     // Ensure loading main devtools module that hooks up into browser UI
     // and initialize all devtools machinery.
     require("devtools/client/framework/devtools-browser");
@@ -599,6 +644,12 @@ DevToolsStartup.prototype = {
    *        the shortcut key id (or toolId) to about:devtools.
    */
   openInstallPage: function (reason, keyId) {
+    // If DevTools are completely disabled, bail out here as this might be called directly
+    // from other files.
+    if (this.isDisabledByPolicy()) {
+      return;
+    }
+
     let { gBrowser } = Services.wm.getMostRecentWindow("navigator:browser");
 
     // Focus about:devtools tab if there is already one opened in the current window.
@@ -643,7 +694,6 @@ DevToolsStartup.prototype = {
     if (!window) {
       let require = this.initDevTools("CommandLine");
       let { HUDService } = require("devtools/client/webconsole/hudservice");
-      let { console } = Cu.import("resource://gre/modules/Console.jsm", {});
       HUDService.toggleBrowserConsole().catch(console.error);
     } else {
       // the Browser Console was already open
@@ -671,14 +721,12 @@ DevToolsStartup.prototype = {
         return Services.prefs.getBoolPref(pref);
       });
     } catch (ex) {
-      let { console } = Cu.import("resource://gre/modules/Console.jsm", {});
       console.error(ex);
       return false;
     }
     if (!remoteDebuggingEnabled) {
       let errorMsg = "Could not run chrome debugger! You need the following " +
                      "prefs to be set to true: " + kDebuggerPrefs.join(", ");
-      let { console } = Cu.import("resource://gre/modules/Console.jsm", {});
       console.error(new Error(errorMsg));
       // Dump as well, as we're doing this from a commandline, make sure people
       // don't miss it:
@@ -702,7 +750,7 @@ DevToolsStartup.prototype = {
       Services.obs.addObserver(observe, "devtools-thread-resumed");
     }
 
-    const { BrowserToolboxProcess } = Cu.import("resource://devtools/client/framework/ToolboxProcess.jsm", {});
+    const { BrowserToolboxProcess } = ChromeUtils.import("resource://devtools/client/framework/ToolboxProcess.jsm", {});
     BrowserToolboxProcess.init();
 
     if (pauseOnStartup) {
@@ -755,7 +803,7 @@ DevToolsStartup.prototype = {
     }
 
     let { DevToolsLoader } =
-      Cu.import("resource://devtools/shared/Loader.jsm", {});
+      ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 
     try {
       // Create a separate loader instance, so that we can be sure to receive
@@ -769,7 +817,7 @@ DevToolsStartup.prototype = {
       let { DebuggerServer: debuggerServer } =
         serverLoader.require("devtools/server/main");
       debuggerServer.init();
-      debuggerServer.addBrowserActors();
+      debuggerServer.registerAllActors();
       debuggerServer.allowChromeProcess = true;
 
       let listener = debuggerServer.createListener();

@@ -1,33 +1,32 @@
+/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set sts=2 sw=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["ExtensionTestUtils"];
+var EXPORTED_SYMBOLS = ["ExtensionTestUtils"];
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-Components.utils.import("resource://gre/modules/ExtensionUtils.jsm");
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
-                                  "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "AddonTestUtils",
-                                  "resource://testing-common/AddonTestUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Extension",
-                                  "resource://gre/modules/Extension.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
-                                  "resource://gre/modules/FileUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Schemas",
-                                  "resource://gre/modules/Schemas.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Services",
-                                  "resource://gre/modules/Services.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "TestUtils",
-                                  "resource://testing-common/TestUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManager",
+                               "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonTestUtils",
+                               "resource://testing-common/AddonTestUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "Extension",
+                               "resource://gre/modules/Extension.jsm");
+ChromeUtils.defineModuleGetter(this, "FileUtils",
+                               "resource://gre/modules/FileUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "Schemas",
+                               "resource://gre/modules/Schemas.jsm");
+ChromeUtils.defineModuleGetter(this, "Services",
+                               "resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "TestUtils",
+                               "resource://testing-common/TestUtils.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "Management", () => {
-  const {Management} = Cu.import("resource://gre/modules/Extension.jsm", {});
+  const {Management} = ChromeUtils.import("resource://gre/modules/Extension.jsm", {});
   return Management;
 });
 
@@ -56,11 +55,11 @@ let BASE_MANIFEST = Object.freeze({
 
 
 function frameScript() {
-  Components.utils.import("resource://gre/modules/Services.jsm");
+  ChromeUtils.import("resource://gre/modules/Services.jsm");
 
   Services.obs.notifyObservers(this, "tab-content-frameloader-created");
 
-  // eslint-disable-next-line mozilla/balanced-listeners
+  // eslint-disable-next-line mozilla/balanced-listeners, no-undef
   addEventListener("MozHeapMinimize", () => {
     Services.obs.notifyObservers(null, "memory-pressure", "heap-minimize");
   }, true, true);
@@ -188,7 +187,7 @@ class ExtensionWrapper {
     this.messageQueue = new Set();
 
 
-    this.testScope.do_register_cleanup(() => {
+    this.testScope.registerCleanupFunction(() => {
       this.clearMessageQueues();
 
       if (this.state == "pending" || this.state == "running") {
@@ -233,7 +232,7 @@ class ExtensionWrapper {
     extension.on("test-done", this.handleResult);
     extension.on("test-message", this.handleMessage);
 
-    this.testScope.do_print(`Extension attached`);
+    this.testScope.info(`Extension attached`);
   }
 
   clearMessageQueues() {
@@ -259,7 +258,7 @@ class ExtensionWrapper {
         break;
 
       case "test-log":
-        this.testScope.do_print(msg);
+        this.testScope.info(msg);
         break;
 
       case "test-result":
@@ -586,7 +585,8 @@ class AOMExtensionWrapper extends ExtensionWrapper {
 var ExtensionTestUtils = {
   BASE_MANIFEST,
 
-  async normalizeManifest(manifest, baseManifest = BASE_MANIFEST) {
+  async normalizeManifest(manifest, manifestType = "manifest.WebExtensionManifest",
+                          baseManifest = BASE_MANIFEST) {
     await Management.lazyInit();
 
     let errors = [];
@@ -602,7 +602,7 @@ var ExtensionTestUtils = {
 
     manifest = Object.assign({}, baseManifest, manifest);
 
-    let normalized = Schemas.normalize(manifest, "manifest.WebExtensionManifest", context);
+    let normalized = Schemas.normalize(manifest, manifestType, context);
     normalized.errors = errors;
 
     return normalized;
@@ -644,7 +644,7 @@ var ExtensionTestUtils = {
     Services.dirsvc.registerProvider(dirProvider);
 
 
-    scope.do_register_cleanup(() => {
+    scope.registerCleanupFunction(() => {
       tmpD.remove(true);
       Services.dirsvc.unregisterProvider(dirProvider);
 
@@ -655,7 +655,7 @@ var ExtensionTestUtils = {
   addonManagerStarted: false,
 
   mockAppInfo() {
-    const {updateAppInfo} = Cu.import("resource://testing-common/AppInfo.jsm", {});
+    const {updateAppInfo} = ChromeUtils.import("resource://testing-common/AppInfo.jsm", {});
     updateAppInfo({
       ID: "xpcshell@tests.mozilla.org",
       name: "XPCShell",

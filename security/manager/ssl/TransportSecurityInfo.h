@@ -18,7 +18,6 @@
 #include "nsIInterfaceRequestor.h"
 #include "nsISSLStatusProvider.h"
 #include "nsITransportSecurityInfo.h"
-#include "nsNSSShutDown.h"
 #include "nsSSLStatus.h"
 #include "nsString.h"
 #include "pkix/pkixtypes.h"
@@ -30,17 +29,15 @@ enum class SSLErrorMessageType {
   Plain = 2,           // all other errors (or "no error")
 };
 
-class TransportSecurityInfo : public nsITransportSecurityInfo,
-                              public nsIInterfaceRequestor,
-                              public nsISSLStatusProvider,
-                              public nsIAssociatedContentSecurity,
-                              public nsISerializable,
-                              public nsIClassInfo,
-                              public nsNSSShutDownObject,
-                              public nsOnPK11LogoutCancelObject
+class TransportSecurityInfo : public nsITransportSecurityInfo
+                            , public nsIInterfaceRequestor
+                            , public nsISSLStatusProvider
+                            , public nsIAssociatedContentSecurity
+                            , public nsISerializable
+                            , public nsIClassInfo
 {
 protected:
-  virtual ~TransportSecurityInfo();
+  virtual ~TransportSecurityInfo() {}
 public:
   TransportSecurityInfo();
 
@@ -109,9 +106,6 @@ private:
 
   /* Peer cert chain for failed connections (for error reporting) */
   nsCOMPtr<nsIX509CertList> mFailedCertChain;
-
-  virtual void virtualDestroyNSSReference() override;
-  void destructorSafeDestroyNSSReference();
 };
 
 class RememberCertErrorsTable

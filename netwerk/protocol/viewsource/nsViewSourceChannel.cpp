@@ -57,7 +57,7 @@ nsViewSourceChannel::Init(nsIURI* uri)
       return rv;
 
     // prevent viewing source of javascript URIs (see bug 204779)
-    if (scheme.LowerCaseEqualsLiteral("javascript")) {
+    if (scheme.EqualsLiteral("javascript")) {
       NS_WARNING("blocking view-source:javascript:");
       return NS_ERROR_INVALID_ARG;
     }
@@ -1078,6 +1078,13 @@ nsViewSourceChannel::RedirectTo(nsIURI *uri)
 }
 
 NS_IMETHODIMP
+nsViewSourceChannel::UpgradeToSecure()
+{
+    return !mHttpChannel ? NS_ERROR_NULL_POINTER :
+        mHttpChannel->UpgradeToSecure();
+}
+
+NS_IMETHODIMP
 nsViewSourceChannel::GetRequestContextID(uint64_t *_retval)
 {
     return !mHttpChannel ? NS_ERROR_NULL_POINTER :
@@ -1110,6 +1117,12 @@ void
 nsViewSourceChannel::SetCorsPreflightParameters(const nsTArray<nsCString>& aUnsafeHeaders)
 {
   mHttpChannelInternal->SetCorsPreflightParameters(aUnsafeHeaders);
+}
+
+void
+nsViewSourceChannel::SetAltDataForChild(bool aIsForChild)
+{
+    mHttpChannelInternal->SetAltDataForChild(aIsForChild);
 }
 
 NS_IMETHODIMP

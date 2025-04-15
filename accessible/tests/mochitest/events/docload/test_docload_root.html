@@ -17,7 +17,7 @@
   <script type="application/javascript">
     // Front end stuff sometimes likes to stuff things in the hidden window(s)
     // in which case there's accessibles for that content.
-    Components.utils.import("resource://gre/modules/Services.jsm");
+    ChromeUtils.import("resource://gre/modules/Services.jsm");
 
     // Force the creation of an accessible for the hidden window's document.
     let doc = Services.appShell.hiddenDOMWindow.document;
@@ -79,7 +79,7 @@
           ]
         };
 
-        testAccessibleTree(gRootAcc, accTree)
+        testAccessibleTree(gRootAcc, accTree);
 
         gDialogDoc = gDialog.document;
         ok(isAccessibleInCache(gDialogDoc),
@@ -93,7 +93,7 @@
       this.eventSeq = [ new invokerChecker(EVENT_FOCUS, getAccessible(document)) ];
 
       this.invoke = () => {
-        gDialog.close()
+        gDialog.close();
         window.focus();
       };
 
@@ -112,7 +112,7 @@
 
     function doTests() {
       const gQueue = new eventQueue();
-      gQueue.push(new openDialogWnd("about:"));
+      gQueue.push(new openDialogWnd("about:about"));
       gQueue.push(new closeDialogWnd());
       gQueue.invoke(); // Will call SimpleTest.finish();
     }

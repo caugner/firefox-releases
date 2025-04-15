@@ -10,7 +10,7 @@
 const { assert } = require("devtools/shared/DevToolsUtils");
 const { MemoryFront } = require("devtools/shared/fronts/memory");
 const HeapAnalysesClient = require("devtools/shared/heapsnapshot/HeapAnalysesClient");
-const { PropTypes } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const {
   snapshotState: states,
   diffingState,
@@ -382,7 +382,7 @@ let previousViewModel = exports.previousView = PropTypes.shape({
   selected: snapshotId,
 });
 
-let viewModel = exports.view = PropTypes.shape({
+exports.view = PropTypes.shape({
   // The current view state.
   state: catchAndIgnore(function (view) {
     switch (view.state) {
@@ -486,8 +486,6 @@ exports.app = {
 
   // The current type of view.
   view: function (app) {
-    viewModel.isRequired(app, "view");
-
     catchAndIgnore(function (app) {
       switch (app.view.state) {
         case viewState.DIFFING:

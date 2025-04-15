@@ -18,6 +18,11 @@ bool StylePrefs::sMozGradientsEnabled;
 bool StylePrefs::sControlCharVisibility;
 bool StylePrefs::sFramesTimingFunctionEnabled;
 bool StylePrefs::sUnprefixedFullscreenApiEnabled;
+bool StylePrefs::sVisitedLinksEnabled;
+bool StylePrefs::sMozDocumentEnabledInContent;
+bool StylePrefs::sGridTemplateSubgridValueEnabled;
+bool StylePrefs::sFontVariationsEnabled;
+bool StylePrefs::sEmulateMozBoxWithFlex;
 
 /* static */ void
 StylePrefs::Init()
@@ -38,6 +43,21 @@ StylePrefs::Init()
                                "layout.css.frames-timing.enabled");
   Preferences::AddBoolVarCache(&sUnprefixedFullscreenApiEnabled,
                                "full-screen-api.unprefix.enabled");
+  Preferences::AddBoolVarCache(&sVisitedLinksEnabled,
+                               "layout.css.visited_links_enabled");
+  Preferences::AddBoolVarCache(&sMozDocumentEnabledInContent,
+                               "layout.css.moz-document.content.enabled");
+  Preferences::AddBoolVarCache(&sGridTemplateSubgridValueEnabled,
+                               "layout.css.grid-template-subgrid-value.enabled");
+  Preferences::AddBoolVarCache(&sFontVariationsEnabled,
+                               "layout.css.font-variations.enabled");
+
+  // Only honor layout.css.emulate-moz-box-with-flex in prerelease builds.
+  // (In release builds, sEmulateMozBoxWithFlex will be implicitly false.)
+#ifndef RELEASE_OR_BETA
+  Preferences::AddBoolVarCache(&sEmulateMozBoxWithFlex,
+                               "layout.css.emulate-moz-box-with-flex");
+#endif
 }
 
 } // namespace mozilla

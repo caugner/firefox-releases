@@ -2,7 +2,7 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-const {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {gDevTools} = require("devtools/client/framework/devtools");
 
 /**
@@ -49,9 +49,9 @@ add_task(async function test_devtools_inspectedWindow_tabId() {
   }
 
   function devtools_page() {
-    browser.test.assertEq(undefined, browser.runtime.getBackgroundPage,
-      "The `runtime.getBackgroundPage` API method should be missing in a devtools_page context"
-    );
+    browser.test.assertEq(
+      undefined, browser.runtime.getBackgroundPage,
+      "The `runtime.getBackgroundPage` API method should be missing in a devtools_page context");
 
     try {
       let tabId = browser.devtools.inspectedWindow.tabId;

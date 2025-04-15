@@ -7,8 +7,8 @@ function test() {
   // initialization
   waitForExplicitFinish();
 
-  let aboutNewTabService = Components.classes["@mozilla.org/browser/aboutnewtab-service;1"]
-                                     .getService(Components.interfaces.nsIAboutNewTabService);
+  let aboutNewTabService = Cc["@mozilla.org/browser/aboutnewtab-service;1"]
+                             .getService(Ci.nsIAboutNewTabService);
   let newTabURL;
   let testURL = "http://example.com/";
   let defaultURL = aboutNewTabService.newTabURL;
@@ -76,12 +76,13 @@ function openNewTab(aWindow, aCallback) {
 
   let browser = aWindow.gBrowser.selectedBrowser;
   // eslint-disable-next-line mozilla/no-cpows-in-tests
-  if (browser.contentDocument.readyState === "complete") {
+  let doc = browser.contentDocumentAsCPOW;
+  if (doc && doc.readyState === "complete") {
     executeSoon(aCallback);
     return;
   }
 
-  browser.addEventListener("load", function() {
+  BrowserTestUtils.browserLoaded(browser).then(() => {
     executeSoon(aCallback);
-  }, {capture: true, once: true});
+  });
 }

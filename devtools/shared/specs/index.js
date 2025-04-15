@@ -112,7 +112,7 @@ const Types = exports.__TypesForTests = [
     front: "devtools/shared/fronts/inspector",
   },
   {
-    types: ["grid", "layout"],
+    types: ["flexbox", "grid", "layout"],
     spec: "devtools/shared/specs/layout",
     front: "devtools/shared/fronts/layout",
   },
@@ -131,6 +131,11 @@ const Types = exports.__TypesForTests = [
     types: ["domnode", "domnodelist"],
     spec: "devtools/shared/specs/node",
     front: "devtools/shared/fronts/node",
+  },
+  {
+    types: ["perf"],
+    spec: "devtools/shared/specs/perf",
+    front: "devtools/shared/fronts/perf",
   },
   {
     types: ["performance"],

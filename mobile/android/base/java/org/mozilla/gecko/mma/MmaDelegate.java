@@ -19,12 +19,13 @@ import android.text.TextUtils;
 
 import org.mozilla.gecko.Experiments;
 import org.mozilla.gecko.MmaConstants;
+import org.mozilla.gecko.PrefsHelper;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.Tab;
 import org.mozilla.gecko.Tabs;
+import org.mozilla.gecko.activitystream.homepanel.ActivityStreamConfiguration;
 import org.mozilla.gecko.fxa.FirefoxAccounts;
 import org.mozilla.gecko.preferences.GeckoPreferences;
-import org.mozilla.gecko.push.PushManager;
 import org.mozilla.gecko.switchboard.SwitchBoard;
 import org.mozilla.gecko.util.ContextUtils;
 
@@ -46,7 +47,9 @@ public class MmaDelegate {
     public static final String SAVED_LOGIN_AND_PASSWORD = "E_Saved_Login_And_Password";
     public static final String LAUNCH_BUT_NOT_DEFAULT_BROWSER = "E_Launch_But_Not_Default_Browser";
     public static final String LAUNCH_BROWSER = "E_Launch_Browser";
+    public static final String RESUMED_FROM_BACKGROUND = "E_Resumed_From_Background";
     public static final String NEW_TAB = "E_Opened_New_Tab";
+    public static final String DISMISS_ONBOARDING = "E_Dismiss_Onboarding";
 
 
     public static final String USER_ATT_FOCUS_INSTALLED = "Focus Installed";
@@ -54,6 +57,7 @@ public class MmaDelegate {
     public static final String USER_ATT_POCKET_INSTALLED = "Pocket Installed";
     public static final String USER_ATT_DEFAULT_BROWSER = "Default Browser";
     public static final String USER_ATT_SIGNED_IN = "Signed In Sync";
+    public static final String USER_ATT_POCKET_TOP_SITES = "Pocket in Top Sites";
 
     public static final String PACKAGE_NAME_KLAR = "org.mozilla.klar";
     public static final String PACKAGE_NAME_FOCUS = "org.mozilla.focus";
@@ -64,7 +68,7 @@ public class MmaDelegate {
     public static final String KEY_ANDROID_PREF_STRING_LEANPLUM_DEVICE_ID = "android.not_a_preference.leanplum.device_id";
     private static final String DEBUG_LEANPLUM_DEVICE_ID = "8effda84-99df-11e7-abc4-cec278b6b50a";
 
-    private static MmaInterface mmaHelper = MmaConstants.getMma();
+    private static final MmaInterface mmaHelper = MmaConstants.getMma();
     private static WeakReference<Context> applicationContext;
 
     public static void init(Activity activity) {
@@ -73,8 +77,9 @@ public class MmaDelegate {
         // we gather the information here then pass to mmaHelper.init()
         // Note that generateUserAttribute always return a non null HashMap.
         final Map<String, Object> attributes = gatherUserAttributes(activity);
-        mmaHelper.setGcmSenderId(PushManager.getSenderIds());
-        mmaHelper.setDeviceId(getDeviceId(activity));
+        final String deviceId = getDeviceId(activity);
+        mmaHelper.setDeviceId(deviceId);
+        PrefsHelper.setPref(GeckoPreferences.PREFS_MMA_DEVICE_ID, deviceId);
         // above two config setup required to be invoked before mmaHelper.init.
         mmaHelper.init(activity, attributes);
 
@@ -100,6 +105,7 @@ public class MmaDelegate {
         attributes.put(USER_ATT_POCKET_INSTALLED, ContextUtils.isPackageInstalled(context, PACKAGE_NAME_POCKET));
         attributes.put(USER_ATT_DEFAULT_BROWSER, isDefaultBrowser(context));
         attributes.put(USER_ATT_SIGNED_IN, FirefoxAccounts.firefoxAccountsExist(context));
+        attributes.put(USER_ATT_POCKET_TOP_SITES, ActivityStreamConfiguration.isPocketRecommendingTopSites(context));
 
         return attributes;
     }
@@ -136,7 +142,7 @@ public class MmaDelegate {
     }
 
 
-    private static boolean isDefaultBrowser(Context context) {
+    public static boolean isDefaultBrowser(Context context) {
         final Intent viewIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://www.mozilla.org"));
         final ResolveInfo info = context.getPackageManager().resolveActivity(viewIntent, PackageManager.MATCH_DEFAULT_ONLY);
         if (info == null) {
@@ -155,10 +161,6 @@ public class MmaDelegate {
         } else {
             return false;
         }
-    }
-
-    public static String getMmaSenderId() {
-        return mmaHelper.getMmaSenderId();
     }
 
     private static String getDeviceId(Activity activity) {

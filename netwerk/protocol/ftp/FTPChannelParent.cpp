@@ -152,7 +152,7 @@ FTPChannelParent::DoAsyncOpen(const URIParams& aURI,
 
   nsCOMPtr<nsIChannel> chan;
   rv = NS_NewChannelInternal(getter_AddRefs(chan), uri, loadInfo,
-                             nullptr, nullptr,
+                             nullptr, nullptr, nullptr,
                              nsIRequest::LOAD_NORMAL, ios);
 
   if (NS_FAILED(rv))
@@ -254,7 +254,7 @@ public:
   {
   }
 
-  void Run()
+  void Run() override
   {
     mParent->DivertOnDataAvailable(mData, mOffset, mCount);
   }
@@ -341,7 +341,8 @@ public:
   {
   }
 
-  void Run() {
+  void Run() override
+  {
     mParent->DivertOnStopRequest(mStatusCode);
   }
 
@@ -399,7 +400,8 @@ public:
   {
   }
 
-  void Run() {
+  void Run() override
+  {
     mParent->DivertComplete();
   }
 
@@ -930,4 +932,3 @@ FTPChannelParent::SetErrorMsg(const char *aMsg, bool aUseUTF8)
 //---------------------
 } // namespace net
 } // namespace mozilla
-

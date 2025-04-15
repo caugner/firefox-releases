@@ -5,19 +5,20 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/CrossProcessCompositorBridgeParent.h"
+
 #include <stdint.h>                     // for uint64_t
+
 #include "LayerTransactionParent.h"     // for LayerTransactionParent
+#include "apz/src/APZCTreeManager.h"    // for APZCTreeManager
 #include "base/message_loop.h"          // for MessageLoop
 #include "base/task.h"                  // for CancelableTask, etc
 #include "base/thread.h"                // for Thread
 #ifdef XP_WIN
-#include "mozilla/gfx/DeviceManagerDx.h"// for DeviceManagerDx
+#include "mozilla/gfx/DeviceManagerDx.h" // for DeviceManagerDx
 #endif
 #include "mozilla/ipc/Transport.h"      // for Transport
 #include "mozilla/layers/AnimationHelper.h" // for CompositorAnimationStorage
-#include "mozilla/layers/APZCTreeManager.h"  // for APZCTreeManager
 #include "mozilla/layers/APZCTreeManagerParent.h"  // for APZCTreeManagerParent
-#include "mozilla/layers/APZThreadUtils.h"  // for APZCTreeManager
 #include "mozilla/layers/AsyncCompositionManager.h"
 #include "mozilla/layers/CompositorOptions.h"
 #include "mozilla/layers/CompositorThread.h"
@@ -131,14 +132,12 @@ CrossProcessCompositorBridgeParent::AllocPAPZCTreeManagerParent(const uint64_t& 
   if (!state.mParent) {
     // Note: we immediately call ClearTree since otherwise the APZCTM will
     // retain a reference to itself, through the checkerboard observer.
-    RefPtr<APZCTreeManager> temp = new APZCTreeManager();
+    RefPtr<APZCTreeManager> temp = new APZCTreeManager(0);
     temp->ClearTree();
     return new APZCTreeManagerParent(aLayersId, temp);
   }
 
-  MOZ_ASSERT(!state.mApzcTreeManagerParent);
-  state.mApzcTreeManagerParent = new APZCTreeManagerParent(aLayersId, state.mParent->GetAPZCTreeManager());
-
+  state.mParent->AllocateAPZCTreeManagerParent(lock, aLayersId, state);
   return state.mApzcTreeManagerParent;
 }
 bool
@@ -228,7 +227,8 @@ CrossProcessCompositorBridgeParent::AllocPWebRenderBridgeParent(const wr::Pipeli
     return parent;
   }
 
-  RefPtr<wr::WebRenderAPI> api = root->GetWebRenderAPI()->Clone();
+  RefPtr<wr::WebRenderAPI> api = root->GetWebRenderAPI();
+  api = api->Clone();
   RefPtr<AsyncImagePipelineManager> holder = root->AsyncImageManager();
   RefPtr<CompositorAnimationStorage> animStorage = cbp->GetAnimationStorage();
   parent = new WebRenderBridgeParent(this, aPipelineId, nullptr, root->CompositorScheduler(), Move(api), Move(holder), Move(animStorage));
@@ -391,7 +391,7 @@ CrossProcessCompositorBridgeParent::DidCompositeLocked(
 }
 
 void
-CrossProcessCompositorBridgeParent::ForceComposite(LayerTransactionParent* aLayerTree)
+CrossProcessCompositorBridgeParent::ScheduleComposite(LayerTransactionParent* aLayerTree)
 {
   uint64_t id = aLayerTree->GetId();
   MOZ_ASSERT(id != 0);
@@ -401,7 +401,7 @@ CrossProcessCompositorBridgeParent::ForceComposite(LayerTransactionParent* aLaye
     parent = sIndirectLayerTrees[id].mParent;
   }
   if (parent) {
-    parent->ForceComposite(aLayerTree);
+    parent->ScheduleComposite(aLayerTree);
   }
 }
 
@@ -466,6 +466,40 @@ CrossProcessCompositorBridgeParent::ApplyAsyncProperties(
 }
 
 void
+CrossProcessCompositorBridgeParent::SetTestAsyncScrollOffset(
+    const uint64_t& aLayersId,
+    const FrameMetrics::ViewID& aScrollId,
+    const CSSPoint& aPoint)
+{
+  MOZ_ASSERT(aLayersId != 0);
+  const CompositorBridgeParent::LayerTreeState* state =
+    CompositorBridgeParent::GetIndirectShadowTree(aLayersId);
+  if (!state) {
+    return;
+  }
+
+  MOZ_ASSERT(state->mParent);
+  state->mParent->SetTestAsyncScrollOffset(aLayersId, aScrollId, aPoint);
+}
+
+void
+CrossProcessCompositorBridgeParent::SetTestAsyncZoom(
+    const uint64_t& aLayersId,
+    const FrameMetrics::ViewID& aScrollId,
+    const LayerToParentLayerScale& aZoom)
+{
+  MOZ_ASSERT(aLayersId != 0);
+  const CompositorBridgeParent::LayerTreeState* state =
+    CompositorBridgeParent::GetIndirectShadowTree(aLayersId);
+  if (!state) {
+    return;
+  }
+
+  MOZ_ASSERT(state->mParent);
+  state->mParent->SetTestAsyncZoom(aLayersId, aScrollId, aZoom);
+}
+
+void
 CrossProcessCompositorBridgeParent::FlushApzRepaints(const uint64_t& aLayersId)
 {
   MOZ_ASSERT(aLayersId != 0);
@@ -485,8 +519,13 @@ CrossProcessCompositorBridgeParent::GetAPZTestData(
   APZTestData* aOutData)
 {
   MOZ_ASSERT(aLayersId != 0);
-  MonitorAutoLock lock(*sIndirectLayerTreesLock);
-  *aOutData = sIndirectLayerTrees[aLayersId].mApzTestData;
+  const CompositorBridgeParent::LayerTreeState* state =
+    CompositorBridgeParent::GetIndirectShadowTree(aLayersId);
+  if (!state || !state->mParent) {
+    return;
+  }
+
+  state->mParent->GetAPZTestData(aLayersId, aOutData);
 }
 
 void
@@ -532,6 +571,7 @@ CrossProcessCompositorBridgeParent::~CrossProcessCompositorBridgeParent()
 
 PTextureParent*
 CrossProcessCompositorBridgeParent::AllocPTextureParent(const SurfaceDescriptor& aSharedData,
+                                                        const ReadLockDescriptor& aReadLock,
                                                         const LayersBackend& aLayersBackend,
                                                         const TextureFlags& aFlags,
                                                         const uint64_t& aId,
@@ -563,7 +603,7 @@ CrossProcessCompositorBridgeParent::AllocPTextureParent(const SurfaceDescriptor&
     gfxDevCrash(gfx::LogReason::PAllocTextureBackendMismatch) << "Texture backend is wrong";
   }
 
-  return TextureHost::CreateIPDLActor(this, aSharedData, aLayersBackend, aFlags, aSerial, aExternalImageId);
+  return TextureHost::CreateIPDLActor(this, aSharedData, aReadLock, aLayersBackend, aFlags, aSerial, aExternalImageId);
 }
 
 bool

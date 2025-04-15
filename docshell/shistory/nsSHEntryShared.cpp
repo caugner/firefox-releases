@@ -155,16 +155,13 @@ nsSHEntryShared::SetContentViewer(nsIContentViewer* aViewer)
     // mSHistory is only set for root entries, but in general bfcache only
     // applies to root entries as well. BFCache for subframe navigation has been
     // disabled since 2005 in bug 304860.
-    nsCOMPtr<nsISHistoryInternal> shistory = do_QueryReferent(mSHistory);
-    if (shistory) {
+    if (nsCOMPtr<nsISHistoryInternal> shistory = do_QueryReferent(mSHistory)) {
       shistory->AddToExpirationTracker(this);
     }
 
-    nsCOMPtr<nsIDOMDocument> domDoc;
-    mContentViewer->GetDOMDocument(getter_AddRefs(domDoc));
     // Store observed document in strong pointer in case it is removed from
     // the contentviewer
-    mDocument = do_QueryInterface(domDoc);
+    mDocument = mContentViewer->GetDocument();
     if (mDocument) {
       mDocument->SetBFCacheEntry(this);
       mDocument->AddMutationObserver(this);
@@ -256,23 +253,20 @@ nsSHEntryShared::NodeWillBeDestroyed(const nsINode* aNode)
 }
 
 void
-nsSHEntryShared::CharacterDataWillChange(nsIDocument* aDocument,
-                                         nsIContent* aContent,
-                                         CharacterDataChangeInfo* aInfo)
+nsSHEntryShared::CharacterDataWillChange(nsIContent* aContent,
+                                         const CharacterDataChangeInfo&)
 {
 }
 
 void
-nsSHEntryShared::CharacterDataChanged(nsIDocument* aDocument,
-                                      nsIContent* aContent,
-                                      CharacterDataChangeInfo* aInfo)
+nsSHEntryShared::CharacterDataChanged(nsIContent* aContent,
+                                      const CharacterDataChangeInfo&)
 {
   RemoveFromBFCacheAsync();
 }
 
 void
-nsSHEntryShared::AttributeWillChange(nsIDocument* aDocument,
-                                     dom::Element* aContent,
+nsSHEntryShared::AttributeWillChange(dom::Element* aContent,
                                      int32_t aNameSpaceID,
                                      nsAtom* aAttribute,
                                      int32_t aModType,
@@ -281,15 +275,13 @@ nsSHEntryShared::AttributeWillChange(nsIDocument* aDocument,
 }
 
 void
-nsSHEntryShared::NativeAnonymousChildListChange(nsIDocument* aDocument,
-                                                nsIContent* aContent,
+nsSHEntryShared::NativeAnonymousChildListChange(nsIContent* aContent,
                                                 bool aIsRemove)
 {
 }
 
 void
-nsSHEntryShared::AttributeChanged(nsIDocument* aDocument,
-                                  dom::Element* aElement,
+nsSHEntryShared::AttributeChanged(dom::Element* aElement,
                                   int32_t aNameSpaceID,
                                   nsAtom* aAttribute,
                                   int32_t aModType,
@@ -299,25 +291,19 @@ nsSHEntryShared::AttributeChanged(nsIDocument* aDocument,
 }
 
 void
-nsSHEntryShared::ContentAppended(nsIDocument* aDocument,
-                                 nsIContent* aContainer,
-                                 nsIContent* aFirstNewContent)
+nsSHEntryShared::ContentAppended(nsIContent* aFirstNewContent)
 {
   RemoveFromBFCacheAsync();
 }
 
 void
-nsSHEntryShared::ContentInserted(nsIDocument* aDocument,
-                                 nsIContent* aContainer,
-                                 nsIContent* aChild)
+nsSHEntryShared::ContentInserted(nsIContent* aChild)
 {
   RemoveFromBFCacheAsync();
 }
 
 void
-nsSHEntryShared::ContentRemoved(nsIDocument* aDocument,
-                                nsIContent* aContainer,
-                                nsIContent* aChild,
+nsSHEntryShared::ContentRemoved(nsIContent* aChild,
                                 nsIContent* aPreviousSibling)
 {
   RemoveFromBFCacheAsync();

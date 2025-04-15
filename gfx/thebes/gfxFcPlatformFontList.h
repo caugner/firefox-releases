@@ -18,6 +18,7 @@
 #include "ft2build.h"
 #include FT_FREETYPE_H
 #include FT_TRUETYPE_TABLES_H
+#include FT_MULTIPLE_MASTERS_H
 #include <cairo.h>
 #include <cairo-ft.h>
 
@@ -96,6 +97,7 @@ public:
                                     int16_t aStretch,
                                     uint8_t aStyle,
                                     const uint8_t *aData,
+                                    uint32_t aLength,
                                     FT_Face aFace);
 
     // used for @font-face local system fonts with explicit patterns
@@ -111,6 +113,14 @@ public:
 
     nsresult ReadCMAP(FontInfoData *aFontInfoData = nullptr) override;
     bool TestCharacterMap(uint32_t aCh) override;
+
+    FT_Face GetFTFace();
+
+    FT_MM_Var* GetMMVar();
+
+    bool HasVariations() override;
+    void GetVariationAxes(nsTArray<gfxFontVariationAxis>& aAxes) override;
+    void GetVariationInstances(nsTArray<gfxFontVariationInstance>& aInstances) override;
 
     hb_blob_t* GetFontTable(uint32_t aTableTag) override;
 
@@ -161,6 +171,7 @@ protected:
 
     // data font
     const uint8_t* mFontData;
+    uint32_t       mLength;
 
     class UnscaledFontCache
     {
@@ -181,6 +192,11 @@ protected:
     };
 
     UnscaledFontCache mUnscaledFontCache;
+
+    // Because of FreeType bug 52955, we keep the FT_MM_Var struct when it is
+    // first loaded, rather than releasing it and re-fetching it as needed.
+    FT_MM_Var* mMMVar = nullptr;
+    bool mMMVarInitialized = false;
 };
 
 class gfxFontconfigFontFamily : public gfxFontFamily {

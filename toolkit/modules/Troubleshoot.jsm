@@ -2,19 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "Troubleshoot",
 ];
 
-const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
-
-Cu.import("resource://gre/modules/AddonManager.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 var Experiments;
 try {
-  Experiments = Cu.import("resource:///modules/experiments/Experiments.jsm").Experiments;
+  Experiments = ChromeUtils.import("resource:///modules/experiments/Experiments.jsm").Experiments;
 } catch (e) {
 }
 
@@ -130,7 +128,7 @@ function getPrefList(filter) {
   }, {});
 }
 
-this.Troubleshoot = {
+var Troubleshoot = {
 
   /**
    * Captures a snapshot of data that may help troubleshooters troubleshoot
@@ -170,13 +168,9 @@ this.Troubleshoot = {
 var dataProviders = {
 
   application: function application(done) {
-
-    let sysInfo = Cc["@mozilla.org/system-info;1"].
-                  getService(Ci.nsIPropertyBag2);
-
     let data = {
       name: Services.appinfo.name,
-      osVersion: sysInfo.getProperty("name") + " " + sysInfo.getProperty("version"),
+      osVersion: Services.sysinfo.getProperty("name") + " " + Services.sysinfo.getProperty("version"),
       version: AppConstants.MOZ_APP_VERSION_DISPLAY,
       buildID: Services.appinfo.appBuildID,
       userAgent: Cc["@mozilla.org/network/protocol;1?name=http"].
@@ -186,16 +180,14 @@ var dataProviders = {
     };
 
     if (AppConstants.MOZ_UPDATER)
-      data.updateChannel = Cu.import("resource://gre/modules/UpdateUtils.jsm", {}).UpdateUtils.UpdateChannel;
+      data.updateChannel = ChromeUtils.import("resource://gre/modules/UpdateUtils.jsm", {}).UpdateUtils.UpdateChannel;
 
     // eslint-disable-next-line mozilla/use-default-preference-values
     try {
       data.vendor = Services.prefs.getCharPref("app.support.vendor");
     } catch (e) {}
-    let urlFormatter = Cc["@mozilla.org/toolkit/URLFormatterService;1"].
-                       getService(Ci.nsIURLFormatter);
     try {
-      data.supportURL = urlFormatter.formatURLPref("app.support.baseURL");
+      data.supportURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
     } catch (e) {}
 
     data.numTotalWindows = 0;
@@ -259,6 +251,10 @@ var dataProviders = {
       data.styloChromeResult = winUtils.isStyledByServo;
     }
 
+    if (Services.policies) {
+      data.policiesStatus = Services.policies.status;
+    }
+
     const keyGoogle = Services.urlFormatter.formatURL("%GOOGLE_API_KEY%").trim();
     data.keyGoogleFound = keyGoogle != "no-google-api-key" && keyGoogle.length > 0;
 
@@ -293,6 +289,27 @@ var dataProviders = {
         }, {});
       }));
     });
+  },
+
+  securitySoftware: function securitySoftware(done) {
+    let data = {};
+
+    let sysInfo = Cc["@mozilla.org/system-info;1"].
+                  getService(Ci.nsIPropertyBag2);
+
+    const keys = ["registeredAntiVirus", "registeredAntiSpyware",
+                  "registeredFirewall"];
+    for (let key of keys) {
+      let prop = "";
+      try {
+        prop = sysInfo.getProperty(key);
+      } catch (e) {
+      }
+
+      data[key] = prop;
+    }
+
+    done(data);
   },
 
   features: function features(done) {
@@ -457,7 +474,9 @@ var dataProviders = {
       DWriteEnabled: "directWriteEnabled",
       DWriteVersion: "directWriteVersion",
       cleartypeParameters: "clearTypeParameters",
+      UsesTiling: "usesTiling",
       OffMainThreadPaintEnabled: "offMainThreadPaintEnabled",
+      OffMainThreadPaintWorkerCount: "offMainThreadPaintWorkerCount",
     };
 
     for (let prop in gfxInfoProps) {
@@ -534,7 +553,9 @@ var dataProviders = {
 
         // Eagerly free resources.
         let loseExt = gl.getExtension("WEBGL_lose_context");
-        loseExt.loseContext();
+        if (loseExt) {
+             loseExt.loseContext();
+        }
     }
 
     GetWebGLInfo(data, "webgl1", "webgl");
@@ -673,7 +694,7 @@ var dataProviders = {
 
 if (AppConstants.MOZ_CRASHREPORTER) {
   dataProviders.crashes = function crashes(done) {
-    let CrashReports = Cu.import("resource://gre/modules/CrashReports.jsm").CrashReports;
+    let CrashReports = ChromeUtils.import("resource://gre/modules/CrashReports.jsm").CrashReports;
     let reports = CrashReports.getReports();
     let now = new Date();
     let reportsNew = reports.filter(report => (now - report.date < Troubleshoot.kMaxCrashAge));
@@ -692,11 +713,9 @@ if (AppConstants.MOZ_SANDBOX) {
                     "hasPrivilegedUserNamespaces", "hasUserNamespaces",
                     "canSandboxContent", "canSandboxMedia"];
 
-      let sysInfo = Cc["@mozilla.org/system-info;1"].
-                    getService(Ci.nsIPropertyBag2);
       for (let key of keys) {
-        if (sysInfo.hasKey(key)) {
-          data[key] = sysInfo.getPropertyAsBool(key);
+        if (Services.sysinfo.hasKey(key)) {
+          data[key] = Services.sysinfo.getPropertyAsBool(key);
         }
       }
 

@@ -1,9 +1,9 @@
 /* globals ProcessHangMonitor */
 
 const { WebExtensionPolicy } =
-  Cu.getGlobalForObject(Cu.import("resource://gre/modules/Services.jsm", {}));
+  Cu.getGlobalForObject(ChromeUtils.import("resource://gre/modules/Services.jsm", {}));
 
-Cu.import("resource://gre/modules/UpdateUtils.jsm");
+ChromeUtils.import("resource://gre/modules/UpdateUtils.jsm");
 
 function getNotificationBox(aWindow) {
   return aWindow.document.getElementById("high-priority-global-notificationbox");
@@ -65,7 +65,7 @@ let TestHangReport = function(hangType = SLOW_SCRIPT,
   }
 
   this._browser = browser;
-}
+};
 
 TestHangReport.prototype = {
   SLOW_SCRIPT,
@@ -80,10 +80,10 @@ TestHangReport.prototype = {
   },
 
   QueryInterface(aIID) {
-    if (aIID.equals(Components.interfaces.nsIHangReport) ||
-        aIID.equals(Components.interfaces.nsISupports))
+    if (aIID.equals(Ci.nsIHangReport) ||
+        aIID.equals(Ci.nsISupports))
       return this;
-    throw Components.results.NS_NOINTERFACE;
+    throw Cr.NS_NOINTERFACE;
   },
 
   userCanceled() {

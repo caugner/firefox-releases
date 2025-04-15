@@ -7,31 +7,29 @@
 
 /* eslint-env mozilla/frame-script */
 
-var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "E10SUtils",
-  "resource:///modules/E10SUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
+ChromeUtils.defineModuleGetter(this, "E10SUtils",
+  "resource://gre/modules/E10SUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "BrowserUtils",
   "resource://gre/modules/BrowserUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Utils",
+ChromeUtils.defineModuleGetter(this, "Utils",
   "resource://gre/modules/sessionstore/Utils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
+ChromeUtils.defineModuleGetter(this, "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "AboutReader",
+ChromeUtils.defineModuleGetter(this, "AboutReader",
   "resource://gre/modules/AboutReader.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode",
+ChromeUtils.defineModuleGetter(this, "ReaderMode",
   "resource://gre/modules/ReaderMode.jsm");
 XPCOMUtils.defineLazyGetter(this, "SimpleServiceDiscovery", function() {
-  let ssdp = Cu.import("resource://gre/modules/SimpleServiceDiscovery.jsm", {}).SimpleServiceDiscovery;
+  let ssdp = ChromeUtils.import("resource://gre/modules/SimpleServiceDiscovery.jsm", {}).SimpleServiceDiscovery;
   // Register targets
   ssdp.registerDevice({
     id: "roku:ecp",
     target: "roku:ecp",
     factory(aService) {
-      Cu.import("resource://gre/modules/RokuApp.jsm");
+      ChromeUtils.import("resource://gre/modules/RokuApp.jsm");
       return new RokuApp(aService);
     },
     types: ["video/mp4"],
@@ -210,39 +208,6 @@ var AboutHomeListener = {
   },
 };
 AboutHomeListener.init(this);
-
-var AboutPrivateBrowsingListener = {
-  init(chromeGlobal) {
-    chromeGlobal.addEventListener("AboutPrivateBrowsingOpenWindow", this,
-                                  false, true);
-    chromeGlobal.addEventListener("AboutPrivateBrowsingToggleTrackingProtection", this,
-                                  false, true);
-    chromeGlobal.addEventListener("AboutPrivateBrowsingDontShowIntroPanelAgain", this,
-                                  false, true);
-  },
-
-  get isAboutPrivateBrowsing() {
-    return content.document.documentURI.toLowerCase() == "about:privatebrowsing";
-  },
-
-  handleEvent(aEvent) {
-    if (!this.isAboutPrivateBrowsing) {
-      return;
-    }
-    switch (aEvent.type) {
-      case "AboutPrivateBrowsingOpenWindow":
-        sendAsyncMessage("AboutPrivateBrowsing:OpenPrivateWindow");
-        break;
-      case "AboutPrivateBrowsingToggleTrackingProtection":
-        sendAsyncMessage("AboutPrivateBrowsing:ToggleTrackingProtection");
-        break;
-      case "AboutPrivateBrowsingDontShowIntroPanelAgain":
-        sendAsyncMessage("AboutPrivateBrowsing:DontShowIntroPanelAgain");
-        break;
-    }
-  },
-};
-AboutPrivateBrowsingListener.init(this);
 
 var AboutReaderListener = {
 
@@ -562,7 +527,7 @@ PageStyleHandler.init();
 // Keep a reference to the translation content handler to avoid it it being GC'ed.
 var trHandler = null;
 if (Services.prefs.getBoolPref("browser.translation.detectLanguage")) {
-  Cu.import("resource:///modules/translation/TranslationContentHandler.jsm");
+  ChromeUtils.import("resource:///modules/translation/TranslationContentHandler.jsm");
   trHandler = new TranslationContentHandler(global, docShell);
 }
 
@@ -602,98 +567,6 @@ addMessageListener("Browser:AppTab", function(message) {
   }
 });
 
-let PrerenderContentHandler = {
-  init() {
-    this._pending = [];
-    this._idMonotonic = 0;
-    this._initialized = true;
-    addMessageListener("Prerender:Canceled", this);
-    addMessageListener("Prerender:Swapped", this);
-  },
-
-  get initialized() {
-    return !!this._initialized;
-  },
-
-  receiveMessage(aMessage) {
-    switch (aMessage.name) {
-      case "Prerender:Canceled": {
-        for (let i = 0; i < this._pending.length; ++i) {
-          if (this._pending[i].id === aMessage.data.id) {
-            if (this._pending[i].failure) {
-              this._pending[i].failure.run();
-            }
-            // Remove the item from the array
-            this._pending.splice(i, 1);
-            break;
-          }
-        }
-        break;
-      }
-      case "Prerender:Swapped": {
-        for (let i = 0; i < this._pending.length; ++i) {
-          if (this._pending[i].id === aMessage.data.id) {
-            if (this._pending[i].success) {
-              this._pending[i].success.run();
-            }
-            // Remove the item from the array
-            this._pending.splice(i, 1);
-            break;
-          }
-        }
-        break;
-      }
-    }
-  },
-
-  startPrerenderingDocument(aHref, aReferrer, aTriggeringPrincipal) {
-    // XXX: Make this constant a pref
-    if (this._pending.length >= 2) {
-      return;
-    }
-
-    let id = ++this._idMonotonic;
-    sendAsyncMessage("Prerender:Request", {
-      href: aHref.spec,
-      referrer: aReferrer ? aReferrer.spec : null,
-      id,
-      triggeringPrincipal: Utils.serializePrincipal(aTriggeringPrincipal),
-    });
-
-    this._pending.push({
-      href: aHref,
-      referrer: aReferrer,
-      id,
-      success: null,
-      failure: null,
-    });
-  },
-
-  shouldSwitchToPrerenderedDocument(aHref, aReferrer, aSuccess, aFailure) {
-    // Check if we think there is a prerendering document pending for the given
-    // href and referrer. If we think there is one, we will send a message to
-    // the parent process asking it to do a swap, and hook up the success and
-    // failure listeners.
-    for (let i = 0; i < this._pending.length; ++i) {
-      let p = this._pending[i];
-      if (p.href.equals(aHref) && p.referrer.equals(aReferrer)) {
-        p.success = aSuccess;
-        p.failure = aFailure;
-        sendAsyncMessage("Prerender:Swap", {id: p.id});
-        return true;
-      }
-    }
-
-    return false;
-  }
-};
-
-if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT) {
-  // We only want to initialize the PrerenderContentHandler in the content
-  // process. Outside of the content process, this should be unused.
-  PrerenderContentHandler.init();
-}
-
 var WebBrowserChrome = {
   onBeforeLinkTraversal(originalTarget, linkURI, linkNode, isAppTab) {
     return BrowserUtils.onBeforeLinkTraversal(originalTarget, linkURI, linkNode, isAppTab);
@@ -717,20 +590,6 @@ var WebBrowserChrome = {
   reloadInFreshProcess(aDocShell, aURI, aReferrer, aTriggeringPrincipal, aLoadFlags) {
     E10SUtils.redirectLoad(aDocShell, aURI, aReferrer, aTriggeringPrincipal, true, aLoadFlags);
     return true;
-  },
-
-  startPrerenderingDocument(aHref, aReferrer, aTriggeringPrincipal) {
-    if (PrerenderContentHandler.initialized) {
-      PrerenderContentHandler.startPrerenderingDocument(aHref, aReferrer, aTriggeringPrincipal);
-    }
-  },
-
-  shouldSwitchToPrerenderedDocument(aHref, aReferrer, aSuccess, aFailure) {
-    if (PrerenderContentHandler.initialized) {
-      return PrerenderContentHandler.shouldSwitchToPrerenderedDocument(
-        aHref, aReferrer, aSuccess, aFailure);
-    }
-    return false;
   }
 };
 

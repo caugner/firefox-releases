@@ -6,15 +6,14 @@
 const expect = require("expect");
 
 const actions = require("devtools/client/webconsole/new-console-output/actions/index");
-const { messageAdd } = require("devtools/client/webconsole/new-console-output/actions/index");
+const { messagesAdd } = require("devtools/client/webconsole/new-console-output/actions/index");
 const { ConsoleCommand } = require("devtools/client/webconsole/new-console-output/types");
 const { getVisibleMessages } = require("devtools/client/webconsole/new-console-output/selectors/messages");
 const { getAllFilters } = require("devtools/client/webconsole/new-console-output/selectors/filters");
-const { setupStore } = require("devtools/client/webconsole/new-console-output/test/helpers");
+const { setupStore, getFiltersPrefs } = require("devtools/client/webconsole/new-console-output/test/helpers");
 const { FILTERS, PREFS } = require("devtools/client/webconsole/new-console-output/constants");
 const { stubPackets } = require("devtools/client/webconsole/new-console-output/test/fixtures/stubs/index");
 const { stubPreparedMessages } = require("devtools/client/webconsole/new-console-output/test/fixtures/stubs/index");
-const ServicesMock = require("Services");
 
 describe("Filtering", () => {
   let store;
@@ -87,7 +86,7 @@ describe("Filtering", () => {
       let message = stubPreparedMessages.get(
         "Unknown property ‘such-unknown-property’.  Declaration dropped."
       );
-      store.dispatch(messageAdd(message));
+      store.dispatch(messagesAdd([message]));
 
       let messages = getVisibleMessages(store.getState());
       expect(messages.length).toEqual(numUnfilterableMessages);
@@ -99,7 +98,7 @@ describe("Filtering", () => {
 
     it("filters xhr messages", () => {
       let message = stubPreparedMessages.get("XHR GET request");
-      store.dispatch(messageAdd(message));
+      store.dispatch(messagesAdd([message]));
 
       let messages = getVisibleMessages(store.getState());
       expect(messages.length).toEqual(numUnfilterableMessages);
@@ -111,7 +110,7 @@ describe("Filtering", () => {
 
     it("filters network messages", () => {
       let message = stubPreparedMessages.get("GET request");
-      store.dispatch(messageAdd(message));
+      store.dispatch(messagesAdd([message]));
 
       let messages = getVisibleMessages(store.getState());
       expect(messages.length).toEqual(numUnfilterableMessages);
@@ -152,7 +151,7 @@ describe("Filtering", () => {
         Object.assign({}, stubPackets.get("console.log('foobar', 'test')"));
       locationMsg.message =
         Object.assign({}, locationMsg.message, { filename: "search-location-test.js" });
-      store.dispatch(messageAdd(locationMsg));
+      store.dispatch(messagesAdd([locationMsg]));
 
       store.dispatch(actions.filterTextSet("search-location-test.js"));
 
@@ -162,7 +161,7 @@ describe("Filtering", () => {
 
     it("matches stacktrace functionName", () => {
       let traceMessage = stubPackets.get("console.trace()");
-      store.dispatch(messageAdd(traceMessage));
+      store.dispatch(messagesAdd([traceMessage]));
 
       store.dispatch(actions.filterTextSet("testStacktraceFiltering"));
 
@@ -179,11 +178,42 @@ describe("Filtering", () => {
           columnNumber: 13
         });
 
-      store.dispatch(messageAdd(traceMessage));
+      store.dispatch(messagesAdd([traceMessage]));
 
       store.dispatch(actions.filterTextSet("search-location-test.js:85:13"));
 
       let messages = getVisibleMessages(store.getState());
+      expect(messages.length - numUnfilterableMessages).toEqual(1);
+    });
+
+    it("matches prefixed log message", () => {
+      const stub = {
+        "level": "debug",
+        "filename": "resource:///modules/CustomizableUI.jsm",
+        "lineNumber": 181,
+        "functionName": "initialize",
+        "timeStamp": 1519311532912,
+        "arguments": [
+          "Initializing"
+        ],
+        "prefix": "MyNicePrefix",
+        "workerType": "none",
+        "styles": [],
+        "category": "webdev",
+        "_type": "ConsoleAPI"
+      };
+      store.dispatch(messagesAdd([stub]));
+
+      store.dispatch(actions.filterTextSet("MyNice"));
+      let messages = getVisibleMessages(store.getState());
+      expect(messages.length - numUnfilterableMessages).toEqual(1);
+
+      store.dispatch(actions.filterTextSet("MyNicePrefix"));
+      messages = getVisibleMessages(store.getState());
+      expect(messages.length - numUnfilterableMessages).toEqual(1);
+
+      store.dispatch(actions.filterTextSet("MyNicePrefix:"));
+      messages = getVisibleMessages(store.getState());
       expect(messages.length - numUnfilterableMessages).toEqual(1);
     });
 
@@ -204,7 +234,7 @@ describe("Filtering", () => {
 
 describe("Clear filters", () => {
   it("clears all filters", () => {
-    const store = setupStore([]);
+    const store = setupStore();
 
     // Setup test case
     store.dispatch(actions.filterToggle(FILTERS.ERROR));
@@ -213,8 +243,7 @@ describe("Clear filters", () => {
     store.dispatch(actions.filterToggle(FILTERS.NETXHR));
     store.dispatch(actions.filterTextSet("foobar"));
 
-    let filters = getAllFilters(store.getState());
-    expect(filters.toJS()).toEqual({
+    expect(getAllFilters(store.getState())).toEqual({
       // default
       [FILTERS.WARN]: true,
       [FILTERS.LOG]: true,
@@ -227,7 +256,7 @@ describe("Clear filters", () => {
       [FILTERS.NETXHR]: true,
       [FILTERS.TEXT]: "foobar",
     });
-    expect(ServicesMock.prefs.testHelpers.getFiltersPrefs()).toEqual({
+    expect(getFiltersPrefs()).toEqual({
       [PREFS.FILTER.WARN]: true,
       [PREFS.FILTER.LOG]: true,
       [PREFS.FILTER.INFO]: true,
@@ -240,8 +269,7 @@ describe("Clear filters", () => {
 
     store.dispatch(actions.filtersClear());
 
-    filters = getAllFilters(store.getState());
-    expect(filters.toJS()).toEqual({
+    expect(getAllFilters(store.getState())).toEqual({
       [FILTERS.CSS]: false,
       [FILTERS.DEBUG]: true,
       [FILTERS.ERROR]: true,
@@ -253,7 +281,7 @@ describe("Clear filters", () => {
       [FILTERS.TEXT]: "",
     });
 
-    expect(ServicesMock.prefs.testHelpers.getFiltersPrefs()).toEqual({
+    expect(getFiltersPrefs()).toEqual({
       [PREFS.FILTER.CSS]: false,
       [PREFS.FILTER.DEBUG]: true,
       [PREFS.FILTER.ERROR]: true,
@@ -268,7 +296,7 @@ describe("Clear filters", () => {
 
 describe("Resets filters", () => {
   it("resets default filters value to their original one.", () => {
-    const store = setupStore([]);
+    const store = setupStore();
 
     // Setup test case
     store.dispatch(actions.filterToggle(FILTERS.ERROR));
@@ -278,8 +306,7 @@ describe("Resets filters", () => {
     store.dispatch(actions.filterToggle(FILTERS.NETXHR));
     store.dispatch(actions.filterTextSet("foobar"));
 
-    let filters = getAllFilters(store.getState());
-    expect(filters.toJS()).toEqual({
+    expect(getAllFilters(store.getState())).toEqual({
       // default
       [FILTERS.WARN]: true,
       [FILTERS.INFO]: true,
@@ -293,7 +320,7 @@ describe("Resets filters", () => {
       [FILTERS.TEXT]: "foobar",
     });
 
-    expect(ServicesMock.prefs.testHelpers.getFiltersPrefs()).toEqual({
+    expect(getFiltersPrefs()).toEqual({
       [PREFS.FILTER.WARN]: true,
       [PREFS.FILTER.INFO]: true,
       [PREFS.FILTER.DEBUG]: true,
@@ -306,8 +333,7 @@ describe("Resets filters", () => {
 
     store.dispatch(actions.defaultFiltersReset());
 
-    filters = getAllFilters(store.getState());
-    expect(filters.toJS()).toEqual({
+    expect(getAllFilters(store.getState())).toEqual({
       // default
       [FILTERS.ERROR]: true,
       [FILTERS.WARN]: true,
@@ -321,7 +347,7 @@ describe("Resets filters", () => {
       [FILTERS.NETXHR]: true,
     });
 
-    expect(ServicesMock.prefs.testHelpers.getFiltersPrefs()).toEqual({
+    expect(getFiltersPrefs()).toEqual({
       [PREFS.FILTER.ERROR]: true,
       [PREFS.FILTER.WARN]: true,
       [PREFS.FILTER.LOG]: true,
@@ -355,7 +381,7 @@ function prepareBaseStore() {
   ]);
 
   // Console Command - never filtered
-  store.dispatch(messageAdd(new ConsoleCommand({ messageText: `console.warn("x")` })));
+  store.dispatch(messagesAdd([new ConsoleCommand({ messageText: `console.warn("x")` })]));
 
   return store;
 }

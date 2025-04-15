@@ -4,13 +4,10 @@
 
 "use strict";
 
-const {
-  Component,
-  createFactory,
-  DOM,
-  PropTypes,
-} = require("devtools/client/shared/vendor/react");
-const { connect } = require("devtools/client/shared/vendor/react-redux");
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const { connect } = require("devtools/client/shared/redux/visibility-handler-connect");
 const Actions = require("../actions/index");
 const { ACTIVITY_TYPE } = require("../constants");
 const { L10N } = require("../utils/l10n");
@@ -20,7 +17,7 @@ const { getPerformanceAnalysisURL } = require("../utils/mdn-utils");
 const MDNLink = createFactory(require("./MdnLink"));
 const RequestListHeader = createFactory(require("./RequestListHeader"));
 
-const { button, div, span } = DOM;
+const { button, div, span } = dom;
 
 const RELOAD_NOTICE_1 = L10N.getStr("netmonitor.reloadNotice1");
 const RELOAD_NOTICE_2 = L10N.getStr("netmonitor.reloadNotice2");

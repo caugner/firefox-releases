@@ -6,7 +6,7 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "DownloadsCommon",
 ];
 
@@ -32,17 +32,13 @@ this.EXPORTED_SYMBOLS = [
 
 // Globals
 
-const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   NetUtil: "resource://gre/modules/NetUtil.jsm",
   PluralForm: "resource://gre/modules/PluralForm.jsm",
   AppConstants: "resource://gre/modules/AppConstants.jsm",
-  AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.jsm",
-  CustomizableUI: "resource:///modules/CustomizableUI.jsm",
   DownloadHistory: "resource://gre/modules/DownloadHistory.jsm",
   Downloads: "resource://gre/modules/Downloads.jsm",
   DownloadUIHelper: "resource://gre/modules/DownloadUIHelper.jsm",
@@ -54,7 +50,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 });
 
 XPCOMUtils.defineLazyGetter(this, "DownloadsLogger", () => {
-  let { ConsoleAPI } = Cu.import("resource://gre/modules/Console.jsm", {});
+  let { ConsoleAPI } = ChromeUtils.import("resource://gre/modules/Console.jsm", {});
   let consoleOptions = {
     maxLogLevelPref: "browser.download.loglevel",
     prefix: "Downloads"
@@ -75,8 +71,6 @@ const kDownloadsStringsRequiringFormatting = {
 const kDownloadsStringsRequiringPluralForm = {
   otherDownloads3: true
 };
-
-const kPartialDownloadSuffix = ".part";
 
 const kMaxHistoryResultsForLimitedView = 42;
 
@@ -124,7 +118,7 @@ PrefObserver.register({
  * This object is exposed directly to the consumers of this JavaScript module,
  * and provides shared methods for all the instances of the user interface.
  */
-this.DownloadsCommon = {
+var DownloadsCommon = {
   // The following legacy constants are still returned by stateOfDownload, but
   // individual properties of the Download object should normally be used.
   DOWNLOAD_NOTSTARTED: -1,
@@ -1006,7 +1000,7 @@ const DownloadsViewPrototype = {
    * @note Subclasses should override this.
    */
   onDownloadStateChanged(download) {
-    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
+    throw Cr.NS_ERROR_NOT_IMPLEMENTED;
   },
 
   /**
@@ -1038,7 +1032,7 @@ const DownloadsViewPrototype = {
    * @note Subclasses should override this.
    */
   onDownloadRemoved(download) {
-    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
+    throw Cr.NS_ERROR_NOT_IMPLEMENTED;
   },
 
   /**
@@ -1048,7 +1042,7 @@ const DownloadsViewPrototype = {
    * @note Subclasses should override this.
    */
   _refreshProperties() {
-    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
+    throw Cr.NS_ERROR_NOT_IMPLEMENTED;
   },
 
   /**
@@ -1057,7 +1051,20 @@ const DownloadsViewPrototype = {
    * @note Subclasses should override this.
    */
   _updateView() {
-    throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
+    throw Cr.NS_ERROR_NOT_IMPLEMENTED;
+  },
+
+  /**
+   * Computes aggregate values and propagates the changes to our views.
+   */
+  _updateViews() {
+    // Do not update the status indicators during batch loads of download items.
+    if (this._loading) {
+      return;
+    }
+
+    this._refreshProperties();
+    this._views.forEach(this._updateView, this);
   },
 };
 
@@ -1171,31 +1178,6 @@ DownloadsIndicatorDataCtor.prototype = {
     return aValue;
   },
   _attentionSuppressed: false,
-
-  /**
-   * Computes aggregate values and propagates the changes to our views.
-   */
-  _updateViews() {
-    // Do not update the status indicators during batch loads of download items.
-    if (this._loading) {
-      return;
-    }
-
-    this._refreshProperties();
-
-    let widgetGroup = CustomizableUI.getWidget("downloads-button");
-    let inMenu = widgetGroup.areaType == CustomizableUI.TYPE_MENU_PANEL;
-    if (inMenu) {
-      if (this._attention == DownloadsCommon.ATTENTION_NONE) {
-        AppMenuNotifications.removeNotification(/^download-/);
-      } else {
-        let badgeClass = "download-" + this._attention;
-        AppMenuNotifications.showBadgeOnlyNotification(badgeClass);
-      }
-    }
-
-    this._views.forEach(this._updateView, this);
-  },
 
   /**
    * Updates the specified view with the current aggregate values.
@@ -1355,19 +1337,6 @@ DownloadsSummaryData.prototype = {
   },
 
   // Propagation of properties to our views
-
-  /**
-   * Computes aggregate values and propagates the changes to our views.
-   */
-  _updateViews() {
-    // Do not update the status indicators during batch loads of download items.
-    if (this._loading) {
-      return;
-    }
-
-    this._refreshProperties();
-    this._views.forEach(this._updateView, this);
-  },
 
   /**
    * Updates the specified view with the current aggregate values.

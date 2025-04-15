@@ -29,6 +29,7 @@
 
 namespace mozilla {
 namespace dom {
+class DocGroup;
 class Element;
 } // namespace dom
 struct ComputedGridTrackInfo;
@@ -62,9 +63,12 @@ public:
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsComputedDOMStyle,
                                                                    nsICSSDeclaration)
 
-  NS_DECL_NSICSSDECLARATION
-
   NS_DECL_NSIDOMCSSSTYLEDECLARATION_HELPER
+  nsresult GetPropertyValue(const nsCSSPropertyID aPropID,
+                            nsAString& aValue) override;
+  nsresult SetPropertyValue(const nsCSSPropertyID aPropID,
+                            const nsAString& aValue,
+                            nsIPrincipal* aSubjectPrincipal) override;
   virtual already_AddRefed<CSSValue>
   GetPropertyCSSValue(const nsAString& aProp, mozilla::ErrorResult& aRv)
     override;
@@ -94,18 +98,16 @@ public:
 
   static already_AddRefed<nsStyleContext>
   GetStyleContext(mozilla::dom::Element* aElement, nsAtom* aPseudo,
-                  nsIPresShell* aPresShell,
                   StyleType aStyleType = eAll);
 
   static already_AddRefed<nsStyleContext>
   GetStyleContextNoFlush(mozilla::dom::Element* aElement,
                          nsAtom* aPseudo,
-                         nsIPresShell* aPresShell,
                          StyleType aStyleType = eAll)
   {
     return DoGetStyleContextNoFlush(aElement,
                                     aPseudo,
-                                    aPresShell,
+                                    aElement->OwnerDoc()->GetShell(),
                                     aStyleType,
                                     eWithAnimation);
   }
@@ -113,18 +115,14 @@ public:
   static already_AddRefed<nsStyleContext>
   GetUnanimatedStyleContextNoFlush(mozilla::dom::Element* aElement,
                                    nsAtom* aPseudo,
-                                   nsIPresShell* aPresShell,
                                    StyleType aStyleType = eAll)
   {
     return DoGetStyleContextNoFlush(aElement,
                                     aPseudo,
-                                    aPresShell,
+                                    aElement->OwnerDoc()->GetShell(),
                                     aStyleType,
                                     eWithoutAnimation);
   }
-
-  static nsIPresShell*
-  GetPresShellForContent(const nsIContent* aContent);
 
   // Helper for nsDOMWindowUtils::GetVisitedDependentComputedStyle
   void SetExposeVisitedStyle(bool aExpose) {
@@ -138,8 +136,10 @@ public:
   virtual mozilla::DeclarationBlock* GetCSSDeclaration(Operation) override;
   virtual nsresult SetCSSDeclaration(mozilla::DeclarationBlock*) override;
   virtual nsIDocument* DocToUpdate() override;
-  virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv) override;
-  nsDOMCSSDeclaration::ServoCSSParsingEnvironment GetServoCSSParsingEnvironment() const final;
+  virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv,
+                                        nsIPrincipal* aSubjectPrincipal) override;
+  nsDOMCSSDeclaration::ServoCSSParsingEnvironment
+  GetServoCSSParsingEnvironment(nsIPrincipal* aSubjectPrincipal) const final;
 
   static already_AddRefed<nsROCSSPrimitiveValue>
     MatrixToCSSValue(const mozilla::gfx::Matrix4x4& aMatrix);
@@ -202,8 +202,6 @@ private:
   already_AddRefed<CSSValue> GetStaticOffset(mozilla::Side aSide);
 
   already_AddRefed<CSSValue> GetPaddingWidthFor(mozilla::Side aSide);
-
-  already_AddRefed<CSSValue> GetBorderColorsFor(mozilla::Side aSide);
 
   already_AddRefed<CSSValue> GetBorderStyleFor(mozilla::Side aSide);
 
@@ -295,6 +293,7 @@ private:
   already_AddRefed<CSSValue> DoGetFontVariationSettings();
   already_AddRefed<CSSValue> DoGetFontKerning();
   already_AddRefed<CSSValue> DoGetFontLanguageOverride();
+  already_AddRefed<CSSValue> DoGetFontOpticalSizing();
   already_AddRefed<CSSValue> DoGetFontSize();
   already_AddRefed<CSSValue> DoGetFontSizeAdjust();
   already_AddRefed<CSSValue> DoGetOsxFontSmoothing();
@@ -386,10 +385,6 @@ private:
   already_AddRefed<CSSValue> DoGetBorderBottomColor();
   already_AddRefed<CSSValue> DoGetBorderLeftColor();
   already_AddRefed<CSSValue> DoGetBorderRightColor();
-  already_AddRefed<CSSValue> DoGetBorderBottomColors();
-  already_AddRefed<CSSValue> DoGetBorderLeftColors();
-  already_AddRefed<CSSValue> DoGetBorderRightColors();
-  already_AddRefed<CSSValue> DoGetBorderTopColors();
   already_AddRefed<CSSValue> DoGetBorderBottomLeftRadius();
   already_AddRefed<CSSValue> DoGetBorderBottomRightRadius();
   already_AddRefed<CSSValue> DoGetBorderTopLeftRadius();
@@ -499,13 +494,17 @@ private:
   already_AddRefed<CSSValue> DoGetOverflow();
   already_AddRefed<CSSValue> DoGetOverflowX();
   already_AddRefed<CSSValue> DoGetOverflowY();
-  already_AddRefed<CSSValue> DoGetOverflowClipBox();
+  already_AddRefed<CSSValue> DoGetOverflowClipBoxBlock();
+  already_AddRefed<CSSValue> DoGetOverflowClipBoxInline();
   already_AddRefed<CSSValue> DoGetResize();
   already_AddRefed<CSSValue> DoGetPageBreakAfter();
   already_AddRefed<CSSValue> DoGetPageBreakBefore();
   already_AddRefed<CSSValue> DoGetPageBreakInside();
   already_AddRefed<CSSValue> DoGetTouchAction();
   already_AddRefed<CSSValue> DoGetTransform();
+  already_AddRefed<CSSValue> DoGetTranslate();
+  already_AddRefed<CSSValue> DoGetRotate();
+  already_AddRefed<CSSValue> DoGetScale();
   already_AddRefed<CSSValue> DoGetTransformBox();
   already_AddRefed<CSSValue> DoGetTransformOrigin();
   already_AddRefed<CSSValue> DoGetPerspective();
@@ -514,6 +513,8 @@ private:
   already_AddRefed<CSSValue> DoGetTransformStyle();
   already_AddRefed<CSSValue> DoGetOrient();
   already_AddRefed<CSSValue> DoGetScrollBehavior();
+  already_AddRefed<CSSValue> DoGetOverscrollBehaviorX();
+  already_AddRefed<CSSValue> DoGetOverscrollBehaviorY();
   already_AddRefed<CSSValue> DoGetScrollSnapType();
   already_AddRefed<CSSValue> DoGetScrollSnapTypeX();
   already_AddRefed<CSSValue> DoGetScrollSnapTypeY();
@@ -521,6 +522,7 @@ private:
   already_AddRefed<CSSValue> DoGetScrollSnapPointsY();
   already_AddRefed<CSSValue> DoGetScrollSnapDestination();
   already_AddRefed<CSSValue> DoGetScrollSnapCoordinate();
+  already_AddRefed<CSSValue> DoGetShapeImageThreshold();
   already_AddRefed<CSSValue> DoGetShapeOutside();
 
   /* User interface properties */
@@ -721,7 +723,7 @@ private:
 
   // Find out if we can safely skip flushing for aDocument (i.e. pending
   // restyles does not affect mContent).
-  mozilla::FlushTarget GetFlushTarget(nsIDocument* aDocument) const;
+  bool NeedsToFlush(nsIDocument* aDocument) const;
 
 
   static nsComputedStyleMap* GetComputedStyleMap();

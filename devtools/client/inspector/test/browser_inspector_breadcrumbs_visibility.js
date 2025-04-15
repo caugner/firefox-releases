@@ -6,6 +6,11 @@
 // Test that the start and end buttons on the breadcrumb trail bring the right
 // crumbs into the visible area, for both LTR and RTL
 
+// There are shutdown issues for which multiple rejections are left uncaught.
+// See bug 1018184 for resolving these issues.
+const { PromiseTestUtils } = scopedCuImport("resource://testing-common/PromiseTestUtils.jsm");
+PromiseTestUtils.whitelistRejectionsGlobally(/Connection closed/);
+
 let { Toolbox } = require("devtools/client/framework/toolbox");
 
 const TEST_URI = URL_ROOT + "doc_inspector_breadcrumbs_visibility.html";
@@ -32,10 +37,6 @@ const NODES = [
 ];
 
 add_task(function* () {
-  // This test needs specific initial size of the sidebar.
-  yield pushPref("devtools.toolsidebar-width.inspector", 350);
-  yield pushPref("devtools.toolsidebar-height.inspector", 150);
-
   let { inspector, toolbox } = yield openInspectorForURL(TEST_URI);
 
   // No way to wait for scrolling to end (Bug 1172171)

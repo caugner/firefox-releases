@@ -9,7 +9,7 @@ const XPINSTALL_URL = "chrome://mozapps/content/xpinstall/xpinstallConfirm.xul";
 const PREF_INSTALL_REQUIREBUILTINCERTS = "extensions.install.requireBuiltInCerts";
 const PROGRESS_NOTIFICATION = "addon-progress";
 
-Cu.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 var rootDir = getRootDirectory(gTestPath);
 var rootPath = rootDir.split("/");
@@ -109,7 +109,7 @@ async function waitForNotification(aId, aExpectedCount = 1) {
   let panelEventPromise = new Promise(resolve => {
     PopupNotifications.panel.addEventListener("PanelUpdated", function eventListener(e) {
       // Skip notifications that are not the one that we are supposed to be looking for
-      if (e.detail.indexOf(aId) == -1) {
+      if (!e.detail.includes(aId)) {
         return;
       }
       PopupNotifications.panel.removeEventListener("PanelUpdated", eventListener);
@@ -158,8 +158,6 @@ async function waitForInstallDialog() {
       },
       onCloseWindow(aXULWindow) {
       },
-      onWindowTitleChange(aXULWindow, aNewTitle) {
-      }
     });
   });
   info("Install dialog opened, waiting for focus");
@@ -207,7 +205,7 @@ function cancelInstallDialog(installDialog) {
 }
 
 async function waitForSingleNotification(aCallback) {
-  while (PopupNotifications.panel.childNodes.length == 2) {
+  while (PopupNotifications.panel.childNodes.length != 1) {
     await new Promise(resolve => executeSoon(resolve));
 
     info("Waiting for single notification");
@@ -593,8 +591,8 @@ async function test_url() {
 },
 
 async function test_localFile() {
-  let cr = Components.classes["@mozilla.org/chrome/chrome-registry;1"]
-                     .getService(Components.interfaces.nsIChromeRegistry);
+  let cr = Cc["@mozilla.org/chrome/chrome-registry;1"]
+             .getService(Ci.nsIChromeRegistry);
   let path;
   try {
     path = cr.convertChromeURL(makeURI(CHROMEROOT + "corrupt.xpi")).spec;
@@ -673,6 +671,13 @@ async function test_tabNavigate() {
   gBrowser.loadURI("about:blank");
   await closePromise;
 
+  // At the point of closing notification, AddonManager hasn't yet removed
+  // pending installs.  It removes them in onLocationChange listener, and
+  // the notification is also closed in another onLocationChange listener,
+  // before AddonManager's one.  Wait for next tick to ensure all
+  // onLocationChange listeners are performed.
+  await waitForTick();
+
   let installs = await getInstalls();
   is(installs.length, 0, "Should be no pending install");
 
@@ -689,7 +694,7 @@ async function test_urlBar() {
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
   gURLBar.value = TESTROOT + "amosigned.xpi";
   gURLBar.focus();
-  EventUtils.synthesizeKey("VK_RETURN", {});
+  EventUtils.synthesizeKey("KEY_Enter");
 
   await progressPromise;
   let installDialog = await dialogPromise;

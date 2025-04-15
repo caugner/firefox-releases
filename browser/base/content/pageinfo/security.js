@@ -3,12 +3,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Components.utils.import("resource://gre/modules/BrowserUtils.jsm");
+ChromeUtils.import("resource://gre/modules/BrowserUtils.jsm");
 
 /* import-globals-from pageInfo.js */
 
-XPCOMUtils.defineLazyModuleGetter(this, "LoginHelper",
-                                  "resource://gre/modules/LoginHelper.jsm");
+ChromeUtils.defineModuleGetter(this, "LoginHelper",
+                               "resource://gre/modules/LoginHelper.jsm");
+ChromeUtils.defineModuleGetter(this, "PluralForm",
+                               "resource://gre/modules/PluralForm.jsm");
 
 var security = {
   init(uri, windowInfo) {
@@ -23,8 +25,8 @@ var security = {
   },
 
   _getSecurityInfo() {
-    const nsISSLStatusProvider = Components.interfaces.nsISSLStatusProvider;
-    const nsISSLStatus = Components.interfaces.nsISSLStatus;
+    const nsISSLStatusProvider = Ci.nsISSLStatusProvider;
+    const nsISSLStatus = Ci.nsISSLStatus;
 
     // We don't have separate info for a frame, return null until further notice
     // (see bug 138479)
@@ -38,22 +40,21 @@ var security = {
       return null;
 
     var isBroken =
-      (ui.state & Components.interfaces.nsIWebProgressListener.STATE_IS_BROKEN);
+      (ui.state & Ci.nsIWebProgressListener.STATE_IS_BROKEN);
     var isMixed =
-      (ui.state & (Components.interfaces.nsIWebProgressListener.STATE_LOADED_MIXED_ACTIVE_CONTENT |
-                   Components.interfaces.nsIWebProgressListener.STATE_LOADED_MIXED_DISPLAY_CONTENT));
+      (ui.state & (Ci.nsIWebProgressListener.STATE_LOADED_MIXED_ACTIVE_CONTENT |
+                   Ci.nsIWebProgressListener.STATE_LOADED_MIXED_DISPLAY_CONTENT));
     var isInsecure =
-      (ui.state & Components.interfaces.nsIWebProgressListener.STATE_IS_INSECURE);
+      (ui.state & Ci.nsIWebProgressListener.STATE_IS_INSECURE);
     var isEV =
-      (ui.state & Components.interfaces.nsIWebProgressListener.STATE_IDENTITY_EV_TOPLEVEL);
+      (ui.state & Ci.nsIWebProgressListener.STATE_IDENTITY_EV_TOPLEVEL);
     ui.QueryInterface(nsISSLStatusProvider);
     var status = ui.SSLStatus;
 
     if (!isInsecure && status) {
       status.QueryInterface(nsISSLStatus);
       var cert = status.serverCert;
-      var issuerName =
-        this.mapIssuerOrganization(cert.issuerOrganization) || cert.issuerName;
+      var issuerName = cert.issuerOrganization || cert.issuerName;
 
       var retval = {
         hostName,
@@ -132,31 +133,15 @@ var security = {
     return null;
   },
 
-  // Interface for mapping a certificate issuer organization to
-  // the value to be displayed.
-  // Bug 82017 - this implementation should be moved to pipnss C++ code
-  mapIssuerOrganization(name) {
-    if (!name) return null;
-
-    if (name == "RSA Data Security, Inc.") return "Verisign, Inc.";
-
-    // No mapping required
-    return name;
-  },
-
   /**
    * Open the cookie manager window
    */
   viewCookies() {
-    var wm = Components.classes["@mozilla.org/appshell/window-mediator;1"]
-                       .getService(Components.interfaces.nsIWindowMediator);
-    var win = wm.getMostRecentWindow("Browser:Cookies");
-    var eTLDService = Components.classes["@mozilla.org/network/effective-tld-service;1"].
-                      getService(Components.interfaces.nsIEffectiveTLDService);
+    var win = Services.wm.getMostRecentWindow("Browser:Cookies");
 
     var eTLD;
     try {
-      eTLD = eTLDService.getBaseDomain(this.uri);
+      eTLD = Services.eTLD.getBaseDomain(this.uri);
     } catch (e) {
       // getBaseDomain will fail if the host is an IP address or is empty
       eTLD = this.uri.asciiHost;
@@ -184,7 +169,7 @@ function securityOnLoad(uri, windowInfo) {
   security.init(uri, windowInfo);
 
   var info = security._getSecurityInfo();
-  if (!info) {
+  if (!info || uri.scheme === "about") {
     document.getElementById("securityTab").hidden = true;
     return;
   }
@@ -204,7 +189,7 @@ function securityOnLoad(uri, windowInfo) {
     // fields must be specified for subject and issuer so that case is simpler.
     if (info.isEV) {
       owner = info.cert.organization;
-      verifier = security.mapIssuerOrganization(info.cAName);
+      verifier = info.cAName;
     } else {
       // Technically, a non-EV cert might specify an owner in the O field or not,
       // depending on the CA's issuing policies.  However we don't have any programmatic
@@ -212,9 +197,7 @@ function securityOnLoad(uri, windowInfo) {
       // vetting standards are good enough (that's what EV is for) so we default to
       // treating these certs as domain-validated only.
       owner = pageInfoBundle.getString("securityNoOwner");
-      verifier = security.mapIssuerOrganization(info.cAName ||
-                                                info.cert.issuerCommonName ||
-                                                info.cert.issuerName);
+      verifier = info.cAName || info.cert.issuerCommonName || info.cert.issuerName;
     }
   } else {
     // We don't have valid identity credentials.
@@ -248,15 +231,12 @@ function securityOnLoad(uri, windowInfo) {
           realmHasPasswords(uri) ? yesStr : noStr);
 
   var visitCount = previousVisitCount(info.hostName);
-  if (visitCount > 1) {
-    setText("security-privacy-history-value",
-            pageInfoBundle.getFormattedString("securityNVisits", [visitCount.toLocaleString()]));
-  } else if (visitCount == 1) {
-    setText("security-privacy-history-value",
-            pageInfoBundle.getString("securityOneVisit"));
-  } else {
-    setText("security-privacy-history-value", noStr);
-  }
+
+  let visitCountStr = visitCount > 0
+    ? PluralForm.get(visitCount, pageInfoBundle.getString("securityVisitsNumber"))
+        .replace("#1", visitCount.toLocaleString())
+    : pageInfoBundle.getString("securityNoVisits");
+  setText("security-privacy-history-value", visitCountStr);
 
   /* Set the Technical Detail section messages */
   const pkiBundle = document.getElementById("pkiBundle");
@@ -325,7 +305,7 @@ function viewCertHelper(parent, cert) {
   if (!cert)
     return;
 
-  var cd = Components.classes[CERTIFICATEDIALOGS_CONTRACTID].getService(nsICertificateDialogs);
+  var cd = Cc[CERTIFICATEDIALOGS_CONTRACTID].getService(nsICertificateDialogs);
   cd.viewCert(parent, cert);
 }
 
@@ -333,10 +313,7 @@ function viewCertHelper(parent, cert) {
  * Return true iff we have cookies for uri
  */
 function hostHasCookies(uri) {
-  var cookieManager = Components.classes["@mozilla.org/cookiemanager;1"]
-                                .getService(Components.interfaces.nsICookieManager);
-
-  return cookieManager.countCookiesFromHost(uri.asciiHost) > 0;
+  return Services.cookies.countCookiesFromHost(uri.asciiHost) > 0;
 }
 
 /**
@@ -344,9 +321,7 @@ function hostHasCookies(uri) {
  * saved passwords
  */
 function realmHasPasswords(uri) {
-  var passwordManager = Components.classes["@mozilla.org/login-manager;1"]
-                                  .getService(Components.interfaces.nsILoginManager);
-  return passwordManager.countLogins(uri.prePath, "", "") > 0;
+  return Services.logins.countLogins(uri.prePath, "", "") > 0;
 }
 
 /**
@@ -358,8 +333,8 @@ function previousVisitCount(host, endTimeReference) {
   if (!host)
     return false;
 
-  var historyService = Components.classes["@mozilla.org/browser/nav-history-service;1"]
-                                 .getService(Components.interfaces.nsINavHistoryService);
+  var historyService = Cc["@mozilla.org/browser/nav-history-service;1"]
+                         .getService(Ci.nsINavHistoryService);
 
   var options = historyService.getNewQueryOptions();
   options.resultType = options.RESULTS_AS_VISIT;

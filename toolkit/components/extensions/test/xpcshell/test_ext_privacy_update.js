@@ -3,14 +3,14 @@
 "use strict";
 
 XPCOMUtils.defineLazyGetter(this, "Management", () => {
-  const {Management} = Cu.import("resource://gre/modules/Extension.jsm", {});
+  const {Management} = ChromeUtils.import("resource://gre/modules/Extension.jsm", {});
   return Management;
 });
 
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
-                                  "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
-                                  "resource://gre/modules/Preferences.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManager",
+                               "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "Preferences",
+                               "resource://gre/modules/Preferences.jsm");
 
 const {
   createAppInfo,
@@ -45,7 +45,7 @@ add_task(async function test_privacy_update() {
     Preferences.set(pref, PREFS[pref]);
   }
 
-  do_register_cleanup(() => {
+  registerCleanupFunction(() => {
     // Reset the prefs.
     for (let pref in PREFS) {
       Preferences.reset(pref);

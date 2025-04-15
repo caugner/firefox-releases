@@ -2,14 +2,14 @@
     http://creativecommons.org/publicdomain/zero/1.0/ */
 "use strict";
 
-const {Utils} = Cu.import("resource://gre/modules/sessionstore/Utils.jsm", {});
-const triggeringPrincipalBase64 = Utils.SERIALIZED_SYSTEMPRINCIPAL;
+const {Utils} = ChromeUtils.import("resource://gre/modules/sessionstore/Utils.jsm", {});
+const triggeringPrincipal_base64 = Utils.SERIALIZED_SYSTEMPRINCIPAL;
 const ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
 
 const testState = {
   windows: [{
     tabs: [
-      { entries: [{ url: "about:blank", triggeringPrincipalBase64 }] },
+      { entries: [{ url: "about:blank", triggeringPrincipal_base64 }] },
     ]
   }],
   scratchpads: [

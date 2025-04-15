@@ -17,8 +17,12 @@ interface Event {
   readonly attribute DOMString type;
   [Pure]
   readonly attribute EventTarget? target;
+  [Pure, BinaryName="target", Func="Event::IsSrcElementEnabled"]
+  readonly attribute EventTarget? srcElement;
   [Pure]
   readonly attribute EventTarget? currentTarget;
+
+  sequence<EventTarget> composedPath();
 
   const unsigned short NONE = 0;
   const unsigned short CAPTURING_PHASE = 1;
@@ -68,7 +72,6 @@ partial interface Event {
   [ChromeOnly] readonly attribute EventTarget? composedTarget;
   [ChromeOnly] readonly attribute boolean multipleActionsPrevented;
   [ChromeOnly] readonly attribute boolean isSynthesized;
-  boolean getPreventDefault();
 };
 
 dictionary EventInit {

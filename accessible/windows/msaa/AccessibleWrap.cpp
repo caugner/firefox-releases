@@ -46,6 +46,7 @@
 #include "mozilla/ReverseIterator.h"
 #include "nsIXULRuntime.h"
 #include "mozilla/mscom/AsyncInvoker.h"
+#include "mozilla/mscom/Interceptor.h"
 
 #include "oleacc.h"
 
@@ -101,6 +102,24 @@ AccessibleWrap::Shutdown()
       doc->RemoveID(mID);
       mID = kNoID;
     }
+  }
+
+  if (XRE_IsContentProcess()) {
+    // Bug 1434822: To improve performance for cross-process COM, we disable COM
+    // garbage collection. However, this means we never receive Release calls
+    // from clients, so defunct accessibles can never be deleted. Since we
+    // know when an accessible is shutting down, we can work around this by
+    // forcing COM to disconnect this object from all of its remote clients,
+    // which will cause associated references to be released.
+    IUnknown* unk = static_cast<IAccessible*>(this);
+    mscom::Interceptor::DisconnectRemotesForTarget(unk);
+    // If an accessible was retrieved via IAccessibleHypertext::hyperlink*,
+    // it will have a different Interceptor that won't be matched by the above
+    // call, even though it's the same object. Therefore, call it again with
+    // the IAccessibleHyperlink pointer. We can remove this horrible hack once
+    // bug 1440267 is fixed.
+    unk = static_cast<IAccessibleHyperlink*>(this);
+    mscom::Interceptor::DisconnectRemotesForTarget(unk);
   }
 
   Accessible::Shutdown();
@@ -495,8 +514,12 @@ AccessibleWrap::get_accRole(
 
   if (content->IsElement()) {
     nsAutoString roleString;
-    if (msaaRole != ROLE_SYSTEM_CLIENT &&
-        !content->GetAttr(kNameSpaceID_None, nsGkAtoms::role, roleString)) {
+    // Try the role attribute.
+    content->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::role, roleString);
+
+    if (roleString.IsEmpty()) {
+      // No role attribute (or it is an empty string).
+      // Use the tag name.
       nsIDocument * document = content->GetUncomposedDoc();
       if (!document)
         return E_FAIL;
@@ -898,10 +921,10 @@ AccessibleWrap::accLocation(
 
   nsIntRect rect = Bounds();
 
-  *pxLeft = rect.x;
-  *pyTop = rect.y;
-  *pcxWidth = rect.width;
-  *pcyHeight = rect.height;
+  *pxLeft = rect.X();
+  *pyTop = rect.Y();
+  *pcxWidth = rect.Width();
+  *pcyHeight = rect.Height();
   return S_OK;
 }
 
@@ -1194,16 +1217,6 @@ AccessibleWrap::FireWinEvent(Accessible* aTarget, uint32_t aEventType)
 
   // Fire MSAA event for client area window.
   ::NotifyWinEvent(winEvent, hwnd, OBJID_CLIENT, childID);
-
-  // JAWS announces collapsed combobox navigation based on focus events.
-  if (aEventType == nsIAccessibleEvent::EVENT_SELECTION &&
-      Compatibility::IsJAWS()) {
-    roles::Role role = aTarget->IsProxy() ? aTarget->Proxy()->Role() :
-      aTarget->Role();
-    if (role == roles::COMBOBOX_OPTION) {
-      ::NotifyWinEvent(EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, childID);
-    }
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1489,7 +1502,10 @@ AccessibleWrap::GetIAccessibleFor(const VARIANT& aVarChild, bool* aIsDefunct)
   // accessible is part of the chrome process and is part of the xul browser
   // window and the child id points in the content documents. Thus we need to
   // make sure that it is never called on proxies.
-  if (XRE_IsParentProcess() && !IsProxy() && !sIDGen.IsChromeID(varChild.lVal)) {
+  // Bug 1422674: We must only handle remote ids here (< 0), not child indices.
+  // Child indices (> 0) are handled below for both local and remote children.
+  if (XRE_IsParentProcess() && !IsProxy() &&
+      varChild.lVal < 0 && !sIDGen.IsChromeID(varChild.lVal)) {
     if (!IsRootForHWND()) {
       // Bug 1422201, 1424657: accChild with a remote id is only valid on the
       // root accessible for an HWND.
@@ -1654,12 +1670,12 @@ AccessibleWrap::UpdateSystemCaretFor(HWND aCaretWnd,
 
   // Create invisible bitmap for caret, otherwise its appearance interferes
   // with Gecko caret
-  nsAutoBitmap caretBitMap(CreateBitmap(1, aCaretRect.height, 1, 1, nullptr));
-  if (::CreateCaret(aCaretWnd, caretBitMap, 1, aCaretRect.height)) {  // Also destroys the last caret
+  nsAutoBitmap caretBitMap(CreateBitmap(1, aCaretRect.Height(), 1, 1, nullptr));
+  if (::CreateCaret(aCaretWnd, caretBitMap, 1, aCaretRect.Height())) {  // Also destroys the last caret
     ::ShowCaret(aCaretWnd);
     RECT windowRect;
     ::GetWindowRect(aCaretWnd, &windowRect);
-    ::SetCaretPos(aCaretRect.x - windowRect.left, aCaretRect.y - windowRect.top);
+    ::SetCaretPos(aCaretRect.X() - windowRect.left, aCaretRect.Y() - windowRect.top);
   }
 }
 

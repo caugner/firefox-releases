@@ -1,18 +1,17 @@
+/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set sts=2 sw=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["ExtensionUtils"];
+var EXPORTED_SYMBOLS = ["ExtensionUtils"];
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "ConsoleAPI",
-                                  "resource://gre/modules/Console.jsm");
+ChromeUtils.defineModuleGetter(this, "ConsoleAPI",
+                               "resource://gre/modules/Console.jsm");
 
 function getConsole() {
   return new ConsoleAPI({
@@ -22,6 +21,10 @@ function getConsole() {
 }
 
 XPCOMUtils.defineLazyGetter(this, "console", getConsole);
+
+// xpcshell doesn't handle idle callbacks well.
+XPCOMUtils.defineLazyGetter(this, "idleTimeout",
+                            () => Services.appinfo.name === "XPCShell" ? 500 : undefined);
 
 // It would be nicer to go through `Services.appinfo`, but some tests need to be
 // able to replace that field with a custom implementation before it is first
@@ -296,6 +299,22 @@ function promiseDocumentReady(doc) {
         resolve(doc);
       }
     }, true);
+  });
+}
+
+/**
+  * Returns a Promise which resolves when the given window's document's DOM has
+  * fully loaded, the <head> stylesheets have fully loaded, and we have hit an
+  * idle time.
+  *
+  * @param {Window} window The window whose document we will await
+                           the readiness of.
+  * @returns {Promise<IdleDeadline>}
+  */
+function promiseDocumentIdle(window) {
+  return window.document.documentReadyForIdle.then(() => {
+    return new Promise(resolve =>
+      window.requestIdleCallback(resolve, {timeout: idleTimeout}));
   });
 }
 
@@ -633,7 +652,7 @@ function checkLoadURL(url, principal, options) {
   return true;
 }
 
-this.ExtensionUtils = {
+var ExtensionUtils = {
   checkLoadURL,
   defineLazyGetter,
   flushJarCache,
@@ -645,6 +664,7 @@ this.ExtensionUtils = {
   getWinUtils,
   instanceOf,
   normalizeTime,
+  promiseDocumentIdle,
   promiseDocumentLoaded,
   promiseDocumentReady,
   promiseEvent,

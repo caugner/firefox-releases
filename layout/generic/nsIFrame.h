@@ -37,12 +37,13 @@
 #include "nsITheme.h"
 #include "nsLayoutUtils.h"
 #include "nsQueryFrame.h"
-#include "nsStringGlue.h"
+#include "nsString.h"
 #include "nsStyleContext.h"
 #include "nsStyleStruct.h"
 #include "Visibility.h"
 #include "nsChangeHint.h"
 #include "nsStyleContextInlines.h"
+#include "mozilla/gfx/CompositorHitTestInfo.h"
 #include "mozilla/gfx/MatrixFwd.h"
 #include "nsDisplayItemTypes.h"
 
@@ -390,14 +391,6 @@ operator<<(std::ostream& aStream, const nsReflowStatus& aStatus);
 //----------------------------------------------------------------------
 
 /**
- * DidReflow status values.
- */
-enum class nsDidReflowStatus : uint32_t {
-  NOT_FINISHED,
-  FINISHED
-};
-
-/**
  * When there is no scrollable overflow rect, the visual overflow rect
  * may be stored as four 1-byte deltas each strictly LESS THAN 0xff, for
  * the four edges of the rectangle, or the four bytes may be read as a
@@ -604,6 +597,7 @@ public:
   typedef mozilla::gfx::DrawTarget DrawTarget;
   typedef mozilla::gfx::Matrix Matrix;
   typedef mozilla::gfx::Matrix4x4 Matrix4x4;
+  typedef mozilla::gfx::Matrix4x4Flagged Matrix4x4Flagged;
   typedef mozilla::Sides Sides;
   typedef mozilla::LogicalSides LogicalSides;
   typedef mozilla::SmallPointerArray<mozilla::DisplayItemData> DisplayItemDataArray;
@@ -633,6 +627,9 @@ public:
     , mMayHaveWillChangeBudget(false)
     , mBuiltBlendContainer(false)
     , mIsPrimaryFrame(false)
+    , mMayHaveTransformAnimation(false)
+    , mMayHaveOpacityAnimation(false)
+    , mAllDescendantsAreInvisible(false)
   {
     mozilla::PodZero(&mOverflow);
   }
@@ -892,14 +889,12 @@ public:
   /**
    * Gets the parent of a frame, using the parent of the placeholder for
    * out-of-flow frames.
+   *
+   * This is effectively the primary frame (or one of the continuations) of the
+   * closest flattened tree ancestor that has a frame (flattened tree ancestors
+   * may not have frames in presence of display: contents).
    */
-  inline nsContainerFrame* GetInFlowParent();
-
-  /**
-   * Gets the primary frame of the Content's flattened tree
-   * parent, if one exists.
-   */
-  nsIFrame* GetFlattenedTreeParentPrimaryFrame() const;
+  inline nsContainerFrame* GetInFlowParent() const;
 
   /**
    * Return the placeholder for this frame (which must be out-of-flow).
@@ -1257,8 +1252,6 @@ public:
   // or height), imposed by its flex container.
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(FlexItemMainSizeOverride, nscoord)
 
-  NS_DECLARE_FRAME_PROPERTY_RELEASABLE(CachedBackgroundImageDT, DrawTarget)
-
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(InvalidationRect, nsRect)
 
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(RefusedAsyncAnimationProperty, bool)
@@ -1272,6 +1265,7 @@ public:
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(BBaselinePadProperty, nscoord)
 
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(ModifiedFrameList, nsTArray<nsIFrame*>)
+  NS_DECLARE_FRAME_PROPERTY_DELETABLE(OverriddenDirtyRectFrameList, nsTArray<nsIFrame*>)
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(DisplayItems, DisplayItemArray)
 
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(BidiDataProperty, mozilla::FrameBidiData)
@@ -1763,29 +1757,23 @@ public:
    *
    * @param aStyleDisplay:  If the caller has this->StyleDisplay(), providing
    *   it here will improve performance.
-   * @param aEffectSet: This function may need to look up EffectSet property.
-   *   If a caller already have one, pass it in can save property look up
-   *   time; otherwise, just left it as nullptr.
    */
-  bool IsTransformed(const nsStyleDisplay* aStyleDisplay, mozilla::EffectSet* aEffectSet = nullptr) const;
-  bool IsTransformed(mozilla::EffectSet* aEffectSet = nullptr) const {
-    return IsTransformed(StyleDisplay(), aEffectSet);
+  bool IsTransformed(const nsStyleDisplay* aStyleDisplay) const;
+  bool IsTransformed() const {
+    return IsTransformed(StyleDisplay());
   }
 
   /**
    * Same as IsTransformed, except that it doesn't take SVG transforms
    * into account.
    */
-  bool IsCSSTransformed(const nsStyleDisplay* aStyleDisplay, mozilla::EffectSet* aEffectSet = nullptr) const;
+  bool IsCSSTransformed(const nsStyleDisplay* aStyleDisplay) const;
 
   /**
    * True if this frame has any animation of transform in effect.
    *
-   * @param aEffectSet: This function may need to look up EffectSet property.
-   *   If a caller already have one, pass it in can save property look up
-   *   time; otherwise, just left it as nullptr.
    */
-  bool HasAnimationOfTransform(mozilla::EffectSet* aEffectSet = nullptr) const;
+  bool HasAnimationOfTransform() const;
 
   /**
    * Returns true if the frame is translucent or the frame has opacity
@@ -1856,14 +1844,10 @@ public:
    *
    * @param aStyleDisplay:  If the caller has this->StyleDisplay(), providing
    *   it here will improve performance.
-   * @param aEffectSet: This function may need to look up EffectSet property.
-   *   If a caller already have one, pass it in can save property look up
-   *   time; otherwise, just left it as nullptr.
    */
-  bool Combines3DTransformWithAncestors(const nsStyleDisplay* aStyleDisplay,
-                                        mozilla::EffectSet* aEffectSet = nullptr) const;
-  bool Combines3DTransformWithAncestors(mozilla::EffectSet* aEffectSet = nullptr) const {
-    return Combines3DTransformWithAncestors(StyleDisplay(), aEffectSet);
+  bool Combines3DTransformWithAncestors(const nsStyleDisplay* aStyleDisplay) const;
+  bool Combines3DTransformWithAncestors() const {
+    return Combines3DTransformWithAncestors(StyleDisplay());
   }
 
   /**
@@ -1871,11 +1855,8 @@ public:
    * Extend3DContext(). This is useful because in some cases the hidden
    * backface can safely be ignored if it could not be visible anyway.
    *
-   * @param aEffectSet: This function may need to look up EffectSet property.
-   *   If a caller already have one, pass it in can save property look up
-   *   time; otherwise, just left it as nullptr.
    */
-  bool In3DContextAndBackfaceIsHidden(mozilla::EffectSet* aEffectSet = nullptr) const;
+  bool In3DContextAndBackfaceIsHidden() const;
 
   bool IsPreserve3DLeaf(const nsStyleDisplay* aStyleDisplay,
                         mozilla::EffectSet* aEffectSet = nullptr) const {
@@ -1886,10 +1867,9 @@ public:
     return IsPreserve3DLeaf(StyleDisplay(), aEffectSet);
   }
 
-  bool HasPerspective(const nsStyleDisplay* aStyleDisplay,
-                      mozilla::EffectSet* aEffectSet = nullptr) const;
-  bool HasPerspective(mozilla::EffectSet* aEffectSet = nullptr) const {
-    return HasPerspective(StyleDisplay(), aEffectSet);
+  bool HasPerspective(const nsStyleDisplay* aStyleDisplay) const;
+  bool HasPerspective() const {
+    return HasPerspective(StyleDisplay());
   }
 
   bool ChildrenHavePerspective(const nsStyleDisplay* aStyleDisplay) const {
@@ -1906,8 +1886,7 @@ public:
    */
   void ComputePreserve3DChildrenOverflow(nsOverflowAreas& aOverflowAreas);
 
-  void RecomputePerspectiveChildrenOverflow(const nsIFrame* aStartFrame,
-                                            mozilla::EffectSet* aEffectSet = nullptr);
+  void RecomputePerspectiveChildrenOverflow(const nsIFrame* aStartFrame);
 
   /**
    * Returns the number of ancestors between this and the root of our frame tree
@@ -1978,10 +1957,10 @@ public:
    * for frame lists other than the primary one.
    * @param aPoint point relative to this frame
    */
-  ContentOffsets GetContentOffsetsFromPoint(nsPoint aPoint,
+  ContentOffsets GetContentOffsetsFromPoint(const nsPoint& aPoint,
                                             uint32_t aFlags = 0);
 
-  virtual ContentOffsets GetContentOffsetsFromPointExternal(nsPoint aPoint,
+  virtual ContentOffsets GetContentOffsetsFromPointExternal(const nsPoint& aPoint,
                                                             uint32_t aFlags = 0)
   { return GetContentOffsetsFromPoint(aPoint, aFlags); }
 
@@ -1998,10 +1977,10 @@ public:
    */
   struct MOZ_STACK_CLASS Cursor {
     nsCOMPtr<imgIContainer> mContainer;
-    int32_t                 mCursor;
-    bool                    mHaveHotspot;
-    bool                    mLoading;
-    float                   mHotspotX, mHotspotY;
+    int32_t mCursor = NS_STYLE_CURSOR_AUTO;
+    bool mHaveHotspot = false;
+    bool mLoading = false;
+    float mHotspotX = 0.0f, mHotspotY = 0.0f;
   };
   /**
    * Get the cursor for a given frame.
@@ -2080,7 +2059,7 @@ public:
    * This call is invoked on the primary frame for a character data content
    * node, when it is changed in the content tree.
    */
-  virtual nsresult  CharacterDataChanged(CharacterDataChangeInfo* aInfo) = 0;
+  virtual nsresult  CharacterDataChanged(const CharacterDataChangeInfo&) = 0;
 
   /**
    * This call is invoked when the value of a content objects's attribute
@@ -2091,7 +2070,7 @@ public:
    * @param aNameSpaceID the namespace of the attribute
    * @param aAttribute the atom name of the attribute
    * @param aModType Whether or not the attribute was added, changed, or removed.
-   *   The constants are defined in nsIDOMMutationEvent.h.
+   *   The constants are defined in MutationEvent.webidl.
    */
   virtual nsresult  AttributeChanged(int32_t         aNameSpaceID,
                                      nsAtom*        aAttribute,
@@ -2590,8 +2569,7 @@ public:
    * a given reflow?
    */
   virtual void DidReflow(nsPresContext*           aPresContext,
-                         const ReflowInput* aReflowInput,
-                         nsDidReflowStatus        aStatus) = 0;
+                         const ReflowInput* aReflowInput) = 0;
 
   /**
    * Updates the overflow areas of the frame. This can be called if an
@@ -2809,6 +2787,11 @@ public:
   nsIWidget* GetNearestWidget(nsPoint& aOffset) const;
 
   /**
+   * Whether the content for this frame is disabled, used for event handling.
+   */
+  bool IsContentDisabled() const;
+
+  /**
    * Get the "type" of the frame.
    *
    * @see mozilla::LayoutFrameType
@@ -2847,9 +2830,9 @@ public:
     IN_CSS_UNITS = 1 << 0,
     STOP_AT_STACKING_CONTEXT_AND_DISPLAY_PORT = 1 << 1
   };
-  Matrix4x4 GetTransformMatrix(const nsIFrame* aStopAtAncestor,
-                               nsIFrame **aOutAncestor,
-                               uint32_t aFlags = 0);
+  Matrix4x4Flagged GetTransformMatrix(const nsIFrame* aStopAtAncestor,
+                                      nsIFrame **aOutAncestor,
+                                      uint32_t aFlags = 0);
 
   /**
    * Bit-flags to pass to IsFrameOfType()
@@ -3918,7 +3901,7 @@ public:
    *   a pointer to this frame and its distance to aPoint, if this frame
    *   is indeed closer than the current distance in aCurrentBestFrame.
    */
-  virtual void FindCloserFrameForSelection(nsPoint aPoint,
+  virtual void FindCloserFrameForSelection(const nsPoint& aPoint,
                                            FrameWithDistance* aCurrentBestFrame);
 
   /**
@@ -4098,6 +4081,26 @@ public:
     mIsWrapperBoxNeedingRestyle = aNeedsRestyle;
   }
 
+  bool MayHaveTransformAnimation() const {
+    return mMayHaveTransformAnimation;
+  }
+  void SetMayHaveTransformAnimation() {
+    mMayHaveTransformAnimation = true;
+  }
+  bool MayHaveOpacityAnimation() const {
+    return mMayHaveOpacityAnimation;
+  }
+  void SetMayHaveOpacityAnimation() {
+    mMayHaveOpacityAnimation = true;
+  }
+
+  // Returns true if this frame is visible or may have visible descendants.
+  bool IsVisibleOrMayHaveVisibleDescendants() const {
+    return !mAllDescendantsAreInvisible || StyleVisibility()->IsVisible();
+  }
+  // Update mAllDescendantsAreInvisible flag for this frame and ancestors.
+  void UpdateVisibleDescendantsState();
+
   /**
    * If this returns true, the frame it's called on should get the
    * NS_FRAME_HAS_DIRTY_CHILDREN bit set on it by the caller; either directly
@@ -4144,6 +4147,15 @@ public:
 
   bool BuiltBlendContainer() { return mBuiltBlendContainer; }
   void SetBuiltBlendContainer(bool aBuilt) { mBuiltBlendContainer = aBuilt; }
+
+  /**
+   * Returns the set of flags indicating the properties of the frame that the
+   * compositor might care about for hit-testing purposes. Note that this function
+   * must be called during Gecko display list construction time (i.e while the
+   * frame tree is being traversed) because that is when the display list builder
+   * has the necessary state set up correctly.
+   */
+  mozilla::gfx::CompositorHitTestInfo GetCompositorHitTestInfo(nsDisplayListBuilder* aBuilder);
 
 protected:
   static void DestroyAnonymousContent(nsPresContext* aPresContext,
@@ -4345,9 +4357,22 @@ private:
    */
   bool mIsPrimaryFrame : 1;
 
+  bool mMayHaveTransformAnimation : 1;
+  bool mMayHaveOpacityAnimation : 1;
+
+  /**
+   * True if we are certain that all descendants are not visible.
+   *
+   * This flag is conservative in that it might sometimes be false even if, in
+   * fact, all descendants are invisible.
+   * For example; an element is visibility:visible and has a visibility:hidden
+   * child. This flag is stil false in such case.
+   */
+  bool mAllDescendantsAreInvisible : 1;
+
 protected:
 
-  // There is a 3-bit gap left here.
+  // There is no gap left here.
 
   // Helpers
   /**
@@ -4545,11 +4570,6 @@ public:
   void DumpFrameTreeLimited() const;
 
   virtual nsresult  GetFrameName(nsAString& aResult) const = 0;
-#endif
-
-#ifdef DEBUG
-public:
-  virtual nsFrameState  GetDebugStateBits() const = 0;
 #endif
 };
 

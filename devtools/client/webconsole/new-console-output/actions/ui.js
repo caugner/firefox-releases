@@ -7,7 +7,7 @@
 "use strict";
 
 const { getAllUi } = require("devtools/client/webconsole/new-console-output/selectors/ui");
-const Services = require("Services");
+const { getMessage } = require("devtools/client/webconsole/new-console-output/selectors/messages");
 
 const {
   FILTER_BAR_TOGGLE,
@@ -15,26 +15,28 @@ const {
   PERSIST_TOGGLE,
   PREFS,
   SELECT_NETWORK_MESSAGE_TAB,
+  SIDEBAR_CLOSE,
+  SHOW_OBJECT_IN_SIDEBAR,
   TIMESTAMPS_TOGGLE,
 } = require("devtools/client/webconsole/new-console-output/constants");
 
 function filterBarToggle(show) {
-  return (dispatch, getState) => {
+  return (dispatch, getState, {prefsService}) => {
     dispatch({
       type: FILTER_BAR_TOGGLE,
     });
-    const uiState = getAllUi(getState());
-    Services.prefs.setBoolPref(PREFS.UI.FILTER_BAR, uiState.get("filterBarVisible"));
+    const {filterBarVisible} = getAllUi(getState());
+    prefsService.setBoolPref(PREFS.UI.FILTER_BAR, filterBarVisible);
   };
 }
 
 function persistToggle(show) {
-  return (dispatch, getState) => {
+  return (dispatch, getState, {prefsService}) => {
     dispatch({
       type: PERSIST_TOGGLE,
     });
     const uiState = getAllUi(getState());
-    Services.prefs.setBoolPref(PREFS.UI.PERSIST, uiState.get("persistLogs"));
+    prefsService.setBoolPref(PREFS.UI.PERSIST, uiState.persistLogs);
   };
 }
 
@@ -58,10 +60,35 @@ function initialize() {
   };
 }
 
+function sidebarClose(show) {
+  return {
+    type: SIDEBAR_CLOSE,
+  };
+}
+
+function showObjectInSidebar(actorId, messageId) {
+  return (dispatch, getState) => {
+    let { parameters } = getMessage(getState(), messageId);
+    if (Array.isArray(parameters)) {
+      for (let parameter of parameters) {
+        if (parameter.actor === actorId) {
+          dispatch({
+            type: SHOW_OBJECT_IN_SIDEBAR,
+            grip: parameter
+          });
+          return;
+        }
+      }
+    }
+  };
+}
+
 module.exports = {
   filterBarToggle,
   initialize,
   persistToggle,
   selectNetworkMessageTab,
+  sidebarClose,
+  showObjectInSidebar,
   timestampsToggle,
 };

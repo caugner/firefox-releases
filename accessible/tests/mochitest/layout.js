@@ -60,9 +60,9 @@ function testOffsetAtPoint(aHyperTextID, aX, aY, aCoordType, aExpectedOffset) {
  */
 function zoomDocument(aDocument, aZoom) {
   var docShell = aDocument.defaultView.
-    QueryInterface(Components.interfaces.nsIInterfaceRequestor).
-    getInterface(Components.interfaces.nsIWebNavigation).
-    QueryInterface(Components.interfaces.nsIDocShell);
+    QueryInterface(Ci.nsIInterfaceRequestor).
+    getInterface(Ci.nsIWebNavigation).
+    QueryInterface(Ci.nsIDocShell);
   var docViewer = docShell.contentViewer;
 
   docViewer.fullZoom = aZoom;
@@ -215,13 +215,13 @@ function getBoundsForDOMElm(aID) {
     var areaWidth = parseInt(areaCoords[2]) - areaX;
     var areaHeight = parseInt(areaCoords[3]) - areaY;
 
-    var rect = img.getBoundingClientRect();
+    let rect = img.getBoundingClientRect();
     x = rect.left + areaX;
     y = rect.top + areaY;
     width = areaWidth;
     height = areaHeight;
   } else {
-    var rect = elm.getBoundingClientRect();
+    let rect = elm.getBoundingClientRect();
     x = rect.left;
     y = rect.top;
     width = rect.width;
@@ -238,8 +238,8 @@ function getBoundsForDOMElm(aID) {
 
 function CSSToDevicePixels(aWindow, aX, aY, aWidth, aHeight) {
   var winUtil = aWindow.
-    QueryInterface(Components.interfaces.nsIInterfaceRequestor).
-    getInterface(Components.interfaces.nsIDOMWindowUtils);
+    QueryInterface(Ci.nsIInterfaceRequestor).
+    getInterface(Ci.nsIDOMWindowUtils);
 
   var ratio = winUtil.screenPixelsPerCSSPixel;
 

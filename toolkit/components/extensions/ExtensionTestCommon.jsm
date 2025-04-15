@@ -1,3 +1,5 @@
+/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set sts=2 sw=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,30 +12,28 @@
 
 /* exported ExtensionTestCommon, MockExtension */
 
-this.EXPORTED_SYMBOLS = ["ExtensionTestCommon", "MockExtension"];
-
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+var EXPORTED_SYMBOLS = ["ExtensionTestCommon", "MockExtension"];
 
 Cu.importGlobalProperties(["TextEncoder"]);
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
-                                  "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Extension",
-                                  "resource://gre/modules/Extension.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionParent",
-                                  "resource://gre/modules/ExtensionParent.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
-                                  "resource://gre/modules/FileUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "OS",
-                                  "resource://gre/modules/osfile.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManager",
+                               "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "Extension",
+                               "resource://gre/modules/Extension.jsm");
+ChromeUtils.defineModuleGetter(this, "ExtensionParent",
+                               "resource://gre/modules/ExtensionParent.jsm");
+ChromeUtils.defineModuleGetter(this, "FileUtils",
+                               "resource://gre/modules/FileUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "OS",
+                               "resource://gre/modules/osfile.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "apiManager",
                             () => ExtensionParent.apiManager);
 
-Cu.import("resource://gre/modules/ExtensionUtils.jsm");
+ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "uuidGen",
                                    "@mozilla.org/uuid-generator;1",
@@ -138,7 +138,7 @@ class MockExtension {
   }
 }
 
-this.ExtensionTestCommon = class ExtensionTestCommon {
+var ExtensionTestCommon = class ExtensionTestCommon {
   /**
    * This code is designed to make it easy to test a WebExtension
    * without creating a bunch of files. Everything is contained in a
@@ -173,10 +173,7 @@ this.ExtensionTestCommon = class ExtensionTestCommon {
       manifest = {};
     }
 
-    let files = data.files;
-    if (!files) {
-      files = {};
-    }
+    let files = Object.assign({}, data.files);
 
     function provide(obj, keys, value, override = false) {
       if (keys.length == 1) {
@@ -381,6 +378,9 @@ this.ExtensionTestCommon = class ExtensionTestCommon {
       id,
       resourceURI: jarURI,
       cleanupFile: file,
+      signedState: data.isPrivileged ? AddonManager.SIGNEDSTATE_PRIVILEGED
+                                     : AddonManager.SIGNEDSTATE_SIGNED,
+      temporarilyInstalled: !!data.temporarilyInstalled,
     });
   }
 };

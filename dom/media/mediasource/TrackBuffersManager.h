@@ -57,7 +57,7 @@ public:
     return task.forget();
   }
 
-  nsTArray<SourceBufferTask>::size_type Length() const
+  nsTArray<RefPtr<SourceBufferTask>>::size_type Length() const
   {
     return mQueue.Length();
   }
@@ -65,7 +65,9 @@ private:
   nsTArray<RefPtr<SourceBufferTask>> mQueue;
 };
 
-class TrackBuffersManager
+DDLoggedTypeDeclName(TrackBuffersManager);
+
+class TrackBuffersManager : public DecoderDoctorLifeLogger<TrackBuffersManager>
 {
 public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(TrackBuffersManager);

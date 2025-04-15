@@ -42,6 +42,7 @@ static const char* acLogTag ="WebrtcAudioSessionConduit";
 // 32 bytes is what WebRTC CodecInst expects
 const unsigned int WebrtcAudioConduit::CODEC_PLNAME_SIZE = 32;
 
+using LocalDirection = MediaSessionConduitLocalDirection;
 /**
  * Factory Method for AudioConduit
  */
@@ -72,13 +73,6 @@ WebrtcAudioConduit::~WebrtcAudioConduit()
   for(auto & codec : mRecvCodecList)
   {
     delete codec;
-  }
-
-  // The first one of a pair to be deleted shuts down media for both
-  if(mPtrVoEXmedia)
-  {
-    mPtrVoEXmedia->SetExternalRecordingStatus(false);
-    mPtrVoEXmedia->SetExternalPlayoutStatus(false);
   }
 
   //Deal with the transport
@@ -285,6 +279,48 @@ bool WebrtcAudioConduit::InsertDTMFTone(int channel, int eventCode,
   return result != -1;
 }
 
+void
+WebrtcAudioConduit::OnRtpPacket(const webrtc::WebRtcRTPHeader* aHeader,
+                                const int64_t aTimestamp,
+                                const uint32_t aJitter) {
+  mRtpSourceObserver.OnRtpPacket(aHeader, aTimestamp, aJitter);
+}
+
+void
+WebrtcAudioConduit::GetRtpSources(const int64_t aTimeNow,
+                                  nsTArray<dom::RTCRtpSourceEntry>& outSources)
+{
+  return mRtpSourceObserver.GetRtpSources(aTimeNow, outSources);
+}
+
+// test-only: inserts a CSRC entry in a RtpSourceObserver's history for
+// getContributingSources mochitests
+void InsertAudioLevelForContributingSource(RtpSourceObserver& observer,
+                                           uint32_t aCsrcSource,
+                                           int64_t aTimestamp,
+                                           bool aHasAudioLevel,
+                                           uint8_t aAudioLevel)
+{
+  using EntryType = dom::RTCRtpSourceEntryType;
+  auto key = RtpSourceObserver::GetKey(aCsrcSource, EntryType::Contributing);
+  auto& hist = observer.mRtpSources[key];
+  hist.Insert(aTimestamp, aTimestamp, aHasAudioLevel, aAudioLevel);
+}
+
+
+void
+WebrtcAudioConduit::InsertAudioLevelForContributingSource(uint32_t aCsrcSource,
+                                                          int64_t aTimestamp,
+                                                          bool aHasAudioLevel,
+                                                          uint8_t aAudioLevel)
+{
+  mozilla::InsertAudioLevelForContributingSource(mRtpSourceObserver,
+                                                 aCsrcSource,
+                                                 aTimestamp,
+                                                 aHasAudioLevel,
+                                                 aAudioLevel);
+}
+
 /*
  * WebRTCAudioConduit Implementation
  */
@@ -315,8 +351,9 @@ MediaConduitErrorCode WebrtcAudioConduit::Init()
     return kMediaConduitSessionNotInited;
   }
 
-  // init the engine with our audio device layer
-  if(mPtrVoEBase->Init() == -1)
+  // Init the engine with a fake audio device (we're using cubeb for audio input
+  // and output anyways).
+  if(mPtrVoEBase->Init(mFakeAudioDevice.get()) == -1)
   {
     CSFLogError(LOGTAG, "%s VoiceEngine Base Not Initialized", __FUNCTION__);
     return kMediaConduitSessionNotInited;
@@ -371,6 +408,7 @@ MediaConduitErrorCode WebrtcAudioConduit::Init()
   webrtc::VoiceEngineImpl* s = static_cast<webrtc::VoiceEngineImpl*>(mVoiceEngine);
   mChannelProxy = s->GetChannelProxy(mChannel);
   MOZ_ASSERT(mChannelProxy);
+  mChannelProxy->SetRtpPacketObserver(this);
 
   CSFLogDebug(LOGTAG, "%s Channel Created %d ",__FUNCTION__, mChannel);
 
@@ -380,21 +418,7 @@ MediaConduitErrorCode WebrtcAudioConduit::Init()
     return kMediaConduitTransportRegistrationFail;
   }
 
-  if(mPtrVoEXmedia->SetExternalRecordingStatus(true) == -1)
-  {
-    CSFLogError(LOGTAG, "%s SetExternalRecordingStatus Failed %d",__FUNCTION__,
-                mPtrVoEBase->LastError());
-    return kMediaConduitExternalPlayoutError;
-  }
-
-  if(mPtrVoEXmedia->SetExternalPlayoutStatus(true) == -1)
-  {
-    CSFLogError(LOGTAG, "%s SetExternalPlayoutStatus Failed %d ",__FUNCTION__,
-                mPtrVoEBase->LastError());
-    return kMediaConduitExternalRecordingError;
-  }
-
-  CSFLogDebug(LOGTAG ,  "%s AudioSessionConduit Initialization Done (%p)",__FUNCTION__, this);
+  CSFLogDebug(LOGTAG, "%s AudioSessionConduit Initialization Done (%p)",__FUNCTION__, this);
   return kMediaConduitNoError;
 }
 
@@ -589,30 +613,56 @@ WebrtcAudioConduit::ConfigureRecvMediaCodecs(
 }
 
 MediaConduitErrorCode
-WebrtcAudioConduit::EnableAudioLevelExtension(bool enabled, uint8_t id)
+WebrtcAudioConduit::SetLocalRTPExtensions(LocalDirection aDirection,
+                                          const RtpExtList& extensions)
 {
-  CSFLogDebug(LOGTAG,  "%s %d %d ", __FUNCTION__, enabled, id);
-
-  if (mPtrVoERTP_RTCP->SetSendAudioLevelIndicationStatus(mChannel, enabled, id) == -1)
-  {
-    CSFLogError(LOGTAG, "%s SetSendAudioLevelIndicationStatus Failed", __FUNCTION__);
-    return kMediaConduitUnknownError;
+  CSFLogDebug(LOGTAG, "%s direction: %s", __FUNCTION__,
+              MediaSessionConduit::LocalDirectionToString(aDirection).c_str());
+  bool isSend = aDirection == LocalDirection::kSend;
+  constexpr bool kEnableExt = true;
+  constexpr bool kSsrcLevel = true;
+  constexpr bool kCsrcLevel = false;
+  for(const auto& extension : extensions) {
+    int ret = 0;
+    // ssrc-audio-level RTP header extension
+    if (extension.uri == webrtc::RtpExtension::kAudioLevelUri) {
+      if (isSend) {
+        ret = mPtrVoERTP_RTCP->SetSendAudioLevelIndicationStatus(mChannel,
+                                                                 kEnableExt,
+                                                                 extension.id);
+      } else {
+        ret = mPtrRTP->SetReceiveAudioLevelIndicationStatus(mChannel,
+                                                            kEnableExt,
+                                                            extension.id,
+                                                            kSsrcLevel);
+      }
+    }
+    // csrc-audio-level RTP header extension
+    if (extension.uri == webrtc::RtpExtension::kCsrcAudioLevelUri) {
+      if (isSend) {
+        CSFLogError(LOGTAG, "%s SetSendAudioLevelIndicationStatus Failed"
+                    " can not send CSRC audio levels.", __FUNCTION__);
+        return kMediaConduitMalformedArgument;
+      }
+      ret = mPtrRTP->SetReceiveAudioLevelIndicationStatus(mChannel,
+                                                          kEnableExt,
+                                                          extension.id,
+                                                          kCsrcLevel);
+    }
+    // MID RTP header extension
+    if (aDirection == LocalDirection::kSend &&
+        extension.uri == webrtc::RtpExtension::kMIdUri) {
+      ret = mPtrVoERTP_RTCP->SetSendMIDStatus(mChannel, kEnableExt,
+                                              extension.id);
+    }
+    // Handle errors
+    if (ret == -1) {
+      CSFLogError(LOGTAG, "Failed %s setting extension %s with id %d",
+                  __FUNCTION__, extension.uri.c_str(),
+                  static_cast<int>(extension.id));
+      return kMediaConduitUnknownError;
+    }
   }
-
-  return kMediaConduitNoError;
-}
-
-MediaConduitErrorCode
-WebrtcAudioConduit::EnableMIDExtension(bool enabled, uint8_t id)
-{
-  CSFLogDebug(LOGTAG,  "%s %d %d ", __FUNCTION__, enabled, id);
-
-  if (mPtrVoERTP_RTCP->SetSendMIDStatus(mChannel, enabled, id) == -1)
-  {
-    CSFLogError(LOGTAG, "%s SetSendMIDStatus Failed", __FUNCTION__);
-    return kMediaConduitUnknownError;
-  }
-
   return kMediaConduitNoError;
 }
 
@@ -663,7 +713,7 @@ WebrtcAudioConduit::SendAudioFrame(const int16_t audio_data[],
   }
 
   capture_delay = mCaptureDelay;
-  //Insert the samples
+  // Insert the samples
   mPtrVoEBase->audio_transport()->PushCaptureData(mChannel, audio_data,
                                                   sizeof(audio_data[0])*8, // bits
                                                   samplingFreqHz,
@@ -675,13 +725,12 @@ WebrtcAudioConduit::SendAudioFrame(const int16_t audio_data[],
 
 MediaConduitErrorCode
 WebrtcAudioConduit::GetAudioFrame(int16_t speechData[],
-                                   int32_t samplingFreqHz,
-                                   int32_t capture_delay,
-                                   int& lengthSamples)
+                                  int32_t samplingFreqHz,
+                                  int32_t capture_delay,
+                                  int& lengthSamples)
 {
 
   CSFLogDebug(LOGTAG,  "%s ", __FUNCTION__);
-  unsigned int numSamples = 0;
 
   //validate params
   if(!speechData )
@@ -692,7 +741,7 @@ WebrtcAudioConduit::GetAudioFrame(int16_t speechData[],
   }
 
   // Validate sample length
-  if((numSamples = GetNum10msSamplesForFrequency(samplingFreqHz)) == 0  )
+  if(GetNum10msSamplesForFrequency(samplingFreqHz) == 0)
   {
     CSFLogError(LOGTAG,"%s Invalid Sampling Frequency ", __FUNCTION__);
     MOZ_ASSERT(PR_FALSE);
@@ -715,14 +764,12 @@ WebrtcAudioConduit::GetAudioFrame(int16_t speechData[],
     return kMediaConduitSessionNotInited;
   }
 
-
+  int lengthSamplesAllowed = lengthSamples;
   lengthSamples = 0;  //output paramter
 
-  if(mPtrVoEXmedia->ExternalPlayoutGetData( speechData,
-                                            samplingFreqHz,
-                                            capture_delay,
-                                            lengthSamples) == -1)
-  {
+  if (mPtrVoEXmedia->GetAudioFrame(mChannel,
+                                   samplingFreqHz,
+                                   &mAudioFrame) != 0) {
     int error = mPtrVoEBase->LastError();
     CSFLogError(LOGTAG,  "%s Getting audio data Failed %d", __FUNCTION__, error);
     if(error == VE_RUNTIME_PLAY_ERROR)
@@ -731,6 +778,11 @@ WebrtcAudioConduit::GetAudioFrame(int16_t speechData[],
     }
     return kMediaConduitUnknownError;
   }
+
+  // XXX Annoying, have to copy to our buffers -- refactor?
+  lengthSamples = mAudioFrame.samples_per_channel_ * mAudioFrame.num_channels_;
+  MOZ_RELEASE_ASSERT(lengthSamples <= lengthSamplesAllowed);
+  PodCopy(speechData, mAudioFrame.data_, lengthSamples);
 
   // Not #ifdef DEBUG or on a log module so we can use it for about:webrtc/etc
   mSamples += lengthSamples;
@@ -908,6 +960,13 @@ WebrtcAudioConduit::StartReceiving()
         return kMediaConduitSocketError;
       }
       return kMediaConduitUnknownError;
+    }
+
+    // we can't call GetAudioFrame() if we don't enable "external" mixing
+    if(mPtrVoEXmedia->SetExternalMixing(mChannel, true) == -1)
+    {
+      CSFLogError(LOGTAG, "%s SetExternalMixing Failed", __FUNCTION__);
+      return kMediaConduitPlayoutError;
     }
 
     if(mPtrVoEBase->StartPlayout(mChannel) == -1)

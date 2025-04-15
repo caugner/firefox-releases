@@ -58,6 +58,7 @@ locales = [
     "ka",
     "kab",
     "kk",
+    "km",
     "kn",
     "ko",
     "lo",
@@ -65,6 +66,7 @@ locales = [
     "ltg",
     "lv",
     "mai",
+    "meh",
     "ml",
     "mr",
     "ms",
@@ -91,26 +93,31 @@ locales = [
     "ta",
     "te",
     "th",
+    "tl",
     "tr",
     "trs",
     "uk",
     "ur",
     "uz",
+    "vi",
     "wo",
     "xh",
     "zam",
     "zh-CN",
     "zh-TW",
-    ]
+]
 
 [build]
 exclude-multi-locale = [
-    "be",
-    "bn-BD",
-    "ne-NP",
+    "ach",
+    "bs",
+    "ia",
+    "km",
+    "ltg",
+    "meh",
+    "oc",
+    "tl",
     "trs",
-    "wo",
-    "zam",
 ]
 
 [env]
@@ -148,10 +155,6 @@ exclude-multi-locale = [
 [[paths]]
     reference = "dom/locales/en-US/chrome/plugins.properties"
     l10n = "{l}dom/chrome/plugins.properties"
-
-[[paths]]
-    reference = "toolkit/locales/en-US/chrome/global/about.dtd"
-    l10n = "{l}toolkit/chrome/global/about.dtd"
 
 [[paths]]
     reference = "toolkit/locales/en-US/chrome/global/aboutAbout.dtd"

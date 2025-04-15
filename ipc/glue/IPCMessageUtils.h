@@ -14,6 +14,8 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
+#include "mozilla/EnumSet.h"
+#include "mozilla/EnumTypeTraits.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/net/WebSocketFrame.h"
 #include "mozilla/TimeStamp.h"
@@ -23,11 +25,11 @@
 #include "mozilla/TypeTraits.h"
 #include "mozilla/IntegerTypeTraits.h"
 
+#include <limits>
 #include <stdint.h>
+#include <type_traits>
 
-#ifdef MOZ_CRASHREPORTER
 #include "nsExceptionHandler.h"
-#endif
 #include "nsID.h"
 #include "nsIWidget.h"
 #include "nsMemory.h"
@@ -66,6 +68,12 @@ struct null_t {
 
 struct SerializedStructuredCloneBuffer final
 {
+  SerializedStructuredCloneBuffer() {}
+  SerializedStructuredCloneBuffer(const SerializedStructuredCloneBuffer& aOther)
+  {
+    *this = aOther;
+  }
+
   SerializedStructuredCloneBuffer&
   operator=(const SerializedStructuredCloneBuffer& aOther)
   {
@@ -127,16 +135,12 @@ struct EnumSerializer {
   static bool Read(const Message* aMsg, PickleIterator* aIter, paramType* aResult) {
     uintParamType value;
     if (!ReadParam(aMsg, aIter, &value)) {
-#ifdef MOZ_CRASHREPORTER
       CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("IPCReadErrorReason"),
                                          NS_LITERAL_CSTRING("Bad iter"));
-#endif
       return false;
     } else if (!EnumValidator::IsLegalValue(paramType(value))) {
-#ifdef MOZ_CRASHREPORTER
       CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("IPCReadErrorReason"),
                                          NS_LITERAL_CSTRING("Illegal value"));
-#endif
       return false;
     }
     *aResult = paramType(value);
@@ -262,6 +266,11 @@ struct BitFlagsEnumSerializer
  * structure's members.
  *
  * Derive ParamTraits<T> from PlainOldDataSerializer<T> if T is POD.
+ *
+ * Note: For POD structures with enumeration fields, this will not do
+ *   validation of the enum values the way serializing the fields
+ *   individually would. Prefer serializing the fields individually
+ *   in such cases.
  */
 template <typename T>
 struct PlainOldDataSerializer
@@ -310,6 +319,12 @@ struct ParamTraits<int8_t>
   {
     return aMsg->ReadBytesInto(aIter, aResult, sizeof(*aResult));
   }
+
+  static void Log(const paramType& aParam, std::wstring* aLog)
+  {
+    // Use 0xff to avoid sign extension.
+    aLog->append(StringPrintf(L"0x%02x", aParam & 0xff));
+  }
 };
 
 template<>
@@ -325,6 +340,11 @@ struct ParamTraits<uint8_t>
   static bool Read(const Message* aMsg, PickleIterator* aIter, paramType* aResult)
   {
     return aMsg->ReadBytesInto(aIter, aResult, sizeof(*aResult));
+  }
+
+  static void Log(const paramType& aParam, std::wstring* aLog)
+  {
+    aLog->append(StringPrintf(L"0x%02x", aParam));
   }
 };
 
@@ -916,6 +936,49 @@ struct ParamTraits<mozilla::Maybe<T>>
       *result = mozilla::Nothing();
     }
     return true;
+  }
+};
+
+template<typename T>
+struct ParamTraits<mozilla::EnumSet<T>>
+{
+  typedef mozilla::EnumSet<T> paramType;
+  typedef typename mozilla::EnumSet<T>::serializedType serializedType;
+
+  static void Write(Message* msg, const paramType& param)
+  {
+    MOZ_RELEASE_ASSERT(IsLegalValue(param.serialize()));
+    WriteParam(msg, param.serialize());
+  }
+
+  static bool Read(const Message* msg, PickleIterator* iter, paramType* result)
+  {
+    serializedType tmp;
+
+    if (ReadParam(msg, iter, &tmp)) {
+      if (IsLegalValue(tmp)) {
+        result->deserialize(tmp);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  static constexpr serializedType AllEnumBits()
+  {
+    return ~serializedType(0) >>
+           (std::numeric_limits<serializedType>::digits - (mozilla::MaxEnumValue<T>::value + 1));
+  }
+
+  static constexpr bool IsLegalValue(const serializedType value)
+  {
+    static_assert(mozilla::MaxEnumValue<T>::value < std::numeric_limits<serializedType>::digits,
+                  "Enum max value is not in the range!");
+    static_assert(std::is_unsigned<decltype(mozilla::MaxEnumValue<T>::value)>::value,
+                  "Type of MaxEnumValue<T>::value specialization should be unsigned!");
+
+    return (value & AllEnumBits()) == value;
   }
 };
 

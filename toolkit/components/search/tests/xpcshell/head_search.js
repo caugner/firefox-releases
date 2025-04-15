@@ -1,17 +1,17 @@
 /* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim:set ts=2 sw=2 sts=2 et: */
 
-var { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
-
-Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/osfile.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://testing-common/AppInfo.jsm");
-Cu.import("resource://testing-common/httpd.js");
-XPCOMUtils.defineLazyModuleGetter(this, "TestUtils",
-                                  "resource://testing-common/TestUtils.jsm");
+ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
+ChromeUtils.import("resource://gre/modules/osfile.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://testing-common/AppInfo.jsm");
+ChromeUtils.import("resource://testing-common/httpd.js");
+ChromeUtils.defineModuleGetter(this, "TestUtils",
+                               "resource://testing-common/TestUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "NetUtil",
+                               "resource://gre/modules/NetUtil.jsm");
 
 const BROWSER_SEARCH_PREF = "browser.search.";
 const NS_APP_SEARCH_DIR = "SrchPlugns";
@@ -255,9 +255,8 @@ function promiseAfterCache() {
 }
 
 function parseJsonFromStream(aInputStream) {
-  const json = Cc["@mozilla.org/dom/json;1"].createInstance(Components.interfaces.nsIJSON);
-  const data = json.decodeFromStream(aInputStream, aInputStream.available());
-  return data;
+  let bytes = NetUtil.readInputStream(aInputStream, aInputStream.available());
+  return JSON.parse((new TextDecoder()).decode(bytes));
 }
 
 /**
@@ -284,12 +283,12 @@ function readJSONFile(aFile) {
 function isSubObjectOf(expectedObj, actualObj) {
   for (let prop in expectedObj) {
     if (expectedObj[prop] instanceof Object) {
-      do_check_eq(expectedObj[prop].length, actualObj[prop].length);
+      Assert.equal(expectedObj[prop].length, actualObj[prop].length);
       isSubObjectOf(expectedObj[prop], actualObj[prop]);
     } else {
       if (expectedObj[prop] != actualObj[prop])
-        do_print("comparing property " + prop);
-      do_check_eq(expectedObj[prop], actualObj[prop]);
+        info("comparing property " + prop);
+      Assert.equal(expectedObj[prop], actualObj[prop]);
     }
   }
 }
@@ -326,7 +325,7 @@ function useHttpServer() {
   httpServer.start(-1);
   httpServer.registerDirectory("/", do_get_cwd());
   gDataUrl = "http://localhost:" + httpServer.identity.primaryPort + "/data/";
-  do_register_cleanup(async function cleanup_httpServer() {
+  registerCleanupFunction(async function cleanup_httpServer() {
     await new Promise(resolve => {
       httpServer.stop(resolve);
     });
@@ -356,12 +355,12 @@ var addTestEngines = async function(aItems) {
   let engines = [];
 
   for (let item of aItems) {
-    do_print("Adding engine: " + item.name);
+    info("Adding engine: " + item.name);
     await new Promise((resolve, reject) => {
       Services.obs.addObserver(function obs(subject, topic, data) {
         try {
           let engine = subject.QueryInterface(Ci.nsISearchEngine);
-          do_print("Observed " + data + " for " + engine.name);
+          info("Observed " + data + " for " + engine.name);
           if (data != "engine-added" || engine.name != item.name) {
             return;
           }
@@ -448,7 +447,7 @@ function waitForSearchNotification(aExpectedData) {
 function asyncInit() {
   return new Promise(resolve => {
     Services.search.init(function() {
-      do_check_true(Services.search.isInitialized);
+      Assert.ok(Services.search.isInitialized);
       resolve();
     });
   });

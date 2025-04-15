@@ -56,13 +56,11 @@ public:
   virtual void GetLinkTarget(nsAString& aTarget) override;
   virtual already_AddRefed<nsIURI> GetHrefURI() const override;
   virtual EventStates IntrinsicState() const override;
-  using nsIContent::SetAttr;
-  virtual nsresult SetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                           nsAtom* aPrefix, const nsAString& aValue,
-                           nsIPrincipal* aSubjectPrincipal,
-                           bool aNotify) override;
-  virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsAtom* aAttribute,
-                             bool aNotify) override;
+  virtual nsresult AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                                const nsAttrValue* aValue,
+                                const nsAttrValue* aOldValue,
+                                nsIPrincipal* aMaybeScriptedPrincipal,
+                                bool aNotify) override;
 
   // Link
   virtual bool ElementHasHref() const override;
@@ -73,7 +71,7 @@ public:
   void GetDownload(nsAString & aDownload);
   void SetDownload(const nsAString & aDownload, ErrorResult& rv);
 
-  virtual void NodeInfoChanged(nsIDocument* aOldDoc) final override
+  void NodeInfoChanged(nsIDocument* aOldDoc) final
   {
     ClearHasPendingLinkUpdate();
     SVGAElementBase::NodeInfoChanged(aOldDoc);

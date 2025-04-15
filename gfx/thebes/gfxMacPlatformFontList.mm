@@ -290,6 +290,64 @@ MacOSFontEntry::HasVariations()
     return mHasVariations;
 }
 
+void
+MacOSFontEntry::GetVariationAxes(nsTArray<gfxFontVariationAxis>& aVariationAxes)
+{
+    MOZ_ASSERT(aVariationAxes.IsEmpty());
+    CTFontRef ctFont =
+        CTFontCreateWithGraphicsFont(mFontRef, 0.0, nullptr, nullptr);
+    CFArrayRef axes = CTFontCopyVariationAxes(ctFont);
+    CFRelease(ctFont);
+    if (axes) {
+        for (CFIndex i = 0; i < CFArrayGetCount(axes); ++i) {
+            gfxFontVariationAxis axis;
+            auto val = (CFDictionaryRef)CFArrayGetValueAtIndex(axes, i);
+            auto num = (CFNumberRef)CFDictionaryGetValue(val,
+                           kCTFontVariationAxisIdentifierKey);
+            SInt32 tag = 0;
+            if (num) {
+                CFNumberGetValue(num, kCFNumberSInt32Type, &tag);
+            }
+            Float32 minValue = 0, maxValue = 0, defaultValue = 0;
+            num = (CFNumberRef)CFDictionaryGetValue(val,
+                      kCTFontVariationAxisMinimumValueKey);
+            if (num) {
+                CFNumberGetValue(num, kCFNumberFloat32Type, &minValue);
+            }
+            num = (CFNumberRef)CFDictionaryGetValue(val,
+                      kCTFontVariationAxisMaximumValueKey);
+            if (num) {
+                CFNumberGetValue(num, kCFNumberFloat32Type, &maxValue);
+            }
+            num = (CFNumberRef)CFDictionaryGetValue(val,
+                      kCTFontVariationAxisDefaultValueKey);
+            if (num) {
+                CFNumberGetValue(num, kCFNumberFloat32Type, &defaultValue);
+            }
+            auto name = (CFStringRef)CFDictionaryGetValue(val,
+                            kCTFontVariationAxisNameKey);
+            if (name) {
+                CFIndex len = CFStringGetLength(name);
+                axis.mName.SetLength(len);
+                CFStringGetCharacters(name, CFRangeMake(0, len),
+                                      (UniChar*)axis.mName.BeginWriting());
+            }
+            axis.mTag = (uint32_t)tag;
+            axis.mMinValue = minValue;
+            axis.mMaxValue = maxValue;
+            axis.mDefaultValue = defaultValue;
+            aVariationAxes.AppendElement(axis);
+        }
+        CFRelease(axes);
+    }
+}
+
+void
+MacOSFontEntry::GetVariationInstances(nsTArray<gfxFontVariationInstance>& aInstances)
+{
+    gfxFontUtils::GetVariationInstances(this, aInstances);
+}
+
 bool
 MacOSFontEntry::IsCFF()
 {
@@ -1054,7 +1112,9 @@ gfxMacPlatformFontList::AddFamily(CFStringRef aFamily)
 
     // CTFontManager includes weird internal family names and
     // LastResort, skip over those
-    if (!family || [family caseInsensitiveCompare:@"LastResort"] == NSOrderedSame) {
+    if (!family ||
+        [family caseInsensitiveCompare:@"LastResort"] == NSOrderedSame ||
+        [family caseInsensitiveCompare:@".LastResort"] == NSOrderedSame) {
         return;
     }
 
@@ -1401,6 +1461,8 @@ gfxMacPlatformFontList::PlatformGlobalFontFallback(const uint32_t aCh,
 
         if (familyNameRef &&
             ::CFStringCompare(familyNameRef, CFSTR("LastResort"),
+                              kCFCompareCaseInsensitive) != kCFCompareEqualTo &&
+            ::CFStringCompare(familyNameRef, CFSTR(".LastResort"),
                               kCFCompareCaseInsensitive) != kCFCompareEqualTo)
         {
             AutoTArray<UniChar, 1024> buffer;

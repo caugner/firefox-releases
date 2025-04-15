@@ -7,10 +7,8 @@
 "use strict";
 
 // React & Redux
-const {
-  createFactory,
-  PropTypes
-} = require("devtools/client/shared/vendor/react");
+const { createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const Message = createFactory(require("devtools/client/webconsole/new-console-output/components/Message"));
 
 PageError.displayName = "PageError";
@@ -31,6 +29,7 @@ function PageError(props) {
     dispatch,
     message,
     open,
+    repeat,
     serviceContainer,
     timestampsVisible,
   } = props;
@@ -41,7 +40,6 @@ function PageError(props) {
     type,
     level,
     messageText,
-    repeat,
     stacktrace,
     frame,
     exceptionDocURL,

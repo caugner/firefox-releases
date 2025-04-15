@@ -1,16 +1,25 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource://gre/modules/osfile.jsm");
-Cu.import("resource://services-sync/engines.js");
-Cu.import("resource://services-sync/service.js");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://testing-common/services/sync/utils.js");
+ChromeUtils.import("resource://gre/modules/osfile.jsm");
+ChromeUtils.import("resource://services-sync/engines.js");
+ChromeUtils.import("resource://services-sync/service.js");
+ChromeUtils.import("resource://services-sync/util.js");
 
 async function makeSteamEngine() {
   let engine = new SyncEngine("Steam", Service);
   await engine.initialize();
   return engine;
+}
+
+function guidSetOfSize(length) {
+  return new SerializableSet(
+    Array.from({ length }, () => Utils.makeGUID()));
+}
+
+function assertSetsEqual(a, b) {
+  // Assert.deepEqual doesn't understand Set.
+  Assert.deepEqual(Array.from(a).sort(), Array.from(b).sort());
 }
 
 async function testSteamEngineStorage(test) {
@@ -50,9 +59,9 @@ add_task(async function test_url_attributes() {
   Service.clusterURL = "https://cluster/1.1/foo/";
   let engine = await makeSteamEngine();
   try {
-    do_check_eq(engine.storageURL, "https://cluster/1.1/foo/storage/");
-    do_check_eq(engine.engineURL, "https://cluster/1.1/foo/storage/steam");
-    do_check_eq(engine.metaURL, "https://cluster/1.1/foo/storage/meta/global");
+    Assert.equal(engine.storageURL, "https://cluster/1.1/foo/storage/");
+    Assert.equal(engine.engineURL, "https://cluster/1.1/foo/storage/steam");
+    Assert.equal(engine.metaURL, "https://cluster/1.1/foo/storage/meta/global");
   } finally {
     Svc.Prefs.resetBranch("");
   }
@@ -64,15 +73,15 @@ add_task(async function test_syncID() {
   let engine = await makeSteamEngine();
   try {
     // Ensure pristine environment
-    do_check_eq(Svc.Prefs.get("steam.syncID"), undefined);
+    Assert.equal(Svc.Prefs.get("steam.syncID"), undefined);
 
     // Performing the first get on the attribute will generate a new GUID.
-    do_check_eq(engine.syncID, "fake-guid-00");
-    do_check_eq(Svc.Prefs.get("steam.syncID"), "fake-guid-00");
+    Assert.equal(engine.syncID, "fake-guid-00");
+    Assert.equal(Svc.Prefs.get("steam.syncID"), "fake-guid-00");
 
     Svc.Prefs.set("steam.syncID", Utils.makeGUID());
-    do_check_eq(Svc.Prefs.get("steam.syncID"), "fake-guid-01");
-    do_check_eq(engine.syncID, "fake-guid-01");
+    Assert.equal(Svc.Prefs.get("steam.syncID"), "fake-guid-01");
+    Assert.equal(engine.syncID, "fake-guid-01");
   } finally {
     Svc.Prefs.resetBranch("");
   }
@@ -84,25 +93,25 @@ add_task(async function test_lastSync() {
   let engine = await makeSteamEngine();
   try {
     // Ensure pristine environment
-    do_check_eq(Svc.Prefs.get("steam.lastSync"), undefined);
-    do_check_eq(engine.lastSync, 0);
-    do_check_eq(Svc.Prefs.get("steam.lastSyncLocal"), undefined);
-    do_check_eq(engine.lastSyncLocal, 0);
+    Assert.equal(Svc.Prefs.get("steam.lastSync"), undefined);
+    Assert.equal(engine.lastSync, 0);
+    Assert.equal(Svc.Prefs.get("steam.lastSyncLocal"), undefined);
+    Assert.equal(engine.lastSyncLocal, 0);
 
     // Floats are properly stored as floats and synced with the preference
     engine.lastSync = 123.45;
-    do_check_eq(engine.lastSync, 123.45);
-    do_check_eq(Svc.Prefs.get("steam.lastSync"), "123.45");
+    Assert.equal(engine.lastSync, 123.45);
+    Assert.equal(Svc.Prefs.get("steam.lastSync"), "123.45");
 
     // Integer is properly stored
     engine.lastSyncLocal = 67890;
-    do_check_eq(engine.lastSyncLocal, 67890);
-    do_check_eq(Svc.Prefs.get("steam.lastSyncLocal"), "67890");
+    Assert.equal(engine.lastSyncLocal, 67890);
+    Assert.equal(Svc.Prefs.get("steam.lastSyncLocal"), "67890");
 
     // resetLastSync() resets the value (and preference) to 0
     engine.resetLastSync();
-    do_check_eq(engine.lastSync, 0);
-    do_check_eq(Svc.Prefs.get("steam.lastSync"), "0");
+    Assert.equal(engine.lastSync, 0);
+    Assert.equal(Svc.Prefs.get("steam.lastSync"), "0");
   } finally {
     Svc.Prefs.resetBranch("");
   }
@@ -114,39 +123,39 @@ add_task(async function test_toFetch() {
   const filename = "weave/toFetch/steam.json";
 
   await testSteamEngineStorage({
-    toFetch: [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()],
+    toFetch: guidSetOfSize(3),
     setup(engine) {
       // Ensure pristine environment
-      do_check_eq(engine.toFetch.length, 0);
+      Assert.equal(engine.toFetch.size, 0);
 
       // Write file to disk
       engine.toFetch = this.toFetch;
-      do_check_eq(engine.toFetch, this.toFetch);
+      Assert.equal(engine.toFetch, this.toFetch);
     },
     check(engine) {
       // toFetch is written asynchronously
-      do_check_matches(engine.toFetch, this.toFetch);
+      assertSetsEqual(engine.toFetch, this.toFetch);
     },
   });
 
   await testSteamEngineStorage({
-    toFetch: [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()],
-    toFetch2: [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()],
+    toFetch: guidSetOfSize(4),
+    toFetch2: guidSetOfSize(5),
     setup(engine) {
       // Make sure it work for consecutive writes before the callback is executed.
       engine.toFetch = this.toFetch;
-      do_check_eq(engine.toFetch, this.toFetch);
+      Assert.equal(engine.toFetch, this.toFetch);
 
       engine.toFetch = this.toFetch2;
-      do_check_eq(engine.toFetch, this.toFetch2);
+      Assert.equal(engine.toFetch, this.toFetch2);
     },
     check(engine) {
-      do_check_matches(engine.toFetch, this.toFetch2);
+      assertSetsEqual(engine.toFetch, this.toFetch2);
     },
   });
 
   await testSteamEngineStorage({
-    toFetch: [Utils.makeGUID(), Utils.makeGUID()],
+    toFetch: guidSetOfSize(2),
     async beforeCheck() {
       let toFetchPath = OS.Path.join(OS.Constants.Path.profileDir, filename);
       let bytes = new TextEncoder().encode(JSON.stringify(this.toFetch));
@@ -155,7 +164,7 @@ add_task(async function test_toFetch() {
     },
     check(engine) {
       // Read file from disk
-      do_check_matches(engine.toFetch, this.toFetch);
+      assertSetsEqual(engine.toFetch, this.toFetch);
     },
   });
 });
@@ -166,39 +175,39 @@ add_task(async function test_previousFailed() {
   const filename = "weave/failed/steam.json";
 
   await testSteamEngineStorage({
-    previousFailed: [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()],
+    previousFailed: guidSetOfSize(3),
     setup(engine) {
       // Ensure pristine environment
-      do_check_eq(engine.previousFailed.length, 0);
+      Assert.equal(engine.previousFailed.size, 0);
 
       // Write file to disk
       engine.previousFailed = this.previousFailed;
-      do_check_eq(engine.previousFailed, this.previousFailed);
+      Assert.equal(engine.previousFailed, this.previousFailed);
     },
     check(engine) {
       // previousFailed is written asynchronously
-      do_check_matches(engine.previousFailed, this.previousFailed);
+      assertSetsEqual(engine.previousFailed, this.previousFailed);
     },
   });
 
   await testSteamEngineStorage({
-    previousFailed: [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()],
-    previousFailed2: [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()],
+    previousFailed: guidSetOfSize(4),
+    previousFailed2: guidSetOfSize(5),
     setup(engine) {
       // Make sure it work for consecutive writes before the callback is executed.
       engine.previousFailed = this.previousFailed;
-      do_check_eq(engine.previousFailed, this.previousFailed);
+      Assert.equal(engine.previousFailed, this.previousFailed);
 
       engine.previousFailed = this.previousFailed2;
-      do_check_eq(engine.previousFailed, this.previousFailed2);
+      Assert.equal(engine.previousFailed, this.previousFailed2);
     },
     check(engine) {
-      do_check_matches(engine.previousFailed, this.previousFailed2);
+      assertSetsEqual(engine.previousFailed, this.previousFailed2);
     },
   });
 
   await testSteamEngineStorage({
-    previousFailed: [Utils.makeGUID(), Utils.makeGUID()],
+    previousFailed: guidSetOfSize(2),
     async beforeCheck() {
       let previousFailedPath = OS.Path.join(OS.Constants.Path.profileDir,
                                             filename);
@@ -208,7 +217,7 @@ add_task(async function test_previousFailed() {
     },
     check(engine) {
       // Read file from disk
-      do_check_matches(engine.previousFailed, this.previousFailed);
+      assertSetsEqual(engine.previousFailed, this.previousFailed);
     },
   });
 });
@@ -219,20 +228,20 @@ add_task(async function test_resetClient() {
   let engine = await makeSteamEngine();
   try {
     // Ensure pristine environment
-    do_check_eq(Svc.Prefs.get("steam.lastSync"), undefined);
-    do_check_eq(Svc.Prefs.get("steam.lastSyncLocal"), undefined);
-    do_check_eq(engine.toFetch.length, 0);
+    Assert.equal(Svc.Prefs.get("steam.lastSync"), undefined);
+    Assert.equal(Svc.Prefs.get("steam.lastSyncLocal"), undefined);
+    Assert.equal(engine.toFetch.size, 0);
 
     engine.lastSync = 123.45;
     engine.lastSyncLocal = 67890;
-    engine.toFetch = [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()];
-    engine.previousFailed = [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()];
+    engine.toFetch = guidSetOfSize(4);
+    engine.previousFailed = guidSetOfSize(3);
 
     await engine.resetClient();
-    do_check_eq(engine.lastSync, 0);
-    do_check_eq(engine.lastSyncLocal, 0);
-    do_check_eq(engine.toFetch.length, 0);
-    do_check_eq(engine.previousFailed.length, 0);
+    Assert.equal(engine.lastSync, 0);
+    Assert.equal(engine.lastSyncLocal, 0);
+    Assert.equal(engine.toFetch.size, 0);
+    Assert.equal(engine.previousFailed.size, 0);
   } finally {
     Svc.Prefs.resetBranch("");
   }
@@ -253,13 +262,13 @@ add_task(async function test_wipeServer() {
   try {
     // Some data to reset.
     engine.lastSync = 123.45;
-    engine.toFetch = [Utils.makeGUID(), Utils.makeGUID(), Utils.makeGUID()];
+    engine.toFetch = guidSetOfSize(3),
 
     _("Wipe server data and reset client.");
     await engine.wipeServer();
-    do_check_eq(steamCollection.payload, undefined);
-    do_check_eq(engine.lastSync, 0);
-    do_check_eq(engine.toFetch.length, 0);
+    Assert.equal(steamCollection.payload, undefined);
+    Assert.equal(engine.lastSync, 0);
+    Assert.equal(engine.toFetch.size, 0);
 
   } finally {
     steamServer.stop(do_test_finished);

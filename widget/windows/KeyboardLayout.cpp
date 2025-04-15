@@ -12,9 +12,7 @@
 #include "mozilla/TextEvents.h"
 
 #include "nsAlgorithm.h"
-#ifdef MOZ_CRASHREPORTER
 #include "nsExceptionHandler.h"
-#endif
 #include "nsGkAtoms.h"
 #include "nsIIdleServiceInternal.h"
 #include "nsIWindowsRegKey.h"
@@ -2696,8 +2694,6 @@ NativeKey::NeedsToHandleWithoutFollowingCharMessages() const
   return mIsPrintableKey;
 }
 
-#ifdef MOZ_CRASHREPORTER
-
 static nsCString
 GetResultOfInSendMessageEx()
 {
@@ -2729,8 +2725,6 @@ GetResultOfInSendMessageEx()
   }
   return result;
 }
-
-#endif // #ifdef MOZ_CRASHREPORTER
 
 bool
 NativeKey::MayBeSameCharMessage(const MSG& aCharMsg1,
@@ -2975,7 +2969,6 @@ NativeKey::GetFollowingCharMessage(MSG& aCharMsg)
     }
 
     if (doCrash) {
-#ifdef MOZ_CRASHREPORTER
       nsPrintfCString info("\nPeekMessage() failed to remove char message! "
                            "\nActive keyboard layout=0x%08X (%s), "
                            "\nHandling message: %s, InSendMessageEx()=%s, "
@@ -3001,7 +2994,7 @@ NativeKey::GetFollowingCharMessage(MSG& aCharMsg)
         CrashReporter::AppendAppNotesToCrashReport(
           NS_LITERAL_CSTRING("\nThere is no message in any window"));
       }
-#endif // #ifdef MOZ_CRASHREPORTER
+
       MOZ_CRASH("We lost the following char message");
     }
 
@@ -3120,7 +3113,6 @@ NativeKey::GetFollowingCharMessage(MSG& aCharMsg)
        "nextKeyMsg=%s, kFoundCharMsg=%s",
        this, ToString(removedMsg).get(), ToString(nextKeyMsg).get(),
        ToString(kFoundCharMsg).get()));
-#ifdef MOZ_CRASHREPORTER
     nsPrintfCString info("\nPeekMessage() removed unexpcted char message! "
                          "\nActive keyboard layout=0x%08X (%s), "
                          "\nHandling message: %s, InSendMessageEx()=%s, "
@@ -3158,14 +3150,13 @@ NativeKey::GetFollowingCharMessage(MSG& aCharMsg)
       CrashReporter::AppendAppNotesToCrashReport(
         NS_LITERAL_CSTRING("\nThere is no key message in any windows."));
     }
-#endif // #ifdef MOZ_CRASHREPORTER
+
     MOZ_CRASH("PeekMessage() removed unexpected message");
   }
   MOZ_LOG(sNativeKeyLogger, LogLevel::Error,
     ("%p   NativeKey::GetFollowingCharMessage(), FAILED, removed messages "
      "are all WM_NULL, nextKeyMsg=%s",
      this, ToString(nextKeyMsg).get()));
-#ifdef MOZ_CRASHREPORTER
   nsPrintfCString info("\nWe lost following char message! "
                        "\nActive keyboard layout=0x%08X (%s), "
                        "\nHandling message: %s, InSendMessageEx()=%s, \n"
@@ -3176,7 +3167,6 @@ NativeKey::GetFollowingCharMessage(MSG& aCharMsg)
                        GetResultOfInSendMessageEx().get(),
                        ToString(kFoundCharMsg).get());
   CrashReporter::AppendAppNotesToCrashReport(info);
-#endif // #ifdef MOZ_CRASHREPORTER
   MOZ_CRASH("We lost the following char message");
   return false;
 }
@@ -4731,7 +4721,75 @@ KeyboardLayout::ConvertNativeKeyCodeToDOMKeyCode(UINT aNativeKeyCode) const
         uniChars = GetUniCharsAndModifiers(aNativeKeyCode, modKeyState);
         if (uniChars.Length() != 1 ||
             uniChars.CharAt(0) < ' ' || uniChars.CharAt(0) > 0x7F) {
-          return 0;
+          // In this case, we've returned 0 in this case for long time because
+          // we decided that we should avoid setting same keyCode value to 2 or
+          // more keys since active keyboard layout may have a key to input the
+          // punctuation with different key.  However, setting keyCode to 0
+          // makes some web applications which are aware of neither
+          // KeyboardEvent.key nor KeyboardEvent.code not work with Firefox
+          // when user selects non-ASCII capable keyboard layout such as
+          // Russian and Thai layout.  So, let's decide keyCode value with
+          // major keyboard layout's key which causes the OEM keycode.
+          // Actually, this maps same keyCode value to 2 keys on Russian
+          // keyboard layout.  "Period" key causes VK_OEM_PERIOD but inputs
+          // Yu of Cyrillic and "Slash" key causes VK_OEM_2 (same as US
+          // keyboard layout) but inputs "." (period of ASCII).  Therefore,
+          // we return DOM_VK_PERIOD which is same as VK_OEM_PERIOD for
+          // "Period" key.  On the other hand, we use same keyCode value for
+          // "Slash" key too because it inputs ".".
+          CodeNameIndex code;
+          switch (aNativeKeyCode) {
+            case VK_OEM_1:
+              code = CODE_NAME_INDEX_Semicolon;
+              break;
+            case VK_OEM_PLUS:
+              code = CODE_NAME_INDEX_Equal;
+              break;
+            case VK_OEM_COMMA:
+              code = CODE_NAME_INDEX_Comma;
+              break;
+            case VK_OEM_MINUS:
+              code = CODE_NAME_INDEX_Minus;
+              break;
+            case VK_OEM_PERIOD:
+              code = CODE_NAME_INDEX_Period;
+              break;
+            case VK_OEM_2:
+              code = CODE_NAME_INDEX_Slash;
+              break;
+            case VK_OEM_3:
+              code = CODE_NAME_INDEX_Backquote;
+              break;
+            case VK_OEM_4:
+              code = CODE_NAME_INDEX_BracketLeft;
+              break;
+            case VK_OEM_5:
+              code = CODE_NAME_INDEX_Backslash;
+              break;
+            case VK_OEM_6:
+              code = CODE_NAME_INDEX_BracketRight;
+              break;
+            case VK_OEM_7:
+              code = CODE_NAME_INDEX_Quote;
+              break;
+            case VK_OEM_8:
+              // Use keyCode value for "Backquote" key on UK keyboard layout.
+              code = CODE_NAME_INDEX_Backquote;
+              break;
+            case VK_OEM_102:
+              // Use keyCode value for "IntlBackslash" key.
+              code = CODE_NAME_INDEX_IntlBackslash;
+              break;
+            case VK_ABNT_C1: // "/" of ABNT.
+              // Use keyCode value for "IntlBackslash" key on ABNT keyboard
+              // layout.
+              code = CODE_NAME_INDEX_IntlBackslash;
+              break;
+            default:
+              MOZ_ASSERT_UNREACHABLE("Handle all OEM keycode values");
+              return 0;
+          }
+          return WidgetKeyboardEvent::GetFallbackKeyCodeOfPunctuationKey(code);
         }
       }
       return WidgetUtils::ComputeKeyCodeFromChar(uniChars.CharAt(0));

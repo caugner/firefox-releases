@@ -4,8 +4,6 @@
 
 "use strict";
 
-const { utils: Cu, interfaces: Ci } = Components;
-
 /* exported init */
 this.EXPORTED_SYMBOLS = ["init"];
 
@@ -20,7 +18,7 @@ function setupServer(mm) {
 
   // Lazy load Loader.jsm to prevent loading any devtools dependency too early.
   let { DevToolsLoader } =
-    Cu.import("resource://devtools/shared/Loader.jsm", {});
+    ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 
   // Init a custom, invisible DebuggerServer, in order to not pollute the
   // debugger with all devtools modules, nor break the debugger itself with
@@ -29,13 +27,11 @@ function setupServer(mm) {
   gLoader.invisibleToDebugger = true;
   let { DebuggerServer } = gLoader.require("devtools/server/main");
 
-  if (!DebuggerServer.initialized) {
-    DebuggerServer.init();
-  }
+  DebuggerServer.init();
   // For browser content toolbox, we do need a regular root actor and all tab
   // actors, but don't need all the "browser actors" that are only useful when
   // debugging the parent process via the browser toolbox.
-  DebuggerServer.registerActors({ browser: false, root: true, tab: true });
+  DebuggerServer.registerActors({ root: true, tab: true });
 
   // Clean up things when the client disconnects
   mm.addMessageListener("debug:content-process-destroy", function onDestroy() {

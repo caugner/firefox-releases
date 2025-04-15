@@ -33,7 +33,6 @@
 #include "nsWeakReference.h"
 #include "Units.h"
 #include "nsIWidget.h"
-#include "nsIPartialSHistory.h"
 
 class nsFrameLoader;
 class nsIFrameLoader;
@@ -275,8 +274,8 @@ public:
                             nsTArray<nsCString>&& aEnabledCommands,
                             nsTArray<nsCString>&& aDisabledCommands) override;
 
-  virtual mozilla::ipc::IPCResult
-  RecvSetCursor(const uint32_t& aValue, const bool& aForce) override;
+  virtual mozilla::ipc::IPCResult RecvSetCursor(const nsCursor& aValue,
+                                                const bool& aForce) override;
 
   virtual mozilla::ipc::IPCResult RecvSetCustomCursor(const nsCString& aUri,
                                                       const uint32_t& aWidth,
@@ -430,10 +429,6 @@ public:
                       int32_t aButton, int32_t aClickCount,
                       int32_t aModifiers, bool aIgnoreRootScrollFrame);
 
-  void SendKeyEvent(const nsAString& aType, int32_t aKeyCode,
-                    int32_t aCharCode, int32_t aModifiers,
-                    bool aPreventDefault);
-
   /**
    * The following Send*Event() marks aEvent as posted to remote process if
    * it succeeded.  So, you can check the result with
@@ -443,7 +438,8 @@ public:
 
   void SendRealDragEvent(WidgetDragEvent& aEvent,
                          uint32_t aDragAction,
-                         uint32_t aDropEffect);
+                         uint32_t aDropEffect,
+                         const nsCString& aPrincipalURISpec);
 
   void SendMouseWheelEvent(WidgetWheelEvent& aEvent);
 
@@ -469,17 +465,6 @@ public:
                      Modifiers aModifiers,
                      const ScrollableLayerGuid& aGuid,
                      uint64_t aInputBlockId);
-
-  virtual PDocumentRendererParent*
-  AllocPDocumentRendererParent(const nsRect& documentRect,
-                               const gfx::Matrix& transform,
-                               const nsString& bgcolor,
-                               const uint32_t& renderFlags,
-                               const bool& flushLayout,
-                               const nsIntSize& renderSize) override;
-
-  virtual bool
-  DeallocPDocumentRendererParent(PDocumentRendererParent* actor) override;
 
   virtual PFilePickerParent*
   AllocPFilePickerParent(const nsString& aTitle,
@@ -512,7 +497,8 @@ public:
 
   bool SendPasteTransferable(const IPCDataTransfer& aDataTransfer,
                              const bool& aIsPrivateData,
-                             const IPC::Principal& aRequestingPrincipal);
+                             const IPC::Principal& aRequestingPrincipal,
+                             const uint32_t& aContentPolicyType);
 
   static TabParent* GetFrom(nsFrameLoader* aFrameLoader);
 
@@ -586,9 +572,11 @@ public:
                         const uint32_t& aAction,
                         const OptionalShmem& aVisualDnDData,
                         const uint32_t& aStride, const uint8_t& aFormat,
-                        const LayoutDeviceIntRect& aDragRect) override;
+                        const LayoutDeviceIntRect& aDragRect,
+                        const nsCString& aPrincipalURISpec) override;
 
-  void AddInitialDnDDataTo(DataTransfer* aDataTransfer);
+  void AddInitialDnDDataTo(DataTransfer* aDataTransfer,
+                           nsACString& aPrincipalURISpec);
 
   bool TakeDragVisualization(RefPtr<mozilla::gfx::SourceSurface>& aSurface,
                              LayoutDeviceIntRect* aDragRect);
@@ -643,11 +631,6 @@ protected:
 
   virtual mozilla::ipc::IPCResult RecvGetTabCount(uint32_t* aValue) override;
 
-  virtual mozilla::ipc::IPCResult RecvSHistoryUpdate(const uint32_t& aCount,
-                                                     const uint32_t& aLocalIndex,
-                                                     const bool& aTruncate) override;
-
-  virtual mozilla::ipc::IPCResult RecvRequestCrossBrowserNavigation(const uint32_t& aGlobalIndex) override;
   virtual mozilla::ipc::IPCResult RecvShowCanvasPermissionPrompt(const nsCString& aFirstPartyURI) override;
 
   ContentCacheInParent mContentCache;
@@ -700,6 +683,7 @@ private:
   RefPtr<gfx::DataSourceSurface> mDnDVisualization;
   bool mDragValid;
   LayoutDeviceIntRect mDragRect;
+  nsCString mDragPrincipalURISpec;
 
   // When true, the TabParent is initialized without child side's request.
   // When false, the TabParent is initialized by window.open() from child side.
@@ -781,6 +765,15 @@ private:
   // If this flag is set, then the tab's layers will be preserved even when
   // the tab's docshell is inactive.
   bool mPreserveLayers;
+
+  // Holds the most recent value passed to the RenderLayers function. This
+  // does not necessarily mean that the layers have finished rendering
+  // and have uploaded - for that, use mHasLayers.
+  bool mRenderLayers;
+
+  // True if the compositor has reported that the TabChild has uploaded
+  // layers.
+  bool mHasLayers;
 
   // True if this TabParent has had its layer tree sent to the compositor
   // at least once.

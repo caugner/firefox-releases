@@ -4,27 +4,23 @@
 
 "use strict";
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
+var EXPORTED_SYMBOLS = [];
 
-this.EXPORTED_SYMBOLS = [];
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/AddonManager.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
 /* globals AddonManagerPrivate*/
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/osfile.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/osfile.jsm");
 /* globals OS*/
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://gre/modules/GMPUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://gre/modules/GMPUtils.jsm");
 /* globals GMP_PLUGIN_IDS, GMPPrefs, GMPUtils, OPEN_H264_ID, WIDEVINE_ID */
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/UpdateUtils.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/UpdateUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(
+ChromeUtils.defineModuleGetter(
   this, "GMPInstallManager", "resource://gre/modules/GMPInstallManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(
+ChromeUtils.defineModuleGetter(
   this, "setTimeout", "resource://gre/modules/Timer.jsm");
 
 const URI_EXTENSION_STRINGS  = "chrome://mozapps/locale/extensions/extensions.properties";
@@ -51,7 +47,6 @@ const GMP_PLUGINS = [
     // localisation.
     licenseURL:      "chrome://mozapps/content/extensions/OpenH264-license.txt",
     homepageURL:     "http://www.openh264.org/",
-    optionsURL:      "chrome://mozapps/content/extensions/gmpPrefs.xul",
   },
   {
     id:              WIDEVINE_ID,
@@ -60,7 +55,6 @@ const GMP_PLUGINS = [
     description:     "cdm_description",
     licenseURL:      "https://www.google.com/policies/privacy/",
     homepageURL:     "https://www.widevine.com/",
-    optionsURL:      "chrome://mozapps/content/extensions/gmpPrefs.xul",
     isEME:           true
   }];
 XPCOMUtils.defineConstant(this, "GMP_PLUGINS", GMP_PLUGINS);
@@ -126,9 +120,6 @@ GMPWrapper.prototype = {
   _updateTask: null,
   _gmpPath: null,
   _isUpdateCheckPending: false,
-
-  optionsType: AddonManager.OPTIONS_TYPE_INLINE,
-  get optionsURL() { return this._plugin.optionsURL; },
 
   set gmpPath(aPath) { this._gmpPath = aPath; },
   get gmpPath() {
@@ -626,7 +617,7 @@ var GMPProvider = {
 
   getAddonsByTypes(aTypes, aCallback) {
     if (!this.isEnabled ||
-        (aTypes && aTypes.indexOf("plugin") < 0)) {
+        (aTypes && !aTypes.includes("plugin"))) {
       aCallback([]);
       return;
     }

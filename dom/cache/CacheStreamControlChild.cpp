@@ -9,8 +9,10 @@
 #include "mozilla/Unused.h"
 #include "mozilla/dom/cache/ActorUtils.h"
 #include "mozilla/dom/cache/CacheTypes.h"
+#include "mozilla/dom/cache/CacheWorkerHolder.h"
 #include "mozilla/dom/cache/ReadStream.h"
 #include "mozilla/ipc/FileDescriptorSetChild.h"
+#include "mozilla/ipc/IPCStreamUtils.h"
 #include "mozilla/ipc/PBackgroundChild.h"
 #include "mozilla/ipc/PFileDescriptorSetChild.h"
 #include "nsISupportsImpl.h"
@@ -123,10 +125,9 @@ CacheStreamControlChild::OpenStream(const nsID& aId, InputStreamResolver&& aReso
   RefPtr<CacheWorkerHolder> holder = GetWorkerHolder();
 
   SendOpenStream(aId)->Then(GetCurrentThreadSerialEventTarget(), __func__,
-  [aResolver, holder](const OptionalIPCStream& aOptionalStream) {
-    nsCOMPtr<nsIInputStream> stream = DeserializeIPCStream(aOptionalStream);
-    aResolver(Move(stream));
-  }, [aResolver, holder](PromiseRejectReason aReason) {
+  [aResolver, holder](const nsCOMPtr<nsIInputStream>& aOptionalStream) {
+    aResolver(nsCOMPtr<nsIInputStream>(aOptionalStream));
+  }, [aResolver, holder](ResponseRejectReason aReason) {
     aResolver(nullptr);
   });
 }

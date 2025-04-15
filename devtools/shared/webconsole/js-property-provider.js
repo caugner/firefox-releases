@@ -74,13 +74,13 @@ function findCompletionBeginning(str) {
           start = i + 1;
         } else if (c == " ") {
           start = i + 1;
-        } else if (OPEN_BODY.indexOf(c) != -1) {
+        } else if (OPEN_BODY.includes(c)) {
           bodyStack.push({
             token: c,
             start: start
           });
           start = i + 1;
-        } else if (CLOSE_BODY.indexOf(c) != -1) {
+        } else if (CLOSE_BODY.includes(c)) {
           let last = bodyStack.pop();
           if (!last || OPEN_CLOSE_BODY[last.token] != c) {
             return {
@@ -414,6 +414,7 @@ function getMatchedPropsImpl(obj, match, {chainIterator, getProperties}) {
       // If it is an array index, we can't take it.
       // This uses a trick: converting a string to a number yields NaN if
       // the operation failed, and NaN is not equal to itself.
+      // eslint-disable-next-line no-self-compare
       if (+prop != +prop) {
         matches.add(prop);
       }

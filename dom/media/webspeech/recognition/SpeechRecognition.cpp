@@ -21,6 +21,7 @@
 
 #include "AudioSegment.h"
 #include "DOMMediaStream.h"
+#include "MediaEnginePrefs.h"
 #include "endpointer.h"
 
 #include "mozilla/dom/SpeechRecognitionEvent.h"
@@ -195,7 +196,6 @@ SpeechRecognition::Constructor(const GlobalObject& aGlobal,
     return nullptr;
   }
 
-  MOZ_ASSERT(win->IsInnerWindow());
   RefPtr<SpeechRecognition> object = new SpeechRecognition(win);
   return object.forget();
 }

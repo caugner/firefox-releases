@@ -11,9 +11,11 @@
 #include "mozilla/EffectCompositor.h"
 #include "mozilla/EnumeratedArray.h"
 #include "mozilla/EventStates.h"
+#include "mozilla/MediaFeatureChange.h"
 #include "mozilla/PostTraversalTask.h"
 #include "mozilla/ServoBindingTypes.h"
 #include "mozilla/ServoElementSnapshot.h"
+#include "mozilla/ServoBindings.h"
 #include "mozilla/ServoUtils.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/SheetType.h"
@@ -84,19 +86,7 @@ class ServoStyleSet
   typedef ServoElementSnapshotTable SnapshotTable;
 
 public:
-  static bool IsInServoTraversal()
-  {
-    // The callers of this function are generally main-thread-only _except_
-    // for potentially running during the Servo traversal, in which case they may
-    // take special paths that avoid writing to caches and the like. In order
-    // to allow those callers to branch efficiently without checking TLS, we
-    // maintain this static boolean. However, the danger is that those callers
-    // are generally unprepared to deal with non-Servo-but-also-non-main-thread
-    // callers, and are likely to take the main-thread codepath if this function
-    // returns false. So we assert against other non-main-thread callers here.
-    MOZ_ASSERT(sInServoTraversal || NS_IsMainThread());
-    return sInServoTraversal;
-  }
+  static bool IsInServoTraversal() { return mozilla::IsInServoTraversal(); }
 
 #ifdef DEBUG
   // Used for debug assertions. We make this debug-only to prevent callers from
@@ -110,48 +100,43 @@ public:
     return sInServoTraversal;
   }
 
-  // The kind of styleset we have.
-  //
-  // We use ServoStyleSet also from XBL bindings, and some stuff needs to be
-  // different between them.
-  enum class Kind : uint8_t {
-    // A "master" StyleSet.
-    //
-    // This one is owned by a pres shell for a given document.
-    Master,
-
-    // A StyleSet for XBL, which is owned by a given XBL binding.
-    ForXBL,
-  };
-
-  explicit ServoStyleSet(Kind aKind);
+  ServoStyleSet();
   ~ServoStyleSet();
 
-  static UniquePtr<ServoStyleSet>
-  CreateXBLServoStyleSet(nsPresContext* aPresContext,
-                         const nsTArray<RefPtr<ServoStyleSheet>>& aNewSheets);
-
-  void Init(nsPresContext* aPresContext, nsBindingManager* aBindingManager);
-  void BeginShutdown();
+  void Init(nsPresContext* aPresContext);
+  void BeginShutdown() {}
   void Shutdown();
 
-  void RecordStyleSheetChange(mozilla::ServoStyleSheet*, StyleSheet::ChangeType);
+  // Called when a rules in a stylesheet in this set, or a child sheet of that,
+  // are mutated from CSSOM.
+  void RuleAdded(ServoStyleSheet&, css::Rule&);
+  void RuleRemoved(ServoStyleSheet&, css::Rule&);
+  void RuleChanged(ServoStyleSheet& aSheet, css::Rule* aRule);
 
-  void RecordShadowStyleChange(mozilla::dom::ShadowRoot* aShadowRoot) {
-    // FIXME(emilio): When we properly support shadow dom we'll need to do
-    // better.
-    MarkOriginsDirty(OriginFlags::All);
-  }
+  // All the relevant changes are handled in RuleAdded / RuleRemoved / etc, and
+  // the relevant AppendSheet / RemoveSheet...
+  void RecordStyleSheetChange(ServoStyleSheet*, StyleSheet::ChangeType) {}
+
+  // Runs style invalidation due to document state changes.
+  void InvalidateStyleForDocumentStateChanges(EventStates aStatesChanged);
+
+  void RecordShadowStyleChange(dom::ShadowRoot&);
 
   bool StyleSheetsHaveChanged() const
   {
     return StylistNeedsUpdate();
   }
 
-  nsRestyleHint MediumFeaturesChanged(bool aViewportChanged);
+  nsRestyleHint MediumFeaturesChanged(MediaFeatureChangeReason);
 
-  // aViewportChanged outputs whether any viewport units is used.
-  bool MediumFeaturesChangedRules(bool* aViewportUnitsUsed);
+  // Evaluates a given SourceSizeList, returning the optimal viewport width in
+  // app units.
+  //
+  // The SourceSizeList parameter can be null, in which case it will return
+  // 100vw.
+  nscoord EvaluateSourceSizeList(const RawServoSourceSizeList* aSourceSizeList) const {
+    return Servo_SourceSizeList_Evaluate(mRawSet.get(), aSourceSizeList);
+  }
 
   void InvalidateStyleForCSSRuleChanges();
 
@@ -160,8 +145,12 @@ public:
     return mRawSet.get();
   }
 
-  bool GetAuthorStyleDisabled() const;
-  nsresult SetAuthorStyleDisabled(bool aStyleDisabled);
+  bool GetAuthorStyleDisabled() const
+  {
+    return mAuthorStyleDisabled;
+  }
+
+  void SetAuthorStyleDisabled(bool aStyleDisabled);
 
   void BeginUpdate();
   nsresult EndUpdate();
@@ -276,7 +265,7 @@ public:
   // check whether there is ::before/::after style for an element
   already_AddRefed<ServoStyleContext>
   ProbePseudoElementStyle(dom::Element* aOriginatingElement,
-                          mozilla::CSSPseudoElementType aType,
+                          CSSPseudoElementType aType,
                           ServoStyleContext* aParentContext);
 
   /**
@@ -300,22 +289,6 @@ public:
    * cannot wait for a future batch restyle.
    */
   void StyleNewSubtree(dom::Element* aRoot);
-
-  /**
-   * Like the above, but skips the root node, and only styles unstyled children.
-   * When potentially appending multiple children, it's preferable to call
-   * StyleNewChildren on the node rather than making multiple calls to
-   * StyleNewSubtree on each child, since it allows for more parallelism.
-   */
-  void StyleNewChildren(dom::Element* aParent);
-
-  /**
-   * Eagerly styles the children of an element that has just had an XBL
-   * binding applied to it.  Some XBL consumers attach bindings to elements
-   * that have not been styled yet, and in such cases, this will do the
-   * equivalent of StyleNewSubtree instead.
-   */
-  void StyleNewlyBoundElement(dom::Element* aElement);
 
   /**
    * Helper for correctly calling UpdateStylist without paying the cost of an
@@ -398,7 +371,6 @@ public:
   already_AddRefed<ServoStyleContext>
   GetBaseContextForElement(dom::Element* aElement,
                            nsPresContext* aPresContext,
-                           CSSPseudoElementType aPseudoType,
                            const ServoStyleContext* aStyle);
 
   // Get a style context that represents |aStyle|, but as though
@@ -449,21 +421,11 @@ public:
   // Called by StyleSheet::EnsureUniqueInner to let us know it cloned
   // its inner.
   void SetNeedsRestyleAfterEnsureUniqueInner() {
-    MOZ_ASSERT(!IsForXBL(), "Should not be cloning things for XBL stylesheet");
     mNeedsRestyleAfterEnsureUniqueInner = true;
   }
 
   // Returns the style rule map.
   ServoStyleRuleMap* StyleRuleMap();
-
-  // Return whether this is the last PresContext which uses this XBL styleset.
-  bool IsPresContextChanged(nsPresContext* aPresContext) const {
-    return aPresContext != mLastPresContextUsesXBLStyleSet;
-  }
-
-  // Set PresContext (i.e. Device) for mRawSet. This should be called only
-  // by XBL stylesets. Returns true if there is any rule changing.
-  bool SetPresContext(nsPresContext* aPresContext);
 
   /**
    * Returns true if a modification to an an attribute with the specified
@@ -507,9 +469,6 @@ public:
                        ServoStyleContext* aNewParentIgnoringFirstLine,
                        ServoStyleContext* aNewLayoutParent,
                        Element* aElement);
-
-  bool IsMaster() const { return mKind == Kind::Master; }
-  bool IsForXBL() const { return mKind == Kind::ForXBL; }
 
 private:
   friend class AutoSetInServoTraversal;
@@ -581,8 +540,7 @@ private:
     ResolveStyleLazilyInternal(dom::Element* aElement,
                                CSSPseudoElementType aPseudoType,
                                StyleRuleInclusion aRules =
-                                 StyleRuleInclusion::All,
-                               bool aIgnoreExistingStyles = false);
+                                 StyleRuleInclusion::All);
 
   void RunPostTraversalTasks();
 
@@ -599,15 +557,21 @@ private:
   void RemoveSheetOfType(SheetType aType,
                          ServoStyleSheet* aSheet);
 
-  const Kind mKind;
+  // The owner document of this style set. Null if this is an XBL style set.
+  //
+  // TODO(emilio): This should become a DocumentOrShadowRoot, and be owned by it
+  // directly instead of the shell, eventually.
+  nsIDocument* mDocument;
 
-  // Nullptr if this is an XBL style set.
-  nsPresContext* MOZ_NON_OWNING_REF mPresContext = nullptr;
+  const nsPresContext* GetPresContext() const {
+    return const_cast<ServoStyleSet*>(this)->GetPresContext();
+  }
 
-  // Because XBL style set could be used by multiple PresContext, we need to
-  // store the last PresContext pointer which uses this XBL styleset for
-  // computing medium rule changes.
-  void* MOZ_NON_OWNING_REF mLastPresContextUsesXBLStyleSet = nullptr;
+  /**
+   * Return the associated pres context if we're the master style set and we
+   * have an associated pres shell.
+   */
+  nsPresContext* GetPresContext();
 
   UniquePtr<RawServoStyleSet> mRawSet;
   EnumeratedArray<SheetType, SheetType::Count,
@@ -633,12 +597,7 @@ private:
 
   // Map from raw Servo style rule to Gecko's wrapper object.
   // Constructed lazily when requested by devtools.
-  RefPtr<ServoStyleRuleMap> mStyleRuleMap;
-
-  // This can be null if we are used to hold XBL style sheets.
-  RefPtr<nsBindingManager> mBindingManager;
-
-  static ServoStyleSet* sInServoTraversal;
+  UniquePtr<ServoStyleRuleMap> mStyleRuleMap;
 };
 
 class UACacheReporter final : public nsIMemoryReporter

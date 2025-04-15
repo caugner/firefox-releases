@@ -8,6 +8,7 @@ package org.mozilla.gecko;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.mozglue.JNIObject;
 import org.mozilla.gecko.util.ThreadUtils;
+import org.mozilla.geckoview.TextInputController;
 
 import android.graphics.RectF;
 import android.os.IBinder;
@@ -21,7 +22,7 @@ import android.view.KeyEvent;
  * process has an instance of GeckoEditableChild, which communicates with the
  * GeckoEditableParent instance in the main process.
  */
-final class GeckoEditableChild extends JNIObject implements IGeckoEditableChild {
+public final class GeckoEditableChild extends JNIObject implements IGeckoEditableChild {
 
     private static final boolean DEBUG = false;
     private static final String LOGTAG = "GeckoEditableChild";
@@ -74,7 +75,7 @@ final class GeckoEditableChild extends JNIObject implements IGeckoEditableChild 
     private int mCurrentTextLength; // Used by Gecko thread
 
     @WrapForJNI(calledFrom = "gecko")
-    /* package */ GeckoEditableChild(final IGeckoEditableParent editableParent) {
+    public GeckoEditableChild(final IGeckoEditableParent editableParent) {
         mEditableParent = editableParent;
 
         final IBinder binder = editableParent.asBinder();
@@ -132,9 +133,10 @@ final class GeckoEditableChild extends JNIObject implements IGeckoEditableChild 
         if (DEBUG) {
             ThreadUtils.assertOnGeckoThread();
             Log.d(LOGTAG, "notifyIME(" + GeckoEditable.getConstantName(
-                          GeckoEditableListener.class, "NOTIFY_IME_", type) + ")");
+                          TextInputController.EditableListener.class,
+                          "NOTIFY_IME_", type) + ")");
         }
-        if (type == GeckoEditableListener.NOTIFY_IME_TO_CANCEL_COMPOSITION) {
+        if (type == TextInputController.EditableListener.NOTIFY_IME_TO_CANCEL_COMPOSITION) {
             // Composition should have been canceled on the parent side through text
             // update notifications. We cannot verify that here because we don't
             // keep track of spans on the child side, but it's simple to add the
@@ -153,17 +155,18 @@ final class GeckoEditableChild extends JNIObject implements IGeckoEditableChild 
     @WrapForJNI(calledFrom = "gecko")
     private void notifyIMEContext(final int state, final String typeHint,
                                   final String modeHint, final String actionHint,
-                                  final boolean inPrivateBrowsing, final boolean isUserAction) {
+                                  final int flags) {
         if (DEBUG) {
             ThreadUtils.assertOnGeckoThread();
             Log.d(LOGTAG, "notifyIMEContext(" + GeckoEditable.getConstantName(
-                          GeckoEditableListener.class, "IME_STATE_", state) + ", \"" +
-                          typeHint + "\", \"" + modeHint + "\", \"" + actionHint + "\", " +
-                          "inPrivateBrowsing=" + inPrivateBrowsing + ")");
+                          TextInputController.EditableListener.class,
+                          "IME_STATE_", state) + ", \"" +
+                          typeHint + "\", \"" + modeHint + "\", \"" + actionHint +
+                          "\", 0x" + Integer.toHexString(flags) + ")");
         }
 
         try {
-            mEditableParent.notifyIMEContext(state, typeHint, modeHint, actionHint, inPrivateBrowsing, isUserAction);
+            mEditableParent.notifyIMEContext(state, typeHint, modeHint, actionHint, flags);
         } catch (final RemoteException e) {
             Log.e(LOGTAG, "Remote call failed", e);
         }

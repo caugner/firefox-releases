@@ -3,12 +3,12 @@
 // The ext-* files are imported into the same scopes.
 /* import-globals-from ext-toolkit.js */
 
-XPCOMUtils.defineLazyModuleGetter(this, "ContextualIdentityService",
-                                  "resource://gre/modules/ContextualIdentityService.jsm");
+ChromeUtils.defineModuleGetter(this, "ContextualIdentityService",
+                               "resource://gre/modules/ContextualIdentityService.jsm");
 XPCOMUtils.defineLazyPreferenceGetter(this, "containersEnabled",
                                       "privacy.userContext.enabled");
 
-Cu.import("resource://gre/modules/ExtensionPreferencesManager.jsm");
+ChromeUtils.import("resource://gre/modules/ExtensionPreferencesManager.jsm");
 
 var {
   ExtensionError,
@@ -128,7 +128,7 @@ this.contextualIdentities = class extends ExtensionAPI {
     let {extension} = this;
 
     if (extension.hasPermission("contextualIdentities")) {
-      ExtensionPreferencesManager.setSetting(extension, CONTAINERS_ENABLED_SETTING_NAME, extension.id);
+      ExtensionPreferencesManager.setSetting(extension.id, CONTAINERS_ENABLED_SETTING_NAME, extension.id);
     }
   }
 

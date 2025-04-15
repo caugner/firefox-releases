@@ -22,8 +22,6 @@
 #include "nsIContentSink.h"
 #include "nsIDocument.h"
 #include "nsIDOMEventListener.h"
-#include "nsIDOMHTMLFormElement.h"
-#include "nsIDOMXULDocument.h"
 #include "nsIFormControl.h"
 #include "mozilla/dom/NodeInfo.h"
 #include "nsIScriptContext.h"
@@ -33,7 +31,6 @@
 #include "nsNameSpaceManager.h"
 #include "nsParserBase.h"
 #include "nsViewManager.h"
-#include "nsIXULDocument.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsLayoutCID.h"
 #include "nsNetUtil.h"
@@ -55,6 +52,7 @@
 #include "nsIConsoleService.h"
 #include "nsIScriptError.h"
 #include "nsContentTypeParser.h"
+#include "XULDocument.h"
 
 static mozilla::LazyLogModule gContentSinkLog("nsXULContentSink");;
 
@@ -409,7 +407,7 @@ XULContentSinkImpl::NormalizeAttributeString(const char16_t *aExpatName,
     RefPtr<mozilla::dom::NodeInfo> ni;
     ni = mNodeInfoManager->GetNodeInfo(localName, prefix,
                                        nameSpaceID,
-                                       nsIDOMNode::ATTRIBUTE_NODE);
+                                       nsINode::ATTRIBUTE_NODE);
     aName.SetTo(ni);
 
     return NS_OK;
@@ -456,7 +454,7 @@ XULContentSinkImpl::HandleStartElement(const char16_t *aName,
 
   RefPtr<mozilla::dom::NodeInfo> nodeInfo;
   nodeInfo = mNodeInfoManager->GetNodeInfo(localName, prefix, nameSpaceID,
-                                           nsIDOMNode::ELEMENT_NODE);
+                                           nsINode::ELEMENT_NODE);
 
   nsresult rv = NS_OK;
   switch (mState) {
@@ -675,7 +673,7 @@ XULContentSinkImpl::ReportError(const char16_t* aErrorText,
     return NS_OK;
   };
 
-  nsCOMPtr<nsIXULDocument> doc = do_QueryReferent(mDocument);
+  XULDocument* doc = idoc ? idoc->AsXULDocument() : nullptr;
   if (doc && !doc->OnDocumentParserError()) {
     // The overlay was broken.  Don't add a messy element to the master doc.
     return NS_OK;
@@ -835,7 +833,6 @@ XULContentSinkImpl::OpenScript(const char16_t** aAttributes,
                                const uint32_t aLineNumber)
 {
   bool isJavaScript = true;
-  uint32_t version = JSVERSION_DEFAULT;
   nsresult rv;
 
   // Look for SRC attribute and look for a LANGUAGE attribute
@@ -861,14 +858,19 @@ XULContentSinkImpl::OpenScript(const char16_t** aAttributes,
 
           if (nsContentUtils::IsJavascriptMIMEType(mimeType)) {
               isJavaScript = true;
-              version = JSVERSION_DEFAULT;
 
               // Get the version string, and ensure that JavaScript supports it.
               nsAutoString versionName;
               rv = parser.GetParameter("version", versionName);
 
               if (NS_SUCCEEDED(rv)) {
-                  version = JSVERSION_UNKNOWN;
+                  nsContentUtils::ReportToConsoleNonLocalized(
+                      NS_LITERAL_STRING("Versioned JavaScripts are no longer supported. "
+                                        "Please remove the version parameter."),
+                      nsIScriptError::errorFlag,
+                      NS_LITERAL_CSTRING("XUL Document"),
+                      nullptr, mDocumentURL, EmptyString(), aLineNumber);
+                  isJavaScript = false;
               } else if (rv != NS_ERROR_INVALID_ARG) {
                   return rv;
               }
@@ -882,7 +884,6 @@ XULContentSinkImpl::OpenScript(const char16_t** aAttributes,
           nsAutoString lang(aAttributes[1]);
           if (nsContentUtils::IsJavaScriptLanguage(lang)) {
               isJavaScript = true;
-              version = JSVERSION_DEFAULT;
           }
       }
       aAttributes += 2;
@@ -898,7 +899,7 @@ XULContentSinkImpl::OpenScript(const char16_t** aAttributes,
   if (doc)
       globalObject = do_QueryInterface(doc->GetWindow());
   RefPtr<nsXULPrototypeScript> script =
-      new nsXULPrototypeScript(aLineNumber, version);
+      new nsXULPrototypeScript(aLineNumber);
 
   // If there is a SRC attribute...
   if (! src.IsEmpty()) {

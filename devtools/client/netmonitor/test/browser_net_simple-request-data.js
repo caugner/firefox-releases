@@ -7,15 +7,6 @@
  * Tests if requests render correct information in the menu UI.
  */
 
-// The following intermittent rejections should not be left uncaught. This test
-// has been whitelisted until the issue is fixed.
-//
-// NOTE: Whitelisting a class of rejections should be limited. Normally you
-//       should use "expectUncaughtRejection" to flag individual failures.
-Cu.import("resource://testing-common/PromiseTestUtils.jsm", this);
-PromiseTestUtils.whitelistRejectionsGlobally(/cookies is undefined/);
-PromiseTestUtils.whitelistRejectionsGlobally(/requestItem is undefined/);
-
 function test() {
   // Disable tcp fast open, because it is setting a response header indicator
   // (bug 1352274). TCP Fast Open is not present on all platforms therefore the
@@ -27,7 +18,7 @@ function test() {
   initNetMonitor(SIMPLE_SJS).then(async ({ tab, monitor }) => {
     info("Starting test... ");
 
-    let { document, store, windowRequire } = monitor.panelWin;
+    let { document, store, windowRequire, connector } = monitor.panelWin;
     let Actions = windowRequire("devtools/client/netmonitor/src/actions/index");
     let { EVENTS } = windowRequire("devtools/client/netmonitor/src/constants");
     let {
@@ -174,9 +165,9 @@ function test() {
 
       ok(requestItem.responseHeaders,
         "There should be a responseHeaders data available.");
-      is(requestItem.responseHeaders.headers.length, 10,
+      is(requestItem.responseHeaders.headers.length, 13,
         "The responseHeaders data has an incorrect |headers| property.");
-      is(requestItem.responseHeaders.headersSize, 330,
+      is(requestItem.responseHeaders.headersSize, 335,
         "The responseHeaders data has an incorrect |headersSize| property.");
 
       verifyRequestItemTarget(
@@ -228,7 +219,7 @@ function test() {
         "The status data has an incorrect value.");
       is(requestItem.statusText, "Och Aye",
         "The statusText data has an incorrect value.");
-      is(requestItem.headersSize, 330,
+      is(requestItem.headersSize, 335,
         "The headersSize data has an incorrect value.");
 
       let requestListItem = document.querySelector(".request-list-item");
@@ -250,39 +241,23 @@ function test() {
       );
     });
 
-    expectEvent(EVENTS.RECEIVED_RESPONSE_CONTENT, async () => {
+    expectEvent(EVENTS.PAYLOAD_READY, async () => {
       await waitUntil(() => {
         let requestItem = getSortedRequests(store.getState()).get(0);
         return requestItem &&
                requestItem.transferredSize &&
                requestItem.contentSize &&
-               requestItem.mimeType &&
-               requestItem.responseContent;
+               requestItem.mimeType;
       });
 
       let requestItem = getSortedRequests(store.getState()).get(0);
 
-      is(requestItem.transferredSize, "342",
+      is(requestItem.transferredSize, "347",
         "The transferredSize data has an incorrect value.");
       is(requestItem.contentSize, "12",
         "The contentSize data has an incorrect value.");
       is(requestItem.mimeType, "text/plain; charset=utf-8",
         "The mimeType data has an incorrect value.");
-
-      ok(requestItem.responseContent,
-        "There should be a responseContent data available.");
-      // eslint-disable-next-line mozilla/no-cpows-in-tests
-      is(requestItem.responseContent.content.mimeType,
-        "text/plain; charset=utf-8",
-        "The responseContent data has an incorrect |content.mimeType| property.");
-      // eslint-disable-next-line mozilla/no-cpows-in-tests
-      is(requestItem.responseContent.content.text,
-        "Hello world!",
-        "The responseContent data has an incorrect |content.text| property.");
-      // eslint-disable-next-line mozilla/no-cpows-in-tests
-      is(requestItem.responseContent.content.size,
-        12,
-        "The responseContent data has an incorrect |content.size| property.");
 
       verifyRequestItemTarget(
         document,
@@ -293,7 +268,7 @@ function test() {
         {
           type: "plain",
           fullMimeType: "text/plain; charset=utf-8",
-          transferred: L10N.getFormatStrWithNumbers("networkMenu.sizeB", 342),
+          transferred: L10N.getFormatStrWithNumbers("networkMenu.sizeB", 347),
           size: L10N.getFormatStrWithNumbers("networkMenu.sizeB", 12),
         }
       );
@@ -363,7 +338,18 @@ function test() {
       );
     });
 
+    let wait = waitForNetworkEvents(monitor, 1);
     tab.linkedBrowser.reload();
+    await wait;
+
+    let requestItem = getSortedRequests(store.getState()).get(0);
+
+    if (!requestItem.requestHeaders) {
+      connector.requestData(requestItem.id, "requestHeaders");
+    }
+    if (!requestItem.responseHeaders) {
+      connector.requestData(requestItem.id, "responseHeaders");
+    }
 
     await Promise.all(promiseList);
     await teardown(monitor);

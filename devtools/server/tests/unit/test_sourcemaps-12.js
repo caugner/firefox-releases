@@ -47,15 +47,15 @@ function define_code() {
 
   code += "//# sourceMappingURL=data:text/json," + map.toString();
 
-  Components.utils.evalInSandbox(code, gDebuggee, "1.8",
-                                 "http://example.com/abc.js", 1);
+  Cu.evalInSandbox(code, gDebuggee, "1.8",
+                   "http://example.com/abc.js", 1);
 
   run_code();
 }
 
 function run_code() {
   gClient.addOneTimeListener("paused", function (event, packet) {
-    do_check_eq(packet.why.type, "debuggerStatement");
+    Assert.equal(packet.why.type, "debuggerStatement");
     step_in();
   });
   gDebuggee.runTest();
@@ -63,14 +63,14 @@ function run_code() {
 
 function step_in() {
   gClient.addOneTimeListener("paused", function (event, packet) {
-    do_check_eq(packet.why.type, "resumeLimit");
+    Assert.equal(packet.why.type, "resumeLimit");
     let { frame: { environment, where: { source, line } } } = packet;
     // Stepping should have moved us to the next source mapped line.
-    do_check_eq(source.url, "http://example.com/a.js");
-    do_check_eq(line, 3);
+    Assert.equal(source.url, "http://example.com/a.js");
+    Assert.equal(line, 3);
     // Which should have skipped over the for loop in the generated js and sum
     // should be calculated.
-    do_check_eq(environment.bindings.variables.sum.value, 10);
+    Assert.equal(environment.bindings.variables.sum.value, 10);
     finishClient(gClient);
   });
   gThreadClient.stepIn();

@@ -90,51 +90,33 @@ SVGStyleElement::UnbindFromTree(bool aDeep, bool aNullParent)
 }
 
 nsresult
-SVGStyleElement::SetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                         nsAtom* aPrefix, const nsAString& aValue,
-                         nsIPrincipal* aSubjectPrincipal,
-                         bool aNotify)
+SVGStyleElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                              const nsAttrValue* aValue,
+                              const nsAttrValue* aOldValue,
+                              nsIPrincipal* aMaybeScriptedPrincipal,
+                              bool aNotify)
 {
-  nsresult rv = SVGStyleElementBase::SetAttr(aNameSpaceID, aName, aPrefix,
-                                             aValue, aSubjectPrincipal, aNotify);
-  if (NS_SUCCEEDED(rv) && aNameSpaceID == kNameSpaceID_None) {
+  if (aNameSpaceID == kNameSpaceID_None) {
     if (aName == nsGkAtoms::title ||
         aName == nsGkAtoms::media ||
         aName == nsGkAtoms::type) {
       UpdateStyleSheetInternal(nullptr, nullptr, true);
     } else if (aName == nsGkAtoms::scoped &&
                OwnerDoc()->IsScopedStyleEnabled()) {
-      UpdateStyleSheetScopedness(true);
+      UpdateStyleSheetScopedness(!!aValue);
     }
   }
 
-  return rv;
-}
-
-nsresult
-SVGStyleElement::UnsetAttr(int32_t aNameSpaceID, nsAtom* aAttribute,
-                           bool aNotify)
-{
-  nsresult rv = SVGStyleElementBase::UnsetAttr(aNameSpaceID, aAttribute,
-                                               aNotify);
-  if (NS_SUCCEEDED(rv) && aNameSpaceID == kNameSpaceID_None) {
-    if (aAttribute == nsGkAtoms::title ||
-        aAttribute == nsGkAtoms::media ||
-        aAttribute == nsGkAtoms::type) {
-      UpdateStyleSheetInternal(nullptr, nullptr, true);
-    } else if (aAttribute == nsGkAtoms::scoped &&
-               OwnerDoc()->IsScopedStyleEnabled()) {
-      UpdateStyleSheetScopedness(false);
-    }
-  }
-
-  return rv;
+  return SVGStyleElementBase::AfterSetAttr(aNameSpaceID, aName, aValue,
+                                           aOldValue, aMaybeScriptedPrincipal,
+                                           aNotify);
 }
 
 bool
 SVGStyleElement::ParseAttribute(int32_t aNamespaceID,
                                 nsAtom* aAttribute,
                                 const nsAString& aValue,
+                                nsIPrincipal* aMaybeScriptedPrincipal,
                                 nsAttrValue& aResult)
 {
   if (aNamespaceID == kNameSpaceID_None &&
@@ -144,40 +126,33 @@ SVGStyleElement::ParseAttribute(int32_t aNamespaceID,
   }
 
   return SVGStyleElementBase::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                             aResult);
+                                             aMaybeScriptedPrincipal, aResult);
 }
 
 //----------------------------------------------------------------------
 // nsIMutationObserver methods
 
 void
-SVGStyleElement::CharacterDataChanged(nsIDocument* aDocument,
-                                      nsIContent* aContent,
-                                      CharacterDataChangeInfo* aInfo)
+SVGStyleElement::CharacterDataChanged(nsIContent* aContent,
+                                      const CharacterDataChangeInfo&)
 {
   ContentChanged(aContent);
 }
 
 void
-SVGStyleElement::ContentAppended(nsIDocument* aDocument,
-                                 nsIContent* aContainer,
-                                 nsIContent* aFirstNewContent)
+SVGStyleElement::ContentAppended(nsIContent* aFirstNewContent)
 {
-  ContentChanged(aContainer);
+  ContentChanged(aFirstNewContent->GetParent());
 }
 
 void
-SVGStyleElement::ContentInserted(nsIDocument* aDocument,
-                                 nsIContent* aContainer,
-                                 nsIContent* aChild)
+SVGStyleElement::ContentInserted(nsIContent* aChild)
 {
   ContentChanged(aChild);
 }
 
 void
-SVGStyleElement::ContentRemoved(nsIDocument* aDocument,
-                                nsIContent* aContainer,
-                                nsIContent* aChild,
+SVGStyleElement::ContentRemoved(nsIContent* aChild,
                                 nsIContent* aPreviousSibling)
 {
   ContentChanged(aChild);

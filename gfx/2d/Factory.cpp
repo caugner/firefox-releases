@@ -222,6 +222,7 @@ StaticRefPtr<ID2D1Device> Factory::mD2D1Device;
 StaticRefPtr<IDWriteFactory> Factory::mDWriteFactory;
 bool Factory::mDWriteFactoryInitialized = false;
 StaticMutex Factory::mDeviceLock;
+StaticMutex Factory::mDTDependencyLock;
 #endif
 
 DrawEventRecorder *Factory::mRecorder;
@@ -665,11 +666,13 @@ Factory::CreateScaledFontForMacFont(CGFontRef aCGFont,
                                     const RefPtr<UnscaledFont>& aUnscaledFont,
                                     Float aSize,
                                     const Color& aFontSmoothingBackgroundColor,
-                                    bool aUseFontSmoothing)
+                                    bool aUseFontSmoothing,
+                                    bool aApplySyntheticBold)
 {
   return MakeAndAddRef<ScaledFontMac>(
-    aCGFont, aUnscaledFont, aSize,
-    aFontSmoothingBackgroundColor, aUseFontSmoothing);
+    aCGFont, aUnscaledFont, aSize, false,
+    aFontSmoothingBackgroundColor, aUseFontSmoothing,
+    aApplySyntheticBold);
 }
 #endif
 
@@ -1137,7 +1140,7 @@ Factory::CopyDataSourceSurface(DataSourceSurface* aSource,
 }
 
 already_AddRefed<DrawEventRecorder>
-Factory::CreateEventRecorderForFile(const char *aFilename)
+Factory::CreateEventRecorderForFile(const char_type* aFilename)
 {
   return MakeAndAddRef<DrawEventRecorderFile>(aFilename);
 }

@@ -29,6 +29,8 @@ struct ParamTraits;
 
 namespace mozilla {
 
+class EventTargetChainItem;
+
 /******************************************************************************
  * mozilla::BaseEventFlags
  *
@@ -514,6 +516,7 @@ protected:
     , mLastRefPoint(0, 0)
     , mFocusSequenceNumber(0)
     , mSpecifiedEventType(nullptr)
+    , mPath(nullptr)
   {
     MOZ_COUNT_CTOR(WidgetEvent);
     mFlags.Clear();
@@ -525,6 +528,7 @@ protected:
 
   WidgetEvent()
     : WidgetEventTime()
+    , mPath(nullptr)
   {
     MOZ_COUNT_CTOR(WidgetEvent);
   }
@@ -546,6 +550,28 @@ public:
     MOZ_COUNT_CTOR(WidgetEvent);
     *this = aOther;
   }
+  WidgetEvent& operator=(const WidgetEvent& aOther) = default;
+
+  WidgetEvent(WidgetEvent&& aOther)
+    : WidgetEventTime(Move(aOther))
+    , mClass(aOther.mClass)
+    , mMessage(aOther.mMessage)
+    , mRefPoint(Move(aOther.mRefPoint))
+    , mLastRefPoint(Move(aOther.mLastRefPoint))
+    , mFocusSequenceNumber(aOther.mFocusSequenceNumber)
+    , mFlags(Move(aOther.mFlags))
+    , mSpecifiedEventType(Move(aOther.mSpecifiedEventType))
+    , mSpecifiedEventTypeString(Move(aOther.mSpecifiedEventTypeString))
+    , mTarget(Move(aOther.mTarget))
+    , mCurrentTarget(Move(aOther.mCurrentTarget))
+    , mOriginalTarget(Move(aOther.mOriginalTarget))
+    , mRelatedTarget(Move(aOther.mRelatedTarget))
+    , mOriginalRelatedTarget(Move(aOther.mOriginalRelatedTarget))
+    , mPath(Move(aOther.mPath))
+  {
+    MOZ_COUNT_CTOR(WidgetEvent);
+  }
+  WidgetEvent& operator=(WidgetEvent&& aOther) = default;
 
   virtual WidgetEvent* Duplicate() const
   {
@@ -588,6 +614,12 @@ public:
   nsCOMPtr<dom::EventTarget> mCurrentTarget;
   nsCOMPtr<dom::EventTarget> mOriginalTarget;
 
+  /// The possible related target
+  nsCOMPtr<dom::EventTarget> mRelatedTarget;
+  nsCOMPtr<dom::EventTarget> mOriginalRelatedTarget;
+
+  nsTArray<EventTargetChainItem>* mPath;
+
   dom::EventTarget* GetDOMEventTarget() const;
   dom::EventTarget* GetCurrentDOMEventTarget() const;
   dom::EventTarget* GetOriginalDOMEventTarget() const;
@@ -606,6 +638,9 @@ public:
     mTarget = aCopyTargets ? aEvent.mTarget : nullptr;
     mCurrentTarget = aCopyTargets ? aEvent.mCurrentTarget : nullptr;
     mOriginalTarget = aCopyTargets ? aEvent.mOriginalTarget : nullptr;
+    mRelatedTarget = aCopyTargets ? aEvent.mRelatedTarget : nullptr;
+    mOriginalRelatedTarget =
+      aCopyTargets ? aEvent.mOriginalRelatedTarget : nullptr;
   }
 
   /**
@@ -851,6 +886,10 @@ public:
    * Whether the event should be dispatched in system group.
    */
   bool IsAllowedToDispatchInSystemGroup() const;
+  /**
+   * Whether the event should be blocked for fingerprinting resistance.
+   */
+  bool IsBlockedForFingerprintingResistance() const;
   /**
    * Initialize mComposed
    */

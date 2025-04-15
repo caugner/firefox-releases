@@ -3,8 +3,10 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {DOM, Component, PropTypes} = require("devtools/client/shared/vendor/react");
-const {img, button, span} = DOM;
+const { Component } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const {img, button, span} = dom;
 
 class ToolboxTab extends Component {
   // See toolbox-toolbar propTypes for details on the props used here.
@@ -13,7 +15,7 @@ class ToolboxTab extends Component {
       currentToolId: PropTypes.string,
       focusButton: PropTypes.func,
       focusedButton: PropTypes.string,
-      highlightedTool: PropTypes.string,
+      highlightedTools: PropTypes.object.isRequired,
       panelDefinition: PropTypes.object,
       selectTool: PropTypes.func,
     };
@@ -37,7 +39,7 @@ class ToolboxTab extends Component {
   }
 
   render() {
-    const {panelDefinition, currentToolId, highlightedTool, selectTool,
+    const {panelDefinition, currentToolId, highlightedTools, selectTool,
            focusedButton, focusButton} = this.props;
     const {id, tooltip, label, iconOnly} = panelDefinition;
     const isHighlighted = id === currentToolId;
@@ -45,7 +47,7 @@ class ToolboxTab extends Component {
     const className = [
       "devtools-tab",
       currentToolId === id ? "selected" : "",
-      highlightedTool === id ? "highlighted" : "",
+      highlightedTools.has(id) ? "highlighted" : "",
       iconOnly ? "devtools-tab-icon-only" : ""
     ].join(" ");
 
@@ -56,6 +58,7 @@ class ToolboxTab extends Component {
         "data-id": id,
         title: tooltip,
         type: "button",
+        "aria-pressed": currentToolId === id ? "true" : "false",
         tabIndex: focusedButton === id ? "0" : "-1",
         onFocus: () => focusButton(id),
         onMouseDown: () => selectTool(id),

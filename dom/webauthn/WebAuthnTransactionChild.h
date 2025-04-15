@@ -7,7 +7,8 @@
 #ifndef mozilla_dom_WebAuthnTransactionChild_h
 #define mozilla_dom_WebAuthnTransactionChild_h
 
-#include "mozilla/dom/WebAuthnTransactionChildBase.h"
+#include "mozilla/dom/PWebAuthnTransactionChild.h"
+#include "mozilla/dom/WebAuthnManagerBase.h"
 
 /*
  * Child process IPC implementation for WebAuthn API. Receives results of
@@ -19,22 +20,32 @@
 namespace mozilla {
 namespace dom {
 
-class WebAuthnTransactionChild final : public WebAuthnTransactionChildBase
+class WebAuthnTransactionChild final : public PWebAuthnTransactionChild
 {
 public:
+  NS_INLINE_DECL_REFCOUNTING(WebAuthnTransactionChild);
+  explicit WebAuthnTransactionChild(WebAuthnManagerBase* aManager);
+
   mozilla::ipc::IPCResult
   RecvConfirmRegister(const uint64_t& aTransactionId,
-                      nsTArray<uint8_t>&& aRegBuffer) override;
+                      const WebAuthnMakeCredentialResult& aResult) override;
 
   mozilla::ipc::IPCResult
   RecvConfirmSign(const uint64_t& aTransactionId,
-                  nsTArray<uint8_t>&& aCredentialId,
-                  nsTArray<uint8_t>&& aBuffer) override;
+                  const WebAuthnGetAssertionResult& aResult) override;
 
   mozilla::ipc::IPCResult
   RecvAbort(const uint64_t& aTransactionId, const nsresult& aError) override;
 
   void ActorDestroy(ActorDestroyReason why) override;
+
+  void Disconnect();
+
+private:
+  ~WebAuthnTransactionChild() = default;
+
+  // Nulled by ~WebAuthnManager() when disconnecting.
+  WebAuthnManagerBase* mManager;
 };
 
 }

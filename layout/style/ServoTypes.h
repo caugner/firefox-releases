@@ -59,9 +59,6 @@ enum class ServoTraversalFlags : uint32_t {
   AnimationOnly = 1 << 0,
   // Traverses as normal mode but tries to update all CSS animations.
   ForCSSRuleChanges = 1 << 1,
-  // Styles unstyled elements, but does not handle invalidations on
-  // already-styled elements.
-  UnstyledOnly = 1 << 2,
   // A forgetful traversal ignores the previous state of the frame tree, and
   // thus does not compute damage or maintain other state describing the styles
   // pre-traversal. A forgetful traversal is usually the right thing if you
@@ -95,10 +92,11 @@ enum class StyleRuleInclusion {
 
 // Represents which tasks are performed in a SequentialTask of UpdateAnimations.
 enum class UpdateAnimationsTasks : uint8_t {
-  CSSAnimations    = 1 << 0,
-  CSSTransitions   = 1 << 1,
-  EffectProperties = 1 << 2,
-  CascadeResults   = 1 << 3,
+  CSSAnimations          = 1 << 0,
+  CSSTransitions         = 1 << 1,
+  EffectProperties       = 1 << 2,
+  CascadeResults         = 1 << 3,
+  DisplayChangedFromNone = 1 << 4,
 };
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(UpdateAnimationsTasks)

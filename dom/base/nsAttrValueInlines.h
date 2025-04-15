@@ -10,7 +10,9 @@
 #include <stdint.h>
 
 #include "nsAttrValue.h"
+#include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/ServoUtils.h"
 
 struct MiscContainer;
 
@@ -23,7 +25,15 @@ struct MiscContainer final
   // mType isn't eCSSDeclaration.
   // Note eStringBase and eAtomBase is used also to handle the type of
   // mStringBits.
-  uintptr_t mStringBits;
+  //
+  // Note that we use an atomic here so that we can use Compare-And-Swap
+  // to cache the serialization during the parallel servo traversal. This case
+  // (which happens when the main thread is blocked) is the only case where
+  // mStringBits is mutated off-main-thread. The Atomic needs to be
+  // ReleaseAcquire so that the pointer to the serialization does not become
+  // observable to other threads before the initialization of the pointed-to
+  // memory is also observable.
+  mozilla::Atomic<uintptr_t, mozilla::ReleaseAcquire> mStringBits;
   union {
     struct {
       union {
@@ -80,6 +90,15 @@ protected:
 
 public:
   bool GetString(nsAString& aString) const;
+
+  void SetStringBitsMainThread(uintptr_t aBits)
+  {
+    // mStringBits is atomic, but the callers of this function are
+    // single-threaded so they don't have to worry about it.
+    MOZ_ASSERT(!mozilla::IsInServoTraversal());
+    MOZ_ASSERT(NS_IsMainThread());
+    mStringBits = aBits;
+  }
 
   inline bool IsRefCounted() const
   {
@@ -234,6 +253,59 @@ nsAttrValue::GetIntInternal() const
   // bitshift right is implementaion dependant.
   return static_cast<int32_t>(mBits & ~NS_ATTRVALUE_INTEGERTYPE_MASK) /
          NS_ATTRVALUE_INTEGERTYPE_MULTIPLIER;
+}
+
+inline nsAttrValue::ValueType
+nsAttrValue::Type() const
+{
+  switch (BaseType()) {
+    case eIntegerBase:
+    {
+      return static_cast<ValueType>(mBits & NS_ATTRVALUE_INTEGERTYPE_MASK);
+    }
+    case eOtherBase:
+    {
+      return GetMiscContainer()->mType;
+    }
+    default:
+    {
+      return static_cast<ValueType>(static_cast<uint16_t>(BaseType()));
+    }
+  }
+}
+
+inline nsAtom*
+nsAttrValue::GetAtomValue() const
+{
+  NS_PRECONDITION(Type() == eAtom, "wrong type");
+  return reinterpret_cast<nsAtom*>(GetPtr());
+}
+
+inline void
+nsAttrValue::ToString(mozilla::dom::DOMString& aResult) const
+{
+  switch (Type()) {
+    case eString:
+    {
+      nsStringBuffer* str = static_cast<nsStringBuffer*>(GetPtr());
+      if (str) {
+        aResult.SetKnownLiveStringBuffer(
+          str, str->StorageSize()/sizeof(char16_t) - 1);
+      }
+      // else aResult is already empty
+      return;
+    }
+    case eAtom:
+    {
+      nsAtom *atom = static_cast<nsAtom*>(GetPtr());
+      aResult.SetKnownLiveAtom(atom, mozilla::dom::DOMString::eNullNotExpected);
+      break;
+    }
+    default:
+    {
+      ToString(aResult.AsAString());
+    }
+  }
 }
 
 #endif

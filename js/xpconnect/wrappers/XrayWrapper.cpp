@@ -17,7 +17,6 @@
 #include "xpcprivate.h"
 
 #include "jsapi.h"
-#include "jsprf.h"
 #include "nsJSUtils.h"
 #include "nsPrintfCString.h"
 
@@ -44,14 +43,14 @@ using namespace XrayUtils;
 
 static_assert(JSProto_URIError - JSProto_Error == 7, "New prototype added in error object range");
 #define AssertErrorObjectKeyInBounds(key) \
-    static_assert(Between(key, JSProto_Error, JSProto_URIError), "We depend on jsprototypes.h ordering here");
+    static_assert(Between(key, JSProto_Error, JSProto_URIError), "We depend on js/ProtoKey.h ordering here");
 MOZ_FOR_EACH(AssertErrorObjectKeyInBounds, (),
              (JSProto_Error, JSProto_InternalError, JSProto_EvalError, JSProto_RangeError,
               JSProto_ReferenceError, JSProto_SyntaxError, JSProto_TypeError, JSProto_URIError));
 
 static_assert(JSProto_Uint8ClampedArray - JSProto_Int8Array == 8, "New prototype added in typed array range");
 #define AssertTypedArrayKeyInBounds(key) \
-    static_assert(Between(key, JSProto_Int8Array, JSProto_Uint8ClampedArray), "We depend on jsprototypes.h ordering here");
+    static_assert(Between(key, JSProto_Int8Array, JSProto_Uint8ClampedArray), "We depend on js/ProtoKey.h ordering here");
 MOZ_FOR_EACH(AssertTypedArrayKeyInBounds, (),
              (JSProto_Int8Array, JSProto_Uint8Array, JSProto_Int16Array, JSProto_Uint16Array,
               JSProto_Int32Array, JSProto_Uint32Array, JSProto_Float32Array, JSProto_Float64Array, JSProto_Uint8ClampedArray));
@@ -1368,7 +1367,7 @@ EnsureXrayExpandoObject(JSContext* cx, JS::HandleObject wrapper)
     MOZ_ASSERT(GetXrayTraits(wrapper) == &DOMXrayTraits::singleton);
     MOZ_ASSERT(IsXrayWrapper(wrapper));
 
-    RootedObject target(cx, DOMXrayTraits::singleton.getTargetObject(wrapper));
+    RootedObject target(cx, DOMXrayTraits::getTargetObject(wrapper));
     return DOMXrayTraits::singleton.ensureExpandoObject(cx, wrapper, target);
 }
 
@@ -1670,7 +1669,7 @@ XPCWrappedNativeXrayTraits::enumerateNames(JSContext* cx, HandleObject wrapper, 
     // Force all native properties to be materialized onto the wrapped native.
     AutoIdVector wnProps(cx);
     {
-        RootedObject target(cx, singleton.getTargetObject(wrapper));
+        RootedObject target(cx, getTargetObject(wrapper));
         JSAutoCompartment ac(cx, target);
         if (!js::GetPropertyKeys(cx, target, flags, &wnProps))
             return false;
@@ -2082,7 +2081,7 @@ XrayWrapper<Base, Traits>::getPropertyDescriptor(JSContext* cx, HandleObject wra
 
     assertEnteredPolicy(cx, wrapper, id, BaseProxyHandler::GET | BaseProxyHandler::SET |
                                          BaseProxyHandler::GET_PROPERTY_DESCRIPTOR);
-    RootedObject target(cx, XrayTraits::getTargetObject(wrapper));
+    RootedObject target(cx, Traits::getTargetObject(wrapper));
     RootedObject holder(cx, Traits::singleton.ensureHolder(cx, wrapper));
 
     if (!holder)
@@ -2173,7 +2172,7 @@ XrayWrapper<Base, Traits>::getOwnPropertyDescriptor(JSContext* cx, HandleObject 
 {
     assertEnteredPolicy(cx, wrapper, id, BaseProxyHandler::GET | BaseProxyHandler::SET |
                                          BaseProxyHandler::GET_PROPERTY_DESCRIPTOR);
-    RootedObject target(cx, XrayTraits::getTargetObject(wrapper));
+    RootedObject target(cx, Traits::getTargetObject(wrapper));
     RootedObject holder(cx, Traits::singleton.ensureHolder(cx, wrapper));
     if (!holder)
         return false;
@@ -2285,7 +2284,7 @@ XrayWrapper<Base, Traits>::defineProperty(JSContext* cx, HandleObject wrapper,
 
     // We're placing an expando. The expando objects live in the target
     // compartment, so we need to enter it.
-    RootedObject target(cx, Traits::singleton.getTargetObject(wrapper));
+    RootedObject target(cx, Traits::getTargetObject(wrapper));
     JSAutoCompartment ac(cx, target);
     JS_MarkCrossZoneId(cx, id);
 
@@ -2591,7 +2590,7 @@ XrayWrapper<Base, Traits>::getPropertyKeys(JSContext* cx, HandleObject wrapper, 
 
     // Enumerate expando properties first. Note that the expando object lives
     // in the target compartment.
-    RootedObject target(cx, Traits::singleton.getTargetObject(wrapper));
+    RootedObject target(cx, Traits::getTargetObject(wrapper));
     RootedObject expando(cx);
     if (!Traits::singleton.getExpandoObject(cx, target, wrapper, &expando))
         return false;

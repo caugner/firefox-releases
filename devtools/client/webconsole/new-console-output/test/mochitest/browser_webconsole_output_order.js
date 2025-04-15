@@ -3,43 +3,31 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
+/* import-globals-from head.js */
+
 // Tests that any output created from calls to the console API comes before the
 // echoed JavaScript.
 
 "use strict";
 
 const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/test-console.html";
+                 "new-console-output/test/mochitest/test-console.html";
 
-add_task(function* () {
-  yield loadTab(TEST_URI);
-  let hud = yield openConsole();
+add_task(async function () {
+  let hud = await openNewTabAndConsole(TEST_URI);
+  hud.jsterm.clearOutput();
 
-  let jsterm = hud.jsterm;
-
-  jsterm.clearOutput();
-  jsterm.execute("console.log('foo', 'bar');");
-
-  let [functionCall, consoleMessage, result] = yield waitForMessages({
-    webconsole: hud,
-    messages: [{
-      text: "console.log('foo', 'bar');",
-      category: CATEGORY_INPUT,
-    },
-      {
-        text: "foo bar",
-        category: CATEGORY_WEBDEV,
-        severity: SEVERITY_LOG,
-      },
-      {
-        text: "undefined",
-        category: CATEGORY_OUTPUT,
-      }]
+  let messages = ["console.log('foo', 'bar');", "foo bar", "undefined"];
+  let onMessages = waitForMessages({
+    hud,
+    messages: messages.map(text => ({text}))
   });
 
-  let fncallNode = [...functionCall.matched][0];
-  let consoleMessageNode = [...consoleMessage.matched][0];
-  let resultNode = [...result.matched][0];
+  hud.jsterm.execute("console.log('foo', 'bar');");
+
+  const [fncallNode, consoleMessageNode, resultNode] =
+    (await onMessages).map(msg => msg.node);
+
   is(fncallNode.nextElementSibling, consoleMessageNode,
      "console.log() is followed by 'foo' 'bar'");
   is(consoleMessageNode.nextElementSibling, resultNode,

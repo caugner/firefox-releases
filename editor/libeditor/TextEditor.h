@@ -21,7 +21,6 @@ class nsIDOMElement;
 class nsIDOMEvent;
 class nsIDOMNode;
 class nsIDocumentEncoder;
-class nsIEditRules;
 class nsIOutputStream;
 class nsISelectionController;
 class nsITransferable;
@@ -30,7 +29,8 @@ namespace mozilla {
 
 class AutoEditInitRulesTrigger;
 class HTMLEditRules;
-class TextEditRules;
+enum class EditAction : int32_t;
+
 namespace dom {
 class Selection;
 } // namespace dom
@@ -74,9 +74,9 @@ public:
   using EditorBase::RemoveAttributeOrEquivalent;
   using EditorBase::SetAttributeOrEquivalent;
 
-  NS_IMETHOD Init(nsIDOMDocument* aDoc, nsIContent* aRoot,
-                  nsISelectionController* aSelCon, uint32_t aFlags,
-                  const nsAString& aValue) override;
+  virtual nsresult Init(nsIDocument& aDoc, Element* aRoot,
+                        nsISelectionController* aSelCon, uint32_t aFlags,
+                        const nsAString& aValue) override;
 
   nsresult DocumentIsEmpty(bool* aIsEmpty);
   NS_IMETHOD GetDocumentIsEmpty(bool* aDocumentIsEmpty) override;
@@ -130,7 +130,7 @@ public:
   virtual nsresult HandleKeyPressEvent(
                      WidgetKeyboardEvent* aKeyboardEvent) override;
 
-  virtual already_AddRefed<dom::EventTarget> GetDOMEventTarget() override;
+  virtual dom::EventTarget* GetDOMEventTarget() override;
 
   virtual nsresult BeginIMEComposition(WidgetCompositionEvent* aEvent) override;
   virtual nsresult UpdateIMEComposition(
@@ -173,7 +173,20 @@ public:
   static void GetDefaultEditorPrefs(int32_t& aNewLineHandling,
                                     int32_t& aCaretStyle);
 
+  /**
+    * The maximum number of characters allowed.
+    *   default: -1 (unlimited).
+    */
   int32_t MaxTextLength() const { return mMaxTextLength; }
+  void SetMaxTextLength(int32_t aLength) { mMaxTextLength = aLength; }
+
+  /**
+   * Replace existed string with a string.
+   * This is fast path to replace all string when using single line control.
+   *
+   * @ param aString   the string to be set
+   */
+  nsresult SetText(const nsAString& aString);
 
 protected:
   virtual ~TextEditor();
@@ -187,16 +200,43 @@ protected:
                                          uint32_t aFlags,
                                          const nsACString& aCharset);
 
-  NS_IMETHOD CreateBR(nsIDOMNode* aNode, int32_t aOffset,
-                      nsCOMPtr<nsIDOMNode>* outBRNode,
-                      EDirection aSelect = eNone);
-  already_AddRefed<Element> CreateBRImpl(nsCOMPtr<nsINode>* aInOutParent,
-                                         int32_t* aInOutOffset,
-                                         EDirection aSelect);
-  nsresult CreateBRImpl(nsCOMPtr<nsIDOMNode>* aInOutParent,
-                        int32_t* aInOutOffset,
-                        nsCOMPtr<nsIDOMNode>* outBRNode,
-                        EDirection aSelect);
+  /**
+   * CreateBR() creates new <br> element and inserts it before aPointToInsert,
+   * and collapse selection if it's necessary.
+   *
+   * @param aPointToInsert  The point to insert new <br> element.
+   * @param aSelect         If eNone, this won't change selection.
+   *                        If eNext, selection will be collapsed after the
+   *                        <br> element.
+   *                        If ePrevious, selection will be collapsed at the
+   *                        <br> element.
+   * @return                The new <br> node.  If failed to create new <br>
+   *                        node, returns nullptr.
+   */
+  already_AddRefed<Element> CreateBR(const EditorRawDOMPoint& aPointToInsert,
+                                     EDirection aSelect = eNone);
+
+  /**
+   * CreateBRImpl() creates a <br> element and inserts it before aPointToInsert.
+   * Then, tries to collapse selection at or after the new <br> node if
+   * aSelect is not eNone.
+   * XXX Perhaps, this should be merged with CreateBR().
+   *
+   * @param aSelection          The selection of this editor.
+   * @param aPointToInsert      The DOM point where should be <br> node inserted
+   *                            before.
+   * @param aSelect             If eNone, this won't change selection.
+   *                            If eNext, selection will be collapsed after
+   *                            the <br> element.
+   *                            If ePrevious, selection will be collapsed at
+   *                            the <br> element.
+   * @return                    The new <br> node.  If failed to create new
+   *                            <br> node, returns nullptr.
+   */
+  already_AddRefed<Element>
+  CreateBRImpl(Selection& aSelection,
+               const EditorRawDOMPoint& aPointToInsert,
+               EDirection aSelect);
 
   /**
    * Factored methods for handling insertion of data from transferables
@@ -229,7 +269,6 @@ protected:
                          const nsACString& aCharacterSet);
 
 protected:
-  nsCOMPtr<nsIEditRules> mRules;
   nsCOMPtr<nsIDocumentEncoder> mCachedDocumentEncoder;
   nsString mCachedDocumentEncoderType;
   int32_t mWrapColumn;

@@ -9,6 +9,7 @@
 
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/LookAndFeel.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/TypedEnumBits.h"
 #include "nsBoundingMetrics.h"
@@ -23,7 +24,9 @@
 #include "nsStyleCoord.h"
 #include "nsStyleConsts.h"
 #include "nsGkAtoms.h"
+#ifdef MOZ_OLD_STYLE
 #include "nsRuleNode.h"
+#endif
 #include "imgIContainer.h"
 #include "mozilla/gfx/2D.h"
 #include "Units.h"
@@ -36,6 +39,7 @@
 #include <limits>
 #include <algorithm>
 #include "gfxPoint.h"
+#include "nsClassHashtable.h"
 
 class gfxContext;
 class nsPresContext;
@@ -81,6 +85,7 @@ class Element;
 class HTMLImageElement;
 class HTMLCanvasElement;
 class HTMLVideoElement;
+class InspectorFontFace;
 class OffscreenCanvas;
 class Selection;
 } // namespace dom
@@ -90,6 +95,7 @@ enum class ShapedTextFlags : uint16_t;
 } // namespace gfx
 namespace layers {
 class Image;
+class StackingContextHelper;
 class Layer;
 } // namespace layers
 } // namespace mozilla
@@ -139,6 +145,7 @@ class nsLayoutUtils
 {
   typedef mozilla::dom::DOMRectList DOMRectList;
   typedef mozilla::layers::Layer Layer;
+  typedef mozilla::layers::StackingContextHelper StackingContextHelper;
   typedef mozilla::ContainerLayerParameters ContainerLayerParameters;
   typedef mozilla::IntrinsicSize IntrinsicSize;
   typedef mozilla::gfx::SourceSurface SourceSurface;
@@ -150,10 +157,12 @@ class nsLayoutUtils
   typedef mozilla::gfx::Point Point;
   typedef mozilla::gfx::Rect Rect;
   typedef mozilla::gfx::RectDouble RectDouble;
+  typedef mozilla::gfx::Size Size;
   typedef mozilla::gfx::Matrix4x4 Matrix4x4;
+  typedef mozilla::gfx::Matrix4x4Flagged Matrix4x4Flagged;
   typedef mozilla::gfx::RectCornerRadii RectCornerRadii;
   typedef mozilla::gfx::StrokeOptions StrokeOptions;
-  typedef mozilla::image::DrawResult DrawResult;
+  typedef mozilla::image::ImgDrawResult ImgDrawResult;
 
 public:
   typedef mozilla::layers::FrameMetrics FrameMetrics;
@@ -165,6 +174,7 @@ public:
   typedef mozilla::CSSRect CSSRect;
   typedef mozilla::ScreenMargin ScreenMargin;
   typedef mozilla::LayoutDeviceIntSize LayoutDeviceIntSize;
+  typedef mozilla::LayoutDeviceRect LayoutDeviceRect;
   typedef mozilla::StyleGeometryBox StyleGeometryBox;
   typedef mozilla::SVGImageContext SVGImageContext;
 
@@ -184,12 +194,6 @@ public:
    * Find content for given ID.
    */
   static nsIContent* FindContentFor(ViewID aId);
-
-  /**
-   * Find the view ID (or generate a new one) for the content element
-   * corresponding to the ASR.
-   */
-  static ViewID ViewIDForASR(const mozilla::ActiveScrolledRoot* aASR);
 
   /**
    * Find the scrollable frame for a given ID.
@@ -854,7 +858,7 @@ public:
                                              const nsRect& aRect,
                                              const nsIFrame* aAncestor,
                                              bool* aPreservesAxisAlignedRectangles = nullptr,
-                                             mozilla::Maybe<Matrix4x4>* aMatrixCache = nullptr,
+                                             mozilla::Maybe<Matrix4x4Flagged>* aMatrixCache = nullptr,
                                              bool aStopAtStackingContextAndDisplayPort = false,
                                              nsIFrame** aOutAncestor = nullptr);
 
@@ -864,7 +868,7 @@ public:
    * aAncestor to go up to the root frame. aInCSSUnits set to true will
    * return CSS units, set to false (the default) will return App units.
    */
-  static Matrix4x4 GetTransformToAncestor(nsIFrame *aFrame,
+  static Matrix4x4Flagged GetTransformToAncestor(nsIFrame *aFrame,
                                           const nsIFrame *aAncestor,
                                           uint32_t aFlags = 0,
                                           nsIFrame** aOutAncestor = nullptr);
@@ -957,7 +961,7 @@ public:
    * transaction were opened at the time this helper is called.
    */
   static bool GetLayerTransformForFrame(nsIFrame* aFrame,
-                                        Matrix4x4* aTransform);
+                                        Matrix4x4Flagged* aTransform);
 
   /**
    * Given a point in the global coordinate space, returns that point expressed
@@ -993,6 +997,8 @@ public:
    */
   static nsRect MatrixTransformRect(const nsRect &aBounds,
                                     const Matrix4x4 &aMatrix, float aFactor);
+  static nsRect MatrixTransformRect(const nsRect &aBounds,
+                                    const Matrix4x4Flagged &aMatrix, float aFactor);
 
   /**
    * Helper function that, given a point and a matrix, returns the image
@@ -1492,8 +1498,7 @@ public:
                "caller must deal with %% of unconstrained block-size");
     MOZ_ASSERT(aCoord.IsCoordPercentCalcUnit());
 
-    nscoord result =
-      nsRuleNode::ComputeCoordPercentCalc(aCoord, aContainingBlockBSize);
+    nscoord result = aCoord.ComputeCoordPercentCalc(aContainingBlockBSize);
     // Clamp calc(), and the subtraction for box-sizing.
     return std::max(0, result - aContentEdgeToBoxSizingBoxEdge);
   }
@@ -1530,8 +1535,8 @@ public:
             aCoord.GetPercentValue() == 0.0f) ||
            (aCoord.IsCalcUnit() &&
             // clamp negative calc() to 0
-            nsRuleNode::ComputeCoordPercentCalc(aCoord, nscoord_MAX) <= 0 &&
-            nsRuleNode::ComputeCoordPercentCalc(aCoord, 0) <= 0);
+            aCoord.ComputeCoordPercentCalc(nscoord_MAX) <= 0 &&
+            aCoord.ComputeCoordPercentCalc(0) <= 0);
   }
 
   static bool IsMarginZero(const nsStyleCoord &aCoord)
@@ -1541,8 +1546,8 @@ public:
            (aCoord.GetUnit() == eStyleUnit_Percent &&
             aCoord.GetPercentValue() == 0.0f) ||
            (aCoord.IsCalcUnit() &&
-            nsRuleNode::ComputeCoordPercentCalc(aCoord, nscoord_MAX) == 0 &&
-            nsRuleNode::ComputeCoordPercentCalc(aCoord, 0) == 0);
+            aCoord.ComputeCoordPercentCalc(nscoord_MAX) == 0 &&
+            aCoord.ComputeCoordPercentCalc(0) == 0);
   }
 
   static void MarkDescendantsDirty(nsIFrame *aSubtreeRoot);
@@ -1645,7 +1650,7 @@ public:
    */
   static void DrawUniDirString(const char16_t* aString,
                                uint32_t aLength,
-                               nsPoint aPoint,
+                               const nsPoint& aPoint,
                                nsFontMetrics& aFontMetrics,
                                gfxContext& aContext);
 
@@ -1809,7 +1814,7 @@ public:
    *   @param aImageFlags       Image flags of the imgIContainer::FLAG_* variety.
    *   @param aExtendMode       How to extend the image over the dest rect.
    */
-  static DrawResult DrawBackgroundImage(gfxContext&         aContext,
+  static ImgDrawResult DrawBackgroundImage(gfxContext&         aContext,
                                         nsIFrame*           aForFrame,
                                         nsPresContext*      aPresContext,
                                         imgIContainer*      aImage,
@@ -1842,7 +1847,7 @@ public:
    *   @param aDirty            Pixels outside this area may be skipped.
    *   @param aImageFlags       Image flags of the imgIContainer::FLAG_* variety
    */
-  static DrawResult DrawImage(gfxContext&         aContext,
+  static ImgDrawResult DrawImage(gfxContext&         aContext,
                               nsStyleContext*     aStyleContext,
                               nsPresContext*      aPresContext,
                               imgIContainer*      aImage,
@@ -1870,7 +1875,7 @@ public:
    *                            in appunits. For best results it should
    *                            be aligned with image pixels.
    */
-  static DrawResult DrawSingleUnscaledImage(gfxContext&          aContext,
+  static ImgDrawResult DrawSingleUnscaledImage(gfxContext&          aContext,
                                             nsPresContext*       aPresContext,
                                             imgIContainer*       aImage,
                                             const SamplingFilter aSamplingFilter,
@@ -1905,7 +1910,7 @@ public:
    *                            in appunits. For best results it should
    *                            be aligned with image pixels.
    */
-  static DrawResult DrawSingleImage(gfxContext&         aContext,
+  static ImgDrawResult DrawSingleImage(gfxContext&         aContext,
                                     nsPresContext*      aPresContext,
                                     imgIContainer*      aImage,
                                     const SamplingFilter aSamplingFilter,
@@ -1949,6 +1954,18 @@ public:
   static CSSIntSize
   ComputeSizeForDrawingWithFallback(imgIContainer* aImage,
                                     const nsSize&  aFallbackSize);
+
+  /**
+   * Given the image container, frame, and dest rect, determine the best fitting
+   * size to decode the image at, and calculate any necessary SVG parameters.
+   */
+  static mozilla::gfx::IntSize
+  ComputeImageContainerDrawingParameters(imgIContainer*            aImage,
+                                         nsIFrame*                 aForFrame,
+                                         const LayoutDeviceRect&   aDestRect,
+                                         const StackingContextHelper& aSc,
+                                         uint32_t                  aFlags,
+                                         mozilla::Maybe<SVGImageContext>& aSVGContext);
 
   /**
    * Given a source area of an image (in appunits) and a destination area
@@ -2203,6 +2220,9 @@ public:
     return SurfaceFromElement(aElement, aSurfaceFlags, target);
   }
 
+  // There are a bunch of callers of SurfaceFromElement.  Just mark it as
+  // MOZ_CAN_RUN_SCRIPT_BOUNDARY for now.
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY
   static SurfaceFromElementResult SurfaceFromElement(nsIImageLoadingContent *aElement,
                                                      uint32_t aSurfaceFlags,
                                                      RefPtr<DrawTarget>& aTarget);
@@ -2239,8 +2259,8 @@ public:
    *  <body><p contenteditable="true"></p></body>
    *    returns nullptr because <body> isn't editable.
    */
-  static nsIContent*
-    GetEditableRootContentByContentEditable(nsIDocument* aDocument);
+  static mozilla::dom::Element*
+  GetEditableRootContentByContentEditable(nsIDocument* aDocument);
 
   static void AddExtraBackgroundItems(nsDisplayListBuilder& aBuilder,
                                       nsDisplayList& aList,
@@ -2255,24 +2275,31 @@ public:
    */
   static bool NeedsPrintPreviewBackground(nsPresContext* aPresContext);
 
+  typedef nsClassHashtable<nsPtrHashKey<gfxFontEntry>,
+                           mozilla::dom::InspectorFontFace> UsedFontFaceTable;
+
   /**
    * Adds all font faces used in the frame tree starting from aFrame
    * to the list aFontFaceList.
+   * aMaxRanges: maximum number of text ranges to record for each face.
    */
   static nsresult GetFontFacesForFrames(nsIFrame* aFrame,
-                                        nsFontFaceList* aFontFaceList);
+                                        UsedFontFaceTable& aResult,
+                                        uint32_t aMaxRanges);
 
   /**
    * Adds all font faces used within the specified range of text in aFrame,
    * and optionally its continuations, to the list in aFontFaceList.
    * Pass 0 and INT32_MAX for aStartOffset and aEndOffset to specify the
    * entire text is to be considered.
+   * aMaxRanges: maximum number of text ranges to record for each face.
    */
-  static nsresult GetFontFacesForText(nsIFrame* aFrame,
-                                      int32_t aStartOffset,
-                                      int32_t aEndOffset,
-                                      bool aFollowContinuations,
-                                      nsFontFaceList* aFontFaceList);
+  static void GetFontFacesForText(nsIFrame* aFrame,
+                                  int32_t aStartOffset,
+                                  int32_t aEndOffset,
+                                  bool aFollowContinuations,
+                                  UsedFontFaceTable& aResult,
+                                  uint32_t aMaxRanges);
 
   /**
    * Walks the frame tree starting at aFrame looking for textRuns.
@@ -2328,6 +2355,11 @@ public:
   static bool IsAnimationLoggingEnabled();
 
   /**
+   * Checks if retained display lists are enabled.
+   */
+  static bool AreRetainedDisplayListsEnabled();
+
+  /**
    * Find a suitable scale for a element (aFrame's content) over the course of any
    * animations and transitions of the CSS transform property on the
    * element that run on the compositor thread.
@@ -2338,9 +2370,9 @@ public:
    * @param aVisibleSize is the size of the area we want to paint
    * @param aDisplaySize is the size of the display area of the pres context
    */
-  static gfxSize ComputeSuitableScaleForAnimation(const nsIFrame* aFrame,
-                                                  const nsSize& aVisibleSize,
-                                                  const nsSize& aDisplaySize);
+  static Size ComputeSuitableScaleForAnimation(const nsIFrame* aFrame,
+                                               const nsSize& aVisibleSize,
+                                               const nsSize& aDisplaySize);
 
   /**
    * Checks whether we want to use the GPU to scale images when
@@ -2364,12 +2396,6 @@ public:
   static bool UnsetValueEnabled();
 
   /**
-   * Checks whether support for the CSS grid-template-{columns,rows} 'subgrid X'
-   * value is enabled.
-   */
-  static bool IsGridTemplateSubgridValueEnabled();
-
-  /**
    * Checks whether support for the CSS text-align (and text-align-last)
    * 'true' value is enabled.
    */
@@ -2379,6 +2405,11 @@ public:
    * Checks whether support for inter-character ruby is enabled.
    */
   static bool IsInterCharacterRubyEnabled();
+
+  /**
+   * Checks whether content-select is enabled.
+   */
+  static bool IsContentSelectEnabled();
 
   static bool InterruptibleReflowEnabled()
   {
@@ -2497,8 +2528,10 @@ public:
   // or disabled at compile-time. However, we provide the additional capability
   // to disable it dynamically in stylo-enabled builds via a pref.
   static bool StyloEnabled() {
-#ifdef MOZ_STYLO
+#if defined(MOZ_STYLO) && defined(MOZ_OLD_STYLE)
     return sStyloEnabled && StyloSupportedInCurrentProcess();
+#elif defined(MOZ_STYLO)
+    return true;
 #else
     return false;
 #endif
@@ -2561,35 +2594,11 @@ public:
 
 #ifdef MOZ_STYLO
   /**
-   * Return whether stylo should be used for a given document URI and
-   * principal.
+   * Return whether stylo should be used for a given document principal.
    */
-  static bool ShouldUseStylo(nsIURI* aDocumentURI, nsIPrincipal* aPrincipal);
-
-  /**
-   * Principal-based blocklist for stylo.
-   * Check if aPrincipal is blocked by stylo's blocklist and should fallback to
-   * use Gecko's style backend. Note that using a document's principal rather
-   * than the document URI will let us piggy-back off the existing principal
-   * relationships and symmetries.
-   */
-  static bool IsInStyloBlocklist(nsIPrincipal* aPrincipal);
-
-  /**
-   * Add aBlockedDomain to the existing stylo blocklist, i.e., sStyloBlocklist.
-   * This function is exposed to nsDOMWindowUtils and only for testing purpose.
-   * So, NEVER use this in any other cases.
-   */
-  static void AddToStyloBlocklist(const nsACString& aBlockedDomain);
-
-  /**
-   * Remove aBlockedDomain from the existing stylo blocklist, i.e., sStyloBlocklist.
-   * This function is exposed to nsDOMWindowUtils and only for testing purpose.
-   * So, NEVER use this in any other cases.
-   */
-  static void RemoveFromStyloBlocklist(const nsACString& aBlockedDomain);
+  static bool ShouldUseStylo(nsIPrincipal* aPrincipal);
 #else
-  static bool ShouldUseStylo(nsIURI* aDocumentURI, nsIPrincipal* aPrincipal) {
+  static bool ShouldUseStylo(nsIPrincipal* aPrincipal) {
     return false;
   }
 #endif
@@ -2723,7 +2732,7 @@ public:
     const nsIFrame* aAncestorFrame,
     nsRegion* aPreciseTargetDest,
     nsRegion* aImpreciseTargetDest,
-    mozilla::Maybe<Matrix4x4>* aMatrixCache,
+    mozilla::Maybe<Matrix4x4Flagged>* aMatrixCache,
     const mozilla::DisplayItemClip* aClip);
 
   /**
@@ -3050,6 +3059,52 @@ public:
   static nsPoint ComputeOffsetToUserSpace(nsDisplayListBuilder* aBuilder,
                                           nsIFrame* aFrame);
 
+  // Return the default value to be used for -moz-control-character-visibility,
+  // from preferences.
+  static uint8_t ControlCharVisibilityDefault();
+
+  enum class FlushUserFontSet {
+    Yes,
+    No,
+  };
+
+  static already_AddRefed<nsFontMetrics> GetMetricsFor(nsPresContext* aPresContext,
+                                                       bool aIsVertical,
+                                                       const nsStyleFont* aStyleFont,
+                                                       nscoord aFontSize,
+                                                       bool aUseUserFontSet,
+                                                       FlushUserFontSet aFlushUserFontSet);
+
+  /**
+   * Appropriately add the correct font if we are using DocumentFonts or
+   * overriding for XUL
+   */
+  static void FixupNoneGeneric(nsFont* aFont,
+                               const nsPresContext* aPresContext,
+                               uint8_t aGenericFontID,
+                               const nsFont* aDefaultVariableFont);
+
+  /**
+   * For an nsStyleFont with mSize set, apply minimum font size constraints
+   * from preferences, as well as -moz-min-font-size-ratio.
+   */
+  static void ApplyMinFontSize(nsStyleFont* aFont,
+                               const nsPresContext* aPresContext,
+                               nscoord aMinFontSize);
+
+  static void ComputeSystemFont(nsFont* aSystemFont,
+                                mozilla::LookAndFeel::FontID aFontID,
+                                const nsPresContext* aPresContext,
+                                const nsFont* aDefaultVariableFont);
+
+  static void ComputeFontFeatures(const nsCSSValuePairList* aFeaturesList,
+                                  nsTArray<gfxFontFeature>& aFeatureSettings);
+
+  static void ComputeFontVariations(const nsCSSValuePairList* aVariationsList,
+                                    nsTArray<gfxFontVariation>& aVariationSettings);
+
+  static uint32_t ParseFontLanguageOverride(const nsAString& aLangTag);
+
 private:
   static uint32_t sFontSizeInflationEmPerLine;
   static uint32_t sFontSizeInflationMinTwips;
@@ -3067,8 +3122,6 @@ private:
   static bool sTextCombineUprightDigitsEnabled;
 #ifdef MOZ_STYLO
   static bool sStyloEnabled;
-  static bool sStyloBlocklistEnabled;
-  static nsTArray<nsCString>* sStyloBlocklist;
 #endif
   static uint32_t sIdlePeriodDeadlineLimit;
   static uint32_t sQuiescentFramesBeforeIdlePeriod;
@@ -3205,14 +3258,14 @@ void StrokeLineWithSnapping(const nsPoint& aP1, const nsPoint& aP2,
 class nsSetAttrRunnable : public mozilla::Runnable
 {
 public:
-  nsSetAttrRunnable(nsIContent* aContent, nsAtom* aAttrName,
+  nsSetAttrRunnable(mozilla::dom::Element* aElement, nsAtom* aAttrName,
                     const nsAString& aValue);
-  nsSetAttrRunnable(nsIContent* aContent, nsAtom* aAttrName,
+  nsSetAttrRunnable(mozilla::dom::Element* aElement, nsAtom* aAttrName,
                     int32_t aValue);
 
   NS_DECL_NSIRUNNABLE
 
-  nsCOMPtr<nsIContent> mContent;
+  RefPtr<Element> mElement;
   RefPtr<nsAtom> mAttrName;
   nsAutoString mValue;
 };
@@ -3220,11 +3273,11 @@ public:
 class nsUnsetAttrRunnable : public mozilla::Runnable
 {
 public:
-  nsUnsetAttrRunnable(nsIContent* aContent, nsAtom* aAttrName);
+  nsUnsetAttrRunnable(mozilla::dom::Element* aElement, nsAtom* aAttrName);
 
   NS_DECL_NSIRUNNABLE
 
-  nsCOMPtr<nsIContent> mContent;
+  RefPtr<Element> mElement;
   RefPtr<nsAtom> mAttrName;
 };
 

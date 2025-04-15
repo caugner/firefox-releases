@@ -10,16 +10,20 @@
 // is used (from service.js).
 /* global Service */
 
-Cu.import("resource://services-common/async.js");
-Cu.import("resource://services-common/utils.js");
-Cu.import("resource://testing-common/PlacesTestUtils.jsm");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/PlacesUtils.jsm");
-Cu.import("resource://gre/modules/PlacesSyncUtils.jsm");
-Cu.import("resource://gre/modules/ObjectUtils.jsm");
+ChromeUtils.import("resource://services-common/async.js");
+ChromeUtils.import("resource://services-common/utils.js");
+ChromeUtils.import("resource://testing-common/PlacesTestUtils.jsm");
+ChromeUtils.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/PlacesUtils.jsm");
+ChromeUtils.import("resource://gre/modules/PlacesSyncUtils.jsm");
+ChromeUtils.import("resource://gre/modules/ObjectUtils.jsm");
+ChromeUtils.import("resource://testing-common/services/sync/utils.js");
 
 add_task(async function head_setup() {
+  // Initialize logging. This will sometimes be reset by a pref reset,
+  // so it's also called as part of SyncTestingInfrastructure().
+  syncTestLogging();
   // If a test imports Service, make sure it is initialized first.
   if (this.Service) {
     await this.Service.promiseInitialized;
@@ -29,23 +33,24 @@ add_task(async function head_setup() {
 // ================================================
 // Load mocking/stubbing library, sinon
 // docs: http://sinonjs.org/releases/v2.3.2/
-Cu.import("resource://gre/modules/Timer.jsm");
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
 Services.scriptloader.loadSubScript("resource://testing-common/sinon-2.3.2.js", this);
 /* globals sinon */
 // ================================================
 
 XPCOMUtils.defineLazyGetter(this, "SyncPingSchema", function() {
   let ns = {};
-  Cu.import("resource://gre/modules/FileUtils.jsm", ns);
+  ChromeUtils.import("resource://gre/modules/FileUtils.jsm", ns);
+  ChromeUtils.import("resource://gre/modules/NetUtil.jsm", ns);
   let stream = Cc["@mozilla.org/network/file-input-stream;1"]
                .createInstance(Ci.nsIFileInputStream);
-  let jsonReader = Cc["@mozilla.org/dom/json;1"]
-                   .createInstance(Components.interfaces.nsIJSON);
   let schema;
   try {
     let schemaFile = do_get_file("sync_ping_schema.json");
     stream.init(schemaFile, ns.FileUtils.MODE_RDONLY, ns.FileUtils.PERMS_FILE, 0);
-    schema = jsonReader.decodeFromStream(stream, stream.available());
+
+    let bytes = ns.NetUtil.readInputStream(stream, stream.available());
+    schema = JSON.parse((new TextDecoder()).decode(bytes));
   } finally {
     stream.close();
   }
@@ -58,7 +63,7 @@ XPCOMUtils.defineLazyGetter(this, "SyncPingSchema", function() {
 
 XPCOMUtils.defineLazyGetter(this, "SyncPingValidator", function() {
   let ns = {};
-  Cu.import("resource://testing-common/ajv-4.1.1.js", ns);
+  ChromeUtils.import("resource://testing-common/ajv-4.1.1.js", ns);
   let ajv = new ns.Ajv({ async: "co*" });
   return ajv.compile(SyncPingSchema);
 });
@@ -109,44 +114,31 @@ function loadWebExtensionTestFunctions() {
   Services.scriptloader.loadSubScript(uri.spec, gGlobalScope);
 }
 
+// Returns a promise
 function getAddonInstall(name) {
   let f = do_get_file(ExtensionsTestPath("/addons/" + name + ".xpi"));
-  let cb = Async.makeSyncCallback();
-  AddonManager.getInstallForFile(f, cb);
-
-  return Async.waitForSyncCallback(cb);
+  return AddonManager.getInstallForFile(f);
 }
 
 /**
- * Obtains an addon from the add-on manager by id.
- *
- * This is merely a synchronous wrapper.
- *
- * @param  id
- *         ID of add-on to fetch
- * @return addon object on success or undefined or null on failure
- */
-function getAddonFromAddonManagerByID(id) {
-   let cb = Async.makeSyncCallback();
-   AddonManager.getAddonByID(id, cb);
-   return Async.waitForSyncCallback(cb);
-}
-
-/**
- * Installs an add-on synchronously from an addonInstall
+ * Installs an add-on from an addonInstall
  *
  * @param  install addonInstall instance to install
  */
-function installAddonFromInstall(install) {
-  let cb = Async.makeSyncCallback();
-  let listener = {onInstallEnded: cb};
-  AddonManager.addInstallListener(listener);
-  install.install();
-  Async.waitForSyncCallback(cb);
-  AddonManager.removeAddonListener(listener);
+async function installAddonFromInstall(install) {
+  await new Promise(res => {
+    let listener = {
+      onInstallEnded() {
+        AddonManager.removeAddonListener(listener);
+        res();
+      }
+    };
+    AddonManager.addInstallListener(listener);
+    install.install();
+  });
 
-  do_check_neq(null, install.addon);
-  do_check_neq(null, install.addon.syncGUID);
+  Assert.notEqual(null, install.addon);
+  Assert.notEqual(null, install.addon.syncGUID);
 
   return install.addon;
 }
@@ -156,32 +148,47 @@ function installAddonFromInstall(install) {
  *
  * @param  name
  *         String name of add-on to install. e.g. test_install1
+ * @param  reconciler
+ *         addons reconciler, if passed we will wait on the events to be
+ *         processed before resolving
  * @return addon object that was installed
  */
-function installAddon(name) {
-  let install = getAddonInstall(name);
-  do_check_neq(null, install);
-  return installAddonFromInstall(install);
+async function installAddon(name, reconciler = null) {
+  let install = await getAddonInstall(name);
+  Assert.notEqual(null, install);
+  const addon = await installAddonFromInstall(install);
+  if (reconciler) {
+    await reconciler.queueCaller.promiseCallsComplete();
+  }
+  return addon;
 }
 
 /**
- * Convenience function to uninstall an add-on synchronously.
+ * Convenience function to uninstall an add-on.
  *
  * @param addon
  *        Addon instance to uninstall
+ * @param reconciler
+ *        addons reconciler, if passed we will wait on the events to be
+ *        processed before resolving
  */
-function uninstallAddon(addon) {
-  let cb = Async.makeSyncCallback();
-  let listener = {onUninstalled(uninstalled) {
-    if (uninstalled.id == addon.id) {
-      AddonManager.removeAddonListener(listener);
-      cb(uninstalled);
-    }
-  }};
-
-  AddonManager.addAddonListener(listener);
+async function uninstallAddon(addon, reconciler = null) {
+  const uninstallPromise = new Promise(res => {
+    let listener = {
+      onUninstalled(uninstalled) {
+        if (uninstalled.id == addon.id) {
+          AddonManager.removeAddonListener(listener);
+          res(uninstalled);
+        }
+      }
+    };
+    AddonManager.addAddonListener(listener);
+  });
   addon.uninstall();
-  Async.waitForSyncCallback(cb);
+  await uninstallPromise;
+  if (reconciler) {
+    await reconciler.queueCaller.promiseCallsComplete();
+  }
 }
 
 async function generateNewKeys(collectionKeys, collections = null) {
@@ -263,19 +270,11 @@ function mockGetWindowEnumerator(url, numWindows, numTabs, indexes, moreURLs) {
   };
 }
 
-// Helper that allows checking array equality.
-function do_check_array_eq(a1, a2) {
-  do_check_eq(a1.length, a2.length);
-  for (let i = 0; i < a1.length; ++i) {
-    do_check_eq(a1[i], a2[i]);
-  }
-}
-
 // Helper function to get the sync telemetry and add the typically used test
 // engine names to its list of allowed engines.
 function get_sync_test_telemetry() {
   let ns = {};
-  Cu.import("resource://services-sync/telemetry.js", ns);
+  ChromeUtils.import("resource://services-sync/telemetry.js", ns);
   let testEngines = ["rotary", "steam", "sterling", "catapult"];
   for (let engineName of testEngines) {
     ns.SyncTelemetry.allowedEngines.add(engineName);
@@ -295,9 +294,9 @@ function assert_valid_ping(record) {
         // validation failed - using a simple |deepEqual([], errors)| tends to
         // truncate the validation errors in the output and doesn't show that
         // the ping actually was - so be helpful.
-        do_print("telemetry ping validation failed");
-        do_print("the ping data is: " + JSON.stringify(record, undefined, 2));
-        do_print("the validation failures: " + JSON.stringify(SyncPingValidator.errors, undefined, 2));
+        info("telemetry ping validation failed");
+        info("the ping data is: " + JSON.stringify(record, undefined, 2));
+        info("the validation failures: " + JSON.stringify(SyncPingValidator.errors, undefined, 2));
         ok(false, "Sync telemetry ping validation failed - see output above for details");
       }
     }
@@ -395,7 +394,7 @@ async function sync_engine_and_validate_telem(engine, allowErrorPings, onError) 
   // Clear out status, so failures from previous syncs won't show up in the
   // telemetry ping.
   let ns = {};
-  Cu.import("resource://services-sync/status.js", ns);
+  ChromeUtils.import("resource://services-sync/status.js", ns);
   ns.Status._engines = {};
   ns.Status.partial = false;
   // Ideally we'd clear these out like we do with engines, (probably via
@@ -490,9 +489,6 @@ function promiseOneObserver(topic, callback) {
   });
 }
 
-function promiseStopServer(server) {
-  return new Promise(resolve => server.stop(resolve));
-}
 // Avoid an issue where `client.name2` containing unicode characters causes
 // a number of tests to fail, due to them assuming that we do not need to utf-8
 // encode or decode data sent through the mocked server (see bug 1268912).
@@ -504,8 +500,8 @@ Utils.getDefaultDeviceName = function() {
 
 async function registerRotaryEngine() {
   let {RotaryEngine} =
-    Cu.import("resource://testing-common/services/sync/rotaryengine.js", {});
-  Service.engineManager.clear();
+    ChromeUtils.import("resource://testing-common/services/sync/rotaryengine.js", {});
+  await Service.engineManager.clear();
 
   await Service.engineManager.register(RotaryEngine);
   let engine = Service.engineManager.get("rotary");
@@ -577,8 +573,9 @@ async function promiseVisit(expectedType, expectedURI) {
       }
     }
     let observer = {
-      onVisit(uri) {
-        done("added", uri);
+      onVisits(visits) {
+        Assert.equal(visits.length, 1);
+        done("added", visits[0].uri);
       },
       onBeginUpdateBatch() {},
       onEndUpdateBatch() {},

@@ -1,12 +1,11 @@
-Cu.import("resource://gre/modules/FormHistory.jsm");
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://services-sync/service.js");
-Cu.import("resource://services-sync/engines/bookmarks.js");
-Cu.import("resource://services-sync/engines/history.js");
-Cu.import("resource://services-sync/engines/forms.js");
-Cu.import("resource://services-sync/engines/passwords.js");
-Cu.import("resource://services-sync/engines/prefs.js");
-Cu.import("resource://testing-common/services/sync/utils.js");
+ChromeUtils.import("resource://gre/modules/FormHistory.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://services-sync/service.js");
+ChromeUtils.import("resource://services-sync/engines/bookmarks.js");
+ChromeUtils.import("resource://services-sync/engines/history.js");
+ChromeUtils.import("resource://services-sync/engines/forms.js");
+ChromeUtils.import("resource://services-sync/engines/passwords.js");
+ChromeUtils.import("resource://services-sync/engines/prefs.js");
 
 const LoginInfo = Components.Constructor(
   "@mozilla.org/login-manager/loginInfo;1", Ci.nsILoginInfo, "init");
@@ -26,7 +25,7 @@ async function assertChildGuids(folderGuid, expectedChildGuids, message) {
 }
 
 async function cleanup(engine, server) {
-  Svc.Obs.notify("weave:engine:stop-tracking");
+  await engine._tracker.stop();
   await engine._store.wipe();
   Svc.Prefs.resetBranch("");
   Service.recordManager.clearCache();
@@ -53,10 +52,11 @@ add_task(async function test_history_change_during_sync() {
     } finally {
       _("Inserting local history visit");
       await addVisit("during_sync");
+      await engine._tracker.asyncObserver.promiseObserversComplete();
     }
   };
 
-  Svc.Obs.notify("weave:engine:start-tracking");
+  engine._tracker.start();
 
   try {
     let remoteRec = new HistoryRec("history", "UrOOuzE5QM-e");
@@ -107,10 +107,11 @@ add_task(async function test_passwords_change_during_sync() {
       let login = new LoginInfo("https://example.com", "", null, "username",
         "password", "", "");
       Services.logins.addLogin(login);
+      await engine._tracker.asyncObserver.promiseObserversComplete();
     }
   };
 
-  Svc.Obs.notify("weave:engine:start-tracking");
+  engine._tracker.start();
 
   try {
     let remoteRec = new LoginRec("passwords", "{765e3d6e-071d-d640-a83d-81a7eb62d3ed}");
@@ -163,10 +164,11 @@ add_task(async function test_prefs_change_during_sync() {
       _("Updating local pref value");
       // Change the value of a synced pref.
       Services.prefs.setCharPref(TEST_PREF, "hello");
+      await engine._tracker.asyncObserver.promiseObserversComplete();
     }
   };
 
-  Svc.Obs.notify("weave:engine:start-tracking");
+  engine._tracker.start();
 
   try {
     // All synced prefs are stored in a single record, so we'll only ever
@@ -229,10 +231,11 @@ add_task(async function test_forms_change_during_sync() {
           handleCompletion: resolve,
         });
       });
+      await engine._tracker.asyncObserver.promiseObserversComplete();
     }
   };
 
-  Svc.Obs.notify("weave:engine:start-tracking");
+  engine._tracker.start();
 
   try {
     // Add an existing remote form history entry. We shouldn't bump the score when
@@ -299,6 +302,7 @@ add_task(async function test_bookmark_change_during_sync() {
         url: "https://mozilla.org/",
         title: "Mozilla",
       });
+      await engine._tracker.asyncObserver.promiseObserversComplete();
     }
   };
 
@@ -317,7 +321,7 @@ add_task(async function test_bookmark_change_during_sync() {
   });
   _(`Thunderbird GUID: ${tbBmk.guid}`);
 
-  Svc.Obs.notify("weave:engine:start-tracking");
+  engine._tracker.start();
 
   try {
     let bmk2_guid = "get-firefox1"; // New child of Folder 1, created remotely.
@@ -394,7 +398,7 @@ add_task(async function test_bookmark_change_during_sync() {
     // because the bookmarks engine will automatically schedule a follow-up
     // sync for us.
     _("Perform first sync and immediate follow-up sync");
-    Service.sync(["bookmarks"]);
+    Service.sync({engines: ["bookmarks"]});
 
     let pings = await pingsPromise;
     equal(pings.length, 2, "Should submit two pings");

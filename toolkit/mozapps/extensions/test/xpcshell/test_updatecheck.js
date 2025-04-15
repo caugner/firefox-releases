@@ -4,9 +4,9 @@
 
 // This verifies that AddonUpdateChecker works correctly
 
-Components.utils.import("resource://gre/modules/addons/AddonUpdateChecker.jsm");
+ChromeUtils.import("resource://gre/modules/addons/AddonUpdateChecker.jsm");
 
-Components.utils.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://testing-common/httpd.js");
 
 var testserver = createHttpServer(4444);
 testserver.registerDirectory("/data/", do_get_file("data"));
@@ -149,7 +149,7 @@ add_task(async function() {
     let updates = await checkUpdates("test_bug378216_12@tests.mozilla.org",
                                      key, file);
     equal(updates.length, 1);
-    do_check_false("updateURL" in updates[0]);
+    Assert.equal(false, "updateURL" in updates[0]);
   }
 });
 

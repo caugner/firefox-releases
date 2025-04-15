@@ -59,13 +59,14 @@ add_task(async function test_deletePasswordWithKey() {
   tree.view.selection.select(0);
 
   if (AppConstants.platform == "macosx") {
-    EventUtils.synthesizeKey("VK_BACK_SPACE", {});
+    EventUtils.synthesizeKey("KEY_Backspace");
   } else {
-    EventUtils.synthesizeKey("VK_DELETE", {});
+    EventUtils.synthesizeKey("KEY_Delete");
   }
 
-  await waitForCondition(() => tree.view.rowCount == 0);
+  await TestUtils.waitForCondition(() => tree.view.rowCount == 0);
 
+  // eslint-disable-next-line mozilla/no-cpows-in-tests
   is_element_visible(content.gSubDialog._dialogs[0]._box,
     "Subdialog is visible after deleting an element");
 });

@@ -1,16 +1,18 @@
 /* exported MANAGE_ADDRESSES_DIALOG_URL, MANAGE_CREDIT_CARDS_DIALOG_URL, EDIT_ADDRESS_DIALOG_URL, EDIT_CREDIT_CARD_DIALOG_URL,
-            BASE_URL, TEST_ADDRESS_1, TEST_ADDRESS_2, TEST_ADDRESS_3, TEST_ADDRESS_4, TEST_ADDRESS_5,
+            BASE_URL, TEST_ADDRESS_1, TEST_ADDRESS_2, TEST_ADDRESS_3, TEST_ADDRESS_4, TEST_ADDRESS_5, TEST_ADDRESS_CA_1, TEST_ADDRESS_DE_1,
             TEST_CREDIT_CARD_1, TEST_CREDIT_CARD_2, TEST_CREDIT_CARD_3, FORM_URL, CREDITCARD_FORM_URL,
             FTU_PREF, ENABLED_AUTOFILL_ADDRESSES_PREF, AUTOFILL_CREDITCARDS_AVAILABLE_PREF, ENABLED_AUTOFILL_CREDITCARDS_PREF,
+            SUPPORTED_COUNTRIES_PREF,
             SYNC_USERNAME_PREF, SYNC_ADDRESSES_PREF, SYNC_CREDITCARDS_PREF, SYNC_CREDITCARDS_AVAILABLE_PREF, CREDITCARDS_USED_STATUS_PREF,
+            DEFAULT_REGION_PREF,
             sleep, expectPopupOpen, openPopupOn, expectPopupClose, closePopup, clickDoorhangerButton,
             getAddresses, saveAddress, removeAddresses, saveCreditCard,
             getDisplayedPopupItems, getDoorhangerCheckbox, waitForMasterPasswordDialog,
-            getNotification, getDoorhangerButton, removeAllRecords */
+            getNotification, getDoorhangerButton, removeAllRecords, testDialog */
 
 "use strict";
 
-Cu.import("resource://testing-common/LoginTestUtils.jsm", this);
+ChromeUtils.import("resource://testing-common/LoginTestUtils.jsm", this);
 
 const MANAGE_ADDRESSES_DIALOG_URL = "chrome://formautofill/content/manageAddresses.xhtml";
 const MANAGE_CREDIT_CARDS_DIALOG_URL = "chrome://formautofill/content/manageCreditCards.xhtml";
@@ -25,10 +27,12 @@ const CREDITCARDS_USED_STATUS_PREF = "extensions.formautofill.creditCards.used";
 const ENABLED_AUTOFILL_ADDRESSES_PREF = "extensions.formautofill.addresses.enabled";
 const AUTOFILL_CREDITCARDS_AVAILABLE_PREF = "extensions.formautofill.creditCards.available";
 const ENABLED_AUTOFILL_CREDITCARDS_PREF = "extensions.formautofill.creditCards.enabled";
+const SUPPORTED_COUNTRIES_PREF = "extensions.formautofill.supportedCountries";
 const SYNC_USERNAME_PREF = "services.sync.username";
 const SYNC_ADDRESSES_PREF = "services.sync.engine.addresses";
 const SYNC_CREDITCARDS_PREF = "services.sync.engine.creditcards";
 const SYNC_CREDITCARDS_AVAILABLE_PREF = "services.sync.engine.creditcards.available";
+const DEFAULT_REGION_PREF = "browser.search.region";
 
 const TEST_ADDRESS_1 = {
   "given-name": "John",
@@ -67,18 +71,45 @@ const TEST_ADDRESS_5 = {
   tel: "+16172535702",
 };
 
+const TEST_ADDRESS_CA_1 = {
+  "given-name": "John",
+  "additional-name": "R.",
+  "family-name": "Smith",
+  organization: "Mozilla",
+  "street-address": "163 W Hastings\nSuite 209",
+  "address-level2": "Vancouver",
+  "address-level1": "BC",
+  "postal-code": "V6B 1H5",
+  country: "CA",
+  tel: "+17787851540",
+  email: "timbl@w3.org",
+};
+
+const TEST_ADDRESS_DE_1 = {
+  "given-name": "John",
+  "additional-name": "R.",
+  "family-name": "Smith",
+  organization: "Mozilla",
+  "street-address": "Geb\u00E4ude 3, 4. Obergeschoss\nSchlesische Stra\u00DFe 27",
+  "address-level2": "Berlin",
+  "postal-code": "10997",
+  country: "DE",
+  tel: "+4930983333000",
+  email: "timbl@w3.org",
+};
+
 const TEST_CREDIT_CARD_1 = {
   "cc-name": "John Doe",
   "cc-number": "1234567812345678",
   "cc-exp-month": 4,
-  "cc-exp-year": 2017,
+  "cc-exp-year": new Date().getFullYear(),
 };
 
 const TEST_CREDIT_CARD_2 = {
   "cc-name": "Timothy Berners-Lee",
   "cc-number": "1111222233334444",
   "cc-exp-month": 12,
-  "cc-exp-year": 2022,
+  "cc-exp-year": new Date().getFullYear() + 10,
 };
 
 const TEST_CREDIT_CARD_3 = {
@@ -106,7 +137,7 @@ async function focusAndWaitForFieldsIdentified(browser, selector) {
   info("expecting the target input being focused and indentified");
   /* eslint no-shadow: ["error", { "allow": ["selector", "previouslyFocused", "previouslyIdentified"] }] */
   const {previouslyFocused, previouslyIdentified} = await ContentTask.spawn(browser, {selector}, async function({selector}) {
-    Components.utils.import("resource://gre/modules/FormLikeFactory.jsm");
+    ChromeUtils.import("resource://gre/modules/FormLikeFactory.jsm");
     const input = content.document.querySelector(selector);
     const rootElement = FormLikeFactory.findRootForField(input);
     const previouslyFocused = content.document.activeElement == input;
@@ -134,7 +165,7 @@ async function focusAndWaitForFieldsIdentified(browser, selector) {
   // Wait 500ms to ensure that "markAsAutofillField" is completely finished.
   await sleep();
   await ContentTask.spawn(browser, {}, async function() {
-    Components.utils.import("resource://gre/modules/FormLikeFactory.jsm");
+    ChromeUtils.import("resource://gre/modules/FormLikeFactory.jsm");
     FormLikeFactory
       .findRootForField(content.document.activeElement)
       .setAttribute("test-formautofill-identified", "true");
@@ -298,6 +329,21 @@ async function removeAllRecords() {
   if (creditCards.length) {
     await removeCreditCards(creditCards.map(cc => cc.guid));
   }
+}
+
+async function waitForFocusAndFormReady(win) {
+  return Promise.all([
+    new Promise(resolve => waitForFocus(resolve, win)),
+    BrowserTestUtils.waitForEvent(win, "FormReady"),
+  ]);
+}
+
+async function testDialog(url, testFn, arg) {
+  let win = window.openDialog(url, null, null, arg);
+  await waitForFocusAndFormReady(win);
+  let unloadPromise = BrowserTestUtils.waitForEvent(win, "unload");
+  testFn(win);
+  return unloadPromise;
 }
 
 registerCleanupFunction(removeAllRecords);

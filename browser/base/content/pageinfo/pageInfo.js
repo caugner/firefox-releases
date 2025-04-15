@@ -2,8 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Components.utils.import("resource://gre/modules/LoadContextInfo.jsm");
-Components.utils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 /* import-globals-from ../../../../toolkit/content/globalOverlay.js */
 /* import-globals-from ../../../../toolkit/content/contentAreaUtils.js */
@@ -128,7 +127,6 @@ pageInfoTreeView.prototype = {
   hasNextSibling(index, after) { return false; },
   getLevel(index) { return 0; },
   getImageSrc(row, column) { },
-  getProgressMode(row, column) { },
   getCellValue(row, column) { },
   toggleOpenState(index) { },
   cycleHeader(col) { },
@@ -235,35 +233,32 @@ const PREFERENCES_CONTRACTID    = "@mozilla.org/preferences-service;1";
 
 // a number of services I'll need later
 // the cache services
-const nsICacheStorageService = Components.interfaces.nsICacheStorageService;
-const nsICacheStorage = Components.interfaces.nsICacheStorage;
-const cacheService = Components.classes["@mozilla.org/netwerk/cache-storage-service;1"].getService(nsICacheStorageService);
+const nsICacheStorageService = Ci.nsICacheStorageService;
+const nsICacheStorage = Ci.nsICacheStorage;
+const cacheService = Cc["@mozilla.org/netwerk/cache-storage-service;1"].getService(nsICacheStorageService);
 
-var loadContextInfo = LoadContextInfo.fromLoadContext(
-  window.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
-        .getInterface(Components.interfaces.nsIWebNavigation)
-        .QueryInterface(Components.interfaces.nsILoadContext), false);
+var loadContextInfo = Services.loadContextInfo.fromLoadContext(
+  window.QueryInterface(Ci.nsIInterfaceRequestor)
+        .getInterface(Ci.nsIWebNavigation)
+        .QueryInterface(Ci.nsILoadContext), false);
 var diskStorage = cacheService.diskCacheStorage(loadContextInfo, false);
 
-const nsICookiePermission  = Components.interfaces.nsICookiePermission;
-const nsIPermissionManager = Components.interfaces.nsIPermissionManager;
+const nsICookiePermission  = Ci.nsICookiePermission;
+const nsIPermissionManager = Ci.nsIPermissionManager;
 
-const nsICertificateDialogs = Components.interfaces.nsICertificateDialogs;
+const nsICertificateDialogs = Ci.nsICertificateDialogs;
 const CERTIFICATEDIALOGS_CONTRACTID = "@mozilla.org/nsCertificateDialogs;1";
 
 // clipboard helper
 function getClipboardHelper() {
     try {
-        return Components.classes["@mozilla.org/widget/clipboardhelper;1"].getService(Components.interfaces.nsIClipboardHelper);
+        return Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper);
     } catch (e) {
         // do nothing, later code will handle the error
         return null;
     }
 }
 const gClipboardHelper = getClipboardHelper();
-
-// Interface for image loading content
-const nsIImageLoadingContent = Components.interfaces.nsIImageLoadingContent;
 
 // namespaces, don't need all of these yet...
 const XLinkNS  = "http://www.w3.org/1999/xlink";
@@ -333,9 +328,7 @@ function onLoadPageInfo() {
 
   /* Select the requested tab, if the name is specified */
   loadTab(args);
-  Components.classes["@mozilla.org/observer-service;1"]
-            .getService(Components.interfaces.nsIObserverService)
-            .notifyObservers(window, "page-info-dialog-loaded");
+  Services.obs.notifyObservers(window, "page-info-dialog-loaded");
 }
 
 function loadPageInfo(frameOuterWindowID, imageElement, browser) {
@@ -412,9 +405,7 @@ function resetPageInfo(args) {
   /* Reset Media tab */
   var mediaTab = document.getElementById("mediaTab");
   if (!mediaTab.hidden) {
-    Components.classes["@mozilla.org/observer-service;1"]
-              .getService(Components.interfaces.nsIObserverService)
-              .removeObserver(imagePermissionObserver, "perm-changed");
+    Services.obs.removeObserver(imagePermissionObserver, "perm-changed");
     mediaTab.hidden = true;
   }
   gImageView.clear();
@@ -435,9 +426,7 @@ function resetPageInfo(args) {
 function onUnloadPageInfo() {
   // Remove the observer, only if there is at least 1 image.
   if (!document.getElementById("mediaTab").hidden) {
-    Components.classes["@mozilla.org/observer-service;1"]
-              .getService(Components.interfaces.nsIObserverService)
-              .removeObserver(imagePermissionObserver, "perm-changed");
+    Services.obs.removeObserver(imagePermissionObserver, "perm-changed");
   }
 
   /* Call registered overlay unload functions */
@@ -500,7 +489,7 @@ function toggleGroupbox(id) {
 function openCacheEntry(key, cb) {
   var checkCacheListener = {
     onCacheEntryCheck(entry, appCache) {
-      return Components.interfaces.nsICacheEntryOpenCallback.ENTRY_WANTED;
+      return Ci.nsICacheEntryOpenCallback.ENTRY_WANTED;
     },
     onCacheEntryAvailable(entry, isNew, appCache, status) {
       cb(entry);
@@ -595,9 +584,7 @@ function addImage(imageViewRow) {
     // Add the observer, only once.
     if (gImageView.data.length == 1) {
       document.getElementById("mediaTab").hidden = false;
-      Components.classes["@mozilla.org/observer-service;1"]
-                .getService(Components.interfaces.nsIObserverService)
-                .addObserver(imagePermissionObserver, "perm-changed");
+      Services.obs.addObserver(imagePermissionObserver, "perm-changed");
     }
   } else {
     var i = gImageHash[url][type][alt];
@@ -667,10 +654,10 @@ function getSelectedRow(tree) {
 }
 
 function selectSaveFolder(aCallback) {
-  const nsIFile = Components.interfaces.nsIFile;
-  const nsIFilePicker = Components.interfaces.nsIFilePicker;
+  const nsIFile = Ci.nsIFile;
+  const nsIFilePicker = Ci.nsIFilePicker;
   let titleText = gBundle.getString("mediaSelectFolder");
-  let fp = Components.classes["@mozilla.org/filepicker;1"].
+  let fp = Cc["@mozilla.org/filepicker;1"].
            createInstance(nsIFilePicker);
   let fpCallback = function fpCallback_done(aResult) {
     if (aResult == nsIFilePicker.returnOK) {
@@ -683,9 +670,7 @@ function selectSaveFolder(aCallback) {
   fp.init(window, titleText, nsIFilePicker.modeGetFolder);
   fp.appendFilters(nsIFilePicker.filterAll);
   try {
-    let prefs = Components.classes[PREFERENCES_CONTRACTID].
-                getService(Components.interfaces.nsIPrefBranch);
-    let initialDir = prefs.getComplexValue("browser.download.dir", nsIFile);
+    let initialDir = Services.prefs.getComplexValue("browser.download.dir", nsIFile);
     if (initialDir) {
       fp.displayDirectory = initialDir;
     }
@@ -730,7 +715,7 @@ function saveMedia() {
           let uri = makeURI(uriString);
 
           try {
-            uri.QueryInterface(Components.interfaces.nsIURL);
+            uri.QueryInterface(Ci.nsIURL);
             dir.append(decodeURIComponent(uri.fileName));
           } catch (ex) {
             // data:/blob: uris
@@ -754,8 +739,8 @@ function saveMedia() {
 }
 
 function onBlockImage() {
-  var permissionManager = Components.classes[PERMISSION_CONTRACTID]
-                                    .getService(nsIPermissionManager);
+  var permissionManager = Cc[PERMISSION_CONTRACTID]
+                            .getService(nsIPermissionManager);
 
   var checkbox = document.getElementById("blockImage");
   var uri = makeURI(document.getElementById("imageurltext").value);
@@ -849,8 +834,8 @@ function makePreview(row) {
     var physWidth = 0, physHeight = 0;
     var width = 0, height = 0;
 
-    let serial = Components.classes["@mozilla.org/network/serialization-helper;1"]
-                           .getService(Components.interfaces.nsISerializationHelper);
+    let serial = Cc["@mozilla.org/network/serialization-helper;1"]
+                   .getService(Ci.nsISerializationHelper);
     let triggeringPrinStr = serial.serializeToString(gDocInfo.principal);
     if ((item.HTMLLinkElement || item.HTMLInputElement ||
          item.HTMLImageElement || item.SVGImageElement ||
@@ -959,13 +944,11 @@ function makePreview(row) {
 }
 
 function makeBlockImage(url) {
-  var permissionManager = Components.classes[PERMISSION_CONTRACTID]
-                                    .getService(nsIPermissionManager);
-  var prefs = Components.classes[PREFERENCES_CONTRACTID]
-                        .getService(Components.interfaces.nsIPrefBranch);
+  var permissionManager = Cc[PERMISSION_CONTRACTID]
+                            .getService(nsIPermissionManager);
 
   var checkbox = document.getElementById("blockImage");
-  var imagePref = prefs.getIntPref("permissions.default.image");
+  var imagePref = Services.prefs.getIntPref("permissions.default.image");
   if (!(/^https?:/.test(url)) || imagePref == 2)
     // We can't block the images from this host because either is is not
     // for http(s) or we don't load images at all
@@ -988,7 +971,7 @@ var imagePermissionObserver = {
       return;
 
     if (aTopic == "perm-changed") {
-      var permission = aSubject.QueryInterface(Components.interfaces.nsIPermission);
+      var permission = aSubject.QueryInterface(Ci.nsIPermission);
       if (permission.type == "image") {
         var imageTree = document.getElementById("imagetree");
         var row = getSelectedRow(imageTree);
@@ -1028,7 +1011,7 @@ function formatDate(datestr, unknown) {
   if (!date.valueOf())
     return unknown;
 
-  const dateTimeFormatter = Services.intl.createDateTimeFormat(undefined, {
+  const dateTimeFormatter = new Services.intl.DateTimeFormat(undefined, {
     dateStyle: "long", timeStyle: "long"
   });
   return dateTimeFormatter.format(date);

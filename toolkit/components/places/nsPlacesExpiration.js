@@ -19,14 +19,10 @@
  * - Status of the database (clean or dirty).
  */
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
+ChromeUtils.defineModuleGetter(this, "PlacesUtils",
   "resource://gre/modules/PlacesUtils.jsm");
 
 // Constants
@@ -235,7 +231,7 @@ const EXPIRATION_QUERIES = {
   // Hosts accumulated during the places delete are updated through a trigger
   // (see nsPlacesTriggers.h).
   QUERY_UPDATE_HOSTS: {
-    sql: `DELETE FROM moz_updatehosts_temp`,
+    sql: `DELETE FROM moz_updatehostsdelete_temp`,
     actions: ACTION.TIMED | ACTION.TIMED_OVERLIMIT | ACTION.SHUTDOWN_DIRTY |
              ACTION.IDLE_DIRTY | ACTION.IDLE_DAILY | ACTION.DEBUG
   },
@@ -507,6 +503,12 @@ nsPlacesExpiration.prototype = {
       this._expireWithActionAndLimit(ACTION.IDLE_DAILY, LIMIT.LARGE);
     } else if (aTopic == TOPIC_TESTING_MODE) {
       this._testingMode = true;
+    } else if (aTopic == PlacesUtils.TOPIC_INIT_COMPLETE) {
+      // Ideally we'd add this observer only when notifications start being
+      // triggered. However, that's difficult to work out, so we do it on
+      // TOPIC_INIT_COMPLETE which means we have to take the hit of initializing
+      // this service slightly earlier.
+      PlacesUtils.history.addObserver(this, true);
     }
   },
 
@@ -536,7 +538,7 @@ nsPlacesExpiration.prototype = {
     this.status = STATUS.CLEAN;
   },
 
-  onVisit() {},
+  onVisits() {},
   onTitleChanged() {},
   onDeleteURI() {},
   onPageChanged() {},
@@ -623,7 +625,7 @@ nsPlacesExpiration.prototype = {
                   .getHistogramById("PLACES_MOST_RECENT_EXPIRED_VISIT_DAYS")
                   .add(this._mostRecentExpiredVisitDays);
         } catch (ex) {
-          Components.utils.reportError("Unable to report telemetry.");
+          Cu.reportError("Unable to report telemetry.");
         } finally {
           delete this._mostRecentExpiredVisitDays;
         }
@@ -649,7 +651,7 @@ nsPlacesExpiration.prototype = {
                       .getHistogramById("PLACES_EXPIRATION_STEPS_TO_CLEAN2")
                       .add(this._telemetrySteps);
             } catch (ex) {
-              Components.utils.reportError("Unable to report telemetry.");
+              Cu.reportError("Unable to report telemetry.");
             }
           }
           this._telemetrySteps = 1;

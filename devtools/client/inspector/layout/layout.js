@@ -17,7 +17,6 @@ loader.lazyRequireGetter(this, "FlexboxInspector", "devtools/client/inspector/fl
 loader.lazyRequireGetter(this, "GridInspector", "devtools/client/inspector/grids/grid-inspector");
 
 class LayoutView {
-
   constructor(inspector, window) {
     this.document = window.document;
     this.inspector = inspector;
@@ -42,6 +41,12 @@ class LayoutView {
       onShowBoxModelHighlighter,
       onToggleGeometryEditor,
     } = this.inspector.getPanel("boxmodel").getComponentProps();
+
+    this.flexboxInspector = new FlexboxInspector(this.inspector,
+      this.inspector.panelWin);
+    let {
+      onToggleFlexboxHighlighter,
+    } = this.flexboxInspector.getComponentProps();
 
     this.gridInspector = new GridInspector(this.inspector, this.inspector.panelWin);
     let {
@@ -72,6 +77,7 @@ class LayoutView {
       onShowGridAreaHighlight,
       onShowGridCellHighlight,
       onShowGridLineNamesHighlight,
+      onToggleFlexboxHighlighter,
       onToggleGeometryEditor,
       onToggleGridHighlighter,
       onToggleShowGridAreas,
@@ -94,13 +100,13 @@ class LayoutView {
    * Destruction function called when the inspector is destroyed. Cleans up references.
    */
   destroy() {
+    this.flexboxInspector.destroy();
     this.gridInspector.destroy();
 
     this.document = null;
     this.inspector = null;
     this.store = null;
   }
-
 }
 
 module.exports = LayoutView;

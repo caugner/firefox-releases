@@ -6,11 +6,8 @@
 // Disables security checking our updates which haven't been signed
 Services.prefs.setBoolPref("extensions.checkUpdateSecurity", false);
 
-var Ci = Components.interfaces;
-var Cu = Components.utils;
-
-Cu.import("resource://testing-common/httpd.js");
-Cu.import("resource://testing-common/MockRegistrar.jsm");
+ChromeUtils.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
 
 // This is the data we expect to see sent as part of the update url.
 var EXPECTED = [
@@ -110,7 +107,7 @@ var BlocklistService = {
      || iid.equals(Ci.nsISupports))
       return this;
 
-    throw Components.results.NS_ERROR_NO_INTERFACE;
+    throw Cr.NS_ERROR_NO_INTERFACE;
   }
 };
 
@@ -135,12 +132,12 @@ var requestHandler = {
   handle(metadata, response) {
     var expected = EXPECTED[metadata.path.substring(1)];
     var params = metadata.queryString.split("&");
-    do_check_eq(params.length, 10);
+    Assert.equal(params.length, 10);
     for (var k in params) {
       var pair = params[k].split("=");
       var name = decodeURIComponent(pair[0]);
       var value = decodeURIComponent(pair[1]);
-      do_check_eq(expected[name], value);
+      Assert.equal(expected[name], value);
     }
     response.setStatusLine(metadata.httpVersion, 404, "Not Found");
   }
@@ -164,7 +161,7 @@ function run_test() {
 
     restartManager();
     AddonManager.getAddonByID(ADDONS[1].id, callback_soon(function(addon) {
-      do_check_true(!(!addon));
+      Assert.ok(!(!addon));
       addon.userDisabled = true;
       restartManager();
 

@@ -46,6 +46,10 @@ EXPORTS += [
     'nsTextEditorState.h',
 ]
 
+EXPORTS.mozilla += [
+    'TextInputListener.h',
+]
+
 EXPORTS.mozilla.dom += [
     'HTMLAllCollection.h',
     'HTMLAnchorElement.h',
@@ -55,7 +59,6 @@ EXPORTS.mozilla.dom += [
     'HTMLBRElement.h',
     'HTMLButtonElement.h',
     'HTMLCanvasElement.h',
-    'HTMLContentElement.h',
     'HTMLDataElement.h',
     'HTMLDataListElement.h',
     'HTMLDetailsElement.h',
@@ -134,7 +137,6 @@ UNIFIED_SOURCES += [
     'HTMLBRElement.cpp',
     'HTMLButtonElement.cpp',
     'HTMLCanvasElement.cpp',
-    'HTMLContentElement.cpp',
     'HTMLDataElement.cpp',
     'HTMLDataListElement.cpp',
     'HTMLDetailsElement.cpp',
@@ -253,5 +255,5 @@ FINAL_LIBRARY = 'xul'
 if CONFIG['MOZ_ANDROID_HLS_SUPPORT']:
     DEFINES['MOZ_ANDROID_HLS_SUPPORT'] = True
 
-if CONFIG['GNU_CXX']:
+if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
     CXXFLAGS += ['-Wno-error=shadow']

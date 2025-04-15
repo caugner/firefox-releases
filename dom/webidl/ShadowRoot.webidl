@@ -17,7 +17,7 @@ enum ShadowRootMode {
 };
 
 // https://dom.spec.whatwg.org/#shadowroot
-[Pref="dom.webcomponents.enabled"]
+[Func="nsDocument::IsShadowDOMEnabled"]
 interface ShadowRoot : DocumentFragment
 {
   // Shadow DOM v1
@@ -31,7 +31,6 @@ interface ShadowRoot : DocumentFragment
   HTMLCollection getElementsByClassName(DOMString classNames);
   [CEReactions, SetterThrows, TreatNullAs=EmptyString]
   attribute DOMString innerHTML;
-  attribute boolean applyAuthorStyles;
-  readonly attribute StyleSheetList styleSheets;
 };
 
+ShadowRoot implements DocumentOrShadowRoot;

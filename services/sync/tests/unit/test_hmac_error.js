@@ -1,11 +1,10 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource://services-sync/engines.js");
-Cu.import("resource://services-sync/service.js");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://testing-common/services/sync/rotaryengine.js");
-Cu.import("resource://testing-common/services/sync/utils.js");
+ChromeUtils.import("resource://services-sync/engines.js");
+ChromeUtils.import("resource://services-sync/service.js");
+ChromeUtils.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://testing-common/services/sync/rotaryengine.js");
 
 // Track HMAC error counts.
 var hmacErrorCount = 0;
@@ -19,6 +18,7 @@ var hmacErrorCount = 0;
 
 async function shared_setup() {
   enableValidationPrefs();
+  syncTestLogging();
 
   hmacErrorCount = 0;
 
@@ -27,8 +27,8 @@ async function shared_setup() {
   engine.lastSync = 123; // Needs to be non-zero so that tracker is queried.
   engine._store.items = {flying: "LNER Class A3 4472",
                          scotsman: "Flying Scotsman"};
-  tracker.addChangedID("scotsman", 0);
-  do_check_eq(1, Service.engineManager.getEnabled().length);
+  await tracker.addChangedID("scotsman", 0);
+  Assert.equal(1, Service.engineManager.getEnabled().length);
 
   let engines = {rotary:  {version: engine.version,
                            syncID:  engine.syncID},
@@ -90,10 +90,10 @@ add_task(async function hmac_error_during_404() {
     _("---------------------------");
 
     // Two rotary items, one client record... no errors.
-    do_check_eq(hmacErrorCount, 0);
+    Assert.equal(hmacErrorCount, 0);
   } finally {
-    tracker.clearChangedIDs();
-    Service.engineManager.unregister(engine);
+    await tracker.clearChangedIDs();
+    await Service.engineManager.unregister(engine);
     Svc.Prefs.resetBranch("");
     Service.recordManager.clearCache();
     await promiseStopServer(server);
@@ -178,22 +178,22 @@ add_task(async function hmac_error_during_node_reassignment() {
 
   // This kicks off the actual test. Split into a function here to allow this
   // source file to broadly follow actual execution order.
-  function onwards() {
+  async function onwards() {
     _("== Invoking first sync.");
-    Async.promiseSpinningly(Service.sync());
+    await Service.sync();
     _("We should not simultaneously have data but no keys on the server.");
     let hasData = rotaryColl.wbo("flying") ||
                   rotaryColl.wbo("scotsman");
     let hasKeys = keysWBO.modified;
 
     _("We correctly handle 401s by aborting the sync and starting again.");
-    do_check_true(!hasData == !hasKeys);
+    Assert.ok(!hasData == !hasKeys);
 
     _("Be prepared for the second (automatic) sync...");
   }
 
   _("Make sure that syncing again causes recovery.");
-  await new Promise(resolve => {
+  let callbacksPromise = new Promise(resolve => {
     onSyncFinished = function() {
       _("== First sync done.");
       _("---------------------------");
@@ -202,7 +202,7 @@ add_task(async function hmac_error_during_node_reassignment() {
         let hasData = rotaryColl.wbo("flying") ||
                       rotaryColl.wbo("scotsman");
         let hasKeys = keysWBO.modified;
-        do_check_true(!hasData == !hasKeys);
+        Assert.ok(!hasData == !hasKeys);
 
         // Kick off another sync. Can't just call it, because we're inside the
         // lock...
@@ -213,31 +213,28 @@ add_task(async function hmac_error_during_node_reassignment() {
           engine.lastSync = 0;
           hmacErrorCount = 0;
 
-          onSyncFinished = function() {
+          onSyncFinished = async function() {
             // Two rotary items, one client record... no errors.
-            do_check_eq(hmacErrorCount, 0);
+            Assert.equal(hmacErrorCount, 0);
 
             Svc.Obs.remove("weave:service:sync:finish", obs);
             Svc.Obs.remove("weave:service:sync:error", obs);
 
-            tracker.clearChangedIDs();
-            Service.engineManager.unregister(engine);
-            Svc.Prefs.resetBranch("");
-            Service.recordManager.clearCache();
-            server.stop(resolve);
+            (async () => {
+              await tracker.clearChangedIDs();
+              await Service.engineManager.unregister(engine);
+              Svc.Prefs.resetBranch("");
+              Service.recordManager.clearCache();
+              server.stop(resolve);
+            })();
           };
 
-          Async.promiseSpinningly(Service.sync());
+          Service.sync();
         },
         this);
       };
     };
-
-    onwards();
   });
+  await onwards();
+  await callbacksPromise;
 });
-
-function run_test() {
-  initTestLogging("Trace");
-  run_next_test();
-}

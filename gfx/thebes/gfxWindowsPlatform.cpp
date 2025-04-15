@@ -14,6 +14,7 @@
 #include "gfxWindowsSurface.h"
 
 #include "nsUnicharUtils.h"
+#include "nsUnicodeProperties.h"
 
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
@@ -84,6 +85,7 @@ using namespace mozilla::gfx;
 using namespace mozilla::layers;
 using namespace mozilla::widget;
 using namespace mozilla::image;
+using namespace mozilla::unicode;
 
 DCFromDrawTarget::DCFromDrawTarget(DrawTarget& aDrawTarget)
 {
@@ -368,6 +370,16 @@ gfxWindowsPlatform::InitAcceleration()
   UpdateCanUseHardwareVideoDecoding();
 }
 
+void
+gfxWindowsPlatform::InitWebRenderConfig()
+{
+  gfxPlatform::InitWebRenderConfig();
+
+  if (gfxVars::UseWebRender()) {
+    UpdateBackendPrefs();
+  }
+}
+
 bool
 gfxWindowsPlatform::CanUseHardwareVideoDecoding()
 {
@@ -434,7 +446,8 @@ gfxWindowsPlatform::UpdateBackendPrefs()
   uint32_t contentMask = BackendTypeBit(BackendType::CAIRO) |
                          BackendTypeBit(BackendType::SKIA);
   BackendType defaultBackend = BackendType::SKIA;
-  if (gfxConfig::IsEnabled(Feature::DIRECT2D) && Factory::HasD2D1Device()) {
+  if (gfxConfig::IsEnabled(Feature::DIRECT2D) &&
+      Factory::HasD2D1Device() && !gfxVars::UseWebRender()) {
     contentMask |= BackendTypeBit(BackendType::DIRECT2D1_1);
     canvasMask |= BackendTypeBit(BackendType::DIRECT2D1_1);
     defaultBackend = BackendType::DIRECT2D1_1;
@@ -490,6 +503,20 @@ gfxWindowsPlatform::GetContentBackendFor(mozilla::layers::LayersBackend aLayers)
 
   // Otherwise we have some non-accelerated backend and that's ok.
   return defaultBackend;
+}
+
+mozilla::gfx::BackendType
+gfxWindowsPlatform::GetPreferredCanvasBackend()
+{
+  mozilla::gfx::BackendType backend = gfxPlatform::GetPreferredCanvasBackend();
+
+  if (backend == BackendType::DIRECT2D1_1 &&
+      gfx::gfxVars::UseWebRender() &&
+      !gfx::gfxVars::UseWebRenderANGLE()) {
+    // We can't have D2D without ANGLE when WebRender is enabled, so fallback to Skia.
+    return BackendType::SKIA;
+  }
+  return backend;
 }
 
 gfxPlatformFontList*
@@ -603,9 +630,15 @@ gfxWindowsPlatform::GetCommonFallbackFonts(uint32_t aCh, uint32_t aNextCh,
                                            Script aRunScript,
                                            nsTArray<const char*>& aFontList)
 {
-    if (aNextCh == 0xfe0fu) {
-        aFontList.AppendElement(kFontSegoeUIEmoji);
-        aFontList.AppendElement(kFontEmojiOneMozilla);
+    EmojiPresentation emoji = GetEmojiPresentation(aCh);
+    if (emoji != EmojiPresentation::TextOnly) {
+        if (aNextCh == kVariationSelector16 ||
+           (aNextCh != kVariationSelector15 &&
+            emoji == EmojiPresentation::EmojiDefault)) {
+            // if char is followed by VS16, try for a color emoji glyph
+            aFontList.AppendElement(kFontSegoeUIEmoji);
+            aFontList.AppendElement(kFontEmojiOneMozilla);
+        }
     }
 
     // Arial is used as the default fallback for system fallback
@@ -614,17 +647,7 @@ gfxWindowsPlatform::GetCommonFallbackFonts(uint32_t aCh, uint32_t aNextCh,
     if (!IS_IN_BMP(aCh)) {
         uint32_t p = aCh >> 16;
         if (p == 1) { // SMP plane
-            if (aNextCh == 0xfe0eu) {
-                aFontList.AppendElement(kFontSegoeUISymbol);
-                aFontList.AppendElement(kFontSegoeUIEmoji);
-                aFontList.AppendElement(kFontEmojiOneMozilla);
-            } else {
-                if (aNextCh != 0xfe0fu) {
-                    aFontList.AppendElement(kFontSegoeUIEmoji);
-                    aFontList.AppendElement(kFontEmojiOneMozilla);
-                }
-                aFontList.AppendElement(kFontSegoeUISymbol);
-            }
+            aFontList.AppendElement(kFontSegoeUISymbol);
             aFontList.AppendElement(kFontEbrima);
             aFontList.AppendElement(kFontNirmalaUI);
             aFontList.AppendElement(kFontCambriaMath);
@@ -1569,6 +1592,13 @@ gfxWindowsPlatform::InitGPUProcessSupport()
   FeatureState& gpuProc = gfxConfig::GetFeature(Feature::GPU_PROCESS);
 
   if (!gpuProc.IsEnabled()) {
+    return false;
+  }
+
+  nsCString message;
+  nsCString failureId;
+  if (!gfxPlatform::IsGfxInfoStatusOkay(nsIGfxInfo::FEATURE_GPU_PROCESS, &message, failureId)) {
+    gpuProc.Disable(FeatureStatus::Blacklisted, message.get(), failureId);
     return false;
   }
 

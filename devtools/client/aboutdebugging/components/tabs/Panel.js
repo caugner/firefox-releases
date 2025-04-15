@@ -6,8 +6,9 @@
 
 "use strict";
 
-const { Component, createFactory, DOM: dom, PropTypes } =
-  require("devtools/client/shared/vendor/react");
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const Services = require("Services");
 
 const PanelHeader = createFactory(require("../PanelHeader"));
@@ -24,6 +25,7 @@ class TabsPanel extends Component {
   static get propTypes() {
     return {
       client: PropTypes.instanceOf(DebuggerClient).isRequired,
+      connect: PropTypes.object,
       id: PropTypes.string.isRequired
     };
   }
@@ -49,33 +51,26 @@ class TabsPanel extends Component {
     client.removeListener("tabListChanged", this.update);
   }
 
-  update() {
-    this.props.client.mainRoot.listTabs().then(({ tabs }) => {
-      // Filter out closed tabs (represented as `null`).
-      tabs = tabs.filter(tab => !!tab);
-      tabs.forEach(tab => {
-        // FIXME Also try to fetch low-res favicon. But we should use actor
-        // support for this to get the high-res one (bug 1061654).
-        let url = new URL(tab.url);
-        if (url.protocol.startsWith("http")) {
-          let prePath = url.origin;
-          let idx = url.pathname.lastIndexOf("/");
-          if (idx === -1) {
-            prePath += url.pathname;
-          } else {
-            prePath += url.pathname.substr(0, idx);
-          }
-          tab.icon = prePath + "/favicon.ico";
-        } else {
-          tab.icon = "chrome://devtools/skin/images/globe.svg";
-        }
-      });
-      this.setState({ tabs });
-    });
+  async update() {
+    let { tabs } = await this.props.client.mainRoot.listTabs({ favicons: true });
+
+    // Filter out closed tabs (represented as `null`).
+    tabs = tabs.filter(tab => !!tab);
+
+    for (let tab of tabs) {
+      if (tab.favicon) {
+        let base64Favicon = btoa(String.fromCharCode.apply(String, tab.favicon));
+        tab.icon = "data:image/png;base64," + base64Favicon;
+      } else {
+        tab.icon = "chrome://devtools/skin/images/globe.svg";
+      }
+    }
+
+    this.setState({ tabs });
   }
 
   render() {
-    let { client, id } = this.props;
+    let { client, connect, id } = this.props;
     let { tabs } = this.state;
 
     return dom.div({
@@ -91,6 +86,7 @@ class TabsPanel extends Component {
     dom.div({},
       TargetList({
         client,
+        connect,
         id: "tabs",
         name: Strings.GetStringFromName("tabs"),
         sort: false,

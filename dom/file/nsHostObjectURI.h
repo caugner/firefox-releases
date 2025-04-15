@@ -25,10 +25,11 @@
  * MediaStreams, with scheme "mediastream", and MediaSources, with scheme
  * "mediasource".
  */
-class nsHostObjectURI : public mozilla::net::nsSimpleURI
-                      , public nsIURIWithPrincipal
-                      , public nsIURIWithBlobImpl
-                      , public nsSupportsWeakReference
+class nsHostObjectURI final
+  : public mozilla::net::nsSimpleURI
+  , public nsIURIWithPrincipal
+  , public nsIURIWithBlobImpl
+  , public nsSupportsWeakReference
 {
 public:
   nsHostObjectURI(nsIPrincipal* aPrincipal,
@@ -48,8 +49,6 @@ public:
   NS_DECL_NSICLASSINFO
   NS_DECL_NSIIPCSERIALIZABLEURI
 
-  NS_IMETHOD SetScheme(const nsACString &aProtocol) override;
-
   // Override CloneInternal() and EqualsInternal()
   virtual nsresult CloneInternal(RefHandlingEnum aRefHandlingMode,
                                  const nsACString& newRef,
@@ -67,6 +66,8 @@ public:
     return url;
   }
 
+  NS_IMETHOD Mutate(nsIURIMutator * *_retval) override;
+
   void ForgetBlobImpl();
 
   nsCOMPtr<nsIPrincipal> mPrincipal;
@@ -74,6 +75,49 @@ public:
 
 protected:
   virtual ~nsHostObjectURI() {}
+
+  nsresult SetScheme(const nsACString &aProtocol) override;
+  bool Deserialize(const mozilla::ipc::URIParams&);
+
+public:
+  class Mutator final
+    : public nsIURIMutator
+    , public BaseURIMutator<nsHostObjectURI>
+    , public nsIBlobURIMutator
+    , public nsIPrincipalURIMutator
+  {
+    NS_DECL_ISUPPORTS
+    NS_FORWARD_SAFE_NSIURISETTERS_RET(mURI)
+    NS_DEFINE_NSIMUTATOR_COMMON
+
+    MOZ_MUST_USE NS_IMETHOD
+    SetBlobImpl(mozilla::dom::BlobImpl *aBlobImpl) override
+    {
+        if (!mURI) {
+            return NS_ERROR_NULL_POINTER;
+        }
+        mURI->mBlobImpl = aBlobImpl;
+        return NS_OK;
+    }
+
+    MOZ_MUST_USE NS_IMETHOD
+    SetPrincipal(nsIPrincipal *aPrincipal) override
+    {
+        if (!mURI) {
+            return NS_ERROR_NULL_POINTER;
+        }
+        mURI->mPrincipal = aPrincipal;
+        return NS_OK;
+    }
+
+    explicit Mutator() { }
+  private:
+    virtual ~Mutator() { }
+
+    friend class nsHostObjectURI;
+  };
+
+  friend BaseURIMutator<nsHostObjectURI>;
 };
 
 #define NS_HOSTOBJECTURI_CID \

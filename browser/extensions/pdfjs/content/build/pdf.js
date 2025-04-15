@@ -1,4 +1,8 @@
-/* Copyright 2017 Mozilla Foundation
+/**
+ * @licstart The following is the entire license notice for the
+ * Javascript code in this page
+ *
+ * Copyright 2017 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -11,6 +15,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * @licend The above is the entire license notice for the
+ * Javascript code in this page
  */
 
 (function webpackUniversalModuleDefinition(root, factory) {
@@ -22,7 +29,7 @@
 		exports["pdfjs-dist/build/pdf"] = factory();
 	else
 		root["pdfjs-dist/build/pdf"] = root.pdfjsDistBuildPdf = factory();
-})(this, function() {
+})(typeof self !== 'undefined' ? self : this, function() {
 return /******/ (function(modules) { // webpackBootstrap
 /******/ 	// The module cache
 /******/ 	var installedModules = {};
@@ -98,7 +105,7 @@ return /******/ (function(modules) { // webpackBootstrap
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.unreachable = exports.warn = exports.utf8StringToString = exports.stringToUTF8String = exports.stringToPDFString = exports.stringToBytes = exports.string32 = exports.shadow = exports.setVerbosityLevel = exports.ReadableStream = exports.removeNullCharacters = exports.readUint32 = exports.readUint16 = exports.readInt8 = exports.log2 = exports.loadJpegStream = exports.isEvalSupported = exports.isLittleEndian = exports.createValidAbsoluteUrl = exports.isSameOrigin = exports.isNodeJS = exports.isSpace = exports.isString = exports.isNum = exports.isEmptyObj = exports.isBool = exports.isArrayBuffer = exports.info = exports.getVerbosityLevel = exports.getLookupTableFactory = exports.deprecated = exports.createObjectURL = exports.createPromiseCapability = exports.createBlob = exports.bytesToString = exports.assert = exports.arraysToBytes = exports.arrayByteLength = exports.FormatError = exports.XRefParseException = exports.Util = exports.UnknownErrorException = exports.UnexpectedResponseException = exports.TextRenderingMode = exports.StreamType = exports.StatTimer = exports.PasswordResponses = exports.PasswordException = exports.PageViewport = exports.NotImplementedException = exports.NativeImageDecoding = exports.MissingPDFException = exports.MissingDataException = exports.MessageHandler = exports.InvalidPDFException = exports.AbortException = exports.CMapCompressionType = exports.ImageKind = exports.FontType = exports.AnnotationType = exports.AnnotationFlag = exports.AnnotationFieldFlag = exports.AnnotationBorderStyleType = exports.UNSUPPORTED_FEATURES = exports.VERBOSITY_LEVELS = exports.OPS = exports.IDENTITY_MATRIX = exports.FONT_IDENTITY_MATRIX = undefined;
+exports.unreachable = exports.warn = exports.utf8StringToString = exports.stringToUTF8String = exports.stringToPDFString = exports.stringToBytes = exports.string32 = exports.shadow = exports.setVerbosityLevel = exports.ReadableStream = exports.removeNullCharacters = exports.readUint32 = exports.readUint16 = exports.readInt8 = exports.log2 = exports.isEvalSupported = exports.isLittleEndian = exports.createValidAbsoluteUrl = exports.isSameOrigin = exports.isSpace = exports.isString = exports.isNum = exports.isEmptyObj = exports.isBool = exports.isArrayBuffer = exports.info = exports.getVerbosityLevel = exports.getLookupTableFactory = exports.deprecated = exports.createObjectURL = exports.createPromiseCapability = exports.createBlob = exports.bytesToString = exports.assert = exports.arraysToBytes = exports.arrayByteLength = exports.FormatError = exports.XRefParseException = exports.Util = exports.UnknownErrorException = exports.UnexpectedResponseException = exports.TextRenderingMode = exports.StreamType = exports.PasswordResponses = exports.PasswordException = exports.PageViewport = exports.NotImplementedException = exports.NativeImageDecoding = exports.MissingPDFException = exports.MissingDataException = exports.MessageHandler = exports.InvalidPDFException = exports.AbortException = exports.CMapCompressionType = exports.ImageKind = exports.FontType = exports.AnnotationType = exports.AnnotationFlag = exports.AnnotationFieldFlag = exports.AnnotationBorderStyleType = exports.UNSUPPORTED_FEATURES = exports.VerbosityLevel = exports.OPS = exports.IDENTITY_MATRIX = exports.FONT_IDENTITY_MATRIX = undefined;
 
 __w_pdfjs_require__(10);
 
@@ -220,10 +227,10 @@ var FontType = {
   TYPE0: 9,
   MMTYPE1: 10
 };
-var VERBOSITY_LEVELS = {
-  errors: 0,
-  warnings: 1,
-  infos: 5
+const VerbosityLevel = {
+  ERRORS: 0,
+  WARNINGS: 1,
+  INFOS: 5
 };
 var CMapCompressionType = {
   NONE: 0,
@@ -323,20 +330,22 @@ var OPS = {
   paintSolidColorImageMask: 90,
   constructPath: 91
 };
-var verbosity = VERBOSITY_LEVELS.warnings;
+let verbosity = VerbosityLevel.WARNINGS;
 function setVerbosityLevel(level) {
-  verbosity = level;
+  if (Number.isInteger(level)) {
+    verbosity = level;
+  }
 }
 function getVerbosityLevel() {
   return verbosity;
 }
 function info(msg) {
-  if (verbosity >= VERBOSITY_LEVELS.infos) {
+  if (verbosity >= VerbosityLevel.INFOS) {
     console.log('Info: ' + msg);
   }
 }
 function warn(msg) {
-  if (verbosity >= VERBOSITY_LEVELS.warnings) {
+  if (verbosity >= VerbosityLevel.WARNINGS) {
     console.log('Warning: ' + msg);
   }
 }
@@ -590,13 +599,10 @@ function string32(value) {
   return String.fromCharCode(value >> 24 & 0xff, value >> 16 & 0xff, value >> 8 & 0xff, value & 0xff);
 }
 function log2(x) {
-  var n = 1,
-      i = 0;
-  while (x > n) {
-    n <<= 1;
-    i++;
+  if (x <= 0) {
+    return 0;
   }
-  return i;
+  return Math.ceil(Math.log2(x));
 }
 function readInt8(data, start) {
   return data[start] << 24 >> 24;
@@ -893,9 +899,6 @@ function isArrayBuffer(v) {
 function isSpace(ch) {
   return ch === 0x20 || ch === 0x09 || ch === 0x0D || ch === 0x0A;
 }
-function isNodeJS() {
-  return typeof process === 'object' && process + '' === '[object process]';
-}
 function createPromiseCapability() {
   var capability = {};
   capability.promise = new Promise(function (resolve, reject) {
@@ -904,63 +907,6 @@ function createPromiseCapability() {
   });
   return capability;
 }
-var StatTimer = function StatTimerClosure() {
-  function rpad(str, pad, length) {
-    while (str.length < length) {
-      str += pad;
-    }
-    return str;
-  }
-  function StatTimer() {
-    this.started = Object.create(null);
-    this.times = [];
-    this.enabled = true;
-  }
-  StatTimer.prototype = {
-    time: function StatTimer_time(name) {
-      if (!this.enabled) {
-        return;
-      }
-      if (name in this.started) {
-        warn('Timer is already running for ' + name);
-      }
-      this.started[name] = Date.now();
-    },
-    timeEnd: function StatTimer_timeEnd(name) {
-      if (!this.enabled) {
-        return;
-      }
-      if (!(name in this.started)) {
-        warn('Timer has not been started for ' + name);
-      }
-      this.times.push({
-        'name': name,
-        'start': this.started[name],
-        'end': Date.now()
-      });
-      delete this.started[name];
-    },
-    toString: function StatTimer_toString() {
-      var i, ii;
-      var times = this.times;
-      var out = '';
-      var longest = 0;
-      for (i = 0, ii = times.length; i < ii; ++i) {
-        var name = times[i]['name'];
-        if (name.length > longest) {
-          longest = name.length;
-        }
-      }
-      for (i = 0, ii = times.length; i < ii; ++i) {
-        var span = times[i];
-        var duration = span.end - span.start;
-        out += rpad(span['name'], ' ', longest) + ' ' + duration + 'ms\n';
-      }
-      return out;
-    }
-  };
-  return StatTimer;
-}();
 var createBlob = function createBlob(data, contentType) {
   if (typeof Blob !== 'undefined') {
     return new Blob([data], { type: contentType });
@@ -1366,21 +1312,10 @@ MessageHandler.prototype = {
     this.comObj.removeEventListener('message', this._onComObjOnMessage);
   }
 };
-function loadJpegStream(id, imageUrl, objs) {
-  var img = new Image();
-  img.onload = function loadJpegStream_onloadClosure() {
-    objs.resolve(id, img);
-  };
-  img.onerror = function loadJpegStream_onerrorClosure() {
-    objs.resolve(id, null);
-    warn('Error during JPEG image loading');
-  };
-  img.src = imageUrl;
-}
 exports.FONT_IDENTITY_MATRIX = FONT_IDENTITY_MATRIX;
 exports.IDENTITY_MATRIX = IDENTITY_MATRIX;
 exports.OPS = OPS;
-exports.VERBOSITY_LEVELS = VERBOSITY_LEVELS;
+exports.VerbosityLevel = VerbosityLevel;
 exports.UNSUPPORTED_FEATURES = UNSUPPORTED_FEATURES;
 exports.AnnotationBorderStyleType = AnnotationBorderStyleType;
 exports.AnnotationFieldFlag = AnnotationFieldFlag;
@@ -1399,7 +1334,6 @@ exports.NotImplementedException = NotImplementedException;
 exports.PageViewport = PageViewport;
 exports.PasswordException = PasswordException;
 exports.PasswordResponses = PasswordResponses;
-exports.StatTimer = StatTimer;
 exports.StreamType = StreamType;
 exports.TextRenderingMode = TextRenderingMode;
 exports.UnexpectedResponseException = UnexpectedResponseException;
@@ -1424,12 +1358,10 @@ exports.isEmptyObj = isEmptyObj;
 exports.isNum = isNum;
 exports.isString = isString;
 exports.isSpace = isSpace;
-exports.isNodeJS = isNodeJS;
 exports.isSameOrigin = isSameOrigin;
 exports.createValidAbsoluteUrl = createValidAbsoluteUrl;
 exports.isLittleEndian = isLittleEndian;
 exports.isEvalSupported = isEvalSupported;
-exports.loadJpegStream = loadJpegStream;
 exports.log2 = log2;
 exports.readInt8 = readInt8;
 exports.readUint16 = readUint16;
@@ -1456,7 +1388,7 @@ exports.unreachable = unreachable;
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.SimpleXMLParser = exports.DOMSVGFactory = exports.DOMCMapReaderFactory = exports.DOMCanvasFactory = exports.DEFAULT_LINK_REL = exports.getDefaultSetting = exports.LinkTarget = exports.getFilenameFromUrl = exports.isExternalLinkTargetSet = exports.addLinkAttributes = exports.RenderingCancelledException = exports.CustomStyle = undefined;
+exports.DummyStatTimer = exports.StatTimer = exports.SimpleXMLParser = exports.DOMSVGFactory = exports.DOMCMapReaderFactory = exports.DOMCanvasFactory = exports.DEFAULT_LINK_REL = exports.getDefaultSetting = exports.LinkTarget = exports.getFilenameFromUrl = exports.addLinkAttributes = exports.RenderingCancelledException = undefined;
 
 var _util = __w_pdfjs_require__(0);
 
@@ -1635,7 +1567,7 @@ class SimpleXMLParser {
     return { documentElement: nodes.pop() };
   }
   _decodeXML(text) {
-    if (text.indexOf('&') < 0) {
+    if (!text.includes('&')) {
       return text;
     }
     return text.replace(/&(#(x[0-9a-f]+|\d+)|\w+);/gi, function (all, entityName, number) {
@@ -1663,38 +1595,6 @@ class SimpleXMLParser {
     });
   }
 }
-var CustomStyle = function CustomStyleClosure() {
-  var prefixes = ['ms', 'Moz', 'Webkit', 'O'];
-  var _cache = Object.create(null);
-  function CustomStyle() {}
-  CustomStyle.getProp = function get(propName, element) {
-    if (arguments.length === 1 && typeof _cache[propName] === 'string') {
-      return _cache[propName];
-    }
-    element = element || document.documentElement;
-    var style = element.style,
-        prefixed,
-        uPropName;
-    if (typeof style[propName] === 'string') {
-      return _cache[propName] = propName;
-    }
-    uPropName = propName.charAt(0).toUpperCase() + propName.slice(1);
-    for (var i = 0, l = prefixes.length; i < l; i++) {
-      prefixed = prefixes[i] + uPropName;
-      if (typeof style[prefixed] === 'string') {
-        return _cache[propName] = prefixed;
-      }
-    }
-    return _cache[propName] = 'undefined';
-  };
-  CustomStyle.setProp = function set(propName, element, str) {
-    var prop = this.getProp(propName);
-    if (prop !== 'undefined') {
-      element.style[prop] = str;
-    }
-  };
-  return CustomStyle;
-}();
 var RenderingCancelledException = function RenderingCancelledException() {
   function RenderingCancelledException(msg, type) {
     this.message = msg;
@@ -1705,28 +1605,21 @@ var RenderingCancelledException = function RenderingCancelledException() {
   RenderingCancelledException.constructor = RenderingCancelledException;
   return RenderingCancelledException;
 }();
-var LinkTarget = {
+const LinkTarget = {
   NONE: 0,
   SELF: 1,
   BLANK: 2,
   PARENT: 3,
   TOP: 4
 };
-var LinkTargetStringMap = ['', '_self', '_blank', '_parent', '_top'];
-function addLinkAttributes(link, params) {
-  var url = params && params.url;
+const LinkTargetStringMap = ['', '_self', '_blank', '_parent', '_top'];
+function addLinkAttributes(link, { url, target, rel } = {}) {
   link.href = link.title = url ? (0, _util.removeNullCharacters)(url) : '';
   if (url) {
-    var target = params.target;
-    if (typeof target === 'undefined') {
-      target = getDefaultSetting('externalLinkTarget');
-    }
-    link.target = LinkTargetStringMap[target];
-    var rel = params.rel;
-    if (typeof rel === 'undefined') {
-      rel = getDefaultSetting('externalLinkRel');
-    }
-    link.rel = rel;
+    const LinkTargetValues = Object.values(LinkTarget);
+    let targetIndex = LinkTargetValues.includes(target) ? target : LinkTarget.NONE;
+    link.target = LinkTargetStringMap[targetIndex];
+    link.rel = typeof rel === 'string' ? rel : DEFAULT_LINK_REL;
   }
 }
 function getFilenameFromUrl(url) {
@@ -1750,65 +1643,77 @@ function getDefaultSetting(id) {
       return globalSettings ? globalSettings.disableFontFace : false;
     case 'disableCreateObjectURL':
       return globalSettings ? globalSettings.disableCreateObjectURL : false;
-    case 'disableWebGL':
-      return globalSettings ? globalSettings.disableWebGL : true;
     case 'cMapUrl':
       return globalSettings ? globalSettings.cMapUrl : null;
     case 'cMapPacked':
       return globalSettings ? globalSettings.cMapPacked : false;
-    case 'postMessageTransfers':
-      return globalSettings ? globalSettings.postMessageTransfers : true;
-    case 'workerPort':
-      return globalSettings ? globalSettings.workerPort : null;
-    case 'workerSrc':
-      return globalSettings ? globalSettings.workerSrc : null;
-    case 'disableWorker':
-      return globalSettings ? globalSettings.disableWorker : false;
     case 'maxImageSize':
       return globalSettings ? globalSettings.maxImageSize : -1;
-    case 'imageResourcesPath':
-      return globalSettings ? globalSettings.imageResourcesPath : '';
     case 'isEvalSupported':
       return globalSettings ? globalSettings.isEvalSupported : true;
-    case 'externalLinkTarget':
-      if (!globalSettings) {
-        return LinkTarget.NONE;
-      }
-      switch (globalSettings.externalLinkTarget) {
-        case LinkTarget.NONE:
-        case LinkTarget.SELF:
-        case LinkTarget.BLANK:
-        case LinkTarget.PARENT:
-        case LinkTarget.TOP:
-          return globalSettings.externalLinkTarget;
-      }
-      (0, _util.warn)('PDFJS.externalLinkTarget is invalid: ' + globalSettings.externalLinkTarget);
-      globalSettings.externalLinkTarget = LinkTarget.NONE;
-      return LinkTarget.NONE;
-    case 'externalLinkRel':
-      return globalSettings ? globalSettings.externalLinkRel : DEFAULT_LINK_REL;
-    case 'enableStats':
-      return !!(globalSettings && globalSettings.enableStats);
     default:
       throw new Error('Unknown default setting: ' + id);
   }
 }
-function isExternalLinkTargetSet() {
-  var externalLinkTarget = getDefaultSetting('externalLinkTarget');
-  switch (externalLinkTarget) {
-    case LinkTarget.NONE:
-      return false;
-    case LinkTarget.SELF:
-    case LinkTarget.BLANK:
-    case LinkTarget.PARENT:
-    case LinkTarget.TOP:
-      return true;
+class StatTimer {
+  constructor(enable = true) {
+    this.enabled = !!enable;
+    this.started = Object.create(null);
+    this.times = [];
+  }
+  time(name) {
+    if (!this.enabled) {
+      return;
+    }
+    if (name in this.started) {
+      (0, _util.warn)('Timer is already running for ' + name);
+    }
+    this.started[name] = Date.now();
+  }
+  timeEnd(name) {
+    if (!this.enabled) {
+      return;
+    }
+    if (!(name in this.started)) {
+      (0, _util.warn)('Timer has not been started for ' + name);
+    }
+    this.times.push({
+      'name': name,
+      'start': this.started[name],
+      'end': Date.now()
+    });
+    delete this.started[name];
+  }
+  toString() {
+    let times = this.times;
+    let out = '',
+        longest = 0;
+    for (let i = 0, ii = times.length; i < ii; ++i) {
+      let name = times[i]['name'];
+      if (name.length > longest) {
+        longest = name.length;
+      }
+    }
+    for (let i = 0, ii = times.length; i < ii; ++i) {
+      let span = times[i];
+      let duration = span.end - span.start;
+      out += `${span['name'].padEnd(longest)} ${duration}ms\n`;
+    }
+    return out;
   }
 }
-exports.CustomStyle = CustomStyle;
+class DummyStatTimer {
+  constructor() {
+    (0, _util.unreachable)('Cannot initialize DummyStatTimer.');
+  }
+  static time(name) {}
+  static timeEnd(name) {}
+  static toString() {
+    return '';
+  }
+}
 exports.RenderingCancelledException = RenderingCancelledException;
 exports.addLinkAttributes = addLinkAttributes;
-exports.isExternalLinkTargetSet = isExternalLinkTargetSet;
 exports.getFilenameFromUrl = getFilenameFromUrl;
 exports.LinkTarget = LinkTarget;
 exports.getDefaultSetting = getDefaultSetting;
@@ -1817,6 +1722,8 @@ exports.DOMCanvasFactory = DOMCanvasFactory;
 exports.DOMCMapReaderFactory = DOMCMapReaderFactory;
 exports.DOMSVGFactory = DOMSVGFactory;
 exports.SimpleXMLParser = SimpleXMLParser;
+exports.StatTimer = StatTimer;
+exports.DummyStatTimer = DummyStatTimer;
 
 /***/ }),
 /* 2 */
@@ -1837,7 +1744,22 @@ module.exports = typeof window !== 'undefined' && window.Math === Math ? window 
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.build = exports.version = exports.setPDFNetworkStreamClass = exports.PDFPageProxy = exports.PDFDocumentProxy = exports.PDFWorker = exports.PDFDataRangeTransport = exports.LoopbackPort = exports.getDocument = undefined;
+const GlobalWorkerOptions = Object.create(null);
+GlobalWorkerOptions.workerPort = GlobalWorkerOptions.workerPort === undefined ? null : GlobalWorkerOptions.workerPort;
+GlobalWorkerOptions.workerSrc = GlobalWorkerOptions.workerSrc === undefined ? '' : GlobalWorkerOptions.workerSrc;
+exports.GlobalWorkerOptions = GlobalWorkerOptions;
+
+/***/ }),
+/* 4 */
+/***/ (function(module, exports, __w_pdfjs_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.build = exports.version = exports.setPDFNetworkStreamFactory = exports.PDFPageProxy = exports.PDFDocumentProxy = exports.PDFWorker = exports.PDFDataRangeTransport = exports.LoopbackPort = exports.getDocument = undefined;
 
 var _util = __w_pdfjs_require__(0);
 
@@ -1851,23 +1773,26 @@ var _global_scope = __w_pdfjs_require__(2);
 
 var _global_scope2 = _interopRequireDefault(_global_scope);
 
+var _worker_options = __w_pdfjs_require__(3);
+
 var _metadata = __w_pdfjs_require__(5);
 
 var _transport_stream = __w_pdfjs_require__(17);
 
+var _webgl = __w_pdfjs_require__(18);
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 var DEFAULT_RANGE_CHUNK_SIZE = 65536;
-var isWorkerDisabled = false;
-var workerSrc;
-var isPostMessageTransfersDisabled = false;
-var pdfjsFilePath = null;
+let isWorkerDisabled = false;
+let workerSrc;
+const pdfjsFilePath = null;
 var fakeWorkerFilesLoader = null;
 var useRequireEnsure = false;
 ;
-var PDFNetworkStream;
-function setPDFNetworkStreamClass(cls) {
-  PDFNetworkStream = cls;
+var createPDFNetworkStream;
+function setPDFNetworkStreamFactory(pdfNetworkStreamFactory) {
+  createPDFNetworkStream = pdfNetworkStreamFactory;
 }
 function getDocument(src) {
   var task = new PDFDocumentLoadingTask();
@@ -1889,7 +1814,7 @@ function getDocument(src) {
   }
   var params = {};
   var rangeTransport = null;
-  var worker = null;
+  let worker = null;
   var CMapReaderFactory = _dom_utils.DOMCMapReaderFactory;
   for (var key in source) {
     if (key === 'url' && typeof window !== 'undefined') {
@@ -1925,9 +1850,19 @@ function getDocument(src) {
   if (params.nativeImageDecoderSupport === undefined || !nativeImageDecoderValues.includes(params.nativeImageDecoderSupport)) {
     params.nativeImageDecoderSupport = _util.NativeImageDecoding.DECODE;
   }
+  (0, _util.setVerbosityLevel)(params.verbosity);
   if (!worker) {
-    var workerPort = (0, _dom_utils.getDefaultSetting)('workerPort');
-    worker = workerPort ? PDFWorker.fromPort(workerPort) : new PDFWorker();
+    const workerParams = {
+      postMessageTransfers: params.postMessageTransfers,
+      verbosity: params.verbosity
+    };
+    let workerPort = _worker_options.GlobalWorkerOptions.workerPort;
+    if (workerPort) {
+      workerParams.port = workerPort;
+      worker = PDFWorker.fromPort(workerParams);
+    } else {
+      worker = new PDFWorker(workerParams);
+    }
     task._worker = worker;
   }
   var docId = task.docId;
@@ -1943,10 +1878,7 @@ function getDocument(src) {
       if (rangeTransport) {
         networkStream = new _transport_stream.PDFDataTransportStream(params, rangeTransport);
       } else if (!params.data) {
-        networkStream = new PDFNetworkStream({
-          source: params,
-          disableRange: (0, _dom_utils.getDefaultSetting)('disableRange')
-        });
+        networkStream = createPDFNetworkStream(params);
       }
       var messageHandler = new _util.MessageHandler(docId, workerId, worker.port);
       messageHandler.postMessageTransfers = worker.postMessageTransfers;
@@ -1961,10 +1893,10 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
   if (worker.destroyed) {
     return Promise.reject(new Error('Worker was destroyed'));
   }
-  let apiVersion = '2.0.106';
+  let apiVersion = '2.0.402';
+  source.disableRange = (0, _dom_utils.getDefaultSetting)('disableRange');
   source.disableAutoFetch = (0, _dom_utils.getDefaultSetting)('disableAutoFetch');
   source.disableStream = (0, _dom_utils.getDefaultSetting)('disableStream');
-  source.chunkedViewerLoading = !!pdfDataRangeTransport;
   if (pdfDataRangeTransport) {
     source.length = pdfDataRangeTransport.length;
     source.initialData = pdfDataRangeTransport.initialData;
@@ -1983,7 +1915,7 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
     maxImageSize: (0, _dom_utils.getDefaultSetting)('maxImageSize'),
     disableFontFace: (0, _dom_utils.getDefaultSetting)('disableFontFace'),
     disableCreateObjectURL: (0, _dom_utils.getDefaultSetting)('disableCreateObjectURL'),
-    postMessageTransfers: (0, _dom_utils.getDefaultSetting)('postMessageTransfers') && !isPostMessageTransfersDisabled,
+    postMessageTransfers: worker.postMessageTransfers,
     docBaseUrl: source.docBaseUrl,
     nativeImageDecoderSupport: source.nativeImageDecoderSupport,
     ignoreErrors: source.ignoreErrors,
@@ -2073,7 +2005,7 @@ var PDFDataRangeTransport = function pdfDataRangeTransportClosure() {
       this._readyCapability.resolve();
     },
     requestDataRange: function PDFDataRangeTransport_requestDataRange(begin, end) {
-      throw new Error('Abstract method PDFDataRangeTransport.requestDataRange');
+      (0, _util.unreachable)('Abstract method PDFDataRangeTransport.requestDataRange');
     },
     abort: function PDFDataRangeTransport_abort() {}
   };
@@ -2092,7 +2024,7 @@ var PDFDocumentProxy = function PDFDocumentProxyClosure() {
     get fingerprint() {
       return this.pdfInfo.fingerprint;
     },
-    getPage: function PDFDocumentProxy_getPage(pageNumber) {
+    getPage(pageNumber) {
       return this.transport.getPage(pageNumber);
     },
     getPageIndex: function PDFDocumentProxy_getPageIndex(ref) {
@@ -2145,8 +2077,7 @@ var PDFPageProxy = function PDFPageProxyClosure() {
     this.pageIndex = pageIndex;
     this.pageInfo = pageInfo;
     this.transport = transport;
-    this.stats = new _util.StatTimer();
-    this.stats.enabled = (0, _dom_utils.getDefaultSetting)('enableStats');
+    this._stats = (0, _dom_utils.getDefaultSetting)('pdfBug') ? new _dom_utils.StatTimer() : _dom_utils.DummyStatTimer;
     this.commonObjs = transport.commonObjs;
     this.objs = new PDFObjects();
     this.cleanupAfterRender = false;
@@ -2170,11 +2101,8 @@ var PDFPageProxy = function PDFPageProxyClosure() {
     get view() {
       return this.pageInfo.view;
     },
-    getViewport: function PDFPageProxy_getViewport(scale, rotate) {
-      if (arguments.length < 2) {
-        rotate = this.rotate;
-      }
-      return new _util.PageViewport(this.view, scale, rotate, 0, 0);
+    getViewport(scale, rotate = this.rotate, dontFlip = false) {
+      return new _util.PageViewport(this.view, scale, rotate, 0, 0, dontFlip);
     },
     getAnnotations: function PDFPageProxy_getAnnotations(params) {
       var intent = params && params.intent || null;
@@ -2185,11 +2113,12 @@ var PDFPageProxy = function PDFPageProxyClosure() {
       return this.annotationsPromise;
     },
     render: function PDFPageProxy_render(params) {
-      var stats = this.stats;
+      let stats = this._stats;
       stats.time('Overall');
       this.pendingCleanup = false;
       var renderingIntent = params.intent === 'print' ? 'print' : 'display';
       var canvasFactory = params.canvasFactory || new _dom_utils.DOMCanvasFactory();
+      let webGLContext = new _webgl.WebGLContext({ enable: params.enableWebGL });
       if (!this.intentStates[renderingIntent]) {
         this.intentStates[renderingIntent] = Object.create(null);
       }
@@ -2202,7 +2131,7 @@ var PDFPageProxy = function PDFPageProxyClosure() {
           argsArray: [],
           lastChunk: false
         };
-        this.stats.time('Page Request');
+        stats.time('Page Request');
         this.transport.messageHandler.send('RenderPageRequest', {
           pageIndex: this.pageNumber - 1,
           intent: renderingIntent,
@@ -2226,7 +2155,7 @@ var PDFPageProxy = function PDFPageProxyClosure() {
         stats.timeEnd('Rendering');
         stats.timeEnd('Overall');
       };
-      var internalRenderTask = new InternalRenderTask(complete, params, this.objs, this.commonObjs, intentState.operatorList, this.pageNumber, canvasFactory);
+      var internalRenderTask = new InternalRenderTask(complete, params, this.objs, this.commonObjs, intentState.operatorList, this.pageNumber, canvasFactory, webGLContext);
       internalRenderTask.useRequestAnimationFrame = renderingIntent !== 'print';
       if (!intentState.renderTasks) {
         intentState.renderTasks = [];
@@ -2335,11 +2264,11 @@ var PDFPageProxy = function PDFPageProxyClosure() {
       this.pendingCleanup = false;
       return Promise.all(waitOn);
     },
-    cleanup: function PDFPageProxy_cleanup() {
+    cleanup(resetStats = false) {
       this.pendingCleanup = true;
-      this._tryCleanup();
+      this._tryCleanup(resetStats);
     },
-    _tryCleanup: function PDFPageProxy_tryCleanup() {
+    _tryCleanup(resetStats = false) {
       if (!this.pendingCleanup || Object.keys(this.intentStates).some(function (intent) {
         var intentState = this.intentStates[intent];
         return intentState.renderTasks.length !== 0 || intentState.receivingOperatorList;
@@ -2351,6 +2280,9 @@ var PDFPageProxy = function PDFPageProxyClosure() {
       }, this);
       this.objs.clear();
       this.annotationsPromise = null;
+      if (resetStats && this._stats instanceof _dom_utils.StatTimer) {
+        this._stats = new _dom_utils.StatTimer();
+      }
       this.pendingCleanup = false;
     },
     _startRenderPage: function PDFPageProxy_startRenderPage(transparency, intent) {
@@ -2374,6 +2306,9 @@ var PDFPageProxy = function PDFPageProxyClosure() {
         intentState.receivingOperatorList = false;
         this._tryCleanup();
       }
+    },
+    get stats() {
+      return this._stats instanceof _dom_utils.StatTimer ? this._stats : null;
     }
   };
   return PDFPageProxy;
@@ -2395,7 +2330,7 @@ class LoopbackPort {
       var result;
       var buffer;
       if ((buffer = value.buffer) && (0, _util.isArrayBuffer)(buffer)) {
-        var transferable = transfers && transfers.indexOf(buffer) >= 0;
+        var transferable = transfers && transfers.includes(buffer);
         if (value === buffer) {
           result = value;
         } else if (transferable) {
@@ -2449,22 +2384,32 @@ class LoopbackPort {
 var PDFWorker = function PDFWorkerClosure() {
   let nextFakeWorkerId = 0;
   function getWorkerSrc() {
+    if (_worker_options.GlobalWorkerOptions.workerSrc) {
+      return _worker_options.GlobalWorkerOptions.workerSrc;
+    }
     if (typeof workerSrc !== 'undefined') {
       return workerSrc;
     }
-    if ((0, _dom_utils.getDefaultSetting)('workerSrc')) {
-      return (0, _dom_utils.getDefaultSetting)('workerSrc');
+    throw new Error('No "GlobalWorkerOptions.workerSrc" specified.');
+  }
+  function getMainThreadWorkerMessageHandler() {
+    if (typeof window === 'undefined') {
+      return null;
     }
-    throw new Error('No PDFJS.workerSrc specified');
+    return window.pdfjsDistBuildPdfWorker && window.pdfjsDistBuildPdfWorker.WorkerMessageHandler;
   }
   let fakeWorkerFilesLoadedCapability;
   function setupFakeWorkerGlobal() {
-    var WorkerMessageHandler;
     if (fakeWorkerFilesLoadedCapability) {
       return fakeWorkerFilesLoadedCapability.promise;
     }
     fakeWorkerFilesLoadedCapability = (0, _util.createPromiseCapability)();
-    var loader = fakeWorkerFilesLoader || function (callback) {
+    let mainWorkerMessageHandler = getMainThreadWorkerMessageHandler();
+    if (mainWorkerMessageHandler) {
+      fakeWorkerFilesLoadedCapability.resolve(mainWorkerMessageHandler);
+      return fakeWorkerFilesLoadedCapability.promise;
+    }
+    let loader = fakeWorkerFilesLoader || function (callback) {
       _util.Util.loadScript(getWorkerSrc(), function () {
         callback(window.pdfjsDistBuildPdfWorker.WorkerMessageHandler);
       });
@@ -2477,13 +2422,14 @@ var PDFWorker = function PDFWorkerClosure() {
     return URL.createObjectURL(new Blob([wrapper]));
   }
   let pdfWorkerPorts = new WeakMap();
-  function PDFWorker(name, port) {
+  function PDFWorker({ name = null, port = null, postMessageTransfers = true, verbosity = null } = {}) {
     if (port && pdfWorkerPorts.has(port)) {
       throw new Error('Cannot use more than one PDFWorker per port');
     }
     this.name = name;
     this.destroyed = false;
-    this.postMessageTransfers = true;
+    this.postMessageTransfers = postMessageTransfers !== false;
+    this.verbosity = (0, _util.isNum)(verbosity) ? verbosity : (0, _util.getVerbosityLevel)();
     this._readyCapability = (0, _util.createPromiseCapability)();
     this._port = null;
     this._webWorker = null;
@@ -2512,7 +2458,7 @@ var PDFWorker = function PDFWorkerClosure() {
       this._readyCapability.resolve();
     },
     _initialize: function PDFWorker_initialize() {
-      if (!isWorkerDisabled && !(0, _dom_utils.getDefaultSetting)('disableWorker') && typeof Worker !== 'undefined') {
+      if (typeof Worker !== 'undefined' && !isWorkerDisabled && !getMainThreadWorkerMessageHandler()) {
         var workerSrc = getWorkerSrc();
         try {
           var worker = new Worker(workerSrc);
@@ -2546,21 +2492,14 @@ var PDFWorker = function PDFWorkerClosure() {
               this._webWorker = worker;
               if (!data.supportTransfers) {
                 this.postMessageTransfers = false;
-                isPostMessageTransfersDisabled = true;
               }
               this._readyCapability.resolve();
-              messageHandler.send('configure', { verbosity: (0, _util.getVerbosityLevel)() });
+              messageHandler.send('configure', { verbosity: this.verbosity });
             } else {
               this._setupFakeWorker();
               messageHandler.destroy();
               worker.terminate();
             }
-          });
-          messageHandler.on('console_log', function (data) {
-            console.log.apply(console, data);
-          });
-          messageHandler.on('console_error', function (data) {
-            console.error.apply(console, data);
           });
           messageHandler.on('ready', data => {
             worker.removeEventListener('error', onWorkerError);
@@ -2574,9 +2513,8 @@ var PDFWorker = function PDFWorkerClosure() {
               this._setupFakeWorker();
             }
           });
-          var sendTest = function () {
-            var postMessageTransfers = (0, _dom_utils.getDefaultSetting)('postMessageTransfers') && !isPostMessageTransfersDisabled;
-            var testObj = new Uint8Array([postMessageTransfers ? 255 : 0]);
+          const sendTest = () => {
+            let testObj = new Uint8Array([this.postMessageTransfers ? 255 : 0]);
             try {
               messageHandler.send('test', testObj, [testObj.buffer]);
             } catch (ex) {
@@ -2594,7 +2532,7 @@ var PDFWorker = function PDFWorkerClosure() {
       this._setupFakeWorker();
     },
     _setupFakeWorker: function PDFWorker_setupFakeWorker() {
-      if (!isWorkerDisabled && !(0, _dom_utils.getDefaultSetting)('disableWorker')) {
+      if (!isWorkerDisabled) {
         (0, _util.warn)('Setting up fake worker.');
         isWorkerDisabled = true;
       }
@@ -2628,11 +2566,14 @@ var PDFWorker = function PDFWorkerClosure() {
       }
     }
   };
-  PDFWorker.fromPort = function (port) {
-    if (pdfWorkerPorts.has(port)) {
-      return pdfWorkerPorts.get(port);
+  PDFWorker.fromPort = function (params) {
+    if (pdfWorkerPorts.has(params.port)) {
+      return pdfWorkerPorts.get(params.port);
     }
-    return new PDFWorker(null, port);
+    return new PDFWorker(params);
+  };
+  PDFWorker.getWorkerSrc = function () {
+    return getWorkerSrc();
   };
   return PDFWorker;
 }();
@@ -2766,9 +2707,8 @@ var WorkerTransport = function WorkerTransportClosure() {
           _rangeReader.cancel(reason);
         };
       }, this);
-      messageHandler.on('GetDoc', function transportDoc(data) {
-        var pdfInfo = data.pdfInfo;
-        this.numPages = data.pdfInfo.numPages;
+      messageHandler.on('GetDoc', function transportDoc({ pdfInfo }) {
+        this.numPages = pdfInfo.numPages;
         var loadingTask = this.loadingTask;
         var pdfDocument = new PDFDocumentProxy(pdfInfo, this, loadingTask);
         this.pdfDocument = pdfDocument;
@@ -2810,7 +2750,7 @@ var WorkerTransport = function WorkerTransportClosure() {
           return;
         }
         var page = this.pageCache[data.pageIndex];
-        page.stats.timeEnd('Page Request');
+        page._stats.timeEnd('Page Request');
         page._startRenderPage(data.transparency, data.intent);
       }, this);
       messageHandler.on('RenderPageChunk', function transportRender(data) {
@@ -2878,8 +2818,18 @@ var WorkerTransport = function WorkerTransportClosure() {
         switch (type) {
           case 'JpegStream':
             imageData = data[3];
-            (0, _util.loadJpegStream)(id, imageData, pageProxy.objs);
-            break;
+            return new Promise((resolve, reject) => {
+              const img = new Image();
+              img.onload = function () {
+                resolve(img);
+              };
+              img.onerror = function () {
+                reject(new Error('Error during JPEG image loading'));
+              };
+              img.src = imageData;
+            }).then(img => {
+              pageProxy.objs.resolve(id, img);
+            });
           case 'Image':
             imageData = data[3];
             pageProxy.objs.resolve(id, imageData);
@@ -2991,7 +2941,7 @@ var WorkerTransport = function WorkerTransportClosure() {
     getData: function WorkerTransport_getData() {
       return this.messageHandler.sendWithPromise('GetData', null);
     },
-    getPage: function WorkerTransport_getPage(pageNumber, capability) {
+    getPage(pageNumber) {
       if (!Number.isInteger(pageNumber) || pageNumber <= 0 || pageNumber > this.numPages) {
         return Promise.reject(new Error('Invalid page request'));
       }
@@ -3043,10 +2993,11 @@ var WorkerTransport = function WorkerTransportClosure() {
       return this.messageHandler.sendWithPromise('GetOutline', null);
     },
     getMetadata: function WorkerTransport_getMetadata() {
-      return this.messageHandler.sendWithPromise('GetMetadata', null).then(function transportMetadata(results) {
+      return this.messageHandler.sendWithPromise('GetMetadata', null).then(results => {
         return {
           info: results[0],
-          metadata: results[1] ? new _metadata.Metadata(results[1]) : null
+          metadata: results[1] ? new _metadata.Metadata(results[1]) : null,
+          contentDispositionFilename: this._fullReader ? this._fullReader.filename : null
         };
       });
     },
@@ -3145,7 +3096,7 @@ var RenderTask = function RenderTaskClosure() {
 }();
 var InternalRenderTask = function InternalRenderTaskClosure() {
   let canvasInRendering = new WeakMap();
-  function InternalRenderTask(callback, params, objs, commonObjs, operatorList, pageNumber, canvasFactory) {
+  function InternalRenderTask(callback, params, objs, commonObjs, operatorList, pageNumber, canvasFactory, webGLContext) {
     this.callback = callback;
     this.params = params;
     this.objs = objs;
@@ -3154,6 +3105,7 @@ var InternalRenderTask = function InternalRenderTaskClosure() {
     this.operatorList = operatorList;
     this.pageNumber = pageNumber;
     this.canvasFactory = canvasFactory;
+    this.webGLContext = webGLContext;
     this.running = false;
     this.graphicsReadyCallback = null;
     this.graphicsReady = false;
@@ -3183,7 +3135,7 @@ var InternalRenderTask = function InternalRenderTaskClosure() {
         this.stepper.nextBreakPoint = this.stepper.getNextBreakPoint();
       }
       var params = this.params;
-      this.gfx = new _canvas.CanvasGraphics(params.canvasContext, this.commonObjs, this.objs, this.canvasFactory, params.imageLayer);
+      this.gfx = new _canvas.CanvasGraphics(params.canvasContext, this.commonObjs, this.objs, this.canvasFactory, this.webGLContext, params.imageLayer);
       this.gfx.beginDrawing({
         transform: params.transform,
         viewport: params.viewport,
@@ -3258,8 +3210,8 @@ var InternalRenderTask = function InternalRenderTaskClosure() {
 }();
 var version, build;
 {
-  exports.version = version = '2.0.106';
-  exports.build = build = '0052dc2b';
+  exports.version = version = '2.0.402';
+  exports.build = build = '401f3a9d';
 }
 exports.getDocument = getDocument;
 exports.LoopbackPort = LoopbackPort;
@@ -3267,376 +3219,9 @@ exports.PDFDataRangeTransport = PDFDataRangeTransport;
 exports.PDFWorker = PDFWorker;
 exports.PDFDocumentProxy = PDFDocumentProxy;
 exports.PDFPageProxy = PDFPageProxy;
-exports.setPDFNetworkStreamClass = setPDFNetworkStreamClass;
+exports.setPDFNetworkStreamFactory = setPDFNetworkStreamFactory;
 exports.version = version;
 exports.build = build;
-
-/***/ }),
-/* 4 */
-/***/ (function(module, exports, __w_pdfjs_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.WebGLUtils = undefined;
-
-var _dom_utils = __w_pdfjs_require__(1);
-
-var _util = __w_pdfjs_require__(0);
-
-var WebGLUtils = function WebGLUtilsClosure() {
-  function loadShader(gl, code, shaderType) {
-    var shader = gl.createShader(shaderType);
-    gl.shaderSource(shader, code);
-    gl.compileShader(shader);
-    var compiled = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
-    if (!compiled) {
-      var errorMsg = gl.getShaderInfoLog(shader);
-      throw new Error('Error during shader compilation: ' + errorMsg);
-    }
-    return shader;
-  }
-  function createVertexShader(gl, code) {
-    return loadShader(gl, code, gl.VERTEX_SHADER);
-  }
-  function createFragmentShader(gl, code) {
-    return loadShader(gl, code, gl.FRAGMENT_SHADER);
-  }
-  function createProgram(gl, shaders) {
-    var program = gl.createProgram();
-    for (var i = 0, ii = shaders.length; i < ii; ++i) {
-      gl.attachShader(program, shaders[i]);
-    }
-    gl.linkProgram(program);
-    var linked = gl.getProgramParameter(program, gl.LINK_STATUS);
-    if (!linked) {
-      var errorMsg = gl.getProgramInfoLog(program);
-      throw new Error('Error during program linking: ' + errorMsg);
-    }
-    return program;
-  }
-  function createTexture(gl, image, textureId) {
-    gl.activeTexture(textureId);
-    var texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-    return texture;
-  }
-  var currentGL, currentCanvas;
-  function generateGL() {
-    if (currentGL) {
-      return;
-    }
-    currentCanvas = document.createElement('canvas');
-    currentGL = currentCanvas.getContext('webgl', { premultipliedalpha: false });
-  }
-  var smaskVertexShaderCode = '\
-  attribute vec2 a_position;                                    \
-  attribute vec2 a_texCoord;                                    \
-                                                                \
-  uniform vec2 u_resolution;                                    \
-                                                                \
-  varying vec2 v_texCoord;                                      \
-                                                                \
-  void main() {                                                 \
-    vec2 clipSpace = (a_position / u_resolution) * 2.0 - 1.0;   \
-    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);          \
-                                                                \
-    v_texCoord = a_texCoord;                                    \
-  }                                                             ';
-  var smaskFragmentShaderCode = '\
-  precision mediump float;                                      \
-                                                                \
-  uniform vec4 u_backdrop;                                      \
-  uniform int u_subtype;                                        \
-  uniform sampler2D u_image;                                    \
-  uniform sampler2D u_mask;                                     \
-                                                                \
-  varying vec2 v_texCoord;                                      \
-                                                                \
-  void main() {                                                 \
-    vec4 imageColor = texture2D(u_image, v_texCoord);           \
-    vec4 maskColor = texture2D(u_mask, v_texCoord);             \
-    if (u_backdrop.a > 0.0) {                                   \
-      maskColor.rgb = maskColor.rgb * maskColor.a +             \
-                      u_backdrop.rgb * (1.0 - maskColor.a);     \
-    }                                                           \
-    float lum;                                                  \
-    if (u_subtype == 0) {                                       \
-      lum = maskColor.a;                                        \
-    } else {                                                    \
-      lum = maskColor.r * 0.3 + maskColor.g * 0.59 +            \
-            maskColor.b * 0.11;                                 \
-    }                                                           \
-    imageColor.a *= lum;                                        \
-    imageColor.rgb *= imageColor.a;                             \
-    gl_FragColor = imageColor;                                  \
-  }                                                             ';
-  var smaskCache = null;
-  function initSmaskGL() {
-    var canvas, gl;
-    generateGL();
-    canvas = currentCanvas;
-    currentCanvas = null;
-    gl = currentGL;
-    currentGL = null;
-    var vertexShader = createVertexShader(gl, smaskVertexShaderCode);
-    var fragmentShader = createFragmentShader(gl, smaskFragmentShaderCode);
-    var program = createProgram(gl, [vertexShader, fragmentShader]);
-    gl.useProgram(program);
-    var cache = {};
-    cache.gl = gl;
-    cache.canvas = canvas;
-    cache.resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
-    cache.positionLocation = gl.getAttribLocation(program, 'a_position');
-    cache.backdropLocation = gl.getUniformLocation(program, 'u_backdrop');
-    cache.subtypeLocation = gl.getUniformLocation(program, 'u_subtype');
-    var texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
-    var texLayerLocation = gl.getUniformLocation(program, 'u_image');
-    var texMaskLocation = gl.getUniformLocation(program, 'u_mask');
-    var texCoordBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]), gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(texCoordLocation);
-    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.uniform1i(texLayerLocation, 0);
-    gl.uniform1i(texMaskLocation, 1);
-    smaskCache = cache;
-  }
-  function composeSMask(layer, mask, properties) {
-    var width = layer.width,
-        height = layer.height;
-    if (!smaskCache) {
-      initSmaskGL();
-    }
-    var cache = smaskCache,
-        canvas = cache.canvas,
-        gl = cache.gl;
-    canvas.width = width;
-    canvas.height = height;
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    gl.uniform2f(cache.resolutionLocation, width, height);
-    if (properties.backdrop) {
-      gl.uniform4f(cache.resolutionLocation, properties.backdrop[0], properties.backdrop[1], properties.backdrop[2], 1);
-    } else {
-      gl.uniform4f(cache.resolutionLocation, 0, 0, 0, 0);
-    }
-    gl.uniform1i(cache.subtypeLocation, properties.subtype === 'Luminosity' ? 1 : 0);
-    var texture = createTexture(gl, layer, gl.TEXTURE0);
-    var maskTexture = createTexture(gl, mask, gl.TEXTURE1);
-    var buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, width, 0, 0, height, 0, height, width, 0, width, height]), gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(cache.positionLocation);
-    gl.vertexAttribPointer(cache.positionLocation, 2, gl.FLOAT, false, 0, 0);
-    gl.clearColor(0, 0, 0, 0);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-    gl.flush();
-    gl.deleteTexture(texture);
-    gl.deleteTexture(maskTexture);
-    gl.deleteBuffer(buffer);
-    return canvas;
-  }
-  var figuresVertexShaderCode = '\
-  attribute vec2 a_position;                                    \
-  attribute vec3 a_color;                                       \
-                                                                \
-  uniform vec2 u_resolution;                                    \
-  uniform vec2 u_scale;                                         \
-  uniform vec2 u_offset;                                        \
-                                                                \
-  varying vec4 v_color;                                         \
-                                                                \
-  void main() {                                                 \
-    vec2 position = (a_position + u_offset) * u_scale;          \
-    vec2 clipSpace = (position / u_resolution) * 2.0 - 1.0;     \
-    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);          \
-                                                                \
-    v_color = vec4(a_color / 255.0, 1.0);                       \
-  }                                                             ';
-  var figuresFragmentShaderCode = '\
-  precision mediump float;                                      \
-                                                                \
-  varying vec4 v_color;                                         \
-                                                                \
-  void main() {                                                 \
-    gl_FragColor = v_color;                                     \
-  }                                                             ';
-  var figuresCache = null;
-  function initFiguresGL() {
-    var canvas, gl;
-    generateGL();
-    canvas = currentCanvas;
-    currentCanvas = null;
-    gl = currentGL;
-    currentGL = null;
-    var vertexShader = createVertexShader(gl, figuresVertexShaderCode);
-    var fragmentShader = createFragmentShader(gl, figuresFragmentShaderCode);
-    var program = createProgram(gl, [vertexShader, fragmentShader]);
-    gl.useProgram(program);
-    var cache = {};
-    cache.gl = gl;
-    cache.canvas = canvas;
-    cache.resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
-    cache.scaleLocation = gl.getUniformLocation(program, 'u_scale');
-    cache.offsetLocation = gl.getUniformLocation(program, 'u_offset');
-    cache.positionLocation = gl.getAttribLocation(program, 'a_position');
-    cache.colorLocation = gl.getAttribLocation(program, 'a_color');
-    figuresCache = cache;
-  }
-  function drawFigures(width, height, backgroundColor, figures, context) {
-    if (!figuresCache) {
-      initFiguresGL();
-    }
-    var cache = figuresCache,
-        canvas = cache.canvas,
-        gl = cache.gl;
-    canvas.width = width;
-    canvas.height = height;
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    gl.uniform2f(cache.resolutionLocation, width, height);
-    var count = 0;
-    var i, ii, rows;
-    for (i = 0, ii = figures.length; i < ii; i++) {
-      switch (figures[i].type) {
-        case 'lattice':
-          rows = figures[i].coords.length / figures[i].verticesPerRow | 0;
-          count += (rows - 1) * (figures[i].verticesPerRow - 1) * 6;
-          break;
-        case 'triangles':
-          count += figures[i].coords.length;
-          break;
-      }
-    }
-    var coords = new Float32Array(count * 2);
-    var colors = new Uint8Array(count * 3);
-    var coordsMap = context.coords,
-        colorsMap = context.colors;
-    var pIndex = 0,
-        cIndex = 0;
-    for (i = 0, ii = figures.length; i < ii; i++) {
-      var figure = figures[i],
-          ps = figure.coords,
-          cs = figure.colors;
-      switch (figure.type) {
-        case 'lattice':
-          var cols = figure.verticesPerRow;
-          rows = ps.length / cols | 0;
-          for (var row = 1; row < rows; row++) {
-            var offset = row * cols + 1;
-            for (var col = 1; col < cols; col++, offset++) {
-              coords[pIndex] = coordsMap[ps[offset - cols - 1]];
-              coords[pIndex + 1] = coordsMap[ps[offset - cols - 1] + 1];
-              coords[pIndex + 2] = coordsMap[ps[offset - cols]];
-              coords[pIndex + 3] = coordsMap[ps[offset - cols] + 1];
-              coords[pIndex + 4] = coordsMap[ps[offset - 1]];
-              coords[pIndex + 5] = coordsMap[ps[offset - 1] + 1];
-              colors[cIndex] = colorsMap[cs[offset - cols - 1]];
-              colors[cIndex + 1] = colorsMap[cs[offset - cols - 1] + 1];
-              colors[cIndex + 2] = colorsMap[cs[offset - cols - 1] + 2];
-              colors[cIndex + 3] = colorsMap[cs[offset - cols]];
-              colors[cIndex + 4] = colorsMap[cs[offset - cols] + 1];
-              colors[cIndex + 5] = colorsMap[cs[offset - cols] + 2];
-              colors[cIndex + 6] = colorsMap[cs[offset - 1]];
-              colors[cIndex + 7] = colorsMap[cs[offset - 1] + 1];
-              colors[cIndex + 8] = colorsMap[cs[offset - 1] + 2];
-              coords[pIndex + 6] = coords[pIndex + 2];
-              coords[pIndex + 7] = coords[pIndex + 3];
-              coords[pIndex + 8] = coords[pIndex + 4];
-              coords[pIndex + 9] = coords[pIndex + 5];
-              coords[pIndex + 10] = coordsMap[ps[offset]];
-              coords[pIndex + 11] = coordsMap[ps[offset] + 1];
-              colors[cIndex + 9] = colors[cIndex + 3];
-              colors[cIndex + 10] = colors[cIndex + 4];
-              colors[cIndex + 11] = colors[cIndex + 5];
-              colors[cIndex + 12] = colors[cIndex + 6];
-              colors[cIndex + 13] = colors[cIndex + 7];
-              colors[cIndex + 14] = colors[cIndex + 8];
-              colors[cIndex + 15] = colorsMap[cs[offset]];
-              colors[cIndex + 16] = colorsMap[cs[offset] + 1];
-              colors[cIndex + 17] = colorsMap[cs[offset] + 2];
-              pIndex += 12;
-              cIndex += 18;
-            }
-          }
-          break;
-        case 'triangles':
-          for (var j = 0, jj = ps.length; j < jj; j++) {
-            coords[pIndex] = coordsMap[ps[j]];
-            coords[pIndex + 1] = coordsMap[ps[j] + 1];
-            colors[cIndex] = colorsMap[cs[j]];
-            colors[cIndex + 1] = colorsMap[cs[j] + 1];
-            colors[cIndex + 2] = colorsMap[cs[j] + 2];
-            pIndex += 2;
-            cIndex += 3;
-          }
-          break;
-      }
-    }
-    if (backgroundColor) {
-      gl.clearColor(backgroundColor[0] / 255, backgroundColor[1] / 255, backgroundColor[2] / 255, 1.0);
-    } else {
-      gl.clearColor(0, 0, 0, 0);
-    }
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    var coordsBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, coordsBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, coords, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(cache.positionLocation);
-    gl.vertexAttribPointer(cache.positionLocation, 2, gl.FLOAT, false, 0, 0);
-    var colorsBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, colorsBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(cache.colorLocation);
-    gl.vertexAttribPointer(cache.colorLocation, 3, gl.UNSIGNED_BYTE, false, 0, 0);
-    gl.uniform2f(cache.scaleLocation, context.scaleX, context.scaleY);
-    gl.uniform2f(cache.offsetLocation, context.offsetX, context.offsetY);
-    gl.drawArrays(gl.TRIANGLES, 0, count);
-    gl.flush();
-    gl.deleteBuffer(coordsBuffer);
-    gl.deleteBuffer(colorsBuffer);
-    return canvas;
-  }
-  function cleanup() {
-    if (smaskCache && smaskCache.canvas) {
-      smaskCache.canvas.width = 0;
-      smaskCache.canvas.height = 0;
-    }
-    if (figuresCache && figuresCache.canvas) {
-      figuresCache.canvas.width = 0;
-      figuresCache.canvas.height = 0;
-    }
-    smaskCache = null;
-    figuresCache = null;
-  }
-  return {
-    get isEnabled() {
-      if ((0, _dom_utils.getDefaultSetting)('disableWebGL')) {
-        return false;
-      }
-      var enabled = false;
-      try {
-        generateGL();
-        enabled = !!currentGL;
-      } catch (e) {}
-      return (0, _util.shadow)(this, 'isEnabled', enabled);
-    },
-    composeSMask,
-    drawFigures,
-    clear: cleanup
-  };
-}();
-exports.WebGLUtils = WebGLUtils;
 
 /***/ }),
 /* 5 */
@@ -3667,6 +3252,20 @@ class Metadata {
     return data.replace(/>\\376\\377([^<]+)/g, function (all, codes) {
       let bytes = codes.replace(/\\([0-3])([0-7])([0-7])/g, function (code, d1, d2, d3) {
         return String.fromCharCode(d1 * 64 + d2 * 8 + d3 * 1);
+      }).replace(/&(amp|apos|gt|lt|quot);/g, function (str, name) {
+        switch (name) {
+          case 'amp':
+            return '&';
+          case 'apos':
+            return '\'';
+          case 'gt':
+            return '>';
+          case 'lt':
+            return '<';
+          case 'quot':
+            return '\"';
+        }
+        throw new Error(`_repair: ${name} isn't defined.`);
       });
       let chars = '';
       for (let i = 0, ii = bytes.length; i < ii; i += 2) {
@@ -3754,8 +3353,7 @@ class AnnotationElementFactory {
             } else if (parameters.data.checkBox) {
               return new CheckboxWidgetAnnotationElement(parameters);
             }
-            (0, _util.warn)('Unimplemented button widget annotation: pushbutton');
-            break;
+            return new PushButtonWidgetAnnotationElement(parameters);
           case 'Ch':
             return new ChoiceWidgetAnnotationElement(parameters);
         }
@@ -3814,8 +3412,8 @@ class AnnotationElement {
     let height = data.rect[3] - data.rect[1];
     container.setAttribute('data-annotation-id', data.id);
     let rect = _util.Util.normalizeRect([data.rect[0], page.view[3] - data.rect[1] + page.view[1], data.rect[2], page.view[3] - data.rect[3] + page.view[1]]);
-    _dom_utils.CustomStyle.setProp('transform', container, 'matrix(' + viewport.transform.join(',') + ')');
-    _dom_utils.CustomStyle.setProp('transformOrigin', container, -rect[0] + 'px ' + -rect[1] + 'px');
+    container.style.transform = 'matrix(' + viewport.transform.join(',') + ')';
+    container.style.transformOrigin = -rect[0] + 'px ' + -rect[1] + 'px';
     if (!ignoreBorder && data.borderStyle.width > 0) {
       container.style.borderWidth = data.borderStyle.width + 'px';
       if (data.borderStyle.style !== _util.AnnotationBorderStyleType.UNDERLINE) {
@@ -3826,7 +3424,7 @@ class AnnotationElement {
       let verticalRadius = data.borderStyle.verticalCornerRadius;
       if (horizontalRadius > 0 || verticalRadius > 0) {
         let radius = horizontalRadius + 'px / ' + verticalRadius + 'px';
-        _dom_utils.CustomStyle.setProp('borderRadius', container, radius);
+        container.style.borderRadius = radius;
       }
       switch (data.borderStyle.style) {
         case _util.AnnotationBorderStyleType.SOLID:
@@ -3879,7 +3477,7 @@ class AnnotationElement {
     container.appendChild(popup);
   }
   render() {
-    throw new Error('Abstract method `AnnotationElement.render` called');
+    (0, _util.unreachable)('Abstract method `AnnotationElement.render` called');
   }
 }
 class LinkAnnotationElement extends AnnotationElement {
@@ -3889,16 +3487,18 @@ class LinkAnnotationElement extends AnnotationElement {
   }
   render() {
     this.container.className = 'linkAnnotation';
+    let { data, linkService } = this;
     let link = document.createElement('a');
     (0, _dom_utils.addLinkAttributes)(link, {
-      url: this.data.url,
-      target: this.data.newWindow ? _dom_utils.LinkTarget.BLANK : undefined
+      url: data.url,
+      target: data.newWindow ? _dom_utils.LinkTarget.BLANK : linkService.externalLinkTarget,
+      rel: linkService.externalLinkRel
     });
-    if (!this.data.url) {
-      if (this.data.action) {
-        this._bindNamedAction(link, this.data.action);
+    if (!data.url) {
+      if (data.action) {
+        this._bindNamedAction(link, data.action);
       } else {
-        this._bindLink(link, this.data.dest);
+        this._bindLink(link, data.dest);
       }
     }
     this.container.appendChild(link);
@@ -4043,6 +3643,13 @@ class RadioButtonWidgetAnnotationElement extends WidgetAnnotationElement {
     return this.container;
   }
 }
+class PushButtonWidgetAnnotationElement extends LinkAnnotationElement {
+  render() {
+    let container = super.render();
+    container.className = 'buttonWidgetAnnotation pushButton';
+    return container;
+  }
+}
 class ChoiceWidgetAnnotationElement extends WidgetAnnotationElement {
   constructor(parameters) {
     super(parameters, parameters.renderInteractiveForms);
@@ -4062,7 +3669,7 @@ class ChoiceWidgetAnnotationElement extends WidgetAnnotationElement {
       let optionElement = document.createElement('option');
       optionElement.textContent = option.displayValue;
       optionElement.value = option.exportValue;
-      if (this.data.fieldValue.indexOf(option.displayValue) >= 0) {
+      if (this.data.fieldValue.includes(option.displayValue)) {
         optionElement.setAttribute('selected', true);
       }
       selectElement.appendChild(optionElement);
@@ -4079,7 +3686,7 @@ class PopupAnnotationElement extends AnnotationElement {
   render() {
     const IGNORE_TYPES = ['Line', 'Square', 'Circle', 'PolyLine', 'Polygon'];
     this.container.className = 'popupAnnotation';
-    if (IGNORE_TYPES.indexOf(this.data.parentType) >= 0) {
+    if (IGNORE_TYPES.includes(this.data.parentType)) {
       return this.container;
     }
     let selector = '[data-annotation-id="' + this.data.parentId + '"]';
@@ -4096,7 +3703,7 @@ class PopupAnnotationElement extends AnnotationElement {
     });
     let parentLeft = parseFloat(parentElement.style.left);
     let parentWidth = parseFloat(parentElement.style.width);
-    _dom_utils.CustomStyle.setProp('transformOrigin', this.container, -(parentLeft + parentWidth) + 'px -' + parentElement.style.top);
+    this.container.style.transformOrigin = -(parentLeft + parentWidth) + 'px -' + parentElement.style.top;
     this.container.style.left = parentLeft + parentWidth + 'px';
     this.container.appendChild(popup.render());
     return this.container;
@@ -4404,7 +4011,7 @@ class AnnotationLayer {
         viewport: parameters.viewport,
         linkService: parameters.linkService,
         downloadManager: parameters.downloadManager,
-        imageResourcesPath: parameters.imageResourcesPath || (0, _dom_utils.getDefaultSetting)('imageResourcesPath'),
+        imageResourcesPath: parameters.imageResourcesPath || '',
         renderInteractiveForms: parameters.renderInteractiveForms || false,
         svgFactory: new _dom_utils.DOMSVGFactory()
       });
@@ -4418,7 +4025,7 @@ class AnnotationLayer {
       let data = parameters.annotations[i];
       let element = parameters.div.querySelector('[data-annotation-id="' + data.id + '"]');
       if (element) {
-        _dom_utils.CustomStyle.setProp('transform', element, 'matrix(' + parameters.viewport.transform.join(',') + ')');
+        element.style.transform = 'matrix(' + parameters.viewport.transform.join(',') + ')';
       }
     }
     parameters.div.removeAttribute('hidden');
@@ -4852,7 +4459,7 @@ var renderTextLayer = function renderTextLayerClosure() {
       }
       if (transform !== '') {
         textDivProperties.originalTransform = transform;
-        _dom_utils.CustomStyle.setProp('transform', textDiv, transform);
+        textDiv.style.transform = transform;
       }
       this._textDivProperties.set(textDiv, textDivProperties);
       textLayerFrag.appendChild(textDiv);
@@ -4938,11 +4545,11 @@ var renderTextLayer = function renderTextLayerClosure() {
             div.setAttribute('style', divProperties.style + padding);
           }
           if (transform !== '') {
-            _dom_utils.CustomStyle.setProp('transform', div, transform);
+            div.style.transform = transform;
           }
         } else {
           div.style.padding = 0;
-          _dom_utils.CustomStyle.setProp('transform', div, divProperties.originalTransform || '');
+          div.style.transform = divProperties.originalTransform || '';
         }
       }
     }
@@ -4980,6 +4587,12 @@ var _util = __w_pdfjs_require__(0);
 
 var _dom_utils = __w_pdfjs_require__(1);
 
+var _is_node = __w_pdfjs_require__(19);
+
+var _is_node2 = _interopRequireDefault(_is_node);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
 var SVGGraphics = function () {
   throw new Error('Not implemented: SVGGraphics');
 };
@@ -4993,15 +4606,16 @@ exports.SVGGraphics = SVGGraphics;
 "use strict";
 
 
-var pdfjsVersion = '2.0.106';
-var pdfjsBuild = '0052dc2b';
+var pdfjsVersion = '2.0.402';
+var pdfjsBuild = '401f3a9d';
 var pdfjsSharedUtil = __w_pdfjs_require__(0);
 var pdfjsDisplayGlobal = __w_pdfjs_require__(13);
-var pdfjsDisplayAPI = __w_pdfjs_require__(3);
+var pdfjsDisplayAPI = __w_pdfjs_require__(4);
 var pdfjsDisplayTextLayer = __w_pdfjs_require__(7);
 var pdfjsDisplayAnnotationLayer = __w_pdfjs_require__(6);
 var pdfjsDisplayDOMUtils = __w_pdfjs_require__(1);
 var pdfjsDisplaySVG = __w_pdfjs_require__(8);
+let pdfjsDisplayWorkerOptions = __w_pdfjs_require__(3);
 ;
 exports.PDFJS = pdfjsDisplayGlobal.PDFJS;
 exports.build = pdfjsDisplayAPI.build;
@@ -5012,7 +4626,6 @@ exports.PDFDataRangeTransport = pdfjsDisplayAPI.PDFDataRangeTransport;
 exports.PDFWorker = pdfjsDisplayAPI.PDFWorker;
 exports.renderTextLayer = pdfjsDisplayTextLayer.renderTextLayer;
 exports.AnnotationLayer = pdfjsDisplayAnnotationLayer.AnnotationLayer;
-exports.CustomStyle = pdfjsDisplayDOMUtils.CustomStyle;
 exports.createPromiseCapability = pdfjsSharedUtil.createPromiseCapability;
 exports.PasswordResponses = pdfjsSharedUtil.PasswordResponses;
 exports.InvalidPDFException = pdfjsSharedUtil.InvalidPDFException;
@@ -5021,6 +4634,7 @@ exports.SVGGraphics = pdfjsDisplaySVG.SVGGraphics;
 exports.NativeImageDecoding = pdfjsSharedUtil.NativeImageDecoding;
 exports.UnexpectedResponseException = pdfjsSharedUtil.UnexpectedResponseException;
 exports.OPS = pdfjsSharedUtil.OPS;
+exports.VerbosityLevel = pdfjsSharedUtil.VerbosityLevel;
 exports.UNSUPPORTED_FEATURES = pdfjsSharedUtil.UNSUPPORTED_FEATURES;
 exports.createValidAbsoluteUrl = pdfjsSharedUtil.createValidAbsoluteUrl;
 exports.createObjectURL = pdfjsSharedUtil.createObjectURL;
@@ -5029,8 +4643,9 @@ exports.shadow = pdfjsSharedUtil.shadow;
 exports.createBlob = pdfjsSharedUtil.createBlob;
 exports.RenderingCancelledException = pdfjsDisplayDOMUtils.RenderingCancelledException;
 exports.getFilenameFromUrl = pdfjsDisplayDOMUtils.getFilenameFromUrl;
+exports.LinkTarget = pdfjsDisplayDOMUtils.LinkTarget;
 exports.addLinkAttributes = pdfjsDisplayDOMUtils.addLinkAttributes;
-exports.StatTimer = pdfjsSharedUtil.StatTimer;
+exports.GlobalWorkerOptions = pdfjsDisplayWorkerOptions.GlobalWorkerOptions;
 
 /***/ }),
 /* 10 */
@@ -8093,17 +7708,19 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.PDFJS = exports.globalScope = undefined;
 
-var _dom_utils = __w_pdfjs_require__(1);
-
 var _util = __w_pdfjs_require__(0);
 
-var _api = __w_pdfjs_require__(3);
+var _dom_utils = __w_pdfjs_require__(1);
+
+var _api = __w_pdfjs_require__(4);
 
 var _annotation_layer = __w_pdfjs_require__(6);
 
 var _global_scope = __w_pdfjs_require__(2);
 
 var _global_scope2 = _interopRequireDefault(_global_scope);
+
+var _worker_options = __w_pdfjs_require__(3);
 
 var _metadata = __w_pdfjs_require__(5);
 
@@ -8117,29 +7734,9 @@ if (!_global_scope2.default.PDFJS) {
   _global_scope2.default.PDFJS = {};
 }
 var PDFJS = _global_scope2.default.PDFJS;
-{
-  PDFJS.version = '2.0.106';
-  PDFJS.build = '0052dc2b';
-}
 PDFJS.pdfBug = false;
-if (PDFJS.verbosity !== undefined) {
-  (0, _util.setVerbosityLevel)(PDFJS.verbosity);
-}
-delete PDFJS.verbosity;
-Object.defineProperty(PDFJS, 'verbosity', {
-  get() {
-    return (0, _util.getVerbosityLevel)();
-  },
-  set(level) {
-    (0, _util.setVerbosityLevel)(level);
-  },
-  enumerable: true,
-  configurable: true
-});
-PDFJS.VERBOSITY_LEVELS = _util.VERBOSITY_LEVELS;
 PDFJS.OPS = _util.OPS;
 PDFJS.UNSUPPORTED_FEATURES = _util.UNSUPPORTED_FEATURES;
-PDFJS.isValidUrl = _dom_utils.isValidUrl;
 PDFJS.shadow = _util.shadow;
 PDFJS.createBlob = _util.createBlob;
 PDFJS.createObjectURL = function PDFJS_createObjectURL(data, contentType) {
@@ -8165,17 +7762,11 @@ PDFJS.maxImageSize = PDFJS.maxImageSize === undefined ? -1 : PDFJS.maxImageSize;
 PDFJS.cMapUrl = PDFJS.cMapUrl === undefined ? null : PDFJS.cMapUrl;
 PDFJS.cMapPacked = PDFJS.cMapPacked === undefined ? false : PDFJS.cMapPacked;
 PDFJS.disableFontFace = PDFJS.disableFontFace === undefined ? false : PDFJS.disableFontFace;
-PDFJS.imageResourcesPath = PDFJS.imageResourcesPath === undefined ? '' : PDFJS.imageResourcesPath;
-PDFJS.disableWorker = PDFJS.disableWorker === undefined ? false : PDFJS.disableWorker;
-PDFJS.workerSrc = PDFJS.workerSrc === undefined ? null : PDFJS.workerSrc;
-PDFJS.workerPort = PDFJS.workerPort === undefined ? null : PDFJS.workerPort;
 PDFJS.disableRange = PDFJS.disableRange === undefined ? false : PDFJS.disableRange;
 PDFJS.disableStream = PDFJS.disableStream === undefined ? false : PDFJS.disableStream;
 PDFJS.disableAutoFetch = PDFJS.disableAutoFetch === undefined ? false : PDFJS.disableAutoFetch;
 PDFJS.pdfBug = PDFJS.pdfBug === undefined ? false : PDFJS.pdfBug;
-PDFJS.postMessageTransfers = PDFJS.postMessageTransfers === undefined ? true : PDFJS.postMessageTransfers;
 PDFJS.disableCreateObjectURL = PDFJS.disableCreateObjectURL === undefined ? false : PDFJS.disableCreateObjectURL;
-PDFJS.disableWebGL = PDFJS.disableWebGL === undefined ? true : PDFJS.disableWebGL;
 PDFJS.externalLinkTarget = PDFJS.externalLinkTarget === undefined ? _dom_utils.LinkTarget.NONE : PDFJS.externalLinkTarget;
 PDFJS.externalLinkRel = PDFJS.externalLinkRel === undefined ? _dom_utils.DEFAULT_LINK_REL : PDFJS.externalLinkRel;
 PDFJS.isEvalSupported = PDFJS.isEvalSupported === undefined ? true : PDFJS.isEvalSupported;
@@ -8183,11 +7774,8 @@ PDFJS.getDocument = _api.getDocument;
 PDFJS.LoopbackPort = _api.LoopbackPort;
 PDFJS.PDFDataRangeTransport = _api.PDFDataRangeTransport;
 PDFJS.PDFWorker = _api.PDFWorker;
-PDFJS.CustomStyle = _dom_utils.CustomStyle;
-PDFJS.LinkTarget = _dom_utils.LinkTarget;
-PDFJS.addLinkAttributes = _dom_utils.addLinkAttributes;
+PDFJS.GlobalWorkerOptions = _worker_options.GlobalWorkerOptions;
 PDFJS.getFilenameFromUrl = _dom_utils.getFilenameFromUrl;
-PDFJS.isExternalLinkTargetSet = _dom_utils.isExternalLinkTargetSet;
 PDFJS.AnnotationLayer = _annotation_layer.AnnotationLayer;
 PDFJS.renderTextLayer = _text_layer.renderTextLayer;
 PDFJS.Metadata = _metadata.Metadata;
@@ -8335,8 +7923,6 @@ exports.CanvasGraphics = undefined;
 var _util = __w_pdfjs_require__(0);
 
 var _pattern_helper = __w_pdfjs_require__(16);
-
-var _webgl = __w_pdfjs_require__(4);
 
 var MIN_FONT_SIZE = 16;
 var MAX_FONT_SIZE = 100;
@@ -8634,7 +8220,7 @@ var CanvasExtraState = function CanvasExtraStateClosure() {
 var CanvasGraphics = function CanvasGraphicsClosure() {
   var EXECUTION_TIME = 15;
   var EXECUTION_STEPS = 10;
-  function CanvasGraphics(canvasCtx, commonObjs, objs, canvasFactory, imageLayer) {
+  function CanvasGraphics(canvasCtx, commonObjs, objs, canvasFactory, webGLContext, imageLayer) {
     this.ctx = canvasCtx;
     this.current = new CanvasExtraState();
     this.stateStack = [];
@@ -8645,6 +8231,7 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
     this.commonObjs = commonObjs;
     this.objs = objs;
     this.canvasFactory = canvasFactory;
+    this.webGLContext = webGLContext;
     this.imageLayer = imageLayer;
     this.groupStack = [];
     this.processingType3 = null;
@@ -8865,15 +8452,19 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
       maskCtx.putImageData(layerData, 0, row);
     }
   }
-  function composeSMask(ctx, smask, layerCtx) {
+  function composeSMask(ctx, smask, layerCtx, webGLContext) {
     var mask = smask.canvas;
     var maskCtx = smask.context;
     ctx.setTransform(smask.scaleX, 0, 0, smask.scaleY, smask.offsetX, smask.offsetY);
     var backdrop = smask.backdrop || null;
-    if (!smask.transferMap && _webgl.WebGLUtils.isEnabled) {
-      var composed = _webgl.WebGLUtils.composeSMask(layerCtx.canvas, mask, {
-        subtype: smask.subtype,
-        backdrop
+    if (!smask.transferMap && webGLContext.isEnabled) {
+      let composed = webGLContext.composeSMask({
+        layer: layerCtx.canvas,
+        mask,
+        properties: {
+          subtype: smask.subtype,
+          backdrop
+        }
       });
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(composed, smask.offsetX, smask.offsetY);
@@ -8974,7 +8565,7 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
         this.transparentCanvas = null;
       }
       this.cachedCanvases.clear();
-      _webgl.WebGLUtils.clear();
+      this.webGLContext.clear();
       if (this.imageLayer) {
         this.imageLayer.endLayout();
       }
@@ -9082,7 +8673,7 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
       var groupCtx = this.ctx;
       this.groupLevel--;
       this.ctx = this.groupStack.pop();
-      composeSMask(this.ctx, this.current.activeSMask, groupCtx);
+      composeSMask(this.ctx, this.current.activeSMask, groupCtx, this.webGLContext);
       this.ctx.restore();
       this.ctx.save();
       copyCtxState(groupCtx, this.ctx);
@@ -9105,7 +8696,7 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
       var groupCtx = this.ctx;
       this.groupLevel--;
       this.ctx = this.groupStack.pop();
-      composeSMask(this.ctx, this.current.activeSMask, groupCtx);
+      composeSMask(this.ctx, this.current.activeSMask, groupCtx, this.webGLContext);
       this.ctx.restore();
       copyCtxState(groupCtx, this.ctx);
       var deltaTransform = _util.Util.transform(this.current.activeSMask.startTransformInverse, groupCtx.mozCurrentTransform);
@@ -9373,7 +8964,7 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
     nextLine: function CanvasGraphics_nextLine() {
       this.moveText(0, this.current.leading);
     },
-    paintChar: function CanvasGraphics_paintChar(character, x, y) {
+    paintChar(character, x, y, patternTransform) {
       var ctx = this.ctx;
       var current = this.current;
       var font = current.font;
@@ -9381,15 +8972,19 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
       var fontSize = current.fontSize / current.fontSizeScale;
       var fillStrokeMode = textRenderingMode & _util.TextRenderingMode.FILL_STROKE_MASK;
       var isAddToPathSet = !!(textRenderingMode & _util.TextRenderingMode.ADD_TO_PATH_FLAG);
+      let patternFill = current.patternFill && font.data;
       var addToPath;
-      if (font.disableFontFace || isAddToPathSet) {
+      if (font.disableFontFace || isAddToPathSet || patternFill) {
         addToPath = font.getPathGenerator(this.commonObjs, character);
       }
-      if (font.disableFontFace) {
+      if (font.disableFontFace || patternFill) {
         ctx.save();
         ctx.translate(x, y);
         ctx.beginPath();
         addToPath(ctx, fontSize);
+        if (patternTransform) {
+          ctx.setTransform.apply(ctx, patternTransform);
+        }
         if (fillStrokeMode === _util.TextRenderingMode.FILL || fillStrokeMode === _util.TextRenderingMode.FILL_STROKE) {
           ctx.fill();
         }
@@ -9451,13 +9046,18 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
       var spacingDir = vertical ? 1 : -1;
       var defaultVMetrics = font.defaultVMetrics;
       var widthAdvanceScale = fontSize * current.fontMatrix[0];
-      var simpleFillText = current.textRenderingMode === _util.TextRenderingMode.FILL && !font.disableFontFace;
+      var simpleFillText = current.textRenderingMode === _util.TextRenderingMode.FILL && !font.disableFontFace && !current.patternFill;
       ctx.save();
+      let patternTransform;
+      if (current.patternFill) {
+        ctx.save();
+        let pattern = current.fillColor.getPattern(ctx, this);
+        patternTransform = ctx.mozCurrentTransform;
+        ctx.restore();
+        ctx.fillStyle = pattern;
+      }
       ctx.transform.apply(ctx, current.textMatrix);
       ctx.translate(current.x, current.y + current.textRise);
-      if (current.patternFill) {
-        ctx.fillStyle = current.fillColor.getPattern(ctx, this);
-      }
       if (fontDirection > 0) {
         ctx.scale(textHScale, -1);
       } else {
@@ -9522,11 +9122,11 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
           if (simpleFillText && !accent) {
             ctx.fillText(character, scaledX, scaledY);
           } else {
-            this.paintChar(character, scaledX, scaledY);
+            this.paintChar(character, scaledX, scaledY, patternTransform);
             if (accent) {
               scaledAccentX = scaledX + accent.offset.x / fontSizeScale;
               scaledAccentY = scaledY - accent.offset.y / fontSizeScale;
-              this.paintChar(accent.fontChar, scaledAccentX, scaledAccentY);
+              this.paintChar(accent.fontChar, scaledAccentX, scaledAccentY, patternTransform);
             }
           }
         }
@@ -9606,7 +9206,7 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
         var baseTransform = this.baseTransform || this.ctx.mozCurrentTransform.slice();
         var canvasGraphicsFactory = {
           createCanvasGraphics: ctx => {
-            return new CanvasGraphics(ctx, this.commonObjs, this.objs, this.canvasFactory);
+            return new CanvasGraphics(ctx, this.commonObjs, this.objs, this.canvasFactory, this.webGLContext);
           }
         };
         pattern = new _pattern_helper.TilingPattern(IR, color, this.ctx, canvasGraphicsFactory, baseTransform);
@@ -9658,10 +9258,10 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
       this.restore();
     },
     beginInlineImage: function CanvasGraphics_beginInlineImage() {
-      throw new Error('Should not call beginInlineImage');
+      (0, _util.unreachable)('Should not call beginInlineImage');
     },
     beginImageData: function CanvasGraphics_beginImageData() {
-      throw new Error('Should not call beginImageData');
+      (0, _util.unreachable)('Should not call beginImageData');
     },
     paintFormXObjectBegin: function CanvasGraphics_paintFormXObjectBegin(matrix, bbox) {
       this.save();
@@ -10063,8 +9663,6 @@ exports.TilingPattern = exports.getShadingPatternFromIR = undefined;
 
 var _util = __w_pdfjs_require__(0);
 
-var _webgl = __w_pdfjs_require__(4);
-
 var ShadingIRs = {};
 ShadingIRs.RadialAxial = {
   fromIR: function RadialAxial_fromIR(raw) {
@@ -10204,7 +9802,7 @@ var createMeshCanvas = function createMeshCanvasClosure() {
         throw new Error('illegal figure');
     }
   }
-  function createMeshCanvas(bounds, combinesScale, coords, colors, figures, backgroundColor, cachedCanvases) {
+  function createMeshCanvas(bounds, combinesScale, coords, colors, figures, backgroundColor, cachedCanvases, webGLContext) {
     var EXPECTED_SCALE = 1.1;
     var MAX_PATTERN_SIZE = 3000;
     var BORDER_SIZE = 2;
@@ -10227,8 +9825,14 @@ var createMeshCanvas = function createMeshCanvasClosure() {
     var paddedWidth = width + BORDER_SIZE * 2;
     var paddedHeight = height + BORDER_SIZE * 2;
     var canvas, tmpCanvas, i, ii;
-    if (_webgl.WebGLUtils.isEnabled) {
-      canvas = _webgl.WebGLUtils.drawFigures(width, height, backgroundColor, figures, context);
+    if (webGLContext.isEnabled) {
+      canvas = webGLContext.drawFigures({
+        width,
+        height,
+        backgroundColor,
+        figures,
+        context
+      });
       tmpCanvas = cachedCanvases.getCanvas('mesh', paddedWidth, paddedHeight, false);
       tmpCanvas.context.drawImage(canvas, BORDER_SIZE, BORDER_SIZE);
       canvas = tmpCanvas.canvas;
@@ -10282,7 +9886,7 @@ ShadingIRs.Mesh = {
             scale = [scale[0] * matrixScale[0], scale[1] * matrixScale[1]];
           }
         }
-        var temporaryPatternCanvas = createMeshCanvas(bounds, scale, coords, colors, figures, shadingFill ? null : background, owner.cachedCanvases);
+        var temporaryPatternCanvas = createMeshCanvas(bounds, scale, coords, colors, figures, shadingFill ? null : background, owner.cachedCanvases, owner.webGLContext);
         if (!shadingFill) {
           ctx.setTransform.apply(ctx, owner.baseTransform);
           if (matrix) {
@@ -10451,8 +10055,8 @@ var PDFDataTransportStream = function PDFDataTransportStreamClosure() {
       this._queuedChunks.push(buffer);
     }
     this._pdfDataRangeTransport = pdfDataRangeTransport;
-    this._isRangeSupported = !params.disableRange;
     this._isStreamingSupported = !params.disableStream;
+    this._isRangeSupported = !params.disableRange;
     this._contentLength = params.length;
     this._fullRequestReader = null;
     this._rangeReaders = [];
@@ -10530,6 +10134,7 @@ var PDFDataTransportStream = function PDFDataTransportStreamClosure() {
   function PDFDataTransportStreamReader(stream, queuedChunks) {
     this._stream = stream;
     this._done = false;
+    this._filename = null;
     this._queuedChunks = queuedChunks || [];
     this._requests = [];
     this._headersReady = Promise.resolve();
@@ -10553,6 +10158,9 @@ var PDFDataTransportStream = function PDFDataTransportStreamClosure() {
     },
     get headersReady() {
       return this._headersReady;
+    },
+    get filename() {
+      return this._filename;
     },
     get isRangeSupported() {
       return this._stream._isRangeSupported;
@@ -10662,6 +10270,400 @@ var PDFDataTransportStream = function PDFDataTransportStreamClosure() {
   return PDFDataTransportStream;
 }();
 exports.PDFDataTransportStream = PDFDataTransportStream;
+
+/***/ }),
+/* 18 */
+/***/ (function(module, exports, __w_pdfjs_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.WebGLContext = undefined;
+
+var _util = __w_pdfjs_require__(0);
+
+class WebGLContext {
+  constructor({
+    enable = false
+  }) {
+    this._enabled = enable === true;
+  }
+  get isEnabled() {
+    let enabled = this._enabled;
+    if (enabled) {
+      enabled = WebGLUtils.tryInitGL();
+    }
+    return (0, _util.shadow)(this, 'isEnabled', enabled);
+  }
+  composeSMask({ layer, mask, properties }) {
+    return WebGLUtils.composeSMask(layer, mask, properties);
+  }
+  drawFigures({ width, height, backgroundColor, figures, context }) {
+    return WebGLUtils.drawFigures(width, height, backgroundColor, figures, context);
+  }
+  clear() {
+    WebGLUtils.cleanup();
+  }
+}
+var WebGLUtils = function WebGLUtilsClosure() {
+  function loadShader(gl, code, shaderType) {
+    var shader = gl.createShader(shaderType);
+    gl.shaderSource(shader, code);
+    gl.compileShader(shader);
+    var compiled = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+    if (!compiled) {
+      var errorMsg = gl.getShaderInfoLog(shader);
+      throw new Error('Error during shader compilation: ' + errorMsg);
+    }
+    return shader;
+  }
+  function createVertexShader(gl, code) {
+    return loadShader(gl, code, gl.VERTEX_SHADER);
+  }
+  function createFragmentShader(gl, code) {
+    return loadShader(gl, code, gl.FRAGMENT_SHADER);
+  }
+  function createProgram(gl, shaders) {
+    var program = gl.createProgram();
+    for (var i = 0, ii = shaders.length; i < ii; ++i) {
+      gl.attachShader(program, shaders[i]);
+    }
+    gl.linkProgram(program);
+    var linked = gl.getProgramParameter(program, gl.LINK_STATUS);
+    if (!linked) {
+      var errorMsg = gl.getProgramInfoLog(program);
+      throw new Error('Error during program linking: ' + errorMsg);
+    }
+    return program;
+  }
+  function createTexture(gl, image, textureId) {
+    gl.activeTexture(textureId);
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    return texture;
+  }
+  var currentGL, currentCanvas;
+  function generateGL() {
+    if (currentGL) {
+      return;
+    }
+    currentCanvas = document.createElement('canvas');
+    currentGL = currentCanvas.getContext('webgl', { premultipliedalpha: false });
+  }
+  var smaskVertexShaderCode = '\
+  attribute vec2 a_position;                                    \
+  attribute vec2 a_texCoord;                                    \
+                                                                \
+  uniform vec2 u_resolution;                                    \
+                                                                \
+  varying vec2 v_texCoord;                                      \
+                                                                \
+  void main() {                                                 \
+    vec2 clipSpace = (a_position / u_resolution) * 2.0 - 1.0;   \
+    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);          \
+                                                                \
+    v_texCoord = a_texCoord;                                    \
+  }                                                             ';
+  var smaskFragmentShaderCode = '\
+  precision mediump float;                                      \
+                                                                \
+  uniform vec4 u_backdrop;                                      \
+  uniform int u_subtype;                                        \
+  uniform sampler2D u_image;                                    \
+  uniform sampler2D u_mask;                                     \
+                                                                \
+  varying vec2 v_texCoord;                                      \
+                                                                \
+  void main() {                                                 \
+    vec4 imageColor = texture2D(u_image, v_texCoord);           \
+    vec4 maskColor = texture2D(u_mask, v_texCoord);             \
+    if (u_backdrop.a > 0.0) {                                   \
+      maskColor.rgb = maskColor.rgb * maskColor.a +             \
+                      u_backdrop.rgb * (1.0 - maskColor.a);     \
+    }                                                           \
+    float lum;                                                  \
+    if (u_subtype == 0) {                                       \
+      lum = maskColor.a;                                        \
+    } else {                                                    \
+      lum = maskColor.r * 0.3 + maskColor.g * 0.59 +            \
+            maskColor.b * 0.11;                                 \
+    }                                                           \
+    imageColor.a *= lum;                                        \
+    imageColor.rgb *= imageColor.a;                             \
+    gl_FragColor = imageColor;                                  \
+  }                                                             ';
+  var smaskCache = null;
+  function initSmaskGL() {
+    var canvas, gl;
+    generateGL();
+    canvas = currentCanvas;
+    currentCanvas = null;
+    gl = currentGL;
+    currentGL = null;
+    var vertexShader = createVertexShader(gl, smaskVertexShaderCode);
+    var fragmentShader = createFragmentShader(gl, smaskFragmentShaderCode);
+    var program = createProgram(gl, [vertexShader, fragmentShader]);
+    gl.useProgram(program);
+    var cache = {};
+    cache.gl = gl;
+    cache.canvas = canvas;
+    cache.resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
+    cache.positionLocation = gl.getAttribLocation(program, 'a_position');
+    cache.backdropLocation = gl.getUniformLocation(program, 'u_backdrop');
+    cache.subtypeLocation = gl.getUniformLocation(program, 'u_subtype');
+    var texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+    var texLayerLocation = gl.getUniformLocation(program, 'u_image');
+    var texMaskLocation = gl.getUniformLocation(program, 'u_mask');
+    var texCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(texCoordLocation);
+    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform1i(texLayerLocation, 0);
+    gl.uniform1i(texMaskLocation, 1);
+    smaskCache = cache;
+  }
+  function composeSMask(layer, mask, properties) {
+    var width = layer.width,
+        height = layer.height;
+    if (!smaskCache) {
+      initSmaskGL();
+    }
+    var cache = smaskCache,
+        canvas = cache.canvas,
+        gl = cache.gl;
+    canvas.width = width;
+    canvas.height = height;
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    gl.uniform2f(cache.resolutionLocation, width, height);
+    if (properties.backdrop) {
+      gl.uniform4f(cache.resolutionLocation, properties.backdrop[0], properties.backdrop[1], properties.backdrop[2], 1);
+    } else {
+      gl.uniform4f(cache.resolutionLocation, 0, 0, 0, 0);
+    }
+    gl.uniform1i(cache.subtypeLocation, properties.subtype === 'Luminosity' ? 1 : 0);
+    var texture = createTexture(gl, layer, gl.TEXTURE0);
+    var maskTexture = createTexture(gl, mask, gl.TEXTURE1);
+    var buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, width, 0, 0, height, 0, height, width, 0, width, height]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(cache.positionLocation);
+    gl.vertexAttribPointer(cache.positionLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.clearColor(0, 0, 0, 0);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.flush();
+    gl.deleteTexture(texture);
+    gl.deleteTexture(maskTexture);
+    gl.deleteBuffer(buffer);
+    return canvas;
+  }
+  var figuresVertexShaderCode = '\
+  attribute vec2 a_position;                                    \
+  attribute vec3 a_color;                                       \
+                                                                \
+  uniform vec2 u_resolution;                                    \
+  uniform vec2 u_scale;                                         \
+  uniform vec2 u_offset;                                        \
+                                                                \
+  varying vec4 v_color;                                         \
+                                                                \
+  void main() {                                                 \
+    vec2 position = (a_position + u_offset) * u_scale;          \
+    vec2 clipSpace = (position / u_resolution) * 2.0 - 1.0;     \
+    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);          \
+                                                                \
+    v_color = vec4(a_color / 255.0, 1.0);                       \
+  }                                                             ';
+  var figuresFragmentShaderCode = '\
+  precision mediump float;                                      \
+                                                                \
+  varying vec4 v_color;                                         \
+                                                                \
+  void main() {                                                 \
+    gl_FragColor = v_color;                                     \
+  }                                                             ';
+  var figuresCache = null;
+  function initFiguresGL() {
+    var canvas, gl;
+    generateGL();
+    canvas = currentCanvas;
+    currentCanvas = null;
+    gl = currentGL;
+    currentGL = null;
+    var vertexShader = createVertexShader(gl, figuresVertexShaderCode);
+    var fragmentShader = createFragmentShader(gl, figuresFragmentShaderCode);
+    var program = createProgram(gl, [vertexShader, fragmentShader]);
+    gl.useProgram(program);
+    var cache = {};
+    cache.gl = gl;
+    cache.canvas = canvas;
+    cache.resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
+    cache.scaleLocation = gl.getUniformLocation(program, 'u_scale');
+    cache.offsetLocation = gl.getUniformLocation(program, 'u_offset');
+    cache.positionLocation = gl.getAttribLocation(program, 'a_position');
+    cache.colorLocation = gl.getAttribLocation(program, 'a_color');
+    figuresCache = cache;
+  }
+  function drawFigures(width, height, backgroundColor, figures, context) {
+    if (!figuresCache) {
+      initFiguresGL();
+    }
+    var cache = figuresCache,
+        canvas = cache.canvas,
+        gl = cache.gl;
+    canvas.width = width;
+    canvas.height = height;
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    gl.uniform2f(cache.resolutionLocation, width, height);
+    var count = 0;
+    var i, ii, rows;
+    for (i = 0, ii = figures.length; i < ii; i++) {
+      switch (figures[i].type) {
+        case 'lattice':
+          rows = figures[i].coords.length / figures[i].verticesPerRow | 0;
+          count += (rows - 1) * (figures[i].verticesPerRow - 1) * 6;
+          break;
+        case 'triangles':
+          count += figures[i].coords.length;
+          break;
+      }
+    }
+    var coords = new Float32Array(count * 2);
+    var colors = new Uint8Array(count * 3);
+    var coordsMap = context.coords,
+        colorsMap = context.colors;
+    var pIndex = 0,
+        cIndex = 0;
+    for (i = 0, ii = figures.length; i < ii; i++) {
+      var figure = figures[i],
+          ps = figure.coords,
+          cs = figure.colors;
+      switch (figure.type) {
+        case 'lattice':
+          var cols = figure.verticesPerRow;
+          rows = ps.length / cols | 0;
+          for (var row = 1; row < rows; row++) {
+            var offset = row * cols + 1;
+            for (var col = 1; col < cols; col++, offset++) {
+              coords[pIndex] = coordsMap[ps[offset - cols - 1]];
+              coords[pIndex + 1] = coordsMap[ps[offset - cols - 1] + 1];
+              coords[pIndex + 2] = coordsMap[ps[offset - cols]];
+              coords[pIndex + 3] = coordsMap[ps[offset - cols] + 1];
+              coords[pIndex + 4] = coordsMap[ps[offset - 1]];
+              coords[pIndex + 5] = coordsMap[ps[offset - 1] + 1];
+              colors[cIndex] = colorsMap[cs[offset - cols - 1]];
+              colors[cIndex + 1] = colorsMap[cs[offset - cols - 1] + 1];
+              colors[cIndex + 2] = colorsMap[cs[offset - cols - 1] + 2];
+              colors[cIndex + 3] = colorsMap[cs[offset - cols]];
+              colors[cIndex + 4] = colorsMap[cs[offset - cols] + 1];
+              colors[cIndex + 5] = colorsMap[cs[offset - cols] + 2];
+              colors[cIndex + 6] = colorsMap[cs[offset - 1]];
+              colors[cIndex + 7] = colorsMap[cs[offset - 1] + 1];
+              colors[cIndex + 8] = colorsMap[cs[offset - 1] + 2];
+              coords[pIndex + 6] = coords[pIndex + 2];
+              coords[pIndex + 7] = coords[pIndex + 3];
+              coords[pIndex + 8] = coords[pIndex + 4];
+              coords[pIndex + 9] = coords[pIndex + 5];
+              coords[pIndex + 10] = coordsMap[ps[offset]];
+              coords[pIndex + 11] = coordsMap[ps[offset] + 1];
+              colors[cIndex + 9] = colors[cIndex + 3];
+              colors[cIndex + 10] = colors[cIndex + 4];
+              colors[cIndex + 11] = colors[cIndex + 5];
+              colors[cIndex + 12] = colors[cIndex + 6];
+              colors[cIndex + 13] = colors[cIndex + 7];
+              colors[cIndex + 14] = colors[cIndex + 8];
+              colors[cIndex + 15] = colorsMap[cs[offset]];
+              colors[cIndex + 16] = colorsMap[cs[offset] + 1];
+              colors[cIndex + 17] = colorsMap[cs[offset] + 2];
+              pIndex += 12;
+              cIndex += 18;
+            }
+          }
+          break;
+        case 'triangles':
+          for (var j = 0, jj = ps.length; j < jj; j++) {
+            coords[pIndex] = coordsMap[ps[j]];
+            coords[pIndex + 1] = coordsMap[ps[j] + 1];
+            colors[cIndex] = colorsMap[cs[j]];
+            colors[cIndex + 1] = colorsMap[cs[j] + 1];
+            colors[cIndex + 2] = colorsMap[cs[j] + 2];
+            pIndex += 2;
+            cIndex += 3;
+          }
+          break;
+      }
+    }
+    if (backgroundColor) {
+      gl.clearColor(backgroundColor[0] / 255, backgroundColor[1] / 255, backgroundColor[2] / 255, 1.0);
+    } else {
+      gl.clearColor(0, 0, 0, 0);
+    }
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    var coordsBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, coordsBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, coords, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(cache.positionLocation);
+    gl.vertexAttribPointer(cache.positionLocation, 2, gl.FLOAT, false, 0, 0);
+    var colorsBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorsBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(cache.colorLocation);
+    gl.vertexAttribPointer(cache.colorLocation, 3, gl.UNSIGNED_BYTE, false, 0, 0);
+    gl.uniform2f(cache.scaleLocation, context.scaleX, context.scaleY);
+    gl.uniform2f(cache.offsetLocation, context.offsetX, context.offsetY);
+    gl.drawArrays(gl.TRIANGLES, 0, count);
+    gl.flush();
+    gl.deleteBuffer(coordsBuffer);
+    gl.deleteBuffer(colorsBuffer);
+    return canvas;
+  }
+  return {
+    tryInitGL() {
+      try {
+        generateGL();
+        return !!currentGL;
+      } catch (ex) {}
+      return false;
+    },
+    composeSMask,
+    drawFigures,
+    cleanup() {
+      if (smaskCache && smaskCache.canvas) {
+        smaskCache.canvas.width = 0;
+        smaskCache.canvas.height = 0;
+      }
+      if (figuresCache && figuresCache.canvas) {
+        figuresCache.canvas.width = 0;
+        figuresCache.canvas.height = 0;
+      }
+      smaskCache = null;
+      figuresCache = null;
+    }
+  };
+}();
+exports.WebGLContext = WebGLContext;
+
+/***/ }),
+/* 19 */
+/***/ (function(module, exports, __w_pdfjs_require__) {
+
+"use strict";
+
+
+module.exports = function isNodeJS() {
+  return typeof process === 'object' && process + '' === '[object process]';
+};
 
 /***/ })
 /******/ ]);

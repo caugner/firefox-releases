@@ -6,22 +6,21 @@
 
 "use strict";
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 const AUTOFILL_BUNDLE_URI = "chrome://formautofill/locale/formautofill.properties";
 const REGIONS_BUNDLE_URI = "chrome://global/locale/regionNames.properties";
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://formautofill/FormAutofillUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://formautofill/FormAutofillUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "profileStorage",
-                                  "resource://formautofill/ProfileStorage.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "MasterPassword",
-                                  "resource://formautofill/MasterPassword.jsm");
+ChromeUtils.defineModuleGetter(this, "formAutofillStorage",
+                               "resource://formautofill/FormAutofillStorage.jsm");
+ChromeUtils.defineModuleGetter(this, "MasterPassword",
+                               "resource://formautofill/MasterPassword.jsm");
 
 class EditDialog {
   constructor(subStorageName, elements, record) {
-    this._storageInitPromise = profileStorage.initialize();
+    this._storageInitPromise = formAutofillStorage.initialize();
     this._subStorageName = subStorageName;
     this._elements = elements;
     this._record = record;
@@ -76,7 +75,7 @@ class EditDialog {
    */
   async getStorage() {
     await this._storageInitPromise;
-    return profileStorage[this._subStorageName];
+    return formAutofillStorage[this._subStorageName];
   }
 
   /**
@@ -118,6 +117,17 @@ class EditDialog {
       }
       case "keypress": {
         this.handleKeyPress(event);
+        break;
+      }
+      case "change": {
+        this.handleChange(event);
+        break;
+      }
+      case "contextmenu": {
+        if (!(event.target instanceof HTMLInputElement) &&
+            !(event.target instanceof HTMLTextAreaElement)) {
+          event.preventDefault();
+        }
         break;
       }
     }
@@ -168,6 +178,7 @@ class EditDialog {
    */
   attachEventListeners() {
     window.addEventListener("keypress", this);
+    window.addEventListener("contextmenu", this);
     this._elements.controlsContainer.addEventListener("click", this);
     document.addEventListener("input", this);
   }
@@ -177,15 +188,28 @@ class EditDialog {
    */
   detachEventListeners() {
     window.removeEventListener("keypress", this);
+    window.removeEventListener("contextmenu", this);
     this._elements.controlsContainer.removeEventListener("click", this);
     document.removeEventListener("input", this);
   }
+
+  // An interface to be inherited.
+  localizeDocument() {}
+
+  // An interface to be inherited.
+  handleSubmit(event) {}
+
+  // An interface to be inherited.
+  handleChange(event) {}
 }
 
 class EditAddress extends EditDialog {
   constructor(elements, record) {
-    super("addresses", elements, record);
-    this.formatForm(record && record.country);
+    let country = record ? record.country :
+                  FormAutofillUtils.supportedCountries.find(supported => supported == FormAutofillUtils.DEFAULT_REGION);
+    super("addresses", elements, record || {country});
+
+    this.formatForm(country);
   }
 
   /**
@@ -194,23 +218,76 @@ class EditAddress extends EditDialog {
    * @param  {string} country
    */
   formatForm(country) {
-    // TODO: Use fmt to show/hide and order fields (Bug 1383687)
-    const {addressLevel1Label, postalCodeLabel} = FormAutofillUtils.getFormFormat(country);
+    const {addressLevel1Label, postalCodeLabel, fieldsOrder} = FormAutofillUtils.getFormFormat(country);
     this._elements.addressLevel1Label.dataset.localization = addressLevel1Label;
     this._elements.postalCodeLabel.dataset.localization = postalCodeLabel;
     FormAutofillUtils.localizeMarkup(AUTOFILL_BUNDLE_URI, document);
+    this.arrangeFields(fieldsOrder);
+  }
+
+  arrangeFields(fieldsOrder) {
+    let fields = [
+      "name",
+      "organization",
+      "street-address",
+      "address-level2",
+      "address-level1",
+      "postal-code",
+    ];
+    let inputs = [];
+    for (let i = 0; i < fieldsOrder.length; i++) {
+      let {fieldId, newLine} = fieldsOrder[i];
+      let container = document.getElementById(`${fieldId}-container`);
+      inputs.push(...container.querySelectorAll("input, textarea, select"));
+      container.style.display = "flex";
+      container.style.order = i;
+      container.style.pageBreakAfter = newLine ? "always" : "auto";
+      // Remove the field from the list of fields
+      fields.splice(fields.indexOf(fieldId), 1);
+    }
+    for (let i = 0; i < inputs.length; i++) {
+      // Assign tabIndex starting from 1
+      inputs[i].tabIndex = i + 1;
+    }
+    // Hide the remaining fields
+    for (let field of fields) {
+      let container = document.getElementById(`${field}-container`);
+      container.style.display = "none";
+    }
   }
 
   localizeDocument() {
     if (this._record) {
       this._elements.title.dataset.localization = "editAddressTitle";
     }
+    let fragment = document.createDocumentFragment();
+    for (let country of FormAutofillUtils.supportedCountries) {
+      let option = new Option();
+      option.value = country;
+      option.dataset.localization = country.toLowerCase();
+      fragment.appendChild(option);
+    }
+    this._elements.country.appendChild(fragment);
     FormAutofillUtils.localizeMarkup(REGIONS_BUNDLE_URI, this._elements.country);
   }
 
   async handleSubmit() {
     await this.saveRecord(this.buildFormObject(), this._record ? this._record.guid : null);
     window.close();
+  }
+
+  handleChange(event) {
+    this.formatForm(event.target.value);
+  }
+
+  attachEventListeners() {
+    this._elements.country.addEventListener("change", this);
+    super.attachEventListeners();
+  }
+
+  detachEventListeners() {
+    this._elements.country.removeEventListener("change", this);
+    super.detachEventListeners();
   }
 }
 

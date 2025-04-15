@@ -34,7 +34,6 @@ class FrameRelay {
 public:
   virtual int DeliverFrame(uint8_t* buffer,
     const mozilla::camera::VideoFrameProperties& props) = 0;
-  virtual void FrameSizeChange(unsigned int w, unsigned int h) = 0;
 };
 
 struct CapturerElement {
@@ -93,6 +92,14 @@ public:
     return gTheInstance.get()->mFakeDeviceChangeEventThread;
   }
 
+  static bool InShutdown() {
+    return gTheInstance.get()->mInShutdown;
+  }
+
+  static void StartShutdown() {
+    gTheInstance.get()->mInShutdown = true;
+  }
+
 private:
   static Singleton<CamerasSingleton> gTheInstance;
 
@@ -110,6 +117,7 @@ private:
   CamerasChild* mCameras;
   nsCOMPtr<nsIThread> mCamerasChildThread;
   nsCOMPtr<nsIThread> mFakeDeviceChangeEventThread;
+  Atomic<bool> mInShutdown;
 };
 
 // Get a pointer to a CamerasChild object we can use to do IPC with.
@@ -149,31 +157,29 @@ class CamerasChild final : public PCamerasChild
 public:
   // We are owned by the PBackground thread only. CamerasSingleton
   // takes a non-owning reference.
-  NS_INLINE_DECL_REFCOUNTING(CamerasChild)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(CamerasChild)
 
   // IPC messages recevied, received on the PBackground thread
   // these are the actual callbacks with data
-  virtual mozilla::ipc::IPCResult RecvDeliverFrame(const CaptureEngine&, const int&,
-                                                   mozilla::ipc::Shmem&&,
-                                                   const VideoFrameProperties & prop) override;
-  virtual mozilla::ipc::IPCResult RecvFrameSizeChange(const CaptureEngine&, const int&,
-                                                      const int& w, const int& h) override;
+  mozilla::ipc::IPCResult RecvDeliverFrame(const CaptureEngine&, const int&,
+                                           mozilla::ipc::Shmem&&,
+                                           const VideoFrameProperties & prop) override;
 
-  virtual mozilla::ipc::IPCResult RecvDeviceChange() override;
-  virtual int AddDeviceChangeCallback(DeviceChangeCallback* aCallback) override;
+  mozilla::ipc::IPCResult RecvDeviceChange() override;
+  int AddDeviceChangeCallback(DeviceChangeCallback* aCallback) override;
   int SetFakeDeviceChangeEvents();
 
   // these are response messages to our outgoing requests
-  virtual mozilla::ipc::IPCResult RecvReplyNumberOfCaptureDevices(const int&) override;
-  virtual mozilla::ipc::IPCResult RecvReplyNumberOfCapabilities(const int&) override;
-  virtual mozilla::ipc::IPCResult RecvReplyAllocateCaptureDevice(const int&) override;
-  virtual mozilla::ipc::IPCResult RecvReplyGetCaptureCapability(const VideoCaptureCapability& capability) override;
-  virtual mozilla::ipc::IPCResult RecvReplyGetCaptureDevice(const nsCString& device_name,
+  mozilla::ipc::IPCResult RecvReplyNumberOfCaptureDevices(const int&) override;
+  mozilla::ipc::IPCResult RecvReplyNumberOfCapabilities(const int&) override;
+  mozilla::ipc::IPCResult RecvReplyAllocateCaptureDevice(const int&) override;
+  mozilla::ipc::IPCResult RecvReplyGetCaptureCapability(const VideoCaptureCapability& capability) override;
+  mozilla::ipc::IPCResult RecvReplyGetCaptureDevice(const nsCString& device_name,
                                                             const nsCString& device_id,
                                                             const bool& scary) override;
-  virtual mozilla::ipc::IPCResult RecvReplyFailure(void) override;
-  virtual mozilla::ipc::IPCResult RecvReplySuccess(void) override;
-  virtual void ActorDestroy(ActorDestroyReason aWhy) override;
+  mozilla::ipc::IPCResult RecvReplyFailure(void) override;
+  mozilla::ipc::IPCResult RecvReplySuccess(void) override;
+  void ActorDestroy(ActorDestroyReason aWhy) override;
 
   // the webrtc.org ViECapture calls are mirrored here, but with access
   // to a specific PCameras instance to communicate over. These also

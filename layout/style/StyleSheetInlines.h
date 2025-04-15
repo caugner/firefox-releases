@@ -9,7 +9,9 @@
 
 #include "mozilla/StyleSheetInfo.h"
 #include "mozilla/ServoStyleSheet.h"
+#ifdef MOZ_OLD_STYLE
 #include "mozilla/CSSStyleSheet.h"
+#endif
 #include "nsINode.h"
 
 namespace mozilla {
@@ -89,7 +91,7 @@ StyleSheet::GetParentObject() const
   if (mOwningNode) {
     return dom::ParentObject(mOwningNode);
   }
-  return dom::ParentObject(static_cast<nsIDOMCSSStyleSheet*>(mParent), mParent);
+  return dom::ParentObject(mParent);
 }
 
 nsIPrincipal*

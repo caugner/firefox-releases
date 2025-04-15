@@ -7,6 +7,7 @@
 const {
   apply,
   getNodeTransformationMatrix,
+  getWritingModeMatrix,
   identity,
   isIdentity,
   multiply,
@@ -14,6 +15,7 @@ const {
   translate,
 } = require("devtools/shared/layout/dom-matrix-2d");
 const { getViewportDimensions } = require("devtools/shared/layout/utils");
+const { getComputedStyle } = require("./markup");
 
 // A set of utility functions for highlighters that render their content to a <canvas>
 // element.
@@ -34,6 +36,31 @@ const { getViewportDimensions } = require("devtools/shared/layout/utils");
 //
 // Using a fixed value should also solve bug 1348293.
 const CANVAS_SIZE = 4096;
+
+// The default color used for the canvas' font, fill and stroke colors.
+const DEFAULT_COLOR = "#9400FF";
+
+/**
+ * Draws a rect to the context given and applies a transformation matrix if passed.
+ * The coordinates are the start and end points of the rectangle's diagonal.
+ *
+ * @param  {CanvasRenderingContext2D} ctx
+ *         The 2D canvas context.
+ * @param  {Number} x1
+ *         The x-axis coordinate of the rectangle's diagonal start point.
+ * @param  {Number} y1
+ *         The y-axis coordinate of the rectangle's diagonal start point.
+ * @param  {Number} x2
+ *         The x-axis coordinate of the rectangle's diagonal end point.
+ * @param  {Number} y2
+ *         The y-axis coordinate of the rectangle's diagonal end point.
+ * @param  {Array} [matrix=identity()]
+ *         The transformation matrix to apply.
+ */
+function clearRect(ctx, x1, y1, x2, y2, matrix = identity()) {
+  let p = getPointsFromDiagonal(x1, y1, x2, y2, matrix);
+  ctx.clearRect(p[0].x, p[0].y, p[1].x - p[0].x, p[3].y - p[0].y);
+}
 
 /**
  * Draws an arrow-bubble rectangle in the provided canvas context.
@@ -141,6 +168,7 @@ function drawLine(ctx, x1, y1, x2, y2, options) {
     }
   }
 
+  ctx.beginPath();
   ctx.moveTo(Math.round(x1), Math.round(y1));
   ctx.lineTo(Math.round(x2), Math.round(y2));
 }
@@ -238,6 +266,8 @@ function getBoundsFromPoints(points) {
  *   5. Any CSS transformation applied directly to the element (only 2D
  *      transformation; the 3D transformation are flattened, see `dom-matrix-2d` module
  *      for further details.)
+ *   6. Rotate, translate, and reflect as needed to match the writing mode and text
+ *      direction of the element.
  *
  *  The transformations of the element's ancestors are not currently computed (see
  *  bug 1355675).
@@ -253,7 +283,7 @@ function getBoundsFromPoints(points) {
  *           true if the node has transformed and false otherwise.
  */
 function getCurrentMatrix(element, window) {
-  let computedStyle = element.ownerGlobal.getComputedStyle(element);
+  let computedStyle = getComputedStyle(element);
 
   let paddingTop = parseFloat(computedStyle.paddingTop);
   let paddingLeft = parseFloat(computedStyle.paddingLeft);
@@ -265,11 +295,11 @@ function getCurrentMatrix(element, window) {
   let currentMatrix = identity();
   let hasNodeTransformations = false;
 
-  // First, we scale based on the device pixel ratio.
+  // Scale based on the device pixel ratio.
   currentMatrix = multiply(currentMatrix, scale(window.devicePixelRatio));
 
-  // Then, we apply the current node's transformation matrix, relative to the
-  // inspected window's root element, but only if it's not a identity matrix.
+  // Apply the current node's transformation matrix, relative to the inspected window's
+  // root element, but only if it's not a identity matrix.
   if (isIdentity(nodeMatrix)) {
     hasNodeTransformations = false;
   } else {
@@ -277,9 +307,19 @@ function getCurrentMatrix(element, window) {
     hasNodeTransformations = true;
   }
 
-  // Finally, we translate the origin based on the node's padding and border values.
+  // Translate the origin based on the node's padding and border values.
   currentMatrix = multiply(currentMatrix,
     translate(paddingLeft + borderLeft, paddingTop + borderTop));
+
+  // Adjust as needed to match the writing mode and text direction of the element.
+  let size = {
+    width: element.offsetWidth,
+    height: element.offsetHeight,
+  };
+  let writingModeMatrix = getWritingModeMatrix(size, computedStyle);
+  if (!isIdentity(writingModeMatrix)) {
+    currentMatrix = multiply(currentMatrix, writingModeMatrix);
+  }
 
   return { currentMatrix, hasNodeTransformations };
 }
@@ -331,7 +371,7 @@ function getPointsFromDiagonal(x1, y1, x2, y2, matrix = identity()) {
 
 /**
  * Updates the <canvas> element's style in accordance with the current window's
- * devicePixelRatio, and the position calculated in `getCanvasPosition`. It also
+ * device pixel ratio, and the position calculated in `getCanvasPosition`. It also
  * clears the drawing context. This is called on canvas update after a scroll event where
  * `getCanvasPosition` updates the new canvasPosition.
  *
@@ -426,6 +466,8 @@ function updateCanvasPosition(canvasPosition, scrollPosition, window, windowDime
 }
 
 exports.CANVAS_SIZE = CANVAS_SIZE;
+exports.DEFAULT_COLOR = DEFAULT_COLOR;
+exports.clearRect = clearRect;
 exports.drawBubbleRect = drawBubbleRect;
 exports.drawLine = drawLine;
 exports.drawRect = drawRect;

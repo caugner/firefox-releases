@@ -1,5 +1,6 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -60,7 +61,6 @@ public:
   bool SubmitFrame(const mozilla::layers::EGLImageDescriptor* aDescriptor,
                    const gfx::Rect& aLeftEyeRect,
                    const gfx::Rect& aRightEyeRect) override;
-  void NotifyVSync() override;
 protected:
   virtual VRHMDSensorState GetSensorState() override;
   // END VRDisplayHost interface
@@ -74,7 +74,7 @@ public:
 
 protected:
   virtual ~VRDisplayGVR();
-  void UpdateHeadToEye(gvr_context* aContext, gfx::Quaternion* aRot = nullptr);
+  void UpdateHeadToEye(gvr_context* aContext);
   void UpdateViewport();
   void RecreateSwapChain();
 
@@ -105,7 +105,9 @@ public:
 
   void Destroy() override;
   void Shutdown() override;
-  bool GetHMDs(nsTArray<RefPtr<VRDisplayHost> >& aHMDResult) override;
+  void Enumerate() override;
+  bool ShouldInhibitEnumeration() override;
+  void GetHMDs(nsTArray<RefPtr<VRDisplayHost>>& aHMDResult) override;
   bool GetIsPresenting() override;
   void HandleInput() override;
   void GetControllers(nsTArray<RefPtr<VRControllerHost>>&
@@ -116,7 +118,7 @@ public:
                      uint32_t aHapticIndex,
                      double aIntensity,
                      double aDuration,
-                     uint32_t aPromiseID) override;
+                     const VRManagerPromise& aPromise) override;
   void StopVibrateHaptic(uint32_t aControllerIdx) override;
 
 protected:

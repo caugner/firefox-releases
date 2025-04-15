@@ -8,21 +8,21 @@
  * checked in the second request.
  */
 
-Cu.import("resource://services-common/utils.js");
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/ClientID.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/LightweightThemeManager.jsm", this);
-Cu.import("resource://gre/modules/XPCOMUtils.jsm", this);
-Cu.import("resource://gre/modules/TelemetryController.jsm", this);
-Cu.import("resource://gre/modules/TelemetrySession.jsm", this);
-Cu.import("resource://gre/modules/TelemetryStorage.jsm", this);
-Cu.import("resource://gre/modules/TelemetryEnvironment.jsm", this);
-Cu.import("resource://gre/modules/TelemetrySend.jsm", this);
-Cu.import("resource://gre/modules/TelemetryUtils.jsm", this);
-Cu.import("resource://gre/modules/TelemetryReportingPolicy.jsm", this);
-Cu.import("resource://gre/modules/Preferences.jsm");
-Cu.import("resource://gre/modules/osfile.jsm", this);
+ChromeUtils.import("resource://services-common/utils.js");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/ClientID.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/LightweightThemeManager.jsm", this);
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm", this);
+ChromeUtils.import("resource://gre/modules/TelemetryController.jsm", this);
+ChromeUtils.import("resource://gre/modules/TelemetrySession.jsm", this);
+ChromeUtils.import("resource://gre/modules/TelemetryStorage.jsm", this);
+ChromeUtils.import("resource://gre/modules/TelemetryEnvironment.jsm", this);
+ChromeUtils.import("resource://gre/modules/TelemetrySend.jsm", this);
+ChromeUtils.import("resource://gre/modules/TelemetryUtils.jsm", this);
+ChromeUtils.import("resource://gre/modules/TelemetryReportingPolicy.jsm", this);
+ChromeUtils.import("resource://gre/modules/Preferences.jsm");
+ChromeUtils.import("resource://gre/modules/osfile.jsm", this);
 
 const PING_FORMAT_VERSION = 4;
 const PING_TYPE_MAIN = "main";
@@ -80,13 +80,13 @@ function sendPing() {
 }
 
 function fakeGenerateUUID(sessionFunc, subsessionFunc) {
-  let session = Cu.import("resource://gre/modules/TelemetrySession.jsm", {});
+  let session = ChromeUtils.import("resource://gre/modules/TelemetrySession.jsm", {});
   session.Policy.generateSessionUUID = sessionFunc;
   session.Policy.generateSubsessionUUID = subsessionFunc;
 }
 
 function fakeIdleNotification(topic) {
-  let session = Cu.import("resource://gre/modules/TelemetrySession.jsm", {});
+  let session = ChromeUtils.import("resource://gre/modules/TelemetrySession.jsm", {});
   return session.TelemetryScheduler.observe(null, topic, null);
 }
 
@@ -109,7 +109,7 @@ function getSavedPingFile(basename) {
   if (pingFile.exists()) {
     pingFile.remove(true);
   }
-  do_register_cleanup(function() {
+  registerCleanupFunction(function() {
     try {
       pingFile.remove(true);
     } catch (e) {
@@ -330,6 +330,10 @@ function checkPayload(payload, reason, successfulPings, savedPings) {
   let activeTicks = payload.simpleMeasurements.activeTicks;
   Assert.ok(activeTicks >= 0);
 
+  if ("browser.timings.last_shutdown" in payload.processes.parent.scalars) {
+    Assert.equal(payload.processes.parent.scalars["browser.timings.last_shutdown"], SHUTDOWN_TIME);
+  }
+
   Assert.equal(payload.simpleMeasurements.failedProfileLockCount,
               FAILED_PROFILE_LOCK_ATTEMPTS);
   let profileDirectory = Services.dirsvc.get("ProfD", Ci.nsIFile);
@@ -338,7 +342,7 @@ function checkPayload(payload, reason, successfulPings, savedPings) {
   Assert.ok(!failedProfileLocksFile.exists());
 
 
-  let isWindows = ("@mozilla.org/windows-registry-key;1" in Components.classes);
+  let isWindows = ("@mozilla.org/windows-registry-key;1" in Cc);
   if (isWindows) {
     Assert.ok(payload.simpleMeasurements.startupSessionRestoreReadBytes > 0);
     Assert.ok(payload.simpleMeasurements.startupSessionRestoreWriteBytes > 0);
@@ -487,7 +491,7 @@ add_task(async function test_setup() {
   write_fake_shutdown_file();
 
   let currentMaxNumberOfThreads = Telemetry.maximalNumberOfConcurrentThreads;
-  do_check_true(currentMaxNumberOfThreads > 0);
+  Assert.ok(currentMaxNumberOfThreads > 0);
 
   // Try to augment the maximal number of threads currently launched
   let threads = [];
@@ -500,9 +504,9 @@ add_task(async function test_setup() {
   }
   gNumberOfThreadsLaunched = threads.length;
 
-  do_check_true(Telemetry.maximalNumberOfConcurrentThreads >= gNumberOfThreadsLaunched);
+  Assert.ok(Telemetry.maximalNumberOfConcurrentThreads >= gNumberOfThreadsLaunched);
 
-  do_register_cleanup(function() {
+  registerCleanupFunction(function() {
     threads.forEach(function(thread) {
       thread.shutdown();
     });
@@ -525,7 +529,7 @@ add_task(async function test_expiredHistogram() {
 
   dummy.add(1);
 
-  do_check_eq(TelemetrySession.getPayload().histograms.TELEMETRY_TEST_EXPIRED, undefined);
+  Assert.equal(TelemetrySession.getPayload().histograms.TELEMETRY_TEST_EXPIRED, undefined);
 });
 
 // Sends a ping to a non existing server. If we remove this test, we won't get

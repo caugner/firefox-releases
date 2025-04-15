@@ -5,13 +5,13 @@
 
 "use strict";
 
-const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
-const { require, DevToolsLoader } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const { require, DevToolsLoader } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
+const Services = require("Services");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const flags = require("devtools/shared/flags");
 
 flags.testing = true;
-do_register_cleanup(() => {
+registerCleanupFunction(() => {
   flags.testing = false;
 });
 
@@ -52,5 +52,4 @@ var listener = {
   }
 };
 
-var consoleService = Cc["@mozilla.org/consoleservice;1"].getService(Ci.nsIConsoleService);
-consoleService.registerListener(listener);
+Services.console.registerListener(listener);

@@ -360,7 +360,7 @@ public:
 
   virtual uint32_t NumSubTextures() const override;
 
-  virtual void PushResourceUpdates(wr::ResourceUpdateQueue& aResources,
+  virtual void PushResourceUpdates(wr::TransactionBuilder& aResources,
                                    ResourceUpdateOp aOp,
                                    const Range<wr::ImageKey>& aImageKeys,
                                    const wr::ExternalImageId& aExtID) override;
@@ -422,7 +422,7 @@ public:
 
   virtual uint32_t NumSubTextures() const override;
 
-  virtual void PushResourceUpdates(wr::ResourceUpdateQueue& aResources,
+  virtual void PushResourceUpdates(wr::TransactionBuilder& aResources,
                                    ResourceUpdateOp aOp,
                                    const Range<wr::ImageKey>& aImageKeys,
                                    const wr::ExternalImageId& aExtID) override;
@@ -445,6 +445,7 @@ protected:
   RefPtr<DataTextureSourceD3D11> mTextureSources[3];
 
   gfx::IntSize mSize;
+  gfx::IntSize mSizeCbCr;
   WindowsHandle mHandles[3];
   bool mIsLocked;
   YUVColorSpace mYUVColorSpace;

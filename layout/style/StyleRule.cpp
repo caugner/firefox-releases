@@ -27,16 +27,15 @@
 #include "nsXMLNameSpaceMap.h"
 #include "nsCSSPseudoClasses.h"
 #include "nsCSSAnonBoxes.h"
+#include "nsCSSRuleProcessor.h"
 #include "nsTArray.h"
 #include "nsContentUtils.h"
 #include "nsError.h"
 #include "mozAutoDocUpdate.h"
 #include "nsRuleProcessorData.h"
 
-class nsIDOMCSSStyleDeclaration;
-class nsIDOMCSSStyleSheet;
-
 using namespace mozilla;
+using namespace mozilla::dom;
 
 #define NS_IF_CLONE(member_)                                                  \
   PR_BEGIN_MACRO                                                              \
@@ -1063,11 +1062,13 @@ protected:
 public:
   explicit DOMCSSDeclarationImpl(css::StyleRule *aRule);
 
-  NS_IMETHOD GetParentRule(nsIDOMCSSRule **aParent) override;
+  css::Rule* GetParentRule() final { return mRule; }
   virtual DeclarationBlock* GetCSSDeclaration(Operation aOperation) override;
   virtual nsresult SetCSSDeclaration(DeclarationBlock* aDecl) override;
-  virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv) override;
-  nsDOMCSSDeclaration::ServoCSSParsingEnvironment GetServoCSSParsingEnvironment() const final;
+  virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv,
+                                        nsIPrincipal* aSubjectPrincipal) override;
+  nsDOMCSSDeclaration::ServoCSSParsingEnvironment
+  GetServoCSSParsingEnvironment(nsIPrincipal* aSubjectPrincipal) const final;
   virtual nsIDocument* DocToUpdate() override;
 
   // Override |AddRef| and |Release| for being owned by StyleRule.  Also, we
@@ -1121,24 +1122,17 @@ DOMCSSDeclarationImpl::GetCSSDeclaration(Operation aOperation)
 }
 
 void
-DOMCSSDeclarationImpl::GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv)
+DOMCSSDeclarationImpl::GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv,
+                                                nsIPrincipal* aSubjectPrincipal)
 {
   GetCSSParsingEnvironmentForRule(mRule, aCSSParseEnv);
 }
 
 nsDOMCSSDeclaration::ServoCSSParsingEnvironment
-DOMCSSDeclarationImpl::GetServoCSSParsingEnvironment() const
+DOMCSSDeclarationImpl::GetServoCSSParsingEnvironment(
+  nsIPrincipal* aSubjectPrincipal) const
 {
   MOZ_CRASH("GetURLData shouldn't be calling on a Gecko rule");
-}
-
-NS_IMETHODIMP
-DOMCSSDeclarationImpl::GetParentRule(nsIDOMCSSRule **aParent)
-{
-  NS_ENSURE_ARG_POINTER(aParent);
-
-  NS_IF_ADDREF(*aParent = mRule);
-  return NS_OK;
 }
 
 nsresult
@@ -1158,11 +1152,7 @@ DOMCSSDeclarationImpl::SetCSSDeclaration(DeclarationBlock* aDecl)
   mRule->SetDeclaration(aDecl->AsGecko());
 
   if (sheet) {
-    sheet->DidDirty();
-  }
-
-  if (doc) {
-    doc->StyleRuleChanged(sheet, mRule);
+    sheet->RuleChanged(mRule);
   }
   return NS_OK;
 }
@@ -1181,14 +1171,7 @@ namespace css {
 uint16_t
 StyleRule::Type() const
 {
-  return nsIDOMCSSRule::STYLE_RULE;
-}
-
-NS_IMETHODIMP
-StyleRule::GetStyle(nsIDOMCSSStyleDeclaration** aStyle)
-{
-  NS_ADDREF(*aStyle = Style());
-  return NS_OK;
+  return CSSRuleBinding::STYLE_RULE;
 }
 
 nsICSSDeclaration*
@@ -1198,14 +1181,6 @@ StyleRule::Style()
     mDOMDeclaration.reset(new DOMCSSDeclarationImpl(this));
   }
   return mDOMDeclaration.get();
-}
-
-NS_IMETHODIMP
-StyleRule::GetCSSStyleRule(BindingStyleRule **aResult)
-{
-  *aResult = this;
-  NS_ADDREF(*aResult);
-  return NS_OK;
 }
 
 StyleRule::StyleRule(nsCSSSelectorList* aSelector,
@@ -1253,8 +1228,6 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(StyleRule)
     return NS_OK;
   }
   else
-  NS_INTERFACE_MAP_ENTRY(nsICSSStyleRuleDOMWrapper)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMCSSStyleRule)
 NS_INTERFACE_MAP_END_INHERITING(Rule)
 
 NS_IMPL_ADDREF_INHERITED(StyleRule, Rule)
@@ -1361,7 +1334,7 @@ StyleRule::List(FILE* out, int32_t aIndent) const
 #endif
 
 void
-StyleRule::GetCssTextImpl(nsAString& aCssText) const
+StyleRule::GetCssText(nsAString& aCssText) const
 {
   if (mSelector) {
     mSelector->ToString(aCssText, GetStyleSheet());
@@ -1379,23 +1352,21 @@ StyleRule::GetCssTextImpl(nsAString& aCssText) const
   aCssText.Append(char16_t('}'));
 }
 
-NS_IMETHODIMP
+void
 StyleRule::GetSelectorText(nsAString& aSelectorText)
 {
   if (mSelector)
     mSelector->ToString(aSelectorText, GetStyleSheet());
   else
     aSelectorText.Truncate();
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 StyleRule::SetSelectorText(const nsAString& aSelectorText)
 {
   // XXX TBI - get a parser and re-parse the selectors,
   // XXX then need to re-compute the cascade
   // XXX and dirty sheet
-  return NS_OK;
 }
 
 /* virtual */ size_t

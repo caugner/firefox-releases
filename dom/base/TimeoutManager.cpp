@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "TimeoutManager.h"
+#include "nsContentUtils.h"
 #include "nsGlobalWindow.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Telemetry.h"
@@ -410,8 +411,6 @@ TimeoutManager::TimeoutManager(nsGlobalWindowInner& aWindow)
     mThrottleTrackingTimeouts(false),
     mBudgetThrottleTimeouts(false)
 {
-  MOZ_DIAGNOSTIC_ASSERT(aWindow.IsInnerWindow());
-
   MOZ_LOG(gLog, LogLevel::Debug,
           ("TimeoutManager %p created, tracking bucketing %s\n",
            this, gAnnotateTrackingChannels ? "enabled" : "disabled"));
@@ -587,7 +586,7 @@ TimeoutManager::SetTimeout(nsITimeoutHandler* aHandler,
   }
 
   if (gRunningTimeoutDepth == 0 &&
-      mWindow.GetPopupControlState() < openBlocked) {
+      nsContentUtils::GetPopupControlState() < openBlocked) {
     // This timeout is *not* set from another timeout and it's set
     // while popups are enabled. Propagate the state to the timeout if
     // its delay (interval) is equal to or less than what
@@ -597,7 +596,7 @@ TimeoutManager::SetTimeout(nsITimeoutHandler* aHandler,
     // because our lower bound for |realInterval| could be pretty high
     // in some cases.
     if (interval <= gDisableOpenClickDelay) {
-      timeout->mPopupState = mWindow.GetPopupControlState();
+      timeout->mPopupState = nsContentUtils::GetPopupControlState();
     }
   }
 
@@ -1197,7 +1196,6 @@ public:
   explicit ThrottleTimeoutsCallback(nsGlobalWindowInner* aWindow)
     : mWindow(aWindow)
   {
-    MOZ_DIAGNOSTIC_ASSERT(aWindow->IsInnerWindow());
   }
 
   NS_DECL_ISUPPORTS

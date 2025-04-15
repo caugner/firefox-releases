@@ -4,32 +4,30 @@
 
 "use strict";
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+var EXPORTED_SYMBOLS = ["SyncTelemetry"];
 
-this.EXPORTED_SYMBOLS = ["SyncTelemetry"];
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://services-sync/browserid_identity.js");
-Cu.import("resource://services-sync/main.js");
-Cu.import("resource://services-sync/status.js");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://services-sync/resource.js");
-Cu.import("resource://services-common/observers.js");
-Cu.import("resource://services-common/async.js");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://services-sync/browserid_identity.js");
+ChromeUtils.import("resource://services-sync/main.js");
+ChromeUtils.import("resource://services-sync/status.js");
+ChromeUtils.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://services-sync/resource.js");
+ChromeUtils.import("resource://services-common/observers.js");
+ChromeUtils.import("resource://services-common/async.js");
 
 let constants = {};
-Cu.import("resource://services-sync/constants.js", constants);
+ChromeUtils.import("resource://services-sync/constants.js", constants);
 
-XPCOMUtils.defineLazyModuleGetter(this, "TelemetryController",
+ChromeUtils.defineModuleGetter(this, "TelemetryController",
                               "resource://gre/modules/TelemetryController.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "TelemetryUtils",
-                                  "resource://gre/modules/TelemetryUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "TelemetryEnvironment",
-                                  "resource://gre/modules/TelemetryEnvironment.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "OS",
-                                  "resource://gre/modules/osfile.jsm");
+ChromeUtils.defineModuleGetter(this, "TelemetryUtils",
+                               "resource://gre/modules/TelemetryUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "TelemetryEnvironment",
+                               "resource://gre/modules/TelemetryEnvironment.jsm");
+ChromeUtils.defineModuleGetter(this, "OS",
+                               "resource://gre/modules/osfile.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "Telemetry",
                                    "@mozilla.org/base/telemetry;1",
@@ -148,6 +146,12 @@ class EngineRecord {
     if (error) {
       this.failureReason = SyncTelemetry.transformError(error);
     }
+    // This allows cases like bookmarks-buffered to have a separate name from
+    // the bookmarks engine.
+    let engineImpl = Weave.Service.engineManager.get(this.name);
+    if (engineImpl && engineImpl.overrideTelemetryName) {
+      this.name = engineImpl.overrideTelemetryName;
+    }
   }
 
   recordApplied(counts) {
@@ -218,7 +222,7 @@ class EngineRecord {
 }
 
 class TelemetryRecord {
-  constructor(allowedEngines) {
+  constructor(allowedEngines, why) {
     this.allowedEngines = allowedEngines;
     // Our failure reason. This property only exists in the generated ping if an
     // error actually occurred.
@@ -227,6 +231,7 @@ class TelemetryRecord {
     this.when = Date.now();
     this.startTime = tryGetMonotonicTimestamp();
     this.took = 0; // will be set later.
+    this.why = why;
 
     // All engines that have finished (ie, does not include the "current" one)
     // We omit this from the ping if it's empty.
@@ -243,6 +248,9 @@ class TelemetryRecord {
       status: this.status,
       devices: this.devices,
     };
+    if (this.why) {
+      result.why = this.why;
+    }
     let engines = [];
     for (let engine of this.engines) {
       engines.push(engine.toJSON());
@@ -424,7 +432,7 @@ function cleanErrorMessage(error) {
 
 class SyncTelemetryImpl {
   constructor(allowedEngines) {
-    log.level = Log.Level[Svc.Prefs.get("log.logger.telemetry", "Trace")];
+    log.manageLevelFromPref("services.sync.log.logger.telemetry");
     // This is accessible so we can enable custom engines during tests.
     this.allowedEngines = allowedEngines;
     this.current = null;
@@ -488,22 +496,24 @@ class SyncTelemetryImpl {
     }
     // We still call submit() with possibly illegal payloads so that tests can
     // know that the ping was built. We don't end up submitting them, however.
-    if (record.syncs.length) {
-      log.trace(`submitting ${record.syncs.length} sync record(s) to telemetry`);
-      TelemetryController.submitExternalPing("sync", record);
+    let numEvents = record.events ? record.events.length : 0;
+    if (record.syncs.length || numEvents) {
+      log.trace(`submitting ${record.syncs.length} sync record(s) and ` +
+                `${numEvents} event(s) to telemetry`);
+      TelemetryController.submitExternalPing("sync", record, { usePingSender: true });
       return true;
     }
     return false;
   }
 
-
-  onSyncStarted() {
+  onSyncStarted(data) {
+    const why = data && JSON.parse(data).why;
     if (this.current) {
       log.warn("Observed weave:service:sync:start, but we're already recording a sync!");
       // Just discard the old record, consistent with our handling of engines, above.
       this.current = null;
     }
-    this.current = new TelemetryRecord(this.allowedEngines);
+    this.current = new TelemetryRecord(this.allowedEngines, why);
   }
 
   _checkCurrent(topic) {
@@ -589,9 +599,9 @@ class SyncTelemetryImpl {
         event.push(extra);
       }
     } else if (extra) {
-        event.push(null); // a null for the empty value.
-        event.push(extra);
-      }
+      event.push(null); // a null for the empty value.
+      event.push(extra);
+    }
     this.events.push(event);
   }
 
@@ -605,7 +615,7 @@ class SyncTelemetryImpl {
 
       /* sync itself state changes */
       case "weave:service:sync:start":
-        this.onSyncStarted();
+        this.onSyncStarted(data);
         break;
 
       case "weave:service:sync:finish":
@@ -678,6 +688,12 @@ class SyncTelemetryImpl {
   // happen (for example, when including an error in the |extra| field of
   // event telemetry)
   transformError(error) {
+    // Certain parts of sync will use this pattern as a way to communicate to
+    // processIncoming to abort the processing. However, there's no guarantee
+    // this can only happen then.
+    if (typeof error == "object" && error.code && error.cause) {
+      error = error.cause;
+    }
     if (Async.isShutdownException(error)) {
       return { name: "shutdownerror" };
     }
@@ -691,10 +707,6 @@ class SyncTelemetryImpl {
       return { name: "unexpectederror", error };
     }
 
-    if (error.failureCode) {
-      return { name: "othererror", error: error.failureCode };
-    }
-
     if (error instanceof AuthenticationError) {
       return { name: "autherror", from: error.source };
     }
@@ -705,6 +717,10 @@ class SyncTelemetryImpl {
 
     if (httpCode) {
       return { name: "httperror", code: httpCode };
+    }
+
+    if (error.failureCode) {
+      return { name: "othererror", error: error.failureCode };
     }
 
     if (error.result) {
@@ -732,4 +748,4 @@ class SyncTelemetryImpl {
 }
 
 /* global SyncTelemetry */
-this.SyncTelemetry = new SyncTelemetryImpl(ENGINES);
+var SyncTelemetry = new SyncTelemetryImpl(ENGINES);

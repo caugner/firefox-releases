@@ -584,17 +584,23 @@ HTMLCanvasElement::CopyInnerTo(Element* aDest,
     HTMLCanvasElement* dest = static_cast<HTMLCanvasElement*>(aDest);
     dest->mOriginalCanvas = this;
 
-    nsCOMPtr<nsISupports> cxt;
-    dest->GetContext(NS_LITERAL_STRING("2d"), getter_AddRefs(cxt));
-    RefPtr<CanvasRenderingContext2D> context2d =
-      static_cast<CanvasRenderingContext2D*>(cxt.get());
-    if (context2d && !mPrintCallback) {
-      CanvasImageSource source;
-      source.SetAsHTMLCanvasElement() = this;
-      ErrorResult err;
-      context2d->DrawImage(source,
-                           0.0, 0.0, err);
-      rv = err.StealNSResult();
+    // We make sure that the canvas is not zero sized since that would cause
+    // the DrawImage call below to return an error, which would cause printing
+    // to fail.
+    nsIntSize size = GetWidthHeight();
+    if (size.height > 0 && size.width > 0) {
+      nsCOMPtr<nsISupports> cxt;
+      dest->GetContext(NS_LITERAL_STRING("2d"), getter_AddRefs(cxt));
+      RefPtr<CanvasRenderingContext2D> context2d =
+        static_cast<CanvasRenderingContext2D*>(cxt.get());
+      if (context2d && !mPrintCallback) {
+        CanvasImageSource source;
+        source.SetAsHTMLCanvasElement() = this;
+        ErrorResult err;
+        context2d->DrawImage(source,
+                             0.0, 0.0, err);
+        rv = err.StealNSResult();
+      }
     }
   }
   return rv;
@@ -642,6 +648,7 @@ bool
 HTMLCanvasElement::ParseAttribute(int32_t aNamespaceID,
                                   nsAtom* aAttribute,
                                   const nsAString& aValue,
+                                  nsIPrincipal* aMaybeScriptedPrincipal,
                                   nsAttrValue& aResult)
 {
   if (aNamespaceID == kNameSpaceID_None &&
@@ -650,7 +657,7 @@ HTMLCanvasElement::ParseAttribute(int32_t aNamespaceID,
   }
 
   return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aResult);
+                                              aMaybeScriptedPrincipal, aResult);
 }
 
 
@@ -711,6 +718,14 @@ public:
     }
 
     mCaptureStream->StopCapture();
+  }
+
+  void Disable() override
+  {
+  }
+
+  void Enable() override
+  {
   }
 
 private:
@@ -905,9 +920,13 @@ HTMLCanvasElement::TransferControlToOffscreen(ErrorResult& aRv)
     renderer->SetWidth(sz.width);
     renderer->SetHeight(sz.height);
 
-    nsCOMPtr<nsIGlobalObject> global =
-      do_QueryInterface(OwnerDoc()->GetInnerWindow());
-    mOffscreenCanvas = new OffscreenCanvas(global,
+    nsPIDOMWindowInner* win = OwnerDoc()->GetInnerWindow();
+    if (!win) {
+      aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+      return nullptr;
+    }
+
+    mOffscreenCanvas = new OffscreenCanvas(win->AsGlobal(),
                                            sz.width,
                                            sz.height,
                                            GetCompositorBackendType(),
@@ -1114,11 +1133,10 @@ HTMLCanvasElement::InvalidateCanvasContent(const gfx::Rect* damageRect)
    * invalidating a canvas will feed into heuristics and cause JIT code to be
    * kept around longer, for smoother animations.
    */
-  nsCOMPtr<nsIGlobalObject> global =
-    do_QueryInterface(OwnerDoc()->GetInnerWindow());
+  nsPIDOMWindowInner* win = OwnerDoc()->GetInnerWindow();
 
-  if (global) {
-    if (JSObject *obj = global->GetGlobalJSObject()) {
+  if (win) {
+    if (JSObject *obj = win->AsGlobal()->GetGlobalJSObject()) {
       js::NotifyAnimationActivity(obj);
     }
   }
@@ -1323,12 +1341,7 @@ HTMLCanvasElement::RegisterFrameCaptureListener(FrameCaptureListener* aListener,
       doc = doc->GetParentDocument();
     }
 
-    nsIPresShell* shell = doc->GetShell();
-    if (!shell) {
-      return NS_ERROR_FAILURE;
-    }
-
-    nsPresContext* context = shell->GetPresContext();
+    nsPresContext* context = doc->GetPresContext();
     if (!context) {
       return NS_ERROR_FAILURE;
     }

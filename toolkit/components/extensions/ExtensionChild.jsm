@@ -1,12 +1,13 @@
+/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set sts=2 sw=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 "use strict";
 
 /* exported ExtensionChild */
 
-this.EXPORTED_SYMBOLS = ["ExtensionChild"];
+var EXPORTED_SYMBOLS = ["ExtensionChild"];
 
 /*
  * This file handles addon logic that is independent of the chrome process.
@@ -16,26 +17,28 @@ this.EXPORTED_SYMBOLS = ["ExtensionChild"];
  * Don't put contentscript logic here, use ExtensionContent.jsm instead.
  */
 
-const Ci = Components.interfaces;
-const Cc = Components.classes;
-const Cu = Components.utils;
-const Cr = Components.results;
-
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "finalizationService",
-  "@mozilla.org/toolkit/finalizationwitness;1", "nsIFinalizationWitnessService");
+                                   "@mozilla.org/toolkit/finalizationwitness;1",
+                                   "nsIFinalizationWitnessService");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   ExtensionContent: "resource://gre/modules/ExtensionContent.jsm",
+  ExtensionPageChild: "resource://gre/modules/ExtensionPageChild.jsm",
   MessageChannel: "resource://gre/modules/MessageChannel.jsm",
   NativeApp: "resource://gre/modules/NativeMessaging.jsm",
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
 });
 
-Cu.import("resource://gre/modules/ExtensionCommon.jsm");
-Cu.import("resource://gre/modules/ExtensionUtils.jsm");
+XPCOMUtils.defineLazyGetter(
+  this, "processScript",
+  () => Cc["@mozilla.org/webextensions/extension-process-script;1"]
+          .getService().wrappedJSObject);
+
+ChromeUtils.import("resource://gre/modules/ExtensionCommon.jsm");
+ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
 
 const {
   DefaultMap,
@@ -87,25 +90,33 @@ function injectAPI(source, dest) {
  * wrapped promise from being garbage collected.
  */
 const StrongPromise = {
+  locations: new Map(),
+
   wrap(promise, channelId, location) {
     return new Promise((resolve, reject) => {
-      const tag = `${channelId}|${location}`;
-      const witness = finalizationService.make("extensions-sendMessage-witness", tag);
+      this.locations.set(channelId, location);
+
+      const witness = finalizationService.make("extensions-sendMessage-witness", channelId);
       promise.then(value => {
+        this.locations.delete(channelId);
         witness.forget();
         resolve(value);
       }, error => {
+        this.locations.delete(channelId);
         witness.forget();
         reject(error);
       });
     });
   },
-  observe(subject, topic, tag) {
-    const pos = tag.indexOf("|");
-    const channel = Number(tag.substr(0, pos));
-    const location = tag.substr(pos + 1);
-    const message = `Promised response from onMessage listener at ${location} went out of scope`;
-    MessageChannel.abortChannel(channel, {message});
+  observe(subject, topic, channelId) {
+    channelId = Number(channelId);
+    let location = this.locations.get(channelId);
+    this.locations.delete(channelId);
+
+    const message = `Promised response from onMessage listener went out of scope`;
+    const error = ChromeUtils.createError(message, location);
+    error.mozWebExtLocation = location;
+    MessageChannel.abortChannel(channelId, error);
   },
 };
 Services.obs.addObserver(StrongPromise, "extensions-sendMessage-witness");
@@ -378,7 +389,7 @@ class Messenger {
         if (error.result == MessageChannel.RESULT_NO_HANDLER) {
           return Promise.reject({message: "Could not establish connection. Receiving end does not exist."});
         } else if (error.result != MessageChannel.RESULT_NO_RESPONSE) {
-          return Promise.reject({message: error.message});
+          return Promise.reject(error);
         }
       });
     holder = null;
@@ -393,7 +404,7 @@ class Messenger {
 
   _onMessage(name, filter) {
     return new EventManager(this.context, name, fire => {
-      const [location] = new this.context.cloneScope.Error().stack.split("\n", 1);
+      const caller = this.context.getCaller();
 
       let listener = {
         messageFilterPermissive: this.optionalFilter,
@@ -437,9 +448,9 @@ class Messenger {
           message = null;
 
           if (result instanceof this.context.cloneScope.Promise) {
-            return StrongPromise.wrap(result, channelId, location);
+            return StrongPromise.wrap(result, channelId, caller);
           } else if (result === true) {
-            return StrongPromise.wrap(promise, channelId, location);
+            return StrongPromise.wrap(promise, channelId, caller);
           }
           return response;
         },
@@ -557,6 +568,10 @@ class BrowserExtensionContent extends EventEmitter {
     this.uuid = data.uuid;
     this.instanceId = data.instanceId;
 
+    this.childModules = data.childModules;
+    this.dependencies = data.dependencies;
+    this.schemaURLs = data.schemaURLs;
+
     this.MESSAGE_EMIT_EVENT = `Extension:EmitEvent:${this.instanceId}`;
     Services.cpmm.addMessageListener(this.MESSAGE_EMIT_EVENT, this);
 
@@ -569,6 +584,8 @@ class BrowserExtensionContent extends EventEmitter {
     this.permissions = data.permissions;
     this.optionalPermissions = data.optionalPermissions;
     this.principal = data.principal;
+
+    this.apiManager = this.getAPIManager();
 
     this.localeData = new LocaleData(data.localeData);
 
@@ -629,6 +646,30 @@ class BrowserExtensionContent extends EventEmitter {
     ExtensionManager.extensions.set(this.id, this);
   }
 
+  getAPIManager() {
+    let apiManagers = [ExtensionPageChild.apiManager];
+
+    for (let id of this.dependencies) {
+      let extension = processScript.getExtensionChild(id);
+      if (extension) {
+        apiManagers.push(extension.experimentAPIManager);
+      }
+    }
+
+    if (this.childModules) {
+      this.experimentAPIManager =
+        new ExtensionCommon.LazyAPIManager("addon", this.childModules, this.schemaURLs);
+
+      apiManagers.push(this.experimentAPIManager);
+    }
+
+    if (apiManagers.length == 1) {
+      return apiManagers[0];
+    }
+
+    return new ExtensionCommon.MultiAPIManager("addon", apiManagers.reverse());
+  }
+
   shutdown() {
     ExtensionManager.extensions.delete(this.id);
     ExtensionContent.shutdownExtension(this);
@@ -636,6 +677,7 @@ class BrowserExtensionContent extends EventEmitter {
     if (isContentProcess) {
       MessageChannel.abortResponses({extensionId: this.id});
     }
+    this.emit("shutdown");
   }
 
   getContext(window) {
@@ -773,6 +815,7 @@ class ChildAPIManager {
     // delegated to the ParentAPIManager.
     this.localApis = localAPICan.root;
     this.apiCan = localAPICan;
+    this.schema = this.apiCan.apiManager.schema;
 
     this.id = `${context.extension.id}.${context.contextId}`;
 
@@ -814,6 +857,10 @@ class ChildAPIManager {
       this.context.extension.on("add-permissions", this.updatePermissions);
       this.context.extension.on("remove-permissions", this.updatePermissions);
     }
+  }
+
+  inject(obj) {
+    this.schema.inject(obj, this);
   }
 
   receiveMessage({name, messageName, data}) {

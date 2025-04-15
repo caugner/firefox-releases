@@ -133,6 +133,7 @@ public:
   void Cancel(uint32_t result, ErrorResult& aRv);
 
   void RedirectTo(nsIURI* uri, ErrorResult& aRv);
+  void UpgradeToSecure(ErrorResult& aRv);
 
 
   bool Suspended() const { return mSuspended; }
@@ -208,7 +209,11 @@ public:
   already_AddRefed<nsIDOMElement> GetBrowserElement() const;
 
 
-  bool GetCanModify(ErrorResult& aRv) const;
+  bool CanModify() const;
+  bool GetCanModify(ErrorResult& aRv) const
+  {
+    return CanModify();
+  }
 
 
   void GetProxyInfo(dom::Nullable<dom::MozProxyInfo>& aRetVal, ErrorResult& aRv) const;
@@ -220,9 +225,9 @@ public:
 
   void GetResponseHeaders(nsTArray<dom::MozHTTPHeader>& aRetVal, ErrorResult& aRv) const;
 
-  void SetRequestHeader(const nsCString& header, const nsCString& value, ErrorResult& aRv);
+  void SetRequestHeader(const nsCString& header, const nsCString& value, bool merge, ErrorResult& aRv);
 
-  void SetResponseHeader(const nsCString& header, const nsCString& value, ErrorResult& aRv);
+  void SetResponseHeader(const nsCString& header, const nsCString& value, bool merge, ErrorResult& aRv);
 
 
   using EventTarget::EventListenerAdded;

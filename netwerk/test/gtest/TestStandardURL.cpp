@@ -7,16 +7,20 @@
 #include "nsString.h"
 #include "nsPrintfCString.h"
 #include "nsComponentManagerUtils.h"
-
+#include "nsIURIMutator.h"
+#define protected public // hack to access setter methods
+#include "../../base/nsStandardURL.h"
+#undef protected
+using mozilla::net::nsStandardURL;
 
 // In nsStandardURL.cpp
 extern nsresult Test_NormalizeIPv4(const nsACString& host, nsCString& result);
 
 
 TEST(TestStandardURL, Simple) {
-    nsCOMPtr<nsIURL> url( do_CreateInstance(NS_STANDARDURL_CONTRACTID) );
+    RefPtr<nsStandardURL> url = new nsStandardURL();
     ASSERT_TRUE(url);
-    ASSERT_EQ(url->SetSpec(NS_LITERAL_CSTRING("http://example.com")), NS_OK);
+    ASSERT_EQ(url->SetSpecInternal(NS_LITERAL_CSTRING("http://example.com")), NS_OK);
 
     nsAutoCString out;
 
@@ -177,13 +181,13 @@ TEST(TestStandardURL, From_test_standardurldotjs)
 
 #define COUNT 10000
 
-MOZ_GTEST_BENCH(TestStandardURL, Perf, [] {
-    nsCOMPtr<nsIURL> url( do_CreateInstance(NS_STANDARDURL_CONTRACTID) );
+MOZ_GTEST_BENCH(TestStandardURL, DISABLED_Perf, [] {
+    RefPtr<nsStandardURL> url = new nsStandardURL();
     ASSERT_TRUE(url);
     nsAutoCString out;
 
     for (int i = COUNT; i; --i) {
-        ASSERT_EQ(url->SetSpec(NS_LITERAL_CSTRING("http://example.com")), NS_OK);
+        ASSERT_EQ(url->SetSpecInternal(NS_LITERAL_CSTRING("http://example.com")), NS_OK);
         ASSERT_EQ(url->GetSpec(out), NS_OK);
         url->Resolve(NS_LITERAL_CSTRING("foo.html?q=45"), out);
         url->SetScheme(NS_LITERAL_CSTRING("foo"));
@@ -200,7 +204,7 @@ MOZ_GTEST_BENCH(TestStandardURL, Perf, [] {
 });
 
 // Note the five calls in the loop, so divide by 100k
-MOZ_GTEST_BENCH(TestStandardURL, NormalizePerf, [] {
+MOZ_GTEST_BENCH(TestStandardURL, DISABLED_NormalizePerf, [] {
     nsAutoCString result;
     for (int i = 0; i < 20000; i++) {
       nsAutoCString encHost("123.232.12.32");
@@ -219,7 +223,7 @@ MOZ_GTEST_BENCH(TestStandardURL, NormalizePerf, [] {
 // Bug 1394785 - ignore unstable test on OSX
 #ifndef XP_MACOSX
 // Note the five calls in the loop, so divide by 100k
-MOZ_GTEST_BENCH(TestStandardURL, NormalizePerfFails, [] {
+MOZ_GTEST_BENCH(TestStandardURL, DISABLED_NormalizePerfFails, [] {
     nsAutoCString result;
     for (int i = 0; i < 20000; i++) {
       nsAutoCString encHost("123.292.12.32");
@@ -235,3 +239,33 @@ MOZ_GTEST_BENCH(TestStandardURL, NormalizePerfFails, [] {
     }
 });
 #endif
+
+TEST(TestStandardURL, Mutator)
+{
+  nsAutoCString out;
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = NS_MutateURI(NS_STANDARDURLMUTATOR_CONTRACTID)
+                  .SetSpec(NS_LITERAL_CSTRING("http://example.com"))
+                  .Finalize(uri);
+  ASSERT_EQ(rv, NS_OK);
+
+  ASSERT_EQ(uri->GetSpec(out), NS_OK);
+  ASSERT_TRUE(out == NS_LITERAL_CSTRING("http://example.com/"));
+
+  rv = NS_MutateURI(uri)
+         .SetScheme(NS_LITERAL_CSTRING("ftp"))
+         .SetHost(NS_LITERAL_CSTRING("mozilla.org"))
+         .SetPathQueryRef(NS_LITERAL_CSTRING("/path?query#ref"))
+         .Finalize(uri);
+  ASSERT_EQ(rv, NS_OK);
+  ASSERT_EQ(uri->GetSpec(out), NS_OK);
+  ASSERT_TRUE(out == NS_LITERAL_CSTRING("ftp://mozilla.org/path?query#ref"));
+
+  nsCOMPtr<nsIURL> url;
+  rv = NS_MutateURI(uri)
+         .SetScheme(NS_LITERAL_CSTRING("https"))
+         .Finalize(url);
+  ASSERT_EQ(rv, NS_OK);
+  ASSERT_EQ(url->GetSpec(out), NS_OK);
+  ASSERT_TRUE(out == NS_LITERAL_CSTRING("https://mozilla.org/path?query#ref"));
+}

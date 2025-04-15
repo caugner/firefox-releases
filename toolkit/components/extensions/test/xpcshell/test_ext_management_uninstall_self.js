@@ -2,9 +2,9 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-Cu.import("resource://gre/modules/AddonManager.jsm");
-Cu.import("resource://testing-common/AddonTestUtils.jsm");
-Cu.import("resource://testing-common/MockRegistrar.jsm");
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
+ChromeUtils.import("resource://testing-common/AddonTestUtils.jsm");
+ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
 
 const id = "uninstall_self_test@tests.mozilla.com";
 
@@ -43,7 +43,7 @@ let promptService = {
 
 add_task(async function setup() {
   let fakePromptService = MockRegistrar.register("@mozilla.org/embedcomp/prompt-service;1", promptService);
-  do_register_cleanup(() => {
+  registerCleanupFunction(() => {
     MockRegistrar.unregister(fakePromptService);
   });
   await ExtensionTestUtils.startAddonManager();

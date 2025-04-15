@@ -4,10 +4,12 @@
 from __future__ import absolute_import, print_function
 
 import copy
+import json
 import os
 import sys
 import time
 
+import mozinfo
 from mozlog.commandline import setup_logging
 from talos import utils, test
 from talos.cmdline import parse_args
@@ -17,7 +19,11 @@ class ConfigurationError(Exception):
     pass
 
 
-FAR_IN_FUTURE = 7258114800
+# Set places maintenance far in the future (the maximum time possible in an
+# int32_t) to avoid it kicking in during tests. The maintenance can take a
+# relatively long time which may cause unnecessary intermittents and slow
+# things down. This, like many things, will stop working correctly in 2038.
+FAR_IN_FUTURE = 2147483647
 
 DEFAULTS = dict(
     # args to pass to browser
@@ -40,17 +46,16 @@ DEFAULTS = dict(
         tpchrome=True,
         tpcycles=10,
         tpmozafterpaint=False,
+        tphero=False,
         fnbpaint=False,
         firstpaint=False,
         format_pagename=True,
         userready=False,
         testeventmap=[],
         base_vs_ref=False,
-        tpnoisy=True,
         tppagecycles=1,
         tploadnocache=False,
         tpscrolltest=False,
-        tprender=False,
         win_counters=[],
         w7_counters=[],
         linux_counters=[],
@@ -58,6 +63,7 @@ DEFAULTS = dict(
         xperf_counters=[],
         setup=None,
         cleanup=None,
+        preferences={},
     ),
     # default preferences to run with
     # these are updated with --extraPrefs from the commandline
@@ -106,9 +112,6 @@ DEFAULTS = dict(
         'browser.newtabpage.activity-stream.tippyTop.service.endpoint': '',
         'browser.newtabpage.activity-stream.feeds.section.topstories': False,
         'browser.newtabpage.activity-stream.feeds.snippets': False,
-        'browser.newtabpage.directory.source':
-            '${webserver}/directoryLinks.json',
-        'browser.newtabpage.introShown': True,
         'browser.safebrowsing.downloads.remote.url':
             'http://127.0.0.1/safebrowsing-dummy/downloads',
         'browser.safebrowsing.provider.google.gethashURL':
@@ -150,7 +153,6 @@ DEFAULTS = dict(
         'extensions.update.enabled': False,
         'extensions.webservice.discoverURL':
             'http://127.0.0.1/extensions-dummy/discoveryURL',
-        'extensions.getAddons.maxResults': 0,
         'extensions.getAddons.get.url':
             'http://127.0.0.1/extensions-dummy/repositoryGetURL',
         'extensions.getAddons.getWithPerformance.url':
@@ -158,14 +160,12 @@ DEFAULTS = dict(
             '/repositoryGetWithPerformanceURL',
         'extensions.getAddons.search.browseURL':
             'http://127.0.0.1/extensions-dummy/repositoryBrowseURL',
-        'extensions.getAddons.search.url':
-            'http://127.0.0.1/extensions-dummy/repositorySearchURL',
         'media.gmp-manager.url':
             'http://127.0.0.1/gmpmanager-dummy/update.xml',
         'media.gmp-manager.updateEnabled': False,
         'extensions.systemAddon.update.url':
             'http://127.0.0.1/dummy-system-addons.xml',
-        'extensions.shield-recipe-client.api_url':
+        'app.normandy.api_url':
             'https://127.0.0.1/selfsupport-dummy/',
         'browser.ping-centre.staging.endpoint':
             'https://127.0.0.1/pingcentre/dummy/',
@@ -182,8 +182,6 @@ DEFAULTS = dict(
         'browser.contentHandlers.types.4.uri': 'http://127.0.0.1/rss?url=%s',
         'browser.contentHandlers.types.5.uri': 'http://127.0.0.1/rss?url=%s',
         'identity.fxaccounts.auth.uri': 'https://127.0.0.1/fxa-dummy/',
-        'datareporting.healthreport.about.reportUrl':
-            'http://127.0.0.1/abouthealthreport/',
         'datareporting.healthreport.documentServerURI':
             'http://127.0.0.1/healthreport/',
         'datareporting.policy.dataSubmissionPolicyBypassNotification': True,
@@ -217,13 +215,12 @@ GLOBAL_OVERRIDES = (
     'gecko_profile',
     'gecko_profile_interval',
     'gecko_profile_entries',
-    'shutdown',
     'tpcycles',
-    'tpdelay',
     'tppagecycles',
     'tpmanifest',
     'tptimeout',
     'tpmozafterpaint',
+    'tphero',
     'fnbpaint',
     'firstpaint',
     'userready',
@@ -313,6 +310,12 @@ def get_counters(config):
 def get_active_tests(config):
     activeTests = config.pop('activeTests').strip().split(':')
 
+    # on osx, ARES6 crashes about 50% of the time, bug 1437425
+    if mozinfo.os not in ['linux', 'win'] and \
+       'ARES6' in activeTests and \
+       not config['develop']:
+        activeTests.remove('ARES6')
+
     # ensure tests are available
     availableTests = test.test_dict()
     if not set(activeTests).issubset(availableTests):
@@ -334,16 +337,6 @@ def get_global_overrides(config):
         if key != 'gecko_profile':
             config.pop(key)
 
-    # add noChrome to global overrides (HACK)
-    noChrome = config.pop('noChrome')
-    if noChrome:
-        global_overrides['tpchrome'] = False
-
-    # HACK: currently xperf tests post results to graph server and
-    # we want to ensure we don't publish shutdown numbers
-    # This is also hacked because "--noShutdown -> shutdown:True"
-    if config['xperf_path']:
-        global_overrides['shutdown'] = False
     return global_overrides
 
 
@@ -352,11 +345,39 @@ def build_manifest(config, manifestName):
     with open(manifestName, 'r') as fHandle:
         manifestLines = fHandle.readlines()
 
+    # look for configuration data - right now just MotionMark
+    tuning_data = {}
+    if os.path.isfile(manifestName + '.json'):
+        with open(manifestName + '.json', 'r') as f:
+            tuning_data = json.load(f)
+
     # write modified manifest lines
     with open(manifestName + '.develop', 'w') as newHandle:
         for line in manifestLines:
             newline = line.replace('localhost', config['webserver'])
             newline = newline.replace('page_load_test', 'tests')
+
+            if tuning_data:
+                suite = ''
+                test = ''
+                # parse suite/test from: suite-name=HTMLsuite&test-name=CompositedTransforms
+                parts = newline.split('&')
+                for part in parts:
+                    key_val = part.split('=')
+                    if len(key_val) != 2:
+                        continue
+
+                    if key_val[0] == 'suite-name':
+                        suite = key_val[1]
+                    if key_val[0] == 'test-name':
+                        test = key_val[1]
+
+                if suite and test and tuning_data:
+                    osver = mozinfo.os
+                    if osver not in ['linux', 'win']:
+                        osver = 'osx'
+                    complexity = tuning_data[suite]['complexity'][test][osver]
+                    newline = newline.replace('complexity=300', 'complexity=%s' % complexity)
             newHandle.write(newline)
 
     newManifestName = manifestName + '.develop'
@@ -367,6 +388,7 @@ def build_manifest(config, manifestName):
 
 def get_test(config, global_overrides, counters, test_instance):
     mozAfterPaint = getattr(test_instance, 'tpmozafterpaint', None)
+    hero = getattr(test_instance, 'tphero', None)
     firstPaint = getattr(test_instance, 'firstpaint', None)
     userReady = getattr(test_instance, 'userready', None)
     firstNonBlankPaint = getattr(test_instance, 'fnbpaint', None)
@@ -383,6 +405,8 @@ def get_test(config, global_overrides, counters, test_instance):
         test_instance.firstpaint = firstPaint
     if userReady is not None:
         test_instance.userready = userReady
+    if hero is not None:
+        test_instance.tphero = hero
 
     # fix up url
     url = getattr(test_instance, 'url', None)
@@ -432,6 +456,9 @@ def get_browser_config(config):
     optional = {'bcontroller_config': '${talos}/bcontroller.json',
                 'branch_name': '',
                 'child_process': 'plugin-container',
+                'debug': False,
+                'debugger': None,
+                'debugger_args': None,
                 'develop': False,
                 'process': '',
                 'framework': 'talos',
@@ -442,8 +469,7 @@ def get_browser_config(config):
                 'xperf_path': None,
                 'error_filename': None,
                 'no_upload_results': False,
-                'enable_stylo': False,
-                'disable_stylo': False,
+                'enable_stylo': True,
                 'stylothreads': 0,
                 'subtests': None,
                 }

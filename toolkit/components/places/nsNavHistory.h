@@ -29,11 +29,17 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/Atomics.h"
 
+#ifdef XP_WIN
+#include "WinUtils.h"
+#include <wincrypt.h>
+#endif
+
 #define QUERYUPDATE_TIME 0
 #define QUERYUPDATE_SIMPLE 1
 #define QUERYUPDATE_COMPLEX 2
 #define QUERYUPDATE_COMPLEX_WITH_BOOKMARKS 3
 #define QUERYUPDATE_HOST 4
+#define QUERYUPDATE_MOBILEPREF 5
 
 // Clamp title and URL to generously large, but not too large, length.
 // See bug 319004 for details.
@@ -51,6 +57,13 @@
 
 // Fired after frecency has been updated.
 #define TOPIC_FRECENCY_UPDATED "places-frecency-updated"
+
+// The preference we watch to know when the mobile bookmarks folder is filled by
+// sync.
+#define MOBILE_BOOKMARKS_PREF "browser.bookmarks.showMobileBookmarks"
+
+// The guid of the mobile bookmarks virtual query.
+#define MOBILE_BOOKMARKS_VIRTUAL_GUID "mobile____v"
 
 class nsNavHistory;
 class QueryKeyValuePair;
@@ -432,18 +445,9 @@ public:
   }
 
   /**
-   * Fires onVisit event to nsINavHistoryService observers
+   * Fires onVisits event to nsINavHistoryService observers
    */
-  void NotifyOnVisit(nsIURI* aURI,
-                     int64_t aVisitId,
-                     PRTime aTime,
-                     int64_t aReferrerVisitId,
-                     int32_t aTransitionType,
-                     const nsACString& aGuid,
-                     bool aHidden,
-                     uint32_t aVisitCount,
-                     uint32_t aTyped,
-                     const nsAString& aLastKnownTitle);
+  void NotifyOnVisits(nsIVisitData** aVisits, uint32_t aVisitsCount);
 
   /**
    * Fires onTitleChanged event to nsINavHistoryService observers
@@ -487,6 +491,17 @@ public:
   bool isBatching() {
     return mBatchLevel > 0;
   }
+
+#ifdef XP_WIN
+  /**
+   * Get the cached HCRYPTPROV initialized in the nsNavHistory constructor.
+   */
+  nsresult GetCryptoProvider(HCRYPTPROV& aCryptoProvider) const {
+    NS_ENSURE_STATE(mCryptoProviderInitialized);
+    aCryptoProvider = mCryptoProvider;
+    return NS_OK;
+  }
+#endif
 
 private:
   ~nsNavHistory();
@@ -641,7 +656,13 @@ protected:
 
   // Used to enable and disable the observer notifications
   bool mCanNotify;
-  nsCategoryCache<nsINavHistoryObserver> mCacheObservers;
+
+  // Used to cache the call to CryptAcquireContext, which is expensive
+  // when called thousands of times
+#ifdef XP_WIN
+  HCRYPTPROV mCryptoProvider;
+  bool mCryptoProviderInitialized;
+#endif
 };
 
 

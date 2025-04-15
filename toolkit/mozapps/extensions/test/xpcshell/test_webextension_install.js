@@ -1,5 +1,5 @@
 
-Components.utils.import("resource://gre/modules/addons/AddonSettings.jsm");
+ChromeUtils.import("resource://gre/modules/addons/AddonSettings.jsm");
 
 let profileDir;
 add_task(async function setup() {
@@ -138,7 +138,7 @@ add_task(async function test_multiple_no_id_extensions() {
 
   const allAddons = await AddonManager.getAllAddons();
 
-  do_print(`Found these add-ons: ${allAddons.map(a => a.name).join(", ")}`);
+  info(`Found these add-ons: ${allAddons.map(a => a.name).join(", ")}`);
   const filtered = allAddons.filter(addon => addon.name === manifest.name);
   // Make sure we have two add-ons by the same name.
   equal(filtered.length, 2, "Two add-ons are installed with the same name");
@@ -498,7 +498,7 @@ add_task(async function test_permissions_prompt() {
     manifest_version: 2,
     version: "1.0",
 
-    permissions: ["tabs", "storage", "https://*.example.com/*", "<all_urls>", "experiments.test"],
+    permissions: ["tabs", "storage", "https://*.example.com/*", "<all_urls>"],
   };
 
   let xpi = ExtensionTestCommon.generateXPI({manifest});
@@ -519,7 +519,6 @@ add_task(async function test_permissions_prompt() {
   let perms = perminfo.addon.userPermissions;
   deepEqual(perms.permissions, ["tabs", "storage"], "API permissions are correct");
   deepEqual(perms.origins, ["https://*.example.com/*", "<all_urls>"], "Host permissions are correct");
-  deepEqual(perms.apis, ["test"], "Experiments permissions are correct");
 
   let addon = await promiseAddonByID(perminfo.addon.id);
   notEqual(addon, null, "Extension was installed");

@@ -7,18 +7,18 @@
 use app_units::Au;
 use context::QuirksMode;
 use cssparser::{Parser, RGBA};
-use euclid::{ScaleFactor, Size2D, TypedSize2D};
+use euclid::{TypedScale, Size2D, TypedSize2D};
 use media_queries::MediaType;
 use parser::ParserContext;
 use properties::ComputedValues;
 use selectors::parser::SelectorParseErrorKind;
-use std::fmt;
+use std::fmt::{self, Write};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use style_traits::{CSSPixel, DevicePixel, ToCss, ParseError};
+use style_traits::{CSSPixel, CssWriter, DevicePixel, ToCss, ParseError};
 use style_traits::viewport::ViewportConstraints;
+use values::{specified, KeyframesName};
 use values::computed::{self, ToComputedValue};
 use values::computed::font::FontSize;
-use values::specified;
 
 /// A device is a structure that represents the current media a given document
 /// is displayed in.
@@ -31,7 +31,7 @@ pub struct Device {
     /// The current viewport size, in CSS pixels.
     viewport_size: TypedSize2D<f32, CSSPixel>,
     /// The current device pixel ratio, from CSS pixels to device pixels.
-    device_pixel_ratio: ScaleFactor<f32, CSSPixel, DevicePixel>,
+    device_pixel_ratio: TypedScale<f32, CSSPixel, DevicePixel>,
 
     /// The font size of the root element
     /// This is set when computing the style of the root
@@ -57,7 +57,7 @@ impl Device {
     pub fn new(
         media_type: MediaType,
         viewport_size: TypedSize2D<f32, CSSPixel>,
-        device_pixel_ratio: ScaleFactor<f32, CSSPixel, DevicePixel>
+        device_pixel_ratio: TypedScale<f32, CSSPixel, DevicePixel>
     ) -> Device {
         Device {
             media_type,
@@ -96,6 +96,12 @@ impl Device {
         // Servo doesn't implement this quirk (yet)
     }
 
+    /// Whether a given animation name may be referenced from style.
+    pub fn animation_name_may_be_referenced(&self, _: &KeyframesName) -> bool {
+        // Assume it is, since we don't have any good way to prove it's not.
+        true
+    }
+
     /// Returns whether we ever looked up the root font size of the Device.
     pub fn used_root_font_size(&self) -> bool {
         self.used_root_font_size.load(Ordering::Relaxed)
@@ -121,7 +127,7 @@ impl Device {
     }
 
     /// Returns the device pixel ratio.
-    pub fn device_pixel_ratio(&self) -> ScaleFactor<f32, CSSPixel, DevicePixel> {
+    pub fn device_pixel_ratio(&self) -> TypedScale<f32, CSSPixel, DevicePixel> {
         self.device_pixel_ratio
     }
 
@@ -218,8 +224,9 @@ impl Expression {
 }
 
 impl ToCss for Expression {
-    fn to_css<W>(&self, dest: &mut W) -> fmt::Result
-        where W: fmt::Write,
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: Write,
     {
         let (s, l) = match self.0 {
             ExpressionKind::Width(Range::Min(ref l)) => ("(min-width: ", l),

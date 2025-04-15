@@ -31,6 +31,7 @@
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/dom/Location.h"
+#include "nsIURIMutator.h"
 
 #include "unicode/uloc.h"
 
@@ -152,7 +153,7 @@ nsChromeRegistry::Init()
 }
 
 nsresult
-nsChromeRegistry::GetProviderAndPath(nsIURL* aChromeURL,
+nsChromeRegistry::GetProviderAndPath(nsIURI* aChromeURL,
                                      nsACString& aProvider, nsACString& aPath)
 {
   nsresult rv;
@@ -199,7 +200,7 @@ nsChromeRegistry::GetProviderAndPath(nsIURL* aChromeURL,
 
 
 nsresult
-nsChromeRegistry::Canonify(nsIURL* aChromeURL)
+nsChromeRegistry::Canonify(nsCOMPtr<nsIURI>& aChromeURL)
 {
   NS_NAMED_LITERAL_CSTRING(kSlash, "/");
 
@@ -228,13 +229,21 @@ nsChromeRegistry::Canonify(nsIURL* aChromeURL)
     else {
       return NS_ERROR_INVALID_ARG;
     }
-    aChromeURL->SetPathQueryRef(path);
+    return NS_MutateURI(aChromeURL)
+             .SetPathQueryRef(path)
+             .Finalize(aChromeURL);
   }
   else {
     // prevent directory traversals ("..")
     // path is already unescaped once, but uris can get unescaped twice
     const char* pos = path.BeginReading();
     const char* end = path.EndReading();
+    // Must start with [a-zA-Z0-9].
+    if (!('a' <= *pos && *pos <= 'z') &&
+        !('A' <= *pos && *pos <= 'Z') &&
+        !('0' <= *pos && *pos <= '9')) {
+      return NS_ERROR_DOM_BAD_URI;
+    }
     while (pos < end) {
       switch (*pos) {
         case ':':
@@ -421,23 +430,22 @@ nsresult nsChromeRegistry::RefreshWindow(nsPIDOMWindowOuter* aWindow)
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  int32_t count = document->GetNumberOfStyleSheets();
+  size_t count = document->SheetCount();
 
   // Build an array of style sheets we need to reload.
   nsTArray<RefPtr<StyleSheet>> oldSheets(count);
   nsTArray<RefPtr<StyleSheet>> newSheets(count);
 
   // Iterate over the style sheets.
-  for (int32_t i = 0; i < count; i++) {
+  for (size_t i = 0; i < count; i++) {
     // Get the style sheet
-    StyleSheet* styleSheet = document->GetStyleSheetAt(i);
-    oldSheets.AppendElement(styleSheet);
+    oldSheets.AppendElement(document->SheetAt(i));
   }
 
   // Iterate over our old sheets and kick off a sync load of the new
   // sheet if and only if it's a non-inline sheet with a chrome URL.
   for (StyleSheet* sheet : oldSheets) {
-    MOZ_ASSERT(sheet, "GetStyleSheetAt shouldn't return nullptr for "
+    MOZ_ASSERT(sheet, "SheetAt shouldn't return nullptr for "
                       "in-range sheet indexes");
     nsIURI* uri = sheet->GetSheetURI();
 

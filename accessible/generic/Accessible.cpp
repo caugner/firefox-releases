@@ -13,6 +13,7 @@
 #include "nsAccUtils.h"
 #include "nsAccessibilityService.h"
 #include "ApplicationAccessible.h"
+#include "nsGenericHTMLElement.h"
 #include "NotificationController.h"
 #include "nsEventShell.h"
 #include "nsTextEquivUtils.h"
@@ -27,18 +28,15 @@
 #include "TableAccessible.h"
 #include "TableCellAccessible.h"
 #include "TreeWalker.h"
+#include "XULDocument.h"
 
 #include "nsIDOMElement.h"
-#include "nsIDOMNodeFilter.h"
-#include "nsIDOMHTMLElement.h"
-#include "nsIDOMKeyEvent.h"
-#include "nsIDOMTreeWalker.h"
 #include "nsIDOMXULButtonElement.h"
-#include "nsIDOMXULDocument.h"
 #include "nsIDOMXULElement.h"
 #include "nsIDOMXULLabelElement.h"
 #include "nsIDOMXULSelectCntrlEl.h"
 #include "nsIDOMXULSelectCntrlItemEl.h"
+#include "nsINodeList.h"
 #include "nsPIDOMWindow.h"
 
 #include "nsIDocument.h"
@@ -76,6 +74,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/ErrorResult.h"
 #include "mozilla/EventStates.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/MouseEvents.h"
@@ -85,6 +84,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "mozilla/dom/HTMLBodyElement.h"
+#include "mozilla/dom/KeyboardEventBinding.h"
 #include "mozilla/dom/TreeWalker.h"
 
 using namespace mozilla;
@@ -153,12 +153,12 @@ Accessible::Name(nsString& aName)
 
   // In the end get the name from tooltip.
   if (mContent->IsHTMLElement()) {
-    if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::title, aName)) {
+    if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::title, aName)) {
       aName.CompressWhitespace();
       return eNameFromTooltip;
     }
   } else if (mContent->IsXULElement()) {
-    if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::tooltiptext, aName)) {
+    if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::tooltiptext, aName)) {
       aName.CompressWhitespace();
       return eNameFromTooltip;
     }
@@ -202,9 +202,9 @@ Accessible::Description(nsString& aDescription)
     if (aDescription.IsEmpty()) {
       // Keep the Name() method logic.
       if (mContent->IsHTMLElement()) {
-        mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::title, aDescription);
+        mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::title, aDescription);
       } else if (mContent->IsXULElement()) {
-        mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::tooltiptext, aDescription);
+        mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::tooltiptext, aDescription);
       } else if (mContent->IsSVGElement()) {
         for (nsIContent* childElm = mContent->GetFirstChild(); childElm;
              childElm = childElm->GetNextSibling()) {
@@ -262,13 +262,13 @@ Accessible::AccessKey() const
   switch (Preferences::GetInt("ui.key.generalAccessKey", -1)) {
   case -1:
     break;
-  case nsIDOMKeyEvent::DOM_VK_SHIFT:
+  case dom::KeyboardEventBinding::DOM_VK_SHIFT:
     return KeyBinding(key, KeyBinding::kShift);
-  case nsIDOMKeyEvent::DOM_VK_CONTROL:
+  case dom::KeyboardEventBinding::DOM_VK_CONTROL:
     return KeyBinding(key, KeyBinding::kControl);
-  case nsIDOMKeyEvent::DOM_VK_ALT:
+  case dom::KeyboardEventBinding::DOM_VK_ALT:
     return KeyBinding(key, KeyBinding::kAlt);
-  case nsIDOMKeyEvent::DOM_VK_META:
+  case dom::KeyboardEventBinding::DOM_VK_META:
     return KeyBinding(key, KeyBinding::kMeta);
   default:
     return KeyBinding();
@@ -451,7 +451,7 @@ Accessible::NativeState()
 
   // Check if a XUL element has the popup attribute (an attached popup menu).
   if (HasOwnContent() && mContent->IsXULElement() &&
-      mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::popup))
+      mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::popup))
     state |= states::HASPOPUP;
 
   // Bypass the link states specialization for non links.
@@ -491,8 +491,9 @@ Accessible::NativelyUnavailable() const
   if (mContent->IsHTMLElement())
     return mContent->AsElement()->State().HasState(NS_EVENT_STATE_DISABLED);
 
-  return mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::disabled,
-                               nsGkAtoms::_true, eCaseMatters);
+  return mContent->IsElement() &&
+    mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::disabled,
+                                       nsGkAtoms::_true, eCaseMatters);
 }
 
 Accessible*
@@ -513,8 +514,7 @@ Accessible::ChildAtPoint(int32_t aX, int32_t aY,
   // we return |this| if the point is within it, otherwise nullptr.
   Accessible* fallbackAnswer = nullptr;
   nsIntRect rect = Bounds();
-  if (aX >= rect.x && aX < rect.x + rect.width &&
-      aY >= rect.y && aY < rect.y + rect.height)
+  if (rect.Contains(aX, aY))
     fallbackAnswer = this;
 
   if (nsAccUtils::MustPrune(this))  // Do not dig any further
@@ -542,7 +542,7 @@ Accessible::ChildAtPoint(int32_t aX, int32_t aY,
 
   WidgetMouseEvent dummyEvent(true, eMouseMove, rootWidget,
                               WidgetMouseEvent::eSynthesized);
-  dummyEvent.mRefPoint = LayoutDeviceIntPoint(aX - rootRect.x, aY - rootRect.y);
+  dummyEvent.mRefPoint = LayoutDeviceIntPoint(aX - rootRect.X(), aY - rootRect.Y());
 
   nsIFrame* popupFrame = nsLayoutUtils::
     GetPopupFrameForEventCoordinates(accDocument->PresContext()->GetRootPresContext(),
@@ -564,8 +564,8 @@ Accessible::ChildAtPoint(int32_t aX, int32_t aY,
 
   nsPresContext* presContext = startFrame->PresContext();
   nsRect screenRect = startFrame->GetScreenRectInAppUnits();
-    nsPoint offset(presContext->DevPixelsToAppUnits(aX) - screenRect.x,
-                   presContext->DevPixelsToAppUnits(aY) - screenRect.y);
+  nsPoint offset(presContext->DevPixelsToAppUnits(aX) - screenRect.X(),
+                 presContext->DevPixelsToAppUnits(aY) - screenRect.Y());
   nsIFrame* foundFrame = nsLayoutUtils::GetFrameForPoint(startFrame, offset);
 
   nsIContent* content = nullptr;
@@ -616,8 +616,7 @@ Accessible::ChildAtPoint(int32_t aX, int32_t aY,
     Accessible* child = accessible->GetChildAt(childIdx);
 
     nsIntRect childRect = child->Bounds();
-    if (aX >= childRect.x && aX < childRect.x + childRect.width &&
-        aY >= childRect.y && aY < childRect.y + childRect.height &&
+    if (childRect.Contains(aX, aY) &&
         (child->State() & states::INVISIBLE) == 0) {
 
       if (aWhichChild == eDeepestChild)
@@ -680,17 +679,16 @@ Accessible::Bounds() const
 
   nsIntRect screenRect;
   nsPresContext* presContext = mDoc->PresContext();
-  screenRect.x = presContext->AppUnitsToDevPixels(unionRectTwips.x);
-  screenRect.y = presContext->AppUnitsToDevPixels(unionRectTwips.y);
-  screenRect.width = presContext->AppUnitsToDevPixels(unionRectTwips.width);
-  screenRect.height = presContext->AppUnitsToDevPixels(unionRectTwips.height);
+  screenRect.SetRect(presContext->AppUnitsToDevPixels(unionRectTwips.X()),
+                     presContext->AppUnitsToDevPixels(unionRectTwips.Y()),
+                     presContext->AppUnitsToDevPixels(unionRectTwips.Width()),
+                     presContext->AppUnitsToDevPixels(unionRectTwips.Height()));
 
   // We have the union of the rectangle, now we need to put it in absolute
   // screen coords.
   nsIntRect orgRectPixels = boundingFrame->GetScreenRectInAppUnits().
     ToNearestPixels(presContext->AppUnitsPerDevPixel());
-  screenRect.x += orgRectPixels.x;
-  screenRect.y += orgRectPixels.y;
+  screenRect.MoveBy(orgRectPixels.X(), orgRectPixels.Y());
 
   return screenRect;
 }
@@ -704,12 +702,14 @@ Accessible::SetSelected(bool aSelect)
   Accessible* select = nsAccUtils::GetSelectableContainer(this, State());
   if (select) {
     if (select->State() & states::MULTISELECTABLE) {
-      if (ARIARoleMap()) {
+      if (mContent->IsElement() && ARIARoleMap()) {
         if (aSelect) {
-          mContent->SetAttr(kNameSpaceID_None, nsGkAtoms::aria_selected,
-                            NS_LITERAL_STRING("true"), true);
+          mContent->AsElement()->SetAttr(kNameSpaceID_None,
+                                         nsGkAtoms::aria_selected,
+                                         NS_LITERAL_STRING("true"), true);
         } else {
-          mContent->UnsetAttr(kNameSpaceID_None, nsGkAtoms::aria_selected, true);
+          mContent->AsElement()->UnsetAttr(kNameSpaceID_None,
+                                           nsGkAtoms::aria_selected, true);
         }
       }
       return;
@@ -789,10 +789,8 @@ Accessible::XULElmName(DocAccessible* aDocument,
       nsCOMPtr<nsIDOMXULSelectControlElement> select = do_QueryInterface(aElm);
       // Use label if this is not a select control element which
       // uses label attribute to indicate which option is selected
-      if (!select) {
-        nsCOMPtr<nsIDOMXULElement> xulEl(do_QueryInterface(aElm));
-        if (xulEl)
-          xulEl->GetAttribute(NS_LITERAL_STRING("label"), aName);
+      if (!select && aElm->IsElement()) {
+        aElm->AsElement()->GetAttribute(NS_LITERAL_STRING("label"), aName);
       }
     }
   }
@@ -825,9 +823,10 @@ Accessible::XULElmName(DocAccessible* aDocument,
   nsAutoString ancestorTitle;
   while (parent) {
     if (parent->IsXULElement(nsGkAtoms::toolbaritem) &&
-        parent->GetAttr(kNameSpaceID_None, nsGkAtoms::title, ancestorTitle)) {
+        parent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::title, ancestorTitle)) {
       // Before returning this, check if the element itself has a tooltip:
-      if (aElm->GetAttr(kNameSpaceID_None, nsGkAtoms::tooltiptext, aName)) {
+      if (aElm->IsElement() &&
+          aElm->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::tooltiptext, aName)) {
         aName.CompressWhitespace();
         return;
       }
@@ -942,7 +941,7 @@ Accessible::Attributes()
   } else {
     // 'xml-roles' attribute coming from ARIA.
     nsAutoString xmlRoles;
-    if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::role, xmlRoles))
+    if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::role, xmlRoles))
       nsAccUtils::SetAccAttr(attributes, nsGkAtoms::xmlroles, xmlRoles);
   }
 
@@ -1063,7 +1062,7 @@ Accessible::NativeAttributes()
 
   // Expose class because it may have useful microformat information.
   nsAutoString _class;
-  if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::_class, _class))
+  if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::_class, _class))
     nsAccUtils::SetAccAttr(attributes, nsGkAtoms::_class, _class);
 
   // Expose tag.
@@ -1072,11 +1071,8 @@ Accessible::NativeAttributes()
   nsAccUtils::SetAccAttr(attributes, nsGkAtoms::tag, tagName);
 
   // Expose draggable object attribute.
-  nsCOMPtr<nsIDOMHTMLElement> htmlElement = do_QueryInterface(mContent);
-  if (htmlElement) {
-    bool draggable = false;
-    htmlElement->GetDraggable(&draggable);
-    if (draggable) {
+  if (auto htmlElement = nsGenericHTMLElement::FromContent(mContent)) {
+    if (htmlElement->Draggable()) {
       nsAccUtils::SetAccAttr(attributes, nsGkAtoms::draggable,
                              NS_LITERAL_STRING("true"));
     }
@@ -1089,7 +1085,7 @@ Accessible::NativeAttributes()
 
   // CSS style based object attributes.
   nsAutoString value;
-  StyleInfo styleInfo(mContent->AsElement(), mDoc->PresShell());
+  StyleInfo styleInfo(mContent->AsElement());
 
   // Expose 'display' attribute.
   styleInfo.Display(value);
@@ -1177,9 +1173,10 @@ Accessible::State()
   // it as selected to make ARIA widget authors life easier.
   const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
   if (roleMapEntry && !(state & states::SELECTED) &&
-      !mContent->AttrValueIs(kNameSpaceID_None,
-                             nsGkAtoms::aria_selected,
-                             nsGkAtoms::_false, eCaseMatters)) {
+      (!mContent->IsElement() ||
+       !mContent->AsElement()->AttrValueIs(kNameSpaceID_None,
+                                           nsGkAtoms::aria_selected,
+                                           nsGkAtoms::_false, eCaseMatters))) {
     // Special case for tabs: focused tab or focus inside related tab panel
     // implies selected state.
     if (roleMapEntry->role == roles::PAGETAB) {
@@ -1337,10 +1334,14 @@ Accessible::Value(nsString& aValue)
     // aria-valuenow is a number, and aria-valuetext is the optional text
     // equivalent. For the string value, we will try the optional text
     // equivalent first.
-    if (!mContent->GetAttr(kNameSpaceID_None,
-                           nsGkAtoms::aria_valuetext, aValue)) {
-      mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_valuenow,
-                        aValue);
+    if (!mContent->IsElement()) {
+      return;
+    }
+
+    if (!mContent->AsElement()->GetAttr(kNameSpaceID_None,
+                                        nsGkAtoms::aria_valuetext, aValue)) {
+      mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_valuenow,
+                                     aValue);
     }
     return;
   }
@@ -1416,8 +1417,12 @@ Accessible::SetCurValue(double aValue)
   nsAutoString strValue;
   strValue.AppendFloat(aValue);
 
+  if (!mContent->IsElement())
+    return true;
+
   return NS_SUCCEEDED(
-    mContent->SetAttr(kNameSpaceID_None, nsGkAtoms::aria_valuenow, strValue, true));
+    mContent->AsElement()->SetAttr(kNameSpaceID_None, nsGkAtoms::aria_valuenow,
+                                   strValue, true));
 }
 
 role
@@ -1448,10 +1453,11 @@ Accessible::ARIATransformRole(role aRole)
       return roles::TOGGLE_BUTTON;
     }
 
-    if (mContent->AttrValueIs(kNameSpaceID_None,
-                              nsGkAtoms::aria_haspopup,
-                              nsGkAtoms::_true,
-                              eCaseMatters)) {
+    if (mContent->IsElement() &&
+        mContent->AsElement()->AttrValueIs(kNameSpaceID_None,
+                                           nsGkAtoms::aria_haspopup,
+                                           nsGkAtoms::_true,
+                                           eCaseMatters)) {
       // For button with aria-haspopup="true".
       return roles::BUTTONMENU;
     }
@@ -1476,8 +1482,9 @@ Accessible::ARIATransformRole(role aRole)
 
   } else if (aRole == roles::MENUITEM) {
     // Menuitem has a submenu.
-    if (mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::aria_haspopup,
-                              nsGkAtoms::_true, eCaseMatters)) {
+    if (mContent->IsElement() &&
+        mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::aria_haspopup,
+                                           nsGkAtoms::_true, eCaseMatters)) {
       return roles::PARENT_MENUITEM;
     }
   }
@@ -1591,7 +1598,10 @@ Accessible::GetAtomicRegion() const
 {
   nsIContent *loopContent = mContent;
   nsAutoString atomic;
-  while (loopContent && !loopContent->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_atomic, atomic))
+  while (loopContent &&
+         (!loopContent->IsElement() ||
+          !loopContent->AsElement()->GetAttr(kNameSpaceID_None,
+                                             nsGkAtoms::aria_atomic, atomic)))
     loopContent = loopContent->GetParent();
 
   return atomic.EqualsLiteral("true") ? loopContent : nullptr;
@@ -1740,22 +1750,17 @@ Accessible::RelationByType(RelationType aType)
         }
       } else {
         // In XUL, use first <button default="true" .../> in the document
-        nsCOMPtr<nsIDOMXULDocument> xulDoc =
-          do_QueryInterface(mContent->OwnerDoc());
+        dom::XULDocument* xulDoc = mContent->OwnerDoc()->AsXULDocument();
         nsCOMPtr<nsIDOMXULButtonElement> buttonEl;
         if (xulDoc) {
-          nsCOMPtr<nsIDOMNodeList> possibleDefaultButtons;
-          xulDoc->GetElementsByAttribute(NS_LITERAL_STRING("default"),
-                                         NS_LITERAL_STRING("true"),
-                                         getter_AddRefs(possibleDefaultButtons));
+          nsCOMPtr<nsINodeList> possibleDefaultButtons =
+            xulDoc->GetElementsByAttribute(NS_LITERAL_STRING("default"),
+                                           NS_LITERAL_STRING("true"));
           if (possibleDefaultButtons) {
-            uint32_t length;
-            possibleDefaultButtons->GetLength(&length);
-            nsCOMPtr<nsIDOMNode> possibleButton;
+            uint32_t length = possibleDefaultButtons->Length();
             // Check for button in list of default="true" elements
             for (uint32_t count = 0; count < length && !buttonEl; count ++) {
-              possibleDefaultButtons->Item(count, getter_AddRefs(possibleButton));
-              buttonEl = do_QueryInterface(possibleButton);
+              buttonEl = do_QueryInterface(possibleDefaultButtons->Item(count));
             }
           }
           if (!buttonEl) { // Check for anonymous accept button in <dialog>
@@ -1981,7 +1986,9 @@ Accessible::ARIAName(nsString& aName)
   }
 
   if (aName.IsEmpty() &&
-      mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_label, aName)) {
+      mContent->IsElement() &&
+      mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_label,
+                                     aName)) {
     aName.CompressWhitespace();
   }
 }
@@ -2538,7 +2545,8 @@ bool
 Accessible::AreItemsOperable() const
 {
   return HasOwnContent() &&
-    mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_activedescendant);
+    mContent->IsElement() &&
+    mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_activedescendant);
 }
 
 Accessible*
@@ -2550,8 +2558,9 @@ Accessible::CurrentItem()
   // with the aria-activedescendant attribute.
   nsAutoString id;
   if (HasOwnContent() &&
-      mContent->GetAttr(kNameSpaceID_None,
-                        nsGkAtoms::aria_activedescendant, id)) {
+      mContent->IsElement() &&
+      mContent->AsElement()->GetAttr(kNameSpaceID_None,
+                                     nsGkAtoms::aria_activedescendant, id)) {
     nsIDocument* DOMDoc = mContent->OwnerDoc();
     dom::Element* activeDescendantElm = DOMDoc->GetElementById(id);
     if (activeDescendantElm) {
@@ -2570,8 +2579,10 @@ Accessible::SetCurrentItem(Accessible* aItem)
   if (id) {
     nsAutoString idStr;
     id->ToString(idStr);
-    mContent->SetAttr(kNameSpaceID_None,
-                      nsGkAtoms::aria_activedescendant, idStr, true);
+    mContent->AsElement()->SetAttr(kNameSpaceID_None,
+                                   nsGkAtoms::aria_activedescendant,
+                                   idStr,
+                                   true);
   }
 }
 
@@ -2582,8 +2593,9 @@ Accessible::ContainerWidget() const
     for (Accessible* parent = Parent(); parent; parent = parent->Parent()) {
       nsIContent* parentContent = parent->GetContent();
       if (parentContent &&
-        parentContent->HasAttr(kNameSpaceID_None,
-                               nsGkAtoms::aria_activedescendant)) {
+          parentContent->IsElement() &&
+          parentContent->AsElement()->HasAttr(kNameSpaceID_None,
+                                              nsGkAtoms::aria_activedescendant)) {
         return parent;
       }
 
@@ -2656,7 +2668,8 @@ Accessible::AttrNumericValue(nsAtom* aAttr) const
     return UnspecifiedNaN<double>();
 
   nsAutoString attrValue;
-  if (!mContent->GetAttr(kNameSpaceID_None, aAttr, attrValue))
+  if (!mContent->IsElement() ||
+      !mContent->AsElement()->GetAttr(kNameSpaceID_None, aAttr, attrValue))
     return UnspecifiedNaN<double>();
 
   nsresult error = NS_OK;
@@ -2672,7 +2685,7 @@ Accessible::GetActionRule() const
 
   // Return "click" action on elements that have an attached popup menu.
   if (mContent->IsXULElement())
-    if (mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::popup))
+    if (mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::popup))
       return eClickAction;
 
   // Has registered 'click' event handler.

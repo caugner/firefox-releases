@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 add_task(async function() {
-  registerCleanupFunction(PlacesTestUtils.clearHistory);
+  registerCleanupFunction(PlacesUtils.history.clear);
 
   const URIS = [
     "http://example.com/tests/toolkit/components/places/tests/browser/399606-window.location.href.html",
@@ -18,10 +18,12 @@ add_task(async function() {
   let historyObserver = {
     count: 0,
     expectedURI: null,
-    onVisit(aURI) {
-      info("Received onVisit: " + aURI.spec);
-      if (aURI.equals(this.expectedURI)) {
-        this.count++;
+    onVisits(aVisits) {
+      for (let {uri} of aVisits) {
+        info("Received onVisits: " + uri.spec);
+        if (uri.equals(this.expectedURI)) {
+          this.count++;
+        }
       }
     },
     onBeginUpdateBatch() {},

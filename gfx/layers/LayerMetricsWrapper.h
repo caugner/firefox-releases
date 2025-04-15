@@ -433,10 +433,10 @@ public:
     return mLayer->GetScrollbarTargetContainerId();
   }
 
-  bool IsScrollbarContainer() const
+  Maybe<ScrollDirection> GetScrollbarContainerDirection() const
   {
     MOZ_ASSERT(IsValid());
-    return mLayer->IsScrollbarContainer();
+    return mLayer->GetScrollbarContainerDirection();
   }
 
   FrameMetrics::ViewID GetFixedPositionScrollContainerId() const
@@ -444,6 +444,13 @@ public:
     MOZ_ASSERT(IsValid());
 
     return mLayer->GetFixedPositionScrollContainerId();
+  }
+
+  bool IsBackfaceHidden() const
+  {
+    MOZ_ASSERT(IsValid());
+
+    return mLayer->IsBackfaceHidden();
   }
 
   // Expose an opaque pointer to the layer. Mostly used for printf

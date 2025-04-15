@@ -3,6 +3,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/* import-globals-from ../../../toolkit/content/preferencesBindings.js */
+
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+
+Preferences.addAll([
+  { id: "intl.accept_languages", type: "wstring" },
+  { id: "pref.browser.language.disable_button.up", type: "bool" },
+  { id: "pref.browser.language.disable_button.down", type: "bool" },
+  { id: "pref.browser.language.disable_button.remove", type: "bool" },
+  { id: "privacy.spoof_english", type: "int" },
+]);
+
 var gLanguagesDialog = {
 
   _availableLanguagesList: [],
@@ -53,7 +65,7 @@ var gLanguagesDialog = {
     var strings = bundleAccepted.strings;
     while (strings.hasMoreElements()) {
       var currString = strings.getNext();
-      if (!(currString instanceof Components.interfaces.nsIPropertyElement))
+      if (!(currString instanceof Ci.nsIPropertyElement))
         break;
 
       var property = currString.key.split("."); // ab[-cd].accept
@@ -124,7 +136,7 @@ var gLanguagesDialog = {
       this._activeLanguages.firstChild.remove();
 
     var selectedIndex = 0;
-    var preference = document.getElementById("intl.accept_languages");
+    var preference = Preferences.get("intl.accept_languages");
     if (preference.value == "")
       return undefined;
     var languages = preference.value.toLowerCase().split(/\s*,\s*/);
@@ -149,6 +161,10 @@ var gLanguagesDialog = {
       this._activeLanguages.selectedIndex = selectedIndex;
     }
 
+    // Update states of accept-language list and buttons according to
+    // privacy.resistFingerprinting and privacy.spoof_english.
+    this.readSpoofEnglish();
+
     return undefined;
   },
 
@@ -157,15 +173,17 @@ var gLanguagesDialog = {
   },
 
   onAvailableLanguageSelect() {
+    var availableLanguages = this._availableLanguages;
     var addButton = document.getElementById("addButton");
-    addButton.disabled = false;
+    addButton.disabled = availableLanguages.disabled ||
+                         availableLanguages.selectedIndex < 0;
 
     this._availableLanguages.removeAttribute("accesskey");
   },
 
   addLanguage() {
     var selectedID = this._availableLanguages.selectedItem.id;
-    var preference = document.getElementById("intl.accept_languages");
+    var preference = Preferences.get("intl.accept_languages");
     var arrayOfPrefs = preference.value.toLowerCase().split(/\s*,\s*/);
     for (var i = 0; i < arrayOfPrefs.length; ++i ) {
       if (arrayOfPrefs[i] == selectedID)
@@ -211,7 +229,7 @@ var gLanguagesDialog = {
     this._selectedItemID = selectItem;
 
     // Update the preference and force a UI rebuild
-    var preference = document.getElementById("intl.accept_languages");
+    var preference = Preferences.get("intl.accept_languages");
     preference.value = string;
 
     this._buildAvailableLanguageList();
@@ -246,7 +264,7 @@ var gLanguagesDialog = {
     this._selectedItemID = selectedItem.id;
 
     // Update the preference and force a UI rebuild
-    var preference = document.getElementById("intl.accept_languages");
+    var preference = Preferences.get("intl.accept_languages");
     preference.value = string;
   },
 
@@ -269,7 +287,7 @@ var gLanguagesDialog = {
     this._selectedItemID = selectedItem.id;
 
     // Update the preference and force a UI rebuild
-    var preference = document.getElementById("intl.accept_languages");
+    var preference = Preferences.get("intl.accept_languages");
     preference.value = string;
   },
 
@@ -291,6 +309,44 @@ var gLanguagesDialog = {
       downButton.disabled = true;
       removeButton.disabled = false;
     }
+  },
+
+  readSpoofEnglish() {
+    var checkbox = document.getElementById("spoofEnglish");
+    var resistFingerprinting = Services.prefs.getBoolPref("privacy.resistFingerprinting");
+    if (!resistFingerprinting) {
+      checkbox.hidden = true;
+      return false;
+    }
+
+    var spoofEnglish = Preferences.get("privacy.spoof_english").value;
+    var activeLanguages = this._activeLanguages;
+    var availableLanguages = this._availableLanguages;
+    checkbox.hidden = false;
+    switch (spoofEnglish) {
+    case 1: // don't spoof intl.accept_languages
+      activeLanguages.disabled = false;
+      activeLanguages.selectItem(activeLanguages.firstChild);
+      availableLanguages.disabled = false;
+      this.onAvailableLanguageSelect();
+      return false;
+    case 2: // spoof intl.accept_languages
+      activeLanguages.clearSelection();
+      activeLanguages.disabled = true;
+      availableLanguages.disabled = true;
+      this.onAvailableLanguageSelect();
+      return true;
+    default: // will prompt for spoofing intl.accept_languages if resisting fingerprinting
+      return false;
+    }
+  },
+
+  writeSpoofEnglish() {
+    return document.getElementById("spoofEnglish").checked ? 2 : 1;
   }
 };
 
+// These focus and resize handlers hack around XUL bug 1194844
+// by triggering extra reflow (see bug 1194346).
+window.addEventListener("focus", () => gLanguagesDialog.forceReflow());
+window.addEventListener("resize", () => gLanguagesDialog.forceReflow());

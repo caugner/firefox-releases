@@ -8,6 +8,7 @@ from voluptuous import Required
 from taskgraph.util.taskcluster import get_artifact_url
 from taskgraph.transforms.job import run_job_using
 from taskgraph.util.schema import Schema
+from taskgraph.util.taskcluster import get_artifact_path
 from taskgraph.transforms.tests import (
     test_description_schema,
     normpath
@@ -41,6 +42,8 @@ BUILDER_NAME_PREFIX = {
     'windows10-64-pgo': 'Windows 10 64-bit',
     'windows10-64-asan': 'Windows 10 64-bit',
     'windows10-64-stylo-disabled': 'Windows 10 64-bit',
+    'windows10-64-ccov': 'Windows 10 64-bit Code Coverage',
+    'windows10-64-qr': 'Windows 10 64-bit',
     'windows7-32': 'Windows 7 32-bit',
     ('windows7-32', 'virtual-with-gpu'): 'Windows 7 VM-GFX 32-bit',
     'windows7-32-nightly': 'Windows 7 32-bit',
@@ -84,7 +87,7 @@ mozharness_test_run_schema = Schema({
 
 def test_packages_url(taskdesc):
     """Account for different platforms that name their test packages differently"""
-    return get_artifact_url('<build>', 'public/build/target.test_packages.json')
+    return get_artifact_url('<build>', get_artifact_path(taskdesc, 'target.test_packages.json'))
 
 
 @run_job_using('docker-engine', 'mozharness-test', schema=mozharness_test_run_schema)
@@ -111,7 +114,7 @@ def mozharness_test_on_docker(config, job, taskdesc):
 
     installer_url = get_artifact_url('<build>', mozharness['build-artifact-name'])
     mozharness_url = get_artifact_url('<build>',
-                                      'public/build/mozharness.zip')
+                                      get_artifact_path(taskdesc, 'mozharness.zip'))
 
     worker['artifacts'] = [{
         'name': prefix,
@@ -145,7 +148,7 @@ def mozharness_test_on_docker(config, job, taskdesc):
     if 'actions' in mozharness:
         env['MOZHARNESS_ACTIONS'] = ' '.join(mozharness['actions'])
 
-    if 'try' in config.params['project']:
+    if config.params.is_try():
         env['TRY_COMMIT_MSG'] = config.params['message']
 
     # handle some of the mozharness-specific options
@@ -313,13 +316,13 @@ def mozharness_test_on_generic_worker(config, job, taskdesc):
                 if isinstance(c, basestring) and c.startswith('--test-suite'):
                     mh_command[i] += suffix
 
-    if 'try' in config.params['project']:
+    if config.params.is_try():
         env['TRY_COMMIT_MSG'] = config.params['message']
 
     worker['mounts'] = [{
         'directory': '.',
         'content': {
-            'artifact': 'public/build/mozharness.zip',
+            'artifact': get_artifact_path(taskdesc, 'mozharness.zip'),
             'task-id': {
                 'task-reference': '<build>'
             }
@@ -350,7 +353,7 @@ def mozharness_test_on_native_engine(config, job, taskdesc):
 
     installer_url = get_artifact_url('<build>', mozharness['build-artifact-name'])
     mozharness_url = get_artifact_url('<build>',
-                                      'public/build/mozharness.zip')
+                                      get_artifact_path(taskdesc, 'mozharness.zip'))
 
     worker['artifacts'] = [{
         'name': prefix.rstrip('/'),
@@ -365,6 +368,9 @@ def mozharness_test_on_native_engine(config, job, taskdesc):
 
     if test['reboot']:
         worker['reboot'] = test['reboot']
+
+    if test['max-run-time']:
+        worker['max-run-time'] = test['max-run-time']
 
     worker['env'] = env = {
         'GECKO_HEAD_REPOSITORY': config.params['head_repository'],

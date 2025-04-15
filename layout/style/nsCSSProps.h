@@ -14,7 +14,7 @@
 
 #include <limits>
 #include <type_traits>
-#include "nsString.h"
+#include "nsStringFwd.h"
 #include "nsCSSPropertyID.h"
 #include "nsStyleStructFwd.h"
 #include "nsCSSKeywords.h"
@@ -284,6 +284,11 @@ static_assert((CSS_PROPERTY_PARSE_PROPERTY_MASK &
 // CSS_PROPERTY_FIXPOS_CB set.
 #define CSS_PROPERTY_ABSPOS_CB                    (1<<30)
 
+// This property should add Cross Origin Request headers to any loads
+// that it triggers. Currently this is only used for properties that
+// also use CSS_PROPERTY_START_IMAGE_LOADS.
+#define CSS_PROPERTY_LOAD_USE_CORS                (1U<<31)
+
 /**
  * Types of animatable values.
  */
@@ -357,6 +362,11 @@ public:
     {
       static_assert(mozilla::EnumTypeFitsWithin<T, int16_t>::value,
                     "aValue must be an enum that fits within mValue");
+    }
+
+    bool IsSentinel() const
+    {
+      return mKeyword == eCSSKeyword_UNKNOWN && mValue == -1;
     }
 
     nsCSSKeyword mKeyword;
@@ -495,7 +505,6 @@ public:
   }
 
 private:
-  // Lives in nsCSSParser.cpp for the macros it depends on.
   static const uint32_t kParserVariantTable[eCSSProperty_COUNT_no_shorthands];
 
 public:
@@ -633,12 +642,10 @@ public:
   static bool IsEnabled(nsCSSPropertyID aProperty) {
     MOZ_ASSERT(0 <= aProperty && aProperty < eCSSProperty_COUNT_with_aliases,
                "out of range");
-    // We don't have useful pref init phases in the parent process.  But in the
-    // child process, assert that we're not trying to parse stylesheets before
-    // we've gotten all our prefs.
-    MOZ_ASSERT(XRE_IsParentProcess() ||
-               mozilla::Preferences::InitPhase() == END_ALL_PREFS,
-               "Checking style preferences before they have been set");
+    // In the child process, assert that we're not trying to parse stylesheets
+    // before we've gotten all our prefs.
+    MOZ_ASSERT_IF(!XRE_IsParentProcess(),
+                  mozilla::Preferences::AreAllPrefsSetInContentProcess());
     return gPropertyEnabled[aProperty];
   }
 
@@ -677,6 +684,10 @@ public:
   }
 
 public:
+
+  // Return an array of possible list style types, and the length of
+  // the array.
+  static const char* const* GetListStyleTypes(int32_t *aLength);
 
 // Storing the enabledstate_ value in an nsCSSPropertyID variable is a small hack
 // to avoid needing a separate variable declaration for its real type
@@ -787,6 +798,7 @@ public:
   static const KTableEntry kFontDisplayKTable[];
   static const KTableEntry kFontKTable[];
   static const KTableEntry kFontKerningKTable[];
+  static const KTableEntry kFontOpticalSizingKTable[];
   static const KTableEntry kFontSizeKTable[];
   static const KTableEntry kFontSmoothingKTable[];
   static const KTableEntry kFontStretchKTable[];
@@ -837,6 +849,7 @@ public:
   static const KTableEntry kRubyAlignKTable[];
   static const KTableEntry kRubyPositionKTable[];
   static const KTableEntry kScrollBehaviorKTable[];
+  static const KTableEntry kOverscrollBehaviorKTable[];
   static const KTableEntry kScrollSnapTypeKTable[];
   static const KTableEntry kSpeakKTable[];
   static const KTableEntry kSpeakHeaderKTable[];

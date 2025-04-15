@@ -5,9 +5,9 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = [ "ZoomUI" ];
+var EXPORTED_SYMBOLS = [ "ZoomUI" ];
 
-Components.utils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 var ZoomUI = {
   init(aWindow) {
@@ -100,14 +100,8 @@ function updateZoomUI(aBrowser, aAnimate = false) {
   }
 }
 
-Components.utils.import("resource:///modules/CustomizableUI.jsm");
-let customizationListener = {
-  onAreaNodeRegistered(aAreaType, aAreaNode) {
-    if (aAreaType == CustomizableUI.AREA_PANEL) {
-      updateZoomUI(aAreaNode.ownerGlobal.gBrowser.selectedBrowser);
-    }
-  }
-};
+ChromeUtils.import("resource:///modules/CustomizableUI.jsm");
+let customizationListener = {};
 customizationListener.onWidgetAdded =
 customizationListener.onWidgetRemoved =
 customizationListener.onWidgetMoved = function(aWidgetId) {

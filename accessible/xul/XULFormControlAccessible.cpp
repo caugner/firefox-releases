@@ -8,7 +8,6 @@
 #include "Accessible-inl.h"
 #include "HTMLFormControlAccessible.h"
 #include "nsAccUtils.h"
-#include "nsCoreUtils.h"
 #include "DocAccessible.h"
 #include "nsIAccessibleRelation.h"
 #include "Relation.h"
@@ -53,8 +52,6 @@ XULButtonAccessible::~XULButtonAccessible()
 
 ////////////////////////////////////////////////////////////////////////////////
 // XULButtonAccessible: nsISupports
-
-NS_IMPL_ISUPPORTS_INHERITED0(XULButtonAccessible, Accessible)
 
 ////////////////////////////////////////////////////////////////////////////////
 // XULButtonAccessible: nsIAccessible
@@ -122,7 +119,7 @@ XULButtonAccessible::NativeState()
   if (ContainsMenu())
     state |= states::HASPOPUP;
 
-  if (mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::_default))
+  if (mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::_default))
     state |= states::DEFAULT;
 
   return state;
@@ -171,26 +168,22 @@ XULButtonAccessible::IsAcceptableChild(nsIContent* aEl) const
   // buttons can have button (@type="menu-button") and popup accessibles
   // (@type="menu-button", @type="menu" or columnpicker.
 
-  // XXX: no children until the button is menu button. Probably it's not
-  // totally correct but in general AT wants to have leaf buttons.
-  nsAutoString role;
-  nsCoreUtils::XBLBindingRole(aEl, role);
-
-  // Get an accessible for menupopup or panel elements.
-  if (role.EqualsLiteral("xul:menupopup")) {
+  // Get an accessible for menupopup or popup elements.
+  if (aEl->IsXULElement(nsGkAtoms::menupopup) ||
+      aEl->IsXULElement(nsGkAtoms::popup)) {
     return true;
   }
 
-  // Button type="menu-button" contains a real button. Get an accessible
+  // Button and toolbarbutton are real buttons. Get an accessible
   // for it. Ignore dropmarker button which is placed as a last child.
-  if ((!role.EqualsLiteral("xul:button") &&
-       !role.EqualsLiteral("xul:toolbarbutton")) ||
+  if ((!aEl->IsXULElement(nsGkAtoms::button) &&
+       !aEl->IsXULElement(nsGkAtoms::toolbarbutton)) ||
       aEl->IsXULElement(nsGkAtoms::dropMarker)) {
     return false;
   }
 
-  return mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
-                               nsGkAtoms::menuButton, eCaseMatters);
+  return mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
+                                            nsGkAtoms::menuButton, eCaseMatters);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -199,12 +192,12 @@ XULButtonAccessible::IsAcceptableChild(nsIContent* aEl) const
 bool
 XULButtonAccessible::ContainsMenu() const
 {
-  static nsIContent::AttrValuesArray strings[] =
+  static Element::AttrValuesArray strings[] =
     {&nsGkAtoms::menu, &nsGkAtoms::menuButton, nullptr};
 
-  return mContent->FindAttrValueIn(kNameSpaceID_None,
-                                   nsGkAtoms::type,
-                                   strings, eCaseMatters) >= 0;
+  return mContent->AsElement()->FindAttrValueIn(kNameSpaceID_None,
+                                                nsGkAtoms::type,
+                                                strings, eCaseMatters) >= 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -603,7 +596,7 @@ XULToolbarAccessible::NativeRole()
 ENameValueFlag
 XULToolbarAccessible::NativeName(nsString& aName)
 {
-  if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::toolbarname, aName))
+  if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::toolbarname, aName))
     aName.CompressWhitespace();
 
   return eNameOK;

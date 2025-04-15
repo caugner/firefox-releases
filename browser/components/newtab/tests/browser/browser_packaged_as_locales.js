@@ -1,20 +1,33 @@
-const LOCALE_PREF = "general.useragent.locale";
-
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyServiceGetter(this, "aboutNewTabService",
                                    "@mozilla.org/browser/aboutnewtab-service;1",
                                    "nsIAboutNewTabService");
 
+// Tests are by default run with non-debug en-US configuration
 const DEFAULT_URL = "resource://activity-stream/prerendered/en-US/activity-stream-prerendered.html";
+
+/**
+ * Temporarily change the app locale to get the localized activity stream url
+ */
 async function getUrlForLocale(locale) {
-  await SpecialPowers.pushPrefEnv({set: [[LOCALE_PREF, locale]]});
-  return aboutNewTabService.defaultURL;
+  const origAvailable = Services.locale.getAvailableLocales();
+  const origRequested = Services.locale.getRequestedLocales();
+  try {
+    Services.locale.setAvailableLocales([locale]);
+    Services.locale.setRequestedLocales([locale]);
+    return aboutNewTabService.defaultURL;
+  } finally {
+    // Always clean up after returning the url
+    Services.locale.setAvailableLocales(origAvailable);
+    Services.locale.setRequestedLocales(origRequested);
+  }
 }
 
 /**
  * Test that an unknown locale defaults to en-US
  */
 add_task(async function test_unknown_locale() {
-  const url = await getUrlForLocale("foo-BAR");
+  const url = await getUrlForLocale("und");
   Assert.equal(url, DEFAULT_URL);
 });
 

@@ -15,26 +15,17 @@ JAR_MANIFESTS += ['jar.mn']
 
 interfaces = [
     'base',
-    'canvas',
     'core',
     'html',
     'events',
-    'stylesheets',
     'sidebar',
-    'css',
-    'traversal',
     'range',
-    'xbl',
-    'xpath',
     'xul',
     'security',
     'storage',
-    'json',
     'offline',
     'geolocation',
     'notification',
-    'svg',
-    'smil',
     'push',
     'payments',
 ]
@@ -50,6 +41,7 @@ DIRS += [
     'browser-element',
     'cache',
     'canvas',
+    'chrome-webidl',
     'clients',
     'commandhandler',
     'credentialmanagement',
@@ -60,16 +52,16 @@ DIRS += [
     'file',
     'filehandle',
     'filesystem',
-    'flyweb',
+    'flex',
     'gamepad',
     'geolocation',
     'grid',
     'html',
-    'json',
     'jsurl',
     'asmjscache',
     'mathml',
     'media',
+    'midi',
     'notification',
     'offline',
     'power',
@@ -78,7 +70,6 @@ DIRS += [
     'security',
     'storage',
     'svg',
-    'time',
     'locales',
     'network',
     'permission',
@@ -111,13 +102,11 @@ DIRS += [
     'script',
     'payments',
     'websocket',
+    'serviceworkers',
 ]
 
 if CONFIG['OS_ARCH'] == 'WINNT':
     DIRS += ['plugins/ipc/hangui']
-
-if CONFIG['MOZ_SECUREELEMENT']:
-    DIRS += ['secureelement']
 
 DIRS += ['presentation']
 
@@ -126,6 +115,6 @@ TEST_DIRS += [
     'imptests',
 ]
 
-if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('gtk2', 'gtk3', 'cocoa', 'windows'):
+if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('gtk3', 'cocoa', 'windows'):
     TEST_DIRS += ['plugins/test']
 

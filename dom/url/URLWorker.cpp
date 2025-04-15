@@ -7,10 +7,11 @@
 #include "URLWorker.h"
 
 #include "mozilla/dom/Blob.h"
+#include "mozilla/dom/WorkerPrivate.h"
+#include "mozilla/dom/WorkerRunnable.h"
+#include "mozilla/dom/WorkerScope.h"
+#include "mozilla/Unused.h"
 #include "nsHostObjectProtocolHandler.h"
-#include "WorkerPrivate.h"
-#include "WorkerRunnable.h"
-#include "WorkerScope.h"
 #include "nsStandardURL.h"
 #include "nsURLHelper.h"
 
@@ -19,8 +20,6 @@ namespace mozilla {
 using net::nsStandardURL;
 
 namespace dom {
-
-using namespace workers;
 
 // Proxy class to forward all the requests to a URLMainThread object.
 class URLWorker::URLProxy final
@@ -85,7 +84,7 @@ public:
   }
 
   bool
-  MainThreadRun()
+  MainThreadRun() override
   {
     using namespace mozilla::ipc;
 
@@ -145,7 +144,7 @@ public:
   {}
 
   bool
-  MainThreadRun()
+  MainThreadRun() override
   {
     AssertIsOnMainThread();
 
@@ -202,7 +201,7 @@ public:
   {}
 
   bool
-  MainThreadRun()
+  MainThreadRun() override
   {
     AssertIsOnMainThread();
 
@@ -245,7 +244,7 @@ public:
   }
 
   bool
-  MainThreadRun()
+  MainThreadRun() override
   {
     AssertIsOnMainThread();
 
@@ -289,7 +288,7 @@ public:
   {
   }
 
-  NS_IMETHOD Run()
+  NS_IMETHOD Run() override
   {
     AssertIsOnMainThread();
 
@@ -336,7 +335,7 @@ public:
   }
 
   bool
-  MainThreadRun()
+  MainThreadRun() override
   {
     AssertIsOnMainThread();
     ErrorResult rv;
@@ -436,7 +435,7 @@ public:
   }
 
   bool
-  MainThreadRun()
+  MainThreadRun() override
   {
     AssertIsOnMainThread();
     ErrorResult rv;
@@ -630,24 +629,30 @@ URLWorker::Init(const nsAString& aURL, const Optional<nsAString>& aBase,
   }
 
   if (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("https")) {
-    RefPtr<nsStandardURL> baseURL;
+    nsCOMPtr<nsIURI> baseURL;
     if (aBase.WasPassed()) {
-      baseURL = new nsStandardURL();
-
       // XXXcatalinb: SetSpec only writes a warning to the console on urls
       // without a valid scheme. I can't fix that because we've come to rely
       // on that behaviour in a bunch of different places.
-      nsresult rv = baseURL->SetSpec(NS_ConvertUTF16toUTF8(aBase.Value()));
+      nsresult rv = NS_MutateURI(new nsStandardURL::Mutator())
+        .SetSpec(NS_ConvertUTF16toUTF8(aBase.Value()))
+        .Finalize(baseURL);
       nsAutoCString baseScheme;
-      baseURL->GetScheme(baseScheme);
+      if (baseURL) {
+        baseURL->GetScheme(baseScheme);
+      }
       if (NS_WARN_IF(NS_FAILED(rv)) || baseScheme.IsEmpty()) {
         aRv.ThrowTypeError<MSG_INVALID_URL>(aBase.Value());
         return;
       }
     }
-    mStdURL = new nsStandardURL();
-    aRv = mStdURL->Init(nsIStandardURL::URLTYPE_STANDARD, -1,
-                        NS_ConvertUTF16toUTF8(aURL), nullptr, baseURL);
+    nsCOMPtr<nsIURI> uri;
+    aRv = NS_MutateURI(new nsStandardURL::Mutator())
+            .Apply(NS_MutatorMethod(&nsIStandardURLMutator::Init,
+                                    nsIStandardURL::URLTYPE_STANDARD,
+                                    -1, NS_ConvertUTF16toUTF8(aURL),
+                                    nullptr, baseURL, nullptr))
+            .Finalize(mStdURL);
     return;
   }
 
@@ -699,6 +704,13 @@ URLWorker::GetHref(nsAString& aHref, ErrorResult& aRv) const
 void
 URLWorker::SetHref(const nsAString& aHref, ErrorResult& aRv)
 {
+  SetHrefInternal(aHref, eUseProxyIfNeeded, aRv);
+}
+
+void
+URLWorker::SetHrefInternal(const nsAString& aHref, Strategy aStrategy,
+                           ErrorResult& aRv)
+{
   nsAutoCString scheme;
   nsresult rv = net_ExtractURLScheme(NS_ConvertUTF16toUTF8(aHref), scheme);
   if (NS_FAILED(rv)) {
@@ -706,9 +718,12 @@ URLWorker::SetHref(const nsAString& aHref, ErrorResult& aRv)
     return;
   }
 
-  if (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("https")) {
-    mStdURL = new nsStandardURL();
-    aRv = mStdURL->SetSpec(NS_ConvertUTF16toUTF8(aHref));
+  if (aStrategy == eUseProxyIfNeeded &&
+      (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("https"))) {
+    nsCOMPtr<nsIURI> uri;
+    aRv = NS_MutateURI(new nsStandardURL::Mutator())
+            .SetSpec(NS_ConvertUTF16toUTF8(aHref))
+            .Finalize(mStdURL);
     if (mURLProxy) {
       mWorkerPrivate->AssertIsOnWorkerThread();
 
@@ -794,27 +809,43 @@ URLWorker::GetProtocol(nsAString& aProtocol, ErrorResult& aRv) const
 void
 URLWorker::SetProtocol(const nsAString& aProtocol, ErrorResult& aRv)
 {
-  if (mStdURL) {
-    nsAString::const_iterator start, end;
-    aProtocol.BeginReading(start);
-    aProtocol.EndReading(end);
-    nsAString::const_iterator iter(start);
+  nsAString::const_iterator start, end;
+  aProtocol.BeginReading(start);
+  aProtocol.EndReading(end);
+  nsAString::const_iterator iter(start);
 
-    FindCharInReadable(':', iter, end);
+  FindCharInReadable(':', iter, end);
+  NS_ConvertUTF16toUTF8 scheme(Substring(start, iter));
 
-    nsresult rv = mStdURL->SetScheme(NS_ConvertUTF16toUTF8(Substring(start, iter)));
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return;
-    }
-
-    nsAutoCString href;
-    rv = mStdURL->GetSpec(href);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return;
-    }
-
-    SetHref(NS_ConvertUTF8toUTF16(href), aRv);
+  // If we are using nsStandardURL on the owning thread, we can continue only if
+  // the scheme is http or https.
+  if (mStdURL &&
+      (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("https"))) {
+    Unused << NS_MutateURI(mStdURL)
+                .SetScheme(scheme)
+                .Finalize(mStdURL);
     return;
+  }
+
+  // If we are using mStandardURL but the new scheme is not http nor https, we
+  // have to migrate to the URL proxy.
+  if (mStdURL) {
+    nsAutoCString href;
+    nsresult rv = mStdURL->GetSpec(href);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return;
+    }
+
+    SetHrefInternal(NS_ConvertUTF8toUTF16(href), eAlwaysUseProxy, aRv);
+    if (NS_WARN_IF(aRv.Failed())) {
+      return;
+    }
+
+    // We want a proxy here.
+    MOZ_ASSERT(!mStdURL);
+    MOZ_ASSERT(mURLProxy);
+
+    // Now we can restart setting the protocol.
   }
 
   MOZ_ASSERT(mURLProxy);
@@ -840,7 +871,9 @@ URLWorker::SetProtocol(const nsAString& aProtocol, ErrorResult& aRv)
 
 #define STDURL_SETTER(value, method)                     \
   if (mStdURL) {                                         \
-    aRv = mStdURL->method(NS_ConvertUTF16toUTF8(value)); \
+    aRv = NS_MutateURI(mStdURL)                          \
+            .method(NS_ConvertUTF16toUTF8(value))        \
+            .Finalize(mStdURL);                          \
     return;                                              \
   }
 
@@ -1012,7 +1045,9 @@ URLWorker::SetPort(const nsAString& aPort, ErrorResult& aRv)
       }
     }
 
-    mStdURL->SetPort(port);
+    Unused << NS_MutateURI(mStdURL)
+                .SetPort(port)
+                .Finalize(mStdURL);
     return;
   }
 
@@ -1138,7 +1173,9 @@ URLWorker::SetSearchInternal(const nsAString& aSearch, ErrorResult& aRv)
 {
   if (mStdURL) {
     // URLMainThread ignores failures here.
-    mStdURL->SetQuery(NS_ConvertUTF16toUTF8(aSearch));
+    Unused << NS_MutateURI(mStdURL)
+                .SetQuery(NS_ConvertUTF16toUTF8(aSearch))
+                .Finalize(mStdURL);
     return;
   }
 

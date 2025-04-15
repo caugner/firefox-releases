@@ -2,12 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#define PRIMITIVE_HAS_PICTURE_TASK
-
 #include shared,prim_shared
 
 varying vec3 vUv;
 flat varying vec4 vColor;
+flat varying vec4 vStRect;
 
 #ifdef WR_VERTEX_SHADER
 // Draw a text run to a cache target. These are always
@@ -20,40 +19,41 @@ void main(void) {
 
     int glyph_index = prim.user_data0;
     int resource_address = prim.user_data1;
+    int subpx_dir = prim.user_data2;
 
     Glyph glyph = fetch_glyph(prim.specific_prim_address,
                               glyph_index,
-                              text.subpx_dir);
+                              subpx_dir);
 
     GlyphResource res = fetch_glyph_resource(resource_address);
 
-    // Glyphs size is already in device-pixels.
+    // Glyph size is already in device-pixels.
     // The render task origin is in device-pixels. Offset that by
     // the glyph offset, relative to its primitive bounding rect.
-    vec2 size = (res.uv_rect.zw - res.uv_rect.xy) * res.scale;
-    vec2 local_pos = glyph.offset + vec2(res.offset.x, -res.offset.y) / uDevicePixelRatio;
-    vec2 origin = prim.task.target_rect.p0 +
-                  uDevicePixelRatio * (local_pos - prim.task.content_origin);
-    vec4 local_rect = vec4(origin, size);
+    vec2 glyph_size = res.uv_rect.zw - res.uv_rect.xy;
+    vec2 glyph_pos = res.offset + glyph_size * aPosition.xy;
+    vec2 local_pos = prim.task.common_data.task_rect.p0 + glyph_pos * res.scale +
+                     uDevicePixelRatio * (glyph.offset - prim.task.content_origin);
+    gl_Position = uTransform * vec4(local_pos, 0.0, 1.0);
 
     vec2 texture_size = vec2(textureSize(sColor0, 0));
     vec2 st0 = res.uv_rect.xy / texture_size;
     vec2 st1 = res.uv_rect.zw / texture_size;
 
-    vec2 pos = mix(local_rect.xy,
-                   local_rect.xy + local_rect.zw,
-                   aPosition.xy);
-
     vUv = vec3(mix(st0, st1, aPosition.xy), res.layer);
     vColor = prim.task.color;
 
-    gl_Position = uTransform * vec4(pos, 0.0, 1.0);
+    // We clamp the texture coordinates to the half-pixel offset from the borders
+    // in order to avoid sampling outside of the texture area.
+    vec2 half_texel = vec2(0.5) / texture_size;
+    vStRect = vec4(min(st0, st1) + half_texel, max(st0, st1) - half_texel);
 }
 #endif
 
 #ifdef WR_FRAGMENT_SHADER
 void main(void) {
-    float a = texture(sColor0, vUv).a;
-    oFragColor = vec4(vColor.rgb, vColor.a * a);
+    vec2 uv = clamp(vUv.xy, vStRect.xy, vStRect.zw);
+    float a = texture(sColor0, vec3(uv, vUv.z)).a;
+    oFragColor = vColor * a;
 }
 #endif

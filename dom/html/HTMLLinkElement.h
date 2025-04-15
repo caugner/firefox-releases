@@ -69,6 +69,7 @@ public:
   virtual bool ParseAttribute(int32_t aNamespaceID,
                               nsAtom* aAttribute,
                               const nsAString& aValue,
+                              nsIPrincipal* aMaybeScriptedPrincipal,
                               nsAttrValue& aResult) override;
   virtual void GetLinkTarget(nsAString& aTarget) override;
   virtual EventStates IntrinsicState() const override;
@@ -86,10 +87,6 @@ public:
   void GetHref(nsAString& aValue)
   {
     GetURIAttr(nsGkAtoms::href, nullptr, aValue);
-  }
-  void GetHref(nsString& aValue, nsIPrincipal*)
-  {
-    GetHref(aValue);
   }
   void SetHref(const nsAString& aHref, nsIPrincipal* aTriggeringPrincipal, ErrorResult& aRv)
   {
@@ -153,11 +150,9 @@ public:
   {
     SetHTMLAttr(nsGkAtoms::type, aType, aRv);
   }
-  // Requires nsresult return for nsStyleLinkElement override.
-  NS_IMETHODIMP GetCharset(nsAString& aValue) override
+  void GetCharset(nsAString& aValue) override
   {
     GetHTMLAttr(nsGkAtoms::charset, aValue);
-    return NS_OK;
   }
   void SetCharset(const nsAString& aCharset, ErrorResult& aRv)
   {
@@ -202,7 +197,7 @@ public:
 
   virtual CORSMode GetCORSMode() const override;
 
-  virtual void NodeInfoChanged(nsIDocument* aOldDoc) final override
+  void NodeInfoChanged(nsIDocument* aOldDoc) final
   {
     ClearHasPendingLinkUpdate();
     nsGenericHTMLElement::NodeInfoChanged(aOldDoc);

@@ -5,16 +5,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["ReadTopManifest"];
+var EXPORTED_SYMBOLS = ["ReadTopManifest", "CreateUrls"];
 
-var CC = Components.classes;
-const CI = Components.interfaces;
-const CU = Components.utils;
-
-CU.import("chrome://reftest/content/globals.jsm", this);
-CU.import("chrome://reftest/content/reftest.jsm", this);
-CU.import("resource://gre/modules/Services.jsm");
-CU.import("resource://gre/modules/NetUtil.jsm");
+Cu.import("chrome://reftest/content/globals.jsm", this);
+Cu.import("chrome://reftest/content/reftest.jsm", this);
+Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource://gre/modules/NetUtil.jsm");
 
 const NS_SCRIPTSECURITYMANAGER_CONTRACTID = "@mozilla.org/scriptsecuritymanager;1";
 const NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX = "@mozilla.org/network/protocol;1?name=";
@@ -31,16 +27,16 @@ function ReadTopManifest(aFileURL, aFilter)
         throw "Expected a file or http URL for the manifest.";
 
     g.manifestsLoaded = {};
-    ReadManifest(url, EXPECTED_PASS, aFilter);
+    ReadManifest(url, aFilter);
 }
 
 // Note: If you materially change the reftest manifest parsing,
 // please keep the parser in print-manifest-dirs.py in sync.
-function ReadManifest(aURL, inherited_status, aFilter)
+function ReadManifest(aURL, aFilter)
 {
-    // Ensure each manifest is only read once. This assumes that manifests that are
-    // included with an unusual inherited_status or filters will be read via their
-    // include before they are read directly in the case of a duplicate
+    // Ensure each manifest is only read once. This assumes that manifests that
+    // are included with filters will be read via their include before they are
+    // read directly in the case of a duplicate
     if (g.manifestsLoaded.hasOwnProperty(aURL.spec)) {
         if (g.manifestsLoaded[aURL.spec] === null)
             return;
@@ -49,13 +45,13 @@ function ReadManifest(aURL, inherited_status, aFilter)
     }
     g.manifestsLoaded[aURL.spec] = aFilter[1];
 
-    var secMan = CC[NS_SCRIPTSECURITYMANAGER_CONTRACTID]
-                     .getService(CI.nsIScriptSecurityManager);
+    var secMan = Cc[NS_SCRIPTSECURITYMANAGER_CONTRACTID]
+                     .getService(Ci.nsIScriptSecurityManager);
 
     var listURL = aURL;
     var channel = NetUtil.newChannel({uri: aURL, loadUsingSystemPrincipal: true});
     var inputStream = channel.open2();
-    if (channel instanceof Components.interfaces.nsIHttpChannel
+    if (channel instanceof Ci.nsIHttpChannel
         && channel.responseStatus != 200) {
       g.logger.error("HTTP ERROR : " + channel.responseStatus);
     }
@@ -68,6 +64,10 @@ function ReadManifest(aURL, inherited_status, aFilter)
     var lineNo = 0;
     var urlprefix = "";
     var defaultTestPrefSettings = [], defaultRefPrefSettings = [];
+    if (g.compareRetainedDisplayLists) {
+        AddRetainedDisplayListTestPrefs(sandbox, defaultTestPrefSettings,
+                                        defaultRefPrefSettings);
+    }
     if (g.compareStyloToGecko) {
         AddStyloTestPrefs(sandbox, defaultTestPrefSettings,
                           defaultRefPrefSettings);
@@ -106,6 +106,10 @@ function ReadManifest(aURL, inherited_status, aFilter)
                     throw "Error in pref value in manifest file " + aURL.spec + " line " + lineNo;
                 }
             }
+            if (g.compareRetainedDisplayLists) {
+                AddRetainedDisplayListTestPrefs(sandbox, defaultTestPrefSettings,
+                                                defaultRefPrefSettings);
+            }
             if (g.compareStyloToGecko) {
                 AddStyloTestPrefs(sandbox, defaultTestPrefSettings,
                                   defaultRefPrefSettings);
@@ -124,6 +128,7 @@ function ReadManifest(aURL, inherited_status, aFilter)
         var fuzzy_delta = { min: 0, max: 2 };
         var fuzzy_pixels = { min: 0, max: 1 };
         var chaosMode = false;
+        var nonSkipUsed = false;
 
         while (items[0].match(/^(fails|needs-focus|random|skip|asserts|slow|require-or|silentfail|pref|test-pref|ref-pref|fuzzy|chaos-mode)/)) {
             var item = items.shift();
@@ -133,7 +138,7 @@ function ReadManifest(aURL, inherited_status, aFilter)
             if (m) {
                 stat = m[1];
                 // Note: m[2] contains the parentheses, and we want them.
-                cond = Components.utils.evalInSandbox(m[2], sandbox);
+                cond = Cu.evalInSandbox(m[2], sandbox);
             } else if (item.match(/^(fails|random|skip)$/)) {
                 stat = item;
                 cond = true;
@@ -147,7 +152,7 @@ function ReadManifest(aURL, inherited_status, aFilter)
                                                  : Number(m[2].substring(1));
             } else if ((m = item.match(/^asserts-if\((.*?),(\d+)(-\d+)?\)$/))) {
                 cond = false;
-                if (Components.utils.evalInSandbox("(" + m[1] + ")", sandbox)) {
+                if (Cu.evalInSandbox("(" + m[1] + ")", sandbox)) {
                     minAsserts = Number(m[2]);
                     maxAsserts =
                       (m[3] == undefined) ? minAsserts
@@ -182,7 +187,7 @@ function ReadManifest(aURL, inherited_status, aFilter)
                 }
             } else if ((m = item.match(/^slow-if\((.*?)\)$/))) {
                 cond = false;
-                if (Components.utils.evalInSandbox("(" + m[1] + ")", sandbox))
+                if (Cu.evalInSandbox("(" + m[1] + ")", sandbox))
                     slow = true;
             } else if (item == "silentfail") {
                 cond = false;
@@ -199,7 +204,7 @@ function ReadManifest(aURL, inherited_status, aFilter)
               fuzzy_pixels = ExtractRange(m, 3);
             } else if ((m = item.match(/^fuzzy-if\((.*?),(\d+)(-\d+)?,(\d+)(-\d+)?\)$/))) {
               cond = false;
-              if (Components.utils.evalInSandbox("(" + m[1] + ")", sandbox)) {
+              if (Cu.evalInSandbox("(" + m[1] + ")", sandbox)) {
                 expected_status = EXPECTED_FUZZY;
                 fuzzy_delta = ExtractRange(m, 2);
                 fuzzy_pixels = ExtractRange(m, 4);
@@ -209,6 +214,10 @@ function ReadManifest(aURL, inherited_status, aFilter)
                 chaosMode = true;
             } else {
                 throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": unexpected item " + item;
+            }
+
+            if (stat != "skip") {
+                nonSkipUsed = true;
             }
 
             if (cond) {
@@ -223,8 +232,6 @@ function ReadManifest(aURL, inherited_status, aFilter)
                 }
             }
         }
-
-        expected_status = Math.max(expected_status, inherited_status);
 
         if (minAsserts > maxAsserts) {
             throw "Bad range in manifest file " + aURL.spec + " line " + lineNo;
@@ -263,29 +270,37 @@ function ReadManifest(aURL, inherited_status, aFilter)
                 throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": incorrect number of arguments to include";
             if (runHttp)
                 throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": use of include with http";
-            var incURI = g.ioService.newURI(items[1], null, listURL);
-            secMan.checkLoadURIWithPrincipal(principal, incURI,
-                                             CI.nsIScriptSecurityManager.DISALLOW_SCRIPT);
-            ReadManifest(incURI, expected_status, aFilter);
-        } else if (items[0] == TYPE_LOAD) {
+
+            // If the expected_status is EXPECTED_PASS (the default) then allow
+            // the include. If it is EXPECTED_DEATH, that means there was a skip
+            // or skip-if annotation (with a true condition) on this include
+            // statement, so we should skip the include. Any other expected_status
+            // is disallowed since it's nonintuitive as to what the intended
+            // effect is.
+            if (nonSkipUsed) {
+                throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": include statement with annotation other than 'skip' or 'skip-if'";
+            } else if (expected_status == EXPECTED_DEATH) {
+                g.logger.info("Skipping included manifest at " + aURL.spec + " line " + lineNo + " due to matching skip condition");
+            } else {
+                // poor man's assertion
+                if (expected_status != EXPECTED_PASS) {
+                    throw "Error in manifest file parsing code: we should never get expected_status=" + expected_status + " when nonSkipUsed=false (from " + aURL.spec + " line " + lineNo + ")";
+                }
+
+                var incURI = g.ioService.newURI(items[1], null, listURL);
+                secMan.checkLoadURIWithPrincipal(principal, incURI,
+                                                 Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT);
+                ReadManifest(incURI, aFilter);
+            }
+        } else if (items[0] == TYPE_LOAD || items[0] == TYPE_SCRIPT) {
             if (items.length != 2)
-                throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": incorrect number of arguments to load";
-            if (expected_status != EXPECTED_PASS &&
-                expected_status != EXPECTED_DEATH)
+                throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": incorrect number of arguments to " + items[0];
+            if (items[0] == TYPE_LOAD && expected_status != EXPECTED_PASS && expected_status != EXPECTED_DEATH)
                 throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": incorrect known failure type for load test";
-            var [testURI] = runHttp
-                            ? ServeFiles(principal, httpDepth,
-                                         listURL, [items[1]])
-                            : [g.ioService.newURI(items[1], null, listURL)];
-            var prettyPath = runHttp
-                           ? g.ioService.newURI(items[1], null, listURL).spec
-                           : testURI.spec;
-            secMan.checkLoadURIWithPrincipal(principal, testURI,
-                                             CI.nsIScriptSecurityManager.DISALLOW_SCRIPT);
             AddTestItem({ type: TYPE_LOAD,
                           expected: expected_status,
+                          manifest: aURL.spec,
                           allowSilentFail: allow_silent_fail,
-                          prettyPath: prettyPath,
                           minAsserts: minAsserts,
                           maxAsserts: maxAsserts,
                           needsFocus: needs_focus,
@@ -296,36 +311,9 @@ function ReadManifest(aURL, inherited_status, aFilter)
                           fuzzyMaxDelta: fuzzy_delta.max,
                           fuzzyMinPixels: fuzzy_pixels.min,
                           fuzzyMaxPixels: fuzzy_pixels.max,
-                          url1: testURI,
-                          url2: null,
-                          chaosMode: chaosMode }, aFilter);
-        } else if (items[0] == TYPE_SCRIPT) {
-            if (items.length != 2)
-                throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": incorrect number of arguments to script";
-            var [testURI] = runHttp
-                            ? ServeFiles(principal, httpDepth,
-                                         listURL, [items[1]])
-                            : [g.ioService.newURI(items[1], null, listURL)];
-            var prettyPath = runHttp
-                           ? g.ioService.newURI(items[1], null, listURL).spec
-                           : testURI.spec;
-            secMan.checkLoadURIWithPrincipal(principal, testURI,
-                                             CI.nsIScriptSecurityManager.DISALLOW_SCRIPT);
-            AddTestItem({ type: TYPE_SCRIPT,
-                          expected: expected_status,
-                          allowSilentFail: allow_silent_fail,
-                          prettyPath: prettyPath,
-                          minAsserts: minAsserts,
-                          maxAsserts: maxAsserts,
-                          needsFocus: needs_focus,
-                          slow: slow,
-                          prefSettings1: testPrefSettings,
-                          prefSettings2: refPrefSettings,
-                          fuzzyMinDelta: fuzzy_delta.min,
-                          fuzzyMaxDelta: fuzzy_delta.max,
-                          fuzzyMinPixels: fuzzy_pixels.min,
-                          fuzzyMaxPixels: fuzzy_pixels.max,
-                          url1: testURI,
+                          runHttp: runHttp,
+                          httpDepth: httpDepth,
+                          url1: items[1],
                           url2: null,
                           chaosMode: chaosMode }, aFilter);
         } else if (items[0] == TYPE_REFTEST_EQUAL || items[0] == TYPE_REFTEST_NOTEQUAL || items[0] == TYPE_PRINT) {
@@ -338,22 +326,9 @@ function ReadManifest(aURL, inherited_status, aFilter)
                 throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": minimum fuzz must be zero for tests of type " + items[0];
             }
 
-            var [testURI, refURI] = runHttp
-                                  ? ServeFiles(principal, httpDepth,
-                                               listURL, [items[1], items[2]])
-                                  : [g.ioService.newURI(items[1], null, listURL),
-                                     g.ioService.newURI(items[2], null, listURL)];
-            var prettyPath = runHttp
-                           ? g.ioService.newURI(items[1], null, listURL).spec
-                           : testURI.spec;
-            secMan.checkLoadURIWithPrincipal(principal, testURI,
-                                             CI.nsIScriptSecurityManager.DISALLOW_SCRIPT);
-            secMan.checkLoadURIWithPrincipal(principal, refURI,
-                                             CI.nsIScriptSecurityManager.DISALLOW_SCRIPT);
             var type = items[0];
-            if (g.compareStyloToGecko) {
+            if (g.compareStyloToGecko || g.compareRetainedDisplayLists) {
                 type = TYPE_REFTEST_EQUAL;
-                refURI = testURI;
 
                 // We expect twice as many assertion failures when running in
                 // styloVsGecko mode because we run each test twice: once in
@@ -373,8 +348,8 @@ function ReadManifest(aURL, inherited_status, aFilter)
 
             AddTestItem({ type: type,
                           expected: expected_status,
+                          manifest: aURL.spec,
                           allowSilentFail: allow_silent_fail,
-                          prettyPath: prettyPath,
                           minAsserts: minAsserts,
                           maxAsserts: maxAsserts,
                           needsFocus: needs_focus,
@@ -385,8 +360,10 @@ function ReadManifest(aURL, inherited_status, aFilter)
                           fuzzyMaxDelta: fuzzy_delta.max,
                           fuzzyMinPixels: fuzzy_pixels.min,
                           fuzzyMaxPixels: fuzzy_pixels.max,
-                          url1: testURI,
-                          url2: refURI,
+                          runHttp: runHttp,
+                          httpDepth: httpDepth,
+                          url1: items[1],
+                          url2: items[2],
                           chaosMode: chaosMode }, aFilter);
         } else {
             throw "Error in manifest file " + aURL.spec + " line " + lineNo + ": unknown test type " + items[0];
@@ -399,8 +376,8 @@ function ReadManifest(aURL, inherited_status, aFilter)
 function getStreamContent(inputStream)
 {
     var streamBuf = "";
-    var sis = CC["@mozilla.org/scriptableinputstream;1"].
-                  createInstance(CI.nsIScriptableInputStream);
+    var sis = Cc["@mozilla.org/scriptableinputstream;1"].
+                  createInstance(Ci.nsIScriptableInputStream);
     sis.init(inputStream);
 
     var available;
@@ -413,16 +390,16 @@ function getStreamContent(inputStream)
 
 // Build the sandbox for fails-if(), etc., condition evaluation.
 function BuildConditionSandbox(aURL) {
-    var sandbox = new Components.utils.Sandbox(aURL.spec);
-    var xr = CC[NS_XREAPPINFO_CONTRACTID].getService(CI.nsIXULRuntime);
-    var appInfo = CC[NS_XREAPPINFO_CONTRACTID].getService(CI.nsIXULAppInfo);
+    var sandbox = new Cu.Sandbox(aURL.spec);
+    var xr = Cc[NS_XREAPPINFO_CONTRACTID].getService(Ci.nsIXULRuntime);
+    var appInfo = Cc[NS_XREAPPINFO_CONTRACTID].getService(Ci.nsIXULAppInfo);
     sandbox.isDebugBuild = g.debug.isDebugBuild;
-    var prefs = CC["@mozilla.org/preferences-service;1"].
-                getService(CI.nsIPrefBranch);
-    var env = CC["@mozilla.org/process/environment;1"].
-                getService(CI.nsIEnvironment);
+    var prefs = Cc["@mozilla.org/preferences-service;1"].
+                getService(Ci.nsIPrefBranch);
+    var env = Cc["@mozilla.org/process/environment;1"].
+                getService(Ci.nsIEnvironment);
 
-    sandbox.xulRuntime = CU.cloneInto({widgetToolkit: xr.widgetToolkit, OS: xr.OS, XPCOMABI: xr.XPCOMABI}, sandbox);
+    sandbox.xulRuntime = Cu.cloneInto({widgetToolkit: xr.widgetToolkit, OS: xr.OS, XPCOMABI: xr.XPCOMABI}, sandbox);
 
     var testRect = g.browser.getBoundingClientRect();
     sandbox.smallScreen = false;
@@ -430,7 +407,7 @@ function BuildConditionSandbox(aURL) {
         sandbox.smallScreen = true;
     }
 
-    var gfxInfo = (NS_GFXINFO_CONTRACTID in CC) && CC[NS_GFXINFO_CONTRACTID].getService(CI.nsIGfxInfo);
+    var gfxInfo = (NS_GFXINFO_CONTRACTID in Cc) && Cc[NS_GFXINFO_CONTRACTID].getService(Ci.nsIGfxInfo);
     let readGfxInfo = function (obj, key) {
       if (g.contentGfxInfo && (key in g.contentGfxInfo)) {
         return g.contentGfxInfo[key];
@@ -482,8 +459,7 @@ function BuildConditionSandbox(aURL) {
     // Shortcuts for widget toolkits.
     sandbox.Android = xr.OS == "Android";
     sandbox.cocoaWidget = xr.widgetToolkit == "cocoa";
-    sandbox.gtkWidget = xr.widgetToolkit == "gtk2"
-                        || xr.widgetToolkit == "gtk3";
+    sandbox.gtkWidget = xr.widgetToolkit == "gtk3";
     sandbox.qtWidget = xr.widgetToolkit == "qt";
     sandbox.winWidget = xr.widgetToolkit == "windows";
 
@@ -491,7 +467,7 @@ function BuildConditionSandbox(aURL) {
     sandbox.transparentScrollbars = xr.widgetToolkit == "gtk3";
 
     if (sandbox.Android) {
-        var sysInfo = CC["@mozilla.org/system-info;1"].getService(CI.nsIPropertyBag2);
+        var sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
 
         // This is currently used to distinguish Android 4.0.3 (SDK version 15)
         // and later from Android 2.x
@@ -509,6 +485,10 @@ function BuildConditionSandbox(aURL) {
 #else
     sandbox.webrtc = false;
 #endif
+
+let retainedDisplayListsEnabled = prefs.getBoolPref("layout.display-list.retain", false);
+sandbox.retainedDisplayLists = retainedDisplayListsEnabled && !g.compareRetainedDisplayLists;
+sandbox.compareRetainedDisplayLists = g.compareRetainedDisplayLists;
 
 #ifdef MOZ_STYLO
     let styloEnabled = false;
@@ -528,12 +508,7 @@ function BuildConditionSandbox(aURL) {
     sandbox.styloVsGecko = false;
 #endif
 
-// Printing via Skia PDF is only supported on Mac for now.
-#ifdef XP_MACOSX && MOZ_ENABLE_SKIA_PDF
-    sandbox.skiaPdf = true;
-#else
     sandbox.skiaPdf = false;
-#endif
 
 #ifdef RELEASE_OR_BETA
     sandbox.release_or_beta = true;
@@ -541,8 +516,8 @@ function BuildConditionSandbox(aURL) {
     sandbox.release_or_beta = false;
 #endif
 
-    var hh = CC[NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX + "http"].
-                 getService(CI.nsIHttpProtocolHandler);
+    var hh = Cc[NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX + "http"].
+                 getService(Ci.nsIHttpProtocolHandler);
     var httpProps = ["userAgent", "appName", "appVersion", "vendor",
                      "vendorSub", "product", "productSub", "platform",
                      "oscpu", "language", "misc"];
@@ -570,7 +545,7 @@ function BuildConditionSandbox(aURL) {
     }
     sandbox.gpuProcessForceEnabled = prefs.getBoolPref("layers.gpu-process.force-enabled", false);
 
-    sandbox.prefs = CU.cloneInto({
+    sandbox.prefs = Cu.cloneInto({
         getBoolPref: function(p) { return prefs.getBoolPref(p); },
         getIntPref:  function(p) { return prefs.getIntPref(p); }
     }, sandbox, { cloneFunctions: true });
@@ -588,13 +563,24 @@ function BuildConditionSandbox(aURL) {
     // Graphics features
     sandbox.usesRepeatResampling = sandbox.d2d;
 
+    // Running in a test-verify session?
+    sandbox.verify = prefs.getBoolPref("reftest.verify", false);
+
     if (!g.dumpedConditionSandbox) {
         g.logger.info("Dumping JSON representation of sandbox");
-        g.logger.info(JSON.stringify(CU.waiveXrays(sandbox)));
+        g.logger.info(JSON.stringify(Cu.waiveXrays(sandbox)));
         g.dumpedConditionSandbox = true;
     }
 
     return sandbox;
+}
+
+function AddRetainedDisplayListTestPrefs(aSandbox, aTestPrefSettings,
+                                         aRefPrefSettings) {
+    AddPrefSettings("test-", "layout.display-list.retain", "true", aSandbox,
+                    aTestPrefSettings, aRefPrefSettings);
+    AddPrefSettings("ref-", "layout.display-list.retain", "false", aSandbox,
+                    aTestPrefSettings, aRefPrefSettings);
 }
 
 function AddStyloTestPrefs(aSandbox, aTestPrefSettings, aRefPrefSettings) {
@@ -605,7 +591,7 @@ function AddStyloTestPrefs(aSandbox, aTestPrefSettings, aRefPrefSettings) {
 }
 
 function AddPrefSettings(aWhere, aPrefName, aPrefValExpression, aSandbox, aTestPrefSettings, aRefPrefSettings) {
-    var prefVal = Components.utils.evalInSandbox("(" + aPrefValExpression + ")", aSandbox);
+    var prefVal = Cu.evalInSandbox("(" + aPrefValExpression + ")", aSandbox);
     var prefType;
     var valType = typeof(prefVal);
     if (valType == "boolean") {
@@ -621,7 +607,8 @@ function AddPrefSettings(aWhere, aPrefName, aPrefValExpression, aSandbox, aTestP
                     type: prefType,
                     value: prefVal };
 
-    if (g.compareStyloToGecko && aPrefName != "layout.css.servo.enabled") {
+    if ((g.compareStyloToGecko && aPrefName != "layout.css.servo.enabled") ||
+        (g.compareRetainedDisplayLists && aPrefName != "layout.display-list.retain")) {
         // ref-pref() is ignored, test-pref() and pref() are added to both
         if (aWhere != "ref-") {
             aTestPrefSettings.push(setting);
@@ -651,8 +638,8 @@ function ExtractRange(matches, startIndex, defaultMin = 0) {
     };
 }
 
-function ServeFiles(manifestPrincipal, depth, aURL, files) {
-    var listURL = aURL.QueryInterface(CI.nsIFileURL);
+function ServeTestBase(aURL, depth) {
+    var listURL = aURL.QueryInterface(Ci.nsIFileURL);
     var directory = listURL.file.parent;
 
     // Allow serving a tree that's an ancestor of the directory containing
@@ -668,41 +655,59 @@ function ServeFiles(manifestPrincipal, depth, aURL, files) {
     var path = "/" + Date.now() + "/" + g.count;
     g.server.registerDirectory(path + "/", directory);
 
-    var secMan = CC[NS_SCRIPTSECURITYMANAGER_CONTRACTID]
-                     .getService(CI.nsIScriptSecurityManager);
+    var secMan = Cc[NS_SCRIPTSECURITYMANAGER_CONTRACTID]
+                     .getService(Ci.nsIScriptSecurityManager);
 
     var testbase = g.ioService.newURI("http://localhost:" + g.httpServerPort +
                                      path + dirPath);
 
     // Give the testbase URI access to XUL and XBL
     Services.perms.add(testbase, "allowXULXBL", Services.perms.ALLOW_ACTION);
+    return testbase;
+}
+
+function CreateUrls(test) {
+    let secMan = Cc[NS_SCRIPTSECURITYMANAGER_CONTRACTID]
+                    .getService(Ci.nsIScriptSecurityManager);
+
+    let manifestURL = g.ioService.newURI(test.manifest);
+    let principal = secMan.createCodebasePrincipal(manifestURL, {});
+
+    let testbase = manifestURL;
+    if (test.runHttp)
+        testbase = ServeTestBase(manifestURL, test.httpDepth)
 
     function FileToURI(file)
     {
-        // Only serve relative URIs via the HTTP server, not absolute
-        // ones like about:blank.
+        if (file === null)
+            return file;
+
         var testURI = g.ioService.newURI(file, null, testbase);
-
-        // XXX necessary?  manifestURL guaranteed to be file, others always HTTP
-        secMan.checkLoadURIWithPrincipal(manifestPrincipal, testURI,
-                                         CI.nsIScriptSecurityManager.DISALLOW_SCRIPT);
-
+        secMan.checkLoadURIWithPrincipal(principal, testURI,
+                                         Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT);
         return testURI;
     }
 
-    return files.map(FileToURI);
+    let files = [test.url1, test.url2];
+    [test.url1, test.url2] = files.map(FileToURI);
+    if (test.url2 && g.compareStyloToGecko)
+        test.url2 = test.url1;
+
+    return test;
 }
 
 function AddTestItem(aTest, aFilter) {
     if (!aFilter)
         aFilter = [null, [], false];
 
+    var {url1, url2} = CreateUrls(Object.assign({}, aTest));
+
     var globalFilter = aFilter[0];
     var manifestFilter = aFilter[1];
     var invertManifest = aFilter[2];
-    if ((globalFilter && !globalFilter.test(aTest.url1.spec)) ||
+    if ((globalFilter && !globalFilter.test(url1.spec)) ||
         (manifestFilter &&
-         !(invertManifest ^ manifestFilter.test(aTest.url1.spec))))
+         !(invertManifest ^ manifestFilter.test(url1.spec))))
         return;
     if (g.focusFilterMode == FOCUS_FILTER_NEEDS_FOCUS_TESTS &&
         !aTest.needsFocus)
@@ -711,10 +716,9 @@ function AddTestItem(aTest, aFilter) {
         aTest.needsFocus)
         return;
 
-    if (aTest.url2 !== null)
-        aTest.identifier = [aTest.prettyPath, aTest.type, aTest.url2.spec];
+    if (url2 !== null)
+        aTest.identifier = [url1.spec, aTest.type, url2.spec];
     else
-        aTest.identifier = aTest.prettyPath;
-
+        aTest.identifier = url1.spec;
     g.urls.push(aTest);
 }

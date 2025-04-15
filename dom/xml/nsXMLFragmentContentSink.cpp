@@ -91,16 +91,24 @@ protected:
   virtual void MaybeStartLayout(bool aIgnorePendingSheets) override;
 
   // nsContentSink overrides
-  virtual nsresult ProcessStyleLink(nsIContent* aElement,
-                                    const nsAString& aHref,
-                                    bool aAlternate,
-                                    const nsAString& aTitle,
-                                    const nsAString& aType,
-                                    const nsAString& aMedia,
-                                    const nsAString& aReferrerPolicy) override;
+  virtual nsresult ProcessStyleLinkFromHeader(
+    const nsAString& aHref,
+    bool aAlternate,
+    const nsAString& aTitle,
+    const nsAString& aType,
+    const nsAString& aMedia,
+    const nsAString& aReferrerPolicy) override;
 
-  nsresult LoadXSLStyleSheet(nsIURI* aUrl);
-  void StartLayout();
+  // nsXMLContentSink overrides
+  virtual nsresult MaybeProcessXSLTLink(
+    ProcessingInstruction* aProcessingInstruction,
+    const nsAString& aHref,
+    bool aAlternate,
+    const nsAString& aTitle,
+    const nsAString& aType,
+    const nsAString& aMedia,
+    const nsAString& aReferrerPolicy,
+    bool* aWasXSLT = nullptr) override;
 
   nsCOMPtr<nsIDocument> mTargetDocument;
   // the fragment
@@ -308,15 +316,8 @@ nsXMLFragmentContentSink::ReportError(const char16_t* aErrorText,
   mState = eXMLContentSinkState_InProlog;
 
   // Clear the current content
-  nsCOMPtr<nsIDOMNode> node(do_QueryInterface(mRoot));
-  if (node) {
-    for (;;) {
-      nsCOMPtr<nsIDOMNode> child, dummy;
-      node->GetLastChild(getter_AddRefs(child));
-      if (!child)
-        break;
-      node->RemoveChild(child, getter_AddRefs(dummy));
-    }
+  while (mRoot->GetLastChild()) {
+    mRoot->GetLastChild()->Remove();
   }
 
   // Clear any buffered-up text we have.  It's enough to set the length to 0.
@@ -328,30 +329,32 @@ nsXMLFragmentContentSink::ReportError(const char16_t* aErrorText,
 }
 
 nsresult
-nsXMLFragmentContentSink::ProcessStyleLink(nsIContent* aElement,
-                                           const nsAString& aHref,
-                                           bool aAlternate,
-                                           const nsAString& aTitle,
-                                           const nsAString& aType,
-                                           const nsAString& aMedia,
-                                           const nsAString& aReferrerPolicy)
+nsXMLFragmentContentSink::ProcessStyleLinkFromHeader(
+  const nsAString& aHref,
+  bool aAlternate,
+  const nsAString& aTitle,
+  const nsAString& aType,
+  const nsAString& aMedia,
+  const nsAString& aReferrerPolicy)
 
 {
-  // don't process until moved to document
+  NS_NOTREACHED("Shouldn't have headers for a fragment sink");
   return NS_OK;
 }
 
 nsresult
-nsXMLFragmentContentSink::LoadXSLStyleSheet(nsIURI* aUrl)
+nsXMLFragmentContentSink::MaybeProcessXSLTLink(
+  ProcessingInstruction* aProcessingInstruction,
+  const nsAString& aHref,
+  bool aAlternate,
+  const nsAString& aTitle,
+  const nsAString& aType,
+  const nsAString& aMedia,
+  const nsAString& aReferrerPolicy,
+  bool* aWasXSLT)
 {
-  NS_NOTREACHED("fragments shouldn't have XSL style sheets");
-  return NS_ERROR_UNEXPECTED;
-}
-
-void
-nsXMLFragmentContentSink::StartLayout()
-{
-  NS_NOTREACHED("fragments shouldn't layout");
+  MOZ_ASSERT(!aWasXSLT, "Our one caller doesn't care about whether we're XSLT");
+  return NS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////

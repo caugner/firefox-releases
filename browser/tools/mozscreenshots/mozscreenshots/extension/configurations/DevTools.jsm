@@ -4,15 +4,13 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["DevTools"];
+var EXPORTED_SYMBOLS = ["DevTools"];
 
-const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
+ChromeUtils.import("resource://devtools/client/framework/gDevTools.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
-Cu.import("resource://devtools/client/framework/gDevTools.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Timer.jsm");
-
-let { devtools } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+let { devtools } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 let TargetFactory = devtools.TargetFactory;
 
 function getTargetForSelectedTab() {
@@ -25,7 +23,7 @@ function selectToolbox() {
   return gDevTools.getToolbox(getTargetForSelectedTab()).win.document.querySelector("#toolbox-container");
 }
 
-this.DevTools = {
+var DevTools = {
   init(libDir) {
     let panels = ["options", "webconsole", "jsdebugger", "styleeditor",
                   "performance", "netmonitor"];
@@ -34,6 +32,7 @@ this.DevTools = {
       this.configurations[panel] = {};
       this.configurations[panel].selectors = [selectToolbox];
       this.configurations[panel].applyConfig = async function() {
+        Services.prefs.setIntPref("devtools.toolbox.footer.height", 800);
         await gDevTools.showToolbox(getTargetForSelectedTab(), panel, "bottom");
         await new Promise(resolve => setTimeout(resolve, 500));
       };
@@ -44,6 +43,7 @@ this.DevTools = {
     bottomToolbox: {
       selectors: [selectToolbox],
       async applyConfig() {
+        Services.prefs.clearUserPref("devtools.toolbox.footer.height");
         await gDevTools.showToolbox(getTargetForSelectedTab(), "inspector", "bottom");
         await new Promise(resolve => setTimeout(resolve, 1000));
       },

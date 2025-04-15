@@ -404,15 +404,15 @@ TabTarget.prototype = {
     if (this.isLocalTab) {
       // Since a remote protocol connection will be made, let's start the
       // DebuggerServer here, once and for all tools.
-      if (!DebuggerServer.initialized) {
-        DebuggerServer.init();
-      }
+      DebuggerServer.init();
+
       // When connecting to a local tab, we only need the root actor.
       // Then we are going to call DebuggerServer.connectToChild and talk
       // directly with actors living in the child process.
       // We also need browser actors for actor registry which enabled addons
       // to register custom actors.
-      DebuggerServer.registerActors({ root: true, browser: true, tab: false });
+      // TODO: the comment and implementation are out of sync here. See Bug 1420134.
+      DebuggerServer.registerAllActors();
 
       this._client = new DebuggerClient(DebuggerServer.connectPipe());
       // A local TabTarget will never perform chrome debugging.
@@ -722,10 +722,34 @@ TabTarget.prototype = {
    *                 The category of the message.  @see nsIScriptError.
    */
   logErrorInPage: function (text, category) {
-    if (this.activeTab && this.activeTab.traits.logErrorInPage) {
+    if (this.activeTab && this.activeTab.traits.logInPage) {
+      const errorFlag = 0;
       let packet = {
         to: this.form.actor,
-        type: "logErrorInPage",
+        type: "logInPage",
+        flags: errorFlag,
+        text,
+        category,
+      };
+      this.client.request(packet);
+    }
+  },
+
+  /**
+   * Log a warning of some kind to the tab's console.
+   *
+   * @param {String} text
+   *                 The text to log.
+   * @param {String} category
+   *                 The category of the message.  @see nsIScriptError.
+   */
+  logWarningInPage: function (text, category) {
+    if (this.activeTab && this.activeTab.traits.logInPage) {
+      const warningFlag = 1;
+      let packet = {
+        to: this.form.actor,
+        type: "logInPage",
+        flags: warningFlag,
         text,
         category,
       };
@@ -885,6 +909,10 @@ WorkerTarget.prototype = {
   },
 
   logErrorInPage: function () {
+    // No-op.  See bug 1368680.
+  },
+
+  logWarningInPage: function () {
     // No-op.  See bug 1368680.
   },
 };

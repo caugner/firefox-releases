@@ -259,6 +259,12 @@ public:
   static bool IsGoogleJapaneseInputActive();
 
   /**
+   * Returns true if active TIP or IME is a black listed one and we should
+   * set input scope of URL bar to IS_DEFAULT rather than IS_URL.
+   */
+  static bool ShouldSetInputScopeOfURLBarToDefault();
+
+  /**
    * Returns true if TSF may crash if GetSelection() returns E_FAIL.
    */
   static bool DoNotReturnErrorFromGetSelection();
@@ -451,12 +457,13 @@ protected:
   Composition mComposition;
 
   /**
-   * IsComposingInContent() returns true if there is a composition in the
-   * focused editor and it's caused by native IME (either TIP of TSF or IME of
-   * IMM).  I.e., returns true between eCompositionStart and
-   * eCompositionCommit(AsIs).
+   * IsHandlingComposition() returns true if there is a composition in the
+   * focused editor.
    */
-  bool IsComposingInContent() const;
+  bool IsHandlingComposition() const
+  {
+    return mDispatcher && mDispatcher->IsHandlingComposition();
+  }
 
   class Selection
   {
@@ -778,6 +785,7 @@ protected:
     {
       mText.Truncate();
       mLastCompositionString.Truncate();
+      mLastCompositionStart = -1;
       mInitialized = false;
     }
 
@@ -788,16 +796,36 @@ protected:
       mText = aText;
       if (mComposition.IsComposing()) {
         mLastCompositionString = mComposition.mString;
+        mLastCompositionStart = mComposition.mStart;
       } else {
         mLastCompositionString.Truncate();
+        mLastCompositionStart = -1;
       }
       mMinTextModifiedOffset = NOT_MODIFIED;
+      mLatestCompositionStartOffset = mLatestCompositionEndOffset = LONG_MAX;
       mInitialized = true;
     }
 
     void OnLayoutChanged()
     {
       mMinTextModifiedOffset = NOT_MODIFIED;
+    }
+
+    // OnCompositionEventsHandled() is called when all pending composition
+    // events are handled in the focused content which may be in a remote
+    // process.
+    void OnCompositionEventsHandled()
+    {
+      if (!mInitialized) {
+        return;
+      }
+      if (mComposition.IsComposing()) {
+        mLastCompositionString = mComposition.mString;
+        mLastCompositionStart = mComposition.mStart;
+      } else {
+        mLastCompositionString.Truncate();
+        mLastCompositionStart = -1;
+      }
     }
 
     const nsDependentSubstring GetSelectedText() const;
@@ -838,10 +866,33 @@ protected:
       MOZ_ASSERT(mInitialized);
       return mLastCompositionString;
     }
+    LONG LastCompositionStringEndOffset() const
+    {
+      MOZ_ASSERT(mInitialized);
+      MOZ_ASSERT(WasLastComposition());
+      return mLastCompositionStart + mLastCompositionString.Length();
+    }
+    bool WasLastComposition() const
+    {
+      MOZ_ASSERT(mInitialized);
+      return mLastCompositionStart >= 0;
+    }
     uint32_t MinTextModifiedOffset() const
     {
       MOZ_ASSERT(mInitialized);
       return mMinTextModifiedOffset;
+    }
+    LONG LatestCompositionStartOffset() const
+    {
+      MOZ_ASSERT(mInitialized);
+      MOZ_ASSERT(HasOrHadComposition());
+      return mLatestCompositionStartOffset;
+    }
+    LONG LatestCompositionEndOffset() const
+    {
+      MOZ_ASSERT(mInitialized);
+      MOZ_ASSERT(HasOrHadComposition());
+      return mLatestCompositionEndOffset;
     }
 
     // Returns true if layout of the character at the aOffset has not been
@@ -862,6 +913,13 @@ protected:
       return mInitialized ? mMinTextModifiedOffset : NOT_MODIFIED;
     }
 
+    bool HasOrHadComposition() const
+    {
+      return mInitialized &&
+             mLatestCompositionStartOffset != LONG_MAX &&
+             mLatestCompositionEndOffset != LONG_MAX;
+    }
+
     TSFTextStore::Composition& Composition() { return mComposition; }
     TSFTextStore::Selection& Selection() { return mSelection; }
 
@@ -872,6 +930,15 @@ protected:
     nsString mLastCompositionString;
     TSFTextStore::Composition& mComposition;
     TSFTextStore::Selection& mSelection;
+
+    // mLastCompositionStart stores the start offset of composition when
+    // mLastCompositionString is set.
+    LONG mLastCompositionStart;
+
+    // The latest composition's start and end offset.  If composition hasn't
+    // been started since this instance is initialized, they are LONG_MAX.
+    LONG mLatestCompositionStartOffset;
+    LONG mLatestCompositionEndOffset;
 
     // The minimum offset of modified part of the text.
     enum : uint32_t

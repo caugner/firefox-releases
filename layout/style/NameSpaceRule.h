@@ -13,8 +13,6 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/CSSNamespaceRule.h"
 
-#include "nsIDOMCSSRule.h"
-
 class nsAtom;
 
 // IID for the NameSpaceRule class {f0b0dbe1-5031-4a21-b06a-dc141ef2af98}
@@ -48,7 +46,7 @@ public:
   void GetURLSpec(nsString& aURLSpec) const final { aURLSpec = mURLSpec; }
 
   // WebIDL interface
-  void GetCssTextImpl(nsAString& aCssText) const override;
+  void GetCssText(nsAString& aCssText) const override;
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const final;
 

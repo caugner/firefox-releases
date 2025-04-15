@@ -27,7 +27,7 @@ class nsTextNode : public mozilla::dom::Text,
 private:
   void Init()
   {
-    MOZ_ASSERT(mNodeInfo->NodeType() == nsIDOMNode::TEXT_NODE,
+    MOZ_ASSERT(mNodeInfo->NodeType() == TEXT_NODE,
                "Bad NodeType in aNodeInfo");
   }
 
@@ -46,10 +46,6 @@ public:
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
-
-  // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  using mozilla::dom::Text::GetParentElement;
 
   // nsIDOMCharacterData
   NS_FORWARD_NSIDOMCHARACTERDATA(nsGenericDOMDataNode::)
@@ -74,6 +70,10 @@ public:
                                   bool aNotify, nsIContent* aNextSibling);
 
   virtual nsIDOMNode* AsDOMNode() override { return this; }
+
+  // Need to have a copy here because including nsDocument.h in this file will
+  // fail to build on Windows.
+  static bool IsShadowDOMEnabled(JSContext* aCx, JSObject* aObject);
 
 #ifdef DEBUG
   virtual void List(FILE* out, int32_t aIndent) const override;

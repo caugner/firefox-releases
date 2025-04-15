@@ -14,6 +14,7 @@ import org.mozilla.gecko.util.BundleEventListener;
 import org.mozilla.gecko.util.EventCallback;
 import org.mozilla.gecko.util.GeckoBundle;
 import org.mozilla.gecko.util.ThreadUtils;
+import org.mozilla.geckoview.BuildConfig;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -67,12 +68,8 @@ public final class EventDispatcher extends JNIObject {
         mNativeQueue = GeckoThread.getNativeQueue();
     }
 
-    /* package */ EventDispatcher(final NativeQueue queue) {
+    public EventDispatcher(final NativeQueue queue) {
         mNativeQueue = queue;
-    }
-
-    public NativeQueue getNativeQueue() {
-        return mNativeQueue;
     }
 
     private boolean isReadyForDispatchingToGecko() {
@@ -116,20 +113,20 @@ public final class EventDispatcher extends JNIObject {
                         listeners = type.newInstance();
                         listenersMap.put(event, listeners);
                     }
-                    if (!AppConstants.RELEASE_OR_BETA && listeners.contains(listener)) {
+                    if (!BuildConfig.RELEASE_OR_BETA && listeners.contains(listener)) {
                         throw new IllegalStateException("Already registered " + event);
                     }
                     listeners.add(listener);
                 }
             }
-        } catch (final IllegalAccessException | InstantiationException e) {
+        } catch (final Exception e) {
             throw new IllegalArgumentException("Invalid new list type", e);
         }
     }
 
     private void checkNotRegisteredElsewhere(final Map<String, ?> allowedMap,
                                              final String[] events) {
-        if (AppConstants.RELEASE_OR_BETA) {
+        if (BuildConfig.RELEASE_OR_BETA) {
             // for performance reasons, we only check for
             // already-registered listeners in non-release builds.
             return;
@@ -161,7 +158,7 @@ public final class EventDispatcher extends JNIObject {
                 }
                 List<T> listeners = listenersMap.get(event);
                 if ((listeners == null ||
-                     !listeners.remove(listener)) && !AppConstants.RELEASE_OR_BETA) {
+                     !listeners.remove(listener)) && !BuildConfig.RELEASE_OR_BETA) {
                     throw new IllegalArgumentException(event + " was not registered");
                 }
             }

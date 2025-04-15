@@ -307,8 +307,9 @@ public:
   // nsITimerCallback
   NS_IMETHOD Notify(nsITimer *timer) override
   {
-    if (mRequest)
-      mRequest->Cancel(NS_ERROR_NET_TIMEOUT);
+    nsCOMPtr<nsICancelable> request(mRequest);
+    if (request)
+      request->Cancel(NS_ERROR_NET_TIMEOUT);
     mTimer = nullptr;
     return NS_OK;
   }
@@ -654,7 +655,6 @@ private:
 
     JS::CompartmentOptions options;
     options.creationOptions().setSystemZone();
-    options.behaviors().setVersion(JSVERSION_LATEST);
     mGlobal = JS_NewGlobalObject(mContext, &sGlobalClass, nullptr,
                                  JS::DontFireOnNewGlobalHook, options);
     if (!mGlobal) {

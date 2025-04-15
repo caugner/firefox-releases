@@ -2,22 +2,23 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
-                                  "resource://gre/modules/AppConstants.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionSettingsStore",
-                                  "resource://gre/modules/ExtensionSettingsStore.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Services",
-                                  "resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "AppConstants",
+                               "resource://gre/modules/AppConstants.jsm");
+ChromeUtils.defineModuleGetter(this, "Services",
+                               "resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "aboutNewTabService",
                                    "@mozilla.org/browser/aboutnewtab-service;1",
                                    "nsIAboutNewTabService");
 
-Cu.import("resource://gre/modules/ExtensionPreferencesManager.jsm");
+ChromeUtils.import("resource://gre/modules/ExtensionPreferencesManager.jsm");
 
 var {
   ExtensionError,
 } = ExtensionUtils;
+var {
+  getSettingsAPI,
+} = ExtensionPreferencesManager;
 
 const HOMEPAGE_OVERRIDE_SETTING = "homepage_override";
 const HOMEPAGE_URL_PREF = "browser.startup.homepage";
@@ -25,31 +26,6 @@ const URL_STORE_TYPE = "url_overrides";
 const NEW_TAB_OVERRIDE_SETTING = "newTabURL";
 
 const PERM_DENY_ACTION = Services.perms.DENY_ACTION;
-
-const getSettingsAPI = (extension, name, callback, storeType, readOnly = false) => {
-  return {
-    async get(details) {
-      return {
-        levelOfControl: details.incognito ?
-          "not_controllable" :
-          await ExtensionPreferencesManager.getLevelOfControl(
-            extension, name, storeType),
-        value: await callback(),
-      };
-    },
-    set(details) {
-      if (!readOnly) {
-        return ExtensionPreferencesManager.setSetting(
-          extension, name, details.value);
-      }
-    },
-    clear(details) {
-      if (!readOnly) {
-        return ExtensionPreferencesManager.removeSetting(extension, name);
-      }
-    },
-  };
-};
 
 // Add settings objects for supported APIs to the preferences manager.
 ExtensionPreferencesManager.addSetting("allowPopupsForUserEvents", {
@@ -80,6 +56,16 @@ ExtensionPreferencesManager.addSetting("cacheEnabled", {
   },
 });
 
+ExtensionPreferencesManager.addSetting("contextMenuShowEvent", {
+  prefNames: [
+    "ui.context_menus.after_mouseup",
+  ],
+
+  setCallback(value) {
+    return {[this.prefNames[0]]: value === "mouseup"};
+  },
+});
+
 ExtensionPreferencesManager.addSetting("imageAnimationBehavior", {
   prefNames: [
     "image.animation_mode",
@@ -90,13 +76,23 @@ ExtensionPreferencesManager.addSetting("imageAnimationBehavior", {
   },
 });
 
-ExtensionPreferencesManager.addSetting("contextMenuShowEvent", {
+ExtensionPreferencesManager.addSetting("openBookmarksInNewTabs", {
   prefNames: [
-    "ui.context_menus.after_mouseup",
+    "browser.tabs.loadBookmarksInTabs",
   ],
 
   setCallback(value) {
-    return {[this.prefNames[0]]: value === "mouseup"};
+    return {[this.prefNames[0]]: value};
+  },
+});
+
+ExtensionPreferencesManager.addSetting("openSearchResultsInNewTabs", {
+  prefNames: [
+    "browser.search.openintab",
+  ],
+
+  setCallback(value) {
+    return {[this.prefNames[0]]: value};
   },
 });
 
@@ -115,37 +111,20 @@ this.browserSettings = class extends ExtensionAPI {
     let {extension} = context;
     return {
       browserSettings: {
-        allowPopupsForUserEvents: getSettingsAPI(extension,
-          "allowPopupsForUserEvents",
+        allowPopupsForUserEvents: getSettingsAPI(
+          extension.id, "allowPopupsForUserEvents",
           () => {
             return Services.prefs.getCharPref("dom.popup_allowed_events") != "";
           }),
-        cacheEnabled: getSettingsAPI(extension,
-          "cacheEnabled",
+        cacheEnabled: getSettingsAPI(
+          extension.id, "cacheEnabled",
           () => {
             return Services.prefs.getBoolPref("browser.cache.disk.enable") &&
               Services.prefs.getBoolPref("browser.cache.memory.enable");
           }),
-        homepageOverride: getSettingsAPI(extension,
-          HOMEPAGE_OVERRIDE_SETTING,
-          () => {
-            return Services.prefs.getComplexValue(
-              HOMEPAGE_URL_PREF, Ci.nsIPrefLocalizedString).data;
-          }, undefined, true),
-        imageAnimationBehavior: getSettingsAPI(extension,
-          "imageAnimationBehavior",
-          () => {
-            return Services.prefs.getCharPref("image.animation_mode");
-          }),
-        newTabPageOverride: getSettingsAPI(extension,
-          NEW_TAB_OVERRIDE_SETTING,
-          () => {
-            return aboutNewTabService.newTabURL;
-          }, URL_STORE_TYPE, true),
         contextMenuShowEvent: Object.assign(
           getSettingsAPI(
-            extension,
-            "contextMenuShowEvent",
+            extension.id, "contextMenuShowEvent",
             () => {
               if (AppConstants.platform === "win") {
                 return "mouseup";
@@ -167,12 +146,38 @@ this.browserSettings = class extends ExtensionAPI {
                 return false;
               }
               return ExtensionPreferencesManager.setSetting(
-                extension, "contextMenuShowEvent", details.value);
+                extension.id, "contextMenuShowEvent", details.value);
             },
           }
         ),
-        webNotificationsDisabled: getSettingsAPI(extension,
-          "webNotificationsDisabled",
+        homepageOverride: getSettingsAPI(
+          extension.id, HOMEPAGE_OVERRIDE_SETTING,
+          () => {
+            return Services.prefs.getComplexValue(
+              HOMEPAGE_URL_PREF, Ci.nsIPrefLocalizedString).data;
+          }, undefined, true),
+        imageAnimationBehavior: getSettingsAPI(
+          extension.id, "imageAnimationBehavior",
+          () => {
+            return Services.prefs.getCharPref("image.animation_mode");
+          }),
+        newTabPageOverride: getSettingsAPI(
+          extension.id, NEW_TAB_OVERRIDE_SETTING,
+          () => {
+            return aboutNewTabService.newTabURL;
+          }, URL_STORE_TYPE, true),
+        openBookmarksInNewTabs: getSettingsAPI(
+          extension.id, "openBookmarksInNewTabs",
+          () => {
+            return Services.prefs.getBoolPref("browser.tabs.loadBookmarksInTabs");
+          }),
+        openSearchResultsInNewTabs: getSettingsAPI(
+          extension.id, "openSearchResultsInNewTabs",
+          () => {
+            return Services.prefs.getBoolPref("browser.search.openintab");
+          }),
+        webNotificationsDisabled: getSettingsAPI(
+          extension.id, "webNotificationsDisabled",
           () => {
             let prefValue =
               Services.prefs.getIntPref(

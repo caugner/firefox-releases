@@ -6,7 +6,9 @@
 
 "use strict";
 
-const { DOM: dom, Component, PropTypes, createFactory } = require("devtools/client/shared/vendor/react");
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const KeyShortcuts = require("devtools/client/shared/key-shortcuts");
 const AutocompletePopup = createFactory(require("devtools/client/shared/components/AutoCompletePopup"));
 
@@ -16,6 +18,9 @@ class SearchBox extends Component {
       delay: PropTypes.number,
       keyShortcut: PropTypes.string,
       onChange: PropTypes.func,
+      onFocus: PropTypes.func,
+      onBlur: PropTypes.func,
+      onKeyDown: PropTypes.func,
       placeholder: PropTypes.string,
       type: PropTypes.string,
       autocompleteProvider: PropTypes.func,
@@ -45,7 +50,7 @@ class SearchBox extends Component {
     this.shortcuts = new KeyShortcuts({
       window
     });
-    this.shortcuts.on(this.props.keyShortcut, (name, event) => {
+    this.shortcuts.on(this.props.keyShortcut, event => {
       event.preventDefault();
       this.refs.input.focus();
     });
@@ -94,14 +99,26 @@ class SearchBox extends Component {
   }
 
   onFocus() {
+    if (this.props.onFocus) {
+      this.props.onFocus();
+    }
+
     this.setState({ focused: true });
   }
 
   onBlur() {
+    if (this.props.onBlur) {
+      this.props.onBlur();
+    }
+
     this.setState({ focused: false });
   }
 
   onKeyDown(e) {
+    if (this.props.onKeyDown) {
+      this.props.onKeyDown();
+    }
+
     let { autocomplete } = this.refs;
     if (!autocomplete || autocomplete.state.list.length <= 0) {
       return;

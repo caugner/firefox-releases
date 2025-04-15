@@ -106,8 +106,6 @@ public:
   virtual void EndTransaction(DrawPaintedLayerCallback aCallback,
                               void* aCallbackData,
                               EndTransactionFlags aFlags = END_DEFAULT) override;
-  virtual bool ShouldAvoidComponentAlphaLayers() override { return IsWidgetLayerManager(); }
-
   void AbortTransaction();
 
   virtual void SetRoot(Layer* aLayer) override;
@@ -117,7 +115,6 @@ public:
   virtual already_AddRefed<ImageLayer> CreateImageLayer() override;
   virtual already_AddRefed<CanvasLayer> CreateCanvasLayer() override;
   virtual already_AddRefed<ColorLayer> CreateColorLayer() override;
-  virtual already_AddRefed<TextLayer> CreateTextLayer() override;
   virtual already_AddRefed<BorderLayer> CreateBorderLayer() override;
   virtual already_AddRefed<ReadbackLayer> CreateReadbackLayer() override;
   virtual already_AddRefed<DisplayItemLayer> CreateDisplayItemLayer() override;

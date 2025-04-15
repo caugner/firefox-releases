@@ -438,6 +438,77 @@ protected:
                                        nsIContent** aNextContent);
 
   /**
+   * Returns scope owner of aContent.
+   * A scope owner is either a document root, shadow host, or slot.
+   */
+  nsIContent* FindOwner(nsIContent* aContent);
+
+  /**
+   * Returns true if aContent is a shadow host or slot
+   */
+  bool IsHostOrSlot(nsIContent* aContent);
+
+  /**
+   * Retrieve the next tabbable element in scope owned by aOwner, using
+   * focusability and tabindex to determine the tab order.
+   *
+   * aOwner is the owner of scope to search in.
+   *
+   * aStartContent is the starting point for this call of this method.
+   *
+   * aForward should be true for forward navigation or false for backward
+   * navigation.
+   *
+   * aCurrentTabIndex is the current tabindex.
+   *
+   * aIgnoreTabIndex to ignore the current tabindex and find the element
+   * irrespective or the tab index.
+   *
+   * aSkipOwner to skip owner while searching. The flag is set when caller is
+   * |GetNextTabbableContent| in order to let caller handle owner.
+   *
+   * NOTE:
+   *   Consider the method searches downwards in flattened subtree
+   *   rooted at aOwner.
+   */
+  nsIContent* GetNextTabbableContentInScope(nsIContent* aOwner,
+                                            nsIContent* aStartContent,
+                                            bool aForward,
+                                            int32_t aCurrentTabIndex,
+                                            bool aIgnoreTabIndex,
+                                            bool aSkipOwner);
+
+  /**
+   * Retrieve the next tabbable element in scope including aStartContent
+   * and the scope's ancestor scopes, using focusability and tabindex to
+   * determine the tab order.
+   *
+   * aStartContent an in/out paremeter. It as input is the starting point
+   * for this call of this method; as output it is the shadow host in
+   * light DOM if the next tabbable element is not found in shadow DOM,
+   * in order to continue searching in light DOM.
+   *
+   * aForward should be true for forward navigation or false for backward
+   * navigation.
+   *
+   * aCurrentTabIndex returns tab index of shadow host in light DOM if the
+   * next tabbable element is not found in shadow DOM, in order to continue
+   * searching in light DOM.
+   *
+   * aIgnoreTabIndex to ignore the current tabindex and find the element
+   * irrespective or the tab index.
+   *
+   * NOTE:
+   *   Consider the method searches upwards in all shadow host- or slot-rooted
+   *   flattened subtrees that contains aStartContent as non-root, except
+   *   the flattened subtree rooted at shadow host in light DOM.
+   */
+  nsIContent* GetNextTabbableContentInAncestorScopes(nsIContent** aStartContent,
+                                                     bool aForward,
+                                                     int32_t* aCurrentTabIndex,
+                                                     bool aIgnoreTabIndex);
+
+  /**
    * Retrieve the next tabbable element within a document, using focusability
    * and tabindex to determine the tab order. The element is returned in
    * aResultContent.
@@ -489,7 +560,7 @@ protected:
    */
   nsIContent* GetNextTabbableMapArea(bool aForward,
                                      int32_t aCurrentTabIndex,
-                                     nsIContent* aImageContent,
+                                     mozilla::dom::Element* aImageContent,
                                      nsIContent* aStartContent);
 
   /**
@@ -506,7 +577,7 @@ protected:
    * aRootContent. For content documents, this will be aRootContent itself, but
    * for chrome documents, this will locate the next focusable content.
    */
-  nsresult FocusFirst(nsIContent* aRootContent, nsIContent** aNextContent);
+  nsresult FocusFirst(mozilla::dom::Element* aRootContent, nsIContent** aNextContent);
 
   /**
    * Retrieves and returns the root node from aDocument to be focused. Will
@@ -517,16 +588,16 @@ protected:
    * - if aCheckVisibility is true and the aWindow is not visible.
    * - if aDocument is a frameset document.
    */
-  nsIContent* GetRootForFocus(nsPIDOMWindowOuter* aWindow,
-                              nsIDocument* aDocument,
-                              bool aForDocumentNavigation,
-                              bool aCheckVisibility);
+  mozilla::dom::Element* GetRootForFocus(nsPIDOMWindowOuter* aWindow,
+                                         nsIDocument* aDocument,
+                                         bool aForDocumentNavigation,
+                                         bool aCheckVisibility);
 
   /**
    * Retrieves and returns the root node as with GetRootForFocus but only if
    * aContent is a frame with a valid child document.
    */
-  nsIContent* GetRootForChildDocument(nsIContent* aContent);
+  mozilla::dom::Element* GetRootForChildDocument(nsIContent* aContent);
 
   /**
    * Retreives a focusable element within the current selection of aWindow.

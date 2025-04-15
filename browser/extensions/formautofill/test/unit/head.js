@@ -8,28 +8,26 @@
 
 "use strict";
 
-var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://gre/modules/ObjectUtils.jsm");
+ChromeUtils.import("resource://gre/modules/FormLikeFactory.jsm");
+ChromeUtils.import("resource://testing-common/FileTestUtils.jsm");
+ChromeUtils.import("resource://testing-common/MockDocument.jsm");
+ChromeUtils.import("resource://testing-common/TestUtils.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
-Cu.import("resource://gre/modules/ObjectUtils.jsm");
-Cu.import("resource://gre/modules/FormLikeFactory.jsm");
-Cu.import("resource://testing-common/FileTestUtils.jsm");
-Cu.import("resource://testing-common/MockDocument.jsm");
-Cu.import("resource://testing-common/TestUtils.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "DownloadPaths",
-                                  "resource://gre/modules/DownloadPaths.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
-                                  "resource://gre/modules/FileUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "DownloadPaths",
+                               "resource://gre/modules/DownloadPaths.jsm");
+ChromeUtils.defineModuleGetter(this, "FileUtils",
+                               "resource://gre/modules/FileUtils.jsm");
 
 do_get_profile();
 
 // ================================================
 // Load mocking/stubbing library, sinon
 // docs: http://sinonjs.org/releases/v2.3.2/
-Cu.import("resource://gre/modules/Timer.jsm");
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
 Services.scriptloader.loadSubScript("resource://testing-common/sinon-2.3.2.js", this);
 /* globals sinon */
 // ================================================
@@ -59,32 +57,53 @@ function getTempFile(leafName) {
 }
 
 async function initProfileStorage(fileName, records, collectionName = "addresses") {
-  let {ProfileStorage} = Cu.import("resource://formautofill/ProfileStorage.jsm", {});
+  let {FormAutofillStorage} = ChromeUtils.import("resource://formautofill/FormAutofillStorage.jsm", {});
   let path = getTempFile(fileName).path;
-  let profileStorage = new ProfileStorage(path);
+  let profileStorage = new FormAutofillStorage(path);
   await profileStorage.initialize();
 
   if (!records || !Array.isArray(records)) {
     return profileStorage;
   }
 
-  let onChanged = TestUtils.topicObserved("formautofill-storage-changed",
-                                          (subject, data) => data == "add");
+  let onChanged = TestUtils.topicObserved(
+    "formautofill-storage-changed",
+    (subject, data) =>
+      data == "add" &&
+      subject.wrappedJSObject.collectionName == collectionName
+  );
   for (let record of records) {
-    do_check_true(profileStorage[collectionName].add(record));
+    Assert.ok(profileStorage[collectionName].add(record));
     await onChanged;
   }
   await profileStorage._saveImmediately();
   return profileStorage;
 }
 
+function verifySectionFieldDetails(sections, expectedResults) {
+  Assert.equal(sections.length, expectedResults.length, "Expected section count.");
+  sections.forEach((sectionInfo, sectionIndex) => {
+    let expectedSectionInfo = expectedResults[sectionIndex];
+    info("FieldName Prediction Results: " + sectionInfo.map(i => i.fieldName));
+    info("FieldName Expected Results:   " + expectedSectionInfo.map(i => i.fieldName));
+    Assert.equal(sectionInfo.length, expectedSectionInfo.length, "Expected field count.");
+
+    sectionInfo.forEach((field, fieldIndex) => {
+      let expectedField = expectedSectionInfo[fieldIndex];
+      delete field._reason;
+      delete field.elementWeakRef;
+      Assert.deepEqual(field, expectedField);
+    });
+  });
+}
+
 function runHeuristicsTest(patterns, fixturePathPrefix) {
-  Cu.import("resource://formautofill/FormAutofillHeuristics.jsm");
-  Cu.import("resource://formautofill/FormAutofillUtils.jsm");
+  ChromeUtils.import("resource://formautofill/FormAutofillHeuristics.jsm");
+  ChromeUtils.import("resource://formautofill/FormAutofillUtils.jsm");
 
   patterns.forEach(testPattern => {
     add_task(async function() {
-      do_print("Starting test fixture: " + testPattern.fixturePath);
+      info("Starting test fixture: " + testPattern.fixturePath);
       let file = do_get_file(fixturePathPrefix + testPattern.fixturePath);
       let doc = MockDocument.createTestDocumentFromFile("http://localhost:8080/test/", file);
 
@@ -100,16 +119,11 @@ function runHeuristicsTest(patterns, fixturePathPrefix) {
       Assert.equal(forms.length, testPattern.expectedResult.length, "Expected form count.");
 
       forms.forEach((form, formIndex) => {
-        let formInfo = FormAutofillHeuristics.getFormInfo(form);
-        do_print("FieldName Prediction Results: " + formInfo.map(i => i.fieldName));
-        do_print("FieldName Expected Results:   " + testPattern.expectedResult[formIndex].map(i => i.fieldName));
-        Assert.equal(formInfo.length, testPattern.expectedResult[formIndex].length, "Expected field count.");
-        formInfo.forEach((field, fieldIndex) => {
-          let expectedField = testPattern.expectedResult[formIndex][fieldIndex];
-          delete field._reason;
-          expectedField.elementWeakRef = field.elementWeakRef;
-          Assert.deepEqual(field, expectedField);
-        });
+        let sections = FormAutofillHeuristics.getFormInfo(form);
+        verifySectionFieldDetails(
+          sections.map(section => section.fieldDetails),
+          testPattern.expectedResult[formIndex],
+        );
       });
     });
   });
@@ -167,13 +181,15 @@ add_task(async function head_initialize() {
   Services.prefs.setStringPref("extensions.formautofill.available", "on");
   Services.prefs.setBoolPref("extensions.formautofill.creditCards.available", true);
   Services.prefs.setBoolPref("extensions.formautofill.heuristics.enabled", true);
+  Services.prefs.setBoolPref("extensions.formautofill.section.enabled", true);
   Services.prefs.setBoolPref("dom.forms.autocomplete.formautofill", true);
 
   // Clean up after every test.
-  do_register_cleanup(function head_cleanup() {
+  registerCleanupFunction(function head_cleanup() {
     Services.prefs.clearUserPref("extensions.formautofill.available");
     Services.prefs.clearUserPref("extensions.formautofill.creditCards.available");
     Services.prefs.clearUserPref("extensions.formautofill.heuristics.enabled");
+    Services.prefs.clearUserPref("extensions.formautofill.section.enabled");
     Services.prefs.clearUserPref("dom.forms.autocomplete.formautofill");
   });
 });

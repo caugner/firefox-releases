@@ -12,8 +12,8 @@ const PREF_APP_UPDATE_CHANNEL         = "app.update.channel";
 const CATEGORY_UPDATE_TIMER           = "update-timer";
 
 // Get the HTTP server.
-Components.utils.import("resource://testing-common/httpd.js");
-Components.utils.import("resource://testing-common/MockRegistrar.jsm");
+ChromeUtils.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
 var testserver;
 var gOSVersion;
 var gBlocklist;
@@ -22,11 +22,11 @@ var gBlocklist;
 var timerService = {
 
   hasTimer(id) {
-    var catMan = Components.classes["@mozilla.org/categorymanager;1"]
-                           .getService(Components.interfaces.nsICategoryManager);
+    var catMan = Cc["@mozilla.org/categorymanager;1"]
+                   .getService(Ci.nsICategoryManager);
     var entries = catMan.enumerateCategory(CATEGORY_UPDATE_TIMER);
     while (entries.hasMoreElements()) {
-      var entry = entries.getNext().QueryInterface(Components.interfaces.nsISupportsCString).data;
+      var entry = entries.getNext().QueryInterface(Ci.nsISupportsCString).data;
       var value = catMan.getCategoryEntry(CATEGORY_UPDATE_TIMER, entry);
       var timerID = value.split(",")[2];
       if (id == timerID) {
@@ -37,15 +37,15 @@ var timerService = {
   },
 
   fireTimer(id) {
-    gBlocklist.QueryInterface(Components.interfaces.nsITimerCallback).notify(null);
+    gBlocklist.QueryInterface(Ci.nsITimerCallback).notify(null);
   },
 
   QueryInterface(iid) {
-    if (iid.equals(Components.interfaces.nsIUpdateTimerManager)
-     || iid.equals(Components.interfaces.nsISupports))
+    if (iid.equals(Ci.nsIUpdateTimerManager)
+     || iid.equals(Ci.nsISupports))
       return this;
 
-    throw Components.results.NS_ERROR_NO_INTERFACE;
+    throw Cr.NS_ERROR_NO_INTERFACE;
   }
 };
 
@@ -59,17 +59,17 @@ function pathHandler(metadata, response) {
   var ABI = "noarch-spidermonkey";
   // the blacklist service special-cases ABI for Universal binaries,
   // so do the same here.
-  if ("@mozilla.org/xpcom/mac-utils;1" in Components.classes) {
-    var macutils = Components.classes["@mozilla.org/xpcom/mac-utils;1"]
-                             .getService(Components.interfaces.nsIMacUtils);
+  if ("@mozilla.org/xpcom/mac-utils;1" in Cc) {
+    var macutils = Cc["@mozilla.org/xpcom/mac-utils;1"]
+                     .getService(Ci.nsIMacUtils);
     if (macutils.isUniversalBinary)
       ABI += "-u-" + macutils.architecturesInBinary;
   }
-  do_check_eq(metadata.queryString,
-              "xpcshell@tests.mozilla.org&1&XPCShell&1&" +
-              gAppInfo.appBuildID + "&" +
-              "XPCShell_" + ABI + "&locale&updatechannel&" +
-              gOSVersion + "&1.9&distribution&distribution-version");
+  Assert.equal(metadata.queryString,
+               "xpcshell@tests.mozilla.org&1&XPCShell&1&" +
+               gAppInfo.appBuildID + "&" +
+               "XPCShell_" + ABI + "&locale&updatechannel&" +
+               gOSVersion + "&1.9&distribution&distribution-version");
   gBlocklist.observe(null, "quit-application", "");
   gBlocklist.observe(null, "xpcom-shutdown", "");
   testserver.stop(do_test_finished);
@@ -77,13 +77,11 @@ function pathHandler(metadata, response) {
 
 function run_test() {
   var osVersion;
-  var sysInfo = Components.classes["@mozilla.org/system-info;1"]
-                          .getService(Components.interfaces.nsIPropertyBag2);
   try {
-    osVersion = sysInfo.getProperty("name") + " " + sysInfo.getProperty("version");
+    osVersion = Services.sysinfo.getProperty("name") + " " + Services.sysinfo.getProperty("version");
     if (osVersion) {
       try {
-        osVersion += " (" + sysInfo.getProperty("secondaryLibrary") + ")";
+        osVersion += " (" + Services.sysinfo.getProperty("secondaryLibrary") + ")";
       } catch (e) {
       }
       gOSVersion = encodeURIComponent(osVersion);
@@ -100,12 +98,10 @@ function run_test() {
   gPort = testserver.identity.primaryPort;
 
   // Initialise the blocklist service
-  gBlocklist = Components.classes["@mozilla.org/extensions/blocklist;1"]
-                         .getService(Components.interfaces.nsIBlocklistService)
-                         .QueryInterface(Components.interfaces.nsIObserver);
+  gBlocklist = Services.blocklist.QueryInterface(Ci.nsIObserver);
   gBlocklist.observe(null, "profile-after-change", "");
 
-  do_check_true(timerService.hasTimer(BLOCKLIST_TIMER));
+  Assert.ok(timerService.hasTimer(BLOCKLIST_TIMER));
 
   do_test_pending();
 
@@ -115,7 +111,7 @@ function run_test() {
   timerService.fireTimer(BLOCKLIST_TIMER);
 
   // Some values have to be on the default branch to work
-  var defaults = Services.prefs.QueryInterface(Components.interfaces.nsIPrefService)
+  var defaults = Services.prefs.QueryInterface(Ci.nsIPrefService)
                        .getDefaultBranch(null);
   defaults.setCharPref(PREF_APP_UPDATE_CHANNEL, "updatechannel");
   defaults.setCharPref(PREF_APP_DISTRIBUTION, "distribution");

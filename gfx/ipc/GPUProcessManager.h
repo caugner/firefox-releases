@@ -107,10 +107,6 @@ public:
     mozilla::ipc::Endpoint<dom::PVideoDecoderManagerChild>* aOutVideoManager,
     nsTArray<uint32_t>* aNamespaces);
 
-  // This returns a reference to the APZCTreeManager to which
-  // pan/zoom-related events can be sent.
-  already_AddRefed<IAPZCTreeManager> GetAPZCTreeManagerForLayers(uint64_t aLayersId);
-
   // Maps the layer tree and process together so that aOwningPID is allowed
   // to access aLayersId across process.
   void MapLayerTreeId(uint64_t aLayersId, base::ProcessId aOwningId);
@@ -281,7 +277,7 @@ private:
 
   // Fields that are associated with the current GPU process.
   GPUProcessHost* mProcess;
-  MOZ_INIT_OUTSIDE_CTOR uint64_t mProcessToken;
+  uint64_t mProcessToken;
   GPUChild* mGPUChild;
   RefPtr<VsyncBridgeChild> mVsyncBridge;
 };

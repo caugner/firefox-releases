@@ -56,11 +56,10 @@ LOCAL_INCLUDES += [
     '/dom/bindings',
     '/dom/html',
     '/dom/svg',
-    '/dom/workers',
     '/layout/base',
     '/layout/style',
     '/xpcom/reflect/xptinfo',
 ]
 
-if CONFIG['GNU_CXX']:
+if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
     CXXFLAGS += ['-Wno-shadow', '-Werror=format']

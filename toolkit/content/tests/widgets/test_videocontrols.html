@@ -110,7 +110,7 @@ add_task(async function setup() {
   await new Promise(resolve => {
     video.addEventListener("canplaythrough", resolve, {once: true});
     video.src = "seek_with_sound.ogg";
-  })
+  });
 
   video.addEventListener("play", verifyExpectedEvent);
   video.addEventListener("pause", verifyExpectedEvent);
@@ -118,6 +118,16 @@ add_task(async function setup() {
   video.addEventListener("seeking", verifyExpectedEvent);
   video.addEventListener("seeked", verifyExpectedEvent);
   document.addEventListener("mozfullscreenchange", verifyExpectedEvent);
+
+  ["mousedown", "mouseup", "dblclick", "click"]
+    .forEach((eventType) => {
+      window.addEventListener(eventType, (evt) => {
+        // Prevent default action of leaked events and make the tests fail.
+        evt.preventDefault();
+        ok(false, "Event " + eventType + " in videocontrol should not leak to content;" +
+          "the event was dispatched from the " + evt.target.tagName.toLowerCase() + " element.");
+      });
+    });
 
   // Check initial state upon load
   is(video.paused, true, "checking video play state");
@@ -132,7 +142,7 @@ add_task(async function click_playbutton() {
 });
 
 add_task(async function click_pausebutton() {
-  synthesizeMouse(video, playButtonCenterX, playButtonCenterY, {})
+  synthesizeMouse(video, playButtonCenterX, playButtonCenterY, {});
   await waitForEvent("pause");
   is(video.paused, true, "checking video play state");
   is(video.muted, false, "checking video mute state");
@@ -212,6 +222,13 @@ add_task(async function drag_slider() {
   const endDragX = scrubberOffsetX + (scrubberWidth / 2);
   const expectedTime = videoDuration / 2;
 
+  function mousemoved(evt) {
+    ok(false, "Mousemove event should not be handled by content while dragging; " +
+      "the event was dispatched from the " + evt.target.tagName.toLowerCase() + " element.");
+  }
+
+  window.addEventListener("mousemove", mousemoved);
+
   synthesizeMouse(video, beginDragX, scrubberCenterY, {type: "mousedown", button: 0});
   synthesizeMouse(video, endDragX, scrubberCenterY, {type: "mousemove", button: 0});
   synthesizeMouse(video, endDragX, scrubberCenterY, {type: "mouseup",   button: 0});
@@ -221,6 +238,8 @@ add_task(async function drag_slider() {
   // in duration and position box. We can not precisely drag to expected position, so
   // we just make sure the difference is within 10% of video duration.
   ok(Math.abs(video.currentTime - expectedTime) < videoDuration / 10, "checking expected playback position");
+
+  window.removeEventListener("mousemove", mousemoved);
 });
 
 /*
@@ -250,19 +269,19 @@ add_task(async function click_slider() {
 add_task(async function change_volume() {
   video.focus();
 
-  synthesizeKey("VK_DOWN", {});
+  synthesizeKey("KEY_ArrowDown");
   await waitForEvent("volumechange");
   is(video.volume, 0, "Volume should be 0.");
   ok(!video.muted, "Video is not muted.");
   ok(await isMuteButtonMuted(), "Mute button says it's muted");
 
-  synthesizeKey("VK_UP", {});
+  synthesizeKey("KEY_ArrowUp");
   await waitForEvent("volumechange");
   is(video.volume, 0.1, "Volume is increased.");
   ok(!video.muted, "Video is not muted.");
   ok(!(await isMuteButtonMuted()), "Mute button says it's not muted");
 
-  synthesizeKey("VK_DOWN", {});
+  synthesizeKey("KEY_ArrowDown");
   await waitForEvent("volumechange");
   is(video.volume, 0, "Volume should be 0.");
   ok(!video.muted, "Video is not muted.");
@@ -273,7 +292,7 @@ add_task(async function change_volume() {
   is(video.volume, 0.5, "Volume should be 0.5.");
   ok(!video.muted, "Video is not muted.");
 
-  synthesizeKey("VK_UP", {});
+  synthesizeKey("KEY_ArrowUp");
   await waitForEvent("volumechange");
   is(video.volume, 0.6, "Volume should be 0.6.");
   ok(!video.muted, "Video is not muted.");
@@ -295,14 +314,14 @@ add_task(async function change_volume() {
   is(video.volume, 0.6, "Volume should still be 0.6");
   await isVolumeSliderShowingCorrectVolume(video.volume);
 
-  synthesizeKey("VK_ESCAPE", {});
+  synthesizeKey("KEY_Escape");
   await waitForEvent("mozfullscreenchange");
   is(video.volume, 0.6, "Volume should still be 0.6");
   await isVolumeSliderShowingCorrectVolume(video.volume);
   forceReframe();
 
   video.focus();
-  synthesizeKey("VK_DOWN", {});
+  synthesizeKey("KEY_ArrowDown");
   await waitForEvent("volumechange");
   is(video.volume, 0.5, "Volume should be decreased by 0.1");
   await isVolumeSliderShowingCorrectVolume(video.volume);
@@ -313,7 +332,7 @@ add_task(async function whitespace_pause_video() {
   await waitForEvent("play");
 
   video.focus();
-  synthesizeKey(" ", {});
+  sendString(" ");
   await waitForEvent("pause");
 
   synthesizeMouse(video, playButtonCenterX, playButtonCenterY, {});

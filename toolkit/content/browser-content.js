@@ -6,21 +6,16 @@
 /* eslint-env mozilla/frame-script */
 /* global sendAsyncMessage */
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
-var Cr = Components.results;
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode",
+ChromeUtils.defineModuleGetter(this, "ReaderMode",
   "resource://gre/modules/ReaderMode.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
+ChromeUtils.defineModuleGetter(this, "BrowserUtils",
   "resource://gre/modules/BrowserUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "SelectContentHelper",
+ChromeUtils.defineModuleGetter(this, "SelectContentHelper",
   "resource://gre/modules/SelectContentHelper.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FindContent",
+ChromeUtils.defineModuleGetter(this, "FindContent",
   "resource://gre/modules/FindContent.jsm");
 
 var global = this;
@@ -28,7 +23,7 @@ var global = this;
 
 // Lazily load the finder code
 addMessageListener("Finder:Initialize", function() {
-  let {RemoteFinderListener} = Cu.import("resource://gre/modules/RemoteFinder.jsm", {});
+  let {RemoteFinderListener} = ChromeUtils.import("resource://gre/modules/RemoteFinder.jsm", {});
   new RemoteFinderListener(global);
 });
 
@@ -75,44 +70,90 @@ var ClickEventHandler = {
     return false;
   },
 
+  isScrollableElement(aNode) {
+    if (aNode instanceof content.HTMLElement) {
+      return !(aNode instanceof content.HTMLSelectElement) || aNode.multiple;
+    }
+
+    return aNode instanceof content.XULElement;
+  },
+
+  getXBLNodes(parent, array) {
+    let anonNodes = content.document.getAnonymousNodes(parent);
+    let nodes = Array.from(anonNodes || parent.childNodes || []);
+    for (let node of nodes) {
+      if (node.nodeName == "children") {
+        return true;
+      }
+      if (this.getXBLNodes(node, array)) {
+        array.push(node);
+        return true;
+      }
+    }
+    return false;
+  },
+
+  * parentNodeIterator(aNode) {
+    while (aNode) {
+      yield aNode;
+
+      let parent = aNode.parentNode;
+      if (parent && parent instanceof content.XULElement) {
+        let anonNodes = content.document.getAnonymousNodes(parent);
+        if (anonNodes && !Array.from(anonNodes).includes(aNode)) {
+          // XBL elements are skipped by parentNode property.
+          // Yield elements between parent and <children> here.
+          let nodes = [];
+          this.getXBLNodes(parent, nodes);
+          for (let node of nodes) {
+            yield node;
+          }
+        }
+      }
+
+      aNode = parent;
+    }
+  },
+
   findNearestScrollableElement(aNode) {
     // this is a list of overflow property values that allow scrolling
     const scrollingAllowed = ["scroll", "auto"];
 
     // go upward in the DOM and find any parent element that has a overflow
     // area and can therefore be scrolled
-    for (this._scrollable = aNode; this._scrollable;
-         this._scrollable = this._scrollable.parentNode) {
+    this._scrollable = null;
+    for (let node of this.parentNodeIterator(aNode)) {
       // do not use overflow based autoscroll for <html> and <body>
-      // Elements or non-html elements such as svg or Document nodes
+      // Elements or non-html/non-xul elements such as svg or Document nodes
       // also make sure to skip select elements that are not multiline
-      if (!(this._scrollable instanceof content.HTMLElement) ||
-          ((this._scrollable instanceof content.HTMLSelectElement) && !this._scrollable.multiple)) {
+      if (!this.isScrollableElement(node)) {
         continue;
       }
 
-      var overflowx = this._scrollable.ownerGlobal
-                          .getComputedStyle(this._scrollable)
+      var overflowx = node.ownerGlobal
+                          .getComputedStyle(node)
                           .getPropertyValue("overflow-x");
-      var overflowy = this._scrollable.ownerGlobal
-                          .getComputedStyle(this._scrollable)
+      var overflowy = node.ownerGlobal
+                          .getComputedStyle(node)
                           .getPropertyValue("overflow-y");
       // we already discarded non-multiline selects so allow vertical
       // scroll for multiline ones directly without checking for a
       // overflow property
-      var scrollVert = this._scrollable.scrollTopMax &&
-        (this._scrollable instanceof content.HTMLSelectElement ||
-         scrollingAllowed.indexOf(overflowy) >= 0);
+      var scrollVert = node.scrollTopMax &&
+        (node instanceof content.HTMLSelectElement ||
+         scrollingAllowed.includes(overflowy));
 
       // do not allow horizontal scrolling for select elements, it leads
       // to visual artifacts and is not the expected behavior anyway
-      if (!(this._scrollable instanceof content.HTMLSelectElement) &&
-          this._scrollable.scrollLeftMin != this._scrollable.scrollLeftMax &&
-          scrollingAllowed.indexOf(overflowx) >= 0) {
+      if (!(node instanceof content.HTMLSelectElement) &&
+          node.scrollLeftMin != node.scrollLeftMax &&
+          scrollingAllowed.includes(overflowx)) {
         this._scrolldir = scrollVert ? "NSEW" : "EW";
+        this._scrollable = node;
         break;
       } else if (scrollVert) {
         this._scrolldir = "NS";
+        this._scrollable = node;
         break;
       }
     }
@@ -259,9 +300,6 @@ var ClickEventHandler = {
       actualScrollX = this.roundToZero(desiredScrollX);
       this._scrollErrorX = (desiredScrollX - actualScrollX);
     }
-
-    const kAutoscroll = 15; // defined in mozilla/layers/ScrollInputMethods.h
-    Services.telemetry.getHistogramById("SCROLL_INPUT_METHODS").add(kAutoscroll);
 
     this._scrollable.scrollBy({
       left: actualScrollX,
@@ -446,12 +484,12 @@ PopupBlocking.init();
 
 XPCOMUtils.defineLazyGetter(this, "console", () => {
   // Set up console.* for frame scripts.
-  let Console = Components.utils.import("resource://gre/modules/Console.jsm", {});
+  let Console = ChromeUtils.import("resource://gre/modules/Console.jsm", {});
   return new Console.ConsoleAPI();
 });
 
 var Printing = {
-  // Bug 1088061: nsPrintEngine's DoCommonPrint currently expects the
+  // Bug 1088061: nsPrintJob's DoCommonPrint currently expects the
   // progress listener passed to it to QI to an nsIPrintingPromptService
   // in order to know that a printing progress dialog has been shown. That's
   // really all the interface is used for, hence the fact that I don't actually
@@ -573,7 +611,7 @@ var Printing = {
 
       return printSettings;
     } catch (e) {
-      Components.utils.reportError(e);
+      Cu.reportError(e);
     }
 
     return null;
@@ -614,14 +652,11 @@ var Printing = {
       };
 
       // Here we QI the docShell into a nsIWebProgress passing our web progress listener in.
-      let webProgress =  docShell.QueryInterface(Ci.nsIInterfaceRequestor)
-                                 .getInterface(Ci.nsIWebProgress);
+      let webProgress = docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                                .getInterface(Ci.nsIWebProgress);
       webProgress.addProgressListener(webProgressListener, Ci.nsIWebProgress.NOTIFY_STATE_REQUEST);
 
       content.document.head.innerHTML = "";
-
-      // Set title of document
-      content.document.title = article.title;
 
       // Set base URI of document. Print preview code will read this value to
       // populate the URL field in print settings so that it doesn't show
@@ -651,53 +686,68 @@ var Printing = {
       containerElement.setAttribute("id", "container");
       content.document.body.appendChild(containerElement);
 
-      // Create header div and append it to container
-      let headerElement = content.document.createElement("div");
-      headerElement.setAttribute("id", "reader-header");
-      headerElement.setAttribute("class", "header");
-      containerElement.appendChild(headerElement);
+      // Reader Mode might return null if there's a failure when parsing the document.
+      // We'll render the error message for the Simplify Page document when that happens.
+      if (article) {
+        // Set title of document
+        content.document.title = article.title;
 
-      // Jam the article's title and byline into header div
-      let titleElement = content.document.createElement("h1");
-      titleElement.setAttribute("id", "reader-title");
-      titleElement.textContent = article.title;
-      headerElement.appendChild(titleElement);
+        // Create header div and append it to container
+        let headerElement = content.document.createElement("div");
+        headerElement.setAttribute("id", "reader-header");
+        headerElement.setAttribute("class", "header");
+        containerElement.appendChild(headerElement);
 
-      let bylineElement = content.document.createElement("div");
-      bylineElement.setAttribute("id", "reader-credits");
-      bylineElement.setAttribute("class", "credits");
-      bylineElement.textContent = article.byline;
-      headerElement.appendChild(bylineElement);
+        // Jam the article's title and byline into header div
+        let titleElement = content.document.createElement("h1");
+        titleElement.setAttribute("id", "reader-title");
+        titleElement.textContent = article.title;
+        headerElement.appendChild(titleElement);
 
-      // Display header element
-      headerElement.style.display = "block";
+        let bylineElement = content.document.createElement("div");
+        bylineElement.setAttribute("id", "reader-credits");
+        bylineElement.setAttribute("class", "credits");
+        bylineElement.textContent = article.byline;
+        headerElement.appendChild(bylineElement);
 
-      // Create content div and append it to container
-      let contentElement = content.document.createElement("div");
-      contentElement.setAttribute("class", "content");
-      containerElement.appendChild(contentElement);
+        // Display header element
+        headerElement.style.display = "block";
 
-      // Create style element for content div and import aboutReaderContent.css
-      let controlContentStyle = content.document.createElement("style");
-      controlContentStyle.setAttribute("scoped", "");
-      controlContentStyle.textContent = "@import url(\"chrome://global/skin/aboutReaderContent.css\");";
-      contentElement.appendChild(controlContentStyle);
+        // Create content div and append it to container
+        let contentElement = content.document.createElement("div");
+        contentElement.setAttribute("class", "content");
+        containerElement.appendChild(contentElement);
 
-      // Jam the article's content into content div
-      let readerContent = content.document.createElement("div");
-      readerContent.setAttribute("id", "moz-reader-content");
-      contentElement.appendChild(readerContent);
+        // Jam the article's content into content div
+        let readerContent = content.document.createElement("div");
+        readerContent.setAttribute("id", "moz-reader-content");
+        contentElement.appendChild(readerContent);
 
-      let articleUri = Services.io.newURI(article.url);
-      let parserUtils = Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils);
-      let contentFragment = parserUtils.parseFragment(article.content,
-        Ci.nsIParserUtils.SanitizerDropForms | Ci.nsIParserUtils.SanitizerAllowStyle,
-        false, articleUri, readerContent);
+        let articleUri = Services.io.newURI(article.url);
+        let parserUtils = Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils);
+        let contentFragment = parserUtils.parseFragment(article.content,
+          Ci.nsIParserUtils.SanitizerDropForms | Ci.nsIParserUtils.SanitizerAllowStyle,
+          false, articleUri, readerContent);
 
-      readerContent.appendChild(contentFragment);
+        readerContent.appendChild(contentFragment);
 
-      // Display reader content element
-      readerContent.style.display = "block";
+        // Display reader content element
+        readerContent.style.display = "block";
+      } else {
+        let aboutReaderStrings = Services.strings.createBundle("chrome://global/locale/aboutReader.properties");
+        let errorMessage = aboutReaderStrings.GetStringFromName("aboutReader.loadError");
+
+        content.document.title = errorMessage;
+
+        // Create reader message div and append it to body
+        let readerMessageElement = content.document.createElement("div");
+        readerMessageElement.setAttribute("class", "reader-message");
+        readerMessageElement.textContent = errorMessage;
+        containerElement.appendChild(readerMessageElement);
+
+        // Display reader message element
+        readerMessageElement.style.display = "block";
+      }
     });
   },
 
@@ -721,7 +771,7 @@ var Printing = {
         } catch (error) {
           // This might fail if we, for example, attempt to print a XUL document.
           // In that case, we inform the parent to bail out of print preview.
-          Components.utils.reportError(error);
+          Cu.reportError(error);
           this.printPreviewInitializingInfo = null;
           sendAsyncMessage("Printing:Preview:Entered", { failed: true });
         }
@@ -740,7 +790,7 @@ var Printing = {
     } catch (error) {
       // This might fail if we, for example, attempt to print a XUL document.
       // In that case, we inform the parent to bail out of print preview.
-      Components.utils.reportError(error);
+      Cu.reportError(error);
       sendAsyncMessage("Printing:Preview:Entered", { failed: true });
     }
   },
@@ -939,7 +989,7 @@ var FindBar = {
       fakeEvent,
       shouldFastFind: fastFind.should
     });
-    if (rv.indexOf(false) !== -1) {
+    if (rv.includes(false)) {
       event.preventDefault();
       return false;
     }
@@ -1143,8 +1193,8 @@ addMessageListener("Browser:PurgeSessionHistory", function BrowserPurgeHistory()
   // place the entry at current index at the end of the history list, so it won't get removed
   if (sessionHistory.index < sessionHistory.count - 1) {
     let indexEntry = sessionHistory.getEntryAtIndex(sessionHistory.index, false);
-    sessionHistory.QueryInterface(Components.interfaces.nsISHistoryInternal);
-    indexEntry.QueryInterface(Components.interfaces.nsISHEntry);
+    sessionHistory.QueryInterface(Ci.nsISHistoryInternal);
+    indexEntry.QueryInterface(Ci.nsISHEntry);
     sessionHistory.addEntry(indexEntry, true);
   }
 
@@ -1365,7 +1415,8 @@ var ViewSelectionSource = {
     var source =
       "<!DOCTYPE html>"
     + "<html>"
-    + "<head><title>" + title + "</title>"
+    + '<head><meta name="viewport" content="width=device-width"/>'
+    + "<title>" + title + "</title>"
     + '<link rel="stylesheet" type="text/css" href="' + VIEW_SOURCE_CSS + '">'
     + '<style type="text/css">'
     + "#target { border: dashed 1px; background-color: lightyellow; }"

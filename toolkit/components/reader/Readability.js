@@ -41,12 +41,14 @@ function Readability(uri, doc, options) {
   this._articleTitle = null;
   this._articleByline = null;
   this._articleDir = null;
+  this._attempts = [];
 
-  // Configureable options
+  // Configurable options
   this._debug = !!options.debug;
   this._maxElemsToParse = options.maxElemsToParse || this.DEFAULT_MAX_ELEMS_TO_PARSE;
   this._nbTopCandidates = options.nbTopCandidates || this.DEFAULT_N_TOP_CANDIDATES;
   this._wordThreshold = options.wordThreshold || this.DEFAULT_WORD_THRESHOLD;
+  this._classesToPreserve = this.CLASSES_TO_PRESERVE.concat(options.classesToPreserve || []);
 
   // Start with all flags set
   this._flags = this.FLAG_STRIP_UNLIKELYS |
@@ -107,10 +109,10 @@ Readability.prototype = {
   // All of the regular expressions in use within readability.
   // Defined up here so we don't instantiate them repeatedly in loops.
   REGEXPS: {
-    unlikelyCandidates: /banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|foot|header|legends|menu|modal|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote/i,
+    unlikelyCandidates: /banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|foot|header|legends|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote/i,
     okMaybeItsACandidate: /and|article|body|column|main|shadow/i,
     positive: /article|body|content|entry|hentry|h-entry|main|page|pagination|post|text|blog|story/i,
-    negative: /hidden|^hid$| hid$| hid |^hid |banner|combx|comment|com-|contact|foot|footer|footnote|masthead|media|meta|modal|outbrain|promo|related|scroll|share|shoutbox|sidebar|skyscraper|sponsor|shopping|tags|tool|widget/i,
+    negative: /hidden|^hid$| hid$| hid |^hid |banner|combx|comment|com-|contact|foot|footer|footnote|masthead|media|meta|outbrain|promo|related|scroll|share|shoutbox|sidebar|skyscraper|sponsor|shopping|tags|tool|widget/i,
     extraneous: /print|archive|comment|discuss|e[\-]?mail|share|reply|all|login|sign|single|utility/i,
     byline: /byline|author|dateline|writtenby|p-author/i,
     replaceFonts: /<(\/?)font[^>]*>/gi,
@@ -130,6 +132,9 @@ Readability.prototype = {
 
   DEPRECATED_SIZE_ATTRIBUTE_ELEMS: [ "TABLE", "TH", "TD", "HR", "PRE" ],
 
+  // These are the classes that readability sets itself.
+  CLASSES_TO_PRESERVE: [ "readability-styled", "page" ],
+
   /**
    * Run any post-process modifications to article content as necessary.
    *
@@ -139,6 +144,9 @@ Readability.prototype = {
   _postProcessContent: function(articleContent) {
     // Readability cannot open relative uris so we convert them to absolute uris.
     this._fixRelativeUris(articleContent);
+
+    // Remove classes.
+    this._cleanClasses(articleContent);
   },
 
   /**
@@ -233,6 +241,34 @@ Readability.prototype = {
   },
 
   /**
+   * Removes the class="" attribute from every element in the given
+   * subtree, except those that match CLASSES_TO_PRESERVE and
+   * the classesToPreserve array from the options object.
+   *
+   * @param Element
+   * @return void
+   */
+  _cleanClasses: function(node) {
+    var classesToPreserve = this._classesToPreserve;
+    var className = (node.getAttribute("class") || "")
+      .split(/\s+/)
+      .filter(function(cls) {
+        return classesToPreserve.indexOf(cls) != -1;
+      })
+      .join(" ");
+
+    if (className) {
+      node.setAttribute("class", className);
+    } else {
+      node.removeAttribute("class");
+    }
+
+    for (node = node.firstElementChild; node; node = node.nextElementSibling) {
+      this._cleanClasses(node);
+    }
+  },
+
+  /**
    * Converts each <a> and <img> uri in the given element to an absolute URI,
    * ignoring #ref URIs.
    *
@@ -240,34 +276,20 @@ Readability.prototype = {
    * @return void
    */
   _fixRelativeUris: function(articleContent) {
-    var scheme = this._uri.scheme;
-    var prePath = this._uri.prePath;
-    var pathBase = this._uri.pathBase;
-
+    var baseURI = this._doc.baseURI;
+    var documentURI = this._doc.documentURI;
     function toAbsoluteURI(uri) {
-      // If this is already an absolute URI, return it.
-      if (/^[a-zA-Z][a-zA-Z0-9\+\-\.]*:/.test(uri))
+      // Leave hash links alone if the base URI matches the document URI:
+      if (baseURI == documentURI && uri.charAt(0) == "#") {
         return uri;
-
-      // Scheme-rooted relative URI.
-      if (uri.substr(0, 2) == "//")
-        return scheme + "://" + uri.substr(2);
-
-      // Prepath-rooted relative URI.
-      if (uri[0] == "/")
-        return prePath + uri;
-
-      // Dotslash relative URI.
-      if (uri.indexOf("./") === 0)
-        return pathBase + uri.slice(2);
-
-      // Ignore hash URIs:
-      if (uri[0] == "#")
-        return uri;
-
-      // Standard relative URI; add entire path. pathBase already includes a
-      // trailing "/".
-      return pathBase + uri;
+      }
+      // Otherwise, resolve against base URI:
+      try {
+        return new URL(uri, baseURI).href;
+      } catch (ex) {
+        // Something went wrong, just return the original:
+      }
+      return uri;
     }
 
     var links = articleContent.getElementsByTagName("a");
@@ -342,8 +364,13 @@ Readability.prototype = {
         curTitle = origTitle.substring(origTitle.lastIndexOf(':') + 1);
 
         // If the title is now too short, try the first colon instead:
-        if (wordCount(curTitle) < 3)
+        if (wordCount(curTitle) < 3) {
           curTitle = origTitle.substring(origTitle.indexOf(':') + 1);
+          // But if we have too many words before the colon there's something weird
+          // with the titles and the H tags so let's just use the original title instead
+        } else if (wordCount(origTitle.substr(0, origTitle.indexOf(':'))) > 5) {
+          curTitle = origTitle;
+        }
       }
     } else if (curTitle.length > 150 || curTitle.length < 15) {
       var hOnes = doc.getElementsByTagName('h1');
@@ -495,6 +522,7 @@ Readability.prototype = {
     this._clean(articleContent, "embed");
     this._clean(articleContent, "h1");
     this._clean(articleContent, "footer");
+    this._clean(articleContent, "link");
 
     // Clean out elements have "share" in their id/class combinations from final top candidates,
     // which means we don't remove the top candidates even they have "share".
@@ -764,6 +792,7 @@ Readability.prototype = {
             var newNode = node.children[0];
             node.parentNode.replaceChild(newNode, node);
             node = newNode;
+            elementsToScore.push(node);
           } else if (!this._hasChildBlockElement(node)) {
             node = this._setNodeTag(node, "P");
             elementsToScore.push(node);
@@ -1048,24 +1077,45 @@ Readability.prototype = {
       if (this._debug)
         this.log("Article content after paging: " + articleContent.innerHTML);
 
+      var parseSuccessful = true;
+
       // Now that we've gone through the full algorithm, check to see if
       // we got any meaningful content. If we didn't, we may need to re-run
       // grabArticle with different flags set. This gives us a higher likelihood of
       // finding the content, and the sieve approach gives us a higher likelihood of
       // finding the -right- content.
-      if (this._getInnerText(articleContent, true).length < this._wordThreshold) {
+      var textLength = this._getInnerText(articleContent, true).length;
+      if (textLength < this._wordThreshold) {
+        parseSuccessful = false;
         page.innerHTML = pageCacheHtml;
 
         if (this._flagIsActive(this.FLAG_STRIP_UNLIKELYS)) {
           this._removeFlag(this.FLAG_STRIP_UNLIKELYS);
+          this._attempts.push({articleContent: articleContent, textLength: textLength});
         } else if (this._flagIsActive(this.FLAG_WEIGHT_CLASSES)) {
           this._removeFlag(this.FLAG_WEIGHT_CLASSES);
+          this._attempts.push({articleContent: articleContent, textLength: textLength});
         } else if (this._flagIsActive(this.FLAG_CLEAN_CONDITIONALLY)) {
           this._removeFlag(this.FLAG_CLEAN_CONDITIONALLY);
+          this._attempts.push({articleContent: articleContent, textLength: textLength});
         } else {
-          return null;
+          this._attempts.push({articleContent: articleContent, textLength: textLength});
+          // No luck after removing flags, just return the longest text we found during the different loops
+          this._attempts.sort(function (a, b) {
+            return a.textLength < b.textLength;
+          });
+
+          // But first check if we actually have something
+          if (!this._attempts[0].textLength) {
+            return null;
+          }
+
+          articleContent = this._attempts[0].articleContent;
+          parseSuccessful = true;
         }
-      } else {
+      }
+
+      if (parseSuccessful) {
         // Find out text direction from ancestors of final top candidate.
         var ancestors = [parentOfTopCandidate, topCandidate].concat(this._getNodeAncestors(parentOfTopCandidate));
         this._someNode(ancestors, function(ancestor) {

@@ -11,6 +11,7 @@
 
 #include "nsStringFwd.h"
 #include "mozilla/CSSEnabledState.h"
+#include "mozilla/EventStates.h"
 #include "mozilla/Maybe.h"
 
 // The following two flags along with the pref defines where this pseudo
@@ -29,6 +30,7 @@
   (CSS_PSEUDO_CLASS_ENABLED_IN_UA_SHEETS | CSS_PSEUDO_CLASS_ENABLED_IN_CHROME)
 
 class nsAtom;
+class nsIDocument;
 
 namespace mozilla {
 namespace dom {
@@ -93,6 +95,41 @@ public:
   // the pseudo-class, Nothing() otherwise.
   static mozilla::Maybe<bool>
     MatchesElement(Type aType, const mozilla::dom::Element* aElement);
+
+  /**
+   * Checks if a function-like ident-containing pseudo (:pseudo(ident))
+   * matches a given element.
+   *
+   * Returns true if it parses and matches, Some(false) if it
+   * parses but does not match. Asserts if it fails to parse; only
+   * call this when you're sure it's a string-like pseudo.
+   *
+   * In Servo mode, please ensure that UpdatePossiblyStaleDocumentState()
+   * has been called first.
+   *
+   * @param aElement The element we are trying to match
+   * @param aPseudo The name of the pseudoselector
+   * @param aString The identifier inside the pseudoselector (cannot be null)
+   * @param aDocument The document
+   * @param aStateMask Mask containing states which we should exclude.
+   *                   Ignored if aDependence is null
+   * @param aDependence Pointer to be set to true if we ignored a state due to
+   *                    aStateMask. Can be null.
+   */
+  static bool StringPseudoMatches(const mozilla::dom::Element* aElement,
+                                  mozilla::CSSPseudoClassType aPseudo,
+                                  const char16_t* aString,
+                                  const nsIDocument* aDocument,
+                                  mozilla::EventStates aStateMask,
+                                  bool* const aDependence = nullptr);
+
+  static bool LangPseudoMatches(const mozilla::dom::Element* aElement,
+                                const nsAtom* aOverrideLang,
+                                bool aHasOverrideLang,
+                                const char16_t* aString,
+                                const nsIDocument* aDocument);
+
+  static const mozilla::EventStates sPseudoClassStateDependences[size_t(Type::Count) + 2];
 
 private:
   static const uint32_t kPseudoClassFlags[size_t(Type::Count)];

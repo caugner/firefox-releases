@@ -2,12 +2,10 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-const { utils: Cu, interfaces: Ci, classes: Cc, results: Cr } = Components;
-
 const URI_EXTENSION_BLOCKLIST_DIALOG = "chrome://mozapps/content/extensions/blocklist.xul";
 
-Cu.import("resource://gre/modules/NetUtil.jsm");
-Cu.import("resource://testing-common/MockRegistrar.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
 
 // Allow insecure updates
 Services.prefs.setBoolPref("extensions.checkUpdateSecurity", false);
@@ -21,7 +19,7 @@ testserver.registerDirectory("/data/", do_get_file("data"));
 var WindowWatcher = {
   openWindow(parent, url, name, features, openArgs) {
     // Should be called to list the newly blocklisted items
-    do_check_eq(url, URI_EXTENSION_BLOCKLIST_DIALOG);
+    Assert.equal(url, URI_EXTENSION_BLOCKLIST_DIALOG);
 
     // Simulate auto-disabling any softblocks
     var list = openArgs.wrappedJSObject.list;
@@ -89,21 +87,21 @@ add_task(async function() {
   // Make sure to mark it as previously enabled.
   s1.userDisabled = false;
 
-  do_check_false(s1.softDisabled);
-  do_check_true(s1.appDisabled);
-  do_check_false(s1.isActive);
+  Assert.ok(!s1.softDisabled);
+  Assert.ok(s1.appDisabled);
+  Assert.ok(!s1.isActive);
 
   await load_blocklist("test_softblocked1.xml");
 
-  do_check_true(s1.softDisabled);
-  do_check_true(s1.appDisabled);
-  do_check_false(s1.isActive);
+  Assert.ok(s1.softDisabled);
+  Assert.ok(s1.appDisabled);
+  Assert.ok(!s1.isActive);
 
   await promiseRestartManager("2");
 
   s1 = await promiseAddonByID("softblock1@tests.mozilla.org");
 
-  do_check_true(s1.softDisabled);
-  do_check_false(s1.appDisabled);
-  do_check_false(s1.isActive);
+  Assert.ok(s1.softDisabled);
+  Assert.ok(!s1.appDisabled);
+  Assert.ok(!s1.isActive);
 });

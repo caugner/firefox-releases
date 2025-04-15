@@ -9,7 +9,6 @@
 interface nsIContent;
 interface nsIArray;
 interface nsISelection;
-interface nsIContentFilter;
 
 %{C++
 namespace mozilla {
@@ -362,8 +361,11 @@ interface nsIHTMLEditor : nsISupports
                                             in nsIDOMNode aNode);
 
   /**
-   * Return an element only if it is the only node selected,
-   *    such as an image, horizontal rule, etc.
+   * Return an Element only if it is the only node selected,
+   *    such as an image, horizontal rule, etc.  The return type is
+   *    nsISupports for implementation convenience; the returned object,
+   *    if not null, is always a DOM Element.
+   *
    * The exception is a link, which is more like a text attribute:
    *    The Anchor tag is returned if the selection is within the textnode(s)
    *    that are children of the "A" node.
@@ -377,15 +379,9 @@ interface nsIHTMLEditor : nsISupports
    *      (an "A" tag with the "href" attribute set)
    *    Use "anchor" or "namedanchor" to get a named anchor node
    *      (an "A" tag with the "name" attribute set)
-   * @return          NS_EDITOR_ELEMENT_NOT_FOUND if an element is not found
-   *                  (passes NS_SUCCEEDED macro)
+   * @return the element as described above
    */
-  nsIDOMElement getSelectedElement(in AString aTagName);
-
-  /**
-   * Output the contents of the <HEAD> section as text/HTML format
-   */
-  AString getHeadContentsAsHTML();
+  nsISupports getSelectedElement(in AString aTagName);
 
   /**
    * Replace all children of <HEAD> with string of HTML source
@@ -453,18 +449,6 @@ interface nsIHTMLEditor : nsISupports
    * @return    true if CSS handled and enabled
    */
   attribute boolean isCSSEnabled;
-
-  /**
-   * Add listener for insertion override
-   * @param inFilter  function which callers want called during insertion
-   */
-  void addInsertionListener(in nsIContentFilter inFilter);
-
-  /**
-   * Remove listener for insertion override
-   * @param inFilter  function which callers do not want called during insertion
-   */
-  void removeInsertionListener(in nsIContentFilter inFilter);
 
   /**
    * returns the deepest container of the selection

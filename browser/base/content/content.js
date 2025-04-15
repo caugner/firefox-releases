@@ -8,10 +8,8 @@
 
 /* eslint-env mozilla/frame-script */
 
-var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
@@ -67,12 +65,6 @@ addEventListener("blur", function(event) {
   LoginManagerContent.onUsernameInput(event);
 });
 
-// Values for telemtery bins: see TLS_ERROR_REPORT_UI in Histograms.json
-const TLS_ERROR_REPORT_TELEMETRY_UI_SHOWN = 0;
-const TLS_ERROR_REPORT_TELEMETRY_EXPANDED = 1;
-const TLS_ERROR_REPORT_TELEMETRY_SUCCESS  = 6;
-const TLS_ERROR_REPORT_TELEMETRY_FAILURE  = 7;
-
 const SEC_ERROR_BASE          = Ci.nsINSSErrorsService.NSS_SEC_ERROR_BASE;
 const MOZILLA_PKIX_ERROR_BASE = Ci.nsINSSErrorsService.MOZILLA_PKIX_ERROR_BASE;
 
@@ -116,7 +108,9 @@ function getSiteBlockedErrorDetails(docShell) {
 
       // Remove the query to avoid leaking sensitive data
       if (reportUri instanceof Ci.nsIURL) {
-        reportUri.query = "";
+        reportUri = reportUri.mutate()
+                             .setQuery("")
+                             .finalize();
       }
 
       blockedInfo = { list: classifiedChannel.matchedList,
@@ -314,7 +308,7 @@ var AboutNetAndCertErrorListener = {
         // and adjusting the date per the interval would make the cert valid, warn the user:
         if (Math.abs(difference) > 60 * 60 * 24 && (now - lastFetched) <= 60 * 60 * 24 * 5 &&
             certRange.notBefore < approximateDate && certRange.notAfter > approximateDate) {
-          let formatter = Services.intl.createDateTimeFormat(undefined, {
+          let formatter = new Services.intl.DateTimeFormat(undefined, {
             dateStyle: "short"
           });
           let systemDate = formatter.format(new Date());
@@ -350,7 +344,7 @@ var AboutNetAndCertErrorListener = {
           // so we shouldn't exclude the possibility that the cert has become valid
           // since the build date.
           if (buildDate > systemDate && new Date(certRange.notAfter) > buildDate) {
-            let formatter = Services.intl.createDateTimeFormat(undefined, {
+            let formatter = new Services.intl.DateTimeFormat(undefined, {
               dateStyle: "short"
             });
 
@@ -409,10 +403,17 @@ var AboutNetAndCertErrorListener = {
   },
 
   onPageLoad(evt) {
+    // Values for telemtery bins: see TLS_ERROR_REPORT_UI in Histograms.json
+    const TLS_ERROR_REPORT_TELEMETRY_UI_SHOWN = 0;
+
+    let hideAddExceptionButton = false;
+
     if (this.isAboutCertError) {
       let originalTarget = evt.originalTarget;
       let ownerDoc = originalTarget.ownerDocument;
       ClickEventHandler.onCertError(originalTarget, ownerDoc);
+      hideAddExceptionButton =
+        Services.prefs.getBoolPref("security.certerror.hideAddException", false);
     }
 
     let automatic = Services.prefs.getBoolPref("security.ssl.errorReporting.automatic");
@@ -420,7 +421,8 @@ var AboutNetAndCertErrorListener = {
       detail: JSON.stringify({
         enabled: Services.prefs.getBoolPref("security.ssl.errorReporting.enabled"),
         changedCertPrefs: this.changedCertPrefs(),
-        automatic
+        automatic,
+        hideAddExceptionButton,
       })
     }));
 
@@ -442,14 +444,20 @@ var AboutNetAndCertErrorListener = {
       automatic: evt.detail
     });
 
-    // if we're enabling reports, send a report for this failure
+    // If we're enabling reports, send a report for this failure.
     if (evt.detail) {
-      let {host, port} = content.document.mozDocumentURIIfNotForErrorPages;
-      sendAsyncMessage("Browser:SendSSLErrorReport", {
-        uri: { host, port },
-        securityInfo: getSerializedSecurityInfo(docShell),
-      });
+      let win = evt.originalTarget.ownerGlobal;
+      let docShell = win.QueryInterface(Ci.nsIInterfaceRequestor)
+                        .getInterface(Ci.nsIWebNavigation)
+                        .QueryInterface(Ci.nsIDocShell);
 
+      let {securityInfo} = docShell.failedChannel;
+      securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
+      let {host, port} = win.document.mozDocumentURIIfNotForErrorPages;
+
+      let errorReporter = Cc["@mozilla.org/securityreporter;1"]
+                            .getService(Ci.nsISecurityReporter);
+      errorReporter.reportTLSError(securityInfo, host, port);
     }
   },
 };
@@ -459,9 +467,7 @@ AboutBlockedSiteListener.init(this);
 
 var ClickEventHandler = {
   init: function init() {
-    Cc["@mozilla.org/eventlistenerservice;1"]
-      .getService(Ci.nsIEventListenerService)
-      .addSystemEventListener(global, "click", this, true);
+    Services.els.addSystemEventListener(global, "click", this, true);
   },
 
   handleEvent(event) {
@@ -748,6 +754,7 @@ var LightWeightThemeWebInstallListener = {
       case "InstallBrowserTheme": {
         sendAsyncMessage("LightWeightThemeWebInstaller:Install", {
           baseURI: event.target.baseURI,
+          principal: event.target.nodePrincipal,
           themeData: event.target.getAttribute("data-browsertheme"),
         });
         break;
@@ -755,6 +762,7 @@ var LightWeightThemeWebInstallListener = {
       case "PreviewBrowserTheme": {
         sendAsyncMessage("LightWeightThemeWebInstaller:Preview", {
           baseURI: event.target.baseURI,
+          principal: event.target.nodePrincipal,
           themeData: event.target.getAttribute("data-browsertheme"),
         });
         this._previewWindow = event.target.ownerGlobal;
@@ -769,7 +777,7 @@ var LightWeightThemeWebInstallListener = {
       case "ResetBrowserThemePreview": {
         if (this._previewWindow) {
           sendAsyncMessage("LightWeightThemeWebInstaller:ResetPreview",
-                           {baseURI: event.target.baseURI});
+                           {principal: event.target.nodePrincipal});
           this._resetPreviewWindow();
         }
         break;

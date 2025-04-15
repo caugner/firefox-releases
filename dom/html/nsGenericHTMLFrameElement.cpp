@@ -56,7 +56,17 @@ NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(nsGenericHTMLFrameElement,
                                              nsIMozBrowserFrame,
                                              nsGenericHTMLFrameElement)
 
-NS_IMPL_BOOL_ATTR(nsGenericHTMLFrameElement, Mozbrowser, mozbrowser)
+NS_IMETHODIMP
+nsGenericHTMLFrameElement::GetMozbrowser(bool* aValue)
+{
+  *aValue = GetBoolAttr(nsGkAtoms::mozbrowser);
+  return NS_OK;
+}
+NS_IMETHODIMP
+nsGenericHTMLFrameElement::SetMozbrowser(bool aValue)
+{
+  return SetBoolAttr(nsGkAtoms::mozbrowser, aValue);
+}
 
 int32_t
 nsGenericHTMLFrameElement::TabIndexDefault()
@@ -129,9 +139,6 @@ nsGenericHTMLFrameElement::GetContentWindow()
     return nullptr;
   }
 
-  NS_ASSERTION(win->IsOuterWindow(),
-               "Uh, this window should always be an outer window!");
-
   return win.forget();
 }
 
@@ -148,9 +155,6 @@ nsGenericHTMLFrameElement::EnsureFrameLoader()
   mFrameLoader = nsFrameLoader::Create(this,
                                        nsPIDOMWindowOuter::From(mOpenerWindow),
                                        mNetworkCreated);
-  if (mIsPrerendered) {
-    mFrameLoader->SetIsPrerendered();
-  }
 }
 
 nsresult
@@ -229,14 +233,6 @@ nsGenericHTMLFrameElement::SwapFrameLoaders(nsIFrameLoaderOwner* aOtherLoaderOwn
   }
 
   rv = loader->SwapWithOtherLoader(otherLoader, this, aOtherLoaderOwner);
-}
-
-NS_IMETHODIMP
-nsGenericHTMLFrameElement::SetIsPrerendered()
-{
-  MOZ_ASSERT(!mFrameLoader, "Please call SetIsPrerendered before frameLoader is created");
-  mIsPrerendered = true;
-  return NS_OK;
 }
 
 nsresult

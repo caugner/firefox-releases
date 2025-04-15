@@ -34,11 +34,11 @@ py2:
         - security
         - services/common/tests/mach_commands.py
         - servo
+        - taskcluster/docker/funsize-update-generator
         - testing/awsy
         - testing/firefox-ui
         - testing/geckodriver
         - testing/gtest
-        - testing/marionette
         - testing/mochitest
         - testing/mozharness
         - testing/remotecppunittests.py
@@ -50,11 +50,9 @@ py2:
         - third_party
         - toolkit
         - tools/docs
-        - tools/git/eslintvalidate.py
         - tools/jprof/split-profile.py
         - tools/lint
         - tools/mach_commands.py
-        - tools/mercurial/eslintvalidate.py
         - tools/power/mach_commands.py
         - tools/profiler
         - tools/rb
@@ -63,3 +61,4 @@ py2:
     extensions: ['py']
     type: external
     payload: python.compat:lintpy2
+    setup: python.compat:setuppy2

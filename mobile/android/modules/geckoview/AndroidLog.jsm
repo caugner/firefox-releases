@@ -42,7 +42,7 @@
 if (typeof Components != "undefined") {
   // Specify exported symbols for JSM module loader.
   this.EXPORTED_SYMBOLS = ["AndroidLog"];
-  Components.utils.import("resource://gre/modules/ctypes.jsm");
+  ChromeUtils.import("resource://gre/modules/ctypes.jsm");
 }
 
 // From <https://android.googlesource.com/platform/system/core/+/master/include/android/log.h>.
@@ -88,5 +88,6 @@ var AndroidLog = {
 
 if (typeof Components == "undefined") {
   // Specify exported symbols for require.js module loader.
+  // eslint-disable-next-line no-undef
   module.exports = AndroidLog;
 }

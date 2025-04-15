@@ -2,24 +2,32 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/* import-globals-from extensionControlled.js */
 /* import-globals-from preferences.js */
 
 /* FIXME: ESlint globals workaround should be removed once bug 1395426 gets fixed */
 /* globals DownloadUtils, LoadContextInfo */
 
-Components.utils.import("resource://gre/modules/AppConstants.jsm");
-Components.utils.import("resource://gre/modules/PluralForm.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/PluralForm.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
+ChromeUtils.defineModuleGetter(this, "PluralForm",
   "resource://gre/modules/PluralForm.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "LoginHelper",
+ChromeUtils.defineModuleGetter(this, "LoginHelper",
   "resource://gre/modules/LoginHelper.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "SiteDataManager",
+ChromeUtils.defineModuleGetter(this, "SiteDataManager",
   "resource:///modules/SiteDataManager.jsm");
 
-Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+XPCOMUtils.defineLazyPreferenceGetter(this, "trackingprotectionUiEnabled",
+                                      "privacy.trackingprotection.ui.enabled");
+
+ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 const PREF_UPLOAD_ENABLED = "datareporting.healthreport.uploadEnabled";
+
+const TRACKING_PROTECTION_KEY = "websites.trackingProtectionMode";
+const TRACKING_PROTECTION_PREFS = ["privacy.trackingprotection.enabled",
+                                   "privacy.trackingprotection.pbmode.enabled"];
 
 XPCOMUtils.defineLazyGetter(this, "AlertsServiceDND", function() {
   try {
@@ -34,13 +42,87 @@ XPCOMUtils.defineLazyGetter(this, "AlertsServiceDND", function() {
   }
 });
 
+Preferences.addAll([
+  // Tracking
+  { id: "privacy.trackingprotection.enabled", type: "bool" },
+  { id: "privacy.trackingprotection.pbmode.enabled", type: "bool" },
+
+  // Button prefs
+  { id: "pref.privacy.disable_button.cookie_exceptions", type: "bool" },
+  { id: "pref.privacy.disable_button.view_cookies", type: "bool" },
+  { id: "pref.privacy.disable_button.change_blocklist", type: "bool" },
+  { id: "pref.privacy.disable_button.tracking_protection_exceptions", type: "bool" },
+
+  // Location Bar
+  { id: "browser.urlbar.autocomplete.enabled", type: "bool" },
+  { id: "browser.urlbar.suggest.bookmark", type: "bool" },
+  { id: "browser.urlbar.suggest.history", type: "bool" },
+  { id: "browser.urlbar.suggest.openpage", type: "bool" },
+
+  // History
+  { id: "places.history.enabled", type: "bool" },
+  { id: "browser.formfill.enable", type: "bool" },
+  { id: "privacy.history.custom", type: "bool" },
+  // Cookies
+  { id: "network.cookie.cookieBehavior", type: "int" },
+  { id: "network.cookie.lifetimePolicy", type: "int" },
+  { id: "network.cookie.blockFutureCookies", type: "bool" },
+  // Clear Private Data
+  { id: "privacy.sanitize.sanitizeOnShutdown", type: "bool" },
+  { id: "privacy.sanitize.timeSpan", type: "int" },
+  // Do not track
+  { id: "privacy.donottrackheader.enabled", type: "bool" },
+
+  // Popups
+  { id: "dom.disable_open_during_load", type: "bool" },
+  // Passwords
+  { id: "signon.rememberSignons", type: "bool" },
+
+  // Buttons
+  { id: "pref.privacy.disable_button.view_passwords", type: "bool" },
+  { id: "pref.privacy.disable_button.view_passwords_exceptions", type: "bool" },
+
+  /* Certificates tab
+   * security.default_personal_cert
+   *   - a string:
+   *       "Select Automatically"   select a certificate automatically when a site
+   *                                requests one
+   *       "Ask Every Time"         present a dialog to the user so he can select
+   *                                the certificate to use on a site which
+   *                                requests one
+   */
+  { id: "security.default_personal_cert", type: "string" },
+
+  { id: "security.disable_button.openCertManager", type: "bool" },
+
+  { id: "security.disable_button.openDeviceManager", type: "bool" },
+
+  { id: "security.OCSP.enabled", type: "int" },
+
+  // Add-ons, malware, phishing
+  { id: "xpinstall.whitelist.required", type: "bool" },
+
+  { id: "browser.safebrowsing.malware.enabled", type: "bool" },
+  { id: "browser.safebrowsing.phishing.enabled", type: "bool" },
+
+  { id: "browser.safebrowsing.downloads.enabled", type: "bool" },
+
+  { id: "urlclassifier.malwareTable", type: "string" },
+
+  { id: "browser.safebrowsing.downloads.remote.block_potentially_unwanted", type: "bool" },
+  { id: "browser.safebrowsing.downloads.remote.block_uncommon", type: "bool" },
+]);
+
+// Data Choices tab
+if (AppConstants.NIGHTLY_BUILD) {
+  Preferences.add({ id: "browser.chrome.errorReporter.enabled", type: "bool" });
+}
+if (AppConstants.MOZ_CRASHREPORTER) {
+  Preferences.add({ id: "browser.crashReports.unsubmittedCheck.autoSubmit2", type: "bool" });
+}
+
 var gPrivacyPane = {
   _pane: null,
-
-  /**
-   * Whether the use has selected the auto-start private browsing mode in the UI.
-   */
-  _autoStartPrivateBrowsing: false,
 
   /**
    * Whether the prompt to restart Firefox should appear when changing the autostart pref.
@@ -52,7 +134,7 @@ var gPrivacyPane = {
    * privacy.trackingprotection.ui.enabled pref, and linkify its Learn More link
    */
   _initTrackingProtection() {
-    if (!Services.prefs.getBoolPref("privacy.trackingprotection.ui.enabled")) {
+    if (!trackingprotectionUiEnabled) {
       return;
     }
 
@@ -72,17 +154,79 @@ var gPrivacyPane = {
    * Protection UI.
    */
   _initTrackingProtectionPBM() {
-    let link = document.getElementById("trackingProtectionPBMLearnMore");
+    if (trackingprotectionUiEnabled) {
+      return;
+    }
+
+    let link = document.getElementById("trackingProtectionLearnMore");
     let url = Services.urlFormatter.formatURLPref("app.support.baseURL") + "tracking-protection-pbm";
     link.setAttribute("href", url);
+
+    this._updateTrackingProtectionUI();
+  },
+
+  /**
+   * Update the tracking protection UI to deal with extension control.
+   */
+  _updateTrackingProtectionUI() {
+    let isLocked = TRACKING_PROTECTION_PREFS.some(
+      pref => Services.prefs.prefIsLocked(pref));
+
+    function setInputsDisabledState(isControlled) {
+      let disabled = isLocked || isControlled;
+      if (trackingprotectionUiEnabled) {
+        document.querySelectorAll("#trackingProtectionRadioGroup > radio")
+          .forEach((element) => {
+            element.disabled = disabled;
+          });
+        document.querySelector("#trackingProtectionDesc > label")
+          .disabled = disabled;
+      } else {
+        document.getElementById("trackingProtectionPBM").disabled = disabled;
+        document.getElementById("trackingProtectionPBMLabel")
+          .disabled = disabled;
+      }
+    }
+
+    if (isLocked) {
+      // An extension can't control this setting if either pref is locked.
+      hideControllingExtension(TRACKING_PROTECTION_KEY);
+      setInputsDisabledState(false);
+    } else {
+      handleControllingExtension(
+        PREF_SETTING_TYPE,
+        TRACKING_PROTECTION_KEY)
+          .then(setInputsDisabledState);
+    }
+  },
+
+  /**
+   * Set up handlers for showing and hiding controlling extension info
+   * for tracking protection.
+   */
+  _initTrackingProtectionExtensionControl() {
+    let trackingProtectionObserver = {
+      observe(subject, topic, data) {
+        gPrivacyPane._updateTrackingProtectionUI();
+      },
+    };
+
+    for (let pref of TRACKING_PROTECTION_PREFS) {
+      Services.prefs.addObserver(pref, trackingProtectionObserver);
+    }
+    window.addEventListener("unload", () => {
+      for (let pref of TRACKING_PROTECTION_PREFS) {
+        Services.prefs.removeObserver(pref, trackingProtectionObserver);
+      }
+    });
   },
 
   /**
    * Initialize autocomplete to ensure prefs are in sync.
    */
   _initAutocomplete() {
-    Components.classes["@mozilla.org/autocomplete/search;1?name=unifiedcomplete"]
-      .getService(Components.interfaces.mozIPlacesAutoComplete);
+    Cc["@mozilla.org/autocomplete/search;1?name=unifiedcomplete"]
+      .getService(Ci.mozIPlacesAutoComplete);
   },
 
   /**
@@ -102,38 +246,44 @@ var gPrivacyPane = {
     this.initAutoStartPrivateBrowsingReverter();
     this._initTrackingProtection();
     this._initTrackingProtectionPBM();
+    this._initTrackingProtectionExtensionControl();
     this._initAutocomplete();
 
-    setEventListener("privacy.sanitize.sanitizeOnShutdown", "change",
-      gPrivacyPane._updateSanitizeSettingsButton);
-    setEventListener("browser.privatebrowsing.autostart", "change",
-      gPrivacyPane.updatePrivacyMicroControls);
+    Preferences.get("privacy.sanitize.sanitizeOnShutdown").on("change",
+      gPrivacyPane._updateSanitizeSettingsButton.bind(gPrivacyPane));
+    Preferences.get("browser.privatebrowsing.autostart").on("change",
+      gPrivacyPane.updatePrivacyMicroControls.bind(gPrivacyPane));
+    Preferences.get("privacy.trackingprotection.enabled").on("change",
+      gPrivacyPane.trackingProtectionReadPrefs.bind(gPrivacyPane));
+    Preferences.get("privacy.trackingprotection.pbmode.enabled").on("change",
+      gPrivacyPane.trackingProtectionReadPrefs.bind(gPrivacyPane));
     setEventListener("historyMode", "command", function() {
       gPrivacyPane.updateHistoryModePane();
       gPrivacyPane.updateHistoryModePrefs();
       gPrivacyPane.updatePrivacyMicroControls();
       gPrivacyPane.updateAutostart();
     });
-    setEventListener("historyRememberClear", "click", function() {
-      gPrivacyPane.clearPrivateDataNow(false);
-      return false;
+    setEventListener("clearHistoryButton", "command", function() {
+      let historyMode = document.getElementById("historyMode");
+      // Select "everything" in the clear history dialog if the
+      // user has set their history mode to never remember history.
+      gPrivacyPane.clearPrivateDataNow(historyMode.value == "dontremember");
     });
-    setEventListener("historyRememberCookies", "click", function() {
-      gPrivacyPane.showCookies();
-      return false;
-    });
-    setEventListener("historyDontRememberClear", "click", function() {
-      gPrivacyPane.clearPrivateDataNow(true);
+    setEventListener("openSearchEnginePreferences", "click", function(event) {
+      if (event.button == 0) {
+        gotoPref("search");
+      }
       return false;
     });
     setEventListener("privateBrowsingAutoStart", "command",
       gPrivacyPane.updateAutostart);
     setEventListener("cookieExceptions", "command",
       gPrivacyPane.showCookieExceptions);
-    setEventListener("showCookiesButton", "command",
-      gPrivacyPane.showCookies);
     setEventListener("clearDataSettings", "command",
       gPrivacyPane.showClearPrivateDataSettings);
+    setEventListener("disableTrackingProtectionExtension", "command",
+      makeDisableControllingExtension(
+        PREF_SETTING_TYPE, TRACKING_PROTECTION_KEY));
     setEventListener("trackingProtectionRadioGroup", "command",
       gPrivacyPane.trackingProtectionWritePrefs);
     setEventListener("trackingProtectionExceptions", "command",
@@ -154,14 +304,10 @@ var gPrivacyPane = {
       gPrivacyPane.showCertificates);
     setEventListener("viewSecurityDevicesButton", "command",
       gPrivacyPane.showSecurityDevices);
-    setEventListener("clearCacheButton", "command",
-      gPrivacyPane.clearCache);
 
     this._pane = document.getElementById("panePrivacy");
     this._initMasterPasswordUI();
     this._initSafeBrowsing();
-    this.updateCacheSizeInputField();
-    this.updateActualCacheSize();
 
     setEventListener("notificationSettingsButton", "command",
       gPrivacyPane.showNotificationExceptions);
@@ -195,9 +341,6 @@ var gPrivacyPane = {
         notificationsDoNotDisturb.setAttribute("checked", true);
       }
     }
-
-    setEventListener("cacheSize", "change",
-      gPrivacyPane.updateCacheSizePref);
 
     if (Services.prefs.getBoolPref("browser.storageManager.enabled")) {
       Services.obs.addObserver(this, "sitedatamanager:sites-updated");
@@ -237,13 +380,18 @@ var gPrivacyPane = {
       document.getElementById("drmGroup").setAttribute("style", "display: none !important");
     }
 
-    this.initDataCollection();
-    if (AppConstants.MOZ_CRASHREPORTER) {
-      this.initSubmitCrashes();
+    if (AppConstants.MOZ_DATA_REPORTING) {
+      this.initDataCollection();
+      if (AppConstants.NIGHTLY_BUILD) {
+        this.initCollectBrowserErrors();
+      }
+      if (AppConstants.MOZ_CRASHREPORTER) {
+        this.initSubmitCrashes();
+      }
+      this.initSubmitHealthReport();
+      setEventListener("submitHealthReportBox", "command",
+        gPrivacyPane.updateSubmitHealthReport);
     }
-    this.initSubmitHealthReport();
-    setEventListener("submitHealthReportBox", "command",
-      gPrivacyPane.updateSubmitHealthReport);
     this._initA11yState();
     let signonBundle = document.getElementById("signonBundle");
     let pkiBundle = document.getElementById("pkiBundle");
@@ -255,13 +403,7 @@ var gPrivacyPane = {
       signonBundle.getString("loginsDescriptionAll2"),
     ]);
     appendSearchKeywords("cookieExceptions", [
-      bundlePrefs.getString("cookiepermissionstext"),
-    ]);
-    appendSearchKeywords("showCookiesButton", [
-      bundlePrefs.getString("cookiesAll"),
-      bundlePrefs.getString("removeAllCookies.label"),
-      bundlePrefs.getString("removeAllShownCookies.label"),
-      bundlePrefs.getString("removeSelectedCookies.label"),
+      bundlePrefs.getString("cookiepermissionstext1"),
     ]);
     appendSearchKeywords("trackingProtectionExceptions", [
       bundlePrefs.getString("trackingprotectionpermissionstitle"),
@@ -277,19 +419,27 @@ var gPrivacyPane = {
     ]);
     appendSearchKeywords("notificationSettingsButton", [
       bundlePrefs.getString("notificationspermissionstitle2"),
-      bundlePrefs.getString("notificationspermissionstext5"),
+      bundlePrefs.getString("notificationspermissionstext6"),
+      bundlePrefs.getString("notificationspermissionsdisablelabel"),
+      bundlePrefs.getString("notificationspermissionsdisabledescription"),
     ]);
     appendSearchKeywords("locationSettingsButton", [
       bundlePrefs.getString("locationpermissionstitle"),
-      bundlePrefs.getString("locationpermissionstext"),
+      bundlePrefs.getString("locationpermissionstext2"),
+      bundlePrefs.getString("locationpermissionsdisablelabel"),
+      bundlePrefs.getString("locationpermissionsdisabledescription"),
     ]);
     appendSearchKeywords("cameraSettingsButton", [
       bundlePrefs.getString("camerapermissionstitle"),
-      bundlePrefs.getString("camerapermissionstext"),
+      bundlePrefs.getString("camerapermissionstext2"),
+      bundlePrefs.getString("camerapermissionsdisablelabel"),
+      bundlePrefs.getString("camerapermissionsdisabledescription"),
     ]);
     appendSearchKeywords("microphoneSettingsButton", [
       bundlePrefs.getString("microphonepermissionstitle"),
-      bundlePrefs.getString("microphonepermissionstext"),
+      bundlePrefs.getString("microphonepermissionstext2"),
+      bundlePrefs.getString("microphonepermissionsdisablelabel"),
+      bundlePrefs.getString("microphonepermissionsdisabledescription"),
     ]);
     appendSearchKeywords("addonExceptions", [
       bundlePrefs.getString("addons_permissions_title2"),
@@ -299,10 +449,15 @@ var gPrivacyPane = {
       pkiBundle.getString("enable_fips"),
     ]);
     appendSearchKeywords("siteDataSettings", [
-      bundlePrefs.getString("siteDataSettings2.description"),
+      bundlePrefs.getString("siteDataSettings3.description"),
       bundlePrefs.getString("removeAllCookies.label"),
       bundlePrefs.getString("removeSelectedCookies.label"),
     ]);
+
+    if (!PrivateBrowsingUtils.enabled) {
+      document.getElementById("privateBrowsingAutoStart").hidden = true;
+      document.querySelector("menuitem[value='dontremember']").hidden = true;
+    }
 
     // Notify observers that the UI is now ready
     Services.obs.notifyObservers(window, "privacy-pane-loaded");
@@ -314,9 +469,11 @@ var gPrivacyPane = {
    * Selects the right item of the Tracking Protection radiogroup.
    */
   trackingProtectionReadPrefs() {
-    let enabledPref = document.getElementById("privacy.trackingprotection.enabled");
-    let pbmPref = document.getElementById("privacy.trackingprotection.pbmode.enabled");
+    let enabledPref = Preferences.get("privacy.trackingprotection.enabled");
+    let pbmPref = Preferences.get("privacy.trackingprotection.pbmode.enabled");
     let radiogroup = document.getElementById("trackingProtectionRadioGroup");
+
+    this._updateTrackingProtectionUI();
 
     // Global enable takes precedence over enabled in Private Browsing.
     if (enabledPref.value) {
@@ -332,8 +489,8 @@ var gPrivacyPane = {
    * Sets the pref values based on the selected item of the radiogroup.
    */
   trackingProtectionWritePrefs() {
-    let enabledPref = document.getElementById("privacy.trackingprotection.enabled");
-    let pbmPref = document.getElementById("privacy.trackingprotection.pbmode.enabled");
+    let enabledPref = Preferences.get("privacy.trackingprotection.enabled");
+    let pbmPref = Preferences.get("privacy.trackingprotection.pbmode.enabled");
     let radiogroup = document.getElementById("trackingProtectionRadioGroup");
 
     switch (radiogroup.value) {
@@ -369,8 +526,6 @@ var gPrivacyPane = {
   prefsForKeepingHistory: {
     "places.history.enabled": true, // History is enabled
     "browser.formfill.enable": true, // Form information is saved
-    "network.cookie.cookieBehavior": 0, // All cookies are enabled
-    "network.cookie.lifetimePolicy": 0, // Cookies use supplied lifetime
     "privacy.sanitize.sanitizeOnShutdown": false, // Private date is NOT cleared on shutdown
   },
 
@@ -384,8 +539,6 @@ var gPrivacyPane = {
   dependentControls: [
     "rememberHistory",
     "rememberForms",
-    "keepUntil",
-    "keepCookiesUntil",
     "alwaysClear",
     "clearDataSettings"
   ],
@@ -399,7 +552,7 @@ var gPrivacyPane = {
    */
   _checkHistoryValues(aPrefs) {
     for (let pref of Object.keys(aPrefs)) {
-      if (document.getElementById(pref).value != aPrefs[pref])
+      if (Preferences.get(pref).value != aPrefs[pref])
         return false;
     }
     return true;
@@ -410,7 +563,7 @@ var gPrivacyPane = {
    */
   initializeHistoryMode() {
     let mode;
-    let getVal = aPref => document.getElementById(aPref).value;
+    let getVal = aPref => Preferences.get(aPref).value;
 
     if (getVal("privacy.history.custom"))
       mode = "custom";
@@ -442,7 +595,7 @@ var gPrivacyPane = {
         break;
     }
     document.getElementById("historyPane").selectedIndex = selectedIndex;
-    document.getElementById("privacy.history.custom").value = selectedIndex == 2;
+    Preferences.get("privacy.history.custom").value = selectedIndex == 2;
   },
 
   /**
@@ -450,25 +603,20 @@ var gPrivacyPane = {
    * micro-management prefs based on the history mode menulist
    */
   updateHistoryModePrefs() {
-    let pref = document.getElementById("browser.privatebrowsing.autostart");
+    let pref = Preferences.get("browser.privatebrowsing.autostart");
     switch (document.getElementById("historyMode").value) {
       case "remember":
         if (pref.value)
           pref.value = false;
 
         // select the remember history option if needed
-        document.getElementById("places.history.enabled").value = true;
+        Preferences.get("places.history.enabled").value = true;
 
         // select the remember forms history option
-        document.getElementById("browser.formfill.enable").value = true;
-
-        // select the allow cookies option
-        document.getElementById("network.cookie.cookieBehavior").value = 0;
-        // select the cookie lifetime policy option
-        document.getElementById("network.cookie.lifetimePolicy").value = 0;
+        Preferences.get("browser.formfill.enable").value = true;
 
         // select the clear on close option
-        document.getElementById("privacy.sanitize.sanitizeOnShutdown").value = false;
+        Preferences.get("privacy.sanitize.sanitizeOnShutdown").value = false;
         break;
       case "dontremember":
         if (!pref.value)
@@ -479,12 +627,16 @@ var gPrivacyPane = {
 
   /**
    * Update the privacy micro-management controls based on the
-   * value of the private browsing auto-start checkbox.
+   * value of the private browsing auto-start preference.
    */
   updatePrivacyMicroControls() {
+    // Set "Keep cookies until..." to "I close Nightly" and disable the setting
+    // when we're in auto private mode (or reset it back otherwise).
+    document.getElementById("keepCookiesUntil").value = this.readKeepCookiesUntil();
+    this.readAcceptCookies();
+
     if (document.getElementById("historyMode").value == "custom") {
-      let disabled = this._autoStartPrivateBrowsing =
-        document.getElementById("privateBrowsingAutoStart").checked;
+      let disabled = Preferences.get("browser.privatebrowsing.autostart").value;
       this.dependentControls.forEach(function(aElement) {
         let control = document.getElementById(aElement);
         let preferenceId = control.getAttribute("preference");
@@ -496,35 +648,80 @@ var gPrivacyPane = {
           }
         }
 
-        let preference = preferenceId ? document.getElementById(preferenceId) : {};
+        let preference = preferenceId ? Preferences.get(preferenceId) : {};
         control.disabled = disabled || preference.locked;
       });
 
-      // adjust the cookie controls status
-      this.readAcceptCookies();
-      let lifetimePolicy = document.getElementById("network.cookie.lifetimePolicy").value;
-      if (lifetimePolicy != Ci.nsICookieService.ACCEPT_NORMALLY &&
-        lifetimePolicy != Ci.nsICookieService.ACCEPT_SESSION &&
-        lifetimePolicy != Ci.nsICookieService.ACCEPT_FOR_N_DAYS) {
-        lifetimePolicy = Ci.nsICookieService.ACCEPT_NORMALLY;
-      }
-      document.getElementById("keepCookiesUntil").value = disabled ? 2 : lifetimePolicy;
-
       // adjust the checked state of the sanitizeOnShutdown checkbox
       document.getElementById("alwaysClear").checked = disabled ? false :
-        document.getElementById("privacy.sanitize.sanitizeOnShutdown").value;
+        Preferences.get("privacy.sanitize.sanitizeOnShutdown").value;
 
       // adjust the checked state of the remember history checkboxes
       document.getElementById("rememberHistory").checked = disabled ? false :
-        document.getElementById("places.history.enabled").value;
+        Preferences.get("places.history.enabled").value;
       document.getElementById("rememberForms").checked = disabled ? false :
-        document.getElementById("browser.formfill.enable").value;
+        Preferences.get("browser.formfill.enable").value;
 
       if (!disabled) {
         // adjust the Settings button for sanitizeOnShutdown
         this._updateSanitizeSettingsButton();
       }
     }
+  },
+
+  // CLEAR PRIVATE DATA
+
+  /*
+   * Preferences:
+   *
+   * privacy.sanitize.sanitizeOnShutdown
+   * - true if the user's private data is cleared on startup according to the
+   *   Clear Private Data settings, false otherwise
+   */
+
+  /**
+   * Displays the Clear Private Data settings dialog.
+   */
+  showClearPrivateDataSettings() {
+    gSubDialog.open("chrome://browser/content/preferences/sanitize.xul", "resizable=no");
+  },
+
+
+  /**
+   * Displays a dialog from which individual parts of private data may be
+   * cleared.
+   */
+  clearPrivateDataNow(aClearEverything) {
+    var ts = Preferences.get("privacy.sanitize.timeSpan");
+    var timeSpanOrig = ts.value;
+
+    if (aClearEverything) {
+      ts.value = 0;
+    }
+
+    gSubDialog.open("chrome://browser/content/sanitize.xul", "resizable=no", null, () => {
+      // reset the timeSpan pref
+      if (aClearEverything) {
+        ts.value = timeSpanOrig;
+      }
+
+      Services.obs.notifyObservers(null, "clear-private-data");
+    });
+  },
+
+  /**
+   * Enables or disables the "Settings..." button depending
+   * on the privacy.sanitize.sanitizeOnShutdown preference value
+   */
+  _updateSanitizeSettingsButton() {
+    var settingsButton = document.getElementById("clearDataSettings");
+    var sanitizeOnShutdownPref = Preferences.get("privacy.sanitize.sanitizeOnShutdown");
+
+    settingsButton.disabled = !sanitizeOnShutdownPref.value;
+  },
+
+  toggleDoNotDisturbNotifications(event) {
+    AlertsServiceDND.manualDoNotDisturb = event.target.checked;
   },
 
   // PRIVATE BROWSING
@@ -541,10 +738,10 @@ var gPrivacyPane = {
 
   _lastMode: null,
   _lastCheckState: null,
-  updateAutostart() {
+  async updateAutostart() {
     let mode = document.getElementById("historyMode");
     let autoStart = document.getElementById("privateBrowsingAutoStart");
-    let pref = document.getElementById("browser.privatebrowsing.autostart");
+    let pref = Preferences.get("browser.privatebrowsing.autostart");
     if ((mode.value == "custom" && this._lastCheckState == autoStart.checked) ||
       (mode.value == "remember" && !this._lastCheckState) ||
       (mode.value == "dontremember" && this._lastCheckState)) {
@@ -559,7 +756,7 @@ var gPrivacyPane = {
       return;
     }
 
-    let buttonIndex = confirmRestartPrompt(autoStart.checked, 1,
+    let buttonIndex = await confirmRestartPrompt(autoStart.checked, 1,
       true, false);
     if (buttonIndex == CONFIRM_RESTART_PROMPT_RESTART_NOW) {
       pref.value = autoStart.hasAttribute("checked");
@@ -612,27 +809,7 @@ var gPrivacyPane = {
       null, params);
   },
 
-  /**
-   * Displays the Do Not Track settings dialog.
-   */
-  showDoNotTrackSettings() {
-    gSubDialog.open("chrome://browser/content/preferences/donottrack.xul",
-      "resizable=no");
-  },
-
-  // HISTORY
-
-  /*
-   * Preferences:
-   *
-   * places.history.enabled
-   * - whether history is enabled or not
-   * browser.formfill.enable
-   * - true if entries in forms and the search bar should be saved, false
-   *   otherwise
-   */
-
-  // COOKIES
+  // COOKIES AND SITE DATA
 
   /*
    * Preferences:
@@ -650,47 +827,72 @@ var gPrivacyPane = {
    *     2   means keep cookies until the browser is closed
    */
 
-  /**
-   * Reads the network.cookie.cookieBehavior preference value and
-   * enables/disables the rest of the cookie UI accordingly, returning true
-   * if cookies are enabled.
-   */
-  readAcceptCookies() {
-    var pref = document.getElementById("network.cookie.cookieBehavior");
-    var acceptThirdPartyLabel = document.getElementById("acceptThirdPartyLabel");
-    var acceptThirdPartyMenu = document.getElementById("acceptThirdPartyMenu");
-    var keepUntil = document.getElementById("keepUntil");
-    var menu = document.getElementById("keepCookiesUntil");
+  readKeepCookiesUntil() {
+    let privateBrowsing = Preferences.get("browser.privatebrowsing.autostart").value;
+    if (privateBrowsing) {
+      return "2";
+    }
 
-    // enable the rest of the UI for anything other than "disable all cookies"
-    var acceptCookies = (pref.value != 2);
+    let lifetimePolicy = Preferences.get("network.cookie.lifetimePolicy").value;
+    if (lifetimePolicy != Ci.nsICookieService.ACCEPT_NORMALLY &&
+      lifetimePolicy != Ci.nsICookieService.ACCEPT_SESSION &&
+      lifetimePolicy != Ci.nsICookieService.ACCEPT_FOR_N_DAYS) {
+      return Ci.nsICookieService.ACCEPT_NORMALLY;
+    }
 
-    acceptThirdPartyLabel.disabled = acceptThirdPartyMenu.disabled = !acceptCookies;
-    keepUntil.disabled = menu.disabled = this._autoStartPrivateBrowsing || !acceptCookies;
-
-    return acceptCookies;
+    return lifetimePolicy;
   },
 
   /**
-   * Enables/disables the "keep until" label and menulist in response to the
-   * "accept cookies" checkbox being checked or unchecked.
+   * Reads the network.cookie.cookieBehavior preference value and
+   * enables/disables the rest of the cookie UI accordingly.
+   *
+   * Returns "0" if cookies are accepted and "2" if they are entirely disabled.
+   */
+  readAcceptCookies() {
+    let pref = Preferences.get("network.cookie.cookieBehavior");
+    let acceptThirdPartyLabel = document.getElementById("acceptThirdPartyLabel");
+    let acceptThirdPartyMenu = document.getElementById("acceptThirdPartyMenu");
+    let keepUntilLabel = document.getElementById("keepUntil");
+    let keepUntilMenu = document.getElementById("keepCookiesUntil");
+
+    // enable the rest of the UI for anything other than "disable all cookies"
+    let acceptCookies = (pref.value != 2);
+    let cookieBehaviorLocked = Services.prefs.prefIsLocked("network.cookie.cookieBehavior");
+    const acceptThirdPartyControlsDisabled = !acceptCookies || cookieBehaviorLocked;
+
+    acceptThirdPartyLabel.disabled = acceptThirdPartyMenu.disabled = acceptThirdPartyControlsDisabled;
+
+    let privateBrowsing = Preferences.get("browser.privatebrowsing.autostart").value;
+    let cookieExpirationLocked = Services.prefs.prefIsLocked("network.cookie.lifetimePolicy");
+    const keepUntilControlsDisabled = privateBrowsing || !acceptCookies || cookieExpirationLocked;
+    keepUntilLabel.disabled = keepUntilMenu.disabled = keepUntilControlsDisabled;
+
+    // Our top-level setting is a radiogroup that only sets "enable all"
+    // and "disable all", so convert the pref value accordingly.
+    return acceptCookies ? "0" : "2";
+  },
+
+  /**
+   * Updates the "accept third party cookies" menu based on whether the
+   * "accept cookies" or "block cookies" radio buttons are selected.
    */
   writeAcceptCookies() {
     var accept = document.getElementById("acceptCookies");
     var acceptThirdPartyMenu = document.getElementById("acceptThirdPartyMenu");
 
     // if we're enabling cookies, automatically select 'accept third party always'
-    if (accept.checked)
+    if (accept.value == "0")
       acceptThirdPartyMenu.selectedIndex = 0;
 
-    return accept.checked ? 0 : 2;
+    return parseInt(accept.value, 10);
   },
 
   /**
    * Converts between network.cookie.cookieBehavior and the third-party cookie UI
    */
   readAcceptThirdPartyCookies() {
-    var pref = document.getElementById("network.cookie.cookieBehavior");
+    var pref = Preferences.get("network.cookie.cookieBehavior");
     switch (pref.value) {
       case 0:
         return "always";
@@ -730,73 +932,42 @@ var gPrivacyPane = {
       allowVisible: true,
       prefilledHost: "",
       permissionType: "cookie",
-      windowTitle: bundlePreferences.getString("cookiepermissionstitle"),
-      introText: bundlePreferences.getString("cookiepermissionstext")
+      windowTitle: bundlePreferences.getString("cookiepermissionstitle1"),
+      introText: bundlePreferences.getString("cookiepermissionstext1")
     };
     gSubDialog.open("chrome://browser/content/preferences/permissions.xul",
       null, params);
   },
 
-  /**
-   * Displays all the user's cookies in a dialog.
-   */
-  showCookies(aCategory) {
-    gSubDialog.open("chrome://browser/content/preferences/cookies.xul");
+  showSiteDataSettings() {
+    gSubDialog.open("chrome://browser/content/preferences/siteDataSettings.xul");
   },
 
-  // CLEAR PRIVATE DATA
-
-  /*
-   * Preferences:
-   *
-   * privacy.sanitize.sanitizeOnShutdown
-   * - true if the user's private data is cleared on startup according to the
-   *   Clear Private Data settings, false otherwise
-   */
-
-  /**
-   * Displays the Clear Private Data settings dialog.
-   */
-  showClearPrivateDataSettings() {
-    gSubDialog.open("chrome://browser/content/preferences/sanitize.xul", "resizable=no");
+  toggleSiteData(shouldShow) {
+    let clearButton = document.getElementById("clearSiteDataButton");
+    let settingsButton = document.getElementById("siteDataSettings");
+    clearButton.disabled = !shouldShow;
+    settingsButton.disabled = !shouldShow;
   },
 
+  showSiteDataLoading() {
+    let totalSiteDataSizeLabel = document.getElementById("totalSiteDataSize");
+    let prefStrBundle = document.getElementById("bundlePreferences");
+    totalSiteDataSizeLabel.textContent = prefStrBundle.getString("loadingSiteDataSize1");
+  },
 
-  /**
-   * Displays a dialog from which individual parts of private data may be
-   * cleared.
-   */
-  clearPrivateDataNow(aClearEverything) {
-    var ts = document.getElementById("privacy.sanitize.timeSpan");
-    var timeSpanOrig = ts.value;
-
-    if (aClearEverything) {
-      ts.value = 0;
-    }
-
-    gSubDialog.open("chrome://browser/content/sanitize.xul", "resizable=no", null, () => {
-      // reset the timeSpan pref
-      if (aClearEverything) {
-        ts.value = timeSpanOrig;
-      }
-
-      Services.obs.notifyObservers(null, "clear-private-data");
+  updateTotalDataSizeLabel(siteDataUsage) {
+    SiteDataManager.getCacheSize().then(function(cacheUsage) {
+      let prefStrBundle = document.getElementById("bundlePreferences");
+      let totalSiteDataSizeLabel = document.getElementById("totalSiteDataSize");
+      let totalUsage = siteDataUsage + cacheUsage;
+      let size = DownloadUtils.convertByteUnits(totalUsage);
+      totalSiteDataSizeLabel.textContent = prefStrBundle.getFormattedString("totalSiteDataSize2", size);
     });
   },
 
-  /**
-   * Enables or disables the "Settings..." button depending
-   * on the privacy.sanitize.sanitizeOnShutdown preference value
-   */
-  _updateSanitizeSettingsButton() {
-    var settingsButton = document.getElementById("clearDataSettings");
-    var sanitizeOnShutdownPref = document.getElementById("privacy.sanitize.sanitizeOnShutdown");
-
-    settingsButton.disabled = !sanitizeOnShutdownPref.value;
-  },
-
-  toggleDoNotDisturbNotifications(event) {
-    AlertsServiceDND.manualDoNotDisturb = event.target.checked;
+  clearSiteData() {
+    gSubDialog.open("chrome://browser/content/preferences/clearSiteData.xul");
   },
 
   // GEOLOCATION
@@ -809,7 +980,9 @@ var gPrivacyPane = {
     let bundlePreferences = document.getElementById("bundlePreferences");
     let params = { permissionType: "geo" };
     params.windowTitle = bundlePreferences.getString("locationpermissionstitle");
-    params.introText = bundlePreferences.getString("locationpermissionstext");
+    params.introText = bundlePreferences.getString("locationpermissionstext2");
+    params.disablePermissionsLabel = bundlePreferences.getString("locationpermissionsdisablelabel");
+    params.disablePermissionsDescription = bundlePreferences.getString("locationpermissionsdisabledescription");
 
     gSubDialog.open("chrome://browser/content/preferences/sitePermissions.xul",
       "resizable=yes", params);
@@ -825,7 +998,9 @@ var gPrivacyPane = {
     let bundlePreferences = document.getElementById("bundlePreferences");
     let params = { permissionType: "camera" };
     params.windowTitle = bundlePreferences.getString("camerapermissionstitle");
-    params.introText = bundlePreferences.getString("camerapermissionstext");
+    params.introText = bundlePreferences.getString("camerapermissionstext2");
+    params.disablePermissionsLabel = bundlePreferences.getString("camerapermissionsdisablelabel");
+    params.disablePermissionsDescription = bundlePreferences.getString("camerapermissionsdisabledescription");
 
     gSubDialog.open("chrome://browser/content/preferences/sitePermissions.xul",
       "resizable=yes", params);
@@ -841,7 +1016,9 @@ var gPrivacyPane = {
     let bundlePreferences = document.getElementById("bundlePreferences");
     let params = { permissionType: "microphone" };
     params.windowTitle = bundlePreferences.getString("microphonepermissionstitle");
-    params.introText = bundlePreferences.getString("microphonepermissionstext");
+    params.introText = bundlePreferences.getString("microphonepermissionstext2");
+    params.disablePermissionsLabel = bundlePreferences.getString("microphonepermissionsdisablelabel");
+    params.disablePermissionsDescription = bundlePreferences.getString("microphonepermissionsdisabledescription");
 
     gSubDialog.open("chrome://browser/content/preferences/sitePermissions.xul",
       "resizable=yes", params);
@@ -857,7 +1034,9 @@ var gPrivacyPane = {
     let bundlePreferences = document.getElementById("bundlePreferences");
     let params = { permissionType: "desktop-notification" };
     params.windowTitle = bundlePreferences.getString("notificationspermissionstitle2");
-    params.introText = bundlePreferences.getString("notificationspermissionstext5");
+    params.introText = bundlePreferences.getString("notificationspermissionstext6");
+    params.disablePermissionsLabel = bundlePreferences.getString("notificationspermissionsdisablelabel");
+    params.disablePermissionsDescription = bundlePreferences.getString("notificationspermissionsdisabledescription");
 
     gSubDialog.open("chrome://browser/content/preferences/sitePermissions.xul",
       "resizable=yes", params);
@@ -896,8 +1075,8 @@ var gPrivacyPane = {
    */
   updateButtons(aButtonID, aPreferenceID) {
     var button = document.getElementById(aButtonID);
-    var preference = document.getElementById(aPreferenceID);
-    button.disabled = preference.value != true;
+    var preference = Preferences.get(aPreferenceID);
+    button.disabled = !preference.value;
     return undefined;
   },
 
@@ -947,6 +1126,7 @@ var gPrivacyPane = {
 
     var checkbox = document.getElementById("useMasterPassword");
     checkbox.checked = !noMP;
+    checkbox.disabled = noMP && !Services.policies.isAllowed("createMasterPassword");
   },
 
   /**
@@ -1014,7 +1194,7 @@ var gPrivacyPane = {
    * Browsing mode, the "Remember passwords" UI is useless, so we disable it.
    */
   readSavePasswords() {
-    var pref = document.getElementById("signon.rememberSignons");
+    var pref = Preferences.get("signon.rememberSignons");
     var excepts = document.getElementById("passwordExceptions");
 
     if (PrivateBrowsingUtils.permanentPrivateBrowsing) {
@@ -1032,7 +1212,7 @@ var gPrivacyPane = {
    * or not add-on installation warnings are displayed.
    */
   readWarnAddonInstall() {
-    var warn = document.getElementById("xpinstall.whitelist.required");
+    var warn = Preferences.get("xpinstall.whitelist.required");
     var exceptions = document.getElementById("addonExceptions");
 
     exceptions.disabled = !warn.value;
@@ -1046,14 +1226,14 @@ var gPrivacyPane = {
     let blockDownloads = document.getElementById("blockDownloads");
     let blockUncommonUnwanted = document.getElementById("blockUncommonUnwanted");
 
-    let safeBrowsingPhishingPref = document.getElementById("browser.safebrowsing.phishing.enabled");
-    let safeBrowsingMalwarePref = document.getElementById("browser.safebrowsing.malware.enabled");
+    let safeBrowsingPhishingPref = Preferences.get("browser.safebrowsing.phishing.enabled");
+    let safeBrowsingMalwarePref = Preferences.get("browser.safebrowsing.malware.enabled");
 
-    let blockDownloadsPref = document.getElementById("browser.safebrowsing.downloads.enabled");
-    let malwareTable = document.getElementById("urlclassifier.malwareTable");
+    let blockDownloadsPref = Preferences.get("browser.safebrowsing.downloads.enabled");
+    let malwareTable = Preferences.get("urlclassifier.malwareTable");
 
-    let blockUnwantedPref = document.getElementById("browser.safebrowsing.downloads.remote.block_potentially_unwanted");
-    let blockUncommonPref = document.getElementById("browser.safebrowsing.downloads.remote.block_uncommon");
+    let blockUnwantedPref = Preferences.get("browser.safebrowsing.downloads.remote.block_potentially_unwanted");
+    let blockUncommonPref = Preferences.get("browser.safebrowsing.downloads.remote.block_uncommon");
 
     let learnMoreLink = document.getElementById("enableSafeBrowsingLearnMore");
     let phishingUrl = Services.urlFormatter.formatURLPref("app.support.baseURL") + "phishing-malware";
@@ -1102,7 +1282,7 @@ var gPrivacyPane = {
                      x !== "test-unwanted-simple");
 
       if (blockUncommonUnwanted.checked) {
-        if (malware.indexOf("goog-malware-shavar") != -1) {
+        if (malware.includes("goog-malware-shavar")) {
           malware.push("goog-unwanted-shavar");
         } else {
           malware.push("goog-unwanted-proto");
@@ -1115,6 +1295,13 @@ var gPrivacyPane = {
       malware.sort();
 
       malwareTable.value = malware.join(",");
+
+      // Force an update after changing the malware table.
+      let listmanager = Cc["@mozilla.org/url-classifier/listmanager;1"]
+                        .getService(Ci.nsIUrlListManager);
+      if (listmanager) {
+        listmanager.forceUpdates(malwareTable.value);
+      }
     });
 
     // set initial values
@@ -1180,7 +1367,7 @@ var gPrivacyPane = {
    * checked. Otherwise, it should be unchecked.
    */
   readEnableOCSP() {
-    var preference = document.getElementById("security.OCSP.enabled");
+    var preference = Preferences.get("security.OCSP.enabled");
     // This is the case if the preference is the default value.
     if (preference.value === undefined) {
       return true;
@@ -1222,133 +1409,14 @@ var gPrivacyPane = {
     gSubDialog.open("chrome://pippki/content/device_manager.xul");
   },
 
-  /**
-   * Clears the cache.
-   */
-  clearCache() {
-    try {
-      Services.cache2.clear();
-    } catch (ex) { }
-    this.updateActualCacheSize();
-  },
-
-  showSiteDataSettings() {
-    gSubDialog.open("chrome://browser/content/preferences/siteDataSettings.xul");
-  },
-
-  toggleSiteData(shouldShow) {
-    let clearButton = document.getElementById("clearSiteDataButton");
-    let settingsButton = document.getElementById("siteDataSettings");
-    clearButton.disabled = !shouldShow;
-    settingsButton.disabled = !shouldShow;
-  },
-
-  updateTotalDataSizeLabel(usage) {
-    let prefStrBundle = document.getElementById("bundlePreferences");
-    let totalSiteDataSizeLabel = document.getElementById("totalSiteDataSize");
-    if (usage < 0) {
-      totalSiteDataSizeLabel.textContent = prefStrBundle.getString("loadingSiteDataSize");
-    } else {
-      let size = DownloadUtils.convertByteUnits(usage);
-      totalSiteDataSizeLabel.textContent = prefStrBundle.getFormattedString("totalSiteDataSize", size);
-    }
-  },
-
-  // Retrieves the amount of space currently used by disk cache
-  updateActualCacheSize() {
-    var actualSizeLabel = document.getElementById("actualDiskCacheSize");
-    var prefStrBundle = document.getElementById("bundlePreferences");
-
-    // Needs to root the observer since cache service keeps only a weak reference.
-    this.observer = {
-      onNetworkCacheDiskConsumption(consumption) {
-        var size = DownloadUtils.convertByteUnits(consumption);
-        // The XBL binding for the string bundle may have been destroyed if
-        // the page was closed before this callback was executed.
-        if (!prefStrBundle.getFormattedString) {
-          return;
-        }
-        actualSizeLabel.textContent = prefStrBundle.getFormattedString("actualDiskCacheSize", size);
-      },
-
-      QueryInterface: XPCOMUtils.generateQI([
-        Components.interfaces.nsICacheStorageConsumptionObserver,
-        Components.interfaces.nsISupportsWeakReference
-      ])
-    };
-
-    actualSizeLabel.textContent = prefStrBundle.getString("actualDiskCacheSizeCalculated");
-
-    try {
-      Services.cache2.asyncGetDiskConsumption(this.observer);
-    } catch (e) { }
-  },
-
-  updateCacheSizeUI(smartSizeEnabled) {
-    document.getElementById("useCacheBefore").disabled = smartSizeEnabled;
-    document.getElementById("cacheSize").disabled = smartSizeEnabled;
-    document.getElementById("useCacheAfter").disabled = smartSizeEnabled;
-  },
-
-  readSmartSizeEnabled() {
-    // The smart_size.enabled preference element is inverted="true", so its
-    // value is the opposite of the actual pref value
-    var disabled = document.getElementById("browser.cache.disk.smart_size.enabled").value;
-    this.updateCacheSizeUI(!disabled);
-  },
-
-  /**
-   * Converts the cache size from units of KB to units of MB and stores it in
-   * the textbox element.
-   *
-   * Preferences:
-   *
-   * browser.cache.disk.capacity
-   * - the size of the browser cache in KB
-   * - Only used if browser.cache.disk.smart_size.enabled is disabled
-   */
-  updateCacheSizeInputField() {
-    let cacheSizeElem = document.getElementById("cacheSize");
-    let cachePref = document.getElementById("browser.cache.disk.capacity");
-    cacheSizeElem.value = cachePref.value / 1024;
-    if (cachePref.locked)
-      cacheSizeElem.disabled = true;
-  },
-
-  /**
-   * Updates the cache size preference once user enters a new value.
-   * We intentionally do not set preference="browser.cache.disk.capacity"
-   * onto the textbox directly, as that would update the pref at each keypress
-   * not only after the final value is entered.
-   */
-  updateCacheSizePref() {
-    let cacheSizeElem = document.getElementById("cacheSize");
-    let cachePref = document.getElementById("browser.cache.disk.capacity");
-    // Converts the cache size as specified in UI (in MB) to KB.
-    let intValue = parseInt(cacheSizeElem.value, 10);
-    cachePref.value = isNaN(intValue) ? 0 : intValue * 1024;
-  },
-
-  clearSiteData() {
-    let flags =
-      Services.prompt.BUTTON_TITLE_IS_STRING * Services.prompt.BUTTON_POS_0 +
-      Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1 +
-      Services.prompt.BUTTON_POS_0_DEFAULT;
-    let prefStrBundle = document.getElementById("bundlePreferences");
-    let title = prefStrBundle.getString("clearSiteDataPromptTitle");
-    let text = prefStrBundle.getString("clearSiteDataPromptText");
-    let btn0Label = prefStrBundle.getString("clearSiteDataNow");
-
-    let result = Services.prompt.confirmEx(
-      window, title, text, flags, btn0Label, null, null, null, {});
-    if (result == 0) {
-      SiteDataManager.removeAll();
-    }
-  },
-
   initDataCollection() {
     this._setupLearnMoreLink("toolkit.datacollection.infoURL",
       "dataCollectionPrivacyNotice");
+  },
+
+  initCollectBrowserErrors() {
+    this._setupLearnMoreLink("browser.chrome.errorReporter.infoURL",
+      "collectBrowserErrorsLearnMore");
   },
 
   initSubmitCrashes() {
@@ -1361,7 +1429,7 @@ var gPrivacyPane = {
    */
   _setupLearnMoreLink(pref, element) {
     // set up the Learn More link with the correct URL
-    let url = Services.prefs.getCharPref(pref);
+    let url = Services.urlFormatter.formatURLPref(pref);
     let el = document.getElementById(element);
 
     if (url) {
@@ -1405,7 +1473,7 @@ var gPrivacyPane = {
       case "sitedatamanager:updating-sites":
         // While updating, we want to disable this section and display loading message until updated
         this.toggleSiteData(false);
-        this.updateTotalDataSizeLabel(-1);
+        this.showSiteDataLoading();
         break;
 
       case "sitedatamanager:sites-updated":
@@ -1438,8 +1506,8 @@ var gPrivacyPane = {
       .setAttribute("href", a11yLearnMoreLink);
   },
 
-  updateA11yPrefs(checked) {
-    let buttonIndex = confirmRestartPrompt(checked, 0, true, false);
+  async updateA11yPrefs(checked) {
+    let buttonIndex = await confirmRestartPrompt(checked, 0, true, false);
     if (buttonIndex == CONFIRM_RESTART_PROMPT_RESTART_NOW) {
       Services.prefs.setIntPref("accessibility.force_disabled", checked ? 1 : 0);
       Services.telemetry.scalarSet("preferences.prevent_accessibility_services", true);

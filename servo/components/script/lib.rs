@@ -31,6 +31,7 @@ extern crate bluetooth_traits;
 extern crate byteorder;
 extern crate canvas_traits;
 extern crate caseless;
+extern crate chrono;
 extern crate cookie as cookie_rs;
 #[macro_use] extern crate cssparser;
 #[macro_use] extern crate deny_public_fields;
@@ -67,10 +68,8 @@ extern crate mitochondria;
 extern crate mozjs as js;
 extern crate msg;
 extern crate net_traits;
-extern crate nonzero;
 extern crate num_traits;
 extern crate offscreen_gl_context;
-extern crate open;
 extern crate parking_lot;
 extern crate phf;
 #[macro_use]

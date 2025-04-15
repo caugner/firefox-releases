@@ -53,7 +53,7 @@ Report.prototype.pageNames = function() {
     retval.push(page);
   }
   return retval;
-}
+};
 
 Report.prototype.getReport = function() {
 
@@ -67,6 +67,10 @@ Report.prototype.getReport = function() {
   report += "|i|pagename|runs|\n";
 
   for (var i = 0; i < pages.length; i++) {
+    // don't report any measurements that were reported for about:blank
+    // some tests (like about-preferences) use it as a dummy test page
+    if (pages[i] == "about:blank")
+      continue;
     report += "|" +
       i + ";" +
       pages[i].substr(prefixLen) + ";" +
@@ -84,7 +88,7 @@ Report.prototype.getReport = function() {
   report += "__startTimestamp" + now + "__endTimestamp\n"; // timestamp for determning shutdown time, used by talos
 
   return report;
-}
+};
 
 Report.prototype.getReportSummary = function() {
 
@@ -149,16 +153,16 @@ Report.prototype.getReportSummary = function() {
   report += "-------- Summary: end --------\n";
 
   return report;
-}
+};
 
 Report.prototype.recordTime = function(pageName, ms) {
   if (this.timeVals[pageName] == undefined) {
     this.timeVals[pageName] = [];
   }
   this.timeVals[pageName].push(ms);
-}
+};
 
 Report.prototype.recordCCTime = function(ms) {
   this.totalCCTime += ms;
   this.showTotalCCTime = true;
-}
+};

@@ -20,7 +20,7 @@
 
 add_task(async function test_removeByFilter() {
   // Cleanup
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
   await PlacesUtils.bookmarks.eraseEverything();
 
   // Adding a witness URI
@@ -286,8 +286,8 @@ function getObserverPromise(bookmarkedUri) {
     observer = {
       onBeginUpdateBatch() {},
       onEndUpdateBatch() {},
-      onVisit(aUri) {
-        reject(new Error("Unexpected call to onVisit"));
+      onVisits() {
+        reject(new Error("Unexpected call to onVisits"));
       },
       onTitleChanged(aUri) {
         reject(new Error("Unexpected call to onTitleChanged"));

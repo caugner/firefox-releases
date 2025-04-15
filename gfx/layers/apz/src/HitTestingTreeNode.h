@@ -7,9 +7,9 @@
 #ifndef mozilla_layers_HitTestingTreeNode_h
 #define mozilla_layers_HitTestingTreeNode_h
 
-#include "APZUtils.h"                       // for HitTestResult
 #include "FrameMetrics.h"                   // for ScrollableLayerGuid
 #include "Layers.h"
+#include "mozilla/gfx/CompositorHitTestInfo.h"
 #include "mozilla/gfx/Matrix.h"             // for Matrix4x4
 #include "mozilla/layers/LayersTypes.h"     // for EventRegions
 #include "mozilla/Maybe.h"                  // for Maybe
@@ -89,7 +89,8 @@ public:
                       const LayerIntRegion& aVisibleRegion,
                       const CSSTransformMatrix& aTransform,
                       const Maybe<ParentLayerIntRegion>& aClipRegion,
-                      const EventRegionsOverride& aOverride);
+                      const EventRegionsOverride& aOverride,
+                      bool aIsBackfaceHidden);
   bool IsOutsideClip(const ParentLayerPoint& aPoint) const;
 
   /* Scrollbar info */
@@ -97,9 +98,11 @@ public:
   void SetScrollbarData(FrameMetrics::ViewID aScrollViewId,
                         const uint64_t& aScrollbarAnimationId,
                         const ScrollThumbData& aThumbData,
-                        bool aIsScrollContainer);
+                        const Maybe<ScrollDirection>& aScrollContainerDirection);
   bool MatchesScrollDragMetrics(const AsyncDragMetrics& aDragMetrics) const;
   bool IsScrollbarNode() const;  // Scroll thumb or scrollbar container layer.
+  // This can only be called if IsScrollbarNode() is true
+  ScrollDirection GetScrollbarDirection() const;
   bool IsScrollThumbNode() const;  // Scroll thumb container layer.
   FrameMetrics::ViewID GetScrollTargetId() const;
   const ScrollThumbData& GetScrollThumbData() const;
@@ -117,7 +120,7 @@ public:
                                 const LayerToParentLayerMatrix4x4& aTransform) const;
   /* Assuming aPoint is inside the clip region for this node, check which of the
    * event region spaces it falls inside. */
-  HitTestResult HitTest(const LayerPoint& aPoint) const;
+  gfx::CompositorHitTestInfo HitTest(const LayerPoint& aPoint) const;
   /* Returns the mOverride flag. */
   EventRegionsOverride GetEventRegionsOverride() const;
   const CSSTransformMatrix& GetTransform() const;
@@ -151,7 +154,7 @@ private:
   ScrollThumbData mScrollThumbData;
 
   // This is set for scroll track Container layers only.
-  bool mIsScrollbarContainer;
+  Maybe<ScrollDirection> mScrollbarContainerDirection;
 
   FrameMetrics::ViewID mFixedPosTarget;
 
@@ -169,6 +172,14 @@ private:
   /* This is the transform from layer L. This does NOT include any async
    * transforms. */
   CSSTransformMatrix mTransform;
+
+  /* Whether layer L is backface-visibility:hidden, and its backface is
+   * currently visible. It's true that the latter depends on the layer's
+   * shadow transform, but the sorts of changes APZ makes to the shadow
+   * transform shouldn't change the backface from hidden to visible or
+   * vice versa, so it's sufficient to record this at hit test tree
+   * building time. */
+  bool mIsBackfaceHidden;
 
   /* This is clip rect for L that we wish to use for hit-testing purposes. Note
    * that this may not be exactly the same as the clip rect on layer L because

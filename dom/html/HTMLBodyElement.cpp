@@ -15,10 +15,13 @@
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIDocument.h"
+#include "nsIDocumentInlines.h"
 #include "nsHTMLStyleSheet.h"
 #include "nsMappedAttributes.h"
 #include "nsIDocShell.h"
+#ifdef MOZ_OLD_STYLE
 #include "nsRuleWalker.h"
+#endif
 #include "nsGlobalWindow.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Body)
@@ -38,14 +41,13 @@ HTMLBodyElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)
   return HTMLBodyElementBinding::Wrap(aCx, this, aGivenProto);
 }
 
-NS_IMPL_ISUPPORTS_INHERITED0(HTMLBodyElement, nsGenericHTMLElement)
-
 NS_IMPL_ELEMENT_CLONE(HTMLBodyElement)
 
 bool
 HTMLBodyElement::ParseAttribute(int32_t aNamespaceID,
                                 nsAtom* aAttribute,
                                 const nsAString& aValue,
+                                nsIPrincipal* aMaybeScriptedPrincipal,
                                 nsAttrValue& aResult)
 {
   if (aNamespaceID == kNameSpaceID_None) {
@@ -70,7 +72,7 @@ HTMLBodyElement::ParseAttribute(int32_t aNamespaceID,
                                                         aAttribute, aValue,
                                                         aResult) ||
          nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aResult);
+                                              aMaybeScriptedPrincipal, aResult);
 }
 
 void
@@ -166,7 +168,7 @@ HTMLBodyElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
     // if marginwidth or marginheight is set in the <frame> and not set in the <body>
     // reflect them as margin in the <body>
     if (bodyMarginWidth == -1 || bodyMarginHeight == -1) {
-      nsCOMPtr<nsIDocShell> docShell(aData->mPresContext->GetDocShell());
+      nsCOMPtr<nsIDocShell> docShell(aData->Document()->GetDocShell());
       if (docShell) {
         nscoord frameMarginWidth=-1;  // default value
         nscoord frameMarginHeight=-1; // default value
@@ -196,41 +198,35 @@ HTMLBodyElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
 
   if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Display))) {
     // When display if first asked for, go ahead and get our colors set up.
-    nsIPresShell *presShell = aData->PresContext()->GetPresShell();
-    if (presShell) {
-      nsIDocument *doc = presShell->GetDocument();
-      if (doc) {
-        nsHTMLStyleSheet* styleSheet = doc->GetAttributeStyleSheet();
-        if (styleSheet) {
-          const nsAttrValue* value;
-          nscolor color;
-          value = aAttributes->GetAttr(nsGkAtoms::link);
-          if (value && value->GetColorValue(color)) {
-            styleSheet->SetLinkColor(color);
-          }
+    if (nsHTMLStyleSheet* styleSheet = aData->Document()->GetAttributeStyleSheet()) {
+      const nsAttrValue* value;
+      nscolor color;
+      value = aAttributes->GetAttr(nsGkAtoms::link);
+      if (value && value->GetColorValue(color)) {
+        styleSheet->SetLinkColor(color);
+      }
 
-          value = aAttributes->GetAttr(nsGkAtoms::alink);
-          if (value && value->GetColorValue(color)) {
-            styleSheet->SetActiveLinkColor(color);
-          }
+      value = aAttributes->GetAttr(nsGkAtoms::alink);
+      if (value && value->GetColorValue(color)) {
+        styleSheet->SetActiveLinkColor(color);
+      }
 
-          value = aAttributes->GetAttr(nsGkAtoms::vlink);
-          if (value && value->GetColorValue(color)) {
-            styleSheet->SetVisitedLinkColor(color);
-          }
-        }
+      value = aAttributes->GetAttr(nsGkAtoms::vlink);
+      if (value && value->GetColorValue(color)) {
+        styleSheet->SetVisitedLinkColor(color);
       }
     }
   }
 
   if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Color))) {
     if (!aData->PropertyIsSet(eCSSProperty_color) &&
-        aData->PresContext()->UseDocumentColors()) {
+        !aData->ShouldIgnoreColors()) {
       // color: color
       nscolor color;
       const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::text);
-      if (value && value->GetColorValue(color))
+      if (value && value->GetColorValue(color)) {
         aData->SetColorValue(eCSSProperty_color, color);
+      }
     }
   }
 
@@ -279,7 +275,7 @@ HTMLBodyElement::GetAssociatedEditor()
   }
 
   // Make sure this is the actual body of the document
-  if (!IsCurrentBodyElement()) {
+  if (this != OwnerDoc()->GetBodyElement()) {
     return nullptr;
   }
 

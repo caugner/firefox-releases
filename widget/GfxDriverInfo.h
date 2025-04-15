@@ -97,16 +97,19 @@ enum DeviceFamily {
   Bug1116812,
   Bug1155608,
   Bug1207665,
+  Bug1447141,
   DeviceFamilyMax
 };
 
 enum DeviceVendor {
-  VendorAll,
+  VendorAll, // There is an assumption that this is the first enum
   VendorIntel,
   VendorNVIDIA,
   VendorAMD,
   VendorATI,
   VendorMicrosoft,
+  VendorParallels,
+  VendorQualcomm,
   DeviceVendorMax
 };
 

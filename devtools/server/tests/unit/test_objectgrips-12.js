@@ -6,7 +6,7 @@
 
 // Test getDisplayString.
 
-Cu.import("resource://testing-common/PromiseTestUtils.jsm", this);
+ChromeUtils.import("resource://testing-common/PromiseTestUtils.jsm", this);
 
 var gDebuggee;
 var gClient;
@@ -147,7 +147,7 @@ function test_display_string() {
     (function loop() {
       const objClient = gThreadClient.pauseGrip(args.pop());
       objClient.getDisplayString(function ({ displayString }) {
-        do_check_eq(displayString, testCases.pop().output);
+        Assert.equal(displayString, testCases.pop().output);
         if (args.length) {
           loop();
         } else {

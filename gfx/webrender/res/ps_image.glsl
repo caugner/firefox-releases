@@ -14,11 +14,10 @@ flat varying vec4 vStRect;        // Rectangle of valid texture rect.
 flat varying float vLayer;
 
 #ifdef WR_FEATURE_TRANSFORM
-varying vec3 vLocalPos;
 flat varying vec4 vLocalRect;
-#else
-varying vec2 vLocalPos;
 #endif
+
+varying vec2 vLocalPos;
 flat varying vec2 vStretchSize;
 
 #ifdef WR_VERTEX_SHADER
@@ -28,14 +27,14 @@ void main(void) {
     ImageResource res = fetch_image_resource(prim.user_data0);
 
 #ifdef WR_FEATURE_TRANSFORM
-    TransformVertexInfo vi = write_transform_vertex_primitive(prim);
+    VertexInfo vi = write_transform_vertex_primitive(prim);
     vLocalPos = vi.local_pos;
     vLocalRect = vec4(prim.local_rect.p0, prim.local_rect.p0 + prim.local_rect.size);
 #else
     VertexInfo vi = write_vertex(prim.local_rect,
                                  prim.local_clip_rect,
                                  prim.z,
-                                 prim.layer,
+                                 prim.scroll_node,
                                  prim.task,
                                  prim.local_rect);
     vLocalPos = vi.local_pos - prim.local_rect.p0;
@@ -51,15 +50,8 @@ void main(void) {
     vec2 texture_size_normalization_factor = vec2(textureSize(sColor0, 0));
 #endif
 
-    vec2 uv0, uv1;
-
-    if (image.sub_rect.x < 0.0) {
-        uv0 = res.uv_rect.xy;
-        uv1 = res.uv_rect.zw;
-    } else {
-        uv0 = res.uv_rect.xy + image.sub_rect.xy;
-        uv1 = res.uv_rect.xy + image.sub_rect.zw;
-    }
+    vec2 uv0 = res.uv_rect.p0;
+    vec2 uv1 = res.uv_rect.p1;
 
     // vUv will contain how many times this image has wrapped around the image size.
     vec2 st0 = uv0 / texture_size_normalization_factor;
@@ -81,13 +73,12 @@ void main(void) {
 #ifdef WR_FRAGMENT_SHADER
 void main(void) {
 #ifdef WR_FEATURE_TRANSFORM
-    float alpha = 0.0;
-    vec2 pos = init_transform_fs(vLocalPos, alpha);
+    float alpha = init_transform_fs(vLocalPos);
 
     // We clamp the texture coordinate calculation here to the local rectangle boundaries,
     // which makes the edge of the texture stretch instead of repeat.
-    vec2 upper_bound_mask = step(vLocalRect.zw, pos);
-    vec2 relative_pos_in_rect = clamp(pos, vLocalRect.xy, vLocalRect.zw) - vLocalRect.xy;
+    vec2 upper_bound_mask = step(vLocalRect.zw, vLocalPos);
+    vec2 relative_pos_in_rect = clamp(vLocalPos, vLocalRect.xy, vLocalRect.zw) - vLocalRect.xy;
 #else
     float alpha = 1.0;
     vec2 relative_pos_in_rect = vLocalPos;

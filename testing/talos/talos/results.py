@@ -52,7 +52,7 @@ class TalosResults(object):
                     'file://%s' % os.path.join(os.getcwd(), 'results.out'),
                     results
                 )
-            except:
+            except Exception:
                 pass
             print('\nFAIL: %s' % str(e).replace('\n', '\nRETURN:'))
             raise e
@@ -408,8 +408,6 @@ class BrowserLogResults(object):
         """accumulate all counters"""
 
         if global_counters is not None:
-            if 'shutdown' in global_counters:
-                self.shutdown(global_counters)
             if 'responsiveness' in global_counters:
                 global_counters['responsiveness'].extend(self.responsiveness())
             self.xperf(global_counters)
@@ -505,14 +503,9 @@ class BrowserLogResults(object):
             contents = open(filename).read()
             counter_results.setdefault('mainthreadio', []).append(contents)
             self.using_xperf = True
-        except:
+        except Exception:
             # silent failure is fine here as we will only see this on tp5n runs
             pass
-
-    def shutdown(self, counter_results):
-        """record shutdown time in counter_results dictionary"""
-        counter_results.setdefault('shutdown', [])\
-            .append(int(self.endTime - self.startTime))
 
     def responsiveness(self):
         return self.RESULTS_RESPONSIVENESS_REGEX.findall(self.results_raw)

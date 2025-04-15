@@ -2,11 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var Ci = Components.interfaces;
-var Cc = Components.classes;
-var Cu = Components.utils;
-
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const bundle = Services.strings.createBundle(
   "chrome://global/locale/aboutUrlClassifier.properties");
@@ -174,11 +170,9 @@ var Provider = {
                       .getService(Ci.nsIUrlListManager);
 
     let pref = "browser.safebrowsing.provider." + provider + ".lists";
-    let tables = Services.prefs.getCharPref(pref, "").split(",");
-    let table = tables.find(t => listmanager.getUpdateUrl(t) != "");
+    let tables = Services.prefs.getCharPref(pref, "");
 
-    let updateUrl = listmanager.getUpdateUrl(table);
-    if (!listmanager.checkForUpdates(updateUrl)) {
+    if (!listmanager.forceUpdates(tables)) {
       // This may because of back-off algorithm.
       let elem = document.getElementById(provider + "-col-lastupdateresult");
       elem.childNodes[0].nodeValue = bundle.GetStringFromName("CannotUpdate");

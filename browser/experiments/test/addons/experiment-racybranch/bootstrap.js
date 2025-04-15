@@ -1,8 +1,7 @@
 /* exported startup, shutdown, install, uninstall */
 
-var {classes: Cc, interfaces: Ci, utils: Cu} = Components;
-
-Cu.import("resource:///modules/experiments/Experiments.jsm");
+ChromeUtils.import("resource:///modules/experiments/Experiments.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 var gStarted = false;
 
@@ -13,7 +12,7 @@ function startup(data, reasonCode) {
   gStarted = true;
 
   // delay realstartup to trigger the race condition
-  Cc["@mozilla.org/thread-manager;1"].getService(Ci.nsIThreadManager).dispatchToMainThread(realstartup);
+  Services.tm.dispatchToMainThread(realstartup);
 }
 
 function realstartup() {

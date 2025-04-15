@@ -13,7 +13,6 @@ const { IdGenerator } = require("devtools/client/webconsole/new-console-output/u
 const { batchActions } = require("devtools/client/shared/redux/middleware/debounce");
 
 const {
-  MESSAGE_ADD,
   MESSAGES_ADD,
   NETWORK_MESSAGE_UPDATE,
   NETWORK_UPDATE_REQUEST,
@@ -22,6 +21,7 @@ const {
   MESSAGE_CLOSE,
   MESSAGE_TYPE,
   MESSAGE_TABLE_RECEIVE,
+  PRIVATE_MESSAGES_CLEAR,
 } = require("../constants");
 
 const defaultIdGenerator = new IdGenerator();
@@ -51,28 +51,15 @@ function messagesAdd(packets, idGenerator = null) {
   };
 }
 
-function messageAdd(packet, idGenerator = null) {
-  if (idGenerator == null) {
-    idGenerator = defaultIdGenerator;
-  }
-  let message = prepareMessage(packet, idGenerator);
-  const addMessageAction = {
-    type: MESSAGE_ADD,
-    message
-  };
-
-  if (message.type === MESSAGE_TYPE.CLEAR) {
-    return batchActions([
-      messagesClear(),
-      addMessageAction,
-    ]);
-  }
-  return addMessageAction;
-}
-
 function messagesClear() {
   return {
     type: MESSAGES_CLEAR
+  };
+}
+
+function privateMessagesClear() {
+  return {
+    type: PRIVATE_MESSAGES_CLEAR
   };
 }
 
@@ -142,7 +129,6 @@ function networkUpdateRequest(id, data) {
 }
 
 module.exports = {
-  messageAdd,
   messagesAdd,
   messagesClear,
   messageOpen,
@@ -150,6 +136,7 @@ module.exports = {
   messageTableDataGet,
   networkMessageUpdate,
   networkUpdateRequest,
+  privateMessagesClear,
   // for test purpose only.
   messageTableDataReceive,
 };

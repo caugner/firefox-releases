@@ -3,8 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { Component, createFactory, PropTypes } =
-  require("devtools/client/shared/vendor/react");
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const { createFactories } = require("devtools/client/shared/react-utils");
 const { Tabs, TabPanel } = createFactories(require("devtools/client/shared/components/tabs/Tabs"));
 
@@ -98,6 +98,7 @@ class NetInfoBody extends Component {
     // Headers tab
     panels.push(
       TabPanel({
+        id: "headers",
         className: "headers",
         key: "headers",
         title: Locale.$STR("netRequest.headers")},
@@ -109,6 +110,7 @@ class NetInfoBody extends Component {
     if (hasParams) {
       panels.push(
         TabPanel({
+          id: "params",
           className: "params",
           key: "params",
           title: Locale.$STR("netRequest.params")},
@@ -121,6 +123,7 @@ class NetInfoBody extends Component {
     if (hasPostData) {
       panels.push(
         TabPanel({
+          id: "post",
           className: "post",
           key: "post",
           title: Locale.$STR("netRequest.post")},
@@ -131,7 +134,10 @@ class NetInfoBody extends Component {
 
     // Response tab
     panels.push(
-      TabPanel({className: "response", key: "response",
+      TabPanel({
+        id: "response",
+        className: "response",
+        key: "response",
         title: Locale.$STR("netRequest.response")},
         ResponseTab({data: data, actions: actions})
       )
@@ -141,6 +147,7 @@ class NetInfoBody extends Component {
     if (this.hasCookies()) {
       panels.push(
         TabPanel({
+          id: "cookies",
           className: "cookies",
           key: "cookies",
           title: Locale.$STR("netRequest.cookies")},
@@ -156,6 +163,7 @@ class NetInfoBody extends Component {
     if (this.hasStackTrace()) {
       panels.push(
         TabPanel({
+          id: "stacktrace-tab",
           className: "stacktrace-tab",
           key: "stacktrace",
           title: Locale.$STR("netRequest.callstack")},

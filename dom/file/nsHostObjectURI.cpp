@@ -156,7 +156,7 @@ nsHostObjectURI::Deserialize(const mozilla::ipc::URIParams& aParams)
   return true;
 }
 
-NS_IMETHODIMP
+nsresult
 nsHostObjectURI::SetScheme(const nsACString& aScheme)
 {
   // Disallow setting the scheme, since that could cause us to be associated
@@ -186,6 +186,8 @@ nsHostObjectURI::CloneInternal(mozilla::net::nsSimpleURI::RefHandlingEnum aRefHa
 
   u->mPrincipal = mPrincipal;
   u->mBlobImpl = mBlobImpl;
+
+  nsHostObjectProtocolHandler::StoreClonedURI(newRef, simpleClone);
 
   simpleClone.forget(aClone);
   return NS_OK;
@@ -225,6 +227,20 @@ nsHostObjectURI::EqualsInternal(nsIURI* aOther,
   // else, at least one of us lacks a principal; only equal if *both* lack it.
   *aResult = (!mPrincipal && !otherUri->mPrincipal);
   return NS_OK;
+}
+
+NS_IMPL_ISUPPORTS(nsHostObjectURI::Mutator, nsIURISetters, nsIURIMutator, nsIBlobURIMutator, nsIPrincipalURIMutator)
+
+NS_IMETHODIMP
+nsHostObjectURI::Mutate(nsIURIMutator** aMutator)
+{
+    RefPtr<nsHostObjectURI::Mutator> mutator = new nsHostObjectURI::Mutator();
+    nsresult rv = mutator->InitFromURI(this);
+    if (NS_FAILED(rv)) {
+        return rv;
+    }
+    mutator.forget(aMutator);
+    return NS_OK;
 }
 
 // nsIClassInfo methods:

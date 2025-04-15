@@ -43,7 +43,7 @@ def test_handle_prompt_ignore():
     """TODO"""
 
 
-def test_handle_prompt_accept(new_session):
+def test_handle_prompt_accept(new_session, add_browser_capabilites):
     """
     2. Handle any user prompts and return its value if it is an error.
 
@@ -63,7 +63,7 @@ def test_handle_prompt_accept(new_session):
            Accept the current user prompt.
 
     """
-    _, session = new_session({"alwaysMatch": {"unhandledPromptBehavior": "accept"}})
+    _, session = new_session({"capabilities": {"alwaysMatch": add_browser_capabilites({"unhandledPromptBehavior": "accept"})}})
     session.url = inline("<title>WD doc title</title>")
     create_dialog(session)("alert", text="accept #1", result_var="accept1")
 
@@ -121,7 +121,7 @@ def test_handle_prompt_missing_value(session, create_dialog):
 
     assert_error(response, "unexpected alert open")
     assert_dialog_handled(session, "dismiss #1")
-    assert read_global(session, "accept1") == None
+    assert read_global(session, "dismiss1") == None
 
     create_dialog("confirm", text="dismiss #2", result_var="dismiss2")
 

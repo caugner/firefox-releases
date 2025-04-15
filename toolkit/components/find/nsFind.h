@@ -14,7 +14,7 @@
 #include "nsIDOMNode.h"
 #include "nsIDOMRange.h"
 #include "nsIContentIterator.h"
-#include "nsIWordBreaker.h"
+#include "mozilla/intl/WordBreaker.h"
 
 class nsIContent;
 
@@ -44,7 +44,7 @@ protected:
 
   // Use "find entire words" mode by setting to a word breaker or null, to
   // disable "entire words" mode.
-  nsCOMPtr<nsIWordBreaker> mWordBreaker;
+  RefPtr<mozilla::intl::WordBreaker> mWordBreaker;
 
   int32_t mIterOffset;
   nsCOMPtr<nsIDOMNode> mIterNode;
@@ -54,7 +54,6 @@ protected:
   nsresult GetBlockParent(nsIDOMNode* aNode, nsIDOMNode** aParent);
 
   // Utility routines:
-  bool IsTextNode(nsIDOMNode* aNode);
   bool IsBlockNode(nsIContent* aNode);
   bool SkipNode(nsIContent* aNode);
   bool IsVisibleNode(nsIDOMNode* aNode);

@@ -4,7 +4,7 @@
 const TEST_URI = "data:text/html;charset=utf-8," +
   "<p>browser_target-from-url.js</p>";
 
-const { DevToolsLoader } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const { DevToolsLoader } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const { targetFromURL } = require("devtools/client/framework/target-from-url");
 
 Services.prefs.setBoolPref("devtools.debugger.remote-enabled", true);
@@ -81,7 +81,7 @@ function* setupDebuggerServer(websocket) {
   let { DebuggerServer } = loader.require("devtools/server/main");
 
   DebuggerServer.init();
-  DebuggerServer.addBrowserActors();
+  DebuggerServer.registerAllActors();
   DebuggerServer.allowChromeProcess = true;
 
   let listener = DebuggerServer.createListener();

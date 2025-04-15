@@ -2,7 +2,7 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-Components.utils.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://testing-common/httpd.js");
 var gServer = new HttpServer();
 gServer.start(-1);
 
@@ -37,9 +37,43 @@ function backgroundUpdate(aCallback) {
 function run_test() {
   do_test_pending();
 
-  mapUrlToFile("/cache.xml", do_get_file("data/test_sourceURI.xml"), gServer);
-  Services.prefs.setCharPref(PREF_GETADDONS_BYIDS, BASE_URL + "/cache.xml");
-  Services.prefs.setCharPref(PREF_GETADDONS_BYIDS_PERFORMANCE, BASE_URL + "/cache.xml");
+  const GETADDONS_RESPONSE = {
+    page_size: 25,
+    next: null,
+    previous: null,
+    results: [
+      {
+        name: "Test",
+        type: "extension",
+        guid: "addon@tests.mozilla.org",
+        current_version: {
+          version: "1",
+          files: [
+            {
+              platform: "all",
+              url: "http://www.example.com/testaddon.xpi"
+            },
+          ],
+        },
+      }
+    ],
+  };
+  gServer.registerPathHandler("/addons.json", (request, response) => {
+    response.setHeader("content-type", "application/json");
+    response.write(JSON.stringify(GETADDONS_RESPONSE));
+  });
+
+  const COMPAT_RESPONSE = {
+    next: null,
+    results: [],
+  };
+  gServer.registerPathHandler("/compat.json", (request, response) => {
+    response.setHeader("content-type", "application/json");
+    response.write(JSON.stringify(COMPAT_RESPONSE));
+  });
+
+  Services.prefs.setCharPref(PREF_GETADDONS_BYIDS, `${BASE_URL}/addons.json`);
+  Services.prefs.setCharPref(PREF_COMPAT_OVERRIDES, `${BASE_URL}/compat.json`);
   Services.prefs.setBoolPref(PREF_GETADDONS_CACHE_ENABLED, true);
 
   createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1", "1");
@@ -47,16 +81,16 @@ function run_test() {
   startupManager();
 
   AddonManager.getAddonByID("addon@tests.mozilla.org", function(a) {
-    do_check_neq(a, null);
-    do_check_eq(a.sourceURI, null);
+    Assert.notEqual(a, null);
+    Assert.equal(a.sourceURI, null);
 
     backgroundUpdate(function() {
       restartManager();
 
       AddonManager.getAddonByID("addon@tests.mozilla.org", function(a2) {
-        do_check_neq(a2, null);
-        do_check_neq(a2.sourceURI, null);
-        do_check_eq(a2.sourceURI.spec, "http://www.example.com/testaddon.xpi");
+        Assert.notEqual(a2, null);
+        Assert.notEqual(a2.sourceURI, null);
+        Assert.equal(a2.sourceURI.spec, "http://www.example.com/testaddon.xpi");
 
         do_test_finished();
       });

@@ -2,10 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const nsIBLS = Components.interfaces.nsIBlocklistService;
-Components.utils.import("resource://testing-common/httpd.js");
+const nsIBLS = Ci.nsIBlocklistService;
+ChromeUtils.import("resource://testing-common/httpd.js");
 
-var gBlocklistService = null;
 var gNotifier = null;
 var gNextTest = null;
 var gPluginHost = null;
@@ -60,31 +59,31 @@ var PLUGINS = [{
 }];
 
 function test_basic() {
-  var blocklist = Components.classes["@mozilla.org/extensions/blocklist;1"].getService(nsIBLS);
+  var blocklist = Cc["@mozilla.org/extensions/blocklist;1"].getService(nsIBLS);
 
-  do_check_true(blocklist.getPluginBlocklistState(PLUGINS[0], "1", "1.9") == nsIBLS.STATE_OUTDATED);
+  Assert.ok(blocklist.getPluginBlocklistState(PLUGINS[0], "1", "1.9") == nsIBLS.STATE_OUTDATED);
 
-  do_check_true(blocklist.getPluginBlocklistState(PLUGINS[1], "1", "1.9") == nsIBLS.STATE_VULNERABLE_UPDATE_AVAILABLE);
+  Assert.ok(blocklist.getPluginBlocklistState(PLUGINS[1], "1", "1.9") == nsIBLS.STATE_VULNERABLE_UPDATE_AVAILABLE);
 
-  do_check_true(blocklist.getPluginBlocklistState(PLUGINS[2], "1", "1.9") == nsIBLS.STATE_VULNERABLE_NO_UPDATE);
+  Assert.ok(blocklist.getPluginBlocklistState(PLUGINS[2], "1", "1.9") == nsIBLS.STATE_VULNERABLE_NO_UPDATE);
 
-  do_check_true(blocklist.getPluginBlocklistState(PLUGINS[3], "1", "1.9") == nsIBLS.STATE_BLOCKED);
+  Assert.ok(blocklist.getPluginBlocklistState(PLUGINS[3], "1", "1.9") == nsIBLS.STATE_BLOCKED);
 
-  do_check_true(blocklist.getPluginBlocklistState(PLUGINS[4], "1", "1.9") == nsIBLS.STATE_SOFTBLOCKED);
+  Assert.ok(blocklist.getPluginBlocklistState(PLUGINS[4], "1", "1.9") == nsIBLS.STATE_SOFTBLOCKED);
 
-  do_check_true(blocklist.getPluginBlocklistState(PLUGINS[5], "1", "1.9") == nsIBLS.STATE_NOT_BLOCKED);
+  Assert.ok(blocklist.getPluginBlocklistState(PLUGINS[5], "1", "1.9") == nsIBLS.STATE_NOT_BLOCKED);
 
   gNextTest = test_is_not_clicktoplay;
-  do_execute_soon(gNextTest);
+  executeSoon(gNextTest);
 }
 
 function get_test_plugin() {
-  var pluginHost = Components.classes["@mozilla.org/plugin/host;1"].getService(Components.interfaces.nsIPluginHost);
+  var pluginHost = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
   for (var plugin of pluginHost.getPluginTags()) {
     if (plugin.name == "Test Plug-in")
       return plugin;
   }
-  do_check_true(false);
+  Assert.ok(false);
   return null;
 }
 
@@ -92,9 +91,9 @@ function get_test_plugin() {
 // so it shouldn't be click-to-play.
 function test_is_not_clicktoplay() {
   var plugin = get_test_plugin();
-  var blocklistState = gBlocklistService.getPluginBlocklistState(plugin, "1", "1.9");
-  do_check_neq(blocklistState, Components.interfaces.nsIBlocklistService.STATE_VULNERABLE_UPDATE_AVAILABLE);
-  do_check_neq(blocklistState, Components.interfaces.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
+  var blocklistState = Services.blocklist.getPluginBlocklistState(plugin, "1", "1.9");
+  Assert.notEqual(blocklistState, Ci.nsIBlocklistService.STATE_VULNERABLE_UPDATE_AVAILABLE);
+  Assert.notEqual(blocklistState, Ci.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
 
   Services.prefs.setCharPref("extensions.blocklist.url", "http://localhost:" + gPort + "/data/test_pluginBlocklistCtpUndo.xml");
   gNextTest = test_is_clicktoplay;
@@ -105,8 +104,8 @@ function test_is_not_clicktoplay() {
 // so it should be click-to-play.
 function test_is_clicktoplay() {
   var plugin = get_test_plugin();
-  var blocklistState = gBlocklistService.getPluginBlocklistState(plugin, "1", "1.9");
-  do_check_eq(blocklistState, Components.interfaces.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
+  var blocklistState = Services.blocklist.getPluginBlocklistState(plugin, "1", "1.9");
+  Assert.equal(blocklistState, Ci.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
 
   Services.prefs.setCharPref("extensions.blocklist.url", "http://localhost:" + gPort + "/data/test_pluginBlocklistCtp.xml");
   gNextTest = test_is_not_clicktoplay2;
@@ -117,9 +116,9 @@ function test_is_clicktoplay() {
 // to the old one), so the plugin shouldn't be click-to-play any more.
 function test_is_not_clicktoplay2() {
   var plugin = get_test_plugin();
-  var blocklistState = gBlocklistService.getPluginBlocklistState(plugin, "1", "1.9");
-  do_check_neq(blocklistState, Components.interfaces.nsIBlocklistService.STATE_VULNERABLE_UPDATE_AVAILABLE);
-  do_check_neq(blocklistState, Components.interfaces.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
+  var blocklistState = Services.blocklist.getPluginBlocklistState(plugin, "1", "1.9");
+  Assert.notEqual(blocklistState, Ci.nsIBlocklistService.STATE_VULNERABLE_UPDATE_AVAILABLE);
+  Assert.notEqual(blocklistState, Ci.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
 
   Services.prefs.setCharPref("extensions.blocklist.url", "http://localhost:" + gPort + "/data/test_pluginBlocklistCtpUndo.xml");
   gNextTest = test_disable_blocklist;
@@ -130,21 +129,21 @@ function test_is_not_clicktoplay2() {
 // result in the plugin not being click-to-play.
 function test_disable_blocklist() {
   var plugin = get_test_plugin();
-  var blocklistState = gBlocklistService.getPluginBlocklistState(plugin, "1", "1.9");
-  do_check_eq(blocklistState, Components.interfaces.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
+  var blocklistState = Services.blocklist.getPluginBlocklistState(plugin, "1", "1.9");
+  Assert.equal(blocklistState, Ci.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
 
   gNextTest = null;
   Services.prefs.setBoolPref("extensions.blocklist.enabled", false);
-  blocklistState = gBlocklistService.getPluginBlocklistState(plugin, "1", "1.9");
-  do_check_neq(blocklistState, Components.interfaces.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
-  do_check_neq(blocklistState, Components.interfaces.nsIBlocklistService.STATE_VULNERABLE_UPDATE_AVAILABLE);
+  blocklistState = Services.blocklist.getPluginBlocklistState(plugin, "1", "1.9");
+  Assert.notEqual(blocklistState, Ci.nsIBlocklistService.STATE_VULNERABLE_NO_UPDATE);
+  Assert.notEqual(blocklistState, Ci.nsIBlocklistService.STATE_VULNERABLE_UPDATE_AVAILABLE);
 
   // it should still be possible to make a plugin click-to-play via the pref
   // and setting that plugin's enabled state to click-to-play
   Services.prefs.setBoolPref("plugins.click_to_play", true);
   let previousEnabledState = plugin.enabledState;
-  plugin.enabledState = Components.interfaces.nsIPluginTag.STATE_CLICKTOPLAY;
-  do_check_eq(gPluginHost.getStateForType("application/x-test"), Components.interfaces.nsIPluginTag.STATE_CLICKTOPLAY);
+  plugin.enabledState = Ci.nsIPluginTag.STATE_CLICKTOPLAY;
+  Assert.equal(gPluginHost.getStateForType("application/x-test"), Ci.nsIPluginTag.STATE_CLICKTOPLAY);
   // clean up plugin state
   plugin.enabledState = previousEnabledState;
 
@@ -154,7 +153,7 @@ function test_disable_blocklist() {
 // Observe "blocklist-updated" so we know when to advance to the next test
 function observer() {
   if (gNextTest)
-    do_execute_soon(gNextTest);
+    executeSoon(gNextTest);
 }
 
 function run_test() {
@@ -164,12 +163,11 @@ function run_test() {
   Services.prefs.setBoolPref("plugin.load_flash_only", false);
   startupManager();
 
-  gPluginHost = Components.classes["@mozilla.org/plugin/host;1"].getService(Components.interfaces.nsIPluginHost);
-  gBlocklistService = Components.classes["@mozilla.org/extensions/blocklist;1"].getService(Components.interfaces.nsIBlocklistService);
-  gNotifier = Components.classes["@mozilla.org/extensions/blocklist;1"].getService(Components.interfaces.nsITimerCallback);
+  gPluginHost = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
+  gNotifier = Cc["@mozilla.org/extensions/blocklist;1"].getService(Ci.nsITimerCallback);
   Services.obs.addObserver(observer, "blocklist-updated");
 
-  do_register_cleanup(function() {
+  registerCleanupFunction(function() {
     Services.prefs.clearUserPref("extensions.blocklist.url");
     Services.prefs.clearUserPref("extensions.blocklist.enabled");
     Services.prefs.clearUserPref("plugins.click_to_play");

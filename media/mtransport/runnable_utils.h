@@ -28,26 +28,7 @@ enum RunnableResult {
 static inline nsresult
 RunOnThreadInternal(nsIEventTarget *thread, nsIRunnable *runnable, uint32_t flags)
 {
-  nsCOMPtr<nsIRunnable> runnable_ref(runnable);
-  if (thread) {
-    bool on;
-    nsresult rv;
-    rv = thread->IsOnCurrentThread(&on);
-
-    // If the target thread has already shut down, we don't want to assert.
-    if (rv != NS_ERROR_NOT_INITIALIZED) {
-      MOZ_ASSERT(NS_SUCCEEDED(rv));
-    }
-
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      // we're going to destroy the runnable on this thread!
-      return rv;
-    }
-    if (!on) {
-      return thread->Dispatch(runnable_ref.forget(), flags);
-    }
-  }
-  return runnable_ref->Run();
+  return thread->Dispatch(runnable, flags);
 }
 
 template<RunnableResult result>
@@ -55,7 +36,7 @@ class runnable_args_base : public Runnable {
  public:
   runnable_args_base() : Runnable("media-runnable_args_base") {}
 
-  NS_IMETHOD Run() = 0;
+  NS_IMETHOD Run() override = 0;
 };
 
 
@@ -117,7 +98,7 @@ public:
     : mFunc(f), mArgs(Forward<Arguments>(args)...)
   {}
 
-  NS_IMETHOD Run() {
+  NS_IMETHOD Run() override {
     detail::RunnableFunctionCallHelper<void>::apply(mFunc, mArgs, typename IndexSequenceFor<Args...>::Type());
     return NS_OK;
   }
@@ -143,7 +124,7 @@ public:
     : mReturn(ret), mFunc(f), mArgs(Forward<Arguments>(args)...)
   {}
 
-  NS_IMETHOD Run() {
+  NS_IMETHOD Run() override {
     *mReturn = detail::RunnableFunctionCallHelper<Ret>::apply(mFunc, mArgs, typename IndexSequenceFor<Args...>::Type());
     return NS_OK;
   }
@@ -170,7 +151,7 @@ public:
     : mObj(obj), mMethod(method), mArgs(Forward<Arguments>(args)...)
   {}
 
-  NS_IMETHOD Run() {
+  NS_IMETHOD Run() override {
     detail::RunnableMethodCallHelper<void>::apply(mObj, mMethod, mArgs, typename IndexSequenceFor<Args...>::Type());
     return NS_OK;
   }
@@ -197,7 +178,7 @@ public:
     : mReturn(ret), mObj(obj), mMethod(method), mArgs(Forward<Arguments>(args)...)
   {}
 
-  NS_IMETHOD Run() {
+  NS_IMETHOD Run() override {
     *mReturn = detail::RunnableMethodCallHelper<Ret>::apply(mObj, mMethod, mArgs, typename IndexSequenceFor<Args...>::Type());
     return NS_OK;
   }
@@ -245,7 +226,7 @@ class DispatchedRelease : public detail::runnable_args_base<detail::NoResult> {
 public:
   explicit DispatchedRelease(already_AddRefed<T>& ref) : ref_(ref) {}
 
-  NS_IMETHOD Run() {
+  NS_IMETHOD Run() override {
     ref_ = nullptr;
     return NS_OK;
   }

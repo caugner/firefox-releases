@@ -21,6 +21,11 @@ struct StylePrefs
   static bool sControlCharVisibility;
   static bool sFramesTimingFunctionEnabled;
   static bool sUnprefixedFullscreenApiEnabled;
+  static bool sVisitedLinksEnabled;
+  static bool sMozDocumentEnabledInContent;
+  static bool sGridTemplateSubgridValueEnabled;
+  static bool sFontVariationsEnabled;
+  static bool sEmulateMozBoxWithFlex;
 
   static void Init();
 };

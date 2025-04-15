@@ -61,6 +61,7 @@ pub struct ParserContext<'a> {
 
 impl<'a> ParserContext<'a> {
     /// Create a parser context.
+    #[inline]
     pub fn new(
         stylesheet_origin: Origin,
         url_data: &'a UrlExtraData,
@@ -79,6 +80,7 @@ impl<'a> ParserContext<'a> {
     }
 
     /// Create a parser context for on-the-fly parsing in CSSOM
+    #[inline]
     pub fn new_for_cssom(
         url_data: &'a UrlExtraData,
         rule_type: Option<CssRuleType>,
@@ -95,6 +97,7 @@ impl<'a> ParserContext<'a> {
     }
 
     /// Create a parser context based on a previous context, but with a modified rule type.
+    #[inline]
     pub fn new_with_rule_type(
         context: &'a ParserContext,
         rule_type: CssRuleType,
@@ -108,6 +111,12 @@ impl<'a> ParserContext<'a> {
             quirks_mode: context.quirks_mode,
             namespaces: Some(namespaces),
         }
+    }
+
+    /// Whether we're in a @page rule.
+    #[inline]
+    pub fn in_page_rule(&self) -> bool {
+        self.rule_type.map_or(false, |rule_type| rule_type == CssRuleType::Page)
     }
 
     /// Get the rule type, which assumes that one is available.
@@ -132,9 +141,9 @@ impl<'a> ParserContext<'a> {
         context.error_reporter.report_error(self.url_data, location, error)
     }
 
-    /// Returns whether this is a chrome stylesheets.
-    pub fn in_chrome_stylesheet(&self) -> bool {
-        self.url_data.is_chrome()
+    /// Returns whether chrome-only rules should be parsed.
+    pub fn chrome_rules_enabled(&self) -> bool {
+        self.url_data.is_chrome() || self.stylesheet_origin == Origin::User
     }
 }
 
@@ -146,8 +155,10 @@ pub trait Parse : Sized {
     /// Parse a value of this type.
     ///
     /// Returns an error on failure.
-    fn parse<'i, 't>(context: &ParserContext, input: &mut Parser<'i, 't>)
-                     -> Result<Self, ParseError<'i>>;
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>>;
 }
 
 impl<T> Parse for Vec<T>

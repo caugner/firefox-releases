@@ -111,13 +111,13 @@ CanvasClient2D::Update(gfx::IntSize aSize, ShareableCanvasRenderer* aCanvasRende
     if (mTextureFlags & TextureFlags::ORIGIN_BOTTOM_LEFT) {
       flags |= TextureFlags::ORIGIN_BOTTOM_LEFT;
     }
+    flags |= TextureFlags::NON_BLOCKING_READ_LOCK;
 
     mBackBuffer = CreateTextureClientForCanvas(surfaceFormat, aSize, flags, aCanvasRenderer);
     if (!mBackBuffer) {
       NS_WARNING("Failed to allocate the TextureClient");
       return;
     }
-    mBackBuffer->EnableReadLock();
     MOZ_ASSERT(mBackBuffer->CanExposeDrawTarget());
 
     bufferCreated = true;
@@ -405,23 +405,25 @@ CanvasClientSharedSurface::UpdateRenderer(gfx::IntSize aSize, Renderer& aRendere
 
   RefPtr<TextureClient> newFront;
 
+  mShSurfClient = nullptr;
   if (canvasRenderer && canvasRenderer->mGLFrontbuffer) {
     mShSurfClient = CloneSurface(canvasRenderer->mGLFrontbuffer.get(), canvasRenderer->mFactory.get());
     if (!mShSurfClient) {
       gfxCriticalError() << "Invalid canvas front buffer";
       return;
     }
-  } else {
+  } else if (gl->Screen()) {
     mShSurfClient = gl->Screen()->Front();
     if (mShSurfClient && mShSurfClient->GetAllocator() &&
         mShSurfClient->GetAllocator() != GetForwarder()->GetTextureForwarder()) {
       mShSurfClient = CloneSurface(mShSurfClient->Surf(), gl->Screen()->Factory());
     }
-    if (!mShSurfClient) {
-      return;
-    }
   }
-  MOZ_ASSERT(mShSurfClient);
+
+  if (!mShSurfClient) {
+    gfxCriticalError() << "Invalid canvas front buffer or screen";
+    return;
+  }
 
   newFront = mShSurfClient;
 

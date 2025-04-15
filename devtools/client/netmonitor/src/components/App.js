@@ -4,54 +4,79 @@
 
 "use strict";
 
-const {
-  createFactory,
-  DOM,
-  PropTypes,
-} = require("devtools/client/shared/vendor/react");
-const { connect } = require("devtools/client/shared/vendor/react-redux");
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const { connect } = require("devtools/client/shared/redux/visibility-handler-connect");
 
 // Components
-const MonitorPanel = createFactory(require("./MonitorPanel"));
-const StatisticsPanel = createFactory(require("./StatisticsPanel"));
+loader.lazyGetter(this, "MonitorPanel", function () {
+  return createFactory(require("./MonitorPanel"));
+});
+loader.lazyGetter(this, "StatisticsPanel", function () {
+  return createFactory(require("./StatisticsPanel"));
+});
+loader.lazyGetter(this, "DropHarHandler", function () {
+  return createFactory(require("./DropHarHandler"));
+});
 
-const { div } = DOM;
+const { div } = dom;
 
 /**
  * App component
  * The top level component for representing main panel
  */
-function App({
-  connector,
-  openLink,
-  sourceMapService,
-  statisticsOpen,
-}) {
-  return (
-    div({ className: "network-monitor" },
-      !statisticsOpen ? MonitorPanel({
-        connector,
-        sourceMapService,
-        openLink,
-      }) : StatisticsPanel({
-        connector
-      })
-    )
-  );
+class App extends Component {
+  static get propTypes() {
+    return {
+      // List of actions passed to HAR importer.
+      actions: PropTypes.object.isRequired,
+      // The backend connector object.
+      connector: PropTypes.object.isRequired,
+      // Callback for opening links in the UI
+      openLink: PropTypes.func,
+      // Callback for opening split console.
+      openSplitConsole: PropTypes.func,
+      // Service to enable the source map feature.
+      sourceMapService: PropTypes.object,
+      // True if the stats panel is opened.
+      statisticsOpen: PropTypes.bool.isRequired,
+    };
+  }
+
+  // Rendering
+
+  render() {
+    let {
+      actions,
+      connector,
+      openLink,
+      openSplitConsole,
+      sourceMapService,
+      statisticsOpen,
+    } = this.props;
+
+    return (
+      div({className: "network-monitor"},
+        !statisticsOpen ?
+          DropHarHandler({
+            actions,
+            openSplitConsole,
+          },
+            MonitorPanel({
+              connector,
+              sourceMapService,
+              openLink,
+            })
+          ) : StatisticsPanel({
+            connector
+          }),
+      )
+    );
+  }
 }
 
-App.displayName = "App";
-
-App.propTypes = {
-  // The backend connector object.
-  connector: PropTypes.object.isRequired,
-  // Callback for opening links in the UI
-  openLink: PropTypes.func,
-  // Service to enable the source map feature.
-  sourceMapService: PropTypes.object,
-  // True if the stats panel is opened.
-  statisticsOpen: PropTypes.bool.isRequired,
-};
+// Exports
 
 module.exports = connect(
   (state) => ({ statisticsOpen: state.ui.statisticsOpen }),

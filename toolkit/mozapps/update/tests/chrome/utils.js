@@ -71,10 +71,7 @@
 
 /* globals TESTS, runTest, finishTest */
 
-const { classes: Cc, interfaces: Ci, manager: Cm, results: Cr,
-        utils: Cu } = Components;
-
-Cu.import("resource://gre/modules/Services.jsm", this);
+ChromeUtils.import("resource://gre/modules/Services.jsm", this);
 
 /* import-globals-from testConstants.js */
 Services.scriptloader.loadSubScript("chrome://mochitests/content/chrome/toolkit/mozapps/update/tests/chrome/testConstants.js", this);
@@ -259,7 +256,6 @@ function runTestDefaultWaitForWindowClosed() {
     setupPrefs();
     gEnv.set("MOZ_TEST_SKIP_UPDATE_STAGE", "1");
     removeUpdateDirsAndFiles();
-    reloadUpdateManagerData();
     setupTimer(gTestTimeout);
     SimpleTest.executeSoon(setupTestUpdater);
   }
@@ -480,9 +476,7 @@ function delayedDefaultCallback() {
  * @return nsIFile for the continue file.
  */
 function getContinueFile() {
-  let continueFile = Cc["@mozilla.org/file/directory_service;1"].
-                     getService(Ci.nsIProperties).
-                     get("CurWorkD", Ci.nsIFile);
+  let continueFile = Services.dirsvc.get("CurWorkD", Ci.nsIFile);
   let continuePath = REL_PATH_DATA + "continue";
   let continuePathParts = continuePath.split("/");
   for (let i = 0; i < continuePathParts.length; ++i) {

@@ -47,14 +47,19 @@ public:
   SetResponse(RefPtr<AuthenticatorResponse>);
 
   static already_AddRefed<Promise>
-  IsPlatformAuthenticatorAvailable(GlobalObject& aGlobal);
+  IsUserVerifyingPlatformAuthenticatorAvailable(GlobalObject& aGlobal);
+
+  void
+  GetClientExtensionResults(AuthenticationExtensionsClientOutputs& aResult);
+
+  void
+  SetClientExtensionResultAppId(bool aResult);
 
 private:
   CryptoBuffer mRawId;
   JS::Heap<JSObject*> mRawIdCachedObj;
   RefPtr<AuthenticatorResponse> mResponse;
-  // Extensions are not supported yet.
-  // <some type> mClientExtensionResults;
+  AuthenticationExtensionsClientOutputs mClientExtensionOutputs;
 };
 
 } // namespace dom

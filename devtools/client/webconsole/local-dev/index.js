@@ -12,13 +12,6 @@ const { EventEmitter } = require("devtools-modules");
 const { Services: { appinfo, pref } } = require("devtools-modules");
 const { bootstrap } = require("devtools-launchpad");
 
-try {
-  const Perf = require("react-addons-perf");
-  window.Perf = Perf;
-} catch (e) {
-  // Perf addon is only available in development builds
-}
-
 EventEmitter.decorate(window);
 
 require("../../themes/widgets.css");
@@ -45,6 +38,7 @@ pref("devtools.webconsole.inputHistoryCount", 50);
 pref("devtools.webconsole.persistlog", false);
 pref("devtools.webconsole.timestampMessages", false);
 pref("devtools.webconsole.autoMultiline", true);
+pref("devtools.webconsole.sidebarToggle", true);
 
 const NewConsoleOutputWrapper = require("../new-console-output/new-console-output-wrapper");
 const NewWebConsoleFrame = require("../new-webconsole").NewWebConsoleFrame;

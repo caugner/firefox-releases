@@ -12,11 +12,15 @@ module.exports = {
     "BrowserFeedWriter": false,
     "CSSPrimitiveValue": false,
     "CSSValueList": false,
+    "Cc": false,
     "CheckerboardReportService": false,
     // Specific to Firefox (Chrome code only).
     "ChromeUtils": false,
     "ChromeWorker": false,
+    "Ci": false,
     "Components": false,
+    "Cr": false,
+    "Cu": false,
     "DOMRequest": false,
     "DedicatedWorkerGlobalScope": false,
     "IDBFileRequest": false,
@@ -34,7 +38,6 @@ module.exports = {
     "MatchPatternSet": false,
     "MenuBoxObject": false,
     // Specific to Firefox (Chrome code only).
-    "MozSelfSupport": false,
     "SharedArrayBuffer": false,
     "SimpleGestureEvent": false,
     // Note: StopIteration will likely be removed as part of removing legacy
@@ -47,6 +50,7 @@ module.exports = {
     "WebrtcGlobalInformation": false,
     // Non-standard, specific to Firefox.
     "XULElement": false,
+    "console": true,
     "dump": true,
     "openDialog": false,
     "sizeToContent": false,
@@ -56,8 +60,31 @@ module.exports = {
     "uneval": false
   },
 
+  "overrides": [{
+    // Turn off use-services for xml files. XBL bindings are going away, and
+    // working out the valid globals for those is difficult.
+    "files": "**/*.xml",
+    "rules": {
+      "mozilla/use-services": "off"
+    }
+  }, {
+    // Turn off browser env for all *.jsm files, and turn on the jsm environment.
+    "env": {
+      "browser": false,
+      "mozilla/jsm": true
+    },
+    "files": "**/*.jsm",
+    "rules": {
+      "mozilla/mark-exported-symbols-as-used": "error",
+      "no-unused-vars": ["error", {
+        "args": "none",
+        "vars": "all"
+      }]
+    }
+  }],
+
   "parserOptions": {
-    "ecmaVersion": 8
+    "ecmaVersion": 9
   },
 
   // When adding items to this file please check for effects on sub-directories.
@@ -89,7 +116,7 @@ module.exports = {
 
     // Warn about cyclomatic complexity in functions.
     // XXX Get this down to 20?
-    "complexity": ["error", 32],
+    "complexity": ["error", 34],
 
     // Don't require spaces around computed properties
     "computed-property-spacing": ["error", "never"],
@@ -140,11 +167,17 @@ module.exports = {
     "mozilla/avoid-removeChild": "error",
     "mozilla/import-browser-window-globals": "error",
     "mozilla/import-globals": "error",
+    "mozilla/no-compare-against-boolean-literals": "error",
+    "mozilla/no-define-cc-etc": "error",
     "mozilla/no-import-into-var-and-global": "error",
     "mozilla/no-useless-parameters": "error",
     "mozilla/no-useless-removeEventListener": "error",
+    "mozilla/use-cc-etc": "error",
+    "mozilla/use-chromeutils-import": "error",
     "mozilla/use-default-preference-values": "error",
+    "mozilla/use-includes-instead-of-indexOf": "error",
     "mozilla/use-ownerGlobal": "error",
+    "mozilla/use-services": "error",
 
     // Always require parenthesis for new calls
     // "new-parens": "error",
@@ -152,6 +185,7 @@ module.exports = {
     // Use [] instead of Array()
     "no-array-constructor": "error",
 
+    // Disallow use of arguments.caller or arguments.callee.
     "no-caller": "error",
 
     // Disallow modifying variables of class declarations.
@@ -217,7 +251,7 @@ module.exports = {
     // Disallow eval and setInteral/setTimeout with strings
     "no-implied-eval": "error",
 
-    // No invalid regular expresions
+    // No invalid regular expressions
     "no-invalid-regexp": "error",
 
     // No odd whitespace characters
@@ -235,8 +269,8 @@ module.exports = {
     // No single if block inside an else block
     "no-lonely-if": "error",
 
-    // No mixing spaces and tabs in indent
-    "no-mixed-spaces-and-tabs": ["error", "smart-tabs"],
+    // no-tabs disallows tabs completely.
+    // "no-mixed-spaces-and-tabs": "error",
 
     // No unnecessary spacing
     "no-multi-spaces": ["error", { exceptions: {
@@ -320,8 +354,7 @@ module.exports = {
     // No declaring variables that are never used
     "no-unused-vars": ["error", {
       "args": "none",
-      "vars": "local",
-      "varsIgnorePattern": "^Cc|Ci|Cu|Cr|EXPORTED_SYMBOLS"
+      "vars": "local"
     }],
 
     // No using variables before defined
@@ -357,13 +390,17 @@ module.exports = {
     "rest-spread-spacing": "error",
 
     // Always require semicolon at end of statement
-    // "semi": ["error", "always"],
+    "semi": ["error", "always"],
 
     // Require space before blocks
     "space-before-blocks": "error",
 
     // Never use spaces before function parentheses
-    "space-before-function-paren": ["error", "never"],
+    "space-before-function-paren": ["error", {
+      "anonymous": "never",
+      "asyncArrow": "always",
+      "named": "never"
+    }],
 
     // No space padding in parentheses
     // "space-in-parens": ["error", "never"],

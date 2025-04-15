@@ -4,7 +4,6 @@
 "use strict";
 
 const { Cc, Ci } = require("chrome");
-const { Task } = require("devtools/shared/task");
 
 loader.lazyRequireGetter(this, "Services");
 loader.lazyRequireGetter(this, "promise");
@@ -47,7 +46,7 @@ const APP_MAP = {
 
 var CACHED_INFO = null;
 
-function* getSystemInfo() {
+async function getSystemInfo() {
   if (CACHED_INFO) {
     return CACHED_INFO;
   }
@@ -75,8 +74,8 @@ function* getSystemInfo() {
     // `getSetting` does not work in child processes on b2g.
     // TODO bug 1205797, make this work in child processes.
     try {
-      hardware = yield exports.getSetting("deviceinfo.hardware");
-      version = yield exports.getSetting("deviceinfo.os");
+      hardware = await exports.getSetting("deviceinfo.hardware");
+      version = await exports.getSetting("deviceinfo.os");
     } catch (e) {
       // Ignore.
     }
@@ -131,9 +130,6 @@ function* getSystemInfo() {
 
     // The application's build ID/date, for example "2004051604".
     appbuildid: appInfo.appBuildID,
-
-    // The application's changeset.
-    changeset: exports.getAppIniString("App", "SourceStamp"),
 
     // The build ID/date of Gecko and the XULRunner platform.
     platformbuildid: appInfo.platformBuildID,
@@ -214,28 +210,6 @@ function getProfileLocation() {
     return profd.leafName;
   } catch (e) {
     return "";
-  }
-}
-
-function getAppIniString(section, key) {
-  let inifile = Services.dirsvc.get("GreD", Ci.nsIFile);
-  inifile.append("application.ini");
-
-  if (!inifile.exists()) {
-    inifile = Services.dirsvc.get("CurProcD", Ci.nsIFile);
-    inifile.append("application.ini");
-  }
-
-  if (!inifile.exists()) {
-    return undefined;
-  }
-
-  let iniParser = Cc["@mozilla.org/xpcom/ini-parser-factory;1"]
-                    .getService(Ci.nsIINIParserFactory).createINIParser(inifile);
-  try {
-    return iniParser.getString(section, key);
-  } catch (e) {
-    return undefined;
   }
 }
 
@@ -349,8 +323,7 @@ function getSetting(name) {
   return deferred.promise;
 }
 
-exports.getSystemInfo = Task.async(getSystemInfo);
-exports.getAppIniString = getAppIniString;
+exports.getSystemInfo = getSystemInfo;
 exports.getSetting = getSetting;
 exports.getScreenDimensions = getScreenDimensions;
 exports.getOSCPU = getOSCPU;

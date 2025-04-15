@@ -7,11 +7,38 @@
 #ifndef mozilla_a11y_HandlerDataCleanup_h
 #define mozilla_a11y_HandlerDataCleanup_h
 
-#include <OleAuto.h>
+#include <oleauto.h>
 #include "HandlerData.h"
 
 namespace mozilla {
 namespace a11y {
+
+inline void
+ReleaseStaticIA2DataInterfaces(StaticIA2Data& aData)
+{
+  // Only interfaces of the proxied object wrapped by this handler should be
+  // released here, never other objects!
+  // For example, if StaticIA2Data were to include accParent in future,
+  // that must not be released here.
+  if (aData.mIA2) {
+    aData.mIA2->Release();
+  }
+  if (aData.mIAHypertext) {
+    aData.mIAHypertext->Release();
+  }
+  if (aData.mIAHyperlink) {
+    aData.mIAHyperlink->Release();
+  }
+  if (aData.mIATable) {
+    aData.mIATable->Release();
+  }
+  if (aData.mIATable2) {
+    aData.mIATable2->Release();
+  }
+  if (aData.mIATableCell) {
+    aData.mIATableCell->Release();
+  }
+}
 
 inline void
 CleanupDynamicIA2Data(DynamicIA2Data& aData, bool aZero=true)

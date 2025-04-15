@@ -5,11 +5,11 @@
 
 "use strict";
 
-const { classes: Cc, interfaces: Ci, manager: Cm, results: Cr, utils: Cu } = Components;
+const Cm = Components.manager;
 
-Cu.import("resource://gre/modules/Promise.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Promise.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const INFO_CONTRACT_ID = "@mozilla.org/toolkit/components/mdnsresponder/dns-info;1";
 const PROVIDER_CONTRACT_ID = "@mozilla.org/presentation-device/multicastdns-provider;1";
@@ -92,7 +92,7 @@ ContractHook.prototype = {
                               this._contractID,
                               this._newFactory);
 
-    do_register_cleanup(() => { this.cleanup.apply(this); });
+    registerCleanupFunction(() => { this.cleanup.apply(this); });
   },
 
   reset: function() {},
@@ -1295,7 +1295,7 @@ function run_test() {
 
   let infoHook = new ContractHook(INFO_CONTRACT_ID, MockDNSServiceInfo);
 
-  do_register_cleanup(() => {
+  registerCleanupFunction(() => {
     Services.prefs.clearUserPref(PREF_DISCOVERY);
     Services.prefs.clearUserPref(PREF_DISCOVERABLE);
   });

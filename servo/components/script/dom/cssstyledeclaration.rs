@@ -21,7 +21,7 @@ use style::properties::{DeclarationSource, Importance, PropertyDeclarationBlock,
 use style::properties::{parse_one_declaration_into, parse_style_attribute, SourcePropertyDeclaration};
 use style::selector_parser::PseudoElement;
 use style::shared_lock::Locked;
-use style_traits::{ParsingMode, ToCss};
+use style_traits::ParsingMode;
 
 // http://dev.w3.org/csswg/cssom/#the-cssstyledeclaration-interface
 #[dom_struct]
@@ -85,7 +85,8 @@ impl CSSStyleOwner {
                     // [1]: https://github.com/whatwg/html/issues/2306
                     if let Some(pdb) = attr {
                         let guard = shared_lock.read();
-                        let serialization = pdb.read_with(&guard).to_css_string();
+                        let mut serialization = String::new();
+                        pdb.read_with(&guard).to_css(&mut serialization).unwrap();
                         el.set_attribute(&local_name!("style"),
                                          AttrValue::Declaration(serialization,
                                                                 pdb));
@@ -163,9 +164,17 @@ macro_rules! css_properties(
     ( $([$getter:ident, $setter:ident, $id:expr],)* ) => (
         $(
             fn $getter(&self) -> DOMString {
+                debug_assert!(
+                    $id.enabled_for_all_content(),
+                    "Someone forgot a #[Pref] annotation"
+                );
                 self.get_property_value($id)
             }
             fn $setter(&self, value: DOMString) -> ErrorResult {
+                debug_assert!(
+                    $id.enabled_for_all_content(),
+                    "Someone forgot a #[Pref] annotation"
+                );
                 self.set_property($id, value, DOMString::new())
             }
         )*
@@ -237,6 +246,10 @@ impl CSSStyleDeclaration {
             return Err(Error::NoModificationAllowed);
         }
 
+        if !id.enabled_for_all_content() {
+            return Ok(());
+        }
+
         self.owner.mutate_associated_block(|pdb, changed| {
             if value.is_empty() {
                 // Step 3
@@ -299,7 +312,7 @@ impl CSSStyleDeclarationMethods for CSSStyleDeclaration {
 
     // https://dev.w3.org/csswg/cssom/#dom-cssstyledeclaration-getpropertyvalue
     fn GetPropertyValue(&self, property: DOMString) -> DOMString {
-        let id = if let Ok(id) = PropertyId::parse(&property, None) {
+        let id = if let Ok(id) = PropertyId::parse(&property) {
             id
         } else {
             // Unkwown property
@@ -310,7 +323,7 @@ impl CSSStyleDeclarationMethods for CSSStyleDeclaration {
 
     // https://dev.w3.org/csswg/cssom/#dom-cssstyledeclaration-getpropertypriority
     fn GetPropertyPriority(&self, property: DOMString) -> DOMString {
-        let id = if let Ok(id) = PropertyId::parse(&property, None) {
+        let id = if let Ok(id) = PropertyId::parse(&property) {
             id
         } else {
             // Unkwown property
@@ -334,7 +347,7 @@ impl CSSStyleDeclarationMethods for CSSStyleDeclaration {
                    priority: DOMString)
                    -> ErrorResult {
         // Step 3
-        let id = if let Ok(id) = PropertyId::parse(&property, None) {
+        let id = if let Ok(id) = PropertyId::parse(&property) {
             id
         } else {
             // Unknown property
@@ -351,7 +364,7 @@ impl CSSStyleDeclarationMethods for CSSStyleDeclaration {
         }
 
         // Step 2 & 3
-        let id = match PropertyId::parse(&property, None) {
+        let id = match PropertyId::parse(&property) {
             Ok(id) => id,
             Err(..) => return Ok(()), // Unkwown property
         };
@@ -383,7 +396,7 @@ impl CSSStyleDeclarationMethods for CSSStyleDeclaration {
             return Err(Error::NoModificationAllowed);
         }
 
-        let id = if let Ok(id) = PropertyId::parse(&property, None) {
+        let id = if let Ok(id) = PropertyId::parse(&property) {
             id
         } else {
             // Unkwown property, cannot be there to remove.
@@ -415,7 +428,8 @@ impl CSSStyleDeclarationMethods for CSSStyleDeclaration {
         self.owner.with_block(|pdb| {
             pdb.declarations().get(index as usize).map(|declaration| {
                 let important = pdb.declarations_importance().get(index);
-                let mut css = declaration.to_css_string();
+                let mut css = String::new();
+                declaration.to_css(&mut css).unwrap();
                 if important {
                     css += " !important";
                 }
@@ -427,7 +441,9 @@ impl CSSStyleDeclarationMethods for CSSStyleDeclaration {
     // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-csstext
     fn CssText(&self) -> DOMString {
         self.owner.with_block(|pdb| {
-            DOMString::from(pdb.to_css_string())
+            let mut serialization = String::new();
+            pdb.to_css(&mut serialization).unwrap();
+            DOMString::from(serialization)
         })
     }
 

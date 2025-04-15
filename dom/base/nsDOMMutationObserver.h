@@ -20,8 +20,8 @@
 #include "mozilla/dom/Element.h"
 #include "nsClassHashtable.h"
 #include "nsNodeUtils.h"
-#include "nsIDOMMutationEvent.h"
 #include "nsWrapperCache.h"
+#include "mozilla/dom/MutationEventBinding.h"
 #include "mozilla/dom/MutationObserverBinding.h"
 #include "nsIDocument.h"
 #include "mozilla/dom/Animation.h"
@@ -59,7 +59,7 @@ public:
 
   void GetType(mozilla::dom::DOMString& aRetVal) const
   {
-    aRetVal.SetOwnedAtom(mType, mozilla::dom::DOMString::eNullNotExpected);
+    aRetVal.SetKnownLiveAtom(mType, mozilla::dom::DOMString::eNullNotExpected);
   }
 
   nsINode* GetTarget() const
@@ -83,17 +83,18 @@ public:
 
   void GetAttributeName(mozilla::dom::DOMString& aRetVal) const
   {
-    aRetVal.SetOwnedAtom(mAttrName, mozilla::dom::DOMString::eTreatNullAsNull);
+    aRetVal.SetKnownLiveAtom(mAttrName,
+                             mozilla::dom::DOMString::eTreatNullAsNull);
   }
 
   void GetAttributeNamespace(mozilla::dom::DOMString& aRetVal) const
   {
-    aRetVal.SetOwnedString(mAttrNamespace);
+    aRetVal.SetKnownLiveString(mAttrNamespace);
   }
 
   void GetOldValue(mozilla::dom::DOMString& aRetVal) const
   {
-    aRetVal.SetOwnedString(mPrevValue);
+    aRetVal.SetKnownLiveString(mPrevValue);
   }
 
   void GetAddedAnimations(AnimationArray& aRetVal) const
@@ -403,14 +404,13 @@ public:
   NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
   NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
 
-  virtual void AttributeSetToCurrentValue(nsIDocument* aDocument,
-                                          mozilla::dom::Element* aElement,
+  virtual void AttributeSetToCurrentValue(mozilla::dom::Element* aElement,
                                           int32_t aNameSpaceID,
                                           nsAtom* aAttribute) override
   {
     // We can reuse AttributeWillChange implementation.
-    AttributeWillChange(aDocument, aElement, aNameSpaceID, aAttribute,
-                        nsIDOMMutationEvent::MODIFICATION, nullptr);
+    AttributeWillChange(aElement, aNameSpaceID, aAttribute,
+                        mozilla::dom::MutationEventBinding::MODIFICATION, nullptr);
   }
 
 protected:
@@ -575,12 +575,9 @@ public:
   }
 
   // static methods
-  static void HandleMutations(mozilla::AutoSlowOperation& aAso)
-  {
-    if (sScheduledMutationObservers) {
-      HandleMutationsInternal(aAso);
-    }
-  }
+  static void QueueMutationObserverMicroTask();
+
+  static void HandleMutations(mozilla::AutoSlowOperation& aAso);
 
   static bool AllScheduledMutationObserversAreSuppressed()
   {

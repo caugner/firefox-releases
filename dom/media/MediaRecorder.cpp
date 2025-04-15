@@ -13,6 +13,7 @@
 #include "MediaDecoder.h"
 #include "MediaEncoder.h"
 #include "MediaStreamGraphImpl.h"
+#include "VideoUtils.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/dom/AudioStreamTrack.h"
 #include "mozilla/dom/BlobEvent.h"
@@ -29,6 +30,7 @@
 #include "nsCharSeparatedTokenizer.h"
 #include "nsContentTypeParser.h"
 #include "nsContentUtils.h"
+#include "nsDocShell.h"
 #include "nsError.h"
 #include "nsIDocument.h"
 #include "nsIPermissionManager.h"
@@ -219,6 +221,8 @@ class MediaRecorder::Session: public PrincipalChangeObserver<MediaStreamTrack>,
                          , public MutableBlobStorageCallback
   {
   public:
+    // We need to always declare refcounting because
+    // MutableBlobStorageCallback has pure-virtual refcounting.
     NS_DECL_ISUPPORTS_INHERITED
 
     // aDestroyRunnable can be null. If it's not, it will be dispatched after
@@ -867,7 +871,7 @@ private:
     // Create a TaskQueue to read encode media data from MediaEncoder.
     MOZ_RELEASE_ASSERT(!mEncoderThread);
     RefPtr<SharedThreadPool> pool =
-      SharedThreadPool::Get(NS_LITERAL_CSTRING("MediaRecorderReadThread"));
+      GetMediaThreadPool(MediaThreadType::WEBRTC_DECODER);
     if (!pool) {
       LOG(LogLevel::Debug, ("Session.InitEncoder %p Failed to create "
                             "MediaRecorderReadThread thread pool", this));
@@ -875,7 +879,8 @@ private:
       return;
     }
 
-    mEncoderThread = MakeAndAddRef<TaskQueue>(pool.forget());
+    mEncoderThread =
+      MakeAndAddRef<TaskQueue>(pool.forget(), "MediaRecorderReadThread");
 
     if (!gMediaRecorderShutdownBlocker) {
       // Add a shutdown blocker so mEncoderThread can be shutdown async.
@@ -962,10 +967,13 @@ private:
     }
 
     mEncoderListener = MakeAndAddRef<EncoderListener>(mEncoderThread, this);
-    mEncoderThread->Dispatch(
-      NewRunnableMethod<RefPtr<EncoderListener>>(
-        "mozilla::MediaEncoder::RegisterListener",
-        mEncoder, &MediaEncoder::RegisterListener, mEncoderListener));
+    nsresult rv =
+      mEncoderThread->Dispatch(
+        NewRunnableMethod<RefPtr<EncoderListener>>(
+          "mozilla::MediaEncoder::RegisterListener",
+          mEncoder, &MediaEncoder::RegisterListener, mEncoderListener));
+    MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
+    Unused << rv;
 
     if (mRecorder->mAudioNode) {
       mEncoder->ConnectAudioNode(mRecorder->mAudioNode,
@@ -975,6 +983,10 @@ private:
     for (auto& track : mMediaStreamTracks) {
       mEncoder->ConnectMediaStreamTrack(track);
     }
+
+    // If user defines timeslice interval for video blobs we have to set
+    // appropriate video keyframe interval defined in milliseconds.
+    mEncoder->SetVideoKeyFrameInterval(mTimeSlice);
 
     // Set mRunningState to Running so that ExtractRunnable/DestroyRunnable will
     // take the responsibility to end the session.
@@ -1246,7 +1258,6 @@ MediaRecorder::MediaRecorder(DOMMediaStream& aSourceMediaStream,
   , mState(RecordingState::Inactive)
 {
   MOZ_ASSERT(aOwnerWindow);
-  MOZ_ASSERT(aOwnerWindow->IsInnerWindow());
   mDOMStream = &aSourceMediaStream;
 
   RegisterActivityObserver();
@@ -1260,7 +1271,6 @@ MediaRecorder::MediaRecorder(AudioNode& aSrcAudioNode,
   , mState(RecordingState::Inactive)
 {
   MOZ_ASSERT(aOwnerWindow);
-  MOZ_ASSERT(aOwnerWindow->IsInnerWindow());
 
   mAudioNode = &aSrcAudioNode;
 
@@ -1690,9 +1700,20 @@ MediaRecorder::NotifyOwnerDocumentActivityChanged()
   nsIDocument* doc = window->GetExtantDoc();
   NS_ENSURE_TRUE_VOID(doc);
 
-  LOG(LogLevel::Debug, ("MediaRecorder %p document IsActive %d isVisible %d\n",
-                     this, doc->IsActive(), doc->IsVisible()));
-  if (!doc->IsActive() || !doc->IsVisible()) {
+  bool inFrameSwap = false;
+  if (nsDocShell* docShell = static_cast<nsDocShell*>(doc->GetDocShell())) {
+    inFrameSwap = docShell->InFrameSwap();
+  }
+
+  LOG(LogLevel::Debug, ("MediaRecorder %p NotifyOwnerDocumentActivityChanged "
+                        "IsActive=%d, "
+                        "IsVisible=%d, "
+                        "InFrameSwap=%d",
+                        this,
+                        doc->IsActive(),
+                        doc->IsVisible(),
+                        inFrameSwap));
+  if (!doc->IsActive() || !(inFrameSwap || doc->IsVisible())) {
     // Stop the session.
     ErrorResult result;
     Stop(result);

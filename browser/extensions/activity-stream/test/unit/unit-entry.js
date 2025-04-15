@@ -1,5 +1,19 @@
-const {GlobalOverrider, FakePrefs, FakePerformance, EventEmitter} = require("test/unit/utils");
-const {chaiAssertions} = require("test/schemas/pings");
+import {EventEmitter, FakePerformance, FakePrefs, GlobalOverrider} from "test/unit/utils";
+import Adapter from "enzyme-adapter-react-16";
+import {chaiAssertions} from "test/schemas/pings";
+import enzyme from "enzyme";
+enzyme.configure({adapter: new Adapter()});
+
+// Cause React warnings to make tests that trigger them fail
+const origConsoleError = console.error; // eslint-disable-line no-console
+console.error = function(msg, ...args) { // eslint-disable-line no-console
+  // eslint-disable-next-line no-console
+  origConsoleError.apply(console, [msg, ...args]);
+
+  if (/(Invalid prop|Failed prop type|Check the render method|React Intl)/.test(msg)) {
+    throw new Error(msg);
+  }
+};
 
 const req = require.context(".", true, /\.test\.jsx?$/);
 const files = req.keys();
@@ -12,20 +26,26 @@ chai.use(chaiAssertions);
 let overrider = new GlobalOverrider();
 
 overrider.set({
-  AppConstants: {MOZILLA_OFFICIAL: true},
-  Components: {
-    classes: {},
-    interfaces: {},
-    utils: {
-      import() {},
-      importGlobalProperties() {},
-      reportError() {},
-      now: () => window.performance.now()
-    },
-    isSuccessCode: () => true
+  AddonManager: {
+    getActiveAddons() {
+      return Promise.resolve({addons: [], fullData: false});
+    }
   },
+  AppConstants: {MOZILLA_OFFICIAL: true},
+  ChromeUtils: {
+    defineModuleGetter() {},
+    import() {}
+  },
+  Components: {isSuccessCode: () => true},
   // eslint-disable-next-line object-shorthand
   ContentSearchUIController: function() {}, // NB: This is a function/constructor
+  Cc: {},
+  Ci: {nsIHttpChannel: {REFERRER_POLICY_UNSAFE_URL: 5}},
+  Cu: {
+    importGlobalProperties() {},
+    now: () => window.performance.now(),
+    reportError() {}
+  },
   dump() {},
   fetch() {},
   // eslint-disable-next-line object-shorthand
@@ -33,10 +53,8 @@ overrider.set({
   Preferences: FakePrefs,
   Services: {
     locale: {
+      getAppLocaleAsLangTag() { return "en-US"; },
       getAppLocalesAsLangTags() {},
-      getRequestedLocale() {
-        return "en-US";
-      },
       negotiateLanguages() {}
     },
     urlFormatter: {formatURL: str => str},
@@ -49,12 +67,17 @@ overrider.set({
       addObserver() {},
       removeObserver() {}
     },
+    telemetry: {
+      setEventRecordingEnabled: () => {},
+      recordEvent: eventDetails => {}
+    },
     console: {logStringMessage: () => {}},
     prefs: {
       addObserver() {},
       prefHasUserValue() {},
       removeObserver() {},
       getStringPref() {},
+      getIntPref() {},
       getBoolPref() {},
       getBranch() {},
       getDefaultBranch() {
@@ -71,13 +94,28 @@ overrider.set({
       getBaseDomain({spec}) { return spec.match(/\/([^/]+)/)[1]; },
       getPublicSuffix() {}
     },
-    io: {newURI(url) { return {spec: url}; }},
+    io: {
+      newURI: spec => ({
+        mutate: () => ({
+          setRef: ref => ({
+            finalize: () => ({
+              ref,
+              spec
+            })
+          })
+        }),
+        spec
+      })
+    },
     search: {
       init(cb) { cb(); },
       getVisibleEngines: () => [{identifier: "google"}, {identifier: "bing"}],
       defaultEngine: {identifier: "google"}
     },
-    scriptSecurityManager: {getSystemPrincipal() {}}
+    scriptSecurityManager: {
+      createNullPrincipal() {},
+      getSystemPrincipal() {}
+    }
   },
   XPCOMUtils: {
     defineLazyGetter(_1, _2, f) { f(); },

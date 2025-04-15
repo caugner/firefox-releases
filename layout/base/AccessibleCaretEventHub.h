@@ -11,6 +11,7 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
 #include "nsCOMPtr.h"
+#include "nsDocShell.h"
 #include "nsIFrame.h"
 #include "nsIReflowObserver.h"
 #include "nsIScrollObserver.h"
@@ -19,7 +20,6 @@
 #include "mozilla/RefPtr.h"
 #include "nsWeakReference.h"
 
-class nsDocShell;
 class nsIPresShell;
 class nsITimer;
 
@@ -89,7 +89,7 @@ public:
   State* GetState() const;
 
 protected:
-  virtual ~AccessibleCaretEventHub();
+  virtual ~AccessibleCaretEventHub() = default;
 
 #define MOZ_DECL_STATE_CLASS_GETTER(aClassName)                                \
   class aClassName;                                                            \
@@ -108,7 +108,6 @@ protected:
   MOZ_DECL_STATE_CLASS_GETTER(DragCaretState)
   MOZ_DECL_STATE_CLASS_GETTER(PressNoCaretState)
   MOZ_DECL_STATE_CLASS_GETTER(ScrollState)
-  MOZ_DECL_STATE_CLASS_GETTER(PostScrollState)
   MOZ_DECL_STATE_CLASS_GETTER(LongTapState)
 
   void SetState(State* aState);
@@ -145,9 +144,6 @@ protected:
   // is enabled, it will send long tap event to us.
   nsCOMPtr<nsITimer> mLongTapInjectorTimer;
 
-  // Use this timer for injecting a simulated scroll end.
-  nsCOMPtr<nsITimer> mScrollEndInjectorTimer;
-
   // Last mouse button down event or touch start event point.
   nsPoint mPressPoint{ NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE };
 
@@ -163,7 +159,6 @@ protected:
   // Simulate long tap if the platform does not support eMouseLongTap events.
   static bool sUseLongTapInjector;
 
-  static const int32_t kScrollEndTimerDelay = 300;
   static const int32_t kMoveStartToleranceInPixel = 5;
   static const int32_t kInvalidTouchId = -1;
   static const int32_t kDefaultTouchId = 0; // For mouse event

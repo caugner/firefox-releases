@@ -43,6 +43,7 @@ ServoSupportsRule::Clone() const
   return nullptr;
 }
 
+#ifdef MOZ_OLD_STYLE
 /* virtual */ bool
 ServoSupportsRule::UseForPresentation(nsPresContext* aPresContext,
                                       nsMediaQueryResultCacheKey& aKey)
@@ -52,6 +53,7 @@ ServoSupportsRule::UseForPresentation(nsPresContext* aPresContext,
   MOZ_ASSERT_UNREACHABLE("Shouldn't be calling UseForPresentation");
   return false;
 }
+#endif
 
 #ifdef DEBUG
 /* virtual */ void
@@ -66,23 +68,21 @@ ServoSupportsRule::List(FILE* out, int32_t aIndent) const
 }
 #endif
 
-// nsIDOMCSSConditionRule methods
-
-NS_IMETHODIMP
+void
 ServoSupportsRule::GetConditionText(nsAString& aConditionText)
 {
   Servo_SupportsRule_GetConditionText(mRawRule, &aConditionText);
-  return NS_OK;
 }
 
-NS_IMETHODIMP
-ServoSupportsRule::SetConditionText(const nsAString& aConditionText)
+void
+ServoSupportsRule::SetConditionText(const nsAString& aConditionText,
+                                    ErrorResult& aRv)
 {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
 }
 
 /* virtual */ void
-ServoSupportsRule::GetCssTextImpl(nsAString& aCssText) const
+ServoSupportsRule::GetCssText(nsAString& aCssText) const
 {
   Servo_SupportsRule_GetCssText(mRawRule, &aCssText);
 }

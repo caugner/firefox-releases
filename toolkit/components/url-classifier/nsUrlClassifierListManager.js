@@ -2,12 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 // This is the only implementation of nsIUrlListManager.
 // A class that manages lists, namely white and black lists for
@@ -101,7 +97,8 @@ PROT_ListManager.prototype.registerTable = function(tableName,
     // Using the V4 backoff algorithm for both V2 and V4. See bug 1273398.
     this.requestBackoffs_[updateUrl] = new RequestBackoffV4(
                                             4 /* num requests */,
-                               60 * 60 * 1000 /* request time, 60 min */);
+                               60 * 60 * 1000 /* request time, 60 min */,
+                                 providerName /* used by testcase */);
   }
   this.needsUpdate_[updateUrl][tableName] = false;
 
@@ -287,7 +284,7 @@ PROT_ListManager.prototype.kickoffUpdate_ = function(onDiskTableData) {
         updateDelay = Math.min(maxDelayMs, Math.max(0, nextUpdate - Date.now()));
         log("Next update at " + nextUpdate);
       }
-      log("Next update " + updateDelay / 60000 + "min from now");
+      log("Next update " + Math.round(updateDelay / 60000) + "min from now");
 
       this.setUpdateCheckTimer(updateUrl, updateDelay);
     } else {
@@ -327,6 +324,42 @@ PROT_ListManager.prototype.maybeToggleUpdateChecking = function() {
     log("Stopping managing lists (if currently active)");
     this.stopUpdateCheckers(); // Cancel pending updates
   }
+};
+
+/**
+ * Force updates for the given tables. This API may trigger more than one update
+ * if the table lists provided belong to multiple updateurl (multiple provider).
+ * Return false when any update is fail due to back-off algorithm.
+ */
+PROT_ListManager.prototype.forceUpdates = function(tables) {
+  log("forceUpdates with " + tables);
+  if (!tables) {
+    return false;
+  }
+
+  let updateUrls = new Set();
+  tables.split(",").forEach((table) => {
+    if (this.tablesData[table]) {
+      updateUrls.add(this.tablesData[table].updateUrl);
+    }
+  });
+
+  let ret = true;
+
+  updateUrls.forEach((url) => {
+    // Cancel current update timer for the url because we are forcing an update.
+    if (this.updateCheckers_[url]) {
+      this.updateCheckers_[url].cancel();
+      this.updateCheckers_[url] = null;
+    }
+
+    // Trigger an update for the given url.
+    if (!this.checkForUpdates(url)) {
+      ret = false;
+    }
+  });
+
+  return ret;
 };
 
 /**
@@ -533,14 +566,14 @@ PROT_ListManager.prototype.updateSuccess_ = function(tableList, updateUrl,
   // timer since the delay is set differently at every callback.
   if (delay > maxDelayMs) {
     log("Ignoring delay from server (too long), waiting " +
-        maxDelayMs / 60000 + "min");
+        Math.round(maxDelayMs / 60000) + "min");
     delay = maxDelayMs;
   } else if (delay < minDelayMs) {
     log("Ignoring delay from server (too short), waiting " +
-        this.updateInterval / 60000 + "min");
+        Math.round(this.updateInterval / 60000) + "min");
     delay = this.updateInterval;
   } else {
-    log("Waiting " + delay / 60000 + "min");
+    log("Waiting " + Math.round(delay / 60000) + "min");
   }
 
   this.setUpdateCheckTimer(updateUrl, delay);
@@ -573,7 +606,7 @@ PROT_ListManager.prototype.updateSuccess_ = function(tableList, updateUrl,
   let nextUpdatePref = "browser.safebrowsing.provider." + provider + ".nextupdatetime";
   let targetTime = now + delay;
   log("Setting next update of " + provider + " to " + targetTime
-      + " (" + delay / 60000 + "min from now)");
+      + " (" + Math.round(delay / 60000) + "min from now)");
   Services.prefs.setCharPref(nextUpdatePref, targetTime.toString());
 
   Services.obs.notifyObservers(null, "safebrowsing-update-finished", "success");
@@ -648,7 +681,7 @@ PROT_ListManager.prototype.QueryInterface = function(iid) {
       iid.equals(Ci.nsITimerCallback))
     return this;
 
-  throw Components.results.NS_ERROR_NO_INTERFACE;
+  throw Cr.NS_ERROR_NO_INTERFACE;
 };
 
 var modScope = this;
@@ -671,7 +704,7 @@ RegistrationData.prototype = {
     _xpcom_factory: {
         createInstance(outer, iid) {
             if (outer != null)
-                throw Components.results.NS_ERROR_NO_AGGREGATION;
+                throw Cr.NS_ERROR_NO_AGGREGATION;
             Init();
             return (new PROT_ListManager()).QueryInterface(iid);
         }

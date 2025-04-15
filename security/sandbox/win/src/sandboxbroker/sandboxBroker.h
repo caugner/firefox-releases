@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <windows.h>
 
+#include "build/build_config.h"
+#include "mozilla/ipc/EnvironmentMap.h"
 #include "nsXULAppAPI.h"
 
 namespace sandbox {
@@ -34,6 +36,7 @@ public:
 
   bool LaunchApp(const wchar_t *aPath,
                  const wchar_t *aArguments,
+                 base::EnvironmentMap& aEnvironment,
                  GeckoProcessType aProcessType,
                  const bool aEnableLogging,
                  void **aProcessHandle);
@@ -48,6 +51,9 @@ public:
   void SetSecurityLevelForGPUProcess(int32_t aSandboxLevel);
 
   bool SetSecurityLevelForPluginProcess(int32_t aSandboxLevel);
+#ifdef MOZ_ENABLE_SKIA_PDF
+  bool SetSecurityLevelForPDFiumProcess();
+#endif
   enum SandboxLevel {
     LockDown,
     Restricted
@@ -57,9 +63,19 @@ public:
   // File system permissions
   bool AllowReadFile(wchar_t const *file);
 
-  // Exposes AddTargetPeer from broker services, so that none sandboxed
-  // processes can be added as handle duplication targets.
+  /**
+   * Exposes AddTargetPeer from broker services, so that non-sandboxed
+   * processes can be added as handle duplication targets.
+   */
   bool AddTargetPeer(HANDLE aPeerProcess);
+
+  /**
+   * Share a HANDLE with the child process. The HANDLE will be made available
+   * in the child process at the memory address
+   * |reinterpret_cast<uintptr_t>(aHandle)|. It is the caller's responsibility
+   * to communicate this address to the child.
+   */
+  void AddHandleToShare(HANDLE aHandle);
 
   // Set up dummy interceptions via the broker, so we can log calls.
   void ApplyLoggingPolicy();

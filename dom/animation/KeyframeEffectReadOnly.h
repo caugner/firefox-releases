@@ -165,8 +165,10 @@ public:
   void SetAnimation(Animation* aAnimation) override;
   void SetKeyframes(JSContext* aContext, JS::Handle<JSObject*> aKeyframes,
                     ErrorResult& aRv);
+#ifdef MOZ_OLD_STYLE
   void SetKeyframes(nsTArray<Keyframe>&& aKeyframes,
                     GeckoStyleContext* aStyleContext);
+#endif
   void SetKeyframes(nsTArray<Keyframe>&& aKeyframes,
                     const ServoStyleContext* aComputedValues);
 
@@ -212,6 +214,7 @@ public:
   void ComposeStyle(ComposeAnimationResult&& aRestultContainer,
                     const nsCSSPropertyIDSet& aPropertiesToSkip);
 
+#ifdef MOZ_OLD_STYLE
   // Composite |aValueToComposite| on |aUnderlyingValue| with
   // |aCompositeOperation|.
   // Returns |aValueToComposite| if |aCompositeOperation| is Replace.
@@ -220,6 +223,7 @@ public:
     const StyleAnimationValue& aValueToComposite,
     const StyleAnimationValue& aUnderlyingValue,
     CompositeOperation aCompositeOperation);
+#endif
 
   // Returns true if at least one property is being animated on compositor.
   bool IsRunningOnCompositor() const;
@@ -254,9 +258,6 @@ public:
     nsCSSPropertyID aProperty,
     const AnimationPerformanceWarning& aWarning);
 
-  // Record telemetry about the size of the content being animated.
-  void RecordFrameSizeTelemetry(uint32_t aPixelArea);
-
   // Cumulative change hint on each segment for each property.
   // This is used for deciding the animation is paint-only.
   template<typename StyleType>
@@ -282,7 +283,11 @@ public:
       // then assign the raw pointer to a RefPtr.
       result.mServo = mBaseStyleValuesForServo.GetWeak(aProperty, &hasProperty);
     } else {
+#ifdef MOZ_OLD_STYLE
       hasProperty = mBaseStyleValues.Get(aProperty, &result.mGecko);
+#else
+      MOZ_CRASH("old style system disabled");
+#endif
     }
     MOZ_ASSERT(hasProperty || result.IsNull());
     return result;
@@ -350,6 +355,7 @@ protected:
   // target and its effectSet.
   void MarkCascadeNeedsUpdate();
 
+#ifdef MOZ_OLD_STYLE
   // Composites |aValueToComposite| using |aCompositeOperation| onto the value
   // for |aProperty| in |aAnimationRule|, or, if there is no suitable value in
   // |aAnimationRule|, uses the base value for the property recorded on the
@@ -368,9 +374,11 @@ protected:
   // Ensure the base styles is available for any properties in |aProperties|.
   void EnsureBaseStyles(GeckoStyleContext* aStyleContext,
                         const nsTArray<AnimationProperty>& aProperties);
+#endif
   void EnsureBaseStyles(const ServoStyleContext* aComputedValues,
                         const nsTArray<AnimationProperty>& aProperties);
 
+#ifdef MOZ_OLD_STYLE
   // If no base style is already stored for |aProperty|, resolves the base style
   // for |aProperty| using |aStyleContext| and stores it in mBaseStyleValues.
   // If |aCachedBaseStyleContext| is non-null, it will be used, otherwise the
@@ -379,10 +387,10 @@ protected:
   void EnsureBaseStyle(nsCSSPropertyID aProperty,
                        GeckoStyleContext* aStyleContext,
                        RefPtr<GeckoStyleContext>& aCachedBaseStyleContext);
+#endif
   // Stylo version of the above function that also first checks for an additive
   // value in |aProperty|'s list of segments.
   void EnsureBaseStyle(const AnimationProperty& aProperty,
-                       CSSPseudoElementType aPseudoType,
                        nsPresContext* aPresContext,
                        const ServoStyleContext* aComputedValues,
                        RefPtr<mozilla::ServoStyleContext>& aBaseComputedValues);
@@ -414,7 +422,9 @@ protected:
   // The non-animated values for properties in this effect that contain at
   // least one animation value that is composited with the underlying value
   // (i.e. it uses the additive or accumulate composite mode).
+#ifdef MOZ_OLD_STYLE
   nsDataHashtable<nsUint32HashKey, StyleAnimationValue> mBaseStyleValues;
+#endif
   nsRefPtrHashtable<nsUint32HashKey, RawServoAnimationValue>
     mBaseStyleValuesForServo;
 
@@ -422,15 +432,6 @@ protected:
   // used as an optimization to avoid unnecessary hashmap lookups on the
   // EffectSet.
   bool mInEffectSet = false;
-
-  // We only want to record telemetry data for "ContentTooLarge" warnings once
-  // per effect:target pair so we use this member to record if we have already
-  // reported a "ContentTooLarge" warning for the current target.
-  bool mRecordedContentTooLarge = false;
-  // Similarly, as a point of comparison we record telemetry whether or not
-  // we get a "ContentTooLarge" warning, but again only once per effect:target
-  // pair.
-  bool mRecordedFrameSize = false;
 
 private:
   nsChangeHint mCumulativeChangeHint;
@@ -441,20 +442,24 @@ private:
   template<typename StyleType>
   void DoUpdateProperties(StyleType* aStyle);
 
+#ifdef MOZ_OLD_STYLE
   void ComposeStyleRule(RefPtr<AnimValuesStyleRule>& aStyleRule,
                         const AnimationProperty& aProperty,
                         const AnimationPropertySegment& aSegment,
                         const ComputedTiming& aComputedTiming);
+#endif
 
   void ComposeStyleRule(RawServoAnimationValueMap& aAnimationValues,
                         const AnimationProperty& aProperty,
                         const AnimationPropertySegment& aSegment,
                         const ComputedTiming& aComputedTiming);
 
+#ifdef MOZ_OLD_STYLE
   already_AddRefed<nsStyleContext> CreateStyleContextForAnimationValue(
     nsCSSPropertyID aProperty,
     const AnimationValue& aValue,
     GeckoStyleContext* aBaseStyleContext);
+#endif
 
   already_AddRefed<nsStyleContext> CreateStyleContextForAnimationValue(
     nsCSSPropertyID aProperty,
@@ -464,7 +469,8 @@ private:
   nsIFrame* GetAnimationFrame() const;
 
   bool CanThrottle() const;
-  bool CanThrottleTransformChanges(nsIFrame& aFrame) const;
+  bool CanThrottleTransformChanges(const nsIFrame& aFrame) const;
+  bool CanThrottleTransformChangesInScrollable(nsIFrame& aFrame) const;
 
   // Returns true if the computedTiming has changed since the last
   // composition.
@@ -482,8 +488,26 @@ private:
 
   void UpdateEffectSet(mozilla::EffectSet* aEffectSet = nullptr) const;
 
+  // Returns true if this effect has transform and the transform might affect
+  // the overflow region.
+  // This function is used for updating scroll bars or notifying intersection
+  // observers reflected by the transform.
+  bool HasTransformThatMightAffectOverflow() const
+  {
+    return mCumulativeChangeHint & (nsChangeHint_UpdatePostTransformOverflow |
+                                    nsChangeHint_AddOrRemoveTransform |
+                                    nsChangeHint_UpdateTransformLayer);
+  }
+
   // FIXME: This flag will be removed in bug 1324966.
   bool mIsComposingStyle = false;
+
+  // Returns true if this effect causes visibility change.
+  // (i.e. 'visibility: hidden' -> 'visibility: visible' and vice versa.)
+  bool HasVisibilityChange() const
+  {
+    return mCumulativeChangeHint & nsChangeHint_VisibilityChange;
+  }
 };
 
 } // namespace dom

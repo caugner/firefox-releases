@@ -199,17 +199,6 @@ static const SheetType gCSSSheetTypes[] = {
   SheetType::Override
 };
 
-/* static */ bool
-nsStyleSet::IsCSSSheetType(SheetType aSheetType)
-{
-  for (SheetType type : gCSSSheetTypes) {
-    if (type == aSheetType) {
-      return true;
-    }
-  }
-  return false;
-}
-
 nsStyleSet::nsStyleSet()
   : mRuleTree(nullptr),
     mBatching(0),
@@ -285,15 +274,15 @@ nsStyleSet::AddSizeOfIncludingThis(nsWindowSizes& aSizes) const
 }
 
 void
-nsStyleSet::Init(nsPresContext* aPresContext, nsBindingManager* aBindingManager)
+nsStyleSet::Init(nsPresContext* aPresContext)
 {
   mFirstLineRule = new nsEmptyStyleRule;
   mFirstLetterRule = new nsEmptyStyleRule;
   mPlaceholderRule = new nsEmptyStyleRule;
   mDisableTextZoomStyleRule = new nsDisableTextZoomStyleRule;
+  mBindingManager = aPresContext->Document()->BindingManager();
 
   mRuleTree = nsRuleNode::CreateRootNode(aPresContext);
-  mBindingManager = aBindingManager;
 
   // Make an explicit GatherRuleProcessors call for the levels that
   // don't have style sheets.  The other levels will have their calls
@@ -418,10 +407,12 @@ SortStyleSheetsByScope(nsTArray<CSSStyleSheet*>& aSheets)
   }
 }
 
-nsresult
+void
 nsStyleSet::GatherRuleProcessors(SheetType aType)
 {
-  NS_ENSURE_FALSE(mInShutdown, NS_ERROR_FAILURE);
+  if (mInShutdown) {
+    return;
+  }
 
   // We might be in GatherRuleProcessors because we are dropping a sheet,
   // resulting in an nsCSSSelector being destroyed.  Tell the
@@ -460,7 +451,7 @@ nsStyleSet::GatherRuleProcessors(SheetType aType)
     // Don't regather if this level is disabled.  Note that we gather
     // preshint sheets no matter what, but then skip them for some
     // elements later if mAuthorStyleDisabled.
-    return NS_OK;
+    return;
   }
   switch (aType) {
     // levels that do not contain CSS style sheets
@@ -468,21 +459,21 @@ nsStyleSet::GatherRuleProcessors(SheetType aType)
       MOZ_ASSERT(mSheets[aType].IsEmpty());
       mRuleProcessors[aType] = PresContext()->EffectCompositor()->
         RuleProcessor(EffectCompositor::CascadeLevel::Animations);
-      return NS_OK;
+      return;
     case SheetType::Transition:
       MOZ_ASSERT(mSheets[aType].IsEmpty());
       mRuleProcessors[aType] = PresContext()->EffectCompositor()->
         RuleProcessor(EffectCompositor::CascadeLevel::Transitions);
-      return NS_OK;
+      return;
     case SheetType::StyleAttr:
       MOZ_ASSERT(mSheets[aType].IsEmpty());
       mRuleProcessors[aType] = PresContext()->Document()->GetInlineStyleSheet();
-      return NS_OK;
+      return;
     case SheetType::PresHint:
       MOZ_ASSERT(mSheets[aType].IsEmpty());
       mRuleProcessors[aType] =
         PresContext()->Document()->GetAttributeStyleSheet();
-      return NS_OK;
+      return;
     default:
       // keep going
       break;
@@ -543,7 +534,7 @@ nsStyleSet::GatherRuleProcessors(SheetType aType)
         start = end;
       } while (start < count);
     }
-    return NS_OK;
+    return;
   }
   if (!mSheets[aType].IsEmpty()) {
     switch (aType) {
@@ -589,8 +580,6 @@ nsStyleSet::GatherRuleProcessors(SheetType aType)
         break;
     }
   }
-
-  return NS_OK;
 }
 
 nsresult
@@ -694,20 +683,15 @@ DirtyBit(SheetType aType)
 nsresult
 nsStyleSet::DirtyRuleProcessors(SheetType aType)
 {
-  if (!mBatching)
-    return GatherRuleProcessors(aType);
-
-  mDirty |= DirtyBit(aType);
+  if (mBatching) {
+    mDirty |= DirtyBit(aType);
+  } else {
+    GatherRuleProcessors(aType);
+  }
   return NS_OK;
 }
 
-bool
-nsStyleSet::GetAuthorStyleDisabled() const
-{
-  return mAuthorStyleDisabled;
-}
-
-nsresult
+void
 nsStyleSet::SetAuthorStyleDisabled(bool aStyleDisabled)
 {
   if (aStyleDisabled == !mAuthorStyleDisabled) {
@@ -716,9 +700,8 @@ nsStyleSet::SetAuthorStyleDisabled(bool aStyleDisabled)
     mDirty |= DirtyBit(SheetType::Doc) |
               DirtyBit(SheetType::ScopedDoc) |
               DirtyBit(SheetType::StyleAttr);
-    return EndUpdate();
+    EndUpdate();
   }
-  return NS_OK;
 }
 
 // -------- Doc Sheets
@@ -737,7 +720,7 @@ nsStyleSet::AddDocStyleSheet(CSSStyleSheet* aSheet, nsIDocument* aDocument)
 
   bool present = sheets.RemoveElement(aSheet);
 
-  size_t index = aDocument->FindDocStyleSheetInsertionPoint(sheets, aSheet);
+  size_t index = aDocument->FindDocStyleSheetInsertionPoint(sheets, *aSheet);
   sheets.InsertElementAt(index, aSheet);
 
   if (!present) {
@@ -781,8 +764,7 @@ nsStyleSet::EndUpdate()
 
   for (SheetType type : MakeEnumeratedRange(SheetType::Count)) {
     if (mDirty & DirtyBit(type)) {
-      nsresult rv = GatherRuleProcessors(type);
-      NS_ENSURE_SUCCESS(rv, rv);
+      GatherRuleProcessors(type);
     }
   }
 
@@ -2365,8 +2347,7 @@ nsStyleSet::Shutdown()
 }
 
 void
-nsStyleSet::RecordStyleSheetChange(CSSStyleSheet* aStyleSheet,
-                                   StyleSheet::ChangeType)
+nsStyleSet::SheetChanged(CSSStyleSheet& aStyleSheet)
 {
   MOZ_ASSERT(mBatching != 0, "Should be in an update");
 
@@ -2374,7 +2355,7 @@ nsStyleSet::RecordStyleSheetChange(CSSStyleSheet* aStyleSheet,
     return;
   }
 
-  if (Element* scopeElement = aStyleSheet->GetScopeElement()) {
+  if (Element* scopeElement = aStyleSheet.GetScopeElement()) {
     mChangedScopeStyleRoots.AppendElement(scopeElement);
     return;
   }
@@ -2386,13 +2367,13 @@ nsStyleSet::RecordStyleSheetChange(CSSStyleSheet* aStyleSheet,
 }
 
 void
-nsStyleSet::RecordShadowStyleChange(ShadowRoot* aShadowRoot)
+nsStyleSet::RecordShadowStyleChange(ShadowRoot& aShadowRoot)
 {
   if (mStylesHaveChanged) {
     return;
   }
 
-  mChangedScopeStyleRoots.AppendElement(aShadowRoot->GetHost()->AsElement());
+  mChangedScopeStyleRoots.AppendElement(aShadowRoot.Host());
 }
 
 void
@@ -2667,7 +2648,7 @@ nsStyleSet::HasAttributeDependentStyle(Element*       aElement,
 }
 
 nsRestyleHint
-nsStyleSet::MediumFeaturesChanged(bool aViewportChanged)
+nsStyleSet::MediumFeaturesChanged(mozilla::MediaFeatureChangeReason aReason)
 {
   NS_ASSERTION(mBatching == 0, "rule processors out of date");
 
@@ -2688,14 +2669,17 @@ nsStyleSet::MediumFeaturesChanged(bool aViewportChanged)
 
   if (mBindingManager) {
     bool thisChanged =
-      mBindingManager->MediumFeaturesChanged(presContext);
+      mBindingManager->MediumFeaturesChanged(presContext, aReason);
     stylesChanged = stylesChanged || thisChanged;
   }
 
   if (stylesChanged) {
     return eRestyle_Subtree;
   }
-  if (aViewportChanged && mUsesViewportUnits) {
+  const bool viewportChanged =
+    bool(aReason & MediaFeatureChangeReason::ViewportChange);
+
+  if (viewportChanged && mUsesViewportUnits) {
     // Rebuild all style data without rerunning selector matching.
     return eRestyle_ForceDescendants;
   }
@@ -2714,9 +2698,6 @@ nsStyleSet::EnsureUniqueInnerOnCSSSheets()
 
   if (mBindingManager) {
     AutoTArray<StyleSheet*, 32> sheets;
-    // XXXheycam stylo: AppendAllSheets will need to be able to return either
-    // CSSStyleSheets or ServoStyleSheets, on request (and then here requesting
-    // CSSStyleSheets).
     mBindingManager->AppendAllSheets(sheets);
     for (StyleSheet* sheet : sheets) {
       MOZ_ASSERT(sheet->IsGecko(), "stylo: AppendAllSheets shouldn't give us "

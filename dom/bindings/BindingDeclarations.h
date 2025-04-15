@@ -23,7 +23,7 @@
 #include "mozilla/dom/DOMString.h"
 
 #include "nsCOMPtr.h"
-#include "nsStringGlue.h"
+#include "nsString.h"
 #include "nsTArray.h"
 
 class nsIPrincipal;
@@ -387,9 +387,8 @@ class NonNull
 {
 public:
   NonNull()
-    : ptr(nullptr)
 #ifdef DEBUG
-    , inited(false)
+    : inited(false)
 #endif
   {}
 
@@ -444,6 +443,7 @@ public:
   }
 
 protected:
+  // ptr is left uninitialized for optimization purposes.
   T* ptr;
 #ifdef DEBUG
   bool inited;
@@ -542,6 +542,17 @@ class SystemCallerGuarantee {
 public:
   operator CallerType() const { return CallerType::System; }
 };
+
+class ProtoAndIfaceCache;
+typedef void (*CreateInterfaceObjectsMethod)(JSContext* aCx,
+                                             JS::Handle<JSObject*> aGlobal,
+                                             ProtoAndIfaceCache& aCache,
+                                             bool aDefineOnGlobal);
+JS::Handle<JSObject*> GetPerInterfaceObjectHandle(
+  JSContext* aCx,
+  size_t aSlotId,
+  CreateInterfaceObjectsMethod aCreator,
+  bool aDefineOnGlobal);
 
 } // namespace dom
 } // namespace mozilla

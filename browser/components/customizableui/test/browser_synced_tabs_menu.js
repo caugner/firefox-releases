@@ -6,10 +6,11 @@
 
 requestLongerTimeout(2);
 
-let {SyncedTabs} = Cu.import("resource://services-sync/SyncedTabs.jsm", {});
-let {UIState} = Cu.import("resource://services-sync/UIState.jsm", {});
+ChromeUtils.import("resource://gre/modules/FxAccounts.jsm");
+let {SyncedTabs} = ChromeUtils.import("resource://services-sync/SyncedTabs.jsm", {});
+let {UIState} = ChromeUtils.import("resource://services-sync/UIState.jsm", {});
 
-XPCOMUtils.defineLazyModuleGetter(this, "UITour", "resource:///modules/UITour.jsm");
+ChromeUtils.defineModuleGetter(this, "UITour", "resource:///modules/UITour.jsm");
 
 // These are available on the widget implementation, but it seems impossible
 // to grab that impl at runtime.
@@ -40,6 +41,10 @@ let mockedInternal = {
 
 
 add_task(async function setup() {
+  const getSignedInUser = FxAccounts.config.getSignedInUser;
+  FxAccounts.config.getSignedInUser = async () => Promise.resolve({uid: "uid", email: "foo@bar.com"});
+  Services.prefs.setCharPref("identity.fxaccounts.remote.root", "https://example.com/");
+
   let oldInternal = SyncedTabs._internal;
   SyncedTabs._internal = mockedInternal;
 
@@ -51,6 +56,8 @@ add_task(async function setup() {
   gSync.init();
 
   registerCleanupFunction(() => {
+    FxAccounts.config.getSignedInUser = getSignedInUser;
+    Services.prefs.clearUserPref("identity.fxaccounts.remote.root");
     UIState._internal.notifyStateUpdated = origNotifyStateUpdated;
     SyncedTabs._internal = oldInternal;
   });
@@ -59,7 +66,6 @@ add_task(async function setup() {
 // The test expects the about:preferences#sync page to open in the current tab
 async function openPrefsFromMenuPanel(expectedPanelId, entryPoint) {
   info("Check Sync button functionality");
-  Services.prefs.setCharPref("identity.fxaccounts.remote.signup.uri", "https://example.com/");
   CustomizableUI.addWidgetToArea("sync-button", CustomizableUI.AREA_FIXED_OVERFLOW_PANEL);
 
   await waitForOverflowButtonShown();
@@ -80,18 +86,18 @@ async function openPrefsFromMenuPanel(expectedPanelId, entryPoint) {
   let viewShownPromise = BrowserTestUtils.waitForEvent(syncPanel, "ViewShown");
   syncButton.click();
   await Promise.all([tabsUpdatedPromise, viewShownPromise]);
-  ok(syncPanel.getAttribute("current"), "Sync Panel is in view");
+  ok(syncPanel.getAttribute("visible"), "Sync Panel is in view");
 
   // Sync is not configured - verify that state is reflected.
   let subpanel = document.getElementById(expectedPanelId);
   ok(!subpanel.hidden, "sync setup element is visible");
 
   // Find and click the "setup" button.
-  let setupButton = subpanel.querySelector(".PanelUI-remotetabs-prefs-button");
+  let setupButton = subpanel.querySelector(".PanelUI-remotetabs-button");
   setupButton.click();
 
   await new Promise(resolve => {
-    let handler = async(e) => {
+    let handler = async (e) => {
       if (e.originalTarget != gBrowser.selectedBrowser.contentDocument ||
           e.target.location.href == "about:blank") {
         info("Skipping spurious 'load' event for " + e.target.location.href);
@@ -121,7 +127,6 @@ function hideOverflow() {
 }
 
 async function asyncCleanup() {
-  Services.prefs.clearUserPref("identity.fxaccounts.remote.signup.uri");
   // reset the panel UI to the default state
   await resetCustomization();
   ok(CustomizableUI.inDefaultState, "The panel UI is in default state again.");
@@ -139,65 +144,36 @@ add_task(async function() {
 });
 add_task(asyncCleanup);
 
+// When Sync is configured in an unverified state.
+add_task(async function() {
+  gSync.updateAllUI({ status: UIState.STATUS_NOT_VERIFIED, email: "foo@bar.com" });
+  await openPrefsFromMenuPanel("PanelUI-remotetabs-unverified", "synced-tabs");
+});
+add_task(asyncCleanup);
+
 // When Sync is configured in a "needs reauthentication" state.
 add_task(async function() {
   gSync.updateAllUI({ status: UIState.STATUS_LOGIN_FAILED, email: "foo@bar.com" });
   await openPrefsFromMenuPanel("PanelUI-remotetabs-reauthsync", "synced-tabs");
 });
 
-// Test the mobile promo links
+// Test the Connect Another Device button
 add_task(async function() {
-  // change the preferences for the mobile links.
-  Services.prefs.setCharPref("identity.mobilepromo.android", "http://example.com/?os=android&tail=");
-  Services.prefs.setCharPref("identity.mobilepromo.ios", "http://example.com/?os=ios&tail=");
-
   gSync.updateAllUI({ status: UIState.STATUS_SIGNED_IN, email: "foo@bar.com" });
 
-  let syncPanel = document.getElementById("PanelUI-remotetabs");
-  let links = syncPanel.querySelectorAll(".remotetabs-promo-link");
+  let button = document.getElementById("PanelUI-remotetabs-connect-device-button");
+  ok(button, "found the button");
 
-  is(links.length, 2, "found 2 links as expected");
-
-  // test each link and left and middle mouse buttons
-  for (let link of links) {
-    for (let button = 0; button < 2; button++) {
-      await document.getElementById("nav-bar").overflowable.show();
-      EventUtils.sendMouseEvent({ type: "click", button }, link, window);
-      // the panel should have been closed.
-      ok(!isOverflowOpen(), "click closed the panel");
-      // should be a new tab - wait for the load.
-      is(gBrowser.tabs.length, 2, "there's a new tab");
-      await new Promise(resolve => {
-        if (gBrowser.selectedBrowser.currentURI.spec == "about:blank") {
-          gBrowser.selectedBrowser.addEventListener("load", function(e) {
-            resolve();
-          }, {capture: true, once: true});
-          return;
-        }
-        // the new tab has already transitioned away from about:blank so we
-        // are good to go.
-        resolve();
-      });
-
-      let os = link.getAttribute("mobile-promo-os");
-      let expectedUrl = `http://example.com/?os=${os}&tail=synced-tabs`;
-      is(gBrowser.selectedBrowser.currentURI.spec, expectedUrl, "correct URL");
-      gBrowser.removeTab(gBrowser.selectedTab);
-    }
-  }
-
-  // test each link and right mouse button - should be a noop.
   await document.getElementById("nav-bar").overflowable.show();
-  for (let link of links) {
-    EventUtils.sendMouseEvent({ type: "click", button: 2 }, link, window);
-    // the panel should still be open
-    ok(isOverflowOpen(), "panel remains open after right-click");
-    is(gBrowser.tabs.length, 1, "no new tab was opened");
-  }
-  await hideOverflow();
+  let expectedUrl = "https://example.com/connect_another_device?service=sync&context=" +
+                    "fx_desktop_v3&entrypoint=synced-tabs&uid=uid&email=foo%40bar.com";
+  let promiseTabOpened = BrowserTestUtils.waitForNewTab(gBrowser, expectedUrl);
+  button.click();
+  // the panel should have been closed.
+  ok(!isOverflowOpen(), "click closed the panel");
+  await promiseTabOpened;
 
-  Services.prefs.clearUserPref("identity.mobilepromo.android");
-  Services.prefs.clearUserPref("identity.mobilepromo.ios");
+  gBrowser.removeTab(gBrowser.selectedTab);
 });
 
 // Test the "Sync Now" button
@@ -211,7 +187,7 @@ add_task(async function() {
   let syncButton = document.getElementById("sync-button");
   syncButton.click();
   await Promise.all([tabsUpdatedPromise, viewShownPromise]);
-  ok(syncPanel.getAttribute("current"), "Sync Panel is in view");
+  ok(syncPanel.getAttribute("visible"), "Sync Panel is in view");
 
   let subpanel = document.getElementById("PanelUI-remotetabs-main");
   ok(!subpanel.hidden, "main pane is visible");
@@ -376,7 +352,7 @@ add_task(async function() {
   await Promise.all([tabsUpdatedPromise, viewShownPromise]);
 
   // Check pre-conditions
-  ok(syncPanel.getAttribute("current"), "Sync Panel is in view");
+  ok(syncPanel.getAttribute("visible"), "Sync Panel is in view");
   let subpanel = document.getElementById("PanelUI-remotetabs-main");
   ok(!subpanel.hidden, "main pane is visible");
   let deck = document.getElementById("PanelUI-remotetabs-deck");

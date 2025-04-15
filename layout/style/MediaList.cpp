@@ -13,14 +13,15 @@
 #include "mozilla/ServoMediaList.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "nsCSSParser.h"
+#ifdef MOZ_OLD_STYLE
 #include "nsMediaList.h"
+#endif
 
 namespace mozilla {
 namespace dom {
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(MediaList)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_MAP_ENTRY(nsIDOMMediaList)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
@@ -62,12 +63,12 @@ MediaList::DoMediaChange(Func aCallback)
   }
 
   if (mStyleSheet) {
-    mStyleSheet->DidDirty();
+    // FIXME(emilio): We should discern between "owned by a rule" (as in @media)
+    // and "owned by a sheet" (as in <style media>), and then pass something
+    // meaningful here.
+    mStyleSheet->RuleChanged(nullptr);
   }
-  /* XXXldb Pass something meaningful? */
-  if (doc) {
-    doc->StyleRuleChanged(mStyleSheet, nullptr);
-  }
+
   return rv;
 }
 
@@ -82,55 +83,48 @@ MediaList::Create(
     return mediaList.forget();
   }
 
+#ifdef MOZ_OLD_STYLE
   nsCSSParser parser;
   RefPtr<nsMediaList> mediaList = new nsMediaList();
   parser.ParseMediaList(aMedia, nullptr, 0, mediaList, aCallerType);
   return mediaList.forget();
+#else
+  MOZ_CRASH("old style system disabled");
+#endif
 }
 
-NS_IMETHODIMP
+void
 MediaList::GetMediaText(nsAString& aMediaText)
 {
   GetText(aMediaText);
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 MediaList::SetMediaText(const nsAString& aMediaText)
 {
-  return DoMediaChange([&]() {
+  DoMediaChange([&]() {
     SetText(aMediaText);
     return NS_OK;
   });
 }
 
-NS_IMETHODIMP
-MediaList::GetLength(uint32_t* aLength)
-{
-  NS_ENSURE_ARG_POINTER(aLength);
-
-  *aLength = Length();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
+void
 MediaList::Item(uint32_t aIndex, nsAString& aReturn)
 {
   bool dummy;
   IndexedGetter(aIndex, dummy, aReturn);
-  return NS_OK;
 }
 
-NS_IMETHODIMP
-MediaList::DeleteMedium(const nsAString& aOldMedium)
+void
+MediaList::DeleteMedium(const nsAString& aOldMedium, ErrorResult& aRv)
 {
-  return DoMediaChange([&]() { return Delete(aOldMedium); });
+  aRv = DoMediaChange([&]() { return Delete(aOldMedium); });
 }
 
-NS_IMETHODIMP
-MediaList::AppendMedium(const nsAString& aNewMedium)
+void
+MediaList::AppendMedium(const nsAString& aNewMedium, ErrorResult& aRv)
 {
-  return DoMediaChange([&]() { return Append(aNewMedium); });
+  aRv = DoMediaChange([&]() { return Append(aNewMedium); });
 }
 
 } // namespace dom

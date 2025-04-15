@@ -30,8 +30,9 @@ public:
   StackingContextHelper(const StackingContextHelper& aParentSC,
                         wr::DisplayListBuilder& aBuilder,
                         const nsTArray<wr::WrFilterOp>& aFilters = nsTArray<wr::WrFilterOp>(),
+                        const LayoutDeviceRect& aBounds = LayoutDeviceRect(),
                         const gfx::Matrix4x4* aBoundTransform = nullptr,
-                        uint64_t aAnimationsId = 0,
+                        const wr::WrAnimationProperty* aAnimation = nullptr,
                         float* aOpacityPtr = nullptr,
                         gfx::Matrix4x4* aTransformPtr = nullptr,
                         gfx::Matrix4x4* aPerspectivePtr = nullptr,
@@ -61,20 +62,25 @@ public:
   // Same but for points
   wr::LayoutPoint ToRelativeLayoutPoint(const LayoutDevicePoint& aPoint) const
   {
-    return wr::ToLayoutPoint(aPoint - mOrigin);
+    return wr::ToLayoutPoint(aPoint);
   }
 
 
   // Export the inherited scale
   gfx::Size GetInheritedScale() const { return mScale; }
 
-  bool IsBackfaceVisible() const { return mTransform.IsBackfaceVisible(); }
+  const gfx::Matrix& GetInheritedTransform() const
+  {
+    return mInheritedTransform;
+  }
+
+  bool AffectsClipPositioning() const { return mAffectsClipPositioning; }
 
 private:
   wr::DisplayListBuilder* mBuilder;
-  LayoutDevicePoint mOrigin;
-  gfx::Matrix4x4 mTransform;
   gfx::Size mScale;
+  gfx::Matrix mInheritedTransform;
+  bool mAffectsClipPositioning;
 };
 
 } // namespace layers

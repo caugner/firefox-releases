@@ -16,6 +16,7 @@
 #include "nsIDocShellTreeItem.h"
 #include "nsIDocShell.h"
 #include "nsIDOMDocument.h"
+#include "nsINestedURI.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIWebShellServices.h"
 #include "nsContentUtils.h"
@@ -649,16 +650,11 @@ nsHtml5TreeOpExecutor::IsScriptEnabled()
   // Note that if we have no document or no docshell or no global or whatnot we
   // want to claim script _is_ enabled, so we don't parse the contents of
   // <noscript> tags!
-  if (!mDocument || !mDocShell)
+  if (!mDocument || !mDocShell) {
     return true;
-  nsCOMPtr<nsIScriptGlobalObject> globalObject = do_QueryInterface(mDocument->GetInnerWindow());
-  // Getting context is tricky if the document hasn't had its
-  // GlobalObject set yet
-  if (!globalObject) {
-    globalObject = mDocShell->GetScriptGlobalObject();
   }
-  NS_ENSURE_TRUE(globalObject && globalObject->GetGlobalJSObject(), true);
-  return xpc::Scriptability::Get(globalObject->GetGlobalJSObject()).Allowed();
+
+  return mDocument->IsScriptEnabled();
 }
 
 void
@@ -1004,15 +1000,17 @@ nsHtml5TreeOpExecutor::PreloadScript(const nsAString& aURL,
                                      const nsAString& aIntegrity,
                                      bool aScriptFromHead,
                                      bool aAsync,
-                                     bool aDefer)
+                                     bool aDefer,
+                                     bool aNoModule)
 {
   nsCOMPtr<nsIURI> uri = ConvertIfNotPreloadedYet(aURL);
   if (!uri) {
     return;
   }
   mDocument->ScriptLoader()->PreloadURI(uri, aCharset, aType, aCrossOrigin,
-                                           aIntegrity, aScriptFromHead, aAsync, aDefer,
-                                           mSpeculationReferrerPolicy);
+                                        aIntegrity, aScriptFromHead, aAsync,
+                                        aDefer, aNoModule,
+                                        mSpeculationReferrerPolicy);
 }
 
 void

@@ -10,13 +10,13 @@
 #include "jsapi.h"
 #include "nsCOMPtr.h"
 #include "nsWrapperCache.h"
-#include "nsContentUtils.h" // Required for nsContentUtils::PushEnabled
 
 #include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/RefPtr.h"
 
 #include "mozilla/dom/BindingDeclarations.h"
+#include "mozilla/dom/DOMPrefs.h"
 #include "mozilla/dom/PushSubscriptionBinding.h"
 #include "mozilla/dom/PushSubscriptionOptionsBinding.h"
 #include "mozilla/dom/TypedArray.h"
@@ -25,10 +25,6 @@ class nsIGlobalObject;
 
 namespace mozilla {
 namespace dom {
-
-namespace workers {
-class WorkerPrivate;
-}
 
 class Promise;
 

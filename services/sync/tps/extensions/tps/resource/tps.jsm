@@ -7,54 +7,60 @@
   * listed symbols will exposed on import, and only when and where imported.
   */
 
-var EXPORTED_SYMBOLS = ["ACTIONS", "TPS"];
-
-const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
+var EXPORTED_SYMBOLS = [
+  "ACTIONS", "Addons", "Addresses", "Bookmarks", "CreditCards",
+  "Formdata", "History", "Passwords", "Prefs",
+  "Tabs", "TPS", "Windows"
+];
 
 var module = this;
 
 // Global modules
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/PlacesUtils.jsm");
-Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/Timer.jsm");
-Cu.import("resource://gre/modules/PromiseUtils.jsm");
-Cu.import("resource://gre/modules/osfile.jsm");
-Cu.import("resource://services-common/async.js");
-Cu.import("resource://services-common/utils.js");
-Cu.import("resource://services-sync/constants.js");
-Cu.import("resource://services-sync/main.js");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://services-sync/telemetry.js");
-Cu.import("resource://services-sync/bookmark_validator.js");
-Cu.import("resource://services-sync/engines/passwords.js");
-Cu.import("resource://services-sync/engines/forms.js");
-Cu.import("resource://services-sync/engines/addons.js");
+ChromeUtils.import("resource://formautofill/FormAutofillSync.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/PlacesUtils.jsm");
+ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
+ChromeUtils.import("resource://gre/modules/PromiseUtils.jsm");
+ChromeUtils.import("resource://gre/modules/osfile.jsm");
+ChromeUtils.import("resource://services-common/async.js");
+ChromeUtils.import("resource://services-common/utils.js");
+ChromeUtils.import("resource://services-sync/constants.js");
+ChromeUtils.import("resource://services-sync/main.js");
+ChromeUtils.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://services-sync/telemetry.js");
+ChromeUtils.import("resource://services-sync/bookmark_validator.js");
+ChromeUtils.import("resource://services-sync/engines/passwords.js");
+ChromeUtils.import("resource://services-sync/engines/forms.js");
+ChromeUtils.import("resource://services-sync/engines/addons.js");
 // TPS modules
-Cu.import("resource://tps/logger.jsm");
+ChromeUtils.import("resource://tps/logger.jsm");
 
 // Module wrappers for tests
-Cu.import("resource://tps/modules/addons.jsm");
-Cu.import("resource://tps/modules/bookmarks.jsm");
-Cu.import("resource://tps/modules/forms.jsm");
-Cu.import("resource://tps/modules/history.jsm");
-Cu.import("resource://tps/modules/passwords.jsm");
-Cu.import("resource://tps/modules/prefs.jsm");
-Cu.import("resource://tps/modules/tabs.jsm");
-Cu.import("resource://tps/modules/windows.jsm");
-
-var hh = Cc["@mozilla.org/network/protocol;1?name=http"]
-         .getService(Ci.nsIHttpProtocolHandler);
-var prefs = Cc["@mozilla.org/preferences-service;1"]
-            .getService(Ci.nsIPrefBranch);
+ChromeUtils.import("resource://tps/modules/addons.jsm");
+ChromeUtils.import("resource://tps/modules/bookmarks.jsm");
+ChromeUtils.import("resource://tps/modules/formautofill.jsm");
+ChromeUtils.import("resource://tps/modules/forms.jsm");
+ChromeUtils.import("resource://tps/modules/history.jsm");
+ChromeUtils.import("resource://tps/modules/passwords.jsm");
+ChromeUtils.import("resource://tps/modules/prefs.jsm");
+ChromeUtils.import("resource://tps/modules/tabs.jsm");
+ChromeUtils.import("resource://tps/modules/windows.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "fileProtocolHandler", () => {
   let fileHandler = Services.io.getProtocolHandler("file");
   return fileHandler.QueryInterface(Ci.nsIFileProtocolHandler);
 });
+
+XPCOMUtils.defineLazyGetter(this, "gTextDecoder", () => {
+  return new TextDecoder();
+});
+
+ChromeUtils.defineModuleGetter(this, "NetUtil",
+                               "resource://gre/modules/NetUtil.jsm");
 
 // Options for wiping data during a sync
 const SYNC_RESET_CLIENT = "resetClient";
@@ -93,8 +99,8 @@ const OBSERVER_TOPICS = ["fxaccounts:onlogin",
                          "private-browsing",
                          "profile-before-change",
                          "sessionstore-windows-restored",
-                         "weave:engine:start-tracking",
-                         "weave:engine:stop-tracking",
+                         "weave:service:tracking-started",
+                         "weave:service:tracking-stopped",
                          "weave:service:login:error",
                          "weave:service:setup-complete",
                          "weave:service:sync:finish",
@@ -141,7 +147,7 @@ var TPS = {
     }, this);
 
     /* global Authentication */
-    Cu.import("resource://tps/auth/fxaccounts.jsm", module);
+    ChromeUtils.import("resource://tps/auth/fxaccounts.jsm", module);
   },
 
   DumpError(msg, exc = null) {
@@ -242,11 +248,11 @@ var TPS = {
           this._syncActive = true;
           break;
 
-        case "weave:engine:start-tracking":
+        case "weave:service:tracking-started":
           this._isTracking = true;
           break;
 
-        case "weave:engine:stop-tracking":
+        case "weave:service:tracking-stopped":
           this._isTracking = false;
           break;
       }
@@ -262,7 +268,6 @@ var TPS = {
    * directly called via TPS.Sync()!
    */
   delayAutoSync: function TPS_delayAutoSync() {
-    Weave.Svc.Prefs.set("scheduler.eolInterval", 7200);
     Weave.Svc.Prefs.set("scheduler.immediateInterval", 7200);
     Weave.Svc.Prefs.set("scheduler.idleInterval", 7200);
     Weave.Svc.Prefs.set("scheduler.activeInterval", 7200);
@@ -401,22 +406,23 @@ var TPS = {
   async HandleHistory(entries, action) {
     try {
       for (let entry of entries) {
+        const entryString = JSON.stringify(entry);
         Logger.logInfo("executing action " + action.toUpperCase() +
-                       " on history entry " + JSON.stringify(entry));
+                       " on history entry " + entryString);
         switch (action) {
           case ACTION_ADD:
-            HistoryEntry.Add(entry, this._usSinceEpoch);
+            await HistoryEntry.Add(entry, this._usSinceEpoch);
             break;
           case ACTION_DELETE:
-            HistoryEntry.Delete(entry, this._usSinceEpoch);
+            await HistoryEntry.Delete(entry, this._usSinceEpoch);
             break;
           case ACTION_VERIFY:
             Logger.AssertTrue((await HistoryEntry.Find(entry, this._usSinceEpoch)),
-              "Uri visits not found in history database");
+              "Uri visits not found in history database: " + entryString);
             break;
           case ACTION_VERIFY_NOT:
             Logger.AssertTrue(!(await HistoryEntry.Find(entry, this._usSinceEpoch)),
-              "Uri visits found in history database, but they shouldn't be");
+              "Uri visits found in history database, but they shouldn't be: " + entryString);
             break;
           default:
             Logger.AssertTrue(false, "invalid action: " + action);
@@ -478,19 +484,19 @@ var TPS = {
       let addon = new Addon(this, entry);
       switch (action) {
         case ACTION_ADD:
-          addon.install();
+          await addon.install();
           break;
         case ACTION_DELETE:
-          addon.uninstall();
+          await addon.uninstall();
           break;
         case ACTION_VERIFY:
-          Logger.AssertTrue(addon.find(state), "addon " + addon.id + " not found");
+          Logger.AssertTrue((await addon.find(state)), "addon " + addon.id + " not found");
           break;
         case ACTION_VERIFY_NOT:
-          Logger.AssertFalse(addon.find(state), "addon " + addon.id + " is present, but it shouldn't be");
+          Logger.AssertFalse((await addon.find(state)), "addon " + addon.id + " is present, but it shouldn't be");
           break;
         case ACTION_SET_ENABLED:
-          Logger.AssertTrue(addon.setEnabled(state), "addon " + addon.id + " not found");
+          Logger.AssertTrue((await addon.setEnabled(state)), "addon " + addon.id + " not found");
           break;
         default:
           throw new Error("Unknown action for add-on: " + action);
@@ -571,6 +577,78 @@ var TPS = {
     }
   },
 
+  async HandleAddresses(addresses, action) {
+    try {
+      for (let address of addresses) {
+        Logger.logInfo("executing action " + action.toUpperCase() +
+                      " on address " + JSON.stringify(address));
+        let addressOb = new Address(address);
+        switch (action) {
+          case ACTION_ADD:
+            await addressOb.Create();
+            break;
+          case ACTION_MODIFY:
+            await addressOb.Update();
+            break;
+          case ACTION_VERIFY:
+            Logger.AssertTrue(await addressOb.Find(), "address not found");
+            break;
+          case ACTION_VERIFY_NOT:
+            Logger.AssertTrue(!await addressOb.Find(),
+              "address found, but it shouldn't exist");
+            break;
+          case ACTION_DELETE:
+            Logger.AssertTrue(await addressOb.Find(), "address not found");
+            await addressOb.Remove();
+            break;
+          default:
+            Logger.AssertTrue(false, "invalid action: " + action);
+        }
+      }
+      Logger.logPass("executing action " + action.toUpperCase() +
+                     " on addresses");
+    } catch (e) {
+      await DumpAddresses();
+      throw (e);
+    }
+  },
+
+  async HandleCreditCards(creditCards, action) {
+    try {
+      for (let creditCard of creditCards) {
+        Logger.logInfo("executing action " + action.toUpperCase() +
+                      " on creditCard " + JSON.stringify(creditCard));
+        let creditCardOb = new CreditCard(creditCard);
+        switch (action) {
+          case ACTION_ADD:
+            await creditCardOb.Create();
+            break;
+          case ACTION_MODIFY:
+            await creditCardOb.Update();
+            break;
+          case ACTION_VERIFY:
+            Logger.AssertTrue(await creditCardOb.Find(), "creditCard not found");
+            break;
+          case ACTION_VERIFY_NOT:
+            Logger.AssertTrue(!await creditCardOb.Find(),
+              "creditCard found, but it shouldn't exist");
+            break;
+          case ACTION_DELETE:
+            Logger.AssertTrue(await creditCardOb.Find(), "creditCard not found");
+            await creditCardOb.Remove();
+            break;
+          default:
+            Logger.AssertTrue(false, "invalid action: " + action);
+        }
+      }
+      Logger.logPass("executing action " + action.toUpperCase() +
+                     " on creditCards");
+    } catch (e) {
+      await DumpCreditCards();
+      throw (e);
+    }
+  },
+
   async Cleanup() {
     try {
       await this.WipeServer();
@@ -628,7 +706,7 @@ var TPS = {
       for (let {name, count} of problemData.getSummary()) {
         // Exclude mobile showing up on the server hackily so that we don't
         // report it every time, see bug 1273234 and 1274394 for more information.
-        if (name === "serverUnexpected" && problemData.serverUnexpected.indexOf("mobile") >= 0) {
+        if (name === "serverUnexpected" && problemData.serverUnexpected.includes("mobile")) {
           --count;
         }
         if (count) {
@@ -737,10 +815,13 @@ var TPS = {
         this.quit();
         return;
       }
-      this.seconds_since_epoch = prefs.getIntPref("tps.seconds_since_epoch");
-      if (this.seconds_since_epoch)
-        this._usSinceEpoch = this.seconds_since_epoch * 1000 * 1000;
-      else {
+      this.seconds_since_epoch = Services.prefs.getIntPref("tps.seconds_since_epoch");
+      if (this.seconds_since_epoch) {
+        // Places dislikes it if we add visits in the future. We pretend the
+        // real time is 1 minute ago to avoid issues caused by places using a
+        // different clock than the one that set the seconds_since_epoch pref.
+        this._usSinceEpoch = (this.seconds_since_epoch - 60) * 1000 * 1000;
+      } else {
         this.DumpError("seconds-since-epoch not set");
         return;
       }
@@ -794,11 +875,10 @@ var TPS = {
       let stream = Cc["@mozilla.org/network/file-input-stream;1"]
                    .createInstance(Ci.nsIFileInputStream);
 
-      let jsonReader = Cc["@mozilla.org/dom/json;1"]
-                       .createInstance(Components.interfaces.nsIJSON);
-
       stream.init(schemaFile, FileUtils.MODE_RDONLY, FileUtils.PERMS_FILE, 0);
-      let schema = jsonReader.decodeFromStream(stream, stream.available());
+
+      let bytes = NetUtil.readInputStream(stream, stream.available());
+      let schema = JSON.parse(gTextDecoder.decode(bytes));
       Logger.logInfo("Successfully loaded schema");
 
       // Importing resource://testing-common/* isn't possible from within TPS,
@@ -806,7 +886,7 @@ var TPS = {
       let ajvFile = this._getFileRelativeToSourceRoot(testFile, "testing/modules/ajv-4.1.1.js");
       let ajvURL = fileProtocolHandler.getURLSpecFromFile(ajvFile);
       let ns = {};
-      Cu.import(ajvURL, ns);
+      ChromeUtils.import(ajvURL, ns);
       let ajv = new ns.Ajv({ async: "co*" });
       this.pingValidator = ajv.compile(schema);
     } catch (e) {
@@ -861,6 +941,8 @@ var TPS = {
         this.waitForEvent("weave:service:ready");
       }
 
+      await Weave.Service.promiseInitialized;
+
       // We only want to do this if we modified the bookmarks this phase.
       this.shouldValidateBookmarks = false;
 
@@ -881,7 +963,7 @@ var TPS = {
    */
   async _executeTestPhase(file, phase, settings) {
     try {
-      this.config = JSON.parse(prefs.getCharPref("tps.config"));
+      this.config = JSON.parse(Services.prefs.getCharPref("tps.config"));
       // parse the test file
       Services.scriptloader.loadSubScript(file, this);
       this._currentPhase = phase;
@@ -916,7 +998,7 @@ var TPS = {
         for (let engine of Weave.Service.engineManager.getEnabled()) {
           if (!(engine.name in names)) {
             Logger.logInfo("Unregistering unused engine: " + engine.name);
-            Weave.Service.engineManager.unregister(engine);
+            await Weave.Service.engineManager.unregister(engine);
           }
         }
       }
@@ -1089,7 +1171,7 @@ var TPS = {
    */
   async waitForTracking() {
     if (!this._isTracking) {
-      await this.waitForEvent("weave:engine:start-tracking");
+      await this.waitForEvent("weave:service:tracking-started");
     }
   },
 
@@ -1097,7 +1179,7 @@ var TPS = {
    * Login on the server
    */
   async Login(force) {
-    if ((await Authentication.isLoggedIn()) && !force) {
+    if ((await Authentication.isReady()) && !force) {
       return;
     }
 
@@ -1135,8 +1217,10 @@ var TPS = {
     } else {
       Weave.Svc.Prefs.reset("firstSync");
     }
-
-    this.Login(false);
+    if (!await Weave.Service.login()) {
+      // We need to complete verification.
+      await this.Login(false);
+    }
     ++this._syncCount;
 
     this._triggeredSync = true;
@@ -1183,6 +1267,24 @@ var Addons = {
   }
 };
 
+var Addresses = {
+  async add(addresses) {
+    await this.HandleAddresses(addresses, ACTION_ADD);
+  },
+  async modify(addresses) {
+    await this.HandleAddresses(addresses, ACTION_MODIFY);
+  },
+  async delete(addresses) {
+    await this.HandleAddresses(addresses, ACTION_DELETE);
+  },
+  async verify(addresses) {
+    await this.HandleAddresses(addresses, ACTION_VERIFY);
+  },
+  async verifyNot(addresses) {
+    await this.HandleAddresses(addresses, ACTION_VERIFY_NOT);
+  }
+};
+
 var Bookmarks = {
   async add(bookmarks) {
     await TPS.HandleBookmarks(bookmarks, ACTION_ADD);
@@ -1201,6 +1303,24 @@ var Bookmarks = {
   },
   skipValidation() {
     TPS.shouldValidateBookmarks = false;
+  }
+};
+
+var CreditCards = {
+  async add(creditCards) {
+    await this.HandleCreditCards(creditCards, ACTION_ADD);
+  },
+  async modify(creditCards) {
+    await this.HandleCreditCards(creditCards, ACTION_MODIFY);
+  },
+  async delete(creditCards) {
+    await this.HandleCreditCards(creditCards, ACTION_DELETE);
+  },
+  async verify(creditCards) {
+    await this.HandleCreditCards(creditCards, ACTION_VERIFY);
+  },
+  async verifyNot(creditCards) {
+    await this.HandleCreditCards(creditCards, ACTION_VERIFY_NOT);
   }
 };
 

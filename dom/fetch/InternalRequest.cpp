@@ -13,9 +13,9 @@
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/FetchTypes.h"
 #include "mozilla/dom/ScriptSettings.h"
-#include "mozilla/dom/workers/Workers.h"
 
-#include "WorkerPrivate.h"
+#include "mozilla/dom/WorkerCommon.h"
+#include "mozilla/dom/WorkerPrivate.h"
 
 namespace mozilla {
 namespace dom {
@@ -41,6 +41,7 @@ InternalRequest::GetRequestConstructorCopy(nsIGlobalObject* aGlobal, ErrorResult
   copy->mReferrerPolicy = mReferrerPolicy;
   copy->mEnvironmentReferrerPolicy = mEnvironmentReferrerPolicy;
   copy->mIntegrity = mIntegrity;
+  copy->mMozErrors = mMozErrors;
 
   copy->mContentPolicyType = mContentPolicyTypeOverridden ?
                              mContentPolicyType :
@@ -51,6 +52,8 @@ InternalRequest::GetRequestConstructorCopy(nsIGlobalObject* aGlobal, ErrorResult
   copy->mRedirectMode = mRedirectMode;
   copy->mCreatedByFetchEvent = mCreatedByFetchEvent;
   copy->mContentPolicyTypeOverridden = mContentPolicyTypeOverridden;
+
+  copy->mPreferredAlternativeDataType = mPreferredAlternativeDataType;
   return copy.forget();
 }
 
@@ -90,6 +93,7 @@ InternalRequest::InternalRequest(const nsACString& aURL,
   , mResponseTainting(LoadTainting::Basic)
   , mCacheMode(RequestCache::Default)
   , mRedirectMode(RequestRedirect::Follow)
+  , mMozErrors(false)
   , mAuthenticationFlag(false)
   , mForceOriginHeader(false)
   , mPreserveContentCodings(false)
@@ -130,6 +134,7 @@ InternalRequest::InternalRequest(const nsACString& aURL,
   , mCacheMode(aCacheMode)
   , mRedirectMode(aRequestRedirect)
   , mIntegrity(aIntegrity)
+  , mMozErrors(false)
   , mAuthenticationFlag(false)
   , mForceOriginHeader(false)
   , mPreserveContentCodings(false)
@@ -158,6 +163,7 @@ InternalRequest::InternalRequest(const InternalRequest& aOther)
   , mCacheMode(aOther.mCacheMode)
   , mRedirectMode(aOther.mRedirectMode)
   , mIntegrity(aOther.mIntegrity)
+  , mMozErrors(aOther.mMozErrors)
   , mFragment(aOther.mFragment)
   , mAuthenticationFlag(aOther.mAuthenticationFlag)
   , mForceOriginHeader(aOther.mForceOriginHeader)
@@ -324,6 +330,9 @@ InternalRequest::MapContentPolicyTypeToRequestContext(nsContentPolicyType aConte
   case nsIContentPolicy::TYPE_WEB_MANIFEST:
     context = RequestContext::Manifest;
     break;
+  case nsIContentPolicy::TYPE_SAVEAS_DOWNLOAD:
+    context = RequestContext::Internal;
+    break;
   default:
     MOZ_ASSERT(false, "Unhandled nsContentPolicyType value");
     break;
@@ -420,21 +429,9 @@ InternalRequest::MapChannelToRequestMode(nsIChannel* aChannel)
       // TODO: Check additional flag force-preflight after bug 1199693 (bug 1189945)
       return RequestMode::Cors;
     default:
-      // TODO: assert never reached after CorsMode flag removed (bug 1189945)
-      MOZ_ASSERT(securityMode == nsILoadInfo::SEC_NORMAL);
-      break;
+      MOZ_ASSERT_UNREACHABLE("Unexpected security mode!");
+      return RequestMode::Same_origin;
   }
-
-  // TODO: remove following code once securityMode is fully implemented (bug 1189945)
-
-  nsCOMPtr<nsIHttpChannelInternal> httpChannel = do_QueryInterface(aChannel);
-
-  uint32_t corsMode;
-  MOZ_ALWAYS_SUCCEEDS(httpChannel->GetCorsMode(&corsMode));
-  MOZ_ASSERT(corsMode != nsIHttpChannelInternal::CORS_MODE_NAVIGATE);
-
-  // This cast is valid due to static asserts in ServiceWorkerManager.cpp.
-  return static_cast<RequestMode>(corsMode);
 }
 
 // static
@@ -445,8 +442,6 @@ InternalRequest::MapChannelToRequestCredentials(nsIChannel* aChannel)
 
   nsCOMPtr<nsILoadInfo> loadInfo;
   MOZ_ALWAYS_SUCCEEDS(aChannel->GetLoadInfo(getter_AddRefs(loadInfo)));
-
-  MOZ_DIAGNOSTIC_ASSERT(loadInfo->GetSecurityMode() != nsILoadInfo::SEC_NORMAL);
 
   uint32_t cookiePolicy = loadInfo->GetCookiePolicy();
 

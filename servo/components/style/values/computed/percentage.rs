@@ -5,13 +5,13 @@
 //! Computed percentages.
 
 use std::fmt;
-use style_traits::ToCss;
+use style_traits::{CssWriter, ToCss};
 use values::{CSSFloat, serialize_percentage};
 
 /// A computed percentage.
 #[cfg_attr(feature = "servo", derive(Deserialize, Serialize))]
 #[derive(Animate, Clone, ComputeSquaredDistance, Copy, Debug, Default, MallocSizeOf)]
-#[derive(PartialEq, PartialOrd, ToAnimatedZero)]
+#[derive(PartialEq, PartialOrd, ToAnimatedZero, ToComputedValue)]
 pub struct Percentage(pub CSSFloat);
 
 impl Percentage {
@@ -35,7 +35,7 @@ impl Percentage {
 }
 
 impl ToCss for Percentage {
-    fn to_css<W>(&self, dest: &mut W) -> fmt::Result
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
     where
         W: fmt::Write,
     {

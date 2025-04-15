@@ -4,16 +4,14 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["SyncedTabs"];
+var EXPORTED_SYMBOLS = ["SyncedTabs"];
 
 
-const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
-
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://services-sync/main.js");
-Cu.import("resource://gre/modules/Preferences.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://services-sync/main.js");
+ChromeUtils.import("resource://gre/modules/Preferences.jsm");
 
 // The Sync XPCOM service
 XPCOMUtils.defineLazyGetter(this, "weaveXPCService", function() {
@@ -22,8 +20,8 @@ XPCOMUtils.defineLazyGetter(this, "weaveXPCService", function() {
            .wrappedJSObject;
 });
 
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
-                                  "resource://gre/modules/PlacesUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "PlacesUtils",
+                               "resource://gre/modules/PlacesUtils.jsm");
 
 // from MDN...
 function escapeRegExp(string) {
@@ -40,17 +38,11 @@ const TOPIC_TABS_CHANGED = "services.sync.tabs.changed";
 // of tabs "fresh enough" and don't force a new sync.
 const TABS_FRESH_ENOUGH_INTERVAL = 30;
 
-let log = Log.repository.getLogger("Sync.RemoteTabs");
-// A new scope to do the logging thang...
-(function() {
-  let level = Preferences.get("services.sync.log.logger.tabs");
-  if (level) {
-    let appender = new Log.DumpAppender();
-    log.level = appender.level = Log.Level[level] || Log.Level.Debug;
-    log.addAppender(appender);
-  }
-})();
-
+XPCOMUtils.defineLazyGetter(this, "log", function() {
+  let log = Log.repository.getLogger("Sync.RemoteTabs");
+  log.manageLevelFromPref("services.sync.log.logger.tabs");
+  return log;
+});
 
 // A private singleton that does the work.
 let SyncedTabsInternal = {
@@ -161,7 +153,7 @@ let SyncedTabsInternal = {
     // Ask Sync to just do the tabs engine if it can.
     try {
       log.info("Doing a tab sync.");
-      await Weave.Service.sync(["tabs"]);
+      await Weave.Service.sync({why: "tabs", engines: ["tabs"]});
       return true;
     } catch (ex) {
       log.error("Sync failed", ex);
@@ -228,7 +220,7 @@ Services.obs.addObserver(SyncedTabsInternal, "weave:service:start-over");
 Services.prefs.addObserver("services.sync.engine.tabs", SyncedTabsInternal);
 
 // The public interface.
-this.SyncedTabs = {
+var SyncedTabs = {
   // A mock-point for tests.
   _internal: SyncedTabsInternal,
 
@@ -245,6 +237,11 @@ this.SyncedTabs = {
   // are waiting for that first sync to complete.
   get hasSyncedThisSession() {
     return this._internal.hasSyncedThisSession;
+  },
+
+  // Returns true if Sync is in a "need to reauthenticate" state.
+  get loginFailed() {
+    return this._internal.loginFailed;
   },
 
   // Return a promise that resolves with an array of client records, each with

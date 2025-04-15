@@ -635,9 +635,6 @@ public:
 
   uint64_t GetLastFwdTransactionId() { return mFwdTransactionId; }
 
-  void EnableReadLock();
-  void EnableBlockingReadLock();
-
   TextureReadLock* GetReadLock() { return mReadLock; }
 
   bool IsReadLocked() const;
@@ -645,7 +642,7 @@ public:
   bool TryReadLock();
   void ReadUnlock();
 
-  bool SerializeReadLock(ReadLockDescriptor& aDescriptor);
+  bool OnForwardedToHost();
 
   // Mark that the TextureClient will be used by the paint thread, and should not
   // free its underlying texture data. This must only be called from the main
@@ -682,6 +679,9 @@ private:
                            LayersBackend aLayersBackend,
                            TextureFlags aTextureFlags,
                            TextureAllocationFlags flags = ALLOC_DEFAULT);
+
+  void EnableReadLock();
+  void EnableBlockingReadLock();
 
   /**
    * Called once, during the destruction of the Texture, on the thread in which
@@ -761,7 +761,7 @@ protected:
   friend void TestTextureClientSurface(TextureClient*, gfxImageSurface*);
   friend void TestTextureClientYCbCr(TextureClient*, PlanarYCbCrData&);
   friend already_AddRefed<TextureHost> CreateTextureHostWithBackend(
-    TextureClient*, LayersBackend&);
+    TextureClient*, ISurfaceAllocator*, LayersBackend&);
 
 #ifdef GFX_DEBUG_TRACK_CLIENTS_IN_POOL
 public:

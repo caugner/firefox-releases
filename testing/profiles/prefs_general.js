@@ -22,7 +22,6 @@ user_pref("dom.ipc.reportProcessHangs", false); // process hang monitor
 user_pref("dom.popup_maximum", -1);
 user_pref("dom.send_after_paint_to_content", true);
 user_pref("dom.successive_dialog_time_limit", 0);
-user_pref("signed.applets.codebase_principal_support", true);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("shell.checkDefaultClient", false);
 user_pref("browser.warnOnQuit", false);
@@ -65,7 +64,7 @@ user_pref("media.gmp-manager.updateEnabled", false);
 user_pref("media.hls.server.url", "http://%(server)s/tests/dom/media/test/hls");
 user_pref("dom.w3c_touch_events.enabled", 1);
 user_pref("layout.accessiblecaret.enabled_on_touch", false);
-user_pref("dom.webcomponents.enabled", true);
+user_pref("dom.webcomponents.shadowdom.enabled", false);
 user_pref("dom.webcomponents.customelements.enabled", true);
 // Existing tests assume there is no font size inflation.
 user_pref("font.size.inflation.emPerLine", 0);
@@ -127,11 +126,9 @@ user_pref("extensions.update.enabled", false);
 // Make sure opening about:addons won't hit the network
 user_pref("extensions.webservice.discoverURL", "http://%(server)s/extensions-dummy/discoveryURL");
 // Make sure AddonRepository won't hit the network
-user_pref("extensions.getAddons.maxResults", 0);
 user_pref("extensions.getAddons.get.url", "http://%(server)s/extensions-dummy/repositoryGetURL");
 user_pref("extensions.getAddons.getWithPerformance.url", "http://%(server)s/extensions-dummy/repositoryGetWithPerformanceURL");
 user_pref("extensions.getAddons.search.browseURL", "http://%(server)s/extensions-dummy/repositoryBrowseURL");
-user_pref("extensions.getAddons.search.url", "http://%(server)s/extensions-dummy/repositorySearchURL");
 // Ensure blocklist updates don't hit the network
 user_pref("services.settings.server", "http://%(server)s/dummy-kinto/v1");
 // Make sure SNTP requests don't hit the network
@@ -159,8 +156,6 @@ user_pref("security.turn_off_all_security_so_that_viruses_can_take_over_this_com
 user_pref("dom.use_xbl_scopes_for_remote_xul", true);
 
 user_pref("captivedetect.canonicalURL", "http://%(server)s/captive-detect/success.txt");
-// Get network events.
-user_pref("network.activity.blipIntervalMilliseconds", 250);
 
 // We do not wish to display datareporting policy notifications as it might
 // cause other tests to fail. Tests that wish to test the notification functionality
@@ -170,7 +165,6 @@ user_pref("datareporting.policy.dataSubmissionPolicyBypassNotification", true);
 // Point Firefox Health Report at a local server. We don't care if it actually
 // works. It just can't hit the default production endpoint.
 user_pref("datareporting.healthreport.documentServerURI", "http://%(server)s/healthreport/");
-user_pref("datareporting.healthreport.about.reportUrl", "http://%(server)s/abouthealthreport/v4/");
 
 // Make sure CSS error reporting is enabled for tests
 user_pref("layout.css.report_errors", true);
@@ -216,10 +210,6 @@ user_pref("browser.pagethumbnails.capturing_disabled", true);
 // download test runs first doesn't show the popup inconsistently.
 user_pref("browser.download.panel.shown", true);
 
-// Assume the about:newtab page's intro panels have been shown to not depend on
-// which test runs first and happens to open about:newtab
-user_pref("browser.newtabpage.introShown", true);
-
 // Enable webapps testing mode, which bypasses native installation.
 user_pref("browser.webapps.testing", true);
 
@@ -239,15 +229,16 @@ user_pref("dom.presentation.testing.simulate-receiver", false);
 
 // Don't connect to Yahoo! for RSS feed tests.
 // en-US only uses .types.0.uri, but set all of them just to be sure.
-user_pref("browser.contentHandlers.types.0.uri", "http://test1.example.org/rss?url=%%s")
-user_pref("browser.contentHandlers.types.1.uri", "http://test1.example.org/rss?url=%%s")
-user_pref("browser.contentHandlers.types.2.uri", "http://test1.example.org/rss?url=%%s")
-user_pref("browser.contentHandlers.types.3.uri", "http://test1.example.org/rss?url=%%s")
-user_pref("browser.contentHandlers.types.4.uri", "http://test1.example.org/rss?url=%%s")
-user_pref("browser.contentHandlers.types.5.uri", "http://test1.example.org/rss?url=%%s")
+user_pref("browser.contentHandlers.types.0.uri", "http://test1.example.org/rss?url=%%s");
+user_pref("browser.contentHandlers.types.1.uri", "http://test1.example.org/rss?url=%%s");
+user_pref("browser.contentHandlers.types.2.uri", "http://test1.example.org/rss?url=%%s");
+user_pref("browser.contentHandlers.types.3.uri", "http://test1.example.org/rss?url=%%s");
+user_pref("browser.contentHandlers.types.4.uri", "http://test1.example.org/rss?url=%%s");
+user_pref("browser.contentHandlers.types.5.uri", "http://test1.example.org/rss?url=%%s");
 
 // We want to collect telemetry, but we don't want to send in the results.
 user_pref("toolkit.telemetry.server", "https://%(server)s/telemetry-dummy/");
+user_pref("datareporting.healthreport.uploadEnabled", false);
 // Don't send 'new-profile' ping on new profiles during tests, otherwise the testing framework
 // might wait on the pingsender to finish and slow down tests.
 user_pref("toolkit.telemetry.newProfilePing.enabled", false);
@@ -274,12 +265,8 @@ user_pref("toolkit.telemetry.test.pref2", false);
 // resolves and accepts requests, even if they all fail.
 user_pref("identity.fxaccounts.auth.uri", "https://%(server)s/fxa-dummy/");
 
-// Ditto for all the other Firefox accounts URIs used for about:accounts et al.:
-user_pref("identity.fxaccounts.remote.signup.uri", "https://%(server)s/fxa-signup");
-user_pref("identity.fxaccounts.remote.force_auth.uri", "https://%(server)s/fxa-force-auth");
-user_pref("identity.fxaccounts.remote.signin.uri", "https://%(server)s/fxa-signin");
-user_pref("identity.fxaccounts.settings.uri", "https://%(server)s/fxa-settings");
-user_pref("identity.fxaccounts.remote.webchannel.uri", "https://%(server)s/");
+// Ditto for all the FxA content root URI.
+user_pref("identity.fxaccounts.remote.root", "https://%(server)s/");
 
 // We don't want browser tests to perform FxA device registration.
 user_pref("identity.fxaccounts.skipDeviceRegistration", true);
@@ -311,9 +298,6 @@ user_pref("browser.newtabpage.activity-stream.tippyTop.service.endpoint", "");
 user_pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
 user_pref("browser.newtabpage.activity-stream.feeds.snippets", false);
 
-// Don't fetch directory tiles data from real servers
-user_pref("browser.newtabpage.directory.source", 'data:application/json,{"testing":1}');
-
 // Ensure UITour won't hit the network
 user_pref("browser.uitour.pinnedTabUrl", "http://%(server)s/uitour-dummy/pinnedTab");
 user_pref("browser.uitour.url", "http://%(server)s/uitour-dummy/tour");
@@ -326,7 +310,7 @@ user_pref("browser.search.countryCode", "US");
 user_pref("browser.search.geoSpecificDefaults", false);
 
 // Make sure Shield doesn't hit the network.
-user_pref("extensions.shield-recipe-client.api_url", "");
+user_pref("app.normandy.api_url", "");
 
 // Make sure PingCentre doesn't hit the network.
 user_pref("browser.ping-centre.staging.endpoint", "");
@@ -394,7 +378,11 @@ user_pref("marionette.prefs.recommended", false);
 // Disable Screenshots by default for now
 user_pref("extensions.screenshots.disabled", true);
 
-// Set places maintenance far in the future to avoid it kicking in during tests.
-// The maintenance can take a relatively long time which may cause unnecessary
-// intermittents and slow down tests.
-user_pref("places.database.lastMaintenance", 7258114800);
+// Set places maintenance far in the future (the maximum time possible in an
+// int32_t) to avoid it kicking in during tests. The maintenance can take a
+// relatively long time which may cause unnecessary intermittents and slow down
+// tests. This, like many things, will stop working correctly in 2038.
+user_pref("places.database.lastMaintenance", 2147483647);
+
+// Disable Bookmark backups by default.
+user_pref("browser.bookmarks.max_backups", 0);

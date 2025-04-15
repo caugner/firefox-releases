@@ -7,15 +7,15 @@
 "use strict";
 
 // React & Redux
-const {
-  createFactory,
-  DOM: dom,
-  PropTypes
-} = require("devtools/client/shared/vendor/react");
+const { createFactory } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const Message = createFactory(require("devtools/client/webconsole/new-console-output/components/Message"));
 const actions = require("devtools/client/webconsole/new-console-output/actions/index");
 const { l10n } = require("devtools/client/webconsole/new-console-output/utils/messages");
 const TabboxPanel = createFactory(require("devtools/client/netmonitor/src/components/TabboxPanel"));
+const { getHTTPStatusCodeURL } = require("devtools/client/netmonitor/src/utils/mdn-utils");
+const LEARN_MORE = l10n.getStr("webConsoleMoreInfoLabel");
 
 NetworkEventMessage.displayName = "NetworkEventMessage";
 
@@ -73,10 +73,24 @@ function NetworkEventMessage({
   } = response;
 
   const topLevelClasses = [ "cm-s-mozilla" ];
-  let statusInfo;
+  let statusCode, statusInfo;
 
   if (httpVersion && status && statusText !== undefined && totalTime !== undefined) {
-    statusInfo = `[${httpVersion} ${status} ${statusText} ${totalTime}ms]`;
+    let statusCodeDocURL = getHTTPStatusCodeURL(status.toString(), "webconsole");
+    statusCode = dom.span({
+      className: "status-code",
+      "data-code": status,
+      title: LEARN_MORE,
+      onClick: (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        serviceContainer.openLink(statusCodeDocURL, e);
+      }
+    }, status);
+    statusInfo = dom.span(
+      {className: "status-info"},
+      `[${httpVersion} `, statusCode, ` ${statusText} ${totalTime}ms]`
+    );
   }
 
   const toggle = () => {
@@ -93,12 +107,12 @@ function NetworkEventMessage({
     ? dom.span({ className: "xhr" }, l10n.getStr("webConsoleXhrIndicator"))
     : null;
   const requestUrl = dom.a({ className: "url", title: request.url, onClick: toggle },
-    request.url.replace(/\?.+/, ""));
+    request.url);
   const statusBody = statusInfo
     ? dom.a({ className: "status", onClick: toggle }, statusInfo)
     : null;
 
-  const messageBody = [method, xhr, requestUrl, statusBody];
+  const messageBody = [xhr, method, requestUrl, statusBody];
 
   // API consumed by Net monitor UI components. Most of the method
   // are not needed in context of the Console panel (atm) and thus
@@ -116,6 +130,9 @@ function NetworkEventMessage({
     sendHTTPRequest: () => {},
     setPreferences: () => {},
     triggerActivity: () => {},
+    requestData: (requestId, dataType) => {
+      return serviceContainer.requestData(requestId, dataType);
+    },
   };
 
   // Only render the attachment if the network-event is

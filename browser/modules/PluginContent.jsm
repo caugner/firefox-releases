@@ -4,26 +4,24 @@
 
 "use strict";
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
+var EXPORTED_SYMBOLS = [ "PluginContent" ];
 
-this.EXPORTED_SYMBOLS = [ "PluginContent" ];
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
+ChromeUtils.import("resource://gre/modules/BrowserUtils.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Timer.jsm");
-Cu.import("resource://gre/modules/BrowserUtils.jsm");
+Cu.importGlobalProperties(["InspectorUtils"]);
 
 XPCOMUtils.defineLazyGetter(this, "gNavigatorBundle", function() {
   const url = "chrome://browser/locale/browser.properties";
   return Services.strings.createBundle(url);
 });
 
-XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
+ChromeUtils.defineModuleGetter(this, "AppConstants",
   "resource://gre/modules/AppConstants.jsm");
 
-this.PluginContent = function(global) {
+var PluginContent = function(global) {
   this.init(global);
 };
 
@@ -519,10 +517,8 @@ PluginContent.prototype = {
       plugin.removeAttribute("href");
       let overlay = this.getPluginUI(plugin, "main");
       this.setVisibility(plugin, overlay, OVERLAY_DISPLAY.FULL);
-      let inIDOMUtils = Cc["@mozilla.org/inspector/dom-utils;1"]
-                          .getService(Ci.inIDOMUtils);
-      // Add psuedo class so our styling will take effect
-      inIDOMUtils.addPseudoClassLock(plugin, "-moz-handler-clicktoplay");
+      // Add pseudo class so our styling will take effect
+      InspectorUtils.addPseudoClassLock(plugin, "-moz-handler-clicktoplay");
       overlay.addEventListener("click", this, true);
       return;
     }

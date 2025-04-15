@@ -3,8 +3,8 @@
 
 "use strict";
 
-Cu.import("resource://testing-common/httpd.js");
-XPCOMUtils.defineLazyModuleGetter(this, "Experiments",
+ChromeUtils.import("resource://testing-common/httpd.js");
+ChromeUtils.defineModuleGetter(this, "Experiments",
   "resource:///modules/experiments/Experiments.jsm");
 
 const MANIFEST_HANDLER         = "manifests/handler";
@@ -36,7 +36,7 @@ add_task(async function test_setup() {
     response.processAsync();
     response.finish();
   });
-  do_register_cleanup(() => gHttpServer.stop(() => {}));
+  registerCleanupFunction(() => gHttpServer.stop(() => {}));
 
   Services.prefs.setBoolPref(PREF_EXPERIMENTS_ENABLED, true);
   Services.prefs.setIntPref(PREF_LOGGING_LEVEL, 0);

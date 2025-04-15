@@ -10,9 +10,12 @@
 #include "mozilla/css/Rule.h"
 #include "nsCSSValue.h"
 #include "nsICSSDeclaration.h"
-#include "nsIDOMCSSFontFaceRule.h"
 
 namespace mozilla {
+
+namespace dom {
+class DocGroup;
+} // namespace dom
 
 struct CSSFontFaceDescriptors
 {
@@ -36,7 +39,6 @@ class nsCSSFontFaceStyleDecl final : public nsICSSDeclaration
 public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIDOMCSSSTYLEDECLARATION_HELPER
-  NS_DECL_NSICSSDECLARATION
   virtual already_AddRefed<mozilla::dom::CSSValue>
   GetPropertyCSSValue(const nsAString& aProp, mozilla::ErrorResult& aRv)
     override;
@@ -61,6 +63,8 @@ protected:
   mozilla::CSSFontFaceDescriptors mDescriptors;
 
   // The actual implementation of GetCssText, so we can make it const.
+  // We can't make nsICSSDeclaration::GetCssText const, because some
+  // subclasses call non-const methods in their implementations.
   void GetCssTextImpl(nsAString& aCssText) const;
 
 private:
@@ -70,8 +74,7 @@ private:
   void* operator new(size_t size) CPP_THROW_NEW;
 };
 
-class nsCSSFontFaceRule final : public mozilla::css::Rule,
-                                public nsIDOMCSSFontFaceRule
+class nsCSSFontFaceRule final : public mozilla::css::Rule
 {
 public:
   nsCSSFontFaceRule(uint32_t aLineNumber, uint32_t aColumnNumber)
@@ -94,18 +97,14 @@ public:
   virtual void List(FILE* out = stdout, int32_t aIndent = 0) const override;
 #endif
   virtual int32_t GetType() const override;
-  using Rule::GetType;
   virtual already_AddRefed<mozilla::css::Rule> Clone() const override;
-
-  // nsIDOMCSSFontFaceRule interface
-  NS_DECL_NSIDOMCSSFONTFACERULE
 
   void SetDesc(nsCSSFontDesc aDescID, nsCSSValue const & aValue);
   void GetDesc(nsCSSFontDesc aDescID, nsCSSValue & aValue);
 
   // WebIDL interface
   uint16_t Type() const override;
-  void GetCssTextImpl(nsAString& aCssText) const override;
+  void GetCssText(nsAString& aCssText) const override;
   nsICSSDeclaration* Style();
 
   virtual size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const override;

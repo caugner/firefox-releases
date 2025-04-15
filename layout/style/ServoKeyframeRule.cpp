@@ -6,6 +6,8 @@
 
 #include "mozilla/ServoKeyframeRule.h"
 
+#include "mozilla/DeclarationBlockInlines.h"
+#include "mozilla/ServoDeclarationBlock.h"
 #include "nsDOMCSSDeclaration.h"
 #include "mozAutoDocUpdate.h"
 
@@ -29,11 +31,7 @@ public:
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(
     ServoKeyframeDeclaration, nsICSSDeclaration)
 
-  NS_IMETHOD GetParentRule(nsIDOMCSSRule** aParent) final
-  {
-    NS_IF_ADDREF(*aParent = mRule);
-    return NS_OK;
-  }
+  css::Rule* GetParentRule() final { return mRule; }
 
   void DropReference() {
     mRule = nullptr;
@@ -59,13 +57,15 @@ public:
     });
     return NS_OK;
   }
-  void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv) final
+  void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv,
+                                nsIPrincipal* aSubjectPrincipal) final
   {
     MOZ_ASSERT_UNREACHABLE("GetCSSParsingEnvironment "
                            "shouldn't be calling for a Servo rule");
     GetCSSParsingEnvironmentForRule(mRule, aCSSParseEnv);
   }
-  ServoCSSParsingEnvironment GetServoCSSParsingEnvironment() const final
+  ServoCSSParsingEnvironment GetServoCSSParsingEnvironment(
+      nsIPrincipal* aSubjectPrincipal) const final
   {
     return GetServoCSSParsingEnvironmentForRule(mRule);
   }
@@ -172,32 +172,27 @@ ServoKeyframeRule::UpdateRule(Func aCallback)
   aCallback();
 
   if (StyleSheet* sheet = GetStyleSheet()) {
-    // FIXME sheet->AsGecko()->SetModifiedByChildRule();
-    if (doc) {
-      doc->StyleRuleChanged(sheet, this);
-    }
+    sheet->RuleChanged(this);
   }
 }
 
-NS_IMETHODIMP
+void
 ServoKeyframeRule::GetKeyText(nsAString& aKeyText)
 {
   Servo_Keyframe_GetKeyText(mRaw, &aKeyText);
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 ServoKeyframeRule::SetKeyText(const nsAString& aKeyText)
 {
   NS_ConvertUTF16toUTF8 keyText(aKeyText);
   UpdateRule([this, &keyText]() {
     Servo_Keyframe_SetKeyText(mRaw, &keyText);
   });
-  return NS_OK;
 }
 
 void
-ServoKeyframeRule::GetCssTextImpl(nsAString& aCssText) const
+ServoKeyframeRule::GetCssText(nsAString& aCssText) const
 {
   Servo_Keyframe_GetCssText(mRaw, &aCssText);
 }

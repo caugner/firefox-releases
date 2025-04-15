@@ -131,6 +131,11 @@ add_task(async function copyURLFromPanel() {
   // does not appear on about:blank for example.)
   let url = "http://example.com/";
   await BrowserTestUtils.withNewTab(url, async () => {
+    // Add action to URL bar.
+    let action = PageActions._builtInActions.find(a => a.id == "copyURL");
+    action.pinnedToUrlbar = true;
+    registerCleanupFunction(() => action.pinnedToUrlbar = false);
+
     // Open the panel and click Copy URL.
     await promisePageActionPanelOpen();
     Assert.ok(true, "page action panel opened");
@@ -147,6 +152,8 @@ add_task(async function copyURLFromPanel() {
     Assert.equal(feedbackPanel.anchorNode.id, "pageActionButton", "Feedback menu should be anchored on the main Page Action button");
     let feedbackHiddenPromise = promisePanelHidden("pageActionFeedback");
     await feedbackHiddenPromise;
+
+    action.pinnedToUrlbar = false;
   });
 });
 
@@ -170,38 +177,33 @@ add_task(async function copyURLFromURLBar() {
     Assert.equal(panel.anchorNode.id, "pageAction-urlbar-copyURL", "Feedback menu should be anchored on the main URL bar button");
     let feedbackHiddenPromise = promisePanelHidden("pageActionFeedback");
     await feedbackHiddenPromise;
+
+    action.pinnedToUrlbar = false;
   });
 });
 
 add_task(async function sendToDevice_nonSendable() {
-  // Open a tab that's not sendable.  An about: page like about:home is
-  // convenient.
-  await BrowserTestUtils.withNewTab("about:home", async () => {
-    // ... but the page actions should be hidden on about:home, including the
-    // main button.  (It's not easy to load a page that's both actionable and
-    // not sendable.)  So first check that that's the case, and then unhide the
-    // main button so that this test can continue.
-    Assert.equal(
-      window.getComputedStyle(BrowserPageActions.mainButtonNode).display,
-      "none",
-      "Main button should be hidden on about:home"
-    );
-    BrowserPageActions.mainButtonNode.style.display = "-moz-box";
+  // Open a tab that's not sendable but where the page action buttons still
+  // appear.  about:about is convenient.
+  await BrowserTestUtils.withNewTab("about:about", async () => {
     await promiseSyncReady();
     // Open the panel.  Send to Device should be disabled.
     await promisePageActionPanelOpen();
-    Assert.equal(BrowserPageActions.mainButtonNode.getAttribute("open"),
-      "true", "Main button has 'open' attribute");
-    let sendToDeviceButton =
-      document.getElementById("pageAction-panel-sendToDevice");
-    Assert.ok(sendToDeviceButton.disabled);
+    Assert.equal(BrowserPageActions.mainButtonNode.getAttribute("open"), "true",
+                 "Main button has 'open' attribute");
+    let panelButton =
+      BrowserPageActions.panelButtonNodeForActionID("sendToDevice");
+    Assert.equal(panelButton.disabled, true,
+                 "The panel button should be disabled");
     let hiddenPromise = promisePageActionPanelHidden();
     BrowserPageActions.panelNode.hidePopup();
     await hiddenPromise;
     Assert.ok(!BrowserPageActions.mainButtonNode.hasAttribute("open"),
-      "Main button no longer has 'open' attribute");
-    // Remove the `display` style set above.
-    BrowserPageActions.mainButtonNode.style.removeProperty("display");
+              "Main button no longer has 'open' attribute");
+    // The urlbar button shouldn't exist.
+    let urlbarButton =
+      BrowserPageActions.urlbarButtonNodeForActionID("sendToDevice");
+    Assert.equal(urlbarButton, null, "The urlbar button shouldn't exist");
   });
 });
 
@@ -445,6 +447,11 @@ add_task(async function sendToDevice_noDevices() {
       null,
       {
         attrs: {
+          label: "Connect Another Device..."
+        }
+      },
+      {
+        attrs: {
           label: "Learn About Sending Tabs..."
         }
       }
@@ -550,11 +557,13 @@ add_task(async function sendToDevice_inUrlbar() {
     let urlbarButton = document.getElementById(
       BrowserPageActions.urlbarButtonNodeIDForActionID(action.id)
     );
-    Assert.ok(!urlbarButton.disabled);
-    let panelPromise =
-      promisePanelShown(BrowserPageActions._activatedActionPanelID);
+    Assert.notEqual(urlbarButton, null, "The urlbar button should exist");
+    Assert.ok(!urlbarButton.disabled,
+              "The urlbar button should not be disabled");
     EventUtils.synthesizeMouseAtCenter(urlbarButton, {});
-    await panelPromise;
+    // The panel element for _activatedActionPanelID is created synchronously
+    // only after the associated button has been clicked.
+    await promisePanelShown(BrowserPageActions._activatedActionPanelID);
     Assert.equal(urlbarButton.getAttribute("open"), "true",
       "Button has open attribute");
 
@@ -739,7 +748,7 @@ add_task(async function contextMenu() {
 
 function promiseSyncReady() {
   let service = Cc["@mozilla.org/weave/service;1"]
-                  .getService(Components.interfaces.nsISupports)
+                  .getService(Ci.nsISupports)
                   .wrappedJSObject;
   return service.whenLoaded().then(() => {
     UIState.isReady();

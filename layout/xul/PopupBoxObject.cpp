@@ -22,11 +22,6 @@
 namespace mozilla {
 namespace dom {
 
-NS_IMPL_ADDREF_INHERITED(PopupBoxObject, BoxObject)
-NS_IMPL_RELEASE_INHERITED(PopupBoxObject, BoxObject)
-NS_INTERFACE_MAP_BEGIN(PopupBoxObject)
-NS_INTERFACE_MAP_END_INHERITING(BoxObject)
-
 PopupBoxObject::PopupBoxObject()
 {
 }
@@ -161,15 +156,15 @@ PopupBoxObject::SizeTo(int32_t aWidth, int32_t aHeight)
   width.AppendInt(aWidth);
   height.AppendInt(aHeight);
 
-  nsCOMPtr<nsIContent> content = mContent;
+  RefPtr<Element> element = mContent->AsElement();
 
   // We only want to pass aNotify=true to SetAttr once, but must make sure
   // we pass it when a value is being changed.  Thus, we check if the height
   // is the same and if so, pass true when setting the width.
-  bool heightSame = content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::height, height, eCaseMatters);
+  bool heightSame = element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::height, height, eCaseMatters);
 
-  content->SetAttr(kNameSpaceID_None, nsGkAtoms::width, width, heightSame);
-  content->SetAttr(kNameSpaceID_None, nsGkAtoms::height, height, true);
+  element->SetAttr(kNameSpaceID_None, nsGkAtoms::width, width, heightSame);
+  element->SetAttr(kNameSpaceID_None, nsGkAtoms::height, height, true);
 }
 
 bool
@@ -214,10 +209,11 @@ PopupBoxObject::EnableKeyboardNavigator(bool aEnableKeyboardNavigator)
 
   // Use ignorekeys="true" on the popup instead of using this function.
   if (aEnableKeyboardNavigator)
-    mContent->UnsetAttr(kNameSpaceID_None, nsGkAtoms::ignorekeys, true);
+    mContent->AsElement()->UnsetAttr(kNameSpaceID_None, nsGkAtoms::ignorekeys,
+                                     true);
   else
-    mContent->SetAttr(kNameSpaceID_None, nsGkAtoms::ignorekeys,
-                      NS_LITERAL_STRING("true"), true);
+    mContent->AsElement()->SetAttr(kNameSpaceID_None, nsGkAtoms::ignorekeys,
+                                   NS_LITERAL_STRING("true"), true);
 }
 
 void

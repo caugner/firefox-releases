@@ -11,7 +11,7 @@
 const {Ci, Cc} = require("chrome");
 const {CanvasFrameAnonymousContentHelper, createNode} = require("./utils/markup");
 const Services = require("Services");
-const EventEmitter = require("devtools/shared/old-event-emitter");
+const EventEmitter = require("devtools/shared/event-emitter");
 const {rgbToHsl, rgbToColorName} = require("devtools/shared/css/color").colorUtils;
 const {getCurrentZoom, getFrameOffsets} = require("devtools/shared/layout/utils");
 
@@ -524,7 +524,7 @@ function toColorString(rgb, format) {
  */
 function hexString([r, g, b]) {
   let val = (1 << 24) + (r << 16) + (g << 8) + (b << 0);
-  return "#" + val.toString(16).substr(-6).toUpperCase();
+  return "#" + val.toString(16).substr(-6);
 }
 
 function cap(value, min, max) {

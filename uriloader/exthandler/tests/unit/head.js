@@ -8,17 +8,15 @@
 
 "use strict";
 
-const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://gre/modules/osfile.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
-Cu.import("resource://gre/modules/osfile.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-
-Cu.import("resource://testing-common/HandlerServiceTestUtils.jsm", this);
-Cu.import("resource://testing-common/TestUtils.jsm");
+ChromeUtils.import("resource://testing-common/HandlerServiceTestUtils.jsm", this);
+ChromeUtils.import("resource://testing-common/TestUtils.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "gHandlerServiceJSON",
                                    "@mozilla.org/uriloader/handler-service;1",
@@ -102,7 +100,7 @@ add_task(async function test_initialize() {
 /**
  * Ensures the files are removed and the services unloaded when the tests end.
  */
-do_register_cleanup(async function test_terminate() {
+registerCleanupFunction(async function test_terminate() {
   await deleteHandlerStoreJSON();
   await deleteHandlerStoreRDF();
 });

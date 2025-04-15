@@ -3,16 +3,19 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
+/* import-globals-from head.js */
+
 // Test the Copy Link Location menu item of the webconsole is displayed for network
 // messages and copies the expected URL.
 
 "use strict";
 
 const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-  "new-console-output/test/mochitest/test-console.html?_date=" + Date.now();
+                 "new-console-output/test/mochitest/test-console.html?_date=" +
+                 Date.now();
 const CONTEXT_MENU_ID = "#console-menu-copy-url";
 
-add_task(async function() {
+add_task(async function () {
   // Enable net messages in the console for this test.
   await pushPref("devtools.webconsole.filter.net", true);
 
@@ -22,14 +25,15 @@ add_task(async function() {
   info("Test Copy URL menu item for text log");
 
   info("Logging a text message in the content window");
+  let onLogMessage = waitForMessage(hud, "simple text message");
   await ContentTask.spawn(gBrowser.selectedBrowser, null, () => {
     content.wrappedJSObject.console.log("simple text message");
   });
-  let message = await waitFor(() => findMessage(hud, "simple text message"));
+  let message = await onLogMessage;
   ok(message, "Text log found in the console");
 
   info("Open and check the context menu for the logged text message");
-  let menuPopup = await openContextMenu(hud, message);
+  let menuPopup = await openContextMenu(hud, message.node);
   let copyURLItem = menuPopup.querySelector(CONTEXT_MENU_ID);
   ok(!copyURLItem, "Copy URL menu item is hidden for a simple text message");
 
@@ -39,15 +43,16 @@ add_task(async function() {
   info("Test Copy URL menu item for network log");
 
   info("Reload the content window to produce a network log");
+  let onNetworkMessage = waitForMessage(hud, "test-console.html");
   await ContentTask.spawn(gBrowser.selectedBrowser, null, () => {
     content.wrappedJSObject.location.reload();
   });
 
-  message = await waitFor(() => findMessage(hud, "test-console.html"));
+  message = await onNetworkMessage;
   ok(message, "Network log found in the console");
 
   info("Open and check the context menu for the logged network message");
-  menuPopup = await openContextMenu(hud, message);
+  menuPopup = await openContextMenu(hud, message.node);
   copyURLItem = menuPopup.querySelector(CONTEXT_MENU_ID);
   ok(copyURLItem, "Copy url menu item is available in context menu");
 

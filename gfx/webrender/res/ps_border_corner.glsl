@@ -24,11 +24,7 @@ flat varying float vIsBorderRadiusLessThanBorderWidth;
 // Border style
 flat varying float vAlphaSelect;
 
-#ifdef WR_FEATURE_TRANSFORM
-varying vec3 vLocalPos;
-#else
 varying vec2 vLocalPos;
-#endif
 
 #ifdef WR_VERTEX_SHADER
 // Matches BorderCornerSide enum in border.rs
@@ -110,6 +106,7 @@ void write_color(vec4 color0, vec4 color1, int style, vec2 delta, int instance_k
         case SIDE_SECOND:
             color1.a = 0.0;
             break;
+        default: break;
     }
 
     vColor00 = vec4(clamp(color0.rgb * modulate.x, vec3(0.0), vec3(color0.a)), color0.a);
@@ -140,6 +137,8 @@ int select_style(int color_select, vec2 fstyle) {
             return style.x;
         case SIDE_SECOND:
             return style.y;
+        default:
+            return 0;
     }
 }
 
@@ -157,8 +156,9 @@ void main(void) {
     vec4 edge_distances;
     vec4 color0, color1;
     vec2 color_delta;
+    vec4 edge_mask;
 
-    // TODO(gw): Now that all border styles are supported, the switch
+    // TODO(gw): Now that all border styles are supported, the
     //           statement below can be tidied up quite a bit.
 
     switch (sub_part) {
@@ -184,6 +184,7 @@ void main(void) {
             color_delta = vec2(1.0);
             vIsBorderRadiusLessThanBorderWidth = any(lessThan(border.radii[0].xy,
                                                               border.widths.xy)) ? 1.0 : 0.0;
+            edge_mask = vec4(1.0, 1.0, 0.0, 0.0);
             break;
         }
         case 1: {
@@ -210,6 +211,7 @@ void main(void) {
             color_delta = vec2(1.0, -1.0);
             vIsBorderRadiusLessThanBorderWidth = any(lessThan(border.radii[0].zw,
                                                               border.widths.zy)) ? 1.0 : 0.0;
+            edge_mask = vec4(0.0, 1.0, 1.0, 0.0);
             break;
         }
         case 2: {
@@ -236,6 +238,7 @@ void main(void) {
             color_delta = vec2(-1.0);
             vIsBorderRadiusLessThanBorderWidth = any(lessThan(border.radii[1].xy,
                                                               border.widths.zw)) ? 1.0 : 0.0;
+            edge_mask = vec4(0.0, 0.0, 1.0, 1.0);
             break;
         }
         case 3: {
@@ -262,8 +265,17 @@ void main(void) {
             color_delta = vec2(-1.0, 1.0);
             vIsBorderRadiusLessThanBorderWidth = any(lessThan(border.radii[1].zw,
                                                               border.widths.xw)) ? 1.0 : 0.0;
+            edge_mask = vec4(1.0, 0.0, 0.0, 1.0);
             break;
         }
+        default:
+            p0 = p1 = vec2(0.0);
+            color0 = color1 = vec4(1.0);
+            vClipCenter = vClipSign = vec2(0.0);
+            style = 0;
+            edge_distances = edge_mask = vec4(0.0);
+            color_delta = vec2(0.0);
+            vIsBorderRadiusLessThanBorderWidth = 0.0;
     }
 
     switch (style) {
@@ -302,17 +314,19 @@ void main(void) {
     segment_rect.size = p1 - p0;
 
 #ifdef WR_FEATURE_TRANSFORM
-    TransformVertexInfo vi = write_transform_vertex(segment_rect,
-                                                    prim.local_clip_rect,
-                                                    vec4(1.0),
-                                                    prim.z,
-                                                    prim.layer,
-                                                    prim.task);
+    VertexInfo vi = write_transform_vertex(segment_rect,
+                                           prim.local_rect,
+                                           prim.local_clip_rect,
+                                           edge_mask,
+                                           prim.z,
+                                           prim.scroll_node,
+                                           prim.task,
+                                           true);
 #else
     VertexInfo vi = write_vertex(segment_rect,
                                  prim.local_clip_rect,
                                  prim.z,
-                                 prim.layer,
+                                 prim.scroll_node,
                                  prim.task,
                                  prim.local_rect);
 #endif
@@ -326,15 +340,12 @@ void main(void) {
 void main(void) {
     float alpha = 1.0;
 #ifdef WR_FEATURE_TRANSFORM
-    alpha = 0.0;
-    vec2 local_pos = init_transform_fs(vLocalPos, alpha);
-#else
-    vec2 local_pos = vLocalPos;
+    alpha = init_transform_fs(vLocalPos);
 #endif
 
     alpha *= do_clip();
 
-    float aa_range = compute_aa_range(local_pos);
+    float aa_range = compute_aa_range(vLocalPos);
 
     float distance_for_color;
     float color_mix_factor;
@@ -343,8 +354,8 @@ void main(void) {
     // necessary for correctness when the border width is greater
     // than the border radius.
     if (vIsBorderRadiusLessThanBorderWidth == 0.0 ||
-        all(lessThan(local_pos * vClipSign, vClipCenter * vClipSign))) {
-        vec2 p = local_pos - vClipCenter;
+        all(lessThan(vLocalPos * vClipSign, vClipCenter * vClipSign))) {
+        vec2 p = vLocalPos - vClipCenter;
 
         // The coordinate system is snapped to pixel boundaries. To sample the distance,
         // however, we are interested in the center of the pixels which introduces an
@@ -357,10 +368,10 @@ void main(void) {
         // direction of the center of the ellipse (a different offset for each corner).
 
         // Get signed distance from the inner/outer clips.
-        float d0 = distance_to_ellipse(p, vRadii0.xy);
-        float d1 = distance_to_ellipse(p, vRadii0.zw);
-        float d2 = distance_to_ellipse(p, vRadii1.xy);
-        float d3 = distance_to_ellipse(p, vRadii1.zw);
+        float d0 = distance_to_ellipse(p, vRadii0.xy, aa_range);
+        float d1 = distance_to_ellipse(p, vRadii0.zw, aa_range);
+        float d2 = distance_to_ellipse(p, vRadii1.xy, aa_range);
+        float d3 = distance_to_ellipse(p, vRadii1.zw, aa_range);
 
         // SDF subtract main radii
         float d_main = max(d0, -d1);
@@ -382,8 +393,8 @@ void main(void) {
         // greater than border radius.
 
         // Get linear distances along horizontal and vertical edges.
-        vec2 d0 = vClipSign.xx * (local_pos.xx - vEdgeDistance.xz);
-        vec2 d1 = vClipSign.yy * (local_pos.yy - vEdgeDistance.yw);
+        vec2 d0 = vClipSign.xx * (vLocalPos.xx - vEdgeDistance.xz);
+        vec2 d1 = vClipSign.yy * (vLocalPos.yy - vEdgeDistance.yw);
         // Apply union to get the outer edge signed distance.
         float da = min(d0.x, d1.x);
         // Apply intersection to get the inner edge signed distance.
@@ -406,7 +417,7 @@ void main(void) {
 
     // Select color based on side of line. Get distance from the
     // reference line, and then apply AA along the edge.
-    float ld = distance_to_line(vColorEdgeLine.xy, vColorEdgeLine.zw, local_pos);
+    float ld = distance_to_line(vColorEdgeLine.xy, vColorEdgeLine.zw, vLocalPos);
     float m = distance_aa(aa_range, -ld);
     vec4 color = mix(color0, color1, m);
 

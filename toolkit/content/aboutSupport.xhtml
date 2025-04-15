@@ -25,8 +25,6 @@
 
     <script type="application/javascript"
             src="chrome://global/content/aboutSupport.js"/>
-    <script type="application/javascript"
-            src="chrome://global/content/resetProfile.js"/>
   </head>
 
   <body dir="&locale.dir;">
@@ -248,6 +246,15 @@
             </td>
           </tr>
 
+          <tr id="policies-status-row">
+            <th class="column">
+              &aboutSupport.enterprisePolicies;
+            </th>
+
+            <td id="policies-status">
+            </td>
+          </tr>
+
           <tr>
             <th class="column">
               &aboutSupport.appBasicsKeyGoogle;
@@ -365,6 +372,53 @@
           </tr>
         </thead>
         <tbody id="extensions-tbody">
+        </tbody>
+      </table>
+
+      <!-- - - - - - - - - - - - - - - - - - - - - -->
+
+      <h2 class="major-section" id="security-software-title">
+        &aboutSupport.securitySoftwareTitle;
+      </h2>
+
+      <table id="security-software-table">
+        <thead>
+          <tr>
+            <th>
+              &aboutSupport.securitySoftwareType;
+            </th>
+            <th>
+              &aboutSupport.securitySoftwareName;
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th class="column">
+              &aboutSupport.securitySoftwareAntivirus;
+            </th>
+
+            <td id="security-software-antivirus">
+            </td>
+          </tr>
+
+          <tr>
+            <th class="column">
+              &aboutSupport.securitySoftwareAntiSpyware;
+            </th>
+
+            <td id="security-software-antispyware">
+            </td>
+          </tr>
+
+          <tr>
+            <th class="column">
+              &aboutSupport.securitySoftwareFirewall;
+            </th>
+
+            <td id="security-software-firewall">
+            </td>
+          </tr>
         </tbody>
       </table>
 

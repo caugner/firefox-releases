@@ -23,15 +23,10 @@
 // set to true and stay userDisabled. This add-on is not used in tests that
 // start with add-ons blocked as it would be identical to softblock3
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
-var Cr = Components.results;
-
 const URI_EXTENSION_BLOCKLIST_DIALOG = "chrome://mozapps/content/extensions/blocklist.xul";
 
-Cu.import("resource://gre/modules/NetUtil.jsm");
-Cu.import("resource://testing-common/MockRegistrar.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://testing-common/MockRegistrar.jsm");
 
 // Allow insecure updates
 Services.prefs.setBoolPref("extensions.checkUpdateSecurity", false);
@@ -280,7 +275,7 @@ const ADDON_IDS = ["softblock1@tests.mozilla.org",
 var WindowWatcher = {
   openWindow(parent, url, name, features, openArgs) {
     // Should be called to list the newly blocklisted items
-    do_check_eq(url, URI_EXTENSION_BLOCKLIST_DIALOG);
+    Assert.equal(url, URI_EXTENSION_BLOCKLIST_DIALOG);
 
     // Simulate auto-disabling any softblocks
     var list = openArgs.wrappedJSObject.list;
@@ -324,12 +319,12 @@ var InstallConfirm = {
 var InstallConfirmFactory = {
   createInstance: function createInstance(outer, iid) {
     if (outer != null)
-      throw Components.results.NS_ERROR_NO_AGGREGATION;
+      throw Cr.NS_ERROR_NO_AGGREGATION;
     return InstallConfirm.QueryInterface(iid);
   }
 };
 
-var registrar = Components.manager.QueryInterface(Components.interfaces.nsIComponentRegistrar);
+var registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
 registrar.registerFactory(Components.ID("{f0863905-4dde-42e2-991c-2dc8209bc9ca}"),
                           "Fake Install Prompt",
                           "@mozilla.org/addons/web-install-prompt;1", InstallConfirmFactory);
@@ -429,37 +424,37 @@ function Pmanual_update(aVersion) {
 // Checks that an add-ons properties match expected values
 function check_addon(aAddon, aExpectedVersion, aExpectedUserDisabled,
                      aExpectedSoftDisabled, aExpectedState) {
-  do_check_neq(aAddon, null);
-  do_print("Testing " + aAddon.id + " version " + aAddon.version + " user "
-           + aAddon.userDisabled + " soft " + aAddon.softDisabled
-           + " perms " + aAddon.permissions);
+  Assert.notEqual(aAddon, null);
+  info("Testing " + aAddon.id + " version " + aAddon.version + " user "
+       + aAddon.userDisabled + " soft " + aAddon.softDisabled
+       + " perms " + aAddon.permissions);
 
-  do_check_eq(aAddon.version, aExpectedVersion);
-  do_check_eq(aAddon.blocklistState, aExpectedState);
-  do_check_eq(aAddon.userDisabled, aExpectedUserDisabled);
-  do_check_eq(aAddon.softDisabled, aExpectedSoftDisabled);
+  Assert.equal(aAddon.version, aExpectedVersion);
+  Assert.equal(aAddon.blocklistState, aExpectedState);
+  Assert.equal(aAddon.userDisabled, aExpectedUserDisabled);
+  Assert.equal(aAddon.softDisabled, aExpectedSoftDisabled);
   if (aAddon.softDisabled)
-    do_check_true(aAddon.userDisabled);
+    Assert.ok(aAddon.userDisabled);
 
   if (aExpectedState == Ci.nsIBlocklistService.STATE_BLOCKED) {
-    do_print("blocked, PERM_CAN_ENABLE " + aAddon.id);
-    do_check_false(hasFlag(aAddon.permissions, AddonManager.PERM_CAN_ENABLE));
-    do_print("blocked, PERM_CAN_DISABLE " + aAddon.id);
-    do_check_false(hasFlag(aAddon.permissions, AddonManager.PERM_CAN_DISABLE));
+    info("blocked, PERM_CAN_ENABLE " + aAddon.id);
+    Assert.ok(!hasFlag(aAddon.permissions, AddonManager.PERM_CAN_ENABLE));
+    info("blocked, PERM_CAN_DISABLE " + aAddon.id);
+    Assert.ok(!hasFlag(aAddon.permissions, AddonManager.PERM_CAN_DISABLE));
   } else if (aAddon.userDisabled) {
-    do_print("userDisabled, PERM_CAN_ENABLE " + aAddon.id);
-    do_check_true(hasFlag(aAddon.permissions, AddonManager.PERM_CAN_ENABLE));
-    do_print("userDisabled, PERM_CAN_DISABLE " + aAddon.id);
-    do_check_false(hasFlag(aAddon.permissions, AddonManager.PERM_CAN_DISABLE));
+    info("userDisabled, PERM_CAN_ENABLE " + aAddon.id);
+    Assert.ok(hasFlag(aAddon.permissions, AddonManager.PERM_CAN_ENABLE));
+    info("userDisabled, PERM_CAN_DISABLE " + aAddon.id);
+    Assert.ok(!hasFlag(aAddon.permissions, AddonManager.PERM_CAN_DISABLE));
   } else {
-    do_print("other, PERM_CAN_ENABLE " + aAddon.id);
-    do_check_false(hasFlag(aAddon.permissions, AddonManager.PERM_CAN_ENABLE));
+    info("other, PERM_CAN_ENABLE " + aAddon.id);
+    Assert.ok(!hasFlag(aAddon.permissions, AddonManager.PERM_CAN_ENABLE));
     if (aAddon.type != "theme") {
-      do_print("other, PERM_CAN_DISABLE " + aAddon.id);
-      do_check_true(hasFlag(aAddon.permissions, AddonManager.PERM_CAN_DISABLE));
+      info("other, PERM_CAN_DISABLE " + aAddon.id);
+      Assert.ok(hasFlag(aAddon.permissions, AddonManager.PERM_CAN_DISABLE));
     }
   }
-  do_check_eq(aAddon.appDisabled, aExpectedState == Ci.nsIBlocklistService.STATE_BLOCKED);
+  Assert.equal(aAddon.appDisabled, aExpectedState == Ci.nsIBlocklistService.STATE_BLOCKED);
 
   let willBeActive = aAddon.isActive;
   if (hasFlag(aAddon.pendingOperations, AddonManager.PENDING_DISABLE))
@@ -468,9 +463,9 @@ function check_addon(aAddon, aExpectedVersion, aExpectedUserDisabled,
     willBeActive = true;
 
   if (aExpectedUserDisabled || aExpectedState == Ci.nsIBlocklistService.STATE_BLOCKED) {
-    do_check_false(willBeActive);
+    Assert.ok(!willBeActive);
   } else {
-    do_check_true(willBeActive);
+    Assert.ok(willBeActive);
   }
 }
 
@@ -1151,7 +1146,7 @@ add_task(async function run_local_install_test() {
 
   let aInstalls = await AddonManager.getAllInstalls();
   // Should have finished all installs without needing to restart
-  do_check_eq(aInstalls.length, 0);
+  Assert.equal(aInstalls.length, 0);
 
   let [s1, s2, s3, /* s4 */, h, r] = await promiseAddonsByIDs(ADDON_IDS);
 

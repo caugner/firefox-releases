@@ -481,8 +481,8 @@ nsHTMLCanvasFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   DisplayListClipState::AutoClipContainingBlockDescendantsToContentBox
     clip(aBuilder, this, clipFlags);
 
-  aLists.Content()->AppendNewToTop(
-    new (aBuilder) nsDisplayCanvas(aBuilder, this));
+  aLists.Content()->AppendToTop(
+    MakeDisplayItem<nsDisplayCanvas>(aBuilder, this));
 
   DisplaySelectionOverlay(aBuilder, aLists.Content(),
                           nsISelectionDisplay::DISPLAY_IMAGES);

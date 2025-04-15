@@ -7,10 +7,11 @@ grade: stable
 
 apps:
   firefox:
-    command: desktop-launch firefox
-    desktop: opt/firefox/distribution/firefox.desktop
+    command: desktop-launch $SNAP/firefox
+    desktop: distribution/firefox.desktop
     environment:
       DISABLE_WAYLAND: 1
+      HOME: "$SNAP_USER_COMMON"
     plugs:
       - avahi-observe
       - browser-sandbox
@@ -21,10 +22,13 @@ apps:
       - gsettings
       - home
       - network
+      - network-observe
       - opengl
       - pulseaudio
+      - removable-media
       - screen-inhibit-control
       - unity7
+      - upower-observe
       - x11
 
 plugs:
@@ -33,6 +37,8 @@ plugs:
     allow-sandbox: true
 
 parts:
+  desktop-gtk3:
+    source-commit: 6a600b00773e8e4624aa12ee1f8e013ba9f2fc03
   firefox:
     plugin: dump
     source: source
@@ -45,6 +51,30 @@ parts:
       - libgl1-mesa-glx
       - libmirclient9
       - desktop-file-utils
-      - xdg-utils
       - ffmpeg
+      - libc-bin
+      - locales-all
     after: [desktop-gtk3]
+
+  xdg-open:
+    after: [firefox]
+    plugin: nil
+    source: .
+    install: |
+      set -eux
+      mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/applications
+      install -m 644 mimeapps.list $SNAPCRAFT_PART_INSTALL/usr/share/applications
+      update-desktop-database -v $SNAPCRAFT_PART_INSTALL/usr/share/applications
+    build-packages:
+      - desktop-file-utils
+    build-attributes: [no-system-libraries]
+
+  shared-mime-info:
+    after: [xdg-open]
+    plugin: nil
+    stage-packages:
+      - shared-mime-info
+    build-attributes: [no-system-libraries]
+    install: |
+      set -eux
+      update-mime-database $SNAPCRAFT_PART_INSTALL/usr/share/mime

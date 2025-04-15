@@ -14,7 +14,6 @@
 #include "mozilla/StaticPtr.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/gfx/gfxVars.h"
-#include "mozilla/layers/APZCTreeManager.h"
 #include "mozilla/layers/APZCTreeManagerChild.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/layers/CompositorManagerChild.h"
@@ -39,11 +38,8 @@
 #include "mozilla/dom/VideoDecoderManagerChild.h"
 #include "mozilla/dom/VideoDecoderManagerParent.h"
 #include "MediaPrefs.h"
+#include "nsExceptionHandler.h"
 #include "nsPrintfCString.h"
-
-#ifdef MOZ_CRASHREPORTER
-# include "nsExceptionHandler.h"
-#endif
 
 #if defined(MOZ_WIDGET_ANDROID)
 #include "mozilla/widget/AndroidUiThread.h"
@@ -91,6 +87,7 @@ GPUProcessManager::GPUProcessManager()
    mNumProcessAttempts(0),
    mDeviceResetCount(0),
    mProcess(nullptr),
+   mProcessToken(0),
    mGPUChild(nullptr)
 {
   MOZ_COUNT_CTOR(GPUProcessManager);
@@ -207,8 +204,17 @@ GPUProcessManager::EnsureGPUReady()
     }
   }
 
-  if (mGPUChild && mGPUChild->EnsureGPUReady()) {
-    return true;
+  if (mGPUChild) {
+    if (mGPUChild->EnsureGPUReady()) {
+      return true;
+    }
+
+    // If the initialization above fails, we likely have a GPU process teardown
+    // waiting in our message queue (or will soon). We need to ensure we don't
+    // restart it later because if we fail here, our callers assume they should
+    // fall back to a combined UI/GPU process. This also ensures our internal
+    // state is consistent (e.g. process token is reset).
+    DisableGPUProcess("Failed to initialize GPU process");
   }
 
   return false;
@@ -367,7 +373,6 @@ GPUProcessManager::OnProcessLaunchComplete(GPUProcessHost* aHost)
   mVsyncBridge = VsyncBridgeChild::Create(mVsyncIOThread, mProcessToken, Move(vsyncChild));
   mGPUChild->SendInitVsyncBridge(Move(vsyncParent));
 
-#ifdef MOZ_CRASHREPORTER
   CrashReporter::AnnotateCrashReport(
     NS_LITERAL_CSTRING("GPUProcessStatus"),
     NS_LITERAL_CSTRING("Running"));
@@ -375,7 +380,6 @@ GPUProcessManager::OnProcessLaunchComplete(GPUProcessHost* aHost)
   CrashReporter::AnnotateCrashReport(
     NS_LITERAL_CSTRING("GPUProcessLaunchCount"),
     nsPrintfCString("%d", mNumProcessAttempts));
-#endif
 }
 
 static bool
@@ -716,11 +720,9 @@ GPUProcessManager::DestroyProcess()
     mVsyncBridge = nullptr;
   }
 
-#ifdef MOZ_CRASHREPORTER
   CrashReporter::AnnotateCrashReport(
     NS_LITERAL_CSTRING("GPUProcessStatus"),
     NS_LITERAL_CSTRING("Destroyed"));
-#endif
 }
 
 already_AddRefed<CompositorSession>
@@ -994,12 +996,6 @@ GPUProcessManager::CreateContentVideoDecoderManager(base::ProcessId aOtherProces
   mGPUChild->SendNewContentVideoDecoderManager(Move(parentPipe));
 
   *aOutEndpoint = Move(childPipe);
-}
-
-already_AddRefed<IAPZCTreeManager>
-GPUProcessManager::GetAPZCTreeManagerForLayers(uint64_t aLayersId)
-{
-  return CompositorBridgeParent::GetAPZCTreeManager(aLayersId);
 }
 
 void

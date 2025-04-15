@@ -7,6 +7,7 @@
 #include "mozilla/layers/WebRenderBridgeChild.h"
 
 #include "gfxPlatform.h"
+#include "mozilla/dom/TabGroup.h"
 #include "mozilla/layers/CompositableClient.h"
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/layers/ImageDataSerializer.h"
@@ -36,16 +37,20 @@ WebRenderBridgeChild::WebRenderBridgeChild(const wr::PipelineId& aPipelineId)
 {
 }
 
+WebRenderBridgeChild::~WebRenderBridgeChild()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mDestroyed);
+}
+
 void
 WebRenderBridgeChild::Destroy(bool aIsSync)
 {
   if (!IPCOpen()) {
     return;
   }
-  // mDestroyed is used to prevent calling Send__delete__() twice.
-  // When this function is called from CompositorBridgeChild::Destroy().
-  mDestroyed = true;
-  mManager = nullptr;
+
+  DoDestroy();
 
   if (aIsSync) {
     SendShutdownSync();
@@ -57,6 +62,21 @@ WebRenderBridgeChild::Destroy(bool aIsSync)
 void
 WebRenderBridgeChild::ActorDestroy(ActorDestroyReason why)
 {
+  DoDestroy();
+}
+
+void
+WebRenderBridgeChild::DoDestroy()
+{
+  if (RefCountedShm::IsValid(mResourceShm) && RefCountedShm::Release(mResourceShm) == 0) {
+    RefCountedShm::Dealloc(this, mResourceShm);
+    mResourceShm = RefCountedShmem();
+  }
+
+  // mDestroyed is used to prevent calling Send__delete__() twice.
+  // When this function is called from CompositorBridgeChild::Destroy().
+  // mActiveResourceTracker is not cleared here, since it is
+  // used by PersistentBufferProviderShared.
   mDestroyed = true;
   mManager = nullptr;
 }
@@ -109,12 +129,16 @@ WebRenderBridgeChild::UpdateResources(wr::IpcResourceUpdateQueue& aResources)
     return;
   }
 
+  if (aResources.IsEmpty()) {
+    return;
+  }
+
   nsTArray<OpUpdateResource> resourceUpdates;
-  nsTArray<ipc::Shmem> smallShmems;
+  nsTArray<RefCountedShmem> smallShmems;
   nsTArray<ipc::Shmem> largeShmems;
   aResources.Flush(resourceUpdates, smallShmems, largeShmems);
 
-  this->SendUpdateResources(resourceUpdates, Move(smallShmems), Move(largeShmems));
+  this->SendUpdateResources(resourceUpdates, Move(smallShmems), largeShmems);
 }
 
 void
@@ -129,7 +153,9 @@ WebRenderBridgeChild::EndTransaction(const wr::LayoutSize& aContentSize,
   MOZ_ASSERT(!mDestroyed);
   MOZ_ASSERT(mIsInTransaction);
 
-  ByteBuffer dlData(Move(aDL.dl));
+  ByteBuf dlData(aDL.dl.inner.data, aDL.dl.inner.length, aDL.dl.inner.capacity);
+  aDL.dl.inner.capacity = 0;
+  aDL.dl.inner.data = nullptr;
 
   TimeStamp fwdTime;
 #if defined(ENABLE_FRAME_LATENCY_LOG)
@@ -137,14 +163,14 @@ WebRenderBridgeChild::EndTransaction(const wr::LayoutSize& aContentSize,
 #endif
 
   nsTArray<OpUpdateResource> resourceUpdates;
-  nsTArray<ipc::Shmem> smallShmems;
+  nsTArray<RefCountedShmem> smallShmems;
   nsTArray<ipc::Shmem> largeShmems;
   aResources.Flush(resourceUpdates, smallShmems, largeShmems);
 
   this->SendSetDisplayList(aSize, mParentCommands, mDestroyedActors,
                            GetFwdTransactionId(), aTransactionId,
                            aContentSize, dlData, aDL.dl_desc, aScrollData,
-                           Move(resourceUpdates), Move(smallShmems), Move(largeShmems),
+                           Move(resourceUpdates), Move(smallShmems), largeShmems,
                            mIdNamespace, aTxnStartTime, fwdTime);
 
   mParentCommands.Clear();
@@ -231,7 +257,7 @@ WebRenderBridgeChild::AllocExternalImageIdForCompositable(CompositableClient* aC
 }
 
 void
-WebRenderBridgeChild::DeallocExternalImageId(wr::ExternalImageId& aImageId)
+WebRenderBridgeChild::DeallocExternalImageId(const wr::ExternalImageId& aImageId)
 {
   if (mDestroyed) {
     // This can happen if the IPC connection was torn down, because, e.g.
@@ -271,13 +297,12 @@ WriteFontDescriptor(const uint8_t* aData, uint32_t aLength, uint32_t aIndex,
 }
 
 void
-WebRenderBridgeChild::PushGlyphs(wr::DisplayListBuilder& aBuilder, const nsTArray<wr::GlyphInstance>& aGlyphs,
+WebRenderBridgeChild::PushGlyphs(wr::DisplayListBuilder& aBuilder, Range<const wr::GlyphInstance> aGlyphs,
                                  gfx::ScaledFont* aFont, const wr::ColorF& aColor, const StackingContextHelper& aSc,
                                  const wr::LayerRect& aBounds, const wr::LayerRect& aClip, bool aBackfaceVisible,
                                  const wr::GlyphOptions* aGlyphOptions)
 {
   MOZ_ASSERT(aFont);
-  MOZ_ASSERT(!aGlyphs.IsEmpty());
 
   wr::WrFontInstanceKey key = GetFontKeyForScaledFont(aFont);
   MOZ_ASSERT(key.mNamespace.mHandle && key.mHandle);
@@ -287,7 +312,7 @@ WebRenderBridgeChild::PushGlyphs(wr::DisplayListBuilder& aBuilder, const nsTArra
                     aBackfaceVisible,
                     aColor,
                     key,
-                    Range<const wr::GlyphInstance>(aGlyphs.Elements(), aGlyphs.Length()),
+                    aGlyphs,
                     aGlyphOptions);
 }
 
@@ -305,7 +330,7 @@ WebRenderBridgeChild::GetFontKeyForScaledFont(gfx::ScaledFont* aScaledFont)
     return instanceKey;
   }
 
-  wr::IpcResourceUpdateQueue resources(GetShmemAllocator());
+  wr::IpcResourceUpdateQueue resources(this);
 
   wr::FontKey fontKey = GetFontKeyForUnscaledFont(aScaledFont->GetUnscaledFont());
   wr::FontKey nullKey = { wr::IdNamespace { 0 }, 0};
@@ -338,7 +363,7 @@ WebRenderBridgeChild::GetFontKeyForUnscaledFont(gfx::UnscaledFont* aUnscaled)
 
   wr::FontKey fontKey = { wr::IdNamespace { 0 }, 0};
   if (!mFontKeys.Get(aUnscaled, &fontKey)) {
-    wr::IpcResourceUpdateQueue resources(GetShmemAllocator());
+    wr::IpcResourceUpdateQueue resources(this);
     FontFileDataSink sink = { &fontKey, this, &resources };
     // First try to retrieve a descriptor for the font, as this is much cheaper
     // to send over IPC than the full raw font data. If this is not possible, then
@@ -360,7 +385,7 @@ void
 WebRenderBridgeChild::RemoveExpiredFontKeys()
 {
   uint32_t counter = gfx::ScaledFont::DeletionCounter();
-  wr::IpcResourceUpdateQueue resources(GetShmemAllocator());
+  wr::IpcResourceUpdateQueue resources(this);
   if (mFontInstanceKeysDeleted != counter) {
     mFontInstanceKeysDeleted = counter;
     for (auto iter = mFontInstanceKeys.Iter(); !iter.Done(); iter.Next()) {
@@ -399,6 +424,15 @@ LayersIPCActor*
 WebRenderBridgeChild::GetLayersIPCActor()
 {
   return static_cast<LayersIPCActor*>(GetCompositorBridgeChild());
+}
+
+void
+WebRenderBridgeChild::SyncWithCompositor()
+{
+  auto compositorBridge = GetCompositorBridgeChild();
+  if (compositorBridge && compositorBridge->IPCOpen()) {
+    compositorBridge->SendSyncWithCompositor();
+  }
 }
 
 void
@@ -505,19 +539,12 @@ WebRenderBridgeChild::UseTextures(CompositableClient* aCompositable,
     MOZ_ASSERT(t.mTextureClient);
     MOZ_ASSERT(t.mTextureClient->GetIPDLActor());
     MOZ_RELEASE_ASSERT(t.mTextureClient->GetIPDLActor()->GetIPCChannel() == GetIPCChannel());
-    ReadLockDescriptor readLock;
-    ReadLockHandle readLockHandle;
-    if (t.mTextureClient->SerializeReadLock(readLock)) {
-      readLockHandle = ReadLockHandle(++mReadLockSequenceNumber);
-      if (mReadLocks.LastElement().Length() >= GetMaxFileDescriptorsPerMessage()) {
-        mReadLocks.AppendElement();
-      }
-      mReadLocks.LastElement().AppendElement(ReadLockInit(readLock, readLockHandle));
-    }
+    bool readLocked = t.mTextureClient->OnForwardedToHost();
+
     textures.AppendElement(TimedTexture(nullptr, t.mTextureClient->GetIPDLActor(),
-                                        readLockHandle,
                                         t.mTimeStamp, t.mPictureRect,
-                                        t.mFrameID, t.mProducerID));
+                                        t.mFrameID, t.mProducerID,
+                                        readLocked));
     GetCompositorBridgeChild()->HoldUntilCompositableRefReleasedIfNecessary(t.mTextureClient);
   }
   AddWebRenderParentCommand(CompositableOperation(aCompositable->GetIPCHandle(),
@@ -569,6 +596,10 @@ void
 WebRenderBridgeChild::BeginClearCachedResources()
 {
   mIsInClearCachedResources = true;
+  // Clear display list and animtaions at parent side before clearing cached
+  // resources on client side. It prevents to clear resources before clearing
+  // display list at parent side.
+  SendClearCachedResources();
 }
 
 void
@@ -579,21 +610,86 @@ WebRenderBridgeChild::EndClearCachedResources()
     return;
   }
   ProcessWebRenderParentCommands();
-  SendClearCachedResources();
   mIsInClearCachedResources = false;
 }
 
 void
 WebRenderBridgeChild::SetWebRenderLayerManager(WebRenderLayerManager* aManager)
 {
-  MOZ_ASSERT(aManager);
+  MOZ_ASSERT(aManager && !mManager);
   mManager = aManager;
+
+  nsCOMPtr<nsIEventTarget> eventTarget = nullptr;
+  if (dom::TabGroup* tabGroup = mManager->GetTabGroup()) {
+    eventTarget = tabGroup->EventTargetFor(TaskCategory::Other);
+  }
+  MOZ_ASSERT(eventTarget || !XRE_IsContentProcess());
+  mActiveResourceTracker = MakeUnique<ActiveResourceTracker>(
+    1000, "CompositableForwarder", eventTarget);
 }
 
 ipc::IShmemAllocator*
 WebRenderBridgeChild::GetShmemAllocator()
 {
   return static_cast<CompositorBridgeChild*>(Manager());
+}
+
+
+RefPtr<KnowsCompositor>
+WebRenderBridgeChild::GetForMedia()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  return MakeAndAddRef<KnowsCompositorMediaProxy>(GetTextureFactoryIdentifier());
+}
+
+bool
+WebRenderBridgeChild::AllocResourceShmem(size_t aSize, RefCountedShmem& aShm)
+{
+  // We keep a single shmem around to reuse later if it is reference count has
+  // dropped back to 1 (the reference held by the WebRenderBridgeChild).
+
+  // If the cached shmem exists, has the correct size and isn't held by anything
+  // other than us, recycle it.
+  bool alreadyAllocated = RefCountedShm::IsValid(mResourceShm);
+  if (alreadyAllocated) {
+    if (RefCountedShm::GetSize(mResourceShm) == aSize
+        && RefCountedShm::GetReferenceCount(mResourceShm) <= 1) {
+      MOZ_ASSERT(RefCountedShm::GetReferenceCount(mResourceShm) == 1);
+      aShm = mResourceShm;
+      return true;
+    }
+  }
+
+  // If there was no cached shmem or we couldn't recycle it, alloc a new one.
+  if (!RefCountedShm::Alloc(this, aSize, aShm)) {
+    return false;
+  }
+
+  // Now that we have a valid shmem, put it in the cache if we don't have one
+  // yet.
+  if (!alreadyAllocated) {
+    mResourceShm = aShm;
+    RefCountedShm::AddRef(aShm);
+  }
+
+  return true;
+}
+
+void
+WebRenderBridgeChild::DeallocResourceShmem(RefCountedShmem& aShm)
+{
+  if (!RefCountedShm::IsValid(aShm)) {
+    return;
+  }
+  MOZ_ASSERT(RefCountedShm::GetReferenceCount(aShm) == 0);
+
+  RefCountedShm::Dealloc(this, aShm);
+}
+
+void
+WebRenderBridgeChild::Capture()
+{
+  this->SendCapture();
 }
 
 } // namespace layers

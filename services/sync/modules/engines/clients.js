@@ -20,29 +20,27 @@
  *   commands.json, update it, and write it back out.
  */
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "ClientEngine",
   "ClientsRec"
 ];
 
-var {classes: Cc, interfaces: Ci, utils: Cu} = Components;
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://services-common/async.js");
+ChromeUtils.import("resource://services-sync/constants.js");
+ChromeUtils.import("resource://services-sync/engines.js");
+ChromeUtils.import("resource://services-sync/record.js");
+ChromeUtils.import("resource://services-sync/resource.js");
+ChromeUtils.import("resource://services-sync/util.js");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://services-common/async.js");
-Cu.import("resource://services-sync/constants.js");
-Cu.import("resource://services-sync/engines.js");
-Cu.import("resource://services-sync/record.js");
-Cu.import("resource://services-sync/resource.js");
-Cu.import("resource://services-sync/util.js");
-
-XPCOMUtils.defineLazyModuleGetter(this, "fxAccounts",
+ChromeUtils.defineModuleGetter(this, "fxAccounts",
   "resource://gre/modules/FxAccounts.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "getRepairRequestor",
+ChromeUtils.defineModuleGetter(this, "getRepairRequestor",
   "resource://services-sync/collection_repair.js");
 
-XPCOMUtils.defineLazyModuleGetter(this, "getRepairResponder",
+ChromeUtils.defineModuleGetter(this, "getRepairResponder",
   "resource://services-sync/collection_repair.js");
 
 const CLIENTS_TTL = 1814400; // 21 days
@@ -67,9 +65,9 @@ function hasDupeCommand(commands, action) {
     Utils.deepEquals(other.args, action.args));
 }
 
-this.ClientsRec = function ClientsRec(collection, id) {
+function ClientsRec(collection, id) {
   CryptoWrapper.call(this, collection, id);
-};
+}
 ClientsRec.prototype = {
   __proto__: CryptoWrapper.prototype,
   _logName: "Sync.Record.Clients",
@@ -84,14 +82,15 @@ Utils.deferGetSet(ClientsRec,
                    "fxaDeviceId"]);
 
 
-this.ClientEngine = function ClientEngine(service) {
+function ClientEngine(service) {
   SyncEngine.call(this, "Clients", service);
 
   // Reset the last sync timestamp on every startup so that we fetch all clients
   this.resetLastSync();
   this.fxAccounts = fxAccounts;
   this.addClientCommandQueue = Promise.resolve();
-};
+  Utils.defineLazyIDProperty(this, "localID", "services.sync.client.GUID");
+}
 ClientEngine.prototype = {
   __proto__: SyncEngine.prototype,
   _storeObj: ClientStore,
@@ -99,6 +98,7 @@ ClientEngine.prototype = {
   _trackerObj: ClientsTracker,
   allowSkippedRecord: false,
   _knownStaleFxADeviceIds: null,
+  _lastDeviceCounts: null,
 
   // These two properties allow us to avoid replaying the same commands
   // continuously if we cannot manage to upload our own record.
@@ -186,15 +186,6 @@ ClientEngine.prototype = {
     return counts;
   },
 
-  get localID() {
-    // Generate a random GUID id we don't have one
-    let localID = Svc.Prefs.get("client.GUID", "");
-    return localID == "" ? this.localID = Utils.makeGUID() : localID;
-  },
-  set localID(value) {
-    Svc.Prefs.set("client.GUID", value);
-  },
-
   get brandName() {
     let brand = Services.strings.createBundle(
       "chrome://branding/locale/brand.properties");
@@ -202,12 +193,7 @@ ClientEngine.prototype = {
   },
 
   get localName() {
-    let name = Utils.getDeviceName();
-    // If `getDeviceName` returns the default name, set the pref. FxA registers
-    // the device before syncing, so we don't need to update the registration
-    // in this case.
-    Svc.Prefs.set("client.name", name);
-    return name;
+    return Utils.getDeviceName();
   },
   set localName(value) {
     Svc.Prefs.set("client.name", value);
@@ -377,7 +363,7 @@ ClientEngine.prototype = {
     this.isFirstSync = !this.lastRecordUpload;
     // Reupload new client record periodically.
     if (Date.now() / 1000 - this.lastRecordUpload > CLIENTS_TTL_REFRESH) {
-      this._tracker.addChangedID(this.localID);
+      await this._tracker.addChangedID(this.localID);
       this.lastRecordUpload = Date.now() / 1000;
     }
     return SyncEngine.prototype._syncStartup.call(this);
@@ -562,7 +548,8 @@ ClientEngine.prototype = {
     // so non-histogram telemetry (eg, UITelemetry) and the sync scheduler
     // has easy access to them, and so they are accurate even before we've
     // successfully synced the first time after startup.
-    for (let [deviceType, count] of this.deviceTypes) {
+    let deviceTypeCounts = this.deviceTypes;
+    for (let [deviceType, count] of deviceTypeCounts) {
       let hid;
       let prefName = this.name + ".devices.";
       switch (deviceType) {
@@ -579,8 +566,13 @@ ClientEngine.prototype = {
           continue;
       }
       Services.telemetry.getHistogramById(hid).add(count);
-      Svc.Prefs.set(prefName, count);
+      // Optimization: only write the pref if it changed since our last sync.
+      if (this._lastDeviceCounts == null ||
+          this._lastDeviceCounts.get(prefName) != count) {
+        Svc.Prefs.set(prefName, count);
+      }
     }
+    this._lastDeviceCounts = deviceTypeCounts;
     return SyncEngine.prototype._syncFinish.call(this);
   },
 
@@ -639,7 +631,7 @@ ClientEngine.prototype = {
 
     // It's a bad client record. Save it to be deleted at the end of the sync.
     this._log.debug("Bad client record detected. Scheduling for deletion.");
-    this._deleteId(item.id);
+    await this._deleteId(item.id);
 
     // Neither try again nor error; we're going to delete it.
     return SyncEngine.kRecoveryStrategy.ignore;
@@ -648,17 +640,18 @@ ClientEngine.prototype = {
   /**
    * A hash of valid commands that the client knows about. The key is a command
    * and the value is a hash containing information about the command such as
-   * number of arguments and description.
+   * number of arguments, description, and importance (lower importance numbers
+   * indicate higher importance.
    */
   _commands: {
-    resetAll:    { args: 0, desc: "Clear temporary local data for all engines" },
-    resetEngine: { args: 1, desc: "Clear temporary local data for engine" },
-    wipeAll:     { args: 0, desc: "Delete all client data for all engines" },
-    wipeEngine:  { args: 1, desc: "Delete all client data for engine" },
-    logout:      { args: 0, desc: "Log out client" },
-    displayURI:  { args: 3, desc: "Instruct a client to display a URI" },
-    repairRequest:  {args: 1, desc: "Instruct a client to initiate a repair"},
-    repairResponse: {args: 1, desc: "Instruct a client a repair request is complete"},
+    resetAll:    { args: 0, importance: 0, desc: "Clear temporary local data for all engines" },
+    resetEngine: { args: 1, importance: 0, desc: "Clear temporary local data for engine" },
+    wipeAll:     { args: 0, importance: 0, desc: "Delete all client data for all engines" },
+    wipeEngine:  { args: 1, importance: 0, desc: "Delete all client data for engine" },
+    logout:      { args: 0, importance: 0, desc: "Log out client" },
+    displayURI:  { args: 3, importance: 1, desc: "Instruct a client to display a URI" },
+    repairRequest:  { args: 1, importance: 2, desc: "Instruct a client to initiate a repair" },
+    repairResponse: { args: 1, importance: 2, desc: "Instruct a client a repair request is complete" },
   },
 
   /**
@@ -689,7 +682,7 @@ ClientEngine.prototype = {
 
     if ((await this._addClientCommand(clientId, action))) {
       this._log.trace(`Client ${clientId} got a new action`, [command, args]);
-      this._tracker.addChangedID(clientId);
+      await this._tracker.addChangedID(clientId);
       try {
         telemetryExtra.deviceID = this.service.identity.hashedDeviceID(clientId);
       } catch (_) {}
@@ -805,7 +798,7 @@ ClientEngine.prototype = {
         }
       }
       if (didRemoveCommand) {
-        this._tracker.addChangedID(this.localID);
+        await this._tracker.addChangedID(this.localID);
       }
 
       if (URIsToDisplay.length) {
@@ -883,7 +876,7 @@ ClientEngine.prototype = {
    *        Title of the page being sent.
    */
   async sendURIToClientForDisplay(uri, clientId, title) {
-    this._log.info("Sending URI to client: " + uri + " -> " +
+    this._log.trace("Sending URI to client: " + uri + " -> " +
                    clientId + " (" + title + ")");
     await this.sendCommand("displayURI", [uri, this.localID, title], clientId);
 
@@ -919,7 +912,7 @@ ClientEngine.prototype = {
 
   async _removeRemoteClient(id) {
     delete this._store._remoteClients[id];
-    this._tracker.removeChangedID(id);
+    await this._tracker.removeChangedID(id);
     await this._removeClientCommands(id);
     this._modified.delete(id);
   },
@@ -997,7 +990,39 @@ ClientStore.prototype = {
         delete record.cleartext.stale;
       }
     }
-
+    if (record.commands) {
+      const maxPayloadSize = this.engine.service.getMemcacheMaxRecordPayloadSize();
+      let origOrder = new Map(record.commands.map((c, i) => [c, i]));
+      // we sort first by priority, and second by age (indicated by order in the
+      // original list)
+      let commands = record.commands.slice().sort((a, b) => {
+        let infoA = this.engine._commands[a.command];
+        let infoB = this.engine._commands[b.command];
+        // Treat unknown command types as highest priority, to allow us to add
+        // high priority commands in the future without worrying about clients
+        // removing them on each-other unnecessarially.
+        let importA = infoA ? infoA.importance : 0;
+        let importB = infoB ? infoB.importance : 0;
+        // Higher importantance numbers indicate that we care less, so they
+        // go to the end of the list where they'll be popped off.
+        let importDelta = importA - importB;
+        if (importDelta != 0) {
+          return importDelta;
+        }
+        let origIdxA = origOrder.get(a);
+        let origIdxB = origOrder.get(b);
+        // Within equivalent priorities, we put older entries near the end
+        // of the list, so that they are removed first.
+        return origIdxB - origIdxA;
+      });
+      let truncatedCommands = Utils.tryFitItems(commands, maxPayloadSize);
+      if (truncatedCommands.length != record.commands.length) {
+        this._log.warn(`Removing commands from client ${id} (from ${record.commands.length} to ${truncatedCommands.length})`);
+        // Restore original order.
+        record.commands = truncatedCommands.sort((a, b) =>
+          origOrder.get(a) - origOrder.get(b));
+      }
+    }
     return record;
   },
 
@@ -1020,31 +1045,24 @@ ClientStore.prototype = {
 
 function ClientsTracker(name, engine) {
   Tracker.call(this, name, engine);
-  Svc.Obs.add("weave:engine:start-tracking", this);
-  Svc.Obs.add("weave:engine:stop-tracking", this);
 }
 ClientsTracker.prototype = {
   __proto__: Tracker.prototype,
 
   _enabled: false,
 
-  observe: function observe(subject, topic, data) {
+  onStart() {
+    Svc.Prefs.observe("client.name", this.asyncObserver);
+  },
+  onStop() {
+    Svc.Prefs.ignore("client.name", this.asyncObserver);
+  },
+
+  async observe(subject, topic, data) {
     switch (topic) {
-      case "weave:engine:start-tracking":
-        if (!this._enabled) {
-          Svc.Prefs.observe("client.name", this);
-          this._enabled = true;
-        }
-        break;
-      case "weave:engine:stop-tracking":
-        if (this._enabled) {
-          Svc.Prefs.ignore("client.name", this);
-          this._enabled = false;
-        }
-        break;
       case "nsPref:changed":
         this._log.debug("client.name preference changed");
-        this.addChangedID(Svc.Prefs.get("client.GUID"));
+        await this.addChangedID(this.engine.localID);
         this.score += SCORE_INCREMENT_XLARGE;
         break;
     }

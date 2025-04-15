@@ -10,6 +10,8 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/ipc/CrashReporterClient.h"
+#include "mozilla/ipc/CrashReporterHost.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/ipc/MessageChannel.h"
 #include "mozilla/ipc/ProtocolUtils.h"
@@ -41,6 +43,7 @@
 #include "mozilla/plugins/PluginSurfaceParent.h"
 #include "mozilla/widget/AudioSession.h"
 #include "PluginHangUIParent.h"
+#include "FunctionBrokerParent.h"
 #include "PluginUtilsWin.h"
 #endif
 
@@ -65,12 +68,7 @@ using namespace mozilla;
 using namespace mozilla::plugins;
 using namespace mozilla::plugins::parent;
 
-#ifdef MOZ_CRASHREPORTER
-#include "mozilla/ipc/CrashReporterClient.h"
-#include "mozilla/ipc/CrashReporterHost.h"
-
 using namespace CrashReporter;
-#endif
 
 static const char kContentTimeoutPref[] = "dom.ipc.plugins.contentTimeoutSecs";
 static const char kChildTimeoutPref[] = "dom.ipc.plugins.timeoutSecs";
@@ -474,7 +472,8 @@ PluginModuleChromeParent::LoadModule(const char* aFilePath, uint32_t aPluginId,
                                          aPluginTag->mSandboxLevel));
     UniquePtr<LaunchCompleteTask> onLaunchedRunnable(new LaunchedTask(parent));
     bool launched = parent->mSubprocess->Launch(Move(onLaunchedRunnable),
-                                                aPluginTag->mSandboxLevel);
+                                                aPluginTag->mSandboxLevel,
+                                                aPluginTag->mIsSandboxLoggingEnabled);
     if (!launched) {
         // We never reached open
         parent->mShutdown = true;
@@ -489,6 +488,23 @@ PluginModuleChromeParent::LoadModule(const char* aFilePath, uint32_t aPluginId,
         parent->mShutdown = true;
         return nullptr;
     }
+
+#if defined(XP_WIN)
+    Endpoint<PFunctionBrokerParent> brokerParentEnd;
+    Endpoint<PFunctionBrokerChild> brokerChildEnd;
+    rv = PFunctionBroker::CreateEndpoints(base::GetCurrentProcId(), parent->OtherPid(),
+                                        &brokerParentEnd, &brokerChildEnd);
+    if (NS_FAILED(rv)) {
+        parent->mShutdown = true;
+        return nullptr;
+    }
+
+    parent->mBrokerParent =
+      FunctionBrokerParent::Create(Move(brokerParentEnd));
+    if (parent->mBrokerParent) {
+      parent->SendInitPluginFunctionBroker(Move(brokerChildEnd));
+    }
+#endif
     return parent.forget();
 }
 
@@ -525,7 +541,6 @@ PluginModuleChromeParent::OnProcessLaunched(const bool aSucceeded)
 
     RegisterSettingsCallbacks();
 
-#ifdef MOZ_CRASHREPORTER
     // If this fails, we're having IPC troubles, and we're doomed anyways.
     if (!InitCrashReporter()) {
         mShutdown = true;
@@ -533,7 +548,6 @@ PluginModuleChromeParent::OnProcessLaunched(const bool aSucceeded)
         OnInitFailure();
         return;
     }
-#endif
 
 #if defined(XP_WIN) && defined(_X86_)
     // Protected mode only applies to Windows and only to x86.
@@ -552,7 +566,6 @@ PluginModuleChromeParent::OnProcessLaunched(const bool aSucceeded)
 bool
 PluginModuleChromeParent::InitCrashReporter()
 {
-#ifdef MOZ_CRASHREPORTER
     ipc::Shmem shmem;
     if (!ipc::CrashReporterClient::AllocShmem(this, &shmem)) {
         return false;
@@ -570,7 +583,6 @@ PluginModuleChromeParent::InitCrashReporter()
         shmem,
         threadId);
     }
-#endif
 
     return true;
 }
@@ -588,9 +600,7 @@ PluginModuleParent::PluginModuleParent(bool aIsChrome)
     , mTaskFactory(this)
     , mSandboxLevel(0)
     , mIsFlashPlugin(false)
-#ifdef MOZ_CRASHREPORTER
     , mCrashReporterMutex("PluginModuleChromeParent::mCrashReporterMutex")
-#endif
 {
 }
 
@@ -631,12 +641,14 @@ PluginModuleChromeParent::PluginModuleChromeParent(const char* aFilePath,
     , mHangUIParent(nullptr)
     , mHangUIEnabled(true)
     , mIsTimerReset(true)
+    , mBrokerParent(nullptr)
 #endif
 #ifdef MOZ_CRASHREPORTER_INJECTOR
     , mFlashProcess1(0)
     , mFlashProcess2(0)
     , mFinishInitTask(nullptr)
 #endif
+    , mIsCleaningFromTimeout(false)
 {
     NS_ASSERTION(mSubprocess, "Out of memory!");
     mSandboxLevel = aSandboxLevel;
@@ -655,10 +667,6 @@ PluginModuleChromeParent::~PluginModuleChromeParent()
     // If we registered for audio notifications, stop.
     mozilla::plugins::PluginUtilsWin::RegisterForAudioDeviceChanges(this,
                                                                     false);
-#endif
-
-#if defined(XP_WIN) && defined(MOZ_SANDBOX)
-    mSandboxPermissions.RemovePermissionsForProcess(OtherPid());
 #endif
 
     if (!mShutdown) {
@@ -702,14 +710,13 @@ PluginModuleChromeParent::~PluginModuleChromeParent()
     mozilla::HangMonitor::UnregisterAnnotator(*this);
 }
 
-#ifdef MOZ_CRASHREPORTER
 void
 PluginModuleChromeParent::WriteExtraDataForMinidump()
 {
     // mCrashReporterMutex is already held by the caller
     mCrashReporterMutex.AssertCurrentThreadOwns();
 
-    typedef nsDependentCString CS;
+    typedef nsDependentCString cstring;
 
     // Get the plugin filename, try to get just the file leafname
     const std::string& pluginFile = mSubprocess->GetPluginFilePath();
@@ -718,7 +725,7 @@ PluginModuleChromeParent::WriteExtraDataForMinidump()
         filePos = 0;
     else
         filePos++;
-    mCrashReporter->AddNote(NS_LITERAL_CSTRING("PluginFilename"), CS(pluginFile.substr(filePos).c_str()));
+    mCrashReporter->AddNote(NS_LITERAL_CSTRING("PluginFilename"), cstring(pluginFile.substr(filePos).c_str()));
 
     mCrashReporter->AddNote(NS_LITERAL_CSTRING("PluginName"), mPluginName);
     mCrashReporter->AddNote(NS_LITERAL_CSTRING("PluginVersion"), mPluginVersion);
@@ -744,7 +751,6 @@ PluginModuleChromeParent::WriteExtraDataForMinidump()
 #endif
     }
 }
-#endif  // MOZ_CRASHREPORTER
 
 void
 PluginModuleParent::SetChildTimeout(const int32_t aChildTimeout)
@@ -799,6 +805,15 @@ PluginModuleChromeParent::CleanupFromTimeout(const bool aFromHangUI)
                 &PluginModuleChromeParent::CleanupFromTimeout, aFromHangUI), 10);
         return;
     }
+
+    // Avoid recursively calling this method.  MessageChannel::Close() can
+    // cause this task to be re-launched.
+    if (mIsCleaningFromTimeout) {
+      return;
+    }
+
+    AutoRestore<bool> resetCleaningFlag(mIsCleaningFromTimeout);
+    mIsCleaningFromTimeout = true;
 
     /* If the plugin container was terminated by the Plugin Hang UI,
        then either the I/O thread detects a channel error, or the
@@ -1000,7 +1015,6 @@ PluginModuleChromeParent::AnnotateHang(mozilla::HangMonitor::HangAnnotations& aA
     }
 }
 
-#ifdef MOZ_CRASHREPORTER
 static bool
 CreatePluginMinidump(base::ProcessId processId, ThreadId childThread,
                      nsIFile* parentMinidump, const nsACString& name)
@@ -1012,7 +1026,6 @@ CreatePluginMinidump(base::ProcessId processId, ThreadId childThread,
   }
   return CreateAdditionalChildMinidump(handle, 0, parentMinidump, name);
 }
-#endif
 
 bool
 PluginModuleChromeParent::ShouldContinueFromReplyTimeout()
@@ -1067,7 +1080,6 @@ PluginModuleChromeParent::TakeFullMinidump(base::ProcessId aContentPid,
                                            std::function<void(nsString)>&& aCallback,
                                            bool aAsync)
 {
-#ifdef MOZ_CRASHREPORTER
     mozilla::MutexAutoLock lock(mCrashReporterMutex);
 
     if (!mCrashReporter || !mTakeFullMinidumpCallback.IsEmpty()) {
@@ -1111,12 +1123,8 @@ PluginModuleChromeParent::TakeFullMinidump(base::ProcessId aContentPid,
     } else {
         TakeBrowserAndPluginMinidumps(false, aContentPid, browserDumpId, aAsync);
     }
-#else // MOZ_CRASHREPORTER
-    aCallback(NS_LITERAL_STRING(""));
-#endif
 }
 
-#ifdef MOZ_CRASHREPORTER
 void
 PluginModuleChromeParent::RetainPluginRef()
 {
@@ -1235,8 +1243,6 @@ PluginModuleChromeParent::OnTakeFullMinidumpComplete(bool aReportsReady,
     }
 }
 
-#endif // MOZ_CRASHREPORTER
-
 void
 PluginModuleChromeParent::TerminateChildProcess(MessageLoop* aMsgLoop,
                                                 base::ProcessId aContentPid,
@@ -1251,7 +1257,6 @@ PluginModuleChromeParent::TerminateChildProcess(MessageLoop* aMsgLoop,
     }
     mTerminateChildProcessCallback.Init(Move(aCallback), aAsync);
 
-#ifdef MOZ_CRASHREPORTER
     // Start by taking a full minidump if necessary, this is done early
     // because it also needs to lock the mCrashReporterMutex and Mutex doesn't
     // support recursive locking.
@@ -1276,17 +1281,12 @@ PluginModuleChromeParent::TerminateChildProcess(MessageLoop* aMsgLoop,
     } else {
         TerminateChildProcessOnDumpComplete(aMsgLoop, aMonitorDescription);
     }
-
-#else
-    TerminateChildProcessOnDumpComplete(aMsgLoop, aMonitorDescription);
-#endif
 }
 
 void
 PluginModuleChromeParent::TerminateChildProcessOnDumpComplete(MessageLoop* aMsgLoop,
                                                               const nsCString& aMonitorDescription)
 {
-#ifdef MOZ_CRASHREPORTER
     mCrashReporterMutex.AssertCurrentThreadOwns();
 
     if (!mCrashReporter) {
@@ -1310,7 +1310,6 @@ PluginModuleChromeParent::TerminateChildProcessOnDumpComplete(MessageLoop* aMsgL
         }
     }
 #endif // XP_WIN
-#endif // MOZ_CRASHREPORTER
 
     mozilla::ipc::ScopedProcessHandle geckoChildProcess;
     bool childOpened = base::OpenProcessHandle(OtherPid(),
@@ -1341,7 +1340,7 @@ PluginModuleChromeParent::TerminateChildProcessOnDumpComplete(MessageLoop* aMsgL
     if (!GetProcessCpuUsage(processHandles, mPluginCpuUsageOnHang)) {
       mPluginCpuUsageOnHang.Clear();
     }
-#endif // MOZ_CRASHREPORTER
+#endif
 
     // this must run before the error notification from the channel,
     // or not at all
@@ -1486,7 +1485,6 @@ PluginModuleChromeParent::OnHangUIContinue()
 }
 #endif // XP_WIN
 
-#ifdef MOZ_CRASHREPORTER
 #ifdef MOZ_CRASHREPORTER_INJECTOR
 static void
 RemoveMinidump(nsIFile* minidump)
@@ -1578,7 +1576,6 @@ PluginModuleChromeParent::ProcessFirstMinidump()
     }
     mCrashReporter->FinalizeCrashReport();
 }
-#endif
 
 void
 PluginModuleParent::ActorDestroy(ActorDestroyReason why)
@@ -1617,15 +1614,20 @@ void
 PluginModuleChromeParent::ActorDestroy(ActorDestroyReason why)
 {
     if (why == AbnormalShutdown) {
-#ifdef MOZ_CRASHREPORTER
         ProcessFirstMinidump();
-#endif
         Telemetry::Accumulate(Telemetry::SUBPROCESS_ABNORMAL_ABORT,
                               NS_LITERAL_CSTRING("plugin"), 1);
     }
 
     // We can't broadcast settings changes anymore.
     UnregisterSettingsCallbacks();
+
+#if defined(XP_WIN)
+    if (mBrokerParent) {
+        FunctionBrokerParent::Destroy(mBrokerParent);
+        mBrokerParent = nullptr;
+    }
+#endif
 
     PluginModuleParent::ActorDestroy(why);
 }
@@ -1656,11 +1658,11 @@ PluginModuleParent::NotifyPluginCrashed()
 
     nsString dumpID;
     nsString browserDumpID;
-#ifdef MOZ_CRASHREPORTER
+
     if (mCrashReporter && mCrashReporter->HasMinidump()) {
         dumpID = mCrashReporter->MinidumpID();
     }
-#endif
+
     mPlugin->PluginCrashed(dumpID, browserDumpID);
 }
 
@@ -2910,102 +2912,3 @@ PluginModuleChromeParent::OnCrash(DWORD processID)
 }
 
 #endif // MOZ_CRASHREPORTER_INJECTOR
-
-mozilla::ipc::IPCResult
-PluginModuleParent::AnswerGetKeyState(const int32_t& aVirtKey, int16_t* aRet)
-{
-    return IPC_FAIL_NO_REASON(this);
-}
-
-mozilla::ipc::IPCResult
-PluginModuleChromeParent::AnswerGetKeyState(const int32_t& aVirtKey,
-                                            int16_t* aRet)
-{
-#if defined(XP_WIN)
-    *aRet = ::GetKeyState(aVirtKey);
-    return IPC_OK();
-#else
-    return PluginModuleParent::AnswerGetKeyState(aVirtKey, aRet);
-#endif
-}
-
-mozilla::ipc::IPCResult
-PluginModuleChromeParent::AnswerGetFileName(const GetFileNameFunc& aFunc,
-                                            const OpenFileNameIPC& aOfnIn,
-                                            OpenFileNameRetIPC* aOfnOut,
-                                            bool* aResult)
-{
-#if defined(XP_WIN) && defined(MOZ_SANDBOX)
-    OPENFILENAMEW ofn;
-    memset(&ofn, 0, sizeof(ofn));
-    aOfnIn.AllocateOfnStrings(&ofn);
-    aOfnIn.AddToOfn(&ofn);
-    switch (aFunc) {
-    case OPEN_FUNC:
-        *aResult = GetOpenFileName(&ofn);
-        break;
-    case SAVE_FUNC:
-        *aResult = GetSaveFileName(&ofn);
-        break;
-    default:
-        *aResult = false;
-        break;
-    }
-    if (*aResult) {
-        if (ofn.Flags & OFN_ALLOWMULTISELECT) {
-            // We only support multiselect with the OFN_EXPLORER flag.
-            // This guarantees that ofn.lpstrFile follows the pattern below.
-            MOZ_ASSERT(ofn.Flags & OFN_EXPLORER);
-
-            // lpstrFile is one of two things:
-            // 1. A null terminated full path to a file, or
-            // 2. A path to a folder, followed by a NULL, followed by a
-            // list of file names, each NULL terminated, followed by an
-            // additional NULL (so it is also double-NULL terminated).
-            std::wstring path = std::wstring(ofn.lpstrFile);
-            MOZ_ASSERT(ofn.nFileOffset > 0);
-            // For condition #1, nFileOffset points to the file name in the path.
-            // It will be preceeded by a non-NULL character from the path.
-            if (ofn.lpstrFile[ofn.nFileOffset-1] != L'\0') {
-                mSandboxPermissions.GrantFileAccess(OtherPid(), path.c_str(),
-                                                          aFunc == SAVE_FUNC);
-            }
-            else {
-                // This is condition #2
-                wchar_t* nextFile = ofn.lpstrFile + path.size() + 1;
-                while (*nextFile != L'\0') {
-                    std::wstring nextFileStr(nextFile);
-                    std::wstring fullPath =
-                        path + std::wstring(L"\\") + nextFileStr;
-                    mSandboxPermissions.GrantFileAccess(OtherPid(), fullPath.c_str(),
-                                                              aFunc == SAVE_FUNC);
-                    nextFile += nextFileStr.size() + 1;
-                }
-            }
-        }
-        else {
-            mSandboxPermissions.GrantFileAccess(OtherPid(), ofn.lpstrFile,
-                                                 aFunc == SAVE_FUNC);
-        }
-        aOfnOut->CopyFromOfn(&ofn);
-    }
-    aOfnIn.FreeOfnStrings(&ofn);
-    return IPC_OK();
-#else
-    MOZ_ASSERT_UNREACHABLE("GetFileName IPC message is only available on "
-                           "Windows builds with sandbox.");
-    return IPC_FAIL_NO_REASON(this);
-#endif
-}
-
-mozilla::ipc::IPCResult
-PluginModuleChromeParent::AnswerSetCursorPos(const int &x, const int &y,
-                                             bool* aResult)
-{
-#if defined(XP_WIN)
-    *aResult = ::SetCursorPos(x, y);
-    return IPC_OK();
-#else
-    return PluginModuleParent::AnswerSetCursorPos(x, y, aResult);
-#endif
-}

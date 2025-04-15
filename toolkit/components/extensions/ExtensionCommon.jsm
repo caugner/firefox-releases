@@ -1,3 +1,5 @@
+/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set sts=2 sw=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,22 +11,21 @@
  * between ExtensionParent.jsm and ExtensionChild.jsm.
  */
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-
 /* exported ExtensionCommon */
 
-this.EXPORTED_SYMBOLS = ["ExtensionCommon"];
+var EXPORTED_SYMBOLS = ["ExtensionCommon"];
 
 Cu.importGlobalProperties(["fetch"]);
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   ConsoleAPI: "resource://gre/modules/Console.jsm",
   MessageChannel: "resource://gre/modules/MessageChannel.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   Schemas: "resource://gre/modules/Schemas.jsm",
+  SchemaRoot: "resource://gre/modules/Schemas.jsm",
 });
 
 XPCOMUtils.defineLazyServiceGetter(this, "styleSheetService",
@@ -33,7 +34,7 @@ XPCOMUtils.defineLazyServiceGetter(this, "styleSheetService",
 
 const global = Cu.getGlobalForObject(this);
 
-Cu.import("resource://gre/modules/ExtensionUtils.jsm");
+ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
 
 var {
   DefaultMap,
@@ -83,6 +84,11 @@ class NoCloneSpreadArgs {
   }
 }
 
+/**
+ * Base class for WebExtension APIs.  Each API creates a new class
+ * that inherits from this class, the derived class is instantiated
+ * once for each extension that uses the API.
+ */
 class ExtensionAPI extends ExtensionUtils.EventEmitter {
   constructor(extension) {
     super();
@@ -113,6 +119,9 @@ var ExtensionAPIs = {
 
   load(apiName) {
     let api = this.apis.get(apiName);
+    if (!api) {
+      return null;
+    }
 
     if (api.loadPromise) {
       return api.loadPromise;
@@ -125,6 +134,7 @@ var ExtensionAPIs = {
       wantXrays: false,
       sandboxName: script,
       addonId,
+      wantGlobalProperties: ["ChromeUtils"],
       metadata: {addonID: addonId},
     });
 
@@ -175,6 +185,13 @@ var ExtensionAPIs = {
   },
 };
 
+/**
+ * This class contains the information we have about an individual
+ * extension.  It is never instantiated directly, instead subclasses
+ * for each type of process extend this class and add members that are
+ * relevant for that process.
+ * @abstract
+ */
 class BaseContext {
   constructor(envType, extension) {
     this.envType = envType;
@@ -255,11 +272,13 @@ class BaseContext {
     return this.applySafeWithoutClone(callback, args);
   }
 
-  applySafe(callback, args) {
+  applySafe(callback, args, caller) {
     if (this.unloaded) {
-      Cu.reportError("context.runSafe called after context unloaded");
+      Cu.reportError("context.runSafe called after context unloaded",
+                     caller);
     } else if (!this.active) {
-      Cu.reportError("context.runSafe called while context is inactive");
+      Cu.reportError("context.runSafe called while context is inactive",
+                     caller);
     } else {
       try {
         let {cloneScope} = this;
@@ -269,15 +288,17 @@ class BaseContext {
         dump(`runSafe failure: cloning into ${this.cloneScope}: ${e}\n\n${filterStack(Error())}`);
       }
 
-      return this.applySafeWithoutClone(callback, args);
+      return this.applySafeWithoutClone(callback, args, caller);
     }
   }
 
-  applySafeWithoutClone(callback, args) {
+  applySafeWithoutClone(callback, args, caller) {
     if (this.unloaded) {
-      Cu.reportError("context.runSafeWithoutClone called after context unloaded");
+      Cu.reportError("context.runSafeWithoutClone called after context unloaded",
+                     caller);
     } else if (!this.active) {
-      Cu.reportError("context.runSafeWithoutClone called while context is inactive");
+      Cu.reportError("context.runSafeWithoutClone called while context is inactive",
+                     caller);
     } else {
       try {
         return Reflect.apply(callback, null, args);
@@ -368,23 +389,36 @@ class BaseContext {
    * exception error.
    *
    * @param {Error|object} error
+   * @param {SavedFrame?} [caller]
    * @returns {Error}
    */
-  normalizeError(error) {
+  normalizeError(error, caller) {
     if (error instanceof this.cloneScope.Error) {
       return error;
     }
     let message, fileName;
-    if (error && typeof error === "object" &&
-        (ChromeUtils.getClassName(error) === "Object" ||
-         error instanceof ExtensionError ||
-         this.principal.subsumes(Cu.getObjectPrincipal(error)))) {
-      message = error.message;
-      fileName = error.fileName;
-    } else {
-      Cu.reportError(error);
+    if (error && typeof error === "object") {
+      const isPlain = ChromeUtils.getClassName(error) === "Object";
+      if (isPlain && error.mozWebExtLocation) {
+        caller = error.mozWebExtLocation;
+      }
+      if (isPlain && caller && (error.mozWebExtLocation || !error.fileName)) {
+        caller = Cu.cloneInto(caller, this.cloneScope);
+        return ChromeUtils.createError(error.message, caller);
+      }
+
+      if (isPlain ||
+          error instanceof ExtensionError ||
+          this.principal.subsumes(Cu.getObjectPrincipal(error))) {
+        message = error.message;
+        fileName = error.fileName;
+      }
     }
-    message = message || "An unexpected error occurred";
+
+    if (!message) {
+      Cu.reportError(error);
+      message = "An unexpected error occurred";
+    }
     return new this.cloneScope.Error(message, fileName);
   }
 
@@ -395,19 +429,31 @@ class BaseContext {
    *
    * @param {object} error An object with a `message` property. May
    *     optionally be an `Error` object belonging to the target scope.
+   * @param {SavedFrame?} caller
+   *        The optional caller frame which triggered this callback, to be used
+   *        in error reporting.
    * @param {function} callback The callback to call.
    * @returns {*} The return value of callback.
    */
-  withLastError(error, callback) {
+  withLastError(error, caller, callback) {
     this.lastError = this.normalizeError(error);
     try {
       return callback();
     } finally {
       if (!this.checkedLastError) {
-        Cu.reportError(`Unchecked lastError value: ${this.lastError}`);
+        Cu.reportError(`Unchecked lastError value: ${this.lastError}`, caller);
       }
       this.lastError = null;
     }
+  }
+
+  /**
+   * Captures the most recent stack frame which belongs to the extension.
+   *
+   * @returns {SavedFrame?}
+   */
+  getCaller() {
+    return ChromeUtils.getCallerLocation(this.principal);
   }
 
   /**
@@ -436,6 +482,7 @@ class BaseContext {
    *     belonging to the target scope. Otherwise, undefined.
    */
   wrapPromise(promise, callback = null) {
+    let caller = this.getCaller();
     let applySafe = this.applySafe.bind(this);
     if (Cu.getGlobalForObject(promise) === this.cloneScope) {
       applySafe = this.applySafeWithoutClone.bind(this);
@@ -445,25 +492,29 @@ class BaseContext {
       promise.then(
         args => {
           if (this.unloaded) {
-            dump(`Promise resolved after context unloaded\n`);
+            Cu.reportError(`Promise resolved after context unloaded\n`,
+                           caller);
           } else if (!this.active) {
-            dump(`Promise resolved while context is inactive\n`);
+            Cu.reportError(`Promise resolved while context is inactive\n`,
+                           caller);
           } else if (args instanceof NoCloneSpreadArgs) {
-            this.applySafeWithoutClone(callback, args.unwrappedValues);
+            this.applySafeWithoutClone(callback, args.unwrappedValues, caller);
           } else if (args instanceof SpreadArgs) {
-            applySafe(callback, args);
+            applySafe(callback, args, caller);
           } else {
-            applySafe(callback, [args]);
+            applySafe(callback, [args], caller);
           }
         },
         error => {
-          this.withLastError(error, () => {
+          this.withLastError(error, caller, () => {
             if (this.unloaded) {
-              dump(`Promise rejected after context unloaded\n`);
+              Cu.reportError(`Promise rejected after context unloaded\n`,
+                             caller);
             } else if (!this.active) {
-              dump(`Promise rejected while context is inactive\n`);
+              Cu.reportError(`Promise rejected while context is inactive\n`,
+                             caller);
             } else {
-              this.applySafeWithoutClone(callback, []);
+              this.applySafeWithoutClone(callback, [], caller);
             }
           });
         });
@@ -472,25 +523,32 @@ class BaseContext {
         promise.then(
           value => {
             if (this.unloaded) {
-              dump(`Promise resolved after context unloaded\n`);
+              Cu.reportError(`Promise resolved after context unloaded\n`,
+                             caller);
             } else if (!this.active) {
-              dump(`Promise resolved while context is inactive\n`);
+              Cu.reportError(`Promise resolved while context is inactive\n`,
+                             caller);
             } else if (value instanceof NoCloneSpreadArgs) {
               let values = value.unwrappedValues;
-              this.applySafeWithoutClone(resolve, values.length == 1 ? [values[0]] : [values]);
+              this.applySafeWithoutClone(resolve, values.length == 1 ? [values[0]] : [values],
+                                         caller);
             } else if (value instanceof SpreadArgs) {
-              applySafe(resolve, value.length == 1 ? value : [value]);
+              applySafe(resolve, value.length == 1 ? value : [value],
+                        caller);
             } else {
-              applySafe(resolve, [value]);
+              applySafe(resolve, [value], caller);
             }
           },
           value => {
             if (this.unloaded) {
-              dump(`Promise rejected after context unloaded: ${value && value.message}\n`);
+              Cu.reportError(`Promise rejected after context unloaded: ${value && value.message}\n`,
+                             caller);
             } else if (!this.active) {
-              dump(`Promise rejected while context is inactive: ${value && value.message}\n`);
+              Cu.reportError(`Promise rejected while context is inactive: ${value && value.message}\n`,
+                             caller);
             } else {
-              this.applySafeWithoutClone(reject, [this.normalizeError(value)]);
+              this.applySafeWithoutClone(reject, [this.normalizeError(value, caller)],
+                                         caller);
             }
           });
       });
@@ -739,6 +797,17 @@ function getPath(map, path) {
   return map;
 }
 
+function mergePaths(dest, source) {
+  for (let name of source.modules) {
+    dest.modules.add(name);
+  }
+
+  for (let [name, child] of source.children.entries()) {
+    mergePaths(getChild(dest, name),
+               child);
+  }
+}
+
 /**
  * Manages loading and accessing a set of APIs for a specific extension
  * context.
@@ -829,7 +898,8 @@ class CanOfAPIs {
     let obj = this.root;
     let modules = this.apiManager.modulePaths;
 
-    for (let key of path.split(".")) {
+    let parts = path.split(".");
+    for (let [i, key] of parts.entries()) {
       if (!obj) {
         return;
       }
@@ -841,6 +911,9 @@ class CanOfAPIs {
         }
       }
 
+      if (!(key in obj) && i < parts.length - 1) {
+        obj[key] = {};
+      }
       obj = obj[key];
     }
 
@@ -865,7 +938,8 @@ class CanOfAPIs {
     let obj = this.root;
     let modules = this.apiManager.modulePaths;
 
-    for (let key of path.split(".")) {
+    let parts = path.split(".");
+    for (let [i, key] of parts.entries()) {
       if (!obj) {
         return;
       }
@@ -875,6 +949,10 @@ class CanOfAPIs {
         if (!this.apis.has(name)) {
           await this.asyncLoadAPI(name);
         }
+      }
+
+      if (!(key in obj) && i < parts.length - 1) {
+        obj[key] = {};
       }
 
       if (typeof obj[key] === "function") {
@@ -938,11 +1016,15 @@ class SchemaAPIManager extends EventEmitter {
    *     "content" - A content process.
    *     "devtools" - A devtools process.
    *     "proxy" - A proxy script process.
+   * @param {SchemaRoot} schema
    */
-  constructor(processType) {
+  constructor(processType, schema) {
     super();
     this.processType = processType;
-    this.global = this._createExtGlobal();
+    this.global = null;
+    if (schema) {
+      this.schema = schema;
+    }
 
     this.modules = new Map();
     this.modulePaths = {children: new Map(), modules: new Set()};
@@ -958,12 +1040,27 @@ class SchemaAPIManager extends EventEmitter {
     this._scriptScopes = [];
   }
 
-  async loadModuleJSON(urls) {
-    function fetchJSON(url) {
-      return fetch(url).then(resp => resp.json());
+  onStartup(extension) {
+    let promises = [];
+    for (let apiName of this.eventModules.get("startup")) {
+      promises.push(extension.apiManager.asyncGetAPI(apiName, extension).then(api => {
+        if (api) {
+          api.onStartup();
+        }
+      }));
     }
 
-    for (let json of await Promise.all(urls.map(fetchJSON))) {
+    return Promise.all(promises);
+  }
+
+  async loadModuleJSON(urls) {
+    let promises = urls.map(url => fetch(url).then(resp => resp.json()));
+
+    return this.initModuleJSON(await Promise.all(promises));
+  }
+
+  initModuleJSON(blobs) {
+    for (let json of blobs) {
       this.registerModules(json);
     }
 
@@ -1054,7 +1151,7 @@ class SchemaAPIManager extends EventEmitter {
   emitManifestEntry(extension, entry) {
     let apiName = this.manifestKeys.get(entry);
     if (apiName) {
-      let api = this.getAPI(apiName, extension);
+      let api = extension.apiManager.getAPI(apiName, extension);
       return api.onManifestEntry(entry);
     }
   }
@@ -1076,7 +1173,7 @@ class SchemaAPIManager extends EventEmitter {
   async asyncEmitManifestEntry(extension, entry) {
     let apiName = this.manifestKeys.get(entry);
     if (apiName) {
-      let api = await this.asyncGetAPI(apiName, extension);
+      let api = await extension.apiManager.asyncGetAPI(apiName, extension);
       return api.onManifestEntry(entry);
     }
   }
@@ -1166,6 +1263,8 @@ class SchemaAPIManager extends EventEmitter {
 
     this._checkLoadModule(module, name);
 
+    this.initGlobal();
+
     Services.scriptloader.loadSubScript(module.url, this.global, "UTF-8");
 
     module.loaded = true;
@@ -1193,6 +1292,7 @@ class SchemaAPIManager extends EventEmitter {
     this._checkLoadModule(module, name);
 
     module.asyncLoaded = ChromeUtils.compileScript(module.url).then(script => {
+      this.initGlobal();
       script.executeInGlobal(this.global);
 
       module.loaded = true;
@@ -1201,6 +1301,10 @@ class SchemaAPIManager extends EventEmitter {
     });
 
     return module.asyncLoaded;
+  }
+
+  getModule(name) {
+    return this.modules.get(name);
   }
 
   /**
@@ -1219,7 +1323,7 @@ class SchemaAPIManager extends EventEmitter {
    *        Whether the module may be loaded.
    */
   _checkGetAPI(name, extension, scope = null) {
-    let module = this.modules.get(name);
+    let module = this.getModule(name);
 
     if (module.permissions && !module.permissions.some(perm => extension.hasPermission(perm))) {
       return false;
@@ -1247,7 +1351,7 @@ class SchemaAPIManager extends EventEmitter {
     if (module.asyncLoaded) {
       throw new Error(`Module '${name}' currently being lazily loaded`);
     }
-    if (this.global[name]) {
+    if (this.global && this.global[name]) {
       throw new Error(`Module '${name}' conflicts with existing global property`);
     }
   }
@@ -1262,12 +1366,28 @@ class SchemaAPIManager extends EventEmitter {
   _createExtGlobal() {
     let global = Cu.Sandbox(Services.scriptSecurityManager.getSystemPrincipal(), {
       wantXrays: false,
+      wantGlobalProperties: ["ChromeUtils"],
       sandboxName: `Namespace of ext-*.js scripts for ${this.processType} (from: resource://gre/modules/ExtensionCommon.jsm)`,
     });
 
-    Object.assign(global, {global, Cc, Ci, Cu, Cr, XPCOMUtils, ChromeUtils, ChromeWorker, ExtensionAPI, ExtensionCommon, MatchPattern, MatchPatternSet, StructuredCloneHolder, extensions: this});
+    Object.assign(global, {
+      Cc,
+      ChromeWorker,
+      Ci,
+      Cr,
+      Cu,
+      ExtensionAPI,
+      ExtensionCommon,
+      MatchGlob,
+      MatchPattern,
+      MatchPatternSet,
+      StructuredCloneHolder,
+      XPCOMUtils,
+      extensions: this,
+      global,
+    });
 
-    Cu.import("resource://gre/modules/AppConstants.jsm", global);
+    ChromeUtils.import("resource://gre/modules/AppConstants.jsm", global);
 
     XPCOMUtils.defineLazyGetter(global, "console", getConsole);
 
@@ -1277,6 +1397,12 @@ class SchemaAPIManager extends EventEmitter {
     });
 
     return global;
+  }
+
+  initGlobal() {
+    if (!this.global) {
+      this.global = this._createExtGlobal();
+    }
   }
 
   /**
@@ -1317,6 +1443,96 @@ class SchemaAPIManager extends EventEmitter {
     }
   }
 }
+
+class LazyAPIManager extends SchemaAPIManager {
+  constructor(processType, moduleData, schemaURLs) {
+    super(processType);
+
+    this.initialized = false;
+
+    this.initModuleData(moduleData);
+
+    this.schemaURLs = schemaURLs;
+  }
+}
+
+defineLazyGetter(LazyAPIManager.prototype, "schema", function() {
+  let root = new SchemaRoot(Schemas.rootSchema, this.schemaURLs);
+  root.parseSchemas();
+  return root;
+});
+
+class MultiAPIManager extends SchemaAPIManager {
+  constructor(processType, children) {
+    super(processType);
+
+    this.initialized = false;
+
+    this.children = children;
+  }
+
+  async lazyInit() {
+    if (!this.initialized) {
+      this.initialized = true;
+
+      for (let child of this.children) {
+        if (child.lazyInit) {
+          let res = child.lazyInit();
+          if (res && typeof res.then === "function") {
+            await res;
+          }
+        }
+
+        mergePaths(this.modulePaths, child.modulePaths);
+      }
+    }
+  }
+
+  onStartup(extension) {
+    return Promise.all(this.children.map(
+      child => child.onStartup(extension)));
+  }
+
+  getModule(name) {
+    for (let child of this.children) {
+      if (child.modules.has(name)) {
+        return child.modules.get(name);
+      }
+    }
+  }
+
+  loadModule(name) {
+    for (let child of this.children) {
+      if (child.modules.has(name)) {
+        return child.loadModule(name);
+      }
+    }
+  }
+
+  asyncLoadModule(name) {
+    for (let child of this.children) {
+      if (child.modules.has(name)) {
+        return child.asyncLoadModule(name);
+      }
+    }
+  }
+}
+
+defineLazyGetter(MultiAPIManager.prototype, "schema", function() {
+  let bases = this.children.map(child => child.schema);
+
+  // All API manager schema roots should derive from the global schema root,
+  // so it doesn't need its own entry.
+  if (bases[bases.length - 1] === Schemas) {
+    bases.pop();
+  }
+
+  if (bases.length === 1) {
+    bases = bases[0];
+  }
+  return new SchemaRoot(bases, new Map());
+});
+
 
 function LocaleData(data) {
   this.defaultLocale = data.defaultLocale;
@@ -1518,27 +1734,38 @@ defineLazyGetter(LocaleData.prototype, "availableLocales", function() {
                  .filter(locale => this.messages.has(locale)));
 });
 
-// This is a generic class for managing event listeners. Example usage:
-//
-// new EventManager(context, "api.subAPI", fire => {
-//   let listener = (...) => {
-//     // Fire any listeners registered with addListener.
-//     fire.async(arg1, arg2);
-//   };
-//   // Register the listener.
-//   SomehowRegisterListener(listener);
-//   return () => {
-//     // Return a way to unregister the listener.
-//     SomehowUnregisterListener(listener);
-//   };
-// }).api()
-//
-// The result is an object with addListener, removeListener, and
-// hasListener methods. |context| is an add-on scope (either an
-// ExtensionContext in the chrome process or ExtensionContext in a
-// content process). |name| is for debugging. |register| is a function
-// to register the listener. |register| should return an
-// unregister function that will unregister the listener.
+/**
+* This is a generic class for managing event listeners.
+ *
+ * @example
+ * new EventManager(context, "api.subAPI", fire => {
+ *   let listener = (...) => {
+ *     // Fire any listeners registered with addListener.
+ *     fire.async(arg1, arg2);
+ *   };
+ *   // Register the listener.
+ *   SomehowRegisterListener(listener);
+ *   return () => {
+ *     // Return a way to unregister the listener.
+ *     SomehowUnregisterListener(listener);
+ *   };
+ * }).api()
+ *
+ * The result is an object with addListener, removeListener, and
+ * hasListener methods. `context` is an add-on scope (either an
+ * ExtensionContext in the chrome process or ExtensionContext in a
+ * content process). `name` is for debugging. `register` is a function
+ * to register the listener. `register` should return an
+ * unregister function that will unregister the listener.
+ * @constructor
+ *
+ * @param {BaseContext} context
+ *        An object representing the extension instance using this event.
+ * @param {string} name
+ *        A name used only for debugging.
+ * @param {functon} register
+ *        A function called whenever a new listener is added.
+ */
 function EventManager(context, name, register) {
   this.context = context;
   this.name = name;
@@ -1680,4 +1907,7 @@ ExtensionCommon = {
   SpreadArgs,
   ignoreEvent,
   stylesheetMap,
+
+  MultiAPIManager,
+  LazyAPIManager,
 };

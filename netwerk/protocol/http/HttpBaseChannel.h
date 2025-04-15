@@ -62,7 +62,7 @@ class nsIPrincipal;
 namespace mozilla {
 
 namespace dom {
-class Performance;
+class PerformanceStorage;
 }
 
 class LogCollector;
@@ -195,6 +195,7 @@ public:
   NS_IMETHOD GetResponseStatusText(nsACString& aValue) override;
   NS_IMETHOD GetRequestSucceeded(bool *aValue) override;
   NS_IMETHOD RedirectTo(nsIURI *newURI) override;
+  NS_IMETHOD UpgradeToSecure() override;
   NS_IMETHOD GetRequestContextID(uint64_t *aRCID) override;
   NS_IMETHOD GetTransferSize(uint64_t *aTransferSize) override;
   NS_IMETHOD GetDecodedBodySize(uint64_t *aDecodedBodySize) override;
@@ -235,6 +236,8 @@ public:
   NS_IMETHOD SetAllowAltSvc(bool aAllowAltSvc) override;
   NS_IMETHOD GetBeConservative(bool *aBeConservative) override;
   NS_IMETHOD SetBeConservative(bool aBeConservative) override;
+  NS_IMETHOD GetTrr(bool *aTRR) override;
+  NS_IMETHOD SetTrr(bool aTRR) override;
   NS_IMETHOD GetTlsFlags(uint32_t *aTlsFlags) override;
   NS_IMETHOD SetTlsFlags(uint32_t aTlsFlags) override;
   NS_IMETHOD GetApiRedirectToURI(nsIURI * *aApiRedirectToURI) override;
@@ -260,6 +263,7 @@ public:
   NS_IMETHOD SetTopWindowURIIfUnknown(nsIURI *aTopWindowURI) override;
   NS_IMETHOD GetProxyURI(nsIURI **proxyURI) override;
   virtual void SetCorsPreflightParameters(const nsTArray<nsCString>& unsafeHeaders) override;
+  virtual void SetAltDataForChild(bool aIsForChild) override;
   NS_IMETHOD GetConnectionInfoHashKey(nsACString& aConnectionInfoHashKey) override;
   NS_IMETHOD GetIntegrityMetadata(nsAString& aIntegrityMetadata) override;
   NS_IMETHOD SetIntegrityMetadata(const nsAString& aIntegrityMetadata) override;
@@ -296,6 +300,10 @@ public:
   void
   FlushReportsToConsole(uint64_t aInnerWindowID,
                         ReportAction aAction = ReportAction::Forget) override;
+
+  void
+  FlushReportsToConsoleForServiceWorkerScope(const nsACString& aScope,
+                                             ReportAction aAction = ReportAction::Forget) override;
 
   void
   FlushConsoleReports(nsIDocument* aDocument,
@@ -338,6 +346,7 @@ public:
 
     nsHttpResponseHead * GetResponseHead() const { return mResponseHead; }
     nsHttpRequestHead * GetRequestHead() { return &mRequestHead; }
+    nsHttpHeaderArray * GetResponseTrailers() const { return mResponseTrailers; }
 
     const NetAddr& GetSelfAddr() { return mSelfAddr; }
     const NetAddr& GetPeerAddr() { return mPeerAddr; }
@@ -348,7 +357,9 @@ public: /* Necko internal use only... */
     int64_t GetAltDataLength() { return mAltDataLength; }
     bool IsNavigation();
 
-    static void PropagateReferenceIfNeeded(nsIURI *aURI, nsIURI *aRedirectURI);
+    static bool IsReferrerSchemeAllowed(nsIURI *aReferrer);
+
+    static void PropagateReferenceIfNeeded(nsIURI *aURI, nsCOMPtr<nsIURI>& aRedirectURI);
 
     // Return whether upon a redirect code of httpStatus for method, the
     // request method should be rewritten to GET.
@@ -417,7 +428,7 @@ protected:
   // was fired.
   void NotifySetCookie(char const *aCookie);
 
-  mozilla::dom::Performance* GetPerformance();
+  mozilla::dom::PerformanceStorage* GetPerformanceStorage();
   nsIURI* GetReferringPage();
   nsPIDOMWindowInner* GetInnerDOMWindow();
 
@@ -500,6 +511,8 @@ private:
   // Proxy release all members above on main thread.
   void ReleaseMainThreadOnlyReferences();
 
+  bool IsCrossOriginWithReferrer();
+
 protected:
   // Use Release-Acquire ordering to ensure the OMT ODA is ignored while channel
   // is canceled on main thread.
@@ -515,6 +528,7 @@ protected:
   nsCOMPtr<nsIInputStream>          mUploadStream;
   nsCOMPtr<nsIRunnable>             mUploadCloneableCallback;
   nsAutoPtr<nsHttpResponseHead>     mResponseHead;
+  nsAutoPtr<nsHttpHeaderArray>      mResponseTrailers;
   RefPtr<nsHttpConnectionInfo>      mConnectionInfo;
   nsCOMPtr<nsIProxyInfo>            mProxyInfo;
   nsCOMPtr<nsISupports>             mSecurityInfo;
@@ -542,6 +556,7 @@ protected:
   int16_t                           mPriority;
   uint8_t                           mRedirectionLimit;
 
+  uint32_t                          mUpgradeToSecure            : 1;
   uint32_t                          mApplyConversion            : 1;
   uint32_t                          mIsPending                  : 1;
   uint32_t                          mWasOpened                  : 1;
@@ -558,9 +573,11 @@ protected:
   uint32_t                          mTracingEnabled             : 1;
   // True if timing collection is enabled
   uint32_t                          mTimingEnabled              : 1;
+  uint32_t                          mReportTiming               : 1;
   uint32_t                          mAllowSpdy                  : 1;
   uint32_t                          mAllowAltSvc                : 1;
   uint32_t                          mBeConservative             : 1;
+  uint32_t                          mTRR                        : 1;
   uint32_t                          mResponseTimeoutEnabled     : 1;
   // A flag that should be false only if a cross-domain redirect occurred
   uint32_t                          mAllRedirectsSameOrigin     : 1;
@@ -639,12 +656,15 @@ protected:
   bool mCorsIncludeCredentials;
   uint32_t mCorsMode;
   uint32_t mRedirectMode;
-  uint32_t mFetchCacheMode;
 
   // These parameters are used to ensure that we do not call OnStartRequest and
   // OnStopRequest more than once.
   bool mOnStartRequestCalled;
   bool mOnStopRequestCalled;
+
+  // Defaults to true.  This is set to false when it is no longer possible
+  // to upgrade the request to a secure channel.
+  uint32_t                          mUpgradableToSecure : 1;
 
   // Defaults to false. Is set to true at the begining of OnStartRequest.
   // Used to ensure methods can't be called before OnStartRequest.
@@ -685,6 +705,9 @@ protected:
   // Holds the name of the alternative data type the channel returned.
   nsCString mAvailableCachedAltDataType;
   int64_t   mAltDataLength;
+  // This flag will be true if the consumer is requesting alt-data AND the
+  // consumer is in the child process.
+  bool mAltDataForChild;
 
   bool mForceMainDocumentChannel;
   Atomic<bool, ReleaseAcquire> mIsTrackingResource;

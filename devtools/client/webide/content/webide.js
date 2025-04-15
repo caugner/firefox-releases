@@ -2,10 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var Cu = Components.utils;
-var Ci = Components.interfaces;
-
-const {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {gDevTools} = require("devtools/client/framework/devtools");
 const {gDevToolsBrowser} = require("devtools/client/framework/devtools-browser");
 const {Toolbox} = require("devtools/client/framework/toolbox");
@@ -13,7 +10,7 @@ const Services = require("Services");
 const {AppProjects} = require("devtools/client/webide/modules/app-projects");
 const {Connection} = require("devtools/shared/client/connection-manager");
 const {AppManager} = require("devtools/client/webide/modules/app-manager");
-const EventEmitter = require("devtools/shared/old-event-emitter");
+const EventEmitter = require("devtools/shared/event-emitter");
 const promise = require("promise");
 const {GetAvailableAddons} = require("devtools/client/webide/modules/addons");
 const {getJSON} = require("devtools/client/shared/getjson");
@@ -30,8 +27,6 @@ const HELP_URL = "https://developer.mozilla.org/docs/Tools/WebIDE/Troubleshootin
 
 const MAX_ZOOM = 1.4;
 const MIN_ZOOM = 0.6;
-
-const MS_PER_DAY = 86400000;
 
 [["AppManager", AppManager],
  ["AppProjects", AppProjects],
@@ -133,7 +128,7 @@ var UI = {
     showDoorhanger({ window, type: "deveditionpromo", anchor: document.querySelector("#deck") });
   },
 
-  appManagerUpdate: function (event, what, details) {
+  appManagerUpdate: function (what, details) {
     // Got a message from app-manager.js
     // See AppManager.update() for descriptions of what these events mean.
     switch (what) {
@@ -182,9 +177,6 @@ var UI = {
         this.updateTitle();
         this.updateCommands();
         break;
-      case "install-progress":
-        this.updateProgress(Math.round(100 * details.bytesSent / details.totalBytes));
-        break;
       case "runtime-targets":
         this.autoSelectProject();
         break;
@@ -217,13 +209,6 @@ var UI = {
   _busyTimeout: null,
   _busyOperationDescription: null,
   _busyPromise: null,
-
-  updateProgress: function (percent) {
-    let progress = document.querySelector("#action-busy-determined");
-    progress.mode = "determined";
-    progress.value = percent;
-    this.setupBusyTimeout();
-  },
 
   busy: function () {
     let win = document.querySelector("window");
@@ -394,7 +379,6 @@ var UI = {
     }
 
     // Runtime commands
-    let monitorCmd = document.querySelector("#cmd_showMonitor");
     let screenshotCmd = document.querySelector("#cmd_takeScreenshot");
     let detailsCmd = document.querySelector("#cmd_showRuntimeDetails");
     let disconnectCmd = document.querySelector("#cmd_disconnectRuntime");
@@ -403,7 +387,6 @@ var UI = {
 
     if (AppManager.connected) {
       if (AppManager.deviceFront) {
-        monitorCmd.removeAttribute("disabled");
         detailsCmd.removeAttribute("disabled");
         screenshotCmd.removeAttribute("disabled");
       }
@@ -412,7 +395,6 @@ var UI = {
       }
       disconnectCmd.removeAttribute("disabled");
     } else {
-      monitorCmd.setAttribute("disabled", "true");
       detailsCmd.setAttribute("disabled", "true");
       screenshotCmd.setAttribute("disabled", "true");
       disconnectCmd.setAttribute("disabled", "true");
@@ -752,27 +734,17 @@ var UI = {
     deck.selectedPanel = null;
   },
 
-  buildIDToDate(buildID) {
-    let fields = buildID.match(/(\d{4})(\d{2})(\d{2})/);
-    // Date expects 0 - 11 for months
-    return new Date(fields[1], Number.parseInt(fields[2]) - 1, fields[3]);
-  },
-
   checkRuntimeVersion: Task.async(function* () {
-    if (AppManager.connected && AppManager.deviceFront) {
-      let desc = yield AppManager.deviceFront.getDescription();
-      // Compare device and firefox build IDs
-      // and only compare by day (strip hours/minutes) to prevent
-      // warning against builds of the same day.
-      let deviceID = desc.appbuildid.substr(0, 8);
-      let localID = Services.appinfo.appBuildID.substr(0, 8);
-      let deviceDate = this.buildIDToDate(deviceID);
-      let localDate = this.buildIDToDate(localID);
-      // Allow device to be newer by up to a week.  This accommodates those with
-      // local device builds, since their devices will almost always be newer
-      // than the client.
-      if (deviceDate - localDate > 7 * MS_PER_DAY) {
-        this.reportError("error_runtimeVersionTooRecent", deviceID, localID);
+    if (AppManager.connected) {
+      let { client } = AppManager.connection;
+      let report = yield client.checkRuntimeVersion(AppManager.listTabsForm);
+      if (report.incompatible == "too-recent") {
+        this.reportError("error_runtimeVersionTooRecent", report.runtimeID,
+          report.localID);
+      }
+      if (report.incompatible == "too-old") {
+        this.reportError("error_runtimeVersionTooOld", report.runtimeVersion,
+          report.minVersion);
       }
     }
   }),
@@ -904,10 +876,6 @@ var Cmds = {
 
   showDevicePrefs: function () {
     UI.selectDeckPanel("devicepreferences");
-  },
-
-  showMonitor: function () {
-    UI.selectDeckPanel("monitor");
   },
 
   play: Task.async(function* () {

@@ -8,7 +8,7 @@
  * startSearch call.
  */
 
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 
 /**
@@ -58,7 +58,7 @@ AutoCompleteSearch.prototype = {
   stopSearchInvoked: true,
   startSearch(aSearchString, aSearchParam, aPreviousResult, aListener) {
     print("Check stop search has been called");
-    do_check_true(this.stopSearchInvoked);
+    Assert.ok(this.stopSearchInvoked);
     this.stopSearchInvoked = false;
   },
   stopSearch() {
@@ -133,7 +133,9 @@ var gTests = [
 
   function(controller) {
     print("handleKeyNavigation");
-    controller.handleKeyNavigation(Ci.nsIDOMKeyEvent.DOM_VK_UP);
+    // Hardcode KeyboardEvent.DOM_VK_RIGHT, because we can't easily
+    // include KeyboardEvent here.
+    controller.handleKeyNavigation(0x26 /* KeyboardEvent.DOM_VK_UP */);
   },
 ];
 
@@ -153,7 +155,7 @@ function run_test() {
   controller.input = input;
 
   input.onSearchBegin = function() {
-    do_execute_soon(function() {
+    executeSoon(function() {
       gCurrentTest(controller);
     });
   };

@@ -3,16 +3,16 @@
 // The ext-* files are imported into the same scopes.
 /* import-globals-from ext-toolkit.js */
 
-XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
-                                  "resource://gre/modules/AppConstants.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Downloads",
-                                  "resource://gre/modules/Downloads.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "DownloadPaths",
-                                  "resource://gre/modules/DownloadPaths.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "OS",
-                                  "resource://gre/modules/osfile.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
-                                  "resource://gre/modules/FileUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "AppConstants",
+                               "resource://gre/modules/AppConstants.jsm");
+ChromeUtils.defineModuleGetter(this, "Downloads",
+                               "resource://gre/modules/Downloads.jsm");
+ChromeUtils.defineModuleGetter(this, "DownloadPaths",
+                               "resource://gre/modules/DownloadPaths.jsm");
+ChromeUtils.defineModuleGetter(this, "OS",
+                               "resource://gre/modules/osfile.jsm");
+ChromeUtils.defineModuleGetter(this, "FileUtils",
+                               "resource://gre/modules/FileUtils.jsm");
 
 var {
   EventEmitter,
@@ -153,7 +153,7 @@ class DownloadItem {
 
 // DownloadMap maps back and forth betwen the numeric identifiers used in
 // the downloads WebExtension API and a Download object from the Downloads jsm.
-// todo: make id and extension info persistent (bug 1247794)
+// TODO Bug 1247794: make id and extension info persistent
 const DownloadMap = new class extends EventEmitter {
   constructor() {
     super();
@@ -238,8 +238,8 @@ const DownloadMap = new class extends EventEmitter {
   }
 
   erase(item) {
-    // This will need to get more complicated for bug 1255507 but for now we
-    // only work with downloads in the DownloadList from getAll()
+    // TODO Bug 1255507: for now we only work with downloads in the DownloadList
+    // from getAll()
     return this.getDownloadList().then(list => {
       list.remove(item.download);
     });
@@ -274,8 +274,7 @@ const downloadQuery = query => {
   // const endedAfter = normalizeDownloadTime(query.endedAfter, false);
 
   const totalBytesGreater = query.totalBytesGreater || 0;
-  const totalBytesLess = (query.totalBytesLess != null)
-        ? query.totalBytesLess : Number.MAX_VALUE;
+  const totalBytesLess = query.totalBytesLess != null ? query.totalBytesLess : Number.MAX_VALUE;
 
   // Handle options for which we can have a regular expression and/or
   // an explicit value to match.
@@ -362,9 +361,9 @@ const queryHelper = query => {
 
   let compareFn;
   if (query.orderBy != null) {
-    const fields = query.orderBy.map(field => field[0] == "-"
-                                     ? {reverse: true, name: field.slice(1)}
-                                     : {reverse: false, name: field});
+    const fields = query.orderBy.map(field => (field[0] == "-"
+                                               ? {reverse: true, name: field.slice(1)}
+                                               : {reverse: false, name: field}));
 
     for (let field of fields) {
       if (!DOWNLOAD_ITEM_FIELDS.includes(field.name)) {

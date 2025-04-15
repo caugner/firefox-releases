@@ -83,19 +83,17 @@ nsLeafBoxFrame::AttributeChanged(int32_t aNameSpaceID,
 
 void nsLeafBoxFrame::UpdateMouseThrough()
 {
-  if (mContent) {
-    static nsIContent::AttrValuesArray strings[] =
-      {&nsGkAtoms::never, &nsGkAtoms::always, nullptr};
-    switch (mContent->FindAttrValueIn(kNameSpaceID_None,
-                                      nsGkAtoms::mousethrough,
-                                      strings, eCaseMatters)) {
-      case 0: AddStateBits(NS_FRAME_MOUSE_THROUGH_NEVER); break;
-      case 1: AddStateBits(NS_FRAME_MOUSE_THROUGH_ALWAYS); break;
-      case 2: {
-          RemoveStateBits(NS_FRAME_MOUSE_THROUGH_ALWAYS);
-          RemoveStateBits(NS_FRAME_MOUSE_THROUGH_NEVER);
-          break;
-      }
+  static Element::AttrValuesArray strings[] =
+    {&nsGkAtoms::never, &nsGkAtoms::always, nullptr};
+  switch (mContent->AsElement()->FindAttrValueIn(kNameSpaceID_None,
+                                                 nsGkAtoms::mousethrough,
+                                                 strings, eCaseMatters)) {
+    case 0: AddStateBits(NS_FRAME_MOUSE_THROUGH_NEVER); break;
+    case 1: AddStateBits(NS_FRAME_MOUSE_THROUGH_ALWAYS); break;
+    case 2: {
+        RemoveStateBits(NS_FRAME_MOUSE_THROUGH_ALWAYS);
+        RemoveStateBits(NS_FRAME_MOUSE_THROUGH_NEVER);
+        break;
     }
   }
 }
@@ -114,8 +112,8 @@ nsLeafBoxFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   if (!aBuilder->IsForEventDelivery() || !IsVisibleForPainting(aBuilder))
     return;
 
-  aLists.Content()->AppendNewToTop(new (aBuilder)
-    nsDisplayEventReceiver(aBuilder, this));
+  aLists.Content()->AppendToTop(
+    MakeDisplayItem<nsDisplayEventReceiver>(aBuilder, this));
 }
 
 /* virtual */ nscoord
@@ -328,7 +326,7 @@ nsLeafBoxFrame::GetFrameName(nsAString& aResult) const
 #endif
 
 nsresult
-nsLeafBoxFrame::CharacterDataChanged(CharacterDataChangeInfo* aInfo)
+nsLeafBoxFrame::CharacterDataChanged(const CharacterDataChangeInfo& aInfo)
 {
   MarkIntrinsicISizesDirty();
   return nsLeafFrame::CharacterDataChanged(aInfo);

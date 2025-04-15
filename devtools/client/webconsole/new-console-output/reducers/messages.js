@@ -5,8 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const Immutable = require("devtools/client/shared/vendor/immutable");
-
 const {
   isGroupType,
   l10n,
@@ -30,21 +28,21 @@ const {
   processNetworkUpdates,
 } = require("devtools/client/netmonitor/src/utils/request-utils");
 
-const MessageState = Immutable.Record({
+const MessageState = overrides => Object.freeze(Object.assign({
   // List of all the messages added to the console.
-  messagesById: Immutable.OrderedMap(),
+  messagesById: new Map(),
   // Array of the visible messages.
   visibleMessages: [],
   // Object for the filtered messages.
   filteredMessagesCount: getDefaultFiltersCounter(),
   // List of the message ids which are opened.
-  messagesUiById: Immutable.List(),
+  messagesUiById: [],
   // Map of the form {messageId : tableData}, which represent the data passed
   // as an argument in console.table calls.
-  messagesTableDataById: Immutable.Map(),
+  messagesTableDataById: new Map(),
   // Map of the form {groupMessageId : groupArray},
   // where groupArray is the list of of all the parent groups' ids of the groupMessageId.
-  groupsById: Immutable.Map(),
+  groupsById: new Map(),
   // Message id of the current group (no corresponding console.groupEnd yet).
   currentGroup: null,
   // Array of removed actors (i.e. actors logged in removed messages) we keep track of
@@ -56,17 +54,29 @@ const MessageState = Immutable.Record({
   // Map of the form {messageId : networkInformation}
   // `networkInformation` holds request, response, totalTime, ...
   networkMessagesUpdateById: {},
-});
+}, overrides));
+
+function cloneState(state) {
+  return {
+    messagesById: new Map(state.messagesById),
+    visibleMessages: [...state.visibleMessages],
+    filteredMessagesCount: {...state.filteredMessagesCount},
+    messagesUiById: [...state.messagesUiById],
+    messagesTableDataById: new Map(state.messagesTableDataById),
+    groupsById: new Map(state.groupsById),
+    currentGroup: state.currentGroup,
+    removedActors: [...state.removedActors],
+    repeatById: {...state.repeatById},
+    networkMessagesUpdateById: {...state.networkMessagesUpdateById},
+  };
+}
 
 function addMessage(state, filtersState, prefsState, newMessage) {
   const {
     messagesById,
-    messagesUiById,
     groupsById,
     currentGroup,
     repeatById,
-    visibleMessages,
-    filteredMessagesCount,
   } = state;
 
   if (newMessage.type === constants.MESSAGE_TYPE.NULL_MESSAGE) {
@@ -76,66 +86,65 @@ function addMessage(state, filtersState, prefsState, newMessage) {
 
   if (newMessage.type === constants.MESSAGE_TYPE.END_GROUP) {
     // Compute the new current group.
-    return state.set("currentGroup", getNewCurrentGroup(currentGroup, groupsById));
+    state.currentGroup = getNewCurrentGroup(currentGroup, groupsById);
+    return state;
   }
 
   if (newMessage.allowRepeating && messagesById.size > 0) {
-    let lastMessage = messagesById.last();
+    let lastMessage = [...messagesById.values()][messagesById.size - 1];
+
     if (
       lastMessage.repeatId === newMessage.repeatId
       && lastMessage.groupId === currentGroup
     ) {
-      return state.set(
-        "repeatById",
-        Object.assign({}, repeatById, {
-          [lastMessage.id]: (repeatById[lastMessage.id] || 1) + 1
-        })
-      );
+      state.repeatById[lastMessage.id] = (repeatById[lastMessage.id] || 1) + 1;
+      return state;
     }
   }
 
-  return state.withMutations(function (record) {
-    // Add the new message with a reference to the parent group.
-    let parentGroups = getParentGroups(currentGroup, groupsById);
-    newMessage.groupId = currentGroup;
-    newMessage.indent = parentGroups.length;
+  // Add the new message with a reference to the parent group.
+  let parentGroups = getParentGroups(currentGroup, groupsById);
+  newMessage.groupId = currentGroup;
+  newMessage.indent = parentGroups.length;
 
-    const addedMessage = Object.freeze(newMessage);
-    record.set(
-      "messagesById",
-      messagesById.set(newMessage.id, addedMessage)
-    );
+  const addedMessage = Object.freeze(newMessage);
+  state.messagesById.set(newMessage.id, addedMessage);
 
-    if (newMessage.type === "trace") {
-      // We want the stacktrace to be open by default.
-      record.set("messagesUiById", messagesUiById.push(newMessage.id));
-    } else if (isGroupType(newMessage.type)) {
-      record.set("currentGroup", newMessage.id);
-      record.set("groupsById", groupsById.set(newMessage.id, parentGroups));
+  if (newMessage.type === "trace") {
+    // We want the stacktrace to be open by default.
+    state.messagesUiById.push(newMessage.id);
+  } else if (isGroupType(newMessage.type)) {
+    state.currentGroup = newMessage.id;
+    state.groupsById.set(newMessage.id, parentGroups);
 
-      if (newMessage.type === constants.MESSAGE_TYPE.START_GROUP) {
-        // We want the group to be open by default.
-        record.set("messagesUiById", messagesUiById.push(newMessage.id));
-      }
+    if (newMessage.type === constants.MESSAGE_TYPE.START_GROUP) {
+      // We want the group to be open by default.
+      state.messagesUiById.push(newMessage.id);
     }
+  }
 
-    const {
-      visible,
-      cause
-    } = getMessageVisibility(addedMessage, record, filtersState);
+  const {
+    visible,
+    cause
+  } = getMessageVisibility(addedMessage, state, filtersState);
 
-    if (visible) {
-      record.set("visibleMessages", [...visibleMessages, newMessage.id]);
-    } else if (DEFAULT_FILTERS.includes(cause)) {
-      record.set("filteredMessagesCount", Object.assign({}, filteredMessagesCount, {
-        global: filteredMessagesCount.global + 1,
-        [cause]: filteredMessagesCount[cause] + 1
-      }));
-    }
-  });
+  if (visible) {
+    state.visibleMessages.push(newMessage.id);
+  } else if (DEFAULT_FILTERS.includes(cause)) {
+    state.filteredMessagesCount.global++;
+    state.filteredMessagesCount[cause]++;
+  }
+
+  // Append received network-data also into networkMessagesUpdateById
+  // that is responsible for collecting (lazy loaded) HTTP payload data.
+  if (newMessage.source == "network") {
+    state.networkMessagesUpdateById[newMessage.actor] = newMessage;
+  }
+
+  return state;
 }
 
-function messages(state = new MessageState(), action, filtersState, prefsState) {
+function messages(state = MessageState(), action, filtersState, prefsState) {
   const {
     messagesById,
     messagesUiById,
@@ -150,17 +159,19 @@ function messages(state = new MessageState(), action, filtersState, prefsState) 
   let newState;
   switch (action.type) {
     case constants.MESSAGES_ADD:
-      newState = state;
-
       // Preemptively remove messages that will never be rendered
       let list = [];
       let prunableCount = 0;
       let lastMessageRepeatId = -1;
       for (let i = action.messages.length - 1; i >= 0; i--) {
         let message = action.messages[i];
-        if (!message.groupId && !isGroupType(message.type) &&
-            message.type !== MESSAGE_TYPE.END_GROUP) {
-          prunableCount++;
+        if (
+          !message.groupId && !isGroupType(message.type) &&
+          message.type !== MESSAGE_TYPE.END_GROUP
+        ) {
+          if (message.repeatId !== lastMessageRepeatId) {
+            prunableCount++;
+          }
           // Once we've added the max number of messages that can be added, stop.
           // Except for repeated messages, where we keep adding over the limit.
           if (prunableCount <= logLimit || message.repeatId == lastMessageRepeatId) {
@@ -174,109 +185,120 @@ function messages(state = new MessageState(), action, filtersState, prefsState) 
         lastMessageRepeatId = message.repeatId;
       }
 
+      newState = cloneState(state);
       list.forEach(message => {
         newState = addMessage(newState, filtersState, prefsState, message);
       });
 
       return limitTopLevelMessageCount(newState, logLimit);
 
-    case constants.MESSAGE_ADD:
-      newState = addMessage(state, filtersState, prefsState, action.message);
-      return limitTopLevelMessageCount(newState, logLimit);
-
     case constants.MESSAGES_CLEAR:
-      return new MessageState({
+      return MessageState({
         // Store all actors from removed messages. This array is used by
         // `releaseActorsEnhancer` to release all of those backend actors.
-        "removedActors": [...state.messagesById].reduce((res, [id, msg]) => {
-          res.push(...getAllActorsInMessage(msg, state));
+        removedActors: [...state.messagesById.values()].reduce((res, msg) => {
+          res.push(...getAllActorsInMessage(msg));
           return res;
         }, [])
       });
 
+    case constants.PRIVATE_MESSAGES_CLEAR:
+      const removedIds = [];
+      for (const [id, message] of messagesById) {
+        if (message.private === true) {
+          removedIds.push(id);
+        }
+      }
+
+      // If there's no private messages, there's no need to change the state.
+      if (removedIds.length === 0) {
+        return state;
+      }
+
+      return removeMessagesFromState({
+        ...state,
+      }, removedIds);
+
     case constants.MESSAGE_OPEN:
-      return state.withMutations(function (record) {
-        record.set("messagesUiById", messagesUiById.push(action.id));
+      const openState = {...state};
+      openState.messagesUiById = [...messagesUiById, action.id];
+      let currMessage = messagesById.get(action.id);
 
-        let currMessage = messagesById.get(action.id);
+      // If the message is a group
+      if (isGroupType(currMessage.type)) {
+        // We want to make its children visible
+        const messagesToShow = [...messagesById].reduce((res, [id, message]) => {
+          if (
+            !visibleMessages.includes(message.id)
+            && getParentGroups(message.groupId, groupsById).includes(action.id)
+            && getMessageVisibility(
+              message,
+              openState,
+              filtersState,
+              // We want to check if the message is in an open group
+              // only if it is not a direct child of the group we're opening.
+              message.groupId !== action.id
+            ).visible
+          ) {
+            res.push(id);
+          }
+          return res;
+        }, []);
 
-        // If the message is a group
-        if (isGroupType(currMessage.type)) {
-          // We want to make its children visible
-          const messagesToShow = [...messagesById].reduce((res, [id, message]) => {
-            if (
-              !visibleMessages.includes(message.id)
-              && getParentGroups(message.groupId, groupsById).includes(action.id)
-              && getMessageVisibility(
-                message,
-                record,
-                filtersState,
-                // We want to check if the message is in an open group
-                // only if it is not a direct child of the group we're opening.
-                message.groupId !== action.id
-              ).visible
-            ) {
-              res.push(id);
-            }
-            return res;
-          }, []);
+        // We can then insert the messages ids right after the one of the group.
+        const insertIndex = visibleMessages.indexOf(action.id) + 1;
+        openState.visibleMessages = [
+          ...visibleMessages.slice(0, insertIndex),
+          ...messagesToShow,
+          ...visibleMessages.slice(insertIndex),
+        ];
+      }
 
-          // We can then insert the messages ids right after the one of the group.
-          const insertIndex = visibleMessages.indexOf(action.id) + 1;
-          record.set("visibleMessages", [
-            ...visibleMessages.slice(0, insertIndex),
-            ...messagesToShow,
-            ...visibleMessages.slice(insertIndex),
-          ]);
-        }
-
-        // If the current message is a network event, mark it as opened-once,
-        // so HTTP details are not fetched again the next time the user
-        // opens the log.
-        if (currMessage.source == "network") {
-          record.set("messagesById",
-            messagesById.set(
-              action.id, Object.assign({},
-                currMessage, {
-                  openedOnce: true
-                }
-              )
-            )
-          );
-        }
-      });
+      // If the current message is a network event, mark it as opened-once,
+      // so HTTP details are not fetched again the next time the user
+      // opens the log.
+      if (currMessage.source == "network") {
+        openState.messagesById = (new Map(messagesById)).set(
+          action.id, {
+            ...currMessage,
+            openedOnce: true
+          });
+      }
+      return openState;
 
     case constants.MESSAGE_CLOSE:
-      return state.withMutations(function (record) {
-        let messageId = action.id;
-        let index = record.messagesUiById.indexOf(messageId);
-        record.deleteIn(["messagesUiById", index]);
+      const closeState = {...state};
+      let messageId = action.id;
+      let index = closeState.messagesUiById.indexOf(messageId);
+      closeState.messagesUiById.splice(index, 1);
+      closeState.messagesUiById = [...closeState.messagesUiById];
 
-        // If the message is a group
-        if (isGroupType(messagesById.get(messageId).type)) {
-          // Hide all its children
-          record.set(
-            "visibleMessages",
-            [...visibleMessages].filter(id => getParentGroups(
-                messagesById.get(id).groupId,
-                groupsById
-              ).includes(messageId) === false
-            )
-          );
-        }
-      });
+      // If the message is a group
+      if (isGroupType(messagesById.get(messageId).type)) {
+        // Hide all its children
+        closeState.visibleMessages = visibleMessages.filter(id =>
+          getParentGroups(messagesById.get(id).groupId, groupsById)
+            .includes(messageId) === false
+        );
+      }
+      return closeState;
 
     case constants.MESSAGE_TABLE_RECEIVE:
       const {id, data} = action;
-      return state.set("messagesTableDataById", messagesTableDataById.set(id, data));
+
+      return {
+        ...state,
+        messagesTableDataById: (new Map(messagesTableDataById)).set(id, data)
+      };
 
     case constants.NETWORK_MESSAGE_UPDATE:
-      return state.set(
-        "networkMessagesUpdateById",
-        Object.assign({}, networkMessagesUpdateById, {
+      return {
+        ...state,
+        networkMessagesUpdateById: {
+          ...networkMessagesUpdateById,
           [action.message.id]: action.message
-        })
-      );
+        }
+      };
 
     case UPDATE_REQUEST:
     case constants.NETWORK_UPDATE_REQUEST: {
@@ -285,59 +307,82 @@ function messages(state = new MessageState(), action, filtersState, prefsState) 
         return state;
       }
 
-      let values = processNetworkUpdates(action.data);
-      newState = state.set(
-        "networkMessagesUpdateById",
-        Object.assign({}, networkMessagesUpdateById, {
-          [action.id]: Object.assign({}, request, values)
-        })
-      );
-
-      return newState;
+      return {
+        ...state,
+        networkMessagesUpdateById: {
+          ...networkMessagesUpdateById,
+          [action.id]: {
+            ...request,
+            ...processNetworkUpdates(action.data),
+          }
+        }
+      };
     }
 
     case constants.REMOVED_ACTORS_CLEAR:
-      return state.set("removedActors", []);
+      return {
+        ...state,
+        removedActors: [],
+      };
 
     case constants.FILTER_TOGGLE:
     case constants.FILTER_TEXT_SET:
     case constants.FILTERS_CLEAR:
     case constants.DEFAULT_FILTERS_RESET:
-      return state.withMutations(function (record) {
-        const messagesToShow = [];
-        const filtered = getDefaultFiltersCounter();
-        messagesById.forEach((message, messageId) => {
-          const {
-            visible,
-            cause
-          } = getMessageVisibility(message, state, filtersState);
-          if (visible) {
-            messagesToShow.push(messageId);
-          } else if (DEFAULT_FILTERS.includes(cause)) {
-            filtered.global = filtered.global + 1;
-            filtered[cause] = filtered[cause] + 1;
-          }
-        });
+      const messagesToShow = [];
+      const filtered = getDefaultFiltersCounter();
 
-        record.set("visibleMessages", messagesToShow);
-        record.set("filteredMessagesCount", filtered);
+      messagesById.forEach((message, msgId) => {
+        const {
+          visible,
+          cause
+        } = getMessageVisibility(message, state, filtersState);
+        if (visible) {
+          messagesToShow.push(msgId);
+        } else if (DEFAULT_FILTERS.includes(cause)) {
+          filtered.global = filtered.global + 1;
+          filtered[cause] = filtered[cause] + 1;
+        }
       });
+
+      return {
+        ...state,
+        visibleMessages: messagesToShow,
+        filteredMessagesCount: filtered,
+      };
   }
 
   return state;
 }
 
-function getNewCurrentGroup(currentGoup, groupsById) {
-  let newCurrentGroup = null;
-  if (currentGoup) {
-    // Retrieve the parent groups of the current group.
-    let parents = groupsById.get(currentGoup);
-    if (Array.isArray(parents) && parents.length > 0) {
-      // If there's at least one parent, make the first one the new currentGroup.
-      newCurrentGroup = parents[0];
-    }
+/**
+ * Returns the new current group id given the previous current group and the groupsById
+ * state property.
+ *
+ * @param {String} currentGroup: id of the current group
+ * @param {Map} groupsById
+ * @param {Array} ignoredIds: An array of ids which can't be the new current group.
+ * @returns {String|null} The new current group id, or null if there isn't one.
+ */
+function getNewCurrentGroup(currentGroup, groupsById, ignoredIds = []) {
+  if (!currentGroup) {
+    return null;
   }
-  return newCurrentGroup;
+
+  // Retrieve the parent groups of the current group.
+  let parents = groupsById.get(currentGroup);
+
+  // If there's at least one parent, make the first one the new currentGroup.
+  if (Array.isArray(parents) && parents.length > 0) {
+    // If the found group must be ignored, let's search for its parent.
+    if (ignoredIds.includes(parents[0])) {
+      return getNewCurrentGroup(parents[0], groupsById, ignoredIds);
+    }
+
+    return parents[0];
+  }
+
+  return null;
 }
 
 function getParentGroups(currentGroup, groupsById) {
@@ -361,109 +406,135 @@ function getParentGroups(currentGroup, groupsById) {
  * Also populate an array of all backend actors associated with these
  * messages so they can be released.
  */
-function limitTopLevelMessageCount(state, logLimit) {
-  return state.withMutations(function (record) {
-    let topLevelCount = record.groupsById.size === 0
-      ? record.messagesById.size
-      : getToplevelMessageCount(record);
+function limitTopLevelMessageCount(newState, logLimit) {
+  let topLevelCount = newState.groupsById.size === 0
+    ? newState.messagesById.size
+    : getToplevelMessageCount(newState);
 
-    if (topLevelCount <= logLimit) {
-      return;
+  if (topLevelCount <= logLimit) {
+    return newState;
+  }
+
+  const removedMessagesId = [];
+
+  let cleaningGroup = false;
+  for (let [id, message] of newState.messagesById) {
+    // If we were cleaning a group and the current message does not have
+    // a groupId, we're done cleaning.
+    if (cleaningGroup === true && !message.groupId) {
+      cleaningGroup = false;
     }
 
-    const removedMessagesId = [];
-    const removedActors = [];
-    let visibleMessages = [...record.visibleMessages];
-
-    let cleaningGroup = false;
-    record.messagesById.forEach((message, id) => {
-      // If we were cleaning a group and the current message does not have
-      // a groupId, we're done cleaning.
-      if (cleaningGroup === true && !message.groupId) {
-        cleaningGroup = false;
-      }
-
-      // If we're not cleaning a group and the message count is below the logLimit,
-      // we exit the forEach iteration.
-      if (cleaningGroup === false && topLevelCount <= logLimit) {
-        return false;
-      }
-
-      // If we're not currently cleaning a group, and the current message is identified
-      // as a group, set the cleaning flag to true.
-      if (cleaningGroup === false && record.groupsById.has(id)) {
-        cleaningGroup = true;
-      }
-
-      if (!message.groupId) {
-        topLevelCount--;
-      }
-
-      removedMessagesId.push(id);
-      removedActors.push(...getAllActorsInMessage(message, record));
-
-      const index = visibleMessages.indexOf(id);
-      if (index > -1) {
-        visibleMessages.splice(index, 1);
-      }
-
-      return true;
-    });
-
-    if (removedActors.length > 0) {
-      record.set("removedActors", record.removedActors.concat(removedActors));
+    // If we're not cleaning a group and the message count is below the logLimit,
+    // we exit the loop.
+    if (cleaningGroup === false && topLevelCount <= logLimit) {
+      break;
     }
 
-    if (record.visibleMessages.length > visibleMessages.length) {
-      record.set("visibleMessages", visibleMessages);
+    // If we're not currently cleaning a group, and the current message is identified
+    // as a group, set the cleaning flag to true.
+    if (cleaningGroup === false && newState.groupsById.has(id)) {
+      cleaningGroup = true;
     }
 
-    const isInRemovedId = id => removedMessagesId.includes(id);
-    const mapHasRemovedIdKey = map => map.findKey((value, id) => isInRemovedId(id));
-    const objectHasRemovedIdKey = obj => Object.keys(obj).findIndex(isInRemovedId) !== -1;
-    const cleanUpCollection = map => removedMessagesId.forEach(id => map.remove(id));
-    const cleanUpList = list => list.filter(id => {
-      return isInRemovedId(id) === false;
-    });
-    const cleanUpObject = object => [...Object.entries(object)]
-      .reduce((res, [id, value]) => {
-        if (!isInRemovedId(id)) {
-          res[id] = value;
-        }
-        return res;
-      }, {});
-
-    record.set("messagesById", record.messagesById.withMutations(cleanUpCollection));
-
-    if (record.messagesUiById.find(isInRemovedId)) {
-      record.set("messagesUiById", cleanUpList(record.messagesUiById));
-    }
-    if (mapHasRemovedIdKey(record.messagesTableDataById)) {
-      record.set("messagesTableDataById",
-        record.messagesTableDataById.withMutations(cleanUpCollection));
-    }
-    if (mapHasRemovedIdKey(record.groupsById)) {
-      record.set("groupsById", record.groupsById.withMutations(cleanUpCollection));
-    }
-    if (objectHasRemovedIdKey(record.repeatById)) {
-      record.set("repeatById", cleanUpObject(record.repeatById));
+    if (!message.groupId) {
+      topLevelCount--;
     }
 
-    if (objectHasRemovedIdKey(record.networkMessagesUpdateById)) {
-      record.set("networkMessagesUpdateById",
-        cleanUpObject(record.networkMessagesUpdateById));
+    removedMessagesId.push(id);
+  }
+
+  return removeMessagesFromState(newState, removedMessagesId);
+}
+
+/**
+ * Clean the properties for a given state object and an array of removed messages ids.
+ * Be aware that this function MUTATE the `state` argument.
+ *
+ * @param {MessageState} state
+ * @param {Array} removedMessagesIds
+ * @returns {MessageState}
+ */
+function removeMessagesFromState(state, removedMessagesIds) {
+  if (!Array.isArray(removedMessagesIds) || removedMessagesIds.length === 0) {
+    return state;
+  }
+
+  const removedActors = [];
+  const visibleMessages = [...state.visibleMessages];
+  removedMessagesIds.forEach(id => {
+    const index = visibleMessages.indexOf(id);
+    if (index > -1) {
+      visibleMessages.splice(index, 1);
     }
+
+    removedActors.push(...getAllActorsInMessage(state.messagesById.get(id)));
   });
+
+  if (state.visibleMessages.length > visibleMessages.length) {
+    state.visibleMessages = visibleMessages;
+  }
+
+  if (removedActors.length > 0) {
+    state.removedActors =  state.removedActors.concat(removedActors);
+  }
+
+  const isInRemovedId = id => removedMessagesIds.includes(id);
+  const mapHasRemovedIdKey = map => removedMessagesIds.some(id => map.has(id));
+  const objectHasRemovedIdKey = obj => Object.keys(obj).findIndex(isInRemovedId) !== -1;
+
+  const cleanUpMap = map => {
+    const clonedMap = new Map(map);
+    removedMessagesIds.forEach(id => clonedMap.delete(id));
+    return clonedMap;
+  };
+  const cleanUpObject = object => [...Object.entries(object)]
+    .reduce((res, [id, value]) => {
+      if (!isInRemovedId(id)) {
+        res[id] = value;
+      }
+      return res;
+    }, {});
+
+  state.messagesById = cleanUpMap(state.messagesById);
+
+  if (state.messagesUiById.find(isInRemovedId)) {
+    state.messagesUiById = state.messagesUiById.filter(id => !isInRemovedId(id));
+  }
+
+  if (isInRemovedId(state.currentGroup)) {
+    state.currentGroup =
+      getNewCurrentGroup(state.currentGroup, state.groupsById, removedMessagesIds);
+  }
+
+  if (mapHasRemovedIdKey(state.messagesTableDataById)) {
+    state.messagesTableDataById = cleanUpMap(state.messagesTableDataById);
+  }
+  if (mapHasRemovedIdKey(state.groupsById)) {
+    state.groupsById = cleanUpMap(state.groupsById);
+  }
+  if (mapHasRemovedIdKey(state.groupsById)) {
+    state.groupsById = cleanUpMap(state.groupsById);
+  }
+
+  if (objectHasRemovedIdKey(state.repeatById)) {
+    state.repeatById = cleanUpObject(state.repeatById);
+  }
+
+  if (objectHasRemovedIdKey(state.networkMessagesUpdateById)) {
+    state.networkMessagesUpdateById = cleanUpObject(state.networkMessagesUpdateById);
+  }
+
+  return state;
 }
 
 /**
  * Get an array of all the actors logged in a specific message.
  *
  * @param {Message} message: The message to get actors from.
- * @param {Record} state: The redux state.
  * @return {Array} An array containing all the actors logged in a message.
  */
-function getAllActorsInMessage(message, state) {
+function getAllActorsInMessage(message) {
   const {
     parameters,
     messageText,
@@ -489,8 +560,14 @@ function getAllActorsInMessage(message, state) {
  * Returns total count of top level messages (those which are not
  * within a group).
  */
-function getToplevelMessageCount(record) {
-  return record.messagesById.count(message => !message.groupId);
+function getToplevelMessageCount(state) {
+  let count = 0;
+  state.messagesById.forEach(message => {
+    if (!message.groupId) {
+      count++;
+    }
+  });
+  return count;
 }
 
 /**
@@ -602,7 +679,7 @@ function passNetworkFilter(message, filters) {
   return (
     message.source !== MESSAGE_SOURCE.NETWORK ||
     message.isXHR === true ||
-    filters.get(FILTERS.NET) === true
+    filters[FILTERS.NET] === true
   );
 }
 
@@ -620,7 +697,7 @@ function passXhrFilter(message, filters) {
   return (
     message.source !== MESSAGE_SOURCE.NETWORK ||
     message.isXHR === false ||
-    filters.get(FILTERS.NETXHR) === true
+    filters[FILTERS.NETXHR] === true
   );
 }
 
@@ -637,7 +714,7 @@ function passLevelFilters(message, filters) {
   return (
     (message.source !== MESSAGE_SOURCE.CONSOLE_API &&
     message.source !== MESSAGE_SOURCE.JAVASCRIPT) ||
-    filters.get(message.level) === true
+    filters[message.level] === true
   );
 }
 
@@ -653,7 +730,7 @@ function passCssFilters(message, filters) {
   // or if the CSS filter is on.
   return (
     message.source !== MESSAGE_SOURCE.CSS ||
-    filters.get("css") === true
+    filters.css === true
   );
 }
 
@@ -665,7 +742,7 @@ function passCssFilters(message, filters) {
  * @returns {Boolean}
  */
 function passSearchFilters(message, filters) {
-  let text = (filters.get("text") || "").trim();
+  let text = (filters.text || "").trim();
 
   // If there is no search, the message passes the filter.
   if (!text) {
@@ -685,6 +762,8 @@ function passSearchFilters(message, filters) {
     || isTextInMessageText(text, message.messageText)
     // Look for a match in notes.
     || isTextInNotes(text, message.notes)
+    // Look for a match in prefix.
+    || isTextInPrefix(text, message.prefix)
   );
 }
 
@@ -784,6 +863,17 @@ function isTextInNotes(text, notes) {
       note.messageBody.toLocaleLowerCase().includes(text.toLocaleLowerCase())
     )
   );
+}
+
+/**
+* Returns true if given text is included in prefix.
+*/
+function isTextInPrefix(text, prefix) {
+  if (!prefix) {
+    return false;
+  }
+
+  return `${prefix}: `.toLocaleLowerCase().includes(text.toLocaleLowerCase());
 }
 
 /**

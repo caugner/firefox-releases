@@ -47,16 +47,16 @@ function test_column_breakpoint() {
 
     source.setBreakpoint(location, function (response, bpClient) {
       gThreadClient.addListener("paused", function onPaused(event, packet) {
-        do_check_eq(packet.type, "paused");
-        do_check_eq(packet.why.type, "breakpoint");
-        do_check_eq(packet.why.actors[0], bpClient.actor);
-        do_check_eq(packet.frame.where.source.actor, source.actor);
-        do_check_eq(packet.frame.where.line, location.line);
-        do_check_eq(packet.frame.where.column, location.column);
+        Assert.equal(packet.type, "paused");
+        Assert.equal(packet.why.type, "breakpoint");
+        Assert.equal(packet.why.actors[0], bpClient.actor);
+        Assert.equal(packet.frame.where.source.actor, source.actor);
+        Assert.equal(packet.frame.where.line, location.line);
+        Assert.equal(packet.frame.where.column, location.column);
 
-        do_check_eq(gDebuggee.acc, timesBreakpointHit);
-        do_check_eq(packet.frame.environment.bindings.variables.i.value,
-                    timesBreakpointHit);
+        Assert.equal(gDebuggee.acc, timesBreakpointHit);
+        Assert.equal(packet.frame.environment.bindings.variables.i.value,
+                     timesBreakpointHit);
 
         if (++timesBreakpointHit === 3) {
           gThreadClient.removeListener("paused", onPaused);
@@ -74,7 +74,7 @@ function test_column_breakpoint() {
   });
 
   /* eslint-disable */
-  Components.utils.evalInSandbox(
+  Cu.evalInSandbox(
     "var line0 = Error().lineNumber;\n" +
     "(function () { debugger; this.acc = 0; for (var i = 0; i < 3; i++) this.acc++; }());",
     gDebuggee

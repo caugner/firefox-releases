@@ -10,6 +10,7 @@
 #define nsPresContext_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/MediaFeatureChange.h"
 #include "mozilla/NotNull.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
@@ -17,6 +18,7 @@
 #include "nsCoord.h"
 #include "nsCOMPtr.h"
 #include "nsIPresShell.h"
+#include "nsIPresShellInlines.h"
 #include "nsRect.h"
 #include "nsStringFwd.h"
 #include "nsFont.h"
@@ -73,6 +75,7 @@ class nsDeviceContext;
 class gfxMissingFontRecorder;
 
 namespace mozilla {
+class AnimationEventDispatcher;
 class EffectCompositor;
 class Encoding;
 class EventStateManager;
@@ -223,15 +226,23 @@ public:
 
   mozilla::StyleSetHandle StyleSet() const { return GetPresShell()->StyleSet(); }
 
-  nsFrameManager* FrameManager()
-    { return PresShell()->FrameManager(); }
+  bool HasPendingMediaQueryUpdates() const
+  {
+    return !!mPendingMediaFeatureValuesChange;
+  }
 
   nsCSSFrameConstructor* FrameConstructor()
     { return PresShell()->FrameConstructor(); }
 
+  mozilla::AnimationEventDispatcher* AnimationEventDispatcher()
+  {
+    return mAnimationEventDispatcher;
+  }
+
   mozilla::EffectCompositor* EffectCompositor() { return mEffectCompositor; }
   nsTransitionManager* TransitionManager() { return mTransitionManager; }
   nsAnimationManager* AnimationManager() { return mAnimationManager; }
+  const nsAnimationManager* AnimationManager() const { return mAnimationManager; }
 
   nsRefreshDriver* RefreshDriver() { return mRefreshDriver; }
 
@@ -259,6 +270,7 @@ public:
   void PostRebuildAllStyleDataEvent(nsChangeHint aExtraHint,
                                     nsRestyleHint aRestyleHint);
 
+
   /**
    * Handle changes in the values of media features (used in media
    * queries).
@@ -279,22 +291,28 @@ public:
    * a nonzero aChangeHint forces rebuilding style data even if
    * nsRestyleHint(0) is passed.)
    */
-  void MediaFeatureValuesChanged(nsRestyleHint aRestyleHint,
-                                 nsChangeHint aChangeHint = nsChangeHint(0));
+  void MediaFeatureValuesChanged(const mozilla::MediaFeatureChange& aChange)
+  {
+    if (mShell) {
+      mShell->EnsureStyleFlush();
+    }
+
+    if (!mPendingMediaFeatureValuesChange) {
+      mPendingMediaFeatureValuesChange.emplace(aChange);
+      return;
+    }
+
+    *mPendingMediaFeatureValuesChange |= aChange;
+  }
+
+  void FlushPendingMediaFeatureValuesChanged();
+
   /**
    * Calls MediaFeatureValuesChanged for this pres context and all descendant
    * subdocuments that have a pres context. This should be used for media
    * features that must be updated in all subdocuments e.g. display-mode.
    */
-  void MediaFeatureValuesChangedAllDocuments(nsRestyleHint aRestyleHint,
-                                             nsChangeHint aChangeHint = nsChangeHint(0));
-
-  void PostMediaFeatureValuesChangedEvent();
-  void HandleMediaFeatureValuesChangedEvent();
-  void FlushPendingMediaFeatureValuesChanged() {
-    if (mPendingMediaFeatureValuesChanged)
-      MediaFeatureValuesChanged(nsRestyleHint(0));
-  }
+  void MediaFeatureValuesChangedAllDocuments(const mozilla::MediaFeatureChange&);
 
   /**
    * Updates the size mode on all remote children and recursively notifies this
@@ -451,9 +469,10 @@ public:
     if (!r.IsEqualEdges(mVisibleArea)) {
       mVisibleArea = r;
       // Visible area does not affect media queries when paginated.
-      if (!IsPaginated() && HasCachedStyleData()) {
-        mPendingViewportChange = true;
-        PostMediaFeatureValuesChangedEvent();
+      if (!IsPaginated()) {
+        MediaFeatureValuesChanged({
+          mozilla::MediaFeatureChangeReason::ViewportChange
+        });
       }
     }
   }
@@ -597,16 +616,19 @@ public:
    * independent of the language-specific global preference.
    */
   void SetBaseMinFontSize(int32_t aMinFontSize) {
-    if (aMinFontSize == mBaseMinFontSize)
+    if (aMinFontSize == mBaseMinFontSize) {
       return;
+    }
 
     mBaseMinFontSize = aMinFontSize;
-    if (HasCachedStyleData()) {
-      // Media queries could have changed, since we changed the meaning
-      // of 'em' units in them.
-      MediaFeatureValuesChanged(eRestyle_ForceDescendants,
-                                NS_STYLE_HINT_REFLOW);
-    }
+
+    // Media queries could have changed, since we changed the meaning
+    // of 'em' units in them.
+    MediaFeatureValuesChanged({
+      eRestyle_ForceDescendants,
+      NS_STYLE_HINT_REFLOW,
+      mozilla::MediaFeatureChangeReason::MinFontSizeChange
+    });
   }
 
   float GetFullZoom() { return mFullZoom; }
@@ -716,6 +738,8 @@ public:
   static nscoord CSSPointsToAppUnits(float aPoints)
   { return NSToCoordRound(aPoints * mozilla::AppUnitsPerCSSInch() /
                           POINTS_PER_INCH_FLOAT); }
+
+  nscoord PhysicalMillimetersToAppUnits(float aMM) const;
 
   nscoord RoundAppUnitsToNearestDevPixels(nscoord aAppUnits) const
   { return DevPixelsToAppUnits(AppUnitsToDevPixels(aAppUnits)); }
@@ -983,7 +1007,7 @@ public:
   // as that value may be out of date when mPaintFlashingInitialized is false.
   bool GetPaintFlashing() const;
 
-  bool             SuppressingResizeReflow() const { return mSuppressResizeReflow; }
+  bool SuppressingResizeReflow() const { return mSuppressResizeReflow; }
 
   gfxUserFontSet* GetUserFontSet(bool aFlushUserFontSet = true);
 
@@ -996,10 +1020,13 @@ public:
   void NotifyMissingFonts();
 
   void FlushCounterStyles();
-  void RebuildCounterStyles(); // asynchronously
+  void MarkCounterStylesDirty();
 
   void FlushFontFeatureValues();
-  void RebuildFontFeatureValues(); // asynchronously
+  void MarkFontFeatureValuesDirty()
+  {
+    mFontFeatureValuesDirty = true;
+  }
 
   // Ensure that it is safe to hand out CSS rules outside the layout
   // engine by ensuring that all CSS style sheets have unique inners
@@ -1122,14 +1149,6 @@ public:
 
   void NotifyNonBlankPaint();
 
-  bool IsGlyph() const {
-    return mIsGlyph;
-  }
-
-  void SetIsGlyph(bool aValue) {
-    mIsGlyph = aValue;
-  }
-
   bool UsesRootEMUnits() const {
     return mUsesRootEMUnits;
   }
@@ -1209,7 +1228,7 @@ protected:
   static void PrefChangedCallback(const char*, void*);
 
   void UpdateAfterPreferencesChanged();
-  static void PrefChangedUpdateTimerCallback(nsITimer *aTimer, void *aClosure);
+  void DispatchPrefChangedRunnableIfNeeded();
 
   void GetUserPreferences();
 
@@ -1228,6 +1247,10 @@ protected:
   static bool NotifyDidPaintSubdocumentCallback(nsIDocument* aDocument, void* aData);
 
 public:
+  // Used by the PresShell to force a reflow when some aspect of font info
+  // has been updated, potentially affecting font selection and layout.
+  void ForceReflowForFontInfoUpdate();
+
   void DoChangeCharSet(NotNull<const Encoding*> aCharSet);
 
   /**
@@ -1258,26 +1281,19 @@ protected:
 
   void AppUnitsPerDevPixelChanged();
 
-  void HandleRebuildCounterStyles() {
-    mPostedFlushCounterStyles = false;
-    FlushCounterStyles();
-  }
-
-  void HandleRebuildFontFeatureValues() {
-    mPostedFlushFontFeatureValues = false;
-    FlushFontFeatureValues();
-  }
-
   bool HavePendingInputEvent();
-
-  // Can't be inline because we can't include nsStyleSet.h.
-  bool HasCachedStyleData();
 
   // Creates a one-shot timer with the given aCallback & aDelay.
   // Returns a refcounted pointer to the timer (or nullptr on failure).
   already_AddRefed<nsITimer> CreateTimer(nsTimerCallbackFunc aCallback,
                                          const char* aName,
                                          uint32_t aDelay);
+
+  struct TransactionInvalidations {
+    uint64_t mTransactionId;
+    nsTArray<nsRect> mInvalidations;
+  };
+  TransactionInvalidations* GetInvalidations(uint64_t aTransactionId);
 
   // IMPORTANT: The ownership implicit in the following member variables
   // has been explicitly checked.  If you add any members to this class,
@@ -1295,6 +1311,7 @@ protected:
                                             // from gfx back to layout.
   RefPtr<mozilla::EventStateManager> mEventManager;
   RefPtr<nsRefreshDriver> mRefreshDriver;
+  RefPtr<mozilla::AnimationEventDispatcher> mAnimationEventDispatcher;
   RefPtr<mozilla::EffectCompositor> mEffectCompositor;
   RefPtr<nsTransitionManager> mTransitionManager;
   RefPtr<nsAnimationManager> mAnimationManager;
@@ -1342,14 +1359,9 @@ protected:
   nsCOMPtr<nsITheme> mTheme;
   nsLanguageAtomService* mLangService;
   nsCOMPtr<nsIPrintSettings> mPrintSettings;
-  nsCOMPtr<nsITimer>    mPrefChangedTimer;
 
   mozilla::UniquePtr<nsBidi> mBidiEngine;
 
-  struct TransactionInvalidations {
-    uint64_t mTransactionId;
-    nsTArray<nsRect> mInvalidations;
-  };
   AutoTArray<TransactionInvalidations, 4> mTransactions;
 
   // text performance metrics
@@ -1453,8 +1465,8 @@ protected:
   unsigned              mPendingSysColorChanged : 1;
   unsigned              mPendingThemeChanged : 1;
   unsigned              mPendingUIResolutionChanged : 1;
-  unsigned              mPendingMediaFeatureValuesChanged : 1;
   unsigned              mPrefChangePendingNeedsReflow : 1;
+  unsigned              mPostedPrefChangedRunnable : 1;
   unsigned              mIsEmulatingMedia : 1;
 
   // Are we currently drawing an SVG glyph?
@@ -1465,26 +1477,17 @@ protected:
   // Does the associated document use ex or ch units?
   unsigned              mUsesExChUnits : 1;
 
-  // Has there been a change to the viewport's dimensions?
-  unsigned              mPendingViewportChange : 1;
-
   // Is the current mCounterStyleManager valid?
   unsigned              mCounterStylesDirty : 1;
-  // Do we currently have an event posted to call FlushCounterStyles?
-  unsigned              mPostedFlushCounterStyles: 1;
 
   // Is the current mFontFeatureValuesLookup valid?
   unsigned              mFontFeatureValuesDirty : 1;
-  // Do we currently have an event posted to call FlushFontFeatureValues?
-  unsigned              mPostedFlushFontFeatureValues: 1;
 
   // resize reflow is suppressed when the only change has been to zoom
   // the document rather than to change the document's dimensions
   unsigned              mSuppressResizeReflow : 1;
 
   unsigned              mIsVisual : 1;
-
-  unsigned              mFireAfterPaintEvents : 1;
 
   unsigned              mIsChrome : 1;
   unsigned              mIsChromeOriginImage : 1;
@@ -1516,6 +1519,7 @@ protected:
   unsigned mInitialized : 1;
 #endif
 
+  mozilla::Maybe<mozilla::MediaFeatureChange> mPendingMediaFeatureValuesChange;
 
 protected:
 
@@ -1609,18 +1613,6 @@ public:
   virtual bool IsRoot() override { return true; }
 
   /**
-   * Increment DOM-modification generation counter to indicate that
-   * the DOM has changed in a way that might lead to style changes/
-   * reflows/frame creation and destruction.
-   */
-  void IncrementDOMGeneration() { mDOMGeneration++; }
-
-  /**
-   * Get the current DOM generation counter.
-   */
-  uint32_t GetDOMGeneration() { return mDOMGeneration; }
-
-  /**
    * Add a runnable that will get called before the next paint. They will get
    * run eventually even if painting doesn't happen. They might run well before
    * painting happens.
@@ -1673,7 +1665,6 @@ protected:
   nsTHashtable<nsRefPtrHashKey<nsIContent> > mRegisteredPlugins;
   nsTArray<nsCOMPtr<nsIRunnable> > mWillPaintObservers;
   nsRevocableEventPtr<RunWillPaintObservers> mWillPaintFallbackEvent;
-  uint32_t mDOMGeneration;
 };
 
 #ifdef MOZ_REFLOW_PERF

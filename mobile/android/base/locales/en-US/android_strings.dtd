@@ -290,7 +290,7 @@
      Instead of switching to the browser it appears as if the user stays in the third-party app.
      For more see: https://developer.chrome.com/multidevice/android/customtabs -->
 <!ENTITY pref_custom_tabs2 "Custom Tabs">
-<!ENTITY pref_custom_tabs_summary4 "Allow apps to open web content in a quickly loading custom tab.">
+<!ENTITY pref_custom_tabs_summary4 "Allow apps to open web content in a quickly loading custom tab">
 
 <!-- Localization note (custom_tabs_menu_item_open_in): The variable is replaced by the name of
      default browser from user's preference, such as "Open in Firefox" -->
@@ -422,7 +422,6 @@
      crashReporterDesc.label). -->
 <!ENTITY datareporting_fhr_title "&brandShortName; Health Report">
 <!ENTITY datareporting_fhr_summary2 "Shares data with &vendorShortName; about your browser health and helps you understand your browser performance">
-<!ENTITY datareporting_abouthr_title "View my Health Report">
 <!ENTITY datareporting_telemetry_title "Telemetry">
 <!ENTITY datareporting_telemetry_summary "Shares performance, usage, hardware and customization data about your browser with &vendorShortName; to help us make &brandShortName; better">
 <!ENTITY datareporting_crashreporter_summary "&brandShortName; submits crash reports to help &vendorShortName; make your browser more stable and secure">
@@ -454,6 +453,7 @@
 <!ENTITY share_image_failed "Unable to share this image">
 <!ENTITY save_as_pdf "Save as PDF">
 <!ENTITY print "Print">
+<!ENTITY view_page_source "View Page Source">
 <!ENTITY find_in_page "Find in page">
 <!ENTITY desktop_mode "Request desktop site">
 <!ENTITY page "Page">
@@ -811,6 +811,9 @@ just addresses the organization to follow, e.g. "This site is run by " -->
      the Android version of this device. the formatS1 is replaced by the CPU ABI (e.g., ARMv7); the formatS2 is
      replaced by the Android OS version (e.g., 14)-->
 <!ENTITY unsupported_sdk_version "Sorry! This &brandShortName; won\'t work on this device (&formatS1;, &formatS2;). Please download the correct version.">
+
+<!-- LOCALIZATION NOTE(corrupt_apk): This notification is shown if corruption has been detected on startup and the user has to reinstall Firefox -->
+<!ENTITY corrupt_apk "Unable to open &brandShortName;. Please reinstall and try again.">
 
 <!ENTITY eol_notification_title2 "&brandShortName; will no longer update">
 <!ENTITY eol_notification_summary "Tap to learn more">

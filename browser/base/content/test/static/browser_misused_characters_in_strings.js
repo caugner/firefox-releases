@@ -145,12 +145,12 @@ let gWhitelist = [{
     key: "aboutNetworking.logTutorial",
     type: "single-quote"
   }, {
-    file: "preferences.properties",
-    key: "searchResults.needHelp2",
-    type: "double-quote"
-  }, {
     file: "aboutdevtools.dtd",
     key: "aboutDevtools.newsletter.privacy.label",
+    type: "single-quote"
+  }, {
+    file: "browser.dtd",
+    key: "addonPostInstallMessage.label",
     type: "single-quote"
   }
 ];
@@ -203,7 +203,7 @@ async function getAllTheFiles(extension) {
   }
   let urisGreD = await generateURIsFromDirTree(appDirGreD, [extension]);
   let urisXCurProcD = await generateURIsFromDirTree(appDirXCurProcD, [extension]);
-  return Array.from(new Set(urisGreD.concat(appDirXCurProcD)));
+  return Array.from(new Set(urisGreD.concat(urisXCurProcD)));
 }
 
 add_task(async function checkAllTheProperties() {

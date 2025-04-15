@@ -48,7 +48,8 @@ public:
   void RemovePipeline(const wr::PipelineId& aPipelineId, const wr::Epoch& aEpoch);
 
   void HoldExternalImage(const wr::PipelineId& aPipelineId, const wr::Epoch& aEpoch, WebRenderTextureHost* aTexture);
-  void Update(const wr::PipelineId& aPipelineId, const wr::Epoch& aEpoch);
+  void PipelineRendered(const wr::PipelineId& aPipelineId, const wr::Epoch& aEpoch);
+  void PipelineRemoved(const wr::PipelineId& aPipelineId);
 
   TimeStamp GetCompositionTime() const {
     return mCompositionTime;
@@ -71,7 +72,7 @@ public:
   }
 
   void AddAsyncImagePipeline(const wr::PipelineId& aPipelineId, WebRenderImageHost* aImageHost);
-  void RemoveAsyncImagePipeline(const wr::PipelineId& aPipelineId);
+  void RemoveAsyncImagePipeline(const wr::PipelineId& aPipelineId, wr::TransactionBuilder& aTxn);
 
   void UpdateAsyncImagePipeline(const wr::PipelineId& aPipelineId,
                                 const LayoutDeviceRect& aScBounds,
@@ -90,6 +91,9 @@ public:
   {
     aNotifications->AppendElements(Move(mImageCompositeNotifications));
   }
+
+  void SetWillGenerateFrame();
+  bool GetAndResetWillGenerateFrame();
 
 private:
 
@@ -120,6 +124,23 @@ private:
 
   struct AsyncImagePipeline {
     AsyncImagePipeline();
+    void Update(const LayoutDeviceRect& aScBounds,
+                const gfx::Matrix4x4& aScTransform,
+                const gfx::MaybeIntSize& aScaleToSize,
+                const wr::ImageRendering& aFilter,
+                const wr::MixBlendMode& aMixBlendMode)
+    {
+      mIsChanged |= !mScBounds.IsEqualEdges(aScBounds) ||
+                    mScTransform != aScTransform ||
+                    mScaleToSize != aScaleToSize ||
+                    mFilter != aFilter ||
+                    mMixBlendMode != aMixBlendMode;
+      mScBounds = aScBounds;
+      mScTransform = aScTransform;
+      mScaleToSize = aScaleToSize;
+      mFilter = aFilter;
+      mMixBlendMode = aMixBlendMode;
+    }
 
     bool mInitialised;
     bool mIsChanged;
@@ -135,11 +156,11 @@ private:
   };
 
   Maybe<TextureHost::ResourceUpdateOp>
-  UpdateImageKeys(wr::ResourceUpdateQueue& aResourceUpdates,
+  UpdateImageKeys(wr::TransactionBuilder& aResourceUpdates,
                   AsyncImagePipeline* aPipeline,
                   nsTArray<wr::ImageKey>& aKeys);
   Maybe<TextureHost::ResourceUpdateOp>
-  UpdateWithoutExternalImage(wr::ResourceUpdateQueue& aResources,
+  UpdateWithoutExternalImage(wr::TransactionBuilder& aResources,
                              TextureHost* aTexture,
                              wr::ImageKey aKey,
                              TextureHost::ResourceUpdateOp);
@@ -151,6 +172,7 @@ private:
   nsClassHashtable<nsUint64HashKey, PipelineTexturesHolder> mPipelineTexturesHolders;
   nsClassHashtable<nsUint64HashKey, AsyncImagePipeline> mAsyncImagePipelines;
   uint32_t mAsyncImageEpoch;
+  bool mWillGenerateFrame;
   bool mDestroyed;
 
   // Render time for the current composition.

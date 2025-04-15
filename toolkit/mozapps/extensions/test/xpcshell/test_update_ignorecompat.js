@@ -15,7 +15,8 @@ var testserver = createHttpServer();
 gPort = testserver.identity.primaryPort;
 mapFile("/data/test_update.rdf", testserver);
 mapFile("/data/test_update.json", testserver);
-mapFile("/data/test_update.xml", testserver);
+mapFile("/data/test_update_addons.json", testserver);
+mapFile("/data/test_update_compat.json", testserver);
 testserver.registerDirectory("/addons/", do_get_file("addons"));
 
 const profileDir = gProfD.clone();
@@ -55,15 +56,17 @@ for (let test of testParams) {
       onNewInstall(aInstall) {
         if (aInstall.existingAddon.id != "addon9@tests.mozilla.org")
           do_throw("Saw unexpected onNewInstall for " + aInstall.existingAddon.id);
-        do_check_eq(aInstall.version, "4.0");
+        Assert.equal(aInstall.version, "4.0");
       },
       onDownloadFailed(aInstall) {
         run_next_test();
       }
     });
 
-    Services.prefs.setCharPref(PREF_GETADDONS_BYIDS_PERFORMANCE,
-                               "http://localhost:" + gPort + "/data/" + updateFile);
+    Services.prefs.setCharPref(PREF_GETADDONS_BYIDS,
+                               `http://localhost:${gPort}/data/test_update_addons.json`);
+    Services.prefs.setCharPref(PREF_COMPAT_OVERRIDES,
+                               `http://localhost:${gPort}/data/test_update_compat.json`);
     Services.prefs.setBoolPref(PREF_GETADDONS_CACHE_ENABLED, true);
 
     AddonManagerInternal.backgroundUpdateCheck();
@@ -87,7 +90,7 @@ for (let test of testParams) {
     restartManager();
 
     AddonManager.getAddonByID("addon11@tests.mozilla.org", function(a11) {
-      do_check_neq(a11, null);
+      Assert.notEqual(a11, null);
 
       a11.findUpdates({
         onCompatibilityUpdateAvailable() {

@@ -2,11 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use {ColorF, FontInstanceKey, ImageKey, LayerPixel, LayoutPixel, LayoutPoint, LayoutRect,
-     LayoutSize, LayoutTransform};
-use {GlyphOptions, LayoutVector2D, PipelineId, PropertyBinding};
+#[cfg(any(feature = "serialize", feature = "deserialize"))]
+use GlyphInstance;
 use euclid::{SideOffsets2D, TypedRect};
 use std::ops::Not;
+use {ColorF, FontInstanceKey, GlyphOptions, ImageKey, LayerPixel, LayoutPixel, LayoutPoint};
+use {LayoutRect, LayoutSize, LayoutTransform, LayoutVector2D, PipelineId, PropertyBinding};
+
 
 // NOTE: some of these structs have an "IMPLICIT" comment.
 // This indicates that the BuiltDisplayList will have serialized
@@ -39,41 +41,30 @@ impl ClipAndScrollInfo {
     }
 }
 
-bitflags! {
-    /// Each bit of the edge AA mask is:
-    /// 0, when the edge of the primitive needs to be considered for AA
-    /// 1, when the edge of the segment needs to be considered for AA
-    ///
-    /// *Note*: the bit values have to match the shader logic in
-    /// `write_transform_vertex()` function.
-    #[derive(Deserialize, Serialize)]
-    pub struct EdgeAaSegmentMask: u8 {
-        const LEFT = 0x1;
-        const TOP = 0x2;
-        const RIGHT = 0x4;
-        const BOTTOM = 0x8;
-    }
-}
-
 /// A tag that can be used to identify items during hit testing. If the tag
 /// is missing then the item doesn't take part in hit testing at all. This
 /// is composed of two numbers. In Servo, the first is an identifier while the
 /// second is used to select the cursor that should be used during mouse
-/// movement.
-pub type ItemTag = (u64, u8);
+/// movement. In Gecko, the first is a scrollframe identifier, while the second
+/// is used to store various flags that APZ needs to properly process input
+/// events.
+pub type ItemTag = (u64, u16);
 
+/// The DI is generic over the specifics, while allows to use
+/// the "complete" version of it for convenient serialization.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-pub struct DisplayItem {
-    pub item: SpecificDisplayItem,
+pub struct GenericDisplayItem<T> {
+    pub item: T,
     pub clip_and_scroll: ClipAndScrollInfo,
     pub info: LayoutPrimitiveInfo,
 }
+
+pub type DisplayItem = GenericDisplayItem<SpecificDisplayItem>;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PrimitiveInfo<T> {
     pub rect: TypedRect<f32, T>,
     pub local_clip: LocalClip,
-    pub edge_aa_segment_mask: EdgeAaSegmentMask,
     pub is_backface_visible: bool,
     pub tag: Option<ItemTag>,
 }
@@ -94,7 +85,6 @@ impl LayerPrimitiveInfo {
         PrimitiveInfo {
             rect: rect,
             local_clip: clip,
-            edge_aa_segment_mask: EdgeAaSegmentMask::empty(),
             is_backface_visible: true,
             tag: None,
         }
@@ -104,6 +94,7 @@ impl LayerPrimitiveInfo {
 pub type LayoutPrimitiveInfo = PrimitiveInfo<LayoutPixel>;
 pub type LayerPrimitiveInfo = PrimitiveInfo<LayerPixel>;
 
+#[repr(u8)]
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub enum SpecificDisplayItem {
     Clip(ClipDisplayItem),
@@ -119,10 +110,40 @@ pub enum SpecificDisplayItem {
     BoxShadow(BoxShadowDisplayItem),
     Gradient(GradientDisplayItem),
     RadialGradient(RadialGradientDisplayItem),
+    ClipChain(ClipChainItem),
     Iframe(IframeDisplayItem),
     PushStackingContext(PushStackingContextDisplayItem),
     PopStackingContext,
     SetGradientStops,
+    PushShadow(Shadow),
+    PopAllShadows,
+}
+
+/// This is a "complete" version of the DI specifics,
+/// containing the auxiliary data within the corresponding
+/// enumeration variants, to be used for debug serialization.
+#[cfg(any(feature = "serialize", feature = "deserialize"))]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+pub enum CompletelySpecificDisplayItem {
+    Clip(ClipDisplayItem, Vec<ComplexClipRegion>),
+    ClipChain(ClipChainItem, Vec<ClipId>),
+    ScrollFrame(ScrollFrameDisplayItem, Vec<ComplexClipRegion>),
+    StickyFrame(StickyFrameDisplayItem),
+    Rectangle(RectangleDisplayItem),
+    ClearRectangle,
+    Line(LineDisplayItem),
+    Text(TextDisplayItem, Vec<GlyphInstance>),
+    Image(ImageDisplayItem),
+    YuvImage(YuvImageDisplayItem),
+    Border(BorderDisplayItem),
+    BoxShadow(BoxShadowDisplayItem),
+    Gradient(GradientDisplayItem),
+    RadialGradient(RadialGradientDisplayItem),
+    Iframe(IframeDisplayItem),
+    PushStackingContext(PushStackingContextDisplayItem, Vec<FilterOp>),
+    PopStackingContext,
+    SetGradientStops(Vec<GradientStop>),
     PushShadow(Shadow),
     PopAllShadows,
 }
@@ -191,7 +212,9 @@ pub enum ScrollSensitivity {
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ScrollFrameDisplayItem {
-    pub id: ClipId,
+    pub clip_id: ClipId,
+    pub scroll_frame_id: ClipId,
+    pub external_id: Option<ExternalScrollId>,
     pub image_mask: Option<ImageMask>,
     pub scroll_sensitivity: ScrollSensitivity,
 }
@@ -344,7 +367,7 @@ pub enum BorderStyle {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum BoxShadowClipMode {
     Outset = 0,
     Inset = 1,
@@ -408,6 +431,12 @@ pub struct RadialGradient {
 } // IMPLICIT stops: Vec<GradientStop>
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ClipChainItem {
+    pub id: ClipChainId,
+    pub parent: Option<ClipChainId>,
+} // IMPLICIT stops: Vec<ClipId>
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RadialGradientDisplayItem {
     pub gradient: RadialGradient,
     pub tile_size: LayoutSize,
@@ -426,6 +455,7 @@ pub struct StackingContext {
     pub transform_style: TransformStyle,
     pub perspective: Option<LayoutTransform>,
     pub mix_blend_mode: MixBlendMode,
+    pub reference_frame_id: Option<ClipId>,
 } // IMPLICIT: filters: Vec<FilterOp>
 
 #[repr(u32)]
@@ -471,13 +501,16 @@ pub enum FilterOp {
     Grayscale(f32),
     HueRotate(f32),
     Invert(f32),
-    Opacity(PropertyBinding<f32>),
+    Opacity(PropertyBinding<f32>, f32),
     Saturate(f32),
     Sepia(f32),
+    DropShadow(LayoutVector2D, f32, ColorF),
+    ColorMatrix([f32; 20]),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct IframeDisplayItem {
+    pub clip_id: ClipId,
     pub pipeline_id: PipelineId,
 }
 
@@ -487,6 +520,7 @@ pub struct ImageDisplayItem {
     pub stretch_size: LayoutSize,
     pub tile_spacing: LayoutSize,
     pub image_rendering: ImageRendering,
+    pub alpha_type: AlphaType,
 }
 
 #[repr(u32)]
@@ -495,6 +529,12 @@ pub enum ImageRendering {
     Auto = 0,
     CrispEdges = 1,
     Pixelated = 2,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum AlphaType {
+    Alpha = 0,
+    PremultipliedAlpha = 1,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -561,9 +601,9 @@ impl YuvFormat {
 
     pub fn get_feature_string(&self) -> &'static str {
         match *self {
-            YuvFormat::NV12 => "NV12",
-            YuvFormat::PlanarYCbCr => "",
-            YuvFormat::InterleavedYCbCr => "INTERLEAVED_Y_CB_CR",
+            YuvFormat::NV12 => "YUV_NV12",
+            YuvFormat::PlanarYCbCr => "YUV_PLANAR",
+            YuvFormat::InterleavedYCbCr => "YUV_INTERLEAVED",
         }
     }
 }
@@ -607,6 +647,22 @@ impl LocalClip {
                     mode: complex.mode,
                 },
             ),
+        }
+    }
+
+    pub fn clip_by(&self, rect: &LayoutRect) -> LocalClip {
+        match *self {
+            LocalClip::Rect(clip_rect) => {
+                LocalClip::Rect(
+                    clip_rect.intersection(rect).unwrap_or(LayoutRect::zero())
+                )
+            }
+            LocalClip::RoundedRect(clip_rect, complex) => {
+                LocalClip::RoundedRect(
+                    clip_rect.intersection(rect).unwrap_or(LayoutRect::zero()),
+                    complex,
+                )
+            }
         }
     }
 }
@@ -707,51 +763,59 @@ impl ComplexClipRegion {
     }
 }
 
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct ClipChainId(pub u64, pub PipelineId);
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum ClipId {
-    Clip(u64, PipelineId),
-    ClipExternalId(u64, PipelineId),
-    DynamicallyAddedNode(u64, PipelineId),
+    Clip(usize, PipelineId),
+    ClipChain(ClipChainId),
 }
+
+const ROOT_REFERENCE_FRAME_CLIP_ID: usize = 0;
+const ROOT_SCROLL_NODE_CLIP_ID: usize = 1;
 
 impl ClipId {
     pub fn root_scroll_node(pipeline_id: PipelineId) -> ClipId {
-        ClipId::Clip(0, pipeline_id)
+        ClipId::Clip(ROOT_SCROLL_NODE_CLIP_ID, pipeline_id)
     }
 
     pub fn root_reference_frame(pipeline_id: PipelineId) -> ClipId {
-        ClipId::DynamicallyAddedNode(0, pipeline_id)
-    }
-
-    pub fn new(id: u64, pipeline_id: PipelineId) -> ClipId {
-        // We do this because it is very easy to create accidentally create something that
-        // seems like a root scroll node, but isn't one.
-        if id == 0 {
-            return ClipId::root_scroll_node(pipeline_id);
-        }
-
-        ClipId::ClipExternalId(id, pipeline_id)
+        ClipId::Clip(ROOT_REFERENCE_FRAME_CLIP_ID, pipeline_id)
     }
 
     pub fn pipeline_id(&self) -> PipelineId {
         match *self {
             ClipId::Clip(_, pipeline_id) |
-            ClipId::ClipExternalId(_, pipeline_id) |
-            ClipId::DynamicallyAddedNode(_, pipeline_id) => pipeline_id,
-        }
-    }
-
-    pub fn external_id(&self) -> Option<u64> {
-        match *self {
-            ClipId::ClipExternalId(id, _) => Some(id),
-            _ => None,
+            ClipId::ClipChain(ClipChainId(_, pipeline_id)) => pipeline_id,
         }
     }
 
     pub fn is_root_scroll_node(&self) -> bool {
         match *self {
-            ClipId::Clip(0, _) => true,
+            ClipId::Clip(1, _) => true,
             _ => false,
         }
+    }
+}
+
+/// An external identifier that uniquely identifies a scroll frame independent of its ClipId, which
+/// may change from frame to frame. This should be unique within a pipeline. WebRender makes no
+/// attempt to ensure uniqueness. The zero value is reserved for use by the root scroll node of
+/// every pipeline, which always has an external id.
+///
+/// When setting display lists with the `preserve_frame_state` this id is used to preserve scroll
+/// offsets between different sets of ClipScrollNodes which are ScrollFrames.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct ExternalScrollId(pub u64, pub PipelineId);
+
+impl ExternalScrollId {
+    pub fn pipeline_id(&self) -> PipelineId {
+        self.1
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.0 == 0
     }
 }

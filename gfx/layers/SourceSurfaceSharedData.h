@@ -128,6 +128,7 @@ public:
     , mStride(0)
     , mMapCount(0)
     , mHandleCount(0)
+    , mInvalidations(0)
     , mFormat(SurfaceFormat::UNKNOWN)
     , mClosed(false)
     , mFinalized(false)
@@ -135,9 +136,16 @@ public:
   {
   }
 
+  /**
+   * Initialize the surface by creating a shared memory buffer with a size
+   * determined by aSize, aStride and aFormat. If aShare is true, it will also
+   * immediately attempt to share the surface with the GPU process via
+   * SharedSurfacesChild.
+   */
   bool Init(const IntSize& aSize,
             int32_t aStride,
-            SurfaceFormat aFormat);
+            SurfaceFormat aFormat,
+            bool aShare = true);
 
   uint8_t* GetData() override
   {
@@ -155,7 +163,8 @@ public:
 
   void AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
                               size_t& aHeapSizeOut,
-                              size_t& aNonHeapSizeOut) const override;
+                              size_t& aNonHeapSizeOut,
+                              size_t& aExtHandlesOut) const override;
 
   bool OnHeap() const override
   {
@@ -234,7 +243,7 @@ public:
 
   /**
    * Signals we have finished writing to the buffer and it may be marked as
-   * read only. May release the handle if possible (see CloseHandleInternal).
+   * read only.
    */
   void Finalize();
 
@@ -246,6 +255,25 @@ public:
   {
     MutexAutoLock lock(mMutex);
     return mFinalized;
+  }
+
+  /**
+   * Indicates how many times the surface has been invalidated.
+   */
+  int32_t Invalidations() const override
+  {
+    MutexAutoLock lock(mMutex);
+    return mInvalidations;
+  }
+
+  /**
+   * Increment the invalidation counter.
+   */
+  void Invalidate() override
+  {
+    MutexAutoLock lock(mMutex);
+    ++mInvalidations;
+    MOZ_ASSERT(mInvalidations >= 0);
   }
 
   /**
@@ -314,6 +342,7 @@ private:
   int32_t mStride;
   int32_t mMapCount;
   int32_t mHandleCount;
+  int32_t mInvalidations;
   IntSize mSize;
   RefPtr<SharedMemoryBasic> mBuf;
   RefPtr<SharedMemoryBasic> mOldBuf;

@@ -26,10 +26,10 @@ function test()
   // is currently active (it should be the older one).
 
   gBrowser.selectedTab = BrowserTestUtils.addTab(gBrowser);
-  gBrowser.selectedBrowser.addEventListener("load", function () {
+  BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser).then(function () {
     openScratchpad(function () {
       let sw = gScratchpadWindow;
-      let {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+      let {require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
       let {TargetFactory} = require("devtools/client/framework/target");
 
       openScratchpad(function () {
@@ -41,15 +41,15 @@ function test()
         });
       });
     });
-  }, {capture: true, once: true});
+  });
 
-  content.location = "data:text/html;charset=utf8,<p>test window focus for Scratchpad.";
+  gBrowser.loadURI("data:text/html;charset=utf8,<p>test window focus for Scratchpad.");
 }
 
 function testFocus(sw, hud) {
   let sp = sw.Scratchpad;
 
-  function onMessage(event, messages) {
+  function onMessage(messages) {
     let msg = [...messages][0];
     let node = msg.node;
 

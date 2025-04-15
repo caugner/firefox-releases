@@ -22,13 +22,13 @@ function run_test() {
       gClient, "test-source-map",
       function (response, tabClient, threadClient) {
         gThreadClient = threadClient;
-        promise.resolve(define_code())
+        Promise.resolve(define_code())
           .then(run_code)
           .then(test_frames)
           .catch(error => {
             dump(error + "\n");
             dump(error.stack);
-            do_check_true(false);
+            Assert.ok(false);
           })
           .then(() => {
             finishClient(gClient);
@@ -56,8 +56,8 @@ function define_code() {
 
   code += "//# sourceMappingURL=data:text/json," + map.toString();
 
-  Components.utils.evalInSandbox(code, gDebuggee, "1.8",
-                                 "http://example.com/www/js/abc.js", 1);
+  Cu.evalInSandbox(code, gDebuggee, "1.8",
+                   "http://example.com/www/js/abc.js", 1);
 }
 
 function run_code() {
@@ -73,15 +73,15 @@ function run_code() {
 }
 
 function test_frames({ error, frames }) {
-  do_check_true(!error);
-  do_check_eq(frames.length, 3);
+  Assert.ok(!error);
+  Assert.equal(frames.length, 3);
   check_frame(frames[0], "http://example.com/www/js/c.js");
   check_frame(frames[1], "http://example.com/www/js/b.js");
   check_frame(frames[2], "http://example.com/www/js/a.js");
 }
 
 function check_frame({ where: { source, line, column } }, expectedUrl) {
-  do_check_eq(source.url, expectedUrl);
-  do_check_eq(line, 2);
-  do_check_eq(column, 0);
+  Assert.equal(source.url, expectedUrl);
+  Assert.equal(line, 2);
+  Assert.equal(column, 0);
 }

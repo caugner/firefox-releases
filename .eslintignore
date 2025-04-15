@@ -4,6 +4,8 @@
 # Always ignore crashtests - specially crafted files that originally caused a
 # crash.
 **/crashtests/**
+# Also ignore reftest - specially crafted to produce expected output.
+**/reftest/**
 
 # Exclude expected objdirs.
 obj*/**
@@ -16,19 +18,32 @@ editor/**
 extensions/cookie/**
 extensions/spellcheck/**
 extensions/universalchardet/**
-gfx/**
+gfx/layers/**
+gfx/tests/browser/**
+gfx/tests/chrome/**
+gfx/tests/mochitest/**
+gfx/tests/unit/**
 image/**
-intl/**
 layout/**
-media/**
-memory/**
+memory/replace/dmd/test/**
 modules/**
-netwerk/**
+netwerk/base/NetUtil.jsm
+netwerk/cookie/test/browser/**
+netwerk/cookie/test/unit/**
+netwerk/protocol/**
+netwerk/dns/**
+netwerk/test/browser/**
+netwerk/test/httpserver/**
+netwerk/test/mochitests/**
+netwerk/test/unit*/**
+netwerk/wifi/**
 parser/**
 rdf/**
 tools/update-packaging/**
-uriloader/**
-widget/**
+uriloader/exthandler/**
+uriloader/exthandler/tests/mochitest/**
+widget/headless/tests/**
+widget/tests/**
 
 # We currently have no js files in these directories, so we ignore them by
 # default to aid ESLint's performance.
@@ -56,11 +71,13 @@ browser/branding/**/firefox-branding.js
 # Gzipped test file.
 browser/base/content/test/general/gZipOfflineChild.html
 browser/base/content/test/urlbar/file_blank_but_not_blank.html
-# New tab is likely to be replaced soon.
-browser/base/content/newtab/**
 # Test files that are really json not js, and don't need to be linted.
 browser/components/sessionstore/test/unit/data/sessionstore_valid.js
 browser/components/sessionstore/test/unit/data/sessionstore_invalid.js
+# This file is split into two in order to keep it as a valid json file
+# for documentation purposes (policies.json) but to be accessed by the
+# code as a .jsm (schema.jsm)
+browser/components/enterprisepolicies/schemas/schema.jsm
 # generated & special files in cld2
 browser/components/translation/cld2/**
 # Screenshots and Follow-on search are imported as a system add-on and have
@@ -74,6 +91,7 @@ browser/extensions/pocket/content/panels/js/tmpl.js
 browser/extensions/pocket/content/panels/js/vendor/**
 # generated or library files in activity-stream
 browser/extensions/activity-stream/data/content/activity-stream.bundle.js
+browser/extensions/activity-stream/test/**
 browser/extensions/activity-stream/vendor/**
 # The only file in browser/locales/ is pre-processed.
 browser/locales/**
@@ -122,9 +140,8 @@ devtools/client/storage/test/*.html
 !devtools/client/storage/test/storage-unsecured-iframe-usercontextid.html
 devtools/client/webaudioeditor/**
 devtools/client/webconsole/net/**
-devtools/client/webconsole/new-console-output/test/mochitest/**
+!devtools/client/webconsole/new-console-output/test/mochitest/**
 devtools/client/webconsole/test/**
-devtools/client/webconsole/hudservice.js
 devtools/client/webconsole/webconsole-connection-proxy.js
 devtools/client/webconsole/webconsole.js
 devtools/client/webide/**
@@ -191,7 +208,8 @@ dom/battery/**
 dom/bindings/**
 dom/broadcastchannel/**
 dom/browser-element/**
-dom/cache/**
+dom/cache/test/mochitest/**
+dom/cache/test/xpcshell/**
 dom/canvas/**
 dom/commandhandler/**
 dom/console/**
@@ -203,6 +221,7 @@ dom/fetch/**
 dom/file/**
 dom/filehandle/**
 dom/filesystem/**
+dom/flex/**
 dom/flyweb/**
 dom/gamepad/**
 dom/geolocation/**
@@ -219,26 +238,46 @@ dom/mathml/**
 dom/media/**
 !dom/media/*.js*
 dom/messagechannel/**
+dom/midi/**
 dom/network/**
-dom/notification/**
+dom/notification/Notification*.*
+dom/notification/test/browser/**
+dom/notification/test/unit/**
+dom/notification/test/mochitest/**
 dom/offline/**
 dom/payments/**
 dom/performance/**
 dom/permission/**
-dom/plugins/**
+dom/plugins/test/mochitest/**
+dom/plugins/test/unit/**
 dom/power/**
-dom/presentation/**
+dom/presentation/Presentation*.js
+dom/presentation/provider/**
+dom/presentation/tests/mochitest/**
+dom/presentation/tests/xpcshell/**
 dom/promise/**
 dom/push/**
 dom/quota/**
 dom/res/**
 dom/secureelement/**
-dom/security/**
+dom/security/test/contentverifier/**
+dom/security/test/cors/**
+dom/security/test/csp/**
+dom/security/test/general/**
+dom/security/test/hsts/**
+dom/security/test/mixedcontentblocker/**
+dom/security/test/sri/**
+dom/security/test/unit/**
+dom/serviceworkers/**
 dom/smil/**
 dom/storage/**
 dom/svg/**
 dom/system/**
-dom/tests/**
+dom/tests/browser/**
+dom/tests/html/**
+dom/tests/js/**
+dom/tests/mochitest/**
+dom/tests/unit/**
 dom/time/**
 dom/u2f/**
 dom/url/**
@@ -258,6 +297,16 @@ dom/xul/**
 # Third-party
 dom/media/webvtt/**
 
+# Third-party
+gfx/ots/**
+gfx/skia/**
+
+# intl/ exclusions
+intl/icu/**
+intl/locale/**
+intl/strres/**
+intl/uconv/**
+
 # Exclude everything but self-hosted JS
 js/ductwork/**
 js/examples/**
@@ -267,15 +316,19 @@ js/xpconnect/**
 js/src/devtools/**
 js/src/octane/**
 js/src/jit-test/**
+js/src/jsapi-tests/binast/**
 js/src/tests/**
 js/src/Y.js
+
+# Third-party
+media/webrtc/trunk/**
 
 # mobile/android/ exclusions
 mobile/android/tests/browser/chrome/tp5/**
 
 # Uses `#filter substitution`
 mobile/android/app/mobile.js
-mobile/android/chrome/content/healthreport-prefs.js
+mobile/android/app/geckoview-prefs.js
 
 # Uses `#expand`
 mobile/android/chrome/content/about.js
@@ -325,9 +378,12 @@ testing/talos/talos/scripts/jszip.min.js
 testing/talos/talos/startup_test/sessionrestore/profile/sessionstore.js
 testing/talos/talos/startup_test/sessionrestore/profile-manywindows/sessionstore.js
 testing/talos/talos/tests/canvasmark/**
+testing/talos/talos/tests/devtools/addon/content/pages/**
 testing/talos/talos/tests/dromaeo/**
 testing/talos/talos/tests/v8_7/**
 testing/talos/talos/tests/kraken/**
+# Runing Talos may extract data here, see bug 1435677.
+testing/talos/talos/tests/tp5n/**
 
 testing/web-platform/**
 testing/xpcshell/moz-http2/**
@@ -353,6 +409,7 @@ toolkit/components/microformats/test/**
 toolkit/components/microformats/microformat-shiv.js
 toolkit/components/reader/Readability.js
 toolkit/components/reader/JSDOMParser.js
+toolkit/components/payments/res/vendor/*
 
 # Uses preprocessing
 toolkit/content/widgets/wizard.xml

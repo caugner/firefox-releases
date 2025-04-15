@@ -49,14 +49,16 @@ extern crate euclid;
 extern crate hashglobe;
 #[cfg(feature = "servo")]
 extern crate mozjs as js;
+extern crate selectors;
 extern crate servo_arc;
 extern crate smallbitvec;
 extern crate smallvec;
 #[cfg(feature = "servo")]
 extern crate string_cache;
-#[cfg(feature = "servo")]
+#[cfg(feature = "url")]
 extern crate url;
-#[cfg(feature = "servo")]
+extern crate void;
+#[cfg(feature = "webrender_api")]
 extern crate webrender_api;
 #[cfg(feature = "servo")]
 extern crate xml5ever;
@@ -65,6 +67,7 @@ use std::hash::{BuildHasher, Hash};
 use std::mem::size_of;
 use std::ops::Range;
 use std::os::raw::c_void;
+use void::Void;
 
 /// A C function that takes a pointer to a heap allocation and returns its size.
 type VoidPtrToSizeFn = unsafe extern "C" fn(ptr: *const c_void) -> usize;
@@ -582,7 +585,7 @@ impl<T: MallocSizeOf, Unit> MallocSizeOf for euclid::Length<T, Unit> {
     }
 }
 
-impl<T: MallocSizeOf, Src, Dst> MallocSizeOf for euclid::ScaleFactor<T, Src, Dst> {
+impl<T: MallocSizeOf, Src, Dst> MallocSizeOf for euclid::TypedScale<T, Src, Dst> {
     fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
         self.0.size_of(ops)
     }
@@ -637,6 +640,20 @@ impl<T: MallocSizeOf, Src, Dst> MallocSizeOf for euclid::TypedTransform3D<T, Src
 impl<T: MallocSizeOf, U> MallocSizeOf for euclid::TypedVector2D<T, U> {
     fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
         self.x.size_of(ops) + self.y.size_of(ops)
+    }
+}
+
+impl MallocSizeOf for selectors::parser::AncestorHashes {
+    fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
+        let selectors::parser::AncestorHashes { ref packed_hashes } = *self;
+        packed_hashes.size_of(ops)
+    }
+}
+
+impl MallocSizeOf for Void {
+    #[inline]
+    fn size_of(&self, _ops: &mut MallocSizeOfOps) -> usize {
+        void::unreachable(*self)
     }
 }
 
@@ -697,7 +714,7 @@ malloc_size_of_is_0!(app_units::Au);
 
 malloc_size_of_is_0!(cssparser::RGBA, cssparser::TokenSerializationType);
 
-#[cfg(feature = "servo")]
+#[cfg(feature = "url")]
 impl MallocSizeOf for url::Host {
     fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
         match *self {
@@ -706,30 +723,55 @@ impl MallocSizeOf for url::Host {
         }
     }
 }
-
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::BorderRadius);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::BorderStyle);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::BorderWidths);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::BoxShadowClipMode);
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::ClipAndScrollInfo);
-#[cfg(feature = "servo")]
-malloc_size_of_is_0!(webrender_api::ClipId);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::ColorF);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::ComplexClipRegion);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::ExtendMode);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::FilterOp);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::ExternalScrollId);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::FontInstanceKey);
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::GradientStop);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::GlyphInstance);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::ImageBorder);
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::ImageKey);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::ImageRendering);
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::LineStyle);
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::LocalClip);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::MixBlendMode);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
+malloc_size_of_is_0!(webrender_api::NormalBorder);
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::RepeatMode);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::ScrollPolicy);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::ScrollSensitivity);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::StickyOffsetBounds);
-#[cfg(feature = "servo")]
+#[cfg(feature = "webrender_api")]
 malloc_size_of_is_0!(webrender_api::TransformStyle);
 
 #[cfg(feature = "servo")]

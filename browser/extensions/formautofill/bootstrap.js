@@ -6,20 +6,19 @@
 
 /* exported startup, shutdown, install, uninstall */
 
-const {classes: Cc, interfaces: Ci, results: Cr, utils: Cu} = Components;
 const STYLESHEET_URI = "chrome://formautofill/content/formautofill.css";
 const CACHED_STYLESHEETS = new WeakMap();
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManager", "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManagerPrivate",
-                                  "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FormAutofillParent",
-                                  "resource://formautofill/FormAutofillParent.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FormAutofillUtils",
-                                  "resource://formautofill/FormAutofillUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManager", "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManagerPrivate",
+                               "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "formAutofillParent",
+                               "resource://formautofill/FormAutofillParent.jsm");
+ChromeUtils.defineModuleGetter(this, "FormAutofillUtils",
+                               "resource://formautofill/FormAutofillUtils.jsm");
 
 function insertStyleSheet(domWindow, url) {
   let doc = domWindow.document;
@@ -59,7 +58,13 @@ function isAvailable() {
   } else if (availablePref == "detect") {
     let locale = Services.locale.getRequestedLocale();
     let region = Services.prefs.getCharPref("browser.search.region", "");
-    return locale == "en-US" && region == "US";
+    let supportedCountries = Services.prefs.getCharPref("extensions.formautofill.supportedCountries")
+                                           .split(",");
+    if (!Services.prefs.getBoolPref("extensions.formautofill.supportRTL") &&
+        Services.locale.isAppLocaleRTL) {
+      return false;
+    }
+    return locale == "en-US" && supportedCountries.includes(region);
   }
   return false;
 }
@@ -108,10 +113,9 @@ function startup(data) {
   // Listen for the autocomplete popup message to lazily append our stylesheet related to the popup.
   Services.mm.addMessageListener("FormAutoComplete:MaybeOpenPopup", onMaybeOpenPopup);
 
-  let parent = new FormAutofillParent();
-  parent.init().catch(Cu.reportError);
+  formAutofillParent.init().catch(Cu.reportError);
   Services.ppmm.loadProcessScript("data:,new " + function() {
-    Components.utils.import("resource://formautofill/FormAutofillContent.jsm");
+    ChromeUtils.import("resource://formautofill/FormAutofillContent.jsm");
   }, true);
   Services.mm.loadFrameScript("chrome://formautofill/content/FormAutofillFrameScript.js", true);
 }

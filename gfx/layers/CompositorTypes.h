@@ -73,9 +73,13 @@ enum class TextureFlags : uint32_t {
   RGB_FROM_YCBCR     = 1 << 13,
   // The texture is used for snapshot.
   SNAPSHOT           = 1 << 14,
+  // Enable a non blocking read lock.
+  NON_BLOCKING_READ_LOCK = 1 << 15,
+  // Enable a blocking read lock.
+  BLOCKING_READ_LOCK = 1 << 16,
 
   // OR union of all valid bits
-  ALL_BITS           = (1 << 15) - 1,
+  ALL_BITS           = (1 << 17) - 1,
   // the default flags
   DEFAULT = NO_FLAGS
 };
@@ -252,10 +256,11 @@ enum class OpenMode : uint8_t {
   // This is only used in conjunction with OMTP to indicate that the DrawTarget
   // that is being borrowed will be painted asynchronously, and so will outlive
   // the write lock.
-  OPEN_ASYNC_WRITE = 0x04,
+  OPEN_ASYNC = 0x04,
 
   OPEN_READ_WRITE  = OPEN_READ|OPEN_WRITE,
-  OPEN_READ_ASYNC_WRITE  = OPEN_READ|OPEN_WRITE|OPEN_ASYNC_WRITE,
+  OPEN_READ_WRITE_ASYNC  = OPEN_READ|OPEN_WRITE|OPEN_ASYNC,
+  OPEN_READ_ASYNC   = OPEN_READ|OPEN_ASYNC,
   OPEN_READ_ONLY   = OPEN_READ,
   OPEN_WRITE_ONLY  = OPEN_WRITE,
 };

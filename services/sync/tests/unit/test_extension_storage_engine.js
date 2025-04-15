@@ -3,12 +3,11 @@
 
 "use strict";
 
-Cu.import("resource://services-sync/engines.js");
-Cu.import("resource://services-sync/engines/extension-storage.js");
-Cu.import("resource://services-sync/service.js");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://testing-common/services/sync/utils.js");
-Cu.import("resource://gre/modules/ExtensionStorageSync.jsm");
+ChromeUtils.import("resource://services-sync/engines.js");
+ChromeUtils.import("resource://services-sync/engines/extension-storage.js");
+ChromeUtils.import("resource://services-sync/service.js");
+ChromeUtils.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://gre/modules/ExtensionStorageSync.jsm");
 /* globals extensionStorageSync */
 
 let engine;
@@ -63,5 +62,5 @@ add_task(async function test_calling_sync_calls_ext_storage_sync() {
   } finally {
     extensionStorageSync.syncAll = oldSync;
   }
-  do_check_true(syncMock.calls.length >= 1);
+  Assert.ok(syncMock.calls.length >= 1);
 });

@@ -29,10 +29,7 @@ namespace dom {
 
 enum class CacheStorageNamespace : uint8_t;
 class Promise;
-
-namespace workers {
-  class WorkerPrivate;
-} // namespace workers
+class WorkerPrivate;
 
 namespace cache {
 
@@ -53,7 +50,7 @@ public:
 
   static already_AddRefed<CacheStorage>
   CreateOnWorker(Namespace aNamespace, nsIGlobalObject* aGlobal,
-                 workers::WorkerPrivate* aWorkerPrivate, ErrorResult& aRv);
+                 WorkerPrivate* aWorkerPrivate, ErrorResult& aRv);
 
   static bool
   DefineCaches(JSContext* aCx, JS::Handle<JSObject*> aGlobal);
@@ -73,8 +70,6 @@ public:
               nsIPrincipal* aPrincipal, ErrorResult& aRv);
 
   // binding methods
-  static bool PrefEnabled(JSContext* aCx, JSObject* aObj);
-
   nsISupports* GetParentObject() const;
   virtual JSObject* WrapObject(JSContext* aContext, JS::Handle<JSObject*> aGivenProto) override;
 

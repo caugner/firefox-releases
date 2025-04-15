@@ -3,16 +3,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /** * =================== SAVED SIGNONS CODE =================== ***/
-const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "DeferredTask",
-                                  "resource://gre/modules/DeferredTask.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
-                                  "resource://gre/modules/PlacesUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "DeferredTask",
+                               "resource://gre/modules/DeferredTask.jsm");
+ChromeUtils.defineModuleGetter(this, "PlacesUtils",
+                               "resource://gre/modules/PlacesUtils.jsm");
 
 let kSignonBundle;
 
@@ -60,9 +58,9 @@ let signonReloadDisplay = {
 };
 
 // Formatter for localization.
-let dateFormatter = Services.intl.createDateTimeFormat(undefined,
+let dateFormatter = new Services.intl.DateTimeFormat(undefined,
                       { dateStyle: "medium" });
-let dateAndTimeFormatter = Services.intl.createDateTimeFormat(undefined,
+let dateAndTimeFormatter = new Services.intl.DateTimeFormat(undefined,
                              { dateStyle: "medium",
                                timeStyle: "short" });
 
@@ -157,7 +155,6 @@ let signonsTreeView = {
 
     return "";
   },
-  getProgressMode(row, column) {},
   getCellValue(row, column) {},
   getCellText(row, column) {
     let time;
@@ -566,16 +563,16 @@ function FocusFilterBox() {
 }
 
 function SignonMatchesFilter(aSignon, aFilterValue) {
-  if (aSignon.hostname.toLowerCase().indexOf(aFilterValue) != -1)
+  if (aSignon.hostname.toLowerCase().includes(aFilterValue))
     return true;
   if (aSignon.username &&
-      aSignon.username.toLowerCase().indexOf(aFilterValue) != -1)
+      aSignon.username.toLowerCase().includes(aFilterValue))
     return true;
   if (aSignon.httpRealm &&
-      aSignon.httpRealm.toLowerCase().indexOf(aFilterValue) != -1)
+      aSignon.httpRealm.toLowerCase().includes(aFilterValue))
     return true;
   if (showingPasswords && aSignon.password &&
-      aSignon.password.toLowerCase().indexOf(aFilterValue) != -1)
+      aSignon.password.toLowerCase().includes(aFilterValue))
     return true;
 
   return false;
@@ -629,6 +626,15 @@ function FilterPasswords() {
   removeAllButton.setAttribute("accesskey", kSignonBundle.getString("removeAllShown.accesskey"));
 }
 
+function CopySiteUrl() {
+  // Copy selected site url to clipboard
+  let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"].
+                  getService(Ci.nsIClipboardHelper);
+  let row = signonsTree.currentIndex;
+  let url = signonsTreeView.getCellText(row, {id: "siteCol"});
+  clipboard.copyString(url);
+}
+
 function CopyPassword() {
   // Don't copy passwords if we aren't already showing the passwords & a master
   // password hasn't been entered.
@@ -659,6 +665,12 @@ function EditCellInSelectedRow(columnName) {
   signonsTree.startEditing(row, signonsTree.columns.getColumnFor(columnElement));
 }
 
+function LaunchSiteUrl() {
+  let row = signonsTree.currentIndex;
+  let url = signonsTreeView.getCellText(row, {id: "siteCol"});
+  window.openUILinkIn(url, "tab");
+}
+
 function UpdateContextMenu() {
   let singleSelection = (signonsTreeView.selection.count == 1);
   let menuItems = new Map();
@@ -676,6 +688,14 @@ function UpdateContextMenu() {
 
   let selectedRow = signonsTree.currentIndex;
 
+  // Don't display "Launch Site URL" if we're not a browser.
+  if (window.openUILinkIn) {
+    menuItems.get("context-launchsiteurl").removeAttribute("disabled");
+  } else {
+    menuItems.get("context-launchsiteurl").setAttribute("disabled", "true");
+    menuItems.get("context-launchsiteurl").setAttribute("hidden", "true");
+  }
+
   // Disable "Copy Username" if the username is empty.
   if (signonsTreeView.getCellText(selectedRow, { id: "userCol" }) != "") {
     menuItems.get("context-copyusername").removeAttribute("disabled");
@@ -683,6 +703,7 @@ function UpdateContextMenu() {
     menuItems.get("context-copyusername").setAttribute("disabled", "true");
   }
 
+  menuItems.get("context-copysiteurl").removeAttribute("disabled");
   menuItems.get("context-editusername").removeAttribute("disabled");
   menuItems.get("context-copypassword").removeAttribute("disabled");
 
@@ -726,7 +747,7 @@ function escapeKeyHandler() {
 }
 
 function OpenMigrator() {
-  const { MigrationUtils } = Cu.import("resource:///modules/MigrationUtils.jsm", {});
+  const { MigrationUtils } = ChromeUtils.import("resource:///modules/MigrationUtils.jsm", {});
   // We pass in the type of source we're using for use in telemetry:
   MigrationUtils.showMigrationWizard(window, [MigrationUtils.MIGRATION_ENTRYPOINT_PASSWORDS]);
 }

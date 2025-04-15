@@ -620,10 +620,10 @@ nsObjectLoadingContent::UnbindFromTree(bool aDeep, bool aNullParent)
 {
   nsImageLoadingContent::UnbindFromTree(aDeep, aNullParent);
 
-  nsCOMPtr<nsIContent> thisContent =
+  nsCOMPtr<Element> thisElement =
     do_QueryInterface(static_cast<nsIObjectLoadingContent*>(this));
-  MOZ_ASSERT(thisContent);
-  nsIDocument* ownerDoc = thisContent->OwnerDoc();
+  MOZ_ASSERT(thisElement);
+  nsIDocument* ownerDoc = thisElement->OwnerDoc();
   ownerDoc->RemovePlugin(this);
 
   /// XXX(johns): Do we want to somehow propogate the reparenting behavior to
@@ -642,7 +642,7 @@ nsObjectLoadingContent::UnbindFromTree(bool aDeep, bool aNullParent)
     UnloadObject();
   }
   if (mType == eType_Plugin) {
-    nsIDocument* doc = thisContent->GetComposedDoc();
+    nsIDocument* doc = thisElement->GetComposedDoc();
     if (doc && doc->IsActive()) {
       nsCOMPtr<nsIRunnable> ev = new nsSimplePluginEvent(doc,
                                                          NS_LITERAL_STRING("PluginRemoved"));
@@ -807,22 +807,18 @@ nsObjectLoadingContent::InstantiatePluginInstance(bool aIsLoading)
     pluginHost->GetPluginTagForInstance(pluginInstance,
                                         getter_AddRefs(pluginTag));
 
-    nsCOMPtr<nsIBlocklistService> blocklist =
-      do_GetService("@mozilla.org/extensions/blocklist;1");
-    if (blocklist) {
-      uint32_t blockState = nsIBlocklistService::STATE_NOT_BLOCKED;
-      blocklist->GetPluginBlocklistState(pluginTag, EmptyString(),
-                                         EmptyString(), &blockState);
-      if (blockState == nsIBlocklistService::STATE_OUTDATED) {
-        // Fire plugin outdated event if necessary
-        LOG(("OBJLC [%p]: Dispatching plugin outdated event for content\n",
-             this));
-        nsCOMPtr<nsIRunnable> ev = new nsSimplePluginEvent(thisContent,
-                                                     NS_LITERAL_STRING("PluginOutdated"));
-        nsresult rv = NS_DispatchToCurrentThread(ev);
-        if (NS_FAILED(rv)) {
-          NS_WARNING("failed to dispatch nsSimplePluginEvent");
-        }
+
+    uint32_t blockState = nsIBlocklistService::STATE_NOT_BLOCKED;
+    pluginTag->GetBlocklistState(&blockState);
+    if (blockState == nsIBlocklistService::STATE_OUTDATED) {
+      // Fire plugin outdated event if necessary
+      LOG(("OBJLC [%p]: Dispatching plugin outdated event for content\n",
+           this));
+      nsCOMPtr<nsIRunnable> ev = new nsSimplePluginEvent(thisContent,
+                                                   NS_LITERAL_STRING("PluginOutdated"));
+      nsresult rv = NS_DispatchToCurrentThread(ev);
+      if (NS_FAILED(rv)) {
+        NS_WARNING("failed to dispatch nsSimplePluginEvent");
       }
     }
 
@@ -924,14 +920,14 @@ nsObjectLoadingContent::BuildParametersArray()
     return NS_OK;
   }
 
-  nsCOMPtr<nsIContent> content =
+  nsCOMPtr<Element> element =
     do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
 
-  for (uint32_t i = 0; i != content->GetAttrCount(); i += 1) {
+  for (uint32_t i = 0; i != element->GetAttrCount(); i += 1) {
     MozPluginParameter param;
-    const nsAttrName* attrName = content->GetAttrNameAt(i);
+    const nsAttrName* attrName = element->GetAttrNameAt(i);
     nsAtom* atom = attrName->LocalName();
-    content->GetAttr(attrName->NamespaceID(), atom, param.mValue);
+    element->GetAttr(attrName->NamespaceID(), atom, param.mValue);
     atom->ToString(param.mName);
     mCachedAttributes.AppendElement(param);
   }
@@ -958,10 +954,10 @@ nsObjectLoadingContent::BuildParametersArray()
   // Nav 4.x would simply replace the "data" with "src". Because some plugins correctly
   // look for "data", lets instead copy the "data" attribute and add another entry
   // to the bottom of the array if there isn't already a "src" specified.
-  if (content->IsHTMLElement(nsGkAtoms::object) &&
-      !content->HasAttr(kNameSpaceID_None, nsGkAtoms::src)) {
+  if (element->IsHTMLElement(nsGkAtoms::object) &&
+      !element->HasAttr(kNameSpaceID_None, nsGkAtoms::src)) {
     MozPluginParameter param;
-    content->GetAttr(kNameSpaceID_None, nsGkAtoms::data, param.mValue);
+    element->GetAttr(kNameSpaceID_None, nsGkAtoms::data, param.mValue);
     if (!param.mValue.IsEmpty()) {
       param.mName = NS_LITERAL_STRING("SRC");
       mCachedAttributes.AppendElement(param);
@@ -1144,12 +1140,6 @@ void
 nsObjectLoadingContent::PresetOpenerWindow(mozIDOMWindowProxy* aWindow, mozilla::ErrorResult& aRv)
 {
   aRv.Throw(NS_ERROR_FAILURE);
-}
-
-NS_IMETHODIMP
-nsObjectLoadingContent::SetIsPrerendered()
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 void
@@ -1557,9 +1547,9 @@ nsObjectLoadingContent::CheckProcessPolicy(int16_t *aContentPolicy)
 nsObjectLoadingContent::ParameterUpdateFlags
 nsObjectLoadingContent::UpdateObjectParameters()
 {
-  nsCOMPtr<nsIContent> thisContent =
+  nsCOMPtr<Element> thisElement =
     do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
-  NS_ASSERTION(thisContent, "Must be an instance of content");
+  MOZ_ASSERT(thisElement, "Must be an Element");
 
   uint32_t caps = GetCapabilities();
   LOG(("OBJLC [%p]: Updating object parameters", this));
@@ -1593,16 +1583,13 @@ nsObjectLoadingContent::UpdateObjectParameters()
   ///
 
   nsAutoString codebaseStr;
-  nsCOMPtr<nsIURI> docBaseURI = thisContent->GetBaseURI();
-  bool hasCodebase = thisContent->HasAttr(kNameSpaceID_None, nsGkAtoms::codebase);
-  if (hasCodebase) {
-    thisContent->GetAttr(kNameSpaceID_None, nsGkAtoms::codebase, codebaseStr);
-  }
+  nsCOMPtr<nsIURI> docBaseURI = thisElement->GetBaseURI();
+  thisElement->GetAttr(kNameSpaceID_None, nsGkAtoms::codebase, codebaseStr);
 
   if (!codebaseStr.IsEmpty()) {
     rv = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(newBaseURI),
                                                    codebaseStr,
-                                                   thisContent->OwnerDoc(),
+                                                   thisElement->OwnerDoc(),
                                                    docBaseURI);
     if (NS_SUCCEEDED(rv)) {
       NS_TryToSetImmutable(newBaseURI);
@@ -1614,7 +1601,7 @@ nsObjectLoadingContent::UpdateObjectParameters()
   }
 
   nsAutoString rawTypeAttr;
-  thisContent->GetAttr(kNameSpaceID_None, nsGkAtoms::type, rawTypeAttr);
+  thisElement->GetAttr(kNameSpaceID_None, nsGkAtoms::type, rawTypeAttr);
   if (!rawTypeAttr.IsEmpty()) {
     typeAttr = rawTypeAttr;
     CopyUTF16toUTF8(rawTypeAttr, newMime);
@@ -1631,10 +1618,10 @@ nsObjectLoadingContent::UpdateObjectParameters()
 
   nsAutoString uriStr;
   // Different elements keep this in various locations
-  if (thisContent->NodeInfo()->Equals(nsGkAtoms::object)) {
-    thisContent->GetAttr(kNameSpaceID_None, nsGkAtoms::data, uriStr);
-  } else if (thisContent->NodeInfo()->Equals(nsGkAtoms::embed)) {
-    thisContent->GetAttr(kNameSpaceID_None, nsGkAtoms::src, uriStr);
+  if (thisElement->NodeInfo()->Equals(nsGkAtoms::object)) {
+    thisElement->GetAttr(kNameSpaceID_None, nsGkAtoms::data, uriStr);
+  } else if (thisElement->NodeInfo()->Equals(nsGkAtoms::embed)) {
+    thisElement->GetAttr(kNameSpaceID_None, nsGkAtoms::src, uriStr);
   } else {
     NS_NOTREACHED("Unrecognized plugin-loading tag");
   }
@@ -1645,7 +1632,7 @@ nsObjectLoadingContent::UpdateObjectParameters()
   if (!uriStr.IsEmpty()) {
     rv = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(newURI),
                                                    uriStr,
-                                                   thisContent->OwnerDoc(),
+                                                   thisElement->OwnerDoc(),
                                                    newBaseURI);
     nsCOMPtr<nsIURI> rewrittenURI;
     MaybeRewriteYoutubeEmbed(newURI,
@@ -1747,7 +1734,7 @@ nsObjectLoadingContent::UpdateObjectParameters()
     // 5) Use the channel type
 
     bool overrideChannelType = false;
-    if (thisContent->HasAttr(kNameSpaceID_None, nsGkAtoms::typemustmatch)) {
+    if (thisElement->HasAttr(kNameSpaceID_None, nsGkAtoms::typemustmatch)) {
       if (!typeAttr.LowerCaseEqualsASCII(channelType.get())) {
         stateInvalid = true;
       }
@@ -2518,6 +2505,7 @@ nsObjectLoadingContent::OpenChannel()
                      thisContent,
                      securityFlags,
                      contentPolicyType,
+                     nullptr, // aPerformanceStorage
                      group, // aLoadGroup
                      shim,  // aCallbacks
                      nsIChannel::LOAD_CALL_CONTENT_SNIFFERS |
@@ -2977,7 +2965,7 @@ nsObjectLoadingContent::LoadFallback(FallbackType aType, bool aNotify) {
       bool skipChildDescendants = false;
       if (aType != eFallbackAlternate &&
           !child->IsHTMLElement(nsGkAtoms::param) &&
-          nsStyleUtil::IsSignificantChild(child, true, false)) {
+          nsStyleUtil::IsSignificantChild(child, false)) {
         aType = eFallbackAlternate;
       }
       if (thisIsObject) {

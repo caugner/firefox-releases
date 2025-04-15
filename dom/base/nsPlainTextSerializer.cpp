@@ -11,7 +11,6 @@
  */
 
 #include "nsPlainTextSerializer.h"
-#include "nsLWBrkCIID.h"
 #include "nsIServiceManager.h"
 #include "nsGkAtoms.h"
 #include "nsNameSpaceManager.h"
@@ -699,7 +698,7 @@ nsPlainTextSerializer::DoOpenContainer(nsAtom* aTag)
 
     }
     else {
-      static char bulletCharArray[] = "*o+#";
+      static const char bulletCharArray[] = "*o+#";
       uint32_t index = mULCount > 0 ? (mULCount - 1) : 3;
       char bulletChar = bulletCharArray[index % 4];
       mInIndentString.Append(char16_t(bulletChar));
@@ -1254,7 +1253,7 @@ static bool
 IsSpaceStuffable(const char16_t *s)
 {
   if (s[0] == '>' || s[0] == ' ' || s[0] == kNBSP ||
-      nsCRT::strncmp(s, u"From ", 5) == 0)
+      NS_strncmp(s, u"From ", 5) == 0)
     return true;
   else
     return false;
@@ -1840,7 +1839,7 @@ nsPlainTextSerializer::GetIdForContent(nsIContent* aContent)
   }
 
   nsAtom* localName = aContent->NodeInfo()->NameAtom();
-  return localName->IsStaticAtom() ? localName : nullptr;
+  return localName->IsStatic() ? localName : nullptr;
 }
 
 bool
@@ -1853,7 +1852,7 @@ bool
 nsPlainTextSerializer::IsElementPreformatted(Element* aElement)
 {
   RefPtr<nsStyleContext> styleContext =
-    nsComputedDOMStyle::GetStyleContextNoFlush(aElement, nullptr, nullptr);
+    nsComputedDOMStyle::GetStyleContextNoFlush(aElement, nullptr);
   if (styleContext) {
     const nsStyleText* textStyle = styleContext->StyleText();
     return textStyle->WhiteSpaceOrNewlineIsSignificant();
@@ -1866,7 +1865,7 @@ bool
 nsPlainTextSerializer::IsElementBlock(Element* aElement)
 {
   RefPtr<nsStyleContext> styleContext =
-    nsComputedDOMStyle::GetStyleContextNoFlush(aElement, nullptr, nullptr);
+    nsComputedDOMStyle::GetStyleContextNoFlush(aElement, nullptr);
   if (styleContext) {
     const nsStyleDisplay* displayStyle = styleContext->StyleDisplay();
     return displayStyle->IsBlockOutsideStyle();

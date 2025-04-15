@@ -2,7 +2,7 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-Components.utils.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://testing-common/httpd.js");
 
 const PREF_BLOCKLIST_LASTUPDATETIME   = "app.update.lastUpdateTime.blocklist-background-update-timer";
 const PREF_BLOCKLIST_PINGCOUNTTOTAL   = "extensions.blocklist.pingCountTotal";
@@ -21,7 +21,7 @@ function notify_blocklist() {
 }
 
 function pathHandler(metadata, response) {
-  do_check_eq(metadata.queryString, gExpectedQueryString);
+  Assert.equal(metadata.queryString, gExpectedQueryString);
   gNextTest();
 }
 

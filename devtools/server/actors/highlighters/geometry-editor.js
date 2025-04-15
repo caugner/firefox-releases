@@ -31,19 +31,19 @@ var GeoProp = {
   },
 
   isSide: function (name) {
-    return this.SIDES.indexOf(name) !== -1;
+    return this.SIDES.includes(name);
   },
 
   isSize: function (name) {
-    return this.SIZES.indexOf(name) !== -1;
+    return this.SIZES.includes(name);
   },
 
   containsSide: function (names) {
-    return names.some(name => this.SIDES.indexOf(name) !== -1);
+    return names.some(name => this.SIDES.includes(name));
   },
 
   containsSize: function (names) {
-    return names.some(name => this.SIZES.indexOf(name) !== -1);
+    return names.some(name => this.SIZES.includes(name));
   },
 
   isHorizontal: function (name) {
@@ -131,8 +131,8 @@ function getDefinedGeometryProperties(node) {
 
   // Get the list of css rules applying to the current node.
   let cssRules = getCSSStyleRules(node);
-  for (let i = 0; i < cssRules.Count(); i++) {
-    let rule = cssRules.GetElementAt(i);
+  for (let i = 0; i < cssRules.length; i++) {
+    let rule = cssRules[i];
     for (let name of GeoProp.allProps()) {
       let value = rule.style.getPropertyValue(name);
       if (value && value !== "auto") {
@@ -167,7 +167,7 @@ function getDefinedGeometryProperties(node) {
   let { position } = getComputedStyle(node);
   for (let [name] of props) {
     // Top/left/bottom/right on static positioned elements have no effect.
-    if (position === "static" && GeoProp.SIDES.indexOf(name) !== -1) {
+    if (position === "static" && GeoProp.SIDES.includes(name)) {
       props.delete(name);
     }
 

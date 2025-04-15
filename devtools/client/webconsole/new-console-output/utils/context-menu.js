@@ -32,13 +32,18 @@ const { l10n } = require("devtools/client/webconsole/new-console-output/utils/me
  *        - {Object} message (optional) message object containing metadata such as:
  *          - {String} source
  *          - {String} request
+ *        - {Function} openSidebar (optional) function that will open the object
+ *            inspector sidebar
+ *        - {String} rootActorId (optional) actor id for the root object being clicked on
  */
 function createContextMenu(jsterm, parentNode, {
   actor,
   clipboardText,
   variableText,
   message,
-  serviceContainer
+  serviceContainer,
+  openSidebar,
+  rootActorId,
 }) {
   let win = parentNode.ownerDocument.defaultView;
   let selection = win.getSelection();
@@ -64,17 +69,15 @@ function createContextMenu(jsterm, parentNode, {
   }));
 
   // Open Network message in the Network panel.
-  menu.append(new MenuItem({
-    id: "console-menu-open-in-network-panel",
-    label: l10n.getStr("webconsole.menu.openInNetworkPanel.label"),
-    accesskey: l10n.getStr("webconsole.menu.openInNetworkPanel.accesskey"),
-    visible: source === MESSAGE_SOURCE.NETWORK,
-    click: () => {
-      if (request && serviceContainer.openNetworkPanel) {
-        serviceContainer.openNetworkPanel(message.messageId);
-      }
-    },
-  }));
+  if (serviceContainer.openNetworkPanel && request) {
+    menu.append(new MenuItem({
+      id: "console-menu-open-in-network-panel",
+      label: l10n.getStr("webconsole.menu.openInNetworkPanel.label"),
+      accesskey: l10n.getStr("webconsole.menu.openInNetworkPanel.accesskey"),
+      visible: source === MESSAGE_SOURCE.NETWORK,
+      click: () => serviceContainer.openNetworkPanel(message.messageId)
+    }));
+  }
 
   // Open URL in a new tab for a network request.
   menu.append(new MenuItem({
@@ -164,6 +167,17 @@ function createContextMenu(jsterm, parentNode, {
       selection.selectAllChildren(webconsoleOutput);
     },
   }));
+
+  // Open object in sidebar.
+  if (openSidebar) {
+    menu.append(new MenuItem({
+      id: "console-menu-open-sidebar",
+      label: l10n.getStr("webconsole.menu.openInSidebar.label"),
+      accesskey: l10n.getStr("webconsole.menu.openInSidebar.accesskey"),
+      disabled: !rootActorId,
+      click: () => openSidebar(message.messageId),
+    }));
+  }
 
   return menu;
 }

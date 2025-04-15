@@ -22,7 +22,7 @@ var { helpers, assert } = (function () {
 
   var helpers = {};
 
-  var { require } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+  var { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
   var { TargetFactory } = require("devtools/client/framework/target");
   var { gDevToolsBrowser } = require("devtools/client/framework/devtools-browser");
   var Services = require("Services");
@@ -132,7 +132,7 @@ var { helpers, assert } = (function () {
     options.browser = tabbrowser.getBrowserForTab(options.tab);
     options.target = TargetFactory.forTab(options.tab);
 
-    var loaded = helpers.listenOnce(options.browser, "load", true).then(function (ev) {
+    var loaded = BrowserTestUtils.browserLoaded(options.browser).then(function () {
       var reply = callback.call(null, options);
 
       return Promise.resolve(reply).catch(function (error) {
@@ -149,7 +149,7 @@ var { helpers, assert } = (function () {
       });
     });
 
-    options.browser.contentWindow.location = url;
+    options.browser.loadURI(url);
     return loaded;
   };
 
@@ -754,7 +754,7 @@ var { helpers, assert } = (function () {
     var chunkLen = 1;
 
   // The easy case is a simple string without things like <TAB>
-    if (typed.indexOf("<") === -1) {
+    if (!typed.includes("<")) {
       inputPromise = automator.setInput(typed);
     }
     else {
@@ -1071,7 +1071,7 @@ var { helpers, assert } = (function () {
           }
 
           if (typeof expected.notinoutput === "string") {
-            assert.ok(textOutput.indexOf(expected.notinoutput) === -1,
+            assert.ok(!textOutput.includes(expected.notinoutput),
               `html output for "${name}" doesn't contain "${expected.notinoutput}"`);
           } else if (Array.isArray(expected.notinoutput)) {
             expected.notinoutput.forEach(function (match) {

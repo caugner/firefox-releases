@@ -3,11 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {
-  Component,
-  DOM: dom,
-  PropTypes
-} = require("devtools/client/shared/vendor/react");
+const { Component } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const { connect } = require("devtools/client/shared/vendor/react-redux");
 const { getAllFilters } = require("devtools/client/webconsole/new-console-output/selectors/filters");
 const { getFilteredMessagesCount } = require("devtools/client/webconsole/new-console-output/selectors/messages");
@@ -33,7 +31,14 @@ class FilterBar extends Component {
       }).isRequired,
       filterBarVisible: PropTypes.bool.isRequired,
       persistLogs: PropTypes.bool.isRequired,
+      hidePersistLogsCheckbox: PropTypes.bool.isRequired,
       filteredMessagesCount: PropTypes.object.isRequired,
+    };
+  }
+
+  static get defaultProps() {
+    return {
+      hidePersistLogsCheckbox: false,
     };
   }
 
@@ -222,6 +227,7 @@ class FilterBar extends Component {
       filterBarVisible,
       persistLogs,
       filteredMessagesCount,
+      hidePersistLogsCheckbox,
     } = this.props;
 
     let children = [
@@ -250,12 +256,12 @@ class FilterBar extends Component {
           placeholder: l10n.getStr("webconsole.filterInput.placeholder"),
           onInput: this.onSearchInput
         }),
-        FilterCheckbox({
+        !hidePersistLogsCheckbox && FilterCheckbox({
           label: l10n.getStr("webconsole.enablePersistentLogs.label"),
           title: l10n.getStr("webconsole.enablePersistentLogs.tooltip"),
           onChange: this.onChangePersistToggle,
           checked: persistLogs,
-        })
+        }),
       )
     ];
 

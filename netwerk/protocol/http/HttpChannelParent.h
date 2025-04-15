@@ -166,6 +166,8 @@ protected:
               const bool&                aSuspendAfterSynthesizeResponse,
               const bool&                aAllowStaleCacheContent,
               const nsCString&           aContentTypeHint,
+              const uint32_t&            aCorsMode,
+              const uint32_t&            aRedirectMode,
               const uint64_t&            aChannelId,
               const uint64_t&            aContentWindowId,
               const nsCString&           aPreferredAlternativeType,
@@ -191,8 +193,6 @@ protected:
                                                       const OptionalURIParams& aReferrerURI,
                                                       const OptionalURIParams& apiRedirectUri,
                                                       const OptionalCorsPreflightArgs& aCorsPreflightArgs,
-                                                      const bool& aForceHSTSPriming,
-                                                      const bool& aMixedContentWouldBlock,
                                                       const bool& aChooseAppcache) override;
   virtual mozilla::ipc::IPCResult RecvUpdateAssociatedContentSecurity(const int32_t& broken,
                                                    const int32_t& no) override;
@@ -266,7 +266,7 @@ private:
   RefPtr<HttpBaseChannel>       mChannel;
   nsCOMPtr<nsICacheEntry>       mCacheEntry;
   nsCOMPtr<nsIAssociatedContentSecurity>  mAssociatedContentSecurity;
-  bool mIPCClosed;                // PHttpChannel actor has been Closed()
+  Atomic<bool> mIPCClosed; // PHttpChannel actor has been Closed()
 
   nsCOMPtr<nsIChannel> mRedirectChannel;
   nsCOMPtr<nsIAsyncVerifyRedirectCallback> mRedirectCallback;

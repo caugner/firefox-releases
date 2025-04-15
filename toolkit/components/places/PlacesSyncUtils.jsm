@@ -4,19 +4,17 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["PlacesSyncUtils"];
-
-const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
+var EXPORTED_SYMBOLS = ["PlacesSyncUtils"];
 
 Cu.importGlobalProperties(["URL", "URLSearchParams"]);
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Log",
-                                  "resource://gre/modules/Log.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
-                                  "resource://gre/modules/PlacesUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "Log",
+                               "resource://gre/modules/Log.jsm");
+ChromeUtils.defineModuleGetter(this, "PlacesUtils",
+                               "resource://gre/modules/PlacesUtils.jsm");
 
 /**
  * This module exports functions for Sync to use when applying remote
@@ -51,9 +49,6 @@ const { SOURCE_SYNC } = Ci.nsINavBookmarksService;
 const MICROSECONDS_PER_SECOND = 1000000;
 const SQLITE_MAX_VARIABLE_NUMBER = 999;
 
-const ORGANIZER_QUERY_ANNO = "PlacesOrganizer/OrganizerQuery";
-const ORGANIZER_ALL_BOOKMARKS_ANNO_VALUE = "AllBookmarks";
-const ORGANIZER_MOBILE_QUERY_ANNO_VALUE = "MobileBookmarks";
 const MOBILE_BOOKMARKS_PREF = "browser.bookmarks.showMobileBookmarks";
 
 // These are defined as lazy getters to defer initializing the bookmarks
@@ -80,7 +75,7 @@ XPCOMUtils.defineLazyGetter(this, "ROOTS", () =>
   Object.keys(ROOT_RECORD_ID_TO_GUID)
 );
 
-const HistorySyncUtils = PlacesSyncUtils.history = Object.freeze({
+PlacesSyncUtils.history = Object.freeze({
   /**
    * Clamps a history visit date between the current date and the earliest
    * sensible date.
@@ -157,7 +152,7 @@ const HistorySyncUtils = PlacesSyncUtils.history = Object.freeze({
   changeGuid(uri, guid) {
       let canonicalURL = PlacesUtils.SYNC_BOOKMARK_VALIDATORS.url(uri);
       let validatedGuid = PlacesUtils.BOOKMARK_VALIDATORS.guid(guid);
-      return PlacesUtils.withConnectionWrapper("HistorySyncUtils: changeGuid",
+      return PlacesUtils.withConnectionWrapper("PlacesSyncUtils.history: changeGuid",
         async function(db) {
           await db.executeCached(`
             UPDATE moz_places
@@ -220,7 +215,7 @@ const HistorySyncUtils = PlacesSyncUtils.history = Object.freeze({
   async fetchURLInfoForGuid(guid) {
     let db = await PlacesUtils.promiseDBConnection();
     let rows = await db.executeCached(`
-      SELECT url, title, frecency
+      SELECT url, IFNULL(title, "") AS title, frecency
       FROM moz_places
       WHERE guid = :guid`,
       { guid }
@@ -564,7 +559,9 @@ const BookmarkSyncUtils = PlacesSyncUtils.bookmarks = Object.freeze({
     return PlacesUtils.withConnectionWrapper(
       "BookmarkSyncUtils: pushChanges", async function(db) {
         let skippedCount = 0;
+        let weakCount = 0;
         let updateParams = [];
+        let tombstoneGuidsToRemove = [];
 
         for (let recordId in changeRecords) {
           // Validate change records to catch coding errors.
@@ -577,6 +574,12 @@ const BookmarkSyncUtils = PlacesSyncUtils.bookmarks = Object.freeze({
             }
           );
 
+          // Skip weakly uploaded records.
+          if (!changeRecord.counter) {
+            weakCount++;
+            continue;
+          }
+
           // Sync sets the `synced` flag for reconciled or successfully
           // uploaded items. If upload failed, ignore the change; we'll
           // try again on the next sync.
@@ -586,38 +589,43 @@ const BookmarkSyncUtils = PlacesSyncUtils.bookmarks = Object.freeze({
           }
 
           let guid = BookmarkSyncUtils.recordIdToGuid(recordId);
-          updateParams.push({
-            guid,
-            syncChangeDelta: changeRecord.counter,
-            syncStatus: PlacesUtils.bookmarks.SYNC_STATUS.NORMAL,
-          });
+          if (changeRecord.tombstone) {
+            tombstoneGuidsToRemove.push(guid);
+          } else {
+            updateParams.push({
+              guid,
+              syncChangeDelta: changeRecord.counter,
+              syncStatus: PlacesUtils.bookmarks.SYNC_STATUS.NORMAL,
+            });
+          }
         }
 
         // Reduce the change counter and update the sync status for
         // reconciled and uploaded items. If the bookmark was updated
         // during the sync, its change counter will still be > 0 for the
         // next sync.
-        if (updateParams.length) {
+        if (updateParams.length || tombstoneGuidsToRemove.length) {
           await db.executeTransaction(async function() {
-            await db.executeCached(`
-              UPDATE moz_bookmarks
-              SET syncChangeCounter = MAX(syncChangeCounter - :syncChangeDelta, 0),
-                  syncStatus = :syncStatus
-              WHERE guid = :guid`,
-              updateParams);
-
-            // Unconditionally delete tombstones, in case the GUID exists in
-            // `moz_bookmarks` and `moz_bookmarks_deleted` (bug 1405563).
-            let deleteParams = updateParams.map(({ guid }) => ({ guid }));
-            await db.executeCached(`
-              DELETE FROM moz_bookmarks_deleted
-              WHERE guid = :guid`,
-              deleteParams);
+            if (updateParams.length) {
+              await db.executeCached(`
+                UPDATE moz_bookmarks
+                SET syncChangeCounter = MAX(syncChangeCounter - :syncChangeDelta, 0),
+                    syncStatus = :syncStatus
+                WHERE guid = :guid`,
+                updateParams);
+              // and if there are *both* bookmarks and tombstones for these
+              // items, we nuke the tombstones.
+              // This should be unlikely, but bad if it happens.
+              let dupedGuids = updateParams.map(({ guid }) => guid);
+              await removeUndeletedTombstones(db, dupedGuids);
+            }
+            await removeTombstones(db, tombstoneGuidsToRemove);
           });
         }
 
         BookmarkSyncLog.debug(`pushChanges: Processed change records`,
-                              { skipped: skippedCount,
+                              { weak: weakCount,
+                                skipped: skippedCount,
                                 updated: updateParams.length });
       }
     );
@@ -1024,14 +1032,14 @@ const BookmarkSyncUtils = PlacesSyncUtils.bookmarks = Object.freeze({
   },
 
   /**
-   * Returns `undefined` if no sensible timestamp could be found.
+   * Returns `0` if no sensible timestamp could be found.
    * Otherwise, returns the earliest sensible timestamp between `existingMillis`
    * and `serverMillis`.
    */
   ratchetTimestampBackwards(existingMillis, serverMillis, lowerBound = BookmarkSyncUtils.EARLIEST_BOOKMARK_TIMESTAMP) {
     const possible = [+existingMillis, +serverMillis].filter(n => !isNaN(n) && n > lowerBound);
     if (!possible.length) {
-      return undefined;
+      return 0;
     }
     return Math.min(...possible);
   },
@@ -1048,56 +1056,12 @@ const BookmarkSyncUtils = PlacesSyncUtils.bookmarks = Object.freeze({
    *   exist, or will be updated with the correct title and URL otherwise.
    */
   async ensureMobileQuery() {
-    Services.prefs.setBoolPref(MOBILE_BOOKMARKS_PREF, true);
-
     let db = await PlacesUtils.promiseDBConnection();
 
-    let maybeAllBookmarksGuids = await fetchGuidsWithAnno(db,
-      ORGANIZER_QUERY_ANNO, ORGANIZER_ALL_BOOKMARKS_ANNO_VALUE);
-    if (!maybeAllBookmarksGuids.length) {
-      return;
-    }
+    let mobileChildGuids = await fetchChildGuids(db, PlacesUtils.bookmarks.mobileGuid);
+    let hasMobileBookmarks = mobileChildGuids.length > 0;
 
-    let allBookmarksGuid = maybeAllBookmarksGuids[0];
-    let mobileTitle = PlacesUtils.getString("MobileBookmarksFolderTitle");
-
-    let maybeMobileQueryGuids = await fetchGuidsWithAnno(db,
-      ORGANIZER_QUERY_ANNO, ORGANIZER_MOBILE_QUERY_ANNO_VALUE);
-    if (maybeMobileQueryGuids.length) {
-      let mobileQueryGuid = maybeMobileQueryGuids[0];
-      // We have a left pane query for mobile bookmarks, make sure the
-      // query title is correct.
-      await PlacesUtils.bookmarks.update({
-        guid: mobileQueryGuid,
-        url: "place:folder=MOBILE_BOOKMARKS",
-        title: mobileTitle,
-        source: SOURCE_SYNC,
-      });
-    } else {
-      // We have no left pane query. Create the query.
-      let mobileQuery = await PlacesUtils.bookmarks.insert({
-        parentGuid: allBookmarksGuid,
-        url: "place:folder=MOBILE_BOOKMARKS",
-        title: mobileTitle,
-        source: SOURCE_SYNC,
-      });
-
-      let mobileQueryId = await PlacesUtils.promiseItemId(mobileQuery.guid);
-
-      PlacesUtils.annotations.setItemAnnotation(mobileQueryId,
-        ORGANIZER_QUERY_ANNO, ORGANIZER_MOBILE_QUERY_ANNO_VALUE, 0,
-        PlacesUtils.annotations.EXPIRE_NEVER, SOURCE_SYNC);
-      PlacesUtils.annotations.setItemAnnotation(mobileQueryId,
-        PlacesUtils.EXCLUDE_FROM_BACKUP_ANNO, 1, 0,
-        PlacesUtils.annotations.EXPIRE_NEVER, SOURCE_SYNC);
-    }
-
-    // Make sure the mobile root title matches the query.
-    await PlacesUtils.bookmarks.update({
-      guid: PlacesUtils.bookmarks.mobileGuid,
-      title: mobileTitle,
-      source: SOURCE_SYNC,
-    });
+    Services.prefs.setBoolPref(MOBILE_BOOKMARKS_PREF, hasMobileBookmarks);
   },
 
   /**
@@ -1111,7 +1075,9 @@ const BookmarkSyncUtils = PlacesSyncUtils.bookmarks = Object.freeze({
 });
 
 XPCOMUtils.defineLazyGetter(this, "BookmarkSyncLog", () => {
-  return Log.repository.getLogger("BookmarkSyncUtils");
+  // Use a sub-log of the bookmarks engine, so setting the level for that
+  // engine also adjust the level of this log.
+  return Log.repository.getLogger("Sync.Engine.Bookmarks.BookmarkSyncUtils");
 });
 
 function validateSyncBookmarkObject(name, input, behavior) {
@@ -2297,6 +2263,22 @@ var removeTombstones = function(db, guids) {
     WHERE guid IN (${guids.map(guid => JSON.stringify(guid)).join(",")})`);
 };
 
+/**
+ * Removes tombstones for successfully synced items where the specified GUID
+ * exists in *both* the bookmarks and tombstones tables.
+ *
+ * @return {Promise}
+ */
+var removeUndeletedTombstones = function(db, guids) {
+  if (!guids.length) {
+    return Promise.resolve();
+  }
+  // sqlite can't join in a DELETE, so we use a subquery.
+  return db.execute(`
+    DELETE FROM moz_bookmarks_deleted
+    WHERE guid IN (${guids.map(guid => JSON.stringify(guid)).join(",")})
+    AND guid IN (SELECT guid from moz_bookmarks)`);
+};
 /**
  * Sends a bookmarks notification through the given observers.
  *

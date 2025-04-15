@@ -12,15 +12,13 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "ContentTaskUtils",
 ];
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
-Cu.import("resource://gre/modules/Timer.jsm");
-
-this.ContentTaskUtils = {
+var ContentTaskUtils = {
   /**
    * Will poll a condition function until it returns true.
    *
@@ -105,14 +103,14 @@ this.ContentTaskUtils = {
             return;
           }
           subject.removeEventListener(eventName, listener, capture);
-          resolve(event);
+          setTimeout(() => resolve(event), 0);
         } catch (ex) {
           try {
             subject.removeEventListener(eventName, listener, capture);
           } catch (ex2) {
             // Maybe the provided object does not support removeEventListener.
           }
-          reject(ex);
+          setTimeout(() => reject(ex), 0);
         }
       }, capture, wantsUntrusted);
     });

@@ -22,16 +22,10 @@ config = {
 
     "exes": {
         'python': sys.executable,
-        'virtualenv': [
-            sys.executable,
-            os.path.join(os.path.dirname(sys.executable), 'Lib', 'site-packages', 'virtualenv.py')
-        ],
         'mozinstall': ['build/venv/scripts/python', 'build/venv/scripts/mozinstall-script.py'],
-        'tooltool.py': [sys.executable, os.path.join(os.environ['MOZILLABUILD'], 'tooltool.py')],
         'hg': os.path.join(os.environ['PROGRAMFILES'], 'Mercurial', 'hg')
     },
 
-    "proxxy": {},
     "find_links": [
         "http://pypi.pub.build.mozilla.org/pub",
     ],
@@ -70,4 +64,6 @@ config = {
     "blob_uploader_auth_file" : 'C:/builds/oauth.txt',
 
     "download_minidump_stackwalk": True,
+
+    "verify_category": "web-platform",
 }

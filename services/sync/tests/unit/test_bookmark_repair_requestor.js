@@ -1,8 +1,6 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
-Cu.import("resource://services-sync/bookmark_repair.js");
-
-initTestLogging("Trace");
+ChromeUtils.import("resource://services-sync/bookmark_repair.js");
 
 function makeClientRecord(id, fields = {}) {
   return {

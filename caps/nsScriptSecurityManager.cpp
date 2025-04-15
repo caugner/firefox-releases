@@ -16,6 +16,7 @@
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIScriptContext.h"
 #include "nsIURL.h"
+#include "nsIURIMutator.h"
 #include "nsINestedURI.h"
 #include "nspr.h"
 #include "nsJSPrincipals.h"
@@ -533,10 +534,8 @@ DenyAccessIfURIHasFlags(nsIURI* aURI, uint32_t aURIFlags)
 static bool
 EqualOrSubdomain(nsIURI* aProbeArg, nsIURI* aBase)
 {
-    // Make a clone of the incoming URI, because we're going to mutate it.
-    nsCOMPtr<nsIURI> probe;
-    nsresult rv = aProbeArg->Clone(getter_AddRefs(probe));
-    NS_ENSURE_SUCCESS(rv, false);
+    nsresult rv;
+    nsCOMPtr<nsIURI> probe = aProbeArg;
 
     nsCOMPtr<nsIEffectiveTLDService> tldService = do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID);
     NS_ENSURE_TRUE(tldService, false);
@@ -554,7 +553,9 @@ EqualOrSubdomain(nsIURI* aProbeArg, nsIURI* aBase)
             return false;
         }
         NS_ENSURE_SUCCESS(rv, false);
-        rv = probe->SetHost(newHost);
+        rv = NS_MutateURI(probe)
+               .SetHost(newHost)
+               .Finalize(probe);
         NS_ENSURE_SUCCESS(rv, false);
     }
 }
@@ -686,6 +687,15 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
              targetIsViewSource)
     {
         // exception for foo: linking to view-source:foo for reftests...
+        return NS_OK;
+    }
+    else if (sourceScheme.EqualsIgnoreCase("file") &&
+             targetScheme.EqualsIgnoreCase("moz-icon"))
+    {
+        // exception for file: linking to moz-icon://.ext?size=...
+        // Note that because targetScheme is the base (innermost) URI scheme,
+        // this does NOT allow file -> moz-icon:file:///... links.
+        // This is intentional.
         return NS_OK;
     }
 
@@ -831,18 +841,12 @@ nsScriptSecurityManager::CheckLoadURIFlags(nsIURI *aSourceURI,
 
     // Check for chrome target URI
     bool hasFlags = false;
-    rv = NS_URIChainHasFlags(aTargetBaseURI,
+    rv = NS_URIChainHasFlags(aTargetURI,
                              nsIProtocolHandler::URI_IS_UI_RESOURCE,
                              &hasFlags);
     NS_ENSURE_SUCCESS(rv, rv);
     if (hasFlags) {
         if (aFlags & nsIScriptSecurityManager::ALLOW_CHROME) {
-            // For now, don't change behavior for moz-icon:// and just allow it.
-            if (!targetScheme.EqualsLiteral("chrome")
-                    && !targetScheme.EqualsLiteral("resource")) {
-                return NS_OK;
-            }
-
             // Allow a URI_IS_UI_RESOURCE source to link to a URI_IS_UI_RESOURCE
             // target if ALLOW_CHROME is set.
             //
@@ -1206,7 +1210,7 @@ nsScriptSecurityManager::CanCreateWrapper(JSContext *cx,
                                           nsISupports *aObj,
                                           nsIClassInfo *aClassInfo)
 {
-// XXX Special case for nsIXPCException ?
+// XXX Special case for Exception ?
 
     uint32_t flags;
     if (aClassInfo && NS_SUCCEEDED(aClassInfo->GetFlags(&flags)) &&

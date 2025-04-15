@@ -7,10 +7,7 @@
 
 this.EXPORTED_SYMBOLS = ["StyleEditorUI"];
 
-const Ci = Components.interfaces;
-const Cu = Components.utils;
-
-const {loader, require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {loader, require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const Services = require("Services");
 const {NetUtil} = require("resource://gre/modules/NetUtil.jsm");
 const {OS} = require("resource://gre/modules/osfile.jsm");
@@ -28,7 +25,6 @@ const {StyleSheetEditor} = require("resource://devtools/client/styleeditor/Style
 const {PluralForm} = require("devtools/shared/plural-form");
 const {PrefObserver} = require("devtools/client/shared/prefs");
 const csscoverage = require("devtools/shared/fronts/csscoverage");
-const {console} = require("resource://gre/modules/Console.jsm");
 const {KeyCodes} = require("devtools/client/shared/keycodes");
 const {OriginalSource} = require("devtools/client/styleeditor/original-source");
 
@@ -103,27 +99,6 @@ function StyleEditorUI(debuggee, target, panelDoc, cssProperties) {
 this.StyleEditorUI = StyleEditorUI;
 
 StyleEditorUI.prototype = {
-  /**
-   * Get whether any of the editors have unsaved changes.
-   *
-   * @return boolean
-   */
-  get isDirty() {
-    if (this._markedDirty === true) {
-      return true;
-    }
-    return this.editors.some((editor) => {
-      return editor.sourceEditor && !editor.sourceEditor.isClean();
-    });
-  },
-
-  /*
-   * Mark the style editor as having or not having unsaved changes.
-   */
-  set isDirty(value) {
-    this._markedDirty = value;
-  },
-
   /*
    * Index of selected stylesheet in document.styleSheets
    */
@@ -266,7 +241,7 @@ StyleEditorUI.prototype = {
         yield this._addStyleSheet(sheet);
       } catch (e) {
         console.error(e);
-        this.emit("error", { key: LOAD_ERROR });
+        this.emit("error", { key: LOAD_ERROR, level: "warning" });
       }
     }
 
@@ -432,7 +407,7 @@ StyleEditorUI.prototype = {
         contentPolicyType: Ci.nsIContentPolicy.TYPE_OTHER
       }, (stream, status) => {
         if (!Components.isSuccessCode(status)) {
-          this.emit("error", { key: LOAD_ERROR });
+          this.emit("error", { key: LOAD_ERROR, level: "warning" });
           return;
         }
         let source =

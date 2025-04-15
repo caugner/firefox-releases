@@ -111,6 +111,8 @@ RUN_FIPS=""
 ########################################################################
 run_tests()
 {
+    echo "Running test cycle: ${TEST_MODE} ----------------------"
+    echo "List of tests that will be executed: ${TESTS}"
     for TEST in ${TESTS}
     do
         # NOTE: the spaces are important. If you don't include
@@ -172,8 +174,9 @@ run_cycle_pkix()
     NSS_SSL_TESTS=`echo "${NSS_SSL_TESTS}" | sed -e "s/normal//g" -e "s/fips//g" -e "s/_//g"`
     export -n NSS_SSL_RUN
 
-    # use the default format
+    # use the default format. (unset for the shell, export -n for binaries)
     export -n NSS_DEFAULT_DB_TYPE
+    unset NSS_DEFAULT_DB_TYPE
 
     run_tests
 }
@@ -279,12 +282,22 @@ run_cycles()
 
 ############################## main code ###############################
 
+SCRIPTNAME=all.sh
+CLEANUP="${SCRIPTNAME}"
+cd `dirname $0`
+
+# all.sh should be the first one to try to source the init
+if [ -z "${INIT_SOURCED}" -o "${INIT_SOURCED}" != "TRUE" ]; then
+    cd common
+    . ./init.sh
+fi
+
 cycles="standard pkix upgradedb sharedb"
 CYCLES=${NSS_CYCLES:-$cycles}
 
-if [ -n "$NSS_FORCE_FIPS" ]; then
+NO_INIT_SUPPORT=`certutil --build-flags |grep -cw NSS_NO_INIT_SUPPORT`
+if [ $NO_INIT_SUPPORT -eq 0 ]; then
     RUN_FIPS="fips"
-    export NSS_TEST_ENABLE_FIPS=1
 fi
 
 tests="cipher lowhash libpkix cert dbtests tools $RUN_FIPS sdr crmf smime ssl ocsp merge pkits ec gtests ssl_gtests"
@@ -297,7 +310,7 @@ TESTS=${NSS_TESTS:-$tests}
 ALL_TESTS=${TESTS}
 
 nss_ssl_tests="crl iopr policy"
-if [ -n "$NSS_FORCE_FIPS" ]; then
+if [ $NO_INIT_SUPPORT -eq 0 ]; then
     nss_ssl_tests="$nss_ssl_tests fips_normal normal_fips"
 fi
 NSS_SSL_TESTS="${NSS_SSL_TESTS:-$nss_ssl_tests}"
@@ -305,22 +318,17 @@ NSS_SSL_TESTS="${NSS_SSL_TESTS:-$nss_ssl_tests}"
 nss_ssl_run="cov auth stapling stress"
 NSS_SSL_RUN="${NSS_SSL_RUN:-$nss_ssl_run}"
 
-SCRIPTNAME=all.sh
-CLEANUP="${SCRIPTNAME}"
-cd `dirname $0`
-
-# all.sh should be the first one to try to source the init
-if [ -z "${INIT_SOURCED}" -o "${INIT_SOURCED}" != "TRUE" ]; then
-    cd common
-    . ./init.sh
-fi
-
 # NOTE:
 # Lists of enabled tests and other settings are stored to ${ENV_BACKUP}
 # file and are are restored after every test cycle.
 
 ENV_BACKUP=${HOSTDIR}/env.sh
 env_backup > ${ENV_BACKUP}
+
+# Print hardware support if we built it.
+if [ -f ${BINDIR}/hw-support ]; then
+    ${BINDIR}/hw-support
+fi
 
 if [ "${O_CRON}" = "ON" ]; then
     run_cycles >> ${LOGFILE}

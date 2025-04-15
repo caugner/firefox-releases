@@ -101,10 +101,13 @@ protected:
 
     uint32_t mSpaceGlyph;
 
-    bool mNeedsOblique;
     bool mNeedsBold;
     bool mUseSubpixelPositions;
     bool mAllowManualShowGlyphs;
+
+    // Used to record the sUseClearType setting at the time mAzureScaledFont
+    // was set up, so we can tell if it's stale and needs to be re-created.
+    bool mAzureScaledFontUsedClearType;
 
     static bool sUseClearType;
 };

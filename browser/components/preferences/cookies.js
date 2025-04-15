@@ -3,17 +3,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const nsICookie = Components.interfaces.nsICookie;
+const nsICookie = Ci.nsICookie;
 
-Components.utils.import("resource://gre/modules/AppConstants.jsm");
-Components.utils.import("resource://gre/modules/PluralForm.jsm");
-Components.utils.import("resource://gre/modules/Services.jsm");
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/PluralForm.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "SiteDataManager",
-                                  "resource:///modules/SiteDataManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ContextualIdentityService",
-                                  "resource://gre/modules/ContextualIdentityService.jsm");
+ChromeUtils.defineModuleGetter(this, "ContextualIdentityService",
+                               "resource://gre/modules/ContextualIdentityService.jsm");
 
 var gCookiesWindow = {
   _hosts: {},
@@ -77,12 +75,18 @@ var gCookiesWindow = {
                                                aCookieB.originAttributes);
   },
 
+  _isPrivateCookie(cookie) {
+    let { userContextId } = cookie.originAttributes;
+    // A private cookie is when its userContextId points to a private identity.
+    return userContextId && !ContextualIdentityService.getPublicIdentityFromId(userContextId);
+  },
+
   observe(aCookie, aTopic, aData) {
     if (aTopic != "cookie-changed")
       return;
 
-    if (aCookie instanceof Components.interfaces.nsICookie) {
-      if (SiteDataManager.isPrivateCookie(aCookie)) {
+    if (aCookie instanceof Ci.nsICookie) {
+      if (this._isPrivateCookie(aCookie)) {
         return;
       }
 
@@ -401,7 +405,6 @@ var gCookiesWindow = {
       return 0;
     },
     getImageSrc(aIndex, aColumn) {},
-    getProgressMode(aIndex, aColumn) {},
     getCellValue(aIndex, aColumn) {},
     setTree(aTree) {},
     toggleOpenState(aIndex) {
@@ -475,8 +478,8 @@ var gCookiesWindow = {
     this._hostOrder = [];
     while (e.hasMoreElements()) {
       var cookie = e.getNext();
-      if (cookie && cookie instanceof Components.interfaces.nsICookie) {
-        if (SiteDataManager.isPrivateCookie(cookie)) {
+      if (cookie && cookie instanceof Ci.nsICookie) {
+        if (this._isPrivateCookie(cookie)) {
           continue;
         }
 
@@ -491,7 +494,7 @@ var gCookiesWindow = {
   formatExpiresString(aExpires) {
     if (aExpires) {
       var date = new Date(1000 * aExpires);
-      const dateTimeFormatter = Services.intl.createDateTimeFormat(undefined, {
+      const dateTimeFormatter = new Services.intl.DateTimeFormat(undefined, {
         dateStyle: "long", timeStyle: "long"
       });
       return dateTimeFormatter.format(date);
@@ -831,9 +834,9 @@ var gCookiesWindow = {
   },
 
   _cookieMatchesFilter(aCookie) {
-    return aCookie.rawHost.indexOf(this._view._filterValue) != -1 ||
-           aCookie.name.indexOf(this._view._filterValue) != -1 ||
-           aCookie.value.indexOf(this._view._filterValue) != -1;
+    return aCookie.rawHost.includes(this._view._filterValue) ||
+           aCookie.name.includes(this._view._filterValue) ||
+           aCookie.value.includes(this._view._filterValue);
   },
 
   _filterCookies(aFilterValue) {

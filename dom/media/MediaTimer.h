@@ -36,13 +36,15 @@ typedef MozPromise<bool, bool, /* IsExclusive = */ true> MediaTimerPromise;
 class MediaTimer
 {
 public:
-  MediaTimer();
+  explicit MediaTimer(bool aFuzzy = false);
 
   // We use a release with a custom Destroy().
   NS_IMETHOD_(MozExternalRefCountType) AddRef(void);
   NS_IMETHOD_(MozExternalRefCountType) Release(void);
 
+  RefPtr<MediaTimerPromise> WaitFor(const TimeDuration& aDuration, const char* aCallSite);
   RefPtr<MediaTimerPromise> WaitUntil(const TimeStamp& aTimeStamp, const char* aCallSite);
+  void Cancel(); // Cancel and reject any unresolved promises with false.
 
 private:
   virtual ~MediaTimer() { MOZ_ASSERT(OnMediaTimerThread()); }
@@ -54,6 +56,8 @@ private:
   void ScheduleUpdate();
   void Update();
   void UpdateLocked();
+  bool IsExpired(const TimeStamp& aTarget, const TimeStamp& aNow);
+  void Reject();
 
   static void TimerCallback(nsITimer* aTimer, void* aClosure);
   void TimerFired();
@@ -111,13 +115,14 @@ private:
   }
 
   bool mUpdateScheduled;
+  const bool mFuzzy;
 };
 
 // Class for managing delayed dispatches on target thread.
 class DelayedScheduler {
 public:
-  explicit DelayedScheduler(AbstractThread* aTargetThread)
-    : mTargetThread(aTargetThread), mMediaTimer(new MediaTimer())
+  explicit DelayedScheduler(AbstractThread* aTargetThread, bool aFuzzy = false)
+    : mTargetThread(aTargetThread), mMediaTimer(new MediaTimer(aFuzzy))
   {
     MOZ_ASSERT(mTargetThread);
   }

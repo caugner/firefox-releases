@@ -9,22 +9,27 @@
 #include "mozilla/dom/ClientOpPromise.h"
 #include "mozilla/dom/ClientThing.h"
 
+class nsIPrincipal;
+
 namespace mozilla {
 namespace ipc {
 class PBackgroundChild;
+class PrincipalInfo;
 } // namespace ipc
 namespace dom {
 
+class ClientClaimArgs;
+class ClientGetInfoAndStateArgs;
 class ClientHandle;
 class ClientInfo;
 class ClientManagerChild;
+class ClientMatchAllArgs;
+class ClientNavigateArgs;
 class ClientOpConstructorArgs;
+class ClientOpenWindowArgs;
 class ClientSource;
 enum class ClientType : uint8_t;
-
-namespace workers {
 class WorkerPrivate;
-} // workers namespace
 
 // The ClientManager provides a per-thread singleton interface workering
 // with the client subsystem.  It allows globals to create ClientSource
@@ -34,6 +39,7 @@ class WorkerPrivate;
 class ClientManager final : public ClientThing<ClientManagerChild>
 {
   friend class ClientManagerChild;
+  friend class ClientSource;
 
   ClientManager();
   ~ClientManager();
@@ -46,6 +52,7 @@ class ClientManager final : public ClientThing<ClientManagerChild>
 
   UniquePtr<ClientSource>
   CreateSourceInternal(ClientType aType,
+                       nsISerialEventTarget* aEventTarget,
                        const mozilla::ipc::PrincipalInfo& aPrincipal);
 
   already_AddRefed<ClientHandle>
@@ -66,7 +73,7 @@ class ClientManager final : public ClientThing<ClientManagerChild>
   GetOrCreateForCurrentThread();
 
   // Private methods called by ClientSource
-  mozilla::dom::workers::WorkerPrivate*
+  mozilla::dom::WorkerPrivate*
   GetWorkerPrivate() const;
 
 public:
@@ -77,14 +84,34 @@ public:
   Startup();
 
   static UniquePtr<ClientSource>
-  CreateSource(ClientType aType, nsIPrincipal* aPrincipal);
+  CreateSource(ClientType aType, nsISerialEventTarget* aEventTarget,
+               nsIPrincipal* aPrincipal);
 
   static UniquePtr<ClientSource>
-  CreateSource(ClientType aType, const mozilla::ipc::PrincipalInfo& aPrincipal);
+  CreateSource(ClientType aType, nsISerialEventTarget* aEventTarget,
+               const mozilla::ipc::PrincipalInfo& aPrincipal);
 
   static already_AddRefed<ClientHandle>
   CreateHandle(const ClientInfo& aClientInfo,
                nsISerialEventTarget* aSerialEventTarget);
+
+  static RefPtr<ClientOpPromise>
+  MatchAll(const ClientMatchAllArgs& aArgs, nsISerialEventTarget* aTarget);
+
+  static RefPtr<ClientOpPromise>
+  Claim(const ClientClaimArgs& aArgs, nsISerialEventTarget* aSerialEventTarget);
+
+  static RefPtr<ClientOpPromise>
+  GetInfoAndState(const ClientGetInfoAndStateArgs& aArgs,
+                  nsISerialEventTarget* aSerialEventTarget);
+
+  static RefPtr<ClientOpPromise>
+  Navigate(const ClientNavigateArgs& aArgs,
+           nsISerialEventTarget* aSerialEventTarget);
+
+  static RefPtr<ClientOpPromise>
+  OpenWindow(const ClientOpenWindowArgs& aArgs,
+             nsISerialEventTarget* aSerialEventTarget);
 
   NS_INLINE_DECL_REFCOUNTING(mozilla::dom::ClientManager)
 };

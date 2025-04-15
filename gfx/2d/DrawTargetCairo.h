@@ -21,7 +21,8 @@ class SourceSurfaceCairo;
 class GradientStopsCairo : public GradientStops
 {
   public:
-  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GradientStopsCairo)
+    MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GradientStopsCairo, override)
+
     GradientStopsCairo(GradientStop* aStops, uint32_t aNumStops,
                        ExtendMode aExtendMode)
      : mExtendMode(aExtendMode)
@@ -43,7 +44,7 @@ class GradientStopsCairo : public GradientStops
       return mExtendMode;
     }
 
-    virtual BackendType GetBackendType() const { return BackendType::CAIRO; }
+    virtual BackendType GetBackendType() const override { return BackendType::CAIRO; }
 
   private:
     std::vector<GradientStop> mStops;
@@ -64,7 +65,7 @@ public:
   virtual DrawTargetType GetType() const override;
   virtual BackendType GetBackendType() const override { return BackendType::CAIRO; }
   virtual already_AddRefed<SourceSurface> Snapshot() override;
-  virtual IntSize GetSize() override;
+  virtual IntSize GetSize() const override;
 
   virtual bool IsCurrentGroupOpaque() override;
 

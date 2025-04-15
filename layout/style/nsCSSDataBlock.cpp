@@ -14,6 +14,7 @@
 #include "CSSVariableImageTable.h"
 #include "mozilla/css/Declaration.h"
 #include "mozilla/css/ImageLoader.h"
+#include "mozilla/CORSMode.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/WritingModes.h"
 #include "nsAutoPtr.h"
@@ -94,7 +95,11 @@ TryToStartImageLoadOnValue(const nsCSSValue& aValue, nsIDocument* aDocument,
       }
     }
 
-    aValue.StartImageLoad(aDocument);
+    CORSMode mode =
+      nsCSSProps::PropHasFlags(aProperty, CSS_PROPERTY_LOAD_USE_CORS) ?
+      CORSMode::CORS_ANONYMOUS :
+      CORSMode::CORS_NONE;
+    aValue.StartImageLoad(aDocument, mode);
     if (aForTokenStream && aContext) {
       CSSVariableImageTable::Add(aContext, aProperty,
                                  aValue.GetImageStructValue());
@@ -454,8 +459,7 @@ nsCSSCompressedDataBlock::HasDefaultBorderImageRepeat() const
 {
   const nsCSSValuePair &repeat =
     ValueFor(eCSSProperty_border_image_repeat)->GetPairValue();
-  return repeat.BothValuesEqualTo(
-    nsCSSValue(NS_STYLE_BORDER_IMAGE_REPEAT_STRETCH, eCSSUnit_Enumerated));
+  return repeat.BothValuesEqualTo(nsCSSValue(StyleBorderImageRepeat::Stretch));
 }
 
 /*****************************************************************************/

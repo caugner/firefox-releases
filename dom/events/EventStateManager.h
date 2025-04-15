@@ -26,7 +26,6 @@ class nsIDocument;
 class nsIDocShell;
 class nsIDocShellTreeItem;
 class imgIContainer;
-class EnterLeaveDispatcher;
 class nsIContentViewer;
 class nsIScrollableFrame;
 class nsITimer;
@@ -93,12 +92,17 @@ public:
    * be conditional based on either DOM or frame processing should occur in
    * PostHandleEvent.  Any centralized event processing which must occur before
    * DOM or frame event handling should occur here as well.
+   *
+   * aOverrideClickTarget can be used to indicate which element should be
+   * used as the *up target when deciding whether to send click event.
+   * This is used when releasing pointer capture. Otherwise null.
    */
   nsresult PreHandleEvent(nsPresContext* aPresContext,
                           WidgetEvent* aEvent,
                           nsIFrame* aTargetFrame,
                           nsIContent* aTargetContent,
-                          nsEventStatus* aStatus);
+                          nsEventStatus* aStatus,
+                          nsIContent* aOverrideClickTarget);
 
   /* The PostHandleEvent method should contain all system processing which
    * should occur conditionally based on DOM or frame processing.  It should
@@ -108,7 +112,8 @@ public:
   nsresult PostHandleEvent(nsPresContext* aPresContext,
                            WidgetEvent* aEvent,
                            nsIFrame* aTargetFrame,
-                           nsEventStatus* aStatus);
+                           nsEventStatus* aStatus,
+                           nsIContent* aOverrideClickTarget);
 
   void PostHandleKeyboardEvent(WidgetKeyboardEvent* aKeyboardEvent,
                                nsIFrame* aTargetFrame, nsEventStatus& aStatus);
@@ -165,26 +170,26 @@ public:
    * Register accesskey on the given element. When accesskey is activated then
    * the element will be notified via nsIContent::PerformAccesskey() method.
    *
-   * @param  aContent  the given element
+   * @param  aElement  the given element
    * @param  aKey      accesskey
    */
-  void RegisterAccessKey(nsIContent* aContent, uint32_t aKey);
+  void RegisterAccessKey(dom::Element* aElement, uint32_t aKey);
 
   /**
    * Unregister accesskey for the given element.
    *
-   * @param  aContent  the given element
+   * @param  aElement  the given element
    * @param  aKey      accesskey
    */
-  void UnregisterAccessKey(nsIContent* aContent, uint32_t aKey);
+  void UnregisterAccessKey(dom::Element* aElement, uint32_t aKey);
 
   /**
    * Get accesskey registered on the given element or 0 if there is none.
    *
-   * @param  aContent  the given element (must not be null)
+   * @param  aElement  the given element (must not be null)
    * @return           registered accesskey
    */
-  uint32_t GetRegisteredAccessKey(nsIContent* aContent);
+  uint32_t GetRegisteredAccessKey(dom::Element* aContent);
 
   static void GetAccessKeyLabelPrefix(dom::Element* aElement, nsAString& aPrefix);
 
@@ -311,10 +316,6 @@ public:
   static void GetUserPrefsForWheelEvent(const WidgetWheelEvent* aEvent,
                                         double* aOutMultiplierX,
                                         double* aOutMultiplierY);
-
-  // Returns whether or not a frame can be vertically scrolled with a mouse
-  // wheel (as opposed to, say, a selection or touch scroll).
-  static bool CanVerticallyScrollFrameWithWheel(nsIFrame* aFrame);
 
   // Holds the point in screen coords that a mouse event was dispatched to,
   // before we went into pointer lock mode. This is constantly updated while
@@ -447,10 +448,13 @@ protected:
                                             nsIPresShell* aPresShell,
                                             nsIContent* aMouseTarget,
                                             AutoWeakFrame aCurrentTarget,
-                                            bool aNoContentDispatch);
-  nsresult SetClickCount(WidgetMouseEvent* aEvent, nsEventStatus* aStatus);
+                                            bool aNoContentDispatch,
+                                            nsIContent* aOverrideClickTarget);
+  nsresult SetClickCount(WidgetMouseEvent* aEvent, nsEventStatus* aStatus,
+                         nsIContent* aOverrideClickTarget = nullptr);
   nsresult CheckForAndDispatchClick(WidgetMouseEvent* aEvent,
-                                    nsEventStatus* aStatus);
+                                    nsEventStatus* aStatus,
+                                    nsIContent* aOverrideClickTarget);
   void EnsureDocument(nsPresContext* aPresContext);
   void FlushPendingEvents(nsPresContext* aPresContext);
 
@@ -912,6 +916,12 @@ protected:
                            WidgetInputEvent* aEvent);
 
   /**
+   * When starting a dnd session, UA must fire a pointercancel event and stop
+   * firing the subsequent pointer events.
+   */
+  void MaybeFirePointerCancel(WidgetInputEvent* aEvent);
+
+  /**
    * Determine which node the drag should be targeted at.
    * This is either the node clicked when there is a selection, or, for HTML,
    * the element with a draggable property set to true.
@@ -920,12 +930,16 @@ protected:
    * aDataTransfer - data transfer object that will contain the data to drag
    * aSelection - [out] set to the selection to be dragged
    * aTargetNode - [out] the draggable node, or null if there isn't one
+   * aPrincipalURISpec - [out] set to the URI of the triggering principal of
+   *                           the drag, or an empty string if it's from
+   *                           browser chrome or OS
    */
   void DetermineDragTargetAndDefaultData(nsPIDOMWindowOuter* aWindow,
                                          nsIContent* aSelectionTarget,
                                          dom::DataTransfer* aDataTransfer,
                                          nsISelection** aSelection,
-                                         nsIContent** aTargetNode);
+                                         nsIContent** aTargetNode,
+                                         nsACString& aPrincipalURISpec);
 
   /*
    * Perform the default handling for the dragstart event and set up a
@@ -936,12 +950,15 @@ protected:
    * aDataTransfer - the data transfer that holds the data to be dragged
    * aDragTarget - the target of the drag
    * aSelection - the selection to be dragged
+   * aPrincipalURISpec - the URI of the triggering principal of the drag,
+   *                     or an empty string if it's from browser chrome or OS
    */
   bool DoDefaultDragStart(nsPresContext* aPresContext,
                           WidgetDragEvent* aDragEvent,
                           dom::DataTransfer* aDataTransfer,
                           nsIContent* aDragTarget,
-                          nsISelection* aSelection);
+                          nsISelection* aSelection,
+                          const nsACString& aPrincipalURISpec);
 
   bool IsTrackingDragGesture ( ) const { return mGestureDownContent != nullptr; }
   /**
@@ -1007,6 +1024,15 @@ private:
 
   // Update the last known ref point to the current event's mRefPoint.
   static void UpdateLastPointerPosition(WidgetMouseEvent* aMouseEvent);
+
+  /**
+   * Notify target when user has been interaction with some speicific user
+   * gestures which are eKeyUp, eMouseUp, eTouchEnd.
+   */
+  void NotifyTargetUserActivation(WidgetEvent* aEvent,
+                                  nsIContent* aTargetContent);
+
+  already_AddRefed<EventStateManager> ESMFromContentOrThis(nsIContent* aContent);
 
   int32_t     mLockCursor;
   bool mLastFrameConsumedSetCursor;

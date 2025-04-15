@@ -5,8 +5,7 @@
 
 "use strict";
 
-const Cu = Components.utils;
-const {require, loader} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {require, loader} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {DebuggerClient} = require("devtools/shared/client/debugger-client");
 const {DebuggerServer} = require("devtools/server/main");
 const {TargetFactory} = require("devtools/client/framework/target");
@@ -22,7 +21,7 @@ loader.lazyImporter(this, "OS", "resource://gre/modules/osfile.jsm");
 // Initialize a minimal DebuggerServer and connect to the webextension addon actor.
 if (!DebuggerServer.initialized) {
   DebuggerServer.init();
-  DebuggerServer.addBrowserActors();
+  DebuggerServer.registerAllActors();
   SimpleTest.registerCleanupFunction(function () {
     DebuggerServer.destroy();
   });

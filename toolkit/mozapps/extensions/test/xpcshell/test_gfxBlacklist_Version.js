@@ -2,24 +2,16 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-var { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
-
 // Test whether a machine which exactly matches the blacklist entry is
 // successfully blocked.
 // Uses test_gfxBlacklist_AllOS.xml
 
-Cu.import("resource://testing-common/httpd.js");
+ChromeUtils.import("resource://testing-common/httpd.js");
 
 var gTestserver = new HttpServer();
 gTestserver.start(-1);
 gPort = gTestserver.identity.primaryPort;
 mapFile("/data/test_gfxBlacklist_AllOS.xml", gTestserver);
-
-function get_platform() {
-  var xulRuntime = Cc["@mozilla.org/xre/app-info;1"]
-                             .getService(Ci.nsIXULRuntime);
-  return xulRuntime.OS;
-}
 
 function load_blocklist(file) {
   Services.prefs.setCharPref("extensions.blocklist.url", "http://localhost:" +
@@ -42,7 +34,7 @@ function run_test() {
   gfxInfo.QueryInterface(Ci.nsIGfxInfoDebug);
 
   // Set the vendor/device ID, etc, to match the test file.
-  switch (get_platform()) {
+  switch (Services.appinfo.OS) {
     case "WINNT":
       gfxInfo.spoofVendorID("0xabcd");
       gfxInfo.spoofDeviceID("0x1234");
@@ -76,64 +68,64 @@ function run_test() {
     var status;
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_DIRECT2D, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
-    do_check_eq(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_g1");
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
+    Assert.equal(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_g1");
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_DIRECT3D_9_LAYERS, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
-    do_check_eq(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_g2");
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
+    Assert.equal(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_g2");
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_DIRECT3D_10_LAYERS, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
-    do_check_eq(failureId.value, "");
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(failureId.value, "");
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_DIRECT3D_10_1_LAYERS, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
-    do_check_eq(failureId.value, "");
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(failureId.value, "");
 
     // These four pass on Linux independent of the blocklist XML file as the
     // try machines don't have support.
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_OPENGL_LAYERS);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_WEBGL_OPENGL, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
-    do_check_eq(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_g11");
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
+    Assert.equal(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_g11");
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_WEBGL_ANGLE, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
-    do_check_eq(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_NO_ID");
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
+    Assert.equal(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_NO_ID");
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_WEBGL2, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
-    do_check_eq(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_NO_ID");
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
+    Assert.equal(failureId.value, "FEATURE_FAILURE_DL_BLACKLIST_NO_ID");
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_WEBGL_MSAA, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_BLOCKED_DRIVER_VERSION);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_STAGEFRIGHT, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_WEBRTC_HW_ACCELERATION, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_WEBRTC_HW_ACCELERATION_ENCODE, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_WEBRTC_HW_ACCELERATION_DECODE, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_DIRECT3D_11_LAYERS, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_HARDWARE_VIDEO_DECODING, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_DIRECT3D_11_ANGLE, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
 
     status = gfxInfo.getFeatureStatus(Ci.nsIGfxInfo.FEATURE_DX_INTEROP2, failureId);
-    do_check_eq(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
+    Assert.equal(status, Ci.nsIGfxInfo.FEATURE_STATUS_OK);
 
     gTestserver.stop(do_test_finished);
   }
@@ -141,7 +133,7 @@ function run_test() {
   Services.obs.addObserver(function(aSubject, aTopic, aData) {
     // If we wait until after we go through the event loop, gfxInfo is sure to
     // have processed the gfxItems event.
-    do_execute_soon(checkBlacklist);
+    executeSoon(checkBlacklist);
   }, "blocklist-data-gfxItems");
 
   load_blocklist("test_gfxBlacklist_AllOS.xml");

@@ -7,7 +7,6 @@
 #include "mozilla-config.h"
 #include "AccessibleHandler.h"
 
-import "oaidl.idl";
 import "ocidl.idl";
 import "ServProv.idl";
 
@@ -21,7 +20,6 @@ import "AccessibleTableCell.idl";
 typedef struct _StaticIA2Data
 {
   NEWEST_IA2_INTERFACE* mIA2;
-  IEnumVARIANT* mIEnumVARIANT;
   IAccessibleHypertext2* mIAHypertext;
   IAccessibleHyperlink* mIAHyperlink;
   IAccessibleTable* mIATable;
@@ -145,6 +143,25 @@ interface IHandlerControl : IUnknown
                        [in] IA2TextSegment* aText);
 }
 
+typedef struct _IARelationData 
+{
+  BSTR mType;
+  long mNTargets;
+} IARelationData;
+
+typedef struct _AccChildData
+{
+  NEWEST_IA2_INTERFACE* mAccessible;
+  BSTR mText;
+  long mTextRole;
+  long mTextId;
+  long mTextState;
+  long mTextLeft;
+  long mTextTop;
+  long mTextWidth;
+  long mTextHeight;
+} AccChildData;
+
 [object,
  uuid(IGECKOBACKCHANNEL_IID),
  pointer_default(unique)]
@@ -152,6 +169,17 @@ interface IGeckoBackChannel : IUnknown
 {
   [propput] HRESULT HandlerControl([in] long aPid, [in] IHandlerControl* aCtrl);
   HRESULT Refresh([out] DynamicIA2Data* aOutData);
+  [propget] HRESULT AllTextInfo([out] BSTR* aText,
+    [out, size_is(,*aNHyperlinks)] IAccessibleHyperlink*** aHyperlinks,
+    [out] long* aNHyperlinks,
+    [out, size_is(,*aNAttribRuns)] IA2TextSegment** aAttribRuns,
+    [out] long* aNAttribRuns);
+  [propget] HRESULT RelationsInfo(
+    [out, size_is(,*aNRelations)] IARelationData** aRelations,
+    [out] long* aNRelations);
+  [propget] HRESULT AllChildren(
+    [out, size_is(,*aNChildren)] AccChildData** aChildren,
+    [out] ULONG* aNChildren);
 }
 
 [uuid(1e545f07-f108-4912-9471-546827a80983)]

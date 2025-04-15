@@ -119,7 +119,7 @@ const char *gInaccessibleProperties[] = {
     "-moz-window-opacity", // chrome-only internal properties
     "-moz-window-transform", // chrome-only internal properties
     "-moz-window-transform-origin", // chrome-only internal properties
-    "-moz-window-shadow" // chrome-only internal properties
+    "-moz-window-shadow", // chrome-only internal properties
 };
 
 inline int

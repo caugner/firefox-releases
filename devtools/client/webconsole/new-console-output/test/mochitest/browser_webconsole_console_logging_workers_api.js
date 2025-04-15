@@ -3,37 +3,26 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
+/* import-globals-from head.js */
+
 // Tests that the basic console.log()-style APIs and filtering work for
 // sharedWorkers
 
 "use strict";
 
 const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
-                 "test/test-console-workers.html";
+                 "new-console-output/test/mochitest/test-console-workers.html";
 
-add_task(function* () {
-  yield loadTab(TEST_URI);
+add_task(async function () {
+  const hud = await openNewTabAndConsole(TEST_URI);
+  const message = await waitFor(() => findMessage(hud, "foo-bar-shared-worker"));
+  is(
+    message.querySelector(".message-body").textContent,
+    `foo-bar-shared-worker Object { foo: "bar" }`,
+    "log from SharedWorker is displayed as expected"
+  );
 
-  let hud = yield openConsole();
-
-  yield waitForMessages({
-    webconsole: hud,
-    messages: [{
-      text: "foo-bar-shared-worker"
-    }],
-  });
-
-  hud.setFilterState("sharedworkers", false);
-
-  is(hud.outputNode.querySelectorAll(".filtered-by-type").length, 1,
-     "1 message hidden for sharedworkers (logging turned off)");
-
-  hud.setFilterState("sharedworkers", true);
-
-  is(hud.outputNode.querySelectorAll(".filtered-by-type").length, 0,
-     "1 message shown for sharedworkers (logging turned on)");
-
-  hud.setFilterState("sharedworkers", false);
-
+  let onMessagesCleared = hud.jsterm.once("messages-cleared");
   hud.jsterm.clearOutput(true);
+  await onMessagesCleared;
 });

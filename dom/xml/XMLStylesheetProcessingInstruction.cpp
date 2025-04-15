@@ -87,10 +87,12 @@ XMLStylesheetProcessingInstruction::SetNodeValueInternal(const nsAString& aNodeV
 
 // nsStyleLinkElement
 
-NS_IMETHODIMP
+void
 XMLStylesheetProcessingInstruction::GetCharset(nsAString& aCharset)
 {
-  return GetAttrValue(nsGkAtoms::charset, aCharset) ? NS_OK : NS_ERROR_FAILURE;
+  if (!GetAttrValue(nsGkAtoms::charset, aCharset)) {
+    aCharset.Truncate();
+  }
 }
 
 /* virtual */ void
@@ -161,6 +163,8 @@ XMLStylesheetProcessingInstruction::GetStyleSheetInfo(nsAString& aTitle,
 
   nsContentUtils::GetPseudoAttributeValue(data, nsGkAtoms::media, aMedia);
 
+  // Make sure the type handling here matches
+  // nsXMLContentSink::HandleProcessingInstruction
   nsAutoString type;
   nsContentUtils::GetPseudoAttributeValue(data, nsGkAtoms::type, type);
 

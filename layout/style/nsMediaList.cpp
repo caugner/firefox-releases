@@ -29,7 +29,7 @@ int32_t DoCompare(Numeric a, Numeric b)
 }
 
 bool
-nsMediaExpression::Matches(nsPresContext *aPresContext,
+nsMediaExpression::Matches(nsPresContext* aPresContext,
                            const nsCSSValue& aActualValue) const
 {
   const nsCSSValue& actual = aActualValue;
@@ -164,9 +164,9 @@ nsMediaExpression::Matches(nsPresContext *aPresContext,
       break;
     case nsMediaFeature::eIdent:
       {
-        NS_ASSERTION(actual.GetUnit() == eCSSUnit_Ident,
+        NS_ASSERTION(actual.GetUnit() == eCSSUnit_AtomIdent,
                      "bad actual value");
-        NS_ASSERTION(required.GetUnit() == eCSSUnit_Ident,
+        NS_ASSERTION(required.GetUnit() == eCSSUnit_AtomIdent,
                      "bad required value");
         NS_ASSERTION(mFeature->mRangeType == nsMediaFeature::eMinMaxNotAllowed,
                      "bad range");
@@ -221,7 +221,7 @@ nsMediaQueryResultCacheKey::Matches(nsPresContext* aPresContext) const
     const FeatureEntry *entry = &mFeatureCache[i];
     nsCSSValue actual;
 
-    entry->mFeature->mGetter(aPresContext, entry->mFeature, actual);
+    entry->mFeature->mGetter(aPresContext->Document(), entry->mFeature, actual);
 
     for (uint32_t j = 0; j < entry->mExpressions.Length(); ++j) {
       const ExpressionEntry &eentry = entry->mExpressions[j];
@@ -447,9 +447,7 @@ nsMediaQuery::AppendToString(nsAString& aString) const
               aString);
           break;
         case nsMediaFeature::eIdent:
-          NS_ASSERTION(expr.mValue.GetUnit() == eCSSUnit_Ident,
-                       "bad unit");
-          aString.Append(expr.mValue.GetStringBufferValue());
+          expr.mValue.AppendToString(eCSSProperty_DOM, aString);
           break;
       }
     }
@@ -476,7 +474,7 @@ nsMediaQuery::Matches(nsPresContext* aPresContext,
   for (uint32_t i = 0, i_end = mExpressions.Length(); match && i < i_end; ++i) {
     const nsMediaExpression &expr = mExpressions[i];
     nsCSSValue actual;
-    expr.mFeature->mGetter(aPresContext, expr.mFeature, actual);
+    expr.mFeature->mGetter(aPresContext->Document(), expr.mFeature, actual);
 
     match = expr.Matches(aPresContext, actual);
     if (aKey) {

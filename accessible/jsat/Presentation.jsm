@@ -6,24 +6,22 @@
 
 "use strict";
 
-const {utils: Cu, interfaces: Ci} = Components;
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/accessibility/Utils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Logger", // jshint ignore:line
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/accessibility/Utils.jsm");
+ChromeUtils.defineModuleGetter(this, "Logger", // jshint ignore:line
   "resource://gre/modules/accessibility/Utils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PivotContext", // jshint ignore:line
+ChromeUtils.defineModuleGetter(this, "PivotContext", // jshint ignore:line
   "resource://gre/modules/accessibility/Utils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "UtteranceGenerator", // jshint ignore:line
+ChromeUtils.defineModuleGetter(this, "UtteranceGenerator", // jshint ignore:line
   "resource://gre/modules/accessibility/OutputGenerator.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "BrailleGenerator", // jshint ignore:line
+ChromeUtils.defineModuleGetter(this, "BrailleGenerator", // jshint ignore:line
   "resource://gre/modules/accessibility/OutputGenerator.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Roles", // jshint ignore:line
+ChromeUtils.defineModuleGetter(this, "Roles", // jshint ignore:line
   "resource://gre/modules/accessibility/Constants.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "States", // jshint ignore:line
+ChromeUtils.defineModuleGetter(this, "States", // jshint ignore:line
   "resource://gre/modules/accessibility/Constants.jsm");
 
-this.EXPORTED_SYMBOLS = ["Presentation"]; // jshint ignore:line
+var EXPORTED_SYMBOLS = ["Presentation"]; // jshint ignore:line
 
 /**
  * The interface for all presenter classes. A presenter could be, for example,
@@ -169,7 +167,7 @@ VisualPresenter.prototype.viewportChanged =
         type: this.type,
         details: {
           eventType: "viewport-change",
-          bounds: bounds,
+          bounds,
           padding: this.BORDER_PADDING
         }
       };
@@ -198,7 +196,7 @@ VisualPresenter.prototype.pivotChanged =
         type: this.type,
         details: {
           eventType: "vc-change",
-          bounds: bounds,
+          bounds,
           padding: this.BORDER_PADDING
         }
       };
@@ -297,7 +295,7 @@ AndroidPresenter.prototype.pivotChanged =
                          clickable: aContext.accessible.actionCount > 0,
                          checkable: state.contains(States.CHECKABLE),
                          checked: state.contains(States.CHECKED),
-                         brailleOutput: brailleOutput});
+                         brailleOutput});
     }
 
 
@@ -323,7 +321,7 @@ AndroidPresenter.prototype.actionInvoked =
       type: this.type,
       details: [{
         eventType: this.ANDROID_VIEW_CLICKED,
-        text: text,
+        text,
         checked: state.contains(States.CHECKED)
       }]
     };
@@ -382,7 +380,7 @@ AndroidPresenter.prototype.textSelectionChanged =
         fromIndex: aStart,
         toIndex: aEnd,
         itemCount: aText.length,
-        brailleOutput: brailleOutput
+        brailleOutput
       });
     }
 
@@ -674,7 +672,7 @@ BraillePresenter.prototype.textSelectionChanged =
     };
   };
 
-this.Presentation = { // jshint ignore:line
+var Presentation = { // jshint ignore:line
   get presenters() {
     delete this.presenters;
     let presenterMap = {

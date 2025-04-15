@@ -5,8 +5,6 @@
  * Tests that preferences are properly set by distribution.ini
  */
 
-Cu.import("resource://gre/modules/LoadContextInfo.jsm");
-
 // Import common head.
 var commonFile = do_get_file("../../../../toolkit/components/places/tests/head_common.js", false);
 /* import-globals-from ../../../../toolkit/components/places/tests/head_common.js */
@@ -79,7 +77,7 @@ function run_test() {
   run_next_test();
 }
 
-do_register_cleanup(function() {
+registerCleanupFunction(function() {
   // Remove the distribution dir, even if the test failed, otherwise all
   // next tests will use it.
   let distDir = gProfD.clone();

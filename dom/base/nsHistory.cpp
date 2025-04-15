@@ -34,13 +34,11 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(nsHistory)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsHistory)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
   NS_INTERFACE_MAP_ENTRY(nsISupports)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMHistory) // Empty, needed for extension compat
 NS_INTERFACE_MAP_END
 
 nsHistory::nsHistory(nsPIDOMWindowInner* aInnerWindow)
   : mInnerWindow(do_GetWeakReference(aInnerWindow))
 {
-  MOZ_ASSERT(aInnerWindow->IsInnerWindow());
 }
 
 nsHistory::~nsHistory()
@@ -79,7 +77,7 @@ nsHistory::GetLength(ErrorResult& aRv) const
   }
 
   int32_t len;
-  nsresult rv = sHistory->GetGlobalCount(&len);
+  nsresult rv = sHistory->GetCount(&len);
 
   if (NS_FAILED(rv)) {
     aRv.Throw(rv);
@@ -191,9 +189,8 @@ nsHistory::Go(int32_t aDelta, ErrorResult& aRv)
 
       nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
 
-      nsIPresShell *shell;
       nsPresContext *pcx;
-      if (doc && (shell = doc->GetShell()) && (pcx = shell->GetPresContext())) {
+      if (doc && (pcx = doc->GetPresContext())) {
         pcx->RebuildAllStyleData(NS_STYLE_HINT_REFLOW, eRestyle_Subtree);
       }
 
@@ -211,8 +208,8 @@ nsHistory::Go(int32_t aDelta, ErrorResult& aRv)
 
   int32_t curIndex = -1;
   int32_t len = 0;
-  session_history->GetGlobalIndex(&curIndex);
-  session_history->GetGlobalCount(&len);
+  session_history->GetIndex(&curIndex);
+  session_history->GetCount(&len);
 
   int32_t index = curIndex + aDelta;
   if (index > -1 && index < len)

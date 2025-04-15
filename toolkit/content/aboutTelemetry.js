@@ -4,23 +4,19 @@
 
 "use strict";
 
-var Ci = Components.interfaces;
-var Cc = Components.classes;
-var Cu = Components.utils;
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/TelemetryTimestamps.jsm");
+ChromeUtils.import("resource://gre/modules/TelemetryController.jsm");
+ChromeUtils.import("resource://gre/modules/TelemetryArchive.jsm");
+ChromeUtils.import("resource://gre/modules/TelemetryUtils.jsm");
+ChromeUtils.import("resource://gre/modules/TelemetryLog.jsm");
+ChromeUtils.import("resource://gre/modules/Preferences.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/TelemetryTimestamps.jsm");
-Cu.import("resource://gre/modules/TelemetryController.jsm");
-Cu.import("resource://gre/modules/TelemetryArchive.jsm");
-Cu.import("resource://gre/modules/TelemetryUtils.jsm");
-Cu.import("resource://gre/modules/TelemetryLog.jsm");
-Cu.import("resource://gre/modules/Preferences.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
-                                  "resource://gre/modules/AppConstants.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
-                                  "resource://gre/modules/Preferences.jsm");
+ChromeUtils.defineModuleGetter(this, "AppConstants",
+                               "resource://gre/modules/AppConstants.jsm");
+ChromeUtils.defineModuleGetter(this, "Preferences",
+                               "resource://gre/modules/Preferences.jsm");
 
 const Telemetry = Services.telemetry;
 const bundle = Services.strings.createBundle(
@@ -35,7 +31,7 @@ const PREF_TELEMETRY_SERVER_OWNER = "toolkit.telemetry.server_owner";
 const PREF_TELEMETRY_ENABLED = "toolkit.telemetry.enabled";
 const PREF_DEBUG_SLOW_SQL = "toolkit.telemetry.debugSlowSql";
 const PREF_SYMBOL_SERVER_URI = "profiler.symbolicationUrl";
-const DEFAULT_SYMBOL_SERVER_URI = "http://symbolapi.mozilla.org";
+const DEFAULT_SYMBOL_SERVER_URI = "https://symbols.mozilla.org/symbolicate/v4";
 const PREF_FHR_UPLOAD_ENABLED = "datareporting.healthreport.uploadEnabled";
 
 // ms idle before applying the filter (allow uninterrupted typing)
@@ -99,7 +95,7 @@ function explodeObject(obj) {
 function filterObject(obj, filterOut) {
   let ret = {};
   for (let k of Object.keys(obj)) {
-    if (filterOut.indexOf(k) == -1) {
+    if (!filterOut.includes(k)) {
       ret[k] = obj[k];
     }
   }
@@ -190,7 +186,7 @@ var Settings = {
     for (let el of elements) {
       el.addEventListener("click", function() {
         if (AppConstants.platform == "android") {
-          Cu.import("resource://gre/modules/Messaging.jsm");
+          ChromeUtils.import("resource://gre/modules/Messaging.jsm");
           EventDispatcher.instance.sendRequest({
             type: "Settings:Show",
             resource: "preferences_privacy",
@@ -237,7 +233,7 @@ var Settings = {
   },
 
   convertStringToLink(string) {
-    return "<a href=\"\" class=\"change-data-choices-link\">" + string + "</a>";
+    return "<a href=\"#\" class=\"change-data-choices-link\">" + string + "</a>";
   },
 };
 
@@ -424,7 +420,7 @@ var PingPicker = {
     for (let p of this._archivedPings) {
       pingTypes.add(p.type);
       const pingDate = new Date(p.timestampCreated);
-      const datetimeText = Services.intl.createDateTimeFormat(undefined, {
+      const datetimeText = new Services.intl.DateTimeFormat(undefined, {
           dateStyle: "short",
           timeStyle: "medium"
         }).format(pingDate);
@@ -515,6 +511,8 @@ var PingPicker = {
           first = false;
         }
         option.hidden = (type != this.TYPE_ALL) && (option.dataset.type != type);
+        // Arrow keys should only iterate over visible options
+        option.disabled = option.hidden;
       });
     });
     this._updateArchivedPingData();
@@ -1060,16 +1058,15 @@ var ChromeHangs = {
   /**
    * Renders raw chrome hang data
    */
-  render: function ChromeHangs_render(payload) {
-    let hangs = payload.chromeHangs;
-    setHasData("chrome-hangs-section", !!hangs);
-    if (!hangs) {
+  render: function ChromeHangs_render(chromeHangs) {
+    setHasData("chrome-hangs-section", !!chromeHangs);
+    if (!chromeHangs) {
       return;
     }
 
-    let stacks = hangs.stacks;
-    let memoryMap = hangs.memoryMap;
-    let durations = hangs.durations;
+    let stacks = chromeHangs.stacks;
+    let memoryMap = chromeHangs.memoryMap;
+    let durations = chromeHangs.durations;
 
     StackRenderer.renderStacks("chrome-hangs", stacks, memoryMap,
                                (index) => this.renderHangHeader(index, durations));
@@ -1152,7 +1149,6 @@ var Histogram = {
     outerDiv.appendChild(divStats);
 
     if (isRTL()) {
-      hgram.buckets.reverse();
       hgram.values.reverse();
     }
 
@@ -1282,13 +1278,15 @@ var Search = {
 
   // A list of ids of sections that do not support search.
   blacklist: [
+    "late-writes-section",
+    "chrome-hangs-section",
     "raw-payload-section"
   ],
 
   // Pass if: all non-empty array items match (case-sensitive)
   isPassText(subject, filter) {
     for (let item of filter) {
-      if (item.length && subject.indexOf(item) < 0) {
+      if (item.length && !subject.includes(item)) {
         return false; // mismatch and not a spurious space
       }
     }
@@ -1460,6 +1458,7 @@ var Search = {
 
   homeSearch(text) {
     changeUrlSearch(text);
+    removeSearchSectionTitles();
     if (text === "") {
       this.resetHome();
       return;
@@ -1475,7 +1474,13 @@ var Search = {
       }
       section.classList.add("active");
       let sectionHidden = this.search(text, section);
-      if (noSearchResults && !sectionHidden) {
+      if (!sectionHidden) {
+        let sectionTitle = document.querySelector(`.category[value="${section.id}"] .category-name`).textContent;
+        let sectionDataDiv = document.querySelector(`#${section.id}.has-data.active .data`);
+        let titleDiv = document.createElement("h1");
+        titleDiv.classList.add("data", "search-section-title");
+        titleDiv.textContent = sectionTitle;
+        section.insertBefore(titleDiv, sectionDataDiv);
         noSearchResults = false;
       }
     });
@@ -1874,6 +1879,7 @@ function displayProcessesSelector(selectedSection) {
 }
 
 function refreshSearch() {
+  removeSearchSectionTitles();
   let selectedSection = document.querySelector(".category.selected").getAttribute("value");
   let search = document.getElementById("search");
   if (!Search.blacklist.includes(selectedSection)) {
@@ -1882,12 +1888,19 @@ function refreshSearch() {
 }
 
 function adjustSearchState() {
+  removeSearchSectionTitles();
   let selectedSection = document.querySelector(".category.selected").getAttribute("value");
   let search = document.getElementById("search");
   search.value = "";
   search.hidden = Search.blacklist.includes(selectedSection);
   document.getElementById("no-search-results").classList.add("hidden");
   Search.search(""); // reinitialize search state.
+}
+
+function removeSearchSectionTitles() {
+    for (let sectionTitleDiv of Array.from(document.getElementsByClassName("search-section-title"))) {
+        sectionTitleDiv.remove();
+    }
 }
 
 function adjustSection() {
@@ -1982,9 +1995,6 @@ function show(selected) {
   });
   selected_section.classList.add("active");
 
-  // Hack because subsection text appear selected. See Bug 1375114.
-  document.getSelection().empty();
-
   adjustHeaderState();
   displayProcessesSelector(selectedValue);
   adjustSearchState();
@@ -2009,7 +2019,6 @@ function showSubSection(selected) {
   let title = selected.parentElement.querySelector(".category-name").textContent;
   let subsection = selected.textContent;
   document.getElementById("sectionTitle").textContent = title + " - " + subsection;
-  document.getSelection().empty(); // prevent subsection text selection
   changeUrlPath(subsection, true);
 }
 
@@ -2058,7 +2067,7 @@ function setupListeners() {
         return;
       }
 
-      ChromeHangs.render(gPingData);
+      ChromeHangs.render(gPingData.payload.chromeHangs);
   });
 
   document.getElementById("captured-stacks-fetch-symbols").addEventListener("click",
@@ -2208,10 +2217,10 @@ var HistogramSection = {
     }
 
     let hasData = Array.from(hgramsSelect.options).some((option) => {
-      if (option == "parent") {
+      let value = option.getAttribute("value");
+      if (value == "parent") {
         return Object.keys(aPayload.histograms).length > 0;
       }
-      let value = option.getAttribute("value");
       let histos = aPayload.processes[value].histograms;
       return histos && Object.keys(histos).length > 0;
     });
@@ -2242,10 +2251,10 @@ var KeyedHistogramSection = {
     }
 
     let hasData = Array.from(keyedHgramsSelect.options).some((option) => {
-      if (option == "parent") {
+      let value = option.getAttribute("value");
+      if (value == "parent") {
         return Object.keys(aPayload.keyedHistograms).length > 0;
       }
-      let value = option.getAttribute("value");
       let keyedHistos = aPayload.processes[value].keyedHistograms;
       return keyedHistos && Object.keys(keyedHistos).length > 0;
     });
@@ -2492,7 +2501,7 @@ function displayRichPingData(ping, updatePayloadList) {
   }
 
   // Show chrome hang stacks
-  ChromeHangs.render(payload);
+  ChromeHangs.render(payload.chromeHangs);
 
   // Show telemetry log.
   TelLog.render(payload);

@@ -63,15 +63,12 @@ public:
     LayoutDeviceRect layoutBoundsRect = LayoutDeviceRect::FromAppUnits(
         aBounds, appUnitsPerDevPixel);
     LayoutDeviceRect layoutClipRect = layoutBoundsRect;
-
-    auto clip = aItem->GetClip();
-    if (clip.HasClip()) {
-      layoutClipRect = LayoutDeviceRect::FromAppUnits(
-                  clip.GetClipRect(), appUnitsPerDevPixel);
-    }
-
     mBoundsRect = aSc.ToRelativeLayoutRect(layoutBoundsRect);
-    mClipRect = aSc.ToRelativeLayoutRect(layoutClipRect);
+
+    // Add 1 pixel of dirty area around clip rect to allow us to paint
+    // antialiased pixels beyond the measured text extents.
+    layoutClipRect.Inflate(1);
+    mClipStack.AppendElement(layoutClipRect);
 
     mBackfaceVisible = !aItem->BackfaceIsHidden();
 
@@ -94,6 +91,41 @@ public:
   void FoundUnsupportedFeature() { mHasUnsupportedFeatures = true; }
   bool HasUnsupportedFeatures() { return mHasUnsupportedFeatures; }
 
+  wr::FontInstanceFlags GetWRGlyphFlags() const { return mWRGlyphFlags; }
+  void SetWRGlyphFlags(wr::FontInstanceFlags aFlags) { mWRGlyphFlags = aFlags; }
+
+  class AutoRestoreWRGlyphFlags
+  {
+  public:
+    ~AutoRestoreWRGlyphFlags()
+    {
+      if (mTarget) {
+        mTarget->SetWRGlyphFlags(mFlags);
+      }
+    }
+
+    void Save(TextDrawTarget* aTarget)
+    {
+      // This allows for recursive saves, in case the flags need to be modified
+      // under multiple conditions (i.e. transforms and synthetic italics),
+      // since the flags will be restored to the first saved value in the
+      // destructor on scope exit.
+      if (!mTarget) {
+        // Only record the first save with the original flags that will be restored.
+        mTarget = aTarget;
+        mFlags = aTarget->GetWRGlyphFlags();
+      } else {
+        // Ensure that this is actually a recursive save to the same target
+        MOZ_ASSERT(mTarget == aTarget,
+                   "Recursive save of WR glyph flags to different TextDrawTargets");
+      }
+    }
+
+  private:
+    TextDrawTarget* mTarget = nullptr;
+    wr::FontInstanceFlags mFlags = {0};
+  };
+
   // This overload just stores the glyphs/font/color.
   void
   FillGlyphs(ScaledFont* aFont,
@@ -105,8 +137,6 @@ public:
     MOZ_RELEASE_ASSERT(aOptions.mCompositionOp == CompositionOp::OP_OVER);
     MOZ_RELEASE_ASSERT(aOptions.mAlpha == 1.0f);
     MOZ_RELEASE_ASSERT(aPattern.GetType() == PatternType::COLOR);
-    auto* colorPat = static_cast<const ColorPattern*>(&aPattern);
-    auto color = wr::ToColorF(colorPat->mColor);
 
     // Make sure the font exists, and can be serialized
     MOZ_RELEASE_ASSERT(aFont);
@@ -115,42 +145,53 @@ public:
       return;
     }
 
-    // 170 is the maximum size gfxFont is expected to hand us
-    AutoTArray<wr::GlyphInstance, 170> glyphs;
-    glyphs.SetLength(aBuffer.mNumGlyphs);
-
-    for (size_t i = 0; i < aBuffer.mNumGlyphs; i++) {
-      wr::GlyphInstance& targetGlyph = glyphs[i];
-      const gfx::Glyph& sourceGlyph = aBuffer.mGlyphs[i];
-      targetGlyph.index = sourceGlyph.mIndex;
-      targetGlyph.point = mSc.ToRelativeLayoutPoint(
-          LayoutDevicePoint::FromUnknownPoint(sourceGlyph.mPosition));
-    }
+    auto* colorPat = static_cast<const ColorPattern*>(&aPattern);
+    auto color = wr::ToColorF(colorPat->mColor);
+    MOZ_ASSERT(aBuffer.mNumGlyphs);
+    auto glyphs = Range<const wr::GlyphInstance>(reinterpret_cast<const wr::GlyphInstance*>(aBuffer.mGlyphs), aBuffer.mNumGlyphs);
+    // MSVC won't let us use offsetof on the following directly so we give it a
+    // name with typedef
+    typedef std::remove_reference<decltype(aBuffer.mGlyphs[0])>::type GlyphType;
+    // Compare gfx::Glyph and wr::GlyphInstance to make sure that they are
+    // structurally equivalent to ensure that our cast above was ok
+    static_assert(std::is_same<decltype(aBuffer.mGlyphs[0].mIndex), decltype(glyphs[0].index)>()
+                  && std::is_same<decltype(aBuffer.mGlyphs[0].mPosition.x), decltype(glyphs[0].point.x)>()
+                  && std::is_same<decltype(aBuffer.mGlyphs[0].mPosition.y), decltype(glyphs[0].point.y)>()
+                  && offsetof(GlyphType, mIndex) == offsetof(wr::GlyphInstance, index)
+                  && offsetof(GlyphType, mPosition) == offsetof(wr::GlyphInstance, point)
+                  && offsetof(decltype(aBuffer.mGlyphs[0].mPosition), x) == offsetof(decltype(glyphs[0].point), x)
+                  && offsetof(decltype(aBuffer.mGlyphs[0].mPosition), y) == offsetof(decltype(glyphs[0].point), y)
+                  && std::is_standard_layout<std::remove_reference<decltype(aBuffer.mGlyphs[0])>>::value
+                  && std::is_standard_layout<std::remove_reference<decltype(glyphs[0])>>::value
+                  && sizeof(aBuffer.mGlyphs[0]) == sizeof(glyphs[0])
+                  && sizeof(aBuffer.mGlyphs[0].mPosition) == sizeof(glyphs[0].point)
+                  , "glyph buf types don't match");
 
     wr::GlyphOptions glyphOptions;
     glyphOptions.render_mode = wr::ToFontRenderMode(aOptions.mAntialiasMode, GetPermitSubpixelAA());
+    glyphOptions.flags = mWRGlyphFlags;
 
-    mManager->WrBridge()->PushGlyphs(mBuilder, glyphs, aFont,
-                                     color, mSc, mBoundsRect, mClipRect,
-                                     mBackfaceVisible, &glyphOptions);
+    mManager->WrBridge()->PushGlyphs(mBuilder, glyphs, aFont, color, mSc,
+                                     mBoundsRect, ClipRect(), mBackfaceVisible,
+                                     &glyphOptions);
   }
 
   void
   PushClipRect(const Rect &aRect) override {
-    auto rect = mSc.ToRelativeLayoutRect(LayoutDeviceRect::FromUnknownRect(aRect));
-    auto clipId = mBuilder.DefineClip(Nothing(), Nothing(), rect);
-    mBuilder.PushClip(clipId);
+    LayoutDeviceRect rect = LayoutDeviceRect::FromUnknownRect(aRect);
+    rect = rect.Intersect(mClipStack.LastElement());
+    mClipStack.AppendElement(rect);
   }
 
   void
   PopClip() override {
-    mBuilder.PopClip();
+    mClipStack.RemoveElementAt(mClipStack.Length() - 1);
   }
 
   void
   AppendShadow(const wr::Shadow& aShadow)
   {
-    mBuilder.PushShadow(mBoundsRect, mClipRect, mBackfaceVisible, aShadow);
+    mBuilder.PushShadow(mBoundsRect, ClipRect(), mBackfaceVisible, aShadow);
     mHasShadows = true;
   }
 
@@ -168,7 +209,7 @@ public:
   {
     auto rect = wr::ToLayoutRect(aRect);
     auto color = wr::ToColorF(aColor);
-    mBuilder.PushRect(rect, mClipRect, mBackfaceVisible, color);
+    mBuilder.PushRect(rect, ClipRect(), mBackfaceVisible, color);
   }
 
 
@@ -230,7 +271,7 @@ public:
         MOZ_CRASH("TextDrawTarget received unsupported line style");
     }
 
-    mBuilder.PushLine(mClipRect, mBackfaceVisible, decoration);
+    mBuilder.PushLine(ClipRect(), mBackfaceVisible, decoration);
   }
 
   // Seperated out from AppendDecoration because Wavy Lines are completely
@@ -253,10 +294,14 @@ public:
       : wr::LineOrientation::Horizontal;
     decoration.style = wr::LineStyle::Wavy;
 
-    mBuilder.PushLine(mClipRect, mBackfaceVisible, decoration);
+    mBuilder.PushLine(ClipRect(), mBackfaceVisible, decoration);
   }
 
 private:
+  wr::LayerRect ClipRect()
+  {
+    return mSc.ToRelativeLayoutRect(mClipStack.LastElement());
+  }
   // Whether anything unsupported was encountered. Currently:
   //
   // * Synthetic bold/italics
@@ -278,8 +323,10 @@ private:
 
   // Computed facts
   wr::LayerRect mBoundsRect;
-  wr::LayerRect mClipRect;
+  nsTArray<LayoutDeviceRect> mClipStack;
   bool mBackfaceVisible;
+
+  wr::FontInstanceFlags mWRGlyphFlags = {0};
 
   // The rest of this is dummy implementations of DrawTarget's API
 public:
@@ -305,7 +352,7 @@ public:
     return nullptr;
   }
 
-  IntSize GetSize() override {
+  IntSize GetSize() const override {
     MOZ_CRASH("TextDrawTarget: Method shouldn't be called");
     return IntSize(1, 1);
   }
@@ -356,14 +403,48 @@ public:
   void FillRect(const Rect &aRect,
                 const Pattern &aPattern,
                 const DrawOptions &aOptions = DrawOptions()) override {
-    MOZ_CRASH("TextDrawTarget: Method shouldn't be called");
+    MOZ_RELEASE_ASSERT(aPattern.GetType() == PatternType::COLOR);
+
+    auto rect = mSc.ToRelativeLayoutRect(LayoutDeviceRect::FromUnknownRect(aRect));
+    auto color = wr::ToColorF(static_cast<const ColorPattern&>(aPattern).mColor);
+    mBuilder.PushRect(rect, ClipRect(), mBackfaceVisible, color);
   }
 
   void StrokeRect(const Rect &aRect,
                   const Pattern &aPattern,
                   const StrokeOptions &aStrokeOptions,
                   const DrawOptions &aOptions) override {
-    MOZ_CRASH("TextDrawTarget: Method shouldn't be called");
+    MOZ_RELEASE_ASSERT(aPattern.GetType() == PatternType::COLOR &&
+                       aStrokeOptions.mDashLength == 0);
+
+    wr::Line line;
+    line.wavyLineThickness = 0; // dummy value, unused
+    line.color = wr::ToColorF(static_cast<const ColorPattern&>(aPattern).mColor);
+    line.style = wr::LineStyle::Solid;
+
+    // Top horizontal line
+    LayoutDevicePoint top(aRect.x, aRect.y - aStrokeOptions.mLineWidth / 2);
+    LayoutDeviceSize horiSize(aRect.width, aStrokeOptions.mLineWidth);
+    line.bounds = mSc.ToRelativeLayoutRect(LayoutDeviceRect(top, horiSize));
+    line.orientation = wr::LineOrientation::Horizontal;
+    mBuilder.PushLine(ClipRect(), mBackfaceVisible, line);
+
+    // Bottom horizontal line
+    LayoutDevicePoint bottom(aRect.x, aRect.YMost() - aStrokeOptions.mLineWidth / 2);
+    line.bounds = mSc.ToRelativeLayoutRect(LayoutDeviceRect(bottom, horiSize));
+    mBuilder.PushLine(ClipRect(), mBackfaceVisible, line);
+
+    // Left vertical line
+    LayoutDevicePoint left(aRect.x + aStrokeOptions.mLineWidth / 2, aRect.y + aStrokeOptions.mLineWidth / 2);
+    LayoutDeviceSize vertSize(aStrokeOptions.mLineWidth, aRect.height - aStrokeOptions.mLineWidth);
+    line.bounds = mSc.ToRelativeLayoutRect(LayoutDeviceRect(left, vertSize));
+    line.orientation = wr::LineOrientation::Vertical;
+    mBuilder.PushLine(ClipRect(), mBackfaceVisible, line);
+
+    // Right vertical line
+    LayoutDevicePoint right(aRect.XMost() - aStrokeOptions.mLineWidth / 2, aRect.y + aStrokeOptions.mLineWidth / 2);
+    line.bounds = mSc.ToRelativeLayoutRect(LayoutDeviceRect(right, vertSize));
+    mBuilder.PushLine(ClipRect(), mBackfaceVisible, line);
   }
 
   void StrokeLine(const Point &aStart,

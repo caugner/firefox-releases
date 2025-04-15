@@ -1,13 +1,13 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://services-common/utils.js");
-Cu.import("resource://services-sync/service.js");
-Cu.import("resource://services-sync/util.js");
-Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://services-common/utils.js");
+ChromeUtils.import("resource://services-sync/service.js");
+ChromeUtils.import("resource://services-sync/util.js");
+ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const logsdir            = FileUtils.getDir("ProfD", ["weave", "logs"], true);
 
@@ -18,25 +18,10 @@ const logsdir            = FileUtils.getDir("ProfD", ["weave", "logs"], true);
 const CLEANUP_DELAY      = 2000;
 const DELAY_BUFFER       = 500; // Buffer for timers on different OS platforms.
 
-const PROLONGED_ERROR_DURATION =
-  (Svc.Prefs.get("errorhandler.networkFailureReportTimeout") * 2) * 1000;
-
 var errorHandler = Service.errorHandler;
 
-function setLastSync(lastSyncValue) {
-  Svc.Prefs.set("lastSync", (new Date(Date.now() - lastSyncValue)).toString());
-}
-
 function run_test() {
-  initTestLogging("Trace");
-
-  Log.repository.getLogger("Sync.LogManager").level = Log.Level.Trace;
-  Log.repository.getLogger("Sync.Service").level = Log.Level.Trace;
-  Log.repository.getLogger("Sync.SyncScheduler").level = Log.Level.Trace;
-  Log.repository.getLogger("Sync.ErrorHandler").level = Log.Level.Trace;
-
   validate_all_future_pings();
-
   run_next_test();
 }
 
@@ -74,7 +59,7 @@ add_test(function test_logOnSuccess_false() {
   Svc.Obs.add("weave:service:reset-file-log", function onResetFileLog() {
     Svc.Obs.remove("weave:service:reset-file-log", onResetFileLog);
     // No log file was written.
-    do_check_false(logsdir.directoryEntries.hasMoreElements());
+    Assert.ok(!logsdir.directoryEntries.hasMoreElements());
 
     Svc.Prefs.resetBranch("");
     run_next_test();
@@ -107,16 +92,16 @@ add_test(function test_logOnSuccess_true() {
 
     // Exactly one log file was written.
     let entries = logsdir.directoryEntries;
-    do_check_true(entries.hasMoreElements());
+    Assert.ok(entries.hasMoreElements());
     let logfile = entries.getNext().QueryInterface(Ci.nsIFile);
-    do_check_eq(logfile.leafName.slice(-4), ".txt");
-    do_check_true(logfile.leafName.startsWith("success-sync-"), logfile.leafName);
-    do_check_false(entries.hasMoreElements());
+    Assert.equal(logfile.leafName.slice(-4), ".txt");
+    Assert.ok(logfile.leafName.startsWith("success-sync-"), logfile.leafName);
+    Assert.ok(!entries.hasMoreElements());
 
     // Ensure the log message was actually written to file.
     readFile(logfile, function(error, data) {
-      do_check_true(Components.isSuccessCode(error));
-      do_check_neq(data.indexOf(MESSAGE), -1);
+      Assert.ok(Components.isSuccessCode(error));
+      Assert.notEqual(data.indexOf(MESSAGE), -1);
 
       // Clean up.
       try {
@@ -144,14 +129,13 @@ add_test(function test_sync_error_logOnError_false() {
   Svc.Obs.add("weave:service:reset-file-log", function onResetFileLog() {
     Svc.Obs.remove("weave:service:reset-file-log", onResetFileLog);
     // No log file was written.
-    do_check_false(logsdir.directoryEntries.hasMoreElements());
+    Assert.ok(!logsdir.directoryEntries.hasMoreElements());
 
     Svc.Prefs.resetBranch("");
     run_next_test();
   });
 
-  // Fake an unsuccessful sync due to prolonged failure.
-  setLastSync(PROLONGED_ERROR_DURATION);
+  // Fake an unsuccessful sync.
   Svc.Obs.notify("weave:service:sync:error");
 });
 
@@ -167,16 +151,16 @@ add_test(function test_sync_error_logOnError_true() {
 
     // Exactly one log file was written.
     let entries = logsdir.directoryEntries;
-    do_check_true(entries.hasMoreElements());
+    Assert.ok(entries.hasMoreElements());
     let logfile = entries.getNext().QueryInterface(Ci.nsIFile);
-    do_check_eq(logfile.leafName.slice(-4), ".txt");
-    do_check_true(logfile.leafName.startsWith("error-sync-"), logfile.leafName);
-    do_check_false(entries.hasMoreElements());
+    Assert.equal(logfile.leafName.slice(-4), ".txt");
+    Assert.ok(logfile.leafName.startsWith("error-sync-"), logfile.leafName);
+    Assert.ok(!entries.hasMoreElements());
 
     // Ensure the log message was actually written to file.
     readFile(logfile, function(error, data) {
-      do_check_true(Components.isSuccessCode(error));
-      do_check_neq(data.indexOf(MESSAGE), -1);
+      Assert.ok(Components.isSuccessCode(error));
+      Assert.notEqual(data.indexOf(MESSAGE), -1);
 
       // Clean up.
       try {
@@ -191,8 +175,7 @@ add_test(function test_sync_error_logOnError_true() {
     });
   });
 
-  // Fake an unsuccessful sync due to prolonged failure.
-  setLastSync(PROLONGED_ERROR_DURATION);
+  // Fake an unsuccessful sync.
   Svc.Obs.notify("weave:service:sync:error");
 });
 
@@ -205,14 +188,13 @@ add_test(function test_login_error_logOnError_false() {
   Svc.Obs.add("weave:service:reset-file-log", function onResetFileLog() {
     Svc.Obs.remove("weave:service:reset-file-log", onResetFileLog);
     // No log file was written.
-    do_check_false(logsdir.directoryEntries.hasMoreElements());
+    Assert.ok(!logsdir.directoryEntries.hasMoreElements());
 
     Svc.Prefs.resetBranch("");
     run_next_test();
   });
 
-  // Fake an unsuccessful login due to prolonged failure.
-  setLastSync(PROLONGED_ERROR_DURATION);
+  // Fake an unsuccessful login.
   Svc.Obs.notify("weave:service:login:error");
 });
 
@@ -228,16 +210,16 @@ add_test(function test_login_error_logOnError_true() {
 
     // Exactly one log file was written.
     let entries = logsdir.directoryEntries;
-    do_check_true(entries.hasMoreElements());
+    Assert.ok(entries.hasMoreElements());
     let logfile = entries.getNext().QueryInterface(Ci.nsIFile);
-    do_check_eq(logfile.leafName.slice(-4), ".txt");
-    do_check_true(logfile.leafName.startsWith("error-sync-"), logfile.leafName);
-    do_check_false(entries.hasMoreElements());
+    Assert.equal(logfile.leafName.slice(-4), ".txt");
+    Assert.ok(logfile.leafName.startsWith("error-sync-"), logfile.leafName);
+    Assert.ok(!entries.hasMoreElements());
 
     // Ensure the log message was actually written to file.
     readFile(logfile, function(error, data) {
-      do_check_true(Components.isSuccessCode(error));
-      do_check_neq(data.indexOf(MESSAGE), -1);
+      Assert.ok(Components.isSuccessCode(error));
+      Assert.notEqual(data.indexOf(MESSAGE), -1);
 
       // Clean up.
       try {
@@ -252,8 +234,7 @@ add_test(function test_login_error_logOnError_true() {
     });
   });
 
-  // Fake an unsuccessful login due to prolonged failure.
-  setLastSync(PROLONGED_ERROR_DURATION);
+  // Fake an unsuccessful login.
   Svc.Obs.notify("weave:service:login:error");
 });
 
@@ -264,7 +245,7 @@ add_test(function test_noNewFailed_noErrorLog() {
   Svc.Obs.add("weave:service:reset-file-log", function onResetFileLog() {
     Svc.Obs.remove("weave:service:reset-file-log", onResetFileLog);
     // No log file was written.
-    do_check_false(logsdir.directoryEntries.hasMoreElements());
+    Assert.ok(!logsdir.directoryEntries.hasMoreElements());
 
     Svc.Prefs.resetBranch("");
     run_next_test();
@@ -294,16 +275,16 @@ add_test(function test_newFailed_errorLog() {
 
     // Exactly one log file was written.
     let entries = logsdir.directoryEntries;
-    do_check_true(entries.hasMoreElements());
+    Assert.ok(entries.hasMoreElements());
     let logfile = entries.getNext().QueryInterface(Ci.nsIFile);
-    do_check_eq(logfile.leafName.slice(-4), ".txt");
-    do_check_true(logfile.leafName.startsWith("error-sync-"), logfile.leafName);
-    do_check_false(entries.hasMoreElements());
+    Assert.equal(logfile.leafName.slice(-4), ".txt");
+    Assert.ok(logfile.leafName.startsWith("error-sync-"), logfile.leafName);
+    Assert.ok(!entries.hasMoreElements());
 
     // Ensure the log message was actually written to file.
     readFile(logfile, function(error, data) {
-      do_check_true(Components.isSuccessCode(error));
-      do_check_neq(data.indexOf(MESSAGE), -1);
+      Assert.ok(Components.isSuccessCode(error));
+      Assert.notEqual(data.indexOf(MESSAGE), -1);
 
       // Clean up.
       try {
@@ -337,16 +318,16 @@ add_test(function test_errorLog_dumpAddons() {
     Svc.Obs.remove("weave:service:reset-file-log", onResetFileLog);
 
     let entries = logsdir.directoryEntries;
-    do_check_true(entries.hasMoreElements());
+    Assert.ok(entries.hasMoreElements());
     let logfile = entries.getNext().QueryInterface(Ci.nsIFile);
-    do_check_eq(logfile.leafName.slice(-4), ".txt");
-    do_check_true(logfile.leafName.startsWith("error-sync-"), logfile.leafName);
-    do_check_false(entries.hasMoreElements());
+    Assert.equal(logfile.leafName.slice(-4), ".txt");
+    Assert.ok(logfile.leafName.startsWith("error-sync-"), logfile.leafName);
+    Assert.ok(!entries.hasMoreElements());
 
     // Ensure we logged some addon list (which is probably empty)
     readFile(logfile, function(error, data) {
-      do_check_true(Components.isSuccessCode(error));
-      do_check_neq(data.indexOf("Addons installed"), -1);
+      Assert.ok(Components.isSuccessCode(error));
+      Assert.notEqual(data.indexOf("Addons installed"), -1);
 
       // Clean up.
       try {
@@ -361,8 +342,7 @@ add_test(function test_errorLog_dumpAddons() {
     });
   });
 
-  // Fake an unsuccessful sync due to prolonged failure.
-  setLastSync(PROLONGED_ERROR_DURATION);
+  // Fake an unsuccessful sync.
   Svc.Obs.notify("weave:service:sync:error");
 });
 
@@ -394,12 +374,12 @@ add_test(function test_logErrorCleanup_age() {
 
     // Only the newest created log file remains.
     let entries = logsdir.directoryEntries;
-    do_check_true(entries.hasMoreElements());
+    Assert.ok(entries.hasMoreElements());
     let logfile = entries.getNext().QueryInterface(Ci.nsIFile);
-    do_check_true(oldLogs.every(function(e) {
+    Assert.ok(oldLogs.every(function(e) {
       return e != logfile.leafName;
     }));
-    do_check_false(entries.hasMoreElements());
+    Assert.ok(!entries.hasMoreElements());
 
     // Clean up.
     try {

@@ -47,6 +47,9 @@
 #define NS_FONT_DISPLAY_FALLBACK        3
 #define NS_FONT_DISPLAY_OPTIONAL        4
 
+#define NS_FONT_OPTICAL_SIZING_AUTO     0
+#define NS_FONT_OPTICAL_SIZING_NONE     1
+
 #define NS_FONT_VARIANT_ALTERNATES_NORMAL             0
 // alternates - simple enumerated values
 #define NS_FONT_VARIANT_ALTERNATES_HISTORICAL        (1 << 0)
@@ -184,6 +187,7 @@ enum eFontPrefLang {
     #undef FONT_PREF_LANG
 
     , eFontPrefLang_CJKSet  // special code for CJK set
+    , eFontPrefLang_Emoji   // special code for emoji presentation
     , eFontPrefLang_First = eFontPrefLang_Western
     , eFontPrefLang_Last = eFontPrefLang_Others
     , eFontPrefLang_Count = (eFontPrefLang_Last - eFontPrefLang_First + 1)

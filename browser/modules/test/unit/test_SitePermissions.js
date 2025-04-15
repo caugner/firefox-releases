@@ -3,19 +3,31 @@
  */
 "use strict";
 
-Components.utils.import("resource:///modules/SitePermissions.jsm");
-Components.utils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource:///modules/SitePermissions.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const STORAGE_MANAGER_ENABLED = Services.prefs.getBoolPref("browser.storageManager.enabled");
+const RESIST_FINGERPRINTING_ENABLED = Services.prefs.getBoolPref("privacy.resistFingerprinting");
+const MIDI_ENABLED = Services.prefs.getBoolPref("dom.webmidi.enabled");
 
 add_task(async function testPermissionsListing() {
   let expectedPermissions = ["camera", "cookie", "desktop-notification", "focus-tab-by-prompt",
-     "geo", "image", "install", "microphone", "popup", "screen", "shortcuts"];
+     "geo", "image", "install", "microphone", "plugin:flash", "popup", "screen", "shortcuts"];
   if (STORAGE_MANAGER_ENABLED) {
     // The persistent-storage permission is still only pref-on on Nightly
     // so we add it only when it's pref-on.
     // Should remove this checking and add it as default after it is fully pref-on.
     expectedPermissions.push("persistent-storage");
+  }
+  if (RESIST_FINGERPRINTING_ENABLED) {
+    // Canvas permission should be hidden unless privacy.resistFingerprinting
+    // is true.
+    expectedPermissions.push("canvas");
+  }
+  if (MIDI_ENABLED) {
+    // Should remove this checking and add it as default after it is fully pref'd-on.
+    expectedPermissions.push("midi");
+    expectedPermissions.push("midi-sysex");
   }
   Assert.deepEqual(SitePermissions.listPermissions().sort(), expectedPermissions.sort(),
     "Correct list of all permissions");
@@ -108,7 +120,18 @@ add_task(async function testExactHostMatch() {
     // Should remove this checking and add it as default after it is fully pref-on.
     exactHostMatched.push("persistent-storage");
   }
-  let nonExactHostMatched = ["image", "cookie", "popup", "install", "shortcuts"];
+  if (RESIST_FINGERPRINTING_ENABLED) {
+    // Canvas permission should be hidden unless privacy.resistFingerprinting
+    // is true.
+    exactHostMatched.push("canvas");
+  }
+  if (MIDI_ENABLED) {
+    // WebMIDI is only pref'd on in nightly.
+    // Should remove this checking and add it as default after it is fully pref-on.
+    exactHostMatched.push("midi");
+    exactHostMatched.push("midi-sysex");
+  }
+  let nonExactHostMatched = ["image", "cookie", "plugin:flash", "popup", "install", "shortcuts"];
 
   let permissions = SitePermissions.listPermissions();
   for (let permission of permissions) {
@@ -138,7 +161,7 @@ add_task(async function testExactHostMatch() {
 });
 
 add_task(function* testDefaultPrefs() {
-  let uri = Services.io.newURI("https://example.com")
+  let uri = Services.io.newURI("https://example.com");
 
   // Check that without a pref the default return value is UNKNOWN.
   Assert.deepEqual(SitePermissions.get(uri, "camera"), {
@@ -186,5 +209,25 @@ add_task(function* testDefaultPrefs() {
     state: SitePermissions.UNKNOWN,
     scope: SitePermissions.SCOPE_PERSISTENT,
   });
+});
+
+add_task(async function testCanvasPermission() {
+  let resistFingerprinting = Services.prefs.getBoolPref("privacy.resistFingerprinting", false);
+  let uri = Services.io.newURI("https://example.com");
+
+  SitePermissions.set(uri, "canvas", SitePermissions.ALLOW);
+
+  // Canvas permission is hidden when privacy.resistFingerprinting is false.
+  Services.prefs.setBoolPref("privacy.resistFingerprinting", false);
+  Assert.equal(SitePermissions.listPermissions().indexOf("canvas"), -1);
+  Assert.equal(SitePermissions.getAllByURI(uri).filter(permission => permission.id === "canvas").length, 0);
+
+  // Canvas permission is visible when privacy.resistFingerprinting is true.
+  Services.prefs.setBoolPref("privacy.resistFingerprinting", true);
+  Assert.notEqual(SitePermissions.listPermissions().indexOf("canvas"), -1);
+  Assert.notEqual(SitePermissions.getAllByURI(uri).filter(permission => permission.id === "canvas").length, 0);
+
+  SitePermissions.remove(uri, "canvas");
+  Services.prefs.setBoolPref("privacy.resistFingerprinting", resistFingerprinting);
 });
 

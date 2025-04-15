@@ -7,7 +7,7 @@
 "use strict";
 
 const {Utils: WebConsoleUtils} = require("devtools/client/webconsole/utils");
-const EventEmitter = require("devtools/shared/old-event-emitter");
+const EventEmitter = require("devtools/shared/event-emitter");
 const promise = require("promise");
 const defer = require("devtools/shared/defer");
 const Services = require("Services");
@@ -17,10 +17,11 @@ const { WebConsoleConnectionProxy } = require("devtools/client/webconsole/webcon
 const KeyShortcuts = require("devtools/client/shared/key-shortcuts");
 const { l10n } = require("devtools/client/webconsole/new-console-output/utils/messages");
 const system = require("devtools/shared/system");
-const { ZoomKeys } = require("devtools/client/shared/zoom-keys");
+const ZoomKeys = require("devtools/client/shared/zoom-keys");
 
 const PREF_MESSAGE_TIMESTAMP = "devtools.webconsole.timestampMessages";
 const PREF_PERSISTLOG = "devtools.webconsole.persistlog";
+const PREF_SIDEBAR_ENABLED = "devtools.webconsole.sidebarToggle";
 
 // XXX: This file is incomplete (see bug 1326937).
 // It's used when loading the webconsole with devtools-launchpad, but will ultimately be
@@ -131,7 +132,7 @@ NewWebConsoleFrame.prototype = {
   },
 
   logWarningAboutReplacedAPI() {
-    this.owner.target.logErrorInPage(l10n.getStr("ConsoleAPIDisabled"),
+    this.owner.target.logWarningInPage(l10n.getStr("ConsoleAPIDisabled"),
       "ConsoleAPIDisabled");
   },
 
@@ -233,7 +234,7 @@ NewWebConsoleFrame.prototype = {
     });
 
     shortcuts.on(l10n.getStr("webconsole.find.key"),
-                 (name, event) => {
+                 event => {
                    this.filterBox.focus();
                    event.preventDefault();
                  });
@@ -249,9 +250,15 @@ NewWebConsoleFrame.prototype = {
 
     if (this.isBrowserConsole) {
       shortcuts.on(l10n.getStr("webconsole.close.key"),
-                   this.window.close.bind(this.window));
+                   this.window.top.close.bind(this.window.top));
 
       ZoomKeys.register(this.window);
+    } else if (Services.prefs.getBoolPref(PREF_SIDEBAR_ENABLED)) {
+      shortcuts.on("Esc", event => {
+        if (!this.jsterm.autocompletePopup || !this.jsterm.autocompletePopup.isOpen) {
+          this.newConsoleOutput.dispatchSidebarClose();
+        }
+      });
     }
   },
   /**
@@ -305,7 +312,7 @@ NewWebConsoleFrame.prototype = {
         packet._type = true;
         this.newConsoleOutput.dispatchMessageAdd(packet);
       } else {
-        this.clearOutput(false);
+        this.jsterm.clearOutput(false);
       }
     }
 
@@ -322,14 +329,6 @@ NewWebConsoleFrame.prototype = {
       // is fully updated after a page reload
       await this.newConsoleOutput.waitAsyncDispatches();
       this.emit("reloaded");
-    }
-  },
-
-  clearOutput(clearStorage) {
-    this.newConsoleOutput.dispatchMessagesClear();
-    this.webConsoleClient.clearNetworkRequests();
-    if (clearStorage) {
-      this.webConsoleClient.clearMessagesCache();
     }
   },
 };

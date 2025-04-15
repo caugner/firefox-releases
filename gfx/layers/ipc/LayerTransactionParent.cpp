@@ -6,7 +6,6 @@
 
 #include "LayerTransactionParent.h"
 #include <vector>                       // for vector
-#include "apz/src/AsyncPanZoomController.h"
 #include "CompositableHost.h"           // for CompositableParent, Get, etc
 #include "ImageLayers.h"                // for ImageLayer
 #include "Layers.h"                     // for Layer, ContainerLayer, etc
@@ -60,6 +59,7 @@ LayerTransactionParent::LayerTransactionParent(HostLayerManager* aManager,
   , mDestroyed(false)
   , mIPCOpen(false)
 {
+  MOZ_ASSERT(mId != 0);
 }
 
 LayerTransactionParent::~LayerTransactionParent()
@@ -244,17 +244,6 @@ LayerTransactionParent::RecvUpdate(const TransactionInfo& aInfo)
       }
 
       UpdateHitTestingTree(layer, "CreateColorLayer");
-      break;
-    }
-    case Edit::TOpCreateTextLayer: {
-      MOZ_LAYERS_LOG(("[ParentSide] CreateTextLayer"));
-
-      RefPtr<TextLayer> layer = mLayerManager->CreateTextLayer();
-      if (!BindLayer(layer, edit.get_OpCreateTextLayer())) {
-        return IPC_FAIL_NO_REASON(this);
-      }
-
-      UpdateHitTestingTree(layer, "CreateTextLayer");
       break;
     }
     case Edit::TOpCreateBorderLayer: {
@@ -622,19 +611,6 @@ LayerTransactionParent::SetLayerAttributes(const OpSetLayerAttributes& aOp)
     colorLayer->SetBounds(specific.get_ColorLayerAttributes().bounds());
     break;
   }
-  case Specific::TTextLayerAttributes: {
-    MOZ_LAYERS_LOG(("[ParentSide]   text layer"));
-
-    TextLayer* textLayer = layer->AsTextLayer();
-    if (!textLayer) {
-      return false;
-    }
-    const auto& tla = specific.get_TextLayerAttributes();
-    textLayer->SetBounds(tla.bounds());
-    textLayer->SetGlyphs(Move(const_cast<nsTArray<GlyphArray>&>(tla.glyphs())));
-    textLayer->SetScaledFont(reinterpret_cast<gfx::ScaledFont*>(tla.scaledFont()));
-    break;
-  }
   case Specific::TBorderLayerAttributes: {
     MOZ_LAYERS_LOG(("[ParentSide]   border layer"));
 
@@ -775,25 +751,6 @@ LayerTransactionParent::RecvGetAnimationTransform(const uint64_t& aCompositorAni
   return IPC_OK();
 }
 
-static AsyncPanZoomController*
-GetAPZCForViewID(Layer* aLayer, FrameMetrics::ViewID aScrollID)
-{
-  AsyncPanZoomController* resultApzc = nullptr;
-  ForEachNode<ForwardIterator>(
-      aLayer,
-      [aScrollID, &resultApzc] (Layer* layer)
-      {
-        for (uint32_t i = 0; i < layer->GetScrollMetadataCount(); i++) {
-          if (layer->GetFrameMetrics(i).GetScrollId() == aScrollID) {
-            resultApzc = layer->GetAsyncPanZoomController(i);
-            return TraversalFlag::Abort;
-          }
-        }
-        return TraversalFlag::Continue;
-      });
-  return resultApzc;
-}
-
 mozilla::ipc::IPCResult
 LayerTransactionParent::RecvSetAsyncScrollOffset(const FrameMetrics::ViewID& aScrollID,
                                                  const float& aX, const float& aY)
@@ -802,11 +759,7 @@ LayerTransactionParent::RecvSetAsyncScrollOffset(const FrameMetrics::ViewID& aSc
     return IPC_FAIL_NO_REASON(this);
   }
 
-  AsyncPanZoomController* controller = GetAPZCForViewID(mRoot, aScrollID);
-  if (!controller) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  controller->SetTestAsyncScrollOffset(CSSPoint(aX, aY));
+  mCompositorBridge->SetTestAsyncScrollOffset(GetId(), aScrollID, CSSPoint(aX, aY));
   return IPC_OK();
 }
 
@@ -818,11 +771,7 @@ LayerTransactionParent::RecvSetAsyncZoom(const FrameMetrics::ViewID& aScrollID,
     return IPC_FAIL_NO_REASON(this);
   }
 
-  AsyncPanZoomController* controller = GetAPZCForViewID(mRoot, aScrollID);
-  if (!controller) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  controller->SetTestAsyncZoom(LayerToParentLayerScale(aValue));
+  mCompositorBridge->SetTestAsyncZoom(GetId(), aScrollID, LayerToParentLayerScale(aValue));
   return IPC_OK();
 }
 
@@ -903,9 +852,9 @@ LayerTransactionParent::RecvClearCachedResources()
 }
 
 mozilla::ipc::IPCResult
-LayerTransactionParent::RecvForceComposite()
+LayerTransactionParent::RecvScheduleComposite()
 {
-  mCompositorBridge->ForceComposite(this);
+  mCompositorBridge->ScheduleComposite(this);
   return IPC_OK();
 }
 

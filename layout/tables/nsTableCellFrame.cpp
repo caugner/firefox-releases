@@ -23,10 +23,7 @@
 #include "nsHTMLParts.h"
 #include "nsGkAtoms.h"
 #include "nsIPresShell.h"
-#include "nsCOMPtr.h"
 #include "nsIServiceManager.h"
-#include "nsIDOMNode.h"
-#include "nsNameSpaceManager.h"
 #include "nsDisplayList.h"
 #include "nsLayoutUtils.h"
 #include "nsTextFrame.h"
@@ -366,7 +363,7 @@ nsTableCellFrame::DecorateForSelection(DrawTarget* aDrawTarget, nsPoint aPt)
   }
 }
 
-DrawResult
+ImgDrawResult
 nsTableCellFrame::PaintBackground(gfxContext&          aRenderingContext,
                                   const nsRect&        aDirtyRect,
                                   nsPoint              aPt,
@@ -391,8 +388,7 @@ nsTableCellFrame::ProcessBorders(nsTableFrame* aFrame,
 
   if (!GetContentEmpty() ||
       StyleTableBorder()->mEmptyCells == NS_STYLE_TABLE_EMPTY_CELLS_SHOW) {
-    aLists.BorderBackground()->AppendNewToTop(new (aBuilder)
-                                              nsDisplayBorder(aBuilder, this));
+    aLists.BorderBackground()->AppendToTop(MakeDisplayItem<nsDisplayBorder>(aBuilder, this));
   }
 
   return NS_OK;
@@ -426,7 +422,7 @@ public:
 void nsDisplayTableCellBackground::Paint(nsDisplayListBuilder* aBuilder,
                                          gfxContext* aCtx)
 {
-  DrawResult result = static_cast<nsTableCellFrame*>(mFrame)->
+  ImgDrawResult result = static_cast<nsTableCellFrame*>(mFrame)->
     PaintBackground(*aCtx, mVisibleRect, ToReferenceFrame(),
                     aBuilder->GetBackgroundPaintFlags());
 
@@ -495,8 +491,8 @@ nsTableCellFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     // display outset box-shadows if we need to.
     bool hasBoxShadow = !!StyleEffects()->mBoxShadow;
     if (hasBoxShadow) {
-      aLists.BorderBackground()->AppendNewToTop(
-        new (aBuilder) nsDisplayBoxShadowOuter(aBuilder, this));
+      aLists.BorderBackground()->AppendToTop(
+        MakeDisplayItem<nsDisplayBoxShadowOuter>(aBuilder, this));
     }
 
     // display background if we need to.
@@ -511,8 +507,8 @@ nsTableCellFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
     // display inset box-shadows if we need to.
     if (hasBoxShadow) {
-      aLists.BorderBackground()->AppendNewToTop(
-        new (aBuilder) nsDisplayBoxShadowInner(aBuilder, this));
+      aLists.BorderBackground()->AppendToTop(
+         MakeDisplayItem<nsDisplayBoxShadowInner>(aBuilder, this));
     }
 
     // display borders if we need to
@@ -520,8 +516,8 @@ nsTableCellFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
     // and display the selection border if we need to
     if (IsSelected()) {
-      aLists.BorderBackground()->AppendNewToTop(new (aBuilder)
-        nsDisplayTableCellSelection(aBuilder, this));
+      aLists.BorderBackground()->AppendToTop(
+        MakeDisplayItem<nsDisplayTableCellSelection>(aBuilder, this));
     }
   }
 
@@ -1173,7 +1169,7 @@ nsBCTableCellFrame::GetBorderOverflow()
   return halfBorder.GetPhysicalMargin(wm);
 }
 
-DrawResult
+ImgDrawResult
 nsBCTableCellFrame::PaintBackground(gfxContext&          aRenderingContext,
                                     const nsRect&        aDirtyRect,
                                     nsPoint              aPt,

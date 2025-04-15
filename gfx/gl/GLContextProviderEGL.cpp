@@ -84,9 +84,6 @@ using namespace mozilla::widget;
 static bool
 CreateConfig(EGLConfig* aConfig, bool aEnableDepthBuffer);
 
-static bool
-CreateConfig(EGLConfig* aConfig, int32_t depth, bool aEnableDepthBuffer);
-
 // append three zeros at the end of attribs list to work around
 // EGL implementation bugs that iterate until they find 0, instead of
 // EGL_NONE. See bug 948406.
@@ -125,6 +122,7 @@ is_power_of_two(int v)
 static void
 DestroySurface(EGLSurface oldSurface) {
     if (oldSurface != EGL_NO_SURFACE) {
+        // TODO: This breaks TLS MakeCurrent caching.
         sEGLLibrary.fMakeCurrent(EGL_DISPLAY(),
                                  EGL_NO_SURFACE, EGL_NO_SURFACE,
                                  EGL_NO_CONTEXT);
@@ -217,14 +215,17 @@ GLContextEGLFactory::Create(EGLNativeWindowType aWindow,
 
     gl->MakeCurrent();
     gl->SetIsDoubleBuffered(doubleBuffered);
-
+    if (aWebRender && sEGLLibrary.IsANGLE()) {
+        MOZ_ASSERT(doubleBuffered);
+        sEGLLibrary.fSwapInterval(EGL_DISPLAY(), 0);
+    }
     return gl.forget();
 }
 
 GLContextEGL::GLContextEGL(CreateContextFlags flags, const SurfaceCaps& caps,
                            bool isOffscreen, EGLConfig config, EGLSurface surface,
                            EGLContext context)
-    : GLContext(flags, caps, nullptr, isOffscreen, sEGLLibrary.IsANGLE())
+    : GLContext(flags, caps, nullptr, isOffscreen, false)
     , mConfig(config)
     , mSurface(surface)
     , mContext(context)
@@ -353,34 +354,22 @@ GLContextEGL::SetEGLSurfaceOverride(EGLSurface surf) {
 }
 
 bool
-GLContextEGL::MakeCurrentImpl(bool aForce) {
-    bool succeeded = true;
-
-    // Assume that EGL has the same problem as WGL does,
-    // where MakeCurrent with an already-current context is
-    // still expensive.
-    bool needsMakeCurrent = (aForce || sEGLLibrary.fGetCurrentContext() != mContext);
-    if (needsMakeCurrent) {
-        EGLSurface surface = mSurfaceOverride != EGL_NO_SURFACE
-                              ? mSurfaceOverride
-                              : mSurface;
-        if (surface == EGL_NO_SURFACE) {
-            return false;
-        }
-        succeeded = sEGLLibrary.fMakeCurrent(EGL_DISPLAY(),
-                                              surface, surface,
-                                              mContext);
-        if (!succeeded) {
-            int eglError = sEGLLibrary.fGetError();
-            if (eglError == LOCAL_EGL_CONTEXT_LOST) {
-                mContextLost = true;
-                NS_WARNING("EGL context has been lost.");
-            } else {
-                NS_WARNING("Failed to make GL context current!");
+GLContextEGL::MakeCurrentImpl() const
+{
+    const EGLSurface surface = (mSurfaceOverride != EGL_NO_SURFACE) ? mSurfaceOverride
+                                                                    : mSurface;
+    const bool succeeded = sEGLLibrary.fMakeCurrent(EGL_DISPLAY(), surface, surface,
+                                                    mContext);
+    if (!succeeded) {
+        const auto eglError = sEGLLibrary.fGetError();
+        if (eglError == LOCAL_EGL_CONTEXT_LOST) {
+            mContextLost = true;
+            NS_WARNING("EGL context has been lost.");
+        } else {
+            NS_WARNING("Failed to make GL context current!");
 #ifdef DEBUG
-                printf_stderr("EGL Error: 0x%04x\n", eglError);
+            printf_stderr("EGL Error: 0x%04x\n", eglError);
 #endif
-            }
         }
     }
 
@@ -388,7 +377,8 @@ GLContextEGL::MakeCurrentImpl(bool aForce) {
 }
 
 bool
-GLContextEGL::IsCurrent() {
+GLContextEGL::IsCurrentImpl() const
+{
     return sEGLLibrary.fGetCurrentContext() == mContext;
 }
 
@@ -641,7 +631,7 @@ static const EGLint kEGLConfigAttribsRGBA32[] = {
     EGL_ATTRIBS_LIST_SAFE_TERMINATION_WORKING_AROUND_BUGS
 };
 
-static bool
+bool
 CreateConfig(EGLConfig* aConfig, int32_t depth, bool aEnableDepthBuffer)
 {
     EGLConfig configs[64];

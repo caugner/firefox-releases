@@ -48,10 +48,12 @@ HTMLVideoElement::HTMLVideoElement(already_AddRefed<NodeInfo>& aNodeInfo)
   : HTMLMediaElement(aNodeInfo)
   , mIsOrientationLocked(false)
 {
+  DecoderDoctorLogger::LogConstruction(this);
 }
 
 HTMLVideoElement::~HTMLVideoElement()
 {
+  DecoderDoctorLogger::LogDestruction(this);
 }
 
 nsresult HTMLVideoElement::GetVideoSize(nsIntSize* size)
@@ -86,6 +88,7 @@ bool
 HTMLVideoElement::ParseAttribute(int32_t aNamespaceID,
                                  nsAtom* aAttribute,
                                  const nsAString& aValue,
+                                 nsIPrincipal* aMaybeScriptedPrincipal,
                                  nsAttrValue& aResult)
 {
    if (aAttribute == nsGkAtoms::width || aAttribute == nsGkAtoms::height) {
@@ -93,7 +96,7 @@ HTMLVideoElement::ParseAttribute(int32_t aNamespaceID,
    }
 
    return HTMLMediaElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                           aResult);
+                                           aMaybeScriptedPrincipal, aResult);
 }
 
 void
@@ -349,14 +352,11 @@ HTMLVideoElement::TotalPlayTime() const
   double total = 0.0;
 
   if (mPlayed) {
-    uint32_t timeRangeCount = 0;
-    mPlayed->GetLength(&timeRangeCount);
+    uint32_t timeRangeCount = mPlayed->Length();
 
     for (uint32_t i = 0; i < timeRangeCount; i++) {
-      double begin;
-      double end;
-      mPlayed->Start(i, &begin);
-      mPlayed->End(i, &end);
+      double begin = mPlayed->Start(i);
+      double end = mPlayed->End(i);
       total += end - begin;
     }
 

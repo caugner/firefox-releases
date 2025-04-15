@@ -9,11 +9,14 @@
 #include <algorithm>
 #include "mozilla/Maybe.h"
 #include "mozilla/ipc/SharedMemory.h"
+#include "mozilla/layers/WebRenderBridgeChild.h"
 
 namespace mozilla {
 namespace wr {
 
-ShmSegmentsWriter::ShmSegmentsWriter(ipc::IShmemAllocator* aAllocator, size_t aChunkSize)
+using namespace mozilla::layers;
+
+ShmSegmentsWriter::ShmSegmentsWriter(layers::WebRenderBridgeChild* aAllocator, size_t aChunkSize)
 : mShmAllocator(aAllocator)
 , mCursor(0)
 , mChunkSize(aChunkSize)
@@ -34,8 +37,11 @@ ShmSegmentsWriter::Write(Range<uint8_t> aBytes)
 
   if (length >= mChunkSize * 4) {
     auto range = AllocLargeChunk(length);
-    uint8_t* dstPtr = mLargeAllocs.LastElement().get<uint8_t>();
-    memcpy(dstPtr, aBytes.begin().get(), length);
+    if (range.length()) {
+      // Allocation was successful
+      uint8_t* dstPtr = mLargeAllocs.LastElement().get<uint8_t>();
+      memcpy(dstPtr, aBytes.begin().get(), length);
+    }
     return range;
   }
 
@@ -48,14 +54,20 @@ ShmSegmentsWriter::Write(Range<uint8_t> aBytes)
   while (remainingBytesToCopy > 0) {
     if (dstCursor >= mSmallAllocs.Length() * mChunkSize) {
       if (!AllocChunk()) {
+        // Allocation failed, so roll back to the state at the start of this
+        // Write() call and abort.
         for (size_t i = mSmallAllocs.Length() ; currAllocLen < i ; i--) {
-          ipc::Shmem shm = mSmallAllocs.ElementAt(i);
-          mShmAllocator->DeallocShmem(shm);
-          mSmallAllocs.RemoveElementAt(i);
+          MOZ_ASSERT(i > 0);
+          RefCountedShmem& shm = mSmallAllocs.ElementAt(i - 1);
+          RefCountedShm::Dealloc(mShmAllocator, shm);
+          mSmallAllocs.RemoveElementAt(i - 1);
         }
+        MOZ_ASSERT(mSmallAllocs.Length() == currAllocLen);
         return layers::OffsetRange(0, start, 0);
       }
-      continue;
+      // Allocation succeeded, so dstCursor should now be pointing to
+      // something inside the allocation buffer
+      MOZ_ASSERT(dstCursor < (mSmallAllocs.Length() * mChunkSize));
     }
 
     const size_t dstMaxOffset = mChunkSize * mSmallAllocs.Length();
@@ -68,7 +80,7 @@ ShmSegmentsWriter::Write(Range<uint8_t> aBytes)
     size_t copyRange = std::min<int>(availableRange, remainingBytesToCopy);
 
     uint8_t* srcPtr = &aBytes[srcCursor];
-    uint8_t* dstPtr = mSmallAllocs.LastElement().get<uint8_t>() + (dstCursor - dstBaseOffset);
+    uint8_t* dstPtr = RefCountedShm::GetBytes(mSmallAllocs.LastElement()) + (dstCursor - dstBaseOffset);
 
     memcpy(dstPtr, srcPtr, copyRange);
 
@@ -88,13 +100,13 @@ ShmSegmentsWriter::Write(Range<uint8_t> aBytes)
 bool
 ShmSegmentsWriter::AllocChunk()
 {
-  ipc::Shmem shm;
-  auto shmType = ipc::SharedMemory::SharedMemoryType::TYPE_BASIC;
-  if (!mShmAllocator->AllocShmem(mChunkSize, shmType, &shm)) {
+  RefCountedShmem shm;
+  if (!mShmAllocator->AllocResourceShmem(mChunkSize, shm)) {
     gfxCriticalNote << "ShmSegmentsWriter failed to allocate chunk #" << mSmallAllocs.Length();
     MOZ_ASSERT(false, "ShmSegmentsWriter fails to allocate chunk");
     return false;
   }
+  RefCountedShm::AddRef(shm);
   mSmallAllocs.AppendElement(shm);
   return true;
 }
@@ -115,31 +127,32 @@ ShmSegmentsWriter::AllocLargeChunk(size_t aSize)
 }
 
 void
-ShmSegmentsWriter::Flush(nsTArray<ipc::Shmem>& aSmallAllocs, nsTArray<ipc::Shmem>& aLargeAllocs)
+ShmSegmentsWriter::Flush(nsTArray<RefCountedShmem>& aSmallAllocs, nsTArray<ipc::Shmem>& aLargeAllocs)
 {
-  aSmallAllocs.Clear();
-  aLargeAllocs.Clear();
+  MOZ_ASSERT(aSmallAllocs.IsEmpty());
+  MOZ_ASSERT(aLargeAllocs.IsEmpty());
   mSmallAllocs.SwapElements(aSmallAllocs);
   mLargeAllocs.SwapElements(aLargeAllocs);
+  mCursor = 0;
+}
+
+bool
+ShmSegmentsWriter::IsEmpty() const
+{
+  return mCursor == 0;
 }
 
 void
 ShmSegmentsWriter::Clear()
 {
   if (mShmAllocator) {
-    for (auto& shm : mSmallAllocs) {
-      mShmAllocator->DeallocShmem(shm);
-    }
-    for (auto& shm : mLargeAllocs) {
-      mShmAllocator->DeallocShmem(shm);
-    }
+    IpcResourceUpdateQueue::ReleaseShmems(mShmAllocator, mSmallAllocs);
+    IpcResourceUpdateQueue::ReleaseShmems(mShmAllocator, mLargeAllocs);
   }
-  mSmallAllocs.Clear();
-  mLargeAllocs.Clear();
   mCursor = 0;
 }
 
-ShmSegmentsReader::ShmSegmentsReader(const nsTArray<ipc::Shmem>& aSmallShmems,
+ShmSegmentsReader::ShmSegmentsReader(const nsTArray<RefCountedShmem>& aSmallShmems,
                                      const nsTArray<ipc::Shmem>& aLargeShmems)
 : mSmallAllocs(aSmallShmems)
 , mLargeAllocs(aLargeShmems)
@@ -149,15 +162,15 @@ ShmSegmentsReader::ShmSegmentsReader(const nsTArray<ipc::Shmem>& aSmallShmems,
     return;
   }
 
-  mChunkSize = mSmallAllocs[0].Size<uint8_t>();
+  mChunkSize = RefCountedShm::GetSize(mSmallAllocs[0]);
 
   // Check that all shmems are readable and have the same size. If anything
   // isn't right, set mChunkSize to zero which signifies that the reader is
   // in an invalid state and Read calls will return false;
   for (const auto& shm : mSmallAllocs) {
-    if (!shm.IsReadable()
-        || shm.Size<uint8_t>() != mChunkSize
-        || shm.get<uint8_t>() == nullptr) {
+    if (!RefCountedShm::IsValid(shm)
+        || RefCountedShm::GetSize(shm) != mChunkSize
+        || RefCountedShm::GetBytes(shm) == nullptr) {
       mChunkSize = 0;
       return;
     }
@@ -173,7 +186,7 @@ ShmSegmentsReader::ShmSegmentsReader(const nsTArray<ipc::Shmem>& aSmallShmems,
 }
 
 bool
-ShmSegmentsReader::ReadLarge(const layers::OffsetRange& aRange, wr::Vec_u8& aInto)
+ShmSegmentsReader::ReadLarge(const layers::OffsetRange& aRange, wr::Vec<uint8_t>& aInto)
 {
   // source = zero is for small allocs.
   MOZ_RELEASE_ASSERT(aRange.source() != 0);
@@ -193,7 +206,7 @@ ShmSegmentsReader::ReadLarge(const layers::OffsetRange& aRange, wr::Vec_u8& aInt
 }
 
 bool
-ShmSegmentsReader::Read(const layers::OffsetRange& aRange, wr::Vec_u8& aInto)
+ShmSegmentsReader::Read(const layers::OffsetRange& aRange, wr::Vec<uint8_t>& aInto)
 {
   if (aRange.length() == 0) {
     return true;
@@ -219,7 +232,7 @@ ShmSegmentsReader::Read(const layers::OffsetRange& aRange, wr::Vec_u8& aInto)
     const size_t shm_idx = srcCursor / mChunkSize;
     const size_t ptrOffset = srcCursor % mChunkSize;
     const size_t copyRange = std::min<int>(remainingBytesToCopy, mChunkSize - ptrOffset);
-    uint8_t* srcPtr = mSmallAllocs[shm_idx].get<uint8_t>() + ptrOffset;
+    uint8_t* srcPtr = RefCountedShm::GetBytes(mSmallAllocs[shm_idx]) + ptrOffset;
 
     aInto.PushBytes(Range<uint8_t>(srcPtr, copyRange));
 
@@ -230,7 +243,7 @@ ShmSegmentsReader::Read(const layers::OffsetRange& aRange, wr::Vec_u8& aInto)
   return aInto.Length() - initialLength == aRange.length();
 }
 
-IpcResourceUpdateQueue::IpcResourceUpdateQueue(ipc::IShmemAllocator* aAllocator,
+IpcResourceUpdateQueue::IpcResourceUpdateQueue(layers::WebRenderBridgeChild* aAllocator,
                                                size_t aChunkSize)
 : mWriter(Move(aAllocator), aChunkSize)
 {}
@@ -352,7 +365,7 @@ IpcResourceUpdateQueue::DeleteFontInstance(wr::FontInstanceKey aKey)
 
 void
 IpcResourceUpdateQueue::Flush(nsTArray<layers::OpUpdateResource>& aUpdates,
-                              nsTArray<ipc::Shmem>& aSmallAllocs,
+                              nsTArray<layers::RefCountedShmem>& aSmallAllocs,
                               nsTArray<ipc::Shmem>& aLargeAllocs)
 {
   aUpdates.Clear();
@@ -360,11 +373,43 @@ IpcResourceUpdateQueue::Flush(nsTArray<layers::OpUpdateResource>& aUpdates,
   mWriter.Flush(aSmallAllocs, aLargeAllocs);
 }
 
+bool
+IpcResourceUpdateQueue::IsEmpty() const
+{
+  if (mUpdates.Length() == 0) {
+    MOZ_ASSERT(mWriter.IsEmpty());
+    return true;
+  }
+  return false;
+}
+
 void
 IpcResourceUpdateQueue::Clear()
 {
   mWriter.Clear();
   mUpdates.Clear();
+}
+
+//static
+void
+IpcResourceUpdateQueue::ReleaseShmems(ipc::IProtocol* aShmAllocator, nsTArray<layers::RefCountedShmem>& aShms)
+{
+  for (auto& shm : aShms) {
+    if (RefCountedShm::IsValid(shm) && RefCountedShm::Release(shm) == 0) {
+      RefCountedShm::Dealloc(aShmAllocator, shm);
+    }
+  }
+  aShms.Clear();
+}
+
+//static
+void
+IpcResourceUpdateQueue::ReleaseShmems(ipc::IProtocol* aShmAllocator, nsTArray<ipc::Shmem>& aShms)
+{
+  for (auto& shm : aShms) {
+    aShmAllocator->DeallocShmem(shm);
+  }
+  aShms.Clear();
 }
 
 } // namespace

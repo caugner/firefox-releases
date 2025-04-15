@@ -19,6 +19,7 @@
 #include "mozilla/dom/WorkerScope.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "nsAutoPtr.h"
+#include "nsIThreadRetargetableStreamListener.h"
 #include "nsNetUtil.h"
 #include "nsIAuthPrompt.h"
 #include "nsIAuthPrompt2.h"
@@ -48,8 +49,6 @@
 
 namespace mozilla {
 namespace dom {
-
-using namespace workers;
 
 static LazyLogModule gEventSourceLog("EventSource");
 
@@ -1014,8 +1013,11 @@ EventSourceImpl::InitChannelAndRequestEventSource()
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
+  // The html spec requires we use fetch cache mode of "no-store".  This
+  // maps to LOAD_BYPASS_CACHE and LOAD_INHIBIT_CACHING in necko.
   nsLoadFlags loadFlags;
-  loadFlags = nsIRequest::LOAD_BACKGROUND | nsIRequest::LOAD_BYPASS_CACHE;
+  loadFlags = nsIRequest::LOAD_BACKGROUND | nsIRequest::LOAD_BYPASS_CACHE
+                                          | nsIRequest::INHIBIT_CACHING;
 
   nsCOMPtr<nsIDocument> doc = mEventSource->GetDocumentIfCurrent();
 
@@ -1035,6 +1037,7 @@ EventSourceImpl::InitChannelAndRequestEventSource()
                        doc,
                        securityFlags,
                        nsIContentPolicy::TYPE_INTERNAL_EVENTSOURCE,
+                       nullptr,          // aPerformanceStorage
                        loadGroup,
                        nullptr,          // aCallbacks
                        loadFlags);       // aLoadFlags
@@ -1045,6 +1048,7 @@ EventSourceImpl::InitChannelAndRequestEventSource()
                        mPrincipal,
                        securityFlags,
                        nsIContentPolicy::TYPE_INTERNAL_EVENTSOURCE,
+                       nullptr,          // aPerformanceStorage
                        nullptr,          // loadGroup
                        nullptr,          // aCallbacks
                        loadFlags);       // aLoadFlags
@@ -1783,13 +1787,14 @@ class EventSourceWorkerHolder final : public WorkerHolder
 {
 public:
   explicit EventSourceWorkerHolder(EventSourceImpl* aEventSourceImpl)
-    : mEventSourceImpl(aEventSourceImpl)
+    : WorkerHolder("EventSourceWorkerHolder")
+    , mEventSourceImpl(aEventSourceImpl)
   {
   }
 
-  bool Notify(Status aStatus) override
+  bool Notify(WorkerStatus aStatus) override
   {
-    MOZ_ASSERT(aStatus > workers::Running);
+    MOZ_ASSERT(aStatus > Running);
     if (aStatus >= Canceling) {
       mEventSourceImpl->Close();
     }
@@ -1963,8 +1968,7 @@ EventSource::Constructor(const GlobalObject& aGlobal, const nsAString& aURL,
   nsCOMPtr<nsPIDOMWindowInner> ownerWindow =
     do_QueryInterface(aGlobal.GetAsSupports());
 
-  MOZ_ASSERT(!NS_IsMainThread() ||
-             (ownerWindow && ownerWindow->IsInnerWindow()));
+  MOZ_ASSERT(!NS_IsMainThread() || ownerWindow);
 
   RefPtr<EventSource> eventSource =
     new EventSource(ownerWindow, aEventSourceInitDict.mWithCredentials);

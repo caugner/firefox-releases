@@ -2,118 +2,92 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#define VECS_PER_SPECIFIC_BRUSH 1
+
 #include shared,prim_shared,brush
 
-varying vec3 vUv;
-flat varying int vImageKind;
-flat varying vec4 vUvBounds;
-flat varying vec4 vUvBounds_NoClamp;
-flat varying vec4 vParams;
-
-#if defined WR_FEATURE_ALPHA_TARGET
-flat varying vec4 vColor;
+#ifdef WR_FEATURE_ALPHA_PASS
+varying vec2 vLocalPos;
 #endif
 
-#define BRUSH_IMAGE_SIMPLE      0
-#define BRUSH_IMAGE_NINEPATCH   1
-#define BRUSH_IMAGE_MIRROR      2
+varying vec3 vUv;
+flat varying vec4 vUvBounds;
+flat varying vec4 vColor;
+
+#ifdef WR_FEATURE_ALPHA_PASS
+flat varying vec2 vSelect;
+#endif
 
 #ifdef WR_VERTEX_SHADER
-void brush_vs(
-    int prim_address,
-    vec2 local_pos,
-    RectWithSize local_rect,
-    ivec2 user_data
-) {
-    // TODO(gw): For now, this brush_image shader is only
-    //           being used to draw items from the intermediate
-    //           surface cache (render tasks). In the future
-    //           we can expand this to support items from
-    //           the normal texture cache and unify this
-    //           with the normal image shader.
-    BlurTask task = fetch_blur_task(user_data.x);
-    vUv.z = task.render_target_layer_index;
-    vImageKind = user_data.y;
 
-#if defined WR_FEATURE_COLOR_TARGET
-    vec2 texture_size = vec2(textureSize(sColor0, 0).xy);
-#else
-    vec2 texture_size = vec2(textureSize(sColor1, 0).xy);
-    vColor = task.color;
+#ifdef WR_FEATURE_ALPHA_PASS
+    #define IMAGE_SOURCE_COLOR              0
+    #define IMAGE_SOURCE_ALPHA              1
+    #define IMAGE_SOURCE_MASK_FROM_COLOR    2
 #endif
 
-    vec2 uv0 = task.target_rect.p0;
-    vec2 src_size = task.target_rect.size * task.scale_factor;
-    vec2 uv1 = uv0 + task.target_rect.size;
+void brush_vs(
+    VertexInfo vi,
+    int prim_address,
+    RectWithSize local_rect,
+    ivec3 user_data,
+    PictureTask pic_task
+) {
+    // If this is in WR_FEATURE_TEXTURE_RECT mode, the rect and size use
+    // non-normalized texture coordinates.
+#ifdef WR_FEATURE_TEXTURE_RECT
+    vec2 texture_size = vec2(1, 1);
+#else
+    vec2 texture_size = vec2(textureSize(sColor0, 0));
+#endif
 
-    // TODO(gw): In the future we'll probably draw these as segments
-    //           with the brush shader. When that occurs, we can
-    //           modify the UVs for each segment in the VS, and the
-    //           FS can become a simple shader that doesn't need
-    //           to adjust the UVs.
+    ImageResource res = fetch_image_resource(user_data.x);
+    vec2 uv0 = res.uv_rect.p0;
+    vec2 uv1 = res.uv_rect.p1;
 
-    switch (vImageKind) {
-        case BRUSH_IMAGE_SIMPLE: {
-            vec2 f = (local_pos - local_rect.p0) / local_rect.size;
-            vUv.xy = mix(uv0, uv1, f);
-            vUv.xy /= texture_size;
+    vUv.z = res.layer;
+    vColor = res.color;
+
+    vec2 f = (vi.local_pos - local_rect.p0) / local_rect.size;
+    vUv.xy = mix(uv0, uv1, f);
+    vUv.xy /= texture_size;
+
+    // Handle case where the UV coords are inverted (e.g. from an
+    // external image).
+    vUvBounds = vec4(
+        min(uv0, uv1) + vec2(0.5),
+        max(uv0, uv1) - vec2(0.5)
+    ) / texture_size.xyxy;
+
+#ifdef WR_FEATURE_ALPHA_PASS
+    switch (user_data.y) {
+        case IMAGE_SOURCE_COLOR:
+            vSelect = vec2(0.0, 0.0);
             break;
-        }
-        case BRUSH_IMAGE_NINEPATCH: {
-            vec2 local_src_size = src_size / uDevicePixelRatio;
-            vUv.xy = (local_pos - local_rect.p0) / local_src_size;
-            vParams.xy = vec2(0.5);
-            vParams.zw = (local_rect.size / local_src_size - 0.5);
+        case IMAGE_SOURCE_ALPHA:
+            vSelect = vec2(0.0, 1.0);
             break;
-        }
-        case BRUSH_IMAGE_MIRROR: {
-            vec2 local_src_size = src_size / uDevicePixelRatio;
-            vUv.xy = (local_pos - local_rect.p0) / local_src_size;
-            vParams.xy = 0.5 * local_rect.size / local_src_size;
+        case IMAGE_SOURCE_MASK_FROM_COLOR:
+            vSelect = vec2(1.0, 1.0);
             break;
-        }
     }
 
-    vUvBounds = vec4(uv0 + vec2(0.5), uv1 - vec2(0.5)) / texture_size.xyxy;
-    vUvBounds_NoClamp = vec4(uv0, uv1) / texture_size.xyxy;
+    vLocalPos = vi.local_pos;
+#endif
 }
 #endif
 
 #ifdef WR_FRAGMENT_SHADER
 vec4 brush_fs() {
-    vec2 uv;
+    vec2 uv = clamp(vUv.xy, vUvBounds.xy, vUvBounds.zw);
 
-    switch (vImageKind) {
-        case BRUSH_IMAGE_SIMPLE: {
-            uv = clamp(vUv.xy, vUvBounds.xy, vUvBounds.zw);
-            break;
-        }
-        case BRUSH_IMAGE_NINEPATCH: {
-            uv = clamp(vUv.xy, vec2(0.0), vParams.xy);
-            uv += max(vec2(0.0), vUv.xy - vParams.zw);
-            uv = mix(vUvBounds_NoClamp.xy, vUvBounds_NoClamp.zw, uv);
-            uv = clamp(uv, vUvBounds.xy, vUvBounds.zw);
-            break;
-        }
-        case BRUSH_IMAGE_MIRROR: {
-            // Mirror and stretch the box shadow corner over the entire
-            // primitives.
-            uv = vParams.xy - abs(vUv.xy - vParams.xy);
+    vec4 texel = TEX_SAMPLE(sColor0, vec3(uv, vUv.z));
 
-            // Ensure that we don't fetch texels outside the box
-            // shadow corner. This can happen, for example, when
-            // drawing the outer parts of an inset box shadow.
-            uv = clamp(uv, vec2(0.0), vec2(1.0));
-            uv = mix(vUvBounds_NoClamp.xy, vUvBounds_NoClamp.zw, uv);
-            uv = clamp(uv, vUvBounds.xy, vUvBounds.zw);
-            break;
-        }
-    }
-
-#if defined WR_FEATURE_COLOR_TARGET
-    vec4 color = texture(sColor0, vec3(uv, vUv.z));
+#ifdef WR_FEATURE_ALPHA_PASS
+    vec4 mask = mix(texel.rrrr, texel.aaaa, vSelect.x);
+    vec4 color = mix(texel, vColor * mask, vSelect.y) * init_transform_fs(vLocalPos);
 #else
-    vec4 color = vColor * texture(sColor1, vec3(uv, vUv.z)).r;
+    vec4 color = texel;
 #endif
 
     return color;

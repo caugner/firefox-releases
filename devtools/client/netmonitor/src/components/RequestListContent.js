@@ -4,30 +4,41 @@
 
 "use strict";
 
-const {
-  Component,
-  createFactory,
-  DOM,
-  PropTypes,
-} = require("devtools/client/shared/vendor/react");
-const { connect } = require("devtools/client/shared/vendor/react-redux");
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const { connect } = require("devtools/client/shared/redux/visibility-handler-connect");
 const { HTMLTooltip } = require("devtools/client/shared/widgets/tooltip/HTMLTooltip");
+
 const Actions = require("../actions/index");
-const { setTooltipImageContent } = require("../request-list-tooltip");
+const { formDataURI } = require("../utils/request-utils");
 const {
   getDisplayedRequests,
+  getSelectedRequest,
+  getSortedRequests,
   getWaterfallScale,
 } = require("../selectors/index");
+
+loader.lazyGetter(this, "setImageTooltip", function () {
+  return require("devtools/client/shared/widgets/tooltip/ImageTooltipHelper")
+    .setImageTooltip;
+});
+loader.lazyGetter(this, "getImageDimensions", function () {
+  return require("devtools/client/shared/widgets/tooltip/ImageTooltipHelper")
+    .getImageDimensions;
+});
 
 // Components
 const RequestListHeader = createFactory(require("./RequestListHeader"));
 const RequestListItem = createFactory(require("./RequestListItem"));
-const RequestListContextMenu = require("../request-list-context-menu");
+const RequestListContextMenu = require("../widgets/RequestListContextMenu");
 
-const { div } = DOM;
+const { div } = dom;
 
 // Tooltip show / hide delay in ms
 const REQUESTS_TOOLTIP_TOGGLE_DELAY = 500;
+// Tooltip image maximum dimension in px
+const REQUESTS_TOOLTIP_IMAGE_MAX_DIM = 400;
 // Gecko's scrollTop is int32_t, so the maximum value is 2^31 - 1 = 2147483647
 const MAX_SCROLL_HEIGHT = 2147483647;
 
@@ -39,18 +50,23 @@ class RequestListContent extends Component {
     return {
       connector: PropTypes.object.isRequired,
       columns: PropTypes.object.isRequired,
-      dispatch: PropTypes.func.isRequired,
-      displayedRequests: PropTypes.object.isRequired,
+      networkDetailsOpen: PropTypes.bool.isRequired,
+      networkDetailsWidth: PropTypes.number.isRequired,
+      networkDetailsHeight: PropTypes.number.isRequired,
+      cloneSelectedRequest: PropTypes.func.isRequired,
+      displayedRequests: PropTypes.array.isRequired,
       firstRequestStartedMillis: PropTypes.number.isRequired,
       fromCache: PropTypes.bool,
       onCauseBadgeMouseDown: PropTypes.func.isRequired,
       onItemMouseDown: PropTypes.func.isRequired,
       onSecurityIconMouseDown: PropTypes.func.isRequired,
       onSelectDelta: PropTypes.func.isRequired,
-      onThumbnailMouseDown: PropTypes.func.isRequired,
       onWaterfallMouseDown: PropTypes.func.isRequired,
+      openStatistics: PropTypes.func.isRequired,
       scale: PropTypes.number,
-      selectedRequestId: PropTypes.string,
+      selectedRequest: PropTypes.object,
+      sortedRequests: PropTypes.array.isRequired,
+      requestFilterTypes: PropTypes.object.isRequired,
     };
   }
 
@@ -59,20 +75,21 @@ class RequestListContent extends Component {
     this.isScrolledToBottom = this.isScrolledToBottom.bind(this);
     this.onHover = this.onHover.bind(this);
     this.onScroll = this.onScroll.bind(this);
+    this.onResize = this.onResize.bind(this);
     this.onKeyDown = this.onKeyDown.bind(this);
     this.onContextMenu = this.onContextMenu.bind(this);
     this.onFocusedNodeChange = this.onFocusedNodeChange.bind(this);
   }
 
   componentWillMount() {
-    const { dispatch, connector } = this.props;
+    const { connector, cloneSelectedRequest, openStatistics } = this.props;
     this.contextMenu = new RequestListContextMenu({
-      cloneSelectedRequest: () => dispatch(Actions.cloneSelectedRequest()),
-      getTabTarget: connector.getTabTarget,
-      getLongString: connector.getLongString,
-      openStatistics: (open) => dispatch(Actions.openStatistics(connector, open)),
+      connector,
+      cloneSelectedRequest,
+      openStatistics,
     });
     this.tooltip = new HTMLTooltip(window.parent.document, { type: "arrow" });
+    window.addEventListener("resize", this.onResize);
   }
 
   componentDidMount() {
@@ -81,9 +98,9 @@ class RequestListContent extends Component {
       toggleDelay: REQUESTS_TOOLTIP_TOGGLE_DELAY,
       interactive: true
     });
-
     // Install event handler to hide the tooltip on scroll
     this.refs.contentEl.addEventListener("scroll", this.onScroll, true);
+    this.onResize();
   }
 
   componentWillUpdate(nextProps) {
@@ -100,6 +117,12 @@ class RequestListContent extends Component {
       // Using maximum scroll height rather than node.scrollHeight to avoid sync reflow.
       node.scrollTop = MAX_SCROLL_HEIGHT;
     }
+    if (prevProps.networkDetailsOpen !== this.props.networkDetailsOpen ||
+      prevProps.networkDetailsWidth !== this.props.networkDetailsWidth ||
+      prevProps.networkDetailsHeight !== this.props.networkDetailsHeight
+    ) {
+      this.onResize();
+    }
   }
 
   componentWillUnmount() {
@@ -107,6 +130,13 @@ class RequestListContent extends Component {
 
     // Uninstall the tooltip event handler
     this.tooltip.stopTogglingOnHover();
+    window.removeEventListener("resize", this.onResize);
+  }
+
+  onResize() {
+    let parent = this.refs.contentEl.parentNode;
+    this.refs.contentEl.style.width = parent.offsetWidth + "px";
+    this.refs.contentEl.style.height = parent.offsetHeight + "px";
   }
 
   isScrolledToBottom() {
@@ -133,7 +163,7 @@ class RequestListContent extends Component {
    *        The current tooltip instance.
    * @return {Promise}
    */
-  onHover(target, tooltip) {
+  async onHover(target, tooltip) {
     let itemEl = target.closest(".request-list-item");
     if (!itemEl) {
       return false;
@@ -147,12 +177,25 @@ class RequestListContent extends Component {
       return false;
     }
 
-    let { connector } = this.props;
-    if (requestItem.responseContent && target.closest(".requests-list-icon")) {
-      return setTooltipImageContent(connector, tooltip, itemEl, requestItem);
+    if (!target.closest(".requests-list-file")) {
+      return false;
     }
 
-    return false;
+    let { mimeType } = requestItem;
+    if (!mimeType || !mimeType.includes("image/")) {
+      return false;
+    }
+
+    let responseContent = await this.props.connector
+      .requestData(requestItem.id, "responseContent");
+    let { encoding, text } = responseContent.content;
+    let src = formDataURI(mimeType, encoding, text);
+    let maxDim = REQUESTS_TOOLTIP_IMAGE_MAX_DIM;
+    let { naturalWidth, naturalHeight } = await getImageDimensions(tooltip.doc, src);
+    let options = { maxDim, naturalWidth, naturalHeight };
+    setImageTooltip(tooltip, tooltip.doc, src, options);
+
+    return itemEl.querySelector(".requests-list-file");
   }
 
   /**
@@ -202,7 +245,8 @@ class RequestListContent extends Component {
 
   onContextMenu(evt) {
     evt.preventDefault();
-    this.contextMenu.open(evt);
+    let { selectedRequest, sortedRequests } = this.props;
+    this.contextMenu.open(evt, selectedRequest, sortedRequests);
   }
 
   /**
@@ -215,44 +259,46 @@ class RequestListContent extends Component {
 
   render() {
     const {
+      connector,
       columns,
       displayedRequests,
       firstRequestStartedMillis,
       onCauseBadgeMouseDown,
       onItemMouseDown,
       onSecurityIconMouseDown,
-      onThumbnailMouseDown,
       onWaterfallMouseDown,
+      requestFilterTypes,
       scale,
-      selectedRequestId,
+      selectedRequest,
     } = this.props;
 
     return (
-      div({ className: "requests-list-wrapper"},
-        div({ className: "requests-list-table"},
+      div({ className: "requests-list-wrapper" },
+        div({ className: "requests-list-table" },
           div({
             ref: "contentEl",
             className: "requests-list-contents",
             tabIndex: 0,
             onKeyDown: this.onKeyDown,
-            style: {"--timings-scale": scale, "--timings-rev-scale": 1 / scale}
+            style: { "--timings-scale": scale, "--timings-rev-scale": 1 / scale }
           },
             RequestListHeader(),
             displayedRequests.map((item, index) => RequestListItem({
               firstRequestStartedMillis,
               fromCache: item.status === "304" || item.fromCache,
+              connector,
               columns,
               item,
               index,
-              isSelected: item.id === selectedRequestId,
+              isSelected: item.id === (selectedRequest && selectedRequest.id),
               key: item.id,
               onContextMenu: this.onContextMenu,
               onFocusedNodeChange: this.onFocusedNodeChange,
               onMouseDown: () => onItemMouseDown(item.id),
               onCauseBadgeMouseDown: () => onCauseBadgeMouseDown(item.cause),
               onSecurityIconMouseDown: () => onSecurityIconMouseDown(item.securityState),
-              onThumbnailMouseDown: () => onThumbnailMouseDown(),
               onWaterfallMouseDown: () => onWaterfallMouseDown(),
+              requestFilterTypes,
             }))
           )
         )
@@ -264,13 +310,19 @@ class RequestListContent extends Component {
 module.exports = connect(
   (state) => ({
     columns: state.ui.columns,
+    networkDetailsOpen: state.ui.networkDetailsOpen,
+    networkDetailsWidth: state.ui.networkDetailsWidth,
+    networkDetailsHeight: state.ui.networkDetailsHeight,
     displayedRequests: getDisplayedRequests(state),
     firstRequestStartedMillis: state.requests.firstStartedMillis,
-    selectedRequestId: state.requests.selectedId,
+    selectedRequest: getSelectedRequest(state),
     scale: getWaterfallScale(state),
+    sortedRequests: getSortedRequests(state),
+    requestFilterTypes: state.filters.requestFilterTypes,
   }),
-  (dispatch) => ({
-    dispatch,
+  (dispatch, props) => ({
+    cloneSelectedRequest: () => dispatch(Actions.cloneSelectedRequest()),
+    openStatistics: (open) => dispatch(Actions.openStatistics(props.connector, open)),
     /**
      * A handler that opens the stack trace tab when a stack trace is available
      */
@@ -290,13 +342,6 @@ module.exports = connect(
       }
     },
     onSelectDelta: (delta) => dispatch(Actions.selectDelta(delta)),
-    /**
-     * A handler that opens the response tab in the details view if
-     * the thumbnail is clicked.
-     */
-    onThumbnailMouseDown: () => {
-      dispatch(Actions.selectDetailsPanelTab("response"));
-    },
     /**
      * A handler that opens the timing sidebar panel if the waterfall is clicked.
      */

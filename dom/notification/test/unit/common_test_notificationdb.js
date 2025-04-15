@@ -1,9 +1,7 @@
 "use strict";
 
-var Cu = Components.utils;
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
                                    "@mozilla.org/childprocessmessagemanager;1",
@@ -30,7 +28,7 @@ var calendarNotification =
 
 // Helper to start the NotificationDB
 function startNotificationDB() {
-  Cu.import("resource://gre/modules/NotificationDB.jsm");
+  ChromeUtils.import("resource://gre/modules/NotificationDB.jsm");
 }
 
 // Helper function to add a listener, send message and treat the reply
@@ -55,6 +53,6 @@ function compareNotification(notif1, notif2) {
   // retrieved notification should be the second one sent
   for (let prop in notif1) {
     // compare each property
-    do_check_eq(notif1[prop], notif2[prop]);
+    Assert.equal(notif1[prop], notif2[prop]);
   }
 }

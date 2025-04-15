@@ -14,14 +14,12 @@
  * @property {boolean} [syncing] Whether or not we are currently syncing.
  */
 
-this.EXPORTED_SYMBOLS = ["UIState"];
+var EXPORTED_SYMBOLS = ["UIState"];
 
-const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
-
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Weave",
-                                  "resource://services-sync/main.js");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "Weave",
+                               "resource://services-sync/main.js");
 
 const TOPICS = [
   "weave:service:login:change",
@@ -30,6 +28,7 @@ const TOPICS = [
   "weave:service:sync:start",
   "weave:service:sync:finish",
   "weave:service:sync:error",
+  "weave:service:start-over:finish",
   "fxaccounts:onverified",
   "fxaccounts:onlogin", // Defined in FxAccountsCommon, pulling it is expensive.
   "fxaccounts:onlogout",
@@ -144,7 +143,17 @@ const UIStateInternal = {
   async _populateWithUserData(state, userData) {
     let status;
     if (!userData) {
-      status = STATUS_NOT_CONFIGURED;
+      // If Sync thinks it is configured but there's no FxA user, then we
+      // want to enter the "login failed" state so the user can get
+      // reconfigured.
+      let syncUserName = Services.prefs.getStringPref("services.sync.username", "");
+      if (syncUserName) {
+        state.email = syncUserName;
+        status = STATUS_LOGIN_FAILED;
+      } else {
+        // everyone agrees nothing is configured.
+        status = STATUS_NOT_CONFIGURED;
+      }
     } else {
       let loginFailed = await this._loginFailed();
       if (loginFailed) {
@@ -226,14 +235,14 @@ const UIStateInternal = {
   }
 };
 
-XPCOMUtils.defineLazyModuleGetter(UIStateInternal, "fxAccounts",
-                                  "resource://gre/modules/FxAccounts.jsm");
+ChromeUtils.defineModuleGetter(UIStateInternal, "fxAccounts",
+                               "resource://gre/modules/FxAccounts.jsm");
 
 for (let topic of TOPICS) {
   Services.obs.addObserver(UIStateInternal, topic);
 }
 
-this.UIState = {
+var UIState = {
   _internal: UIStateInternal,
 
   ON_UPDATE,

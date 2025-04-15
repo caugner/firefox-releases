@@ -7,7 +7,7 @@
  * Tests middle-clicking items in the Library.
  */
 
-const URIs = ["about:license", "about:"];
+const URIs = ["about:license", "about:mozilla"];
 
 var gLibrary = null;
 
@@ -22,7 +22,7 @@ add_task(async function test_setup() {
 
   registerCleanupFunction(async () => {
     // We must close "Other Bookmarks" ready for other tests.
-    gLibrary.PlacesOrganizer.selectLeftPaneQuery("UnfiledBookmarks");
+    gLibrary.PlacesOrganizer.selectLeftPaneBuiltIn("UnfiledBookmarks");
     gLibrary.PlacesOrganizer._places.selectedNode.containerOpen = false;
 
     await PlacesUtils.bookmarks.eraseEverything();
@@ -37,7 +37,7 @@ add_task(async function test_open_folder_in_tabs() {
     return {
       title: "Title",
       url
-    }
+    };
   });
 
   // Create a new folder.
@@ -51,7 +51,7 @@ add_task(async function test_open_folder_in_tabs() {
   });
 
   // Select unsorted bookmarks root in the left pane.
-  gLibrary.PlacesOrganizer.selectLeftPaneQuery("UnfiledBookmarks");
+  gLibrary.PlacesOrganizer.selectLeftPaneBuiltIn("UnfiledBookmarks");
   Assert.notEqual(gLibrary.PlacesOrganizer._places.selectedNode, null,
         "We correctly have selection in the Library left pane");
 

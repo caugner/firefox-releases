@@ -64,7 +64,8 @@ enum eHtml5TreeOperation
   eTreeOpAddViewSourceBase,
   eTreeOpAddError,
   eTreeOpAddLineNumberId,
-  eTreeOpStartLayout
+  eTreeOpStartLayout,
+  eTreeOpDisableEncodingMenu
 };
 
 class nsHtml5TreeOperationStringPair {
@@ -111,7 +112,7 @@ class nsHtml5TreeOperation final {
      */
     static inline already_AddRefed<nsAtom> Reget(nsAtom* aAtom)
     {
-      if (!aAtom || aAtom->IsStaticAtom()) {
+      if (!aAtom || aAtom->IsStatic()) {
         return dont_AddRef(aAtom);
       }
       nsAutoString str;

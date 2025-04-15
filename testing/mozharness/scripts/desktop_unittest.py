@@ -337,7 +337,7 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
         dirs = self.query_abs_dirs()
 
         self.register_virtualenv_module(name='pip>=1.5')
-        self.register_virtualenv_module('psutil==3.1.1', method='pip')
+        self.register_virtualenv_module('psutil==5.4.3', method='pip')
         self.register_virtualenv_module(name='mock')
         self.register_virtualenv_module(name='simplejson')
 
@@ -415,7 +415,10 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
                 elif suite_category not in SUITE_DEFAULT_E10S and c['e10s']:
                     base_cmd.append('--e10s')
 
-            if c.get('total_chunks') and c.get('this_chunk'):
+            # Ignore chunking if we have user specified test paths
+            if os.environ.get('MOZHARNESS_TEST_PATHS'):
+                base_cmd.extend(os.environ['MOZHARNESS_TEST_PATHS'].split(':'))
+            elif c.get('total_chunks') and c.get('this_chunk'):
                 base_cmd.extend(['--total-chunks', c['total_chunks'],
                                  '--this-chunk', c['this_chunk']])
 
@@ -573,12 +576,6 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
         c = self.config
 
         extract_dirs = None
-        if c['specific_tests_zip_dirs']:
-            extract_dirs = list(c['minimum_tests_zip_dirs'])
-            for category in c['specific_tests_zip_dirs'].keys():
-                if c['run_all_suites'] or self._query_specified_suites(category) \
-                        or 'run-tests' not in self.actions:
-                    extract_dirs.extend(c['specific_tests_zip_dirs'][category])
 
         if c.get('run_all_suites'):
             target_categories = SUITE_CATEGORIES
@@ -663,6 +660,71 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
                                                     'resources',
                                                     module))
 
+    def _kill_proc_tree(self, pid):
+        # Kill a process tree (including grandchildren) with signal.SIGTERM
+        try:
+            import signal
+            import psutil
+            if pid == os.getpid():
+                return (None, None)
+
+            parent = psutil.Process(pid)
+            children = parent.children(recursive=True)
+            children.append(parent)
+
+            for p in children:
+                p.send_signal(signal.SIGTERM)
+
+            # allow for 60 seconds to kill procs
+            timeout = 60
+            gone, alive = psutil.wait_procs(children, timeout=timeout)
+            for p in gone:
+                self.info('psutil found pid %s dead' % p.pid)
+            for p in alive:
+                self.error('failed to kill pid %d after %d' % (p.pid, timeout))
+
+            return (gone, alive)
+        except Exception as e:
+            self.error('Exception while trying to kill process tree: %s' % str(e))
+
+    def _kill_named_proc(self, pname):
+        try:
+            import psutil
+        except Exception as e:
+            self.info("Error importing psutil, not killing process %s: %s" % pname, str(e))
+            return
+
+        for proc in psutil.process_iter():
+            try:
+                if proc.name() == pname:
+                    procd = proc.as_dict(attrs=['pid', 'ppid', 'name', 'username'])
+                    self.info("in _kill_named_proc, killing %s" % procd)
+                    self._kill_proc_tree(proc.pid)
+            except Exception as e:
+                self.info("Warning: Unable to kill process %s: %s" % (pname, str(e)))
+                # may not be able to access process info for all processes
+                continue
+
+    def _remove_xen_clipboard(self):
+        """
+            When running on a Windows 7 VM, we have XenDPriv.exe running which
+            interferes with the clipboard, lets terminate this process and remove
+            the binary so it doesn't restart
+        """
+        if not self._is_windows():
+            return
+
+        self._kill_named_proc('XenDPriv.exe')
+        xenpath = os.path.join(os.environ['ProgramFiles'],
+                               'Citrix',
+                               'XenTools',
+                               'XenDPriv.exe')
+        try:
+            if os.path.isfile(xenpath):
+                os.remove(xenpath)
+        except Exception as e:
+            self.error("Error: Failure to remove file %s: %s" % (xenpath, str(e)))
+
     def _report_system_info(self):
         """
            Create the system-info.log artifact file, containing a variety of
@@ -686,7 +748,7 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
                 try:
                     for nc in psutil.net_connections():
                         f.write("  %s\n" % str(nc))
-                except:
+                except Exception:
                     f.write("Exception getting network info: %s\n" % sys.exc_info()[0])
                 f.write("\nProcesses:\n")
                 try:
@@ -694,9 +756,9 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
                         ctime = str(datetime.fromtimestamp(p.create_time()))
                         f.write("  PID %d %s %s created at %s\n" %
                                 (p.pid, p.name(), str(p.cmdline()), ctime))
-                except:
+                except Exception:
                     f.write("Exception getting process info: %s\n" % sys.exc_info()[0])
-        except:
+        except Exception:
             # psutil throws a variety of intermittent exceptions
             self.info("Unable to complete system-info.log: %s" % sys.exc_info()[0])
 
@@ -704,6 +766,7 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
     # preflight_run_tests defined in TestingMixin.
 
     def run_tests(self):
+        self._remove_xen_clipboard()
         self._report_system_info()
         self.start_time = datetime.now()
         for category in SUITE_CATEGORIES:

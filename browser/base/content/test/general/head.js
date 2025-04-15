@@ -1,10 +1,10 @@
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
+ChromeUtils.defineModuleGetter(this, "PlacesUtils",
   "resource://gre/modules/PlacesUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesTestUtils",
+ChromeUtils.defineModuleGetter(this, "PlacesTestUtils",
   "resource://testing-common/PlacesTestUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "TabCrashHandler",
+ChromeUtils.defineModuleGetter(this, "TabCrashHandler",
   "resource:///modules/ContentCrashHandlers.jsm");
 
 /**
@@ -55,25 +55,6 @@ function whenDelayedStartupFinished(aWindow, aCallback) {
       executeSoon(aCallback);
     }
   }, "browser-delayed-startup-finished");
-}
-
-function updateTabContextMenu(tab, onOpened) {
-  let menu = document.getElementById("tabContextMenu");
-  if (!tab)
-    tab = gBrowser.selectedTab;
-  var evt = new Event("");
-  tab.dispatchEvent(evt);
-  menu.openPopup(tab, "end_after", 0, 0, true, false, evt);
-  is(TabContextMenu.contextTab, tab, "TabContextMenu context is the expected tab");
-  const onFinished = () => menu.hidePopup();
-  if (onOpened) {
-    return (async function() {
-      await onOpened();
-      onFinished();
-    })();
-  }
-  onFinished();
-  return Promise.resolve();
 }
 
 function openToolbarCustomizationUI(aCallback, aBrowserWin) {
@@ -188,6 +169,12 @@ function pushPrefs(...aPrefs) {
   });
 }
 
+function popPrefs() {
+  return new Promise(resolve => {
+    SpecialPowers.popPrefEnv(resolve);
+  });
+}
+
 function updateBlocklist(aCallback) {
   var blocklistNotifier = Cc["@mozilla.org/extensions/blocklist;1"]
                           .getService(Ci.nsITimerCallback);
@@ -223,7 +210,7 @@ function promiseWindowWillBeClosed(win) {
     Services.obs.addObserver(function observe(subject, topic) {
       if (subject == win) {
         Services.obs.removeObserver(observe, topic);
-        resolve();
+        executeSoon(resolve);
       }
     }, "domwindowclosed");
   });
@@ -292,29 +279,12 @@ function waitForAsyncUpdates(aCallback, aScope, aArguments) {
   commit.finalize();
 }
 
-/**
- * Asynchronously check a url is visited.
-
- * @param aURI The URI.
- * @param aExpectedValue The expected value.
- * @return {Promise}
- * @resolves When the check has been added successfully.
- * @rejects JavaScript exception.
- */
-function promiseIsURIVisited(aURI, aExpectedValue) {
-  return new Promise(resolve => {
-    PlacesUtils.asyncHistory.isURIVisited(aURI, function(unused, aIsVisited) {
-      resolve(aIsVisited);
-    });
-
-  });
-}
-
 function whenNewTabLoaded(aWindow, aCallback) {
   aWindow.BrowserOpenTab();
 
   let browser = aWindow.gBrowser.selectedBrowser;
-  if (browser.contentDocument.readyState === "complete") {
+  let doc = browser.contentDocumentAsCPOW;
+  if (doc && doc.readyState === "complete") {
     aCallback();
     return;
   }
@@ -329,33 +299,6 @@ function whenTabLoaded(aTab, aCallback) {
 function promiseTabLoaded(aTab) {
   return new Promise(resolve => {
     whenTabLoaded(aTab, resolve);
-  });
-}
-
-/**
- * Ensures that the specified URIs are either cleared or not.
- *
- * @param aURIs
- *        Array of page URIs
- * @param aShouldBeCleared
- *        True if each visit to the URI should be cleared, false otherwise
- */
-function promiseHistoryClearedState(aURIs, aShouldBeCleared) {
-  return new Promise(resolve => {
-    let callbackCount = 0;
-    let niceStr = aShouldBeCleared ? "no longer" : "still";
-    function callbackDone() {
-      if (++callbackCount == aURIs.length)
-        resolve();
-    }
-    aURIs.forEach(function(aURI) {
-      PlacesUtils.asyncHistory.isURIVisited(aURI, function(uri, isVisited) {
-        is(isVisited, !aShouldBeCleared,
-           "history visit " + uri.spec + " should " + niceStr + " exist");
-        callbackDone();
-      });
-    });
-
   });
 }
 
@@ -433,11 +376,11 @@ var FullZoomHelper = {
       let didPs = false;
       let didZoom = false;
 
-      gBrowser.addEventListener("pageshow", function(event) {
+      BrowserTestUtils.waitForContentEvent(gBrowser.selectedBrowser, "pageshow", true).then(() => {
         didPs = true;
         if (didZoom)
           resolve();
-      }, {capture: true, once: true});
+      });
 
       if (direction == this.BACK)
         gBrowser.goBack();
@@ -515,7 +458,7 @@ function is_hidden(element) {
   if (style.visibility != "visible")
     return true;
   if (style.display == "-moz-popup")
-    return ["hiding", "closed"].indexOf(element.state) != -1;
+    return ["hiding", "closed"].includes(element.state);
 
   // Hiding a parent element will hide all its children
   if (element.parentNode != element.ownerDocument)

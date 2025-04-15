@@ -30,14 +30,14 @@ const beforeReload = {
   }
 };
 
-function* testStores(data, front) {
+async function testStores(data, front) {
   testWindowsBeforeReload(data);
 
   // FIXME: Bug 1183581 - browser_storage_dynamic_windows.js IsSafeToRunScript
   //                      errors when testing reload in E10S mode
   // yield testReload(front);
-  yield testAddIframe(front);
-  yield testRemoveIframe(front);
+  await testAddIframe(front);
+  await testRemoveIframe(front);
 }
 
 function testWindowsBeforeReload(data) {
@@ -164,10 +164,10 @@ function testAddIframe(front) {
     front.on("stores-update", onStoresUpdate);
 
     // eslint-disable-next-line mozilla/no-cpows-in-tests
-    let iframe = content.document.createElement("iframe");
+    let iframe = gBrowser.contentDocumentAsCPOW.createElement("iframe");
     iframe.src = ALT_DOMAIN_SECURED + "storage-secured-iframe.html";
     // eslint-disable-next-line mozilla/no-cpows-in-tests
-    content.document.querySelector("body").appendChild(iframe);
+    gBrowser.contentDocumentAsCPOW.querySelector("body").appendChild(iframe);
   });
 }
 
@@ -242,21 +242,21 @@ function testRemoveIframe(front) {
   });
 }
 
-add_task(function* () {
-  yield openTabAndSetupStorage(MAIN_DOMAIN + "storage-dynamic-windows.html");
+add_task(async function () {
+  await openTabAndSetupStorage(MAIN_DOMAIN + "storage-dynamic-windows.html");
 
   initDebuggerServer();
   let client = new DebuggerClient(DebuggerServer.connectPipe());
-  let form = yield connectDebuggerClient(client);
+  let form = await connectDebuggerClient(client);
   let front = StorageFront(client, form);
-  let data = yield front.listStores();
-  yield testStores(data, front);
+  let data = await front.listStores();
+  await testStores(data, front);
 
-  yield clearStorage();
+  await clearStorage();
 
   // Forcing GC/CC to get rid of docshells and windows created by this test.
   forceCollections();
-  yield client.close();
+  await client.close();
   forceCollections();
   DebuggerServer.destroy();
   forceCollections();

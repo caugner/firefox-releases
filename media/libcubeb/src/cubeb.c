@@ -19,7 +19,12 @@ struct cubeb {
 };
 
 struct cubeb_stream {
+  /*
+   * Note: All implementations of cubeb_stream must keep the following
+   * layout.
+   */
   struct cubeb * context;
+  void * user_ptr;
 };
 
 #if defined(USE_PULSE)
@@ -166,7 +171,7 @@ cubeb_init(cubeb ** context, char const * context_name, char const * backend_nam
      * to override all other choices
      */
     init_oneshot,
-#if defined(NIGHTLY_BUILD) && defined(USE_PULSE_RUST)
+#if defined(USE_PULSE_RUST)
     pulse_rust_init,
 #endif
 #if defined(USE_PULSE)
@@ -476,6 +481,15 @@ int cubeb_stream_register_device_changed_callback(cubeb_stream * stream,
   }
 
   return stream->context->ops->stream_register_device_changed_callback(stream, device_changed_callback);
+}
+
+void * cubeb_stream_user_ptr(cubeb_stream * stream)
+{
+  if (!stream) {
+    return NULL;
+  }
+
+  return stream->user_ptr;
 }
 
 static

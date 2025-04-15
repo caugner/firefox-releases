@@ -6,7 +6,7 @@
 "use strict";
 
 XPCOMUtils.defineLazyGetter(this, "DebuggerServer", () => {
-  let { require } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+  let { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
   let { DebuggerServer } = require("devtools/server/main");
   return DebuggerServer;
 });
@@ -176,14 +176,10 @@ var RemoteDebugger = {
   },
 
   initServer: function() {
-    if (DebuggerServer.initialized) {
-      return;
-    }
-
     DebuggerServer.init();
 
     // Add browser and Fennec specific actors
-    DebuggerServer.addBrowserActors();
+    DebuggerServer.registerAllActors();
     DebuggerServer.registerModule("resource://gre/modules/dbg-browser-actors.js");
 
     // Allow debugging of chrome for any process

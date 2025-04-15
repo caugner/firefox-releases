@@ -23,11 +23,11 @@ tests.push({
   // Initialise something to avoid undefined property warnings in validate.
   _litterTitle: "",
 
-  populate: function populate() {
+  async populate() {
     // check initial size
     var rootNode = PlacesUtils.getFolderContents(PlacesUtils.placesRootId,
                                                  false, false).root;
-    do_check_eq(rootNode.childCount, 5);
+    Assert.equal(rootNode.childCount, 5);
 
     // create a test root
     this._folderTitle = "test folder";
@@ -35,24 +35,24 @@ tests.push({
       PlacesUtils.bookmarks.createFolder(PlacesUtils.placesRootId,
                                          this._folderTitle,
                                          PlacesUtils.bookmarks.DEFAULT_INDEX);
-    do_check_eq(rootNode.childCount, 6);
+    Assert.equal(rootNode.childCount, 6);
 
     // add a tag
-    this._testURI = PlacesUtils._uri("http://test");
+    this._testURI = Services.io.newURI("http://test");
     this._tags = ["a", "b"];
     PlacesUtils.tagging.tagURI(this._testURI, this._tags);
 
     // add a child to each root, including our test root
+    await PlacesUtils.bookmarks.eraseEverything();
     this._roots = [PlacesUtils.bookmarksMenuFolderId, PlacesUtils.toolbarFolderId,
                    PlacesUtils.unfiledBookmarksFolderId, PlacesUtils.mobileFolderId,
                    this._folderId];
-    this._roots.forEach(function(aRootId) {
-      // clean slate
-      PlacesUtils.bookmarks.removeFolderChildren(aRootId);
-      // add a test bookmark
+
+    this._roots.forEach(aRootId => {
+          // add a test bookmark
       PlacesUtils.bookmarks.insertBookmark(aRootId, this._testURI,
                                            PlacesUtils.bookmarks.DEFAULT_INDEX, "test");
-    }, this);
+    });
 
     // add a folder to exclude from replacing during restore
     // this will still be present post-restore
@@ -60,7 +60,7 @@ tests.push({
       PlacesUtils.bookmarks.createFolder(PlacesUtils.placesRootId,
                                          "excluded",
                                          PlacesUtils.bookmarks.DEFAULT_INDEX);
-    do_check_eq(rootNode.childCount, 7);
+    Assert.equal(rootNode.childCount, 7);
 
     // add a test bookmark to it
     PlacesUtils.bookmarks.insertBookmark(excludedFolderId, this._testURI,
@@ -83,41 +83,41 @@ tests.push({
     // validate tags restored
     var tags = PlacesUtils.tagging.getTagsForURI(this._testURI);
     // also validates that litter tags are gone
-    do_check_eq(this._tags.toString(), tags.toString());
+    Assert.equal(this._tags.toString(), tags.toString());
 
     var rootNode = PlacesUtils.getFolderContents(PlacesUtils.placesRootId,
                                                  false, false).root;
 
     // validate litter is gone
-    do_check_neq(rootNode.getChild(0).title, this._litterTitle);
+    Assert.notEqual(rootNode.getChild(0).title, this._litterTitle);
 
     // test root count is the same
-    do_check_eq(rootNode.childCount, 7);
+    Assert.equal(rootNode.childCount, 7);
 
     var foundTestFolder = 0;
     for (var i = 0; i < rootNode.childCount; i++) {
       var node = rootNode.getChild(i);
 
-      do_print("validating " + node.title);
+      info("validating " + node.title);
       if (node.itemId != PlacesUtils.tagsFolderId) {
         if (node.title == this._folderTitle) {
           // check the test folder's properties
-          do_check_eq(node.type, node.RESULT_TYPE_FOLDER);
-          do_check_eq(node.title, this._folderTitle);
+          Assert.equal(node.type, node.RESULT_TYPE_FOLDER);
+          Assert.equal(node.title, this._folderTitle);
           foundTestFolder++;
         }
 
         // test contents
         node.QueryInterface(Ci.nsINavHistoryContainerResultNode).containerOpen = true;
-        do_check_eq(node.childCount, 1);
+        Assert.equal(node.childCount, 1);
         var child = node.getChild(0);
-        do_check_true(PlacesUtils._uri(child.uri).equals(this._testURI));
+        Assert.ok(Services.io.newURI(child.uri).equals(this._testURI));
 
         // clean up
         node.containerOpen = false;
       }
     }
-    do_check_eq(foundTestFolder, 1);
+    Assert.equal(foundTestFolder, 1);
     rootNode.containerOpen = false;
   }
 });
@@ -127,11 +127,11 @@ add_task(async function() {
   let jsonFile = OS.Path.join(OS.Constants.Path.profileDir, "bookmarks.json");
 
   // populate db
-  tests.forEach(function(aTest) {
-    aTest.populate();
+  for (let test of tests) {
+    await test.populate();
     // sanity
-    aTest.validate();
-  });
+    test.validate();
+  }
 
   await BookmarkJSONUtils.exportToFile(jsonFile);
 

@@ -2,7 +2,7 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-XPCOMUtils.defineLazyModuleGetter(this, "AboutHomeUtils",
+ChromeUtils.defineModuleGetter(this, "AboutHomeUtils",
   "resource:///modules/AboutHome.jsm");
 
 ignoreAllUncaughtExceptions();
@@ -12,7 +12,6 @@ add_task(async function setup() {
   // The following prefs would affect tests so make sure to disable them
   // before any tests start.
   await SpecialPowers.pushPrefEnv({set: [
-    ["browser.newtabpage.activity-stream.aboutHome.enabled", false],
     ["browser.onboarding.enabled", false],
     ["network.cookie.cookieBehavior", 0],
     ["network.cookie.lifetimePolicy", 0],
@@ -26,9 +25,7 @@ add_task(async function() {
 
   await withSnippetsMap(
     () => {
-      Cc["@mozilla.org/observer-service;1"]
-        .getService(Ci.nsIObserverService)
-        .notifyObservers(null, "cookie-changed", "cleared");
+      Services.obs.notifyObservers(null, "cookie-changed", "cleared");
     },
     function() {
       isnot(content.gSnippetsMap.get("snippets-last-update"), null,
@@ -235,4 +232,3 @@ async function withSnippetsMap(setupFn, testFn, testArgs = null, parentFn = null
     }
   });
 }
-

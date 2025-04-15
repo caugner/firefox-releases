@@ -3,9 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-var { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
-
-const {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {XPCOMUtils} = require("resource://gre/modules/XPCOMUtils.jsm");
 const {SideMenuWidget} = require("resource://devtools/client/shared/widgets/SideMenuWidget.jsm");
 const promise = require("promise");
@@ -15,7 +13,8 @@ const EventEmitter = require("devtools/shared/old-event-emitter");
 const Tooltip = require("devtools/client/shared/widgets/tooltip/Tooltip");
 const Editor = require("devtools/client/sourceeditor/editor");
 const {LocalizationHelper} = require("devtools/shared/l10n");
-const {Heritage, WidgetMethods, setNamedTimeout} =
+const {extend} = require("devtools/shared/extend");
+const {WidgetMethods, setNamedTimeout} =
   require("devtools/client/shared/widgets/view-helpers");
 const {Task} = require("devtools/shared/task");
 
@@ -198,7 +197,7 @@ var EventsHandler = {
 /**
  * Functions handling the sources UI.
  */
-var ShadersListView = Heritage.extend(WidgetMethods, {
+var ShadersListView = extend(WidgetMethods, {
   /**
    * Initialization function, called when the tool is started.
    */

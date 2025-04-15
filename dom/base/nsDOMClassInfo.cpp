@@ -61,15 +61,11 @@
 
 // DOM core includes
 #include "nsError.h"
-#include "nsIDOMXULButtonElement.h"
-#include "nsIDOMXULCheckboxElement.h"
-#include "nsIDOMXULPopupElement.h"
 
 // Event related includes
 #include "nsIDOMEventTarget.h"
 
 // CSS related includes
-#include "nsIDOMCSSRule.h"
 #include "nsMemory.h"
 
 // includes needed for the prototype chain interfaces
@@ -184,18 +180,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
                                        DOM_DEFAULT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CHROME_ONLY_CLASSINFO_DATA(ChromeMessageSender, nsDOMGenericSH,
                                        DOM_DEFAULT_SCRIPTABLE_FLAGS)
-
-
-  NS_DEFINE_CHROME_XBL_CLASSINFO_DATA(XULControlElement, nsDOMGenericSH,
-                                      DOM_DEFAULT_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CHROME_XBL_CLASSINFO_DATA(XULLabeledControlElement, nsDOMGenericSH,
-                                      DOM_DEFAULT_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CHROME_XBL_CLASSINFO_DATA(XULButtonElement, nsDOMGenericSH,
-                                      DOM_DEFAULT_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CHROME_XBL_CLASSINFO_DATA(XULCheckboxElement, nsDOMGenericSH,
-                                      DOM_DEFAULT_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CHROME_XBL_CLASSINFO_DATA(XULPopupElement, nsDOMGenericSH,
-                                      DOM_DEFAULT_SCRIPTABLE_FLAGS)
 };
 
 nsIXPConnect *nsDOMClassInfo::sXPConnect = nullptr;
@@ -229,7 +213,6 @@ static inline nsresult
 SetParentToWindow(nsGlobalWindowInner *win, JSObject **parent)
 {
   MOZ_ASSERT(win);
-  MOZ_ASSERT(win->IsInnerWindow());
   *parent = win->FastGetGlobalJSObject();
 
   if (MOZ_UNLIKELY(!*parent)) {
@@ -458,26 +441,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_MAP_ENTRY(nsIProcessScriptLoader)
     DOM_CLASSINFO_MAP_ENTRY(nsIMessageListenerManager)
     DOM_CLASSINFO_MAP_ENTRY(nsIMessageSender)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN_NO_CLASS_IF(XULControlElement, nsIDOMXULControlElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMXULControlElement)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN_NO_CLASS_IF(XULLabeledControlElement, nsIDOMXULLabeledControlElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMXULLabeledControlElement)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN_NO_CLASS_IF(XULButtonElement, nsIDOMXULButtonElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMXULButtonElement)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN_NO_CLASS_IF(XULCheckboxElement, nsIDOMXULCheckboxElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMXULCheckboxElement)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN_NO_CLASS_IF(XULPopupElement, nsIDOMXULPopupElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMXULPopupElement)
   DOM_CLASSINFO_MAP_END
 
   static_assert(MOZ_ARRAY_LENGTH(sClassInfoData) == eDOMClassInfoIDCount,
@@ -803,7 +766,7 @@ nsDOMClassInfo::PostCreatePrototype(JSContext * cx, JSObject * aProto)
   NS_ENSURE_TRUE(nameSpaceManager, NS_OK);
 
   JS::Rooted<JS::PropertyDescriptor> desc(cx);
-  nsresult rv = ResolvePrototype(sXPConnect, win->AssertInner(), cx, global,
+  nsresult rv = ResolvePrototype(sXPConnect, win, cx, global,
                                  mData->mNameUTF16, mData, nullptr,
                                  nameSpaceManager, proto, &desc);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1029,11 +992,12 @@ nsDOMConstructor::Create(const char16_t* aName,
   nsPIDOMWindowOuter* outerWindow = aOwner->GetOuterWindow();
   nsPIDOMWindowInner* currentInner =
     outerWindow ? outerWindow->GetCurrentInnerWindow() : aOwner;
-  if (!currentInner ||
-      (aOwner != currentInner &&
-       !nsContentUtils::CanCallerAccess(currentInner) &&
-       !(currentInner = aOwner)->IsInnerWindow())) {
+  if (!currentInner) {
     return NS_ERROR_DOM_SECURITY_ERR;
+  }
+  if (aOwner != currentInner &&
+      !nsContentUtils::CanCallerAccess(currentInner)) {
+    currentInner = aOwner;
   }
 
   bool constructable = aNameStruct && IsConstructable(aNameStruct);
@@ -1707,6 +1671,7 @@ const InterfaceShimEntry kInterfaceShimMap[] =
   { "nsIDOMOfflineResourceList", "OfflineResourceList" },
   { "nsIDOMRange", "Range" },
   { "nsIDOMSVGLength", "SVGLength" },
+  // Think about whether Ci.nsINodeFilter can just go away for websites!
   { "nsIDOMNodeFilter", "NodeFilter" },
   { "nsIDOMXPathResult", "XPathResult" } };
 

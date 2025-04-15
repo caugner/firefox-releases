@@ -810,12 +810,6 @@ EventListenerManager::SetEventHandler(nsAtom* aName,
     return NS_OK;
   }
 
-#ifdef DEBUG
-  if (nsCOMPtr<nsPIDOMWindowInner> win = do_QueryInterface(global)) {
-    MOZ_ASSERT(win->IsInnerWindow(), "We should not have an outer window here!");
-  }
-#endif
-
   nsresult rv = NS_OK;
   // return early preventing the event listener from being added
   // 'doc' is fetched above
@@ -837,9 +831,9 @@ EventListenerManager::SetEventHandler(nsAtom* aName,
       // the script sample in aContent.
       nsAutoString scriptSample, attr, tagName(NS_LITERAL_STRING("UNKNOWN"));
       aName->ToString(attr);
-      nsCOMPtr<nsIDOMNode> domNode(do_QueryInterface(mTarget));
+      nsCOMPtr<nsINode> domNode(do_QueryInterface(mTarget));
       if (domNode) {
-        domNode->GetNodeName(tagName);
+        tagName = domNode->NodeName();
       }
       // build a "script sample" based on what we know about this element
       scriptSample.Assign(attr);
@@ -1056,7 +1050,6 @@ EventListenerManager::CompileEventHandlerInternal(Listener* aListener,
   // Use line 0 to make the function body starts from line 1.
   options.setIntroductionType("eventHandler")
          .setFileAndLine(url.get(), 0)
-         .setVersion(JSVERSION_DEFAULT)
          .setElement(&v.toObject())
          .setElementAttributeName(jsStr);
 
@@ -1102,12 +1095,8 @@ EventListenerManager::HandleEventSubType(Listener* aListener,
   }
 
   if (NS_SUCCEEDED(result)) {
-    if (mIsMainThreadELM) {
-      CycleCollectedJSContext* ccjs = CycleCollectedJSContext::Get();
-      if (ccjs) {
-        ccjs->EnterMicroTask();
-      }
-    }
+    nsAutoMicroTask mt;
+
     // nsIDOMEvent::currentTarget is set in EventDispatcher.
     if (listenerHolder.HasWebIDLCallback()) {
       ErrorResult rv;
@@ -1116,12 +1105,6 @@ EventListenerManager::HandleEventSubType(Listener* aListener,
       result = rv.StealNSResult();
     } else {
       result = listenerHolder.GetXPCOMCallback()->HandleEvent(aDOMEvent);
-    }
-    if (mIsMainThreadELM) {
-      CycleCollectedJSContext* ccjs = CycleCollectedJSContext::Get();
-      if (ccjs) {
-        ccjs->LeaveMicroTask();
-      }
     }
   }
 

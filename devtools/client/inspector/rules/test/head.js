@@ -23,10 +23,12 @@ const FRAME_SCRIPT_URL = ROOT_TEST_DIR + "doc_frame_script.js";
 const STYLE_INSPECTOR_L10N
       = new LocalizationHelper("devtools/shared/locales/styleinspector.properties");
 
+Services.prefs.setBoolPref("devtools.inspector.flexboxHighlighter.enabled", true);
 Services.prefs.setBoolPref("devtools.inspector.shapesHighlighter.enabled", true);
 
 registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.defaultColorUnit");
+  Services.prefs.clearUserPref("devtools.inspector.flexboxHighlighter.enabled");
   Services.prefs.clearUserPref("devtools.inspector.shapesHighlighter.enabled");
 });
 
@@ -442,7 +444,7 @@ function* addNewRuleAndDismissEditor(inspector, view, expectedSelector, expected
      "The editor for the new selector has the correct value: " + expectedSelector);
 
   info("Pressing escape to leave the editor");
-  EventUtils.synthesizeKey("VK_ESCAPE", {});
+  EventUtils.synthesizeKey("KEY_Escape");
 
   is(ruleEditor.selectorText.textContent, expectedSelector,
      "The new selector has the correct text: " + expectedSelector);

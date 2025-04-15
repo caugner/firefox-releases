@@ -33,15 +33,18 @@
 #include "nsGkAtoms.h"
 #include "nsImageFrame.h"
 #include "nsLayoutStylesheetCache.h"
+#ifdef MOZ_OLD_STYLE
 #include "mozilla/RuleProcessorCache.h"
-#include "ContentPrincipal.h"
+#endif
 #include "nsRange.h"
 #include "nsRegion.h"
 #include "nsRepeatService.h"
 #include "nsFloatManager.h"
 #include "nsSprocketLayout.h"
 #include "nsStackLayout.h"
+#ifdef MOZ_OLD_STYLE
 #include "nsStyleSet.h"
+#endif
 #include "nsTextControlFrame.h"
 #include "nsXBLService.h"
 #include "txMozillaXSLTProcessor.h"
@@ -50,7 +53,7 @@
 #include "nsTextFrame.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsTextFragment.h"
-#include "nsCSSRuleProcessor.h"
+#include "nsMediaFeatures.h"
 #include "nsCORSListenerProxy.h"
 #include "nsHTMLDNSPrefetch.h"
 #include "nsHtml5Module.h"
@@ -88,10 +91,6 @@
 #include "nsMenuBarListener.h"
 #endif
 
-#ifdef MOZ_WEBSPEECH
-#include "nsSynthVoiceRegistry.h"
-#endif
-
 #include "CubebUtils.h"
 #include "Latency.h"
 #include "WebAudioUtils.h"
@@ -103,7 +102,6 @@
 #include "nsFrameMessageManager.h"
 #include "nsDOMMutationObserver.h"
 #include "nsHyphenationManager.h"
-#include "nsEditorSpellCheck.h"
 #include "nsWindowMemoryReporter.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/ProcessPriorityManager.h"
@@ -111,11 +109,11 @@
 #include "nsCookieService.h"
 #include "nsApplicationCacheService.h"
 #include "mozilla/dom/CustomElementRegistry.h"
-#include "mozilla/dom/time/DateCacheCleaner.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/dom/HTMLVideoElement.h"
 #include "TouchManager.h"
+#include "DecoderDoctorLogger.h"
 #include "MediaDecoder.h"
 #include "MediaPrefs.h"
 #include "mozilla/ServoBindings.h"
@@ -125,6 +123,8 @@
 #include "mozilla/dom/ipc/IPCBlobInputStreamStorage.h"
 #include "mozilla/dom/U2FTokenManager.h"
 #include "mozilla/dom/PointerEventHandler.h"
+#include "nsHostObjectProtocolHandler.h"
+#include "nsThreadManager.h"
 
 using namespace mozilla;
 using namespace mozilla::net;
@@ -158,16 +158,12 @@ nsLayoutStatics::Initialize()
   nsHTMLTags::RegisterAtoms();
   nsRDFAtoms::RegisterAtoms();
 
-  NS_SealStaticAtomTable();
+  NS_SetStaticAtomsDone();
 
   StartupJSEnvironment();
-  rv = nsRegion::InitStatic();
-  if (NS_FAILED(rv)) {
-    NS_ERROR("Could not initialize nsRegion");
-    return rv;
-  }
 
-  nsGlobalWindow::Init();
+  nsGlobalWindowInner::Init();
+  nsGlobalWindowOuter::Init();
   Navigator::Init();
   nsXBLService::Init();
 
@@ -236,7 +232,6 @@ nsLayoutStatics::Initialize()
   }
 
   StylePrefs::Init();
-  nsCSSRuleProcessor::Startup();
 
 #ifdef MOZ_XUL
   rv = nsXULPopupManager::Init();
@@ -253,6 +248,7 @@ nsLayoutStatics::Initialize()
   }
 
   AsyncLatencyLogger::InitializeStatics();
+  DecoderDoctorLogger::Init();
   MediaManager::StartupInit();
   CubebUtils::InitLibrary();
 
@@ -262,7 +258,6 @@ nsLayoutStatics::Initialize()
   nsLayoutUtils::Initialize();
   PointerEventHandler::InitializeStatics();
   TouchManager::InitializeStatics();
-  ContentPrincipal::InitializeStatics();
 
   nsCORSListenerProxy::Startup();
 
@@ -291,7 +286,9 @@ nsLayoutStatics::Initialize()
   ServiceWorkerRegistrar::Initialize();
 
 #ifdef DEBUG
+#ifdef MOZ_OLD_STYLE
   GeckoStyleContext::Initialize();
+#endif
   mozilla::LayerAnimationInfo::Initialize();
 #endif
 
@@ -316,6 +313,15 @@ nsLayoutStatics::Initialize()
   mozilla::dom::IPCBlobInputStreamStorage::Initialize();
 
   mozilla::dom::U2FTokenManager::Initialize();
+
+  if (XRE_IsParentProcess()) {
+    // On content process we initialize DOMPrefs when PContentChild is fully
+    // initialized.
+    mozilla::dom::DOMPrefs::Initialize();
+  }
+
+  nsThreadManager::InitializeShutdownObserver();
+
   return NS_OK;
 }
 
@@ -342,8 +348,10 @@ nsLayoutStatics::Shutdown()
   Attr::Shutdown();
   EventListenerManager::Shutdown();
   IMEStateManager::Shutdown();
+#ifdef MOZ_OLD_STYLE
   nsCSSParser::Shutdown();
-  nsCSSRuleProcessor::Shutdown();
+#endif
+  nsMediaFeatures::Shutdown();
   nsHTMLDNSPrefetch::Shutdown();
   nsCSSRendering::Shutdown();
   StaticPresData::Shutdown();
@@ -380,10 +388,13 @@ nsLayoutStatics::Shutdown()
   nsAttrValue::Shutdown();
   nsContentUtils::Shutdown();
   nsLayoutStylesheetCache::Shutdown();
+#ifdef MOZ_OLD_STYLE
   RuleProcessorCache::Shutdown();
+#endif
 
   ShutdownJSEnvironment();
-  nsGlobalWindow::ShutDown();
+  nsGlobalWindowInner::ShutDown();
+  nsGlobalWindowOuter::ShutDown();
   nsDOMClassInfo::ShutDown();
   WebIDLGlobalNameHash::Shutdown();
   nsListControlFrame::Shutdown();
@@ -394,10 +405,6 @@ nsLayoutStatics::Shutdown()
   CubebUtils::ShutdownLibrary();
   AsyncLatencyLogger::ShutdownLogger();
   WebAudioUtils::Shutdown();
-
-#ifdef MOZ_WEBSPEECH
-  nsSynthVoiceRegistry::Shutdown();
-#endif
 
   nsCORSListenerProxy::Shutdown();
 
@@ -410,8 +417,6 @@ nsLayoutStatics::Shutdown()
   nsHtml5Module::ReleaseStatics();
 
   mozilla::dom::FallbackEncoding::Shutdown();
-
-  nsRegion::ShutdownStatic();
 
   mozilla::EventDispatcher::Shutdown();
 
@@ -432,4 +437,6 @@ nsLayoutStatics::Shutdown()
   CacheObserver::Shutdown();
 
   PromiseDebugging::Shutdown();
+
+  nsHostObjectProtocolHandler::RemoveDataEntries();
 }

@@ -14,6 +14,7 @@
 #include "nsIMutable.h"
 #include "nsISizeOf.h"
 #include "nsIIPCSerializableURI.h"
+#include "nsIURIMutator.h"
 
 namespace mozilla {
 namespace net {
@@ -74,6 +75,20 @@ protected:
         eReplaceRef
     };
 
+    virtual nsresult SetSpecInternal(const nsACString &input);
+    virtual nsresult SetScheme(const nsACString &input);
+    virtual nsresult SetUserPass(const nsACString &input);
+    virtual nsresult SetUsername(const nsACString &input);
+    virtual nsresult SetPassword(const nsACString &input);
+    virtual nsresult SetHostPort(const nsACString &aValue);
+    virtual nsresult SetHost(const nsACString &input);
+    virtual nsresult SetPort(int32_t port);
+    virtual nsresult SetPathQueryRef(const nsACString &input);
+    virtual nsresult SetRef(const nsACString &input);
+    virtual nsresult SetFilePath(const nsACString &input);
+    virtual nsresult SetQuery(const nsACString &input);
+    virtual nsresult SetQueryWithEncoding(const nsACString &input, const Encoding* encoding);
+
     // Helper to share code between Equals methods.
     virtual nsresult EqualsInternal(nsIURI* other,
                                     RefHandlingEnum refHandlingMode,
@@ -102,6 +117,8 @@ protected:
 
     nsresult SetPathQueryRefEscaped(const nsACString &aPath, bool aNeedsEscape);
 
+    bool Deserialize(const mozilla::ipc::URIParams&);
+
     nsCString mScheme;
     nsCString mPath; // NOTE: mPath does not include ref, as an optimization
     nsCString mRef;  // so that URIs with different refs can share string data.
@@ -109,6 +126,25 @@ protected:
     bool mMutable;
     bool mIsRefValid; // To distinguish between empty-ref and no-ref.
     bool mIsQueryValid; // To distinguish between empty-query and no-query.
+
+
+public:
+    class Mutator final
+        : public nsIURIMutator
+        , public BaseURIMutator<nsSimpleURI>
+    {
+        NS_DECL_ISUPPORTS
+        NS_FORWARD_SAFE_NSIURISETTERS_RET(mURI)
+        NS_DEFINE_NSIMUTATOR_COMMON
+
+        explicit Mutator() { }
+    private:
+        virtual ~Mutator() { }
+
+        friend class nsSimpleURI;
+    };
+
+    friend BaseURIMutator<nsSimpleURI>;
 };
 
 } // namespace net

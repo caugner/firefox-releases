@@ -17,11 +17,9 @@ Migrated from Robocop: https://bugzilla.mozilla.org/show_bug.cgi?id=1184186
 
 "use strict";
 
-const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Task.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Task.jsm");
 
 let gChromeWin;
 let gBrowserApp;
@@ -48,7 +46,7 @@ function queryElement(contentWindow, data) {
   }
 
   if (data.hasOwnProperty("xpath")) {
-    let xptype = Ci.nsIDOMXPathResult.FIRST_ORDERED_NODE_TYPE;
+    let xptype = XPathResult.FIRST_ORDERED_NODE_TYPE;
     return doc.evaluate(data.xpath, doc, null, xptype, null).singleNodeValue;
   }
 
@@ -96,11 +94,13 @@ add_task(function* test_formdata() {
       // Create a new tab.
       let tab = gBrowserApp.addTab(URL);
       let browser = tab.browser;
-      yield promiseBrowserEvent(browser, "load");
+      yield promiseBrowserEvent(browser, "load", { resolveAtNextTick: true });
 
       // Modify form data.
       setInputValue(browser, {id: "txt", value: OUTER_VALUE});
       setInputValue(browser, {id: "txt", value: INNER_VALUE, frame: 0});
+      // Note: event must occur even if no info is captured due to privacy
+      yield promiseTabEvent(browser, "SSTabInputCaptured");
 
       // Remove the tab.
       gBrowserApp.closeTab(tab);
@@ -151,11 +151,12 @@ add_task(function* test_formdata2() {
       // Create a new tab.
       let tab = gBrowserApp.addTab(URL);
       let browser = tab.browser;
-      yield promiseBrowserEvent(browser, "load");
+      yield promiseBrowserEvent(browser, "load", { resolveAtNextTick: true });
 
       // Modify form data.
       setInputValue(browser, {id: "txt", value: OUTER_VALUE});
       setInputValue(browser, {id: "txt", value: INNER_VALUE, frame: 0});
+      yield promiseTabEvent(browser, "SSTabInputCaptured");
 
       // Remove the tab.
       gBrowserApp.closeTab(tab);
@@ -172,7 +173,7 @@ add_task(function* test_formdata2() {
   // Restore the closed tab.
   let closedTabData = ss.getClosedTabs(gChromeWin)[0];
   let browser = ss.undoCloseTab(gChromeWin, closedTabData);
-  yield promiseBrowserEvent(browser, "load");
+  yield promiseBrowserEvent(browser, "load", { resolveAtNextTick: true });
 
   // Check the form data.
   is(getInputValue(browser, {id: "txt"}), OUTER_VALUE, "outer value restored correctly");
@@ -211,11 +212,12 @@ add_task(function* test_formdata_navigation() {
       // Create a new tab.
       let tab = gBrowserApp.addTab(URL);
       let browser = tab.browser;
-      yield promiseBrowserEvent(browser, "load");
+      yield promiseBrowserEvent(browser, "load", { resolveAtNextTick: true });
 
       // Modify form data.
       setInputValue(browser, {id: "txt", value: OUTER_VALUE});
       setInputValue(browser, {id: "txt", value: INNER_VALUE, frame: 0});
+      yield promiseTabEvent(browser, "SSTabInputCaptured");
 
       // Visit a different page.
       gBrowserApp.loadURI(otherURL, browser);
@@ -251,7 +253,7 @@ add_task(function* test_formdata_navigation() {
   // Restore the closed tab.
   let closedTabData = ss.getClosedTabs(gChromeWin)[0];
   let browser = ss.undoCloseTab(gChromeWin, closedTabData);
-  yield promiseBrowserEvent(browser, "load");
+  yield promiseBrowserEvent(browser, "load", { resolveAtNextTick: true });
 
   // Check the form data.
   is(getInputValue(browser, {id: "txt"}), OUTER_VALUE, "outer value restored correctly");

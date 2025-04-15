@@ -166,7 +166,7 @@ function Editor(config) {
     this.config.gutters = [];
   }
   if (this.config.lineNumbers
-      && this.config.gutters.indexOf("CodeMirror-linenumbers") === -1) {
+      && !this.config.gutters.includes("CodeMirror-linenumbers")) {
     this.config.gutters.push("CodeMirror-linenumbers");
   }
 
@@ -481,6 +481,16 @@ Editor.prototype = {
       this.setOption("autocomplete", false);
       this.setOption("autocomplete", true);
     }
+  },
+
+  /**
+   * The source editor can expose several commands linked from system and context menus.
+   * Kept for backward compatibility with scratchpad and styleeditor.
+   */
+  insertCommandsController: function () {
+    const { insertCommandsController } =
+      require("devtools/client/sourceeditor/editor-commands-controller");
+    insertCommandsController(this);
   },
 
   /**
@@ -876,7 +886,7 @@ Editor.prototype = {
       return false;
     }
 
-    return info.wrapClass.split(" ").indexOf(className) != -1;
+    return info.wrapClass.split(" ").includes(className);
   },
 
   /**
@@ -1355,7 +1365,7 @@ Editor.prototype = {
     // Process generic keys:
     keys.forEach(name => {
       let key = L10N.getStr(name);
-      shortcuts.on(key, (_, event) => this._onShortcut(name, event));
+      shortcuts.on(key, event => this._onShortcut(name, event));
     });
   },
     /**

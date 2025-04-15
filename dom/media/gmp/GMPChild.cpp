@@ -11,6 +11,7 @@
 #include "GMPVideoEncoderChild.h"
 #include "GMPVideoHost.h"
 #include "nsDebugImpl.h"
+#include "nsExceptionHandler.h"
 #include "nsIFile.h"
 #include "nsXULAppAPI.h"
 #include "gmp-video-decode.h"
@@ -246,13 +247,19 @@ GMPChild::Init(const nsAString& aPluginPath,
     return false;
   }
 
-#ifdef MOZ_CRASHREPORTER
   CrashReporterClient::InitSingleton(this);
-#endif
 
   mPluginPath = aPluginPath;
 
   return true;
+}
+
+mozilla::ipc::IPCResult
+GMPChild::RecvProvideStorageId(const nsCString& aStorageId)
+{
+  LOGD("%s", __FUNCTION__);
+  mStorageId = aStorageId;
+  return IPC_OK();
 }
 
 GMPErr
@@ -547,7 +554,19 @@ GMPChild::AnswerStartPlugin(const nsString& aAdapter)
 
   nsCString libPath;
   if (!GetUTF8LibPath(libPath)) {
-    return IPC_FAIL_NO_REASON(this);
+    CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("GMPLibraryPath"),
+                                       NS_ConvertUTF16toUTF8(mPluginPath));
+
+#ifdef XP_WIN
+    return IPC_FAIL(
+      this,
+      nsPrintfCString("Failed to get lib path with error(%d).", GetLastError())
+        .get());
+#else
+    return IPC_FAIL(
+      this,
+      "Failed to get lib path.");
+#endif
   }
 
   auto platformAPI = new GMPPlatformAPI();
@@ -558,7 +577,7 @@ GMPChild::AnswerStartPlugin(const nsString& aAdapter)
   if (!mGMPLoader->CanSandbox()) {
     LOGD("%s Can't sandbox GMP, failing", __FUNCTION__);
     delete platformAPI;
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "Can't sandbox GMP.");
   }
 #endif
   bool isChromium = aAdapter.EqualsLiteral("chromium");
@@ -570,7 +589,10 @@ GMPChild::AnswerStartPlugin(const nsString& aAdapter)
   if (!SetMacSandboxInfo(pluginType)) {
     NS_WARNING("Failed to set Mac GMP sandbox info");
     delete platformAPI;
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(
+      this,
+      nsPrintfCString("Failed to set Mac GMP sandbox info with plugin type %d.",
+                      pluginType).get());
   }
 #endif
 
@@ -587,7 +609,19 @@ GMPChild::AnswerStartPlugin(const nsString& aAdapter)
                         adapter)) {
     NS_WARNING("Failed to load GMP");
     delete platformAPI;
-    return IPC_FAIL_NO_REASON(this);
+    CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("GMPLibraryPath"),
+                                       NS_ConvertUTF16toUTF8(mPluginPath));
+
+#ifdef XP_WIN
+    return IPC_FAIL(
+      this,
+      nsPrintfCString("Failed to load GMP with error(%d).", GetLastError())
+        .get());
+#else
+    return IPC_FAIL(
+      this,
+      "Failed to load GMP.");
+#endif
   }
 
   return IPC_OK();
@@ -617,9 +651,8 @@ GMPChild::ActorDestroy(ActorDestroyReason aWhy)
     ProcessChild::QuickExit();
   }
 
-#ifdef MOZ_CRASHREPORTER
   CrashReporterClient::DestroySingleton();
-#endif
+
   XRE_ShutdownChildProcess();
 }
 

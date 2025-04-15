@@ -83,9 +83,9 @@ public:
    * to prevent the viewport from overscrolling the page rect), and axis locking
    * (which might prevent any displacement from happening). If overscroll
    * ocurred, its amount is written to |aOverscrollAmountOut|.
-   * The |aDisplacementOut| parameter is set to the adjusted
-   * displacement, and the function returns true iff internal overscroll amounts
-   * were changed.
+   * The |aDisplacementOut| parameter is set to the adjusted displacement, and
+   * the function returns true if and only if internal overscroll amounts were
+   * changed.
    */
   bool AdjustDisplacement(ParentLayerCoord aDisplacement,
                           /* ParentLayerCoord */ float& aDisplacementOut,
@@ -249,6 +249,9 @@ public:
 
   ParentLayerCoord GetPos() const { return mPos; }
 
+  bool OverscrollBehaviorAllowsHandoff() const;
+  bool OverscrollBehaviorAllowsOverscrollEffect() const;
+
   virtual ParentLayerCoord GetPointOffset(const ParentLayerPoint& aPoint) const = 0;
   virtual ParentLayerCoord GetRectLength(const ParentLayerRect& aRect) const = 0;
   virtual ParentLayerCoord GetRectOffset(const ParentLayerRect& aRect) const = 0;
@@ -286,6 +289,9 @@ protected:
   nsTArray<std::pair<uint32_t, float> > mVelocityQueue;
 
   const FrameMetrics& GetFrameMetrics() const;
+  const ScrollMetadata& GetScrollMetadata() const;
+
+  virtual OverscrollBehavior GetOverscrollBehavior() const = 0;
 
   // Adjust a requested overscroll amount for resistance, yielding a smaller
   // actual overscroll amount.
@@ -307,6 +313,8 @@ public:
   virtual CSSToParentLayerScale GetScaleForAxis(const CSSToParentLayerScale2D& aScale) const override;
   virtual ScreenPoint MakePoint(ScreenCoord aCoord) const override;
   virtual const char* Name() const override;
+private:
+  virtual OverscrollBehavior GetOverscrollBehavior() const override;
 };
 
 class AxisY : public Axis {
@@ -318,6 +326,8 @@ public:
   virtual CSSToParentLayerScale GetScaleForAxis(const CSSToParentLayerScale2D& aScale) const override;
   virtual ScreenPoint MakePoint(ScreenCoord aCoord) const override;
   virtual const char* Name() const override;
+private:
+  virtual OverscrollBehavior GetOverscrollBehavior() const override;
 };
 
 } // namespace layers

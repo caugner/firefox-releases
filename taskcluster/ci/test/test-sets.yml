@@ -38,6 +38,7 @@ common-tests:
     - reftest-no-accel
     - telemetry-tests-client
     - test-verify
+    - test-verify-wpt
     - xpcshell
 
 web-platform-tests:
@@ -69,14 +70,12 @@ talos:
     - talos-tp6
     - talos-tp6-stylo-threads
     - talos-speedometer
+    - talos-motionmark
     - talos-h1
     - talos-h2
 
 awsy:
     - awsy
-
-awsy-stylo-disabled:
-    - awsy-stylo-disabled
 
 awsy-stylo-sequential:
     - awsy-stylo-sequential
@@ -103,7 +102,7 @@ stylo-disabled-tests:
 reftest-stylo:
     - reftest-stylo
 
-qr-talos:
+linux-qr-talos:
     - talos-chrome
     - talos-dromaeojs
     - talos-g1
@@ -119,15 +118,15 @@ qr-talos:
     - talos-tp6
     - talos-tp6-stylo-threads
     - talos-speedometer
-    - talos-h1
-    - talos-h2
+    - talos-motionmark
 
-qr-tests:
+linux-qr-tests:
     - cppunit
     - crashtest
     - gtest
     - jittest
     - jsreftest
+    - mochitest
     - mochitest-a11y
     - mochitest-gpu
     - mochitest-media
@@ -135,27 +134,49 @@ qr-tests:
     - reftest
     - xpcshell
 
+linux-talos-profiling:
+    - talos-chrome-profiling
+    - talos-dromaeojs-profiling
+    - talos-g1-profiling
+    - talos-g2-profiling
+    - talos-g3-profiling
+    - talos-g4-profiling
+    - talos-g5-profiling
+    - talos-other-profiling
+    - talos-perf-reftest-profiling
+    - talos-perf-reftest-singletons-profiling
+    - talos-speedometer-profiling
+    - talos-motionmark-profiling
+    - talos-svgr-profiling
+    - talos-tp5o-profiling
+    - talos-tp6-profiling
+
+linux-talos-flex:
+    - talos-flex
+
+windows-qr-tests:
+    - crashtest
+    - mochitest-gpu
+    - mochitest-media
+    - mochitest-webgl
+
+windows-qr-talos:
+    - talos-chrome
+    - talos-dromaeojs
+    - talos-g1
+    - talos-g4
+    - talos-perf-reftest
+    - talos-perf-reftest-singletons
+    - talos-svgr
+    - talos-tp5o
+    - talos-speedometer
+    - talos-motionmark
+
 jsdcov-code-coverage-tests:
     - mochitest
     - mochitest-browser-chrome
     - mochitest-devtools-chrome
     - xpcshell
-
-linux-talos-stylo-disabled:
-    - talos-chrome-stylo-disabled
-    - talos-dromaeojs-stylo-disabled
-    - talos-g1-stylo-disabled
-    - talos-g2-stylo-disabled
-    - talos-g3-stylo-disabled
-    - talos-g4-stylo-disabled
-    - talos-g5-stylo-disabled
-    - talos-other-stylo-disabled
-    - talos-svgr-stylo-disabled
-    - talos-tp5o-stylo-disabled
-    - talos-perf-reftest-stylo-disabled
-    - talos-perf-reftest-singletons-stylo-disabled
-    - talos-tp6-stylo-disabled
-    - talos-speedometer-stylo-disabled
 
 windows-reftest-gpu:
     - reftest-gpu
@@ -182,6 +203,7 @@ windows-tests:
     - reftest
     - reftest-no-accel
     - test-verify
+    - test-verify-wpt
     - web-platform-tests
     - web-platform-tests-reftests
     - xpcshell
@@ -199,27 +221,10 @@ windows-talos:
     - talos-svgr
     - talos-tp5o
     - talos-xperf
-    - talos-tp6
-    - talos-tp6-stylo-threads
     - talos-speedometer
+    - talos-tp6
+    - talos-motionmark
     - talos-h1
-    - talos-h2
-
-windows-talos-stylo-disabled:
-    - talos-chrome-stylo-disabled
-    - talos-dromaeojs-stylo-disabled
-    - talos-g1-stylo-disabled
-    - talos-g2-stylo-disabled
-    - talos-g4-stylo-disabled
-    - talos-g5-stylo-disabled
-    - talos-other-stylo-disabled
-    - talos-perf-reftest-stylo-disabled
-    - talos-perf-reftest-singletons-stylo-disabled
-    - talos-svgr-stylo-disabled
-    - talos-tp5o-stylo-disabled
-    - talos-xperf-stylo-disabled
-    - talos-tp6-stylo-disabled
-    - talos-speedometer-stylo-disabled
 
 macosx64-tests:
     - cppunit
@@ -242,6 +247,7 @@ macosx64-tests:
     - mochitest-webgl
     - reftest
     - test-verify
+    - test-verify-wpt
     - web-platform-tests
     - web-platform-tests-reftests
     - xpcshell
@@ -261,23 +267,25 @@ macosx64-talos:
     - talos-tp6
     - talos-tp6-stylo-threads
     - talos-speedometer
+    - talos-motionmark
     - talos-h1
-    - talos-h2
 
-macosx64-talos-stylo-disabled:
-    - talos-chrome-stylo-disabled
-    - talos-dromaeojs-stylo-disabled
-    - talos-g1-stylo-disabled
-    - talos-g2-stylo-disabled
-    - talos-g4-stylo-disabled
-    - talos-g5-stylo-disabled
-    - talos-other-stylo-disabled
-    - talos-svgr-stylo-disabled
-    - talos-tp5o-stylo-disabled
-    - talos-perf-reftest-stylo-disabled
-    - talos-perf-reftest-singletons-stylo-disabled
-    - talos-tp6-stylo-disabled
-    - talos-speedometer-stylo-disabled
+macosx64-talos-profiling:
+    - talos-chrome-profiling
+    - talos-dromaeojs-profiling
+    - talos-g1-profiling
+    - talos-g2-profiling
+    - talos-g3-profiling
+    - talos-g4-profiling
+    - talos-g5-profiling
+    - talos-other-profiling
+    - talos-perf-reftest-profiling
+    - talos-perf-reftest-singletons-profiling
+    - talos-speedometer-profiling
+    - talos-motionmark-profiling
+    - talos-svgr-profiling
+    - talos-tp5o-profiling
+    - talos-tp6-profiling
 
 linux32-tests:
     - cppunit
@@ -300,6 +308,7 @@ linux32-tests:
     - reftest-no-accel
     - web-platform-tests
     - web-platform-tests-reftests
+    - web-platform-tests-wdspec
     - xpcshell
 
 linux32-opt-tests:
@@ -328,16 +337,14 @@ android-common-tests:
 android-debug-tests:
     # Marionette only available on Fennec debug builds as a security precaution
     - marionette
-    - geckoview
 
 android-opt-tests:
+    # Robocop tests often fail on Debug builds
     - robocop
-    - geckoview
 
 android-gradle-tests:
-    - mochitest-chrome
-    - robocop
-    - test-verify
+    # geckoview_example is only built in gradle builds
+    - geckoview
 
 android-x86-tests:
     - mochitest-chrome

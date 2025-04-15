@@ -10,14 +10,15 @@
 const TEST_URL = URL_ROOT + "doc_markup_anonymous.html";
 
 add_task(function* () {
-  Services.prefs.setBoolPref("dom.webcomponents.enabled", true);
+  Services.prefs.setBoolPref("dom.webcomponents.shadowdom.enabled", true);
 
   let {inspector} = yield openInspectorForURL(TEST_URL);
 
   let shadow = yield getNodeFront("#shadow", inspector.markup);
   let children = yield inspector.walker.children(shadow);
 
-  is(shadow.numChildren, 3, "Children of the shadow root are counted");
+  // Bug 1441535.
+  todo_is(shadow.numChildren, 3, "Children of the shadow root are counted");
   is(children.nodes.length, 3, "Children returned from walker");
 
   info("Checking the ::before pseudo element");

@@ -7,18 +7,25 @@
 #ifndef mozilla_dom_workerscope_h__
 #define mozilla_dom_workerscope_h__
 
-#include "Workers.h"
+#include "mozilla/dom/WorkerCommon.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/dom/Headers.h"
 #include "mozilla/dom/RequestBinding.h"
 #include "nsWeakReference.h"
 #include "mozilla/dom/ImageBitmapSource.h"
 
+#ifdef XP_WIN
+#undef PostMessage
+#endif
+
 namespace mozilla {
 namespace dom {
 
 class AnyCallback;
 struct ChannelPixelLayout;
+class ClientInfo;
+class Clients;
+class ClientState;
 class Console;
 class Crypto;
 class Function;
@@ -27,9 +34,9 @@ enum class ImageBitmapFormat : uint8_t;
 class Performance;
 class Promise;
 class RequestOrUSVString;
-class ServiceWorkerRegistration;
 class WorkerLocation;
 class WorkerNavigator;
+class WorkerPrivate;
 enum class CallerType : uint32_t;
 
 namespace cache {
@@ -37,13 +44,6 @@ namespace cache {
 class CacheStorage;
 
 } // namespace cache
-
-namespace workers {
-
-class ServiceWorkerClients;
-class WorkerPrivate;
-
-} // namespace workers
 
 class WorkerGlobalScope : public DOMEventTargetHelper,
                           public nsIGlobalObject,
@@ -63,7 +63,6 @@ class WorkerGlobalScope : public DOMEventTargetHelper,
   uint32_t mWindowInteractionsAllowed;
 
 protected:
-  typedef mozilla::dom::workers::WorkerPrivate WorkerPrivate;
   WorkerPrivate* mWorkerPrivate;
 
   explicit WorkerGlobalScope(WorkerPrivate* aWorkerPrivate);
@@ -92,7 +91,7 @@ public:
     return this;
   }
 
-  Console*
+  already_AddRefed<Console>
   GetConsole(ErrorResult& aRv);
 
   Console*
@@ -161,6 +160,11 @@ public:
     return mPerformance;
   }
 
+  static bool IsInAutomation(JSContext* aCx, JSObject* /* unused */);
+  void GetJSTestingFunctions(JSContext* aCx,
+                             JS::MutableHandle<JSObject*> aFunctions,
+                             ErrorResult& aRv);
+
   already_AddRefed<Promise>
   Fetch(const RequestOrUSVString& aInput, const RequestInit& aInit,
         CallerType aCallerType, ErrorResult& aRv);
@@ -221,6 +225,18 @@ public:
 
   AbstractThread*
   AbstractMainThreadFor(TaskCategory aCategory) override;
+
+  Maybe<ClientInfo>
+  GetClientInfo() const override;
+
+  Maybe<ClientState>
+  GetClientState() const;
+
+  Maybe<ServiceWorkerDescriptor>
+  GetController() const override;
+
+  RefPtr<mozilla::dom::ServiceWorkerRegistration>
+  GetOrCreateServiceWorkerRegistration(const ServiceWorkerRegistrationDescriptor& aDescriptor) override;
 };
 
 class DedicatedWorkerGlobalScope final : public WorkerGlobalScope
@@ -282,7 +298,7 @@ public:
 class ServiceWorkerGlobalScope final : public WorkerGlobalScope
 {
   const nsString mScope;
-  RefPtr<workers::ServiceWorkerClients> mClients;
+  RefPtr<Clients> mClients;
   RefPtr<ServiceWorkerRegistration> mRegistration;
 
   ~ServiceWorkerGlobalScope();
@@ -294,14 +310,12 @@ public:
   IMPL_EVENT_HANDLER(notificationclick)
   IMPL_EVENT_HANDLER(notificationclose)
 
-  ServiceWorkerGlobalScope(WorkerPrivate* aWorkerPrivate, const nsACString& aScope);
+  ServiceWorkerGlobalScope(WorkerPrivate* aWorkerPrivate,
+                           const ServiceWorkerRegistrationDescriptor& aRegistrationDescriptor);
 
   virtual bool
   WrapGlobalObject(JSContext* aCx,
                    JS::MutableHandle<JSObject*> aReflector) override;
-
-  static bool
-  OpenWindowEnabled(JSContext* aCx, JSObject* aObj);
 
   void
   GetScope(nsString& aScope) const
@@ -309,8 +323,8 @@ public:
     aScope = mScope;
   }
 
-  workers::ServiceWorkerClients*
-  Clients();
+  already_AddRefed<Clients>
+  GetClients();
 
   ServiceWorkerRegistration*
   Registration();
@@ -343,8 +357,6 @@ public:
 class WorkerDebuggerGlobalScope final : public DOMEventTargetHelper,
                                         public nsIGlobalObject
 {
-  typedef mozilla::dom::workers::WorkerPrivate WorkerPrivate;
-
   WorkerPrivate* mWorkerPrivate;
   RefPtr<Console> mConsole;
   nsCOMPtr<nsISerialEventTarget> mSerialEventTarget;
@@ -413,7 +425,7 @@ public:
   SetConsoleEventHandler(JSContext* aCx, AnyCallback* aHandler,
                          ErrorResult& aRv);
 
-  Console*
+  already_AddRefed<Console>
   GetConsole(ErrorResult& aRv);
 
   Console*

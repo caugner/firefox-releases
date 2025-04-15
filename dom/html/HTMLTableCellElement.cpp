@@ -10,7 +10,9 @@
 #include "mozilla/GenericSpecifiedValuesInlines.h"
 #include "nsMappedAttributes.h"
 #include "nsAttrValueInlines.h"
+#ifdef MOZ_OLD_STYLE
 #include "nsRuleWalker.h"
+#endif
 #include "celldata.h"
 #include "mozilla/dom/HTMLTableCellElementBinding.h"
 
@@ -28,8 +30,6 @@ HTMLTableCellElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aGivenProto
 {
   return HTMLTableCellElementBinding::Wrap(aCx, this, aGivenProto);
 }
-
-NS_IMPL_ISUPPORTS_INHERITED0(HTMLTableCellElement, nsGenericHTMLElement)
 
 NS_IMPL_ELEMENT_CLONE(HTMLTableCellElement)
 
@@ -93,6 +93,7 @@ HTMLTableCellElement::CellIndex() const
   return -1;
 }
 
+#ifdef MOZ_OLD_STYLE
 NS_IMETHODIMP
 HTMLTableCellElement::WalkContentStyleRules(nsRuleWalker* aRuleWalker)
 {
@@ -106,6 +107,7 @@ HTMLTableCellElement::WalkContentStyleRules(nsRuleWalker* aRuleWalker)
   }
   return NS_OK;
 }
+#endif
 
 nsMappedAttributes*
 HTMLTableCellElement::GetMappedAttributesInheritedFromTable() const
@@ -147,6 +149,7 @@ bool
 HTMLTableCellElement::ParseAttribute(int32_t aNamespaceID,
                                      nsAtom* aAttribute,
                                      const nsAString& aValue,
+                                     nsIPrincipal* aMaybeScriptedPrincipal,
                                      nsAttrValue& aResult)
 {
   if (aNamespaceID == kNameSpaceID_None) {
@@ -193,7 +196,7 @@ HTMLTableCellElement::ParseAttribute(int32_t aNamespaceID,
                                                         aAttribute, aValue,
                                                         aResult) ||
          nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aResult);
+                                              aMaybeScriptedPrincipal, aResult);
 }
 
 void
@@ -236,7 +239,7 @@ HTMLTableCellElement::MapAttributesIntoRule(const nsMappedAttributes* aAttribute
       if (aAttributes->GetAttr(nsGkAtoms::nowrap)) {
         // See if our width is not a nonzero integer width.
         const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::width);
-        nsCompatibility mode = aData->PresContext()->CompatibilityMode();
+        nsCompatibility mode = aData->Document()->GetCompatibilityMode();
         if (!value || value->Type() != nsAttrValue::eInteger ||
             value->GetIntegerValue() == 0 ||
             eCompatibility_NavQuirks != mode) {

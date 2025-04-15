@@ -2,17 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
-
-Cu.import("resource://gre/modules/Log.jsm");
-Cu.import("resource://gre/modules/Preferences.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://gre/modules/Preferences.jsm");
 
 const {
   element,
   WebElement,
-} = Cu.import("chrome://marionette/content/element.js", {});
-Cu.import("chrome://marionette/content/evaluate.js");
-Cu.import("chrome://marionette/content/event.js");
+} = ChromeUtils.import("chrome://marionette/content/element.js", {});
+ChromeUtils.import("chrome://marionette/content/evaluate.js");
+ChromeUtils.import("chrome://marionette/content/event.js");
 
 const CONTEXT_MENU_DELAY_PREF = "ui.click_hold_context_menus.delay";
 const DEFAULT_CONTEXT_MENU_DELAY = 750;  // ms
@@ -27,7 +25,7 @@ this.legacyaction = this.action = {};
 /**
  * Functionality for (single finger) action chains.
  */
-action.Chain = function (checkForInterrupted) {
+action.Chain = function() {
   // for assigning unique ids to all touches
   this.nextTouchId = 1000;
   // keep track of active Touches
@@ -39,12 +37,6 @@ action.Chain = function (checkForInterrupted) {
   // whether to send mouse event
   this.mouseEventsOnly = false;
   this.checkTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-
-  if (typeof checkForInterrupted == "function") {
-    this.checkForInterrupted = checkForInterrupted;
-  } else {
-    this.checkForInterrupted = () => {};
-  }
 
   // determines if we create touch events
   this.inputSource = null;
@@ -111,35 +103,33 @@ action.Chain.prototype.emitMouseEvent = function (
     button,
     clickCount,
     modifiers) {
-  if (!this.checkForInterrupted()) {
-    logger.debug(`Emitting ${type} mouse event ` +
-        `at coordinates (${elClientX}, ${elClientY}) ` +
-        `relative to the viewport, ` +
-        `button: ${button}, ` +
-        `clickCount: ${clickCount}`);
+  logger.debug(`Emitting ${type} mouse event ` +
+      `at coordinates (${elClientX}, ${elClientY}) ` +
+      `relative to the viewport, ` +
+      `button: ${button}, ` +
+      `clickCount: ${clickCount}`);
 
-    let win = doc.defaultView;
-    let domUtils = win.QueryInterface(Ci.nsIInterfaceRequestor)
-        .getInterface(Ci.nsIDOMWindowUtils);
+  let win = doc.defaultView;
+  let domUtils = win.QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIDOMWindowUtils);
 
-    let mods;
-    if (typeof modifiers != "undefined") {
-      mods = event.parseModifiers_(modifiers);
-    } else {
-      mods = 0;
-    }
-
-    domUtils.sendMouseEvent(
-        type,
-        elClientX,
-        elClientY,
-        button || 0,
-        clickCount || 1,
-        mods,
-        false,
-        0,
-        this.inputSource);
+  let mods;
+  if (typeof modifiers != "undefined") {
+    mods = event.parseModifiers_(modifiers);
+  } else {
+    mods = 0;
   }
+
+  domUtils.sendMouseEvent(
+      type,
+      elClientX,
+      elClientY,
+      button || 0,
+      clickCount || 1,
+      mods,
+      false,
+      0,
+      this.inputSource);
 };
 
 /**
@@ -186,7 +176,7 @@ action.Chain.prototype.actions = function (chain, touchId, i, keyModifiers, cb) 
   let c;
   i++;
 
-  if (["press", "wait", "keyDown", "keyUp", "click"].indexOf(command) == -1) {
+  if (!["press", "wait", "keyDown", "keyUp", "click"].includes(command)) {
     // if mouseEventsOnly, then touchIds isn't used
     if (!(touchId in this.touchIds) && !this.mouseEventsOnly) {
       this.resetValues();
@@ -235,7 +225,7 @@ action.Chain.prototype.actions = function (chain, touchId, i, keyModifiers, cb) 
 
       // look ahead to check if we're scrolling,
       // needed for APZ touch dispatching
-      if ((i != chain.length) && (chain[i][0].indexOf('move') !== -1)) {
+      if ((i != chain.length) && (chain[i][0].includes('move'))) {
         this.scrolling = true;
       }
       webEl = WebElement.fromUUID(pack[1], "content");
@@ -476,7 +466,6 @@ action.Chain.prototype.generateEvents = function (
     default:
       throw new WebDriverError("Unknown event type: " + type);
   }
-  this.checkForInterrupted();
 };
 
 action.Chain.prototype.mouseTap = function (doc, x, y, button, count, mod) {

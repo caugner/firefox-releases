@@ -15,8 +15,10 @@
 #include "nsStyleAutoArray.h"
 #include "nsTArray.h"
 
+struct RawServoAuthorStyles;
 struct RawServoStyleSet;
 struct RawServoSelectorList;
+struct RawServoSourceSizeList;
 struct RawServoAnimationValueMap;
 struct RustString;
 
@@ -134,7 +136,8 @@ struct MOZ_MUST_USE_TYPE ServoStyleContextStrong
 // This is a reference to a reference of RawServoDeclarationBlock, which
 // corresponds to Option<&Arc<RawServoDeclarationBlock>> in Servo side.
 DECL_NULLABLE_BORROWED_REF_TYPE_FOR(RawServoDeclarationBlockStrong)
-
+DECL_OWNED_REF_TYPE_FOR(RawServoAuthorStyles)
+DECL_NULLABLE_BORROWED_REF_TYPE_FOR(RawServoAuthorStyles)
 DECL_OWNED_REF_TYPE_FOR(RawServoStyleSet)
 DECL_NULLABLE_BORROWED_REF_TYPE_FOR(RawServoStyleSet)
 DECL_NULLABLE_OWNED_REF_TYPE_FOR(StyleChildrenIterator)
@@ -182,6 +185,9 @@ DECL_BORROWED_REF_TYPE_FOR(nsXBLBinding)
 DECL_BORROWED_MUT_REF_TYPE_FOR(RawGeckoStyleChildrenIterator)
 DECL_OWNED_REF_TYPE_FOR(RawServoSelectorList)
 DECL_BORROWED_REF_TYPE_FOR(RawServoSelectorList)
+DECL_OWNED_REF_TYPE_FOR(RawServoSourceSizeList)
+DECL_BORROWED_REF_TYPE_FOR(RawServoSourceSizeList)
+DECL_NULLABLE_BORROWED_REF_TYPE_FOR(RawServoSourceSizeList)
 
 #undef DECL_ARC_REF_TYPE_FOR
 #undef DECL_OWNED_REF_TYPE_FOR
@@ -224,7 +230,9 @@ DECL_BORROWED_REF_TYPE_FOR(RawServoSelectorList)
   }
 
 DEFINE_BOXED_TYPE(StyleSet, RawServoStyleSet);
+DEFINE_BOXED_TYPE(AuthorStyles, RawServoAuthorStyles);
 DEFINE_BOXED_TYPE(SelectorList, RawServoSelectorList);
+DEFINE_BOXED_TYPE(SourceSizeList, RawServoSourceSizeList);
 
 #undef DEFINE_BOXED_TYPE
 

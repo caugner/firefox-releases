@@ -102,29 +102,23 @@ static bool IsEventTargetChrome(EventTarget* aEventTarget,
     *aDocument = nullptr;
   }
 
-  if (NS_WARN_IF(!aEventTarget)) {
-    return false;
-  }
-
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(aEventTarget);
-  if (!doc) {
-    nsCOMPtr<nsINode> node = do_QueryInterface(aEventTarget);
-    if (node) {
-      doc = node->OwnerDoc();
-    } else {
-      nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aEventTarget);
-      if (!window) {
-        return false;
-      }
-      doc = window->GetExtantDoc();
-    }
-    if (!doc) {
+  nsIDocument* doc = nullptr;
+  nsCOMPtr<nsINode> node = do_QueryInterface(aEventTarget);
+  if (node) {
+    doc = node->OwnerDoc();
+  } else {
+    nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aEventTarget);
+    if (!window) {
       return false;
     }
+    doc = window->GetExtantDoc();
   }
+
+  // nsContentUtils::IsChromeDoc is null-safe.
   bool isChrome = nsContentUtils::IsChromeDoc(doc);
-  if (aDocument) {
-    doc.swap(*aDocument);
+  if (aDocument && doc) {
+    nsCOMPtr<nsIDocument> retVal = doc;
+    retVal.swap(*aDocument);
   }
   return isChrome;
 }
@@ -206,6 +200,16 @@ public:
     mNewTarget = aNewTarget;
   }
 
+  EventTarget* GetRetargetedRelatedTarget()
+  {
+    return mRetargetedRelatedTarget;
+  }
+
+  void SetRetargetedRelatedTarget(EventTarget* aTarget)
+  {
+    mRetargetedRelatedTarget = aTarget;
+  }
+
   void SetForceContentDispatch(bool aForce)
   {
     mFlags.mForceContentDispatch = aForce;
@@ -244,6 +248,36 @@ public:
   bool PreHandleEventOnly()
   {
     return mFlags.mPreHandleEventOnly;
+  }
+
+  void SetRootOfClosedTree(bool aSet)
+  {
+    mFlags.mRootOfClosedTree = aSet;
+  }
+
+  bool IsRootOfClosedTree()
+  {
+    return mFlags.mRootOfClosedTree;
+  }
+
+  void SetIsSlotInClosedTree(bool aSet)
+  {
+    mFlags.mIsSlotInClosedTree = aSet;
+  }
+
+  bool IsSlotInClosedTree()
+  {
+    return mFlags.mIsSlotInClosedTree;
+  }
+
+  void SetIsChromeHandler(bool aSet)
+  {
+    mFlags.mIsChromeHandler = aSet;
+  }
+
+  bool IsChromeHandler()
+  {
+    return mFlags.mIsChromeHandler;
   }
 
   void SetMayHaveListenerManager(bool aMayHave)
@@ -326,6 +360,7 @@ public:
 
 private:
   nsCOMPtr<EventTarget>             mTarget;
+  nsCOMPtr<EventTarget>             mRetargetedRelatedTarget;
 
   class EventTargetChainFlags
   {
@@ -344,6 +379,9 @@ private:
     bool mIsChromeContent : 1;
     bool mWantsPreHandleEvent : 1;
     bool mPreHandleEventOnly : 1;
+    bool mRootOfClosedTree : 1;
+    bool mIsSlotInClosedTree : 1;
+    bool mIsChromeHandler : 1;
   private:
     typedef uint32_t RawFlags;
     void SetRawFlags(RawFlags aRawFlags)
@@ -390,6 +428,8 @@ EventTargetChainItem::GetEventTargetParent(EventChainPreVisitor& aVisitor)
   SetMayHaveListenerManager(aVisitor.mMayHaveListenerManager);
   SetWantsPreHandleEvent(aVisitor.mWantsPreHandleEvent);
   SetPreHandleEventOnly(aVisitor.mWantsPreHandleEvent && !aVisitor.mCanHandle);
+  SetRootOfClosedTree(aVisitor.mRootOfClosedTree);
+  SetRetargetedRelatedTarget(aVisitor.mRetargetedRelatedTarget);
   mItemFlags = aVisitor.mItemFlags;
   mItemData = aVisitor.mItemData;
 }
@@ -422,6 +462,7 @@ EventTargetChainItem::HandleEventTargetChain(
 {
   // Save the target so that it can be restored later.
   nsCOMPtr<EventTarget> firstTarget = aVisitor.mEvent->mTarget;
+  nsCOMPtr<EventTarget> firstRelatedTarget = aVisitor.mEvent->mRelatedTarget;
   uint32_t chainLength = aChain.Length();
   uint32_t firstCanHandleEventTargetIdx =
     EventTargetChainItem::GetFirstCanHandleEventTargetIdx(aChain);
@@ -449,6 +490,30 @@ EventTargetChainItem::HandleEventTargetChain(
           aVisitor.mEvent->mTarget = newTarget;
           break;
         }
+      }
+    }
+
+    // https://dom.spec.whatwg.org/#dispatching-events
+    // Step 14.2
+    // "Set event's relatedTarget to tuple's relatedTarget."
+    // Note, the initial retargeting was done already when creating
+    // event target chain, so we need to do this only after calling
+    // HandleEvent, not before, like in the specification.
+    if (item.GetRetargetedRelatedTarget()) {
+      bool found = false;
+      for (uint32_t j = i; j > 0; --j) {
+        uint32_t childIndex = j - 1;
+        EventTarget* relatedTarget =
+          aChain[childIndex].GetRetargetedRelatedTarget();
+        if (relatedTarget) {
+          found = true;
+          aVisitor.mEvent->mRelatedTarget = relatedTarget;
+          break;
+        }
+      }
+      if (!found) {
+        aVisitor.mEvent->mRelatedTarget =
+          aVisitor.mEvent->mOriginalRelatedTarget;
       }
     }
   }
@@ -479,6 +544,14 @@ EventTargetChainItem::HandleEventTargetChain(
       aVisitor.mEvent->mTarget = newTarget;
     }
 
+    // https://dom.spec.whatwg.org/#dispatching-events
+    // Step 15.2
+    // "Set event's relatedTarget to tuple's relatedTarget."
+    EventTarget* relatedTarget = item.GetRetargetedRelatedTarget();
+    if (relatedTarget) {
+      aVisitor.mEvent->mRelatedTarget = relatedTarget;
+    }
+
     if (aVisitor.mEvent->mFlags.mBubbles || newTarget) {
       if ((!aVisitor.mEvent->mFlags.mNoContentDispatch ||
            item.ForceContentDispatch()) &&
@@ -501,6 +574,7 @@ EventTargetChainItem::HandleEventTargetChain(
 
     // Setting back the original target of the event.
     aVisitor.mEvent->mTarget = aVisitor.mEvent->mOriginalTarget;
+    aVisitor.mEvent->mRelatedTarget = aVisitor.mEvent->mOriginalRelatedTarget;
 
     // Special handling if PresShell (or some other caller)
     // used a callback object.
@@ -511,6 +585,7 @@ EventTargetChainItem::HandleEventTargetChain(
     // Retarget for system event group (which does the default handling too).
     // Setting back the target which was used also for default event group.
     aVisitor.mEvent->mTarget = firstTarget;
+    aVisitor.mEvent->mRelatedTarget = firstRelatedTarget;
     aVisitor.mEvent->mFlags.mInSystemGroup = true;
     HandleEventTargetChain(aChain,
                            aVisitor,
@@ -568,6 +643,7 @@ MayRetargetToChromeIfCanNotHandleEvent(
     EventTargetChainItem::DestroyLast(aChain, aTargetEtci);
   }
   if (aPreVisitor.mAutomaticChromeDispatch && aContent) {
+    aPreVisitor.mRelatedTargetRetargetedInCurrentScope = false;
     // Event target couldn't handle the event. Try to propagate to chrome.
     EventTargetChainItem* chromeTargetEtci =
       EventTargetChainItemForChromeTarget(aChain, aContent, aChildEtci);
@@ -604,6 +680,8 @@ EventDispatcher::Dispatch(nsISupports* aTarget,
   // Events shall not be fired while we are in stable state to prevent anything
   // visible from the scripts.
   MOZ_ASSERT(!nsContentUtils::IsInStableOrMetaStableState());
+  NS_ENSURE_TRUE(!nsContentUtils::IsInStableOrMetaStableState(),
+                 NS_ERROR_DOM_INVALID_STATE_ERR);
 
 #ifdef MOZ_TASK_TRACER
   if (MOZ_UNLIKELY(mozilla::tasktracer::IsStartLogging())) {
@@ -739,9 +817,10 @@ EventDispatcher::Dispatch(nsISupports* aTarget,
     aEvent->mOriginalTarget = aEvent->mTarget;
   }
 
+  aEvent->mOriginalRelatedTarget = aEvent->mRelatedTarget;
+
   nsCOMPtr<nsIContent> content = do_QueryInterface(aEvent->mOriginalTarget);
-  bool isInAnon = (content && (content->IsInAnonymousSubtree() ||
-                               content->IsInShadowTree()));
+  bool isInAnon = content && content->IsInAnonymousSubtree();
 
   aEvent->mFlags.mIsBeingDispatched = true;
 
@@ -749,7 +828,7 @@ EventDispatcher::Dispatch(nsISupports* aTarget,
   // GetEventTargetParent for the original target.
   nsEventStatus status = aEventStatus ? *aEventStatus : nsEventStatus_eIgnore;
   EventChainPreVisitor preVisitor(aPresContext, aEvent, aDOMEvent, status,
-                                  isInAnon);
+                                  isInAnon, aEvent->mTarget);
   targetEtci->GetEventTargetParent(preVisitor);
 
   if (!preVisitor.mCanHandle) {
@@ -770,26 +849,35 @@ EventDispatcher::Dispatch(nsISupports* aTarget,
     targetEtci->SetNewTarget(t);
     EventTargetChainItem* topEtci = targetEtci;
     targetEtci = nullptr;
-    while (preVisitor.mParentTarget) {
-      EventTarget* parentTarget = preVisitor.mParentTarget;
+    while (preVisitor.GetParentTarget()) {
+      EventTarget* parentTarget = preVisitor.GetParentTarget();
       EventTargetChainItem* parentEtci =
-        EventTargetChainItem::Create(chain, preVisitor.mParentTarget, topEtci);
+        EventTargetChainItem::Create(chain, parentTarget, topEtci);
       if (!parentEtci->IsValid()) {
         EventTargetChainItem::DestroyLast(chain, parentEtci);
         rv = NS_ERROR_FAILURE;
         break;
       }
 
+      parentEtci->SetIsSlotInClosedTree(preVisitor.mParentIsSlotInClosedTree);
+      parentEtci->SetIsChromeHandler(preVisitor.mParentIsChromeHandler);
+
       // Item needs event retargetting.
       if (preVisitor.mEventTargetAtParent) {
         // Need to set the target of the event
         // so that also the next retargeting works.
+        preVisitor.mTargetInKnownToBeHandledScope = preVisitor.mEvent->mTarget;
         preVisitor.mEvent->mTarget = preVisitor.mEventTargetAtParent;
         parentEtci->SetNewTarget(preVisitor.mEventTargetAtParent);
       }
 
+      if (preVisitor.mRetargetedRelatedTarget) {
+        preVisitor.mEvent->mRelatedTarget = preVisitor.mRetargetedRelatedTarget;
+      }
+
       parentEtci->GetEventTargetParent(preVisitor);
       if (preVisitor.mCanHandle) {
+        preVisitor.mTargetInKnownToBeHandledScope = preVisitor.mEvent->mTarget;
         topEtci = parentEtci;
       } else {
         nsCOMPtr<nsINode> disabledTarget = do_QueryInterface(parentTarget);
@@ -799,6 +887,7 @@ EventDispatcher::Dispatch(nsISupports* aTarget,
                                                             topEtci,
                                                             disabledTarget);
         if (parentEtci && preVisitor.mCanHandle) {
+          preVisitor.mTargetInKnownToBeHandledScope = preVisitor.mEvent->mTarget;
           EventTargetChainItem* item =
             EventTargetChainItem::GetFirstCanHandleEventTarget(chain);
           item->SetNewTarget(parentTarget);
@@ -823,8 +912,11 @@ EventDispatcher::Dispatch(nsISupports* aTarget,
         }
         // Handle the chain.
         EventChainPostVisitor postVisitor(preVisitor);
+        MOZ_RELEASE_ASSERT(!aEvent->mPath);
+        aEvent->mPath = &chain;
         EventTargetChainItem::HandleEventTargetChain(chain, postVisitor,
                                                      aCallback, cd);
+        aEvent->mPath = nullptr;
 
         preVisitor.mEventStatus = postVisitor.mEventStatus;
         // If the DOM event was created during event flow.
@@ -840,6 +932,18 @@ EventDispatcher::Dispatch(nsISupports* aTarget,
 
   aEvent->mFlags.mIsBeingDispatched = false;
   aEvent->mFlags.mDispatchedAtLeastOnce = true;
+
+  // https://dom.spec.whatwg.org/#concept-event-dispatch
+  // Step 18
+  // "If target's root is a shadow root, then set event's target attribute and
+  //  event's relatedTarget to null."
+  nsCOMPtr<nsIContent> finalTarget = do_QueryInterface(aEvent->mTarget);
+  if (finalTarget && finalTarget->SubtreeRoot()->IsShadowRoot()) {
+    aEvent->mTarget = nullptr;
+    aEvent->mOriginalTarget = nullptr;
+    aEvent->mRelatedTarget = nullptr;
+    aEvent->mOriginalRelatedTarget = nullptr;
+  }
 
   if (!externalDOMEvent && preVisitor.mDOMEvent) {
     // An dom::Event was created while dispatching the event.
@@ -885,7 +989,7 @@ EventDispatcher::DispatchDOMEvent(nsISupports* aTarget,
     if (!dontResetTrusted) {
       //Check security state to determine if dispatcher is trusted
       bool trusted = NS_IsMainThread() ? nsContentUtils::LegacyIsCallerChromeOrNativeCode()
-                                       : mozilla::dom::workers::IsCurrentThreadRunningChromeWorker();
+                                       : IsCurrentThreadRunningChromeWorker();
       aDOMEvent->SetTrusted(trusted);
     }
 
@@ -968,51 +1072,29 @@ EventDispatcher::CreateEvent(EventTarget* aOwner,
 
   // And if we didn't get an event, check the type argument.
 
-#define LOG_EVENT_CREATION(name) mozilla::Telemetry::Accumulate( \
-    mozilla::Telemetry::CREATE_EVENT_##name, true);
-
-  if (aEventType.LowerCaseEqualsLiteral("mouseevent")) {
-    LOG_EVENT_CREATION(MOUSEEVENT);
-    return NS_NewDOMMouseEvent(aOwner, aPresContext, nullptr);
-  }
-  if (aEventType.LowerCaseEqualsLiteral("mouseevents")) {
-    LOG_EVENT_CREATION(MOUSEEVENTS);
+  if (aEventType.LowerCaseEqualsLiteral("mouseevent") ||
+      aEventType.LowerCaseEqualsLiteral("mouseevents")) {
     return NS_NewDOMMouseEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("mousescrollevents")) {
-    LOG_EVENT_CREATION(MOUSESCROLLEVENTS);
     return NS_NewDOMMouseScrollEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("dragevent")) {
-    LOG_EVENT_CREATION(DRAGEVENT);
     return NS_NewDOMDragEvent(aOwner, aPresContext, nullptr);
   }
-  if (aEventType.LowerCaseEqualsLiteral("keyboardevent")) {
-    LOG_EVENT_CREATION(KEYBOARDEVENT);
+  if (aEventType.LowerCaseEqualsLiteral("keyboardevent") ||
+      aEventType.LowerCaseEqualsLiteral("keyevents")) {
     return NS_NewDOMKeyboardEvent(aOwner, aPresContext, nullptr);
   }
-  if (aEventType.LowerCaseEqualsLiteral("keyevents")) {
-    LOG_EVENT_CREATION(KEYEVENTS);
-    return NS_NewDOMKeyboardEvent(aOwner, aPresContext, nullptr);
-  }
-  if (aEventType.LowerCaseEqualsLiteral("compositionevent")) {
-    LOG_EVENT_CREATION(COMPOSITIONEVENT);
+  if (aEventType.LowerCaseEqualsLiteral("compositionevent") ||
+      aEventType.LowerCaseEqualsLiteral("textevent")) {
     return NS_NewDOMCompositionEvent(aOwner, aPresContext, nullptr);
   }
-  if (aEventType.LowerCaseEqualsLiteral("textevent")) {
-    LOG_EVENT_CREATION(TEXTEVENT);
-    return NS_NewDOMCompositionEvent(aOwner, aPresContext, nullptr);
-  }
-  if (aEventType.LowerCaseEqualsLiteral("mutationevent")) {
-    LOG_EVENT_CREATION(MUTATIONEVENT);
-    return NS_NewDOMMutationEvent(aOwner, aPresContext, nullptr);
-  }
-  if (aEventType.LowerCaseEqualsLiteral("mutationevents")) {
-    LOG_EVENT_CREATION(MUTATIONEVENTS);
+  if (aEventType.LowerCaseEqualsLiteral("mutationevent") ||
+      aEventType.LowerCaseEqualsLiteral("mutationevents")) {
     return NS_NewDOMMutationEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("deviceorientationevent")) {
-    LOG_EVENT_CREATION(DEVICEORIENTATIONEVENT);
     DeviceOrientationEventInit init;
     RefPtr<Event> event =
       DeviceOrientationEvent::Constructor(aOwner, EmptyString(), init);
@@ -1020,57 +1102,36 @@ EventDispatcher::CreateEvent(EventTarget* aOwner,
     return event.forget();
   }
   if (aEventType.LowerCaseEqualsLiteral("devicemotionevent")) {
-    LOG_EVENT_CREATION(DEVICEMOTIONEVENT);
     return NS_NewDOMDeviceMotionEvent(aOwner, aPresContext, nullptr);
   }
-  if (aEventType.LowerCaseEqualsLiteral("uievent")) {
-    LOG_EVENT_CREATION(UIEVENT);
+  if (aEventType.LowerCaseEqualsLiteral("uievent") ||
+      aEventType.LowerCaseEqualsLiteral("uievents")) {
     return NS_NewDOMUIEvent(aOwner, aPresContext, nullptr);
   }
-  if (aEventType.LowerCaseEqualsLiteral("uievents")) {
-    LOG_EVENT_CREATION(UIEVENTS);
-    return NS_NewDOMUIEvent(aOwner, aPresContext, nullptr);
-  }
-  if (aEventType.LowerCaseEqualsLiteral("event")) {
-    LOG_EVENT_CREATION(EVENT);
-    return NS_NewDOMEvent(aOwner, aPresContext, nullptr);
-  }
-  if (aEventType.LowerCaseEqualsLiteral("events")) {
-    LOG_EVENT_CREATION(EVENTS);
-    return NS_NewDOMEvent(aOwner, aPresContext, nullptr);
-  }
-  if (aEventType.LowerCaseEqualsLiteral("htmlevents")) {
-    LOG_EVENT_CREATION(HTMLEVENTS);
-    return NS_NewDOMEvent(aOwner, aPresContext, nullptr);
-  }
-  if (aEventType.LowerCaseEqualsLiteral("svgevents")) {
-    LOG_EVENT_CREATION(SVGEVENTS);
+  if (aEventType.LowerCaseEqualsLiteral("event") ||
+      aEventType.LowerCaseEqualsLiteral("events") ||
+      aEventType.LowerCaseEqualsLiteral("htmlevents") ||
+      aEventType.LowerCaseEqualsLiteral("svgevents")) {
     return NS_NewDOMEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("timeevent")) {
-    LOG_EVENT_CREATION(TIMEEVENT);
     return NS_NewDOMTimeEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("messageevent")) {
-    LOG_EVENT_CREATION(MESSAGEEVENT);
     RefPtr<Event> event = new MessageEvent(aOwner, aPresContext, nullptr);
     return event.forget();
   }
   if (aEventType.LowerCaseEqualsLiteral("beforeunloadevent")) {
-    LOG_EVENT_CREATION(BEFOREUNLOADEVENT);
     return NS_NewDOMBeforeUnloadEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("scrollareaevent")) {
-    LOG_EVENT_CREATION(SCROLLAREAEVENT);
     return NS_NewDOMScrollAreaEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("touchevent") &&
       TouchEvent::PrefEnabled(nsContentUtils::GetDocShellForEventTarget(aOwner))) {
-    LOG_EVENT_CREATION(TOUCHEVENT);
     return NS_NewDOMTouchEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("hashchangeevent")) {
-    LOG_EVENT_CREATION(HASHCHANGEEVENT);
     HashChangeEventInit init;
     RefPtr<Event> event =
       HashChangeEvent::Constructor(aOwner, EmptyString(), init);
@@ -1078,11 +1139,9 @@ EventDispatcher::CreateEvent(EventTarget* aOwner,
     return event.forget();
   }
   if (aEventType.LowerCaseEqualsLiteral("customevent")) {
-    LOG_EVENT_CREATION(CUSTOMEVENT);
     return NS_NewDOMCustomEvent(aOwner, aPresContext, nullptr);
   }
   if (aEventType.LowerCaseEqualsLiteral("storageevent")) {
-    LOG_EVENT_CREATION(STORAGEEVENT);
     RefPtr<Event> event =
       StorageEvent::Constructor(aOwner, EmptyString(), StorageEventInit());
     event->MarkUninitialized();
@@ -1099,22 +1158,76 @@ EventDispatcher::CreateEvent(EventTarget* aOwner,
     if (aEventType.LowerCaseEqualsLiteral("simplegestureevent")) {
       return NS_NewDOMSimpleGestureEvent(aOwner, aPresContext, nullptr);
     }
-    if (aEventType.LowerCaseEqualsLiteral("xulcommandevent")) {
-      LOG_EVENT_CREATION(XULCOMMANDEVENT);
-      return NS_NewDOMXULCommandEvent(aOwner, aPresContext, nullptr);
-    }
-    if (aEventType.LowerCaseEqualsLiteral("xulcommandevents")) {
-      LOG_EVENT_CREATION(XULCOMMANDEVENTS);
+    if (aEventType.LowerCaseEqualsLiteral("xulcommandevent") ||
+        aEventType.LowerCaseEqualsLiteral("xulcommandevents")) {
       return NS_NewDOMXULCommandEvent(aOwner, aPresContext, nullptr);
     }
   }
-
-#undef LOG_EVENT_CREATION
 
   // NEW EVENT TYPES SHOULD NOT BE ADDED HERE; THEY SHOULD USE ONLY EVENT
   // CONSTRUCTORS
 
   return nullptr;
+}
+
+// static
+void
+EventDispatcher::GetComposedPathFor(WidgetEvent* aEvent,
+                                    nsTArray<RefPtr<EventTarget>>& aPath)
+{
+  nsTArray<EventTargetChainItem>* path = aEvent->mPath;
+  if (!path || path->IsEmpty() || !aEvent->mCurrentTarget) {
+    return;
+  }
+
+  EventTarget* currentTarget =
+    aEvent->mCurrentTarget->GetTargetForEventTargetChain();
+  if (!currentTarget) {
+    return;
+  }
+
+  AutoTArray<EventTarget*, 128> reversedComposedPath;
+  bool hasSeenCurrentTarget = false;
+  uint32_t hiddenSubtreeLevel = 0;
+  for (uint32_t i = path->Length(); i; ) {
+    --i;
+
+    EventTargetChainItem& item = path->ElementAt(i);
+    if (item.PreHandleEventOnly()) {
+      continue;
+    }
+
+    if (!hasSeenCurrentTarget && currentTarget == item.CurrentTarget()) {
+      hasSeenCurrentTarget = true;
+    } else if (hasSeenCurrentTarget && item.IsRootOfClosedTree()) {
+      ++hiddenSubtreeLevel;
+    }
+
+    if (hiddenSubtreeLevel == 0) {
+      reversedComposedPath.AppendElement(item.CurrentTarget());
+    }
+
+    if (item.IsSlotInClosedTree() && hiddenSubtreeLevel > 0) {
+      --hiddenSubtreeLevel;
+    }
+
+    if (item.IsChromeHandler()) {
+      if (hasSeenCurrentTarget) {
+        // The current behavior is to include only EventTargets from
+        // either chrome side of event path or content side, not from both.
+        break;
+      }
+
+      // Need to start all over to collect the composed path on content side.
+      reversedComposedPath.Clear();
+    }
+  }
+
+  aPath.SetCapacity(reversedComposedPath.Length());
+  for (uint32_t i = reversedComposedPath.Length(); i; ) {
+    --i;
+    aPath.AppendElement(reversedComposedPath[i]->GetTargetForDOMEvent());
+  }
 }
 
 } // namespace mozilla

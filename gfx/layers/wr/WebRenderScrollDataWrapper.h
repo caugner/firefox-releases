@@ -303,16 +303,23 @@ public:
     return mLayer->GetScrollbarTargetContainerId();
   }
 
-  bool IsScrollbarContainer() const
+  Maybe<ScrollDirection> GetScrollbarContainerDirection() const
   {
     MOZ_ASSERT(IsValid());
-    return mLayer->IsScrollbarContainer();
+    return mLayer->GetScrollbarContainerDirection();
   }
 
   FrameMetrics::ViewID GetFixedPositionScrollContainerId() const
   {
     MOZ_ASSERT(IsValid());
     return mLayer->GetFixedPositionScrollContainerId();
+  }
+
+  bool IsBackfaceHidden() const
+  {
+    // This is only used by APZCTM hit testing, and WR does its own
+    // hit testing, so no need to implement this.
+    return false;
   }
 
   const void* GetLayer() const

@@ -14,10 +14,6 @@
 
 "use strict";
 
-var Cu = Components.utils;
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-
 const SCRATCHPAD_CONTEXT_CONTENT = 1;
 const SCRATCHPAD_CONTEXT_BROWSER = 2;
 const BUTTON_POSITION_SAVE = 0;
@@ -43,11 +39,11 @@ const FALLBACK_CHARSET_LIST = "intl.fallbackCharsetList.ISO-8859-1";
 
 const VARIABLES_VIEW_URL = "chrome://devtools/content/shared/widgets/VariablesView.xul";
 
-const {require, loader} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {require, loader} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 
 const Editor = require("devtools/client/sourceeditor/editor");
 const TargetFactory = require("devtools/client/framework/target").TargetFactory;
-const EventEmitter = require("devtools/shared/old-event-emitter");
+const EventEmitter = require("devtools/shared/event-emitter");
 const {DevToolsWorker} = require("devtools/shared/worker/worker");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const flags = require("devtools/shared/flags");
@@ -55,7 +51,7 @@ const promise = require("promise");
 const defer = require("devtools/shared/defer");
 const Services = require("Services");
 const {gDevTools} = require("devtools/client/framework/devtools");
-const {Heritage} = require("devtools/client/shared/widgets/view-helpers");
+const { extend } = require("devtools/shared/extend");
 
 const {XPCOMUtils} = require("resource://gre/modules/XPCOMUtils.jsm");
 const {NetUtil} = require("resource://gre/modules/NetUtil.jsm");
@@ -75,10 +71,10 @@ XPCOMUtils.defineConstant(this, "BUTTON_POSITION_CANCEL", BUTTON_POSITION_CANCEL
 XPCOMUtils.defineConstant(this, "BUTTON_POSITION_DONT_SAVE", BUTTON_POSITION_DONT_SAVE);
 XPCOMUtils.defineConstant(this, "BUTTON_POSITION_REVERT", BUTTON_POSITION_REVERT);
 
-XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
+ChromeUtils.defineModuleGetter(this, "VariablesView",
   "resource://devtools/client/shared/widgets/VariablesView.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "VariablesViewController",
+ChromeUtils.defineModuleGetter(this, "VariablesViewController",
   "resource://devtools/client/shared/widgets/VariablesViewController.jsm");
 
 loader.lazyRequireGetter(this, "DebuggerServer", "devtools/server/main", true);
@@ -91,10 +87,10 @@ loader.lazyRequireGetter(this, "HUDService", "devtools/client/webconsole/hudserv
 XPCOMUtils.defineLazyGetter(this, "REMOTE_TIMEOUT", () =>
   Services.prefs.getIntPref("devtools.debugger.remote-timeout"));
 
-XPCOMUtils.defineLazyModuleGetter(this, "ShortcutUtils",
+ChromeUtils.defineModuleGetter(this, "ShortcutUtils",
   "resource://gre/modules/ShortcutUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Reflect",
+ChromeUtils.defineModuleGetter(this, "Reflect",
   "resource://gre/modules/reflect.jsm");
 
 var WebConsoleUtils = require("devtools/client/webconsole/utils").Utils;
@@ -1086,14 +1082,14 @@ var Scratchpad = {
     let writePromise = OS.File.writeAtomic(aFile.path, buffer, {tmpPath: aFile.path + ".tmp"});
     writePromise.then(value => {
       if (aCallback) {
-        aCallback.call(this, Components.results.NS_OK);
+        aCallback.call(this, Cr.NS_OK);
       }
     }, reason => {
       if (!aSilentError) {
         window.alert(this.strings.GetStringFromName("saveFile.failed"));
       }
       if (aCallback) {
-        aCallback.call(this, Components.results.NS_ERROR_UNEXPECTED);
+        aCallback.call(this, Cr.NS_ERROR_UNEXPECTED);
       }
     });
 
@@ -1238,8 +1234,8 @@ var Scratchpad = {
           if (aFile) {
             file = aFile;
           } else {
-            file = Components.classes["@mozilla.org/file/local;1"].
-                   createInstance(Components.interfaces.nsIFile);
+            file = Cc["@mozilla.org/file/local;1"].
+                   createInstance(Ci.nsIFile);
             let filePath = this.getRecentFiles()[aIndex];
             file.initWithPath(filePath);
           }
@@ -1732,6 +1728,9 @@ var Scratchpad = {
       this.editor.focus();
       this.editor.setCursor({ line: lines.length, ch: lines.pop().length });
 
+      // Add the commands controller for the source-editor.
+      this.editor.insertCommandsController();
+
       if (state)
         this.dirty = !state.saved;
 
@@ -2177,7 +2176,7 @@ function ScratchpadWindow() {}
 
 ScratchpadWindow.consoleFor = ScratchpadTab.consoleFor;
 
-ScratchpadWindow.prototype = Heritage.extend(ScratchpadTab.prototype, {
+ScratchpadWindow.prototype = extend(ScratchpadTab.prototype, {
   /**
    * Attach to this window.
    *
@@ -2186,10 +2185,8 @@ ScratchpadWindow.prototype = Heritage.extend(ScratchpadTab.prototype, {
    */
   _attach: function SW__attach()
   {
-    if (!DebuggerServer.initialized) {
-      DebuggerServer.init();
-      DebuggerServer.addBrowserActors();
-    }
+    DebuggerServer.init();
+    DebuggerServer.registerAllActors();
     DebuggerServer.allowChromeProcess = true;
 
     let client = new DebuggerClient(DebuggerServer.connectPipe());
@@ -2209,7 +2206,7 @@ function ScratchpadTarget(aTarget)
 
 ScratchpadTarget.consoleFor = ScratchpadTab.consoleFor;
 
-ScratchpadTarget.prototype = Heritage.extend(ScratchpadTab.prototype, {
+ScratchpadTarget.prototype = extend(ScratchpadTab.prototype, {
   _attach: function ST__attach()
   {
     if (this._target.isRemote) {

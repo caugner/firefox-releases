@@ -7,9 +7,10 @@
 
 // Make this available to both AMD and CJS environments
 define(function (require, exports, module) {
-  const React = require("devtools/client/shared/vendor/react");
-  const { Component, PropTypes } = React;
-  const { thead, tr, td, div } = React.DOM;
+  const { Component } = require("devtools/client/shared/vendor/react");
+  const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+  const dom = require("devtools/client/shared/vendor/react-dom-factories");
+  const { thead, tr, td, div } = dom;
 
   /**
    * This component is responsible for rendering tree header.
@@ -85,7 +86,10 @@ define(function (require, exports, module) {
             id: col.id,
             key: col.id,
           },
-            visible ? div({ className: "treeHeaderCellBox" }, col.title) : null
+            visible ? div({
+              className: "treeHeaderCellBox",
+              role: "presentation"
+            }, col.title) : null
           )
         );
       });

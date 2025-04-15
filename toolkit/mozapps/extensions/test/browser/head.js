@@ -5,11 +5,11 @@
 
 /* eslint no-unused-vars: ["error", {vars: "local", args: "none"}] */
 
-Components.utils.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 var tmp = {};
-Components.utils.import("resource://gre/modules/AddonManager.jsm", tmp);
-Components.utils.import("resource://gre/modules/Log.jsm", tmp);
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm", tmp);
+ChromeUtils.import("resource://gre/modules/Log.jsm", tmp);
 var AddonManager = tmp.AddonManager;
 var AddonManagerPrivate = tmp.AddonManagerPrivate;
 var Log = tmp.Log;
@@ -36,7 +36,6 @@ const PREF_UI_LASTCATEGORY = "extensions.ui.lastCategory";
 const MANAGER_URI = "about:addons";
 const INSTALL_URI = "chrome://mozapps/content/xpinstall/xpinstallConfirm.xul";
 const PREF_LOGGING_ENABLED = "extensions.logging.enabled";
-const PREF_SEARCH_MAXRESULTS = "extensions.getAddons.maxResults";
 const PREF_STRICT_COMPAT = "extensions.strictCompatibility";
 
 var PREF_CHECK_COMPATIBILITY;
@@ -66,11 +65,8 @@ var gRestorePrefs = [{name: PREF_LOGGING_ENABLED},
                      {name: "extensions.update.autoUpdateDefault"},
                      {name: "extensions.getAddons.get.url"},
                      {name: "extensions.getAddons.getWithPerformance.url"},
-                     {name: "extensions.getAddons.search.browseURL"},
-                     {name: "extensions.getAddons.search.url"},
                      {name: "extensions.getAddons.cache.enabled"},
                      {name: "devtools.chrome.enabled"},
-                     {name: PREF_SEARCH_MAXRESULTS},
                      {name: PREF_STRICT_COMPAT},
                      {name: PREF_CHECK_COMPATIBILITY}];
 
@@ -110,8 +106,8 @@ function checkOpenWindows(aWindowID) {
 
 // Tools to disable and re-enable the background update and blocklist timers
 // so that tests can protect themselves from unwanted timer events.
-var gCatMan = Components.classes["@mozilla.org/categorymanager;1"]
-                           .getService(Components.interfaces.nsICategoryManager);
+var gCatMan = Cc["@mozilla.org/categorymanager;1"]
+                .getService(Ci.nsICategoryManager);
 // Default values from toolkit/mozapps/extensions/extensions.manifest, but disable*UpdateTimer()
 // records the actual value so we can put it back in enable*UpdateTimer()
 var backgroundUpdateConfig = "@mozilla.org/addons/integration;1,getService,addon-background-update-timer,extensions.update.interval,86400";
@@ -283,9 +279,7 @@ function get_current_view(aManager) {
 function get_test_items_in_list(aManager) {
   var tests = "@tests.mozilla.org";
 
-  let view = get_current_view(aManager);
-  let listid = view.id == "search-view" ? "search-list" : "addon-list";
-  let item = aManager.document.getElementById(listid).firstChild;
+  let item = aManager.document.getElementById("addon-list").firstChild;
   let items = [];
 
   while (item) {
@@ -304,9 +298,7 @@ function get_test_items_in_list(aManager) {
 
 function check_all_in_list(aManager, aIds, aIgnoreExtras) {
   var doc = aManager.document;
-  var view = get_current_view(aManager);
-  var listid = view.id == "search-view" ? "search-list" : "addon-list";
-  var list = doc.getElementById(listid);
+  var list = doc.getElementById("addon-list");
 
   var inlist = [];
   var node = list.firstChild;
@@ -317,7 +309,7 @@ function check_all_in_list(aManager, aIds, aIgnoreExtras) {
   }
 
   for (let id of aIds) {
-    if (inlist.indexOf(id) == -1)
+    if (!inlist.includes(id))
       ok(false, "Should find " + id + " in the list");
   }
 
@@ -325,7 +317,7 @@ function check_all_in_list(aManager, aIds, aIgnoreExtras) {
     return;
 
   for (let inlistItem of inlist) {
-    if (aIds.indexOf(inlistItem) == -1)
+    if (!aIds.includes(inlistItem))
       ok(false, "Shouldn't have seen " + inlistItem + " in the list");
   }
 }
@@ -334,9 +326,7 @@ function get_addon_element(aManager, aId) {
   var doc = aManager.document;
   var view = get_current_view(aManager);
   var listid = "addon-list";
-  if (view.id == "search-view")
-    listid = "search-list";
-  else if (view.id == "updates-view")
+  if (view.id == "updates-view")
     listid = "updates-list";
   var list = doc.getElementById(listid);
 
@@ -468,9 +458,6 @@ function wait_for_window_open(aCallback) {
 
     onCloseWindow(aWindow) {
     },
-
-    onWindowTitleChange(aWindow, aTitle) {
-    }
   });
 }
 
@@ -632,11 +619,11 @@ CertOverrideListener.prototype = {
         aIID.equals(Ci.nsISupports))
       return this;
 
-    throw Components.Exception("No interface", Components.results.NS_ERROR_NO_INTERFACE);
+    throw Components.Exception("No interface", Cr.NS_ERROR_NO_INTERFACE);
   },
 
   notifyCertProblem(socketInfo, sslStatus, targetHost) {
-    var cert = sslStatus.QueryInterface(Components.interfaces.nsISSLStatus)
+    var cert = sslStatus.QueryInterface(Ci.nsISSLStatus)
                         .serverCert;
     var cos = Cc["@mozilla.org/security/certoverride;1"].
               getService(Ci.nsICertOverrideService);
@@ -918,7 +905,7 @@ MockProvider.prototype = {
    */
   getAddonsByTypes: function MP_getAddonsByTypes(aTypes, aCallback) {
     var addons = this.addons.filter(function(aAddon) {
-      if (aTypes && aTypes.length > 0 && aTypes.indexOf(aAddon.type) == -1)
+      if (aTypes && aTypes.length > 0 && !aTypes.includes(aAddon.type))
         return false;
       return true;
     });
@@ -935,7 +922,7 @@ MockProvider.prototype = {
    */
   getAddonsWithOperationsByTypes: function MP_getAddonsWithOperationsByTypes(aTypes, aCallback) {
     var addons = this.addons.filter(function(aAddon) {
-      if (aTypes && aTypes.length > 0 && aTypes.indexOf(aAddon.type) == -1)
+      if (aTypes && aTypes.length > 0 && !aTypes.includes(aAddon.type))
         return false;
       return aAddon.pendingOperations != 0;
     });
@@ -956,7 +943,7 @@ MockProvider.prototype = {
       if (aInstall.state == AddonManager.STATE_CANCELLED)
         return false;
 
-      if (aTypes && aTypes.length > 0 && aTypes.indexOf(aInstall.type) == -1)
+      if (aTypes && aTypes.length > 0 && !aTypes.includes(aInstall.type))
         return false;
 
       return true;

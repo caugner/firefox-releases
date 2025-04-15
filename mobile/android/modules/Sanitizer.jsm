@@ -1,35 +1,24 @@
-// -*- indent-tabs-mode: nil; js-indent-level: 4 -*-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* globals LoadContextInfo, FormHistory, Accounts */
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/LoadContextInfo.jsm");
-Cu.import("resource://gre/modules/FormHistory.jsm");
-Cu.import("resource://gre/modules/Task.jsm");
-Cu.import("resource://gre/modules/Downloads.jsm");
-Cu.import("resource://gre/modules/osfile.jsm");
-Cu.import("resource://gre/modules/Accounts.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  Accounts: "resource://gre/modules/Accounts.jsm",
+  DownloadIntegration: "resource://gre/modules/DownloadIntegration.jsm",
+  Downloads: "resource://gre/modules/Downloads.jsm",
+  EventDispatcher: "resource://gre/modules/Messaging.jsm",
+  FormHistory: "resource://gre/modules/FormHistory.jsm",
+  OS: "resource://gre/modules/osfile.jsm",
+  Task: "resource://gre/modules/Task.jsm",
+  TelemetryStopwatch: "resource://gre/modules/TelemetryStopwatch.jsm",
+});
 
-XPCOMUtils.defineLazyModuleGetter(this, "DownloadIntegration",
-                                  "resource://gre/modules/DownloadIntegration.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "EventDispatcher",
-                                  "resource://gre/modules/Messaging.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "TelemetryStopwatch",
-                                  "resource://gre/modules/TelemetryStopwatch.jsm");
-
-function dump(a) {
-  Services.console.logStringMessage(a);
-}
-
-this.EXPORTED_SYMBOLS = ["Sanitizer"];
+var EXPORTED_SYMBOLS = ["Sanitizer"];
 
 function Sanitizer() {}
 Sanitizer.prototype = {
@@ -56,10 +45,16 @@ Sanitizer.prototype = {
     let item = this.items[aItemName];
     let canClear = item.canClear;
     if (typeof canClear == "function") {
-      canClear(function clearCallback(aCanClear) {
-        if (aCanClear)
+      let maybeDoClear = async () => {
+        let canClearResult = await new Promise(resolve => {
+          canClear(resolve);
+        });
+
+        if (canClearResult) {
           return item.clear(options);
-      });
+        }
+      };
+      return maybeDoClear();
     } else if (canClear) {
       return item.clear(options);
     }
@@ -72,9 +67,8 @@ Sanitizer.prototype = {
           let refObj = {};
           TelemetryStopwatch.start("FX_SANITIZE_CACHE", refObj);
 
-          var cache = Cc["@mozilla.org/netwerk/cache-storage-service;1"].getService(Ci.nsICacheStorageService);
           try {
-            cache.clear();
+            Services.cache2.clear();
           } catch (er) {}
 
           let imageCache = Cc["@mozilla.org/image/tools;1"].getService(Ci.imgITools)
@@ -153,8 +147,7 @@ Sanitizer.prototype = {
     offlineApps: {
       clear: function() {
         return new Promise(function(resolve, reject) {
-          var cacheService = Cc["@mozilla.org/netwerk/cache-storage-service;1"].getService(Ci.nsICacheStorageService);
-          var appCacheStorage = cacheService.appCacheStorage(LoadContextInfo.default, null);
+          var appCacheStorage = Services.cache2.appCacheStorage(Services.loadContextInfo.default, null);
           try {
             appCacheStorage.asyncEvictStorage(null);
           } catch (er) {}
@@ -238,10 +231,12 @@ Sanitizer.prototype = {
           FormHistory.update({
             op: "remove",
             firstUsedStart: time
+          }, {
+            handleCompletion() {
+              TelemetryStopwatch.finish("FX_SANITIZE_FORMDATA", refObj);
+              resolve();
+            }
           });
-
-          TelemetryStopwatch.finish("FX_SANITIZE_FORMDATA", refObj);
-          resolve();
         });
       },
 
@@ -360,4 +355,4 @@ Sanitizer.prototype = {
   }
 };
 
-this.Sanitizer = new Sanitizer();
+var Sanitizer = new Sanitizer();

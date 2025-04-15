@@ -5,33 +5,33 @@
 add_task(async function test_cancelEditCreditCardDialog() {
   await new Promise(resolve => {
     let win = window.openDialog(EDIT_CREDIT_CARD_DIALOG_URL);
-    win.addEventListener("load", () => {
+    waitForFocus(() => {
       win.addEventListener("unload", () => {
         ok(true, "Edit credit card dialog is closed");
         resolve();
       }, {once: true});
       win.document.querySelector("#cancel").click();
-    }, {once: true});
+    }, win);
   });
 });
 
 add_task(async function test_cancelEditCreditCardDialogWithESC() {
   await new Promise(resolve => {
     let win = window.openDialog(EDIT_CREDIT_CARD_DIALOG_URL);
-    win.addEventListener("load", () => {
+    waitForFocus(() => {
       win.addEventListener("unload", () => {
         ok(true, "Edit credit card dialog is closed with ESC key");
         resolve();
       }, {once: true});
       EventUtils.synthesizeKey("VK_ESCAPE", {}, win);
-    }, {once: true});
+    }, win);
   });
 });
 
 add_task(async function test_saveCreditCard() {
   await new Promise(resolve => {
     let win = window.openDialog(EDIT_CREDIT_CARD_DIALOG_URL);
-    win.addEventListener("load", () => {
+    waitForFocus(() => {
       win.addEventListener("unload", () => {
         ok(true, "Edit credit card dialog is closed");
         resolve();
@@ -48,7 +48,7 @@ add_task(async function test_saveCreditCard() {
       EventUtils.synthesizeKey("VK_TAB", {}, win);
       info("saving credit card");
       EventUtils.synthesizeKey("VK_RETURN", {}, win);
-    }, {once: true});
+    }, win);
   });
   let creditCards = await getCreditCards();
 
@@ -62,23 +62,54 @@ add_task(async function test_saveCreditCard() {
   ok(creditCards[0]["cc-number-encrypted"], "cc-number-encrypted exists");
 });
 
-add_task(async function test_editCreditCard() {
-  let creditCards = await getCreditCards();
-  is(creditCards.length, 1, "only one credit card is in storage");
+add_task(async function test_saveCreditCardWithMaxYear() {
   await new Promise(resolve => {
-    let win = window.openDialog(EDIT_CREDIT_CARD_DIALOG_URL, null, null, creditCards[0]);
-    win.addEventListener("FormReady", () => {
+    let win = window.openDialog(EDIT_CREDIT_CARD_DIALOG_URL);
+    waitForFocus(() => {
       win.addEventListener("unload", () => {
         ok(true, "Edit credit card dialog is closed");
         resolve();
       }, {once: true});
       EventUtils.synthesizeKey("VK_TAB", {}, win);
+      EventUtils.synthesizeKey(TEST_CREDIT_CARD_2["cc-number"], {}, win);
       EventUtils.synthesizeKey("VK_TAB", {}, win);
-      EventUtils.synthesizeKey("VK_RIGHT", {}, win);
-      EventUtils.synthesizeKey("test", {}, win);
-      win.document.querySelector("#save").click();
-    }, {once: true});
+      EventUtils.synthesizeKey(TEST_CREDIT_CARD_2["cc-name"], {}, win);
+      EventUtils.synthesizeKey("VK_TAB", {}, win);
+      EventUtils.synthesizeKey(TEST_CREDIT_CARD_2["cc-exp-month"].toString(), {}, win);
+      EventUtils.synthesizeKey("VK_TAB", {}, win);
+      EventUtils.synthesizeKey(TEST_CREDIT_CARD_2["cc-exp-year"].toString(), {}, win);
+      EventUtils.synthesizeKey("VK_TAB", {}, win);
+      EventUtils.synthesizeKey("VK_TAB", {}, win);
+      info("saving credit card");
+      EventUtils.synthesizeKey("VK_RETURN", {}, win);
+    }, win);
   });
+  let creditCards = await getCreditCards();
+
+  is(creditCards.length, 2, "Two credit card is in storage");
+  for (let [fieldName, fieldValue] of Object.entries(TEST_CREDIT_CARD_2)) {
+    if (fieldName === "cc-number") {
+      fieldValue = "*".repeat(fieldValue.length - 4) + fieldValue.substr(-4);
+    }
+    is(creditCards[1][fieldName], fieldValue, "check " + fieldName);
+  }
+  ok(creditCards[1]["cc-number-encrypted"], "cc-number-encrypted exists");
+  await removeCreditCards([creditCards[1].guid]);
+});
+
+add_task(async function test_editCreditCard() {
+  let creditCards = await getCreditCards();
+  is(creditCards.length, 1, "only one credit card is in storage");
+  let win = window.openDialog(EDIT_CREDIT_CARD_DIALOG_URL, null, null, creditCards[0]);
+  await waitForFocusAndFormReady(win);
+  let unloadPromise = BrowserTestUtils.waitForEvent(win, "unload");
+  EventUtils.synthesizeKey("VK_TAB", {}, win);
+  EventUtils.synthesizeKey("VK_TAB", {}, win);
+  EventUtils.synthesizeKey("VK_RIGHT", {}, win);
+  EventUtils.synthesizeKey("test", {}, win);
+  win.document.querySelector("#save").click();
+  await unloadPromise;
+  ok(true, "Edit credit card dialog is closed");
   creditCards = await getCreditCards();
 
   is(creditCards.length, 1, "only one credit card is in storage");
@@ -92,7 +123,7 @@ add_task(async function test_editCreditCard() {
 add_task(async function test_addInvalidCreditCard() {
   await new Promise(resolve => {
     let win = window.openDialog(EDIT_CREDIT_CARD_DIALOG_URL);
-    win.addEventListener("FormReady", () => {
+    waitForFocus(() => {
       const unloadHandler = () => ok(false, "Edit credit card dialog shouldn't be closed");
       win.addEventListener("unload", unloadHandler);
 
@@ -107,7 +138,7 @@ add_task(async function test_addInvalidCreditCard() {
         win.close();
         resolve();
       }, 500);
-    }, {once: true});
+    }, win);
   });
   let creditCards = await getCreditCards();
 

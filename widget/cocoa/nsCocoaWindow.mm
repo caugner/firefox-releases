@@ -35,6 +35,7 @@
 #include "nsIScreenManager.h"
 #include "nsIWidgetListener.h"
 #include "nsIPresShell.h"
+#include "VibrancyManager.h"
 
 #include "gfxPlatform.h"
 #include "gfxPrefs.h"
@@ -487,6 +488,11 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect &aRect,
   mWindow = [[windowClass alloc] initWithContentRect:contentRect styleMask:features 
                                  backing:NSBackingStoreBuffered defer:YES];
 
+  // Make sure that window titles don't leak to disk in private browsing mode
+  // due to macOS' resume feature.
+  [mWindow setRestorable:NO];
+  [mWindow disableSnapshotRestoration];
+
   // setup our notification delegate. Note that setDelegate: does NOT retain.
   mDelegate = [[WindowDelegate alloc] initWithGeckoWindow:this];
   [mWindow setDelegate:mDelegate];
@@ -549,7 +555,9 @@ nsCocoaWindow::CreatePopupContentView(const LayoutDeviceIntRect &aRect,
   }
 
   ChildView* newContentView = (ChildView*)mPopupContentView->GetNativeData(NS_NATIVE_WIDGET);
-  [mWindow setContentView:newContentView];
+  [newContentView setFrame:NSZeroRect];
+  [newContentView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [[mWindow contentView] addSubview:newContentView];
 
   return NS_OK;
 
@@ -2137,7 +2145,17 @@ nsCocoaWindow::ClientToWindowSize(const LayoutDeviceIntSize& aClientSize)
   LayoutDeviceIntRect r(0, 0, aClientSize.width, aClientSize.height);
   NSRect rect = nsCocoaUtils::DevPixelsToCocoaPoints(r, backingScale);
 
-  NSRect inflatedRect = [mWindow frameRectForContentRect:rect];
+  // Our caller expects the inflated rect for windows *with separate titlebars*,
+  // i.e. for windows where [mWindow drawsContentsIntoWindowFrame] is NO.
+  //
+  // So we call frameRectForContentRect on NSWindow here, instead of mWindow, so
+  // that we don't run into our override if this window is a window that draws
+  // its content into the titlebar.
+  //
+  // This is the same thing the windows widget does, but we probably should fix
+  // that, see bug 1445738.
+  unsigned int features = [mWindow styleMask];
+  NSRect inflatedRect = [NSWindow frameRectForContentRect:rect styleMask:features];
   r = nsCocoaUtils::CocoaRectToGeckoRectDevPix(inflatedRect, backingScale);
   return r.Size();
 
@@ -2222,13 +2240,7 @@ nsCocoaWindow::SetWindowShadowStyle(int32_t aStyle)
 
   // Shadowless windows are only supported on popups.
   if (mWindowType == eWindowType_popup) {
-    MOZ_ASSERT(mPopupContentView);
-
-    // Drop shadows are not sized correctly for composited popups when they are
-    // animated, so disable them entirely if the popup is composited.
-    bool disableShadow = (aStyle == NS_STYLE_WINDOW_SHADOW_NONE ||
-                          mPopupContentView->ShouldUseOffMainThreadCompositing());
-    [mWindow setHasShadow:!disableShadow];
+    [mWindow setHasShadow:aStyle != NS_STYLE_WINDOW_SHADOW_NONE];
   }
 
   [mWindow setUseMenuStyle:(aStyle == NS_STYLE_WINDOW_SHADOW_MENU)];
@@ -2272,6 +2284,12 @@ nsCocoaWindow::SetWindowTransform(const gfx::Matrix& aTransform)
 
   if (!mWindow) {
     return;
+  }
+
+  // Calling CGSSetWindowTransform when the window is not visible results in
+  // misplacing the window into doubled x,y coordinates (see bug 1448132).
+  if (![mWindow isVisible] || NSIsEmptyRect([mWindow frame])) {
+      return;
   }
 
   if (gfxPrefs::WindowTransformsDisabled()) {
@@ -2980,12 +2998,6 @@ static NSMutableSet *gSwizzledFrameViewClasses = nil;
  - (void)_addKnownSubview:(NSView*)aView positioned:(NSWindowOrderingMode)place relativeTo:(NSView*)otherView;
 @end
 
-// Available on 10.10
-@interface NSWindow(PrivateCornerMaskMethod)
- - (id)_cornerMask;
- - (void)_cornerMaskChanged;
-@end
-
 #if !defined(MAC_OS_X_VERSION_10_10) || \
     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_10
 
@@ -3006,6 +3018,10 @@ static NSMutableSet *gSwizzledFrameViewClasses = nil;
 
 #endif
 
+@interface NSView(NSVisualEffectViewSetMaskImage)
+- (void)setMaskImage:(NSImage*)image;
+@end
+
 @interface BaseWindow(Private)
 - (void)removeTrackingArea;
 - (void)cursorUpdated:(NSEvent*)aEvent;
@@ -3014,25 +3030,6 @@ static NSMutableSet *gSwizzledFrameViewClasses = nil;
 @end
 
 @implementation BaseWindow
-
-- (id)_cornerMask
-{
-  if (!mUseMenuStyle) {
-    return [super _cornerMask];
-  }
-
-  CGFloat radius = 4.0f;
-  NSEdgeInsets insets = { 5, 5, 5, 5 };
-  NSSize maskSize = { 12, 12 };
-  NSImage* maskImage = [NSImage imageWithSize:maskSize flipped:YES drawingHandler:^BOOL(NSRect dstRect) {
-    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:dstRect xRadius:radius yRadius:radius];
-    [[NSColor colorWithDeviceWhite:1.0 alpha:1.0] set];
-    [path fill];
-    return YES;
-  }];
-  [maskImage setCapInsets:insets];
-  return maskImage;
-}
 
 // The frame of a window is implemented using undocumented NSView subclasses.
 // We offset the window buttons by overriding the methods _closeButtonOrigin
@@ -3118,14 +3115,54 @@ static NSMutableSet *gSwizzledFrameViewClasses = nil;
   return self;
 }
 
+// Returns an autoreleased NSImage.
+static NSImage*
+GetMenuMaskImage()
+{
+  CGFloat radius = 4.0f;
+  NSEdgeInsets insets = { 5, 5, 5, 5 };
+  NSSize maskSize = { 12, 12 };
+  NSImage* maskImage = [NSImage imageWithSize:maskSize flipped:YES drawingHandler:^BOOL(NSRect dstRect) {
+    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:dstRect xRadius:radius yRadius:radius];
+    [[NSColor colorWithDeviceWhite:1.0 alpha:1.0] set];
+    [path fill];
+    return YES;
+  }];
+  [maskImage setCapInsets:insets];
+  return maskImage;
+}
+
+- (void)swapOutChildViewWrapper:(NSView*)aNewWrapper
+{
+  [aNewWrapper setFrame:[[self contentView] frame]];
+  NSView* childView = [[self mainChildView] retain];
+  [childView removeFromSuperview];
+  [aNewWrapper addSubview:childView];
+  [childView release];
+  [super setContentView:aNewWrapper];
+}
+
 - (void)setUseMenuStyle:(BOOL)aValue
 {
-  if (aValue != mUseMenuStyle) {
-    mUseMenuStyle = aValue;
-    if ([self respondsToSelector:@selector(_cornerMaskChanged)]) {
-      [self _cornerMaskChanged];
-    }
+  if (!VibrancyManager::SystemSupportsVibrancy()) {
+    return;
   }
+
+  if (aValue && !mUseMenuStyle) {
+    // Turn on rounded corner masking.
+    NSView* effectView = VibrancyManager::CreateEffectView(VibrancyType::MENU, YES);
+    if ([effectView respondsToSelector:@selector(setMaskImage:)]) {
+      [effectView setMaskImage:GetMenuMaskImage()];
+    }
+    [self swapOutChildViewWrapper:effectView];
+    [effectView release];
+  } else if (mUseMenuStyle && !aValue) {
+    // Turn off rounded corner masking.
+    NSView* wrapper = [[NSView alloc] initWithFrame:NSZeroRect];
+    [self swapOutChildViewWrapper:wrapper];
+    [wrapper release];
+  }
+  mUseMenuStyle = aValue;
 }
 
 - (void)setBeingShown:(BOOL)aValue
@@ -3171,7 +3208,9 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
 
 - (void)importState:(NSDictionary*)aState
 {
-  [self setTitle:[aState objectForKey:kStateTitleKey]];
+  if (NSString* title = [aState objectForKey:kStateTitleKey]) {
+    [self setTitle:title];
+  }
   [self setDrawsContentsIntoWindowFrame:[[aState objectForKey:kStateDrawsContentsIntoWindowFrameKey] boolValue]];
   [self setTitlebarColor:[aState objectForKey:kStateActiveTitlebarColorKey] forActiveWindow:YES];
   [self setTitlebarColor:[aState objectForKey:kStateInactiveTitlebarColorKey] forActiveWindow:NO];
@@ -3182,7 +3221,9 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
 - (NSMutableDictionary*)exportState
 {
   NSMutableDictionary* state = [NSMutableDictionary dictionaryWithCapacity:10];
-  [state setObject:[self title] forKey:kStateTitleKey];
+  if (NSString* title = [self title]) {
+    [state setObject:title forKey:kStateTitleKey];
+  }
   [state setObject:[NSNumber numberWithBool:[self drawsContentsIntoWindowFrame]]
             forKey:kStateDrawsContentsIntoWindowFrameKey];
   NSColor* activeTitlebarColor = [self titlebarColorForActiveWindow:YES];
@@ -3269,11 +3310,7 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
 
 - (ChildView*)mainChildView
 {
-  NSView *contentView = [self contentView];
-  // A PopupWindow's contentView is a ChildView object.
-  if ([contentView isKindOfClass:[ChildView class]]) {
-    return (ChildView*)contentView;
-  }
+  NSView* contentView = [self contentView];
   NSView* lastView = [[contentView subviews] lastObject];
   if ([lastView isKindOfClass:[ChildView class]]) {
     return (ChildView*)lastView;
@@ -3889,7 +3926,7 @@ TitlebarDrawCallback(void* aInfo, CGContextRef aContext)
   float patternWidth = [mWindow frame].size.width;
 
   CGPatternCallbacks callbacks = {0, &TitlebarDrawCallback, NULL};
-  CGPatternRef pattern = CGPatternCreate(mWindow, CGRectMake(0.0f, 0.0f, patternWidth, [mWindow frame].size.height), 
+  CGPatternRef pattern = CGPatternCreate(mWindow, CGRectMake(0.0f, 0.0f, patternWidth, [mWindow frame].size.height),
                                          CGAffineTransformIdentity, patternWidth, [mWindow frame].size.height,
                                          kCGPatternTilingConstantSpacing, true, &callbacks);
 
@@ -3928,6 +3965,15 @@ TitlebarDrawCallback(void* aInfo, CGContextRef aContext)
           backing:bufferingType defer:deferCreation];
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NIL;
+}
+
+// Override the private API _backdropBleedAmount. This determines how much the
+// desktop wallpaper contributes to the vibrancy backdrop.
+// Return 0 in order to match what the system does for sheet windows and
+// _NSPopoverWindows.
+- (CGFloat)_backdropBleedAmount
+{
+  return 0.0;
 }
 
 - (BOOL)isContextMenu

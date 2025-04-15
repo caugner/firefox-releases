@@ -16,9 +16,10 @@
 #include "nsAttrValueInlines.h"
 #include "nsAtom.h"
 #include "nsUnicharUtils.h"
+#include "mozilla/CORSMode.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ServoBindingTypes.h"
-#include "mozilla/ServoStyleSet.h"
+#include "mozilla/ServoUtils.h"
 #include "mozilla/DeclarationBlockInlines.h"
 #include "nsContentUtils.h"
 #include "nsReadableUtils.h"
@@ -186,25 +187,6 @@ nsAttrValue::Shutdown()
   sEnumTableArray = nullptr;
 }
 
-nsAttrValue::ValueType
-nsAttrValue::Type() const
-{
-  switch (BaseType()) {
-    case eIntegerBase:
-    {
-      return static_cast<ValueType>(mBits & NS_ATTRVALUE_INTEGERTYPE_MASK);
-    }
-    case eOtherBase:
-    {
-      return GetMiscContainer()->mType;
-    }
-    default:
-    {
-      return static_cast<ValueType>(static_cast<uint16_t>(BaseType()));
-    }
-  }
-}
-
 void
 nsAttrValue::Reset()
 {
@@ -370,7 +352,7 @@ nsAttrValue::SetTo(const nsAttrValue& aOther)
     } else {
       static_cast<nsAtom*>(otherPtr)->AddRef();
     }
-    cont->mStringBits = otherCont->mStringBits;
+    cont->SetStringBitsMainThread(otherCont->mStringBits);
   }
   // Note, set mType after switch-case, otherwise EnsureEmptyAtomArray doesn't
   // work correctly.
@@ -648,14 +630,10 @@ nsAttrValue::ToString(nsAString& aResult) const
         decl->ToString(aResult);
       }
 
-      // We can reach this during parallel style traversal. If that happens,
-      // don't cache the string. The TLS overhead should't hurt us here, since
-      // main thread consumers will subsequently use the cache, and
-      // off-main-thread consumers only reach this in the rare case of selector
-      // matching on the "style" attribute.
-      if (!ServoStyleSet::IsInServoTraversal()) {
-        const_cast<nsAttrValue*>(this)->SetMiscAtomOrString(&aResult);
-      }
+      // This can be reached during parallel selector matching with attribute
+      // selectors on the style attribute. SetMiscAtomOrString handles this
+      // case, and as of this writing this is the only consumer that needs it.
+      const_cast<nsAttrValue*>(this)->SetMiscAtomOrString(&aResult);
 
       break;
     }
@@ -1061,8 +1039,8 @@ nsAttrValue::Equals(const nsAttrValue& aOther) const
          eStringBase) &&
         (static_cast<ValueBaseType>(otherCont->mStringBits & NS_ATTRVALUE_BASETYPE_MASK) ==
          eStringBase)) {
-      return nsCheapString(reinterpret_cast<nsStringBuffer*>(thisCont->mStringBits)).Equals(
-        nsCheapString(reinterpret_cast<nsStringBuffer*>(otherCont->mStringBits)));
+      return nsCheapString(reinterpret_cast<nsStringBuffer*>(static_cast<uintptr_t>(thisCont->mStringBits))).Equals(
+        nsCheapString(reinterpret_cast<nsStringBuffer*>(static_cast<uintptr_t>(otherCont->mStringBits))));
     }
   }
   return false;
@@ -1620,7 +1598,7 @@ nsAttrValue::SetColorValue(nscolor aColor, const nsAString& aString)
   cont->mType = eColor;
 
   // Save the literal string we were passed for round-tripping.
-  cont->mStringBits = reinterpret_cast<uintptr_t>(buf) | eStringBase;
+  cont->SetStringBitsMainThread(reinterpret_cast<uintptr_t>(buf) | eStringBase);
 }
 
 bool
@@ -1715,7 +1693,9 @@ nsAttrValue::LoadImage(nsIDocument* aDocument)
                "How did we end up with an empty string for eURL");
 
   mozilla::css::ImageValue* image =
-      mozilla::css::ImageValue::CreateFromURLValue(url, aDocument);
+      mozilla::css::ImageValue::CreateFromURLValue(url,
+                                                   aDocument,
+                                                   mozilla::CORSMode::CORS_NONE);
 
   NS_ADDREF(image);
   cont->mValue.mImage = image;
@@ -1725,6 +1705,7 @@ nsAttrValue::LoadImage(nsIDocument* aDocument)
 
 bool
 nsAttrValue::ParseStyleAttribute(const nsAString& aString,
+                                 nsIPrincipal* aMaybeScriptedPrincipal,
                                  nsStyledElement* aElement)
 {
   nsIDocument* ownerDoc = aElement->OwnerDoc();
@@ -1735,11 +1716,19 @@ nsAttrValue::ParseStyleAttribute(const nsAString& aString,
   NS_ASSERTION(aElement->NodePrincipal() == ownerDoc->NodePrincipal(),
                "This is unexpected");
 
+  nsCOMPtr<nsIPrincipal> principal = (
+      aMaybeScriptedPrincipal ? aMaybeScriptedPrincipal
+                              : aElement->NodePrincipal());
+
   // If the (immutable) document URI does not match the element's base URI
   // (the common case is that they do match) do not cache the rule.  This is
   // because the results of the CSS parser are dependent on these URIs, and we
   // do not want to have to account for the URIs in the hash lookup.
-  bool cachingAllowed = sheet && baseURI == docURI;
+  // Similarly, if the triggering principal does not match the node principal,
+  // do not cache the rule, since the principal will be encoded in any parsed
+  // URLs in the rule.
+  bool cachingAllowed = (sheet && baseURI == docURI &&
+                         principal == aElement->NodePrincipal());
   if (cachingAllowed) {
     MiscContainer* cont = sheet->LookupStyleAttr(aString);
     if (cont) {
@@ -1753,15 +1742,19 @@ nsAttrValue::ParseStyleAttribute(const nsAString& aString,
   RefPtr<DeclarationBlock> decl;
   if (ownerDoc->GetStyleBackendType() == StyleBackendType::Servo) {
     RefPtr<URLExtraData> data = new URLExtraData(baseURI, docURI,
-                                                 aElement->NodePrincipal());
+                                                 principal);
     decl = ServoDeclarationBlock::FromCssText(aString, data,
                                               ownerDoc->GetCompatibilityMode(),
                                               ownerDoc->CSSLoader());
   } else {
+#ifdef MOZ_OLD_STYLE
     css::Loader* cssLoader = ownerDoc->CSSLoader();
     nsCSSParser cssParser(cssLoader);
     decl = cssParser.ParseStyleAttribute(aString, docURI, baseURI,
-                                         aElement->NodePrincipal());
+                                         principal);
+#else
+    MOZ_CRASH("old style system disabled");
+#endif
   }
   if (!decl) {
     return false;
@@ -1781,7 +1774,7 @@ void
 nsAttrValue::SetMiscAtomOrString(const nsAString* aValue)
 {
   NS_ASSERTION(GetMiscContainer(), "Must have MiscContainer!");
-  NS_ASSERTION(!GetMiscContainer()->mStringBits,
+  NS_ASSERTION(!GetMiscContainer()->mStringBits || IsInServoTraversal(),
                "Trying to re-set atom or string!");
   if (aValue) {
     uint32_t len = aValue->Length();
@@ -1795,16 +1788,34 @@ nsAttrValue::SetMiscAtomOrString(const nsAString* aValue)
     NS_ASSERTION(len || Type() == eCSSDeclaration || Type() == eEnum,
                  "Empty string?");
     MiscContainer* cont = GetMiscContainer();
+
     if (len <= NS_ATTRVALUE_MAX_STRINGLENGTH_ATOM) {
-      RefPtr<nsAtom> atom = NS_AtomizeMainThread(*aValue);
-      if (atom) {
-        cont->mStringBits =
-          reinterpret_cast<uintptr_t>(atom.forget().take()) | eAtomBase;
+      nsAtom* atom = MOZ_LIKELY(!IsInServoTraversal())
+        ? NS_AtomizeMainThread(*aValue).take()
+        : NS_Atomize(*aValue).take();
+      NS_ENSURE_TRUE_VOID(atom);
+      uintptr_t bits = reinterpret_cast<uintptr_t>(atom) | eAtomBase;
+
+      // In the common case we're not in the servo traversal, and we can just
+      // set the bits normally. The parallel case requires more care.
+      if (MOZ_LIKELY(!IsInServoTraversal())) {
+        cont->SetStringBitsMainThread(bits);
+      } else if (!cont->mStringBits.compareExchange(0, bits)) {
+        // We raced with somebody else setting the bits. Release our copy.
+        atom->Release();
       }
     } else {
-      nsStringBuffer* buf = GetStringBuffer(*aValue).take();
-      if (buf) {
-        cont->mStringBits = reinterpret_cast<uintptr_t>(buf) | eStringBase;
+      nsStringBuffer* buffer = GetStringBuffer(*aValue).take();
+      NS_ENSURE_TRUE_VOID(buffer);
+      uintptr_t bits = reinterpret_cast<uintptr_t>(buffer) | eStringBase;
+
+      // In the common case we're not in the servo traversal, and we can just
+      // set the bits normally. The parallel case requires more care.
+      if (MOZ_LIKELY(!IsInServoTraversal())) {
+        cont->SetStringBitsMainThread(bits);
+      } else if (!cont->mStringBits.compareExchange(0, bits)) {
+        // We raced with somebody else setting the bits. Release our copy.
+        buffer->Release();
       }
     }
   }
@@ -1822,7 +1833,7 @@ nsAttrValue::ResetMiscAtomOrString()
     } else {
       static_cast<nsAtom*>(ptr)->Release();
     }
-    cont->mStringBits = 0;
+    cont->SetStringBitsMainThread(0);
   }
 }
 

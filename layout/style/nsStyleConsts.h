@@ -9,8 +9,9 @@
 #ifndef nsStyleConsts_h___
 #define nsStyleConsts_h___
 
-#include "gfxRect.h"
-#include "nsFont.h"
+#include <inttypes.h>
+
+#include "gfxFontConstants.h"
 #include "X11UndefineNone.h"
 
 // XXX fold this into nsStyleContext and group by nsStyleXXX struct
@@ -154,7 +155,8 @@ enum class StyleShapeRadius : uint8_t {
 // Shape source type
 enum class StyleShapeSourceType : uint8_t {
   None,
-  URL,
+  URL,   // clip-path only
+  Image, // shape-outside only
   Shape,
   Box,
 };
@@ -204,8 +206,6 @@ enum class StyleUserSelect : uint8_t {
 // user-input
 enum class StyleUserInput : uint8_t {
   None,
-  Enabled,
-  Disabled,
   Auto,
 };
 
@@ -336,11 +336,13 @@ enum class StyleImageLayerRepeat : uint8_t {
 #define NS_STYLE_BORDER_STYLE_HIDDEN            9
 #define NS_STYLE_BORDER_STYLE_AUTO              10 // for outline-style only
 
-// See nsStyleBorder mBorderImage
-#define NS_STYLE_BORDER_IMAGE_REPEAT_STRETCH    0
-#define NS_STYLE_BORDER_IMAGE_REPEAT_REPEAT     1
-#define NS_STYLE_BORDER_IMAGE_REPEAT_ROUND      2
-#define NS_STYLE_BORDER_IMAGE_REPEAT_SPACE      3
+// border-image-repeat
+enum class StyleBorderImageRepeat : uint8_t {
+  Stretch,
+  Repeat,
+  Round,
+  Space
+};
 
 #define NS_STYLE_BORDER_IMAGE_SLICE_NOFILL      0
 #define NS_STYLE_BORDER_IMAGE_SLICE_FILL        1
@@ -1188,6 +1190,13 @@ enum class StyleWhiteSpace : uint8_t {
 #define NS_STYLE_SCROLL_BEHAVIOR_AUTO       0
 #define NS_STYLE_SCROLL_BEHAVIOR_SMOOTH     1
 
+// See nsStyleDisplay::mOverscrollBehavior{X,Y}
+enum class StyleOverscrollBehavior : uint8_t {
+  Auto = 0,
+  Contain,
+  None,
+};
+
 // See nsStyleDisplay::mScrollSnapType{X,Y}
 #define NS_STYLE_SCROLL_SNAP_TYPE_NONE              0
 #define NS_STYLE_SCROLL_SNAP_TYPE_MANDATORY         1
@@ -1198,18 +1207,24 @@ enum class StyleWhiteSpace : uint8_t {
  *****************************************************************************/
 
 // orientation
-#define NS_STYLE_ORIENTATION_PORTRAIT           0
-#define NS_STYLE_ORIENTATION_LANDSCAPE          1
+enum class StyleOrientation : uint8_t {
+  Portrait = 0,
+  Landscape,
+};
 
 // scan
-#define NS_STYLE_SCAN_PROGRESSIVE               0
-#define NS_STYLE_SCAN_INTERLACE                 1
+enum class StyleScan : uint8_t {
+  Progressive = 0,
+  Interlace,
+};
 
 // display-mode
-#define NS_STYLE_DISPLAY_MODE_BROWSER           0
-#define NS_STYLE_DISPLAY_MODE_MINIMAL_UI        1
-#define NS_STYLE_DISPLAY_MODE_STANDALONE        2
-#define NS_STYLE_DISPLAY_MODE_FULLSCREEN        3
+enum class StyleDisplayMode : uint8_t {
+  Browser = 0,
+  MinimalUi,
+  Standalone,
+  Fullscreen,
+};
 
 } // namespace mozilla
 

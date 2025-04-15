@@ -12,6 +12,7 @@
 #include <unordered_set>
 
 #include "mozilla/AlreadyAddRefed.h"
+#include "mozilla/gfx/CompositorHitTestInfo.h"
 #include "mozilla/layers/SyncObject.h"
 #include "mozilla/Range.h"
 #include "mozilla/webrender/webrender_ffi.h"
@@ -49,24 +50,50 @@ struct Line {
   wr::LineStyle style;
 };
 
-/// Updates to retained resources such as images and fonts, applied within the
-/// same transaction.
-class ResourceUpdateQueue {
+
+class TransactionBuilder {
 public:
-  ResourceUpdateQueue();
-  ~ResourceUpdateQueue();
-  ResourceUpdateQueue(ResourceUpdateQueue&&);
-  ResourceUpdateQueue(const ResourceUpdateQueue&) = delete;
-  ResourceUpdateQueue& operator=(ResourceUpdateQueue&&);
-  ResourceUpdateQueue& operator=(const ResourceUpdateQueue&) = delete;
+  TransactionBuilder();
+
+  ~TransactionBuilder();
+
+  void UpdateEpoch(PipelineId aPipelineId, Epoch aEpoch);
+
+  void SetRootPipeline(PipelineId aPipelineId);
+
+  void RemovePipeline(PipelineId aPipelineId);
+
+  void SetDisplayList(gfx::Color aBgColor,
+                      Epoch aEpoch,
+                      mozilla::LayerSize aViewportSize,
+                      wr::WrPipelineId pipeline_id,
+                      const wr::LayoutSize& content_size,
+                      wr::BuiltDisplayListDescriptor dl_descriptor,
+                      wr::Vec<uint8_t>& dl_data);
+
+  void ClearDisplayList(Epoch aEpoch, wr::WrPipelineId aPipeline);
+
+  void GenerateFrame();
+
+  void UpdateDynamicProperties(const nsTArray<wr::WrOpacityProperty>& aOpacityArray,
+                               const nsTArray<wr::WrTransformProperty>& aTransformArray);
+
+  void SetWindowParameters(const LayoutDeviceIntSize& aWindowSize,
+                           const LayoutDeviceIntRect& aDocRect);
+
+  void UpdateScrollPosition(const wr::WrPipelineId& aPipelineId,
+                            const layers::FrameMetrics::ViewID& aScrollId,
+                            const wr::LayoutPoint& aScrollPosition);
+
+  bool IsEmpty() const;
 
   void AddImage(wr::ImageKey aKey,
                 const ImageDescriptor& aDescriptor,
-                wr::Vec_u8& aBytes);
+                wr::Vec<uint8_t>& aBytes);
 
   void AddBlobImage(wr::ImageKey aKey,
                     const ImageDescriptor& aDescriptor,
-                    wr::Vec_u8& aBytes);
+                    wr::Vec<uint8_t>& aBytes);
 
   void AddExternalImageBuffer(ImageKey key,
                               const ImageDescriptor& aDescriptor,
@@ -75,16 +102,16 @@ public:
   void AddExternalImage(ImageKey key,
                         const ImageDescriptor& aDescriptor,
                         ExternalImageId aExtID,
-                        WrExternalImageBufferType aBufferType,
+                        wr::WrExternalImageBufferType aBufferType,
                         uint8_t aChannelIndex = 0);
 
   void UpdateImageBuffer(wr::ImageKey aKey,
                          const ImageDescriptor& aDescriptor,
-                         wr::Vec_u8& aBytes);
+                         wr::Vec<uint8_t>& aBytes);
 
   void UpdateBlobImage(wr::ImageKey aKey,
                        const ImageDescriptor& aDescriptor,
-                       wr::Vec_u8& aBytes,
+                       wr::Vec<uint8_t>& aBytes,
                        const wr::DeviceUintRect& aDirtyRect);
 
   void UpdateExternalImage(ImageKey aKey,
@@ -95,9 +122,9 @@ public:
 
   void DeleteImage(wr::ImageKey aKey);
 
-  void AddRawFont(wr::FontKey aKey, wr::Vec_u8& aBytes, uint32_t aIndex);
+  void AddRawFont(wr::FontKey aKey, wr::Vec<uint8_t>& aBytes, uint32_t aIndex);
 
-  void AddFontDescriptor(wr::FontKey aKey, wr::Vec_u8& aBytes, uint32_t aIndex);
+  void AddFontDescriptor(wr::FontKey aKey, wr::Vec<uint8_t>& aBytes, uint32_t aIndex);
 
   void DeleteFont(wr::FontKey aKey);
 
@@ -106,31 +133,30 @@ public:
                        float aGlyphSize,
                        const wr::FontInstanceOptions* aOptions,
                        const wr::FontInstancePlatformOptions* aPlatformOptions,
-                       wr::Vec_u8& aVariations);
+                       wr::Vec<uint8_t>& aVariations);
 
   void DeleteFontInstance(wr::FontInstanceKey aKey);
 
   void Clear();
 
-  // Try to avoid using this when possible.
-  wr::ResourceUpdates* Raw() { return mUpdates; }
-
+  Transaction* Raw() { return mTxn; }
+  wr::ResourceUpdates* RawUpdates() { return mResourceUpdates; }
 protected:
-  explicit ResourceUpdateQueue(wr::ResourceUpdates* aUpdates)
-  : mUpdates(aUpdates) {}
-
-  wr::ResourceUpdates* mUpdates;
+  Transaction* mTxn;
+  wr::ResourceUpdates* mResourceUpdates;
 };
 
 class WebRenderAPI
 {
-  NS_INLINE_DECL_REFCOUNTING(WebRenderAPI);
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(WebRenderAPI);
 
 public:
   /// This can be called on the compositor thread only.
   static already_AddRefed<WebRenderAPI> Create(layers::CompositorBridgeParentBase* aBridge,
                                                RefPtr<widget::CompositorWidget>&& aWidget,
                                                LayoutDeviceIntSize aSize);
+
+  already_AddRefed<WebRenderAPI> CreateDocument(LayoutDeviceIntSize aSize, int8_t aLayerIndex);
 
   // Redirect the WR's log to gfxCriticalError/Note.
   static void InitExternalLogHandler();
@@ -140,33 +166,12 @@ public:
 
   wr::WindowId GetId() const { return mId; }
 
-  void UpdateScrollPosition(const wr::WrPipelineId& aPipelineId,
-                            const layers::FrameMetrics::ViewID& aScrollId,
-                            const wr::LayoutPoint& aScrollPosition);
+  bool HitTest(const wr::WorldPoint& aPoint,
+               wr::WrPipelineId& aOutPipelineId,
+               layers::FrameMetrics::ViewID& aOutScrollId,
+               gfx::CompositorHitTestInfo& aOutHitInfo);
 
-  void GenerateFrame();
-  void GenerateFrame(const nsTArray<wr::WrOpacityProperty>& aOpacityArray,
-                     const nsTArray<wr::WrTransformProperty>& aTransformArray);
-
-  void SetWindowParameters(LayoutDeviceIntSize size);
-
-  void SetDisplayList(gfx::Color aBgColor,
-                      Epoch aEpoch,
-                      mozilla::LayerSize aViewportSize,
-                      wr::WrPipelineId pipeline_id,
-                      const wr::LayoutSize& content_size,
-                      wr::BuiltDisplayListDescriptor dl_descriptor,
-                      uint8_t *dl_data,
-                      size_t dl_size,
-                      ResourceUpdateQueue& aResources);
-
-  void ClearDisplayList(Epoch aEpoch, wr::WrPipelineId pipeline_id);
-
-  void SetRootPipeline(wr::PipelineId aPipeline);
-
-  void UpdateResources(ResourceUpdateQueue& aUpdates);
-
-  void UpdatePipelineResources(ResourceUpdateQueue& aUpdates, PipelineId aPipeline, Epoch aEpoch);
+  void SendTransaction(TransactionBuilder& aTxn);
 
   void SetFrameStartTime(const TimeStamp& aTime);
 
@@ -181,6 +186,8 @@ public:
   uint32_t GetMaxTextureSize() const { return mMaxTextureSize; }
   bool GetUseANGLE() const { return mUseANGLE; }
   layers::SyncHandle GetSyncHandle() const { return mSyncHandle; }
+
+  void Capture();
 
 protected:
   WebRenderAPI(wr::DocumentHandle* aHandle, wr::WindowId aId, uint32_t aMaxTextureSize, bool aUseANGLE, layers::SyncHandle aSyncHandle)
@@ -200,7 +207,17 @@ protected:
   uint32_t mMaxTextureSize;
   bool mUseANGLE;
   layers::SyncHandle mSyncHandle;
+
+  // We maintain alive the root api to know when to shut the render backend down,
+  // and the root api for the document to know when to delete the document.
+  // mRootApi is null for the api object that owns the channel (and is responsible
+  // for shutting it down), and mRootDocumentApi is null for the api object owning
+  // (and responsible for destroying) a given document.
+  // All api objects in the same window use the same channel, and some api objects
+  // write to the same document (but there is only one owner for each channel and
+  // for each document).
   RefPtr<wr::WebRenderAPI> mRootApi;
+  RefPtr<wr::WebRenderAPI> mRootDocumentApi;
 
   friend class DisplayListBuilder;
   friend class layers::WebRenderBridgeParent;
@@ -221,12 +238,13 @@ public:
   void Save();
   void Restore();
   void ClearSave();
+  void Dump();
 
   void Finalize(wr::LayoutSize& aOutContentSize,
                 wr::BuiltDisplayList& aOutDisplayList);
 
   void PushStackingContext(const wr::LayoutRect& aBounds, // TODO: We should work with strongly typed rects
-                           const uint64_t& aAnimationId,
+                           const wr::WrAnimationProperty* aAnimation,
                            const float* aOpacity,
                            const gfx::Matrix4x4* aTransform,
                            wr::TransformStyle aTransformStyle,
@@ -236,7 +254,7 @@ public:
                            bool aIsBackfaceVisible);
   void PopStackingContext();
 
-  wr::WrClipId DefineClip(const Maybe<layers::FrameMetrics::ViewID>& aAncestorScrollId,
+  wr::WrClipId DefineClip(const Maybe<wr::WrScrollId>& aAncestorScrollId,
                           const Maybe<wr::WrClipId>& aAncestorClipId,
                           const wr::LayoutRect& aClipRect,
                           const nsTArray<wr::ComplexClipRegion>* aComplex = nullptr,
@@ -257,16 +275,16 @@ public:
                        const DisplayItemClipChain* aParent);
   void PopStickyFrame(const DisplayItemClipChain* aParent);
 
-  bool IsScrollLayerDefined(layers::FrameMetrics::ViewID aScrollId) const;
-  void DefineScrollLayer(const layers::FrameMetrics::ViewID& aScrollId,
-                         const Maybe<layers::FrameMetrics::ViewID>& aAncestorScrollId,
-                         const Maybe<wr::WrClipId>& aAncestorClipId,
-                         const wr::LayoutRect& aContentRect, // TODO: We should work with strongly typed rects
-                         const wr::LayoutRect& aClipRect);
-  void PushScrollLayer(const layers::FrameMetrics::ViewID& aScrollId);
+  Maybe<wr::WrScrollId> GetScrollIdForDefinedScrollLayer(layers::FrameMetrics::ViewID aViewId) const;
+  wr::WrScrollId DefineScrollLayer(const layers::FrameMetrics::ViewID& aViewId,
+                                   const Maybe<wr::WrScrollId>& aAncestorScrollId,
+                                   const Maybe<wr::WrClipId>& aAncestorClipId,
+                                   const wr::LayoutRect& aContentRect, // TODO: We should work with strongly typed rects
+                                   const wr::LayoutRect& aClipRect);
+  void PushScrollLayer(const wr::WrScrollId& aScrollId);
   void PopScrollLayer();
 
-  void PushClipAndScrollInfo(const layers::FrameMetrics::ViewID& aScrollId,
+  void PushClipAndScrollInfo(const wr::WrScrollId& aScrollId,
                              const wr::WrClipId* aClipId);
   void PopClipAndScrollInfo();
 
@@ -301,7 +319,8 @@ public:
                  const wr::LayoutRect& aClip,
                  bool aIsBackfaceVisible,
                  wr::ImageRendering aFilter,
-                 wr::ImageKey aImage);
+                 wr::ImageKey aImage,
+                 bool aPremultipliedAlpha = true);
 
   void PushImage(const wr::LayoutRect& aBounds,
                  const wr::LayoutRect& aClip,
@@ -309,7 +328,8 @@ public:
                  const wr::LayoutSize& aStretchSize,
                  const wr::LayoutSize& aTileSpacing,
                  wr::ImageRendering aFilter,
-                 wr::ImageKey aImage);
+                 wr::ImageKey aImage,
+                 bool aPremultipliedAlpha = true);
 
   void PushYCbCrPlanarImage(const wr::LayoutRect& aBounds,
                             const wr::LayoutRect& aClip,
@@ -354,7 +374,7 @@ public:
                        const wr::BorderWidths& aWidths,
                        wr::ImageKey aImage,
                        const wr::NinePatchDescriptor& aPatch,
-                       const wr::SideOffsets2D_f32& aOutset,
+                       const wr::SideOffsets2D<float>& aOutset,
                        const wr::RepeatMode& aRepeatHorizontal,
                        const wr::RepeatMode& aRepeatVertical);
 
@@ -366,7 +386,7 @@ public:
                           const wr::LayoutPoint& aEndPoint,
                           const nsTArray<wr::GradientStop>& aStops,
                           wr::ExtendMode aExtendMode,
-                          const wr::SideOffsets2D_f32& aOutset);
+                          const wr::SideOffsets2D<float>& aOutset);
 
   void PushBorderRadialGradient(const wr::LayoutRect& aBounds,
                                 const wr::LayoutRect& aClip,
@@ -376,7 +396,7 @@ public:
                                 const wr::LayoutSize& aRadius,
                                 const nsTArray<wr::GradientStop>& aStops,
                                 wr::ExtendMode aExtendMode,
-                                const wr::SideOffsets2D_f32& aOutset);
+                                const wr::SideOffsets2D<float>& aOutset);
 
   void PushText(const wr::LayoutRect& aBounds,
                 const wr::LayoutRect& aClip,
@@ -415,9 +435,16 @@ public:
   // is empty.
   Maybe<wr::WrClipId> TopmostClipId();
   // Same as TopmostClipId() but for scroll layers.
-  layers::FrameMetrics::ViewID TopmostScrollId();
+  wr::WrScrollId TopmostScrollId();
   // If the topmost item on the stack is a clip or a scroll layer
   bool TopmostIsClip();
+
+  // Set the hit-test info to be used for all display items until the next call
+  // to SetHitTestInfo or ClearHitTestInfo.
+  void SetHitTestInfo(const layers::FrameMetrics::ViewID& aScrollId,
+                      gfx::CompositorHitTestInfo aHitInfo);
+  // Clears the hit-test info so that subsequent display items will not have it.
+  void ClearHitTestInfo();
 
   // Try to avoid using this when possible.
   wr::WrState* Raw() { return mWrState; }
@@ -440,7 +467,7 @@ protected:
   // Track each scroll id that we encountered. We use this structure to
   // ensure that we don't define a particular scroll layer multiple times,
   // as that results in undefined behaviour in WR.
-  std::unordered_set<layers::FrameMetrics::ViewID> mScrollIdsDefined;
+  std::unordered_map<layers::FrameMetrics::ViewID, wr::WrScrollId> mScrollIds;
 
   // A map that holds the cache overrides creates by "out of band" clips, i.e.
   // clips that are generated by display items but that ScrollingLayersHelper

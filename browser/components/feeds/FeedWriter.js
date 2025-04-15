@@ -4,14 +4,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cr = Components.results;
-const Cu = Components.utils;
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 const FEEDWRITER_CID = Components.ID("{49bb6593-3aff-4eb3-a068-2712c28bd58e}");
 const FEEDWRITER_CONTRACTID = "@mozilla.org/browser/feeds/result-writer;1";
@@ -75,6 +70,7 @@ function FeedWriter() {
   this._subscribeCallback = null;
   this._defaultHandlerMenuItem = null;
 
+  Services.telemetry.scalarAdd("browser.feeds.preview_loaded", 1);
 
   XPCOMUtils.defineLazyGetter(this, "_mm", () =>
     this._window.QueryInterface(Ci.nsIInterfaceRequestor).
@@ -192,7 +188,7 @@ FeedWriter.prototype = {
         timeStyle: "short",
         dateStyle: "long"
       };
-      this.__dateFormatter = Services.intl.createDateTimeFormat(undefined, dtOptions);
+      this.__dateFormatter = new Services.intl.DateTimeFormat(undefined, dtOptions);
     }
     return this.__dateFormatter;
   },

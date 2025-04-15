@@ -4,17 +4,14 @@
 
 "use strict";
 
-const {
-  createFactory,
-  DOM: dom,
-  PropTypes,
-  PureComponent,
-} = require("devtools/client/shared/vendor/react");
+const { createFactory, PureComponent } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const { getStr } = require("devtools/client/inspector/layout/utils/l10n");
 
 const GridItem = createFactory(require("./GridItem"));
 
 const Types = require("../types");
-const { getStr } = require("../utils/l10n");
 
 class GridList extends PureComponent {
   static get propTypes() {

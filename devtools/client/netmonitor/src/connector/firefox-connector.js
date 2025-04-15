@@ -5,9 +5,12 @@
 "use strict";
 
 const Services = require("Services");
-const { TimelineFront } = require("devtools/shared/fronts/timeline");
 const { ACTIVITY_TYPE, EVENTS } = require("../constants");
 const FirefoxDataProvider = require("./firefox-data-provider");
+const { getDisplayedTimingMarker } = require("../selectors/index");
+
+// To be removed once FF60 is deprecated
+loader.lazyRequireGetter(this, "TimelineFront", "devtools/shared/fronts/timeline", true);
 
 class FirefoxConnector {
   constructor() {
@@ -15,13 +18,17 @@ class FirefoxConnector {
     this.connect = this.connect.bind(this);
     this.disconnect = this.disconnect.bind(this);
     this.willNavigate = this.willNavigate.bind(this);
+    this.navigate = this.navigate.bind(this);
     this.displayCachedEvents = this.displayCachedEvents.bind(this);
     this.onDocLoadingMarker = this.onDocLoadingMarker.bind(this);
+    this.onDocEvent = this.onDocEvent.bind(this);
     this.sendHTTPRequest = this.sendHTTPRequest.bind(this);
     this.setPreferences = this.setPreferences.bind(this);
     this.triggerActivity = this.triggerActivity.bind(this);
     this.getTabTarget = this.getTabTarget.bind(this);
     this.viewSourceInDebugger = this.viewSourceInDebugger.bind(this);
+    this.requestData = this.requestData.bind(this);
+    this.getTimingMarker = this.getTimingMarker.bind(this);
 
     // Internals
     this.getLongString = this.getLongString.bind(this);
@@ -33,6 +40,7 @@ class FirefoxConnector {
     this.getState = getState;
     this.tabTarget = connection.tabConnection.tabTarget;
     this.toolbox = connection.toolbox;
+    this.panel = connection.panel;
 
     this.webConsoleClient = this.tabTarget.activeConsole;
 
@@ -41,7 +49,7 @@ class FirefoxConnector {
       actions: this.actions,
     });
 
-    this.addListeners();
+    await this.addListeners();
 
     // Listener for `will-navigate` event is (un)registered outside
     // of the `addListeners` and `removeListeners` methods since
@@ -49,14 +57,7 @@ class FirefoxConnector {
     // Paused network panel should be automatically resumed when page
     // reload, so `will-navigate` listener needs to be there all the time.
     this.tabTarget.on("will-navigate", this.willNavigate);
-
-    // Don't start up waiting for timeline markers if the server isn't
-    // recent enough to emit the markers we're interested in.
-    if (this.tabTarget.getTrait("documentLoadingMarkers")) {
-      this.timelineFront = new TimelineFront(this.tabTarget.client, this.tabTarget.form);
-      this.timelineFront.on("doc-loading", this.onDocLoadingMarker);
-      await this.timelineFront.start({ withDocLoadingEvents: true });
-    }
+    this.tabTarget.on("navigate", this.navigate);
 
     this.displayCachedEvents();
   }
@@ -64,43 +65,70 @@ class FirefoxConnector {
   async disconnect() {
     this.actions.batchReset();
 
-    // The timeline front wasn't initialized and started if the server wasn't
-    // recent enough to emit the markers we were interested in.
-    if (this.tabTarget.getTrait("documentLoadingMarkers") && this.timelineFront) {
-      this.timelineFront.off("doc-loading", this.onDocLoadingMarker);
-      await this.timelineFront.destroy();
+    await this.removeListeners();
+
+    if (this.tabTarget) {
+      this.tabTarget.off("will-navigate");
+      this.tabTarget = null;
     }
 
-    this.removeListeners();
-
-    this.tabTarget.off("will-navigate");
-
-    this.tabTarget = null;
     this.webConsoleClient = null;
-    this.timelineFront = null;
     this.dataProvider = null;
+    this.panel = null;
   }
 
-  pause() {
-    this.removeListeners();
+  async pause() {
+    await this.removeListeners();
   }
 
-  resume() {
-    this.addListeners();
+  async resume() {
+    await this.addListeners();
   }
 
-  addListeners() {
+  async addListeners() {
     this.tabTarget.on("close", this.disconnect);
     this.webConsoleClient.on("networkEvent",
       this.dataProvider.onNetworkEvent);
     this.webConsoleClient.on("networkEventUpdate",
       this.dataProvider.onNetworkEventUpdate);
+    this.webConsoleClient.on("documentEvent", this.onDocEvent);
+
+    // With FF60+ console actor supports listening to document events like
+    // DOMContentLoaded and load. We used to query Timeline actor, but it was too CPU
+    // intensive.
+    let { startedListeners } = await this.webConsoleClient.startListeners(
+      ["DocumentEvents"]);
+    // Allows to know if we are on FF60 and support these events.
+    let supportsDocEvents = startedListeners.includes("DocumentEvents");
+
+    // Don't start up waiting for timeline markers if the server isn't
+    // recent enough (<FF45) to emit the markers we're interested in.
+    if (!supportsDocEvents && !this.timelineFront &&
+        this.tabTarget.getTrait("documentLoadingMarkers")) {
+      this.timelineFront = new TimelineFront(this.tabTarget.client, this.tabTarget.form);
+      this.timelineFront.on("doc-loading", this.onDocLoadingMarker);
+      await this.timelineFront.start({ withDocLoadingEvents: true });
+    }
   }
 
-  removeListeners() {
-    this.tabTarget.off("close");
-    this.webConsoleClient.off("networkEvent");
-    this.webConsoleClient.off("networkEventUpdate");
+  async removeListeners() {
+    if (this.tabTarget) {
+      this.tabTarget.off("close");
+    }
+    if (this.timelineFront) {
+      this.timelineFront.off("doc-loading", this.onDocLoadingMarker);
+      await this.timelineFront.destroy();
+      this.timelineFront = null;
+    }
+    if (this.webConsoleClient) {
+      this.webConsoleClient.off("networkEvent");
+      this.webConsoleClient.off("networkEventUpdate");
+      this.webConsoleClient.off("docEvent");
+    }
+  }
+
+  enableActions(enable) {
+    this.dataProvider.enableActions(enable);
   }
 
   willNavigate() {
@@ -116,6 +144,31 @@ class FirefoxConnector {
     let state = this.getState();
     if (!state.requests.recording) {
       this.actions.toggleRecording();
+    }
+  }
+
+  navigate() {
+    if (this.dataProvider.isPayloadQueueEmpty()) {
+      this.onReloaded();
+      return;
+    }
+    let listener = () => {
+      if (this.dataProvider && !this.dataProvider.isPayloadQueueEmpty()) {
+        return;
+      }
+      window.off(EVENTS.PAYLOAD_READY, listener);
+      // Netmonitor may already be destroyed,
+      // so do not try to notify the listeners
+      if (this.dataProvider) {
+        this.onReloaded();
+      }
+    };
+    window.on(EVENTS.PAYLOAD_READY, listener);
+  }
+
+  onReloaded() {
+    if (this.panel) {
+      this.panel.emit("reloaded");
     }
   }
 
@@ -139,11 +192,32 @@ class FirefoxConnector {
   /**
    * The "DOMContentLoaded" and "Load" events sent by the timeline actor.
    *
+   * To be removed once FF60 is deprecated.
+   *
    * @param {object} marker
    */
   onDocLoadingMarker(marker) {
-    window.emit(EVENTS.TIMELINE_EVENT, marker);
-    this.actions.addTimingMarker(marker);
+    // Translate marker into event similar to newer "docEvent" event sent by the console
+    // actor
+    let event = {
+      name: marker.name == "document::DOMContentLoaded" ?
+            "dom-interactive" : "dom-complete",
+      time: marker.unixTime / 1000
+    };
+    this.actions.addTimingMarker(event);
+    window.emit(EVENTS.TIMELINE_EVENT, event);
+  }
+
+  /**
+   * The "DOMContentLoaded" and "Load" events sent by the console actor.
+   *
+   * Only used by FF60+.
+   *
+   * @param {object} marker
+   */
+  onDocEvent(type, event) {
+    this.actions.addTimingMarker(event);
+    window.emit(EVENTS.TIMELINE_EVENT, event);
   }
 
   /**
@@ -284,6 +358,21 @@ class FirefoxConnector {
     if (this.toolbox) {
       this.toolbox.viewSourceInDebugger(sourceURL, sourceLine);
     }
+  }
+
+  /**
+   * Fetch networkEventUpdate websocket message from back-end when
+   * data provider is connected.
+   * @param {object} request network request instance
+   * @param {string} type NetworkEventUpdate type
+   */
+  requestData(request, type) {
+    return this.dataProvider.requestData(request, type);
+  }
+
+  getTimingMarker(name) {
+    let state = this.getState();
+    return getDisplayedTimingMarker(state, name);
   }
 }
 

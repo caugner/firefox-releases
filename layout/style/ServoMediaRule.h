@@ -26,8 +26,10 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(ServoMediaRule, dom::CSSMediaRule)
 
   already_AddRefed<css::Rule> Clone() const override;
+#ifdef MOZ_OLD_STYLE
   bool UseForPresentation(nsPresContext* aPresContext,
                           nsMediaQueryResultCacheKey& aKey) final;
+#endif
   void SetStyleSheet(StyleSheet* aSheet) override;
 #ifdef DEBUG
   void List(FILE* out = stdout, int32_t aIndent = 0) const final;
@@ -35,13 +37,12 @@ public:
 
   RawServoMediaRule* Raw() const { return mRawRule; }
 
-  // nsIDOMCSSConditionRule interface
-  NS_DECL_NSIDOMCSSCONDITIONRULE
-
   // WebIDL interface
-  void GetCssTextImpl(nsAString& aCssText) const override;
-  using CSSMediaRule::SetConditionText;
-  dom::MediaList* Media() override;
+  void GetCssText(nsAString& aCssText) const final;
+  void GetConditionText(nsAString& aConditionText) final;
+  void SetConditionText(const nsAString& aConditionText,
+                        ErrorResult& aRv) final;
+  dom::MediaList* Media() final;
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf)
     const override;

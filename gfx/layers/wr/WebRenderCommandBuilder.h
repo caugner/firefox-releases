@@ -51,7 +51,8 @@ public:
                               nsDisplayList* aDisplayList,
                               nsDisplayListBuilder* aDisplayListBuilder,
                               WebRenderScrollData& aScrollData,
-                              wr::LayoutSize& aContentSize);
+                              wr::LayoutSize& aContentSize,
+                              const nsTArray<wr::WrFilterOp>& aFilters);
 
   Maybe<wr::ImageKey> CreateImageKey(nsDisplayItem* aItem,
                                      ImageContainer* aContainer,
@@ -150,21 +151,20 @@ public:
   template<class T> already_AddRefed<T>
   GetWebRenderUserData(nsIFrame* aFrame, uint32_t aPerFrameKey)
   {
-    RefPtr<T> result;
     MOZ_ASSERT(aFrame);
     nsIFrame::WebRenderUserDataTable* userDataTable =
       aFrame->GetProperty(nsIFrame::WebRenderUserDataProperty());
     if (!userDataTable) {
+      return nullptr;
+    }
+
+    RefPtr<WebRenderUserData> data = userDataTable->Get(aPerFrameKey);
+    if (data && (data->GetType() == T::Type()) && data->IsDataValid(mManager)) {
+      RefPtr<T> result = static_cast<T*>(data.get());
       return result.forget();
     }
 
-    WebRenderUserData* data = nullptr;
-    if (userDataTable->Get(aPerFrameKey, &data)) {
-      if (data->GetType() == T::Type() && data->IsDataValid(mManager)) {
-        result = static_cast<T*>(data);
-      }
-    }
-    return result.forget();
+    return nullptr;
   }
 
 private:

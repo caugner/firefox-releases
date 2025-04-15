@@ -6,18 +6,18 @@
 /* globals window, document, PerformanceView, ToolbarView, RecordingsView, DetailsView */
 
 /* exported Cc, Ci, Cu, Cr, loader, Promise */
-var { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
 var BrowserLoaderModule = {};
-Cu.import("resource://devtools/client/shared/browser-loader.js", BrowserLoaderModule);
+ChromeUtils.import("resource://devtools/client/shared/browser-loader.js", BrowserLoaderModule);
 var { loader, require } = BrowserLoaderModule.BrowserLoader({
   baseURI: "resource://devtools/client/performance/",
   window
 });
 var { Task } = require("devtools/shared/task");
-/* exported Heritage, ViewHelpers, WidgetMethods, setNamedTimeout, clearNamedTimeout */
-var { Heritage, ViewHelpers, WidgetMethods, setNamedTimeout, clearNamedTimeout } = require("devtools/client/shared/widgets/view-helpers");
+/* exported ViewHelpers, WidgetMethods, setNamedTimeout, clearNamedTimeout */
+var { ViewHelpers, WidgetMethods, setNamedTimeout, clearNamedTimeout } = require("devtools/client/shared/widgets/view-helpers");
 var { PrefObserver } = require("devtools/client/shared/prefs");
-
+/* exported extend */
+const { extend } = require("devtools/shared/extend");
 // Use privileged promise in panel documents to prevent having them to freeze
 // during toolbox destruction. See bug 1402779.
 var Promise = require("Promise");
@@ -434,7 +434,7 @@ var PerformanceController = {
    * @param {PerformanceRecordingFront} recording
    */
   _addRecordingIfUnknown: function (recording) {
-    if (this._recordings.indexOf(recording) === -1) {
+    if (!this._recordings.includes(recording)) {
       this._recordings.push(recording);
       this.emit(EVENTS.RECORDING_ADDED, recording);
     }

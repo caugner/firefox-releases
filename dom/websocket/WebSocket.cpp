@@ -68,7 +68,6 @@
 #define CLOSE_EVENT_STRING NS_LITERAL_STRING("close")
 
 using namespace mozilla::net;
-using namespace mozilla::dom::workers;
 
 namespace mozilla {
 namespace dom {
@@ -1278,8 +1277,6 @@ WebSocket::ConstructorCommon(const GlobalObject& aGlobal,
     }
   }
 
-  MOZ_ASSERT_IF(ownerWindow, ownerWindow->IsInnerWindow());
-
   nsTArray<nsString> protocolArray;
 
   for (uint32_t index = 0, len = aProtocols.Length(); index < len; ++index) {
@@ -2255,13 +2252,14 @@ class WebSocketWorkerHolder final : public WorkerHolder
 {
 public:
   explicit WebSocketWorkerHolder(WebSocketImpl* aWebSocketImpl)
-    : mWebSocketImpl(aWebSocketImpl)
+    : WorkerHolder("WebSocketWorkerHolder")
+    , mWebSocketImpl(aWebSocketImpl)
   {
   }
 
-  bool Notify(Status aStatus) override
+  bool Notify(WorkerStatus aStatus) override
   {
-    MOZ_ASSERT(aStatus > workers::Running);
+    MOZ_ASSERT(aStatus > Running);
 
     if (aStatus >= Canceling) {
       {

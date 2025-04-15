@@ -9,6 +9,7 @@
 
 #include "mozilla/AtomArray.h"
 #include "mozilla/EventStates.h"
+#include "mozilla/MediaFeatureChange.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/ServoTypes.h"
 #include "mozilla/SheetType.h"
@@ -18,14 +19,6 @@
 #include "nsCSSPseudoElements.h"
 #include "nsTArray.h"
 
-namespace mozilla {
-class CSSStyleSheet;
-class ServoStyleSet;
-namespace dom {
-class Element;
-class ShadowRoot;
-} // namespace dom
-} // namespace mozilla
 class nsBindingManager;
 class nsCSSCounterStyleRule;
 struct nsFontFaceRuleContainer;
@@ -40,6 +33,16 @@ class gfxFontFeatureValueSet;
 struct TreeMatchContext;
 
 namespace mozilla {
+
+class CSSStyleSheet;
+class ServoStyleSet;
+namespace dom {
+class Element;
+class ShadowRoot;
+} // namespace dom
+namespace css {
+class Rule;
+} // namespace css
 
 #define SERVO_BIT 0x1
 
@@ -59,7 +62,15 @@ public:
   public:
     friend class ::mozilla::StyleSetHandle;
 
-    bool IsGecko() const { return !IsServo(); }
+    bool IsGecko() const
+    {
+#ifdef MOZ_OLD_STYLE
+      return !IsServo();
+#else
+      return false;
+#endif
+    }
+
     bool IsServo() const
     {
       MOZ_ASSERT(mValue, "StyleSetHandle null pointer dereference");
@@ -76,11 +87,13 @@ public:
                          StyleBackendType::Servo;
     }
 
+#ifdef MOZ_OLD_STYLE
     nsStyleSet* AsGecko()
     {
       MOZ_ASSERT(IsGecko());
       return reinterpret_cast<nsStyleSet*>(mValue);
     }
+#endif
 
     ServoStyleSet* AsServo()
     {
@@ -88,13 +101,17 @@ public:
       return reinterpret_cast<ServoStyleSet*>(mValue & ~SERVO_BIT);
     }
 
+#ifdef MOZ_OLD_STYLE
     nsStyleSet* GetAsGecko() { return IsGecko() ? AsGecko() : nullptr; }
+#endif
     ServoStyleSet* GetAsServo() { return IsServo() ? AsServo() : nullptr; }
 
+#ifdef MOZ_OLD_STYLE
     const nsStyleSet* AsGecko() const
     {
       return const_cast<Ptr*>(this)->AsGecko();
     }
+#endif
 
     const ServoStyleSet* AsServo() const
     {
@@ -102,7 +119,9 @@ public:
       return const_cast<Ptr*>(this)->AsServo();
     }
 
+#ifdef MOZ_OLD_STYLE
     const nsStyleSet* GetAsGecko() const { return IsGecko() ? AsGecko() : nullptr; }
+#endif
     const ServoStyleSet* GetAsServo() const { return IsServo() ? AsServo() : nullptr; }
 
     // These inline methods are defined in StyleSetHandleInlines.h.
@@ -113,11 +132,11 @@ public:
     // nsStyleSet or ServoStyleSet.  See corresponding comments in
     // nsStyleSet.h for descriptions of these methods.
 
-    inline void Init(nsPresContext* aPresContext, nsBindingManager* aBindingManager);
+    inline void Init(nsPresContext* aPresContext);
     inline void BeginShutdown();
     inline void Shutdown();
     inline bool GetAuthorStyleDisabled() const;
-    inline nsresult SetAuthorStyleDisabled(bool aStyleDisabled);
+    inline void SetAuthorStyleDisabled(bool aStyleDisabled);
     inline void BeginUpdate();
     inline nsresult EndUpdate();
     inline already_AddRefed<nsStyleContext>
@@ -166,11 +185,17 @@ public:
     inline void AppendAllXBLStyleSheets(nsTArray<StyleSheet*>& aArray) const;
     inline nsresult RemoveDocStyleSheet(StyleSheet* aSheet);
     inline nsresult AddDocStyleSheet(StyleSheet* aSheet, nsIDocument* aDocument);
+
+    inline void RuleRemoved(StyleSheet&, css::Rule&);
+    inline void RuleAdded(StyleSheet&, css::Rule&);
+    inline void RuleChanged(StyleSheet&, css::Rule*);
+
+    // TODO(emilio): Remove in favor of Rule* methods.
     inline void RecordStyleSheetChange(StyleSheet* aSheet, StyleSheet::ChangeType);
-    inline void RecordShadowStyleChange(mozilla::dom::ShadowRoot* aShadowRoot);
+    inline void RecordShadowStyleChange(mozilla::dom::ShadowRoot& aShadowRoot);
     inline bool StyleSheetsHaveChanged() const;
     inline void InvalidateStyleForCSSRuleChanges();
-    inline nsRestyleHint MediumFeaturesChanged(bool aViewportChanged);
+    inline nsRestyleHint MediumFeaturesChanged(mozilla::MediaFeatureChangeReason);
     inline already_AddRefed<nsStyleContext>
     ProbePseudoElementStyle(dom::Element* aParentElement,
                             mozilla::CSSPseudoElementType aType,

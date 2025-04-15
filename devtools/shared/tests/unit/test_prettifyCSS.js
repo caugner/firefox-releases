@@ -6,7 +6,6 @@
 "use strict";
 
 const {prettifyCSS} = require("devtools/shared/inspector/css-logic");
-const Services = require("Services");
 
 const EXPAND_TAB = "devtools.editor.expandtab";
 
@@ -149,7 +148,7 @@ function run_test() {
 
   Services.prefs.setBoolPref(EXPAND_TAB, true);
   for (let test of TESTS_SPACE_INDENT) {
-    do_print(test.name);
+    info(test.name);
 
     let input = test.input.split("\n").join(prettifyCSS.LINE_SEPARATOR);
     let output = prettifyCSS(input);
@@ -160,7 +159,7 @@ function run_test() {
 
   Services.prefs.setBoolPref(EXPAND_TAB, false);
   for (let test of TESTS_TAB_INDENT) {
-    do_print(test.name);
+    info(test.name);
 
     let input = test.input.split("\n").join(prettifyCSS.LINE_SEPARATOR);
     let output = prettifyCSS(input);

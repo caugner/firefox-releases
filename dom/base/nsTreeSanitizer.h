@@ -5,7 +5,9 @@
 #ifndef nsTreeSanitizer_h_
 #define nsTreeSanitizer_h_
 
+#ifdef MOZ_OLD_STYLE
 #include "mozilla/css/StyleRule.h"
+#endif
 #include "nsIPrincipal.h"
 #include "mozilla/dom/Element.h"
 
@@ -83,6 +85,11 @@ class MOZ_STACK_CLASS nsTreeSanitizer {
      */
     bool mFullDocument;
 
+    /**
+     * Whether we should notify to the console for anything that's stripped.
+     */
+    bool mLogRemovals;
+
     void SanitizeChildren(nsINode* aRoot);
 
     /**
@@ -146,8 +153,8 @@ class MOZ_STACK_CLASS nsTreeSanitizer {
      * @return true if the attribute was removed and false otherwise
      */
     bool SanitizeURL(mozilla::dom::Element* aElement,
-                       int32_t aNamespace,
-                       nsAtom* aLocalName);
+                     int32_t aNamespace,
+                     nsAtom* aLocalName);
 
     /**
      * Checks a style rule for the presence of the 'binding' CSS property and
@@ -178,7 +185,21 @@ class MOZ_STACK_CLASS nsTreeSanitizer {
     /**
      * Removes all attributes from an element node.
      */
-    void RemoveAllAttributes(nsIContent* aElement);
+    void RemoveAllAttributes(mozilla::dom::Element* aElement);
+
+    /**
+     * Log a Console Service message to indicate we removed something.
+     * If you pass an element and/or attribute, their information will
+     * be appended to the message.
+     *
+     * @param aMessage   the basic message to log.
+     * @param aDocument  the base document we're modifying
+     *                   (used for the error message)
+     * @param aElement   optional, the element being removed or modified.
+     * @param aAttribute optional, the attribute being removed or modified.
+     */
+    void LogMessage(const char* aMessage, nsIDocument* aDoc,
+                    Element* aElement = nullptr, nsAtom* aAttr = nullptr);
 
     /**
      * The whitelist of HTML elements.

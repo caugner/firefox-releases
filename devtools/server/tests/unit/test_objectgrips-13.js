@@ -13,7 +13,7 @@ var gThreadClient;
 function run_test() {
   initTestDebuggerServer();
   gDebuggee = addTestGlobal("test-grips");
-  Components.utils.evalInSandbox(function stopMe() {
+  Cu.evalInSandbox(function stopMe() {
     debugger;
   }.toString(), gDebuggee);
 
@@ -40,7 +40,7 @@ function add_pause_listener() {
 }
 
 function eval_code() {
-  Components.utils.evalInSandbox([
+  Cu.evalInSandbox([
     "this.line0 = Error().lineNumber;",
     "function f() {}",
     "stopMe(f, {});"
@@ -49,10 +49,10 @@ function eval_code() {
 
 function test_definition_site(func, obj) {
   func.getDefinitionSite(({ error, source, line, column }) => {
-    do_check_true(!error);
-    do_check_eq(source.url, getFilePath("test_objectgrips-13.js"));
-    do_check_eq(line, gDebuggee.line0 + 1);
-    do_check_eq(column, 0);
+    Assert.ok(!error);
+    Assert.equal(source.url, getFilePath("test_objectgrips-13.js"));
+    Assert.equal(line, gDebuggee.line0 + 1);
+    Assert.equal(column, 0);
 
     test_bad_definition_site(obj);
   });
@@ -60,7 +60,7 @@ function test_definition_site(func, obj) {
 
 function test_bad_definition_site(obj) {
   try {
-    obj._client.request("definitionSite", () => do_check_true(false));
+    obj._client.request("definitionSite", () => Assert.ok(false));
   } catch (e) {
     gThreadClient.resume(() => finishClient(gClient));
   }

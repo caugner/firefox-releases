@@ -13,6 +13,7 @@ add_task(async function setup() {
 add_task(async function test_support_toolbar_field_properties() {
   const TOOLBAR_FIELD_BACKGROUND = "#ff00ff";
   const TOOLBAR_FIELD_COLOR = "#00ff00";
+  const TOOLBAR_FIELD_BORDER = "#aaaaff";
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       "theme": {
@@ -24,6 +25,7 @@ add_task(async function test_support_toolbar_field_properties() {
           "textcolor": TEXT_COLOR,
           "toolbar_field": TOOLBAR_FIELD_BACKGROUND,
           "toolbar_field_text": TOOLBAR_FIELD_COLOR,
+          "toolbar_field_border": TOOLBAR_FIELD_BORDER,
         },
       },
     },
@@ -53,9 +55,12 @@ add_task(async function test_support_toolbar_field_properties() {
   for (let field of fields) {
     info(`Testing ${field.id || field.className}`);
     Assert.equal(window.getComputedStyle(field).backgroundColor,
-      "rgb(" + hexToRGB(TOOLBAR_FIELD_BACKGROUND).join(", ") + ")", "Field background should be set.");
+                 hexToCSS(TOOLBAR_FIELD_BACKGROUND),
+                 "Field background should be set.");
     Assert.equal(window.getComputedStyle(field).color,
-      "rgb(" + hexToRGB(TOOLBAR_FIELD_COLOR).join(", ") + ")", "Field color should be set.");
+                 hexToCSS(TOOLBAR_FIELD_COLOR),
+                 "Field color should be set.");
+    testBorderColor(field, TOOLBAR_FIELD_BORDER);
   }
 
   // Restore the `remotecontrol` attribute at the end of the test.

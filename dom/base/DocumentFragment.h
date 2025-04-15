@@ -28,7 +28,7 @@ class DocumentFragment : public FragmentOrElement,
 private:
   void Init()
   {
-    MOZ_ASSERT(mNodeInfo->NodeType() == nsIDOMNode::DOCUMENT_FRAGMENT_NODE &&
+    MOZ_ASSERT(mNodeInfo->NodeType() == DOCUMENT_FRAGMENT_NODE &&
                mNodeInfo->Equals(nsGkAtoms::documentFragmentNodeName,
                                  kNameSpaceID_None),
                "Bad NodeType in aNodeInfo");
@@ -45,9 +45,6 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(DocumentFragment, FragmentOrElement)
 
-  // interface nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-
   // interface nsIDOMDocumentFragment
   NS_DECL_NSIDOMDOCUMENTFRAGMENT
 
@@ -61,40 +58,13 @@ public:
     : FragmentOrElement(aNodeInfoManager->GetNodeInfo(
                                             nsGkAtoms::documentFragmentNodeName,
                                             nullptr, kNameSpaceID_None,
-                                            nsIDOMNode::DOCUMENT_FRAGMENT_NODE)),
+                                            DOCUMENT_FRAGMENT_NODE)),
       mHost(nullptr)
   {
     Init();
   }
 
   virtual JSObject* WrapNode(JSContext *aCx, JS::Handle<JSObject*> aGivenProto) override;
-
-  // nsIContent
-  using nsIContent::SetAttr;
-  virtual nsresult SetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                           nsAtom* aPrefix, const nsAString& aValue,
-                           nsIPrincipal* aSubjectPrincipal,
-                           bool aNotify) override
-  {
-    return NS_OK;
-  }
-  virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsAtom* aAttribute,
-                             bool aNotify) override
-  {
-    return NS_OK;
-  }
-  virtual const nsAttrName* GetAttrNameAt(uint32_t aIndex) const override
-  {
-    return nullptr;
-  }
-  virtual BorrowedAttrInfo GetAttrInfoAt(uint32_t aIndex) const override
-  {
-    return BorrowedAttrInfo(nullptr, nullptr);
-  }
-  virtual uint32_t GetAttrCount() const override
-  {
-    return 0;
-  }
 
   virtual bool IsNodeOfType(uint32_t aFlags) const override;
 
@@ -137,7 +107,7 @@ protected:
 
   nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
                  bool aPreallocateChildren) const override;
-  nsCOMPtr<Element> mHost;
+  RefPtr<Element> mHost;
 };
 
 } // namespace dom

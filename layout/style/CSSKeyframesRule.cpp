@@ -11,29 +11,7 @@
 namespace mozilla {
 namespace dom {
 
-NS_IMPL_ADDREF_INHERITED(CSSKeyframesRule, css::GroupRule)
-NS_IMPL_RELEASE_INHERITED(CSSKeyframesRule, css::GroupRule)
-
-// QueryInterface implementation for CSSKeyframesRule
-NS_INTERFACE_MAP_BEGIN(CSSKeyframesRule)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMCSSKeyframesRule)
-NS_INTERFACE_MAP_END_INHERITING(GroupRule)
-
-NS_IMETHODIMP
-CSSKeyframesRule::GetCssRules(nsIDOMCSSRuleList** aRuleList)
-{
-  NS_ADDREF(*aRuleList = CssRules());
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-CSSKeyframesRule::FindRule(const nsAString& aKey,
-                           nsIDOMCSSKeyframeRule** aResult)
-{
-  NS_IF_ADDREF(*aResult = FindRule(aKey));
-  return NS_OK;
-}
-
+#ifdef MOZ_OLD_STYLE
 /* virtual */ bool
 CSSKeyframesRule::UseForPresentation(nsPresContext* aPresContext,
                                      nsMediaQueryResultCacheKey& aKey)
@@ -41,6 +19,7 @@ CSSKeyframesRule::UseForPresentation(nsPresContext* aPresContext,
   MOZ_ASSERT_UNREACHABLE("should not be called");
   return false;
 }
+#endif
 
 /* virtual */ JSObject*
 CSSKeyframesRule::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)

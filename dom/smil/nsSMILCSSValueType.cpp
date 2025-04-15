@@ -18,6 +18,7 @@
 #include "nsPresContext.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/StyleAnimationValue.h" // For AnimationValue
+#include "mozilla/ServoCSSParser.h"
 #include "mozilla/StyleSetHandleInlines.h"
 #include "mozilla/dom/BaseKeyframeTypesBinding.h" // For CompositeOperation
 #include "mozilla/dom/Element.h"
@@ -40,10 +41,16 @@ struct ValueWrapper {
       mServoValues.AppendElement(aValue.mServo);
       return;
     }
+#ifdef MOZ_OLD_STYLE
     mGeckoValue = aValue.mGecko;
+#else
+    MOZ_CRASH("old style system disabled");
+#endif
   }
+#ifdef MOZ_OLD_STYLE
   ValueWrapper(nsCSSPropertyID aPropID, const StyleAnimationValue& aValue)
     : mPropID(aPropID), mGeckoValue(aValue) {}
+#endif
   ValueWrapper(nsCSSPropertyID aPropID,
                const RefPtr<RawServoAnimationValue>& aValue)
     : mPropID(aPropID), mServoValues{(aValue)} {}
@@ -70,7 +77,11 @@ struct ValueWrapper {
       return true;
     }
 
+#ifdef MOZ_OLD_STYLE
     return mGeckoValue == aOther.mGeckoValue;
+#else
+    MOZ_CRASH("old style system disabled");
+#endif
   }
 
   bool operator!=(const ValueWrapper& aOther) const
@@ -80,12 +91,14 @@ struct ValueWrapper {
 
   nsCSSPropertyID mPropID;
   ServoAnimationValues mServoValues;
+#ifdef MOZ_OLD_STYLE
   StyleAnimationValue mGeckoValue;
-
+#endif
 };
 
 // Helper Methods
 // --------------
+#ifdef MOZ_OLD_STYLE
 static const StyleAnimationValue*
 GetZeroValueForUnit(StyleAnimationValue::Unit aUnit)
 {
@@ -113,6 +126,7 @@ GetZeroValueForUnit(StyleAnimationValue::Unit aUnit)
       return nullptr;
   }
 }
+#endif
 
 // If one argument is null, this method updates it to point to "zero"
 // for the other argument's Unit (if applicable; otherwise, we return false).
@@ -147,6 +161,7 @@ FinalizeServoAnimationValues(const RefPtr<RawServoAnimationValue>*& aValue1,
   return *aValue1 && *aValue2;
 }
 
+#ifdef MOZ_OLD_STYLE
 static bool
 FinalizeStyleAnimationValues(const StyleAnimationValue*& aValue1,
                              const StyleAnimationValue*& aValue2)
@@ -200,6 +215,7 @@ InvertSign(StyleAnimationValue& aValue)
       break;
   }
 }
+#endif
 
 static ValueWrapper*
 ExtractValueWrapper(nsSMILValue& aValue)
@@ -397,6 +413,7 @@ AddOrAccumulate(nsSMILValue& aDest, const nsSMILValue& aValueToAdd,
                                    aCount);
   }
 
+#ifdef MOZ_OLD_STYLE
   const StyleAnimationValue* valueToAdd = valueToAddWrapper ?
     &valueToAddWrapper->mGeckoValue : nullptr;
   const StyleAnimationValue* destValue = destWrapper ?
@@ -423,6 +440,9 @@ AddOrAccumulate(nsSMILValue& aDest, const nsSMILValue& aValueToAdd,
   return StyleAnimationValue::Add(property,
                                   destWrapper->mGeckoValue,
                                   *valueToAdd, aCount);
+#else
+  MOZ_CRASH("old style system disabled");
+#endif
 }
 
 nsresult
@@ -499,6 +519,7 @@ nsSMILCSSValueType::ComputeDistance(const nsSMILValue& aFrom,
     return ComputeDistanceForServo(fromWrapper, *toWrapper, aDistance);
   }
 
+#ifdef MOZ_OLD_STYLE
   const StyleAnimationValue* fromCSSValue = fromWrapper ?
     &fromWrapper->mGeckoValue : nullptr;
   const StyleAnimationValue* toCSSValue = &toWrapper->mGeckoValue;
@@ -513,8 +534,12 @@ nsSMILCSSValueType::ComputeDistance(const nsSMILValue& aFrom,
                                               aDistance)
          ? NS_OK
          : NS_ERROR_FAILURE;
+#else
+  MOZ_CRASH("old style system disabled");
+#endif
 }
 
+#ifdef MOZ_OLD_STYLE
 static nsresult
 InterpolateForGecko(const ValueWrapper* aStartWrapper,
                     const ValueWrapper& aEndWrapper,
@@ -539,6 +564,7 @@ InterpolateForGecko(const ValueWrapper* aStartWrapper,
   }
   return NS_ERROR_FAILURE;
 }
+#endif
 
 static nsresult
 InterpolateForServo(const ValueWrapper* aStartWrapper,
@@ -618,10 +644,14 @@ nsSMILCSSValueType::Interpolate(const nsSMILValue& aStartVal,
                                aResult);
   }
 
+#ifdef MOZ_OLD_STYLE
   return InterpolateForGecko(startWrapper,
                              *endWrapper,
                              aUnitDistance,
                              aResult);
+#else
+  MOZ_CRASH("old style system disabled");
+#endif
 }
 
 // Helper function to extract presContext
@@ -635,10 +665,10 @@ GetPresContextForElement(Element* aElem)
     // See bug 534975.
     return nullptr;
   }
-  nsIPresShell* shell = doc->GetShell();
-  return shell ? shell->GetPresContext() : nullptr;
+  return doc->GetPresContext();
 }
 
+#ifdef MOZ_OLD_STYLE
 static const nsDependentSubstring
 GetNonNegativePropValue(const nsAString& aString, nsCSSPropertyID aPropID,
                         bool& aIsNegative)
@@ -696,6 +726,7 @@ ValueFromStringHelper(nsCSSPropertyID aPropID,
   }
   return true;
 }
+#endif
 
 static ServoAnimationValues
 ValueFromStringHelper(nsCSSPropertyID aPropID,
@@ -712,19 +743,12 @@ ValueFromStringHelper(nsCSSPropertyID aPropID,
   }
 
   // Parse property
-  // FIXME this is using the wrong base uri (bug 1343919)
-  RefPtr<URLExtraData> data = new URLExtraData(doc->GetDocumentURI(),
-                                               doc->GetDocumentURI(),
-                                               doc->NodePrincipal());
-  NS_ConvertUTF16toUTF8 value(aString);
+  ServoCSSParser::ParsingEnvironment env =
+    ServoCSSParser::GetParsingEnvironment(doc);
   RefPtr<RawServoDeclarationBlock> servoDeclarationBlock =
-    Servo_ParseProperty(aPropID,
-                        &value,
-                        data,
-                        ParsingMode::AllowUnitlessLength |
-                        ParsingMode::AllowAllNumericValues,
-                        doc->GetCompatibilityMode(),
-                        doc->CSSLoader()).Consume();
+    ServoCSSParser::ParseProperty(aPropID, aString, env,
+                                  ParsingMode::AllowUnitlessLength |
+                                    ParsingMode::AllowAllNumericValues);
   if (!servoDeclarationBlock) {
     return result;
   }
@@ -756,14 +780,14 @@ nsSMILCSSValueType::ValueFromString(nsCSSPropertyID aPropID,
   nsIDocument* doc = aTargetElement->GetUncomposedDoc();
   if (doc && !nsStyleUtil::CSPAllowsInlineStyle(nullptr,
                                                 doc->NodePrincipal(),
+                                                nullptr,
                                                 doc->GetDocumentURI(),
                                                 0, aString, nullptr)) {
     return;
   }
 
   RefPtr<nsStyleContext> styleContext =
-    nsComputedDOMStyle::GetStyleContext(aTargetElement, nullptr,
-                                        presContext->PresShell());
+    nsComputedDOMStyle::GetStyleContext(aTargetElement, nullptr);
   if (!styleContext) {
     return;
   }
@@ -785,6 +809,7 @@ nsSMILCSSValueType::ValueFromString(nsCSSPropertyID aPropID,
     return;
   }
 
+#ifdef MOZ_OLD_STYLE
   StyleAnimationValue parsedValue;
   if (ValueFromStringHelper(aPropID, aTargetElement, presContext,
                             styleContext->AsGecko(), aString, parsedValue,
@@ -792,6 +817,9 @@ nsSMILCSSValueType::ValueFromString(nsCSSPropertyID aPropID,
     sSingleton.Init(aValue);
     aValue.mU.mPtr = new ValueWrapper(aPropID, parsedValue);
   }
+#else
+    MOZ_CRASH("old style system disabled");
+#endif
 }
 
 // static
@@ -811,6 +839,7 @@ nsSMILCSSValueType::ValueFromAnimationValue(nsCSSPropertyID aPropID,
     NS_LITERAL_STRING("[SVG animation of CSS]");
   if (doc && !nsStyleUtil::CSPAllowsInlineStyle(nullptr,
                                                 doc->NodePrincipal(),
+                                                nullptr,
                                                 doc->GetDocumentURI(),
                                                 0, kPlaceholderText, nullptr)) {
     return result;
@@ -835,11 +864,15 @@ nsSMILCSSValueType::ValueToString(const nsSMILValue& aValue,
   }
 
   if (wrapper->mServoValues.IsEmpty()) {
+#ifdef MOZ_OLD_STYLE
     DebugOnly<bool> uncomputeResult =
       StyleAnimationValue::UncomputeValue(wrapper->mPropID,
                                           wrapper->mGeckoValue,
                                           aString);
     return;
+#else
+    MOZ_CRASH("old style system disabled");
+#endif
   }
 
   if (nsCSSProps::IsShorthand(wrapper->mPropID)) {
@@ -911,6 +944,7 @@ nsSMILCSSValueType::FinalizeValue(nsSMILValue& aValue,
     aValue.mU.mPtr = new ValueWrapper(valueToMatchWrapper->mPropID,
                                       Move(zeroValues));
   } else {
+#ifdef MOZ_OLD_STYLE
     const StyleAnimationValue* zeroValue =
       GetZeroValueForUnit(valueToMatchWrapper->mGeckoValue.GetUnit());
     if (!zeroValue) {
@@ -918,5 +952,8 @@ nsSMILCSSValueType::FinalizeValue(nsSMILValue& aValue,
     }
     aValue.mU.mPtr = new ValueWrapper(valueToMatchWrapper->mPropID,
                                       *zeroValue);
+#else
+    MOZ_CRASH("old style system disabled");
+#endif
   }
 }

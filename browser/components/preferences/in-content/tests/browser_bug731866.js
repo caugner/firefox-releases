@@ -1,8 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Components.utils.import("resource://gre/modules/PlacesUtils.jsm");
-Components.utils.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://gre/modules/PlacesUtils.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 const storageManagerDisabled = !SpecialPowers.getBoolPref("browser.storageManager.enabled");
 const browserContainersGroupDisabled = !SpecialPowers.getBoolPref("privacy.userContext.ui.enabled");
@@ -16,10 +16,9 @@ var gElements;
 
 function checkElements(expectedPane) {
   for (let element of gElements) {
-    // keyset and preferences elements fail is_element_visible checks because they are never visible.
+    // keyset elements fail is_element_visible checks because they are never visible.
     // special-case the drmGroup item because its visibility depends on pref + OS version
     if (element.nodeName == "keyset" ||
-        element.nodeName == "preferences" ||
         element.id === "drmGroup") {
       continue;
     }

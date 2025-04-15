@@ -3,9 +3,7 @@
 
 "use strict";
 
-var { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
-var { console } = Cu.import("resource://gre/modules/Console.jsm", {});
-var { require } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+var { require } = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 
 var Services = require("Services");
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
@@ -31,7 +29,7 @@ var SYSTEM_PRINCIPAL =
 
 var EXPECTED_DTU_ASSERT_FAILURE_COUNT = 0;
 
-do_register_cleanup(function () {
+registerCleanupFunction(function () {
   equal(DevToolsUtils.assertionFailureCount, EXPECTED_DTU_ASSERT_FAILURE_COUNT,
         "Should have had the expected number of DevToolsUtils.assert() failures.");
 });
@@ -78,11 +76,11 @@ StubbedMemoryFront.prototype.stopRecordingAllocations = expectState("attached",
 function waitUntilSnapshotState(store, expected) {
   let predicate = () => {
     let snapshots = store.getState().snapshots;
-    do_print(snapshots.map(x => x.state));
+    info(snapshots.map(x => x.state));
     return snapshots.length === expected.length &&
            expected.every((state, i) => state === "*" || snapshots[i].state === state);
   };
-  do_print(`Waiting for snapshots to be of state: ${expected}`);
+  info(`Waiting for snapshots to be of state: ${expected}`);
   return waitUntilState(store, predicate);
 }
 
@@ -107,8 +105,8 @@ function waitUntilCensusState(store, getCensus, expected) {
   let predicate = () => {
     let snapshots = store.getState().snapshots;
 
-    do_print("Current census state:" +
-             snapshots.map(x => getCensus(x) ? getCensus(x).state : null));
+    info("Current census state:" +
+         snapshots.map(x => getCensus(x) ? getCensus(x).state : null));
 
     return snapshots.length === expected.length &&
            expected.every((state, i) => {
@@ -118,7 +116,7 @@ function waitUntilCensusState(store, getCensus, expected) {
                     (census && census.state === state);
            });
   };
-  do_print(`Waiting for snapshots' censuses to be of state: ${expected}`);
+  info(`Waiting for snapshots' censuses to be of state: ${expected}`);
   return waitUntilState(store, predicate);
 }
 

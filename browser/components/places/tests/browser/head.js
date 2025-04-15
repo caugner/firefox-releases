@@ -1,13 +1,12 @@
-XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
+ChromeUtils.defineModuleGetter(this, "NetUtil",
   "resource://gre/modules/NetUtil.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesTestUtils",
+ChromeUtils.defineModuleGetter(this, "PlacesTestUtils",
   "resource://testing-common/PlacesTestUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "TestUtils",
+ChromeUtils.defineModuleGetter(this, "TestUtils",
   "resource://testing-common/TestUtils.jsm");
 
 // We need to cache these before test runs...
-let leftPaneGetters = new Map([["leftPaneFolderId", null],
-                               ["allBookmarksFolderId", null]]);
+let leftPaneGetters = new Map([["leftPaneFolderId", null]]);
 for (let [key, val] of leftPaneGetters) {
   if (!val) {
     let getter = Object.getOwnPropertyDescriptor(PlacesUIUtils, key).get;
@@ -63,7 +62,7 @@ function promiseLibraryClosed(organizer) {
   return new Promise(resolve => {
     // Wait for the Organizer window to actually be closed
     organizer.addEventListener("unload", function() {
-      resolve();
+      executeSoon(resolve);
     }, {once: true});
 
     // Close Library window.
@@ -140,24 +139,6 @@ function synthesizeClickOnSelectedTreeCell(aTree, aOptions) {
   // Simulate the click.
   EventUtils.synthesizeMouse(aTree.body, x, y, aOptions || {},
                              aTree.ownerGlobal);
-}
-
-/**
- * Asynchronously check a url is visited.
- *
- * @param aURI The URI.
- * @return {Promise}
- * @resolves When the check has been added successfully.
- * @rejects JavaScript exception.
- */
-function promiseIsURIVisited(aURI) {
-  return new Promise(resolve => {
-
-    PlacesUtils.asyncHistory.isURIVisited(aURI, function(unused, aIsVisited) {
-      resolve(aIsVisited);
-    });
-
-  });
 }
 
 /**
@@ -331,8 +312,8 @@ var openContextMenuForContentSelector = async function(browser, selector) {
 
     /* Open context menu so chrome can access the element */
     const domWindowUtils =
-      content.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
-             .getInterface(Components.interfaces.nsIDOMWindowUtils);
+      content.QueryInterface(Ci.nsIInterfaceRequestor)
+             .getInterface(Ci.nsIDOMWindowUtils);
     let rect = elt.getBoundingClientRect();
     let left = rect.left + rect.width / 2;
     let top = rect.top + rect.height / 2;
@@ -391,8 +372,12 @@ function fillBookmarkTextField(id, text, win, blur = true) {
   let elt = win.document.getElementById(id);
   elt.focus();
   elt.select();
-  for (let c of text.split("")) {
-    EventUtils.synthesizeKey(c, {}, win);
+  if (!text) {
+    EventUtils.synthesizeKey("VK_DELETE", {}, win);
+  } else {
+    for (let c of text.split("")) {
+      EventUtils.synthesizeKey(c, {}, win);
+    }
   }
   if (blur)
     elt.blur();
@@ -413,7 +398,7 @@ var withSidebarTree = async function(type, taskFn) {
   info("withSidebarTree: waiting sidebar load");
   let sidebarLoadedPromise = new Promise(resolve => {
     sidebar.addEventListener("load", function() {
-      resolve();
+      executeSoon(resolve);
     }, {capture: true, once: true});
   });
   let sidebarId = type == "bookmarks" ? "viewBookmarksSidebar"
@@ -444,4 +429,41 @@ function promisePlacesInitComplete() {
     "places-browser-init-complete");
 
   return placesInitCompleteObserved;
+}
+
+// Function copied from browser/base/content/test/general/head.js.
+function promisePopupShown(popup) {
+  return new Promise(resolve => {
+    if (popup.state == "open") {
+      resolve();
+    } else {
+      let onPopupShown = event => {
+        popup.removeEventListener("popupshown", onPopupShown);
+        resolve();
+      };
+      popup.addEventListener("popupshown", onPopupShown);
+    }
+  });
+}
+
+// Function copied from browser/base/content/test/general/head.js.
+function promisePopupHidden(popup) {
+  return new Promise(resolve => {
+    let onPopupHidden = event => {
+      popup.removeEventListener("popuphidden", onPopupHidden);
+      resolve();
+    };
+    popup.addEventListener("popuphidden", onPopupHidden);
+  });
+}
+
+// Identify a bookmark node in the Bookmarks Toolbar by its guid.
+function getToolbarNodeForItemGuid(itemGuid) {
+  let children = document.getElementById("PlacesToolbarItems").childNodes;
+  for (let child of children) {
+    if (itemGuid === child._placesNode.bookmarkGuid) {
+      return child;
+    }
+  }
+  return null;
 }

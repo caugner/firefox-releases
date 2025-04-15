@@ -39,6 +39,7 @@ function test() {
       tab.linkedBrowser.removeEventListener("load", load, true);
 
       // Observe page setup
+      // eslint-disable-next-line mozilla/no-cpows-in-tests
       let doc = gBrowser.contentDocumentAsCPOW;
       gMutationObserver = new MutationObserver(function(mutations) {
         for (let mutation of mutations) {
@@ -66,13 +67,6 @@ function test() {
       searchURL: replaceUrl("http://www.bing.com/search?q=foo&pc=MOZI&form=MOZSPG"),
       run() {
         verify_about_home_search("Bing");
-      }
-    },
-    {
-      name: "Search with Yahoo from about:home",
-      searchURL: replaceUrl("https://search.yahoo.com/search?p=foo&ei=UTF-8&fr=moz35"),
-      run() {
-        verify_about_home_search("Yahoo");
       }
     },
     {
@@ -122,7 +116,7 @@ function test() {
       is(req.originalURI.spec, gCurrTest.searchURL, "search URL was loaded");
       info("Actual URI: " + req.URI.spec);
 
-      req.cancel(Components.results.NS_ERROR_FAILURE);
+      req.cancel(Cr.NS_ERROR_FAILURE);
 
       executeSoon(nextTest);
     }

@@ -12,6 +12,7 @@
 #include "sslerr.h"
 #include "sslexp.h"
 #include "sslproto.h"
+#include "tls_filter.h"
 #include "tls_parser.h"
 
 extern "C" {
@@ -66,6 +67,7 @@ TlsAgent::TlsAgent(const std::string& name, Role role,
       expected_sent_alert_(kTlsAlertCloseNotify),
       expected_sent_alert_level_(kTlsAlertWarning),
       handshake_callback_called_(false),
+      resumption_callback_called_(false),
       error_code_(0),
       send_ctr_(0),
       recv_ctr_(0),
@@ -73,8 +75,8 @@ TlsAgent::TlsAgent(const std::string& name, Role role,
       handshake_callback_(),
       auth_certificate_callback_(),
       sni_callback_(),
-      expect_short_headers_(false),
-      skip_version_checks_(false) {
+      skip_version_checks_(false),
+      resumption_token_() {
   memset(&info_, 0, sizeof(info_));
   memset(&csinfo_, 0, sizeof(csinfo_));
   SECStatus rv = SSL_VersionRangeGetDefault(variant_, &vrange_);
@@ -93,11 +95,11 @@ TlsAgent::~TlsAgent() {
   // Add failures manually, if any, so we don't throw in a destructor.
   if (expected_received_alert_ != kTlsAlertCloseNotify ||
       expected_received_alert_level_ != kTlsAlertWarning) {
-    ADD_FAILURE() << "Wrong expected_received_alert status";
+    ADD_FAILURE() << "Wrong expected_received_alert status: " << role_str();
   }
   if (expected_sent_alert_ != kTlsAlertCloseNotify ||
       expected_sent_alert_level_ != kTlsAlertWarning) {
-    ADD_FAILURE() << "Wrong expected_sent_alert status";
+    ADD_FAILURE() << "Wrong expected_sent_alert status: " << role_str();
   }
 }
 
@@ -183,6 +185,10 @@ bool TlsAgent::EnsureTlsSetup(PRFileDesc* modelSocket) {
     ScopedCERTCertList anchors(CERT_NewCertList());
     rv = SSL_SetTrustAnchors(ssl_fd(), anchors.get());
     if (rv != SECSuccess) return false;
+
+    rv = SSL_SetMaxEarlyDataSize(ssl_fd(), 1024);
+    EXPECT_EQ(SECSuccess, rv);
+    if (rv != SECSuccess) return false;
   } else {
     rv = SSL_SetURL(ssl_fd(), "server");
     EXPECT_EQ(SECSuccess, rv);
@@ -204,6 +210,29 @@ bool TlsAgent::EnsureTlsSetup(PRFileDesc* modelSocket) {
   rv = SSL_HandshakeCallback(ssl_fd(), HandshakeCallback, this);
   EXPECT_EQ(SECSuccess, rv);
   if (rv != SECSuccess) return false;
+
+  return true;
+}
+
+bool TlsAgent::MaybeSetResumptionToken() {
+  if (!resumption_token_.empty()) {
+    SECStatus rv = SSL_SetResumptionToken(ssl_fd(), resumption_token_.data(),
+                                          resumption_token_.size());
+
+    // rv is SECFailure with error set to SSL_ERROR_BAD_RESUMPTION_TOKEN_ERROR
+    // if the resumption token was bad (expired/malformed/etc.).
+    if (expect_resumption_) {
+      // Only in case we expect resumption this has to be successful. We might
+      // not expect resumption due to some reason but the token is totally fine.
+      EXPECT_EQ(SECSuccess, rv);
+    }
+    if (rv != SECSuccess) {
+      EXPECT_EQ(SSL_ERROR_BAD_RESUMPTION_TOKEN_ERROR, PORT_GetError());
+      resumption_token_.clear();
+      EXPECT_FALSE(expect_resumption_);
+      if (expect_resumption_) return false;
+    }
+  }
 
   return true;
 }
@@ -377,20 +406,6 @@ void TlsAgent::Set0RttEnabled(bool en) {
   SetOption(SSL_ENABLE_0RTT_DATA, en ? PR_TRUE : PR_FALSE);
 }
 
-void TlsAgent::SetShortHeadersEnabled() {
-  EXPECT_TRUE(EnsureTlsSetup());
-
-  SECStatus rv = SSLInt_EnableShortHeaders(ssl_fd());
-  EXPECT_EQ(SECSuccess, rv);
-}
-
-void TlsAgent::SetAltHandshakeTypeEnabled() {
-  EXPECT_TRUE(EnsureTlsSetup());
-
-  SECStatus rv = SSL_UseAltServerHelloType(ssl_fd(), PR_TRUE);
-  EXPECT_EQ(SECSuccess, rv);
-}
-
 void TlsAgent::SetVersionRange(uint16_t minver, uint16_t maxver) {
   vrange_.min = minver;
   vrange_.max = maxver;
@@ -399,6 +414,27 @@ void TlsAgent::SetVersionRange(uint16_t minver, uint16_t maxver) {
     SECStatus rv = SSL_VersionRangeSet(ssl_fd(), &vrange_);
     EXPECT_EQ(SECSuccess, rv);
   }
+}
+
+SECStatus ResumptionTokenCallback(PRFileDesc* fd,
+                                  const PRUint8* resumptionToken,
+                                  unsigned int len, void* ctx) {
+  EXPECT_NE(nullptr, resumptionToken);
+  if (!resumptionToken) {
+    return SECFailure;
+  }
+
+  std::vector<uint8_t> new_token(resumptionToken, resumptionToken + len);
+  reinterpret_cast<TlsAgent*>(ctx)->SetResumptionToken(new_token);
+  reinterpret_cast<TlsAgent*>(ctx)->SetResumptionCallbackCalled();
+  return SECSuccess;
+}
+
+void TlsAgent::SetResumptionTokenCallback() {
+  EXPECT_TRUE(EnsureTlsSetup());
+  SECStatus rv =
+      SSL_SetResumptionTokenCallback(ssl_fd(), ResumptionTokenCallback, this);
+  EXPECT_EQ(SECSuccess, rv);
 }
 
 void TlsAgent::GetVersionRange(uint16_t* minver, uint16_t* maxver) {
@@ -413,8 +449,6 @@ void TlsAgent::SetExpectedVersion(uint16_t version) {
 void TlsAgent::SetServerKeyBits(uint16_t bits) { server_key_bits_ = bits; }
 
 void TlsAgent::ExpectReadWriteError() { expect_readwrite_error_ = true; }
-
-void TlsAgent::ExpectShortHeaders() { expect_short_headers_ = true; }
 
 void TlsAgent::SkipVersionChecks() { skip_version_checks_ = true; }
 
@@ -604,12 +638,8 @@ void TlsAgent::CheckErrorCode(int32_t expected) const {
 }
 
 static uint8_t GetExpectedAlertLevel(uint8_t alert) {
-  switch (alert) {
-    case kTlsAlertCloseNotify:
-    case kTlsAlertEndOfEarlyData:
-      return kTlsAlertWarning;
-    default:
-      break;
+  if (alert == kTlsAlertCloseNotify) {
+    return kTlsAlertWarning;
   }
   return kTlsAlertFatal;
 }
@@ -712,6 +742,50 @@ void TlsAgent::ResetPreliminaryInfo() {
   expected_cipher_suite_ = 0;
 }
 
+void TlsAgent::ValidateCipherSpecs() {
+  PRInt32 cipherSpecs = SSLInt_CountCipherSpecs(ssl_fd());
+  // We use one ciphersuite in each direction.
+  PRInt32 expected = 2;
+  if (variant_ == ssl_variant_datagram) {
+    // For DTLS 1.3, the client retains the cipher spec for early data and the
+    // handshake so that it can retransmit EndOfEarlyData and its final flight.
+    // It also retains the handshake read cipher spec so that it can read ACKs
+    // from the server. The server retains the handshake read cipher spec so it
+    // can read the client's retransmitted Finished.
+    if (expected_version_ >= SSL_LIBRARY_VERSION_TLS_1_3) {
+      if (role_ == CLIENT) {
+        expected = info_.earlyDataAccepted ? 5 : 4;
+      } else {
+        expected = 3;
+      }
+    } else {
+      // For DTLS 1.1 and 1.2, the last endpoint to send maintains a cipher spec
+      // until the holddown timer runs down.
+      if (expect_resumption_) {
+        if (role_ == CLIENT) {
+          expected = 3;
+        }
+      } else {
+        if (role_ == SERVER) {
+          expected = 3;
+        }
+      }
+    }
+  }
+  // This function will be run before the handshake completes if false start is
+  // enabled.  In that case, the client will still be reading cleartext, but
+  // will have a spec prepared for reading ciphertext.  With DTLS, the client
+  // will also have a spec retained for retransmission of handshake messages.
+  if (role_ == CLIENT && falsestart_enabled_ && !handshake_callback_called_) {
+    EXPECT_GT(SSL_LIBRARY_VERSION_TLS_1_3, expected_version_);
+    expected = (variant_ == ssl_variant_datagram) ? 4 : 3;
+  }
+  EXPECT_EQ(expected, cipherSpecs);
+  if (expected != cipherSpecs) {
+    SSLInt_PrintCipherSpecs(role_str().c_str(), ssl_fd());
+  }
+}
+
 void TlsAgent::Connected() {
   if (state_ == STATE_CONNECTED) {
     return;
@@ -737,22 +811,8 @@ void TlsAgent::Connected() {
   EXPECT_EQ(SECSuccess, rv);
   EXPECT_EQ(sizeof(csinfo_), csinfo_.length);
 
-  if (expected_version_ >= SSL_LIBRARY_VERSION_TLS_1_3) {
-    PRInt32 cipherSuites = SSLInt_CountTls13CipherSpecs(ssl_fd());
-    // We use one ciphersuite in each direction, plus one that's kept around
-    // by DTLS for retransmission.
-    PRInt32 expected =
-        ((variant_ == ssl_variant_datagram) && (role_ == CLIENT)) ? 3 : 2;
-    EXPECT_EQ(expected, cipherSuites);
-    if (expected != cipherSuites) {
-      SSLInt_PrintTls13CipherSpecs(ssl_fd());
-    }
-  }
+  ValidateCipherSpecs();
 
-  PRBool short_headers;
-  rv = SSLInt_UsingShortHeaders(ssl_fd(), &short_headers);
-  EXPECT_EQ(SECSuccess, rv);
-  EXPECT_EQ((PRBool)expect_short_headers_, short_headers);
   SetState(STATE_CONNECTED);
 }
 
@@ -847,6 +907,14 @@ void TlsAgent::SendDirect(const DataBuffer& buf) {
   }
 }
 
+void TlsAgent::SendRecordDirect(const TlsRecord& record) {
+  DataBuffer buf;
+
+  auto rv = record.header.Write(&buf, 0, record.buffer);
+  EXPECT_EQ(record.header.header_length() + record.buffer.len(), rv);
+  SendDirect(buf);
+}
+
 static bool ErrorIsNonFatal(PRErrorCode code) {
   return code == PR_WOULD_BLOCK_ERROR || code == SSL_ERROR_RX_SHORT_DTLS_READ;
 }
@@ -880,6 +948,27 @@ void TlsAgent::SendBuffer(const DataBuffer& buf) {
   } else {
     ASSERT_EQ(buf.len(), static_cast<size_t>(rv));
   }
+}
+
+bool TlsAgent::SendEncryptedRecord(const std::shared_ptr<TlsCipherSpec>& spec,
+                                   uint16_t wireVersion, uint64_t seq,
+                                   uint8_t ct, const DataBuffer& buf) {
+  LOGV("Writing " << buf.len() << " bytes");
+  // Ensure we are a TLS 1.3 cipher agent.
+  EXPECT_GE(expected_version_, SSL_LIBRARY_VERSION_TLS_1_3);
+  TlsRecordHeader header(wireVersion, kTlsApplicationDataType, seq);
+  DataBuffer padded = buf;
+  padded.Write(padded.len(), ct, 1);
+  DataBuffer ciphertext;
+  if (!spec->Protect(header, padded, &ciphertext)) {
+    return false;
+  }
+
+  DataBuffer record;
+  auto rv = header.Write(&record, 0, ciphertext);
+  EXPECT_EQ(header.header_length() + ciphertext.len(), rv);
+  SendDirect(record);
+  return true;
 }
 
 void TlsAgent::ReadBytes(size_t amount) {

@@ -14,10 +14,14 @@ use values::computed::transform::TimingFunction as ComputedTimingFunction;
 use values::generics::transform::{Matrix3D, Transform as GenericTransform};
 use values::generics::transform::{StepPosition, TimingFunction as GenericTimingFunction, Matrix};
 use values::generics::transform::{TimingKeyword, TransformOrigin as GenericTransformOrigin};
+use values::generics::transform::Rotate as GenericRotate;
+use values::generics::transform::Scale as GenericScale;
 use values::generics::transform::TransformOperation as GenericTransformOperation;
-use values::specified::{self, Angle, Number, Length, Integer};
-use values::specified::{LengthOrNumber, LengthOrPercentage, LengthOrPercentageOrNumber};
+use values::generics::transform::Translate as GenericTranslate;
+use values::specified::{self, Angle, Number, Length, Integer, LengthOrPercentage};
 use values::specified::position::{Side, X, Y};
+
+pub use values::generics::transform::TransformStyle;
 
 /// A single operation in a specified CSS `transform`
 pub type TransformOperation = GenericTransformOperation<
@@ -25,24 +29,23 @@ pub type TransformOperation = GenericTransformOperation<
     Number,
     Length,
     Integer,
-    LengthOrNumber,
     LengthOrPercentage,
-    LengthOrPercentageOrNumber,
 >;
+
 /// A specified CSS `transform`
 pub type Transform = GenericTransform<TransformOperation>;
 
 /// The specified value of a CSS `<transform-origin>`
 pub type TransformOrigin = GenericTransformOrigin<OriginComponent<X>, OriginComponent<Y>, Length>;
 
-
 impl Transform {
     /// Internal parse function for deciding if we wish to accept prefixed values or not
-    // Allow unitless zero angle for rotate() and skew() to align with gecko
-    pub fn parse_internal<'i, 't>(
+    ///
+    /// `transform` allows unitless zero angles as an exception, see:
+    /// https://github.com/w3c/csswg-drafts/issues/1162
+    fn parse_internal<'i, 't>(
         context: &ParserContext,
         input: &mut Parser<'i, 't>,
-        prefixed: bool,
     ) -> Result<Self, ParseError<'i>> {
         use style_traits::{Separator, Space};
 
@@ -60,84 +63,59 @@ impl Transform {
                 let result =
                     match_ignore_ascii_case! { &function,
                     "matrix" => {
-                        let a = specified::parse_number(context, input)?;
+                        let a = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let b = specified::parse_number(context, input)?;
+                        let b = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let c = specified::parse_number(context, input)?;
+                        let c = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let d = specified::parse_number(context, input)?;
+                        let d = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        if !prefixed {
-                            // Standard matrix parsing.
-                            let e = specified::parse_number(context, input)?;
-                            input.expect_comma()?;
-                            let f = specified::parse_number(context, input)?;
-                            Ok(GenericTransformOperation::Matrix(Matrix { a, b, c, d, e, f }))
-                        } else {
-                            // Non-standard prefixed matrix parsing for -moz-transform.
-                            let e = LengthOrPercentageOrNumber::parse(context, input)?;
-                            input.expect_comma()?;
-                            let f = LengthOrPercentageOrNumber::parse(context, input)?;
-                            Ok(GenericTransformOperation::PrefixedMatrix(Matrix { a, b, c, d, e, f }))
-                        }
+                        // Standard matrix parsing.
+                        let e = Number::parse(context, input)?;
+                        input.expect_comma()?;
+                        let f = Number::parse(context, input)?;
+                        Ok(GenericTransformOperation::Matrix(Matrix { a, b, c, d, e, f }))
                     },
                     "matrix3d" => {
-                        let m11 = specified::parse_number(context, input)?;
+                        let m11 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m12 = specified::parse_number(context, input)?;
+                        let m12 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m13 = specified::parse_number(context, input)?;
+                        let m13 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m14 = specified::parse_number(context, input)?;
+                        let m14 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m21 = specified::parse_number(context, input)?;
+                        let m21 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m22 = specified::parse_number(context, input)?;
+                        let m22 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m23 = specified::parse_number(context, input)?;
+                        let m23 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m24 = specified::parse_number(context, input)?;
+                        let m24 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m31 = specified::parse_number(context, input)?;
+                        let m31 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m32 = specified::parse_number(context, input)?;
+                        let m32 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m33 = specified::parse_number(context, input)?;
+                        let m33 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let m34 = specified::parse_number(context, input)?;
+                        let m34 = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        if !prefixed {
-                            // Standard matrix3d parsing.
-                            let m41 = specified::parse_number(context, input)?;
-                            input.expect_comma()?;
-                            let m42 = specified::parse_number(context, input)?;
-                            input.expect_comma()?;
-                            let m43 = specified::parse_number(context, input)?;
-                            input.expect_comma()?;
-                            let m44 = specified::parse_number(context, input)?;
-                            Ok(GenericTransformOperation::Matrix3D(Matrix3D {
-                                m11, m12, m13, m14,
-                                m21, m22, m23, m24,
-                                m31, m32, m33, m34,
-                                m41, m42, m43, m44,
-                            }))
-                        } else {
-                            // Non-standard prefixed matrix parsing for -moz-transform.
-                            let m41 = LengthOrPercentageOrNumber::parse(context, input)?;
-                            input.expect_comma()?;
-                            let m42 = LengthOrPercentageOrNumber::parse(context, input)?;
-                            input.expect_comma()?;
-                            let m43 = LengthOrNumber::parse(context, input)?;
-                            input.expect_comma()?;
-                            let m44 = specified::parse_number(context, input)?;
-                            Ok(GenericTransformOperation::PrefixedMatrix3D(Matrix3D {
-                                m11, m12, m13, m14,
-                                m21, m22, m23, m24,
-                                m31, m32, m33, m34,
-                                m41, m42, m43, m44,
-                            }))
-                        }
+                        // Standard matrix3d parsing.
+                        let m41 = Number::parse(context, input)?;
+                        input.expect_comma()?;
+                        let m42 = Number::parse(context, input)?;
+                        input.expect_comma()?;
+                        let m43 = Number::parse(context, input)?;
+                        input.expect_comma()?;
+                        let m44 = Number::parse(context, input)?;
+                        Ok(GenericTransformOperation::Matrix3D(Matrix3D {
+                            m11, m12, m13, m14,
+                            m21, m22, m23, m24,
+                            m31, m32, m33, m34,
+                            m41, m42, m43, m44,
+                        }))
                     },
                     "translate" => {
                         let sx = specified::LengthOrPercentage::parse(context, input)?;
@@ -169,32 +147,32 @@ impl Transform {
                         Ok(GenericTransformOperation::Translate3D(tx, ty, tz))
                     },
                     "scale" => {
-                        let sx = specified::parse_number(context, input)?;
+                        let sx = Number::parse(context, input)?;
                         if input.try(|input| input.expect_comma()).is_ok() {
-                            let sy = specified::parse_number(context, input)?;
+                            let sy = Number::parse(context, input)?;
                             Ok(GenericTransformOperation::Scale(sx, Some(sy)))
                         } else {
                             Ok(GenericTransformOperation::Scale(sx, None))
                         }
                     },
                     "scalex" => {
-                        let sx = specified::parse_number(context, input)?;
+                        let sx = Number::parse(context, input)?;
                         Ok(GenericTransformOperation::ScaleX(sx))
                     },
                     "scaley" => {
-                        let sy = specified::parse_number(context, input)?;
+                        let sy = Number::parse(context, input)?;
                         Ok(GenericTransformOperation::ScaleY(sy))
                     },
                     "scalez" => {
-                        let sz = specified::parse_number(context, input)?;
+                        let sz = Number::parse(context, input)?;
                         Ok(GenericTransformOperation::ScaleZ(sz))
                     },
                     "scale3d" => {
-                        let sx = specified::parse_number(context, input)?;
+                        let sx = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let sy = specified::parse_number(context, input)?;
+                        let sy = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let sz = specified::parse_number(context, input)?;
+                        let sz = Number::parse(context, input)?;
                         Ok(GenericTransformOperation::Scale3D(sx, sy, sz))
                     },
                     "rotate" => {
@@ -214,11 +192,11 @@ impl Transform {
                         Ok(GenericTransformOperation::RotateZ(theta))
                     },
                     "rotate3d" => {
-                        let ax = specified::parse_number(context, input)?;
+                        let ax = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let ay = specified::parse_number(context, input)?;
+                        let ay = Number::parse(context, input)?;
                         input.expect_comma()?;
-                        let az = specified::parse_number(context, input)?;
+                        let az = Number::parse(context, input)?;
                         input.expect_comma()?;
                         let theta = specified::Angle::parse_with_unitless(context, input)?;
                         // TODO(gw): Check that the axis can be normalized.
@@ -251,6 +229,15 @@ impl Transform {
                     .map_err(|()| location.new_custom_error(StyleParseErrorKind::UnexpectedFunction(function.clone())))
             })
         })?))
+    }
+}
+
+impl Parse for Transform {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>
+    ) -> Result<Self, ParseError<'i>> {
+        Transform::parse_internal(context, input)
     }
 }
 
@@ -485,5 +472,87 @@ impl ToComputedValue for TimingFunction {
                 GenericTimingFunction::Frames(Integer::from_computed_value(&(frames as i32)))
             },
         }
+    }
+}
+
+/// A specified CSS `rotate`
+pub type Rotate = GenericRotate<Number, Angle>;
+
+impl Parse for Rotate {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>
+    ) -> Result<Self, ParseError<'i>> {
+        if input.try(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(GenericRotate::None);
+        }
+
+        if let Ok(rx) = input.try(|i| Number::parse(context, i)) {
+            // 'rotate: <number>{3} <angle>'
+            let ry = Number::parse(context, input)?;
+            let rz = Number::parse(context, input)?;
+            let angle = specified::Angle::parse(context, input)?;
+            return Ok(GenericRotate::Rotate3D(rx, ry, rz, angle));
+        }
+
+        // 'rotate: <angle>'
+        let angle = specified::Angle::parse(context, input)?;
+        Ok(GenericRotate::Rotate(angle))
+    }
+}
+
+/// A specified CSS `translate`
+pub type Translate = GenericTranslate<LengthOrPercentage, Length>;
+
+impl Parse for Translate {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>
+    ) -> Result<Self, ParseError<'i>> {
+        if input.try(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(GenericTranslate::None);
+        }
+
+        let tx = specified::LengthOrPercentage::parse(context, input)?;
+        if let Ok(ty) = input.try(|i| specified::LengthOrPercentage::parse(context, i)) {
+            if let Ok(tz) = input.try(|i| specified::Length::parse(context, i)) {
+                // 'translate: <length-percentage> <length-percentage> <length>'
+                return Ok(GenericTranslate::Translate3D(tx, ty, tz));
+            }
+
+            // translate: <length-percentage> <length-percentage>'
+            return Ok(GenericTranslate::Translate(tx, ty));
+        }
+
+        // 'translate: <length-percentage> '
+        Ok(GenericTranslate::TranslateX(tx))
+    }
+}
+
+/// A specified CSS `scale`
+pub type Scale = GenericScale<Number>;
+
+impl Parse for Scale {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>
+    ) -> Result<Self, ParseError<'i>> {
+        if input.try(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(GenericScale::None);
+        }
+
+        let sx = Number::parse(context, input)?;
+        if let Ok(sy) = input.try(|i| Number::parse(context, i)) {
+            if let Ok(sz) = input.try(|i| Number::parse(context, i)) {
+                // 'scale: <number> <number> <number>'
+                return Ok(GenericScale::Scale3D(sx, sy, sz));
+            }
+
+            // 'scale: <number> <number>'
+            return Ok(GenericScale::Scale(sx, sy));
+        }
+
+        // 'scale: <number>'
+        Ok(GenericScale::ScaleX(sx))
     }
 }

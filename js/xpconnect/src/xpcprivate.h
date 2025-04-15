@@ -118,7 +118,6 @@
 #include "XPCForwards.h"
 #include "XPCLog.h"
 #include "xpccomponents.h"
-#include "xpcexception.h"
 #include "xpcjsid.h"
 #include "prenv.h"
 #include "prcvar.h"
@@ -128,7 +127,6 @@
 #include "MainThreadUtils.h"
 
 #include "nsIConsoleService.h"
-#include "nsIException.h"
 
 #include "nsVariant.h"
 #include "nsIPropertyBag.h"
@@ -161,6 +159,12 @@
 #undef GetClassName
 #endif
 #endif /* XP_WIN */
+
+namespace mozilla {
+namespace dom {
+class Exception;
+} // namespace dom
+} // namespace mozilla
 
 /***************************************************************************/
 // default initial sizes for maps (hashtables)
@@ -267,15 +271,8 @@ public:
     bool IsShuttingDown() const {return mShuttingDown;}
 
     nsresult GetInfoForIID(const nsIID * aIID, nsIInterfaceInfo** info);
-    nsresult GetInfoForName(const char * name, nsIInterfaceInfo** info);
-
-    virtual nsIPrincipal* GetPrincipal(JSObject* obj,
-                                       bool allowShortCircuit) const override;
 
     void RecordTraversal(void* p, nsISupports* s);
-    virtual char* DebugPrintJSStack(bool showArgs,
-                                    bool showLocals,
-                                    bool showThisProps) override;
 
 protected:
     virtual ~nsXPConnect();
@@ -395,7 +392,7 @@ public:
 
     XPCJSRuntime* Runtime() const;
 
-    mozilla::CycleCollectedJSRuntime* CreateRuntime(JSContext* aCx) override;
+    virtual mozilla::CycleCollectedJSRuntime* CreateRuntime(JSContext* aCx) override;
 
     XPCCallContext*  GetCallContext() const {return mCallContext;}
     XPCCallContext*  SetCallContext(XPCCallContext* ccx)
@@ -442,6 +439,10 @@ public:
         IDX_VALUE                   ,
         IDX_QUERY_INTERFACE         ,
         IDX_COMPONENTS              ,
+        IDX_CC                      ,
+        IDX_CI                      ,
+        IDX_CR                      ,
+        IDX_CU                      ,
         IDX_WRAPPED_JSOBJECT        ,
         IDX_OBJECT                  ,
         IDX_FUNCTION                ,
@@ -463,6 +464,7 @@ public:
         IDX_STACK                   ,
         IDX_MESSAGE                 ,
         IDX_LASTINDEX               ,
+        IDX_THEN                    ,
         IDX_TOTAL_COUNT // just a count of the above
     };
 
@@ -856,21 +858,9 @@ static inline bool IS_PROTO_CLASS(const js::Class* clazz)
            clazz == &XPC_WN_ModsAllowed_Proto_JSClass;
 }
 
-typedef js::HashSet<size_t,
-                    js::DefaultHasher<size_t>,
-                    js::SystemAllocPolicy> InterpositionWhitelist;
-
-struct InterpositionWhitelistPair {
-    nsIAddonInterposition* interposition;
-    InterpositionWhitelist whitelist;
-};
-
-typedef nsTArray<InterpositionWhitelistPair> InterpositionWhitelistArray;
-
 /***************************************************************************/
 // XPCWrappedNativeScope is one-to-one with a JS global object.
 
-class nsIAddonInterposition;
 class nsXPCComponentsBase;
 class XPCWrappedNativeScope final
 {
@@ -984,11 +974,6 @@ public:
     static bool
     IsDyingScope(XPCWrappedNativeScope* scope);
 
-    typedef js::HashMap<JSAddonId*,
-                        nsCOMPtr<nsIAddonInterposition>,
-                        js::PointerHasher<JSAddonId*>,
-                        js::SystemAllocPolicy> InterpositionMap;
-
     typedef js::HashSet<JSAddonId*,
                         js::PointerHasher<JSAddonId*>,
                         js::SystemAllocPolicy> AddonSet;
@@ -1013,17 +998,6 @@ public:
 
     bool IsAddonScope() { return xpc::IsAddonCompartment(Compartment()); }
 
-    inline bool HasInterposition() { return mInterposition; }
-    nsCOMPtr<nsIAddonInterposition> GetInterposition();
-
-    static bool SetAddonInterposition(JSContext* cx,
-                                      JSAddonId* addonId,
-                                      nsIAddonInterposition* interp);
-
-    static InterpositionWhitelist* GetInterpositionWhitelist(nsIAddonInterposition* interposition);
-    static bool UpdateInterpositionWhitelist(JSContext* cx,
-                                             nsIAddonInterposition* interposition);
-
     static bool AllowCPOWsInAddon(JSContext* cx, JSAddonId* addonId, bool allow);
 
 protected:
@@ -1044,10 +1018,7 @@ private:
     static XPCWrappedNativeScope* gDyingScopes;
 
     static bool                      gShutdownObserverInitialized;
-    static InterpositionMap*         gInterpositionMap;
     static AddonSet*                 gAllowCPOWAddonSet;
-
-    static InterpositionWhitelistArray* gInterpositionWhitelists;
 
     Native2WrappedNativeMap*         mWrappedNativeMap;
     ClassInfo2WrappedNativeProtoMap* mWrappedNativeProtoMap;
@@ -1066,10 +1037,6 @@ private:
 
     // Lazily created sandboxes for addon code.
     nsTArray<JS::ObjectPtr>          mAddonScopes;
-
-    // This is a service that will be use to interpose on some property accesses on
-    // objects from other scope, for add-on compatibility reasons.
-    nsCOMPtr<nsIAddonInterposition>  mInterposition;
 
     JS::WeakMapPtr<JSObject*, JSObject*> mXrayExpandos;
 
@@ -1338,8 +1305,6 @@ class XPCNativeSet final
 
     inline XPCNativeInterface* FindInterfaceWithIID(const nsIID& iid) const;
 
-    inline XPCNativeInterface* FindNamedInterface(jsid name) const;
-
     uint16_t GetMemberCount() const {
         return mMemberCount;
     }
@@ -1548,8 +1513,6 @@ public:
 
     NS_DECL_CYCLE_COLLECTION_CLASS(XPCWrappedNative)
 
-    nsIPrincipal* GetObjectPrincipal() const;
-
     bool
     IsValid() const { return mFlatJSObject.hasFlag(FLAT_JS_OBJECT_VALID); }
 
@@ -1658,12 +1621,6 @@ public:
                  XPCWrappedNativeScope* Scope,
                  XPCNativeInterface* Interface,
                  XPCWrappedNative** wrapper);
-
-    static nsresult
-    GetUsedOnly(nsISupports* Object,
-                XPCWrappedNativeScope* Scope,
-                XPCNativeInterface* Interface,
-                XPCWrappedNative** wrapper);
 
     void FlatJSObjectFinalized();
     void FlatJSObjectMoved(JSObject* obj, const JSObject* old);
@@ -1829,15 +1786,13 @@ public:
     nsIInterfaceInfo* GetInterfaceInfo() const {return mInfo;}
     const char* GetInterfaceName();
 
-    static bool IsWrappedJS(nsISupports* aPtr);
-
     NS_IMETHOD DelegatedQueryInterface(nsXPCWrappedJS* self, REFNSIID aIID,
                                        void** aInstancePtr);
 
     JSObject* GetRootJSObject(JSContext* cx, JSObject* aJSObj);
 
     NS_IMETHOD CallMethod(nsXPCWrappedJS* wrapper, uint16_t methodIndex,
-                          const XPTMethodDescriptor* info,
+                          const nsXPTMethodInfo* info,
                           nsXPTCMiniVariant* params);
 
     JSObject*  CallQueryInterfaceOnJSObject(JSContext* cx,
@@ -1860,7 +1815,7 @@ private:
                                       mozilla::dom::AutoEntryScript& aes,
                                       const char * aPropertyName,
                                       const char * anInterfaceName,
-                                      nsIException* aSyntheticException = nullptr);
+                                      mozilla::dom::Exception* aSyntheticException = nullptr);
     virtual ~nsXPCWrappedJSClass();
 
     nsXPCWrappedJSClass() = delete;
@@ -1874,7 +1829,7 @@ private:
          else mDescriptors[i/32] &= ~(1 << (i%32));}
 
     bool GetArraySizeFromParam(JSContext* cx,
-                               const XPTMethodDescriptor* method,
+                               const nsXPTMethodInfo* method,
                                const nsXPTParamInfo& param,
                                uint16_t methodIndex,
                                uint8_t paramIndex,
@@ -1882,7 +1837,7 @@ private:
                                uint32_t* result) const;
 
     bool GetInterfaceTypeFromParam(JSContext* cx,
-                                   const XPTMethodDescriptor* method,
+                                   const nsXPTMethodInfo* method,
                                    const nsXPTParamInfo& param,
                                    uint16_t methodIndex,
                                    const nsXPTType& type,
@@ -1929,7 +1884,7 @@ public:
     NS_DECL_CYCLE_COLLECTION_SKIPPABLE_CLASS_AMBIGUOUS(nsXPCWrappedJS, nsIXPConnectWrappedJS)
 
     NS_IMETHOD CallMethod(uint16_t methodIndex,
-                          const XPTMethodDescriptor* info,
+                          const nsXPTMethodInfo* info,
                           nsXPTCMiniVariant* params) override;
 
     /*
@@ -2057,7 +2012,7 @@ private:
 class XPCConvert
 {
 public:
-    static bool IsMethodReflectable(const XPTMethodDescriptor& info);
+    static bool IsMethodReflectable(const nsXPTMethodInfo& info);
 
     /**
      * Convert a native object into a JS::Value.
@@ -2149,13 +2104,13 @@ public:
     static nsresult JSValToXPCException(JS::MutableHandleValue s,
                                         const char* ifaceName,
                                         const char* methodName,
-                                        nsIException** exception);
+                                        mozilla::dom::Exception** exception);
 
     static nsresult ConstructException(nsresult rv, const char* message,
                                        const char* ifaceName,
                                        const char* methodName,
                                        nsISupports* data,
-                                       nsIException** exception,
+                                       mozilla::dom::Exception** exception,
                                        JSContext* cx,
                                        JS::Value* jsExceptionPtr);
 
@@ -2370,18 +2325,6 @@ xpc_JSObjectToID(JSContext* cx, JSObject* obj);
 extern bool
 xpc_JSObjectIsID(JSContext* cx, JSObject* obj);
 
-/***************************************************************************/
-// in XPCDebug.cpp
-
-extern bool
-xpc_DumpJSStack(bool showArgs, bool showLocals, bool showThisProps);
-
-// Return a newly-allocated string containing a representation of the
-// current JS stack.
-extern JS::UniqueChars
-xpc_PrintJSStack(JSContext* cx, bool showArgs, bool showLocals,
-                 bool showThisProps);
-
 /******************************************************************************
  * Handles pre/post script processing.
  */
@@ -2508,7 +2451,7 @@ class TypedAutoMarkingPtr : public AutoMarkingPtr
     TypedAutoMarkingPtr<T>& operator =(T* ptr) { mPtr = ptr; return *this; }
 
   protected:
-    virtual void TraceJS(JSTracer* trc)
+    virtual void TraceJS(JSTracer* trc) override
     {
         if (mPtr) {
             mPtr->TraceJS(trc);
@@ -2516,7 +2459,7 @@ class TypedAutoMarkingPtr : public AutoMarkingPtr
         }
     }
 
-    virtual void MarkAfterJSFinalize()
+    virtual void MarkAfterJSFinalize() override
     {
         if (mPtr)
             mPtr->Mark();
@@ -2696,24 +2639,33 @@ struct GlobalProperties {
     bool Parse(JSContext* cx, JS::HandleObject obj);
     bool DefineInXPCComponents(JSContext* cx, JS::HandleObject obj);
     bool DefineInSandbox(JSContext* cx, JS::HandleObject obj);
+
+    // Interface objects we can expose.
+    bool Blob : 1;
+    bool ChromeUtils : 1;
     bool CSS : 1;
-    bool indexedDB : 1;
-    bool XMLHttpRequest : 1;
+    bool CSSRule : 1;
+    bool Directory : 1;
+    bool File : 1;
+    bool FileReader: 1;
+    bool FormData : 1;
+    bool InspectorUtils : 1;
+    bool MessageChannel: 1;
+    bool NodeFilter : 1;
     bool TextDecoder : 1;
     bool TextEncoder : 1;
     bool URL : 1;
     bool URLSearchParams : 1;
+    bool XMLHttpRequest : 1;
+
+    // Ad-hoc property names we implement.
     bool atob : 1;
     bool btoa : 1;
-    bool Blob : 1;
-    bool Directory : 1;
-    bool File : 1;
-    bool crypto : 1;
-    bool rtcIdentityProvider : 1;
-    bool fetch : 1;
     bool caches : 1;
-    bool fileReader: 1;
-    bool messageChannel: 1;
+    bool crypto : 1;
+    bool fetch : 1;
+    bool indexedDB : 1;
+    bool rtcIdentityProvider : 1;
 private:
     bool Define(JSContext* cx, JS::HandleObject obj);
 };
@@ -2760,7 +2712,6 @@ public:
         , wantComponents(true)
         , wantExportHelpers(false)
         , isWebExtensionContentScript(false)
-        , waiveInterposition(false)
         , proto(cx)
         , addonId(cx)
         , writeToGlobalPrototype(false)
@@ -2774,14 +2725,13 @@ public:
         , originAttributes(cx)
     { }
 
-    virtual bool Parse();
+    virtual bool Parse() override;
 
     bool wantXrays;
     bool allowWaivers;
     bool wantComponents;
     bool wantExportHelpers;
     bool isWebExtensionContentScript;
-    bool waiveInterposition;
     JS::RootedObject proto;
     nsCString sandboxName;
     JS::RootedString addonId;
@@ -2808,7 +2758,7 @@ public:
         , defineAs(cx, JSID_VOID)
     { }
 
-    virtual bool Parse() { return ParseId("defineAs", &defineAs); }
+    virtual bool Parse() override { return ParseId("defineAs", &defineAs); }
 
     JS::RootedId defineAs;
 };
@@ -2822,7 +2772,7 @@ public:
         , allowCrossOriginArguments(false)
     { }
 
-    virtual bool Parse() {
+    virtual bool Parse() override {
         return ParseId("defineAs", &defineAs) &&
                ParseBoolean("allowCrossOriginArguments", &allowCrossOriginArguments);
     }
@@ -2853,7 +2803,7 @@ public:
         return obj;
     }
 
-    virtual bool Parse() {
+    virtual bool Parse() override {
         return ParseBoolean("allowCrossOriginArguments", &allowCrossOriginArguments);
     }
 
@@ -2870,7 +2820,7 @@ public:
         , deepFreeze(false)
     { }
 
-    virtual bool Parse() {
+    virtual bool Parse() override {
         return ParseBoolean("wrapReflectors", &wrapReflectors) &&
                ParseBoolean("cloneFunctions", &cloneFunctions) &&
                ParseBoolean("deepFreeze", &deepFreeze);
@@ -2933,7 +2883,7 @@ CreateSandboxObject(JSContext* cx, JS::MutableHandleValue vp, nsISupports* prinO
 nsresult
 EvalInSandbox(JSContext* cx, JS::HandleObject sandbox, const nsAString& source,
               const nsACString& filename, int32_t lineNo,
-              JSVersion jsVersion, JS::MutableHandleValue rval);
+              JS::MutableHandleValue rval);
 
 nsresult
 GetSandboxAddonId(JSContext* cx, JS::HandleObject sandboxArg,
@@ -3047,21 +2997,6 @@ public:
     // receives various bits of special compatibility behavior.
     bool isWebExtensionContentScript;
 
-    // True if wrappers in this compartment will interpose on some property
-    // accesses on objects from other compartments, for add-on compatibility
-    // reasons.
-    bool hasInterposition;
-
-    // Even if an add-on needs interposition, it does not necessary need it
-    // for every compartment. If this flag is set we waive interposition for
-    // this compartment.
-    bool waiveInterposition;
-
-    // If this flag is set, we intercept function calls on vanilla JS function
-    // objects from this compartment if the caller compartment has the
-    // hasInterposition flag set.
-    bool addonCallInterposition;
-
     // If CPOWs are disabled for browser code via the
     // dom.ipc.cpows.forbid-unsafe-from-browser preferences, then only
     // add-ons can use CPOWs. This flag allows a non-addon scope
@@ -3143,8 +3078,6 @@ public:
             return;
         locationURI = aLocationURI;
     }
-
-    void SetAddonCallInterposition() { addonCallInterposition = true; }
 
     JSObject2WrappedJSMap* GetWrappedJSMap() const { return mWrappedJSMap; }
     void UpdateWeakPointersAfterGC();

@@ -13,10 +13,9 @@ use cssparser::{Token, ParserInput};
 use error_reporting::{ContextualParseError, ParseErrorReporter};
 use parser::{ParserContext, ParserErrorContext};
 use selectors::parser::SelectorParseErrorKind;
-use serialize_comma_separated_list;
-use std::fmt;
+use std::fmt::{self, Write};
 use str::string_as_ascii_lowercase;
-use style_traits::{ToCss, ParseError, StyleParseErrorKind};
+use style_traits::{CssWriter, ToCss, ParseError, StyleParseErrorKind};
 use values::CustomIdent;
 
 #[cfg(feature = "servo")]
@@ -25,19 +24,13 @@ pub use servo::media_queries::{Device, Expression};
 pub use gecko::media_queries::{Device, Expression};
 
 /// A type that encapsulates a media query list.
-#[derive(Clone, Debug)]
 #[cfg_attr(feature = "servo", derive(MallocSizeOf))]
+#[css(comma)]
+#[derive(Clone, Debug, ToCss)]
 pub struct MediaList {
     /// The list of media queries.
+    #[css(iterable)]
     pub media_queries: Vec<MediaQuery>,
-}
-
-impl ToCss for MediaList {
-    fn to_css<W>(&self, dest: &mut W) -> fmt::Result
-        where W: fmt::Write
-    {
-        serialize_comma_separated_list(dest, &self.media_queries)
-    }
 }
 
 impl MediaList {
@@ -86,8 +79,9 @@ impl MediaQuery {
 }
 
 impl ToCss for MediaQuery {
-    fn to_css<W>(&self, dest: &mut W) -> fmt::Result
-        where W: fmt::Write,
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: Write,
     {
         if let Some(qual) = self.qualifier {
             qual.to_css(dest)?;

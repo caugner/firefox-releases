@@ -6,10 +6,12 @@
 
 "use strict";
 
-const { DOM, Component, PropTypes } = require("devtools/client/shared/vendor/react");
+const { Component } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 
 // Shortcuts
-const { div } = DOM;
+const { div } = dom;
 
 /**
  * Helper panel component that is using an existing DOM node
@@ -23,8 +25,10 @@ class InspectorTabPanel extends Component {
       id: PropTypes.string.isRequired,
       // Optional prefix for panel IDs.
       idPrefix: PropTypes.string,
-      // Optional mount callback
+      // Optional mount callback.
       onMount: PropTypes.func,
+      // Optional unmount callback.
+      onUnmount: PropTypes.func,
     };
   }
 
@@ -49,6 +53,10 @@ class InspectorTabPanel extends Component {
   componentWillUnmount() {
     let doc = this.refs.content.ownerDocument;
     let panels = doc.getElementById("tabpanels");
+
+    if (this.props.onUnmount) {
+      this.props.onUnmount(this.refs.content, this.props);
+    }
 
     // Move panel's content node back into list of tab panels.
     panels.appendChild(this.refs.content.firstChild);

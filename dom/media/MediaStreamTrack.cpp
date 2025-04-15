@@ -124,7 +124,7 @@ MediaStreamTrack::MediaStreamTrack(DOMMediaStream* aStream, TrackID aTrackID,
     mInputTrackID(aInputTrackID), mSource(aSource),
     mPrincipal(aSource->GetPrincipal()),
     mReadyState(MediaStreamTrackState::Live),
-    mEnabled(true), mConstraints(aConstraints)
+    mEnabled(true), mMuted(false), mConstraints(aConstraints)
 {
   GetSource().RegisterSink(this);
 
@@ -166,11 +166,15 @@ MediaStreamTrack::Destroy()
     mPrincipalHandleListener->Forget();
     mPrincipalHandleListener = nullptr;
   }
-  for (auto l : mTrackListeners) {
-    RemoveListener(l);
+  // Remove all listeners -- avoid iterating over the list we're removing from
+  const nsTArray<RefPtr<MediaStreamTrackListener>> trackListeners(mTrackListeners);
+  for (auto listener : trackListeners) {
+    RemoveListener(listener);
   }
-  for (auto l : mDirectTrackListeners) {
-    RemoveDirectListener(l);
+  // Do the same as above for direct listeners
+  const nsTArray<RefPtr<DirectMediaStreamTrackListener>> directTrackListeners(mDirectTrackListeners);
+  for (auto listener : directTrackListeners) {
+    RemoveDirectListener(listener);
   }
 }
 
@@ -219,9 +223,14 @@ MediaStreamTrack::SetEnabled(bool aEnabled)
   LOG(LogLevel::Info, ("MediaStreamTrack %p %s",
                        this, aEnabled ? "Enabled" : "Disabled"));
 
+  if (mEnabled == aEnabled) {
+    return;
+  }
+
   mEnabled = aEnabled;
   GetOwnedStream()->SetTrackEnabled(mTrackID, mEnabled ? DisabledTrackMode::ENABLED
                                                        : DisabledTrackMode::SILENCE_BLACK);
+  GetSource().SinkEnabledStateChanged();
 }
 
 void
@@ -259,9 +268,18 @@ MediaStreamTrack::GetConstraints(dom::MediaTrackConstraints& aResult)
 }
 
 void
-MediaStreamTrack::GetSettings(dom::MediaTrackSettings& aResult)
+MediaStreamTrack::GetSettings(dom::MediaTrackSettings& aResult, CallerType aCallerType)
 {
   GetSource().GetSettings(aResult);
+
+  // Spoof values when privacy.resistFingerprinting is true.
+  if (!nsContentUtils::ResistFingerprinting(aCallerType)) {
+    return;
+  }
+  if (aResult.mFacingMode.WasPassed()) {
+    aResult.mFacingMode.Value().Assign(NS_ConvertASCIItoUTF16(
+        VideoFacingModeEnumValues::strings[uint8_t(VideoFacingModeEnum::User)].value));
+  }
 }
 
 already_AddRefed<Promise>
@@ -280,9 +298,12 @@ MediaStreamTrack::ApplyConstraints(const MediaTrackConstraints& aConstraints,
   typedef media::Pledge<bool, MediaStreamError*> PledgeVoid;
 
   nsPIDOMWindowInner* window = mOwningStream->GetParentObject();
+  nsIGlobalObject* go = window ? window->AsGlobal() : nullptr;
 
-  nsCOMPtr<nsIGlobalObject> go = do_QueryInterface(window);
   RefPtr<Promise> promise = Promise::Create(go, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
 
   // Forward constraints to the source.
   //
@@ -362,6 +383,25 @@ MediaStreamTrack::NotifyPrincipalHandleChanged(const PrincipalHandle& aNewPrinci
     SetPrincipal(mPendingPrincipal);
     mPendingPrincipal = nullptr;
   }
+}
+
+void
+MediaStreamTrack::MutedChanged(bool aNewState)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (mMuted == aNewState) {
+    MOZ_ASSERT_UNREACHABLE("Muted state didn't actually change");
+    return;
+  }
+
+  LOG(LogLevel::Info, ("MediaStreamTrack %p became %s",
+                       this, aNewState ? "muted" : "unmuted"));
+
+  mMuted = aNewState;
+  nsString eventName =
+    aNewState ? NS_LITERAL_STRING("mute") : NS_LITERAL_STRING("unmute");
+  DispatchTrustedEvent(eventName);
 }
 
 void

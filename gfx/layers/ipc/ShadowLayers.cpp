@@ -185,6 +185,48 @@ KnowsCompositor::KnowsCompositor()
 KnowsCompositor::~KnowsCompositor()
 {}
 
+KnowsCompositorMediaProxy::KnowsCompositorMediaProxy(const TextureFactoryIdentifier& aIdentifier)
+{
+  mTextureFactoryIdentifier = aIdentifier;
+  // overwrite mSerial's value set by the parent class because we use the same serial
+  // as the KnowsCompositor we are proxying.
+  mThreadSafeAllocator = ImageBridgeChild::GetSingleton();
+  mSyncObject = mThreadSafeAllocator->GetSyncObject();
+}
+
+KnowsCompositorMediaProxy::~KnowsCompositorMediaProxy()
+{}
+
+TextureForwarder*
+KnowsCompositorMediaProxy::GetTextureForwarder()
+{
+  return mThreadSafeAllocator->GetTextureForwarder();
+}
+
+LayersIPCActor*
+KnowsCompositorMediaProxy::GetLayersIPCActor()
+{
+  return mThreadSafeAllocator->GetLayersIPCActor();
+}
+
+ActiveResourceTracker*
+KnowsCompositorMediaProxy::GetActiveResourceTracker()
+{
+  return mThreadSafeAllocator->GetActiveResourceTracker();
+}
+
+void
+KnowsCompositorMediaProxy::SyncWithCompositor()
+{
+  mThreadSafeAllocator->SyncWithCompositor();
+}
+
+RefPtr<KnowsCompositor>
+ShadowLayerForwarder::GetForMedia()
+{
+  return MakeAndAddRef<KnowsCompositorMediaProxy>(GetTextureFactoryIdentifier());
+}
+
 ShadowLayerForwarder::ShadowLayerForwarder(ClientLayerManager* aClientLayerManager)
  : mClientLayerManager(aClientLayerManager)
  , mMessageLoop(MessageLoop::current())
@@ -295,11 +337,6 @@ void
 ShadowLayerForwarder::CreatedColorLayer(ShadowableLayer* aColor)
 {
   CreatedLayer<OpCreateColorLayer>(mTxn, aColor);
-}
-void
-ShadowLayerForwarder::CreatedTextLayer(ShadowableLayer* aColor)
-{
-  CreatedLayer<OpCreateTextLayer>(mTxn, aColor);
 }
 void
 ShadowLayerForwarder::CreatedBorderLayer(ShadowableLayer* aBorder)
@@ -456,15 +493,11 @@ ShadowLayerForwarder::UseTextures(CompositableClient* aCompositable,
     MOZ_ASSERT(t.mTextureClient);
     MOZ_ASSERT(t.mTextureClient->GetIPDLActor());
     MOZ_RELEASE_ASSERT(t.mTextureClient->GetIPDLActor()->GetIPCChannel() == mShadowManager->GetIPCChannel());
-    ReadLockDescriptor readLock;
-    ReadLockHandle readLockHandle;
-    if (t.mTextureClient->SerializeReadLock(readLock)) {
-      readLockHandle = mTxn->AddReadLock(readLock);
-    }
+    bool readLocked = t.mTextureClient->OnForwardedToHost();
     textures.AppendElement(TimedTexture(nullptr, t.mTextureClient->GetIPDLActor(),
-                                        readLockHandle,
                                         t.mTimeStamp, t.mPictureRect,
-                                        t.mFrameID, t.mProducerID));
+                                        t.mFrameID, t.mProducerID,
+                                        readLocked));
     mClientLayerManager->GetCompositorBridgeChild()->HoldUntilCompositableRefReleasedIfNecessary(t.mTextureClient);
   }
   mTxn->AddEdit(CompositableOperation(aCompositable->GetIPCHandle(),
@@ -491,16 +524,8 @@ ShadowLayerForwarder::UseComponentAlphaTextures(CompositableClient* aCompositabl
   MOZ_RELEASE_ASSERT(aTextureOnWhite->GetIPDLActor()->GetIPCChannel() == mShadowManager->GetIPCChannel());
   MOZ_RELEASE_ASSERT(aTextureOnBlack->GetIPDLActor()->GetIPCChannel() == mShadowManager->GetIPCChannel());
 
-  ReadLockDescriptor readLockB;
-  ReadLockHandle readLockHandleB;
-  ReadLockDescriptor readLockW;
-  ReadLockHandle readLockHandleW;
-  if (aTextureOnBlack->SerializeReadLock(readLockB)) {
-    readLockHandleB = mTxn->AddReadLock(readLockB);
-  }
-  if (aTextureOnWhite->SerializeReadLock(readLockW)) {
-    readLockHandleW = mTxn->AddReadLock(readLockW);
-  }
+  bool readLockedB = aTextureOnBlack->OnForwardedToHost();
+  bool readLockedW = aTextureOnWhite->OnForwardedToHost();
 
   mClientLayerManager->GetCompositorBridgeChild()->HoldUntilCompositableRefReleasedIfNecessary(aTextureOnBlack);
   mClientLayerManager->GetCompositorBridgeChild()->HoldUntilCompositableRefReleasedIfNecessary(aTextureOnWhite);
@@ -511,7 +536,7 @@ ShadowLayerForwarder::UseComponentAlphaTextures(CompositableClient* aCompositabl
       OpUseComponentAlphaTextures(
         nullptr, aTextureOnBlack->GetIPDLActor(),
         nullptr, aTextureOnWhite->GetIPDLActor(),
-        readLockHandleB, readLockHandleW)
+        readLockedB, readLockedW)
       )
     );
 }
@@ -904,12 +929,12 @@ void ShadowLayerForwarder::ClearCachedResources()
   mShadowManager->SendClearCachedResources();
 }
 
-void ShadowLayerForwarder::Composite()
+void ShadowLayerForwarder::ScheduleComposite()
 {
   if (!IPCOpen()) {
     return;
   }
-  mShadowManager->SendForceComposite();
+  mShadowManager->SendScheduleComposite();
 }
 
 bool

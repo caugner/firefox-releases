@@ -4,71 +4,66 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
-var Cr = Components.results;
-
-Cu.import("resource://gre/modules/AddonManager.jsm");
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/DelayedInit.jsm");
-Cu.import("resource://gre/modules/Messaging.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/TelemetryController.jsm");
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/DelayedInit.jsm");
+ChromeUtils.import("resource://gre/modules/Messaging.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/TelemetryController.jsm");
 
 if (AppConstants.ACCESSIBILITY) {
-  XPCOMUtils.defineLazyModuleGetter(this, "AccessFu",
-                                    "resource://gre/modules/accessibility/AccessFu.jsm");
+  ChromeUtils.defineModuleGetter(this, "AccessFu",
+                                 "resource://gre/modules/accessibility/AccessFu.jsm");
 }
 
-XPCOMUtils.defineLazyModuleGetter(this, "AsyncPrefs",
-                                  "resource://gre/modules/AsyncPrefs.jsm");
+ChromeUtils.defineModuleGetter(this, "AsyncPrefs",
+                               "resource://gre/modules/AsyncPrefs.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Manifests",
-                                  "resource://gre/modules/Manifest.jsm");
+ChromeUtils.defineModuleGetter(this, "Manifests",
+                               "resource://gre/modules/Manifest.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
-                                  "resource://gre/modules/FileUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "FileUtils",
+                               "resource://gre/modules/FileUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "UITelemetry",
-                                  "resource://gre/modules/UITelemetry.jsm");
+ChromeUtils.defineModuleGetter(this, "UITelemetry",
+                               "resource://gre/modules/UITelemetry.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
-                                  "resource://gre/modules/PluralForm.jsm");
+ChromeUtils.defineModuleGetter(this, "PluralForm",
+                               "resource://gre/modules/PluralForm.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Downloads",
-                                  "resource://gre/modules/Downloads.jsm");
+ChromeUtils.defineModuleGetter(this, "Downloads",
+                               "resource://gre/modules/Downloads.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "UserAgentOverrides",
-                                  "resource://gre/modules/UserAgentOverrides.jsm");
+ChromeUtils.defineModuleGetter(this, "UserAgentOverrides",
+                               "resource://gre/modules/UserAgentOverrides.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Task", "resource://gre/modules/Task.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
+ChromeUtils.defineModuleGetter(this, "Task", "resource://gre/modules/Task.jsm");
+ChromeUtils.defineModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
-                                  "resource://gre/modules/SafeBrowsing.jsm");
+ChromeUtils.defineModuleGetter(this, "SafeBrowsing",
+                               "resource://gre/modules/SafeBrowsing.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
-                                  "resource://gre/modules/BrowserUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "BrowserUtils",
+                               "resource://gre/modules/BrowserUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
-                                  "resource://gre/modules/PrivateBrowsingUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "PrivateBrowsingUtils",
+                               "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Sanitizer",
-                                  "resource://gre/modules/Sanitizer.jsm");
+ChromeUtils.defineModuleGetter(this, "Sanitizer",
+                               "resource://gre/modules/Sanitizer.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Prompt",
-                                  "resource://gre/modules/Prompt.jsm");
+ChromeUtils.defineModuleGetter(this, "Prompt",
+                               "resource://gre/modules/Prompt.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "HelperApps",
-                                  "resource://gre/modules/HelperApps.jsm");
+ChromeUtils.defineModuleGetter(this, "HelperApps",
+                               "resource://gre/modules/HelperApps.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "SSLExceptions",
-                                  "resource://gre/modules/SSLExceptions.jsm");
+ChromeUtils.defineModuleGetter(this, "SSLExceptions",
+                               "resource://gre/modules/SSLExceptions.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "FormHistory",
-                                  "resource://gre/modules/FormHistory.jsm");
+ChromeUtils.defineModuleGetter(this, "FormHistory",
+                               "resource://gre/modules/FormHistory.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "uuidgen",
                                    "@mozilla.org/uuid-generator;1",
@@ -80,40 +75,42 @@ if (AppConstants.MOZ_ENABLE_PROFILER_SPS) {
                                      "nsIProfiler");
 }
 
-XPCOMUtils.defineLazyModuleGetter(this, "SimpleServiceDiscovery",
-                                  "resource://gre/modules/SimpleServiceDiscovery.jsm");
+ChromeUtils.defineModuleGetter(this, "SimpleServiceDiscovery",
+                               "resource://gre/modules/SimpleServiceDiscovery.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
-                                  "resource://gre/modules/CharsetMenu.jsm");
+ChromeUtils.defineModuleGetter(this, "CharsetMenu",
+                               "resource://gre/modules/CharsetMenu.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "NetErrorHelper",
-                                  "resource://gre/modules/NetErrorHelper.jsm");
+ChromeUtils.defineModuleGetter(this, "NetErrorHelper",
+                               "resource://gre/modules/NetErrorHelper.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "PermissionsUtils",
-                                  "resource://gre/modules/PermissionsUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "PermissionsUtils",
+                               "resource://gre/modules/PermissionsUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
-                                  "resource://gre/modules/Preferences.jsm");
+ChromeUtils.defineModuleGetter(this, "Preferences",
+                               "resource://gre/modules/Preferences.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "SharedPreferences",
-                                  "resource://gre/modules/SharedPreferences.jsm");
+ChromeUtils.defineModuleGetter(this, "SharedPreferences",
+                               "resource://gre/modules/SharedPreferences.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Notifications",
-                                  "resource://gre/modules/Notifications.jsm");
+ChromeUtils.defineModuleGetter(this, "Notifications",
+                               "resource://gre/modules/Notifications.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "ReaderMode", "resource://gre/modules/ReaderMode.jsm");
+ChromeUtils.defineModuleGetter(this, "ReaderMode", "resource://gre/modules/ReaderMode.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Snackbars", "resource://gre/modules/Snackbars.jsm");
+ChromeUtils.defineModuleGetter(this, "Snackbars", "resource://gre/modules/Snackbars.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "RuntimePermissions", "resource://gre/modules/RuntimePermissions.jsm");
+ChromeUtils.defineModuleGetter(this, "RuntimePermissions", "resource://gre/modules/RuntimePermissions.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "WebsiteMetadata", "resource://gre/modules/WebsiteMetadata.jsm");
+ChromeUtils.defineModuleGetter(this, "WebsiteMetadata", "resource://gre/modules/WebsiteMetadata.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "TelemetryStopwatch", "resource://gre/modules/TelemetryStopwatch.jsm");
+ChromeUtils.defineModuleGetter(this, "TelemetryStopwatch", "resource://gre/modules/TelemetryStopwatch.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "FontEnumerator",
   "@mozilla.org/gfx/fontenumerator;1",
   "nsIFontEnumerator");
+
+ChromeUtils.defineModuleGetter(this, "Utils", "resource://gre/modules/sessionstore/Utils.jsm");
 
 var GlobalEventDispatcher = EventDispatcher.instance;
 var WindowEventDispatcher = EventDispatcher.for(window);
@@ -124,6 +121,7 @@ var lazilyLoadedBrowserScripts = [
   ["Linkifier", "chrome://browser/content/Linkify.js"],
   ["CastingApps", "chrome://browser/content/CastingApps.js"],
   ["RemoteDebugger", "chrome://browser/content/RemoteDebugger.js"],
+  ["gViewSourceUtils", "chrome://global/content/viewSourceUtils.js"],
 ];
 if (!AppConstants.RELEASE_OR_BETA) {
   lazilyLoadedBrowserScripts.push(
@@ -239,7 +237,7 @@ lazilyLoadedObserverScripts.forEach(function (aScript) {
   XPCOMUtils.defineLazyGetter(window, name, function() {
     let sandbox = {};
     if (script.endsWith(".jsm")) {
-      Cu.import(script, sandbox);
+      ChromeUtils.import(script, sandbox);
     } else {
       Services.scriptloader.loadSubScript(script, sandbox);
     }
@@ -258,12 +256,6 @@ XPCOMUtils.defineLazyServiceGetter(this, "Haptic",
 
 XPCOMUtils.defineLazyServiceGetter(this, "ParentalControls",
   "@mozilla.org/parental-controls-service;1", "nsIParentalControlsService");
-
-XPCOMUtils.defineLazyServiceGetter(this, "DOMUtils",
-  "@mozilla.org/inspector/dom-utils;1", "inIDOMUtils");
-
-XPCOMUtils.defineLazyServiceGetter(window, "URIFixup",
-  "@mozilla.org/docshell/urifixup;1", "nsIURIFixup");
 
 XPCOMUtils.defineLazyModuleGetter(this, "Log",
   "resource://gre/modules/AndroidLog.jsm", "AndroidLog");
@@ -288,8 +280,8 @@ XPCOMUtils.defineLazyGetter(this, "ContentAreaUtils", function() {
   return ContentAreaUtils;
 });
 
-XPCOMUtils.defineLazyModuleGetter(this, "Rect", "resource://gre/modules/Geometry.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Point", "resource://gre/modules/Geometry.jsm");
+ChromeUtils.defineModuleGetter(this, "Rect", "resource://gre/modules/Geometry.jsm");
+ChromeUtils.defineModuleGetter(this, "Point", "resource://gre/modules/Geometry.jsm");
 
 function resolveGeckoURI(aURI) {
   if (!aURI)
@@ -364,12 +356,14 @@ var BrowserApp = {
     Services.androidBridge.browserApp = this;
 
     WindowEventDispatcher.registerListener(this, [
+      "GeckoView:ZoomToInput",
       "Session:Restore",
       "Tab:Load",
       "Tab:Selected",
       "Tab:Closed",
       "Tab:Move",
       "Tab:OpenUri",
+      "Tab:ViewSource",
     ]);
 
     GlobalEventDispatcher.registerListener(this, [
@@ -383,7 +377,6 @@ var BrowserApp = {
       "Passwords:Init",
       "Sanitize:ClearData",
       "SaveAs:PDF",
-      "ScrollTo:FocusedInput",
       "Session:Back",
       "Session:Forward",
       "Session:GetHistory",
@@ -517,7 +510,7 @@ var BrowserApp = {
     // fxa-content-server messages.
     if (ParentalControls.isAllowed(ParentalControls.MODIFY_ACCOUNTS)) {
       console.log("browser.js: loading Firefox Accounts WebChannel");
-      Cu.import("resource://gre/modules/FxAccountsWebChannel.jsm");
+      ChromeUtils.import("resource://gre/modules/FxAccountsWebChannel.jsm");
       EnsureFxAccountsWebChannel();
     } else {
       console.log("browser.js: not loading Firefox Accounts WebChannel; this profile cannot connect to Firefox Accounts.");
@@ -527,7 +520,7 @@ var BrowserApp = {
     GlobalEventDispatcher.sendRequest({ type: "Gecko:Ready" });
 
     this.deck.addEventListener("DOMContentLoaded", function() {
-      InitLater(() => Cu.import("resource://gre/modules/NotificationDB.jsm"));
+      InitLater(() => ChromeUtils.import("resource://gre/modules/NotificationDB.jsm"));
 
       InitLater(() => Services.obs.notifyObservers(window, "browser-delayed-startup-finished"));
       InitLater(() => GlobalEventDispatcher.sendRequest({ type: "Gecko:DelayedStartup" }));
@@ -581,6 +574,19 @@ var BrowserApp = {
     // context menu to automatically accommodate locale changes without
     // having to be rebuilt.
     let stringGetter = name => () => Strings.browser.GetStringFromName(name);
+
+    function videoClassifier(aTarget) {
+      if (aTarget.readyState == aTarget.HAVE_NOTHING) {
+        // We don't know if the height/width of the video,
+        // show a generic string.
+        return "Media";
+      } else if (aTarget.videoWidth == 0 || aTarget.videoHeight == 0) {
+        // If a video element is zero width or height, it's essentially
+        // an HTMLAudioElement.
+        return "Audio";
+      }
+      return "Video";
+    }
 
     // TODO: These should eventually move into more appropriate classes
     NativeWindow.contextmenus.add(stringGetter("contextmenu.openInNewTab"),
@@ -781,7 +787,11 @@ var BrowserApp = {
       });
 
     NativeWindow.contextmenus.add({
-      label: stringGetter("contextmenu.shareMedia"),
+      label: function(aTarget) {
+        return Strings.browser.GetStringFromName(
+          `contextmenu.share${videoClassifier(aTarget)}2`
+        );
+      },
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1,
       selector: NativeWindow.contextmenus._disableRestricted(
         "SHARE", NativeWindow.contextmenus.videoContext()),
@@ -791,7 +801,7 @@ var BrowserApp = {
         return {
           title: title,
           uri: url,
-          type: "video/*",
+          type: videoClassifier(aElement) === "Audio" ? "audio/*" : "video/*",
         };
       },
       icon: "drawable://ic_menu_share",
@@ -848,10 +858,6 @@ var BrowserApp = {
       selector: NativeWindow.contextmenus._disableRestricted("SHARE", NativeWindow.contextmenus.imageShareableContext),
       order: NativeWindow.contextmenus.DEFAULT_HTML5_ORDER - 1, // Show above HTML5 menu items
       showAsActions: function(aTarget) {
-        let doc = aTarget.ownerDocument;
-        let imageCache = Cc["@mozilla.org/image/tools;1"].getService(Ci.imgITools)
-                                                         .getImgCacheForDocument(doc);
-        let props = imageCache.findEntryProperties(aTarget.currentURI, doc);
         let src = aTarget.src;
         return {
           title: src,
@@ -881,7 +887,7 @@ var BrowserApp = {
                 return;
             }
 
-            ContentAreaUtils.saveImageURL(aTarget.currentURI.spec, null, "SaveImageTitle",
+            ContentAreaUtils.saveImageURL(aTarget.currentRequestFinalURI.spec, null, "SaveImageTitle",
                                           false, true, aTarget.ownerDocument.documentURIObject,
                                           aTarget.ownerDocument);
         });
@@ -902,16 +908,9 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(
       function(aTarget) {
         if (aTarget instanceof HTMLVideoElement) {
-          if (aTarget.readyState == aTarget.HAVE_NOTHING) {
-            // We don't know if the height/width of the video,
-            // show a generic string.
-            return Strings.browser.GetStringFromName("contextmenu.saveMedia");
-          } else if (aTarget.videoWidth == 0 || aTarget.videoHeight == 0) {
-            // If a video element is zero width or height, its essentially
-            // an HTMLAudioElement.
-            return Strings.browser.GetStringFromName("contextmenu.saveAudio");
-          }
-          return Strings.browser.GetStringFromName("contextmenu.saveVideo");
+          return Strings.browser.GetStringFromName(
+            `contextmenu.save${videoClassifier(aTarget)}`
+          );
         } else if (aTarget instanceof HTMLAudioElement) {
           return Strings.browser.GetStringFromName("contextmenu.saveAudio");
         }
@@ -928,12 +927,7 @@ var BrowserApp = {
 
         let filePickerTitleKey;
         if (aTarget instanceof HTMLVideoElement) {
-          if (aTarget.readyState == aTarget.HAVE_NOTHING) {
-            filePickerTitleKey = "SaveMediaTitle";
-          } else if (aTarget.videoWidth == 0 || aTarget.videoHeight == 0) {
-            filePickerTitleKey = "SaveAudioTitle";
-          }
-          filePickerTitleKey = "SaveVideoTitle";
+          filePickerTitleKey = `Save${videoClassifier(aTarget)}Title`;
         } else {
           filePickerTitleKey = "SaveAudioTitle";
         }
@@ -1284,6 +1278,9 @@ var BrowserApp = {
       }
     }
 
+    // Retrieve updated tabIndex again for the removal because the index could
+    // be changed if a new tab is added by the event listener.
+    tabIndex = this._tabs.indexOf(aTab);
     aTab.destroy();
     this._tabs.splice(tabIndex, 1);
   },
@@ -1438,6 +1435,27 @@ var BrowserApp = {
     let evt = document.createEvent("UIEvents");
     evt.initUIEvent("TabSelect", true, false, window, null);
     aTab.browser.dispatchEvent(evt);
+  },
+
+  viewSourceForTab(aTab) {
+    let browser = aTab.browser;
+    let outerWindowID = browser.outerWindowID;
+    let url = browser.currentURI.spec;
+    let args = { browser, outerWindowID, URL: url };
+
+    // `viewSourceInBrowser` will load the source content from the page
+    // descriptor for the tab (when possible) or fallback to the network if
+    // that fails.  Either way, the view source module will manage the tab's
+    // location, so use "about:blank" here to avoid unnecessary redundant
+    // requests.
+    let tab = this.addTab("about:blank", {
+      selected: true,
+      parentId: aTab.id,
+      isPrivate: PrivateBrowsingUtils.isBrowserPrivate(aTab.browser)
+    });
+    args.viewSourceBrowser = tab.browser;
+
+    gViewSourceUtils.viewSourceInBrowser(args);
   },
 
   quit: function quit(aClear = { sanitize: {}, dontSaveSession: false }) {
@@ -1610,49 +1628,49 @@ var BrowserApp = {
     return null;
   },
 
-  scrollToFocusedInput: function(aBrowser, aAllowZoom = true) {
+  scrollToFocusedInput: function(aBrowser) {
     let formHelperMode = Services.prefs.getIntPref("formhelper.mode");
-    if (formHelperMode == kFormHelperModeDisabled)
+    if (formHelperMode == kFormHelperModeDisabled) {
       return;
+    }
 
-    let dwu = aBrowser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+    let dwu = aBrowser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                                    .getInterface(Ci.nsIDOMWindowUtils);
     if (!dwu) {
       return;
     }
 
-    let apzFlushDone = function() {
-      Services.obs.removeObserver(apzFlushDone, "apz-repaints-flushed");
-      dwu.zoomToFocusedInput();
-    };
-
-    let paintDone = function() {
-      window.removeEventListener("MozAfterPaint", paintDone);
-      if (dwu.flushApzRepaints()) {
-        Services.obs.addObserver(apzFlushDone, "apz-repaints-flushed");
-      } else {
-        apzFlushDone();
-      }
-    };
-
-    let gotResizeWindow = false;
-    let resizeWindow = function(e) {
-      gotResizeWindow = true;
-      aBrowser.contentWindow.removeEventListener("resize", resizeWindow);
-      if (dwu.isMozAfterPaintPending) {
-        window.addEventListener("MozAfterPaint", paintDone);
-      } else {
-        paintDone();
-      }
-    }
-
-    aBrowser.contentWindow.addEventListener("resize", resizeWindow);
-
-    // The "resize" event sometimes fails to fire, so set a timer to catch that case
-    // and unregister the event listener. See Bug 1253469
-    setTimeout(function(e) {
-    if (!gotResizeWindow) {
-        aBrowser.contentWindow.removeEventListener("resize", resizeWindow);
+    let zoomToFocusedInput = function() {
+      if (!dwu.flushApzRepaints()) {
         dwu.zoomToFocusedInput();
+        return;
+      }
+      Services.obs.addObserver(function apzFlushDone() {
+        Services.obs.removeObserver(apzFlushDone, "apz-repaints-flushed");
+        dwu.zoomToFocusedInput();
+      }, "apz-repaints-flushed");
+    };
+
+    let gotResize = false;
+    let onResize = function() {
+      gotResize = true;
+      if (dwu.isMozAfterPaintPending) {
+        addEventListener("MozAfterPaint", zoomToFocusedInput, {once: true});
+      } else {
+        zoomToFocusedInput();
+      }
+    };
+
+    aBrowser.contentWindow.addEventListener("resize", onResize);
+
+    // When the keyboard is displayed, we can get one resize event, multiple
+    // resize events, or none at all. Try to handle all these cases by allowing
+    // resizing within a set interval, and still zoom to input if there is no
+    // resize event at the end of the interval.
+    setTimeout(function(e) {
+      aBrowser.contentWindow.removeEventListener("resize", onResize);
+      if (!gotResize) {
+        onResize();
       }
     }, 500);
   },
@@ -1695,7 +1713,11 @@ var BrowserApp = {
 
       case "FormHistory:Init": {
         // Force creation/upgrade of formhistory.sqlite
-        FormHistory.count({});
+        FormHistory.count({}, {
+          handleCompletion() {
+            GlobalEventDispatcher.sendRequest({ type: "FormHistory:Ready" });
+          },
+        });
         GlobalEventDispatcher.unregisterListener(this, event);
         break;
       }
@@ -1769,10 +1791,10 @@ var BrowserApp = {
         this.saveAsPDF(browser);
         break;
 
-      case "ScrollTo:FocusedInput": {
+      case "GeckoView:ZoomToInput": {
         // these messages come from a change in the viewable area and not user interaction
         // we allow scrolling to the selected input, but not zooming the page
-        this.scrollToFocusedInput(browser, false);
+        this.scrollToFocusedInput(browser);
         break;
       }
 
@@ -1949,6 +1971,10 @@ var BrowserApp = {
       case "Tab:Move":
         this._handleTabMove(data.fromTabId, data.fromPosition, data.toTabId, data.toPosition);
         break;
+
+      case "Tab:ViewSource":
+        this.viewSourceForTab(this.getTabForId(data.tabId));
+        break;
     }
   },
 
@@ -1995,9 +2021,7 @@ var BrowserApp = {
           // Crash reporter submit pref must be fetched from nsICrashReporter
           // service.
           case "datareporting.crashreporter.submitEnabled":
-            let crashReporterBuilt = "nsICrashReporter" in Ci &&
-                Services.appinfo instanceof Ci.nsICrashReporter;
-            if (crashReporterBuilt) {
+            if (AppConstants.MOZ_CRASHREPORTER) {
               aSubject.setAsBool(Services.appinfo.submitReports);
             }
             break;
@@ -2050,9 +2074,7 @@ var BrowserApp = {
 
           // Crash reporter preference is in a service; set and return.
           case "datareporting.crashreporter.submitEnabled":
-            let crashReporterBuilt = "nsICrashReporter" in Ci &&
-                Services.appinfo instanceof Ci.nsICrashReporter;
-            if (crashReporterBuilt) {
+            if (AppConstants.MOZ_CRASHREPORTER) {
               Services.appinfo.submitReports = value;
               aSubject.setAsEmpty();
             }
@@ -2634,7 +2656,8 @@ var NativeWindow = {
     mediaContext: function(aMode) {
       return {
         matches: function(aElt) {
-          if (aElt instanceof Ci.nsIDOMHTMLMediaElement) {
+          if (ChromeUtils.getClassName(aElt) === "HTMLVideoElement" ||
+              ChromeUtils.getClassName(aElt) === "HTMLAudioElement") {
             let hasError = aElt.error != null || aElt.networkState == aElt.NETWORK_NO_SOURCE;
             if (hasError)
               return false;
@@ -2700,6 +2723,10 @@ var NativeWindow = {
       return this.defaultContext = Strings.browser.GetStringFromName("browser.menu.context.default");
     },
 
+    get nonLinkContext() {
+      return "";
+    },
+
     /* Gets menuitems for an arbitrary node
      * Parameters:
      *   element - The element to look at. If this element has a contextmenu attribute, the
@@ -2762,16 +2789,33 @@ var NativeWindow = {
       return false;
     },
 
+    // Returns true if there are any link-related context menu items
+    _shouldPreventDefault: function() {
+      for (let context in this.menus) {
+        if (context === this.nonLinkContext) {
+          continue;
+        }
+        let menu = this.menus[context];
+        if (menu.length > 0) {
+          return true;
+        }
+      }
+      return false;
+    },
+
     /* Returns a label to be shown in a tabbed ui if there are multiple "contexts". For instance, if this
      * is an image inside an <a> tag, we may have a "link" context and an "image" one.
      */
     _getContextType: function(element) {
       // For anchor nodes, we try to use the scheme to pick a string
       if (ChromeUtils.getClassName(element) === "HTMLAnchorElement") {
-        let uri = this.makeURI(this._getLinkURL(element));
         try {
+          let uri = this.makeURI(this._getLinkURL(element));
           return Strings.browser.GetStringFromName("browser.menu.context." + uri.scheme);
-        } catch(ex) { }
+        } catch(ex) {
+          // Fallback to the default
+          return this.defaultContext;
+        }
       }
 
       // Otherwise we try the nodeName
@@ -2779,8 +2823,7 @@ var NativeWindow = {
         return Strings.browser.GetStringFromName("browser.menu.context." + element.nodeName.toLowerCase());
       } catch(ex) { }
 
-      // Fallback to the default
-      return this.defaultContext;
+      return this.nonLinkContext;
     },
 
     // Adds context menu items added through the add-on api
@@ -2828,8 +2871,10 @@ var NativeWindow = {
       if (this._shouldShow()) {
         BrowserEventHandler._cancelTapHighlight();
 
-        // Consume / preventDefault the event, and show the contextmenu.
-        event.preventDefault();
+        if (this._shouldPreventDefault()) {
+          // Consume / preventDefault the event.
+          event.preventDefault();
+        }
         this._innerShow(this._target, event.clientX, event.clientY);
         this._target = null;
 
@@ -2862,7 +2907,8 @@ var NativeWindow = {
           return originalURL;
         }
         return node.currentURI.displaySpec;
-      } else if (node instanceof Ci.nsIDOMHTMLMediaElement) {
+      } else if (ChromeUtils.getClassName(node) === "HTMLVideoElement" ||
+                 ChromeUtils.getClassName(node) === "HTMLAudioElement") {
         let srcUrl = node.currentSrc || node.src;
         // If URL prepended with blob or mediasource, we'll remove it.
         return srcUrl.replace(/^(?:blob|mediasource):/, '');
@@ -3137,8 +3183,8 @@ var NativeWindow = {
   }
 };
 
-XPCOMUtils.defineLazyModuleGetter(this, "PageActions",
-                                  "resource://gre/modules/PageActions.jsm");
+ChromeUtils.defineModuleGetter(this, "PageActions",
+                               "resource://gre/modules/PageActions.jsm");
 
 // These alias to the old, deprecated NativeWindow interfaces
 [
@@ -3152,7 +3198,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "PageActions",
     Cu.reportError(err);
 
     let sandbox = {};
-    Cu.import(script, sandbox);
+    ChromeUtils.import(script, sandbox);
     return sandbox[exprt];
   });
 });
@@ -3160,7 +3206,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "PageActions",
 var LightWeightThemeWebInstaller = {
   init: function sh_init() {
     let temp = {};
-    Cu.import("resource://gre/modules/LightweightThemeConsumer.jsm", temp);
+    ChromeUtils.import("resource://gre/modules/LightweightThemeConsumer.jsm", temp);
     let theme = new temp.LightweightThemeConsumer(document);
     BrowserApp.deck.addEventListener("InstallBrowserTheme", this, false, true);
     BrowserApp.deck.addEventListener("PreviewBrowserTheme", this, false, true);
@@ -3203,7 +3249,7 @@ var LightWeightThemeWebInstaller = {
 
   get _manager () {
     let temp = {};
-    Cu.import("resource://gre/modules/LightweightThemeManager.jsm", temp);
+    ChromeUtils.import("resource://gre/modules/LightweightThemeManager.jsm", temp);
     delete this._manager;
     return this._manager = temp.LightweightThemeManager;
   },
@@ -3697,7 +3743,8 @@ Tab.prototype = {
     this.browser.__SS_data = {
       entries: [{
         url: uri,
-        title: truncate(title, MAX_TITLE_LENGTH)
+        title: truncate(title, MAX_TITLE_LENGTH),
+        triggeringPrincipal_base64: Utils.SERIALIZED_SYSTEMPRINCIPAL
       }],
       index: 1,
       desktopMode: this.desktopMode,
@@ -4193,14 +4240,14 @@ Tab.prototype = {
 
         // Sanitize rel link
         let list = this.sanitizeRelString(target.rel);
-        if (list.indexOf("[icon]") != -1) {
+        if (list.includes("[icon]")) {
           jsonMessage = this.makeFaviconMessage(target);
-        } else if (list.indexOf("[apple-touch-icon]") != -1 ||
-            list.indexOf("[apple-touch-icon-precomposed]") != -1) {
+        } else if (list.includes("[apple-touch-icon]") ||
+            list.includes("[apple-touch-icon-precomposed]")) {
           jsonMessage = this.makeFaviconMessage(target);
           jsonMessage['type'] = 'Link:Touchicon';
           this.addMetadata("touchIconList", jsonMessage.href, jsonMessage.size);
-        } else if (list.indexOf("[alternate]") != -1 && aEvent.type == "DOMLinkAdded") {
+        } else if (list.includes("[alternate]") && aEvent.type == "DOMLinkAdded") {
           let type = target.type.toLowerCase().replace(/^\s+|\s*(?:;.*)?$/g, "");
           let isFeed = (type == "application/rss+xml" || type == "application/atom+xml");
 
@@ -4208,9 +4255,9 @@ Tab.prototype = {
             return;
 
           jsonMessage = this.makeFeedMessage(target, type);
-        } else if (list.indexOf("[search]") != -1 && aEvent.type == "DOMLinkAdded") {
+        } else if (list.includes("[search]") && aEvent.type == "DOMLinkAdded") {
           this.sendOpenSearchMessage(target);
-        } else if (list.indexOf("[manifest]") != -1 &&
+        } else if (list.includes("[manifest]") &&
                    aEvent.type == "DOMLinkAdded"){
           this.makeManifestMessage(target);
           return;
@@ -4381,13 +4428,13 @@ Tab.prototype = {
       let uri = "";
       try {
         // Remember original URI for UA changes on redirected pages
-        this.originalURI = aRequest.QueryInterface(Components.interfaces.nsIChannel).originalURI;
+        this.originalURI = aRequest.QueryInterface(Ci.nsIChannel).originalURI;
 
         if (this.originalURI != null)
           uri = this.originalURI.displaySpec;
       } catch (e) { }
       try {
-        success = aRequest.QueryInterface(Components.interfaces.nsIHttpChannel).requestSucceeded;
+        success = aRequest.QueryInterface(Ci.nsIHttpChannel).requestSucceeded;
       } catch (e) {
         // If the request does not handle the nsIHttpChannel interface, use nsIRequest's success
         // status. Used for local files. See bug 948849.
@@ -4434,7 +4481,7 @@ Tab.prototype = {
 
     let fixedURI = aLocationURI;
     try {
-      fixedURI = URIFixup.createExposableURI(aLocationURI);
+      fixedURI = Services.uriFixup.createExposableURI(aLocationURI);
     } catch (ex) { }
 
     // In restricted profiles, we refuse to let you open various urls.
@@ -4485,14 +4532,20 @@ Tab.prototype = {
       let originHost = "";
       try {
         originHost = Services.io.newURI(appOrigin).host;
-      } catch (e if (e.result == Cr.NS_ERROR_FAILURE)) {
+      } catch (e) {
+        if (e.result != Cr.NS_ERROR_FAILURE) {
+          throw e;
+        }
         // NS_ERROR_FAILURE can be thrown by nsIURI.host if the URI scheme does not possess a host -
         // in this case we just act as if we have an empty host.
       }
       let locationHost = "";
       try {
         locationHost = aLocationURI.host;
-      } catch (e if (e.result == Cr.NS_ERROR_FAILURE)) {
+      } catch (e) {
+        if (e.result != Cr.NS_ERROR_FAILURE) {
+          throw e;
+        }
         // Ditto.
       }
       if (originHost != locationHost || originHost == "") {
@@ -4659,10 +4712,6 @@ Tab.prototype = {
             BrowserApp.contentDocumentChanged();
           }
           this.contentDocumentIsDisplayed = true;
-
-          if (contentDocument instanceof Ci.nsIImageDocument) {
-            contentDocument.shrinkToFit();
-          }
         }
         break;
 
@@ -5502,7 +5551,7 @@ var IdentityHandler = {
   */
   getIdentityData : function() {
     let result = {};
-    let status = this._lastStatus.QueryInterface(Components.interfaces.nsISSLStatus);
+    let status = this._lastStatus.QueryInterface(Ci.nsISSLStatus);
     let cert = status.serverCert;
 
     // Human readable name of Subject
@@ -5541,8 +5590,7 @@ var IdentityHandler = {
       return this.IDENTITY_MODE_IDENTIFIED;
     }
 
-    // We also allow "about:" by allowing the selector to be empty (i.e. '(|.....|...|...)'
-    let whitelist = /^about:($|about|accounts|addons|buildconfig|cache|config|crashes|devices|downloads|fennec|firefox|feedback|healthreport|home|license|logins|logo|memory|mozilla|networking|privatebrowsing|rights|serviceworkers|support|telemetry|webrtc)($|\?)/i;
+    let whitelist = /^about:(about|accounts|addons|buildconfig|cache|config|crashes|devices|downloads|fennec|firefox|feedback|home|license|logins|logo|memory|mozilla|networking|privatebrowsing|rights|serviceworkers|support|telemetry|webrtc)($|\?)/i;
     if (uri.schemeIs("about") && whitelist.test(uri.spec)) {
         return this.IDENTITY_MODE_CHROMEUI;
     }
@@ -5609,7 +5657,7 @@ var IdentityHandler = {
    */
   checkIdentity: function checkIdentity(aState, aBrowser) {
     this._lastStatus = aBrowser.securityUI
-                               .QueryInterface(Components.interfaces.nsISSLStatusProvider)
+                               .QueryInterface(Ci.nsISSLStatusProvider)
                                .SSLStatus;
 
     // Don't pass in the actual location object, since it can cause us to
@@ -6157,7 +6205,9 @@ var ExternalApps = {
   // extend _getLink to pickup html5 media links.
   _getMediaLink: function(aElement) {
     let uri = NativeWindow.contextmenus._getLink(aElement);
-    if (uri == null && aElement.nodeType == Ci.nsIDOMNode.ELEMENT_NODE && (aElement instanceof Ci.nsIDOMHTMLMediaElement)) {
+    if (uri == null &&
+        (ChromeUtils.getClassName(aElement) === "HTMLVideoElement" ||
+         ChromeUtils.getClassName(aElement) === "HTMLAudioElement")) {
       try {
         let mediaSrc = aElement.currentSrc || aElement.src;
         uri = ContentAreaUtils.makeURI(mediaSrc, null, null);
@@ -6588,7 +6638,7 @@ var Tabs = {
         }
         break;
       case "network:link-status-changed":
-        if (["down", "unknown", "up"].indexOf(aData) == -1) {
+        if (!["down", "unknown", "up"].includes(aData)) {
           return;
         }
         this.useCache = (aData === "down");
@@ -6808,4 +6858,3 @@ HTMLContextMenuItem.prototype = Object.create(ContextMenuItem.prototype, {
     }
   },
 });
-

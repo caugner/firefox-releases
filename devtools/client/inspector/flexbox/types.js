@@ -4,14 +4,17 @@
 
 "use strict";
 
-const { PropTypes } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 
 exports.flexbox = {
 
-  // The id of the flexbox container.
-  id: PropTypes.number,
+  // The actor ID of the flex container.
+  actorID: PropTypes.number,
 
-  // The node front of the flexbox container.
+  // Whether or not the flexbox highlighter is highlighting the flex container.
+  highlighted: PropTypes.bool,
+
+  // The NodeFront of the flex container.
   nodeFront: PropTypes.object,
 
 };

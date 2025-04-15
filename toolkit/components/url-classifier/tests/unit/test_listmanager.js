@@ -1,7 +1,7 @@
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
-                                  "resource://gre/modules/NetUtil.jsm");
+ChromeUtils.defineModuleGetter(this, "NetUtil",
+                               "resource://gre/modules/NetUtil.jsm");
 
 // These tables share the same updateURL.
 const TEST_TABLE_DATA_LIST = [
@@ -223,7 +223,7 @@ function run_test() {
       return;
     }
 
-    do_print("Waiting for TEST_TABLE_DATA_V4 to be tested ...");
+    info("Waiting for TEST_TABLE_DATA_V4 to be tested ...");
   });
 
   gHttpServ.start(4444);
@@ -289,7 +289,7 @@ function run_test() {
         return;
       }
 
-      do_print("Wait for all sever-involved tests to be done ...");
+      info("Wait for all sever-involved tests to be done ...");
     });
 
   });
@@ -316,7 +316,7 @@ function disableAllUpdates() {
 // we could only rely on the refresh of "nextupdatetime".
 function waitForUpdateSuccess(callback) {
   let nextupdatetime = parseInt(Services.prefs.getCharPref(PREF_NEXTUPDATETIME));
-  do_print("nextupdatetime: " + nextupdatetime);
+  info("nextupdatetime: " + nextupdatetime);
   if (nextupdatetime !== 1) {
     callback();
     return;

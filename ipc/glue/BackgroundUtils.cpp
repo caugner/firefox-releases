@@ -31,6 +31,8 @@ class OptionalLoadInfoArgs;
 }
 
 using mozilla::BasePrincipal;
+using mozilla::Maybe;
+using mozilla::dom::ServiceWorkerDescriptor;
 using namespace mozilla::net;
 
 namespace ipc {
@@ -96,16 +98,12 @@ PrincipalInfoToPrincipal(const PrincipalInfo& aPrincipalInfo,
         return nullptr;
       }
 
-      // When the principal is serialized, the origin is extract from it. This
-      // can fail, and in case, here we will havea Tvoid_t. If we have a string,
-      // it must match with what the_new_principal.getOrigin returns.
-      if (info.originNoSuffix().type() == ContentPrincipalInfoOriginNoSuffix::TnsCString) {
-        nsAutoCString originNoSuffix;
-        rv = principal->GetOriginNoSuffix(originNoSuffix);
-        if (NS_WARN_IF(NS_FAILED(rv)) ||
-            !info.originNoSuffix().get_nsCString().Equals(originNoSuffix)) {
-          MOZ_CRASH("If the origin was in the contentPrincipalInfo, it must be available when deserialized");
-        }
+      // Origin must match what the_new_principal.getOrigin returns.
+      nsAutoCString originNoSuffix;
+      rv = principal->GetOriginNoSuffix(originNoSuffix);
+      if (NS_WARN_IF(NS_FAILED(rv)) ||
+          !info.originNoSuffix().Equals(originNoSuffix)) {
+        MOZ_CRASH("Origin must be available when deserialized");
       }
 
       return principal.forget();
@@ -232,18 +230,14 @@ PrincipalToPrincipalInfo(nsIPrincipal* aPrincipal,
     return rv;
   }
 
-  ContentPrincipalInfoOriginNoSuffix infoOriginNoSuffix;
-
   nsCString originNoSuffix;
   rv = aPrincipal->GetOriginNoSuffix(originNoSuffix);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    infoOriginNoSuffix = void_t();
-  } else {
-    infoOriginNoSuffix = originNoSuffix;
+    return rv;
   }
 
   *aPrincipalInfo = ContentPrincipalInfo(aPrincipal->OriginAttributesRef(),
-                                         infoOriginNoSuffix, spec);
+                                         originNoSuffix, spec);
   return NS_OK;
 }
 
@@ -374,6 +368,30 @@ LoadInfoToLoadInfoArgs(nsILoadInfo *aLoadInfo,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  OptionalIPCClientInfo ipcClientInfo = mozilla::void_t();
+  const Maybe<ClientInfo>& clientInfo = aLoadInfo->GetClientInfo();
+  if (clientInfo.isSome()) {
+    ipcClientInfo = clientInfo.ref().ToIPC();
+  }
+
+  OptionalIPCClientInfo ipcReservedClientInfo = mozilla::void_t();
+  const Maybe<ClientInfo>& reservedClientInfo = aLoadInfo->GetReservedClientInfo();
+  if (reservedClientInfo.isSome()) {
+    ipcReservedClientInfo = reservedClientInfo.ref().ToIPC();
+  }
+
+  OptionalIPCClientInfo ipcInitialClientInfo = mozilla::void_t();
+  const Maybe<ClientInfo>& initialClientInfo = aLoadInfo->GetInitialClientInfo();
+  if (initialClientInfo.isSome()) {
+    ipcInitialClientInfo = initialClientInfo.ref().ToIPC();
+  }
+
+  OptionalIPCServiceWorkerDescriptor ipcController = mozilla::void_t();
+  const Maybe<ServiceWorkerDescriptor>& controller = aLoadInfo->GetController();
+  if (controller.isSome()) {
+    ipcController = controller.ref().ToIPC();
+  }
+
   *aOptionalLoadInfoArgs =
     LoadInfoArgs(
       loadingPrincipalInfo,
@@ -385,9 +403,12 @@ LoadInfoToLoadInfoArgs(nsILoadInfo *aLoadInfo,
       aLoadInfo->InternalContentPolicyType(),
       static_cast<uint32_t>(aLoadInfo->GetTainting()),
       aLoadInfo->GetUpgradeInsecureRequests(),
+      aLoadInfo->GetBrowserUpgradeInsecureRequests(),
       aLoadInfo->GetVerifySignedContent(),
       aLoadInfo->GetEnforceSRI(),
+      aLoadInfo->GetAllowDocumentToBeAgnosticToCSP(),
       aLoadInfo->GetForceAllowDataURI(),
+      aLoadInfo->GetAllowInsecureRedirectToDataURI(),
       aLoadInfo->GetForceInheritPrincipalDropped(),
       aLoadInfo->GetInnerWindowID(),
       aLoadInfo->GetOuterWindowID(),
@@ -397,19 +418,21 @@ LoadInfoToLoadInfoArgs(nsILoadInfo *aLoadInfo,
       aLoadInfo->GetEnforceSecurity(),
       aLoadInfo->GetInitialSecurityCheckDone(),
       aLoadInfo->GetIsInThirdPartyContext(),
+      aLoadInfo->GetIsDocshellReload(),
       aLoadInfo->GetOriginAttributes(),
       redirectChainIncludingInternalRedirects,
       redirectChain,
       ancestorPrincipals,
       aLoadInfo->AncestorOuterWindowIDs(),
+      ipcClientInfo,
+      ipcReservedClientInfo,
+      ipcInitialClientInfo,
+      ipcController,
       aLoadInfo->CorsUnsafeHeaders(),
       aLoadInfo->GetForcePreflight(),
       aLoadInfo->GetIsPreflight(),
       aLoadInfo->GetLoadTriggeredFromExternal(),
-      aLoadInfo->GetForceHSTSPriming(),
-      aLoadInfo->GetMixedContentWouldBlock(),
-      aLoadInfo->GetIsHSTSPriming(),
-      aLoadInfo->GetIsHSTSPrimingUpgrade()
+      aLoadInfo->GetServiceWorkerTaintingSynthesized()
       );
 
   return NS_OK;
@@ -484,19 +507,55 @@ LoadInfoArgsToLoadInfo(const OptionalLoadInfoArgs& aOptionalLoadInfoArgs,
     ancestorPrincipals.AppendElement(ancestorPrincipal.forget());
   }
 
+  Maybe<ClientInfo> clientInfo;
+  if (loadInfoArgs.clientInfo().type() != OptionalIPCClientInfo::Tvoid_t) {
+    clientInfo.emplace(ClientInfo(loadInfoArgs.clientInfo().get_IPCClientInfo()));
+  }
+
+  Maybe<ClientInfo> reservedClientInfo;
+  if (loadInfoArgs.reservedClientInfo().type() != OptionalIPCClientInfo::Tvoid_t) {
+    reservedClientInfo.emplace(
+      ClientInfo(loadInfoArgs.reservedClientInfo().get_IPCClientInfo()));
+  }
+
+  Maybe<ClientInfo> initialClientInfo;
+  if (loadInfoArgs.initialClientInfo().type() != OptionalIPCClientInfo::Tvoid_t) {
+    initialClientInfo.emplace(
+      ClientInfo(loadInfoArgs.initialClientInfo().get_IPCClientInfo()));
+  }
+
+  // We can have an initial client info or a reserved client info, but not both.
+  MOZ_DIAGNOSTIC_ASSERT(reservedClientInfo.isNothing() ||
+                        initialClientInfo.isNothing());
+  NS_ENSURE_TRUE(reservedClientInfo.isNothing() ||
+                 initialClientInfo.isNothing(), NS_ERROR_UNEXPECTED);
+
+  Maybe<ServiceWorkerDescriptor> controller;
+  if (loadInfoArgs.controller().type() != OptionalIPCServiceWorkerDescriptor::Tvoid_t) {
+    controller.emplace(ServiceWorkerDescriptor(
+      loadInfoArgs.controller().get_IPCServiceWorkerDescriptor()));
+  }
+
   nsCOMPtr<nsILoadInfo> loadInfo =
     new mozilla::LoadInfo(loadingPrincipal,
                           triggeringPrincipal,
                           principalToInherit,
                           sandboxedLoadingPrincipal,
                           resultPrincipalURI,
+                          clientInfo,
+                          reservedClientInfo,
+                          initialClientInfo,
+                          controller,
                           loadInfoArgs.securityFlags(),
                           loadInfoArgs.contentPolicyType(),
                           static_cast<LoadTainting>(loadInfoArgs.tainting()),
                           loadInfoArgs.upgradeInsecureRequests(),
+                          loadInfoArgs.browserUpgradeInsecureRequests(),
                           loadInfoArgs.verifySignedContent(),
                           loadInfoArgs.enforceSRI(),
+                          loadInfoArgs.allowDocumentToBeAgnosticToCSP(),
                           loadInfoArgs.forceAllowDataURI(),
+                          loadInfoArgs.allowInsecureRedirectToDataURI(),
                           loadInfoArgs.forceInheritPrincipalDropped(),
                           loadInfoArgs.innerWindowID(),
                           loadInfoArgs.outerWindowID(),
@@ -506,6 +565,7 @@ LoadInfoArgsToLoadInfo(const OptionalLoadInfoArgs& aOptionalLoadInfoArgs,
                           loadInfoArgs.enforceSecurity(),
                           loadInfoArgs.initialSecurityCheckDone(),
                           loadInfoArgs.isInThirdPartyContext(),
+                          loadInfoArgs.isDocshellReload(),
                           loadInfoArgs.originAttributes(),
                           redirectChainIncludingInternalRedirects,
                           redirectChain,
@@ -515,14 +575,41 @@ LoadInfoArgsToLoadInfo(const OptionalLoadInfoArgs& aOptionalLoadInfoArgs,
                           loadInfoArgs.forcePreflight(),
                           loadInfoArgs.isPreflight(),
                           loadInfoArgs.loadTriggeredFromExternal(),
-                          loadInfoArgs.forceHSTSPriming(),
-                          loadInfoArgs.mixedContentWouldBlock(),
-                          loadInfoArgs.isHSTSPriming(),
-                          loadInfoArgs.isHSTSPrimingUpgrade()
+                          loadInfoArgs.serviceWorkerTaintingSynthesized()
                           );
 
    loadInfo.forget(outLoadInfo);
    return NS_OK;
+}
+
+void
+LoadInfoToParentLoadInfoForwarder(nsILoadInfo* aLoadInfo,
+                                  ParentLoadInfoForwarderArgs* outLoadInfoChildForwardArgs)
+{
+  if (!aLoadInfo) {
+    return;
+  }
+
+  *outLoadInfoChildForwardArgs = ParentLoadInfoForwarderArgs(
+    aLoadInfo->GetAllowInsecureRedirectToDataURI()
+  );
+}
+
+nsresult
+MergeParentLoadInfoForwarder(ParentLoadInfoForwarderArgs const& outLoadInfoChildForwardArgs,
+                             nsILoadInfo* aLoadInfo)
+{
+  if (!aLoadInfo) {
+    return NS_OK;
+  }
+
+  nsresult rv;
+
+  rv = aLoadInfo->SetAllowInsecureRedirectToDataURI(
+    outLoadInfoChildForwardArgs.allowInsecureRedirectToDataURI());
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
 }
 
 } // namespace ipc

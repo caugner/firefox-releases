@@ -80,8 +80,10 @@ nsFirstLetterFrame::SetInitialChildList(ChildListID  aListID,
   for (nsIFrame* f : aChildList) {
     MOZ_ASSERT(f->GetParent() == this, "Unexpected parent");
     MOZ_ASSERT(f->IsTextFrame(), "We should not have kids that are containers!");
+#ifdef MOZ_OLD_STYLE
     MOZ_ASSERT_IF(f->StyleContext()->IsGecko(),
                   f->StyleContext()->AsGecko()->GetParent() == StyleContext());
+#endif
     nsLayoutUtils::MarkDescendantsDirty(f); // Drops cached textruns
   }
 
@@ -218,7 +220,7 @@ nsFirstLetterFrame::Reflow(nsPresContext*          aPresContext,
     kid->SetRect(nsRect(bp.IStart(wm), bp.BStart(wm),
                         convertedSize.ISize(wm), convertedSize.BSize(wm)));
     kid->FinishAndStoreOverflow(&kidMetrics, rs.mStyleDisplay);
-    kid->DidReflow(aPresContext, nullptr, nsDidReflowStatus::FINISHED);
+    kid->DidReflow(aPresContext, nullptr);
 
     convertedSize.ISize(wm) += bp.IStartEnd(wm);
     convertedSize.BSize(wm) += bp.BStartEnd(wm);

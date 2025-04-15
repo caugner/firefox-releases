@@ -4,18 +4,13 @@
 
 "use strict";
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cr = Components.results;
-const Cu = Components.utils;
-
-this.EXPORTED_SYMBOLS = ["XPIProvider", "XPIInternal"];
+var EXPORTED_SYMBOLS = ["XPIProvider", "XPIInternal"];
 
 /* globals WebExtensionPolicy */
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/AddonManager.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   AddonRepository: "resource://gre/modules/addons/AddonRepository.jsm",
@@ -57,6 +52,10 @@ XPCOMUtils.defineLazyServiceGetters(this, {
   aomStartup: ["@mozilla.org/addons/addon-manager-startup;1", "amIAddonManagerStartup"],
 });
 
+XPCOMUtils.defineLazyGetter(this, "gTextDecoder", () => {
+  return new TextDecoder();
+});
+
 Cu.importGlobalProperties(["URL"]);
 
 const nsIFile = Components.Constructor("@mozilla.org/file/local;1", "nsIFile",
@@ -81,11 +80,12 @@ const PREF_XPI_FILE_WHITELISTED       = "xpinstall.whitelist.fileRequest";
 // xpinstall.signatures.required only supported in dev builds
 const PREF_XPI_SIGNATURES_REQUIRED    = "xpinstall.signatures.required";
 const PREF_XPI_SIGNATURES_DEV_ROOT    = "xpinstall.signatures.dev-root";
+const PREF_LANGPACK_SIGNATURES        = "extensions.langpacks.signatures.required";
 const PREF_XPI_PERMISSIONS_BRANCH     = "xpinstall.";
 const PREF_INSTALL_REQUIRESECUREORIGIN = "extensions.install.requireSecureOrigin";
 const PREF_INSTALL_DISTRO_ADDONS      = "extensions.installDistroAddons";
 const PREF_BRANCH_INSTALLED_ADDON     = "extensions.installedDistroAddon.";
-const PREF_INTERPOSITION_ENABLED      = "extensions.interposition.enabled";
+const PREF_DISTRO_ADDONS_PERMS        = "extensions.distroAddons.promptForPermissions";
 const PREF_SYSTEM_ADDON_SET           = "extensions.systemAddonSet";
 const PREF_SYSTEM_ADDON_UPDATE_URL    = "extensions.systemAddon.update.url";
 const PREF_ALLOW_LEGACY               = "extensions.legacy.enabled";
@@ -94,7 +94,6 @@ const PREF_ALLOW_NON_MPC              = "extensions.allow-non-mpc-extensions";
 const PREF_EM_MIN_COMPAT_APP_VERSION      = "extensions.minCompatibleAppVersion";
 const PREF_EM_MIN_COMPAT_PLATFORM_VERSION = "extensions.minCompatiblePlatformVersion";
 
-const PREF_EM_HOTFIX_ID               = "extensions.hotfix.id";
 const PREF_EM_LAST_APP_BUILD_ID       = "extensions.lastAppBuildId";
 
 // Specify a list of valid built-in add-ons to load.
@@ -151,7 +150,7 @@ const TOOLKIT_ID                      = "toolkit@mozilla.org";
 
 const XPI_SIGNATURE_CHECK_PERIOD      = 24 * 60 * 60;
 
-XPCOMUtils.defineConstant(this, "DB_SCHEMA", 23);
+XPCOMUtils.defineConstant(this, "DB_SCHEMA", 24);
 
 XPCOMUtils.defineLazyPreferenceGetter(this, "ALLOW_NON_MPC", PREF_ALLOW_NON_MPC);
 
@@ -220,6 +219,7 @@ const SIGNED_TYPES = new Set([
   "extension",
   "experiment",
   "webextension",
+  "webextension-langpack",
   "webextension-theme",
 ]);
 
@@ -241,6 +241,10 @@ const ALL_EXTERNAL_TYPES = new Set([
 function mustSign(aType) {
   if (!SIGNED_TYPES.has(aType))
     return false;
+
+  if (aType == "webextension-langpack") {
+    return AddonSettings.LANGPACKS_REQUIRE_SIGNING;
+  }
 
   return AddonSettings.REQUIRE_SIGNING;
 }
@@ -268,7 +272,7 @@ var gGlobalScope = this;
  */
 var gIDTest = /^(\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}|[a-z0-9-\._]*\@[a-z0-9-\._]+)$/i;
 
-Cu.import("resource://gre/modules/Log.jsm");
+ChromeUtils.import("resource://gre/modules/Log.jsm");
 const LOGGER_ID = "addons.xpi";
 
 // Create a new logger for use by all objects in this Addons XPI Provider module
@@ -296,7 +300,7 @@ function loadLazyObjects() {
   let uri = "resource://gre/modules/addons/XPIProviderUtils.js";
   let scope = Cu.Sandbox(Services.scriptSecurityManager.getSystemPrincipal(), {
     sandboxName: uri,
-    wantGlobalProperties: ["TextDecoder"],
+    wantGlobalProperties: ["ChromeUtils", "TextDecoder"],
   });
 
   Object.assign(scope, {
@@ -403,10 +407,7 @@ function getRelativePath(file, dir) {
 }
 
 /**
- * Converts the given opaque descriptor string into an ordinary path
- * string. In practice, the path string is always exactly equal to the
- * descriptor string, but theoretically may not have been on some legacy
- * systems.
+ * Converts the given opaque descriptor string into an ordinary path string.
  *
  * @param {string} descriptor
  *        The opaque descriptor string to convert.
@@ -780,7 +781,16 @@ function canRunInSafeMode(aAddon) {
 function isDisabledLegacy(addon) {
   return (!AddonSettings.ALLOW_LEGACY_EXTENSIONS &&
           LEGACY_TYPES.has(addon.type) &&
+
+          // Legacy add-ons are allowed in the system location.
           !addon._installLocation.isSystem &&
+
+          // Legacy extensions may be installed temporarily in
+          // non-release builds.
+          !(AppConstants.MOZ_ALLOW_LEGACY_EXTENSIONS &&
+            addon._installLocation.name == KEY_APP_TEMPORARY) &&
+
+          // Properly signed legacy extensions are allowed.
           addon.signedState !== AddonManager.SIGNEDSTATE_PRIVILEGED);
 }
 
@@ -1412,7 +1422,7 @@ class XPIStateLocation extends Map {
    * @returns {XPIState}
    */
   addFile(addonId, file) {
-    let xpiState = this._addState(addonId, {enabled: true, file: file.clone()});
+    let xpiState = this._addState(addonId, {enabled: false, file: file.clone()});
     xpiState.getModTime(xpiState.file, addonId);
     return xpiState;
   }
@@ -1438,7 +1448,7 @@ class XPIStateLocation extends Map {
 /**
  * Keeps track of the state of XPI add-ons on the file system.
  */
-this.XPIStates = {
+var XPIStates = {
   // Map(location name -> Map(add-on ID -> XPIState))
   db: null,
 
@@ -1562,7 +1572,7 @@ this.XPIStates = {
 
       // The results of scanning this location.
       let loc = this.getLocation(location.name, location.path || null,
-                                 oldState[location.name]);
+                                 oldState[location.name] || undefined);
       changed = changed || loc.changed;
 
       // Don't bother checking scopes where we don't accept side-loads.
@@ -1778,7 +1788,7 @@ this.XPIStates = {
   },
 };
 
-this.XPIProvider = {
+var XPIProvider = {
   get name() {
     return "XPIProvider";
   },
@@ -1810,6 +1820,8 @@ this.XPIProvider = {
   // True if all of the add-ons found during startup were installed in the
   // application install location
   allAppGlobal: true,
+  // New distribution addons awaiting permissions approval
+  newDistroAddons: null,
   // Keep track of startup phases for telemetry
   runPhase: XPI_STARTING,
   // Per-addon telemetry information
@@ -2036,8 +2048,13 @@ this.XPIProvider = {
     }
 
     function addBuiltInInstallLocation(name, key, paths, scope) {
+      let dir;
       try {
-        let dir = FileUtils.getDir(key, paths);
+        dir = FileUtils.getDir(key, paths);
+      } catch (e) {
+        return;
+      }
+      try {
         let location = new BuiltInInstallLocation(name, dir, scope);
 
         XPIProvider.installLocations.push(location);
@@ -2163,6 +2180,7 @@ this.XPIProvider = {
       Services.prefs.addObserver(PREF_EM_MIN_COMPAT_PLATFORM_VERSION, this);
       if (!AppConstants.MOZ_REQUIRE_SIGNING || Cu.isInAutomation)
         Services.prefs.addObserver(PREF_XPI_SIGNATURES_REQUIRED, this);
+      Services.prefs.addObserver(PREF_LANGPACK_SIGNATURES, this);
       Services.prefs.addObserver(PREF_ALLOW_LEGACY, this);
       Services.prefs.addObserver(PREF_ALLOW_NON_MPC, this);
       Services.obs.addObserver(this, NOTIFICATION_FLUSH_PERMISSIONS);
@@ -2197,8 +2215,7 @@ this.XPIProvider = {
         Services.obs.notifyObservers(null, "chrome-flush-caches");
       }
 
-      if ("nsICrashReporter" in Ci &&
-          Services.appinfo instanceof Ci.nsICrashReporter) {
+      if (AppConstants.MOZ_CRASHREPORTER) {
         // Annotate the crash report with relevant add-on information.
         try {
           Services.appinfo.annotateCrashReport("Theme", this.currentSkin);
@@ -2225,7 +2242,7 @@ this.XPIProvider = {
             // Eventually set INSTALLED reason when a bootstrap addon
             // is dropped in profile folder and automatically installed
             if (AddonManager.getStartupChanges(AddonManager.STARTUP_CHANGE_INSTALLED)
-                            .indexOf(addon.id) !== -1)
+                            .includes(addon.id))
               reason = BOOTSTRAP_REASONS.ADDON_INSTALL;
             this.callBootstrapMethod(addon, addon.file, "startup", reason);
           } catch (e) {
@@ -2453,7 +2470,7 @@ this.XPIProvider = {
     if (startupChanges.length > 0) {
     let addons = XPIDatabase.getAddons();
       for (let addon of addons) {
-        if ((startupChanges.indexOf(addon.id) != -1) &&
+        if ((startupChanges.includes(addon.id)) &&
             (addon.permissions() & AddonManager.PERM_CAN_UPGRADE) &&
             (!addon.isCompatible || isDisabledLegacy(addon))) {
           logger.debug("shouldForceUpdateCheck: can upgrade disabled add-on " + addon.id);
@@ -2759,14 +2776,16 @@ this.XPIProvider = {
    * Adds a list of currently active add-ons to the next crash report.
    */
   addAddonsToCrashReporter() {
-    if (!("nsICrashReporter" in Ci) ||
-        !(Services.appinfo instanceof Ci.nsICrashReporter))
+    if (!(Services.appinfo instanceof Ci.nsICrashReporter) ||
+        !AppConstants.MOZ_CRASHREPORTER) {
       return;
+    }
 
     // In safe mode no add-ons are loaded so we should not include them in the
     // crash report
-    if (Services.appinfo.inSafeMode)
+    if (Services.appinfo.inSafeMode) {
       return;
+    }
 
     let data = Array.from(XPIStates.enabledAddons(),
                           a => encoded`${a.id}:${a.version}`).join(",");
@@ -2776,7 +2795,7 @@ this.XPIProvider = {
     } catch (e) { }
 
     let TelemetrySession =
-      Cu.import("resource://gre/modules/TelemetrySession.jsm", {}).TelemetrySession;
+      ChromeUtils.import("resource://gre/modules/TelemetrySession.jsm", {}).TelemetrySession;
     TelemetrySession.setAddOns(data);
   },
 
@@ -2915,12 +2934,11 @@ this.XPIProvider = {
           logger.debug("Found updated metadata for " + id + " in " + location.name);
           let fis = Cc["@mozilla.org/network/file-input-stream;1"].
                        createInstance(Ci.nsIFileInputStream);
-          let json = Cc["@mozilla.org/dom/json;1"].
-                     createInstance(Ci.nsIJSON);
-
           try {
             fis.init(jsonfile, -1, 0, 0);
-            let metadata = json.decodeFromStream(fis, jsonfile.fileSize);
+
+            let bytes = NetUtil.readInputStream(fis, jsonfile.fileSize);
+            let metadata = JSON.parse(gTextDecoder.decode(bytes));
             addon.importMetadata(metadata);
 
             // Pass this through to addMetadata so it knows this add-on was
@@ -3101,6 +3119,14 @@ this.XPIProvider = {
       // Install the add-on
       try {
         addon._sourceBundle = profileLocation.installAddon({ id, source: entry, action: "copy" });
+        if (Services.prefs.getBoolPref(PREF_DISTRO_ADDONS_PERMS, false)) {
+          addon.userDisabled = true;
+          if (!this.newDistroAddons) {
+            this.newDistroAddons = new Set();
+          }
+          this.newDistroAddons.add(id);
+        }
+
         XPIStates.addAddon(addon);
         logger.debug("Installed distribution add-on " + id);
 
@@ -3121,6 +3147,12 @@ this.XPIProvider = {
     entries.close();
 
     return changed;
+  },
+
+  getNewDistroAddons() {
+    let addons = this.newDistroAddons;
+    this.newDistroAddons = null;
+    return addons;
   },
 
   /**
@@ -3414,7 +3446,7 @@ this.XPIProvider = {
 
     let requireSecureOrigin = Services.prefs.getBoolPref(PREF_INSTALL_REQUIRESECUREORIGIN, true);
     let safeSchemes = ["https", "chrome", "file"];
-    if (requireSecureOrigin && safeSchemes.indexOf(uri.scheme) == -1)
+    if (requireSecureOrigin && !safeSchemes.includes(uri.scheme))
       return false;
 
     return true;
@@ -3613,7 +3645,7 @@ this.XPIProvider = {
     // WebExtension themes are installed as disabled, fix that here.
     addon.userDisabled = false;
 
-    addon = XPIDatabase.addAddonMetadata(addon, file.persistentDescriptor);
+    addon = XPIDatabase.addAddonMetadata(addon, file.path);
 
     XPIStates.addAddon(addon);
     XPIDatabase.saveChanges();
@@ -3868,7 +3900,7 @@ this.XPIProvider = {
           this.updateAddonDisabledState(theme, true, undefined, aPendingRestart);
       } else if (isChangedAddon) {
         newSkin = theme.internalName;
-      } else if (theme.userDisabled == false && !theme.pendingUninstall) {
+      } else if (!theme.userDisabled && !theme.pendingUninstall) {
         previousTheme = theme;
       }
     }
@@ -3930,11 +3962,10 @@ this.XPIProvider = {
       }
 
       for (let addon of aAddons) {
-        AddonRepository.getCachedAddonByID(addon.id, aRepoAddon => {
-          if (aRepoAddon) {
+        AddonRepository.getCachedAddonByID(addon.id).then(aRepoAddon => {
+          if (aRepoAddon || AddonRepository.getCompatibilityOverridesSync(addon.id)) {
             logger.debug("updateAddonRepositoryData got info for " + addon.id);
             addon._repositoryAddon = aRepoAddon;
-            addon.compatibilityOverrides = aRepoAddon.compatibilityOverrides;
             this.updateAddonDisabledState(addon);
           }
 
@@ -4010,6 +4041,7 @@ this.XPIProvider = {
         this.updateAddonAppDisabledStates();
         break;
       case PREF_XPI_SIGNATURES_REQUIRED:
+      case PREF_LANGPACK_SIGNATURES:
       case PREF_ALLOW_LEGACY:
       case PREF_ALLOW_NON_MPC:
         this.updateAddonAppDisabledStates();
@@ -4211,10 +4243,7 @@ this.XPIProvider = {
 
     let principal = Cc["@mozilla.org/systemprincipal;1"].
                     createInstance(Ci.nsIPrincipal);
-    if (!aMultiprocessCompatible && Services.prefs.getBoolPref(PREF_INTERPOSITION_ENABLED, false)) {
-      let interposition = Cc["@mozilla.org/addons/multiprocess-shims;1"].
-        getService(Ci.nsIAddonInterposition);
-      Cu.setAddonInterposition(aId, interposition);
+    if (!aMultiprocessCompatible) {
       Cu.allowCPOWsInAddon(aId, true);
     }
 
@@ -4222,6 +4251,7 @@ this.XPIProvider = {
       activeAddon.bootstrapScope =
         new Cu.Sandbox(principal, { sandboxName: aFile.path,
                                     addonId: aId,
+                                    wantGlobalProperties: ["ChromeUtils"],
                                     metadata: { addonID: aId } });
       logger.error("Attempted to load bootstrap scope from missing directory " + aFile.path);
       return;
@@ -4241,6 +4271,7 @@ this.XPIProvider = {
       activeAddon.bootstrapScope =
         new Cu.Sandbox(principal, { sandboxName: uri,
                                     addonId: aId,
+                                    wantGlobalProperties: ["ChromeUtils"],
                                     metadata: { addonID: aId, URI: uri } });
 
       try {
@@ -4276,9 +4307,6 @@ this.XPIProvider = {
    *         The add-on's ID
    */
   unloadBootstrapScope(aId) {
-    // In case the add-on was not multiprocess-compatible, deregister
-    // any interpositions for it.
-    Cu.setAddonInterposition(aId, null);
     Cu.allowCPOWsInAddon(aId, false);
 
     this.activeAddons.delete(aId);
@@ -4362,12 +4390,14 @@ this.XPIProvider = {
         }
       }
 
+      let installLocation = aAddon._installLocation || null;
       let params = {
         id: aAddon.id,
         version: aAddon.version,
         installPath: aFile.clone(),
         resourceURI: getURIForResourceInFile(aFile, ""),
         signedState: aAddon.signedState,
+        temporarilyInstalled: installLocation == TemporaryInstallLocation,
       };
 
       if (aMethod == "startup" && aAddon.startupData) {
@@ -4913,6 +4943,10 @@ AddonInternal.prototype = {
     return this.signedState > AddonManager.SIGNEDSTATE_MISSING;
   },
 
+  get unpack() {
+    return this.type === "dictionary";
+  },
+
   get isCompatible() {
     return this.isCompatibleWith();
   },
@@ -4985,18 +5019,17 @@ AddonInternal.prototype = {
     // Only extensions and dictionaries can be compatible by default; themes
     // and language packs always use strict compatibility checking.
     if (this.type in COMPATIBLE_BY_DEFAULT_TYPES &&
-        !AddonManager.strictCompatibility && !this.strictCompatibility &&
-        !this.hasBinaryComponents) {
+        !AddonManager.strictCompatibility && !this.strictCompatibility) {
 
       // The repository can specify compatibility overrides.
       // Note: For now, only blacklisting is supported by overrides.
-      if (this._repositoryAddon &&
-          this._repositoryAddon.compatibilityOverrides) {
-        let overrides = this._repositoryAddon.compatibilityOverrides;
+      let overrides = AddonRepository.getCompatibilityOverridesSync(this.id);
+      if (overrides) {
         let override = AddonRepository.findMatchingCompatOverride(this.version,
                                                                   overrides);
-        if (override && override.type == "incompatible")
+        if (override) {
           return false;
+        }
       }
 
       // Extremely old extensions should not be compatible by default.
@@ -5210,6 +5243,12 @@ AddonInternal.prototype = {
       permissions |= AddonManager.PERM_CAN_UNINSTALL;
     }
 
+    if (Services.policies &&
+        !Services.policies.isAllowed(`modify-extension:${this.id}`)) {
+      permissions &= ~AddonManager.PERM_CAN_UNINSTALL;
+      permissions &= ~AddonManager.PERM_CAN_DISABLE;
+    }
+
     return permissions;
   },
 };
@@ -5282,9 +5321,6 @@ AddonWrapper.prototype = {
       return addon.optionsURL;
     }
 
-    if (this.hasResource("options.xul"))
-      return this.getResourceURI("options.xul").spec;
-
     return null;
   },
 
@@ -5293,27 +5329,16 @@ AddonWrapper.prototype = {
       return null;
 
     let addon = addonFor(this);
-    let hasOptionsXUL = this.hasResource("options.xul");
     let hasOptionsURL = !!this.optionsURL;
 
     if (addon.optionsType) {
       switch (parseInt(addon.optionsType, 10)) {
-      case AddonManager.OPTIONS_TYPE_DIALOG:
       case AddonManager.OPTIONS_TYPE_TAB:
-        return hasOptionsURL ? addon.optionsType : null;
-      case AddonManager.OPTIONS_TYPE_INLINE:
-      case AddonManager.OPTIONS_TYPE_INLINE_INFO:
       case AddonManager.OPTIONS_TYPE_INLINE_BROWSER:
-        return (hasOptionsXUL || hasOptionsURL) ? addon.optionsType : null;
+        return hasOptionsURL ? addon.optionsType : null;
       }
       return null;
     }
-
-    if (hasOptionsXUL)
-      return AddonManager.OPTIONS_TYPE_INLINE;
-
-    if (hasOptionsURL)
-      return AddonManager.OPTIONS_TYPE_DIALOG;
 
     return null;
   },
@@ -5595,14 +5620,10 @@ AddonWrapper.prototype = {
     return addon._installLocation.isSystem;
   },
 
-  // Returns true if Firefox Sync should sync this addon. Only non-hotfixes
-  // directly in the profile are considered syncable.
+  // Returns true if Firefox Sync should sync this addon. Only addons
+  // in the profile install location are considered syncable.
   get isSyncable() {
     let addon = addonFor(this);
-    let hotfixID = Services.prefs.getStringPref(PREF_EM_HOTFIX_ID, undefined);
-    if (hotfixID && hotfixID == addon.id) {
-      return false;
-    }
     return (addon._installLocation.name == KEY_APP_PROFILE);
   },
 
@@ -5754,8 +5775,8 @@ function defineAddonWrapperProperty(name, getter) {
 
 ["id", "syncGUID", "version", "isCompatible", "isPlatformCompatible",
  "providesUpdatesSecurely", "blocklistState", "blocklistURL", "appDisabled",
- "softDisabled", "skinnable", "size", "foreignInstall", "hasBinaryComponents",
- "strictCompatibility", "compatibilityOverrides", "updateURL", "dependencies",
+ "softDisabled", "skinnable", "size", "foreignInstall",
+ "strictCompatibility", "updateURL", "dependencies",
  "getDataDirectory", "multiprocessCompatible", "signedState", "mpcOptedOut",
  "isCorrectlySigned"].forEach(function(aProp) {
    defineAddonWrapperProperty(aProp, function() {
@@ -5764,10 +5785,9 @@ function defineAddonWrapperProperty(name, getter) {
    });
 });
 
-["fullDescription", "developerComments", "eula", "supportURL",
- "contributionURL", "contributionAmount", "averageRating", "reviewCount",
- "reviewURL", "totalDownloads", "weeklyDownloads", "dailyUsers",
- "repositoryStatus"].forEach(function(aProp) {
+["fullDescription", "developerComments", "supportURL",
+ "contributionURL", "averageRating", "reviewCount",
+ "reviewURL", "weeklyDownloads"].forEach(function(aProp) {
   defineAddonWrapperProperty(aProp, function() {
     let addon = addonFor(this);
     if (addon._repositoryAddon)
@@ -6077,7 +6097,7 @@ class DirectoryInstallLocation {
    *        The ID of the addon
    */
   isLinkedAddon(aId) {
-    return this._linkedAddons.indexOf(aId) != -1;
+    return this._linkedAddons.includes(aId);
   }
 }
 
@@ -6382,7 +6402,7 @@ class BuiltInInstallLocation extends DirectoryInstallLocation {
     let manifest;
     try {
       let url = Services.io.newURI(BUILT_IN_ADDONS_URI);
-      let data = Cu.readURI(url);
+      let data = Cu.readUTF8URI(url);
       manifest = JSON.parse(data);
     } catch (e) {
       logger.warn("List of valid built-in add-ons could not be parsed.", e);
@@ -6541,11 +6561,6 @@ class SystemAddonInstallLocation extends MutableDirectoryInstallLocation {
   isValidAddon(aAddon) {
     if (aAddon.appDisabled) {
       logger.warn(`System add-on ${aAddon.id} isn't compatible with the application.`);
-      return false;
-    }
-
-    if (aAddon.unpack) {
-      logger.warn(`System add-on ${aAddon.id} isn't a packed add-on.`);
       return false;
     }
 
@@ -6982,12 +6997,13 @@ class WinRegInstallLocation extends DirectoryInstallLocation {
   }
 }
 
-this.XPIInternal = {
+var XPIInternal = {
   AddonInternal,
   BOOTSTRAP_REASONS,
   KEY_APP_SYSTEM_ADDONS,
   KEY_APP_SYSTEM_DEFAULTS,
   KEY_APP_TEMPORARY,
+  SIGNED_TYPES,
   TEMPORARY_ADDON_SUFFIX,
   TOOLKIT_ID,
   XPIStates,
@@ -6995,6 +7011,7 @@ this.XPIInternal = {
   isTheme,
   isUsableAddon,
   isWebExtension,
+  mustSign,
   recordAddonTelemetry,
 
   get XPIDatabase() { return gGlobalScope.XPIDatabase; },

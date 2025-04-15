@@ -9,6 +9,7 @@
 #include "DBusRemoteClient.h"
 #include "RemoteUtils.h"
 #include "mozilla/Logging.h"
+#include "mozilla/Base64.h"
 #include "nsPrintfCString.h"
 
 using mozilla::LogLevel;
@@ -77,24 +78,85 @@ DBusRemoteClient::SendCommandLine (const char *aProgram, const char *aUsername,
   return rv;
 }
 
+bool
+DBusRemoteClient::GetRemoteDestinationName(const char *aProgram,
+                                           const char *aProfile,
+                                           nsCString &aDestinationName)
+{
+  if(!aProfile || aProfile[0] == '\0') {
+    // We don't have a profile name - search for active mozilla instances.
+    RefPtr<DBusMessage> msg = already_AddRefed<DBusMessage>(
+        dbus_message_new_method_call("org.freedesktop.DBus",
+                                     "/org/freedesktop/DBus",
+                                     "org.freedesktop.DBus",
+                                     "ListNames"));
+    if (!msg) {
+      return false;
+    }
+
+    // send message and get a handle for a reply
+    RefPtr<DBusMessage> reply = already_AddRefed<DBusMessage>(
+        dbus_connection_send_with_reply_and_block(mConnection, msg, -1, nullptr));
+    if (!reply) {
+      return false;
+    }
+
+    char **interfaces;
+    dbus_int32_t interfaceNums;
+    if (!dbus_message_get_args(reply, nullptr, DBUS_TYPE_ARRAY,
+                               DBUS_TYPE_STRING, &interfaces, &interfaceNums,
+                               DBUS_TYPE_INVALID)) {
+      return false;
+    }
+
+    nsAutoCString destinationTemplate;
+    destinationTemplate = nsPrintfCString("org.mozilla.%s", aProgram);
+
+    aDestinationName.SetLength(0);
+    for (int i = 0; i < interfaceNums; i++) {
+      if (strstr(interfaces[i], destinationTemplate.get())) {
+        aDestinationName = interfaces[i];
+        break;
+      }
+    }
+    dbus_free_string_array(interfaces);
+
+    return (!aDestinationName.IsEmpty());
+  } else {
+    // We have a profile name - just create the destination.
+    // D-Bus names can contain only [a-z][A-Z][0-9]_
+    // characters so adjust the profile string properly.
+    nsAutoCString profileName;
+    nsresult rv = mozilla::Base64Encode(nsAutoCString(aProfile), profileName);
+    NS_ENSURE_SUCCESS(rv, false);
+    profileName.ReplaceChar("+/=", '_');
+
+    aDestinationName = nsPrintfCString("org.mozilla.%s.%s", aProgram,
+                                                            profileName.get());
+    if (aDestinationName.Length() > DBUS_MAXIMUM_NAME_LENGTH)
+      aDestinationName.Truncate(DBUS_MAXIMUM_NAME_LENGTH);
+
+    return true;
+  }
+}
+
 nsresult
 DBusRemoteClient::DoSendDBusCommandLine(const char *aProgram, const char *aProfile,
                                         const char* aBuffer, int aLength)
 {
-  NS_ASSERTION(aProfile && aProfile[0] != '\0', "Missing user profile!");
-
   nsAutoCString destinationName;
-  destinationName = nsPrintfCString("org.mozilla.%s.%s", aProgram, aProfile);
+  if (!GetRemoteDestinationName(aProgram, aProfile, destinationName))
+    return NS_ERROR_FAILURE;
 
-  nsAutoCString objectName;
-  objectName = nsPrintfCString("/org/mozilla/%s/Remote", aProgram);
+  nsAutoCString pathName;
+  pathName = nsPrintfCString("/org/mozilla/%s/Remote", aProgram);
 
   nsAutoCString remoteInterfaceName;
   remoteInterfaceName = nsPrintfCString("org.mozilla.%s", aProgram);
 
   RefPtr<DBusMessage> msg = already_AddRefed<DBusMessage>(
       dbus_message_new_method_call(destinationName.get(),
-                                   objectName.get(), // object to call on
+                                   pathName.get(), // object to call on
                                    remoteInterfaceName.get(), // interface to call on
                                    "OpenURL")); // method name
   if (!msg) {

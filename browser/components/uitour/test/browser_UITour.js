@@ -7,8 +7,9 @@ var gTestTab;
 var gContentAPI;
 var gContentWindow;
 
-Components.utils.import("resource://testing-common/TelemetryArchiveTesting.jsm", this);
-Components.utils.import("resource://gre/modules/ProfileAge.jsm", this);
+ChromeUtils.import("resource://testing-common/TelemetryArchiveTesting.jsm", this);
+ChromeUtils.import("resource://gre/modules/ProfileAge.jsm", this);
+ChromeUtils.import("resource://gre/modules/UpdateUtils.jsm", this);
 
 
 function test() {
@@ -166,7 +167,7 @@ var tests = [
           done();
         }, "Highlight should move to the appMenu button");
       }, "Highlight should be shown after showHighlight() for fixed panel items");
-    }).catch(Components.utils.reportError);
+    }).catch(Cu.reportError);
   },
   function test_highlight_effect(done) {
     function waitForHighlightWithEffect(highlightEl, effect, next, error) {
@@ -291,11 +292,9 @@ var tests = [
   }),
   function test_getConfigurationVersion(done) {
     function callback(result) {
-      let props = ["defaultUpdateChannel", "version"];
-      for (let property of props) {
-        ok(typeof(result[property]) !== "undefined", "Check " + property + " isn't undefined.");
-        is(result[property], Services.appinfo[property], "Should have the same " + property + " property.");
-      }
+      ok(typeof result.version !== "undefined", "Check version isn't undefined.");
+      is(result.version, Services.appinfo.version, "Should have the same version property.");
+      is(result.defaultUpdateChannel, UpdateUtils.getUpdateChannel(false), "Should have the correct update channel.");
       done();
     }
 
@@ -337,7 +336,7 @@ var tests = [
     is(placement, null, "default UI has panic button in the palette");
 
     gContentAPI.getConfiguration("availableTargets", (data) => {
-      let available = (data.targets.indexOf("forget") != -1);
+      let available = (data.targets.includes("forget"));
       ok(!available, "Forget button should not be available by default");
 
       gContentAPI.addNavBarWidget("forget", () => {
@@ -347,7 +346,7 @@ var tests = [
         is(updatedPlacement.area, CustomizableUI.AREA_NAVBAR);
 
         gContentAPI.getConfiguration("availableTargets", (data2) => {
-          let updatedAvailable = data2.targets.indexOf("forget") != -1;
+          let updatedAvailable = data2.targets.includes("forget");
           ok(updatedAvailable, "Forget button should now be available");
 
           // Cleanup

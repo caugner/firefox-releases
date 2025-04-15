@@ -25,8 +25,8 @@ add_task(function* () {
 
   yield waitForClipboardPromise(() => {
     info("Activate the eyedropper so the background color is copied");
-    EventUtils.synthesizeKey("VK_RETURN", {});
-  }, "#FF0000");
+    EventUtils.synthesizeKey("KEY_Enter");
+  }, "#ff0000");
 
   ok(true, "The clipboard contains the right value");
 

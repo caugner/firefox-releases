@@ -10,7 +10,7 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/StartupTimeline.h"
 #include "nsTArray.h"
-#include "nsStringGlue.h"
+#include "nsString.h"
 #include "nsXULAppAPI.h"
 
 #include "mozilla/TelemetryHistogramEnums.h"
@@ -40,11 +40,6 @@ struct ScalarAction;
 struct KeyedScalarAction;
 struct ChildEventData;
 
-enum TimerResolution {
-  Millisecond,
-  Microsecond
-};
-
 /**
  * Initialize the Telemetry service on the main thread at startup.
  */
@@ -59,6 +54,13 @@ void Init();
 void Accumulate(HistogramID id, uint32_t sample);
 
 /**
+ * Adds an array of samples to a histogram defined in TelemetryHistograms.h
+ * @param id - histogram id
+ * @param samples - values to record.
+ */
+void Accumulate(HistogramID id, const nsTArray<uint32_t>& samples);
+
+/**
  * Adds sample to a keyed histogram defined in TelemetryHistogramEnums.h
  *
  * @param id - keyed histogram id
@@ -66,6 +68,14 @@ void Accumulate(HistogramID id, uint32_t sample);
  * @param sample - (optional) value to record, defaults to 1.
  */
 void Accumulate(HistogramID id, const nsCString& key, uint32_t sample = 1);
+
+/**
+ * Adds an array of samples to a histogram defined in TelemetryHistograms.h
+ * @param id - histogram id
+ * @param samples - values to record.
+ * @param key - the string key
+ */
+void Accumulate(HistogramID id, const nsCString& key, const nsTArray<uint32_t>& samples);
 
 /**
  * Adds a sample to a histogram defined in TelemetryHistogramEnums.h.
@@ -106,6 +116,30 @@ void AccumulateCategorical(E enumValue) {
 };
 
 /**
+ * Adds an array of samples to categorical histograms defined in TelemetryHistogramEnums.h
+ * This is the typesafe - and preferred - way to use the categorical histograms
+ * by passing values from the corresponding Telemetry::LABELS_* enums.
+ *
+ * @param enumValues - Array of labels from Telemetry::LABELS_* enums.
+ */
+template<class E>
+void
+AccumulateCategorical(const nsTArray<E>& enumValues)
+{
+  static_assert(IsCategoricalLabelEnum<E>::value,
+                "Only categorical label enum types are supported.");
+  nsTArray<uint32_t> intSamples(enumValues.Length());
+
+  for (E aValue: enumValues){
+    intSamples.AppendElement(static_cast<uint32_t>(aValue));
+  }
+
+  HistogramID categoricalId = static_cast<HistogramID>(CategoricalLabelId<E>::value);
+
+  Accumulate(categoricalId, intSamples);
+}
+
+/**
  * Adds sample to a keyed categorical histogram defined in TelemetryHistogramEnums.h
  * This is the typesafe - and preferred - way to use the keyed categorical histograms
  * by passing values from the corresponding Telemetry::LABELS_* enum.
@@ -123,6 +157,29 @@ void AccumulateCategoricalKeyed(const nsCString& key, E enumValue) {
 };
 
 /**
+ * Adds an array of samples to a keyed categorical histogram defined in TelemetryHistogramEnums.h.
+ * This is the typesafe - and preferred - way to use the keyed categorical histograms
+ * by passing values from the corresponding Telemetry::LABELS_*enum.
+ *
+ * @param key - the string key
+ * @param enumValue - Label value from one of the Telemetry::LABELS_* enums.
+ */
+template<class E>
+void AccumulateCategoricalKeyed(const nsCString& key, const nsTArray<E>& enumValues) {
+    static_assert(IsCategoricalLabelEnum<E>::value,
+                  "Only categorical label enum types are supported.");
+    nsTArray<uint32_t> intSamples(enumValues.Length());
+
+    for (E aValue: enumValues){
+      intSamples.AppendElement(static_cast<uint32_t>(aValue));
+    }
+
+    Accumulate(static_cast<HistogramID>(CategoricalLabelId<E>::value),
+               key,
+               intSamples);
+};
+
+/**
  * Adds sample to a categorical histogram defined in TelemetryHistogramEnums.h
  * This string will be matched against the labels defined in Histograms.json.
  * If the string does not match a label defined for the histogram, nothing will
@@ -134,6 +191,14 @@ void AccumulateCategoricalKeyed(const nsCString& key, E enumValue) {
 void AccumulateCategorical(HistogramID id, const nsCString& label);
 
 /**
+ * Adds an array of samples to a categorical histogram defined in Histograms.json
+ *
+ * @param id - The histogram id
+ * @param labels - The array of labels to accumulate
+ */
+void AccumulateCategorical(HistogramID id, const nsTArray<nsCString>& labels);
+
+/**
  * Adds time delta in milliseconds to a histogram defined in TelemetryHistogramEnums.h
  *
  * @param id - histogram id
@@ -143,9 +208,24 @@ void AccumulateCategorical(HistogramID id, const nsCString& label);
 void AccumulateTimeDelta(HistogramID id, TimeStamp start, TimeStamp end = TimeStamp::Now());
 
 /**
+ * Adds time delta in milliseconds to a keyed histogram defined in
+ * TelemetryHistogramEnums.h
+ *
+ * @param id - histogram id
+ * @param key - the string key
+ * @param start - start time
+ * @param end - end time
+ */
+void
+AccumulateTimeDelta(HistogramID id,
+                    const nsCString& key,
+                    TimeStamp start,
+                    TimeStamp end = TimeStamp::Now());
+
+/**
  * Enable/disable recording for this histogram in this process at runtime.
- * Recording is enabled by default, unless listed at kRecordingInitiallyDisabledIDs[].
- * id must be a valid telemetry enum, otherwise an assertion is triggered.
+ * Recording is enabled by default, unless listed at
+ * kRecordingInitiallyDisabledIDs[]. id must be a valid telemetry enum,
  *
  * @param id - histogram id
  * @param enabled - whether or not to enable recording from now on.
@@ -154,42 +234,9 @@ void SetHistogramRecordingEnabled(HistogramID id, bool enabled);
 
 const char* GetHistogramName(HistogramID id);
 
-/**
- * Those wrappers are needed because the VS versions we use do not support free
- * functions with default template arguments.
- */
-template<TimerResolution res>
-struct AccumulateDelta_impl
+template<HistogramID id>
+class MOZ_RAII AutoTimer
 {
-  static void compute(HistogramID id, TimeStamp start, TimeStamp end = TimeStamp::Now());
-  static void compute(HistogramID id, const nsCString& key, TimeStamp start, TimeStamp end = TimeStamp::Now());
-};
-
-template<>
-struct AccumulateDelta_impl<Millisecond>
-{
-  static void compute(HistogramID id, TimeStamp start, TimeStamp end = TimeStamp::Now()) {
-    Accumulate(id, static_cast<uint32_t>((end - start).ToMilliseconds()));
-  }
-  static void compute(HistogramID id, const nsCString& key, TimeStamp start, TimeStamp end = TimeStamp::Now()) {
-    Accumulate(id, key, static_cast<uint32_t>((end - start).ToMilliseconds()));
-  }
-};
-
-template<>
-struct AccumulateDelta_impl<Microsecond>
-{
-  static void compute(HistogramID id, TimeStamp start, TimeStamp end = TimeStamp::Now()) {
-    Accumulate(id, static_cast<uint32_t>((end - start).ToMicroseconds()));
-  }
-  static void compute(HistogramID id, const nsCString& key, TimeStamp start, TimeStamp end = TimeStamp::Now()) {
-    Accumulate(id, key, static_cast<uint32_t>((end - start).ToMicroseconds()));
-  }
-};
-
-
-template<HistogramID id, TimerResolution res = Millisecond>
-class MOZ_RAII AutoTimer {
 public:
   explicit AutoTimer(TimeStamp aStart = TimeStamp::Now() MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
      : start(aStart)
@@ -207,9 +254,9 @@ public:
 
   ~AutoTimer() {
     if (key.IsEmpty()) {
-      AccumulateDelta_impl<res>::compute(id, start);
+      AccumulateTimeDelta(id, start);
     } else {
-      AccumulateDelta_impl<res>::compute(id, key, start);
+      AccumulateTimeDelta(id, key, start);
     }
   }
 

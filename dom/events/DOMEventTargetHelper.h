@@ -143,14 +143,10 @@ public:
   void BindToOwner(nsPIDOMWindowInner* aOwner);
   void BindToOwner(DOMEventTargetHelper* aOther);
   virtual void DisconnectFromOwner();
-  nsIGlobalObject* GetParentObject() const
-  {
-    return GetOwnerGlobal();
-  }
+  using EventTarget::GetParentObject;
   virtual nsIGlobalObject* GetOwnerGlobal() const override
   {
-    nsCOMPtr<nsIGlobalObject> parentObject = do_QueryReferent(mParentObject);
-    return parentObject;
+    return mParentObject;
   }
   bool HasOrHasHadOwner() { return mHasOrHasHadOwnerWindow; }
 
@@ -198,8 +194,9 @@ protected:
   void IgnoreKeepAliveIfHasListenersFor(nsAtom* aType);
 
 private:
-  // Inner window or sandbox.
-  nsWeakPtr                  mParentObject;
+  // The parent global object.  The global will clear this when
+  // it is destroyed by calling DisconnectFromOwner().
+  nsIGlobalObject* MOZ_NON_OWNING_REF mParentObject;
   // mParentObject pre QI-ed and cached (inner window)
   // (it is needed for off main thread access)
   // It is obtained in BindToOwner and reset in DisconnectFromOwner.
@@ -243,19 +240,19 @@ NS_DEFINE_STATIC_IID_ACCESSOR(DOMEventTargetHelper,
  * want to override it.
  */
 #define NS_FORWARD_NSIDOMEVENTTARGET_NOGETEVENTTARGETPARENT(_to) \
-  NS_IMETHOD AddEventListener(const nsAString & type, nsIDOMEventListener *listener, bool useCapture, bool wantsUntrusted, uint8_t _argc) { \
+  NS_IMETHOD AddEventListener(const nsAString & type, nsIDOMEventListener *listener, bool useCapture, bool wantsUntrusted, uint8_t _argc) override { \
     return _to AddEventListener(type, listener, useCapture, wantsUntrusted, _argc); \
   } \
-  NS_IMETHOD AddSystemEventListener(const nsAString & type, nsIDOMEventListener *listener, bool aUseCapture, bool aWantsUntrusted, uint8_t _argc) { \
+  NS_IMETHOD AddSystemEventListener(const nsAString & type, nsIDOMEventListener *listener, bool aUseCapture, bool aWantsUntrusted, uint8_t _argc) override { \
     return _to AddSystemEventListener(type, listener, aUseCapture, aWantsUntrusted, _argc); \
   } \
-  NS_IMETHOD RemoveEventListener(const nsAString & type, nsIDOMEventListener *listener, bool useCapture) { \
+  NS_IMETHOD RemoveEventListener(const nsAString & type, nsIDOMEventListener *listener, bool useCapture) override { \
     return _to RemoveEventListener(type, listener, useCapture); \
   } \
-  NS_IMETHOD RemoveSystemEventListener(const nsAString & type, nsIDOMEventListener *listener, bool aUseCapture) { \
+  NS_IMETHOD RemoveSystemEventListener(const nsAString & type, nsIDOMEventListener *listener, bool aUseCapture) override { \
     return _to RemoveSystemEventListener(type, listener, aUseCapture); \
   } \
-  NS_IMETHOD DispatchEvent(nsIDOMEvent *evt, bool *_retval) { \
+  NS_IMETHOD DispatchEvent(nsIDOMEvent *evt, bool *_retval) override { \
     return _to DispatchEvent(evt, _retval); \
   } \
   virtual mozilla::dom::EventTarget* GetTargetForDOMEvent() { \

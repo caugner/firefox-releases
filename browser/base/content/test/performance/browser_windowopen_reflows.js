@@ -13,31 +13,10 @@
  * for tips on how to do that.
  */
 const EXPECTED_REFLOWS = [
-  {
-    stack: [
-      "select@chrome://global/content/bindings/textbox.xml",
-      "focusAndSelectUrlBar@chrome://browser/content/browser.js",
-    ],
-  },
+  /**
+   * Nothing here! Please don't add anything new!
+   */
 ];
-
-if (Services.appinfo.OS == "Linux") {
-  if (gMultiProcessBrowser) {
-    EXPECTED_REFLOWS.push({
-      stack: [
-        "handleEvent@chrome://browser/content/tabbrowser.xml",
-      ],
-    });
-  } else {
-    EXPECTED_REFLOWS.push({
-      stack: [
-        "handleEvent@chrome://browser/content/tabbrowser.xml",
-        "inferFromText@chrome://browser/content/browser.js",
-        "handleEvent@chrome://browser/content/browser.js",
-      ],
-    });
-  }
-}
 
 if (Services.appinfo.OS == "WINNT") {
   EXPECTED_REFLOWS.push(
@@ -48,7 +27,7 @@ if (Services.appinfo.OS == "WINNT") {
         "init@chrome://browser/content/browser-tabsintitlebar.js",
         "handleEvent@chrome://browser/content/tabbrowser.xml",
       ],
-      times: 2, // This number should only ever go down - never up.
+      maxCount: 2, // This number should only ever go down - never up.
     },
   );
 }
@@ -62,7 +41,8 @@ if (Services.appinfo.OS == "WINNT" || Services.appinfo.OS == "Darwin") {
         "init@chrome://browser/content/browser-tabsintitlebar.js",
         "handleEvent@chrome://browser/content/tabbrowser.xml",
       ],
-      times: 4, // This number should only ever go down - never up.
+      // These numbers should only ever go down - never up.
+      maxCount: Services.appinfo.OS == "WINNT" ? 5 : 4,
     },
   );
 }

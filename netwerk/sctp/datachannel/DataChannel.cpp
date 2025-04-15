@@ -196,7 +196,12 @@ DataChannelConnectionShutdown::Notify(nsITimer* aTimer)
 {
   // safely release reference to ourself
   RefPtr<DataChannelConnectionShutdown> grip(this);
-  sDataChannelShutdown->RemoveConnectionShutdown(this);
+  // Might not be set. We don't actually use the |this| pointer in
+  // RemoveConnectionShutdown right now, which makes this a bit gratuitous
+  // anyway...
+  if (sDataChannelShutdown) {
+    sDataChannelShutdown->RemoveConnectionShutdown(this);
+  }
   return NS_OK;
 }
 
@@ -431,6 +436,7 @@ DataChannelConnection::Init(unsigned short aPort, uint16_t aNumStreams, bool aMa
 
     mSendInterleaved = false;
     mPpidFragmentation = false;
+    mMaxMessageSizeSet = false;
     SetMaxMessageSize(aMaxMessageSizeSet, aMaxMessageSize);
 
     if (!sctp_initialized) {
@@ -595,6 +601,11 @@ void
 DataChannelConnection::SetMaxMessageSize(bool aMaxMessageSizeSet, uint64_t aMaxMessageSize)
 {
   MutexAutoLock lock(mLock); // TODO: Needed?
+
+  if (mMaxMessageSizeSet && !aMaxMessageSizeSet) {
+    // Don't overwrite already set MMS with default values
+    return;
+  }
 
   mMaxMessageSizeSet = aMaxMessageSizeSet;
   mMaxMessageSize = aMaxMessageSize;
@@ -812,6 +823,7 @@ DataChannelConnection::SctpDtlsInput(TransportFlow *flow,
     }
   }
   // Pass the data to SCTP
+  MutexAutoLock lock(mLock);
   usrsctp_conninput(static_cast<void *>(this), data, len, 0);
 }
 
@@ -1219,7 +1231,7 @@ DataChannelConnection::SendDeferredMessages()
   RefPtr<DataChannel> channel; // we may null out the refs to this
 
   // This may block while something is modifying channels, but should not block for IO
-  MutexAutoLock lock(mLock);
+  mLock.AssertCurrentThreadOwns();
 
   LOG(("SendDeferredMessages called, pending type: %d", mPendingType));
   if (!mPendingType) {
@@ -2302,7 +2314,7 @@ DataChannelConnection::ReceiveCallback(struct socket* sock, void *data, size_t d
   if (!data) {
     usrsctp_close(sock); // SCTP has finished shutting down
   } else {
-    MutexAutoLock lock(mLock);
+    mLock.AssertCurrentThreadOwns();
     if (flags & MSG_NOTIFICATION) {
       HandleNotification(static_cast<union sctp_notification *>(data), datalen);
     } else {

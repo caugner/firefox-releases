@@ -1,6 +1,6 @@
 "use strict";
 
-Cu.import("resource://gre/modules/AppMenuNotifications.jsm");
+ChromeUtils.import("resource://gre/modules/AppMenuNotifications.jsm");
 
 /**
  * Tests that when we click on the main call-to-action of the doorhanger, the provided
@@ -190,15 +190,6 @@ add_task(async function testMultipleBadges() {
     is(menuButton.getAttribute("badge-status"), "update-succeeded", "Should have update-succeeded badge status (update > fxa)");
 
     AppMenuNotifications.showBadgeOnlyNotification("update-failed");
-    is(menuButton.getAttribute("badge-status"), "update-failed", "Should have update-failed badge status");
-
-    AppMenuNotifications.showBadgeOnlyNotification("download-severe");
-    is(menuButton.getAttribute("badge-status"), "download-severe", "Should have download-severe badge status");
-
-    AppMenuNotifications.showBadgeOnlyNotification("download-warning");
-    is(menuButton.getAttribute("badge-status"), "download-warning", "Should have download-warning badge status");
-
-    AppMenuNotifications.removeNotification(/^download-/);
     is(menuButton.getAttribute("badge-status"), "update-failed", "Should have update-failed badge status");
 
     AppMenuNotifications.removeNotification(/^update-/);

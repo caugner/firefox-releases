@@ -6,64 +6,86 @@ loader: taskgraph.loader.transform:loader
 
 transforms:
    - taskgraph.transforms.release_deps:transforms
-   - taskgraph.transforms.job:transforms
+   - taskgraph.transforms.bouncer_aliases:transforms
+   - taskgraph.transforms.release_notifications:transforms
    - taskgraph.transforms.task:transforms
 
 kind-dependencies:
-   - release-uptake-monitoring
+   - release-bouncer-check
 
 job-defaults:
+   description: Update bouncer aliases job
+   worker-type:
+      by-project:
+         mozilla-beta: scriptworker-prov-v1/bouncer-v1
+         mozilla-release: scriptworker-prov-v1/bouncer-v1
+         mozilla-esr60: scriptworker-prov-v1/bouncer-v1
+         default: scriptworker-prov-v1/bouncer-dev
+   worker:
+      implementation: bouncer-aliases
+   scopes:
+      by-project:
+         mozilla-beta:
+            - project:releng:bouncer:action:aliases
+            - project:releng:bouncer:server:production
+         mozilla-release:
+            - project:releng:bouncer:action:aliases
+            - project:releng:bouncer:server:production
+         mozilla-esr60:
+            - project:releng:bouncer:action:aliases
+            - project:releng:bouncer:server:production
+         default:
+            - project:releng:bouncer:action:aliases
+            - project:releng:bouncer:server:staging
+   run-on-projects: []
    shipping-phase: ship
 
 jobs:
+   devedition:
+      bouncer-products-per-alias:
+         firefox-devedition-latest-ssl: installer-ssl
+         firefox-devedition-latest: installer
+         firefox-devedition-stub: stub-installer
+      shipping-product: devedition
+
    fennec:
-      name: fennec_release_bouncer_aliases
-      description: Update bouncer aliases job
-      worker-type: buildbot-bridge/buildbot-bridge
-      run-on-projects: []
+      bouncer-products-per-alias:
+         by-project:
+            mozilla-beta:
+               fennec-beta-latest: apk
+            mozilla-release:
+               fennec-latest: apk
+            birch:
+               fennec-latest: apk
+            maple:
+               fennec-beta-latest: apk
+            default: {}
       shipping-product: fennec
-      run:
-         using: buildbot
-         product: fennec
-         buildername: release-{branch}-fennec_bouncer_aliases
-         release-promotion: true
-      worker:
-         properties:
-             tuxedo_server_url:
-                by-project:
-                    mozilla-beta: https://bounceradmin.mozilla.com/api
-                    mozilla-release: https://bounceradmin.mozilla.com/api
-                    maple: https://admin-bouncer.stage.mozaws.net/api/
-                    default: http://localhost/api
-      routes:
-         - index.releases.v1.{branch}.latest.fennec.latest.bouncer_submitter
-         - index.releases.v1.{branch}.{revision}.fennec.{underscore_version}.build{build_number}.bouncer_submitter
-      index:
-         type: release
-         product: fennec
-         job-name: android-api-16-opt
-      notifications:
-         completed:
-            by-project:
-               maple:
-                  - "release-drivers-staging"
-               try:
-                  #- "{task[tags][createdForUser]}"
-               default:
-                  - "releasetasks"
-         failed:
-            by-project:
-               maple:
-                  - "release-drivers-staging"
-               try:
-                  #- "{task[tags][createdForUser]}"
-               default:
-                  - "releasetasks"
-         exception:
-            by-project:
-               maple:
-                  - "release-drivers-staging"
-               try:
-                  #- "{task[tags][createdForUser]}"
-               default:
-                  - "releasetasks"
+
+   firefox:
+      bouncer-products-per-alias:
+         by-project:
+            mozilla-beta:
+               firefox-beta-latest-ssl: installer-ssl
+               firefox-beta-latest: installer
+               firefox-beta-stub: stub-installer
+            mozilla-release:
+               firefox-latest-ssl: installer-ssl
+               firefox-latest: installer
+               firefox-stub: stub-installer
+            mozilla-esr60:
+               firefox-esr-latest-ssl: installer-ssl
+               firefox-esr-latest: installer
+            birch:
+               firefox-latest-ssl: installer-ssl
+               firefox-latest: installer
+               firefox-stub: stub-installer
+            jamun:
+               firefox-esr-latest-ssl: installer-ssl
+               firefox-esr-latest: installer
+            maple:
+               firefox-beta-latest-ssl: installer-ssl
+               firefox-beta-latest: installer
+               firefox-beta-stub: stub-installer
+            default: {}
+      shipping-product: firefox

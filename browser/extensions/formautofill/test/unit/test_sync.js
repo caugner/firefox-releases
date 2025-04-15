@@ -9,12 +9,12 @@
 
 "use strict";
 
-Cu.import("resource://services-sync/service.js");
-Cu.import("resource://services-sync/constants.js");
-Cu.import("resource://testing-common/services/sync/utils.js");
+ChromeUtils.import("resource://services-sync/service.js");
+ChromeUtils.import("resource://services-sync/constants.js");
+ChromeUtils.import("resource://testing-common/services/sync/utils.js");
 
 let {sanitizeStorageObject, AutofillRecord, AddressesEngine} =
-  Cu.import("resource://formautofill/FormAutofillSync.jsm", {});
+  ChromeUtils.import("resource://formautofill/FormAutofillSync.jsm", {});
 
 
 Services.prefs.setCharPref("extensions.formautofill.loglevel", "Trace");
@@ -58,10 +58,10 @@ function expectLocalProfiles(profileStorage, expected) {
       ok(objectMatches(thisGot, thisExpected));
     }
   } catch (ex) {
-    do_print("Comparing expected profiles:");
-    do_print(JSON.stringify(expected, undefined, 2));
-    do_print("against actual profiles:");
-    do_print(JSON.stringify(profiles, undefined, 2));
+    info("Comparing expected profiles:");
+    info(JSON.stringify(expected, undefined, 2));
+    info("against actual profiles:");
+    info(JSON.stringify(profiles, undefined, 2));
     throw ex;
   }
 }
@@ -142,6 +142,7 @@ add_task(async function test_outgoing() {
       },
     ]);
 
+    await engine._tracker.asyncObserver.promiseObserversComplete();
     // The tracker should have a score recorded for the 2 additions we had.
     equal(engine._tracker.score, SCORE_INCREMENT_XLARGE * 2);
 

@@ -8,6 +8,7 @@
 #define nsTextControlFrame_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/Element.h"
 #include "nsContainerFrame.h"
 #include "nsIAnonymousContentCreator.h"
 #include "nsIContent.h"
@@ -275,7 +276,8 @@ protected:
     nsTextControlFrame* mFrame;
   };
 
-  nsresult OffsetToDOMPoint(uint32_t aOffset, nsIDOMNode** aResult, uint32_t* aPosition);
+  nsresult OffsetToDOMPoint(uint32_t aOffset, nsINode** aResult,
+                            uint32_t* aPosition);
 
   /**
    * Update the textnode under our anonymous div to show the new
@@ -299,7 +301,7 @@ protected:
    * @returns false if it does not exist
    */
   bool AttributeExists(nsAtom *aAtt) const
-  { return mContent && mContent->HasAttr(kNameSpaceID_None, aAtt); }
+  { return mContent && mContent->AsElement()->HasAttr(kNameSpaceID_None, aAtt); }
 
   /**
    * We call this when we are being destroyed or removed from the PFM.
@@ -318,8 +320,8 @@ protected:
 
 private:
   //helper methods
-  nsresult SetSelectionInternal(nsIDOMNode *aStartNode, uint32_t aStartOffset,
-                                nsIDOMNode *aEndNode, uint32_t aEndOffset,
+  nsresult SetSelectionInternal(nsINode* aStartNode, uint32_t aStartOffset,
+                                nsINode* aEndNode, uint32_t aEndOffset,
                                 SelectionDirection aDirection = eNone);
   nsresult SelectAllOrCollapseToEndOfText(bool aSelect);
   nsresult SetSelectionEndPoints(uint32_t aSelStart, uint32_t aSelEnd,

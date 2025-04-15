@@ -11,25 +11,23 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "BrowserTestUtils",
 ];
 
-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-
-Cu.import("resource://gre/modules/AppConstants.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://testing-common/TestUtils.jsm");
-Cu.import("resource://testing-common/ContentTask.jsm");
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://testing-common/TestUtils.jsm");
+ChromeUtils.import("resource://testing-common/ContentTask.jsm");
 
 Cc["@mozilla.org/globalmessagemanager;1"]
   .getService(Ci.nsIMessageListenerManager)
   .loadFrameScript(
     "chrome://mochikit/content/tests/BrowserTestUtils/content-utils.js", true);
 
-XPCOMUtils.defineLazyModuleGetter(this, "E10SUtils",
-  "resource:///modules/E10SUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "E10SUtils",
+  "resource://gre/modules/E10SUtils.jsm");
 
 const PROCESSSELECTOR_CONTRACTID = "@mozilla.org/ipc/processselector;1";
 const OUR_PROCESSSELECTOR_CID =
@@ -37,6 +35,8 @@ const OUR_PROCESSSELECTOR_CID =
 const EXISTING_JSID = Cc[PROCESSSELECTOR_CONTRACTID];
 const DEFAULT_PROCESSSELECTOR_CID = EXISTING_JSID ?
   Components.ID(EXISTING_JSID.number) : null;
+
+let gListenerId = 0;
 
 // A process selector that always asks for a new process.
 function NewProcessSelector() {
@@ -67,7 +67,7 @@ var gSynthesizeCompositionChangeCount = 0;
 const kAboutPageRegistrationContentScript =
   "chrome://mochikit/content/tests/BrowserTestUtils/content-about-page-utils.js";
 
-this.BrowserTestUtils = {
+var BrowserTestUtils = {
   /**
    * Loads a page in a new tab, executes a Task and closes the tab.
    *
@@ -104,6 +104,10 @@ this.BrowserTestUtils = {
     let result = await taskFn(tab.linkedBrowser);
     let finalWindow = tab.ownerGlobal;
     if (originalWindow == finalWindow && !tab.closing && tab.linkedBrowser) {
+      // taskFn may resolve within a tick after opening a new tab.
+      // We shouldn't remove the newly opened tab in the same tick.
+      // Wait for the next tick here.
+      await TestUtils.waitForTick();
       await BrowserTestUtils.removeTab(tab);
     } else {
       Services.console.logStringMessage(
@@ -140,7 +144,7 @@ this.BrowserTestUtils = {
    */
   openNewForegroundTab(tabbrowser, ...args) {
     let options;
-    if (tabbrowser instanceof Ci.nsIDOMXULElement) {
+    if (tabbrowser.ownerGlobal && tabbrowser === tabbrowser.ownerGlobal.gBrowser) {
       // tabbrowser is a tabbrowser, read the rest of the arguments from args.
       let [
         opening = "about:blank",
@@ -301,16 +305,26 @@ this.BrowserTestUtils = {
    * loaded its DOM yet, and where you can't easily use browserLoaded
    * on gBrowser.selectedBrowser since gBrowser doesn't yet exist.
    *
-   * @param {win}
+   * @param {xul:window} window
    *        A newly opened window for which we're waiting for the
    *        first browser load.
+   * @param {Boolean} aboutBlank [optional]
+   *        If false, about:blank loads are ignored and we continue
+   *        to wait.
+   * @param {function or null} checkFn [optional]
+   *        If checkFn(browser) returns false, the load is ignored
+   *        and we continue to wait.
    *
    * @return {Promise}
    * @resolves Once the selected browser fires its load event.
    */
-  firstBrowserLoaded(win, aboutBlank = true) {
+  firstBrowserLoaded(win, aboutBlank = true, checkFn = null) {
     let mm = win.messageManager;
     return this.waitForMessage(mm, "browser-test-utils:loadEvent", (msg) => {
+      if (checkFn) {
+        return checkFn(msg.target);
+      }
+
       let selectedBrowser = win.gBrowser.selectedBrowser;
       return msg.target == selectedBrowser &&
              (aboutBlank || selectedBrowser.currentURI.spec != "about:blank")
@@ -427,7 +441,7 @@ this.BrowserTestUtils = {
               tabbrowser.tabContainer.removeEventListener("TabOpen", tabOpenListener);
             }
             tabbrowser.removeTabsProgressListener(progressListener);
-            resolve(result);
+            TestUtils.executeSoon(() => resolve(result));
           },
         };
         tabbrowser.addTabsProgressListener(progressListener);
@@ -466,9 +480,6 @@ this.BrowserTestUtils = {
   /**
    * Waits for the next browser window to open and be fully loaded.
    *
-   * @param {bool} delayedStartup (optional)
-   *        Whether or not to wait for the browser-delayed-startup-finished
-   *        observer notification before resolving. Defaults to true.
    * @param {string} initialBrowserLoaded (optional)
    *        If set, we will wait until the initial browser in the new
    *        window has loaded a particular page. If unset, the initial
@@ -478,8 +489,7 @@ this.BrowserTestUtils = {
    *         A Promise which resolves the next time that a DOM window
    *         opens and the delayed startup observer notification fires.
    */
-  async waitForNewWindow(delayedStartup=true,
-                                          initialBrowserLoaded=null) {
+  async waitForNewWindow(initialBrowserLoaded=null) {
     let win = await this.domWindowOpened();
 
     let promises = [
@@ -560,10 +570,10 @@ this.BrowserTestUtils = {
    */
   domWindowOpened(win, checkFn) {
     return new Promise(resolve => {
-      function observer(subject, topic, data) {
+      async function observer(subject, topic, data) {
         if (topic == "domwindowopened" && (!win || subject === win)) {
           let observedWindow = subject.QueryInterface(Ci.nsIDOMWindow);
-          if (checkFn && !checkFn(observedWindow)) {
+          if (checkFn && !await checkFn(observedWindow)) {
             return;
           }
           Services.ww.unregisterNotification(observer);
@@ -733,8 +743,28 @@ this.BrowserTestUtils = {
    *    let promiseEvent = BrowserTestUtils.waitForEvent(element, "eventName");
    *    // Do some processing here that will cause the event to be fired
    *    // ...
-   *    // Now yield until the Promise is fulfilled
-   *    let receivedEvent = yield promiseEvent;
+   *    // Now wait until the Promise is fulfilled
+   *    let receivedEvent = await promiseEvent;
+   *
+   * The promise resolution/rejection handler for the returned promise is
+   * guaranteed not to be called until the next event tick after the event
+   * listener gets called, so that all other event listeners for the element
+   * are executed before the handler is executed.
+   *
+   *    let promiseEvent = BrowserTestUtils.waitForEvent(element, "eventName");
+   *    // Same event tick here.
+   *    await promiseEvent;
+   *    // Next event tick here.
+   *
+   * If some code, such like adding yet another event listener, needs to be
+   * executed in the same event tick, use raw addEventListener instead and
+   * place the code inside the event listener.
+   *
+   *    element.addEventListener("load", () => {
+   *      // Add yet another event listener in the same event tick as the load
+   *      // event listener.
+   *      p = BrowserTestUtils.waitForEvent(element, "ready");
+   *    }, { once: true });
    *
    * @param {Element} subject
    *        The element that should receive the event.
@@ -765,14 +795,14 @@ this.BrowserTestUtils = {
             return;
           }
           subject.removeEventListener(eventName, listener, capture);
-          resolve(event);
+          TestUtils.executeSoon(() => resolve(event));
         } catch (ex) {
           try {
             subject.removeEventListener(eventName, listener, capture);
           } catch (ex2) {
             // Maybe the provided object does not support removeEventListener.
           }
-          reject(ex);
+          TestUtils.executeSoon(() => reject(ex));
         }
       }, capture, wantsUntrusted);
     });
@@ -828,6 +858,115 @@ this.BrowserTestUtils = {
             }, capture, wantsUntrusted);
           });
         });
+  },
+
+  /**
+   * Adds a content event listener on the given browser
+   * element. Similar to waitForContentEvent, but the listener will
+   * fire until it is removed. A callable object is returned that,
+   * when called, removes the event listener. Note that this function
+   * works even if the browser's frameloader is swapped.
+   *
+   * @param {xul:browser} browser
+   *        The browser element to listen for events in.
+   * @param {string} eventName
+   *        Name of the event to listen to.
+   * @param {function} listener
+   *        Function to call in parent process when event fires.
+   *        Not passed any arguments.
+   * @param {bool} useCapture [optional]
+   *        Whether to use a capturing listener.
+   * @param {function} checkFn [optional]
+   *        Called with the Event object as argument, should return true if the
+   *        event is the expected one, or false if it should be ignored and
+   *        listening should continue. If not specified, the first event with
+   *        the specified name resolves the returned promise. This is called
+   *        within the content process and can have no closure environment.
+   * @param {bool} wantsUntrusted [optional]
+   *        Whether to accept untrusted events
+   * @param {bool} autoremove [optional]
+   *        Whether the listener should be removed when |browser| is removed
+   *        from the DOM. Note that, if this flag is true, it won't be possible
+   *        to listen for events after a frameloader swap.
+   *
+   * @returns function
+   *        If called, the return value will remove the event listener.
+   */
+  addContentEventListener(browser,
+                          eventName,
+                          listener,
+                          useCapture = false,
+                          checkFn,
+                          wantsUntrusted = false,
+                          autoremove = true) {
+    let id = gListenerId++;
+    let checkFnSource = checkFn ? encodeURIComponent(escape(checkFn.toSource())) : "";
+
+    // To correctly handle frameloader swaps, we load a frame script
+    // into all tabs but ignore messages from the ones not related to
+    // |browser|.
+
+    function frameScript(id, eventName, useCapture, checkFnSource, wantsUntrusted) {
+      let checkFn;
+      if (checkFnSource) {
+        checkFn = eval(`(() => (${unescape(checkFnSource)}))()`);
+      }
+
+      function listener(event) {
+        if (checkFn && !checkFn(event)) {
+          return;
+        }
+        sendAsyncMessage("ContentEventListener:Run", id);
+      }
+      function removeListener(msg) {
+        if (msg.data == id) {
+          removeMessageListener("ContentEventListener:Remove", removeListener);
+          removeEventListener(eventName, listener, useCapture, wantsUntrusted);
+        }
+      }
+      addMessageListener("ContentEventListener:Remove", removeListener);
+      addEventListener(eventName, listener, useCapture, wantsUntrusted);
+    }
+
+    let frameScriptSource =
+        `data:,(${frameScript.toString()})(${id}, "${eventName}", ${useCapture}, "${checkFnSource}", ${wantsUntrusted})`;
+
+    let mm = Services.mm;
+
+    function runListener(msg) {
+      if (msg.data == id && msg.target == browser) {
+        listener();
+      }
+    }
+    mm.addMessageListener("ContentEventListener:Run", runListener);
+
+    let needCleanup = true;
+
+    let unregisterFunction = function() {
+      if (!needCleanup) {
+        return;
+      }
+      needCleanup = false;
+      mm.removeMessageListener("ContentEventListener:Run", runListener);
+      mm.broadcastAsyncMessage("ContentEventListener:Remove", id);
+      mm.removeDelayedFrameScript(frameScriptSource);
+      if (autoremove) {
+        Services.obs.removeObserver(cleanupObserver, "message-manager-close");
+      }
+    };
+
+    function cleanupObserver(subject, topic, data) {
+      if (subject == browser.messageManager) {
+        unregisterFunction();
+      }
+    }
+    if (autoremove) {
+      Services.obs.addObserver(cleanupObserver, "message-manager-close");
+    }
+
+    mm.loadFrameScript(frameScriptSource, true);
+
+    return unregisterFunction;
   },
 
   /**
@@ -989,10 +1128,13 @@ this.BrowserTestUtils = {
   tabRemoved(tab) {
     return new Promise(resolve => {
       let {messageManager: mm, frameLoader} = tab.linkedBrowser;
+      // FIXME! We shouldn't use "SessionStore:update" to know the tab was
+      // removed.  It will be processed before other "SessionStore:update"
+      // listeners hasn't been processed.
       mm.addMessageListener("SessionStore:update", function onMessage(msg) {
         if (msg.targetFrameLoader == frameLoader && msg.data.isFinal) {
           mm.removeMessageListener("SessionStore:update", onMessage);
-          resolve();
+          TestUtils.executeSoon(() => resolve());
         }
       }, true);
     });
@@ -1020,7 +1162,7 @@ this.BrowserTestUtils = {
     let extra = {};
     let KeyValueParser = {};
     if (AppConstants.MOZ_CRASHREPORTER) {
-      Cu.import("resource://gre/modules/KeyValueParser.jsm", KeyValueParser);
+      ChromeUtils.import("resource://gre/modules/KeyValueParser.jsm", KeyValueParser);
     }
 
     if (!browser.isRemoteBrowser) {
@@ -1060,8 +1202,7 @@ this.BrowserTestUtils = {
     // a bad pointer. The crash should happen immediately upon loading this
     // frame script.
     let frame_script = () => {
-      const Cu = Components.utils;
-      Cu.import("resource://gre/modules/ctypes.jsm");
+      ChromeUtils.import("resource://gre/modules/ctypes.jsm");
 
       let dies = function() {
         privateNoteIntentionalCrash();
@@ -1092,7 +1233,7 @@ this.BrowserTestUtils = {
         }
 
         let dumpID;
-        if ('nsICrashReporter' in Ci) {
+        if (AppConstants.MOZ_CRASHREPORTER) {
           dumpID = subject.getPropertyAsAString('dumpID');
           if (!dumpID) {
             return reject("dumpID was not present despite crash reporting " +
@@ -1461,14 +1602,85 @@ this.BrowserTestUtils = {
   },
 
   /**
+   * Waits for the dialog to open, and clicks the specified button.
+   *
+   * @param {string} buttonAction
+   *        The ID of the button to click ("accept", "cancel", etc).
+   * @param {string} uri
+   *        The URI of the dialog to wait for.  Defaults to the common dialog.
+   * @return {Promise}
+   *         A Promise which resolves when a "domwindowopened" notification
+   *         for a dialog has been fired by the window watcher and the
+   *         specified button is clicked.
+   */
+  async promiseAlertDialogOpen(buttonAction,
+                               uri="chrome://global/content/commonDialog.xul",
+                               func) {
+    let win = await this.domWindowOpened(null, async win => {
+      // The test listens for the "load" event which guarantees that the alert
+      // class has already been added (it is added when "DOMContentLoaded" is
+      // fired).
+      await this.waitForEvent(win, "load");
+
+      return win.document.documentURI === uri;
+    });
+
+    if (func) {
+      await func(win);
+      return win;
+    }
+
+    let doc = win.document.documentElement;
+    doc.getButton(buttonAction).click();
+
+    return win;
+  },
+
+  /**
+   * Waits for the dialog to open, and clicks the specified button, and waits
+   * for the dialog to close.
+   *
+   * @param {string} buttonAction
+   *        The ID of the button to click ("accept", "cancel", etc).
+   * @param {string} uri
+   *        The URI of the dialog to wait for.  Defaults to the common dialog.
+   * @return {Promise}
+   *         A Promise which resolves when a "domwindowopened" notification
+   *         for a dialog has been fired by the window watcher and the
+   *         specified button is clicked, and the dialog has been fully closed.
+   */
+  async promiseAlertDialog(buttonAction,
+                           uri="chrome://global/content/commonDialog.xul",
+                           func) {
+    let win = await this.promiseAlertDialogOpen(buttonAction, uri, func);
+    return this.windowClosed(win);
+  },
+
+  /**
    * Opens a tab with a given uri and params object. If the params object is not set
    * or the params parameter does not include a triggeringPricnipal then this function
    * provides a params object using the systemPrincipal as the default triggeringPrincipal.
+   *
+   * @param {xul:tabbrowser} tabbrowser
+   *        The gBrowser object to open the tab with.
+   * @param {string} uri
+   *        The URI to open in the new tab.
+   * @param {object} params [optional]
+   *        Parameters object for gBrowser.addTab.
+   * @param {function} beforeLoadFunc [optional]
+   *        A function to run after that xul:browser has been created but before the URL is
+   *        loaded. Can spawn a content task in the tab, for example.
    */
-  addTab(browser, uri, params = {}) {
+  addTab(tabbrowser, uri, params = {}, beforeLoadFunc = null) {
     if (!params.triggeringPrincipal) {
       params.triggeringPrincipal = Services.scriptSecurityManager.getSystemPrincipal();
     }
-    return browser.addTab(uri, params);
+    if (beforeLoadFunc) {
+      let window = tabbrowser.ownerGlobal;
+      window.addEventListener("TabOpen", function(e) {
+        beforeLoadFunc(e.target);
+      }, {once: true});
+    }
+    return tabbrowser.addTab(uri, params);
   }
 };

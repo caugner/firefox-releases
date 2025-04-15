@@ -31,7 +31,6 @@ Structure:
         vendor: <string>, // e.g. "Mozilla"
         platformVersion: <string>, // e.g. "35.0"
         xpcomAbi: <string>, // e.g. "x86-msvc"
-        hotfixVersion: <string>, // e.g. "20141211.01"
         updaterAvailable: <bool>, // Whether the app was built with app update available (MOZ_UPDATER)
       },
       settings: {
@@ -55,8 +54,7 @@ Structure:
           autoDownload: <bool>, // true on failure
         },
         userPrefs: {
-          // Only prefs which are changed from the default value are listed
-          // in this block
+          // Only prefs which are changed are listed in this block
           "pref.name.value": value // some prefs send the value
           "pref.name.url": "<user-set>" // For some privacy-sensitive prefs
             // only the fact that the value has been changed is recorded
@@ -203,6 +201,11 @@ Structure:
             },
           },
         appleModelId: <string>, // Mac only or null on failure
+        sec: { // This feature is Windows 8+ only
+          antivirus: [ <string>, ... ],    // null if unavailable on platform: Product name(s) of registered antivirus programs
+          antispyware: [ <string>, ... ],  // null if unavailable on platform: Product name(s) of registered antispyware programs
+          firewall: [ <string>, ... ],     // null if unavailable on platform: Product name(s) of registered firewall programs
+        },
       },
       addons: {
         activeAddons: { // the currently enabled add-ons
@@ -332,7 +335,7 @@ userPrefs
 
 This object contains user preferences.
 
-Each key in the object is the name of a preference. A key's value depends on the policy with which the preference was collected. There are two such policies, "value" and "state". For preferences collected under the "value" policy, the value will be the preference's value. For preferences collected under the "state" policy, the value will be an opaque marker signifying only that the preference has a user value. The "state" policy is therefore used when user privacy is a concern.
+Each key in the object is the name of a preference. A key's value depends on the policy with which the preference was collected. There are three such policies, "value", "state", and "default value". For preferences collected under the "value" policy, the value will be the preference's value. For preferences collected under the "state" policy, the value will be an opaque marker signifying only that the preference has a user value. The "state" policy is therefore used when user privacy is a concern. For preferences collected under the "default value" policy, the value will be the preference's default value, if the preference exists. If the preference does not exist, there is no key or value.
 
 The following is a partial list of collected preferences.
 
@@ -400,7 +403,17 @@ activeAddons
 
 Starting from Firefox 44, the length of the following string fields: ``name``, ``description`` and ``version`` is limited to 100 characters. The same limitation applies to the same fields in ``theme`` and ``activePlugins``.
 
-Some of the fields in the record for each add-on are not available during startup.  The fields that will always be present are ``id``, ``version``, ``type``, ``updateDate``, ``scope``, ``isSystem``, ``isWebExtension``, and ``multiprocessCompatible``.  All the other fields documented above become present shortly after the ``sessionstore-windows-restored`` event is dispatched.
+Some of the fields in the record for each add-on are not available during startup.  The fields that will always be present are ``id``, ``version``, ``type``, ``updateDate``, ``scope``, ``isSystem``, ``isWebExtension``, and ``multiprocessCompatible``.  All the other fields documented above become present shortly after the ``sessionstore-windows-restored`` observer topic is notified.
+
+activePlugins
+~~~~~~~~~~~~~
+
+Just like activeAddons, up-to-date information is not available immediately during startup. The field will be populated with dummy information until the blocklist is loaded. At the latest, this will happen just after the ``sessionstore-windows-restored`` observer topic is notified.
+
+activeGMPPlugins
+~~~~~~~~~~~~~~~~
+
+Just like activePlugins, this will report dummy values until the blocklist is loaded.
 
 experiments
 -----------

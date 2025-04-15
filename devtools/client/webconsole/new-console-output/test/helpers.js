@@ -3,17 +3,14 @@
 
 "use strict";
 
-let ReactDOM = require("devtools/client/shared/vendor/react-dom");
-let React = require("devtools/client/shared/vendor/react");
-var TestUtils = React.addons.TestUtils;
-
-const actions = require("devtools/client/webconsole/new-console-output/actions/index");
+const reduxActions = require("devtools/client/webconsole/new-console-output/actions/index");
 const { configureStore } = require("devtools/client/webconsole/new-console-output/store");
 const { IdGenerator } = require("devtools/client/webconsole/new-console-output/utils/id-generator");
 const { stubPackets } = require("devtools/client/webconsole/new-console-output/test/fixtures/stubs/index");
-const {
-  getAllMessagesById,
-} = require("devtools/client/webconsole/new-console-output/selectors/messages");
+const { getAllMessagesById } = require("devtools/client/webconsole/new-console-output/selectors/messages");
+const { getPrefsService } = require("devtools/client/webconsole/new-console-output/utils/prefs");
+const prefsService = getPrefsService({});
+const { PREFS } = require("devtools/client/webconsole/new-console-output/constants");
 
 /**
  * Prepare actions for use in testing.
@@ -21,42 +18,43 @@ const {
 function setupActions() {
   // Some actions use dependency injection. This helps them avoid using state in
   // a hard-to-test way. We need to inject stubbed versions of these dependencies.
+  const wrappedActions = Object.assign({}, reduxActions);
+
   const idGenerator = new IdGenerator();
-  return Object.assign({}, actions, {
-    messageAdd: packet => actions.messageAdd(packet, idGenerator),
-    messagesAdd: packets => actions.messagesAdd(packets, idGenerator)
-  });
+  wrappedActions.messagesAdd = (packets) => {
+    return reduxActions.messagesAdd(packets, idGenerator);
+  };
+
+  return {
+    ...reduxActions,
+    messagesAdd: packets => reduxActions.messagesAdd(packets, idGenerator)
+  };
 }
 
 /**
  * Prepare the store for use in testing.
  */
-function setupStore(input = [], hud, options) {
-  const store = configureStore(hud, options);
+function setupStore(input = [], {
+  storeOptions,
+  actions,
+  hud,
+} = {}) {
+  if (!hud) {
+    hud = {
+      proxy: {
+        releaseActor: () => {}
+      }
+    };
+  }
+  const store = configureStore(hud, storeOptions);
 
   // Add the messages from the input commands to the store.
-  input.forEach((cmd) => {
-    store.dispatch(actions.messageAdd(stubPackets.get(cmd)));
-  });
+  const messagesAdd = actions
+    ? actions.messagesAdd
+    : reduxActions.messagesAdd;
+  store.dispatch(messagesAdd(input.map(cmd => stubPackets.get(cmd))));
 
   return store;
-}
-
-function renderComponent(component, props) {
-  const el = React.createElement(component, props, {});
-  // By default, renderIntoDocument() won't work for stateless components, but
-  // it will work if the stateless component is wrapped in a stateful one.
-  // See https://github.com/facebook/react/issues/4839
-  const wrappedEl = React.DOM.span({}, [el]);
-  const renderedComponent = TestUtils.renderIntoDocument(wrappedEl);
-  return ReactDOM.findDOMNode(renderedComponent).children[0];
-}
-
-function shallowRenderComponent(component, props) {
-  const el = React.createElement(component, props);
-  const renderer = TestUtils.createRenderer();
-  renderer.render(el, {});
-  return renderer.getRenderOutput();
 }
 
 /**
@@ -78,11 +76,62 @@ function getMessageAt(state, index) {
   return messages.get([...messages.keys()][index]);
 }
 
+/**
+ * Return the first message in the store.
+ *
+ * @param {object} state - The redux state of the console.
+ * @return {Message} - The last message, or undefined if there are no message in store.
+ */
+function getFirstMessage(state) {
+  return getMessageAt(state, 0);
+}
+
+/**
+ * Return the last message in the store.
+ *
+ * @param {object} state - The redux state of the console.
+ * @return {Message} - The last message, or undefined if there are no message in store.
+ */
+function getLastMessage(state) {
+  const lastIndex = getAllMessagesById(state).size - 1;
+  return getMessageAt(state, lastIndex);
+}
+
+function getFiltersPrefs() {
+  return Object.values(PREFS.FILTER).reduce((res, pref) => {
+    res[pref] = prefsService.getBoolPref(pref);
+    return res;
+  }, {});
+}
+
+function clearPrefs() {
+  [
+    "devtools.hud.loglimit",
+    ...Object.values(PREFS.FILTER),
+    ...Object.values(PREFS.UI),
+  ].forEach(prefsService.clearUserPref);
+}
+
+function getPrivatePacket(key) {
+  const packet = clonePacket(stubPackets.get(key));
+  if (packet.message) {
+    packet.message.private = true;
+  }
+  if (Object.getOwnPropertyNames(packet).includes("private")) {
+    packet.private = true;
+  }
+  return packet;
+}
+
 module.exports = {
+  clearPrefs,
   clonePacket,
+  getFiltersPrefs,
+  getFirstMessage,
+  getLastMessage,
   getMessageAt,
-  renderComponent,
+  getPrivatePacket,
+  prefsService,
   setupActions,
   setupStore,
-  shallowRenderComponent,
 };

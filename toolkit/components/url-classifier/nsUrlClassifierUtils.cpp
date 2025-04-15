@@ -6,6 +6,7 @@
 #include "nsEscape.h"
 #include "nsString.h"
 #include "nsIURI.h"
+#include "nsIURIMutator.h"
 #include "nsIURL.h"
 #include "nsUrlClassifierUtils.h"
 #include "nsTArray.h"
@@ -267,6 +268,7 @@ static const struct {
   // For testing purpose.
   { "test-phish-proto",    SOCIAL_ENGINEERING_PUBLIC}, // 2
   { "test-unwanted-proto", UNWANTED_SOFTWARE},         // 3
+  { "test-passwordwhite-proto", CSD_WHITELIST},        // 8
 };
 
 NS_IMETHODIMP
@@ -478,21 +480,17 @@ GetSpecWithoutSensitiveData(nsIURI* aUri, nsACString &aSpec)
     return NS_ERROR_INVALID_ARG;
   }
 
-  nsCOMPtr<nsIURI> clone;
-  // Clone to make the uri mutable
-  nsresult rv = aUri->CloneIgnoringRef(getter_AddRefs(clone));
-  nsCOMPtr<nsIURL> url(do_QueryInterface(clone));
+  nsresult rv;
+  nsCOMPtr<nsIURL> url(do_QueryInterface(aUri));
   if (url) {
-    rv = url->SetQuery(EmptyCString());
+    nsCOMPtr<nsIURI> clone;
+    rv = NS_MutateURI(url)
+           .SetQuery(EmptyCString())
+           .SetRef(EmptyCString())
+           .SetUserPass(EmptyCString())
+           .Finalize(clone);
     NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = url->SetRef(EmptyCString());
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = url->SetUserPass(EmptyCString());
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = url->GetAsciiSpec(aSpec);
+    rv = clone->GetAsciiSpec(aSpec);
     NS_ENSURE_SUCCESS(rv, rv);
   }
   return NS_OK;
@@ -512,7 +510,7 @@ AddThreatSourceFromChannel(ThreatHit& aHit, nsIChannel *aChannel,
   matchingSource->set_type(aType);
 
   nsCOMPtr<nsIURI> uri;
-  rv = aChannel->GetURI(getter_AddRefs(uri));
+  rv = NS_GetFinalChannelURI(aChannel, getter_AddRefs(uri));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString spec;
@@ -634,12 +632,12 @@ AddTabThreatSources(ThreatHit& aHit, nsIChannel *aChannel)
     }
   }
 
-  // Set top level tab_url threatshource
+  // Set top level tab_url threat source
   rv = AddThreatSourceFromChannel(aHit, topChannel,
                                   ThreatHit_ThreatSourceType_TAB_URL);
   Unused << NS_WARN_IF(NS_FAILED(rv));
 
-  // Set tab_redirect threatshources if there's any
+  // Set tab_redirect threat sources if there's any
   nsCOMPtr<nsILoadInfo> topLoadInfo = topChannel->GetLoadInfo();
   if (!topLoadInfo) {
     return NS_OK;

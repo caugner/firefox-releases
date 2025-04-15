@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Cu.import("resource:///modules/sessionstore/SessionStore.jsm");
+ChromeUtils.import("resource:///modules/sessionstore/SessionStore.jsm");
 
 function test() {
   /** Test for Bug 461634 **/
@@ -34,8 +34,8 @@ function test() {
   // Open a window and add the above closed tab list.
   let newWin = openDialog(location, "", "chrome,all,dialog=no");
   promiseWindowLoaded(newWin).then(() => {
-    gPrefService.setIntPref("browser.sessionstore.max_tabs_undo",
-                            test_state.windows[0]._closedTabs.length);
+    Services.prefs.setIntPref("browser.sessionstore.max_tabs_undo",
+                              test_state.windows[0]._closedTabs.length);
     ss.setWindowState(newWin, JSON.stringify(test_state), true);
 
     let closedTabs = SessionStore.getClosedTabData(newWin, false);
@@ -78,7 +78,7 @@ function test() {
        "... and tabs not specifically forgetten weren't");
 
     // Clean up.
-    gPrefService.clearUserPref("browser.sessionstore.max_tabs_undo");
+    Services.prefs.clearUserPref("browser.sessionstore.max_tabs_undo");
     BrowserTestUtils.closeWindow(newWin).then(finish);
   });
 }

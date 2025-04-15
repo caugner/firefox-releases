@@ -35,7 +35,7 @@ protected:
   // Reference-counted classes cannot have public destructors.
   ~OverscrollHandoffChain();
 public:
-  // Threadsafe so that the controller and compositor threads can both maintain
+  // Threadsafe so that the controller and sampler threads can both maintain
   // nsRefPtrs to the same handoff chain.
   // Mutable so that we can pass around the class by
   // RefPtr<const OverscrollHandoffChain> and thus enforce that, once built,
@@ -89,7 +89,13 @@ public:
   // Determine whether any APZC along this handoff chain has been flung fast.
   bool HasFastFlungApzc() const;
 
-  RefPtr<AsyncPanZoomController> FindFirstScrollable(const InputData& aInput) const;
+  // Find the first APZC in this handoff chain that can be scrolled by |aInput|.
+  // Since overscroll-behavior can restrict handoff in some directions,
+  // |aOutAllowedScrollDirections| is populated with the scroll directions
+  // in which scrolling of the returned APZC is allowed.
+  RefPtr<AsyncPanZoomController> FindFirstScrollable(
+      const InputData& aInput,
+      ScrollDirections* aOutAllowedScrollDirections) const;
 
 private:
   std::vector<RefPtr<AsyncPanZoomController>> mChain;

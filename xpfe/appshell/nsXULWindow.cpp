@@ -26,7 +26,6 @@
 #include "nsIContentViewer.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMXULDocument.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMXULElement.h"
 #include "nsPIDOMWindow.h"
@@ -44,7 +43,6 @@
 #include "nsIScriptSecurityManager.h"
 #include "nsIWindowWatcher.h"
 #include "nsIURI.h"
-#include "nsIDOMCSSStyleDeclaration.h"
 #include "nsAppShellCID.h"
 #include "nsReadableUtils.h"
 #include "nsStyleConsts.h"
@@ -52,6 +50,7 @@
 #include "nsContentUtils.h"
 #include "nsWebShellWindow.h" // get rid of this one, too...
 #include "nsGlobalWindow.h"
+#include "XULDocument.h"
 
 #include "prenv.h"
 #include "mozilla/AutoRestore.h"
@@ -614,7 +613,7 @@ NS_IMETHODIMP nsXULWindow::SetPositionAndSize(int32_t aX, int32_t aY,
 
   DesktopToLayoutDeviceScale scale = mWindow->GetDesktopToDeviceScale();
   DesktopRect rect = LayoutDeviceIntRect(aX, aY, aCX, aCY) / scale;
-  mWindow->Resize(rect.x, rect.y, rect.width, rect.height,
+  mWindow->Resize(rect.X(), rect.Y(), rect.Width(), rect.Height(),
                   !!(aFlags & nsIBaseWindow::eRepaint));
   if (!mChromeLoaded) {
     // If we're called before the chrome is loaded someone obviously wants this
@@ -639,13 +638,13 @@ NS_IMETHODIMP nsXULWindow::GetPositionAndSize(int32_t* x, int32_t* y, int32_t* c
   LayoutDeviceIntRect rect = mWindow->GetScreenBounds();
 
   if (x)
-    *x = rect.x;
+    *x = rect.X();
   if (y)
-    *y = rect.y;
+    *y = rect.Y();
   if (cx)
-    *cx = rect.width;
+    *cx = rect.Width();
   if (cy)
-    *cy = rect.height;
+    *cy = rect.Height();
 
   return NS_OK;
 }
@@ -702,8 +701,8 @@ NS_IMETHODIMP nsXULWindow::Center(nsIXULWindow *aRelative, bool aScreen, bool aA
   if (!aRelative) {
     if (!mOpenerScreenRect.IsEmpty()) {
       // FIXME - check if these are device or display pixels
-      screenmgr->ScreenForRect(mOpenerScreenRect.x, mOpenerScreenRect.y,
-                               mOpenerScreenRect.width, mOpenerScreenRect.height,
+      screenmgr->ScreenForRect(mOpenerScreenRect.X(), mOpenerScreenRect.Y(),
+                               mOpenerScreenRect.Width(), mOpenerScreenRect.Height(),
                                getter_AddRefs(screen));
     } else {
       screenmgr->GetPrimaryScreen(getter_AddRefs(screen));
@@ -902,14 +901,6 @@ NS_IMETHODIMP nsXULWindow::SetTitle(const nsAString& aTitle)
   mTitle.Assign(aTitle);
   mTitle.StripCRLF();
   NS_ENSURE_SUCCESS(mWindow->SetTitle(mTitle), NS_ERROR_FAILURE);
-
-  // Tell the window mediator that a title has changed
-  nsCOMPtr<nsIWindowMediator> windowMediator(do_GetService(NS_WINDOWMEDIATOR_CONTRACTID));
-  if (!windowMediator)
-    return NS_OK;
-
-  windowMediator->UpdateWindowTitle(static_cast<nsIXULWindow*>(this), aTitle);
-
   return NS_OK;
 }
 
@@ -1376,6 +1367,11 @@ bool nsXULWindow::LoadMiscPersistentAttributesFromXUL()
     auto* piWindow = nsPIDOMWindowOuter::From(ourWindow);
     piWindow->SetFullScreen(true);
   } else {
+    // For maximized windows, ignore the XUL size attributes, as setting the
+    // size would set the window back to the normal sizemode.
+    if (sizeMode == nsSizeMode_Maximized) {
+      mIgnoreXULSize = true;
+    }
     mWindow->SetSizeMode(sizeMode);
   }
   gotState = true;
@@ -1622,18 +1618,17 @@ NS_IMETHODIMP nsXULWindow::SavePersistentAttributes()
   if (parent && gotRestoredBounds) {
     int32_t parentX, parentY;
     if (NS_SUCCEEDED(parent->GetPosition(&parentX, &parentY))) {
-      rect.x -= parentX;
-      rect.y -= parentY;
+      rect.MoveBy(-parentX, -parentY);
     }
   }
 
   char                        sizeBuf[10];
   nsAutoString                sizeString;
   nsAutoString                windowElementId;
-  nsCOMPtr<nsIDOMXULDocument> ownerXULDoc;
+  RefPtr<dom::XULDocument>    ownerXULDoc;
 
   // fetch docShellElement's ID and XUL owner document
-  ownerXULDoc = do_QueryInterface(docShellElement->OwnerDoc());
+  ownerXULDoc = docShellElement->OwnerDoc()->AsXULDocument();
   if (docShellElement->IsXULElement()) {
     docShellElement->GetId(windowElementId);
   }
@@ -1643,38 +1638,42 @@ NS_IMETHODIMP nsXULWindow::SavePersistentAttributes()
   // (only for size elements which are persisted)
   if ((mPersistentAttributesDirty & PAD_POSITION) && gotRestoredBounds) {
     if (persistString.Find("screenX") >= 0) {
-      SprintfLiteral(sizeBuf, "%d", NSToIntRound(rect.x / posScale.scale));
+      SprintfLiteral(sizeBuf, "%d", NSToIntRound(rect.X() / posScale.scale));
       CopyASCIItoUTF16(sizeBuf, sizeString);
       docShellElement->SetAttribute(SCREENX_ATTRIBUTE, sizeString, rv);
       if (shouldPersist) {
-        ownerXULDoc->Persist(windowElementId, SCREENX_ATTRIBUTE);
+        IgnoredErrorResult err;
+        ownerXULDoc->Persist(windowElementId, SCREENX_ATTRIBUTE, err);
       }
     }
     if (persistString.Find("screenY") >= 0) {
-      SprintfLiteral(sizeBuf, "%d", NSToIntRound(rect.y / posScale.scale));
+      SprintfLiteral(sizeBuf, "%d", NSToIntRound(rect.Y() / posScale.scale));
       CopyASCIItoUTF16(sizeBuf, sizeString);
       docShellElement->SetAttribute(SCREENY_ATTRIBUTE, sizeString, rv);
       if (shouldPersist) {
-        ownerXULDoc->Persist(windowElementId, SCREENY_ATTRIBUTE);
+        IgnoredErrorResult err;
+        ownerXULDoc->Persist(windowElementId, SCREENY_ATTRIBUTE, err);
       }
     }
   }
 
   if ((mPersistentAttributesDirty & PAD_SIZE) && gotRestoredBounds) {
     if (persistString.Find("width") >= 0) {
-      SprintfLiteral(sizeBuf, "%d", NSToIntRound(rect.width / sizeScale.scale));
+      SprintfLiteral(sizeBuf, "%d", NSToIntRound(rect.Width() / sizeScale.scale));
       CopyASCIItoUTF16(sizeBuf, sizeString);
       docShellElement->SetAttribute(WIDTH_ATTRIBUTE, sizeString, rv);
       if (shouldPersist) {
-        ownerXULDoc->Persist(windowElementId, WIDTH_ATTRIBUTE);
+        IgnoredErrorResult err;
+        ownerXULDoc->Persist(windowElementId, WIDTH_ATTRIBUTE, err);
       }
     }
     if (persistString.Find("height") >= 0) {
-      SprintfLiteral(sizeBuf, "%d", NSToIntRound(rect.height / sizeScale.scale));
+      SprintfLiteral(sizeBuf, "%d", NSToIntRound(rect.Height() / sizeScale.scale));
       CopyASCIItoUTF16(sizeBuf, sizeString);
       docShellElement->SetAttribute(HEIGHT_ATTRIBUTE, sizeString, rv);
       if (shouldPersist) {
-        ownerXULDoc->Persist(windowElementId, HEIGHT_ATTRIBUTE);
+        IgnoredErrorResult err;
+        ownerXULDoc->Persist(windowElementId, HEIGHT_ATTRIBUTE, err);
       }
     }
   }
@@ -1691,7 +1690,8 @@ NS_IMETHODIMP nsXULWindow::SavePersistentAttributes()
         sizeString.Assign(SIZEMODE_NORMAL);
       docShellElement->SetAttribute(MODE_ATTRIBUTE, sizeString, rv);
       if (shouldPersist && persistString.Find("sizemode") >= 0) {
-        ownerXULDoc->Persist(windowElementId, MODE_ATTRIBUTE);
+        IgnoredErrorResult err;
+        ownerXULDoc->Persist(windowElementId, MODE_ATTRIBUTE, err);
       }
     }
     if (persistString.Find("zlevel") >= 0) {
@@ -1703,7 +1703,8 @@ NS_IMETHODIMP nsXULWindow::SavePersistentAttributes()
         CopyASCIItoUTF16(sizeBuf, sizeString);
         docShellElement->SetAttribute(ZLEVEL_ATTRIBUTE, sizeString, rv);
         if (shouldPersist) {
-          ownerXULDoc->Persist(windowElementId, ZLEVEL_ATTRIBUTE);
+          IgnoredErrorResult err;
+          ownerXULDoc->Persist(windowElementId, ZLEVEL_ATTRIBUTE, err);
         }
       }
     }
@@ -1989,11 +1990,9 @@ NS_IMETHODIMP nsXULWindow::CreateNewContentWindow(int32_t aChromeFlags,
     nsCOMPtr<nsIDocShell> docShell;
     xulWin->GetDocShell(getter_AddRefs(docShell));
     MOZ_ASSERT(docShell);
-    nsCOMPtr<nsIDOMChromeWindow> chromeWindow =
-      do_QueryInterface(docShell->GetWindow());
-    MOZ_ASSERT(chromeWindow);
-
-    chromeWindow->SetOpenerForInitialContentBrowser(aOpener);
+    nsCOMPtr<nsPIDOMWindowOuter> window = docShell->GetWindow();
+    MOZ_ASSERT(window);
+    window->SetOpenerForInitialContentBrowser(nsPIDOMWindowOuter::From(aOpener));
   }
 
   xulWin->LockUntilChromeLoad();

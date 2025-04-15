@@ -4,10 +4,11 @@
 
 "use strict";
 
-const { Cc, Ci, Cu, Cr } = require("chrome");
+const { Ci, Cu, Cr } = require("chrome");
 const { getCurrentZoom, getWindowDimensions, getViewportDimensions,
   getRootBindingParent, loadSheet } = require("devtools/shared/layout/utils");
 const EventEmitter = require("devtools/shared/event-emitter");
+const InspectorUtils = require("InspectorUtils");
 
 const lazyContainer = {};
 
@@ -19,16 +20,14 @@ exports.getComputedStyle = (node) =>
 exports.getBindingElementAndPseudo = (node) =>
   lazyContainer.CssLogic.getBindingElementAndPseudo(node);
 
-loader.lazyGetter(lazyContainer, "DOMUtils", () =>
-  Cc["@mozilla.org/inspector/dom-utils;1"].getService(Ci.inIDOMUtils));
 exports.hasPseudoClassLock = (...args) =>
-  lazyContainer.DOMUtils.hasPseudoClassLock(...args);
+  InspectorUtils.hasPseudoClassLock(...args);
 
 exports.addPseudoClassLock = (...args) =>
-  lazyContainer.DOMUtils.addPseudoClassLock(...args);
+  InspectorUtils.addPseudoClassLock(...args);
 
 exports.removePseudoClassLock = (...args) =>
-  lazyContainer.DOMUtils.removePseudoClassLock(...args);
+  InspectorUtils.removePseudoClassLock(...args);
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
@@ -255,7 +254,7 @@ CanvasFrameAnonymousContentHelper.prototype = {
     }
 
     // For now highlighters.css is injected in content as a ua sheet because
-    // <style scoped> doesn't work inside anonymous content (see bug 1086532).
+    // we no longer support scoped style sheets (see bug 1345702).
     // If it did, highlighters.css would be injected as an anonymous content
     // node using CanvasFrameAnonymousContentHelper instead.
     loadSheet(this.highlighterEnv.window, STYLESHEET_URI);
@@ -303,7 +302,7 @@ CanvasFrameAnonymousContentHelper.prototype = {
    *   - when first attaching to a page
    *   - when swapping frame loaders (moving tabs, toggling RDM)
    */
-  _onWindowReady(e, {isTopLevel}) {
+  _onWindowReady({isTopLevel}) {
     if (isTopLevel) {
       this._removeAllListeners();
       this.elements.clear();

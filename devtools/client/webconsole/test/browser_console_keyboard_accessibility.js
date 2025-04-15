@@ -7,13 +7,13 @@
 
 "use strict";
 
-add_task(function* () {
+add_task(async function () {
   const TEST_URI = "http://example.com/browser/devtools/client/webconsole/" +
                    "test/test-console.html";
 
-  yield loadTab(TEST_URI);
+  await loadTab(TEST_URI);
 
-  let hud = yield openConsole();
+  let hud = await openConsole();
   ok(hud, "Web Console opened");
 
   info("dump some spew into the console for scrolling");
@@ -21,7 +21,7 @@ add_task(function* () {
                      "console.log('foobarz' + i);" +
                      "}})();");
 
-  yield waitForMessages({
+  await waitForMessages({
     webconsole: hud,
     messages: [{
       text: "foobarz99",
@@ -33,19 +33,19 @@ add_task(function* () {
   let currentPosition = hud.ui.outputWrapper.scrollTop;
   let bottom = currentPosition;
 
-  EventUtils.synthesizeKey("VK_PAGE_UP", {});
+  EventUtils.synthesizeKey("KEY_PageUp");
   isnot(hud.ui.outputWrapper.scrollTop, currentPosition,
         "scroll position changed after page up");
 
   currentPosition = hud.ui.outputWrapper.scrollTop;
-  EventUtils.synthesizeKey("VK_PAGE_DOWN", {});
+  EventUtils.synthesizeKey("KEY_PageDown");
   ok(hud.ui.outputWrapper.scrollTop > currentPosition,
      "scroll position now at bottom");
 
-  EventUtils.synthesizeKey("VK_HOME", {});
+  EventUtils.synthesizeKey("KEY_Home");
   is(hud.ui.outputWrapper.scrollTop, 0, "scroll position now at top");
 
-  EventUtils.synthesizeKey("VK_END", {});
+  EventUtils.synthesizeKey("KEY_End");
 
   let scrollTop = hud.ui.outputWrapper.scrollTop;
   ok(scrollTop > 0 && Math.abs(scrollTop - bottom) <= 5,
@@ -61,7 +61,11 @@ add_task(function* () {
     }
     synthesizeKeyShortcut(clearShortcut);
   });
-  yield hud.jsterm.once("messages-cleared");
+  await hud.jsterm.once("messages-cleared");
+
+  // Wait for the next event tick to make sure keyup for the shortcut above
+  // finishes.  Otherwise the 2 shortcuts are mixed.
+  await new Promise(executeSoon);
 
   is(hud.outputNode.textContent.indexOf("foobarz1"), -1, "output cleared");
   is(hud.jsterm.inputNode.getAttribute("focused"), "true",
@@ -76,12 +80,12 @@ add_task(function* () {
 
   if (Services.appinfo.OS == "Darwin") {
     ok(hud.ui.getFilterState("network"), "network category is enabled");
-    EventUtils.synthesizeKey("t", { ctrlKey: true });
+    EventUtils.synthesizeKey("t", {ctrlKey: true});
     ok(!hud.ui.getFilterState("network"), "accesskey for Network works");
-    EventUtils.synthesizeKey("t", { ctrlKey: true });
+    EventUtils.synthesizeKey("t", {ctrlKey: true});
     ok(hud.ui.getFilterState("network"), "accesskey for Network works (again)");
   } else {
-    EventUtils.synthesizeKey("N", { altKey: true });
+    EventUtils.synthesizeKey("n", {altKey: true});
     let net = hud.ui.document.querySelector("toolbarbutton[category=net]");
     is(hud.ui.document.activeElement, net,
        "accesskey for Network category focuses the Net button");

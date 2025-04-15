@@ -22,6 +22,7 @@
 #include "mozilla/layers/KeyboardMap.h"
 #include "mozilla/layers/LayerAttributes.h"
 #include "mozilla/layers/LayersTypes.h"
+#include "mozilla/layers/RefCountedShmem.h"
 #include "mozilla/Move.h"
 
 #include <stdint.h>
@@ -66,7 +67,7 @@ template <>
 struct ParamTraits<mozilla::layers::ScrollDirection>
   : public ContiguousEnumSerializerInclusive<
             mozilla::layers::ScrollDirection,
-            mozilla::layers::ScrollDirection::NONE,
+            mozilla::layers::ScrollDirection::eVertical,
             mozilla::layers::kHighestScrollDirection>
 {};
 
@@ -76,6 +77,14 @@ struct ParamTraits<mozilla::layers::FrameMetrics::ScrollOffsetUpdateType>
              mozilla::layers::FrameMetrics::ScrollOffsetUpdateType,
              mozilla::layers::FrameMetrics::ScrollOffsetUpdateType::eNone,
              mozilla::layers::FrameMetrics::sHighestScrollOffsetUpdateType>
+{};
+
+template <>
+struct ParamTraits<mozilla::layers::OverscrollBehavior>
+  : public ContiguousEnumSerializerInclusive<
+            mozilla::layers::OverscrollBehavior,
+            mozilla::layers::OverscrollBehavior::Auto,
+            mozilla::layers::kHighestOverscrollBehavior>
 {};
 
 template<>
@@ -225,6 +234,27 @@ struct ParamTraits<mozilla::layers::ScrollSnapInfo>
 };
 
 template <>
+struct ParamTraits<mozilla::layers::OverscrollBehaviorInfo>
+{
+  // Not using PlainOldDataSerializer so we get enum validation
+  // for the members.
+
+  typedef mozilla::layers::OverscrollBehaviorInfo paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam)
+  {
+    WriteParam(aMsg, aParam.mBehaviorX);
+    WriteParam(aMsg, aParam.mBehaviorY);
+  }
+
+  static bool Read(const Message* aMsg, PickleIterator* aIter, paramType* aResult)
+  {
+    return (ReadParam(aMsg, aIter, &aResult->mBehaviorX) &&
+            ReadParam(aMsg, aIter, &aResult->mBehaviorY));
+  }
+};
+
+template <>
 struct ParamTraits<mozilla::layers::LayerClip>
 {
   typedef mozilla::layers::LayerClip paramType;
@@ -259,10 +289,11 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
     WriteParam(aMsg, aParam.mPageScrollAmount);
     WriteParam(aMsg, aParam.mScrollClip);
     WriteParam(aMsg, aParam.mHasScrollgrab);
-    WriteParam(aMsg, aParam.mAllowVerticalScrollWithWheel);
     WriteParam(aMsg, aParam.mIsLayersIdRoot);
     WriteParam(aMsg, aParam.mUsesContainerScrolling);
     WriteParam(aMsg, aParam.mForceDisableApz);
+    WriteParam(aMsg, aParam.mDisregardedDirection);
+    WriteParam(aMsg, aParam.mOverscrollBehavior);
   }
 
   static bool ReadContentDescription(const Message* aMsg, PickleIterator* aIter, paramType* aResult)
@@ -286,10 +317,11 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
             ReadParam(aMsg, aIter, &aResult->mPageScrollAmount) &&
             ReadParam(aMsg, aIter, &aResult->mScrollClip) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetHasScrollgrab) &&
-            ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetAllowVerticalScrollWithWheel) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetIsLayersIdRoot) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetUsesContainerScrolling) &&
-            ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetForceDisableApz));
+            ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetForceDisableApz) &&
+            ReadParam(aMsg, aIter, &aResult->mDisregardedDirection) &&
+            ReadParam(aMsg, aIter, &aResult->mOverscrollBehavior));
   }
 };
 
@@ -407,6 +439,7 @@ struct ParamTraits<mozilla::layers::EventRegions>
     WriteParam(aMsg, aParam.mNoActionRegion);
     WriteParam(aMsg, aParam.mHorizontalPanRegion);
     WriteParam(aMsg, aParam.mVerticalPanRegion);
+    WriteParam(aMsg, aParam.mDTCRequiresTargetConfirmation);
   }
 
   static bool Read(const Message* aMsg, PickleIterator* aIter, paramType* aResult)
@@ -415,7 +448,8 @@ struct ParamTraits<mozilla::layers::EventRegions>
             ReadParam(aMsg, aIter, &aResult->mDispatchToContentHitRegion) &&
             ReadParam(aMsg, aIter, &aResult->mNoActionRegion) &&
             ReadParam(aMsg, aIter, &aResult->mHorizontalPanRegion) &&
-            ReadParam(aMsg, aIter, &aResult->mVerticalPanRegion));
+            ReadParam(aMsg, aIter, &aResult->mVerticalPanRegion) &&
+            ReadParam(aMsg, aIter, &aResult->mDTCRequiresTargetConfirmation));
   }
 };
 

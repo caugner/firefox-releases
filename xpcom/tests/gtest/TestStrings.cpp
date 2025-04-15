@@ -17,6 +17,7 @@
 #include "gtest/gtest.h"
 #include "gtest/MozGTestBench.h" // For MOZ_GTEST_BENCH
 #include "gtest/BlackBox.h"
+#include "nsBidiUtils.h"
 
 namespace TestStrings {
 
@@ -66,6 +67,52 @@ TEST(Strings, IsChar)
   a_test.AssignLiteral(u"hello");
   a_test.AssignLiteral("hello");
 #endif
+}
+
+TEST(Strings, DependentStrings)
+{
+  // A few tests that make sure copying nsTDependentStrings behaves properly.
+  using DataFlags = mozilla::detail::StringDataFlags;
+
+  {
+    // Test copy ctor.
+    nsDependentCString tmp("foo");
+    auto data = tmp.Data();
+    nsDependentCString foo(tmp);
+    // Neither string should be using a shared buffer.
+    EXPECT_FALSE(tmp.GetDataFlags() & DataFlags::SHARED);
+    EXPECT_FALSE(foo.GetDataFlags() & DataFlags::SHARED);
+    // Both strings should be pointing to the original buffer.
+    EXPECT_EQ(data, tmp.Data());
+    EXPECT_EQ(data, foo.Data());
+  }
+  {
+    // Test move ctor.
+    nsDependentCString tmp("foo");
+    auto data = tmp.Data();
+    nsDependentCString foo(mozilla::Move(tmp));
+    // Neither string should be using a shared buffer.
+    EXPECT_FALSE(tmp.GetDataFlags() & DataFlags::SHARED);
+    EXPECT_FALSE(foo.GetDataFlags() & DataFlags::SHARED);
+    // First string should be reset, the second should be pointing to the
+    // original buffer.
+    EXPECT_NE(data, tmp.Data());
+    EXPECT_EQ(data, foo.Data());
+    EXPECT_TRUE(tmp.IsEmpty());
+  }
+  {
+    // Test copying to a nsCString.
+    nsDependentCString tmp("foo");
+    auto data = tmp.Data();
+    nsCString foo(tmp);
+    // Original string should not be shared, copy should be shared.
+    EXPECT_FALSE(tmp.GetDataFlags() & DataFlags::SHARED);
+    EXPECT_TRUE(foo.GetDataFlags() & DataFlags::SHARED);
+    // First string should remain the same, the second should be pointing to
+    // a new buffer.
+    EXPECT_EQ(data, tmp.Data());
+    EXPECT_NE(data, foo.Data());
+  }
 }
 
 TEST(Strings, assign)
@@ -1452,6 +1499,84 @@ MOZ_GTEST_BENCH(Strings, PerfIsASCIIExample3, [] {
     nsCString test(TestExample3);
     for (int i = 0; i < 100000; i++) {
       bool b = IsASCII(*BlackBox(&test));
+      BlackBox(&b);
+    }
+});
+
+MOZ_GTEST_BENCH(Strings, PerfHasRTLCharsExample3, [] {
+    nsCString utf8(TestExample3);
+    nsString test;
+    CopyUTF8toUTF16(utf8, test);
+    for (int i = 0; i < 100000; i++) {
+      bool b = HasRTLChars(*BlackBox(&test));
+      BlackBox(&b);
+    }
+});
+
+// Originally ReadVPXFile in TestVPXDecoding.cpp
+static void
+ReadFile(const char* aPath, nsACString& aBuffer)
+{
+  FILE* f = fopen(aPath, "rb");
+  ASSERT_NE(f, (FILE *) nullptr);
+
+  int r = fseek(f, 0, SEEK_END);
+  ASSERT_EQ(r, 0);
+
+  long size = ftell(f);
+  ASSERT_NE(size, -1);
+  aBuffer.SetLength(size);
+
+  r = fseek(f, 0, SEEK_SET);
+  ASSERT_EQ(r, 0);
+
+  size_t got = fread(aBuffer.BeginWriting(), 1, size, f);
+  ASSERT_EQ(got, size_t(size));
+
+  r = fclose(f);
+  ASSERT_EQ(r, 0);
+}
+
+MOZ_GTEST_BENCH(Strings, PerfHasRTLCharsDE, [] {
+    nsCString utf8;
+    ReadFile("de.txt", utf8);
+    nsString test;
+    CopyUTF8toUTF16(utf8, test);
+    for (int i = 0; i < 100000; i++) {
+      bool b = HasRTLChars(*BlackBox(&test));
+      BlackBox(&b);
+    }
+});
+
+MOZ_GTEST_BENCH(Strings, PerfHasRTLCharsRU, [] {
+    nsCString utf8;
+    ReadFile("ru.txt", utf8);
+    nsString test;
+    CopyUTF8toUTF16(utf8, test);
+    for (int i = 0; i < 100000; i++) {
+      bool b = HasRTLChars(*BlackBox(&test));
+      BlackBox(&b);
+    }
+});
+
+MOZ_GTEST_BENCH(Strings, PerfHasRTLCharsTH, [] {
+    nsCString utf8;
+    ReadFile("th.txt", utf8);
+    nsString test;
+    CopyUTF8toUTF16(utf8, test);
+    for (int i = 0; i < 100000; i++) {
+      bool b = HasRTLChars(*BlackBox(&test));
+      BlackBox(&b);
+    }
+});
+
+MOZ_GTEST_BENCH(Strings, PerfHasRTLCharsJA, [] {
+    nsCString utf8;
+    ReadFile("ja.txt", utf8);
+    nsString test;
+    CopyUTF8toUTF16(utf8, test);
+    for (int i = 0; i < 100000; i++) {
+      bool b = HasRTLChars(*BlackBox(&test));
       BlackBox(&b);
     }
 });

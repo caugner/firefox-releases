@@ -23,13 +23,9 @@
 #include "nsICommandManager.h"
 #include "nsIDocShell.h"
 #include "nsIDocument.h"
-#include "nsIDOMAttr.h"
 #include "nsIDOMCharacterData.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMXULDocument.h"
-#include "nsIDOMMutationEvent.h"
 #include "nsPIDOMWindow.h"
-#include "nsIDOMXULPopupElement.h"
 #include "nsIEditingSession.h"
 #include "nsIFrame.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -51,10 +47,7 @@
 #include "mozilla/dom/TabChild.h"
 #include "mozilla/dom/DocumentType.h"
 #include "mozilla/dom/Element.h"
-
-#ifdef MOZ_XUL
-#include "nsIXULDocument.h"
-#endif
+#include "mozilla/dom/MutationEventBinding.h"
 
 using namespace mozilla;
 using namespace mozilla::a11y;
@@ -215,8 +208,7 @@ DocAccessible::NativeRole()
 
       if (itemType == nsIDocShellTreeItem::typeContent) {
 #ifdef MOZ_XUL
-        nsCOMPtr<nsIXULDocument> xulDoc(do_QueryInterface(mDocumentNode));
-        if (xulDoc)
+        if (mDocumentNode && mDocumentNode->IsXULDocument())
           return roles::APPLICATION;
 #endif
         return roles::DOCUMENT;
@@ -394,8 +386,7 @@ void
 DocAccessible::DocType(nsAString& aType) const
 {
 #ifdef MOZ_XUL
-  nsCOMPtr<nsIXULDocument> xulDoc(do_QueryInterface(mDocumentNode));
-  if (xulDoc) {
+  if (mDocumentNode->IsXULDocument()) {
     aType.AssignLiteral("window"); // doctype not implemented for XUL at time of writing - causes assertion
     return;
   }
@@ -451,9 +442,6 @@ DocAccessible::Shutdown()
 
   RemoveEventListeners();
 
-  nsCOMPtr<nsIDocument> kungFuDeathGripDoc = mDocumentNode;
-  mDocumentNode = nullptr;
-
   if (mParent) {
     DocAccessible* parentDocument = mParent->Document();
     if (parentDocument)
@@ -501,7 +489,8 @@ DocAccessible::Shutdown()
 
   HyperTextAccessibleWrap::Shutdown();
 
-  GetAccService()->NotifyOfDocumentShutdown(this, kungFuDeathGripDoc);
+  GetAccService()->NotifyOfDocumentShutdown(this, mDocumentNode);
+  mDocumentNode = nullptr;
 }
 
 nsIFrame*
@@ -711,10 +700,10 @@ NS_IMPL_NSIDOCUMENTOBSERVER_LOAD_STUB(DocAccessible)
 NS_IMPL_NSIDOCUMENTOBSERVER_STYLE_STUB(DocAccessible)
 
 void
-DocAccessible::AttributeWillChange(nsIDocument* aDocument,
-                                   dom::Element* aElement,
+DocAccessible::AttributeWillChange(dom::Element* aElement,
                                    int32_t aNameSpaceID,
-                                   nsAtom* aAttribute, int32_t aModType,
+                                   nsAtom* aAttribute,
+                                   int32_t aModType,
                                    const nsAttrValue* aNewValue)
 {
   Accessible* accessible = GetAccessible(aElement);
@@ -728,7 +717,7 @@ DocAccessible::AttributeWillChange(nsIDocument* aDocument,
   // Update dependent IDs cache. Take care of elements that are accessible
   // because dependent IDs cache doesn't contain IDs from non accessible
   // elements.
-  if (aModType != nsIDOMMutationEvent::ADDITION)
+  if (aModType != dom::MutationEventBinding::ADDITION)
     RemoveDependentIDsFor(accessible, aAttribute);
 
   if (aAttribute == nsGkAtoms::id) {
@@ -746,7 +735,7 @@ DocAccessible::AttributeWillChange(nsIDocument* aDocument,
   // need to newly expose it as a toggle button) etc.
   if (aAttribute == nsGkAtoms::aria_checked ||
       aAttribute == nsGkAtoms::aria_pressed) {
-    mARIAAttrOldValue = (aModType != nsIDOMMutationEvent::ADDITION) ?
+    mARIAAttrOldValue = (aModType != dom::MutationEventBinding::ADDITION) ?
       nsAccUtils::GetARIAToken(aElement, aAttribute) : nullptr;
     return;
   }
@@ -757,15 +746,13 @@ DocAccessible::AttributeWillChange(nsIDocument* aDocument,
 }
 
 void
-DocAccessible::NativeAnonymousChildListChange(nsIDocument* aDocument,
-                                              nsIContent* aContent,
+DocAccessible::NativeAnonymousChildListChange(nsIContent* aContent,
                                               bool aIsRemove)
 {
 }
 
 void
-DocAccessible::AttributeChanged(nsIDocument* aDocument,
-                                dom::Element* aElement,
+DocAccessible::AttributeChanged(dom::Element* aElement,
                                 int32_t aNameSpaceID, nsAtom* aAttribute,
                                 int32_t aModType,
                                 const nsAttrValue* aOldValue)
@@ -803,8 +790,8 @@ DocAccessible::AttributeChanged(nsIDocument* aDocument,
   // its accessible will be created later. It doesn't make sense to keep
   // dependent IDs for non accessible elements. For the second case we'll update
   // dependent IDs cache when its accessible is created.
-  if (aModType == nsIDOMMutationEvent::MODIFICATION ||
-      aModType == nsIDOMMutationEvent::ADDITION) {
+  if (aModType == dom::MutationEventBinding::MODIFICATION ||
+      aModType == dom::MutationEventBinding::ADDITION) {
     AddDependentIDsFor(accessible, aAttribute);
   }
 }
@@ -876,7 +863,7 @@ DocAccessible::AttributeChangedImpl(Accessible* aAccessible,
     return;
   }
 
-  nsIContent* elm = aAccessible->GetContent();
+  dom::Element* elm = aAccessible->GetContent()->AsElement();
   if (aAttribute == nsGkAtoms::aria_labelledby &&
       !elm->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_label)) {
     FireDelayedEvent(nsIAccessibleEvent::EVENT_NAME_CHANGE, aAccessible);
@@ -997,7 +984,7 @@ DocAccessible::ARIAAttributeChanged(Accessible* aAccessible, nsAtom* aAttribute)
     FireDelayedEvent(event);
   }
 
-  nsIContent* elm = aAccessible->GetContent();
+  dom::Element* elm = aAccessible->GetContent()->AsElement();
 
   // Update aria-hidden flag for the whole subtree iff aria-hidden is changed
   // on the root, i.e. ignore any affiliated aria-hidden changes in the subtree
@@ -1073,9 +1060,11 @@ void
 DocAccessible::ARIAActiveDescendantChanged(Accessible* aAccessible)
 {
   nsIContent* elm = aAccessible->GetContent();
-  if (elm && aAccessible->IsActiveWidget()) {
+  if (elm && elm->IsElement() && aAccessible->IsActiveWidget()) {
     nsAutoString id;
-    if (elm->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_activedescendant, id)) {
+    if (elm->AsElement()->GetAttr(kNameSpaceID_None,
+                                  nsGkAtoms::aria_activedescendant,
+                                  id)) {
       dom::Element* activeDescendantElm = elm->OwnerDoc()->GetElementById(id);
       if (activeDescendantElm) {
         Accessible* activeDescendant = GetAccessible(activeDescendantElm);
@@ -1093,9 +1082,7 @@ DocAccessible::ARIAActiveDescendantChanged(Accessible* aAccessible)
 }
 
 void
-DocAccessible::ContentAppended(nsIDocument* aDocument,
-                               nsIContent* aContainer,
-                               nsIContent* aFirstNewContent)
+DocAccessible::ContentAppended(nsIContent* aFirstNewContent)
 {
 }
 
@@ -1146,35 +1133,30 @@ DocAccessible::DocumentStatesChanged(nsIDocument* aDocument,
 }
 
 void
-DocAccessible::CharacterDataWillChange(nsIDocument* aDocument,
-                                       nsIContent* aContent,
-                                       CharacterDataChangeInfo* aInfo)
+DocAccessible::CharacterDataWillChange(nsIContent* aContent,
+                                       const CharacterDataChangeInfo&)
 {
 }
 
 void
-DocAccessible::CharacterDataChanged(nsIDocument* aDocument,
-                                    nsIContent* aContent,
-                                    CharacterDataChangeInfo* aInfo)
+DocAccessible::CharacterDataChanged(nsIContent* aContent,
+                                    const CharacterDataChangeInfo&)
 {
 }
 
 void
-DocAccessible::ContentInserted(nsIDocument* aDocument, nsIContent* aContainer,
-                               nsIContent* aChild)
+DocAccessible::ContentInserted(nsIContent* aChild)
 {
 }
 
 void
-DocAccessible::ContentRemoved(nsIDocument* aDocument,
-                              nsIContent* aContainerNode,
-                              nsIContent* aChildNode,
+DocAccessible::ContentRemoved(nsIContent* aChildNode,
                               nsIContent* aPreviousSiblingNode)
 {
 #ifdef A11Y_LOG
   if (logging::IsEnabled(logging::eTree)) {
     logging::MsgBegin("TREE", "DOM content removed; doc: %p", this);
-    logging::Node("container node", aContainerNode);
+    logging::Node("container node", aChildNode->GetParent());
     logging::Node("content node", aChildNode);
     logging::MsgEnd();
   }
@@ -1250,26 +1232,14 @@ DocAccessible::GetAccessibleOrContainer(nsINode* aNode) const
   if (!aNode || !aNode->GetComposedDoc())
     return nullptr;
 
-  nsINode* currNode = aNode;
-  Accessible* accessible = nullptr;
-  while (!(accessible = GetAccessible(currNode))) {
-    nsINode* parent = nullptr;
-
-    // If this is a content node, try to get a flattened parent content node.
-    // This will smartly skip from the shadow root to the host element,
-    // over parentless document fragment
-    if (currNode->IsContent())
-      parent = currNode->AsContent()->GetFlattenedTreeParent();
-
-    // Fallback to just get parent node, in case there is no parent content
-    // node. Or current node is not a content node.
-    if (!parent)
-      parent = currNode->GetParentNode();
-
-    if (!(currNode = parent)) break;
+  for (nsINode* currNode = aNode; currNode;
+       currNode = currNode->GetFlattenedTreeParentNode()) {
+    if (Accessible* accessible = GetAccessible(currNode)) {
+      return accessible;
+    }
   }
 
-  return accessible;
+  return nullptr;
 }
 
 Accessible*
@@ -1312,8 +1282,9 @@ DocAccessible::BindToDocument(Accessible* aAccessible,
   if (aAccessible->HasOwnContent()) {
     AddDependentIDsFor(aAccessible);
 
-    nsIContent* el = aAccessible->GetContent();
-    if (el->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_owns)) {
+    nsIContent* content = aAccessible->GetContent();
+    if (content->IsElement() &&
+        content->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_owns)) {
       mNotificationController->ScheduleRelocation(aAccessible);
     }
   }
@@ -1854,6 +1825,7 @@ InsertIterator::Next()
       if (finder.Seek(node)) {
         mChild = mWalker.Scope(node);
         if (mChild) {
+          MOZ_ASSERT(!mChild->IsRelocated(), "child cannot be aria owned");
           mChildBefore = finder.Prev();
           return true;
         }
@@ -2213,7 +2185,8 @@ DocAccessible::PutChildrenBack(nsTArray<RefPtr<Accessible> >* aChildren,
 
     nsIContent* content = child->GetContent();
     int32_t idxInParent = -1;
-    Accessible* origContainer = AccessibleOrTrueContainer(content->GetParentNode());
+    Accessible* origContainer =
+      AccessibleOrTrueContainer(content->GetFlattenedTreeParentNode());
     if (origContainer) {
       TreeWalker walker(origContainer);
       if (walker.Seek(content)) {
@@ -2367,7 +2340,7 @@ DocAccessible::CacheChildrenInSubtree(Accessible* aRoot,
   // XXX: we should delay document load complete event if the ARIA document
   // has aria-busy.
   roles::Role role = aRoot->ARIARole();
-  if (!aRoot->IsDoc() && (role == roles::DIALOG || role == roles::DOCUMENT)) {
+  if (!aRoot->IsDoc() && (role == roles::DIALOG || role == roles::NON_NATIVE_DOCUMENT)) {
     FireDelayedEvent(nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE, aRoot);
   }
 }

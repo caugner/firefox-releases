@@ -17,7 +17,8 @@ namespace gfx {
 class GradientStopsD2D : public GradientStops
 {
 public:
-  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GradientStopsD2D)
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GradientStopsD2D, override)
+
   GradientStopsD2D(ID2D1GradientStopCollection *aStopCollection, ID3D11Device *aDevice)
     : mStopCollection(aStopCollection)
     , mDevice(aDevice)
@@ -25,7 +26,7 @@ public:
 
   virtual BackendType GetBackendType() const { return BackendType::DIRECT2D; }
 
-  virtual bool IsValid() const final{ return mDevice == Factory::GetDirect3D11Device(); }
+  bool IsValid() const final { return mDevice == Factory::GetDirect3D11Device(); }
 
 private:
   friend class DrawTargetD2D;

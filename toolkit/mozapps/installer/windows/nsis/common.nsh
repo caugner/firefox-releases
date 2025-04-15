@@ -5099,6 +5099,15 @@
               ${ElevateUAC}
             ${EndIf}
 
+            !ifdef MOZ_OPTIONAL_EXTENSIONS
+              ReadINIStr $R8 $R7 "Install" "OptionalExtensions"
+              ${If} $R8 == "false"
+                StrCpy $InstallOptionalExtensions "0"
+              ${Else}
+                StrCpy $InstallOptionalExtensions "1"
+              ${EndIf}
+            !endif
+
             !ifndef NO_STARTMENU_DIR
               ReadINIStr $R8 $R7 "Install" "StartMenuDirectoryName"
               ${If} $R8 != ""

@@ -25,6 +25,7 @@
 #include "js/TypeDecls.h"     // for Handle, Value, JSObject, JSContext
 #include "mozilla/dom/DOMString.h"
 #include "mozilla/dom/BindingDeclarations.h"
+#include "mozilla/dom/NodeBinding.h"
 #include "nsTHashtable.h"
 #include <iosfwd>
 
@@ -76,13 +77,16 @@ inline bool IsSpaceCharacter(char aChar) {
 class AccessibleNode;
 struct BoxQuadOptions;
 struct ConvertCoordinateOptions;
+class DocGroup;
 class DOMPoint;
 class DOMQuad;
 class DOMRectReadOnly;
 class Element;
 class EventHandlerNonNull;
+class L10nCallback;
 template<typename T> class Optional;
 class OwningNodeOrString;
+class Promise;
 template<typename> class Sequence;
 class Text;
 class TextOrElementOrDocument;
@@ -278,6 +282,7 @@ private:
 #define DOM_USER_DATA         1
 
 // IID for the nsINode interface
+// Must be kept in sync with xpcom/rust/xpcom/src/interfaces/nonidl.rs
 #define NS_INODE_IID \
 { 0x70ba4547, 0x7699, 0x44fc, \
   { 0xb3, 0x20, 0x52, 0xdb, 0xe3, 0xd1, 0xf9, 0x0a } }
@@ -292,6 +297,7 @@ class nsINode : public mozilla::dom::EventTarget
 public:
   typedef mozilla::dom::BoxQuadOptions BoxQuadOptions;
   typedef mozilla::dom::ConvertCoordinateOptions ConvertCoordinateOptions;
+  typedef mozilla::dom::DocGroup DocGroup;
   typedef mozilla::dom::DOMPoint DOMPoint;
   typedef mozilla::dom::DOMPointInit DOMPointInit;
   typedef mozilla::dom::DOMQuad DOMQuad;
@@ -300,6 +306,26 @@ public:
   typedef mozilla::dom::TextOrElementOrDocument TextOrElementOrDocument;
   typedef mozilla::dom::CallerType CallerType;
   typedef mozilla::ErrorResult ErrorResult;
+
+  // XXXbz Maybe we should codegen a class holding these constants and
+  // inherit from it...
+  static const auto ELEMENT_NODE = mozilla::dom::NodeBinding::ELEMENT_NODE;
+  static const auto ATTRIBUTE_NODE = mozilla::dom::NodeBinding::ATTRIBUTE_NODE;
+  static const auto TEXT_NODE = mozilla::dom::NodeBinding::TEXT_NODE;
+  static const auto CDATA_SECTION_NODE =
+    mozilla::dom::NodeBinding::CDATA_SECTION_NODE;
+  static const auto ENTITY_REFERENCE_NODE =
+    mozilla::dom::NodeBinding::ENTITY_REFERENCE_NODE;
+  static const auto ENTITY_NODE = mozilla::dom::NodeBinding::ENTITY_NODE;
+  static const auto PROCESSING_INSTRUCTION_NODE =
+    mozilla::dom::NodeBinding::PROCESSING_INSTRUCTION_NODE;
+  static const auto COMMENT_NODE = mozilla::dom::NodeBinding::COMMENT_NODE;
+  static const auto DOCUMENT_NODE = mozilla::dom::NodeBinding::DOCUMENT_NODE;
+  static const auto DOCUMENT_TYPE_NODE =
+    mozilla::dom::NodeBinding::DOCUMENT_TYPE_NODE;
+  static const auto DOCUMENT_FRAGMENT_NODE =
+    mozilla::dom::NodeBinding::DOCUMENT_FRAGMENT_NODE;
+  static const auto NOTATION_NODE = mozilla::dom::NodeBinding::NOTATION_NODE;
 
   template<class T>
   using Sequence = mozilla::dom::Sequence<T>;
@@ -419,6 +445,12 @@ public:
         IsNodeOfType(eDATA_NODE));
   }
 
+  bool
+  IsSlotable() const
+  {
+    return IsElement() || IsNodeOfType(eTEXT);
+  }
+
   virtual JSObject* WrapObject(JSContext *aCx, JS::Handle<JSObject*> aGivenProto) override;
 
   /**
@@ -494,21 +526,24 @@ public:
   virtual uint32_t GetChildCount() const = 0;
 
   /**
+   * NOTE: this function is going to be removed soon (hopefully!) Don't use it
+   * in new code.
+   *
    * Get a child by index
    * @param aIndex the index of the child to get
    * @return the child, or null if index out of bounds
    */
-  virtual nsIContent* GetChildAt(uint32_t aIndex) const = 0;
+  virtual nsIContent* GetChildAt_Deprecated(uint32_t aIndex) const = 0;
 
   /**
    * Get the index of a child within this content
    * @param aPossibleChild the child to get the index of.
    * @return the index of the child, or -1 if not a child
    *
-   * If the return value is not -1, then calling GetChildAt() with that value
-   * will return aPossibleChild.
+   * If the return value is not -1, then calling GetChildAt_Deprecated() with
+   * that value will return aPossibleChild.
    */
-  virtual int32_t IndexOf(const nsINode* aPossibleChild) const = 0;
+  virtual int32_t ComputeIndexOf(const nsINode* aPossibleChild) const = 0;
 
   /**
    * Returns the "node document" of this node.
@@ -524,7 +559,7 @@ public:
    *
    * For all other cases OwnerDoc and GetOwnerDocument behave identically.
    */
-  nsIDocument *OwnerDoc() const
+  nsIDocument* OwnerDoc() const
   {
     return mNodeInfo->GetDocument();
   }
@@ -533,7 +568,7 @@ public:
    * Return the "owner document" of this node as an nsINode*.  Implemented
    * in nsIDocument.h.
    */
-  nsINode *OwnerDocAsNode() const;
+  inline nsINode* OwnerDocAsNode() const;
 
   /**
    * Returns true if the content has an ancestor that is a document.
@@ -606,6 +641,11 @@ public:
   {
     return mNodeInfo->NamespaceID() == aNamespace;
   }
+
+  /**
+   * Returns the DocGroup of the "node document" of this node.
+   */
+  DocGroup* GetDocGroup() const;
 
   /**
    * Print a debugger friendly descriptor of this element. This will describe
@@ -692,6 +732,36 @@ public:
     return IsMathMLElement() && IsNodeInternal(aFirst, aArgs...);
   }
 
+  bool IsShadowRoot() const
+  {
+    const bool isShadowRoot = IsInShadowTree() && !GetParentNode();
+    MOZ_ASSERT_IF(isShadowRoot, NodeType() == DOCUMENT_FRAGMENT_NODE);
+    return isShadowRoot;
+  }
+
+  /**
+   * Insert a content node before another or at the end.
+   * This method handles calling BindToTree on the child appropriately.
+   *
+   * @param aKid the content to insert
+   * @param aBeforeThis an existing node. Use nullptr if you want to
+   *        add aKid at the end.
+   * @param aNotify whether to notify the document (current document for
+   *        nsIContent, and |this| for nsIDocument) that the insert has
+   *        occurred
+   *
+   * @throws NS_ERROR_DOM_HIERARCHY_REQUEST_ERR if one attempts to have more
+   * than one element node as a child of a document.  Doing this will also
+   * assert -- you shouldn't be doing it!  Check with
+   * nsIDocument::GetRootElement() first if you're not sure.  Apart from this
+   * one constraint, this doesn't do any checking on whether aKid is a valid
+   * child of |this|.
+   *
+   * @throws NS_ERROR_OUT_OF_MEMORY in some cases (from BindToTree).
+   */
+  virtual nsresult InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
+                                     bool aNotify) = 0;
+
   /**
    * Insert a content node at a particular index.  This method handles calling
    * BindToTree on the child appropriately.
@@ -712,8 +782,8 @@ public:
    *
    * @throws NS_ERROR_OUT_OF_MEMORY in some cases (from BindToTree).
    */
-  virtual nsresult InsertChildAt(nsIContent* aKid, uint32_t aIndex,
-                                 bool aNotify) = 0;
+  virtual nsresult InsertChildAt_Deprecated(nsIContent* aKid, uint32_t aIndex,
+                                            bool aNotify) = 0;
 
   /**
    * Append a content node to the end of the child list.  This method handles
@@ -735,10 +805,13 @@ public:
    */
   nsresult AppendChildTo(nsIContent* aKid, bool aNotify)
   {
-    return InsertChildAt(aKid, GetChildCount(), aNotify);
+    return InsertChildAt_Deprecated(aKid, GetChildCount(), aNotify);
   }
 
   /**
+   * NOTE: this function is going to be removed soon (hopefully!) Don't use it
+   * in new code.
+   *
    * Remove a child from this node.  This method handles calling UnbindFromTree
    * on the child appropriately.
    *
@@ -749,7 +822,18 @@ public:
    *
    * Note: If there is no child at aIndex, this method will simply do nothing.
    */
-  virtual void RemoveChildAt(uint32_t aIndex, bool aNotify) = 0;
+  virtual void RemoveChildAt_Deprecated(uint32_t aIndex, bool aNotify) = 0;
+
+  /**
+   * Remove a child from this node.  This method handles calling UnbindFromTree
+   * on the child appropriately.
+   *
+   * @param aKid the content to remove
+   * @param aNotify whether to notify the document (current document for
+   *        nsIContent, and |this| for nsIDocument) that the remove has
+   *        occurred
+   */
+  virtual void RemoveChildNode(nsIContent* aKid, bool aNotify) = 0;
 
   /**
    * Get a property associated with this node.
@@ -930,6 +1014,14 @@ public:
   }
 
   /**
+   * This is similar to above, but in case 'this' is ShadowRoot, we return its
+   * host element.
+   */
+  nsINode* GetParentOrHostNode() const;
+
+  enum FlattenedParentType { eNotForStyle, eForStyle };
+
+  /**
    * Returns the node that is the parent of this node in the flattened
    * tree. This differs from the normal parent if the node is filtered
    * into an insertion point, or if the node is a direct child of a
@@ -940,10 +1032,10 @@ public:
   inline nsINode* GetFlattenedTreeParentNode() const;
 
   /**
-   * Like GetFlattenedTreeParentNode, but returns null for any native
-   * anonymous content that was generated for ancestor frames of the
-   * root element's primary frame, such as scrollbar elements created
-   * by the root scroll frame.
+   * Like GetFlattenedTreeParentNode, but returns the document for any native
+   * anonymous content that was generated for ancestor frames of the document
+   * element's primary frame, such as scrollbar elements created by the root
+   * scroll frame.
    */
   inline nsINode* GetFlattenedTreeParentNodeForStyle() const;
 
@@ -1099,8 +1191,8 @@ public:
     // putting a DestroySlots function on nsINode
     virtual ~nsSlots();
 
-    void Traverse(nsCycleCollectionTraversalCallback &cb);
-    void Unlink();
+    virtual void Traverse(nsCycleCollectionTraversalCallback&);
+    virtual void Unlink();
 
     /**
      * A list of mutation observers
@@ -1281,7 +1373,7 @@ public:
   {
     uint32_t count = GetChildCount();
 
-    return count > 0 ? GetChildAt(count - 1) : nullptr;
+    return count > 0 ? GetChildAt_Deprecated(count - 1) : nullptr;
   }
 
   /**
@@ -1340,9 +1432,15 @@ public:
     GetTextContentInternal(aTextContent, aError);
   }
   void SetTextContent(const nsAString& aTextContent,
+                      nsIPrincipal* aSubjectPrincipal,
                       mozilla::ErrorResult& aError)
   {
-    SetTextContentInternal(aTextContent, aError);
+    SetTextContentInternal(aTextContent, aSubjectPrincipal, aError);
+  }
+  void SetTextContent(const nsAString& aTextContent,
+                      mozilla::ErrorResult& aError)
+  {
+    SetTextContentInternal(aTextContent, nullptr, aError);
   }
 
   mozilla::dom::Element* QuerySelector(const nsAString& aSelector,
@@ -1663,29 +1761,29 @@ public:
   void ClearHasValidDir() { ClearBoolFlag(NodeHasValidDirAttribute); }
   bool HasValidDir() const { return GetBoolFlag(NodeHasValidDirAttribute); }
   void SetHasDirAutoSet() {
-    MOZ_ASSERT(NodeType() != nsIDOMNode::TEXT_NODE,
+    MOZ_ASSERT(NodeType() != TEXT_NODE,
                "SetHasDirAutoSet on text node");
     SetBoolFlag(NodeHasDirAutoSet);
   }
   void ClearHasDirAutoSet() {
-    MOZ_ASSERT(NodeType() != nsIDOMNode::TEXT_NODE,
+    MOZ_ASSERT(NodeType() != TEXT_NODE,
                "ClearHasDirAutoSet on text node");
     ClearBoolFlag(NodeHasDirAutoSet);
   }
   bool HasDirAutoSet() const
     { return GetBoolFlag(NodeHasDirAutoSet); }
   void SetHasTextNodeDirectionalityMap() {
-    MOZ_ASSERT(NodeType() == nsIDOMNode::TEXT_NODE,
+    MOZ_ASSERT(NodeType() == TEXT_NODE,
                "SetHasTextNodeDirectionalityMap on non-text node");
     SetBoolFlag(NodeHasTextNodeDirectionalityMap);
   }
   void ClearHasTextNodeDirectionalityMap() {
-    MOZ_ASSERT(NodeType() == nsIDOMNode::TEXT_NODE,
+    MOZ_ASSERT(NodeType() == TEXT_NODE,
                "ClearHasTextNodeDirectionalityMap on non-text node");
     ClearBoolFlag(NodeHasTextNodeDirectionalityMap);
   }
   bool HasTextNodeDirectionalityMap() const {
-    MOZ_ASSERT(NodeType() == nsIDOMNode::TEXT_NODE,
+    MOZ_ASSERT(NodeType() == TEXT_NODE,
                "HasTextNodeDirectionalityMap on non-text node");
     return GetBoolFlag(NodeHasTextNodeDirectionalityMap);
   }
@@ -1788,6 +1886,9 @@ public:
   void GetBoundMutationObservers(nsTArray<RefPtr<nsDOMMutationObserver> >& aResult);
   void GenerateXPath(nsAString& aResult);
 
+  already_AddRefed<mozilla::dom::Promise>
+  Localize(JSContext* aCx, mozilla::dom::L10nCallback& aCallback, mozilla::ErrorResult& aRv);
+
   already_AddRefed<mozilla::dom::AccessibleNode> GetAccessibleNode();
 
   /**
@@ -1799,7 +1900,7 @@ public:
   void GetNodeName(mozilla::dom::DOMString& aNodeName)
   {
     const nsString& nodeName = NodeName();
-    aNodeName.SetOwnedString(nodeName);
+    aNodeName.SetKnownLiveString(nodeName);
   }
   MOZ_MUST_USE nsresult GetBaseURI(nsAString& aBaseURI) const;
   // Return the base URI for the document.
@@ -1863,7 +1964,7 @@ public:
   void GetLocalName(mozilla::dom::DOMString& aLocalName) const
   {
     const nsString& localName = LocalName();
-    aLocalName.SetOwnedString(localName);
+    aLocalName.SetKnownLiveString(localName);
   }
 
   nsDOMAttributeMap* GetAttributes();
@@ -1993,6 +2094,7 @@ protected:
   virtual void GetTextContentInternal(nsAString& aTextContent,
                                       mozilla::OOMReporter& aError);
   virtual void SetTextContentInternal(const nsAString& aTextContent,
+                                      nsIPrincipal* aSubjectPrincipal,
                                       mozilla::ErrorResult& aError)
   {
   }
@@ -2003,16 +2105,6 @@ protected:
   virtual void CheckNotNativeAnonymous() const;
 #endif
 
-  // These are just used to implement nsIDOMNode using
-  // NS_FORWARD_NSIDOMNODE_TO_NSINODE_HELPER and for quickstubs.
-  nsresult GetParentNode(nsIDOMNode** aParentNode);
-  nsresult GetChildNodes(nsIDOMNodeList** aChildNodes);
-  nsresult GetFirstChild(nsIDOMNode** aFirstChild);
-  nsresult GetLastChild(nsIDOMNode** aLastChild);
-  nsresult GetPreviousSibling(nsIDOMNode** aPrevSibling);
-  nsresult GetNextSibling(nsIDOMNode** aNextSibling);
-  nsresult GetOwnerDocument(nsIDOMDocument** aOwnerDocument);
-
   void EnsurePreInsertionValidity1(nsINode& aNewChild, nsINode* aRefChild,
                                    mozilla::ErrorResult& aError);
   void EnsurePreInsertionValidity2(bool aReplace, nsINode& aNewChild,
@@ -2021,7 +2113,6 @@ protected:
   nsINode* ReplaceOrInsertBefore(bool aReplace, nsINode* aNewChild,
                                  nsINode* aRefChild,
                                  mozilla::ErrorResult& aError);
-  nsresult RemoveChild(nsIDOMNode* aOldChild, nsIDOMNode** aReturn);
 
   /**
    * Returns the Element that should be used for resolving namespaces
@@ -2046,7 +2137,7 @@ protected:
                        nsAttrAndChildArray& aChildArray);
 
   /**
-   * Most of the implementation of the nsINode InsertChildAt method.
+   * Most of the implementation of the nsINode InsertChildAt_Deprecated method.
    * Should only be called on document, element, and document fragment
    * nodes.  The aChildArray passed in should be the one for |this|.
    *
@@ -2099,10 +2190,14 @@ protected:
     const ServoFunctor& aServoFunctor,
     const GeckoFunctor& aGeckoFunctor)
   {
-    if (false) {
+    if (IsStyledByServo()) {
       return aServoFunctor(ParseServoSelectorList(aSelectorString, aRv));
     }
+#ifdef MOZ_OLD_STYLE
     return aGeckoFunctor(ParseSelectorList(aSelectorString, aRv));
+#else
+    MOZ_CRASH("old style system disabled");
+#endif
   }
 
 public:
@@ -2197,111 +2292,5 @@ ToCanonicalSupports(nsINode* aPointer)
 {
   return aPointer;
 }
-
-#define NS_FORWARD_NSIDOMNODE_TO_NSINODE_HELPER(...) \
-  NS_IMETHOD GetNodeName(nsAString& aNodeName) __VA_ARGS__ override \
-  { \
-    aNodeName = nsINode::NodeName(); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD GetNodeValue(nsAString& aNodeValue) __VA_ARGS__ override \
-  { \
-    nsINode::GetNodeValue(aNodeValue); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD SetNodeValue(const nsAString& aNodeValue) __VA_ARGS__ override \
-  { \
-    mozilla::ErrorResult rv; \
-    nsINode::SetNodeValue(aNodeValue, rv); \
-    return rv.StealNSResult(); \
-  } \
-  NS_IMETHOD GetNodeType(uint16_t* aNodeType) __VA_ARGS__ override \
-  { \
-    *aNodeType = nsINode::NodeType(); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD GetParentNode(nsIDOMNode** aParentNode) __VA_ARGS__ override \
-  { \
-    return nsINode::GetParentNode(aParentNode); \
-  } \
-  NS_IMETHOD GetChildNodes(nsIDOMNodeList** aChildNodes) __VA_ARGS__ override \
-  { \
-    return nsINode::GetChildNodes(aChildNodes); \
-  } \
-  NS_IMETHOD GetFirstChild(nsIDOMNode** aFirstChild) __VA_ARGS__ override \
-  { \
-    return nsINode::GetFirstChild(aFirstChild); \
-  } \
-  NS_IMETHOD GetLastChild(nsIDOMNode** aLastChild) __VA_ARGS__ override \
-  { \
-    return nsINode::GetLastChild(aLastChild); \
-  } \
-  NS_IMETHOD GetPreviousSibling(nsIDOMNode** aPreviousSibling) __VA_ARGS__ override \
-  { \
-    return nsINode::GetPreviousSibling(aPreviousSibling); \
-  } \
-  NS_IMETHOD GetNextSibling(nsIDOMNode** aNextSibling) __VA_ARGS__ override \
-  { \
-    return nsINode::GetNextSibling(aNextSibling); \
-  } \
-  NS_IMETHOD GetOwnerDocument(nsIDOMDocument** aOwnerDocument) __VA_ARGS__ override \
-  { \
-    return nsINode::GetOwnerDocument(aOwnerDocument); \
-  } \
-  NS_IMETHOD RemoveChild(nsIDOMNode* aOldChild, nsIDOMNode** aResult) __VA_ARGS__ override \
-  { \
-    return nsINode::RemoveChild(aOldChild, aResult); \
-  } \
-  NS_IMETHOD HasChildNodes(bool* aResult) __VA_ARGS__ override \
-  { \
-    *aResult = nsINode::HasChildNodes(); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD CloneNode(bool aDeep, uint8_t aArgc, nsIDOMNode** aResult) __VA_ARGS__ override \
-  { \
-    if (aArgc == 0) { \
-      aDeep = true; \
-    } \
-    mozilla::ErrorResult rv; \
-    nsCOMPtr<nsINode> clone = nsINode::CloneNode(aDeep, rv); \
-    if (rv.Failed()) { \
-      return rv.StealNSResult(); \
-    } \
-    *aResult = clone.forget().take()->AsDOMNode(); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD GetNamespaceURI(nsAString& aNamespaceURI) __VA_ARGS__ override \
-  { \
-    nsINode::GetNamespaceURI(aNamespaceURI); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD GetPrefix(nsAString& aPrefix) __VA_ARGS__ override \
-  { \
-    nsINode::GetPrefix(aPrefix); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD GetLocalName(nsAString& aLocalName) __VA_ARGS__ override \
-  { \
-    aLocalName = nsINode::LocalName(); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD GetTextContent(nsAString& aTextContent) __VA_ARGS__ override \
-  { \
-    mozilla::ErrorResult rv; \
-    nsINode::GetTextContent(aTextContent, rv); \
-    return rv.StealNSResult(); \
-  } \
-  NS_IMETHOD SetTextContent(const nsAString& aTextContent) __VA_ARGS__ override \
-  { \
-    mozilla::ErrorResult rv; \
-    nsINode::SetTextContent(aTextContent, rv); \
-    return rv.StealNSResult(); \
-  }
-
-#define NS_FORWARD_NSIDOMNODE_TO_NSINODE \
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE_HELPER(final)
-
-#define NS_FORWARD_NSIDOMNODE_TO_NSINODE_OVERRIDABLE \
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE_HELPER()
 
 #endif /* nsINode_h___ */

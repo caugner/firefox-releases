@@ -9,8 +9,7 @@
 #include "mozilla/Attributes.h"
 #include "nsDocument.h"
 #include "nsIHTMLDocument.h"
-#include "nsIDOMHTMLDocument.h"
-#include "nsIDOMHTMLCollection.h"
+#include "nsIHTMLCollection.h"
 #include "nsIScriptElement.h"
 #include "nsTArray.h"
 
@@ -35,8 +34,7 @@ class HTMLAllCollection;
 } // namespace mozilla
 
 class nsHTMLDocument : public nsDocument,
-                       public nsIHTMLDocument,
-                       public nsIDOMHTMLDocument
+                       public nsIHTMLDocument
 {
 public:
   using nsDocument::SetDocumentURI;
@@ -94,12 +92,6 @@ public:
   using nsDocument::GetLastStyleSheetSet;
   using nsDocument::MozSetImageElement;
 
-  // nsIDOMNode interface
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-
-  // nsIDOMHTMLDocument interface
-  NS_DECL_NSIDOMHTMLDOCUMENT
-
   mozilla::dom::HTMLAllCollection* All();
 
   nsISupports* ResolveName(const nsAString& aName, nsWrapperCache **aCache);
@@ -156,11 +148,7 @@ public:
                          bool aPreallocateChildren) const override;
 
   virtual void RemovedFromDocShell() override;
-
-  virtual mozilla::dom::Element *GetElementById(const nsAString& aElementId) override
-  {
-    return nsDocument::GetElementById(aElementId);
-  }
+  using mozilla::dom::DocumentOrShadowRoot::GetElementById;
 
   virtual void DocAddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const override;
   // DocAddSizeOfIncludingThis is inherited from nsIDocument.
@@ -170,6 +158,7 @@ public:
   // WebIDL API
   virtual JSObject* WrapNode(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
     override;
+  void GetDomain(nsAString& aDomain);
   void SetDomain(const nsAString& aDomain, mozilla::ErrorResult& rv);
   bool IsRegistrableDomainSuffixOfOrEqualTo(const nsAString& aHostSuffixString,
                                             const nsACString& aOrigHost);
@@ -179,8 +168,6 @@ public:
                    JS::MutableHandle<JSObject*> aRetval,
                    mozilla::ErrorResult& rv);
   void GetSupportedNames(nsTArray<nsString>& aNames);
-  nsGenericHTMLElement *GetBody();
-  void SetBody(nsGenericHTMLElement* aBody, mozilla::ErrorResult& rv);
   mozilla::dom::HTMLSharedElement *GetHead() {
     return static_cast<mozilla::dom::HTMLSharedElement*>(GetHeadElement());
   }
@@ -209,11 +196,7 @@ public:
              mozilla::ErrorResult& rv);
   void Writeln(JSContext* cx, const mozilla::dom::Sequence<nsString>& aText,
                mozilla::ErrorResult& rv);
-  void GetDesignMode(nsAString& aDesignMode,
-                     nsIPrincipal& aSubjectPrincipal)
-  {
-    GetDesignMode(aDesignMode);
-  }
+  void GetDesignMode(nsAString& aDesignMode);
   void SetDesignMode(const nsAString& aDesignMode,
                      nsIPrincipal& aSubjectPrincipal,
                      mozilla::ErrorResult& rv);
@@ -234,19 +217,24 @@ public:
                              mozilla::dom::CallerType aCallerType);
   void QueryCommandValue(const nsAString& aCommandID, nsAString& aValue,
                          mozilla::ErrorResult& rv);
-  // The XPCOM Get/SetFgColor work OK for us, since they never throw.
-  // The XPCOM Get/SetLinkColor work OK for us, since they never throw.
-  // The XPCOM Get/SetVLinkColor work OK for us, since they never throw.
-  // The XPCOM Get/SetALinkColor work OK for us, since they never throw.
-  // The XPCOM Get/SetBgColor work OK for us, since they never throw.
+  void GetFgColor(nsAString& aFgColor);
+  void SetFgColor(const nsAString& aFgColor);
+  void GetLinkColor(nsAString& aLinkColor);
+  void SetLinkColor(const nsAString& aLinkColor);
+  void GetVlinkColor(nsAString& aAvlinkColor);
+  void SetVlinkColor(const nsAString& aVlinkColor);
+  void GetAlinkColor(nsAString& aAlinkColor);
+  void SetAlinkColor(const nsAString& aAlinkColor);
+  void GetBgColor(nsAString& aBgColor);
+  void SetBgColor(const nsAString& aBgColor);
   nsIHTMLCollection* Anchors();
   nsIHTMLCollection* Applets();
   void Clear() const
   {
     // Deprecated
   }
-  // The XPCOM CaptureEvents works fine for us.
-  // The XPCOM ReleaseEvents works fine for us.
+  void CaptureEvents();
+  void ReleaseEvents();
   // We're picking up GetLocation from Document
   already_AddRefed<mozilla::dom::Location> GetLocation() const
   {
@@ -281,8 +269,8 @@ protected:
                                                              nsIURI* aOrigHost);
 
 
-  nsresult WriteCommon(JSContext *cx, const nsAString& aText,
-                       bool aNewlineTerminate);
+  void WriteCommon(JSContext *cx, const nsAString& aText,
+                   bool aNewlineTerminate, mozilla::ErrorResult& aRv);
   // A version of WriteCommon used by WebIDL bindings
   void WriteCommon(JSContext *cx,
                    const mozilla::dom::Sequence<nsString>& aText,
@@ -362,8 +350,8 @@ protected:
                         int32_t& charsetSource,
                         NotNull<const Encoding*>& aEncoding);
   void TryTLD(int32_t& aCharsetSource, NotNull<const Encoding*>& aCharset);
-  static void TryFallback(int32_t& aCharsetSource,
-                          NotNull<const Encoding*>& aEncoding);
+  void TryFallback(int32_t& aCharsetSource,
+                   NotNull<const Encoding*>& aEncoding);
 
   // Override so we can munge the charset on our wyciwyg channel as needed.
   virtual void
@@ -410,7 +398,6 @@ protected:
 
 #define NS_HTML_DOCUMENT_INTERFACE_TABLE_BEGIN(_class)                        \
     NS_DOCUMENT_INTERFACE_TABLE_BEGIN(_class)                                 \
-    NS_INTERFACE_TABLE_ENTRY(_class, nsIHTMLDocument)                         \
-    NS_INTERFACE_TABLE_ENTRY(_class, nsIDOMHTMLDocument)
+    NS_INTERFACE_TABLE_ENTRY(_class, nsIHTMLDocument)
 
 #endif /* nsHTMLDocument_h___ */

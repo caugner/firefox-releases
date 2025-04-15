@@ -2,9 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const {utils: Cu} = Components;
-
-Cu.import("chrome://marionette/content/cookie.js");
+ChromeUtils.import("chrome://marionette/content/cookie.js");
 
 cookie.manager = {
   cookies: [],
@@ -211,6 +209,13 @@ add_test(function test_add() {
     path: "/foo/bar",
   });
   equal("/foo/bar", cookie.manager.cookies[3].path);
+
+  cookie.add({
+    name: "name6",
+    value: "value",
+    domain: ".domain"
+  });
+  equal(".domain", cookie.manager.cookies[4].host);
 
   Assert.throws(() => {
     cookie.add({name: "fail", value: "value6", domain: "domain6"})

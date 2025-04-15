@@ -18,11 +18,19 @@ using namespace mozilla::dom;
 namespace mozilla {
 namespace css {
 
+#ifdef MOZ_OLD_STYLE
 #define CALL_INNER(inner_, call_)               \
   ((inner_).is<GeckoGroupRuleRules>()           \
     ? (inner_).as<GeckoGroupRuleRules>().call_  \
     : (inner_).as<ServoGroupRuleRules>().call_)
+#else
+#define CALL_INNER(inner_, call_)               \
+  ((inner_).is<DummyGroupRuleRules>()           \
+    ? (inner_).as<DummyGroupRuleRules>().call_  \
+    : (inner_).as<ServoGroupRuleRules>().call_)
+#endif
 
+#ifdef MOZ_OLD_STYLE
 // -------------------------------
 // Style Rule List for group rules
 //
@@ -193,6 +201,7 @@ GeckoGroupRuleRules::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
   // - mRuleCollection
   return n;
 }
+#endif
 
 // -------------------------------
 // ServoGroupRuleRules
@@ -226,7 +235,11 @@ ServoGroupRuleRules::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 
 GroupRule::GroupRule(uint32_t aLineNumber, uint32_t aColumnNumber)
   : Rule(aLineNumber, aColumnNumber)
+#ifdef MOZ_OLD_STYLE
   , mInner(GeckoGroupRuleRules())
+#else
+  , mInner(DummyGroupRuleRules())
+#endif
 {
 }
 
@@ -296,6 +309,7 @@ GroupRule::SetStyleSheet(StyleSheet* aSheet)
   }
 }
 
+#ifdef MOZ_OLD_STYLE
 void
 GroupRule::AppendStyleRule(Rule* aRule)
 {
@@ -304,7 +318,7 @@ GroupRule::AppendStyleRule(Rule* aRule)
   aRule->SetStyleSheet(sheet);
   aRule->SetParentRule(this);
   if (sheet) {
-    sheet->AsGecko()->SetModifiedByChildRule();
+    sheet->RuleChanged(this);
   }
 }
 
@@ -343,27 +357,12 @@ GroupRule::AppendRulesToCssText(nsAString& aCssText) const
   }
   aCssText.Append('}');
 }
-
-// nsIDOMCSSMediaRule or nsIDOMCSSMozDocumentRule methods
-nsresult
-GroupRule::GetCssRules(nsIDOMCSSRuleList* *aRuleList)
-{
-  NS_ADDREF(*aRuleList = CssRules());
-  return NS_OK;
-}
+#endif
 
 CSSRuleList*
 GroupRule::CssRules()
 {
   return CALL_INNER(mInner, CssRules(this));
-}
-
-nsresult
-GroupRule::InsertRule(const nsAString & aRule, uint32_t aIndex, uint32_t* _retval)
-{
-  ErrorResult rv;
-  *_retval = InsertRule(aRule, aIndex, rv);
-  return rv.StealNSResult();
 }
 
 uint32_t
@@ -389,14 +388,6 @@ GroupRule::InsertRule(const nsAString& aRule, uint32_t aIndex, ErrorResult& aRv)
     return 0;
   }
   return aIndex;
-}
-
-nsresult
-GroupRule::DeleteRule(uint32_t aIndex)
-{
-  ErrorResult rv;
-  DeleteRule(aIndex, rv);
-  return rv.StealNSResult();
 }
 
 void

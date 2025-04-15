@@ -14,6 +14,7 @@ const actionTypes = {
   CLONE_SELECTED_REQUEST: "CLONE_SELECTED_REQUEST",
   ENABLE_REQUEST_FILTER_TYPE_ONLY: "ENABLE_REQUEST_FILTER_TYPE_ONLY",
   OPEN_NETWORK_DETAILS: "OPEN_NETWORK_DETAILS",
+  RESIZE_NETWORK_DETAILS: "RESIZE_NETWORK_DETAILS",
   ENABLE_PERSISTENT_LOGS: "ENABLE_PERSISTENT_LOGS",
   DISABLE_BROWSER_CACHE: "DISABLE_BROWSER_CACHE",
   OPEN_STATISTICS: "OPEN_STATISTICS",
@@ -73,8 +74,8 @@ const EVENTS = {
   RECEIVED_REQUEST_POST_DATA: "NetMonitor:NetworkEventUpdated:RequestPostData",
 
   // When security information begins and finishes receiving.
-  UPDATING_SECURITY_INFO: "NetMonitor::NetworkEventUpdating:SecurityInfo",
-  RECEIVED_SECURITY_INFO: "NetMonitor::NetworkEventUpdated:SecurityInfo",
+  UPDATING_SECURITY_INFO: "NetMonitor:NetworkEventUpdating:SecurityInfo",
+  RECEIVED_SECURITY_INFO: "NetMonitor:NetworkEventUpdated:SecurityInfo",
 
   // When response headers begin and finish receiving.
   UPDATING_RESPONSE_HEADERS: "NetMonitor:NetworkEventUpdating:ResponseHeaders",
@@ -93,6 +94,9 @@ const EVENTS = {
   UPDATING_RESPONSE_CONTENT: "NetMonitor:NetworkEventUpdating:ResponseContent",
   RECEIVED_RESPONSE_CONTENT: "NetMonitor:NetworkEventUpdated:ResponseContent",
 
+  // When stack-trace finishes receiving.
+  RECEIVED_EVENT_STACKTRACE: "NetMonitor:NetworkEventUpdated:StackTrace",
+
   // Fired once the connection is established
   CONNECTED: "connected",
 
@@ -110,22 +114,30 @@ const UPDATE_PROPS = [
   "httpVersion",
   "securityState",
   "securityInfo",
+  "securityInfoAvailable",
   "mimeType",
   "contentSize",
   "transferredSize",
   "totalTime",
   "eventTimings",
+  "eventTimingsAvailable",
   "headersSize",
   "customQueryValue",
   "requestHeaders",
+  "requestHeadersAvailable",
   "requestHeadersFromUploadStream",
   "requestCookies",
+  "requestCookiesAvailable",
   "requestPostData",
+  "requestPostDataAvailable",
   "responseHeaders",
+  "responseHeadersAvailable",
   "responseCookies",
+  "responseCookiesAvailable",
   "responseContent",
-  "responseContentDataUri",
+  "responseContentAvailable",
   "formDataSections",
+  "stacktrace",
 ];
 
 const PANELS = {
@@ -240,6 +252,7 @@ const HEADERS = [
   ...RESPONSE_HEADERS
     .map(header => ({
       name: header,
+      boxName: "response-header",
       canFilter: false,
       subMenu: "responseHeaders",
       noLocalization: true
@@ -298,6 +311,16 @@ const REQUESTS_WATERFALL = {
   LABEL_WIDTH: 50, // px
 };
 
+const TIMING_KEYS = [
+  "blocked",
+  "dns",
+  "connect",
+  "ssl",
+  "send",
+  "wait",
+  "receive",
+];
+
 const general = {
   ACTIVITY_TYPE,
   EVENTS,
@@ -307,9 +330,9 @@ const general = {
   RESPONSE_HEADERS,
   FILTER_FLAGS,
   FILTER_TAGS,
-  SOURCE_EDITOR_SYNTAX_HIGHLIGHT_MAX_SIZE: 51200, // 50 KB in bytes
   REQUESTS_WATERFALL,
   PANELS,
+  TIMING_KEYS,
 };
 
 // flatten constants

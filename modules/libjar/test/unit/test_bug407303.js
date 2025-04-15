@@ -1,11 +1,8 @@
 // Regression test for bug 407303 - A failed channel should not be checked
 // for an unsafe content type.
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
 // XXX: NS_ERROR_UNKNOWN_HOST is not in Components.results
 const NS_ERROR_UNKNOWN_HOST = 0x804B001E;
@@ -26,7 +23,7 @@ var listener = {
   },
 
   onStopRequest: function(request, context, status) {
-    do_check_eq(status, NS_ERROR_UNKNOWN_HOST);
+    Assert.equal(status, NS_ERROR_UNKNOWN_HOST);
     do_test_finished();
   }
 };

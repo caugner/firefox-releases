@@ -7,7 +7,6 @@
 
 #include "mozilla/Attributes.h"
 #include <vector>
-#include "nsIDOMCanvasRenderingContext2D.h"
 #include "nsICanvasRenderingContextInternal.h"
 #include "mozilla/RefPtr.h"
 #include "nsColor.h"
@@ -426,15 +425,15 @@ public:
 
   nsresult Redraw();
 
-  virtual int32_t GetWidth() const override;
-  virtual int32_t GetHeight() const override;
   gfx::IntSize GetSize() const { return gfx::IntSize(mWidth, mHeight); }
+  virtual int32_t GetWidth() override { return GetSize().width; }
+  virtual int32_t GetHeight() override { return GetSize().height; }
 
   // nsICanvasRenderingContextInternal
   /**
     * Gets the pres shell from either the canvas element or the doc shell
     */
-  virtual nsIPresShell *GetPresShell() override {
+  nsIPresShell* GetPresShell() final {
     if (mCanvasElement) {
       return mCanvasElement->OwnerDoc()->GetShell();
     }

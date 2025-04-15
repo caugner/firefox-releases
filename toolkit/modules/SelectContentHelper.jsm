@@ -4,18 +4,14 @@
 
 "use strict";
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cu = Components.utils;
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "BrowserUtils",
+                               "resource://gre/modules/BrowserUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "DeferredTask",
+                               "resource://gre/modules/DeferredTask.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
-                                  "resource://gre/modules/BrowserUtils.jsm");
-XPCOMUtils.defineLazyServiceGetter(this, "DOMUtils",
-                                   "@mozilla.org/inspector/dom-utils;1", "inIDOMUtils");
-XPCOMUtils.defineLazyModuleGetter(this, "DeferredTask",
-                                  "resource://gre/modules/DeferredTask.jsm");
+Cu.importGlobalProperties(["InspectorUtils"]);
 
 const kStateActive = 0x00000001; // NS_EVENT_STATE_ACTIVE
 const kStateHover = 0x00000004; // NS_EVENT_STATE_HOVER
@@ -32,11 +28,11 @@ const SUPPORTED_PROPERTIES = [
 // via SelectContentHelper.open.
 var gOpen = false;
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "SelectContentHelper"
 ];
 
-this.SelectContentHelper = function(aElement, aOptions, aGlobal) {
+var SelectContentHelper = function(aElement, aOptions, aGlobal) {
   this.element = aElement;
   this.initialSelection = aElement[aElement.selectedIndex] || null;
   this.global = aGlobal;
@@ -139,14 +135,14 @@ this.SelectContentHelper.prototype = {
     // Do all of the things that change style at once, before we read
     // any styles.
     this._pseudoStylesSetup = true;
-    DOMUtils.addPseudoClassLock(this.element, ":focus");
+    InspectorUtils.addPseudoClassLock(this.element, ":focus");
     let lockedDescendants = this._lockedDescendants = this.element.querySelectorAll(":checked");
     for (let child of lockedDescendants) {
       // Selected options have the :checked pseudo-class, which
       // we want to disable before calculating the computed
       // styles since the user agent styles alter the styling
       // based on :checked.
-      DOMUtils.addPseudoClassLock(child, ":checked", false);
+      InspectorUtils.addPseudoClassLock(child, ":checked", false);
     }
   },
 
@@ -156,10 +152,10 @@ this.SelectContentHelper.prototype = {
     }
     // Undo all of the things that change style at once, after we're
     // done reading styles.
-    DOMUtils.clearPseudoClassLocks(this.element);
+    InspectorUtils.clearPseudoClassLocks(this.element);
     let lockedDescendants = this._lockedDescendants;
     for (let child of lockedDescendants) {
-      DOMUtils.clearPseudoClassLocks(child);
+      InspectorUtils.clearPseudoClassLocks(child);
     }
     this._lockedDescendants = null;
     this._pseudoStylesSetup = false;
@@ -281,9 +277,8 @@ this.SelectContentHelper.prototype = {
           }
 
           // Clear active document no matter user selects via keyboard or mouse
-          DOMUtils.removeContentState(this.element,
-                                      kStateActive,
-                                      /* aClearActiveDocument */ true);
+          InspectorUtils.removeContentState(this.element, kStateActive,
+                                            /* aClearActiveDocument */ true);
 
           // Fire input and change events when selected option changes
           if (this.initialSelection !== selectedOption) {
@@ -308,11 +303,11 @@ this.SelectContentHelper.prototype = {
         }
 
       case "Forms:MouseOver":
-        DOMUtils.setContentState(this.element, kStateHover);
+        InspectorUtils.setContentState(this.element, kStateHover);
         break;
 
       case "Forms:MouseOut":
-        DOMUtils.removeContentState(this.element, kStateHover);
+        InspectorUtils.removeContentState(this.element, kStateHover);
         break;
 
       case "Forms:MouseUp":
@@ -320,7 +315,7 @@ this.SelectContentHelper.prototype = {
         if (message.data.onAnchor) {
           this.dispatchMouseEvent(win, this.element, "mouseup");
         }
-        DOMUtils.removeContentState(this.element, kStateActive);
+        InspectorUtils.removeContentState(this.element, kStateActive);
         if (message.data.onAnchor) {
           this.dispatchMouseEvent(win, this.element, "click");
         }
@@ -366,7 +361,7 @@ this.SelectContentHelper.prototype = {
         }
         break;
       case "transitionend":
-        if (SUPPORTED_PROPERTIES.indexOf(event.propertyName) != -1) {
+        if (SUPPORTED_PROPERTIES.includes(event.propertyName)) {
           this._updateTimer.arm();
         }
         break;

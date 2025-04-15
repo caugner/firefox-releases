@@ -6,8 +6,7 @@
 
 "use strict";
 
-var Cu = Components.utils;
-const {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {findOptimalTimeInterval} = require("devtools/client/animationinspector/utils");
 
 // This test array contains objects that are used to test the
@@ -68,8 +67,8 @@ const TEST_DATA = [{
 
 function run_test() {
   for (let {minTimeInterval, desc, expectedInterval} of TEST_DATA) {
-    do_print(`Testing minTimeInterval: ${minTimeInterval}.
-              Expecting ${expectedInterval}.`);
+    info(`Testing minTimeInterval: ${minTimeInterval}.
+          Expecting ${expectedInterval}.`);
 
     let interval = findOptimalTimeInterval(minTimeInterval);
     if (typeof expectedInterval == "string") {

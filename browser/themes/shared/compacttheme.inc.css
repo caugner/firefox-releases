@@ -7,17 +7,12 @@
    there are overrides for each platform in their compacttheme.css files. */
 
 :root:-moz-lwtheme {
-  text-shadow: none;
-
   --toolbar-bgcolor: var(--chrome-secondary-background-color);
-  --toolbar-gbimage: none;
   --toolbar-non-lwt-bgcolor: var(--toolbar-bgcolor);
   --toolbar-non-lwt-textcolor: var(--chrome-color);
   --toolbar-non-lwt-bgimage: none;
 
   --toolbarbutton-icon-fill-opacity: .7;
-
-  --tab-line-color: #0a84ff;
 }
 
 :root:-moz-lwtheme-brighttext {
@@ -54,6 +49,10 @@
   --chrome-selection-background-color: #4c9ed9;
 }
 
+#tabbrowser-tabs:-moz-lwtheme {
+  --tab-line-color: #0a84ff;
+}
+
 .toolbarbutton-animatable-box[brighttext],
 toolbar[brighttext] .toolbarbutton-animatable-box,
 toolbar[brighttext] .toolbarbutton-1 {
@@ -70,8 +69,8 @@ toolbar[brighttext] .toolbarbutton-1 {
 /* Change the base colors for the browser chrome */
 
 #TabsToolbar,
-#browser-panel {
-  background: var(--chrome-background-color);
+#navigator-toolbox {
+  background-color: var(--chrome-background-color);
   color: var(--chrome-color);
 }
 
@@ -107,9 +106,3 @@ toolbar[brighttext] .toolbarbutton-1 {
 #urlbar-zoom-button:-moz-lwtheme-brighttext:hover:active {
   background-color: rgba(255,255,255,.3);
 }
-
-.tab-icon-sound[soundplaying],
-.tab-icon-sound[muted] {
-  filter: none !important; /* removes drop-shadow filter */
-}
-

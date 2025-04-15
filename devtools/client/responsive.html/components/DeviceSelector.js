@@ -5,25 +5,29 @@
 "use strict";
 
 const { getStr } = require("../utils/l10n");
-const { DOM: dom, createClass, PropTypes, addons } =
-  require("devtools/client/shared/vendor/react");
+const { PureComponent } = require("devtools/client/shared/vendor/react");
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
 
 const Types = require("../types");
 const OPEN_DEVICE_MODAL_VALUE = "OPEN_DEVICE_MODAL";
 
-module.exports = createClass({
-  displayName: "DeviceSelector",
+class DeviceSelector extends PureComponent {
+  static get propTypes() {
+    return {
+      devices: PropTypes.shape(Types.devices).isRequired,
+      selectedDevice: PropTypes.string.isRequired,
+      viewportId: PropTypes.number.isRequired,
+      onChangeDevice: PropTypes.func.isRequired,
+      onResizeViewport: PropTypes.func.isRequired,
+      onUpdateDeviceModal: PropTypes.func.isRequired,
+    };
+  }
 
-  propTypes: {
-    devices: PropTypes.shape(Types.devices).isRequired,
-    selectedDevice: PropTypes.string.isRequired,
-    viewportId: PropTypes.number.isRequired,
-    onChangeDevice: PropTypes.func.isRequired,
-    onResizeViewport: PropTypes.func.isRequired,
-    onUpdateDeviceModal: PropTypes.func.isRequired,
-  },
-
-  mixins: [ addons.PureRenderMixin ],
+  constructor(props) {
+    super(props);
+    this.onSelectChange = this.onSelectChange.bind(this);
+  }
 
   onSelectChange({ target }) {
     let {
@@ -47,7 +51,7 @@ module.exports = createClass({
         }
       }
     }
-  },
+  }
 
   render() {
     let {
@@ -68,7 +72,7 @@ module.exports = createClass({
       return a.name.localeCompare(b.name);
     });
 
-    let selectClass = "viewport-device-selector";
+    let selectClass = "viewport-device-selector toolbar-dropdown";
     if (selectedDevice) {
       selectClass += " selected";
     }
@@ -76,7 +80,7 @@ module.exports = createClass({
     let state = devices.listState;
     let listContent;
 
-    if (state == Types.deviceListState.LOADED) {
+    if (state == Types.loadableState.LOADED) {
       listContent = [
         dom.option({
           value: "",
@@ -96,14 +100,14 @@ module.exports = createClass({
           value: OPEN_DEVICE_MODAL_VALUE,
           title: "",
         }, getStr("responsive.editDeviceList"))];
-    } else if (state == Types.deviceListState.LOADING
-      || state == Types.deviceListState.INITIALIZED) {
+    } else if (state == Types.loadableState.LOADING
+      || state == Types.loadableState.INITIALIZED) {
       listContent = [dom.option({
         value: "",
         title: "",
         disabled: true,
       }, getStr("responsive.deviceListLoading"))];
-    } else if (state == Types.deviceListState.ERROR) {
+    } else if (state == Types.loadableState.ERROR) {
       listContent = [dom.option({
         value: "",
         title: "",
@@ -117,10 +121,11 @@ module.exports = createClass({
         value: selectedDevice,
         title: selectedDevice,
         onChange: this.onSelectChange,
-        disabled: (state !== Types.deviceListState.LOADED),
+        disabled: (state !== Types.loadableState.LOADED),
       },
       ...listContent
     );
-  },
+  }
+}
 
-});
+module.exports = DeviceSelector;

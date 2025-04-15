@@ -8,9 +8,10 @@
 
 // A helper actor for inspector and markupview tests.
 
-const { Cc, Ci, Cu } = require("chrome");
+const { Ci, Cu } = require("chrome");
+const Services = require("Services");
 const {
-  getRect, getElementFromPoint, getAdjustedQuads, getWindowDimensions
+  getRect, getAdjustedQuads, getWindowDimensions
 } = require("devtools/shared/layout/utils");
 const defer = require("devtools/shared/defer");
 const {Task} = require("devtools/shared/task");
@@ -18,9 +19,7 @@ const {
   isContentStylesheet,
   getCSSStyleRules
 } = require("devtools/shared/inspector/css-logic");
-const DOMUtils = Cc["@mozilla.org/inspector/dom-utils;1"].getService(Ci.inIDOMUtils);
-const loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
-                 .getService(Ci.mozIJSSubScriptLoader);
+const InspectorUtils = require("InspectorUtils");
 
 // Set up a dummy environment so that EventUtils works. We need to be careful to
 // pass a window object into each EventUtils method we call rather than having
@@ -29,10 +28,10 @@ let EventUtils = {};
 EventUtils.window = {};
 EventUtils.parent = {};
 /* eslint-disable camelcase */
-EventUtils._EU_Ci = Components.interfaces;
-EventUtils._EU_Cc = Components.classes;
+EventUtils._EU_Ci = Ci;
+EventUtils._EU_Cc = Cc;
 /* eslint-disable camelcase */
-loader.loadSubScript("chrome://mochikit/content/tests/SimpleTest/EventUtils.js", EventUtils);
+Services.scriptloader.loadSubScript("chrome://mochikit/content/tests/SimpleTest/EventUtils.js", EventUtils);
 
 const protocol = require("devtools/shared/protocol");
 const {Arg, RetVal} = protocol;
@@ -124,16 +123,6 @@ var testSpec = protocol.generateActorSpec({
         actorID: Arg(1, "string"),
       },
       response: {}
-    },
-    assertElementAtPoint: {
-      request: {
-        x: Arg(0, "number"),
-        y: Arg(1, "number"),
-        selector: Arg(2, "string")
-      },
-      response: {
-        value: RetVal("boolean")
-      }
     },
     getAllAdjustedQuads: {
       request: {
@@ -473,15 +462,6 @@ var TestActor = exports.TestActor = protocol.ActorClassWithSpec(testSpec, {
     });
   },
 
-  assertElementAtPoint: function (x, y, selector) {
-    let elementAtPoint = getElementFromPoint(this.content.document, x, y);
-    if (!elementAtPoint) {
-      throw new Error("Unable to find element at (" + x + ", " + y + ")");
-    }
-    let node = this._querySelector(selector);
-    return node == elementAtPoint;
-  },
-
   /**
    * Get all box-model regions' adjusted boxquads for the given element
    * @param {String} selector The node selector to target a given element
@@ -546,7 +526,7 @@ var TestActor = exports.TestActor = protocol.ActorClassWithSpec(testSpec, {
    */
   hasPseudoClassLock: function (selector, pseudo) {
     let node = this._querySelector(selector);
-    return DOMUtils.hasPseudoClassLock(node, pseudo);
+    return InspectorUtils.hasPseudoClassLock(node, pseudo);
   },
 
   loadAndWaitForCustomEvent: function (url) {
@@ -784,8 +764,8 @@ var TestActor = exports.TestActor = protocol.ActorClassWithSpec(testSpec, {
 
     let sheets = [];
 
-    for (let i = 0, n = domRules.Count(); i < n; i++) {
-      let sheet = domRules.GetElementAt(i).parentStyleSheet;
+    for (let i = 0, n = domRules.length; i < n; i++) {
+      let sheet = domRules[i].parentStyleSheet;
       sheets.push({
         href: sheet.href,
         isContentSheet: isContentStylesheet(sheet)

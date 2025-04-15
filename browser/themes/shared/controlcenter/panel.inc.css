@@ -11,6 +11,12 @@
   display: none;
 }
 
+/* This is used by screenshots tests to hide intermittently different
+ * identity popup shadows (see bug 1425253). */
+#identity-popup.no-shadow {
+  -moz-window-shadow: none;
+}
+
 /* Show the right elements for the right connection states. */
 #identity-popup[connection=not-secure] [when-connection~=not-secure],
 #identity-popup[connection=secure-cert-user-overridden] [when-connection~=secure-cert-user-overridden],
@@ -68,20 +74,6 @@
   max-width: 30em;
 }
 
-#identity-popup-multiView > .panel-viewcontainer > .panel-viewstack[viewtype="main"] > .panel-subviews {
-  transform: translateX(100%);
-  box-shadow: none;
-}
-
-#identity-popup-multiView > .panel-viewcontainer > .panel-viewstack[viewtype="main"] > .panel-subviews:-moz-locale-dir(rtl) {
-  transform: translateX(-100%);
-}
-
-#identity-popup-multiView > .panel-viewcontainer > .panel-viewstack > .panel-subviews {
-  background: var(--arrowpanel-background);
-  padding: 0;
-}
-
 .identity-popup-section:not(:first-child) {
   border-top: 1px solid var(--panel-separator-color);
 }
@@ -92,6 +84,9 @@
   background-repeat: no-repeat;
   background-position: 1em 1em;
   background-size: 24px auto;
+  -moz-context-properties: fill, fill-opacity;
+  fill: currentColor;
+  fill-opacity: .6;
   padding: 0.5em 0 1em;
   /* .identity-popup-host depends on this width */
   padding-inline-start: calc(2em + 24px);
@@ -164,7 +159,7 @@
 .identity-popup-host {
   word-wrap: break-word;
   /* 1em + 2em + 24px is .identity-popup-security-content padding
-   * 30em is .panel-mainview width */
+   * 30em is the panel width */
   max-width: calc(30rem - 3rem - 24px - @identityPopupExpanderWidth@);
 }
 
@@ -211,6 +206,7 @@
 
 #identity-popup[connection=secure-cert-user-overridden] .identity-popup-security-content {
   background-image: url(chrome://browser/skin/connection-mixed-passive-loaded.svg);
+  fill: unset;
   -moz-context-properties: fill, fill-opacity;
 }
 
@@ -314,6 +310,14 @@ description#identity-popup-content-verifier,
   padding-bottom: 1.5em;
 }
 
+@supports -moz-bool-pref("layout.css.emulate-moz-box-with-flex") {
+  /* The extra padding-bottom is there to work around XUL flex (Bug 1368281).
+     This rule and the 1.5em above can both be removed once we are only using CSS flex. */
+  #identity-popup-permissions-content {
+    padding-bottom: 1em;
+  }
+}
+
 #identity-popup-permissions-headline {
   /* Make sure the label is as tall as the icon so that the permission list
      which is aligned with the icon doesn't cover it up. */
@@ -378,6 +382,8 @@ description#identity-popup-content-verifier,
   min-width: 0;
   padding: 2px;
   background-color: transparent;
+  color: inherit;
+  opacity: 0.6;
 }
 
 .identity-popup-permission-remove-button > .button-box {
@@ -390,7 +396,7 @@ description#identity-popup-content-verifier,
   height: 16px;
   list-style-image: url(chrome://browser/skin/panel-icon-cancel.svg);
   -moz-context-properties: fill;
-  fill: graytext;
+  fill: currentColor;
 }
 
 .identity-popup-permission-remove-button > .button-box > .button-text {
@@ -399,13 +405,13 @@ description#identity-popup-content-verifier,
 
 /* swap foreground / background colors on hover */
 .identity-popup-permission-remove-button:not(:-moz-focusring):hover {
-  background-color: graytext;
+  background-color: currentColor;
 }
 
 .identity-popup-permission-remove-button:not(:-moz-focusring):hover > .button-box > .button-icon {
-  fill: -moz-field;
+  fill: var(--arrowpanel-background);
 }
 
 .identity-popup-permission-remove-button:not(:-moz-focusring):hover:active {
-  background-color: -moz-fieldtext;
+  opacity: 0.8;
 }

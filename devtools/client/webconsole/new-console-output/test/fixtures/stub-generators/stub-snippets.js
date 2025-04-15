@@ -106,8 +106,20 @@ consoleApi.set("console.log(%cfoobar)", {
   code: `
 console.log(
   "%cfoo%cbar",
-  "color:blue;font-size:1.3em;background:url('http://example.com/test');position:absolute;top:10px",
-  "color:red;background:\\165rl('http://example.com/test')");
+  "color:blue; font-size:1.3em; background:url('http://example.com/test'); position:absolute; top:10px; ",
+  "color:red; line-height: 1.5; background:\\165rl('http://example.com/test')"
+);
+`});
+
+consoleApi.set('console.log("%cHello%c|%cWorld")', {
+  keys: ['console.log("%cHello%c|%cWorld")'],
+  code: `
+  console.log(
+    "%cHello%c|%cWorld",
+    "color:red",
+    "",
+    "color: blue"
+  );
 `});
 
 consoleApi.set("console.group(%cfoo%cbar)", {
@@ -135,6 +147,28 @@ consoleApi.set("console.dir({C, M, Y, K})", {
   code: "console.dir({cyan: 'C', magenta: 'M', yellow: 'Y', black: 'K'});"
 });
 
+consoleApi.set("console.count", {
+  keys: [
+    "console.count | default: 1",
+    "console.count | default: 2",
+    "console.count | test counter: 1",
+    "console.count | test counter: 2",
+    "console.count | default: 3",
+    "console.count | clear",
+    "console.count | default: 4",
+    "console.count | test counter: 3",
+  ],
+  code: `
+    console.count();
+    console.count();
+    console.count("test counter");
+    console.count("test counter");
+    console.count();
+    console.clear();
+    console.count();
+    console.count("test counter");
+`});
+
 // CSS messages
 const cssMessage = new Map();
 
@@ -155,12 +189,17 @@ const evaluationResultCommands = [
   "new Date(0)",
   "asdf()",
   "1 + @",
-  "inspect({a: 1})"
+  "inspect({a: 1})",
+  "cd(document)",
+  "undefined"
 ];
 
 let evaluationResult = new Map(evaluationResultCommands.map(cmd => [cmd, cmd]));
 evaluationResult.set("longString message Error",
   `throw new Error("Long error ".repeat(10000))`);
+
+evaluationResult.set(`eval throw ""`, `throw ""`);
+evaluationResult.set(`eval throw "tomato"`, `throw "tomato"`);
 
 // Network Event
 
@@ -210,6 +249,9 @@ pageError.set("SyntaxError: redeclaration of let a", `
 
 pageError.set("TypeError longString message",
   `throw new Error("Long error ".repeat(10000))`);
+
+pageError.set(`throw ""`, `throw ""`);
+pageError.set(`throw "tomato"`, `throw "tomato"`);
 
 module.exports = {
   consoleApi,

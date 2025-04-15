@@ -3,25 +3,23 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {classes: Cc, interfaces: Ci, results: Cr, utils: Cu} = Components;
+var EXPORTED_SYMBOLS = ["ExtensionsUI"];
 
-this.EXPORTED_SYMBOLS = ["ExtensionsUI"];
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.import("resource://gre/modules/EventEmitter.jsm");
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/EventEmitter.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
-                                  "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "AddonManagerPrivate",
-                                  "resource://gre/modules/AddonManager.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "AppMenuNotifications",
-                                  "resource://gre/modules/AppMenuNotifications.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionData",
-                                  "resource://gre/modules/Extension.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "RecentWindow",
-                                  "resource:///modules/RecentWindow.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Services",
-                                  "resource://gre/modules/Services.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManager",
+                               "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "AddonManagerPrivate",
+                               "resource://gre/modules/AddonManager.jsm");
+ChromeUtils.defineModuleGetter(this, "AppMenuNotifications",
+                               "resource://gre/modules/AppMenuNotifications.jsm");
+ChromeUtils.defineModuleGetter(this, "ExtensionData",
+                               "resource://gre/modules/Extension.jsm");
+ChromeUtils.defineModuleGetter(this, "RecentWindow",
+                               "resource:///modules/RecentWindow.jsm");
+ChromeUtils.defineModuleGetter(this, "Services",
+                               "resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyPreferenceGetter(this, "WEBEXT_PERMISSION_PROMPTS",
                                       "extensions.webextPermissionPrompts", false);
@@ -33,7 +31,7 @@ const BRAND_PROPERTIES = "chrome://branding/locale/brand.properties";
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 
-this.ExtensionsUI = {
+var ExtensionsUI = {
   sideloaded: new Set(),
   updates: new Set(),
   sideloadListener: null,
@@ -51,6 +49,7 @@ this.ExtensionsUI = {
     await Services.wm.getMostRecentWindow("navigator:browser").delayedStartupPromise;
 
     this._checkForSideloaded();
+    this._checkNewDistroAddons();
   },
 
   async _checkForSideloaded() {
@@ -98,6 +97,60 @@ this.ExtensionsUI = {
       }
     }
   },
+
+  async _checkNewDistroAddons() {
+    let newDistroAddons = AddonManagerPrivate.getNewDistroAddons();
+    if (!newDistroAddons) {
+      return;
+    }
+
+    for (let id of newDistroAddons) {
+      let addon = await AddonManager.getAddonByID(id);
+
+      let win = Services.wm.getMostRecentWindow("navigator:browser");
+      if (!win) {
+        return;
+      }
+
+      let {gBrowser} = win;
+      let browser = gBrowser.selectedBrowser;
+
+      // The common case here is that we enter this code right after startup
+      // in a brand new profile so we haven't yet loaded a page.  That state is
+      // surprisingly difficult to detect but wait until we've actually loaded
+      // a page.
+      if (browser.currentURI.spec == "about:blank" ||
+          browser.webProgress.isLoadingDocument) {
+        await new Promise(resolve => {
+          let listener = {
+            onLocationChange(browser_, webProgress, ...ignored) {
+              if (webProgress.isTopLevel && browser_ == browser) {
+                gBrowser.removeTabsProgressListener(listener);
+                resolve();
+              }
+            },
+          };
+          gBrowser.addTabsProgressListener(listener);
+        });
+      }
+
+      // If we're at about:newtab and the url bar gets focus, that will
+      // prevent a doorhanger from displaying.
+      // Our elegant solution is to ... take focus away from the url bar.
+      win.gURLBar.blur();
+
+      let strings = this._buildStrings({
+        addon,
+        permissions: addon.userPermissions,
+      });
+      let accepted = await this.showPermissionsPrompt(browser, strings,
+                                                      addon.iconURL);
+      if (accepted) {
+        addon.userDisabled = false;
+      }
+    }
+  },
+
 
   _updateNotifications() {
     if (this.sideloaded.size + this.updates.size == 0) {
@@ -249,47 +302,35 @@ this.ExtensionsUI = {
       strings.acceptKey = bundle.GetStringFromName("webext.defaultSearchYes.accessKey");
       strings.cancelText = bundle.GetStringFromName("webext.defaultSearchNo.label");
       strings.cancelKey = bundle.GetStringFromName("webext.defaultSearchNo.accessKey");
-      let addonName = `<span class="addon-webext-name">${this._sanitizeName(name)}</span>`;
+      strings.addonName = name;
       strings.text = bundle.formatStringFromName("webext.defaultSearch.description",
-                                               [addonName, currentEngine, newEngine], 3);
+                                                 ["<>", currentEngine, newEngine], 3);
       resolve(this.showDefaultSearchPrompt(browser, strings, icon));
     }
-  },
-
-  // Escape &, <, and > characters in a string so that it may be
-  // injected as part of raw markup.
-  _sanitizeName(name) {
-    return name.replace(/&/g, "&amp;")
-               .replace(/</g, "&lt;")
-               .replace(/>/g, "&gt;");
   },
 
   // Create a set of formatted strings for a permission prompt
   _buildStrings(info) {
     let bundle = Services.strings.createBundle(BROWSER_PROPERTIES);
-
     let brandBundle = Services.strings.createBundle(BRAND_PROPERTIES);
     let appName = brandBundle.GetStringFromName("brandShortName");
-    let addonName = `<span class="addon-webext-name">${this._sanitizeName(info.addon.name)}</span>`;
+    let info2 = Object.assign({appName}, info);
 
-    let info2 = Object.assign({appName, addonName}, info);
-
-    return ExtensionData.formatPermissionStrings(info2, bundle);
+    let strings = ExtensionData.formatPermissionStrings(info2, bundle);
+    strings.addonName = info.addon.name;
+    return strings;
   },
 
   showPermissionsPrompt(browser, strings, icon, histkey) {
     function eventCallback(topic) {
       let doc = this.browser.ownerDocument;
       if (topic == "showing") {
-        // eslint-disable-next-line no-unsanitized/property
-        doc.getElementById("addon-webext-perm-header").innerHTML = strings.header;
         let textEl = doc.getElementById("addon-webext-perm-text");
-        // eslint-disable-next-line no-unsanitized/property
-        textEl.innerHTML = strings.text;
+        textEl.textContent = strings.text;
         textEl.hidden = !strings.text;
 
         let listIntroEl = doc.getElementById("addon-webext-perm-intro");
-        listIntroEl.value = strings.listIntro;
+        listIntroEl.textContent = strings.listIntro;
         listIntroEl.hidden = (strings.msgs.length == 0);
 
         let list = doc.getElementById("addon-webext-perm-list");
@@ -313,6 +354,7 @@ this.ExtensionsUI = {
       popupIconURL: icon || DEFAULT_EXTENSION_ICON,
       persistent: true,
       eventCallback,
+      name: strings.addonName,
     };
 
     let win = browser.ownerGlobal;
@@ -340,14 +382,13 @@ this.ExtensionsUI = {
         },
       ];
 
-      win.PopupNotifications.show(browser, "addon-webext-permissions", "",
-                                  "addons-notification-icon",
-                                  action, secondaryActions, popupOptions);
+      win.PopupNotifications.show(browser, "addon-webext-permissions", strings.header,
+                                  "addons-notification-icon", action,
+                                  secondaryActions, popupOptions);
     });
   },
 
   showDefaultSearchPrompt(browser, strings, icon) {
-//    const kDefaultSearchHistKey = "defaultSearch";
     return new Promise(resolve => {
       let popupOptions = {
         hideClose: true,
@@ -355,14 +396,11 @@ this.ExtensionsUI = {
         persistent: false,
         removeOnDismissal: true,
         eventCallback(topic) {
-          if (topic == "showing") {
-            let doc = this.browser.ownerDocument;
-            // eslint-disable-next-line no-unsanitized/property
-            doc.getElementById("addon-webext-defaultsearch-text").innerHTML = strings.text;
-          } else if (topic == "removed") {
+          if (topic == "removed") {
             resolve(false);
           }
-        }
+        },
+        name: strings.addonName,
       };
 
       let action = {
@@ -370,7 +408,6 @@ this.ExtensionsUI = {
         accessKey: strings.acceptKey,
         disableHighlight: true,
         callback: () => {
-//          this.histogram.add(kDefaultSearchHistKey + "Accepted");
           resolve(true);
         },
       };
@@ -379,16 +416,15 @@ this.ExtensionsUI = {
           label: strings.cancelText,
           accessKey: strings.cancelKey,
           callback: () => {
-//            this.histogram.add(kDefaultSearchHistKey + "Rejected");
             resolve(false);
           },
         },
       ];
 
       let win = browser.ownerGlobal;
-      win.PopupNotifications.show(browser, "addon-webext-defaultsearch", "",
-                                  "addons-notification-icon",
-                                  action, secondaryActions, popupOptions);
+      win.PopupNotifications.show(browser, "addon-webext-defaultsearch", strings.text,
+                                  "addons-notification-icon", action,
+                                  secondaryActions, popupOptions);
     });
   },
 
@@ -396,20 +432,12 @@ this.ExtensionsUI = {
     let win = target.ownerGlobal;
     let popups = win.PopupNotifications;
 
-    let name = this._sanitizeName(addon.name);
-    let addonName = `<span class="addon-webext-name">${name}</span>`;
-    let addonIcon = '<image class="addon-addon-icon"/>';
-    let toolbarIcon = '<image class="addon-toolbar-icon"/>';
-
     let brandBundle = win.document.getElementById("bundle_brand");
     let appName = brandBundle.getString("brandShortName");
-
     let bundle = win.gNavigatorBundle;
-    let msg1 = bundle.getFormattedString("addonPostInstall.message1",
-                                         [addonName, appName]);
-    let msg2 = bundle.getFormattedString("addonPostInstall.messageDetail",
-                                         [addonIcon, toolbarIcon]);
 
+    let message = bundle.getFormattedString("addonPostInstall.message1",
+                                            ["<>", appName]);
     return new Promise(resolve => {
       let action = {
         label: bundle.getString("addonPostInstall.okay.label"),
@@ -425,21 +453,14 @@ this.ExtensionsUI = {
         timeout: Date.now() + 30000,
         popupIconURL: icon,
         eventCallback(topic) {
-          if (topic == "showing") {
-            let doc = this.browser.ownerDocument;
-        // eslint-disable-next-line no-unsanitized/property
-            doc.getElementById("addon-installed-notification-header")
-               .innerHTML = msg1;
-            // eslint-disable-next-line no-unsanitized/property
-            doc.getElementById("addon-installed-notification-message")
-               .innerHTML = msg2;
-          } else if (topic == "dismissed") {
+          if (topic == "dismissed") {
             resolve();
           }
-        }
+        },
+        name: addon.name,
       };
 
-      popups.show(target, "addon-installed", "", "addons-notification-icon",
+      popups.show(target, "addon-installed", message, "addons-notification-icon",
                   action, null, options);
     });
   },

@@ -10,13 +10,13 @@
 #include "nsIContent.h"
 #include "nsCSSProps.h"
 #include "nsContentUtils.h"
-#include "nsRuleNode.h"
 #include "nsROCSSPrimitiveValue.h"
 #include "nsStyleStruct.h"
 #include "nsIContentPolicy.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsIURI.h"
 #include "nsISupportsPrimitives.h"
+#include "nsLayoutUtils.h"
 #include "nsPrintfCString.h"
 #include <cctype>
 
@@ -380,15 +380,11 @@ nsStyleUtil::AppendFontFeatureSettings(const nsTArray<gfxFontFeature>& aFeatures
 
     AppendFontTagAsString(feat.mTag, aResult);
 
-    // output value, if necessary
-    if (feat.mValue == 0) {
-      // 0 ==> off
-      aResult.AppendLiteral(" off");
-    } else if (feat.mValue > 1) {
+    // omit value if it's 1, implied by default
+    if (feat.mValue != 1) {
       aResult.Append(' ');
       aResult.AppendInt(feat.mValue);
     }
-    // else, omit value if 1, implied by default
   }
 }
 
@@ -407,7 +403,7 @@ nsStyleUtil::AppendFontFeatureSettings(const nsCSSValue& aSrc,
                   "improper value unit for font-feature-settings:");
 
   nsTArray<gfxFontFeature> featureSettings;
-  nsRuleNode::ComputeFontFeatures(aSrc.GetPairListValue(), featureSettings);
+  nsLayoutUtils::ComputeFontFeatures(aSrc.GetPairListValue(), featureSettings);
   AppendFontFeatureSettings(featureSettings, aResult);
 }
 
@@ -446,7 +442,8 @@ nsStyleUtil::AppendFontVariationSettings(const nsCSSValue& aSrc,
                   "improper value unit for font-variation-settings:");
 
   nsTArray<gfxFontVariation> variationSettings;
-  nsRuleNode::ComputeFontVariations(aSrc.GetPairListValue(), variationSettings);
+  nsLayoutUtils::ComputeFontVariations(aSrc.GetPairListValue(),
+                                       variationSettings);
   AppendFontVariationSettings(variationSettings, aResult);
 }
 
@@ -744,12 +741,9 @@ nsStyleUtil::ColorComponentToFloat(uint8_t aAlpha)
 }
 
 /* static */ bool
-nsStyleUtil::IsSignificantChild(nsIContent* aChild, bool aTextIsSignificant,
+nsStyleUtil::IsSignificantChild(nsIContent* aChild,
                                 bool aWhitespaceIsSignificant)
 {
-  NS_ASSERTION(!aWhitespaceIsSignificant || aTextIsSignificant,
-               "Nonsensical arguments");
-
   bool isText = aChild->IsNodeOfType(nsINode::eTEXT);
 
   if (!isText && !aChild->IsNodeOfType(nsINode::eCOMMENT) &&
@@ -757,19 +751,15 @@ nsStyleUtil::IsSignificantChild(nsIContent* aChild, bool aTextIsSignificant,
     return true;
   }
 
-  return aTextIsSignificant && isText && aChild->TextLength() != 0 &&
+  return isText && aChild->TextLength() != 0 &&
          (aWhitespaceIsSignificant ||
           !aChild->TextIsOnlyWhitespace());
 }
 
 /* static */ bool
 nsStyleUtil::ThreadSafeIsSignificantChild(const nsIContent* aChild,
-                                          bool aTextIsSignificant,
                                           bool aWhitespaceIsSignificant)
 {
-  NS_ASSERTION(!aWhitespaceIsSignificant || aTextIsSignificant,
-               "Nonsensical arguments");
-
   bool isText = aChild->IsNodeOfType(nsINode::eTEXT);
 
   if (!isText && !aChild->IsNodeOfType(nsINode::eCOMMENT) &&
@@ -777,7 +767,7 @@ nsStyleUtil::ThreadSafeIsSignificantChild(const nsIContent* aChild,
     return true;
   }
 
-  return aTextIsSignificant && isText && aChild->TextLength() != 0 &&
+  return isText && aChild->TextLength() != 0 &&
          (aWhitespaceIsSignificant ||
           !aChild->ThreadSafeTextIsOnlyWhitespace());
 }
@@ -833,8 +823,9 @@ nsStyleUtil::ObjectPropsMightCauseOverflow(const nsStylePosition* aStylePos)
 
 
 /* static */ bool
-nsStyleUtil::CSPAllowsInlineStyle(nsIContent* aContent,
+nsStyleUtil::CSPAllowsInlineStyle(Element* aElement,
                                   nsIPrincipal* aPrincipal,
+                                  nsIPrincipal* aTriggeringPrincipal,
                                   nsIURI* aSourceURI,
                                   uint32_t aLineNumber,
                                   const nsAString& aStyleText,
@@ -846,12 +837,18 @@ nsStyleUtil::CSPAllowsInlineStyle(nsIContent* aContent,
     *aRv = NS_OK;
   }
 
-  MOZ_ASSERT(!aContent || aContent->NodeInfo()->NameAtom() == nsGkAtoms::style,
-      "aContent passed to CSPAllowsInlineStyle "
+  MOZ_ASSERT(!aElement || aElement->NodeInfo()->NameAtom() == nsGkAtoms::style,
+      "aElement passed to CSPAllowsInlineStyle "
       "for an element that is not <style>");
 
+  nsIPrincipal* principal = aPrincipal;
+  if (aTriggeringPrincipal &&
+      BasePrincipal::Cast(aTriggeringPrincipal)->OverridesCSP(aPrincipal)) {
+    principal = aTriggeringPrincipal;
+  }
+
   nsCOMPtr<nsIContentSecurityPolicy> csp;
-  rv = aPrincipal->GetCsp(getter_AddRefs(csp));
+  rv = principal->GetCsp(getter_AddRefs(csp));
 
   if (NS_FAILED(rv)) {
     if (aRv)
@@ -866,8 +863,8 @@ nsStyleUtil::CSPAllowsInlineStyle(nsIContent* aContent,
 
   // query the nonce
   nsAutoString nonce;
-  if (aContent) {
-    aContent->GetAttr(kNameSpaceID_None, nsGkAtoms::nonce, nonce);
+  if (aElement) {
+    aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::nonce, nonce);
   }
 
   nsCOMPtr<nsISupportsString> styleText(do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID));

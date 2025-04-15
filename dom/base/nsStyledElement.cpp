@@ -10,6 +10,7 @@
 #include "nsAttrValue.h"
 #include "nsAttrValueInlines.h"
 #include "mozilla/dom/ElementInlines.h"
+#include "mozilla/dom/MutationEventBinding.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "nsDOMCSSDeclaration.h"
 #include "nsDOMCSSAttrDeclaration.h"
@@ -18,7 +19,6 @@
 #include "mozilla/DeclarationBlockInlines.h"
 #include "nsCSSParser.h"
 #include "mozilla/css/Loader.h"
-#include "nsIDOMMutationEvent.h"
 #include "nsXULElement.h"
 #include "nsContentUtils.h"
 #include "nsStyleUtil.h"
@@ -39,15 +39,16 @@ bool
 nsStyledElement::ParseAttribute(int32_t aNamespaceID,
                                 nsAtom* aAttribute,
                                 const nsAString& aValue,
+                                nsIPrincipal* aMaybeScriptedPrincipal,
                                 nsAttrValue& aResult)
 {
   if (aAttribute == nsGkAtoms::style && aNamespaceID == kNameSpaceID_None) {
-    ParseStyleAttribute(aValue, aResult, false);
+    ParseStyleAttribute(aValue, aMaybeScriptedPrincipal, aResult, false);
     return true;
   }
 
   return nsStyledElementBase::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                             aResult);
+                                             aMaybeScriptedPrincipal, aResult);
 }
 
 nsresult
@@ -85,7 +86,7 @@ nsStyledElement::SetInlineStyleDeclaration(DeclarationBlock* aDeclaration,
   // getting a new stylerule here. And we can't compare the stringvalues of
   // the old and the new rules since both will point to the same declaration
   // and thus will be the same.
-  if (hasListeners) {
+  if (hasListeners || GetCustomElementData()) {
     // save the old attribute so we can set up the mutation event properly
     nsAutoString oldValueStr;
     modification = GetAttr(kNameSpaceID_None, nsGkAtoms::style,
@@ -103,8 +104,8 @@ nsStyledElement::SetInlineStyleDeclaration(DeclarationBlock* aDeclaration,
 
   // XXXbz do we ever end up with ADDITION here?  I doubt it.
   uint8_t modType = modification ?
-    static_cast<uint8_t>(nsIDOMMutationEvent::MODIFICATION) :
-    static_cast<uint8_t>(nsIDOMMutationEvent::ADDITION);
+    static_cast<uint8_t>(MutationEventBinding::MODIFICATION) :
+    static_cast<uint8_t>(MutationEventBinding::ADDITION);
 
   nsIDocument* document = GetComposedDoc();
   mozAutoDocUpdate updateBatch(document, UPDATE_CONTENT_MODEL, aNotify);
@@ -145,7 +146,7 @@ nsStyledElement::ReparseStyleAttribute(bool aForceInDataDoc, bool aForceIfAlread
     nsAttrValue attrValue;
     nsAutoString stringValue;
     oldVal->ToString(stringValue);
-    ParseStyleAttribute(stringValue, attrValue, aForceInDataDoc);
+    ParseStyleAttribute(stringValue, nullptr, attrValue, aForceInDataDoc);
     // Don't bother going through SetInlineStyleDeclaration; we don't
     // want to fire off mutation events or document notifications anyway
     bool oldValueSet;
@@ -179,6 +180,7 @@ nsStyledElement::GetExistingStyle()
 
 void
 nsStyledElement::ParseStyleAttribute(const nsAString& aValue,
+                                     nsIPrincipal* aMaybeScriptedPrincipal,
                                      nsAttrValue& aResult,
                                      bool aForceInDataDoc)
 {
@@ -187,6 +189,7 @@ nsStyledElement::ParseStyleAttribute(const nsAString& aValue,
 
   if (!isNativeAnon &&
       !nsStyleUtil::CSPAllowsInlineStyle(nullptr, NodePrincipal(),
+                                         aMaybeScriptedPrincipal,
                                          doc->GetDocumentURI(), 0, aValue,
                                          nullptr))
     return;
@@ -206,7 +209,8 @@ nsStyledElement::ParseStyleAttribute(const nsAString& aValue,
       }
     }
 
-    if (isCSS && aResult.ParseStyleAttribute(aValue, this)) {
+    if (isCSS && aResult.ParseStyleAttribute(aValue, aMaybeScriptedPrincipal,
+                                             this)) {
       return;
     }
   }

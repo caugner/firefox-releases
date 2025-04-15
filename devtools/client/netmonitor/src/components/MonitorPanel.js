@@ -5,24 +5,28 @@
 "use strict";
 
 const Services = require("Services");
-const {
-  Component,
-  createFactory,
-  DOM,
-  PropTypes,
-} = require("devtools/client/shared/vendor/react");
-const { connect } = require("devtools/client/shared/vendor/react-redux");
+const { Component, createFactory } = require("devtools/client/shared/vendor/react");
+const dom = require("devtools/client/shared/vendor/react-dom-factories");
+const { div } = dom;
+const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const { connect } = require("devtools/client/shared/redux/visibility-handler-connect");
 const { findDOMNode } = require("devtools/client/shared/vendor/react-dom");
 const Actions = require("../actions/index");
 const { updateFormDataSections } = require("../utils/request-utils");
-const { getSelectedRequest } = require("../selectors/index");
+const {
+  getSelectedRequest,
+  isSelectedRequestVisible,
+} = require("../selectors/index");
 
 // Components
 const SplitBox = createFactory(require("devtools/client/shared/components/splitter/SplitBox"));
-const NetworkDetailsPanel = createFactory(require("./NetworkDetailsPanel"));
 const RequestList = createFactory(require("./RequestList"));
 const Toolbar = createFactory(require("./Toolbar"));
-const { div } = DOM;
+
+loader.lazyGetter(this, "NetworkDetailsPanel", function () {
+  return createFactory(require("./NetworkDetailsPanel"));
+});
+
 const MediaQueryList = window.matchMedia("(min-width: 700px)");
 
 /**
@@ -36,7 +40,9 @@ class MonitorPanel extends Component {
       isEmpty: PropTypes.bool.isRequired,
       networkDetailsOpen: PropTypes.bool.isRequired,
       openNetworkDetails: PropTypes.func.isRequired,
+      onNetworkDetailsResized: PropTypes.func.isRequired,
       request: PropTypes.object,
+      selectedRequestVisible: PropTypes.bool.isRequired,
       sourceMapService: PropTypes.object,
       openLink: PropTypes.func,
       updateRequest: PropTypes.func.isRequired,
@@ -51,6 +57,7 @@ class MonitorPanel extends Component {
     };
 
     this.onLayoutChange = this.onLayoutChange.bind(this);
+    this.onNetworkDetailsResized = this.onNetworkDetailsResized.bind(this);
   }
 
   componentDidMount() {
@@ -59,6 +66,13 @@ class MonitorPanel extends Component {
 
   componentWillReceiveProps(nextProps) {
     updateFormDataSections(nextProps);
+  }
+
+  componentDidUpdate() {
+    let { selectedRequestVisible, openNetworkDetails } = this.props;
+    if (!selectedRequestVisible) {
+      openNetworkDetails(false);
+    }
   }
 
   componentWillUnmount() {
@@ -82,6 +96,16 @@ class MonitorPanel extends Component {
     });
   }
 
+  onNetworkDetailsResized(width, height) {
+   // Cleaning width and height parameters, because SplitBox passes ALWAYS two values,
+   // while depending on orientation ONLY ONE dimension is managed by it at a time.
+    let { isVerticalSpliter }  = this.state;
+    return this.props.onNetworkDetailsResized(
+      isVerticalSpliter ? width : null,
+      isVerticalSpliter ? null : height
+    );
+  }
+
   render() {
     let {
       connector,
@@ -98,14 +122,14 @@ class MonitorPanel extends Component {
 
     return (
       div({ className: "monitor-panel" },
-        Toolbar(),
+        Toolbar({ connector }),
         SplitBox({
           className: "devtools-responsive-container",
-          initialWidth: `${initialWidth}px`,
-          initialHeight: `${initialHeight}px`,
+          initialWidth: initialWidth,
+          initialHeight: initialHeight,
           minSize: "50px",
           maxSize: "80%",
-          splitterSize: "1px",
+          splitterSize: 1,
           startPanel: RequestList({ isEmpty, connector }),
           endPanel: networkDetailsOpen && NetworkDetailsPanel({
             ref: "endPanel",
@@ -116,6 +140,7 @@ class MonitorPanel extends Component {
           endPanelCollapsed: !networkDetailsOpen,
           endPanelControl: true,
           vert: this.state.isVerticalSpliter,
+          onControlledPanelResized: this.onNetworkDetailsResized,
         }),
       )
     );
@@ -124,12 +149,16 @@ class MonitorPanel extends Component {
 
 module.exports = connect(
   (state) => ({
-    isEmpty: state.requests.requests.isEmpty(),
+    isEmpty: state.requests.requests.size == 0,
     networkDetailsOpen: state.ui.networkDetailsOpen,
     request: getSelectedRequest(state),
+    selectedRequestVisible: isSelectedRequestVisible(state),
   }),
   (dispatch) => ({
     openNetworkDetails: (open) => dispatch(Actions.openNetworkDetails(open)),
+    onNetworkDetailsResized: (width, height) => dispatch(
+      Actions.resizeNetworkDetails(width, height)
+    ),
     updateRequest: (id, data, batch) => dispatch(Actions.updateRequest(id, data, batch)),
   }),
 )(MonitorPanel);

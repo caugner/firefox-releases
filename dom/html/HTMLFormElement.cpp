@@ -165,22 +165,12 @@ HTMLFormElement::AsyncEventRunning(AsyncEventDispatcher* aEvent)
   }
 }
 
-// nsIDOMHTMLFormElement
-
 NS_IMPL_ELEMENT_CLONE(HTMLFormElement)
 
 nsIHTMLCollection*
 HTMLFormElement::Elements()
 {
   return mControls;
-}
-
-NS_IMETHODIMP
-HTMLFormElement::GetElements(nsIDOMHTMLCollection** aElements)
-{
-  *aElements = Elements();
-  NS_ADDREF(*aElements);
-  return NS_OK;
 }
 
 nsresult
@@ -233,17 +223,20 @@ HTMLFormElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                                             aOldValue, aSubjectPrincipal, aNotify);
 }
 
-NS_IMPL_STRING_ATTR(HTMLFormElement, AcceptCharset, acceptcharset)
-NS_IMPL_ACTION_ATTR(HTMLFormElement, Action, action)
-NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(HTMLFormElement, Autocomplete, autocomplete,
-                                kFormDefaultAutocomplete->tag)
-NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(HTMLFormElement, Enctype, enctype,
-                                kFormDefaultEnctype->tag)
-NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(HTMLFormElement, Method, method,
-                                kFormDefaultMethod->tag)
-NS_IMPL_BOOL_ATTR(HTMLFormElement, NoValidate, novalidate)
-NS_IMPL_STRING_ATTR(HTMLFormElement, Name, name)
-NS_IMPL_STRING_ATTR(HTMLFormElement, Target, target)
+void HTMLFormElement::GetAutocomplete(nsAString& aValue)
+{
+  GetEnumAttr(nsGkAtoms::autocomplete, kFormDefaultAutocomplete->tag, aValue);
+}
+
+void HTMLFormElement::GetEnctype(nsAString& aValue)
+{
+  GetEnumAttr(nsGkAtoms::enctype, kFormDefaultEnctype->tag, aValue);
+}
+
+void HTMLFormElement::GetMethod(nsAString& aValue)
+{
+  GetEnumAttr(nsGkAtoms::method, kFormDefaultMethod->tag, aValue);
+}
 
 void
 HTMLFormElement::Submit(ErrorResult& aRv)
@@ -260,33 +253,18 @@ HTMLFormElement::Submit(ErrorResult& aRv)
   aRv = DoSubmitOrReset(nullptr, eFormSubmit);
 }
 
-NS_IMETHODIMP
-HTMLFormElement::Submit()
-{
-  ErrorResult rv;
-  Submit(rv);
-  return rv.StealNSResult();
-}
-
-NS_IMETHODIMP
+void
 HTMLFormElement::Reset()
 {
   InternalFormEvent event(true, eFormReset);
   EventDispatcher::Dispatch(static_cast<nsIContent*>(this), nullptr, &event);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-HTMLFormElement::CheckValidity(bool* retVal)
-{
-  *retVal = CheckValidity();
-  return NS_OK;
 }
 
 bool
 HTMLFormElement::ParseAttribute(int32_t aNamespaceID,
                                 nsAtom* aAttribute,
                                 const nsAString& aValue,
+                                nsIPrincipal* aMaybeScriptedPrincipal,
                                 nsAttrValue& aResult)
 {
   if (aNamespaceID == kNameSpaceID_None) {
@@ -302,7 +280,7 @@ HTMLFormElement::ParseAttribute(int32_t aNamespaceID,
   }
 
   return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aResult);
+                                              aMaybeScriptedPrincipal, aResult);
 }
 
 nsresult
@@ -586,6 +564,7 @@ HTMLFormElement::DoSubmitOrReset(WidgetEvent* aEvent,
 nsresult
 HTMLFormElement::DoReset()
 {
+  mEverTriedInvalidSubmit = false;
   // JBK walk the elements[] array instead of form frame controls - bug 34297
   uint32_t numElements = GetElementCount();
   for (uint32_t elementX = 0; elementX < numElements; ++elementX) {
@@ -702,7 +681,7 @@ nsresult
 HTMLFormElement::SubmitSubmission(HTMLFormSubmission* aFormSubmission)
 {
   nsresult rv;
-  nsIContent* originatingElement = aFormSubmission->GetOriginatingElement();
+  Element* originatingElement = aFormSubmission->GetOriginatingElement();
 
   //
   // Get the action and target
@@ -798,7 +777,8 @@ HTMLFormElement::SubmitSubmission(HTMLFormSubmission* aFormSubmission)
     int64_t postDataStreamLength = -1;
     rv = aFormSubmission->GetEncodedSubmission(actionURI,
                                                getter_AddRefs(postDataStream),
-                                               &postDataStreamLength);
+                                               &postDataStreamLength,
+                                               actionURI);
     NS_ENSURE_SUBMIT_SUCCESS(rv);
 
     rv = linkHandler->OnLinkClickSync(this, actionURI,
@@ -884,6 +864,10 @@ HTMLFormElement::DoSecureToInsecureSubmitCheck(nsIURI* aActionURL,
   }
 
   if (nsMixedContentBlocker::IsPotentiallyTrustworthyLoopbackURL(aActionURL)) {
+    return NS_OK;
+  }
+
+  if (nsMixedContentBlocker::IsPotentiallyTrustworthyOnion(aActionURL)) {
     return NS_OK;
   }
 
@@ -1041,9 +1025,7 @@ HTMLFormElement::WalkFormElements(HTMLFormSubmission* aFormSubmission)
 NS_IMETHODIMP_(uint32_t)
 HTMLFormElement::GetElementCount() const
 {
-  uint32_t count = 0;
-  mControls->GetLength(&count);
-  return count;
+  return mControls->Length();
 }
 
 Element*
@@ -1554,7 +1536,7 @@ HTMLFormElement::DoResolveName(const nsAString& aName,
 }
 
 void
-HTMLFormElement::OnSubmitClickBegin(nsIContent* aOriginatingElement)
+HTMLFormElement::OnSubmitClickBegin(Element* aOriginatingElement)
 {
   mDeferSubmission = true;
 
@@ -1622,7 +1604,7 @@ HTMLFormElement::GetAction(nsString& aValue)
 
 nsresult
 HTMLFormElement::GetActionURL(nsIURI** aActionURL,
-                              nsIContent* aOriginatingElement)
+                              Element* aOriginatingElement)
 {
   nsresult rv = NS_OK;
 
@@ -1645,7 +1627,7 @@ HTMLFormElement::GetActionURL(nsIURI** aActionURL,
                  "The originating element must be a submit form control!");
 #endif // DEBUG
 
-    nsCOMPtr<nsIDOMHTMLInputElement> inputElement = do_QueryInterface(aOriginatingElement);
+    HTMLInputElement* inputElement = HTMLInputElement::FromContent(aOriginatingElement);
     if (inputElement) {
       inputElement->GetFormAction(action);
     } else {
@@ -1852,29 +1834,10 @@ HTMLFormElement::IsLastActiveElement(const nsIFormControl* aControl) const
   return false;
 }
 
-NS_IMETHODIMP
-HTMLFormElement::GetEncoding(nsAString& aEncoding)
-{
-  return GetEnctype(aEncoding);
-}
-
-NS_IMETHODIMP
-HTMLFormElement::SetEncoding(const nsAString& aEncoding)
-{
-  return SetEnctype(aEncoding);
-}
-
 int32_t
 HTMLFormElement::Length()
 {
   return mControls->Length();
-}
-
-NS_IMETHODIMP
-HTMLFormElement::GetLength(int32_t* aLength)
-{
-  *aLength = Length();
-  return NS_OK;
 }
 
 void
@@ -2271,9 +2234,9 @@ HTMLFormElement::WalkRadioGroup(const nsAString& aName,
     for (uint32_t i = 0; i < len; i++) {
       control = GetElementAt(i);
       if (control->ControlType() == NS_FORM_INPUT_RADIO) {
-        nsCOMPtr<nsIContent> controlContent = do_QueryInterface(control);
-        if (controlContent &&
-            controlContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name,
+        nsCOMPtr<Element> controlElement = do_QueryInterface(control);
+        if (controlElement &&
+            controlElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name,
                                         EmptyString(), eCaseMatters) &&
             !aVisitor->Visit(control)) {
           break;
@@ -2470,7 +2433,8 @@ HTMLFormElement::AddElementToTableInternal(
 
       // If an element has a @form, we can assume it *might* be able to not have
       // a parent and still be in the form.
-      NS_ASSERTION(content->HasAttr(kNameSpaceID_None, nsGkAtoms::form) ||
+      NS_ASSERTION((content->IsElement() &&
+                    content->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::form)) ||
                    content->GetParent(), "Item in list without parent");
 
       // Determine the ordering between the new and old element.

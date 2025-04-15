@@ -7,8 +7,8 @@
 #include "DDMediaLogs.h"
 
 #include "DDLogUtils.h"
+#include "nsIThreadManager.h"
 #include "mozilla/JSONWriter.h"
-#include "mozilla/SharedThreadPool.h"
 
 namespace mozilla {
 
@@ -19,7 +19,7 @@ DDMediaLogs::New()
   nsresult rv = NS_NewNamedThread("DDMediaLogs",
                                   getter_AddRefs(mThread),
                                   nullptr,
-                                  SharedThreadPool::kStackSize);
+                                  nsIThreadManager::kThreadPoolStackSize);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return { rv, nullptr };
   }
@@ -305,6 +305,9 @@ size_t
 DDMediaLogs::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t size = aMallocSizeOf(this) +
+                // This will usually be called after processing, so negligible
+                // external data should still be present in the queue.
+                mMessagesQueue.ShallowSizeOfExcludingThis(aMallocSizeOf) +
                 mLifetimes.SizeOfExcludingThis(aMallocSizeOf) +
                 mMediaLogs.ShallowSizeOfExcludingThis(aMallocSizeOf) +
                 mObjectLinks.ShallowSizeOfExcludingThis(aMallocSizeOf) +
@@ -676,7 +679,8 @@ DDMediaLogs::ProcessLog()
   ProcessBuffer();
   FulfillPromises();
   CleanUpLogs();
-  DDL_INFO("DDMediaLog size: %zu", SizeOfIncludingThis(moz_malloc_size_of));
+  DDL_INFO("ProcessLog() completed - DDMediaLog size: %zu",
+           SizeOfIncludingThis(moz_malloc_size_of));
 }
 
 nsresult
@@ -693,6 +697,8 @@ DDMediaLogs::DispatchProcessLog(const MutexAutoLock& aProofOfLock)
 nsresult
 DDMediaLogs::DispatchProcessLog()
 {
+  DDL_INFO("DispatchProcessLog() - Yet-unprocessed message buffers: %d",
+           mMessagesQueue.LiveBuffersStats().mCount);
   MutexAutoLock lock(mMutex);
   return DispatchProcessLog(lock);
 }

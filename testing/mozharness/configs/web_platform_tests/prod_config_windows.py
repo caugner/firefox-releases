@@ -22,11 +22,9 @@ config = {
 
     "exes": {
         'python': sys.executable,
-        'virtualenv': [sys.executable, 'c:/mozilla-build/buildbotve/virtualenv.py'],
         'hg': 'c:/mozilla-build/hg/hg',
         'mozinstall': ['%s/build/venv/scripts/python' % os.getcwd(),
                        '%s/build/venv/scripts/mozinstall-script.py' % os.getcwd()],
-        'tooltool.py': [sys.executable, 'C:/mozilla-build/tooltool.py'],
     },
 
     "find_links": [
@@ -45,4 +43,6 @@ config = {
     "blob_uploader_auth_file" : os.path.join(os.getcwd(), "oauth.txt"),
 
     "download_minidump_stackwalk": True,
+
+    "verify_category": "web-platform",
 }

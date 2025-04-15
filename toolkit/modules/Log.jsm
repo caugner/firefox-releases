@@ -4,9 +4,7 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["Log"];
-
-const {classes: Cc, interfaces: Ci, results: Cr, utils: Cu} = Components;
+var EXPORTED_SYMBOLS = ["Log"];
 
 const ONE_BYTE = 1;
 const ONE_KILOBYTE = 1024 * ONE_BYTE;
@@ -15,11 +13,13 @@ const ONE_MEGABYTE = 1024 * ONE_KILOBYTE;
 const STREAM_SEGMENT_SIZE = 4096;
 const PR_UINT32_MAX = 0xffffffff;
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "OS",
-                                  "resource://gre/modules/osfile.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Task",
-                                  "resource://gre/modules/Task.jsm");
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "OS",
+                               "resource://gre/modules/osfile.jsm");
+ChromeUtils.defineModuleGetter(this, "Task",
+                               "resource://gre/modules/Task.jsm");
+ChromeUtils.defineModuleGetter(this, "Services",
+                               "resource://gre/modules/Services.jsm");
 const INTERNAL_FIELDS = new Set(["_level", "_message", "_time", "_namespace"]);
 
 
@@ -31,7 +31,7 @@ function dumpError(text) {
   Cu.reportError(text);
 }
 
-this.Log = {
+var Log = {
   Level: {
     Fatal:  70,
     Error:  60,
@@ -187,7 +187,7 @@ this.Log = {
         }
         frame = frame.caller;
       }
-      return "Stack trace: " + output.join(" < ");
+      return "Stack trace: " + output.join("\n");
     }
     // Standard JS exception
     if (e.stack) {
@@ -196,7 +196,7 @@ this.Log = {
       if (stack.includes("/Task.jsm:"))
         stack = Task.Debugging.generateReadableStack(stack);
       return "JS Stack trace: " + stack.trim()
-        .replace(/\n/g, " < ").replace(/@[^@]*?([^\/\.]+\.\w+:)/g, "@$1");
+        .replace(/@[^@]*?([^\/\.]+\.\w+:)/g, "@$1");
     }
 
     return "No traceback available";
@@ -263,12 +263,33 @@ function Logger(name, repository) {
   this._repository = repository;
 }
 Logger.prototype = {
+  _levelPrefName: null,
+  _levelPrefValue: null,
+
   get name() {
     return this._name;
   },
 
   _level: null,
   get level() {
+    if (this._levelPrefName) {
+      // We've been asked to use a preference to configure the logs. If the
+      // pref has a value we use it, otherwise we continue to use the parent.
+      const lpv = this._levelPrefValue;
+      if (lpv) {
+        const levelValue = Log.Level[lpv];
+        if (levelValue) {
+          // stash it in _level just in case a future value of the pref is
+          // invalid, in which case we end up continuing to use this value.
+          this._level = levelValue;
+          return levelValue;
+        }
+      } else {
+        // in case the pref has transitioned from a value to no value, we reset
+        // this._level and fall through to using the parent.
+        this._level = null;
+      }
+    }
     if (this._level != null)
       return this._level;
     if (this.parent)
@@ -277,6 +298,15 @@ Logger.prototype = {
     return Log.Level.All;
   },
   set level(level) {
+    if (this._levelPrefName) {
+      // I guess we could honor this by nuking this._levelPrefValue, but it
+      // almost certainly implies confusion, so we'll warn and ignore.
+      dumpError(`Log warning: The log '${this.name}' is configured to use ` +
+                `the preference '${this._levelPrefName}' - you must adjust ` +
+                `the level by setting this preference, not by using the ` +
+                `level setter`);
+      return;
+    }
     this._level = level;
   },
 
@@ -300,10 +330,25 @@ Logger.prototype = {
     this.updateAppenders();
   },
 
+  manageLevelFromPref(prefName) {
+    if (prefName == this._levelPrefName) {
+      // We've already configured this log with an observer for that pref.
+      return;
+    }
+    if (this._levelPrefName) {
+      dumpError(`The log '${this.name}' is already configured with the ` +
+                `preference '${this._levelPrefName}' - ignoring request to ` +
+                `also use the preference '${prefName}'`);
+      return;
+    }
+    this._levelPrefName = prefName;
+    XPCOMUtils.defineLazyPreferenceGetter(this, "_levelPrefValue", prefName);
+  },
+
   updateAppenders: function updateAppenders() {
     if (this._parent) {
       let notOwnAppenders = this._parent.appenders.filter(function(appender) {
-        return this.ownAppenders.indexOf(appender) == -1;
+        return !this.ownAppenders.includes(appender);
       }, this);
       this.appenders = notOwnAppenders.concat(this.ownAppenders);
     } else {
@@ -317,7 +362,7 @@ Logger.prototype = {
   },
 
   addAppender: function Logger_addAppender(appender) {
-    if (this.ownAppenders.indexOf(appender) != -1) {
+    if (this.ownAppenders.includes(appender)) {
       return;
     }
     this.ownAppenders.push(appender);
@@ -757,8 +802,7 @@ ConsoleAppender.prototype = {
   },
 
   doAppend: function CApp_doAppend(formatted) {
-    Cc["@mozilla.org/consoleservice;1"].
-      getService(Ci.nsIConsoleService).logStringMessage(formatted);
+    Services.console.logStringMessage(formatted);
   }
 };
 

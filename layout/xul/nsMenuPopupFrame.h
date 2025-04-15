@@ -27,6 +27,12 @@
 
 class nsIWidget;
 
+namespace mozilla {
+namespace dom {
+class KeyboardEvent;
+} // namespace dom
+} // namespace mozilla
+
 // XUL popups can be in several different states. When opening a popup, the
 // state changes as follows:
 //   ePopupClosed - initial state
@@ -339,7 +345,8 @@ public:
   // the Enter key. If doAction is false, the menu should just be highlighted.
   // This method also handles incremental searching in menus so the user can
   // type the first few letters of an item/s name to select it.
-  nsMenuFrame* FindMenuWithShortcut(nsIDOMKeyEvent* aKeyEvent, bool& doAction);
+  nsMenuFrame* FindMenuWithShortcut(mozilla::dom::KeyboardEvent* aKeyEvent,
+                                    bool& doAction);
 
   void ClearIncrementalString() { mIncrementalString.Truncate(); }
   static bool IsWithinIncrementalTime(DOMTimeStamp time) {
@@ -613,19 +620,22 @@ protected:
       mAnchor(nullptr),
       mSizedToPopup(false)
     {}
-    void MarkPosted(nsIFrame* aAnchor, bool aSizedToPopup) {
+    void MarkPosted(nsIFrame* aAnchor, bool aSizedToPopup, bool aIsOpenChanged) {
       mPosted = true;
       mAnchor = aAnchor;
       mSizedToPopup = aSizedToPopup;
+      mIsOpenChanged = aIsOpenChanged;
     }
     void Clear() {
       mPosted = false;
       mAnchor = nullptr;
       mSizedToPopup = false;
+      mIsOpenChanged = false;
     }
     bool mPosted;
     nsIFrame* mAnchor;
     bool mSizedToPopup;
+    bool mIsOpenChanged;
   };
   ReflowCallbackData mReflowCallbackData;
 
@@ -649,6 +659,11 @@ protected:
   // the flip modes that were used when the popup was opened
   bool mHFlip;
   bool mVFlip;
+
+  // When POPUPPOSITION_SELECTION is used, this indicates the vertical offset that the
+  // original selected item was. This needs to be used in case the popup gets changed
+  // so that we can keep the popup at the same vertical offset.
+  nscoord mPositionedOffset;
 
   // How the popup is anchored.
   MenuPopupAnchorType mAnchorType;

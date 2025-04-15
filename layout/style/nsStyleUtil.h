@@ -8,7 +8,6 @@
 
 #include "nsCoord.h"
 #include "nsCSSPropertyID.h"
-#include "nsString.h"
 #include "nsTArrayForwardDeclare.h"
 #include "gfxFontFamilyList.h"
 #include "nsStringFwd.h"
@@ -149,14 +148,12 @@ public:
    * Does this child count as significant for selector matching?
    */
   static bool IsSignificantChild(nsIContent* aChild,
-                                   bool aTextIsSignificant,
-                                   bool aWhitespaceIsSignificant);
+                                 bool aWhitespaceIsSignificant);
 
   /*
    * Thread-safe version of IsSignificantChild()
    */
   static bool ThreadSafeIsSignificantChild(const nsIContent* aChild,
-                                           bool aTextIsSignificant,
                                            bool aWhitespaceIsSignificant);
   /**
    * Returns true if our object-fit & object-position properties might cause
@@ -189,6 +186,9 @@ public:
    *      The principal of the of the document (*not* of the style sheet).
    *      The document's principal is where any Content Security Policy that
    *      should be used to block or allow inline styles will be located.
+   *  @param aTriggeringPrincipal
+   *      The principal of the scripted caller which added the inline
+   *      stylesheet, or null if no scripted caller can be identified.
    *  @param aSourceURI
    *      URI of document containing inline style (for reporting violations)
    *  @param aLineNumber
@@ -201,8 +201,9 @@ public:
    *  @return
    *      Does CSP allow application of the specified inline style?
    */
-  static bool CSPAllowsInlineStyle(nsIContent* aContent,
+  static bool CSPAllowsInlineStyle(mozilla::dom::Element* aContent,
                                    nsIPrincipal* aPrincipal,
+                                   nsIPrincipal* aTriggeringPrincipal,
                                    nsIURI* aSourceURI,
                                    uint32_t aLineNumber,
                                    const nsAString& aStyleText,
@@ -212,7 +213,7 @@ public:
   static bool MatchesLanguagePrefix(const char16_t* aLang, size_t aLen,
                                     const char16_t (&aPrefix)[N])
   {
-    return !nsCRT::strncmp(aLang, aPrefix, N - 1) &&
+    return !NS_strncmp(aLang, aPrefix, N - 1) &&
            (aLen == N - 1 || aLang[N - 1] == '-');
   }
 

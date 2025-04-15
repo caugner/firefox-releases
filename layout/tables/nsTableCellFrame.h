@@ -7,14 +7,11 @@
 
 #include "mozilla/Attributes.h"
 #include "celldata.h"
-#include "imgIContainer.h"
 #include "nsITableCellLayout.h"
 #include "nscore.h"
 #include "nsContainerFrame.h"
 #include "nsStyleContext.h"
 #include "nsIPercentBSizeObserver.h"
-#include "nsGkAtoms.h"
-#include "nsLayoutUtils.h"
 #include "nsTArray.h"
 #include "nsTableRowFrame.h"
 #include "mozilla/WritingModes.h"
@@ -35,7 +32,7 @@ class nsTableCellFrame : public nsContainerFrame,
                          public nsIPercentBSizeObserver
 {
   typedef mozilla::gfx::DrawTarget DrawTarget;
-  typedef mozilla::image::DrawResult DrawResult;
+  typedef mozilla::image::ImgDrawResult ImgDrawResult;
 
   friend nsTableCellFrame* NS_NewTableCellFrame(nsIPresShell*   aPresShell,
                                                 nsStyleContext* aContext,
@@ -229,7 +226,7 @@ public:
 
   virtual LogicalMargin GetBorderWidth(WritingMode aWM) const;
 
-  virtual DrawResult PaintBackground(gfxContext&          aRenderingContext,
+  virtual ImgDrawResult PaintBackground(gfxContext&          aRenderingContext,
                                      const nsRect&        aDirtyRect,
                                      nsPoint              aPt,
                                      uint32_t             aFlags);
@@ -322,7 +319,7 @@ inline void nsTableCellFrame::SetHasPctOverBSize(bool aValue)
 // nsBCTableCellFrame
 class nsBCTableCellFrame final : public nsTableCellFrame
 {
-  typedef mozilla::image::DrawResult DrawResult;
+  typedef mozilla::image::ImgDrawResult ImgDrawResult;
 public:
   NS_DECL_FRAMEARENA_HELPERS(nsBCTableCellFrame)
 
@@ -347,7 +344,7 @@ public:
   virtual nsresult GetFrameName(nsAString& aResult) const override;
 #endif
 
-  virtual DrawResult PaintBackground(gfxContext&          aRenderingContext,
+  virtual ImgDrawResult PaintBackground(gfxContext&          aRenderingContext,
                                      const nsRect&        aDirtyRect,
                                      nsPoint              aPt,
                                      uint32_t             aFlags) override;

@@ -44,7 +44,7 @@ const UPDATE_PORT = 50625;
 const ADDRESS = "224.0.0.115";
 const REPLY_TIMEOUT = 5000;
 
-const { XPCOMUtils } = Cu.import("resource://gre/modules/XPCOMUtils.jsm", {});
+const { XPCOMUtils } = require("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "converter", () => {
   let conv = Cc["@mozilla.org/intl/scriptableunicodeconverter"]
@@ -55,11 +55,6 @@ XPCOMUtils.defineLazyGetter(this, "converter", () => {
 
 XPCOMUtils.defineLazyGetter(this, "sysInfo", () => {
   return Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
-});
-
-XPCOMUtils.defineLazyGetter(this, "libcutils", function () {
-  let { libcutils } = Cu.import("resource://gre/modules/systemlibs.js", {});
-  return libcutils;
 });
 
 var logging = Services.prefs.getBoolPref("devtools.discovery.log");

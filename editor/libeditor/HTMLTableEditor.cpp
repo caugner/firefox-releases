@@ -9,6 +9,7 @@
 
 #include "HTMLEditUtils.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/EditAction.h"
 #include "mozilla/EditorDOMPoint.h"
 #include "mozilla/EditorUtils.h"
 #include "mozilla/FlushType.h"
@@ -86,66 +87,74 @@ public:
   }
 };
 
-NS_IMETHODIMP
-HTMLEditor::InsertCell(nsIDOMElement* aCell,
+nsresult
+HTMLEditor::InsertCell(nsIDOMElement* aDOMCell,
                        int32_t aRowSpan,
                        int32_t aColSpan,
                        bool aAfter,
                        bool aIsHeader,
-                       nsIDOMElement** aNewCell)
+                       nsIDOMElement** aNewDOMCell)
 {
-  NS_ENSURE_TRUE(aCell, NS_ERROR_NULL_POINTER);
-  if (aNewCell) {
-    *aNewCell = nullptr;
+  if (aNewDOMCell) {
+    *aNewDOMCell = nullptr;
+  }
+
+  if (NS_WARN_IF(!aDOMCell)) {
+    return NS_ERROR_NULL_POINTER;
   }
 
   // And the parent and offsets needed to do an insert
-  nsCOMPtr<nsIDOMNode> cellParent;
-  nsresult rv = aCell->GetParentNode(getter_AddRefs(cellParent));
-  NS_ENSURE_SUCCESS(rv, rv);
-  NS_ENSURE_TRUE(cellParent, NS_ERROR_NULL_POINTER);
+  nsCOMPtr<nsIContent> cell = do_QueryInterface(aDOMCell);
+  if (NS_WARN_IF(!cell)) {
+    return NS_ERROR_INVALID_ARG;
+  }
+  EditorDOMPoint pointToInsert(cell);
+  if (NS_WARN_IF(!pointToInsert.IsSet())) {
+    return NS_ERROR_INVALID_ARG;
+  }
 
-  int32_t cellOffset = GetChildOffset(aCell, cellParent);
-
-  nsCOMPtr<nsIDOMElement> newCell;
-  rv = CreateElementWithDefaults(aIsHeader ? NS_LITERAL_STRING("th") :
-                                             NS_LITERAL_STRING("tb"),
-                                 getter_AddRefs(newCell));
-  if (NS_FAILED(rv)) {
+  nsCOMPtr<nsIDOMElement> newDOMCell;
+  nsresult rv =
+    CreateElementWithDefaults(aIsHeader ? NS_LITERAL_STRING("th") :
+                                          NS_LITERAL_STRING("tb"),
+                              getter_AddRefs(newDOMCell));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
-  if (!newCell) {
+  nsCOMPtr<Element> newCell = do_QueryInterface(newDOMCell);
+  if (NS_WARN_IF(!newCell)) {
     return NS_ERROR_FAILURE;
   }
 
   //Optional: return new cell created
-  if (aNewCell) {
-    *aNewCell = newCell.get();
-    NS_ADDREF(*aNewCell);
+  if (aNewDOMCell) {
+    newDOMCell.forget(aNewDOMCell);
   }
 
   if (aRowSpan > 1) {
     // Note: Do NOT use editor transaction for this
     nsAutoString newRowSpan;
     newRowSpan.AppendInt(aRowSpan, 10);
-    newCell->SetAttribute(NS_LITERAL_STRING("rowspan"), newRowSpan);
+    newCell->SetAttr(kNameSpaceID_None, nsGkAtoms::rowspan, newRowSpan, true);
   }
   if (aColSpan > 1) {
     // Note: Do NOT use editor transaction for this
     nsAutoString newColSpan;
     newColSpan.AppendInt(aColSpan, 10);
-    newCell->SetAttribute(NS_LITERAL_STRING("colspan"), newColSpan);
+    newCell->SetAttr(kNameSpaceID_None, nsGkAtoms::colspan, newColSpan, true);
   }
   if (aAfter) {
-    cellOffset++;
+    DebugOnly<bool> advanced = pointToInsert.AdvanceOffset();
+    NS_WARNING_ASSERTION(advanced,
+      "Failed to advance offset to after the old cell");
   }
 
-  //Don't let Rules System change the selection
+  // Don't let Rules System change the selection.
   AutoTransactionsConserveSelection dontChangeSelection(this);
-  return InsertNode(newCell, cellParent, cellOffset);
+  return InsertNode(*newCell, pointToInsert.AsRaw());
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::SetColSpan(nsIDOMElement* aCell,
                        int32_t aColSpan)
 {
@@ -155,7 +164,7 @@ HTMLEditor::SetColSpan(nsIDOMElement* aCell,
   return SetAttribute(aCell, NS_LITERAL_STRING("colspan"), newSpan);
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::SetRowSpan(nsIDOMElement* aCell,
                        int32_t aRowSpan)
 {
@@ -207,7 +216,11 @@ HTMLEditor::InsertTableCell(int32_t aNumber,
       if (aAfter) {
         cellOffset++;
       }
-      rv = InsertNode(newCell, cellParent, cellOffset);
+      nsCOMPtr<nsIContent> cell = do_QueryInterface(newCell);
+      if (NS_WARN_IF(!cell)) {
+        return NS_ERROR_FAILURE;
+      }
+      rv = InsertNode(*cell, EditorRawDOMPoint(cellParent, cellOffset));
       if (NS_FAILED(rv)) {
         break;
       }
@@ -226,60 +239,43 @@ HTMLEditor::GetFirstRow(nsIDOMElement* aTableElement,
 
   *aRowNode = nullptr;
 
-  NS_ENSURE_TRUE(aTableElement, NS_ERROR_NULL_POINTER);
-
-  nsCOMPtr<nsIDOMElement> tableElement;
-  nsresult rv = GetElementOrParentByTagName(NS_LITERAL_STRING("table"),
-                                            aTableElement,
-                                            getter_AddRefs(tableElement));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsINode> tableElement = do_QueryInterface(aTableElement);
   NS_ENSURE_TRUE(tableElement, NS_ERROR_NULL_POINTER);
 
-  nsCOMPtr<nsIDOMNode> tableChild;
-  rv = tableElement->GetFirstChild(getter_AddRefs(tableChild));
-  NS_ENSURE_SUCCESS(rv, rv);
+  tableElement = GetElementOrParentByTagName(NS_LITERAL_STRING("table"),
+                                             tableElement);
+  NS_ENSURE_TRUE(tableElement, NS_ERROR_NULL_POINTER);
 
+  nsCOMPtr<nsIContent> tableChild = tableElement->GetFirstChild();
   while (tableChild) {
-    nsCOMPtr<nsIContent> content = do_QueryInterface(tableChild);
-    if (content) {
-      if (content->IsHTMLElement(nsGkAtoms::tr)) {
-        // Found a row directly under <table>
-        *aRowNode = tableChild;
+    if (tableChild->IsHTMLElement(nsGkAtoms::tr)) {
+      // Found a row directly under <table>
+      *aRowNode = tableChild->AsDOMNode();
+      NS_ADDREF(*aRowNode);
+      return NS_OK;
+    }
+    // Look for row in one of the row container elements
+    if (tableChild->IsAnyOfHTMLElements(nsGkAtoms::tbody,
+                                        nsGkAtoms::thead,
+                                        nsGkAtoms::tfoot)) {
+      nsCOMPtr<nsIContent> rowNode = tableChild->GetFirstChild();
+
+      // We can encounter textnodes here -- must find a row
+      while (rowNode && !HTMLEditUtils::IsTableRow(rowNode)) {
+        rowNode = rowNode->GetNextSibling();
+      }
+
+      if (rowNode) {
+        *aRowNode = rowNode->AsDOMNode();
         NS_ADDREF(*aRowNode);
         return NS_OK;
-      }
-      // Look for row in one of the row container elements
-      if (content->IsAnyOfHTMLElements(nsGkAtoms::tbody,
-                                       nsGkAtoms::thead,
-                                       nsGkAtoms::tfoot)) {
-        nsCOMPtr<nsIDOMNode> rowNode;
-        rv = tableChild->GetFirstChild(getter_AddRefs(rowNode));
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        // We can encounter textnodes here -- must find a row
-        while (rowNode && !HTMLEditUtils::IsTableRow(rowNode)) {
-          nsCOMPtr<nsIDOMNode> nextNode;
-          rv = rowNode->GetNextSibling(getter_AddRefs(nextNode));
-          NS_ENSURE_SUCCESS(rv, rv);
-
-          rowNode = nextNode;
-        }
-        if (rowNode) {
-          *aRowNode = rowNode.get();
-          NS_ADDREF(*aRowNode);
-          return NS_OK;
-        }
       }
     }
     // Here if table child was a CAPTION or COLGROUP
     //  or child of a row parent wasn't a row (bad HTML?),
     //  or first child was a textnode
     // Look in next table child
-    nsCOMPtr<nsIDOMNode> nextChild;
-    rv = tableChild->GetNextSibling(getter_AddRefs(nextChild));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    tableChild = nextChild;
+    tableChild = tableChild->GetNextSibling();
   }
   // If here, row was not found
   return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
@@ -293,54 +289,40 @@ HTMLEditor::GetNextRow(nsIDOMNode* aCurrentRowNode,
 
   *aRowNode = nullptr;
 
-  NS_ENSURE_TRUE(aCurrentRowNode, NS_ERROR_NULL_POINTER);
+  nsCOMPtr<nsINode> currentRowNode = do_QueryInterface(aCurrentRowNode);
+  NS_ENSURE_TRUE(currentRowNode, NS_ERROR_NULL_POINTER);
 
-  if (!HTMLEditUtils::IsTableRow(aCurrentRowNode)) {
+  if (!HTMLEditUtils::IsTableRow(currentRowNode)) {
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIDOMNode> nextRow;
-  nsresult rv = aCurrentRowNode->GetNextSibling(getter_AddRefs(nextRow));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIDOMNode> nextNode;
+  nsIContent* nextRow = currentRowNode->GetNextSibling();
 
   // Skip over any textnodes here
   while (nextRow && !HTMLEditUtils::IsTableRow(nextRow)) {
-    rv = nextRow->GetNextSibling(getter_AddRefs(nextNode));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nextRow = nextNode;
+    nextRow = nextRow->GetNextSibling();
   }
   if (nextRow) {
-    *aRowNode = nextRow.get();
+    *aRowNode = nextRow->AsDOMNode();
     NS_ADDREF(*aRowNode);
     return NS_OK;
   }
 
   // No row found, search for rows in other table sections
-  nsCOMPtr<nsIDOMNode> rowParent;
-  rv = aCurrentRowNode->GetParentNode(getter_AddRefs(rowParent));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsINode* rowParent = currentRowNode->GetParentNode();
   NS_ENSURE_TRUE(rowParent, NS_ERROR_NULL_POINTER);
 
-  nsCOMPtr<nsIDOMNode> parentSibling;
-  rv = rowParent->GetNextSibling(getter_AddRefs(parentSibling));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsIContent* parentSibling = rowParent->GetNextSibling();
 
   while (parentSibling) {
-    rv = parentSibling->GetFirstChild(getter_AddRefs(nextRow));
-    NS_ENSURE_SUCCESS(rv, rv);
+    nextRow = parentSibling->GetFirstChild();
 
     // We can encounter textnodes here -- must find a row
     while (nextRow && !HTMLEditUtils::IsTableRow(nextRow)) {
-      rv = nextRow->GetNextSibling(getter_AddRefs(nextNode));
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      nextRow = nextNode;
+      nextRow = nextRow->GetNextSibling();
     }
     if (nextRow) {
-      *aRowNode = nextRow.get();
+      *aRowNode = nextRow->AsDOMNode();
       NS_ADDREF(*aRowNode);
       return NS_OK;
     }
@@ -348,10 +330,7 @@ HTMLEditor::GetNextRow(nsIDOMNode* aCurrentRowNode,
     // We arrive here only if a table section has no children
     //  or first child of section is not a row (bad HTML or more "_moz_text" nodes!)
     // So look for another section sibling
-    rv = parentSibling->GetNextSibling(getter_AddRefs(nextNode));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    parentSibling = nextNode;
+    parentSibling = parentSibling->GetNextSibling();
   }
   // If here, row was not found
   return NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND;
@@ -365,22 +344,17 @@ HTMLEditor::GetLastCellInRow(nsIDOMNode* aRowNode,
 
   *aCellNode = nullptr;
 
-  NS_ENSURE_TRUE(aRowNode, NS_ERROR_NULL_POINTER);
+  nsCOMPtr<nsINode> rowNode = do_QueryInterface(aRowNode);
+  NS_ENSURE_TRUE(rowNode, NS_ERROR_NULL_POINTER);
 
-  nsCOMPtr<nsIDOMNode> rowChild;
-  nsresult rv = aRowNode->GetLastChild(getter_AddRefs(rowChild));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsINode> rowChild = rowNode->GetLastChild();
 
   while (rowChild && !HTMLEditUtils::IsTableCell(rowChild)) {
     // Skip over textnodes
-    nsCOMPtr<nsIDOMNode> previousChild;
-    rv = rowChild->GetPreviousSibling(getter_AddRefs(previousChild));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rowChild = previousChild;
+    rowChild = rowChild->GetPreviousSibling();
   }
   if (rowChild) {
-    *aCellNode = rowChild.get();
+    *aCellNode = rowChild->AsDOMNode();
     NS_ADDREF(*aCellNode);
     return NS_OK;
   }
@@ -659,7 +633,7 @@ HTMLEditor::InsertTableRow(int32_t aNumber,
     // The row parent and offset where we will insert new row
     nsCOMPtr<nsINode> parentOfRow = parentRow->GetParentNode();
     NS_ENSURE_TRUE(parentOfRow, NS_ERROR_NULL_POINTER);
-    int32_t newRowOffset = parentOfRow->IndexOf(parentRow);
+    int32_t newRowOffset = parentOfRow->ComputeIndexOf(parentRow);
 
     // Adjust for when adding past the end
     if (aAfter && startRowIndex >= rowCount) {
@@ -687,7 +661,7 @@ HTMLEditor::InsertTableRow(int32_t aNumber,
 
       // Use transaction system to insert the entire row+cells
       // (Note that rows are inserted at same childoffset each time)
-      rv = InsertNode(*newRow, *parentOfRow, newRowOffset);
+      rv = InsertNode(*newRow, EditorRawDOMPoint(parentOfRow, newRowOffset));
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }
@@ -974,23 +948,18 @@ HTMLEditor::DeleteTableCellContents()
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::DeleteCellContents(nsIDOMElement* aCell)
 {
-  NS_ENSURE_TRUE(aCell, NS_ERROR_NULL_POINTER);
+  nsCOMPtr<Element> cell = do_QueryInterface(aCell);
+  NS_ENSURE_TRUE(cell, NS_ERROR_NULL_POINTER);
 
   // Prevent rules testing until we're done
   AutoRules beginRulesSniffing(this, EditAction::deleteNode, nsIEditor::eNext);
 
-  nsCOMPtr<nsIDOMNode> child;
-  bool hasChild;
-  aCell->HasChildNodes(&hasChild);
-
-  while (hasChild) {
-    aCell->GetLastChild(getter_AddRefs(child));
+  while (nsCOMPtr<nsINode> child = cell->GetLastChild()) {
     nsresult rv = DeleteNode(child);
     NS_ENSURE_SUCCESS(rv, rv);
-    aCell->HasChildNodes(&hasChild);
   }
   return NS_OK;
 }
@@ -1076,7 +1045,7 @@ HTMLEditor::DeleteTableColumn(int32_t aNumber)
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::DeleteColumn(nsIDOMElement* aTable,
                          int32_t aColIndex)
 {
@@ -1253,7 +1222,7 @@ HTMLEditor::DeleteTableRow(int32_t aNumber)
 }
 
 // Helper that doesn't batch or change the selection
-NS_IMETHODIMP
+nsresult
 HTMLEditor::DeleteRow(nsIDOMElement* aTable,
                       int32_t aRowIndex)
 {
@@ -1782,7 +1751,7 @@ HTMLEditor::CopyCellBackgroundColor(nsIDOMElement* destCell,
   return SetAttribute(destCell, bgcolor, color);
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::SplitCellIntoColumns(nsIDOMElement* aTable,
                                  int32_t aRowIndex,
                                  int32_t aColIndex,
@@ -1830,7 +1799,7 @@ HTMLEditor::SplitCellIntoColumns(nsIDOMElement* aTable,
   return CopyCellBackgroundColor(newCell, cell);
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::SplitCellIntoRows(nsIDOMElement* aTable,
                               int32_t aRowIndex,
                               int32_t aColIndex,
@@ -2295,7 +2264,7 @@ HTMLEditor::JoinTableCells(bool aMergeNonContiguousContents)
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::MergeCells(nsCOMPtr<nsIDOMElement> aTargetCell,
                        nsCOMPtr<nsIDOMElement> aCellToMerge,
                        bool aDeleteCellToMerge)
@@ -2328,11 +2297,12 @@ HTMLEditor::MergeCells(nsCOMPtr<nsIDOMElement> aTargetCell,
 
     // Move the contents
     while (cellToMerge->HasChildren()) {
-      nsCOMPtr<nsIDOMNode> cellChild = cellToMerge->GetLastChild()->AsDOMNode();
-      nsresult rv = DeleteNode(cellChild);
+      nsCOMPtr<nsIContent> cellChild = cellToMerge->GetLastChild();
+      // XXX We need HTMLEditor::DeleteNode(nsINode&).
+      nsresult rv = DeleteNode(cellChild->AsDOMNode());
       NS_ENSURE_SUCCESS(rv, rv);
 
-      rv = InsertNode(cellChild, aTargetCell, insertIndex);
+      rv = InsertNode(*cellChild, EditorRawDOMPoint(aTargetCell, insertIndex));
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }
@@ -2346,7 +2316,7 @@ HTMLEditor::MergeCells(nsCOMPtr<nsIDOMElement> aTargetCell,
 }
 
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::FixBadRowSpan(nsIDOMElement* aTable,
                           int32_t aRowIndex,
                           int32_t& aNewRowCount)
@@ -2411,7 +2381,7 @@ HTMLEditor::FixBadRowSpan(nsIDOMElement* aTable,
   return GetTableSize(aTable, &aNewRowCount, &colCount);
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::FixBadColSpan(nsIDOMElement* aTable,
                           int32_t aColIndex,
                           int32_t& aNewColCount)
@@ -2642,18 +2612,25 @@ HTMLEditor::GetTableSize(nsIDOMElement* aTable,
                          int32_t* aRowCount,
                          int32_t* aColCount)
 {
+  nsCOMPtr<Element> table = do_QueryInterface(aTable);
+  return GetTableSize(table, aRowCount, aColCount);
+}
+
+nsresult
+HTMLEditor::GetTableSize(Element* aTable,
+                         int32_t* aRowCount,
+                         int32_t* aColCount)
+{
   NS_ENSURE_ARG_POINTER(aRowCount);
   NS_ENSURE_ARG_POINTER(aColCount);
   *aRowCount = 0;
   *aColCount = 0;
-  nsCOMPtr<nsIDOMElement> table;
   // Get the selected talbe or the table enclosing the selection anchor
-  nsresult rv = GetElementOrParentByTagName(NS_LITERAL_STRING("table"), aTable,
-                                            getter_AddRefs(table));
-  NS_ENSURE_SUCCESS(rv, rv);
+  RefPtr<Element> table =
+    GetElementOrParentByTagName(NS_LITERAL_STRING("table"), aTable);
   NS_ENSURE_TRUE(table, NS_ERROR_FAILURE);
 
-  nsTableWrapperFrame* tableFrame = GetTableFrame(table.get());
+  nsTableWrapperFrame* tableFrame = do_QueryFrame(table->GetPrimaryFrame());
   NS_ENSURE_TRUE(tableFrame, NS_ERROR_FAILURE);
 
   *aRowCount = tableFrame->GetRowCount();
@@ -2764,7 +2741,7 @@ HTMLEditor::GetCellAt(nsIDOMElement* aTable,
 }
 
 // When all you want are the rowspan and colspan (not exposed in nsITableEditor)
-NS_IMETHODIMP
+nsresult
 HTMLEditor::GetCellSpansAt(nsIDOMElement* aTable,
                            int32_t aRowIndex,
                            int32_t aColIndex,
@@ -2887,18 +2864,17 @@ HTMLEditor::GetCellContext(Selection** aSelection,
     }
   }
   if (aCellParent) {
-    nsCOMPtr <nsIDOMNode> cellParent;
+    nsCOMPtr<nsINode> cellNode = do_QueryInterface(cell);
     // Get the immediate parent of the cell
-    rv = cell->GetParentNode(getter_AddRefs(cellParent));
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsINode* cellParent = cellNode->GetParentNode();
     // Cell has to have a parent, so fail if not found
     NS_ENSURE_TRUE(cellParent, NS_ERROR_FAILURE);
 
-    *aCellParent = cellParent.get();
+    *aCellParent = cellParent->AsDOMNode();
     NS_ADDREF(*aCellParent);
 
     if (aCellOffset) {
-      *aCellOffset = GetChildOffset(cell, cellParent);
+      *aCellOffset = GetChildOffset(cell, cellParent->AsDOMNode());
     }
   }
 
@@ -3155,9 +3131,8 @@ HTMLEditor::SetSelectionAfterTableEdit(nsIDOMElement* aTable,
 
   // We didn't find a cell
   // Set selection to just before the table
-  nsCOMPtr<nsIDOMNode> tableParent;
-  nsresult rv = aTable->GetParentNode(getter_AddRefs(tableParent));
-  if (NS_SUCCEEDED(rv) && tableParent) {
+  nsCOMPtr<nsINode> table = do_QueryInterface(aTable);
+  if (table->GetParentNode()) {
     nsCOMPtr<nsIContent> table = do_QueryInterface(aTable);
     if (NS_WARN_IF(!table)) {
       return;

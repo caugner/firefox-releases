@@ -7,10 +7,10 @@
 // by ext-utils.js).
 /* global tabTracker */
 
-XPCOMUtils.defineLazyModuleGetter(this, "MatchURLFilters",
-                                  "resource://gre/modules/MatchURLFilters.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "WebNavigation",
-                                  "resource://gre/modules/WebNavigation.jsm");
+ChromeUtils.defineModuleGetter(this, "MatchURLFilters",
+                               "resource://gre/modules/MatchURLFilters.jsm");
+ChromeUtils.defineModuleGetter(this, "WebNavigation",
+                               "resource://gre/modules/WebNavigation.jsm");
 
 const defaultTransitionTypes = {
   topFrame: "link",
@@ -97,8 +97,7 @@ function WebNavigationEventManager(context, eventName) {
   let name = `webNavigation.${eventName}`;
   let register = (fire, urlFilters) => {
     // Don't create a MatchURLFilters instance if the listener does not include any filter.
-    let filters = urlFilters ?
-          new MatchURLFilters(urlFilters.url) : null;
+    let filters = urlFilters ? new MatchURLFilters(urlFilters.url) : null;
 
     let listener = data => {
       if (!data.browser) {

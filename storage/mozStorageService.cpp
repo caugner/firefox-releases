@@ -12,6 +12,7 @@
 #include "nsAutoPtr.h"
 #include "nsCollationCID.h"
 #include "nsEmbedCID.h"
+#include "nsExceptionHandler.h"
 #include "nsThreadUtils.h"
 #include "mozStoragePrivateHelpers.h"
 #include "nsIXPConnect.h"
@@ -25,10 +26,6 @@
 
 #include "sqlite3.h"
 #include "mozilla/AutoSQLiteLifetime.h"
-
-#ifdef MOZ_CRASHREPORTER
-#include "nsExceptionHandler.h"
-#endif
 
 #ifdef XP_WIN
 // "windows.h" was included and it can #define lots of things we care about...
@@ -222,13 +219,13 @@ Service::getSingleton()
   // main thread.
   NS_ENSURE_TRUE(NS_IsMainThread(), nullptr);
   RefPtr<Service> service = new Service();
-  gService = service.get();
-  if (NS_FAILED(service->initialize())) {
-    gService = nullptr;
-    return nullptr;
+  if (NS_SUCCEEDED(service->initialize())) {
+    // Note: This is cleared in the Service destructor.
+    gService = service.get();
+    return service.forget();
   }
 
-  return service.forget();
+  return nullptr;
 }
 
 int32_t Service::sSynchronousPref;
@@ -300,17 +297,12 @@ Service::unregisterConnection(Connection *aConnection)
   MOZ_ASSERT(forgettingRef,
              "Attempt to unregister unknown storage connection!");
 
-  // Ensure the connection is released on its opening thread.  We explicitly use
-  // aAlwaysDispatch=false because at the time of writing this, LocalStorage's
-  // StorageDBThread uses a hand-rolled PRThread implementation that cannot
-  // handle us dispatching events at it during shutdown.  However, it is
-  // arguably also desirable for callers to not be aware of our connection
-  // tracking mechanism.  And by synchronously dropping the reference (when
-  // on the correct thread), this avoids surprises for the caller and weird
-  // shutdown edge cases.
-  nsCOMPtr<nsIThread> thread = forgettingRef->threadOpenedOn;
-  NS_ProxyRelease(
-    "storage::Service::mConnections", thread, forgettingRef.forget(), false);
+  // Do not proxy the release anywhere, just let this reference drop here.  (We
+  // previously did proxy the release, but that was because we invoked Close()
+  // in the destructor and Close() likes to complain if it's not invoked on the
+  // opener thread, so it was essential that the last reference be dropped on
+  // the opener thread.  We now enqueue Close() inside our caller, Release(), so
+  // it doesn't actually matter what thread our reference drops on.)
 }
 
 void
@@ -801,13 +793,11 @@ Service::Observe(nsISupports *, const char *aTopic, const char16_t *)
       getConnections(connections);
       for (uint32_t i = 0, n = connections.Length(); i < n; i++) {
         if (!connections[i]->isClosed()) {
-#ifdef MOZ_CRASHREPORTER
           // getFilename is only the leaf name for the database file,
           // so it shouldn't contain privacy-sensitive information.
           CrashReporter::AnnotateCrashReport(
             NS_LITERAL_CSTRING("StorageConnectionNotClosed"),
             connections[i]->getFilename());
-#endif
 #ifdef DEBUG
           printf_stderr("Storage connection not closed: %s",
                         connections[i]->getFilename().get());

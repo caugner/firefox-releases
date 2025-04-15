@@ -92,7 +92,6 @@ class DisplayItemLayer;
 class ColorLayer;
 class CompositorAnimations;
 class CompositorBridgeChild;
-class TextLayer;
 class CanvasLayer;
 class BorderLayer;
 class ReadbackLayer;
@@ -340,14 +339,6 @@ public:
   virtual void StorePluginWidgetConfigurations(const nsTArray<nsIWidget::Configuration>& aConfigurations) {}
   bool IsSnappingEffectiveTransforms() { return mSnapEffectiveTransforms; }
 
-
-  /**
-   * Returns true if the layer manager can't render component alpha
-   * layers, and layer building should do it's best to avoid
-   * creating them.
-   */
-  virtual bool ShouldAvoidComponentAlphaLayers() { return false; }
-
   /**
    * Returns true if this LayerManager can properly support layers with
    * SurfaceMode::SURFACE_COMPONENT_ALPHA. LayerManagers that can't will use
@@ -434,11 +425,6 @@ public:
    * Create a ColorLayer for this manager's layer tree.
    */
   virtual already_AddRefed<ColorLayer> CreateColorLayer() = 0;
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Create a TextLayer for this manager's layer tree.
-   */
-  virtual already_AddRefed<TextLayer> CreateTextLayer() = 0;
   /**
    * CONSTRUCTION PHASE ONLY
    * Create a BorderLayer for this manager's layer tree.
@@ -732,8 +718,7 @@ public:
   virtual void AddDidCompositeObserver(DidCompositeObserver* aObserver) { MOZ_CRASH("GFX: LayerManager"); }
   virtual void RemoveDidCompositeObserver(DidCompositeObserver* aObserver) { MOZ_CRASH("GFX: LayerManager"); }
 
-  virtual void UpdateTextureFactoryIdentifier(const TextureFactoryIdentifier& aNewIdentifier,
-											  uint64_t aDeviceResetSeqNo) {}
+  virtual void UpdateTextureFactoryIdentifier(const TextureFactoryIdentifier& aNewIdentifier) {}
 
   virtual TextureFactoryIdentifier GetTextureFactoryIdentifier()
   {
@@ -831,7 +816,6 @@ public:
     TYPE_CONTAINER,
     TYPE_DISPLAYITEM,
     TYPE_IMAGE,
-    TYPE_TEXT,
     TYPE_BORDER,
     TYPE_READBACK,
     TYPE_REF,
@@ -1082,14 +1066,14 @@ public:
     if (mClipRect) {
       if (!aRect) {
         MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ClipRect was %d,%d,%d,%d is <none>", this,
-                                            mClipRect->x, mClipRect->y, mClipRect->Width(), mClipRect->Height()));
+                                            mClipRect->X(), mClipRect->Y(), mClipRect->Width(), mClipRect->Height()));
         mClipRect.reset();
         Mutated();
       } else {
         if (!aRect->IsEqualEdges(*mClipRect)) {
           MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ClipRect was %d,%d,%d,%d is %d,%d,%d,%d", this,
-                                              mClipRect->x, mClipRect->y, mClipRect->Width(), mClipRect->Height(),
-                                              aRect->x, aRect->y, aRect->Width(), aRect->Height()));
+                                              mClipRect->X(), mClipRect->Y(), mClipRect->Width(), mClipRect->Height(),
+                                              aRect->X(), aRect->Y(), aRect->Width(), aRect->Height()));
           mClipRect = aRect;
           Mutated();
         }
@@ -1097,7 +1081,7 @@ public:
     } else {
       if (aRect) {
         MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ClipRect was <none> is %d,%d,%d,%d", this,
-                                            aRect->x, aRect->y, aRect->Width(), aRect->Height()));
+                                            aRect->X(), aRect->Y(), aRect->Width(), aRect->Height()));
         mClipRect = aRect;
         Mutated();
       }
@@ -1287,8 +1271,8 @@ public:
    * dimension, while that component of the scroll position lies within either
    * interval, the layer should not move relative to its scrolling container.
    */
-  void SetStickyPositionData(FrameMetrics::ViewID aScrollId, LayerRect aOuter,
-                             LayerRect aInner)
+  void SetStickyPositionData(FrameMetrics::ViewID aScrollId,
+                             LayerRectAbsolute aOuter, LayerRectAbsolute aInner)
   {
     if (mSimpleAttrs.SetStickyPositionData(aScrollId, aOuter, aInner)) {
       MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) StickyPositionData", this));
@@ -1313,9 +1297,10 @@ public:
   // Set during construction for the container layer of scrollbar components.
   // |aScrollId| holds the scroll identifier of the scrollable content that
   // the scrollbar is for.
-  void SetIsScrollbarContainer(FrameMetrics::ViewID aScrollId)
+  void SetScrollbarContainer(FrameMetrics::ViewID aScrollId,
+                             ScrollDirection aDirection)
   {
-    if (mSimpleAttrs.SetIsScrollbarContainer(aScrollId)) {
+    if (mSimpleAttrs.SetScrollbarContainer(aScrollId, aDirection)) {
       MutatedSimple();
     }
   }
@@ -1375,11 +1360,12 @@ public:
   LayerPoint GetFixedPositionAnchor() { return mSimpleAttrs.FixedPositionAnchor(); }
   int32_t GetFixedPositionSides() { return mSimpleAttrs.FixedPositionSides(); }
   FrameMetrics::ViewID GetStickyScrollContainerId() { return mSimpleAttrs.StickyScrollContainerId(); }
-  const LayerRect& GetStickyScrollRangeOuter() { return mSimpleAttrs.StickyScrollRangeOuter(); }
-  const LayerRect& GetStickyScrollRangeInner() { return mSimpleAttrs.StickyScrollRangeInner(); }
+  const LayerRectAbsolute& GetStickyScrollRangeOuter() { return mSimpleAttrs.StickyScrollRangeOuter(); }
+  const LayerRectAbsolute& GetStickyScrollRangeInner() { return mSimpleAttrs.StickyScrollRangeInner(); }
   FrameMetrics::ViewID GetScrollbarTargetContainerId() { return mSimpleAttrs.ScrollbarTargetContainerId(); }
   const ScrollThumbData& GetScrollThumbData() const { return mSimpleAttrs.ThumbData(); }
-  bool IsScrollbarContainer() { return mSimpleAttrs.IsScrollbarContainer(); }
+  bool IsScrollbarContainer() { return mSimpleAttrs.GetScrollbarContainerDirection().isSome(); }
+  Maybe<ScrollDirection> GetScrollbarContainerDirection() { return mSimpleAttrs.GetScrollbarContainerDirection(); }
   Layer* GetMaskLayer() const { return mMaskLayer; }
   bool HasPendingTransform() const { return mPendingTransform; }
 
@@ -1502,9 +1488,9 @@ public:
    * This setter can be used anytime. The user data for all keys is
    * initially null. Ownership pases to the layer manager.
    */
-  void SetUserData(void* aKey, LayerUserData* aData)
+  void SetUserData(void* aKey, LayerUserData* aData, void (*aDestroy)(void*) = LayerManager::LayerUserDataDestroy)
   {
-    mUserData.Add(static_cast<gfx::UserDataKey*>(aKey), aData, LayerManager::LayerUserDataDestroy);
+    mUserData.Add(static_cast<gfx::UserDataKey*>(aKey), aData, aDestroy);
   }
   /**
    * This can be used anytime. Ownership passes to the caller!
@@ -1561,12 +1547,6 @@ public:
     * ColorLayer.
     */
   virtual ColorLayer* AsColorLayer() { return nullptr; }
-
-  /**
-    * Dynamic cast to a TextLayer. Returns null if this is not a
-    * TextLayer.
-    */
-  virtual TextLayer* AsTextLayer() { return nullptr; }
 
   /**
     * Dynamic cast to a Border. Returns null if this is not a
@@ -2520,63 +2500,6 @@ protected:
 
   gfx::IntRect mBounds;
   gfx::Color mColor;
-};
-
-/**
- * A Layer which renders Glyphs.
- */
-class TextLayer : public Layer {
-public:
-  virtual TextLayer* AsTextLayer() override { return this; }
-
-  /**
-   * CONSTRUCTION PHASE ONLY
-   */
-  void SetBounds(const gfx::IntRect& aBounds)
-  {
-    if (!mBounds.IsEqualEdges(aBounds)) {
-      mBounds = aBounds;
-      Mutated();
-    }
-  }
-
-  const gfx::IntRect& GetBounds()
-  {
-    return mBounds;
-  }
-
-  void SetScaledFont(gfx::ScaledFont* aScaledFont) {
-    if (aScaledFont != mFont) {
-      mFont = aScaledFont;
-      Mutated();
-    }
-  }
-
-  const nsTArray<GlyphArray>& GetGlyphs() { return mGlyphs; }
-
-  gfx::ScaledFont* GetScaledFont() { return mFont; }
-
-  MOZ_LAYER_DECL_NAME("TextLayer", TYPE_TEXT)
-
-  virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) override
-  {
-    gfx::Matrix4x4 idealTransform = GetLocalTransform() * aTransformToSurface;
-    mEffectiveTransform = SnapTransformTranslation(idealTransform, nullptr);
-    ComputeEffectiveTransformForMaskLayers(aTransformToSurface);
-  }
-
-  virtual void SetGlyphs(nsTArray<GlyphArray>&& aGlyphs);
-protected:
-  TextLayer(LayerManager* aManager, void* aImplData);
-  ~TextLayer();
-
-  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix) override;
-
-  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent) override;
-
-  gfx::IntRect mBounds;
-  nsTArray<GlyphArray> mGlyphs;
-  RefPtr<gfx::ScaledFont> mFont;
 };
 
 /**

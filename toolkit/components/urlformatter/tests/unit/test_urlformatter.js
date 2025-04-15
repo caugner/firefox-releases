@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Cu.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 function run_test() {
   var formatter = Services.urlFormatter;
@@ -41,21 +41,21 @@ function run_test() {
   var pref = "xpcshell.urlformatter.test";
   Services.prefs.setStringPref(pref, upperUrlRaw);
 
-  do_check_eq(formatter.formatURL(upperUrlRaw), ulUrlRef);
-  do_check_eq(formatter.formatURLPref(pref), ulUrlRef);
+  Assert.equal(formatter.formatURL(upperUrlRaw), ulUrlRef);
+  Assert.equal(formatter.formatURLPref(pref), ulUrlRef);
   // Keys must be uppercase
-  do_check_neq(formatter.formatURL(lowerUrlRaw), ulUrlRef);
-  do_check_eq(formatter.formatURL(multiUrl), multiUrlRef);
+  Assert.notEqual(formatter.formatURL(lowerUrlRaw), ulUrlRef);
+  Assert.equal(formatter.formatURL(multiUrl), multiUrlRef);
   // Encoded strings must be kept as is (Bug 427304)
-  do_check_eq(formatter.formatURL(encodedUrl), encodedUrlRef);
+  Assert.equal(formatter.formatURL(encodedUrl), encodedUrlRef);
 
-  do_check_eq(formatter.formatURL(advancedUrl), advancedUrlRef);
+  Assert.equal(formatter.formatURL(advancedUrl), advancedUrlRef);
 
   for (let val of ["MOZILLA_API_KEY", "GOOGLE_API_KEY", "BING_API_CLIENTID", "BING_API_KEY"]) {
     let url = "http://test.mozilla.com/?val=%" + val + "%";
-    do_check_neq(formatter.formatURL(url), url);
+    Assert.notEqual(formatter.formatURL(url), url);
   }
 
   let url = "http://test.mozilla.com/%GOOGLE_API_KEY%/?val=%GOOGLE_API_KEY%";
-  do_check_eq(formatter.trimSensitiveURLs(formatter.formatURL(url)), "http://test.mozilla.com/[trimmed-google-api-key]/?val=[trimmed-google-api-key]");
+  Assert.equal(formatter.trimSensitiveURLs(formatter.formatURL(url)), "http://test.mozilla.com/[trimmed-google-api-key]/?val=[trimmed-google-api-key]");
 }

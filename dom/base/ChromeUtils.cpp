@@ -11,11 +11,14 @@
 
 #include "mozilla/Base64.h"
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/CycleCollectedJSRuntime.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/dom/IdleDeadline.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "mozilla/dom/WindowBinding.h" // For IdleRequestCallback/Options
 #include "nsThreadUtils.h"
+#include "mozJSComponentLoader.h"
+#include "GeckoProfiler.h"
 
 namespace mozilla {
 namespace dom {
@@ -372,6 +375,196 @@ ChromeUtils::IdleDispatch(const GlobalObject& aGlobal,
 }
 
 /* static */ void
+ChromeUtils::Import(const GlobalObject& aGlobal,
+                    const nsAString& aResourceURI,
+                    const Optional<JS::Handle<JSObject*>>& aTargetObj,
+                    JS::MutableHandle<JSObject*> aRetval,
+                    ErrorResult& aRv)
+{
+
+  RefPtr<mozJSComponentLoader> moduleloader = mozJSComponentLoader::Get();
+  MOZ_ASSERT(moduleloader);
+
+  NS_ConvertUTF16toUTF8 registryLocation(aResourceURI);
+
+  AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING(
+    "ChromeUtils::Import", OTHER, registryLocation);
+
+  JSContext* cx = aGlobal.Context();
+  JS::Rooted<JS::Value> targetObj(cx);
+  uint8_t optionalArgc;
+  if (aTargetObj.WasPassed()) {
+    targetObj.setObjectOrNull(aTargetObj.Value());
+    optionalArgc = 1;
+  } else {
+    targetObj.setUndefined();
+    optionalArgc = 0;
+  }
+
+  JS::Rooted<JS::Value> retval(cx);
+  nsresult rv = moduleloader->ImportInto(registryLocation, targetObj, cx,
+                                         optionalArgc, &retval);
+  if (NS_FAILED(rv)) {
+    aRv.Throw(rv);
+    return;
+  }
+
+  // Import() on the component loader can return NS_OK while leaving an
+  // exception on the JSContext.  Check for that case.
+  if (JS_IsExceptionPending(cx)) {
+    aRv.NoteJSContextException(cx);
+    return;
+  }
+
+  // Now we better have an object.
+  MOZ_ASSERT(retval.isObject());
+  aRetval.set(&retval.toObject());
+}
+
+namespace module_getter {
+  static const size_t SLOT_ID = 0;
+  static const size_t SLOT_URI = 1;
+
+  static bool
+  ExtractArgs(JSContext* aCx, JS::CallArgs& aArgs,
+              JS::MutableHandle<JSObject*> aCallee,
+              JS::MutableHandle<JSObject*> aThisObj,
+              JS::MutableHandle<jsid> aId)
+  {
+    aCallee.set(&aArgs.callee());
+
+    JS::Handle<JS::Value> thisv = aArgs.thisv();
+    if (!thisv.isObject()) {
+      JS_ReportErrorASCII(aCx, "Invalid target object");
+      return false;
+    }
+
+    aThisObj.set(&thisv.toObject());
+
+    JS::Rooted<JS::Value> id(aCx, js::GetFunctionNativeReserved(aCallee, SLOT_ID));
+    MOZ_ALWAYS_TRUE(JS_ValueToId(aCx, id, aId));
+    return true;
+  }
+
+  static bool
+  ModuleGetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
+  {
+    JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
+
+    JS::Rooted<JSObject*> callee(aCx);
+    JS::Rooted<JSObject*> thisObj(aCx);
+    JS::Rooted<jsid> id(aCx);
+    if (!ExtractArgs(aCx, args, &callee, &thisObj, &id)) {
+      return false;
+    }
+
+    JS::Rooted<JSString*> moduleURI(
+      aCx, js::GetFunctionNativeReserved(callee, SLOT_URI).toString());
+    JSAutoByteString bytes;
+    if (!bytes.encodeUtf8(aCx, moduleURI)) {
+      return false;
+    }
+    nsDependentCString uri(bytes.ptr());
+
+    RefPtr<mozJSComponentLoader> moduleloader = mozJSComponentLoader::Get();
+    MOZ_ASSERT(moduleloader);
+
+    JS::Rooted<JSObject*> moduleGlobal(aCx);
+    JS::Rooted<JSObject*> moduleExports(aCx);
+    nsresult rv = moduleloader->Import(aCx, uri, &moduleGlobal, &moduleExports);
+    if (NS_FAILED(rv)) {
+      Throw(aCx, rv);
+      return false;
+    }
+
+    JS::RootedValue value(aCx);
+    {
+      JSAutoCompartment ac(aCx, moduleExports);
+
+      if (!JS_GetPropertyById(aCx, moduleExports, id, &value)) {
+        return false;
+      }
+    }
+
+    if (!JS_WrapValue(aCx, &value) ||
+        !JS_DefinePropertyById(aCx, thisObj, id, value,
+                               JSPROP_ENUMERATE)) {
+      return false;
+    }
+
+    args.rval().set(value);
+    return true;
+  }
+
+  static bool
+  ModuleSetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
+  {
+    JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
+
+    JS::Rooted<JSObject*> callee(aCx);
+    JS::Rooted<JSObject*> thisObj(aCx);
+    JS::Rooted<jsid> id(aCx);
+    if (!ExtractArgs(aCx, args, &callee, &thisObj, &id)) {
+      return false;
+    }
+
+    return JS_DefinePropertyById(aCx, thisObj, id, args.get(0),
+                                 JSPROP_ENUMERATE);
+  }
+
+  static bool
+  DefineGetter(JSContext* aCx,
+               JS::Handle<JSObject*> aTarget,
+               const nsAString& aId,
+               const nsAString& aResourceURI)
+  {
+    JS::RootedValue uri(aCx);
+    JS::RootedValue idValue(aCx);
+    JS::Rooted<jsid> id(aCx);
+    if (!xpc::NonVoidStringToJsval(aCx, aResourceURI, &uri) ||
+        !xpc::NonVoidStringToJsval(aCx, aId, &idValue) ||
+        !JS_ValueToId(aCx, idValue, &id)) {
+      return false;
+    }
+    idValue = js::IdToValue(id);
+
+
+    JS::Rooted<JSObject*> getter(aCx, JS_GetFunctionObject(
+      js::NewFunctionByIdWithReserved(aCx, ModuleGetter, 0, 0, id)));
+
+    JS::Rooted<JSObject*> setter(aCx, JS_GetFunctionObject(
+      js::NewFunctionByIdWithReserved(aCx, ModuleSetter, 0, 0, id)));
+
+    if (!getter || !setter) {
+      JS_ReportOutOfMemory(aCx);
+      return false;
+    }
+
+    js::SetFunctionNativeReserved(getter, SLOT_ID, idValue);
+    js::SetFunctionNativeReserved(setter, SLOT_ID, idValue);
+
+    js::SetFunctionNativeReserved(getter, SLOT_URI, uri);
+
+    return JS_DefinePropertyById(aCx, aTarget, id,
+                                 JS_DATA_TO_FUNC_PTR(JSNative, getter.get()),
+                                 JS_DATA_TO_FUNC_PTR(JSNative, setter.get()),
+                                 JSPROP_GETTER | JSPROP_SETTER | JSPROP_ENUMERATE);
+  }
+} // namespace module_getter
+
+/* static */ void
+ChromeUtils::DefineModuleGetter(const GlobalObject& global,
+                                JS::Handle<JSObject*> target,
+                                const nsAString& id,
+                                const nsAString& resourceURI,
+                                ErrorResult& aRv)
+{
+  if (!module_getter::DefineGetter(global.Context(), target, id, resourceURI)) {
+    aRv.NoteJSContextException(global.Context());
+  }
+}
+
+/* static */ void
 ChromeUtils::OriginAttributesToSuffix(dom::GlobalObject& aGlobal,
                                       const dom::OriginAttributesDictionary& aAttrs,
                                       nsCString& aSuffix)
@@ -431,6 +624,122 @@ ChromeUtils::IsOriginAttributesEqual(const dom::OriginAttributesDictionary& aA,
          aA.mInIsolatedMozBrowser == aB.mInIsolatedMozBrowser &&
          aA.mUserContextId == aB.mUserContextId &&
          aA.mPrivateBrowsingId == aB.mPrivateBrowsingId;
+}
+
+#ifdef NIGHTLY_BUILD
+/* static */ void
+ChromeUtils::GetRecentJSDevError(GlobalObject& aGlobal,
+                                JS::MutableHandleValue aRetval,
+                                ErrorResult& aRv)
+{
+  aRetval.setUndefined();
+  auto runtime = CycleCollectedJSRuntime::Get();
+  MOZ_ASSERT(runtime);
+
+  auto cx = aGlobal.Context();
+  if (!runtime->GetRecentDevError(cx, aRetval)) {
+    aRv.NoteJSContextException(cx);
+    return;
+  }
+}
+
+/* static */ void
+ChromeUtils::ClearRecentJSDevError(GlobalObject&)
+{
+  auto runtime = CycleCollectedJSRuntime::Get();
+  MOZ_ASSERT(runtime);
+
+  runtime->ClearRecentDevError();
+}
+#endif // NIGHTLY_BUILD
+
+constexpr auto kSkipSelfHosted = JS::SavedFrameSelfHosted::Exclude;
+
+/* static */ void
+ChromeUtils::GetCallerLocation(const GlobalObject& aGlobal, nsIPrincipal* aPrincipal,
+                               JS::MutableHandle<JSObject*> aRetval)
+{
+  JSContext* cx = aGlobal.Context();
+
+  auto* principals = nsJSPrincipals::get(aPrincipal);
+
+  JS::StackCapture captureMode(JS::FirstSubsumedFrame(cx, principals));
+
+  JS::RootedObject frame(cx);
+  if (!JS::CaptureCurrentStack(cx, &frame, mozilla::Move(captureMode))) {
+    JS_ClearPendingException(cx);
+    aRetval.set(nullptr);
+    return;
+  }
+
+  // FirstSubsumedFrame gets us a stack which stops at the first principal which
+  // is subsumed by the given principal. That means that we may have a lot of
+  // privileged frames that we don't care about at the top of the stack, though.
+  // We need to filter those out to get the frame we actually want.
+  aRetval.set(js::GetFirstSubsumedSavedFrame(cx, principals, frame, kSkipSelfHosted));
+}
+
+/* static */ void
+ChromeUtils::CreateError(const GlobalObject& aGlobal, const nsAString& aMessage,
+                         JS::Handle<JSObject*> aStack,
+                         JS::MutableHandle<JSObject*> aRetVal, ErrorResult& aRv)
+{
+  if (aStack && !JS::IsSavedFrame(aStack)) {
+    aRv.Throw(NS_ERROR_INVALID_ARG);
+    return;
+  }
+
+  JSContext* cx = aGlobal.Context();
+
+  auto cleanup = MakeScopeExit([&]() {
+    aRv.NoteJSContextException(cx);
+  });
+
+  JS::RootedObject retVal(cx);
+  {
+    JS::RootedString fileName(cx, JS_GetEmptyString(cx));
+    uint32_t line = 0;
+    uint32_t column = 0;
+
+    Maybe<JSAutoCompartment> ac;
+    JS::RootedObject stack(cx);
+    if (aStack) {
+      stack = UncheckedUnwrap(aStack);
+      ac.emplace(cx, stack);
+
+      if (JS::GetSavedFrameLine(cx, stack, &line) != JS::SavedFrameResult::Ok ||
+          JS::GetSavedFrameColumn(cx, stack, &column) != JS::SavedFrameResult::Ok ||
+          JS::GetSavedFrameSource(cx, stack, &fileName) != JS::SavedFrameResult::Ok) {
+        return;
+      }
+    }
+
+    JS::RootedString message(cx);
+    {
+      JS::RootedValue msgVal(cx);
+      if (!xpc::NonVoidStringToJsval(cx, aMessage, &msgVal)) {
+        return;
+      }
+      message = msgVal.toString();
+    }
+
+    JS::Rooted<JS::Value> err(cx);
+    if (!JS::CreateError(cx, JSEXN_ERR, stack,
+                         fileName, line, column,
+                         nullptr, message, &err)) {
+      return;
+    }
+
+    MOZ_ASSERT(err.isObject());
+    retVal = &err.toObject();
+  }
+
+  if (aStack && !JS_WrapObject(cx, &retVal)) {
+    return;
+  }
+
+  cleanup.release();
+  aRetVal.set(retVal);
 }
 
 } // namespace dom

@@ -74,7 +74,6 @@
 @BINPATH@/@DLL_PREFIX@mozglue@DLL_SUFFIX@
 # This should be MOZ_CHILD_PROCESS_NAME, but that has a "lib/" prefix.
 @BINPATH@/@MOZ_CHILD_PROCESS_NAME@
-@BINPATH@/@MOZ_CHILD_PROCESS_NAME_PIE@
 
 #ifdef MOZ_ANDROID_GOOGLE_VR
 @BINPATH@/@DLL_PREFIX@gvr@DLL_SUFFIX@
@@ -82,7 +81,6 @@
 
 [xpcom]
 @BINPATH@/package-name.txt
-@BINPATH@/classes.dex
 
 [browser]
 ; [Base Browser Files]
@@ -120,9 +118,10 @@
 @BINPATH@/components/dom.xpt
 @BINPATH@/components/dom_base.xpt
 @BINPATH@/components/dom_bindings.xpt
-@BINPATH@/components/dom_canvas.xpt
+#ifdef MOZ_DEBUG
+@BINPATH@/components/dom_bindings_test.xpt
+#endif
 @BINPATH@/components/dom_core.xpt
-@BINPATH@/components/dom_css.xpt
 @BINPATH@/components/dom_events.xpt
 @BINPATH@/components/dom_file.xpt
 @BINPATH@/components/dom_geolocation.xpt
@@ -131,7 +130,6 @@
 @BINPATH@/components/dom_notification.xpt
 @BINPATH@/components/dom_html.xpt
 @BINPATH@/components/dom_offline.xpt
-@BINPATH@/components/dom_json.xpt
 @BINPATH@/components/dom_payments.xpt
 @BINPATH@/components/dom_power.xpt
 #ifdef MOZ_ANDROID_GCM
@@ -141,18 +139,12 @@
 @BINPATH@/components/dom_range.xpt
 @BINPATH@/components/dom_security.xpt
 @BINPATH@/components/dom_sidebar.xpt
-@BINPATH@/components/dom_mobilemessage.xpt
 @BINPATH@/components/dom_storage.xpt
-@BINPATH@/components/dom_stylesheets.xpt
 @BINPATH@/components/dom_system.xpt
-@BINPATH@/components/dom_traversal.xpt
-@BINPATH@/components/dom_tv.xpt
 #ifdef MOZ_WEBSPEECH
 @BINPATH@/components/dom_webspeechrecognition.xpt
 #endif
-@BINPATH@/components/dom_xbl.xpt
 @BINPATH@/components/dom_xhr.xpt
-@BINPATH@/components/dom_xpath.xpt
 @BINPATH@/components/dom_xul.xpt
 @BINPATH@/components/dom_presentation.xpt
 @BINPATH@/components/downloads.xpt
@@ -169,7 +161,6 @@
 @BINPATH@/components/intl.xpt
 @BINPATH@/components/jar.xpt
 @BINPATH@/components/jsdebugger.xpt
-@BINPATH@/components/jsdownloads.xpt
 @BINPATH@/components/jsinspector.xpt
 @BINPATH@/components/layout_base.xpt
 #ifdef NS_PRINTING
@@ -244,7 +235,6 @@
 @BINPATH@/components/widget.xpt
 @BINPATH@/components/widget_android.xpt
 @BINPATH@/components/windowcreator.xpt
-@BINPATH@/components/windowds.xpt
 @BINPATH@/components/windowwatcher.xpt
 @BINPATH@/components/xpcom_base.xpt
 @BINPATH@/components/xpcom_system.xpt
@@ -256,16 +246,11 @@
 @BINPATH@/components/xpconnect.xpt
 @BINPATH@/components/xulapp.xpt
 @BINPATH@/components/xul.xpt
-@BINPATH@/components/xultmpl.xpt
 @BINPATH@/components/zipwriter.xpt
 
 ; JavaScript components
 @BINPATH@/components/ConsoleAPI.manifest
 @BINPATH@/components/ConsoleAPIStorage.js
-@BINPATH@/components/ContactManager.js
-@BINPATH@/components/ContactManager.manifest
-@BINPATH@/components/PhoneNumberService.js
-@BINPATH@/components/PhoneNumberService.manifest
 @BINPATH@/components/NotificationStorage.js
 @BINPATH@/components/NotificationStorage.manifest
 #ifdef MOZ_ANDROID_GCM
@@ -303,15 +288,16 @@
 @BINPATH@/components/EditorUtils.manifest
 @BINPATH@/components/EditorUtils.js
 
-#ifndef MOZ_GECKOVIEW_JAR
 @BINPATH@/components/extensions.manifest
+@BINPATH@/components/addonManager.js
+@BINPATH@/components/nsBlocklistService.js
+
+#ifndef MOZ_GECKOVIEW_JAR
 @BINPATH@/components/utils.manifest
 @BINPATH@/components/simpleServices.js
-@BINPATH@/components/addonManager.js
 @BINPATH@/components/amContentHandler.js
-@BINPATH@/components/amInstallTrigger.js
 @BINPATH@/components/amWebAPI.js
-@BINPATH@/components/nsBlocklistService.js
+@BINPATH@/components/amInstallTrigger.js
 #ifndef RELEASE_OR_BETA
 @BINPATH@/components/TabSource.js
 #endif
@@ -327,9 +313,10 @@
 @BINPATH@/components/nsUpdateService.js
 @BINPATH@/components/nsUpdateServiceStub.js
 #endif
+#endif
+
 @BINPATH@/components/nsUpdateTimerManager.manifest
 @BINPATH@/components/nsUpdateTimerManager.js
-#endif
 
 @BINPATH@/components/pluginGlue.manifest
 @BINPATH@/components/ProcessSingleton.manifest
@@ -405,9 +392,6 @@
 @BINPATH@/components/PresentationDataChannelSessionTransport.manifest
 @BINPATH@/components/AndroidCastDeviceProvider.manifest
 @BINPATH@/components/AndroidCastDeviceProvider.js
-
-@BINPATH@/components/TVSimulatorService.js
-@BINPATH@/components/TVSimulatorService.manifest
 #endif
 
 @BINPATH@/components/mozIntl.manifest
@@ -450,7 +434,11 @@
 
 ; [Default Preferences]
 ; All the pref files must be part of base to prevent migration bugs
+#ifdef MOZ_GECKOVIEW_JAR
+@BINPATH@/@PREF_DIR@/geckoview-prefs.js
+#else
 @BINPATH@/@PREF_DIR@/mobile.js
+#endif
 @BINPATH@/@PREF_DIR@/channel-prefs.js
 @BINPATH@/ua-update.json
 @BINPATH@/greprefs.js
@@ -481,7 +469,6 @@
 @BINPATH@/res/table-remove-row.gif
 @BINPATH@/res/grabber.gif
 @BINPATH@/res/dtd/*
-@BINPATH@/res/html/*
 @BINPATH@/res/language.properties
 
 #ifndef MOZ_ANDROID_EXCLUDE_FONTS
@@ -495,8 +482,6 @@
 
 ; svg
 @BINPATH@/res/svg.css
-@BINPATH@/components/dom_svg.xpt
-@BINPATH@/components/dom_smil.xpt
 
 ; [Personal Security Manager]
 ;

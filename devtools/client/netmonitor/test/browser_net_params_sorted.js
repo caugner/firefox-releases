@@ -7,8 +7,8 @@
  * Tests whether keys in Params panel are sorted.
  */
 
-add_task(function* () {
-  let { tab, monitor } = yield initNetMonitor(POST_DATA_URL);
+add_task(async function () {
+  let { tab, monitor } = await initNetMonitor(POST_DATA_URL);
   info("Starting test... ");
 
   let { document, store, windowRequire } = monitor.panelWin;
@@ -16,16 +16,16 @@ add_task(function* () {
 
   store.dispatch(Actions.batchEnable(false));
 
-  let wait = waitForNetworkEvents(monitor, 0, 2);
-  yield ContentTask.spawn(tab.linkedBrowser, {}, function* () {
+  let wait = waitForNetworkEvents(monitor, 2);
+  await ContentTask.spawn(tab.linkedBrowser, {}, async function () {
     content.wrappedJSObject.performRequests();
   });
-  yield wait;
+  await wait;
 
   wait = waitForDOM(document, ".headers-overview");
   EventUtils.sendMouseEvent({ type: "mousedown" },
     document.querySelectorAll(".request-list-item")[0]);
-  yield wait;
+  await wait;
 
   EventUtils.sendMouseEvent({ type: "click" },
     document.querySelector("#params-tab"));

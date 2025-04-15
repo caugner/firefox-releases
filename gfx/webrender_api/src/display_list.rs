@@ -2,30 +2,35 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use {BorderDetails, BorderDisplayItem, BorderRadius, BorderWidths, BoxShadowClipMode};
-use {BoxShadowDisplayItem, ClipAndScrollInfo, ClipDisplayItem, ClipId, ColorF, ComplexClipRegion};
-use {DisplayItem, ExtendMode, FilterOp, FontInstanceKey, GlyphInstance, GlyphOptions, Gradient};
-use {GradientDisplayItem, GradientStop, IframeDisplayItem, ImageDisplayItem, ImageKey, ImageMask};
-use {ImageRendering, LayerPrimitiveInfo, LayoutPoint, LayoutPrimitiveInfo, LayoutRect, LayoutSize};
-use {LayoutTransform, LayoutVector2D, LineDisplayItem, LineOrientation, LineStyle, LocalClip};
-use {MixBlendMode, PipelineId, PropertyBinding, PushStackingContextDisplayItem, RadialGradient};
-use {RadialGradientDisplayItem, RectangleDisplayItem, ScrollFrameDisplayItem, ScrollPolicy};
-use {ScrollSensitivity, Shadow, SpecificDisplayItem, StackingContext, StickyFrameDisplayItem};
-use {StickyOffsetBounds, TextDisplayItem, TransformStyle, YuvColorSpace, YuvData};
-use YuvImageDisplayItem;
 use bincode;
 use euclid::SideOffsets2D;
-use serde::{Deserialize, Serialize, Serializer};
-use serde::ser::{SerializeMap, SerializeSeq};
+#[cfg(feature = "deserialize")]
+use serde::de::Deserializer;
+#[cfg(feature = "serialize")]
+use serde::ser::{Serializer, SerializeSeq};
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use std::{io, ptr};
 use std::marker::PhantomData;
-use std::slice;
+use std::{io, mem, ptr, slice};
 use time::precise_time_ns;
+use {AlphaType, BorderDetails, BorderDisplayItem, BorderRadius, BorderWidths, BoxShadowClipMode};
+use {BoxShadowDisplayItem, ClipAndScrollInfo, ClipChainId, ClipChainItem, ClipDisplayItem, ClipId};
+use {ColorF, ComplexClipRegion, DisplayItem, ExtendMode, ExternalScrollId, FilterOp};
+use {FontInstanceKey, GlyphInstance, GlyphOptions, Gradient, GradientDisplayItem, GradientStop};
+use {IframeDisplayItem, ImageDisplayItem, ImageKey, ImageMask, ImageRendering, LayerPrimitiveInfo};
+use {LayoutPoint, LayoutPrimitiveInfo, LayoutRect, LayoutSize, LayoutTransform, LayoutVector2D};
+use {LineDisplayItem, LineOrientation, LineStyle, LocalClip, MixBlendMode, PipelineId};
+use {PropertyBinding, PushStackingContextDisplayItem, RadialGradient, RadialGradientDisplayItem};
+use {RectangleDisplayItem, ScrollFrameDisplayItem, ScrollPolicy, ScrollSensitivity, Shadow};
+use {SpecificDisplayItem, StackingContext, StickyFrameDisplayItem, StickyOffsetBounds};
+use {TextDisplayItem, TransformStyle, YuvColorSpace, YuvData, YuvImageDisplayItem};
 
 // We don't want to push a long text-run. If a text-run is too long, split it into several parts.
 // This needs to be set to (renderer::MAX_VERTEX_TEXTURE_WIDTH - VECS_PER_PRIM_HEADER - VECS_PER_TEXT_RUN) * 2
 pub const MAX_TEXT_RUN_LENGTH: usize = 2038;
+
+// We start at 2, because the root reference is always 0 and the root scroll node is always 1.
+const FIRST_CLIP_ID: usize = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -48,7 +53,7 @@ impl<T> Default for ItemRange<T> {
 impl<T> ItemRange<T> {
     pub fn is_empty(&self) -> bool {
         // Nothing more than space for a length (0).
-        self.length <= ::std::mem::size_of::<u64>()
+        self.length <= mem::size_of::<u64>()
     }
 }
 
@@ -73,6 +78,8 @@ pub struct BuiltDisplayListDescriptor {
     builder_finish_time: u64,
     /// The third IPC time stamp: just before sending
     send_start_time: u64,
+    /// The amount of clips ids assigned while building this display list.
+    total_clip_ids: usize,
 }
 
 pub struct BuiltDisplayListIter<'a> {
@@ -82,6 +89,7 @@ pub struct BuiltDisplayListIter<'a> {
     cur_stops: ItemRange<GradientStop>,
     cur_glyphs: ItemRange<GlyphInstance>,
     cur_filters: ItemRange<FilterOp>,
+    cur_clip_chain_items: ItemRange<ClipId>,
     cur_complex_clip: (ItemRange<ComplexClipRegion>, usize),
     peeking: Peek,
 }
@@ -137,6 +145,10 @@ impl BuiltDisplayList {
         )
     }
 
+    pub fn total_clip_ids(&self) -> usize {
+        self.descriptor.total_clip_ids
+    }
+
     pub fn iter(&self) -> BuiltDisplayListIter {
         BuiltDisplayListIter::new(self)
     }
@@ -187,12 +199,14 @@ impl<'a> BuiltDisplayListIter<'a> {
             cur_item: DisplayItem {
                 // Dummy data, will be overwritten by `next`
                 item: SpecificDisplayItem::PopStackingContext,
-                clip_and_scroll: ClipAndScrollInfo::simple(ClipId::new(0, PipelineId::dummy())),
+                clip_and_scroll:
+                    ClipAndScrollInfo::simple(ClipId::root_scroll_node(PipelineId::dummy())),
                 info: LayoutPrimitiveInfo::new(LayoutRect::zero()),
             },
             cur_stops: ItemRange::default(),
             cur_glyphs: ItemRange::default(),
             cur_filters: ItemRange::default(),
+            cur_clip_chain_items: ItemRange::default(),
             cur_complex_clip: (ItemRange::default(), 0),
             peeking: Peek::NotPeeking,
         }
@@ -219,14 +233,19 @@ impl<'a> BuiltDisplayListIter<'a> {
         // Don't let these bleed into another item
         self.cur_stops = ItemRange::default();
         self.cur_complex_clip = (ItemRange::default(), 0);
+        self.cur_clip_chain_items = ItemRange::default();
 
         loop {
             if self.data.len() == 0 {
                 return None;
             }
 
-            self.cur_item = bincode::deserialize_from(&mut UnsafeReader::new(&mut self.data), bincode::Infinite)
-                .expect("MEH: malicious process?");
+            {
+                let reader = bincode::read_types::IoReader::new(UnsafeReader::new(&mut self.data));
+                let mut deserializer = bincode::Deserializer::new(reader, bincode::Infinite);
+                Deserialize::deserialize_in_place(&mut deserializer, &mut self.cur_item)
+                    .expect("MEH: malicious process?");
+            }
 
             match self.cur_item.item {
                 SetGradientStops => {
@@ -234,6 +253,9 @@ impl<'a> BuiltDisplayListIter<'a> {
 
                     // This is a dummy item, skip over it
                     continue;
+                }
+                ClipChain(_) => {
+                    self.cur_clip_chain_items = skip_slice::<ClipId>(self.list, &mut self.data).0;
                 }
                 Clip(_) | ScrollFrame(_) => {
                     self.cur_complex_clip = self.skip_slice::<ComplexClipRegion>()
@@ -315,7 +337,6 @@ impl<'a, 'b> DisplayItemRef<'a, 'b> {
         LayerPrimitiveInfo {
             rect: info.rect.translate(&offset),
             local_clip: info.local_clip.create_with_offset(offset),
-            edge_aa_segment_mask: info.edge_aa_segment_mask,
             is_backface_visible: info.is_backface_visible,
             tag: info.tag,
         }
@@ -333,8 +354,8 @@ impl<'a, 'b> DisplayItemRef<'a, 'b> {
         &self.iter.cur_item.item
     }
 
-    pub fn complex_clip(&self) -> &(ItemRange<ComplexClipRegion>, usize) {
-        &self.iter.cur_complex_clip
+    pub fn complex_clip(&self) -> (ItemRange<ComplexClipRegion>, usize) {
+        self.iter.cur_complex_clip
     }
 
     pub fn gradient_stops(&self) -> ItemRange<GradientStop> {
@@ -347,6 +368,10 @@ impl<'a, 'b> DisplayItemRef<'a, 'b> {
 
     pub fn filters(&self) -> ItemRange<FilterOp> {
         self.iter.cur_filters
+    }
+
+    pub fn clip_chain_items(&self) -> ItemRange<ClipId> {
+        self.iter.cur_clip_chain_items
     }
 
     pub fn display_list(&self) -> &BuiltDisplayList {
@@ -368,7 +393,8 @@ impl<'de, 'a, T: Deserialize<'de>> AuxIter<'a, T> {
         let size: usize = if data.len() == 0 {
             0 // Accept empty ItemRanges pointing anywhere
         } else {
-            bincode::deserialize_from(&mut UnsafeReader::new(&mut data), bincode::Infinite).expect("MEH: malicious input?")
+            bincode::deserialize_from(&mut UnsafeReader::new(&mut data), bincode::Infinite)
+                .expect("MEH: malicious input?")
         };
 
         AuxIter {
@@ -402,58 +428,155 @@ impl<'a, T: for<'de> Deserialize<'de>> Iterator for AuxIter<'a, T> {
 impl<'a, T: for<'de> Deserialize<'de>> ::std::iter::ExactSizeIterator for AuxIter<'a, T> {}
 
 
-// This is purely for the JSON/RON writers in wrench
+#[cfg(feature = "serialize")]
 impl Serialize for BuiltDisplayList {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use display_item::CompletelySpecificDisplayItem::*;
+        use display_item::GenericDisplayItem;
+
         let mut seq = serializer.serialize_seq(None)?;
         let mut traversal = self.iter();
         while let Some(item) = traversal.next() {
-            seq.serialize_element(&item)?
+            let display_item = item.display_item();
+            let serial_di = GenericDisplayItem {
+                item: match display_item.item {
+                    SpecificDisplayItem::Clip(v) => Clip(
+                        v,
+                        item.iter.list.get(item.iter.cur_complex_clip.0).collect()
+                    ),
+                    SpecificDisplayItem::ClipChain(v) => ClipChain(
+                        v,
+                        item.iter.list.get(item.iter.cur_clip_chain_items).collect(),
+                    ),
+                    SpecificDisplayItem::ScrollFrame(v) => ScrollFrame(
+                        v,
+                        item.iter.list.get(item.iter.cur_complex_clip.0).collect()
+                    ),
+                    SpecificDisplayItem::StickyFrame(v) => StickyFrame(v),
+                    SpecificDisplayItem::Rectangle(v) => Rectangle(v),
+                    SpecificDisplayItem::ClearRectangle => ClearRectangle,
+                    SpecificDisplayItem::Line(v) => Line(v),
+                    SpecificDisplayItem::Text(v) => Text(
+                        v,
+                        item.iter.list.get(item.iter.cur_glyphs).collect()
+                    ),
+                    SpecificDisplayItem::Image(v) => Image(v),
+                    SpecificDisplayItem::YuvImage(v) => YuvImage(v),
+                    SpecificDisplayItem::Border(v) => Border(v),
+                    SpecificDisplayItem::BoxShadow(v) => BoxShadow(v),
+                    SpecificDisplayItem::Gradient(v) => Gradient(v),
+                    SpecificDisplayItem::RadialGradient(v) => RadialGradient(v),
+                    SpecificDisplayItem::Iframe(v) => Iframe(v),
+                    SpecificDisplayItem::PushStackingContext(v) => PushStackingContext(
+                        v,
+                        item.iter.list.get(item.iter.cur_filters).collect()
+                    ),
+                    SpecificDisplayItem::PopStackingContext => PopStackingContext,
+                    SpecificDisplayItem::SetGradientStops => SetGradientStops(
+                        item.iter.list.get(item.iter.cur_stops).collect()
+                    ),
+                    SpecificDisplayItem::PushShadow(v) => PushShadow(v),
+                    SpecificDisplayItem::PopAllShadows => PopAllShadows,
+                },
+                clip_and_scroll: display_item.clip_and_scroll,
+                info: display_item.info,
+            };
+            seq.serialize_element(&serial_di)?
         }
         seq.end()
     }
 }
 
-impl<'a, 'b> Serialize for DisplayItemRef<'a, 'b> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(None)?;
+// The purpose of this implementation is to deserialize
+// a display list from one format just to immediately
+// serialize then into a "built" `Vec<u8>`.
 
-        map.serialize_entry("item", self.display_item())?;
+#[cfg(feature = "deserialize")]
+impl<'de> Deserialize<'de> for BuiltDisplayList {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use display_item::CompletelySpecificDisplayItem::*;
+        use display_item::{CompletelySpecificDisplayItem, GenericDisplayItem};
 
-        match *self.item() {
-            SpecificDisplayItem::Text(_) => {
-                map.serialize_entry(
-                    "glyphs",
-                    &self.iter.list.get(self.glyphs()).collect::<Vec<_>>(),
-                )?;
-            }
-            SpecificDisplayItem::PushStackingContext(_) => {
-                map.serialize_entry(
-                    "filters",
-                    &self.iter.list.get(self.filters()).collect::<Vec<_>>(),
-                )?;
-            }
-            _ => {}
+        let list = Vec::<GenericDisplayItem<CompletelySpecificDisplayItem>>
+            ::deserialize(deserializer)?;
+
+        let mut data = Vec::new();
+        let mut temp = Vec::new();
+        let mut total_clip_ids = FIRST_CLIP_ID;
+        for complete in list {
+            let item = DisplayItem {
+                item: match complete.item {
+                    Clip(specific_item, complex_clips) => {
+                        total_clip_ids += 1;
+                        DisplayListBuilder::push_iter_impl(&mut temp, complex_clips);
+                        SpecificDisplayItem::Clip(specific_item)
+                    },
+                    ClipChain(specific_item, clip_chain_ids) => {
+                        DisplayListBuilder::push_iter_impl(&mut temp, clip_chain_ids);
+                        SpecificDisplayItem::ClipChain(specific_item)
+                    }
+                    ScrollFrame(specific_item, complex_clips) => {
+                        total_clip_ids += 2;
+                        DisplayListBuilder::push_iter_impl(&mut temp, complex_clips);
+                        SpecificDisplayItem::ScrollFrame(specific_item)
+                    },
+                    StickyFrame(specific_item) => {
+                        total_clip_ids += 1;
+                        SpecificDisplayItem::StickyFrame(specific_item)
+                    }
+                    Rectangle(specific_item) => SpecificDisplayItem::Rectangle(specific_item),
+                    ClearRectangle => SpecificDisplayItem::ClearRectangle,
+                    Line(specific_item) => SpecificDisplayItem::Line(specific_item),
+                    Text(specific_item, glyphs) => {
+                        DisplayListBuilder::push_iter_impl(&mut temp, glyphs);
+                        SpecificDisplayItem::Text(specific_item)
+                    },
+                    Image(specific_item) => SpecificDisplayItem::Image(specific_item),
+                    YuvImage(specific_item) => SpecificDisplayItem::YuvImage(specific_item),
+                    Border(specific_item) => SpecificDisplayItem::Border(specific_item),
+                    BoxShadow(specific_item) => SpecificDisplayItem::BoxShadow(specific_item),
+                    Gradient(specific_item) => SpecificDisplayItem::Gradient(specific_item),
+                    RadialGradient(specific_item) =>
+                        SpecificDisplayItem::RadialGradient(specific_item),
+                    Iframe(specific_item) => {
+                        total_clip_ids += 1;
+                        SpecificDisplayItem::Iframe(specific_item)
+                    }
+                    PushStackingContext(specific_item, filters) => {
+                        if specific_item.stacking_context.reference_frame_id.is_some() {
+                            total_clip_ids += 1;
+                        }
+                        DisplayListBuilder::push_iter_impl(&mut temp, filters);
+                        SpecificDisplayItem::PushStackingContext(specific_item)
+                    },
+                    PopStackingContext => SpecificDisplayItem::PopStackingContext,
+                    SetGradientStops(stops) => {
+                        DisplayListBuilder::push_iter_impl(&mut temp, stops);
+                        SpecificDisplayItem::SetGradientStops
+                    },
+                    PushShadow(specific_item) => SpecificDisplayItem::PushShadow(specific_item),
+                    PopAllShadows => SpecificDisplayItem::PopAllShadows,
+                },
+                clip_and_scroll: complete.clip_and_scroll,
+                info: complete.info,
+            };
+            serialize_fast(&mut data, &item);
+            // the aux data is serialized after the item, hence the temporary
+            data.extend(temp.drain(..));
         }
 
-        let &(complex_clips, number_of_complex_clips) = self.complex_clip();
-        let gradient_stops = self.gradient_stops();
-
-        if number_of_complex_clips > 0 {
-            map.serialize_entry(
-                "complex_clips",
-                &self.iter.list.get(complex_clips).collect::<Vec<_>>(),
-            )?;
-        }
-
-        if !gradient_stops.is_empty() {
-            map.serialize_entry(
-                "gradient_stops",
-                &self.iter.list.get(gradient_stops).collect::<Vec<_>>(),
-            )?;
-        }
-
-        map.end()
+        Ok(BuiltDisplayList {
+            data,
+            descriptor: BuiltDisplayListDescriptor {
+                builder_start_time: 0,
+                builder_finish_time: 1,
+                send_start_time: 0,
+                total_clip_ids,
+            },
+        })
     }
 }
 
@@ -533,10 +656,16 @@ impl<'a> Write for SizeCounter {
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
+/// Serializes a value assuming the Serialize impl has a stable size across two
+/// invocations.
+///
+/// If this assumption is incorrect, the result will be Undefined Behaviour. This
+/// assumption should hold for all derived Serialize impls, which is all we currently
+/// use.
 fn serialize_fast<T: Serialize>(vec: &mut Vec<u8>, e: &T) {
     // manually counting the size is faster than vec.reserve(bincode::serialized_size(&e) as usize) for some reason
     let mut size = SizeCounter(0);
-    bincode::serialize_into(&mut size,e , bincode::Infinite).unwrap();
+    bincode::serialize_into(&mut size, e, bincode::Infinite).unwrap();
     vec.reserve(size.0);
 
     let old_len = vec.len();
@@ -548,7 +677,55 @@ fn serialize_fast<T: Serialize>(vec: &mut Vec<u8>, e: &T) {
     unsafe { vec.set_len(old_len + size.0); }
 
     // make sure we wrote the right amount
-    debug_assert!(((w.0 as usize) - (vec.as_ptr() as usize)) == vec.len());
+    debug_assert_eq!(((w.0 as usize) - (vec.as_ptr() as usize)), vec.len());
+}
+
+/// Serializes an iterator, assuming:
+///
+/// * The Clone impl is trivial (e.g. we're just memcopying a slice iterator)
+/// * The ExactSizeIterator impl is stable and correct across a Clone
+/// * The Serialize impl has a stable size across two invocations
+///
+/// If the first is incorrect, webrender will be very slow. If the other two are
+/// incorrect, the result will be Undefined Behaviour! The ExactSizeIterator
+/// bound would ideally be replaced with a TrustedLen bound to protect us a bit
+/// better, but that trait isn't stable (and won't be for a good while, if ever).
+///
+/// Debug asserts are included that should catch all Undefined Behaviour, but
+/// we can't afford to include these in release builds.
+fn serialize_iter_fast<I>(vec: &mut Vec<u8>, iter: I) -> usize
+where I: ExactSizeIterator + Clone,
+      I::Item: Serialize,
+{
+    // manually counting the size is faster than vec.reserve(bincode::serialized_size(&e) as usize) for some reason
+    let mut size = SizeCounter(0);
+    let mut count1 = 0;
+
+    for e in iter.clone() {
+        bincode::serialize_into(&mut size, &e, bincode::Infinite).unwrap();
+        count1 += 1;
+    }
+
+    vec.reserve(size.0);
+
+    let old_len = vec.len();
+    let ptr = unsafe { vec.as_mut_ptr().offset(old_len as isize) };
+    let mut w = UnsafeVecWriter(ptr);
+    let mut count2 = 0;
+
+    for e in iter {
+        bincode::serialize_into(&mut w, &e, bincode::Infinite).unwrap();
+        count2 += 1;
+    }
+
+    // fix up the length
+    unsafe { vec.set_len(old_len + size.0); }
+
+    // make sure we wrote the right amount
+    debug_assert_eq!(((w.0 as usize) - (vec.as_ptr() as usize)), vec.len());
+    debug_assert_eq!(count1, count2);
+
+    count1
 }
 
 // This uses a (start, end) representation instead of (start, len) so that
@@ -622,7 +799,8 @@ impl<'a, 'b> Read for UnsafeReader<'a, 'b> {
 pub struct SaveState {
     dl_len: usize,
     clip_stack_len: usize,
-    next_clip_id: u64,
+    next_clip_id: usize,
+    next_clip_chain_id: u64,
 }
 
 #[derive(Clone)]
@@ -630,7 +808,8 @@ pub struct DisplayListBuilder {
     pub data: Vec<u8>,
     pub pipeline_id: PipelineId,
     clip_stack: Vec<ClipAndScrollInfo>,
-    next_clip_id: u64,
+    next_clip_id: usize,
+    next_clip_chain_id: u64,
     builder_start_time: u64,
 
     /// The size of the content of this display list. This is used to allow scrolling
@@ -640,7 +819,7 @@ pub struct DisplayListBuilder {
 }
 
 impl DisplayListBuilder {
-    pub fn new(pipeline_id: PipelineId, content_size: LayoutSize) -> DisplayListBuilder {
+    pub fn new(pipeline_id: PipelineId, content_size: LayoutSize) -> Self {
         Self::with_capacity(pipeline_id, content_size, 0)
     }
 
@@ -648,11 +827,8 @@ impl DisplayListBuilder {
         pipeline_id: PipelineId,
         content_size: LayoutSize,
         capacity: usize,
-    ) -> DisplayListBuilder {
+    ) -> Self {
         let start_time = precise_time_ns();
-
-        // We start at 1 here, because the root scroll id is always 0.
-        const FIRST_CLIP_ID: u64 = 1;
 
         DisplayListBuilder {
             data: Vec::with_capacity(capacity),
@@ -661,10 +837,16 @@ impl DisplayListBuilder {
                 ClipAndScrollInfo::simple(ClipId::root_scroll_node(pipeline_id)),
             ],
             next_clip_id: FIRST_CLIP_ID,
+            next_clip_chain_id: 0,
             builder_start_time: start_time,
             content_size,
             save_state: None,
         }
+    }
+
+    /// Return the content size for this display list
+    pub fn content_size(&self) -> LayoutSize {
+        self.content_size
     }
 
     /// Saves the current display list state, so it may be `restore()`'d.
@@ -681,6 +863,7 @@ impl DisplayListBuilder {
             clip_stack_len: self.clip_stack.len(),
             dl_len: self.data.len(),
             next_clip_id: self.next_clip_id,
+            next_clip_chain_id: self.next_clip_chain_id,
         });
     }
 
@@ -691,6 +874,7 @@ impl DisplayListBuilder {
         self.clip_stack.truncate(state.clip_stack_len);
         self.data.truncate(state.dl_len);
         self.next_clip_id = state.next_clip_id;
+        self.next_clip_chain_id = state.next_clip_chain_id;
     }
 
     /// Discards the builder's save (indicating the attempted operation was sucessful).
@@ -700,7 +884,7 @@ impl DisplayListBuilder {
 
     pub fn print_display_list(&mut self) {
         let mut temp = BuiltDisplayList::default();
-        ::std::mem::swap(&mut temp.data, &mut self.data);
+        mem::swap(&mut temp.data, &mut self.data);
 
         {
             let mut iter = BuiltDisplayListIter::new(&temp);
@@ -751,40 +935,46 @@ impl DisplayListBuilder {
         )
     }
 
-    fn push_iter<I>(&mut self, iter: I)
+    fn push_iter_impl<I>(data: &mut Vec<u8>, iter_source: I)
     where
         I: IntoIterator,
-        I::IntoIter: ExactSizeIterator,
+        I::IntoIter: ExactSizeIterator + Clone,
         I::Item: Serialize,
     {
-        let iter = iter.into_iter();
+        let iter = iter_source.into_iter();
         let len = iter.len();
-        let mut count = 0;
-
         // Format:
         // payload_byte_size: usize, item_count: usize, [I; item_count]
 
         // We write a dummy value so there's room for later
-        let byte_size_offset = self.data.len();
-        serialize_fast(&mut self.data, &0usize);
-        serialize_fast(&mut self.data, &len);
-        let payload_offset = self.data.len();
+        let byte_size_offset = data.len();
+        serialize_fast(data, &0usize);
+        serialize_fast(data, &len);
+        let payload_offset = data.len();
 
-        for elem in iter {
-            count += 1;
-            serialize_fast(&mut self.data, &elem);
-        }
+        let count = serialize_iter_fast(data, iter);
 
         // Now write the actual byte_size
-        let final_offset = self.data.len();
+        let final_offset = data.len();
         let byte_size = final_offset - payload_offset;
 
         // Note we don't use serialize_fast because we don't want to change the Vec's len
-        bincode::serialize_into(&mut &mut self.data[byte_size_offset..],
-                                &byte_size,
-                                bincode::Infinite).unwrap();
+        bincode::serialize_into(
+            &mut &mut data[byte_size_offset..],
+            &byte_size,
+            bincode::Infinite,
+        ).unwrap();
 
         debug_assert_eq!(len, count);
+    }
+
+    fn push_iter<I>(&mut self, iter: I)
+    where
+        I: IntoIterator,
+        I::IntoIter: ExactSizeIterator + Clone,
+        I::Item: Serialize,
+    {
+        Self::push_iter_impl(&mut self.data, iter);
     }
 
     pub fn push_rect(&mut self, info: &LayoutPrimitiveInfo, color: ColorF) {
@@ -820,6 +1010,7 @@ impl DisplayListBuilder {
         stretch_size: LayoutSize,
         tile_spacing: LayoutSize,
         image_rendering: ImageRendering,
+        alpha_type: AlphaType,
         key: ImageKey,
     ) {
         let item = SpecificDisplayItem::Image(ImageDisplayItem {
@@ -827,6 +1018,7 @@ impl DisplayListBuilder {
             stretch_size,
             tile_spacing,
             image_rendering,
+            alpha_type,
         });
 
         self.push_item(item, info);
@@ -1079,6 +1271,20 @@ impl DisplayListBuilder {
         self.push_item(item, info);
     }
 
+    /// Pushes a linear gradient to be displayed.
+    ///
+    /// The gradient itself is described in the
+    /// `gradient` parameter. It is drawn on
+    /// a "tile" with the dimensions from `tile_size`.
+    /// These tiles are now repeated to the right and
+    /// to the bottom infinitly. If `tile_spacing`
+    /// is not zero spacers with the given dimensions
+    /// are inserted between the tiles as seams.
+    ///
+    /// The origin of the tiles is given in `info.rect.origin`.
+    /// If the gradient should only be displayed once limit
+    /// the `info.rect.size` to a single tile.
+    /// The gradient is only visible within the local clip.
     pub fn push_gradient(
         &mut self,
         info: &LayoutPrimitiveInfo,
@@ -1095,6 +1301,9 @@ impl DisplayListBuilder {
         self.push_item(item, info);
     }
 
+    /// Pushes a radial gradient to be displayed.
+    ///
+    /// See [`push_gradient`](#method.push_gradient) for explanation.
     pub fn push_radial_gradient(
         &mut self,
         info: &LayoutPrimitiveInfo,
@@ -1121,6 +1330,12 @@ impl DisplayListBuilder {
         mix_blend_mode: MixBlendMode,
         filters: Vec<FilterOp>,
     ) {
+        let reference_frame_id = if transform.is_some() || perspective.is_some() {
+            Some(self.generate_clip_id())
+        } else {
+            None
+        };
+
         let item = SpecificDisplayItem::PushStackingContext(PushStackingContextDisplayItem {
             stacking_context: StackingContext {
                 scroll_policy,
@@ -1128,6 +1343,7 @@ impl DisplayListBuilder {
                 transform_style,
                 perspective,
                 mix_blend_mode,
+                reference_frame_id,
             },
         });
 
@@ -1147,16 +1363,19 @@ impl DisplayListBuilder {
         self.push_iter(stops);
     }
 
-    fn generate_clip_id(&mut self, id: Option<ClipId>) -> ClipId {
-        id.unwrap_or_else(|| {
-            self.next_clip_id += 1;
-            ClipId::Clip(self.next_clip_id - 1, self.pipeline_id)
-        })
+    fn generate_clip_id(&mut self) -> ClipId {
+        self.next_clip_id += 1;
+        ClipId::Clip(self.next_clip_id - 1, self.pipeline_id)
+    }
+
+    fn generate_clip_chain_id(&mut self) -> ClipChainId {
+        self.next_clip_chain_id += 1;
+        ClipChainId(self.next_clip_chain_id - 1, self.pipeline_id)
     }
 
     pub fn define_scroll_frame<I>(
         &mut self,
-        id: Option<ClipId>,
+        external_id: Option<ExternalScrollId>,
         content_rect: LayoutRect,
         clip_rect: LayoutRect,
         complex_clips: I,
@@ -1165,12 +1384,12 @@ impl DisplayListBuilder {
     ) -> ClipId
     where
         I: IntoIterator<Item = ComplexClipRegion>,
-        I::IntoIter: ExactSizeIterator,
+        I::IntoIter: ExactSizeIterator + Clone,
     {
         let parent = self.clip_stack.last().unwrap().scroll_node_id;
         self.define_scroll_frame_with_parent(
-            id,
             parent,
+            external_id,
             content_rect,
             clip_rect,
             complex_clips,
@@ -1180,8 +1399,8 @@ impl DisplayListBuilder {
 
     pub fn define_scroll_frame_with_parent<I>(
         &mut self,
-        id: Option<ClipId>,
         parent: ClipId,
+        external_id: Option<ExternalScrollId>,
         content_rect: LayoutRect,
         clip_rect: LayoutRect,
         complex_clips: I,
@@ -1190,45 +1409,64 @@ impl DisplayListBuilder {
     ) -> ClipId
     where
         I: IntoIterator<Item = ComplexClipRegion>,
-        I::IntoIter: ExactSizeIterator,
+        I::IntoIter: ExactSizeIterator + Clone,
     {
-        let id = self.generate_clip_id(id);
+        let clip_id = self.generate_clip_id();
+        let scroll_frame_id = self.generate_clip_id();
         let item = SpecificDisplayItem::ScrollFrame(ScrollFrameDisplayItem {
-            id: id,
-            image_mask: image_mask,
+            clip_id,
+            scroll_frame_id,
+            external_id,
+            image_mask,
             scroll_sensitivity,
         });
-        let info = LayoutPrimitiveInfo::with_clip_rect(content_rect, clip_rect);
 
-        let scrollinfo = ClipAndScrollInfo::simple(parent);
-        self.push_item_with_clip_scroll_info(item, &info, scrollinfo);
+        self.push_item_with_clip_scroll_info(
+            item,
+            &LayoutPrimitiveInfo::with_clip_rect(content_rect, clip_rect),
+            ClipAndScrollInfo::simple(parent),
+        );
         self.push_iter(complex_clips);
+
+        scroll_frame_id
+    }
+
+    pub fn define_clip_chain<I>(
+        &mut self,
+        parent: Option<ClipChainId>,
+        clips: I,
+    ) -> ClipChainId
+    where
+        I: IntoIterator<Item = ClipId>,
+        I::IntoIter: ExactSizeIterator + Clone,
+    {
+        let id = self.generate_clip_chain_id();
+        self.push_new_empty_item(SpecificDisplayItem::ClipChain(ClipChainItem { id, parent }));
+        self.push_iter(clips);
         id
     }
 
     pub fn define_clip<I>(
         &mut self,
-        id: Option<ClipId>,
         clip_rect: LayoutRect,
         complex_clips: I,
         image_mask: Option<ImageMask>,
     ) -> ClipId
     where
         I: IntoIterator<Item = ComplexClipRegion>,
-        I::IntoIter: ExactSizeIterator,
+        I::IntoIter: ExactSizeIterator + Clone,
     {
         let parent = self.clip_stack.last().unwrap().scroll_node_id;
         self.define_clip_with_parent(
-            id,
             parent,
             clip_rect,
             complex_clips,
-            image_mask)
+            image_mask
+        )
     }
 
     pub fn define_clip_with_parent<I>(
         &mut self,
-        id: Option<ClipId>,
         parent: ClipId,
         clip_rect: LayoutRect,
         complex_clips: I,
@@ -1236,9 +1474,9 @@ impl DisplayListBuilder {
     ) -> ClipId
     where
         I: IntoIterator<Item = ComplexClipRegion>,
-        I::IntoIter: ExactSizeIterator,
+        I::IntoIter: ExactSizeIterator + Clone,
     {
-        let id = self.generate_clip_id(id);
+        let id = self.generate_clip_id();
         let item = SpecificDisplayItem::Clip(ClipDisplayItem {
             id,
             image_mask: image_mask,
@@ -1254,7 +1492,6 @@ impl DisplayListBuilder {
 
     pub fn define_sticky_frame(
         &mut self,
-        id: Option<ClipId>,
         frame_rect: LayoutRect,
         margins: SideOffsets2D<Option<f32>>,
         vertical_offset_bounds: StickyOffsetBounds,
@@ -1262,7 +1499,7 @@ impl DisplayListBuilder {
         previously_applied_offset: LayoutVector2D,
 
     ) -> ClipId {
-        let id = self.generate_clip_id(id);
+        let id = self.generate_clip_id();
         let item = SpecificDisplayItem::StickyFrame(StickyFrameDisplayItem {
             id,
             margins,
@@ -1295,7 +1532,8 @@ impl DisplayListBuilder {
 
     pub fn push_iframe(&mut self, info: &LayoutPrimitiveInfo, pipeline_id: PipelineId) {
         let item = SpecificDisplayItem::Iframe(IframeDisplayItem {
-            pipeline_id: pipeline_id,
+            clip_id: self.generate_clip_id(),
+            pipeline_id,
         });
         self.push_item(item, info);
     }
@@ -1322,6 +1560,7 @@ impl DisplayListBuilder {
                     builder_start_time: self.builder_start_time,
                     builder_finish_time: end_time,
                     send_start_time: 0,
+                    total_clip_ids: self.next_clip_id,
                 },
                 data: self.data,
             },

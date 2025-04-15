@@ -51,31 +51,8 @@ Thread::GetCurrentId()
 void*
 GetStackTop(void* aGuess)
 {
-#if defined(GP_ARCH_x86)
-  // Offset 0x18 from the FS segment register gives a pointer to the thread
-  // information block for the current thread.
-  NT_TIB* pTib;
-#if defined(_MSC_VER)
-  __asm {
-    MOV EAX, FS:[18h]
-      MOV pTib, EAX
-  }
-#elif defined(__GNUC__)
-  asm ( "movl %%fs:0x18, %0\n"
-       : "=r" (pTib)
-      );
-#else
-#error "unimplemented"
-#endif
-  return static_cast<void*>(pTib->StackBase);
-
-#elif defined(GP_ARCH_amd64)
-  PNT_TIB64 pTib = reinterpret_cast<PNT_TIB64>(NtCurrentTeb());
+  PNT_TIB pTib = reinterpret_cast<PNT_TIB>(NtCurrentTeb());
   return reinterpret_cast<void*>(pTib->StackBase);
-
-#else
-#error "unimplemented"
-#endif
 }
 
 static void
@@ -150,10 +127,10 @@ Sampler::Disable(PSLockRef aLock)
 template<typename Func>
 void
 Sampler::SuspendAndSampleAndResumeThread(PSLockRef aLock,
-                                         const ThreadInfo& aThreadInfo,
+                                         const RegisteredThread& aRegisteredThread,
                                          const Func& aProcessRegs)
 {
-  HANDLE profiled_thread = aThreadInfo.GetPlatformData()->ProfiledThread();
+  HANDLE profiled_thread = aRegisteredThread.GetPlatformData()->ProfiledThread();
   if (profiled_thread == nullptr) {
     return;
   }

@@ -13,13 +13,13 @@ import org.mozilla.gecko.background.sync.helpers.ExpectStoredDelegate;
 import org.mozilla.gecko.background.sync.helpers.SessionTestHelper;
 import org.mozilla.gecko.background.testhelpers.WaitHelper;
 import org.mozilla.gecko.db.BrowserContract;
+import org.mozilla.gecko.sync.SessionCreateException;
 import org.mozilla.gecko.sync.repositories.InactiveSessionException;
 import org.mozilla.gecko.sync.repositories.NoContentProviderException;
 import org.mozilla.gecko.sync.repositories.NoStoreDelegateException;
 import org.mozilla.gecko.sync.repositories.RepositorySession;
 import org.mozilla.gecko.sync.repositories.android.BrowserContractHelpers;
 import org.mozilla.gecko.sync.repositories.android.FormHistoryRepositorySession;
-import org.mozilla.gecko.sync.repositories.delegates.RepositorySessionCreationDelegate;
 import org.mozilla.gecko.sync.repositories.delegates.RepositorySessionStoreDelegate;
 import org.mozilla.gecko.sync.repositories.delegates.RepositorySessionWipeDelegate;
 import org.mozilla.gecko.sync.repositories.domain.FormHistoryRecord;
@@ -69,17 +69,15 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
      */
     return new FormHistoryRepositorySession.FormHistoryRepository() {
       @Override
-      public void createSession(RepositorySessionCreationDelegate delegate,
-                                Context context) {
+      public RepositorySession createSession(Context context) throws SessionCreateException {
         try {
-          final FormHistoryRepositorySession session = new FormHistoryRepositorySession(this, context) {
+          return new FormHistoryRepositorySession(this, context) {
             @Override
             protected synchronized void trackGUID(String guid) {
             }
           };
-          delegate.onSessionCreated(session);
         } catch (Exception e) {
-          delegate.onSessionCreateFailed(e);
+          throw new SessionCreateException(e);
         }
       }
     };
@@ -98,7 +96,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
         getRepository());
   }
 
-  public void testAcquire() throws NoContentProviderException {
+  public void testAcquire() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
     assertNotNull(session.getFormsProvider());
     session.abort();
@@ -186,7 +184,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     after4 = System.currentTimeMillis();
   }
 
-  public void testWipe() throws NoContentProviderException, RemoteException {
+  public void testWipe() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
 
     insertTwoRecords(session);
@@ -248,7 +246,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     };
   }
 
-  public void testFetchAll() throws NoContentProviderException, RemoteException {
+  public void testFetchAll() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
 
     insertTwoRecords(session);
@@ -258,7 +256,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     session.abort();
   }
 
-  public void testFetchByGuid() throws NoContentProviderException, RemoteException {
+  public void testFetchByGuid() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
 
     insertTwoRecords(session);
@@ -279,7 +277,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     session.abort();
   }
 
-  public void testFetchSince() throws NoContentProviderException, RemoteException {
+  public void testFetchSince() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
 
     insertFourRecords(session);
@@ -313,7 +311,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     };
   }
 
-  public void testStoreRemoteNew() throws NoContentProviderException, RemoteException {
+  public void testStoreRemoteNew() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
 
     insertTwoRecords(session);
@@ -324,7 +322,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     rec = new FormHistoryRecord("new1", "forms", System.currentTimeMillis(), false);
     rec.fieldName  = "fieldName1";
     rec.fieldValue = "fieldValue1";
-    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(rec.guid)));
+    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(1)));
     performWait(fetchRunnable(session, new String[] { rec.guid }, new Record[] { rec }));
 
     // remote deleted, local missing => should delete, but at the moment we ignore.
@@ -335,7 +333,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     session.abort();
   }
 
-  public void testStoreRemoteNewer() throws NoContentProviderException, RemoteException {
+  public void testStoreRemoteNewer() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
 
     insertFourRecords(session);
@@ -347,19 +345,19 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     rec = new FormHistoryRecord(regular1.guid, regular1.collection, newTimestamp, false);
     rec.fieldName  = regular1.fieldName;
     rec.fieldValue = regular1.fieldValue + "NEW";
-    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(rec.guid)));
+    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(1)));
     performWait(fetchRunnable(session, new String[] { regular1.guid }, new Record[] { rec }));
 
     // remote deleted, local regular, remote newer => should delete everything.
     rec = new FormHistoryRecord(regular2.guid, regular2.collection, newTimestamp, true);
-    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(rec.guid)));
+    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(1)));
     performWait(fetchRunnable(session, new String[] { regular2.guid }, new Record[] { }));
 
     // remote regular, local deleted, remote newer => should update.
     rec = new FormHistoryRecord(deleted1.guid, deleted1.collection, newTimestamp, false);
     rec.fieldName  = regular1.fieldName;
     rec.fieldValue = regular1.fieldValue + "NEW";
-    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(rec.guid)));
+    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(1)));
     performWait(fetchRunnable(session, new String[] { deleted1.guid }, new Record[] { rec }));
 
     // remote deleted, local deleted, remote newer => should delete everything.
@@ -370,7 +368,7 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     session.abort();
   }
 
-  public void testStoreRemoteOlder() throws NoContentProviderException, RemoteException {
+  public void testStoreRemoteOlder() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
 
     long oldTimestamp = System.currentTimeMillis() - 100;
@@ -401,13 +399,13 @@ public class TestFormHistoryRepositorySession extends AndroidSyncTestCase {
     session.abort();
   }
 
-  public void testStoreDifferentGuid() throws NoContentProviderException, RemoteException {
+  public void testStoreDifferentGuid() throws Exception {
     final FormHistoryRepositorySession session = createAndBeginSession();
 
     insertTwoRecords(session);
 
     FormHistoryRecord rec = (FormHistoryRecord) regular1.copyWithIDs("distinct", 999);
-    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(rec.guid)));
+    performWait(storeRunnable(session, rec, new ExpectStoredDelegate(1)));
     // Existing record should take remote record's GUID.
     performWait(fetchAllRunnable(session, new Record[] { rec, deleted1 }));
 

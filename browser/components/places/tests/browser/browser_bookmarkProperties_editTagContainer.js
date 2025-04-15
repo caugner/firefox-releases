@@ -19,7 +19,7 @@ add_task(async function() {
     await promiseLibraryClosed(library);
   });
 
-  PlacesOrganizer.selectLeftPaneQuery("Tags");
+  PlacesOrganizer.selectLeftPaneBuiltIn("Tags");
   let tree = PlacesOrganizer._places;
   let tagsContainer = tree.selectedNode;
   tagsContainer.containerOpen = true;
@@ -58,6 +58,11 @@ add_task(async function() {
       Assert.equal(namepicker.value, "tag2", "Node title has been properly edited");
 
       // Check the shortcut's title.
+      Assert.equal(tree.selectedNode.title, "tag2", "The node has the correct title");
+
+      // Try to set an empty title, it should restore the previous one.
+      fillBookmarkTextField("editBMPanel_namePicker", "", dialogWin);
+      Assert.equal(namepicker.value, "tag2", "Title has not been changed");
       Assert.equal(tree.selectedNode.title, "tag2", "The node has the correct title");
 
       // Check the tags have been edited.

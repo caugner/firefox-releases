@@ -13,8 +13,6 @@ interface HTMLDocument : Document {
   // DOM tree accessors
   [Throws]
   getter object (DOMString name);
-  [CEReactions, Pure, SetterThrows]
-           attribute HTMLElement? body;
   [Pure]
   readonly attribute HTMLHeadElement? head;
   [Pure]
@@ -42,7 +40,7 @@ interface HTMLDocument : Document {
   [CEReactions, Throws]
   void writeln(DOMString... text);
 
-  [CEReactions, SetterThrows, NeedsSubjectPrincipal]
+  [CEReactions, SetterThrows, SetterNeedsSubjectPrincipal]
            attribute DOMString designMode;
   [CEReactions, Throws, NeedsSubjectPrincipal]
   boolean execCommand(DOMString commandId, optional boolean showUI = false,

@@ -11,7 +11,6 @@
 #include "mozilla/SelectionState.h"
 #include "mozilla/TextEditRules.h"
 #include "nsCOMPtr.h"
-#include "nsIEditActionListener.h"
 #include "nsIEditor.h"
 #include "nsIHTMLEditor.h"
 #include "nsISupportsImpl.h"
@@ -32,7 +31,10 @@ namespace mozilla {
 class EditActionResult;
 class HTMLEditor;
 class RulesInfo;
+class SplitNodeResult;
 class TextEditor;
+enum class EditAction : int32_t;
+
 namespace dom {
 class Element;
 class Selection;
@@ -50,7 +52,7 @@ struct StyleCache final : public PropItem
   }
 
   StyleCache(nsAtom* aTag,
-             const nsAString& aAttr,
+             nsAtom* aAttr,
              const nsAString& aValue)
     : PropItem(aTag, aAttr, aValue)
     , mPresent(false)
@@ -59,7 +61,7 @@ struct StyleCache final : public PropItem
   }
 
   StyleCache(nsAtom* aTag,
-             const nsAString& aAttr)
+             nsAtom* aAttr)
     : PropItem(aTag, aAttr, EmptyString())
     , mPresent(false)
   {
@@ -75,7 +77,6 @@ struct StyleCache final : public PropItem
 #define SIZE_STYLE_TABLE 19
 
 class HTMLEditRules : public TextEditRules
-                    , public nsIEditActionListener
 {
 public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -83,19 +84,22 @@ public:
 
   HTMLEditRules();
 
-  // nsIEditRules methods
-  NS_IMETHOD Init(TextEditor* aTextEditor) override;
-  NS_IMETHOD DetachEditor() override;
-  NS_IMETHOD BeforeEdit(EditAction action,
-                        nsIEditor::EDirection aDirection) override;
-  NS_IMETHOD AfterEdit(EditAction action,
-                       nsIEditor::EDirection aDirection) override;
-  NS_IMETHOD WillDoAction(Selection* aSelection, RulesInfo* aInfo,
-                          bool* aCancel, bool* aHandled) override;
-  NS_IMETHOD DidDoAction(Selection* aSelection, RulesInfo* aInfo,
-                         nsresult aResult) override;
-  NS_IMETHOD_(bool) DocumentIsEmpty() override;
-  NS_IMETHOD DocumentModified() override;
+  // TextEditRules methods
+  virtual nsresult Init(TextEditor* aTextEditor) override;
+  virtual nsresult DetachEditor() override;
+  virtual nsresult BeforeEdit(EditAction aAction,
+                              nsIEditor::EDirection aDirection) override;
+  virtual nsresult AfterEdit(EditAction aAction,
+                             nsIEditor::EDirection aDirection) override;
+  virtual nsresult WillDoAction(Selection* aSelection,
+                                RulesInfo* aInfo,
+                                bool* aCancel,
+                                bool* aHandled) override;
+  virtual nsresult DidDoAction(Selection* aSelection,
+                               RulesInfo* aInfo,
+                               nsresult aResult) override;
+  virtual bool DocumentIsEmpty() override;
+  virtual nsresult DocumentModified() override;
 
   nsresult GetListState(bool* aMixed, bool* aOL, bool* aUL, bool* aDL);
   nsresult GetListItemState(bool* aMixed, bool* aLI, bool* aDT, bool* aDD);
@@ -104,37 +108,22 @@ public:
   nsresult GetParagraphState(bool* aMixed, nsAString& outFormat);
   nsresult MakeSureElemStartsOrEndsOnCR(nsINode& aNode);
 
-  // nsIEditActionListener methods
+  void DidCreateNode(Element* aNewElement);
+  void DidInsertNode(nsIContent& aNode);
+  void WillDeleteNode(nsINode* aChild);
+  void DidSplitNode(nsINode* aExistingRightNode,
+                    nsINode* aNewLeftNode);
+  void WillJoinNodes(nsINode& aLeftNode, nsINode& aRightNode);
+  void DidJoinNodes(nsINode& aLeftNode, nsINode& aRightNode);
+  void DidInsertText(nsINode* aTextNode, int32_t aOffset,
+                     const nsAString& aString);
+  void DidDeleteText(nsINode* aTextNode, int32_t aOffset, int32_t aLength);
+  void WillDeleteSelection(Selection* aSelection);
 
-  NS_IMETHOD WillCreateNode(const nsAString& aTag,
-                            nsIDOMNode* aNextSiblingOfNewNode) override;
-  NS_IMETHOD DidCreateNode(const nsAString& aTag, nsIDOMNode* aNewNode,
-                           nsresult aResult) override;
-  NS_IMETHOD WillInsertNode(nsIDOMNode* aNode, nsIDOMNode* aParent,
-                            int32_t aPosition) override;
-  NS_IMETHOD DidInsertNode(nsIDOMNode* aNode, nsIDOMNode* aParent,
-                           int32_t aPosition, nsresult aResult) override;
-  NS_IMETHOD WillDeleteNode(nsIDOMNode* aChild) override;
-  NS_IMETHOD DidDeleteNode(nsIDOMNode* aChild, nsresult aResult) override;
-  NS_IMETHOD WillSplitNode(nsIDOMNode* aExistingRightNode,
-                           int32_t aOffset) override;
-  NS_IMETHOD DidSplitNode(nsIDOMNode* aExistingRightNode, int32_t aOffset,
-                          nsIDOMNode* aNewLeftNode, nsresult aResult) override;
-  NS_IMETHOD WillJoinNodes(nsIDOMNode* aLeftNode, nsIDOMNode* aRightNode,
-                           nsIDOMNode* aParent) override;
-  NS_IMETHOD DidJoinNodes(nsIDOMNode* aLeftNode, nsIDOMNode* aRightNode,
-                          nsIDOMNode* aParent, nsresult aResult) override;
-  NS_IMETHOD WillInsertText(nsIDOMCharacterData* aTextNode, int32_t aOffset,
-                            const nsAString &aString) override;
-  NS_IMETHOD DidInsertText(nsIDOMCharacterData* aTextNode, int32_t aOffset,
-                           const nsAString &aString, nsresult aResult) override;
-  NS_IMETHOD WillDeleteText(nsIDOMCharacterData* aTextNode, int32_t aOffset,
-                            int32_t aLength) override;
-  NS_IMETHOD DidDeleteText(nsIDOMCharacterData* aTextNode, int32_t aOffset,
-                           int32_t aLength, nsresult aResult) override;
-  NS_IMETHOD WillDeleteSelection(nsISelection* aSelection) override;
-  NS_IMETHOD DidDeleteSelection(nsISelection* aSelection) override;
   void DeleteNodeIfCollapsedText(nsINode& aNode);
+
+  void StartToListenToEditActions() { mListenerEnabled = true; }
+  void EndListeningToEditActions() { mListenerEnabled = false; }
 
 protected:
   virtual ~HTMLEditRules();
@@ -158,8 +147,17 @@ protected:
   nsresult WillLoadHTML(Selection* aSelection, bool* aCancel);
   nsresult WillInsertBreak(Selection& aSelection, bool* aCancel,
                            bool* aHandled);
-  nsresult StandardBreakImpl(nsINode& aNode, int32_t aOffset,
-                             Selection& aSelection);
+
+  /**
+   * InsertBRElement() inserts a <br> element into aInsertToBreak.
+   *
+   * @param aSelection          The selection.
+   * @param aInsertToBreak      The point where new <br> element will be
+   *                            inserted before.
+   */
+  nsresult InsertBRElement(Selection& aSelection,
+                           const EditorDOMPoint& aInsertToBreak);
+
   nsresult DidInsertBreak(Selection* aSelection, nsresult aResult);
   nsresult SplitMailCites(Selection* aSelection, bool* aHandled);
   nsresult WillDeleteSelection(Selection* aSelection,
@@ -283,7 +281,7 @@ protected:
   nsresult AlignBlockContents(nsIDOMNode* aNode, const nsAString* alignType);
   nsresult AppendInnerFormatNodes(nsTArray<OwningNonNull<nsINode>>& aArray,
                                   nsINode* aNode);
-  nsresult GetFormatString(nsIDOMNode* aNode, nsAString &outFormat);
+  nsresult GetFormatString(nsINode* aNode, nsAString &outFormat);
   enum class Lists { no, yes };
   enum class Tables { no, yes };
   void GetInnerContent(nsINode& aNode,
@@ -294,15 +292,41 @@ protected:
   nsAtom& DefaultParagraphSeparator();
   nsresult ReturnInHeader(Selection& aSelection, Element& aHeader,
                           nsINode& aNode, int32_t aOffset);
-  nsresult ReturnInParagraph(Selection* aSelection, nsINode* aHeader,
-                             nsINode* aTextNode, int32_t aOffset,
-                             nsIContent* aChildAtOffset, bool* aCancel,
-                             bool* aHandled);
-  nsresult SplitParagraph(nsIDOMNode* aPara,
-                          nsIContent* aBRNode,
-                          Selection* aSelection,
-                          nsCOMPtr<nsIDOMNode>* aSelNode,
-                          int32_t* aOffset);
+
+  /**
+   * ReturnInParagraph() does the right thing for Enter key press or
+   * 'insertParagraph' command in aParentDivOrP.  aParentDivOrP will be
+   * split at start of first selection range.
+   *
+   * @param aSelection      The selection.  aParentDivOrP will be split at
+   *                        start of the first selection range.
+   * @param aParentDivOrP   The parent block.  This must be <p> or <div>
+   *                        element.
+   * @return                Returns with NS_OK if this doesn't meat any
+   *                        unexpected situation.  If this method tries to
+   *                        split the paragraph, marked as handled.
+   */
+  EditActionResult ReturnInParagraph(Selection& aSelection,
+                                     Element& aParentDivOrP);
+
+  /**
+   * SplitParagraph() splits the parent block, aPara, at aSelNode - aOffset.
+   *
+   * @param aSelection          The selection.
+   * @param aParentDivOrP       The parent block to be split.  This must be <p>
+   *                            or <div> element.
+   * @param aStartOfRightNode   The point to be start of right node after
+   *                            split.  This must be descendant of
+   *                            aParentDivOrP.
+   * @param aNextBRNode         Next <br> node if there is.  Otherwise, nullptr.
+   *                            If this is not nullptr, the <br> node may be
+   *                            removed.
+   */
+  nsresult SplitParagraph(Selection& aSelection,
+                          Element& aParentDivOrP,
+                          const EditorRawDOMPoint& aStartOfRightNode,
+                          nsIContent* aBRNode);
+
   nsresult ReturnInListItem(Selection& aSelection, Element& aHeader,
                             nsINode& aNode, int32_t aOffset);
   nsresult AfterEditInner(EditAction action,
@@ -326,9 +350,19 @@ protected:
                                             nsAtom* aItemType);
 
   nsresult CreateStyleForInsertText(Selection& aSelection, nsIDocument& aDoc);
-  enum class MozBRCounts { yes, no };
-  nsresult IsEmptyBlock(Element& aNode, bool* aOutIsEmptyBlock,
-                        MozBRCounts aMozBRCounts = MozBRCounts::yes);
+
+  /**
+   * IsEmptyBlockElement() returns true if aElement is a block level element
+   * and it doesn't have any visible content.
+   */
+  enum class IgnoreSingleBR
+  {
+    eYes,
+    eNo
+  };
+  bool IsEmptyBlockElement(Element& aElement,
+                           IgnoreSingleBR aIgnoreSingleBR);
+
   nsresult CheckForEmptyBlock(nsINode* aStartNode, Element* aBodyNode,
                               Selection* aSelection,
                               nsIEditor::EDirection aAction, bool* aHandled);
@@ -386,15 +420,49 @@ protected:
   void MakeTransitionList(nsTArray<OwningNonNull<nsINode>>& aNodeArray,
                           nsTArray<bool>& aTransitionArray);
   nsresult RemoveBlockStyle(nsTArray<OwningNonNull<nsINode>>& aNodeArray);
+
+  /**
+   * ApplyBlockStyle() formats all nodes in aNodeArray with block elements
+   * whose name is aBlockTag.
+   * If aNodeArray has an inline element, a block element is created and the
+   * inline element and following inline elements are moved into the new block
+   * element.
+   * If aNodeArray has <br> elements, they'll be removed from the DOM tree and
+   * new block element will be created when there are some remaining inline
+   * elements.
+   * If aNodeArray has a block element, this calls itself with children of
+   * the block element.  Then, new block element will be created when there
+   * are some remaining inline elements.
+   *
+   * @param aNodeArray      Must be descendants of a node.
+   * @param aBlockTag       The element name of new block elements.
+   */
   nsresult ApplyBlockStyle(nsTArray<OwningNonNull<nsINode>>& aNodeArray,
                            nsAtom& aBlockTag);
+
   nsresult MakeBlockquote(nsTArray<OwningNonNull<nsINode>>& aNodeArray);
-  nsresult SplitAsNeeded(nsAtom& aTag, OwningNonNull<nsINode>& inOutParent,
-                         int32_t& inOutOffset,
-                         nsCOMPtr<nsIContent>* inOutChildAtOffset = nullptr);
-  nsresult SplitAsNeeded(nsAtom& aTag, nsCOMPtr<nsINode>& inOutParent,
-                         int32_t& inOutOffset,
-                         nsCOMPtr<nsIContent>* inOutChildAtOffset = nullptr);
+
+  /**
+   * MaybeSplitAncestorsForInsert() does nothing if container of
+   * aStartOfDeepestRightNode can have an element whose tag name is aTag.
+   * Otherwise, looks for an ancestor node which is or is in active editing
+   * host and can have an element whose name is aTag.  If there is such
+   * ancestor, its descendants are split.
+   *
+   * Note that this may create empty elements while splitting ancestors.
+   *
+   * @param aTag                        The name of element to be inserted
+   *                                    after calling this method.
+   * @param aStartOfDeepestRightNode    The start point of deepest right node.
+   *                                    This point must be descendant of
+   *                                    active editing host.
+   * @return                            When succeeded, SplitPoint() returns
+   *                                    the point to insert the element.
+   */
+  SplitNodeResult MaybeSplitAncestorsForInsert(
+                    nsAtom& aTag,
+                    const EditorRawDOMPoint& aStartOfDeepestRightNode);
+
   nsresult AddTerminatingBR(nsIDOMNode *aBlock);
   EditorDOMPoint JoinNodesSmart(nsIContent& aNodeLeft,
                                 nsIContent& aNodeRight);

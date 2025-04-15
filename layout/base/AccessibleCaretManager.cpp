@@ -11,6 +11,7 @@
 #include "AccessibleCaretLogger.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/NodeFilterBinding.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/TreeWalker.h"
 #include "mozilla/IMEStateManager.h"
@@ -124,6 +125,7 @@ AccessibleCaretManager::AccessibleCaretManager(nsIPresShell* aPresShell)
 
 AccessibleCaretManager::~AccessibleCaretManager()
 {
+  MOZ_RELEASE_ASSERT(!mFlushingLayout, "Going away in FlushLayout? Bad!");
 }
 
 void
@@ -219,10 +221,9 @@ AccessibleCaretManager::HideCarets()
 }
 
 void
-AccessibleCaretManager::UpdateCarets(UpdateCaretsHintSet aHint)
+AccessibleCaretManager::UpdateCarets(const UpdateCaretsHintSet& aHint)
 {
-  FlushLayout();
-  if (IsTerminated()) {
+  if (!FlushLayout()) {
     return;
   }
 
@@ -280,7 +281,7 @@ AccessibleCaretManager::HasNonEmptyTextContent(nsINode* aNode) const
 }
 
 void
-AccessibleCaretManager::UpdateCaretsForCursorMode(UpdateCaretsHintSet aHints)
+AccessibleCaretManager::UpdateCaretsForCursorMode(const UpdateCaretsHintSet& aHints)
 {
   AC_LOG("%s, selection: %p", __FUNCTION__, GetSelection());
 
@@ -339,7 +340,7 @@ AccessibleCaretManager::UpdateCaretsForCursorMode(UpdateCaretsHintSet aHints)
 }
 
 void
-AccessibleCaretManager::UpdateCaretsForSelectionMode(UpdateCaretsHintSet aHints)
+AccessibleCaretManager::UpdateCaretsForSelectionMode(const UpdateCaretsHintSet& aHints)
 {
   AC_LOG("%s: selection: %p", __FUNCTION__, GetSelection());
 
@@ -389,8 +390,7 @@ AccessibleCaretManager::UpdateCaretsForSelectionMode(UpdateCaretsHintSet aHints)
   if (firstCaretResult == PositionChangedResult::Changed ||
       secondCaretResult == PositionChangedResult::Changed) {
     // Flush layout to make the carets intersection correct.
-    FlushLayout();
-    if (IsTerminated()) {
+    if (!FlushLayout()) {
       return;
     }
   }
@@ -789,24 +789,24 @@ AccessibleCaretManager::GetFrameSelection() const
   MOZ_ASSERT(fm);
 
   nsIContent* focusedContent = fm->GetFocusedContent();
-  if (focusedContent) {
-    nsIFrame* focusFrame = focusedContent->GetPrimaryFrame();
-    if (!focusFrame) {
-      return nullptr;
-    }
-
-    // Prevent us from touching the nsFrameSelection associated with other
-    // PresShell.
-    RefPtr<nsFrameSelection> fs = focusFrame->GetFrameSelection();
-    if (!fs || fs->GetShell() != mPresShell) {
-      return nullptr;
-    }
-
-    return fs.forget();
-  } else {
+  if (!focusedContent) {
     // For non-editable content
     return mPresShell->FrameSelection();
   }
+
+  nsIFrame* focusFrame = focusedContent->GetPrimaryFrame();
+  if (!focusFrame) {
+    return nullptr;
+  }
+
+  // Prevent us from touching the nsFrameSelection associated with other
+  // PresShell.
+  RefPtr<nsFrameSelection> fs = focusFrame->GetFrameSelection();
+  if (!fs || fs->GetShell() != mPresShell) {
+    return nullptr;
+  }
+
+  return fs.forget();
 }
 
 nsAutoString
@@ -1029,12 +1029,19 @@ AccessibleCaretManager::ClearMaintainedSelection() const
   }
 }
 
-void
-AccessibleCaretManager::FlushLayout() const
+bool
+AccessibleCaretManager::FlushLayout()
 {
   if (mPresShell) {
-    mPresShell->FlushPendingNotifications(FlushType::Layout);
+    AutoRestore<bool> flushing(mFlushingLayout);
+    mFlushingLayout = true;
+
+    if (nsIDocument* doc = mPresShell->GetDocument()) {
+      doc->FlushPendingNotifications(FlushType::Layout);
+    }
   }
+
+  return !IsTerminated();
 }
 
 nsIFrame*
@@ -1082,7 +1089,7 @@ AccessibleCaretManager::GetFrameForFirstRangeStartOrLastRangeEnd(
   if (!startFrame) {
     ErrorResult err;
     RefPtr<TreeWalker> walker = mPresShell->GetDocument()->CreateTreeWalker(
-      *startNode, nsIDOMNodeFilter::SHOW_ALL, nullptr, err);
+      *startNode, dom::NodeFilterBinding::SHOW_ALL, nullptr, err);
 
     if (!walker) {
       return nullptr;
@@ -1406,14 +1413,9 @@ AccessibleCaretManager::StopSelectionAutoScrollTimer() const
 }
 
 void
-AccessibleCaretManager::DispatchCaretStateChangedEvent(CaretChangedReason aReason) const
+AccessibleCaretManager::DispatchCaretStateChangedEvent(CaretChangedReason aReason)
 {
-  if (!mPresShell) {
-    return;
-  }
-
-  FlushLayout();
-  if (IsTerminated()) {
+  if (!FlushLayout()) {
     return;
   }
 

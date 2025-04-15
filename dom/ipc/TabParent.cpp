@@ -27,7 +27,6 @@
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/Hal.h"
 #include "mozilla/IMEStateManager.h"
-#include "mozilla/ipc/DocumentRendererParent.h"
 #include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "mozilla/layers/AsyncDragMetrics.h"
 #include "mozilla/layers/InputAPZContext.h"
@@ -98,8 +97,6 @@
 #include "UnitTransforms.h"
 #include <algorithm>
 #include "mozilla/WebBrowserPersistDocumentParent.h"
-#include "nsIGroupedSHistory.h"
-#include "PartialSHistory.h"
 #include "ProcessPriorityManager.h"
 #include "nsString.h"
 #include "NullPrincipal.h"
@@ -171,8 +168,10 @@ TabParent::TabParent(nsIContentParent* aManager,
 #ifdef DEBUG
   , mActiveSupressDisplayportCount(0)
 #endif
-  , mLayerTreeEpoch(0)
+  , mLayerTreeEpoch(1)
   , mPreserveLayers(false)
+  , mRenderLayers(true)
+  , mHasLayers(false)
   , mHasPresented(false)
   , mHasBeforeUnload(false)
   , mIsMouseEnterIntoWidgetEventSuppressed(false)
@@ -317,7 +316,7 @@ TabParent::SetOwnerElement(Element* aElement)
 void
 TabParent::AddWindowListeners()
 {
-  if (mFrameElement && mFrameElement->OwnerDoc()) {
+  if (mFrameElement) {
     if (nsCOMPtr<nsPIDOMWindowOuter> window = mFrameElement->OwnerDoc()->GetWindow()) {
       nsCOMPtr<EventTarget> eventTarget = window->GetTopWindowRoot();
       if (eventTarget) {
@@ -973,11 +972,6 @@ TabParent::RecvPDocAccessibleConstructor(PDocAccessibleParent* aDoc,
 #ifdef XP_WIN
     a11y::WrapperFor(doc)->SetID(aMsaaID);
     MOZ_ASSERT(!aDocCOMProxy.IsNull());
-#ifdef NIGHTLY_BUILD
-    if (aDocCOMProxy.IsNull()) {
-      return IPC_FAIL(this, "Constructing a top-level PDocAccessible with null COM proxy");
-    }
-#endif
 
     RefPtr<IAccessible> proxy(aDocCOMProxy.Get());
     doc->SetCOMInterface(proxy);
@@ -1007,24 +1001,6 @@ TabParent::GetTopLevelDocAccessible() const
                                 "there shouldn't be an accessible doc at all!");
 #endif
   return nullptr;
-}
-
-PDocumentRendererParent*
-TabParent::AllocPDocumentRendererParent(const nsRect& documentRect,
-                                        const gfx::Matrix& transform,
-                                        const nsString& bgcolor,
-                                        const uint32_t& renderFlags,
-                                        const bool& flushLayout,
-                                        const nsIntSize& renderSize)
-{
-    return new DocumentRendererParent();
-}
-
-bool
-TabParent::DeallocPDocumentRendererParent(PDocumentRendererParent* actor)
-{
-    delete actor;
-    return true;
 }
 
 PFilePickerParent*
@@ -1101,20 +1077,6 @@ TabParent::SendMouseEvent(const nsAString& aType, float aX, float aY,
                                              aModifiers,
                                              aIgnoreRootScrollFrame);
   }
-}
-
-void
-TabParent::SendKeyEvent(const nsAString& aType,
-                        int32_t aKeyCode,
-                        int32_t aCharCode,
-                        int32_t aModifiers,
-                        bool aPreventDefault)
-{
-  if (mIsDestroyed || !mIsReadyToHandleInputEvents) {
-    return;
-  }
-  Unused << PBrowserParent::SendKeyEvent(nsString(aType), aKeyCode, aCharCode,
-                                         aModifiers, aPreventDefault);
 }
 
 void
@@ -1200,8 +1162,7 @@ TabParent::GetLayoutDeviceToCSSScale()
 {
   nsCOMPtr<nsIContent> content = do_QueryInterface(mFrameElement);
   nsIDocument* doc = (content ? content->OwnerDoc() : nullptr);
-  nsIPresShell* shell = (doc ? doc->GetShell() : nullptr);
-  nsPresContext* ctx = (shell ? shell->GetPresContext() : nullptr);
+  nsPresContext* ctx = (doc ? doc->GetPresContext() : nullptr);
   return LayoutDeviceToCSSScale(ctx
     ? (float)ctx->AppUnitsPerDevPixel() / nsPresContext::AppUnitsPerCSSPixel()
     : 0.0f);
@@ -1281,7 +1242,8 @@ TabParent::QueryDropLinksForVerification()
 
 void
 TabParent::SendRealDragEvent(WidgetDragEvent& aEvent, uint32_t aDragAction,
-                             uint32_t aDropEffect)
+                             uint32_t aDropEffect,
+                             const nsCString& aPrincipalURISpec)
 {
   if (mIsDestroyed || !mIsReadyToHandleInputEvents) {
     return;
@@ -1294,7 +1256,8 @@ TabParent::SendRealDragEvent(WidgetDragEvent& aEvent, uint32_t aDragAction,
     }
   }
   DebugOnly<bool> ret =
-    PBrowserParent::SendRealDragEvent(aEvent, aDragAction, aDropEffect);
+    PBrowserParent::SendRealDragEvent(aEvent, aDragAction, aDropEffect,
+                                      aPrincipalURISpec);
   NS_WARNING_ASSERTION(ret, "PBrowserParent::SendRealDragEvent() failed");
   MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
 }
@@ -1760,9 +1723,9 @@ TabParent::RecvAsyncMessage(const nsString& aMessage,
 }
 
 mozilla::ipc::IPCResult
-TabParent::RecvSetCursor(const uint32_t& aCursor, const bool& aForce)
+TabParent::RecvSetCursor(const nsCursor& aCursor, const bool& aForce)
 {
-  mCursor = static_cast<nsCursor>(aCursor);
+  mCursor = aCursor;
   mCustomCursor = nullptr;
 
   nsCOMPtr<nsIWidget> widget = GetWidget();
@@ -2142,7 +2105,7 @@ TabParent::GetChildProcessOffset()
   }
 
   nsPresContext* presContext = targetFrame->PresContext();
-  nsIFrame* rootFrame = presContext->PresShell()->FrameManager()->GetRootFrame();
+  nsIFrame* rootFrame = presContext->PresShell()->GetRootFrame();
   nsView* rootView = rootFrame ? rootFrame->GetView() : nullptr;
   if (!rootView) {
     return offset;
@@ -2194,9 +2157,7 @@ TabParent::RecvReplyKeyEvent(const WidgetKeyboardEvent& aEvent)
   // Here we convert the WidgetEvent that we received to an nsIDOMEvent
   // to be able to dispatch it to the <browser> element as the target element.
   nsIDocument* doc = mFrameElement->OwnerDoc();
-  nsIPresShell* presShell = doc->GetShell();
-  NS_ENSURE_TRUE(presShell, IPC_OK());
-  nsPresContext* presContext = presShell->GetPresContext();
+  nsPresContext* presContext = doc->GetPresContext();
   NS_ENSURE_TRUE(presContext, IPC_OK());
 
   AutoHandlingUserInputStatePusher userInpStatePusher(localEvent.IsTrusted(),
@@ -2244,6 +2205,7 @@ TabParent::RecvAccessKeyNotHandled(const WidgetKeyboardEvent& aEvent)
   //     twice or more for a keyboard event, that must be a bug.  But how to
   //     detect if received event has already been handled?
 
+  MOZ_ASSERT(aEvent.mMessage == eKeyPress);
   WidgetKeyboardEvent localEvent(aEvent);
   localEvent.MarkAsHandledInRemoteProcess();
   localEvent.mMessage = eAccessKeyNotFound;
@@ -2350,11 +2312,13 @@ TabParent::SendSelectionEvent(WidgetSelectionEvent& aEvent)
 bool
 TabParent::SendPasteTransferable(const IPCDataTransfer& aDataTransfer,
                                  const bool& aIsPrivateData,
-                                 const IPC::Principal& aRequestingPrincipal)
+                                 const IPC::Principal& aRequestingPrincipal,
+                                 const uint32_t& aContentPolicyType)
 {
   return PBrowserParent::SendPasteTransferable(aDataTransfer,
                                                aIsPrivateData,
-                                               aRequestingPrincipal);
+                                               aRequestingPrincipal,
+                                               aContentPolicyType);
 }
 
 /*static*/ TabParent*
@@ -2902,14 +2866,9 @@ TabParent::GetUseAsyncPanZoom(bool* useAsyncPanZoom)
 NS_IMETHODIMP
 TabParent::SetDocShellIsActive(bool isActive)
 {
-  // Increment the epoch so that layer tree updates from previous
-  // SetDocShellIsActive requests are ignored.
-  mLayerTreeEpoch++;
-
-  // docshell is consider prerendered only if not active yet
-  mIsPrerendered &= !isActive;
   mDocShellIsActive = isActive;
-  Unused << SendSetDocShellIsActive(isActive, mPreserveLayers, mLayerTreeEpoch);
+  SetRenderLayers(isActive);
+  Unused << SendSetDocShellIsActive(isActive);
 
   // update active accessible documents on windows
 #if defined(XP_WIN) && defined(ACCESSIBILITY)
@@ -2932,13 +2891,6 @@ TabParent::SetDocShellIsActive(bool isActive)
   // changing of the process priority.
   ProcessPriorityManager::TabActivityChanged(this, isActive);
 
-  // Ask the child to repaint using the PHangMonitor channel/thread (which may
-  // be less congested).
-  if (isActive) {
-    ContentParent* cp = Manager()->AsContentParent();
-    cp->ForceTabPaint(this, mLayerTreeEpoch);
-  }
-
   return NS_OK;
 }
 
@@ -2950,9 +2902,62 @@ TabParent::GetDocShellIsActive(bool* aIsActive)
 }
 
 NS_IMETHODIMP
-TabParent::GetIsPrerendered(bool* aIsPrerendered)
+TabParent::SetRenderLayers(bool aEnabled)
 {
-  *aIsPrerendered = mIsPrerendered;
+  if (aEnabled == mRenderLayers) {
+    if (aEnabled && mHasLayers && mPreserveLayers) {
+      // RenderLayers might be called when we've been preserving layers,
+      // and already had layers uploaded. In that case, the MozLayerTreeReady
+      // event will not naturally arrive, which can confuse the front-end
+      // layer. So we fire the event here.
+      RefPtr<TabParent> self = this;
+      uint64_t epoch = mLayerTreeEpoch;
+      NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "dom::TabParent::RenderLayers",
+        [self, epoch] () {
+          MOZ_ASSERT(NS_IsMainThread());
+          self->LayerTreeUpdate(epoch, true);
+        }));
+    }
+
+    return NS_OK;
+  }
+
+  // Preserve layers means that attempts to stop rendering layers
+  // will be ignored.
+  if (!aEnabled && mPreserveLayers) {
+    return NS_OK;
+  }
+
+  mRenderLayers = aEnabled;
+
+  // Increment the epoch so that layer tree updates from previous
+  // RenderLayers requests are ignored.
+  mLayerTreeEpoch++;
+
+  Unused << SendRenderLayers(aEnabled, mLayerTreeEpoch);
+
+  // Ask the child to repaint using the PHangMonitor channel/thread (which may
+  // be less congested).
+  if (aEnabled) {
+    ContentParent* cp = Manager()->AsContentParent();
+    cp->ForceTabPaint(this, mLayerTreeEpoch);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TabParent::GetRenderLayers(bool* aResult)
+{
+  *aResult = mRenderLayers;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TabParent::GetHasLayers(bool* aResult)
+{
+  *aResult = mHasLayers;
   return NS_OK;
 }
 
@@ -3043,35 +3048,6 @@ TabParent::GetHasBeforeUnload(bool* aResult)
   return NS_OK;
 }
 
-class LayerTreeUpdateRunnable final
-  : public mozilla::Runnable
-{
-  uint64_t mLayersId;
-  uint64_t mEpoch;
-  bool mActive;
-
-public:
-  explicit LayerTreeUpdateRunnable(uint64_t aLayersId,
-                                   uint64_t aEpoch,
-                                   bool aActive)
-    : Runnable("dom::LayerTreeUpdateRunnable")
-    , mLayersId(aLayersId)
-    , mEpoch(aEpoch)
-    , mActive(aActive)
-  {
-    MOZ_ASSERT(!NS_IsMainThread());
-  }
-
-private:
-  NS_IMETHOD Run() override {
-    MOZ_ASSERT(NS_IsMainThread());
-    if (RefPtr<TabParent> tabParent = TabParent::GetTabParentFromLayersId(mLayersId)) {
-      tabParent->LayerTreeUpdate(mEpoch, mActive);
-    }
-    return NS_OK;
-  }
-};
-
 void
 TabParent::LayerTreeUpdate(uint64_t aEpoch, bool aActive)
 {
@@ -3087,6 +3063,8 @@ TabParent::LayerTreeUpdate(uint64_t aEpoch, bool aActive)
     NS_WARNING("Could not locate target for layer tree message.");
     return;
   }
+
+  mHasLayers = aActive;
 
   RefPtr<Event> event = NS_NewDOMEvent(mFrameElement, nullptr, nullptr);
   if (aActive) {
@@ -3330,7 +3308,8 @@ TabParent::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
                                  const uint32_t& aAction,
                                  const OptionalShmem& aVisualDnDData,
                                  const uint32_t& aStride, const uint8_t& aFormat,
-                                 const LayoutDeviceIntRect& aDragRect)
+                                 const LayoutDeviceIntRect& aDragRect,
+                                 const nsCString& aPrincipalURISpec)
 {
   mInitialDataTransferItems.Clear();
   nsIPresShell* shell = mFrameElement->OwnerDoc()->GetShell();
@@ -3372,6 +3351,7 @@ TabParent::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
 
   mDragValid = true;
   mDragRect = aDragRect;
+  mDragPrincipalURISpec = aPrincipalURISpec;
 
   esm->BeginTrackingRemoteDragGesture(mFrameElement);
 
@@ -3383,8 +3363,22 @@ TabParent::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
 }
 
 void
-TabParent::AddInitialDnDDataTo(DataTransfer* aDataTransfer)
+TabParent::AddInitialDnDDataTo(DataTransfer* aDataTransfer,
+                               nsACString& aPrincipalURISpec)
 {
+  aPrincipalURISpec.Assign(mDragPrincipalURISpec);
+
+  nsCOMPtr<nsIPrincipal> principal;
+  if (!mDragPrincipalURISpec.IsEmpty()) {
+    // If principal is given, try using it first.
+    principal = BasePrincipal::CreateCodebasePrincipal(mDragPrincipalURISpec);
+  }
+  if (!principal) {
+    // Fallback to system principal, to handle like the data is from browser
+    // chrome or OS.
+    principal = nsContentUtils::GetSystemPrincipal();
+  }
+
   for (uint32_t i = 0; i < mInitialDataTransferItems.Length(); ++i) {
     nsTArray<IPCDataTransferItem>& itemArray = mInitialDataTransferItems[i];
     for (auto& item : itemArray) {
@@ -3420,19 +3414,17 @@ TabParent::AddInitialDnDDataTo(DataTransfer* aDataTransfer)
         mozilla::Unused << DeallocShmem(item.data().get_Shmem());
       }
 
-      // Using system principal here, since once the data is on parent process
-      // side, it can be handled as being from browser chrome or OS.
-
       // We set aHidden to false, as we don't need to worry about hiding data
       // from content in the parent process where there is no content.
       // XXX: Nested Content Processes may change this
       aDataTransfer->SetDataWithPrincipalFromOtherProcess(NS_ConvertUTF8toUTF16(item.flavor()),
                                                           variant, i,
-                                                          nsContentUtils::GetSystemPrincipal(),
+                                                          principal,
                                                           /* aHidden = */ false);
     }
   }
   mInitialDataTransferItems.Clear();
+  mDragPrincipalURISpec.Truncate(0);
 }
 
 bool
@@ -3571,45 +3563,6 @@ TabParent::RecvLookUpDictionary(const nsString& aText,
 
   widget->LookUpDictionary(aText, aFontRangeArray, aIsVertical,
                            aPoint - GetChildProcessOffset());
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-TabParent::RecvSHistoryUpdate(const uint32_t& aCount, const uint32_t& aLocalIndex, const bool& aTruncate)
-{
-  RefPtr<nsFrameLoader> frameLoader(GetFrameLoader());
-  if (!frameLoader) {
-    // FrameLoader can be nullptr if the it is destroying.
-    // In this case session history change can simply be ignored.
-    return IPC_OK();
-  }
-
-  nsCOMPtr<nsIPartialSHistory> partialHistory;
-  frameLoader->GetPartialSHistory(getter_AddRefs(partialHistory));
-  if (!partialHistory) {
-    // PartialSHistory is not enabled
-    return IPC_OK();
-  }
-
-  partialHistory->HandleSHistoryUpdate(aCount, aLocalIndex, aTruncate);
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-TabParent::RecvRequestCrossBrowserNavigation(const uint32_t& aGlobalIndex)
-{
-  RefPtr<nsFrameLoader> frameLoader(GetFrameLoader());
-  if (!frameLoader) {
-    // FrameLoader can be nullptr if the it is destroying.
-    // In this case we can ignore the request.
-    return IPC_OK();
-  }
-
-  nsCOMPtr<nsISupports> promise;
-  if (NS_FAILED(frameLoader->RequestGroupedHistoryNavigation(aGlobalIndex,
-                                                             getter_AddRefs(promise)))) {
-    return IPC_FAIL_NO_REASON(this);
-  }
   return IPC_OK();
 }
 
