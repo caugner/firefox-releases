@@ -323,13 +323,22 @@ class MediaPipelineTransmit : public MediaPipeline {
   class PipelineListener : public MediaStreamListener {
    public:
     PipelineListener(const RefPtr<MediaSessionConduit>& conduit)
-      : conduit_(conduit), active_(false), samples_10ms_buffer_(nullptr),
-        buffer_current_(0), samplenum_10ms_(0){}
+      : conduit_(conduit),
+        active_(false),
+        last_img_(-1),
+        samples_10ms_buffer_(nullptr),
+        buffer_current_(0),
+        samplenum_10ms_(0) {}
 
     ~PipelineListener()
     {
       // release conduit on mainthread.  Must use forget()!
-      NS_DispatchToMainThread(new ConduitDeleteEvent(conduit_.forget()), NS_DISPATCH_NORMAL);
+      nsresult rv = NS_DispatchToMainThread(new
+        ConduitDeleteEvent(conduit_.forget()), NS_DISPATCH_NORMAL);
+      MOZ_ASSERT(!NS_FAILED(rv),"Could not dispatch conduit shutdown to main");
+      if (NS_FAILED(rv)) {
+        MOZ_CRASH();
+      }
     }
 
 
@@ -355,6 +364,8 @@ class MediaPipelineTransmit : public MediaPipeline {
 #endif
     RefPtr<MediaSessionConduit> conduit_;
     volatile bool active_;
+
+    int32_t last_img_; // serial number of last Image
 
     // These vars handle breaking audio samples into exact 10ms chunks:
     // The buffer of 10ms audio samples that we will send once full
@@ -436,7 +447,12 @@ class MediaPipelineReceiveAudio : public MediaPipelineReceive {
     ~PipelineListener()
     {
       // release conduit on mainthread.  Must use forget()!
-      NS_DispatchToMainThread(new ConduitDeleteEvent(conduit_.forget()), NS_DISPATCH_NORMAL);
+      nsresult rv = NS_DispatchToMainThread(new
+        ConduitDeleteEvent(conduit_.forget()), NS_DISPATCH_NORMAL);
+      MOZ_ASSERT(!NS_FAILED(rv),"Could not dispatch conduit shutdown to main");
+      if (NS_FAILED(rv)) {
+        MOZ_CRASH();
+      }
     }
 
     // Implement MediaStreamListener

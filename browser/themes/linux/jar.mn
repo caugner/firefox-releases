@@ -39,6 +39,8 @@ browser.jar:
 * skin/classic/browser/pageInfo.css
   skin/classic/browser/pageInfo.png
   skin/classic/browser/page-livemarks.png
+  skin/classic/browser/pluginInstall-16.png
+  skin/classic/browser/pluginInstall-64.png
   skin/classic/browser/pointerLock-16.png
   skin/classic/browser/pointerLock-64.png
   skin/classic/browser/Privacy-16.png
@@ -81,6 +83,7 @@ browser.jar:
 * skin/classic/browser/places/editBookmarkOverlay.css (places/editBookmarkOverlay.css)
   skin/classic/browser/places/livemark-item.png       (places/livemark-item.png)
   skin/classic/browser/places/pageStarred.png         (places/pageStarred.png)
+  skin/classic/browser/places/star-icons.png          (places/star-icons.png)
   skin/classic/browser/places/starred48.png           (places/starred48.png)
   skin/classic/browser/places/unstarred48.png         (places/unstarred48.png)
   skin/classic/browser/places/places.css              (places/places.css)
@@ -102,7 +105,10 @@ browser.jar:
   skin/classic/browser/preferences/in-content/preferences.css (preferences/in-content/preferences.css)
   skin/classic/browser/preferences/applications.css   (preferences/applications.css)
   skin/classic/browser/preferences/aboutPermissions.css (preferences/aboutPermissions.css)
-  skin/classic/browser/social/social.png              (social/social.png)
+  skin/classic/browser/social/services-16.png         (social/services-16.png)
+  skin/classic/browser/social/services-64.png         (social/services-64.png)
+  skin/classic/browser/social/share-button.png        (social/share-button.png)
+  skin/classic/browser/social/share-button-active.png (social/share-button-active.png)
   skin/classic/browser/social/chat-close.png          (social/chat-close.png)
   skin/classic/browser/tabbrowser/connecting.png      (tabbrowser/connecting.png)
   skin/classic/browser/tabbrowser/loading.png         (tabbrowser/loading.png)
@@ -167,6 +173,9 @@ browser.jar:
   skin/classic/browser/devtools/splitview.css         (devtools/splitview.css)
   skin/classic/browser/devtools/styleeditor.css       (devtools/styleeditor.css)
   skin/classic/browser/devtools/debugger.css          (devtools/debugger.css)
+* skin/classic/browser/devtools/profiler.css          (devtools/profiler.css)
+  skin/classic/browser/devtools/netmonitor.css        (devtools/netmonitor.css)
+* skin/classic/browser/devtools/scratchpad.css        (devtools/scratchpad.css)
   skin/classic/browser/devtools/magnifying-glass.png  (devtools/magnifying-glass.png)
   skin/classic/browser/devtools/option-icon.png       (devtools/option-icon.png)
   skin/classic/browser/devtools/itemToggle.png        (devtools/itemToggle.png)
@@ -194,11 +203,13 @@ browser.jar:
   skin/classic/browser/devtools/floating-scrollbars-light.css (devtools/floating-scrollbars-light.css)
   skin/classic/browser/devtools/inspector.css             (devtools/inspector.css)
   skin/classic/browser/devtools/toolbox.css               (devtools/toolbox.css)
+  skin/classic/browser/devtools/tool-options.png          (devtools/tool-options.png)
   skin/classic/browser/devtools/tool-webconsole.png       (devtools/tool-webconsole.png)
   skin/classic/browser/devtools/tool-debugger.png         (devtools/tool-debugger.png)
   skin/classic/browser/devtools/tool-inspector.png        (devtools/tool-inspector.png)
   skin/classic/browser/devtools/tool-styleeditor.png      (devtools/tool-styleeditor.png)
   skin/classic/browser/devtools/tool-profiler.png         (devtools/tool-profiler.png)
+  skin/classic/browser/devtools/tool-network.png          (devtools/tool-network.png)
   skin/classic/browser/devtools/close.png                 (devtools/close.png)
   skin/classic/browser/devtools/undock.png                (devtools/undock.png)
   skin/classic/browser/devtools/font-inspector.css        (devtools/font-inspector.css)

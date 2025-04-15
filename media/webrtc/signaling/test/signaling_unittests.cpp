@@ -529,7 +529,7 @@ class ParsedSDP {
 class SignalingAgent {
  public:
   SignalingAgent() : pc(nullptr) {
-    cfg_.addServer("23.21.150.121", 3478);
+    cfg_.addStunServer("23.21.150.121", 3478);
 
     pc = sipcc::PeerConnectionImpl::CreatePeerConnection();
     EXPECT_TRUE(pc);
@@ -598,7 +598,7 @@ class SignalingAgent {
   {
     if (pc) {
       cout << "Close" << endl;
-      
+
       pc->Close();
       pc = nullptr;
     }
@@ -1894,8 +1894,16 @@ TEST_F(SignalingTest, CheckTrickleSdpChange)
   ASSERT_NE(a1_.getRemoteDescription().find("\r\na=candidate"), string::npos);
   ASSERT_NE(a2_.getLocalDescription().find("\r\na=candidate"), string::npos);
   ASSERT_NE(a2_.getRemoteDescription().find("\r\na=candidate"), string::npos);
+  /* TODO (abr): These checks aren't quite right, since trickle ICE
+   * can easily result in SDP that is semantically identical but
+   * varies syntactically (in particularly, the ordering of attributes
+   * withing an m-line section can be different). This needs to be updated
+   * to be a semantic comparision between the SDP. Currently, these checks
+   * will fail whenever we add any other attributes to the SDP, such as
+   * RTCP MUX or RTCP feedback.
   ASSERT_EQ(a1_.getLocalDescription(),a2_.getRemoteDescription());
   ASSERT_EQ(a2_.getLocalDescription(),a1_.getRemoteDescription());
+  */
 }
 
 TEST_F(SignalingTest, ipAddrAnyOffer)

@@ -1,4 +1,4 @@
-let doc, win;
+let doc;
 
 function test() {
   waitForExplicitFinish();
@@ -171,6 +171,60 @@ gTests.push({
 });
 
 gTests.push({
+  desc: "getItemsByUrl",
+  run: function() {
+    let grid = doc.querySelector("#grid5");
+
+    is(grid.itemCount, 4, "4 items total");
+    is(typeof grid.getItemsByUrl, "function", "getItemsByUrl is a function on the grid");
+
+    ['about:blank', 'http://bugzilla.mozilla.org/'].forEach(function(testUrl) {
+      let items = grid.getItemsByUrl(testUrl);
+      is(items.length, 2, "2 matching items in the test grid");
+      is(items.item(0).url, testUrl, "Matched item has correct url property");
+      is(items.item(1).url, testUrl, "Matched item has correct url property");
+    });
+
+    let badUrl = 'http://gopher.well.com:70/';
+    let items = grid.getItemsByUrl(badUrl);
+    is(items.length, 0, "0 items matched url: "+badUrl);
+
+  }
+});
+
+gTests.push({
+  desc: "removeItem",
+  run: function() {
+    let grid = doc.querySelector("#grid5");
+
+    is(grid.itemCount, 4, "4 items total");
+    is(typeof grid.removeItem, "function", "removeItem is a function on the grid");
+
+    let arrangeStub = stubMethod(grid, "arrangeItems");
+    let removedFirst = grid.removeItem( grid.children[0] );
+
+    is(arrangeStub.callCount, 1, "arrangeItems is called when we removeItem");
+
+    let removed2nd = grid.removeItem( grid.children[0], true);
+    is(removed2nd.getAttribute("label"), "2nd item", "the next item was returned");
+    is(grid.itemCount, 2, "2 items remain");
+
+    // callCount should still be at 1
+    is(arrangeStub.callCount, 1, "arrangeItems is not called when we pass the truthy skipArrange param");
+
+    let otherItem = grid.ownerDocument.querySelector("#grid6_item1");
+    let removedFail = grid.removeItem(otherItem);
+    ok(!removedFail, "Falsy value returned when non-child item passed");
+    is(grid.itemCount, 2, "2 items remain");
+
+    // callCount should still be at 1
+    is(arrangeStub.callCount, 1, "arrangeItems is not called when nothing is matched");
+
+    arrangeStub.restore();
+  }
+});
+
+gTests.push({
   desc: "selections (single)",
   run: function() {
      // when seltype is single,
@@ -193,6 +247,7 @@ gTests.push({
     is(grid.selectedIndex, 1, "selectedIndex is correct");
 
     grid.toggleItemSelection(grid.children[1]);
+    ok(!grid.children[1].selected, "toggleItemSelection sets falsy selected prop on previously-selected item");
     is(grid.selectedIndex, -1, "selectedIndex reports correctly with nothing selected");
 
     // item selection
@@ -221,7 +276,7 @@ gTests.push({
     info("calling selectItem, currently it is:" + grid.children[0].selected);
     // Note: A richgrid in seltype=single mode fires "select" events from selectItem
     grid.selectItem(grid.children[0]);
-    info("/calling selectItem, now it is:" + grid.children[0].selected);
+    info("calling selectItem, now it is:" + grid.children[0].selected);
     yield waitForMs(0);
 
     is(handlerStub.callCount, 1, "select event handler was called when we selected an item");

@@ -12,6 +12,7 @@ import org.mozilla.gecko.db.BrowserDB.URLColumns;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.GamepadUtils;
 import org.mozilla.gecko.util.ThreadUtils;
+import org.mozilla.gecko.widget.FaviconView;
 
 import android.app.Activity;
 import android.content.ContentResolver;
@@ -27,7 +28,6 @@ import android.util.Pair;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.KeyEvent;
-import android.view.LayoutInflater;
 import android.view.MenuInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -70,7 +70,7 @@ public class HistoryTab extends AwesomeBarTab {
     @Override
     public ListView getView() {
         if (mView == null) {
-            mView = LayoutInflater.from(mContext).inflate(R.layout.awesomebar_expandable_list, null);
+            mView = new ExpandableListView(mContext, null);
             ((Activity)mContext).registerForContextMenu(mView);
             mView.setTag(TAG);
 
@@ -124,6 +124,8 @@ public class HistoryTab extends AwesomeBarTab {
 
     @Override
     public void destroy() {
+        super.destroy();
+
         if (mContentObserver != null)
             BrowserDB.unregisterContentObserver(getContentResolver(), mContentObserver);
     }
@@ -164,7 +166,7 @@ public class HistoryTab extends AwesomeBarTab {
                 viewHolder = new AwesomeEntryViewHolder();
                 viewHolder.titleView = (TextView) convertView.findViewById(R.id.title);
                 viewHolder.urlView = (TextView) convertView.findViewById(R.id.url);
-                viewHolder.faviconView = (ImageView) convertView.findViewById(R.id.favicon);
+                viewHolder.faviconView = (FaviconView) convertView.findViewById(R.id.favicon);
                 viewHolder.bookmarkIconView = (ImageView) convertView.findViewById(R.id.bookmark_icon);
 
                 convertView.setTag(viewHolder);
@@ -183,11 +185,8 @@ public class HistoryTab extends AwesomeBarTab {
             String title = (String) historyItem.get(URLColumns.TITLE);
             String url = (String) historyItem.get(URLColumns.URL);
 
-            if (TextUtils.isEmpty(title))
-                title = url;
-
-            viewHolder.titleView.setText(title);
-            viewHolder.urlView.setText(url);
+            updateTitle(viewHolder.titleView, title, url);
+            updateUrl(viewHolder, url);
 
             byte[] b = (byte[]) historyItem.get(URLColumns.FAVICON);
             Bitmap favicon = null;
@@ -198,7 +197,7 @@ public class HistoryTab extends AwesomeBarTab {
                     favicon = Favicons.getInstance().scaleImage(bitmap);
                 }
             }
-            updateFavicon(viewHolder.faviconView, favicon);
+            updateFavicon(viewHolder.faviconView, favicon, url);
 
             Integer bookmarkId = (Integer) historyItem.get(Combined.BOOKMARK_ID);
             Integer display = (Integer) historyItem.get(Combined.DISPLAY);
@@ -412,9 +411,7 @@ public class HistoryTab extends AwesomeBarTab {
 
         String url = (String) historyItem.get(URLColumns.URL);
         String title = (String) historyItem.get(URLColumns.TITLE);
-        AwesomeBarTabs.OnUrlOpenListener listener = getUrlListener();
-        if (!TextUtils.isEmpty(url) && listener != null)
-            listener.onUrlOpen(url, title);
+        sendToListener(url, title);
 
         return true;
     }
@@ -447,18 +444,12 @@ public class HistoryTab extends AwesomeBarTab {
                                                      (String) map.get(URLColumns.TITLE),
                                                      null);
 
-        MenuInflater inflater = new MenuInflater(mContext);
-        inflater.inflate(R.menu.awesomebar_contextmenu, menu);
-        
+        setupMenu(menu, subject);
+
         menu.findItem(R.id.remove_bookmark).setVisible(false);
         menu.findItem(R.id.edit_bookmark).setVisible(false);
         menu.findItem(R.id.open_in_reader).setVisible(false);
 
-        // Hide "Remove" item if there isn't a valid history ID
-        if (subject.id < 0)
-            menu.findItem(R.id.remove_history).setVisible(false);
-
-        menu.setHeaderTitle(subject.title);
         return subject;
     }
 }

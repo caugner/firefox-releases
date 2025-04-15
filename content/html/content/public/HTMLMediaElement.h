@@ -123,7 +123,7 @@ public:
    * Call this to reevaluate whether we should start/stop due to our owner
    * document being active, inactive, visible or hidden.
    */
-  void NotifyOwnerDocumentActivityChanged();
+  virtual void NotifyOwnerDocumentActivityChanged();
 
   // Called by the video decoder object, on the main thread,
   // when it has read the metadata containing video dimensions,
@@ -469,8 +469,6 @@ public:
 
   void SetMozSrcObject(DOMMediaStream& aValue);
 
-  double InitialTime();
-
   bool MozPreservesPitch() const
   {
     return mPreservesPitch;
@@ -522,16 +520,33 @@ protected:
 
   class WakeLockBoolWrapper {
   public:
-    WakeLockBoolWrapper(bool val = false) : mValue(val), mOuter(NULL), mWakeLock(NULL) {}
+    WakeLockBoolWrapper(bool val = false)
+      : mValue(val), mCanPlay(true), mOuter(nullptr) {}
+
     void SetOuter(HTMLMediaElement* outer) { mOuter = outer; }
+    void SetCanPlay(bool aCanPlay);
+
     operator bool() const { return mValue; }
+
     WakeLockBoolWrapper& operator=(bool val);
+
     bool operator !() const { return !mValue; }
+
   private:
+    void UpdateWakeLock();
+
     bool mValue;
+    bool mCanPlay;
     HTMLMediaElement* mOuter;
-    nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
   };
+
+  /**
+   * These two methods are called by the WakeLockBoolWrapper when the wakelock
+   * has to be created or released.
+   */
+  virtual void WakeLockCreate();
+  virtual void WakeLockRelease();
+  nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
 
   /**
    * Logs a warning message to the web console to report various failures.
@@ -806,7 +821,7 @@ protected:
   nsresult UpdateChannelMuteState(bool aCanPlay);
 
   // Update the audio channel playing state
-  void UpdateAudioChannelPlayingState();
+  virtual void UpdateAudioChannelPlayingState();
 
   // The current decoder. Load() has been called on this decoder.
   // At most one of mDecoder and mSrcStream can be non-null.
@@ -960,7 +975,7 @@ protected:
   nsAutoPtr<AudioStream> mAudioStream;
 
   // Range of time played.
-  TimeRanges mPlayed;
+  nsRefPtr<TimeRanges> mPlayed;
 
   // Stores the time at the start of the current 'played' range.
   double mCurrentPlayRangeStart;

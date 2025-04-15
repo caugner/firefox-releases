@@ -8,8 +8,8 @@ package org.mozilla.gecko.db;
 import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserContract.ExpirePriority;
-import org.mozilla.gecko.db.BrowserContract.Favicons;
 import org.mozilla.gecko.db.BrowserContract.FaviconColumns;
+import org.mozilla.gecko.db.BrowserContract.Favicons;
 import org.mozilla.gecko.db.BrowserContract.History;
 import org.mozilla.gecko.db.BrowserContract.SyncColumns;
 import org.mozilla.gecko.db.BrowserContract.Thumbnails;
@@ -237,8 +237,9 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
     public Cursor getTopSites(ContentResolver cr, int limit) {
         // Filter out sites that are pinned
         String selection = DBUtils.concatenateWhere("", Combined.URL + " NOT IN (SELECT " +
-                                             Bookmarks.URL + " FROM bookmarks WHERE bookmarks." +
-                                             Bookmarks.PARENT + " == ?)");
+                                             Bookmarks.URL + " FROM bookmarks WHERE " +
+                                             DBUtils.qualifyColumn("bookmarks", Bookmarks.PARENT) + " == ? AND " +
+                                             DBUtils.qualifyColumn("bookmarks", Bookmarks.IS_DELETED) + " == 0)");
         String[] selectionArgs = DBUtils.appendSelectionArgs(new String[0], new String[] { String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) });
         return filterAllSites(cr,
                               new String[] { Combined._ID,

@@ -24,6 +24,9 @@
 #endif
 #include <inputscope.h>
 
+// TSF InputScope, for earlier SDK 8
+#define IS_SEARCH static_cast<InputScope>(50)
+
 struct ITfThreadMgr;
 struct ITfDocumentMgr;
 struct ITfDisplayAttributeMgr;
@@ -139,12 +142,6 @@ public:
   }
 
   static nsIMEUpdatePreference GetIMEUpdatePreference();
-
-  static bool CanOptimizeKeyAndIMEMessages()
-  {
-    // TODO: We need to implement this for ATOK.
-    return true;
-  }
 
   // Returns the address of the pointer so that the TSF automatic test can
   // replace the system object with a custom implementation for testing.
@@ -498,7 +495,7 @@ protected:
   // When On*Composition() is called without document lock, we need to flush
   // the recorded actions at quitting the method.
   // AutoPendingActionAndContentFlusher class is usedful for it.  
-  class NS_STACK_CLASS AutoPendingActionAndContentFlusher MOZ_FINAL
+  class MOZ_STACK_CLASS AutoPendingActionAndContentFlusher MOZ_FINAL
   {
   public:
     AutoPendingActionAndContentFlusher(nsTextStore* aTextStore)

@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/layers/AsyncCompositionManager.h" // for ViewTransform
 #include "CompositorParent.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/ClearOnShutdown.h"
@@ -19,6 +20,7 @@
 #include "Layers.h"
 #include "AnimationCommon.h"
 #include <algorithm>
+#include "mozilla/layers/LayerManagerComposite.h"
 
 using namespace mozilla::css;
 
@@ -225,8 +227,20 @@ WidgetSpaceToCompensatedViewportSpace(const gfx::Point& aPoint,
 }
 
 nsEventStatus
-AsyncPanZoomController::ReceiveMainThreadInputEvent(const nsInputEvent& aEvent)
+AsyncPanZoomController::ReceiveInputEvent(const nsInputEvent& aEvent,
+                                          nsInputEvent* aOutEvent)
 {
+  gfxFloat currentResolution;
+  gfx::Point currentScrollOffset, lastScrollOffset;
+  {
+    MonitorAutoLock monitor(mMonitor);
+    currentResolution = CalculateResolution(mFrameMetrics).width;
+    currentScrollOffset = gfx::Point(mFrameMetrics.mScrollOffset.x,
+                                     mFrameMetrics.mScrollOffset.y);
+    lastScrollOffset = gfx::Point(mLastContentPaintMetrics.mScrollOffset.x,
+                                  mLastContentPaintMetrics.mScrollOffset.y);
+  }
+
   nsEventStatus status;
   switch (aEvent.eventStructType) {
   case NS_TOUCH_EVENT: {
@@ -244,21 +258,9 @@ AsyncPanZoomController::ReceiveMainThreadInputEvent(const nsInputEvent& aEvent)
     break;
   }
 
-  return status;
-}
-
-void
-AsyncPanZoomController::ApplyZoomCompensationToEvent(nsInputEvent* aEvent)
-{
-  gfxFloat currentResolution;
-  {
-    MonitorAutoLock monitor(mMonitor);
-    currentResolution = CalculateResolution(mFrameMetrics).width;
-  }
-
-  switch (aEvent->eventStructType) {
+  switch (aEvent.eventStructType) {
   case NS_TOUCH_EVENT: {
-    nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+    nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aOutEvent);
     const nsTArray<nsCOMPtr<nsIDOMTouch> >& touches = touchEvent->touches;
     for (uint32_t i = 0; i < touches.Length(); ++i) {
       nsIDOMTouch* touch = touches[i];
@@ -273,12 +275,14 @@ AsyncPanZoomController::ApplyZoomCompensationToEvent(nsInputEvent* aEvent)
   }
   default: {
     gfx::Point refPoint = WidgetSpaceToCompensatedViewportSpace(
-      gfx::Point(aEvent->refPoint.x, aEvent->refPoint.y),
+      gfx::Point(aOutEvent->refPoint.x, aOutEvent->refPoint.y),
       currentResolution);
-    aEvent->refPoint = nsIntPoint(refPoint.x, refPoint.y);
+    aOutEvent->refPoint = nsIntPoint(refPoint.x, refPoint.y);
     break;
   }
   }
+
+  return status;
 }
 
 nsEventStatus AsyncPanZoomController::ReceiveInputEvent(const InputData& aEvent) {
@@ -305,10 +309,7 @@ nsEventStatus AsyncPanZoomController::ReceiveInputEvent(const InputData& aEvent)
         mTouchListenerTimeoutTask =
           NewRunnableMethod(this, &AsyncPanZoomController::TimeoutTouchListeners);
 
-        MessageLoop::current()->PostDelayedTask(
-          FROM_HERE,
-          mTouchListenerTimeoutTask,
-          gTouchListenerTimeout);
+        PostDelayedTask(mTouchListenerTimeoutTask, gTouchListenerTimeout);
       }
     }
     return nsEventStatus_eConsumeNoDefault;
@@ -337,10 +338,7 @@ nsEventStatus AsyncPanZoomController::HandleInputEvent(const InputData& aEvent) 
         mTouchListenerTimeoutTask =
           NewRunnableMethod(this, &AsyncPanZoomController::TimeoutTouchListeners);
 
-        MessageLoop::current()->PostDelayedTask(
-          FROM_HERE,
-          mTouchListenerTimeoutTask,
-          gTouchListenerTimeout);
+        PostDelayedTask(mTouchListenerTimeoutTask, gTouchListenerTimeout);
       }
       return nsEventStatus_eConsumeNoDefault;
     }
@@ -1116,7 +1114,8 @@ AsyncPanZoomController::FireAsyncScrollOnTimeout()
 
 bool AsyncPanZoomController::SampleContentTransformForFrame(const TimeStamp& aSampleTime,
                                                             ContainerLayer* aLayer,
-                                                            ViewTransform* aNewTransform) {
+                                                            ViewTransform* aNewTransform,
+                                                            gfx::Point& aScrollOffset) {
   // The eventual return value of this function. The compositor needs to know
   // whether or not to advance by a frame as soon as it can. For example, if a
   // fling is happening, it has to keep compositing so that the animation is
@@ -1225,6 +1224,8 @@ bool AsyncPanZoomController::SampleContentTransformForFrame(const TimeStamp& aSa
   gfxPoint scrollCompensation(
     (scrollOffset / rootScale - metricsScrollOffset) * localScale);
   *aNewTransform = ViewTransform(-scrollCompensation, localScale);
+  aScrollOffset.x = scrollOffset.x * localScale.width;
+  aScrollOffset.y = scrollOffset.y * localScale.height;
 
   mLastSampleTime = aSampleTime;
 
@@ -1477,6 +1478,7 @@ void AsyncPanZoomController::SetState(PanZoomState aState) {
 }
 
 void AsyncPanZoomController::TimeoutTouchListeners() {
+  mTouchListenerTimeoutTask = nullptr;
   ContentReceivedTouch(false);
 }
 

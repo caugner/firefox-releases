@@ -4,6 +4,8 @@
 
 "use strict";
 
+var connCount = 0;
+
 /**
  * Creates a ProfilerActor. ProfilerActor provides remote access to the
  * built-in profiler module.
@@ -13,6 +15,7 @@ function ProfilerActor(aConnection)
   this._profiler = Cc["@mozilla.org/tools/profiler;1"].getService(Ci.nsIProfiler);
   this._started = false;
   this._observedEvents = [];
+  connCount += 1;
 }
 
 ProfilerActor.prototype = {
@@ -22,9 +25,18 @@ ProfilerActor.prototype = {
     for (var event of this._observedEvents) {
       Services.obs.removeObserver(this, event);
     }
-    if (this._profiler && this._started) {
+
+    // We stop the profiler only after the last client is
+    // disconnected. Otherwise there's a problem where
+    // we stop the profiler as soon as you close the devtools
+    // panel in one tab even though there might be other
+    // profiler instances running in other tabs.
+
+    connCount -= 1;
+    if (connCount <= 0 && this._profiler && this._started) {
       this._profiler.StopProfiler();
     }
+
     this._profiler = null;
   },
 
@@ -86,37 +98,42 @@ ProfilerActor.prototype = {
     }
     return { unregistered: unregistered }
   },
-  observe: function(aSubject, aTopic, aData) {
-    function unWrapper(obj) {
-      if (obj && typeof obj == "object" && ("wrappedJSObject" in obj)) {
-        obj = obj.wrappedJSObject;
-        if (("wrappedJSObject" in obj) && (obj.wrappedJSObject == obj)) {
-          /* If the object defines wrappedJSObject as itself, which is the
-           * typical idiom for wrapped JS objects, JSON.stringify won't be
-           * able to work because the object is cyclic.
-           * But removing the wrappedJSObject property will break aSubject
-           * for possible other observers of the same topic, so we need
-           * to restore wrappedJSObject afterwards */
-          delete obj.wrappedJSObject;
-          return { unwrapped: obj,
-                   fixup: function() {
-                     this.unwrapped.wrappedJSObject = this.unwrapped;
-                   }
-                 }
-        }
+  observe: makeInfallible(function(aSubject, aTopic, aData) {
+    /*
+     * this.conn.send can only transmit acyclic values. However, it is
+     * idiomatic for wrapped JS objects like aSubject (and possibly aData?)
+     * to have a 'wrappedJSObject' property pointing to themselves.
+     *
+     * this.conn.send also assumes that it can retain the object it is
+     * passed to be handled on later event ticks; and that it's okay to
+     * freeze it. Since we don't really know what aSubject and aData are,
+     * we need to pass this.conn.send a copy of them, not the originals.
+     *
+     * We break the cycle and make the copy by JSON.stringifying those
+     * values with a replacer that omits properties known to introduce
+     * cycles, and then JSON.parsing the result. This spends processor
+     * time, but it's simple.
+     */
+    function cycleBreaker(key, value) {
+      if (key === 'wrappedJSObject') {
+        return undefined;
       }
-      return { unwrapped: obj, fixup: function() { } }
+      return value;
     }
-    var subject = unWrapper(aSubject);
-    var data = unWrapper(aData);
+
+    /*
+     * If these values are objects with a non-null 'wrappedJSObject'
+     * property, use its value. Otherwise, use the value unchanged.
+     */
+    aSubject = (aSubject && aSubject.wrappedJSObject) || aSubject;
+    aData    = (aData    && aData.wrappedJSObject)    || aData;
+
     this.conn.send({ from: this.actorID,
                      type: "eventNotification",
                      event: aTopic,
-                     subject: subject.unwrapped,
-                     data: data.unwrapped });
-    data.fixup();
-    subject.fixup();
-  },
+                     subject: JSON.parse(JSON.stringify(aSubject, cycleBreaker)),
+                     data:    JSON.parse(JSON.stringify(aData,    cycleBreaker)) });
+  }, "ProfilerActor.prototype.observe"),
 };
 
 /**

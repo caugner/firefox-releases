@@ -28,6 +28,9 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=741267
     function doTest() {
       var win = $("t").contentWindow;
       var sandbox = Components.utils.Sandbox(win, { sandboxPrototype: win });
+
+      is(sandbox._content, undefined, "_content does nothing over Xray");
+
       try {
         var css = Components.utils.evalInSandbox("CSSStyleDeclaration", sandbox);
         is(css.prototype, "[object XrayWrapper [object CSSStyleDeclarationPrototype]]", "'CSSStyleDeclaration.prototype' in a sandbox should return the CSSStyleDeclaration interface prototype object");
@@ -239,6 +242,19 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=741267
         is(e.bubbles, true, "Dictionary argument should work");
       } catch (e) {
         ok(false, "Should be able to construct my event " + e);
+      }
+
+      try {
+        var elem = Components.utils.evalInSandbox('document.createElement("p")', sandbox);
+        elem.expando = 5;
+        elem.expando = 7;
+        is(elem.expando, 7, "Should be able to set expandos on Xrays for DOM bindings");
+        var doc = Components.utils.evalInSandbox('document', sandbox);
+        doc.expando = 5;
+        doc.expando = 7;
+        is(doc.expando, 7, "Should be able to set expandos on Xrays for DOM bindings with named properties");
+      } catch (e) {
+        ok(false, "Setting expandos on Xrays shouldn't throw " + e);
       }
 
       SimpleTest.finish();

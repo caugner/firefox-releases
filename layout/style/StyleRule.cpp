@@ -1281,6 +1281,7 @@ StyleRule::StyleRule(nsCSSSelectorList* aSelector,
     mImportantRule(nullptr),
     mDOMRule(nullptr),
     mLineNumber(0),
+    mColumnNumber(0),
     mWasMatched(false)
 {
   NS_PRECONDITION(aDeclaration, "must have a declaration");
@@ -1294,6 +1295,7 @@ StyleRule::StyleRule(const StyleRule& aCopy)
     mImportantRule(nullptr),
     mDOMRule(nullptr),
     mLineNumber(aCopy.mLineNumber),
+    mColumnNumber(aCopy.mColumnNumber),
     mWasMatched(false)
 {
   // rest is constructed lazily on existing data
@@ -1308,6 +1310,7 @@ StyleRule::StyleRule(StyleRule& aCopy,
     mImportantRule(nullptr),
     mDOMRule(aCopy.mDOMRule),
     mLineNumber(aCopy.mLineNumber),
+    mColumnNumber(aCopy.mColumnNumber),
     mWasMatched(false)
 {
   // The DOM rule is replacing |aCopy| with |this|, so transfer
@@ -1405,12 +1408,7 @@ StyleRule::GetExistingDOMRule()
 StyleRule::DeclarationChanged(Declaration* aDecl,
                               bool aHandleContainer)
 {
-  StyleRule* clone = new StyleRule(*this, aDecl);
-  if (!clone) {
-    return nullptr;
-  }
-
-  NS_ADDREF(clone); // for return
+  nsRefPtr<StyleRule> clone = new StyleRule(*this, aDecl);
 
   if (aHandleContainer) {
     nsCSSStyleSheet* sheet = GetStyleSheet();
@@ -1425,7 +1423,7 @@ StyleRule::DeclarationChanged(Declaration* aDecl,
     }
   }
 
-  return clone;
+  return clone.forget();
 }
 
 /* virtual */ void

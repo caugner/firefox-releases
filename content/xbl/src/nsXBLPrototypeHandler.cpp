@@ -25,7 +25,6 @@
 #include "nsIDOMHTMLInputElement.h"
 #include "nsFocusManager.h"
 #include "nsEventListenerManager.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIDOMEventListener.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
@@ -139,9 +138,7 @@ nsXBLPrototypeHandler::GetHandlerElement()
 {
   if (mType & NS_HANDLER_TYPE_XUL) {
     nsCOMPtr<nsIContent> element = do_QueryReferent(mHandlerElement);
-    nsIContent* el = nullptr;
-    element.swap(el);
-    return el;
+    return element.forget();
   }
 
   return nullptr;
@@ -187,7 +184,7 @@ nsXBLPrototypeHandler::InitAccessKeys()
 }
 
 nsresult
-nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventTarget* aTarget,
+nsXBLPrototypeHandler::ExecuteHandler(EventTarget* aTarget,
                                       nsIDOMEvent* aEvent)
 {
   nsresult rv = NS_ERROR_FAILURE;
@@ -262,7 +259,7 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventTarget* aTarget,
       boundDocument = content->OwnerDoc();
     }
 
-    boundGlobal = boundDocument->GetScopeObject();
+    boundGlobal = do_QueryInterface(boundDocument->GetScopeObject());
   }
 
   if (!boundGlobal)
@@ -326,13 +323,9 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventTarget* aTarget,
   if (!JS_WrapObject(cx, bound.address())) {
     return NS_ERROR_FAILURE;
   }
-  JS::Rooted<JSObject*> boundHandler(cx, bound);
 
   nsRefPtr<EventHandlerNonNull> handlerCallback =
-    new EventHandlerNonNull(cx, globalObject, boundHandler, &ok);
-  if (!ok) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
+    new EventHandlerNonNull(bound);
 
   nsEventHandler eventHandler(handlerCallback);
 
@@ -418,7 +411,7 @@ nsXBLPrototypeHandler::EnsureEventHandler(nsIScriptGlobalObject* aGlobal,
 }
 
 nsresult
-nsXBLPrototypeHandler::DispatchXBLCommand(nsIDOMEventTarget* aTarget, nsIDOMEvent* aEvent)
+nsXBLPrototypeHandler::DispatchXBLCommand(EventTarget* aTarget, nsIDOMEvent* aEvent)
 {
   // This is a special-case optimization to make command handling fast.
   // It isn't really a part of XBL, but it helps speed things up.
@@ -579,15 +572,14 @@ nsXBLPrototypeHandler::DispatchXULKeyCommand(nsIDOMEvent* aEvent)
 already_AddRefed<nsIAtom>
 nsXBLPrototypeHandler::GetEventName()
 {
-  nsIAtom* eventName = mEventName;
-  NS_IF_ADDREF(eventName);
-  return eventName;
+  nsCOMPtr<nsIAtom> eventName = mEventName;
+  return eventName.forget();
 }
 
 already_AddRefed<nsIController>
-nsXBLPrototypeHandler::GetController(nsIDOMEventTarget* aTarget)
+nsXBLPrototypeHandler::GetController(EventTarget* aTarget)
 {
-  // XXX Fix this so there's a generic interface that describes controllers, 
+  // XXX Fix this so there's a generic interface that describes controllers,
   // This code should have no special knowledge of what objects might have controllers.
   nsCOMPtr<nsIControllers> controllers;
 
@@ -616,13 +608,12 @@ nsXBLPrototypeHandler::GetController(nsIDOMEventTarget* aTarget)
   // Return the first controller.
   // XXX This code should be checking the command name and using supportscommand and
   // iscommandenabled.
-  nsIController* controller;
+  nsCOMPtr<nsIController> controller;
   if (controllers) {
-    controllers->GetControllerAt(0, &controller);  // return reference
+    controllers->GetControllerAt(0, getter_AddRefs(controller));
   }
-  else controller = nullptr;
 
-  return controller;
+  return controller.forget();
 }
 
 bool
@@ -816,7 +807,7 @@ nsXBLPrototypeHandler::ConstructPrototype(nsIContent* aKeyElement,
     char* str = ToNewCString(modifiers);
     char* newStr;
     char* token = nsCRT::strtok( str, ", \t", &newStr );
-    while( token != NULL ) {
+    while( token != nullptr ) {
       if (PL_strcmp(token, "shift") == 0)
         mKeyMask |= cShift | cShiftMask;
       else if (PL_strcmp(token, "alt") == 0)

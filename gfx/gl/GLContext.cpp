@@ -696,11 +696,6 @@ GLContext::CanUploadSubTextures()
     if (!mWorkAroundDriverBugs)
         return true;
 
-    // Lock surface feature allows to mmap texture memory and modify it directly
-    // this feature allow us modify texture partially without full upload
-    if (HasLockSurface())
-        return true;
-
     // There are certain GPUs that we don't want to use glTexSubImage2D on
     // because that function can be very slow and/or buggy
     if (Renderer() == RendererAdreno200 || Renderer() == RendererAdreno205)
@@ -810,35 +805,7 @@ GLContext::CreateTextureImage(const nsIntSize& aSize,
                               GLenum aWrapMode,
                               TextureImage::Flags aFlags)
 {
-    bool useNearestFilter = aFlags & TextureImage::UseNearestFilter;
-    MakeCurrent();
-
-    GLuint texture;
-    fGenTextures(1, &texture);
-
-    fActiveTexture(LOCAL_GL_TEXTURE0);
-    fBindTexture(LOCAL_GL_TEXTURE_2D, texture);
-
-    GLint texfilter = useNearestFilter ? LOCAL_GL_NEAREST : LOCAL_GL_LINEAR;
-    fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_MIN_FILTER, texfilter);
-    fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_MAG_FILTER, texfilter);
-    fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_WRAP_S, aWrapMode);
-    fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_WRAP_T, aWrapMode);
-
-    return CreateBasicTextureImage(texture, aSize, aWrapMode, aContentType, this, aFlags);
-}
-
-already_AddRefed<TextureImage>
-GLContext::CreateBasicTextureImage(GLuint aTexture,
-                        const nsIntSize& aSize,
-                        GLenum aWrapMode,
-                        TextureImage::ContentType aContentType,
-                        GLContext* aContext,
-                        TextureImage::Flags aFlags)
-{
-    nsRefPtr<BasicTextureImage> teximage(
-        new BasicTextureImage(aTexture, aSize, aWrapMode, aContentType, aContext, aFlags));
-    return teximage.forget();
+    return CreateBasicTextureImage(this, aSize, aContentType, aWrapMode, aFlags);
 }
 
 void GLContext::ApplyFilterToBoundTexture(gfxPattern::GraphicsFilter aFilter)
@@ -902,9 +869,12 @@ GLContext::UpdatePixelFormat()
     PixelBufferFormat format = QueryPixelFormat();
 #ifdef DEBUG
     const SurfaceCaps& caps = Caps();
+    MOZ_ASSERT(!caps.any, "Did you forget to DetermineCaps()?");
+
     MOZ_ASSERT(caps.color == !!format.red);
     MOZ_ASSERT(caps.color == !!format.green);
     MOZ_ASSERT(caps.color == !!format.blue);
+
     MOZ_ASSERT(caps.alpha == !!format.alpha);
     MOZ_ASSERT(caps.depth == !!format.depth);
     MOZ_ASSERT(caps.stencil == !!format.stencil);
@@ -2861,8 +2831,10 @@ GLContext::ReportOutstandingNames()
 void
 GLContext::GuaranteeResolve()
 {
-   mScreen->AssureBlitted();
-   fFinish();
+    if (mScreen) {
+        mScreen->AssureBlitted();
+    }
+    fFinish();
 }
 
 const gfxIntSize&

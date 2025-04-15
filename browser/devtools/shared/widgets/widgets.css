@@ -16,10 +16,6 @@
   overflow-y: auto;
 }
 
-.side-menu-widget-group[name=""] > .side-menu-widget-group-title {
-  display: none;
-}
-
 /* VariablesView */
 
 .variables-view-container {
@@ -34,6 +30,11 @@
 .variables-view-scope,
 .variable-or-property {
   -moz-user-focus: normal;
+}
+
+.variables-view-scope > .title,
+.variable-or-property > .title {
+  overflow: hidden;
 }
 
 .variables-view-scope[non-header] > .title,

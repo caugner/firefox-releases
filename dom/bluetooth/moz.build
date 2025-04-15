@@ -1,3 +1,4 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # Copyright 2013 Mozilla Foundation and Mozilla contributors
 #
@@ -23,4 +24,12 @@ if CONFIG['MOZ_B2G_BT']:
         'nsIDOMBluetoothDevice.idl',
         'nsIDOMBluetoothDeviceEvent.idl'
     ]
+
+EXPORTS.mozilla.dom.bluetooth.ipc += [
+    'BluetoothMessageUtils.h',
+]
+
+EXPORTS.mozilla.dom.bluetooth += [
+    'BluetoothCommon.h',
+]
 

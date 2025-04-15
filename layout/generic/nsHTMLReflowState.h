@@ -366,7 +366,6 @@ public:
                                      // page?  When true, we force something
                                      // that's too tall for a page/column to
                                      // fit anyway to avoid infinite loops.
-    uint16_t mBlinks:1;              // Keep track of text-decoration: blink
     uint16_t mHasClearance:1;        // Block has clearance
     uint16_t mAssumingHScrollbar:1;  // parent frame is an nsIScrollableFrame and it
                                      // is assuming a horizontal scrollbar
@@ -392,6 +391,12 @@ public:
     uint16_t mDummyParentReflowState:1; // a "fake" reflow state made
                                         // in order to be the parent
                                         // of a real one
+    uint16_t mMustReflowPlaceholders:1; // Should this frame reflow its place-
+                                        // holder children? If the available
+                                        // height of this frame didn't change,
+                                        // but its in a paginated environment
+                                        // (e.g. columns), it should always
+                                        // reflow its placeholder children.
   } mFlags;
 
   // Note: The copy constructor is written by the compiler automatically. You

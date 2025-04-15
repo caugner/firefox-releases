@@ -100,7 +100,7 @@ public:
   }
   void SetWidth(uint32_t aWidth, ErrorResult& aError)
   {
-    SetHTMLUnsignedIntAttr(nsGkAtoms::width, aWidth, aError);
+    SetUnsignedIntAttr(nsGkAtoms::width, aWidth, aError);
   }
   uint32_t Height()
   {
@@ -108,7 +108,7 @@ public:
   }
   void SetHeight(uint32_t aHeight, ErrorResult& aError)
   {
-    SetHTMLUnsignedIntAttr(nsGkAtoms::height, aHeight, aError);
+    SetUnsignedIntAttr(nsGkAtoms::height, aHeight, aError);
   }
   uint32_t NaturalWidth();
   uint32_t NaturalHeight();
@@ -176,7 +176,8 @@ protected:
   nsIntPoint GetXY();
   virtual void GetItemValueText(nsAString& text);
   virtual void SetItemValueText(const nsAString& text);
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *aCx,
+                             JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 };
 
 } // namespace dom

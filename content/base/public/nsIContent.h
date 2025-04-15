@@ -6,9 +6,7 @@
 #define nsIContent_h___
 
 #include "nsCaseTreatment.h" // for enum, cannot be forward-declared
-#include "nsCOMPtr.h"        // for already_AddRefed in constructor
-#include "nsIDocument.h"     // for use in inline function (IsInHTMLDocument)
-#include "nsINode.h"         // for base class
+#include "nsIDocument.h"
 
 // Forward declarations
 class nsAString;
@@ -429,7 +427,7 @@ public:
    * @param aNameSpaceID The namespace ID of the attribute.  Must not
    *                     be kNameSpaceID_Unknown.
    * @param aName The name atom of the attribute.  Must not be null.
-   * @param aValues a NULL-terminated array of pointers to atom values to test
+   * @param aValues a nullptr-terminated array of pointers to atom values to test
    *                against.
    * @param aCaseSensitive Whether to do a case-sensitive compare on the values.
    * @return ATTR_MISSING, ATTR_VALUE_NO_MATCH or the non-negative index

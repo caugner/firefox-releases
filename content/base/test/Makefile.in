@@ -18,12 +18,12 @@ CPP_UNIT_TESTS = \
                  $(NULL)
 
 
-XPCSHELL_TESTS = \
+DISABLED_XPCSHELL_TESTS = \
                unit \
                $(NULL)
 # FIXME/bug 575918: out-of-process xpcshell is broken on OS X
 ifneq ($(OS_ARCH),Darwin)
-XPCSHELL_TESTS += unit_ipc
+DISABLED_XPCSHELL_TESTS += unit_ipc
 endif
 
 
@@ -86,7 +86,6 @@ MOCHITEST_FILES_A = \
 		test_bug378969.html \
 		test_bug382113.html \
 		test_bug382871.html \
-		test_bug383430.html \
 		test_bug384003.xhtml \
 		test_bug390219.html \
 		test_bug390735.html \
@@ -257,6 +256,7 @@ MOCHITEST_FILES_A = \
 		test_bug811701.html \
 		test_bug811701.xhtml \
 		test_bug820909.html \
+		test_bug704063.html \
 		$(NULL)
 
 MOCHITEST_FILES_B = \
@@ -348,6 +348,7 @@ MOCHITEST_FILES_B = \
 		test_viewport_scroll.html \
 		test_CSP.html \
 		file_CSP.sjs \
+		file_CSP.css \
 		file_CSP_main.html \
 		file_CSP_main.html^headers^ \
 		file_CSP_main_spec_compliant.html \
@@ -377,6 +378,13 @@ MOCHITEST_FILES_B = \
 	 	file_CSP_evalscript_main_spec_compliant.html^headers^ \
 		file_CSP_evalscript_main_spec_compliant_allowed.html \
 		file_CSP_evalscript_main_spec_compliant_allowed.html^headers^ \
+		test_CSP_inlinestyle.html \
+		file_CSP_inlinestyle_main.html \
+		file_CSP_inlinestyle_main.html^headers^ \
+		file_CSP_inlinestyle_main_spec_compliant.html \
+		file_CSP_inlinestyle_main_spec_compliant.html^headers^ \
+		file_CSP_inlinestyle_main_spec_compliant_allowed.html \
+		file_CSP_inlinestyle_main_spec_compliant_allowed.html^headers^ \
 		file_csp_bug768029.html \
 		file_csp_bug768029.sjs \
 		file_csp_bug773891.html \
@@ -617,6 +625,15 @@ MOCHITEST_FILES_C= \
 		test_xhr_send_readystate.html \
 		test_bug813919.html \
 		test_bug814576.html \
+		test_bug876282.html \
+		test_CSP_bug885433.html \
+		file_CSP_bug885433_allows.html \
+		file_CSP_bug885433_allows.html^headers^ \
+		file_CSP_bug885433_blocks.html \
+		file_CSP_bug885433_blocks.html^headers^ \
+		test_CSP_bug888172.html \
+		file_CSP_bug888172.html \
+		file_CSP_bug888172.sjs \
 		test_xhr_withCredentials.html \
 		test_bothCSPheaders.html \
 		file_bothCSPheaders.html \

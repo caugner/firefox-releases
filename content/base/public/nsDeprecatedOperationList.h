@@ -28,5 +28,5 @@ DEPRECATED_OPERATION(MozSlice)
 DEPRECATED_OPERATION(Components)
 DEPRECATED_OPERATION(PrefixedVisibilityAPI)
 DEPRECATED_OPERATION(NodeIteratorDetach)
-// This string is being hardcoded here to avoid l10n on beta.
-DEPRECATED_OPERATION_WITH_HARDCODED_STRING(MozAudioData, "The Mozilla Audio Data API is deprecated.  Please use the Web Audio API instead.")
+DEPRECATED_OPERATION(MozAudioData)
+DEPRECATED_OPERATION(LenientThis)

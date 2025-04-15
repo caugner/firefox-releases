@@ -2,15 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+let manifest = { // normal provider
+  name: "provider 1",
+  origin: "https://example.com",
+  workerURL: "https://example.com/browser/browser/base/content/test/social/social_worker.js",
+  iconURL: "https://example.com/browser/browser/base/content/test/moz.png"
+};
+
 function test() {
   waitForExplicitFinish();
 
-  let manifest = { // normal provider
-    name: "provider 1",
-    origin: "https://example.com",
-    workerURL: "https://example.com/browser/browser/base/content/test/social/social_worker.js",
-    iconURL: "https://example.com/browser/browser/base/content/test/moz.png"
-  };
   runSocialTestWithProvider(manifest, function (finishcb) {
     runSocialTests(tests, undefined, undefined, finishcb);
   });
@@ -35,14 +36,19 @@ var tests = {
     this.testProfileNone(next, true);
   },
   testProfileSet: function(next) {
+    let statusIcon = document.getElementById("social-provider-button").style.listStyleImage;
+    is(statusIcon, "url(\"" + manifest.iconURL + "\")", "manifest iconURL is showing");
     let profile = {
       portrait: "https://example.com/portrait.jpg",
       userName: "trickster",
       displayName: "Kuma Lisa",
-      profileURL: "http://en.wikipedia.org/wiki/Kuma_Lisa"
+      profileURL: "http://example.com/Kuma_Lisa",
+      iconURL: "https://example.com/browser/browser/base/content/test/social/moz.png"
     }
     Social.provider.updateUserProfile(profile);
     // check dom values
+    statusIcon = document.getElementById("social-provider-button").style.listStyleImage;
+    is(statusIcon, "url(\"" + profile.iconURL + "\")", "profile iconURL is showing");
     let portrait = document.getElementsByClassName("social-statusarea-user-portrait")[0].getAttribute("src");
     is(profile.portrait, portrait, "portrait is set");
     let userButton = document.getElementsByClassName("social-statusarea-loggedInStatus")[0];
@@ -95,6 +101,14 @@ var tests = {
       label: "Test Ambient 3",
       menuURL: "https://example.com/testAmbient3"
     };
+    let ambience4 = {
+      name: "testIcon4",
+      iconURL: "https://example.com/browser/browser/base/content/test/moz.png",
+      contentPanel: "about:blank",
+      counter: 0,
+      label: "Test Ambient 4",
+      menuURL: "https://example.com/testAmbient4"
+    };
     Social.provider.setAmbientNotification(ambience);
 
     // for Bug 813834.  Check preference whether stored data is correct.
@@ -102,6 +116,12 @@ var tests = {
 
     Social.provider.setAmbientNotification(ambience2);
     Social.provider.setAmbientNotification(ambience3);
+    
+    try {
+      Social.provider.setAmbientNotification(ambience4);
+    } catch(e) {}
+    let numIcons = Object.keys(Social.provider.ambientNotificationIcons).length;
+    ok(numIcons == 3, "prevent adding more than 3 ambient notification icons");
 
     let statusIcon = document.getElementById("social-provider-button").nextSibling;
     waitForCondition(function() {

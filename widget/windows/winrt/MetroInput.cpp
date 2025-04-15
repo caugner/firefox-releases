@@ -9,7 +9,7 @@
 #include "MetroUtils.h" // Logging, POINT_CEIL_*, ActivateGenericInstance, etc
 #include "MetroWidget.h" // MetroInput::mWidget
 #include "npapi.h" // NPEvent
-#include "nsDOMTouchEvent.h"  // nsDOMTouch
+#include "mozilla/dom/Touch.h"  // Touch
 #include "nsTArray.h" // Touch lists
 #include "nsIDOMSimpleGestureEvent.h" // Constants for gesture events
 
@@ -23,6 +23,7 @@
 using namespace ABI::Windows; // UI, System, Foundation namespaces
 using namespace Microsoft; // WRL namespace (ComPtr, possibly others)
 using namespace mozilla::widget::winrt;
+using namespace mozilla::dom;
 
 // File-scoped statics (unnamed namespace)
 namespace {
@@ -46,17 +47,17 @@ namespace {
   typedef ABI::Windows::UI::Core::ICoreAcceleratorKeys ICoreAcceleratorKeys;
 
   /**
-   * Creates and returns a new {@link nsDOMTouch} from the given
+   * Creates and returns a new {@link Touch} from the given
    * ABI::Windows::UI::Input::IPointerPoint.  Note that the caller is
-   * responsible for freeing the memory for the nsDOMTouch returned from
+   * responsible for freeing the memory for the Touch returned from
    * this function.
    *
    * @param aPoint the ABI::Windows::UI::Input::IPointerPoint containing the
-   *               metadata from which to create our new {@link nsDOMTouch}
-   * @return a new {@link nsDOMTouch} representing the touch point. The caller
+   *               metadata from which to create our new {@link Touch}
+   * @return a new {@link Touch} representing the touch point. The caller
    *         is responsible for freeing the memory for this touch point.
    */
-  nsDOMTouch*
+  Touch*
   CreateDOMTouch(UI::Input::IPointerPoint* aPoint) {
     WRL::ComPtr<UI::Input::IPointerPointProperties> props;
     Foundation::Point position;
@@ -74,28 +75,28 @@ namespace {
     nsIntPoint touchRadius;
     touchRadius.x = MetroUtils::LogToPhys(contactRect.Width) / 2;
     touchRadius.y = MetroUtils::LogToPhys(contactRect.Height) / 2;
-    return new nsDOMTouch(pointerId,
-                          touchPoint,
-                          // Rotation radius and angle.
-                          // W3C touch events v1 do not use these.
-                          // The draft for W3C touch events v2 explains that
-                          // radius and angle should describe the ellipse that
-                          // most closely circumscribes the touching area.  Since
-                          // Windows gives us a bounding rectangle rather than an
-                          // ellipse, we provide the ellipse that is most closely
-                          // circumscribed by the bounding rectangle that Windows
-                          // gave us.
-                          touchRadius,
-                          0.0f,
-                          // Pressure
-                          // W3C touch events v1 do not use this.
-                          // The current draft for W3C touch events v2 says that
-                          // this should be a value between 0.0 and 1.0, which is
-                          // consistent with what Windows provides us here.
-                          // XXX: Windows defaults to 0.5, but the current W3C
-                          // draft says that the value should be 0.0 if no value
-                          // known.
-                          pressure);
+    return new Touch(pointerId,
+                     touchPoint,
+                     // Rotation radius and angle.
+                     // W3C touch events v1 do not use these.
+                     // The draft for W3C touch events v2 explains that
+                     // radius and angle should describe the ellipse that
+                     // most closely circumscribes the touching area.  Since
+                     // Windows gives us a bounding rectangle rather than an
+                     // ellipse, we provide the ellipse that is most closely
+                     // circumscribed by the bounding rectangle that Windows
+                     // gave us.
+                     touchRadius,
+                     0.0f,
+                     // Pressure
+                     // W3C touch events v1 do not use this.
+                     // The current draft for W3C touch events v2 says that
+                     // this should be a value between 0.0 and 1.0, which is
+                     // consistent with what Windows provides us here.
+                     // XXX: Windows defaults to 0.5, but the current W3C
+                     // draft says that the value should be 0.0 if no value
+                     // known.
+                     pressure);
   }
 
   bool
@@ -342,7 +343,7 @@ MetroInput::OnAcceleratorKeyActivated(UI::Core::ICoreDispatcher* sender,
 
 #ifdef DEBUG_INPUT
   LogFunction();
-  Log(L"Accelerator key! Type: %d Value: %d", type, vkey);
+  Log("Accelerator key! Type: %d Value: %d", type, vkey);
 #endif
 
   switch(type) {
@@ -513,6 +514,7 @@ MetroInput::OnCharacterReceived(uint32_t aCharCode,
   keyEvent.time = ::GetMessageTime();
   keyEvent.isChar = true;
   keyEvent.charCode = aCharCode;
+  keyEvent.mKeyNameIndex = KEY_NAME_INDEX_PrintableKey;
 
   NPEvent pluginEvent;
   pluginEvent.event = WM_CHAR;
@@ -556,6 +558,7 @@ MetroInput::OnKeyDown(uint32_t aVKey,
   mModifierKeyState.InitInputEvent(keyEvent);
   keyEvent.time = ::GetMessageTime();
   keyEvent.keyCode = mozKey;
+  keyEvent.mKeyNameIndex = GetDOMKeyNameIndex(aVKey);
 
   NPEvent pluginEvent;
   pluginEvent.event = WM_KEYDOWN;
@@ -618,6 +621,7 @@ MetroInput::OnKeyUp(uint32_t aVKey,
   mModifierKeyState.InitInputEvent(keyEvent);
   keyEvent.time = ::GetMessageTime();
   keyEvent.keyCode = mozKey;
+  keyEvent.mKeyNameIndex = GetDOMKeyNameIndex(aVKey);
 
   NPEvent pluginEvent;
   pluginEvent.event = WM_KEYUP;
@@ -1265,6 +1269,23 @@ MetroInput::OnTapped(UI::Input::IGestureRecognizer* aSender,
     // Send the mouseup
     mouseEvent.message = NS_MOUSE_BUTTON_UP;
     DispatchEventIgnoreStatus(&mouseEvent);
+
+    // Send one more mousemove to avoid getting a hover state.
+    // In the Metro environment for any application, a tap does not imply a
+    // mouse cursor move.  In desktop environment for any application a tap
+    // does imply a cursor move.
+    POINT point;
+    if (GetCursorPos(&point)) {
+      ScreenToClient((HWND)mWidget->GetNativeData(NS_NATIVE_WINDOW), &point);
+      Foundation::Point oldMousePosition;
+      oldMousePosition.X = static_cast<FLOAT>(point.x);
+      oldMousePosition.Y = static_cast<FLOAT>(point.y);
+      mouseEvent.refPoint = MetroUtils::LogToPhys(oldMousePosition);
+      mouseEvent.message = NS_MOUSE_MOVE;
+      mouseEvent.button = 0;
+
+      DispatchEventIgnoreStatus(&mouseEvent);
+    }
   }
 
   return S_OK;
@@ -1386,6 +1407,7 @@ bool MetroInput::sIsVirtualKeyMapInitialized = false;
 // References
 //   nsVKList.h - defines NS_VK_*
 //   nsIDOMKeyEvent.idl - defines the values that NS_VK_* are based on
+//   nsDOMKeyNameList.h - defines KeyNameIndex values
 void
 MetroInput::InitializeVirtualKeyMap() {
   sVirtualKeyMap[System::VirtualKey::VirtualKey_Cancel] = NS_VK_CANCEL;
@@ -1393,9 +1415,8 @@ MetroInput::InitializeVirtualKeyMap() {
   sVirtualKeyMap[System::VirtualKey::VirtualKey_Back] = NS_VK_BACK;
   sVirtualKeyMap[System::VirtualKey::VirtualKey_Tab] = NS_VK_TAB;
   sVirtualKeyMap[System::VirtualKey::VirtualKey_Clear] = NS_VK_CLEAR;
-  // XXX: Do we want RETURN or ENTER here?
   sVirtualKeyMap[System::VirtualKey::VirtualKey_Enter] = NS_VK_RETURN;
-  // NS_VK_ENTER
+  // NS_VK_ENTER is never used.
   sVirtualKeyMap[System::VirtualKey::VirtualKey_Shift] = NS_VK_SHIFT;
   sVirtualKeyMap[System::VirtualKey::VirtualKey_Control] = NS_VK_CONTROL;
   sVirtualKeyMap[System::VirtualKey::VirtualKey_Menu] = NS_VK_ALT;
@@ -1565,6 +1586,84 @@ MetroInput::GetMozKeyCode(uint32_t aKey)
   return sVirtualKeyMap[aKey];
 }
 
+KeyNameIndex
+MetroInput::GetDOMKeyNameIndex(uint32_t aVirtualKey)
+{
+  switch (aVirtualKey) {
+
+#define NS_NATIVE_KEY_TO_DOM_KEY_NAME_INDEX(aNativeKey, aKeyNameIndex) \
+    case aNativeKey: return aKeyNameIndex;
+
+#include "NativeKeyToDOMKeyName.h"
+
+#undef NS_NATIVE_KEY_TO_DOM_KEY_NAME_INDEX
+
+    // printable keys:
+    case System::VirtualKey::VirtualKey_Number0:
+    case System::VirtualKey::VirtualKey_Number1:
+    case System::VirtualKey::VirtualKey_Number2:
+    case System::VirtualKey::VirtualKey_Number3:
+    case System::VirtualKey::VirtualKey_Number4:
+    case System::VirtualKey::VirtualKey_Number5:
+    case System::VirtualKey::VirtualKey_Number6:
+    case System::VirtualKey::VirtualKey_Number7:
+    case System::VirtualKey::VirtualKey_Number8:
+    case System::VirtualKey::VirtualKey_Number9:
+    case System::VirtualKey::VirtualKey_A:
+    case System::VirtualKey::VirtualKey_B:
+    case System::VirtualKey::VirtualKey_C:
+    case System::VirtualKey::VirtualKey_D:
+    case System::VirtualKey::VirtualKey_E:
+    case System::VirtualKey::VirtualKey_F:
+    case System::VirtualKey::VirtualKey_G:
+    case System::VirtualKey::VirtualKey_H:
+    case System::VirtualKey::VirtualKey_I:
+    case System::VirtualKey::VirtualKey_J:
+    case System::VirtualKey::VirtualKey_K:
+    case System::VirtualKey::VirtualKey_L:
+    case System::VirtualKey::VirtualKey_M:
+    case System::VirtualKey::VirtualKey_N:
+    case System::VirtualKey::VirtualKey_O:
+    case System::VirtualKey::VirtualKey_P:
+    case System::VirtualKey::VirtualKey_Q:
+    case System::VirtualKey::VirtualKey_R:
+    case System::VirtualKey::VirtualKey_S:
+    case System::VirtualKey::VirtualKey_T:
+    case System::VirtualKey::VirtualKey_U:
+    case System::VirtualKey::VirtualKey_V:
+    case System::VirtualKey::VirtualKey_W:
+    case System::VirtualKey::VirtualKey_X:
+    case System::VirtualKey::VirtualKey_Y:
+    case System::VirtualKey::VirtualKey_Z:
+    case VK_NUMPAD0:
+    case VK_NUMPAD1:
+    case VK_NUMPAD2:
+    case VK_NUMPAD3:
+    case VK_NUMPAD4:
+    case VK_NUMPAD5:
+    case VK_NUMPAD6:
+    case VK_NUMPAD7:
+    case VK_NUMPAD8:
+    case VK_NUMPAD9:
+    case VK_OEM_1:
+    case VK_OEM_PLUS:
+    case VK_OEM_COMMA:
+    case VK_OEM_MINUS:
+    case VK_OEM_PERIOD:
+    case VK_OEM_2:
+    case VK_OEM_3:
+    case VK_OEM_4:
+    case VK_OEM_5:
+    case VK_OEM_6:
+    case VK_OEM_7:
+    case VK_OEM_8:
+    case VK_OEM_102:
+      return KEY_NAME_INDEX_PrintableKey;
+
+    default:
+      return KEY_NAME_INDEX_Unidentified;
+  }
+}
 void
 MetroInput::RegisterInputEvents()
 {

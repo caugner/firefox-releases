@@ -19,7 +19,7 @@ function runTests() {
 
   // Add a new tab with a nice icon.
   let tab = gBrowser.addTab("about:robots");
-  yield whenBrowserLoaded(tab.linkedBrowser, next);
+  yield whenBrowserLoaded(tab.linkedBrowser);
 
   // Check that the tab has an 'image' attribute.
   ok(tab.hasAttribute("image"), "tab.image exists");
@@ -52,7 +52,7 @@ function runTests() {
 
   // Let the pending tab load.
   gBrowser.selectedTab = tab;
-  yield whenBrowserLoaded(tab.linkedBrowser, next);
+  yield whenBrowserLoaded(tab.linkedBrowser);
 
   // Ensure no 'image' or 'pending' attributes are stored.
   let {attributes} = JSON.parse(ss.getTabState(tab));

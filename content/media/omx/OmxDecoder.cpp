@@ -12,6 +12,7 @@
 #include <stagefright/MetaData.h>
 #include <stagefright/OMXClient.h>
 #include <stagefright/OMXCodec.h>
+#include <OMX.h>
 
 #include "mozilla/Preferences.h"
 #include "mozilla/Types.h"
@@ -141,7 +142,8 @@ OmxDecoder::OmxDecoder(MediaResource *aResource,
   mVideoBuffer(nullptr),
   mAudioBuffer(nullptr),
   mIsVideoSeeking(false),
-  mAudioMetadataRead(false)
+  mAudioMetadataRead(false),
+  mPaused(false)
 {
 }
 
@@ -169,6 +171,14 @@ public:
     mMediaSource->stop();
   }
 };
+
+static sp<IOMX> sOMX = nullptr;
+static sp<IOMX> GetOMX() {
+  if(sOMX.get() == nullptr) {
+    sOMX = new OMX;
+    }
+  return sOMX;
+}
 
 bool OmxDecoder::Init() {
 #ifdef PR_LOGGING
@@ -296,14 +306,28 @@ bool OmxDecoder::Init() {
     if (!strcasecmp(audioMime, "audio/raw")) {
       audioSource = audioTrack;
     } else {
+      // try to load hardware codec in mediaserver process.
+      int flags = kHardwareCodecsOnly;
       audioSource = OMXCodec::Create(omx,
                                      audioTrack->getFormat(),
                                      false, // decoder
-                                     audioTrack);
+                                     audioTrack,
+                                     nullptr,
+                                     flags);
     }
     if (audioSource == nullptr) {
-      NS_WARNING("Couldn't create OMX audio source");
-      return false;
+      // try to load software codec in this process.
+      int flags = kSoftwareCodecsOnly;
+      audioSource = OMXCodec::Create(GetOMX(),
+                                     audioTrack->getFormat(),
+                                     false, // decoder
+                                     audioTrack,
+                                     nullptr,
+                                     flags);
+      if (audioSource == nullptr) {
+        NS_WARNING("Couldn't create OMX audio source");
+        return false;
+      }
     }
     if (audioSource->start() != OK) {
       NS_WARNING("Couldn't start OMX audio source");
@@ -332,7 +356,12 @@ bool OmxDecoder::Init() {
   // To reliably get the channel and sample rate data we need to read from the
   // audio source until we get a INFO_FORMAT_CHANGE status
   if (mAudioSource.get()) {
-    if (mAudioSource->read(&mAudioBuffer) != INFO_FORMAT_CHANGED) {
+    status_t err = mAudioSource->read(&mAudioBuffer);
+    if (err != INFO_FORMAT_CHANGED) {
+      if (err != OK) {
+        NS_WARNING("Couldn't read audio buffer from OMX decoder");
+        return false;
+      }
       sp<MetaData> meta = mAudioSource->getFormat();
       if (!meta->findInt32(kKeyChannelCount, &mAudioChannels) ||
           !meta->findInt32(kKeySampleRate, &mAudioSampleRate)) {
@@ -657,3 +686,33 @@ void OmxDecoder::ReleaseAllPendingVideoBuffersLocked()
   }
   mPendingVideoBuffers.clear();
 }
+
+nsresult OmxDecoder::Play() {
+  if (!mPaused) {
+    return NS_OK;
+  }
+  if (mVideoSource.get() && mVideoSource->start() != OK) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  if (mAudioSource.get()&& mAudioSource->start() != OK) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  mPaused = false;
+  return NS_OK;
+}
+
+void OmxDecoder::Pause() {
+  if (mPaused) {
+    return;
+  }
+  if (mVideoSource.get()) {
+    mVideoSource->pause();
+  }
+
+  if (mAudioSource.get()) {
+    mAudioSource->pause();
+  }
+  mPaused = true;
+}
+

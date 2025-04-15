@@ -131,6 +131,10 @@ struct nsTArrayFallibleAllocatorBase
   static ResultTypeProxy FailureResult() {
     return false;
   }
+
+  static ResultType ConvertBoolToResultType(bool aValue) {
+    return aValue;
+  }
 };
 
 struct nsTArrayInfallibleAllocatorBase
@@ -152,6 +156,12 @@ struct nsTArrayInfallibleAllocatorBase
   static ResultTypeProxy FailureResult() {
     NS_RUNTIMEABORT("Infallible nsTArray should never fail");
     return ResultTypeProxy();
+  }
+
+  static ResultType ConvertBoolToResultType(bool aValue) {
+    if (!aValue) {
+      NS_RUNTIMEABORT("infallible nsTArray should never convert false to ResultType");
+    }
   }
 };
 
@@ -424,9 +434,10 @@ protected:
 
 protected:
   template<class Allocator>
-  bool SwapArrayElements(nsTArray_base<Allocator>& other,
-                           size_type elemSize,
-                           size_t elemAlign);
+  typename Alloc::ResultTypeProxy
+  SwapArrayElements(nsTArray_base<Allocator>& other,
+                    size_type elemSize,
+                    size_t elemAlign);
 
   // This is an RAII class used in SwapArrayElements.
   class IsAutoArrayRestorer {
@@ -1157,8 +1168,10 @@ public:
   // This method causes the elements contained in this array and the given
   // array to be swapped.
   template<class Allocator>
-  bool SwapElements(nsTArray_Impl<E, Allocator>& other) {
-    return this->SwapArrayElements(other, sizeof(elem_type), MOZ_ALIGNOF(elem_type));
+  typename Alloc::ResultType
+  SwapElements(nsTArray_Impl<E, Allocator>& other) {
+    return Alloc::Result(this->SwapArrayElements(other, sizeof(elem_type),
+                                                 MOZ_ALIGNOF(elem_type)));
   }
 
   //
@@ -1212,12 +1225,12 @@ public:
   // constructor.
   // @param minLen  The desired minimum length of this array.
   // @return        True if the operation succeeded; false otherwise.
-  bool EnsureLengthAtLeast(size_type minLen) {
+typename Alloc::ResultType EnsureLengthAtLeast(size_type minLen) {
     size_type oldLen = Length();
     if (minLen > oldLen) {
-      return InsertElementsAt(oldLen, minLen - oldLen) != nullptr;
+      return Alloc::ConvertBoolToResultType(!!InsertElementsAt(oldLen, minLen - oldLen));
     }
-    return true;
+    return Alloc::ConvertBoolToResultType(true);
   }
 
   // This method inserts elements into the array, constructing

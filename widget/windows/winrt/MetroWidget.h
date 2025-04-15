@@ -119,10 +119,11 @@ public:
   virtual bool  ShouldUseOffMainThreadCompositing();
   bool          ShouldUseMainThreadD3D10Manager();
   bool          ShouldUseBasicManager();
-  virtual LayerManager* GetLayerManager(PLayersChild* aShadowManager = nullptr,
+  virtual LayerManager* GetLayerManager(PLayerTransactionChild* aShadowManager = nullptr,
                                         LayersBackend aBackendHint = mozilla::layers::LAYERS_NONE,
                                         LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
                                         bool* aAllowRetaining = nullptr);
+  virtual mozilla::layers::LayersBackend GetPreferredCompositorBackend() { return mozilla::layers::LAYERS_D3D11; }
 
   // IME related interfaces
   NS_IMETHOD_(void) SetInputContext(const InputContext& aContext,

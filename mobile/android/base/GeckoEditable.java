@@ -14,11 +14,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
 import android.text.InputFilter;
-import android.text.Spanned;
+import android.text.Selection;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.SpannableStringBuilder;
-import android.text.Selection;
+import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.CharacterStyle;
@@ -220,8 +220,8 @@ final class GeckoEditable
             case Action.TYPE_SET_SPAN:
             case Action.TYPE_REMOVE_SPAN:
             case Action.TYPE_SET_HANDLER:
-                GeckoAppShell.sendEventToGecko(
-                        GeckoEvent.createIMEEvent(GeckoEvent.IME_SYNCHRONIZE));
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createIMEEvent(
+                        GeckoEvent.ImeAction.IME_SYNCHRONIZE));
                 break;
             case Action.TYPE_REPLACE_TEXT:
                 // try key events first
@@ -231,7 +231,7 @@ final class GeckoEditable
                 break;
             case Action.TYPE_ACKNOWLEDGE_FOCUS:
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createIMEEvent(
-                        GeckoEvent.IME_ACKNOWLEDGE_FOCUS));
+                        GeckoEvent.ImeAction.IME_ACKNOWLEDGE_FOCUS));
                 break;
             }
             ++mIcUpdateSeqno;
@@ -426,7 +426,7 @@ final class GeckoEditable
                         GeckoEvent.createIMESelectEvent(selStart, selEnd));
             } else {
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createIMEEvent(
-                        GeckoEvent.IME_REMOVE_COMPOSITION));
+                        GeckoEvent.ImeAction.IME_REMOVE_COMPOSITION));
             }
             return;
         }
@@ -983,8 +983,10 @@ final class GeckoEditable
             }
             Log.w(LOGTAG, "Exception in GeckoEditable." + method.getName(), e.getCause());
             Class<?> retClass = method.getReturnType();
-            if (retClass != Void.TYPE && retClass.isPrimitive()) {
-                ret = retClass.newInstance();
+            if (retClass == Character.TYPE) {
+                ret = '\0';
+            } else if (retClass == Integer.TYPE) {
+                ret = 0;
             } else if (retClass == String.class) {
                 ret = "";
             } else {

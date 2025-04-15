@@ -10,6 +10,7 @@
 #include "mozilla/dom/indexedDB/IndexedDatabase.h"
 
 #include "nsIIndexedDatabaseManager.h"
+#include "nsIObserver.h"
 
 #include "mozilla/Mutex.h"
 #include "nsClassHashtable.h"
@@ -31,11 +32,13 @@ BEGIN_INDEXEDDB_NAMESPACE
 
 class FileManager;
 
-class IndexedDatabaseManager MOZ_FINAL : public nsIIndexedDatabaseManager
+class IndexedDatabaseManager MOZ_FINAL : public nsIIndexedDatabaseManager,
+                                         public nsIObserver
 {
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIINDEXEDDATABASEMANAGER
+  NS_DECL_NSIOBSERVER
 
   // Returns a non-owning reference.
   static IndexedDatabaseManager*
@@ -62,6 +65,16 @@ public:
   }
 #endif
 
+  static bool
+  InLowDiskSpaceMode()
+#ifdef DEBUG
+  ;
+#else
+  {
+    return !!sLowDiskSpaceMode;
+  }
+#endif
+
   already_AddRefed<FileManager>
   GetFileManager(const nsACString& aOrigin,
                  const nsAString& aDatabaseName);
@@ -82,6 +95,18 @@ public:
   nsresult
   AsyncDeleteFile(FileManager* aFileManager,
                   int64_t aFileId);
+
+  // Don't call this method in real code, it blocks the main thread!
+  // It is intended to be used by mochitests to test correctness of the special
+  // reference counting of stored blobs/files.
+  nsresult
+  BlockAndGetFileReferences(const nsACString& aOrigin,
+                            const nsAString& aDatabaseName,
+                            int64_t aFileId,
+                            int32_t* aRefCnt,
+                            int32_t* aDBRefCnt,
+                            int32_t* aSliceRefCnt,
+                            bool* aResult);
 
   static mozilla::Mutex&
   FileMutex()
@@ -121,6 +146,7 @@ private:
   mozilla::Mutex mFileMutex;
 
   static bool sIsMainProcess;
+  static int32_t sLowDiskSpaceMode;
 };
 
 END_INDEXEDDB_NAMESPACE

@@ -280,10 +280,17 @@ PeerConnection.prototype = {
 
     // Nothing starts until ICE gathering completes.
     this._queueOrRun({
-      func: this._pc.initialize,
+      func: this._getPC().initialize,
       args: [this._observer, win, rtcConfig, Services.tm.currentThread],
       wait: true
     });
+  },
+
+  _getPC: function() {
+    if (!this._pc) {
+      throw new Components.Exception("PeerConnection is gone (did you turn on Offline mode?)");
+    }
+    return this._pc;
   },
 
   /**
@@ -468,7 +475,7 @@ PeerConnection.prototype = {
     this._onCreateOfferFailure = onError;
 
     this._queueOrRun({
-      func: this._pc.createOffer,
+      func: this._getPC().createOffer,
       args: [constraints],
       wait: true
     });
@@ -494,7 +501,7 @@ PeerConnection.prototype = {
 
     // TODO: Implement provisional answer.
 
-    this._pc.createAnswer(constraints);
+    this._getPC().createAnswer(constraints);
   },
 
   createAnswer: function(onSuccess, onError, constraints, provisional) {
@@ -537,7 +544,7 @@ PeerConnection.prototype = {
     }
 
     this._queueOrRun({
-      func: this._pc.setLocalDescription,
+      func: this._getPC().setLocalDescription,
       args: [type, desc.sdp],
       wait: true,
       type: desc.type
@@ -566,7 +573,7 @@ PeerConnection.prototype = {
     }
 
     this._queueOrRun({
-      func: this._pc.setRemoteDescription,
+      func: this._getPC().setRemoteDescription,
       args: [type, desc.sdp],
       wait: true,
       type: desc.type
@@ -590,7 +597,7 @@ PeerConnection.prototype = {
     this._onAddIceCandidateError = onError;
 
     this._queueOrRun({
-      func: this._pc.addIceCandidate,
+      func: this._getPC().addIceCandidate,
       args: [cand.candidate, cand.sdpMid || "", cand.sdpMLineIndex],
       wait: true
     });
@@ -599,7 +606,7 @@ PeerConnection.prototype = {
   addStream: function(stream, constraints) {
     // TODO: Implement constraints.
     this._queueOrRun({
-      func: this._pc.addStream,
+      func: this._getPC().addStream,
       args: [stream],
       wait: false
     });
@@ -612,7 +619,7 @@ PeerConnection.prototype = {
 
   close: function() {
     this._queueOrRun({
-      func: this._pc.close,
+      func: this._getPC().close,
       args: [false],
       wait: false
     });
@@ -621,17 +628,17 @@ PeerConnection.prototype = {
 
   get localStreams() {
     this._checkClosed();
-    return this._pc.localStreams;
+    return this._getPC().localStreams;
   },
 
   get remoteStreams() {
     this._checkClosed();
-    return this._pc.remoteStreams;
+    return this._getPC().remoteStreams;
   },
 
   get localDescription() {
     this._checkClosed();
-    let sdp = this._pc.localDescription;
+    let sdp = this._getPC().localDescription;
     if (sdp.length == 0) {
       return null;
     }
@@ -643,7 +650,7 @@ PeerConnection.prototype = {
 
   get remoteDescription() {
     this._checkClosed();
-    let sdp = this._pc.remoteDescription;
+    let sdp = this._getPC().remoteDescription;
     if (sdp.length == 0) {
       return null;
     }
@@ -661,7 +668,7 @@ PeerConnection.prototype = {
     }
 
     var state="undefined";
-    switch (this._pc.readyState) {
+    switch (this._getPC().readyState) {
       case Ci.IPeerConnection.kNew:
         state = "new";
         break;
@@ -701,8 +708,8 @@ PeerConnection.prototype = {
     }
 
     if (dict.maxRetransmitTime != undefined &&
-        dict.maxRetransmitNum != undefined) {
-      throw new Components.Exception("Both maxRetransmitTime and maxRetransmitNum cannot be provided");
+        dict.maxRetransmits != undefined) {
+      throw new Components.Exception("Both maxRetransmitTime and maxRetransmits cannot be provided");
     }
     let protocol;
     if (dict.protocol == undefined) {
@@ -715,17 +722,17 @@ PeerConnection.prototype = {
     let type;
     if (dict.maxRetransmitTime != undefined) {
       type = Ci.IPeerConnection.kDataChannelPartialReliableTimed;
-    } else if (dict.maxRetransmitNum != undefined) {
+    } else if (dict.maxRetransmits != undefined) {
       type = Ci.IPeerConnection.kDataChannelPartialReliableRexmit;
     } else {
       type = Ci.IPeerConnection.kDataChannelReliable;
     }
 
     // Synchronous since it doesn't block.
-    let channel = this._pc.createDataChannel(
-      label, protocol, type, dict.outOfOrderAllowed, dict.maxRetransmitTime,
-      dict.maxRetransmitNum, dict.preset ? true : false,
-      dict.stream != undefined ? dict.stream : 0xFFFF
+    let channel = this._getPC().createDataChannel(
+      label, protocol, type, !dict.ordered, dict.maxRetransmitTime,
+      dict.maxRetransmits, dict.negotiated ? true : false,
+      dict.id != undefined ? dict.id : 0xFFFF
     );
     return channel;
   },
@@ -735,7 +742,7 @@ PeerConnection.prototype = {
       numstreams = 16;
     }
     this._queueOrRun({
-      func: this._pc.connectDataConnection,
+      func: this._getPC().connectDataConnection,
       args: [localport, remoteport, numstreams],
       wait: false
     });

@@ -45,7 +45,7 @@ static const uint32_t STALL_MS = 3000;
 // catching up with the download. Having this margin make the
 // MediaDecoder::CanPlayThrough() calculation more stable in the case of
 // fluctuating bitrates.
-static const int64_t CAN_PLAY_THROUGH_MARGIN = 10;
+static const int64_t CAN_PLAY_THROUGH_MARGIN = 1;
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* gMediaDecoderLog;
@@ -1219,9 +1219,9 @@ void MediaDecoder::DurationChanged()
 void MediaDecoder::SetDuration(double aDuration)
 {
   MOZ_ASSERT(NS_IsMainThread());
-  if (MOZ_DOUBLE_IS_INFINITE(aDuration)) {
+  if (mozilla::IsInfinite(aDuration)) {
     SetInfinite(true);
-  } else if (MOZ_DOUBLE_IS_NaN(aDuration)) {
+  } else if (IsNaN(aDuration)) {
     mDuration = -1;
     SetInfinite(true);
   } else {
@@ -1278,7 +1278,6 @@ bool MediaDecoder::IsMediaSeekable()
 
 nsresult MediaDecoder::GetSeekable(TimeRanges* aSeekable)
 {
-  //TODO : change 0.0 to GetInitialTime() when available
   double initialTime = 0.0;
 
   // We can seek in buffered range if the media is seekable. Also, we can seek
@@ -1658,7 +1657,7 @@ MediaDecoder::IsGStreamerEnabled()
 }
 #endif
 
-#ifdef MOZ_WIDGET_GONK
+#ifdef MOZ_OMX_DECODER
 bool
 MediaDecoder::IsOmxEnabled()
 {
@@ -1689,6 +1688,13 @@ MediaDecoder::IsWMFEnabled()
   return WMFDecoder::IsEnabled();
 }
 #endif
+
+MediaDecoderOwner*
+MediaDecoder::GetOwner()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  return mOwner;
+}
 
 MediaMemoryReporter* MediaMemoryReporter::sUniqueInstance;
 

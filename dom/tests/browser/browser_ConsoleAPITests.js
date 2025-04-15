@@ -34,7 +34,7 @@ function test() {
 }
 
 function testConsoleData(aMessageObject) {
-  let messageWindow = getWindowByWindowId(aMessageObject.ID);
+  let messageWindow = Services.wm.getOuterWindowWithId(aMessageObject.ID);
   is(messageWindow, gWindow, "found correct window by window ID");
 
   is(aMessageObject.level, gLevel, "expected level received");
@@ -63,7 +63,7 @@ function testConsoleData(aMessageObject) {
 }
 
 function testLocationData(aMessageObject) {
-  let messageWindow = getWindowByWindowId(aMessageObject.ID);
+  let messageWindow = Services.wm.getOuterWindowWithId(aMessageObject.ID);
   is(messageWindow, gWindow, "found correct window by window ID");
 
   is(aMessageObject.level, gLevel, "expected level received");
@@ -97,7 +97,7 @@ function startGroupTest() {
 }
 
 function testConsoleGroup(aMessageObject) {
-  let messageWindow = getWindowByWindowId(aMessageObject.ID);
+  let messageWindow = Services.wm.getOuterWindowWithId(aMessageObject.ID);
   is(messageWindow, gWindow, "found correct window by window ID");
 
   ok(aMessageObject.level == "group" ||
@@ -278,7 +278,7 @@ function startTimeTest() {
 }
 
 function testConsoleTime(aMessageObject) {
-  let messageWindow = getWindowByWindowId(aMessageObject.ID);
+  let messageWindow = Services.wm.getOuterWindowWithId(aMessageObject.ID);
   is(messageWindow, gWindow, "found correct window by window ID");
 
   is(aMessageObject.level, gLevel, "expected level received");
@@ -321,7 +321,7 @@ function startTimeEndTest() {
 }
 
 function testConsoleTimeEnd(aMessageObject) {
-  let messageWindow = getWindowByWindowId(aMessageObject.ID);
+  let messageWindow = Services.wm.getOuterWindowWithId(aMessageObject.ID);
   is(messageWindow, gWindow, "found correct window by window ID");
 
   is(aMessageObject.level, gLevel, "expected level received");
@@ -333,7 +333,8 @@ function testConsoleTimeEnd(aMessageObject) {
   is(aMessageObject.arguments.length, gArgs[0].arguments.length, "arguments.length matches");
   is(aMessageObject.timer.name, gArgs[0].timer.name, "timer name matches");
   is(typeof aMessageObject.timer.duration, "number", "timer duration is a number");
-  ok(aMessageObject.timer.duration > 0, "timer duration is positive");
+  info("timer duration: " + aMessageObject.timer.duration);
+  ok(aMessageObject.timer.duration >= 0, "timer duration is positive");
 
   gArgs[0].arguments.forEach(function (a, i) {
     is(aMessageObject.arguments[i], a, "correct arg " + i);
@@ -360,7 +361,7 @@ function startEmptyTimerTest() {
 }
 
 function testEmptyTimer(aMessageObject) {
-  let messageWindow = getWindowByWindowId(aMessageObject.ID);
+  let messageWindow = Services.wm.getOuterWindowWithId(aMessageObject.ID);
   is(messageWindow, gWindow, "found correct window by window ID");
 
   ok(aMessageObject.level == "time" || aMessageObject.level == "timeEnd",
@@ -403,14 +404,4 @@ function getWindowId(aWindow)
   return aWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                 .getInterface(Ci.nsIDOMWindowUtils)
                 .outerWindowID;
-}
-
-function getWindowByWindowId(aId) {
-  let someWindow = Services.wm.getMostRecentWindow("navigator:browser");
-  if (someWindow) {
-    let windowUtils = someWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                .getInterface(Ci.nsIDOMWindowUtils);
-    return windowUtils.getOuterWindowWithId(aId);
-  }
-  return null;
 }

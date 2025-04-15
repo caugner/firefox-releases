@@ -9,13 +9,13 @@
 
 package org.mozilla.gecko;
 
-import android.util.Log;
-
 import java.util.LinkedList;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import android.util.Log;
 
 public abstract class SessionParser {
     private static final String LOGTAG = "GeckoSessionParser";

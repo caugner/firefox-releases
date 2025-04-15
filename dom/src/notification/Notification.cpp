@@ -36,7 +36,7 @@ public:
   NotificationPermissionRequest(nsIPrincipal* aPrincipal, nsPIDOMWindow* aWindow,
                                 NotificationPermissionCallback* aCallback)
     : mPrincipal(aPrincipal), mWindow(aWindow),
-      mPermission(NotificationPermissionValues::Default),
+      mPermission(NotificationPermission::Default),
       mCallback(aCallback) {}
 
   virtual ~NotificationPermissionRequest() {}
@@ -106,7 +106,7 @@ NS_IMETHODIMP
 NotificationPermissionRequest::Run()
 {
   if (nsContentUtils::IsSystemPrincipal(mPrincipal)) {
-    mPermission = NotificationPermissionValues::Granted;
+    mPermission = NotificationPermission::Granted;
   } else {
     // File are automatically granted permission.
     nsCOMPtr<nsIURI> uri;
@@ -116,7 +116,7 @@ NotificationPermissionRequest::Run()
       bool isFile;
       uri->SchemeIs("file", &isFile);
       if (isFile) {
-        mPermission = NotificationPermissionValues::Granted;
+        mPermission = NotificationPermission::Granted;
       }
     }
   }
@@ -124,13 +124,13 @@ NotificationPermissionRequest::Run()
   // Grant permission if pref'ed on.
   if (Preferences::GetBool("notification.prompt.testing", false)) {
     if (Preferences::GetBool("notification.prompt.testing.allow", true)) {
-      mPermission = NotificationPermissionValues::Granted;
+      mPermission = NotificationPermission::Granted;
     } else {
-      mPermission = NotificationPermissionValues::Denied;
+      mPermission = NotificationPermission::Denied;
     }
   }
 
-  if (mPermission != NotificationPermissionValues::Default) {
+  if (mPermission != NotificationPermission::Default) {
     return DispatchCallback();
   }
 
@@ -187,14 +187,14 @@ NotificationPermissionRequest::GetElement(nsIDOMElement** aElement)
 NS_IMETHODIMP
 NotificationPermissionRequest::Cancel()
 {
-  mPermission = NotificationPermissionValues::Denied;
+  mPermission = NotificationPermission::Denied;
   return DispatchCallback();
 }
 
 NS_IMETHODIMP
 NotificationPermissionRequest::Allow()
 {
-  mPermission = NotificationPermissionValues::Granted;
+  mPermission = NotificationPermission::Granted;
   return DispatchCallback();
 }
 
@@ -327,7 +327,7 @@ Notification::ShowInternal()
 
   ErrorResult result;
   if (GetPermissionInternal(GetOwner(), result) !=
-    NotificationPermissionValues::Granted || !alertService) {
+    NotificationPermission::Granted || !alertService) {
     // We do not have permission to show a notification or alert service
     // is not available.
     return DispatchTrustedEvent(NS_LITERAL_STRING("error"));
@@ -403,12 +403,12 @@ Notification::GetPermissionInternal(nsISupports* aGlobal, ErrorResult& aRv)
   nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(aGlobal);
   if (!sop) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
-    return NotificationPermissionValues::Denied;
+    return NotificationPermission::Denied;
   }
 
   nsCOMPtr<nsIPrincipal> principal = sop->GetPrincipal();
   if (nsContentUtils::IsSystemPrincipal(principal)) {
-    return NotificationPermissionValues::Granted;
+    return NotificationPermission::Granted;
   } else {
     // Allow files to show notifications by default.
     nsCOMPtr<nsIURI> uri;
@@ -417,7 +417,7 @@ Notification::GetPermissionInternal(nsISupports* aGlobal, ErrorResult& aRv)
       bool isFile;
       uri->SchemeIs("file", &isFile);
       if (isFile) {
-        return NotificationPermissionValues::Granted;
+        return NotificationPermission::Granted;
       }
     }
   }
@@ -425,9 +425,9 @@ Notification::GetPermissionInternal(nsISupports* aGlobal, ErrorResult& aRv)
   // We also allow notifications is they are pref'ed on.
   if (Preferences::GetBool("notification.prompt.testing", false)) {
     if (Preferences::GetBool("notification.prompt.testing.allow", true)) {
-      return NotificationPermissionValues::Granted;
+      return NotificationPermission::Granted;
     } else {
-      return NotificationPermissionValues::Denied;
+      return NotificationPermission::Denied;
     }
   }
 
@@ -451,11 +451,11 @@ Notification::GetPermissionInternal(nsISupports* aGlobal, ErrorResult& aRv)
   // Convert the result to one of the enum types.
   switch (permission) {
   case nsIPermissionManager::ALLOW_ACTION:
-    return NotificationPermissionValues::Granted;
+    return NotificationPermission::Granted;
   case nsIPermissionManager::DENY_ACTION:
-    return NotificationPermissionValues::Denied;
+    return NotificationPermission::Denied;
   default:
-    return NotificationPermissionValues::Default;
+    return NotificationPermission::Default;
   }
 }
 
@@ -466,7 +466,7 @@ Notification::PrefEnabled()
 }
 
 JSObject*
-Notification::WrapObject(JSContext* aCx, JSObject* aScope)
+Notification::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return mozilla::dom::NotificationBinding::Wrap(aCx, aScope, this);
 }

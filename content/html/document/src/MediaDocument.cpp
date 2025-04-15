@@ -98,7 +98,8 @@ const char* const MediaDocument::sFormatNames[4] =
 };
 
 MediaDocument::MediaDocument()
-    : mDocumentElementInserted(false)
+    : nsHTMLDocument(),
+      mDocumentElementInserted(false)
 {
 }
 MediaDocument::~MediaDocument()
@@ -225,7 +226,6 @@ MediaDocument::CreateSyntheticDocument()
   nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::html, nullptr,
                                            kNameSpaceID_XHTML,
                                            nsIDOMNode::ELEMENT_NODE);
-  NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   nsRefPtr<nsGenericHTMLElement> root = NS_NewHTMLHtmlElement(nodeInfo.forget());
   NS_ENSURE_TRUE(root, NS_ERROR_OUT_OF_MEMORY);
@@ -237,7 +237,6 @@ MediaDocument::CreateSyntheticDocument()
   nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::head, nullptr,
                                            kNameSpaceID_XHTML,
                                            nsIDOMNode::ELEMENT_NODE);
-  NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   // Create a <head> so our title has somewhere to live
   nsRefPtr<nsGenericHTMLElement> head = NS_NewHTMLHeadElement(nodeInfo.forget());
@@ -246,7 +245,6 @@ MediaDocument::CreateSyntheticDocument()
   nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::meta, nullptr,
                                            kNameSpaceID_XHTML,
                                            nsIDOMNode::ELEMENT_NODE);
-  NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   nsRefPtr<nsGenericHTMLElement> metaContent = NS_NewHTMLMetaElement(nodeInfo.forget());
   NS_ENSURE_TRUE(metaContent, NS_ERROR_OUT_OF_MEMORY);
@@ -264,7 +262,6 @@ MediaDocument::CreateSyntheticDocument()
   nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::body, nullptr,
                                            kNameSpaceID_XHTML,
                                            nsIDOMNode::ELEMENT_NODE);
-  NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   nsRefPtr<nsGenericHTMLElement> body = NS_NewHTMLBodyElement(nodeInfo.forget());
   NS_ENSURE_TRUE(body, NS_ERROR_OUT_OF_MEMORY);
@@ -337,7 +334,6 @@ MediaDocument::LinkStylesheet(const nsAString& aStylesheet)
   nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::link, nullptr,
                                            kNameSpaceID_XHTML,
                                            nsIDOMNode::ELEMENT_NODE);
-  NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   nsRefPtr<nsGenericHTMLElement> link = NS_NewHTMLLinkElement(nodeInfo.forget());
   NS_ENSURE_TRUE(link, NS_ERROR_OUT_OF_MEMORY);

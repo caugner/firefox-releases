@@ -89,14 +89,13 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLObjectElement)
     NS_INTERFACE_TABLE_ENTRY(HTMLObjectElement, nsIObjectLoadingContent)
     NS_INTERFACE_TABLE_ENTRY(HTMLObjectElement, nsIImageLoadingContent)
     NS_INTERFACE_TABLE_ENTRY(HTMLObjectElement, imgIOnloadBlocker)
-    NS_INTERFACE_TABLE_ENTRY(HTMLObjectElement, nsIInterfaceRequestor)
     NS_INTERFACE_TABLE_ENTRY(HTMLObjectElement, nsIChannelEventSink)
     NS_INTERFACE_TABLE_ENTRY(HTMLObjectElement, nsIConstraintValidation)
     NS_INTERFACE_TABLE_ENTRY(HTMLObjectElement, nsIDOMGetSVGDocument)
   NS_OFFSET_AND_INTERFACE_TABLE_END
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLObjectElement,
                                                nsGenericHTMLFormElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLObjectElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLObjectElement)
 
@@ -453,9 +452,10 @@ HTMLObjectElement::CopyInnerTo(Element* aDest)
 }
 
 JSObject*
-HTMLObjectElement::WrapNode(JSContext* aCx, JSObject* aScope)
+HTMLObjectElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
-  JSObject* obj = HTMLObjectElementBinding::Wrap(aCx, aScope, this);
+  JS::Rooted<JSObject*> obj(aCx,
+    HTMLObjectElementBinding::Wrap(aCx, aScope, this));
   if (!obj) {
     return nullptr;
   }
@@ -463,15 +463,7 @@ HTMLObjectElement::WrapNode(JSContext* aCx, JSObject* aScope)
   return obj;
 }
 
-JSObject*
-HTMLObjectElement::GetCanonicalPrototype(JSContext* aCx, JSObject* aGlobal)
-{
-  return HTMLObjectElementBinding::GetProtoObject(aCx, aGlobal);
-}
-
 } // namespace dom
 } // namespace mozilla
-
-DOMCI_NODE_DATA(HTMLObjectElement, mozilla::dom::HTMLObjectElement)
 
 NS_IMPL_NS_NEW_HTML_ELEMENT_CHECK_PARSER(Object)

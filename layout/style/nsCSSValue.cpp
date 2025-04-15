@@ -42,7 +42,7 @@ nsCSSValue::nsCSSValue(float aValue, nsCSSUnit aUnit)
   NS_ABORT_IF_FALSE(eCSSUnit_Percent <= aUnit, "not a float value");
   if (eCSSUnit_Percent <= aUnit) {
     mValue.mFloat = aValue;
-    MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(mValue.mFloat));
+    MOZ_ASSERT(!mozilla::IsNaN(mValue.mFloat));
   }
   else {
     mUnit = eCSSUnit_Null;
@@ -105,7 +105,7 @@ nsCSSValue::nsCSSValue(const nsCSSValue& aCopy)
   }
   else if (eCSSUnit_Percent <= mUnit) {
     mValue.mFloat = aCopy.mValue.mFloat;
-    MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(mValue.mFloat));
+    MOZ_ASSERT(!mozilla::IsNaN(mValue.mFloat));
   }
   else if (UnitHasStringValue()) {
     mValue.mString = aCopy.mValue.mString;
@@ -323,7 +323,7 @@ void nsCSSValue::SetPercentValue(float aValue)
   Reset();
   mUnit = eCSSUnit_Percent;
   mValue.mFloat = aValue;
-  MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(mValue.mFloat));
+  MOZ_ASSERT(!mozilla::IsNaN(mValue.mFloat));
 }
 
 void nsCSSValue::SetFloatValue(float aValue, nsCSSUnit aUnit)
@@ -333,7 +333,7 @@ void nsCSSValue::SetFloatValue(float aValue, nsCSSUnit aUnit)
   if (eCSSUnit_Number <= aUnit) {
     mUnit = aUnit;
     mValue.mFloat = aValue;
-    MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(mValue.mFloat));
+    MOZ_ASSERT(!mozilla::IsNaN(mValue.mFloat));
   }
 }
 
@@ -624,10 +624,9 @@ nsCSSValue::EqualsFunction(nsCSSKeyword aFunctionId) const
 already_AddRefed<nsStringBuffer>
 nsCSSValue::BufferFromString(const nsString& aValue)
 {
-  nsStringBuffer* buffer = nsStringBuffer::FromString(aValue);
+  nsRefPtr<nsStringBuffer> buffer = nsStringBuffer::FromString(aValue);
   if (buffer) {
-    buffer->AddRef();
-    return buffer;
+    return buffer.forget();
   }
 
   nsString::size_type length = aValue.Length();
@@ -643,7 +642,7 @@ nsCSSValue::BufferFromString(const nsString& aValue)
   nsCharTraits<PRUnichar>::copy(data, aValue.get(), length);
   // Null-terminate.
   data[length] = 0;
-  return buffer;
+  return buffer.forget();
 }
 
 namespace {

@@ -6,6 +6,7 @@
 #include "AndroidJavaWrappers.h"
 #include "AndroidBridge.h"
 #include "nsIAndroidBridge.h"
+#include "nsIDOMKeyEvent.h"
 
 using namespace mozilla;
 
@@ -54,6 +55,9 @@ jfieldID AndroidGeckoEvent::jByteBufferField = 0;
 jfieldID AndroidGeckoEvent::jWidthField = 0;
 jfieldID AndroidGeckoEvent::jHeightField = 0;
 
+jclass AndroidGeckoEvent::jDomKeyLocationClass = 0;
+jfieldID AndroidGeckoEvent::jDomKeyLocationValueField = 0;
+
 jclass AndroidPoint::jPointClass = 0;
 jfieldID AndroidPoint::jXField = 0;
 jfieldID AndroidPoint::jYField = 0;
@@ -85,6 +89,7 @@ jclass AndroidGeckoLayerClient::jDisplayportClass = 0;
 jmethodID AndroidGeckoLayerClient::jSetFirstPaintViewport = 0;
 jmethodID AndroidGeckoLayerClient::jSetPageRect = 0;
 jmethodID AndroidGeckoLayerClient::jSyncViewportInfoMethod = 0;
+jmethodID AndroidGeckoLayerClient::jSyncFrameMetricsMethod = 0;
 jmethodID AndroidGeckoLayerClient::jCreateFrameMethod = 0;
 jmethodID AndroidGeckoLayerClient::jActivateProgramMethod = 0;
 jmethodID AndroidGeckoLayerClient::jDeactivateProgramMethod = 0;
@@ -108,6 +113,8 @@ jfieldID AndroidViewTransform::jFixedLayerMarginLeft = 0;
 jfieldID AndroidViewTransform::jFixedLayerMarginTop = 0;
 jfieldID AndroidViewTransform::jFixedLayerMarginRight = 0;
 jfieldID AndroidViewTransform::jFixedLayerMarginBottom = 0;
+jfieldID AndroidViewTransform::jOffsetXField = 0;
+jfieldID AndroidViewTransform::jOffsetYField = 0;
 
 jclass AndroidProgressiveUpdateData::jProgressiveUpdateDataClass = 0;
 jfieldID AndroidProgressiveUpdateData::jXField = 0;
@@ -225,7 +232,7 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jCharactersExtraField = getField("mCharactersExtra", "Ljava/lang/String;");
     jKeyCodeField = getField("mKeyCode", "I");
     jMetaStateField = getField("mMetaState", "I");
-    jDomKeyLocationField = getField("mDomKeyLocation", "I");
+    jDomKeyLocationField = getField("mDomKeyLocation", "Lorg/mozilla/gecko/GeckoEvent$DomKeyLocation;");
     jFlagsField = getField("mFlags", "I");
     jUnicodeCharField = getField("mUnicodeChar", "I");
     jBaseUnicodeCharField = getField("mBaseUnicodeChar", "I");
@@ -248,6 +255,10 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jByteBufferField = getField("mBuffer", "Ljava/nio/ByteBuffer;");
     jWidthField = getField("mWidth", "I");
     jHeightField = getField("mHeight", "I");
+
+    // Init GeckoEvent.DomKeyLocation enum
+    jDomKeyLocationClass = getClassGlobalRef("org/mozilla/gecko/GeckoEvent$DomKeyLocation");
+    jDomKeyLocationValueField = getField("value", "I");
 }
 
 void
@@ -339,6 +350,8 @@ AndroidGeckoLayerClient::InitGeckoLayerClientClass(JNIEnv *jEnv)
     jSetPageRect = getMethod("setPageRect", "(FFFF)V");
     jSyncViewportInfoMethod = getMethod("syncViewportInfo",
                                         "(IIIIFZ)Lorg/mozilla/gecko/gfx/ViewTransform;");
+    jSyncFrameMetricsMethod = getMethod("syncFrameMetrics",
+                                        "(FFFFFFFZIIIIFZ)Lorg/mozilla/gecko/gfx/ViewTransform;");
     jCreateFrameMethod = getMethod("createFrame", "()Lorg/mozilla/gecko/gfx/LayerRenderer$Frame;");
     jActivateProgramMethod = getMethod("activateProgram", "()V");
     jDeactivateProgramMethod = getMethod("deactivateProgram", "()V");
@@ -381,6 +394,8 @@ AndroidViewTransform::InitViewTransformClass(JNIEnv *jEnv)
     jFixedLayerMarginTop = getField("fixedLayerMarginTop", "F");
     jFixedLayerMarginRight = getField("fixedLayerMarginRight", "F");
     jFixedLayerMarginBottom = getField("fixedLayerMarginBottom", "F");
+    jOffsetXField = getField("offsetX", "F");
+    jOffsetYField = getField("offsetY", "F");
 }
 
 void
@@ -490,11 +505,21 @@ AndroidGeckoEvent::ReadCharactersExtraField(JNIEnv *jenv)
 }
 
 void
-AndroidGeckoEvent::Init(int aType, nsIntRect const& aRect)
+AndroidGeckoEvent::UnionRect(nsIntRect const& aRect)
 {
-    mType = aType;
-    mAckNeeded = false;
-    mRect = aRect;
+    mRect = aRect.Union(mRect);
+}
+
+uint32_t
+AndroidGeckoEvent::ReadDomKeyLocation(JNIEnv* jenv, jobject jGeckoEventObj)
+{
+    jobject enumObject = jenv->GetObjectField(jGeckoEventObj,
+                                             jDomKeyLocationField);
+    MOZ_ASSERT(enumObject);
+    int enumValue = jenv->GetIntField(enumObject, jDomKeyLocationValueField);
+    MOZ_ASSERT(enumValue >= nsIDOMKeyEvent::DOM_KEY_LOCATION_STANDARD &&
+               enumValue <= nsIDOMKeyEvent::DOM_KEY_LOCATION_JOYSTICK);
+    return static_cast<uint32_t>(enumValue);
 }
 
 void
@@ -520,7 +545,7 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
         case IME_KEY_EVENT:
             mTime = jenv->GetLongField(jobj, jTimeField);
             mMetaState = jenv->GetIntField(jobj, jMetaStateField);
-            mDomKeyLocation = jenv->GetIntField(jobj, jDomKeyLocationField);
+            mDomKeyLocation = ReadDomKeyLocation(jenv, jobj);
             mFlags = jenv->GetIntField(jobj, jFlagsField);
             mKeyCode = jenv->GetIntField(jobj, jKeyCodeField);
             mUnicodeChar = jenv->GetIntField(jobj, jUnicodeCharField);
@@ -652,14 +677,6 @@ AndroidGeckoEvent::Init(int aType)
 }
 
 void
-AndroidGeckoEvent::Init(int aType, int aAction)
-{
-    mType = aType;
-    mAckNeeded = false;
-    mAction = aAction;
-}
-
-void
 AndroidGeckoEvent::Init(AndroidGeckoEvent *aResizeEvent)
 {
     NS_ASSERTION(aResizeEvent->Type() == SIZE_CHANGED, "Init called on non-SIZE_CHANGED event");
@@ -668,6 +685,120 @@ AndroidGeckoEvent::Init(AndroidGeckoEvent *aResizeEvent)
     mAckNeeded = false;
     mTime = aResizeEvent->mTime;
     mPoints = aResizeEvent->mPoints; // x,y coordinates
+}
+
+nsTouchEvent
+AndroidGeckoEvent::MakeTouchEvent(nsIWidget* widget)
+{
+    int type = NS_EVENT_NULL;
+    int startIndex = 0;
+    int endIndex = Count();
+
+    switch (Action()) {
+        case AndroidMotionEvent::ACTION_DOWN:
+        case AndroidMotionEvent::ACTION_POINTER_DOWN: {
+            type = NS_TOUCH_START;
+            break;
+        }
+        case AndroidMotionEvent::ACTION_MOVE: {
+            type = NS_TOUCH_MOVE;
+            break;
+        }
+        case AndroidMotionEvent::ACTION_UP:
+        case AndroidMotionEvent::ACTION_POINTER_UP: {
+            type = NS_TOUCH_END;
+            // for pointer-up events we only want the data from
+            // the one pointer that went up
+            startIndex = PointerIndex();
+            endIndex = startIndex + 1;
+            break;
+        }
+        case AndroidMotionEvent::ACTION_OUTSIDE:
+        case AndroidMotionEvent::ACTION_CANCEL: {
+            type = NS_TOUCH_CANCEL;
+            break;
+        }
+    }
+
+    nsTouchEvent event(true, type, widget);
+    if (type == NS_EVENT_NULL) {
+        // An event we don't know about
+        return event;
+    }
+
+    event.modifiers = 0;
+    event.time = Time();
+    event.InitBasicModifiers(IsCtrlPressed(),
+                             IsAltPressed(),
+                             IsShiftPressed(),
+                             IsMetaPressed());
+
+    const nsIntPoint& offset = widget->WidgetToScreenOffset();
+    event.touches.SetCapacity(endIndex - startIndex);
+    for (int i = startIndex; i < endIndex; i++) {
+        nsCOMPtr<nsIDOMTouch> t(new dom::Touch(PointIndicies()[i],
+                                               Points()[i] - offset,
+                                               PointRadii()[i],
+                                               Orientations()[i],
+                                               Pressures()[i]));
+        event.touches.AppendElement(t);
+    }
+
+    return event;
+}
+
+MultiTouchInput
+AndroidGeckoEvent::MakeMultiTouchInput(nsIWidget* widget)
+{
+    MultiTouchInput::MultiTouchType type = (MultiTouchInput::MultiTouchType)-1;
+    int startIndex = 0;
+    int endIndex = Count();
+
+    switch (Action()) {
+        case AndroidMotionEvent::ACTION_DOWN:
+        case AndroidMotionEvent::ACTION_POINTER_DOWN: {
+            type = MultiTouchInput::MULTITOUCH_START;
+            break;
+        }
+        case AndroidMotionEvent::ACTION_MOVE: {
+            type = MultiTouchInput::MULTITOUCH_MOVE;
+            break;
+        }
+        case AndroidMotionEvent::ACTION_UP:
+        case AndroidMotionEvent::ACTION_POINTER_UP: {
+            // for pointer-up events we only want the data from
+            // the one pointer that went up
+            startIndex = PointerIndex();
+            endIndex = startIndex + 1;
+            type = MultiTouchInput::MULTITOUCH_END;
+            break;
+        }
+        case AndroidMotionEvent::ACTION_OUTSIDE:
+        case AndroidMotionEvent::ACTION_CANCEL: {
+            type = MultiTouchInput::MULTITOUCH_CANCEL;
+            break;
+        }
+    }
+
+    MultiTouchInput event(type, Time());
+
+    if (type < 0) {
+        // An event we don't know about
+        return event;
+    }
+
+    const nsIntPoint& offset = widget->WidgetToScreenOffset();
+    event.mTouches.SetCapacity(endIndex - startIndex);
+    for (int i = startIndex; i < endIndex; i++) {
+        SingleTouchData data(PointIndicies()[i],
+                             Points()[i] - offset,
+                             PointRadii()[i],
+                             Orientations()[i],
+                             Pressures()[i]);
+        event.mTouches.AppendElement(data);
+    }
+
+    return event;
 }
 
 void
@@ -754,7 +885,7 @@ AndroidGeckoLayerClient::SetPageRect(const gfx::Rect& aCssPageRect)
 void
 AndroidGeckoLayerClient::SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
                                           nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY,
-                                          gfx::Margin& aFixedLayerMargins)
+                                          gfx::Margin& aFixedLayerMargins, gfx::Point& aOffset)
 {
     NS_ASSERTION(!isNull(), "SyncViewportInfo called on null layer client!");
     JNIEnv *env = GetJNIForThread();    // this is called on the compositor thread
@@ -778,6 +909,45 @@ AndroidGeckoLayerClient::SyncViewportInfo(const nsIntRect& aDisplayPort, float a
     aScrollOffset = nsIntPoint(viewTransform.GetX(env), viewTransform.GetY(env));
     aScaleX = aScaleY = viewTransform.GetScale(env);
     viewTransform.GetFixedLayerMargins(env, aFixedLayerMargins);
+
+    aOffset.x = viewTransform.GetOffsetX(env);
+    aOffset.y = viewTransform.GetOffsetY(env);
+}
+
+void
+AndroidGeckoLayerClient::SyncFrameMetrics(const gfx::Point& aScrollOffset, float aZoom, const gfx::Rect& aCssPageRect,
+                                          bool aLayersUpdated, const gfx::Rect& aDisplayPort, float aDisplayResolution,
+                                          bool aIsFirstPaint, gfx::Margin& aFixedLayerMargins, gfx::Point& aOffset)
+{
+    NS_ASSERTION(!isNull(), "SyncFrameMetrics called on null layer client!");
+    JNIEnv *env = GetJNIForThread();    // this is called on the compositor thread
+    if (!env)
+        return;
+
+    AutoLocalJNIFrame jniFrame(env);
+
+    // convert the displayport rect from scroll-relative CSS pixels to document-relative device pixels
+    int dpX = NS_lround((aDisplayPort.x * aDisplayResolution) + aScrollOffset.x);
+    int dpY = NS_lround((aDisplayPort.y * aDisplayResolution) + aScrollOffset.y);
+    int dpW = NS_lround(aDisplayPort.width * aDisplayResolution);
+    int dpH = NS_lround(aDisplayPort.height * aDisplayResolution);
+
+    jobject viewTransformJObj = env->CallObjectMethod(wrapped_obj, jSyncFrameMetricsMethod,
+            aScrollOffset.x, aScrollOffset.y, aZoom,
+            aCssPageRect.x, aCssPageRect.y, aCssPageRect.XMost(), aCssPageRect.YMost(),
+            aLayersUpdated, dpX, dpY, dpW, dpH, aDisplayResolution,
+            aIsFirstPaint);
+
+    if (jniFrame.CheckForException())
+        return;
+
+    NS_ABORT_IF_FALSE(viewTransformJObj, "No view transform object!");
+
+    AndroidViewTransform viewTransform;
+    viewTransform.Init(viewTransformJObj);
+    viewTransform.GetFixedLayerMargins(env, aFixedLayerMargins);
+    aOffset.x = viewTransform.GetOffsetX(env);
+    aOffset.y = viewTransform.GetOffsetY(env);
 }
 
 bool
@@ -1022,6 +1192,22 @@ AndroidViewTransform::GetFixedLayerMargins(JNIEnv *env, gfx::Margin &aFixedLayer
     aFixedLayerMargins.right = env->GetFloatField(wrapped_obj, jFixedLayerMarginRight);
     aFixedLayerMargins.bottom = env->GetFloatField(wrapped_obj, jFixedLayerMarginBottom);
     aFixedLayerMargins.left = env->GetFloatField(wrapped_obj, jFixedLayerMarginLeft);
+}
+
+float
+AndroidViewTransform::GetOffsetX(JNIEnv *env)
+{
+    if (!env)
+        return 0.0f;
+    return env->GetFloatField(wrapped_obj, jOffsetXField);
+}
+
+float
+AndroidViewTransform::GetOffsetY(JNIEnv *env)
+{
+    if (!env)
+        return 0.0f;
+    return env->GetFloatField(wrapped_obj, jOffsetYField);
 }
 
 float

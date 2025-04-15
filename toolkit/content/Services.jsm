@@ -50,7 +50,7 @@ let initTable = [
   ["search", "@mozilla.org/browser/search-service;1", "nsIBrowserSearchService"],
 #endif
   ["storage", "@mozilla.org/storage/service;1", "mozIStorageService"],
-  ["domStorageManager", "@mozilla.org/dom/storagemanager;1", "nsIDOMStorageManager"],
+  ["domStorageManager", "@mozilla.org/dom/localStorage-manager;1", "nsIDOMStorageManager"],
   ["strings", "@mozilla.org/intl/stringbundle;1", "nsIStringBundleService"],
   ["telemetry", "@mozilla.org/base/telemetry;1", "nsITelemetry"],
   ["tm", "@mozilla.org/thread-manager;1", "nsIThreadManager"],
@@ -64,6 +64,7 @@ let initTable = [
   ["DOMRequest", "@mozilla.org/dom/dom-request-service;1", "nsIDOMRequestService"],
   ["focus", "@mozilla.org/focus-manager;1", "nsIFocusManager"],
   ["uriFixup", "@mozilla.org/docshell/urifixup;1", "nsIURIFixup"],
+  ["blocklist", "@mozilla.org/extensions/blocklist;1", "nsIBlocklistService"]
 ];
 
 initTable.forEach(function ([name, contract, intf])

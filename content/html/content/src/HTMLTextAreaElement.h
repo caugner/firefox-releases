@@ -177,7 +177,7 @@ public:
     if (aCols == 0) {
       aError.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
     } else {
-      SetHTMLUnsignedIntAttr(nsGkAtoms::cols, aCols, aError);
+      SetUnsignedIntAttr(nsGkAtoms::cols, aCols, aError);
     }
   }
   bool Disabled()
@@ -237,7 +237,7 @@ public:
     if (aRows == 0) {
       aError.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
     } else {
-      SetHTMLUnsignedIntAttr(nsGkAtoms::rows, aRows, aError);
+      SetUnsignedIntAttr(nsGkAtoms::rows, aRows, aError);
     }
   }
   // XPCOM GetWrap is fine
@@ -273,7 +273,8 @@ public:
 protected:
   using nsGenericHTMLFormElement::IsSingleLineTextControl; // get rid of the compiler warning
 
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *aCx,
+                             JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   nsCOMPtr<nsIControllers> mControllers;
   /** Whether or not the value has changed since its default value was given. */

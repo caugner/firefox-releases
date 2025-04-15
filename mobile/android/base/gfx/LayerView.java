@@ -36,6 +36,7 @@ import android.view.inputmethod.InputConnection;
 import android.widget.FrameLayout;
 
 import java.nio.IntBuffer;
+import java.util.ArrayList;
 
 /**
  * A view rendered by the layer compositor.
@@ -47,6 +48,7 @@ public class LayerView extends FrameLayout {
 
     private GeckoLayerClient mLayerClient;
     private PanZoomController mPanZoomController;
+    private LayerMarginsAnimator mMarginsAnimator;
     private GLController mGLController;
     private InputConnectionHandler mInputConnectionHandler;
     private LayerRenderer mRenderer;
@@ -59,7 +61,9 @@ public class LayerView extends FrameLayout {
     private TextureView mTextureView;
 
     private Listener mListener;
-    private TouchEventInterceptor mTouchInterceptor;
+
+    /* This should only be modified on the Java UI thread. */
+    private final ArrayList<TouchEventInterceptor> mTouchInterceptors;
 
     /* Flags used to determine when to show the painted surface. */
     public static final int PAINT_START = 0;
@@ -95,11 +99,14 @@ public class LayerView extends FrameLayout {
         mGLController = GLController.getInstance(this);
         mPaintState = PAINT_START;
         mBackgroundColor = Color.WHITE;
+
+        mTouchInterceptors = new ArrayList<TouchEventInterceptor>();
     }
 
     public void initializeView(EventDispatcher eventDispatcher) {
         mLayerClient = new GeckoLayerClient(getContext(), this, eventDispatcher);
         mPanZoomController = mLayerClient.getPanZoomController();
+        mMarginsAnimator = mLayerClient.getLayerMarginsAnimator();
 
         mRenderer = new LayerRenderer(this);
         mInputConnectionHandler = null;
@@ -129,15 +136,35 @@ public class LayerView extends FrameLayout {
         }
     }
 
-    public void setTouchIntercepter(final TouchEventInterceptor touchInterceptor) {
-        // this gets run on the gecko thread, but for thread safety we want the assignment
-        // on the UI thread.
+    public void addTouchInterceptor(final TouchEventInterceptor aTouchInterceptor) {
         post(new Runnable() {
             @Override
             public void run() {
-                mTouchInterceptor = touchInterceptor;
+                mTouchInterceptors.add(aTouchInterceptor);
             }
         });
+    }
+
+    public void removeTouchInterceptor(final TouchEventInterceptor aTouchInterceptor) {
+        post(new Runnable() {
+            @Override
+            public void run() {
+                mTouchInterceptors.remove(aTouchInterceptor);
+            }
+        });
+    }
+
+    private boolean runTouchInterceptors(MotionEvent event, boolean aOnTouch) {
+        boolean result = false;
+        for (TouchEventInterceptor i : mTouchInterceptors) {
+            if (aOnTouch) {
+                result |= i.onTouch(this, event);
+            } else {
+                result |= i.onInterceptTouchEvent(this, event);
+            }
+        }
+
+        return result;
     }
 
     @Override
@@ -146,13 +173,13 @@ public class LayerView extends FrameLayout {
             requestFocus();
         }
 
-        if (mTouchInterceptor != null && mTouchInterceptor.onInterceptTouchEvent(this, event)) {
+        if (runTouchInterceptors(event, false)) {
             return true;
         }
         if (mPanZoomController != null && mPanZoomController.onTouchEvent(event)) {
             return true;
         }
-        if (mTouchInterceptor != null && mTouchInterceptor.onTouch(this, event)) {
+        if (runTouchInterceptors(event, true)) {
             return true;
         }
         return false;
@@ -160,7 +187,7 @@ public class LayerView extends FrameLayout {
 
     @Override
     public boolean onHoverEvent(MotionEvent event) {
-        if (mTouchInterceptor != null && mTouchInterceptor.onTouch(this, event)) {
+        if (runTouchInterceptors(event, true)) {
             return true;
         }
         return false;
@@ -207,6 +234,7 @@ public class LayerView extends FrameLayout {
 
     public GeckoLayerClient getLayerClient() { return mLayerClient; }
     public PanZoomController getPanZoomController() { return mPanZoomController; }
+    public LayerMarginsAnimator getLayerMarginsAnimator() { return mMarginsAnimator; }
 
     public ImmutableViewportMetrics getViewportMetrics() {
         return mLayerClient.getViewportMetrics();
@@ -236,9 +264,13 @@ public class LayerView extends FrameLayout {
         mLayerClient.setZoomConstraints(constraints);
     }
 
+    public void setIsRTL(boolean aIsRTL) {
+        mLayerClient.setIsRTL(aIsRTL);
+    }
+
     public void setInputConnectionHandler(InputConnectionHandler inputConnectionHandler) {
         mInputConnectionHandler = inputConnectionHandler;
-        mLayerClient.forceRedraw();
+        mLayerClient.forceRedraw(null);
     }
 
     @Override

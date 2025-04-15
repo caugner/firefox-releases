@@ -57,6 +57,7 @@ const SEARCH_ENGINE_ADDED        = "engine-added";
 const SEARCH_ENGINE_CHANGED      = "engine-changed";
 const SEARCH_ENGINE_LOADED       = "engine-loaded";
 const SEARCH_ENGINE_CURRENT      = "engine-current";
+const SEARCH_ENGINE_DEFAULT      = "engine-default";
 
 // The following constants are left undocumented in nsIBrowserSearchService.idl
 // For the moment, they are meant for testing/debugging purposes only.
@@ -206,19 +207,19 @@ function isUsefulLine(aLine) {
   return !(/^\s*($|#)/i.test(aLine));
 }
 
-__defineGetter__("FileUtils", function() {
+this.__defineGetter__("FileUtils", function() {
   delete this.FileUtils;
   Components.utils.import("resource://gre/modules/FileUtils.jsm");
   return FileUtils;
 });
 
-__defineGetter__("NetUtil", function() {
+this.__defineGetter__("NetUtil", function() {
   delete this.NetUtil;
   Components.utils.import("resource://gre/modules/NetUtil.jsm");
   return NetUtil;
 });
 
-__defineGetter__("gChromeReg", function() {
+this.__defineGetter__("gChromeReg", function() {
   delete this.gChromeReg;
   return this.gChromeReg = Cc["@mozilla.org/chrome/chrome-registry;1"].
                            getService(Ci.nsIChromeRegistry);
@@ -922,6 +923,7 @@ EngineURL.prototype = {
     }
 
     var postData = null;
+    let postDataString = null;
     if (this.method == "GET") {
       // GET method requests have no post data, and append the encoded
       // query string to the url...
@@ -929,8 +931,8 @@ EngineURL.prototype = {
         url += "?";
       url += dataString;
     } else if (this.method == "POST") {
-      // POST method requests must wrap the encoded text in a MIME
-      // stream and supply that as POSTDATA.
+      // For POST requests, specify the data as a MIME stream as well as a string.
+      postDataString = dataString;
       var stringStream = Cc["@mozilla.org/io/string-input-stream;1"].
                          createInstance(Ci.nsIStringInputStream);
       stringStream.data = dataString;
@@ -942,7 +944,7 @@ EngineURL.prototype = {
       postData.setData(stringStream);
     }
 
-    return new Submission(makeURI(url), postData);
+    return new Submission(makeURI(url), postData, postDataString);
   },
 
   _hasRelation: function SRC_EURL__hasRelation(aRel)
@@ -2501,7 +2503,7 @@ Engine.prototype = {
 
     if (!aData) {
       // Return a dummy submission object with our searchForm attribute
-      return new Submission(makeURI(this.searchForm), null);
+      return new Submission(makeURI(this.searchForm));
     }
 
     LOG("getSubmission: In data: \"" + aData + "\"; Purpose: \"" + aPurpose + "\"");
@@ -2538,9 +2540,10 @@ Engine.prototype = {
 };
 
 // nsISearchSubmission
-function Submission(aURI, aPostData) {
+function Submission(aURI, aPostData = null, aPostDataString = null) {
   this._uri = aURI;
   this._postData = aPostData;
+  this._postDataString = aPostDataString;
 }
 Submission.prototype = {
   get uri() {
@@ -2548,6 +2551,9 @@ Submission.prototype = {
   },
   get postData() {
     return this._postData;
+  },
+  get postDataString() {
+    return this._postDataString;
   },
   QueryInterface: function SRCH_SUBM_QI(aIID) {
     if (aIID.equals(Ci.nsISearchSubmission) ||
@@ -2618,7 +2624,11 @@ SearchService.prototype = {
     this._addObservers();
 
     gInitialized = true;
+
     this._initObservers.resolve(this._initRV);
+
+    Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "init-complete");
+
     LOG("_syncInit end");
   },
 
@@ -2630,9 +2640,20 @@ SearchService.prototype = {
     return this.__sortedEngines;
   },
 
-  // Whether or not we need to write the order of engines on shutdown. This
-  // needs to happen anytime _sortedEngines is modified after initial startup. 
-  _needToSetOrderPrefs: false,
+  // Get the original Engine object that belongs to the defaultenginename pref
+  // of the default branch.
+  get _originalDefaultEngine() {
+    let defaultPrefB = Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF);
+    let nsIPLS = Ci.nsIPrefLocalizedString;
+    let defaultEngine;
+    try {
+      defaultEngine = defaultPrefB.getComplexValue("defaultenginename", nsIPLS).data;
+    } catch (ex) {
+      // If the default pref is invalid (e.g. an add-on set it to a bogus value)
+      // getEngineByName will just return null, which is the best we can do.
+    }
+    return this.getEngineByName(defaultEngine);
+  },
 
   _buildCache: function SRCH_SVC__buildCache() {
     if (!getBoolPref(BROWSER_SEARCH_PREF + "cache.enabled", true))
@@ -2864,7 +2885,7 @@ SearchService.prototype = {
       // will be built once we need it.
       if (this.__sortedEngines) {
         this.__sortedEngines.push(aEngine);
-        this._needToSetOrderPrefs = true;
+        this._saveSortedEngineList();
       }
       notifyAction(aEngine, SEARCH_ENGINE_ADDED);
     }
@@ -3051,12 +3072,7 @@ SearchService.prototype = {
   },
 
   _saveSortedEngineList: function SRCH_SVC_saveSortedEngineList() {
-    // We only need to write the prefs. if something has changed.
     LOG("SRCH_SVC_saveSortedEngineList: starting");
-    if (!this._needToSetOrderPrefs)
-      return;
-
-    LOG("SRCH_SVC_saveSortedEngineList: something to do");
 
     // Set the useDB pref to indicate that from now on we should use the order
     // information stored in the database.
@@ -3088,29 +3104,34 @@ SearchService.prototype = {
     // prefs.
     if (getBoolPref(BROWSER_SEARCH_PREF + "useDBForOrder", false)) {
       LOG("_buildSortedEngineList: using db for order");
+
+      // Flag to keep track of whether or not we need to call _saveSortedEngineList. 
+      let needToSaveEngineList = false;
+
       for each (engine in this._engines) {
         var orderNumber = engineMetadataService.getAttr(engine, "order");
 
         // Since the DB isn't regularly cleared, and engine files may disappear
         // without us knowing, we may already have an engine in this slot. If
         // that happens, we just skip it - it will be added later on as an
-        // unsorted engine. This problem will sort itself out when we call
-        // _saveSortedEngineList at shutdown.
+        // unsorted engine.
         if (orderNumber && !this.__sortedEngines[orderNumber-1]) {
           this.__sortedEngines[orderNumber-1] = engine;
           addedEngines[engine.name] = engine;
         } else {
-          // We need to call _saveSortedEngines so this gets sorted out.
-          this._needToSetOrderPrefs = true;
+          // We need to call _saveSortedEngineList so this gets sorted out.
+          needToSaveEngineList = true;
         }
       }
 
       // Filter out any nulls for engines that may have been removed
       var filteredEngines = this.__sortedEngines.filter(function(a) { return !!a; });
       if (this.__sortedEngines.length != filteredEngines.length)
-        this._needToSetOrderPrefs = true;
+        needToSaveEngineList = true;
       this.__sortedEngines = filteredEngines;
 
+      if (needToSaveEngineList)
+        this._saveSortedEngineList();
     } else {
       // The DB isn't being used, so just read the engine order from the prefs
       var i = 0;
@@ -3285,6 +3306,15 @@ SearchService.prototype = {
     return this._sortedEngines.filter(function (engine) {
                                         return !engine.hidden;
                                       });
+  },
+
+  _setEngineByPref: function SRCH_SVC_setEngineByPref(aEngineType, aPref) {
+    this._ensureInitialized();
+    let newEngine = this.getEngineByName(getLocalizedPref(aPref, ""));
+    if (!newEngine)
+      FAIL("Can't find engine in store!", Cr.NS_ERROR_UNEXPECTED);
+
+    this[aEngineType] = newEngine;
   },
 
   // nsIBrowserSearchService
@@ -3462,15 +3492,21 @@ SearchService.prototype = {
       FAIL("no engine passed to removeEngine!");
 
     var engineToRemove = null;
-    for (var e in this._engines)
+    for (var e in this._engines) {
       if (aEngine.wrappedJSObject == this._engines[e])
         engineToRemove = this._engines[e];
+    }
 
     if (!engineToRemove)
       FAIL("removeEngine: Can't find engine to remove!", Cr.NS_ERROR_FILE_NOT_FOUND);
 
-    if (engineToRemove == this.currentEngine)
+    if (engineToRemove == this.currentEngine) {
       this._currentEngine = null;
+    }
+
+    if (engineToRemove == this.defaultEngine) {
+      this._defaultEngine = null;
+    }
 
     if (engineToRemove._readOnly) {
       // Just hide it (the "hidden" setter will notify) and remove its alias to
@@ -3500,7 +3536,7 @@ SearchService.prototype = {
       notifyAction(engineToRemove, SEARCH_ENGINE_REMOVED);
 
       // Since we removed an engine, we need to update the preferences.
-      this._needToSetOrderPrefs = true;
+      this._saveSortedEngineList();
     }
   },
 
@@ -3551,7 +3587,7 @@ SearchService.prototype = {
     notifyAction(engine, SEARCH_ENGINE_CHANGED);
 
     // Since we moved an engine, we need to update the preferences.
-    this._needToSetOrderPrefs = true;
+    this._saveSortedEngineList();
   },
 
   restoreDefaultEngines: function SRCH_SVC_resetDefaultEngines() {
@@ -3563,18 +3599,53 @@ SearchService.prototype = {
     }
   },
 
-  get originalDefaultEngine() {
-    this._ensureInitialized();
-    const defPref = BROWSER_SEARCH_PREF + "defaultenginename";
-    return this.getEngineByName(getLocalizedPref(defPref, ""));
-  },
-
   get defaultEngine() {
     this._ensureInitialized();
-    let defaultEngine = this.originalDefaultEngine;
-    if (!defaultEngine || defaultEngine.hidden)
-      defaultEngine = this._getSortedEngines(false)[0] || null;
-    return defaultEngine;
+    if (!this._defaultEngine || this._defaultEngine.hidden) {
+      let defPref = BROWSER_SEARCH_PREF + "defaultenginename";
+      let defaultEngine = this.getEngineByName(getLocalizedPref(defPref, ""))
+      if (!defaultEngine || defaultEngine.hidden)
+        defaultEngine = this._getSortedEngines(false)[0] || null;
+      this._defaultEngine = defaultEngine;
+    }
+    return this._defaultEngine;
+  },
+
+  set defaultEngine(val) {
+    this._ensureInitialized();
+    // Sometimes we get wrapped nsISearchEngine objects (external XPCOM callers),
+    // and sometimes we get raw Engine JS objects (callers in this file), so
+    // handle both.
+    if (!(val instanceof Ci.nsISearchEngine) && !(val instanceof Engine))
+      FAIL("Invalid argument passed to defaultEngine setter");
+
+    let newDefaultEngine = this.getEngineByName(val.name);
+    if (!newDefaultEngine)
+      FAIL("Can't find engine in store!", Cr.NS_ERROR_UNEXPECTED);
+
+    if (newDefaultEngine == this._defaultEngine)
+      return;
+
+    this._defaultEngine = newDefaultEngine;
+
+    // Set a flag to keep track that this setter was called properly, not by
+    // setting the pref alone.
+    this._changingDefaultEngine = true;
+    let defPref = BROWSER_SEARCH_PREF + "defaultenginename";
+    // If we change the default engine in the future, that change should impact
+    // users who have switched away from and then back to the build's "default"
+    // engine. So clear the user pref when the defaultEngine is set to the
+    // build's default engine, so that the defaultEngine getter falls back to
+    // whatever the default is.
+    if (this._defaultEngine == this._originalDefaultEngine) {
+      Services.prefs.clearUserPref(defPref);
+    }
+    else {
+      setLocalizedPref(defPref, this._defaultEngine.name);
+    }
+    this._changingDefaultEngine = false;
+
+    notifyAction(this._defaultEngine, SEARCH_ENGINE_DEFAULT);
   },
 
   get currentEngine() {
@@ -3589,25 +3660,41 @@ SearchService.prototype = {
       this._currentEngine = this.defaultEngine;
     return this._currentEngine;
   },
+
   set currentEngine(val) {
     this._ensureInitialized();
-    if (!(val instanceof Ci.nsISearchEngine))
+    // Sometimes we get wrapped nsISearchEngine objects (external XPCOM callers),
+    // and sometimes we get raw Engine JS objects (callers in this file), so
+    // handle both.
+    if (!(val instanceof Ci.nsISearchEngine) && !(val instanceof Engine))
       FAIL("Invalid argument passed to currentEngine setter");
 
     var newCurrentEngine = this.getEngineByName(val.name);
     if (!newCurrentEngine)
       FAIL("Can't find engine in store!", Cr.NS_ERROR_UNEXPECTED);
 
+    if (newCurrentEngine == this._currentEngine)
+      return;
+
     this._currentEngine = newCurrentEngine;
 
     var currentEnginePref = BROWSER_SEARCH_PREF + "selectedEngine";
 
-    if (this._currentEngine == this.defaultEngine) {
+    // Set a flag to keep track that this setter was called properly, not by
+    // setting the pref alone.
+    this._changingCurrentEngine = true;
+    // If we change the default engine in the future, that change should impact
+    // users who have switched away from and then back to the build's "default"
+    // engine. So clear the user pref when the currentEngine is set to the
+    // build's default engine, so that the currentEngine getter falls back to
+    // whatever the default is.
+    if (this._currentEngine == this._originalDefaultEngine) {
       Services.prefs.clearUserPref(currentEnginePref);
     }
     else {
       setLocalizedPref(currentEnginePref, this._currentEngine.name);
     }
+    this._changingCurrentEngine = false;
 
     notifyAction(this._currentEngine, SEARCH_ENGINE_CURRENT);
   },
@@ -3637,13 +3724,22 @@ SearchService.prototype = {
 
       case QUIT_APPLICATION_TOPIC:
         this._removeObservers();
-        this._saveSortedEngineList();
         if (this._batchTimer) {
           // Flush to disk immediately
           this._batchTimer.cancel();
           this._buildCache();
         }
         engineMetadataService.flush();
+        break;
+
+      case "nsPref:changed":
+        let currPref = BROWSER_SEARCH_PREF + "selectedEngine";
+        let defPref = BROWSER_SEARCH_PREF + "defaultenginename";
+        if (aVerb == currPref && !this._changingCurrentEngine) {
+          this._setEngineByPref("currentEngine", currPref);
+        } else if (aVerb == defPref && !this._changingDefaultEngine) {
+          this._setEngineByPref("defaultEngine", defPref);
+        }
         break;
     }
   },
@@ -3690,11 +3786,15 @@ SearchService.prototype = {
   _addObservers: function SRCH_SVC_addObservers() {
     Services.obs.addObserver(this, SEARCH_ENGINE_TOPIC, false);
     Services.obs.addObserver(this, QUIT_APPLICATION_TOPIC, false);
+    Services.prefs.addObserver(BROWSER_SEARCH_PREF + "defaultenginename", this, false);
+    Services.prefs.addObserver(BROWSER_SEARCH_PREF + "selectedEngine", this, false);
   },
 
   _removeObservers: function SRCH_SVC_removeObservers() {
     Services.obs.removeObserver(this, SEARCH_ENGINE_TOPIC);
     Services.obs.removeObserver(this, QUIT_APPLICATION_TOPIC);
+    Services.prefs.removeObserver(BROWSER_SEARCH_PREF + "defaultenginename", this);
+    Services.prefs.removeObserver(BROWSER_SEARCH_PREF + "selectedEngine", this);
   },
 
   QueryInterface: function SRCH_SVC_QI(aIID) {

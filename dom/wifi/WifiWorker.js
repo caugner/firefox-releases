@@ -44,11 +44,12 @@ var WifiManager = (function() {
     Cu.import("resource://gre/modules/systemlibs.js");
     return {
       sdkVersion: parseInt(libcutils.property_get("ro.build.version.sdk"), 10),
+      unloadDriverEnabled: libcutils.property_get("ro.moz.wifi.unloaddriver") === "1",
       schedScanRecovery: libcutils.property_get("ro.moz.wifi.sched_scan_recover") === "false" ? false : true
     };
   }
 
-  let {sdkVersion, schedScanRecovery} = getStartupPrefs();
+  let {sdkVersion, unloadDriverEnabled, schedScanRecovery} = getStartupPrefs();
 
   var controlWorker = new ChromeWorker(WIFIWORKER_WORKER);
   var eventWorker = new ChromeWorker(WIFIWORKER_WORKER);
@@ -132,12 +133,14 @@ var WifiManager = (function() {
   }
 
   function unloadDriver(callback) {
-    // Unloading drivers is generally unnecessary and
-    // can trigger bugs in some drivers.
-    // On properly written drivers, bringing the interface
-    // down powers down the interface.
-    callback(0);
-    return;
+    if (!unloadDriverEnabled) {
+      // Unloading drivers is generally unnecessary and
+      // can trigger bugs in some drivers.
+      // On properly written drivers, bringing the interface
+      // down powers down the interface.
+      callback(0);
+      return;
+    }
 
     voidControlMessage("unload_driver", function(status) {
       driverLoaded = (status < 0);
@@ -2173,6 +2176,10 @@ WifiWorker.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIWorkerHolder,
                                          Ci.nsIWifi]),
 
+  disconnectedByWifi: false,
+
+  disconnectedByWifiTethering: false,
+
   // Internal methods.
   waitForScan: function(callback) {
     this.wantScanResults.push(callback);
@@ -2724,31 +2731,37 @@ WifiWorker.prototype = {
       return;
     }
 
-    let ssid = network.ssid;
-    let networkKey = getNetworkKey(network);
-
-    if (!(networkKey in this.configuredNetworks)) {
-      this._sendMessage(message, false, "Trying to forget an unknown network", msg);
-      return;
-    }
-
-    let self = this;
-    let configured = this.configuredNetworks[networkKey];
-    this._reconnectOnDisconnect = (this.currentNetwork &&
-                                   (this.currentNetwork.ssid === ssid));
-    WifiManager.removeNetwork(configured.netId, function(ok) {
+    this._reloadConfiguredNetworks((function(ok) {
+      // Give it a chance to remove the network even if reload is failed.
       if (!ok) {
-        self._sendMessage(message, false, "Unable to remove the network", msg);
-        self._reconnectOnDisconnect = false;
+        debug("Warning !!! Failed to reload the configured networks");
+      }
+
+      let ssid = network.ssid;
+      let networkKey = getNetworkKey(network);
+      if (!(networkKey in this.configuredNetworks)) {
+        this._sendMessage(message, false, "Trying to forget an unknown network", msg);
         return;
       }
 
-      WifiManager.saveConfig(function() {
-        self._reloadConfiguredNetworks(function() {
-          self._sendMessage(message, true, true, msg);
+      let self = this;
+      let configured = this.configuredNetworks[networkKey];
+      this._reconnectOnDisconnect = (this.currentNetwork &&
+                                    (this.currentNetwork.ssid === ssid));
+      WifiManager.removeNetwork(configured.netId, function(ok) {
+        if (!ok) {
+          self._sendMessage(message, false, "Unable to remove the network", msg);
+          self._reconnectOnDisconnect = false;
+          return;
+        }
+
+        WifiManager.saveConfig(function() {
+          self._reloadConfiguredNetworks(function() {
+            self._sendMessage(message, true, true, msg);
+          });
         });
       });
-    });
+    }).bind(this));
   },
 
   wps: function(msg) {
@@ -2828,6 +2841,16 @@ WifiWorker.prototype = {
     }
   },
 
+  notifyTetheringOn: function notifyTetheringOn() {
+    // It's really sad that we don't have an API to notify the wifi
+    // hotspot status. Toggle settings to let gaia know that wifi hotspot
+    // is enabled.
+    gSettingsService.createLock().set(
+      "tethering.wifi.enabled", true, null, "fromInternalSetting");
+    // Check for the next request.
+    this.nextRequest();
+  },
+
   notifyTetheringOff: function notifyTetheringOff() {
     // It's really sad that we don't have an API to notify the wifi
     // hotspot status. Toggle settings to let gaia know that wifi hotspot
@@ -2846,10 +2869,18 @@ WifiWorker.prototype = {
     if (enabled && (gNetworkManager.wifiTetheringEnabled ||
          WifiManager.tetheringState != "UNINITIALIZED")) {
       this.queueRequest(false, function(data) {
+        this.disconnectedByWifi = true;
         this.setWifiApEnabled(false, this.notifyTetheringOff.bind(this));
       }.bind(this));
     }
     this.setWifiEnabled({enabled: enabled});
+    
+    if (!enabled && this.disconnectedByWifi) {
+      this.queueRequest(true, function(data) {
+        this.disconnectedByWifi = false;
+        this.setWifiApEnabled(true, this.notifyTetheringOn.bind(this));
+      }.bind(this));
+    }
   },
 
   handleWifiTetheringEnabled: function(enabled) {
@@ -2860,12 +2891,18 @@ WifiWorker.prototype = {
     // Make sure Wifi is idle before switching to Wifi hotspot mode.
     if (enabled && (WifiManager.enabled ||
          WifiManager.state != "UNINITIALIZED")) {
+      this.disconnectedByWifiTethering = true;
       this.setWifiEnabled({enabled: false});
     }
 
     this.queueRequest(enabled, function(data) {
       this.setWifiApEnabled(data, this.nextRequest.bind(this));
     }.bind(this));
+
+    if (!enabled && this.disconnectedByWifiTethering) {
+      this.disconnectedByWifiTethering = false;
+      this.setWifiEnabled({enabled: true});
+    }
   },
 
   // nsIObserver implementation

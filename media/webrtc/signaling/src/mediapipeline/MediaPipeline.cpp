@@ -22,6 +22,9 @@
 #include "ImageTypes.h"
 #include "ImageContainer.h"
 #include "VideoUtils.h"
+#ifdef MOZ_WIDGET_GONK
+#include "GonkIOSurfaceImage.h"
+#endif
 #endif
 
 #include "logging.h"
@@ -779,58 +782,112 @@ void MediaPipelineTransmit::PipelineListener::ProcessAudioChunk(
 }
 
 #ifdef MOZILLA_INTERNAL_API
+static void FillBlackYCbCr420PixelData(uint8_t* aBuffer, const gfxIntSize& aSize)
+{
+  // Fill Y plane
+}
+
 void MediaPipelineTransmit::PipelineListener::ProcessVideoChunk(
     VideoSessionConduit* conduit,
     TrackRate rate,
     VideoChunk& chunk) {
-  // We now need to send the video frame to the other side
   layers::Image *img = chunk.mFrame.GetImage();
+  gfxIntSize size = img ? img->GetSize() : chunk.mFrame.GetIntrinsicSize();
+  if ((size.width & 1) != 0 || (size.height & 1) != 0) {
+    MOZ_ASSERT(false, "Can't handle odd-sized images");
+    return;
+  }
+
+  if (chunk.mFrame.GetForceBlack()) {
+    uint32_t yPlaneLen = size.width*size.height;
+    uint32_t cbcrPlaneLen = yPlaneLen/2;
+    uint32_t length = yPlaneLen + cbcrPlaneLen;
+
+    // Send a black image.
+    nsAutoArrayPtr<uint8_t> pixelData;
+    static const fallible_t fallible = fallible_t();
+    pixelData = new (fallible) uint8_t[length];
+    if (pixelData) {
+      memset(pixelData, 0x10, yPlaneLen);
+      // Fill Cb/Cr planes
+      memset(pixelData + yPlaneLen, 0x80, cbcrPlaneLen);
+
+      MOZ_MTLOG(PR_LOG_DEBUG, "Sending a black video frame");
+      conduit->SendVideoFrame(pixelData, length, size.width, size.height,
+                              mozilla::kVideoI420, 0);
+    }
+    return;
+  }
+
+  // We now need to send the video frame to the other side
   if (!img) {
     // segment.AppendFrame() allows null images, which show up here as null
     return;
   }
 
-  ImageFormat format = img->GetFormat();
+  // We get passed duplicate frames every ~10ms even if there's no frame change!
+  int32_t serial = img->GetSerial();
+  if (serial == last_img_) {
+    return;
+  }
+  last_img_ = serial;
 
-  if (format != PLANAR_YCBCR) {
-    MOZ_MTLOG(PR_LOG_ERROR, "Can't process non-YCBCR video");
+  ImageFormat format = img->GetFormat();
+#ifdef MOZ_WIDGET_GONK
+  if (format == GONK_IO_SURFACE) {
+    layers::GonkIOSurfaceImage *nativeImage = static_cast<layers::GonkIOSurfaceImage*>(img);
+    layers::SurfaceDescriptor handle = nativeImage->GetSurfaceDescriptor();
+    layers::SurfaceDescriptorGralloc grallocHandle = handle.get_SurfaceDescriptorGralloc();
+
+    android::sp<android::GraphicBuffer> graphicBuffer = layers::GrallocBufferActor::GetFrom(grallocHandle);
+    void *basePtr;
+    graphicBuffer->lock(android::GraphicBuffer::USAGE_SW_READ_MASK, &basePtr);
+    conduit->SendVideoFrame(static_cast<unsigned char*>(basePtr),
+                            (graphicBuffer->getWidth() * graphicBuffer->getHeight() * 3) / 2,
+                            graphicBuffer->getWidth(),
+                            graphicBuffer->getHeight(),
+                            mozilla::kVideoNV21, 0);
+    graphicBuffer->unlock();
+  } else
+#endif
+  if (format == PLANAR_YCBCR) {
+    // Cast away constness b/c some of the accessors are non-const
+    layers::PlanarYCbCrImage* yuv =
+    const_cast<layers::PlanarYCbCrImage *>(
+          static_cast<const layers::PlanarYCbCrImage *>(img));
+    // Big-time assumption here that this is all contiguous data coming
+    // from getUserMedia or other sources.
+    const layers::PlanarYCbCrImage::Data *data = yuv->GetData();
+
+    uint8_t *y = data->mYChannel;
+#ifdef DEBUG
+    uint8_t *cb = data->mCbChannel;
+    uint8_t *cr = data->mCrChannel;
+#endif
+    uint32_t width = yuv->GetSize().width;
+    uint32_t height = yuv->GetSize().height;
+    uint32_t length = yuv->GetDataSize();
+
+    // SendVideoFrame only supports contiguous YCrCb 4:2:0 buffers
+    // Verify it's contiguous and in the right order
+    MOZ_ASSERT(cb == (y + width*height) &&
+               cr == (cb + width*height/4));
+    // XXX Consider making this a non-debug-only check if we ever implement
+    // any subclasses of PlanarYCbCrImage that allow disjoint buffers such
+    // that y+3(width*height)/2 might go outside the allocation.
+    // GrallocPlanarYCbCrImage can have wider strides, and so in some cases
+    // would encode as garbage.  If we need to encode it we'll either want to
+    // modify SendVideoFrame or copy/move the data in the buffer.
+
+    // OK, pass it on to the conduit
+    MOZ_MTLOG(PR_LOG_DEBUG, "Sending a video frame");
+    // Not much for us to do with an error
+    conduit->SendVideoFrame(y, length, width, height, mozilla::kVideoI420, 0);
+  } else {
+    MOZ_MTLOG(PR_LOG_ERROR, "Unsupported video format");
     MOZ_ASSERT(PR_FALSE);
     return;
   }
-
-  // Cast away constness b/c some of the accessors are non-const
-  layers::PlanarYCbCrImage* yuv =
-    const_cast<layers::PlanarYCbCrImage *>(
-      static_cast<const layers::PlanarYCbCrImage *>(img));
-
-  // Big-time assumption here that this is all contiguous data coming
-  // from getUserMedia or other sources.
-  const layers::PlanarYCbCrImage::Data *data = yuv->GetData();
-
-  uint8_t *y = data->mYChannel;
-#ifdef DEBUG
-  uint8_t *cb = data->mCbChannel;
-  uint8_t *cr = data->mCrChannel;
-#endif
-  uint32_t width = yuv->GetSize().width;
-  uint32_t height = yuv->GetSize().height;
-  uint32_t length = yuv->GetDataSize();
-
-  // SendVideoFrame only supports contiguous YCrCb 4:2:0 buffers
-  // Verify it's contiguous and in the right order
-  MOZ_ASSERT(cb == (y + width*height) &&
-             cr == (cb + width*height/4));
-  // XXX Consider making this a non-debug-only check if we ever implement
-  // any subclasses of PlanarYCbCrImage that allow disjoint buffers such
-  // that y+3(width*height)/2 might go outside the allocation.
-  // GrallocPlanarYCbCrImage can have wider strides, and so in some cases
-  // would encode as garbage.  If we need to encode it we'll either want to
-  // modify SendVideoFrame or copy/move the data in the buffer.
-
-  // OK, pass it on to the conduit
-  MOZ_MTLOG(PR_LOG_DEBUG, "Sending a video frame");
-  // Not much for us to do with an error
-  conduit->SendVideoFrame(y, length, width, height, mozilla::kVideoI420, 0);
 }
 #endif
 

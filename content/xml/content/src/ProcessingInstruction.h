@@ -64,10 +64,19 @@ protected:
    */
   bool GetAttrValue(nsIAtom *aName, nsAString& aValue);
 
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *aCx,
+                             JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 };
 
 } // namespace dom
 } // namespace mozilla
+
+/**
+ * aNodeInfoManager must not be null.
+ */
+already_AddRefed<mozilla::dom::ProcessingInstruction>
+NS_NewXMLProcessingInstruction(nsNodeInfoManager *aNodeInfoManager,
+                               const nsAString& aTarget,
+                               const nsAString& aData);
 
 #endif // mozilla_dom_ProcessingInstruction_h

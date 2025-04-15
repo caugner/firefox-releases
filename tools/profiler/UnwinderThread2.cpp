@@ -71,6 +71,10 @@ void uwt__init()
 {
 }
 
+void uwt__stop()
+{
+}
+
 void uwt__deinit()
 {
 }
@@ -153,13 +157,17 @@ void uwt__init()
   MOZ_ALWAYS_TRUE(r==0);
 }
 
-void uwt__deinit()
+void uwt__stop()
 {
   // Shut down the unwinder thread.
   MOZ_ASSERT(unwind_thr_exit_now == 0);
   unwind_thr_exit_now = 1;
   do_MBAR();
   int r = pthread_join(unwind_thr, NULL); MOZ_ALWAYS_TRUE(r==0);
+}
+
+void uwt__deinit()
+{
   do_breakpad_unwind_Buffer_free_singletons();
 }
 
@@ -817,14 +825,9 @@ static void* unwind_thr_fn(void* exit_nowV)
     MOZ_ASSERT(buffers);
     int i;
     for (i = 0; i < N_UNW_THR_BUFFERS; i++) {
-      /* These calloc-ations are never freed, even when the unwinder
-         thread is shut down.  The reason is that sampler threads
-         might still be filling them up even after this thread is shut
-         down.  The buffers themselves are not protected by the
-         spinlock, so we have no way to stop them being accessed
-         whilst we free them.  It doesn't matter much since they will
-         not be reallocated if a new unwinder thread is restarted
-         later. */
+      /* These calloc-ations are shared between the sampler and the unwinder.
+       * They must be free after both threads have terminated.
+       */
       buffers[i] = (UnwinderThreadBuffer*)
                    calloc(sizeof(UnwinderThreadBuffer), 1);
       MOZ_ASSERT(buffers[i]);
@@ -866,9 +869,16 @@ static void* unwind_thr_fn(void* exit_nowV)
   */
   int* exit_now = (int*)exit_nowV;
   int ms_to_sleep_if_empty = 1;
+
+  const int longest_sleep_ms = 1000;
+  bool show_sleep_message = true;
+
   while (1) {
 
-    if (*exit_now != 0) break;
+    if (*exit_now != 0) {
+      *exit_now = 0;
+      break;
+    }
 
     spinLock_acquire(&g_spinLock);
 
@@ -889,15 +899,21 @@ static void* unwind_thr_fn(void* exit_nowV)
       MOZ_ASSERT(oldest_seqNo == ~0ULL);
       spinLock_release(&g_spinLock);
       if (ms_to_sleep_if_empty > 100 && LOGLEVEL >= 2) {
-        LOGF("BPUnw: unwinder: sleep for %d ms", ms_to_sleep_if_empty);
+        if (show_sleep_message)
+          LOGF("BPUnw: unwinder: sleep for %d ms", ms_to_sleep_if_empty);
+        /* If we've already shown the message for the longest sleep,
+           don't show it again, until the next round of sleeping
+           starts. */
+        if (ms_to_sleep_if_empty == longest_sleep_ms)
+          show_sleep_message = false;
       }
       sleep_ms(ms_to_sleep_if_empty);
       if (ms_to_sleep_if_empty < 20) {
         ms_to_sleep_if_empty += 2;
       } else {
         ms_to_sleep_if_empty = (15 * ms_to_sleep_if_empty) / 10;
-        if (ms_to_sleep_if_empty > 1000)
-          ms_to_sleep_if_empty = 1000;
+        if (ms_to_sleep_if_empty > longest_sleep_ms)
+          ms_to_sleep_if_empty = longest_sleep_ms;
       }
       continue;
     }
@@ -1011,6 +1027,11 @@ static void* unwind_thr_fn(void* exit_nowV)
           do_breakpad_unwind_Buffer(&pairs, &nPairs, buff, oldest_ix);
           buff->aProfile->addTag( ProfileEntry('s', "(root)") );
           for (unsigned int i = 0; i < nPairs; i++) {
+            /* Skip any outermost frames that
+               do_breakpad_unwind_Buffer didn't give us.  See comments
+               on that function for details. */
+            if (pairs[i].pc == 0 && pairs[i].sp == 0)
+              continue;
             buff->aProfile
                 ->addTag( ProfileEntry('l', reinterpret_cast<void*>(pairs[i].pc)) );
           }
@@ -1082,6 +1103,12 @@ static void* unwind_thr_fn(void* exit_nowV)
       if (0) LOGF("at mergeloop: n_pairs %llu ix_last_hQ %llu",
                   (unsigned long long int)n_pairs,
                   (unsigned long long int)ix_last_hQ);
+      /* Skip any outermost frames that do_breakpad_unwind_Buffer
+         didn't give us.  See comments on that function for
+         details. */
+      while (next_N < n_pairs && pairs[next_N].pc == 0 && pairs[next_N].sp == 0)
+        next_N++;
+
       while (true) {
         if (next_P <= ix_last_hQ) {
           // Assert that next_P points at the start of an P entry
@@ -1235,6 +1262,7 @@ static void* unwind_thr_fn(void* exit_nowV)
     buff->state = S_EMPTY;
     spinLock_release(&g_spinLock);
     ms_to_sleep_if_empty = 1;
+    show_sleep_message = true;
   }
   return NULL;
 }
@@ -1484,7 +1512,10 @@ class MyCodeModules : public google_breakpad::CodeModules
    responsible for deallocating it.
 
    The first pair is for the outermost frame, the last for the
-   innermost frame.
+   innermost frame.  There may be some leading section of the array
+   containing (zero, zero) values, in the case where the stack got
+   truncated because breakpad started stack-scanning, or for whatever
+   reason.  Users of this function need to be aware of that.
 */
 
 MyCodeModules* sModules = NULL;
@@ -1502,6 +1533,47 @@ void do_breakpad_unwind_Buffer_free_singletons()
   if (sModules) {
     delete sModules;
     sModules = NULL;
+  }
+
+  g_stackLimitsUsed = 0;
+  g_seqNo = 0;
+  free(g_buffers);
+  g_buffers = NULL;
+}
+
+static void stats_notify_frame(google_breakpad::StackFrame::FrameTrust tr)
+{
+  // Gather stats in intervals.
+  static int nf_NONE     = 0;
+  static int nf_SCAN     = 0;
+  static int nf_CFI_SCAN = 0;
+  static int nf_FP       = 0;
+  static int nf_CFI      = 0;
+  static int nf_CONTEXT  = 0;
+  static int nf_total    = 0; // total frames since last printout
+
+  nf_total++;
+  switch (tr) {
+    case google_breakpad::StackFrame::FRAME_TRUST_NONE: nf_NONE++; break;
+    case google_breakpad::StackFrame::FRAME_TRUST_SCAN: nf_SCAN++; break;
+    case google_breakpad::StackFrame::FRAME_TRUST_CFI_SCAN:
+      nf_CFI_SCAN++; break;
+    case google_breakpad::StackFrame::FRAME_TRUST_FP: nf_FP++; break;
+    case google_breakpad::StackFrame::FRAME_TRUST_CFI: nf_CFI++; break;
+    case google_breakpad::StackFrame::FRAME_TRUST_CONTEXT: nf_CONTEXT++; break;
+    default: break;
+  }
+  if (nf_total >= 5000) {
+    LOGF("BPUnw frame stats: TOTAL %5u"
+         "    CTX %4u    CFI %4u    FP %4u    SCAN %4u    NONE %4u",
+         nf_total, nf_CONTEXT, nf_CFI, nf_FP, nf_CFI_SCAN+nf_SCAN, nf_NONE);
+    nf_NONE     = 0;
+    nf_SCAN     = 0;
+    nf_CFI_SCAN = 0;
+    nf_FP       = 0;
+    nf_CFI      = 0;
+    nf_CONTEXT  = 0;
+    nf_total    = 0;
   }
 }
 
@@ -1610,14 +1682,21 @@ void do_breakpad_unwind_Buffer(/*OUT*/PCandSP** pairs,
 
   std::vector<const google_breakpad::CodeModule*>* modules_without_symbols
     = new std::vector<const google_breakpad::CodeModule*>();
+
+  // Set the max number of frames to a reasonably low level.  By
+  // default Breakpad's limit is 1024, which means it can wind up
+  // spending a lot of time looping on corrupted stacks.
+  sw->set_max_frames(256);
+
   bool b = sw->Walk(stack, modules_without_symbols);
   (void)b;
   delete modules_without_symbols;
 
   unsigned int n_frames = stack->frames()->size();
   unsigned int n_frames_good = 0;
+  unsigned int n_frames_dubious = 0;
 
-  *pairs  = (PCandSP*)malloc(n_frames * sizeof(PCandSP));
+  *pairs  = (PCandSP*)calloc(n_frames, sizeof(PCandSP));
   *nPairs = n_frames;
   if (*pairs == NULL) {
     *nPairs = 0;
@@ -1629,10 +1708,28 @@ void do_breakpad_unwind_Buffer(/*OUT*/PCandSP** pairs,
          frame_index < n_frames; ++frame_index) {
       google_breakpad::StackFrame *frame = stack->frames()->at(frame_index);
 
-      if (frame->trust == google_breakpad::StackFrame::FRAME_TRUST_CFI
-          || frame->trust == google_breakpad::StackFrame::FRAME_TRUST_CONTEXT) {
+      bool dubious
+        = frame->trust == google_breakpad::StackFrame::FRAME_TRUST_SCAN
+          || frame->trust == google_breakpad::StackFrame::FRAME_TRUST_CFI_SCAN
+          || frame->trust == google_breakpad::StackFrame::FRAME_TRUST_NONE;
+
+      if (dubious) {
+        n_frames_dubious++;
+      } else {
         n_frames_good++;
       }
+
+      /* Once we've seen more than some threshhold number of dubious
+         frames, give up.  Doing that gives better results than
+         polluting the profiling results with junk frames.  Because
+         the entries are put into the pairs array starting at the end,
+         this will leave some initial section of pairs containing
+         (0,0) values, which correspond to the skipped frames. */
+      if (n_frames_dubious > (unsigned int)sUnwindStackScan)
+        break;
+
+      if (LOGLEVEL >= 2)
+        stats_notify_frame(frame->trust);
 
 #     if defined(SPS_ARCH_amd64)
       google_breakpad::StackFrameAMD64* frame_amd64

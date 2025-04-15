@@ -50,11 +50,7 @@ HTMLTemplateElement::Init()
     NS_ENSURE_TRUE(contentsOwner, NS_ERROR_UNEXPECTED);
   }
 
-  ErrorResult rv;
-  mContent = contentsOwner->CreateDocumentFragment(rv);
-  if (rv.Failed()) {
-    return rv.ErrorCode();
-  }
+  mContent = contentsOwner->CreateDocumentFragment();
   mContent->SetHost(this);
 
   return NS_OK;
@@ -84,7 +80,7 @@ NS_HTML_CONTENT_INTERFACE_MAP_END
 NS_IMPL_ELEMENT_CLONE_WITH_INIT(HTMLTemplateElement)
 
 JSObject*
-HTMLTemplateElement::WrapNode(JSContext *aCx, JSObject *aScope)
+HTMLTemplateElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
   return HTMLTemplateElementBinding::Wrap(aCx, aScope, this);
 }

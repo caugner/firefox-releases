@@ -57,11 +57,7 @@ this.webrtcUI = {
 }
 
 function getBrowserForWindowId(aWindowID) {
-  let someWindow = Services.wm.getMostRecentWindow(null);
-  let contentWindow = someWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                .getInterface(Ci.nsIDOMWindowUtils)
-                                .getOuterWindowWithId(aWindowID);
-  return getBrowserForWindow(contentWindow);
+  return getBrowserForWindow(Services.wm.getOuterWindowWithId(aWindowID));
 }
 
 function getBrowserForWindow(aContentWindow) {
@@ -126,10 +122,7 @@ function prompt(aWindowID, aCallID, aAudioRequested, aVideoRequested, aDevices) 
     return;
   }
 
-  let someWindow = Services.wm.getMostRecentWindow(null);
-  let contentWindow = someWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                .getInterface(Ci.nsIDOMWindowUtils)
-                                .getOuterWindowWithId(aWindowID);
+  let contentWindow = Services.wm.getOuterWindowWithId(aWindowID);
   let host = contentWindow.document.documentURIObject.asciiHost;
   let browser = getBrowserForWindow(contentWindow);
   let chromeDoc = browser.ownerDocument;

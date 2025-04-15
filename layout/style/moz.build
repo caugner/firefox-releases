@@ -1,3 +1,4 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -7,4 +8,70 @@ DIRS += ['xbl-marquee']
 TEST_TOOL_DIRS += ['test']
 
 MODULE = 'layout'
+
+EXPORTS += [
+    'AnimationCommon.h',
+    'nsAnimationManager.h',
+    'nsCSSAnonBoxList.h',
+    'nsCSSAnonBoxes.h',
+    'nsCSSFontDescList.h',
+    'nsCSSKeywordList.h',
+    'nsCSSKeywords.h',
+    'nsCSSParser.h',
+    'nsCSSPropAliasList.h',
+    'nsCSSPropList.h',
+    'nsCSSProperty.h',
+    'nsCSSProps.h',
+    'nsCSSPseudoClassList.h',
+    'nsCSSPseudoClasses.h',
+    'nsCSSPseudoElementList.h',
+    'nsCSSPseudoElements.h',
+    'nsCSSRuleProcessor.h',
+    'nsCSSStyleSheet.h',
+    'nsCSSValue.h',
+    'nsDOMCSSAttrDeclaration.h',
+    'nsDOMCSSDeclaration.h',
+    'nsDOMCSSRGBColor.h',
+    'nsDOMMediaQueryList.h',
+    'nsICSSDeclaration.h',
+    'nsICSSLoaderObserver.h',
+    'nsICSSPseudoComparator.h',
+    'nsICSSRuleList.h',
+    'nsICSSStyleRuleDOMWrapper.h',
+    'nsIStyleRule.h',
+    'nsIStyleRuleProcessor.h',
+    'nsIStyleSheet.h',
+    'nsLayoutStylesheetCache.h',
+    'nsRuleData.h',
+    'nsRuleNode.h',
+    'nsRuleProcessorData.h',
+    'nsRuleWalker.h',
+    'nsStyleAnimation.h',
+    'nsStyleContext.h',
+    'nsStyleCoord.h',
+    'nsStyleSet.h',
+    'nsStyleStruct.h',
+    'nsStyleStructFwd.h',
+    'nsStyleStructInlines.h',
+    'nsStyleStructList.h',
+    'nsStyleTransformMatrix.h',
+    'nsStyleUtil.h',
+]
+
+EXPORTS.mozilla.dom += [
+    'CSS.h',
+    'CSSValue.h',
+]
+
+EXPORTS.mozilla.css += [
+    'Declaration.h',
+    'ErrorReporter.h',
+    'GroupRule.h',
+    'ImageLoader.h',
+    'ImportRule.h',
+    'Loader.h',
+    'NameSpaceRule.h',
+    'Rule.h',
+    'StyleRule.h',
+]
 

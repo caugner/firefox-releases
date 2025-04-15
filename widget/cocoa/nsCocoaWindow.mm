@@ -168,8 +168,8 @@ nsCocoaWindow::~nsCocoaWindow()
   NS_IF_RELEASE(mPopupContentView);
 
   // Deal with the possiblity that we're being destroyed while running modal.
-  NS_ASSERTION(!mModal, "Widget destroyed while running modal!");
   if (mModal) {
+    NS_WARNING("Widget destroyed while running modal!");
     --gXULModalLevel;
     NS_ASSERTION(gXULModalLevel >= 0, "Wierdness setting modality!");
   }
@@ -510,6 +510,12 @@ NS_IMETHODIMP nsCocoaWindow::CreatePopupContentView(const nsIntRect &aRect,
 
 NS_IMETHODIMP nsCocoaWindow::Destroy()
 {
+  // The reference from a possible sibling widget will never get cleared because
+  // we don't implement GetParent so RemoveChild never removes us from the
+  // sibling widget list. So if we don't hide ourselves here we may stay on
+  // screen. This is gross. (Bug 891424)
+  Show(false);
+
   if (mPopupContentView)
     mPopupContentView->Destroy();
 
@@ -993,7 +999,7 @@ nsCocoaWindow::ConfigureChildren(const nsTArray<Configuration>& aConfigurations)
 }
 
 LayerManager*
-nsCocoaWindow::GetLayerManager(PLayersChild* aShadowManager,
+nsCocoaWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
                                LayersBackend aBackendHint,
                                LayerManagerPersistence aPersistence,
                                bool* aAllowRetaining)
@@ -1344,7 +1350,7 @@ nsresult nsCocoaWindow::DoResize(double aX, double aY,
   int32_t height = NSToIntRound(aHeight * scale);
   ConstrainSize(&width, &height);
 
-  nsIntRect newBounds(aX, aY,
+  nsIntRect newBounds(NSToIntRound(aX), NSToIntRound(aY),
                       NSToIntRound(width / scale),
                       NSToIntRound(height / scale));
 
@@ -2585,6 +2591,20 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
   return [contentView superview] ? [contentView superview] : contentView;
 }
 
+- (ChildView*)mainChildView
+{
+  NSView *contentView = [self contentView];
+  // A PopupWindow's contentView is a ChildView object.
+  if ([contentView isKindOfClass:[ChildView class]]) {
+    return (ChildView*)contentView;
+  }
+  NSView* lastView = [[contentView subviews] lastObject];
+  if ([lastView isKindOfClass:[ChildView class]]) {
+    return (ChildView*)lastView;
+  }
+  return nil;
+}
+
 - (void)removeTrackingArea
 {
   if (mTrackingArea) {
@@ -2693,6 +2713,22 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
 
   return retval;
 }
+
+// If we were built on OS X 10.6 or with the 10.6 SDK and are running on Lion,
+// the OS (specifically -[NSWindow sendEvent:]) won't send NSEventTypeGesture
+// events to -[ChildView magnifyWithEvent:] as it should.  The following code
+// gets around this.  See bug 863841.
+#if !defined( MAC_OS_X_VERSION_10_7 ) || \
+    ( MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7 )
+- (void)sendEvent:(NSEvent *)anEvent
+{
+  if ([ChildView isLionSmartMagnifyEvent: anEvent]) {
+    [[self mainChildView] magnifyWithEvent:anEvent];
+    return;
+  }
+  [super sendEvent:anEvent];
+}
+#endif
 
 @end
 
@@ -2901,6 +2937,8 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
   } else {
     [borderView setNeedsDisplayInRect:rect];
   }
+
+  [[self mainChildView] maybeDrawInTitlebar];
 }
 
 - (NSRect)titlebarRect
@@ -3011,14 +3049,6 @@ static const NSString* kStateShowsToolbarButton = @"showsToolbarButton";
   [mTitlebarView removeFromSuperview];
   [mTitlebarView release];
   mTitlebarView = nil;
-}
-
-- (ChildView*)mainChildView
-{
-  NSView* view = [[[self contentView] subviews] lastObject];
-  if (view && [view isKindOfClass:[ChildView class]])
-    return (ChildView*)view;
-  return nil;
 }
 
 // Returning YES here makes the setShowsToolbarButton method work even though

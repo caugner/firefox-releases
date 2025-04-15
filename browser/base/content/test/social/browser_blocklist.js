@@ -29,21 +29,18 @@ function test() {
   waitForExplicitFinish();
 
   runSocialTests(tests, undefined, undefined, function () {
-    resetBlocklist(); //restore to original pref
-    finish();
+    resetBlocklist(finish); //restore to original pref
   });
 }
 
 var tests = {
   testSimpleBlocklist: function(next) {
     // this really just tests adding and clearing our blocklist for later tests
-    var blocklist = Components.classes["@mozilla.org/extensions/blocklist;1"]
-                        .getService(Components.interfaces.nsIBlocklistService);
     setAndUpdateBlocklist(blocklistURL, function() {
-      ok(blocklist.isAddonBlocklisted("test1.example.com@services.mozilla.org", "0", "0", "0"), "blocking 'blocked'");
-      ok(!blocklist.isAddonBlocklisted("example.com@services.mozilla.org", "0", "0", "0"), "not blocking 'good'");
+      ok(Services.blocklist.isAddonBlocklisted("test1.example.com@services.mozilla.org", "0", "0", "0"), "blocking 'blocked'");
+      ok(!Services.blocklist.isAddonBlocklisted("example.com@services.mozilla.org", "0", "0", "0"), "not blocking 'good'");
       setAndUpdateBlocklist(blocklistEmpty, function() {
-        ok(!blocklist.isAddonBlocklisted("test1.example.com@services.mozilla.org", "0", "0", "0"), "blocklist cleared");
+        ok(!Services.blocklist.isAddonBlocklisted("test1.example.com@services.mozilla.org", "0", "0", "0"), "blocklist cleared");
         next();
       });
     });
@@ -131,21 +128,22 @@ var tests = {
       ok(true, "window closed");
     });
 
-    function finish(good) {
-      ok(good, "blocklisted provider removed");
-      Services.prefs.clearUserPref("social.manifest.blocked");
-      setAndUpdateBlocklist(blocklistEmpty, next);
-    }
     setManifestPref("social.manifest.blocked", manifest_bad);
     SocialService.addProvider(manifest_bad, function(provider) {
       if (provider) {
-        setAndUpdateBlocklist(blocklistURL, function() {
+        // the act of blocking should cause a 'provider-removed' notification
+        // from SocialService.
+        SocialService.registerProviderListener(function providerListener() {
+          SocialService.unregisterProviderListener(providerListener);
           SocialService.getProvider(provider.origin, function(p) {
-            finish(p==null);
-          })
+            ok(p==null, "blocklisted provider removed");
+            Services.prefs.clearUserPref("social.manifest.blocked");
+            setAndUpdateBlocklist(blocklistEmpty, next);
+          });
         });
-      } else {
-        finish(false);
+        // no callback - the act of updating should cause the listener above
+        // to fire.
+        setAndUpdateBlocklist(blocklistURL);
       }
     });
   }

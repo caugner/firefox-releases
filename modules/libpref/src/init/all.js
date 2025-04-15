@@ -19,7 +19,6 @@
  *  - Computed values (e.g. 50 * 1024) don't work.
  */
 
-pref("keyword.URL", "https://www.google.com/search?ie=UTF-8&oe=utf-8&q=");
 pref("keyword.enabled", false);
 pref("general.useragent.locale", "chrome://global/locale/intl.properties");
 pref("general.useragent.compatMode.firefox", false);
@@ -87,7 +86,7 @@ pref("dom.workers.enabled", true);
 // The number of workers per domain allowed to run concurrently.
 pref("dom.workers.maxPerDomain", 20);
 
-// Whether window.performance is enabled
+// Whether nonzero values can be returned from performance.timing.*
 pref("dom.enable_performance", true);
 
 // Fastback caching - if this pref is negative, then we calculate the number
@@ -113,7 +112,6 @@ pref("browser.anchor_color",                "#0000EE");
 pref("browser.active_color",                "#EE0000");
 pref("browser.visited_color",               "#551A8B");
 pref("browser.underline_anchors",           true);
-pref("browser.blink_allowed",               true);
 pref("browser.enable_automatic_image_resizing", false);
 pref("browser.enable_click_image_resizing", true);
 
@@ -156,6 +154,7 @@ pref("media.volume_scale", "1.0");
 
 #ifdef MOZ_WMF
 pref("media.windows-media-foundation.enabled", true);
+pref("media.windows-media-foundation.use-dxva", true);
 #endif
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
@@ -191,6 +190,7 @@ pref("media.peerconnection.use_document_iceservers", true);
 // These values (aec, agc, and noice) are from media/webrtc/trunk/webrtc/common_types.h
 // kXxxUnchanged = 0, kXxxDefault = 1, and higher values are specific to each 
 // setting (for Xxx = Ec, Agc, or Ns).  Defaults are all set to kXxxDefault here.
+pref("media.peerconnection.turn.disable", false);
 pref("media.peerconnection.aec_enabled", true);
 pref("media.peerconnection.aec", 1);
 pref("media.peerconnection.agc_enabled", false);
@@ -217,6 +217,9 @@ pref("media.autoplay.enabled", true);
 // MediaDecoderReader's mVideoQueue.
 pref("media.video-queue.default-size", 10);
 
+// Whether to enable the audio writing APIs on the audio element
+pref("media.audio_data.enabled", true);
+
 #ifdef XP_MACOSX
 // Whether to run in native HiDPI mode on machines with "Retina"/HiDPI display;
 //   <= 0 : hidpi mode disabled, display will just use pixel-based upscaling
@@ -236,6 +239,17 @@ pref("gfx.downloadable_fonts.enabled", true);
 pref("gfx.downloadable_fonts.fallback_delay", 3000);
 
 pref("gfx.filter.nearest.force-enabled", false);
+
+// prefs controlling the font (name/cmap) loader that runs shortly after startup
+#ifdef XP_WIN
+pref("gfx.font_loader.families_per_slice", 3); // read in info 3 families at a time
+pref("gfx.font_loader.delay", 120000);         // 2 minutes after startup
+pref("gfx.font_loader.interval", 1000);        // every 1 second until complete
+#else
+pref("gfx.font_loader.families_per_slice", 3); // read in info 3 families at a time
+pref("gfx.font_loader.delay", 8000);           // 8 secs after startup
+pref("gfx.font_loader.interval", 50);          // run every 50 ms
+#endif
 
 // whether to always search all font cmaps during system font fallback
 pref("gfx.font_rendering.fallback.always_use_cmaps", false);
@@ -726,9 +740,6 @@ pref("dom.min_timeout_value", 4);
 // And for background windows
 pref("dom.min_background_timeout_value", 1000);
 
-// Run content XBL in a separate scope.
-pref("dom.xbl_scopes", true);
-
 // Stop defining the Components object in content.
 pref("dom.omit_components_in_content", true);
 
@@ -736,7 +747,10 @@ pref("dom.omit_components_in_content", true);
 pref("dom.experimental_forms", false);
 
 // Don't enable <input type=range> yet:
-pref("dom.experimental_forms_range", false);
+pref("dom.experimental_forms_range", true);
+
+// Enables system messages and activities
+pref("dom.sysmsg.enabled", false);
 
 // Allocation Threshold for Workers
 pref("dom.workers.mem.gc_allocation_threshold_mb", 30);
@@ -766,8 +780,10 @@ pref("javascript.options.strict",           false);
 #ifdef DEBUG
 pref("javascript.options.strict.debug",     true);
 #endif
-pref("javascript.options.methodjit.content", true);
-pref("javascript.options.methodjit.chrome",  true);
+pref("javascript.options.methodjit.content", false);
+pref("javascript.options.methodjit.chrome",  false);
+pref("javascript.options.baselinejit.content", true);
+pref("javascript.options.baselinejit.chrome",  true);
 pref("javascript.options.ion.content",      true);
 pref("javascript.options.asmjs",            true);
 pref("javascript.options.ion.parallel_compilation", true);
@@ -997,6 +1013,11 @@ pref("network.http.spdy.ping-timeout", 8);
 pref("network.http.spdy.send-buffer-size", 131072);
 
 pref("network.http.diagnostics", false);
+
+pref("network.http.pacing.requests.enabled", true);
+pref("network.http.pacing.requests.min-parallelism", 6);
+pref("network.http.pacing.requests.hz", 100);
+pref("network.http.pacing.requests.burst", 32);
 
 // default values for FTP
 // in a DSCP environment this should be 40 (0x28, or AF11), per RFC-4594,
@@ -1667,11 +1688,12 @@ pref("layout.word_select.stop_at_punctuation", true);
 // controls caret style and word-delete during text selection
 // 0 = use platform default
 // 1 = caret moves and blinks as when there is no selection; word
-//     delete deselects the selection and then deletes word (Windows default)
+//     delete deselects the selection and then deletes word
 // 2 = caret moves to selection edge and is not visible during selection; 
-//     word delete deletes the selection (Mac default)
+//     word delete deletes the selection (Mac and Linux default)
 // 3 = caret moves and blinks as when there is no selection; word delete
-//     deletes the selection (Unix default)
+//     deletes the selection
+// Windows default is 1 for word delete behavior, the rest as for 2.
 pref("layout.selection.caret_style", 0);
 
 // pref to control whether or not to replace backslashes with Yen signs
@@ -1768,22 +1790,6 @@ pref("viewmanager.do_doublebuffering", true);
 // enable single finger gesture input (win7+ tablets)
 pref("gestures.enable_single_finger_input", true);
 
-/*
- * What are the entities that you want Mozilla to save using mnemonic
- * names rather than numeric codes? E.g. If set, we'll output &nbsp;
- * otherwise, we may output 0xa0 depending on the charset.
- *
- * "none"   : don't use any entity names; only use numeric codes.
- * "basic"  : use entity names just for &nbsp; &amp; &lt; &gt; &quot; for 
- *            interoperability/exchange with products that don't support more
- *            than that.
- * "latin1" : use entity names for 8bit accented letters and other special
- *            symbols between 128 and 255.
- * "html"   : use entity names for 8bit accented letters, greek letters, and
- *            other special markup symbols as defined in HTML4.
- */
-//pref("editor.encode_entity",                 "html");
-
 pref("editor.resizing.preserve_ratio",       true);
 pref("editor.positioning.offset",            0);
 
@@ -1802,6 +1808,8 @@ pref("hangmonitor.timeout", 0);
 pref("plugins.load_appdir_plugins", false);
 // If true, plugins will be click to play
 pref("plugins.click_to_play", false);
+// The default value for nsIPluginTag.enabledState (STATE_ENABLED = 2)
+pref("plugin.default.state", 2);
 
 #ifndef DEBUG
 // How long a plugin is allowed to process a synchronous IPC message
@@ -3165,89 +3173,83 @@ pref("print.print_extra_margin", 0); // twips
 
 pref("font.alias-list", "sans,sans-serif,serif,monospace");
 
-// As we ship bundled Open Sans and Charis SIL Compact fonts on Android,
-// but not on B2G/Gonk, we give them separate default font preferences.
+// Gonk and Android ship different sets of fonts
 
 #ifdef MOZ_WIDGET_GONK
 
-// TODO: this block is initially a copy of the ANDROID prefs as they were
-// prior to the switch to Open Sans and Charis SIL Compact (bug 831354).
-// We should review these in the light of what's actually present on the Gonk platform;
-// some entries could probably be cleaned up.
+// TODO: some entries could probably be cleaned up.
 
 // ar
 
 pref("font.name.serif.el", "Droid Serif");
-pref("font.name.sans-serif.el", "Droid Sans");
-pref("font.name.monospace.el", "Droid Sans Mono");
-pref("font.name-list.sans-serif.el", "Roboto, Droid Sans");
+pref("font.name.sans-serif.el", "Roboto");
+pref("font.name.monospace.el", "Source Code Pro");
 
-pref("font.name.serif.he", "Droid Serif");
-pref("font.name.sans-serif.he", "Droid Sans");
-pref("font.name.monospace.he", "Droid Sans Mono");
-pref("font.name-list.sans-serif.he", "Droid Sans Hebrew, Droid Sans");
+pref("font.name.serif.he", "Charis SIL Compact");
+pref("font.name.sans-serif.he", "Feura Sans");
+pref("font.name.monospace.he", "Source Code Pro");
+pref("font.name-list.sans-serif.he", "Droid Sans Hebrew, Feura Sans");
 
-pref("font.name.serif.ja", "Droid Serif");
-pref("font.name.sans-serif.ja", "Droid Sans");
+pref("font.name.serif.ja", "Charis SIL Compact");
+pref("font.name.sans-serif.ja", "Feura Sans");
 pref("font.name.monospace.ja", "MotoyaLMaru");
-pref("font.name-list.sans-serif.ja", "Roboto, Droid Sans, MotoyaLMaru, MotoyaLCedar, Droid Sans Japanese");
-pref("font.name-list.monospace.ja", "MotoyaLMaru, MotoyaLCedar, Droid Sans Mono");
+pref("font.name-list.sans-serif.ja", "Feura Sans, Roboto, MotoyaLMaru, MotoyaLCedar, Droid Sans Japanese");
+pref("font.name-list.monospace.ja", "MotoyaLMaru, MotoyaLCedar, Source Code Pro");
 
-pref("font.name.serif.ko", "Droid Serif");
-pref("font.name.sans-serif.ko", "Droid Sans");
-pref("font.name.monospace.ko", "Droid Sans Mono");
+pref("font.name.serif.ko", "Charis SIL Compact");
+pref("font.name.sans-serif.ko", "Feura Sans");
+pref("font.name.monospace.ko", "Source Code Pro");
 
-pref("font.name.serif.th", "Droid Serif");
-pref("font.name.sans-serif.th", "Droid Sans");
-pref("font.name.monospace.th", "Droid Sans Mono");
-pref("font.name-list.sans-serif.th", "Droid Sans Thai, Droid Sans");
+pref("font.name.serif.th", "Charis SIL Compact");
+pref("font.name.sans-serif.th", "Feura Sans");
+pref("font.name.monospace.th", "Source Code Pro");
+pref("font.name-list.sans-serif.th", "Feura Sans, Droid Sans Thai");
 
-pref("font.name.serif.tr", "Droid Serif");
-pref("font.name.sans-serif.tr", "Droid Sans");
-pref("font.name.monospace.tr", "Droid Sans Mono");
-pref("font.name-list.sans-serif.tr", "Roboto, Droid Sans");
+pref("font.name.serif.tr", "Charis SIL Compact");
+pref("font.name.sans-serif.tr", "Feura Sans");
+pref("font.name.monospace.tr", "Source Code Pro");
+pref("font.name-list.sans-serif.tr", "Feura Sans, Roboto");
 
-pref("font.name.serif.x-baltic", "Droid Serif");
-pref("font.name.sans-serif.x-baltic", "Droid Sans");
-pref("font.name.monospace.x-baltic", "Droid Sans Mono");
-pref("font.name-list.sans-serif.x-baltic", "Roboto, Droid Sans");
+pref("font.name.serif.x-baltic", "Charis SIL Compact");
+pref("font.name.sans-serif.x-baltic", "Feura Sans");
+pref("font.name.monospace.x-baltic", "Source Code Pro");
+pref("font.name-list.sans-serif.x-baltic", "Feura Sans, Roboto");
 
-pref("font.name.serif.x-central-euro", "Droid Serif");
-pref("font.name.sans-serif.x-central-euro", "Droid Sans");
-pref("font.name.monospace.x-central-euro", "Droid Sans Mono");
-pref("font.name-list.sans-serif.x-central-euro", "Roboto, Droid Sans");
+pref("font.name.serif.x-central-euro", "Charis SIL Compact");
+pref("font.name.sans-serif.x-central-euro", "Feura Sans");
+pref("font.name.monospace.x-central-euro", "Source Code Pro");
+pref("font.name-list.sans-serif.x-central-euro", "Feura Sans, Roboto");
 
-pref("font.name.serif.x-cyrillic", "Droid Serif");
-pref("font.name.sans-serif.x-cyrillic", "Droid Sans");
-pref("font.name.monospace.x-cyrillic", "Droid Sans Mono");
-pref("font.name-list.sans-serif.x-cyrillic", "Roboto, Droid Sans");
+pref("font.name.serif.x-cyrillic", "Charis SIL Compact");
+pref("font.name.sans-serif.x-cyrillic", "Roboto");
+pref("font.name.monospace.x-cyrillic", "Source Code Pro");
 
-pref("font.name.serif.x-unicode", "Droid Serif");
-pref("font.name.sans-serif.x-unicode", "Droid Sans");
-pref("font.name.monospace.x-unicode", "Droid Sans Mono");
-pref("font.name-list.sans-serif.x-unicode", "Roboto, Droid Sans");
+pref("font.name.serif.x-unicode", "Charis SIL Compact");
+pref("font.name.sans-serif.x-unicode", "Feura Sans");
+pref("font.name.monospace.x-unicode", "Source Code Pro");
+pref("font.name-list.sans-serif.x-unicode", "Feura Sans, Roboto");
 
-pref("font.name.serif.x-user-def", "Droid Serif");
-pref("font.name.sans-serif.x-user-def", "Droid Sans");
-pref("font.name.monospace.x-user-def", "Droid Sans Mono");
-pref("font.name-list.sans-serif.x-user-def", "Roboto, Droid Sans");
+pref("font.name.serif.x-user-def", "Charis SIL Compact");
+pref("font.name.sans-serif.x-user-def", "Feura Sans");
+pref("font.name.monospace.x-user-def", "Source Code Pro");
+pref("font.name-list.sans-serif.x-user-def", "Feura Sans, Roboto");
 
-pref("font.name.serif.x-western", "Droid Serif");
-pref("font.name.sans-serif.x-western", "Droid Sans");
-pref("font.name.monospace.x-western", "Droid Sans Mono");
-pref("font.name-list.sans-serif.x-western", "Roboto, Droid Sans");
+pref("font.name.serif.x-western", "Charis SIL Compact");
+pref("font.name.sans-serif.x-western", "Feura Sans");
+pref("font.name.monospace.x-western", "Source Code Pro");
+pref("font.name-list.sans-serif.x-western", "Feura Sans, Roboto");
 
-pref("font.name.serif.zh-CN", "Droid Serif");
-pref("font.name.sans-serif.zh-CN", "Droid Sans");
-pref("font.name.monospace.zh-CN", "Droid Sans Mono");
+pref("font.name.serif.zh-CN", "Charis SIL Compact");
+pref("font.name.sans-serif.zh-CN", "Feura Sans");
+pref("font.name.monospace.zh-CN", "Source Code Pro");
 
-pref("font.name.serif.zh-HK", "Droid Serif");
-pref("font.name.sans-serif.zh-HK", "Droid Sans");
-pref("font.name.monospace.zh-HK", "Droid Sans Mono");
+pref("font.name.serif.zh-HK", "Charis SIL Compact");
+pref("font.name.sans-serif.zh-HK", "Feura Sans");
+pref("font.name.monospace.zh-HK", "Source Code Pro");
 
-pref("font.name.serif.zh-TW", "Droid Serif");
-pref("font.name.sans-serif.zh-TW", "Droid Sans");
-pref("font.name.monospace.zh-TW", "Droid Sans Mono");
+pref("font.name.serif.zh-TW", "Charis SIL Compact");
+pref("font.name.sans-serif.zh-TW", "Feura Sans");
+pref("font.name.monospace.zh-TW", "Source Code Pro");
 
 #else
 
@@ -3274,6 +3276,8 @@ pref("font.name-list.monospace.ja", "MotoyaLMaru, MotoyaLCedar, Droid Sans Mono"
 pref("font.name.serif.ko", "Charis SIL Compact");
 pref("font.name.sans-serif.ko", "Open Sans");
 pref("font.name.monospace.ko", "Droid Sans Mono");
+pref("font.name-list.serif.ko", "HYSerif");
+pref("font.name-list.sans-serif.ko", "SmartGothic, NanumGothic, DroidSansFallback, Droid Sans Fallback");
 
 pref("font.name.serif.th", "Charis SIL Compact");
 pref("font.name.sans-serif.th", "Open Sans");
@@ -3318,14 +3322,23 @@ pref("font.name-list.sans-serif.x-western", "Open Sans, Roboto, Droid Sans");
 pref("font.name.serif.zh-CN", "Charis SIL Compact");
 pref("font.name.sans-serif.zh-CN", "Open Sans");
 pref("font.name.monospace.zh-CN", "Droid Sans Mono");
+pref("font.name-list.serif.zh-CN", "Droid Sans Fallback");
+pref("font.name-list.sans-serif.zh-CN", "Roboto, Droid Sans, Droid Sans Fallback");
+pref("font.name-list.monospace.zh-CN", "Droid Sans Fallback");
 
 pref("font.name.serif.zh-HK", "Charis SIL Compact");
 pref("font.name.sans-serif.zh-HK", "Open Sans");
 pref("font.name.monospace.zh-HK", "Droid Sans Mono");
+pref("font.name-list.serif.zh-HK", "Droid Sans Fallback");
+pref("font.name-list.sans-serif.zh-HK", "Roboto, Droid Sans, Droid Sans Fallback");
+pref("font.name-list.monospace.zh-HK", "Droid Sans Fallback");
 
 pref("font.name.serif.zh-TW", "Charis SIL Compact");
 pref("font.name.sans-serif.zh-TW", "Open Sans");
 pref("font.name.monospace.zh-TW", "Droid Sans Mono");
+pref("font.name-list.serif.zh-TW", "Droid Sans Fallback");
+pref("font.name-list.sans-serif.zh-TW", "Roboto, Droid Sans, Droid Sans Fallback");
+pref("font.name-list.monospace.zh-TW", "Droid Sans Fallback");
 
 // end ! MOZ_WIDGET_GONK
 
@@ -3814,6 +3827,13 @@ pref("toolkit.zoomManager.zoomValues", ".3,.5,.67,.8,.9,1,1.1,1.2,1.33,1.5,1.7,2
 pref("browser.zoom.reflowOnZoom", false);
 
 /**
+ * Specifies the number of milliseconds to wait after a given reflow-on-zoom
+ * operation has completed before allowing another one to be triggered. This
+ * is to prevent a buildup of reflow-zoom events.
+ */
+pref("browser.zoom.reflowZoom.reflowTimeout", 500);
+
+/**
  * Controls whether or not the reflow-on-zoom behavior happens on page load.
  * This can be enabled in conjunction with the above preference (reflowOnZoom),
  * but has no effect if browser.zoom.reflowOnZoom is disabled.
@@ -3889,6 +3909,13 @@ pref("image.multithreaded_decoding.enabled", true);
 // automatically determined based on the system's number of cores.
 pref("image.multithreaded_decoding.limit", -1);
 
+// Limit for the canvas image cache. 0 means we don't limit the size of the
+// cache.
+pref("canvas.image.cache.limit", 0);
+
+// How many images to eagerly decode on a given page. 0 means "no limit".
+pref("image.onload.decode.limit", 0);
+
 // Try to discard images in the current tab that not visible.
 pref("layout.imagevisibility.enabled", false);
 
@@ -3921,11 +3948,7 @@ pref("network.tcp.sendbuffer", 131072);
 pref("layers.async-video.enabled",false);
 
 // Whether to disable acceleration for all widgets.
-#ifdef MOZ_E10S_COMPAT
-pref("layers.acceleration.disabled", true);
-#else
 pref("layers.acceleration.disabled", false);
-#endif
 
 // Whether to force acceleration on, ignoring blacklists.
 #ifdef ANDROID
@@ -3938,13 +3961,16 @@ pref("layers.acceleration.force-enabled", false);
 
 pref("layers.acceleration.draw-fps", false);
 
+pref("layers.draw-borders", false);
+
+pref("layers.offmainthreadcomposition.enabled", false);
+// same effect as layers.offmainthreadcomposition.enabled, but specifically for
+// use with tests.
+pref("layers.offmainthreadcomposition.testing.enabled", false);
 // Whether to animate simple opacity and transforms on the compositor
 pref("layers.offmainthreadcomposition.animate-opacity", false);
 pref("layers.offmainthreadcomposition.animate-transform", false);
 pref("layers.offmainthreadcomposition.log-animations", false);
-
-// Whether to (try) to use a Composer2D if available on this platform.
-pref("layers.composer2d.enabled", false);
 
 #ifdef MOZ_X11
 #ifdef MOZ_WIDGET_GTK2
@@ -3954,11 +3980,8 @@ pref("gfx.xrender.enabled",true);
 
 #ifdef XP_WIN
 // Whether to disable the automatic detection and use of direct2d.
-#ifdef MOZ_E10S_COMPAT
-pref("gfx.direct2d.disabled", true);
-#else
 pref("gfx.direct2d.disabled", false);
-#endif
+
 // Whether to attempt to enable Direct2D regardless of automatic detection or
 // blacklisting
 pref("gfx.direct2d.force-enabled", false);
@@ -4040,12 +4063,16 @@ pref("dom.sms.enabled", false);
 // Enable Latin characters replacement with corresponding ones in GSM SMS
 // 7-bit default alphabet.
 pref("dom.sms.strict7BitEncoding", false);
+pref("dom.sms.requestStatusReport", true);
 
 // WebContacts
 pref("dom.mozContacts.enabled", false);
 
 // WebAlarms
 pref("dom.mozAlarms.enabled", false);
+
+// SimplePush
+pref("services.push.enabled", false);
 
 // WebNetworkStats
 pref("dom.mozNetworkStats.enabled", false);
@@ -4100,6 +4127,18 @@ pref("memory.ghost_window_timeout_seconds", 60);
 pref("memory.free_dirty_pages", false);
 
 pref("social.enabled", false);
+// comma separated list of domain origins (e.g. https://domain.com) for
+// providers that can install from their own website without user warnings.
+// entries are
+pref("social.whitelist", "https://mozsocial.cliqz.com,https://now.msn.com,https://mixi.jp");
+// omma separated list of domain origins (e.g. https://domain.com) for directory
+// websites (e.g. AMO) that can install providers for other sites
+pref("social.directories", "https://addons.mozilla.org");
+// remote-install allows any website to activate a provider, with extended UI
+// notifying user of installation. we can later pref off remote install if
+// necessary. This does not affect whitelisted and directory installs.
+pref("social.remote-install.enabled", true);
+pref("social.toast-notifications.enabled", true);
 
 // Disable idle observer fuzz, because only privileged content can access idle
 // observers (bug 780507).
@@ -4143,13 +4182,21 @@ pref("dom.placeholder.show_on_focus", true);
 pref("wap.UAProf.url", "");
 pref("wap.UAProf.tagname", "x-wap-profile");
 
-//Retrieval mode for MMS
-//manual: Manual retrieval mode.
-//automatic: Automatic retrieval mode.
-//never: Never retrieval mode.
+// Retrieval mode for MMS
+// manual: Manual retrieval mode.
+// automatic: Automatic retrieval mode even in roaming.
+// automatic-home: Automatic retrieval mode in home network.
+// never: Never retrieval mode.
 pref("dom.mms.retrieval_mode", "manual");
-pref("dom.mms.retrievalRetryCount", 3);
-pref("dom.mms.retrievalRetryInterval", 300000);
+
+pref("dom.mms.sendRetryCount", 3);
+pref("dom.mms.sendRetryInterval", 300000);
+
+pref("dom.mms.retrievalRetryCount", 4);
+pref("dom.mms.retrievalRetryIntervals", "60000,300000,600000,1800000");
+
+// Debug enabler for MMS.
+pref("mms.debugging.enabled", false);
 
 // If the user puts a finger down on an element and we think the user
 // might be executing a pan gesture, how long do we wait before

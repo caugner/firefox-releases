@@ -18,7 +18,7 @@
 #include "nsCRT.h"
 
 #include "Image.h"
-#include "ImageFactory.h"
+#include "ImageOps.h"
 #include "nsError.h"
 #include "ImageLogging.h"
 
@@ -55,7 +55,12 @@ class RequestBehaviour : public ProxyBehaviour
 
   virtual void SetOwner(imgRequest* aOwner) MOZ_OVERRIDE {
     mOwner = aOwner;
-    mOwnerHasImage = !!aOwner->GetStatusTracker().GetImage();
+
+    if (mOwner) {
+      mOwnerHasImage = !!aOwner->GetStatusTracker().GetImage();
+    } else {
+      mOwnerHasImage = false;
+    }
   }
 
  private:
@@ -915,7 +920,7 @@ imgRequestProxy::GetStaticRequest(imgRequestProxy** aReturn)
   }
 
   // We are animated. We need to create a frozen version of this image.
-  nsRefPtr<Image> frozenImage = ImageFactory::Freeze(image);
+  nsRefPtr<Image> frozenImage = ImageOps::Freeze(image);
 
   // Create a static imgRequestProxy with our new extracted frame.
   nsCOMPtr<nsIPrincipal> currentPrincipal;
@@ -1014,7 +1019,7 @@ public:
   }
 
   virtual void SetOwner(imgRequest* aOwner) MOZ_OVERRIDE {
-    MOZ_ASSERT_IF(aOwner, "We shouldn't be giving static requests a non-null owner.");
+    MOZ_ASSERT(!aOwner, "We shouldn't be giving static requests a non-null owner.");
   }
 
 private:

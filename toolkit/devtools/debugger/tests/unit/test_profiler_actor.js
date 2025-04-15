@@ -114,21 +114,15 @@ function test_profile(aClient, aProfiler)
     do_check_eq(typeof aResponse.profile.threads[0].samples, "object");
     do_check_neq(aResponse.profile.threads[0].samples.length, 0);
 
-    function some(array, cb) {
-      for (var i = array.length; i; i--) {
-        if (cb(array[i - 1]))
-          return true;
-      }
-      return false;
-    }
+    let location = stack.name + " (" + stack.filename + ":" + funcLine + ")";
     // At least one sample is expected to have been in the busy wait above.
-    do_check_true(some(aResponse.profile.threads[0].samples, function(sample) {
+    do_check_true(aResponse.profile.threads[0].samples.some(function(sample) {
       return sample.name == "(root)" &&
              typeof sample.frames == "object" &&
              sample.frames.length != 0 &&
              sample.frames.some(function(f) {
                return (f.line == stack.lineNumber) &&
-                      (f.location == stack.name + " (" + stack.filename + ":" + funcLine + ")");
+                      (f.location == location);
              });
     }));
 
@@ -147,21 +141,27 @@ function test_profile(aClient, aProfiler)
 function test_profiler_status()
 {
   var connectionClosed = DebuggerServer._connectionClosed;
-  DebuggerServer._connectionClosed = function (conn) {
-    connectionClosed.call(this, conn);
-    // Check that closing the connection stops the profiler
-    do_check_false(Profiler.IsActive());
-    do_test_finished();
-  };
-
   var client = new DebuggerClient(DebuggerServer.connectPipe());
-  client.connect(function () {
-    client.listTabs(function(aResponse) {
+
+  client.connect(() => {
+    client.listTabs((aResponse) => {
+      DebuggerServer._connectionClosed = function (conn) {
+        connectionClosed.call(this, conn);
+
+        // Check that closing the last (only?) connection stops the profiler.
+        do_check_false(Profiler.IsActive());
+        do_test_finished();
+      }
+
       var profiler = aResponse.profilerActor;
       do_check_false(Profiler.IsActive());
-      client.request({ to: profiler, type: "startProfiler", features: [] }, function (aResponse) {
+      client.request({
+        to: profiler,
+        type: "startProfiler",
+        features: []
+      }, function (aResponse) {
         do_check_true(Profiler.IsActive());
-        client.close(function() { });
+        client.close();
       });
     });
   });

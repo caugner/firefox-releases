@@ -39,7 +39,7 @@ public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(MediaStreamList)
 
-  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope)
+  virtual JSObject* WrapObject(JSContext *cx, JS::Handle<JSObject*> scope)
     MOZ_OVERRIDE;
   nsISupports* GetParentObject();
 

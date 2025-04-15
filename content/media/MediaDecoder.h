@@ -736,6 +736,8 @@ public:
   // Notifies the element that decoding has failed.
   virtual void DecodeError();
 
+  MediaDecoderOwner* GetOwner() MOZ_OVERRIDE;
+
 #ifdef MOZ_RAW
   static bool IsRawEnabled();
 #endif
@@ -757,7 +759,7 @@ public:
   static bool IsGStreamerEnabled();
 #endif
 
-#ifdef MOZ_WIDGET_GONK
+#ifdef MOZ_OMX_DECODER
   static bool IsOmxEnabled();
 #endif
 

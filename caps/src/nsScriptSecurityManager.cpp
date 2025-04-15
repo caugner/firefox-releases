@@ -22,7 +22,6 @@
 #include "nsXPIDLString.h"
 #include "nsCRT.h"
 #include "nsCRTGlue.h"
-#include "nsIJSContextStack.h"
 #include "nsError.h"
 #include "nsDOMCID.h"
 #include "jsdbgapi.h"
@@ -73,7 +72,6 @@ static NS_DEFINE_CID(kZipReaderCID, NS_ZIPREADER_CID);
 
 nsIIOService    *nsScriptSecurityManager::sIOService = nullptr;
 nsIXPConnect    *nsScriptSecurityManager::sXPConnect = nullptr;
-nsIThreadJSContextStack *nsScriptSecurityManager::sJSContextStack = nullptr;
 nsIStringBundle *nsScriptSecurityManager::sStrBundle = nullptr;
 JSRuntime       *nsScriptSecurityManager::sRuntime   = 0;
 bool nsScriptSecurityManager::sStrictFileOriginPolicy = true;
@@ -260,43 +258,18 @@ private:
     bool mMustFreeName;
 };
 
-class AutoCxPusher {
-public:
-    AutoCxPusher(nsIJSContextStack *aStack, JSContext *cx)
-        : mStack(aStack), mContext(cx)
-    {
-        if (NS_FAILED(mStack->Push(mContext))) {
-            mStack = nullptr;
-        }
-    }
-
-    ~AutoCxPusher()
-    {
-        if (mStack) {
-            mStack->Pop(nullptr);
-        }
-    }
-
-private:
-    nsCOMPtr<nsIJSContextStack> mStack;
-    JSContext *mContext;
-};
-
 JSContext *
 nsScriptSecurityManager::GetCurrentJSContext()
 {
     // Get JSContext from stack.
-    JSContext *cx;
-    if (NS_FAILED(sJSContextStack->Peek(&cx)))
-        return nullptr;
-    return cx;
+    return sXPConnect->GetCurrentJSContext();
 }
 
 JSContext *
 nsScriptSecurityManager::GetSafeJSContext()
 {
     // Get JSContext from stack.
-    return sJSContextStack->GetSafeJSContext();
+    return sXPConnect->GetSafeJSContext();
 }
 
 /* static */
@@ -1591,7 +1564,7 @@ nsScriptSecurityManager::CheckLoadURIStrWithPrincipal(nsIPrincipal* aPrincipal,
     };
 
     for (uint32_t i = 0; i < ArrayLength(flags); ++i) {
-        rv = fixup->CreateFixupURI(aTargetURIStr, flags[i],
+        rv = fixup->CreateFixupURI(aTargetURIStr, flags[i], nullptr,
                                    getter_AddRefs(target));
         NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1608,23 +1581,24 @@ nsScriptSecurityManager::CheckFunctionAccess(JSContext *aCx, void *aFunObj,
 {
     // This check is called for event handlers
     nsresult rv;
+    JS::Rooted<JSObject*> rootedFunObj(aCx, static_cast<JSObject*>(aFunObj));
     nsIPrincipal* subject =
-        GetFunctionObjectPrincipal(aCx, (JSObject *)aFunObj, &rv);
+        GetFunctionObjectPrincipal(aCx, rootedFunObj, &rv);
 
     // If subject is null, get a principal from the function object's scope.
     if (NS_SUCCEEDED(rv) && !subject)
     {
 #ifdef DEBUG
         {
-            JS_ASSERT(JS_ObjectIsFunction(aCx, (JSObject *)aFunObj));
-            JSFunction *fun = JS_GetObjectFunction((JSObject *)aFunObj);
+            JS_ASSERT(JS_ObjectIsFunction(aCx, rootedFunObj));
+            JS::Rooted<JSFunction*> fun(aCx, JS_GetObjectFunction(rootedFunObj));
             JSScript *script = JS_GetFunctionScript(aCx, fun);
 
             NS_ASSERTION(!script, "Null principal for non-native function!");
         }
 #endif
 
-        subject = doGetObjectPrincipal((JSObject*)aFunObj);
+        subject = doGetObjectPrincipal(rootedFunObj);
     }
 
     if (!subject)
@@ -1657,7 +1631,7 @@ nsScriptSecurityManager::CheckFunctionAccess(JSContext *aCx, void *aFunObj,
     nsIPrincipal* object = doGetObjectPrincipal(obj);
 
     if (!object)
-        return NS_ERROR_FAILURE;        
+        return NS_ERROR_FAILURE;
 
     bool subsumes;
     rv = subject->Subsumes(object, &subsumes);
@@ -1976,7 +1950,7 @@ nsScriptSecurityManager::GetScriptPrincipal(JSScript *script,
 // static
 nsIPrincipal*
 nsScriptSecurityManager::GetFunctionObjectPrincipal(JSContext *cx,
-                                                    JSObject *obj,
+                                                    JS::Handle<JSObject*> obj,
                                                     nsresult *rv)
 {
     NS_PRECONDITION(rv, "Null out param");
@@ -1992,7 +1966,7 @@ nsScriptSecurityManager::GetFunctionObjectPrincipal(JSContext *cx,
         return result;
     }
 
-    JSFunction *fun = JS_GetObjectFunction(obj);
+    JS::Rooted<JSFunction*> fun(cx, JS_GetObjectFunction(obj));
     JSScript *script = JS_GetFunctionScript(cx, fun);
 
     if (!script)
@@ -2445,7 +2419,6 @@ nsresult nsScriptSecurityManager::Init()
         return NS_ERROR_FAILURE;
 
     NS_ADDREF(sXPConnect = xpconnect);
-    NS_ADDREF(sJSContextStack = xpconnect);
 
     JSContext* cx = GetSafeJSContext();
     if (!cx) return NS_ERROR_FAILURE;   // this can happen of xpt loading fails
@@ -2514,15 +2487,14 @@ void
 nsScriptSecurityManager::Shutdown()
 {
     if (sRuntime) {
-        JS_SetSecurityCallbacks(sRuntime, NULL);
-        JS_SetTrustedPrincipals(sRuntime, NULL);
+        JS_SetSecurityCallbacks(sRuntime, nullptr);
+        JS_SetTrustedPrincipals(sRuntime, nullptr);
         sRuntime = nullptr;
     }
     sEnabledID = JSID_VOID;
 
     NS_IF_RELEASE(sIOService);
     NS_IF_RELEASE(sXPConnect);
-    NS_IF_RELEASE(sJSContextStack);
     NS_IF_RELEASE(sStrBundle);
 }
 
@@ -2613,9 +2585,7 @@ nsScriptSecurityManager::InitPolicies()
     }
 
     // Get a JS context - we need it to create internalized strings later.
-    JSContext* cx = GetSafeJSContext();
-    NS_ASSERTION(cx, "failed to get JS context");
-    AutoCxPusher autoPusher(sJSContextStack, cx);
+    AutoSafeJSContext cx;
     rv = InitDomainPolicy(cx, "default", mDefaultPolicy);
     NS_ENSURE_SUCCESS(rv, rv);
 

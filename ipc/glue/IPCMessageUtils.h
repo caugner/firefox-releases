@@ -32,9 +32,11 @@
 #include "nsRegion.h"
 #include "gfxASurface.h"
 #include "jsapi.h"
-#include "LayersTypes.h"
+#include "mozilla/layers/LayersTypes.h"
+#include "mozilla/layers/CompositorTypes.h"
 #include "FrameMetrics.h"
 #include "nsCSSProperty.h"
+#include "ImageLayers.h"
 
 #ifdef _MSC_VER
 #pragma warning( disable : 4800 )
@@ -56,6 +58,7 @@ typedef gfxASurface::gfxImageFormat PixelFormat;
 typedef gfxASurface::gfxSurfaceType gfxSurfaceType;
 typedef gfxPattern::GraphicsFilter GraphicsFilterType;
 typedef layers::LayersBackend LayersBackend;
+typedef layers::ImageLayer::ScaleMode ScaleMode;
 
 // This is a cross-platform approximation to HANDLE, which we expect
 // to be typedef'd to void* or thereabouts.
@@ -613,6 +616,13 @@ struct ParamTraits<mozilla::layers::LayersBackend>
 {};
 
 template <>
+struct ParamTraits<mozilla::ScaleMode>
+  : public EnumSerializer<mozilla::ScaleMode,
+                          mozilla::layers::ImageLayer::SCALE_NONE,
+                          mozilla::layers::ImageLayer::SCALE_SENTINEL>
+{};
+
+template <>
 struct ParamTraits<mozilla::PixelFormat>
   : public EnumSerializer<mozilla::PixelFormat,
                           gfxASurface::ImageFormatARGB32,
@@ -1052,6 +1062,51 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
             ReadParam(aMsg, aIter, &aResult->mMayHaveTouchListeners));
   }
 };
+
+template<>
+struct ParamTraits<mozilla::layers::TextureFactoryIdentifier>
+{
+  typedef mozilla::layers::TextureFactoryIdentifier paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam)
+  {
+    WriteParam(aMsg, aParam.mParentBackend);
+    WriteParam(aMsg, aParam.mMaxTextureSize);
+  }
+
+  static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
+  {
+    return ReadParam(aMsg, aIter, &aResult->mParentBackend) &&
+           ReadParam(aMsg, aIter, &aResult->mMaxTextureSize);
+  }
+};
+
+template<>
+struct ParamTraits<mozilla::layers::TextureInfo>
+{
+  typedef mozilla::layers::TextureInfo paramType;
+  
+  static void Write(Message* aMsg, const paramType& aParam)
+  {
+    WriteParam(aMsg, aParam.mCompositableType);
+    WriteParam(aMsg, aParam.mTextureHostFlags);
+    WriteParam(aMsg, aParam.mTextureFlags);
+  }
+
+  static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
+  {
+    return ReadParam(aMsg, aIter, &aResult->mCompositableType) &&
+           ReadParam(aMsg, aIter, &aResult->mTextureHostFlags) &&
+           ReadParam(aMsg, aIter, &aResult->mTextureFlags);
+  }
+};
+
+template <>
+struct ParamTraits<mozilla::layers::CompositableType>
+  : public EnumSerializer<mozilla::layers::CompositableType,
+                          mozilla::layers::BUFFER_UNKNOWN,
+                          mozilla::layers::BUFFER_COUNT>
+{};
 
 } /* namespace IPC */
 

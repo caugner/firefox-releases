@@ -12,13 +12,9 @@ include $(DEPTH)/config/autoconf.mk
 LIBRARY_NAME     = domfile_s
 LIBXUL_LIBRARY   = 1
 FORCE_STATIC_LIB = 1
-ifndef _MSC_VER
 FAIL_ON_WARNINGS := 1
-endif # !_MSC_VER
 
 include $(topsrcdir)/dom/dom-config.mk
-
-EXPORTS_NAMESPACES = mozilla/dom/file
 
 CPPSRCS = \
   AsyncHelper.cpp \
@@ -38,26 +34,6 @@ CPPSRCS = \
   ArchiveZipFile.cpp \
   ArchiveReader.cpp \
   ArchiveRequest.cpp \
-  $(NULL)
-
-EXPORTS = \
-  nsIFileStorage.h \
-  $(NULL)
-
-EXPORTS_mozilla/dom/file = \
-  DOMFileHandle.h \
-  DOMFileRequest.h \
-  File.h \
-  FileCommon.h \
-  FileHandle.h \
-  FileHelper.h \
-  FileService.h \
-  LockedFile.h \
-  ArchiveEvent.h \
-  ArchiveZipEvent.h \
-  ArchiveZipFile.h \
-  ArchiveReader.h \
-  ArchiveRequest.h \
   $(NULL)
 
 include $(topsrcdir)/config/rules.mk

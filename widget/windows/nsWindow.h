@@ -136,7 +136,7 @@ public:
                                               bool aDoCapture);
   NS_IMETHOD              GetAttention(int32_t aCycleCount);
   virtual bool            HasPendingInputEvent();
-  virtual LayerManager*   GetLayerManager(PLayersChild* aShadowManager = nullptr,
+  virtual LayerManager*   GetLayerManager(PLayerTransactionChild* aShadowManager = nullptr,
                                           LayersBackend aBackendHint = mozilla::layers::LAYERS_NONE,
                                           LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
                                           bool* aAllowRetaining = nullptr);
@@ -281,7 +281,8 @@ public:
 
   static void             SetupKeyModifiersSequence(nsTArray<KeyPair>* aArray, uint32_t aModifiers);
 
-  virtual bool            ShouldUseOffMainThreadCompositing();
+  virtual mozilla::layers::LayersBackend GetPreferredCompositorBackend() { return mozilla::layers::LAYERS_D3D11; }
+
 protected:
 
   // A magic number to identify the FAKETRACKPOINTSCROLLABLE window created

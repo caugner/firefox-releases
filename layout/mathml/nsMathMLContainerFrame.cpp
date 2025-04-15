@@ -39,7 +39,7 @@ using namespace mozilla;
 NS_IMPL_FRAMEARENA_HELPERS(nsMathMLContainerFrame)
 
 NS_QUERYFRAME_HEAD(nsMathMLContainerFrame)
-  NS_QUERYFRAME_ENTRY(nsMathMLFrame)
+  NS_QUERYFRAME_ENTRY(nsIMathMLFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 // =============================================================================
@@ -1286,7 +1286,7 @@ nsMathMLContainerFrame::Place(nsRenderingContext& aRenderingContext,
   // another math frame
   mBoundingMetrics.width = child.X();
 
-  aDesiredSize.width = mBoundingMetrics.width;
+  aDesiredSize.width = std::max(0, mBoundingMetrics.width);
   aDesiredSize.height = ascent + descent;
   aDesiredSize.ascent = ascent;
   aDesiredSize.mBoundingMetrics = mBoundingMetrics;

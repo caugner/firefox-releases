@@ -216,7 +216,7 @@ static nsresult ConvertToUTF8(nsIUnicodeDecoder *aUnicodeDecoder,
   nsresult rv = aUnicodeDecoder->GetMaxLength(aString.get(), numberOfBytes,
                                               &outUnicodeLen);
   NS_ENSURE_SUCCESS(rv, rv);
-  if (!EnsureStringLength(buffer, outUnicodeLen))
+  if (!buffer.SetLength(outUnicodeLen, fallible_t()))
     return NS_ERROR_OUT_OF_MEMORY;
   rv = aUnicodeDecoder->Convert(aString.get(), &numberOfBytes,
                                 buffer.BeginWriting(), &outUnicodeLen);
@@ -321,37 +321,10 @@ nsPluginTag::IsEnabled()
   return (state == ePluginState_Enabled) || (state == ePluginState_Clicktoplay);
 }
 
-void
-nsPluginTag::SetEnabled(bool enabled)
-{
-  if (enabled == IsEnabled()) {
-    return;
-  }
-
-  PluginState state = GetPluginState();
-
-  if (!enabled) {
-    SetPluginState(ePluginState_Disabled);
-  } else if (state != ePluginState_Clicktoplay) {
-    SetPluginState(ePluginState_Enabled);
-  }
-
-  if (nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst()) {
-    host->UpdatePluginInfo(this);
-  }
-}
-
 NS_IMETHODIMP
 nsPluginTag::GetDisabled(bool* aDisabled)
 {
   *aDisabled = !IsEnabled();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsPluginTag::SetDisabled(bool aDisabled)
-{
-  SetEnabled(!aDisabled);
   return NS_OK;
 }
 
@@ -403,19 +376,39 @@ nsPluginTag::GetClicktoplay(bool *aClicktoplay)
 }
 
 NS_IMETHODIMP
-nsPluginTag::SetClicktoplay(bool clicktoplay)
-{
-  if (clicktoplay == IsClicktoplay()) {
+nsPluginTag::GetEnabledState(uint32_t *aEnabledState) {
+  int32_t enabledState;
+  nsresult rv = Preferences::GetInt(GetStatePrefNameForPlugin(this).get(),
+                                    &enabledState);
+  if (NS_SUCCEEDED(rv) &&
+      enabledState >= nsIPluginTag::STATE_DISABLED &&
+      enabledState <= nsIPluginTag::STATE_ENABLED) {
+    *aEnabledState = (uint32_t)enabledState;
+    return rv;
+  }
+
+  enabledState = Preferences::GetInt("plugin.default.state",
+                                     nsIPluginTag::STATE_ENABLED);
+  if (enabledState >= nsIPluginTag::STATE_DISABLED &&
+      enabledState <= nsIPluginTag::STATE_ENABLED) {
+    *aEnabledState = (uint32_t)enabledState;
     return NS_OK;
   }
 
-  const PluginState state = GetPluginState();
-  if (state != ePluginState_Disabled) {
-    SetPluginState(ePluginState_Clicktoplay);
-  }
+  return NS_ERROR_UNEXPECTED;
+}
 
-  if (nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst()) {
-    host->UpdatePluginInfo(this);
+NS_IMETHODIMP
+nsPluginTag::SetEnabledState(uint32_t aEnabledState) {
+  if (aEnabledState >= ePluginState_MaxValue)
+    return NS_ERROR_ILLEGAL_VALUE;
+  uint32_t oldState = nsIPluginTag::STATE_DISABLED;
+  GetEnabledState(&oldState);
+  if (oldState != aEnabledState) {
+    Preferences::SetInt(GetStatePrefNameForPlugin(this).get(), aEnabledState);
+    if (nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst()) {
+      host->UpdatePluginInfo(this);
+    }
   }
   return NS_OK;
 }
@@ -423,14 +416,18 @@ nsPluginTag::SetClicktoplay(bool clicktoplay)
 nsPluginTag::PluginState
 nsPluginTag::GetPluginState()
 {
-  return (PluginState)Preferences::GetInt(GetStatePrefNameForPlugin(this).get(),
-                                          ePluginState_Enabled);
+  uint32_t enabledState = nsIPluginTag::STATE_DISABLED;
+  GetEnabledState(&enabledState);
+  return (PluginState)enabledState;
 }
 
 void
 nsPluginTag::SetPluginState(PluginState state)
 {
-  Preferences::SetInt(GetStatePrefNameForPlugin(this).get(), state);
+  MOZ_STATIC_ASSERT((uint32_t)nsPluginTag::ePluginState_Disabled == nsIPluginTag::STATE_DISABLED, "nsPluginTag::ePluginState_Disabled must match nsIPluginTag::STATE_DISABLED");
+  MOZ_STATIC_ASSERT((uint32_t)nsPluginTag::ePluginState_Clicktoplay == nsIPluginTag::STATE_CLICKTOPLAY, "nsPluginTag::ePluginState_Clicktoplay must match nsIPluginTag::STATE_CLICKTOPLAY");
+  MOZ_STATIC_ASSERT((uint32_t)nsPluginTag::ePluginState_Enabled == nsIPluginTag::STATE_ENABLED, "nsPluginTag::ePluginState_Enabled must match nsIPluginTag::STATE_ENABLED");
+  SetEnabledState((uint32_t)state);
 }
 
 NS_IMETHODIMP

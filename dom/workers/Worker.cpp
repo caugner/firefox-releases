@@ -31,8 +31,8 @@ class Worker
 {
   static DOMJSClass sClass;
   static DOMIfaceAndProtoJSClass sProtoClass;
-  static JSPropertySpec sProperties[];
-  static JSFunctionSpec sFunctions[];
+  static const JSPropertySpec sProperties[];
+  static const JSFunctionSpec sFunctions[];
 
   enum
   {
@@ -74,10 +74,10 @@ public:
   InitClass(JSContext* aCx, JSObject* aObj, JSObject* aParentProto,
             bool aMainRuntime)
   {
-    JSObject* proto =
+    JS::Rooted<JSObject*> proto(aCx,
       js::InitClassWithReserved(aCx, aObj, aParentProto, ProtoClass(),
                                 Construct, 0, sProperties, sFunctions,
-                                NULL, NULL);
+                                NULL, NULL));
     if (!proto) {
       return NULL;
     }
@@ -112,7 +112,7 @@ protected:
       return false;
     }
 
-    JSString* scriptURL = JS_ValueToString(aCx, JS_ARGV(aCx, aVp)[0]);
+    JS::Rooted<JSString*> scriptURL(aCx, JS_ValueToString(aCx, JS_ARGV(aCx, aVp)[0]));
     if (!scriptURL) {
       return false;
     }
@@ -137,7 +137,7 @@ protected:
       parent->AssertIsOnWorkerThread();
     }
 
-    JSObject* obj = JS_NewObject(aCx, aClass, nullptr, nullptr);
+    JS::Rooted<JSObject*> obj(aCx, JS_NewObject(aCx, aClass, nullptr, nullptr));
     if (!obj) {
       return false;
     }
@@ -188,7 +188,7 @@ private:
 
     NS_ConvertASCIItoUTF16 nameStr(name + 2);
     ErrorResult rv;
-    JSObject* listener = worker->GetEventListener(nameStr, rv);
+    JS::Rooted<JSObject*> listener(aCx, worker->GetEventListener(nameStr, rv));
 
     if (rv.Failed()) {
       JS_ReportError(aCx, "Failed to get listener!");
@@ -211,8 +211,8 @@ private:
       return !JS_IsExceptionPending(aCx);
     }
 
-    JSObject* listener;
-    if (!JS_ValueToObject(aCx, aVp, &listener)) {
+    JS::Rooted<JSObject*> listener(aCx);
+    if (!JS_ValueToObject(aCx, aVp, listener.address())) {
       return false;
     }
 
@@ -262,7 +262,7 @@ private:
       return false;
     }
 
-    const char*& name = sFunctions[0].name;
+    const char* name = sFunctions[0].name;
     WorkerPrivate* worker = GetInstancePrivate(aCx, obj, name);
     if (!worker) {
       return !JS_IsExceptionPending(aCx);
@@ -279,16 +279,16 @@ private:
       return false;
     }
 
-    const char*& name = sFunctions[1].name;
+    const char* name = sFunctions[1].name;
     WorkerPrivate* worker = GetInstancePrivate(aCx, obj, name);
     if (!worker) {
       return !JS_IsExceptionPending(aCx);
     }
 
-    jsval message;
-    jsval transferable = JSVAL_VOID;
+    JS::Rooted<JS::Value> message(aCx);
+    JS::Rooted<JS::Value> transferable(aCx, JS::UndefinedValue());
     if (!JS_ConvertArguments(aCx, aArgc, JS_ARGV(aCx, aVp), "v/v",
-                             &message, &transferable)) {
+                             message.address(), transferable.address())) {
       return false;
     }
 
@@ -301,7 +301,7 @@ DOMJSClass Worker::sClass = {
     "Worker",
     JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(3) |
     JSCLASS_IMPLEMENTS_BARRIERS,
-    JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+    JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize,
     NULL, NULL, NULL, NULL, Trace
   },
@@ -321,7 +321,7 @@ DOMIfaceAndProtoJSClass Worker::sProtoClass = {
     "Worker",
     JSCLASS_IS_DOMIFACEANDPROTOJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(2),
     JS_PropertyStub,       /* addProperty */
-    JS_PropertyStub,       /* delProperty */
+    JS_DeletePropertyStub, /* delProperty */
     JS_PropertyStub,       /* getProperty */
     JS_StrictPropertyStub, /* setProperty */
     JS_EnumerateStub,
@@ -342,7 +342,7 @@ DOMIfaceAndProtoJSClass Worker::sProtoClass = {
   0
 };
 
-JSPropertySpec Worker::sProperties[] = {
+const JSPropertySpec Worker::sProperties[] = {
   { sEventStrings[STRING_onerror], STRING_onerror, PROPERTY_FLAGS,
     JSOP_WRAPPER(GetEventListener), JSOP_WRAPPER(SetEventListener) },
   { sEventStrings[STRING_onmessage], STRING_onmessage, PROPERTY_FLAGS,
@@ -350,7 +350,7 @@ JSPropertySpec Worker::sProperties[] = {
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-JSFunctionSpec Worker::sFunctions[] = {
+const JSFunctionSpec Worker::sFunctions[] = {
   JS_FN("terminate", Terminate, 0, FUNCTION_FLAGS),
   JS_FN("postMessage", PostMessage, 1, FUNCTION_FLAGS),
   JS_FS_END
@@ -389,9 +389,9 @@ public:
   InitClass(JSContext* aCx, JSObject* aObj, JSObject* aParentProto,
             bool aMainRuntime)
   {
-    JSObject* proto =
+    JS::Rooted<JSObject*> proto(aCx,
       js::InitClassWithReserved(aCx, aObj, aParentProto, ProtoClass(),
-                                Construct, 0, NULL, NULL, NULL, NULL);
+                                Construct, 0, NULL, NULL, NULL, NULL));
     if (!proto) {
       return NULL;
     }
@@ -464,7 +464,7 @@ DOMJSClass ChromeWorker::sClass = {
   { "ChromeWorker",
     JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(3) |
     JSCLASS_IMPLEMENTS_BARRIERS,
-    JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+    JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize,
     NULL, NULL, NULL, NULL, Trace,
   },
@@ -484,7 +484,7 @@ DOMIfaceAndProtoJSClass ChromeWorker::sProtoClass = {
     "ChromeWorker",
     JSCLASS_IS_DOMIFACEANDPROTOJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(2),
     JS_PropertyStub,       /* addProperty */
-    JS_PropertyStub,       /* delProperty */
+    JS_DeletePropertyStub, /* delProperty */
     JS_PropertyStub,       /* getProperty */
     JS_StrictPropertyStub, /* setProperty */
     JS_EnumerateStub,

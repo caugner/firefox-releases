@@ -26,9 +26,15 @@ public:
   // Forward to base class
   NS_FORWARD_TO_NSDOMMOUSEEVENT
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope)
+  virtual JSObject* WrapObject(JSContext* aCx,
+			       JS::Handle<JSObject*> aScope) MOZ_OVERRIDE
   {
     return mozilla::dom::SimpleGestureEventBinding::Wrap(aCx, aScope, this);
+  }
+
+  uint32_t AllowedDirections()
+  {
+    return static_cast<nsSimpleGestureEvent*>(mEvent)->allowedDirections;
   }
 
   uint32_t Direction()
@@ -61,6 +67,7 @@ public:
                               bool aMetaKey,
                               uint16_t aButton,
                               mozilla::dom::EventTarget* aRelatedTarget,
+                              uint32_t aAllowedDirections,
                               uint32_t aDirection,
                               double aDelta,
                               uint32_t aClickCount,
@@ -70,8 +77,8 @@ public:
                                  aView, aDetail, aScreenX, aScreenY,
                                  aClientX, aClientY, aCtrlKey, aAltKey,
                                  aShiftKey, aMetaKey, aButton,
-                                 aRelatedTarget, aDirection,
-                                 aDelta, aClickCount);
+                                 aRelatedTarget, aAllowedDirections,
+                                 aDirection, aDelta, aClickCount);
   }
 };
 

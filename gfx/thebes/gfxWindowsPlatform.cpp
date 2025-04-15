@@ -53,34 +53,11 @@ using namespace mozilla::gfx;
 #include "nsMemory.h"
 #endif
 
-/*
- * Required headers are not available in the current consumer preview Win8
- * dev kit, disabling for now.
- */
-#undef MOZ_WINSDK_TARGETVER
+#include <d3d11.h>
 
-/**
- * XXX below should be >= MOZ_NTDDI_WIN8 or such which is not defined yet
- */
-#if MOZ_WINSDK_TARGETVER > MOZ_NTDDI_WIN7
-#define ENABLE_GPU_MEM_REPORTER
-#endif
-
-#if defined CAIRO_HAS_D2D_SURFACE || defined ENABLE_GPU_MEM_REPORTER
 #include "nsIMemoryReporter.h"
-#endif
-
-#ifdef ENABLE_GPU_MEM_REPORTER
 #include <winternl.h>
-
-/**
- * XXX need to check that extern C is really needed with Win8 SDK.
- *     It was required for files I had available at push time.
- */
-extern "C" {
-#include <d3dkmthk.h>
-}
-#endif
+#include "d3dkmtQueryStatistics.h"
 
 using namespace mozilla;
 
@@ -183,18 +160,30 @@ typedef HRESULT (WINAPI*D3D10CreateDevice1Func)(
   UINT SDKVersion,
   ID3D10Device1 **ppDevice
 );
+#endif
 
 typedef HRESULT(WINAPI*CreateDXGIFactory1Func)(
   REFIID riid,
   void **ppFactory
 );
-#endif
 
-#ifdef ENABLE_GPU_MEM_REPORTER
+typedef HRESULT (WINAPI*D3D11CreateDeviceFunc)(
+  IDXGIAdapter *pAdapter,
+  D3D_DRIVER_TYPE DriverType,
+  HMODULE Software,
+  UINT Flags,
+  D3D_FEATURE_LEVEL *pFeatureLevels,
+  UINT FeatureLevels,
+  UINT SDKVersion,
+  ID3D11Device **ppDevice,
+  D3D_FEATURE_LEVEL *pFeatureLevel,
+  ID3D11DeviceContext *ppImmediateContext
+);
+
 class GPUAdapterMultiReporter : public nsIMemoryMultiReporter {
 
     // Callers must Release the DXGIAdapter after use or risk mem-leak
-    static bool GetDXGIAdapter(__out IDXGIAdapter **DXGIAdapter)
+    static bool GetDXGIAdapter(IDXGIAdapter **DXGIAdapter)
     {
         ID3D10Device1 *D2D10Device;
         IDXGIDevice *DXGIDevice;
@@ -212,6 +201,14 @@ class GPUAdapterMultiReporter : public nsIMemoryMultiReporter {
     
 public:
     NS_DECL_ISUPPORTS
+
+    // nsIMemoryMultiReporter abstract method implementation
+    NS_IMETHOD
+    GetName(nsACString &aName)
+    {
+        aName.AssignLiteral("gpuadapter");
+        return NS_OK;
+    }
     
     // nsIMemoryMultiReporter abstract method implementation
     NS_IMETHOD
@@ -227,7 +224,7 @@ public:
         IDXGIAdapter *DXGIAdapter;
         
         HMODULE gdi32Handle;
-        PFND3DKMT_QUERYSTATISTICS queryD3DKMTStatistics;
+        PFND3DKMTQS queryD3DKMTStatistics;
         
         winVers = gfxWindowsPlatform::WindowsOSVersion(&buildNum);
         
@@ -236,35 +233,35 @@ public:
             return NS_OK;
         
         if (gdi32Handle = LoadLibrary(TEXT("gdi32.dll")))
-            queryD3DKMTStatistics = (PFND3DKMT_QUERYSTATISTICS)GetProcAddress(gdi32Handle, "D3DKMTQueryStatistics");
+            queryD3DKMTStatistics = (PFND3DKMTQS)GetProcAddress(gdi32Handle, "D3DKMTQueryStatistics");
         
         if (queryD3DKMTStatistics && GetDXGIAdapter(&DXGIAdapter)) {
             // Most of this block is understood thanks to wj32's work on Process Hacker
             
             DXGI_ADAPTER_DESC adapterDesc;
-            D3DKMT_QUERYSTATISTICS queryStatistics;
+            D3DKMTQS queryStatistics;
             
             DXGIAdapter->GetDesc(&adapterDesc);
             DXGIAdapter->Release();
             
-            memset(&queryStatistics, 0, sizeof(D3DKMT_QUERYSTATISTICS));
-            queryStatistics.Type = D3DKMT_QUERYSTATISTICS_PROCESS;
+            memset(&queryStatistics, 0, sizeof(D3DKMTQS));
+            queryStatistics.Type = D3DKMTQS_PROCESS;
             queryStatistics.AdapterLuid = adapterDesc.AdapterLuid;
             queryStatistics.hProcess = ProcessHandle;
             if (NT_SUCCESS(queryD3DKMTStatistics(&queryStatistics))) {
-                committedBytesUsed = queryStatistics.QueryResult.ProcessInformation.SystemMemory.BytesAllocated;
+                committedBytesUsed = queryStatistics.QueryResult.ProcessInfo.SystemMemory.BytesAllocated;
             }
             
-            memset(&queryStatistics, 0, sizeof(D3DKMT_QUERYSTATISTICS));
-            queryStatistics.Type = D3DKMT_QUERYSTATISTICS_ADAPTER;
+            memset(&queryStatistics, 0, sizeof(D3DKMTQS));
+            queryStatistics.Type = D3DKMTQS_ADAPTER;
             queryStatistics.AdapterLuid = adapterDesc.AdapterLuid;
             if (NT_SUCCESS(queryD3DKMTStatistics(&queryStatistics))) {
                 ULONG i;
-                ULONG segmentCount = queryStatistics.QueryResult.AdapterInformation.NbSegments;
+                ULONG segmentCount = queryStatistics.QueryResult.AdapterInfo.NbSegments;
                 
                 for (i = 0; i < segmentCount; i++) {
-                    memset(&queryStatistics, 0, sizeof(D3DKMT_QUERYSTATISTICS));
-                    queryStatistics.Type = D3DKMT_QUERYSTATISTICS_SEGMENT;
+                    memset(&queryStatistics, 0, sizeof(D3DKMTQS));
+                    queryStatistics.Type = D3DKMTQS_SEGMENT;
                     queryStatistics.AdapterLuid = adapterDesc.AdapterLuid;
                     queryStatistics.QuerySegment.SegmentId = i;
                     
@@ -272,24 +269,24 @@ public:
                         bool aperture;
                         
                         // SegmentInformation has a different definition in Win7 than later versions
-                        if (winVers > gfxWindowsPlatform::kWindows7)
-                            aperture = queryStatistics.QueryResult.SegmentInformation.Aperture;
+                        if (winVers < gfxWindowsPlatform::kWindows8)
+                            aperture = queryStatistics.QueryResult.SegmentInfoWin7.Aperture;
                         else
-                            aperture = queryStatistics.QueryResult.SegmentInformationV1.Aperture;
+                            aperture = queryStatistics.QueryResult.SegmentInfoWin8.Aperture;
                         
-                        memset(&queryStatistics, 0, sizeof(D3DKMT_QUERYSTATISTICS));
-                        queryStatistics.Type = D3DKMT_QUERYSTATISTICS_PROCESS_SEGMENT;
+                        memset(&queryStatistics, 0, sizeof(D3DKMTQS));
+                        queryStatistics.Type = D3DKMTQS_PROCESS_SEGMENT;
                         queryStatistics.AdapterLuid = adapterDesc.AdapterLuid;
                         queryStatistics.hProcess = ProcessHandle;
                         queryStatistics.QueryProcessSegment.SegmentId = i;
                         if (NT_SUCCESS(queryD3DKMTStatistics(&queryStatistics))) {
                             if (aperture)
                                 sharedBytesUsed += queryStatistics.QueryResult
-                                                                  .ProcessSegmentInformation
+                                                                  .ProcessSegmentInfo
                                                                   .BytesCommitted;
                             else
                                 dedicatedBytesUsed += queryStatistics.QueryResult
-                                                                     .ProcessSegmentInformation
+                                                                     .ProcessSegmentInfo
                                                                      .BytesCommitted;
                         }
                     }
@@ -323,18 +320,8 @@ public:
 
         return NS_OK;
     }
-
-    // nsIMemoryMultiReporter abstract method implementation
-    NS_IMETHOD
-    GetExplicitNonHeap(int64_t *aExplicitNonHeap)
-    {
-        // This reporter doesn't do any non-heap measurements.
-        *aExplicitNonHeap = 0;
-        return NS_OK;
-    }
 };
 NS_IMPL_ISUPPORTS1(GPUAdapterMultiReporter, nsIMemoryMultiReporter)
-#endif // ENABLE_GPU_MEM_REPORTER
 
 static __inline void
 BuildKeyNameFromFontName(nsAString &aName)
@@ -345,6 +332,7 @@ BuildKeyNameFromFontName(nsAString &aName)
 }
 
 gfxWindowsPlatform::gfxWindowsPlatform()
+  : mD3D11DeviceInitialized(false)
 {
     mPrefFonts.Init(50);
 
@@ -370,17 +358,13 @@ gfxWindowsPlatform::gfxWindowsPlatform()
 
     UpdateRenderMode();
 
-#ifdef ENABLE_GPU_MEM_REPORTER
     mGPUAdapterMultiReporter = new GPUAdapterMultiReporter();
     NS_RegisterMemoryMultiReporter(mGPUAdapterMultiReporter);
-#endif
 }
 
 gfxWindowsPlatform::~gfxWindowsPlatform()
 {
-#ifdef ENABLE_GPU_MEM_REPORTER
     NS_UnregisterMemoryMultiReporter(mGPUAdapterMultiReporter);
-#endif
     
     ::ReleaseDC(NULL, mScreenDC);
     // not calling FT_Done_FreeType because cairo may still hold references to
@@ -560,14 +544,17 @@ gfxWindowsPlatform::VerifyD2DDevice(bool aAttemptForce)
 
     nsRefPtr<ID3D10Device1> device;
 
-    nsModuleHandle dxgiModule(LoadLibrarySystem32(L"dxgi.dll"));
-    CreateDXGIFactory1Func createDXGIFactory1 = (CreateDXGIFactory1Func)
-        GetProcAddress(dxgiModule, "CreateDXGIFactory1");
-
     int supportedFeatureLevelsCount = ArrayLength(kSupportedFeatureLevels);
     // If we're not running in Metro don't allow DX9.3
     if (!IsRunningInWindowsMetro()) {
       supportedFeatureLevelsCount--;
+    }
+
+    nsRefPtr<IDXGIAdapter1> adapter1 = GetDXGIAdapter();
+
+    if (!adapter1) {
+      // Unable to create adapter, abort acceleration.
+      return;
     }
 
     // It takes a lot of time (5-10% of startup time or ~100ms) to do both
@@ -576,28 +563,6 @@ gfxWindowsPlatform::VerifyD2DDevice(bool aAttemptForce)
     int featureLevelIndex = Preferences::GetInt(kFeatureLevelPref, 0);
     if (featureLevelIndex >= supportedFeatureLevelsCount || featureLevelIndex < 0)
       featureLevelIndex = 0;
-
-    // Try to use a DXGI 1.1 adapter in order to share resources
-    // across processes.
-    nsRefPtr<IDXGIAdapter1> adapter1;
-    if (createDXGIFactory1) {
-        nsRefPtr<IDXGIFactory1> factory1;
-        HRESULT hr = createDXGIFactory1(__uuidof(IDXGIFactory1),
-                                        getter_AddRefs(factory1));
-
-        if (FAILED(hr) || !factory1) {
-          // This seems to happen with some people running the iZ3D driver.
-          // They won't get acceleration.
-          return;
-        }
-
-        hr = factory1->EnumAdapters1(0, getter_AddRefs(adapter1));
-        if (FAILED(hr) || !adapter1) {
-          // We should return and not accelerate if we can't obtain
-          // an adapter.
-          return;
-        }
-    }
 
     // Start with the last used feature level, and move to lower DX versions
     // until we find one that works.
@@ -1464,8 +1429,89 @@ gfxWindowsPlatform::SetupClearTypeParams()
 #endif
 }
 
+ID3D11Device*
+gfxWindowsPlatform::GetD3D11Device()
+{
+  if (mD3D11DeviceInitialized) {
+    return mD3D11Device;
+  }
+
+  mD3D11DeviceInitialized = true;
+
+  nsModuleHandle d3d11Module(LoadLibrarySystem32(L"d3d11.dll"));
+  D3D11CreateDeviceFunc d3d11CreateDevice = (D3D11CreateDeviceFunc)
+    GetProcAddress(d3d11Module, "D3D11CreateDevice");
+
+  if (!d3d11CreateDevice) {
+    return nullptr;
+  }
+
+  D3D_FEATURE_LEVEL featureLevels[] = {
+    D3D_FEATURE_LEVEL_11_1,
+    D3D_FEATURE_LEVEL_11_0,
+    D3D_FEATURE_LEVEL_10_1,
+    D3D_FEATURE_LEVEL_10_0,
+    D3D_FEATURE_LEVEL_9_3
+  };
+
+  RefPtr<IDXGIAdapter1> adapter = GetDXGIAdapter();
+
+  if (!adapter) {
+    return nullptr;
+  }
+
+  HRESULT hr = d3d11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL,
+                                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                 featureLevels, sizeof(featureLevels) / sizeof(D3D_FEATURE_LEVEL),
+                                 D3D11_SDK_VERSION, byRef(mD3D11Device), nullptr, nullptr);
+
+  // We leak these everywhere and we need them our entire runtime anyway, let's
+  // leak it here as well.
+  d3d11Module.disown();
+
+  return mD3D11Device;
+}
+
 bool
 gfxWindowsPlatform::IsOptimus()
 {
   return GetModuleHandleA("nvumdshim.dll");
+}
+
+IDXGIAdapter1*
+gfxWindowsPlatform::GetDXGIAdapter()
+{
+  if (mAdapter) {
+    return mAdapter;
+  }
+
+  nsModuleHandle dxgiModule(LoadLibrarySystem32(L"dxgi.dll"));
+  CreateDXGIFactory1Func createDXGIFactory1 = (CreateDXGIFactory1Func)
+    GetProcAddress(dxgiModule, "CreateDXGIFactory1");
+
+  // Try to use a DXGI 1.1 adapter in order to share resources
+  // across processes.
+  if (createDXGIFactory1) {
+    nsRefPtr<IDXGIFactory1> factory1;
+    HRESULT hr = createDXGIFactory1(__uuidof(IDXGIFactory1),
+                                    getter_AddRefs(factory1));
+
+    if (FAILED(hr) || !factory1) {
+      // This seems to happen with some people running the iZ3D driver.
+      // They won't get acceleration.
+      return nullptr;
+    }
+
+    hr = factory1->EnumAdapters1(0, byRef(mAdapter));
+    if (FAILED(hr)) {
+      // We should return and not accelerate if we can't obtain
+      // an adapter.
+      return nullptr;
+    }
+  }
+
+  // We leak this module everywhere, we might as well do so here as well.
+  dxgiModule.disown();
+
+  return mAdapter;
 }

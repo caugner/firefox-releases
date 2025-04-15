@@ -12,9 +12,7 @@ include $(DEPTH)/config/autoconf.mk
 
 LIBRARY_NAME	= gksvgbase_s
 LIBXUL_LIBRARY	= 1
-ifndef _MSC_VER
 FAIL_ON_WARNINGS = 1
-endif # !_MSC_VER
 
 
 CPPSRCS		= \
@@ -59,15 +57,6 @@ include $(topsrcdir)/config/config.mk
 
 # we don't want the shared lib, but we want to force the creation of a static lib.
 FORCE_STATIC_LIB = 1
-
-EXPORTS = \
-	nsSVGEffects.h \
-	nsSVGFilterInstance.h \
-	nsSVGForeignObjectFrame.h \
-	nsSVGIntegrationUtils.h \
-	nsSVGUtils.h \
-	SVGImageContext.h \
-	$(NULL)
 
 include $(topsrcdir)/config/rules.mk
 

@@ -31,11 +31,12 @@ public:
   MediaStreamTrack(DOMMediaStream* aStream, TrackID aTrackID);
   virtual ~MediaStreamTrack();
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(MediaStreamTrack, nsDOMEventTargetHelper)
 
   DOMMediaStream* GetParentObject() const { return mStream; }
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) = 0;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE = 0;
 
   DOMMediaStream* GetStream() const { return mStream; }
   TrackID GetTrackID() const { return mTrackID; }
@@ -46,6 +47,8 @@ public:
   virtual void GetKind(nsAString& aKind) = 0;
   void GetId(nsAString& aID);
   void GetLabel(nsAString& aLabel) { aLabel.Truncate(); }
+  bool Enabled() { return mEnabled; }
+  void SetEnabled(bool aEnabled);
 
   // Notifications from the MediaStreamGraph
   void NotifyEnded() { mEnded = true; }
@@ -55,6 +58,7 @@ protected:
   TrackID mTrackID;
   nsID mID;
   bool mEnded;
+  bool mEnabled;
 };
 
 }

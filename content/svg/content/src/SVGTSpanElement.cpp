@@ -13,7 +13,7 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-SVGTSpanElement::WrapNode(JSContext *aCx, JSObject *aScope)
+SVGTSpanElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
   return SVGTSpanElementBinding::Wrap(aCx, aScope, this);
 }
@@ -52,11 +52,8 @@ SVGTSpanElement::IsAttributeMapped(const nsIAtom* name) const
     SVGTSpanElementBase::IsAttributeMapped(name);
 }
 
-//----------------------------------------------------------------------
-// nsSVGElement overrides
-
 bool
-SVGTSpanElement::IsEventName(nsIAtom* aName)
+SVGTSpanElement::IsEventAttributeName(nsIAtom* aName)
 {
   return nsContentUtils::IsEventAttributeName(aName, EventNameType_SVGGraphic);
 }

@@ -30,6 +30,7 @@ void
 WriteZeroesToAudioBlock(AudioChunk* aChunk, uint32_t aStart, uint32_t aLength)
 {
   MOZ_ASSERT(aStart + aLength <= WEBAUDIO_BLOCK_SIZE);
+  MOZ_ASSERT(!aChunk->IsNull(), "You should pass a non-null chunk");
   if (aLength == 0)
     return;
   for (uint32_t i = 0; i < aChunk->mChannelData.Length(); ++i) {
@@ -55,9 +56,9 @@ AudioBlockAddChannelWithScale(const float aInput[WEBAUDIO_BLOCK_SIZE],
 }
 
 void
-AudioBlockCopyChannelWithScale(const float aInput[WEBAUDIO_BLOCK_SIZE],
+AudioBlockCopyChannelWithScale(const float* aInput,
                                float aScale,
-                               float aOutput[WEBAUDIO_BLOCK_SIZE])
+                               float* aOutput)
 {
   if (aScale == 1.0f) {
     memcpy(aOutput, aInput, WEBAUDIO_BLOCK_SIZE*sizeof(float));

@@ -14,26 +14,6 @@ LIBRARY_NAME	= gfx2d
 LIBXUL_LIBRARY	= 1
 EXPORT_LIBRARY	= 1
 
-EXPORTS_NAMESPACES = mozilla/gfx
-EXPORTS_mozilla/gfx	= \
-        2D.h \
-        BasePoint.h \
-        BasePoint3D.h \
-        BasePoint4D.h \
-        BaseMargin.h \
-        BaseRect.h \
-        BaseSize.h \
-        Blur.h \
-        PathHelpers.h \
-        Point.h \
-        Matrix.h \
-        Rect.h \
-        Scale.h \
-        Types.h \
-        Tools.h \
-        UserData.h \
-	$(NULL)
-
 CPPSRCS	= \
         Factory.cpp \
         Rect.cpp \
@@ -71,11 +51,6 @@ CPPSRCS	+= \
 CMMSRCS = \
 	   QuartzSupport.mm \
 	   $(NULL)
-
-EXPORTS_mozilla/gfx	+= \
-	   QuartzSupport.h \
-	   MacIOSurface.h \
-	   $(NULL)
 endif
 
 DEFINES += -DMOZ_GFX -DUSE_CAIRO -DGFX2D_INTERNAL
@@ -91,12 +66,10 @@ CPPSRCS	+= \
 endif
 
 ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
-ifdef MOZ_ENABLE_SKIA
 CPPSRCS += \
         ScaledFontMac.cpp \
         $(NULL)
 
-endif
 endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),$(findstring $(MOZ_WIDGET_TOOLKIT),android gtk2 gonk qt))

@@ -122,6 +122,7 @@ public class testBookmarksTab extends BaseTest {
             mSolo.clickLongOnView(mFirstChild);
 
             // TODO: Test clicking these does the right thing
+            mAsserter.ok(mSolo.waitForText("Open in New Tab"), "Context menu has Open in New Tab option", "Open in New Tab");
             mAsserter.ok(mSolo.waitForText("Share"), "Context menu has Share option", "Share");
             mAsserter.ok(mSolo.searchText("Edit", true), "Context menu has Edit option", "Edit");
             mAsserter.ok(mSolo.searchText("Remove", true), "Context menu has Remove option", "Remove");
@@ -150,15 +151,15 @@ public class testBookmarksTab extends BaseTest {
         mAsserter.is(checkBookmarkEdit(1,"Bookmark Link",list), true, "Bookmark Link was changed");
 
         // Test edit bookmark keyword
-        editBookmark(1,2," Bookmark Keyword ",list);
-        mAsserter.is(checkBookmarkEdit(1,"Bookmark Keyword",list), true, "Bookmark Keyword was changed");
+        editBookmark(1,2," BookmarkKeyword ",list);
+        mAsserter.is(checkBookmarkEdit(1,"BookmarkKeyword",list), true, "Bookmark Keyword was changed");
 
         // Remove Bookmark from Context Menu
         waitForText("Bookmarks");
         child = list.getChildAt(1);
         mAsserter.ok(child != null, "second list item can be retrieved", child != null ? child.toString() : "null!");
         mSolo.clickLongOnView(child);
-        waitForText("Share");
+        waitForText("Remove");
         mSolo.clickOnText("Remove");
 
         // Wait for the toaster notification

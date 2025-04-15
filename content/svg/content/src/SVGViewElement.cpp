@@ -13,7 +13,7 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-SVGViewElement::WrapNode(JSContext *aCx, JSObject *aScope)
+SVGViewElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
   return SVGViewElementBinding::Wrap(aCx, aScope, this);
 }
@@ -64,10 +64,10 @@ SVGViewElement::SetZoomAndPan(uint16_t aZoomAndPan, ErrorResult& rv)
 
 //----------------------------------------------------------------------
 
-already_AddRefed<nsIDOMSVGAnimatedRect>
+already_AddRefed<SVGAnimatedRect>
 SVGViewElement::ViewBox()
 {
-  nsCOMPtr<nsIDOMSVGAnimatedRect> box;
+  nsRefPtr<SVGAnimatedRect> box;
   mViewBox.ToDOMAnimatedRect(getter_AddRefs(box), this);
   return box.forget();
 }
@@ -82,7 +82,7 @@ SVGViewElement::PreserveAspectRatio()
 
 //----------------------------------------------------------------------
 
-already_AddRefed<nsIDOMSVGStringList>
+already_AddRefed<DOMSVGStringList>
 SVGViewElement::ViewTarget()
 {
   return DOMSVGStringList::GetDOMWrapper(

@@ -54,6 +54,11 @@ private:
   void NotifyBytesConsumed();
   int64_t QueryDuration();
 
+  /* Called once the pipeline is setup to check that the stream only contains
+   * supported formats
+   */
+  nsresult CheckSupportedFormats();
+
   /* Gst callbacks */
 
   /* Called on the source-setup signal emitted by playbin. Used to
@@ -146,21 +151,6 @@ private:
   gint64 mLastReportedByteOffset;
   int fpsNum;
   int fpsDen;
-};
-
-class BufferData {
-  public:
-    BufferData(layers::PlanarYCbCrImage* aImage) : mImage(aImage) {}
-
-    static void* Copy(void* aData) {
-      return new BufferData(reinterpret_cast<BufferData*>(aData)->mImage);
-    }
-
-    static void Free(void* aData) {
-      delete reinterpret_cast<BufferData*>(aData);
-    }
-
-    nsRefPtr<layers::PlanarYCbCrImage> mImage;
 };
 
 } // namespace mozilla

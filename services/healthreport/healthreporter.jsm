@@ -19,10 +19,10 @@ Cu.import("resource://services-common/bagheeraclient.js");
 #endif
 
 Cu.import("resource://services-common/log4moz.js");
-Cu.import("resource://services-common/preferences.js");
 Cu.import("resource://services-common/utils.js");
 Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Cu.import("resource://gre/modules/osfile.jsm");
+Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/TelemetryStopwatch.jsm");
@@ -177,8 +177,17 @@ HealthReporterState.prototype = Object.freeze({
   },
 
   removeRemoteID: function (id) {
-    this._log.warn("Removing document from remote ID list: " + id);
-    let filtered = this._s.remoteIDs.filter((x) => x != id);
+    return this.removeRemoteIDs(id ? [id] : []);
+  },
+
+  removeRemoteIDs: function (ids) {
+    if (!ids || !ids.length) {
+      this._log.warn("No IDs passed for removal.");
+      return Promise.resolve();
+    }
+
+    this._log.warn("Removing documents from remote ID list: " + ids);
+    let filtered = this._s.remoteIDs.filter((x) => ids.indexOf(x) === -1);
 
     if (filtered.length == this._s.remoteIDs.length) {
       return Promise.resolve();
@@ -195,13 +204,17 @@ HealthReporterState.prototype = Object.freeze({
   },
 
   updateLastPingAndRemoveRemoteID: function (date, id) {
-    if (!id) {
+    return this.updateLastPingAndRemoveRemoteIDs(date, id ? [id] : []);
+  },
+
+  updateLastPingAndRemoveRemoteIDs: function (date, ids) {
+    if (!ids) {
       return this.setLastPingDate(date);
     }
 
     this._log.info("Recording last ping time and deleted remote document.");
     this._s.lastPingTime = date.getTime();
-    return this.removeRemoteID(id);
+    return this.removeRemoteIDs(ids);
   },
 
   _migratePrefs: function () {
@@ -1305,10 +1318,10 @@ HealthReporter.prototype = Object.freeze({
 
       if (isDelete) {
         this._log.warn("Marking delete as successful.");
-        yield this._state.removeRemoteID(result.id);
+        yield this._state.removeRemoteIDs([result.id]);
       } else {
         this._log.warn("Marking upload as successful.");
-        yield this._state.updateLastPingAndRemoveRemoteID(date, result.deleteID);
+        yield this._state.updateLastPingAndRemoveRemoteIDs(date, result.deleteIDs);
       }
 
       request.onSubmissionSuccess(this._now());
@@ -1355,7 +1368,7 @@ HealthReporter.prototype = Object.freeze({
       let result;
       try {
         let options = {
-          deleteID: lastID,
+          deleteIDs: this._state.remoteIDs.filter((x) => { return x != id; }),
           telemetryCompressed: TELEMETRY_PAYLOAD_SIZE_COMPRESSED,
         };
         result = yield client.uploadJSON(this.serverNamespace, id, payload,

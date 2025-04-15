@@ -18,11 +18,6 @@ DEFINES += -DENABLE_MARIONETTE=1
 endif
 
 ifndef LIBXUL_SDK
-ifneq ($(GAIADIR),)
-PROGRAM=$(MOZ_APP_NAME)-bin$(BIN_SUFFIX)
-else
-PROGRAM=$(MOZ_APP_NAME)$(BIN_SUFFIX)
-endif
 
 CPPSRCS = nsBrowserApp.cpp
 
@@ -37,6 +32,7 @@ LIBS += \
   $(MOZ_ZLIB_LIBS) \
   $(NULL)
 OS_LDFLAGS += -Wl,--export-dynamic
+LOCAL_INCLUDES += -I$(ANDROID_SOURCE)/hardware/libhardware_legacy/include
 endif
 
 LOCAL_INCLUDES += -I$(topsrcdir)/toolkit/xre
@@ -155,9 +151,13 @@ endif # SKIP_COPY_XULRUNNER
 
 	$(NSINSTALL) -D $(DIST)/bin/chrome/icons/default
 
+# Copy the app icon for b2g-desktop
 ifeq ($(OS_ARCH),WINNT)
 	cp $(srcdir)/$(APP_ICON).ico $(DIST)/bin/chrome/icons/default/$(APP_ICON).ico
 	$(REDIT_PATH)/redit$(HOST_BIN_SUFFIX) $(DIST)/bin/$(APP_BINARY) $(srcdir)/$(APP_ICON).ico
+	cp $(srcdir)/$(APP_ICON).ico $(DIST)/bin/chrome/icons/default/default.ico
+else ifneq (gonk,$(MOZ_WIDGET_TOOLKIT))
+	cp $(srcdir)/default.png $(DIST)/bin/chrome/icons/default/default.png
 endif
 
 endif

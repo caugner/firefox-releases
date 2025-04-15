@@ -16,7 +16,7 @@ dictionary DeviceStorageEnumerationParameters
   jsval since;
 };
 
-[scriptable, uuid(cf424c41-26e0-4c26-bb81-82981f7e3641), builtinclass]
+[scriptable, uuid(3d336180-b130-4b54-b205-ce74e36e733f), builtinclass]
 interface nsIDOMDeviceStorage : nsIDOMEventTarget
 {
     [implicit_jscontext] attribute jsval onchange;
@@ -43,6 +43,10 @@ interface nsIDOMDeviceStorage : nsIDOMEventTarget
     nsIDOMDOMRequest usedSpace();
 
     nsIDOMDOMRequest available();
+
+    // Note that the storageName is just a name (like sdcard), and doesn't
+    // include any path information.
+    readonly attribute DOMString storageName;
 
     [noscript] readonly attribute nsIFile rootDirectory;
 };

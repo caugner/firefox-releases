@@ -62,7 +62,8 @@ public:
   {
     return mWindow;
   }
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   // WebIDL
   double CurrentTime();
@@ -144,6 +145,7 @@ public:
   void OnTracksAvailable(OnTracksAvailableCallback* aCallback);
 
 protected:
+  void Destroy();
   void InitSourceStream(nsIDOMWindow* aWindow, TrackTypeHints aHintContents);
   void InitTrackUnionStream(nsIDOMWindow* aWindow, TrackTypeHints aHintContents);
   void InitStreamCommon(MediaStream* aStream);
@@ -186,7 +188,8 @@ public:
 
   NS_DECL_ISUPPORTS_INHERITED
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   virtual void Stop();
 

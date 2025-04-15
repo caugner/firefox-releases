@@ -214,46 +214,7 @@ var Browser = {
     }
   },
 
-  _waitingToClose: false,
   closing: function closing() {
-    // If we are already waiting for the close prompt, don't show another
-    if (this._waitingToClose)
-      return false;
-
-    // Prompt if we have multiple tabs before closing window
-    let numTabs = this._tabs.length;
-    if (numTabs > 1) {
-      let shouldPrompt = Services.prefs.getBoolPref("browser.tabs.warnOnClose");
-      if (shouldPrompt) {
-        let prompt = Services.prompt;
-
-        // Default to true: if it were false, we wouldn't get this far
-        let warnOnClose = { value: true };
-
-        let messageBase = Strings.browser.GetStringFromName("tabs.closeWarning");
-        let message = PluralForm.get(numTabs, messageBase).replace("#1", numTabs);
-
-        let title = Strings.browser.GetStringFromName("tabs.closeWarningTitle");
-        let closeText = Strings.browser.GetStringFromName("tabs.closeButton");
-        let checkText = Strings.browser.GetStringFromName("tabs.closeWarningPromptMe");
-        let buttons = (prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_0) +
-                      (prompt.BUTTON_TITLE_CANCEL * prompt.BUTTON_POS_1);
-
-        this._waitingToClose = true;
-        let pressed = prompt.confirmEx(window, title, message, buttons, closeText, null, null, checkText, warnOnClose);
-        this._waitingToClose = false;
-
-        // Don't set the pref unless they press OK and it's false
-        let reallyClose = (pressed == 0);
-        if (reallyClose && !warnOnClose.value)
-          Services.prefs.setBoolPref("browser.tabs.warnOnClose", false);
-
-        // If we don't want to close, return now. If we are closing, continue with other housekeeping.
-        if (!reallyClose)
-          return false;
-      }
-    }
-
     // Figure out if there's at least one other browser window around.
     let lastBrowser = true;
     let e = Services.wm.getEnumerator("navigator:browser");
@@ -277,7 +238,7 @@ var Browser = {
 
   shutdown: function shutdown() {
     BrowserUI.uninit();
-    ContentAreaObserver.uninit();
+    ContentAreaObserver.shutdown();
 
     messageManager.removeMessageListener("MozScrolledAreaChanged", this);
     messageManager.removeMessageListener("Browser:ViewportMetadata", this);
@@ -292,12 +253,12 @@ var Browser = {
 
     var os = Services.obs;
     os.removeObserver(SessionHistoryObserver, "browser:purge-session-history");
-    os.removeObserver(ActivityObserver, "application-background", false);
-    os.removeObserver(ActivityObserver, "application-foreground", false);
-    os.removeObserver(ActivityObserver, "system-active", false);
-    os.removeObserver(ActivityObserver, "system-idle", false);
-    os.removeObserver(ActivityObserver, "system-display-on", false);
-    os.removeObserver(ActivityObserver, "system-display-off", false);
+    os.removeObserver(ActivityObserver, "application-background");
+    os.removeObserver(ActivityObserver, "application-foreground");
+    os.removeObserver(ActivityObserver, "system-active");
+    os.removeObserver(ActivityObserver, "system-idle");
+    os.removeObserver(ActivityObserver, "system-display-on");
+    os.removeObserver(ActivityObserver, "system-display-off");
 
     window.controllers.removeController(this);
     window.controllers.removeController(BrowserUI);
@@ -467,7 +428,7 @@ var Browser = {
     }
     return null;
   },
-  
+
   createTabId: function createTabId() {
     return this._tabId++;
   },
@@ -481,22 +442,18 @@ var Browser = {
     if (aBringFront)
       this.selectedTab = newTab;
 
-    let getAttention = ("getAttention" in params ? params.getAttention : !aBringFront);
-    let event = document.createEvent("UIEvents");
-    event.initUIEvent("TabOpen", true, false, window, getAttention);
-    newTab.chromeTab.dispatchEvent(event);
-    newTab.browser.messageManager.sendAsyncMessage("Browser:TabOpen");
-
+    this._announceNewTab(newTab, params, aBringFront);
     return newTab;
   },
 
   closeTab: function closeTab(aTab, aOptions) {
     let tab = aTab instanceof XULElement ? this.getTabFromChrome(aTab) : aTab;
-    if (!tab || !this._getNextTab(tab))
+    if (!tab) {
       return;
+    }
 
     if (aOptions && "forceClose" in aOptions && aOptions.forceClose) {
-      this._doCloseTab(aTab);
+      this._doCloseTab(tab);
       return;
     }
 
@@ -507,10 +464,24 @@ var Browser = {
     ContentAreaUtils.saveDocument(this.selectedBrowser.contentWindow.document);
   },
 
+  /*
+   * helper for addTab related methods. Fires events related to
+   * new tab creation.
+   */
+  _announceNewTab: function _announceNewTab(aTab, aParams, aBringFront) {
+    let getAttention = ("getAttention" in aParams ? aParams.getAttention : !aBringFront);
+    let event = document.createEvent("UIEvents");
+    event.initUIEvent("TabOpen", true, false, window, getAttention);
+    aTab.chromeTab.dispatchEvent(event);
+    aTab.browser.messageManager.sendAsyncMessage("Browser:TabOpen");
+  },
+
   _doCloseTab: function _doCloseTab(aTab) {
-    let nextTab = this._getNextTab(aTab);
-    if (!nextTab)
-       return;
+    if (this._tabs.length === 1) {
+      Browser.addTab(this.getHomePage());
+    }
+
+    let nextTab = this.getNextTab(aTab);
 
     // Tabs owned by the closed tab are now orphaned.
     this._tabs.forEach(function(item, index, array) {
@@ -534,14 +505,28 @@ var Browser = {
     container.dispatchEvent(event);
   },
 
-  _getNextTab: function _getNextTab(aTab) {
+  getNextTab: function getNextTab(aTab) {
     let tabIndex = this._tabs.indexOf(aTab);
     if (tabIndex == -1)
       return null;
 
-    let nextTab = this._selectedTab;
-    if (nextTab == aTab) {
-      nextTab = this.getTabAtIndex(tabIndex + 1) || this.getTabAtIndex(tabIndex - 1);
+    if (this._selectedTab == aTab || this._selectedTab.chromeTab.hasAttribute("closing")) {
+      let nextTabIndex = tabIndex + 1;
+      let nextTab = null;
+
+      while (nextTabIndex < this._tabs.length && (!nextTab || nextTab.chromeTab.hasAttribute("closing"))) {
+        nextTab = this.getTabAtIndex(nextTabIndex);
+        nextTabIndex++;
+      }
+
+      nextTabIndex = tabIndex - 1;
+      while (nextTabIndex >= 0 && (!nextTab || nextTab.chromeTab.hasAttribute("closing"))) {
+        nextTab = this.getTabAtIndex(nextTabIndex);
+        nextTabIndex--;
+      }
+
+      if (!nextTab || nextTab.chromeTab.hasAttribute("closing"))
+        return null;
 
       // If the next tab is not a sibling, switch back to the parent.
       if (aTab.owner && nextTab.owner != aTab.owner)
@@ -549,9 +534,11 @@ var Browser = {
 
       if (!nextTab)
         return null;
+
+      return nextTab;
     }
 
-    return nextTab;
+    return this._selectedTab;
   },
 
   get selectedTab() {
@@ -574,11 +561,10 @@ var Browser = {
 
     let isFirstTab = this._selectedTab == null;
     let lastTab = this._selectedTab;
-    let oldBrowser = lastTab ? lastTab._browser : null;
     let browser = tab.browser;
 
     this._selectedTab = tab;
-    
+
     if (lastTab)
       lastTab.active = false;
 
@@ -684,6 +670,25 @@ var Browser = {
   },
 
   pinSite: function browser_pinSite() {
+    // Get a path to our app tile
+    var file = Components.classes["@mozilla.org/file/directory_service;1"].
+           getService(Components.interfaces.nsIProperties).
+           get("CurProcD", Components.interfaces.nsIFile);
+    // Get rid of the current working directory's metro subidr
+    file = file.parent;
+    file.append("tileresources");
+    file.append("VisualElements_logo.png");
+    var ios = Components.classes["@mozilla.org/network/io-service;1"].
+              getService(Components.interfaces.nsIIOService);
+    var uriSpec = ios.newFileURI(file).spec;
+    MetroUtils.pinTileAsync(this._currentPageTileID,
+                            Browser.selectedBrowser.contentTitle, // short name
+                            Browser.selectedBrowser.contentTitle, // display name
+                            "metrobrowser -url " + Browser.selectedBrowser.currentURI.spec,
+                            uriSpec, uriSpec);
+  },
+
+  get _currentPageTileID() {
     // We use a unique ID per URL, so just use an MD5 hash of the URL as the ID.
     let hasher = Cc["@mozilla.org/security/hash;1"].
                  createInstance(Ci.nsICryptoHash);
@@ -693,58 +698,22 @@ var Browser = {
     stringStream.data = Browser.selectedBrowser.currentURI.spec;
     hasher.updateFromStream(stringStream, -1);
     let hashASCII = hasher.finish(true);
-
-    // Get a path to our app tile
-    var file = Components.classes["@mozilla.org/file/directory_service;1"]. 
-           getService(Components.interfaces.nsIProperties). 
-           get("CurProcD", Components.interfaces.nsIFile);
-    // Get rid of the current working directory's metro subidr
-    file = file.parent;
-    file.append("tileresources");
-    file.append("VisualElements_logo.png");
-    var ios = Components.classes["@mozilla.org/network/io-service;1"]. 
-              getService(Components.interfaces.nsIIOService); 
-    var uriSpec = ios.newFileURI(file).spec;
-    MetroUtils.pinTileAsync("FFTileID_" + hashASCII,
-                               Browser.selectedBrowser.contentTitle, // short name
-                               Browser.selectedBrowser.contentTitle, // display name
-                               "metrobrowser -url " + Browser.selectedBrowser.currentURI.spec,
-                               uriSpec,
-                               uriSpec);
+    // Replace '/' with a valid filesystem character
+    return ("FFTileID_" + hashASCII).replace('/', '_', 'g');
   },
 
   unpinSite: function browser_unpinSite() {
     if (!MetroUtils.immersive)
       return;
 
-    // We use a unique ID per URL, so just use an MD5 hash of the URL as the ID.
-    let hasher = Cc["@mozilla.org/security/hash;1"].
-                 createInstance(Ci.nsICryptoHash);
-    hasher.init(Ci.nsICryptoHash.MD5);
-    let stringStream = Cc["@mozilla.org/io/string-input-stream;1"].
-                       createInstance(Ci.nsIStringInputStream);
-    stringStream.data = Browser.selectedBrowser.currentURI.spec;
-    hasher.updateFromStream(stringStream, -1);
-    let hashASCII = hasher.finish(true);
-
-    MetroUtils.unpinTileAsync("FFTileID_" + hashASCII);
+    MetroUtils.unpinTileAsync(this._currentPageTileID);
   },
 
   isSitePinned: function browser_isSitePinned() {
     if (!MetroUtils.immersive)
       return false;
 
-    // We use a unique ID per URL, so just use an MD5 hash of the URL as the ID.
-    let hasher = Cc["@mozilla.org/security/hash;1"].
-                 createInstance(Ci.nsICryptoHash);
-    hasher.init(Ci.nsICryptoHash.MD5);
-    let stringStream = Cc["@mozilla.org/io/string-input-stream;1"].
-                       createInstance(Ci.nsIStringInputStream);
-    stringStream.data = Browser.selectedBrowser.currentURI.spec;
-    hasher.updateFromStream(stringStream, -1);
-    let hashASCII = hasher.finish(true);
-
-    return MetroUtils.isTilePinned("FFTileID_" + hashASCII);
+    return MetroUtils.isTilePinned(this._currentPageTileID);
   },
 
   starSite: function browser_starSite(callback) {
@@ -782,9 +751,9 @@ var Browser = {
     zoomLevel = tab.clampZoomLevel(zoomLevel);
 
     let browserRect = browser.getBoundingClientRect();
-    let center = browser.transformClientToBrowser(browserRect.width / 2,
-                                                  browserRect.height / 2);
-    let rect = this._getZoomRectForPoint(center.x, center.y, zoomLevel);
+    let center = browser.ptClientToBrowser(browserRect.width / 2,
+                                           browserRect.height / 2);
+    let rect = this._getZoomRectForPoint(center.xPos, center.yPos, zoomLevel);
     AnimatedZoom.animateTo(rect);
   },
 
@@ -942,16 +911,11 @@ var Browser = {
         break;
 
       case "Browser:CanUnload:Return": {
-        if (!json.permit)
-          return;
-
-        // Allow a little delay to not close the target tab while processing
-        // a message for this particular tab
-        setTimeout(function(self) {
-          let tab = self.getTabForBrowser(browser);
-          self._doCloseTab(tab);
-        }, 0, this);
-        break;
+	if (json.permit) {
+	  let tab = this.getTabForBrowser(browser);
+	  BrowserUI.animateClosingTab(tab);
+	}
+	break;
       }
       case "Browser:ZoomToPoint:Return":
         if (json.zoomTo) {
@@ -1071,7 +1035,7 @@ Browser.MainDragger.prototype = {
           x: (width + ALLOWED_MARGIN) < contentWidth ? (width - SCROLL_CORNER_SIZE) / contentWidth : 0,
           y: (height + ALLOWED_MARGIN) < contentHeight ? (height - SCROLL_CORNER_SIZE) / contentHeight : 0
         }
-        
+
         this._showScrollbars();
         break;
       }
@@ -1105,7 +1069,7 @@ Browser.MainDragger.prototype = {
   _updateScrollbars: function _updateScrollbars() {
     let scaleX = this._scrollScales.x, scaleY = this._scrollScales.y;
     let contentScroll = Browser.getScrollboxPosition(Browser.contentScrollboxScroller);
-    
+
     if (scaleX)
       this._horizontalScrollbar.style.MozTransform =
         "translateX(" + Math.round(contentScroll.x * scaleX) + "px)";
@@ -1425,6 +1389,7 @@ function Tab(aURI, aParams) {
   this._loading = false;
   this._chromeTab = null;
   this._metadata = null;
+  this._eventDeferred = null;
 
   this.owner = null;
 
@@ -1458,6 +1423,10 @@ Tab.prototype = {
 
   get metadata() {
     return this._metadata || kDefaultMetadata;
+  },
+
+  get pageShowPromise() {
+    return this._eventDeferred ? this._eventDeferred.promise : null;
   },
 
   /** Update browser styles when the viewport metadata changes. */
@@ -1558,23 +1527,23 @@ Tab.prototype = {
   },
 
   create: function create(aURI, aParams) {
+    this._eventDeferred = Promise.defer();
+
     this._chromeTab = Elements.tabList.addTab();
     this._id = Browser.createTabId();
     let browser = this._createBrowser(aURI, null);
 
-    // Should we fully load the new browser, or wait until later
-    if ("delayLoad" in aParams && aParams.delayLoad)
-      return;
-
-    try {
-      let flags = aParams.flags || Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
-      let postData = ("postData" in aParams && aParams.postData) ? aParams.postData.value : null;
-      let referrerURI = "referrerURI" in aParams ? aParams.referrerURI : null;
-      let charset = "charset" in aParams ? aParams.charset : null;
-      browser.loadURIWithFlags(aURI, flags, referrerURI, charset, postData);
-    } catch(e) {
-      dump("Error: " + e + "\n");
+    let self = this;
+    function onPageShowEvent(aEvent) {
+      browser.removeEventListener("pageshow", onPageShowEvent);
+      if (self._eventDeferred) {
+        self._eventDeferred.resolve(self);
+      }
+      self._eventDeferred = null;
     }
+    browser.addEventListener("pageshow", onPageShowEvent, true);
+
+    this._loadUsingParams(browser, aURI, aParams);
   },
 
   destroy: function destroy() {
@@ -1607,6 +1576,14 @@ Tab.prototype = {
     browser.__SS_restore = true;
   },
 
+  _loadUsingParams: function _loadUsingParams(aBrowser, aURI, aParams) {
+    let flags = aParams.flags || Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
+    let postData = ("postData" in aParams && aParams.postData) ? aParams.postData.value : null;
+    let referrerURI = "referrerURI" in aParams ? aParams.referrerURI : null;
+    let charset = "charset" in aParams ? aParams.charset : null;
+    aBrowser.loadURIWithFlags(aURI, flags, referrerURI, charset, postData);
+  },
+
   _createBrowser: function _createBrowser(aURI, aInsertBefore) {
     if (this._browser)
       throw "Browser already exists";
@@ -1618,8 +1595,10 @@ Tab.prototype = {
 
     let browser = this._browser = document.createElement("browser");
     browser.id = "browser-" + this._id;
-    browser.setAttribute("class", "viewable-width viewable-height");
     this._chromeTab.linkedBrowser = browser;
+
+    // let the content area manager know about this browser.
+    ContentAreaObserver.onBrowserCreated(browser);
 
     browser.setAttribute("type", "content");
 
@@ -1833,197 +1812,4 @@ function rendererFactory(aBrowser, aCanvas) {
   }
 
   return wrapper;
-};
-
-var ContentAreaObserver = {
-  styles: {},
-  
-  // In desktop mode avoids breaking window dims before
-  // the desktop window is displayed.
-  get width() { return window.innerWidth || 1366; },
-  get height() { return window.innerHeight || 768; },
-
-  get contentHeight() {
-    return this._getContentHeightForWindow(this.height);
-  },
-
-  get contentTop () {
-    return Elements.toolbar.getBoundingClientRect().bottom;
-  },
-
-  get viewableHeight() {
-    return this._getViewableHeightForContent(this.contentHeight);
-  },
-
-  get isKeyboardOpened() { return MetroUtils.keyboardVisible; },
-  get hasVirtualKeyboard() { return true; },
-
-  init: function cao_init() {
-    window.addEventListener("resize", this, false);
-
-    let os = Services.obs;
-    os.addObserver(this, "metro_softkeyboard_shown", false);
-    os.addObserver(this, "metro_softkeyboard_hidden", false);
-
-    // Create styles for the following class names.  The 'width' and 'height'
-    // properties of these styles are updated whenever various parts of the UI
-    // are resized.
-    //
-    // * window-width, window-height: The innerWidth/innerHeight of the main
-    //     chrome window.
-    // * content-width, content-height: The area of the window dedicated to web
-    //     content; this is equal to the innerWidth/Height minus any toolbars
-    //     or similar chrome.
-    // * viewable-width, viewable-height: The portion of the content area that
-    //     is not obscured by the on-screen keyboard.
-    let stylesheet = document.styleSheets[0];
-    for (let style of ["window-width", "window-height",
-                       "content-height", "content-width",
-                       "viewable-height", "viewable-width"]) {
-      let index = stylesheet.insertRule("." + style + " {}", stylesheet.cssRules.length);
-      this.styles[style] = stylesheet.cssRules[index].style;
-    }
-    this.update();
-  },
-
-  uninit: function cao_uninit() {
-    let os = Services.obs;
-    os.removeObserver(this, "metro_softkeyboard_shown");
-    os.removeObserver(this, "metro_softkeyboard_hidden");
-  },
-
-  update: function cao_update (width, height) {
-    let oldWidth = parseInt(this.styles["window-width"].width);
-    let oldHeight = parseInt(this.styles["window-height"].height);
-
-    let newWidth = width || this.width;
-    let newHeight = height || this.height;
-
-    if (newHeight == oldHeight && newWidth == oldWidth)
-      return;
-
-    this.styles["window-width"].width = newWidth + "px";
-    this.styles["window-width"].maxWidth = newWidth + "px";
-    this.styles["window-height"].height = newHeight + "px";
-    this.styles["window-height"].maxHeight = newHeight + "px";
-
-    let isStartup = !oldHeight && !oldWidth;
-    for (let i = Browser.tabs.length - 1; i >=0; i--) {
-      let tab = Browser.tabs[i];
-      let oldContentWindowWidth = tab.browser.contentWindowWidth;
-      tab.updateViewportSize(newWidth, newHeight); // contentWindowWidth may change here.
-      
-      // Don't bother updating the zoom level on startup
-      if (!isStartup) {
-        // If the viewport width is still the same, the page layout has not
-        // changed, so we can keep keep the same content on-screen.
-        if (tab.browser.contentWindowWidth == oldContentWindowWidth)
-          tab.restoreViewportPosition(oldWidth, newWidth);
-
-        tab.updateDefaultZoomLevel();
-      }
-    }
-
-    // We want to keep the current focused element into view if possible
-    if (!isStartup) {
-      let currentElement = document.activeElement;
-      let [scrollbox, scrollInterface] = ScrollUtils.getScrollboxFromElement(currentElement);
-      if (scrollbox && scrollInterface && currentElement && currentElement != scrollbox) {
-        // retrieve the direct child of the scrollbox
-        while (currentElement && currentElement.parentNode != scrollbox)
-          currentElement = currentElement.parentNode;
-  
-        setTimeout(function() { scrollInterface.ensureElementIsVisible(currentElement) }, 0);
-      }
-    }
-
-    this.updateContentArea(newWidth, this._getContentHeightForWindow(newHeight));
-    this._fire("SizeChanged");
-  },
-
-  updateContentArea: function cao_updateContentArea (width, height) {
-    let oldHeight = parseInt(this.styles["content-height"].height);
-    let oldWidth = parseInt(this.styles["content-width"].width);
-
-    let newWidth = width || this.width;
-    let newHeight = height || this.contentHeight;
-
-    if (newHeight == oldHeight && newWidth == oldWidth)
-      return;
-
-    this.styles["content-height"].height = newHeight + "px";
-    this.styles["content-height"].maxHeight = newHeight + "px";
-    this.styles["content-width"].width = newWidth + "px";
-    this.styles["content-width"].maxWidth = newWidth + "px";
-
-    this.updateViewableArea(newWidth, this._getViewableHeightForContent(newHeight));
-    this._fire("ContentSizeChanged");
-  },
-
-  updateViewableArea: function cao_updateViewableArea (width, height) {
-    let oldHeight = parseInt(this.styles["viewable-height"].height);
-    let oldWidth = parseInt(this.styles["viewable-width"].width);
-
-    let newWidth = width || this.width;
-    let newHeight = height || this.viewableHeight;
-
-    if (newHeight == oldHeight && newWidth == oldWidth)
-      return;
-
-    this.styles["viewable-height"].height = newHeight + "px";
-    this.styles["viewable-height"].maxHeight = newHeight + "px";
-    this.styles["viewable-width"].width = newWidth + "px";
-    this.styles["viewable-width"].maxWidth = newWidth + "px";
-
-    this._fire("ViewableSizeChanged");
-  },
-
-  observe: function cao_observe(aSubject, aTopic, aData) {
-    switch (aTopic) {
-      case "metro_softkeyboard_shown":
-      case "metro_softkeyboard_hidden": {
-        let event = document.createEvent("UIEvents");
-        let eventDetails = {
-          opened: aTopic == "metro_softkeyboard_shown",
-          details: aData
-        };
-
-        event.initUIEvent("KeyboardChanged", true, false, window, eventDetails);
-        window.dispatchEvent(event);
-
-        this.updateViewableArea();
-        break;
-      }
-    };
-  },
-
-  handleEvent: function cao_handleEvent(anEvent) {
-    switch (anEvent.type) {
-      case 'resize':
-        if (anEvent.target != window)
-          return;
-
-        ContentAreaObserver.update();
-        break;
-    }
-  },
-
-  _fire: function (aName) {
-    // setTimeout(callback, 0) to ensure the resize event handler dispatch is finished
-    setTimeout(function() {
-      let event = document.createEvent("Events");
-      event.initEvent(aName, true, false);
-      Elements.browsers.dispatchEvent(event);
-    }, 0);
-  },
-
-  _getContentHeightForWindow: function (windowHeight) {
-    let contextUIHeight = BrowserUI.isTabsOnly ? Elements.toolbar.getBoundingClientRect().bottom : 0;
-    return windowHeight - contextUIHeight;
-  },
-
-  _getViewableHeightForContent: function (contentHeight) {
-    let keyboardHeight = MetroUtils.keyboardHeight;
-    return contentHeight - keyboardHeight;
-  }
 };

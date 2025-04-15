@@ -26,6 +26,11 @@ static const int64_t SEEK_VS_READ_THRESHOLD = 32*1024;
 
 static const uint32_t HTTP_REQUESTED_RANGE_NOT_SATISFIABLE_CODE = 416;
 
+// Number of bytes we have accumulated before we assume the connection download
+// rate can be reliably calculated. 57 Segments at IW=3 allows slow start to
+// reach a CWND of 30 (See bug 831998)
+static const int64_t RELIABLE_DATA_THRESHOLD = 57 * 1460;
+
 namespace mozilla {
 
 class MediaDecoder;
@@ -83,7 +88,8 @@ public:
   }
   double GetRateAtLastStop(bool* aReliable) {
     double seconds = mAccumulatedTime.ToSeconds();
-    *aReliable = seconds >= 1.0;
+    *aReliable = (seconds >= 1.0) ||
+                 (mAccumulatedBytes >= RELIABLE_DATA_THRESHOLD);
     if (seconds <= 0.0)
       return 0.0;
     return static_cast<double>(mAccumulatedBytes)/seconds;
@@ -94,7 +100,8 @@ public:
       time += TimeStamp::Now() - mLastStartTime;
     }
     double seconds = time.ToSeconds();
-    *aReliable = seconds >= 3.0;
+    *aReliable = (seconds >= 3.0) ||
+                 (mAccumulatedBytes >= RELIABLE_DATA_THRESHOLD);
     if (seconds <= 0.0)
       return 0.0;
     return static_cast<double>(mAccumulatedBytes)/seconds;
@@ -339,6 +346,7 @@ public:
    */
   virtual nsresult Open(nsIStreamListener** aStreamListener) = 0;
 
+#ifdef MOZ_DASH
   /**
    * Open the stream using a specific byte range only. Creates a stream
    * listener and returns it in aStreamListener; this listener needs to be
@@ -349,6 +357,7 @@ public:
   {
     return Open(aStreamListener);
   }
+#endif
 
   /**
    * Fills aRanges with MediaByteRanges representing the data which is cached
@@ -481,8 +490,10 @@ public:
 
   // Main thread
   virtual nsresult Open(nsIStreamListener** aStreamListener);
+#ifdef MOZ_DASH
   virtual nsresult OpenByteRange(nsIStreamListener** aStreamListener,
                                  MediaByteRange const & aByteRange);
+#endif
   virtual nsresult Close();
   virtual void     Suspend(bool aCloseImmediately);
   virtual void     Resume();
@@ -622,21 +633,23 @@ protected:
   // Start and end offset of the bytes to be requested.
   MediaByteRange mByteRange;
 
+#ifdef MOZ_DASH
   // True if resource was opened with a byte rage request.
   bool mByteRangeDownloads;
 
   // Set to false once first byte range request has been made.
   bool mByteRangeFirstOpen;
 
-  // True if the stream can seek into unbuffered ranged, i.e. if the
-  // connection supports byte range requests.
-  bool mIsTransportSeekable;
-
   // For byte range requests, set to the offset requested in |Seek|.
   // Used in |CacheClientSeek| to find the originally requested byte range.
   // Read/Write on multiple threads; use |mSeekMonitor|.
   ReentrantMonitor mSeekOffsetMonitor;
   int64_t mSeekOffset;
+#endif
+
+  // True if the stream can seek into unbuffered ranged, i.e. if the
+  // connection supports byte range requests.
+  bool mIsTransportSeekable;
 };
 
 } // namespace mozilla

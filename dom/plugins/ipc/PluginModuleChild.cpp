@@ -56,6 +56,8 @@
 #include "PluginUtilsOSX.h"
 #endif
 
+#include "GeckoProfiler.h"
+
 using namespace mozilla;
 using namespace mozilla::plugins;
 using mozilla::dom::CrashReporterChild;
@@ -1055,10 +1057,8 @@ _geturlnotify(NPP aNPP,
     StreamNotifyChild* sn = new StreamNotifyChild(url);
 
     NPError err;
-    if (!InstCast(aNPP)->CallPStreamNotifyConstructor(
-           sn, url, NullableString(aTarget), false, nsCString(), false, &err)) {
-        NS_RUNTIMEABORT("StreamNotify constructor failed");
-    }
+    InstCast(aNPP)->CallPStreamNotifyConstructor(
+        sn, url, NullableString(aTarget), false, nsCString(), false, &err);
 
     if (NPERR_NO_ERROR == err) {
         // If NPN_PostURLNotify fails, the parent will immediately send us
@@ -1168,11 +1168,9 @@ _posturlnotify(NPP aNPP,
     StreamNotifyChild* sn = new StreamNotifyChild(url);
 
     NPError err;
-    if (!InstCast(aNPP)->CallPStreamNotifyConstructor(
-            sn, url, NullableString(aTarget), true,
-            nsCString(aBuffer, aLength), aIsFile, &err)) {
-        NS_RUNTIMEABORT("StreamNotify constructor failed");
-    }
+    InstCast(aNPP)->CallPStreamNotifyConstructor(
+        sn, url, NullableString(aTarget), true,
+        nsCString(aBuffer, aLength), aIsFile, &err);
 
     if (NPERR_NO_ERROR == err) {
         // If NPN_PostURLNotify fails, the parent will immediately send us
@@ -2429,3 +2427,16 @@ PluginModuleChild::ProcessNativeEvents() {
     CallProcessSomeEvents();    
 }
 #endif
+
+bool
+PluginModuleChild::AnswerGeckoGetProfile(nsCString* aProfile) {
+    char* profile = profiler_get_profile();
+    if (profile != NULL) {
+        *aProfile = nsCString(profile, strlen(profile));
+        free(profile);
+    } else {
+        *aProfile = nsCString("", 0);
+    }
+    return true;
+}
+

@@ -181,6 +181,9 @@ this.CSPRep = function CSPRep(aSpecCompliant) {
   // Is this a 1.0 spec compliant CSPRep ?
   // Default to false if not specified.
   this._specCompliant = (aSpecCompliant !== undefined) ? aSpecCompliant : false;
+
+  // Only CSP 1.0 spec compliant policies block inline styles by default.
+  this._allowInlineStyles = !aSpecCompliant;
 }
 
 // Source directives for our original CSP implementation.
@@ -510,15 +513,49 @@ CSPRep.fromStringSpecCompliant = function(aStr, self, docRequest, csp) {
     } catch (ex) {}
   }
 
-  var dirs = aStr.split(";");
-
-  directive:
-  for each(var dir in dirs) {
+  var dirs_list = aStr.split(";");
+  var dirs = {};
+  for each(var dir in dirs_list) {
     dir = dir.trim();
     if (dir.length < 1) continue;
 
     var dirname = dir.split(/\s+/)[0];
     var dirvalue = dir.substring(dirname.length).trim();
+    dirs[dirname] = dirvalue;
+  }
+
+  // Spec compliant policies have different default behavior for inline
+  // scripts, styles, and eval. Bug 885433
+  aCSPR._allowEval = true;
+  aCSPR._allowInlineScripts = true;
+  aCSPR._allowInlineStyles = true;
+
+  // In CSP 1.0, you need to opt-in to blocking inline scripts and eval by
+  // specifying either default-src or script-src, and to blocking inline
+  // styles by specifying either default-src or style-src.
+  if ("default-src" in dirs) {
+    // Parse the source list (look ahead) so we can set the defaults properly,
+    // honoring the 'unsafe-inline' and 'unsafe-eval' keywords
+    var defaultSrcValue = CSPSourceList.fromString(dirs["default-src"], null, self);
+    if (!defaultSrcValue._allowUnsafeInline) {
+      aCSPR._allowInlineScripts = false;
+      aCSPR._allowInlineStyles = false;
+    }
+    if (!defaultSrcValue._allowUnsafeEval) {
+      aCSPR._allowEval = false;
+    }
+  }
+  if ("script-src" in dirs) {
+    aCSPR._allowInlineScripts = false;
+    aCSPR._allowEval = false;
+  }
+  if ("style-src" in dirs) {
+    aCSPR._allowInlineStyles = false;
+  }
+
+  directive:
+  for (var dirname in dirs) {
+    var dirvalue = dirs[dirname];
 
     if (aCSPR._directives.hasOwnProperty(dirname)) {
       // Check for (most) duplicate directives
@@ -541,7 +578,8 @@ CSPRep.fromStringSpecCompliant = function(aStr, self, docRequest, csp) {
             // Check for unsafe-inline and unsafe-eval in script-src
             if (dv._allowUnsafeInline) {
               aCSPR._allowInlineScripts = true;
-            } else if (dv._allowUnsafeEval) {
+            }
+            if (dv._allowUnsafeEval) {
               aCSPR._allowEval = true;
             }
           }
@@ -717,7 +755,8 @@ CSPRep.prototype = {
       }
     }
     return (this.allowsInlineScripts === that.allowsInlineScripts)
-        && (this.allowsEvalInScripts === that.allowsEvalInScripts);
+        && (this.allowsEvalInScripts === that.allowsEvalInScripts)
+        && (this.allowsInlineStyles === that.allowsInlineStyles);
   },
 
   /**
@@ -812,6 +851,9 @@ CSPRep.prototype = {
     newRep._allowInlineScripts = this.allowsInlineScripts
                            && aCSPRep.allowsInlineScripts;
 
+    newRep._allowInlineStyles = this.allowsInlineStyles
+                           && aCSPRep.allowsInlineStyles;
+
     newRep._innerWindowID = this._innerWindowID ?
                               this._innerWindowID : aCSPRep._innerWindowID;
 
@@ -870,6 +912,14 @@ CSPRep.prototype = {
    */
   get allowsInlineScripts () {
     return this._allowInlineScripts;
+  },
+
+  /**
+   * Returns true if inline styles are enabled through the "inline-style"
+   * keyword.
+   */
+  get allowsInlineStyles () {
+    return this._allowInlineStyles;
   },
 
   /**

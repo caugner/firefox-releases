@@ -1,3 +1,4 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10,3 +11,28 @@ XPIDL_SOURCES += [
 
 MODULE = 'gfx'
 
+EXPORTS += [
+    'gfxCore.h',
+    'gfxCrashReporterUtils.h',
+    'nsBoundingMetrics.h',
+    'nsColor.h',
+    'nsColorNameList.h',
+    'nsColorNames.h',
+    'nsCoord.h',
+    'nsDeviceContext.h',
+    'nsFont.h',
+    'nsFontMetrics.h',
+    'nsGfxCIID.h',
+    'nsITheme.h',
+    'nsMargin.h',
+    'nsPoint.h',
+    'nsRect.h',
+    'nsRegion.h',
+    'nsRenderingContext.h',
+    'nsSize.h',
+    'nsThemeConstants.h',
+    'nsTransform2D.h',
+]
+
+if CONFIG['MOZ_X11']:
+    EXPORTS.mozilla += ['X11Util.h']

@@ -15,7 +15,16 @@ interface nsIRilMobileMessageDatabaseCallback : nsISupports
   void notify(in nsresult aRv, in nsISupports aDomMessage);
 };
 
-[scriptable, uuid(a31b1716-8631-11e2-afaa-2fbd087f426e)]
+[scriptable, function, uuid(2be52603-5885-412c-9225-f78a78f1bbbd)]
+interface nsIRilMobileMessageDatabaseRecordCallback : nsISupports
+{
+  /**
+   * |aMessageRecord| Object: the mobile-message database record
+   */
+  void notify(in nsresult aRv, in jsval aMessageRecord);
+};
+
+[scriptable, uuid(0ead3154-542d-4e2c-a624-9e3cec504758)]
 interface nsIRilMobileMessageDatabaseService : nsIMobileMessageDatabaseService
 {
   /**
@@ -31,6 +40,7 @@ interface nsIRilMobileMessageDatabaseService : nsIMobileMessageDatabaseService
    *     - |delivery| DOMString: the delivery state of received message
    *     - |deliveryStatus| DOMString Array: the delivery status of received message
    *     - |receivers| DOMString Array: the phone numbers of receivers
+   *     - |transactionId| DOMString: the transaction ID from MMS pdu header.
    *
    * Note: |deliveryStatus| should only contain single string to specify
    *       the delivery status of MMS message for the phone owner self.
@@ -65,4 +75,20 @@ interface nsIRilMobileMessageDatabaseService : nsIMobileMessageDatabaseService
                           in DOMString aDelivery,
                           in DOMString aDeliveryStatus,
                [optional] in nsIRilMobileMessageDatabaseCallback aCallback);
+
+  /**
+   * |aMessageId| Number: the message's DB record ID.
+   * |aCallback| nsIRilMobileMessageDatabaseCallback: a callback which takes
+   *   result flag and message record as parameters.
+   */
+  void getMessageRecordById(in long aMessageId,
+                            in nsIRilMobileMessageDatabaseRecordCallback aCallback);
+
+  /**
+   * |aTransactionId| DOMString: the transaction ID of MMS pdu.
+   * |aCallback| nsIRilMobileMessageDatabaseCallback: a callback which takes
+   *   result flag and message record as parameters.
+   */
+  void getMessageRecordByTransactionId(in DOMString aTransactionId,
+                                       in nsIRilMobileMessageDatabaseRecordCallback aCallback);
 };

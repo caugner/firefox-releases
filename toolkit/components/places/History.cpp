@@ -228,8 +228,8 @@ GetURIFromJSObject(JSContext* aCtx,
                    JSObject* aObject,
                    const char* aProperty)
 {
-  JS::Value uriVal;
-  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, &uriVal);
+  JS::Rooted<JS::Value> uriVal(aCtx);
+  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, uriVal.address());
   NS_ENSURE_TRUE(rc, nullptr);
 
   if (!JSVAL_IS_PRIMITIVE(uriVal)) {
@@ -263,8 +263,8 @@ GetStringFromJSObject(JSContext* aCtx,
                       const char* aProperty,
                       nsString& _string)
 {
-  JS::Value val;
-  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, &val);
+  JS::Rooted<JS::Value> val(aCtx);
+  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, val.address());
   if (!rc || JSVAL_IS_VOID(val) ||
       !(JSVAL_IS_NULL(val) || JSVAL_IS_STRING(val))) {
     _string.SetIsVoid(true);
@@ -304,8 +304,8 @@ GetIntFromJSObject(JSContext* aCtx,
                    const char* aProperty,
                    IntType* _int)
 {
-  JS::Value value;
-  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, &value);
+  JS::Rooted<JS::Value> value(aCtx);
+  JSBool rc = JS_GetProperty(aCtx, aObject, aProperty, value.address());
   NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
   if (JSVAL_IS_VOID(value)) {
     return NS_ERROR_INVALID_ARG;
@@ -345,8 +345,8 @@ GetJSObjectFromArray(JSContext* aCtx,
   NS_PRECONDITION(JS_IsArrayObject(aCtx, aArray),
                   "Must provide an object that is an array!");
 
-  JS::Value value;
-  JSBool rc = JS_GetElement(aCtx, aArray, aIndex, &value);
+  JS::Rooted<JS::Value> value(aCtx);
+  JSBool rc = JS_GetElement(aCtx, aArray, aIndex, value.address());
   NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
   NS_ENSURE_ARG(!JSVAL_IS_PRIMITIVE(value));
   *_rooter = JSVAL_TO_OBJECT(value);
@@ -2217,7 +2217,10 @@ History::VisitURI(nsIURI* aURI,
   else if (aFlags & IHistory::REDIRECT_PERMANENT) {
     transitionType = nsINavHistoryService::TRANSITION_REDIRECT_PERMANENT;
   }
-  else if (recentFlags & nsNavHistory::RECENT_TYPED) {
+  else if ((recentFlags & nsNavHistory::RECENT_TYPED) &&
+           !(aFlags & IHistory::UNRECOVERABLE_ERROR)) {
+    // Don't mark error pages as typed, even if they were actually typed by
+    // the user.  This is useful to limit their score in autocomplete.
     transitionType = nsINavHistoryService::TRANSITION_TYPED;
   }
   else if (recentFlags & nsNavHistory::RECENT_BOOKMARKED) {
@@ -2506,9 +2509,9 @@ History::UpdatePlaces(const JS::Value& aPlaceInfos,
   NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(aPlaceInfos), NS_ERROR_INVALID_ARG);
 
   uint32_t infosLength = 1;
-  JSObject* infos;
-  if (JS_IsArrayObject(aCtx, JSVAL_TO_OBJECT(aPlaceInfos))) {
-    infos = JSVAL_TO_OBJECT(aPlaceInfos);
+  JS::Rooted<JSObject*> infos(aCtx);
+  if (JS_IsArrayObject(aCtx, aPlaceInfos.toObjectOrNull())) {
+    infos = aPlaceInfos.toObjectOrNull();
     (void)JS_GetArrayLength(aCtx, infos, &infosLength);
     NS_ENSURE_ARG(infosLength > 0);
   }
@@ -2524,8 +2527,8 @@ History::UpdatePlaces(const JS::Value& aPlaceInfos,
 
   nsTArray<VisitData> visitData;
   for (uint32_t i = 0; i < infosLength; i++) {
-    JSObject* info;
-    nsresult rv = GetJSObjectFromArray(aCtx, infos, i, &info);
+    JS::Rooted<JSObject*> info(aCtx);
+    nsresult rv = GetJSObjectFromArray(aCtx, infos, i, info.address());
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIURI> uri = GetURIFromJSObject(aCtx, info, "uri");
@@ -2557,10 +2560,10 @@ History::UpdatePlaces(const JS::Value& aPlaceInfos,
     nsString title;
     GetStringFromJSObject(aCtx, info, "title", title);
 
-    JSObject* visits = NULL;
+    JS::Rooted<JSObject*> visits(aCtx, nullptr);
     {
-      JS::Value visitsVal;
-      JSBool rc = JS_GetProperty(aCtx, info, "visits", &visitsVal);
+      JS::Rooted<JS::Value> visitsVal(aCtx);
+      JSBool rc = JS_GetProperty(aCtx, info, "visits", visitsVal.address());
       NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
       if (!JSVAL_IS_PRIMITIVE(visitsVal)) {
         visits = JSVAL_TO_OBJECT(visitsVal);
@@ -2578,8 +2581,8 @@ History::UpdatePlaces(const JS::Value& aPlaceInfos,
     // Check each visit, and build our array of VisitData objects.
     visitData.SetCapacity(visitData.Length() + visitsLength);
     for (uint32_t j = 0; j < visitsLength; j++) {
-      JSObject* visit;
-      rv = GetJSObjectFromArray(aCtx, visits, j, &visit);
+      JS::Rooted<JSObject*> visit(aCtx);
+      rv = GetJSObjectFromArray(aCtx, visits, j, visit.address());
       NS_ENSURE_SUCCESS(rv, rv);
 
       VisitData& data = *visitData.AppendElement(VisitData(uri));

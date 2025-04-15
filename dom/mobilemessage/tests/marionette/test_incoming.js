@@ -1,7 +1,7 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-MARIONETTE_TIMEOUT = 10000;
+MARIONETTE_TIMEOUT = 60000;
 
 SpecialPowers.setBoolPref("dom.sms.enabled", true);
 SpecialPowers.addPermission("sms", true, document);
@@ -25,6 +25,7 @@ sms.onreceived = function onreceived(event) {
   let message = event.message;
   ok(message instanceof MozSmsMessage, "Message is instanceof MozSmsMessage");
 
+  ok(message.threadId, "thread id");
   is(message.delivery, "received", "Message delivery");
   is(message.deliveryStatus, "success", "Delivery status");
   is(message.sender, SENDER, "Message sender");

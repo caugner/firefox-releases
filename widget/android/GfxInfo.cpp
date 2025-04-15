@@ -381,6 +381,7 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
         // Gingerbread HTC devices are whitelisted.
         // Gingerbread Samsung devices are whitelisted except for:
         //   Samsung devices identified in Bug 847837
+        //   Samsung SGH-T989 (Bug 818363)
         // All other Gingerbread devices are blacklisted.
         bool isWhitelisted =
           cManufacturer.Equals("htc", nsCaseInsensitiveCStringComparator()) ||
@@ -396,6 +397,7 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
             cModel.Equals("GT-S7500T", nsCaseInsensitiveCStringComparator()) ||
             cModel.Equals("GT-S7500L", nsCaseInsensitiveCStringComparator()) ||
             cModel.Equals("GT-S6500T", nsCaseInsensitiveCStringComparator()) ||
+            cModel.Equals("SGH-T989", nsCaseInsensitiveCStringComparator()) ||
             cHardware.Equals("smdkc110", nsCaseInsensitiveCStringComparator()) ||
             cHardware.Equals("smdkc210", nsCaseInsensitiveCStringComparator()) ||
             cHardware.Equals("herring", nsCaseInsensitiveCStringComparator()) ||
@@ -479,6 +481,14 @@ GfxInfo::GetFeatureStatusImpl(int32_t aFeature,
           cManufacturer.Find("Sony", true) != -1;
 
         if (isBlocklisted) {
+          *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
+          return NS_OK;
+        }
+      }
+      else if (CompareVersions(mOSVersion.get(), "4.3.0") < 0)
+      {
+        // Blocklist all Sony devices
+        if (cManufacturer.Find("Sony", true) != -1) {
           *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
           return NS_OK;
         }

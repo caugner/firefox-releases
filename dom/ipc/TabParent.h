@@ -34,6 +34,7 @@ namespace mozilla {
 
 namespace layers {
 struct FrameMetrics;
+struct TextureFactoryIdentifier;
 }
 
 namespace layout {
@@ -61,6 +62,20 @@ public:
     virtual ~TabParent();
     nsIDOMElement* GetOwnerElement() { return mFrameElement; }
     void SetOwnerElement(nsIDOMElement* aElement);
+
+    /**
+     * Get the mozapptype attribute from this TabParent's owner DOM element.
+     */
+    void GetAppType(nsAString& aOut);
+
+    /**
+     * Returns true iff this TabParent's nsIFrameLoader is visible.
+     *
+     * The frameloader's visibility can be independent of e.g. its docshell's
+     * visibility.
+     */
+    bool IsVisible();
+
     nsIBrowserDOMWindow *GetBrowserDOMWindow() { return mBrowserDOMWindow; }
     void SetBrowserDOMWindow(nsIBrowserDOMWindow* aBrowserDOMWindow) {
         mBrowserDOMWindow = aBrowserDOMWindow;
@@ -96,8 +111,7 @@ public:
     virtual bool RecvEvent(const RemoteDOMEvent& aEvent);
     virtual bool RecvPRenderFrameConstructor(PRenderFrameParent* actor,
                                              ScrollingBehavior* scrolling,
-                                             LayersBackend* backend,
-                                             int32_t* maxTextureSize,
+                                             TextureFactoryIdentifier* identifier,
                                              uint64_t* layersId);
     virtual bool RecvBrowserFrameOpenWindow(PBrowserParent* aOpener,
                                             const nsString& aURL,
@@ -135,6 +149,7 @@ public:
     virtual bool RecvSetCursor(const uint32_t& aValue);
     virtual bool RecvSetBackgroundColor(const nscolor& aValue);
     virtual bool RecvGetDPI(float* aValue);
+    virtual bool RecvGetDefaultScale(double* aValue);
     virtual bool RecvGetWidgetNativeData(WindowsHandle* aValue);
     virtual bool RecvZoomToRect(const gfxRect& aRect);
     virtual bool RecvUpdateZoomConstraints(const bool& aAllowZoom,
@@ -191,7 +206,7 @@ public:
     virtual POfflineCacheUpdateParent* AllocPOfflineCacheUpdate(
             const URIParams& aManifestURI,
             const URIParams& aDocumentURI,
-            const bool& stickDocument);
+            const bool& stickDocument) MOZ_OVERRIDE;
     virtual bool DeallocPOfflineCacheUpdate(POfflineCacheUpdateParent* actor);
 
     JSBool GetGlobalJSObject(JSContext* cx, JSObject** globalp);
@@ -255,8 +270,7 @@ protected:
     bool AllowContentIME();
 
     virtual PRenderFrameParent* AllocPRenderFrame(ScrollingBehavior* aScrolling,
-                                                  LayersBackend* aBackend,
-                                                  int32_t* aMaxTextureSize,
+                                                  TextureFactoryIdentifier* aTextureFactoryIdentifier,
                                                   uint64_t* aLayersId) MOZ_OVERRIDE;
     virtual bool DeallocPRenderFrame(PRenderFrameParent* aFrame) MOZ_OVERRIDE;
 
@@ -280,6 +294,7 @@ protected:
     nsIntSize mDimensions;
     ScreenOrientation mOrientation;
     float mDPI;
+    double mDefaultScale;
     bool mShown;
     bool mUpdatedDimensions;
 
@@ -287,7 +302,7 @@ private:
     already_AddRefed<nsFrameLoader> GetFrameLoader() const;
     already_AddRefed<nsIWidget> GetWidget() const;
     layout::RenderFrameParent* GetRenderFrame();
-    void TryCacheDPI();
+    void TryCacheDPIAndScale();
 
     // When true, we create a pan/zoom controller for our frame and
     // notify it of input events targeting us.

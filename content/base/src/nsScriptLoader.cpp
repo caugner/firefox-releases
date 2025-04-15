@@ -805,7 +805,7 @@ nsScriptLoader::EvaluateScript(nsScriptLoadRequest* aRequest,
   }
 
   nsPIDOMWindow *pwin = mDocument->GetInnerWindow();
-  if (!pwin || !pwin->IsInnerWindow()) {
+  if (!pwin) {
     return NS_ERROR_FAILURE;
   }
   nsCOMPtr<nsIScriptGlobalObject> globalObject = do_QueryInterface(pwin);
@@ -848,7 +848,8 @@ nsScriptLoader::EvaluateScript(nsScriptLoadRequest* aRequest,
     if (aRequest->mOriginPrincipal) {
       options.setOriginPrincipals(nsJSPrincipals::get(aRequest->mOriginPrincipal));
     }
-    rv = context->EvaluateString(aScript, *globalObject->GetGlobalJSObject(),
+    JS::Rooted<JSObject*> global(cx, globalObject->GetGlobalJSObject());
+    rv = context->EvaluateString(aScript, global,
                                  options, /* aCoerceToString = */ false, nullptr);
   }
 
@@ -1062,7 +1063,7 @@ nsScriptLoader::ConvertToUTF16(nsIChannel* aChannel, const uint8_t* aData,
                                  aLength, &unicodeLength);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!EnsureStringLength(aString, unicodeLength)) {
+  if (!aString.SetLength(unicodeLength, fallible_t())) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 

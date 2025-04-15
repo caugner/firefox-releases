@@ -222,8 +222,6 @@ public:
                        uint32_t* imageLength,
                        imgFrame** aFrame);
 
-  void FrameUpdated(uint32_t aFrameNum, nsIntRect& aUpdatedRect);
-
   /* notification that the entire image has been decoded */
   nsresult DecodingComplete();
 
@@ -527,12 +525,11 @@ private:
 
   private: /* members */
 
-    // mThreadPoolMutex protects both mThreadPool and mShuttingDown. For all
-    // RasterImages R, R::mDecodingMutex must be acquired before
-    // mThreadPoolMutex if both are acquired; the other order may cause deadlock.
+    // mThreadPoolMutex protects mThreadPool. For all RasterImages R,
+    // R::mDecodingMutex must be acquired before mThreadPoolMutex if both are
+    // acquired; the other order may cause deadlock.
     mozilla::Mutex          mThreadPoolMutex;
     nsCOMPtr<nsIThreadPool> mThreadPool;
-    bool                    mShuttingDown;
   };
 
   class DecodeDoneWorker : public nsRunnable
@@ -588,7 +585,8 @@ private:
                                     gfxPattern::GraphicsFilter aFilter,
                                     const gfxMatrix &aUserSpaceToImageSpace,
                                     const gfxRect &aFill,
-                                    const nsIntRect &aSubimage);
+                                    const nsIntRect &aSubimage,
+                                    uint32_t aFlags);
 
   nsresult CopyFrame(uint32_t aWhichFrame,
                      uint32_t aFlags,
@@ -626,7 +624,6 @@ private:
   imgFrame* GetImgFrame(uint32_t framenum);
   imgFrame* GetDrawableImgFrame(uint32_t framenum);
   imgFrame* GetCurrentImgFrame();
-  imgFrame* GetCurrentDrawableImgFrame();
   uint32_t GetCurrentImgFrameIndex() const;
   mozilla::TimeStamp GetCurrentImgFrameEndTime() const;
 
@@ -715,7 +712,8 @@ private:
   bool IsInUpdateImageContainer() { return mInUpdateImageContainer; }
   enum RequestDecodeType {
       ASYNCHRONOUS,
-      SOMEWHAT_SYNCHRONOUS
+      SYNCHRONOUS_NOTIFY,
+      SYNCHRONOUS_NOTIFY_AND_SOME_DECODE
   };
   NS_IMETHOD RequestDecodeCore(RequestDecodeType aDecodeType);
 
@@ -831,7 +829,7 @@ private: // data
   TimeStamp mDrawStartTime;
 
   inline bool CanQualityScale(const gfxSize& scale);
-  inline bool CanScale(gfxPattern::GraphicsFilter aFilter, gfxSize aScale);
+  inline bool CanScale(gfxPattern::GraphicsFilter aFilter, gfxSize aScale, uint32_t aFlags);
 
   struct ScaleResult
   {

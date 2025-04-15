@@ -26,11 +26,11 @@ import android.text.InputType;
 import android.text.TextUtils;
 import android.text.format.DateFormat;
 import android.util.Log;
-import android.view.inputmethod.InputMethodManager;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ArrayAdapter;
@@ -46,22 +46,21 @@ import android.widget.TextView;
 import android.widget.TimePicker;
 
 import java.text.SimpleDateFormat;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 
 public class PromptService implements OnClickListener, OnCancelListener, OnItemClickListener, GeckoEventResponder {
     private static final String LOGTAG = "GeckoPromptService";
-
-    private static LayoutInflater sInflater;
-    private static SynchronousQueue<String> sPromptQueue = new SynchronousQueue<String>();
 
     private String[] mButtons;
     private PromptInput[] mInputs;
     private boolean[] mSelected;
     private AlertDialog mDialog;
 
+    private final LayoutInflater mInflater;
+    private final ConcurrentLinkedQueue<String> mPromptQueue;
     private final int mGroupPaddingSize;
     private final int mLeftRightTextWithIconPadding;
     private final int mTopBottomTextWithIconPadding;
@@ -71,7 +70,8 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
     private final int mMinRowSize;
 
     PromptService() {
-        sInflater = LayoutInflater.from(GeckoApp.mAppContext);
+        mInflater = LayoutInflater.from(GeckoApp.mAppContext);
+        mPromptQueue = new ConcurrentLinkedQueue<String>();
 
         Resources res = GeckoApp.mAppContext.getResources();
         mGroupPaddingSize = (int) (res.getDimension(R.dimen.prompt_service_group_padding_size));
@@ -157,14 +157,14 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                 GregorianCalendar calendar = new GregorianCalendar();
                 if (!TextUtils.isEmpty(mValue)) {
                     try {
-                        calendar.setTime(new SimpleDateFormat("kk:mm").parse(mValue));
+                        calendar.setTime(new SimpleDateFormat("HH:mm").parse(mValue));
                     } catch (Exception e) { }
                 }
                 input.setCurrentHour(calendar.get(GregorianCalendar.HOUR_OF_DAY));
                 input.setCurrentMinute(calendar.get(GregorianCalendar.MINUTE));
                 mView = (View)input;
             } else if (mType.equals("datetime-local") || mType.equals("datetime")) {
-                DateTimePicker input = new DateTimePicker(GeckoApp.mAppContext, "yyyy-MM-dd kk:mm", mValue,
+                 DateTimePicker input = new DateTimePicker(GeckoApp.mAppContext, "yyyy-MM-dd HH:mm", mValue,
                                                           DateTimePicker.PickersState.DATETIME);
                 input.toggleCalendar(true);
                 mView = (View)input;
@@ -203,7 +203,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                 try {
                     String[] listitems = getStringArray(mJSONInput, "values");
                     if (listitems.length > 0) {
-                        ArrayAdapter<String> adapter = new ArrayAdapter<String>(GeckoApp.mAppContext, android.R.layout.simple_dropdown_item_1line, listitems);
+                        ArrayAdapter<String> adapter = new ArrayAdapter<String>(GeckoApp.mAppContext, R.layout.simple_dropdown_item_1line, listitems);
                         spinner.setAdapter(adapter);
                         int selectedIndex = getSafeInt(mJSONInput, "selected");
                         spinner.setSelection(selectedIndex);
@@ -237,7 +237,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                 TimePicker tp = (TimePicker)mView;
                 GregorianCalendar calendar =
                     new GregorianCalendar(0,0,0,tp.getCurrentHour(),tp.getCurrentMinute());
-                return formatDateString("kk:mm",calendar);
+                return formatDateString("HH:mm",calendar);
             } else if (mType.equals("label")) {
                 return "";
             } else if (android.os.Build.VERSION.SDK_INT < 11 && mType.equals("date")) {
@@ -256,11 +256,11 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                 } else if (mType.equals("week")) {
                     return formatDateString("yyyy-'W'ww",calendar);
                 } else if (mType.equals("datetime-local")) {
-                    return formatDateString("yyyy-MM-dd kk:mm",calendar);
+                    return formatDateString("yyyy-MM-dd HH:mm",calendar);
                 } else if (mType.equals("datetime")) {
                     calendar.set(GregorianCalendar.ZONE_OFFSET,0);
                     calendar.setTimeInMillis(dp.getTimeInMillis());
-                    return formatDateString("yyyy-MM-dd kk:mm",calendar);
+                    return formatDateString("yyyy-MM-dd HH:mm",calendar);
                 } else if (mType.equals("month")) {
                     return formatDateString("yyyy-MM",calendar);
                 }
@@ -286,11 +286,11 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
     public String getResponse() {
         // we only handle one kind of message in handleMessage, and this is the
         // response we provide for that message
-        String promptServiceResult = "";
-        try {
-            promptServiceResult = waitForReturn();
-        } catch (InterruptedException e) { }
-        return promptServiceResult;
+        String result;
+        while (null == (result = mPromptQueue.poll())) {
+            GeckoAppShell.processNextNativeEvent(true);
+        }
+        return result;
     }
 
     private View applyInputStyle(View view) {
@@ -320,13 +320,13 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                 if (aMultipleSelection) {
                     resourceId = R.layout.select_dialog_multichoice;
                 } else {
-                    resourceId = android.R.layout.select_dialog_singlechoice;
+                    resourceId = R.layout.select_dialog_singlechoice;
                 }
             }
             PromptListAdapter adapter = new PromptListAdapter(GeckoApp.mAppContext, resourceId, aMenuList);
             if (mSelected != null && mSelected.length > 0) {
                 if (aMultipleSelection) {
-                    adapter.listView = (ListView) sInflater.inflate(R.layout.select_dialog_list, null);
+                    adapter.listView = (ListView) mInflater.inflate(R.layout.select_dialog_list, null);
                     adapter.listView.setOnItemClickListener(this);
                     builder.setInverseBackgroundForced(true);
                     adapter.listView.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
@@ -451,26 +451,14 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
         finishDialog(ret.toString());
     }
 
-    public static String waitForReturn() throws InterruptedException {
-        String value;
-
-        while (null == (value = sPromptQueue.poll(1, TimeUnit.MILLISECONDS))) {
-            GeckoAppShell.processNextNativeEvent();
-        }
-
-        return value;
-    }
-
     public void finishDialog(String aReturn) {
         mInputs = null;
         mButtons = null;
         mDialog = null;
         mSelected = null;
-        try {
-            sPromptQueue.put(aReturn);
-        } catch(Exception ex) {
-            Log.d(LOGTAG, "sPromptQueue not ready yet");
-        }
+        mPromptQueue.offer(aReturn);
+        // poke the Gecko thread in case it's waiting for new events
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createNoOpEvent());
     }
 
     private void processMessage(JSONObject geckoObject) {
@@ -696,7 +684,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                     resourceId = R.layout.list_item_header;
                 }
 
-                convertView = sInflater.inflate(resourceId, null);
+                convertView = mInflater.inflate(resourceId, null);
                 convertView.setMinimumHeight(mMinRowSize);
 
                 TextView tv = (TextView) convertView.findViewById(android.R.id.text1);

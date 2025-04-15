@@ -34,6 +34,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using namespace mozilla::gl;
 
 static bool BaseTypeAndSizeFromUniformType(WebGLenum uType, WebGLenum *baseType, WebGLint *unitSize);
 static WebGLenum InternalFormatForFormatAndType(WebGLenum format, WebGLenum type, bool isGLES2);
@@ -314,7 +315,7 @@ GLenum WebGLContext::CheckedBufferData(GLenum target,
         return LOCAL_GL_INVALID_VALUE;
     }
 #endif
-    WebGLBuffer *boundBuffer = NULL;
+    WebGLBuffer *boundBuffer = nullptr;
     if (target == LOCAL_GL_ARRAY_BUFFER) {
         boundBuffer = mBoundArrayBuffer;
     } else if (target == LOCAL_GL_ELEMENT_ARRAY_BUFFER) {
@@ -342,7 +343,7 @@ WebGLContext::BufferData(WebGLenum target, WebGLsizeiptr size,
     if (!IsContextStable())
         return;
 
-    WebGLBuffer *boundBuffer = NULL;
+    WebGLBuffer *boundBuffer = nullptr;
 
     if (target == LOCAL_GL_ARRAY_BUFFER) {
         boundBuffer = mBoundArrayBuffer;
@@ -361,10 +362,16 @@ WebGLContext::BufferData(WebGLenum target, WebGLsizeiptr size,
     if (!boundBuffer)
         return ErrorInvalidOperation("bufferData: no buffer bound!");
 
+    void* zeroBuffer = calloc(size, 1);
+    if (!zeroBuffer)
+        return ErrorOutOfMemory("bufferData: out of memory");
+
     MakeContextCurrent();
     InvalidateCachedMinInUseAttribArrayLength();
 
-    GLenum error = CheckedBufferData(target, size, 0, usage);
+    GLenum error = CheckedBufferData(target, size, zeroBuffer, usage);
+    free(zeroBuffer);
+
     if (error) {
         GenerateWarning("bufferData generated error %s", ErrorName(error));
         return;
@@ -387,7 +394,7 @@ WebGLContext::BufferData(WebGLenum target, ArrayBuffer *data, WebGLenum usage)
         return ErrorInvalidValue("bufferData: null object passed");
     }
 
-    WebGLBuffer *boundBuffer = NULL;
+    WebGLBuffer *boundBuffer = nullptr;
 
     if (target == LOCAL_GL_ARRAY_BUFFER) {
         boundBuffer = mBoundArrayBuffer;
@@ -425,7 +432,7 @@ WebGLContext::BufferData(WebGLenum target, ArrayBufferView& data, WebGLenum usag
     if (!IsContextStable())
         return;
 
-    WebGLBuffer *boundBuffer = NULL;
+    WebGLBuffer *boundBuffer = nullptr;
 
     if (target == LOCAL_GL_ARRAY_BUFFER) {
         boundBuffer = mBoundArrayBuffer;
@@ -468,7 +475,7 @@ WebGLContext::BufferSubData(GLenum target, WebGLsizeiptr byteOffset,
         return;
     }
 
-    WebGLBuffer *boundBuffer = NULL;
+    WebGLBuffer *boundBuffer = nullptr;
 
     if (target == LOCAL_GL_ARRAY_BUFFER) {
         boundBuffer = mBoundArrayBuffer;
@@ -506,7 +513,7 @@ WebGLContext::BufferSubData(WebGLenum target, WebGLsizeiptr byteOffset,
     if (!IsContextStable())
         return;
 
-    WebGLBuffer *boundBuffer = NULL;
+    WebGLBuffer *boundBuffer = nullptr;
 
     if (target == LOCAL_GL_ARRAY_BUFFER) {
         boundBuffer = mBoundArrayBuffer;
@@ -731,7 +738,7 @@ WebGLContext::CopyTexSubImage2D_base(WebGLenum target,
         // now that the size is known, create the buffer
 
         // We need some zero pages, because GL doesn't guarantee the
-        // contents of a texture allocated with NULL data.
+        // contents of a texture allocated with nullptr data.
         // Hopefully calloc will just mmap zero pages here.
         void *tempZeroData = calloc(1, bytesNeeded);
         if (!tempZeroData)
@@ -2816,16 +2823,15 @@ WebGLContext::GetUniformLocation(WebGLProgram *prog, const nsAString& name)
     MakeContextCurrent();
     GLint intlocation = gl->fGetUniformLocation(progname, mappedName.get());
 
-    WebGLUniformLocation *loc = nullptr;
+    nsRefPtr<WebGLUniformLocation> loc;
     if (intlocation >= 0) {
         WebGLUniformInfo info = prog->GetUniformInfoForMappedIdentifier(mappedName);
         loc = new WebGLUniformLocation(this,
                                        prog,
                                        intlocation,
                                        info);
-        NS_ADDREF(loc);
     }
-    return loc;
+    return loc.forget();
 }
 
 JS::Value
@@ -4396,12 +4402,12 @@ WebGLContext::CompileShader(WebGLShader *shader)
 
             const char *ts = translatedSrc.get();
 
-            gl->fShaderSource(shadername, 1, &ts, NULL);
+            gl->fShaderSource(shadername, 1, &ts, nullptr);
         } else { // not useShaderSourceTranslation
             // we just pass the raw untranslated shader source. We then can't use ANGLE idenfier mapping.
             // that's really bad, as that means we can't be 100% conformant. We should work towards always
             // using ANGLE identifier mapping.
-            gl->fShaderSource(shadername, 1, &s, NULL);
+            gl->fShaderSource(shadername, 1, &s, nullptr);
         }
 
         shader->SetTranslationSuccess();
@@ -4674,10 +4680,9 @@ WebGLContext::GetShaderPrecisionFormat(WebGLenum shadertype, WebGLenum precision
     GLint range[2], precision;
     gl->fGetShaderPrecisionFormat(shadertype, precisiontype, range, &precision);
 
-    WebGLShaderPrecisionFormat *retShaderPrecisionFormat
+    nsRefPtr<WebGLShaderPrecisionFormat> retShaderPrecisionFormat
         = new WebGLShaderPrecisionFormat(this, range[0], range[1], precision);
-    NS_ADDREF(retShaderPrecisionFormat);
-    return retShaderPrecisionFormat;
+    return retShaderPrecisionFormat.forget();
 }
 
 void
@@ -4875,11 +4880,11 @@ WebGLContext::TexImage2D_base(WebGLenum target, WebGLint level, WebGLenum intern
 
     if (format == LOCAL_GL_DEPTH_COMPONENT || format == LOCAL_GL_DEPTH_STENCIL) {
         if (IsExtensionEnabled(WEBGL_depth_texture)) {
-            if (target != LOCAL_GL_TEXTURE_2D || data != NULL || level != 0)
+            if (target != LOCAL_GL_TEXTURE_2D || data != nullptr || level != 0)
                 return ErrorInvalidOperation("texImage2D: "
                                              "with format of DEPTH_COMPONENT or DEPTH_STENCIL "
                                              "target must be TEXTURE_2D, "
-                                             "data must be NULL, "
+                                             "data must be nullptr, "
                                              "level must be zero");
         }
         else
@@ -4954,7 +4959,7 @@ WebGLContext::TexImage2D_base(WebGLenum target, WebGLint level, WebGLenum intern
         }
     } else {
         // We need some zero pages, because GL doesn't guarantee the
-        // contents of a texture allocated with NULL data.
+        // contents of a texture allocated with nullptr data.
         // Hopefully calloc will just mmap zero pages here.
         void *tempZeroData = calloc(1, bytesNeeded);
         if (!tempZeroData)
@@ -5405,21 +5410,25 @@ WebGLContext::ReattachTextureToAnyFramebufferToWorkAroundBugs(WebGLTexture *tex,
         framebuffer = framebuffer->getNext())
     {
         if (framebuffer->ColorAttachment().Texture() == tex) {
+            ScopedBindFramebuffer autoFB(gl, framebuffer->GLName());
             framebuffer->FramebufferTexture2D(
               LOCAL_GL_FRAMEBUFFER, LOCAL_GL_COLOR_ATTACHMENT0,
               tex->Target(), tex, level);
         }
         if (framebuffer->DepthAttachment().Texture() == tex) {
+            ScopedBindFramebuffer autoFB(gl, framebuffer->GLName());
             framebuffer->FramebufferTexture2D(
               LOCAL_GL_FRAMEBUFFER, LOCAL_GL_DEPTH_ATTACHMENT,
               tex->Target(), tex, level);
         }
         if (framebuffer->StencilAttachment().Texture() == tex) {
+            ScopedBindFramebuffer autoFB(gl, framebuffer->GLName());
             framebuffer->FramebufferTexture2D(
               LOCAL_GL_FRAMEBUFFER, LOCAL_GL_STENCIL_ATTACHMENT,
               tex->Target(), tex, level);
         }
         if (framebuffer->DepthStencilAttachment().Texture() == tex) {
+            ScopedBindFramebuffer autoFB(gl, framebuffer->GLName());
             framebuffer->FramebufferTexture2D(
               LOCAL_GL_FRAMEBUFFER, LOCAL_GL_DEPTH_STENCIL_ATTACHMENT,
               tex->Target(), tex, level);

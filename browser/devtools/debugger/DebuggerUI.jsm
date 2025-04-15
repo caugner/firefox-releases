@@ -9,10 +9,9 @@ const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
 
-const DBG_XUL = "chrome://browser/content/debugger.xul";
+const DBG_XUL = "chrome://browser/content/devtools/debugger.xul";
 const DBG_STRINGS_URI = "chrome://browser/locale/devtools/debugger.properties";
 const CHROME_DEBUGGER_PROFILE_NAME = "-chrome-debugger";
-const TAB_SWITCH_NOTIFICATION = "debugger-tab-switch";
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
@@ -21,9 +20,6 @@ XPCOMUtils.defineLazyModuleGetter(this,
 
 XPCOMUtils.defineLazyModuleGetter(this,
   "Services", "resource://gre/modules/Services.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this,
-  "FileUtils", "resource://gre/modules/FileUtils.jsm");
 
 this.EXPORTED_SYMBOLS = ["DebuggerUI"];
 
@@ -83,10 +79,6 @@ DebuggerUI.prototype = {
     let selectedTab = this.chromeWindow.gBrowser.selectedTab;
 
     if (scriptDebugger) {
-      if (scriptDebugger.ownerTab !== selectedTab) {
-        this.showTabSwitchNotification();
-        return scriptDebugger;
-      }
       scriptDebugger.close();
       return null;
     }
@@ -171,63 +163,6 @@ DebuggerUI.prototype = {
    */
   getChromeDebugger: function DUI_getChromeDebugger() {
     return '_chromeDebugger' in this ? this._chromeDebugger : null;
-  },
-
-  /**
-   * Currently, there can only be one debugger per tab.
-   * Show an asynchronous notification which asks the user to switch the
-   * script debugger to the current tab if it's already open in another one.
-   */
-  showTabSwitchNotification: function DUI_showTabSwitchNotification() {
-    let gBrowser = this.chromeWindow.gBrowser;
-    let selectedBrowser = gBrowser.selectedBrowser;
-
-    let nbox = gBrowser.getNotificationBox(selectedBrowser);
-    let notification = nbox.getNotificationWithValue(TAB_SWITCH_NOTIFICATION);
-    if (notification) {
-      nbox.removeNotification(notification);
-      return;
-    }
-    let self = this;
-
-    let buttons = [{
-      id: "debugger.confirmTabSwitch.buttonSwitch",
-      label: L10N.getStr("confirmTabSwitch.buttonSwitch"),
-      accessKey: L10N.getStr("confirmTabSwitch.buttonSwitch.accessKey"),
-      callback: function DUI_notificationButtonSwitch() {
-        let scriptDebugger = self.findDebugger();
-        let targetWindow = scriptDebugger.globalUI.chromeWindow;
-        targetWindow.gBrowser.selectedTab = scriptDebugger.ownerTab;
-        targetWindow.focus();
-      }
-    }, {
-      id: "debugger.confirmTabSwitch.buttonOpen",
-      label: L10N.getStr("confirmTabSwitch.buttonOpen"),
-      accessKey: L10N.getStr("confirmTabSwitch.buttonOpen.accessKey"),
-      callback: function DUI_notificationButtonOpen() {
-        let scriptDebugger = self.findDebugger();
-        let targetWindow = scriptDebugger.globalUI.chromeWindow;
-        scriptDebugger.close();
-
-        targetWindow.addEventListener("Debugger:Shutdown", function onShutdown() {
-          targetWindow.removeEventListener("Debugger:Shutdown", onShutdown, false);
-          Services.tm.currentThread.dispatch({ run: function() {
-            self.toggleDebugger();
-          }}, 0);
-        }, false);
-      }
-    }];
-
-    let message = L10N.getStr("confirmTabSwitch.message");
-    let imageURL = "chrome://browser/skin/Info.png";
-
-    notification = nbox.appendNotification(
-      message, TAB_SWITCH_NOTIFICATION,
-      imageURL, nbox.PRIORITY_WARNING_HIGH, buttons, null);
-
-    // Make sure this is not a transient notification, to avoid the automatic
-    // transient notification removal.
-    notification.persistence = -1;
   }
 };
 
@@ -553,13 +488,16 @@ ChromeDebuggerProcess.prototype = {
   close: function RDP_close() {
     dumpn("Closing chrome debugging process");
     if (!this.globalUI) {
+      dumpn("globalUI is missing");
       return;
     }
     delete this.globalUI._chromeDebugger;
 
     if (this._dbgProcess.isRunning) {
+      dumpn("Killing chrome debugging process...");
       this._dbgProcess.kill();
     }
+    dumpn("...done.");
     if (typeof this._closeCallback == "function") {
       this._closeCallback.call({}, this);
     }

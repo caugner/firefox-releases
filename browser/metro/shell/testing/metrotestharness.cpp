@@ -28,6 +28,12 @@ static const WCHAR* kFirefoxExe = L"firefox.exe";
 static const WCHAR* kDefaultMetroBrowserIDPathKey = L"FirefoxURL";
 static const WCHAR* kDemoMetroBrowserIDPathKey = L"Mozilla.Firefox.URL";
 
+// Logging pipe handle
+HANDLE gTestOutputPipe = INVALID_HANDLE_VALUE;
+// Logging pipe read buffer
+#define PIPE_BUFFER_SIZE 4096
+char buffer[PIPE_BUFFER_SIZE + 1];
+
 CString sAppParams;
 CString sFirefoxPath;
 
@@ -156,12 +162,36 @@ public:
   }
 };
 
-static void AddConsoleIdToParams()
+static bool SetupTestOutputPipe()
 {
-  DWORD dwId = GetCurrentProcessId();
-  CString tmp;
-  tmp.Format(L" testconsoleid=%d", dwId);
-  sAppParams += tmp;
+  SECURITY_ATTRIBUTES saAttr;
+  saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+  saAttr.bInheritHandle = TRUE;
+  saAttr.lpSecurityDescriptor = NULL;
+
+  gTestOutputPipe =
+    CreateNamedPipeW(L"\\\\.\\pipe\\metrotestharness",
+                     PIPE_ACCESS_INBOUND,
+                     PIPE_TYPE_BYTE|PIPE_WAIT,
+                     1,
+                     PIPE_BUFFER_SIZE,
+                     PIPE_BUFFER_SIZE, 0, NULL);
+
+  if (gTestOutputPipe == INVALID_HANDLE_VALUE) {
+    Log(L"Failed to create named logging pipe.");
+    return false;
+  }
+  return true;
+}
+
+static void ReadPipe()
+{
+  DWORD numBytesRead;
+  while (ReadFile(gTestOutputPipe, buffer, PIPE_BUFFER_SIZE, &numBytesRead, NULL) &&
+         numBytesRead) {
+    buffer[numBytesRead] = '\0';
+    printf("%s", buffer);
+  }
 }
 
 static bool Launch()
@@ -189,12 +219,15 @@ static bool Launch()
   }
   Log(L"App model id='%s'", appModelID);
 
-  // Hand off focus rights to the out-of-process activation server. Without
-  // this the metro interface won't launch.
-  hr = CoAllowSetForegroundWindow(activateMgr, NULL);
-  if (FAILED(hr)) {
-    Fail(L"CoAllowSetForegroundWindow result %X", hr);
-    return false;
+  // Hand off focus rights if the terminal has focus to the out-of-process
+  // activation server (explorer.exe). Without this the metro interface
+  // won't launch.
+  if (GetForegroundWindow() == GetConsoleWindow()) {
+    hr = CoAllowSetForegroundWindow(activateMgr, NULL);
+    if (FAILED(hr)) {
+      Fail(L"CoAllowSetForegroundWindow result %X", hr);
+      return false;
+    }
   }
 
   Log(L"Harness process id: %d", GetCurrentProcessId());
@@ -249,6 +282,12 @@ static bool Launch()
   FlushFileBuffers(hTestFile);
   CloseHandle(hTestFile);
 
+  // Create a named stdout pipe for the browser
+  if (!SetupTestOutputPipe()) {
+    Fail(L"SetupTestOutputPipe failed (errno=%d)", GetLastError());
+    return false;
+  }
+
   // Launch firefox
   hr = activateMgr->ActivateApplication(appModelID, L"", AO_NOERRORUI, &processID);
   if (FAILED(hr)) {
@@ -268,12 +307,23 @@ static bool Launch()
 
   MSG msg;
   DWORD waitResult = WAIT_TIMEOUT;
-  while ((waitResult = WaitForSingleObject(child, 10)) != WAIT_OBJECT_0) {
-    if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+  HANDLE handles[2] = { child, gTestOutputPipe };
+  while ((waitResult = MsgWaitForMultipleObjects(2, handles, FALSE, INFINITE, QS_ALLINPUT)) != WAIT_OBJECT_0) {
+    if (waitResult == WAIT_FAILED) {
+      Log(L"Wait failed (errno=%d)", GetLastError());
+      break;
+    } else if (waitResult == WAIT_OBJECT_0 + 1) {
+      ReadPipe();
+    } else if (waitResult == WAIT_OBJECT_0 + 2 &&
+               PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
       TranslateMessage(&msg);
       DispatchMessage(&msg);
     }
   }
+
+  ReadPipe();
+  CloseHandle(gTestOutputPipe);
+  CloseHandle(child);
 
   Log(L"Exiting.");
   return true;
@@ -307,7 +357,6 @@ int wmain(int argc, WCHAR* argv[])
   if (sFirefoxPath.GetLength()) {
     Log(L"firefoxpath: '%s'", sFirefoxPath);
   }
-  AddConsoleIdToParams();
   Log(L"args: '%s'", sAppParams);
   Launch();
 

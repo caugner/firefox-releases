@@ -196,7 +196,8 @@ public:
     NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(WebGLContext,
                                                            nsIDOMWebGLRenderingContext)
 
-    virtual JSObject* WrapObject(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
+    virtual JSObject* WrapObject(JSContext *cx,
+                                 JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
 
     NS_DECL_NSIDOMWEBGLRENDERINGCONTEXT
 
@@ -1173,7 +1174,7 @@ public:
 inline nsISupports*
 ToSupports(WebGLContext* context)
 {
-  return static_cast<nsICanvasRenderingContextInternal*>(context);
+  return static_cast<nsIDOMWebGLRenderingContext*>(context);
 }
 
 class WebGLActiveInfo MOZ_FINAL
@@ -1200,7 +1201,7 @@ public:
         retval = mName;
     }
 
-    virtual JSObject* WrapObject(JSContext *cx, JSObject *scope);
+    JSObject* WrapObject(JSContext *cx, JS::Handle<JSObject*> scope);
 
     NS_DECL_ISUPPORTS
 

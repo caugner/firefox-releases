@@ -72,7 +72,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIDOMDATACHANNEL
 
-  NS_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper::)
+  NS_REALLY_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper)
 
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsDOMDataChannel,
                                            nsDOMEventTargetHelper)
@@ -141,8 +141,6 @@ nsDOMDataChannel::Init(nsPIDOMWindow* aDOMWindow)
 {
   nsresult rv;
   nsAutoString urlParam;
-
-  nsDOMEventTargetHelper::Init();
 
   MOZ_ASSERT(mDataChannel);
   mDataChannel->SetListener(this, nullptr);
@@ -347,10 +345,11 @@ nsDOMDataChannel::GetSendParams(nsIVariant* aData, nsCString& aStringOut,
 
     nsMemory::Free(iid);
 
+    AutoSafeJSContext cx;
     // ArrayBuffer?
-    JS::Value realVal;
-    JSObject* obj;
-    nsresult rv = aData->GetAsJSVal(&realVal);
+    JS::Rooted<JS::Value> realVal(cx);
+    JS::Rooted<JSObject*> obj(cx);
+    nsresult rv = aData->GetAsJSVal(realVal.address());
     if (NS_SUCCEEDED(rv) && !JSVAL_IS_PRIMITIVE(realVal) &&
         (obj = JSVAL_TO_OBJECT(realVal)) &&
         (JS_IsArrayBufferObject(obj))) {
@@ -423,15 +422,15 @@ nsDOMDataChannel::DoOnMessageAvailable(const nsACString& aData,
   NS_ENSURE_TRUE(cx, NS_ERROR_FAILURE);
 
   JSAutoRequest ar(cx);
-  JS::Value jsData;
+  JS::Rooted<JS::Value> jsData(cx);
 
   if (aBinary) {
     if (mBinaryType == DC_BINARY_TYPE_BLOB) {
-      rv = nsContentUtils::CreateBlobBuffer(cx, aData, jsData);
+      rv = nsContentUtils::CreateBlobBuffer(cx, aData, &jsData);
       NS_ENSURE_SUCCESS(rv, rv);
     } else if (mBinaryType == DC_BINARY_TYPE_ARRAYBUFFER) {
-      JSObject* arrayBuf;
-      rv = nsContentUtils::CreateArrayBuffer(cx, aData, &arrayBuf);
+      JS::Rooted<JSObject*> arrayBuf(cx);
+      rv = nsContentUtils::CreateArrayBuffer(cx, aData, arrayBuf.address());
       NS_ENSURE_SUCCESS(rv, rv);
       jsData = OBJECT_TO_JSVAL(arrayBuf);
     } else {

@@ -311,26 +311,20 @@ SurfaceStream_TripleBuffer_Copy::SwapProducer(SurfaceFactory* factory,
 
     RecycleScraps(factory);
     if (mProducer) {
-        if (mStaging && mStaging->Type() != factory->Type())
+        if (mStaging) {
+            // We'll re-use this for a new mProducer later on if
+            // the size remains the same
             Recycle(factory, mStaging);
+        }
 
-        if (!mStaging)
-            New(factory, mProducer->Size(), mStaging);
-
-        if (!mStaging)
-            return nullptr;
-
-        SharedSurface::Copy(mProducer, mStaging, factory);
-        // Fence now, before we start (maybe) juggling Prod around.
+        Move(mProducer, mStaging);
         mStaging->Fence();
 
-        if (mProducer->Size() != size)
-            Recycle(factory, mProducer);
-    }
-
-    // The old Prod (if there every was one) was invalid,
-    // so we need a new one.
-    if (!mProducer) {
+        New(factory, size, mProducer);
+        
+        if (mProducer && mStaging->Size() == mProducer->Size())
+            SharedSurface::Copy(mStaging, mProducer, factory);
+    } else {
         New(factory, size, mProducer);
     }
 
@@ -351,12 +345,7 @@ SurfaceStream_TripleBuffer_Copy::SwapConsumer_NoWait()
     return mConsumer;
 }
 
-
-
-SurfaceStream_TripleBuffer::SurfaceStream_TripleBuffer(SurfaceStream* prevStream)
-    : SurfaceStream(SurfaceStreamType::TripleBuffer, prevStream)
-    , mStaging(nullptr)
-    , mConsumer(nullptr)
+void SurfaceStream_TripleBuffer::Init(SurfaceStream* prevStream)
 {
     if (!prevStream)
         return;
@@ -370,6 +359,23 @@ SurfaceStream_TripleBuffer::SurfaceStream_TripleBuffer(SurfaceStream* prevStream
 
     mProducer = Absorb(prevProducer);
     mConsumer = Absorb(prevConsumer);
+}
+
+
+SurfaceStream_TripleBuffer::SurfaceStream_TripleBuffer(SurfaceStreamType type, SurfaceStream* prevStream)
+    : SurfaceStream(type, prevStream)
+    , mStaging(nullptr)
+    , mConsumer(nullptr)
+{
+    SurfaceStream_TripleBuffer::Init(prevStream);
+}
+
+SurfaceStream_TripleBuffer::SurfaceStream_TripleBuffer(SurfaceStream* prevStream)
+    : SurfaceStream(SurfaceStreamType::TripleBuffer, prevStream)
+    , mStaging(nullptr)
+    , mConsumer(nullptr)
+{
+    SurfaceStream_TripleBuffer::Init(prevStream);
 }
 
 SurfaceStream_TripleBuffer::~SurfaceStream_TripleBuffer()
@@ -431,7 +437,7 @@ SurfaceStream_TripleBuffer::SwapConsumer_NoWait()
 }
 
 SurfaceStream_TripleBuffer_Async::SurfaceStream_TripleBuffer_Async(SurfaceStream* prevStream)
-    : SurfaceStream_TripleBuffer(prevStream)
+    : SurfaceStream_TripleBuffer(SurfaceStreamType::TripleBuffer_Async, prevStream)
 {
 }
 

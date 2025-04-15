@@ -23,7 +23,6 @@
 #include "nsStubDocumentObserver.h"
 #include "nsIDOMStyleSheetList.h"
 #include "nsIScriptGlobalObject.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIContent.h"
 #include "nsEventListenerManager.h"
 #include "nsIDOMNodeSelector.h"
@@ -141,7 +140,7 @@ public:
     return mNameContentList;
   }
   bool HasNameElement() const {
-    return mNameContentList && !mNameContentList->Length() != 0;
+    return mNameContentList && mNameContentList->Length() != 0;
   }
 
   /**
@@ -179,6 +178,7 @@ public:
    * GetIdElement(true) if non-null.
    */
   void SetImageElement(Element* aElement);
+  bool HasIdElementExposedAsHTMLDocumentProperty();
 
   bool HasContentChangeCallback() { return mChangeCallbacks != nullptr; }
   void AddContentChangeCallback(nsIDocument::IDTargetObserver aCallback,
@@ -463,6 +463,29 @@ protected:
   bool mHaveShutDown;
 };
 
+class CSPErrorQueue
+{
+  public:
+    /**
+     * Note this was designed to be passed string literals. If you give it
+     * a dynamically allocated string, it is your responsibility to make sure
+     * it never dies and is properly freed!
+     */
+    void Add(const char* aMessageName);
+    void Flush(nsIDocument* aDocument);
+
+    CSPErrorQueue()
+    {
+    }
+
+    ~CSPErrorQueue()
+    {
+    }
+
+  private:
+    nsAutoTArray<const char*,5> mErrors;
+};
+
 // Base class for our document implementations.
 //
 // Note that this class *implements* nsIDOMXMLDocument, but it's not
@@ -568,13 +591,12 @@ public:
 
   /**
    * Create a new presentation shell that will use aContext for
-   * its presentation context (presentation context's <b>must not</b> be
-   * shared among multiple presentation shell's).
+   * its presentation context (presentation contexts <b>must not</b> be
+   * shared among multiple presentation shells).
    */
-  virtual nsresult CreateShell(nsPresContext* aContext,
-                               nsViewManager* aViewManager,
-                               nsStyleSet* aStyleSet,
-                               nsIPresShell** aInstancePtrResult);
+  virtual already_AddRefed<nsIPresShell> CreateShell(nsPresContext* aContext,
+                                                     nsViewManager* aViewManager,
+                                                     nsStyleSet* aStyleSet) MOZ_OVERRIDE;
   virtual void DeleteShell();
 
   virtual nsresult GetAllowPlugins(bool* aAllowPlugins);
@@ -637,8 +659,8 @@ public:
 
   virtual void SetScriptHandlingObject(nsIScriptGlobalObject* aScriptObject);
 
-  virtual nsIScriptGlobalObject* GetScopeObject() const;
-
+  virtual nsIGlobalObject* GetScopeObject() const;
+  void SetScopeObject(nsIGlobalObject* aGlobal);
   /**
    * Get the script loader for this document
    */
@@ -696,9 +718,9 @@ public:
                                  nsAString& Standalone);
   virtual bool IsScriptEnabled();
 
-  virtual void OnPageShow(bool aPersisted, nsIDOMEventTarget* aDispatchStartTarget);
-  virtual void OnPageHide(bool aPersisted, nsIDOMEventTarget* aDispatchStartTarget);
-  
+  virtual void OnPageShow(bool aPersisted, mozilla::dom::EventTarget* aDispatchStartTarget);
+  virtual void OnPageHide(bool aPersisted, mozilla::dom::EventTarget* aDispatchStartTarget);
+
   virtual void WillDispatchMutationEvent(nsINode* aTarget);
   virtual void MutationEventDispatched(nsINode* aTarget);
 
@@ -794,9 +816,7 @@ public:
                               int32_t aNamespaceID,
                               nsIContent **aResult);
 
-  nsresult CreateTextNode(const nsAString& aData, nsIContent** aReturn);
-
-  virtual NS_HIDDEN_(nsresult) Sanitize();
+  virtual NS_HIDDEN_(void) Sanitize();
 
   virtual NS_HIDDEN_(void) EnumerateSubDocuments(nsSubDocEnumFunc aCallback,
                                                  void *aData);
@@ -1023,11 +1043,9 @@ public:
 
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
-  JSObject* GetCustomPrototype(const nsAString& aElementName)
+  void GetCustomPrototype(const nsAString& aElementName, JS::MutableHandle<JSObject*> prototype)
   {
-    JSObject* prototype = nullptr;
-    mCustomPrototypes.Get(aElementName, &prototype);
-    return prototype;
+    mCustomPrototypes.Get(aElementName, prototype.address());
   }
 
   static bool RegisterEnabled();
@@ -1120,34 +1138,42 @@ public:
   virtual void SetTitle(const nsAString& aTitle, mozilla::ErrorResult& rv);
 
   static void XPCOMShutdown();
+
+  bool mIsTopLevelContentDocument:1;
+
+  bool IsTopLevelContentDocument();
+
+  void SetIsTopLevelContentDocument(bool aIsTopLevelContentDocument);
+
+  js::ExpandoAndGeneration mExpandoAndGeneration;
+
 protected:
-  nsresult doCreateShell(nsPresContext* aContext,
-                         nsViewManager* aViewManager, nsStyleSet* aStyleSet,
-                         nsCompatibility aCompatMode,
-                         nsIPresShell** aInstancePtrResult);
+  already_AddRefed<nsIPresShell> doCreateShell(nsPresContext* aContext,
+                                               nsViewManager* aViewManager,
+                                               nsStyleSet* aStyleSet,
+                                               nsCompatibility aCompatMode);
 
   void RemoveDocStyleSheetsFromStyleSets();
   void RemoveStyleSheetsFromStyleSets(nsCOMArray<nsIStyleSheet>& aSheets, 
                                       nsStyleSet::sheetType aType);
-  nsresult ResetStylesheetsToURI(nsIURI* aURI);
+  void ResetStylesheetsToURI(nsIURI* aURI);
   void FillStyleSet(nsStyleSet* aStyleSet);
 
   // Return whether all the presshells for this document are safe to flush
   bool IsSafeToFlush() const;
-  
-  void DispatchPageTransition(nsIDOMEventTarget* aDispatchTarget,
+
+  void DispatchPageTransition(mozilla::dom::EventTarget* aDispatchTarget,
                               const nsAString& aType,
                               bool aPersisted);
 
   virtual nsPIDOMWindow *GetWindowInternal() const;
-  virtual nsPIDOMWindow *GetInnerWindowInternal();
   virtual nsIScriptGlobalObject* GetScriptHandlingObjectInternal() const;
   virtual bool InternalAllowXULXBL();
 
 #define NS_DOCUMENT_NOTIFY_OBSERVERS(func_, params_)                        \
   NS_OBSERVER_ARRAY_NOTIFY_XPCOM_OBSERVERS(mObservers, nsIDocumentObserver, \
                                            func_, params_);
-  
+
 #ifdef DEBUG
   void VerifyRootContentState();
 #endif
@@ -1179,11 +1205,6 @@ protected:
 
   // Array of observers
   nsTObserverArray<nsIDocumentObserver*> mObservers;
-
-  // If document is created for example using
-  // document.implementation.createDocument(...), mScriptObject points to
-  // the script global object of the original document.
-  nsWeakPtr mScriptObject;
 
   // Weak reference to the scope object (aka the script global object)
   // that, unlike mScriptGlobalObject, is never unset once set. This
@@ -1316,12 +1337,19 @@ private:
   friend class nsUnblockOnloadEvent;
   // Recomputes the visibility state but doesn't set the new value.
   mozilla::dom::VisibilityState GetVisibilityState() const;
+  void NotifyStyleSheetAdded(nsIStyleSheet* aSheet, bool aDocumentSheet);
+  void NotifyStyleSheetRemoved(nsIStyleSheet* aSheet, bool aDocumentSheet);
 
   void PostUnblockOnloadEvent();
   void DoUnblockOnload();
 
   nsresult CheckFrameOptions();
   nsresult InitCSP(nsIChannel* aChannel);
+
+  void FlushCSPWebConsoleErrorQueue()
+  {
+    mCSPWebConsoleErrorQueue.Flush(this);
+  }
 
   /**
    * Find the (non-anonymous) content in this document for aFrame. It will
@@ -1420,6 +1448,8 @@ private:
 
   nsrefcnt mStackRefCnt;
   bool mNeedsReleaseAfterStackRefCntRelease;
+
+  CSPErrorQueue mCSPWebConsoleErrorQueue;
 
 #ifdef DEBUG
 protected:

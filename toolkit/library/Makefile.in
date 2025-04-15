@@ -37,6 +37,7 @@ CPPSRCS += dlldeps-xul.cpp
 endif
 
 SHARED_LIBRARY_LIBS += \
+  $(DEPTH)/media/kiss_fft/$(LIB_PREFIX)kiss_fft.$(LIB_SUFFIX) \
   $(DEPTH)/toolkit/components/osfile/$(LIB_PREFIX)osfile_s.$(LIB_SUFFIX) \
   $(DEPTH)/toolkit/xre/$(LIB_PREFIX)xulapp_s.$(LIB_SUFFIX) \
   $(NULL)
@@ -128,6 +129,13 @@ endif
 ifeq (Linux,$(OS_ARCH))
 ifneq (Android,$(OS_TARGET))
 OS_LIBS += -lrt
+EXTRA_DSO_LDOPTS += -Wl,-version-script,symverscript
+
+symverscript: symverscript.in
+	$(PYTHON) $(topsrcdir)/config/Preprocessor.py \
+		-DVERSION="$(LIBRARY_NAME)$(MOZILLA_VERSION)" $< > $@
+
+EXTRA_DEPS += symverscript
 endif
 endif
 
@@ -171,6 +179,7 @@ COMPONENT_LIBS += \
   storagecomps \
   rdf \
   windowds \
+  diskspacewatcher \
   $(NULL)
 
 ifdef BUILD_CTYPES
@@ -296,7 +305,7 @@ endif
 STATIC_LIBS += thebes gl ycbcr
 
 ifdef MOZ_ENABLE_GTEST
-COMPONENT_LIBS += gtest
+COMPONENT_LIBS += gtest xpcom_glue_gtest
 endif
 
 ifdef MOZ_ENABLE_PROFILER_SPS
@@ -462,7 +471,7 @@ OS_LIBS += \
 endif
 
 ifdef MOZ_WMF
-OS_LIBS += $(call EXPAND_LIBNAME,mfuuid wmcodecdspuuid)
+OS_LIBS += $(call EXPAND_LIBNAME,mfuuid wmcodecdspuuid strmiids)
 endif
 
 EXTRA_DEPS += \

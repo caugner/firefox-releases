@@ -32,6 +32,7 @@ CPPSRCS	= \
 	AndroidDirectTexture.cpp \
 	AndroidGraphicBuffer.cpp \
 	AndroidJNI.cpp \
+	AndroidJNIWrapper.cpp \
 	nsWindow.cpp \
 	nsLookAndFeel.cpp \
 	nsScreenManagerAndroid.cpp \
@@ -53,8 +54,6 @@ NOT_THERE_YET_CPPSRCS = \
 	$(NULL)
 
 SHARED_LIBRARY_LIBS = ../xpwidgets/libxpwidgets_s.a
-
-EXPORTS = AndroidBridge.h AndroidJavaWrappers.h
 
 include $(topsrcdir)/config/rules.mk
 

@@ -18,14 +18,14 @@ var timeout = null;
 var clicks = 0;
 const EXPECTED_RESULT = "change select";
 
-function log858459(ev,msg) {
+function logEvent(ev,msg) {
   result += ev.type + ' ' + msg;
   ++clicks;
   if (result.length > EXPECTED_RESULT.length)
     finishTest();
 }
 
-document.onclick = function(event) { log858459(event,"document"); }
+document.onclick = function(event) { logEvent(event,"document"); }
 
 SimpleTest.waitForExplicitFinish();
 
@@ -38,6 +38,7 @@ function finishTest() {
 }
 
 function runTest() {
+  // Need a timeout to check that an event has _not_ occurred.
   timeout = setTimeout(finishTest, 5000);
   synthesizeMouseAtCenter(document.getElementById('test858459'), { });
 }
@@ -50,7 +51,7 @@ function runTest() {
 <div id="content" style="display: none">
 
 </div>
-<pre id="test"><div><select id="test858459" size=4 onclick="log858459(event,'select');" onchange="log858459(event,'select');var div = document.querySelector('#test div'); div.innerHTML='<p>'+div.innerHTML; document.body.offsetHeight;"><option>1111111111111111<option>2<option>3</select></div>
+<pre id="test"><div><select id="test858459" size=4 onclick="logEvent(event,'select');" onchange="logEvent(event,'select');var div = document.querySelector('#test div'); div.innerHTML='<p>'+div.innerHTML; document.body.offsetHeight;"><option>1111111111111111<option>2<option>3</select></div>
 
 </pre>
 </body>

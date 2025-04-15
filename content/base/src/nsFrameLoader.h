@@ -179,7 +179,7 @@ public:
   nsresult ReallyStartLoading();
   void Finalize();
   nsIDocShell* GetExistingDocShell() { return mDocShell; }
-  nsIDOMEventTarget* GetTabChildGlobalAsEventTarget();
+  mozilla::dom::EventTarget* GetTabChildGlobalAsEventTarget();
   nsresult CreateStaticClone(nsIFrameLoader* aDest);
 
   /**
@@ -246,7 +246,7 @@ public:
    * The "current" render frame is the one on which the most recent
    * remote layer-tree transaction was executed.  If no content has
    * been drawn yet, or the remote browser doesn't have any drawn
-   * content for whatever reason, return NULL.  The returned render
+   * content for whatever reason, return nullptr.  The returned render
    * frame has an associated shadow layer tree.
    *
    * Note that the returned render frame might not be a frame
@@ -427,6 +427,11 @@ private:
   bool mClampScrollPosition : 1;
   bool mRemoteBrowserInitialized : 1;
   bool mObservingOwnerContent : 1;
+
+  // Backs nsIFrameLoader::{Get,Set}Visible.  Visibility state here relates to
+  // whether this frameloader's <iframe mozbrowser> is setVisible(true)'ed, and
+  // doesn't necessarily correlate with docshell/document visibility.
+  bool mVisible : 1;
 
   // XXX leaking
   nsCOMPtr<nsIObserver> mChildHost;

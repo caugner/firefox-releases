@@ -30,11 +30,11 @@
 
 #include "nsEventDispatcher.h"
 #include "nsIDOMProgressEvent.h"
+#include "nsIPowerManagerService.h"
 #include "MediaError.h"
 #include "MediaDecoder.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Video)
-DOMCI_NODE_DATA(HTMLVideoElement, mozilla::dom::HTMLVideoElement)
 
 namespace mozilla {
 namespace dom {
@@ -46,7 +46,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLVideoElement)
   NS_HTML_CONTENT_INTERFACE_TABLE2(HTMLVideoElement, nsIDOMHTMLMediaElement, nsIDOMHTMLVideoElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLVideoElement,
                                                HTMLMediaElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLVideoElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLVideoElement)
 
@@ -231,9 +231,55 @@ NS_IMETHODIMP HTMLVideoElement::GetMozHasAudio(bool *aHasAudio) {
 }
 
 JSObject*
-HTMLVideoElement::WrapNode(JSContext* aCx, JSObject* aScope)
+HTMLVideoElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return HTMLVideoElementBinding::Wrap(aCx, aScope, this);
+}
+
+void
+HTMLVideoElement::NotifyOwnerDocumentActivityChanged()
+{
+  HTMLMediaElement::NotifyOwnerDocumentActivityChanged();
+  WakeLockUpdate();
+}
+
+void
+HTMLVideoElement::WakeLockCreate()
+{
+  WakeLockUpdate();
+}
+
+void
+HTMLVideoElement::WakeLockRelease()
+{
+  WakeLockUpdate();
+}
+
+void
+HTMLVideoElement::WakeLockUpdate()
+{
+  bool hidden = true;
+
+  nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(OwnerDoc());
+  if (domDoc) {
+    domDoc->GetHidden(&hidden);
+  }
+
+  if (mScreenWakeLock && (mPaused || hidden)) {
+    mScreenWakeLock->Unlock();
+    mScreenWakeLock = nullptr;
+    return;
+  }
+
+  if (!mScreenWakeLock && !mPaused && !hidden) {
+    nsCOMPtr<nsIPowerManagerService> pmService =
+      do_GetService(POWERMANAGERSERVICE_CONTRACTID);
+    NS_ENSURE_TRUE_VOID(pmService);
+
+    pmService->NewWakeLock(NS_LITERAL_STRING("screen"),
+                           OwnerDoc()->GetWindow(),
+                           getter_AddRefs(mScreenWakeLock));
+  }
 }
 
 } // namespace dom

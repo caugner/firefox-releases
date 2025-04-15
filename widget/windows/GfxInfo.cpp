@@ -443,16 +443,6 @@ GfxInfo::Init()
     }
   }
 
-  const char *spoofedDriverVersionString = PR_GetEnv("MOZ_GFX_SPOOF_DRIVER_VERSION");
-  if (spoofedDriverVersionString) {
-    mDriverVersion.AssignASCII(spoofedDriverVersionString);
-  }
-
-  const char *spoofedVendor = PR_GetEnv("MOZ_GFX_SPOOF_VENDOR_ID");
-  if (spoofedVendor) {
-    mAdapterVendorID.AssignASCII(spoofedVendor);
-  }
-
   mHasDriverVersionMismatch = false;
   if (mAdapterVendorID == GfxDriverInfo::GetDeviceVendor(VendorIntel)) {
     // we've had big crashers (bugs 590373 and 595364) apparently correlated
@@ -479,6 +469,16 @@ GfxInfo::Init()
     // so this test implicitly handles the case where GetDLLVersion failed
     if (dllNumericVersion != driverNumericVersion && dllNumericVersion2 != driverNumericVersion)
       mHasDriverVersionMismatch = true;
+  }
+
+  const char *spoofedDriverVersionString = PR_GetEnv("MOZ_GFX_SPOOF_DRIVER_VERSION");
+  if (spoofedDriverVersionString) {
+    mDriverVersion.AssignASCII(spoofedDriverVersionString);
+  }
+
+  const char *spoofedVendor = PR_GetEnv("MOZ_GFX_SPOOF_VENDOR_ID");
+  if (spoofedVendor) {
+    mAdapterVendorID.AssignASCII(spoofedVendor);
   }
 
   const char *spoofedDevice = PR_GetEnv("MOZ_GFX_SPOOF_DEVICE_ID");
@@ -890,6 +890,14 @@ GfxInfo::GetGfxDriverInfo()
      * See bug 806786
      */
     APPEND_TO_DRIVER_BLOCKLIST2( DRIVER_OS_WINDOWS_7,
+        (nsAString&) GfxDriverInfo::GetDeviceVendor(VendorIntel), (GfxDeviceFamily*) GfxDriverInfo::GetDeviceFamily(IntelMobileHDGraphics),
+      nsIGfxInfo::FEATURE_DIRECT2D, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
+      DRIVER_LESS_THAN_OR_EQUAL, V(8,15,10,2302) );
+
+    /* Disable D2D on Win8 on Intel HD Graphics on driver <= 8.15.10.2302
+     * See bug 804144 and 863683
+     */
+    APPEND_TO_DRIVER_BLOCKLIST2( DRIVER_OS_WINDOWS_8,
         (nsAString&) GfxDriverInfo::GetDeviceVendor(VendorIntel), (GfxDeviceFamily*) GfxDriverInfo::GetDeviceFamily(IntelMobileHDGraphics),
       nsIGfxInfo::FEATURE_DIRECT2D, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
       DRIVER_LESS_THAN_OR_EQUAL, V(8,15,10,2302) );

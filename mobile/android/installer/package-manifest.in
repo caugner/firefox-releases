@@ -128,8 +128,8 @@
 @BINPATH@/components/dom_indexeddb.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_json.xpt
-@BINPATH@/components/dom_push.xpt
 @BINPATH@/components/dom_browserelement.xpt
+@BINPATH@/components/dom_payment.xpt
 @BINPATH@/components/dom_power.xpt
 @BINPATH@/components/dom_quota.xpt
 @BINPATH@/components/dom_range.xpt
@@ -143,7 +143,7 @@
 @BINPATH@/components/dom_traversal.xpt
 @BINPATH@/components/dom_views.xpt
 #ifdef MOZ_WEBSPEECH
-@BINPATH@/components/dom_webspeech.xpt
+@BINPATH@/components/dom_webspeechrecognition.xpt
 #endif
 @BINPATH@/components/dom_xbl.xpt
 @BINPATH@/components/dom_xpath.xpt
@@ -194,6 +194,7 @@
 @BINPATH@/components/necko_socket.xpt
 @BINPATH@/components/necko_strconv.xpt
 @BINPATH@/components/necko_viewsource.xpt
+@BINPATH@/components/necko_websocket.xpt
 @BINPATH@/components/necko_wifi.xpt
 @BINPATH@/components/necko_wyciwyg.xpt
 @BINPATH@/components/necko.xpt
@@ -262,6 +263,8 @@
 @BINPATH@/components/ConsoleAPI.js
 @BINPATH@/components/ContactManager.js
 @BINPATH@/components/ContactManager.manifest
+@BINPATH@/components/NavigatorPropertyHelper.js
+@BINPATH@/components/NavigatorPropertyHelper.manifest
 @BINPATH@/components/SettingsManager.js
 @BINPATH@/components/SettingsManager.manifest
 @BINPATH@/components/SettingsService.js
@@ -305,8 +308,6 @@
 @BINPATH@/components/nsDownloadManagerUI.js
 @BINPATH@/components/NetworkGeolocationProvider.manifest
 @BINPATH@/components/NetworkGeolocationProvider.js
-@BINPATH@/components/GPSDGeolocationProvider.manifest
-@BINPATH@/components/GPSDGeolocationProvider.js
 @BINPATH@/components/nsSidebar.manifest
 @BINPATH@/components/nsSidebar.js
 @BINPATH@/components/extensions.manifest
@@ -344,6 +345,7 @@
 @BINPATH@/components/satchel.manifest
 @BINPATH@/components/nsFormAutoComplete.js
 @BINPATH@/components/nsFormHistory.js
+@BINPATH@/components/FormHistoryStartup.js
 @BINPATH@/components/nsInputListAutoComplete.js
 @BINPATH@/components/contentSecurityPolicy.manifest
 @BINPATH@/components/contentSecurityPolicy.js
@@ -366,12 +368,15 @@
 @BINPATH@/components/Webapps.manifest
 @BINPATH@/components/AppsService.js
 @BINPATH@/components/AppsService.manifest
-@BINPATH@/components/Push.js
-@BINPATH@/components/Push.manifest
-@BINPATH@/components/PushService.js
-@BINPATH@/components/PushService.manifest
 @BINPATH@/components/AppProtocolHandler.js
 @BINPATH@/components/AppProtocolHandler.manifest
+
+@BINPATH@/components/Push.js
+@BINPATH@/components/Push.manifest
+
+@BINPATH@/components/SystemMessageInternal.js
+@BINPATH@/components/SystemMessageManager.js
+@BINPATH@/components/SystemMessageManager.manifest
 
 @BINPATH@/components/TCPSocket.js
 @BINPATH@/components/TCPSocketParentIntermediary.js
@@ -390,6 +395,10 @@
 #ifdef MOZ_CAPTIVEDETECT
 @BINPATH@/components/CaptivePortalDetectComponents.manifest
 @BINPATH@/components/captivedetect.js
+#endif
+
+#ifdef MOZ_WEBSPEECH
+@BINPATH@/components/dom_webspeechsynth.xpt
 #endif
 
 ; Modules
@@ -415,9 +424,6 @@
 @BINPATH@/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/install.rdf
 @BINPATH@/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/icon.png
 @BINPATH@/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/preview.png
-#if MOZ_UPDATE_CHANNEL == beta
-@BINPATH@/extensions/testpilot@labs.mozilla.com/*
-#endif
 @BINPATH@/chrome/toolkit@JAREXT@
 @BINPATH@/chrome/toolkit.manifest
 #ifdef XP_UNIX
@@ -555,7 +561,6 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/ContentPermissionPrompt.js
 @BINPATH@/components/DirectoryProvider.js
 @BINPATH@/components/DownloadManagerUI.js
-@BINPATH@/components/FormAutoComplete.js
 @BINPATH@/components/HelperAppDialog.js
 @BINPATH@/components/LoginManagerPrompter.js
 @BINPATH@/components/MobileComponents.manifest
@@ -564,7 +569,13 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/PromptService.js
 @BINPATH@/components/SessionStore.js
 @BINPATH@/components/Sidebar.js
-@BINPATH@/components/SiteSpecificUserAgent.js
+
+@BINPATH@/components/Payment.js
+@BINPATH@/components/PaymentFlowInfo.js
+@BINPATH@/components/PaymentRequestInfo.js
+@BINPATH@/components/Payment.manifest
+@BINPATH@/components/PaymentsUI.js
+
 #ifdef MOZ_SAFE_BROWSING
 @BINPATH@/components/SafeBrowsing.jsm
 #endif

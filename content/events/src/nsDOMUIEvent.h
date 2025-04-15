@@ -92,89 +92,61 @@ public:
                                                     const mozilla::dom::UIEventInit& aParam,
                                                     mozilla::ErrorResult& aRv);
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope)
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE
   {
     return mozilla::dom::UIEventBinding::Wrap(aCx, aScope, this);
   }
 
-  already_AddRefed<nsIDOMWindow> GetView()
+  nsIDOMWindow* GetView() const
   {
-    nsCOMPtr<nsIDOMWindow> view = mView;
-    return view.forget();
+    return mView;
   }
 
-  int32_t Detail()
+  int32_t Detail() const
   {
     return mDetail;
   }
 
-  int32_t LayerX()
+  int32_t LayerX() const
   {
     return GetLayerPoint().x;
   }
 
-  int32_t LayerY()
+  int32_t LayerY() const
   {
     return GetLayerPoint().y;
   }
 
-  int32_t PageX()
-  {
-    int32_t x;
-    GetPageX(&x);
-    return x;
-  }
+  int32_t PageX() const;
+  int32_t PageY() const;
 
-  int32_t PageY()
+  virtual uint32_t Which()
   {
-    int32_t y;
-    GetPageY(&y);
-    return y;
-  }
-
-  uint32_t Which()
-  {
-    uint32_t w;
-    GetWhich(&w);
-    return w;
+    MOZ_ASSERT(mEvent->eventStructType != NS_KEY_EVENT,
+               "Key events should override Which()");
+    MOZ_ASSERT(mEvent->eventStructType != NS_MOUSE_EVENT,
+               "Mouse events should override Which()");
+    return 0;
   }
 
   already_AddRefed<nsINode> GetRangeParent();
 
-  int32_t RangeOffset()
-  {
-    int32_t offset;
-    GetRangeOffset(&offset);
-    return offset;
-  }
+  int32_t RangeOffset() const;
 
-  bool CancelBubble()
+  bool CancelBubble() const
   {
     return mEvent->mFlags.mPropagationStopped;
   }
 
-  bool IsChar()
-  {
-    bool isChar;
-    GetIsChar(&isChar);
-    return isChar;
-  }
+  bool IsChar() const;
 
 protected:
   // Internal helper functions
   nsIntPoint GetClientPoint();
   nsIntPoint GetMovementPoint();
-  nsIntPoint GetLayerPoint();
+  nsIntPoint GetLayerPoint() const;
   nsIntPoint GetPagePoint();
-
-  // Allow specializations.
-  virtual nsresult Which(uint32_t* aWhich)
-  {
-    NS_ENSURE_ARG_POINTER(aWhich);
-    // Usually we never reach here, as this is reimplemented for mouse and keyboard events.
-    *aWhich = 0;
-    return NS_OK;
-  }
 
   nsCOMPtr<nsIDOMWindow> mView;
   int32_t mDetail;

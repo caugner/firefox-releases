@@ -164,6 +164,11 @@ SettingsListener.observe('language.current', 'en-US', function(value) {
     function(value) {
       Services.prefs.setBoolPref('dom.sms.strict7BitEncoding', value);
   });
+
+  SettingsListener.observe('ril.sms.requestStatusReport.enabled', true,
+    function(value) {
+      Services.prefs.setBoolPref('dom.sms.requestStatusReport', value);
+  });
 })();
 
 //=================== DeviceInfo ====================
@@ -254,6 +259,11 @@ SettingsListener.observe('devtools.debugger.remote-enabled', false, function(val
 
 SettingsListener.observe('debug.log-animations.enabled', false, function(value) {
   Services.prefs.setBoolPref('layers.offmainthreadcomposition.log-animations', value);
+});
+
+// =================== Device Storage ====================
+SettingsListener.observe('device.storage.writable.name', false, function(value) {
+  Services.prefs.setBoolPref('device.storage.writable.name', value);
 });
 
 // =================== Privacy ====================

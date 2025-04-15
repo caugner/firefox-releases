@@ -12,10 +12,10 @@
 #include "nsIJSNativeInitializer.h"
 #include "nsHTMLFormElement.h"
 
-class nsHTMLSelectElement;
-
 namespace mozilla {
 namespace dom {
+
+class HTMLSelectElement;
 
 class HTMLOptionElement : public nsGenericHTMLElement,
                           public nsIDOMHTMLOptionElement
@@ -130,14 +130,15 @@ public:
   }
 
 protected:
-  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx,
+                             JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   /**
    * Get the select content element that contains this option, this
    * intentionally does not return nsresult, all we care about is if
    * there's a select associated with this option or not.
    */
-  nsHTMLSelectElement* GetSelect();
+  HTMLSelectElement* GetSelect();
 
   bool mSelectedChanged;
   bool mIsSelected;

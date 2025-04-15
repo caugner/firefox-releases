@@ -30,7 +30,7 @@ var _nextPortId = 1;
 // Retrieves a reference to a WorkerHandle associated with a FrameWorker and a
 // new ClientPort.
 this.getFrameWorkerHandle =
- function getFrameWorkerHandle(url, clientWindow, name, origin) {
+ function getFrameWorkerHandle(url, clientWindow, name, origin, exposeLocalStorage = false) {
   // first create the client port we are going to use.  Later we will
   // message the worker to create the worker port.
   let portid = _nextPortId++;
@@ -39,7 +39,7 @@ this.getFrameWorkerHandle =
   let existingWorker = workerCache[url];
   if (!existingWorker) {
     // setup the worker and add this connection to the pending queue
-    let worker = new FrameWorker(url, name, origin);
+    let worker = new FrameWorker(url, name, origin, exposeLocalStorage);
     worker.pendingPorts.push(clientPort);
     existingWorker = workerCache[url] = worker;
   } else {
@@ -69,7 +69,7 @@ this.getFrameWorkerHandle =
  * the script does not have a full DOM but is instead run in a sandbox
  * that has a select set of methods cloned from the URL's domain.
  */
-function FrameWorker(url, name, origin) {
+function FrameWorker(url, name, origin, exposeLocalStorage) {
   this.url = url;
   this.name = name || url;
   this.ports = new Map();
@@ -77,6 +77,8 @@ function FrameWorker(url, name, origin) {
   this.loaded = false;
   this.reloading = false;
   this.origin = origin;
+  this._injectController = null;
+  this.exposeLocalStorage = exposeLocalStorage;
 
   this.frame = makeHiddenFrame();
   this.load();
@@ -84,20 +86,27 @@ function FrameWorker(url, name, origin) {
 
 FrameWorker.prototype = {
   load: function FrameWorker_loadWorker() {
-    var self = this;
-    Services.obs.addObserver(function injectController(doc, topic, data) {
-      if (!doc.defaultView || doc.defaultView != self.frame.contentWindow) {
+    this._injectController = function(doc, topic, data) {
+      if (!doc.defaultView || doc.defaultView != this.frame.contentWindow) {
         return;
       }
-      Services.obs.removeObserver(injectController, "document-element-inserted");
+      this._maybeRemoveInjectController();
       try {
-        self.createSandbox();
+        this.createSandbox();
       } catch (e) {
         Cu.reportError("FrameWorker: failed to create sandbox for " + url + ". " + e);
       }
-    }, "document-element-inserted", false);
+    }.bind(this);
 
+    Services.obs.addObserver(this._injectController, "document-element-inserted", false);
     this.frame.setAttribute("src", this.url);
+  },
+
+  _maybeRemoveInjectController: function() {
+    if (this._injectController) {
+      Services.obs.removeObserver(this._injectController, "document-element-inserted");
+      this._injectController = null;
+    }
   },
 
   reload: function FrameWorker_reloadWorker() {
@@ -125,11 +134,17 @@ FrameWorker.prototype = {
     // copy the window apis onto the sandbox namespace only functions or
     // objects that are naturally a part of an iframe, I'm assuming they are
     // safe to import this way
-    let workerAPI = ['WebSocket', 'localStorage', 'atob', 'btoa',
+    let workerAPI = ['WebSocket', 'atob', 'btoa',
                      'clearInterval', 'clearTimeout', 'dump',
                      'setInterval', 'setTimeout', 'XMLHttpRequest',
-                     'FileReader', 'Blob',
+                     'FileReader', 'Blob', 'EventSource', 'indexedDB',
                      'location'];
+
+    // Only expose localStorage if the caller opted-in
+    if (this.exposeLocalStorage) {
+      workerAPI.push('localStorage');
+    }
+
     // Bug 798660 - XHR and WebSocket have issues in a sandbox and need
     // to be unwrapped to work
     let needsWaive = ['XMLHttpRequest', 'WebSocket'];
@@ -308,6 +323,7 @@ FrameWorker.prototype = {
       // terminating an already terminated worker - ignore it
       return;
     }
+    this._maybeRemoveInjectController();
     // we want to "forget" about this worker now even though the termination
     // may not be complete for a little while...
     delete workerCache[this.url];

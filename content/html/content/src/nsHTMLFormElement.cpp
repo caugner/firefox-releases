@@ -4,7 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "nsHTMLFormElement.h"
 #include "nsIHTMLDocument.h"
-#include "nsIDOMEventTarget.h"
 #include "nsEventStateManager.h"
 #include "nsEventStates.h"
 #include "nsGkAtoms.h"
@@ -124,7 +123,8 @@ public:
   nsresult GetSortedControls(nsTArray<nsGenericHTMLFormElement*>& aControls) const;
 
   // nsWrapperCache
-  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope)
+  virtual JSObject* WrapObject(JSContext *cx,
+                               JS::Handle<JSObject*> scope) MOZ_OVERRIDE
   {
     return HTMLCollectionBinding::Wrap(cx, scope, this);
   }
@@ -1364,19 +1364,33 @@ nsHTMLFormElement::RemoveElementFromTable(nsGenericHTMLFormElement* aElement,
   return mControls->RemoveElementFromTable(aElement, aName);
 }
 
-NS_IMETHODIMP_(already_AddRefed<nsISupports>)
-nsHTMLFormElement::ResolveName(const nsAString& aName)
+already_AddRefed<nsISupports>
+nsHTMLFormElement::FindNamedItem(const nsAString& aName,
+                                 nsWrapperCache** aCache)
 {
-  return DoResolveName(aName, true);
+  nsCOMPtr<nsISupports> result = DoResolveName(aName, true);
+  if (result) {
+    // FIXME Get the wrapper cache from DoResolveName.
+    *aCache = nullptr;
+    return result.forget();
+  }
+
+  nsCOMPtr<nsIHTMLDocument> htmlDoc = do_QueryInterface(GetCurrentDoc());
+  if (!htmlDoc) {
+    *aCache = nullptr;
+    return nullptr;
+  }
+
+  return htmlDoc->ResolveName(aName, this, aCache);
 }
 
 already_AddRefed<nsISupports>
 nsHTMLFormElement::DoResolveName(const nsAString& aName,
                                  bool aFlushContent)
 {
-  nsISupports *result;
-  NS_IF_ADDREF(result = mControls->NamedItemInternal(aName, aFlushContent));
-  return result;
+  nsCOMPtr<nsISupports> result =
+    mControls->NamedItemInternal(aName, aFlushContent);
+  return result.forget();
 }
 
 void
@@ -1933,7 +1947,7 @@ nsHTMLFormElement::GetNextRadioButton(const nsAString& aName,
     mSelectedRadioButtons.Get(aName, getter_AddRefs(currentRadio));
   }
 
-  nsCOMPtr<nsISupports> itemWithName = ResolveName(aName);
+  nsCOMPtr<nsISupports> itemWithName = DoResolveName(aName, true);
   nsCOMPtr<nsINodeList> radioGroup(do_QueryInterface(itemWithName));
 
   if (!radioGroup) {
@@ -2185,22 +2199,12 @@ nsFormControlList::FlushPendingNotifications()
   }
 }
 
-static PLDHashOperator
-ControlTraverser(const nsAString& key, nsISupports* control, void* userArg)
-{
-  nsCycleCollectionTraversalCallback *cb = 
-    static_cast<nsCycleCollectionTraversalCallback*>(userArg);
- 
-  cb->NoteXPCOMChild(control);
-  return PL_DHASH_NEXT;
-}
-
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsFormControlList)
   tmp->Clear();
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsFormControlList)
-  tmp->mNameLookupTable.EnumerateRead(ControlTraverser, &cb);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNameLookupTable)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsFormControlList)
@@ -2253,7 +2257,7 @@ nsFormControlList::NamedItem(const nsAString& aName,
   *aReturn = nullptr;
 
   nsCOMPtr<nsISupports> supports;
-  
+
   if (!mNameLookupTable.Get(aName, getter_AddRefs(supports))) {
     // key not found
     return NS_OK;
@@ -2547,10 +2551,10 @@ nsFormControlList::NamedItem(JSContext* cx, const nsAString& name,
   if (!item) {
     return nullptr;
   }
-  JSObject* wrapper = nsWrapperCache::GetWrapper();
+  JS::Rooted<JSObject*> wrapper(cx, nsWrapperCache::GetWrapper());
   JSAutoCompartment ac(cx, wrapper);
-  JS::Value v;
-  if (!mozilla::dom::WrapObject(cx, wrapper, item, &v)) {
+  JS::Rooted<JS::Value> v(cx);
+  if (!mozilla::dom::WrapObject(cx, wrapper, item, v.address())) {
     error.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }

@@ -1,3 +1,4 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -6,4 +7,24 @@
 TEST_DIRS += ['test']
 
 MODULE = 'dom'
+
+# Public stuff.
+EXPORTS.mozilla.dom.workers += [
+    'Workers.h',
+]
+
+# Stuff needed for the bindings, not really public though.
+EXPORTS.mozilla.dom.workers.bindings += [
+    'DOMBindingBase.h',
+    'EventListenerManager.h',
+    'EventTarget.h',
+    'FileReaderSync.h',
+    'TextDecoder.h',
+    'TextEncoder.h',
+    'URL.h',
+    'WorkerFeature.h',
+    'XMLHttpRequest.h',
+    'XMLHttpRequestEventTarget.h',
+    'XMLHttpRequestUpload.h',
+]
 

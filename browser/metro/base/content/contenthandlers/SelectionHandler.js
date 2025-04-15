@@ -57,13 +57,14 @@ var SelectionHandler = {
     addMessageListener("Browser:SelectionMoveEnd", this);
     addMessageListener("Browser:SelectionUpdate", this);
     addMessageListener("Browser:SelectionClose", this);
-    addMessageListener("Browser:SelectionClear", this);
     addMessageListener("Browser:SelectionCopy", this);
     addMessageListener("Browser:SelectionDebug", this);
     addMessageListener("Browser:CaretAttach", this);
     addMessageListener("Browser:CaretMove", this);
     addMessageListener("Browser:CaretUpdate", this);
     addMessageListener("Browser:SelectionSwitchMode", this);
+    addMessageListener("Browser:RepositionInfoRequest", this);
+    addMessageListener("Browser:SelectionHandlerPing", this);
   },
 
   shutdown: function shutdown() {
@@ -75,18 +76,27 @@ var SelectionHandler = {
     removeMessageListener("Browser:SelectionMoveEnd", this);
     removeMessageListener("Browser:SelectionUpdate", this);
     removeMessageListener("Browser:SelectionClose", this);
-    removeMessageListener("Browser:SelectionClear", this);
     removeMessageListener("Browser:SelectionCopy", this);
     removeMessageListener("Browser:SelectionDebug", this);
     removeMessageListener("Browser:CaretAttach", this);
     removeMessageListener("Browser:CaretMove", this);
     removeMessageListener("Browser:CaretUpdate", this);
     removeMessageListener("Browser:SelectionSwitchMode", this);
+    removeMessageListener("Browser:RepositionInfoRequest", this);
+    removeMessageListener("Browser:SelectionHandlerPing", this);
   },
 
   /*************************************************
    * Properties
    */
+
+  get isActive() {
+    return !!this._targetElement;
+  },
+
+  get targetIsEditable() {
+    return this._targetIsEditable || false;
+  },
 
   /*
    * snap - enable or disable word snap for the active marker when a
@@ -353,21 +363,14 @@ var SelectionHandler = {
 
   /*
    * Selection close event handler
-   */
-  _onSelectionClose: function _onSelectionClose() {
-    this._closeSelection();
-  },
-
-  /*
-   * Selection clear message handler
    *
-   * @param aClearFocus requests that the focus also be cleared.
+   * @param aClearSelection requests that selection be cleared.
    */
-  _onSelectionClear: function _onSelectionClear(aClearFocus) {
-    this._clearSelection();
-    if (aClearFocus && this._targetElement) {
-      this._targetElement.blur();
+  _onSelectionClose: function _onSelectionClose(aClearSelection) {
+    if (aClearSelection) {
+      this._clearSelection();
     }
+    this._closeSelection();
   },
 
   /*
@@ -402,6 +405,41 @@ var SelectionHandler = {
   _onSelectionDebug: function _onSelectionDebug(aMsg) {
     this._debugOptions = aMsg;
     this._debugEvents = aMsg.dumpEvents;
+  },
+
+  /*
+   * _repositionInfoRequest - fired at us by ContentAreaObserver when the
+   * soft keyboard is being displayed. CAO wants to make a decision about
+   * whether the browser deck needs repositioning.
+   */
+  _repositionInfoRequest: function _repositionInfoRequest(aJsonMsg) {
+    if (!this.isActive) {
+      Util.dumpLn("unexpected: repositionInfoRequest but selection isn't active.");
+      sendAsyncMessage("Content:RepositionInfoResponse", { reposition: false });
+      return;
+    }
+    
+    if (!this.targetIsEditable) {
+      Util.dumpLn("unexpected: repositionInfoRequest but targetIsEditable is false.");
+      sendAsyncMessage("Content:RepositionInfoResponse", { reposition: false });
+    }
+    
+    let result = this._calcNewContentPosition(aJsonMsg.viewHeight);
+
+    // no repositioning needed
+    if (result == 0) {
+      sendAsyncMessage("Content:RepositionInfoResponse", { reposition: false });
+      return;
+    }
+
+    sendAsyncMessage("Content:RepositionInfoResponse", {
+      reposition: true,
+      raiseContent: result,
+    });
+  },
+
+  _onPing: function _onPing(aId) {
+    sendAsyncMessage("Content:SelectionHandlerPong", { id: aId });
   },
 
   /*************************************************
@@ -442,6 +480,7 @@ var SelectionHandler = {
     this._contentOffset = null;
     this._domWinUtils = null;
     this._targetIsEditable = false;
+    sendSyncMessage("Content:HandlerShutdown", {});
   },
 
   /*
@@ -503,17 +542,7 @@ var SelectionHandler = {
     this._contentWindow = contentWindow;
     this._contentOffset = offset;
     this._domWinUtils = utils;
-    this._targetIsEditable = false;
-    if (this._isTextInput(this._targetElement)) {
-      this._targetIsEditable = true;
-      // Since we have an overlay, focus will not get set, so set it. There
-      // are ways around this if this causes trouble - we have the selection
-      // controller, so we can turn selection display on manually. (Selection
-      // display is setup on edits when focus changes.) I think web pages will
-      // prefer that focus be set when we are interacting with selection in
-      // the element.
-      this._targetElement.focus();
-    }
+    this._targetIsEditable = this._isTextInput(this._targetElement);
     return true;
   },
 
@@ -525,7 +554,7 @@ var SelectionHandler = {
    * SelectionHelperUI.
    */
   _updateUIMarkerRects: function _updateUIMarkerRects(aSelection) {
-    this._cache = this._extractClientRectFromRange(aSelection.getRangeAt(0));
+    this._cache = this._extractUIRects(aSelection.getRangeAt(0));
     if (this. _debugOptions.dumpRanges)  {
        Util.dumpLn("start:", "(" + this._cache.start.xPos + "," +
                    this._cache.start.yPos + ")");
@@ -545,7 +574,8 @@ var SelectionHandler = {
   _restrictSelectionRectToEditBounds: function _restrictSelectionRectToEditBounds() {
     if (!this._targetIsEditable)
       return;
-    let bounds = this._getTargetClientRect();
+
+    let bounds = this._getTargetBrowserRect();
     if (this._cache.start.xPos < bounds.left)
       this._cache.start.xPos = bounds.left;
     if (this._cache.end.xPos < bounds.left)
@@ -765,7 +795,7 @@ var SelectionHandler = {
    * @return new constrained point struct
    */
   _constrainPointWithinControl: function _cpwc(aPoint, aHalfLineHeight) {
-    let bounds = this._getTargetClientRect();
+    let bounds = this._getTargetBrowserRect();
     let point = { xPos: aPoint.xPos, yPos: aPoint.yPos };
     if (point.xPos <= bounds.left)
       point.xPos = bounds.left + 2;
@@ -786,7 +816,7 @@ var SelectionHandler = {
    * Works on client coordinates.
    */
   _pointOrientationToRect: function _pointOrientationToRect(aPoint) {
-    let bounds = this._targetElement.getBoundingClientRect();
+    let bounds = this._getTargetBrowserRect();
     let result = { left: 0, right: 0, top: 0, bottom: 0 };
     if (aPoint.xPos <= bounds.left)
       result.left = bounds.left - aPoint.xPos;
@@ -820,13 +850,16 @@ var SelectionHandler = {
 
     let orientation = this._pointOrientationToRect(aClientPoint);
     let result = { speed: 1, trigger: false, start: false, end: false };
+    let ml = Util.isMultilineInput(this._targetElement);
 
-    if (orientation.left || orientation.top) {
+    // This could be improved such that we only select to the beginning of
+    // the line when dragging left but not up.
+    if (orientation.left || (ml && orientation.top)) {
       this._addEditSelection(kSelectionNodeAnchor);
       result.speed = orientation.left + orientation.top;
       result.trigger = true;
       result.end = true;
-    } else if (orientation.right || orientation.bottom) {
+    } else if (orientation.right || (ml && orientation.bottom)) {
       this._addEditSelection(kSelectionNodeFocus);
       result.speed = orientation.right + orientation.bottom;
       result.trigger = true;
@@ -1048,6 +1081,75 @@ var SelectionHandler = {
   },
 
   /*
+   * _calcNewContentPosition - calculates the distance the browser should be
+   * raised to move the focused form input out of the way of the soft
+   * keyboard.
+   *
+   * @param aNewViewHeight the new content view height
+   * @return 0 if no positioning is required or a positive val equal to the
+   * distance content should be raised to center the target element.
+   */
+  _calcNewContentPosition: function _calcNewContentPosition(aNewViewHeight) {
+    // We don't support this on non-editable elements
+    if (!this._targetIsEditable) {
+      return 0;
+    }
+
+    // If the bottom of the target bounds is higher than the new height,
+    // there's no need to adjust. It will be above the keyboard.
+    if (this._cache.element.bottom <= aNewViewHeight) {
+      return 0;
+    }
+    
+    // height of the target element
+    let targetHeight = this._cache.element.bottom - this._cache.element.top;
+    // height of the browser view.
+    let viewBottom = content.innerHeight;
+
+    // If the target is shorter than the new content height, we can go ahead
+    // and center it.
+    if (targetHeight <= aNewViewHeight) {
+      // Try to center the element vertically in the new content area, but
+      // don't position such that the bottom of the browser view moves above
+      // the top of the chrome. We purposely do not resize the browser window
+      // by making it taller when trying to center elements that are near the
+      // lower bounds. This would trigger reflow which can cause content to
+      // shift around. 
+      let splitMargin = Math.round((aNewViewHeight - targetHeight) * .5);
+      let distanceToPageBounds = viewBottom - this._cache.element.bottom;
+      let distanceFromChromeTop = this._cache.element.bottom - aNewViewHeight;
+      let distanceToCenter =
+        distanceFromChromeTop + Math.min(distanceToPageBounds, splitMargin);
+      return distanceToCenter;
+    }
+
+    // Special case: we are dealing with an input that is taller than the
+    // desired height of content. We need to center on the caret location.
+    let rect =
+      this._domWinUtils.sendQueryContentEvent(this._domWinUtils.QUERY_CARET_RECT,
+                                              this._targetElement.selectionEnd,
+                                              0, 0, 0);
+    if (!rect || !rect.succeeded) {
+      Util.dumpLn("no caret was present, unexpected.");
+      return 0;
+    }
+
+    // Note sendQueryContentEvent with QUERY_CARET_RECT is really buggy. If it
+    // can't find the exact location of the caret position it will "guess".
+    // Sometimes this can put the result in unexpected locations.
+    let caretLocation = Math.max(Math.min(Math.round(rect.top + (rect.height * .5)),
+                                          viewBottom), 0);
+
+    // Caret is above the bottom of the new view bounds, no need to shift.
+    if (caretLocation <= aNewViewHeight) {
+      return 0;
+    }
+
+    // distance from the top of the keyboard down to the caret location
+    return caretLocation - aNewViewHeight;
+  },
+
+  /*
    * Events
    */
 
@@ -1097,7 +1199,7 @@ var SelectionHandler = {
         break;
 
       case "Browser:SelectionClose":
-        this._onSelectionClose();
+        this._onSelectionClose(json.clearSelection);
         break;
 
       case "Browser:SelectionMoveStart":
@@ -1116,16 +1218,20 @@ var SelectionHandler = {
         this._onSelectionCopy(json);
         break;
 
-      case "Browser:SelectionClear":
-        this._onSelectionClear(json.clearFocus);
-        break;
-
       case "Browser:SelectionDebug":
         this._onSelectionDebug(json);
         break;
 
       case "Browser:SelectionUpdate":
         this._onSelectionUpdate();
+        break;
+
+      case "Browser:RepositionInfoRequest":
+        this._repositionInfoRequest(json);
+        break;
+
+      case "Browser:SelectionHandlerPing":
+        this._onPing(json.id);
         break;
     }
   },
@@ -1135,12 +1241,13 @@ var SelectionHandler = {
    */
 
   /*
-   * Returns data on the position of a selection using the relative
-   * coordinates in a range extracted from any sub frames. If aRange
-   * is in the root frame offset should be zero. 
+   * _extractUIRects - Extracts selection and target element information
+   * used by SelectionHelperUI. Returns client relative coordinates.
+   *
+   * @return table containing various ui rects and information
    */
-  _extractClientRectFromRange: function _extractClientRectFromRange(aRange) {
-    let cache = {
+  _extractUIRects: function _extractUIRects(aRange) {
+    let seldata = {
       start: {}, end: {}, caret: {},
       selection: { left: 0, top: 0, right: 0, bottom: 0 },
       element: { left: 0, top: 0, right: 0, bottom: 0 }
@@ -1149,46 +1256,64 @@ var SelectionHandler = {
     // When in an iframe, aRange coordinates are relative to the frame origin.
     let rects = aRange.getClientRects();
 
-    let startSet = false;
-    for (let idx = 0; idx < rects.length; idx++) {
-      if (this. _debugOptions.dumpRanges) Util.dumpDOMRect(idx, rects[idx]);
-      if (!startSet && !Util.isEmptyDOMRect(rects[idx])) {
-        cache.start.xPos = rects[idx].left + this._contentOffset.x;
-        cache.start.yPos = rects[idx].bottom + this._contentOffset.y;
-        cache.caret = cache.start;
-        startSet = true;
-        if (this. _debugOptions.dumpRanges) Util.dumpLn("start set");
+    if (rects && rects.length) {
+      let startSet = false;
+      for (let idx = 0; idx < rects.length; idx++) {
+        if (this. _debugOptions.dumpRanges) Util.dumpDOMRect(idx, rects[idx]);
+        if (!startSet && !Util.isEmptyDOMRect(rects[idx])) {
+          seldata.start.xPos = rects[idx].left + this._contentOffset.x;
+          seldata.start.yPos = rects[idx].bottom + this._contentOffset.y;
+          seldata.caret = seldata.start;
+          startSet = true;
+          if (this. _debugOptions.dumpRanges) Util.dumpLn("start set");
+        }
+        if (!Util.isEmptyDOMRect(rects[idx])) {
+          seldata.end.xPos = rects[idx].right + this._contentOffset.x;
+          seldata.end.yPos = rects[idx].bottom + this._contentOffset.y;
+          if (this. _debugOptions.dumpRanges) Util.dumpLn("end set");
+        }
       }
-      if (!Util.isEmptyDOMRect(rects[idx])) {
-        cache.end.xPos = rects[idx].right + this._contentOffset.x;
-        cache.end.yPos = rects[idx].bottom + this._contentOffset.y;
-        if (this. _debugOptions.dumpRanges) Util.dumpLn("end set");
-      }
-    }
 
-    // Store the client rect of selection
-    let r = aRange.getBoundingClientRect();
-    cache.selection.left = r.left + this._contentOffset.x;
-    cache.selection.top = r.top + this._contentOffset.y;
-    cache.selection.right = r.right + this._contentOffset.x;
-    cache.selection.bottom = r.bottom + this._contentOffset.y;
+      // Store the client rect of selection
+      let r = aRange.getBoundingClientRect();
+      seldata.selection.left = r.left + this._contentOffset.x;
+      seldata.selection.top = r.top + this._contentOffset.y;
+      seldata.selection.right = r.right + this._contentOffset.x;
+      seldata.selection.bottom = r.bottom + this._contentOffset.y;
+    }
 
     // Store the client rect of target element
     r = this._getTargetClientRect();
-    cache.element.left = r.left + this._contentOffset.x;
-    cache.element.top = r.top + this._contentOffset.y;
-    cache.element.right = r.right + this._contentOffset.x;
-    cache.element.bottom = r.bottom + this._contentOffset.y;
+    seldata.element.left = r.left + this._contentOffset.x;
+    seldata.element.top = r.top + this._contentOffset.y;
+    seldata.element.right = r.right + this._contentOffset.x;
+    seldata.element.bottom = r.bottom + this._contentOffset.y;
 
-    if (!rects.length) {
-      Util.dumpLn("no rects in selection range. unexpected.");
-    }
+    // If we don't have a range we can attach to let SelectionHelperUI know.
+    seldata.selectionRangeFound = !!rects.length;
 
-    return cache;
+    return seldata;
   },
 
+  /*
+   * Returns bounds of the element relative to the inner sub frame it sits
+   * in.
+   */
   _getTargetClientRect: function _getTargetClientRect() {
     return this._targetElement.getBoundingClientRect();
+  },
+
+  /*
+   * Returns bounds of the element relative to the top level browser.
+   */
+  _getTargetBrowserRect: function _getTargetBrowserRect() {
+    let client = this._getTargetClientRect();
+    return {
+      left: client.left +  this._contentOffset.x,
+      top: client.top +  this._contentOffset.y,
+      right: client.right +  this._contentOffset.x,
+      bottom: client.bottom +  this._contentOffset.y
+    };
   },
 
    /*

@@ -169,10 +169,10 @@ public:
 
     bool MakeCurrent(bool aForce = false) {
 #ifdef DEBUG
-        PR_SetThreadPrivate(sCurrentGLContextTLS, this);
+    PR_SetThreadPrivate(sCurrentGLContextTLS, this);
 
-	// XXX this assertion is disabled because it's triggering on Mac;
-	// we need to figure out why and reenable it.
+    // XXX this assertion is disabled because it's triggering on Mac;
+    // we need to figure out why and reenable it.
 #if 0
         // IsOwningThreadCurrent is a bit of a misnomer;
         // the "owning thread" is the creation thread,
@@ -324,7 +324,6 @@ public:
     bool CanUploadNonPowerOfTwo();
 
     bool WantsSmallTiles();
-    virtual bool HasLockSurface() { return false; }
 
     /**
      * If this context wraps a double-buffered target, swap the back
@@ -355,6 +354,12 @@ public:
 
     virtual bool BindExternalBuffer(GLuint texture, void* buffer) { return false; }
     virtual bool UnbindExternalBuffer(GLuint texture) { return false; }
+
+#ifdef MOZ_WIDGET_GONK
+    virtual EGLImage CreateEGLImageForNativeBuffer(void* buffer) = 0;
+    virtual void DestroyEGLImage(EGLImage image) = 0;
+    virtual EGLImage GetNullEGLImage() = 0;
+#endif
 
     virtual already_AddRefed<TextureImage>
     CreateDirectTextureImage(android::GraphicBuffer* aBuffer, GLenum aWrapMode)
@@ -435,13 +440,11 @@ public:
 #ifdef MOZ_WIDGET_ANDROID
         , SurfaceTexture
 #endif
+#ifdef XP_MACOSX
+        , IOSurface
+#endif
     };
 
-    /**
-     * Create new shared GLContext content handle, must be released by ReleaseSharedHandle.
-     */
-    virtual SharedTextureHandle CreateSharedHandle(SharedTextureShareType shareType)
-    { return 0; }
     /*
      * Create a new shared GLContext content handle, using the passed buffer as a source.
      * Must be released by ReleaseSharedHandle. UpdateSharedHandle will have no effect
@@ -745,7 +748,7 @@ public:
 
     virtual bool RenewSurface() { return false; }
 
-    /**`
+    /**
      * Return a valid, allocated TextureImage of |aSize| with
      * |aContentType|.  The TextureImage's texture is configured to
      * use |aWrapMode| (usually GL_CLAMP_TO_EDGE or GL_REPEAT) and by
@@ -1192,7 +1195,10 @@ public:
         fViewport(0, 0, size.width, size.height);
 
         mCaps = mScreen->Caps();
-        UpdateGLFormats(caps);
+        if (mCaps.any)
+            DetermineCaps();
+
+        UpdateGLFormats(mCaps);
         UpdatePixelFormat();
 
         return true;
@@ -1354,14 +1360,6 @@ protected:
     bool InitWithPrefix(const char *prefix, bool trygl);
 
     void InitExtensions();
-
-    virtual already_AddRefed<TextureImage>
-    CreateBasicTextureImage(GLuint aTexture,
-                            const nsIntSize& aSize,
-                            GLenum aWrapMode,
-                            TextureImage::ContentType aContentType,
-                            GLContext* aContext,
-                            TextureImage::Flags aFlags = TextureImage::NoFlags);
 
     bool IsOffscreenSizeAllowed(const gfxIntSize& aSize) const {
         int32_t biggerDimension = std::max(aSize.width, aSize.height);
@@ -2193,7 +2191,6 @@ public:
             height = -1;
             border = -1;
         }
-
         raw_fTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
     }
 

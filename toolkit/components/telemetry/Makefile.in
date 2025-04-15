@@ -17,20 +17,9 @@ MODULE_NAME = telemetry
 LIBXUL_LIBRARY = 1
 EXPORT_LIBRARY = 1
 IS_COMPONENT = 1
-ifndef _MSC_VER
-# Note: Bug 851306 tracks the MSVC-only build warnings in this directory.
 FAIL_ON_WARNINGS = 1
-endif # !_MSC_VER
 
 LIBRARY_NAME = telemetry
-
-EXPORTS_NAMESPACES = mozilla
-
-EXPORTS_mozilla = \
-  Telemetry.h \
-  ProcessedStack.h \
-  TelemetryHistogramEnums.h \
-  $(NULL)
 
 EXTRA_PP_COMPONENTS = \
   TelemetryPing.js \
@@ -49,6 +38,7 @@ CPPSRCS = \
   $(NULL)
 
 LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/build
+LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/threads
 
 EXTRA_DSO_LDOPTS += \
   $(MOZ_COMPONENT_LIBS) \

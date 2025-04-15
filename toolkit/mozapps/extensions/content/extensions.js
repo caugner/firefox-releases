@@ -19,6 +19,8 @@ Cu.import("resource://gre/modules/AddonRepository.jsm");
 
 
 const PREF_DISCOVERURL = "extensions.webservice.discoverURL";
+const PREF_DISCOVER_ENABLED = "extensions.getAddons.showPane";
+const PREF_XPI_ENABLED = "xpinstall.enabled";
 const PREF_MAXRESULTS = "extensions.getAddons.maxResults";
 const PREF_GETADDONS_CACHE_ENABLED = "extensions.getAddons.cache.enabled";
 const PREF_GETADDONS_CACHE_ID_ENABLED = "extensions.%ID%.getAddons.cache.enabled";
@@ -68,7 +70,7 @@ document.addEventListener("load", initialize, true);
 window.addEventListener("unload", shutdown, false);
 
 var gPendingInitializations = 1;
-__defineGetter__("gIsInitializing", function gIsInitializingGetter() gPendingInitializations > 0);
+this.__defineGetter__("gIsInitializing", function gIsInitializingGetter() gPendingInitializations > 0);
 
 function initialize(event) {
   // XXXbz this listener gets _all_ load events for all nodes in the
@@ -100,7 +102,7 @@ function initialize(event) {
 
   // Allow passing in a view through the window arguments
   if ("arguments" in window && window.arguments.length > 0 &&
-      "view" in window.arguments[0]) {
+      window.arguments[0] !== null && "view" in window.arguments[0]) {
     view = window.arguments[0].view;
   }
 
@@ -141,6 +143,23 @@ function loadView(aViewId) {
   } else {
     gViewController.loadView(aViewId);
   }
+}
+
+function isDiscoverEnabled() {
+  if (Services.prefs.getPrefType(PREF_DISCOVERURL) == Services.prefs.PREF_INVALID)
+    return false;
+
+  try {
+    if (!Services.prefs.getBoolPref(PREF_DISCOVER_ENABLED))
+      return false;
+  } catch (e) {}
+
+  try {
+    if (!Services.prefs.getBoolPref(PREF_XPI_ENABLED))
+      return false;
+  } catch (e) {}
+
+  return true;
 }
 
 /**
@@ -943,7 +962,9 @@ var gViewController = {
       isEnabled: function cmd_enableItem_isEnabled(aAddon) {
         if (!aAddon)
           return false;
-        return hasPermission(aAddon, "enable");
+        let addonType = AddonManager.addonTypes[aAddon.type];
+        return (!(addonType.flags & AddonManager.TYPE_SUPPORTS_ASK_TO_ACTIVATE) &&
+                hasPermission(aAddon, "enable"));
       },
       doCommand: function cmd_enableItem_doCommand(aAddon) {
         aAddon.userDisabled = false;
@@ -961,7 +982,9 @@ var gViewController = {
       isEnabled: function cmd_disableItem_isEnabled(aAddon) {
         if (!aAddon)
           return false;
-        return hasPermission(aAddon, "disable");
+        let addonType = AddonManager.addonTypes[aAddon.type];
+        return (!(addonType.flags & AddonManager.TYPE_SUPPORTS_ASK_TO_ACTIVATE) &&
+                hasPermission(aAddon, "disable"));
       },
       doCommand: function cmd_disableItem_doCommand(aAddon) {
         aAddon.userDisabled = true;
@@ -1112,7 +1135,46 @@ var gViewController = {
       doCommand: function cmd_contribute_doCommand(aAddon) {
         openURL(aAddon.contributionURL);
       }
-    }
+    },
+
+    cmd_askToActivateItem: {
+      isEnabled: function cmd_askToActivateItem_isEnabled(aAddon) {
+        if (!aAddon)
+          return false;
+        let addonType = AddonManager.addonTypes[aAddon.type];
+        return ((addonType.flags & AddonManager.TYPE_SUPPORTS_ASK_TO_ACTIVATE) &&
+                hasPermission(aAddon, "ask_to_activate"));
+      },
+      doCommand: function cmd_askToActivateItem_doCommand(aAddon) {
+        aAddon.userDisabled = AddonManager.STATE_ASK_TO_ACTIVATE;
+      }
+    },
+
+    cmd_alwaysActivateItem: {
+      isEnabled: function cmd_alwaysActivateItem_isEnabled(aAddon) {
+        if (!aAddon)
+          return false;
+        let addonType = AddonManager.addonTypes[aAddon.type];
+        return ((addonType.flags & AddonManager.TYPE_SUPPORTS_ASK_TO_ACTIVATE) &&
+                hasPermission(aAddon, "enable"));
+      },
+      doCommand: function cmd_alwaysActivateItem_doCommand(aAddon) {
+        aAddon.userDisabled = false;
+      }
+    },
+
+    cmd_neverActivateItem: {
+      isEnabled: function cmd_neverActivateItem_isEnabled(aAddon) {
+        if (!aAddon)
+          return false;
+        let addonType = AddonManager.addonTypes[aAddon.type];
+        return ((addonType.flags & AddonManager.TYPE_SUPPORTS_ASK_TO_ACTIVATE) &&
+                hasPermission(aAddon, "disable"));
+      },
+      doCommand: function cmd_neverActivateItem_doCommand(aAddon) {
+        aAddon.userDisabled = true;
+      }
+    },
   },
 
   supportsCommand: function gVC_supportsCommand(aCommand) {
@@ -1749,8 +1811,8 @@ var gDiscoverView = {
   _loadListeners: [],
 
   initialize: function gDiscoverView_initialize() {
-    if (Services.prefs.getPrefType(PREF_DISCOVERURL) == Services.prefs.PREF_INVALID) {
-      this.enabled = false;
+    this.enabled = isDiscoverEnabled();
+    if (!this.enabled) {
       gCategories.get("addons://discover/").hidden = true;
       return;
     }
@@ -2835,6 +2897,27 @@ var gDetailView = {
       }
     }
 
+    let menulist = document.getElementById("detail-state-menulist");
+    let addonType = AddonManager.addonTypes[this._addon.type];
+    if (addonType.flags & AddonManager.TYPE_SUPPORTS_ASK_TO_ACTIVATE &&
+        (hasPermission(this._addon, "ask_to_activate") ||
+         hasPermission(this._addon, "enable") ||
+         hasPermission(this._addon, "disable"))) {
+      let askItem = document.getElementById("detail-ask-to-activate-menuitem");
+      let alwaysItem = document.getElementById("detail-always-activate-menuitem");
+      let neverItem = document.getElementById("detail-never-activate-menuitem");
+      if (this._addon.userDisabled === true) {
+        menulist.selectedItem = neverItem;
+      } else if (this._addon.userDisabled == AddonManager.STATE_ASK_TO_ACTIVATE) {
+        menulist.selectedItem = askItem;
+      } else {
+        menulist.selectedItem = alwaysItem;
+      }
+      menulist.hidden = false;
+    } else {
+      menulist.hidden = true;
+    }
+
     this.node.setAttribute("active", this._addon.isActive);
   },
 
@@ -3008,7 +3091,8 @@ var gDetailView = {
       document.getElementById("detail-findUpdates-btn").hidden = hideFindUpdates;
     }
 
-    if (aProperties.indexOf("appDisabled") != -1)
+    if (aProperties.indexOf("appDisabled") != -1 ||
+        aProperties.indexOf("userDisabled") != -1)
       this.updateState();
   },
 

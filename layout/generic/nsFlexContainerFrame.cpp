@@ -162,7 +162,7 @@ MarginComponentForSide(nsMargin& aMargin, Side aSide)
 }
 
 // Encapsulates our flex container's main & cross axes.
-NS_STACK_CLASS class FlexboxAxisTracker {
+class MOZ_STACK_CLASS FlexboxAxisTracker {
 public:
   FlexboxAxisTracker(nsFlexContainerFrame* aFlexContainerFrame);
 
@@ -528,6 +528,24 @@ IsOrderLEQWithDOMFallback(nsIFrame* aFrame1,
     return order1 < order2;
   }
 
+  // If either frame is for generated content from :before or ::after, then
+  // we can't use nsContentUtils::PositionIsBefore(), since that method won't
+  // recognize generated content as being an actual sibling of other nodes.
+  // We know where ::before and ::after nodes *effectively* insert in the DOM
+  // tree, though (at the beginning & end), so we can just special-case them.
+  nsIAtom* pseudo1 = aFrame1->StyleContext()->GetPseudo();
+  nsIAtom* pseudo2 = aFrame2->StyleContext()->GetPseudo();
+  if (pseudo1 == nsCSSPseudoElements::before ||
+      pseudo2 == nsCSSPseudoElements::after) {
+    // frame1 is ::before and/or frame2 is ::after => frame1 is LEQ frame2.
+    return true;
+  }
+  if (pseudo1 == nsCSSPseudoElements::after ||
+      pseudo2 == nsCSSPseudoElements::before) {
+    // frame1 is ::after and/or frame2 is ::before => frame1 is not LEQ frame2.
+    return false;
+  }
+
   // Same "order" value --> use DOM position.
   nsIContent* content1 = GetContentForComparison(aFrame1);
   nsIContent* content2 = GetContentForComparison(aFrame2);
@@ -840,8 +858,7 @@ FlexItem::GetNumAutoMarginsInAxis(AxisOrientationType aAxis) const
 // corresponds to the 'start' edge of that axis).
 // This class shouldn't be instantiated directly -- rather, it should only be
 // instantiated via its subclasses defined below.
-NS_STACK_CLASS
-class PositionTracker {
+class MOZ_STACK_CLASS PositionTracker {
 public:
   // Accessor for the current value of the position that we're tracking.
   inline nscoord GetPosition() const { return mPosition; }
@@ -904,8 +921,7 @@ protected:
 };
 
 // Tracks our position in the main axis, when we're laying out flex items.
-NS_STACK_CLASS
-class MainAxisPositionTracker : public PositionTracker {
+class MOZ_STACK_CLASS MainAxisPositionTracker : public PositionTracker {
 public:
   MainAxisPositionTracker(nsFlexContainerFrame* aFlexContainerFrame,
                           const FlexboxAxisTracker& aAxisTracker,
@@ -936,8 +952,7 @@ private:
 // Utility class for managing our position along the cross axis along
 // the whole flex container (at a higher level than a single line)
 class SingleLineCrossAxisPositionTracker;
-NS_STACK_CLASS
-class CrossAxisPositionTracker : public PositionTracker {
+class MOZ_STACK_CLASS CrossAxisPositionTracker : public PositionTracker {
 public:
   CrossAxisPositionTracker(nsFlexContainerFrame* aFlexContainerFrame,
                            const FlexboxAxisTracker& aAxisTracker,
@@ -952,8 +967,7 @@ public:
 
 // Utility class for managing our position along the cross axis, *within* a
 // single flex line.
-NS_STACK_CLASS
-class SingleLineCrossAxisPositionTracker : public PositionTracker {
+class MOZ_STACK_CLASS SingleLineCrossAxisPositionTracker : public PositionTracker {
 public:
   SingleLineCrossAxisPositionTracker(nsFlexContainerFrame* aFlexContainerFrame,
                                      const FlexboxAxisTracker& aAxisTracker,
@@ -1042,6 +1056,26 @@ nsFlexContainerFrame::GetType() const
   return nsGkAtoms::flexContainerFrame;
 }
 
+/* virtual */
+int
+nsFlexContainerFrame::GetSkipSides() const
+{
+  // (same as nsBlockFrame's GetSkipSides impl)
+  if (IS_TRUE_OVERFLOW_CONTAINER(this)) {
+    return (1 << NS_SIDE_TOP) | (1 << NS_SIDE_BOTTOM);
+  }
+
+  int skip = 0;
+  if (GetPrevInFlow()) {
+    skip |= 1 << NS_SIDE_TOP;
+  }
+  nsIFrame* nif = GetNextInFlow();
+  if (nif && !IS_TRUE_OVERFLOW_CONTAINER(nif)) {
+    skip |= 1 << NS_SIDE_BOTTOM;
+  }
+  return skip;
+}
+
 #ifdef DEBUG
 NS_IMETHODIMP
 nsFlexContainerFrame::GetFrameName(nsAString& aResult) const
@@ -1065,7 +1099,7 @@ GetDisplayFlagsForFlexItem(nsIFrame* aFrame)
   if (pos->mZIndex.GetUnit() == eStyleUnit_Integer) {
     return nsIFrame::DISPLAY_CHILD_FORCE_STACKING_CONTEXT;
   }
-  return 0;
+  return nsIFrame::DISPLAY_CHILD_FORCE_PSEUDO_STACKING_CONTEXT;
 }
 
 void

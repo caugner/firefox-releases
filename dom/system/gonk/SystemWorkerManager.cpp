@@ -17,7 +17,6 @@
 
 #include "SystemWorkerManager.h"
 
-#include "nsIJSContextStack.h"
 #include "nsINetworkManager.h"
 #include "nsIWifi.h"
 #include "nsIWorkerHolder.h"
@@ -92,7 +91,7 @@ private:
 };
 
 JSBool
-PostToRIL(JSContext *cx, unsigned argc, jsval *vp)
+PostToRIL(JSContext *cx, unsigned argc, JS::Value *vp)
 {
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
 
@@ -101,10 +100,10 @@ PostToRIL(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  jsval cv = JS_ARGV(cx, vp)[0];
+  JS::Value cv = JS_ARGV(cx, vp)[0];
   int clientId = cv.toInt32();
 
-  jsval v = JS_ARGV(cx, vp)[1];
+  JS::Value v = JS_ARGV(cx, vp)[1];
 
   JSAutoByteString abs;
   void *data;
@@ -169,7 +168,7 @@ ConnectWorkerToRIL::RunTask(JSContext *aCx)
 #ifdef MOZ_WIDGET_GONK
 
 JSBool
-DoNetdCommand(JSContext *cx, unsigned argc, jsval *vp)
+DoNetdCommand(JSContext *cx, unsigned argc, JS::Value *vp)
 {
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
 
@@ -178,7 +177,7 @@ DoNetdCommand(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  jsval v = JS_ARGV(cx, vp)[0];
+  JS::Value v = JS_ARGV(cx, vp)[0];
 
   JSAutoByteString abs;
   void *data;
@@ -308,7 +307,7 @@ NetdReceiver::DispatchNetdEvent::RunTask(JSContext *aCx)
   }
 
   memcpy(JS_GetUint8ArrayData(array), mMessage->mData, mMessage->mSize);
-  jsval argv[] = { OBJECT_TO_JSVAL(array) };
+  JS::Value argv[] = { OBJECT_TO_JSVAL(array) };
   return JS_CallFunctionName(aCx, obj, "onNetdMessage", NS_ARRAY_LENGTH(argv),
                              argv, argv);
 }
@@ -342,7 +341,7 @@ SystemWorkerManager::Init()
   NS_ASSERTION(NS_IsMainThread(), "We can only initialize on the main thread");
   NS_ASSERTION(!mShutdown, "Already shutdown!");
 
-  mozilla::SafeAutoJSContext cx;
+  mozilla::AutoSafeJSContext cx;
 
   nsresult rv = InitWifi(cx);
   if (NS_FAILED(rv)) {
@@ -480,10 +479,7 @@ SystemWorkerManager::RegisterRilWorker(unsigned int aClientId,
 {
   NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(aWorker), NS_ERROR_UNEXPECTED);
 
-  if (!mRilConsumers.EnsureLengthAtLeast(aClientId + 1)) {
-    NS_WARNING("Failed to ensure minimum length of mRilConsumers");
-    return NS_ERROR_FAILURE;
-  }
+  mRilConsumers.EnsureLengthAtLeast(aClientId + 1);
 
   if (mRilConsumers[aClientId]) {
     NS_WARNING("RilConsumer already registered");
@@ -518,7 +514,7 @@ SystemWorkerManager::InitNetd(JSContext *cx)
   nsCOMPtr<nsIWorkerHolder> worker = do_GetService(kNetworkManagerCID);
   NS_ENSURE_TRUE(worker, NS_ERROR_FAILURE);
 
-  jsval workerval;
+  JS::Value workerval;
   nsresult rv = worker->GetWorker(&workerval);
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(workerval), NS_ERROR_UNEXPECTED);

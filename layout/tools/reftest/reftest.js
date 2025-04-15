@@ -566,6 +566,8 @@ function BuildConditionSandbox(aURL) {
       gWindowUtils.layerManagerType != "Basic";
     sandbox.layersOpenGL =
       gWindowUtils.layerManagerType == "OpenGL";
+    sandbox.layersOMTC =
+      gWindowUtils.layerManagerRemote == true;
 
     // Shortcuts for widget toolkits.
     sandbox.B2G = xr.widgetToolkit == "gonk";
@@ -1102,12 +1104,6 @@ function ServeFiles(manifestPrincipal, depth, aURL, files)
 // Return true iff this window is focused when this function returns.
 function Focus()
 {
-    // FIXME/bug 583976: focus doesn't yet work with out-of-process
-    // content.
-    if (gBrowserIsRemote) {
-        return false;
-    }
-
     var fm = CC["@mozilla.org/focus-manager;1"].getService(CI.nsIFocusManager);
     fm.focusedWindow = gContainingWindow;
 #ifdef XP_MACOSX

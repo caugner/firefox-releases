@@ -5,8 +5,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
+const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
+
+const PANE_APPEARANCE_DELAY = 50;
+
+Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 this.EXPORTED_SYMBOLS = ["ViewHelpers", "MenuItem", "MenuContainer"];
 
@@ -69,7 +75,7 @@ this.ViewHelpers = {
    * @param nsIDOMNode aNode
    *        A node to delegate the methods to.
    */
-  delegateWidgetAttributeMethods: function MC_delegateWidgetAttributeMethods(aWidget, aNode) {
+  delegateWidgetAttributeMethods: function VH_delegateWidgetAttributeMethods(aWidget, aNode) {
     aWidget.getAttribute = aNode.getAttribute.bind(aNode);
     aWidget.setAttribute = aNode.setAttribute.bind(aNode);
     aWidget.removeAttribute = aNode.removeAttribute.bind(aNode);
@@ -84,9 +90,211 @@ this.ViewHelpers = {
    * @param nsIDOMNode aNode
    *        A node to delegate the methods to.
    */
-  delegateWidgetEventMethods: function MC_delegateWidgetEventMethods(aWidget, aNode) {
+  delegateWidgetEventMethods: function VH_delegateWidgetEventMethods(aWidget, aNode) {
     aWidget.addEventListener = aNode.addEventListener.bind(aNode);
     aWidget.removeEventListener = aNode.removeEventListener.bind(aNode);
+  },
+
+  /**
+   * Sets a side pane hidden or visible.
+   *
+   * @param object aFlags
+   *        An object containing some of the following properties:
+   *        - visible: true if the pane should be shown, false to hide
+   *        - animated: true to display an animation on toggle
+   *        - delayed: true to wait a few cycles before toggle
+   *        - callback: a function to invoke when the toggle finishes
+   * @param nsIDOMNode aPane
+   *        The element representing the pane to toggle.
+   */
+  togglePane: function VH_togglePane(aFlags, aPane) {
+    // Hiding is always handled via margins, not the hidden attribute.
+    aPane.removeAttribute("hidden");
+
+    // Add a class to the pane to handle min-widths, margins and animations.
+    if (!aPane.classList.contains("generic-toggled-side-pane")) {
+      aPane.classList.add("generic-toggled-side-pane");
+    }
+
+    // Avoid useless toggles.
+    if (aFlags.visible == !aPane.hasAttribute("pane-collapsed")) {
+      if (aFlags.callback) aFlags.callback();
+      return;
+    }
+
+    // Computes and sets the pane margins in order to hide or show it.
+    function set() {
+      if (aFlags.visible) {
+        aPane.style.marginLeft = "0";
+        aPane.style.marginRight = "0";
+        aPane.removeAttribute("pane-collapsed");
+      } else {
+        let margin = ~~(aPane.getAttribute("width")) + 1;
+        aPane.style.marginLeft = -margin + "px";
+        aPane.style.marginRight = -margin + "px";
+        aPane.setAttribute("pane-collapsed", "");
+      }
+
+      // Invoke the callback when the transition ended.
+      if (aFlags.animated) {
+        aPane.addEventListener("transitionend", function onEvent() {
+          aPane.removeEventListener("transitionend", onEvent, false);
+          if (aFlags.callback) aFlags.callback();
+        }, false);
+      }
+      // Invoke the callback immediately since there's no transition.
+      else {
+        if (aFlags.callback) aFlags.callback();
+      }
+    }
+
+    // The "animated" attributes enables animated toggles (slide in-out).
+    if (aFlags.animated) {
+      aPane.setAttribute("animated", "");
+    } else {
+      aPane.removeAttribute("animated");
+    }
+
+    // Sometimes it's useful delaying the toggle a few ticks to ensure
+    // a smoother slide in-out animation.
+    if (aFlags.delayed) {
+      aPane.ownerDocument.defaultView.setTimeout(set.bind(this), PANE_APPEARANCE_DELAY);
+    } else {
+      set.call(this);
+    }
+  }
+};
+
+/**
+ * Localization convenience methods.
+ *
+ * @param string aStringBundleName
+ *        The desired string bundle's name.
+ */
+ViewHelpers.L10N = function L10N(aStringBundleName) {
+  XPCOMUtils.defineLazyGetter(this, "stringBundle", () =>
+    Services.strings.createBundle(aStringBundleName));
+
+  XPCOMUtils.defineLazyGetter(this, "ellipsis", () =>
+    Services.prefs.getComplexValue("intl.ellipsis", Ci.nsIPrefLocalizedString).data);
+};
+
+ViewHelpers.L10N.prototype = {
+  stringBundle: null,
+
+  /**
+   * L10N shortcut function.
+   *
+   * @param string aName
+   * @return string
+   */
+  getStr: function L10N_getStr(aName) {
+    return this.stringBundle.GetStringFromName(aName);
+  },
+
+  /**
+   * L10N shortcut function.
+   *
+   * @param string aName
+   * @param array aArgs
+   * @return string
+   */
+  getFormatStr: function L10N_getFormatStr(aName, ...aArgs) {
+    return this.stringBundle.formatStringFromName(aName, aArgs, aArgs.length);
+  },
+
+  /**
+   * Converts a number to a locale-aware string format and keeps a certain
+   * number of decimals.
+   *
+   * @param number aNumber
+   *        The number to convert.
+   * @param number aDecimals [optional]
+   *        Total decimals to keep.
+   * @return string
+   *         The localized number as a string.
+   */
+  numberWithDecimals: function L10N__numberWithDecimals(aNumber, aDecimals = 0) {
+    // If this is an integer, don't do anything special.
+    if (aNumber == (aNumber | 0)) {
+      return aNumber;
+    }
+    // Remove {n} trailing decimals. Can't use toFixed(n) because
+    // toLocaleString converts the number to a string. Also can't use
+    // toLocaleString(, { maximumFractionDigits: n }) because it's not
+    // implemented on OS X (bug 368838). Gross.
+    let localized = aNumber.toLocaleString(); // localize
+    let padded = localized + new Array(aDecimals).join("0"); // pad with zeros
+    let match = padded.match("([^]*?\\d{" + aDecimals + "})\\d*$");
+    return match.pop();
+  }
+};
+
+/**
+ * Shortcuts for lazily accessing and setting various preferences.
+ * Usage:
+ *   let prefs = new ViewHelpers.Prefs("root.path.to.branch", {
+ *     myIntPref: ["Int", "leaf.path.to.my-int-pref"],
+ *     myCharPref: ["Char", "leaf.path.to.my-char-pref"],
+ *     ...
+ *   });
+ *
+ *   prefs.myCharPref = "foo";
+ *   let aux = prefs.myCharPref;
+ *
+ * @param string aPrefsRoot
+ *        The root path to the required preferences branch.
+ * @param object aPrefsObject
+ *        An object containing { accessorName: [prefType, prefName] } keys.
+ */
+ViewHelpers.Prefs = function Prefs(aPrefsRoot = "", aPrefsObject = {}) {
+  this.root = aPrefsRoot;
+
+  for (let accessorName in aPrefsObject) {
+    let [prefType, prefName] = aPrefsObject[accessorName];
+    this.map(accessorName, prefType, prefName);
+  }
+};
+
+ViewHelpers.Prefs.prototype = {
+  /**
+   * Helper method for getting a pref value.
+   *
+   * @param string aType
+   * @param string aPrefName
+   * @return any
+   */
+  _get: function P__get(aType, aPrefName) {
+    if (this[aPrefName] === undefined) {
+      this[aPrefName] = Services.prefs["get" + aType + "Pref"](aPrefName);
+    }
+    return this[aPrefName];
+  },
+
+  /**
+   * Helper method for setting a pref value.
+   *
+   * @param string aType
+   * @param string aPrefName
+   * @param any aValue
+   */
+  _set: function P__set(aType, aPrefName, aValue) {
+    Services.prefs["set" + aType + "Pref"](aPrefName, aValue);
+    this[aPrefName] = aValue;
+  },
+
+  /**
+   * Maps a property name to a pref, defining lazy getters and setters.
+   *
+   * @param string aAccessorName
+   * @param string aType
+   * @param string aPrefName
+   */
+  map: function P_map(aAccessorName, aType, aPrefName) {
+    Object.defineProperty(this, aAccessorName, {
+      get: () => this._get(aType, [this.root, aPrefName].join(".")),
+      set: (aValue) => this._set(aType, [this.root, aPrefName].join("."), aValue)
+    });
   }
 };
 
@@ -97,43 +305,39 @@ this.ViewHelpers = {
  *
  * @param any aAttachment
  *        Some attached primitive/object.
- * @param string aLabel
- *        The label displayed in the container.
- * @param string aValue
- *        The actual internal value of the item.
- * @param string aDescription [optional]
- *        An optional description of the item.
+ * @param nsIDOMNode | nsIDOMDocumentFragment | array aContents [optional]
+ *        A prebuilt node, or an array containing the following properties:
+ *        - aLabel: the label displayed in the container
+ *        - aValue: the actual internal value of the item
+ *        - aDescription: an optional description of the item
  */
-this.MenuItem = function MenuItem(aAttachment, aLabel, aValue, aDescription) {
+this.MenuItem = function MenuItem(aAttachment, aContents = []) {
   this.attachment = aAttachment;
-  this._label = aLabel + "";
-  this._value = aValue + "";
-  this._description = (aDescription || "") + "";
+
+  // Allow the insertion of prebuilt nodes.
+  if (aContents instanceof Ci.nsIDOMNode ||
+      aContents instanceof Ci.nsIDOMDocumentFragment) {
+    this._prebuiltTarget = aContents;
+  }
+  // Delegate the item view creation to a container widget.
+  else {
+    let [aLabel, aValue, aDescription] = aContents;
+    this._label = aLabel + "";
+    this._value = aValue + "";
+    this._description = (aDescription || "") + "";
+  }
 };
 
 MenuItem.prototype = {
-  /**
-   * Gets the label set for this item.
-   * @return string
-   */
   get label() this._label,
-
-  /**
-   * Gets the value set for this item.
-   * @return string
-   */
   get value() this._value,
-
-  /**
-   * Gets the description set for this item.
-   * @return string
-   */
   get description() this._description,
+  get target() this._target,
 
   /**
    * Immediately appends a child item to this menu item.
    *
-   * @param nsIDOMNode
+   * @param nsIDOMNode aElement
    *        An nsIDOMNode representing the child element to append.
    * @param object aOptions [optional]
    *        Additional options or flags supported by this operation:
@@ -155,7 +359,7 @@ MenuItem.prototype = {
     }
 
     // Entangle the item with the newly inserted child node.
-    this._entangleItem(item, this.target.appendChild(aElement));
+    this._entangleItem(item, this._target.appendChild(aElement));
 
     // Return the item associated with the displayed element.
     return item;
@@ -171,7 +375,7 @@ MenuItem.prototype = {
     if (!aItem) {
       return;
     }
-    this.target.removeChild(aItem.target);
+    this._target.removeChild(aItem._target);
     this._untangleItem(aItem);
   },
 
@@ -179,20 +383,20 @@ MenuItem.prototype = {
    * Visually marks this menu item as selected.
    */
   markSelected: function MI_markSelected() {
-    if (!this.target) {
+    if (!this._target) {
       return;
     }
-    this.target.classList.add("selected");
+    this._target.classList.add("selected");
   },
 
   /**
    * Visually marks this menu item as deselected.
    */
   markDeselected: function MI_markDeselected() {
-    if (!this.target) {
+    if (!this._target) {
       return;
     }
-    this.target.classList.remove("selected");
+    this._target.classList.remove("selected");
   },
 
   /**
@@ -203,7 +407,7 @@ MenuItem.prototype = {
    * @param nsIDOMNode aElement [optional]
    *        A custom element to set the attributes to.
    */
-  setAttributes: function MI_setAttributes(aAttributes, aElement = this.target) {
+  setAttributes: function MI_setAttributes(aAttributes, aElement = this._target) {
     for (let [name, value] of aAttributes) {
       aElement.setAttribute(name, value);
     }
@@ -219,11 +423,11 @@ MenuItem.prototype = {
    */
   _entangleItem: function MI__entangleItem(aItem, aElement) {
     if (!this._itemsByElement) {
-      this._itemsByElement = new Map();
+      this._itemsByElement = new Map(); // This needs to be iterable.
     }
 
     this._itemsByElement.set(aElement, aItem);
-    aItem.target = aElement;
+    aItem._target = aElement;
   },
 
   /**
@@ -240,8 +444,19 @@ MenuItem.prototype = {
       aItem.remove(childItem);
     }
 
-    this._itemsByElement.delete(aItem.target);
-    aItem.target = null;
+    this._unlinkItem(aItem);
+    aItem._prebuiltTarget = null;
+    aItem._target = null;
+  },
+
+  /**
+   * Deletes an item from the its parent's storage maps.
+   *
+   * @param MenuItem aItem
+   *        The item to forget.
+   */
+  _unlinkItem: function MC__unlinkItem(aItem) {
+    this._itemsByElement.delete(aItem._target);
   },
 
   /**
@@ -249,13 +464,20 @@ MenuItem.prototype = {
    * @return string
    */
   toString: function MI_toString() {
-    return this._label + " -> " + this._value;
+    if (this._label && this._value) {
+      return this._label + " -> " + this._value;
+    }
+    if (this.attachment) {
+      return this.attachment.toString();
+    }
+    return "(null)";
   },
 
   _label: "",
   _value: "",
   _description: "",
-  target: null,
+  _prebuiltTarget: null,
+  _target: null,
   finalize: null,
   attachment: null
 };
@@ -323,8 +545,8 @@ MenuContainer.prototype = {
    * (items with "undefined" or "null" labels/values). This can, as well, be
    * overridden via the "relaxed" flag.
    *
-   * @param nsIDOMNode | object aContents
-   *        An nsIDOMNode, or an array containing the following properties:
+   * @param nsIDOMNode | nsIDOMDocumentFragment array aContents
+   *        A prebuilt node, or an array containing the following properties:
    *          - label: the label displayed in the container
    *          - value: the actual internal value of the item
    *          - description: an optional description of the item
@@ -341,23 +563,17 @@ MenuContainer.prototype = {
    *         undefined if the item was staged for a later commit.
    */
   push: function MC_push(aContents, aOptions = {}) {
-    if (aContents instanceof Ci.nsIDOMNode ||
-        aContents instanceof Ci.nsIDOMElement) {
-      // Allow the insertion of prebuilt nodes.
-      aOptions.node = aContents;
-      aContents = [];
-    }
-
-    let [label, value, description] = aContents;
-    let item = new MenuItem(aOptions.attachment, label, value, description);
+    let item = new MenuItem(aOptions.attachment, aContents);
 
     // Batch the item to be added later.
     if (aOptions.staged) {
+      // Commit operations will ignore any specified index.
+      delete aOptions.index;
       return void this._stagedItems.push({ item: item, options: aOptions });
     }
     // Find the target position in this container and insert the item there.
     if (!("index" in aOptions)) {
-      return this._insertItemAt(this._findExpectedIndex(label), item, aOptions);
+      return this._insertItemAt(this._findExpectedIndex(item), item, aOptions);
     }
     // Insert the item at the specified index. If negative or out of bounds,
     // the item will be simply appended.
@@ -366,6 +582,7 @@ MenuContainer.prototype = {
 
   /**
    * Flushes all the prepared items into this container.
+   * Any specified index on the items will be ignored. Everything is appended.
    *
    * @param object aOptions [optional]
    *        Additional options or flags supported by this operation:
@@ -376,8 +593,7 @@ MenuContainer.prototype = {
 
     // Sort the items before adding them to this container, if preferred.
     if (aOptions.sorted) {
-      stagedItems.sort(function(a, b) a.item._label.toLowerCase() >
-                                      b.item._label.toLowerCase());
+      stagedItems.sort((a, b) => this._sortPredicate(a.item, b.item));
     }
     // Append the prepared items to this container.
     for (let { item, options } of stagedItems) {
@@ -416,7 +632,7 @@ MenuContainer.prototype = {
     if (!aItem) {
       return;
     }
-    this._container.removeChild(aItem.target);
+    this._container.removeChild(aItem._target);
     this._untangleItem(aItem);
   },
 
@@ -435,9 +651,9 @@ MenuContainer.prototype = {
       this._untangleItem(item);
     }
 
-    this._itemsByLabel = new Map();
-    this._itemsByValue = new Map();
-    this._itemsByElement = new Map();
+    this._itemsByLabel.clear();
+    this._itemsByValue.clear();
+    this._itemsByElement.clear();
     this._stagedItems.length = 0;
   },
 
@@ -470,8 +686,95 @@ MenuContainer.prototype = {
    */
   toggleContents: function MC_toggleContents(aVisibleFlag) {
     for (let [, item] of this._itemsByElement) {
-      item.target.hidden = !aVisibleFlag;
+      item._target.hidden = !aVisibleFlag;
     }
+  },
+
+  /**
+   * Sorts all the items in this container based on a predicate.
+   *
+   * @param function aPredicate [optional]
+   *        Items are sorted according to the return value of the function, which
+   *        will become the new default sorting predicate in this container.
+   *        If unspecified, all items will be sorted by their label.
+   */
+  sortContents: function MC_sortContents(aPredicate = this._sortPredicate) {
+    let sortedItems = this.allItems.sort(this._sortPredicate = aPredicate);
+
+    for (let i = 0, len = sortedItems.length; i < len; i++) {
+      this.swapItems(this.getItemAtIndex(i), sortedItems[i]);
+    }
+  },
+
+  /**
+   * Visually swaps two items in this container.
+   *
+   * @param MenuItem aFirst
+   *        The first menu item to be swapped.
+   * @param MenuItem aSecond
+   *        The second menu item to be swapped.
+   */
+  swapItems: function MC_swapItems(aFirst, aSecond) {
+    if (aFirst == aSecond) { // We're just dandy, thank you.
+      return;
+    }
+    let { _prebuiltTarget: firstPrebuiltTarget, target: firstTarget } = aFirst;
+    let { _prebuiltTarget: secondPrebuiltTarget, target: secondTarget } = aSecond;
+
+    // If the two items were constructed with prebuilt nodes as DocumentFragments,
+    // then those DocumentFragments are now empty and need to be reassembled.
+    if (firstPrebuiltTarget instanceof Ci.nsIDOMDocumentFragment) {
+      for (let node of firstTarget.childNodes) {
+        firstPrebuiltTarget.appendChild(node.cloneNode(true));
+      }
+    }
+    if (secondPrebuiltTarget instanceof Ci.nsIDOMDocumentFragment) {
+      for (let node of secondTarget.childNodes) {
+        secondPrebuiltTarget.appendChild(node.cloneNode(true));
+      }
+    }
+
+    // 1. Get the indices of the two items to swap.
+    let i = this._indexOfElement(firstTarget);
+    let j = this._indexOfElement(secondTarget);
+
+    // 2. Remeber the selection index, to reselect an item, if necessary.
+    let selectedTarget = this._container.selectedItem;
+    let selectedIndex = -1;
+    if (selectedTarget == firstTarget) {
+      selectedIndex = i;
+    } else if (selectedTarget == secondTarget) {
+      selectedIndex = j;
+    }
+
+    // 3. Silently nuke both items, nobody needs to know about this.
+    this._container.removeChild(firstTarget);
+    this._container.removeChild(secondTarget);
+    this._unlinkItem(aFirst);
+    this._unlinkItem(aSecond);
+
+    // 4. Add the items again, but reversing their indices.
+    this._insertItemAt.apply(this, i < j ? [i, aSecond] : [j, aFirst]);
+    this._insertItemAt.apply(this, i < j ? [j, aFirst] : [i, aSecond]);
+
+    // 5. Restore the previous selection, if necessary.
+    if (selectedIndex == i) {
+      this._container.selectedItem = aFirst._target;
+    } else if (selectedIndex == j) {
+      this._container.selectedItem = aSecond._target;
+    }
+  },
+
+  /**
+   * Visually swaps two items in this container at specific indices.
+   *
+   * @param number aFirst
+   *        The index of the first menu item to be swapped.
+   * @param number aSecond
+   *        The index of the second menu item to be swapped.
+   */
+  swapItemsAtIndices: function MC_swapItemsAtIndices(aFirst, aSecond) {
+    this.swapItems(this.getItemAtIndex(aFirst), this.getItemAtIndex(aSecond));
   },
 
   /**
@@ -517,7 +820,7 @@ MenuContainer.prototype = {
     if (selectedElement) {
       return this._itemsByElement.get(selectedElement);
     }
-    return -1;
+    return null;
   },
 
   /**
@@ -562,14 +865,15 @@ MenuContainer.prototype = {
    */
   set selectedItem(aItem) {
     // A falsy item is allowed to invalidate the current selection.
-    let targetNode = aItem ? aItem.target : null;
+    let targetElement = aItem ? aItem._target : null;
 
     // Prevent selecting the same item again, so return early.
-    if (this._container.selectedItem == targetNode) {
+    if (this._container.selectedItem == targetElement) {
       return;
     }
-    this._container.selectedItem = targetNode;
-    ViewHelpers.dispatchEvent(targetNode, "select", aItem);
+
+    this._container.selectedItem = targetElement;
+    ViewHelpers.dispatchEvent(targetElement, "select", aItem);
   },
 
   /**
@@ -663,7 +967,7 @@ MenuContainer.prototype = {
    *         The index of the matched item, or -1 if nothing is found.
    */
   indexOfItem: function MC_indexOfItem(aItem) {
-    return this._indexOfElement(aItem.target);
+    return this._indexOfElement(aItem._target);
   },
 
   /**
@@ -717,7 +1021,20 @@ MenuContainer.prototype = {
   get itemCount() this._itemsByElement.size,
 
   /**
-   * Returns a list of all the visible (non-hidden) items in this container.
+   * Returns a list of all items in this container, in the displayed order.
+   * @return array
+   */
+  get allItems() {
+    let items = [];
+    for (let i = 0; i < this.itemCount; i++) {
+      items.push(this.getItemAtIndex(i));
+    }
+    return items;
+  },
+
+  /**
+   * Returns a list of all the visible (non-hidden) items in this container,
+   * in no particular order.
    * @return array
    */
   get visibleItems() {
@@ -773,25 +1090,26 @@ MenuContainer.prototype = {
    *         True if the element is eligible, false otherwise.
    */
   isEligible: function MC_isEligible(aItem) {
-    return this.isUnique(aItem) &&
+    return aItem._prebuiltTarget || (this.isUnique(aItem) &&
            aItem._label != "undefined" && aItem._label != "null" &&
-           aItem._value != "undefined" && aItem._value != "null";
+           aItem._value != "undefined" && aItem._value != "null");
   },
 
   /**
-   * Finds the expected item index in this container based on its label.
+   * Finds the expected item index in this container based on the default
+   * sort predicate.
    *
-   * @param string aLabel
-   *        The label used to identify the element.
+   * @param MenuItem aItem
+   *        The item to get the expected index for.
    * @return number
    *         The expected item index.
    */
-  _findExpectedIndex: function MC__findExpectedIndex(aLabel) {
+  _findExpectedIndex: function MC__findExpectedIndex(aItem) {
     let container = this._container;
     let itemCount = this.itemCount;
 
     for (let i = 0; i < itemCount; i++) {
-      if (this.getItemAtIndex(i)._label > aLabel) {
+      if (this._sortPredicate(this.getItemAtIndex(i), aItem) > 0) {
         return i;
       }
     }
@@ -814,7 +1132,7 @@ MenuContainer.prototype = {
    * @return MenuItem
    *         The item associated with the displayed element, null if rejected.
    */
-  _insertItemAt: function MC__insertItemAt(aIndex, aItem, aOptions) {
+  _insertItemAt: function MC__insertItemAt(aIndex, aItem, aOptions = {}) {
     // Relaxed nodes may be appended without verifying their eligibility.
     if (!aOptions.relaxed && !this.isEligible(aItem)) {
       return null;
@@ -822,14 +1140,14 @@ MenuContainer.prototype = {
 
     // Entangle the item with the newly inserted node.
     this._entangleItem(aItem, this._container.insertItemAt(aIndex,
-      aOptions.node || aItem._label,
+      aItem._prebuiltTarget || aItem._label, // Allow the insertion of prebuilt nodes.
       aItem._value,
       aItem._description,
-      aOptions.attachment));
+      aItem.attachment));
 
     // Handle any additional options after entangling the item.
     if (aOptions.attributes) {
-      aItem.setAttributes(aOptions.attributes, aItem.target);
+      aItem.setAttributes(aOptions.attributes, aItem._target);
     }
     if (aOptions.finalize) {
       aItem.finalize = aOptions.finalize;
@@ -851,7 +1169,7 @@ MenuContainer.prototype = {
     this._itemsByLabel.set(aItem._label, aItem);
     this._itemsByValue.set(aItem._value, aItem);
     this._itemsByElement.set(aElement, aItem);
-    aItem.target = aElement;
+    aItem._target = aElement;
   },
 
   /**
@@ -868,10 +1186,38 @@ MenuContainer.prototype = {
       aItem.remove(childItem);
     }
 
+    this._unlinkItem(aItem);
+    aItem._prebuiltTarget = null;
+    aItem._target = null;
+  },
+
+  /**
+   * Deletes an item from the its parent's storage maps.
+   *
+   * @param MenuItem aItem
+   *        The item to forget.
+   */
+  _unlinkItem: function MI__unlinkItem(aItem) {
     this._itemsByLabel.delete(aItem._label);
     this._itemsByValue.delete(aItem._value);
-    this._itemsByElement.delete(aItem.target);
-    aItem.target = null;
+    this._itemsByElement.delete(aItem._target);
+  },
+
+  /**
+   * The predicate used when sorting items. By default, items in this view
+   * are sorted by their label.
+   *
+   * @param MenuItem aFirst
+   *        The first menu item used in the comparison.
+   * @param MenuItem aSecond
+   *        The second menu item used in the comparison.
+   * @return number
+   *         -1 to sort aFirst to a lower index than aSecond
+   *          0 to leave aFirst and aSecond unchanged with respect to each other
+   *          1 to sort aSecond to a lower index than aFirst
+   */
+  _sortPredicate: function MC__sortPredicate(aFirst, aSecond) {
+    return +(aFirst._label.toLowerCase() > aSecond._label.toLowerCase());
   },
 
   _container: null,

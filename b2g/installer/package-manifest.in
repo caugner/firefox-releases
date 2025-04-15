@@ -155,6 +155,7 @@
 @BINPATH@/components/content_xslt.xpt
 @BINPATH@/components/cookie.xpt
 @BINPATH@/components/directory.xpt
+@BINPATH@/components/diskspacewatcher.xpt
 @BINPATH@/components/docshell.xpt
 @BINPATH@/components/dom.xpt
 @BINPATH@/components/dom_activities.xpt
@@ -214,7 +215,7 @@
 @BINPATH@/components/dom_traversal.xpt
 @BINPATH@/components/dom_views.xpt
 #ifdef MOZ_WEBSPEECH
-@BINPATH@/components/dom_webspeech.xpt
+@BINPATH@/components/dom_webspeechrecognition.xpt
 #endif
 @BINPATH@/components/dom_xbl.xpt
 @BINPATH@/components/dom_xpath.xpt
@@ -351,6 +352,8 @@
 @BINPATH@/components/BrowserElementParent.js
 @BINPATH@/components/ContactManager.js
 @BINPATH@/components/ContactManager.manifest
+@BINPATH@/components/NavigatorPropertyHelper.js
+@BINPATH@/components/NavigatorPropertyHelper.manifest
 @BINPATH@/components/PermissionSettings.js
 @BINPATH@/components/PermissionSettings.manifest
 @BINPATH@/components/PermissionPromptService.js
@@ -445,6 +448,7 @@
 @BINPATH@/components/satchel.manifest
 @BINPATH@/components/nsFormAutoComplete.js
 @BINPATH@/components/nsFormHistory.js
+@BINPATH@/components/FormHistoryStartup.js
 @BINPATH@/components/nsInputListAutoComplete.js
 @BINPATH@/components/contentSecurityPolicy.manifest
 @BINPATH@/components/contentSecurityPolicy.js
@@ -508,8 +512,6 @@
 @BINPATH@/components/AppsService.manifest
 @BINPATH@/components/Push.js
 @BINPATH@/components/Push.manifest
-@BINPATH@/components/PushService.js
-@BINPATH@/components/PushService.manifest
 
 @BINPATH@/components/nsDOMIdentity.js
 @BINPATH@/components/nsIDService.js
@@ -566,9 +568,6 @@
 @BINPATH@/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/install.rdf
 @BINPATH@/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/icon.png
 @BINPATH@/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/preview.png
-#if MOZ_UPDATE_CHANNEL == beta
-@BINPATH@/extensions/testpilot@labs.mozilla.com/*
-#endif
 @BINPATH@/chrome/toolkit@JAREXT@
 @BINPATH@/chrome/toolkit.manifest
 #ifdef XP_UNIX
@@ -750,6 +749,10 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/TelProtocolHandler.js
 @BINPATH@/components/B2GAboutRedirector.js
 @BINPATH@/components/FilePicker.js
+
+#ifdef MOZ_WEBSPEECH
+@BINPATH@/components/dom_webspeechsynth.xpt
+#endif
 
 #ifdef XP_MACOSX
 @BINPATH@/@DLL_PREFIX@plugin_child_interpose@DLL_SUFFIX@

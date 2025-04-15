@@ -115,6 +115,8 @@ class Configuration:
                 getter = lambda x: x.interface.isExternal()
             elif key == 'isJSImplemented':
                 getter = lambda x: x.interface.isJSImplemented()
+            elif key == 'isNavigatorProperty':
+                getter = lambda x: x.interface.getNavigatorProperty() != None
             else:
                 getter = lambda x: getattr(x, key)
             curr = filter(lambda x: getter(x) == val, curr)
@@ -211,6 +213,7 @@ class Descriptor(DescriptorProvider):
                 nativeTypeDefault = "mozilla::dom::" + ifaceName
 
         self.nativeType = desc.get('nativeType', nativeTypeDefault)
+        self.jsImplParent = desc.get('jsImplParent', self.nativeType)
 
         # Do something sane for JSObject
         if self.nativeType == "JSObject":
@@ -225,10 +228,16 @@ class Descriptor(DescriptorProvider):
         else:
             if self.workers:
                 headerDefault = "mozilla/dom/workers/bindings/%s.h" % ifaceName
+            elif not self.interface.isExternal() and self.interface.getExtendedAttribute("HeaderFile"):
+                headerDefault = self.interface.getExtendedAttribute("HeaderFile")[0]
             else:
                 headerDefault = self.nativeType
                 headerDefault = headerDefault.replace("::", "/") + ".h"
         self.headerFile = desc.get('headerFile', headerDefault)
+        if self.jsImplParent == self.nativeType:
+            self.jsImplParentHeader = self.headerFile
+        else:
+            self.jsImplParentHeader = self.jsImplParent.replace("::", "/") + ".h"
 
         self.skipGen = desc.get('skipGen', False)
 

@@ -535,7 +535,7 @@ SVGComponentTransferFunctionElement::GetNumberInfo()
 }
 
 /* virtual */ JSObject*
-SVGFEFuncRElement::WrapNode(JSContext* aCx, JSObject* aScope)
+SVGFEFuncRElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return SVGFEFuncRElementBinding::Wrap(aCx, aScope, this);
 }
@@ -551,7 +551,7 @@ namespace dom {
 NS_IMPL_ELEMENT_CLONE_WITH_INIT(SVGFEFuncRElement)
 
 /* virtual */ JSObject*
-SVGFEFuncGElement::WrapNode(JSContext* aCx, JSObject* aScope)
+SVGFEFuncGElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return SVGFEFuncGElementBinding::Wrap(aCx, aScope, this);
 }
@@ -567,7 +567,7 @@ namespace dom {
 NS_IMPL_ELEMENT_CLONE_WITH_INIT(SVGFEFuncGElement)
 
 /* virtual */ JSObject*
-SVGFEFuncBElement::WrapNode(JSContext* aCx, JSObject* aScope)
+SVGFEFuncBElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return SVGFEFuncBElementBinding::Wrap(aCx, aScope, this);
 }
@@ -583,7 +583,7 @@ namespace dom {
 NS_IMPL_ELEMENT_CLONE_WITH_INIT(SVGFEFuncBElement)
 
 /* virtual */ JSObject*
-SVGFEFuncAElement::WrapNode(JSContext* aCx, JSObject* aScope)
+SVGFEFuncAElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return SVGFEFuncAElementBinding::Wrap(aCx, aScope, this);
 }
@@ -719,13 +719,13 @@ GenerateNormal(float *N, const uint8_t *data, int32_t stride,
         { { -1, -2, -1}, { 1,  2,  1}, { 0,  0,  0} },
         { { -1, -2,  0}, { 1,  2,  0}, { 0,  0,  0} } } };
   static const float FACTORx[3][3] =
-    { { 2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0 },
-      { 1.0 / 2.0, 1.0 / 4.0, 1.0 / 2.0 },
-      { 2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0 } };
+    { { 2.0f / 3.0f, 1.0f / 3.0f, 2.0f / 3.0f },
+      { 1.0f / 2.0f, 1.0f / 4.0f, 1.0f / 2.0f },
+      { 2.0f / 3.0f, 1.0f / 3.0f, 2.0f / 3.0f } };
   static const float FACTORy[3][3] =
-    { { 2.0 / 3.0, 1.0 / 2.0, 2.0 / 3.0 },
-      { 1.0 / 3.0, 1.0 / 4.0, 1.0 / 3.0 },
-      { 2.0 / 3.0, 1.0 / 2.0, 2.0 / 3.0 } };
+    { { 2.0f / 3.0f, 1.0f / 2.0f, 2.0f / 3.0f },
+      { 1.0f / 3.0f, 1.0f / 4.0f, 1.0f / 3.0f },
+      { 2.0f / 3.0f, 1.0f / 2.0f, 2.0f / 3.0f } };
 
   // degenerate cases
   if (surfaceWidth == 1 || surfaceHeight == 1) {
@@ -820,7 +820,7 @@ nsSVGFELightingElement::Filter(nsSVGFilterInstance *instance,
   if (!distantLight && !pointLight && !spotLight)
     return NS_ERROR_FAILURE;
 
-  const float radPerDeg = M_PI/180.0;
+  const float radPerDeg = static_cast<float>(M_PI/180.0);
 
   float L[3];
   if (distantLight) {

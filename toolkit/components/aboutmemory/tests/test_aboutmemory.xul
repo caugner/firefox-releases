@@ -29,6 +29,7 @@
 
   // Remove all the real reporters and multi-reporters;  save them to
   // restore at the end.
+  mgr.blockRegistration();
   let e = mgr.enumerateReporters();
   let realReporters = [];
   while (e.hasMoreElements()) {
@@ -162,10 +163,10 @@
     }
   ];
   for (let i = 0; i < fakeReporters.length; i++) {
-    mgr.registerReporter(fakeReporters[i]);
+    mgr.registerReporterEvenIfBlocked(fakeReporters[i]);
   }
   for (let i = 0; i < fakeMultiReporters.length; i++) {
-    mgr.registerMultiReporter(fakeMultiReporters[i]);
+    mgr.registerMultiReporterEvenIfBlocked(fakeMultiReporters[i]);
   }
 
   // mgr.explicit sums "heap-allocated" and all the appropriate NONHEAP ones:
@@ -243,15 +244,15 @@
     f("5th", "explicit/b/c/i/j", NONHEAP,   5 * KB)
   ];
   for (let i = 0; i < fakeReporters2.length; i++) {
-    mgr.registerReporter(fakeReporters2[i]);
+    mgr.registerReporterEvenIfBlocked(fakeReporters2[i]);
   }
   fakeReporters = fakeReporters.concat(fakeReporters2);
   ]]>
   </script>
 
-  <iframe id="amFrame"  height="400" src="about:memory"></iframe>
+  <iframe id="amFrame"  height="300" src="about:memory"></iframe>
   <!-- vary the capitalization to make sure that works -->
-  <iframe id="amvFrame" height="400" src="About:Memory?verbose"></iframe>
+  <iframe id="amvFrame" height="300" src="About:Memory"></iframe>
 
   <script type="application/javascript">
   <![CDATA[
@@ -572,22 +573,33 @@ Other Measurements\n\
       mgr.unregisterMultiReporter(fakeMultiReporters[i]);
     }
     for (let i = 0; i < realReporters.length; i++) {
-      mgr.registerReporter(realReporters[i]);
+      mgr.registerReporterEvenIfBlocked(realReporters[i]);
     }
     for (let i = 0; i < realMultiReporters.length; i++) {
-      mgr.registerMultiReporter(realMultiReporters[i]);
+      mgr.registerMultiReporterEvenIfBlocked(realMultiReporters[i]);
     }
+    mgr.unblockRegistration();
+
     SimpleTest.finish();
   }
 
   // Cut+paste the entire page and check that the cut text matches what we
   // expect.  This tests the output in general and also that the cutting and
   // pasting works as expected.
-  function test(aFrameId, aExpected, aNext) {
+  function test(aFrameId, aVerbose, aExpected, aNext) {
     SimpleTest.executeSoon(function() {
       ok(document.title === "about:memory", "document.title is correct");
       let mostRecentActual;
-      document.getElementById(aFrameId).focus();
+      let frame = document.getElementById(aFrameId);
+      frame.focus();
+        
+      // Set the verbose checkbox value and click the go button.
+      let doc = frame.contentWindow.document;
+      let measureButton = doc.getElementById("measureButton");
+      let verbose = doc.getElementById("verbose");
+      verbose.checked = aVerbose;
+      measureButton.click();
+
       SimpleTest.waitForClipboard(
         function(aActual) {
           mostRecentActual = aActual;
@@ -614,10 +626,12 @@ Other Measurements\n\
   SimpleTest.waitForFocus(function() {
     test(
       "amFrame",
+      /* verbose = */ false,
       amExpectedText,
       function() {
         test(
           "amvFrame",
+          /* verbose = */ true,
           amvExpectedText,
           function() {
             finish()

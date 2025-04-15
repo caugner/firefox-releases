@@ -26,6 +26,7 @@
 
   // Remove all the real reporters and multi-reporters;  save them to
   // restore at the end.
+  mgr.blockRegistration();
   var e = mgr.enumerateReporters();
   var realReporters = [];
   while (e.hasMoreElements()) {
@@ -131,17 +132,16 @@
   ];
 
   for (var i = 0; i < fakeReporters.length; i++) {
-    mgr.registerReporter(fakeReporters[i]);
+    mgr.registerReporterEvenIfBlocked(fakeReporters[i]);
   }
   for (var i = 0; i < fakeMultiReporters.length; i++) {
-    mgr.registerMultiReporter(fakeMultiReporters[i]);
+    mgr.registerMultiReporterEvenIfBlocked(fakeMultiReporters[i]);
   }
   ]]>
   </script>
 
-  <iframe id="acFrame"  height="400" src="about:compartments"></iframe>
   <!-- vary the capitalization to make sure that works -->
-  <iframe id="acvFrame" height="400" src="abouT:compartMENTS?veRBOse"></iframe>
+  <iframe id="acFrame"  height="400" src="abouT:compartMENTS"></iframe>
 
   <script type="application/javascript">
   <![CDATA[
@@ -175,9 +175,6 @@ Ghost Windows\n\
 \n\
 ";
 
-  // Verbose mode output is the same when you cut and paste.
-  var acvExpectedText = acExpectedText;
-
   function finish()
   {
     // Unregister fake reporters and multi-reporters, re-register the real
@@ -190,11 +187,13 @@ Ghost Windows\n\
       mgr.unregisterMultiReporter(fakeMultiReporters[i]);
     }
     for (var i = 0; i < realReporters.length; i++) {
-      mgr.registerReporter(realReporters[i]);
+      mgr.registerReporterEvenIfBlocked(realReporters[i]);
     }
     for (var i = 0; i < realMultiReporters.length; i++) {
-      mgr.registerMultiReporter(realMultiReporters[i]);
+      mgr.registerMultiReporterEvenIfBlocked(realMultiReporters[i]);
     }
+    mgr.unblockRegistration();
+
     SimpleTest.finish();
   }
 
@@ -234,13 +233,7 @@ Ghost Windows\n\
       "acFrame",
       acExpectedText,
       function() {
-        test(
-          "acvFrame",
-          acvExpectedText,
-          function() {
-            finish()
-          }
-        )
+        finish()
       }
     );
   });

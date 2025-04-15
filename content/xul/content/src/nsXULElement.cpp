@@ -59,6 +59,7 @@
 #include "nsIXULTemplateBuilder.h"
 #include "nsLayoutCID.h"
 #include "nsContentCID.h"
+#include "nsDOMEvent.h"
 #include "nsRDFCID.h"
 #include "nsStyleConsts.h"
 #include "nsXPIDLString.h"
@@ -224,10 +225,8 @@ nsXULElement::Create(nsXULPrototypeElement* aPrototype, nsINodeInfo *aNodeInfo,
                      bool aIsScriptable, bool aIsRoot)
 {
     nsCOMPtr<nsINodeInfo> ni = aNodeInfo;
-    nsXULElement *element = new nsXULElement(ni.forget());
+    nsRefPtr<nsXULElement> element = new nsXULElement(ni.forget());
     if (element) {
-        NS_ADDREF(element);
-
         if (aPrototype->mHasIdAttribute) {
             element->SetHasID();
         }
@@ -258,7 +257,7 @@ nsXULElement::Create(nsXULPrototypeElement* aPrototype, nsINodeInfo *aNodeInfo,
         }
     }
 
-    return element;
+    return element.forget();
 }
 
 nsresult
@@ -283,7 +282,6 @@ nsXULElement::Create(nsXULPrototypeElement* aPrototype,
         nodeInfo = aDocument->NodeInfoManager()->
           GetNodeInfo(ni->NameAtom(), ni->GetPrefixAtom(), ni->NamespaceID(),
                       nsIDOMNode::ELEMENT_NODE);
-        NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
     }
     else {
         nodeInfo = aPrototype->mNodeInfo;
@@ -500,9 +498,9 @@ nsXULElement::GetEventListenerManagerForAttr(nsIAtom* aAttrName, bool* aDefer)
     nsPIDOMWindow *window;
     Element *root = doc->GetRootElement();
     if ((!root || root == this) && !mNodeInfo->Equals(nsGkAtoms::overlay) &&
-        (window = doc->GetInnerWindow()) && window->IsInnerWindow()) {
+        (window = doc->GetInnerWindow())) {
 
-        nsCOMPtr<nsIDOMEventTarget> piTarget = do_QueryInterface(window);
+        nsCOMPtr<EventTarget> piTarget = do_QueryInterface(window);
 
         *aDefer = false;
         return piTarget->GetListenerManager(true);
@@ -1181,15 +1179,15 @@ nsXULElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
                 // handling.
                 nsCOMPtr<nsIDOMEvent> domEvent = aVisitor.mDOMEvent;
                 while (domEvent) {
-                    nsCOMPtr<nsIDOMEventTarget> oTarget;
-                    domEvent->GetOriginalTarget(getter_AddRefs(oTarget));
-                    NS_ENSURE_STATE(!SameCOMIdentity(oTarget, commandContent));
+                    nsDOMEvent* event = domEvent->InternalDOMEvent();
+                    NS_ENSURE_STATE(!SameCOMIdentity(event->GetOriginalTarget(),
+                                                     commandContent));
                     nsCOMPtr<nsIDOMXULCommandEvent> commandEvent =
                         do_QueryInterface(domEvent);
                     if (commandEvent) {
                         commandEvent->GetSourceEvent(getter_AddRefs(domEvent));
                     } else {
-                        domEvent = NULL;
+                        domEvent = nullptr;
                     }
                 }
 
@@ -1474,9 +1472,8 @@ nsXULElement::GetFrameLoader()
     if (!slots)
         return nullptr;
 
-    nsFrameLoader* loader = slots->mFrameLoader;
-    NS_IF_ADDREF(loader);
-    return loader;
+    nsRefPtr<nsFrameLoader> loader = slots->mFrameLoader;
+    return loader.forget();
 }
 
 nsresult
@@ -1933,7 +1930,7 @@ nsXULElement::IsEventAttributeName(nsIAtom *aName)
 }
 
 JSObject*
-nsXULElement::WrapNode(JSContext *aCx, JSObject *aScope)
+nsXULElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
     return dom::XULElementBinding::Wrap(aCx, aScope, this);
 }
@@ -2308,6 +2305,9 @@ nsXULPrototypeElement::SetAttrAt(uint32_t aPos, const nsAString& aValue,
         nsCSSParser parser;
 
         // XXX Get correct Base URI (need GetBaseURI on *prototype* element)
+        // TODO: If we implement Content Security Policy for chrome documents
+        // as has been discussed, the CSP should be checked here to see if
+        // inline styles are allowed to be applied.
         parser.ParseStyleAttribute(aValue, aDocumentURI, aDocumentURI,
                                    // This is basically duplicating what
                                    // nsINode::NodePrincipal() does
@@ -2343,10 +2343,7 @@ nsXULPrototypeElement::TraceAllScripts(JSTracer* aTrc)
         if (child->mType == nsXULPrototypeNode::eType_Element) {
             static_cast<nsXULPrototypeElement*>(child)->TraceAllScripts(aTrc);
         } else if (child->mType == nsXULPrototypeNode::eType_Script) {
-            JSScript* script = static_cast<nsXULPrototypeScript*>(child)->GetScriptObject();
-            if (script) {
-                JS_CallScriptTracer(aTrc, script, "active window XUL prototype script");
-            }
+            static_cast<nsXULPrototypeScript*>(child)->TraceScriptObject(aTrc);
         }
     }
 }

@@ -174,10 +174,18 @@ protected:
     // Returns true if we were able to wait, false if not
     virtual bool WaitForCompositor() { return false; }
 
+    // To support subclasses initializing the mType.
+    SurfaceStream_TripleBuffer(SurfaceStreamType type, SurfaceStream* prevStream);
+
 public:
     SurfaceStream_TripleBuffer(SurfaceStream* prevStream);
     virtual ~SurfaceStream_TripleBuffer();
 
+private:
+    // Common constructor code.
+    void Init(SurfaceStream* prevStream);
+
+public:
     // Done writing to prod, swap prod and staging
     virtual SharedSurface* SwapProducer(SurfaceFactory* factory,
                                         const gfxIntSize& size);

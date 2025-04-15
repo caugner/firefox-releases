@@ -16,7 +16,6 @@ include $(DEPTH)/config/autoconf.mk
 STL_FLAGS =
 
 ifneq ($(OS_TARGET),Android)
-PROGRAM = crashreporter$(BIN_SUFFIX)
 DIST_PROGRAM = crashreporter$(BIN_SUFFIX)
 
 # Don't link the updater against libmozglue.
@@ -71,7 +70,7 @@ $(DIST)/bin/crashreporter.crt: $(topsrcdir)/security/nss/lib/ckfw/builtins/certd
 
 # The xpcshell test case here verifies that the CA certificate list
 # works with OpenSSL.
-XPCSHELL_TESTS = maemo-unit
+DISABLED_XPCSHELL_TESTS = maemo-unit
 
 else
 CPPSRCS += crashreporter_linux.cpp

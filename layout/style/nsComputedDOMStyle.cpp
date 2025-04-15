@@ -116,7 +116,8 @@ nsComputedDOMStyle::nsComputedDOMStyle(dom::Element* aElement,
 
     // There aren't any non-CSS2 pseudo-elements with a single ':'
     if (!haveTwoColons &&
-        !nsCSSPseudoElements::IsCSS2PseudoElement(mPseudo)) {
+        (!nsCSSPseudoElements::IsPseudoElement(mPseudo) ||
+         !nsCSSPseudoElements::IsCSS2PseudoElement(mPseudo))) {
       // XXXbz I'd really rather we threw an exception or something, but
       // the DOM spec sucks.
       mPseudo = nullptr;
@@ -315,8 +316,8 @@ nsComputedDOMStyle::GetStyleContextForElementNoFlush(Element* aElement,
       // for this element.
       if (!result->HasPseudoElementData()) {
         // this function returns an addrefed style context
-        result->AddRef();
-        return result;
+        nsRefPtr<nsStyleContext> ret = result;
+        return ret.forget();
       }
     }
   }
@@ -373,6 +374,26 @@ nsComputedDOMStyle::GetStyleContextForElementNoFlush(Element* aElement,
   }
 
   return sc.forget();
+}
+
+nsMargin
+nsComputedDOMStyle::GetAdjustedValuesForBoxSizing()
+{
+  // We want the width/height of whatever parts 'width' or 'height' controls,
+  // which can be different depending on the value of the 'box-sizing' property.
+  const nsStylePosition* stylePos = StylePosition();
+
+  nsMargin adjustment;
+  switch(stylePos->mBoxSizing) {
+    case NS_STYLE_BOX_SIZING_BORDER:
+      adjustment += mInnerFrame->GetUsedBorder();
+      // fall through
+
+    case NS_STYLE_BOX_SIZING_PADDING:
+      adjustment += mInnerFrame->GetUsedPadding();
+  }
+
+  return adjustment;
 }
 
 /* static */
@@ -3325,8 +3346,9 @@ nsComputedDOMStyle::DoGetHeight()
 
   if (calcHeight) {
     AssertFlushedPendingReflows();
-
-    val->SetAppUnits(mInnerFrame->GetContentRect().height);
+    nsMargin adjustedValues = GetAdjustedValuesForBoxSizing();
+    val->SetAppUnits(mInnerFrame->GetContentRect().height +
+      adjustedValues.TopBottom());
   } else {
     const nsStylePosition *positionData = StylePosition();
 
@@ -3365,8 +3387,9 @@ nsComputedDOMStyle::DoGetWidth()
 
   if (calcWidth) {
     AssertFlushedPendingReflows();
-
-    val->SetAppUnits(mInnerFrame->GetContentRect().width);
+    nsMargin adjustedValues = GetAdjustedValuesForBoxSizing();
+    val->SetAppUnits(mInnerFrame->GetContentRect().width +
+      adjustedValues.LeftRight());
   } else {
     const nsStylePosition *positionData = StylePosition();
 

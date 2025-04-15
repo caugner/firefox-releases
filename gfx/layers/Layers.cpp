@@ -7,8 +7,8 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include "mozilla/layers/PLayers.h"
-#include "mozilla/layers/ShadowLayers.h"
+#include "mozilla/layers/PLayerTransaction.h"
+#include "mozilla/layers/LayerManagerComposite.h"
 #include "mozilla/Telemetry.h"
 
 #include "ImageLayers.h"
@@ -20,6 +20,8 @@
 #include "nsPrintfCString.h"
 #include "LayerSorter.h"
 #include "AnimationCommon.h"
+#include "mozilla/layers/Compositor.h"
+#include "LayersLogging.h"
 
 using namespace mozilla::layers;
 using namespace mozilla::gfx;
@@ -38,161 +40,6 @@ FILEOrDefault(FILE* aFile)
   return aFile ? aFile : stderr;
 }
 #endif // MOZ_LAYERS_HAVE_LOG
-
-namespace {
-
-// XXX pretty general utilities, could centralize
-
-nsACString&
-AppendToString(nsACString& s, const void* p,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  s += nsPrintfCString("%p", p);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const gfxPattern::GraphicsFilter& f,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  switch (f) {
-  case gfxPattern::FILTER_FAST:      s += "fast"; break;
-  case gfxPattern::FILTER_GOOD:      s += "good"; break;
-  case gfxPattern::FILTER_BEST:      s += "best"; break;
-  case gfxPattern::FILTER_NEAREST:   s += "nearest"; break;
-  case gfxPattern::FILTER_BILINEAR:  s += "bilinear"; break;
-  case gfxPattern::FILTER_GAUSSIAN:  s += "gaussian"; break;
-  default:
-    NS_ERROR("unknown filter type");
-    s += "???";
-  }
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, ViewID n,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  s.AppendInt(n);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const gfxRGBA& c,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  s += nsPrintfCString(
-    "rgba(%d, %d, %d, %g)",
-    uint8_t(c.r*255.0), uint8_t(c.g*255.0), uint8_t(c.b*255.0), c.a);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const gfx3DMatrix& m,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  if (m.IsIdentity())
-    s += "[ I ]";
-  else {
-    gfxMatrix matrix;
-    if (m.Is2D(&matrix)) {
-      s += nsPrintfCString(
-        "[ %g %g; %g %g; %g %g; ]",
-        matrix.xx, matrix.yx, matrix.xy, matrix.yy, matrix.x0, matrix.y0);
-    } else {
-      s += nsPrintfCString(
-        "[ %g %g %g %g; %g %g %g %g; %g %g %g %g; %g %g %g %g; ]",
-        m._11, m._12, m._13, m._14,
-        m._21, m._22, m._23, m._24,
-        m._31, m._32, m._33, m._34,
-        m._41, m._42, m._43, m._44);
-    }
-  }
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const nsIntPoint& p,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  s += nsPrintfCString("(x=%d, y=%d)", p.x, p.y);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const Point& p,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  s += nsPrintfCString("(x=%f, y=%f)", p.x, p.y);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const nsIntRect& r,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  s += nsPrintfCString(
-    "(x=%d, y=%d, w=%d, h=%d)",
-    r.x, r.y, r.width, r.height);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const Rect& r,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  s.AppendPrintf(
-    "(x=%f, y=%f, w=%f, h=%f)",
-    r.x, r.y, r.width, r.height);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const nsIntRegion& r,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-
-  nsIntRegionRectIterator it(r);
-  s += "< ";
-  while (const nsIntRect* sr = it.Next())
-    AppendToString(s, *sr) += "; ";
-  s += ">";
-
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const nsIntSize& sz,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  s += nsPrintfCString("(w=%d, h=%d)", sz.width, sz.height);
-  return s += sfx;
-}
-
-nsACString&
-AppendToString(nsACString& s, const FrameMetrics& m,
-               const char* pfx="", const char* sfx="")
-{
-  s += pfx;
-  AppendToString(s, m.mViewport, "{ viewport=");
-  AppendToString(s, m.mScrollOffset, " viewportScroll=");
-  AppendToString(s, m.mDisplayPort, " displayport=");
-  AppendToString(s, m.mScrollId, " scrollId=", " }");
-  return s += sfx;
-}
-
-} // namespace <anon>
 
 namespace mozilla {
 namespace layers {
@@ -281,6 +128,15 @@ LayerManager::CreateDrawTarget(const IntSize &aSize,
   return gfxPlatform::GetPlatform()->
     CreateOffscreenDrawTarget(aSize, aFormat);
 }
+
+TextureFactoryIdentifier
+LayerManager::GetTextureFactoryIdentifier()
+{
+  //TODO[nrc] make pure virtual when all layer managers use Compositor
+  NS_ERROR("Should have been overridden");
+  return TextureFactoryIdentifier();
+}
+
 
 #ifdef DEBUG
 void
@@ -487,7 +343,7 @@ Layer::SetAnimations(const AnimationArray& aAnimations)
   mAnimationData.Clear();
   for (uint32_t i = 0; i < mAnimations.Length(); i++) {
     AnimData* data = mAnimationData.AppendElement();
-    InfallibleTArray<css::ComputedTimingFunction*>& functions = data->mFunctions;
+    InfallibleTArray<nsAutoPtr<css::ComputedTimingFunction> >& functions = data->mFunctions;
     const InfallibleTArray<AnimationSegment>& segments =
       mAnimations.ElementAt(i).segments();
     for (uint32_t j = 0; j < segments.Length(); j++) {
@@ -542,6 +398,38 @@ Layer::SetAnimations(const AnimationArray& aAnimations)
   Mutated();
 }
 
+static uint8_t sPanZoomUserDataKey;
+struct PanZoomUserData : public LayerUserData {
+  PanZoomUserData(AsyncPanZoomController* aController)
+    : mController(aController)
+  { }
+
+  // We don't keep a strong ref here because PanZoomUserData is only
+  // set transiently, and APZC is thread-safe refcounted so
+  // AddRef/Release is expensive.
+  AsyncPanZoomController* mController;
+};
+
+void
+Layer::SetAsyncPanZoomController(AsyncPanZoomController *controller)
+{
+  if (controller) {
+    SetUserData(&sPanZoomUserDataKey, new PanZoomUserData(controller));
+  } else {
+    RemoveUserData(&sPanZoomUserDataKey);
+  }
+}
+
+AsyncPanZoomController*
+Layer::GetAsyncPanZoomController()
+{
+  LayerUserData* data = GetUserData(&sPanZoomUserDataKey);
+  if (!data) {
+    return nullptr;
+  }
+  return static_cast<PanZoomUserData*>(data)->mController;
+}
+
 void
 Layer::ApplyPendingUpdatesToSubtree()
 {
@@ -572,7 +460,7 @@ Layer::CanUseOpaqueSurface()
 const nsIntRect*
 Layer::GetEffectiveClipRect()
 {
-  if (ShadowLayer* shadow = AsShadowLayer()) {
+  if (LayerComposite* shadow = AsLayerComposite()) {
     return shadow->GetShadowClipRect();
   }
   return GetClipRect();
@@ -581,7 +469,7 @@ Layer::GetEffectiveClipRect()
 const nsIntRegion&
 Layer::GetEffectiveVisibleRegion()
 {
-  if (ShadowLayer* shadow = AsShadowLayer()) {
+  if (LayerComposite* shadow = AsLayerComposite()) {
     return shadow->GetShadowVisibleRegion();
   }
   return GetVisibleRegion();
@@ -597,7 +485,8 @@ Layer::SnapTransformTranslation(const gfx3DMatrix& aTransform,
 
   gfxMatrix matrix2D;
   gfx3DMatrix result;
-  if (mManager->IsSnappingEffectiveTransforms() &&
+  if (!(mContentFlags & CONTENT_DISABLE_TRANSFORM_SNAPPING) &&
+      mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
       !matrix2D.HasNonTranslation() &&
       matrix2D.HasNonIntegerTranslation()) {
@@ -629,7 +518,8 @@ Layer::SnapTransform(const gfx3DMatrix& aTransform,
 
   gfxMatrix matrix2D;
   gfx3DMatrix result;
-  if (mManager->IsSnappingEffectiveTransforms() &&
+  if (!(mContentFlags & CONTENT_DISABLE_TRANSFORM_SNAPPING) &&
+      mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
       gfxSize(1.0, 1.0) <= aSnapRect.Size() &&
       matrix2D.PreservesAxisAlignedRectangles()) {
@@ -750,7 +640,7 @@ const gfx3DMatrix
 Layer::GetLocalTransform()
 {
   gfx3DMatrix transform;
-  if (ShadowLayer* shadow = AsShadowLayer())
+  if (LayerComposite* shadow = AsLayerComposite())
     transform = shadow->GetShadowTransform();
   else
     transform = mTransform;
@@ -775,7 +665,7 @@ Layer::ApplyPendingUpdatesForThisTransaction()
 const float
 Layer::GetLocalOpacity()
 {
-   if (ShadowLayer* shadow = AsShadowLayer())
+   if (LayerComposite* shadow = AsLayerComposite())
     return shadow->GetShadowOpacity();
   return mOpacity;
 }
@@ -1085,7 +975,7 @@ LayerManager::BeginTabSwitch()
 
 #ifdef MOZ_LAYERS_HAVE_LOG
 
-static nsACString& PrintInfo(nsACString& aTo, ShadowLayer* aShadowLayer);
+static nsACString& PrintInfo(nsACString& aTo, LayerComposite* aLayerComposite);
 
 #ifdef MOZ_DUMP_PAINTING
 template <typename T>
@@ -1118,6 +1008,11 @@ void WriteSnapshotToDumpFile(Layer* aLayer, gfxASurface* aSurf)
 void WriteSnapshotToDumpFile(LayerManager* aManager, gfxASurface* aSurf)
 {
   WriteSnapshotToDumpFile_internal(aManager, aSurf);
+}
+
+void WriteSnapshotToDumpFile(Compositor* aCompositor, gfxASurface* aSurf)
+{
+  WriteSnapshotToDumpFile_internal(aCompositor, aSurf);
 }
 #endif
 
@@ -1206,7 +1101,7 @@ Layer::PrintInfo(nsACString& aTo, const char* aPrefix)
   aTo += aPrefix;
   aTo += nsPrintfCString("%s%s (0x%p)", mManager->Name(), Name(), this);
 
-  ::PrintInfo(aTo, AsShadowLayer());
+  ::PrintInfo(aTo, AsLayerComposite());
 
   if (mUseClipRect) {
     AppendToString(aTo, mClipRect, " [clip=", "]");
@@ -1417,19 +1312,19 @@ LayerManager::IsLogEnabled()
 }
 
 static nsACString&
-PrintInfo(nsACString& aTo, ShadowLayer* aShadowLayer)
+PrintInfo(nsACString& aTo, LayerComposite* aLayerComposite)
 {
-  if (!aShadowLayer) {
+  if (!aLayerComposite) {
     return aTo;
   }
-  if (const nsIntRect* clipRect = aShadowLayer->GetShadowClipRect()) {
+  if (const nsIntRect* clipRect = aLayerComposite->GetShadowClipRect()) {
     AppendToString(aTo, *clipRect, " [shadow-clip=", "]");
   }
-  if (!aShadowLayer->GetShadowTransform().IsIdentity()) {
-    AppendToString(aTo, aShadowLayer->GetShadowTransform(), " [shadow-transform=", "]");
+  if (!aLayerComposite->GetShadowTransform().IsIdentity()) {
+    AppendToString(aTo, aLayerComposite->GetShadowTransform(), " [shadow-transform=", "]");
   }
-  if (!aShadowLayer->GetShadowVisibleRegion().IsEmpty()) {
-    AppendToString(aTo, aShadowLayer->GetShadowVisibleRegion(), " [shadow-visible=", "]");
+  if (!aLayerComposite->GetShadowVisibleRegion().IsEmpty()) {
+    AppendToString(aTo, aLayerComposite->GetShadowVisibleRegion(), " [shadow-visible=", "]");
   }
   return aTo;
 }

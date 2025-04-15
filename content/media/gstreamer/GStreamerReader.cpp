@@ -9,6 +9,8 @@
 #include "AbstractMediaDecoder.h"
 #include "MediaResource.h"
 #include "GStreamerReader.h"
+#include "GStreamerFormatHelper.h"
+#include "GStreamerMozVideoBuffer.h"
 #include "VideoUtils.h"
 #include "mozilla/dom/TimeRanges.h"
 #include "mozilla/Preferences.h"
@@ -37,8 +39,6 @@ static const int MAX_CHANNELS = 4;
 static const int SHORT_FILE_SIZE = 1024 * 1024;
 // The default resource->Read() size when working in push mode
 static const int DEFAULT_SOURCE_READ_SIZE = 50 * 1024;
-
-G_DEFINE_BOXED_TYPE(BufferData, buffer_data, BufferData::Copy, BufferData::Free);
 
 typedef enum {
   GST_PLAY_FLAG_VIDEO         = (1 << 0),
@@ -138,9 +138,7 @@ nsresult GStreamerReader::Init(MediaDecoderReader* aCloneDonor)
   gst_pad_add_event_probe(sinkpad,
       G_CALLBACK(&GStreamerReader::EventProbeCb), this);
   gst_object_unref(sinkpad);
-#if GST_VERSION_MICRO >= 36
   gst_pad_set_bufferalloc_function(sinkpad, GStreamerReader::AllocateVideoBufferCb);
-#endif
   gst_pad_set_element_private(sinkpad, this);
 
   mAudioSink = gst_parse_bin_from_description("capsfilter name=filter ! "
@@ -296,6 +294,9 @@ nsresult GStreamerReader::ReadMetadata(VideoInfo* aInfo,
     }
   }
 
+  if (NS_SUCCEEDED(ret))
+    ret = CheckSupportedFormats();
+
   if (NS_FAILED(ret))
     /* we couldn't get this to play */
     return ret;
@@ -340,6 +341,58 @@ nsresult GStreamerReader::ReadMetadata(VideoInfo* aInfo,
   gst_element_set_state(mPlayBin, GST_STATE_PLAYING);
 
   return NS_OK;
+}
+
+nsresult GStreamerReader::CheckSupportedFormats()
+{
+  bool done = false;
+  bool unsupported = false;
+
+  GstIterator *it = gst_bin_iterate_recurse(GST_BIN(mPlayBin));
+  while (!done) {
+    GstElement* element;
+    GstIteratorResult res = gst_iterator_next(it, (void **)&element);
+    switch(res) {
+      case GST_ITERATOR_OK:
+      {
+        GstElementFactory* factory = gst_element_get_factory(element);
+        if (factory) {
+          const char* klass = gst_element_factory_get_klass(factory);
+          GstPad* pad = gst_element_get_pad(element, "sink");
+          if (pad) {
+            GstCaps* caps = gst_pad_get_negotiated_caps(pad);
+
+            if (caps) {
+              /* check for demuxers but ignore elements like id3demux */
+              if (strstr (klass, "Demuxer") && !strstr(klass, "Metadata"))
+                unsupported = !GStreamerFormatHelper::Instance()->CanHandleContainerCaps(caps);
+              else if (strstr (klass, "Decoder"))
+                unsupported = !GStreamerFormatHelper::Instance()->CanHandleCodecCaps(caps);
+
+              gst_caps_unref(caps);
+            }
+            gst_object_unref(pad);
+          }
+        }
+
+        gst_object_unref(element);
+        done = unsupported;
+        break;
+      }
+      case GST_ITERATOR_RESYNC:
+        unsupported = false;
+        done = false;
+        break;
+      case GST_ITERATOR_ERROR:
+        done = true;
+        break;
+      case GST_ITERATOR_DONE:
+        done = true;
+        break;
+    }
+  }
+
+  return unsupported ? NS_ERROR_FAILURE : NS_OK;
 }
 
 nsresult GStreamerReader::ResetDecode()
@@ -476,15 +529,11 @@ bool GStreamerReader::DecodeVideoFrame(bool &aKeyFrameSkip,
     return false;
 
   nsRefPtr<PlanarYCbCrImage> image;
-#if GST_VERSION_MICRO >= 36
-  const GstStructure* structure = gst_buffer_get_qdata(buffer,
-      g_quark_from_string("moz-reader-data"));
-  const GValue* value = gst_structure_get_value(structure, "image");
-  if (value) {
-    BufferData* data = reinterpret_cast<BufferData*>(g_value_get_boxed(value));
-    image = data->mImage;
-  }
-#endif
+  GstMozVideoBufferData* bufferdata = reinterpret_cast<GstMozVideoBufferData*>
+      GST_IS_MOZ_VIDEO_BUFFER(buffer)?gst_moz_video_buffer_get_data(GST_MOZ_VIDEO_BUFFER(buffer)):nullptr;
+
+  if(bufferdata)
+    image = bufferdata->mImage;
 
   if (!image) {
     /* Ugh, upstream is not calling gst_pad_alloc_buffer(). Fallback to
@@ -495,7 +544,7 @@ bool GStreamerReader::DecodeVideoFrame(bool &aKeyFrameSkip,
         GST_BUFFER_SIZE(buffer), nullptr, &tmp, image);
 
     /* copy */
-    gst_buffer_copy_metadata(tmp, buffer, GST_BUFFER_COPY_ALL);
+    gst_buffer_copy_metadata(tmp, buffer, (GstBufferCopyFlags)GST_BUFFER_COPY_ALL);
     memcpy(GST_BUFFER_DATA(tmp), GST_BUFFER_DATA(buffer),
         GST_BUFFER_SIZE(tmp));
     gst_buffer_unref(buffer);
@@ -655,12 +704,15 @@ int64_t GStreamerReader::QueryDuration()
     }
   }
 
-  /*if (mDecoder->mDuration != -1 &&
-      mDecoder->mDuration > duration) {
-    // We decoded more than the reported duration (which could be estimated)
-    LOG(PR_LOG_DEBUG, ("mDuration > duration"));
-    duration = mDecoder->mDuration;
-  }*/
+  {
+    ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+    int64_t media_duration = mDecoder->GetMediaDuration();
+    if (media_duration != -1 && media_duration > duration) {
+      // We decoded more than the reported duration (which could be estimated)
+      LOG(PR_LOG_DEBUG, ("decoded duration > estimated duration"));
+      duration = media_duration;
+    }
+  }
 
   return duration;
 }
@@ -785,29 +837,18 @@ GstFlowReturn GStreamerReader::AllocateVideoBufferFull(GstPad* aPad,
   nsRefPtr<PlanarYCbCrImage> image = dont_AddRef(img);
 
   /* prepare a GstBuffer pointing to the underlying PlanarYCbCrImage buffer */
-  GstBuffer* buf = gst_buffer_new();
+  GstBuffer* buf = GST_BUFFER(gst_moz_video_buffer_new());
   GST_BUFFER_SIZE(buf) = aSize;
   /* allocate the actual YUV buffer */
   GST_BUFFER_DATA(buf) = image->AllocateAndGetNewBuffer(aSize);
 
   aImage = image;
 
-#if GST_VERSION_MICRO >= 36
-  /* create a GBoxed handle to hold the image */
-  BufferData* data = new BufferData(image);
+  /* create a GstMozVideoBufferData to hold the image */
+  GstMozVideoBufferData* bufferdata = new GstMozVideoBufferData(image);
 
-  /* store it in a GValue so we can put it in a GstStructure */
-  GValue value = {0,};
-  g_value_init(&value, buffer_data_get_type());
-  g_value_take_boxed(&value, data);
-
-  /* store the value in the structure */
-  GstStructure* structure = gst_structure_new("moz-reader-data", nullptr);
-  gst_structure_take_value(structure, "image", &value);
-
-  /* and attach the structure to the buffer */
-  gst_buffer_set_qdata(buf, g_quark_from_string("moz-reader-data"), structure);
-#endif
+  /* Attach bufferdata to our GstMozVideoBuffer, it will take care to free it */
+  gst_moz_video_buffer_set_data(GST_MOZ_VIDEO_BUFFER(buf), bufferdata);
 
   *aBuf = buf;
   return GST_FLOW_OK;

@@ -44,6 +44,8 @@ var FindHelperUI = {
     this._cmdPrevious = document.getElementById(this.commands.previous);
     this._cmdNext = document.getElementById(this.commands.next);
 
+    this._textbox.addEventListener('keydown', this);
+
     // Listen for find assistant messages from content
     messageManager.addMessageListener("FindAssist:Show", this);
     messageManager.addMessageListener("FindAssist:Hide", this);
@@ -98,6 +100,15 @@ var FindHelperUI = {
         this._container.style.visibility = "visible";
         this._textbox.collapsed = false;
         break;
+
+      case "keydown":
+        if (aEvent.keyCode == Ci.nsIDOMKeyEvent.DOM_VK_RETURN) {
+	  if (aEvent.shiftKey) {
+	    this.goToPrevious();
+	  } else {
+	    this.goToNext();
+	  }
+        }
     }
   },
 
@@ -142,12 +153,6 @@ var FindHelperUI = {
 
   search: function findHelperSearch(aValue) {
     this.updateCommands(aValue);
-
-    // Don't bother searching if the value is empty
-    if (aValue == "") {
-      this.status = null;
-      return;
-    }
 
     Browser.selectedBrowser.messageManager.sendAsyncMessage("FindAssist:Find", { searchString: aValue });
   },
