@@ -925,21 +925,6 @@ function getLocalizedPref(aPrefName, aDefault) {
 }
 
 /**
- * Wrapper for nsIPrefBranch::setComplexValue.
- * @param aPrefName
- *        The name of the pref to set.
- */
-function setLocalizedPref(aPrefName, aValue) {
-  const nsIPLS = Ci.nsIPrefLocalizedString;
-  try {
-    var pls = Components.classes["@mozilla.org/pref-localizedstring;1"]
-                        .createInstance(Ci.nsIPrefLocalizedString);
-    pls.data = aValue;
-    Services.prefs.setComplexValue(aPrefName, nsIPLS, pls);
-  } catch (ex) {}
-}
-
-/**
  * Wrapper for nsIPrefBranch::getBoolPref.
  * @param aPrefName
  *        The name of the pref to get.
@@ -1325,7 +1310,11 @@ function Engine(aLocation, aIsReadOnly) {
 
     // Build the id used for the legacy metadata storage, so that we
     // can do a one-time import of data from old profiles.
-    if (this._isDefault) {
+    if (this._isDefault ||
+        (uri && uri.spec.startsWith(APP_SEARCH_PREFIX))) {
+      // The second part of the check is to catch engines from language packs.
+      // They aren't default engines (because they aren't app-shipped), but we
+      // still need to give their id an [app] prefix for backward compat.
       this._id = "[app]/" + this._shortName + ".xml";
     }
     else if (!aIsReadOnly) {
@@ -2866,6 +2855,9 @@ SearchService.prototype = {
     }
 
     try {
+      if (!cache.engines.length)
+        throw "cannot write without any engine.";
+
       LOG("_buildCache: Writing to cache file.");
       let path = OS.Path.join(OS.Constants.Path.profileDir, CACHE_FILENAME);
       let data = gEncoder.encode(JSON.stringify(cache));
@@ -3122,7 +3114,6 @@ SearchService.prototype = {
         this._engines = {};
         this.__sortedEngines = null;
         this._currentEngine = null;
-        this._defaultEngine = null;
         this._visibleDefaultEngines = [];
         this._metaData = {};
         this._cacheFileJSON = null;
@@ -3185,7 +3176,10 @@ SearchService.prototype = {
       bis.readArrayBuffer(count, array.buffer);
 
       let bytes = Lz4.decompressFileContent(array);
-      return JSON.parse(new TextDecoder().decode(bytes));
+      let json = JSON.parse(new TextDecoder().decode(bytes));
+      if (!json.engines || !json.engines.length)
+        throw "no engine in the file";
+      return json;
     } catch(ex) {
       LOG("_readCacheFile: Error reading cache file: " + ex);
     } finally {
@@ -3197,8 +3191,8 @@ SearchService.prototype = {
       stream = Cc["@mozilla.org/network/file-input-stream;1"].
                  createInstance(Ci.nsIFileInputStream);
       stream.init(cacheFile, MODE_RDONLY, FileUtils.PERMS_FILE, 0);
-      let metadata = json.decodeFromStream(stream, stream.available());
-      let json;
+      let metadata = parseJsonFromStream(stream);
+      let json = {};
       if ("[global]" in metadata) {
         LOG("_readCacheFile: migrating metadata from search-metadata.json");
         let data = metadata["[global]"];
@@ -3217,7 +3211,7 @@ SearchService.prototype = {
 
       return json;
     } catch(ex) {
-      LOG("_readCacheFile: failed to read old metadata");
+      LOG("_readCacheFile: failed to read old metadata: " + ex);
       return {};
     } finally {
       stream.close();
@@ -3238,6 +3232,8 @@ SearchService.prototype = {
         let cacheFilePath = OS.Path.join(OS.Constants.Path.profileDir, CACHE_FILENAME);
         let bytes = yield OS.File.read(cacheFilePath, {compression: "lz4"});
         json = JSON.parse(new TextDecoder().decode(bytes));
+        if (!json.engines || !json.engines.length)
+          throw "no engine in the file";
         this._cacheFileJSON = json;
       } catch (ex) {
         LOG("_asyncReadCacheFile: Error reading cache file: " + ex);
@@ -3987,10 +3983,6 @@ SearchService.prototype = {
       this._currentEngine = null;
     }
 
-    if (engineToRemove == this.defaultEngine) {
-      this._defaultEngine = null;
-    }
-
     if (engineToRemove._readOnly) {
       // Just hide it (the "hidden" setter will notify) and remove its alias to
       // avoid future conflicts with other engines.
@@ -4016,11 +4008,10 @@ SearchService.prototype = {
       // Remove the engine from the internal store
       delete this._engines[engineToRemove.name];
 
-      notifyAction(engineToRemove, SEARCH_ENGINE_REMOVED);
-
       // Since we removed an engine, we need to update the preferences.
       this._saveSortedEngineList();
     }
+    notifyAction(engineToRemove, SEARCH_ENGINE_REMOVED);
   },
 
   moveEngine: function SRCH_SVC_moveEngine(aEngine, aNewIndex) {
@@ -4083,52 +4074,10 @@ SearchService.prototype = {
     }
   },
 
-  get defaultEngine() {
-    this._ensureInitialized();
-    if (!this._defaultEngine) {
-      let defPref = getGeoSpecificPrefName(BROWSER_SEARCH_PREF + "defaultenginename");
-      let defaultEngine = this.getEngineByName(getLocalizedPref(defPref, ""))
-      if (!defaultEngine)
-        defaultEngine = this._getSortedEngines(false)[0] || null;
-      this._defaultEngine = defaultEngine;
-    }
-    if (this._defaultEngine.hidden)
-      return this._getSortedEngines(false)[0];
-    return this._defaultEngine;
-  },
+  get defaultEngine() { return this.currentEngine; },
 
   set defaultEngine(val) {
-    this._ensureInitialized();
-    // Sometimes we get wrapped nsISearchEngine objects (external XPCOM callers),
-    // and sometimes we get raw Engine JS objects (callers in this file), so
-    // handle both.
-    if (!(val instanceof Ci.nsISearchEngine) && !(val instanceof Engine))
-      FAIL("Invalid argument passed to defaultEngine setter");
-
-    let newDefaultEngine = this.getEngineByName(val.name);
-    if (!newDefaultEngine)
-      FAIL("Can't find engine in store!", Cr.NS_ERROR_UNEXPECTED);
-
-    if (newDefaultEngine == this._defaultEngine)
-      return;
-
-    this._defaultEngine = newDefaultEngine;
-
-    let defPref = getGeoSpecificPrefName(BROWSER_SEARCH_PREF + "defaultenginename");
-
-    // If we change the default engine in the future, that change should impact
-    // users who have switched away from and then back to the build's "default"
-    // engine. So clear the user pref when the defaultEngine is set to the
-    // build's default engine, so that the defaultEngine getter falls back to
-    // whatever the default is.
-    if (this._defaultEngine == this._originalDefaultEngine) {
-      Services.prefs.clearUserPref(defPref);
-    }
-    else {
-      setLocalizedPref(defPref, this._defaultEngine.name);
-    }
-
-    notifyAction(this._defaultEngine, SEARCH_ENGINE_DEFAULT);
+    this.currentEngine = val;
   },
 
   get currentEngine() {
@@ -4205,6 +4154,7 @@ SearchService.prototype = {
     this.setGlobalAttr("current", newName);
     this.setGlobalAttr("hash", getVerificationHash(newName));
 
+    notifyAction(this._currentEngine, SEARCH_ENGINE_DEFAULT);
     notifyAction(this._currentEngine, SEARCH_ENGINE_CURRENT);
   },
 

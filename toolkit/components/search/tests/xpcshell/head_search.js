@@ -215,6 +215,12 @@ function promiseCacheData() {
   }));
 }
 
+function promiseSaveCacheData(data) {
+  return OS.File.writeAtomic(OS.Path.join(OS.Constants.Path.profileDir, CACHE_FILENAME),
+                             new TextEncoder().encode(JSON.stringify(data)),
+                             {compression: "lz4"});
+}
+
 function promiseEngineMetadata() {
   return new Promise(resolve => Task.spawn(function* () {
     let cache = yield promiseCacheData();
@@ -237,9 +243,7 @@ function promiseSaveGlobalMetadata(globalData) {
   return new Promise(resolve => Task.spawn(function* () {
     let data = yield promiseCacheData();
     data.metaData = globalData;
-    yield OS.File.writeAtomic(OS.Path.join(OS.Constants.Path.profileDir, CACHE_FILENAME),
-                              new TextEncoder().encode(JSON.stringify(data)),
-                              {compression: "lz4"});
+    yield promiseSaveCacheData(data);
     resolve();
   }));
 }
@@ -254,6 +258,7 @@ var forceExpiration = Task.async(function* () {
 
 /**
  * Clean the profile of any cache file left from a previous run.
+ * Returns a boolean indicating if the cache file existed.
  */
 function removeCacheFile()
 {
@@ -261,7 +266,9 @@ function removeCacheFile()
   file.append(CACHE_FILENAME);
   if (file.exists()) {
     file.remove(false);
+    return true;
   }
+  return false;
 }
 
 /**
@@ -458,18 +465,14 @@ function installTestEngine() {
 }
 
 /**
- * Wrapper for nsIPrefBranch::setComplexValue.
+ * Set a localized preference on the default branch
  * @param aPrefName
  *        The name of the pref to set.
  */
-function setLocalizedPref(aPrefName, aValue) {
-  const nsIPLS = Ci.nsIPrefLocalizedString;
-  try {
-    var pls = Components.classes["@mozilla.org/pref-localizedstring;1"]
-                        .createInstance(Ci.nsIPrefLocalizedString);
-    pls.data = aValue;
-    Services.prefs.setComplexValue(aPrefName, nsIPLS, pls);
-  } catch (ex) {}
+function setLocalizedDefaultPref(aPrefName, aValue) {
+  let value = "data:text/plain," + BROWSER_SEARCH_PREF + aPrefName + "=" + aValue;
+  Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF)
+          .setCharPref(aPrefName, value);
 }
 
 
@@ -496,8 +499,8 @@ function setUpGeoDefaults() {
 
   do_get_file("data/engine2.xml").copyTo(engineDir, "engine2.xml");
 
-  setLocalizedPref("browser.search.defaultenginename",    "Test search engine");
-  setLocalizedPref("browser.search.defaultenginename.US", "A second test engine");
+  setLocalizedDefaultPref("defaultenginename",    "Test search engine");
+  setLocalizedDefaultPref("defaultenginename.US", "A second test engine");
 
   do_register_cleanup(function() {
     removeMetadata();
