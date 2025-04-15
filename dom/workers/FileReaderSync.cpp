@@ -44,7 +44,6 @@
 #include "jsapi.h"
 #include "jsatom.h"
 #include "jsfriendapi.h"
-#include "jstypedarray.h"
 #include "nsJSUtils.h"
 
 #include "Exceptions.h"
@@ -58,7 +57,6 @@
 USING_WORKERS_NAMESPACE
 
 using mozilla::dom::workers::exceptions::ThrowFileExceptionForCode;
-using js::ArrayBuffer;
 
 namespace {
 
@@ -156,7 +154,7 @@ private:
   }
 
   static void
-  Finalize(JSContext* aCx, JSObject* aObj)
+  Finalize(JSFreeOp* aFop, JSObject* aObj)
   {
     JS_ASSERT(JS_GetClass(aObj) == &sClass);
     FileReaderSyncPrivate* fileReader =
@@ -194,13 +192,13 @@ private:
       return false;
     }
 
-    JSObject* jsArrayBuffer = js_CreateArrayBuffer(aCx, blobSize);
+    JSObject* jsArrayBuffer = JS_NewArrayBuffer(aCx, blobSize);
     if (!jsArrayBuffer) {
       return false;
     }
 
-    uint32_t bufferLength = JS_GetArrayBufferByteLength(jsArrayBuffer);
-    uint8_t* arrayBuffer = JS_GetArrayBufferData(jsArrayBuffer);
+    uint32_t bufferLength = JS_GetArrayBufferByteLength(jsArrayBuffer, aCx);
+    uint8_t* arrayBuffer = JS_GetArrayBufferData(jsArrayBuffer, aCx);
 
     rv = fileReader->ReadAsArrayBuffer(blob, bufferLength, arrayBuffer);
     if (!EnsureSucceededOrThrow(aCx, rv)) {
@@ -343,8 +341,7 @@ JSClass FileReaderSync::sClass = {
   "FileReaderSync",
   JSCLASS_HAS_PRIVATE,
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize
 };
 
 JSFunctionSpec FileReaderSync::sFunctions[] = {

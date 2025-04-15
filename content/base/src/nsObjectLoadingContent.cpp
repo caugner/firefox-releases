@@ -56,6 +56,7 @@
 #include "nsEventStates.h"
 #include "nsIObjectFrame.h"
 #include "nsIPluginDocument.h"
+#include "nsIPermissionManager.h"
 #include "nsPluginHost.h"
 #include "nsIPresShell.h"
 #include "nsIPrivateDOMEvent.h"
@@ -114,6 +115,18 @@ static PRLogModuleInfo* gObjectLog = PR_NewLogModule("objlc");
 #define LOG_ENABLED() PR_LOG_TEST(gObjectLog, PR_LOG_DEBUG)
 
 #include "mozilla/Preferences.h"
+
+static bool gClickToPlayPlugins = false;
+
+static void
+InitPrefCache()
+{
+  static bool initializedPrefCache = false;
+  if (!initializedPrefCache) {
+    mozilla::Preferences::AddBoolVarCache(&gClickToPlayPlugins, "plugins.click_to_play");
+  }
+  initializedPrefCache = true;
+}
 
 class nsAsyncInstantiateEvent : public nsRunnable {
 public:
@@ -491,16 +504,54 @@ IsSupportedImage(const nsCString& aMimeType)
 
 nsresult nsObjectLoadingContent::IsPluginEnabledForType(const nsCString& aMIMEType)
 {
-  if (!mShouldPlay) {
-    return NS_ERROR_PLUGIN_CLICKTOPLAY;
-  }
-
   nsCOMPtr<nsIPluginHost> pluginHostCOM(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID));
   nsPluginHost *pluginHost = static_cast<nsPluginHost*>(pluginHostCOM.get());
   if (!pluginHost) {
-    return false;
+    return NS_ERROR_FAILURE;
   }
-  return pluginHost->IsPluginEnabledForType(aMIMEType.get());
+
+  nsresult rv = pluginHost->IsPluginEnabledForType(aMIMEType.get());
+
+  // Check to see if the plugin is disabled before deciding if it
+  // should be in the "click to play" state, since we only want to
+  // display "click to play" UI for enabled plugins.
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  if (!mShouldPlay) {
+    nsCOMPtr<nsIContent> thisContent = do_QueryInterface(static_cast<nsIObjectLoadingContent*>(this));
+    MOZ_ASSERT(thisContent);
+    nsIDocument* ownerDoc = thisContent->OwnerDoc();
+
+    nsCOMPtr<nsIDOMWindow> window = ownerDoc->GetWindow();
+    if (!window) {
+      return NS_ERROR_FAILURE;
+    }
+    nsCOMPtr<nsIDOMWindow> topWindow;
+    rv = window->GetTop(getter_AddRefs(topWindow));
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIDOMDocument> topDocument;
+    rv = topWindow->GetDocument(getter_AddRefs(topDocument));
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIDocument> topDoc = do_QueryInterface(topDocument);
+    nsIURI* topUri = topDoc->GetDocumentURI();
+
+    nsCOMPtr<nsIPermissionManager> permissionManager = do_GetService(NS_PERMISSIONMANAGER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    PRUint32 permission;
+    rv = permissionManager->TestPermission(topUri,
+                                           "plugins",
+                                           &permission);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (permission == nsIPermissionManager::ALLOW_ACTION) {
+      mShouldPlay = true;
+    } else {
+      return NS_ERROR_PLUGIN_CLICKTOPLAY;
+    }
+  }
+
+  return NS_OK;
 }
 
 static void
@@ -551,6 +602,26 @@ bool nsObjectLoadingContent::IsPluginEnabledByExtension(nsIURI* uri, nsCString& 
   return false;
 }
 
+nsresult
+nsObjectLoadingContent::BindToTree(nsIDocument* aDocument, nsIContent* /*aParent*/,
+                                   nsIContent* /*aBindingParent*/,
+                                   bool /*aCompileEventHandlers*/)
+{
+  if (aDocument) {
+    return aDocument->AddPlugin(this);
+  }
+  return NS_OK;
+}
+
+void
+nsObjectLoadingContent::UnbindFromTree(bool /*aDeep*/, bool /*aNullParent*/)
+{
+  nsCOMPtr<nsIContent> thisContent = do_QueryInterface(static_cast<nsIObjectLoadingContent*>(this));
+  MOZ_ASSERT(thisContent);
+  nsIDocument* ownerDoc = thisContent->OwnerDoc();
+  ownerDoc->RemovePlugin(this);
+}
+
 nsObjectLoadingContent::nsObjectLoadingContent()
   : mPendingInstantiateEvent(nsnull)
   , mChannel(nsnull)
@@ -559,12 +630,15 @@ nsObjectLoadingContent::nsObjectLoadingContent()
   , mUserDisabled(false)
   , mSuppressed(false)
   , mNetworkCreated(true)
-  // If plugins.click_to_play is false, plugins should always play
-  , mShouldPlay(!mozilla::Preferences::GetBool("plugins.click_to_play", false))
   , mIsStopping(false)
   , mSrcStreamLoading(false)
   , mFallbackReason(ePluginOtherState)
 {
+  InitPrefCache();
+  // If plugins.click_to_play is false, plugins should always play
+  mShouldPlay = !gClickToPlayPlugins;
+  // If plugins.click_to_play is true, track the activated state of plugins.
+  mActivated = !gClickToPlayPlugins;
 }
 
 nsObjectLoadingContent::~nsObjectLoadingContent()
@@ -642,12 +716,14 @@ nsObjectLoadingContent::InstantiatePluginInstance(const char* aMimeType, nsIURI*
 
   if (fullPageMode) {
     nsCOMPtr<nsIStreamListener> stream;
-    rv = pluginHost->InstantiateFullPagePlugin(aMimeType, aURI, this, getter_AddRefs(mInstanceOwner), getter_AddRefs(stream));
+    rv = pluginHost->InstantiateFullPagePluginInstance(aMimeType, aURI, this,
+                                                       getter_AddRefs(mInstanceOwner), getter_AddRefs(stream));
     if (NS_SUCCEEDED(rv)) {
       pDoc->SetStreamListener(stream);
     }
   } else {
-    rv = pluginHost->InstantiateEmbeddedPlugin(aMimeType, aURI, this, getter_AddRefs(mInstanceOwner));
+    rv = pluginHost->InstantiateEmbeddedPluginInstance(aMimeType, aURI, this,
+                                                       getter_AddRefs(mInstanceOwner));
   }
 
   if (appShell) {
@@ -678,6 +754,7 @@ nsObjectLoadingContent::InstantiatePluginInstance(const char* aMimeType, nsIURI*
     }
   }
 
+  mActivated = true;
   return NS_OK;
 }
 
@@ -2150,4 +2227,11 @@ nsObjectLoadingContent::PlayPlugin()
 
   mShouldPlay = true;
   return LoadObject(mURI, true, mContentType, true);
+}
+
+NS_IMETHODIMP
+nsObjectLoadingContent::GetActivated(bool* aActivated)
+{
+  *aActivated = mActivated;
+  return NS_OK;
 }

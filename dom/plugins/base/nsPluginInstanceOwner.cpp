@@ -47,8 +47,12 @@
 #ifdef MOZ_WIDGET_QT
 #include <QWidget>
 #include <QKeyEvent>
-#ifdef MOZ_X11
+#if defined(MOZ_X11)
+#if defined(Q_WS_X11)
 #include <QX11Info>
+#else
+#include "gfxQtPlatform.h"
+#endif
 #endif
 #undef slots
 #endif
@@ -115,14 +119,16 @@ static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
 #include <gdk/gdk.h>
 #include <gdk/gdkx.h>
 #include <gtk/gtk.h>
-#include "gfxXlibNativeRenderer.h"
 #endif
 
 #ifdef MOZ_WIDGET_ANDROID
 #include "ANPBase.h"
-#include "android_npapi.h"
 #include "AndroidBridge.h"
 #include "AndroidMediaLayer.h"
+#include "nsWindow.h"
+
+static nsPluginInstanceOwner* sFullScreenInstance = nsnull;
+
 using namespace mozilla::dom;
 
 #include <android/log.h>
@@ -341,7 +347,9 @@ nsPluginInstanceOwner::nsPluginInstanceOwner()
 
 #ifdef MOZ_WIDGET_ANDROID
   mInverted = false;
+  mFullScreen = false;
   mLayer = nsnull;
+  mJavaView = nsnull;
 #endif
 }
 
@@ -414,8 +422,13 @@ nsPluginInstanceOwner::SetInstance(nsNPAPIPluginInstance *aInstance)
   // If we're going to null out mInstance after use, be sure to call
   // mInstance->InvalidateOwner() here, since it now won't be called
   // from our destructor.  This fixes bug 613376.
-  if (mInstance && !aInstance)
+  if (mInstance && !aInstance) {
     mInstance->InvalidateOwner();
+
+#ifdef MOZ_WIDGET_ANDROID
+    RemovePluginView();
+#endif
+  }
 
   mInstance = aInstance;
 
@@ -747,7 +760,7 @@ NS_IMETHODIMP nsPluginInstanceOwner::GetNetscapeWindow(void *value)
   }
 
   return rv;
-#elif defined(MOZ_WIDGET_GTK2) || defined(MOZ_WIDGET_QT)
+#elif (defined(MOZ_WIDGET_GTK2) || defined(MOZ_WIDGET_QT)) && defined(MOZ_X11)
   // X11 window managers want the toplevel window for WM_TRANSIENT_FOR.
   nsIWidget* win = mObjectFrame->GetNearestWidget();
   if (!win)
@@ -1688,6 +1701,56 @@ void nsPluginInstanceOwner::ScrollPositionDidChange(nscoord aX, nscoord aY)
 
 #ifdef MOZ_WIDGET_ANDROID
 
+// Modified version of nsFrame::GetOffsetToCrossDoc that stops when it
+// hits an element with a displayport (or runs out of frames). This is
+// not really the right thing to do, but it's better than what was here before.
+static nsPoint
+GetOffsetRootContent(nsIFrame* aFrame)
+{
+  // offset will hold the final offset
+  // docOffset holds the currently accumulated offset at the current APD, it
+  // will be converted and added to offset when the current APD changes.
+  nsPoint offset(0, 0), docOffset(0, 0);
+  const nsIFrame* f = aFrame;
+  PRInt32 currAPD = aFrame->PresContext()->AppUnitsPerDevPixel();
+  PRInt32 apd = currAPD;
+  nsRect displayPort;
+  while (f) {
+    if (f->GetContent() && nsLayoutUtils::GetDisplayPort(f->GetContent(), &displayPort))
+      break;
+
+    docOffset += f->GetPosition();
+    nsIFrame* parent = f->GetParent();
+    if (parent) {
+      f = parent;
+    } else {
+      nsPoint newOffset(0, 0);
+      f = nsLayoutUtils::GetCrossDocParentFrame(f, &newOffset);
+      PRInt32 newAPD = f ? f->PresContext()->AppUnitsPerDevPixel() : 0;
+      if (!f || newAPD != currAPD) {
+        // Convert docOffset to the right APD and add it to offset.
+        offset += docOffset.ConvertAppUnits(currAPD, apd);
+        docOffset.x = docOffset.y = 0;
+      }
+      currAPD = newAPD;
+      docOffset += newOffset;
+    }
+  }
+
+  offset += docOffset.ConvertAppUnits(currAPD, apd);
+
+  return offset;
+}
+
+gfxRect nsPluginInstanceOwner::GetPluginRect()
+{
+  // Get the offset of the content relative to the page
+  nsRect bounds = mObjectFrame->GetContentRectRelativeToSelf() + GetOffsetRootContent(mObjectFrame);
+  nsIntRect intBounds = bounds.ToNearestPixels(mObjectFrame->PresContext()->AppUnitsPerDevPixel());
+
+  return gfxRect(intBounds);
+}
+
 void nsPluginInstanceOwner::SendSize(int width, int height)
 {
   if (!mInstance)
@@ -1708,79 +1771,39 @@ void nsPluginInstanceOwner::SendSize(int width, int height)
   mInstance->HandleEvent(&event, nsnull);
 }
 
-bool nsPluginInstanceOwner::AddPluginView(const gfxRect& aRect)
+bool nsPluginInstanceOwner::AddPluginView(const gfxRect& aRect /* = gfxRect(0, 0, 0, 0) */)
 {
-  void* javaSurface = mInstance->GetJavaSurface();
-  if (!javaSurface) {
-    mInstance->RequestJavaSurface();
-    return false;
+  if (!mJavaView) {
+    mJavaView = mInstance->GetJavaSurface();
+  
+    if (!mJavaView)
+      return false;
+
+    mJavaView = (void*)AndroidBridge::GetJNIEnv()->NewGlobalRef((jobject)mJavaView);
   }
 
-  JNIEnv* env = GetJNIForThread();
-  if (!env)
-    return false;
+  if (AndroidBridge::Bridge())
+    AndroidBridge::Bridge()->AddPluginView((jobject)mJavaView, aRect, mFullScreen);
 
-  AndroidBridge::AutoLocalJNIFrame frame(env, 1);
-
-  jclass cls = env->FindClass("org/mozilla/gecko/GeckoAppShell");
-
-#ifdef MOZ_JAVA_COMPOSITOR
-  nsAutoString metadata;
-  nsCOMPtr<nsIAndroidDrawMetadataProvider> metadataProvider =
-      AndroidBridge::Bridge()->GetDrawMetadataProvider();
-  metadataProvider->GetDrawMetadata(metadata);
-
-  jstring jMetadata = env->NewString(nsPromiseFlatString(metadata).get(), metadata.Length());
-
-  jmethodID method = env->GetStaticMethodID(cls,
-                                            "addPluginView",
-                                            "(Landroid/view/View;IIIILjava/lang/String;)V");
-
-  env->CallStaticVoidMethod(cls,
-                            method,
-                            javaSurface,
-                            (int)aRect.x,
-                            (int)aRect.y,
-                            (int)aRect.width,
-                            (int)aRect.height,
-                            jMetadata);
-#else
-  jmethodID method = env->GetStaticMethodID(cls,
-                                            "addPluginView",
-                                            "(Landroid/view/View;DDDD)V");
-
-  env->CallStaticVoidMethod(cls,
-                            method,
-                            javaSurface,
-                            aRect.x,
-                            aRect.y,
-                            aRect.width,
-                            aRect.height);
-#endif
+  if (mFullScreen)
+    sFullScreenInstance = this;
 
   return true;
 }
 
 void nsPluginInstanceOwner::RemovePluginView()
 {
-  if (!mInstance || !mObjectFrame)
+  if (!mInstance || !mJavaView)
     return;
 
-  void* surface = mInstance->GetJavaSurface();
-  if (!surface)
-    return;
+  if (AndroidBridge::Bridge())
+    AndroidBridge::Bridge()->RemovePluginView((jobject)mJavaView, mFullScreen);
 
-  JNIEnv* env = GetJNIForThread();
-  if (!env)
-    return;
+  AndroidBridge::GetJNIEnv()->DeleteGlobalRef((jobject)mJavaView);
+  mJavaView = nsnull;
 
-  AndroidBridge::AutoLocalJNIFrame frame(env, 1);
-
-  jclass cls = env->FindClass("org/mozilla/gecko/GeckoAppShell");
-  jmethodID method = env->GetStaticMethodID(cls,
-                                            "removePluginView",
-                                            "(Landroid/view/View;)V");
-  env->CallStaticVoidMethod(cls, method, surface);
+  if (mFullScreen)
+    sFullScreenInstance = nsnull;
 }
 
 void nsPluginInstanceOwner::Invalidate() {
@@ -1789,6 +1812,51 @@ void nsPluginInstanceOwner::Invalidate() {
   rect.right = mPluginWindow->width;
   rect.bottom = mPluginWindow->height;
   InvalidateRect(&rect);
+}
+
+void nsPluginInstanceOwner::RequestFullScreen() {
+  if (mFullScreen)
+    return;
+
+  // Remove whatever view we currently have (if any, fullscreen or otherwise)
+  RemovePluginView();
+
+  mFullScreen = true;
+  AddPluginView();
+
+  mInstance->NotifyFullScreen(mFullScreen);
+}
+
+void nsPluginInstanceOwner::ExitFullScreen() {
+  if (!mFullScreen)
+    return;
+
+  RemovePluginView();
+
+  mFullScreen = false;
+  
+  PRInt32 model = mInstance->GetANPDrawingModel();
+
+  if (model == kSurface_ANPDrawingModel) {
+    // We need to do this immediately, otherwise Flash
+    // sometimes causes a deadlock (bug 762407)
+    AddPluginView(GetPluginRect());
+  }
+
+  mInstance->NotifyFullScreen(mFullScreen);
+
+  // This will cause Paint() to be called, which is where
+  // we normally add/update views and layers
+  Invalidate();
+}
+
+void nsPluginInstanceOwner::ExitFullScreen(jobject view) {
+  JNIEnv* env = AndroidBridge::GetJNIEnv();
+
+  if (env && sFullScreenInstance && sFullScreenInstance->mInstance &&
+      env->IsSameObject(view, (jobject)sFullScreenInstance->mInstance->GetJavaSurface())) {
+    sFullScreenInstance->ExitFullScreen();
+  } 
 }
 
 #endif
@@ -2390,7 +2458,7 @@ nsEventStatus nsPluginInstanceOwner::ProcessEvent(const nsGUIEvent& anEvent)
 #ifdef MOZ_WIDGET_GTK2
         Window root = GDK_ROOT_WINDOW();
 #elif defined(MOZ_WIDGET_QT)
-        Window root = QX11Info::appRootWindow();
+        Window root = RootWindowOfScreen(DefaultScreenOfDisplay(mozilla::DefaultXDisplay()));
 #else
         Window root = None; // Could XQueryTree, but this is not important.
 #endif
@@ -2506,8 +2574,13 @@ nsEventStatus nsPluginInstanceOwner::ProcessEvent(const nsGUIEvent& anEvent)
           event.time = anEvent.time;
 
           QWidget* qWidget = static_cast<QWidget*>(widget->GetNativeData(NS_NATIVE_WINDOW));
+
           if (qWidget)
+#if defined(Q_WS_X11)
             event.root = qWidget->x11Info().appRootWindow();
+#else
+            event.root = RootWindowOfScreen(DefaultScreenOfDisplay(gfxQtPlatform::GetXDisplay(qWidget)));
+#endif
 
           // deduce keycode from the information in the attached QKeyEvent
           const QKeyEvent* qtEvent = static_cast<const QKeyEvent*>(anEvent.pluginEvent);
@@ -2677,33 +2750,13 @@ nsEventStatus nsPluginInstanceOwner::ProcessEvent(const nsGUIEvent& anEvent)
      {
        const nsKeyEvent& keyEvent = static_cast<const nsKeyEvent&>(anEvent);
        LOG("Firing NS_KEY_EVENT %d %d\n", keyEvent.keyCode, keyEvent.charCode);
-       
-       int modifiers = 0;
-       if (keyEvent.isShift)
-         modifiers |= kShift_ANPKeyModifier;
-       if (keyEvent.isAlt)
-         modifiers |= kAlt_ANPKeyModifier;
-
-       ANPEvent event;
-       event.inSize = sizeof(ANPEvent);
-       event.eventType = kKey_ANPEventType;
-       event.data.key.nativeCode = keyEvent.keyCode;
-       event.data.key.virtualCode = keyEvent.charCode;
-       event.data.key.modifiers = modifiers;
-       event.data.key.repeatCount = 0;
-       event.data.key.unichar = 0;
-       switch (anEvent.message)
-         {
-         case NS_KEY_DOWN:
-           event.data.key.action = kDown_ANPKeyAction;
-           mInstance->HandleEvent(&event, nsnull);
-           break;
-           
-         case NS_KEY_UP:
-           event.data.key.action = kUp_ANPKeyAction;
-           mInstance->HandleEvent(&event, nsnull);
-           break;
-         }
+       // pluginEvent is initialized by nsWindow::InitKeyEvent().
+       ANPEvent* pluginEvent = reinterpret_cast<ANPEvent*>(keyEvent.pluginEvent);
+       if (pluginEvent) {
+         MOZ_ASSERT(pluginEvent->inSize == sizeof(ANPEvent));
+         MOZ_ASSERT(pluginEvent->eventType == kKey_ANPEventType);
+         mInstance->HandleEvent(pluginEvent, nsnull);
+       }
      }
     }
     rv = nsEventStatus_eConsumeNoDefault;
@@ -2876,13 +2929,15 @@ void nsPluginInstanceOwner::Paint(gfxContext* aContext,
                                   const gfxRect& aFrameRect,
                                   const gfxRect& aDirtyRect)
 {
-  if (!mInstance || !mObjectFrame || !mPluginDocumentActiveState)
+  if (!mInstance || !mObjectFrame || !mPluginDocumentActiveState || mFullScreen)
     return;
 
   PRInt32 model = mInstance->GetANPDrawingModel();
 
+  gfxRect pluginRect = GetPluginRect();
+
   if (model == kSurface_ANPDrawingModel) {
-    if (!AddPluginView(aFrameRect)) {
+    if (!AddPluginView(pluginRect)) {
       Invalidate();
     }
     return;
@@ -2892,11 +2947,13 @@ void nsPluginInstanceOwner::Paint(gfxContext* aContext,
     if (!mLayer)
       mLayer = new AndroidMediaLayer();
 
-    // FIXME: this is gross
-    float zoomLevel = aFrameRect.width / (float)mPluginWindow->width;
-    mLayer->UpdatePosition(aFrameRect, zoomLevel);
+    mLayer->UpdatePosition(pluginRect);
 
-    SendSize((int)aFrameRect.width, (int)aFrameRect.height);
+    float xResolution = mObjectFrame->PresContext()->GetRootPresContext()->PresShell()->GetXResolution();
+    float yResolution = mObjectFrame->PresContext()->GetRootPresContext()->PresShell()->GetYResolution();
+    pluginRect.Scale(xResolution, yResolution);
+
+    SendSize((int)pluginRect.width, (int)pluginRect.height);
     return;
   }
 
@@ -3018,11 +3075,10 @@ void nsPluginInstanceOwner::Paint(gfxContext* aContext,
   Visual* visual = gdk_x11_visual_get_xvisual(gdkVisual);
   Screen* screen =
     gdk_x11_screen_get_xscreen(gdk_visual_get_screen(gdkVisual));
-#endif
-#ifdef MOZ_WIDGET_QT
-  Display* dpy = QX11Info().display();
-  Screen* screen = ScreenOfDisplay(dpy, QX11Info().screen());
-  Visual* visual = static_cast<Visual*>(QX11Info().visual());
+#else
+  Display* dpy = mozilla::DefaultXDisplay();
+  Screen* screen = DefaultScreenOfDisplay(dpy);
+  Visual* visual = DefaultVisualOfScreen(screen);
 #endif
   renderer.Draw(aContext, nsIntSize(window->width, window->height),
                 rendererFlags, screen, visual, nsnull);

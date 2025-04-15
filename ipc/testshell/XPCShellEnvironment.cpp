@@ -136,15 +136,12 @@ ScriptErrorReporter(JSContext *cx,
     int i, j, k, n;
     char *prefix = NULL, *tmp;
     const char *ctmp;
-    JSStackFrame * fp = nsnull;
     nsCOMPtr<nsIXPConnect> xpc;
 
     // Don't report an exception from inner JS frames as the callers may intend
     // to handle it.
-    while ((fp = JS_FrameIterator(cx, &fp))) {
-        if (JS_IsScriptFrame(cx, fp)) {
-            return;
-        }
+    if (JS_DescribeScriptedCaller(cx, nsnull, nsnull)) {
+        return;
     }
 
     // In some cases cx->fp is null here so use XPConnect to tell us about inner
@@ -409,9 +406,9 @@ GC(JSContext *cx,
    unsigned argc,
    jsval *vp)
 {
-    JS_GC(cx);
-#ifdef JS_GCMETER
     JSRuntime *rt = JS_GetRuntime(cx);
+    JS_GC(rt);
+#ifdef JS_GCMETER
     js_DumpGCStats(rt, stdout);
 #endif
     JS_SET_RVAL(cx, vp, JSVAL_VOID);
@@ -430,7 +427,7 @@ GCZeal(JSContext *cx,
   if (!JS_ValueToECMAUint32(cx, argv[0], &zeal))
     return JS_FALSE;
 
-  JS_SetGCZeal(cx, PRUint8(zeal), JS_DEFAULT_ZEAL_FREQ, JS_FALSE);
+  JS_SetGCZeal(cx, PRUint8(zeal), JS_DEFAULT_ZEAL_FREQ);
   return JS_TRUE;
 }
 #endif
@@ -1054,15 +1051,14 @@ XPCShellEnvironment::~XPCShellEnvironment()
         }
         mGlobalHolder.Release();
 
-        JS_GC(mCx);
+        JSRuntime *rt = JS_GetRuntime(mCx);
+        JS_GC(rt);
 
         mCxStack = nsnull;
 
         if (mJSPrincipals) {
-            JS_DropPrincipals(JS_GetRuntime(mCx), mJSPrincipals);
+            JS_DropPrincipals(rt, mJSPrincipals);
         }
-
-        JSRuntime* rt = gOldContextCallback ? JS_GetRuntime(mCx) : NULL;
 
         JS_EndRequest(mCx);
         JS_DestroyContext(mCx);

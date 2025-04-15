@@ -36,6 +36,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "mozilla/FloatingPoint.h"
+
 #include "CTypes.h"
 #include "Library.h"
 #include "jsnum.h"
@@ -56,6 +58,12 @@
 #include <sys/types.h>
 #endif
 
+#if defined(XP_UNIX)
+#include <errno.h>
+#elif defined(XP_WIN)
+#include <windows.h>
+#endif
+
 using namespace std;
 
 namespace js {
@@ -72,8 +80,8 @@ namespace CType {
   static JSBool ConstructBasic(JSContext* cx, JSObject* obj, unsigned argc, jsval* vp);
 
   static void Trace(JSTracer* trc, JSObject* obj);
-  static void Finalize(JSContext* cx, JSObject* obj);
-  static void FinalizeProtoClass(JSContext* cx, JSObject* obj);
+  static void Finalize(JSFreeOp *fop, JSObject* obj);
+  static void FinalizeProtoClass(JSFreeOp *fop, JSObject* obj);
 
   static JSBool PrototypeGetter(JSContext* cx, JSObject* obj, jsid idval,
     jsval* vp);
@@ -86,6 +94,17 @@ namespace CType {
   static JSBool ToString(JSContext* cx, unsigned argc, jsval* vp);
   static JSBool ToSource(JSContext* cx, unsigned argc, jsval* vp);
   static JSBool HasInstance(JSContext* cx, JSObject* obj, const jsval* v, JSBool* bp);
+
+
+  /**
+   * Get the global "ctypes" object.
+   *
+   * |obj| must be a CType object.
+   *
+   * This function never returns NULL.
+   */
+  static JSObject* GetGlobalCTypes(JSContext* cx, JSObject* obj);
+
 }
 
 namespace PointerType {
@@ -151,7 +170,7 @@ namespace FunctionType {
 
 namespace CClosure {
   static void Trace(JSTracer* trc, JSObject* obj);
-  static void Finalize(JSContext* cx, JSObject* obj);
+  static void Finalize(JSFreeOp *fop, JSObject* obj);
 
   // libffi callback
   static void ClosureStub(ffi_cif* cif, void* result, void** args,
@@ -159,7 +178,7 @@ namespace CClosure {
 }
 
 namespace CData {
-  static void Finalize(JSContext* cx, JSObject* obj);
+  static void Finalize(JSFreeOp *fop, JSObject* obj);
 
   static JSBool ValueGetter(JSContext* cx, JSObject* obj, jsid idval,
                             jsval* vp);
@@ -168,6 +187,14 @@ namespace CData {
   static JSBool Address(JSContext* cx, unsigned argc, jsval* vp);
   static JSBool ReadString(JSContext* cx, unsigned argc, jsval* vp);
   static JSBool ToSource(JSContext* cx, unsigned argc, jsval* vp);
+
+  static JSBool ErrnoGetter(JSContext* cx, JSObject *obj, jsid idval,
+                            jsval* vp);
+
+#if defined(XP_WIN)
+  static JSBool LastErrorGetter(JSContext* cx, JSObject *obj, jsid idval,
+                                jsval* vp);
+#endif // defined(XP_WIN)
 }
 
 // Int64Base provides functions common to Int64 and UInt64.
@@ -183,7 +210,7 @@ namespace Int64Base {
   JSBool ToSource(JSContext* cx, JSObject* obj, unsigned argc, jsval* vp,
     bool isUnsigned);
 
-  static void Finalize(JSContext* cx, JSObject* obj);
+  static void Finalize(JSFreeOp *fop, JSObject* obj);
 }
 
 namespace Int64 {
@@ -220,16 +247,14 @@ static JSClass sCTypesGlobalClass = {
   "ctypes",
   JSCLASS_HAS_RESERVED_SLOTS(CTYPESGLOBAL_SLOTS),
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, JS_FinalizeStub,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 static JSClass sCABIClass = {
   "CABI",
   JSCLASS_HAS_RESERVED_SLOTS(CABI_SLOTS),
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, JS_FinalizeStub,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 // Class representing ctypes.{C,Pointer,Array,Struct,Function}Type.prototype.
@@ -249,8 +274,7 @@ static JSClass sCDataProtoClass = {
   "CData",
   0,
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, JS_FinalizeStub,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 static JSClass sCTypeClass = {
@@ -389,36 +413,38 @@ static JSPropertySpec sFunctionProps[] = {
   { 0, 0, 0, NULL, NULL }
 };
 
+static JSFunctionSpec sFunctionInstanceFunctions[] = {
+  JS_FN("call", js_fun_call, 1, CDATAFN_FLAGS),
+  JS_FN("apply", js_fun_apply, 2, CDATAFN_FLAGS),
+  JS_FS_END
+};
+
 static JSClass sInt64ProtoClass = {
   "Int64",
   0,
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, JS_FinalizeStub,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 static JSClass sUInt64ProtoClass = {
   "UInt64",
   0,
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, JS_FinalizeStub,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 static JSClass sInt64Class = {
   "Int64",
   JSCLASS_HAS_RESERVED_SLOTS(INT64_SLOTS),
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Int64Base::Finalize,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Int64Base::Finalize
 };
 
 static JSClass sUInt64Class = {
   "UInt64",
   JSCLASS_HAS_RESERVED_SLOTS(INT64_SLOTS),
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Int64Base::Finalize,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Int64Base::Finalize
 };
 
 static JSFunctionSpec sInt64StaticFunctions[] = {
@@ -449,6 +475,16 @@ static JSFunctionSpec sUInt64Functions[] = {
   JS_FS_END
 };
 
+static JSPropertySpec sModuleProps[] = {
+  { "errno", 0, JSPROP_SHARED | JSPROP_PERMANENT,
+    CData::ErrnoGetter, NULL },
+#if defined(XP_WIN)
+  { "winLastError", 0, JSPROP_SHARED | JSPROP_PERMANENT,
+    CData::LastErrorGetter, NULL },
+#endif // defined(XP_WIN)
+  { 0, 0, 0, NULL, NULL }
+};
+
 static JSFunctionSpec sModuleFunctions[] = {
   JS_FN("open", Library::Open, 1, CTYPESFN_FLAGS),
   JS_FN("cast", CData::Cast, 2, CTYPESFN_FLAGS),
@@ -456,14 +492,6 @@ static JSFunctionSpec sModuleFunctions[] = {
   JS_FN("libraryName", Library::Name, 1, CTYPESFN_FLAGS),
   JS_FS_END
 };
-
-static inline bool FloatIsFinite(double f) {
-#ifdef WIN32
-  return _finite(f) != 0;
-#else
-  return finite(f);
-#endif
-}
 
 JS_ALWAYS_INLINE JSString*
 NewUCString(JSContext* cx, const AutoString& from)
@@ -736,9 +764,9 @@ static void
 AttachProtos(JSObject* proto, JSObject** protos)
 {
   // For a given 'proto' of [[Class]] "CTypeProto", attach each of the 'protos'
-  // to the appropriate CTypeProtoSlot. (SLOT_UINT64PROTO is the last slot
+  // to the appropriate CTypeProtoSlot. (SLOT_CTYPES is the last slot
   // of [[Class]] "CTypeProto" that we fill in this automated manner.)
-  for (uint32_t i = 0; i <= SLOT_UINT64PROTO; ++i)
+  for (uint32_t i = 0; i <= SLOT_CTYPES; ++i)
     JS_SetReservedSlot(proto, i, OBJECT_TO_JSVAL(protos[i]));
 }
 
@@ -829,8 +857,8 @@ InitTypeClasses(JSContext* cx, JSObject* parent)
     return false;
   js::AutoObjectRooter sroot(cx, protos[SLOT_STRUCTDATAPROTO]);
 
-  if (!InitTypeConstructor(cx, parent, CTypeProto, CDataProto,
-         sFunctionFunction, NULL, sFunctionProps, NULL, NULL,
+  if (!InitTypeConstructor(cx, parent, CTypeProto, protos[SLOT_POINTERDATAPROTO],
+         sFunctionFunction, NULL, sFunctionProps, sFunctionInstanceFunctions, NULL,
          protos[SLOT_FUNCTIONPROTO], protos[SLOT_FUNCTIONDATAPROTO]))
     return false;
   js::AutoObjectRooter froot(cx, protos[SLOT_FUNCTIONDATAPROTO]);
@@ -853,6 +881,10 @@ InitTypeClasses(JSContext* cx, JSObject* parent)
     UInt64::Construct, sUInt64Functions, sUInt64StaticFunctions);
   if (!protos[SLOT_UINT64PROTO])
     return false;
+
+  // Finally, store a pointer to the global ctypes object.
+  // Note that there is no other reliable manner of locating this object.
+  protos[SLOT_CTYPES] = parent;
 
   // Attach the prototypes just created to each of ctypes.CType.prototype,
   // and the special type constructors, so we can access them when constructing
@@ -949,8 +981,9 @@ JS_InitCTypesClass(JSContext* cx, JSObject* global)
   if (!InitTypeClasses(cx, ctypes))
     return false;
 
-  // attach API functions
-  if (!JS_DefineFunctions(cx, ctypes, sModuleFunctions))
+  // attach API functions and properties
+  if (!JS_DefineFunctions(cx, ctypes, sModuleFunctions) ||
+      !JS_DefineProperties(cx, ctypes, sModuleProps))
     return false;
 
   // Seal the ctypes object, to prevent modification.
@@ -1500,7 +1533,7 @@ jsvalToIntegerExplicit(jsval val, IntegerType* result)
   if (JSVAL_IS_DOUBLE(val)) {
     // Convert -Inf, Inf, and NaN to 0; otherwise, convert by C-style cast.
     double d = JSVAL_TO_DOUBLE(val);
-    *result = FloatIsFinite(d) ? IntegerType(d) : 0;
+    *result = MOZ_DOUBLE_IS_FINITE(d) ? IntegerType(d) : 0;
     return true;
   }
   if (!JSVAL_IS_PRIMITIVE(val)) {
@@ -2725,7 +2758,7 @@ CType::DefineBuiltin(JSContext* cx,
 }
 
 void
-CType::Finalize(JSContext* cx, JSObject* obj)
+CType::Finalize(JSFreeOp *fop, JSObject* obj)
 {
   // Make sure our TypeCode slot is legit. If it's not, bail.
   jsval slot = JS_GetReservedSlot(obj, SLOT_TYPECODE);
@@ -2738,7 +2771,7 @@ CType::Finalize(JSContext* cx, JSObject* obj)
     // Free the FunctionInfo.
     slot = JS_GetReservedSlot(obj, SLOT_FNINFO);
     if (!JSVAL_IS_VOID(slot))
-      cx->delete_(static_cast<FunctionInfo*>(JSVAL_TO_PRIVATE(slot)));
+      FreeOp::get(fop)->delete_(static_cast<FunctionInfo*>(JSVAL_TO_PRIVATE(slot)));
     break;
   }
 
@@ -2747,7 +2780,7 @@ CType::Finalize(JSContext* cx, JSObject* obj)
     slot = JS_GetReservedSlot(obj, SLOT_FIELDINFO);
     if (!JSVAL_IS_VOID(slot)) {
       void* info = JSVAL_TO_PRIVATE(slot);
-      cx->delete_(static_cast<FieldInfoHash*>(info));
+      FreeOp::get(fop)->delete_(static_cast<FieldInfoHash*>(info));
     }
   }
 
@@ -2757,8 +2790,8 @@ CType::Finalize(JSContext* cx, JSObject* obj)
     slot = JS_GetReservedSlot(obj, SLOT_FFITYPE);
     if (!JSVAL_IS_VOID(slot)) {
       ffi_type* ffiType = static_cast<ffi_type*>(JSVAL_TO_PRIVATE(slot));
-      cx->array_delete(ffiType->elements);
-      cx->delete_(ffiType);
+      FreeOp::get(fop)->array_delete(ffiType->elements);
+      FreeOp::get(fop)->delete_(ffiType);
     }
 
     break;
@@ -2770,7 +2803,7 @@ CType::Finalize(JSContext* cx, JSObject* obj)
 }
 
 void
-CType::FinalizeProtoClass(JSContext* cx, JSObject* obj)
+CType::FinalizeProtoClass(JSFreeOp *fop, JSObject* obj)
 {
   // Finalize the CTypeProto class. The only important bit here is our
   // SLOT_CLOSURECX -- it contains the JSContext that was (lazily) instantiated
@@ -3233,6 +3266,23 @@ CType::HasInstance(JSContext* cx, JSObject* obj, const jsval* v, JSBool* bp)
   return JS_TRUE;
 }
 
+static JSObject*
+CType::GetGlobalCTypes(JSContext* cx, JSObject* obj)
+{
+  JS_ASSERT(CType::IsCType(obj));
+
+  JSObject *objTypeProto = JS_GetPrototype(obj);
+  if (!objTypeProto) {
+  }
+  JS_ASSERT(objTypeProto);
+  JS_ASSERT(CType::IsCTypeProto(objTypeProto));
+
+  jsval valCTypes = JS_GetReservedSlot(objTypeProto, SLOT_CTYPES);
+  JS_ASSERT(!JSVAL_IS_PRIMITIVE(valCTypes));
+
+  return JSVAL_TO_OBJECT(valCTypes);
+}
+
 /*******************************************************************************
 ** PointerType implementation
 *******************************************************************************/
@@ -3269,11 +3319,11 @@ PointerType::CreateInternal(JSContext* cx, JSObject* baseType)
     return JSVAL_TO_OBJECT(slot);
 
   // Get ctypes.PointerType.prototype and the common prototype for CData objects
-  // of this type.
-  JSObject* typeProto;
-  JSObject* dataProto;
-  typeProto = CType::GetProtoFromType(baseType, SLOT_POINTERPROTO);
-  dataProto = CType::GetProtoFromType(baseType, SLOT_POINTERDATAPROTO);
+  // of this type, or ctypes.FunctionType.prototype for function pointers.
+  CTypeProtoSlot slotId = CType::GetTypeCode(baseType) == TYPE_function ?
+    SLOT_FUNCTIONDATAPROTO : SLOT_POINTERDATAPROTO;
+  JSObject* dataProto = CType::GetProtoFromType(baseType, slotId);
+  JSObject* typeProto = CType::GetProtoFromType(baseType, SLOT_POINTERPROTO);
 
   // Create a new CType object with the common properties and slots.
   JSObject* typeObj = CType::Create(cx, typeProto, dataProto, TYPE_pointer,
@@ -5156,13 +5206,45 @@ FunctionType::Call(JSContext* cx,
 
   uintptr_t fn = *reinterpret_cast<uintptr_t*>(CData::GetData(obj));
 
+#if defined(XP_WIN)
+  int32_t lastErrorStatus; // The status as defined by |GetLastError|
+  int32_t savedLastError = GetLastError();
+  SetLastError(0);
+#endif //defined(XP_WIN)
+  int errnoStatus;         // The status as defined by |errno|
+  int savedErrno = errno;
+  errno = 0;
+
   // suspend the request before we call into the function, since the call
   // may block or otherwise take a long time to return.
   {
     JSAutoSuspendRequest suspend(cx);
     ffi_call(&fninfo->mCIF, FFI_FN(fn), returnValue.mData,
              reinterpret_cast<void**>(values.begin()));
+
+    // Save error value.
+    // We need to save it before leaving the scope of |suspend| as destructing
+    // |suspend| has the side-effect of clearing |GetLastError|
+    // (see bug 684017).
+
+    errnoStatus = errno;
+#if defined(XP_WIN)
+    lastErrorStatus = GetLastError();
+#endif // defined(XP_WIN)
   }
+#if defined(XP_WIN)
+  SetLastError(savedLastError);
+#endif // defined(XP_WIN)
+
+  errno = savedErrno;
+
+  // Store the error value for later consultation with |ctypes.getStatus|
+  JSObject *objCTypes = CType::GetGlobalCTypes(cx, typeObj);
+
+  JS_SetReservedSlot(objCTypes, SLOT_ERRNO, INT_TO_JSVAL(errnoStatus));
+#if defined(XP_WIN)
+  JS_SetReservedSlot(objCTypes, SLOT_LASTERROR, INT_TO_JSVAL(lastErrorStatus));
+#endif // defined(XP_WIN)
 
   // Small integer types get returned as a word-sized ffi_arg. Coerce it back
   // into the correct size for ConvertToJS.
@@ -5412,7 +5494,7 @@ CClosure::Trace(JSTracer* trc, JSObject* obj)
 }
 
 void
-CClosure::Finalize(JSContext* cx, JSObject* obj)
+CClosure::Finalize(JSFreeOp *fop, JSObject* obj)
 {
   // Make sure our ClosureInfo slot is legit. If it's not, bail.
   jsval slot = JS_GetReservedSlot(obj, SLOT_CLOSUREINFO);
@@ -5420,7 +5502,7 @@ CClosure::Finalize(JSContext* cx, JSObject* obj)
     return;
 
   ClosureInfo* cinfo = static_cast<ClosureInfo*>(JSVAL_TO_PRIVATE(slot));
-  cx->delete_(cinfo);
+  FreeOp::get(fop)->delete_(cinfo);
 }
 
 void
@@ -5658,7 +5740,7 @@ CData::Create(JSContext* cx,
 }
 
 void
-CData::Finalize(JSContext* cx, JSObject* obj)
+CData::Finalize(JSFreeOp *fop, JSObject* obj)
 {
   // Delete our buffer, and the data it contains if we own it.
   jsval slot = JS_GetReservedSlot(obj, SLOT_OWNS);
@@ -5673,8 +5755,8 @@ CData::Finalize(JSContext* cx, JSObject* obj)
   char** buffer = static_cast<char**>(JSVAL_TO_PRIVATE(slot));
 
   if (owns)
-    cx->array_delete(*buffer);
-  cx->delete_(buffer);
+    FreeOp::get(fop)->array_delete(*buffer);
+  FreeOp::get(fop)->delete_(buffer);
 }
 
 JSObject*
@@ -5983,6 +6065,33 @@ CData::ToSource(JSContext* cx, unsigned argc, jsval* vp)
   return JS_TRUE;
 }
 
+JSBool
+CData::ErrnoGetter(JSContext* cx, JSObject* obj, jsid, jsval* vp)
+{
+  if (!IsCTypesGlobal(obj)) {
+    JS_ReportError(cx, "this is not not global object ctypes");
+    return JS_FALSE;
+  }
+
+  *vp = JS_GetReservedSlot(obj, SLOT_ERRNO);
+  return JS_TRUE;
+}
+
+#if defined(XP_WIN)
+JSBool
+CData::LastErrorGetter(JSContext* cx, JSObject* obj, jsid, jsval* vp)
+{
+  if (!IsCTypesGlobal(obj)) {
+    JS_ReportError(cx, "not global object ctypes");
+    return JS_FALSE;
+  }
+
+
+  *vp = JS_GetReservedSlot(obj, SLOT_LASTERROR);
+  return JS_TRUE;
+}
+#endif // defined(XP_WIN)
+
 /*******************************************************************************
 ** Int64 and UInt64 implementation
 *******************************************************************************/
@@ -6015,13 +6124,13 @@ Int64Base::Construct(JSContext* cx,
 }
 
 void
-Int64Base::Finalize(JSContext* cx, JSObject* obj)
+Int64Base::Finalize(JSFreeOp *fop, JSObject* obj)
 {
   jsval slot = JS_GetReservedSlot(obj, SLOT_INT64);
   if (JSVAL_IS_VOID(slot))
     return;
 
-  cx->delete_(static_cast<uint64_t*>(JSVAL_TO_PRIVATE(slot)));
+  FreeOp::get(fop)->delete_(static_cast<uint64_t*>(JSVAL_TO_PRIVATE(slot)));
 }
 
 uint64_t

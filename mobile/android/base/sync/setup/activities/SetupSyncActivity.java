@@ -14,20 +14,23 @@ import org.mozilla.gecko.sync.jpake.JPakeClient;
 import org.mozilla.gecko.sync.jpake.JPakeNoActivePairingException;
 import org.mozilla.gecko.sync.setup.Constants;
 import org.mozilla.gecko.sync.setup.SyncAccounts;
+import org.mozilla.gecko.sync.setup.SyncAccounts.SyncAccountParameters;
 
 import android.accounts.Account;
 import android.accounts.AccountAuthenticatorActivity;
 import android.accounts.AccountManager;
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -100,6 +103,12 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
 
   public void finishResume(Account[] accts) {
     Logger.debug(LOG_TAG, "Finishing Resume after fetching accounts.");
+
+    // Set "screen on" flag.
+    Logger.debug(LOG_TAG, "Setting screen-on flag.");
+    Window w = getWindow();
+    w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
     if (accts.length == 0) { // Start J-PAKE for pairing if no accounts present.
       Logger.debug(LOG_TAG, "No accounts; starting J-PAKE receiver.");
       displayReceiveNoPin();
@@ -124,7 +133,8 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
         return;
       }
     }
-    
+
+    final Activity setupActivity = this;
     runOnUiThread(new Runnable() {
       @Override
       public void run() {
@@ -135,10 +145,7 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
             R.string.sync_notification_oneaccount, Toast.LENGTH_LONG);
         toast.show();
 
-        Intent intent = new Intent(Settings.ACTION_SYNC_SETTINGS);
-        intent.setFlags(Constants.FLAG_ACTIVITY_REORDER_TO_FRONT_NO_ANIMATION);
-        startActivity(intent);
-
+        SyncAccounts.openSyncSettings(setupActivity);
         finish();
       }
     });
@@ -152,11 +159,21 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
     if (jClient != null) {
       jClient.abort(Constants.JPAKE_ERROR_USERABORT);
     }
+    if (pairWithPin) {
+      finish();
+    }
   }
 
   @Override
   public void onNewIntent(Intent intent) {
+    Logger.debug(LOG_TAG, "Started SetupSyncActivity with new intent.");
     setIntent(intent);
+  }
+
+  @Override
+  public void onDestroy() {
+    Logger.debug(LOG_TAG, "onDestroy() called.");
+    super.onDestroy();
   }
 
   /* Click Handlers */
@@ -237,8 +254,13 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
           return;
         }
         view1.setText(pin1);
+        view1.setContentDescription(pin1.replaceAll("\\B", ", "));
+
         view2.setText(pin2);
+        view2.setContentDescription(pin2.replaceAll("\\B", ", "));
+
         view3.setText(pin3);
+        view3.setContentDescription(pin3.replaceAll("\\B", ", "));
       }
     });
   }
@@ -249,7 +271,12 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
    */
   public void displayAbort(String error) {
     if (!Constants.JPAKE_ERROR_USERABORT.equals(error) && !hasInternet()) {
-      setContentView(R.layout.sync_setup_nointernet);
+      runOnUiThread(new Runnable() {
+        @Override
+        public void run() {
+          setContentView(R.layout.sync_setup_nointernet);
+        }
+      });
       return;
     }
     if (pairWithPin) {
@@ -356,26 +383,38 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
    * @param jCreds
    */
   public void onComplete(JSONObject jCreds) {
+    boolean result = true;
+
     if (!pairWithPin) {
       String accountName  = (String) jCreds.get(Constants.JSON_KEY_ACCOUNT);
       String password     = (String) jCreds.get(Constants.JSON_KEY_PASSWORD);
       String syncKey      = (String) jCreds.get(Constants.JSON_KEY_SYNCKEY);
       String serverURL    = (String) jCreds.get(Constants.JSON_KEY_SERVER);
 
-      Logger.debug(LOG_TAG, "Using account manager " + mAccountManager);
-      final Intent intent = SyncAccounts.createAccount(mContext, mAccountManager,
-                                                          accountName,
-                                                          syncKey, password, serverURL);
+      final SyncAccountParameters syncAccount = new SyncAccountParameters(mContext, mAccountManager,
+          accountName, syncKey, password, serverURL);
+      final Account account = SyncAccounts.createSyncAccount(syncAccount);
+      result = (account != null);
+
+      final Intent intent = new Intent(); // The intent to return.
+      intent.putExtra(AccountManager.KEY_ACCOUNT_NAME, syncAccount.username);
+      intent.putExtra(AccountManager.KEY_ACCOUNT_TYPE, Constants.ACCOUNTTYPE_SYNC);
+      intent.putExtra(AccountManager.KEY_AUTHTOKEN, Constants.ACCOUNTTYPE_SYNC);
       setAccountAuthenticatorResult(intent.getExtras());
 
-      setResult(RESULT_OK, intent);
+      if (result) {
+        setResult(RESULT_OK, intent);
+      } else {
+        setResult(RESULT_CANCELED, intent);
+      }
     }
 
-    jClient = null; // Sync is set up. Kill reference to JPakeClient object.
+    jClient = null; // Sync should be set up. Kill reference to JPakeClient object.
+    final boolean res = result;
     runOnUiThread(new Runnable() {
       @Override
       public void run() {
-        displayAccount(true);
+        displayResult(res);
       }
     });
   }
@@ -396,16 +435,20 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
   }
 
   /**
-   * Displays Sync account setup completed feedback to user.
+   * Displays Sync account setup result to user.
    *
    * @param isSetup
-   *          boolean for whether success screen is reached during setup
-   *          completion, or otherwise.
+   *          true is account was set up successfully, false otherwise.
    */
-  private void displayAccount(boolean isSetup) {
-    Intent intent = new Intent(mContext, SetupSuccessActivity.class);
+  private void displayResult(boolean isSuccess) {
+    Intent intent = null;
+    if (isSuccess) {
+      intent = new Intent(mContext, SetupSuccessActivity.class);
+    }  else {
+      intent = new Intent(mContext, SetupFailureActivity.class);
+    }
     intent.setFlags(Constants.FLAG_ACTIVITY_REORDER_TO_FRONT_NO_ANIMATION);
-    intent.putExtra(Constants.INTENT_EXTRA_IS_SETUP, isSetup);
+    intent.putExtra(Constants.INTENT_EXTRA_IS_SETUP, !pairWithPin);
     startActivity(intent);
     finish();
   }
@@ -510,6 +553,8 @@ public class SetupSyncActivity extends AccountAuthenticatorActivity {
           public void onTextChanged(CharSequence s, int start, int before, int count) {
           }
         });
+
+        row1.requestFocus();
       }
     });
   }

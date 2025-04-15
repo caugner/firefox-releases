@@ -58,6 +58,7 @@
 #include "nsThreadUtils.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/FileUtils.h"
+#include "mozilla/Preferences.h"
 
 namespace {
 
@@ -130,20 +131,43 @@ public:
   static bool CanRecord();
   static already_AddRefed<nsITelemetry> CreateTelemetryInstance();
   static void ShutdownTelemetry();
-  static void RecordSlowStatement(const nsACString &statement,
-                                  const nsACString &dbName,
-                                  PRUint32 delay);
+  static void RecordSlowStatement(const nsACString &sql, const nsACString &dbName,
+                                  PRUint32 delay, bool isDynamicString);
+#if defined(MOZ_ENABLE_PROFILER_SPS)
+  static void RecordChromeHang(PRUint32 duration,
+                               const Telemetry::HangStack &callStack,
+                               SharedLibraryInfo &moduleMap);
+#endif
   static nsresult GetHistogramEnumId(const char *name, Telemetry::ID *id);
   struct StmtStats {
     PRUint32 hitCount;
     PRUint32 totalTime;
+    bool isDynamicSql;
+    bool isTrackedDb;
+    bool isAggregate;
   };
   typedef nsBaseHashtableET<nsCStringHashKey, StmtStats> SlowSQLEntryType;
+  struct HangReport {
+    PRUint32 duration;
+    Telemetry::HangStack callStack;
+#if defined(MOZ_ENABLE_PROFILER_SPS)
+    SharedLibraryInfo moduleMap;
+#endif
+  };
 
 private:
-  static bool StatementReflector(SlowSQLEntryType *entry, JSContext *cx,
-                                 JSObject *obj);
-  bool AddSQLInfo(JSContext *cx, JSObject *rootObj, bool mainThread);
+  static void StoreSlowSQL(const nsACString &offender, PRUint32 delay,
+                           bool isDynamicSql, bool isTrackedDB, bool isAggregate);
+
+  static bool ReflectPublicSql(SlowSQLEntryType *entry, JSContext *cx,
+                               JSObject *obj);
+  static bool ReflectPrivateSql(SlowSQLEntryType *entry, JSContext *cx,
+                                JSObject *obj);
+  static bool ReflectSql(SlowSQLEntryType *entry, JSContext *cx, JSObject *obj);
+
+  bool AddSQLInfo(JSContext *cx, JSObject *rootObj, bool mainThread,
+                  bool includePrivateStrings);
+  bool GetSQLStats(JSContext *cx, jsval *ret, bool includePrivateSql);
 
   // Like GetHistogramById, but returns the underlying C++ object, not the JS one.
   nsresult GetHistogramByName(const nsACString &name, Histogram **ret);
@@ -181,6 +205,8 @@ private:
   // AutoHashtable here.
   nsTHashtable<nsCStringHashKey> mTrackedDBs;
   Mutex mHashMutex;
+  nsTArray<HangReport> mHangReports;
+  Mutex mHangReportsMutex;
 };
 
 TelemetryImpl*  TelemetryImpl::sTelemetry = NULL;
@@ -202,9 +228,10 @@ struct TelemetryHistogram {
 // that if people add incorrect histogram definitions, they get compiler
 // errors.
 #define HISTOGRAM(id, min, max, bucket_count, histogram_type, b) \
-  PR_STATIC_ASSERT(nsITelemetry::HISTOGRAM_ ## histogram_type == nsITelemetry::HISTOGRAM_BOOLEAN || \
-                   nsITelemetry::HISTOGRAM_ ## histogram_type == nsITelemetry::HISTOGRAM_FLAG || \
-                   (min < max && bucket_count > 2 && min >= 1));
+  MOZ_STATIC_ASSERT(nsITelemetry::HISTOGRAM_ ## histogram_type == nsITelemetry::HISTOGRAM_BOOLEAN || \
+                    nsITelemetry::HISTOGRAM_ ## histogram_type == nsITelemetry::HISTOGRAM_FLAG || \
+                    (min < max && bucket_count > 2 && min >= 1), \
+                    "Incorrect histogram definitions were found");
 
 #include "TelemetryHistograms.h"
 
@@ -440,8 +467,7 @@ WrapAndReturnHistogram(Histogram *h, JSContext *cx, jsval *ret)
     "JSHistogram",  /* name */
     JSCLASS_HAS_PRIVATE, /* flags */
     JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, JS_FinalizeStub,
-    JSCLASS_NO_OPTIONAL_MEMBERS
+    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
   };
 
   JSObject *obj = JS_NewObject(cx, &JSHistogram_class, NULL, NULL);
@@ -460,7 +486,8 @@ WrapAndReturnHistogram(Histogram *h, JSContext *cx, jsval *ret)
 TelemetryImpl::TelemetryImpl():
 mHistogramMap(Telemetry::HistogramCount),
 mCanRecord(XRE_GetProcessType() == GeckoProcessType_Default),
-mHashMutex("Telemetry::mHashMutex")
+mHashMutex("Telemetry::mHashMutex"),
+mHangReportsMutex("Telemetry::mHangReportsMutex")
 {
   // A whitelist to prevent Telemetry reporting on Addon & Thunderbird DBs
   const char *trackedDBs[] = {
@@ -496,14 +523,13 @@ TelemetryImpl::NewHistogram(const nsACString &name, PRUint32 min, PRUint32 max, 
 }
 
 bool
-TelemetryImpl::StatementReflector(SlowSQLEntryType *entry, JSContext *cx,
-                                  JSObject *obj)
+TelemetryImpl::ReflectSql(SlowSQLEntryType *entry, JSContext *cx, JSObject *obj)
 {
   const nsACString &sql = entry->GetKey();
   jsval hitCount = UINT_TO_JSVAL(entry->mData.hitCount);
   jsval totalTime = UINT_TO_JSVAL(entry->mData.totalTime);
 
-  JSObject *arrayObj = JS_NewArrayObject(cx, 2, nsnull);
+  JSObject *arrayObj = JS_NewArrayObject(cx, 0, nsnull);
   if (!arrayObj) {
     return false;
   }
@@ -517,17 +543,38 @@ TelemetryImpl::StatementReflector(SlowSQLEntryType *entry, JSContext *cx,
 }
 
 bool
-TelemetryImpl::AddSQLInfo(JSContext *cx, JSObject *rootObj, bool mainThread)
+TelemetryImpl::ReflectPublicSql(SlowSQLEntryType *entry, JSContext *cx,
+                                JSObject *obj)
+{
+  bool isPrivateSql = entry->mData.isDynamicSql || (!entry->mData.isTrackedDb);
+  if (!isPrivateSql || entry->mData.isAggregate)
+    return ReflectSql(entry, cx, obj);
+  return true;
+}
+
+bool
+TelemetryImpl::ReflectPrivateSql(SlowSQLEntryType *entry, JSContext *cx,
+                                 JSObject *obj)
+{
+  if (!entry->mData.isAggregate)
+    return ReflectSql(entry, cx, obj);
+  return true;
+}
+
+bool
+TelemetryImpl::AddSQLInfo(JSContext *cx, JSObject *rootObj, bool mainThread,
+                          bool includePrivateStrings)
 {
   JSObject *statsObj = JS_NewObject(cx, NULL, NULL, NULL);
   if (!statsObj)
     return false;
   JS::AutoObjectRooter root(cx, statsObj);
 
-  AutoHashtable<SlowSQLEntryType> &sqlMap = (mainThread
-                                             ? mSlowSQLOnMainThread
-                                             : mSlowSQLOnOtherThread);
-  if (!sqlMap.ReflectHashtable(StatementReflector, cx, statsObj)) {
+  AutoHashtable<SlowSQLEntryType> &sqlMap =
+    (mainThread ? mSlowSQLOnMainThread : mSlowSQLOnOtherThread);
+  AutoHashtable<SlowSQLEntryType>::ReflectEntryFunc reflectFunction =
+    (includePrivateStrings ? ReflectPrivateSql : ReflectPublicSql);
+  if(!sqlMap.ReflectHashtable(reflectFunction, cx, statsObj)) {
     return false;
   }
 
@@ -923,21 +970,193 @@ TelemetryImpl::GetAddonHistogramSnapshots(JSContext *cx, jsval *ret)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-TelemetryImpl::GetSlowSQL(JSContext *cx, jsval *ret)
+bool
+TelemetryImpl::GetSQLStats(JSContext *cx, jsval *ret, bool includePrivateSql)
 {
   JSObject *root_obj = JS_NewObject(cx, NULL, NULL, NULL);
   if (!root_obj)
-    return NS_ERROR_FAILURE;
+    return false;
   *ret = OBJECT_TO_JSVAL(root_obj);
 
   MutexAutoLock hashMutex(mHashMutex);
   // Add info about slow SQL queries on the main thread
-  if (!AddSQLInfo(cx, root_obj, true))
-    return NS_ERROR_FAILURE;
+  if (!AddSQLInfo(cx, root_obj, true, includePrivateSql))
+    return false;
   // Add info about slow SQL queries on other threads
-  if (!AddSQLInfo(cx, root_obj, false))
+  if (!AddSQLInfo(cx, root_obj, false, includePrivateSql))
+    return false;
+  
+  return true;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::GetSlowSQL(JSContext *cx, jsval *ret)
+{
+  if (GetSQLStats(cx, ret, false))
+    return NS_OK;
+  return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::GetDebugSlowSQL(JSContext *cx, jsval *ret)
+{
+  bool revealPrivateSql =
+    Preferences::GetBool("toolkit.telemetry.debugSlowSql", false);
+  if (GetSQLStats(cx, ret, revealPrivateSql))
+    return NS_OK;
+  return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+TelemetryImpl::GetChromeHangs(JSContext *cx, jsval *ret)
+{
+  MutexAutoLock hangReportMutex(mHangReportsMutex);
+  JSObject *reportArray = JS_NewArrayObject(cx, 0, nsnull);
+  if (!reportArray) {
     return NS_ERROR_FAILURE;
+  }
+  *ret = OBJECT_TO_JSVAL(reportArray);
+
+  // Each hang report is an object in the 'chromeHangs' array
+  for (size_t i = 0; i < mHangReports.Length(); ++i) {
+    JSObject *reportObj = JS_NewObject(cx, NULL, NULL, NULL);
+    if (!reportObj) {
+      return NS_ERROR_FAILURE;
+    }
+    jsval reportObjVal = OBJECT_TO_JSVAL(reportObj);
+    if (!JS_SetElement(cx, reportArray, i, &reportObjVal)) {
+      return NS_ERROR_FAILURE;
+    }
+
+    // Record the hang duration (expressed in seconds)
+    JSBool ok = JS_DefineProperty(cx, reportObj, "duration",
+                                  INT_TO_JSVAL(mHangReports[i].duration),
+                                  NULL, NULL, JSPROP_ENUMERATE);
+    if (!ok) {
+      return NS_ERROR_FAILURE;
+    }
+
+    // Represent call stack PCs as strings
+    // (JS can't represent all 64-bit integer values)
+    JSObject *pcArray = JS_NewArrayObject(cx, 0, nsnull);
+    if (!pcArray) {
+      return NS_ERROR_FAILURE;
+    }
+    ok = JS_DefineProperty(cx, reportObj, "stack", OBJECT_TO_JSVAL(pcArray),
+                           NULL, NULL, JSPROP_ENUMERATE);
+    if (!ok) {
+      return NS_ERROR_FAILURE;
+    }
+
+    const PRUint32 pcCount = mHangReports[i].callStack.Length();
+    for (size_t pcIndex = 0; pcIndex < pcCount; ++pcIndex) {
+      nsCAutoString pcString;
+      pcString.AppendPrintf("0x%p", mHangReports[i].callStack[pcIndex]);
+      JSString *str = JS_NewStringCopyZ(cx, pcString.get());
+      if (!str) {
+        return NS_ERROR_FAILURE;
+      }
+      jsval v = STRING_TO_JSVAL(str);
+      if (!JS_SetElement(cx, pcArray, pcIndex, &v)) {
+        return NS_ERROR_FAILURE;
+      }
+    }
+
+    // Record memory map info
+    JSObject *moduleArray = JS_NewArrayObject(cx, 0, nsnull);
+    if (!moduleArray) {
+      return NS_ERROR_FAILURE;
+    }
+    ok = JS_DefineProperty(cx, reportObj, "memoryMap",
+                           OBJECT_TO_JSVAL(moduleArray),
+                           NULL, NULL, JSPROP_ENUMERATE);
+    if (!ok) {
+      return NS_ERROR_FAILURE;
+    }
+
+#if defined(MOZ_ENABLE_PROFILER_SPS)
+    const PRUint32 moduleCount = mHangReports[i].moduleMap.GetSize();
+    for (size_t moduleIndex = 0; moduleIndex < moduleCount; ++moduleIndex) {
+      // Current module
+      const SharedLibrary &module =
+        mHangReports[i].moduleMap.GetEntry(moduleIndex);
+
+      JSObject *moduleInfoArray = JS_NewArrayObject(cx, 0, nsnull);
+      if (!moduleInfoArray) {
+        return NS_ERROR_FAILURE;
+      }
+      jsval val = OBJECT_TO_JSVAL(moduleInfoArray);
+      if (!JS_SetElement(cx, moduleArray, moduleIndex, &val)) {
+        return NS_ERROR_FAILURE;
+      }
+
+      // Start address
+      nsCAutoString addressString;
+      addressString.AppendPrintf("0x%p", module.GetStart());
+      JSString *str = JS_NewStringCopyZ(cx, addressString.get());
+      if (!str) {
+        return NS_ERROR_FAILURE;
+      }
+      val = STRING_TO_JSVAL(str);
+      if (!JS_SetElement(cx, moduleInfoArray, 0, &val)) {
+        return NS_ERROR_FAILURE;
+      }
+
+      // Module name
+      str = JS_NewStringCopyZ(cx, module.GetName());
+      if (!str) {
+        return NS_ERROR_FAILURE;
+      }
+      val = STRING_TO_JSVAL(str);
+      if (!JS_SetElement(cx, moduleInfoArray, 1, &val)) {
+        return NS_ERROR_FAILURE;
+      }
+
+      // Module size in memory
+      val = INT_TO_JSVAL(int32_t(module.GetEnd() - module.GetStart()));
+      if (!JS_SetElement(cx, moduleInfoArray, 2, &val)) {
+        return NS_ERROR_FAILURE;
+      }
+
+      // "PDB Age" identifier
+      val = INT_TO_JSVAL(0);
+#if defined(MOZ_PROFILING) && defined(XP_WIN)
+      val = INT_TO_JSVAL(module.GetPdbAge());
+#endif
+      if (!JS_SetElement(cx, moduleInfoArray, 3, &val)) {
+        return NS_ERROR_FAILURE;
+      }
+
+      // "PDB Signature" GUID
+      char guidString[NSID_LENGTH] = { 0 };
+#if defined(MOZ_PROFILING) && defined(XP_WIN)
+      module.GetPdbSignature().ToProvidedString(guidString);
+#endif
+      str = JS_NewStringCopyZ(cx, guidString);
+      if (!str) {
+        return NS_ERROR_FAILURE;
+      }
+      val = STRING_TO_JSVAL(str);
+      if (!JS_SetElement(cx, moduleInfoArray, 4, &val)) {
+        return NS_ERROR_FAILURE;
+      }
+
+      // Name of associated PDB file
+      const char *pdbName = "";
+#if defined(MOZ_PROFILING) && defined(XP_WIN)
+      pdbName = module.GetPdbName();
+#endif
+      str = JS_NewStringCopyZ(cx, pdbName);
+      if (!str) {
+        return NS_ERROR_FAILURE;
+      }
+      val = STRING_TO_JSVAL(str);
+      if (!JS_SetElement(cx, moduleInfoArray, 5, &val)) {
+        return NS_ERROR_FAILURE;
+      }
+    }
+#endif
+  }
 
   return NS_OK;
 }
@@ -1133,7 +1352,7 @@ TelemetrySessionData::LoadFromDisk(nsIFile *file, TelemetrySessionData **ptr)
   }
 
   AutoFDClose fd;
-  rv = f->OpenNSPRFileDesc(PR_RDONLY, 0, &fd);
+  rv = f->OpenNSPRFileDesc(PR_RDONLY, 0, &fd.rwget());
   if (NS_FAILED(rv)) {
     return NS_ERROR_FAILURE;
   }
@@ -1220,7 +1439,7 @@ TelemetrySessionData::SaveToDisk(nsIFile *file, const nsACString &uuid)
   }
 
   AutoFDClose fd;
-  rv = f->OpenNSPRFileDesc(PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE, 0600, &fd);
+  rv = f->OpenNSPRFileDesc(PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE, 0600, &fd.rwget());
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -1366,14 +1585,9 @@ TelemetryImpl::ShutdownTelemetry()
 }
 
 void
-TelemetryImpl::RecordSlowStatement(const nsACString &statement,
-                                   const nsACString &dbName,
-                                   PRUint32 delay)
+TelemetryImpl::StoreSlowSQL(const nsACString &sql, PRUint32 delay,
+                            bool isDynamicSql, bool isTrackedDB, bool isAggregate)
 {
-  MOZ_ASSERT(sTelemetry);
-  if (!sTelemetry->mCanRecord || !sTelemetry->mTrackedDBs.GetEntry(dbName))
-    return;
-
   AutoHashtable<SlowSQLEntryType> *slowSQLMap = NULL;
   if (NS_IsMainThread())
     slowSQLMap = &(sTelemetry->mSlowSQLOnMainThread);
@@ -1381,17 +1595,78 @@ TelemetryImpl::RecordSlowStatement(const nsACString &statement,
     slowSQLMap = &(sTelemetry->mSlowSQLOnOtherThread);
 
   MutexAutoLock hashMutex(sTelemetry->mHashMutex);
-  SlowSQLEntryType *entry = slowSQLMap->GetEntry(statement);
+
+  SlowSQLEntryType *entry = slowSQLMap->GetEntry(sql);
   if (!entry) {
-    entry = slowSQLMap->PutEntry(statement);
+    entry = slowSQLMap->PutEntry(sql);
     if (NS_UNLIKELY(!entry))
       return;
+    entry->mData.isDynamicSql = isDynamicSql;
+    entry->mData.isTrackedDb = isTrackedDB;
+    entry->mData.isAggregate = isAggregate;
+
     entry->mData.hitCount = 0;
     entry->mData.totalTime = 0;
   }
+
   entry->mData.hitCount++;
   entry->mData.totalTime += delay;
 }
+
+void
+TelemetryImpl::RecordSlowStatement(const nsACString &sql, const nsACString &dbName,
+                                   PRUint32 delay, bool isDynamicString)
+{
+  MOZ_ASSERT(sTelemetry);
+  if (!sTelemetry->mCanRecord)
+    return;
+
+  bool isTrackedDb = sTelemetry->mTrackedDBs.Contains(dbName);
+  bool isPrivate = (!isTrackedDb) || isDynamicString;
+  if (isPrivate) {
+    // Report aggregate DB-level statistics to Telemetry for potentially
+    // sensitive SQL strings
+    nsCAutoString aggregate;
+    aggregate.AppendPrintf("Untracked SQL for %s", dbName.BeginReading());
+    StoreSlowSQL(aggregate, delay, isDynamicString, isTrackedDb, true);
+  }
+
+  // Record original SQL string
+  nsCAutoString fullSql(sql);
+  if (!isTrackedDb)
+    fullSql.AppendPrintf(" -- Untracked DB %s", dbName.BeginReading());
+  StoreSlowSQL(fullSql, delay, isDynamicString, isTrackedDb, false);
+}
+
+#if defined(MOZ_ENABLE_PROFILER_SPS)
+void
+TelemetryImpl::RecordChromeHang(PRUint32 duration,
+                                const Telemetry::HangStack &callStack,
+                                SharedLibraryInfo &moduleMap)
+{
+  MOZ_ASSERT(sTelemetry);
+  if (!sTelemetry->mCanRecord) {
+    return;
+  }
+
+  MutexAutoLock hangReportMutex(sTelemetry->mHangReportsMutex);
+
+  // Only report the modules which changed since the first hang report
+  if (sTelemetry->mHangReports.Length()) {
+    SharedLibraryInfo &firstModuleMap =
+      sTelemetry->mHangReports[0].moduleMap;
+    for (size_t i = 0; i < moduleMap.GetSize(); ++i) {
+      if (firstModuleMap.Contains(moduleMap.GetEntry(i))) {
+        moduleMap.RemoveEntries(i, i + 1);
+        --i;
+      }
+    }
+  }
+
+  HangReport newReport = { duration, callStack, moduleMap };
+  sTelemetry->mHangReports.AppendElement(newReport);
+}
+#endif
 
 NS_IMPL_THREADSAFE_ISUPPORTS1(TelemetryImpl, nsITelemetry)
 NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsITelemetry, TelemetryImpl::CreateTelemetryInstance)
@@ -1461,9 +1736,10 @@ GetHistogramById(ID id)
 void
 RecordSlowSQLStatement(const nsACString &statement,
                        const nsACString &dbName,
-                       PRUint32 delay)
+                       PRUint32 delay,
+                       bool isDynamicString)
 {
-  TelemetryImpl::RecordSlowStatement(statement, dbName, delay);
+  TelemetryImpl::RecordSlowStatement(statement, dbName, delay, isDynamicString);
 }
 
 void Init()
@@ -1473,6 +1749,15 @@ void Init()
     do_GetService("@mozilla.org/base/telemetry;1");
   MOZ_ASSERT(telemetryService);
 }
+
+#if defined(MOZ_ENABLE_PROFILER_SPS)
+void RecordChromeHang(PRUint32 duration,
+                      const Telemetry::HangStack &callStack,
+                      SharedLibraryInfo &moduleMap)
+{
+  TelemetryImpl::RecordChromeHang(duration, callStack, moduleMap);
+}
+#endif
 
 } // namespace Telemetry
 } // namespace mozilla

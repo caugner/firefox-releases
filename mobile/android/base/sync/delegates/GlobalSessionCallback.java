@@ -46,10 +46,15 @@ public interface GlobalSessionCallback {
    * error.
    *
    * @param globalSession
-   * @param newClusterURL
+   * @param failedClusterURL
    *          The new node/weave cluster URL.
    */
   void informNodeAuthenticationFailed(GlobalSession globalSession, URI failedClusterURL);
+
+  /**
+   * Called when an HTTP failure indicates that a software upgrade is required.
+   */
+  void informUpgradeRequiredResponse(GlobalSession session);
 
   void handleAborted(GlobalSession globalSession, String reason);
   void handleError(GlobalSession globalSession, Exception ex);
@@ -57,4 +62,5 @@ public interface GlobalSessionCallback {
   void handleStageCompleted(Stage currentState, GlobalSession globalSession);
 
   boolean shouldBackOff();
+
 }

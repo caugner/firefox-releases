@@ -95,6 +95,7 @@ SHARED_LIBRARY_LIBS = \
 	$(DEPTH)/dom/battery/$(LIB_PREFIX)dom_battery_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/contacts/$(LIB_PREFIX)jsdomcontacts_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/power/$(LIB_PREFIX)dom_power_s.$(LIB_SUFFIX) \
+	$(DEPTH)/dom/settings/$(LIB_PREFIX)jsdomsettings_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/network/src/$(LIB_PREFIX)dom_network_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/sms/src/$(LIB_PREFIX)dom_sms_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/src/events/$(LIB_PREFIX)jsdomevents_s.$(LIB_SUFFIX) \
@@ -105,7 +106,6 @@ SHARED_LIBRARY_LIBS = \
 	$(DEPTH)/dom/src/geolocation/$(LIB_PREFIX)jsdomgeolocation_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/src/notification/$(LIB_PREFIX)jsdomnotification_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/system/$(LIB_PREFIX)domsystem_s.$(LIB_SUFFIX) \
-	$(DEPTH)/dom/telephony/$(LIB_PREFIX)domtelephony_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/workers/$(LIB_PREFIX)domworkers_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/indexedDB/$(LIB_PREFIX)dom_indexeddb_s.$(LIB_SUFFIX) \
 	$(DEPTH)/editor/libeditor/text/$(LIB_PREFIX)texteditor_s.$(LIB_SUFFIX) \
@@ -131,13 +131,6 @@ SHARED_LIBRARY_LIBS += \
 LOCAL_INCLUDES	+= \
 	-I$(topsrcdir)/dom/system/windows \
 	$(NULL)
-else ifneq (,$(filter cocoa,$(MOZ_WIDGET_TOOLKIT)))
-SHARED_LIBRARY_LIBS += \
-	$(DEPTH)/dom/system/cocoa/$(LIB_PREFIX)domsystemcocoa_s.$(LIB_SUFFIX) \
-	$(NULL)
-LOCAL_INCLUDES	+= \
-	-I$(topsrcdir)/dom/system/cocoa \
-	$(NULL)
 else ifneq (,$(filter android,$(MOZ_WIDGET_TOOLKIT)))
 SHARED_LIBRARY_LIBS += \
 	$(DEPTH)/dom/system/android/$(LIB_PREFIX)domsystemandroid_s.$(LIB_SUFFIX) \
@@ -154,7 +147,10 @@ SHARED_LIBRARY_LIBS	+= $(DEPTH)/dom/bluetooth/$(LIB_PREFIX)dombluetooth_s.$(LIB_
 endif #}
 
 ifdef MOZ_B2G_RIL #{
-SHARED_LIBRARY_LIBS	+= $(DEPTH)/dom/system/b2g/$(LIB_PREFIX)domsystemb2g_s.$(LIB_SUFFIX)
+SHARED_LIBRARY_LIBS	+= \
+  $(DEPTH)/dom/system/gonk/$(LIB_PREFIX)domsystemgonk_s.$(LIB_SUFFIX) \
+  $(DEPTH)/dom/telephony/$(LIB_PREFIX)domtelephony_s.$(LIB_SUFFIX) \
+  $(NULL)
 endif #}
 
 ifdef MOZ_MEDIA
@@ -184,6 +180,12 @@ endif
 ifdef MOZ_WAVE
 SHARED_LIBRARY_LIBS 	+= \
 	$(DEPTH)/content/media/wave/$(LIB_PREFIX)gkconwave_s.$(LIB_SUFFIX) \
+	$(NULL)
+endif
+
+ifdef MOZ_GSTREAMER
+SHARED_LIBRARY_LIBS 	+= \
+	$(DEPTH)/content/media/gstreamer/$(LIB_PREFIX)gkcongstreamer_s.$(LIB_SUFFIX) \
 	$(NULL)
 endif
 
@@ -227,6 +229,10 @@ endif
 SHARED_LIBRARY_LIBS += \
 	$(DEPTH)/js/xpconnect/src/$(LIB_PREFIX)xpconnect_s.$(LIB_SUFFIX)
 
+ifdef MOZ_GSTREAMER
+EXTRA_DSO_LDOPTS += $(GSTREAMER_LIBS)
+endif
+
 include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk
 
@@ -260,6 +266,7 @@ LOCAL_INCLUDES	+= -I$(srcdir)/../base \
 		   -I$(topsrcdir)/dom/src/offline \
 		   -I$(topsrcdir)/dom/src/geolocation \
 		   -I$(topsrcdir)/dom/contacts \
+		   -I$(topsrcdir)/dom/settings \
 		   -I$(topsrcdir)/dom/telephony \
 		   -I. \
 		   -I$(topsrcdir)/editor/libeditor/base \
@@ -275,7 +282,7 @@ LOCAL_INCLUDES	+= -I$(srcdir)/../base \
 		   $(NULL)
 
 ifdef MOZ_B2G_RIL #{
-LOCAL_INCLUDES	+= -I$(topsrcdir)/dom/system/b2g
+LOCAL_INCLUDES	+= -I$(topsrcdir)/dom/system/gonk
 endif #}
 
 ifdef MOZ_B2G_BT #{

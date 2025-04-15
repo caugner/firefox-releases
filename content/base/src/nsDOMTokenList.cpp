@@ -53,7 +53,7 @@ nsDOMTokenList::nsDOMTokenList(nsGenericElement *aElement, nsIAtom* aAttrAtom)
 {
   // We don't add a reference to our element. If it goes away,
   // we'll be told to drop our reference
-  SetIsProxy();
+  SetIsDOMBinding();
 }
 
 nsDOMTokenList::~nsDOMTokenList() { }
@@ -309,8 +309,7 @@ nsDOMTokenList::ToString(nsAString& aResult)
 }
 
 JSObject*
-nsDOMTokenList::WrapObject(JSContext *cx, XPCWrappedNativeScope *scope,
-                           bool *triedToWrap)
+nsDOMTokenList::WrapObject(JSContext *cx, JSObject *scope, bool *triedToWrap)
 {
   return mozilla::dom::binding::DOMTokenList::create(cx, scope, this,
                                                      triedToWrap);

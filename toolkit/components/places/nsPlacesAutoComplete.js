@@ -76,6 +76,7 @@ const MATCH_ANYWHERE = Ci.mozIPlacesAutoComplete.MATCH_ANYWHERE;
 const MATCH_BOUNDARY_ANYWHERE = Ci.mozIPlacesAutoComplete.MATCH_BOUNDARY_ANYWHERE;
 const MATCH_BOUNDARY = Ci.mozIPlacesAutoComplete.MATCH_BOUNDARY;
 const MATCH_BEGINNING = Ci.mozIPlacesAutoComplete.MATCH_BEGINNING;
+const MATCH_BEGINNING_CASE_SENSITIVE = Ci.mozIPlacesAutoComplete.MATCH_BEGINNING_CASE_SENSITIVE;
 
 // AutoComplete index constants.  All AutoComplete queries will provide these
 // columns in this order.
@@ -102,7 +103,8 @@ const kQueryTypeFiltered = 1;
 const kTitleTagsSeparator = " \u2013 ";
 
 const kBrowserUrlbarBranch = "browser.urlbar.";
-
+// Toggle autocomplete.
+const kBrowserUrlbarAutocompleteEnabledPref = "autocomplete.enabled";
 // Toggle autoFill.
 const kBrowserUrlbarAutofillPref = "autoFill";
 // Whether to search only typed entries.
@@ -844,7 +846,9 @@ nsPlacesAutoComplete.prototype = {
    */
   _loadPrefs: function PAC_loadPrefs(aRegisterObserver)
   {
-    this._enabled = safePrefGetter(this._prefs, "autocomplete.enabled", true);
+    this._enabled = safePrefGetter(this._prefs,
+                                   kBrowserUrlbarAutocompleteEnabledPref,
+                                   true);
     this._matchBehavior = safePrefGetter(this._prefs,
                                          "matchBehavior",
                                          MATCH_BOUNDARY_ANYWHERE);
@@ -1300,7 +1304,7 @@ urlInlineComplete.prototype = {
 
   get _db()
   {
-    if (!this.__db && this._autofill) {
+    if (!this.__db && this._autofillEnabled) {
       this.__db = PlacesUtils.history.QueryInterface(Ci.nsPIPlacesDatabase).
                   DBConnection.clone(true);
     }
@@ -1316,9 +1320,10 @@ urlInlineComplete.prototype = {
       // want to complete up to and including a URL separator.
       this.__syncQuery = this._db.createStatement(
           "/* do not warn (bug no): could index on (typed,frecency) but not worth it */ "
-        + "SELECT host || '/' "
+        + "SELECT host || '/', prefix || host || '/' "
         + "FROM moz_hosts "
         + "WHERE host BETWEEN :search_string AND :search_string || X'FFFF' "
+        + "AND frecency <> 0 "
         + (this._autofillTyped ? "AND typed = 1 " : "")
         + "ORDER BY frecency DESC "
         + "LIMIT 1"
@@ -1389,6 +1394,15 @@ urlInlineComplete.prototype = {
       return;
     }
 
+    // Don't try to autofill if the search term includes any whitespace.
+    // This may confuse completeDefaultIndex cause the AUTOCOMPLETE_MATCH
+    // tokenizer ends up trimming the search string and returning a value
+    // that doesn't match it, or is even shorter.
+    if (/\s/.test(this._currentSearchString)) {
+      this._finishSearch();
+      return;
+    }
+
     // Do a synchronous search on the table of domains.
     let query = this._syncQuery;
     query.params.search_string = this._currentSearchString.toLowerCase();
@@ -1397,11 +1411,12 @@ urlInlineComplete.prototype = {
     let lastSlashIndex = this._currentSearchString.lastIndexOf("/");
     if (lastSlashIndex == -1) {
       var hasDomainResult = false;
-      var domain;
+      var domain, untrimmedDomain;
       try {
         hasDomainResult = query.executeStep();
         if (hasDomainResult) {
           domain = query.getString(0);
+          untrimmedDomain = query.getString(1);
         }
       } finally {
         query.reset();
@@ -1409,7 +1424,9 @@ urlInlineComplete.prototype = {
 
       if (hasDomainResult) {
         // We got a match for a domain, we can add it immediately.
-        result.appendMatch(this._strippedPrefix + domain, "");
+        // TODO (bug 754265): this is a temporary solution introduced while
+        // waiting for a propert dedicated API.
+        result.appendMatch(this._strippedPrefix + domain, untrimmedDomain);
 
         this._finishSearch();
         return;
@@ -1429,11 +1446,20 @@ urlInlineComplete.prototype = {
       return;
     }
 
+    // The URIs in the database are fixed up, so we can match on a lowercased
+    // host, but the path must be matched in a case sensitive way.
+    let pathIndex =
+      this._originalSearchString.indexOf("/", this._strippedPrefix.length);
+    this._currentSearchString = fixupSearchText(
+      this._originalSearchString.slice(0, pathIndex).toLowerCase() +
+      this._originalSearchString.slice(pathIndex)
+    );
+
     // Within the standard autocomplete query, we only search the beginning
     // of URLs for 1 result.
     let query = this._asyncQuery;
     let (params = query.params) {
-      params.matchBehavior = MATCH_BEGINNING;
+      params.matchBehavior = MATCH_BEGINNING_CASE_SENSITIVE;
       params.searchBehavior = Ci.mozIPlacesAutoComplete["BEHAVIOR_URL"];
       params.searchString = this._currentSearchString;
     }
@@ -1466,9 +1492,13 @@ urlInlineComplete.prototype = {
   _loadPrefs: function UIC_loadPrefs(aRegisterObserver)
   {
     let prefBranch = Services.prefs.getBranch(kBrowserUrlbarBranch);
-    this._autofill = safePrefGetter(prefBranch,
-                                    kBrowserUrlbarAutofillPref,
-                                    true);
+    let autocomplete = safePrefGetter(prefBranch,
+                                      kBrowserUrlbarAutocompleteEnabledPref,
+                                      true);
+    let autofill = safePrefGetter(prefBranch,
+                                  kBrowserUrlbarAutofillPref,
+                                  true);
+    this._autofillEnabled = autocomplete && autofill;
     this._autofillTyped = safePrefGetter(prefBranch,
                                          kBrowserUrlbarAutofillTypedPref,
                                          true);
@@ -1487,7 +1517,10 @@ urlInlineComplete.prototype = {
   handleResult: function UIC_handleResult(aResultSet)
   {
     let row = aResultSet.getNextRow();
-    let url = fixupSearchText(row.getResultByIndex(0));
+    let value = row.getResultByIndex(0);
+    let url = fixupSearchText(value);
+
+    let prefix = value.slice(0, value.length - url.length);
 
     // We must complete the URL up to the next separator (which is /, ? or #).
     let separatorIndex = url.slice(this._currentSearchString.length)
@@ -1500,8 +1533,10 @@ urlInlineComplete.prototype = {
       url = url.slice(0, separatorIndex);
     }
 
-    // Add the result
-    this._result.appendMatch(this._strippedPrefix + url, "");
+    // Add the result.
+    // TODO (bug 754265): this is a temporary solution introduced while
+    // waiting for a propert dedicated API.
+    this._result.appendMatch(this._strippedPrefix + url, prefix + url);
 
     // handleCompletion() will cause the result listener to be called, and
     // will display the result in the UI.
@@ -1528,10 +1563,11 @@ urlInlineComplete.prototype = {
     }
     else if (aTopic == kPrefChanged &&
              (aData.substr(kBrowserUrlbarBranch.length) == kBrowserUrlbarAutofillPref ||
+              aData.substr(kBrowserUrlbarBranch.length) == kBrowserUrlbarAutocompleteEnabledPref ||
               aData.substr(kBrowserUrlbarBranch.length) == kBrowserUrlbarAutofillTypedPref)) {
       let previousAutofillTyped = this._autofillTyped;
       this._loadPrefs();
-      if (!this._autofill) {
+      if (!this._autofillEnabled) {
         this.stopSearch();
         this._closeDatabase();
       }

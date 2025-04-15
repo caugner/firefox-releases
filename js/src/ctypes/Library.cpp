@@ -53,7 +53,7 @@ namespace ctypes {
 
 namespace Library
 {
-  static void Finalize(JSContext* cx, JSObject* obj);
+  static void Finalize(JSFreeOp *fop, JSObject* obj);
 
   static JSBool Close(JSContext* cx, unsigned argc, jsval* vp);
   static JSBool Declare(JSContext* cx, unsigned argc, jsval* vp);
@@ -67,8 +67,7 @@ static JSClass sLibraryClass = {
   "Library",
   JSCLASS_HAS_RESERVED_SLOTS(LIBRARY_SLOTS),
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub,JS_ResolveStub, JS_ConvertStub, Library::Finalize,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub,JS_ResolveStub, JS_ConvertStub, Library::Finalize
 };
 
 #define CTYPESFN_FLAGS \
@@ -206,13 +205,18 @@ Library::GetLibrary(JSObject* obj)
   return static_cast<PRLibrary*>(JSVAL_TO_PRIVATE(slot));
 }
 
-void
-Library::Finalize(JSContext* cx, JSObject* obj)
+static void
+UnloadLibrary(JSObject* obj)
 {
-  // unload the library
-  PRLibrary* library = GetLibrary(obj);
+  PRLibrary* library = Library::GetLibrary(obj);
   if (library)
     PR_UnloadLibrary(library);
+}
+
+void
+Library::Finalize(JSFreeOp *fop, JSObject* obj)
+{
+  UnloadLibrary(obj);
 }
 
 JSBool
@@ -252,7 +256,7 @@ Library::Close(JSContext* cx, unsigned argc, jsval* vp)
   }
 
   // delete our internal objects
-  Finalize(cx, obj);
+  UnloadLibrary(obj);
   JS_SetReservedSlot(obj, SLOT_LIBRARY, PRIVATE_TO_JSVAL(NULL));
 
   JS_SET_RVAL(cx, vp, JSVAL_VOID);

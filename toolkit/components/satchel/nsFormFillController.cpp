@@ -335,8 +335,8 @@ nsFormFillController::SetPopupOpen(bool aPopupOpen)
       docShell->GetPresShell(getter_AddRefs(presShell));
       NS_ENSURE_STATE(presShell);
       presShell->ScrollContentIntoView(content,
-                                       NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,
-                                       NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,
+                                       nsIPresShell::ScrollAxis(),
+                                       nsIPresShell::ScrollAxis(),
                                        nsIPresShell::SCROLL_OVERFLOW_HIDDEN);
       // mFocusedPopup can be destroyed after ScrollContentIntoView, see bug 420089
       if (mFocusedPopup)
@@ -844,7 +844,7 @@ nsFormFillController::Focus(nsIDOMEvent* aEvent)
 
   nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(input);
   if (isPwmgrInput || (formControl &&
-                       formControl->IsSingleLineTextControl(PR_TRUE) &&
+                       formControl->IsSingleLineTextControl(true) &&
                        (hasList || autocomplete) && !isReadOnly)) {
     StartControllingInput(input);
   }

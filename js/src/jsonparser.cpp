@@ -42,9 +42,9 @@
 #include "jsnum.h"
 #include "jsonparser.h"
 
-#include "jsobjinlines.h"
+#include "vm/StringBuffer.h"
 
-#include "vm/StringBuffer-inl.h"
+#include "jsobjinlines.h"
 
 using namespace js;
 
@@ -539,7 +539,8 @@ JSONParser::parse(Value *vp)
              *     js_CheckForStringIndex.
              */
             jsid propid = ATOM_TO_JSID(&valueStack.popCopy().toString()->asAtom());
-            if (!DefineNativeProperty(cx, &valueStack.back().toObject(), propid, v,
+            RootedVarObject obj(cx, &valueStack.back().toObject());
+            if (!DefineNativeProperty(cx, obj, propid, v,
                                       JS_PropertyStub, JS_StrictPropertyStub, JSPROP_ENUMERATE,
                                       0, 0))
             {

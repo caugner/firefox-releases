@@ -50,6 +50,8 @@
 #include "nsIInterfaceInfoManager.idl"
 #include "nsIExceptionService.idl"
 #include "nsIVariant.idl"
+#include "nsIObjectOutputStream.idl"
+#include "nsIObjectInputStream.idl"
 
 %{ C++
 #include "jspubtd.h"
@@ -65,11 +67,13 @@ class nsWrapperCache;
 
 [ptr] native JSContextPtr(JSContext);
 [ptr] native JSClassPtr(JSClass);
+[ptr] native JSFreeOpPtr(JSFreeOp);
 [ptr] native JSObjectPtr(JSObject);
 [ptr] native JSValPtr(jsval);
 [ptr] native JSValConstPtr(const jsval);
       native JSPropertyOp(JSPropertyOp);
       native JSEqualityOp(JSEqualityOp);
+[ptr] native JSScriptPtr(JSScript);
 [ptr] native voidPtrPtr(void*);
 [ptr] native nsScriptObjectTracerPtr(nsScriptObjectTracer);
 [ref] native nsCCTraversalCallbackRef(nsCycleCollectionTraversalCallback);
@@ -405,7 +409,7 @@ enum nsGCType {
 };
 %}
 
-[uuid(0213cb40-2dd5-4ac8-a9d3-157bd53c3824)]
+[uuid(1239b432-b835-4d28-9dc0-53063cb7f60f)]
 interface nsIXPConnect : nsISupports
 {
 %{ C++
@@ -741,30 +745,6 @@ interface nsIXPConnect : nsISupports
      */
     void NotifyDidPaint();
 
-    /**
-     * Define quick stubs on the given object, @a proto.
-     *
-     * @param cx
-     *     A context.  Requires request.
-     * @param proto
-     *     The (newly created) prototype object for a DOM class.  The JS half
-     *     of an XPCWrappedNativeProto.
-     * @param flags
-     *     Property flags for the quick stub properties--should be either
-     *     JSPROP_ENUMERATE or 0.
-     * @param interfaceCount
-     *     The number of interfaces the class implements.
-     * @param interfaceArray
-     *     The interfaces the class implements; interfaceArray and
-     *     interfaceCount are like what nsIClassInfo.getInterfaces returns.
-     */
-    [noscript,notxpcom] boolean defineDOMQuickStubs(
-        in JSContextPtr cx,
-        in JSObjectPtr proto,
-        in PRUint32 flags,
-        in PRUint32 interfaceCount,
-        [array, size_is(interfaceCount)] in nsIIDPtr interfaceArray);
-
 %{C++
     /**
      * Get the object principal for this wrapper.  Note that this may well end
@@ -801,4 +781,18 @@ interface nsIXPConnect : nsISupports
      */
     [noscript] void setDebugModeWhenPossible(in boolean mode,
                                              in boolean allowSyncDisable);
+
+    [noscript] void writeScript(in nsIObjectOutputStream aStream,
+                                in JSContextPtr aJSContext,
+                                in JSScriptPtr aJSScript);
+
+    [noscript] JSScriptPtr readScript(in nsIObjectInputStream aStream,
+                                      in JSContextPtr aJSContext);
+
+    [noscript] void writeFunction(in nsIObjectOutputStream aStream,
+                                  in JSContextPtr aJSContext,
+                                  in JSObjectPtr aJSObject);
+
+    [noscript] JSObjectPtr readFunction(in nsIObjectInputStream aStream,
+                                        in JSContextPtr aJSContext);
 };

@@ -53,6 +53,7 @@
 #include "nsITimer.h"
 #include "nsPIDOMWindow.h"
 
+#include "mozilla/dom/bindings/EventTargetBinding.h"
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
 #include "nsDOMJSUtils.h"
@@ -65,18 +66,17 @@
 #include "xpcpublic.h"
 
 #include "Events.h"
-#include "EventTarget.h"
 #include "Worker.h"
 #include "WorkerPrivate.h"
 
 using namespace mozilla;
+using namespace mozilla::dom::bindings::prototypes;
 
 USING_WORKERS_NAMESPACE
 
 using mozilla::MutexAutoLock;
 using mozilla::MutexAutoUnlock;
 using mozilla::Preferences;
-using namespace mozilla::xpconnect::memory;
 
 // The size of the worker runtime heaps in bytes. May be changed via pref.
 #define WORKER_DEFAULT_RUNTIME_HEAPSIZE 32 * 1024 * 1024
@@ -319,7 +319,7 @@ CreateJSContextForWorker(WorkerPrivate* aWorkerPrivate)
     NS_ASSERTION(zeal <= 3, "Bad zeal value!");
 
     PRUint32 frequency = zeal <= 2 ? JS_DEFAULT_ZEAL_FREQ : 1;
-    JS_SetGCZeal(workerCx, zeal, frequency, false);
+    JS_SetGCZeal(workerCx, zeal, frequency);
   }
 #endif
 
@@ -449,7 +449,7 @@ ResolveWorkerClasses(JSContext* aCx, JSObject* aObj, jsid aId, unsigned aFlags,
       return true;
     }
 
-    JSObject* eventTarget = events::InitEventTargetClass(aCx, aObj, true);
+    JSObject* eventTarget = EventTarget_workers::GetProtoObject(aCx, aObj, aObj);
     if (!eventTarget) {
       return false;
     }

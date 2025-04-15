@@ -563,7 +563,18 @@ public:
   nscoord GetAutoQualityMinFontSize() {
     return DevPixelsToAppUnits(mAutoQualityMinFontSizePixelsPref);
   }
-  
+
+  /**
+   * Return the device's screen width in inches, for font size
+   * inflation.
+   *
+   * If |aChanged| is non-null, then aChanged is filled in with whether
+   * the return value has changed since either:
+   *  a. the last time the function was called with non-null aChanged, or
+   *  b. the first time the function was called.
+   */
+  float ScreenWidthInchesForFontInflation(bool* aChanged = nsnull);
+
   static PRInt32 AppUnitsPerCSSPixel() { return nsDeviceContext::AppUnitsPerCSSPixel(); }
   PRUint32 AppUnitsPerDevPixel() const  { return mDeviceContext->AppUnitsPerDevPixel(); }
   static PRInt32 AppUnitsPerCSSInch() { return nsDeviceContext::AppUnitsPerCSSInch(); }
@@ -1120,19 +1131,13 @@ public:
   // The following are public member variables so that we can use them
   // with mozilla::AutoToggle or mozilla::AutoRestore.
 
-  // The frame that is the container for font size inflation for the
-  // reflow or intrinsic width computation currently happening.  If this
-  // frame is null, then font inflation should not be performed.
-  nsIFrame*             mCurrentInflationContainer; // [WEAK]
-
-  // The content-rect width of mCurrentInflationContainer.  If
-  // mCurrentInflationContainer is currently in reflow, this is its new
-  // width, which is not yet set on its rect.
-  nscoord               mCurrentInflationContainerWidth;
+  // Should we disable font size inflation because we're inside of
+  // shrink-wrapping calculations on an inflation container?
+  bool                  mInflationDisabledForShrinkWrap;
 
 protected:
 
-  nsRefPtrHashtable<nsVoidPtrHashKey, nsImageLoader>
+  nsRefPtrHashtable<nsPtrHashKey<nsIFrame>, nsImageLoader>
                         mImageLoaders[IMAGE_LOAD_TYPE_COUNT];
 
   nsWeakPtr             mContainer;
@@ -1142,6 +1147,8 @@ protected:
   PRInt32               mMinFontSize;   // Min font size, defaults to 0
   float                 mTextZoom;      // Text zoom, defaults to 1.0
   float                 mFullZoom;      // Page zoom, defaults to 1.0
+
+  float                 mLastFontInflationScreenWidth;
 
   PRInt32               mCurAppUnitsPerDevPixel;
   PRInt32               mAutoQualityMinFontSizePixelsPref;

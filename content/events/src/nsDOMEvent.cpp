@@ -100,6 +100,8 @@ static const char* const sEventNames[] = {
   "MozBeforeResize",
   "mozfullscreenchange",
   "mozfullscreenerror",
+  "mozpointerlockchange",
+  "mozpointerlockerror",
   "MozSwipeGesture",
   "MozMagnifyGestureStart",
   "MozMagnifyGestureUpdate",
@@ -896,7 +898,8 @@ NS_METHOD nsDOMEvent::DuplicatePrivateData()
     }
     case NS_TOUCH_EVENT:
     {
-      newEvent = new nsTouchEvent(false, msg, nsnull);
+      nsTouchEvent *oldTouchEvent = static_cast<nsTouchEvent*>(mEvent);
+      newEvent = new nsTouchEvent(false, oldTouchEvent);
       NS_ENSURE_TRUE(newEvent, NS_ERROR_OUT_OF_MEMORY);
       isInputEvent = true;
       break;
@@ -1169,6 +1172,10 @@ nsDOMEvent::GetScreenCoords(nsPresContext* aPresContext,
                             nsEvent* aEvent,
                             nsIntPoint aPoint)
 {
+  if (nsEventStateManager::sIsPointerLocked) {
+    return nsEventStateManager::sLastScreenPoint;
+  }
+
   if (!aEvent || 
        (aEvent->eventStructType != NS_MOUSE_EVENT &&
         aEvent->eventStructType != NS_POPUP_EVENT &&
@@ -1224,6 +1231,10 @@ nsDOMEvent::GetClientCoords(nsPresContext* aPresContext,
                             nsIntPoint aPoint,
                             nsIntPoint aDefaultPoint)
 {
+  if (nsEventStateManager::sIsPointerLocked) {
+    return nsEventStateManager::sLastClientPoint;
+  }
+
   if (!aEvent ||
       (aEvent->eventStructType != NS_MOUSE_EVENT &&
        aEvent->eventStructType != NS_POPUP_EVENT &&

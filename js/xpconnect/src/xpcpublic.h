@@ -53,10 +53,11 @@
 #include "nsWrapperCache.h"
 #include "nsStringGlue.h"
 #include "nsTArray.h"
+#include "mozilla/dom/bindings/DOMJSClass.h"
 
 class nsIPrincipal;
 class nsIXPConnectWrappedJS;
-struct nsDOMClassInfoData;
+class nsScriptNameSpaceManager;
 
 #ifndef BAD_TLS_INDEX
 #define BAD_TLS_INDEX ((PRUint32) -1)
@@ -74,9 +75,9 @@ xpc_CreateMTGlobalObject(JSContext *cx, JSClass *clasp,
                          JSCompartment **compartment);
 
 #define XPCONNECT_GLOBAL_FLAGS                                                \
-    JSCLASS_XPCONNECT_GLOBAL | JSCLASS_HAS_PRIVATE |                          \
+    JSCLASS_DOM_GLOBAL | JSCLASS_XPCONNECT_GLOBAL | JSCLASS_HAS_PRIVATE |     \
     JSCLASS_PRIVATE_IS_NSISUPPORTS | JSCLASS_IMPLEMENTS_BARRIERS |            \
-    JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(1)
+    JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(3)
 
 void
 TraceXPCGlobal(JSTracer *trc, JSObject *obj);
@@ -138,9 +139,9 @@ xpc_FastGetCachedWrapper(nsWrapperCache *cache, JSObject *scope, jsval *vp)
     if (cache) {
         JSObject* wrapper = cache->GetWrapper();
         NS_ASSERTION(!wrapper ||
-                     !cache->IsProxy() ||
+                     !cache->IsDOMBinding() ||
                      !IS_SLIM_WRAPPER(wrapper),
-                     "Should never have a slim wrapper when IsProxy()");
+                     "Should never have a slim wrapper when IsDOMBinding()");
         if (wrapper &&
             js::GetObjectCompartment(wrapper) == js::GetObjectCompartment(scope) &&
             (IS_SLIM_WRAPPER(wrapper) ||
@@ -196,9 +197,9 @@ xpc_UnmarkGrayObject(JSObject *obj)
 extern void
 xpc_MarkInCCGeneration(nsISupports* aVariant, PRUint32 aGeneration);
 
-// Unmarks aWrappedJS's JSObject.
+// If aWrappedJS is a JS wrapper, unmark its JSObject.
 extern void
-xpc_UnmarkGrayObject(nsIXPConnectWrappedJS* aWrappedJS);
+xpc_TryUnmarkWrappedGrayObject(nsISupports* aWrappedJS);
 
 extern void
 xpc_UnmarkSkippableJSHolders();
@@ -208,7 +209,11 @@ xpc_UnmarkSkippableJSHolders();
 NS_EXPORT_(void)
 xpc_ActivateDebugMode();
 
+class nsIMemoryMultiReporterCallback;
+
 namespace xpc {
+
+bool DeferredRelease(nsISupports *obj);
 
 // If these functions return false, then an exception will be set on cx.
 bool Base64Encode(JSContext *cx, JS::Value val, JS::Value *out);
@@ -222,16 +227,32 @@ bool Base64Decode(JSContext *cx, JS::Value val, JS::Value *out);
 bool StringToJsval(JSContext *cx, nsAString &str, JS::Value *rval);
 bool NonVoidStringToJsval(JSContext *cx, nsAString &str, JS::Value *rval);
 
+nsIPrincipal *GetCompartmentPrincipal(JSCompartment *compartment);
+
 #ifdef DEBUG
 void DumpJSHeap(FILE* file);
 #endif
-} // namespace xpc
 
-class nsIMemoryMultiReporterCallback;
-
-namespace mozilla {
-namespace xpconnect {
-namespace memory {
+/**
+ * Define quick stubs on the given object, @a proto.
+ *
+ * @param cx
+ *     A context.  Requires request.
+ * @param proto
+ *     The (newly created) prototype object for a DOM class.  The JS half
+ *     of an XPCWrappedNativeProto.
+ * @param flags
+ *     Property flags for the quick stub properties--should be either
+ *     JSPROP_ENUMERATE or 0.
+ * @param interfaceCount
+ *     The number of interfaces the class implements.
+ * @param interfaceArray
+ *     The interfaces the class implements; interfaceArray and
+ *     interfaceCount are like what nsIClassInfo.getInterfaces returns.
+ */
+bool
+DOM_DefineQuickStubs(JSContext *cx, JSObject *proto, PRUint32 flags,
+                     PRUint32 interfaceCount, const nsIID **interfaceArray);
 
 // This reports all the stats in |rtStats| that belong in the "explicit" tree,
 // (which isn't all of them).
@@ -241,9 +262,49 @@ ReportJSRuntimeExplicitTreeStats(const JS::RuntimeStats &rtStats,
                                  nsIMemoryMultiReporterCallback *cb,
                                  nsISupports *closure);
 
-} // namespace memory
-} // namespace xpconnect
+/**
+ * Convert a jsval to PRInt64. Return true on success.
+ */
+inline bool
+ValueToInt64(JSContext *cx, JS::Value v, int64_t *result)
+{
+    if (JSVAL_IS_INT(v)) {
+        int32_t intval;
+        if (!JS_ValueToECMAInt32(cx, v, &intval))
+            return false;
+        *result = static_cast<int64_t>(intval);
+    } else {
+        double doubleval;
+        if (!JS_ValueToNumber(cx, v, &doubleval))
+            return false;
+        *result = static_cast<int64_t>(doubleval);
+    }
+    return true;
+}
 
+/**
+ * Convert a jsval to uint64_t. Return true on success.
+ */
+inline bool
+ValueToUint64(JSContext *cx, JS::Value v, uint64_t *result)
+{
+    if (JSVAL_IS_INT(v)) {
+        uint32_t intval;
+        if (!JS_ValueToECMAUint32(cx, v, &intval))
+            return false;
+        *result = static_cast<uint64_t>(intval);
+    } else {
+        double doubleval;
+        if (!JS_ValueToNumber(cx, v, &doubleval))
+            return false;
+        *result = static_cast<uint64_t>(doubleval);
+    }
+    return true;
+}
+
+} // namespace xpc
+
+namespace mozilla {
 namespace dom {
 namespace binding {
 
@@ -254,24 +315,14 @@ inline bool instanceIsProxy(JSObject *obj)
     return js::IsProxy(obj) &&
            js::GetProxyHandler(obj)->family() == ProxyFamily();
 }
-extern JSClass ExpandoClass;
-inline bool isExpandoObject(JSObject *obj)
-{
-    return js::GetObjectJSClass(obj) == &ExpandoClass;
-}
 
-enum {
-    JSPROXYSLOT_PROTOSHAPE = 0,
-    JSPROXYSLOT_EXPANDO = 1
-};
-
-typedef JSObject*
-(*DefineInterface)(JSContext *cx, XPCWrappedNativeScope *scope, bool *enabled);
+typedef bool
+(*DefineInterface)(JSContext *cx, JSObject *global, bool *enabled);
 
 extern bool
 DefineStaticJSVals(JSContext *cx);
 void
-Register(nsDOMClassInfoData *aData);
+Register(nsScriptNameSpaceManager* aNameSpaceManager);
 extern bool
 DefineConstructor(JSContext *cx, JSObject *obj, DefineInterface aDefine,
                   nsresult *aResult);

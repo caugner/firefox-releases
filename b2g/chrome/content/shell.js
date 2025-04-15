@@ -7,16 +7,12 @@
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
-const CC = Components.Constructor;
 const Cr = Components.results;
-
-const LocalFile = CC('@mozilla.org/file/local;1',
-                     'nsILocalFile',
-                     'initWithPath');
 
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 Cu.import('resource://gre/modules/Services.jsm');
 Cu.import('resource://gre/modules/ContactService.jsm');
+Cu.import('resource://gre/modules/Webapps.jsm');
 
 XPCOMUtils.defineLazyGetter(Services, 'env', function() {
   return Cc['@mozilla.org/process/environment;1']
@@ -34,8 +30,14 @@ XPCOMUtils.defineLazyGetter(Services, 'idle', function() {
 });
 
 XPCOMUtils.defineLazyGetter(Services, 'audioManager', function() {
+#ifdef MOZ_WIDGET_GONK
   return Cc['@mozilla.org/telephony/audiomanager;1']
            .getService(Ci.nsIAudioManager);
+#else
+  return {
+    "masterVolume": 0
+  };
+#endif
 });
 
 XPCOMUtils.defineLazyServiceGetter(Services, 'fm', function() {
@@ -43,21 +45,10 @@ XPCOMUtils.defineLazyServiceGetter(Services, 'fm', function() {
            .getService(Ci.nsFocusManager);
 });
 
-#ifndef MOZ_WIDGET_GONK
-// In order to use http:// scheme instead of file:// scheme
-// (that is much more restricted) the following code kick-off
-// a local http server listening on http://127.0.0.1:7777 and
-// http://localhost:7777.
-function startupHttpd(baseDir, port) {
-  const httpdURL = 'chrome://browser/content/httpd.js';
-  let httpd = {};
-  Services.scriptloader.loadSubScript(httpdURL, httpd);
-  let server = new httpd.nsHttpServer();
-  server.registerDirectory('/', new LocalFile(baseDir));
-  server.registerContentType('appcache', 'text/cache-manifest');
-  server.start(port);
-}
-#endif
+XPCOMUtils.defineLazyGetter(this, 'DebuggerServer', function() {
+  Cu.import('resource://gre/modules/devtools/dbg-server.jsm');
+  return DebuggerServer;
+});
 
 // FIXME Bug 707625
 // until we have a proper security model, add some rights to
@@ -65,9 +56,13 @@ function startupHttpd(baseDir, port) {
 // XXX never grant 'content-camera' to non-gaia apps
 function addPermissions(urls) {
   let permissions = [
-    'indexedDB', 'indexedDB-unlimited', 'webapps-manage', 'offline-app', 'content-camera', 'webcontacts-manage'
+    'indexedDB', 'indexedDB-unlimited', 'webapps-manage', 'offline-app', 'pin-app',
+    'websettings-read', 'websettings-readwrite',
+    'content-camera', 'webcontacts-manage', 'wifi-manage', 'desktop-notification',
+    'geolocation'
   ];
   urls.forEach(function(url) {
+    url = url.trim();
     let uri = Services.io.newURI(url, null, null);
     let allow = Ci.nsIPermissionManager.ALLOW_ACTION;
 
@@ -92,24 +87,15 @@ var shell = {
         return homeSrc;
     } catch (e) {}
 
-    let urls = Services.prefs.getCharPref('browser.homescreenURL').split(',');
-    for (let i = 0; i < urls.length; i++) {
-      let url = urls[i];
-      if (url.substring(0, 7) != 'file://')
-        return url;
-
-      let file = new LocalFile(url.substring(7, url.length));
-      if (file.exists())
-        return url;
-    }
-    return null;
+    return Services.prefs.getCharPref('browser.homescreenURL');
   },
 
-  start: function shell_init() {
+  start: function shell_start() {
     let homeURL = this.homeURL;
     if (!homeURL) {
-      let msg = 'Fatal error during startup: [No homescreen found]';
-      return alert(msg);
+      let msg = 'Fatal error during startup: No homescreen found: try setting B2G_HOMESCREEN';
+      alert(msg);
+      return;
     }
 
     ['keydown', 'keypress', 'keyup'].forEach((function listenKey(type) {
@@ -119,42 +105,26 @@ var shell = {
 
     window.addEventListener('MozApplicationManifest', this);
     window.addEventListener('mozfullscreenchange', this);
+    window.addEventListener('sizemodechange', this);
     this.contentBrowser.addEventListener('load', this, true);
 
     // Until the volume can be set from the content side, set it to a
     // a specific value when the device starts. This way the front-end
     // can display a notification when the volume change and show a volume
     // level modified from this point.
+    // try catch block must be used since the emulator fails here. bug 746429
     try {
       Services.audioManager.masterVolume = 0.5;
+    } catch(e) {
+      dump('Error setting master volume: ' + e + '\n');
+    }
+
+    let domains = "";
+    try {
+      domains = Services.prefs.getCharPref('b2g.privileged.domains');
     } catch(e) {}
 
-    try {
-      Services.io.offline = false;
-
-      let fileScheme = 'file://';
-      if (homeURL.substring(0, fileScheme.length) == fileScheme) {
-#ifndef MOZ_WIDGET_GONK
-        homeURL = homeURL.replace(fileScheme, '');
-
-        let baseDir = homeURL.split('/');
-        baseDir.pop();
-        baseDir = baseDir.join('/');
-
-        const SERVER_PORT = 7777;
-        startupHttpd(baseDir, SERVER_PORT);
-
-        let baseHost = 'http://localhost';
-        homeURL = homeURL.replace(baseDir, baseHost + ':' + SERVER_PORT);
-#else
-        homeURL = 'http://localhost:7777' + homeURL.replace(fileScheme, '');
-#endif
-      }
-      addPermissions([homeURL]);
-    } catch (e) {
-      let msg = 'Fatal error during startup: [' + e + '[' + homeURL + ']';
-      return alert(msg);
-    }
+    addPermissions(domains.split(","));
 
     // Load webapi.js as a frame script
     let frameScriptUrl = 'chrome://browser/content/webapi.js';
@@ -164,6 +134,10 @@ var shell = {
       dump('Error loading ' + frameScriptUrl + ' as a frame script: ' + e + '\n');
     }
 
+    CustomEventManager.init();
+
+    WebappsHelper.init();
+
     let browser = this.contentBrowser;
     browser.homePage = homeURL;
     browser.goHome();
@@ -172,6 +146,7 @@ var shell = {
   stop: function shell_stop() {
     window.removeEventListener('MozApplicationManifest', this);
     window.removeEventListener('mozfullscreenchange', this);
+    window.removeEventListener('sizemodechange', this);
   },
 
   toggleDebug: function shell_toggleDebug() {
@@ -268,6 +243,13 @@ var shell = {
         if (document.mozFullScreen)
           Services.fm.focusedWindow = window;
         break;
+      case 'sizemodechange':
+        if (window.windowState == window.STATE_MINIMIZED) {
+          this.contentBrowser.docShell.isActive = false;
+        } else {
+          this.contentBrowser.docShell.isActive = true;
+        }
+        break;
       case 'load':
         this.contentBrowser.removeEventListener('load', this, true);
 
@@ -320,18 +302,67 @@ var shell = {
 };
 
 (function PowerManager() {
-  let idleHandler = {
-    observe: function(subject, topic, time) {
-      if (topic === "idle") {
-        // TODO: Check wakelock status. See bug 697132.
-        screen.mozEnabled = false;
+  // This will eventually be moved to content, so use content API as
+  // much as possible here. TODO: Bug 738530
+  let power = navigator.mozPower;
+  let idleHandler = function idleHandler(subject, topic, time) {
+    if (topic === "idle") {
+      if (power.getWakeLockState("screen") != "locked-foreground") {
+        navigator.mozPower.screenEnabled = false;
       }
-    },
+    }
   }
+
+  let wakeLockHandler = function wakeLockHandler(topic, state) {
+    // Turn off the screen when no one needs the it or all of them are
+    // invisible, otherwise turn the screen on. Note that the CPU
+    // might go to sleep as soon as the screen is turned off and
+    // acquiring wake lock will not bring it back (actually the code
+    // is not executed at all).
+    if (topic == "screen") {
+      if (state != "locked-foreground") {
+        if (Services.idle.idleTime > idleTimeout*1000) {
+          navigator.mozPower.screenEnabled = false;
+        }
+      } else {
+        navigator.mozPower.screenEnabled = true;
+      }
+    }
+    if (topic == "cpu") {
+      navigator.mozPower.cpuSleepAllowed = (state != "locked-foreground" &&
+                                            state != "locked-background");
+    }
+  }
+
   let idleTimeout = Services.prefs.getIntPref("power.screen.timeout");
-  if (idleTimeout) {
-    Services.idle.addIdleObserver(idleHandler, idleTimeout);
-  }
+  if (!('mozSettings' in navigator))
+    return;
+
+  let request = navigator.mozSettings.getLock().get("power.screen.timeout");
+  request.onsuccess = function onSuccess() {
+    idleTimeout = request.result["power.screen.timeout"] || idleTimeout;
+    if (idleTimeout) {
+      Services.idle.addIdleObserver(idleHandler, idleTimeout);
+      power.addWakeLockListener(wakeLockHandler);
+    }
+  };
+
+  request.onerror = function onError() {
+    if (idleTimeout) {
+      Services.idle.addIdleObserver(idleHandler, idleTimeout);
+      power.addWakeLockListener(wakeLockHandler);
+    }
+  };
+
+  // XXX We may override other's callback here, but this is the only
+  // user of mozSettings in shell.js at this moment.
+  navigator.mozSettings.onsettingchange = function onSettingChange(e) {
+    if (e.settingName == "power.screen.timeout" && e.settingValue) {
+      Services.idle.removeIdleObserver(idleHandler, idleTimeout);
+      idleTimeout = e.settingValue;
+      Services.idle.addIdleObserver(idleHandler, idleTimeout);
+    }
+  };
 })();
 
 function nsBrowserAccess() {
@@ -420,3 +451,128 @@ Services.obs.addObserver(function onConsoleAPILogEvent(subject, topic, data) {
   serverSocket.asyncListen(listener);
 })();
 
+var CustomEventManager = {
+  init: function custevt_init() {
+    window.addEventListener("ContentStart", (function(evt) {
+      content.addEventListener("mozContentEvent", this, false, true);
+    }).bind(this), false);
+  },
+
+  handleEvent: function custevt_handleEvent(evt) {
+    let detail = evt.detail;
+    dump("XXX FIXME : Got a mozContentEvent: " + detail.type);
+
+    switch(detail.type) {
+      case "desktop-notification-click":
+      case "desktop-notification-close":
+        AlertsHelper.handleEvent(detail);
+        break;
+      case "webapps-install-granted":
+      case "webapps-install-denied":
+        WebappsHelper.handleEvent(detail);
+        break;
+    }
+  }
+}
+
+var AlertsHelper = {
+  _listeners: {},
+  _count: 0,
+
+  handleEvent: function alert_handleEvent(detail) {
+    if (!detail || !detail.id)
+      return;
+
+    let listener = this._listeners[detail.id];
+    let topic = detail.type == "desktop-notification-click" ? "alertclickcallback" : "alertfinished";
+    listener.observer.observe(null, topic, listener.cookie);
+
+    // we're done with this notification
+    if (topic === "alertfinished")
+      delete this._listeners[detail.id];
+  },
+
+  registerListener: function alert_registerListener(cookie, alertListener) {
+    let id = "alert" + this._count++;
+    this._listeners[id] = { observer: alertListener, cookie: cookie };
+    return id;
+  },
+
+  showAlertNotification: function alert_showAlertNotification(imageUrl, title, text, textClickable, 
+                                                              cookie, alertListener, name) {
+    let id = this.registerListener(cookie, alertListener);
+    shell.sendEvent(content, "mozChromeEvent", { type: "desktop-notification", id: id, icon: imageUrl, 
+                                                 title: title, text: text } );
+  }
+}
+
+var WebappsHelper = {
+  _installers: {},
+  _count: 0,
+
+  init: function webapps_init() {
+    Services.obs.addObserver(this, "webapps-launch", false);
+    Services.obs.addObserver(this, "webapps-ask-install", false);
+  },
+
+  registerInstaller: function webapps_registerInstaller(data) {
+    let id = "installer" + this._count++;
+    this._installers[id] = data;
+    return id;
+  },
+
+  handleEvent: function webapps_handleEvent(detail) {
+    if (!detail || !detail.id)
+      return;
+
+    let installer = this._installers[detail.id];
+    switch (detail.type) {
+      case "webapps-install-granted":
+        DOMApplicationRegistry.confirmInstall(installer);
+        break;
+      case "webapps-install-denied":
+        DOMApplicationRegistry.denyInstall(installer);
+        break;
+    }
+  },
+
+  observe: function webapps_observe(subject, topic, data) {
+    let json = JSON.parse(data);
+    switch(topic) {
+      case "webapps-launch":
+        DOMApplicationRegistry.getManifestFor(json.origin, function(aManifest) {
+          if (!aManifest)
+            return;
+
+          let manifest = new DOMApplicationManifest(aManifest, json.origin);
+          shell.sendEvent(content, "mozChromeEvent", { type: "webapps-launch", url: manifest.fullLaunchPath(), origin: json.origin });
+        });
+        break;
+      case "webapps-ask-install":
+        let id = this.registerInstaller(json);
+        shell.sendEvent(content, "mozChromeEvent", { type: "webapps-ask-install", id: id, app: json.app } );
+        break;
+    }
+  }
+}
+
+// Start the debugger server.
+function startDebugger() {
+  if (!DebuggerServer.initialized) {
+    DebuggerServer.init();
+    DebuggerServer.addActors('chrome://browser/content/dbg-browser-actors.js');
+  }
+
+  let port = Services.prefs.getIntPref('devtools.debugger.port') || 6000;
+  try {
+    DebuggerServer.openListener(port, false);
+  } catch (e) {
+    dump('Unable to start debugger server: ' + e + '\n');
+  }
+}
+
+window.addEventListener('ContentStart', function(evt) {
+  if (Services.prefs.getBoolPref('devtools.debugger.enabled')) {
+    startDebugger();
+  }
+}, false);

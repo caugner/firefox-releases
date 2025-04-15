@@ -39,6 +39,8 @@
 package org.mozilla.gecko;
 
 import android.R;
+import android.os.Build;
+import android.os.SystemClock;
 import android.content.Context;
 import android.text.Editable;
 import android.text.InputType;
@@ -54,8 +56,10 @@ import android.text.style.BackgroundColorSpan;
 import android.text.style.CharacterStyle;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.UnderlineSpan;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.LogPrinter;
+import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.BaseInputConnection;
@@ -91,6 +95,26 @@ public class GeckoInputConnection
 
     private static final int NO_COMPOSITION_STRING = -1;
 
+    private static final int INLINE_IME_MIN_DISPLAY_SIZE = 480;
+
+    private static final char UNICODE_BULLET                    = '\u2022';
+    private static final char UNICODE_CENT_SIGN                 = '\u00a2';
+    private static final char UNICODE_COPYRIGHT_SIGN            = '\u00a9';
+    private static final char UNICODE_DIVISION_SIGN             = '\u00f7';
+    private static final char UNICODE_DOUBLE_LOW_QUOTATION_MARK = '\u201e';
+    private static final char UNICODE_ELLIPSIS                  = '\u2026';
+    private static final char UNICODE_EURO_SIGN                 = '\u20ac';
+    private static final char UNICODE_INVERTED_EXCLAMATION_MARK = '\u00a1';
+    private static final char UNICODE_MULTIPLICATION_SIGN       = '\u00d7';
+    private static final char UNICODE_PI                        = '\u03a0';
+    private static final char UNICODE_PILCROW_SIGN              = '\u00b6';
+    private static final char UNICODE_POUND_SIGN                = '\u00a3';
+    private static final char UNICODE_REGISTERED_SIGN           = '\u00ae';
+    private static final char UNICODE_SQUARE_ROOT               = '\u221a';
+    private static final char UNICODE_TRADEMARK_SIGN            = '\u2122';
+    private static final char UNICODE_WHITE_BULLET              = '\u25e6';
+    private static final char UNICODE_YEN_SIGN                  = '\u00a5';
+
     private static final Timer mIMETimer = new Timer("GeckoInputConnection Timer");
     private static int mIMEState;
     private static String mIMETypeHint;
@@ -98,6 +122,8 @@ public class GeckoInputConnection
 
     // Is a composition active?
     private int mCompositionStart = NO_COMPOSITION_STRING;
+    private boolean mCommittingText;
+    private KeyCharacterMap mKeyCharacterMap;
     private Editable mEditable;
     private Editable.Factory mEditableFactory;
     private boolean mBatchMode;
@@ -140,7 +166,12 @@ public class GeckoInputConnection
 
     @Override
     public boolean commitText(CharSequence text, int newCursorPosition) {
+        if (mCommittingText)
+            Log.e(LOGTAG, "Please report this bug:", new IllegalStateException("commitText, but already committing text?!"));
+
+        mCommittingText = true;
         replaceText(text, newCursorPosition, false);
+        mCommittingText = false;
 
         if (hasCompositionString()) {
             if (DEBUG) Log.d(LOGTAG, ". . . commitText: endComposition");
@@ -151,6 +182,7 @@ public class GeckoInputConnection
 
     @Override
     public boolean finishComposingText() {
+        // finishComposingText() is sometimes called even when we are not composing text.
         if (hasCompositionString()) {
             if (DEBUG) Log.d(LOGTAG, ". . . finishComposingText: endComposition");
             endComposition();
@@ -284,6 +316,7 @@ public class GeckoInputConnection
 
     @Override
     public boolean setComposingText(CharSequence text, int newCursorPosition) {
+        // setComposingText will likely be called multiple times while we are composing text.
         clampSelection();
         return super.setComposingText(text, newCursorPosition);
     }
@@ -470,14 +503,16 @@ public class GeckoInputConnection
         return (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
     }
 
-    public void notifyTextChange(InputMethodManager imm, String text,
-                                 int start, int oldEnd, int newEnd) {
+    protected void notifyTextChange(InputMethodManager imm, String text,
+                                    int start, int oldEnd, int newEnd) {
         if (!mBatchMode) {
             if (!text.contentEquals(mEditable)) {
                 if (DEBUG) Log.d(LOGTAG, String.format(
                                  ". . . notifyTextChange: current mEditable=\"%s\"",
                                  mEditable.toString()));
-                setEditable(text);
+                // Editable will be updated by IME event
+                if (!hasCompositionString())
+                    setEditable(text);
             }
         }
 
@@ -551,7 +586,7 @@ public class GeckoInputConnection
         }
     }
 
-    public void reset() {
+    protected void resetCompositionState() {
         mCompositionStart = NO_COMPOSITION_STRING;
         mBatchMode = false;
         mUpdateRequest = null;
@@ -564,18 +599,35 @@ public class GeckoInputConnection
             endComposition();
         }
 
-        if (count == 1 && s.charAt(start) == '\n') {
-            // Some IMEs (e.g. SwiftKey X) send a string with '\n' when Enter is pressed
-            // Such string cannot be handled by Gecko, so we convert it to a key press instead
-            if (DEBUG) Log.d(LOGTAG, ". . . onTextChanged: Typed <Enter>");
-            processKeyDown(KeyEvent.KEYCODE_ENTER, new KeyEvent(KeyEvent.ACTION_DOWN,
-                                                                KeyEvent.KEYCODE_ENTER), false);
-            processKeyUp(KeyEvent.KEYCODE_ENTER, new KeyEvent(KeyEvent.ACTION_UP,
-                                                              KeyEvent.KEYCODE_ENTER), false);
-            return;
+        CharSequence changedText = s.subSequence(start, start + count);
+        if (DEBUG) {
+            Log.d(LOGTAG, "onTextChanged: changedText=\"" + changedText + "\"");
         }
 
-        if (!hasCompositionString()) {
+        if (changedText.length() == 1) {
+            char changedChar = changedText.charAt(0);
+
+            // Some IMEs (e.g. SwiftKey X) send a string with '\n' when Enter is pressed
+            // Such string cannot be handled by Gecko, so we convert it to a key press instead
+            if (changedChar == '\n') {
+                processKeyDown(KeyEvent.KEYCODE_ENTER, new KeyEvent(KeyEvent.ACTION_DOWN,
+                                                                    KeyEvent.KEYCODE_ENTER), false);
+                processKeyUp(KeyEvent.KEYCODE_ENTER, new KeyEvent(KeyEvent.ACTION_UP,
+                                                                  KeyEvent.KEYCODE_ENTER), false);
+                return;
+            }
+
+            // If we are committing a single character and didn't have an active composition string,
+            // we can send Gecko keydown/keyup events instead of composition events.
+            if (mCommittingText && !hasCompositionString() && sendKeyEventsToGecko(changedChar)) {
+                // Block this thread until all pending events are processed
+                GeckoAppShell.geckoEventSync();
+                return;
+            }
+        }
+
+        boolean startCompositionString = !hasCompositionString();
+        if (startCompositionString) {
             if (DEBUG) Log.d(LOGTAG, ". . . onTextChanged: IME_COMPOSITION_BEGIN");
             GeckoAppShell.sendEventToGecko(
                 GeckoEvent.createIMEEvent(GeckoEvent.IME_COMPOSITION_BEGIN, 0, 0));
@@ -590,7 +642,7 @@ public class GeckoInputConnection
                 GeckoEvent.createIMEEvent(GeckoEvent.IME_SET_SELECTION, start, before));
         }
 
-        sendTextToGecko(s.subSequence(start, start + count), start + count);
+        sendTextToGecko(changedText, start + count);
 
         if (DEBUG) {
             Log.d(LOGTAG, ". . . onTextChanged: IME_SET_SELECTION, start=" + (start + count)
@@ -602,17 +654,114 @@ public class GeckoInputConnection
 
         // End composition if all characters in the word have been deleted.
         // This fixes autocomplete results not appearing.
-        if (count == 0)
+        if (count == 0 || (startCompositionString && mCommittingText))
             endComposition();
 
         // Block this thread until all pending events are processed
         GeckoAppShell.geckoEventSync();
     }
 
+    private boolean sendKeyEventsToGecko(char inputChar) {
+        // Synthesize VKB key events that could plausibly generate the input character.
+        KeyEvent[] events = synthesizeKeyEvents(inputChar);
+        if (events == null) {
+            if (DEBUG) {
+                Log.d(LOGTAG, "synthesizeKeyEvents: char '" + inputChar
+                              + "' has no virtual key mapping");
+            }
+            return false;
+        }
+
+        boolean sentKeyEvents = false;
+
+        for (KeyEvent event : events) {
+            if (!KeyEvent.isModifierKey(event.getKeyCode())) {
+                if (DEBUG) {
+                    Log.d(LOGTAG, "synthesizeKeyEvents: char '" + inputChar
+                                  + "' -> action=" + event.getAction()
+                                  + ", keyCode=" + event.getKeyCode()
+                                  + ", UnicodeChar='" + (char) event.getUnicodeChar() + "'");
+                }
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createKeyEvent(event));
+                sentKeyEvents = true;
+            }
+        }
+
+        return sentKeyEvents;
+    }
+
+    private KeyEvent[] synthesizeKeyEvents(char inputChar) {
+        // Some symbol characters produce unusual key events on Froyo and Gingerbread.
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.GINGERBREAD_MR1) {
+            switch (inputChar) {
+                case '&':
+                    // Some Gingerbread devices' KeyCharacterMaps return ALT+7 instead of SHIFT+7,
+                    // but some devices like the Droid Bionic treat SHIFT+7 as '7'. So just return
+                    // null and onTextChanged() will send "&" as a composition string instead of
+                    // KEY_DOWN + KEY_UP event pair. This may break web content listening for '&'
+                    // key events, but they will still receive "&" input event.
+                    return null;
+
+                case '<':
+                case '>':
+                    // We can't synthesize KeyEvents for '<' or '>' because Froyo and Gingerbread
+                    // return incorrect shifted char codes from KeyEvent.getUnicodeChar().
+                    // Send these characters as composition strings, not key events.
+                    return null;
+
+                // Some symbol characters produce key events on Froyo and Gingerbread, but not
+                // Honeycomb and ICS. Send these characters as composition strings, not key events,
+                // to more closely mimic Honeycomb and ICS.
+                case UNICODE_BULLET:
+                case UNICODE_CENT_SIGN:
+                case UNICODE_COPYRIGHT_SIGN:
+                case UNICODE_DIVISION_SIGN:
+                case UNICODE_DOUBLE_LOW_QUOTATION_MARK:
+                case UNICODE_ELLIPSIS:
+                case UNICODE_EURO_SIGN:
+                case UNICODE_INVERTED_EXCLAMATION_MARK:
+                case UNICODE_MULTIPLICATION_SIGN:
+                case UNICODE_PI:
+                case UNICODE_PILCROW_SIGN:
+                case UNICODE_POUND_SIGN:
+                case UNICODE_REGISTERED_SIGN:
+                case UNICODE_SQUARE_ROOT:
+                case UNICODE_TRADEMARK_SIGN:
+                case UNICODE_WHITE_BULLET:
+                case UNICODE_YEN_SIGN:
+                    return null;
+
+                default:
+                    // Look up the character's key events in KeyCharacterMap below.
+                    break;
+            }
+        }
+
+        if (mKeyCharacterMap == null) {
+            mKeyCharacterMap = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD);
+        }
+
+        char[] inputChars = { inputChar };
+        return mKeyCharacterMap.getEvents(inputChars);
+    }
+
+    private static KeyEvent[] createKeyDownKeyUpEvents(int keyCode, int metaState) {
+        long now = SystemClock.uptimeMillis();
+        KeyEvent keyDown = new KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, metaState);
+        KeyEvent keyUp = KeyEvent.changeAction(keyDown, KeyEvent.ACTION_UP);
+        KeyEvent[] events = { keyDown, keyUp };
+        return events;
+    }
+
     private void endComposition() {
         if (DEBUG) Log.d(LOGTAG, "IME: endComposition: IME_COMPOSITION_END");
+
+        if (!hasCompositionString())
+           Log.e(LOGTAG, "Please report this bug:", new IllegalStateException("endComposition, but not composing text?!"));
+
         GeckoAppShell.sendEventToGecko(
             GeckoEvent.createIMEEvent(GeckoEvent.IME_COMPOSITION_END, 0, 0));
+
         mCompositionStart = NO_COMPOSITION_STRING;
     }
 
@@ -740,10 +889,22 @@ public class GeckoInputConnection
         else if (mIMEActionHint != null && mIMEActionHint.length() != 0)
             outAttrs.actionLabel = mIMEActionHint;
 
-        outAttrs.imeOptions |= EditorInfo.IME_FLAG_NO_EXTRACT_UI
-                               | EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        DisplayMetrics metrics = GeckoApp.mAppContext.getDisplayMetrics();
+        if (Math.min(metrics.widthPixels, metrics.heightPixels) > INLINE_IME_MIN_DISPLAY_SIZE) {
+            // prevent showing full-screen keyboard only when the screen is tall enough
+            // to show some reasonable amount of the page (see bug 752709)
+            outAttrs.imeOptions |= EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                                   | EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        }
 
-        reset();
+        // onCreateInputConnection() can be called during composition when input focus
+        // is restored from a VKB popup window (such as for entering accented characters)
+        // back to our IME. We want to commit our active composition string. Bug 756429
+        if (hasCompositionString()) {
+            endComposition();
+        }
+
+        resetCompositionState();
         return this;
     }
 
@@ -768,6 +929,9 @@ public class GeckoInputConnection
             Log.d(LOGTAG, "IME: processKeyDown(keyCode=" + keyCode + ", event=" + event + ", "
                           + isPreIme + ")");
         }
+
+        if (keyCode > KeyEvent.getMaxKeyCode())
+            return false;
 
         clampSelection();
 
@@ -829,6 +993,9 @@ public class GeckoInputConnection
             Log.d(LOGTAG, "IME: processKeyUp(keyCode=" + keyCode + ", event=" + event + ", "
                           + isPreIme + ")");
         }
+
+        if (keyCode > KeyEvent.getMaxKeyCode())
+            return false;
 
         switch (keyCode) {
             case KeyEvent.KEYCODE_BACK:
@@ -892,9 +1059,9 @@ public class GeckoInputConnection
         case NOTIFY_IME_RESETINPUTSTATE:
             if (DEBUG) Log.d(LOGTAG, ". . . notifyIME: reset");
 
-            // Composition event is already fired from widget.
-            // So reset IME flags.
-            reset();
+            // Gecko just cancelled the current composition from underneath us,
+            // so abandon our active composition string WITHOUT committing it!
+            resetCompositionState();
 
             // Don't use IMEStateUpdater for reset.
             // Because IME may not work showSoftInput()
@@ -977,10 +1144,10 @@ public class GeckoInputConnection
                 instance = null;
             }
 
-            View v = GeckoApp.mAppContext.getLayerController().getView();
+            final View v = GeckoApp.mAppContext.getLayerController().getView();
             if (DEBUG) Log.d(LOGTAG, "IME: v=" + v);
 
-            InputMethodManager imm = getInputMethodManager();
+            final InputMethodManager imm = getInputMethodManager();
             if (imm == null)
                 return;
 
@@ -990,11 +1157,20 @@ public class GeckoInputConnection
             if (!mEnable)
                 return;
 
-            if (mIMEState != IME_STATE_DISABLED &&
-                mIMEState != IME_STATE_PLUGIN)
-                imm.showSoftInput(v, 0);
-            else
+            if (mIMEState != IME_STATE_DISABLED) {
+                if (!v.isFocused()) {
+                    GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+                        public void run() {
+                            v.requestFocus();
+                            imm.showSoftInput(v, 0);
+                        }
+                    });
+                } else {
+                    imm.showSoftInput(v, 0);
+                }
+            } else {
                 imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
+            }
         }
     }
 
@@ -1011,12 +1187,11 @@ public class GeckoInputConnection
         Selection.setSelection(mEditable, contents.length());
     }
 
-    private boolean hasCompositionString() {
+    protected final boolean hasCompositionString() {
         return mCompositionStart != NO_COMPOSITION_STRING;
     }
-}
 
-class DebugGeckoInputConnection extends GeckoInputConnection {
+private static final class DebugGeckoInputConnection extends GeckoInputConnection {
     public DebugGeckoInputConnection(View targetView) {
         super(targetView);
     }
@@ -1147,9 +1322,12 @@ class DebugGeckoInputConnection extends GeckoInputConnection {
     }
 
     @Override
-    public void reset() {
-        Log.d(LOGTAG, "IME: reset");
-        super.reset();
+    protected void resetCompositionState() {
+        Log.d(LOGTAG, "IME: resetCompositionState");
+        if (hasCompositionString()) {
+            Log.d(LOGTAG, "resetCompositionState() is abandoning an active composition string");
+        }
+        super.resetCompositionState();
     }
 
     @Override
@@ -1214,11 +1392,6 @@ class DebugGeckoInputConnection extends GeckoInputConnection {
         Log.d(LOGTAG, String.format("IME: >notifyIME(type=%d, state=%d)", type, state));
         super.notifyIME(type, state);
     }
+}
 
-    @Override
-    public void notifyIMEChange(String text, int start, int end, int newEnd) {
-        Log.d(LOGTAG, String.format("IME: >notifyIMEChange(\"%s\", start=%d, end=%d, newEnd=%d)",
-                                    text, start, end, newEnd));
-        super.notifyIMEChange(text, start, end, newEnd);
-    }
 }

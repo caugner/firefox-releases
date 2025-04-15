@@ -182,6 +182,7 @@ private:
     nsresult ContinueProcessFallback(nsresult);
     bool     ResponseWouldVary();
     void     HandleAsyncAbort();
+    nsresult EnsureAssocReq();
 
     nsresult ContinueOnStartRequest1(nsresult);
     nsresult ContinueOnStartRequest2(nsresult);
@@ -210,14 +211,19 @@ private:
     nsresult OpenCacheEntry();
     nsresult OnOfflineCacheEntryAvailable(nsICacheEntryDescriptor *aEntry,
                                           nsCacheAccessMode aAccess,
-                                          nsresult aResult,
-                                          bool aSync);
-    nsresult OpenNormalCacheEntry(bool aSync);
+                                          nsresult aResult);
+    nsresult OpenNormalCacheEntry();
     nsresult OnNormalCacheEntryAvailable(nsICacheEntryDescriptor *aEntry,
                                          nsCacheAccessMode aAccess,
-                                         nsresult aResult,
-                                         bool aSync);
+                                         nsresult aResult);
     nsresult OpenOfflineCacheEntryForWriting();
+    nsresult OnOfflineCacheEntryForWritingAvailable(
+        nsICacheEntryDescriptor *aEntry,
+        nsCacheAccessMode aAccess,
+        nsresult aResult);
+    nsresult OnCacheEntryAvailableInternal(nsICacheEntryDescriptor *entry,
+                                           nsCacheAccessMode access,
+                                           nsresult status);
     nsresult GenerateCacheKey(PRUint32 postID, nsACString &key);
     nsresult UpdateExpirationTime();
     nsresult CheckCache();
@@ -299,9 +305,8 @@ private:
     PRUint32                          mRequestTime;
 
     typedef nsresult (nsHttpChannel:: *nsOnCacheEntryAvailableCallback)(
-        nsICacheEntryDescriptor *, nsCacheAccessMode, nsresult, bool);
+        nsICacheEntryDescriptor *, nsCacheAccessMode, nsresult);
     nsOnCacheEntryAvailableCallback   mOnCacheEntryAvailableCallback;
-    bool                              mAsyncCacheOpen;
 
     nsCOMPtr<nsICacheEntryDescriptor> mOfflineCacheEntry;
     nsCacheAccessMode                 mOfflineCacheAccess;
@@ -332,9 +337,6 @@ private:
     PRUint32                          mResuming                 : 1;
     PRUint32                          mInitedCacheEntry         : 1;
     PRUint32                          mCacheForOfflineUse       : 1;
-    // True if mCacheForOfflineUse was set because we were caching
-    // opportunistically.
-    PRUint32                          mCachingOpportunistically : 1;
     // True if we are loading a fallback cache entry from the
     // application cache.
     PRUint32                          mFallbackChannel          : 1;

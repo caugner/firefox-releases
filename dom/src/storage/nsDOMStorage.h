@@ -45,7 +45,6 @@
 #include "nsAutoPtr.h"
 #include "nsIDOMStorageObsolete.h"
 #include "nsIDOMStorage.h"
-#include "nsIDOMStorageList.h"
 #include "nsIDOMStorageItem.h"
 #include "nsIPermissionManager.h"
 #include "nsInterfaceHashtable.h"
@@ -82,7 +81,7 @@ using mozilla::dom::StorageParent;
 
 class DOMStorageImpl;
 
-class nsDOMStorageEntry : public nsVoidPtrHashKey
+class nsDOMStorageEntry : public nsPtrHashKey<const void>
 {
 public:
   nsDOMStorageEntry(KeyTypePointer aStr);
@@ -340,6 +339,8 @@ private:
   nsDOMStorage* mOwner;
 };
 
+class nsDOMStorage2;
+
 class nsDOMStorage : public nsIDOMStorageObsolete,
                      public nsPIDOMStorage
 {
@@ -367,9 +368,6 @@ public:
   virtual nsIPrincipal* Principal();
   virtual bool CanAccess(nsIPrincipal *aPrincipal);
   virtual nsDOMStorageType StorageType();
-  virtual void BroadcastChangeNotification(const nsSubstring &aKey,
-                                           const nsSubstring &aOldValue,
-                                           const nsSubstring &aNewValue);
 
   // Check whether storage may be used by the caller, and whether it
   // is session only.  Returns true if storage may be used.
@@ -420,7 +418,7 @@ public:
 
   friend class nsIDOMStorage2;
   nsCOMPtr<nsIPrincipal> mPrincipal;
-  nsPIDOMStorage* mEventBroadcaster;
+  nsDOMStorage2* mEventBroadcaster;
 };
 
 class nsDOMStorage2 : public nsIDOMStorage,
@@ -446,10 +444,10 @@ public:
   virtual nsIPrincipal* Principal();
   virtual bool CanAccess(nsIPrincipal *aPrincipal);
   virtual nsDOMStorageType StorageType();
-  virtual void BroadcastChangeNotification(const nsSubstring &aKey,
-                                           const nsSubstring &aOldValue,
-                                           const nsSubstring &aNewValue);
 
+  void BroadcastChangeNotification(const nsSubstring &aKey,
+                                   const nsSubstring &aOldValue,
+                                   const nsSubstring &aNewValue);
   nsresult InitAsSessionStorageFork(nsIPrincipal *aPrincipal,
                                     const nsSubstring &aDocumentURI,
                                     nsIDOMStorageObsolete* aStorage);
@@ -463,59 +461,6 @@ private:
   // is bound to
   nsString mDocumentURI;
   nsRefPtr<nsDOMStorage> mStorage;
-};
-
-class nsDOMStorageList : public nsIDOMStorageList
-{
-public:
-  nsDOMStorageList()
-  {
-    mStorages.Init();
-  }
-
-  virtual ~nsDOMStorageList() {}
-
-  // nsISupports
-  NS_DECL_ISUPPORTS
-
-  // nsIDOMStorageList
-  NS_DECL_NSIDOMSTORAGELIST
-
-  nsIDOMStorageObsolete* GetNamedItem(const nsAString& aDomain, nsresult* aResult);
-
-  /**
-   * Check whether aCurrentDomain has access to aRequestedDomain
-   */
-  static bool
-  CanAccessDomain(const nsACString& aRequestedDomain,
-                  const nsACString& aCurrentDomain);
-
-protected:
-
-  /**
-   * Return the global nsIDOMStorageObsolete for a particular domain.
-   * aNoCurrentDomainCheck may be true to skip the domain comparison;
-   * this is used for chrome code so that it may retrieve data from
-   * any domain.
-   *
-   * @param aRequestedDomain domain to return
-   * @param aCurrentDomain domain of current caller
-   * @param aNoCurrentDomainCheck true to skip domain comparison
-   */
-  nsIDOMStorageObsolete*
-  GetStorageForDomain(const nsACString& aRequestedDomain,
-                      const nsACString& aCurrentDomain,
-                      bool aNoCurrentDomainCheck,
-                      nsresult* aResult);
-
-  /**
-   * Convert the domain into an array of its component parts.
-   */
-  static bool
-  ConvertDomainToArray(const nsACString& aDomain,
-                       nsTArray<nsCString>* aArray);
-
-  nsInterfaceHashtable<nsCStringHashKey, nsIDOMStorageObsolete> mStorages;
 };
 
 class nsDOMStorageItem : public nsIDOMStorageItem,
@@ -636,9 +581,6 @@ NS_NewDOMStorage(nsISupports* aOuter, REFNSIID aIID, void** aResult);
 
 nsresult
 NS_NewDOMStorage2(nsISupports* aOuter, REFNSIID aIID, void** aResult);
-
-nsresult
-NS_NewDOMStorageList(nsIDOMStorageList** aResult);
 
 PRUint32
 GetOfflinePermission(const nsACString &aDomain);

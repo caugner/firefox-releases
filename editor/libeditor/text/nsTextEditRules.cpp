@@ -711,10 +711,8 @@ nsTextEditRules::WillInsertText(PRInt32          aAction,
     return NS_ERROR_FAILURE;
 
   // we need to get the doc
-  nsCOMPtr<nsIDOMDocument>doc;
-  res = mEditor->GetDocument(getter_AddRefs(doc));
-  NS_ENSURE_SUCCESS(res, res);
-  NS_ENSURE_TRUE(doc, NS_ERROR_NULL_POINTER);
+  nsCOMPtr<nsIDOMDocument> doc = mEditor->GetDOMDocument();
+  NS_ENSURE_TRUE(doc, NS_ERROR_NOT_INITIALIZED);
     
   if (aAction == kInsertTextIME) 
   { 
@@ -1107,6 +1105,17 @@ nsTextEditRules::CreateTrailingBRIfNeeded()
     NS_ENSURE_SUCCESS(res, res); 
     nsCOMPtr<nsIDOMNode> unused;
     res = CreateMozBR(body, rootLen, address_of(unused));
+  } else {
+    // Check to see if the trailing BR is a former bogus node - this will have stuck
+    // around if we previously morphed a trailing node into a bogus node
+    nsCOMPtr<nsIContent> lastBR = do_QueryInterface(lastChild);
+    if (!mEditor->IsMozEditorBogusNode(lastBR))
+      return NS_OK;
+
+    // Morph it back to a mozBR
+    dom::Element* elem = lastBR->AsElement();
+    elem->UnsetAttr(kNameSpaceID_None, kMOZEditorBogusNodeAttrAtom, false);
+    elem->SetAttr(kNameSpaceID_None, nsGkAtoms::type, NS_LITERAL_STRING("_moz"), true);
   }
   return res;
 }

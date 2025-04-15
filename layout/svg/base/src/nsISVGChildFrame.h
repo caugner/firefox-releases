@@ -39,21 +39,22 @@
 #ifndef __NS_ISVGCHILDFRAME_H__
 #define __NS_ISVGCHILDFRAME_H__
 
-
-#include "nsQueryFrame.h"
-#include "nsCOMPtr.h"
-#include "nsRect.h"
 #include "gfxRect.h"
-#include "gfxMatrix.h"
+#include "nsQueryFrame.h"
+#include "nsRect.h"
 
-class gfxContext;
+class nsIFrame;
 class nsRenderingContext;
 
+struct gfxMatrix;
+struct nsPoint;
+class SVGBBox;
+
 namespace mozilla {
-class SVGAnimatedNumberList;
-class SVGNumberList;
 class SVGAnimatedLengthList;
+class SVGAnimatedNumberList;
 class SVGLengthList;
+class SVGNumberList;
 class SVGUserUnitList;
 }
 
@@ -88,13 +89,13 @@ public:
 
   // Get bounds in our gfxContext's coordinates space (in app units)
   NS_IMETHOD_(nsRect) GetCoveredRegion()=0;
-  NS_IMETHOD UpdateCoveredRegion()=0;
 
-  // Called once on SVG child frames except descendants of <defs>, either
-  // when their nsSVGOuterSVGFrame receives its initial reflow (i.e. once
-  // the SVG viewport dimensions are known), or else when they're inserted
-  // into the frame tree (if they're inserted after the initial reflow).
-  NS_IMETHOD InitialUpdate()=0;
+  // Called on SVG child frames (except NS_STATE_SVG_NONDISPLAY_CHILD frames)
+  // to update and then invalidate their cached bounds. This method is not
+  // called until after the nsSVGOuterSVGFrame has had its initial reflow
+  // (i.e. once the SVG viewport dimensions are known). It should also only
+  // be called by nsSVGOuterSVGFrame during its reflow.
+  virtual void UpdateBounds()=0;
 
   // Flags to pass to NotifySVGChange:
   //
@@ -112,8 +113,6 @@ public:
     COORD_CONTEXT_CHANGED = 0x04
   };
   virtual void NotifySVGChanged(PRUint32 aFlags)=0;
-  virtual void NotifyRedrawSuspended()=0;
-  virtual void NotifyRedrawUnsuspended()=0;
 
   /**
    * Get this frame's contribution to the rect returned by a GetBBox() call
@@ -136,7 +135,7 @@ public:
    * @param aFlags Flags indicating whether, stroke, for example, should be
    *   included in the bbox calculation.
    */
-  virtual gfxRect GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
+  virtual SVGBBox GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
                                       PRUint32 aFlags) = 0;
 
   // Are we a container frame?

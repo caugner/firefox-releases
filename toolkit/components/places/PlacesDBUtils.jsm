@@ -341,6 +341,7 @@ let PlacesDBUtils = {
       "WHERE anno_attribute_id IN ( "               +
       "  SELECT id FROM moz_anno_attributes "       +
       "  WHERE name = 'sync/children' "             +
+      "     OR name = 'placesInternal/GUID' "       +
       "     OR name BETWEEN 'weave/' AND 'weave0' " +
       ")");
     cleanupStatements.push(deleteObsoleteItemsAnnos);
@@ -710,6 +711,19 @@ let PlacesDBUtils = {
                                   "WHERE v.place_id = h.id) " +
       ")");
     cleanupStatements.push(fixVisitStats);
+
+    // L.3 recalculate hidden for redirects.
+    let fixRedirectsHidden = DBConn.createAsyncStatement(
+      "UPDATE moz_places " +
+      "SET hidden = 1 " +
+      "WHERE id IN ( " +
+        "SELECT h.id FROM moz_places h " +
+        "JOIN moz_historyvisits src ON src.place_id = h.id " +
+        "JOIN moz_historyvisits dst ON dst.from_visit = src.id AND dst.visit_type IN (5,6) " +
+        "LEFT JOIN moz_bookmarks on fk = h.id AND fk ISNULL " +
+        "GROUP BY src.place_id HAVING count(*) = visit_count " +
+      ")");
+    cleanupStatements.push(fixRedirectsHidden);
 
     // MAINTENANCE STATEMENTS SHOULD GO ABOVE THIS POINT!
 

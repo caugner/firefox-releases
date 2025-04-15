@@ -44,10 +44,15 @@
  * entries at the top.
  */
 
-// SYNTAX HINTS:  dashes are delimiters.  Use underscores instead.
-//  The first character after a period must be alphabetic.
+/*
+ * SYNTAX HINTS:
+ *
+ *  - Dashes are delimiters; use underscores instead.
+ *  - The first character after a period must be alphabetic.
+ *  - Computed values (e.g. 50 * 1024) don't work.
+ */
 
-pref("keyword.URL", "http://www.google.com/search?ie=UTF-8&oe=utf-8&q=");
+pref("keyword.URL", "https://www.google.com/search?ie=UTF-8&oe=utf-8&q=");
 pref("keyword.enabled", false);
 pref("general.useragent.locale", "chrome://global/locale/intl.properties");
 pref("general.useragent.compatMode.firefox", false);
@@ -188,6 +193,10 @@ pref("media.wave.enabled", true);
 #ifdef MOZ_WEBM
 pref("media.webm.enabled", true);
 #endif
+#ifdef MOZ_GSTREAMER
+pref("media.h264.enabled", true);
+#endif
+
 
 // Whether to autostart a media element with an |autoplay| attribute
 pref("media.autoplay.enabled", true);
@@ -202,6 +211,8 @@ pref("gfx.color_management.enablev4", false);
 pref("gfx.downloadable_fonts.enabled", true);
 pref("gfx.downloadable_fonts.fallback_delay", 3000);
 pref("gfx.downloadable_fonts.sanitize", true);
+
+pref("gfx.filter.nearest.force-enabled", false);
 
 // whether to always search all font cmaps during system font fallback
 pref("gfx.font_rendering.fallback.always_use_cmaps", false);
@@ -235,6 +246,12 @@ pref("gfx.canvas.azure.enabled", true);
 pref("gfx.canvas.azure.enabled", true);
 #endif
 #endif
+
+#ifdef ANDROID
+pref("gfx.textures.poweroftwo.force-enabled", false);
+#endif
+
+pref("gfx.work-around-driver-bugs", true);
 
 pref("accessibility.browsewithcaret", false);
 pref("accessibility.warn_on_browsewithcaret", true);
@@ -289,9 +306,6 @@ pref("accessibility.typeaheadfind.prefillwithselection", true);
 // use Mac OS X Appearance panel text smoothing setting when rendering text, disabled by default
 pref("gfx.use_text_smoothing_setting", false);
 
-// show checkerboard pattern on android, enabled by default (option exists for image analysis testing)
-pref("gfx.show_checkerboard_pattern", true);
-
 // loading and rendering of framesets and iframes
 pref("browser.frames.enabled", true);
 
@@ -311,6 +325,9 @@ pref("toolkit.telemetry.server", "https://data.mozilla.com");
 pref("toolkit.telemetry.server_owner", "Mozilla");
 // Information page about telemetry (temporary ; will be about:telemetry in the end)
 pref("toolkit.telemetry.infoURL", "http://www.mozilla.com/legal/privacy/firefox.html#telemetry");
+// Determines whether full SQL strings are returned when they might contain sensitive info
+// i.e. dynamically constructed SQL strings or SQL executed by addons against addon DBs
+pref("toolkit.telemetry.debugSlowSql", false);
 
 // Disable remote debugging protocol logging
 pref("devtools.debugger.log", false);
@@ -413,7 +430,7 @@ pref("extensions.spellcheck.inline.max-misspellings", 500);
 
 pref("editor.use_custom_colors", false);
 pref("editor.singleLine.pasteNewlines",      2);
-pref("editor.use_css",                       true);
+pref("editor.use_css",                       false);
 pref("editor.css.default_length_unit",       "px");
 pref("editor.resizing.preserve_ratio",       true);
 pref("editor.positioning.offset",            0);
@@ -625,6 +642,7 @@ pref("dom.min_background_timeout_value", 1000);
 // Use the new DOM bindings (only affects any scopes created after the pref is
 // changed)
 pref("dom.new_bindings", true);
+pref("dom.paris_bindings", true);
 
 // Parsing perf prefs. For now just mimic what the old code did.
 #ifndef XP_WIN
@@ -797,10 +815,27 @@ pref("network.http.pipelining.ssl"  , false); // disable pipelining over SSL
 pref("network.http.proxy.pipelining", false);
 
 // Max number of requests in the pipeline
-pref("network.http.pipelining.maxrequests" , 4);
+pref("network.http.pipelining.maxrequests" , 32);
+
+// An optimistic request is one pipelined when policy might allow a new
+// connection instead
+pref("network.http.pipelining.max-optimistic-requests" , 4);
+
+pref("network.http.pipelining.aggressive", false);
+pref("network.http.pipelining.maxsize" , 300000);
+pref("network.http.pipelining.reschedule-on-timeout", true);
+pref("network.http.pipelining.reschedule-timeout", 1500);
+
+// The read-timeout is a ms timer that causes the transaction to be completely
+// restarted without pipelining.
+pref("network.http.pipelining.read-timeout", 30000);
 
 // Prompt for 307 redirects
 pref("network.http.prompt-temp-redirect", true);
+
+// If true generate CORRUPTED_CONTENT errors for entities that
+// contain an invalid Assoc-Req response header
+pref("network.http.assoc-req.enforce", false);
 
 // On networks deploying QoS, it is recommended that these be lockpref()'d,
 // since inappropriate marking can easily overwhelm bandwidth reservations
@@ -1649,6 +1684,28 @@ pref("font.size.inflation.emPerLine", 0);
  * used.
  */
 pref("font.size.inflation.minTwips", 0);
+/*
+ * Since the goal of font size inflation is to avoid having to
+ * repeatedly scroll side to side to read a block of text, and there are
+ * a number of page layouts where a relatively small chunk of text is
+ * better of not being inflated according to the same algorithm we use
+ * for larger chunks of text, we want a threshold for an amount of text
+ * that triggers font size inflation.  This preference controls that
+ * threshold.
+ *
+ * It controls the threshold used within an *approximation* of the
+ * number of lines of text we use.  In particular, if we assume that
+ * each character (collapsing collapsible whitespace) has a width the
+ * same as the em-size of the font (when, normally, it's actually quite
+ * a bit smaller on average), this preference gives the percentage of a
+ * number of lines of text we'd need to trigger inflation.  This means
+ * that a percentage of 100 means that we'd need a number of characters
+ * (we know the font size and the width) equivalent to one line of
+ * square text (which is actually a lot less than a real line of text).
+ *
+ * A value of 0 means there's no character length threshold.
+ */
+pref("font.size.inflation.lineThreshold", 400);
 
 #ifdef XP_WIN
 
@@ -2049,8 +2106,7 @@ pref("print.print_extra_margin", 90); // twips (90 twips is an eigth of an inch)
 pref("print.extend_native_print_dialog", true);
 
 // Locate Java by scanning the Sun JRE installation directory with a minimum version
-// Note: Does not scan if security.enable_java is not true
-pref("plugin.scan.SunJRE", "1.3");
+pref("plugin.scan.SunJRE", "1.6");
 
 // Locate plugins by scanning the Adobe Acrobat installation directory with a minimum version
 pref("plugin.scan.Acrobat", "5.0");
@@ -2071,13 +2127,6 @@ pref("plugin.allow.asyncdrawing", false);
 // Help Windows NT, 2000, and XP dialup a RAS connection
 // when a network address is unreachable.
 pref("network.autodial-helper.enabled", true);
-
-// Pref to control whether we set ddeexec subkeys for the http
-// Internet shortcut protocol if we are handling it.  These
-// subkeys will be set only while we are running (to avoid the
-// problem of Windows showing an alert when it tries to use DDE
-// and we're not already running).
-pref("advanced.system.supportDDEExec", true);
 
 // Switch the keyboard layout per window
 pref("intl.keyboard.per_window_layout", false);
@@ -2370,19 +2419,19 @@ pref("font.name-list.serif.zh-CN", "STSong,Heiti SC");
 pref("font.name-list.sans-serif.zh-CN", "STHeiti,Heiti SC");
 pref("font.name-list.monospace.zh-CN", "STHeiti,Heiti SC");
 
-pref("font.name.serif.zh-TW", "Apple LiSung"); 
-pref("font.name.sans-serif.zh-TW", "Apple LiGothic");  
-pref("font.name.monospace.zh-TW", "Apple LiGothic");  
-pref("font.name-list.serif.zh-TW", "Apple LiSung,Heiti TC");
-pref("font.name-list.sans-serif.zh-TW", "Apple LiGothic,Heiti TC");
-pref("font.name-list.monospace.zh-TW", "Apple LiGothic,Heiti TC");
+pref("font.name.serif.zh-TW", "Times"); 
+pref("font.name.sans-serif.zh-TW", "Helvetica");  
+pref("font.name.monospace.zh-TW", "Courier");  
+pref("font.name-list.serif.zh-TW", "Times,LiSong Pro,Heiti TC");
+pref("font.name-list.sans-serif.zh-TW", "Helvetica,Heiti TC,LiHei Pro");
+pref("font.name-list.monospace.zh-TW", "Courier,Heiti TC,LiHei Pro");
 
-pref("font.name.serif.zh-HK", "LiSong Pro");
-pref("font.name.sans-serif.zh-HK", "LiHei Pro");
-pref("font.name.monospace.zh-HK", "LiHei Pro");
-pref("font.name-list.serif.zh-HK", "LiSong Pro,Heiti TC");
-pref("font.name-list.sans-serif.zh-HK", "LiHei Pro,Heiti TC");
-pref("font.name-list.monospace.zh-HK", "LiHei Pro,Heiti TC");
+pref("font.name.serif.zh-HK", "Times");
+pref("font.name.sans-serif.zh-HK", "Helvetica");
+pref("font.name.monospace.zh-HK", "Courier");
+pref("font.name-list.serif.zh-HK", "Times,LiSong Pro,Heiti TC");
+pref("font.name-list.sans-serif.zh-HK", "Helvetica,Heiti TC,LiHei Pro");
+pref("font.name-list.monospace.zh-HK", "Courier,Heiti TC,LiHei Pro");
 
 pref("font.default.ar", "sans-serif");
 pref("font.size.variable.ar", 16);
@@ -2534,7 +2583,7 @@ pref("ui.key.generalAccessKey", -1);
 // Use 0 for disabled, 1 for Shift, 2 for Ctrl, 4 for Alt, 8 for Meta (Cmd)
 // (values can be combined, e.g. 3 for Ctrl+Shift)
 pref("ui.key.chromeAccess", 2);
-pref("ui.key.contentAccess", 2);
+pref("ui.key.contentAccess", 6);
 
 // print_extra_margin enables platforms to specify an extra gap or margin
 // around the content of the page for Print Preview only
@@ -3380,6 +3429,10 @@ pref("image.mem.max_ms_before_yield", 5);
 // The maximum source data size for which we auto sync decode
 pref("image.mem.max_bytes_for_sync_decode", 150000);
 
+// The maximum amount of decoded image data we'll willingly keep around (we
+// might keep around more than this, but we'll try to get down to this value).
+pref("image.mem.max_decoded_image_kb", 51200);
+
 // WebGL prefs
 pref("webgl.force-enabled", false);
 pref("webgl.disabled", false);
@@ -3472,6 +3525,7 @@ pref("full-screen-api.allow-trusted-requests-only", true);
 pref("full-screen-api.key-input-restricted", true);
 pref("full-screen-api.warning.enabled", true);
 pref("full-screen-api.exit-on-deactivate", true);
+pref("full-screen-api.pointer-lock.enabled", true);
 
 // Time limit, in milliseconds, for nsEventStateManager::IsHandlingUserInput().
 // Used to detect long running handlers of user-generated events.
@@ -3495,6 +3549,9 @@ pref("dom.sms.whitelist", "");
 pref("dom.mozContacts.enabled", false);
 pref("dom.mozContacts.whitelist", "");
 
+// WebSettings
+pref("dom.mozSettings.enabled", false);
+
 // enable JS dump() function.
 pref("browser.dom.window.dump.enabled", false);
 
@@ -3506,6 +3563,7 @@ pref("profiler.entries", 100000);
 // Network API
 pref("dom.network.enabled", true);
 pref("dom.network.metered", false);
+
 #ifdef XP_WIN
 // On 32-bit Windows, fire a low-memory notification if we have less than this
 // many mb of virtual address space available.
@@ -3524,3 +3582,8 @@ pref("memory.low_physical_memory_threshold_mb", 0);
 // low_memory_notification_interval_ms.
 pref("memory.low_memory_notification_interval_ms", 10000);
 #endif
+
+// How long must we wait before declaring that a window is a "ghost" (i.e., a
+// likely leak)?  This should be longer than it usually takes for an eligible
+// window to be collected via the GC/CC.
+pref("memory.ghost_window_timeout_seconds", 60);

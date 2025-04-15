@@ -108,6 +108,7 @@ STATIC_LIBS += \
   gfx2d \
   gfxipc_s \
   hal_s \
+  dombindings_s \
   $(NULL)
 
 ifdef MOZ_B2G_RIL #{
@@ -394,6 +395,7 @@ OS_LIBS += \
   -lhardware \
   -lutils \
   -lcutils \
+  -lsysutils \
   -lcamera_client \
   -lbinder \
   -lsensorservice \
@@ -521,7 +523,7 @@ endif
 endif
 
 ifeq ($(OS_ARCH),WINNT)
-OS_LIBS += $(call EXPAND_LIBNAME,shell32 ole32 version winspool comdlg32 imm32 msimg32 shlwapi psapi ws2_32 dbghelp rasapi32 rasdlg iphlpapi uxtheme setupapi t2embed secur32)
+OS_LIBS += $(call EXPAND_LIBNAME,shell32 ole32 version winspool comdlg32 imm32 msimg32 shlwapi psapi ws2_32 dbghelp rasapi32 rasdlg iphlpapi uxtheme setupapi secur32)
 ifdef MOZ_CRASHREPORTER
 OS_LIBS += $(call EXPAND_LIBNAME,wininet)
 endif
@@ -531,14 +533,12 @@ endif
 ifdef _MSC_VER
 OS_LIBS += $(call EXPAND_LIBNAME,delayimp)
 EXTRA_DSO_LDOPTS += \
-  -DELAYLOAD:gkmedias.dll \
   -DELAYLOAD:psapi.dll \
   -DELAYLOAD:dbghelp.dll \
   -DELAYLOAD:rasapi32.dll \
   -DELAYLOAD:rasdlg.dll \
   -DELAYLOAD:comdlg32.dll \
   -DELAYLOAD:winspool.drv \
-  -DELAYLOAD:t2embed.dll \
   -DELAYLOAD:secur32.dll \
   $(NULL)
 ifdef ACCESSIBILITY
@@ -553,6 +553,10 @@ endif
 
 ifdef MOZ_ENABLE_QT
 EXTRA_DSO_LDOPTS += $(MOZ_QT_LDFLAGS) $(XEXT_LIBS)
+endif
+
+ifdef MOZ_GSTREAMER
+EXTRA_DSO_LDOPTS += $(GSTREAMER_LIBS)
 endif
 
 include $(topsrcdir)/config/rules.mk

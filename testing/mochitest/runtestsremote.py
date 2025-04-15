@@ -384,8 +384,6 @@ class MochiRemote(Mochitest):
                 failed += 1
             elif line.startswith("INFO TEST-KNOWN"):
                 todo += 1
-
-            logFile.append("%s %s" % (incr, line))
             incr += 1
 
         logFile.append("%s INFO TEST-START | Shutdown" % incr)
@@ -409,15 +407,14 @@ class MochiRemote(Mochitest):
         
 def main():
     scriptdir = os.path.abspath(os.path.realpath(os.path.dirname(__file__)))
-    dm_none = devicemanagerADB.DeviceManagerADB()
-    auto = RemoteAutomation(dm_none, "fennec")
+    auto = RemoteAutomation(None, "fennec")
     parser = RemoteOptions(auto, scriptdir)
     options, args = parser.parse_args()
     if (options.dm_trans == "adb"):
         if (options.deviceIP):
             dm = devicemanagerADB.DeviceManagerADB(options.deviceIP, options.devicePort)
         else:
-            dm = dm_none
+            dm = devicemanagerADB.DeviceManagerADB()
     else:
          dm = devicemanagerSUT.DeviceManagerSUT(options.deviceIP, options.devicePort)
     auto.setDeviceManager(dm)

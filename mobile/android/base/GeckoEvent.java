@@ -37,6 +37,7 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.gfx.DisplayPortMetrics;
 import org.mozilla.gecko.gfx.IntSize;
 import org.mozilla.gecko.gfx.ViewportMetrics;
 import android.os.*;
@@ -52,6 +53,7 @@ import android.util.DisplayMetrics;
 import android.graphics.PointF;
 import android.text.format.Time;
 import android.os.SystemClock;
+import java.lang.Math;
 import java.lang.System;
 
 import android.util.Log;
@@ -61,6 +63,9 @@ import android.util.Log;
  * Fields have different meanings depending on the event type.
  */
 
+/* This class is referenced by Robocop via reflection; use care when 
+ * modifying the signature.
+ */
 public class GeckoEvent {
     private static final String LOGTAG = "GeckoEvent";
 
@@ -68,8 +73,8 @@ public class GeckoEvent {
     private static final int NATIVE_POKE = 0;
     private static final int KEY_EVENT = 1;
     private static final int MOTION_EVENT = 2;
-    private static final int ORIENTATION_EVENT = 3;
-    private static final int ACCELERATION_EVENT = 4;
+    private static final int SENSOR_EVENT = 3;
+    private static final int UNUSED1_EVENT = 4;
     private static final int LOCATION_EVENT = 5;
     private static final int IME_EVENT = 6;
     private static final int DRAW = 7;
@@ -86,9 +91,14 @@ public class GeckoEvent {
     private static final int VIEWPORT = 20;
     private static final int VISITED = 21;
     private static final int NETWORK_CHANGED = 22;
-    private static final int PROXIMITY_EVENT = 23;
+    private static final int UNUSED3_EVENT = 23;
     private static final int ACTIVITY_RESUMING = 24;
     private static final int SCREENSHOT = 25;
+    private static final int UNUSED2_EVENT = 26;
+    private static final int SCREENORIENTATION_CHANGED = 27;
+    private static final int COMPOSITOR_PAUSE = 28;
+    private static final int COMPOSITOR_RESUME = 29;
+    private static final int PAINT_LISTEN_START_EVENT = 30;
 
     public static final int IME_COMPOSITION_END = 0;
     public static final int IME_COMPOSITION_BEGIN = 1;
@@ -120,11 +130,10 @@ public class GeckoEvent {
     public Point[] mPointRadii;
     public Rect mRect;
     public double mX, mY, mZ;
-    public double mAlpha, mBeta, mGamma;
-    public double mDistance;
 
     public int mMetaState, mFlags;
     public int mKeyCode, mUnicodeChar;
+    public int mRepeatCount;
     public int mOffset, mCount;
     public String mCharacters, mCharactersExtra;
     public int mRangeType, mRangeStyles;
@@ -137,31 +146,33 @@ public class GeckoEvent {
 
     public int mNativeWindow;
 
+    public short mScreenOrientation;
+
     private GeckoEvent(int evType) {
         mType = evType;
     }
 
-    public static GeckoEvent createPauseEvent(int activityDepth) {
+    public static GeckoEvent createPauseEvent(boolean isApplicationInBackground) {
         GeckoEvent event = new GeckoEvent(ACTIVITY_PAUSING);
-        event.mFlags = activityDepth > 0 ? 1 : 0;
+        event.mFlags = isApplicationInBackground ? 0 : 1;
         return event;
     }
 
-    public static GeckoEvent createResumeEvent(int activityDepth) {
+    public static GeckoEvent createResumeEvent(boolean isApplicationInBackground) {
         GeckoEvent event = new GeckoEvent(ACTIVITY_RESUMING);
-        event.mFlags = activityDepth > 0 ? 1 : 0;
+        event.mFlags = isApplicationInBackground ? 0 : 1;
         return event;
     }
 
-    public static GeckoEvent createStoppingEvent(int activityDepth) {
+    public static GeckoEvent createStoppingEvent(boolean isApplicationInBackground) {
         GeckoEvent event = new GeckoEvent(ACTIVITY_STOPPING);
-        event.mFlags = activityDepth > 0 ? 1 : 0;
+        event.mFlags = isApplicationInBackground ? 0 : 1;
         return event;
     }
 
-    public static GeckoEvent createStartEvent(int activityDepth) {
+    public static GeckoEvent createStartEvent(boolean isApplicationInBackground) {
         GeckoEvent event = new GeckoEvent(ACTIVITY_START);
-        event.mFlags = activityDepth > 0 ? 1 : 0;
+        event.mFlags = isApplicationInBackground ? 0 : 1;
         return event;
     }
 
@@ -179,6 +190,14 @@ public class GeckoEvent {
         return event;
     }
 
+    public static GeckoEvent createCompositorPauseEvent() {
+        return new GeckoEvent(COMPOSITOR_PAUSE);
+    }
+
+    public static GeckoEvent createCompositorResumeEvent() {
+        return new GeckoEvent(COMPOSITOR_RESUME);
+    }
+
     private void initKeyEvent(KeyEvent k) {
         mAction = k.getAction();
         mTime = k.getEventTime();
@@ -186,6 +205,7 @@ public class GeckoEvent {
         mFlags = k.getFlags();
         mKeyCode = k.getKeyCode();
         mUnicodeChar = k.getUnicodeChar();
+        mRepeatCount = k.getRepeatCount();
         mCharacters = k.getCharacters();
     }
 
@@ -264,8 +284,7 @@ public class GeckoEvent {
                 }
             } else {
                 float size = event.getSize(eventIndex);
-                DisplayMetrics displaymetrics = new DisplayMetrics();
-                GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
+                DisplayMetrics displaymetrics = GeckoApp.mAppContext.getDisplayMetrics();
                 size = size*Math.min(displaymetrics.heightPixels, displaymetrics.widthPixels);
                 mPointRadii[index] = new Point((int)size,(int)size);
                 mOrientations[index] = 0;
@@ -278,37 +297,74 @@ public class GeckoEvent {
         }
     }
 
+    private static int HalSensorAccuracyFor(int androidAccuracy) {
+        switch (androidAccuracy) {
+        case SensorManager.SENSOR_STATUS_UNRELIABLE:
+            return GeckoHalDefines.SENSOR_ACCURACY_UNRELIABLE;
+        case SensorManager.SENSOR_STATUS_ACCURACY_LOW:
+            return GeckoHalDefines.SENSOR_ACCURACY_LOW;
+        case SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM:
+            return GeckoHalDefines.SENSOR_ACCURACY_MED;
+        case SensorManager.SENSOR_STATUS_ACCURACY_HIGH:
+            return GeckoHalDefines.SENSOR_ACCURACY_HIGH;
+        }
+        return GeckoHalDefines.SENSOR_ACCURACY_UNKNOWN;
+    }
+
     public static GeckoEvent createSensorEvent(SensorEvent s) {
-        GeckoEvent event = null;
         int sensor_type = s.sensor.getType();
- 
+        GeckoEvent event = null;
+
         switch(sensor_type) {
+
         case Sensor.TYPE_ACCELEROMETER:
-            event = new GeckoEvent(ACCELERATION_EVENT);
+            event = new GeckoEvent(SENSOR_EVENT);
+            event.mFlags = GeckoHalDefines.SENSOR_ACCELERATION;
+            event.mMetaState = HalSensorAccuracyFor(s.accuracy);
             event.mX = s.values[0];
             event.mY = s.values[1];
             event.mZ = s.values[2];
             break;
-            
+
+        case 10 /* Requires API Level 9, so just use the raw value - Sensor.TYPE_LINEAR_ACCELEROMETER*/ :
+            event = new GeckoEvent(SENSOR_EVENT);
+            event.mFlags = GeckoHalDefines.SENSOR_LINEAR_ACCELERATION;
+            event.mMetaState = HalSensorAccuracyFor(s.accuracy);
+            event.mX = s.values[0];
+            event.mY = s.values[1];
+            event.mZ = s.values[2];
+            break;
+
         case Sensor.TYPE_ORIENTATION:
-            event = new GeckoEvent(ORIENTATION_EVENT);
-            event.mAlpha = -s.values[0];
-            event.mBeta = -s.values[1];
-            event.mGamma = -s.values[2];
+            event = new GeckoEvent(SENSOR_EVENT);
+            event.mFlags = GeckoHalDefines.SENSOR_ORIENTATION;
+            event.mMetaState = HalSensorAccuracyFor(s.accuracy);
+            event.mX = s.values[0];
+            event.mY = s.values[1];
+            event.mZ = s.values[2];
+            break;
+
+        case Sensor.TYPE_GYROSCOPE:
+            event = new GeckoEvent(SENSOR_EVENT);
+            event.mFlags = GeckoHalDefines.SENSOR_GYROSCOPE;
+            event.mMetaState = HalSensorAccuracyFor(s.accuracy);
+            event.mX = Math.toDegrees(s.values[0]);
+            event.mY = Math.toDegrees(s.values[1]);
+            event.mZ = Math.toDegrees(s.values[2]);
             break;
 
         case Sensor.TYPE_PROXIMITY:
-            event = new GeckoEvent(PROXIMITY_EVENT);
-            event.mDistance = s.values[0];
+            event = new GeckoEvent(SENSOR_EVENT);
+            event.mFlags = GeckoHalDefines.SENSOR_PROXIMITY;
+            event.mX = s.values[0];
             break;
         }
         return event;
     }
 
-    public static GeckoEvent createLocationEvent(Location l, Address a) {
+    public static GeckoEvent createLocationEvent(Location l) {
         GeckoEvent event = new GeckoEvent(LOCATION_EVENT);
         event.mLocation = l;
-        event.mAddress  = a;
         return event;
     }
 
@@ -359,12 +415,11 @@ public class GeckoEvent {
         return event;
     }
 
-    public static GeckoEvent createSizeChangedEvent(int w, int h, int screenw, int screenh, int tilew, int tileh) {
+    public static GeckoEvent createSizeChangedEvent(int w, int h, int screenw, int screenh) {
         GeckoEvent event = new GeckoEvent(SIZE_CHANGED);
-        event.mPoints = new Point[3];
+        event.mPoints = new Point[2];
         event.mPoints[0] = new Point(w, h);
         event.mPoints[1] = new Point(screenw, screenh);
-        event.mPoints[2] = new Point(tilew, tileh);
         return event;
     }
 
@@ -375,16 +430,38 @@ public class GeckoEvent {
         return event;
     }
 
-    public static GeckoEvent createViewportEvent(ViewportMetrics viewport) {
+    public static GeckoEvent createViewportEvent(ViewportMetrics viewport, DisplayPortMetrics displayPort) {
         GeckoEvent event = new GeckoEvent(VIEWPORT);
         event.mCharacters = "Viewport:Change";
-        event.mCharactersExtra = viewport.toJSON();
+        PointF origin = viewport.getOrigin();
+        StringBuffer sb = new StringBuffer(256);
+        sb.append("{ \"x\" : ").append(origin.x)
+          .append(", \"y\" : ").append(origin.y)
+          .append(", \"zoom\" : ").append(viewport.getZoomFactor())
+          .append(", \"displayPort\" :").append(displayPort.toJSON())
+          .append('}');
+        event.mCharactersExtra = sb.toString();
         return event;
     }
 
-    public static GeckoEvent createLoadEvent(String uri) {
+    public static GeckoEvent createURILoadEvent(String uri) {
         GeckoEvent event = new GeckoEvent(LOAD_URI);
         event.mCharacters = uri;
+        event.mCharactersExtra = "";
+        return event;
+    }
+
+    public static GeckoEvent createWebappLoadEvent(String uri) {
+        GeckoEvent event = new GeckoEvent(LOAD_URI);
+        event.mCharacters = uri;
+        event.mCharactersExtra = "-webapp";
+        return event;
+    }
+
+    public static GeckoEvent createBookmarkLoadEvent(String uri) {
+        GeckoEvent event = new GeckoEvent(LOAD_URI);
+        event.mCharacters = uri;
+        event.mCharactersExtra = "-bookmark";
         return event;
     }
 
@@ -401,11 +478,26 @@ public class GeckoEvent {
         return event;
     }
 
-    public static GeckoEvent createScreenshotEvent(int tabId, int sw, int sh, int dw, int dh) {
+    public static GeckoEvent createScreenshotEvent(int tabId, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int token) {
         GeckoEvent event = new GeckoEvent(SCREENSHOT);
-        event.mPoints = new Point[2];
-        event.mPoints[0] = new Point(sw, sh);
-        event.mPoints[1] = new Point(dw, dh);
+        event.mPoints = new Point[4];
+        event.mPoints[0] = new Point(sx, sy);
+        event.mPoints[1] = new Point(sw, sh);
+        event.mPoints[2] = new Point(dx, dy);
+        event.mPoints[3] = new Point(dw, dh);
+        event.mMetaState = tabId;
+        event.mFlags = token;
+        return event;
+    }
+
+    public static GeckoEvent createScreenOrientationEvent(short aScreenOrientation) {
+        GeckoEvent event = new GeckoEvent(SCREENORIENTATION_CHANGED);
+        event.mScreenOrientation = aScreenOrientation;
+        return event;
+    }
+
+    public static GeckoEvent createStartPaintListentingEvent(int tabId) {
+        GeckoEvent event = new GeckoEvent(PAINT_LISTEN_START_EVENT);
         event.mMetaState = tabId;
         return event;
     }

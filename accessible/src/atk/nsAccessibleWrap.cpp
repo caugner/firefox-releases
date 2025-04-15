@@ -38,17 +38,18 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "mozilla/Util.h"
-
-#include "nsAccessible.h"
 #include "nsAccessibleWrap.h"
 
+#include "Accessible-inl.h"
+#include "InterfaceInitFuncs.h"
 #include "nsAccUtils.h"
 #include "nsApplicationAccessibleWrap.h"
 #include "nsIAccessibleRelation.h"
 #include "nsRootAccessible.h"
 #include "nsDocAccessibleWrap.h"
 #include "nsIAccessibleValue.h"
+#include "nsMai.h"
+#include "nsMaiHyperlink.h"
 #include "nsString.h"
 #include "nsAutoPtr.h"
 #include "prprf.h"
@@ -57,19 +58,9 @@
 #include "Relation.h"
 #include "States.h"
 
-#include "nsMaiInterfaceComponent.h"
-#include "nsMaiInterfaceAction.h"
-#include "nsMaiInterfaceText.h"
-#include "nsMaiInterfaceEditableText.h"
-#include "nsMaiInterfaceSelection.h"
-#include "nsMaiInterfaceValue.h"
-#include "nsMaiInterfaceHypertext.h"
-#include "nsMaiInterfaceHyperlinkImpl.h"
-#include "nsMaiInterfaceTable.h"
+#include "mozilla/Util.h"
 #include "nsXPCOMStrings.h"
 #include "nsComponentManagerUtils.h"
-#include "nsMaiInterfaceDocument.h"
-#include "nsMaiInterfaceImage.h"
 
 using namespace mozilla;
 using namespace mozilla::a11y;

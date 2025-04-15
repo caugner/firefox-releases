@@ -411,7 +411,7 @@ static const PRUint32 sNextIdIndexSlot = 0;
 static const PRUint32 sNumNewEnumerateStateSlots = 1;
 
 static void
-CPOW_NewEnumerateState_Finalize(JSContext* cx, JSObject* state)
+CPOW_NewEnumerateState_FreeIds(JSObject* state)
 {
     nsTArray<nsString>* strIds =
         static_cast<nsTArray<nsString>*>(JS_GetPrivate(state));
@@ -422,6 +422,12 @@ CPOW_NewEnumerateState_Finalize(JSContext* cx, JSObject* state)
     }
 }
 
+static void
+CPOW_NewEnumerateState_Finalize(JSFreeOp* fop, JSObject* state)
+{
+    CPOW_NewEnumerateState_FreeIds(state);
+}
+
 // Similar to IteratorClass in XPCWrapper.cpp
 static const JSClass sCPOW_NewEnumerateState_JSClass = {
     "CPOW NewEnumerate State",
@@ -430,8 +436,7 @@ static const JSClass sCPOW_NewEnumerateState_JSClass = {
     JS_PropertyStub,  JS_PropertyStub,
     JS_PropertyStub,  JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub,
-    JS_ConvertStub,   CPOW_NewEnumerateState_Finalize,
-    JSCLASS_NO_OPTIONAL_MEMBERS
+    JS_ConvertStub,   CPOW_NewEnumerateState_Finalize
 };
 
 bool
@@ -532,7 +537,7 @@ ObjectWrapperChild::RecvNewEnumerateDestroy(const JSVariant& in_state)
     if (!JSObject_from_JSVariant(cx, in_state, &state))
         return false;
 
-    CPOW_NewEnumerateState_Finalize(cx, state);
+    CPOW_NewEnumerateState_FreeIds(state);
 
     return true;
 }

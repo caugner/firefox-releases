@@ -182,8 +182,9 @@ ProxyHandler::set(JSContext *cx, JSObject *proxy, JSObject *receiver, jsid id, b
         return false;
     /* The control-flow here differs from ::get() because of the fall-through case below. */
     if (desc.obj) {
+        // Check for read-only properties.
         if (desc.attrs & JSPROP_READONLY)
-            return true;
+            return strict ? Throw(cx, id, JSMSG_CANT_REDEFINE_PROP) : true;
         if (!desc.setter) {
             // Be wary of the odd explicit undefined setter case possible through
             // Object.defineProperty.
@@ -208,8 +209,9 @@ ProxyHandler::set(JSContext *cx, JSObject *proxy, JSObject *receiver, jsid id, b
     if (!getPropertyDescriptor(cx, proxy, id, true, &desc))
         return false;
     if (desc.obj) {
+        // Check for read-only properties.
         if (desc.attrs & JSPROP_READONLY)
-            return true;
+            return strict ? Throw(cx, id, JSMSG_CANT_REDEFINE_PROP) : true;
         if (!desc.setter) {
             // Be wary of the odd explicit undefined setter case possible through
             // Object.defineProperty.
@@ -268,8 +270,10 @@ ProxyHandler::keys(JSContext *cx, JSObject *proxy, AutoIdVector &props)
 }
 
 bool
-ProxyHandler::iterate(JSContext *cx, JSObject *proxy, unsigned flags, Value *vp)
+ProxyHandler::iterate(JSContext *cx, JSObject *proxy_, unsigned flags, Value *vp)
 {
+    RootedVarObject proxy(cx, proxy_);
+
     JS_ASSERT(OperationInProgress(cx, proxy));
     AutoIdVector props(cx);
     if ((flags & JSITER_OWNONLY)
@@ -316,7 +320,7 @@ ProxyHandler::regexp_toShared(JSContext *cx, JSObject *proxy, RegExpGuard *g)
 bool
 ProxyHandler::defaultValue(JSContext *cx, JSObject *proxy, JSType hint, Value *vp)
 {
-    return DefaultValue(cx, proxy, hint, vp);
+    return DefaultValue(cx, RootedVarObject(cx, proxy), hint, vp);
 }
 
 bool
@@ -380,7 +384,7 @@ ProxyHandler::objectClassIs(JSObject *proxy, ESClassValue classValue, JSContext 
 }
 
 void
-ProxyHandler::finalize(JSContext *cx, JSObject *proxy)
+ProxyHandler::finalize(JSFreeOp *fop, JSObject *proxy)
 {
 }
 
@@ -1282,11 +1286,11 @@ proxy_Fix(JSContext *cx, JSObject *obj, bool *fixed, AutoIdVector *props)
 }
 
 static void
-proxy_Finalize(JSContext *cx, JSObject *obj)
+proxy_Finalize(FreeOp *fop, JSObject *obj)
 {
     JS_ASSERT(obj->isProxy());
     if (!obj->getSlot(JSSLOT_PROXY_HANDLER).isUndefined())
-        GetProxyHandler(obj)->finalize(cx, obj);
+        GetProxyHandler(obj)->finalize(fop, obj);
 }
 
 static JSBool
@@ -1666,10 +1670,6 @@ callable_Call(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 callable_Construct(JSContext *cx, unsigned argc, Value *vp)
 {
-    JSObject *thisobj = js_CreateThis(cx, &JS_CALLEE(cx, vp).toObject());
-    if (!thisobj)
-        return false;
-
     JSObject *callable = &vp[0].toObject();
     JS_ASSERT(callable->getClass() == &CallableObjectClass);
     Value fval = callable->getSlot(JSSLOT_CALLABLE_CONSTRUCT);
@@ -1709,7 +1709,7 @@ callable_Construct(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    bool ok = Invoke(cx, ObjectValue(*thisobj), fval, argc, vp + 2, vp);
+    bool ok = Invoke(cx, UndefinedValue(), fval, argc, vp + 2, vp);
     return ok;
 }
 
@@ -1758,7 +1758,8 @@ FixProxy(JSContext *cx, JSObject *proxy, JSBool *bp)
      * number of fixed slots as the proxy so that we can swap their contents.
      */
     gc::AllocKind kind = proxy->getAllocKind();
-    JSObject *newborn = NewObjectWithGivenProto(cx, clasp, proto, parent, kind);
+    RootedVarObject newborn(cx);
+    newborn = NewObjectWithGivenProto(cx, clasp, proto, parent, kind);
     if (!newborn)
         return false;
 

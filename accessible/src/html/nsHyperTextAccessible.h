@@ -201,6 +201,12 @@ public:
                                       nsIDOMNode **aEndNode,
                                       PRInt32 *aEndOffset);
 
+  /**
+   * Return true if the used ARIA role (if any) allows the hypertext accessible
+   * to expose text interfaces.
+   */
+  bool IsTextRole();
+
   //////////////////////////////////////////////////////////////////////////////
   // TextAccessible
 
@@ -263,6 +269,22 @@ public:
   {
     return GetChildAt(GetChildIndexAtOffset(aOffset));
   }
+
+  /**
+   * Return the bounds of the text between given start and end offset.
+   */
+  nsIntRect GetTextBounds(PRInt32 aStartOffset, PRInt32 aEndOffset)
+  {
+    nsIntRect bounds;
+    GetPosAndText(aStartOffset, aEndOffset, nsnull, nsnull, &bounds);
+    return bounds;
+  }
+
+  /**
+   * Provide the line number for the caret.
+   * @return 1-based index for the line number with the caret
+   */
+  PRInt32 CaretLineNumber();
 
   //////////////////////////////////////////////////////////////////////////////
   // EditableTextAccessible
@@ -373,17 +395,10 @@ protected:
 
   nsresult SetSelectionRange(PRInt32 aStartPos, PRInt32 aEndPos);
 
-  /**
-   * Provide the line number for the caret, relative to the
-   * current DOM node.
-   * @return 1-based index for the line number with the caret
-   */
-  PRInt32 GetCaretLineNumber();
-
   // Helpers
-  nsresult GetDOMPointByFrameOffset(nsIFrame *aFrame, PRInt32 aOffset,
-                                    nsIAccessible *aAccessible,
-                                    nsIDOMNode **aNode, PRInt32 *aNodeOffset);
+  nsresult GetDOMPointByFrameOffset(nsIFrame* aFrame, PRInt32 aOffset,
+                                    nsAccessible* aAccessible,
+                                    nsIDOMNode** aNode, PRInt32* aNodeOffset);
 
   
   /**

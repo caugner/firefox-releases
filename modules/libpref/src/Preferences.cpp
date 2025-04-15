@@ -405,13 +405,15 @@ Preferences::ReadUserPrefs(nsIFile *aFile)
 
   if (nsnull == aFile) {
     rv = UseDefaultPrefFile();
-    UseUserPrefFile();
+    // A user pref file is optional.
+    // Ignore all errors related to it, so we retain 'rv' value :-|
+    (void) UseUserPrefFile();
 
     NotifyServiceObservers(NS_PREFSERVICE_READ_TOPIC_ID);
-
   } else {
     rv = ReadAndOwnUserPrefFile(aFile);
   }
+
   return rv;
 }
 
@@ -587,7 +589,7 @@ Preferences::NotifyServiceObservers(const char *aTopic)
 nsresult
 Preferences::UseDefaultPrefFile()
 {
-  nsresult rv, rv2;
+  nsresult rv;
   nsCOMPtr<nsIFile> aFile;
 
   rv = NS_GetSpecialDirectory(NS_APP_PREFS_50_FILE, getter_AddRefs(aFile));
@@ -597,8 +599,10 @@ Preferences::UseDefaultPrefFile()
     // exist, so save a new one. mUserPrefReadFailed will be
     // used to catch an error in actually reading the file.
     if (NS_FAILED(rv)) {
-      rv2 = SavePrefFileInternal(aFile);
-      NS_ASSERTION(NS_SUCCEEDED(rv2), "Failed to save new shared pref file");
+      if (NS_FAILED(SavePrefFileInternal(aFile)))
+        NS_ERROR("Failed to save new shared pref file");
+      else
+        rv = NS_OK;
     }
   }
   
@@ -854,7 +858,7 @@ pref_LoadPrefsInDir(nsIFile* aDir, char const *const *aSpecialFiles, PRUint32 aS
   if (NS_FAILED(rv)) {
     // If the directory doesn't exist, then we have no reason to complain.  We
     // loaded everything (and nothing) successfully.
-    if (rv == NS_ERROR_FILE_NOT_FOUND)
+    if (rv == NS_ERROR_FILE_NOT_FOUND || rv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST)
       rv = NS_OK;
     return rv;
   }
@@ -1011,6 +1015,10 @@ static nsresult pref_InitInitialObjects()
   // - $app/defaults/preferences/*.js
   // and in non omni.jar case:
   // - $app/defaults/preferences/*.js
+  // When $app == $gre, we additionally load, in omni.jar case:
+  // - jar:$gre/omni.jar!/defaults/preferences/*.js
+  // Thus, in omni.jar case, we always load app-specific default preferences
+  // from omni.jar, whether or not $app == $gre.
 
   nsZipFind *findPtr;
   nsAutoPtr<nsZipFind> find;
@@ -1084,7 +1092,12 @@ static nsresult pref_InitInitialObjects()
     NS_WARNING("Error parsing application default preferences.");
 
   // Load jar:$app/omni.jar!/defaults/preferences/*.js
+  // or jar:$gre/omni.jar!/defaults/preferences/*.js.
   nsRefPtr<nsZipArchive> appJarReader = mozilla::Omnijar::GetReader(mozilla::Omnijar::APP);
+  // GetReader(mozilla::Omnijar::APP) returns null when $app == $gre, in which
+  // case we look for app-specific default preferences in $gre.
+  if (!appJarReader)
+    appJarReader = mozilla::Omnijar::GetReader(mozilla::Omnijar::GRE);
   if (appJarReader) {
     rv = appJarReader->FindInit("defaults/preferences/*.js$", &findPtr);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -1322,6 +1335,16 @@ Preferences::HasUserValue(const char* aPref)
 {
   NS_ENSURE_TRUE(InitStaticMembers(), false);
   return PREF_HasUserPref(aPref);
+}
+
+// static
+PRInt32
+Preferences::GetType(const char* aPref)
+{
+  NS_ENSURE_TRUE(InitStaticMembers(), nsIPrefBranch::PREF_INVALID);
+  PRInt32 result;
+  return NS_SUCCEEDED(sRootBranch->GetPrefType(aPref, &result)) ?
+    result : nsIPrefBranch::PREF_INVALID;
 }
 
 // static
@@ -1634,6 +1657,16 @@ Preferences::GetDefaultComplex(const char* aPref, const nsIID &aType,
 {
   NS_ENSURE_TRUE(InitStaticMembers(), NS_ERROR_NOT_AVAILABLE);
   return sDefaultRootBranch->GetComplexValue(aPref, aType, aResult);
+}
+
+// static
+PRInt32
+Preferences::GetDefaultType(const char* aPref)
+{
+  NS_ENSURE_TRUE(InitStaticMembers(), nsIPrefBranch::PREF_INVALID);
+  PRInt32 result;
+  return NS_SUCCEEDED(sDefaultRootBranch->GetPrefType(aPref, &result)) ?
+    result : nsIPrefBranch::PREF_INVALID;
 }
 
 } // namespace mozilla

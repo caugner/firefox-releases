@@ -134,10 +134,13 @@ class LayerManager;
 #define CAPTURE_RETARGETTOELEMENT 2
 // true if the current capture wants drags to be prevented
 #define CAPTURE_PREVENTDRAG 4
+// true when the mouse is pointer locked, and events are sent to locked elemnt
+#define CAPTURE_POINTERLOCK 8
 
 typedef struct CapturingContentInfo {
   // capture should only be allowed during a mousedown event
   bool mAllowed;
+  bool mPointerLock;
   bool mRetargetToElement;
   bool mPreventDrag;
   nsIContent* mContent;
@@ -147,22 +150,13 @@ typedef struct CapturingContentInfo {
         { 0x4dc4db09, 0x03d4, 0x4427, \
           { 0xbe, 0xfb, 0xc9, 0x29, 0xac, 0x5c, 0x62, 0xab } }
 
-// Constants for ScrollContentIntoView() function
-#define NS_PRESSHELL_SCROLL_TOP      0
-#define NS_PRESSHELL_SCROLL_BOTTOM   100
-#define NS_PRESSHELL_SCROLL_LEFT     0
-#define NS_PRESSHELL_SCROLL_RIGHT    100
-#define NS_PRESSHELL_SCROLL_CENTER   50
-#define NS_PRESSHELL_SCROLL_ANYWHERE -1
-#define NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE -2
-
 // debug VerifyReflow flags
-#define VERIFY_REFLOW_ON              0x01
-#define VERIFY_REFLOW_NOISY           0x02
-#define VERIFY_REFLOW_ALL             0x04
-#define VERIFY_REFLOW_DUMP_COMMANDS   0x08
-#define VERIFY_REFLOW_NOISY_RC        0x10
-#define VERIFY_REFLOW_REALLY_NOISY_RC 0x20
+#define VERIFY_REFLOW_ON                    0x01
+#define VERIFY_REFLOW_NOISY                 0x02
+#define VERIFY_REFLOW_ALL                   0x04
+#define VERIFY_REFLOW_DUMP_COMMANDS         0x08
+#define VERIFY_REFLOW_NOISY_RC              0x10
+#define VERIFY_REFLOW_REALLY_NOISY_RC       0x20
 #define VERIFY_REFLOW_DURING_RESIZE_REFLOW  0x40
 
 #undef NOISY_INTERRUPTIBLE_REFLOW
@@ -533,34 +527,68 @@ public:
    */
   virtual NS_HIDDEN_(nsresult) ScrollToAnchor() = 0;
 
+  enum {
+    SCROLL_TOP     = 0,
+    SCROLL_BOTTOM  = 100,
+    SCROLL_LEFT    = 0,
+    SCROLL_RIGHT   = 100,
+    SCROLL_CENTER  = 50,
+    SCROLL_MINIMUM = -1
+  };
+
+  enum WhenToScroll {
+    SCROLL_ALWAYS,
+    SCROLL_IF_NOT_VISIBLE,
+    SCROLL_IF_NOT_FULLY_VISIBLE
+  };
+  typedef struct ScrollAxis {
+    PRInt16 mWhereToScroll;
+    WhenToScroll mWhenToScroll;
+  /**
+   * @param aWhere: Either a percentage or a special value.
+   *                nsIPresShell defines:
+   *                * (Default) SCROLL_MINIMUM = -1: The visible area is
+   *                scrolled to show the entire frame. If the frame is too
+   *                large, the top and left edges are given precedence.
+   *                * SCROLL_TOP = 0: The frame's upper edge is aligned with the
+   *                top edge of the visible area.
+   *                * SCROLL_BOTTOM = 100: The frame's bottom edge is aligned
+   *                with the bottom edge of the visible area.
+   *                * SCROLL_LEFT = 0: The frame's left edge is aligned with the
+   *                left edge of the visible area.
+   *                * SCROLL_RIGHT = 100: The frame's right edge is aligned with
+   *                the right edge of the visible area.
+   *                * SCROLL_CENTER = 50: The frame is centered along the axis
+   *                the ScrollAxis is used for.
+   *
+   *                Other values are treated as a percentage, and the point
+   *                "percent" down the frame is placed at the point "percent"
+   *                down the visible area.
+   * @param aWhen:
+   *                * (Default) SCROLL_IF_NOT_FULLY_VISIBLE: Move the frame only
+   *                if it is not fully visible (including if it's not visible
+   *                at all). Note that in this case if the frame is too large to
+   *                fit in view, it will only be scrolled if more of it can fit
+   *                than is already in view.
+   *                * SCROLL_IF_NOT_VISIBLE: Move the frame only if none of it
+   *                is visible.
+   *                * SCROLL_ALWAYS: Move the frame regardless of its current
+   *                visibility.
+   */
+    ScrollAxis(PRInt16 aWhere = SCROLL_MINIMUM,
+               WhenToScroll aWhen = SCROLL_IF_NOT_FULLY_VISIBLE) :
+                 mWhereToScroll(aWhere), mWhenToScroll(aWhen) {}
+  } ScrollAxis;
   /**
    * Scrolls the view of the document so that the primary frame of the content
    * is displayed in the window. Layout is flushed before scrolling.
    *
    * @param aContent  The content object of which primary frame should be
    *                  scrolled into view.
-   * @param aVPercent How to align the frame vertically. A value of 0
-   *                  (NS_PRESSHELL_SCROLL_TOP) means the frame's upper edge is
-   *                  aligned with the top edge of the visible area. A value of
-   *                  100 (NS_PRESSHELL_SCROLL_BOTTOM) means the frame's bottom
-   *                  edge is aligned with the bottom edge of the visible area.
-   *                  For values in between, the point "aVPercent" down the frame
-   *                  is placed at the point "aVPercent" down the visible area. A
-   *                  value of 50 (NS_PRESSHELL_SCROLL_CENTER) centers the frame
-   *                  vertically. A value of NS_PRESSHELL_SCROLL_ANYWHERE means move
-   *                  the frame the minimum amount necessary in order for the entire
-   *                  frame to be visible vertically (if possible)
-   * @param aHPercent How to align the frame horizontally. A value of 0
-   *                  (NS_PRESSHELL_SCROLL_LEFT) means the frame's left edge is
-   *                  aligned with the left edge of the visible area. A value of
-   *                  100 (NS_PRESSHELL_SCROLL_RIGHT) means the frame's right
-   *                  edge is aligned with the right edge of the visible area.
-   *                  For values in between, the point "aVPercent" across the frame
-   *                  is placed at the point "aVPercent" across the visible area.
-   *                  A value of 50 (NS_PRESSHELL_SCROLL_CENTER) centers the frame
-   *                  horizontally . A value of NS_PRESSHELL_SCROLL_ANYWHERE means move
-   *                  the frame the minimum amount necessary in order for the entire
-   *                  frame to be visible horizontally (if possible)
+   * @param aVertical How to align the frame vertically and when to do so.
+   *                  This is a ScrollAxis of Where and When.
+   * @param aHorizontal How to align the frame horizontally and when to do so.
+   *                  This is a ScrollAxis of Where and When.
    * @param aFlags    If SCROLL_FIRST_ANCESTOR_ONLY is set, only the nearest
    *                  scrollable ancestor is scrolled, otherwise all
    *                  scrollable ancestors may be scrolled if necessary.
@@ -573,8 +601,8 @@ public:
    *                  contain this document in a iframe or the like.
    */
   virtual NS_HIDDEN_(nsresult) ScrollContentIntoView(nsIContent* aContent,
-                                                     PRIntn      aVPercent,
-                                                     PRIntn      aHPercent,
+                                                     ScrollAxis  aVertical,
+                                                     ScrollAxis  aHorizontal,
                                                      PRUint32    aFlags) = 0;
 
   enum {
@@ -587,8 +615,8 @@ public:
    * is visible, if possible. Layout is not flushed before scrolling.
    * 
    * @param aRect relative to aFrame
-   * @param aVPercent see ScrollContentIntoView
-   * @param aHPercent see ScrollContentIntoView
+   * @param aVertical see ScrollContentIntoView and ScrollAxis
+   * @param aHorizontal see ScrollContentIntoView and ScrollAxis
    * @param aFlags if SCROLL_FIRST_ANCESTOR_ONLY is set, only the
    * nearest scrollable ancestor is scrolled, otherwise all
    * scrollable ancestors may be scrolled if necessary
@@ -602,10 +630,10 @@ public:
    * @return true if any scrolling happened, false if no scrolling happened
    */
   virtual bool ScrollFrameRectIntoView(nsIFrame*     aFrame,
-                                         const nsRect& aRect,
-                                         PRIntn        aVPercent,
-                                         PRIntn        aHPercent,
-                                         PRUint32      aFlags) = 0;
+                                       const nsRect& aRect,
+                                       ScrollAxis    aVertical,
+                                       ScrollAxis    aHorizontal,
+                                       PRUint32      aFlags) = 0;
 
   /**
    * Determine if a rectangle specified in the frame's coordinate system 
@@ -1078,6 +1106,11 @@ public:
    *
    * If CAPTURE_PREVENTDRAG is set then drags are prevented from starting while
    * this capture is active.
+   *
+   * If CAPTURE_POINTERLOCK is set, similar to CAPTURE_RETARGETTOELEMENT, then
+   * events are targeted at aContent, but capturing is held more strongly (i.e.,
+   * calls to SetCapturingContent won't unlock unless CAPTURE_POINTERLOCK is
+   * set again).
    */
   static void SetCapturingContent(nsIContent* aContent, PRUint8 aFlags);
 
@@ -1147,6 +1180,16 @@ public:
   float GetYResolution() { return mYResolution; }
 
   /**
+   * Set the isFirstPaint flag.
+   */
+  void SetIsFirstPaint(bool aIsFirstPaint) { mIsFirstPaint = aIsFirstPaint; }
+
+  /**
+   * Get the isFirstPaint flag.
+   */
+  bool GetIsFirstPaint() const { return mIsFirstPaint; }
+
+  /**
    * Dispatch a mouse move event based on the most recent mouse position if
    * this PresShell is visible. This is used when the contents of the page
    * moved (aFromScroll is false) or scrolled (aFromScroll is true).
@@ -1181,7 +1224,24 @@ public:
                                    size_t *aStyleSetsSize,
                                    size_t *aTextRunsSize) const = 0;
 
+
   /**
+   * Methods that retrieve the cached font inflation preferences.
+   */
+  PRUint32 FontSizeInflationEmPerLine() const {
+    return mFontSizeInflationEmPerLine;
+  }
+
+  PRUint32 FontSizeInflationMinTwips() const {
+    return mFontSizeInflationMinTwips;
+  }
+
+  PRUint32 FontSizeInflationLineThreshold() const {
+    return mFontSizeInflationLineThreshold;
+  }
+
+  /**
+   *
    * Refresh observer management.
    */
 protected:
@@ -1222,6 +1282,15 @@ public:
   // clears that capture.
   static void ClearMouseCapture(nsIFrame* aFrame);
 
+  void SetScrollPositionClampingScrollPortSize(nscoord aWidth, nscoord aHeight);
+  bool IsScrollPositionClampingScrollPortSizeSet() {
+    return mScrollPositionClampingScrollPortSizeSet;
+  }
+  nsSize GetScrollPositionClampingScrollPortSize() {
+    NS_ASSERTION(mScrollPositionClampingScrollPortSizeSet, "asking for scroll port when its not set?");
+    return mScrollPositionClampingScrollPortSize;
+  }
+
 protected:
   friend class nsRefreshDriver;
 
@@ -1261,6 +1330,8 @@ protected:
   bool                      mIsActive;
   bool                      mFrozen;
 
+  bool                      mIsFirstPaint;
+
   bool                      mObservesMutationsForPrint;
 
   bool                      mReflowScheduled; // If true, we have a reflow
@@ -1269,6 +1340,8 @@ protected:
                                               // is non-null.
 
   bool                      mSuppressInterruptibleReflows;
+
+  bool                      mScrollPositionClampingScrollPortSizeSet;
 
   // A list of weak frames. This is a pointer to the last item in the list.
   nsWeakFrame*              mWeakFrames;
@@ -1288,7 +1361,16 @@ protected:
   float                     mXResolution;
   float                     mYResolution;
 
+  nsSize                    mScrollPositionClampingScrollPortSize;
+
   static nsIContent* gKeyDownTarget;
+
+
+  // Cached font inflation values. This is done to prevent changing of font
+  // inflation until a page is reloaded.
+  PRUint32 mFontSizeInflationEmPerLine;
+  PRUint32 mFontSizeInflationMinTwips;
+  PRUint32 mFontSizeInflationLineThreshold;
 };
 
 /**

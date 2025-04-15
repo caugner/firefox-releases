@@ -5641,9 +5641,13 @@ var XPIDatabase = {
 
     if (fullCount > 0) {
       LOG("Writing add-ons list");
-      var fos = FileUtils.openSafeFileOutputStream(addonsList);
+
+      let addonsListTmp = FileUtils.getFile(KEY_PROFILEDIR, [FILE_XPI_ADDONS_LIST + ".tmp"],
+                                            true);
+      var fos = FileUtils.openFileOutputStream(addonsListTmp);
       fos.write(text, text.length);
-      FileUtils.closeSafeFileOutputStream(fos);
+      fos.close();
+      addonsListTmp.moveTo(addonsListTmp.parent, FILE_XPI_ADDONS_LIST);
 
       Services.prefs.setCharPref(PREF_EM_ENABLED_ADDONS, enabledAddons.join(","));
     }
@@ -6707,6 +6711,18 @@ AddonInstall.prototype = {
             XPIProvider.callBootstrapMethod(self.addon.id, self.addon.version,
                                             self.addon.type, file, "install",
                                             reason);
+          }
+
+          AddonManagerPrivate.callAddonListeners("onInstalled",
+                                                 createWrapper(self.addon));
+
+          LOG("Install of " + self.sourceURI.spec + " completed.");
+          self.state = AddonManager.STATE_INSTALLED;
+          AddonManagerPrivate.callInstallListeners("onInstallEnded",
+                                                   self.listeners, self.wrapper,
+                                                   createWrapper(self.addon));
+
+          if (self.addon.bootstrap) {
             if (self.addon.active) {
               XPIProvider.callBootstrapMethod(self.addon.id, self.addon.version,
                                               self.addon.type, file, "startup",
@@ -6716,14 +6732,6 @@ AddonInstall.prototype = {
               XPIProvider.unloadBootstrapScope(self.addon.id);
             }
           }
-          AddonManagerPrivate.callAddonListeners("onInstalled",
-                                                 createWrapper(self.addon));
-
-          LOG("Install of " + self.sourceURI.spec + " completed.");
-          self.state = AddonManager.STATE_INSTALLED;
-          AddonManagerPrivate.callInstallListeners("onInstallEnded",
-                                                   self.listeners, self.wrapper,
-                                                   createWrapper(self.addon));
         });
       }
     }
@@ -7779,7 +7787,15 @@ function AddonWrapper(aAddon) {
   this.hasResource = function(aPath) {
     let bundle = aAddon._sourceBundle.clone();
 
-    if (bundle.isDirectory()) {
+    // Bundle may not exist any more if the addon has just been uninstalled,
+    // but explicitly first checking .exists() results in unneeded file I/O.
+    try {
+      var isDir = bundle.isDirectory();
+    } catch (e) {
+      return false;
+    }
+
+    if (isDir) {
       if (aPath) {
         aPath.split("/").forEach(function(aPart) {
           bundle.append(aPart);
@@ -7790,10 +7806,16 @@ function AddonWrapper(aAddon) {
 
     let zipReader = Cc["@mozilla.org/libjar/zip-reader;1"].
                     createInstance(Ci.nsIZipReader);
-    zipReader.open(bundle);
-    let result = zipReader.hasEntry(aPath);
-    zipReader.close();
-    return result;
+    try {
+      zipReader.open(bundle);
+      return zipReader.hasEntry(aPath);
+    }
+    catch (e) {
+      return false;
+    }
+    finally {
+      zipReader.close();
+    }
   },
 
   /**

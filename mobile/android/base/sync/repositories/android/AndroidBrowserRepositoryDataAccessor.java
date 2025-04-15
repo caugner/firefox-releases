@@ -1,42 +1,10 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Android Sync Client.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Jason Voll <jvoll@mozilla.com>
- *   Richard Newman <rnewman@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package org.mozilla.gecko.sync.repositories.android;
+
+import java.util.List;
 
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.sync.Logger;
@@ -53,7 +21,7 @@ public abstract class AndroidBrowserRepositoryDataAccessor {
   private static final String[] GUID_COLUMNS = new String[] { BrowserContract.SyncColumns.GUID };
   protected Context context;
   protected static String LOG_TAG = "BrowserDataAccessor";
-  private final RepoUtils.QueryHelper queryHelper;
+  protected final RepoUtils.QueryHelper queryHelper;
 
   public AndroidBrowserRepositoryDataAccessor(Context context) {
     this.context = context;
@@ -197,22 +165,8 @@ public abstract class AndroidBrowserRepositoryDataAccessor {
    * @throws NullCursorException
    */
   public Cursor fetch(String guids[]) throws NullCursorException {
-    String where = computeSQLInClause(guids.length, "guid");
+    String where = RepoUtils.computeSQLInClause(guids.length, "guid");
     return queryHelper.safeQuery(".fetch", getAllColumns(), where, guids, null);
-  }
-
-  protected String computeSQLInClause(int items, String field) {
-    StringBuilder builder = new StringBuilder(field);
-    builder.append(" IN (");
-    int i = 0;
-    for (; i < items - 1; ++i) {
-      builder.append("?, ");
-    }
-    if (i < items) {
-      builder.append("?");
-    }
-    builder.append(")");
-    return builder.toString();
   }
 
   public void updateByGuid(String guid, ContentValues cv) {
@@ -224,5 +178,56 @@ public abstract class AndroidBrowserRepositoryDataAccessor {
       return;
     }
     Logger.warn(LOG_TAG, "Unexpectedly updated " + updated + " rows for guid " + guid);
+  }
+
+  /**
+   * Insert records.
+   * <p>
+   * This inserts all the records (using <code>ContentProvider.bulkInsert</code>),
+   * but does <b>not</b> update the <code>androidID</code> of each record.
+   *
+   * @param records
+   *          the records to insert.
+   * @return
+   *          the number of records actually inserted.
+   * @throws NullCursorException
+   */
+  public int bulkInsert(List<Record> records) throws NullCursorException {
+    if (records.isEmpty()) {
+      Logger.debug(LOG_TAG, "No records to insert, returning.");
+    }
+
+    int size = records.size();
+    ContentValues[] cvs = new ContentValues[size];
+    int index = 0;
+    for (Record record : records) {
+      try {
+        cvs[index] = getContentValues(record);
+        index += 1;
+      } catch (Exception e) {
+        Logger.warn(LOG_TAG, "Got exception in getContentValues for record with guid " + record.guid, e);
+      }
+    }
+
+    if (index != size) {
+      // bulkInsert treats null ContentValues as blank rows, which we don't want
+      // to insert into the database.
+      // We expect exceptions in getContentValues to be exceedingly rare, so we
+      // re-allocate in the (rare) error case and maintain a fast path for the
+      // success case.
+      size = index;
+      ContentValues[] temp = new ContentValues[size];
+      System.arraycopy(cvs, 0, temp, 0, size); // No java.util.Arrays.copyOf in older Android SDKs.
+    }
+
+    int inserted = context.getContentResolver().bulkInsert(getUri(), cvs);
+    if (inserted == size) {
+      Logger.debug(LOG_TAG, "Inserted " + inserted + " records, as expected.");
+    } else {
+      Logger.debug(LOG_TAG, "Inserted " +
+                   inserted + " records but expected " +
+                   size     + " records.");
+    }
+    return inserted;
   }
 }

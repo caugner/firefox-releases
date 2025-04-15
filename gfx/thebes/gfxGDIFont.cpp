@@ -464,7 +464,7 @@ gfxGDIFont::Initialize()
     cairo_matrix_init_identity(&ctm);
     cairo_matrix_init_scale(&sizeMatrix, mAdjustedSize, mAdjustedSize);
 
-    bool italic = (mStyle.style & (FONT_STYLE_ITALIC | FONT_STYLE_OBLIQUE));
+    bool italic = (mStyle.style & (NS_FONT_STYLE_ITALIC | NS_FONT_STYLE_OBLIQUE));
     if (italic && !mFontEntry->IsItalic()) {
         double skewfactor = OBLIQUE_SKEW_FACTOR;
         cairo_matrix_t style;
@@ -563,4 +563,21 @@ gfxGDIFont::GetGlyphWidth(gfxContext *aCtx, PRUint16 aGID)
     }
 
     return -1;
+}
+
+void
+gfxGDIFont::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                FontCacheSizes*   aSizes) const
+{
+    gfxFont::SizeOfExcludingThis(aMallocSizeOf, aSizes);
+    aSizes->mFontInstances += aMallocSizeOf(mMetrics) +
+        mGlyphWidths.SizeOfExcludingThis(nsnull, aMallocSizeOf);
+}
+
+void
+gfxGDIFont::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                FontCacheSizes*   aSizes) const
+{
+    aSizes->mFontInstances += aMallocSizeOf(this);
+    SizeOfExcludingThis(aMallocSizeOf, aSizes);
 }

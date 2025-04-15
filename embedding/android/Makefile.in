@@ -57,6 +57,7 @@ JAVAFILES = \
   GeckoBatteryManager.java \
   VideoPlayer.java \
   GeckoNetworkManager.java \
+  GeckoScreenOrientationListener.java \
   $(NULL)
 
 ifdef MOZ_WEBSMS_BACKEND
@@ -94,11 +95,6 @@ DEFINES += \
   -DANDROID_VERSION_CODE=$(ANDROID_VERSION_CODE) \
   -DMOZILLA_OFFICIAL=$(MOZILLA_OFFICIAL) \
   $(NULL)
-
-MOZ_MOBILE_COMPAT = @MOZ_MOBILE_COMPAT@
-ifeq (Tablets,$(MOZ_MOBILE_COMPAT))
-DEFINES += -DMOZ_TABLETS_ONLY=1
-endif
 
 GARBAGE += \
   AndroidManifest.xml  \

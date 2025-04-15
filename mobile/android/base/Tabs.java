@@ -95,6 +95,7 @@ public class Tabs implements GeckoEventListener {
             GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
                 public void run() {
                     GeckoApp.mBrowserToolbar.updateTabCountAndAnimate(getCount());
+                    GeckoApp.mAppContext.invalidateOptionsMenu();
                 }
             });
         }
@@ -127,29 +128,30 @@ public class Tabs implements GeckoEventListener {
         else
             GeckoApp.mAppContext.hideAboutHome();
 
+        selectedTab = tab;
         GeckoApp.mAppContext.mMainHandler.post(new Runnable() { 
             public void run() {
                 GeckoApp.mFormAssistPopup.hide();
-                // Do we need to do this check?
                 if (isSelectedTab(tab)) {
                     String url = tab.getURL();
                     GeckoApp.mBrowserToolbar.setTitle(tab.getDisplayTitle());
                     GeckoApp.mBrowserToolbar.setFavicon(tab.getFavicon());
                     GeckoApp.mBrowserToolbar.setSecurityMode(tab.getSecurityMode());
                     GeckoApp.mBrowserToolbar.setProgressVisibility(tab.getState() == Tab.STATE_LOADING);
+                    GeckoApp.mAppContext.invalidateOptionsMenu();
                     GeckoApp.mDoorHangerPopup.updatePopup();
                     GeckoApp.mBrowserToolbar.setShadowVisibility((url == null) || !url.startsWith("about:"));
                     notifyListeners(tab, TabEvents.SELECTED);
 
                     if (oldTab != null)
-                        GeckoApp.mAppContext.hidePlugins(oldTab, true);
+                        GeckoApp.mAppContext.hidePlugins(oldTab);
                 }
             }
         });
 
         // Pass a message to Gecko to update tab state in BrowserApp
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Tab:Selected", String.valueOf(tab.getId())));
-        return selectedTab = tab;
+        return tab;
     }
 
     public int getIndexOf(Tab tab) {
@@ -204,7 +206,7 @@ public class Tabs implements GeckoEventListener {
                 notifyListeners(tab, TabEvents.CLOSED);
                 GeckoApp.mBrowserToolbar.updateTabCountAndAnimate(Tabs.getInstance().getCount());
                 GeckoApp.mDoorHangerPopup.updatePopup();
-                GeckoApp.mAppContext.hidePlugins(tab, true);
+                GeckoApp.mAppContext.hidePlugins(tab);
                 tab.onDestroy();
             }
         });
@@ -310,7 +312,7 @@ public class Tabs implements GeckoEventListener {
             final Tab tab = iterator.next();
             GeckoAppShell.getHandler().post(new Runnable() {
                 public void run() {
-                    GeckoApp.mAppContext.getAndProcessThumbnailForTab(tab, false);
+                    GeckoApp.mAppContext.getAndProcessThumbnailForTab(tab);
                 }
             });
         }

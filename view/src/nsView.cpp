@@ -206,7 +206,6 @@ nsView::nsView(nsViewManager* aViewManager, nsViewVisibility aVisibility)
   mViewManager = aViewManager;
   mDirtyRegion = nsnull;
   mDeletionObserver = nsnull;
-  mHaveInvalidationDimensions = false;
   mWidgetIsTopLevel = false;
 }
 
@@ -355,11 +354,6 @@ void nsView::SetPosition(nscoord aX, nscoord aY)
   ResetWidgetBounds(true, false);
 }
 
-void nsIView::SetInvalidationDimensions(const nsRect* aRect)
-{
-  return Impl()->SetInvalidationDimensions(aRect);
-}
-
 void nsView::ResetWidgetBounds(bool aRecurse, bool aForceSync)
 {
   if (mWindow) {
@@ -495,13 +489,6 @@ void nsView::SetDimensions(const nsRect& aRect, bool aPaint, bool aResizeWidget)
 
   if (aResizeWidget) {
     ResetWidgetBounds(false, false);
-  }
-}
-
-void nsView::SetInvalidationDimensions(const nsRect* aRect)
-{
-  if ((mHaveInvalidationDimensions = !!aRect)) {
-    mInvalidationDimensions = *aRect;
   }
 }
 
@@ -987,7 +974,7 @@ void nsIView::List(FILE* out, PRInt32 aIndent) const
   fprintf(out, "{%d,%d,%d,%d}",
           brect.x, brect.y, brect.width, brect.height);
   fprintf(out, " z=%d vis=%d frame=%p <\n",
-          mZIndex, mVis, mFrame);
+          mZIndex, mVis, static_cast<void*>(mFrame));
   for (nsView* kid = mFirstChild; kid; kid = kid->GetNextSibling()) {
     NS_ASSERTION(kid->GetParent() == this, "incorrect parent");
     kid->List(out, aIndent + 1);

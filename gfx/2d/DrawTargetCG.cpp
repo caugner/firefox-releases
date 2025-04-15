@@ -699,7 +699,8 @@ DrawTargetCG::Fill(const Path *aPath, const Pattern &aPattern, const DrawOptions
 
 
 void
-DrawTargetCG::FillGlyphs(ScaledFont *aFont, const GlyphBuffer &aBuffer, const Pattern &aPattern, const DrawOptions &aDrawOptions)
+DrawTargetCG::FillGlyphs(ScaledFont *aFont, const GlyphBuffer &aBuffer, const Pattern &aPattern, const DrawOptions &aDrawOptions,
+                         const GlyphRenderingOptions*)
 {
   MarkChanged();
 
@@ -728,7 +729,8 @@ DrawTargetCG::FillGlyphs(ScaledFont *aFont, const GlyphBuffer &aBuffer, const Pa
   CGContextConcatCTM(cg, matrix);
   // CGContextSetTextMatrix works differently with kCGTextClip && kCGTextFill
   // It seems that it transforms the positions with TextFill and not with TextClip
-  // Therefore we'll avoid it.
+  // Therefore we'll avoid it. See also:
+  // http://cgit.freedesktop.org/cairo/commit/?id=9c0d761bfcdd28d52c83d74f46dd3c709ae0fa69
 
   for (unsigned int i = 0; i < aBuffer.mNumGlyphs; i++) {
     glyphs[i] = aBuffer.mGlyphs[i].mIndex;

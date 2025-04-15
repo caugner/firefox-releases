@@ -283,11 +283,17 @@ protected:
                               bool aPermitUntrustedEvents,
                               nsListenerStruct **aListenerStruct);
 
+  bool IsDeviceType(PRUint32 aType);
+  void EnableDevice(PRUint32 aType);
+  void DisableDevice(PRUint32 aType);
+
 public:
   /**
    * Set the "inline" event listener for aEventName to |v|.  This
    * might actually remove the event listener, depending on the value
-   * of |v|.
+   * of |v|.  Note that on entry to this function cx and aScope might
+   * not be in the same compartment, though cx and v are guaranteed to
+   * be in the same compartment.
    */
   nsresult SetJSEventListenerToJsval(nsIAtom *aEventName, JSContext *cx,
                                      JSObject *aScope, const jsval &v);

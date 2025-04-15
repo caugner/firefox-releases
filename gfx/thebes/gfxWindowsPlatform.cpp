@@ -88,6 +88,12 @@ using namespace mozilla::gfx;
 #include "nsMemory.h"
 #endif
 
+/*
+ * Required headers are not available in the current consumer preview Win8
+ * dev kit, disabling for now.
+ */
+#undef MOZ_WINSDK_TARGETVER
+
 /**
  * XXX below should be >= MOZ_NTDDI_WIN8 or such which is not defined yet
  */
@@ -143,7 +149,7 @@ NS_MEMORY_REPORTER_IMPLEMENT(
     KIND_OTHER,
     UNITS_BYTES,
     GetD2DSurfaceVramUsage,
-    "Video memory used by D2D surfaces")
+    "Video memory used by D2D surfaces.")
 
 #endif
 
@@ -711,25 +717,30 @@ gfxWindowsPlatform::CreateOffscreenSurface(const gfxIntSize& size,
 RefPtr<ScaledFont>
 gfxWindowsPlatform::GetScaledFontForFont(gfxFont *aFont)
 {
-  if(mUseDirectWrite) {
-    gfxDWriteFont *font = static_cast<gfxDWriteFont*>(aFont);
+    if (aFont->GetType() == gfxFont::FONT_TYPE_DWRITE) {
+        gfxDWriteFont *font = static_cast<gfxDWriteFont*>(aFont);
+
+        NativeFont nativeFont;
+        nativeFont.mType = NATIVE_FONT_DWRITE_FONT_FACE;
+        nativeFont.mFont = font->GetFontFace();
+        RefPtr<ScaledFont> scaledFont =
+            mozilla::gfx::Factory::CreateScaledFontForNativeFont(nativeFont, font->GetAdjustedSize());
+
+        return scaledFont;
+    }
+
+    NS_ASSERTION(aFont->GetType() == gfxFont::FONT_TYPE_GDI,
+        "Fonts on windows should be GDI or DWrite!");
 
     NativeFont nativeFont;
-    nativeFont.mType = NATIVE_FONT_DWRITE_FONT_FACE;
-    nativeFont.mFont = font->GetFontFace();
+    nativeFont.mType = NATIVE_FONT_GDI_FONT_FACE;
+    LOGFONT lf;
+    GetObject(static_cast<gfxGDIFont*>(aFont)->GetHFONT(), sizeof(LOGFONT), &lf);
+    nativeFont.mFont = &lf;
     RefPtr<ScaledFont> scaledFont =
-      mozilla::gfx::Factory::CreateScaledFontForNativeFont(nativeFont, font->GetAdjustedSize());
-
-    return scaledFont;
-  }
-
-  NativeFont nativeFont;
-  nativeFont.mType = NATIVE_FONT_GDI_FONT_FACE;
-  nativeFont.mFont = aFont;
-  RefPtr<ScaledFont> scaledFont =
     Factory::CreateScaledFontForNativeFont(nativeFont, aFont->GetAdjustedSize());
 
-  return scaledFont;
+    return scaledFont;
 }
 
 already_AddRefed<gfxASurface>
@@ -832,6 +843,7 @@ static const char kFontEuphemia[] = "Euphemia";
 static const char kFontGabriola[] = "Gabriola";
 static const char kFontKhmerUI[] = "Khmer UI";
 static const char kFontLaoUI[] = "Lao UI";
+static const char kFontLucidaSansUnicode[] = "Lucida Sans Unicode";
 static const char kFontMVBoli[] = "MV Boli";
 static const char kFontMalgunGothic[] = "Malgun Gothic";
 static const char kFontMicrosoftJhengHei[] = "Microsoft JhengHei";
@@ -861,9 +873,9 @@ gfxWindowsPlatform::GetCommonFallbackFonts(const PRUint32 aCh,
     if (!IS_IN_BMP(aCh)) {
         PRUint32 p = aCh >> 16;
         if (p == 1) { // SMP plane
-            aFontList.AppendElement(kFontCambriaMath);
             aFontList.AppendElement(kFontSegoeUISymbol);
             aFontList.AppendElement(kFontEbrima);
+            aFontList.AppendElement(kFontCambriaMath);
         }
     } else {
         PRUint32 b = (aCh >> 8) & 0xff;
@@ -922,9 +934,9 @@ gfxWindowsPlatform::GetCommonFallbackFonts(const PRUint32 aCh,
             aFontList.AppendElement(kFontSegoeUI);
             aFontList.AppendElement(kFontSegoeUISymbol);
             aFontList.AppendElement(kFontCambria);
-            aFontList.AppendElement(kFontCambriaMath);
             aFontList.AppendElement(kFontMeiryo);
             aFontList.AppendElement(kFontArial);
+            aFontList.AppendElement(kFontLucidaSansUnicode);
             aFontList.AppendElement(kFontEbrima);
             break;
         case 0x2d:
@@ -1347,6 +1359,9 @@ gfxWindowsPlatform::FontsPrefsChanged(const char *aPref)
     }
 }
 
+#define ENHANCED_CONTRAST_REGISTRY_KEY \
+    HKEY_CURRENT_USER, "Software\\Microsoft\\Avalon.Graphics\\DISPLAY1\\EnhancedContrastLevel"
+
 void
 gfxWindowsPlatform::SetupClearTypeParams()
 {
@@ -1404,6 +1419,59 @@ gfxWindowsPlatform::SetupClearTypeParams()
             mMeasuringMode = DWRITE_MEASURING_MODE_NATURAL;
             break;
         }
+
+        nsRefPtr<IDWriteRenderingParams> defaultRenderingParams;
+        GetDWriteFactory()->CreateRenderingParams(getter_AddRefs(defaultRenderingParams));
+        // For EnhancedContrast, we override the default if the user has not set it
+        // in the registry (by using the ClearType Tuner).
+        if (contrast >= 0.0 && contrast <= 10.0) {
+	    contrast = contrast;
+        } else {
+            HKEY hKey;
+            if (RegOpenKeyExA(ENHANCED_CONTRAST_REGISTRY_KEY,
+                              0, KEY_READ, &hKey) == ERROR_SUCCESS)
+            {
+                contrast = defaultRenderingParams->GetEnhancedContrast();
+                RegCloseKey(hKey);
+            } else {
+                contrast = 1.0;
+            }
+        }
+
+        // For parameters that have not been explicitly set,
+        // we copy values from default params (or our overridden value for contrast)
+        if (gamma < 1.0 || gamma > 2.2) {
+            gamma = defaultRenderingParams->GetGamma();
+        }
+
+        if (level < 0.0 || level > 1.0) {
+            level = defaultRenderingParams->GetClearTypeLevel();
+        }
+
+        DWRITE_PIXEL_GEOMETRY dwriteGeometry =
+          static_cast<DWRITE_PIXEL_GEOMETRY>(geometry);
+        DWRITE_RENDERING_MODE renderMode =
+          static_cast<DWRITE_RENDERING_MODE>(mode);
+
+        if (dwriteGeometry < DWRITE_PIXEL_GEOMETRY_FLAT ||
+            dwriteGeometry > DWRITE_PIXEL_GEOMETRY_BGR) {
+            dwriteGeometry = defaultRenderingParams->GetPixelGeometry();
+        }
+
+        if (renderMode < DWRITE_RENDERING_MODE_DEFAULT ||
+            renderMode > DWRITE_RENDERING_MODE_CLEARTYPE_NATURAL_SYMMETRIC) {
+            renderMode = defaultRenderingParams->GetRenderingMode();
+        }
+
+        mRenderingParams[TEXT_RENDERING_NO_CLEARTYPE] = defaultRenderingParams;
+
+        GetDWriteFactory()->CreateCustomRenderingParams(gamma, contrast, level,
+	    dwriteGeometry, renderMode,
+            getter_AddRefs(mRenderingParams[TEXT_RENDERING_NORMAL]));
+
+        GetDWriteFactory()->CreateCustomRenderingParams(gamma, contrast, level,
+	    dwriteGeometry, DWRITE_RENDERING_MODE_CLEARTYPE_GDI_CLASSIC,
+            getter_AddRefs(mRenderingParams[TEXT_RENDERING_GDI_CLASSIC]));
     }
 #endif
 }

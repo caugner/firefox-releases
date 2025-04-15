@@ -146,9 +146,9 @@ PluginModuleChild::PluginModuleChild()
 PluginModuleChild::~PluginModuleChild()
 {
     NS_ASSERTION(gInstance == this, "Something terribly wrong here!");
-    if (mLibrary) {
-        PR_UnloadLibrary(mLibrary);
-    }
+
+    // We don't unload the plugin library in case it uses atexit handlers or
+    // other similar hooks.
 
     DeinitGraphics();
 
@@ -1308,7 +1308,8 @@ _reloadplugins(NPBool aReloadPages)
 {
     PLUGIN_LOG_DEBUG_FUNCTION;
     ENSURE_PLUGIN_THREAD_VOID();
-    NS_WARNING("Not yet implemented!");
+
+    PluginModuleChild::current()->SendNPN_ReloadPlugins(!!aReloadPages);
 }
 
 void NP_CALLBACK

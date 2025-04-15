@@ -758,10 +758,6 @@ nsDefaultCommandLineHandler.prototype = {
     return this;
   },
 
-  // List of uri's that were passed via the command line without the app
-  // running and have already been handled. This is compared against uri's
-  // opened using DDE on Win32 so we only open one of the requests.
-  _handledURIs: [ ],
 #ifdef XP_WIN
   _haveProfile: false,
 #endif
@@ -795,25 +791,8 @@ nsDefaultCommandLineHandler.prototype = {
     try {
       var ar;
       while ((ar = cmdLine.handleFlagWithParam("url", false))) {
-        var found = false;
         var uri = resolveURIInternal(cmdLine, ar);
-        // count will never be greater than zero except on Win32.
-        var count = this._handledURIs.length;
-        for (var i = 0; i < count; ++i) {
-          if (this._handledURIs[i].spec == uri.spec) {
-            this._handledURIs.splice(i, 1);
-            found = true;
-            cmdLine.preventDefault = true;
-            break;
-          }
-        }
-        if (!found) {
-          urilist.push(uri);
-          // The requestpending command line flag is only used on Win32.
-          if (cmdLine.handleFlag("requestpending", false) &&
-              cmdLine.state == nsICommandLine.STATE_INITIAL_LAUNCH)
-            this._handledURIs.push(uri)
-        }
+        urilist.push(uri);
       }
     }
     catch (e) {
@@ -898,7 +877,7 @@ let AboutHomeUtils = {
 
   loadSnippetsURL: function AHU_loadSnippetsURL()
   {
-    const STARTPAGE_VERSION = 2;
+    const STARTPAGE_VERSION = 3;
     let updateURL = Services.prefs
                             .getCharPref(this.SNIPPETS_URL_PREF)
                             .replace("%STARTPAGE_VERSION%", STARTPAGE_VERSION);

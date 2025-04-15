@@ -51,6 +51,7 @@
 #include "nsHashKeys.h"
 #ifdef MOZ_WIDGET_ANDROID
 #include "nsIRunnable.h"
+class PluginEventRunnable;
 #endif
 
 #include "mozilla/TimeStamp.h"
@@ -96,15 +97,12 @@ private:
 public:
   NS_DECL_ISUPPORTS
 
-  nsresult Initialize(nsIPluginInstanceOwner* aOwner, const char* aMIMEType);
+  nsresult Initialize(nsNPAPIPlugin *aPlugin, nsIPluginInstanceOwner* aOwner, const char* aMIMEType);
   nsresult Start();
   nsresult Stop();
   nsresult SetWindow(NPWindow* window);
   nsresult NewStreamFromPlugin(const char* type, const char* target, nsIOutputStream* *result);
   nsresult Print(NPPrint* platformPrint);
-#ifdef MOZ_WIDGET_ANDROID
-  nsresult PostEvent(void* event) { return 0; };
-#endif
   nsresult HandleEvent(void* event, PRInt16* result);
   nsresult GetValueFromPlugin(NPPVariable variable, void* value);
   nsresult GetDrawingModel(PRInt32* aModel);
@@ -161,6 +159,7 @@ public:
   void NotifyForeground(bool aForeground);
   void NotifyOnScreen(bool aOnScreen);
   void MemoryPressure();
+  void NotifyFullScreen(bool aFullScreen);
 
   bool IsOnScreen() {
     return mOnScreen;
@@ -169,16 +168,20 @@ public:
   PRUint32 GetANPDrawingModel() { return mANPDrawingModel; }
   void SetANPDrawingModel(PRUint32 aModel);
 
-  // This stuff is for kSurface_ANPDrawingModel
   void* GetJavaSurface();
-  void SetJavaSurface(void* aSurface);
-  void RequestJavaSurface();
-#endif
+  void PostEvent(void* event);
 
+  // These are really mozilla::dom::ScreenOrientation, but it's
+  // difficult to include that here
+  PRUint32 FullScreenOrientation() { return mFullScreenOrientation; }
+  void SetFullScreenOrientation(PRUint32 orientation);
+
+  void SetWakeLock(bool aLock);
+#endif
   nsresult NewStreamListener(const char* aURL, void* notifyData,
                              nsIPluginStreamListener** listener);
 
-  nsNPAPIPluginInstance(nsNPAPIPlugin* plugin);
+  nsNPAPIPluginInstance();
   virtual ~nsNPAPIPluginInstance();
 
   // To be called when an instance becomes orphaned, when
@@ -235,7 +238,6 @@ public:
   void CarbonNPAPIFailure();
 
 protected:
-  nsresult InitializePlugin();
 
   nsresult GetTagType(nsPluginTagType *result);
   nsresult GetAttributes(PRUint16& n, const char*const*& names,
@@ -253,6 +255,15 @@ protected:
 #ifdef MOZ_WIDGET_ANDROID
   PRUint32 mANPDrawingModel;
   nsCOMPtr<nsIRunnable> mSurfaceGetter;
+
+  friend class PluginEventRunnable;
+
+  nsTArray<nsCOMPtr<PluginEventRunnable>> mPostedEvents;
+  void PopPostedEvent(PluginEventRunnable* r);
+
+  PRUint32 mFullScreenOrientation;
+  bool mWakeLocked;
+  bool mFullScreen;
 #endif
 
   enum {

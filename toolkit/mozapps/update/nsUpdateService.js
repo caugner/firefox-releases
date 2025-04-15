@@ -1,3 +1,5 @@
+#filter substitution
+
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /*
 # ***** BEGIN LICENSE BLOCK *****
@@ -115,7 +117,7 @@ const KEY_UPDROOT         = "UpdRootD";
 const DIR_UPDATES         = "updates";
 const FILE_UPDATE_STATUS  = "update.status";
 const FILE_UPDATE_VERSION = "update.version";
-#ifdef ANDROID
+#ifdef MOZ_WIDGET_ANDROID
 const FILE_UPDATE_ARCHIVE = "update.apk";
 #else
 const FILE_UPDATE_ARCHIVE = "update.mar";
@@ -744,7 +746,9 @@ function getLocale() {
  * to other instances of the application that may use the same profile.
  */
 function getUpdateChannel() {
-  var channel = "default";
+  // Preprocess the channel name that is defined when building to allow updating
+  // even when the preference file that defines the channel name doesn't exist.
+  var channel = "@MOZ_UPDATE_CHANNEL@";
   var prefName;
   var prefValue;
 
@@ -752,7 +756,7 @@ function getUpdateChannel() {
     channel = Services.prefs.getDefaultBranch(null).
               getCharPref(PREF_APP_UPDATE_CHANNEL);
   } catch (e) {
-    // use default when pref not found
+    // Use the channel name that was preprocessed when building above.
   }
 
   try {

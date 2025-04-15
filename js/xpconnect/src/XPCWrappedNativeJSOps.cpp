@@ -44,6 +44,7 @@
 #include "xpcprivate.h"
 #include "XPCWrapper.h"
 #include "nsWrapperCacheInlines.h"
+#include "mozilla/dom/bindings/Utils.h"
 
 /***************************************************************************/
 
@@ -615,8 +616,12 @@ static PRUint32 sFinalizedSlimWrappers;
 #endif
 
 static void
-XPC_WN_NoHelper_Finalize(JSContext *cx, JSObject *obj)
+XPC_WN_NoHelper_Finalize(js::FreeOp *fop, JSObject *obj)
 {
+    js::Class* clazz = js::GetObjectClass(obj);
+    if (clazz->flags & JSCLASS_DOM_GLOBAL) {
+        mozilla::dom::bindings::DestroyProtoOrIfaceCache(obj);
+    }
     nsISupports* p = static_cast<nsISupports*>(xpc_GetJSPrivate(obj));
     if (!p)
         return;
@@ -690,6 +695,11 @@ TraceForValidWrapper(JSTracer *trc, XPCWrappedNative* wrapper)
 static void
 MarkWrappedNative(JSTracer *trc, JSObject *obj)
 {
+    js::Class* clazz = js::GetObjectClass(obj);
+    if (clazz->flags & JSCLASS_DOM_GLOBAL) {
+        mozilla::dom::bindings::TraceProtoOrIfaceCache(trc, obj);
+    }
+
     JSObject *obj2;
 
     // Pass null for the first JSContext* parameter  to skip any security
@@ -956,7 +966,7 @@ XPC_WN_Helper_DelProperty(JSContext *cx, JSObject *obj, jsid id, jsval *vp)
     POST_HELPER_STUB
 }
 
-static JSBool
+JSBool
 XPC_WN_Helper_GetProperty(JSContext *cx, JSObject *obj, jsid id, jsval *vp)
 {
     PRE_HELPER_STUB
@@ -964,7 +974,7 @@ XPC_WN_Helper_GetProperty(JSContext *cx, JSObject *obj, jsid id, jsval *vp)
     POST_HELPER_STUB
 }
 
-static JSBool
+JSBool
 XPC_WN_Helper_SetProperty(JSContext *cx, JSObject *obj, jsid id, JSBool strict, jsval *vp)
 {
     PRE_HELPER_STUB
@@ -1041,8 +1051,12 @@ XPC_WN_Helper_HasInstance(JSContext *cx, JSObject *obj, const jsval *valp, JSBoo
 }
 
 static void
-XPC_WN_Helper_Finalize(JSContext *cx, JSObject *obj)
+XPC_WN_Helper_Finalize(js::FreeOp *fop, JSObject *obj)
 {
+    js::Class* clazz = js::GetObjectClass(obj);
+    if (clazz->flags & JSCLASS_DOM_GLOBAL) {
+        mozilla::dom::bindings::DestroyProtoOrIfaceCache(obj);
+    }
     nsISupports* p = static_cast<nsISupports*>(xpc_GetJSPrivate(obj));
     if (IS_SLIM_WRAPPER(obj)) {
         SLIM_LOG(("----- %i finalized slim wrapper (%p, %p)\n",
@@ -1058,7 +1072,8 @@ XPC_WN_Helper_Finalize(JSContext *cx, JSObject *obj)
     XPCWrappedNative* wrapper = (XPCWrappedNative*)p;
     if (!wrapper)
         return;
-    wrapper->GetScriptableCallback()->Finalize(wrapper, cx, obj);
+
+    wrapper->GetScriptableCallback()->Finalize(wrapper, js::CastToJSFreeOp(fop), obj);
     wrapper->FlatJSObjectFinalized();
 }
 
@@ -1631,12 +1646,12 @@ XPC_WN_Shared_Proto_Enumerate(JSContext *cx, JSObject *obj)
 }
 
 static void
-XPC_WN_Shared_Proto_Finalize(JSContext *cx, JSObject *obj)
+XPC_WN_Shared_Proto_Finalize(js::FreeOp *fop, JSObject *obj)
 {
     // This can be null if xpc shutdown has already happened
     XPCWrappedNativeProto* p = (XPCWrappedNativeProto*) xpc_GetJSPrivate(obj);
     if (p)
-        p->JSProtoObjectFinalized(cx, obj);
+        p->JSProtoObjectFinalized(fop, obj);
 }
 
 static void
@@ -1890,7 +1905,7 @@ XPC_WN_TearOff_Resolve(JSContext *cx, JSObject *obj, jsid id)
 }
 
 static void
-XPC_WN_TearOff_Finalize(JSContext *cx, JSObject *obj)
+XPC_WN_TearOff_Finalize(js::FreeOp *fop, JSObject *obj)
 {
     XPCWrappedNativeTearOff* p = (XPCWrappedNativeTearOff*)
         xpc_GetJSPrivate(obj);

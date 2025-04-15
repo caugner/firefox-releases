@@ -44,7 +44,6 @@
 #include "nsIAccessibleText.h"
 #include "nsIAccessibleTable.h"
 
-#include "nsARIAMap.h"
 #include "nsAccessibilityService.h"
 #include "nsCoreUtils.h"
 
@@ -60,6 +59,7 @@ class nsAccessible;
 class nsHyperTextAccessible;
 class nsHTMLTableAccessible;
 class nsDocAccessible;
+struct nsRoleMapEntry;
 #ifdef MOZ_XUL
 class nsXULTreeAccessible;
 #endif
@@ -108,14 +108,6 @@ public:
   static PRInt32 GetARIAOrDefaultLevel(nsAccessible *aAccessible);
 
   /**
-   * Compute position in group (posinset) and group size (setsize) for
-   * nsIDOMXULSelectControlItemElement node.
-   */
-  static void GetPositionAndSizeForXULSelectControlItem(nsIContent *aContent,
-                                                        PRInt32 *aPosInSet,
-                                                        PRInt32 *aSetSize);
-
-  /**
    * Compute group level for nsIDOMXULContainerItemElement node.
    */
   static PRInt32 GetLevelForXULContainerItem(nsIContent *aContent);
@@ -146,22 +138,12 @@ public:
   static nsIAtom* GetARIAToken(mozilla::dom::Element* aElement, nsIAtom* aAttr);
 
   /**
-   * Return document accessible for the given presshell.
-   */
-  static nsDocAccessible* GetDocAccessibleFor(const nsIPresShell* aPresShell)
-  {
-    return aPresShell ?
-      GetAccService()->GetDocAccessible(aPresShell->GetDocument()) : nsnull;
-  }
-
-  /**
    * Return document accessible for the given DOM node.
    */
   static nsDocAccessible *GetDocAccessibleFor(nsINode *aNode)
   {
     nsIPresShell *presShell = nsCoreUtils::GetPresShellFor(aNode);
-    return presShell ?
-      GetAccService()->GetDocAccessible(presShell->GetDocument()) : nsnull;
+    return GetAccService()->GetDocAccessible(presShell);
   }
 
   /**
@@ -172,8 +154,7 @@ public:
     nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(aContainer));
     nsCOMPtr<nsIPresShell> presShell;
     docShell->GetPresShell(getter_AddRefs(presShell));
-    return presShell ?
-      GetAccService()->GetDocAccessible(presShell->GetDocument()) : nsnull;
+    return GetAccService()->GetDocAccessible(presShell);
   }
 
   /**
@@ -195,11 +176,6 @@ public:
    */
   static nsAccessible* GetSelectableContainer(nsAccessible* aAccessible,
                                               PRUint64 aState);
-
-  /**
-   * Return multi selectable container for the given item.
-   */
-  static nsAccessible *GetMultiSelectableContainer(nsINode *aNode);
 
   /**
    * Return true if the DOM node of given accessible has aria-selected="true"
@@ -261,16 +237,6 @@ public:
    * @param aAccessNode  the accessible
    */
   static nsIntPoint GetScreenCoordsForParent(nsAccessNode *aAccessNode);
-
-  /**
-   * Get the role map entry for a given DOM node. This will use the first
-   * ARIA role if the role attribute provides a space delimited list of roles.
-   *
-   * @param aNode  [in] the DOM node to get the role map entry for
-   * @return        a pointer to the role map entry for the ARIA role, or nsnull
-   *                if none
-   */
-  static nsRoleMapEntry *GetRoleMapEntry(nsINode *aNode);
 
   /**
    * Return the role of the given accessible.

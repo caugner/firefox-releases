@@ -217,6 +217,9 @@ protected:
     RecvNPN_SetException(PPluginScriptableObjectParent* aActor,
                          const nsCString& aMessage);
 
+    NS_OVERRIDE virtual bool
+    RecvNPN_ReloadPlugins(const bool& aReloadPages);
+
     static PluginInstanceParent* InstCast(NPP instance);
     static BrowserStreamParent* StreamCast(NPP instance, NPStream* s);
 
@@ -321,7 +324,7 @@ private:
     bool mClearSiteDataSupported;
     bool mGetSitesWithDataSupported;
     const NPNetscapeFuncs* mNPNIface;
-    nsDataHashtable<nsVoidPtrHashKey, PluginIdentifierParent*> mIdentifiers;
+    nsDataHashtable<nsPtrHashKey<void>, PluginIdentifierParent*> mIdentifiers;
     nsNPAPIPlugin* mPlugin;
     ScopedRunnableMethodFactory<PluginModuleParent> mTaskFactory;
     nsString mPluginDumpID;

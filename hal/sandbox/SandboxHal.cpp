@@ -12,6 +12,7 @@
 #include "mozilla/dom/TabChild.h"
 #include "mozilla/dom/battery/Types.h"
 #include "mozilla/dom/network/Types.h"
+#include "mozilla/dom/ScreenOrientation.h"
 #include "mozilla/Observer.h"
 #include "mozilla/unused.h"
 #include "WindowIdentifier.h"
@@ -91,6 +92,38 @@ GetCurrentNetworkInformation(NetworkInformation* aNetworkInfo)
   Hal()->SendGetCurrentNetworkInformation(aNetworkInfo);
 }
 
+void
+EnableScreenOrientationNotifications()
+{
+  Hal()->SendEnableScreenOrientationNotifications();
+}
+
+void
+DisableScreenOrientationNotifications()
+{
+  Hal()->SendDisableScreenOrientationNotifications();
+}
+
+void
+GetCurrentScreenOrientation(ScreenOrientation* aScreenOrientation)
+{
+  Hal()->SendGetCurrentScreenOrientation(aScreenOrientation);
+}
+
+bool
+LockScreenOrientation(const dom::ScreenOrientation& aOrientation)
+{
+  bool allowed;
+  Hal()->SendLockScreenOrientation(aOrientation, &allowed);
+  return allowed;
+}
+
+void
+UnlockScreenOrientation()
+{
+  Hal()->SendUnlockScreenOrientation();
+}
+
 bool
 GetScreenEnabled()
 {
@@ -103,6 +136,20 @@ void
 SetScreenEnabled(bool enabled)
 {
   Hal()->SendSetScreenEnabled(enabled);
+}
+
+bool
+GetCpuSleepAllowed()
+{
+  bool allowed = true;
+  Hal()->SendGetCpuSleepAllowed(&allowed);
+  return allowed;
+}
+
+void
+SetCpuSleepAllowed(bool allowed)
+{
+  Hal()->SendSetCpuSleepAllowed(allowed);
 }
 
 double
@@ -193,11 +240,33 @@ GetWakeLockInfo(const nsAString &aTopic, WakeLockInformation *aWakeLockInfo)
   Hal()->SendGetWakeLockInfo(nsString(aTopic), aWakeLockInfo);
 }
 
+void
+EnableSwitchNotifications(SwitchDevice aDevice)
+{
+  Hal()->SendEnableSwitchNotifications(aDevice);
+}
+
+void
+DisableSwitchNotifications(SwitchDevice aDevice)
+{
+  Hal()->SendDisableSwitchNotifications(aDevice);
+}
+
+SwitchState
+GetCurrentSwitchState(SwitchDevice aDevice)
+{
+  SwitchState state;
+  Hal()->SendGetCurrentSwitchState(aDevice, &state);
+  return state;
+}
+
 class HalParent : public PHalParent
                 , public BatteryObserver
                 , public NetworkObserver
                 , public ISensorObserver
                 , public WakeLockObserver
+                , public ScreenOrientationObserver
+                , public SwitchObserver
 {
 public:
   NS_OVERRIDE virtual bool
@@ -284,6 +353,42 @@ public:
   }
 
   NS_OVERRIDE virtual bool
+  RecvEnableScreenOrientationNotifications() {
+    hal::RegisterScreenOrientationObserver(this);
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvDisableScreenOrientationNotifications() {
+    hal::UnregisterScreenOrientationObserver(this);
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvGetCurrentScreenOrientation(ScreenOrientation* aScreenOrientation) {
+    hal::GetCurrentScreenOrientation(aScreenOrientation);
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvLockScreenOrientation(const dom::ScreenOrientation& aOrientation, bool* aAllowed)
+  {
+    *aAllowed = hal::LockScreenOrientation(aOrientation);
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvUnlockScreenOrientation()
+  {
+    hal::UnlockScreenOrientation();
+    return true;
+  }
+
+  void Notify(const ScreenOrientationWrapper& aScreenOrientation) {
+    unused << SendNotifyScreenOrientationChange(aScreenOrientation.orientation);
+  }
+
+  NS_OVERRIDE virtual bool
   RecvGetScreenEnabled(bool *enabled)
   {
     *enabled = hal::GetScreenEnabled();
@@ -294,6 +399,20 @@ public:
   RecvSetScreenEnabled(const bool &enabled)
   {
     hal::SetScreenEnabled(enabled);
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvGetCpuSleepAllowed(bool *allowed)
+  {
+    *allowed = hal::GetCpuSleepAllowed();
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvSetCpuSleepAllowed(const bool &allowed)
+  {
+    hal::SetCpuSleepAllowed(allowed);
     return true;
   }
 
@@ -403,6 +522,32 @@ public:
   {
     unused << SendNotifyWakeLockChange(aWakeLockInfo);
   }
+
+  NS_OVERRIDE virtual bool
+  RecvEnableSwitchNotifications(const SwitchDevice& aDevice) 
+  {
+    hal::RegisterSwitchObserver(aDevice, this);
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvDisableSwitchNotifications(const SwitchDevice& aDevice) 
+  {
+    hal::UnregisterSwitchObserver(aDevice, this);
+    return true;
+  }
+
+  void Notify(const SwitchEvent& aSwitchEvent)
+  {
+    unused << SendNotifySwitchChange(aSwitchEvent);
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvGetCurrentSwitchState(const SwitchDevice& aDevice, hal::SwitchState *aState)
+  {
+    *aState = hal::GetCurrentSwitchState(aDevice);
+    return true;
+  }
 };
 
 class HalChild : public PHalChild {
@@ -425,6 +570,18 @@ public:
   NS_OVERRIDE virtual bool
   RecvNotifyWakeLockChange(const WakeLockInformation& aWakeLockInfo) {
     hal::NotifyWakeLockChange(aWakeLockInfo);
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvNotifyScreenOrientationChange(const ScreenOrientation& aScreenOrientation) {
+    hal::NotifyScreenOrientationChange(aScreenOrientation);
+    return true;
+  }
+
+  NS_OVERRIDE virtual bool
+  RecvNotifySwitchChange(const mozilla::hal::SwitchEvent& aEvent) {
+    hal::NotifySwitchChange(aEvent);
     return true;
   }
 };

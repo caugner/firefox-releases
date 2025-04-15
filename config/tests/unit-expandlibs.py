@@ -37,6 +37,7 @@ config_unix = {
 config = sys.modules['expandlibs_config'] = imp.new_module('expandlibs_config')
 
 from expandlibs import LibDescriptor, ExpandArgs, relativize
+from expandlibs_deps import ExpandLibsDeps, split_args
 from expandlibs_gen import generate
 from expandlibs_exec import ExpandArgsMore, SectionFinder
 
@@ -145,6 +146,9 @@ class TestExpandLibsGen(TestCaseWithTmpDir):
         self.assertEqual(desc['OBJS'], [self.tmpfile(Obj(s)) for s in ['b', 'd', 'e']])
         self.assertEqual(desc['LIBS'], [self.tmpfile(Lib(s)) for s in ['a', 'c', 'f']])
 
+        self.assertRaises(Exception, generate, files + [self.tmpfile(Obj('z'))])
+        self.assertRaises(Exception, generate, files + [self.tmpfile(Lib('y'))])
+
 class TestExpandInit(TestCaseWithTmpDir):
     def init(self):
         ''' Initializes test environment for library expansion tests'''
@@ -190,6 +194,30 @@ class TestExpandArgs(TestExpandInit):
         self.touch([self.tmpfile('liby', Lib('y'))])
         args = ExpandArgs(['foo', '-bar'] + self.arg_files + [self.tmpfile('liby', Lib('y'))])
         self.assertRelEqual(args, ['foo', '-bar'] + self.files + [self.tmpfile('liby', Lib('y'))])
+
+class TestExpandLibsDeps(TestExpandInit):
+    def test_expandlibsdeps(self):
+        '''Test library expansion for dependencies'''
+        # Dependency list for a library with a descriptor is equivalent to
+        # the arguments expansion, to which we add each descriptor
+        args = self.arg_files + [self.tmpfile('liby', Lib('y'))]
+        self.assertRelEqual(ExpandLibsDeps(args), ExpandArgs(args) + [self.tmpfile('libx', Lib('x') + config.LIBS_DESC_SUFFIX), self.tmpfile('liby', Lib('y') + config.LIBS_DESC_SUFFIX)])
+
+        # When a library exists at the same time as a descriptor, the
+        # descriptor is not a dependency
+        self.touch([self.tmpfile('libx', Lib('x'))])
+        args = self.arg_files + [self.tmpfile('liby', Lib('y'))]
+        self.assertRelEqual(ExpandLibsDeps(args), ExpandArgs(args) + [self.tmpfile('liby', Lib('y') + config.LIBS_DESC_SUFFIX)])
+
+        self.touch([self.tmpfile('liby', Lib('y'))])
+        args = self.arg_files + [self.tmpfile('liby', Lib('y'))]
+        self.assertRelEqual(ExpandLibsDeps(args), ExpandArgs(args))
+
+class TestSplitArgs(unittest.TestCase):
+    def test_split_args(self):
+        self.assertEqual(split_args(['a', '=', 'b', 'c']), {'a': ['b', 'c']})
+        self.assertEqual(split_args(['a', '=', 'b', 'c', ',', 'd', '=', 'e', 'f', 'g', ',', 'h', '=', 'i']),
+                         {'a': ['b', 'c'], 'd': ['e', 'f', 'g'], 'h': ['i']})
 
 class TestExpandArgsMore(TestExpandInit):
     def test_makelist(self):

@@ -36,17 +36,19 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+// Main header first:
 #include "nsSVGPathGeometryFrame.h"
-#include "nsGkAtoms.h"
-#include "nsSVGMarkerFrame.h"
-#include "nsSVGUtils.h"
-#include "nsSVGEffects.h"
-#include "nsSVGGraphicElement.h"
-#include "nsSVGOuterSVGFrame.h"
-#include "nsSVGRect.h"
-#include "nsSVGPathGeometryElement.h"
+
+// Keep others in (case-insensitive) order:
 #include "gfxContext.h"
 #include "gfxPlatform.h"
+#include "nsGkAtoms.h"
+#include "nsRenderingContext.h"
+#include "nsSVGEffects.h"
+#include "nsSVGGraphicElement.h"
+#include "nsSVGMarkerFrame.h"
+#include "nsSVGPathGeometryElement.h"
+#include "nsSVGUtils.h"
 
 //----------------------------------------------------------------------
 // Implementation
@@ -79,7 +81,7 @@ nsSVGPathGeometryFrame::AttributeChanged(PRInt32         aNameSpaceID,
       (static_cast<nsSVGPathGeometryElement*>
                   (mContent)->AttributeDefinesGeometry(aAttribute) ||
        aAttribute == nsGkAtoms::transform))
-    nsSVGUtils::UpdateGraphic(this);
+    nsSVGUtils::InvalidateAndScheduleBoundsUpdate(this);
 
   return NS_OK;
 }
@@ -95,7 +97,7 @@ nsSVGPathGeometryFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
   // style_hints don't map very well onto svg. Here seems to be the
   // best place to deal with style changes:
 
-  nsSVGUtils::UpdateGraphic(this);
+  nsSVGUtils::InvalidateAndScheduleBoundsUpdate(this);
 }
 
 nsIAtom *
@@ -209,9 +211,19 @@ nsSVGPathGeometryFrame::GetCoveredRegion()
   return mCoveredRegion;
 }
 
-NS_IMETHODIMP
-nsSVGPathGeometryFrame::UpdateCoveredRegion()
+void
+nsSVGPathGeometryFrame::UpdateBounds()
 {
+  NS_ASSERTION(nsSVGUtils::OuterSVGIsCallingUpdateBounds(this),
+               "This call is probaby a wasteful mistake");
+
+  NS_ABORT_IF_FALSE(!(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD),
+                    "UpdateBounds mechanism not designed for this");
+
+  if (!nsSVGUtils::NeedsUpdatedBounds(this)) {
+    return;
+  }
+
   gfxRect extent = GetBBoxContribution(gfxMatrix(),
     nsSVGUtils::eBBoxIncludeFill | nsSVGUtils::eBBoxIgnoreFillIfNone |
     nsSVGUtils::eBBoxIncludeStroke | nsSVGUtils::eBBoxIgnoreStrokeIfNone |
@@ -223,25 +235,15 @@ nsSVGPathGeometryFrame::UpdateCoveredRegion()
   mCoveredRegion = nsSVGUtils::TransformFrameRectToOuterSVG(
     mRect, GetCanvasTM(), PresContext());
 
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSVGPathGeometryFrame::InitialUpdate()
-{
-  NS_ASSERTION(GetStateBits() & NS_FRAME_FIRST_REFLOW,
-               "Yikes! We've been called already! Hopefully we weren't called "
-               "before our nsSVGOuterSVGFrame's initial Reflow()!!!");
-
-  nsSVGUtils::UpdateGraphic(this);
-
-  NS_ASSERTION(!(mState & NS_FRAME_IN_REFLOW),
-               "We don't actually participate in reflow");
-  
-  // Do unset the various reflow bits, though.
   mState &= ~(NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY |
               NS_FRAME_HAS_DIRTY_CHILDREN);
-  return NS_OK;
+
+  if (!(GetParent()->GetStateBits() & NS_FRAME_FIRST_REFLOW)) {
+    // We only invalidate if our outer-<svg> has already had its
+    // initial reflow (since if it hasn't, its entire area will be
+    // invalidated when it gets that initial reflow):
+    nsSVGUtils::InvalidateBounds(this, true);
+  }
 }
 
 void
@@ -255,32 +257,19 @@ nsSVGPathGeometryFrame::NotifySVGChanged(PRUint32 aFlags)
                     "Invalidation logic may need adjusting");
 
   if (!(aFlags & DO_NOT_NOTIFY_RENDERING_OBSERVERS)) {
-    nsSVGUtils::UpdateGraphic(this);
+    nsSVGUtils::InvalidateAndScheduleBoundsUpdate(this);
   }
 }
 
-void
-nsSVGPathGeometryFrame::NotifyRedrawSuspended()
-{
-  AddStateBits(NS_STATE_SVG_REDRAW_SUSPENDED);
-}
-
-void
-nsSVGPathGeometryFrame::NotifyRedrawUnsuspended()
-{
-  RemoveStateBits(NS_STATE_SVG_REDRAW_SUSPENDED);
-
-  if (GetStateBits() & NS_STATE_SVG_DIRTY)
-    nsSVGUtils::UpdateGraphic(this);
-}
-
-gfxRect
+SVGBBox
 nsSVGPathGeometryFrame::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
                                             PRUint32 aFlags)
 {
+  SVGBBox bbox;
+
   if (aToBBoxUserspace.IsSingular()) {
     // XXX ReportToConsole
-    return gfxRect(0.0, 0.0, 0.0, 0.0);
+    return bbox;
   }
 
   nsRefPtr<gfxContext> context =
@@ -288,8 +277,6 @@ nsSVGPathGeometryFrame::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
 
   GeneratePath(context, &aToBBoxUserspace);
   context->IdentityMatrix();
-
-  gfxRect bbox;
 
   // Be careful when replacing the following logic to get the fill and stroke
   // extents independently (instead of computing the stroke extents from the
@@ -329,10 +316,9 @@ nsSVGPathGeometryFrame::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
       pathExtents.MoveTo(context->GetUserStrokeExtent().Center());
       pathExtents.SizeTo(0, 0);
     }
-    bbox =
-      bbox.Union(nsSVGUtils::PathExtentsToMaxStrokeExtents(pathExtents,
-                                                           this,
-                                                           aToBBoxUserspace));
+    bbox.UnionEdges(nsSVGUtils::PathExtentsToMaxStrokeExtents(pathExtents,
+                                                              this,
+                                                              aToBBoxUserspace));
   }
 
   // Account for markers:
@@ -350,28 +336,28 @@ nsSVGPathGeometryFrame::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
       if (num) {
         nsSVGMarkerFrame *frame = properties.GetMarkerStartFrame();
         if (frame) {
-          gfxRect mbbox =
+          SVGBBox mbbox =
             frame->GetMarkBBoxContribution(aToBBoxUserspace, aFlags, this,
                                            &marks[0], strokeWidth);
-          bbox.UnionRect(bbox, mbbox);
+          bbox.UnionEdges(mbbox);
         }
 
         frame = properties.GetMarkerMidFrame();
         if (frame) {
           for (PRUint32 i = 1; i < num - 1; i++) {
-            gfxRect mbbox =
+            SVGBBox mbbox =
               frame->GetMarkBBoxContribution(aToBBoxUserspace, aFlags, this,
                                              &marks[i], strokeWidth);
-            bbox.UnionRect(bbox, mbbox);
+            bbox.UnionEdges(mbbox);
           }
         }
 
         frame = properties.GetMarkerEndFrame();
         if (frame) {
-          gfxRect mbbox =
+          SVGBBox mbbox =
             frame->GetMarkBBoxContribution(aToBBoxUserspace, aFlags, this,
                                            &marks[num-1], strokeWidth);
-          bbox.UnionRect(bbox, mbbox);
+          bbox.UnionEdges(mbbox);
         }
       }
     }

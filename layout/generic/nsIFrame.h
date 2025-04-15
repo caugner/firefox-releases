@@ -45,6 +45,8 @@
 #error This header/class should only be used within Mozilla code. It should not be used by extensions.
 #endif
 
+#define MAX_REFLOW_DEPTH 200
+
 /* nsIFrame is in the process of being deCOMtaminated, i.e., this file is eventually
    going to be eliminated, and all callers will use nsFrame instead.  At the moment
    we're midway through this process, so you will see inlined functions and member
@@ -303,6 +305,11 @@ typedef PRUint64 nsFrameState;
 // frame whose width is used to determine the inflation factor for
 // everything whose nearest ancestor container for this frame?
 #define NS_FRAME_FONT_INFLATION_CONTAINER           NS_FRAME_STATE_BIT(41)
+
+// Does this frame manage a region in which we do font size inflation,
+// i.e., roughly, is it an element establishing a new block formatting
+// context?
+#define NS_FRAME_FONT_INFLATION_FLOW_ROOT           NS_FRAME_STATE_BIT(42)
 
 // Box layout bits
 #define NS_STATE_IS_HORIZONTAL                      NS_FRAME_STATE_BIT(22)
@@ -806,11 +813,6 @@ public:
 
   virtual void SetAdditionalStyleContext(PRInt32 aIndex,
                                          nsStyleContext* aStyleContext) = 0;
-
-  /**
-   * @return false if this frame definitely has no borders at all
-   */                 
-  bool HasBorder() const;
 
   /**
    * Accessor functions for geometric parent
@@ -1653,6 +1655,16 @@ public:
   virtual nsSize GetIntrinsicRatio() = 0;
 
   /**
+   * Bit-flags to pass to ComputeSize in |aFlags| parameter.
+   */
+  enum {
+    /* Set if the frame is in a context where non-replaced blocks should
+     * shrink-wrap (e.g., it's floating, absolutely positioned, or
+     * inline-block). */
+    eShrinkWrap =        1 << 0
+  };
+
+  /**
    * Compute the size that a frame will occupy.  Called while
    * constructing the nsHTMLReflowState to be used to Reflow the frame,
    * in order to fill its mComputedWidth and mComputedHeight member
@@ -1683,18 +1695,15 @@ public:
    *                 positioning.
    * @param aBorder  The sum of the vertical / horizontal border widths
    *                 of the frame.
-   * @param aPadding  The sum of the vertical / horizontal margins of
-   *                  the frame, including actual values resulting from
-   *                  percentages.
-   * @param aShrinkWrap  Whether the frame is in a context where
-   *                     non-replaced blocks should shrink-wrap (e.g.,
-   *                     it's floating, absolutely positioned, or
-   *                     inline-block).
+   * @param aPadding The sum of the vertical / horizontal margins of
+   *                 the frame, including actual values resulting from
+   *                 percentages.
+   * @param aFlags   Flags to further customize behavior (definitions above).
    */
   virtual nsSize ComputeSize(nsRenderingContext *aRenderingContext,
                              nsSize aCBSize, nscoord aAvailableWidth,
                              nsSize aMargin, nsSize aBorder, nsSize aPadding,
-                             bool aShrinkWrap) = 0;
+                             PRUint32 aFlags) = 0;
 
   /**
    * Compute a tight bounding rectangle for the frame. This is a rectangle
@@ -2523,12 +2532,16 @@ public:
 
   NS_DECLARE_FRAME_PROPERTY(BaseLevelProperty, nsnull)
   NS_DECLARE_FRAME_PROPERTY(EmbeddingLevelProperty, nsnull)
+  NS_DECLARE_FRAME_PROPERTY(ParagraphDepthProperty, nsnull)
 
 #define NS_GET_BASE_LEVEL(frame) \
 NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::BaseLevelProperty()))
 
 #define NS_GET_EMBEDDING_LEVEL(frame) \
 NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::EmbeddingLevelProperty()))
+
+#define NS_GET_PARAGRAPH_DEPTH(frame) \
+NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
 
   /**
    * Return true if and only if this frame obeys visibility:hidden.
@@ -2694,18 +2707,26 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::EmbeddingLevelProperty()))
   // The above methods have been migrated from nsIBox and are in the process of
   // being refactored. DO NOT USE OUTSIDE OF XUL.
 
+  struct CaretPosition {
+    CaretPosition() :
+      mContentOffset(0)
+    {}
+
+    nsCOMPtr<nsIContent> mResultContent;
+    PRInt32              mContentOffset;
+  };
+
   /**
    * gets the first or last possible caret position within the frame
    *
    * @param  [in] aStart
    *         true  for getting the first possible caret position
    *         false for getting the last possible caret position
-   * @return The caret position in an nsPeekOffsetStruct (the
-   *         fields set are mResultContent and mContentOffset;
+   * @return The caret position in a CaretPosition.
    *         the returned value is a 'best effort' in case errors
    *         are encountered rummaging through the frame.
    */
-  nsPeekOffsetStruct GetExtremeCaretPosition(bool aStart);
+  CaretPosition GetExtremeCaretPosition(bool aStart);
 
   /**
    * Same thing as nsFrame::CheckInvalidateSizeChange, but more flexible.  The

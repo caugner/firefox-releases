@@ -79,9 +79,12 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/StandardInteger.h"
+#include "mozilla/Util.h"
 #include "FrameLayerBuilder.h"
 #include "nsSMILKeySpline.h"
 #include "nsSubDocumentFrame.h"
+#include "nsSVGOuterSVGFrame.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -606,6 +609,12 @@ nsHTMLScrollFrame::GuessVScrollbarNeeded(const ScrollReflowState& aState)
     return false;
 
   if (mInner.mIsRoot) {
+    nsIFrame *f = mInner.mScrolledFrame->GetFirstPrincipalChild();
+    if (f && f->GetType() == nsGkAtoms::svgOuterSVGFrame &&
+        static_cast<nsSVGOuterSVGFrame*>(f)->VerticalScrollbarNotNeeded()) {
+      // Common SVG case - avoid a bad guess.
+      return false;
+    }
     // Assume that there will be a scrollbar; it seems to me
     // that 'most pages' do have a scrollbar, and anyway, it's cheaper
     // to do an extra reflow for the pages that *don't* need a
@@ -1609,7 +1618,7 @@ Clamp(nscoord aLower, nscoord aVal, nscoord aUpper)
 nsPoint
 nsGfxScrollFrameInner::ClampScrollPosition(const nsPoint& aPt) const
 {
-  nsRect range = GetScrollRange();
+  nsRect range = GetScrollRangeForClamping();
   return nsPoint(Clamp(range.x, aPt.x, range.XMost()),
                  Clamp(range.y, aPt.y, range.YMost()));
 }
@@ -1935,7 +1944,7 @@ nsGfxScrollFrameInner::RestrictToDevPixels(const nsPoint& aPt,
   // pixels. But we also need to make sure that our position remains
   // inside the allowed region.
   if (aShouldClamp) {
-    nsRect scrollRange = GetScrollRange();
+    nsRect scrollRange = GetScrollRangeForClamping();
     *aPtDevPx = nsIntPoint(ClampInt(scrollRange.x, aPt.x, scrollRange.XMost(), appUnitsPerDevPixel),
                            ClampInt(scrollRange.y, aPt.y, scrollRange.YMost(), appUnitsPerDevPixel));
   } else {
@@ -2093,11 +2102,11 @@ public:
   }
 
 protected:
-  void SetCount(PRWord aCount) {
+  void SetCount(intptr_t aCount) {
     mProps.Set(nsIFrame::ScrollLayerCount(), reinterpret_cast<void*>(aCount));
   }
 
-  PRWord mCount;
+  intptr_t mCount;
   FrameProperties mProps;
   nsIFrame* mScrollFrame;
   nsIFrame* mScrolledFrame;
@@ -2159,24 +2168,57 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   dirtyRect.IntersectRect(aDirtyRect, mScrollPort);
 
   // Override the dirty rectangle if the displayport has been set.
+  nsRect displayPort;
   bool usingDisplayport =
-    nsLayoutUtils::GetDisplayPort(mOuter->GetContent(), &dirtyRect);
+    nsLayoutUtils::GetDisplayPort(mOuter->GetContent(), &displayPort) &&
+    !aBuilder->IsForEventDelivery();
+  if (usingDisplayport) {
+    dirtyRect = displayPort;
+  }
 
   nsDisplayListCollection set;
   rv = mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame, dirtyRect, set);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Since making new layers is expensive, only use nsDisplayScrollLayer
-  // if the area is scrollable.
-  nsRect scrollRange = GetScrollRange();
-  ScrollbarStyles styles = GetScrollbarStylesFromFrame();
-  mShouldBuildLayer =
-     (XRE_GetProcessType() == GeckoProcessType_Content &&
-     (styles.mHorizontal != NS_STYLE_OVERFLOW_HIDDEN ||
-      styles.mVertical != NS_STYLE_OVERFLOW_HIDDEN) &&
-     (scrollRange.width > 0 ||
-      scrollRange.height > 0) &&
-     (!mIsRoot || !mOuter->PresContext()->IsRootContentDocument()));
+  // if the area is scrollable and we're the content process.
+  // When a displayport is being used, force building of a layer so that
+  // CompositorParent can always find the scrollable layer for the root content
+  // document.
+  if (usingDisplayport) {
+    mShouldBuildLayer = true;
+  } else {
+    nsRect scrollRange = GetScrollRange();
+    ScrollbarStyles styles = GetScrollbarStylesFromFrame();
+    mShouldBuildLayer =
+       (styles.mHorizontal != NS_STYLE_OVERFLOW_HIDDEN ||
+        styles.mVertical != NS_STYLE_OVERFLOW_HIDDEN) &&
+       (XRE_GetProcessType() == GeckoProcessType_Content &&
+        (scrollRange.width > 0 || scrollRange.height > 0) &&
+        (!mIsRoot || !mOuter->PresContext()->IsRootContentDocument()));
+  }
+
+  nsRect clip;
+  nscoord radii[8];
+
+  if (usingDisplayport) {
+    clip = displayPort + aBuilder->ToReferenceFrame(mOuter);
+    memset(radii, 0, sizeof(nscoord) * ArrayLength(radii));
+  } else {
+    clip = mScrollPort + aBuilder->ToReferenceFrame(mOuter);
+    // Our override of GetBorderRadii ensures we never have a radius at
+    // the corners where we have a scrollbar.
+    mOuter->GetPaddingBoxBorderRadii(radii);
+  }
+
+  // mScrolledFrame may have given us a background, e.g., the scrolled canvas
+  // frame below the viewport. If so, we want it to be clipped. We also want
+  // to end up on our BorderBackground list.
+  // If we are the viewport scrollframe, then clip all our descendants (to ensure
+  // that fixed-pos elements get clipped by us).
+  rv = mOuter->OverflowClip(aBuilder, set, aLists, clip, radii,
+                            true, mIsRoot);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   if (ShouldBuildLayer()) {
     // ScrollLayerWrapper must always be created because it initializes the
@@ -2187,7 +2229,7 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       // Once a displayport is set, assume that scrolling needs to be fast
       // so create a layer with all the content inside. The compositor
       // process will be able to scroll the content asynchronously.
-      wrapper.WrapListsInPlace(aBuilder, mOuter, set);
+      wrapper.WrapListsInPlace(aBuilder, mOuter, aLists);
     }
 
     // In case we are not using displayport or the nsDisplayScrollLayers are
@@ -2195,25 +2237,8 @@ nsGfxScrollFrameInner::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     // metadata about this scroll box to the compositor process.
     nsDisplayScrollInfoLayer* layerItem = new (aBuilder) nsDisplayScrollInfoLayer(
       aBuilder, mScrolledFrame, mOuter);
-    set.BorderBackground()->AppendNewToBottom(layerItem);
+    aLists.BorderBackground()->AppendNewToBottom(layerItem);
   }
-
-  nsRect clip;
-  clip = mScrollPort + aBuilder->ToReferenceFrame(mOuter);
-
-  nscoord radii[8];
-  // Our override of GetBorderRadii ensures we never have a radius at
-  // the corners where we have a scrollbar.
-  mOuter->GetPaddingBoxBorderRadii(radii);
-
-  // mScrolledFrame may have given us a background, e.g., the scrolled canvas
-  // frame below the viewport. If so, we want it to be clipped. We also want
-  // to end up on our BorderBackground list.
-  // If we are the viewport scrollframe, then clip all our descendants (to ensure
-  // that fixed-pos elements get clipped by us).
-  rv = mOuter->OverflowClip(aBuilder, set, aLists, clip, radii,
-                            true, mIsRoot);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   // Now display overlay scrollbars and the resizer, if we have one.
   AppendScrollPartsTo(aBuilder, aDirtyRect, aLists, createLayersForScrollbars,
@@ -2285,9 +2310,15 @@ AlignToDevPixelRoundingToZero(nscoord aVal, PRInt32 aAppUnitsPerDevPixel)
 nsRect
 nsGfxScrollFrameInner::GetScrollRange() const
 {
+  return GetScrollRange(mScrollPort.width, mScrollPort.height);
+}
+
+nsRect
+nsGfxScrollFrameInner::GetScrollRange(nscoord aWidth, nscoord aHeight) const
+{
   nsRect range = GetScrolledRect();
-  range.width -= mScrollPort.width;
-  range.height -= mScrollPort.height;
+  range.width -= aWidth;
+  range.height -= aHeight;
 
   nsPresContext* presContext = mOuter->PresContext();
   PRInt32 appUnitsPerDevPixel = presContext->AppUnitsPerDevPixel();
@@ -2298,6 +2329,17 @@ nsGfxScrollFrameInner::GetScrollRange() const
   range.x = AlignToDevPixelRoundingToZero(range.x, appUnitsPerDevPixel);
   range.y = AlignToDevPixelRoundingToZero(range.y, appUnitsPerDevPixel);
   return range;
+}
+
+nsRect
+nsGfxScrollFrameInner::GetScrollRangeForClamping() const
+{
+  nsIPresShell* presShell = mOuter->PresContext()->PresShell();
+  if (mIsRoot && presShell->IsScrollPositionClampingScrollPortSizeSet()) {
+    nsSize size = presShell->GetScrollPositionClampingScrollPortSize();
+    return GetScrollRange(size.width, size.height);
+  }
+  return GetScrollRange();
 }
 
 static void
@@ -2379,7 +2421,7 @@ nsGfxScrollFrameInner::GetLineScrollAmount() const
 {
   nsRefPtr<nsFontMetrics> fm;
   nsLayoutUtils::GetFontMetricsForFrame(mOuter, getter_AddRefs(fm),
-    nsLayoutUtils::FontSizeInflationFor(mOuter, nsLayoutUtils::eNotInReflow));
+    nsLayoutUtils::FontSizeInflationFor(mOuter));
   NS_ASSERTION(fm, "FontMetrics is null, assuming fontHeight == 1 appunit");
   nscoord fontHeight = 1;
   if (fm) {

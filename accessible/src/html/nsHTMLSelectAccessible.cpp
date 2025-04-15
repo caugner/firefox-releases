@@ -38,6 +38,7 @@
 
 #include "nsHTMLSelectAccessible.h"
 
+#include "Accessible-inl.h"
 #include "nsAccessibilityService.h"
 #include "nsAccUtils.h"
 #include "nsDocAccessible.h"
@@ -347,31 +348,6 @@ nsHTMLSelectOptionAccessible::GetLevelInternal()
   return level;
 }
 
-void
-nsHTMLSelectOptionAccessible::GetPositionAndSizeInternal(PRInt32 *aPosInSet,
-                                                         PRInt32 *aSetSize)
-{
-  PRInt32 posInSet = 0, setSize = 0;
-  bool isContentFound = false;
-
-  nsIContent* parentContent = mContent->GetParent();
-  for (nsIContent* childContent = parentContent->GetFirstChild(); childContent;
-       childContent = childContent->GetNextSibling()) {
-    if (childContent->NodeInfo()->Equals(mContent->NodeInfo())) {
-      if (!isContentFound) {
-        if (childContent == mContent)
-          isContentFound = true;
-
-        posInSet++;
-      }
-      setSize++;
-    }
-  }
-
-  *aSetSize = setSize;
-  *aPosInSet = posInSet;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // nsHTMLSelectOptionAccessible: nsIAccessible
 
@@ -612,11 +588,13 @@ nsHTMLComboboxAccessible::Description(nsString& aDescription)
     option->Description(aDescription);
 }
 
-NS_IMETHODIMP nsHTMLComboboxAccessible::GetValue(nsAString& aValue)
+void
+nsHTMLComboboxAccessible::Value(nsString& aValue)
 {
   // Use accessible name of selected option.
   nsAccessible* option = SelectedOption();
-  return option ? option->GetName(aValue) : NS_OK;
+  if (option)
+    option->GetName(aValue);
 }
 
 PRUint8

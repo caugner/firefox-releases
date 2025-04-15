@@ -40,6 +40,7 @@
 #define CreateEvent CreateEventA
 #include "nsIDOMDocument.h"
 
+#include "Accessible-inl.h"
 #include "nsAccessibilityService.h"
 #include "nsApplicationAccessibleWrap.h"
 #include "nsAccUtils.h"
@@ -92,17 +93,7 @@ using namespace mozilla::a11y;
 ////////////////////////////////////////////////////////////////////////////////
 // nsISupports
 
-// Expanded version of NS_IMPL_ISUPPORTS_INHERITED2 
-// so we can QI directly to concrete nsRootAccessible
-NS_IMPL_QUERY_HEAD(nsRootAccessible)
-NS_IMPL_QUERY_BODY(nsIDOMEventListener)
-if (aIID.Equals(NS_GET_IID(nsRootAccessible)))
-  foundInterface = reinterpret_cast<nsISupports*>(this);
-else
-NS_IMPL_QUERY_TAIL_INHERITING(nsDocAccessible)
-
-NS_IMPL_ADDREF_INHERITED(nsRootAccessible, nsDocAccessible) 
-NS_IMPL_RELEASE_INHERITED(nsRootAccessible, nsDocAccessible)
+NS_IMPL_ISUPPORTS_INHERITED1(nsRootAccessible, nsDocAccessible, nsIAccessibleDocument)
 
 ////////////////////////////////////////////////////////////////////////////////
 // Constructor/desctructor
@@ -229,8 +220,6 @@ const char* const docEvents[] = {
   "ValueChange",
   // capture AlertActive events (fired whenever alert pops up)
   "AlertActive",
-  // add ourself as a TreeViewChanged listener (custom event fired in nsTreeBodyFrame.cpp)
-  "TreeViewChanged",
   "TreeRowCountChanged",
   "TreeInvalidated",
   // add ourself as a OpenStateChange listener (custom event fired in tree.xml)
@@ -388,26 +377,16 @@ nsRootAccessible::ProcessDOMEvent(nsIDOMEvent* aDOMEvent)
   nsINode* targetNode = accessible->GetNode();
 
 #ifdef MOZ_XUL
-  nsRefPtr<nsXULTreeAccessible> treeAcc;
-  if (targetNode->IsElement() &&
-      targetNode->AsElement()->NodeInfo()->Equals(nsGkAtoms::tree,
-                                                  kNameSpaceID_XUL)) {
-    treeAcc = do_QueryObject(accessible);
-    if (treeAcc) {
-      if (eventType.EqualsLiteral("TreeViewChanged")) {
-        treeAcc->TreeViewChanged();
-        return;
-      }
+  nsXULTreeAccessible* treeAcc = accessible->AsXULTree();
+  if (treeAcc) {
+    if (eventType.EqualsLiteral("TreeRowCountChanged")) {
+      HandleTreeRowCountChangedEvent(aDOMEvent, treeAcc);
+      return;
+    }
 
-      if (eventType.EqualsLiteral("TreeRowCountChanged")) {
-        HandleTreeRowCountChangedEvent(aDOMEvent, treeAcc);
-        return;
-      }
-
-      if (eventType.EqualsLiteral("TreeInvalidated")) {
-        HandleTreeInvalidatedEvent(aDOMEvent, treeAcc);
-        return;
-      }
+    if (eventType.EqualsLiteral("TreeInvalidated")) {
+      HandleTreeInvalidatedEvent(aDOMEvent, treeAcc);
+      return;
     }
   }
 #endif

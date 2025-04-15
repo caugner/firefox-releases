@@ -917,7 +917,7 @@ public:
   }
 #endif
 
-  virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder);
+  virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap);
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                    nsRegion* aVisibleRegion,
                                    const nsRect& aAllowVisibleRegionExpansion);
@@ -946,8 +946,9 @@ GetDisplayItemBounds(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem, nsIFr
 }
 
 nsRect
-nsDisplayPluginReadback::GetBounds(nsDisplayListBuilder* aBuilder)
+nsDisplayPluginReadback::GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap)
 {
+  *aSnap = false;
   return GetDisplayItemBounds(aBuilder, this, mFrame);
 }
 
@@ -961,7 +962,8 @@ nsDisplayPluginReadback::ComputeVisibility(nsDisplayListBuilder* aBuilder,
     return false;
 
   nsRect expand;
-  expand.IntersectRect(aAllowVisibleRegionExpansion, GetBounds(aBuilder));
+  bool snap;
+  expand.IntersectRect(aAllowVisibleRegionExpansion, GetBounds(aBuilder, &snap));
   // *Add* our bounds to the visible region so that stuff underneath us is
   // likely to be made visible, so we can use it for a background! This is
   // a bit crazy since we normally only subtract from the visible region.
@@ -970,8 +972,9 @@ nsDisplayPluginReadback::ComputeVisibility(nsDisplayListBuilder* aBuilder,
 }
 
 nsRect
-nsDisplayPlugin::GetBounds(nsDisplayListBuilder* aBuilder)
+nsDisplayPlugin::GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap)
 {
+  *aSnap = false;
   return GetDisplayItemBounds(aBuilder, this, mFrame);
 }
 
@@ -980,7 +983,8 @@ nsDisplayPlugin::Paint(nsDisplayListBuilder* aBuilder,
                        nsRenderingContext* aCtx)
 {
   nsObjectFrame* f = static_cast<nsObjectFrame*>(mFrame);
-  f->PaintPlugin(aBuilder, *aCtx, mVisibleRect, GetBounds(aBuilder));
+  bool snap;
+  f->PaintPlugin(aBuilder, *aCtx, mVisibleRect, GetBounds(aBuilder, &snap));
 }
 
 bool
@@ -988,18 +992,19 @@ nsDisplayPlugin::ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                    nsRegion* aVisibleRegion,
                                    const nsRect& aAllowVisibleRegionExpansion)
 {
-  mVisibleRegion.And(*aVisibleRegion, GetBounds(aBuilder));  
+  bool snap;
+  mVisibleRegion.And(*aVisibleRegion, GetBounds(aBuilder, &snap));
   return nsDisplayItem::ComputeVisibility(aBuilder, aVisibleRegion,
                                           aAllowVisibleRegionExpansion);
 }
 
 nsRegion
 nsDisplayPlugin::GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
+                                 bool* aSnap,
                                  bool* aForceTransparentSurface)
 {
-  if (aForceTransparentSurface) {
-    *aForceTransparentSurface = false;
-  }
+  *aForceTransparentSurface = false;
+  *aSnap = false;
   nsRegion result;
   nsObjectFrame* f = static_cast<nsObjectFrame*>(mFrame);
   if (!aBuilder->IsForPluginGeometry()) {
@@ -1018,11 +1023,13 @@ nsDisplayPlugin::GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
       }
     }
   }
-  if (f->IsOpaque() &&
-      (aBuilder->IsForPluginGeometry() ||
-       (f->GetPaintedRect(this) + ToReferenceFrame()).Contains(GetBounds(aBuilder)))) {
-    // We can treat this as opaque
-    result = GetBounds(aBuilder);
+  if (f->IsOpaque()) {
+    nsRect bounds = GetBounds(aBuilder, aSnap);
+    if (aBuilder->IsForPluginGeometry() ||
+        (f->GetPaintedRect(this) + ToReferenceFrame()).Contains(bounds)) {
+      // We can treat this as opaque
+      result = bounds;
+    }
   }
   return result;
 }
@@ -1644,26 +1651,14 @@ nsObjectFrame::PaintPlugin(nsDisplayListBuilder* aBuilder,
 {
 #if defined(MOZ_WIDGET_ANDROID)
   if (mInstanceOwner) {
-    NPWindow *window;
-    mInstanceOwner->GetWindow(window);
-
     gfxRect frameGfxRect =
       PresContext()->AppUnitsToGfxUnits(aPluginRect);
     gfxRect dirtyGfxRect =
       PresContext()->AppUnitsToGfxUnits(aDirtyRect);
+
     gfxContext* ctx = aRenderingContext.ThebesContext();
 
-    gfx3DMatrix matrix3d = nsLayoutUtils::GetTransformToAncestor(this, nsnull);
-
-    gfxMatrix matrix2d;
-    if (!matrix3d.Is2D(&matrix2d))
-      return;
-
-    // The matrix includes the frame's position, so we need to transform
-    // from 0,0 to get the correct coordinates.
-    frameGfxRect.MoveTo(0, 0);
-
-    mInstanceOwner->Paint(ctx, matrix2d.Transform(frameGfxRect), dirtyGfxRect);
+    mInstanceOwner->Paint(ctx, frameGfxRect, dirtyGfxRect);
     return;
   }
 #endif

@@ -61,13 +61,12 @@ Site.prototype = {
 
   /**
    * Unpins the site and calls the given callback when done.
-   * @param aCallback The callback to be called when finished.
    */
-  unpin: function Site_unpin(aCallback) {
+  unpin: function Site_unpin() {
     if (this.isPinned()) {
       this._updateAttributes(false);
       gPinnedLinks.unpin(this._link);
-      gUpdater.updateGrid(aCallback);
+      gUpdater.updateGrid();
     }
   },
 
@@ -82,15 +81,11 @@ Site.prototype = {
   /**
    * Blocks the site (removes it from the grid) and calls the given callback
    * when done.
-   * @param aCallback The function to be called when finished.
    */
-  block: function Site_block(aCallback) {
-    if (gBlockedLinks.isBlocked(this._link)) {
-      if (aCallback)
-        aCallback();
-    } else {
+  block: function Site_block() {
+    if (!gBlockedLinks.isBlocked(this._link)) {
       gBlockedLinks.block(this._link);
-      gUpdater.updateGrid(aCallback);
+      gUpdater.updateGrid();
     }
   },
 
@@ -124,10 +119,13 @@ Site.prototype = {
    * Renders the site's data (fills the HTML fragment).
    */
   _render: function Site_render() {
-    let title = this.title || this.url;
+    let url = this.url;
+    let title = this.title || url;
+    let tooltip = (title == url ? title : title + "\n" + url);
+
     let link = this._querySelector(".newtab-link");
-    link.setAttribute("title", title);
-    link.setAttribute("href", this.url);
+    link.setAttribute("title", tooltip);
+    link.setAttribute("href", url);
     this._querySelector(".newtab-title").textContent = title;
 
     if (this.isPinned())

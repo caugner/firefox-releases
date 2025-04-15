@@ -19,6 +19,7 @@
 #include "nsIDocShell.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "WindowIdentifier.h"
+#include "mozilla/dom/ScreenOrientation.h"
 
 using namespace mozilla::services;
 
@@ -178,8 +179,22 @@ public:
   }
 
   void RemoveObserver(Observer<InfoType>* aObserver) {
+    // If mObservers is null, that means there are no observers.
+    // In addition, if RemoveObserver() returns false, that means we didn't
+    // find the observer.
+    // In both cases, that is a logical error we want to make sure the developer
+    // notices.
+
     MOZ_ASSERT(mObservers);
-    mObservers->RemoveObserver(aObserver);
+
+#ifndef DEBUG
+    if (!mObservers) {
+      return;
+    }
+#endif
+
+    DebugOnly<bool> removed = mObservers->RemoveObserver(aObserver);
+    MOZ_ASSERT(removed);
 
     if (mObservers->Length() == 0) {
       DisableNotifications();
@@ -192,7 +207,14 @@ public:
   }
 
   void BroadcastInformation(const InfoType& aInfo) {
-    MOZ_ASSERT(mObservers);
+    // It is possible for mObservers to be NULL here on some platforms,
+    // because a call to BroadcastInformation gets queued up asynchronously
+    // while RemoveObserver is running (and before the notifications are
+    // disabled). The queued call can then get run after mObservers has
+    // been nulled out. See bug 757025.
+    if (!mObservers) {
+      return;
+    }
     mObservers->Broadcast(aInfo);
   }
 
@@ -289,6 +311,24 @@ protected:
 
 static WakeLockObserversManager sWakeLockObservers;
 
+class ScreenOrientationObserversManager : public CachingObserversManager<dom::ScreenOrientationWrapper>
+{
+protected:
+  void EnableNotifications() {
+    PROXY_IF_SANDBOXED(EnableScreenOrientationNotifications());
+  }
+
+  void DisableNotifications() {
+    PROXY_IF_SANDBOXED(DisableScreenOrientationNotifications());
+  }
+
+  void GetCurrentInformationInternal(dom::ScreenOrientationWrapper* aInfo) {
+    PROXY_IF_SANDBOXED(GetCurrentScreenOrientation(&(aInfo->orientation)));
+  }
+};
+
+static ScreenOrientationObserversManager sScreenOrientationObservers;
+
 void
 RegisterBatteryObserver(BatteryObserver* aObserver)
 {
@@ -328,6 +368,22 @@ void SetScreenEnabled(bool enabled)
 {
   AssertMainThread();
   PROXY_IF_SANDBOXED(SetScreenEnabled(enabled));
+}
+
+bool GetCpuSleepAllowed()
+{
+  // Generally for interfaces that are accessible by normal web content
+  // we should cache the result and be notified on state changes, like
+  // what the battery API does. But since this is only used by
+  // privileged interface, the synchronous getter is OK here.
+  AssertMainThread();
+  RETURN_PROXY_IF_SANDBOXED(GetCpuSleepAllowed());
+}
+
+void SetCpuSleepAllowed(bool allowed)
+{
+  AssertMainThread();
+  PROXY_IF_SANDBOXED(SetCpuSleepAllowed(allowed));
 }
 
 double GetScreenBrightness()
@@ -382,7 +438,7 @@ DisableSensorNotifications(SensorType aSensor) {
 }
 
 typedef mozilla::ObserverList<SensorData> SensorObserverList;
-static SensorObserverList *gSensorObservers = NULL;
+static SensorObserverList* gSensorObservers = NULL;
 
 static SensorObserverList &
 GetSensorObservers(SensorType sensor_type) {
@@ -414,6 +470,8 @@ UnregisterSensorObserver(SensorType aSensor, ISensorObserver *aObserver) {
   observers.RemoveObserver(aObserver);
   if(observers.Length() == 0) {
     DisableSensorNotifications(aSensor);
+    delete [] gSensorObservers;
+    gSensorObservers = nsnull;
   }
 }
 
@@ -501,6 +559,126 @@ NotifyWakeLockChange(const WakeLockInformation& aInfo)
 {
   AssertMainThread();
   sWakeLockObservers.BroadcastInformation(aInfo);
+}
+
+void
+RegisterScreenOrientationObserver(hal::ScreenOrientationObserver* aObserver)
+{
+  AssertMainThread();
+  sScreenOrientationObservers.AddObserver(aObserver);
+}
+
+void
+UnregisterScreenOrientationObserver(hal::ScreenOrientationObserver* aObserver)
+{
+  AssertMainThread();
+  sScreenOrientationObservers.RemoveObserver(aObserver);
+}
+
+void
+GetCurrentScreenOrientation(dom::ScreenOrientation* aScreenOrientation)
+{
+  AssertMainThread();
+  *aScreenOrientation = sScreenOrientationObservers.GetCurrentInformation().orientation;
+}
+
+void
+NotifyScreenOrientationChange(const dom::ScreenOrientation& aScreenOrientation)
+{
+  sScreenOrientationObservers.CacheInformation(dom::ScreenOrientationWrapper(aScreenOrientation));
+  sScreenOrientationObservers.BroadcastCachedInformation();
+}
+
+bool
+LockScreenOrientation(const dom::ScreenOrientation& aOrientation)
+{
+  AssertMainThread();
+  RETURN_PROXY_IF_SANDBOXED(LockScreenOrientation(aOrientation));
+}
+
+void
+UnlockScreenOrientation()
+{
+  AssertMainThread();
+  PROXY_IF_SANDBOXED(UnlockScreenOrientation());
+}
+
+void
+EnableSwitchNotifications(hal::SwitchDevice aDevice) {
+  AssertMainThread();
+  PROXY_IF_SANDBOXED(EnableSwitchNotifications(aDevice));
+}
+
+void
+DisableSwitchNotifications(hal::SwitchDevice aDevice) {
+  AssertMainThread();
+  PROXY_IF_SANDBOXED(DisableSwitchNotifications(aDevice));
+}
+
+hal::SwitchState GetCurrentSwitchState(hal::SwitchDevice aDevice)
+{
+  AssertMainThread();
+  RETURN_PROXY_IF_SANDBOXED(GetCurrentSwitchState(aDevice));
+}
+
+typedef mozilla::ObserverList<SwitchEvent> SwitchObserverList;
+
+static SwitchObserverList *sSwitchObserverLists = NULL;
+
+static SwitchObserverList&
+GetSwitchObserverList(hal::SwitchDevice aDevice) {
+  MOZ_ASSERT(0 <= aDevice && aDevice < NUM_SWITCH_DEVICE); 
+  if (sSwitchObserverLists == NULL) {
+    sSwitchObserverLists = new SwitchObserverList[NUM_SWITCH_DEVICE];
+  }
+  return sSwitchObserverLists[aDevice];
+}
+
+static void
+ReleaseObserversIfNeeded() {
+  for (int i = 0; i < NUM_SWITCH_DEVICE; i++) {
+    if (sSwitchObserverLists[i].Length() != 0)
+      return;
+  }
+
+  //The length of every list is 0, no observer in the list.
+  delete [] sSwitchObserverLists;
+  sSwitchObserverLists = NULL;
+}
+
+void
+RegisterSwitchObserver(hal::SwitchDevice aDevice, hal::SwitchObserver *aObserver)
+{
+  AssertMainThread();
+  SwitchObserverList& observer = GetSwitchObserverList(aDevice);
+  observer.AddObserver(aObserver);
+  if (observer.Length() == 1) {
+    EnableSwitchNotifications(aDevice);
+  }
+}
+
+void
+UnregisterSwitchObserver(hal::SwitchDevice aDevice, hal::SwitchObserver *aObserver)
+{
+  AssertMainThread();
+  SwitchObserverList& observer = GetSwitchObserverList(aDevice);
+  observer.RemoveObserver(aObserver);
+  if (observer.Length() == 0) {
+    DisableSwitchNotifications(aDevice);
+    ReleaseObserversIfNeeded();
+  }
+}
+
+void
+NotifySwitchChange(const hal::SwitchEvent& aEvent)
+{
+  // When callback this notification, main thread may call unregister function
+  // first. We should check if this pointer is valid.
+  if (!sSwitchObserverLists)
+    return;
+
+  SwitchObserverList& observer = GetSwitchObserverList(aEvent.device());
+  observer.Broadcast(aEvent);
 }
 
 } // namespace hal

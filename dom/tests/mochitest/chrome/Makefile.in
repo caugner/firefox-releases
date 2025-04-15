@@ -73,6 +73,12 @@ _TEST_FILES = \
 		489127.html \
 		test_focus_docnav.xul \
 		window_focus_docnav.xul \
+		test_clonewrapper.xul \
+		test_moving_nodeList.xul \
+		test_callback_wrapping.xul \
+		window_callback_wrapping.xul \
+		test_sandbox_postMessage.html \
+		test_sandbox_bindings.xul \
 		$(NULL)
 
 ifeq (WINNT,$(OS_ARCH))

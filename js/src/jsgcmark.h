@@ -76,10 +76,10 @@ DeclMarker(XML, JSXML)
  * after we transition to exact rooting.
  */
 void
-MarkKind(JSTracer *trc, void *thing, JSGCTraceKind kind);
+MarkKind(JSTracer *trc, void **thingp, JSGCTraceKind kind);
 
 void
-MarkGCThingRoot(JSTracer *trc, void *thing, const char *name);
+MarkGCThingRoot(JSTracer *trc, void **thingp, const char *name);
 
 /*** ID Marking ***/
 
@@ -125,6 +125,12 @@ MarkArraySlots(JSTracer *trc, size_t len, HeapSlot *vec, const char *name);
 
 void
 MarkObjectSlots(JSTracer *trc, JSObject *obj, uint32_t start, uint32_t nslots);
+
+void
+MarkCrossCompartmentObjectUnbarriered(JSTracer *trc, JSObject **obj, const char *name);
+
+void
+MarkCrossCompartmentScriptUnbarriered(JSTracer *trc, JSScript **script, const char *name);
 
 /*
  * Mark a value that may be in a different compartment from the compartment
@@ -185,6 +191,12 @@ Mark(JSTracer *trc, HeapPtr<JSObject> *o, const char *name)
 }
 
 inline void
+Mark(JSTracer *trc, HeapPtr<JSScript> *o, const char *name)
+{
+    MarkScript(trc, o, name);
+}
+
+inline void
 Mark(JSTracer *trc, HeapPtr<JSXML> *xml, const char *name)
 {
     MarkXML(trc, xml, name);
@@ -202,6 +214,41 @@ inline bool
 IsMarked(Cell *cell)
 {
     return !IsAboutToBeFinalized(cell);
+}
+
+inline Cell *
+ToMarkable(const Value &v)
+{
+    if (v.isMarkable())
+        return (Cell *)v.toGCThing();
+    return NULL;
+}
+
+inline Cell *
+ToMarkable(Cell *cell)
+{
+    return cell;
+}
+
+inline JSGCTraceKind
+TraceKind(const Value &v)
+{
+    JS_ASSERT(v.isMarkable());
+    if (v.isObject())
+        return JSTRACE_OBJECT;
+    return JSTRACE_STRING;
+}
+
+inline JSGCTraceKind
+TraceKind(JSObject *obj)
+{
+    return JSTRACE_OBJECT;
+}
+
+inline JSGCTraceKind
+TraceKind(JSScript *script)
+{
+    return JSTRACE_SCRIPT;
 }
 
 } /* namespace gc */

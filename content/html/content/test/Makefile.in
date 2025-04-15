@@ -293,11 +293,14 @@ _TEST_FILES = \
 		file_fullscreen-esc-exit.html \
 		file_fullscreen-esc-exit-inner.html \
 		file_fullscreen-rollback.html \
+		file_fullscreen-svg-element.html \
 		test_li_attributes_reflection.html \
 		test_ol_attributes_reflection.html \
 		test_bug651956.html \
 		test_bug694503.html \
 		test_object_plugin_nav.html \
+		test_bug742030.html \
+		test_bug742549.html \
 		$(NULL)
 
 _BROWSER_TEST_FILES = \

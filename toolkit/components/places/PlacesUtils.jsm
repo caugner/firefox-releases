@@ -85,7 +85,7 @@ XPCOMUtils.defineLazyGetter(this, "NetUtil", function() {
 const MIN_TRANSACTIONS_FOR_BATCH = 5;
 
 // The RESTORE_*_NSIOBSERVER_TOPIC constants should match the #defines of the
-// same names in browser/components/places/src/nsPlacesImportExportService.cpp
+// same names in browser/components/places/src/nsPlacesExportService.cpp
 const RESTORE_BEGIN_NSIOBSERVER_TOPIC = "bookmarks-restore-begin";
 const RESTORE_SUCCESS_NSIOBSERVER_TOPIC = "bookmarks-restore-success";
 const RESTORE_FAILED_NSIOBSERVER_TOPIC = "bookmarks-restore-failed";
@@ -131,12 +131,8 @@ var PlacesUtils = {
   TYPE_X_MOZ_PLACE_ACTION: "text/x-moz-place-action",
 
   EXCLUDE_FROM_BACKUP_ANNO: "places/excludeFromBackup",
-  GUID_ANNO: "placesInternal/GUID",
   LMANNO_FEEDURI: "livemark/feedURI",
   LMANNO_SITEURI: "livemark/siteURI",
-  LMANNO_EXPIRATION: "livemark/expiration",
-  LMANNO_LOADFAILED: "livemark/loadfailed",
-  LMANNO_LOADING: "livemark/loading",
   POST_DATA_ANNO: "bookmarkProperties/POSTData",
   READ_ONLY_ANNO: "placesInternal/READ_ONLY",
 
@@ -597,18 +593,21 @@ var PlacesUtils = {
 
     function gatherLivemarkUrl(aNode) {
       try {
-        return PlacesUtils.annotations.getItemAnnotation(aNode.itemId,
-                                                         this.LMANNO_SITEURI);
+        return PlacesUtils.annotations
+                          .getItemAnnotation(aNode.itemId,
+                                             PlacesUtils.LMANNO_SITEURI);
       } catch (ex) {
-        return PlacesUtils.annotations.getItemAnnotation(aNode.itemId,
-                                                         this.LMANNO_FEEDURI);
+        return PlacesUtils.annotations
+                          .getItemAnnotation(aNode.itemId,
+                                             PlacesUtils.LMANNO_FEEDURI);
       }
     }
 
     function isLivemark(aNode) {
       return PlacesUtils.nodeIsFolder(aNode) &&
-             PlacesUtils.annotations.itemHasAnnotation(aNode.itemId,
-                                                       this.LMANNO_FEEDURI);
+             PlacesUtils.annotations
+                        .itemHasAnnotation(aNode.itemId,
+                                           PlacesUtils.LMANNO_FEEDURI);
     }
 
     switch (aType) {
@@ -1387,10 +1386,6 @@ var PlacesUtils = {
                 return false;
               case this.LMANNO_SITEURI:
                 siteURI = this._uri(aAnno.value);
-                return false;
-              case this.LMANNO_EXPIRATION:
-              case this.LMANNO_LOADING:
-              case this.LMANNO_LOADFAILED:
                 return false;
               default:
                 return true;
@@ -2206,6 +2201,10 @@ XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "history",
                                    "@mozilla.org/browser/nav-history-service;1",
                                    "nsINavHistoryService");
 
+XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "asyncHistory",
+                                   "@mozilla.org/browser/history;1",
+                                   "mozIAsyncHistory");
+
 XPCOMUtils.defineLazyGetter(PlacesUtils, "bhistory", function() {
   return PlacesUtils.history.QueryInterface(Ci.nsIBrowserHistory);
 });
@@ -2298,7 +2297,6 @@ TransactionItemCache.prototype = {
     this._parentId || -1,
   keyword: null,
   title: null,
-  guid: null,
   dateAdded: null,
   lastModified: null,
   postData: null,
@@ -2482,9 +2480,6 @@ PlacesCreateFolderTransaction.prototype = {
                                                 this.childTransactions);
       txn.doTransaction();
     }
-
-    if (this.item.guid)
-      PlacesUtils.bookmarks.setItemGUID(this.item.id, this.item.guid);
   },
 
   undoTransaction: function CFTXN_undoTransaction()
@@ -2494,11 +2489,6 @@ PlacesCreateFolderTransaction.prototype = {
                                                 this.childTransactions);
       txn.undoTransaction();
     }
-
-    // If a GUID exists for this item, preserve it before removing the item.
-    if (PlacesUtils.annotations.itemHasAnnotation(this.item.id,
-                                                  PlacesUtils.GUID_ANNO))
-      this.item.guid = PlacesUtils.bookmarks.getItemGUID(this.item.id);
 
     // Remove item only after all child transactions have been reverted.
     PlacesUtils.bookmarks.removeItem(this.item.id);
@@ -2570,8 +2560,6 @@ PlacesCreateBookmarkTransaction.prototype = {
                                                 this.childTransactions);
       txn.doTransaction();
     }
-    if (this.item.guid)
-      PlacesUtils.bookmarks.setItemGUID(this.item.id, this.item.guid);
   },
 
   undoTransaction: function CITXN_undoTransaction()
@@ -2582,11 +2570,6 @@ PlacesCreateBookmarkTransaction.prototype = {
                                                 this.childTransactions);
       txn.undoTransaction();
     }
-
-    // If a GUID exists for this item, preserve it before removing the item.
-    if (PlacesUtils.annotations
-                   .itemHasAnnotation(this.item.id, PlacesUtils.GUID_ANNO))
-      this.item.guid = PlacesUtils.bookmarks.getItemGUID(this.item.id);
 
     // Remove item only after all child transactions have been reverted.
     PlacesUtils.bookmarks.removeItem(this.item.id);
@@ -2618,17 +2601,10 @@ PlacesCreateSeparatorTransaction.prototype = {
   {
     this.item.id =
       PlacesUtils.bookmarks.insertSeparator(this.item.parentId, this.item.index);
-    if (this.item.guid)
-      PlacesUtils.bookmarks.setItemGUID(this.item.id, this.item.guid);
   },
 
   undoTransaction: function CSTXN_undoTransaction()
   {
-    // If a GUID exists for this item, preserve it before removing the item.
-    if (PlacesUtils.annotations
-                   .itemHasAnnotation(this.item.id, PlacesUtils.GUID_ANNO))
-      this.item.guid = PlacesUtils.bookmarks.getItemGUID(this.item.id);
-
     PlacesUtils.bookmarks.removeItem(this.item.id);
   }
 };
@@ -2685,8 +2661,6 @@ PlacesCreateLivemarkTransaction.prototype = {
             PlacesUtils.setAnnotationsForItem(this.item.id,
                                               this.item.annotations);
           }
-          if (this.item.guid)
-            PlacesUtils.bookmarks.setItemGUID(this.item.id, this.item.guid);
         }
       }).bind(this)
     );
@@ -2699,10 +2673,6 @@ PlacesCreateLivemarkTransaction.prototype = {
     PlacesUtils.livemarks.getLivemark(
       { id: this.item.id },
       (function (aStatus, aLivemark) {
-        // If a GUID exists for this item, preserve it before removing the item.
-        if (PlacesUtils.annotations.itemHasAnnotation(this.item.id, PlacesUtils.GUID_ANNO))
-          this.item.guid = PlacesUtils.bookmarks.getItemGUID(this.item.id);
-
         PlacesUtils.bookmarks.removeItem(this.item.id);
       }).bind(this)
     );
@@ -2729,10 +2699,7 @@ function PlacesRemoveLivemarkTransaction(aLivemarkId)
   let annos = PlacesUtils.getAnnotationsForItem(this.item.id);
   // Exclude livemark service annotations, those will be recreated automatically
   let annosToExclude = [PlacesUtils.LMANNO_FEEDURI,
-                        PlacesUtils.LMANNO_SITEURI,
-                        PlacesUtils.LMANNO_EXPIRATION,
-                        PlacesUtils.LMANNO_LOADFAILED,
-                        PlacesUtils.LMANNO_LOADING];
+                        PlacesUtils.LMANNO_SITEURI];
   this.item.annotations = annos.filter(function(aValue, aIndex, aArray) {
       return annosToExclude.indexOf(aValue.name) == -1;
     });
@@ -3433,8 +3400,6 @@ PlacesTagURITransaction.prototype = {
                                    this.item.uri,
                                    PlacesUtils.bookmarks.DEFAULT_INDEX,
                                    PlacesUtils.history.getPageTitle(this.item.uri));
-      if (this.item.guid)
-        PlacesUtils.bookmarks.setItemGUID(this.item.id, this.item.guid);
     }
     PlacesUtils.tagging.tagURI(this.item.uri, this.item.tags);
   },
@@ -3442,11 +3407,6 @@ PlacesTagURITransaction.prototype = {
   undoTransaction: function TUTXN_undoTransaction()
   {
     if (this.item.id != -1) {
-      // If a GUID exists for this item, preserve it before removing the item.
-      if (PlacesUtils.annotations
-                     .itemHasAnnotation(this.item.id, PlacesUtils.GUID_ANNO)) {
-        this.item.guid = PlacesUtils.bookmarks.getItemGUID(this.item.id);
-      }
       PlacesUtils.bookmarks.removeItem(this.item.id);
       this.item.id = -1;
     }

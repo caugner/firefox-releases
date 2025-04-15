@@ -25,17 +25,28 @@ function test()
 
 function testFrameParameters()
 {
-  // scriptsadded is fired last when switching to a paused state, so the
-  // property view will have had a chance to fetch the call parameters.
-  gPane.activeThread.addOneTimeListener("scriptsadded", function() {
+  dump("Started testFrameParameters!\n");
+
+  gDebugger.addEventListener("Debugger:FetchedParameters", function test() {
+    dump("Entered Debugger:FetchedParameters!\n");
+
+    gDebugger.removeEventListener("Debugger:FetchedParameters", test, false);
     Services.tm.currentThread.dispatch({ run: function() {
 
-      var frames = gDebugger.DebuggerView.Stackframes._frames,
+      dump("After currentThread.dispatch!\n");
+
+      var frames = gDebugger.DebuggerView.StackFrames._frames,
           childNodes = frames.childNodes,
           localScope = gDebugger.DebuggerView.Properties.localScope,
           localNodes = localScope.querySelector(".details").childNodes;
 
-      is(gDebugger.StackFrames.activeThread.state, "paused",
+      dump("Got our variables:\n");
+      dump("frames     - " + frames.constructor + "\n");
+      dump("childNodes - " + childNodes.constructor + "\n");
+      dump("localScope - " + localScope.constructor + "\n");
+      dump("localNodes - " + localNodes.constructor + "\n");
+
+      is(gDebugger.DebuggerController.activeThread.state, "paused",
         "Should only be getting stack frames while paused.");
 
       is(frames.querySelectorAll(".dbg-stackframe").length, 3,
@@ -70,7 +81,7 @@ function testFrameParameters()
 
       resumeAndFinish();
     }}, 0);
-  });
+  }, false);
 
   EventUtils.sendMouseEvent({ type: "click" },
     content.document.querySelector("button"),
@@ -78,9 +89,9 @@ function testFrameParameters()
 }
 
 function resumeAndFinish() {
-  gPane.activeThread.addOneTimeListener("framescleared", function() {
+  gDebugger.DebuggerController.activeThread.addOneTimeListener("framescleared", function() {
     Services.tm.currentThread.dispatch({ run: function() {
-      var frames = gDebugger.DebuggerView.Stackframes._frames;
+      var frames = gDebugger.DebuggerView.StackFrames._frames;
 
       is(frames.querySelectorAll(".dbg-stackframe").length, 0,
         "Should have no frames.");
@@ -89,7 +100,7 @@ function resumeAndFinish() {
     }}, 0);
   });
 
-  gDebugger.StackFrames.activeThread.resume();
+  gDebugger.DebuggerController.activeThread.resume();
 }
 
 registerCleanupFunction(function() {

@@ -36,20 +36,18 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsCoreUtils.h"
 #include "nsAccUtils.h"
 
-#include "nsIAccessibleTypes.h"
-#include "Role.h"
-#include "States.h"
-
+#include "Accessible-inl.h"
 #include "nsAccessibilityService.h"
 #include "nsARIAMap.h"
+#include "nsCoreUtils.h"
 #include "nsDocAccessible.h"
 #include "nsHyperTextAccessible.h"
-#include "nsHTMLTableAccessible.h"
+#include "nsIAccessibleTypes.h"
 #include "nsTextAccessible.h"
-#include "nsXULTreeGridAccessible.h"
+#include "Role.h"
+#include "States.h"
 
 #include "nsIDOMXULContainerElement.h"
 #include "nsIDOMXULSelectCntrlEl.h"
@@ -134,47 +132,6 @@ nsAccUtils::GetARIAOrDefaultLevel(nsAccessible *aAccessible)
   return GetDefaultLevel(aAccessible);
 }
 
-void
-nsAccUtils::GetPositionAndSizeForXULSelectControlItem(nsIContent *aContent,
-                                                      PRInt32 *aPosInSet,
-                                                      PRInt32 *aSetSize)
-{
-  nsCOMPtr<nsIDOMXULSelectControlItemElement> item(do_QueryInterface(aContent));
-  if (!item)
-    return;
-
-  nsCOMPtr<nsIDOMXULSelectControlElement> control;
-  item->GetControl(getter_AddRefs(control));
-  if (!control)
-    return;
-
-  PRUint32 itemsCount = 0;
-  control->GetItemCount(&itemsCount);
-
-  PRInt32 indexOf = 0;
-  control->GetIndexOfItem(item, &indexOf);
-
-  *aSetSize = itemsCount;
-  *aPosInSet = indexOf;
-
-  for (PRUint32 index = 0; index < itemsCount; index++) {
-    nsCOMPtr<nsIDOMXULSelectControlItemElement> currItem;
-    control->GetItemAtIndex(index, getter_AddRefs(currItem));
-    nsCOMPtr<nsINode> currNode(do_QueryInterface(currItem));
-
-    nsAccessible* itemAcc = currNode ?
-      GetAccService()->GetAccessible(currNode, nsnull) : nsnull;
-
-    if (!itemAcc || itemAcc->State() & states::INVISIBLE) {
-      (*aSetSize)--;
-      if (index < static_cast<PRUint32>(indexOf))
-        (*aPosInSet)--;
-    }
-  }
-
-  (*aPosInSet)++; // group position is 1-index based.
-}
-
 PRInt32
 nsAccUtils::GetLevelForXULContainerItem(nsIContent *aContent)
 {
@@ -217,7 +174,7 @@ nsAccUtils::SetLiveContainerAttributes(nsIPersistentProperties *aAttributes,
 
     // container-live, and container-live-role attributes
     if (live.IsEmpty()) {
-      nsRoleMapEntry *role = GetRoleMapEntry(ancestor);
+      nsRoleMapEntry* role = aria::GetRoleMap(ancestor);
       if (nsAccUtils::HasDefinedARIAToken(ancestor,
                                           nsGkAtoms::aria_live)) {
         ancestor->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_live,
@@ -320,20 +277,6 @@ nsAccUtils::GetSelectableContainer(nsAccessible* aAccessible, PRUint64 aState)
       return nsnull;
   }
   return parent;
-}
-
-nsAccessible*
-nsAccUtils::GetMultiSelectableContainer(nsINode* aNode)
-{
-  nsAccessible* accessible = GetAccService()->GetAccessible(aNode, nsnull);
-  if (accessible) {
-    nsAccessible* container = GetSelectableContainer(accessible,
-                                                     accessible->State());
-    if (container && container->State() & states::MULTISELECTABLE)
-      return container;
-  }
-
-  return nsnull;
 }
 
 bool
@@ -473,45 +416,6 @@ nsAccUtils::GetScreenCoordsForParent(nsAccessNode *aAccessNode)
 
   nsIntRect parentRect = parentFrame->GetScreenRectExternal();
   return nsIntPoint(parentRect.x, parentRect.y);
-}
-
-nsRoleMapEntry*
-nsAccUtils::GetRoleMapEntry(nsINode *aNode)
-{
-  nsIContent *content = nsCoreUtils::GetRoleContent(aNode);
-  nsAutoString roleString;
-  if (!content ||
-      !content->GetAttr(kNameSpaceID_None, nsGkAtoms::role, roleString) ||
-      roleString.IsEmpty()) {
-    // We treat role="" as if the role attribute is absent (per aria spec:8.1.1)
-    return nsnull;
-  }
-
-  nsWhitespaceTokenizer tokenizer(roleString);
-  while (tokenizer.hasMoreTokens()) {
-    // Do a binary search through table for the next role in role list
-    NS_LossyConvertUTF16toASCII role(tokenizer.nextToken());
-    PRUint32 low = 0;
-    PRUint32 high = nsARIAMap::gWAIRoleMapLength;
-    while (low < high) {
-      PRUint32 index = (low + high) / 2;
-      PRInt32 compare = PL_strcmp(role.get(), nsARIAMap::gWAIRoleMap[index].roleString);
-      if (compare == 0) {
-        // The  role attribute maps to an entry in the role table
-        return &nsARIAMap::gWAIRoleMap[index];
-      }
-      if (compare < 0) {
-        high = index;
-      }
-      else {
-        low = index + 1;
-      }
-    }
-  }
-
-  // Always use some entry if there is a non-empty role string
-  // To ensure an accessible object is created
-  return &nsARIAMap::gLandmarkRoleMap;
 }
 
 PRUint8

@@ -348,7 +348,6 @@ IDBKeyRange::~IDBKeyRange()
 {
   if (mRooted) {
     NS_DROP_JS_OBJECTS(this, IDBKeyRange);
-    mRooted = false;
   }
 }
 

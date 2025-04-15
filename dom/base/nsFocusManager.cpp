@@ -954,8 +954,7 @@ nsFocusManager::WindowHidden(nsIDOMWindow* aWindow)
   // window, or an ancestor of the focused window. Either way, the focus is no
   // longer valid, so it needs to be updated.
 
-  nsIContent* oldFocusedContent = mFocusedContent;
-  mFocusedContent = nsnull;
+  nsCOMPtr<nsIContent> oldFocusedContent = mFocusedContent.forget();
 
   if (oldFocusedContent && oldFocusedContent->IsInDoc()) {
     NotifyFocusStateChange(oldFocusedContent,
@@ -1960,8 +1959,12 @@ nsFocusManager::ScrollIntoView(nsIPresShell* aPresShell,
   // if the noscroll flag isn't set, scroll the newly focused element into view
   if (!(aFlags & FLAG_NOSCROLL))
     aPresShell->ScrollContentIntoView(aContent,
-                                      NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,
-                                      NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,
+                                      nsIPresShell::ScrollAxis(
+                                        nsIPresShell::SCROLL_MINIMUM,
+                                        nsIPresShell::SCROLL_IF_NOT_VISIBLE),
+                                      nsIPresShell::ScrollAxis(
+                                        nsIPresShell::SCROLL_MINIMUM,
+                                        nsIPresShell::SCROLL_IF_NOT_VISIBLE),
                                       nsIPresShell::SCROLL_OVERFLOW_HIDDEN);
 }
 

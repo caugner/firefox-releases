@@ -3,6 +3,7 @@ DOM_SRCDIRS = \
   dom/battery \
   dom/power \
   dom/network/src \
+  dom/settings \
   dom/sms/src \
   dom/contacts \
   dom/src/events \
@@ -26,7 +27,7 @@ DOM_SRCDIRS = \
 
 ifdef MOZ_B2G_RIL
 DOM_SRCDIRS += \
-  dom/system/b2g \
+  dom/system/gonk \
   dom/telephony \
   dom/wifi \
   $(NULL)

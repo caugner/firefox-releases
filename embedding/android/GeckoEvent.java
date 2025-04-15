@@ -80,6 +80,7 @@ public class GeckoEvent {
     public static final int VISITED = 21;
     public static final int NETWORK_CHANGED = 22;
     public static final int PROXIMITY_EVENT = 23;
+    public static final int SCREENORIENTATION_CHANGED = 26;
 
     public static final int IME_COMPOSITION_END = 0;
     public static final int IME_COMPOSITION_BEGIN = 1;
@@ -116,6 +117,7 @@ public class GeckoEvent {
 
     public int mMetaState, mFlags;
     public int mKeyCode, mUnicodeChar;
+    public int mRepeatCount;
     public int mOffset, mCount;
     public String mCharacters, mCharactersExtra;
     public int mRangeType, mRangeStyles;
@@ -125,6 +127,8 @@ public class GeckoEvent {
 
     public double mBandwidth;
     public boolean mCanBeMetered;
+
+    public short mScreenOrientation;
 
     public int mNativeWindow;
 
@@ -144,6 +148,7 @@ public class GeckoEvent {
         mFlags = k.getFlags();
         mKeyCode = k.getKeyCode();
         mUnicodeChar = k.getUnicodeChar();
+        mRepeatCount = k.getRepeatCount();
         mCharacters = k.getCharacters();
     }
 
@@ -252,10 +257,9 @@ public class GeckoEvent {
         }
     }
 
-    public GeckoEvent(Location l, Address a) {
+    public GeckoEvent(Location l) {
         mType = LOCATION_EVENT;
         mLocation = l;
-        mAddress  = a;
     }
 
     public GeckoEvent(int imeAction, int offset, int count) {
@@ -333,5 +337,10 @@ public class GeckoEvent {
         mType = NETWORK_CHANGED;
         mBandwidth = bandwidth;
         mCanBeMetered = canBeMetered;
+    }
+
+    public GeckoEvent(short aScreenOrientation) {
+        mType = SCREENORIENTATION_CHANGED;
+        mScreenOrientation = aScreenOrientation;
     }
 }

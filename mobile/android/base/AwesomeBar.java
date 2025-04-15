@@ -40,7 +40,6 @@
 package org.mozilla.gecko;
 
 import android.app.Activity;
-import android.app.ActionBar;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -51,10 +50,10 @@ import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.Spanned;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -72,7 +71,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ExpandableListView;
 import android.widget.ImageButton;
-import android.widget.RelativeLayout;
 import android.widget.ListView;
 import android.widget.TabWidget;
 import android.widget.Toast;
@@ -86,7 +84,7 @@ import org.mozilla.gecko.db.BrowserDB;
 
 import org.json.JSONObject;
 
-public class AwesomeBar extends Activity implements GeckoEventListener {
+public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
     private static final String LOGTAG = "GeckoAwesomeBar";
 
     static final String URL_KEY = "url";
@@ -233,15 +231,6 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
                     return true;
                 } else {
                     return false;
-                }
-            }
-        });
-
-        mText.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            public void onFocusChange(View v, boolean hasFocus) {
-                if (!hasFocus) {
-                    InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-                    imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
                 }
             }
         });
@@ -397,15 +386,21 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
                 selEnd = mText.getSelectionEnd();
             }
 
-            // Return focus to the edit box, and dispatch the event to it
-            mText.requestFocusFromTouch();
-
             if (selStart >= 0) {
                 // Restore the selection, which gets lost due to the focus switch
                 mText.setSelection(selStart, selEnd);
             }
 
+            // Manually dispatch the key event to the AwesomeBar before restoring (default) input
+            // focus. dispatchKeyEvent() will update AwesomeBar's cursor position.
             mText.dispatchKeyEvent(event);
+            int newCursorPos = mText.getSelectionEnd();
+
+            // requestFocusFromTouch() will select all AwesomeBar text, so we must restore cursor
+            // position so subsequent typing does not overwrite all text.
+            mText.requestFocusFromTouch();
+            mText.setSelection(newCursorPos);
+
             return true;
         }
     }
@@ -542,6 +537,11 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
 
         switch (item.getItemId()) {
             case R.id.open_new_tab: {
+                if (url == null) {
+                    Log.e(LOGTAG, "Can't open in new tab because URL is null");
+                    break;
+                }
+
                 GeckoApp.mAppContext.loadUrl(url, AwesomeBar.Type.ADD);
                 Toast.makeText(this, R.string.new_tab_opened, Toast.LENGTH_SHORT).show();
                 break;
@@ -565,7 +565,7 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
                             @Override
                             public Void doInBackground(Void... params) {
                                 String newUrl = locationText.getText().toString().trim();
-                                BrowserDB.updateBookmark(mResolver, url, newUrl, nameText.getText().toString(),
+                                BrowserDB.updateBookmark(mResolver, id, newUrl, nameText.getText().toString(),
                                                          keywordText.getText().toString());
                                 return null;
                             }
@@ -622,14 +622,25 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
                 break;
             }
             case R.id.add_to_launcher: {
+                if (url == null) {
+                    Log.e(LOGTAG, "Can't add to home screen because URL is null");
+                    break;
+                }
+
                 Bitmap bitmap = null;
                 if (b != null)
                     bitmap = BitmapFactory.decodeByteArray(b, 0, b.length);
-    
-                GeckoAppShell.createShortcut(title, url, bitmap, "");
+
+                String shortcutTitle = TextUtils.isEmpty(title) ? url.replaceAll("^([a-z]+://)?(www\\.)?", "") : title;
+                GeckoAppShell.createShortcut(shortcutTitle, url, bitmap, "");
                 break;
             }
             case R.id.share: {
+                if (url == null) {
+                    Log.e(LOGTAG, "Can't share because URL is null");
+                    break;
+                }
+
                 GeckoAppShell.openUriExternal(url, "text/plain", "", "",
                                               Intent.ACTION_SEND, title);
                 break;

@@ -79,7 +79,7 @@
 #include "xpcpublic.h"
 #include "nsContentPolicyUtils.h"
 #include "nsContentErrors.h"
-#include "jstypedarray.h"
+#include "jsfriendapi.h"
 #include "prmem.h"
 #include "nsDOMFile.h"
 #include "nsWrapperCacheInlines.h"
@@ -390,10 +390,14 @@ nsWebSocket::OnServerClose(nsISupports *aContext, PRUint16 aCode,
   CopyUTF8toUTF16(aReason, mCloseEventReason);
 
   if (mReadyState == nsIWebSocket::OPEN) {
-    // Send reciprocal Close frame.
-    // 5.5.1: "When sending a Close frame in response, the endpoint typically
-    // echos the status code it received"
-    CloseConnection(aCode, aReason);
+    // RFC 6455, 5.5.1: "When sending a Close frame in response, the endpoint
+    // typically echos the status code it received".
+    // But never send certain codes, per section 7.4.1
+    if (aCode == 1005 || aCode == 1006 || aCode == 1015) {
+      CloseConnection(0, EmptyCString());
+    } else {
+      CloseConnection(aCode, aReason);
+    }
   } else {
     // Nothing else to do: OnStop does the rest of the work.
     NS_ASSERTION (mReadyState == nsIWebSocket::CLOSING, "unknown state");
@@ -476,10 +480,8 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsWebSocket)
       NS_UNMARK_LISTENER_WRAPPER(Message)
       NS_UNMARK_LISTENER_WRAPPER(Close)
     }
-    if (!isBlack) {
-      xpc_UnmarkGrayObject(tmp->PreservingWrapper() ? 
-                           tmp->GetWrapperPreserveColor() :
-                           tmp->GetExpandoObjectPreserveColor());
+    if (!isBlack && tmp->PreservingWrapper()) {
+      xpc_UnmarkGrayObject(tmp->GetWrapperPreserveColor());
     }
     return true;
   }
@@ -1303,7 +1305,7 @@ ContainsUnpairedSurrogates(const nsAString& aData)
 }
 
 NS_IMETHODIMP
-nsWebSocket::Send(nsIVariant *aData)
+nsWebSocket::Send(nsIVariant *aData, JSContext *aCx)
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "Not running on main thread");
 
@@ -1315,7 +1317,7 @@ nsWebSocket::Send(nsIVariant *aData)
   nsCOMPtr<nsIInputStream> msgStream;
   bool isBinary;
   PRUint32 msgLen;
-  nsresult rv = GetSendParams(aData, msgString, msgStream, isBinary, msgLen);
+  nsresult rv = GetSendParams(aData, msgString, msgStream, isBinary, msgLen, aCx);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Always increment outgoing buffer len, even if closed
@@ -1348,7 +1350,8 @@ nsWebSocket::Send(nsIVariant *aData)
 nsresult
 nsWebSocket::GetSendParams(nsIVariant *aData, nsCString &aStringOut,
                            nsCOMPtr<nsIInputStream> &aStreamOut,
-                           bool &aIsBinary, PRUint32 &aOutgoingLength)
+                           bool &aIsBinary, PRUint32 &aOutgoingLength,
+                           JSContext *aCx)
 {
   // Get type of data (arraybuffer, blob, or string)
   PRUint16 dataType;
@@ -1370,9 +1373,9 @@ nsWebSocket::GetSendParams(nsIVariant *aData, nsCString &aStringOut,
     nsresult rv = aData->GetAsJSVal(&realVal);
     if (NS_SUCCEEDED(rv) && !JSVAL_IS_PRIMITIVE(realVal) &&
         (obj = JSVAL_TO_OBJECT(realVal)) &&
-        (js_IsArrayBuffer(obj))) {
-      PRInt32 len = JS_GetArrayBufferByteLength(obj);
-      char* data = (char*)JS_GetArrayBufferData(obj);
+        (JS_IsArrayBufferObject(obj, aCx))) {
+      PRInt32 len = JS_GetArrayBufferByteLength(obj, aCx);
+      char* data = reinterpret_cast<char*>(JS_GetArrayBufferData(obj, aCx));
 
       aStringOut.Assign(data, len);
       aIsBinary = true;

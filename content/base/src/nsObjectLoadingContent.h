@@ -245,6 +245,12 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     void DoStopPlugin(nsPluginInstanceOwner* aInstanceOwner, bool aDelayedStop,
                       bool aForcedReentry = false);
 
+    nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+                        nsIContent* aBindingParent,
+                        bool aCompileEventHandler);
+    void UnbindFromTree(bool aDeep = true,
+                        bool aNullParent = true);
+
   private:
 
     void NotifyContentObjectWrapper();
@@ -401,6 +407,10 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     // Used to keep track of whether or not a plugin should be played.
     // This is used for click-to-play plugins.
     bool                        mShouldPlay : 1;
+
+    // Used to keep track of whether or not a plugin has been played.
+    // This is used for click-to-play plugins.
+    bool                        mActivated : 1;
 
     // Protects DoStopPlugin from reentry (bug 724781).
     bool                        mIsStopping : 1;

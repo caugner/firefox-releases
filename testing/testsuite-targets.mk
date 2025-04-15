@@ -86,7 +86,7 @@ RUN_MOCHITEST_ROBOTIUM = \
   rm -f ./$@.log && \
   $(PYTHON) _tests/testing/mochitest/runtestsremote.py --robocop-path=$(DEPTH)/dist \
     --robocop-ids=$(DEPTH)/build/mobile/robocop/fennec_ids.txt \
-    --console-level=INFO --log-file=./$@.log --file-level=INFO $(DM_FLAGS) --dm_trans=adb \
+    --console-level=INFO --log-file=./$@.log --file-level=INFO $(DM_FLAGS) --dm_trans=$(DM_TRANS) \
     --app=$(TEST_PACKAGE_NAME) --deviceIP=${TEST_DEVICE} --xre-path=${MOZ_HOST_BIN} \
     --robocop=$(DEPTH)/build/mobile/robocop/robocop.ini $(SYMBOLS_PATH) $(TEST_PATH_ARG) $(EXTRA_TEST_ARGS)
 
@@ -290,7 +290,18 @@ include $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
 
 ifndef UNIVERSAL_BINARY
 PKG_STAGE = $(DIST)/test-package-stage
-package-tests: stage-mochitest stage-reftest stage-xpcshell stage-jstests stage-jetpack stage-firebug stage-peptest stage-mozbase
+package-tests: \
+  stage-mochitest \
+  stage-reftest \
+  stage-xpcshell \
+  stage-jstests \
+  stage-jetpack \
+  stage-firebug \
+  stage-peptest \
+  stage-mozbase \
+  stage-tps \
+  stage-modules \
+  $(NULL)
 else
 # This staging area has been built for us by universal/flight.mk
 PKG_STAGE = $(DIST)/universal/test-package-stage
@@ -350,12 +361,41 @@ stage-firebug: make-stage-dir
 stage-peptest: make-stage-dir
 	$(MAKE) -C $(DEPTH)/testing/peptest stage-package
 
+stage-tps: make-stage-dir
+	$(NSINSTALL) -D $(PKG_STAGE)/tps/tests
+	@(cd $(topsrcdir)/testing/tps && tar $(TAR_CREATE_FLAGS) - *) | (cd $(PKG_STAGE)/tps && tar -xf -)
+	@(cd $(topsrcdir)/services/sync/tps && tar $(TAR_CREATE_FLAGS) - *) | (cd $(PKG_STAGE)/tps && tar -xf -)
+	@(cd $(topsrcdir)/services/sync/tests/tps && tar $(TAR_CREATE_FLAGS) - *) | (cd $(PKG_STAGE)/tps/tests && tar -xf -)
+
+  # This will get replaced by actual logic in a subsequent patch.
+stage-modules: make-stage-dir
+	$(TOUCH) $(PKG_STAGE)/modules/.dummy
+
 stage-mozbase: make-stage-dir
 	$(MAKE) -C $(DEPTH)/testing/mozbase stage-package
 .PHONY: \
-  mochitest mochitest-plain mochitest-chrome mochitest-a11y mochitest-ipcplugins \
-  reftest crashtest \
+  mochitest \
+  mochitest-plain \
+  mochitest-chrome \
+  mochitest-a11y \
+  mochitest-ipcplugins \
+  reftest \
+  crashtest \
   xpcshell-tests \
   jstestbrowser \
   peptest \
-  package-tests make-stage-dir stage-mochitest stage-reftest stage-xpcshell stage-jstests stage-android stage-jetpack stage-firebug stage-peptest stage-mozbase
+  package-tests \
+  make-stage-dir \
+  stage-mochitest \
+  stage-reftest \
+  stage-xpcshell \
+  stage-jstests \
+  stage-android \
+  stage-jetpack \
+  stage-firebug \
+  stage-peptest \
+  stage-mozbase \
+  stage-tps \
+  stage-modules \
+  $(NULL)
+

@@ -254,24 +254,29 @@ class XPCShellTests(object):
         # Simply remove optional ending separator.
         self.testPath = self.testPath.rstrip("/")
 
+  def getHeadAndTailFiles(self, test):
+      """Obtain the list of head and tail files.
 
-  def getHeadFiles(self, test):
-    """
-      test['head'] is a whitespace delimited list of head files.
-      return the list of head files as paths including the subdir if the head file exists
+      Returns a 2-tuple. The first element is a list of head files. The second
+      is a list of tail files.
+      """
+      def sanitize_list(s, kind):
+          for f in s.strip().split(' '):
+              f = f.strip()
+              if len(f) < 1:
+                  continue
 
-      On a remote system, this may be overloaded to list files in a remote directory structure.
-    """
-    return [os.path.join(test['here'], f).strip() for f in sorted(test['head'].split(' ')) if os.path.isfile(os.path.join(test['here'], f))]
+              path = os.path.normpath(os.path.join(test['here'], f))
+              if not os.path.exists(path):
+                  raise Exception('%s file does not exist: %s' % (kind, path))
 
-  def getTailFiles(self, test):
-    """
-      test['tail'] is a whitespace delimited list of head files.
-      return the list of tail files as paths including the subdir if the tail file exists
+              if not os.path.isfile(path):
+                  raise Exception('%s file is not a file: %s' % (kind, path))
 
-      On a remote system, this may be overloaded to list files in a remote directory structure.
-    """
-    return [os.path.join(test['here'], f).strip() for f in sorted(test['tail'].split(' ')) if os.path.isfile(os.path.join(test['here'], f))]
+              yield path
+
+      return (list(sanitize_list(test['head'], 'head')),
+              list(sanitize_list(test['tail'], 'tail')))
 
   def setupProfileDir(self):
     """
@@ -637,8 +642,7 @@ class XPCShellTests(object):
 
       testdir = os.path.dirname(name)
       self.buildXpcsCmd(testdir)
-      testHeadFiles = self.getHeadFiles(test)
-      testTailFiles = self.getTailFiles(test)
+      testHeadFiles, testTailFiles = self.getHeadAndTailFiles(test)
       cmdH = self.buildCmdHead(testHeadFiles, testTailFiles, self.xpcsCmd)
 
       # create a temp dir that the JS harness can stick a profile in
@@ -652,11 +656,21 @@ class XPCShellTests(object):
       if 'debug' in test:
           args.insert(0, '-d')
 
+      completeCmd = cmdH + cmdT + args
+
       try:
         self.log.info("TEST-INFO | %s | running test ..." % name)
+        if verbose:
+            self.log.info("TEST-INFO | %s | full command: %r" % (name, completeCmd))
+            self.log.info("TEST-INFO | %s | current directory: %r" % (name, testdir))
+            # Show only those environment variables that are changed from
+            # the ambient environment.
+            changedEnv = (set("%s=%s" % i for i in self.env.iteritems())
+                          - set("%s=%s" % i for i in os.environ.iteritems()))
+            self.log.info("TEST-INFO | %s | environment: %s" % (name, list(changedEnv)))
         startTime = time.time()
 
-        proc = self.launchProcess(cmdH + cmdT + args,
+        proc = self.launchProcess(completeCmd,
                     stdout=pStdout, stderr=pStderr, env=self.env, cwd=testdir)
 
         # Allow user to kill hung subprocess with SIGINT w/o killing this script

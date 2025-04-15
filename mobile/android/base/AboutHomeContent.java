@@ -56,6 +56,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
+import org.mozilla.gecko.sync.setup.SyncAccounts;
 import org.mozilla.gecko.sync.setup.activities.SetupSyncActivity;
 
 import android.accounts.Account;
@@ -77,7 +78,6 @@ import android.text.style.StyleSpan;
 import android.text.style.UnderlineSpan;
 import android.util.AttributeSet;
 import android.util.Log;
-import android.util.DisplayMetrics;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.AdapterView;
@@ -142,7 +142,7 @@ public class AboutHomeContent extends ScrollView
     }
 
     public void init() {
-        Context context = getContext();
+        final Context context = getContext();
         mInflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         mInflater.inflate(R.layout.abouthome_content, this);
 
@@ -152,7 +152,7 @@ public class AboutHomeContent extends ScrollView
         mAccountManager.addOnAccountsUpdatedListener(mAccountListener = new OnAccountsUpdateListener() {
             public void onAccountsUpdated(Account[] accounts) {
                 final GeckoApp.StartupMode startupMode = GeckoApp.mAppContext.getStartupMode();
-                final boolean syncIsSetup = isSyncSetup();
+                final boolean syncIsSetup = SyncAccounts.syncAccountsExist(context);
 
                 GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
                     public void run() {
@@ -298,11 +298,6 @@ public class AboutHomeContent extends ScrollView
         syncContainer.setBackgroundResource(background);
     }
 
-    private boolean isSyncSetup() {
-        Account[] accounts = mAccountManager.getAccountsByType("org.mozilla.firefox_sync");
-        return accounts.length > 0;
-    }
-
     private void updateLayout(GeckoApp.StartupMode startupMode, boolean syncIsSetup) {
         // The idea here is that we only show the sync invitation
         // on the very first run. Show sync banner below the top
@@ -324,26 +319,20 @@ public class AboutHomeContent extends ScrollView
             return NUMBER_OF_TOP_SITES_PORTRAIT;
     }
 
-    private int getNumberOfColumns() {
-        Configuration config = getContext().getResources().getConfiguration();
-        if (config.orientation == Configuration.ORIENTATION_LANDSCAPE)
-            return NUMBER_OF_COLS_LANDSCAPE;
-        else
-            return NUMBER_OF_COLS_PORTRAIT;
-    }
-
     private void loadTopSites(final Activity activity) {
         // Ensure we initialize GeckoApp's startup mode in
         // background thread before we use it when updating
         // the top sites section layout in main thread.
         final GeckoApp.StartupMode startupMode = GeckoApp.mAppContext.getStartupMode();
 
-        // The isSyncSetup method should not be called on
+        // The SyncAccounts.syncAccountsExist method should not be called on
         // UI thread as it touches disk to access a sqlite DB.
-        final boolean syncIsSetup = isSyncSetup();
+        final boolean syncIsSetup = SyncAccounts.syncAccountsExist(activity);
 
-        ContentResolver resolver = GeckoApp.mAppContext.getContentResolver();
-        mCursor = BrowserDB.getTopSites(resolver, NUMBER_OF_TOP_SITES_PORTRAIT);
+        final ContentResolver resolver = GeckoApp.mAppContext.getContentResolver();
+        final Cursor oldCursor = mCursor;
+        // Swap in the new cursor.
+        mCursor = BrowserDB.getTopSites(resolver, NUMBER_OF_TOP_SITES_PORTRAIT);;
 
         GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
             public void run() {
@@ -361,9 +350,11 @@ public class AboutHomeContent extends ScrollView
                     mTopSitesAdapter.changeCursor(mCursor);
                 }
 
-                mTopSitesGrid.setNumColumns(getNumberOfColumns());
-
                 updateLayout(startupMode, syncIsSetup);
+
+                // Free the old Cursor in the right thread now.
+                if (oldCursor != null && !oldCursor.isClosed())
+                    oldCursor.close();
             }
         });
     }
@@ -396,8 +387,6 @@ public class AboutHomeContent extends ScrollView
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
-        if (mTopSitesGrid != null) 
-            mTopSitesGrid.setNumColumns(getNumberOfColumns());
         if (mTopSitesAdapter != null)
             mTopSitesAdapter.notifyDataSetChanged();
 
@@ -630,7 +619,7 @@ public class AboutHomeContent extends ScrollView
     }
 
     private void loadRemoteTabs(final Activity activity) {
-        if (!isSyncSetup()) {
+        if (!SyncAccounts.syncAccountsExist(activity)) {
             GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
                 public void run() {
                     mRemoteTabs.hide();
@@ -687,9 +676,7 @@ public class AboutHomeContent extends ScrollView
 
         public TopSitesGridView(Context context, AttributeSet attrs) {
             super(context, attrs);
-            DisplayMetrics dm = new DisplayMetrics();
-            GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(dm);
-            mDisplayDensity = dm.density;
+            mDisplayDensity = GeckoApp.mAppContext.getDisplayMetrics().density;
         }
 
         @Override
@@ -709,13 +696,16 @@ public class AboutHomeContent extends ScrollView
             if (config.orientation == Configuration.ORIENTATION_LANDSCAPE) {
                 nSites = Math.min(nSites, NUMBER_OF_TOP_SITES_LANDSCAPE);
                 numRows = (int) Math.round((double) nSites / NUMBER_OF_COLS_LANDSCAPE);
+                setNumColumns(NUMBER_OF_COLS_LANDSCAPE);
             } else {
                 nSites = Math.min(nSites, NUMBER_OF_TOP_SITES_PORTRAIT);
                 numRows = (int) Math.round((double) nSites / NUMBER_OF_COLS_PORTRAIT);
+                setNumColumns(NUMBER_OF_COLS_PORTRAIT);
             }
             int expandedHeightSpec = 
                 MeasureSpec.makeMeasureSpec((int)(mDisplayDensity * numRows * kTopSiteItemHeight),
                                             MeasureSpec.EXACTLY);
+
             super.onMeasure(widthMeasureSpec, expandedHeightSpec);
         }
     }
@@ -729,6 +719,13 @@ public class AboutHomeContent extends ScrollView
         @Override
         public int getCount() {
             return Math.min(super.getCount(), getNumberOfTopSites());
+        }
+
+        @Override
+        protected void onContentChanged () {
+            // Don't do anything. We don't want to regenerate every time
+            // our history database is updated.
+            return;
         }
     }
 

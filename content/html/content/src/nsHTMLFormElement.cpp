@@ -150,7 +150,7 @@ public:
   nsresult GetSortedControls(nsTArray<nsGenericHTMLFormElement*>& aControls) const;
 
   // nsWrapperCache
-  virtual JSObject* WrapObject(JSContext *cx, XPCWrappedNativeScope *scope,
+  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
                                bool *triedToWrap)
   {
     return mozilla::dom::binding::HTMLCollection::create(cx, scope, this,
@@ -223,7 +223,6 @@ ShouldBeInElements(nsIFormControl* aFormControl)
   //
   // NS_FORM_INPUT_IMAGE
   // NS_FORM_LABEL
-  // NS_FORM_PROGRESS
 
   return false;
 }
@@ -1053,7 +1052,12 @@ CompareFormControlPosition(nsGenericHTMLFormElement *aControl1,
 {
   NS_ASSERTION(aControl1 != aControl2, "Comparing a form control to itself");
 
-  NS_ASSERTION(aControl1->GetParent() && aControl2->GetParent(),
+  // If an element has a @form, we can assume it *might* be able to not have
+  // a parent and still be in the form.
+  NS_ASSERTION((aControl1->HasAttr(kNameSpaceID_None, nsGkAtoms::form) ||
+                aControl1->GetParent()) &&
+               (aControl2->HasAttr(kNameSpaceID_None, nsGkAtoms::form) ||
+                aControl2->GetParent()),
                "Form controls should always have parents");
 
   // If we pass aForm, we are assuming both controls are form descendants which
@@ -1104,7 +1108,11 @@ nsresult
 nsHTMLFormElement::AddElement(nsGenericHTMLFormElement* aChild,
                               bool aUpdateValidity, bool aNotify)
 {
-  NS_ASSERTION(aChild->GetParent(), "Form control should have a parent");
+  // If an element has a @form, we can assume it *might* be able to not have
+  // a parent and still be in the form.
+  NS_ASSERTION(aChild->HasAttr(kNameSpaceID_None, nsGkAtoms::form) ||
+               aChild->GetParent(),
+               "Form control should have a parent");
 
   // Determine whether to add the new element to the elements or
   // the not-in-elements list.
@@ -2160,8 +2168,7 @@ nsFormControlList::nsFormControlList(nsHTMLFormElement* aForm) :
   // of 8 to reduce allocations on small forms.
   mElements(8)
 {
-  // Mark ourselves as a proxy
-  SetIsProxy();
+  SetIsDOMBinding();
 }
 
 nsFormControlList::~nsFormControlList()
@@ -2358,7 +2365,10 @@ nsFormControlList::AddElementToTable(nsGenericHTMLFormElement* aChild,
       // the list in the hash
       nsSimpleContentList *list = new nsSimpleContentList(mForm);
 
-      NS_ASSERTION(content->GetParent(), "Item in list without parent");
+      // If an element has a @form, we can assume it *might* be able to not have
+      // a parent and still be in the form.
+      NS_ASSERTION(content->HasAttr(kNameSpaceID_None, nsGkAtoms::form) ||
+                   content->GetParent(), "Item in list without parent");
 
       // Determine the ordering between the new and old element.
       bool newFirst = nsContentUtils::PositionIsBefore(aChild, content);

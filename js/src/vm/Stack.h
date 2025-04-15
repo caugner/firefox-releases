@@ -544,7 +544,7 @@ class StackFrame
 
     Value &varSlot(unsigned i) {
         JS_ASSERT(i < script()->nfixed);
-        JS_ASSERT_IF(maybeFun(), i < script()->bindings.countVars());
+        JS_ASSERT_IF(maybeFun(), i < script()->bindings.numVars());
         return slots()[i];
     }
 
@@ -726,13 +726,21 @@ class StackFrame
     inline bool forEachCanonicalActualArg(Op op, unsigned start = 0, unsigned count = unsigned(-1));
     template <class Op> inline bool forEachFormalArg(Op op);
 
+    /* XXX: all these argsObj functions will be removed with bug 659577. */
+
     bool hasArgsObj() const {
+        /*
+         * HAS_ARGS_OBJ is still technically not equivalent to
+         * script()->needsArgsObj() during functionPrologue (where GC can
+         * observe a frame that needsArgsObj but has not yet been given the
+         * args). This can be fixed by creating and rooting the args/call
+         * object before pushing the frame, which should be done eventually.
+         */
         return !!(flags_ & HAS_ARGS_OBJ);
     }
 
     ArgumentsObject &argsObj() const {
         JS_ASSERT(hasArgsObj());
-        JS_ASSERT(!isEvalFrame());
         return *argsObj_;
     }
 
@@ -740,7 +748,12 @@ class StackFrame
         return hasArgsObj() ? &argsObj() : NULL;
     }
 
-    inline void setArgsObj(ArgumentsObject &obj);
+    void initArgsObj(ArgumentsObject &argsObj) {
+        JS_ASSERT(script()->needsArgsObj());
+        JS_ASSERT(!hasArgsObj());
+        argsObj_ = &argsObj;
+        flags_ |= HAS_ARGS_OBJ;
+    }
 
     /*
      * This value
@@ -807,26 +820,12 @@ class StackFrame
         return calleev;
     }
 
-    /*
-     * Beware! Ad hoc changes can corrupt the stack layout; the callee should
-     * only be changed to something that is equivalent to the current callee in
-     * terms of numFormalArgs etc. Prefer overwriteCallee since it checks.
-     */
-    inline void overwriteCallee(JSObject &newCallee);
-
     Value &mutableCalleev() const {
         JS_ASSERT(isFunctionFrame());
         if (isEvalFrame())
             return ((Value *)this)[-2];
         return formalArgs()[-2];
     }
-
-    /*
-     * Compute the callee function for this stack frame, cloning if needed to
-     * implement the method read barrier.  If this is not a function frame,
-     * set *vp to null.
-     */
-    bool getValidCalleeObject(JSContext *cx, Value *vp);
 
     CallReceiver callReceiver() const {
         return CallReceiverFromArgv(formalArgs());
@@ -903,8 +902,8 @@ class StackFrame
     /*
      * Epilogue for function frames: put any args or call object for the frame
      * which may still be live, and maintain type nesting invariants. Note:
-     * this does not mark the epilogue as having been completed, since the
-     * frame is about to be popped. Use updateEpilogueFlags for this.
+     * this does mark the epilogue as having been completed, since the frame is
+     * about to be popped. Use updateEpilogueFlags for this.
      */
     inline void functionEpilogue();
 
@@ -1693,6 +1692,7 @@ class ContextStack
 
     /* Get the topmost script and optional pc on the stack. */
     inline JSScript *currentScript(jsbytecode **pc = NULL) const;
+    inline JSScript *currentScriptWithDiagnostics(jsbytecode **pc = NULL) const;
 
     /* Get the scope chain for the topmost scripted call on the stack. */
     inline JSObject *currentScriptedScopeChain() const;
@@ -1838,13 +1838,27 @@ class StackIter
     bool operator!=(const StackIter &rhs) const { return !(*this == rhs); }
 
     bool isScript() const { JS_ASSERT(!done()); return state_ == SCRIPTED; }
-    StackFrame *fp() const { JS_ASSERT(!done() && isScript()); return fp_; }
-    Value      *sp() const { JS_ASSERT(!done() && isScript()); return sp_; }
-    jsbytecode *pc() const { JS_ASSERT(!done() && isScript()); return pc_; }
-    JSScript   *script() const { JS_ASSERT(!done() && isScript()); return script_; }
+    bool isImplicitNativeCall() const {
+        JS_ASSERT(!done());
+        return state_ == IMPLICIT_NATIVE;
+    }
+    bool isNativeCall() const {
+        JS_ASSERT(!done());
+        return state_ == NATIVE || state_ == IMPLICIT_NATIVE;
+    }
 
-    bool isNativeCall() const { JS_ASSERT(!done()); return state_ != SCRIPTED; }
-    CallArgs nativeArgs() const { JS_ASSERT(!done() && isNativeCall()); return args_; }
+    bool isFunctionFrame() const;
+    bool isEvalFrame() const;
+    bool isNonEvalFunctionFrame() const;
+
+    StackFrame *fp() const { JS_ASSERT(isScript()); return fp_; }
+    Value      *sp() const { JS_ASSERT(isScript()); return sp_; }
+    jsbytecode *pc() const { JS_ASSERT(isScript()); return pc_; }
+    JSScript   *script() const { JS_ASSERT(isScript()); return script_; }
+    JSObject   &callee() const;
+    Value       calleev() const;
+
+    CallArgs nativeArgs() const { JS_ASSERT(isNativeCall()); return args_; }
 };
 
 /* A filtering of the StackIter to only stop at scripts. */

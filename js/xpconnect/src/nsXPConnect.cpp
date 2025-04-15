@@ -63,12 +63,19 @@
 #include "WrapperFactory.h"
 #include "AccessCheck.h"
 
+#ifdef MOZ_JSDEBUGGER
 #include "jsdIDebuggerService.h"
+#endif
 
 #include "XPCQuickStubs.h"
 #include "dombindings.h"
 
+#include "mozilla/dom/bindings/Utils.h"
+
 #include "nsWrapperCacheInlines.h"
+#include "nsDOMMutationObserver.h"
+
+using namespace mozilla::dom;
 
 NS_IMPL_THREADSAFE_ISUPPORTS7(nsXPConnect,
                               nsIXPConnect,
@@ -402,27 +409,18 @@ nsXPConnect::Collect(PRUint32 reason, PRUint32 kind)
     // To improve debugging, if DEBUG_CC is defined all JS objects are
     // traversed.
 
-    XPCCallContext ccx(NATIVE_CALLER);
-    if (!ccx.IsValid())
-        return;
-
-    JSContext *cx = ccx.GetJSContext();
-
-    // We want to scan the current thread for GC roots only if it was in a
-    // request prior to the Collect call to avoid false positives during the
-    // cycle collection. So to compensate for JS_BeginRequest in
-    // XPCCallContext::Init we disable the conservative scanner if that call
-    // has started the request on this thread.
-    js::AutoSkipConservativeScan ascs(cx);
     MOZ_ASSERT(reason < js::gcreason::NUM_REASONS);
     js::gcreason::Reason gcreason = (js::gcreason::Reason)reason;
+
+    JSRuntime *rt = GetRuntime()->GetJSRuntime();
+    js::PrepareForFullGC(rt);
     if (kind == nsGCShrinking) {
-        js::ShrinkingGC(cx, gcreason);
+        js::ShrinkingGC(rt, gcreason);
     } else if (kind == nsGCIncremental) {
-        js::IncrementalGC(cx, gcreason);
+        js::IncrementalGC(rt, gcreason);
     } else {
         MOZ_ASSERT(kind == nsGCNormal);
-        js::GCForReason(cx, gcreason);
+        js::GCForReason(rt, gcreason);
     }
 }
 
@@ -506,7 +504,7 @@ struct NoteWeakMapsTracer : public js::WeakMapTracer
 };
 
 static void
-TraceWeakMapping(js::WeakMapTracer *trc, JSObject *m, 
+TraceWeakMapping(js::WeakMapTracer *trc, JSObject *m,
                  void *k, JSGCTraceKind kkind,
                  void *v, JSGCTraceKind vkind)
 {
@@ -593,7 +591,7 @@ nsXPConnect::BeginCycleCollection(nsCycleCollectionTraversalCallback &cb,
 #endif
 
     GetRuntime()->AddXPConnectRoots(cb);
- 
+
     NoteWeakMapsTracer trc(GetRuntime()->GetJSRuntime(), TraceWeakMapping, cb);
     js::TraceWeakMaps(&trc);
 
@@ -858,11 +856,12 @@ xpc_MarkInCCGeneration(nsISupports* aVariant, PRUint32 aGeneration)
 }
 
 void
-xpc_UnmarkGrayObject(nsIXPConnectWrappedJS* aWrappedJS)
+xpc_TryUnmarkWrappedGrayObject(nsISupports* aWrappedJS)
 {
-    if (aWrappedJS) {
+    nsCOMPtr<nsIXPConnectWrappedJS> wjs = do_QueryInterface(aWrappedJS);
+    if (wjs) {
         // Unmarks gray JSObject.
-        static_cast<nsXPCWrappedJS*>(aWrappedJS)->GetJSObject();
+        static_cast<nsXPCWrappedJS*>(wjs.get())->GetJSObject();
     }
 }
 
@@ -1012,10 +1011,15 @@ nsXPConnect::Traverse(void *p, nsCycleCollectionTraversalCallback &cb)
              clazz->flags & JSCLASS_PRIVATE_IS_NSISUPPORTS) {
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "xpc_GetJSPrivate(obj)");
         cb.NoteXPCOMChild(static_cast<nsISupports*>(xpc_GetJSPrivate(obj)));
-    } else if (mozilla::dom::binding::instanceIsProxy(obj)) {
+    } else if (binding::instanceIsProxy(obj)) {
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "js::GetProxyPrivate(obj)");
         nsISupports *identity =
             static_cast<nsISupports*>(js::GetProxyPrivate(obj).toPrivate());
+        cb.NoteXPCOMChild(identity);
+    } else if ((clazz->flags & JSCLASS_IS_DOMJSCLASS) &&
+               bindings::DOMJSClass::FromJSClass(clazz)->mDOMObjectIsISupports) {
+        NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "UnwrapDOMObject(obj)");
+        nsISupports *identity = bindings::UnwrapDOMObject<nsISupports>(obj, clazz);
         cb.NoteXPCOMChild(identity);
     }
 
@@ -1187,7 +1191,49 @@ TraceXPCGlobal(JSTracer *trc, JSObject *obj)
 
     if (XPCWrappedNativeScope *scope = XPCWrappedNativeScope::GetNativeScope(obj))
         scope->TraceDOMPrototypes(trc);
+
+    mozilla::dom::bindings::TraceProtoOrIfaceCache(trc, obj);
 }
+
+#ifdef DEBUG
+#include "mozilla/Preferences.h"
+#include "nsIXULRuntime.h"
+static void
+CheckTypeInference(JSContext *cx, JSClass *clasp, nsIPrincipal *principal)
+{
+    // Check that the global class isn't whitelisted.
+    if (strcmp(clasp->name, "Sandbox") ||
+        strcmp(clasp->name, "nsXBLPrototypeScript compilation scope") ||
+        strcmp(clasp->name, "nsXULPrototypeScript compilation scope"))
+        return;
+
+    // Check that the pref is on.
+    if (!mozilla::Preferences::GetBool("javascript.options.typeinference"))
+        return;
+
+    // Check that we're not chrome.
+    bool isSystem;
+    nsIScriptSecurityManager* ssm;
+    ssm = XPCWrapper::GetSecurityManager();
+    if (NS_FAILED(ssm->IsSystemPrincipal(principal, &isSystem)) || !isSystem)
+        return;
+
+    // Check that safe mode isn't on.
+    bool safeMode;
+    nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
+    if (!xr) {
+        NS_WARNING("Couldn't get XUL runtime!");
+        return;
+    }
+    if (NS_FAILED(xr->GetInSafeMode(&safeMode)) || safeMode)
+        return;
+
+    // Finally, do the damn assert.
+    MOZ_ASSERT(JS_GetOptions(cx) & JSOPTION_TYPE_INFERENCE);
+}
+#else
+#define CheckTypeInference(cx, clasp, principal) {}
+#endif
 
 nsresult
 xpc_CreateGlobalObject(JSContext *cx, JSClass *clasp,
@@ -1195,6 +1241,10 @@ xpc_CreateGlobalObject(JSContext *cx, JSClass *clasp,
                        bool wantXrays, JSObject **global,
                        JSCompartment **compartment)
 {
+    // Make sure that Type Inference is enabled for everything non-chrome.
+    // Sandboxes and compilation scopes are exceptions. See bug 744034.
+    CheckTypeInference(cx, clasp, principal);
+
     NS_ABORT_IF_FALSE(NS_IsMainThread(), "using a principal off the main thread?");
     NS_ABORT_IF_FALSE(principal, "bad key");
 
@@ -1233,6 +1283,10 @@ xpc_CreateGlobalObject(JSContext *cx, JSClass *clasp,
         NS_ABORT_IF_FALSE(trc.ok, "Trace hook needs to call TraceXPCGlobal if JSCLASS_XPCONNECT_GLOBAL is set.");
     }
 #endif
+
+    if (clasp->flags & JSCLASS_DOM_GLOBAL) {
+        mozilla::dom::bindings::AllocateProtoOrIfaceCache(*global);
+    }
 
     return NS_OK;
 }
@@ -1288,7 +1342,12 @@ nsXPConnect::InitClassesWithNewWrappedGlobal(JSContext * aJSContext,
         }
     }
 
-    *_retval = wrappedGlobal.forget().get();
+    // Stuff coming through this path always ends up as a DOM global.
+    // XXX Someone who knows why we can assert this should re-check
+    //     (after bug 720580).
+    MOZ_ASSERT(js::GetObjectClass(global)->flags & JSCLASS_DOM_GLOBAL);
+
+    wrappedGlobal.forget(_retval);
     return NS_OK;
 }
 
@@ -2314,6 +2373,7 @@ nsXPConnect::AfterProcessNextEvent(nsIThreadInternal *aThread,
     // Call cycle collector occasionally.
     MOZ_ASSERT(NS_IsMainThread());
     nsJSContext::MaybePokeCC();
+    nsDOMMutationObserver::HandleMutations();
 
     return Pop(nsnull);
 }
@@ -2345,18 +2405,6 @@ nsXPConnect::SetReportAllJSExceptions(bool newval)
         gReportAllJSExceptions = newval ? 2 : 0;
 
     return NS_OK;
-}
-
-/* [noscript, notxpcom] bool defineDOMQuickStubs (in JSContextPtr cx, in JSObjectPtr proto, in PRUint32 flags, in PRUint32 interfaceCount, [array, size_is (interfaceCount)] in nsIIDPtr interfaceArray); */
-NS_IMETHODIMP_(bool)
-nsXPConnect::DefineDOMQuickStubs(JSContext * cx,
-                                 JSObject * proto,
-                                 PRUint32 flags,
-                                 PRUint32 interfaceCount,
-                                 const nsIID * *interfaceArray)
-{
-    return DOM_DefineQuickStubs(cx, proto, flags,
-                                interfaceCount, interfaceArray);
 }
 
 /* attribute JSRuntime runtime; */
@@ -2443,8 +2491,10 @@ nsXPConnect::Peek(JSContext * *_retval)
     return NS_OK;
 }
 
+#ifdef MOZ_JSDEBUGGER
 void
-nsXPConnect::CheckForDebugMode(JSRuntime *rt) {
+nsXPConnect::CheckForDebugMode(JSRuntime *rt)
+{
     JSContext *cx = NULL;
 
     if (gDebugMode == gDesiredDebugMode) {
@@ -2511,6 +2561,14 @@ fail:
         JS_SetRuntimeDebugMode(rt, false);
     gDesiredDebugMode = gDebugMode = false;
 }
+#else //MOZ_JSDEBUGGER not defined
+void
+nsXPConnect::CheckForDebugMode(JSRuntime *rt)
+{
+    gDesiredDebugMode = gDebugMode = false;
+}
+#endif //#ifdef MOZ_JSDEBUGGER
+
 
 NS_EXPORT_(void)
 xpc_ActivateDebugMode()
@@ -2661,6 +2719,12 @@ nsXPConnect::GetCaller(JSContext **aJSContext, JSObject **aObj)
 namespace xpc {
 
 bool
+DeferredRelease(nsISupports *obj)
+{
+    return nsXPConnect::GetRuntimeInstance()->DeferredRelease(obj);
+}
+
+bool
 Base64Encode(JSContext *cx, JS::Value val, JS::Value *out)
 {
     MOZ_ASSERT(cx);
@@ -2768,18 +2832,159 @@ nsXPConnect::GetTelemetryValue(JSContext *cx, jsval *rval)
 NS_IMETHODIMP
 nsXPConnect::NotifyDidPaint()
 {
-    JSRuntime *rt = mRuntime->GetJSRuntime();
-    if (!js::WantGCSlice(rt))
-        return NS_OK;
-
-    XPCCallContext ccx(NATIVE_CALLER);
-    if (!ccx.IsValid())
-        return UnexpectedFailure(NS_ERROR_FAILURE);
-
-    JSContext *cx = ccx.GetJSContext();
-
-    js::NotifyDidPaint(cx);
+    js::NotifyDidPaint(GetRuntime()->GetJSRuntime());
     return NS_OK;
+}
+
+const PRUint8 HAS_PRINCIPALS_FLAG               = 1;
+const PRUint8 HAS_ORIGIN_PRINCIPALS_FLAG        = 2;
+
+static nsresult
+WriteScriptOrFunction(nsIObjectOutputStream *stream, JSContext *cx,
+                      JSScript *script, JSObject *functionObj)
+{
+    // Exactly one of script or functionObj must be given
+    MOZ_ASSERT(!script != !functionObj);
+
+    if (!script)
+        script = JS_GetFunctionScript(cx, JS_GetObjectFunction(functionObj));
+
+    nsIPrincipal *principal =
+        nsJSPrincipals::get(JS_GetScriptPrincipals(script));
+    nsIPrincipal *originPrincipal =
+        nsJSPrincipals::get(JS_GetScriptOriginPrincipals(script));
+
+    PRUint8 flags = 0;
+    if (principal)
+        flags |= HAS_PRINCIPALS_FLAG;
+
+    // Optimize for the common case when originPrincipals == principals. As
+    // originPrincipals is set to principals when the former is null we can
+    // simply skip the originPrincipals when they are the same as principals.
+    if (originPrincipal && originPrincipal != principal)
+        flags |= HAS_ORIGIN_PRINCIPALS_FLAG;
+
+    nsresult rv = stream->Write8(flags);
+    if (NS_FAILED(rv))
+        return rv;
+
+    if (flags & HAS_PRINCIPALS_FLAG) {
+        rv = stream->WriteObject(principal, true);
+        if (NS_FAILED(rv))
+            return rv;
+    }
+
+    if (flags & HAS_ORIGIN_PRINCIPALS_FLAG) {
+        rv = stream->WriteObject(originPrincipal, true);
+        if (NS_FAILED(rv))
+            return rv;
+    }
+
+    uint32_t size;
+    void* data;
+    {
+        JSAutoRequest ar(cx);
+        if (functionObj)
+            data = JS_EncodeInterpretedFunction(cx, functionObj, &size);
+        else
+            data = JS_EncodeScript(cx, script, &size);
+    }
+
+    if (!data)
+        return NS_ERROR_OUT_OF_MEMORY;
+    MOZ_ASSERT(size);
+    rv = stream->Write32(size);
+    if (NS_SUCCEEDED(rv))
+        rv = stream->WriteBytes(static_cast<char *>(data), size);
+    js_free(data);
+
+    return rv;
+}
+
+static nsresult
+ReadScriptOrFunction(nsIObjectInputStream *stream, JSContext *cx,
+                     JSScript **scriptp, JSObject **functionObjp)
+{
+    // Exactly one of script or functionObj must be given
+    MOZ_ASSERT(!scriptp != !functionObjp);
+
+    PRUint8 flags;
+    nsresult rv = stream->Read8(&flags);
+    if (NS_FAILED(rv))
+        return rv;
+
+    nsJSPrincipals* principal = nsnull;
+    nsCOMPtr<nsIPrincipal> readPrincipal;
+    if (flags & HAS_PRINCIPALS_FLAG) {
+        rv = stream->ReadObject(true, getter_AddRefs(readPrincipal));
+        if (NS_FAILED(rv))
+            return rv;
+        principal = nsJSPrincipals::get(readPrincipal);
+    }
+
+    nsJSPrincipals* originPrincipal = nsnull;
+    nsCOMPtr<nsIPrincipal> readOriginPrincipal;
+    if (flags & HAS_ORIGIN_PRINCIPALS_FLAG) {
+        rv = stream->ReadObject(true, getter_AddRefs(readOriginPrincipal));
+        if (NS_FAILED(rv))
+            return rv;
+        originPrincipal = nsJSPrincipals::get(readOriginPrincipal);
+    }
+
+    PRUint32 size;
+    rv = stream->Read32(&size);
+    if (NS_FAILED(rv))
+        return rv;
+
+    char* data;
+    rv = stream->ReadBytes(size, &data);
+    if (NS_FAILED(rv))
+        return rv;
+
+    {
+        JSAutoRequest ar(cx);
+        if (scriptp) {
+            JSScript *script = JS_DecodeScript(cx, data, size, principal, originPrincipal);
+            if (!script)
+                rv = NS_ERROR_OUT_OF_MEMORY;
+            else
+                *scriptp = script;
+        } else {
+            JSObject *funobj = JS_DecodeInterpretedFunction(cx, data, size,
+                                                            principal, originPrincipal);
+            if (!funobj)
+                rv = NS_ERROR_OUT_OF_MEMORY;
+            else
+                *functionObjp = funobj;
+        }
+    }
+
+    nsMemory::Free(data);
+    return rv;
+}
+
+NS_IMETHODIMP
+nsXPConnect::WriteScript(nsIObjectOutputStream *stream, JSContext *cx, JSScript *script)
+{
+    return WriteScriptOrFunction(stream, cx, script, nsnull);
+}
+
+NS_IMETHODIMP
+nsXPConnect::ReadScript(nsIObjectInputStream *stream, JSContext *cx, JSScript **scriptp)
+{
+    return ReadScriptOrFunction(stream, cx, scriptp, nsnull);
+}
+
+NS_IMETHODIMP
+nsXPConnect::WriteFunction(nsIObjectOutputStream *stream, JSContext *cx, JSObject *functionObj)
+{
+    return WriteScriptOrFunction(stream, cx, nsnull, functionObj);
+}
+
+NS_IMETHODIMP
+nsXPConnect::ReadFunction(nsIObjectInputStream *stream, JSContext *cx, JSObject **functionObjp)
+{
+    return ReadScriptOrFunction(stream, cx, nsnull, functionObjp);
 }
 
 /* These are here to be callable from a debugger */

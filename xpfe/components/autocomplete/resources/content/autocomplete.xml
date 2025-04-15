@@ -97,6 +97,10 @@
         document.getAnonymousElementByAttribute(this, "anonid", "popup");
       ]]></field>
 
+      <property name="popupOpen"
+                onget="return this.mMenuOpen;"
+                onset="if (val) this.openPopup(); else this.closePopup(); return val;"/>
+
       <!-- option to turn off autocomplete -->
       <property name="disableAutoComplete"
                 onset="this.setAttribute('disableautocomplete', val); return val;"
@@ -138,6 +142,37 @@
       <property name="timeout"
                 onset="this.setAttribute('timeout', val); return val;"
                 onget="return parseInt(this.getAttribute('timeout')) || 0;"/>
+
+      <property name="searchParam"
+                onget="return this.getAttribute('autocompletesearchparam') || '';"
+                onset="this.setAttribute('autocompletesearchparam', val); return val;"/>
+
+      <property name="textValue"
+                onget="return this.value;"
+                onset="this.setTextValue(val); return val;"/>
+
+      <method name="onSearchBegin">
+        <body><![CDATA[
+          this._fireEvent("searchbegin");
+        ]]></body>
+      </method>
+
+      <method name="onSearchComplete">
+        <body><![CDATA[
+          if (this.noMatch)
+            this.setAttribute("nomatch", "true");
+          else
+            this.removeAttribute("nomatch");
+
+          this._fireEvent("searchcomplete");
+        ]]></body>
+      </method>
+
+      <method name="onTextReverted">
+        <body><![CDATA[
+          return this._fireEvent("textreverted");
+        ]]></body>
+      </method>
 
       <!-- =================== nsIDOMXULMenuListElement =================== -->
 
@@ -355,7 +390,7 @@
           param: this,
           onStartLookup: function(aSearchString, aPreviousSearchResult, aListener) {
             this.session.startSearch(aSearchString,
-                         this.param.getAttribute("autocompletesearchparam") || "",
+                         this.param.searchParam,
                          aPreviousSearchResult && aPreviousSearchResult.lastResult,
                          aListener);
           },
@@ -660,6 +695,9 @@
           this.mFailureItems = 0;
           this.mDefaultMatchFilled = false; // clear out our prefill state.
 
+          // Notify the input that the search is beginning.
+          this.onSearchBegin();
+
           // tell each session to start searching...
           for (var name in this.mSessions)
             try {
@@ -787,10 +825,6 @@
               break;
           }
           this.noMatch = failed;
-          if (this.noMatch)
-            this.setAttribute("nomatch", true);
-          else
-            this.removeAttribute("nomatch");
           
           // if we have processed all of our searches, and none of them gave us a default index,
           // then we should try to auto fill the input field with the first match. 
@@ -801,8 +835,8 @@
                 this.autoFillInput(defaultSession, this.mLastResults[defaultSession], true);         
           }
 
-	  // Now we've finished, fire an event to let everyone know
-	  this._fireEvent("searchcomplete");
+          // Notify the input that the search is complete.
+          this.onSearchComplete();
         ]]></body>
       </method>
 
@@ -926,7 +960,7 @@
         <body><![CDATA[
           var val = this.currentSearchString;
 
-          var ok = this._fireEvent("textreverted");
+          var ok = this.onTextReverted();
           if ((ok || ok == undefined) && val)
             this.setTextValue(val);
 
@@ -1254,9 +1288,10 @@
       <method name="setTextValue">
         <parameter name="aValue"/>
         <body><![CDATA[
+          this.value = aValue;
+
           // Completing a result should simulate the user typing the result,
           // so fire an input event.
-          this.value = aValue;
           var evt = document.createEvent("UIEvents");
           evt.initUIEvent("input", true, false, window, 0);
           var oldIgnoreInput = this.ignoreInputEvent;
@@ -1595,21 +1630,6 @@
         </body>
       </method>
 
-      <method name="selectBy">
-        <parameter name="aReverse"/>
-        <parameter name="aPage"/>
-        <body><![CDATA[
-          try {
-            return this.selectedIndex = this.getNextIndex(aReverse, aPage, this.selectedIndex, this.view.rowCount - 1);
-          } catch (ex) {
-            // do nothing - occasionally timer-related js errors happen here
-            // e.g. "this.selectedIndex has no properties", when you type fast and hit a
-            // navigation key before this popup has opened
-            return -1;
-          }
-        ]]></body>
-      </method>
-
       <method name="getNextIndex">
         <parameter name="aReverse"/>
         <parameter name="aPage"/>
@@ -1718,6 +1738,21 @@
             this.adjustHeight();
           this.tree.treeBoxObject.invalidate();
         </body>
+      </method>
+
+      <method name="selectBy">
+        <parameter name="aReverse"/>
+        <parameter name="aPage"/>
+        <body><![CDATA[
+          try {
+            return this.selectedIndex = this.getNextIndex(aReverse, aPage, this.selectedIndex, this.view.rowCount - 1);
+          } catch (ex) {
+            // do nothing - occasionally timer-related js errors happen here
+            // e.g. "this.selectedIndex has no properties", when you type fast and hit a
+            // navigation key before this popup has opened
+            return -1;
+          }
+        ]]></body>
       </method>
     </implementation>
 

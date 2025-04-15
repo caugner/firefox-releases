@@ -4,10 +4,15 @@
 
 package org.mozilla.gecko.sync.repositories.android;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.sync.Logger;
+import org.mozilla.gecko.sync.repositories.NullCursorException;
 import org.mozilla.gecko.sync.repositories.domain.HistoryRecord;
 import org.mozilla.gecko.sync.repositories.domain.Record;
 
@@ -92,5 +97,55 @@ public class AndroidBrowserHistoryDataAccessor extends
 
   public void closeExtender() {
     dataExtender.close();
+  }
+
+  public static String[] GUID_AND_ID = new String[] { BrowserContract.History.GUID, BrowserContract.History._ID };
+
+  /**
+   * Insert records.
+   * <p>
+   * This inserts all the records (using <code>ContentProvider.bulkInsert</code>),
+   * then inserts all the visit information (using the data extender's
+   * <code>bulkInsert</code>, which internally uses a single database
+   * transaction).
+   *
+   * @param records
+   *          the records to insert.
+   * @return
+   *          the number of records actually inserted.
+   * @throws NullCursorException
+   */
+  public int bulkInsert(ArrayList<HistoryRecord> records) throws NullCursorException {
+    if (records.isEmpty()) {
+      Logger.debug(LOG_TAG, "No records to insert, returning.");
+    }
+
+    int size = records.size();
+    ContentValues[] cvs = new ContentValues[size];
+    String[] guids = new String[size];
+    Map<String, Record> guidToRecord = new HashMap<String, Record>();
+    int index = 0;
+    for (Record record : records) {
+      if (record.guid == null) {
+        throw new IllegalArgumentException("Record with null GUID passed in to bulkInsert.");
+      }
+      cvs[index] = getContentValues(record);
+      guids[index] = record.guid;
+      guidToRecord.put(record.guid, record);
+      index += 1;
+    }
+
+    // First update the history records.
+    int inserted = context.getContentResolver().bulkInsert(getUri(), cvs);
+    if (inserted == size) {
+      Logger.debug(LOG_TAG, "Inserted " + inserted + " records, as expected.");
+    } else {
+      Logger.debug(LOG_TAG, "Inserted " +
+                   inserted + " records but expected " +
+                   size     + " records; continuing to update visits.");
+    }
+    // Then update the history visits.
+    dataExtender.bulkInsert(records);
+    return inserted;
   }
 }

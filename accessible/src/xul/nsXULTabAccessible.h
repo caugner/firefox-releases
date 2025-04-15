@@ -59,8 +59,6 @@ public:
   NS_IMETHOD DoAction(PRUint8 index);
 
   // nsAccessible
-  virtual void GetPositionAndSizeInternal(PRInt32 *aPosInSet,
-                                          PRInt32 *aSetSize);
   virtual mozilla::a11y::role NativeRole();
   virtual PRUint64 NativeState();
   virtual Relation RelationByType(PRUint32 aType);
@@ -78,10 +76,8 @@ class nsXULTabsAccessible : public XULSelectControlAccessible
 public:
   nsXULTabsAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
 
-  // nsIAccessible
-  NS_IMETHOD GetValue(nsAString& _retval);
-
   // nsAccessible
+  virtual void Value(nsString& aValue);
   virtual nsresult GetNameInternal(nsAString& aName);
   virtual mozilla::a11y::role NativeRole();
 

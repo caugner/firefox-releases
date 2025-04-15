@@ -51,7 +51,6 @@
 #include "XPCWrapper.h"
 #include "nsJSPrincipals.h"
 #include "nsWrapperCache.h"
-#include "WrapperFactory.h"
 #include "AccessCheck.h"
 #include "nsJSUtils.h"
 
@@ -60,9 +59,11 @@
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
-#include "jstypedarray.h"
+
+#include "mozilla/dom/bindings/Utils.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 //#define STRICT_CHECK_OF_UNICODE
 #ifdef STRICT_CHECK_OF_UNICODE
@@ -106,6 +107,11 @@ XPCConvert::GetISupportsFromJSObject(JSObject* obj, nsISupports** iface)
         (jsclass->flags & JSCLASS_HAS_PRIVATE) &&
         (jsclass->flags & JSCLASS_PRIVATE_IS_NSISUPPORTS)) {
         *iface = (nsISupports*) xpc_GetJSPrivate(obj);
+        return true;
+    }
+    if (jsclass && (jsclass->flags & JSCLASS_IS_DOMJSCLASS) &&
+        bindings::DOMJSClass::FromJSClass(jsclass)->mDOMObjectIsISupports) {
+        *iface = bindings::UnwrapDOMObject<nsISupports>(obj, jsclass);
         return true;
     }
     return false;
@@ -912,14 +918,15 @@ XPCConvert::NativeInterface2JSObject(XPCLazyCallContext& lccx,
     JSObject *flat;
     if (cache) {
         flat = cache->GetWrapper();
-        if (cache->IsProxy()) {
+        if (cache->IsDOMBinding()) {
             XPCCallContext &ccx = lccx.GetXPCCallContext();
             if (!ccx.IsValid())
                 return false;
 
             if (!flat) {
                 bool triedToWrap;
-                flat = cache->WrapObject(lccx.GetJSContext(), xpcscope,
+                flat = cache->WrapObject(lccx.GetJSContext(),
+                                         xpcscope->GetGlobalJSObject(),
                                          &triedToWrap);
                 if (!flat && triedToWrap)
                     return false;
@@ -1069,48 +1076,15 @@ XPCConvert::NativeInterface2JSObject(XPCLazyCallContext& lccx,
     if (!ccx.IsValid())
         return false;
 
+    // The call to wrap here handles both cross-compartment and same-compartment
+    // security wrappers.
     JSObject *original = flat;
     if (!JS_WrapObject(ccx, &flat))
         return false;
 
-    // If the object was not wrapped, we are same compartment and don't need
-    // to enforce any cross origin policies, except in case of the location
-    // object, which always needs a wrapper in between.
-    if (original == flat) {
-        if (xpc::WrapperFactory::IsLocationObject(flat)) {
-            JSObject *locationWrapper = wrapper->GetWrapper();
-            if (!locationWrapper) {
-                locationWrapper = xpc::WrapperFactory::WrapLocationObject(cx, flat);
-                if (!locationWrapper)
-                    return false;
-
-                // Cache the location wrapper to ensure that we maintain
-                // the identity of window/document.location.
-                wrapper->SetWrapper(locationWrapper);
-            }
-
-            flat = locationWrapper;
-        } else if (wrapper->NeedsSOW() &&
-                   !xpc::AccessCheck::isChrome(js::GetContextCompartment(cx))) {
-            JSObject *sowWrapper = wrapper->GetWrapper();
-            if (!sowWrapper) {
-                sowWrapper = xpc::WrapperFactory::WrapSOWObject(cx, flat);
-                if (!sowWrapper)
-                    return false;
-
-                // Cache the sow wrapper to ensure that we maintain
-                // the identity of this node.
-                wrapper->SetWrapper(sowWrapper);
-            }
-
-            flat = sowWrapper;
-        } else {
-            flat = JS_ObjectToOuterObject(cx, flat);
-            NS_ASSERTION(flat, "bad outer object hook!");
-            NS_ASSERTION(js::IsObjectInContextCompartment(flat, cx),
-                         "bad compartment");
-        }
-    }
+    // Outerize if necessary.
+    flat = JS_ObjectToOuterObject(cx, flat);
+    MOZ_ASSERT(flat, "bad outer object hook!");
 
     *d = OBJECT_TO_JSVAL(flat);
 
@@ -1484,7 +1458,7 @@ XPCConvert::JSErrorToXPCException(XPCCallContext& ccx,
         if (report && report->ucmessage) {
             bestMessage = (const PRUnichar *)report->ucmessage;
         } else if (message) {
-            bestMessage.AssignWithConversion(message);
+            CopyASCIItoUTF16(message, bestMessage);
         } else {
             bestMessage.AssignLiteral("JavaScript Error");
         }
@@ -1619,7 +1593,8 @@ failure:
 // of the output does not exceed PR_UINT32_MAX bytes. Allocate
 // the memory and copy the elements by memcpy.
 static JSBool
-CheckTargetAndPopulate(const nsXPTType& type,
+CheckTargetAndPopulate(JSContext *cx,
+                       const nsXPTType& type,
                        PRUint8 requiredType,
                        size_t typeSize,
                        uint32_t count,
@@ -1650,7 +1625,7 @@ CheckTargetAndPopulate(const nsXPTType& type,
         return false;
     }
 
-    memcpy(*output, JS_GetTypedArrayData(tArr), byteSize);
+    memcpy(*output, JS_GetArrayBufferViewData(tArr, cx), byteSize);
     return true;
 }
 
@@ -1673,11 +1648,12 @@ XPCConvert::JSTypedArray2Native(XPCCallContext& ccx,
 {
     NS_ABORT_IF_FALSE(jsArray, "bad param");
     NS_ABORT_IF_FALSE(d, "bad param");
-    NS_ABORT_IF_FALSE(js_IsTypedArray(jsArray), "not a typed array");
+    JSContext* cx = ccx.GetJSContext();
+    NS_ABORT_IF_FALSE(JS_IsTypedArrayObject(jsArray, cx), "not a typed array");
 
     // Check the actual length of the input array against the
     // given size_is.
-    uint32_t len = JS_GetTypedArrayLength(jsArray);
+    uint32_t len = JS_GetTypedArrayLength(jsArray, cx);
     if (len < count) {
         if (pErr)
             *pErr = NS_ERROR_XPC_NOT_ENOUGH_ELEMENTS_IN_ARRAY;
@@ -1687,66 +1663,66 @@ XPCConvert::JSTypedArray2Native(XPCCallContext& ccx,
 
     void* output = nsnull;
 
-    switch (JS_GetTypedArrayType(jsArray)) {
-    case js::TypedArray::TYPE_INT8:
-        if (!CheckTargetAndPopulate(nsXPTType::T_I8, type,
+    switch (JS_GetTypedArrayType(jsArray, cx)) {
+    case js::ArrayBufferView::TYPE_INT8:
+        if (!CheckTargetAndPopulate(cx, nsXPTType::T_I8, type,
                                     sizeof(int8_t), count,
                                     jsArray, &output, pErr)) {
             return false;
         }
         break;
 
-    case js::TypedArray::TYPE_UINT8:
-    case js::TypedArray::TYPE_UINT8_CLAMPED:
-        if (!CheckTargetAndPopulate(nsXPTType::T_U8, type,
+    case js::ArrayBufferView::TYPE_UINT8:
+    case js::ArrayBufferView::TYPE_UINT8_CLAMPED:
+        if (!CheckTargetAndPopulate(cx, nsXPTType::T_U8, type,
                                     sizeof(uint8_t), count,
                                     jsArray, &output, pErr)) {
             return false;
         }
         break;
 
-    case js::TypedArray::TYPE_INT16:
-        if (!CheckTargetAndPopulate(nsXPTType::T_I16, type,
+    case js::ArrayBufferView::TYPE_INT16:
+        if (!CheckTargetAndPopulate(cx, nsXPTType::T_I16, type,
                                     sizeof(int16_t), count,
                                     jsArray, &output, pErr)) {
             return false;
         }
         break;
 
-    case js::TypedArray::TYPE_UINT16:
-        if (!CheckTargetAndPopulate(nsXPTType::T_U16, type,
+    case js::ArrayBufferView::TYPE_UINT16:
+        if (!CheckTargetAndPopulate(cx, nsXPTType::T_U16, type,
                                     sizeof(uint16_t), count,
                                     jsArray, &output, pErr)) {
             return false;
         }
         break;
 
-    case js::TypedArray::TYPE_INT32:
-        if (!CheckTargetAndPopulate(nsXPTType::T_I32, type,
+    case js::ArrayBufferView::TYPE_INT32:
+        if (!CheckTargetAndPopulate(cx, nsXPTType::T_I32, type,
                                     sizeof(int32_t), count,
                                     jsArray, &output, pErr)) {
             return false;
         }
         break;
 
-    case js::TypedArray::TYPE_UINT32:
-        if (!CheckTargetAndPopulate(nsXPTType::T_U32, type,
+    case js::ArrayBufferView::TYPE_UINT32:
+        if (!CheckTargetAndPopulate(cx, nsXPTType::T_U32, type,
                                     sizeof(uint32_t), count,
                                     jsArray, &output, pErr)) {
             return false;
         }
         break;
 
-    case js::TypedArray::TYPE_FLOAT32:
-        if (!CheckTargetAndPopulate(nsXPTType::T_FLOAT, type,
+    case js::ArrayBufferView::TYPE_FLOAT32:
+        if (!CheckTargetAndPopulate(cx, nsXPTType::T_FLOAT, type,
                                     sizeof(float), count,
                                     jsArray, &output, pErr)) {
             return false;
         }
         break;
 
-    case js::TypedArray::TYPE_FLOAT64:
-        if (!CheckTargetAndPopulate(nsXPTType::T_DOUBLE, type,
+    case js::ArrayBufferView::TYPE_FLOAT64:
+        if (!CheckTargetAndPopulate(cx, nsXPTType::T_DOUBLE, type,
                                     sizeof(double), count,
                                     jsArray, &output, pErr)) {
             return false;
@@ -1811,8 +1787,8 @@ XPCConvert::JSArray2Native(XPCCallContext& ccx, void** d, jsval s,
 
     jsarray = JSVAL_TO_OBJECT(s);
 
-    // If this is a typed array, then do a fast conversion with memcpy.
-    if (js_IsTypedArray(jsarray)) {
+    // If this is a typed array, then try a fast conversion with memcpy.
+    if (JS_IsTypedArrayObject(jsarray, cx)) {
         return JSTypedArray2Native(ccx, d, jsarray, count, type, pErr);
     }
 

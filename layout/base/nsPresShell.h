@@ -248,14 +248,14 @@ public:
   virtual NS_HIDDEN_(nsresult) ScrollToAnchor();
 
   virtual NS_HIDDEN_(nsresult) ScrollContentIntoView(nsIContent* aContent,
-                                                     PRIntn      aVPercent,
-                                                     PRIntn      aHPercent,
+                                                     ScrollAxis  aVertical,
+                                                     ScrollAxis  aHorizontal,
                                                      PRUint32    aFlags);
   virtual bool ScrollFrameRectIntoView(nsIFrame*     aFrame,
-                                         const nsRect& aRect,
-                                         PRIntn        aVPercent,
-                                         PRIntn        aHPercent,
-                                         PRUint32      aFlags);
+                                       const nsRect& aRect,
+                                       ScrollAxis    aVertical,
+                                       ScrollAxis    aHorizontal,
+                                       PRUint32      aFlags);
   virtual nsRectVisibility GetRectVisibility(nsIFrame *aFrame,
                                              const nsRect &aRect,
                                              nscoord aMinTwips) const;
@@ -493,9 +493,18 @@ protected:
 
   // Helper for ScrollContentIntoView
   void DoScrollContentIntoView(nsIContent* aContent,
-                               PRIntn      aVPercent,
-                               PRIntn      aHPercent,
+                               ScrollAxis  aVertical,
+                               ScrollAxis  aHorizontal,
                                PRUint32    aFlags);
+
+  /**
+   * Initialize cached font inflation preference values.
+   *
+   * @see nsLayoutUtils::sFontSizeInflationEmPerLine
+   * @see nsLayoutUtils::sFontSizeInflationMinTwips
+   * @see nsLayoutUtils::sFontSizeInflationLineThreshold
+   */
+  void SetupFontInflation();
 
   friend struct AutoRenderingStateSaveRestore;
   friend struct RenderingState;
@@ -672,8 +681,8 @@ protected:
   // processing all our dirty roots.  mContentScrollVPosition and
   // mContentScrollHPosition are only used when it's non-null.
   nsCOMPtr<nsIContent> mContentToScrollTo;
-  PRIntn mContentScrollVPosition;
-  PRIntn mContentScrollHPosition;
+  ScrollAxis mContentScrollVAxis;
+  ScrollAxis mContentScrollHAxis;
   PRUint32 mContentToScrollToFlags;
 
   class nsDelayedEvent
@@ -792,6 +801,10 @@ protected:
 
 private:
 
+
+#ifdef ANDROID
+  nsIDocument* GetTouchEventTargetDocument();
+#endif
   bool InZombieDocument(nsIContent *aContent);
   already_AddRefed<nsIPresShell> GetParentPresShell();
   nsresult RetargetEventToParent(nsGUIEvent* aEvent,

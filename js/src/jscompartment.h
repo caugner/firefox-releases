@@ -194,13 +194,59 @@ struct JSCompartment
 
     bool                         needsBarrier_;
 
-    bool needsBarrier() {
+    bool needsBarrier() const {
         return needsBarrier_;
     }
 
     js::GCMarker *barrierTracer() {
         JS_ASSERT(needsBarrier_);
         return &rt->gcMarker;
+    }
+
+  private:
+    enum CompartmentGCState {
+        NoGCScheduled,
+        GCScheduled,
+        GCRunning
+    };
+
+    CompartmentGCState           gcState;
+
+  public:
+    bool isCollecting() const {
+        /* Allow this if we're in the middle of an incremental GC. */
+        if (rt->gcRunning) {
+            return gcState == GCRunning;
+        } else {
+            JS_ASSERT(gcState != GCRunning);
+            return needsBarrier();
+        }
+    }
+
+    /*
+     * If this returns true, all object tracing must be done with a GC marking
+     * tracer.
+     */
+    bool requireGCTracer() const {
+        return gcState == GCRunning;
+    }
+
+    void setCollecting(bool collecting) {
+        JS_ASSERT(rt->gcRunning);
+        if (collecting)
+            gcState = GCRunning;
+        else
+            gcState = NoGCScheduled;
+    }
+
+    void scheduleGC() {
+        JS_ASSERT(!rt->gcRunning);
+        JS_ASSERT(gcState != GCRunning);
+        gcState = GCScheduled;
+    }
+
+    bool isGCScheduled() const {
+        return gcState == GCScheduled;
     }
 
     size_t                       gcBytes;
@@ -268,16 +314,16 @@ struct JSCompartment
 
     /* Set of all unowned base shapes in the compartment. */
     js::BaseShapeSet             baseShapes;
-    void sweepBaseShapeTable(JSContext *cx);
+    void sweepBaseShapeTable();
 
     /* Set of initial shapes in the compartment. */
     js::InitialShapeSet          initialShapes;
-    void sweepInitialShapeTable(JSContext *cx);
+    void sweepInitialShapeTable();
 
     /* Set of default 'new' or lazy types in the compartment. */
     js::types::TypeObjectSet     newTypeObjects;
     js::types::TypeObjectSet     lazyTypeObjects;
-    void sweepNewTypeObjectTable(JSContext *cx, js::types::TypeObjectSet &table);
+    void sweepNewTypeObjectTable(js::types::TypeObjectSet &table);
 
     js::types::TypeObject        *emptyTypeObject;
 
@@ -337,8 +383,8 @@ struct JSCompartment
     bool wrap(JSContext *cx, js::AutoIdVector &props);
 
     void markTypes(JSTracer *trc);
-    void discardJitCode(JSContext *cx);
-    void sweep(JSContext *cx, bool releaseTypes);
+    void discardJitCode(js::FreeOp *fop);
+    void sweep(js::FreeOp *fop, bool releaseTypes);
     void purge();
 
     void setGCLastBytes(size_t lastBytes, size_t lastMallocBytes, js::JSGCInvocationKind gckind);
@@ -400,23 +446,29 @@ struct JSCompartment
 
   private:
     /* This is called only when debugMode() has just toggled. */
-    void updateForDebugMode(JSContext *cx);
+    void updateForDebugMode(js::FreeOp *fop);
 
   public:
     js::GlobalObjectSet &getDebuggees() { return debuggees; }
     bool addDebuggee(JSContext *cx, js::GlobalObject *global);
-    void removeDebuggee(JSContext *cx, js::GlobalObject *global,
+    void removeDebuggee(js::FreeOp *fop, js::GlobalObject *global,
                         js::GlobalObjectSet::Enum *debuggeesEnum = NULL);
     bool setDebugModeFromC(JSContext *cx, bool b);
 
-    void clearBreakpointsIn(JSContext *cx, js::Debugger *dbg, JSObject *handler);
-    void clearTraps(JSContext *cx);
+    void clearBreakpointsIn(js::FreeOp *fop, js::Debugger *dbg, JSObject *handler);
+    void clearTraps(js::FreeOp *fop);
 
   private:
-    void sweepBreakpoints(JSContext *cx);
+    void sweepBreakpoints(js::FreeOp *fop);
 
   public:
     js::WatchpointMap *watchpointMap;
+
+    js::ScriptCountsMap *scriptCountsMap;
+
+    js::SourceMapMap *sourceMapMap;
+
+    js::DebugScriptMap *debugScriptMap;
 };
 
 #define JS_PROPERTY_TREE(cx)    ((cx)->compartment->propertyTree)

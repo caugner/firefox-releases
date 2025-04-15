@@ -37,6 +37,9 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#ifndef _xpc_WRAPPERFACTORY_H
+#define _xpc_WRAPPERFACTORY_H
+
 #include "jsapi.h"
 #include "jswrapper.h"
 
@@ -96,6 +99,10 @@ class WrapperFactory {
                             JSObject *parent,
                             unsigned flags);
 
+    // Wrap an object for same-compartment access.
+    static JSObject *WrapForSameCompartment(JSContext *cx,
+                                            JSObject *obj);
+
     // Return true if this is a location object.
     static bool IsLocationObject(JSObject *obj);
 
@@ -112,3 +119,5 @@ class WrapperFactory {
 extern js::Wrapper WaiveXrayWrapperWrapper;
 
 }
+
+#endif /* _xpc_WRAPPERFACTORY_H */

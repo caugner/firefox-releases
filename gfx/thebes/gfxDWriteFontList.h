@@ -79,6 +79,11 @@ public:
 
     void SetForceGDIClassic(bool aForce) { mForceGDIClassic = aForce; }
 
+    virtual void SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                     FontListSizes*    aSizes) const;
+    virtual void SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                     FontListSizes*    aSizes) const;
+
 protected:
     /** This font family's directwrite fontfamily object */
     nsRefPtr<IDWriteFontFamily> mDWFamily;
@@ -179,6 +184,11 @@ public:
     void SetForceGDIClassic(bool aForce) { mForceGDIClassic = aForce; }
     bool GetForceGDIClassic() { return mForceGDIClassic; }
 
+    virtual void SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                     FontListSizes*    aSizes) const;
+    virtual void SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                     FontListSizes*    aSizes) const;
+
 protected:
     friend class gfxDWriteFont;
     friend class gfxDWriteFontList;
@@ -222,21 +232,21 @@ public:
 
     // IDWriteTextRenderer methods
     IFACEMETHOD(DrawGlyphRun)(
-        __maybenull void* clientDrawingContext,
+        void* clientDrawingContext,
         FLOAT baselineOriginX,
         FLOAT baselineOriginY,
         DWRITE_MEASURING_MODE measuringMode,
-        __in DWRITE_GLYPH_RUN const* glyphRun,
-        __in DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDescription,
-        __maybenull IUnknown* clientDrawingEffect
+        DWRITE_GLYPH_RUN const* glyphRun,
+        DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDescription,
+        IUnknown* clientDrawingEffect
         );
 
     IFACEMETHOD(DrawUnderline)(
-        __maybenull void* clientDrawingContext,
+        void* clientDrawingContext,
         FLOAT baselineOriginX,
         FLOAT baselineOriginY,
-        __in DWRITE_UNDERLINE const* underline,
-        __maybenull IUnknown* clientDrawingEffect
+        DWRITE_UNDERLINE const* underline,
+        IUnknown* clientDrawingEffect
         )
     {
         return E_NOTIMPL;
@@ -244,11 +254,11 @@ public:
 
 
     IFACEMETHOD(DrawStrikethrough)(
-        __maybenull void* clientDrawingContext,
+        void* clientDrawingContext,
         FLOAT baselineOriginX,
         FLOAT baselineOriginY,
-        __in DWRITE_STRIKETHROUGH const* strikethrough,
-        __maybenull IUnknown* clientDrawingEffect
+        DWRITE_STRIKETHROUGH const* strikethrough,
+        IUnknown* clientDrawingEffect
         )
     {
         return E_NOTIMPL;
@@ -256,13 +266,13 @@ public:
 
 
     IFACEMETHOD(DrawInlineObject)(
-        __maybenull void* clientDrawingContext,
+        void* clientDrawingContext,
         FLOAT originX,
         FLOAT originY,
         IDWriteInlineObject* inlineObject,
         BOOL isSideways,
         BOOL isRightToLeft,
-        __maybenull IUnknown* clientDrawingEffect
+        IUnknown* clientDrawingEffect
         )
     {
         return E_NOTIMPL;
@@ -271,8 +281,8 @@ public:
     // IDWritePixelSnapping methods
 
     IFACEMETHOD(IsPixelSnappingDisabled)(
-        __maybenull void* clientDrawingContext,
-        __out BOOL* isDisabled
+        void* clientDrawingContext,
+        BOOL* isDisabled
         )
     {
         *isDisabled = FALSE;
@@ -280,8 +290,8 @@ public:
     }
 
     IFACEMETHOD(GetCurrentTransform)(
-        __maybenull void* clientDrawingContext,
-        __out DWRITE_MATRIX* transform
+        void* clientDrawingContext,
+        DWRITE_MATRIX* transform
         )
     {
         const DWRITE_MATRIX ident = {1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
@@ -290,8 +300,8 @@ public:
     }
 
     IFACEMETHOD(GetPixelsPerDip)(
-        __maybenull void* clientDrawingContext,
-        __out FLOAT* pixelsPerDip
+        void* clientDrawingContext,
+        FLOAT* pixelsPerDip
         )
     {
         *pixelsPerDip = 1.0f;
@@ -337,7 +347,7 @@ public:
     const nsString& FallbackFamilyName() { return mFamilyName; }
 
 protected:
-    unsigned long mRefCount;
+    long mRefCount;
     nsRefPtr<IDWriteFontCollection> mSystemFonts;
     nsString mFamilyName;
 };
@@ -380,6 +390,11 @@ public:
 
     gfxFloat GetForceGDIClassicMaxFontSize() { return mForceGDIClassicMaxFontSize; }
 
+    virtual void SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                     FontListSizes*    aSizes) const;
+    virtual void SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf,
+                                     FontListSizes*    aSizes) const;
+
 private:
     friend class gfxDWriteFontFamily;
 
@@ -401,7 +416,7 @@ private:
      */
     nsTArray<nsString> mNonExistingFonts;
 
-    typedef nsDataHashtable<nsStringHashKey, nsRefPtr<gfxFontFamily> > FontTable;
+    typedef nsRefPtrHashtable<nsStringHashKey, gfxFontFamily> FontTable;
 
     /**
      * Table of font substitutes, we grab this from the registry to get

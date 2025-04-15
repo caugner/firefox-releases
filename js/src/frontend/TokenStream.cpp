@@ -154,7 +154,9 @@ js::IsIdentifier(JSLinearString *str)
 
 /* Initialize members that aren't initialized in |init|. */
 TokenStream::TokenStream(JSContext *cx, JSPrincipals *prin, JSPrincipals *originPrin)
-  : tokens(), cursor(), lookahead(), flags(), listenerTSData(), tokenbuf(cx),
+  : tokens(), tokensRoot(cx, &tokens),
+    cursor(), lookahead(), flags(), userbufRoot(cx, &userbuf),
+    sourceMap(), listenerTSData(), tokenbuf(cx),
     cx(cx), originPrincipals(JSScript::normalizeOriginPrincipals(prin, originPrin))
 {
     if (originPrincipals)
@@ -176,7 +178,6 @@ TokenStream::init(const jschar *base, size_t length, const char *fn, unsigned ln
     userbuf.init(base, length);
     linebase = base;
     prevLinebase = NULL;
-    sourceMap = NULL;
 
     JSSourceHandler listener = cx->runtime->debugHooks.sourceHandler;
     void *listenerData = cx->runtime->debugHooks.sourceHandlerData;

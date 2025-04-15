@@ -74,10 +74,10 @@ EXPORTS_mozilla/dom = \
   Link.h \
   $(NULL)
 
-LOCAL_INCLUDES = -I$(srcdir)/js/xpconnect/src
+LOCAL_INCLUDES = \
+		$(NULL)
 
 CPPSRCS		= \
-		mozSanitizingSerializer.cpp \
 		nsAtomListUtils.cpp \
 		nsAttrAndChildArray.cpp \
 		nsAttrValue.cpp \
@@ -156,6 +156,7 @@ CPPSRCS		= \
 		ThirdPartyUtil.cpp \
 		nsEventSource.cpp \
 		FileIOObject.cpp \
+		nsDOMMutationObserver.cpp \
 		$(NULL)
 
 # Are we targeting x86-32 or x86-64?  If so, we want to include SSE2 code for

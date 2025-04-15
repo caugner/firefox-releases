@@ -57,13 +57,13 @@
 #include "gfxAndroidPlatform.h"
 #endif
 
-#include "gfxAtoms.h"
+#include "nsGkAtoms.h"
 #include "gfxPlatformFontList.h"
 #include "gfxContext.h"
 #include "gfxImageSurface.h"
 #include "gfxUserFontSet.h"
 #include "nsUnicodeProperties.h"
-#include "harfbuzz/hb-unicode.h"
+#include "harfbuzz/hb.h"
 #ifdef MOZ_GRAPHITE
 #include "gfxGraphiteShaper.h"
 #endif
@@ -86,6 +86,7 @@
 
 #include "mozilla/FunctionTimer.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Assertions.h"
 
 #include "nsIGfxInfo.h"
 
@@ -265,8 +266,6 @@ gfxPlatform::Init()
     }
     gEverInitialized = true;
 
-    gfxAtoms::RegisterAtoms();
-
 #ifdef PR_LOGGING
     sFontlistLog = PR_NewLogModule("fontlist");;
     sFontInitLog = PR_NewLogModule("fontinit");;
@@ -337,6 +336,8 @@ gfxPlatform::Init()
 
     gPlatform->mFontPrefsObserver = new FontPrefsObserver();
     Preferences::AddStrongObservers(gPlatform->mFontPrefsObserver, kObservedPrefs);
+
+    gPlatform->mWorkAroundDriverBugs = Preferences::GetBool("gfx.work-around-driver-bugs", true);
 
     // Force registration of the gfx component, thus arranging for
     // ::Shutdown to be called.
@@ -562,13 +563,6 @@ gfxPlatform::GetScaledFontForFont(gfxFont *aFont)
   return scaledFont;
 }
 
-cairo_user_data_key_t kDrawSourceSurface;
-static void
-DataSourceSurfaceDestroy(void *dataSourceSurface)
-{
-  static_cast<DataSourceSurface*>(dataSourceSurface)->Release();
-}
-
 UserDataKey kThebesSurfaceKey;
 void
 DestroyThebesSurface(void *data)
@@ -608,11 +602,13 @@ gfxPlatform::GetThebesSurfaceForDrawTarget(DrawTarget *aTarget)
     IntSize size = data->GetSize();
     gfxASurface::gfxImageFormat format = gfxASurface::FormatFromContent(ContentForFormat(data->GetFormat()));
 
-    surf =
-      new gfxImageSurface(data->GetData(), gfxIntSize(size.width, size.height),
-                          data->Stride(), format);
 
-    surf->SetData(&kDrawSourceSurface, data.forget().drop(), DataSourceSurfaceDestroy);
+    // We need to make a copy here because data might change its data under us
+    nsRefPtr<gfxImageSurface> imageSurf = new gfxImageSurface(gfxIntSize(size.width, size.height), format, false);
+ 
+    bool resultOfCopy = imageSurf->CopyFrom(source);
+    NS_ASSERTION(resultOfCopy, "Failed to copy surface.");
+    surf = imageSurf;
   }
 
   // add a reference to be held by the drawTarget
@@ -647,6 +643,16 @@ gfxPlatform::CreateOffscreenDrawTarget(const IntSize& aSize, SurfaceFormat aForm
   } else {
     return Factory::CreateDrawTarget(backend, aSize, aFormat);
   }
+}
+
+RefPtr<DrawTarget>
+gfxPlatform::CreateDrawTargetForData(unsigned char* aData, const IntSize& aSize, int32_t aStride, SurfaceFormat aFormat)
+{
+  BackendType backend;
+  if (!SupportsAzure(backend)) {
+    return NULL;
+  }
+  return Factory::CreateDrawTargetForData(backend, aData, aSize, aStride, aFormat); 
 }
 
 nsresult
@@ -786,7 +792,7 @@ gfxPlatform::GetPrefFonts(nsIAtom *aLanguage, nsString& aFonts, bool aAppendUnic
 
     AppendGenericFontFromPref(aFonts, aLanguage, nsnull);
     if (aAppendUnicode)
-        AppendGenericFontFromPref(aFonts, gfxAtoms::x_unicode, nsnull);
+        AppendGenericFontFromPref(aFonts, nsGkAtoms::Unicode, nsnull);
 }
 
 bool gfxPlatform::ForEachPrefFont(eFontPrefLang aLangArray[], PRUint32 aLangArrayLen, PrefFontCallback aCallback,
@@ -1426,4 +1432,11 @@ gfxPlatform::GetLog(eGfxLog aWhichLog)
 #else
     return nsnull;
 #endif
+}
+
+int
+gfxPlatform::GetScreenDepth() const
+{
+    MOZ_ASSERT(false, "Not implemented on this platform");
+    return 0;
 }

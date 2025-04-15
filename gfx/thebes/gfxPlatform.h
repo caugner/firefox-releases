@@ -175,10 +175,6 @@ public:
      */
     static gfxPlatform *GetPlatform();
 
-    /**
-     * Start up Thebes.
-     */
-    static void Init();
 
     /**
      * Shut down Thebes.
@@ -211,6 +207,10 @@ public:
 
     virtual mozilla::RefPtr<mozilla::gfx::DrawTarget>
       CreateOffscreenDrawTarget(const mozilla::gfx::IntSize& aSize, mozilla::gfx::SurfaceFormat aFormat);
+
+    virtual mozilla::RefPtr<mozilla::gfx::DrawTarget>
+      CreateDrawTargetForData(unsigned char* aData, const mozilla::gfx::IntSize& aSize, 
+                              int32_t aStride, mozilla::gfx::SurfaceFormat aFormat);
 
     virtual bool SupportsAzure(mozilla::gfx::BackendType& aBackend) { return false; }
 
@@ -455,6 +455,10 @@ public:
      */
     static PRLogModuleInfo* GetLog(eGfxLog aWhichLog);
 
+    bool WorkAroundDriverBugs() const { return mWorkAroundDriverBugs; }
+
+    virtual int GetScreenDepth() const;
+
 protected:
     gfxPlatform();
     virtual ~gfxPlatform();
@@ -481,6 +485,11 @@ protected:
     mozilla::gfx::BackendType mPreferredDrawTargetBackend;
 
 private:
+    /**
+     * Start up Thebes.
+     */
+    static void Init();
+
     virtual qcms_profile* GetPlatformCMSOutputProfile();
 
     nsRefPtr<gfxASurface> mScreenReferenceSurface;
@@ -488,6 +497,7 @@ private:
     nsCOMPtr<nsIObserver> mSRGBOverrideObserver;
     nsCOMPtr<nsIObserver> mFontPrefsObserver;
     mozilla::widget::GfxInfoCollector<gfxPlatform> mAzureBackendCollector;
+    bool mWorkAroundDriverBugs;
 };
 
 #endif /* GFX_PLATFORM_H */

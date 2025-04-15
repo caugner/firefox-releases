@@ -43,13 +43,15 @@
 
 #include "CheckedInt.h"
 
-#include "jstypedarray.h"
+#include "jsfriendapi.h"
 
 #if defined(USE_ANGLE)
 #include "angle/ShaderLang.h"
 #endif
 
 #include <algorithm>
+
+#include "nsIObserverService.h"
 
 using namespace mozilla;
 
@@ -61,6 +63,7 @@ WebGLProgram::UpdateInfo()
 {
     mIdentifierMap = nsnull;
     mIdentifierReverseMap = nsnull;
+    mUniformInfoMap = nsnull;
 
     mAttribMaxNameLength = 0;
 
@@ -342,6 +345,9 @@ bool WebGLContext::ValidateDrawModeEnum(WebGLenum mode, const char *info)
 
 bool WebGLContext::ValidateGLSLVariableName(const nsAString& name, const char *info)
 {
+    if (name.IsEmpty())
+        return false;
+
     const PRUint32 maxSize = 256;
     if (name.Length() > maxSize) {
         ErrorInvalidValue("%s: identifier is %d characters long, exceeds the maximum allowed length of %d characters",
@@ -403,10 +409,10 @@ bool WebGLContext::ValidateTexFormatAndType(WebGLenum format, WebGLenum type, in
         (IsExtensionEnabled(WebGL_OES_texture_float) && type == LOCAL_GL_FLOAT))
     {
         if (jsArrayType != -1) {
-            if ((type == LOCAL_GL_UNSIGNED_BYTE && jsArrayType != js::TypedArray::TYPE_UINT8) ||
-                (type == LOCAL_GL_FLOAT && jsArrayType != js::TypedArray::TYPE_FLOAT32))
+            if ((type == LOCAL_GL_UNSIGNED_BYTE && jsArrayType != js::ArrayBufferView::TYPE_UINT8) ||
+                (type == LOCAL_GL_FLOAT && jsArrayType != js::ArrayBufferView::TYPE_FLOAT32))
             {
-                ErrorInvalidOperation("%s: invalid typed array type for given format", info);
+                ErrorInvalidOperation("%s: invalid typed array type for given texture data type", info);
                 return false;
             }
         }
@@ -437,8 +443,8 @@ bool WebGLContext::ValidateTexFormatAndType(WebGLenum format, WebGLenum type, in
     switch (type) {
         case LOCAL_GL_UNSIGNED_SHORT_4_4_4_4:
         case LOCAL_GL_UNSIGNED_SHORT_5_5_5_1:
-            if (jsArrayType != -1 && jsArrayType != js::TypedArray::TYPE_UINT16) {
-                ErrorInvalidOperation("%s: invalid typed array type for given format", info);
+            if (jsArrayType != -1 && jsArrayType != js::ArrayBufferView::TYPE_UINT16) {
+                ErrorInvalidOperation("%s: invalid typed array type for given texture data type", info);
                 return false;
             }
 
@@ -450,8 +456,8 @@ bool WebGLContext::ValidateTexFormatAndType(WebGLenum format, WebGLenum type, in
             return false;
 
         case LOCAL_GL_UNSIGNED_SHORT_5_6_5:
-            if (jsArrayType != -1 && jsArrayType != js::TypedArray::TYPE_UINT16) {
-                ErrorInvalidOperation("%s: invalid typed array type for given format", info);
+            if (jsArrayType != -1 && jsArrayType != js::ArrayBufferView::TYPE_UINT16) {
+                ErrorInvalidOperation("%s: invalid typed array type for given texture data type", info);
                 return false;
             }
 
@@ -514,6 +520,20 @@ WebGLContext::InitAndValidateGL()
         LogMessage("GL error 0x%x occurred during OpenGL context initialization, before WebGL initialization!", error);
         return false;
     }
+
+#ifdef ANDROID
+    // bug 736123, blacklist WebGL on Adreno
+    bool forceEnabled = Preferences::GetBool("webgl.force-enabled", false);
+    if (!forceEnabled) {
+        int renderer = gl->Renderer();
+        if (renderer == gl::GLContext::RendererAdreno200 ||
+            renderer == gl::GLContext::RendererAdreno205)
+        {
+            LogMessage("WebGL blocked on this Adreno driver!");
+            return false;
+        }
+    }
+#endif
 
     mMinCapability = Preferences::GetBool("webgl.min_capability_mode", false);
     mDisableExtensions = Preferences::GetBool("webgl.disable-extensions", false);
@@ -579,14 +599,6 @@ WebGLContext::InitAndValidateGL()
         gl->fGetIntegerv(LOCAL_GL_MAX_TEXTURE_IMAGE_UNITS, &mGLMaxTextureImageUnits);
         gl->fGetIntegerv(LOCAL_GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &mGLMaxVertexTextureImageUnits);
     }
-    
-#ifdef XP_MACOSX
-    if (gl->Vendor() == gl::GLContext::VendorIntel) {
-        // bug 684882, corruption in large cube maps on Intel Mac driver.
-        // Is reported to only affect Mac OS < 10.7.2 but don't want to rely on that yet.
-        mGLMaxCubeMapTextureSize = NS_MIN(mGLMaxCubeMapTextureSize, 512);
-    }
-#endif
 
     if (MinCapabilityMode()) {
         mGLMaxFragmentUniformVectors = MINVALUE_GL_MAX_FRAGMENT_UNIFORM_VECTORS;
@@ -649,7 +661,8 @@ WebGLContext::InitAndValidateGL()
         //    http://www.gamedev.net/community/forums/topic.asp?topic_id=525643
         // Also, if the ATI/Windows driver implements a recent GL spec version, this shouldn't be needed anyway.
 #ifdef XP_WIN
-        if (gl->Vendor() != gl::GLContext::VendorATI)
+        if (!(gl->WorkAroundDriverBugs() &&
+              gl->Vendor() == gl::GLContext::VendorATI))
 #else
         if (true)
 #endif
@@ -683,6 +696,16 @@ WebGLContext::InitAndValidateGL()
     if (error != LOCAL_GL_NO_ERROR) {
         LogMessage("GL error 0x%x occurred during WebGL context initialization!", error);
         return false;
+    }
+
+    mMemoryPressureObserver
+        = new WebGLMemoryPressureObserver(this);
+    nsCOMPtr<nsIObserverService> observerService
+        = mozilla::services::GetObserverService();
+    if (observerService) {
+        observerService->AddObserver(mMemoryPressureObserver,
+                                     "memory-pressure",
+                                     false);
     }
 
     return true;

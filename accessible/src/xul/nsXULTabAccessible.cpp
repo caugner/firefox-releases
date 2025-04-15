@@ -164,14 +164,6 @@ nsXULTabAccessible::RelationByType(PRUint32 aType)
   return rel;
 }
 
-void
-nsXULTabAccessible::GetPositionAndSizeInternal(PRInt32 *aPosInSet,
-                                               PRInt32 *aSetSize)
-{
-  nsAccUtils::GetPositionAndSizeForXULSelectControlItem(mContent, aPosInSet,
-                                                        aSetSize);
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 // nsXULTabsAccessible
@@ -195,10 +187,10 @@ nsXULTabsAccessible::ActionCount()
   return 0;
 }
 
-/** no value */
-NS_IMETHODIMP nsXULTabsAccessible::GetValue(nsAString& _retval)
+void
+nsXULTabsAccessible::Value(nsString& aValue)
 {
-  return NS_OK;
+  aValue.Truncate();
 }
 
 nsresult

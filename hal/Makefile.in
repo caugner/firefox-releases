@@ -46,6 +46,7 @@ VPATH       = \
   $(srcdir)/sandbox \
   $(srcdir)/linux \
   $(srcdir)/windows \
+  $(srcdir)/cocoa \
   $(NULL)
 
 include $(DEPTH)/config/autoconf.mk
@@ -83,6 +84,8 @@ CPPSRCS += \
   GonkHal.cpp \
   Power.cpp \
   GonkSensor.cpp \
+  UeventPoller.cpp \
+  GonkSwitch.cpp \
   $(NULL)
 else ifeq (Linux,$(OS_TARGET))
 CPPSRCS += \
@@ -99,6 +102,14 @@ CPPSRCS += \
   WindowsBattery.cpp \
   FallbackSensor.cpp \
   $(NULL)
+else ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
+CPPSRCS += \
+  FallbackHal.cpp \
+  $(NULL)
+CMMSRCS += \
+  CocoaSensor.mm \
+  smslib.mm \
+  $(NULL)
 else
 CPPSRCS += \
   FallbackHal.cpp \
@@ -107,8 +118,18 @@ CPPSRCS += \
 endif
 
 ifneq (gonk,$(MOZ_WIDGET_TOOLKIT)) #{
-CPPSRCS += FallbackLights.cpp FallbackTime.cpp
+CPPSRCS += \
+  FallbackLights.cpp  \
+  FallbackTime.cpp \
+  FallbackWakeLocks.cpp \
+  FallbackSwitch.cpp \
+  $(NULL)
 endif #}
+
+# Screen Orientation backend
+ifneq (android,$(MOZ_WIDGET_TOOLKIT))
+CPPSRCS += ScreenOrientationFallback.cpp
+endif
 
 include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk

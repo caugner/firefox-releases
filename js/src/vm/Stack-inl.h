@@ -189,13 +189,6 @@ StackFrame::initFixupFrame(StackFrame *prev, StackFrame::Flags flags, void *ncod
     u.nactual = nactual;
 }
 
-inline void
-StackFrame::overwriteCallee(JSObject &newCallee)
-{
-    JS_ASSERT(callee().toFunction()->script() == newCallee.toFunction()->script());
-    mutableCalleev().setObject(newCallee);
-}
-
 inline Value &
 StackFrame::canonicalActualArg(unsigned i) const
 {
@@ -303,15 +296,6 @@ StackFrame::actualArgsEnd() const
 }
 
 inline void
-StackFrame::setArgsObj(ArgumentsObject &obj)
-{
-    JS_ASSERT_IF(hasArgsObj(), &obj == argsObj_);
-    JS_ASSERT_IF(!hasArgsObj(), numActualArgs() == obj.initialLength());
-    argsObj_ = &obj;
-    flags_ |= HAS_ARGS_OBJ;
-}
-
-inline void
 StackFrame::setScopeChainNoCallObj(JSObject &obj)
 {
 #ifdef DEBUG
@@ -366,8 +350,10 @@ inline bool
 StackFrame::functionPrologue(JSContext *cx)
 {
     JS_ASSERT(isNonEvalFunctionFrame());
+    JS_ASSERT(!isGeneratorFrame());
 
     JSFunction *fun = this->fun();
+    JSScript *script = fun->script();
 
     if (fun->isHeavyweight()) {
         if (!CallObject::createForFunction(cx, this))
@@ -377,7 +363,7 @@ StackFrame::functionPrologue(JSContext *cx)
         scopeChain();
     }
 
-    if (script()->nesting()) {
+    if (script->nesting()) {
         JS_ASSERT(maintainNestingState());
         types::NestingPrologue(cx, this);
     }
@@ -391,10 +377,9 @@ StackFrame::functionEpilogue()
     JS_ASSERT(isNonEvalFunctionFrame());
 
     if (flags_ & (HAS_ARGS_OBJ | HAS_CALL_OBJ)) {
-        /* NB: there is an ordering dependency here. */
         if (hasCallObj())
             js_PutCallObject(this);
-        else if (hasArgsObj())
+        if (hasArgsObj())
             js_PutArgsObject(this);
     }
 
@@ -618,6 +603,45 @@ ContextStack::currentScript(jsbytecode **ppc) const
 
     if (ppc)
         *ppc = fp->pcQuadratic(*this);
+    return script;
+}
+
+inline JSScript *
+ContextStack::currentScriptWithDiagnostics(jsbytecode **ppc) const
+{
+    if (ppc)
+        *ppc = NULL;
+
+    FrameRegs *regs = maybeRegs();
+    StackFrame *fp = regs ? regs->fp() : NULL;
+    while (fp && fp->isDummyFrame())
+        fp = fp->prev();
+    if (!fp)
+        *(int *) 0x10 = 0;
+
+#ifdef JS_METHODJIT
+    mjit::CallSite *inlined = regs->inlined();
+    if (inlined) {
+        mjit::JITChunk *chunk = fp->jit()->chunk(regs->pc);
+        JS_ASSERT(inlined->inlineIndex < chunk->nInlineFrames);
+        mjit::InlineFrame *frame = &chunk->inlineFrames()[inlined->inlineIndex];
+        JSScript *script = frame->fun->script();
+        if (script->compartment() != cx_->compartment)
+            *(int *) 0x20 = 0;
+        if (ppc)
+            *ppc = script->code + inlined->pcOffset;
+        return script;
+    }
+#endif
+
+    JSScript *script = fp->script();
+    if (script->compartment() != cx_->compartment)
+        *(int *) 0x30 = 0;
+
+    if (ppc)
+        *ppc = fp->pcQuadratic(*this);
+    if (!script)
+        *(int *) 0x40 = 0;
     return script;
 }
 

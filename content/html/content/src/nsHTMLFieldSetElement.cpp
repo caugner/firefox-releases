@@ -160,8 +160,7 @@ nsHTMLFieldSetElement::MatchListedElements(nsIContent* aContent, PRInt32 aNamesp
                                            nsIAtom* aAtom, void* aData)
 {
   nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(aContent);
-  return formControl && formControl->GetType() != NS_FORM_LABEL &&
-                        formControl->GetType() != NS_FORM_PROGRESS;
+  return formControl && formControl->GetType() != NS_FORM_LABEL;
 }
 
 NS_IMETHODIMP
@@ -220,7 +219,7 @@ nsHTMLFieldSetElement::InsertChildAt(nsIContent* aChild, PRUint32 aIndex,
   return rv;
 }
 
-nsresult
+void
 nsHTMLFieldSetElement::RemoveChildAt(PRUint32 aIndex, bool aNotify)
 {
   bool firstLegendHasChanged = false;
@@ -239,14 +238,11 @@ nsHTMLFieldSetElement::RemoveChildAt(PRUint32 aIndex, bool aNotify)
     }
   }
 
-  nsresult rv = nsGenericHTMLFormElement::RemoveChildAt(aIndex, aNotify);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsGenericHTMLFormElement::RemoveChildAt(aIndex, aNotify);
 
   if (firstLegendHasChanged) {
     NotifyElementsForFirstLegendChange(aNotify);
   }
-
-  return rv;
 }
 
 void

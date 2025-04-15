@@ -44,7 +44,7 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMDocumentType.h"
 #include "nsIScriptElement.h"
-#include "nsIParser.h"
+#include "nsCharsetSource.h"
 #include "nsIRefreshURI.h"
 #include "nsPIDOMWindow.h"
 #include "nsIContent.h"
@@ -65,7 +65,7 @@
 #include "mozilla/css/Loader.h"
 #include "mozilla/dom/Element.h"
 #include "nsCharsetAlias.h"
-#include "nsIHTMLContentSink.h"
+#include "nsIFrame.h"
 #include "nsContentUtils.h"
 #include "txXMLUtils.h"
 #include "nsContentSink.h"
@@ -258,6 +258,8 @@ txMozillaXMLOutput::endDocument(nsresult aResult)
 
     if (mCreatingNewDocument) {
         // This should really be handled by nsIDocument::EndLoad
+        MOZ_ASSERT(mDocument->GetReadyStateEnum() ==
+                   nsIDocument::READYSTATE_LOADING, "Bad readyState");
         mDocument->SetReadyStateInternal(nsIDocument::READYSTATE_INTERACTIVE);
         nsScriptLoader* loader = mDocument->ScriptLoader();
         if (loader) {
@@ -691,8 +693,7 @@ txMozillaXMLOutput::createTxWrapper()
             ++j;
         }
         else {
-            rv = mDocument->RemoveChildAt(j, true);
-            NS_ENSURE_SUCCESS(rv, rv);
+            mDocument->RemoveChildAt(j, true);
 
             rv = wrapper->AppendChildTo(childContent, true);
             NS_ENSURE_SUCCESS(rv, rv);
@@ -838,6 +839,8 @@ txMozillaXMLOutput::createResultDocument(const nsSubstring& aName, PRInt32 aNsID
         NS_ENSURE_SUCCESS(rv, rv);
     }
     // This should really be handled by nsIDocument::BeginLoad
+    MOZ_ASSERT(mDocument->GetReadyStateEnum() ==
+               nsIDocument::READYSTATE_UNINITIALIZED, "Bad readyState");
     mDocument->SetReadyStateInternal(nsIDocument::READYSTATE_LOADING);
     nsCOMPtr<nsIDocument> source = do_QueryInterface(aSourceDocument);
     NS_ENSURE_STATE(source);

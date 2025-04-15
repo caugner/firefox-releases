@@ -2201,11 +2201,11 @@ OpenDatabaseHelper::DispatchErrorEvent()
     return;
   }
 
-  PRUint16 errorCode = 0;
+  nsCOMPtr<nsIDOMDOMError> error;
   DebugOnly<nsresult> rv =
-    mOpenDBRequest->GetErrorCode(&errorCode);
+    mOpenDBRequest->GetError(getter_AddRefs(error));
   NS_ASSERTION(NS_SUCCEEDED(rv), "This shouldn't be failing at this point!");
-  if (!errorCode) {
+  if (!error) {
     mOpenDBRequest->SetError(mResultCode);
   }
 
@@ -2370,6 +2370,16 @@ DeleteDatabaseHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
     if (rc != SQLITE_OK) {
       NS_WARNING("Failed to delete db file!");
       return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
+    }
+
+    // sqlite3_quota_remove won't actually remove anything if we're not tracking
+    // the quota here. Manually remove the file if it exists.
+    rv = dbFile->Exists(&exists);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+
+    if (exists) {
+      rv = dbFile->Remove(false);
+      NS_ENSURE_SUCCESS(rv, rv);
     }
   }
 

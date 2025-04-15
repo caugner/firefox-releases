@@ -37,8 +37,6 @@
 
 #include "ScaledFontBase.h"
 
-#include "gfxFont.h"
-
 #ifdef USE_SKIA
 #include "PathSkia.h"
 #include "skia/SkPaint.h"
@@ -130,6 +128,14 @@ ScaledFontBase::GetPathForGlyphs(const GlyphBuffer &aBuffer, const DrawTarget *a
   }
 #endif
   return NULL;
+}
+
+void
+ScaledFontBase::CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder)
+{
+  // XXX - implement me
+  MOZ_ASSERT(false);
+  return;
 }
 
 #ifdef USE_CAIRO

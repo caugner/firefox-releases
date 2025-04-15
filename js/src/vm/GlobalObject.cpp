@@ -144,7 +144,7 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
         functionProto->flags |= JSFUN_PROTOTYPE;
 
         JSScript *script =
-            JSScript::NewScript(cx, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, JSVERSION_DEFAULT);
+            JSScript::NewScript(cx, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, JSVERSION_DEFAULT);
         if (!script)
             return NULL;
         script->noScriptRval = true;
@@ -176,8 +176,6 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
                                     CLASS_ATOM(cx, Object));
         if (!objectCtor)
             return NULL;
-
-        objectCtor->setConstructorClass(&ObjectClass);
     }
 
     /*
@@ -198,8 +196,6 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
         if (!functionCtor)
             return NULL;
         JS_ASSERT(ctor == functionCtor);
-
-        functionCtor->setConstructorClass(&FunctionClass);
     }
 
     /*
@@ -374,8 +370,8 @@ GlobalObject::clear(JSContext *cx)
     for (gc::CellIter i(cx->compartment, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
         JSScript *script = i.get<JSScript>();
         if (script->compileAndGo && script->hasJITCode() && script->hasClearedGlobal()) {
-            mjit::Recompiler::clearStackReferences(cx, script);
-            mjit::ReleaseScriptCode(cx, script);
+            mjit::Recompiler::clearStackReferences(cx->runtime->defaultFreeOp(), script);
+            mjit::ReleaseScriptCode(cx->runtime->defaultFreeOp(), script);
         }
     }
 #endif
@@ -397,22 +393,11 @@ GlobalObject::isRuntimeCodeGenEnabled(JSContext *cx)
 }
 
 JSFunction *
-GlobalObject::createConstructor(JSContext *cx, Native ctor, Class *clasp, JSAtom *name,
-                                unsigned length, gc::AllocKind kind)
+GlobalObject::createConstructor(JSContext *cx, Native ctor, JSAtom *name, unsigned length,
+                                gc::AllocKind kind)
 {
     RootedVarObject self(cx, this);
-
-    JSFunction *fun = js_NewFunction(cx, NULL, ctor, length,
-                                     JSFUN_CONSTRUCTOR, self, name, kind);
-    if (!fun)
-        return NULL;
-
-    /*
-     * Remember the class this function is a constructor for so that we know to
-     * create an object of this class when we call the constructor.
-     */
-    fun->setConstructorClass(clasp);
-    return fun;
+    return js_NewFunction(cx, NULL, ctor, length, JSFUN_CONSTRUCTOR, self, name, kind);
 }
 
 static JSObject *
@@ -468,9 +453,9 @@ DefinePropertiesAndBrand(JSContext *cx, JSObject *obj, JSPropertySpec *ps, JSFun
 }
 
 void
-GlobalDebuggees_finalize(JSContext *cx, JSObject *obj)
+GlobalDebuggees_finalize(FreeOp *fop, JSObject *obj)
 {
-    cx->delete_((GlobalObject::DebuggerVector *) obj->getPrivate());
+    fop->delete_((GlobalObject::DebuggerVector *) obj->getPrivate());
 }
 
 static Class
@@ -522,7 +507,7 @@ GlobalObject::addDebugger(JSContext *cx, Debugger *dbg)
     if (debuggers->empty() && !compartment()->addDebuggee(cx, this))
         return false;
     if (!debuggers->append(dbg)) {
-        compartment()->removeDebuggee(cx, this);
+        compartment()->removeDebuggee(cx->runtime->defaultFreeOp(), this);
         return false;
     }
     return true;

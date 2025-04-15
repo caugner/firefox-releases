@@ -38,6 +38,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "mozilla/FloatingPoint.h"
+
 #include "builtin/MapObject.h"
 
 #include "jscntxt.h"
@@ -63,7 +65,7 @@ InitClass(JSContext *cx, GlobalObject *global, Class *clasp, JSProtoKey key, Nat
     proto->setPrivate(NULL);
 
     JSAtom *atom = cx->runtime->atomState.classAtoms[key];
-    JSFunction *ctor = global->createConstructor(cx, construct, clasp, atom, 1);
+    JSFunction *ctor = global->createConstructor(cx, construct, atom, 1);
     if (!ctor ||
         !LinkConstructorAndPrototype(cx, ctor, proto) ||
         !DefinePropertiesAndBrand(cx, proto, NULL, methods) ||
@@ -89,10 +91,10 @@ HashableValue::setValue(JSContext *cx, const Value &v)
     } else if (v.isDouble()) {
         double d = v.toDouble();
         int32_t i;
-        if (JSDOUBLE_IS_INT32(d, &i)) {
+        if (MOZ_DOUBLE_IS_INT32(d, &i)) {
             /* Normalize int32-valued doubles to int32 for faster hashing and testing. */
             value = Int32Value(i);
-        } else if (JSDOUBLE_IS_NaN(d)) {
+        } else if (MOZ_DOUBLE_IS_NaN(d)) {
             /* NaNs with different bits must hash and test identically. */
             value = DoubleValue(js_NaN);
         } else {
@@ -196,11 +198,11 @@ MapObject::mark(JSTracer *trc, JSObject *obj)
 }
 
 void
-MapObject::finalize(JSContext *cx, JSObject *obj)
+MapObject::finalize(FreeOp *fop, JSObject *obj)
 {
     MapObject *mapobj = static_cast<MapObject *>(obj);
     if (ValueMap *map = mapobj->getData())
-        cx->delete_(map);
+        fop->delete_(map);
 }
 
 class AddToMap {
@@ -286,7 +288,7 @@ MapObject::construct(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 MapObject::size(JSContext *cx, unsigned argc, Value *vp)
 {
-    THIS_MAP(get, cx, argc, vp, args, map);
+    THIS_MAP(size, cx, argc, vp, args, map);
     JS_STATIC_ASSERT(sizeof map.count() <= sizeof(uint32_t));
     args.rval().setNumber(map.count());
     return true;
@@ -397,11 +399,11 @@ SetObject::mark(JSTracer *trc, JSObject *obj)
 }
 
 void
-SetObject::finalize(JSContext *cx, JSObject *obj)
+SetObject::finalize(FreeOp *fop, JSObject *obj)
 {
     SetObject *setobj = static_cast<SetObject *>(obj);
     if (ValueSet *set = setobj->getData())
-        cx->delete_(set);
+        fop->delete_(set);
 }
 
 class AddToSet {
@@ -455,7 +457,7 @@ SetObject::construct(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 SetObject::size(JSContext *cx, unsigned argc, Value *vp)
 {
-    THIS_SET(has, cx, argc, vp, args, set);
+    THIS_SET(size, cx, argc, vp, args, set);
     JS_STATIC_ASSERT(sizeof set.count() <= sizeof(uint32_t));
     args.rval().setNumber(set.count());
     return true;

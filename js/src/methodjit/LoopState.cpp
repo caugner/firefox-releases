@@ -812,7 +812,7 @@ LoopState::invariantLength(const CrossSSAValue &obj)
     TypeSet *objTypes = ssa->getValueTypes(obj);
 
     /* Check for 'length' on the lazy arguments for the current frame. */
-    if (objTypes->isLazyArguments(cx)) {
+    if (objTypes->isMagicArguments(cx)) {
         JS_ASSERT(obj.frame == CrossScriptSSA::OUTER_FRAME);
 
         for (unsigned i = 0; i < invariantEntries.length(); i++) {
@@ -1869,8 +1869,7 @@ LoopState::analyzeLoopBody(unsigned frame)
             break;
           }
 
-          case JSOP_SETPROP:
-          case JSOP_SETMETHOD: {
+          case JSOP_SETPROP: {
             JSAtom *atom = script->getAtom(GET_UINT32_INDEX(pc));
             jsid id = MakeTypeId(cx, ATOM_TO_JSID(atom));
 
@@ -1918,7 +1917,6 @@ LoopState::analyzeLoopBody(unsigned frame)
           case JSOP_THIS:
           case JSOP_GETLOCAL:
           case JSOP_SETLOCAL:
-          case JSOP_SETLOCALPOP:
           case JSOP_INCLOCAL:
           case JSOP_DECLOCAL:
           case JSOP_LOCALINC:

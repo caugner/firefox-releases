@@ -54,7 +54,7 @@ PlacesViewBase.prototype = {
   get result() this._result,
   set result(val) {
     if (this._result == val)
-      return;
+      return val;
 
     if (this._result) {
       this._result.removeObserver(this);
@@ -407,7 +407,8 @@ PlacesViewBase.prototype = {
     }
     else {
       // The livemark has finished loading.
-      aPopup.removeChild(aPopup._statusMenuitem);
+      if (aPopup._statusMenuitem.parentNode == aPopup)
+        aPopup.removeChild(aPopup._statusMenuitem);
     }
   },
 
@@ -683,7 +684,9 @@ PlacesViewBase.prototype = {
   _populateLivemarkPopup: function PVB__populateLivemarkPopup(aPopup)
   {
     this._setLivemarkSiteURIMenuItem(aPopup);
-    this._setLivemarkStatusMenuItem(aPopup, Ci.mozILivemark.STATUS_LOADING);
+    // Show the loading status only if there are no entries yet.
+    if (aPopup._startMarker.nextSibling == aPopup._endMarker)
+      this._setLivemarkStatusMenuItem(aPopup, Ci.mozILivemark.STATUS_LOADING);
 
     PlacesUtils.livemarks.getLivemark({ id: aPopup._placesNode.itemId },
       (function (aStatus, aLivemark) {
@@ -691,7 +694,8 @@ PlacesViewBase.prototype = {
         if (!Components.isSuccessCode(aStatus) || !placesNode.containerOpen)
           return;
 
-        this._setLivemarkStatusMenuItem(aPopup, aLivemark.status);
+        if (aLivemark.status != Ci.mozILivemark.STATUS_LOADING)
+          this._setLivemarkStatusMenuItem(aPopup, aLivemark.status);
         this._cleanPopup(aPopup,
           this._nativeView && aPopup.parentNode.hasAttribute("open"));
 
@@ -745,6 +749,8 @@ PlacesViewBase.prototype = {
                                  .getComputedStyle(this.viewElt, "")
                                  .direction == "rtl";
   },
+
+  get ownerWindow() window,
 
   /**
    * Adds an "Open All in Tabs" menuitem to the bottom of the popup.
@@ -1698,7 +1704,7 @@ PlacesToolbar.prototype = {
     if (parent.localName == "toolbarbutton")
       this._openedMenuButton = parent;
 
-    return PlacesViewBase.prototype._onPopupShowing.apply(this, arguments);
+    PlacesViewBase.prototype._onPopupShowing.apply(this, arguments);
   },
 
   _onPopupHidden: function PT__onPopupHidden(aEvent) {

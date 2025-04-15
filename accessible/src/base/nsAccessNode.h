@@ -106,11 +106,6 @@ public:
   virtual void Shutdown();
 
   /**
-   * Returns true when the accessible is defunct.
-   */
-  virtual bool IsDefunct() const;
-
-  /**
    * Return frame for the given access node object.
    */
   virtual nsIFrame* GetFrame() const;
@@ -157,25 +152,22 @@ public:
    * Interface methods on nsIAccessible shared with ISimpleDOM.
    */
   void Language(nsAString& aLocale);
-  void ScrollTo(PRUint32 aType);
 
 protected:
-    nsPresContext* GetPresContext();
-
-    void LastRelease();
+  void LastRelease();
 
   nsCOMPtr<nsIContent> mContent;
   nsDocAccessible* mDoc;
 
-    /**
-     * Notify global nsIObserver's that a11y is getting init'd or shutdown
-     */
-    static void NotifyA11yInitOrShutdown(bool aIsInit);
+  /**
+   * Notify global nsIObserver's that a11y is getting init'd or shutdown.
+   */
+  static void NotifyA11yInitOrShutdown(bool aIsInit);
 
-    // Static data, we do our own refcounting for our static data
-    static nsIStringBundle *gStringBundle;
+  // Static data, we do our own refcounting for our static data.
+  static nsIStringBundle* gStringBundle;
 
-    static bool gIsFormFillEnabled;
+  static bool gIsFormFillEnabled;
 
 private:
   nsAccessNode() MOZ_DELETE;

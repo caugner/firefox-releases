@@ -39,16 +39,21 @@
 
 include protocol PContent;
 include protocol PBrowser;
-include "nspr/prtime.h";
+include "prtime.h";
 include "mozilla/HalSensor.h";
 include "mozilla/HalTypes.h";
+include "mozilla/dom/ScreenOrientation.h";
 
 using PRTime;
 using mozilla::hal::FlashMode;
 using mozilla::hal::LightType;
 using mozilla::hal::LightMode;
 using mozilla::hal::SensorType;
+using mozilla::hal::SensorAccuracyType;
 using mozilla::hal::WakeLockControl;
+using mozilla::dom::ScreenOrientation;
+using mozilla::hal::SwitchState;
+using mozilla::hal::SwitchDevice;
 
 namespace mozilla {
 
@@ -72,13 +77,17 @@ namespace hal {
     SensorType sensor;
     PRTime timestamp;
     float[] values;
+    SensorAccuracyType accuracy;
   };
-}
 
-namespace hal {
   struct NetworkInformation {
     double bandwidth;
     bool   canBeMetered;
+  };
+
+  struct SwitchEvent {
+    SwitchDevice device;
+    SwitchState status;
   };
 }
 
@@ -99,6 +108,8 @@ child:
     NotifyBatteryChange(BatteryInformation aBatteryInfo);
     NotifyNetworkChange(NetworkInformation aNetworkInfo);
     NotifyWakeLockChange(WakeLockInformation aWakeLockInfo);
+    NotifyScreenOrientationChange(ScreenOrientation aScreenOrientation);
+    NotifySwitchChange(SwitchEvent aEvent);
 
 parent:
     Vibrate(uint32[] pattern, uint64[] id, PBrowser browser);
@@ -116,6 +127,9 @@ parent:
 
     sync GetScreenEnabled() returns (bool enabled);
     SetScreenEnabled(bool enabled);
+
+    sync GetCpuSleepAllowed() returns (bool allowed);
+    SetCpuSleepAllowed(bool allowed);
 
     sync GetScreenBrightness() returns (double brightness);
     SetScreenBrightness(double brightness);
@@ -136,6 +150,19 @@ parent:
     DisableWakeLockNotifications();
     sync GetWakeLockInfo(nsString aTopic)
       returns (WakeLockInformation aWakeLockInfo);
+
+    EnableScreenOrientationNotifications();
+    DisableScreenOrientationNotifications();
+    sync GetCurrentScreenOrientation()
+      returns (ScreenOrientation aScreenOrientation);
+    sync LockScreenOrientation(ScreenOrientation aOrientation)
+      returns (bool allowed);
+    UnlockScreenOrientation();
+ 
+    EnableSwitchNotifications(SwitchDevice aDevice);
+    DisableSwitchNotifications(SwitchDevice aDevice);
+    sync GetCurrentSwitchState(SwitchDevice aDevice)
+      returns (SwitchState aState);
 
 child:
     NotifySensorChange(SensorData aSensorData);

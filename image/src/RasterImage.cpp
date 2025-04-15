@@ -214,8 +214,7 @@ RasterImage::RasterImage(imgStatusTracker* aStatusTracker) :
   mAnimationFinished(false)
 {
   // Set up the discard tracker node.
-  mDiscardTrackerNode.curr = this;
-  mDiscardTrackerNode.prev = mDiscardTrackerNode.next = nsnull;
+  mDiscardTrackerNode.img = this;
   Telemetry::GetHistogramById(Telemetry::IMAGE_DECODE_COUNT)->Add(0);
 
   // Statistics
@@ -1327,6 +1326,25 @@ RasterImage::SetFrameHasNoAlpha(PRUint32 aFrameNum)
 }
 
 nsresult
+RasterImage::SetFrameAsNonPremult(PRUint32 aFrameNum, bool aIsNonPremult)
+{
+  if (mError)
+    return NS_ERROR_FAILURE;
+
+  NS_ABORT_IF_FALSE(aFrameNum < mFrames.Length(), "Invalid frame index!");
+  if (aFrameNum >= mFrames.Length())
+    return NS_ERROR_INVALID_ARG;
+
+  imgFrame* frame = GetImgFrame(aFrameNum);
+  NS_ABORT_IF_FALSE(frame, "Calling SetFrameAsNonPremult on frame that doesn't exist!");
+  NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
+
+  frame->SetAsNonPremult(aIsNonPremult);
+
+  return NS_OK;
+}
+
+nsresult
 RasterImage::DecodingComplete()
 {
   if (mError)
@@ -2222,7 +2240,7 @@ RasterImage::CanForciblyDiscard() {
 // discarding this image. Mainly for assertions.
 bool
 RasterImage::DiscardingActive() {
-  return !!(mDiscardTrackerNode.prev || mDiscardTrackerNode.next);
+  return mDiscardTrackerNode.isInList();
 }
 
 // Helper method to determine if we're storing the source data in a buffer
@@ -2617,7 +2635,7 @@ RasterImage::Draw(gfxContext *aContext,
                       mSize.width - framerect.XMost(),
                       mSize.height - framerect.YMost());
 
-  frame->Draw(aContext, aFilter, aUserSpaceToImageSpace, aFill, padding, aSubimage);
+  frame->Draw(aContext, aFilter, aUserSpaceToImageSpace, aFill, padding, aSubimage, aFlags);
 
   if (mDecoded && !mDrawStartTime.IsNull()) {
       TimeDuration drawLatency = TimeStamp::Now() - mDrawStartTime;
@@ -2984,9 +3002,6 @@ RasterImage::DecodeWorker::DecodeSomeOfImage(
   NS_ABORT_IF_FALSE(aImg->mInitialized,
                     "Worker active for uninitialized container!");
 
-  if (aDecodeType == DECODE_TYPE_UNTIL_SIZE && aImg->mHasSize)
-    return NS_OK;
-
   // If an error is flagged, it probably happened while we were waiting
   // in the event queue.
   if (aImg->mError)
@@ -3015,8 +3030,14 @@ RasterImage::DecodeWorker::DecodeSomeOfImage(
   TimeStamp start = TimeStamp::Now();
   TimeStamp deadline = start + TimeDuration::FromMilliseconds(gMaxMSBeforeYield);
 
-  // Decode some chunks of data.
-  do {
+  // We keep decoding chunks until:
+  //  * we don't have any data left to decode,
+  //  * the decode completes,
+  //  * we're an UNTIL_SIZE decode and we get the size, or
+  //  * we run out of time.
+  while (aImg->mSourceData.Length() > aImg->mBytesDecoded &&
+         !aImg->IsDecodeFinished() &&
+         !(aDecodeType == DECODE_TYPE_UNTIL_SIZE && aImg->mHasSize)) {
     chunkCount++;
     nsresult rv = aImg->DecodeSomeData(maxBytes);
     if (NS_FAILED(rv)) {
@@ -3024,18 +3045,11 @@ RasterImage::DecodeWorker::DecodeSomeOfImage(
       return rv;
     }
 
-    // We keep decoding chunks until either:
-    //  * we're an UNTIL_SIZE decode and we get the size,
-    //  * we don't have any data left to decode,
-    //  * the decode completes, or
-    //  * we run out of time.
-
-    if (aDecodeType == DECODE_TYPE_UNTIL_SIZE && aImg->mHasSize)
+    // Yield if we've been decoding for too long. We check this _after_ decoding
+    // a chunk to ensure that we don't yield without doing any decoding.
+    if (TimeStamp::Now() >= deadline)
       break;
-
-  } while (aImg->mSourceData.Length() > aImg->mBytesDecoded &&
-           !aImg->IsDecodeFinished() &&
-           TimeStamp::Now() < deadline);
+  }
 
   aImg->mDecodeRequest.mDecodeTime += (TimeStamp::Now() - start);
 

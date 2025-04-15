@@ -6,12 +6,15 @@ import @ANDROID_PACKAGE_NAME@.*;
 
 import android.app.Activity;
 import android.app.Instrumentation;
-import android.database.Cursor;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.res.AssetManager;
+import android.database.Cursor;
 import android.os.SystemClock;
 import android.test.ActivityInstrumentationTestCase2;
 import java.io.File;
+import java.io.InputStream;
+import java.io.IOException;
 
 import java.util.HashMap;
 
@@ -167,9 +170,14 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         for (int i = 0; i < columns.length; i++) {
             String column = columns[i];
             if (cv.containsKey(column)) {
-                mAsserter.info("Comparing", "Column value " + c.getString(i) + " ?= " + cv.get(column).toString());
-                if (!cv.get(column).toString().equals(c.getString(i))) {
-                    return false;
+                mAsserter.info("Comparing", "Column values for: " + column);
+                Object value = cv.get(column);
+                if (value == null) {
+                    if (!c.isNull(i))
+                        return false;
+                } else {
+                    if (c.isNull(i) || !value.toString().equals(c.getString(i)))
+                        return false;
                 }
             }
         }
@@ -196,12 +204,22 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         for (int i = 0; i < c.getColumnCount(); i++) {
             String column = c.getColumnName(i);
              if (cv.containsKey(column)) {
-                mAsserter.info("Pass","Column value " + c.getString(i) + " ?= " + cv.get(column).toString());
-                if (!cv.get(column).toString().equals(c.getString(i))) {
-                    return false;
+                mAsserter.info("Comparing", "Column values for: " + column);
+                Object value = cv.get(column);
+                if (value == null) {
+                    if (!c.isNull(i))
+                        return false;
+                } else {
+                    if (c.isNull(i) || !value.toString().equals(c.getString(i)))
+                        return false;
                 }
             }
         }
         return true;
+    }
+
+    public InputStream getAsset(String filename) throws IOException {
+        AssetManager assets = getInstrumentation().getContext().getAssets();
+        return assets.open(filename);
     }
 }

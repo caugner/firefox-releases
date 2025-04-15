@@ -1111,9 +1111,7 @@ nsFrameMessageManager::MarkForCC()
 {
   PRUint32 len = mListeners.Length();
   for (PRUint32 i = 0; i < len; ++i) {
-    nsCOMPtr<nsIXPConnectWrappedJS> wjs =
-      do_QueryInterface(mListeners[i].mListener);
-    xpc_UnmarkGrayObject(wjs);
+    xpc_TryUnmarkWrappedGrayObject(mListeners[i].mListener);
   }
   return true;
 }

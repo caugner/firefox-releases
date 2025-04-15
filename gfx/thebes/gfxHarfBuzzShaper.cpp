@@ -53,7 +53,7 @@
 #include "nsUnicodeScriptCodes.h"
 #include "nsUnicodeNormalizer.h"
 
-#include "harfbuzz/hb-unicode.h"
+#include "harfbuzz/hb.h"
 #include "harfbuzz/hb-ot.h"
 
 #include "cairo.h"
@@ -202,7 +202,7 @@ HBGetGlyph(hb_font_t *font, void *font_data,
     const FontCallbackData *fcd =
         static_cast<const FontCallbackData*>(font_data);
     *glyph = fcd->mShaper->GetGlyph(unicode, variation_selector);
-    return true;
+    return *glyph != 0;
 }
 
 struct HMetricsHeader {
@@ -855,7 +855,9 @@ gfxHarfBuzzShaper::ShapeWord(gfxContext      *aContext,
                              const PRUnichar *aText)
 {
     // some font back-ends require this in order to get proper hinted metrics
-    mFont->SetupCairoFont(aContext);
+    if (!mFont->SetupCairoFont(aContext)) {
+        return false;
+    }
 
     if (!mHBFace) {
 

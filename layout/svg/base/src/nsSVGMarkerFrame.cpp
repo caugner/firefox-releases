@@ -34,15 +34,16 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsIDOMSVGAnimatedRect.h"
-#include "nsIDOMSVGRect.h"
-#include "nsIDocument.h"
+// Main header first:
 #include "nsSVGMarkerFrame.h"
-#include "nsSVGPathGeometryFrame.h"
+
+// Keep others in (case-insensitive) order:
+#include "gfxContext.h"
+#include "nsRenderingContext.h"
 #include "nsSVGEffects.h"
 #include "nsSVGMarkerElement.h"
 #include "nsSVGPathGeometryElement.h"
-#include "gfxContext.h"
+#include "nsSVGPathGeometryFrame.h"
 
 nsIFrame*
 NS_NewSVGMarkerFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
@@ -176,18 +177,20 @@ nsSVGMarkerFrame::PaintMark(nsRenderingContext *aContext,
   return NS_OK;
 }
 
-gfxRect
+SVGBBox
 nsSVGMarkerFrame::GetMarkBBoxContribution(const gfxMatrix &aToBBoxUserspace,
                                           PRUint32 aFlags,
                                           nsSVGPathGeometryFrame *aMarkedFrame,
                                           const nsSVGMark *aMark,
                                           float aStrokeWidth)
 {
+  SVGBBox bbox;
+
   // If the flag is set when we get here, it means this marker frame
   // has already been used in calculating the current mark bbox, and
   // the document has a marker reference loop.
   if (mInUse)
-    return gfxRect();
+    return bbox;
 
   AutoMarkerReferencer markerRef(this, aMarkedFrame);
 
@@ -196,15 +199,13 @@ nsSVGMarkerFrame::GetMarkBBoxContribution(const gfxMatrix &aToBBoxUserspace,
   const nsSVGViewBoxRect viewBox = content->GetViewBoxRect();
 
   if (viewBox.width <= 0.0f || viewBox.height <= 0.0f) {
-    return gfxRect();
+    return bbox;
   }
 
   mStrokeWidth = aStrokeWidth;
   mX = aMark->x;
   mY = aMark->y;
   mAutoAngle = aMark->angle;
-
-  gfxRect bbox;
 
   gfxMatrix markerTM =
     content->GetMarkerTransform(mStrokeWidth, mX, mY, mAutoAngle);
@@ -220,7 +221,10 @@ nsSVGMarkerFrame::GetMarkBBoxContribution(const gfxMatrix &aToBBoxUserspace,
       // When we're being called to obtain the invalidation area, we need to
       // pass down all the flags so that stroke is included. However, once DOM
       // getBBox() accepts flags, maybe we should strip some of those here?
-      bbox.UnionRect(bbox, child->GetBBoxContribution(tm, aFlags));
+
+      // We need to include zero width/height vertical/horizontal lines, so we have
+      // to use UnionEdges.
+      bbox.UnionEdges(child->GetBBoxContribution(tm, aFlags));
     }
   }
 

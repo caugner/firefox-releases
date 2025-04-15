@@ -169,15 +169,15 @@ public:
   StorageSQLiteMultiReporter(Service *aService) 
   : mService(aService)
   {
-    NS_NAMED_LITERAL_CSTRING(mStmtDesc,
+    mStmtDesc = NS_LITERAL_CSTRING(
       "Memory (approximate) used by all prepared statements used by "
       "connections to this database.");
 
-    NS_NAMED_LITERAL_CSTRING(mCacheDesc,
+    mCacheDesc = NS_LITERAL_CSTRING(
       "Memory (approximate) used by all pager caches used by connections "
       "to this database.");
 
-    NS_NAMED_LITERAL_CSTRING(mSchemaDesc,
+    mSchemaDesc = NS_LITERAL_CSTRING(
       "Memory (approximate) used to store the schema for all databases "
       "associated with connections to this database.");
   }
@@ -529,20 +529,8 @@ Service::shutdown()
 
 sqlite3_vfs *ConstructTelemetryVFS();
 
-#ifdef MOZ_MEMORY
-
-#  if defined(XP_WIN) || defined(SOLARIS) || defined(ANDROID) || defined(XP_MACOSX)
-#    include "jemalloc.h"
-#  elif defined(XP_LINUX)
-// jemalloc is directly linked into firefox-bin; libxul doesn't link
-// with it.  So if we tried to use je_malloc_usable_size_in_advance directly
-// here, it wouldn't be defined.  Instead, we don't include the jemalloc header
-// and weakly link against je_malloc_usable_size_in_advance.
-extern "C" {
-extern size_t je_malloc_usable_size_in_advance(size_t size)
-  NS_VISIBILITY_DEFAULT __attribute__((weak));
-}
-#  endif  // XP_LINUX
+#ifdef MOZ_STORAGE_MEMORY
+#  include "jemalloc.h"
 
 namespace {
 
@@ -611,7 +599,7 @@ const sqlite3_mem_methods memMethods = {
 
 } // anonymous namespace
 
-#endif  // MOZ_MEMORY
+#endif  // MOZ_STORAGE_MEMORY
 
 nsresult
 Service::initialize()
@@ -620,7 +608,7 @@ Service::initialize()
 
   int rc;
 
-#ifdef MOZ_MEMORY
+#ifdef MOZ_STORAGE_MEMORY
   rc = ::sqlite3_config(SQLITE_CONFIG_MALLOC, &memMethods);
   if (rc != SQLITE_OK)
     return convertResultCode(rc);

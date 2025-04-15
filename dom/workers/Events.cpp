@@ -246,7 +246,7 @@ private:
   }
 
   static void
-  Finalize(JSContext* aCx, JSObject* aObj)
+  Finalize(JSFreeOp* aFop, JSObject* aObj)
   {
     JS_ASSERT(IsThisClass(JS_GetClass(aObj)));
     delete GetJSPrivateSafeish<Event>(aObj);
@@ -365,8 +365,7 @@ private:
     _name, \
     JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(SLOT_COUNT), \
     JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub, \
-    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize, \
-    JSCLASS_NO_OPTIONAL_MEMBERS \
+    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize \
   };
 
 DECL_EVENT_CLASS(Event::sClass, "Event")
@@ -530,12 +529,12 @@ private:
   }
 
   static void
-  Finalize(JSContext* aCx, JSObject* aObj)
+  Finalize(JSFreeOp* aFop, JSObject* aObj)
   {
     JS_ASSERT(IsThisClass(JS_GetClass(aObj)));
     MessageEvent* priv = GetJSPrivateSafeish<MessageEvent>(aObj);
     if (priv) {
-      JS_free(aCx, priv->mData);
+      JS_freeop(aFop, priv->mData);
 #ifdef DEBUG
       priv->mData = NULL;
 #endif
@@ -618,8 +617,7 @@ private:
     _name, \
     JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(SLOT_COUNT), \
     JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub, \
-    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize, \
-    JSCLASS_NO_OPTIONAL_MEMBERS \
+    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize \
   };
 
 DECL_MESSAGEEVENT_CLASS(MessageEvent::sClass, "MessageEvent")
@@ -746,7 +744,7 @@ private:
   }
 
   static void
-  Finalize(JSContext* aCx, JSObject* aObj)
+  Finalize(JSFreeOp* aFop, JSObject* aObj)
   {
     JS_ASSERT(IsThisClass(JS_GetClass(aObj)));
     delete GetJSPrivateSafeish<ErrorEvent>(aObj);
@@ -804,8 +802,7 @@ private:
     _name, \
     JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(SLOT_COUNT), \
     JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub, \
-    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize, \
-    JSCLASS_NO_OPTIONAL_MEMBERS \
+    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize \
   };
 
 DECL_ERROREVENT_CLASS(ErrorEvent::sClass, "ErrorEvent")
@@ -927,7 +924,7 @@ private:
   }
 
   static void
-  Finalize(JSContext* aCx, JSObject* aObj)
+  Finalize(JSFreeOp* aFop, JSObject* aObj)
   {
     JS_ASSERT(JS_GetClass(aObj) == &sClass);
     delete GetJSPrivateSafeish<ProgressEvent>(aObj);
@@ -984,8 +981,7 @@ JSClass ProgressEvent::sClass = {
   "ProgressEvent",
   JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(SLOT_COUNT),
   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize,
-  JSCLASS_NO_OPTIONAL_MEMBERS
+  JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Finalize
 };
 
 JSPropertySpec ProgressEvent::sProperties[] = {

@@ -39,7 +39,7 @@
 
 #include "nsIDOMXULDescriptionElement.idl"
 
-[scriptable, uuid(856417d4-5a5b-404c-91ab-692fa2c0c64f)]
+[scriptable, uuid(042FB07F-AFEB-454E-809C-532A5A8557D0)]
 interface nsIDOMXULLabelElement : nsIDOMXULDescriptionElement {
   attribute DOMString accessKey;
   attribute DOMString control;

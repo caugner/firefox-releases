@@ -36,7 +36,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsDOMBlobBuilder.h"
-#include "jstypedarray.h"
+#include "jsfriendapi.h"
 #include "nsAutoPtr.h"
 #include "nsDOMClassInfoID.h"
 #include "nsIMultiplexInputStream.h"
@@ -45,6 +45,7 @@
 #include "nsJSUtils.h"
 #include "nsContentUtils.h"
 #include "DictionaryHelpers.h"
+#include "nsIScriptError.h"
 
 using namespace mozilla;
 
@@ -178,12 +179,28 @@ nsDOMMultipartFile::NewBlob(nsISupports* *aNewObject)
   return NS_OK;
 }
 
+static nsIDOMBlob*
+GetXPConnectNative(JSContext* aCx, JSObject* aObj) {
+  nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(
+    nsContentUtils::XPConnect()->GetNativeOfWrapper(aCx, aObj));
+  return blob;
+}
+
 NS_IMETHODIMP
 nsDOMMultipartFile::Initialize(nsISupports* aOwner,
                                JSContext* aCx,
                                JSObject* aObj,
                                PRUint32 aArgc,
                                jsval* aArgv)
+{
+  return InitInternal(aCx, aArgc, aArgv, GetXPConnectNative);
+}
+
+nsresult
+nsDOMMultipartFile::InitInternal(JSContext* aCx,
+                                 PRUint32 aArgc,
+                                 jsval* aArgv,
+                                 UnwrapFuncPtr aUnwrapFunc)
 {
   bool nativeEOL = false;
   if (aArgc > 1) {
@@ -220,8 +237,7 @@ nsDOMMultipartFile::Initialize(nsISupports* aOwner,
 
       if (element.isObject()) {
         JSObject& obj = element.toObject();
-        nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(
-          nsContentUtils::XPConnect()->GetNativeOfWrapper(aCx, &obj));
+        nsCOMPtr<nsIDOMBlob> blob = aUnwrapFunc(aCx, &obj);
         if (blob) {
           // Flatten so that multipart blobs will never nest
           nsDOMFileBase* file = static_cast<nsDOMFileBase*>(
@@ -233,11 +249,8 @@ nsDOMMultipartFile::Initialize(nsISupports* aOwner,
           } else {
             blobSet.AppendBlob(blob);
           }
-        } else if (js_IsArrayBuffer(&obj)) {
-          JSObject* buffer = js::ArrayBuffer::getArrayBuffer(&obj);
-          if (!buffer)
-            return NS_ERROR_DOM_INVALID_STATE_ERR;
-          blobSet.AppendArrayBuffer(buffer);
+        } else if (JS_IsArrayBufferObject(&obj, aCx)) {
+          blobSet.AppendArrayBuffer(&obj, aCx);
         } else {
           // neither arraybuffer nor blob
           return NS_ERROR_DOM_INVALID_STATE_ERR;
@@ -315,9 +328,10 @@ BlobSet::AppendBlobs(const nsTArray<nsCOMPtr<nsIDOMBlob> >& aBlob)
 }
 
 nsresult
-BlobSet::AppendArrayBuffer(JSObject* aBuffer)
+BlobSet::AppendArrayBuffer(JSObject* aBuffer, JSContext *aCx)
 {
-  return AppendVoidPtr(JS_GetArrayBufferData(aBuffer), JS_GetArrayBufferByteLength(aBuffer));
+  return AppendVoidPtr(JS_GetArrayBufferData(aBuffer, aCx),
+                       JS_GetArrayBufferByteLength(aBuffer, aCx));
 }
 
 DOMCI_DATA(MozBlobBuilder, nsDOMBlobBuilder)
@@ -326,7 +340,8 @@ NS_IMPL_ADDREF(nsDOMBlobBuilder)
 NS_IMPL_RELEASE(nsDOMBlobBuilder)
 NS_INTERFACE_MAP_BEGIN(nsDOMBlobBuilder)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozBlobBuilder)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMMozBlobBuilder)
+  NS_INTERFACE_MAP_ENTRY(nsIJSNativeInitializer)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(MozBlobBuilder)
 NS_INTERFACE_MAP_END
 
@@ -419,10 +434,8 @@ nsDOMBlobBuilder::Append(const jsval& aData,
     }
 
     // Is it an array buffer?
-    if (js_IsArrayBuffer(obj)) {
-      JSObject* buffer = js::ArrayBuffer::getArrayBuffer(obj);
-      if (buffer)
-        return mBlobSet.AppendArrayBuffer(buffer);
+    if (JS_IsArrayBufferObject(obj, aCx)) {
+      return mBlobSet.AppendArrayBuffer(obj, aCx);
     }
   }
 
@@ -437,4 +450,25 @@ nsresult NS_NewBlobBuilder(nsISupports* *aSupports)
 {
   nsDOMBlobBuilder* builder = new nsDOMBlobBuilder();
   return CallQueryInterface(builder, aSupports);
+}
+
+NS_IMETHODIMP
+nsDOMBlobBuilder::Initialize(nsISupports* aOwner,
+                             JSContext* aCx,
+                             JSObject* aObj,
+                             PRUint32 aArgc,
+                             jsval* aArgv)
+{
+  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(aOwner));
+  if (!window) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(window->GetExtantDocument()));
+  if (!doc) {
+    return NS_OK;
+  }
+
+  doc->WarnOnceAbout(nsIDocument::eMozBlobBuilder);
+  return NS_OK;
 }

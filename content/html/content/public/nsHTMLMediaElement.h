@@ -277,6 +277,10 @@ public:
   // false here even if CanHandleMediaType would return true.
   static bool ShouldHandleMediaType(const char* aMIMEType);
 
+#ifdef MOZ_RAW
+  static bool IsRawEnabled();
+#endif
+
 #ifdef MOZ_OGG
   static bool IsOggEnabled();
   static bool IsOggType(const nsACString& aType);
@@ -296,6 +300,13 @@ public:
   static bool IsWebMType(const nsACString& aType);
   static const char gWebMTypes[2][17];
   static char const *const gWebMCodecs[4];
+#endif
+
+#ifdef MOZ_GSTREAMER
+  static bool IsH264Enabled();
+  static bool IsH264Type(const nsACString& aType);
+  static const char gH264Types[3][17];
+  static char const *const gH264Codecs[6];
 #endif
 
   /**

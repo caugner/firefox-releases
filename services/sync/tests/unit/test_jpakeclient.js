@@ -1,4 +1,4 @@
-Cu.import("resource://services-sync/log4moz.js");
+Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-sync/identity.js");
 Cu.import("resource://services-sync/jpakeclient.js");
 Cu.import("resource://services-sync/constants.js");
@@ -183,16 +183,15 @@ function run_test() {
 
   // Simulate Sync setup with credentials in place. We want to make
   // sure the J-PAKE requests don't include those data.
-  let id = new Identity(PWDMGR_PASSWORD_REALM, "johndoe");
-  id.password = "ilovejane";
-  ID.set("WeaveID", id);
+  setBasicCredentials("johndoe", "ilovejane");
 
   server = httpd_setup({"/new_channel": server_new_channel,
                         "/report":      server_report});
 
   initTestLogging("Trace");
   Log4Moz.repository.getLogger("Sync.JPAKEClient").level = Log4Moz.Level.Trace;
-  Log4Moz.repository.getLogger("Sync.RESTRequest").level = Log4Moz.Level.Trace;
+  Log4Moz.repository.getLogger("Common.RESTRequest").level =
+    Log4Moz.Level.Trace;
   run_next_test();
 }
 

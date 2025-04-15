@@ -51,6 +51,7 @@
 #include "nsCSSPseudoElements.h"
 #include "nsRuleWalker.h"
 #include "nsNthIndexCache.h"
+#include "nsILoadContext.h"
 #include "mozilla/BloomFilter.h"
 #include "mozilla/GuardObjects.h"
 
@@ -221,10 +222,19 @@ struct NS_STACK_CLASS TreeMatchContext {
   // An ancestor filter
   AncestorFilter mAncestorFilter;
 
+  // Whether this document is using PB mode
+  bool mUsingPrivateBrowsing;
+
+  enum MatchVisited {
+    eNeverMatchVisited,
+    eMatchVisitedDefault
+  };
+
   // Constructor to use when creating a tree match context for styling
   TreeMatchContext(bool aForStyling,
                    nsRuleWalker::VisitedHandlingType aVisitedHandling,
-                   nsIDocument* aDocument)
+                   nsIDocument* aDocument,
+                   MatchVisited aMatchVisited = eMatchVisitedDefault)
     : mForStyling(aForStyling)
     , mHaveRelevantLink(false)
     , mVisitedHandling(aVisitedHandling)
@@ -232,7 +242,18 @@ struct NS_STACK_CLASS TreeMatchContext {
     , mScopedRoot(nsnull)
     , mIsHTMLDocument(aDocument->IsHTML())
     , mCompatMode(aDocument->GetCompatibilityMode())
+    , mUsingPrivateBrowsing(false)
   {
+    if (aMatchVisited != eNeverMatchVisited) {
+      nsCOMPtr<nsISupports> container = mDocument->GetContainer();
+      if (container) {
+        nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(container);
+        NS_ASSERTION(loadContext, "Couldn't get loadContext from container; assuming no private browsing.");
+        if (loadContext) {
+          mUsingPrivateBrowsing = loadContext->UsePrivateBrowsing();
+        }
+      }
+    }
   }
 };
 

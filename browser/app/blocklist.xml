@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<blocklist xmlns="http://www.mozilla.org/2006/addons-blocklist" lastupdate="1331241604000">
+<blocklist xmlns="http://www.mozilla.org/2006/addons-blocklist" lastupdate="1333739604000">
   <emItems>
       <emItem  blockID="i58" id="webmaster@buzzzzvideos.info">
                         <versionRange  minVersion="0" maxVersion="*">
@@ -65,8 +65,12 @@
                         <versionRange  minVersion="0" maxVersion="*">
                     </versionRange>
                   </emItem>
-      <emItem  blockID="i72" id="{4ED1F68A-5463-4931-9384-8FFF5ED91D92}">
-                        <versionRange  minVersion="0" maxVersion="3.4.1.194" severity="1">
+      <emItem  blockID="i72" os="WINNT" id="{4ED1F68A-5463-4931-9384-8FFF5ED91D92}">
+                        <versionRange  minVersion="3.4.1" maxVersion="3.4.1.194" severity="1">
+                    </versionRange>
+                  </emItem>
+      <emItem  blockID="i77" id="{fa277cfc-1d75-4949-a1f9-4ac8e41b2dfd}">
+                        <versionRange  minVersion="0" maxVersion="*">
                     </versionRange>
                   </emItem>
       <emItem  blockID="i40" id="{28387537-e3f9-4ed7-860c-11e69af4a8a0}">
@@ -81,8 +85,16 @@
                         <versionRange  minVersion="0" maxVersion="*">
                     </versionRange>
                   </emItem>
+      <emItem  blockID="i78" id="socialnetworktools@mozilla.doslash.org">
+                        <versionRange  minVersion="0" maxVersion="*">
+                    </versionRange>
+                  </emItem>
       <emItem  blockID="i70" id="psid-vhvxQHMZBOzUZA@jetpack">
                         <versionRange  minVersion="0" maxVersion="*" severity="1">
+                    </versionRange>
+                  </emItem>
+      <emItem  blockID="i68" id="flashupdate@adobe.com">
+                        <versionRange  minVersion="0" maxVersion="*">
                     </versionRange>
                   </emItem>
       <emItem  blockID="i7" id="{2224e955-00e9-4613-a844-ce69fccaae91}">
@@ -103,6 +115,8 @@
                         <versionRange  minVersion="0" maxVersion="*">
                     </versionRange>
                   </emItem>
+      <emItem  blockID="i47" id="youtube@youtube2.com">
+                        </emItem>
       <emItem  blockID="i22" id="ShopperReports@ShopperReports.com">
                         <versionRange  minVersion="3.1.22.0" maxVersion="3.1.22.0">
                     </versionRange>
@@ -131,12 +145,14 @@
                         <versionRange  minVersion="0.1" maxVersion="5.2.0.7164" severity="1">
                     </versionRange>
                   </emItem>
-      <emItem  blockID="i68" id="flashupdate@adobe.com">
+      <emItem  blockID="i76" id="crossriderapp3924@crossrider.com">
                         <versionRange  minVersion="0" maxVersion="*">
                     </versionRange>
                   </emItem>
-      <emItem  blockID="i47" id="youtube@youtube2.com">
-                        </emItem>
+      <emItem  blockID="i79" id="GifBlock@facebook.com">
+                        <versionRange  minVersion="0" maxVersion="*">
+                    </versionRange>
+                  </emItem>
       <emItem  blockID="i62" id="jid0-EcdqvFOgWLKHNJPuqAnawlykCGZ@jetpack">
                         <versionRange  minVersion="0" maxVersion="*">
                     </versionRange>
@@ -153,6 +169,10 @@
                         <versionRange  minVersion="2.0" maxVersion="2.0">
                     </versionRange>
                   </emItem>
+      <emItem  blockID="i73" id="a1g0a9g219d@a1.com">
+                        <versionRange  minVersion="0" maxVersion="*">
+                    </versionRange>
+                  </emItem>
       <emItem  blockID="i51" id="admin@youtubeplayer.com">
                         <versionRange  minVersion="0" maxVersion="*">
                     </versionRange>
@@ -167,50 +187,37 @@
 
   <pluginItems>
       <pluginItem  blockID="p28">
-                  <match name="filename" exp="NPFFAddOn.dll" />              <versionRange >
-                  </versionRange>
-          </pluginItem>
+                  <match name="filename" exp="NPFFAddOn.dll" />                        </pluginItem>
       <pluginItem  blockID="p31">
-                  <match name="filename" exp="NPMySrch.dll" />              <versionRange >
-                  </versionRange>
-          </pluginItem>
+                  <match name="filename" exp="NPMySrch.dll" />                        </pluginItem>
       <pluginItem  blockID="p33">
-      <match name="name" exp="[0-6]\.0\.[01]\d{2}\.\d+" />            <match name="filename" exp="npdeploytk.dll" />              <versionRange  severity="1">
-                  </versionRange>
-          </pluginItem>
+      <match name="name" exp="[0-6]\.0\.[01]\d{2}\.\d+" />            <match name="filename" exp="npdeploytk.dll" />                      <versionRange  severity="1"></versionRange>
+                  </pluginItem>
+      <pluginItem  blockID="p80">
+            <match name="description" exp="[^\d\._]((0(\.\d+(\.\d+([_\.]\d+)?)?)?)|(1\.(([0-5](\.\d+([_\.]\d+)?)?)|(6(\.0([_\.](0?\d|1\d|2\d|30))?)?)|(7(\.0([_\.][0-2])?)?))))([^\d\._]|$)" />      <match name="filename" exp="(npjp2\.dll)|(libnpjp2\.so)" />                      <versionRange  severity="1"></versionRange>
+                  </pluginItem>
     </pluginItems>
 
   <gfxItems>
-    <gfxBlacklistEntry  blockID="g35">
-      <os>WINNT 6.1</os>
-      <vendor>0x10de</vendor>
-              <devices>
+    <gfxBlacklistEntry  blockID="g35">      <os>WINNT 6.1</os>      <vendor>0x10de</vendor>              <devices>
                       <device>0x0a6c</device>
                   </devices>
-            <feature>DIRECT2D</feature>
-      <featureStatus>BLOCKED_DRIVER_VERSION</featureStatus>
-      <driverVersion>8.17.12.5896</driverVersion>
-      <driverVersionComparator>LESS_THAN_OR_EQUAL</driverVersionComparator>
-    </gfxBlacklistEntry>
-    <gfxBlacklistEntry  blockID="g36">
-      <os>WINNT 6.1</os>
-      <vendor>0x10de</vendor>
-              <devices>
+            <feature>DIRECT2D</feature>      <featureStatus>BLOCKED_DRIVER_VERSION</featureStatus>      <driverVersion>8.17.12.5896</driverVersion>      <driverVersionComparator>LESS_THAN_OR_EQUAL</driverVersionComparator>    </gfxBlacklistEntry>
+    <gfxBlacklistEntry  blockID="g36">      <os>WINNT 6.1</os>      <vendor>0x10de</vendor>              <devices>
                       <device>0x0a6c</device>
                   </devices>
-            <feature>DIRECT3D_9_LAYERS</feature>
-      <featureStatus>BLOCKED_DRIVER_VERSION</featureStatus>
-      <driverVersion>8.17.12.5896</driverVersion>
-      <driverVersionComparator>LESS_THAN_OR_EQUAL</driverVersionComparator>
-    </gfxBlacklistEntry>
-    <gfxBlacklistEntry  blockID="g37">
-      <os>WINNT 5.1</os>
-      <vendor>0x10de</vendor>
-            <feature>DIRECT3D_9_LAYERS</feature>
-      <featureStatus>BLOCKED_DRIVER_VERSION</featureStatus>
-      <driverVersion>7.0.0.0</driverVersion>
-      <driverVersionComparator>GREATER_THAN_OR_EQUAL</driverVersionComparator>
-    </gfxBlacklistEntry>
+            <feature>DIRECT3D_9_LAYERS</feature>      <featureStatus>BLOCKED_DRIVER_VERSION</featureStatus>      <driverVersion>8.17.12.5896</driverVersion>      <driverVersionComparator>LESS_THAN_OR_EQUAL</driverVersionComparator>    </gfxBlacklistEntry>
+    <gfxBlacklistEntry  blockID="g37">      <os>WINNT 5.1</os>      <vendor>0x10de</vendor>            <feature>DIRECT3D_9_LAYERS</feature>      <featureStatus>BLOCKED_DRIVER_VERSION</featureStatus>      <driverVersion>7.0.0.0</driverVersion>      <driverVersionComparator>GREATER_THAN_OR_EQUAL</driverVersionComparator>    </gfxBlacklistEntry>
+    <gfxBlacklistEntry  blockID="g81">      <os>WINNT 6.1</os>      <vendor>0x1002</vendor>              <devices>
+                      <device>0x9802</device>
+                      <device>0x9803</device>
+                      <device>0x9803</device>
+                      <device>0x9804</device>
+                      <device>0x9805</device>
+                      <device>0x9806</device>
+                      <device>0x9807</device>
+                  </devices>
+            <feature>DIRECT2D</feature>      <featureStatus>BLOCKED_DEVICE</featureStatus>      <driverVersion>1.0.0.0</driverVersion>      <driverVersionComparator>GREATER_THAN_OR_EQUAL</driverVersionComparator>    </gfxBlacklistEntry>
     </gfxItems>
 
 

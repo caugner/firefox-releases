@@ -561,8 +561,7 @@ nsBlockFrame::GetCaretBaseline() const
     }
   }
   nsRefPtr<nsFontMetrics> fm;
-  float inflation =
-    nsLayoutUtils::FontSizeInflationFor(this, nsLayoutUtils::eNotInReflow);
+  float inflation = nsLayoutUtils::FontSizeInflationFor(this);
   nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm), inflation);
   return nsLayoutUtils::GetCenteredFontBaseline(fm, nsHTMLReflowState::
       CalcLineHeight(GetStyleContext(), contentRect.height, inflation)) +
@@ -695,6 +694,27 @@ nsBlockFrame::MarkIntrinsicWidthsDirty()
   nsBlockFrameSuper::MarkIntrinsicWidthsDirty();
 }
 
+void
+nsBlockFrame::CheckIntrinsicCacheAgainstShrinkWrapState()
+{
+  nsPresContext *presContext = PresContext();
+  if (!nsLayoutUtils::FontSizeInflationEnabled(presContext)) {
+    return;
+  }
+  bool inflationEnabled =
+    !presContext->mInflationDisabledForShrinkWrap;
+  if (inflationEnabled !=
+      !!(GetStateBits() & NS_BLOCK_FRAME_INTRINSICS_INFLATED)) {
+    mMinWidth = NS_INTRINSIC_WIDTH_UNKNOWN;
+    mPrefWidth = NS_INTRINSIC_WIDTH_UNKNOWN;
+    if (inflationEnabled) {
+      AddStateBits(NS_BLOCK_FRAME_INTRINSICS_INFLATED);
+    } else {
+      RemoveStateBits(NS_BLOCK_FRAME_INTRINSICS_INFLATED);
+    }
+  }
+}
+
 /* virtual */ nscoord
 nsBlockFrame::GetMinWidth(nsRenderingContext *aRenderingContext)
 {
@@ -703,6 +723,9 @@ nsBlockFrame::GetMinWidth(nsRenderingContext *aRenderingContext)
     return firstInFlow->GetMinWidth(aRenderingContext);
 
   DISPLAY_MIN_WIDTH(this, mMinWidth);
+
+  CheckIntrinsicCacheAgainstShrinkWrapState();
+
   if (mMinWidth != NS_INTRINSIC_WIDTH_UNKNOWN)
     return mMinWidth;
 
@@ -780,6 +803,8 @@ nsBlockFrame::GetPrefWidth(nsRenderingContext *aRenderingContext)
     return firstInFlow->GetPrefWidth(aRenderingContext);
 
   DISPLAY_PREF_WIDTH(this, mPrefWidth);
+
+  CheckIntrinsicCacheAgainstShrinkWrapState();
 
   if (mPrefWidth != NS_INTRINSIC_WIDTH_UNKNOWN)
     return mPrefWidth;
@@ -2364,7 +2389,7 @@ nsBlockFrame::ReflowDirtyLines(nsBlockReflowState& aState)
 
       nsRefPtr<nsFontMetrics> fm;
       nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm),
-        nsLayoutUtils::FontSizeInflationFor(this, nsLayoutUtils::eInReflow));
+        nsLayoutUtils::FontSizeInflationFor(this));
       aState.mReflowState.rendContext->SetFont(fm); // FIXME: needed?
 
       nscoord minAscent =
@@ -6512,6 +6537,12 @@ nsBlockFrame::Init(nsIContent*      aContent,
   if (!aPrevInFlow ||
       aPrevInFlow->GetStateBits() & NS_BLOCK_NEEDS_BIDI_RESOLUTION)
     AddStateBits(NS_BLOCK_NEEDS_BIDI_RESOLUTION);
+
+  if ((GetStateBits() &
+       (NS_FRAME_FONT_INFLATION_CONTAINER | NS_BLOCK_FLOAT_MGR)) ==
+      (NS_FRAME_FONT_INFLATION_CONTAINER | NS_BLOCK_FLOAT_MGR)) {
+    AddStateBits(NS_FRAME_FONT_INFLATION_FLOW_ROOT);
+  }
 
   return rv;
 }

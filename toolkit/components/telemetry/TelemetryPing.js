@@ -68,7 +68,8 @@ const MEM_HISTOGRAMS = {
   "page-faults-hard": "PAGE_FAULTS_HARD",
   "low-memory-events-virtual": "LOW_MEMORY_EVENTS_VIRTUAL",
   "low-memory-events-commit-space": "LOW_MEMORY_EVENTS_COMMIT_SPACE",
-  "low-memory-events-physical": "LOW_MEMORY_EVENTS_PHYSICAL"
+  "low-memory-events-physical": "LOW_MEMORY_EVENTS_PHYSICAL",
+  "ghost-windows": "GHOST_WINDOWS"
 };
 // Seconds of idle time before pinging.
 // On idle-daily a gather-telemetry notification is fired, during it probes can
@@ -461,6 +462,7 @@ TelemetryPing.prototype = {
       payloadObj.simpleMeasurements = getSimpleMeasurements();
       payloadObj.histograms = this.getHistograms(Telemetry.histogramSnapshots);
       payloadObj.slowSQL = Telemetry.slowSQL;
+      payloadObj.chromeHangs = Telemetry.chromeHangs;
       payloadObj.addonHistograms = this.getAddonHistograms();
     }
     if (Object.keys(this._slowSQLStartup.mainThread).length
@@ -742,10 +744,12 @@ TelemetryPing.prototype = {
         idleService.removeIdleObserver(this, IDLE_TIMEOUT_SECONDS);
         this._isIdleObserver = false;
       }
-      reason = (Telemetry.canSend && aTopic == "idle"
-		? "idle-daily"
-		: "test-ping");
-      this.send(reason, server);
+      if (aTopic == "test-ping") {
+        this.send("test-ping", server);
+      }
+      else if (Telemetry.canSend && aTopic == "idle") {
+        this.send("idle-daily", server);
+      }
       break;
     case "quit-application-granted":
       Telemetry.saveHistograms(this.savedHistogramsFile(),

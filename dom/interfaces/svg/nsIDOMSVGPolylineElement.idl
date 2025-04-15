@@ -38,7 +38,7 @@
 
 #include "nsIDOMSVGElement.idl"
 
-[scriptable, uuid(c2a0becc-3b3d-45a9-8f5c-b13963aadf6b)]
+[scriptable, uuid(189F12DA-B61D-4AD5-9EE0-0A7F4CE59970)]
 interface nsIDOMSVGPolylineElement
   : nsIDOMSVGElement
 /*

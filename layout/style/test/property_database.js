@@ -234,7 +234,7 @@ var gCSSProperties = {
 		domProp: "MozBorderImage",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "none" ],
+    initial_values: [ "none" ],
 		other_values: [ "url('border.png') 27 27 27 27",
 						"url('border.png') 27",
 						"url('border.png') 27 27 27 27 repeat",
@@ -244,7 +244,7 @@ var gCSSProperties = {
 		invalid_values: [ "url('border.png')",
 						  "url('border.png') 27 27 27 27 27",
 						  "url('border.png') 27 27 27 27 / 1em 1em 1em 1em 1em",
-						  "url('border.png') / repeat",
+              "url('border.png') / repeat",
 						  "url('border.png') 27 27 27 27 /" ]
 	},
 	"-moz-border-left-colors": {
@@ -490,14 +490,6 @@ var gCSSProperties = {
 		other_values: [ "1", "17" ],
 		// negative and zero invalid per editor's draft
 		invalid_values: [ "-1", "0", "3px" ]
-	},
-	"-moz-column-fill": {
-		domProp: "MozColumnFill",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "balance" ],
-		other_values: [ "auto" ],
-		invalid_values: [ "2px", "dotted", "5em" ]
 	},
 	"-moz-column-gap": {
 		domProp: "MozColumnGap",
@@ -964,7 +956,9 @@ var gCSSProperties = {
 			"translatex(-moz-max(5px,10%))",
 			"translate(10px, -moz-calc(min(5px,10%)))",
 			"translate(-moz-calc(max(5px,10%)), 10%)",
-			"matrix(1, 0, 0, 1, -moz-max(5px * 3), -moz-calc(10% - 3px))"
+			"matrix(1, 0, 0, 1, -moz-max(5px * 3), -moz-calc(10% - 3px))",
+			// Bug 734953
+			"skew(45deg)", "skew(45deg, 45deg)",
 		].concat(SpecialPowers.getBoolPref("layout.3d-transforms.enabled") ? [
             "perspective(0px)", "perspective(-10px)", "matrix3d(dinosaur)", "matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)", "matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)", "matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15%, 16)", "matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16px)", "rotatey(words)", "rotatex(7)", "translate3d(3px, 4px, 1px, 7px)"
 		] : [])

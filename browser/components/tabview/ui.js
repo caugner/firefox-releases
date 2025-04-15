@@ -158,14 +158,8 @@ let UI = {
       // initialize the direction of the page
       this._initPageDirection();
 
-      // ___ thumbnail storage
-      ThumbnailStorage.init();
-
       // ___ storage
       Storage.init();
-
-      // ___ storage policy
-      StoragePolicy.init();
 
       if (Storage.readWindowBusyState(gWindow))
         this.storageBusy();
@@ -250,6 +244,9 @@ let UI = {
       TabItems.init();
       TabItems.pausePainting();
 
+      // ___ favicons
+      FavIcons.init();
+
       if (!hasGroupItemsData)
         this.reset();
 
@@ -274,7 +271,6 @@ let UI = {
           GroupItems.removeHiddenGroups();
 
         TabItems.saveAll();
-        TabItems.saveAllThumbnails({synchronously: true});
 
         self._save();
       }, false);
@@ -292,6 +288,9 @@ let UI = {
       let event = document.createEvent("Events");
       event.initEvent("tabviewframeinitialized", true, false);
       dispatchEvent(event);
+
+      // XXX this can be removed when bug 731868 is fixed
+      event = null;
     } catch(e) {
       Utils.log(e);
     } finally {
@@ -311,8 +310,8 @@ let UI = {
     // additional clean up
     TabItems.uninit();
     GroupItems.uninit();
+    FavIcons.uninit();
     Storage.uninit();
-    StoragePolicy.uninit();
 
     this._removeTabActionHandlers();
     this._currentTab = null;
@@ -710,11 +709,6 @@ let UI = {
         if (data == "enter" || data == "exit") {
           Search.hide();
           self._privateBrowsing.transitionMode = data;
-
-          // make sure to save all thumbnails that haven't been saved yet
-          // before we enter the private browsing mode
-          if (data == "enter")
-            TabItems.saveAllThumbnails({synchronously: true});
         }
       } else if (topic == "private-browsing-transition-complete") {
         // We use .transitionMode here, as aData is empty.
@@ -769,7 +763,7 @@ let UI = {
         if (gBrowser.tabs.length > 1) {
           // Don't return to TabView if there are any app tabs
           for (let a = 0; a < gBrowser._numPinnedTabs; a++) {
-            if (!gBrowser.tabs[a].closing)
+            if (Utils.isValidXULTab(gBrowser.tabs[a]))
               return;
           }
 
@@ -1158,6 +1152,7 @@ let UI = {
 
       let preventDefault = true;
       let activeTab;
+      let activeGroupItem;
       let norm = null;
       switch (event.keyCode) {
         case KeyEvent.DOM_VK_RIGHT:
@@ -1175,7 +1170,7 @@ let UI = {
       }
 
       if (norm != null) {
-        var nextTab = getClosestTabBy(norm);
+        let nextTab = getClosestTabBy(norm);
         if (nextTab) {
           if (nextTab.isStacked && !nextTab.parent.expanded)
             nextTab = nextTab.parent.getChild(0);
@@ -1184,7 +1179,7 @@ let UI = {
       } else {
         switch(event.keyCode) {
           case KeyEvent.DOM_VK_ESCAPE:
-            let activeGroupItem = GroupItems.getActiveGroupItem();
+            activeGroupItem = GroupItems.getActiveGroupItem();
             if (activeGroupItem && activeGroupItem.expanded)
               activeGroupItem.collapse();
             else
@@ -1192,9 +1187,18 @@ let UI = {
             break;
           case KeyEvent.DOM_VK_RETURN:
           case KeyEvent.DOM_VK_ENTER:
-            activeTab = self.getActiveTab();
-            if (activeTab)
-              activeTab.zoomIn();
+            activeGroupItem = GroupItems.getActiveGroupItem();
+            if (activeGroupItem) {
+              activeTab = self.getActiveTab();
+
+              if (!activeTab || activeTab.parent != activeGroupItem)
+                activeTab = activeGroupItem.getActiveTab();
+
+              if (activeTab)
+                activeTab.zoomIn();
+              else
+                activeGroupItem.newTab();
+            }
             break;
           case KeyEvent.DOM_VK_TAB:
             // tab/shift + tab to go to the next tab.
@@ -1604,39 +1608,10 @@ let UI = {
   // ----------
   // Function: _saveAll
   // Saves all data associated with TabView.
-  // TODO: Save info items
   _saveAll: function UI__saveAll() {
     this._save();
     GroupItems.saveAll();
     TabItems.saveAll();
-  },
-
-  // ----------
-  // Function: shouldLoadFavIcon
-  // Takes a xul:browser and checks whether we should display a favicon for it.
-  shouldLoadFavIcon: function UI_shouldLoadFavIcon(browser) {
-    return !(browser.contentDocument instanceof window.ImageDocument) &&
-            (browser.currentURI.schemeIs("about") ||
-             gBrowser.shouldLoadFavIcon(browser.contentDocument.documentURIObject));
-  },
-
-  // ----------
-  // Function: getFavIconUrlForTab
-  // Gets fav icon url for the given xul:tab.
-  getFavIconUrlForTab: function UI_getFavIconUrlForTab(tab) {
-    let url;
-
-    if (tab.image) {
-      // if starts with http/https, fetch icon from favicon service via the moz-anno protocal
-      if (/^https?:/.test(tab.image))
-        url = gFavIconService.getFaviconLinkForIcon(gWindow.makeURI(tab.image)).spec;
-      else
-        url = tab.image;
-    } else {
-      url = gFavIconService.getFaviconImageForPage(tab.linkedBrowser.currentURI).spec;
-    }
-
-    return url;
   },
 
   // ----------

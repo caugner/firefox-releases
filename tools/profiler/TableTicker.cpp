@@ -38,13 +38,15 @@
 
 #include <string>
 #include <stdio.h>
+#include <iostream>
+#include <fstream>
+#include <sstream>
 #include "sps_sampler.h"
 #include "platform.h"
 #include "nsXULAppAPI.h"
 #include "nsThreadUtils.h"
 #include "prenv.h"
 #include "shared-libraries.h"
-#include "mozilla/StringBuilder.h"
 #include "mozilla/StackWalk.h"
 #include "JSObjectBuilder.h"
 
@@ -63,6 +65,12 @@
 #endif
 #ifdef USE_NS_STACKWALK
  #include "nsStackWalk.h"
+#endif
+
+#if defined(MOZ_PROFILING) && defined(ANDROID)
+ #define USE_LIBUNWIND
+ #include <libunwind.h>
+ #include "android-signal-defs.h"
 #endif
 
 using std::string;
@@ -111,37 +119,31 @@ class ProfileEntry
 public:
   ProfileEntry()
     : mTagData(NULL)
-    , mLeafAddress(0)
     , mTagName(0)
   { }
 
   // aTagData must not need release (i.e. be a string from the text segment)
   ProfileEntry(char aTagName, const char *aTagData)
     : mTagData(aTagData)
-    , mLeafAddress(0)
-    , mTagName(aTagName)
-  { }
-
-  // aTagData must not need release (i.e. be a string from the text segment)
-  ProfileEntry(char aTagName, const char *aTagData, Address aLeafAddress)
-    : mTagData(aTagData)
-    , mLeafAddress(aLeafAddress)
     , mTagName(aTagName)
   { }
 
   ProfileEntry(char aTagName, double aTagFloat)
     : mTagFloat(aTagFloat)
-    , mLeafAddress(0)
     , mTagName(aTagName)
   { }
 
   ProfileEntry(char aTagName, uintptr_t aTagOffset)
     : mTagOffset(aTagOffset)
-    , mLeafAddress(0)
     , mTagName(aTagName)
   { }
 
-  string TagToString(ThreadProfile *profile);
+  ProfileEntry(char aTagName, Address aTagAddress)
+    : mTagAddress(aTagAddress)
+    , mTagName(aTagName)
+  { }
+
+  friend std::ostream& operator<<(std::ostream& stream, const ProfileEntry& entry);
 
 private:
   friend class ThreadProfile;
@@ -151,7 +153,6 @@ private:
     Address mTagAddress;
     uintptr_t mTagOffset;
   };
-  Address mLeafAddress;
   char mTagName;
 };
 
@@ -252,14 +253,7 @@ public:
     mWritePos = mLastFlushPos;
   }
 
-  void ToString(StringBuilder &profile)
-  {
-    int readPos = mReadPos;
-    while (readPos != mLastFlushPos) {
-      profile.Append(mEntries[readPos].TagToString(this).c_str());
-      readPos = (readPos + 1) % mEntrySize;
-    }
-  }
+  friend std::ostream& operator<<(std::ostream& stream, const ThreadProfile& profile);
 
   JSObject *ToJSObject(JSContext *aCx)
   {
@@ -290,8 +284,8 @@ public:
             if (sample) {
               JSObject *frame = b.CreateObject();
               char tagBuff[1024];
-              void* pc = (void*)entry.mTagData;
-              snprintf(tagBuff, 1024, "%p", pc);
+              unsigned long long pc = (unsigned long long)entry.mTagData;
+              snprintf(tagBuff, 1024, "%#llx", pc);
               b.DefineProperty(frame, "location", tagBuff);
               b.ArrayPush(frames, frame);
             }
@@ -301,16 +295,6 @@ public:
     mReadPos = oldReadPos;
 
     return profile;
-  }
-
-  void WriteProfile(FILE* stream)
-  {
-    int readPos = mReadPos;
-    while (readPos != mLastFlushPos) {
-      string tag = mEntries[readPos].TagToString(this);
-      fwrite(tag.data(), 1, tag.length(), stream);
-      readPos = (readPos + 1) % mEntrySize;
-    }
   }
 
   ProfileStack* GetStack()
@@ -348,6 +332,7 @@ class TableTicker: public Sampler {
     , mSaveRequested(false)
   {
     mUseStackWalk = hasFeature(aFeatures, aFeatureCount, "stackwalk");
+
     //XXX: It's probably worth splitting the jank profiler out from the regular profiler at some point
     mJankOnly = hasFeature(aFeatures, aFeatureCount, "jank");
     mPrimaryThreadProfile.addTag(ProfileEntry('m', "Start"));
@@ -377,7 +362,7 @@ class TableTicker: public Sampler {
 
 private:
   // Not implemented on platforms which do not support backtracing
-  void doBacktrace(ThreadProfile &aProfile, Address pc);
+  void doBacktrace(ThreadProfile &aProfile, TickSample* aSample);
 
 private:
   // This represent the application's main thread (SAMPLER_INIT)
@@ -386,6 +371,8 @@ private:
   bool mUseStackWalk;
   bool mJankOnly;
 };
+
+std::string GetSharedLibraryInfoString();
 
 /**
  * This is an event used to save the profile on the main thread
@@ -418,10 +405,12 @@ public:
     }
 #endif
 
-    FILE* stream = ::fopen(buff, "w");
-    if (stream) {
-      t->GetPrimaryThreadProfile()->WriteProfile(stream);
-      ::fclose(stream);
+    std::ofstream stream;
+    stream.open(buff);
+    if (stream.is_open()) {
+      stream << *(t->GetPrimaryThreadProfile());
+      stream << "h-" << GetSharedLibraryInfoString() << std::endl;
+      stream.close();
       LOG("Saved to " FOLDER "profile_TYPE_PID.txt");
     } else {
       LOG("Fail to open profile log file.");
@@ -465,12 +454,12 @@ JSObject* TableTicker::ToJSObject(JSContext *aCx)
 
 
 #ifdef USE_BACKTRACE
-void TableTicker::doBacktrace(ThreadProfile &aProfile, Address pc)
+void TableTicker::doBacktrace(ThreadProfile &aProfile, TickSample* aSample)
 {
   void *array[100];
   int count = backtrace (array, 100);
 
-  aProfile.addTag(ProfileEntry('s', "(root)", 0));
+  aProfile.addTag(ProfileEntry('s', "(root)"));
 
   for (int i = 0; i < count; i++) {
     if( (intptr_t)array[i] == -1 ) break;
@@ -498,7 +487,7 @@ void StackWalkCallback(void* aPC, void* aClosure)
   array->array[array->count++] = aPC;
 }
 
-void TableTicker::doBacktrace(ThreadProfile &aProfile, Address fp)
+void TableTicker::doBacktrace(ThreadProfile &aProfile, TickSample* aSample)
 {
 #ifndef XP_MACOSX
   uintptr_t thread = GetThreadHandle(platform_data());
@@ -510,21 +499,73 @@ void TableTicker::doBacktrace(ThreadProfile &aProfile, Address fp)
     mozilla::ArrayLength(pc_array),
     0
   };
+
+  // Start with the current function.
+  StackWalkCallback(aSample->pc, &array);
+
 #ifdef XP_MACOSX
   pthread_t pt = GetProfiledThread(platform_data());
   void *stackEnd = reinterpret_cast<void*>(-1);
   if (pt)
     stackEnd = static_cast<char*>(pthread_get_stackaddr_np(pt));
-  nsresult rv = FramePointerStackWalk(StackWalkCallback, 1, &array, reinterpret_cast<void**>(fp), stackEnd);
+  nsresult rv = FramePointerStackWalk(StackWalkCallback, 0, &array, reinterpret_cast<void**>(aSample->fp), stackEnd);
 #else
   nsresult rv = NS_StackWalk(StackWalkCallback, 0, &array, thread);
 #endif
   if (NS_SUCCEEDED(rv)) {
-    aProfile.addTag(ProfileEntry('s', "(root)", 0));
+    aProfile.addTag(ProfileEntry('s', "(root)"));
 
     for (size_t i = array.count; i > 0; --i) {
       aProfile.addTag(ProfileEntry('l', (const char*)array.array[i - 1]));
     }
+  }
+}
+#endif
+
+#if defined(USE_LIBUNWIND) && defined(ANDROID)
+void TableTicker::doBacktrace(ThreadProfile &aProfile, TickSample* aSample)
+{
+  void* pc_array[1000];
+  size_t count = 0;
+
+  unw_cursor_t cursor; unw_context_t uc;
+  unw_word_t ip;
+  unw_getcontext(&uc);
+
+  // Dirty hack: replace the registers with values from the signal handler
+  // We do this in order to avoid the overhead of walking up to reach the
+  // signal handler frame, and the possibility that libunwind fails to
+  // handle it correctly.
+  unw_tdep_context_t *unw_ctx = reinterpret_cast<unw_tdep_context_t*> (&uc);
+  mcontext_t& mcontext = reinterpret_cast<ucontext_t*> (aSample->context)->uc_mcontext;
+#define REPLACE_REG(num) unw_ctx->regs[num] = mcontext.gregs[R##num]
+  REPLACE_REG(0);
+  REPLACE_REG(1);
+  REPLACE_REG(2);
+  REPLACE_REG(3);
+  REPLACE_REG(4);
+  REPLACE_REG(5);
+  REPLACE_REG(6);
+  REPLACE_REG(7);
+  REPLACE_REG(8);
+  REPLACE_REG(9);
+  REPLACE_REG(10);
+  REPLACE_REG(11);
+  REPLACE_REG(12);
+  REPLACE_REG(13);
+  REPLACE_REG(14);
+  REPLACE_REG(15);
+#undef REPLACE_REG
+  unw_init_local(&cursor, &uc);
+  while (count < ArrayLength(pc_array) &&
+         unw_step(&cursor) > 0) {
+    unw_get_reg(&cursor, UNW_REG_IP, &ip);
+    pc_array[count++] = reinterpret_cast<void*> (ip);
+  }
+
+  aProfile.addTag(ProfileEntry('s', "(root)"));
+  for (size_t i = count; i > 0; --i) {
+    aProfile.addTag(ProfileEntry('l', reinterpret_cast<const char*>(pc_array[i - 1])));
   }
 }
 #endif
@@ -535,17 +576,19 @@ void doSampleStackTrace(ProfileStack *aStack, ThreadProfile &aProfile, TickSampl
   // Sample
   // 's' tag denotes the start of a sample block
   // followed by 0 or more 'c' tags.
-  for (int i = 0; i < aStack->mStackPointer; i++) {
+  for (mozilla::sig_safe_t i = 0; i < aStack->mStackPointer; i++) {
     if (i == 0) {
-      Address pc = 0;
-      if (sample) {
-        pc = sample->pc;
-      }
-      aProfile.addTag(ProfileEntry('s', aStack->mStack[i], pc));
+      aProfile.addTag(ProfileEntry('s', aStack->mStack[i]));
     } else {
       aProfile.addTag(ProfileEntry('c', aStack->mStack[i]));
     }
   }
+#ifdef ENABLE_SPS_LEAF_DATA
+  if (sample) {
+    Address pc = sample->pc;
+    aProfile.addTag(ProfileEntry('l', sample->pc));
+  }
+#endif
 }
 
 /* used to keep track of the last event that we sampled during */
@@ -591,9 +634,9 @@ void TableTicker::Tick(TickSample* sample)
     }
   }
 
-#if defined(USE_BACKTRACE) || defined(USE_NS_STACKWALK)
+#if defined(USE_BACKTRACE) || defined(USE_NS_STACKWALK) || defined(USE_LIBUNWIND)
   if (mUseStackWalk) {
-    doBacktrace(mPrimaryThreadProfile, sample->fp);
+    doBacktrace(mPrimaryThreadProfile, sample);
   } else {
     doSampleStackTrace(stack, mPrimaryThreadProfile, sample);
   }
@@ -610,37 +653,32 @@ void TableTicker::Tick(TickSample* sample)
   }
 }
 
-string ProfileEntry::TagToString(ThreadProfile *profile)
+std::ostream& operator<<(std::ostream& stream, const ThreadProfile& profile)
 {
-  string tag = "";
-  if (mTagName == 'r') {
-    char buff[50];
-    snprintf(buff, 50, "%-40f", mTagFloat);
-    tag += string(1, mTagName) + string("-") + string(buff) + string("\n");
-  } else if (mTagName == 'l') {
-    char tagBuff[1024];
-    Address pc = mTagAddress;
-    snprintf(tagBuff, 1024, "l-%p\n", pc);
-    tag += string(tagBuff);
-  } else {
-    tag += string(1, mTagName) + string("-") + string(mTagData) + string("\n");
+  int readPos = profile.mReadPos;
+  while (readPos != profile.mLastFlushPos) {
+    stream << profile.mEntries[readPos];
+    readPos = (readPos + 1) % profile.mEntrySize;
   }
-
-#ifdef ENABLE_SPS_LEAF_DATA
-  if (mLeafAddress) {
-    char tagBuff[1024];
-    unsigned long pc = (unsigned long)mLeafAddress;
-    snprintf(tagBuff, 1024, "l-%llu\n", pc);
-    tag += string(tagBuff);
-  }
-#endif
-  return tag;
+  return stream;
 }
 
-#define PROFILE_DEFAULT_ENTRY 100000
-#define PROFILE_DEFAULT_INTERVAL 10
-#define PROFILE_DEFAULT_FEATURES NULL
-#define PROFILE_DEFAULT_FEATURE_COUNT 0
+std::ostream& operator<<(std::ostream& stream, const ProfileEntry& entry)
+{
+  if (entry.mTagName == 'r') {
+    stream << entry.mTagName << "-" << std::fixed << entry.mTagFloat << "\n";
+  } else if (entry.mTagName == 'l') {
+    // Bug 739800 - Force l-tag addresses to have a "0x" prefix on all platforms
+    // Additionally, stringstream seemed to be ignoring formatter flags.
+    char tagBuff[1024];
+    unsigned long long pc = (unsigned long long)entry.mTagData;
+    snprintf(tagBuff, 1024, "l-%#llx\n", pc);
+    stream << tagBuff;
+  } else {
+    stream << entry.mTagName << "-" << entry.mTagData << "\n";
+  }
+  return stream;
+}
 
 void mozilla_sampler_init()
 {
@@ -654,6 +692,18 @@ void mozilla_sampler_init()
 
   ProfileStack *stack = new ProfileStack();
   mozilla::tls::set(pkey_stack, stack);
+
+#if defined(USE_LIBUNWIND) && defined(ANDROID)
+  // Only try debug_frame and exidx unwinding
+  putenv("UNW_ARM_UNWIND_METHOD=5");
+
+  // Allow the profiler to be started and stopped using signals
+  OS::RegisterStartStopHandlers();
+
+  // On Android, this is too soon in order to start up the
+  // profiler.
+  return;
+#endif
 
   // We can't open pref so we use an environment variable
   // to know if we should trigger the profiler on startup
@@ -695,11 +745,12 @@ char* mozilla_sampler_get_profile()
     return NULL;
   }
 
-  StringBuilder profile;
-  t->GetPrimaryThreadProfile()->ToString(profile);
+  std::stringstream profile;
+  profile << *(t->GetPrimaryThreadProfile());
 
-  char *rtn = (char*)malloc( (profile.Length()+1) * sizeof(char) );
-  strcpy(rtn, profile.Buffer());
+  std::string profileString = profile.str();
+  char *rtn = (char*)malloc( (profileString.length() + 1) * sizeof(char) );
+  strcpy(rtn, profileString.c_str());
   return rtn;
 }
 
@@ -717,7 +768,7 @@ JSObject *mozilla_sampler_get_profile_data(JSContext *aCx)
 const char** mozilla_sampler_get_features()
 {
   static const char* features[] = {
-#if defined(MOZ_PROFILING) && (defined(USE_BACKTRACE) || defined(USE_NS_STACKWALK))
+#if defined(MOZ_PROFILING) && (defined(USE_BACKTRACE) || defined(USE_NS_STACKWALK) || defined(USE_LIBUNWIND))
     "stackwalk",
 #endif
     "jank",

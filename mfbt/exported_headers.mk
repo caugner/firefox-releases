@@ -45,6 +45,7 @@ EXPORTS_mozilla += \
   Assertions.h \
   Attributes.h \
   BloomFilter.h \
+  FloatingPoint.h \
   GuardObjects.h \
   HashFunctions.h \
   Likely.h \
@@ -52,6 +53,7 @@ EXPORTS_mozilla += \
   MSStdInt.h \
   RangedPtr.h \
   RefPtr.h \
+  Scoped.h \
   StandardInteger.h \
   Types.h \
   Util.h \
