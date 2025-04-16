@@ -13,8 +13,12 @@ const { XPCOMUtils } = ChromeUtils.import(
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   RemoteSettings: "resource://services-settings/remote-settings.js",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
+  UrlbarProviderQuickSuggest:
+    "resource:///modules/UrlbarProviderQuickSuggest.jsm",
 });
 
 XPCOMUtils.defineLazyGlobalGetters(this, ["TextDecoder"]);
@@ -25,10 +29,15 @@ const log = console.createInstance({
 });
 
 const RS_COLLECTION = "quicksuggest";
-const RS_PREF = "quicksuggest.enabled";
 
 // Categories that should show "Firefox Suggest" instead of "Sponsored"
 const NONSPONSORED_IAB_CATEGORIES = new Set(["5 - Education"]);
+// Version in which the mr1 dialog is shown.
+const MR1_VERSION = 89;
+
+const SEEN_DIALOG_PREF = "quicksuggest.showedOnboardingDialog";
+const VERSION_PREF = "browser.startup.upgradeDialog.version";
+const RESTARTS_PREF = "quicksuggest.seenRestarts";
 
 /**
  * Fetches the suggestions data from RemoteSettings and builds the tree
@@ -51,15 +60,13 @@ class Suggestions {
       return this._initPromise;
     }
     this._initPromise = Promise.resolve();
-    this._rs = RemoteSettings(RS_COLLECTION);
-    if (UrlbarPrefs.get(RS_PREF)) {
+    if (UrlbarPrefs.get("quickSuggestEnabled")) {
       this._initPromise = new Promise(resolve => (this._initResolve = resolve));
-      Services.tm.idleDispatchToMainThread(
-        this._setupRemoteSettings.bind(this)
-      );
+      Services.tm.idleDispatchToMainThread(this.onEnabledUpdate.bind(this));
     } else {
-      UrlbarPrefs.addObserver(this);
+      NimbusFeatures.urlbar.onUpdate(this.onEnabledUpdate.bind(this));
     }
+    UrlbarPrefs.addObserver(this);
     return this._initPromise;
   }
 
@@ -149,12 +156,99 @@ class Suggestions {
     return longerPhrase || trimmedQuery;
   }
 
-  /*
-   * Called if a Urlbar preference is changed.
+  /**
+   * Called when a urlbar pref changes. The onboarding dialog will set the
+   * `browser.urlbar.quicksuggest.user-seen-dialog` pref once the user has
+   * seen the dialog at which point we can start showing results.
+   *
+   * @param {string} pref
+   *   The name of the pref relative to `browser.urlbar`.
    */
-  onPrefChanged(changedPref) {
-    if (changedPref == RS_PREF && UrlbarPrefs.get(RS_PREF)) {
+  onPrefChanged(pref) {
+    switch (pref) {
+      case SEEN_DIALOG_PREF:
+        this.onEnabledUpdate();
+        break;
+    }
+  }
+
+  /*
+   * Called when an update that may change whether this feature is enabled
+   * or not has occured.
+   *
+   * QuickSuggest is controlled by two perferences that can be remotely
+   * configured through Nimbus.
+   *
+   *   * `quickSuggestEnabled`: this enables the QuickSuggest feature, but the
+   *     suggestion might not be immediately available if we want the user to
+   *     see the onboarding dialog, which is controlled by
+   *     `quickSuggestShouldShowOnboardingDialog`
+   *
+   *   * `quickSuggestShouldShowOnboardingDialog`: this determines whether the
+   *     QuickSuggest onboarding dialog should be shown before we show any
+   *     suggestions to the user once QuickSuggest is enabled
+   */
+  onEnabledUpdate() {
+    if (
+      UrlbarPrefs.get("quickSuggestEnabled") &&
+      (UrlbarPrefs.get(SEEN_DIALOG_PREF) ||
+        !UrlbarPrefs.get("quickSuggestShouldShowOnboardingDialog"))
+    ) {
       this._setupRemoteSettings();
+    }
+  }
+
+  /*
+   * An onboarding dialog can be shown to the users who are enrolled into
+   * the QuickSuggest experiments or rollouts. This behavior is controlled
+   * by the pref `browser.urlbar.quicksuggest.shouldShowOnboardingDialog`
+   * which can be remotely configured by Nimbus.
+   *
+   * Given that the release may overlap with MR1 which has an onboarding dialog
+   * We will wait for a few restarts after the MR1 dialog will have been shown
+   * before showing the QuickSuggest dialog. This could be remotely configured
+   * by Nimbus through `quickSuggestShowOnboardingDialogAfterNRestarts`, the
+   * default is 2.
+   */
+  async maybeShowOnboardingDialog() {
+    // If quicksuggest is not enabled, the user has already seen the
+    // quicksuggest onboarding dialog, the onboarding dialog is configured to
+    // be skipped, or the user is not yet on a version where they could have
+    // seen the mr1 onboarding dialog then we won't show the quicksuggest
+    // onboarding.
+    if (
+      !UrlbarPrefs.get("quickSuggestEnabled") ||
+      !UrlbarPrefs.get("quickSuggestShouldShowOnboardingDialog") ||
+      UrlbarPrefs.get(SEEN_DIALOG_PREF) ||
+      Services.prefs.getIntPref(VERSION_PREF, 0) < MR1_VERSION
+    ) {
+      return;
+    }
+
+    // Wait a number of restarts after the user will have seen the mr1 onboarding dialog
+    // before showing the quicksuggest one.
+    let restartsSeen = UrlbarPrefs.get(RESTARTS_PREF);
+    if (
+      restartsSeen <
+      UrlbarPrefs.get("quickSuggestShowOnboardingDialogAfterNRestarts")
+    ) {
+      UrlbarPrefs.set(RESTARTS_PREF, restartsSeen + 1);
+      return;
+    }
+
+    let params = { learnMore: false };
+    let win = BrowserWindowTracker.getTopWindow();
+    await win.gDialogBox.open(
+      "chrome://browser/content/urlbar/quicksuggestOnboarding.xhtml",
+      params
+    );
+
+    UrlbarPrefs.set(SEEN_DIALOG_PREF, true);
+
+    if (params.learnMore) {
+      win.openTrustedLinkIn(UrlbarProviderQuickSuggest.helpUrl, "tab", {
+        fromChrome: true,
+      });
     }
   }
 
@@ -162,6 +256,7 @@ class Suggestions {
    * Set up RemoteSettings listeners.
    */
   async _setupRemoteSettings() {
+    this._rs = RemoteSettings(RS_COLLECTION);
     this._rs.on("sync", this._onSettingsSync.bind(this));
     await this._ensureAttachmentsDownloaded();
     if (this._initResolve) {
@@ -237,6 +332,9 @@ class Suggestions {
    * Fetch the icon from RemoteSettings attachments.
    */
   async fetchIcon(path) {
+    if (!path) {
+      return null;
+    }
     let record = (
       await this._rs.get({
         filters: { id: `icon-${path}` },

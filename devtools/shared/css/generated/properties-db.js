@@ -836,74 +836,6 @@ exports.CSS_PROPERTIES = {
       "vertical"
     ]
   },
-  "-moz-outline-radius": {
-    "isInherited": false,
-    "subproperties": [
-      "-moz-outline-radius-topleft",
-      "-moz-outline-radius-topright",
-      "-moz-outline-radius-bottomright",
-      "-moz-outline-radius-bottomleft"
-    ],
-    "supports": [],
-    "values": [
-      "inherit",
-      "initial",
-      "revert",
-      "unset"
-    ]
-  },
-  "-moz-outline-radius-bottomleft": {
-    "isInherited": false,
-    "subproperties": [
-      "-moz-outline-radius-bottomleft"
-    ],
-    "supports": [],
-    "values": [
-      "inherit",
-      "initial",
-      "revert",
-      "unset"
-    ]
-  },
-  "-moz-outline-radius-bottomright": {
-    "isInherited": false,
-    "subproperties": [
-      "-moz-outline-radius-bottomright"
-    ],
-    "supports": [],
-    "values": [
-      "inherit",
-      "initial",
-      "revert",
-      "unset"
-    ]
-  },
-  "-moz-outline-radius-topleft": {
-    "isInherited": false,
-    "subproperties": [
-      "-moz-outline-radius-topleft"
-    ],
-    "supports": [],
-    "values": [
-      "inherit",
-      "initial",
-      "revert",
-      "unset"
-    ]
-  },
-  "-moz-outline-radius-topright": {
-    "isInherited": false,
-    "subproperties": [
-      "-moz-outline-radius-topright"
-    ],
-    "supports": [],
-    "values": [
-      "inherit",
-      "initial",
-      "revert",
-      "unset"
-    ]
-  },
   "-moz-padding-end": {
     "isInherited": false,
     "subproperties": [
@@ -3066,6 +2998,7 @@ exports.CSS_PROPERTIES = {
       "-moz-outline-radius-bottomright",
       "-moz-outline-radius-bottomleft",
       "outline-offset",
+      "size",
       "padding-top",
       "padding-right",
       "padding-bottom",
@@ -11071,12 +11004,32 @@ exports.PREFERENCES = [
     "layout.css.individual-transform.enabled"
   ],
   [
+    "size",
+    "layout.css.page-size.enabled"
+  ],
+  [
     "translate",
     "layout.css.individual-transform.enabled"
   ],
   [
     "offset-distance",
     "layout.css.motion-path.enabled"
+  ],
+  [
+    "-moz-outline-radius-bottomleft",
+    "layout.css.moz-outline-radius.enabled"
+  ],
+  [
+    "-moz-outline-radius-bottomright",
+    "layout.css.moz-outline-radius.enabled"
+  ],
+  [
+    "-moz-outline-radius-topleft",
+    "layout.css.moz-outline-radius.enabled"
+  ],
+  [
+    "-moz-outline-radius-topright",
+    "layout.css.moz-outline-radius.enabled"
   ],
   [
     "overflow-clip-box",
@@ -11093,6 +11046,10 @@ exports.PREFERENCES = [
   [
     "zoom",
     "layout.css.zoom-transform-hack.enabled"
+  ],
+  [
+    "-moz-outline-radius",
+    "layout.css.moz-outline-radius.enabled"
   ],
   [
     "-moz-transition-duration",

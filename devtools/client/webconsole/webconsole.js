@@ -98,11 +98,7 @@ class WebConsole {
   }
 
   get currentTarget() {
-    return this.toolbox.target;
-  }
-
-  get targetList() {
-    return this.commands.targetCommand;
+    return this.commands.targetCommand.targetFront;
   }
 
   get resourceWatcher() {

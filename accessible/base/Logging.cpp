@@ -16,11 +16,11 @@
 #include "nsDocShellLoadTypes.h"
 #include "nsIChannel.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsTraceRefcnt.h"
 #include "nsIWebProgress.h"
 #include "prenv.h"
 #include "nsIDocShellTreeItem.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StackWalk.h"
 #include "mozilla/dom/BorrowedAttrInfo.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
@@ -250,9 +250,6 @@ static void LogShellLoadType(nsIDocShell* aDocShell) {
     case LOAD_NORMAL_BYPASS_PROXY_AND_CACHE:
       printf("normal bypass proxy and cache; ");
       break;
-    case LOAD_NORMAL_ALLOW_MIXED_CONTENT:
-      printf("normal allow mixed content; ");
-      break;
     case LOAD_RELOAD_NORMAL:
       printf("reload normal; ");
       break;
@@ -265,14 +262,14 @@ static void LogShellLoadType(nsIDocShell* aDocShell) {
     case LOAD_RELOAD_BYPASS_PROXY_AND_CACHE:
       printf("reload bypass proxy and cache; ");
       break;
-    case LOAD_RELOAD_ALLOW_MIXED_CONTENT:
-      printf("reload allow mixed content; ");
-      break;
     case LOAD_LINK:
       printf("link; ");
       break;
     case LOAD_REFRESH:
       printf("refresh; ");
+      break;
+    case LOAD_REFRESH_REPLACE:
+      printf("refresh replace; ");
       break;
     case LOAD_RELOAD_CHARSET_CHANGE:
       printf("reload charset change; ");
@@ -906,7 +903,7 @@ void logging::DOMEvent(const char* aDescr, nsINode* aOrigTarget,
 void logging::Stack() {
   if (IsEnabled(eStack)) {
     printf("  stack: \n");
-    nsTraceRefcnt::WalkTheStack(stdout);
+    MozWalkTheStack(stdout);
   }
 }
 

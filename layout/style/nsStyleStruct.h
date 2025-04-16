@@ -693,6 +693,20 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleList {
   mozilla::StyleMozListReversed mMozListReversed;
 };
 
+struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePage {
+  using StylePageSize = mozilla::StylePageSize;
+  nsStylePage(const nsStylePage& aOther) = default;
+  nsStylePage& operator=(const nsStylePage& aOther) = default;
+  explicit nsStylePage(const mozilla::dom::Document&)
+      : mSize(StylePageSize::Auto()) {}
+
+  static constexpr bool kHasTriggerImageLoads = false;
+  nsChangeHint CalcDifference(const nsStylePage& aNewData) const;
+
+  // page-size property.
+  StylePageSize mSize;
+};
+
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
   using LengthPercentageOrAuto = mozilla::LengthPercentageOrAuto;
   using Position = mozilla::Position;
@@ -894,7 +908,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleText {
   mozilla::StyleRubyPosition mRubyPosition;
   mozilla::StyleTextSizeAdjust mTextSizeAdjust;
   uint8_t mTextCombineUpright;  // NS_STYLE_TEXT_COMBINE_UPRIGHT_*
-  mozilla::StyleControlCharacterVisibility mControlCharacterVisibility;
+  mozilla::StyleMozControlCharacterVisibility mMozControlCharacterVisibility;
   uint8_t mTextEmphasisPosition;  // NS_STYLE_TEXT_EMPHASIS_POSITION_*
   mozilla::StyleTextRendering mTextRendering;
   mozilla::StyleColor mTextEmphasisColor;

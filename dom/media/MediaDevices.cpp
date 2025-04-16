@@ -47,7 +47,7 @@ already_AddRefed<Promise> MediaDevices::GetUserMedia(
     if (!owner->IsSecureContext()) {
       doc->SetUseCounter(eUseCounter_custom_GetUserMediaInsec);
     }
-    Document* topDoc = doc->GetTopLevelContentDocument();
+    Document* topDoc = doc->GetTopLevelContentDocumentIfSameProcess();
     IgnoredErrorResult ignored;
     if (topDoc && !topDoc->HasFocus(ignored)) {
       doc->SetUseCounter(eUseCounter_custom_GetUserMediaUnfocused);
@@ -101,7 +101,7 @@ already_AddRefed<Promise> MediaDevices::EnumerateDevices(CallerType aCallerType,
     if (!owner->IsSecureContext()) {
       doc->SetUseCounter(eUseCounter_custom_EnumerateDevicesInsec);
     }
-    Document* topDoc = doc->GetTopLevelContentDocument();
+    Document* topDoc = doc->GetTopLevelContentDocumentIfSameProcess();
     IgnoredErrorResult ignored;
     if (topDoc && !topDoc->HasFocus(ignored)) {
       doc->SetUseCounter(eUseCounter_custom_EnumerateDevicesUnfocused);
@@ -164,11 +164,12 @@ already_AddRefed<Promise> MediaDevices::GetDisplayMedia(
     return nullptr;
   }
   nsCOMPtr<nsPIDOMWindowInner> owner = do_QueryInterface(global);
-  /* If the relevant global object of this does not have transient activation,
+  /* TODO: bug 1705289
+   * If the relevant global object of this does not have transient activation,
    * return a promise rejected with a DOMException object whose name attribute
    * has the value InvalidStateError. */
   WindowContext* wc = owner->GetWindowContext();
-  if (!wc || !wc->HasValidTransientUserGestureActivation()) {
+  if (!wc || !wc->HasBeenUserGestureActivated()) {
     p->MaybeRejectWithInvalidStateError(
         "getDisplayMedia must be called from a user gesture handler.");
     return p.forget();
@@ -287,6 +288,23 @@ already_AddRefed<Promise> MediaDevices::GetDisplayMedia(
 already_AddRefed<Promise> MediaDevices::SelectAudioOutput(
     const AudioOutputOptions& aOptions, CallerType aCallerType,
     ErrorResult& aRv) {
+  nsCOMPtr<nsIGlobalObject> global = xpc::NativeGlobal(GetWrapper());
+  RefPtr<Promise> p = Promise::Create(global, aRv);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
+  }
+  /* (This includes the expected user activation update of
+   * https://github.com/w3c/mediacapture-output/issues/107)
+   * If the relevant global object of this does not have transient activation,
+   * return a promise rejected with a DOMException object whose name attribute
+   * has the value InvalidStateError. */
+  nsCOMPtr<nsPIDOMWindowInner> owner = do_QueryInterface(global);
+  WindowContext* wc = owner->GetWindowContext();
+  if (!wc || !wc->HasValidTransientUserGestureActivation()) {
+    p->MaybeRejectWithInvalidStateError(
+        "selectAudioOutput requires transient user activation.");
+    return p.forget();
+  }
   aRv.ThrowNotSupportedError("Under implementation");
   return nullptr;
 }

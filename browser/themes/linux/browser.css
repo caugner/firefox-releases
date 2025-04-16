@@ -21,27 +21,37 @@
 
   --toolbarbutton-border-radius: 4px;
   --toolbarbutton-vertical-text-padding: calc(var(--toolbarbutton-inner-padding) - 1px);
-  --toolbarbutton-icon-fill-opacity: .85;
+  --toolbarbutton-icon-fill-opacity: 1;
 
   --panel-separator-color: ThreeDShadow;
 
+  --tabs-border-color: rgba(0,0,0,.3);
 
   --chrome-content-separator-color: ThreeDShadow;
 }
 
-@supports -moz-bool-pref("browser.proton.enabled") {
+@media (-moz-proton) {
 :root:not(:-moz-lwtheme) {
   --focus-outline-color: -moz-accent-color;
+  --toolbarbutton-icon-fill-attention: -moz-accent-color;
 }
+
+#TabsToolbar:not(:-moz-lwtheme),
+#TabsToolbar[brighttext]:not(:-moz-lwtheme) {
+  --attention-icon-color: -moz-accent-color;
+}
+
 } /*** END proton ***/
 
-#navigator-toolbox {
-  --tabs-border-color: rgba(0,0,0,.3);
+@media not (-moz-proton) {
+:root {
+  --toolbarbutton-icon-fill-opacity: .85;
 }
 
 #tabbrowser-tabs {
   --tab-line-color: -moz-accent-color;
 }
+} /*** end !proton ***/
 
 :root:-moz-lwtheme {
   --chrome-content-separator-color: rgba(0,0,0,.3);
@@ -203,11 +213,16 @@ menuitem.bookmark-item {
 %include ../shared/urlbarView.inc.css
 
 :root:not(:-moz-lwtheme) {
-  --urlbar-popup-url-color: -moz-nativehyperlinktext;
   --urlbar-popup-action-color: -moz-nativehyperlinktext;
   --autocomplete-popup-highlight-background: Highlight;
   --autocomplete-popup-highlight-color: HighlightText;
 }
+
+@media not (-moz-proton) {
+:root:not(:-moz-lwtheme) {
+  --urlbar-popup-url-color: -moz-nativehyperlinktext;
+}
+} /*** END !proton ***/
 
 /* Translation infobar */
 
@@ -270,7 +285,7 @@ menuitem.bookmark-item {
   }
 }
 
-@supports not -moz-bool-pref("browser.proton.tabs.enabled") {
+@media not (-moz-proton) {
 .keyboard-focused-tab > .tab-stack > .tab-content,
 .tabbrowser-tab:focus:not([aria-activedescendant]) > .tab-stack > .tab-content {
   outline: 1px dotted;
@@ -386,6 +401,10 @@ menuitem.bookmark-item {
   margin-inline-end: 0 !important;
 }
 
+.cui-widget-panelview[id^=PanelUI-webext-] {
+  border-radius: var(--arrowpanel-border-radius);
+}
+
 .webextension-popup-browser,
 .webextension-popup-stack {
   border-radius: inherit;
@@ -427,13 +446,7 @@ menuitem.bookmark-item {
     height: var(--tab-min-height);
   }
   :root[tabsintitlebar][sizemode="normal"] #toolbar-menubar[autohide="true"] {
-    height: calc(var(--tab-min-height) + var(--space-above-tabbar));
-  }
-
-  /* Add extra space to titlebar for dragging */
-  :root[sizemode="normal"][chromehidden~="menubar"] #TabsToolbar > .toolbar-items,
-  :root[sizemode="normal"] #toolbar-menubar[autohide="true"][inactive] + #TabsToolbar > .toolbar-items {
-    padding-top: var(--space-above-tabbar);
+    height: var(--tab-min-height);
   }
 
   /* Make #TabsToolbar transparent as we style underlying #titlebar with

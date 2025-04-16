@@ -98,7 +98,6 @@ struct LoadInfoArgs
   bool                        browserWouldUpgradeInsecureRequests;
   bool                        forceAllowDataURI;
   bool                        allowInsecureRedirectToDataURI;
-  bool                        bypassCORSChecks;
   bool                        skipContentPolicyCheckForWebRequest;
   bool                        originalFrameSrcLoad;
   bool                        forceInheritPrincipalDropped;
@@ -153,6 +152,8 @@ struct LoadInfoArgs
   bool                        isInDevToolsContext;
   bool                        parserCreatedScript;
   bool                        isFromProcessingFrameAttributes;
+  bool                        isMediaRequest;
+  bool                        isMediaInitialRequest;
   CookieJarSettingsArgs       cookieJarSettings;
   uint32_t                    requestBlockingReason;
   CSPInfo?                    cspToInheritInfo;
@@ -174,11 +175,6 @@ struct ParentLoadInfoForwarderArgs
   // the parent and needs to be mirrored to the child so that security
   // checks can pass.
   bool allowInsecureRedirectToDataURI;
-
-  // WebExtextensions WebRequest API allows extentions to redirect a channel
-  // Before the CORS-preflight was fetched, which can lead into unexpeced CORS blocks.
-  // We can set this to skip the Cors Checks for the old Channel.
-  bool bypassCORSChecks;
 
   // The ServiceWorker controller that may be set in the parent when
   // interception occurs.
@@ -315,7 +311,7 @@ struct HttpChannelOpenArgs
   nsString                    integrityMetadata;
   uint64_t                    contentWindowId;
   PreferredAlternativeDataTypeParams[] preferredAlternativeTypes;
-  uint64_t                    topLevelOuterContentWindowId;
+  uint64_t                    topBrowsingContextId;
   TimeStamp                   launchServiceWorkerStart;
   TimeStamp                   launchServiceWorkerEnd;
   TimeStamp                   dispatchFetchEventStart;
@@ -324,7 +320,6 @@ struct HttpChannelOpenArgs
   TimeStamp                   handleFetchEventEnd;
   bool                        forceMainDocumentChannel;
   TimeStamp                   navigationStartTimeStamp;
-  bool                        hasNonEmptySandboxingFlag;
 };
 
 struct HttpChannelConnectArgs

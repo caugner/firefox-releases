@@ -60,11 +60,7 @@ extern mozilla::LazyLogModule gWidgetLog;
   ((nscolor)NS_RGBA((int)((c).red * 255), (int)((c).green * 255), \
                     (int)((c).blue * 255), (int)((c).alpha * 255)))
 
-nsLookAndFeel::nsLookAndFeel(const LookAndFeelCache* aCache) {
-  if (aCache) {
-    DoSetCache(*aCache);
-  }
-}
+nsLookAndFeel::nsLookAndFeel() = default;
 
 nsLookAndFeel::~nsLookAndFeel() = default;
 
@@ -217,10 +213,7 @@ static bool GetBorderColors(GtkStyleContext* aContext, nscolor* aLightColor,
 // from both Highlight, used as focused+selected background, and the listbox
 // background which is assumed to be similar to -moz-field
 nsresult nsLookAndFeel::InitCellHighlightColors() {
-  // NS_SUFFICIENT_LUMINOSITY_DIFFERENCE is the a11y standard for text
-  // on a background. Use 20% of that standard since we have a background
-  // on top of another background
-  int32_t minLuminosityDifference = NS_SUFFICIENT_LUMINOSITY_DIFFERENCE / 5;
+  int32_t minLuminosityDifference = NS_SUFFICIENT_LUMINOSITY_DIFFERENCE_BG;
   int32_t backLuminosityDifference =
       NS_LUMINOSITY_DIFFERENCE(mMozWindowBackground, mFieldBackground);
   if (backLuminosityDifference >= minLuminosityDifference) {
@@ -273,84 +266,52 @@ void nsLookAndFeel::RefreshImpl() {
   mInitialized = false;
 }
 
-widget::LookAndFeelCache nsLookAndFeel::GetCacheImpl() {
-  LookAndFeelCache cache = nsXPLookAndFeel::GetCacheImpl();
-
-  constexpr IntID kIntIdsToCache[] = {IntID::SystemUsesDarkTheme,
-                                      IntID::PrefersReducedMotion,
-                                      IntID::UseAccessibilityTheme};
-
-  constexpr ColorID kColorIdsToCache[] = {
-      ColorID::ThemedScrollbar,
-      ColorID::ThemedScrollbarInactive,
-      ColorID::ThemedScrollbarThumb,
-      ColorID::ThemedScrollbarThumbHover,
-      ColorID::ThemedScrollbarThumbActive,
-      ColorID::ThemedScrollbarThumbInactive};
-
-  for (IntID id : kIntIdsToCache) {
-    cache.mInts().AppendElement(LookAndFeelInt(id, GetInt(id)));
-  }
-
-  for (ColorID id : kColorIdsToCache) {
-    cache.mColors().AppendElement(LookAndFeelColor(id, GetColor(id)));
-  }
-
-  return cache;
-}
-
-void nsLookAndFeel::SetCacheImpl(const LookAndFeelCache& aCache) {
-  DoSetCache(aCache);
-}
-
-void nsLookAndFeel::DoSetCache(const LookAndFeelCache& aCache) {
-  for (const auto& entry : aCache.mInts()) {
-    switch (entry.id()) {
-      case IntID::SystemUsesDarkTheme:
-        mSystemUsesDarkTheme = entry.value();
-        break;
-      case IntID::PrefersReducedMotion:
-        mPrefersReducedMotion = entry.value();
-        break;
-      case IntID::UseAccessibilityTheme:
-        mHighContrast = entry.value();
-        break;
-      default:
-        MOZ_ASSERT_UNREACHABLE("Bogus Int ID in cache");
-        break;
-    }
-  }
-  for (const auto& entry : aCache.mColors()) {
-    switch (entry.id()) {
-      case ColorID::ThemedScrollbar:
-        mThemedScrollbar = entry.color();
-        break;
-      case ColorID::ThemedScrollbarInactive:
-        mThemedScrollbarInactive = entry.color();
-        break;
-      case ColorID::ThemedScrollbarThumb:
-        mThemedScrollbarThumb = entry.color();
-        break;
-      case ColorID::ThemedScrollbarThumbHover:
-        mThemedScrollbarThumbHover = entry.color();
-        break;
-      case ColorID::ThemedScrollbarThumbActive:
-        mThemedScrollbarThumbActive = entry.color();
-        break;
-      case ColorID::ThemedScrollbarThumbInactive:
-        mThemedScrollbarThumbInactive = entry.color();
-        break;
-      default:
-        MOZ_ASSERT_UNREACHABLE("Bogus Color ID in cache");
-        break;
-    }
+static bool IsSelectionColorForeground(LookAndFeel::ColorID aID) {
+  using ColorID = LookAndFeel::ColorID;
+  switch (aID) {
+    case ColorID::WidgetSelectForeground:
+    case ColorID::TextSelectForeground:
+    case ColorID::IMESelectedRawTextForeground:
+    case ColorID::IMESelectedConvertedTextForeground:
+    case ColorID::Highlighttext:
+    case ColorID::MozHtmlCellhighlighttext:
+      return true;
+    default:
+      return false;
   }
 }
 
-nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
+static bool IsSelectionColorBackground(LookAndFeel::ColorID aID) {
+  using ColorID = LookAndFeel::ColorID;
+  switch (aID) {
+    case ColorID::WidgetSelectBackground:
+    case ColorID::TextSelectBackground:
+    case ColorID::IMESelectedRawTextBackground:
+    case ColorID::IMESelectedConvertedTextBackground:
+    case ColorID::MozDragtargetzone:
+    case ColorID::MozHtmlCellhighlight:
+    case ColorID::Highlight:
+      return true;
+    default:
+      return false;
+  }
+}
+
+nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme,
+                                       nscolor& aColor) {
   EnsureInit();
 
   nsresult res = NS_OK;
+
+  if (IsSelectionColorBackground(aID)) {
+    aColor = mTextSelectedBackground;
+    return NS_OK;
+  }
+
+  if (IsSelectionColorForeground(aID)) {
+    aColor = mTextSelectedText;
+    return NS_OK;
+  }
 
   switch (aID) {
       // These colors don't seem to be used for anything anymore in Mozilla
@@ -391,14 +352,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, nscolor& aColor) {
       break;
     case ColorID::MozAccentColorForeground:
       aColor = mAccentColorForeground;
-      break;
-    case ColorID::WidgetSelectForeground:
-    case ColorID::TextSelectForeground:
-    case ColorID::IMESelectedRawTextForeground:
-    case ColorID::IMESelectedConvertedTextForeground:
-    case ColorID::Highlighttext:
-    case ColorID::MozHtmlCellhighlighttext:
-      aColor = mTextSelectedText;
       break;
     case ColorID::MozCellhighlight:
       aColor = mMozCellHighlightBackground;
@@ -718,9 +671,6 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       aResult = 0;
       res = NS_ERROR_NOT_IMPLEMENTED;
       break;
-    case IntID::TouchEnabled:
-      aResult = mozilla::widget::WidgetUtils::IsTouchDeviceSupportPresent();
-      break;
     case IntID::MacGraphiteTheme:
       aResult = 0;
       res = NS_ERROR_NOT_IMPLEMENTED;
@@ -809,6 +759,22 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       aResult = mHighContrast;
       break;
     }
+    case IntID::AllowOverlayScrollbarsOverlap: {
+      aResult = 1;
+      break;
+    }
+    case IntID::ScrollbarFadeBeginDelay: {
+      aResult = 1000;
+      break;
+    }
+    case IntID::ScrollbarFadeDuration: {
+      aResult = 400;
+      break;
+    }
+    case IntID::ScrollbarDisplayOnMouseMove: {
+      aResult = 1;
+      break;
+    }
     default:
       aResult = 0;
       res = NS_ERROR_FAILURE;
@@ -829,6 +795,9 @@ nsresult nsLookAndFeel::NativeGetFloat(FloatID aID, float& aResult) {
     case FloatID::CaretAspectRatio:
       EnsureInit();
       aResult = mCaretRatio;
+      break;
+    case FloatID::TextScaleFactor:
+      aResult = gfxPlatformGtk::GetFontScaleFactor();
       break;
     default:
       aResult = -1.0;
@@ -876,19 +845,19 @@ static void GetSystemFontInfo(GtkStyleContext* aStyle, nsString* aFontName,
 bool nsLookAndFeel::NativeGetFont(FontID aID, nsString& aFontName,
                                   gfxFontStyle& aFontStyle) {
   switch (aID) {
-    case FontID::Menu:          // css2
-    case FontID::PullDownMenu:  // css3
+    case FontID::Menu:             // css2
+    case FontID::MozPullDownMenu:  // css3
       aFontName = mMenuFontName;
       aFontStyle = mMenuFontStyle;
       break;
 
-    case FontID::Field:  // css3
-    case FontID::List:   // css3
+    case FontID::MozField:  // css3
+    case FontID::MozList:   // css3
       aFontName = mFieldFontName;
       aFontStyle = mFieldFontStyle;
       break;
 
-    case FontID::Button:  // css3
+    case FontID::MozButton:  // css3
       aFontName = mButtonFontName;
       aFontStyle = mButtonFontStyle;
       break;
@@ -898,14 +867,12 @@ bool nsLookAndFeel::NativeGetFont(FontID aID, nsString& aFontName,
     case FontID::MessageBox:    // css2
     case FontID::SmallCaption:  // css2
     case FontID::StatusBar:     // css2
-    case FontID::Window:        // css3
-    case FontID::Document:      // css3
-    case FontID::Workspace:     // css3
-    case FontID::Desktop:       // css3
-    case FontID::Info:          // css3
-    case FontID::Dialog:        // css3
-    case FontID::Tooltips:      // moz
-    case FontID::Widget:        // moz
+    case FontID::MozWindow:     // css3
+    case FontID::MozDocument:   // css3
+    case FontID::MozWorkspace:  // css3
+    case FontID::MozDesktop:    // css3
+    case FontID::MozInfo:       // css3
+    case FontID::MozDialog:     // css3
     default:
       aFontName = mDefaultFontName;
       aFontStyle = mDefaultFontStyle;
@@ -999,7 +966,7 @@ void nsLookAndFeel::ConfigureTheme(const LookAndFeelTheme& aTheme) {
 }
 
 void nsLookAndFeel::WithThemeConfiguredForContent(
-    const std::function<void(const LookAndFeelTheme& aTheme)>& aFn) {
+    const std::function<void(const LookAndFeelTheme&, bool)>& aFn) {
   nsWindow::WithSettingsChangesIgnored([&]() {
     // Available on Gtk 3.20+.
     static auto sGtkSettingsResetProperty =
@@ -1029,7 +996,7 @@ void nsLookAndFeel::WithThemeConfiguredForContent(
     theme.themeName() = GetGtkTheme();
     theme.preferDarkTheme() = GetPreferDarkTheme();
 
-    aFn(theme);
+    aFn(theme, changed);
 
     if (changed) {
       GtkSettings* settings = gtk_settings_get_default();
@@ -1045,6 +1012,43 @@ void nsLookAndFeel::WithThemeConfiguredForContent(
       RefreshImpl();
     }
   });
+}
+
+bool nsLookAndFeel::FromParentTheme(IntID aID) {
+  switch (aID) {
+    case IntID::SystemUsesDarkTheme:
+    case IntID::UseAccessibilityTheme:
+      // We want to take SystemUsesDarkTheme and UseAccessibilityTheme from the
+      // parent process theme rather than the content configured theme.
+      //
+      // This ensures that media queries like (prefers-color-scheme: dark) will
+      // match correctly in content processes.
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool nsLookAndFeel::FromParentTheme(ColorID aID) {
+  if (IsSelectionColorBackground(aID) || IsSelectionColorForeground(aID)) {
+    return StaticPrefs::widget_content_allow_gtk_dark_theme_selection();
+  }
+  switch (aID) {
+    case ColorID::ThemedScrollbar:
+    case ColorID::ThemedScrollbarInactive:
+    case ColorID::ThemedScrollbarThumb:
+    case ColorID::ThemedScrollbarThumbHover:
+    case ColorID::ThemedScrollbarThumbInactive:
+      return StaticPrefs::widget_content_allow_gtk_dark_theme_scrollbar();
+    case ColorID::ThemedScrollbarThumbActive:
+      return StaticPrefs::
+          widget_content_allow_gtk_dark_theme_scrollbar_active();
+    case ColorID::MozAccentColor:
+    case ColorID::MozAccentColorForeground:
+      return StaticPrefs::widget_content_allow_gtk_dark_theme_accent();
+    default:
+      return false;
+  }
 }
 
 bool nsLookAndFeel::ConfigureContentGtkTheme() {
@@ -1140,7 +1144,7 @@ void nsLookAndFeel::EnsureInit() {
     g_object_get(settings, "gtk-enable-animations", &enableAnimations, nullptr);
     mPrefersReducedMotion = !enableAnimations;
 
-    // Colors that we pass to content processes through the LookAndFeelCache.
+    // Colors that we pass to content processes through RemoteLookAndFeel.
     if (ShouldHonorThemeScrollbarColors()) {
       // Some themes style the <trough>, while others style the <scrollbar>
       // itself, so we look at both and compose the colors.
@@ -1310,9 +1314,10 @@ void nsLookAndFeel::EnsureInit() {
       GrabSelectionColors(style);
     }
 
-    // Accent is the darker of the selection background / foreground.
     mAccentColor = mTextSelectedBackground;
     mAccentColorForeground = mTextSelectedText;
+
+    // Accent is the darker of the selection background / foreground.
     if (RelativeLuminanceUtils::Compute(mAccentColor) >
         RelativeLuminanceUtils::Compute(mAccentColorForeground)) {
       std::swap(mAccentColor, mAccentColorForeground);
@@ -1338,6 +1343,9 @@ void nsLookAndFeel::EnsureInit() {
   gtk_style_context_get_background_color(style, GTK_STATE_FLAG_PRELIGHT,
                                          &color);
   mButtonHoverFace = GDK_RGBA_TO_NS_RGBA(color);
+  if (!NS_GET_A(mButtonHoverFace)) {
+    mButtonHoverFace = mMozWindowBackground;
+  }
 
   // Combobox text color
   style = GetStyleContext(MOZ_GTK_COMBOBOX_ENTRY_TEXTAREA);

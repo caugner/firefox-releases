@@ -58,7 +58,6 @@
 #include "mozilla/layers/PLayerTransactionChild.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/webrender/WebRenderTypes.h"
-#include "npapi.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
@@ -157,7 +156,6 @@ nsBaseWidget::nsBaseWidget()
       mPreviouslyAttachedWidgetListener(nullptr),
       mLayerManager(nullptr),
       mCompositorVsyncDispatcher(nullptr),
-      mCursor(eCursor_standard),
       mBorderStyle(eBorderStyle_none),
       mBounds(0, 0, 0, 0),
       mOriginalBounds(nullptr),
@@ -525,6 +523,19 @@ CSSToLayoutDeviceScale nsIWidget::GetDefaultScale() {
   return CSSToLayoutDeviceScale(devPixelsPerCSSPixel);
 }
 
+nsIntSize nsIWidget::CustomCursorSize(const Cursor& aCursor) {
+  MOZ_ASSERT(aCursor.IsCustom());
+  int32_t width = 0;
+  int32_t height = 0;
+  aCursor.mContainer->GetWidth(&width);
+  aCursor.mContainer->GetHeight(&height);
+  if (aCursor.mResolution != 0.0f && aCursor.mResolution != 1.0f) {
+    width = std::round(float(width) / aCursor.mResolution);
+    height = std::round(float(height) / aCursor.mResolution);
+  }
+  return {width, height};
+}
+
 //-------------------------------------------------------------------------
 //
 // Add a child to the list of children
@@ -656,11 +667,7 @@ void nsBaseWidget::MoveToWorkspace(const nsAString& workspaceID) {
 //
 //-------------------------------------------------------------------------
 
-void nsBaseWidget::SetCursor(nsCursor aCursor, imgIContainer*, uint32_t,
-                             uint32_t) {
-  // We don't support the cursor image.
-  mCursor = aCursor;
-}
+void nsBaseWidget::SetCursor(const Cursor& aCursor) { mCursor = aCursor; }
 
 //-------------------------------------------------------------------------
 //
@@ -827,10 +834,6 @@ bool nsBaseWidget::ComputeShouldAccelerate() {
          WidgetTypeSupportsAcceleration();
 }
 
-bool nsBaseWidget::WidgetTypePrefersSoftwareWebRender() const {
-  return StaticPrefs::gfx_webrender_software_unaccelerated_widget_force();
-}
-
 bool nsBaseWidget::UseAPZ() {
   return (gfxPlatform::AsyncPanZoomEnabled() &&
           (WindowType() == eWindowType_toplevel ||
@@ -977,7 +980,7 @@ nsEventStatus nsBaseWidget::ProcessUntransformedAPZEvent(
     // hit-test result therefore needs to use the parent process layers id.
     LayersId rootLayersId = mCompositorSession->RootLayerTreeId();
 
-    UniquePtr<DisplayportSetListener> postLayerization;
+    RefPtr<DisplayportSetListener> postLayerization;
     if (WidgetTouchEvent* touchEvent = aEvent->AsTouchEvent()) {
       nsTArray<TouchBehaviorFlags> allowedTouchBehaviors;
       if (touchEvent->mMessage == eTouchStart) {
@@ -1010,8 +1013,8 @@ nsEventStatus nsBaseWidget::ProcessUntransformedAPZEvent(
           inputBlockId);
       mAPZEventState->ProcessMouseEvent(*mouseEvent, inputBlockId);
     }
-    if (postLayerization && postLayerization->Register()) {
-      Unused << postLayerization.release();
+    if (postLayerization) {
+      postLayerization->TryRegister();
     }
   }
 
@@ -1127,15 +1130,19 @@ void nsBaseWidget::DispatchPinchGestureInput(PinchGestureInput& aInput) {
   }
 }
 
-nsEventStatus nsBaseWidget::DispatchInputEvent(WidgetInputEvent* aEvent) {
+nsIWidget::ContentAndAPZEventStatus nsBaseWidget::DispatchInputEvent(
+    WidgetInputEvent* aEvent) {
+  nsIWidget::ContentAndAPZEventStatus status;
   MOZ_ASSERT(NS_IsMainThread());
   if (mAPZC) {
     if (APZThreadUtils::IsControllerThread()) {
       APZEventResult result = mAPZC->InputBridge()->ReceiveInputEvent(*aEvent);
+      status.mApzStatus = result.GetStatus();
       if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
-        return result.GetStatus();
+        return status;
       }
-      return ProcessUntransformedAPZEvent(aEvent, result);
+      status.mContentStatus = ProcessUntransformedAPZEvent(aEvent, result);
+      return status;
     }
     if (WidgetWheelEvent* wheelEvent = aEvent->AsWheelEvent()) {
       RefPtr<Runnable> r =
@@ -1143,21 +1150,22 @@ nsEventStatus nsBaseWidget::DispatchInputEvent(WidgetInputEvent* aEvent) {
                                               WidgetWheelEvent>(*wheelEvent,
                                                                 mAPZC, this);
       APZThreadUtils::RunOnControllerThread(std::move(r));
-      return nsEventStatus_eConsumeDoDefault;
+      status.mContentStatus = nsEventStatus_eConsumeDoDefault;
+      return status;
     }
     if (WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent()) {
       RefPtr<Runnable> r =
           new DispatchInputOnControllerThread<MouseInput, WidgetMouseEvent>(
               *mouseEvent, mAPZC, this);
       APZThreadUtils::RunOnControllerThread(std::move(r));
-      return nsEventStatus_eConsumeDoDefault;
+      status.mContentStatus = nsEventStatus_eConsumeDoDefault;
+      return status;
     }
     // Allow dispatching keyboard events on Gecko thread.
     MOZ_ASSERT(aEvent->AsKeyboardEvent());
   }
 
-  nsEventStatus status;
-  DispatchEvent(aEvent, status);
+  DispatchEvent(aEvent, status.mContentStatus);
   return status;
 }
 
@@ -1227,7 +1235,9 @@ already_AddRefed<LayerManager> nsBaseWidget::CreateCompositorSession(
         StaticPrefs::gfx_webrender_unaccelerated_widget_force()) {
       enableWR = gfx::gfxVars::UseWebRender();
       enableSWWR = gfx::gfxVars::UseSoftwareWebRender();
-    } else if (WidgetTypePrefersSoftwareWebRender()) {
+    } else if (gfxPlatform::DoesFissionForceWebRender() ||
+               StaticPrefs::
+                   gfx_webrender_software_unaccelerated_widget_allow()) {
       enableWR = enableSWWR = gfx::gfxVars::UseWebRender();
     } else {
       enableWR = enableSWWR = false;
@@ -1816,10 +1826,11 @@ void nsBaseWidget::ZoomToRect(const uint32_t& aPresShellId,
   }
   LayersId layerId = mCompositorSession->RootLayerTreeId();
   APZThreadUtils::RunOnControllerThread(
-      NewRunnableMethod<ScrollableLayerGuid, CSSRect, uint32_t>(
+      NewRunnableMethod<ScrollableLayerGuid, ZoomTarget, uint32_t>(
           "layers::IAPZCTreeManager::ZoomToRect", mAPZC,
           &IAPZCTreeManager::ZoomToRect,
-          ScrollableLayerGuid(layerId, aPresShellId, aViewId), aRect, aFlags));
+          ScrollableLayerGuid(layerId, aPresShellId, aViewId),
+          ZoomTarget{aRect, Nothing()}, aFlags));
 }
 
 #ifdef ACCESSIBILITY

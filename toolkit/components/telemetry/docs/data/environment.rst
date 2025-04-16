@@ -100,7 +100,6 @@ Structure:
         creationDate: <integer>, // integer days since UNIX epoch, e.g. 16446
         resetDate: <integer>, // integer days since UNIX epoch, e.g. 16446 - optional
         firstUseDate: <integer>, // integer days since UNIX epoch, e.g. 16446 - optional
-        wasCanary: <bool>, // Android only: true if this profile previously had a canary client ID
       },
       partner: { // This section may not be immediately available on startup
         distributionId: <string>, // pref "distribution.id", null on failure
@@ -295,19 +294,6 @@ Structure:
           installDay: <number>, // days since UNIX epoch, 0 on failure
           updateDay: <number>, // days since UNIX epoch, 0 on failure
         },
-        activePlugins: [
-          {
-            name: <string>,
-            version: <string>,
-            description: <string>,
-            blocklisted: <bool>,
-            disabled: <bool>,
-            clicktoplay: <bool>,
-            mimeTypes: [<string>, ...],
-            updateDay: <number>, // days since UNIX epoch, 0 on failure
-          },
-          ...
-        ],
         activeGMPlugins: {
             <gmp id>: {
                 version: <string>,
@@ -462,12 +448,6 @@ The time of the first use of profile. If this is an old profile where we can't
 determine this this field will not be present.
 It's read from a file-stored timestamp from the client's profile directory.
 
-wasCanary
-~~~~~~~~~
-
-Android-only. This attribute is set to ``true`` if the client ID was erroneously set to a canary client ID before
-and later reset to a new random client ID. The attribute is not included if the client ID was not changed.
-
 partner
 -------
 
@@ -506,19 +486,14 @@ addons
 activeAddons
 ~~~~~~~~~~~~
 
-Starting from Firefox 44, the length of the following string fields: ``name``, ``description`` and ``version`` is limited to 100 characters. The same limitation applies to the same fields in ``theme`` and ``activePlugins``.
+Starting from Firefox 44, the length of the following string fields: ``name``, ``description`` and ``version`` is limited to 100 characters. The same limitation applies to the same fields in ``theme``.
 
 Some of the fields in the record for each add-on are not available during startup.  The fields that will always be present are ``id``, ``version``, ``type``, ``updateDate``, ``scope``, ``isSystem``, ``isWebExtension``, and ``multiprocessCompatible``.  All the other fields documented above become present shortly after the ``sessionstore-windows-restored`` observer topic is notified.
-
-activePlugins
-~~~~~~~~~~~~~
-
-Just like activeAddons, up-to-date information is not available immediately during startup. The field will be populated with dummy information until the blocklist is loaded. At the latest, this will happen just after the ``sessionstore-windows-restored`` observer topic is notified.
 
 activeGMPPlugins
 ~~~~~~~~~~~~~~~~
 
-Just like activePlugins, this will report dummy values until the blocklist is loaded.
+Up-to-date information is not available immediately during startup. The field will be populated with dummy information until the blocklist is loaded. At the latest, this will happen just after the ``sessionstore-windows-restored`` observer topic is notified.
 
 experiments
 -----------
@@ -529,10 +504,16 @@ For each experiment we collect the
 - ``type`` (Optional. Like ``normandy-exp``, max length 20 characters)
 - ``enrollmentId`` (Optional. Like ``5bae2134-e121-46c2-aa00-232f3f5855c5``, max length 40 characters)
 
-In the event any of these fields are truncated, a warning is printed to the console.
+In the event any of these fields are truncated, a warning is printed to the console
+
+Note that this list includes other types of deliveries, including Normandy rollouts and Nimbus feature defaults.
 
 Version History
 ---------------
+
+- Firefox 88:
+
+  - Removed ``addons.activePlugins`` as part of removing NPAPI plugin support. (`bug 1682030 <https://bugzilla.mozilla.org/show_bug.cgi?id=1682030>`_)
 
 - Firefox 70:
 

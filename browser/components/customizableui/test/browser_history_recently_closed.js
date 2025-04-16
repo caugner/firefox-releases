@@ -9,37 +9,6 @@ const TEST_PATH = getRootDirectory(gTestPath).replace(
   "http://example.com"
 );
 
-/**
- * Opens the history panel through the history toolbarbutton in the
- * navbar and returns a promise that resolves as soon as the panel is open
- * is showing.
- */
-async function openHistoryPanel() {
-  await waitForOverflowButtonShown();
-  await document.getElementById("nav-bar").overflowable.show();
-  info("Menu panel was opened");
-
-  let historyButton = document.getElementById("history-panelmenu");
-  Assert.ok(historyButton, "History button appears in Panel Menu");
-
-  historyButton.click();
-
-  let historyPanel = document.getElementById("PanelUI-history");
-  return BrowserTestUtils.waitForEvent(historyPanel, "ViewShown");
-}
-
-/**
- * Closes the history panel and returns a promise that resolves as sooon
- * as the panel is closed.
- */
-async function hideHistoryPanel() {
-  let historyView = document.getElementById("PanelUI-history");
-  let historyPanel = historyView.closest("panel");
-  let promise = BrowserTestUtils.waitForEvent(historyPanel, "popuphidden");
-  historyPanel.hidePopup();
-  return promise;
-}
-
 add_task(async function testRecentlyClosedDisabled() {
   info("Check history recently closed tabs/windows section");
 
@@ -124,4 +93,54 @@ add_task(async function testRecentlyClosedDisabled() {
   );
 
   await hideHistoryPanel();
+});
+
+add_task(async function testRecentlyClosedTabsDisabledPersists() {
+  info("Check history recently closed tabs/windows section");
+
+  CustomizableUI.addWidgetToArea(
+    "history-panelmenu",
+    CustomizableUI.AREA_FIXED_OVERFLOW_PANEL
+  );
+  registerCleanupFunction(() => CustomizableUI.reset());
+
+  // We need to make sure the history is cleared before starting the test
+  await Sanitizer.sanitize(["history"]);
+
+  await openHistoryPanel();
+
+  let recentlyClosedTabs = document.getElementById("appMenuRecentlyClosedTabs");
+  Assert.ok(
+    recentlyClosedTabs.getAttribute("disabled"),
+    "Recently closed tabs button disabled"
+  );
+
+  await hideHistoryPanel();
+
+  let newWin = await BrowserTestUtils.openNewBrowserWindow();
+
+  await openHistoryPanel(newWin.document);
+  recentlyClosedTabs = newWin.document.getElementById(
+    "appMenuRecentlyClosedTabs"
+  );
+  Assert.ok(
+    recentlyClosedTabs.getAttribute("disabled"),
+    "Recently closed tabs is disabled"
+  );
+
+  // We close the window without hiding the panel first, which used to interfere
+  // with populating the view subsequently.
+  await BrowserTestUtils.closeWindow(newWin);
+
+  newWin = await BrowserTestUtils.openNewBrowserWindow();
+  await openHistoryPanel(newWin.document);
+  recentlyClosedTabs = newWin.document.getElementById(
+    "appMenuRecentlyClosedTabs"
+  );
+  Assert.ok(
+    recentlyClosedTabs.getAttribute("disabled"),
+    "Recently closed tabs is disabled"
+  );
+  await hideHistoryPanel(newWin.document);
+  await BrowserTestUtils.closeWindow(newWin);
 });

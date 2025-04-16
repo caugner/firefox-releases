@@ -170,9 +170,31 @@ class Axis {
   bool IsOverscrolled() const;
 
   /**
+   * Return true if this axis is overscrolled but its scroll offset
+   * has changed in a way that makes the oversrolled state no longer
+   * valid (for example, it is overscrolled at the top but the
+   * scroll offset is no longer zero).
+   */
+  bool IsInInvalidOverscroll() const;
+
+  /**
    * Clear any overscroll amount on this axis.
    */
   void ClearOverscroll();
+
+  /**
+   * Returns whether the overscroll animation is alive.
+   */
+  bool IsOverscrollAnimationAlive() const;
+
+  /**
+   * Returns whether the overscroll animation is running.
+   * Note that unlike the above IsOverscrollAnimationAlive, this function
+   * returns false even if the animation is still there but is very close to
+   * the destination position and its velocity is quite low, i.e. it's time to
+   * finish.
+   */
+  bool IsOverscrollAnimationRunning() const;
 
   /**
    * Gets the starting position of the touch supplied in StartTouch().
@@ -274,6 +296,9 @@ class Axis {
   ParentLayerCoord GetCompositionEnd() const;
   ParentLayerCoord GetPageEnd() const;
   ParentLayerCoord GetScrollRangeEnd() const;
+
+  bool IsScrolledToStart() const;
+  bool IsScrolledToEnd() const;
 
   ParentLayerCoord GetPos() const { return mPos; }
 

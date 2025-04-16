@@ -4,13 +4,13 @@
 
 %include ../shared/compacttheme.inc.css
 
-@supports not -moz-bool-pref("browser.proton.enabled") {
+@media not (-moz-proton) {
 /**
  * macOS vibrancy effects only work when there is no background colour behind
  * the effect. We disable transparency in fullscreen so #browser can't be seen
  * through the toolbar if the latter shifts over the former.
  */
-:root:not([OSXLionFullscreen]) #navigator-toolbox:-moz-lwtheme-darktext {
+:root:not([macOSNativeFullscreen]) #navigator-toolbox:-moz-lwtheme-darktext {
   background-color: transparent;
 }
 

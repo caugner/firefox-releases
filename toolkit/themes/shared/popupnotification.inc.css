@@ -48,10 +48,6 @@
   display: none;
 }
 
-.popup-notification-learnmore-link {
-  margin-top: .5em !important;
-}
-
 .popup-notification-button-container {
   display: flex;
 }
@@ -70,6 +66,7 @@
 
 .popup-notification-button {
   flex: 1;
+  margin-bottom: 0;
 }
 
 .popup-notification-primary-button {
@@ -80,10 +77,16 @@
   flex: 1;
 }
 
+@media not (-moz-proton-doorhangers) {
 .popup-notification-dropmarker {
   flex: none;
   padding: 0 15px !important;
 }
+
+.popup-notification-learnmore-link {
+  margin-top: .5em !important;
+}
+} /** END not Proton **/
 
 .popup-notification-dropmarker > .button-box > hbox {
   display: none;
@@ -110,15 +113,14 @@
 }
 
 /** PopupNotifications **/
-@supports -moz-bool-pref("browser.proton.doorhangers.enabled") {
+@media (-moz-proton-doorhangers) {
 popupnotification {
   font: caption;
 }
 
 .panel-footer {
   justify-content: flex-end;
-  margin-inline: 16px;
-  margin-bottom: 16px;
+  margin: 8px 16px 16px;
 }
 
 .panel-footer.panel-footer-menulike {
@@ -143,11 +145,16 @@ popupnotification {
   margin: 4px 0 0;
 }
 
+.panel-footer.panel-footer-menulike > button:focus-visible {
+  box-shadow: var(--panelview-toolbarbutton-focus-box-shadow);
+}
+
 .panel-footer.panel-footer-menulike > button:hover:active {
   color: inherit;
 }
 
 .panel-footer.panel-footer-menulike > button > .button-box {
+  padding: 0;
   display: inline;
 }
 
@@ -167,32 +174,32 @@ popupnotification {
 }
 
 .panel-footer > button {
-  color: var(--buttons-secondary-color);
+  color: var(--button-color, inherit);
 }
 
 .panel-footer:not(.panel-footer-menulike) > button {
-  background-color: var(--buttons-secondary-bgcolor, color-mix(in srgb, currentColor 13%, transparent));
+  background-color: var(--button-bgcolor, color-mix(in srgb, currentColor 13%, transparent));
 }
 
 .panel-footer:not(.panel-footer-menulike) > button[disabled] {
   opacity: 0.4;
 }
 
+.panel-footer:not(.panel-footer-menulike) > button:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: 0;
+}
+
 .panel-footer > button:not([disabled]):hover {
-  background-color: var(--buttons-secondary-hover-bgcolor, color-mix(in srgb, currentColor 17%, transparent));
+  background-color: var(--button-hover-bgcolor, color-mix(in srgb, currentColor 17%, transparent));
 }
 
 .panel-footer > button:not([disabled]):hover:active {
-  /**
-   * We override the colour here because on macOS, buttons default to
-   * having :hover:active buttons have color -moz-mac-buttonactivetext
-   */
-  color: var(--buttons-secondary-color);
-  background-color: var(--buttons-secondary-active-bgcolor, color-mix(in srgb, currentColor 30%, transparent));
+  background-color: var(--button-active-bgcolor, color-mix(in srgb, currentColor 30%, transparent));
 }
 
 .panel-footer > button:not([disabled])[default] {
-  color: var(--buttons-primary-button-color, -moz-accent-color-foreground) !important;
+  color: var(--buttons-primary-button-color, -moz-accent-color-foreground);
   background-color: var(--buttons-primary-button-bgcolor, -moz-accent-color);
 }
 
@@ -204,9 +211,17 @@ popupnotification {
   background-color: var(--buttons-primary-button-active-bgcolor, color-mix(in srgb, black 20%, -moz-accent-color));
 }
 
+.panel-footer:not(.panel-footer-menulike) > button > .button-box {
+  padding: 0;
+}
+
 .popup-notification-button,
 .popup-notification-primary-button {
   flex: unset;
+}
+
+.popup-notification-secondary-button[hidden="true"] ~ .popup-notification-primary-button {
+  flex: none;
 }
 
 .panel-footer > .popup-notification-secondary-button:not([dropmarkerhidden="true"]) {
@@ -221,9 +236,20 @@ popupnotification {
 .popup-notification-icon {
   height: 16px;
   width: 16px;
+  margin-inline-end: 6px;
 }
 
 .popup-notification-checkbox > .checkbox-label-box > .checkbox-label {
   opacity: 0.7;
+}
+
+.panel-footer > .popup-notification-dropmarker {
+  max-width: 32px;
+  padding: 8px;
+}
+
+.popup-notification-learnmore-link {
+  text-decoration: underline;
+  margin-block: 0 8px;
 }
 } /*** END proton ***/

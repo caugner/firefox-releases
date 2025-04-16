@@ -64,6 +64,7 @@ inline uint32_t BackendTypeBit(BackendType b) { return 1 << uint8_t(b); }
 }  // namespace gfx
 namespace dom {
 class SystemFontListEntry;
+class SystemFontList;
 }
 }  // namespace mozilla
 
@@ -265,9 +266,8 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
    * aTarget should not keep a reference to the returned surface because that
    * will cause a cycle.
    *
-   * This function is static so that it can be accessed from
-   * PluginInstanceChild (where we can't call gfxPlatform::GetPlatform()
-   * because the prefs service can only be accessed from the main process).
+   * This function is static so that it can be accessed from outside the main
+   * process.
    *
    * aIsPlugin is used to tell the backend that they can optimize this surface
    * specifically because it's used for a plugin. This is mostly for Skia.
@@ -360,8 +360,7 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
    * available fonts on the platform; used to pass the list from chrome to
    * content process. Currently implemented only on MacOSX and Linux.
    */
-  virtual void ReadSystemFontList(
-      nsTArray<mozilla::dom::SystemFontListEntry>* aFontList) {}
+  virtual void ReadSystemFontList(mozilla::dom::SystemFontList*){};
 
   /**
    * Rebuilds the system font lists (if aFullRebuild is true), or just notifies

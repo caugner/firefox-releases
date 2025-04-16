@@ -53,7 +53,14 @@
 #  include "nsWindowsDllInterceptor.h"
 #  include "mozilla/WindowsDllBlocklist.h"
 #  include "mozilla/WindowsVersion.h"
-#  include "psapi.h"  // For PERFORMANCE_INFORAMTION
+#  include "psapi.h"  // For PERFORMANCE_INFORMATION and K32GetPerformanceInfo()
+#  if defined(__MINGW32__) || defined(__MINGW64__)
+// Add missing constants and types for mingw builds
+#    define HREPORT HANDLE
+#    define PWER_SUBMIT_RESULT WER_SUBMIT_RESULT*
+#    define WER_MAX_PREFERRED_MODULES_BUFFER (256)
+#  endif               // defined(__MINGW32__) || defined(__MINGW64__)
+#  include "werapi.h"  // For WerRegisterRuntimeExceptionModule()
 #elif defined(XP_MACOSX)
 #  include "breakpad-client/mac/crash_generation/client_info.h"
 #  include "breakpad-client/mac/crash_generation/crash_generation_server.h"
@@ -1917,6 +1924,51 @@ static void TeardownAnnotationFacilities() {
   ShutdownThreadAnnotation();
 }
 
+#ifdef XP_WIN
+
+bool GetRuntimeExceptionModulePath(wchar_t* aPath, const size_t aLength) {
+  const wchar_t* kModuleName = L"mozwer.dll";
+  DWORD res = GetModuleFileName(nullptr, aPath, aLength);
+  if ((res > 0) && (res != aLength)) {
+    wchar_t* last_backslash = wcsrchr(aPath, L'\\');
+    if (last_backslash) {
+      *(last_backslash + 1) = L'\0';
+      if (wcscat_s(aPath, aLength, kModuleName) == 0) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+#endif  // XP_WIN
+
+void RegisterRuntimeExceptionModule(void) {
+#ifdef XP_WIN
+  const size_t kPathLength = MAX_PATH + 1;
+  wchar_t path[kPathLength] = {};
+  if (GetRuntimeExceptionModulePath(path, kPathLength)) {
+    Unused << WerRegisterRuntimeExceptionModule(path, nullptr);
+  }
+
+  DWORD dwFlags = 0;
+  if (WerGetFlags(GetCurrentProcess(), &dwFlags) == S_OK) {
+    Unused << WerSetFlags(dwFlags | WER_FAULT_REPORTING_DISABLE_SNAPSHOT_HANG);
+  }
+#endif  // XP_WIN
+}
+
+void UnregisterRuntimeExceptionModule(void) {
+#ifdef XP_WIN
+  const size_t kPathLength = MAX_PATH + 1;
+  wchar_t path[kPathLength] = {};
+  if (GetRuntimeExceptionModulePath(path, kPathLength)) {
+    Unused << WerUnregisterRuntimeExceptionModule(path, nullptr);
+  }
+#endif  // XP_WIN
+}
+
 nsresult SetExceptionHandler(nsIFile* aXREDirectory, bool force /*=false*/) {
   if (gExceptionHandler) return NS_ERROR_ALREADY_INITIALIZED;
 
@@ -1936,6 +1988,7 @@ nsresult SetExceptionHandler(nsIFile* aXREDirectory, bool force /*=false*/) {
   // the crash reporter client
   doReport = ShouldReport();
 
+  RegisterRuntimeExceptionModule();
   InitializeAnnotationFacilities();
 
 #if !defined(MOZ_WIDGET_ANDROID)
@@ -2214,9 +2267,7 @@ static nsresult GetOrInit(nsIFile* aDir, const nsACString& filename,
 // and just setting this to "the time when this version was first run".
 static nsresult InitInstallTime(nsACString& aInstallTime) {
   time_t t = time(nullptr);
-  char buf[16];
-  SprintfLiteral(buf, "%ld", t);
-  aInstallTime = buf;
+  aInstallTime = nsPrintfCString("%" PRIu64, static_cast<uint64_t>(t));
 
   return NS_OK;
 }
@@ -3679,43 +3730,6 @@ static mach_port_t GetChildThread(ProcessHandle childPid,
   return childThread;
 }
 #endif
-
-bool TakeMinidump(nsIFile** aResult, bool aMoveToPending) {
-  if (!GetEnabled()) return false;
-
-#if defined(DEBUG) && defined(HAS_DLL_BLOCKLIST)
-  DllBlocklist_Shutdown();
-#endif
-
-  AutoIOInterposerDisable disableIOInterposition;
-
-  xpstring dump_path;
-#ifndef XP_LINUX
-  dump_path = gExceptionHandler->dump_path();
-#else
-  dump_path = gExceptionHandler->minidump_descriptor().directory();
-#endif
-
-  // capture the dump
-  if (!google_breakpad::ExceptionHandler::WriteMinidump(
-          dump_path,
-#ifdef XP_MACOSX
-          true,
-#endif
-          PairedDumpCallback, static_cast<void*>(aResult)
-#ifdef XP_WIN
-                                  ,
-          GetMinidumpType()
-#endif
-              )) {
-    return false;
-  }
-
-  if (aMoveToPending) {
-    MoveToPending(*aResult, nullptr, nullptr);
-  }
-  return true;
-}
 
 bool CreateMinidumpsAndPair(ProcessHandle aTargetHandle,
                             ThreadId aTargetBlamedThread,

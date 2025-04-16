@@ -1040,6 +1040,8 @@ class nsDocShell final : public nsDocLoader,
   nsresult HandleSameDocumentNavigation(nsDocShellLoadState* aLoadState,
                                         SameDocumentNavigationState& aState);
 
+  uint32_t GetSameDocumentNavigationFlags(nsIURI* aNewURI);
+
   // Called when the Private Browsing state of a nsDocShell changes.
   void NotifyPrivateBrowsingChanged();
 
@@ -1073,6 +1075,9 @@ class nsDocShell final : public nsDocLoader,
    * a popup window, even if rel="opener" is requested.
    */
   bool NoopenerForceEnabled();
+
+  bool ShouldOpenInBlankTarget(const nsAString& aOriginalTarget,
+                               nsIURI* aLinkURI, nsIContent* aContent);
 
  private:  // data members
   nsString mTitle;
@@ -1168,11 +1173,6 @@ class nsDocShell final : public nsDocLoader,
   nsCOMPtr<nsIURI> mFailedURI;
   nsCOMPtr<nsIChannel> mFailedChannel;
 
-  // Set in DoURILoad when either the LOAD_RELOAD_ALLOW_MIXED_CONTENT flag or
-  // the LOAD_NORMAL_ALLOW_MIXED_CONTENT flag is set.
-  // Checked in nsMixedContentBlocker, to see if the channels match.
-  nsCOMPtr<nsIChannel> mMixedContentChannel;
-
   mozilla::UniquePtr<mozilla::gfx::Matrix5x4> mColorMatrix;
 
   const mozilla::Encoding* mForcedCharset;
@@ -1201,10 +1201,6 @@ class nsDocShell final : public nsDocLoader,
   // root docshell's indices can differ from child docshells'.
   int32_t mPreviousEntryIndex;
   int32_t mLoadedEntryIndex;
-
-  // Offset in the parent's child list.
-  // -1 if the docshell is added dynamically to the parent shell.
-  int32_t mChildOffset;
 
   BusyFlags mBusyFlags;
   AppType mAppType;

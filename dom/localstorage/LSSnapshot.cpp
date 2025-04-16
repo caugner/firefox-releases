@@ -42,7 +42,6 @@
 #include "nsStringFlags.h"
 #include "nsStringFwd.h"
 #include "nsTArray.h"
-#include "nsTHashtable.h"
 #include "nsTStringRepr.h"
 #include "nscore.h"
 
@@ -199,7 +198,7 @@ nsresult LSSnapshot::Init(const nsAString& aKey,
     const LSValue& value = itemInfo.value();
 
     if (loadState != LoadState::AllOrderedItems && !value.IsVoid()) {
-      mLoadedItems.PutEntry(itemInfo.key());
+      mLoadedItems.Insert(itemInfo.key());
     }
 
     mValues.InsertOrUpdate(itemInfo.key(), value.AsString());
@@ -207,7 +206,7 @@ nsresult LSSnapshot::Init(const nsAString& aKey,
 
   if (loadState == LoadState::Partial) {
     if (aInitInfo.addKeyToUnknownItems()) {
-      mUnknownItems.PutEntry(aKey);
+      mUnknownItems.Insert(aKey);
     }
     mInitLength = aInitInfo.totalLength();
     mLength = mInitLength;
@@ -319,9 +318,7 @@ nsresult LSSnapshot::GetKeys(nsTArray<nsString>& aKeys) {
     return rv;
   }
 
-  for (auto iter = mValues.ConstIter(); !iter.Done(); iter.Next()) {
-    aKeys.AppendElement(iter.Key());
-  }
+  AppendToArray(aKeys, mValues.Keys());
 
   return NS_OK;
 }
@@ -630,7 +627,7 @@ nsresult LSSnapshot::GetItemInternal(const nsAString& aKey,
     case LoadState::Partial: {
       if (mValues.Get(aKey, &result)) {
         MOZ_ASSERT(!result.IsVoid());
-      } else if (mLoadedItems.GetEntry(aKey) || mUnknownItems.GetEntry(aKey)) {
+      } else if (mLoadedItems.Contains(aKey) || mUnknownItems.Contains(aKey)) {
         result.SetIsVoid(true);
       } else {
         LSValue value;
@@ -643,9 +640,9 @@ nsresult LSSnapshot::GetItemInternal(const nsAString& aKey,
         result = value.AsString();
 
         if (result.IsVoid()) {
-          mUnknownItems.PutEntry(aKey);
+          mUnknownItems.Insert(aKey);
         } else {
-          mLoadedItems.PutEntry(aKey);
+          mLoadedItems.Insert(aKey);
           mValues.InsertOrUpdate(aKey, result);
 
           // mLoadedItems.Count()==mInitLength is checked below.
@@ -654,7 +651,7 @@ nsresult LSSnapshot::GetItemInternal(const nsAString& aKey,
         for (uint32_t i = 0; i < itemInfos.Length(); i++) {
           const LSItemInfo& itemInfo = itemInfos[i];
 
-          mLoadedItems.PutEntry(itemInfo.key());
+          mLoadedItems.Insert(itemInfo.key());
           mValues.InsertOrUpdate(itemInfo.key(), itemInfo.value().AsString());
         }
 
@@ -692,7 +689,7 @@ nsresult LSSnapshot::GetItemInternal(const nsAString& aKey,
 
           MOZ_ASSERT(!result.IsVoid());
 
-          mLoadedItems.PutEntry(aKey);
+          mLoadedItems.Insert(aKey);
           mValues.InsertOrUpdate(aKey, result);
 
           // mLoadedItems.Count()==mInitLength is checked below.
@@ -700,7 +697,7 @@ nsresult LSSnapshot::GetItemInternal(const nsAString& aKey,
           for (uint32_t i = 0; i < itemInfos.Length(); i++) {
             const LSItemInfo& itemInfo = itemInfos[i];
 
-            mLoadedItems.PutEntry(itemInfo.key());
+            mLoadedItems.Insert(itemInfo.key());
             mValues.InsertOrUpdate(itemInfo.key(), itemInfo.value().AsString());
           }
 

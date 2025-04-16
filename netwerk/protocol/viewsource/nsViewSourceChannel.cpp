@@ -729,17 +729,15 @@ nsViewSourceChannel::SetTopLevelContentWindowId(uint64_t aWindowId) {
 }
 
 NS_IMETHODIMP
-nsViewSourceChannel::GetTopLevelOuterContentWindowId(uint64_t* aWindowId) {
-  return !mHttpChannel
-             ? NS_ERROR_NULL_POINTER
-             : mHttpChannel->GetTopLevelOuterContentWindowId(aWindowId);
+nsViewSourceChannel::GetTopBrowsingContextId(uint64_t* aId) {
+  return !mHttpChannel ? NS_ERROR_NULL_POINTER
+                       : mHttpChannel->GetTopBrowsingContextId(aId);
 }
 
 NS_IMETHODIMP
-nsViewSourceChannel::SetTopLevelOuterContentWindowId(uint64_t aWindowId) {
-  return !mHttpChannel
-             ? NS_ERROR_NULL_POINTER
-             : mHttpChannel->SetTopLevelOuterContentWindowId(aWindowId);
+nsViewSourceChannel::SetTopBrowsingContextId(uint64_t aId) {
+  return !mHttpChannel ? NS_ERROR_NULL_POINTER
+                       : mHttpChannel->SetTopBrowsingContextId(aId);
 }
 
 NS_IMETHODIMP
@@ -1056,21 +1054,6 @@ void nsViewSourceChannel::SetIPv4Disabled() {
 void nsViewSourceChannel::SetIPv6Disabled() {
   if (mHttpChannelInternal) {
     mHttpChannelInternal->SetIPv6Disabled();
-  }
-}
-
-bool nsViewSourceChannel::GetHasNonEmptySandboxingFlag() {
-  if (mHttpChannelInternal) {
-    return mHttpChannelInternal->GetHasNonEmptySandboxingFlag();
-  }
-  return false;
-}
-
-void nsViewSourceChannel::SetHasNonEmptySandboxingFlag(
-    bool aHasNonEmptySandboxingFlag) {
-  if (mHttpChannelInternal) {
-    mHttpChannelInternal->SetHasNonEmptySandboxingFlag(
-        aHasNonEmptySandboxingFlag);
   }
 }
 

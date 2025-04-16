@@ -13,7 +13,7 @@
 
     <groupbox id="searchbarGroup" data-category="paneSearch" hidden="true">
       <label control="searchBarVisibleGroup"><html:h2 data-l10n-id="search-bar-header"/></label>
-      <radiogroup id="searchBarVisibleGroup" preference="browser.search.widget.inNavBar">
+      <radiogroup id="searchBarVisibleGroup" preference="browser.search.widget.inNavBar" align="start">
         <radio id="searchBarHiddenRadio" value="false" data-l10n-id="search-bar-hidden"/>
         <image class="searchBarImage searchBarHiddenImage" role="presentation"/>
         <radio id="searchBarShownRadio" value="true" data-l10n-id="search-bar-shown"/>
@@ -82,7 +82,7 @@
         </hbox>
       </vbox>
       <label id="openLocationBarPrivacyPreferences" is="text-link"
-             data-l10n-id="suggestions-addressbar-settings-generic"/>
+             data-l10n-id="suggestions-addressbar-settings-generic2"/>
     </groupbox>
 
     <groupbox id="oneClickSearchProvidersGroup" data-category="paneSearch" hidden="true">

@@ -31,30 +31,15 @@ raptor_description_schema = Schema(
         Optional("binary-path"): optionally_keyed_by("app", text_type),
         # Configs defined in the 'test_description_schema'.
         Optional("max-run-time"): optionally_keyed_by(
-            "app", test_description_schema["max-run-time"]
+            "app", "subtest", "test-platform", test_description_schema["max-run-time"]
         ),
         Optional("run-on-projects"): optionally_keyed_by(
             "app",
             "test-name",
             "raptor-test",
             "subtest",
+            "variant",
             test_description_schema["run-on-projects"],
-        ),
-        Optional("fission-run-on-projects"): optionally_keyed_by(
-            "app",
-            "test-name",
-            "raptor-test",
-            "subtest",
-            "test-platform",
-            test_description_schema["fission-run-on-projects"],
-        ),
-        Optional("webrender-run-on-projects"): optionally_keyed_by(
-            "app",
-            "test-name",
-            "raptor-test",
-            "subtest",
-            "test-platform",
-            test_description_schema["webrender-run-on-projects"],
         ),
         Optional("variants"): optionally_keyed_by(
             "app", "subtest", test_description_schema["variants"]
@@ -63,7 +48,7 @@ raptor_description_schema = Schema(
             "app", test_description_schema["target"]
         ),
         Optional("tier"): optionally_keyed_by(
-            "app", "raptor-test", "subtest", test_description_schema["tier"]
+            "app", "raptor-test", "subtest", "variant", test_description_schema["tier"]
         ),
         Optional("test-url-param"): optionally_keyed_by(
             "subtest", "test-platform", text_type
@@ -159,7 +144,9 @@ def split_raptor_subtests(config, tests):
             if isinstance(chunked["subtest"], list):
                 chunked["subtest"] = subtest[0]
                 chunked["subtest-symbol"] = subtest[1]
-            chunked = resolve_keyed_by(chunked, "tier", chunked["subtest"])
+            chunked = resolve_keyed_by(
+                chunked, "tier", chunked["subtest"], defer=["variant"]
+            )
             yield chunked
 
 
@@ -172,17 +159,17 @@ def handle_keyed_by(config, tests):
         "activity",
         "binary-path",
         "fetches.fetch",
-        "fission-run-on-projects",
         "max-run-time",
         "run-on-projects",
         "target",
         "tier",
         "run-visual-metrics",
-        "webrender-run-on-projects",
     ]
     for test in tests:
         for field in fields:
-            resolve_keyed_by(test, field, item_name=test["test-name"])
+            resolve_keyed_by(
+                test, field, item_name=test["test-name"], defer=["variant"]
+            )
         yield test
 
 
@@ -192,7 +179,9 @@ def split_page_load_by_url(config, tests):
         # `chunk-number` and 'subtest' only exists when the task had a
         # definition for `raptor-subtests`
         chunk_number = test.pop("chunk-number", None)
-        subtest = test.pop("subtest", None)
+        subtest = test.get(
+            "subtest"
+        )  # don't pop as some tasks need this value after splitting variants
         subtest_symbol = test.pop("subtest-symbol", None)
 
         if not chunk_number or not subtest:
@@ -246,14 +235,10 @@ def add_extra_options(config, tests):
             extra_options.append("--browsertime-video")
             test["attributes"]["run-visual-metrics"] = True
 
-        if test.get("app", "") == "fennec" and test["test-name"].startswith(
-            "browsertime"
-        ):
-            # Bug 1645181: Conditioned profiles cause problems
-            extra_options.append("--no-conditioned-profile")
-
         if "app" in test:
-            extra_options.append("--app={}".format(test.pop("app")))
+            extra_options.append(
+                "--app={}".format(test["app"])
+            )  # don't pop as some tasks need this value after splitting variants
 
         if "activity" in test:
             extra_options.append("--activity={}".format(test.pop("activity")))
@@ -276,17 +261,4 @@ def add_extra_options(config, tests):
 
         extra_options.append("--project={}".format(config.params.get("project")))
 
-        yield test
-
-
-@transforms.add
-def apply_tier_optimization(config, tests):
-    for test in tests:
-        if test["test-platform"].startswith("android-hw"):
-            yield test
-            continue
-
-        test["optimization"] = {"skip-unless-expanded": None}
-        if test["tier"] > 1:
-            test["optimization"] = {"skip-unless-backstop": None}
         yield test

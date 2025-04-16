@@ -35,6 +35,7 @@
 #include "mozilla/dom/Performance.h"
 #include "mozilla/dom/PerformanceStorage.h"
 #include "mozilla/dom/WindowGlobalParent.h"
+#include "mozilla/net/OpaqueResponseUtils.h"
 #include "mozilla/net/PartiallySeekableInputStream.h"
 #include "mozilla/net/UrlClassifierCommon.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
@@ -178,7 +179,7 @@ HttpBaseChannel::HttpBaseChannel()
       mEncodedBodySize(0),
       mRequestContextID(0),
       mContentWindowId(0),
-      mTopLevelOuterContentWindowId(0),
+      mTopBrowsingContextId(0),
       mAltDataLength(-1),
       mChannelId(0),
       mReqContentLength(0U),
@@ -201,7 +202,11 @@ HttpBaseChannel::HttpBaseChannel()
       mPriority(PRIORITY_NORMAL),
       mRedirectionLimit(gHttpHandler->RedirectionLimit()),
       mRedirectCount(0),
-      mInternalRedirectCount(0) {
+      mInternalRedirectCount(0),
+      mCachedOpaqueResponseBlockingPref(
+          StaticPrefs::browser_opaqueResponseBlocking()),
+      mBlockOpaqueResponseAfterSniff(false),
+      mCheckIsOpaqueResponseAllowedAfterSniff(false) {
   StoreApplyConversion(true);
   StoreAllowSTS(true);
   StoreInheritApplicationCache(true);
@@ -1466,16 +1471,14 @@ NS_IMETHODIMP HttpBaseChannel::GetTopLevelContentWindowId(uint64_t* aWindowId) {
   return NS_OK;
 }
 
-NS_IMETHODIMP HttpBaseChannel::SetTopLevelOuterContentWindowId(
-    uint64_t aWindowId) {
-  mTopLevelOuterContentWindowId = aWindowId;
+NS_IMETHODIMP HttpBaseChannel::SetTopBrowsingContextId(uint64_t aId) {
+  mTopBrowsingContextId = aId;
   return NS_OK;
 }
 
-NS_IMETHODIMP HttpBaseChannel::GetTopLevelOuterContentWindowId(
-    uint64_t* aWindowId) {
-  EnsureTopLevelOuterContentWindowId();
-  *aWindowId = mTopLevelOuterContentWindowId;
+NS_IMETHODIMP HttpBaseChannel::GetTopBrowsingContextId(uint64_t* aId) {
+  EnsureTopBrowsingContextId();
+  *aId = mTopBrowsingContextId;
   return NS_OK;
 }
 
@@ -2253,6 +2256,10 @@ nsresult HttpBaseChannel::ProcessCrossOriginResourcePolicyHeader() {
     return NS_OK;
   }
 
+  if (mLoadInfo->GetLoadingPrincipal()->IsSystemPrincipal()) {
+    return NS_OK;
+  }
+
   nsAutoCString content;
   Unused << mResponseHead->GetHeader(nsHttp::Cross_Origin_Resource_Policy,
                                      content);
@@ -2369,7 +2376,7 @@ nsresult HttpBaseChannel::ComputeCrossOriginOpenerPolicyMismatch() {
   // If bc's popup sandboxing flag set is not empty and potentialCOOP is
   // non-null, then navigate bc to a network error and abort these steps.
   if (resultPolicy != nsILoadInfo::OPENER_POLICY_UNSAFE_NONE &&
-      GetHasNonEmptySandboxingFlag()) {
+      mLoadInfo->GetSandboxFlags()) {
     LOG((
         "HttpBaseChannel::ComputeCrossOriginOpenerPolicyMismatch network error "
         "for non empty sandboxing and non null COOP"));
@@ -2772,6 +2779,204 @@ nsresult HttpBaseChannel::ValidateMIMEType() {
 
   WarnWrongMIMEOfScript(this, mURI, mResponseHead.get(), mLoadInfo);
   return NS_OK;
+}
+
+bool HttpBaseChannel::EnsureOpaqueResponseIsAllowed() {
+  MOZ_ASSERT(XRE_IsParentProcess());
+
+  if (!mCachedOpaqueResponseBlockingPref) {
+    return true;
+  }
+
+  if (!mURI || !mResponseHead || !mLoadInfo) {
+    // if there is no uri, no response head or no loadInfo, then there is
+    // nothing to do
+    return true;
+  }
+
+  nsCOMPtr<nsIPrincipal> principal = mLoadInfo->GetLoadingPrincipal();
+  if (!principal || principal->IsSystemPrincipal()) {
+    // If it's a top-level load or a system principal, then there is nothing to
+    // do.
+    return true;
+  }
+
+  // Check if it's cross-origin without CORS.
+  const bool isPrivateWin =
+      mLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
+  bool isSameOrigin = false;
+  principal->IsSameOrigin(mURI, isPrivateWin, &isSameOrigin);
+  if (isSameOrigin) {
+    return true;
+  }
+
+  nsAutoCString corsOrigin;
+  nsresult rv = mResponseHead->GetHeader(
+      nsHttp::ResolveAtom("Access-Control-Allow-Origin"), corsOrigin);
+  if (NS_SUCCEEDED(rv)) {
+    if (corsOrigin.Equals("*")) {
+      return true;
+    }
+
+    nsCOMPtr<nsIURI> corsOriginURI;
+    rv = NS_NewURI(getter_AddRefs(corsOriginURI), corsOrigin);
+    if (NS_SUCCEEDED(rv)) {
+      bool isSameOrigin = false;
+      principal->IsSameOrigin(corsOriginURI, isPrivateWin, &isSameOrigin);
+      if (isSameOrigin) {
+        return true;
+      }
+    }
+  }
+
+  InitiateORBTelemetry();
+
+  nsAutoCString contentType;
+  mResponseHead->ContentType(contentType);
+  if (!contentType.IsEmpty()) {
+    if (IsOpaqueSafeListedMIMEType(contentType)) {
+      ReportORBTelemetry("Allowed_SafeListed"_ns);
+      return true;
+    }
+
+    if (IsOpaqueBlockListedNeverSniffedMIMEType(contentType)) {
+      // XXXtt: Report To Console.
+      ReportORBTelemetry("Blocked_BlockListedNeverSniffed"_ns);
+      return false;
+    }
+
+    if (mResponseHead->Status() == 206 &&
+        IsOpaqueBlockListedMIMEType(contentType)) {
+      // XXXtt: Report To Console.
+      ReportORBTelemetry("Blocked_206AndBlockListed"_ns);
+      return false;
+    }
+
+    nsAutoCString contentTypeOptionsHeader;
+    if (mResponseHead->GetContentTypeOptionsHeader(contentTypeOptionsHeader) &&
+        contentTypeOptionsHeader.EqualsIgnoreCase("nosniff") &&
+        (IsOpaqueBlockListedMIMEType(contentType) ||
+         contentType.EqualsLiteral(TEXT_PLAIN))) {
+      // XXXtt: Report To Console.
+      ReportORBTelemetry("Blocked_NosniffAndEitherBlockListedOrTextPlain"_ns);
+      return false;
+    }
+  }
+
+  // If it's a media subsequent request, we assume that it will only be made
+  // after a successful initial request.
+  bool isMediaRequest;
+  mLoadInfo->GetIsMediaRequest(&isMediaRequest);
+  if (isMediaRequest) {
+    bool isMediaInitialRequest;
+    mLoadInfo->GetIsMediaInitialRequest(&isMediaInitialRequest);
+    if (!isMediaInitialRequest) {
+      ReportORBTelemetry("Allowed_SubsequentMediaRequest"_ns);
+      return true;
+    }
+  }
+
+  if (mLoadFlags & nsIChannel::LOAD_CALL_CONTENT_SNIFFERS) {
+    mSnifferCategoryType = SnifferCategoryType::All;
+  } else {
+    mSnifferCategoryType = SnifferCategoryType::OpaqueResponseBlocking;
+  }
+
+  mLoadFlags |= (nsIChannel::LOAD_CALL_CONTENT_SNIFFERS |
+                 nsIChannel::LOAD_MEDIA_SNIFFER_OVERRIDES_CONTENT_TYPE);
+  mCheckIsOpaqueResponseAllowedAfterSniff = true;
+
+  return true;
+}
+
+Result<bool, nsresult>
+HttpBaseChannel::EnsureOpaqueResponseIsAllowedAfterSniff() {
+  MOZ_ASSERT(XRE_IsParentProcess());
+
+  if (!mCheckIsOpaqueResponseAllowedAfterSniff) {
+    return true;
+  }
+
+  MOZ_ASSERT(mCachedOpaqueResponseBlockingPref);
+
+  // Set mCheckIsOpaqueResponseAllowedAfterSniff as false to bypass
+  // nsHttpChannel::DisableIsOpaqueResponseAllowedAfterSniff() when content
+  // sniff happens in OnDataAvailable stage.
+  //
+  // XXXechuang: This method can return true when content type is
+  // UNKNOWN_CONTENT_TYPE. But the response might be recognized as a blocked
+  // type when after sniff in OnDataAvailable(). Should have a follow bug for
+  // these cases.
+  mCheckIsOpaqueResponseAllowedAfterSniff = false;
+
+  if (mBlockOpaqueResponseAfterSniff) {
+    // XXXtt: Report To Console.
+    return false;
+  }
+
+  bool isMediaRequest;
+  mLoadInfo->GetIsMediaRequest(&isMediaRequest);
+  if (isMediaRequest) {
+    // XXXtt: Report To Console.
+    ReportORBTelemetry("Blocked_UnexpectedMediaRequest"_ns);
+    return false;
+  }
+
+  nsAutoCString contentType;
+  nsresult rv = GetContentType(contentType);
+  if (NS_FAILED(rv)) {
+    ReportORBTelemetry("Blocked_UnexpectedContentType"_ns);
+    return Err(rv);
+  }
+
+  if (!mResponseHead) {
+    ReportORBTelemetry("Allowed_UnexpectedResponseHead"_ns);
+    return true;
+  }
+
+  nsAutoCString contentTypeOptionsHeader;
+  if (mResponseHead->GetContentTypeOptionsHeader(contentTypeOptionsHeader) &&
+      contentTypeOptionsHeader.EqualsIgnoreCase("nosniff")) {
+    // XXXtt: Report To Console.
+    ReportORBTelemetry("Blocked_NoSniffHeaderAfterSniff"_ns);
+    return false;
+  }
+
+  if (mResponseHead->Status() < 200 || mResponseHead->Status() > 299) {
+    // XXXtt: Report To Console.
+    ReportORBTelemetry("Blocked_ResponseNotOk"_ns);
+    return false;
+  }
+
+  if (contentType.EqualsLiteral(UNKNOWN_CONTENT_TYPE) ||
+      contentType.EqualsLiteral(APPLICATION_OCTET_STREAM)) {
+    ReportORBTelemetry("Allowed_FailtoGetMIMEType"_ns);
+    return true;
+  }
+
+  if (StringBeginsWith(contentType, "image/"_ns) ||
+      StringBeginsWith(contentType, "video/"_ns) ||
+      StringBeginsWith(contentType, "audio/"_ns)) {
+    // XXXtt: Report To Console.
+    ReportORBTelemetry("Blocked_ContentTypeBeginsWithImageOrVideoOrAudio"_ns);
+    return false;
+  }
+
+  // XXXtt: If response's body parses as JavaScript and does not parse as JSON,
+  // then return true.
+
+  int64_t contentLength;
+  rv = GetContentLength(&contentLength);
+  if (NS_FAILED(rv)) {
+    // XXXtt: Report To Console.
+    ReportORBTelemetry("Blocked_GetContentLengthFailed"_ns);
+    return false;
+  }
+
+  ReportORBTelemetry(contentLength);
+  ReportORBTelemetry("Allowed_NotImplementOrPass"_ns);
+
+  return true;
 }
 
 NS_IMETHODIMP
@@ -4256,8 +4461,7 @@ nsresult HttpBaseChannel::SetupReplacementChannel(nsIURI* newURI,
 
   // When on the parent process, the channel can't attempt to get it itself.
   // When on the child process, it would be waste to query it again.
-  rv = httpChannel->SetTopLevelOuterContentWindowId(
-      mTopLevelOuterContentWindowId);
+  rv = httpChannel->SetTopBrowsingContextId(mTopBrowsingContextId);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 
   // Not setting this flag would break carrying permissions down to the child
@@ -4988,25 +5192,38 @@ bool HttpBaseChannel::EnsureRequestContext() {
   return true;
 }
 
-void HttpBaseChannel::EnsureTopLevelOuterContentWindowId() {
-  if (mTopLevelOuterContentWindowId) {
+void HttpBaseChannel::EnsureTopBrowsingContextId() {
+  if (mTopBrowsingContextId) {
     return;
   }
 
-  nsCOMPtr<nsILoadContext> loadContext;
-  GetCallback(loadContext);
-  if (!loadContext) {
-    return;
-  }
+  RefPtr<dom::BrowsingContext> bc;
+  MOZ_ALWAYS_SUCCEEDS(mLoadInfo->GetBrowsingContext(getter_AddRefs(bc)));
 
-  nsCOMPtr<mozIDOMWindowProxy> topWindow;
-  loadContext->GetTopWindow(getter_AddRefs(topWindow));
-  if (!topWindow) {
-    return;
+  if (bc && bc->Top()) {
+    mTopBrowsingContextId = bc->Top()->Id();
   }
+}
 
-  mTopLevelOuterContentWindowId =
-      nsPIDOMWindowOuter::From(topWindow)->WindowID();
+void HttpBaseChannel::InitiateORBTelemetry() {
+  MOZ_ASSERT(!mOpaqueResponseBlockingInfo);
+  MOZ_RELEASE_ASSERT(mLoadInfo);
+
+  mOpaqueResponseBlockingInfo = MakeRefPtr<OpaqueResponseBlockingInfo>(
+      mLoadInfo->GetExternalContentPolicyType());
+}
+
+void HttpBaseChannel::ReportORBTelemetry(const nsCString& aKey) {
+  MOZ_ASSERT(mOpaqueResponseBlockingInfo);
+
+  mOpaqueResponseBlockingInfo->Report(aKey);
+  mOpaqueResponseBlockingInfo = nullptr;
+}
+
+void HttpBaseChannel::ReportORBTelemetry(int64_t aContentLength) {
+  MOZ_ASSERT(mOpaqueResponseBlockingInfo);
+
+  mOpaqueResponseBlockingInfo->ReportContentLength(aContentLength);
 }
 
 void HttpBaseChannel::SetCorsPreflightParameters(
@@ -5122,9 +5339,25 @@ nsresult HttpBaseChannel::CheckRedirectLimit(uint32_t aRedirectFlags) const {
 void HttpBaseChannel::CallTypeSniffers(void* aClosure, const uint8_t* aData,
                                        uint32_t aCount) {
   nsIChannel* chan = static_cast<nsIChannel*>(aClosure);
+  const char* snifferType = [chan]() {
+    if (RefPtr<nsHttpChannel> httpChannel = do_QueryObject(chan)) {
+      switch (httpChannel->GetSnifferCategoryType()) {
+        case SnifferCategoryType::NetContent:
+          return NS_CONTENT_SNIFFER_CATEGORY;
+        case SnifferCategoryType::OpaqueResponseBlocking:
+          return NS_ORB_SNIFFER_CATEGORY;
+        case SnifferCategoryType::All:
+          return NS_CONTENT_AND_ORB_SNIFFER_CATEGORY;
+        default:
+          MOZ_ASSERT_UNREACHABLE("Unexpected SnifferCategoryType!");
+      }
+    }
+
+    return NS_CONTENT_SNIFFER_CATEGORY;
+  }();
 
   nsAutoCString newType;
-  NS_SniffContent(NS_CONTENT_SNIFFER_CATEGORY, chan, aData, aCount, newType);
+  NS_SniffContent(snifferType, chan, aData, aCount, newType);
   if (!newType.IsEmpty()) {
     chan->SetContentType(newType);
   }
@@ -5175,7 +5408,7 @@ HttpBaseChannel::GetNativeServerTiming(
     nsTArray<nsCOMPtr<nsIServerTiming>>& aServerTiming) {
   aServerTiming.Clear();
 
-  if (mURI->SchemeIs("https")) {
+  if (nsContentUtils::ComputeIsSecureContext(this)) {
     ParseServerTimingHeader(mResponseHead, aServerTiming);
     ParseServerTimingHeader(mResponseTrailers, aServerTiming);
   }

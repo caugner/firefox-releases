@@ -67,9 +67,6 @@ loader.lazyRequireGetter(
   true
 );
 
-// This import to chrome code is forbidden according to the inspector specific
-// eslintrc. TODO: Fix in Bug 1591091.
-// eslint-disable-next-line mozilla/reject-some-requires
 loader.lazyImporter(
   this,
   "DeferredTask",
@@ -152,7 +149,6 @@ function Inspector(toolbox, commands) {
   this.panelWin.inspector = this;
   this.telemetry = toolbox.telemetry;
   this.store = createStore(this);
-  this.isReady = false;
 
   // Map [panel id => panel instance]
   // Stores all the instances of sidebar panels like rule view, computed view, ...
@@ -206,23 +202,8 @@ Inspector.prototype = {
       r => (this._resolveMarkupViewInitialized = r)
     );
 
-    // If the server-side stylesheet watcher is enabled, we should start to watch
-    // stylesheet resources before instanciating the inspector front since pageStyle
-    // actor should refer the watcher.
-    if (
-      this.toolbox.resourceWatcher.hasResourceWatcherSupport(
-        this.toolbox.resourceWatcher.TYPES.STYLESHEET
-      )
-    ) {
-      this._isServerSideStyleSheetWatcherEnabled = true;
-      await this.toolbox.resourceWatcher.watchResources(
-        [this.toolbox.resourceWatcher.TYPES.STYLESHEET],
-        { onAvailable: this.onResourceAvailable }
-      );
-    }
-
-    await this.toolbox.targetList.watchTargets(
-      [this.toolbox.targetList.TYPES.FRAME],
+    await this.commands.targetCommand.watchTargets(
+      [this.commands.targetCommand.TYPES.FRAME],
       this._onTargetAvailable,
       this._onTargetDestroyed
     );
@@ -274,11 +255,6 @@ Inspector.prototype = {
   async initInspectorFront(targetFront) {
     this.inspectorFront = await targetFront.getFront("inspector");
     this.walker = this.inspectorFront.walker;
-
-    // PageStyle front need the resource watcher when the server-side stylesheet watcher is enabled.
-    if (this._isServerSideStyleSheetWatcherEnabled) {
-      this.inspectorFront.pageStyle.resourceWatcher = this.toolbox.resourceWatcher;
-    }
   },
 
   get toolbox() {
@@ -297,8 +273,8 @@ Inspector.prototype = {
    * @return {Array} The list of InspectorFront instances.
    */
   async getAllInspectorFronts() {
-    return this.toolbox.targetList.getAllFronts(
-      this.toolbox.targetList.TYPES.FRAME,
+    return this.commands.targetCommand.getAllFronts(
+      this.commands.targetCommand.TYPES.FRAME,
       "inspector"
     );
   },
@@ -404,7 +380,6 @@ Inspector.prototype = {
     this.setupSidebar();
 
     await this._onMarkupViewInitialized;
-    this.isReady = true;
 
     // All the components are initialized. Take care of the remaining initialization
     // and setup.
@@ -430,7 +405,6 @@ Inspector.prototype = {
       1
     );
 
-    this.emit("ready");
     return this;
   },
 
@@ -505,7 +479,7 @@ Inspector.prototype = {
    * Top level target front getter.
    */
   get currentTarget() {
-    return this.toolbox.targetList.targetFront;
+    return this.commands.targetCommand.targetFront;
   },
 
   /**
@@ -1701,12 +1675,12 @@ Inspector.prototype = {
     this.styleChangeTracker.destroy();
     this.searchboxShortcuts.destroy();
 
-    const { targetList, resourceWatcher } = this.toolbox;
-    targetList.unwatchTargets(
-      [targetList.TYPES.FRAME],
+    this.commands.targetCommand.unwatchTargets(
+      [this.commands.targetCommand.TYPES.FRAME],
       this._onTargetAvailable,
       this._onTargetDestroyed
     );
+    const { resourceWatcher } = this.toolbox;
     resourceWatcher.unwatchResources(
       [resourceWatcher.TYPES.ROOT_NODE, resourceWatcher.TYPES.CSS_CHANGE],
       { onAvailable: this.onResourceAvailable }

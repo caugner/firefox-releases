@@ -13,17 +13,15 @@ let ORIGINAL_LONG_STRING_LENGTH, ORIGINAL_LONG_STRING_INITIAL_LENGTH;
 add_task(async function() {
   const tab = await addTab(URL_ROOT + "network_requests_iframe.html");
 
-  const target = await createAndAttachTargetForTab(tab);
-
   // Avoid mocha to try to load these module and fail while doing it when running node tests
   const {
     ResourceWatcher,
   } = require("devtools/shared/resources/resource-watcher");
 
-  const commands = await target.descriptorFront.getCommands();
-  const targetList = commands.targetCommand;
-  await targetList.startListening();
-  const resourceWatcher = new ResourceWatcher(targetList);
+  const commands = await CommandsFactory.forTab(tab);
+  await commands.targetCommand.startListening();
+  const target = commands.targetCommand.targetFront;
+  const resourceWatcher = new ResourceWatcher(commands.targetCommand);
 
   // Override the default long string settings to lower values.
   // This is done from the parent process's DevToolsServer as the LongString

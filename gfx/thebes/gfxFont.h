@@ -27,6 +27,7 @@
 #include "nsCOMPtr.h"
 #include "nsColor.h"
 #include "nsTHashMap.h"
+#include "nsTHashSet.h"
 #include "nsExpirationTracker.h"
 #include "nsFontMetrics.h"
 #include "nsHashKeys.h"
@@ -1487,8 +1488,15 @@ class gfxFont {
   }
 
   gfxFloat GetAdjustedSize() const {
-    return mAdjustedSize > 0.0 ? mAdjustedSize
-                               : (mStyle.sizeAdjust == 0.0 ? 0.0 : mStyle.size);
+    // mAdjustedSize is cached here if not already set to a non-zero value;
+    // but it may be overridden by a value computed in metrics initialization
+    // from font-size-adjust.
+    if (mAdjustedSize < 0.0) {
+      mAdjustedSize = mStyle.sizeAdjust == 0.0
+                          ? 0.0
+                          : mStyle.size * mFontEntry->mSizeAdjust;
+    }
+    return mAdjustedSize;
   }
 
   float FUnitsToDevUnitsFactor() const {
@@ -2032,7 +2040,7 @@ class gfxFont {
 
   // used when analyzing whether a font has space contextual lookups
   static nsTHashMap<nsUint32HashKey, Script>* sScriptTagToCode;
-  static nsTHashtable<nsUint32HashKey>* sDefaultFeatures;
+  static nsTHashSet<uint32_t>* sDefaultFeatures;
 
   RefPtr<gfxFontEntry> mFontEntry;
 
@@ -2126,8 +2134,7 @@ class gfxFont {
   static const uint32_t kShapedWordCacheMaxAge = 3;
 
   nsTArray<mozilla::UniquePtr<gfxGlyphExtents>> mGlyphExtentsArray;
-  mozilla::UniquePtr<nsTHashtable<nsPtrHashKey<GlyphChangeObserver>>>
-      mGlyphChangeObservers;
+  mozilla::UniquePtr<nsTHashSet<GlyphChangeObserver*>> mGlyphChangeObservers;
 
   // a copy of the font without antialiasing, if needed for separate
   // measurement by mathml code
@@ -2153,7 +2160,7 @@ class gfxFont {
   mozilla::UniquePtr<gfxMathTable> mMathTable;
 
   gfxFontStyle mStyle;
-  gfxFloat mAdjustedSize;
+  mutable gfxFloat mAdjustedSize;
 
   // Conversion factor from font units to dev units; note that this may be
   // zero (in the degenerate case where mAdjustedSize has become zero).

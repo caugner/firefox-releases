@@ -58,7 +58,6 @@
 #include "mozilla/StaticPrefs_page_load.h"
 #include "nsViewManager.h"
 #include "GeckoProfiler.h"
-#include "nsNPAPIPluginInstance.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/CallbackDebuggerNotification.h"
 #include "mozilla/dom/Event.h"
@@ -230,6 +229,7 @@ class RefreshDriverTimer {
   }
 
   TimeStamp MostRecentRefresh() const { return mLastFireTime; }
+  VsyncId MostRecentRefreshVsyncId() const { return mLastFireId; }
 
   virtual TimeDuration GetTimerRate() = 0;
 
@@ -332,6 +332,7 @@ class RefreshDriverTimer {
     ScheduleNextTick(now);
 
     mLastFireTime = now;
+    mLastFireId = aId;
 
     LOG("[%p] ticking drivers...", this);
 
@@ -346,6 +347,7 @@ class RefreshDriverTimer {
   }
 
   TimeStamp mLastFireTime;
+  VsyncId mLastFireId;
   TimeStamp mTargetTime;
 
   nsTArray<RefPtr<nsRefreshDriver>> mContentRefreshDrivers;
@@ -393,6 +395,7 @@ class SimpleTimerBasedRefreshDriverTimer : public RefreshDriverTimer {
   void StartTimer() override {
     // pretend we just fired, and we schedule the next tick normally
     mLastFireTime = TimeStamp::Now();
+    mLastFireId = VsyncId();
 
     mTargetTime = mLastFireTime + mRateDuration;
 
@@ -497,15 +500,15 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
 
       NS_IMETHOD Run() override {
         MOZ_ASSERT(NS_IsMainThread());
-        sHighPriorityEnabled = mozilla::BrowserTabsRemoteAutostart();
+        sVsyncPriorityEnabled = mozilla::BrowserTabsRemoteAutostart();
 
         mObserver->NotifyParentProcessVsync();
         return NS_OK;
       }
 
       NS_IMETHOD GetPriority(uint32_t* aPriority) override {
-        *aPriority = sHighPriorityEnabled
-                         ? nsIRunnablePriority::PRIORITY_HIGH
+        *aPriority = sVsyncPriorityEnabled
+                         ? nsIRunnablePriority::PRIORITY_VSYNC
                          : nsIRunnablePriority::PRIORITY_NORMAL;
         return NS_OK;
       }
@@ -513,7 +516,7 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
      private:
       ~ParentProcessVsyncNotifier() = default;
       RefPtr<RefreshDriverVsyncObserver> mObserver;
-      static mozilla::Atomic<bool> sHighPriorityEnabled;
+      static mozilla::Atomic<bool> sVsyncPriorityEnabled;
     };
 
     bool NotifyVsync(const VsyncEvent& aVsync) override {
@@ -741,6 +744,7 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
     MOZ_ASSERT(NS_IsMainThread());
 
     mLastFireTime = TimeStamp::Now();
+    mLastFireId = VsyncId();
 
     if (mVsyncDispatcher) {
       mVsyncDispatcher->AddChildRefreshTimer(mVsyncObserver);
@@ -790,7 +794,7 @@ NS_IMPL_ISUPPORTS_INHERITED(
     Runnable, nsIRunnablePriority)
 
 mozilla::Atomic<bool> VsyncRefreshDriverTimer::RefreshDriverVsyncObserver::
-    ParentProcessVsyncNotifier::sHighPriorityEnabled(false);
+    ParentProcessVsyncNotifier::sVsyncPriorityEnabled(false);
 
 /**
  * Since the content process takes some time to setup
@@ -876,6 +880,7 @@ class InactiveRefreshDriverTimer final
 
   void StartTimer() override {
     mLastFireTime = TimeStamp::Now();
+    mLastFireId = VsyncId();
 
     mTargetTime = mLastFireTime + mRateDuration;
 
@@ -919,6 +924,7 @@ class InactiveRefreshDriverTimer final
     ScheduleNextTick(now);
 
     mLastFireTime = now;
+    mLastFireId = VsyncId();
 
     nsTArray<RefPtr<nsRefreshDriver>> drivers(mContentRefreshDrivers.Clone());
     drivers.AppendElements(mRootRefreshDrivers);
@@ -1197,19 +1203,14 @@ void nsRefreshDriver::AddRefreshObserver(nsARefreshObserver* aObserver,
                                          FlushType aFlushType,
                                          const char* aObserverDescription) {
   ObserverArray& array = ArrayFor(aFlushType);
-  Maybe<uint64_t> innerWindowID;
+  array.AppendElement(ObserverData{
+      aObserver, aObserverDescription, TimeStamp::Now(),
 #ifdef MOZ_GECKO_PROFILER
-  if (mPresContext) {
-    innerWindowID =
-        profiler_get_inner_window_id_from_docshell(mPresContext->GetDocShell());
-  }
+      mPresContext
+          ? MarkerInnerWindowIdFromDocShell(mPresContext->GetDocShell())
+          : MarkerInnerWindowId::NoId(),
 #endif
-  array.AppendElement(ObserverData{aObserver, aObserverDescription,
-                                   TimeStamp::Now(), innerWindowID,
-#ifdef MOZ_GECKO_PROFILER
-                                   profiler_capture_backtrace(),
-#endif
-                                   aFlushType});
+      profiler_capture_backtrace(), aFlushType});
   EnsureTimerStarted();
 }
 
@@ -1221,7 +1222,6 @@ bool nsRefreshDriver::RemoveRefreshObserver(nsARefreshObserver* aObserver,
     return false;
   }
 
-#ifdef MOZ_GECKO_PROFILER
   if (profiler_can_accept_markers()) {
     auto& data = array.ElementAt(index);
     nsPrintfCString str("%s [%s]", data.mDescription,
@@ -1230,10 +1230,9 @@ bool nsRefreshDriver::RemoveRefreshObserver(nsARefreshObserver* aObserver,
         "RefreshObserver", GRAPHICS,
         MarkerOptions(MarkerStack::TakeBacktrace(std::move(data.mCause)),
                       MarkerTiming::IntervalUntilNowFrom(data.mRegisterTime),
-                      MarkerInnerWindowId(data.mInnerWindowId)),
+                      std::move(data.mInnerWindowId)),
         str);
   }
-#endif
 
   array.RemoveElementAt(index);
   return true;
@@ -1320,10 +1319,10 @@ void nsRefreshDriver::RemovePostRefreshObserver(
 bool nsRefreshDriver::AddImageRequest(imgIRequest* aRequest) {
   uint32_t delay = GetFirstFrameDelay(aRequest);
   if (delay == 0) {
-    mRequests.PutEntry(aRequest);
+    mRequests.Insert(aRequest);
   } else {
     auto* const start = mStartTable.GetOrInsertNew(delay);
-    start->mEntries.PutEntry(aRequest);
+    start->mEntries.Insert(aRequest);
   }
 
   EnsureTimerStarted();
@@ -1334,12 +1333,12 @@ bool nsRefreshDriver::AddImageRequest(imgIRequest* aRequest) {
 void nsRefreshDriver::RemoveImageRequest(imgIRequest* aRequest) {
   // Try to remove from both places, just in case, because we can't tell
   // whether RemoveEntry() succeeds.
-  mRequests.RemoveEntry(aRequest);
+  mRequests.Remove(aRequest);
   uint32_t delay = GetFirstFrameDelay(aRequest);
   if (delay != 0) {
     ImageStartData* start = mStartTable.Get(delay);
     if (start) {
-      start->mEntries.RemoveEntry(aRequest);
+      start->mEntries.Remove(aRequest);
     }
   }
 }
@@ -1360,6 +1359,21 @@ void nsRefreshDriver::RegisterCompositionPayload(
   mCompositionPayloads.AppendElement(aPayload);
 }
 
+void nsRefreshDriver::AddForceNotifyContentfulPaintPresContext(
+    nsPresContext* aPresContext) {
+  mForceNotifyContentfulPaintPresContexts.AppendElement(aPresContext);
+}
+
+void nsRefreshDriver::FlushForceNotifyContentfulPaintPresContext() {
+  while (!mForceNotifyContentfulPaintPresContexts.IsEmpty()) {
+    WeakPtr<nsPresContext> presContext =
+        mForceNotifyContentfulPaintPresContexts.PopLastElement();
+    if (presContext) {
+      presContext->NotifyContentfulPaint();
+    }
+  }
+}
+
 void nsRefreshDriver::RunDelayedEventsSoon() {
   // Place entries for delayed events into their corresponding normal list,
   // and schedule a refresh. When these delayed events run, if their document
@@ -1375,6 +1389,20 @@ void nsRefreshDriver::RunDelayedEventsSoon() {
   EnsureTimerStarted();
 }
 
+bool nsRefreshDriver::CanDoCatchUpTick() {
+  if (mTestControllingRefreshes || !mActiveTimer) {
+    return false;
+  }
+
+  // If we've already ticked for the current timer refresh (or more recently
+  // than that), then we don't need to do any catching up.
+  if (mMostRecentRefresh >= mActiveTimer->MostRecentRefresh()) {
+    return false;
+  }
+
+  return true;
+}
+
 void nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags) {
   // FIXME: Bug 1346065: We should also assert the case where we have
   // STYLO_THREADS=1.
@@ -1384,11 +1412,9 @@ void nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags) {
 
   if (mTestControllingRefreshes) return;
 
-#ifdef MOZ_GECKO_PROFILER
   if (!mRefreshTimerStartedCause) {
     mRefreshTimerStartedCause = profiler_capture_backtrace();
   }
-#endif
 
   // will it already fire, and no other changes needed?
   if (mActiveTimer && !(aFlags & eForceAdjustTimer)) return;
@@ -1419,6 +1445,24 @@ void nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags) {
     if (mActiveTimer) mActiveTimer->RemoveRefreshDriver(this);
     mActiveTimer = newTimer;
     mActiveTimer->AddRefreshDriver(this);
+
+    // If the timer has ticked since we last ticked, consider doing a 'catch-up'
+    // tick immediately.
+    if (CanDoCatchUpTick()) {
+      RefPtr<nsRefreshDriver> self = this;
+      NS_DispatchToCurrentThreadQueue(
+          NS_NewRunnableFunction(
+              "RefreshDriver::EnsureTimerStarted::catch-up",
+              [self]() -> void {
+                // Re-check if we can still do a catch-up, in case anything
+                // changed while the runnable was pending.
+                if (self->CanDoCatchUpTick()) {
+                  self->Tick(self->mActiveTimer->MostRecentRefreshVsyncId(),
+                             self->mActiveTimer->MostRecentRefresh());
+                }
+              }),
+          EventQueuePriority::Vsync);
+    }
   }
 
   // When switching from an inactive timer to an active timer, the root
@@ -1432,19 +1476,17 @@ void nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags) {
 
   // Since the different timers are sampled at different rates, when switching
   // timers, the most recent refresh of the new timer may be *before* the
-  // most recent refresh of the old timer. However, the refresh driver time
-  // should not go backwards so we clamp the most recent refresh time.
-  //
-  // The one exception to this is when we are restoring the refresh driver
-  // from test control in which case the time is expected to go backwards
-  // (see bug 1043078).
-  TimeStamp newMostRecentRefresh =
-      aFlags & eAllowTimeToGoBackwards
-          ? mActiveTimer->MostRecentRefresh()
-          : std::max(mActiveTimer->MostRecentRefresh(), mMostRecentRefresh);
+  // most recent refresh of the old timer.
+  // If we are restoring the refresh driver from test control, the time is
+  // expected to go backwards (see bug 1043078), otherwise we just keep the most
+  // recent tick of this driver (which may be older than the most recent tick of
+  // the timer).
+  if (!(aFlags & eAllowTimeToGoBackwards)) {
+    return;
+  }
 
-  if (mMostRecentRefresh != newMostRecentRefresh) {
-    mMostRecentRefresh = newMostRecentRefresh;
+  if (mMostRecentRefresh != mActiveTimer->MostRecentRefresh()) {
+    mMostRecentRefresh = mActiveTimer->MostRecentRefresh();
 
     for (nsATimerAdjustmentObserver* obs :
          mTimerAdjustmentObservers.EndLimitedRange()) {
@@ -1458,9 +1500,7 @@ void nsRefreshDriver::StopTimer() {
 
   mActiveTimer->RemoveRefreshDriver(this);
   mActiveTimer = nullptr;
-#ifdef MOZ_GECKO_PROFILER
   mRefreshTimerStartedCause = nullptr;
-#endif
 }
 
 uint32_t nsRefreshDriver::ObserverCount() const {
@@ -1553,8 +1593,8 @@ void nsRefreshDriver::AppendObserverDescriptionsToString(
 }
 
 bool nsRefreshDriver::HasImageRequests() const {
-  for (auto iter = mStartTable.ConstIter(); !iter.Done(); iter.Next()) {
-    if (!iter.UserData()->mEntries.IsEmpty()) {
+  for (const auto& data : mStartTable.Values()) {
+    if (!data->mEntries.IsEmpty()) {
       return true;
     }
   }
@@ -1930,12 +1970,6 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   MOZ_ASSERT(!nsContentUtils::GetCurrentJSContext(),
              "Shouldn't have a JSContext on the stack");
 
-  if (nsNPAPIPluginInstance::InPluginCallUnsafeForReentry()) {
-    NS_ERROR("Refresh driver should not run during plugin call!");
-    // Try to survive this by just ignoring the refresh tick.
-    return;
-  }
-
   // We're either frozen or we were disconnected (likely in the middle
   // of a tick iteration).  Just do nothing here, since our
   // prescontext went away.
@@ -1965,7 +1999,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     // We're currently suspended waiting for earlier Tick's to
     // be completed (on the Compositor). Mark that we missed the paint
     // and keep waiting.
-    PROFILER_MARKER_UNTYPED("nsRefreshDriver::Tick waiting for paint", LAYOUT);
+    PROFILER_MARKER_UNTYPED(
+        "RefreshDriverTick waiting for paint", GRAPHICS,
+        MarkerInnerWindowIdFromDocShell(GetDocShell(mPresContext)));
     return;
   }
 
@@ -2000,8 +2036,10 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     // On top level content pages keep the timer running initially so that we
     // paint the page soon enough.
     if (ShouldKeepTimerRunningWhileWaitingForFirstContentfulPaint()) {
-      PROFILER_MARKER("RefreshDriver waiting for first contentful paint",
-                      GRAPHICS, {}, Tracing, "Paint");
+      PROFILER_MARKER(
+          "RefreshDriverTick waiting for first contentful paint", GRAPHICS,
+          MarkerInnerWindowIdFromDocShell(GetDocShell(mPresContext)), Tracing,
+          "Paint");
     } else {
       StopTimer();
     }
@@ -2011,7 +2049,6 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   AUTO_PROFILER_LABEL("nsRefreshDriver::Tick", LAYOUT);
 
   nsAutoCString profilerStr;
-#ifdef MOZ_GECKO_PROFILER
   if (profiler_can_accept_markers()) {
     profilerStr.AppendLiteral("Tick reasons:");
     AppendTickReasonsToString(tickReasons, profilerStr);
@@ -2022,7 +2059,6 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
           MarkerStack::TakeBacktrace(std::move(mRefreshTimerStartedCause)),
           MarkerInnerWindowIdFromDocShell(GetDocShell(mPresContext))),
       profilerStr);
-#endif
 
   mResizeSuppressed = false;
 
@@ -2043,6 +2079,8 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   if (StaticPrefs::apz_peek_messages_enabled()) {
     DisplayPortUtils::UpdateDisplayPortMarginsFromPendingMessages();
   }
+
+  FlushForceNotifyContentfulPaintPresContext();
 
   AutoTArray<nsCOMPtr<nsIRunnable>, 16> earlyRunners = std::move(mEarlyRunners);
   for (auto& runner : earlyRunners) {
@@ -2255,9 +2293,8 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     // images to refresh, and then we refresh each image in that array.
     nsCOMArray<imgIContainer> imagesToRefresh(mRequests.Count());
 
-    for (auto iter = mRequests.ConstIter(); !iter.Done(); iter.Next()) {
-      const nsISupportsHashKey* entry = iter.Get();
-      auto req = static_cast<imgIRequest*>(entry->GetKey());
+    for (nsISupports* entry : mRequests) {
+      auto* req = static_cast<imgIRequest*>(entry);
       MOZ_ASSERT(req, "Unable to retrieve the image request");
       nsCOMPtr<imgIContainer> image;
       if (NS_SUCCEEDED(req->GetImage(getter_AddRefs(image)))) {
@@ -2275,15 +2312,15 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   if (mViewManagerFlushIsPending) {
     AutoRecordPhase paintRecord(&phasePaint);
     nsCString transactionId;
-#ifdef MOZ_GECKO_PROFILER
     if (profiler_can_accept_markers()) {
       transactionId.AppendLiteral("Transaction ID: ");
       transactionId.AppendInt((uint64_t)mNextTransactionId);
     }
-#endif
     AUTO_PROFILER_MARKER_TEXT(
         "ViewManagerFlush", GRAPHICS,
-        MarkerStack::TakeBacktrace(std::move(mViewManagerFlushCause)),
+        MarkerOptions(
+            MarkerInnerWindowIdFromDocShell(GetDocShell(mPresContext)),
+            MarkerStack::TakeBacktrace(std::move(mViewManagerFlushCause))),
         transactionId);
 
     // Forward our composition payloads to the layer manager.
@@ -2407,11 +2444,11 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
 
 void nsRefreshDriver::BeginRefreshingImages(RequestTable& aEntries,
                                             mozilla::TimeStamp aDesired) {
-  for (auto iter = aEntries.ConstIter(); !iter.Done(); iter.Next()) {
-    auto req = static_cast<imgIRequest*>(iter.Get()->GetKey());
+  for (const auto& key : aEntries) {
+    auto* req = static_cast<imgIRequest*>(key);
     MOZ_ASSERT(req, "Unable to retrieve the image request");
 
-    mRequests.PutEntry(req);
+    mRequests.Insert(req);
 
     nsCOMPtr<imgIContainer> image;
     if (NS_SUCCEEDED(req->GetImage(getter_AddRefs(image)))) {
@@ -2619,11 +2656,9 @@ void nsRefreshDriver::ScheduleViewManagerFlush() {
   NS_ASSERTION(mPresContext->IsRoot(),
                "Should only schedule view manager flush on root prescontexts");
   mViewManagerFlushIsPending = true;
-#ifdef MOZ_GECKO_PROFILER
   if (!mViewManagerFlushCause) {
     mViewManagerFlushCause = profiler_capture_backtrace();
   }
-#endif
   mHasScheduleFlush = true;
   EnsureTimerStarted(eNeverAdjustTimer);
 }

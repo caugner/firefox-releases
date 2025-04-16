@@ -41,7 +41,7 @@ function promiseEvent(eventEmitter, event) {
 }
 
 function getAddonElement(managerWindow, addonId) {
-  return BrowserTestUtils.waitForCondition(
+  return TestUtils.waitForCondition(
     () =>
       managerWindow.document.querySelector(`addon-card[addon-id="${addonId}"]`),
     `Found entry for sideload extension addon "${addonId}" in HTML about:addons`
@@ -167,7 +167,7 @@ add_task(async function test_sideloading() {
   const VIEW = "addons://list/extension";
   let win = gBrowser.selectedBrowser.contentWindow;
 
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => !win.gViewController.isLoading,
     "about:addons view is fully loaded"
   );
@@ -216,12 +216,7 @@ add_task(async function test_sideloading() {
   await gCUITestUtils.hideMainMenu();
 
   win = await BrowserOpenAddonsMgr(VIEW);
-
-  if (win.gViewController.isLoading) {
-    await new Promise(resolve =>
-      win.document.addEventListener("ViewChanged", resolve, { once: true })
-    );
-  }
+  await waitAboutAddonsViewLoaded(win.document);
 
   // about:addons addon entry element.
   const addonElement = await getAddonElement(win, ID2);

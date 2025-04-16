@@ -107,7 +107,7 @@ var BackgroundTasksManager = {
       `Running background task named '${name}' (with ${commandLine.length} arguments)`
     );
 
-    let exitCode = 2;
+    let exitCode = BackgroundTasksManager.EXIT_CODE.NOT_FOUND;
     try {
       let runBackgroundTask = findRunBackgroundTask(name);
       addMarker("BackgroundTasksManager:AfterFindRunBackgroundTask");
@@ -120,7 +120,7 @@ var BackgroundTasksManager = {
         );
       } catch (e) {
         log.error(`Backgroundtask named '${name}' threw exception`, e);
-        exitCode = 3;
+        exitCode = BackgroundTasksManager.EXIT_CODE.EXCEPTION;
       }
     } finally {
       addMarker("BackgroundTasksManager:AfterAwaitRunBackgroundTask");
@@ -131,4 +131,44 @@ var BackgroundTasksManager = {
 
     return exitCode;
   },
+};
+
+/**
+ * Background tasks should standard exit code conventions where 0 denotes
+ * success and non-zero denotes failure and/or an error.  In addition, since
+ * background tasks have limited channels to communicate with consumers, the
+ * special values `NOT_FOUND` (integer 2) and `THREW_EXCEPTION` (integer 3) are
+ * distinguished.
+ *
+ * If you extend this to add background task-specific exit codes, use exit codes
+ * greater than 10 to allow for additional shared exit codes to be added here.
+ * Exit codes should be between 0 and 127 to be safe across platforms.
+ */
+BackgroundTasksManager.EXIT_CODE = {
+  /**
+   * The task succeeded.
+   *
+   * The `runBackgroundTask(...)` promise resolved to 0.
+   */
+  SUCCESS: 0,
+
+  /**
+   * The task with the specified name could not be found or imported.
+   *
+   * The corresponding `runBackgroundTask` method could not be found.
+   */
+  NOT_FOUND: 2,
+
+  /**
+   * The task failed with an uncaught exception.
+   *
+   * The `runBackgroundTask(...)` promise rejected with an exception.
+   */
+  EXCEPTION: 3,
+
+  /**
+   * The last exit code reserved by this structure.  Use codes larger than this
+   * code for background task-specific exit codes.
+   */
+  LAST_RESERVED: 10,
 };

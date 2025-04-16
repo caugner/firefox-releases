@@ -95,12 +95,6 @@ const ADDITIONAL_FROM_ACTOR_RESOURCE = {
 };
 
 add_task(async function() {
-  await pushPref("devtools.testing.enableServerWatcherSupport", false);
-  await testResourceAvailableFeature();
-  await testResourceUpdateFeature();
-  await testNestedResourceUpdateFeature();
-
-  await pushPref("devtools.testing.enableServerWatcherSupport", true);
   await testResourceAvailableFeature();
   await testResourceUpdateFeature();
   await testNestedResourceUpdateFeature();
@@ -111,7 +105,7 @@ async function testResourceAvailableFeature() {
 
   const tab = await addTab(STYLE_TEST_URL);
 
-  const { client, resourceWatcher, targetList } = await initResourceWatcher(
+  const { client, resourceWatcher, targetCommand } = await initResourceWatcher(
     tab
   );
 
@@ -157,7 +151,9 @@ async function testResourceAvailableFeature() {
   info(
     "Check whether ResourceWatcher gets additonal stylesheet which is added by DevTool"
   );
-  const styleSheetsFront = await targetList.targetFront.getFront("stylesheets");
+  const styleSheetsFront = await targetCommand.targetFront.getFront(
+    "stylesheets"
+  );
   await styleSheetsFront.addStyleSheet(
     ADDITIONAL_FROM_ACTOR_RESOURCE.styleText
   );
@@ -169,7 +165,7 @@ async function testResourceAvailableFeature() {
     ADDITIONAL_FROM_ACTOR_RESOURCE
   );
 
-  targetList.destroy();
+  targetCommand.destroy();
   await client.close();
 }
 
@@ -178,7 +174,7 @@ async function testResourceUpdateFeature() {
 
   const tab = await addTab(STYLE_TEST_URL);
 
-  const { client, resourceWatcher, targetList } = await initResourceWatcher(
+  const { client, resourceWatcher, targetCommand } = await initResourceWatcher(
     tab
   );
 
@@ -301,7 +297,7 @@ async function testResourceUpdateFeature() {
   );
   assertMediaRules(styleSheetResult.mediaRules, expectedMediaRules);
 
-  targetList.destroy();
+  targetCommand.destroy();
   await client.close();
 }
 
@@ -319,7 +315,7 @@ async function testNestedResourceUpdateFeature() {
     tab.ownerGlobal.resizeTo(originalWindowWidth, originalWindowHeight);
   });
 
-  const { client, resourceWatcher, targetList } = await initResourceWatcher(
+  const { client, resourceWatcher, targetCommand } = await initResourceWatcher(
     tab
   );
 
@@ -358,9 +354,6 @@ async function testNestedResourceUpdateFeature() {
   await waitUntil(() => updates.length === 4);
 
   // Check the update content.
-  const isServerWatcher = Services.prefs.getBoolPref(
-    "devtools.testing.enableServerWatcherSupport"
-  );
   const targetUpdate = updates[3];
   assertUpdate(targetUpdate.update, {
     resourceId: resource.resourceId,
@@ -368,29 +361,16 @@ async function testNestedResourceUpdateFeature() {
   });
   ok(resource === targetUpdate.resource, "Update object has the same resource");
 
-  if (isServerWatcher) {
-    is(
-      JSON.stringify(targetUpdate.update.nestedResourceUpdates[0].path),
-      JSON.stringify(["mediaRules", 0, "matches"]),
-      "path of nestedResourceUpdates is correct"
-    );
-    is(
-      targetUpdate.update.nestedResourceUpdates[0].value,
-      true,
-      "value of nestedResourceUpdates is correct"
-    );
-  } else {
-    is(
-      JSON.stringify(targetUpdate.update.nestedResourceUpdates[0].path),
-      JSON.stringify(["mediaRules", 0]),
-      "path of nestedResourceUpdates is correct"
-    );
-    is(
-      targetUpdate.update.nestedResourceUpdates[0].value.matches,
-      true,
-      "value of nestedResourceUpdates is correct"
-    );
-  }
+  is(
+    JSON.stringify(targetUpdate.update.nestedResourceUpdates[0].path),
+    JSON.stringify(["mediaRules", 0, "matches"]),
+    "path of nestedResourceUpdates is correct"
+  );
+  is(
+    targetUpdate.update.nestedResourceUpdates[0].value,
+    true,
+    "value of nestedResourceUpdates is correct"
+  );
 
   // Check the resource.
   const expectedMediaRules = [
@@ -414,7 +394,7 @@ async function testNestedResourceUpdateFeature() {
 
   tab.ownerGlobal.resizeTo(originalWindowWidth, originalWindowHeight);
 
-  targetList.destroy();
+  targetCommand.destroy();
   await client.close();
 }
 

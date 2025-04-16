@@ -44,6 +44,13 @@ XPCOMUtils.defineLazyServiceGetter(
   "nsIClipboardHelper"
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "protonEnabled",
+  "browser.proton.enabled",
+  false
+);
+
 const DEFAULT_FORM_HISTORY_NAME = "searchbar-history";
 const SEARCH_BUTTON_ID = "urlbar-search-button";
 
@@ -201,6 +208,10 @@ class UrlbarInput {
       return new UrlbarValueFormatter(this);
     });
 
+    XPCOMUtils.defineLazyGetter(this, "addSearchEngineHelper", () => {
+      return new AddSearchEngineHelper(this);
+    });
+
     // If the toolbar is not visible in this window or the urlbar is readonly,
     // we'll stop here, so that most properties of the input object are valid,
     // but we won't handle events.
@@ -260,9 +271,6 @@ class UrlbarInput {
 
     this._initCopyCutController();
     this._initPasteAndGo();
-    if (UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
-      this.addSearchEngineHelper = new AddSearchEngineHelper(this);
-    }
 
     // Tracks IME composition.
     this._compositionState = UrlbarUtils.COMPOSITION.NONE;
@@ -1328,7 +1336,7 @@ class UrlbarInput {
    * @param {string} value
    *   The input's value will be set to this value, and the search will
    *   use it as its query.
-   * @param {UrlbarUtils.WEB_ENGINE_NAMES} [options.searchEngine]
+   * @param {nsISearchEngine} [options.searchEngine]
    *   Search engine to use when the search is using a known alias.
    * @param {UrlbarUtils.SEARCH_MODE_ENTRY} [options.searchModeEntry]
    *   If provided, we will record this parameter as the search mode entry point
@@ -1406,12 +1414,20 @@ class UrlbarInput {
   /**
    * Restore focus styles.
    * This is used by Activity Stream and about:privatebrowsing for search hand-off.
+   *
+   * @param {Browser} forceSuppressFocusBorder
+   *   Set true to suppress-focus-border attribute if this flag is true.
    */
-  removeHiddenFocus() {
+  removeHiddenFocus(forceSuppressFocusBorder = false) {
     this._hideFocus = false;
     if (this.focused) {
       this.setAttribute("focused", "true");
-      if (!UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+
+      if (forceSuppressFocusBorder) {
+        this.toggleAttribute("suppress-focus-border", true);
+      }
+
+      if (!protonEnabled) {
         this.startLayoutExtend();
       }
     }
@@ -1473,11 +1489,12 @@ class UrlbarInput {
       ObjectUtils.deepEqual(currentSearchMode, searchMode);
 
     // Exit search mode if the passed-in engine is invalid or hidden.
+    let engine;
     if (searchMode?.engineName) {
       if (!Services.search.isInitialized) {
         await Services.search.init();
       }
-      let engine = Services.search.getEngineByName(searchMode.engineName);
+      engine = Services.search.getEngineByName(searchMode.engineName);
       if (!engine || engine.hidden) {
         searchMode = null;
       }
@@ -1488,10 +1505,13 @@ class UrlbarInput {
     searchMode = null;
 
     if (engineName) {
-      searchMode = { engineName };
+      searchMode = {
+        engineName,
+        isGeneralPurposeEngine: engine.isGeneralPurposeEngine,
+      };
       if (source) {
         searchMode.source = source;
-      } else if (UrlbarUtils.WEB_ENGINE_NAMES.has(engineName)) {
+      } else if (searchMode.isGeneralPurposeEngine) {
         // History results for general-purpose search engines are often not
         // useful, so we hide them in search mode. See bug 1658646 for
         // discussion.
@@ -1647,7 +1667,7 @@ class UrlbarInput {
       return;
     }
     await this._updateLayoutBreakoutDimensions();
-    if (!UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+    if (!protonEnabled) {
       this.startLayoutExtend();
     }
   }
@@ -1661,7 +1681,7 @@ class UrlbarInput {
     ) {
       return;
     }
-    if (UrlbarPrefs.get("browser.proton.urlbar.enabled") && !this.view.isOpen) {
+    if (protonEnabled && !this.view.isOpen) {
       return;
     }
     // The Urlbar is unfocused or reduce motion is on and the view is closed.
@@ -1710,7 +1730,7 @@ class UrlbarInput {
     }
 
     if (
-      !UrlbarPrefs.get("browser.proton.urlbar.enabled") &&
+      !protonEnabled &&
       this.getAttribute("focused") == "true" &&
       (!this.window.gReduceMotion ||
         !this.window.matchMedia("(prefers-reduced-motion: reduce)").matches)
@@ -1955,6 +1975,8 @@ class UrlbarInput {
       }
       case UrlbarUtils.RESULT_TYPE.OMNIBOX:
         return result.payload.content;
+      case UrlbarUtils.RESULT_TYPE.DYNAMIC:
+        return result.payload.input || "";
     }
 
     try {
@@ -2621,7 +2643,7 @@ class UrlbarInput {
    *   See setSearchMode documentation.  If null, then search mode is exited.
    */
   _updateSearchModeUI(searchMode) {
-    let { engineName, source } = searchMode || {};
+    let { engineName, source, isGeneralPurposeEngine } = searchMode || {};
 
     // As an optimization, bail if the given search mode is null but search mode
     // is already inactive.  Otherwise browser_preferences_usage.js fails due to
@@ -2655,7 +2677,7 @@ class UrlbarInput {
       this._searchModeLabel.textContent = engineName;
       this.document.l10n.setAttributes(
         this.inputField,
-        UrlbarUtils.WEB_ENGINE_NAMES.has(engineName)
+        isGeneralPurposeEngine
           ? "urlbar-placeholder-search-mode-web-2"
           : "urlbar-placeholder-search-mode-other-engine",
         { name: engineName }
@@ -2726,7 +2748,7 @@ class UrlbarInput {
     });
 
     this.removeAttribute("focused");
-    if (!UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+    if (!protonEnabled) {
       this.endLayoutExtend();
     }
 
@@ -2805,6 +2827,10 @@ class UrlbarInput {
   }
 
   _on_contextmenu(event) {
+    if (protonEnabled) {
+      this.addSearchEngineHelper.refreshContextMenu(event);
+    }
+
     // Context menu opened via keyboard shortcut.
     if (!event.button) {
       return;
@@ -2838,7 +2864,7 @@ class UrlbarInput {
       }
     }
 
-    if (!UrlbarPrefs.get("browser.proton.urlbar.enabled")) {
+    if (!protonEnabled) {
       this.startLayoutExtend();
     }
 
@@ -3543,27 +3569,12 @@ class CopyCutController {
  *
  * @note setEnginesFromBrowser must be invoked from the outside when the
  *       page provided engines list changes.
+ *       refreshContextMenu must be invoked when the context menu is opened.
  */
 class AddSearchEngineHelper {
   constructor(input) {
-    this.document = input.document;
-
+    this.input = input;
     this.shortcutButtons = input.view.oneOffSearchButtons;
-
-    let contextMenu = input.querySelector("moz-input-box").menupopup;
-    this.contextSeparator = this.document.createXULElement("menuseparator");
-    this.contextSeparator.setAttribute("anonid", "add-engine-separator");
-    this.contextSeparator.classList.add("menuseparator-add-engine");
-    this.contextSeparator.collapsed = true;
-    contextMenu.appendChild(this.contextSeparator);
-
-    // Since the contextual menu is not opened often, compared to the urlbar
-    // results panel, we update it just before showing it, instead of spending
-    // time on every page load.
-    contextMenu.addEventListener(
-      "popupshowing",
-      this._onContextMenu.bind(this)
-    );
 
     XPCOMUtils.defineLazyGetter(this, "_bundle", () =>
       Services.strings.createBundle("chrome://browser/locale/search.properties")
@@ -3609,25 +3620,6 @@ class AddSearchEngineHelper {
     }
   }
 
-  /**
-   * Adds an OpenSearch engine.
-   * @param {string} uri The engine url.
-   * @param {string} icon The engine icon url.
-   * @returns {Promise} resolved once the addition is complete.
-   * @resolves {boolean} whether the engine was added.
-   * @rejects never
-   */
-  addSearchEngine({ uri, icon }) {
-    return SearchUIUtils.addOpenSearchEngine(
-      uri,
-      icon,
-      this.browsingContext
-    ).catch(ex => {
-      console.error(ex);
-      return false;
-    });
-  }
-
   _sameEngines(engines1, engines2) {
     if (engines1?.length != engines2?.length) {
       return false;
@@ -3639,7 +3631,7 @@ class AddSearchEngineHelper {
   }
 
   _createMenuitem(engine, index) {
-    let elt = this.document.createXULElement("menuitem");
+    let elt = this.input.document.createXULElement("menuitem");
     elt.setAttribute("anonid", `add-engine-${index}`);
     elt.classList.add("menuitem-iconic");
     elt.classList.add("context-menu-add-engine");
@@ -3658,7 +3650,7 @@ class AddSearchEngineHelper {
   }
 
   _createMenu(engine) {
-    let elt = this.document.createXULElement("menu");
+    let elt = this.input.document.createXULElement("menu");
     elt.setAttribute("anonid", "add-engine-menu");
     elt.classList.add("menu-iconic");
     elt.classList.add("context-menu-add-engine");
@@ -3669,13 +3661,27 @@ class AddSearchEngineHelper {
     if (engine.icon) {
       elt.setAttribute("image", engine.icon);
     }
-    let popup = this.document.createXULElement("menupopup");
+    let popup = this.input.document.createXULElement("menupopup");
     elt.appendChild(popup);
     return elt;
   }
 
-  _refreshContextMenu() {
+  refreshContextMenu() {
     let engines = this.engines;
+
+    // Certain operations, like customization, destroy and recreate widgets,
+    // so we cannot rely on cached elements.
+    if (!this.input.querySelector(".menuseparator-add-engine")) {
+      this.contextSeparator = this.input.document.createXULElement(
+        "menuseparator"
+      );
+      this.contextSeparator.setAttribute("anonid", "add-engine-separator");
+      this.contextSeparator.classList.add("menuseparator-add-engine");
+      this.contextSeparator.collapsed = true;
+      let contextMenu = this.input.querySelector("moz-input-box").menupopup;
+      contextMenu.appendChild(this.contextSeparator);
+    }
+
     this.contextSeparator.collapsed = !engines.length;
     let curElt = this.contextSeparator;
     // Remove the previous items, if any.
@@ -3708,23 +3714,16 @@ class AddSearchEngineHelper {
     }
   }
 
-  _onContextMenu(event) {
-    // Ignore sub-menus.
-    if (event.target == event.currentTarget) {
-      this._refreshContextMenu();
+  async _onCommand(event) {
+    let added = await SearchUIUtils.addOpenSearchEngine(
+      event.target.getAttribute("uri"),
+      event.target.getAttribute("image"),
+      this.browsingContext
+    ).catch(console.error);
+    if (added) {
+      // Remove the offered engine from the list. The browser updated the
+      // engines list at this point, so we just have to refresh the menu.)
+      this.refreshContextMenu();
     }
-  }
-
-  _onCommand(event) {
-    this.addSearchEngine({
-      uri: event.target.getAttribute("uri"),
-      icon: event.target.getAttribute("image"),
-    }).then(added => {
-      if (added) {
-        // Remove the offered engine from the list. The browser updated the
-        // engines list at this point, so we just have to refresh the menu.)
-        this._refreshContextMenu();
-      }
-    });
   }
 }

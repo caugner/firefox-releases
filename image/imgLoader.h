@@ -17,6 +17,7 @@
 #include "nsWeakReference.h"
 #include "nsIContentSniffer.h"
 #include "nsRefPtrHashtable.h"
+#include "nsTHashSet.h"
 #include "nsExpirationTracker.h"
 #include "ImageCacheKey.h"
 #include "imgRequest.h"
@@ -190,7 +191,7 @@ class imgLoader final : public imgILoader,
   typedef mozilla::image::ImageCacheKey ImageCacheKey;
   typedef nsRefPtrHashtable<nsGenericHashKey<ImageCacheKey>, imgCacheEntry>
       imgCacheTable;
-  typedef nsTHashtable<nsPtrHashKey<imgRequest>> imgSet;
+  typedef nsTHashSet<imgRequest*> imgSet;
   typedef mozilla::Mutex Mutex;
 
   NS_DECL_ISUPPORTS
@@ -272,8 +273,7 @@ class imgLoader final : public imgILoader,
    * @param aAcceptedMimeTypes Which kinds of MIME types to treat as images.
    */
   static bool SupportImageWithMimeType(
-      const char* aMimeType,
-      AcceptedMimeTypes aAccept = AcceptedMimeTypes::IMAGES);
+      const nsACString&, AcceptedMimeTypes aAccept = AcceptedMimeTypes::IMAGES);
 
   static void GlobalInit();  // for use by the factory
   static void Shutdown();    // for use by the factory

@@ -264,7 +264,7 @@ class StorageUI {
   }
 
   get currentTarget() {
-    return this._toolbox.targetList.targetFront;
+    return this._commands.targetCommand.targetFront;
   }
 
   async init() {
@@ -275,11 +275,10 @@ class StorageUI {
     //   but rather the storage specific front, i.e. a storage resource. Storage resources are fronts.
     this.storageResources = {};
 
-    const { targetList } = this._toolbox;
     this._onTargetAvailable = this._onTargetAvailable.bind(this);
     this._onTargetDestroyed = this._onTargetDestroyed.bind(this);
-    await targetList.watchTargets(
-      [targetList.TYPES.FRAME],
+    await this._commands.targetCommand.watchTargets(
+      [this._commands.targetCommand.TYPES.FRAME],
       this._onTargetAvailable,
       this._onTargetDestroyed
     );
@@ -287,7 +286,6 @@ class StorageUI {
     this._onResourceListAvailable = this._onResourceListAvailable.bind(this);
 
     const { resourceWatcher } = this._toolbox;
-
     await this._toolbox.resourceWatcher.watchResources(
       [
         // The first item in this list will be the first selected storage item
@@ -367,6 +365,7 @@ class StorageUI {
       return;
     }
 
+    this.storageResources = {};
     this.table.clear();
     this.hideSidebar();
     this.tree.clear();
@@ -510,6 +509,10 @@ class StorageUI {
   }
 
   editItem(data) {
+    const selectedItem = this.tree.selectedItem;
+    if (!selectedItem) {
+      return;
+    }
     const front = this.getCurrentFront();
 
     front.editItem(data);

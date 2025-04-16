@@ -19,7 +19,7 @@
 #include "mozilla/WeakPtr.h"
 #include "nsTObserverArray.h"
 #include "nsTArray.h"
-#include "nsTHashtable.h"
+#include "nsTHashSet.h"
 #include "nsClassHashtable.h"
 #include "nsHashKeys.h"
 #include "nsRefreshObservers.h"
@@ -30,9 +30,7 @@
 #include "mozilla/layers/TransactionIdAllocator.h"
 #include "LayersTypes.h"
 
-#ifdef MOZ_GECKO_PROFILER
-#  include "mozilla/ProfileChunkedBuffer.h"
-#endif
+#include "GeckoProfiler.h"  // for ProfileChunkedBuffer
 
 class nsPresContext;
 
@@ -127,11 +125,9 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
    * refresh driver ticks.
    */
   void AddPostRefreshObserver(nsAPostRefreshObserver* aObserver);
-  void AddPostRefreshObserver(mozilla::OneShotPostRefreshObserver* aObserver) =
-      delete;
+  void AddPostRefreshObserver(mozilla::ManagedPostRefreshObserver*) = delete;
   void RemovePostRefreshObserver(nsAPostRefreshObserver* aObserver);
-  void RemovePostRefreshObserver(
-      mozilla::OneShotPostRefreshObserver* aObserver) = delete;
+  void RemovePostRefreshObserver(mozilla::ManagedPostRefreshObserver*) = delete;
 
   /**
    * Add/Remove imgIRequest versions of observers.
@@ -409,11 +405,14 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
     eHasVisualViewportScrollEvents = 1 << 5,
   };
 
+  void AddForceNotifyContentfulPaintPresContext(nsPresContext* aPresContext);
+  void FlushForceNotifyContentfulPaintPresContext();
+
  private:
   typedef nsTArray<RefPtr<VVPResizeEvent>> VisualViewportResizeEventArray;
   typedef nsTArray<RefPtr<mozilla::Runnable>> ScrollEventArray;
   typedef nsTArray<RefPtr<VVPScrollEvent>> VisualViewportScrollEventArray;
-  typedef nsTHashtable<nsISupportsHashKey> RequestTable;
+  typedef nsTHashSet<nsCOMPtr<nsISupports>> RequestTable;
   struct ImageStartData {
     ImageStartData() = default;
 
@@ -426,10 +425,10 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
     nsARefreshObserver* mObserver;
     const char* mDescription;
     mozilla::TimeStamp mRegisterTime;
-    mozilla::Maybe<uint64_t> mInnerWindowId;
 #ifdef MOZ_GECKO_PROFILER
-    mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> mCause;
+    mozilla::MarkerInnerWindowId mInnerWindowId;
 #endif
+    mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> mCause;
     mozilla::FlushType mFlushType;
 
     bool operator==(nsARefreshObserver* aObserver) const {
@@ -479,12 +478,12 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
 
   void FinishedWaitingForTransaction();
 
+  bool CanDoCatchUpTick();
+
   mozilla::RefreshDriverTimer* ChooseTimer();
   mozilla::RefreshDriverTimer* mActiveTimer;
   RefPtr<mozilla::RefreshDriverTimer> mOwnTimer;
-#ifdef MOZ_GECKO_PROFILER
   mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> mRefreshTimerStartedCause;
-#endif
 
   // nsPresContext passed in constructor and unset in Disconnect.
   mozilla::WeakPtr<nsPresContext> mPresContext;
@@ -513,9 +512,7 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   // flush since the last time we did it.
   const mozilla::TimeDuration mMinRecomputeVisibilityInterval;
 
-#ifdef MOZ_GECKO_PROFILER
   mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> mViewManagerFlushCause;
-#endif
 
   bool mThrottled : 1;
   bool mNeedToRecomputeVisibility : 1;
@@ -595,6 +592,17 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
       mPendingFullscreenEvents;
   AutoTArray<mozilla::AnimationEventDispatcher*, 16>
       mAnimationEventFlushObservers;
+
+  // nsPresContexts which `NotifyContentfulPaint` have been called,
+  // however the corresponding paint doesn't come from a regular
+  // rendering steps(aka tick).
+  //
+  // For these nsPresContexts, we invoke
+  // `FlushForceNotifyContentfulPaintPresContext` in the next tick
+  // to force notify contentful paint, regardless whether the tick paints
+  // or not.
+  nsTArray<mozilla::WeakPtr<nsPresContext>>
+      mForceNotifyContentfulPaintPresContexts;
 
   void BeginRefreshingImages(RequestTable& aEntries,
                              mozilla::TimeStamp aDesired);

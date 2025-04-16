@@ -135,9 +135,7 @@ add_task(async function test_open_managedbookmark() {
   let tabCreatedPromise = BrowserTestUtils.waitForNewTab(gBrowser, null, true);
 
   let openInNewTabOption = document.getElementById("placesContext_open:newtab");
-  EventUtils.synthesizeMouseAtCenter(openInNewTabOption, {
-    button: 0,
-  });
+  context.activateItem(openInNewTabOption);
   info("Click open in new tab");
 
   let lastOpenedTab = await tabCreatedPromise;
@@ -183,9 +181,7 @@ add_task(async function test_copy_managedbookmark() {
     SimpleTest.waitForClipboard(
       "https://example.com/",
       () => {
-        EventUtils.synthesizeMouseAtCenter(copyOption, {
-          button: 0,
-        });
+        context.activateItem(copyOption);
       },
       resolve,
       () => {

@@ -41,7 +41,7 @@ using mozilla::widget::IconLoader;
 
 static const uint32_t kIconSize = 16;
 
-nsMenuItemIconX::nsMenuItemIconX(nsMenuObjectX* aMenuItem) : mMenuObject(aMenuItem) {
+nsMenuItemIconX::nsMenuItemIconX(Listener* aListener) : mListener(aListener) {
   MOZ_COUNT_CTOR(nsMenuItemIconX);
 }
 
@@ -149,6 +149,8 @@ already_AddRefed<nsIURI> nsMenuItemIconX::GetIconURI(nsIContent* aContent) {
   } else {
     mImageRegionRect = r.ToNearestPixels(mozilla::AppUnitsPerCSSPixel());
   }
+  mComputedStyle = std::move(sc);
+
   return iconURI.forget();
 }
 
@@ -166,10 +168,13 @@ nsresult nsMenuItemIconX::OnComplete(imgIContainer* aImage) {
 
   mIconImage = [[MOZIconHelper iconImageFromImageContainer:aImage
                                                   withSize:NSMakeSize(kIconSize, kIconSize)
+                                             computedStyle:mComputedStyle
                                                    subrect:mImageRegionRect
                                                scaleFactor:0.0f] retain];
-  if (mMenuObject) {
-    mMenuObject->IconUpdated();
+  mComputedStyle = nullptr;
+
+  if (mListener) {
+    mListener->IconUpdated();
   }
 
   mIconLoader->Destroy();

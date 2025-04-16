@@ -79,7 +79,6 @@ function organizeToolbars(state = {}) {
       pageActionsInUrlBar: [],
 
       // Areas to show or hide.
-      dragSpaceVisible: false,
       titlebarVisible: false,
       menubarVisible: false,
       personalToolbarVisible: false,
@@ -112,10 +111,6 @@ function organizeToolbars(state = {}) {
     targetState.personalToolbarVisible
   );
 
-  Services.prefs.setBoolPref(
-    "browser.tabs.extraDragSpace",
-    !targetState.titlebarVisible && targetState.dragSpaceVisible
-  );
   Services.prefs.setBoolPref(
     "browser.tabs.drawInTitlebar",
     !targetState.titlebarVisible
@@ -169,7 +164,6 @@ add_task(async function widgetPositions() {
   BrowserUsageTelemetry._recordUITelemetry();
 
   assertVisibilityScalars([
-    "drag-space_pinned_off",
     "menu-toolbar_pinned_off",
     "titlebar_pinned_off",
     "bookmarks-bar_pinned_off",
@@ -203,14 +197,12 @@ add_task(async function widgetPositions() {
       "library-button",
     ],
 
-    dragSpaceVisible: true,
     personalToolbarVisible: true,
   });
 
   BrowserUsageTelemetry._recordUITelemetry();
 
   assertVisibilityScalars([
-    "drag-space_pinned_on",
     "menu-toolbar_pinned_off",
     "titlebar_pinned_off",
     "bookmarks-bar_pinned_on",
@@ -259,7 +251,6 @@ add_task(async function customizeMode() {
     BrowserUsageTelemetry._recordUITelemetry();
 
     assertVisibilityScalars([
-      "drag-space_pinned_off",
       "menu-toolbar_pinned_off",
       "titlebar_pinned_off",
       "bookmarks-bar_pinned_off",
@@ -381,7 +372,6 @@ add_task(async function contextMenus() {
     BrowserUsageTelemetry._recordUITelemetry();
 
     assertVisibilityScalars([
-      "drag-space_pinned_off",
       "menu-toolbar_pinned_off",
       "titlebar_pinned_off",
       "bookmarks-bar_pinned_off",
@@ -414,14 +404,14 @@ add_task(async function contextMenus() {
     if (bookmarksFeatureEnabled) {
       let subMenu = barMenu.querySelector("menupopup");
       popupShown = BrowserTestUtils.waitForEvent(subMenu, "popupshown");
-      EventUtils.synthesizeMouseAtCenter(barMenu, {});
+      barMenu.openMenu(true);
       await popupShown;
-      let alwaysButton = barMenu.querySelector(
+      let alwaysButton = subMenu.querySelector(
         '*[data-visibility-enum="always"]'
       );
-      EventUtils.synthesizeMouseAtCenter(alwaysButton, {});
+      subMenu.activateItem(alwaysButton);
     } else {
-      EventUtils.synthesizeMouseAtCenter(barMenu, {});
+      menu.activateItem(barMenu);
     }
     await popupHidden;
 
@@ -437,7 +427,7 @@ add_task(async function contextMenus() {
     let removeButton = document.querySelector(
       "#toolbar-context-menu .customize-context-removeFromToolbar"
     );
-    EventUtils.synthesizeMouseAtCenter(removeButton, {}, window);
+    menu.activateItem(removeButton);
     await popupHidden;
 
     let bookmarksBarTelemetryScalar = bookmarksFeatureEnabled
@@ -453,6 +443,11 @@ add_task(async function contextMenus() {
 });
 
 add_task(async function pageActions() {
+  // Built-in page actions are removed in Proton.
+  if (gProton) {
+    return;
+  }
+
   // The page action button is only visible when a page is loaded.
   await BrowserTestUtils.withNewTab("http://example.com", async () => {
     // Create a default state.
@@ -476,7 +471,6 @@ add_task(async function pageActions() {
     BrowserUsageTelemetry._recordUITelemetry();
 
     assertVisibilityScalars([
-      "drag-space_pinned_off",
       "menu-toolbar_pinned_off",
       "titlebar_pinned_off",
       "bookmarks-bar_pinned_off",
@@ -583,7 +577,6 @@ add_task(async function extensions() {
     BrowserUsageTelemetry._recordUITelemetry();
 
     assertVisibilityScalars([
-      "drag-space_pinned_off",
       "menu-toolbar_pinned_off",
       "titlebar_pinned_off",
       "bookmarks-bar_pinned_off",
@@ -610,7 +603,6 @@ add_task(async function extensions() {
     BrowserUsageTelemetry._recordUITelemetry();
 
     assertVisibilityScalars([
-      "drag-space_pinned_off",
       "menu-toolbar_pinned_off",
       "titlebar_pinned_off",
       "bookmarks-bar_pinned_off",
@@ -632,7 +624,6 @@ add_task(async function extensions() {
     BrowserUsageTelemetry._recordUITelemetry();
 
     assertVisibilityScalars([
-      "drag-space_pinned_off",
       "menu-toolbar_pinned_off",
       "titlebar_pinned_off",
       "bookmarks-bar_pinned_off",
@@ -680,7 +671,6 @@ add_task(async function extensions() {
     BrowserUsageTelemetry._recordUITelemetry();
 
     assertVisibilityScalars([
-      "drag-space_pinned_off",
       "menu-toolbar_pinned_off",
       "titlebar_pinned_off",
       "bookmarks-bar_pinned_off",

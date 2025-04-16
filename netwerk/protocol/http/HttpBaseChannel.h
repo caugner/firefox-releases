@@ -65,6 +65,7 @@ class LogCollector;
 namespace net {
 extern mozilla::LazyLogModule gHttpLog;
 
+class OpaqueResponseBlockingInfo;
 class PreferredAlternativeDataTypeParams;
 
 enum CacheDisposition : uint8_t {
@@ -232,8 +233,8 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD SetChannelId(uint64_t aChannelId) override;
   NS_IMETHOD GetTopLevelContentWindowId(uint64_t* aContentWindowId) override;
   NS_IMETHOD SetTopLevelContentWindowId(uint64_t aContentWindowId) override;
-  NS_IMETHOD GetTopLevelOuterContentWindowId(uint64_t* aWindowId) override;
-  NS_IMETHOD SetTopLevelOuterContentWindowId(uint64_t aWindowId) override;
+  NS_IMETHOD GetTopBrowsingContextId(uint64_t* aId) override;
+  NS_IMETHOD SetTopBrowsingContextId(uint64_t aId) override;
 
   NS_IMETHOD GetFlashPluginState(
       nsIHttpChannel::FlashPluginState* aState) override;
@@ -327,13 +328,6 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD HasCrossOriginOpenerPolicyMismatch(bool* aIsMismatch) override;
   NS_IMETHOD GetResponseEmbedderPolicy(
       nsILoadInfo::CrossOriginEmbedderPolicy* aOutPolicy) override;
-  virtual bool GetHasNonEmptySandboxingFlag() override {
-    return LoadHasNonEmptySandboxingFlag();
-  }
-  virtual void SetHasNonEmptySandboxingFlag(
-      bool aHasNonEmptySandboxingFlag) override {
-    StoreHasNonEmptySandboxingFlag(aHasNonEmptySandboxingFlag);
-  }
 
   inline void CleanRedirectCacheChainIfNecessary() {
     mRedirectedCachekeys = nullptr;
@@ -616,6 +610,10 @@ class HttpBaseChannel : public nsHashPropertyBag,
 
   nsresult ValidateMIMEType();
 
+  bool EnsureOpaqueResponseIsAllowed();
+
+  Result<bool, nsresult> EnsureOpaqueResponseIsAllowedAfterSniff();
+
   friend class PrivateBrowsingChannel<HttpBaseChannel>;
   friend class InterceptFailedOnStop;
 
@@ -698,6 +696,8 @@ class HttpBaseChannel : public nsHashPropertyBag,
   UniquePtr<nsTArray<nsCString>> mRedirectedCachekeys;
   nsCOMPtr<nsIRequestContext> mRequestContext;
 
+  RefPtr<OpaqueResponseBlockingInfo> mOpaqueResponseBlockingInfo;
+
   NetAddr mSelfAddr;
   NetAddr mPeerAddr;
 
@@ -741,7 +741,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
   // ID of the top-level document's inner window this channel is being
   // originated from.
   uint64_t mContentWindowId;
-  uint64_t mTopLevelOuterContentWindowId;
+  uint64_t mTopBrowsingContextId;
   int64_t mAltDataLength;
   uint64_t mChannelId;
   uint64_t mReqContentLength;
@@ -837,9 +837,6 @@ class HttpBaseChannel : public nsHashPropertyBag,
     // to upgrade the request to a secure channel.
     (uint32_t, UpgradableToSecure, 1),
 
-    // True if the docshell's sandboxing flag set is not empty.
-    (uint32_t, HasNonEmptySandboxingFlag, 1),
-
     // Tainted origin flag of a request, specified by
     // WHATWG Fetch Standard 2.2.5.
     (uint32_t, TaintedOriginFlag, 1),
@@ -880,6 +877,16 @@ class HttpBaseChannel : public nsHashPropertyBag,
   int8_t mRedirectCount;
   // Number of internal redirects that has occurred.
   int8_t mInternalRedirectCount;
+
+  enum class SnifferCategoryType {
+    NetContent = 0,
+    OpaqueResponseBlocking,
+    All
+  };
+  SnifferCategoryType mSnifferCategoryType = SnifferCategoryType::NetContent;
+  const bool mCachedOpaqueResponseBlockingPref;
+  bool mBlockOpaqueResponseAfterSniff;
+  bool mCheckIsOpaqueResponseAllowedAfterSniff;
 
   // clang-format off
   MOZ_ATOMIC_BITFIELDS(mAtomicBitfields3, 8, (
@@ -942,7 +949,12 @@ class HttpBaseChannel : public nsHashPropertyBag,
   void AddAsNonTailRequest();
   void RemoveAsNonTailRequest();
 
-  void EnsureTopLevelOuterContentWindowId();
+  void EnsureTopBrowsingContextId();
+
+  void InitiateORBTelemetry();
+
+  void ReportORBTelemetry(const nsCString& aKey);
+  void ReportORBTelemetry(int64_t aContentLength);
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(HttpBaseChannel, HTTP_BASE_CHANNEL_IID)

@@ -41,9 +41,6 @@ class MOZ_STACK_CLASS JSExecutionContext final {
   // Set to a valid handle if a return value is expected.
   JS::Rooted<JS::Value> mRetValue;
 
-  // Scope chain in which the execution takes place.
-  JS::RootedVector<JSObject*> mScopeChain;
-
   // The compiled script.
   JS::Rooted<JSScript*> mScript;
 
@@ -64,8 +61,6 @@ class MOZ_STACK_CLASS JSExecutionContext final {
 #ifdef DEBUG
   // Should we set the return value.
   bool mWantsReturnValue;
-
-  bool mExpectScopeChain;
 
   bool mScriptUsed;
 #endif
@@ -109,9 +104,6 @@ class MOZ_STACK_CLASS JSExecutionContext final {
     return *this;
   }
 
-  // Set the scope chain in which the code should be executed.
-  void SetScopeChain(JS::HandleVector<JSObject*> aScopeChain);
-
   // After getting a notification that an off-thread compilation terminated,
   // this function will take the result of the parser and move it to the main
   // thread.
@@ -136,12 +128,6 @@ class MOZ_STACK_CLASS JSExecutionContext final {
   // function will get the result of the decoder and move it to the main
   // thread.
   nsresult JoinDecode(JS::OffThreadToken** aOffThreadToken);
-
-  nsresult JoinDecodeBinAST(JS::OffThreadToken** aOffThreadToken);
-
-  // Decode a BinAST encoded script contained in a buffer.
-  nsresult DecodeBinAST(JS::CompileOptions& aCompileOptions,
-                        const uint8_t* aBuf, size_t aLength);
 
   // Get a successfully compiled script.
   JSScript* GetScript();

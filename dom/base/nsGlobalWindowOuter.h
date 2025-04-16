@@ -50,6 +50,7 @@
 #include "mozilla/dom/ImageBitmapSource.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/dom/BrowsingContext.h"
+#include "X11UndefineNone.h"
 
 class nsDocShell;
 class nsIArray;
@@ -828,8 +829,12 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   static bool CanSetProperty(const char* aPrefName);
 
-  static void MakeScriptDialogTitle(nsAString& aOutTitle,
-                                    nsIPrincipal* aSubjectPrincipal);
+  static void MakeMessageWithPrincipal(nsAString& aOutMessage,
+                                       nsIPrincipal* aSubjectPrincipal,
+                                       bool aUseHostPort,
+                                       const char* aNullMessage,
+                                       const char* aContentMessage,
+                                       const char* aFallbackMessage);
 
   // Outer windows only.
   MOZ_CAN_RUN_SCRIPT_BOUNDARY

@@ -367,6 +367,7 @@ GPUProcessLaunchCount:
   description: >
     Number of times the GPU process was launched.
   type: integer
+  ping: true
 
 GPUProcessStatus:
   description: >
@@ -606,10 +607,10 @@ LauncherProcessState:
     mozilla::LauncherRegistryInfo::EnableState enum
   type: integer
 
-LowCommitSpaceEvents:
+LowPhysicalMemoryEvents:
   description: >
-    Number of times the available memory tracker has detected a that
-    commit-space was running low. This is a Windows-specific annotation.
+    Number of times the available memory tracker has detected that free
+    physical memory is running low. This is a Windows-specific annotation.
   type: integer
   ping: true
 
@@ -703,6 +704,13 @@ ProductName:
 ProductID:
   description: >
     Application UUID (e.g. ec8030f7-c20a-464f-9b0e-13a3a9e97384).
+  type: string
+  ping: true
+
+ProfilerChildShutdownPhase:
+  description: >
+    When a child process shuts down, this describes if the profiler is running,
+    and the point the profiler shutdown sequence has reached.
   type: string
   ping: true
 

@@ -29,7 +29,7 @@ add_task(async function setup() {
     true
   );
 
-  Services.search.wrappedJSObject.GENERAL_SEARCH_ENGINE_IDS = new Set([
+  SearchUtils.GENERAL_SEARCH_ENGINE_IDS = new Set([
     "engine-resourceicon@search.mozilla.org",
     "engine-reordered@search.mozilla.org",
   ]);
@@ -293,7 +293,7 @@ add_task(
       "Should only have one visible engine"
     );
 
-    Services.search.wrappedJSObject.GENERAL_SEARCH_ENGINE_IDS.clear();
+    SearchUtils.GENERAL_SEARCH_ENGINE_IDS.clear();
 
     const observer = new SearchObserver(
       [
@@ -351,9 +351,9 @@ async function checkNonBuiltinFallback(private) {
     : SearchUtils.MODIFIED_TYPE.DEFAULT;
   Services.search.restoreDefaultEngines();
 
-  const [addedEngine] = await addTestEngines([
-    { name: "A second test engine", xmlFileName: "engine2.xml" },
-  ]);
+  let addedEngine = await SearchTestUtils.promiseNewSearchEngine(
+    `${gDataUrl}engine2.xml`
+  );
 
   await setDefault(private, addedEngine);
 

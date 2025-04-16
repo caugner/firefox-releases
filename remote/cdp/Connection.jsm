@@ -16,7 +16,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   UnknownMethodError: "chrome://remote/content/cdp/Error.jsm",
 });
 
-XPCOMUtils.defineLazyGetter(this, "log", () => Log.get());
+XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -65,7 +65,7 @@ class Connection {
 
   send(body) {
     const payload = JSON.stringify(body, null, Log.verbose ? "\t" : null);
-    log.trace(truncate`<-(connection ${this.id}) ${payload}`);
+    logger.trace(truncate`<-(connection ${this.id}) ${payload}`);
     this.transport.send(JSON.parse(payload));
   }
 
@@ -109,18 +109,16 @@ class Connection {
     // session. `Target.attachToTarget` creates the secondary session and
     // returns the session ID.
     if (sessionId) {
-      // Temporarily disabled due to spamming of the console (bug 1598468).
-      // Event should only be sent on protocol messages (eg. attachedToTarget)
-      // this.sendEvent("Target.receivedMessageFromTarget", {
-      //   sessionId,
-      //   // receivedMessageFromTarget is expected to send a raw CDP packet
-      //   // in the `message` property and it to be already serialized to a
-      //   // string
-      //   message: JSON.stringify({
-      //     id,
-      //     result,
-      //   }),
-      // });
+      this.sendEvent("Target.receivedMessageFromTarget", {
+        sessionId,
+        // receivedMessageFromTarget is expected to send a raw CDP packet
+        // in the `message` property and it to be already serialized to a
+        // string
+        message: JSON.stringify({
+          id,
+          result,
+        }),
+      });
     }
   }
 
@@ -155,15 +153,13 @@ class Connection {
     // session. `Target.attachToTarget` creates the secondary session and
     // returns the session ID.
     if (sessionId) {
-      // Temporarily disabled due to spamming of the console (bug 1598468).
-      // Event should only be sent on protocol messages (eg. attachedToTarget)
-      // this.sendEvent("Target.receivedMessageFromTarget", {
-      //   sessionId,
-      //   message: JSON.stringify({
-      //     method,
-      //     params,
-      //   }),
-      // });
+      this.sendEvent("Target.receivedMessageFromTarget", {
+        sessionId,
+        message: JSON.stringify({
+          method,
+          params,
+        }),
+      });
     }
   }
 
@@ -186,7 +182,7 @@ class Connection {
    *        JSON-serializable object sent by the client
    */
   async onPacket(packet) {
-    log.trace(`(connection ${this.id})-> ${JSON.stringify(packet)}`);
+    logger.trace(`(connection ${this.id})-> ${JSON.stringify(packet)}`);
 
     try {
       const { id, method, params, sessionId } = packet;

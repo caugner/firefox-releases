@@ -44,10 +44,6 @@ class TabDescriptorFront extends DescriptorMixin(
     // debugging).
     this._localTab = null;
 
-    // Flipped when creating dedicated tab targets for DevTools WebExtensions.
-    // See toolkit/components/extensions/ExtensionParent.jsm .
-    this.isDevToolsExtensionContext = false;
-
     this._onTargetDestroyed = this._onTargetDestroyed.bind(this);
     this._handleTabEvent = this._handleTabEvent.bind(this);
   }
@@ -86,6 +82,12 @@ class TabDescriptorFront extends DescriptorMixin(
   setLocalTab(localTab) {
     this._localTab = localTab;
     this._setupLocalTabListeners();
+
+    // This is pure legacy. We always assumed closing the DevToolsClient
+    // when the tab was closed. It is mostly important for tests,
+    // but also ensure cleaning up the client and everything on tab closing.
+    // (this flag is handled by DescriptorMixin)
+    this.shouldCloseClient = true;
   }
 
   get isLocalTab() {
@@ -138,16 +140,11 @@ class TabDescriptorFront extends DescriptorMixin(
   _createTabTarget(form) {
     const front = new BrowsingContextTargetFront(this._client, null, this);
 
-    if (this.isLocalTab) {
-      front.shouldCloseClient = true;
-    }
-
     // As these fronts aren't instantiated by protocol.js, we have to set their actor ID
     // manually like that:
     front.actorID = form.actor;
     front.form(form);
     this.manage(front);
-    front.on("target-destroyed", this._onTargetDestroyed);
     return front;
   }
 
@@ -162,7 +159,12 @@ class TabDescriptorFront extends DescriptorMixin(
     // so that we also have to remove the descriptor when the target is destroyed.
     // Should be kept until about:debugging supports target switching and we remove the
     // !isLocalTab check.
-    if (!this.traits.emitDescriptorDestroyed || !this.isLocalTab) {
+    // Also destroy descriptor of web extension as they expect the client to be closed immediately
+    if (
+      !this.traits.emitDescriptorDestroyed ||
+      !this.isLocalTab ||
+      this.isDevToolsExtensionContext
+    ) {
       this.destroy();
     }
   }
@@ -183,6 +185,25 @@ class TabDescriptorFront extends DescriptorMixin(
         console.error("Failed to retrieve the favicon for " + this.url, e);
       }
     }
+  }
+
+  /**
+   * Top-level targets created on the server will not be created and managed
+   * by a descriptor front. Instead they are created by the Watcher actor.
+   * On the client side we manually re-establish a link between the descriptor
+   * and the new top-level target.
+   */
+  setTarget(targetFront) {
+    // Completely ignore the previous target.
+    // We might nullify the _targetFront unexpectely due to previous target
+    // being destroyed after the new is created
+    if (this._targetFront) {
+      this._targetFront.off("target-destroyed", this._onTargetDestroyed);
+    }
+    this._targetFront = targetFront;
+    targetFront.setDescriptor(this);
+
+    targetFront.on("target-destroyed", this._onTargetDestroyed);
   }
 
   async getTarget() {
@@ -206,13 +227,7 @@ class TabDescriptorFront extends DescriptorMixin(
         );
       }
 
-      // Completely ignore the previous target.
-      // We might nullify the _targetFront unexpectely due to previous target
-      // being destroyed after the new is created
-      if (this._targetFront) {
-        this._targetFront.off("target-destroyed", this._onTargetDestroyed);
-      }
-      this._targetFront = newTargetFront;
+      this.setTarget(newTargetFront);
       this._targetFrontPromise = null;
       return newTargetFront;
     })();
@@ -246,11 +261,6 @@ class TabDescriptorFront extends DescriptorMixin(
    * Process change can go in both ways.
    */
   async _onRemotenessChange() {
-    // The front that was created for DevTools page extension does not have corresponding toolbox.
-    if (this.isDevToolsExtensionContext) {
-      return;
-    }
-
     // In a near future, this client side code should be replaced by actor code,
     // notifying about new tab targets.
     this.emit("remoteness-change", this._targetFront);

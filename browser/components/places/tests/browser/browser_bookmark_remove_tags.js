@@ -45,17 +45,13 @@ add_task(async function test_remove_tags_from_BookmarkStar() {
   });
 
   StarUI._createPanelIfNeeded();
-  let bookmarkPanel = document.getElementById("editBookmarkPanel");
-  let shownPromise = promisePopupShown(bookmarkPanel);
-  let bookmarkStar = BookmarkingUI.star;
-  bookmarkStar.click();
-  await shownPromise;
+  await clickBookmarkStar();
 
   // Check if the "Edit This Bookmark" panel is open.
   let bookmarkPanelTitle = document.getElementById("editBookmarkPanelTitle");
   Assert.equal(
-    bookmarkPanelTitle.textContent,
-    gNavigatorBundle.getString("editBookmarkPanel.editBookmarkTitle"),
+    document.l10n.getAttributes(bookmarkPanelTitle).id,
+    "bookmarks-edit-bookmark",
     "Bookmark panel title is correct."
   );
 
@@ -107,8 +103,10 @@ add_task(async function test_remove_tags_from_Toolbar() {
       });
       await promisePopup;
 
-      let properties = document.getElementById("placesContext_show:info");
-      EventUtils.synthesizeMouseAtCenter(properties, {});
+      let properties = document.getElementById(
+        "placesContext_show_bookmark:info"
+      );
+      placesContext.activateItem(properties, {});
     },
     async function test(dialogWin) {
       let tagspicker = dialogWin.document.getElementById(

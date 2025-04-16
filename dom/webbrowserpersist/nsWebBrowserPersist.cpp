@@ -1347,7 +1347,10 @@ nsresult nsWebBrowserPersist::SaveURIInternal(
   // current state of the prefs/permissions.
   nsCOMPtr<nsICookieJarSettings> cookieJarSettings = aCookieJarSettings;
   if (!cookieJarSettings) {
-    cookieJarSettings = mozilla::net::CookieJarSettings::Create();
+    cookieJarSettings =
+        aIsPrivate
+            ? net::CookieJarSettings::Create(net::CookieJarSettings::ePrivate)
+            : net::CookieJarSettings::Create(net::CookieJarSettings::eRegular);
   }
 
   // Open a channel to the URI
@@ -1824,16 +1827,16 @@ void nsWebBrowserPersist::Cleanup() {
     MutexAutoLock lock(mOutputMapMutex);
     mOutputMap.SwapElements(outputMapCopy);
   }
-  for (auto iter = outputMapCopy.ConstIter(); !iter.Done(); iter.Next()) {
-    nsCOMPtr<nsIChannel> channel = do_QueryInterface(iter.Key());
+  for (const auto& key : outputMapCopy.Keys()) {
+    nsCOMPtr<nsIChannel> channel = do_QueryInterface(key);
     if (channel) {
       channel->Cancel(NS_BINDING_ABORTED);
     }
   }
   outputMapCopy.Clear();
 
-  for (auto iter = mUploadList.ConstIter(); !iter.Done(); iter.Next()) {
-    nsCOMPtr<nsIChannel> channel = do_QueryInterface(iter.Key());
+  for (const auto& key : mUploadList.Keys()) {
+    nsCOMPtr<nsIChannel> channel = do_QueryInterface(key);
     if (channel) {
       channel->Cancel(NS_BINDING_ABORTED);
     }
@@ -2379,8 +2382,7 @@ nsresult nsWebBrowserPersist::FixRedirectedChannelEntry(
   nsCOMPtr<nsIURI> originalURI;
   aNewChannel->GetOriginalURI(getter_AddRefs(originalURI));
   nsISupports* matchingKey = nullptr;
-  for (auto iter = mOutputMap.ConstIter(); !iter.Done(); iter.Next()) {
-    nsISupports* key = iter.Key();
+  for (nsISupports* key : mOutputMap.Keys()) {
     nsCOMPtr<nsIChannel> thisChannel = do_QueryInterface(key);
     nsCOMPtr<nsIURI> thisURI;
 
@@ -2421,9 +2423,8 @@ void nsWebBrowserPersist::CalcTotalProgress() {
 
   if (mOutputMap.Count() > 0) {
     // Total up the progress of each output stream
-    for (auto iter = mOutputMap.ConstIter(); !iter.Done(); iter.Next()) {
+    for (const auto& data : mOutputMap.Values()) {
       // Only count toward total progress if destination file is local.
-      OutputData* data = iter.UserData();
       nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(data->mFile);
       if (fileURL) {
         mTotalCurrentProgress += data->mSelfProgress;
@@ -2434,8 +2435,7 @@ void nsWebBrowserPersist::CalcTotalProgress() {
 
   if (mUploadList.Count() > 0) {
     // Total up the progress of each upload
-    for (auto iter = mUploadList.ConstIter(); !iter.Done(); iter.Next()) {
-      UploadData* data = iter.UserData();
+    for (const auto& data : mUploadList.Values()) {
       if (data) {
         mTotalCurrentProgress += data->mSelfProgress;
         mTotalMaxProgress += data->mSelfProgressMax;

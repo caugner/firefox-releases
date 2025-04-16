@@ -41,7 +41,8 @@ class SearchOneOffs {
         <button class="searchbar-engine-one-off-item search-setting-button-compact" tabindex="-1" data-l10n-id="search-one-offs-change-settings-compact-button"/>
       </box>
       <vbox class="search-add-engines"/>
-      <button class="search-setting-button" data-l10n-id="search-one-offs-change-settings-button"/>
+      <menuseparator class="searchbar-separator"/>
+      <button class="search-setting-button" pack="start" data-l10n-id="search-one-offs-change-settings-button"/>
       <box>
         <menupopup class="search-one-offs-context-menu">
           <menuitem class="search-one-offs-context-open-in-new-tab" data-l10n-id="search-one-offs-context-open-new-tab"/>
@@ -1152,7 +1153,9 @@ class SearchOneOffs {
     if (target.classList.contains("addengine-menu-button")) {
       return;
     }
-    // Required to receive click events from the buttons on Linux.
+    // This is necessary to prevent the input from losing focus and closing the
+    // popup. Unfortunately it also has the side effect of preventing the
+    // buttons from receiving the `:active` pseudo-class.
     event.preventDefault();
   }
 
@@ -1214,7 +1217,10 @@ class SearchOneOffs {
       return;
     }
 
-    if (target.classList.contains("addengine-item")) {
+    if (
+      target.classList.contains("addengine-item") ||
+      target.classList.contains("searchbar-engine-one-off-add-engine")
+    ) {
       // On success, hide the panel and tell event listeners to reshow it to
       // show the new engine.
       SearchUIUtils.addOpenSearchEngine(
@@ -1228,6 +1234,7 @@ class SearchOneOffs {
           }
         })
         .catch(console.error);
+      return;
     }
 
     if (target.classList.contains("search-one-offs-context-open-in-new-tab")) {

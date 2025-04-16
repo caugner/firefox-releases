@@ -9,6 +9,10 @@ ChromeUtils.defineModuleGetter(
   "resource://testing-common/TestUtils.jsm"
 );
 
+XPCOMUtils.defineLazyGetter(this, "gFluentStrings", function() {
+  return new Localization(["branding/brand.ftl", "browser/browser.ftl"], true);
+});
+
 function openLibrary(callback, aLeftPaneRoot) {
   let library = window.openDialog(
     "chrome://browser/content/places/places.xhtml",
@@ -50,6 +54,10 @@ function promiseLibrary(aLeftPaneRoot) {
 
 function promiseLibraryClosed(organizer) {
   return new Promise(resolve => {
+    if (organizer.closed) {
+      resolve();
+      return;
+    }
     // Wait for the Organizer window to actually be closed
     organizer.addEventListener(
       "unload",
@@ -206,33 +214,43 @@ var withBookmarksDialog = async function(
   skipOverlayWait = false
 ) {
   let closed = false;
-  let dialogPromise = new Promise(resolve => {
-    Services.ww.registerNotification(function winObserver(
-      subject,
-      topic,
-      data
-    ) {
-      if (topic == "domwindowopened") {
-        let win = subject;
-        win.addEventListener(
-          "load",
-          function() {
-            ok(
-              win.location.href.startsWith(dialogUrl),
-              "The bookmark properties dialog is open: " + win.location.href
-            );
-            // This is needed for the overlay.
-            waitForFocus(() => {
-              resolve(win);
-            }, win);
-          },
-          { once: true }
-        );
-      } else if (topic == "domwindowclosed") {
-        Services.ww.unregisterNotification(winObserver);
-        closed = true;
-      }
+  let protonModal =
+    Services.prefs.getBoolPref("browser.proton.modals.enabled", false) &&
+    // We can't show the in-window prompt for windows which don't have
+    // gDialogBox, like the library (Places:Organizer) window.
+    Services.wm.getMostRecentWindow("").gDialogBox;
+  let dialogPromise;
+  if (protonModal) {
+    dialogPromise = BrowserTestUtils.promiseAlertDialogOpen(null, dialogUrl, {
+      isSubDialog: true,
     });
+  } else {
+    dialogPromise = BrowserTestUtils.domWindowOpenedAndLoaded(null, win => {
+      return win.document.documentURI.startsWith(dialogUrl);
+    }).then(win => {
+      ok(
+        win.location.href.startsWith(dialogUrl),
+        "The bookmark properties dialog is open: " + win.location.href
+      );
+      // This is needed for the overlay.
+      return SimpleTest.promiseFocus(win).then(() => win);
+    });
+  }
+  let dialogClosePromise = dialogPromise.then(win => {
+    if (!protonModal) {
+      return BrowserTestUtils.domWindowClosed(win);
+    }
+    let container = win.top.document.getElementById("window-modal-dialog");
+    return BrowserTestUtils.waitForEvent(container, "close").then(() => {
+      return BrowserTestUtils.waitForMutationCondition(
+        container,
+        { childList: true, attributes: true },
+        () => !container.hasChildNodes() && !container.open
+      );
+    });
+  });
+  dialogClosePromise.then(() => {
+    closed = true;
   });
 
   info("withBookmarksDialog: opening the dialog");
@@ -280,10 +298,7 @@ var withBookmarksDialog = async function(
       await closePromise;
     }
     // Give the dialog a little time to close itself.
-    await BrowserTestUtils.waitForCondition(
-      () => closed,
-      "The dialog should be closed!"
-    );
+    await dialogClosePromise;
   }
 };
 
@@ -434,6 +449,28 @@ var withSidebarTree = async function(type, taskFn) {
     await taskFn(tree);
   } finally {
     SidebarUI.hide();
+  }
+};
+
+/**
+ * Executes a task after opening the Library on a given root. Takes care
+ * of closing the library once done.
+ *
+ * @param hierarchy
+ *        The left pane hierarchy to open.
+ * @param taskFn
+ *        The task to execute once the Library is ready.
+ *        Will get { left, right } trees as argument.
+ */
+var withLibraryWindow = async function(hierarchy, taskFn) {
+  let library = await promiseLibrary(hierarchy);
+  let left = library.document.getElementById("placesList");
+  let right = library.document.getElementById("placeContent");
+  info("withLibrary: executing the task");
+  try {
+    await taskFn({ left, right });
+  } finally {
+    await promiseLibraryClosed(library);
   }
 };
 

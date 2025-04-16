@@ -36,6 +36,8 @@ pub struct PendingTileCache {
     pub prim_list: PrimitiveList,
     /// Parameters that define the tile cache (such as background color, shared clips, reference spatial node)
     pub params: TileCacheParams,
+    /// An additional clip chain that get applied to the shared clips unconditionally for this tile cache
+    pub iframe_clip: Option<ClipChainId>,
 }
 
 /// Used during scene building to construct the list of pending tile caches.
@@ -117,6 +119,8 @@ impl TileCacheBuilder {
         clip_store: &ClipStore,
         interners: &Interners,
         config: &FrameBuilderConfig,
+        iframe_clip: Option<ClipChainId>,
+        slice_flags: SliceFlags,
     ) {
         assert!(self.can_add_container_tile_cache());
 
@@ -238,17 +242,19 @@ impl TileCacheBuilder {
 
         let params = TileCacheParams {
             slice,
-            slice_flags: SliceFlags::empty(),
+            slice_flags,
             spatial_node_index: scroll_root,
             background_color: None,
             shared_clips,
             shared_clip_chain: ClipChainId::NONE,
             virtual_surface_size: config.compositor_kind.get_virtual_surface_size(),
+            compositor_surface_count: prim_list.compositor_surface_count,
         };
 
         self.pending_tile_caches.push(PendingTileCache {
             prim_list,
             params,
+            iframe_clip,
         });
 
         // Add a tile cache barrier so that the next prim definitely gets added to a
@@ -268,6 +274,7 @@ impl TileCacheBuilder {
         interners: &Interners,
         config: &FrameBuilderConfig,
         quality_settings: &QualitySettings,
+        iframe_clip: Option<ClipChainId>,
     ) {
         // Check if we want to create a new slice based on the current / next scroll root
         let scroll_root = self.find_scroll_root(spatial_node_index, spatial_tree);
@@ -371,8 +378,8 @@ impl TileCacheBuilder {
                 // However, if we _do_ ever see this occur on real world content, we could
                 // probably consider increasing the max cache slices a bit more than the
                 // current limit.
-                let params = if slice == MAX_CACHE_SLICES-1 {
-                    TileCacheParams {
+                let (params, iframe_clip) = if slice == MAX_CACHE_SLICES-1 {
+                    let params = TileCacheParams {
                         slice,
                         slice_flags: SliceFlags::empty(),
                         spatial_node_index: ROOT_SPATIAL_NODE_INDEX,
@@ -380,7 +387,10 @@ impl TileCacheBuilder {
                         shared_clips: Vec::new(),
                         shared_clip_chain: ClipChainId::NONE,
                         virtual_surface_size: config.compositor_kind.get_virtual_surface_size(),
-                    }
+                        compositor_surface_count: 0,
+                    };
+
+                    (params, None)
                 } else {
                     let slice_flags = self.force_new_tile_cache.unwrap_or(SliceFlags::empty());
 
@@ -402,7 +412,7 @@ impl TileCacheBuilder {
 
                     self.last_checked_clip_chain = prim_instance.clip_set.clip_chain_id;
 
-                    TileCacheParams {
+                    let params = TileCacheParams {
                         slice,
                         slice_flags,
                         spatial_node_index: scroll_root,
@@ -410,12 +420,16 @@ impl TileCacheBuilder {
                         shared_clips,
                         shared_clip_chain: ClipChainId::NONE,
                         virtual_surface_size: config.compositor_kind.get_virtual_surface_size(),
-                    }
+                        compositor_surface_count: 0,
+                    };
+
+                    (params, iframe_clip)
                 };
 
                 self.pending_tile_caches.push(PendingTileCache {
                     prim_list: PrimitiveList::empty(),
                     params,
+                    iframe_clip,
                 });
 
                 self.force_new_tile_cache = None;
@@ -440,11 +454,23 @@ impl TileCacheBuilder {
         config: &FrameBuilderConfig,
         clip_store: &mut ClipStore,
         prim_store: &mut PrimitiveStore,
+        interners: &Interners,
     ) -> (TileCacheConfig, Vec<PictureIndex>) {
         let mut result = TileCacheConfig::new(self.pending_tile_caches.len());
         let mut tile_cache_pictures = Vec::new();
 
-        for pending_tile_cache in self.pending_tile_caches {
+        for mut pending_tile_cache in self.pending_tile_caches {
+            // Accumulate any clip instances from the iframe_clip into the shared clips
+            // that will be applied by this tile cache during compositing.
+            if let Some(clip_chain_id) = pending_tile_cache.iframe_clip {
+                add_all_rect_clips(
+                    clip_chain_id,
+                    &mut pending_tile_cache.params.shared_clips,
+                    clip_store,
+                    interners,
+                );
+            }
+
             let pic_index = create_tile_cache(
                 pending_tile_cache.params.slice,
                 pending_tile_cache.params.slice_flags,
@@ -511,6 +537,28 @@ fn add_clips(
     }
 }
 
+// Walk a clip-chain, and accumulate all clip instances into supplied `prim_clips` array.
+fn add_all_rect_clips(
+    clip_chain_id: ClipChainId,
+    prim_clips: &mut Vec<ClipInstance>,
+    clip_store: &ClipStore,
+    interners: &Interners,
+) {
+    let mut current_clip_chain_id = clip_chain_id;
+
+    while current_clip_chain_id != ClipChainId::NONE {
+        let clip_chain_node = &clip_store
+            .clip_chain_nodes[current_clip_chain_id.0 as usize];
+
+        let clip_node_data = &interners.clip[clip_chain_node.handle];
+        if let ClipNodeKind::Rectangle = clip_node_data.clip_node_kind {
+            prim_clips.push(ClipInstance::new(clip_chain_node.handle, clip_chain_node.spatial_node_index));
+        }
+
+        current_clip_chain_id = clip_chain_node.parent_clip_chain_id;
+    }
+}
+
 /// Given a PrimitiveList and scroll root, construct a tile cache primitive instance
 /// that wraps the primitive list.
 fn create_tile_cache(
@@ -562,6 +610,7 @@ fn create_tile_cache(
         shared_clips,
         shared_clip_chain: parent_clip_chain_id,
         virtual_surface_size: frame_builder_config.compositor_kind.get_virtual_surface_size(),
+        compositor_surface_count: prim_list.compositor_surface_count,
     });
 
     let pic_index = prim_store.pictures.alloc().init(PicturePrimitive::new_image(

@@ -4,11 +4,11 @@
 
 ## App Menu
 
-appmenuitem-update-banner2 =
+appmenuitem-update-banner3 =
     .label-update-downloading = Downloading { -brand-shorter-name } update
     .label-update-available = Update available — download now
     .label-update-manual = Update available — download now
-    .label-update-unsupported = Unable to update
+    .label-update-unsupported = Unable to update — system incompatible
     .label-update-restart = Update available — restart now
 
 appmenuitem-protection-dashboard-title = Protections Dashboard
@@ -24,14 +24,18 @@ appmenuitem-find-in-page =
     .label = Find In Page…
 appmenuitem-more-tools =
     .label = More Tools
-appmenuitem-exit =
-    .label = Exit
-appmenu-menu-button-closed =
+appmenuitem-exit2 =
+    .label =
+        { PLATFORM() ->
+            [linux] Quit
+           *[other] Exit
+        }
+appmenu-menu-button-closed2 =
     .tooltiptext = Open Application Menu
-    .label = { -brand-shorter-name }
-appmenu-menu-button-opened =
+    .label = { -brand-short-name }
+appmenu-menu-button-opened2 =
     .tooltiptext = Close Application Menu
-    .label = { -brand-shorter-name }
+    .label = { -brand-short-name }
 
 # Settings is now used to access the browser settings across all platforms,
 # instead of Options or Preferences.
@@ -49,17 +53,20 @@ appmenuitem-fullscreen =
 
 ## Firefox Account toolbar button and Sync panel in App menu.
 
+appmenu-remote-tabs-sign-into-sync =
+  .label = Sign in to Sync…
+appmenu-remote-tabs-turn-on-sync =
+  .label = Turn on Sync…
+
 appmenuitem-fxa-toolbar-sync-now2 = Sync Now
 appmenuitem-fxa-manage-account = Manage Account
-appmenu-fxa-header =
-    .title = { -fxaccount-brand-name }
+appmenu-fxa-header2 = { -fxaccount-brand-name }
 # Variables
 # $time (string) - Localized relative time since last sync (e.g. 1 second ago,
 # 3 hours ago, etc.)
 appmenu-fxa-last-sync = Last synced { $time }
     .label = Last synced { $time }
-appmenu-fxa-sync-and-save-data =
-    .value = Sync and Save Data
+appmenu-fxa-sync-and-save-data2 = Sync and save data
 appmenu-fxa-signed-in-label = Sign In
 appmenu-fxa-setup-sync =
     .label = Turn On Syncing…

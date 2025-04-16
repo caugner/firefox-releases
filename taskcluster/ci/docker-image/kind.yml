@@ -146,8 +146,6 @@ jobs:
         parent: push-to-try
     periodic-updates:
         symbol: I(file)
-    python-dependency-update:
-        symbol: I(pip)
     firefox-snap:
         symbol: I(snap)
     firefox-flatpak:
@@ -166,6 +164,9 @@ jobs:
         parent: debian10-base
     github-sync:
         symbol: I(github-sync)
+        parent: debian10-base
+    sentry:
+        symbol: I(sentry)
         parent: debian10-base
     system-symbols-mac:
         symbol: I(system-symbols-mac)

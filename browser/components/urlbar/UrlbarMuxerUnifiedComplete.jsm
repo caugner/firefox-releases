@@ -72,6 +72,15 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
 
     // Do the first pass over all results to build some state.
     for (let result of context.results) {
+      if (result.providerName == "UrlbarProviderQuickSuggest") {
+        // Quick suggest results are handled specially and always come at the
+        // end of the general bucket.
+        // TODO (Bug 1710518): Come up with a more general solution.
+        state.quickSuggestResult = result;
+        this._updateStatePreAdd(result, state);
+        continue;
+      }
+
       // Add each result to the resultsByGroup map:
       // group => array of results belonging to the group
       let group = UrlbarUtils.getResultGroup(result);
@@ -99,33 +108,9 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       state
     );
 
-    // Finally, insert results that have a suggested index.
-    let resultsWithSuggestedIndex = state.resultsByGroup.get(
-      UrlbarUtils.RESULT_GROUP.SUGGESTED_INDEX
-    );
-    if (resultsWithSuggestedIndex) {
-      // Sort them by index in descending order so that earlier insertions don't
-      // disrupt later ones.
-      resultsWithSuggestedIndex.sort(
-        (a, b) => a.suggestedIndex - b.suggestedIndex
-      );
-      // Do a first pass to update sort state for each result.
-      for (let result of resultsWithSuggestedIndex) {
-        this._updateStatePreAdd(result, state);
-      }
-      // Now insert them.
-      for (let result of resultsWithSuggestedIndex) {
-        if (this._canAddResult(result, state)) {
-          let index =
-            result.suggestedIndex <= sortedResults.length
-              ? result.suggestedIndex
-              : sortedResults.length;
-          sortedResults.splice(index, 0, result);
-          this._updateStatePostAdd(result, state);
-        }
-      }
-    }
+    this._addSuggestedIndexResults(sortedResults, state);
 
+    this._truncateResults(sortedResults, context.maxResults);
     context.results = sortedResults;
   }
 
@@ -297,6 +282,14 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       maxResultCount = 0;
     }
 
+    let addQuickSuggest =
+      state.quickSuggestResult &&
+      group == UrlbarUtils.RESULT_GROUP.GENERAL &&
+      this._canAddResult(state.quickSuggestResult, state);
+    if (addQuickSuggest) {
+      maxResultCount--;
+    }
+
     let addedResults = [];
     let groupResults = state.resultsByGroup.get(group);
     while (
@@ -315,6 +308,15 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
         this._updateStatePostAdd(result, state);
       }
     }
+
+    if (addQuickSuggest) {
+      let { quickSuggestResult } = state;
+      state.quickSuggestResult = null;
+      addedResults.push(quickSuggestResult);
+      state.totalResultCount++;
+      this._updateStatePostAdd(quickSuggestResult, state);
+    }
+
     return addedResults;
   }
 
@@ -642,6 +644,97 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
         UrlbarProviderTabToSearch.enginesShown.regular.add(
           result.payload.engine
         );
+      }
+    }
+  }
+
+  /**
+   * Inserts results with suggested indexes.  This should be called at the end
+   * of the sort, after all buckets have been filled.
+   *
+   * @param {array} sortedResults
+   *   The sorted results produced by the muxer so far.  Updated in place.
+   * @param {object} state
+   *   Global state that we use to make decisions during this sort.
+   */
+  _addSuggestedIndexResults(sortedResults, state) {
+    let suggestedIndexResults = state.resultsByGroup.get(
+      UrlbarUtils.RESULT_GROUP.SUGGESTED_INDEX
+    );
+    if (!suggestedIndexResults) {
+      return;
+    }
+
+    // First, sort the results by index in ascending order so that insertions of
+    // results with both positive and negative indexes are in ascending order.
+    suggestedIndexResults.sort((a, b) => a.suggestedIndex - b.suggestedIndex);
+
+    // Insert results with positive indexes.  Insertions should happen in
+    // ascending order so that higher-index results are inserted at their
+    // suggested indexes and aren't offset by later lower-index insertions.
+    let negativeIndexSpanCount = 0;
+    for (let result of suggestedIndexResults) {
+      if (result.suggestedIndex < 0) {
+        negativeIndexSpanCount += UrlbarUtils.getSpanForResult(result);
+      } else {
+        this._updateStatePreAdd(result, state);
+        if (this._canAddResult(result, state)) {
+          let index =
+            result.suggestedIndex <= sortedResults.length
+              ? result.suggestedIndex
+              : sortedResults.length;
+          sortedResults.splice(index, 0, result);
+          this._updateStatePostAdd(result, state);
+        }
+      }
+    }
+
+    // Before inserting results with negative indexes, truncate the sorted
+    // results so that their total span count is no larger than maxResults minus
+    // the span count of the negative-index results themselves.  If we didn't do
+    // that, the negative-index results could end up getting removed when the
+    // muxer truncates the final results array, which would effectively mean
+    // that we inserted them at the wrong indexes.
+    this._truncateResults(
+      sortedResults,
+      state.context.maxResults - negativeIndexSpanCount
+    );
+
+    // Insert results with negative indexes.
+    if (negativeIndexSpanCount) {
+      for (let result of suggestedIndexResults) {
+        if (result.suggestedIndex >= 0) {
+          break;
+        }
+        this._updateStatePreAdd(result, state);
+        if (this._canAddResult(result, state)) {
+          let index = Math.max(
+            result.suggestedIndex + sortedResults.length + 1,
+            0
+          );
+          sortedResults.splice(index, 0, result);
+          this._updateStatePostAdd(result, state);
+        }
+      }
+    }
+  }
+
+  /**
+   * Truncates the array of results so that their total span count is no larger
+   * than a given number.
+   *
+   * @param {array} sortedResults
+   *   The sorted results produced by the muxer so far.  Updated in place.
+   * @param {number} maxSpanCount
+   *   The max span count.
+   */
+  _truncateResults(sortedResults, maxSpanCount) {
+    let remainingSpanCount = maxSpanCount;
+    for (let i = 0; i < sortedResults.length; i++) {
+      remainingSpanCount -= UrlbarUtils.getSpanForResult(sortedResults[i]);
+      if (remainingSpanCount < 0) {
+        sortedResults.splice(i, sortedResults.length - i);
+        break;
       }
     }
   }

@@ -19,16 +19,22 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "browser.newtabpage.enabled",
   false
 );
+
+/* Work around the pref callback being run after the document has been unlinked.
+   See bug 1543537. */
+var docWeak = Cu.getWeakReference(document);
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "SHOW_OTHER_BOOKMARKS",
   "browser.toolbars.bookmarks.showOtherBookmarks",
   true,
   (aPref, aPrevVal, aNewVal) => {
+    let doc = docWeak.get();
+    if (!doc) {
+      return;
+    }
     BookmarkingUI.maybeShowOtherBookmarksFolder();
-    document
-      .getElementById("PlacesToolbar")
-      ?._placesView?.updateNodesVisibility();
+    doc.getElementById("PlacesToolbar")?._placesView?.updateNodesVisibility();
   }
 );
 ChromeUtils.defineModuleGetter(
@@ -95,9 +101,6 @@ var StarUI = {
         if (aEvent.originalTarget == this.panel) {
           let { selectedFolderGuid, didChangeFolder } = gEditItemOverlay;
           gEditItemOverlay.uninitPanel(true);
-
-          this._anchorElement.removeAttribute("open");
-          this._anchorElement = null;
 
           let removeBookmarksOnPopupHidden = this._removeBookmarksOnPopupHidden;
           this._removeBookmarksOnPopupHidden = false;
@@ -236,9 +239,13 @@ var StarUI = {
     this._isNewBookmark = aIsNewBookmark;
     this._itemGuids = null;
 
-    this._element("editBookmarkPanelTitle").textContent = this._isNewBookmark
-      ? gNavigatorBundle.getString("editBookmarkPanel.newBookmarkTitle")
-      : gNavigatorBundle.getString("editBookmarkPanel.editBookmarkTitle");
+    let titleL10nID = this._isNewBookmark
+      ? "bookmarks-add-bookmark"
+      : "bookmarks-edit-bookmark";
+    document.l10n.setAttributes(
+      this._element("editBookmarkPanelTitle"),
+      titleL10nID
+    );
 
     this._element(
       "editBookmarkPanel_showForNewBookmarks"
@@ -251,29 +258,13 @@ var StarUI = {
 
     let removeButton = this._element("editBookmarkPanelRemoveButton");
     if (this._isNewBookmark) {
-      removeButton.label = gNavigatorBundle.getString(
-        "editBookmarkPanel.cancel.label"
-      );
-      removeButton.setAttribute(
-        "accesskey",
-        gNavigatorBundle.getString("editBookmarkPanel.cancel.accesskey")
-      );
+      document.l10n.setAttributes(removeButton, "bookmark-panel-cancel");
     } else {
       // The label of the remove button differs if the URI is bookmarked
       // multiple times.
-      let bookmarksCount = this._itemGuids.length;
-      let forms = gNavigatorBundle.getString(
-        "editBookmark.removeBookmarks.label"
-      );
-      let label = PluralForm.get(bookmarksCount, forms).replace(
-        "#1",
-        bookmarksCount
-      );
-      removeButton.label = label;
-      removeButton.setAttribute(
-        "accesskey",
-        gNavigatorBundle.getString("editBookmark.removeBookmarks.accesskey")
-      );
+      document.l10n.setAttributes(removeButton, "bookmark-panel-remove", {
+        count: this._itemGuids.length,
+      });
     }
 
     this._setIconAndPreviewImage();
@@ -294,9 +285,6 @@ var StarUI = {
     });
 
     this.beginBatch();
-
-    this._anchorElement = BookmarkingUI.anchor;
-    this._anchorElement.setAttribute("open", "true");
 
     let onPanelReady = fn => {
       let target = this.panel;
@@ -322,7 +310,7 @@ var StarUI = {
       isNewBookmark: this._isNewBookmark,
     });
 
-    this.panel.openPopup(this._anchorElement, "bottomcenter topright");
+    this.panel.openPopup(BookmarkingUI.anchor, "bottomcenter topright");
   },
 
   _createPanelIfNeeded() {
@@ -446,15 +434,12 @@ var StarUI = {
   },
 
   showConfirmation() {
-    let animationTriggered = LibraryUI.triggerLibraryAnimation("bookmark");
-
-    // Show the "Saved to Library!" hint in addition to the library button
-    // animation for the first three times, or when the animation was skipped
-    // e.g. because the library button has been customized away.
+    // Show the "Saved to bookmarks" hint for the first three times
     const HINT_COUNT_PREF =
       "browser.bookmarks.editDialog.confirmationHintShowCount";
     const HINT_COUNT = Services.prefs.getIntPref(HINT_COUNT_PREF, 0);
-    if (animationTriggered && HINT_COUNT >= 3) {
+
+    if (HINT_COUNT >= 3) {
       return;
     }
     Services.prefs.setIntPref(HINT_COUNT_PREF, HINT_COUNT + 1);
@@ -476,7 +461,7 @@ var StarUI = {
     if (!anchor) {
       anchor = document.getElementById("PanelUI-menu-button");
     }
-    ConfirmationHint.show(anchor, "pageBookmarked");
+    ConfirmationHint.show(anchor, "pageBookmarked2");
   },
 };
 
@@ -561,7 +546,10 @@ var PlacesCommandHook = {
     let bm = await PlacesUtils.bookmarks.fetch({ url });
     if (bm) {
       let node = await PlacesUIUtils.promiseNodeLikeFromFetchInfo(bm);
-      PlacesUIUtils.showBookmarkDialog({ action: "edit", node }, window.top);
+      await PlacesUIUtils.showBookmarkDialog(
+        { action: "edit", node },
+        window.top
+      );
       return;
     }
 
@@ -571,7 +559,7 @@ var PlacesCommandHook = {
       parentId,
       parentGuid,
     });
-    PlacesUIUtils.showBookmarkDialog(
+    await PlacesUIUtils.showBookmarkDialog(
       {
         action: "add",
         type: "bookmark",
@@ -837,8 +825,8 @@ var BookmarksEventHandler = {
    */
 
   onMouseUp(aEvent) {
-    // Handles left-click with modifier if not browser.bookmarks.openInTabClosesMenu.
-    if (aEvent.button != 0 || PlacesUIUtils.openInTabClosesMenu) {
+    // Handles middle-click or left-click with modifier if not browser.bookmarks.openInTabClosesMenu.
+    if (aEvent.button == 2 || PlacesUIUtils.openInTabClosesMenu) {
       return;
     }
     let target = aEvent.originalTarget;
@@ -847,7 +835,7 @@ var BookmarksEventHandler = {
     }
     let modifKey =
       AppConstants.platform === "macosx" ? aEvent.metaKey : aEvent.ctrlKey;
-    if (modifKey) {
+    if (modifKey || aEvent.button == 1) {
       target.setAttribute("closemenu", "none");
       var menupopup = target.parentNode;
       menupopup.addEventListener(
@@ -899,8 +887,9 @@ var BookmarksEventHandler = {
           aView
         );
       }
-    } else if (aEvent.button == 1) {
-      // left-clicks with modifier are already served by onCommand
+    } else if (aEvent.button == 1 && !(tag == "menuitem" || tag == "menu")) {
+      // Call onCommand in the cases where it's not called automatically:
+      // Middle-clicks outside of menus.
       this.onCommand(aEvent);
     }
   },
@@ -1422,116 +1411,6 @@ var PlacesToolbarHelper = {
 };
 
 /**
- * Handles the Library button in the toolbar.
- */
-var LibraryUI = {
-  /**
-   * @returns true if the animation could be triggered, false otherwise.
-   */
-  triggerLibraryAnimation(animation) {
-    let libraryButton = document.getElementById("library-button");
-    if (
-      !libraryButton ||
-      libraryButton.getAttribute("cui-areatype") == "menu-panel" ||
-      libraryButton.getAttribute("overflowedItem") == "true" ||
-      !libraryButton.closest("#nav-bar") ||
-      !window.toolbar.visible ||
-      gReduceMotion
-    ) {
-      return false;
-    }
-
-    let animatableBox = document.getElementById("library-animatable-box");
-    let navBar = document.getElementById("nav-bar");
-    let iconBounds = window.windowUtils.getBoundsWithoutFlushing(
-      libraryButton.icon
-    );
-    let libraryBounds = window.windowUtils.getBoundsWithoutFlushing(
-      libraryButton
-    );
-
-    animatableBox.style.setProperty(
-      "--library-button-height",
-      libraryBounds.height + "px"
-    );
-    animatableBox.style.setProperty("--library-icon-x", iconBounds.x + "px");
-    if (navBar.hasAttribute("brighttext")) {
-      animatableBox.setAttribute("brighttext", "true");
-    } else {
-      animatableBox.removeAttribute("brighttext");
-    }
-    animatableBox.removeAttribute("fade");
-    libraryButton.setAttribute("animate", animation);
-    animatableBox.setAttribute("animate", animation);
-    if (!this._libraryButtonAnimationEndListeners[animation]) {
-      this._libraryButtonAnimationEndListeners[animation] = event => {
-        this._libraryButtonAnimationEndListener(event, animation);
-      };
-    }
-    animatableBox.addEventListener(
-      "animationend",
-      this._libraryButtonAnimationEndListeners[animation]
-    );
-
-    window.addEventListener("resize", this._onWindowResize);
-
-    return true;
-  },
-
-  _libraryButtonAnimationEndListeners: {},
-  _libraryButtonAnimationEndListener(aEvent, animation) {
-    let animatableBox = document.getElementById("library-animatable-box");
-    if (aEvent.animationName.startsWith(`library-${animation}-animation`)) {
-      animatableBox.setAttribute("fade", "true");
-    } else if (aEvent.animationName == `library-${animation}-fade`) {
-      animatableBox.removeEventListener(
-        "animationend",
-        LibraryUI._libraryButtonAnimationEndListeners[animation]
-      );
-      animatableBox.removeAttribute("animate");
-      animatableBox.removeAttribute("fade");
-      window.removeEventListener("resize", this._onWindowResize);
-      let libraryButton = document.getElementById("library-button");
-      // Put the 'fill' back in the normal icon.
-      libraryButton.removeAttribute("animate");
-    }
-  },
-
-  _windowResizeRunning: false,
-  _onWindowResize(aEvent) {
-    if (LibraryUI._windowResizeRunning) {
-      return;
-    }
-    LibraryUI._windowResizeRunning = true;
-
-    requestAnimationFrame(() => {
-      let libraryButton = document.getElementById("library-button");
-      // Only update the position if the library button remains in the
-      // navbar (not moved to the palette or elsewhere).
-      if (
-        !libraryButton ||
-        libraryButton.getAttribute("cui-areatype") == "menu-panel" ||
-        libraryButton.getAttribute("overflowedItem") == "true" ||
-        !libraryButton.closest("#nav-bar")
-      ) {
-        return;
-      }
-
-      let animatableBox = document.getElementById("library-animatable-box");
-      let iconBounds = window.windowUtils.getBoundsWithoutFlushing(
-        libraryButton.icon
-      );
-
-      // Resizing the window will only have the ability to change the X offset of the
-      // library button.
-      animatableBox.style.setProperty("--library-icon-x", iconBounds.x + "px");
-
-      LibraryUI._windowResizeRunning = false;
-    });
-  },
-};
-
-/**
  * Handles the bookmarks menu-button in the toolbar.
  */
 
@@ -1688,7 +1567,7 @@ var BookmarkingUI = {
 
     // Used by the Places context menu in the Bookmarks Toolbar
     // when nothing is selected
-    menu.setAttribute("selectiontype", "none");
+    menu.setAttribute("selectiontype", "none|single");
 
     MozXULElement.insertFTLIfNeeded("browser/toolbarContextMenu.ftl");
     let menuItems = [
@@ -1796,12 +1675,17 @@ var BookmarkingUI = {
       return;
     }
 
+    let extraClasses = {
+      entry: "subviewbutton",
+    };
+
+    if (!gProtonDoorhangers) {
+      extraClasses.footer = "panel-subview-footer";
+    }
+
     new PlacesMenu(event, `place:parent=${PlacesUtils.bookmarks.menuGuid}`, {
-      extraClasses: {
-        entry: "subviewbutton",
-        footer: "panel-subview-footer",
-      },
-      insertionPoint: ".panel-subview-footer",
+      extraClasses,
+      insertionPoint: ".panel-subview-footer-button",
     });
   },
 
@@ -1916,7 +1800,6 @@ var BookmarkingUI = {
   init() {
     CustomizableUI.addListener(this);
     this.updateEmptyToolbarMessage();
-    this.star.addEventListener("mouseover", this, { once: true });
 
     if (gProtonPlacesTooltip) {
       let bhTooltip = document.getElementById("bhTooltip");
@@ -1929,8 +1812,6 @@ var BookmarkingUI = {
   uninit: function BUI_uninit() {
     this.updateBookmarkPageMenuItem(true);
     CustomizableUI.removeListener(this);
-
-    this.star.removeEventListener("mouseover", this);
 
     this._uninitView();
 
@@ -2005,9 +1886,6 @@ var BookmarkingUI = {
 
   _updateStar: function BUI__updateStar() {
     let starred = this._itemGuids.size > 0;
-    if (!starred) {
-      this.star.removeAttribute("animate");
-    }
 
     // Update the image for all elements.
     for (let element of [
@@ -2089,20 +1967,30 @@ var BookmarkingUI = {
 
     // Localize the context menu item element.
     let contextItem = document.getElementById("context-bookmarkpage");
+    // On macOS regular menuitems are used and the shortcut isn't added
     if (contextItem) {
-      let shortcutElem = document.getElementById(this.BOOKMARK_BUTTON_SHORTCUT);
-      if (shortcutElem) {
-        let shortcut = ShortcutUtils.prettifyShortcut(shortcutElem);
+      if (AppConstants.platform == "macosx") {
         let contextItemL10nId = isStarred
-          ? "main-context-menu-bookmark-change-with-shortcut"
-          : "main-context-menu-bookmark-add-with-shortcut";
-        let l10nArgs = { shortcut };
-        document.l10n.setAttributes(contextItem, contextItemL10nId, l10nArgs);
-      } else {
-        let contextItemL10nId = isStarred
-          ? "main-context-menu-bookmark-change"
-          : "main-context-menu-bookmark-add";
+          ? "main-context-menu-bookmark-edit-mac"
+          : "main-context-menu-bookmark-add-mac";
         document.l10n.setAttributes(contextItem, contextItemL10nId);
+      } else {
+        let shortcutElem = document.getElementById(
+          this.BOOKMARK_BUTTON_SHORTCUT
+        );
+        if (shortcutElem) {
+          let shortcut = ShortcutUtils.prettifyShortcut(shortcutElem);
+          let contextItemL10nId = isStarred
+            ? "main-context-menu-bookmark-change-with-shortcut"
+            : "main-context-menu-bookmark-add-with-shortcut";
+          let l10nArgs = { shortcut };
+          document.l10n.setAttributes(contextItem, contextItemL10nId, l10nArgs);
+        } else {
+          let contextItemL10nId = isStarred
+            ? "main-context-menu-bookmark-change"
+            : "main-context-menu-bookmark-add";
+          document.l10n.setAttributes(contextItem, contextItemL10nId);
+        }
       }
     }
 
@@ -2195,32 +2083,12 @@ var BookmarkingUI = {
       !this._pendingUpdate &&
       (aEvent.type != "click" || aEvent.button == 0)
     ) {
-      let isBookmarked = this._itemGuids.size > 0;
-      if (!isBookmarked) {
-        BrowserUIUtils.setToolbarButtonHeightProperty(this.star);
-        // there are no other animations on this element, so we can simply
-        // listen for animationend with the "once" option to clean up
-        let animatableBox = document.getElementById(
-          "star-button-animatable-box"
-        );
-        animatableBox.addEventListener(
-          "animationend",
-          event => {
-            this.star.removeAttribute("animate");
-          },
-          { once: true }
-        );
-        this.star.setAttribute("animate", "true");
-      }
       PlacesCommandHook.bookmarkPage();
     }
   },
 
   handleEvent: function BUI_handleEvent(aEvent) {
     switch (aEvent.type) {
-      case "mouseover":
-        this.star.setAttribute("preloadanimations", "true");
-        break;
       case "ViewShowing":
         this.onPanelMenuViewShowing(aEvent);
         break;

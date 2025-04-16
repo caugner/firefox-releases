@@ -201,7 +201,7 @@ class LoadInfo final : public nsILoadInfo {
       bool aUpgradeInsecureRequests, bool aBrowserUpgradeInsecureRequests,
       bool aBrowserDidUpgradeInsecureRequests,
       bool aBrowserWouldUpgradeInsecureRequests, bool aForceAllowDataURI,
-      bool aAllowInsecureRedirectToDataURI, bool aBypassCORSChecks,
+      bool aAllowInsecureRedirectToDataURI,
       bool aSkipContentPolicyCheckForWebRequest, bool aOriginalFrameSrcLoad,
       bool aForceInheritPrincipalDropped, uint64_t aInnerWindowID,
       uint64_t aBrowsingContextID, uint64_t aFrameBrowsingContextID,
@@ -289,7 +289,6 @@ class LoadInfo final : public nsILoadInfo {
   bool mBrowserWouldUpgradeInsecureRequests = false;
   bool mForceAllowDataURI = false;
   bool mAllowInsecureRedirectToDataURI = false;
-  bool mBypassCORSChecks = false;
   bool mSkipContentPolicyCheckForWebRequest = false;
   bool mOriginalFrameSrcLoad = false;
   bool mForceInheritPrincipalDropped = false;
@@ -330,6 +329,10 @@ class LoadInfo final : public nsILoadInfo {
   // browsing context container.
   // See nsILoadInfo.isFromProcessingFrameAttributes
   bool mIsFromProcessingFrameAttributes = false;
+
+  // See nsILoadInfo.isMediaRequest and nsILoadInfo.isMediaInitialRequest.
+  bool mIsMediaRequest = false;
+  bool mIsMediaInitialRequest = false;
 
   // The cross origin embedder policy that the loading need to respect.
   // If the value is nsILoadInfo::EMBEDDER_POLICY_REQUIRE_CORP, CORP checking

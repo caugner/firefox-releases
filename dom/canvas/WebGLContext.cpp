@@ -532,8 +532,9 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
           Telemetry::Accumulate(Telemetry::CANVAS_WEBGL_FAILURE_ID, cur.key);
         }
 
-        text.AppendLiteral("\n* ");
-        text.Append(cur.info);
+        const auto str = nsPrintfCString("\n* %s (%s)", cur.info.BeginReading(),
+                                         cur.key.BeginReading());
+        text.Append(str);
       }
       failureId = "FEATURE_FAILURE_REASON"_ns;
       return Err(text.BeginReading());
@@ -958,9 +959,14 @@ Maybe<layers::SurfaceDescriptor> WebGLContext::GetFrontBuffer(
   return front->ToSurfaceDescriptor();
 }
 
-bool WebGLContext::FrontBufferSnapshotInto(Range<uint8_t> dest) {
+Maybe<uvec2> WebGLContext::FrontBufferSnapshotInto(
+    const Maybe<Range<uint8_t>> maybeDest) {
   const auto& front = mSwapChain.FrontBuffer();
-  if (!front) return false;
+  if (!front) return {};
+  const auto& size = front->mDesc.size;
+  const auto ret = Some(*uvec2::FromSize(size));
+  if (!maybeDest) return ret;
+  const auto& dest = *maybeDest;
 
   // -
 
@@ -1004,14 +1010,19 @@ bool WebGLContext::FrontBufferSnapshotInto(Range<uint8_t> dest) {
     }
   });
 
-  const auto& size = front->mDesc.size;
   const size_t stride = size.width * 4;
-  MOZ_ASSERT(dest.length() == stride * size.height);
+  const size_t srcByteCount = stride * size.height;
+  const auto dstByteCount = dest.length();
+  if (srcByteCount != dstByteCount) {
+    gfxCriticalError() << "FrontBufferSnapshotInto: srcByteCount:"
+                       << srcByteCount << " != dstByteCount:" << dstByteCount;
+    return {};
+  }
   gl->fReadPixels(0, 0, size.width, size.height, LOCAL_GL_RGBA,
                   LOCAL_GL_UNSIGNED_BYTE, dest.begin().get());
-  gfxUtils::ConvertBGRAtoRGBA(dest.begin().get(), stride * size.height);
+  gfxUtils::ConvertBGRAtoRGBA(dest.begin().get(), dstByteCount);
 
-  return true;
+  return ret;
 }
 
 void WebGLContext::ClearVRSwapChain() { mWebVRSwapChain.ClearPool(); }

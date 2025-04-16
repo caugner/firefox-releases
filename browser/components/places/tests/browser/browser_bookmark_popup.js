@@ -101,20 +101,13 @@ async function test_bookmarks_popup({
         "Page is starred"
       );
       Assert.equal(
-        bookmarkPanelTitle.textContent,
-        isNewBookmark
-          ? gNavigatorBundle.getString("editBookmarkPanel.newBookmarkTitle")
-          : gNavigatorBundle.getString("editBookmarkPanel.editBookmarkTitle"),
+        bookmarkPanelTitle.dataset.l10nId,
+        isNewBookmark ? "bookmarks-add-bookmark" : "bookmarks-edit-bookmark",
         "title should match isEditingBookmark state"
       );
       Assert.equal(
-        bookmarkRemoveButton.label,
-        isNewBookmark
-          ? gNavigatorBundle.getString("editBookmarkPanel.cancel.label")
-          : PluralForm.get(
-              1,
-              gNavigatorBundle.getString("editBookmark.removeBookmarks.label")
-            ).replace("#1", 1),
+        bookmarkRemoveButton.dataset.l10nId,
+        isNewBookmark ? "bookmark-panel-cancel" : "bookmark-panel-remove",
         "remove/cancel button label should match isEditingBookmark state"
       );
 

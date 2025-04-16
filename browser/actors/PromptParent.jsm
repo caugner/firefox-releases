@@ -36,10 +36,8 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-XPCOMUtils.defineLazyGetter(this, "gTabBrowserBundle", () => {
-  return Services.strings.createBundle(
-    "chrome://browser/locale/tabbrowser.properties"
-  );
+XPCOMUtils.defineLazyGetter(this, "gTabBrowserLocalization", () => {
+  return new Localization(["browser/tabbrowser.ftl"], true);
 });
 
 /**
@@ -124,6 +122,21 @@ class PromptParent extends JSWindowActorParent {
     }
   }
 
+  isAboutAddonsOptionsPage(browsingContext) {
+    const { embedderWindowGlobal, name } = browsingContext;
+    if (!embedderWindowGlobal) {
+      // Return earlier if there is no embedder global, this is definitely
+      // not an about:addons extensions options page.
+      return false;
+    }
+
+    return (
+      embedderWindowGlobal.documentPrincipal.isSystemPrincipal &&
+      embedderWindowGlobal.documentURI.spec === "about:addons" &&
+      name === "addon-inline-options"
+    );
+  }
+
   receiveMessage(message) {
     let args = message.data;
     let id = args._remoteId;
@@ -134,7 +147,8 @@ class PromptParent extends JSWindowActorParent {
           (args.modalType === Ci.nsIPrompt.MODAL_TYPE_CONTENT &&
             !contentPromptSubDialog) ||
           (args.modalType === Ci.nsIPrompt.MODAL_TYPE_TAB &&
-            !tabChromePromptSubDialog)
+            !tabChromePromptSubDialog) ||
+          this.isAboutAddonsOptionsPage(this.browsingContext)
         ) {
           return this.openContentPrompt(args, id);
         }
@@ -391,13 +405,25 @@ class PromptParent extends JSWindowActorParent {
       allowTabFocusByPromptPrincipal &&
       args.modalType === Services.prompt.MODAL_TYPE_CONTENT
     ) {
-      let allowTabswitchCheckboxLabel = gTabBrowserBundle.formatStringFromName(
-        "tabs.allowTabFocusByPromptForSite",
-        [allowTabFocusByPromptPrincipal.URI.host]
-      );
-
-      args.allowFocusCheckbox = true;
-      args.checkLabel = allowTabswitchCheckboxLabel;
+      let domain = allowTabFocusByPromptPrincipal.addonPolicy?.name;
+      try {
+        domain ||= allowTabFocusByPromptPrincipal.URI.displayHostPort;
+      } catch (ex) {
+        /* Ignore exceptions from fetching the display host/port. */
+      }
+      // If it's still empty, use `prePath` so we have *something* to show:
+      domain ||= allowTabFocusByPromptPrincipal.URI.prePath;
+      let [allowFocusMsg] = gTabBrowserLocalization.formatMessagesSync([
+        {
+          id: "tabbrowser-allow-dialogs-to-get-focus",
+          args: { domain },
+        },
+      ]);
+      let labelAttr = allowFocusMsg.attributes.find(a => a.name == "label");
+      if (labelAttr) {
+        args.allowFocusCheckbox = true;
+        args.checkLabel = labelAttr.value;
+      }
     }
   }
 }

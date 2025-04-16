@@ -18,36 +18,30 @@ add_task(async function() {
   // This preference helps destroying the content process when we close the tab
   await pushPref("dom.ipc.keepProcessesAlive.web", 1);
 
-  const client = await createLocalClient();
-  const mainRoot = client.mainRoot;
-
   // Test fetching the frames from the main process target
-  await testBrowserFrames(mainRoot);
+  await testBrowserFrames();
 
   // Test fetching the frames from a tab target
-  await testTabFrames(mainRoot);
-
-  await client.close();
+  await testTabFrames();
 });
 
-async function testBrowserFrames(mainRoot) {
+async function testBrowserFrames() {
   info("Test TargetCommand against frames via the parent process target");
 
-  const targetDescriptor = await mainRoot.getMainProcess();
-  const commands = await targetDescriptor.getCommands();
-  const targetList = commands.targetCommand;
-  const { TYPES } = targetList;
-  await targetList.startListening();
+  const commands = await CommandsFactory.forMainProcess();
+  const targetCommand = commands.targetCommand;
+  const { TYPES } = targetCommand;
+  await targetCommand.startListening();
 
   // Very naive sanity check against getAllTargets([frame])
-  const frames = await targetList.getAllTargets([TYPES.FRAME]);
+  const frames = await targetCommand.getAllTargets([TYPES.FRAME]);
   const hasBrowserDocument = frames.find(
     frameTarget => frameTarget.url == window.location.href
   );
   ok(hasBrowserDocument, "retrieve the target for the browser document");
 
   // Check that calling getAllTargets([frame]) return the same target instances
-  const frames2 = await targetList.getAllTargets([TYPES.FRAME]);
+  const frames2 = await targetCommand.getAllTargets([TYPES.FRAME]);
   is(frames2.length, frames.length, "retrieved the same number of frames");
 
   function sortFronts(f1, f2) {
@@ -61,7 +55,7 @@ async function testBrowserFrames(mainRoot) {
 
   // Assert that watchTargets will call the create callback for all existing frames
   const targets = [];
-  const topLevelTarget = await targetDescriptor.getTarget();
+  const topLevelTarget = targetCommand.targetFront;
   const onAvailable = ({ targetFront }) => {
     is(
       targetFront.targetType,
@@ -76,7 +70,7 @@ async function testBrowserFrames(mainRoot) {
     );
     targets.push(targetFront);
   };
-  await targetList.watchTargets([TYPES.FRAME], onAvailable);
+  await targetCommand.watchTargets([TYPES.FRAME], onAvailable);
   is(
     targets.length,
     frames.length,
@@ -92,7 +86,7 @@ async function testBrowserFrames(mainRoot) {
       `frame ${i} targets are the same via watchTargets`
     );
   }
-  targetList.unwatchTargets([TYPES.FRAME], onAvailable);
+  targetCommand.unwatchTargets([TYPES.FRAME], onAvailable);
 
   /* NOT READY YET, need to implement frame listening
   // Open a new tab and see if the frame target is reported by watchTargets and getAllTargets
@@ -101,13 +95,15 @@ async function testBrowserFrames(mainRoot) {
   is(targets.length, frames.length + 1, "Opening a tab reported a new frame");
   is(targets[targets.length - 1].url, TEST_URL, "This frame target is about the new tab");
 
-  const frames3 = await targetList.getAllTargets([TYPES.FRAME]);
+  const frames3 = await targetCommand.getAllTargets([TYPES.FRAME]);
   const hasTabDocument = frames3.find(target => target.url == TEST_URL);
   ok(hasTabDocument, "retrieve the target for tab via getAllTargets");
   */
 
-  targetList.destroy();
-  await waitForAllTargetsToBeAttached(targetList);
+  targetCommand.destroy();
+  await waitForAllTargetsToBeAttached(targetCommand);
+
+  await commands.destroy();
 }
 
 async function testTabFrames(mainRoot) {
@@ -115,15 +111,14 @@ async function testTabFrames(mainRoot) {
 
   // Create a TargetCommand for a given test tab
   const tab = await addTab(FISSION_TEST_URL);
-  const descriptor = await mainRoot.getTab({ tab });
-  const commands = await descriptor.getCommands();
-  const targetList = commands.targetCommand;
-  const { TYPES } = targetList;
+  const commands = await CommandsFactory.forTab(tab);
+  const targetCommand = commands.targetCommand;
+  const { TYPES } = targetCommand;
 
-  await targetList.startListening();
+  await targetCommand.startListening();
 
   // Check that calling getAllTargets([frame]) return the same target instances
-  const frames = await targetList.getAllTargets([TYPES.FRAME]);
+  const frames = await targetCommand.getAllTargets([TYPES.FRAME]);
   // When fission is enabled, we also get the remote example.org iframe.
   const expectedFramesCount = isFissionEnabled() ? 2 : 1;
   is(
@@ -135,7 +130,7 @@ async function testTabFrames(mainRoot) {
   // Assert that watchTargets will call the create callback for all existing frames
   const targets = [];
   const destroyedTargets = [];
-  const topLevelTarget = await descriptor.getTarget();
+  const topLevelTarget = targetCommand.targetFront;
   const onAvailable = ({ targetFront, isTargetSwitching }) => {
     is(
       targetFront.targetType,
@@ -158,7 +153,7 @@ async function testTabFrames(mainRoot) {
     );
     destroyedTargets.push({ targetFront, isTargetSwitching });
   };
-  await targetList.watchTargets([TYPES.FRAME], onAvailable, onDestroyed);
+  await targetCommand.watchTargets([TYPES.FRAME], onAvailable, onDestroyed);
   is(
     targets.length,
     frames.length,
@@ -206,7 +201,7 @@ async function testTabFrames(mainRoot) {
   }
 
   // Before navigating to another process, ensure cleaning up everything from the first page
-  await waitForAllTargetsToBeAttached(targetList);
+  await waitForAllTargetsToBeAttached(targetCommand);
   await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
     // registrationPromise is set by the test page.
     const registration = await content.wrappedJSObject.registrationPromise;
@@ -230,9 +225,13 @@ async function testTabFrames(mainRoot) {
       afterNavigationFramesCount,
       "retrieved all targets after navigation"
     );
+    // As targetFront.url isn't reliable and might be about:blank,
+    // try to assert that we got the right target via other means.
+    // outerWindowID should change when navigating to another process,
+    // while it would stay equal for in-process navigations.
     is(
-      targets[2].targetFront.url,
-      SECOND_PAGE_URL,
+      targets[2].targetFront.outerWindowID,
+      browser.outerWindowID,
       "The new target should be the newly loaded document"
     );
     is(
@@ -271,19 +270,21 @@ async function testTabFrames(mainRoot) {
     is(targets.length, 1, "without fission, we always have only one target");
     is(destroyedTargets.length, 0, "no target should be destroyed");
     is(
-      targetList.targetFront,
+      targetCommand.targetFront,
       targets[0].targetFront,
       "and that unique target is always the same"
     );
     ok(
-      !targetList.targetFront.isDestroyed(),
+      !targetCommand.targetFront.isDestroyed(),
       "and that target is never destroyed"
     );
   }
 
-  targetList.unwatchTargets([TYPES.FRAME], onAvailable);
+  targetCommand.unwatchTargets([TYPES.FRAME], onAvailable);
 
-  targetList.destroy();
+  targetCommand.destroy();
 
   BrowserTestUtils.removeTab(tab);
+
+  await commands.destroy();
 }

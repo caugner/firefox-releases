@@ -23,7 +23,7 @@ use crate::gpu_cache::{GpuCacheHandle, GpuDataRequest};
 use crate::gpu_types::{BrushFlags};
 use crate::internal_types::{FastHashMap, PlaneSplitAnchor};
 use crate::picture::{PicturePrimitive, SliceId, TileCacheLogger, ClusterFlags, SurfaceRenderTasks};
-use crate::picture::{PrimitiveList, PrimitiveCluster, SurfaceIndex, TileCacheInstance};
+use crate::picture::{PrimitiveList, PrimitiveCluster, SurfaceIndex, TileCacheInstance, SubpixelMode};
 use crate::prim_store::gradient::{GRADIENT_FP_STOPS, FastLinearGradientCacheKey, GradientStopKey, CachedGradientSegment};
 use crate::prim_store::gradient::LinearGradientPrimitive;
 use crate::prim_store::line_dec::MAX_LINE_DECORATION_RESOLUTION;
@@ -37,7 +37,7 @@ use crate::segment::SegmentBuilder;
 use crate::space::SpaceMapper;
 use crate::texture_cache::TEXTURE_REGION_DIMENSIONS;
 use crate::util::{clamp_to_scale_factor, pack_as_float, raster_rect_to_device_pixels};
-use crate::visibility::{compute_conservative_visible_rect, PrimitiveVisibility, VisibilityState, PrimitiveVisibilityMask};
+use crate::visibility::{compute_conservative_visible_rect, PrimitiveVisibility, VisibilityState};
 
 
 const MAX_MASK_SIZE: f32 = 4096.0;
@@ -81,7 +81,7 @@ pub fn prepare_primitives(
                 VisibilityState::Culled => {
                     continue;
                 }
-                VisibilityState::Coarse { ref rect_in_pic_space } => {
+                VisibilityState::Coarse { ref filter, vis_flags } => {
                     // The original coarse state was calculated during the initial visibility pass.
                     // However, it's possible that the dirty rect has got smaller, if tiles were not
                     // dirty. Intersecting with the dirty rect here eliminates preparing any primitives
@@ -91,27 +91,24 @@ pub fn prepare_primitives(
                     // Clear the current visibiilty mask, and build a more detailed one based on the dirty rect
                     // regions below.
                     let dirty_region = frame_state.current_dirty_region();
-                    let mut visibility_mask = PrimitiveVisibilityMask::empty();
+                    let is_in_dirty_region = dirty_region.filters
+                        .iter()
+                        .any(|region_filter| region_filter.matches(filter));
 
-                    for dirty_region in &dirty_region.dirty_rects {
-                        if rect_in_pic_space.intersects(&dirty_region.rect_in_pic_space) {
-                            visibility_mask.include(dirty_region.visibility_mask);
+                    if is_in_dirty_region {
+                        prim_instance.vis.state = VisibilityState::Detailed {
+                            filter: *filter,
+                            vis_flags,
                         }
-                    }
-
-                    // Check again if the prim is now visible after considering the current dirty regions.
-                    if visibility_mask.is_empty() {
+                    } else {
                         prim_instance.clear_visibility();
                         continue;
-                    } else {
-                        prim_instance.vis.state = VisibilityState::Detailed {
-                            visibility_mask,
-                        }
                     }
                 }
                 VisibilityState::Detailed { .. } => {
                     // Was already set to detailed (picture caching disabled or a root element)
                 }
+                VisibilityState::PassThrough => {}
             }
 
             let plane_split_anchor = PlaneSplitAnchor::new(cluster_index, prim_instance_index);
@@ -175,7 +172,7 @@ fn prepare_prim_for_render(
             pic_context.surface_spatial_node_index,
             pic_context.raster_spatial_node_index,
             pic_context.surface_index,
-            &pic_context.subpixel_mode,
+            pic_context.subpixel_mode,
             frame_state,
             frame_context,
             scratch,
@@ -364,22 +361,49 @@ fn prepare_interned_prim_for_render(
 
             let pic = &store.pictures[pic_context.pic_index.0];
             let surface = &frame_state.surfaces[pic_context.surface_index.0];
-            let prim_info = &prim_instance.vis;
             let root_scaling_factor = match pic.raster_config {
                 Some(ref raster_config) => raster_config.root_scaling_factor,
                 None => 1.0
             };
 
+            // If subpixel AA is disabled due to the backing surface the glyphs
+            // are being drawn onto, disable it (unless we are using the
+            // specifial subpixel mode that estimates background color).
+            let allow_subpixel = match prim_instance.vis.state {
+                VisibilityState::Culled |
+                VisibilityState::Unset |
+                VisibilityState::Coarse { .. } |
+                VisibilityState::PassThrough => {
+                    panic!("bug: invalid visibility state");
+                }
+                VisibilityState::Detailed { ref filter, .. } => {
+                    // For now, we only allow subpixel AA on primary sub-slices. In future we
+                    // may support other sub-slices if we find content that does this.
+                    if filter.sub_slice_index.is_primary() {
+                        match pic_context.subpixel_mode {
+                            SubpixelMode::Allow => true,
+                            SubpixelMode::Deny => false,
+                            SubpixelMode::Conditional { allowed_rect } => {
+                                // Conditional mode allows subpixel AA to be enabled for this
+                                // text run, so long as it's inside the allowed rect.
+                                allowed_rect.contains_rect(&prim_instance.vis.clip_chain.pic_clip_rect)
+                            }
+                        }
+                    } else {
+                        false
+                    }
+                }
+            };
+
             run.request_resources(
                 prim_offset,
-                prim_info.clip_chain.pic_clip_rect,
                 &prim_data.font,
                 &prim_data.glyphs,
                 &transform.to_transform().with_destination::<_>(),
                 surface,
                 prim_spatial_node_index,
                 root_scaling_factor,
-                &pic_context.subpixel_mode,
+                allow_subpixel,
                 frame_state.resource_cache,
                 frame_state.gpu_cache,
                 frame_context.spatial_tree,
@@ -616,7 +640,10 @@ fn prepare_interned_prim_for_render(
                 prim_data.common.may_need_repetition = false;
             }
 
-            if prim_data.supports_caching {
+            // We disable cached gradients with the software fallback because in this
+            // configuration rendering the gradient directly into a picture is faster
+            // than reading from the texture cache.
+            if prim_data.supports_caching && !frame_context.fb_config.is_software {
                 let gradient_size = (prim_data.end_point - prim_data.start_point).to_size();
 
                 // Calculate what the range of the gradient is that covers this

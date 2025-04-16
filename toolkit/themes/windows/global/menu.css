@@ -25,7 +25,7 @@ menucaption {
   -moz-image-region: auto;
 }
 
-@supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
   /* For Windows 10, prevent using native OS drawing of certain menu elements,
      especially background colors and shadows. */
@@ -52,7 +52,7 @@ menuitem[_moz-menuactive="true"][disabled="true"] {
   text-shadow: none;
 }
 
-@supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
   menu[disabled="true"],
   menuitem[disabled="true"],
@@ -61,6 +61,11 @@ menuitem[_moz-menuactive="true"][disabled="true"] {
     color: var(--menu-disabled-color);
     /* override the default hover disabled style: */
     background-color: transparent;
+  }
+
+  menu[_moz-menuactive="true"][disabled="true"],
+  menuitem[_moz-menuactive="true"][disabled="true"] {
+    background-color: var(--menuitem-disabled-hover-background-color);
   }
 }
 }
@@ -124,7 +129,7 @@ menucaption {
 }
 
 /* Don't leave space for icons on Win10. */
-@supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
   .menu-text {
     padding-inline-start: 0 !important;
@@ -144,7 +149,7 @@ menucaption {
 }
 
 /* Override the native menu arrow with a custom one for Win10. */
-@supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
   .menu-right {
     appearance: none;
@@ -237,12 +242,12 @@ menuitem[_moz-menuactive="true"] {
   color: -moz-menuhovertext;
 }
 
-@supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
   menu[_moz-menuactive="true"]:not([disabled="true"]),
   menuitem[_moz-menuactive="true"]:not([disabled="true"]) {
     background-color: var(--menuitem-hover-background-color);
-    color: var(--menuitem-color);
+    color: var(--menu-color);
   }
 }
 }
@@ -251,6 +256,7 @@ menuitem[_moz-menuactive="true"] {
 
 menulist > menupopup {
   font: inherit;
+  color: FieldText;
 }
 
 menulist > menupopup > menuitem,
@@ -260,7 +266,6 @@ menulist > menupopup > menu {
   border: 1px solid transparent;
   padding-inline: 5px;
   max-width: none;
-  color: FieldText;
 }
 
 menulist > menupopup > menuitem[_moz-menuactive="true"],
@@ -301,11 +306,9 @@ menulist > menupopup > :is(menuitem, menucaption):not(.menuitem-iconic) > .menu-
   margin: 0 !important;
 }
 
-@supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
-  menulist > menupopup > menuitem,
-  menulist > menupopup > menucaption,
-  menulist > menupopup > menu {
+  menulist > menupopup {
     color: var(--menu-color);
   }
 }
@@ -343,10 +346,10 @@ menuitem[type="radio"] > .menu-iconic-left > .menu-iconic-icon {
   display: none;
 }
 
-@supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
-  menupopup[needsgutter] menu:not([icon]),
-  menupopup[needsgutter] menuitem:not([checked="true"]):not([icon]) {
+  menupopup[needsgutter] menu:not([icon], .menu-iconic),
+  menupopup[needsgutter] menuitem:not([checked="true"], [icon], .menuitem-iconic) {
     padding-inline-start: 36px;
   }
 
@@ -361,7 +364,7 @@ menuitem[type="radio"] > .menu-iconic-left > .menu-iconic-icon {
 
   .menu-iconic > .menu-iconic-left,
   .menuitem-iconic > .menu-iconic-left {
-    margin-inline-end: 1em;
+    margin-inline-end: 8px;
   }
 
   menuitem[checked="true"] {
@@ -376,7 +379,7 @@ menuitem[type="radio"] > .menu-iconic-left > .menu-iconic-icon {
     -moz-context-properties: fill, fill-opacity;
     fill: currentColor;
     fill-opacity: var(--menu-icon-opacity);
-    list-style-image: url("chrome://global/skin/icons/check.svg");
+    list-style-image: url("chrome://global/skin/icons/menu-check.svg");
     width: 16px;
     margin-inline-end: 8px;
   }
@@ -403,7 +406,7 @@ menulist > menupopup > menuseparator {
 }
 
 /* On Windows 10, separators get entirely custom rendering. */
-@supports -moz-bool-pref("browser.proton.contextmenus.enabled") {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
   menuseparator {
     appearance: none;

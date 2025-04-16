@@ -33,8 +33,6 @@
 #include "mozilla/layers/PCompositorBridgeParent.h"
 #include "mozilla/webrender/WebRenderTypes.h"
 
-struct DxgiAdapterDesc;
-
 namespace mozilla {
 
 class CancelableRunnable;
@@ -99,11 +97,15 @@ class CompositorThreadHolder;
 class InProcessCompositorSession;
 class UiCompositorControllerParent;
 class WebRenderBridgeParent;
+class WebRenderScrollDataWrapper;
 struct CollectedFrames;
 
 struct ScopedLayerTreeRegistration {
-  ScopedLayerTreeRegistration(APZCTreeManager* aApzctm, LayersId aLayersId,
-                              Layer* aRoot,
+  // For Layers
+  ScopedLayerTreeRegistration(LayersId aLayersId, Layer* aRoot,
+                              GeckoContentController* aController);
+  // For WebRender
+  ScopedLayerTreeRegistration(LayersId aLayersId,
                               GeckoContentController* aController);
   ~ScopedLayerTreeRegistration();
 
@@ -294,14 +296,6 @@ class CompositorBridgeParentBase : public PCompositorBridgeParent,
   virtual mozilla::ipc::IPCResult RecvInitPCanvasParent(
       Endpoint<PCanvasParent>&& aEndpoint) = 0;
   virtual mozilla::ipc::IPCResult RecvReleasePCanvasParent() = 0;
-
-  virtual mozilla::ipc::IPCResult RecvSupportsAsyncDXGISurface(bool* value) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  virtual mozilla::ipc::IPCResult RecvPreferredDXGIAdapter(
-      DxgiAdapterDesc* desc) {
-    return IPC_FAIL_NO_REASON(this);
-  }
 
   virtual already_AddRefed<PWebGLParent> AllocPWebGLParent() = 0;
 
@@ -711,6 +705,8 @@ class CompositorBridgeParent final : public CompositorBridgeParentBase,
    * Wrap the data structure to be sent over IPC.
    */
   Maybe<CollectedFramesParams> WrapCollectedFrames(CollectedFrames&& aFrames);
+
+  void MaybeDeclareStable();
 
  protected:
   // Protected destructor, to discourage deletion outside of Release():

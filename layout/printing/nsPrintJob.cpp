@@ -840,7 +840,9 @@ nsresult nsPrintJob::Print(Document* aSourceDoc,
       nsCOMPtr<nsIPrintSettingsService> printSettingsService =
           do_GetService("@mozilla.org/gfx/printsettings-service;1");
       printSettingsService->SavePrintSettingsToPrefs(
-          aPrintSettings, true, nsIPrintSettings::kInitSaveAll);
+          aPrintSettings, true,
+          nsIPrintSettings::kInitSaveAll &
+              ~nsIPrintSettings::kInitSaveToFileName);
       printSettingsService->SavePrintSettingsToPrefs(
           aPrintSettings, false, nsIPrintSettings::kInitSavePrinterName);
     }
@@ -2121,6 +2123,9 @@ nsresult nsPrintJob::DoPrint(const UniquePtr<nsPrintObject>& aPO) {
   // because it might be cleared if other modules called from here may fire
   // events, notifying observers and/or listeners.
   RefPtr<nsPrintData> printData = mPrt;
+  if (NS_WARN_IF(!printData)) {
+    return NS_ERROR_FAILURE;
+  }
 
   if (printData->mPrintProgressParams) {
     SetURLAndTitleOnProgressParams(aPO, printData->mPrintProgressParams);
@@ -2739,9 +2744,9 @@ void nsPrintJob::DisconnectPagePrintTimer() {
 //---------------------------------------------------------------
 //---------------------------------------------------------------
 #if defined(XP_WIN) && defined(EXTENDED_DEBUG_PRINTING)
-#  include "windows.h"
-#  include "process.h"
-#  include "direct.h"
+#  include <windows.h>
+#  include <process.h>
+#  include <direct.h>
 
 #  define MY_FINDFIRST(a, b) FindFirstFile(a, b)
 #  define MY_FINDNEXT(a, b) FindNextFile(a, b)

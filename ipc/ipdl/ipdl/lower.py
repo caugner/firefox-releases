@@ -707,9 +707,10 @@ class _HybridDecl:
     """A hybrid decl stores both an IPDL type and all the C++ type
     info needed by later passes, along with a basic name for the decl."""
 
-    def __init__(self, ipdltype, name):
+    def __init__(self, ipdltype, name, attributes={}):
         self.ipdltype = ipdltype
         self.name = name
+        self.attributes = attributes
 
     def var(self):
         return ExprVar(self.name)
@@ -1115,7 +1116,11 @@ class MessageDecl(ipdl.ast.MessageDecl):
         |params| and |returns| is the C++ semantics of those: 'in', 'out', or None."""
 
         def makeDecl(d, sems):
-            if self.decl.type.tainted and direction == "recv":
+            if (
+                self.decl.type.tainted
+                and "NoTaint" not in d.attributes
+                and direction == "recv"
+            ):
                 # Tainted types are passed by-value, allowing the receiver to move them if desired.
                 assert sems != "out"
                 return Decl(Type("Tainted", T=d.bareType(side)), d.name)
@@ -1513,7 +1518,7 @@ class _DecorateWithCxxStuff(ipdl.ast.Visitor):
             self.typedefSet.add(Typedef(Type(ud.fqClassName()), ud.name))
 
     def visitDecl(self, decl):
-        return _HybridDecl(decl.type, decl.progname)
+        return _HybridDecl(decl.type, decl.progname, decl.attributes)
 
     def visitMessageDecl(self, md):
         md.namespace = self.protocolName
@@ -1878,8 +1883,8 @@ def _generateMessageConstructor(md, segmentSize, protocol, forReply=False):
         prioEnum = "NORMAL_PRIORITY"
     elif prio == ipdl.ast.INPUT_PRIORITY:
         prioEnum = "INPUT_PRIORITY"
-    elif prio == ipdl.ast.HIGH_PRIORITY:
-        prioEnum = "HIGH_PRIORITY"
+    elif prio == ipdl.ast.VSYNC_PRIORITY:
+        prioEnum = "VSYNC_PRIORITY"
     else:
         prioEnum = "MEDIUMHIGH_PRIORITY"
 
@@ -3957,8 +3962,8 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
         for managed in ptype.manages:
             managedmeth.addcode(
                 """
-                for (auto it = ${container}.ConstIter(); !it.Done(); it.Next()) {
-                    arr__.AppendElement(it.Get()->GetKey()->GetLifecycleProxy());
+                for (auto* key : ${container}) {
+                    arr__.AppendElement(key->GetLifecycleProxy());
                 }
 
                 """,
@@ -4167,12 +4172,12 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
         for managed in ptype.manages:
             clearsubtree.addcode(
                 """
-                for (auto it = ${container}.Iter(); !it.Done(); it.Next()) {
-                    it.Get()->GetKey()->ClearSubtree();
+                for (auto* key : ${container}) {
+                    key->ClearSubtree();
                 }
-                for (auto it = ${container}.Iter(); !it.Done(); it.Next()) {
+                for (auto* key : ${container}) {
                     // Recursively releasing ${container} kids.
-                    auto* proxy = it.Get()->GetKey()->GetLifecycleProxy();
+                    auto* proxy = key->GetLifecycleProxy();
                     NS_IF_RELEASE(proxy);
                 }
                 ${container}.Clear();
@@ -4652,7 +4657,7 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
             }
 
             ${actor}->SetManagerAndRegister($,{setManagerArgs});
-            ${container}.PutEntry(${actor});
+            ${container}.Insert(${actor});
             """,
                 actor=actordecl.var(),
                 actorname=actorproto.name() + self.side.capitalize(),
@@ -5119,7 +5124,7 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
                     Decl(
                         (
                             Type("Tainted", T=p.bareType(side))
-                            if md.decl.type.tainted
+                            if md.decl.type.tainted and "NoTaint" not in p.attributes
                             else p.bareType(side)
                         ),
                         p.var().name,

@@ -53,13 +53,13 @@ BrowsingContextGroup::BrowsingContextGroup(uint64_t aId) : mId(aId) {
 void BrowsingContextGroup::Register(nsISupports* aContext) {
   MOZ_DIAGNOSTIC_ASSERT(!mDestroyed);
   MOZ_DIAGNOSTIC_ASSERT(aContext);
-  mContexts.PutEntry(aContext);
+  mContexts.Insert(aContext);
 }
 
 void BrowsingContextGroup::Unregister(nsISupports* aContext) {
   MOZ_DIAGNOSTIC_ASSERT(!mDestroyed);
   MOZ_DIAGNOSTIC_ASSERT(aContext);
-  mContexts.RemoveEntry(aContext);
+  mContexts.Remove(aContext);
 
   MaybeDestroy();
 }
@@ -160,7 +160,8 @@ void BrowsingContextGroup::Subscribe(ContentParent* aProcess) {
 
     if (focused || active) {
       Unused << aProcess->SendSetupFocusedAndActive(
-          focused, active, fm->GetActionIdForActiveBrowsingContextInChrome());
+          focused, fm->GetActionIdForFocusedBrowsingContextInChrome(), active,
+          fm->GetActionIdForActiveBrowsingContextInChrome());
     }
   }
 }
@@ -168,7 +169,7 @@ void BrowsingContextGroup::Subscribe(ContentParent* aProcess) {
 void BrowsingContextGroup::Unsubscribe(ContentParent* aProcess) {
   MOZ_DIAGNOSTIC_ASSERT(aProcess);
   MOZ_DIAGNOSTIC_ASSERT(aProcess->GetRemoteType() != PREALLOC_REMOTE_TYPE);
-  mSubscribers.RemoveEntry(aProcess);
+  mSubscribers.Remove(aProcess);
   aProcess->RemoveBrowsingContextGroup(this);
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
@@ -234,11 +235,11 @@ void BrowsingContextGroup::Destroy() {
   // Make sure to call `RemoveBrowsingContextGroup` for every entry in both
   // `mHosts` and `mSubscribers`. This will visit most entries twice, but
   // `RemoveBrowsingContextGroup` is safe to call multiple times.
-  for (auto& entry : mHosts) {
-    entry.GetData()->RemoveBrowsingContextGroup(this);
+  for (auto& entry : mHosts.Values()) {
+    entry->RemoveBrowsingContextGroup(this);
   }
-  for (auto& entry : mSubscribers) {
-    entry.GetKey()->RemoveBrowsingContextGroup(this);
+  for (const auto& key : mSubscribers) {
+    key->RemoveBrowsingContextGroup(this);
   }
   mHosts.Clear();
   mSubscribers.Clear();
@@ -395,9 +396,7 @@ BrowsingContextGroup* BrowsingContextGroup::GetChromeGroup() {
 
 void BrowsingContextGroup::GetDocGroups(nsTArray<DocGroup*>& aDocGroups) {
   MOZ_ASSERT(NS_IsMainThread());
-  for (const auto& entry : mDocGroups) {
-    aDocGroups.AppendElement(entry.GetData());
-  }
+  AppendToArray(aDocGroups, mDocGroups.Values());
 }
 
 already_AddRefed<DocGroup> BrowsingContextGroup::AddDocument(
@@ -443,10 +442,7 @@ void BrowsingContextGroup::GetAllGroups(
     return;
   }
 
-  aGroups.SetCapacity(sBrowsingContextGroups->Count());
-  for (auto& group : *sBrowsingContextGroups) {
-    aGroups.AppendElement(group.GetData());
-  }
+  aGroups = ToArray(sBrowsingContextGroups->Values());
 }
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(BrowsingContextGroup, mContexts,

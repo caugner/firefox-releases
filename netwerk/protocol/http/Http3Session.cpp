@@ -73,8 +73,8 @@ Http3Session::Http3Session()
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG(("Http3Session::Http3Session [this=%p]", this));
 
-  mCurrentForegroundTabOuterContentWindowId =
-      gHttpHandler->ConnMgr()->CurrentTopLevelOuterContentWindowId();
+  mCurrentTopBrowsingContextId =
+      gHttpHandler->ConnMgr()->CurrentTopBrowsingContextId();
   mThroughCaptivePortal = gHttpHandler->GetThroughCaptivePortal();
 }
 
@@ -234,9 +234,7 @@ void Http3Session::Shutdown() {
     gHttpHandler->ExcludeHttp3(mConnInfo);
   }
 
-  for (auto iter = mStreamTransactionHash.Iter(); !iter.Done(); iter.Next()) {
-    RefPtr<Http3Stream> stream = iter.Data();
-
+  for (const auto& stream : mStreamTransactionHash.Values()) {
     if (mBeforeConnectedError) {
       // We have an error before we were connected, just restart transactions.
       // The transaction restart code path will remove AltSvc mapping and the
@@ -1404,13 +1402,13 @@ void Http3Session::DontReuse() {
   }
 }
 
-void Http3Session::TopLevelOuterContentWindowIdChanged(uint64_t windowId) {
+void Http3Session::TopBrowsingContextIdChanged(uint64_t id) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
-  mCurrentForegroundTabOuterContentWindowId = windowId;
+  mCurrentTopBrowsingContextId = id;
 
-  for (auto iter = mStreamTransactionHash.Iter(); !iter.Done(); iter.Next()) {
-    iter.Data()->TopLevelOuterContentWindowIdChanged(windowId);
+  for (const auto& stream : mStreamTransactionHash.Values()) {
+    stream->TopBrowsingContextIdChanged(id);
   }
 }
 
@@ -1636,13 +1634,13 @@ void Http3Session::SetSecInfo() {
   if (NS_SUCCEEDED(mHttp3Connection->GetSecInfo(&secInfo))) {
     mSocketControl->SetSSLVersionUsed(secInfo.version);
     mSocketControl->SetResumed(secInfo.resumed);
+    mSocketControl->SetNegotiatedNPN(secInfo.alpn);
 
     mSocketControl->SetInfo(secInfo.cipher, secInfo.version, secInfo.group,
                             secInfo.signature_scheme);
   }
 
-  if (!mSocketControl->HasServerCert() &&
-      StaticPrefs::network_ssl_tokens_cache_enabled()) {
+  if (!mSocketControl->HasServerCert()) {
     mSocketControl->RebuildCertificateInfoFromSSLTokenCache();
   }
 }

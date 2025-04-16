@@ -120,12 +120,15 @@ var UITour = {
       "accountStatus",
       {
         query: aDocument => {
-          let id = UITour.protonAppMenuEnabled
+          let id = UITour.protonEnabled
             ? "appMenu-fxa-label2"
             : "appMenu-fxa-label";
-          // Use the sync setup icon.
-          let statusButton = aDocument.getElementById(id);
-          return statusButton.icon;
+          let statusButton = PanelMultiView.getViewNode(aDocument, id);
+          if (!UITour.protonEnabled) {
+            // Use the sync setup icon.
+            return statusButton.querySelector(".toolbarbutton-icon");
+          }
+          return statusButton;
         },
         // This is a fake widgetName starting with the "appMenu-" prefix so we know
         // to automatically open the appMenu when annotating this target.
@@ -136,7 +139,7 @@ var UITour = {
       "addons",
       {
         query: aDocument => {
-          return UITour.protonAppMenuEnabled
+          return UITour.protonEnabled
             ? UITour.getNodeFromDocument(
                 aDocument,
                 "#appMenu-extensions-themes-button"
@@ -183,7 +186,7 @@ var UITour = {
       "logins",
       {
         query: aDocument => {
-          return UITour.protonAppMenuEnabled
+          return UITour.protonEnabled
             ? UITour.getNodeFromDocument(aDocument, "#appMenu-passwords-button")
             : UITour.getNodeFromDocument(aDocument, "#appMenu-logins-button");
         },
@@ -193,23 +196,14 @@ var UITour = {
       "pocket",
       {
         allowAdd: true,
-        query: aDocument => {
-          // The pocket's urlbar page action button is pre-defined in the DOM.
-          // It would be hidden if toggled off from the urlbar.
-          let node = aDocument.getElementById("pocket-button");
-          if (node && !node.hidden) {
-            return node;
-          }
-          aDocument.ownerGlobal.BrowserPageActions.placeLazyActionsInPanel();
-          return aDocument.getElementById("pageAction-panel-pocket");
-        },
+        query: "#save-to-pocket-button",
       },
     ],
     [
       "privateWindow",
       {
         query: aDocument => {
-          return UITour.protonAppMenuEnabled
+          return UITour.protonEnabled
             ? UITour.getNodeFromDocument(
                 aDocument,
                 "#appMenu-new-private-window-button2"
@@ -225,7 +219,7 @@ var UITour = {
       "quit",
       {
         query: aDocument => {
-          return UITour.protonAppMenuEnabled
+          return UITour.protonEnabled
             ? UITour.getNodeFromDocument(aDocument, "#appMenu-quit-button2")
             : UITour.getNodeFromDocument(aDocument, "#appMenu-quit-button");
         },
@@ -286,6 +280,9 @@ var UITour = {
         },
       },
     ],
+  ]),
+
+  nonProtonTargets: [
     [
       "pageAction-copyURL",
       {
@@ -334,7 +331,7 @@ var UITour = {
         },
       },
     ],
-  ]),
+  ],
 
   init() {
     log.debug("Initializing UITour");
@@ -347,10 +344,17 @@ var UITour = {
 
     XPCOMUtils.defineLazyPreferenceGetter(
       this,
-      "protonAppMenuEnabled",
+      "protonEnabled",
       "browser.proton.enabled",
       false
     );
+
+    // Add non-proton targets if necessary.
+    if (!UITour.protonEnabled) {
+      for (let [id, target] of this.nonProtonTargets) {
+        this.targets.set(id, target);
+      }
+    }
 
     // Clear the availableTargetsCache on widget changes.
     let listenerMethods = [
@@ -422,7 +426,7 @@ var UITour = {
       }
 
       case "showHighlight": {
-        if (data.target.startsWith("pageAction-")) {
+        if (!UITour.protonEnabled && data.target.startsWith("pageAction-")) {
           // The page action panel is lazily loaded, so we will need to initialize it
           // and place actions in the panel before showing the highlight for a panel
           // node.
@@ -1166,7 +1170,10 @@ var UITour = {
     let shouldOpenPageActionPanel = false;
     if (this.targetIsInAppMenu(aTarget)) {
       shouldOpenAppMenu = true;
-    } else if (this.targetIsInPageActionPanel(aTarget)) {
+    } else if (
+      this.targetIsInPageActionPanel(aTarget) &&
+      !UITour.protonEnabled
+    ) {
       shouldOpenPageActionPanel = true;
       // Ensure the panel visibility so as to ensure the visibility of the target
       // element inside the panel otherwise we would be rejected in the below
@@ -1569,7 +1576,10 @@ var UITour = {
       aMenuBtn.openMenu(true);
     }
 
-    if (aMenuName == "appMenu" || aMenuName == "pageActionPanel") {
+    if (
+      aMenuName == "appMenu" ||
+      (aMenuName == "pageActionPanel" && !UITour.protonEnabled)
+    ) {
       let menu = {
         onPanelHidden: this.onPanelHidden,
       };
@@ -1647,7 +1657,7 @@ var UITour = {
       closeMenuButton(menuBtn);
     } else if (aMenuName == "urlbar") {
       aWindow.gURLBar.view.close();
-    } else if (aMenuName == "pageActionPanel") {
+    } else if (aMenuName == "pageActionPanel" && !UITour.protonEnabled) {
       aWindow.BrowserPageActions.panelNode.hidePopup();
     }
   },

@@ -321,7 +321,13 @@ nsNSSSocketInfo::DriveHandshake() {
 
   if (rv != SECSuccess) {
     PRErrorCode errorCode = PR_GetError();
-    MOZ_DIAGNOSTIC_ASSERT(errorCode, "handshake failed without error code");
+    MOZ_ASSERT(errorCode, "handshake failed without error code");
+    // There is a bug in NSS. Sometimes SSL_ForceHandshake will return
+    // SECFailure without setting an error code. In these cases, cancel
+    // the connection with SEC_ERROR_LIBRARY_FAILURE.
+    if (!errorCode) {
+      errorCode = SEC_ERROR_LIBRARY_FAILURE;
+    }
     if (errorCode == PR_WOULD_BLOCK_ERROR) {
       return NS_BASE_STREAM_WOULD_BLOCK;
     }
@@ -1876,9 +1882,6 @@ SECStatus nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
   *pRetCert = nullptr;
   *pRetKey = nullptr;
 
-  Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_CLIENT_CERT,
-                       u"requested"_ns, 1);
-
   RefPtr<nsNSSSocketInfo> info(
       BitwiseCast<nsNSSSocketInfo*, PRFilePrivate*>(socket->higher->secret));
 
@@ -1937,8 +1940,6 @@ SECStatus nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
     *pRetKey = selectedKey.release();
     // Make joinConnection prohibit joining after we've sent a client cert
     info->SetSentClientCert();
-    Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_CLIENT_CERT, u"sent"_ns,
-                         1);
     if (info->GetSSLVersionUsed() == nsISSLSocketControl::TLS_VERSION_1_3) {
       Telemetry::Accumulate(Telemetry::TLS_1_3_CLIENT_AUTH_USES_PHA,
                             info->IsHandshakeCompleted());

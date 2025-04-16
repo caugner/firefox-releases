@@ -425,7 +425,8 @@ WebRenderAPI::WebRenderAPI(wr::DocumentHandle* aHandle, wr::WindowId aId,
       mUseTripleBuffering(aUseTripleBuffering),
       mSupportsExternalBufferTextures(aSupportsExternalBufferTextures),
       mCaptureSequence(false),
-      mSyncHandle(aSyncHandle) {}
+      mSyncHandle(aSyncHandle),
+      mRendererDestroyed(false) {}
 
 WebRenderAPI::~WebRenderAPI() {
   if (!mRootDocumentApi) {
@@ -433,17 +434,26 @@ WebRenderAPI::~WebRenderAPI() {
   }
 
   if (!mRootApi) {
-    RenderThread::Get()->SetDestroyed(GetId());
-
-    layers::SynchronousTask task("Destroy WebRenderAPI");
-    auto event = MakeUnique<RemoveRenderer>(&task);
-    RunOnRenderThread(std::move(event));
-    task.Wait();
-
+    MOZ_RELEASE_ASSERT(mRendererDestroyed);
     wr_api_shut_down(mDocHandle);
   }
 
   wr_api_delete(mDocHandle);
+}
+
+void WebRenderAPI::DestroyRenderer() {
+  MOZ_RELEASE_ASSERT(!mRootApi);
+
+  RenderThread::Get()->SetDestroyed(GetId());
+  // Call wr_api_stop_render_backend() before RemoveRenderer.
+  wr_api_stop_render_backend(mDocHandle);
+
+  layers::SynchronousTask task("Destroy WebRenderAPI");
+  auto event = MakeUnique<RemoveRenderer>(&task);
+  RunOnRenderThread(std::move(event));
+  task.Wait();
+
+  mRendererDestroyed = true;
 }
 
 void WebRenderAPI::UpdateDebugFlags(uint32_t aFlags) {
@@ -1062,11 +1072,13 @@ wr::WrClipId DisplayListBuilder::DefineClip(
 }
 
 wr::WrClipId DisplayListBuilder::DefineImageMaskClip(
-    const wr::ImageMask& aMask) {
+    const wr::ImageMask& aMask, const nsTArray<wr::LayoutPoint>& aPoints,
+    wr::FillRule aFillRule) {
   CancelGroup();
 
   WrClipId clipId = wr_dp_define_image_mask_clip_with_parent_clip_chain(
-      mWrState, &mCurrentSpaceAndClipChain, aMask);
+      mWrState, &mCurrentSpaceAndClipChain, aMask, aPoints.Elements(),
+      aPoints.Length(), aFillRule);
 
   return clipId;
 }

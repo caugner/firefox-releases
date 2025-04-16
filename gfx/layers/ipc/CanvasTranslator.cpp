@@ -6,6 +6,7 @@
 
 #include "CanvasTranslator.h"
 
+#include "gfxGradientCache.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/GPUParent.h"
 #include "mozilla/gfx/Logging.h"
@@ -13,7 +14,7 @@
 #include "mozilla/layers/TextureClient.h"
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/Telemetry.h"
-#include "nsTHashtable.h"
+#include "nsTHashSet.h"
 #include "RecordedCanvasEventImpl.h"
 
 #if defined(XP_WIN)
@@ -67,7 +68,7 @@ TextureData* CanvasTranslator::CreateTextureData(TextureType aTextureType,
   return textureData;
 }
 
-typedef nsTHashtable<nsRefPtrHashKey<CanvasTranslator>> CanvasTranslatorSet;
+typedef nsTHashSet<RefPtr<CanvasTranslator>> CanvasTranslatorSet;
 
 static CanvasTranslatorSet& CanvasTranslators() {
   MOZ_ASSERT(CanvasThreadHolder::IsInCanvasThread());
@@ -76,8 +77,8 @@ static CanvasTranslatorSet& CanvasTranslators() {
 }
 
 static void EnsureAllClosed() {
-  for (auto iter = CanvasTranslators().Iter(); !iter.Done(); iter.Next()) {
-    iter.Get()->GetKey()->Close();
+  for (const auto& key : CanvasTranslators()) {
+    key->Close();
   }
 }
 
@@ -121,7 +122,7 @@ void CanvasTranslator::Bind(Endpoint<PCanvasParent>&& aEndpoint) {
     return;
   }
 
-  CanvasTranslators().PutEntry(this);
+  CanvasTranslators().Insert(this);
 }
 
 mozilla::ipc::IPCResult CanvasTranslator::RecvInitTranslator(
@@ -210,7 +211,7 @@ void CanvasTranslator::FinishShutdown() {
   // ReleaseOnCompositorThread.
   CanvasTranslatorSet& canvasTranslators = CanvasTranslators();
   CanvasThreadHolder::ReleaseOnCompositorThread(mCanvasThreadHolder.forget());
-  canvasTranslators.RemoveEntry(this);
+  canvasTranslators.Remove(this);
 }
 
 void CanvasTranslator::Deactivate() {
@@ -363,9 +364,13 @@ bool CanvasTranslator::CreateReferenceTexture() {
 
   mReferenceTextureData->Lock(OpenMode::OPEN_READ_WRITE);
   mBaseDT = mReferenceTextureData->BorrowDrawTarget();
-  if (mBaseDT) {
-    mBackendType = mBaseDT->GetBackendType();
+  if (!mBaseDT) {
+    // We might get a null draw target due to a device failure, just return
+    // false so that we can recover.
+    return false;
   }
+
+  mBackendType = mBaseDT->GetBackendType();
   return true;
 }
 
@@ -494,6 +499,21 @@ UniquePtr<SurfaceDescriptor> CanvasTranslator::WaitForSurfaceDescriptor(
   UniquePtr<SurfaceDescriptor> descriptor = std::move(result->second);
   mSurfaceDescriptors.erase(aTextureId);
   return descriptor;
+}
+
+already_AddRefed<gfx::GradientStops> CanvasTranslator::GetOrCreateGradientStops(
+    gfx::GradientStop* aRawStops, uint32_t aNumStops,
+    gfx::ExtendMode aExtendMode) {
+  nsTArray<gfx::GradientStop> rawStopArray(aRawStops, aNumStops);
+  RefPtr<DrawTarget> drawTarget = GetReferenceDrawTarget();
+  if (!drawTarget) {
+    // We might end up with a null reference draw target due to a device
+    // failure, just return false so that we can recover.
+    return nullptr;
+  }
+
+  return gfx::gfxGradientCache::GetOrCreateGradientStops(
+      drawTarget, rawStopArray, aExtendMode);
 }
 
 gfx::DataSourceSurface* CanvasTranslator::LookupDataSurface(

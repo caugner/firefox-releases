@@ -110,7 +110,10 @@ mochitest-a11y:
     test-manifest-loader: default  # ensure we don't run with manifest-scheduling
     loopback-video: true
     e10s: false
-    run-on-projects: built-projects
+    run-on-projects:
+        by-test-platform:
+            .*-tsan/opt: ['trunk']
+            default: built-projects
     mozharness:
         mochitest-flavor: a11y
 
@@ -394,11 +397,17 @@ mochitest-media:
         by-variant:
             fission:
                 by-test-platform:
-                    linux.*64-qr/debug: ['trunk']
-                    linux.*64-shippable-qr/opt: ['mozilla-central']
-                    linux.*64-shippable/.*: ['mozilla-central']
-                    linux.*64/debug: ['mozilla-central']
-                    windows10-64-shippable(-qr)?/opt: ['mozilla-central']
+                    (linux.*64|windows10-64)-qr/debug: ['autoland', 'mozilla-central']
+                    (linux.*64|windows10-64)-qr/opt: ['autoland']
+                    (linux.*64|windows10-64)-shippable-qr/opt: ['mozilla-central']
+                    linux.*64-(asan|tsan)/opt: ['autoland', 'mozilla-central']
+                    default: []
+            fission-webgl-ipc:
+                by-test-platform:
+                    (linux.*64|windows10-64)-qr/debug: ['autoland', 'mozilla-central']
+                    (linux.*64|windows10-64)-qr/opt: ['autoland']
+                    (linux.*64|windows10-64)-shippable-qr/opt: ['mozilla-central']
+                    linux.*64-(asan|tsan)/opt: ['autoland', 'mozilla-central']
                     default: []
             default:
                 by-test-platform:
@@ -412,8 +421,8 @@ mochitest-media:
         by-test-platform:
             .*-ccov.*/.*: []
             android.*: ['socketprocess']
-            linux.*64-qr/debug: ['webrender-sw', 'fission']
-            default: ['fission', 'socketprocess', 'webgl-ipc']
+            linux.*64-qr/debug: ['webrender-sw', 'fission', 'fission-webgl-ipc']
+            default: ['fission', 'fission-webgl-ipc', 'socketprocess', 'webgl-ipc']
     loopback-video: true
     instance-size:
         by-test-platform:
@@ -445,6 +454,7 @@ mochitest-media:
                 by-test-platform:
                     linux.*64.*-qr/debug: 1
                     default: 2
+            fission-webgl-ipc: 2
             default:
                 by-test-platform:
                     android-em.*: 1
@@ -534,7 +544,9 @@ mochitest-webgl1-core:
         by-test-platform:
             .*-ccov.*/.*: []
             android.*: []
-            linux.*64-qr/debug: ['webrender-sw', 'webgl-ipc']
+            linux.*64-qr/debug: ['fission', 'webrender-sw', 'webgl-ipc']
+            (linux.*64|macosx.*64|windows10-64)(-shippable)?-qr/(debug|opt): ['fission', 'webgl-ipc']
+            linux.*64-asan/opt: ['fission', 'webgl-ipc']
             default: ['webgl-ipc']
     e10s: true
     test-manifest-loader: null  # don't load tests in the taskgraph

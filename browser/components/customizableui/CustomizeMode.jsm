@@ -11,7 +11,7 @@ const kPaletteId = "customization-palette";
 const kDragDataTypePrefix = "text/toolbarwrapper-id/";
 const kSkipSourceNodePref = "browser.uiCustomization.skipSourceNodeCheck";
 const kDrawInTitlebarPref = "browser.tabs.drawInTitlebar";
-const kExtraDragSpacePref = "browser.tabs.extraDragSpace";
+const kCompactModeShowPref = "browser.compactmode.show";
 const kBookmarksToolbarPref = "browser.toolbars.bookmarks.visibility";
 const kKeepBroadcastAttributes = "keepbroadcastattributeswhencustomizing";
 
@@ -52,11 +52,6 @@ ChromeUtils.defineModuleGetter(
 );
 ChromeUtils.defineModuleGetter(
   this,
-  "BrowserUIUtils",
-  "resource:///modules/BrowserUIUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
   "BrowserUsageTelemetry",
   "resource:///modules/BrowserUsageTelemetry.jsm"
 );
@@ -70,6 +65,12 @@ XPCOMUtils.defineLazyGetter(this, "gWidgetsBundle", function() {
     "chrome://browser/locale/customizableui/customizableWidgets.properties";
   return Services.strings.createBundle(kUrl);
 });
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gProton",
+  "browser.proton.enabled",
+  false
+);
 XPCOMUtils.defineLazyServiceGetter(
   this,
   "gTouchBarUpdater",
@@ -171,12 +172,9 @@ function CustomizeMode(aWindow) {
 
   if (this._canDrawInTitlebar()) {
     this._updateTitlebarCheckbox();
-    this._updateDragSpaceCheckbox();
     Services.prefs.addObserver(kDrawInTitlebarPref, this);
-    Services.prefs.addObserver(kExtraDragSpacePref, this);
   } else {
     this.$("customization-titlebar-visibility-checkbox").hidden = true;
-    this.$("customization-extra-drag-space-checkbox").hidden = true;
   }
 
   // Observe pref changes to the bookmarks toolbar visibility,
@@ -234,7 +232,6 @@ CustomizeMode.prototype = {
   uninit() {
     if (this._canDrawInTitlebar()) {
       Services.prefs.removeObserver(kDrawInTitlebarPref, this);
-      Services.prefs.removeObserver(kExtraDragSpacePref, this);
     }
     Services.prefs.removeObserver(kBookmarksToolbarPref, this);
   },
@@ -259,6 +256,11 @@ CustomizeMode.prototype = {
   },
 
   async _updateThemeButtonIcon() {
+    // Keep the default button icon.
+    if (gProton) {
+      return;
+    }
+
     let lwthemeButton = this.$("customization-lwtheme-button");
     let lwthemeIcon = lwthemeButton.icon;
     let theme = (await AddonManager.getAddonsByTypes(["theme"])).find(
@@ -440,6 +442,7 @@ CustomizeMode.prototype = {
       this._updateResetButton();
       this._updateUndoResetButton();
       this._updateTouchBarButton();
+      this._updateDensityMenu();
 
       this._skipSourceNodeCheck =
         Services.prefs.getPrefType(kSkipSourceNodePref) ==
@@ -791,19 +794,14 @@ CustomizeMode.prototype = {
     }
     if (!this.window.gReduceMotion) {
       let overflowButton = this.$("nav-bar-overflow-button");
-      BrowserUIUtils.setToolbarButtonHeightProperty(overflowButton).then(() => {
-        overflowButton.setAttribute("animate", "true");
-        overflowButton.addEventListener("animationend", function onAnimationEnd(
-          event
-        ) {
-          if (event.animationName.startsWith("overflow-animation")) {
-            this.setAttribute("fade", "true");
-          } else if (event.animationName == "overflow-fade") {
-            this.removeEventListener("animationend", onAnimationEnd);
-            this.removeAttribute("animate");
-            this.removeAttribute("fade");
-          }
-        });
+      overflowButton.setAttribute("animate", "true");
+      overflowButton.addEventListener("animationend", function onAnimationEnd(
+        event
+      ) {
+        if (event.animationName.startsWith("overflow-animation")) {
+          this.removeEventListener("animationend", onAnimationEnd);
+          this.removeAttribute("animate");
+        }
       });
     }
   },
@@ -1490,12 +1488,19 @@ CustomizeMode.prototype = {
     );
     normalItem.mode = gUIDensity.MODE_NORMAL;
 
+    let items = [normalItem];
+
     let compactItem = doc.getElementById(
       "customization-uidensity-menuitem-compact"
     );
     compactItem.mode = gUIDensity.MODE_COMPACT;
 
-    let items = [normalItem, compactItem];
+    if (Services.prefs.getBoolPref(kCompactModeShowPref)) {
+      compactItem.hidden = false;
+      items.push(compactItem);
+    } else {
+      compactItem.hidden = true;
+    }
 
     let touchItem = doc.getElementById(
       "customization-uidensity-menuitem-touch"
@@ -1571,7 +1576,7 @@ CustomizeMode.prototype = {
       panel.hidePopup();
     };
 
-    let doc = this.window.document;
+    let doc = this.document;
 
     function buildToolbarButton(aTheme) {
       let tbb = doc.createXULElement("toolbarbutton");
@@ -1627,8 +1632,8 @@ CustomizeMode.prototype = {
     for (let theme of themes) {
       let button = buildToolbarButton(theme);
       button.addEventListener("command", async () => {
-        await button.theme.enable();
         onThemeSelected(panel);
+        await button.theme.enable();
         AMTelemetry.recordActionEvent({
           object: "customize",
           action: "enable",
@@ -1700,6 +1705,20 @@ CustomizeMode.prototype = {
     let isTouchBarInitialized = gTouchBarUpdater.isTouchBarInitialized();
     touchBarButton.hidden = !isTouchBarInitialized;
     touchBarSpacer.hidden = !isTouchBarInitialized;
+  },
+
+  _updateDensityMenu() {
+    // If we're entering Customize Mode, and we're using compact mode,
+    // then show the button after that.
+    let gUIDensity = this.window.gUIDensity;
+    if (gUIDensity.getCurrentDensity().mode == gUIDensity.MODE_COMPACT) {
+      Services.prefs.setBoolPref(kCompactModeShowPref, true);
+    }
+
+    let button = this.document.getElementById("customization-uidensity-button");
+    button.hidden =
+      !Services.prefs.getBoolPref(kCompactModeShowPref) &&
+      !button.querySelector("#customization-uidensity-menuitem-touch");
   },
 
   handleEvent(aEvent) {
@@ -1792,7 +1811,6 @@ CustomizeMode.prototype = {
         this._updateUndoResetButton();
         if (this._canDrawInTitlebar()) {
           this._updateTitlebarCheckbox();
-          this._updateDragSpaceCheckbox();
         }
         break;
     }
@@ -1842,40 +1860,9 @@ CustomizeMode.prototype = {
     }
   },
 
-  _updateDragSpaceCheckbox() {
-    let extraDragSpace = Services.prefs.getBoolPref(kExtraDragSpacePref);
-    let drawInTitlebar = Services.prefs.getBoolPref(
-      kDrawInTitlebarPref,
-      this.window.matchMedia("(-moz-gtk-csd-hide-titlebar-by-default)").matches
-    );
-    let menuBar = this.$("toolbar-menubar");
-    let menuBarEnabled =
-      menuBar &&
-      AppConstants.platform != "macosx" &&
-      menuBar.getAttribute("autohide") != "true";
-
-    let checkbox = this.$("customization-extra-drag-space-checkbox");
-    if (extraDragSpace) {
-      checkbox.setAttribute("checked", "true");
-    } else {
-      checkbox.removeAttribute("checked");
-    }
-
-    if (!drawInTitlebar || menuBarEnabled) {
-      checkbox.setAttribute("disabled", "true");
-    } else {
-      checkbox.removeAttribute("disabled");
-    }
-  },
-
   toggleTitlebar(aShouldShowTitlebar) {
     // Drawing in the titlebar means not showing the titlebar, hence the negation:
     Services.prefs.setBoolPref(kDrawInTitlebarPref, !aShouldShowTitlebar);
-    this._updateDragSpaceCheckbox();
-  },
-
-  toggleDragSpace(aShouldShowDragSpace) {
-    Services.prefs.setBoolPref(kExtraDragSpacePref, aShouldShowDragSpace);
   },
 
   _getBoundsWithoutFlushing(element) {

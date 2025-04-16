@@ -587,8 +587,9 @@ void gfxShapedText::SetupClusterBoundaries(uint32_t aOffset,
     }
   }
 
+  const char16_t kIdeographicSpace = 0x3000;
   while (!iter.AtEnd()) {
-    if (*iter == char16_t(' ')) {
+    if (*iter == char16_t(' ') || *iter == kIdeographicSpace) {
       glyphs->SetIsSpace();
     }
     // advance iter to the next cluster-start (or end of text)
@@ -796,7 +797,7 @@ gfxFont::gfxFont(const RefPtr<UnscaledFont>& aUnscaledFont,
     : mFontEntry(aFontEntry),
       mUnscaledFont(aUnscaledFont),
       mStyle(*aFontStyle),
-      mAdjustedSize(0.0),
+      mAdjustedSize(-1.0),       // negative to indicate "not yet initialized"
       mFUnitsConvFactor(-1.0f),  // negative to indicate "not yet initialized"
       mAntialiasOption(anAAOption),
       mIsValid(true),
@@ -824,8 +825,8 @@ gfxFont::~gfxFont() {
   mFontEntry->NotifyFontDestroyed(this);
 
   if (mGlyphChangeObservers) {
-    for (auto it = mGlyphChangeObservers->Iter(); !it.Done(); it.Next()) {
-      it.Get()->GetKey()->ForgetFont();
+    for (const auto& key : *mGlyphChangeObservers) {
+      key->ForgetFont();
     }
   }
 }
@@ -917,9 +918,9 @@ static void CollectLookupsByFeature(hb_face_t* aFace, hb_tag_t aTableTag,
 
 static void CollectLookupsByLanguage(
     hb_face_t* aFace, hb_tag_t aTableTag,
-    const nsTHashtable<nsUint32HashKey>& aSpecificFeatures,
-    hb_set_t* aOtherLookups, hb_set_t* aSpecificFeatureLookups,
-    uint32_t aScriptIndex, uint32_t aLangIndex) {
+    const nsTHashSet<uint32_t>& aSpecificFeatures, hb_set_t* aOtherLookups,
+    hb_set_t* aSpecificFeatureLookups, uint32_t aScriptIndex,
+    uint32_t aLangIndex) {
   uint32_t reqFeatureIndex;
   if (hb_ot_layout_language_get_required_feature_index(
           aFace, aTableTag, aScriptIndex, aLangIndex, &reqFeatureIndex)) {
@@ -947,7 +948,7 @@ static void CollectLookupsByLanguage(
                                              &featureTag);
 
       // collect lookups
-      hb_set_t* lookups = aSpecificFeatures.GetEntry(featureTag)
+      hb_set_t* lookups = aSpecificFeatures.Contains(featureTag)
                               ? aSpecificFeatureLookups
                               : aOtherLookups;
       CollectLookupsByFeature(aFace, aTableTag, featureIndex, lookups);
@@ -959,7 +960,7 @@ static void CollectLookupsByLanguage(
 static bool HasLookupRuleWithGlyphByScript(
     hb_face_t* aFace, hb_tag_t aTableTag, hb_tag_t aScriptTag,
     uint32_t aScriptIndex, uint16_t aGlyph,
-    const nsTHashtable<nsUint32HashKey>& aDefaultFeatures,
+    const nsTHashSet<uint32_t>& aDefaultFeatures,
     bool& aHasDefaultFeatureWithGlyph) {
   uint32_t numLangs, lang;
   hb_set_t* defaultFeatureLookups = hb_set_create();
@@ -1022,9 +1023,9 @@ static void HasLookupRuleWithGlyph(hb_face_t* aFace, hb_tag_t aTableTag,
   uint32_t numScripts, numLangs, script, lang;
   hb_set_t* otherLookups = hb_set_create();
   hb_set_t* specificFeatureLookups = hb_set_create();
-  nsTHashtable<nsUint32HashKey> specificFeature;
+  nsTHashSet<uint32_t> specificFeature(1);
 
-  specificFeature.PutEntry(aSpecificFeature);
+  specificFeature.Insert(aSpecificFeature);
 
   numScripts =
       hb_ot_layout_table_get_script_tags(aFace, aTableTag, 0, nullptr, nullptr);
@@ -1074,7 +1075,7 @@ static void HasLookupRuleWithGlyph(hb_face_t* aFace, hb_tag_t aTableTag,
 }
 
 nsTHashMap<nsUint32HashKey, Script>* gfxFont::sScriptTagToCode = nullptr;
-nsTHashtable<nsUint32HashKey>* gfxFont::sDefaultFeatures = nullptr;
+nsTHashSet<uint32_t>* gfxFont::sDefaultFeatures = nullptr;
 
 static inline bool HasSubstitution(uint32_t* aBitVector, Script aScript) {
   return (aBitVector[static_cast<uint32_t>(aScript) >> 5] &
@@ -1150,9 +1151,9 @@ void gfxFont::CheckForFeaturesInvolvingSpace() {
       }
 
       uint32_t numDefaultFeatures = ArrayLength(defaultFeatures);
-      sDefaultFeatures = new nsTHashtable<nsUint32HashKey>(numDefaultFeatures);
+      sDefaultFeatures = new nsTHashSet<uint32_t>(numDefaultFeatures);
       for (uint32_t i = 0; i < numDefaultFeatures; i++) {
-        sDefaultFeatures->PutEntry(defaultFeatures[i]);
+        sDefaultFeatures->Insert(defaultFeatures[i]);
       }
     }
 
@@ -2710,8 +2711,8 @@ void gfxFont::NotifyGlyphsChanged() {
   }
 
   if (mGlyphChangeObservers) {
-    for (auto it = mGlyphChangeObservers->Iter(); !it.Done(); it.Next()) {
-      it.Get()->GetKey()->NotifyGlyphsChanged();
+    for (const auto& key : *mGlyphChangeObservers) {
+      key->NotifyGlyphsChanged();
     }
   }
 }
@@ -3664,9 +3665,29 @@ void gfxFont::SanitizeMetrics(gfxFont::Metrics* aMetrics,
   // Even if this font size is zero, this font is created with non-zero size.
   // However, for layout and others, we should return the metrics of zero size
   // font.
-  if (mStyle.size == 0.0 || mStyle.sizeAdjust == 0.0) {
+  if (mStyle.size == 0.0 || mStyle.sizeAdjust == 0.0 ||
+      mFontEntry->mSizeAdjust == 0.0) {
     memset(aMetrics, 0, sizeof(gfxFont::Metrics));
     return;
+  }
+
+  // If the font entry has ascent/descent/lineGap-override values,
+  // replace the metrics from the font with the overrides.
+  gfxFloat adjustedSize = GetAdjustedSize();
+  if (mFontEntry->mAscentOverride >= 0.0) {
+    aMetrics->maxAscent = mFontEntry->mAscentOverride * adjustedSize;
+    aMetrics->maxHeight = aMetrics->maxAscent + aMetrics->maxDescent;
+    aMetrics->internalLeading =
+        std::max(0.0, aMetrics->maxHeight - aMetrics->emHeight);
+  }
+  if (mFontEntry->mDescentOverride >= 0.0) {
+    aMetrics->maxDescent = mFontEntry->mDescentOverride * adjustedSize;
+    aMetrics->maxHeight = aMetrics->maxAscent + aMetrics->maxDescent;
+    aMetrics->internalLeading =
+        std::max(0.0, aMetrics->maxHeight - aMetrics->emHeight);
+  }
+  if (mFontEntry->mLineGapOverride >= 0.0) {
+    aMetrics->externalLeading = mFontEntry->mLineGapOverride * adjustedSize;
   }
 
   aMetrics->underlineSize = std::max(1.0, aMetrics->underlineSize);
@@ -3959,17 +3980,16 @@ void gfxFont::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
 
 void gfxFont::AddGlyphChangeObserver(GlyphChangeObserver* aObserver) {
   if (!mGlyphChangeObservers) {
-    mGlyphChangeObservers =
-        MakeUnique<nsTHashtable<nsPtrHashKey<GlyphChangeObserver>>>();
+    mGlyphChangeObservers = MakeUnique<nsTHashSet<GlyphChangeObserver*>>();
   }
-  mGlyphChangeObservers->PutEntry(aObserver);
+  mGlyphChangeObservers->Insert(aObserver);
 }
 
 void gfxFont::RemoveGlyphChangeObserver(GlyphChangeObserver* aObserver) {
   NS_ASSERTION(mGlyphChangeObservers, "No observers registered");
   NS_ASSERTION(mGlyphChangeObservers->Contains(aObserver),
                "Observer not registered");
-  mGlyphChangeObservers->RemoveEntry(aObserver);
+  mGlyphChangeObservers->Remove(aObserver);
 }
 
 #define DEFAULT_PIXEL_FONT_SIZE 16.0f

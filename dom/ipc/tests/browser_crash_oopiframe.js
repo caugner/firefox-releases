@@ -157,13 +157,15 @@ async function testFrameCrash(numTabs) {
       "Should be showing the right notification" + count
     );
 
-    let buttons = notification.querySelectorAll(".notification-button");
+    let buttons = notification.buttonContainer.querySelectorAll(
+      ".notification-button"
+    );
     is(
       buttons.length,
       1,
       "Notification " + count + " should have only one button."
     );
-    let links = notification.querySelectorAll(".text-link");
+    let links = notification.messageText.querySelectorAll(".text-link");
     is(
       links.length,
       1,
@@ -174,21 +176,22 @@ async function testFrameCrash(numTabs) {
   // Press the ignore button on the visible notification.
   let notificationBox = gBrowser.getNotificationBox(gBrowser.selectedBrowser);
   let notification = notificationBox.currentNotification;
-  notification.dismiss();
 
+  // Make sure all of the notifications were closed when one of them was closed.
+  let closedPromises = [];
   for (let count = 1; count <= numTabs; count++) {
     let nb = gBrowser.getNotificationBox(gBrowser.browsers[count]);
-
-    await TestUtils.waitForCondition(
-      () => !nb.currentNotification,
-      "notification closed"
-    );
-
-    ok(
-      !nb.currentNotification,
-      "notification " + count + " closed when dismiss button is pressed"
+    closedPromises.push(
+      BrowserTestUtils.waitForMutationCondition(
+        nb.stack,
+        { childList: true },
+        () => !nb.currentNotification
+      )
     );
   }
+
+  notification.dismiss();
+  await Promise.all(closedPromises);
 
   for (let count = 1; count <= numTabs; count++) {
     BrowserTestUtils.removeTab(gBrowser.selectedTab);
@@ -216,6 +219,10 @@ add_task(async function test_crashframe() {
     SpecialPowers.useRemoteSubframes,
     "This test only makes sense of we can use OOP iframes."
   );
+
+  await SpecialPowers.pushPrefEnv({
+    set: [["dom.security.enforceIPCBasedPrincipalVetting", false]],
+  });
 
   // Create the crash reporting directory if it doesn't yet exist, otherwise, a failure
   // sometimes occurs. See bug 1687855 for fixing this.

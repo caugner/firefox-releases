@@ -74,7 +74,7 @@ class EffectCompositor;
 class Encoding;
 class EventStateManager;
 class CounterStyleManager;
-class OneShotPostRefreshObserver;
+class ManagedPostRefreshObserver;
 class PresShell;
 class RestyleManager;
 class ServoStyleSet;
@@ -510,11 +510,10 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
 
   mozilla::ScreenIntMargin GetSafeAreaInsets() const { return mSafeAreaInsets; }
 
-  bool RegisterOneShotPostRefreshObserver(
-      mozilla::OneShotPostRefreshObserver* aObserver);
-  void UnregisterOneShotPostRefreshObserver(
-      mozilla::OneShotPostRefreshObserver* aObserver);
-  void ClearOneShotPostRefreshObservers();
+  bool RegisterManagedPostRefreshObserver(mozilla::ManagedPostRefreshObserver*);
+  void UnregisterManagedPostRefreshObserver(
+      mozilla::ManagedPostRefreshObserver*);
+  void CancelManagedPostRefreshObservers();
 
  protected:
   void UpdateEffectiveTextZoom();
@@ -1249,8 +1248,8 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   // During page load we use slower frame rate.
   uint32_t mNextFrameRateMultiplier;
 
-  nsTArray<RefPtr<mozilla::OneShotPostRefreshObserver>>
-      mOneShotPostRefreshObservers;
+  nsTArray<RefPtr<mozilla::ManagedPostRefreshObserver>>
+      mManagedPostRefreshObservers;
 
   ScrollStyles mViewportScrollStyles;
 
@@ -1331,6 +1330,11 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   unsigned mHadNonBlankPaint : 1;
   // Has NotifyContentfulPaint been called on this PresContext?
   unsigned mHadContentfulPaint : 1;
+  // True when a contentful paint has happened and this paint doesn't
+  // come from the regular tick process. Usually this means a
+  // contentful paint was triggered manually.
+  unsigned mHadNonTickContentfulPaint : 1;
+
   // Has NotifyDidPaintForSubtree been called for a contentful paint?
   unsigned mHadContentfulPaintComposite : 1;
 

@@ -142,8 +142,6 @@ class AndroidBridge final {
   uint32_t GetScreenOrientation();
   uint16_t GetScreenAngle();
 
-  int GetAPIVersion() { return mAPIVersion; }
-
   nsresult GetProxyForURI(const nsACString& aSpec, const nsACString& aScheme,
                           const nsACString& aHost, const int32_t aPort,
                           nsACString& aResult);
@@ -176,23 +174,6 @@ class AndroidBridge final {
 
   AndroidBridge();
   ~AndroidBridge();
-
-  int mAPIVersion;
-
-  // intput stream
-  jclass jReadableByteChannel;
-  jclass jChannels;
-  jmethodID jChannelCreate;
-  jmethodID jByteBufferRead;
-
-  jclass jInputStream;
-  jmethodID jClose;
-  jmethodID jAvailable;
-
-  jmethodID jCalculateLength;
-
-  // some convinient types to have around
-  jclass jStringClass;
 
   jni::Object::GlobalRef mMessageQueue;
   jfieldID mMessageQueueMessages;

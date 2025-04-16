@@ -6,7 +6,6 @@
 
 cfr-doorhanger-extension-heading = Recommended Extension
 cfr-doorhanger-feature-heading = Recommended Feature
-cfr-doorhanger-pintab-heading = Try This: Pin Tab
 
 ##
 
@@ -18,8 +17,6 @@ cfr-doorhanger-extension-cancel-button = Not Now
 
 cfr-doorhanger-extension-ok-button = Add Now
   .accesskey = A
-cfr-doorhanger-pintab-ok-button = Pin This Tab
-  .accesskey = P
 
 cfr-doorhanger-extension-manage-settings-button = Manage Recommendation Settings
   .accesskey = M
@@ -66,17 +63,6 @@ cfr-doorhanger-extension-total-users =
       [one] { $total } user
      *[other] { $total } users
   }
-
-cfr-doorhanger-pintab-description = Get easy access to your most-used sites. Keep sites open in a tab (even when you restart).
-
-## These messages are steps on how to use the feature and are shown together.
-
-cfr-doorhanger-pintab-step1 = <b>Right-click</b> on the tab you want to pin.
-cfr-doorhanger-pintab-step2 = Select <b>Pin Tab</b> from the menu.
-cfr-doorhanger-pintab-step3 = If the site has an update you’ll see a blue dot on your pinned tab.
-
-cfr-doorhanger-pintab-animation-pause = Pause
-cfr-doorhanger-pintab-animation-resume = Resume
 
 ## Firefox Accounts Message
 
@@ -153,20 +139,6 @@ cfr-whatsnew-fingerprinter-counter-body = { -brand-shorter-name } blocks many fi
 # Message variation when fingerprinters count is less than 10
 cfr-whatsnew-fingerprinter-counter-header-alt = Fingerprinters
 cfr-whatsnew-fingerprinter-counter-body-alt = { -brand-shorter-name } can block fingerprinters that secretly gather information about your device and actions to create an advertising profile of you.
-
-## Bookmark Sync
-
-cfr-doorhanger-sync-bookmarks-header = Get this bookmark on your phone
-cfr-doorhanger-sync-bookmarks-body = Take your bookmarks, passwords, history and more everywhere you’re signed into { -brand-product-name }.
-cfr-doorhanger-sync-bookmarks-ok-button = Turn on { -sync-brand-short-name }
-  .accesskey = T
-
-## Login Sync
-
-cfr-doorhanger-sync-logins-header = Never Lose a Password Again
-cfr-doorhanger-sync-logins-body = Securely store and sync your passwords to all your devices.
-cfr-doorhanger-sync-logins-ok-button = Turn on { -sync-brand-short-name }
-  .accesskey = T
 
 ## Social Tracking Protection
 

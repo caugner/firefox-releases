@@ -1206,6 +1206,11 @@ impl RenderApi {
         self.api_sender.send(ApiMsg::DebugCommand(cmd)).unwrap();
     }
 
+    /// Stop RenderBackend's task until shut down
+    pub fn stop_render_backend(&self) {
+        self.low_priority_scene_sender.send(SceneBuilderRequest::StopRenderBackend).unwrap();
+    }
+
     /// Shut the WebRender instance down.
     pub fn shut_down(&self, synchronously: bool) {
         if synchronously {
@@ -1435,6 +1440,7 @@ pub struct MemoryReport {
     pub interning: InterningMemoryReport,
     pub display_list: usize,
     pub upload_staging_memory: usize,
+    pub swgl: usize,
 
     //
     // GPU memory.

@@ -17,6 +17,7 @@ use std::usize;
 use webrender::api::*;
 use webrender::render_api::*;
 use webrender::api::units::*;
+use webrender::api::FillRule;
 use crate::wrench::{FontDescriptor, Wrench, WrenchThing};
 use crate::yaml_helper::{StringEnum, YamlHelper, make_perspective};
 use yaml_rust::{Yaml, YamlLoader};
@@ -235,8 +236,13 @@ fn generate_checkerboard_image(
         }
     }
 
+    let flags = match kind {
+        CheckerboardKind::BlackGrey => ImageDescriptorFlags::IS_OPAQUE,
+        CheckerboardKind::BlackTransparent => ImageDescriptorFlags::empty(),
+    };
+
     (
-        ImageDescriptor::new(width as i32, height as i32, ImageFormat::BGRA8, ImageDescriptorFlags::IS_OPAQUE),
+        ImageDescriptor::new(width as i32, height as i32, ImageFormat::BGRA8, flags),
         ImageData::new(pixels),
     )
 }
@@ -1977,6 +1983,8 @@ impl YamlFrameReader {
             space_and_clip.clip_id = dl.define_clip_image_mask(
                 &space_and_clip,
                 image_mask,
+                &vec![],
+                FillRule::Nonzero,
             );
         }
 

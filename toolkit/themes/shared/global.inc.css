@@ -30,9 +30,10 @@
   --panel-disabled-color: GrayText;
 
   --popup-notification-body-width: calc(31em - calc(2 * var(--arrowpanel-padding)));
+  --toolbarbutton-icon-fill: currentColor;
 }
 
-@supports not -moz-bool-pref("browser.proton.doorhangers.enabled") {
+@media not (-moz-proton-doorhangers) {
 :root {
   --popup-notification-body-width: 25em;
 }
@@ -112,6 +113,10 @@ xul|label[disabled="true"] {
 
 .tooltip-label {
   margin: 0;
+  word-wrap: break-word;
+  /* We must specify a min-width, otherwise word-wrap:break-word doesn't work.
+     See Bug 630864. */
+  min-width: 1px;
 }
 
 /* Links */
@@ -156,7 +161,7 @@ xul|label[disabled="true"] {
 
 /* Panel footers */
 
-@supports not -moz-bool-pref("browser.proton.doorhangers.enabled") {
+@media not (-moz-proton-doorhangers) {
 .panel-footer {
   background-color: var(--arrowpanel-dimmed);
 }
@@ -164,8 +169,7 @@ xul|label[disabled="true"] {
 .panel-footer > xul|button {
   appearance: none;
   border-top: 1px solid var(--panel-separator-color);
-  /* !important overrides :hover and :active colors from button.css: */
-  color: inherit !important;
+  color: inherit;
   min-width: 0;
   margin: 0;
   padding: .9em 2px;

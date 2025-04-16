@@ -233,7 +233,8 @@ MouseInput::MouseInput()
       mButtonType(NONE),
       mInputSource(0),
       mButtons(0),
-      mHandledByAPZ(false) {}
+      mHandledByAPZ(false),
+      mPreventClickEvent(false) {}
 
 MouseInput::MouseInput(MouseType aType, ButtonType aButtonType,
                        uint16_t aInputSource, int16_t aButtons,
@@ -245,7 +246,8 @@ MouseInput::MouseInput(MouseType aType, ButtonType aButtonType,
       mInputSource(aInputSource),
       mButtons(aButtons),
       mOrigin(aPoint),
-      mHandledByAPZ(false) {}
+      mHandledByAPZ(false),
+      mPreventClickEvent(false) {}
 
 MouseInput::MouseInput(const WidgetMouseEventBase& aMouseEvent)
     : InputData(MOUSE_INPUT, aMouseEvent.mTime, aMouseEvent.mTimeStamp,
@@ -254,7 +256,9 @@ MouseInput::MouseInput(const WidgetMouseEventBase& aMouseEvent)
       mButtonType(NONE),
       mInputSource(aMouseEvent.mInputSource),
       mButtons(aMouseEvent.mButtons),
-      mHandledByAPZ(aMouseEvent.mFlags.mHandledByAPZ) {
+      mHandledByAPZ(aMouseEvent.mFlags.mHandledByAPZ),
+      mPreventClickEvent(aMouseEvent.mClass == eMouseEventClass &&
+                         aMouseEvent.AsMouseEvent()->mClickEventPrevented) {
   MOZ_ASSERT(NS_IsMainThread(),
              "Can only copy from WidgetTouchEvent on main thread");
 
@@ -396,6 +400,7 @@ WidgetMouseEvent MouseInput::ToWidgetEvent(nsIWidget* aWidget) const {
   event.mInputSource = mInputSource;
   event.mFocusSequenceNumber = mFocusSequenceNumber;
   event.mExitFrom = exitFrom;
+  event.mClickEventPrevented = mPreventClickEvent;
 
   return event;
 }
@@ -644,11 +649,17 @@ bool PinchGestureInput::SetLineOrPageDeltaY(nsIWidget* aWidget) {
     if (mType == PINCHGESTURE_SCALE) {
       return false;
     }
-    // We can't drop PINCHGESTURE_START, so instead set the event's
+    // On Windows, drop PINCHGESTURE_START as well (the Windows widget code will
+    // defer the START event until we accumulate enough delta).
+    // The Linux widget code doesn't support this, so instead set the event's
     // mLineOrPageDeltaY to the smallest nonzero amount in the relevant
     // direction.
     if (mType == PINCHGESTURE_START) {
+#ifdef XP_WIN
+      return false;
+#else
       mLineOrPageDeltaY = (deltaY >= 0) ? 1 : -1;
+#endif
     }
     // For PINCHGESTURE_END events, not dispatching a DOMMouseScroll for them is
     // fine.

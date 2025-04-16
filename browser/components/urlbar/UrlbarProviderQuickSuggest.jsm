@@ -13,6 +13,7 @@ const { XPCOMUtils } = ChromeUtils.import(
 XPCOMUtils.defineLazyModuleGetters(this, {
   CONTEXTUAL_SERVICES_PING_TYPES:
     "resource:///modules/PartnerLinkAttribution.jsm",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
   PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
@@ -23,11 +24,11 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 });
 
 // These prefs are relative to the `browser.urlbar` branch.
-const EXPERIMENT_PREF = "quicksuggest.enabled";
 const SUGGEST_PREF = "suggest.quicksuggest";
 
-const NONSPONSORED_ACTION_TEXT = "Firefox Suggest";
-const HELP_TITLE = "Learn more about Firefox Suggest";
+const FEATURE_NAME = "Firefox Suggest";
+const NONSPONSORED_ACTION_TEXT = FEATURE_NAME;
+const HELP_TITLE = `Learn more about ${FEATURE_NAME}`;
 
 const TELEMETRY_SCALAR_IMPRESSION =
   "contextual.services.quicksuggest.impression";
@@ -45,6 +46,7 @@ class ProviderQuickSuggest extends UrlbarProvider {
     super(...args);
     this._updateExperimentState();
     UrlbarPrefs.addObserver(this);
+    NimbusFeatures.urlbar.onUpdate(this._updateExperimentState);
   }
 
   /**
@@ -60,6 +62,14 @@ class ProviderQuickSuggest extends UrlbarProvider {
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.NETWORK;
+  }
+
+  /**
+   * @returns {string} The name of the Firefox Suggest feature, suitable for
+   *   display to the user. en-US only for now.
+   */
+  get featureName() {
+    return FEATURE_NAME;
   }
 
   /**
@@ -95,7 +105,9 @@ class ProviderQuickSuggest extends UrlbarProvider {
     return (
       queryContext.trimmedSearchString &&
       !queryContext.searchMode &&
-      UrlbarPrefs.get(EXPERIMENT_PREF) &&
+      UrlbarPrefs.get("quickSuggestEnabled") &&
+      (UrlbarPrefs.get("quicksuggest.showedOnboardingDialog") ||
+        !UrlbarPrefs.get("quickSuggestShouldShowOnboardingDialog")) &&
       UrlbarPrefs.get(SUGGEST_PREF) &&
       UrlbarPrefs.get("suggest.searches") &&
       UrlbarPrefs.get("browser.search.suggest.enabled") &&
@@ -144,10 +156,6 @@ class ProviderQuickSuggest extends UrlbarProvider {
       UrlbarUtils.RESULT_SOURCE.SEARCH,
       ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, payload)
     );
-    result.suggestedIndex = UrlbarPrefs.get("quicksuggest.suggestedIndex");
-    if (result.suggestedIndex == -1) {
-      result.suggestedIndex = UrlbarPrefs.get("maxRichResults") - 1;
-    }
     addCallback(this, result);
 
     this._addedResultInLastQuery = true;
@@ -261,9 +269,6 @@ class ProviderQuickSuggest extends UrlbarProvider {
    */
   onPrefChanged(pref) {
     switch (pref) {
-      case EXPERIMENT_PREF:
-        this._updateExperimentState();
-        break;
       case SUGGEST_PREF:
         Services.telemetry.recordEvent(
           TELEMETRY_EVENT_CATEGORY,
@@ -282,12 +287,12 @@ class ProviderQuickSuggest extends UrlbarProvider {
   _updateExperimentState() {
     Services.telemetry.setEventRecordingEnabled(
       TELEMETRY_EVENT_CATEGORY,
-      UrlbarPrefs.get(EXPERIMENT_PREF)
+      NimbusFeatures.urlbar.getValue().quickSuggestEnabled
     );
     // QuickSuggest is only loaded by the UrlBar on it's first query, however
     // there is work it can preload when idle instead of starting it on user
     // input. Referencing it here will trigger its import and init.
-    if (UrlbarPrefs.get(EXPERIMENT_PREF)) {
+    if (NimbusFeatures.urlbar.getValue().quickSuggestEnabled) {
       UrlbarQuickSuggest; // eslint-disable-line no-unused-expressions
     }
   }

@@ -963,22 +963,22 @@ impl Renderer {
         let ext_blend_equation_advanced_coherent =
             device.supports_extension("GL_KHR_blend_equation_advanced_coherent");
 
-        // 512 is the minimum that the texture cache can work with.
-        const MIN_TEXTURE_SIZE: i32 = 512;
-        if let Some(user_limit) = options.max_texture_size {
-            assert!(user_limit >= MIN_TEXTURE_SIZE);
-            device.clamp_max_texture_size(user_limit);
-        }
-        if device.max_texture_size() < MIN_TEXTURE_SIZE {
+        // 2048 is the minimum that the texture cache can work with.
+        const MIN_TEXTURE_SIZE: i32 = 2048;
+        let mut max_internal_texture_size = device.max_texture_size();
+        if max_internal_texture_size < MIN_TEXTURE_SIZE {
             // Broken GL contexts can return a max texture size of zero (See #1260).
             // Better to gracefully fail now than panic as soon as a texture is allocated.
             error!(
                 "Device reporting insufficient max texture size ({})",
-                device.max_texture_size()
+                max_internal_texture_size
             );
             return Err(RendererError::MaxTextureSize);
         }
-        let max_texture_size = device.max_texture_size();
+        if let Some(internal_limit) = options.max_internal_texture_size {
+            assert!(internal_limit >= MIN_TEXTURE_SIZE);
+            max_internal_texture_size = max_internal_texture_size.min(internal_limit);
+        }
 
         device.begin_frame();
 
@@ -1148,8 +1148,9 @@ impl Renderer {
             compositor_kind,
             tile_size_override: None,
             max_depth_ids: device.max_depth_ids(),
-            max_target_size: max_texture_size,
+            max_target_size: max_internal_texture_size,
             force_invalidation: false,
+            is_software,
         };
         info!("WR {:?}", config);
 
@@ -1249,7 +1250,7 @@ impl Renderer {
             thread_started(&rb_thread_name);
 
             let texture_cache = TextureCache::new(
-                max_texture_size,
+                max_internal_texture_size,
                 picture_tile_size,
                 color_cache_formats,
                 swizzle_settings,
@@ -1411,8 +1412,8 @@ impl Renderer {
         self.device.preferred_color_formats().external
     }
 
-    pub fn optimal_texture_stride_alignment(&self, format: ImageFormat) -> usize {
-        self.device.optimal_pbo_stride().num_bytes(format).get()
+    pub fn required_texture_stride_alignment(&self, format: ImageFormat) -> usize {
+        self.device.required_pbo_stride().num_bytes(format).get()
     }
 
     pub fn set_clear_color(&mut self, color: Option<ColorF>) {
@@ -2081,15 +2082,15 @@ impl Renderer {
                     true
                 }
                 (current_compositor_kind, active_doc_compositor_kind) => {
-                    dbg!(current_compositor_kind, active_doc_compositor_kind);
-                    unreachable!();
+                    warn!("Compositor mismatch, assuming this is Wrench running. Current {:?}, active {:?}",
+                        current_compositor_kind, active_doc_compositor_kind);
+                    false
                 }
             };
 
-            self.compositor_config
-                .compositor()
-                .unwrap()
-                .enable_native_compositor(enable);
+            if let Some(config) = self.compositor_config.compositor() {
+                config.enable_native_compositor(enable);
+            }
             self.current_compositor_kind = compositor_kind;
         }
 
@@ -2188,16 +2189,17 @@ impl Renderer {
         let _gm = self.gpu_profiler.start_marker("end frame");
         self.gpu_profiler.end_frame();
 
-        if let Some(device_size) = device_size {
+        let debug_overlay = device_size.and_then(|device_size| {
             // Bind a surface to draw the debug / profiler information to.
-            if let Some(draw_target) = self.bind_debug_overlay(device_size) {
+            self.bind_debug_overlay(device_size).map(|draw_target| {
                 self.draw_render_target_debug(&draw_target);
                 self.draw_texture_cache_debug(&draw_target);
                 self.draw_gpu_cache_debug(device_size);
                 self.draw_zoom_debug(device_size);
                 self.draw_epoch_debug();
-            }
-        }
+                draw_target
+            })
+        });
 
         self.profile.end_time(profiler::RENDERER_TIME);
         self.profile.end_time_if_started(profiler::TOTAL_FRAME_CPU_TIME);
@@ -2234,6 +2236,13 @@ impl Renderer {
         results.stats.gpu_cache_upload_time = self.gpu_cache_upload_time;
         self.gpu_cache_upload_time = 0.0;
 
+        if let Some(stats) = active_doc.frame_stats.take() {
+          // Copy the full frame stats to RendererStats
+          results.stats.merge(&stats);
+
+          self.profiler.update_frame_stats(stats);
+        }
+
         // Note: this clears the values in self.profile.
         self.profiler.set_counters(&mut self.profile);
 
@@ -2266,9 +2275,11 @@ impl Renderer {
                 CompositorKind::Native { .. } => true,
                 CompositorKind::Draw { .. } => self.device.surface_origin_is_top_left(),
             };
+            // If there is a debug overlay, render it. Otherwise, just clear
+            // the debug renderer.
             debug_renderer.render(
                 &mut self.device,
-                device_size,
+                debug_overlay.and(device_size),
                 scale,
                 surface_origin_is_top_left,
             );
@@ -2278,7 +2289,7 @@ impl Renderer {
         self.texture_upload_pbo_pool.end_frame(&mut self.device);
         self.device.end_frame();
 
-        if device_size.is_some() {
+        if debug_overlay.is_some() {
             self.last_time = current_time;
 
             // Unbind the target for the debug overlay. No debug or profiler drawing
@@ -3506,10 +3517,15 @@ impl Renderer {
 
         match partial_present_mode {
             Some(PartialPresentMode::Single { dirty_rect }) => {
-                // We have a single dirty rect, so clear only that
-                self.device.clear_target(clear_color,
-                                         Some(1.0),
-                                         Some(draw_target.to_framebuffer_rect(dirty_rect.to_i32())));
+                // On Mali-G77 we have observed artefacts when calling glClear (even with
+                // the empty scissor rect set) after calling eglSetDamageRegion with an
+                // empty damage region. So avoid clearing in that case. See bug 1709548.
+                if !dirty_rect.is_empty() {
+                    // We have a single dirty rect, so clear only that
+                    self.device.clear_target(clear_color,
+                                             Some(1.0),
+                                             Some(draw_target.to_framebuffer_rect(dirty_rect.to_i32())));
+                }
             }
             None => {
                 // Partial present is disabled, so clear the entire framebuffer
@@ -3738,6 +3754,7 @@ impl Renderer {
     fn draw_clip_batch_list(
         &mut self,
         list: &ClipBatchList,
+        draw_target: &DrawTarget,
         projection: &default::Transform3D<f32>,
         stats: &mut RendererStats,
     ) {
@@ -3792,8 +3809,27 @@ impl Renderer {
         }
 
         // draw image masks
-        for (mask_texture_id, items) in list.images.iter() {
+        let mut using_scissor = false;
+        for ((mask_texture_id, clip_rect), items) in list.images.iter() {
             let _gm2 = self.gpu_profiler.start_marker("clip images");
+            // Some image masks may require scissoring to ensure they don't draw
+            // outside their task's target bounds. Axis-aligned primitives will
+            // be clamped inside the shader and should not require scissoring.
+            // TODO: We currently assume scissor state is off by default for
+            // alpha targets here, but in the future we may want to track the
+            // current scissor state so that this can be properly saved and
+            // restored here.
+            if let Some(clip_rect) = clip_rect {
+                if !using_scissor {
+                    self.device.enable_scissor();
+                    using_scissor = true;
+                }
+                let scissor_rect = draw_target.build_scissor_rect(Some(*clip_rect));
+                self.device.set_scissor_rect(scissor_rect);
+            } else if using_scissor {
+                self.device.disable_scissor();
+                using_scissor = false;
+            }
             let textures = BatchTextures::composite_rgb(*mask_texture_id);
             self.shaders.borrow_mut().cs_clip_image
                 .bind(&mut self.device, projection, None, &mut self.renderer_errors);
@@ -3803,6 +3839,9 @@ impl Renderer {
                 &textures,
                 stats,
             );
+        }
+        if using_scissor {
+            self.device.disable_scissor();
         }
     }
 
@@ -3947,6 +3986,7 @@ impl Renderer {
             self.set_blend(false, FramebufferKind::Other);
             self.draw_clip_batch_list(
                 &target.clip_batcher.primary_clips,
+                &draw_target,
                 projection,
                 stats,
             );
@@ -3957,6 +3997,7 @@ impl Renderer {
             self.set_blend_mode_multiply(FramebufferKind::Other);
             self.draw_clip_batch_list(
                 &target.clip_batcher.secondary_clips,
+                &draw_target,
                 projection,
                 stats,
             );
@@ -5331,7 +5372,7 @@ impl Renderer {
         report += self.texture_upload_pbo_pool.report_memory();
 
         // Textures held internally within the device layer.
-        report += self.device.report_memory();
+        report += self.device.report_memory(self.size_of_ops.as_ref().unwrap());
 
         report
     }
@@ -5471,7 +5512,7 @@ pub struct RendererOptions {
     pub force_subpixel_aa: bool,
     pub clear_color: Option<ColorF>,
     pub enable_clear_scissor: bool,
-    pub max_texture_size: Option<i32>,
+    pub max_internal_texture_size: Option<i32>,
     pub upload_method: UploadMethod,
     /// The default size in bytes for PBOs used to upload texture data.
     pub upload_pbo_default_size: usize,
@@ -5557,7 +5598,7 @@ impl Default for RendererOptions {
             force_subpixel_aa: false,
             clear_color: Some(ColorF::new(1.0, 1.0, 1.0, 1.0)),
             enable_clear_scissor: true,
-            max_texture_size: None,
+            max_internal_texture_size: None,
             // This is best as `Immediate` on Angle, or `Pixelbuffer(Dynamic)` on GL,
             // but we are unable to make this decision here, so picking the reasonable medium.
             upload_method: UploadMethod::PixelBuffer(ONE_TIME_USAGE_HINT),
@@ -5631,6 +5672,30 @@ fn new_debug_server(_enable: bool, api_tx: Sender<ApiMsg>) -> Box<dyn DebugServe
     Box::new(NoopDebugServer::new(api_tx))
 }
 
+/// The cumulative times spent in each painting phase to generate this frame.
+#[derive(Debug, Default)]
+pub struct FullFrameStats {
+    pub gecko_display_list_time: f64,
+    pub wr_display_list_time: f64,
+    pub scene_build_time: f64,
+    pub frame_build_time: f64,
+}
+
+impl FullFrameStats {
+    pub fn merge(&self, other: &FullFrameStats) -> Self {
+        Self {
+            gecko_display_list_time: self.gecko_display_list_time + other.gecko_display_list_time,
+            wr_display_list_time: self.wr_display_list_time + other.wr_display_list_time,
+            scene_build_time: self.scene_build_time + other.scene_build_time,
+            frame_build_time: self.frame_build_time + other.frame_build_time
+        }
+    }
+
+    pub fn total(&self) -> f64 {
+      self.gecko_display_list_time + self.wr_display_list_time + self.scene_build_time + self.frame_build_time
+    }
+}
+
 /// Some basic statistics about the rendered scene, used in Gecko, as
 /// well as in wrench reftests to ensure that tests are batching and/or
 /// allocating on render targets as we expect them to.
@@ -5643,6 +5708,21 @@ pub struct RendererStats {
     pub texture_upload_mb: f64,
     pub resource_upload_time: f64,
     pub gpu_cache_upload_time: f64,
+    pub gecko_display_list_time: f64,
+    pub wr_display_list_time: f64,
+    pub scene_build_time: f64,
+    pub frame_build_time: f64,
+    pub full_frame: bool,
+}
+
+impl RendererStats {
+    pub fn merge(&mut self, stats: &FullFrameStats) {
+        self.gecko_display_list_time = stats.gecko_display_list_time;
+        self.wr_display_list_time = stats.wr_display_list_time;
+        self.scene_build_time = stats.scene_build_time;
+        self.frame_build_time = stats.frame_build_time;
+        self.full_frame = true;
+    }
 }
 
 /// Return type from render(), which contains some repr(C) statistics as well as

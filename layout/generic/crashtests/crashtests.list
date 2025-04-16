@@ -508,7 +508,7 @@ load 810726.html
 load 812822-1.html
 load 812879-1.html
 load 812879-2.html
-asserts-if(winWidget,4-26) asserts-if(Android,4-34) load 812893.html # bug 1581653
+asserts-if(winWidget,4-26) load 812893.html # bug 1581653
 load 814995.html
 load 822910.xhtml
 load 824297-1.html
@@ -794,3 +794,5 @@ HTTP load 1682882.html
 load 1683126.html
 load 1697262-1.html
 pref(layout.css.aspect-ratio.enabled,true) load 1682032.html
+pref(layout.css.aspect-ratio.enabled,true) load 1699263.html
+pref(layout.css.aspect-ratio.enabled,true) load 1699468.html

@@ -224,8 +224,12 @@ bool TRRService::GetParentalControlEnabledInternal() {
 }
 
 void TRRService::SetDetectedTrrURI(const nsACString& aURI) {
+  LOG(("SetDetectedTrrURI(%s", nsPromiseFlatCString(aURI).get()));
   // If the user has set a custom URI then we don't want to override that.
+  // If the URI is set via doh-rollout.uri, mURIPrefHasUserValue will be false
+  // (see TRRServiceBase::OnTRRURIChange)
   if (mURIPrefHasUserValue) {
+    LOG(("Already has user value. Not setting URI"));
     return;
   }
 
@@ -286,8 +290,9 @@ void TRRService::GetPrefBranch(nsIPrefBranch** result) {
 bool TRRService::MaybeSetPrivateURI(const nsACString& aURI) {
   bool clearCache = false;
   nsAutoCString newURI(aURI);
-  ProcessURITemplate(newURI);
+  LOG(("MaybeSetPrivateURI(%s)", newURI.get()));
 
+  ProcessURITemplate(newURI);
   {
     MutexAutoLock lock(mLock);
     if (mPrivateURI.Equals(newURI)) {
@@ -376,9 +381,9 @@ nsresult TRRService::ReadPrefs(const char* name) {
     Preferences::GetCString(TRR_PREF("confirmationNS"), mConfirmationNS);
     LOG(("confirmationNS = %s", mConfirmationNS.get()));
   }
-  if (!name || !strcmp(name, TRR_PREF("bootstrapAddress"))) {
+  if (!name || !strcmp(name, TRR_PREF("bootstrapAddr"))) {
     MutexAutoLock lock(mLock);
-    Preferences::GetCString(TRR_PREF("bootstrapAddress"), mBootstrapAddr);
+    Preferences::GetCString(TRR_PREF("bootstrapAddr"), mBootstrapAddr);
     clearEntireCache = true;
   }
   if (!name || !strcmp(name, TRR_PREF("blacklist-duration"))) {
@@ -414,7 +419,7 @@ nsresult TRRService::ReadPrefs(const char* name) {
                .ToRange()) {
         nsCString token{tokenSubstring};
         LOG(("TRRService::ReadPrefs %s host:[%s]\n", aPrefName, token.get()));
-        mExcludedDomains.PutEntry(token);
+        mExcludedDomains.Insert(token);
       }
     };
 
@@ -447,7 +452,7 @@ void TRRService::AddEtcHosts(const nsTArray<nsCString>& aArray) {
   MutexAutoLock lock(mLock);
   for (const auto& item : aArray) {
     LOG(("Adding %s from /etc/hosts to excluded domains", item.get()));
-    mEtcHostsDomains.PutEntry(item);
+    mEtcHostsDomains.Insert(item);
   }
 }
 
@@ -586,9 +591,16 @@ TRRService::Observe(nsISupports* aSubject, const char* aTopic,
   MOZ_ASSERT(NS_IsMainThread(), "wrong thread");
   LOG(("TRR::Observe() topic=%s\n", aTopic));
   if (!strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
+    TRR* prevConf = mConfirmation.mTask;
+
     ReadPrefs(NS_ConvertUTF16toUTF8(aData).get());
     mConfirmation.RecordEvent("pref-change");
-    HandleConfirmationEvent(ConfirmationEvent::PrefChange);
+
+    // We should only trigger a new confirmation if reading the prefs didn't
+    // already trigger one.
+    if (prevConf == mConfirmation.mTask) {
+      HandleConfirmationEvent(ConfirmationEvent::PrefChange);
+    }
   } else if (!strcmp(aTopic, kOpenCaptivePortalLoginEvent)) {
     // We are in a captive portal
     LOG(("TRRservice in captive portal\n"));
@@ -597,13 +609,19 @@ TRRService::Observe(nsISupports* aSubject, const char* aTopic,
   } else if (!strcmp(aTopic, NS_CAPTIVE_PORTAL_CONNECTIVITY)) {
     nsAutoCString data = NS_ConvertUTF16toUTF8(aData);
     LOG(("TRRservice captive portal was %s\n", data.get()));
-    HandleConfirmationEvent(ConfirmationEvent::CaptivePortalConnectivity);
-
-    mCaptiveIsPassed = true;
     nsCOMPtr<nsICaptivePortalService> cps = do_QueryInterface(aSubject);
     if (cps) {
-      cps->GetState(&mConfirmation.mCaptivePortalStatus);
+      mConfirmation.mCaptivePortalStatus = cps->State();
     }
+
+    // If we were previously in a captive portal, this event means we will
+    // need to trigger confirmation again. Otherwise it's just a periodical
+    // captive-portal check that completed and we don't need to react to it.
+    if (!mCaptiveIsPassed) {
+      HandleConfirmationEvent(ConfirmationEvent::CaptivePortalConnectivity);
+    }
+
+    mCaptiveIsPassed = true;
   } else if (!strcmp(aTopic, kClearPrivateData) || !strcmp(aTopic, kPurge)) {
     // flush the TRR blocklist
     auto bl = mTRRBLStorage.Lock();
@@ -667,7 +685,7 @@ void TRRService::RebuildSuffixList(nsTArray<nsCString>&& aSuffixList) {
   mDNSSuffixDomains.Clear();
   for (const auto& item : aSuffixList) {
     LOG(("TRRService adding %s to suffix list", item.get()));
-    mDNSSuffixDomains.PutEntry(item);
+    mDNSSuffixDomains.Insert(item);
   }
 }
 
@@ -948,17 +966,17 @@ bool TRRService::IsExcludedFromTRR_unlocked(const nsACString& aHost) {
     nsDependentCSubstring subdomain =
         Substring(aHost, dot, aHost.Length() - dot);
 
-    if (mExcludedDomains.GetEntry(subdomain)) {
+    if (mExcludedDomains.Contains(subdomain)) {
       LOG(("Subdomain [%s] of host [%s] Is Excluded From TRR via pref\n",
            subdomain.BeginReading(), aHost.BeginReading()));
       return true;
     }
-    if (mDNSSuffixDomains.GetEntry(subdomain)) {
+    if (mDNSSuffixDomains.Contains(subdomain)) {
       LOG(("Subdomain [%s] of host [%s] Is Excluded From TRR via pref\n",
            subdomain.BeginReading(), aHost.BeginReading()));
       return true;
     }
-    if (mEtcHostsDomains.GetEntry(subdomain)) {
+    if (mEtcHostsDomains.Contains(subdomain)) {
       LOG(("Subdomain [%s] of host [%s] Is Excluded From TRR by /etc/hosts\n",
            subdomain.BeginReading(), aHost.BeginReading()));
       return true;

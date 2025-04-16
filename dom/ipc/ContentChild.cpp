@@ -4,6 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#ifdef MOZ_WIDGET_ANDROID
+#  include "AndroidDecoderModule.h"
+#endif
+
 #include "BrowserChild.h"
 #include "ContentChild.h"
 #include "GeckoProfiler.h"
@@ -81,6 +85,7 @@
 #include "mozilla/dom/WorkerDebugger.h"
 #include "mozilla/dom/WorkerDebuggerManager.h"
 #include "mozilla/dom/ipc/SharedMap.h"
+#include "mozilla/extensions/ExtensionsChild.h"
 #include "mozilla/extensions/StreamFilterParent.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/gfx/gfxVars.h"
@@ -107,8 +112,6 @@
 #include "mozilla/net/DocumentChannelChild.h"
 #include "mozilla/net/HttpChannelChild.h"
 #include "mozilla/net/NeckoChild.h"
-#include "mozilla/plugins/PluginInstanceParent.h"
-#include "mozilla/plugins/PluginModuleParent.h"
 #include "mozilla/widget/RemoteLookAndFeel.h"
 #include "mozilla/widget/ScreenManager.h"
 #include "mozilla/widget/WidgetMessageUtils.h"
@@ -143,6 +146,7 @@
 #    include "mozilla/SandboxInfo.h"
 #  elif defined(XP_MACOSX)
 #    include "mozilla/Sandbox.h"
+#    include "mozilla/gfx/QuartzSupport.h"
 #  elif defined(__OpenBSD__)
 #    include <err.h>
 #    include <sys/stat.h>
@@ -604,8 +608,7 @@ NS_INTERFACE_MAP_END
 
 mozilla::ipc::IPCResult ContentChild::RecvSetXPCOMProcessAttributes(
     XPCOMInitData&& aXPCOMInit, const StructuredCloneData& aInitialData,
-    LookAndFeelData&& aLookAndFeelData,
-    nsTArray<SystemFontListEntry>&& aFontList,
+    FullLookAndFeel&& aLookAndFeelData, dom::SystemFontList&& aFontList,
     const Maybe<SharedMemoryHandle>& aSharedUASheetHandle,
     const uintptr_t& aSharedUASheetAddress,
     nsTArray<SharedMemoryHandle>&& aSharedFontListBlocks) {
@@ -900,23 +903,10 @@ nsresult ContentChild::ProvideWindowCommon(
       (aLoadState &&
        (aLoadState->IsFormSubmission() || aLoadState->PostDataStream()));
   if (!cannotLoadInDifferentProcess) {
-    // Check if we should load in a different process. If we have the noopener
-    // flag set, we can do so, but we may also want to do so eagerly if the load
-    // cannot be completed within the current process.
-    bool loadInDifferentProcess =
-        aForceNoOpener && StaticPrefs::dom_noopener_newprocess_enabled();
-    if (!loadInDifferentProcess && aURI) {
-      nsCOMPtr<nsIWebBrowserChrome3> browserChrome3;
-      rv = aTabOpener->GetWebBrowserChrome(getter_AddRefs(browserChrome3));
-      if (NS_SUCCEEDED(rv) && browserChrome3) {
-        bool shouldLoad;
-        rv = browserChrome3->ShouldLoadURIInThisProcess(aURI, &shouldLoad);
-        loadInDifferentProcess = NS_SUCCEEDED(rv) && !shouldLoad;
-      }
-    }
-
     // If we're in a content process and we have noopener set, there's no reason
     // to load in our process, so let's load it elsewhere!
+    bool loadInDifferentProcess =
+        aForceNoOpener && StaticPrefs::dom_noopener_newprocess_enabled();
     if (loadInDifferentProcess) {
       float fullZoom;
       nsCOMPtr<nsIPrincipal> triggeringPrincipal;
@@ -2246,17 +2236,8 @@ mozilla::ipc::IPCResult ContentChild::RecvNotifyVisited(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvThemeChanged(
-    LookAndFeelData&& aLookAndFeelData, widget::ThemeChangeKind aKind) {
-  switch (aLookAndFeelData.type()) {
-    case LookAndFeelData::TLookAndFeelCache:
-      LookAndFeel::SetCache(aLookAndFeelData.get_LookAndFeelCache());
-      break;
-    case LookAndFeelData::TFullLookAndFeel:
-      LookAndFeel::SetData(std::move(aLookAndFeelData.get_FullLookAndFeel()));
-      break;
-    default:
-      MOZ_ASSERT(false, "unreachable");
-  }
+    FullLookAndFeel&& aLookAndFeelData, widget::ThemeChangeKind aKind) {
+  LookAndFeel::SetData(std::move(aLookAndFeelData));
   LookAndFeel::NotifyChangedAllWindows(aKind);
   return IPC_OK();
 }
@@ -2364,7 +2345,7 @@ mozilla::ipc::IPCResult ContentChild::RecvUpdateDictionaryList(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvUpdateFontList(
-    nsTArray<SystemFontListEntry>&& aFontList) {
+    dom::SystemFontList&& aFontList) {
   mFontList = std::move(aFontList);
   gfxPlatform::GetPlatform()->UpdateFontList(true);
   return IPC_OK();
@@ -2696,7 +2677,7 @@ void ContentChild::AddIdleObserver(nsIObserver* aObserver,
   // Make sure aObserver isn't released while we wait for the parent
   aObserver->AddRef();
   SendAddIdleObserver(reinterpret_cast<uint64_t>(aObserver), aIdleTimeInS);
-  mIdleObservers.PutEntry(aObserver);
+  mIdleObservers.Insert(aObserver);
 }
 
 void ContentChild::RemoveIdleObserver(nsIObserver* aObserver,
@@ -2704,7 +2685,7 @@ void ContentChild::RemoveIdleObserver(nsIObserver* aObserver,
   MOZ_ASSERT(aObserver, "null idle observer");
   SendRemoveIdleObserver(reinterpret_cast<uint64_t>(aObserver), aIdleTimeInS);
   aObserver->Release();
-  mIdleObservers.RemoveEntry(aObserver);
+  mIdleObservers.Remove(aObserver);
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvNotifyIdleObserver(
@@ -2903,12 +2884,32 @@ void ContentChild::ShutdownInternal() {
 
 #ifdef MOZ_GECKO_PROFILER
   if (mProfilerController) {
+    const bool isProfiling = profiler_is_active();
+    CrashReporter::AnnotateCrashReport(
+        CrashReporter::Annotation::ProfilerChildShutdownPhase,
+        isProfiling ? "Profiling - GrabShutdownProfileAndShutdown"_ns
+                    : "Not profiling - GrabShutdownProfileAndShutdown"_ns);
     nsCString shutdownProfile =
         mProfilerController->GrabShutdownProfileAndShutdown();
+    CrashReporter::AnnotateCrashReport(
+        CrashReporter::Annotation::ProfilerChildShutdownPhase,
+        isProfiling ? "Profiling - Destroying ChildProfilerController"_ns
+                    : "Not profiling - Destroying ChildProfilerController"_ns);
     mProfilerController = nullptr;
+    CrashReporter::AnnotateCrashReport(
+        CrashReporter::Annotation::ProfilerChildShutdownPhase,
+        isProfiling ? "Profiling - SendShutdownProfile (sending)"_ns
+                    : "Not profiling - SendShutdownProfile (sending)"_ns);
     // Send the shutdown profile to the parent process through our own
     // message channel, which we know will survive for long enough.
-    Unused << SendShutdownProfile(shutdownProfile);
+    bool sent = SendShutdownProfile(shutdownProfile);
+    CrashReporter::AnnotateCrashReport(
+        CrashReporter::Annotation::ProfilerChildShutdownPhase,
+        sent ? (isProfiling ? "Profiling - SendShutdownProfile (sent)"_ns
+                            : "Not profiling - SendShutdownProfile (sent)"_ns)
+             : (isProfiling
+                    ? "Profiling - SendShutdownProfile (failed)"_ns
+                    : "Not profiling - SendShutdownProfile (failed)"_ns));
   }
 #endif
 
@@ -2928,26 +2929,10 @@ void ContentChild::ShutdownInternal() {
 
 mozilla::ipc::IPCResult ContentChild::RecvUpdateWindow(
     const uintptr_t& aChildId) {
-#if defined(XP_WIN)
-  NS_ASSERTION(aChildId,
-               "Expected child hwnd value for remote plugin instance.");
-  mozilla::plugins::PluginInstanceParent* parentInstance =
-      mozilla::plugins::PluginInstanceParent::LookupPluginInstanceByID(
-          aChildId);
-  if (parentInstance) {
-    // sync! update call to the plugin instance that forces the
-    // plugin to paint its child window.
-    if (!parentInstance->CallUpdateWindow()) {
-      return IPC_FAIL_NO_REASON(this);
-    }
-  }
-  return IPC_OK();
-#else
   MOZ_ASSERT(
       false,
       "ContentChild::RecvUpdateWindow calls unexpected on this platform.");
   return IPC_FAIL_NO_REASON(this);
-#endif
 }
 
 PContentPermissionRequestChild*
@@ -3310,14 +3295,6 @@ mozilla::ipc::IPCResult ContentChild::RecvRefreshScreens(
     nsTArray<ScreenDetails>&& aScreens) {
   ScreenManager& screenManager = ScreenManager::GetSingleton();
   screenManager.Refresh(std::move(aScreens));
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentChild::RecvSetPluginList(
-    const uint32_t& aPluginEpoch, nsTArray<plugins::PluginTag>&& aPluginTags,
-    nsTArray<plugins::FakePluginTag>&& aFakePluginTags) {
-  RefPtr<nsPluginHost> host = nsPluginHost::GetInst();
-  host->SetPluginsInContent(aPluginEpoch, aPluginTags, aFakePluginTags);
   return IPC_OK();
 }
 
@@ -3784,7 +3761,7 @@ mozilla::ipc::IPCResult ContentChild::RecvClearFocus(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvSetFocusedBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3793,7 +3770,7 @@ mozilla::ipc::IPCResult ContentChild::RecvSetFocusedBrowsingContext(
 
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
-    fm->SetFocusedBrowsingContextFromOtherProcess(aContext.get());
+    fm->SetFocusedBrowsingContextFromOtherProcess(aContext.get(), aActionId);
   }
   return IPC_OK();
 }
@@ -3904,17 +3881,18 @@ mozilla::ipc::IPCResult ContentChild::RecvBlurToChild(
 
 mozilla::ipc::IPCResult ContentChild::RecvSetupFocusedAndActive(
     const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
+    uint64_t aActionIdForFocused,
     const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext,
-    uint64_t aActionId) {
+    uint64_t aActionIdForActive) {
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
     if (!aActiveBrowsingContext.IsNullOrDiscarded()) {
       fm->SetActiveBrowsingContextFromOtherProcess(aActiveBrowsingContext.get(),
-                                                   aActionId);
+                                                   aActionIdForActive);
     }
     if (!aFocusedBrowsingContext.IsNullOrDiscarded()) {
       fm->SetFocusedBrowsingContextFromOtherProcess(
-          aFocusedBrowsingContext.get());
+          aFocusedBrowsingContext.get(), aActionIdForFocused);
     }
   }
   return IPC_OK();
@@ -3928,6 +3906,18 @@ mozilla::ipc::IPCResult ContentChild::RecvReviseActiveBrowsingContext(
   if (fm && !aActiveBrowsingContext.IsNullOrDiscarded()) {
     fm->ReviseActiveBrowsingContext(aOldActionId, aActiveBrowsingContext.get(),
                                     aNewActionId);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvReviseFocusedBrowsingContext(
+    uint64_t aOldActionId,
+    const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
+    uint64_t aNewActionId) {
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
+  if (fm && !aFocusedBrowsingContext.IsNullOrDiscarded()) {
+    fm->ReviseFocusedBrowsingContext(
+        aOldActionId, aFocusedBrowsingContext.get(), aNewActionId);
   }
   return IPC_OK();
 }
@@ -4271,6 +4261,14 @@ mozilla::ipc::IPCResult ContentChild::RecvCanSavePresentation(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentChild::RecvDecoderSupportedMimeTypes(
+    nsTArray<nsCString>&& aSupportedTypes) {
+#ifdef MOZ_WIDGET_ANDROID
+  AndroidDecoderModule::SetSupportedMimeTypes(std::move(aSupportedTypes));
+#endif
+  return IPC_OK();
+}
+
 /* static */ void ContentChild::DispatchBeforeUnloadToSubtree(
     BrowsingContext* aStartingAt,
     const DispatchBeforeUnloadToSubtreeResolver& aResolver) {
@@ -4296,6 +4294,21 @@ mozilla::ipc::IPCResult ContentChild::RecvCanSavePresentation(
   if (!resolved) {
     aResolver(nsIContentViewer::eAllowNavigation);
   }
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvFlushTabState(
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    FlushTabStateResolver&& aResolver) {
+  if (aContext.IsNullOrDiscarded()) {
+    aResolver(false);
+    return IPC_OK();
+  }
+
+  aContext->FlushSessionStore();
+
+  aResolver(true);
+
+  return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvGoBack(

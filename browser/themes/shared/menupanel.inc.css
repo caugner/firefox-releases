@@ -4,9 +4,9 @@
 
 /* Menu panel and palette styles */
 
-@supports not -moz-bool-pref("browser.proton.enabled") {
+@media not (-moz-proton) {
 #appMenu-new-window-button {
-  list-style-image: url(chrome://browser/skin/new-window.svg);
+  list-style-image: url(chrome://browser/skin/window.svg);
 }
 
 #appMenu-private-window-button {
@@ -120,15 +120,12 @@
 }
 
 #PanelUI-fxa-menu-view-sidebar,
-#PanelUI-remotetabs-view-sidebar,
 #panelMenu_viewBookmarksSidebar {
   list-style-image: url("chrome://browser/skin/sidebars-right.svg");
 }
 
 #PanelUI-fxa-menu-view-sidebar:-moz-locale-dir(ltr):not([positionend]),
 #PanelUI-fxa-menu-view-sidebar:-moz-locale-dir(rtl)[positionend],
-#PanelUI-remotetabs-view-sidebar:-moz-locale-dir(ltr):not([positionend]),
-#PanelUI-remotetabs-view-sidebar:-moz-locale-dir(rtl)[positionend],
 #panelMenu_viewBookmarksSidebar:-moz-locale-dir(ltr):not([positionend]),
 #panelMenu_viewBookmarksSidebar:-moz-locale-dir(rtl)[positionend] {
   list-style-image: url("chrome://browser/skin/sidebars.svg");
@@ -170,21 +167,21 @@ toolbarpaletteitem[place="palette"] > #bookmarks-menu-button,
 }
 
 #appMenu-library-downloads-button {
-  list-style-image: url("chrome://browser/skin/downloads/download-icons.svg#arrow-with-bar");
+  list-style-image: url("chrome://browser/skin/downloads/downloads.svg");
 }
 } /** END not Proton **/
 
-@supports -moz-bool-pref("browser.proton.enabled") {
+@media (-moz-proton) {
 /**
  * These are placeholder icons until we get the proper Proton
  * assets for zoom/fullscreen/sync.
  */
 #appMenu-zoomEnlarge-button2 {
-  list-style-image: url(chrome://browser/skin/zoom-in.svg);
+  list-style-image: url(chrome://browser/skin/add-circle-fill.svg);
 }
 
 #appMenu-zoomReduce-button2 {
-  list-style-image: url(chrome://browser/skin/zoom-out.svg);
+  list-style-image: url(chrome://browser/skin/subtract-circle-fill.svg);
 }
 
 #appMenu-fullscreen-button2 {

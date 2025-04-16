@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+@namespace html "http://www.w3.org/1999/xhtml";
 
 .notificationbox-stack {
   /* Prevent the animation from overlapping the navigation toolbar */
@@ -13,7 +14,12 @@
   /* Create a stacking context for the box-shadow */
   position: relative;
   z-index: 1;
+}
+
+@media not (-moz-proton) {
+.notificationbox-stack[notificationside="top"] {
   box-shadow: 0 3px 10px -7px #00000080;
+}
 }
 
 notification {
@@ -48,6 +54,7 @@ notification[type="info"]:-moz-lwtheme-brighttext {
   --notification-button-background-active: rgba(249,249,250,.3);
 }
 
+html|notification-message.animated,
 notification.animated {
   transition: margin-top 300ms var(--animation-easing-function), opacity 300ms var(--animation-easing-function);
 }
@@ -133,7 +140,6 @@ notification[type="critical"] > hbox > .messageImage {
 
 .messageCloseButton:-moz-focusring > .toolbarbutton-icon {
   outline: var(--toolbarbutton-focus-outline, 2px solid currentColor);
-  -moz-outline-radius: var(--toolbarbutton-border-radius, 4px);
 }
 
 .notification-button {
@@ -141,8 +147,7 @@ notification[type="critical"] > hbox > .messageImage {
   border: 1px solid transparent;
   border-radius: 4px;
   background-color: var(--notification-button-background);
-  /* Override button.css hover & active styles */
-  color: var(--notification-button-text) !important;
+  color: var(--notification-button-text);
   padding: 0 6px;
   margin: 4px 8px;
   height: 24px;
@@ -162,7 +167,6 @@ notification[type="critical"] > hbox > .messageImage {
 
 .notification-button:-moz-focusring {
   outline: var(--toolbarbutton-focus-outline, 2px solid currentColor);
-  -moz-outline-radius: var(--toolbarbutton-border-radius, 4px);
 }
 
 .notification-button.primary {
@@ -184,9 +188,9 @@ notification[type="critical"] > hbox > .messageImage {
   background-color: var(--notification-primary-button-background-active);
 }
 
-@supports -moz-bool-pref("browser.proton.infobars.enabled") {
-.notificationbox-stack,
-notification {
+@media (-moz-proton) {
+.notificationbox-stack {
+  background-color: var(--toolbar-bgcolor);
   width: 100%;
 }
 }

@@ -1757,10 +1757,8 @@ nsresult Element::BindToTree(BindContext& aContext, nsINode& aParent) {
     HandleShadowDOMRelatedInsertionSteps(hadParent);
   }
 
-  if (MayHaveStyle() && !IsXULElement()) {
-    // XXXbz if we already have a style attr parsed, this won't do
-    // anything... need to fix that.
-    // If MayHaveStyle() is true, we must be an nsStyledElement
+  if (MayHaveStyle()) {
+    // If MayHaveStyle() is true, we must be an nsStyledElement.
     static_cast<nsStyledElement*>(this)->ReparseStyleAttribute(
         /* aForceInDataDoc = */ false);
   }
@@ -3932,8 +3930,7 @@ static void IntersectionObserverPropertyDtor(void* aObject,
                                              void* aData) {
   auto* element = static_cast<Element*>(aObject);
   auto* observers = static_cast<IntersectionObserverList*>(aPropertyValue);
-  for (const auto& entry : *observers) {
-    DOMIntersectionObserver* observer = entry.GetKey();
+  for (DOMIntersectionObserver* observer : observers->Keys()) {
     observer->UnlinkTarget(*element);
   }
   delete observers;
@@ -4487,7 +4484,7 @@ void Element::RegUnRegAccessKey(bool aDoReg) {
   }
 
   // We have an access key, so get the ESM from the pres context.
-  if (nsPresContext* presContext = GetPresContext(eForUncomposedDoc)) {
+  if (nsPresContext* presContext = GetPresContext(eForComposedDoc)) {
     EventStateManager* esm = presContext->EventStateManager();
 
     // Register or unregister as appropriate.

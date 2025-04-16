@@ -51,19 +51,22 @@ struct AnimationEventInfo {
     event.mPseudoElement =
         nsCSSPseudoElements::PseudoTypeAsString(aTarget.mPseudoType);
 
-#ifdef MOZ_GECKO_PROFILER
     if ((aMessage == eAnimationCancel || aMessage == eAnimationEnd) &&
         profiler_can_accept_markers()) {
       nsCString markerText;
       aAnimationName->ToUTF8String(markerText);
       PROFILER_MARKER_TEXT(
           "CSS animation", DOM,
-          MarkerTiming::Interval(aScheduledEventTimeStamp -
-                                     TimeDuration::FromSeconds(aElapsedTime),
-                                 aScheduledEventTimeStamp),
+          MarkerOptions(
+              MarkerTiming::Interval(
+                  aScheduledEventTimeStamp -
+                      TimeDuration::FromSeconds(aElapsedTime),
+                  aScheduledEventTimeStamp),
+              aAnimation->GetOwner()
+                  ? MarkerInnerWindowId(aAnimation->GetOwner()->WindowID())
+                  : MarkerInnerWindowId::NoId()),
           markerText);
     }
-#endif
   }
 
   // For CSS transition events
@@ -85,7 +88,6 @@ struct AnimationEventInfo {
     event.mPseudoElement =
         nsCSSPseudoElements::PseudoTypeAsString(aTarget.mPseudoType);
 
-#ifdef MOZ_GECKO_PROFILER
     if ((aMessage == eTransitionEnd || aMessage == eTransitionCancel) &&
         profiler_can_accept_markers()) {
       nsCString markerText;
@@ -93,14 +95,19 @@ struct AnimationEventInfo {
       if (aMessage == eTransitionCancel) {
         markerText.AppendLiteral(" (canceled)");
       }
+
       PROFILER_MARKER_TEXT(
           "CSS transition", DOM,
-          MarkerTiming::Interval(aScheduledEventTimeStamp -
-                                     TimeDuration::FromSeconds(aElapsedTime),
-                                 aScheduledEventTimeStamp),
+          MarkerOptions(
+              MarkerTiming::Interval(
+                  aScheduledEventTimeStamp -
+                      TimeDuration::FromSeconds(aElapsedTime),
+                  aScheduledEventTimeStamp),
+              aAnimation->GetOwner()
+                  ? MarkerInnerWindowId(aAnimation->GetOwner()->WindowID())
+                  : MarkerInnerWindowId::NoId()),
           markerText);
     }
-#endif
   }
 
   // For web animation events

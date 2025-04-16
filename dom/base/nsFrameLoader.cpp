@@ -78,6 +78,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/PresShellInlines.h"
+#include "mozilla/ProcessPriorityManager.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/Unused.h"
@@ -87,7 +88,10 @@
 #include "mozilla/dom/FrameLoaderBinding.h"
 #include "mozilla/dom/MozFrameLoaderOwnerBinding.h"
 #include "mozilla/dom/PBrowser.h"
+#include "mozilla/dom/SessionHistoryEntry.h"
+#include "mozilla/dom/SessionStoreChangeListener.h"
 #include "mozilla/dom/SessionStoreListener.h"
+#include "mozilla/dom/SessionStoreUtils.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/XULFrameElement.h"
 #include "mozilla/gfx/CrossProcessPaint.h"
@@ -116,11 +120,6 @@
 #include "mozilla/dom/HTMLBodyElement.h"
 
 #include "mozilla/ContentPrincipal.h"
-
-#ifdef XP_WIN
-#  include "mozilla/plugins/PPluginWidgetParent.h"
-#  include "../plugins/ipc/PluginWidgetParent.h"
-#endif
 
 #ifdef MOZ_XUL
 #  include "nsXULPopupManager.h"
@@ -152,7 +151,8 @@ using PrintPreviewResolver = std::function<void(const PrintPreviewResultInfo&)>;
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsFrameLoader, mPendingBrowsingContext,
                                       mMessageManager, mChildMessageManager,
-                                      mRemoteBrowser)
+                                      mRemoteBrowser,
+                                      mSessionStoreChangeListener)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsFrameLoader)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsFrameLoader)
 
@@ -1106,6 +1106,7 @@ bool nsFrameLoader::ShowRemoteFrame(const ScreenIntSize& size,
       if (nsCOMPtr<nsIObserverService> os = services::GetObserverService()) {
         os->NotifyObservers(ToSupports(this), "remote-browser-shown", nullptr);
       }
+      ProcessPriorityManager::RemoteBrowserFrameShown(this);
     }
   } else {
     nsIntRect dimensions;
@@ -1292,22 +1293,25 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
   otherBrowserParent->SetBrowserDOMWindow(browserDOMWindow);
   browserParent->SetBrowserDOMWindow(otherBrowserDOMWindow);
 
-#ifdef XP_WIN
-  // Native plugin windows used by this remote content need to be reparented.
-  if (nsPIDOMWindowOuter* newWin = ourDoc->GetWindow()) {
-    RefPtr<nsIWidget> newParent =
-        nsGlobalWindowOuter::Cast(newWin)->GetMainWidget();
-    const ManagedContainer<mozilla::plugins::PPluginWidgetParent>& plugins =
-        otherBrowserParent->ManagedPPluginWidgetParent();
-    for (auto iter = plugins.ConstIter(); !iter.Done(); iter.Next()) {
-      static_cast<mozilla::plugins::PluginWidgetParent*>(iter.Get()->GetKey())
-          ->SetParent(newParent);
-    }
-  }
-#endif  // XP_WIN
-
   MaybeUpdatePrimaryBrowserParent(eBrowserParentRemoved);
   aOther->MaybeUpdatePrimaryBrowserParent(eBrowserParentRemoved);
+
+  if (mozilla::BFCacheInParent() && XRE_IsParentProcess()) {
+    // nsFrameLoaders in session history can't be moved to another owner since
+    // there are no corresponging message managers on which swap can be done.
+    // See the line mMessageManager.swap(aOther->mMessageManager); below.
+    auto evict = [](nsFrameLoader* aFrameLoader) {
+      if (BrowsingContext* bc =
+              aFrameLoader->GetMaybePendingBrowsingContext()) {
+        nsCOMPtr<nsISHistory> shistory = bc->Canonical()->GetSessionHistory();
+        if (shistory) {
+          shistory->EvictAllContentViewers();
+        }
+      }
+    };
+    evict(this);
+    evict(aOther);
+  }
 
   SetOwnerContent(otherContent);
   aOther->SetOwnerContent(ourContent);
@@ -1338,6 +1342,9 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
     otherMessageManager->SetCallback(this);
   }
   mMessageManager.swap(aOther->mMessageManager);
+
+  // XXXsmaug what should be done to JSWindowActorParent objects when swapping
+  // frameloaders? Currently they leak very easily, bug 1697918.
 
   // Perform the actual swap of the internal refptrs. We keep a strong reference
   // to ourselves to make sure we don't die while we overwrite our reference to
@@ -1828,7 +1835,7 @@ void nsFrameLoader::StartDestroy(bool aForProcessSwitch) {
   mDestroyCalled = true;
 
   // request a tabStateFlush before tab is closed
-  RequestTabStateFlush(/*flushId*/ 0, /*isFinal*/ true);
+  RequestTabStateFlush();
 
   // After this point, we return an error when trying to send a message using
   // the message manager on the frame.
@@ -1995,6 +2002,11 @@ void nsFrameLoader::DestroyDocShell() {
     mSessionStoreListener = nullptr;
   }
 
+  if (mSessionStoreChangeListener) {
+    mSessionStoreChangeListener->Stop();
+    mSessionStoreChangeListener = nullptr;
+  }
+
   // Destroy the docshell.
   if (GetDocShell()) {
     GetDocShell()->Destroy();
@@ -2066,16 +2078,41 @@ void nsFrameLoader::SetOwnerContent(Element* aContent) {
 
   if (RefPtr<nsFrameLoaderOwner> owner = do_QueryObject(mOwnerContent)) {
     owner->AttachFrameLoader(this);
+
+#ifdef NIGHTLY_BUILD
+    if (mozilla::BFCacheInParent() && XRE_IsParentProcess()) {
+      if (BrowsingContext* bc = GetMaybePendingBrowsingContext()) {
+        nsISHistory* shistory = bc->Canonical()->GetSessionHistory();
+        if (shistory) {
+          uint32_t count = shistory->GetCount();
+          for (uint32_t i = 0; i < count; ++i) {
+            nsCOMPtr<nsISHEntry> entry;
+            shistory->GetEntryAtIndex(i, getter_AddRefs(entry));
+            nsCOMPtr<SessionHistoryEntry> she = do_QueryInterface(entry);
+            MOZ_RELEASE_ASSERT(!she || !she->GetFrameLoader());
+          }
+        }
+      }
+    }
+#endif
   }
 
   if (mSessionStoreListener && mOwnerContent) {
     // mOwnerContent will only be null when the frame loader is being destroyed,
     // so the session store listener will be destroyed along with it.
+    // XXX(farre): This probably needs to update the cache. See bug 1698497.
     mSessionStoreListener->SetOwnerContent(mOwnerContent);
   }
 
   if (RefPtr<BrowsingContext> browsingContext = GetExtantBrowsingContext()) {
     browsingContext->SetEmbedderElement(mOwnerContent);
+  }
+
+  if (mSessionStoreChangeListener) {
+    // UpdateEventTargets will requery its browser contexts for event
+    // targets, so this call needs to happen after the call to
+    // SetEmbedderElement above.
+    mSessionStoreChangeListener->UpdateEventTargets();
   }
 
   AutoJSAPI jsapi;
@@ -2957,15 +2994,17 @@ nsresult nsFrameLoader::EnsureMessageManager() {
         GetDocShell(), mOwnerContent, mMessageManager);
     NS_ENSURE_TRUE(mChildMessageManager, NS_ERROR_UNEXPECTED);
 
-#if !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_THUNDERBIRD) && \
-    !defined(MOZ_SUITE)
     // Set up a TabListener for sessionStore
-    if (XRE_IsParentProcess()) {
-      mSessionStoreListener = new TabListener(GetDocShell(), mOwnerContent);
-      rv = mSessionStoreListener->Init();
-      NS_ENSURE_SUCCESS(rv, rv);
+    if constexpr (SessionStoreUtils::NATIVE_LISTENER) {
+      if (XRE_IsParentProcess()) {
+        mSessionStoreListener = new TabListener(GetDocShell(), mOwnerContent);
+        rv = mSessionStoreListener->Init();
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        mSessionStoreChangeListener =
+            SessionStoreChangeListener::Create(GetExtantBrowsingContext());
+      }
     }
-#endif
   }
   return NS_OK;
 }
@@ -3103,23 +3142,93 @@ void nsFrameLoader::RequestUpdatePosition(ErrorResult& aRv) {
   }
 }
 
-bool nsFrameLoader::RequestTabStateFlush(uint32_t aFlushId, bool aIsFinal) {
+already_AddRefed<Promise> nsFrameLoader::RequestTabStateFlush(
+    ErrorResult& aRv) {
+  MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess());
+  RefPtr<Promise> promise =
+      Promise::Create(GetOwnerDoc()->GetOwnerGlobal(), aRv);
+
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
+  RefPtr<BrowsingContext> context = GetExtantBrowsingContext();
+  if (!context) {
+    promise->MaybeResolveWithUndefined();
+    return promise.forget();
+  }
+
   if (mSessionStoreListener) {
-    mSessionStoreListener->ForceFlushFromParent(aFlushId, aIsFinal);
+    context->FlushSessionStore();
+    mSessionStoreListener->ForceFlushFromParent(false);
+
     // No async ipc call is involved in parent only case
-    return false;
+    promise->MaybeResolveWithUndefined();
+    return promise.forget();
   }
 
-  // If remote browsing (e10s), handle this with the BrowserParent.
-  if (auto* browserParent = GetBrowserParent()) {
-    Unused << browserParent->SendFlushTabState(aFlushId, aIsFinal);
-    return true;
+  // XXX(farre): We hack around not having fully implemented session
+  // store session storage collection in the parent. What we need to
+  // do is to make sure that we always flush the toplevel context
+  // first. And also to wait for that flush to resolve. This will be
+  // fixed by moving session storage collection to the parent, which
+  // will happen in Bug 1700623.
+  RefPtr<ContentParent> contentParent =
+      context->Canonical()->GetContentParent();
+  using FlushPromise = ContentParent::FlushTabStatePromise;
+  contentParent->SendFlushTabState(context)->Then(
+      GetCurrentSerialEventTarget(), __func__,
+      [promise, context,
+       contentParent](const FlushPromise::ResolveOrRejectValue&) {
+        nsTArray<RefPtr<FlushPromise>> flushPromises;
+        context->Group()->EachOtherParent(
+            contentParent, [&](ContentParent* aParent) {
+              if (aParent->CanSend()) {
+                flushPromises.AppendElement(
+                    aParent->SendFlushTabState(context));
+              }
+            });
+
+        FlushPromise::All(GetCurrentSerialEventTarget(), flushPromises)
+            ->Then(
+                GetCurrentSerialEventTarget(), __func__,
+                [promise](
+                    const FlushPromise::AllPromiseType::ResolveOrRejectValue&) {
+                  promise->MaybeResolveWithUndefined();
+                });
+      });
+
+  return promise.forget();
+}
+
+void nsFrameLoader::RequestTabStateFlush() {
+  BrowsingContext* context = GetExtantBrowsingContext();
+  if (!context || !context->IsTop()) {
+    return;
   }
 
-  return false;
+  if (mSessionStoreListener) {
+    context->FlushSessionStore();
+    mSessionStoreListener->ForceFlushFromParent(true);
+    // No async ipc call is involved in parent only case
+    return;
+  }
+
+  context->Group()->EachParent([&](ContentParent* aParent) {
+    if (aParent->CanSend()) {
+      aParent->SendFlushTabState(
+          context, [](auto) {}, [](auto) {});
+    }
+  });
 }
 
 void nsFrameLoader::RequestEpochUpdate(uint32_t aEpoch) {
+  BrowsingContext* context = GetExtantBrowsingContext();
+  if (context) {
+    BrowsingContext* top = context->Top();
+    Unused << top->SetSessionStoreEpoch(aEpoch);
+  }
+
   if (mSessionStoreListener) {
     mSessionStoreListener->SetEpoch(aEpoch);
     return;
@@ -3143,67 +3252,9 @@ void nsFrameLoader::RequestSHistoryUpdate(bool aImmediately) {
   }
 }
 
-#ifdef NS_PRINTING
-class WebProgressListenerToPromise final : public nsIWebProgressListener {
- public:
-  explicit WebProgressListenerToPromise(Promise* aPromise)
-      : mPromise(aPromise) {}
-
-  NS_DECL_ISUPPORTS
-
-  // NS_DECL_NSIWEBPROGRESSLISTENER
-  NS_IMETHOD OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
-                           uint32_t aStateFlags, nsresult aStatus) override {
-    if (aStateFlags & nsIWebProgressListener::STATE_STOP &&
-        aStateFlags & nsIWebProgressListener::STATE_IS_DOCUMENT && mPromise) {
-      mPromise->MaybeResolveWithUndefined();
-      mPromise = nullptr;
-    }
-    return NS_OK;
-  }
-  NS_IMETHOD OnStatusChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
-                            nsresult aStatus,
-                            const char16_t* aMessage) override {
-    if (aStatus != NS_OK && mPromise) {
-      mPromise->MaybeReject(ErrorResult(aStatus));
-      mPromise = nullptr;
-    }
-    return NS_OK;
-  }
-  NS_IMETHOD OnProgressChange(nsIWebProgress* aWebProgress,
-                              nsIRequest* aRequest, int32_t aCurSelfProgress,
-                              int32_t aMaxSelfProgress,
-                              int32_t aCurTotalProgress,
-                              int32_t aMaxTotalProgress) override {
-    return NS_OK;
-  }
-  NS_IMETHOD OnLocationChange(nsIWebProgress* aWebProgress,
-                              nsIRequest* aRequest, nsIURI* aLocation,
-                              uint32_t aFlags) override {
-    return NS_OK;
-  }
-  NS_IMETHOD OnSecurityChange(nsIWebProgress* aWebProgress,
-                              nsIRequest* aRequest, uint32_t aState) override {
-    return NS_OK;
-  }
-  NS_IMETHOD OnContentBlockingEvent(nsIWebProgress* aWebProgress,
-                                    nsIRequest* aRequest,
-                                    uint32_t aEvent) override {
-    return NS_OK;
-  }
-
- private:
-  ~WebProgressListenerToPromise() = default;
-
-  RefPtr<Promise> mPromise;
-};
-
-NS_IMPL_ISUPPORTS(WebProgressListenerToPromise, nsIWebProgressListener)
-#endif
-
 already_AddRefed<Promise> nsFrameLoader::PrintPreview(
-    nsIPrintSettings* aPrintSettings,
-    const Optional<uint64_t>& aSourceOuterWindowID, ErrorResult& aRv) {
+    nsIPrintSettings* aPrintSettings, BrowsingContext* aSourceBrowsingContext,
+    ErrorResult& aRv) {
   auto* ownerDoc = GetOwnerDoc();
   if (!ownerDoc) {
     aRv.ThrowNotSupportedError("No owner document");
@@ -3248,11 +3299,7 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
       return promise.forget();
     }
 
-    auto winID(aSourceOuterWindowID.WasPassed()
-                   ? Some(aSourceOuterWindowID.Value())
-                   : Nothing());
-
-    browserParent->SendPrintPreview(printData, winID)
+    browserParent->SendPrintPreview(printData, aSourceBrowsingContext)
         ->Then(
             GetMainThreadSerialEventTarget(), __func__, std::move(resolve),
             [promise](const mozilla::ipc::ResponseRejectReason) {
@@ -3263,9 +3310,9 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
   }
 
   RefPtr<nsGlobalWindowOuter> sourceWindow;
-  if (aSourceOuterWindowID.WasPassed()) {
+  if (aSourceBrowsingContext) {
     sourceWindow =
-        nsGlobalWindowOuter::GetOuterWindowWithId(aSourceOuterWindowID.Value());
+        nsGlobalWindowOuter::Cast(aSourceBrowsingContext->GetDOMWindow());
   } else {
     auto* ourDocshell = static_cast<nsDocShell*>(GetExistingDocShell());
     if (NS_WARN_IF(!ourDocshell)) {
@@ -3280,7 +3327,7 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
   }
 
   nsIDocShell* docShellToCloneInto = nullptr;
-  if (aSourceOuterWindowID.WasPassed()) {
+  if (aSourceBrowsingContext) {
     // We're going to call `Print()` below on a window that is not our own,
     // which happens when we are creating a new print preview document instead
     // of just applying a settings change to the existing PP document.  In this
@@ -3326,60 +3373,6 @@ void nsFrameLoader::ExitPrintPreview() {
     return;
   }
   webBrowserPrint->ExitPrintPreview();
-#endif
-}
-
-already_AddRefed<Promise> nsFrameLoader::Print(uint64_t aOuterWindowID,
-                                               nsIPrintSettings* aPrintSettings,
-                                               ErrorResult& aRv) {
-  RefPtr<Promise> promise =
-      Promise::Create(GetOwnerDoc()->GetOwnerGlobal(), aRv);
-
-#ifndef NS_PRINTING
-  promise->MaybeReject(ErrorResult(NS_ERROR_NOT_AVAILABLE));
-  return promise.forget();
-#else
-
-  RefPtr<WebProgressListenerToPromise> listener(
-      new WebProgressListenerToPromise(promise));
-
-  if (auto* browserParent = GetBrowserParent()) {
-    RefPtr<embedding::PrintingParent> printingParent =
-        browserParent->Manager()->GetPrintingParent();
-
-    embedding::PrintData printData;
-    nsresult rv = printingParent->SerializeAndEnsureRemotePrintJob(
-        aPrintSettings, listener, nullptr, &printData);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      promise->MaybeReject(ErrorResult(rv));
-      return promise.forget();
-    }
-
-    bool success = browserParent->SendPrint(aOuterWindowID, printData);
-    if (!success) {
-      promise->MaybeReject(ErrorResult(NS_ERROR_FAILURE));
-    }
-    return promise.forget();
-  }
-
-  RefPtr<nsGlobalWindowOuter> outerWindow =
-      nsGlobalWindowOuter::GetOuterWindowWithId(aOuterWindowID);
-  if (NS_WARN_IF(!outerWindow)) {
-    promise->MaybeReject(ErrorResult(NS_ERROR_FAILURE));
-    return promise.forget();
-  }
-
-  ErrorResult rv;
-  outerWindow->Print(aPrintSettings, listener,
-                     /* aDocShellToCloneInto = */ nullptr,
-                     nsGlobalWindowOuter::IsPreview::No,
-                     nsGlobalWindowOuter::IsForWindowDotPrint::No,
-                     /* aPrintPreviewCallback = */ nullptr, rv);
-  if (rv.Failed()) {
-    promise->MaybeReject(std::move(rv));
-  }
-
-  return promise.forget();
 #endif
 }
 
@@ -3619,34 +3612,16 @@ void nsFrameLoader::SetWillChangeProcess() {
   mWillChangeProcess = true;
 
   if (IsRemoteFrame()) {
-    // OOP Browser - Go directly over Browser Parent
     if (auto* browserParent = GetBrowserParent()) {
-      // We're going to be synchronously changing the owner of the
-      // BrowsingContext in the parent process while the current owner may still
-      // have in-flight requests which only the owner is allowed to make. Those
-      // requests will typically trigger assertions if they come from a child
-      // other than the owner.
-      //
-      // To work around this, we record the previous owner at the start of the
-      // process switch, and clear it when we've received a reply from the
-      // child, treating ownership mismatches as warnings in the interim.
-      //
-      // In the future, this sort of issue will probably need to be handled
-      // using ownership epochs, which should be more both flexible and
-      // resilient. For the moment, though, the surrounding process switch code
-      // is enough in flux that we're better off with a workable interim
-      // solution.
-      MOZ_DIAGNOSTIC_ASSERT(mPendingBrowsingContext == GetBrowsingContext());
-      RefPtr<CanonicalBrowsingContext> bc(mPendingBrowsingContext->Canonical());
-      uint64_t targetProcessId = browserParent->Manager()->ChildID();
-      bc->SetInFlightProcessId(targetProcessId);
-      auto callback = [bc, targetProcessId](auto) {
-        bc->ClearInFlightProcessId(targetProcessId);
-      };
-      browserParent->SendWillChangeProcess(callback, callback);
-    }
-    // OOP IFrame - Through Browser Bridge Parent, set on browser child
-    else if (auto* browserBridgeChild = GetBrowserBridgeChild()) {
+      if (auto* bc = CanonicalBrowsingContext::Cast(mPendingBrowsingContext);
+          bc && bc->EverAttached()) {
+        bc->StartUnloadingHost(browserParent->Manager()->ChildID());
+        bc->SetCurrentBrowserParent(nullptr);
+      }
+      // OOP Browser - Go directly over Browser Parent
+      Unused << browserParent->SendWillChangeProcess();
+    } else if (auto* browserBridgeChild = GetBrowserBridgeChild()) {
+      // OOP IFrame - Through Browser Bridge Parent, set on browser child
       Unused << browserBridgeChild->SendWillChangeProcess();
     }
     return;

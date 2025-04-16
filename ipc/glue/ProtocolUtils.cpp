@@ -233,14 +233,9 @@ void SentinelReadError(const char* aClassName) {
   MOZ_CRASH_UNSAFE_PRINTF("incorrect sentinel when reading %s", aClassName);
 }
 
-void TableToArray(const nsTHashtable<nsPtrHashKey<void>>& aTable,
-                  nsTArray<void*>& aArray) {
-  uint32_t i = 0;
-  void** elements = aArray.AppendElements(aTable.Count());
-  for (auto iter = aTable.ConstIter(); !iter.Done(); iter.Next()) {
-    elements[i] = iter.Get()->GetKey();
-    ++i;
-  }
+void TableToArray(const nsTHashSet<void*>& aTable, nsTArray<void*>& aArray) {
+  MOZ_ASSERT(aArray.IsEmpty());
+  aArray = ToArray(aTable);
 }
 
 ActorLifecycleProxy::ActorLifecycleProxy(IProtocol* aActor) : mActor(aActor) {
@@ -780,8 +775,8 @@ Shmem::SharedMemory* IToplevelProtocol::LookupSharedMemory(Shmem::id_t aId) {
 }
 
 bool IToplevelProtocol::IsTrackingSharedMemory(Shmem::SharedMemory* segment) {
-  for (const auto& iter : mShmemMap) {
-    if (segment == iter.GetData()) {
+  for (const auto& shmem : mShmemMap.Values()) {
+    if (segment == shmem) {
       return true;
     }
   }
@@ -812,8 +807,8 @@ bool IToplevelProtocol::DestroySharedMemory(Shmem& shmem) {
 }
 
 void IToplevelProtocol::DeallocShmems() {
-  for (const auto& cit : mShmemMap) {
-    Shmem::Dealloc(Shmem::PrivateIPDLCaller(), cit.GetData());
+  for (const auto& shmem : mShmemMap.Values()) {
+    Shmem::Dealloc(Shmem::PrivateIPDLCaller(), shmem);
   }
   mShmemMap.Clear();
 }

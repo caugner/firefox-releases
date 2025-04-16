@@ -299,6 +299,11 @@ class MouseInput : public InputData {
   ScreenPoint mOrigin;
   ParentLayerPoint mLocalOrigin;
   bool mHandledByAPZ;
+  /**
+   * If click event should not be fired in the content after the "mousedown"
+   * event or following "mouseup", set to true.
+   */
+  bool mPreventClickEvent;
 };
 
 /**
@@ -357,7 +362,12 @@ class PanGestureInput : public InputData {
       // MomentumEnd: The momentum animation has ended, for example because the
       // momentum velocity has gone below the stopping threshold, or because the
       // user has stopped the animation by putting their fingers on a touchpad.
-      PANGESTURE_MOMENTUMEND
+      PANGESTURE_MOMENTUMEND,
+
+      // Interrupted:: A pan gesture started being handled by an APZC but
+      // subsequent pan events might have been consumed by other operations
+      // which haven't been handled by the APZC (e.g. full zoom).
+      PANGESTURE_INTERRUPTED
   ));
 
   MOZ_DEFINE_ENUM_AT_CLASS_SCOPE(

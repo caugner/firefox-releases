@@ -87,8 +87,6 @@ PuppetWidget::PuppetWidget(BrowserChild* aBrowserChild)
       mDPI(-1),
       mRounding(1),
       mDefaultScale(-1),
-      mCursorHotspotX(0),
-      mCursorHotspotY(0),
       mEnabled(false),
       mVisible(false),
       mNeedIMEStateInit(false),
@@ -268,10 +266,10 @@ void PuppetWidget::Invalidate(const LayoutDeviceIntRect& aRect) {
     return;
   }
 
-  if (mBrowserChild && !aRect.IsEmpty()) {
-    if (RefPtr<nsRefreshDriver> refreshDriver = GetTopLevelRefreshDriver()) {
-      refreshDriver->ScheduleViewManagerFlush();
-    }
+  if (mBrowserChild && !aRect.IsEmpty() && !mWidgetPaintTask.IsPending()) {
+    mWidgetPaintTask = new WidgetPaintTask(this);
+    nsCOMPtr<nsIRunnable> event(mWidgetPaintTask.get());
+    SchedulerGroup::Dispatch(TaskCategory::Other, event.forget());
   }
 }
 
@@ -382,15 +380,16 @@ nsresult PuppetWidget::DispatchEvent(WidgetGUIEvent* aEvent,
   return NS_OK;
 }
 
-nsEventStatus PuppetWidget::DispatchInputEvent(WidgetInputEvent* aEvent) {
+nsIWidget::ContentAndAPZEventStatus PuppetWidget::DispatchInputEvent(
+    WidgetInputEvent* aEvent) {
+  ContentAndAPZEventStatus status;
   if (!AsyncPanZoomEnabled()) {
-    nsEventStatus status = nsEventStatus_eIgnore;
-    DispatchEvent(aEvent, status);
+    DispatchEvent(aEvent, status.mContentStatus);
     return status;
   }
 
   if (!mBrowserChild) {
-    return nsEventStatus_eIgnore;
+    return status;
   }
 
   switch (aEvent->mClass) {
@@ -408,7 +407,7 @@ nsEventStatus PuppetWidget::DispatchInputEvent(WidgetInputEvent* aEvent) {
       MOZ_ASSERT_UNREACHABLE("unsupported event type");
   }
 
-  return nsEventStatus_eIgnore;
+  return status;
 }
 
 nsresult PuppetWidget::SynthesizeNativeKeyEvent(
@@ -893,21 +892,15 @@ struct CursorSurface {
   IntSize mSize;
 };
 
-void PuppetWidget::SetCursor(nsCursor aCursor, imgIContainer* aCursorImage,
-                             uint32_t aHotspotX, uint32_t aHotspotY) {
+void PuppetWidget::SetCursor(const Cursor& aCursor) {
   if (!mBrowserChild) {
     return;
   }
 
-  // Don't cache on windows, Windowless flash breaks this via async cursor
-  // updates.
-#if !defined(XP_WIN)
-  if (!mUpdateCursor && mCursor == aCursor && mCustomCursor == aCursorImage &&
-      (!aCursorImage ||
-       (mCursorHotspotX == aHotspotX && mCursorHotspotY == aHotspotY))) {
+  const bool force = mUpdateCursor;
+  if (!force && mCursor == aCursor) {
     return;
   }
-#endif
 
   bool hasCustomCursor = false;
   UniquePtr<char[]> customCursorData;
@@ -915,10 +908,11 @@ void PuppetWidget::SetCursor(nsCursor aCursor, imgIContainer* aCursorImage,
   IntSize customCursorSize;
   int32_t stride = 0;
   auto format = SurfaceFormat::B8G8R8A8;
-  bool force = mUpdateCursor;
-
-  if (aCursorImage) {
-    RefPtr<SourceSurface> surface = aCursorImage->GetFrame(
+  if (aCursor.IsCustom()) {
+    // NOTE(emilio): We get the frame at the full size, ignoring resolution,
+    // because we're going to rasterize it, and we'd effectively lose the extra
+    // pixels if we rasterized to CustomCursorSize.
+    RefPtr<SourceSurface> surface = aCursor.mContainer->GetFrame(
         imgIContainer::FRAME_CURRENT,
         imgIContainer::FLAG_SYNC_DECODE | imgIContainer::FLAG_ASYNC_NOTIFY);
     if (surface) {
@@ -932,27 +926,15 @@ void PuppetWidget::SetCursor(nsCursor aCursor, imgIContainer* aCursorImage,
     }
   }
 
-  mCustomCursor = nullptr;
-
   nsDependentCString cursorData(customCursorData ? customCursorData.get() : "",
                                 length);
-  if (!mBrowserChild->SendSetCursor(aCursor, hasCustomCursor, cursorData,
-                                    customCursorSize.width,
-                                    customCursorSize.height, stride, format,
-                                    aHotspotX, aHotspotY, force)) {
+  if (!mBrowserChild->SendSetCursor(
+          aCursor.mDefaultCursor, hasCustomCursor, cursorData,
+          customCursorSize.width, customCursorSize.height, aCursor.mResolution,
+          stride, format, aCursor.mHotspotX, aCursor.mHotspotY, force)) {
     return;
   }
-
   mCursor = aCursor;
-  mCustomCursor = aCursorImage;
-  mCursorHotspotX = aHotspotX;
-  mCursorHotspotY = aHotspotY;
-  mUpdateCursor = false;
-}
-
-void PuppetWidget::ClearCachedCursor() {
-  nsBaseWidget::ClearCachedCursor();
-  mCustomCursor = nullptr;
 }
 
 void PuppetWidget::SetChild(PuppetWidget* aChild) {
@@ -963,11 +945,31 @@ void PuppetWidget::SetChild(PuppetWidget* aChild) {
   mChild = aChild;
 }
 
+NS_IMETHODIMP
+PuppetWidget::WidgetPaintTask::Run() {
+  if (mWidget) {
+    mWidget->Paint();
+  }
+  return NS_OK;
+}
+
+void PuppetWidget::Paint() {
+  if (!GetCurrentWidgetListener()) return;
+
+  mWidgetPaintTask.Revoke();
+
+  RefPtr<PuppetWidget> strongThis(this);
+
+  GetCurrentWidgetListener()->WillPaintWindow(this);
+
+  if (GetCurrentWidgetListener()) {
+    GetCurrentWidgetListener()->DidPaintWindow();
+  }
+}
+
 void PuppetWidget::PaintNowIfNeeded() {
-  if (IsVisible()) {
-    if (RefPtr<nsRefreshDriver> refreshDriver = GetTopLevelRefreshDriver()) {
-      refreshDriver->DoTick();
-    }
+  if (IsVisible() && mWidgetPaintTask.IsPending()) {
+    Paint();
   }
 }
 

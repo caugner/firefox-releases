@@ -73,9 +73,6 @@ namespace dom {
 class BrowserChild;
 enum class CallerType : uint32_t;
 }  // namespace dom
-namespace plugins {
-class PluginWidgetChild;
-}  // namespace plugins
 namespace layers {
 class AsyncDragMetrics;
 class Compositor;
@@ -172,6 +169,7 @@ typedef void* nsNativeWidget;
 #endif
 
 #define MOZ_WIDGET_MAX_SIZE 16384
+#define MOZ_WIDGET_INVALID_SCALE 0.0
 
 // Must be kept in sync with xpcom/rust/xpcom/src/interfaces/nonidl.rs
 #define NS_IWIDGET_IID                               \
@@ -293,11 +291,14 @@ namespace widget {
  * Values are in device pixels.
  */
 struct SizeConstraints {
-  SizeConstraints() : mMaxSize(MOZ_WIDGET_MAX_SIZE, MOZ_WIDGET_MAX_SIZE) {}
+  SizeConstraints()
+      : mMaxSize(MOZ_WIDGET_MAX_SIZE, MOZ_WIDGET_MAX_SIZE),
+        mScale(MOZ_WIDGET_INVALID_SCALE) {}
 
   SizeConstraints(mozilla::LayoutDeviceIntSize aMinSize,
-                  mozilla::LayoutDeviceIntSize aMaxSize)
-      : mMinSize(aMinSize), mMaxSize(aMaxSize) {
+                  mozilla::LayoutDeviceIntSize aMaxSize,
+                  mozilla::DesktopToLayoutDeviceScale aScale)
+      : mMinSize(aMinSize), mMaxSize(aMaxSize), mScale(aScale) {
     if (mMaxSize.width > MOZ_WIDGET_MAX_SIZE) {
       mMaxSize.width = MOZ_WIDGET_MAX_SIZE;
     }
@@ -308,6 +309,16 @@ struct SizeConstraints {
 
   mozilla::LayoutDeviceIntSize mMinSize;
   mozilla::LayoutDeviceIntSize mMaxSize;
+
+  /*
+   * The scale used to convert from desktop to device dimensions.
+   * MOZ_WIDGET_INVALID_SCALE if the value is not known.
+   *
+   * Bug 1701109 is filed to revisit adding of 'mScale' and deal
+   * with multi-monitor scaling issues in more complete way across
+   * all widget implementations.
+   */
+  mozilla::DesktopToLayoutDeviceScale mScale;
 };
 
 struct AutoObserverNotifier {
@@ -579,7 +590,7 @@ class nsIWidget : public nsISupports {
   /**
    * Return the top (non-sheet) parent of this Widget if it's a sheet,
    * or nullptr if this isn't a sheet (or some other error occurred).
-   * Sheets are only supported on some platforms (currently only OS X).
+   * Sheets are only supported on some platforms (currently only macOS).
    *
    * @return the top (non-sheet) parent widget or nullptr
    *
@@ -718,8 +729,8 @@ class nsIWidget : public nsISupports {
    * following Move and Resize widget APIs.
    *
    * The display-/device-pixel distinction becomes important for (at least)
-   * Mac OS X with Hi-DPI (retina) displays, and Windows when the UI scale
-   * factor is set to other than 100%.
+   * macOS with Hi-DPI (retina) displays, and Windows when the UI scale factor
+   * is set to other than 100%.
    *
    * The Move and Resize methods take floating-point parameters, rather than
    * integer ones. This is important when manipulating top-level widgets,
@@ -977,16 +988,35 @@ class nsIWidget : public nsISupports {
 
   virtual void ClearCachedCursor() = 0;
 
+  struct Cursor {
+    // The system cursor chosen by the page. This is used if there's no custom
+    // cursor, or if we fail to use the custom cursor in some way (if the image
+    // fails to load, for example).
+    nsCursor mDefaultCursor = eCursor_standard;
+    // May be null, to represent no custom cursor image.
+    nsCOMPtr<imgIContainer> mContainer;
+    uint32_t mHotspotX = 0;
+    uint32_t mHotspotY = 0;
+    float mResolution = 1.0f;
+
+    bool IsCustom() const { return !!mContainer; }
+
+    bool operator==(const Cursor& aOther) const {
+      return mDefaultCursor == aOther.mDefaultCursor &&
+             mContainer.get() == aOther.mContainer.get() &&
+             mHotspotX == aOther.mHotspotX && mHotspotY == aOther.mHotspotY &&
+             mResolution == aOther.mResolution;
+    }
+
+    bool operator!=(const Cursor& aOther) { return !(*this == aOther); }
+  };
+
   /**
-   * Sets the cursor cursor for this widget.
-   *
-   * @param aDefaultCursor the default cursor to be set
-   * @param aCursorImage a custom cursor, maybe null.
-   * @param aX the X coordinate of the hotspot for aCursorImage (from left).
-   * @param aY the Y coordinate of the hotspot for aCursorImage (from top).
+   * Sets the cursor for this widget.
    */
-  virtual void SetCursor(nsCursor aDefaultCursor, imgIContainer* aCursorImage,
-                         uint32_t aHotspotX, uint32_t aHotspotY) = 0;
+  virtual void SetCursor(const Cursor&) = 0;
+
+  static nsIntSize CustomCursorSize(const Cursor&);
 
   /**
    * Get the window type of this widget.
@@ -1146,7 +1176,7 @@ class nsIWidget : public nsISupports {
   virtual void SetWindowMouseTransparent(bool aIsTransparent) {}
 
   /*
-   * On Mac OS X, this method shows or hides the pill button in the titlebar
+   * On macOS, this method shows or hides the pill button in the titlebar
    * that's used to collapse the toolbar.
    *
    * Ignored on child widgets and on non-Mac platforms.
@@ -1170,8 +1200,8 @@ class nsIWidget : public nsISupports {
   };
 
   /**
-   * Sets the kind of top-level window animation this widget should have.  On
-   * Mac OS X, this causes a particular kind of animation to be shown when the
+   * Sets the kind of top-level window animation this widget should have. On
+   * macOS, this causes a particular kind of animation to be shown when the
    * window is first made visible.
    *
    * Ignored on child widgets and on non-Mac platforms.
@@ -1181,9 +1211,33 @@ class nsIWidget : public nsISupports {
   /**
    * Specifies whether the window title should be drawn even if the window
    * contents extend into the titlebar. Ignored on windows that don't draw
-   * in the titlebar. Only implemented on OS X.
+   * in the titlebar. Only implemented on macOS.
    */
   virtual void SetDrawsTitle(bool aDrawTitle) {}
+
+  /**
+   * These values are used to communicate the expected window apperance via
+   * SetWindowAppearance (see function comment below for more info):
+   * eSystem: Use the system default window appearance, which can be light or
+   *          dark.
+   * eLight:  Use the light window appearance, regardless of the current system
+   *          window appearance.
+   * eDark:   Use the dark window appearance, regardless of the current system
+   *          window appearance.
+   */
+  enum WindowAppearance { eSystem, eLight, eDark };
+
+  /**
+   * Allows overriding the window's light/dark appearance. This is used for
+   * windows whose light/dark look can differ from the system-wide look, and
+   * allows the window decorations to better match the window contents, for
+   * example ensuring sufficient contrast for the window buttons. The window
+   * appearance affects the look of the window frame, window buttons, titlebars
+   * and vibrant sidebars, and various -moz-default-appearance types.
+   *
+   * Ignored on non-Mac platforms.
+   */
+  virtual void SetWindowAppearance(WindowAppearance aAppearance) {}
 
   /**
    * Hide window chrome (borders, buttons) for this widget.
@@ -1246,7 +1300,7 @@ class nsIWidget : public nsISupports {
    * Same as MakeFullScreen, except that, on systems which natively
    * support fullscreen transition, calling this method explicitly
    * requests that behavior.
-   * It is currently only supported on OS X 10.7+.
+   * It is currently only supported on macOS 10.7+.
    */
   virtual nsresult MakeFullScreenWithNativeTransition(
       bool aFullScreen, nsIScreen* aTargetScreen = nullptr) {
@@ -1415,12 +1469,21 @@ class nsIWidget : public nsISupports {
    */
   virtual void DispatchEventToAPZOnly(mozilla::WidgetInputEvent* aEvent) = 0;
 
+  // A structure that groups the statuses from APZ dispatch and content
+  // dispatch.
+  struct ContentAndAPZEventStatus {
+    // Either of these may not be set if the event was not dispatched
+    // to APZ or to content.
+    nsEventStatus mApzStatus = nsEventStatus_eIgnore;
+    nsEventStatus mContentStatus = nsEventStatus_eIgnore;
+  };
+
   /**
    * Dispatches an event that must be handled by APZ first, when APZ is
    * enabled. If invoked in the child process, it is forwarded to the
    * parent process synchronously.
    */
-  virtual nsEventStatus DispatchInputEvent(
+  virtual ContentAndAPZEventStatus DispatchInputEvent(
       mozilla::WidgetInputEvent* aEvent) = 0;
 
   /**
@@ -1954,15 +2017,6 @@ class nsIWidget : public nsISupports {
       BrowserChild* aBrowserChild);
 
   static already_AddRefed<nsIWidget> CreateHeadlessWidget();
-
-  /**
-   * Allocate and return a "plugin proxy widget", a subclass of PuppetWidget
-   * used in wrapping a PPluginWidget connection for remote widgets. Note
-   * this call creates the base object, it does not create the widget. Use
-   * nsIWidget's Create to do this.
-   */
-  static already_AddRefed<nsIWidget> CreatePluginProxyWidget(
-      BrowserChild* aBrowserChild, mozilla::plugins::PluginWidgetChild* aActor);
 
   /**
    * Reparent this widget's native widget.

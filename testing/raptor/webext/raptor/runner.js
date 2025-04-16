@@ -19,7 +19,7 @@ const TEST_BENCHMARK = "benchmark";
 const TEST_PAGE_LOAD = "pageload";
 const TEST_SCENARIO = "scenario";
 
-const ANDROID_BROWSERS = ["fennec", "fenix", "geckoview", "refbrow"];
+const ANDROID_BROWSERS = ["fenix", "geckoview", "refbrow"];
 
 // when the browser starts this webext runner will start automatically; we
 // want to give the browser some time (ms) to settle before starting tests
@@ -130,7 +130,7 @@ async function getTestSettings() {
   results.subtest_lower_is_better = settings.subtest_lower_is_better === true;
 
   if (settings.gecko_profile === true) {
-    results.extra_options = ["gecko_profile"];
+    results.extra_options = ["gecko-profile"];
 
     geckoProfiling = true;
     geckoEntries = settings.gecko_profile_entries;

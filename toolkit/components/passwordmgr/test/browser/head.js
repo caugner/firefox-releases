@@ -28,6 +28,12 @@ add_task(async function common_initialize() {
       ["toolkit.telemetry.ipcBatchTimeout", 0],
     ],
   });
+  if (LoginHelper.relatedRealmsEnabled) {
+    LoginTestUtils.remoteSettings.setupWebsitesWithSharedCredentials();
+    registerCleanupFunction(function() {
+      LoginTestUtils.remoteSettings.cleanWebsitesWithSharedCredentials();
+    });
+  }
 });
 
 registerCleanupFunction(
@@ -150,11 +156,15 @@ async function submitFormAndGetResults(
     }
     form.submit();
   }
+
+  let loadPromise = BrowserTestUtils.browserLoaded(browser);
   await SpecialPowers.spawn(
     browser,
     [[formAction, selectorValues]],
     contentSubmitForm
   );
+  await loadPromise;
+
   let result = await getFormSubmitResponseResult(
     browser,
     formAction,
@@ -747,12 +757,12 @@ async function openPasswordContextMenu(
   }
 
   if (openFillMenu) {
-    // Synthesize a mouse click over the fill login menu header.
-    let popupShownPromise = BrowserTestUtils.waitForCondition(
-      () => POPUP_HEADER.open && BrowserTestUtils.is_visible(LOGIN_POPUP),
-      "Waiting for header to be open and submenu to be visible"
+    // Open the fill login menu.
+    let popupShownPromise = BrowserTestUtils.waitForEvent(
+      LOGIN_POPUP,
+      "popupshown"
     );
-    EventUtils.synthesizeMouseAtCenter(POPUP_HEADER, {}, browser.ownerGlobal);
+    POPUP_HEADER.openMenu(true);
     await popupShownPromise;
   }
 }
@@ -813,7 +823,8 @@ async function doFillGeneratedPasswordContextMenuItem(browser, passwordInput) {
     SimpleTest.executeSoon(resolve);
   });
 
-  EventUtils.synthesizeMouseAtCenter(generatedPasswordItem, {});
+  let contextMenu = document.getElementById("contentAreaContextMenu");
+  contextMenu.activateItem(generatedPasswordItem);
 
   await promiseShown;
   await fillGeneratedPasswordFromOpenACPopup(browser, passwordInput);

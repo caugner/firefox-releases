@@ -56,8 +56,6 @@ var gTabsPanel = {
 
     this.allTabsView.addEventListener("ViewShowing", e => {
       PanelUI._ensureShortcutsShown(this.allTabsView);
-      document.getElementById("allTabsMenu-undoCloseTab").disabled =
-        SessionStore.getClosedTabCount(window) == 0;
 
       let containersEnabled =
         Services.prefs.getBoolPref("privacy.userContext.enabled") &&
@@ -140,6 +138,12 @@ var gTabsPanel = {
   showAllTabsPanel(event) {
     this.init();
     if (this.canOpen) {
+      if (!gProton) {
+        PanelMultiView.getViewNode(
+          document,
+          "allTabsMenu-searchTabs"
+        ).classList.add("subviewbutton-iconic");
+      }
       PanelUI.showSubView(
         this.kElements.allTabsView,
         this.allTabsButton,

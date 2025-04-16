@@ -96,6 +96,7 @@ var BrowserPageActions = {
     for (let action of urlbarActions) {
       this.placeActionInUrlbar(action);
     }
+    this._updateMainButtonAttributes();
   },
 
   /**
@@ -108,9 +109,6 @@ var BrowserPageActions = {
       template.replaceWith(template.content);
       this._panelNode = document.getElementById("pageActionPanel");
       this._panelNode.addEventListener("popupshowing", this._onPanelShowing);
-      this._panelNode.addEventListener("popuphiding", () => {
-        this.mainButtonNode.removeAttribute("open");
-      });
     }
 
     for (let action of PageActions.actionsInPanel(window)) {
@@ -128,6 +126,7 @@ var BrowserPageActions = {
   placeAction(action) {
     this.placeActionInPanel(action);
     this.placeActionInUrlbar(action);
+    this._updateMainButtonAttributes();
   },
 
   /**
@@ -140,6 +139,18 @@ var BrowserPageActions = {
     if (this._panelNode && this.panelNode.state != "closed") {
       this._placeActionInPanelNow(action);
     } else {
+      // This method may be called for the same action more than once
+      // (e.g. when an extension does call pageAction.show/hidden to
+      // enable or disable its own pageAction and we will have to
+      // update the urlbar overflow panel accordingly).
+      //
+      // Ensure we don't add the same actions more than once (otherwise we will
+      // not remove all the entries in _removeActionFromPanel).
+      if (
+        this._actionsToLazilyPlaceInPanel.findIndex(a => a.id == action.id) >= 0
+      ) {
+        return;
+      }
       // Lazily place the action in the panel the next time it opens.
       this._actionsToLazilyPlaceInPanel.push(action);
     }
@@ -211,6 +222,13 @@ var BrowserPageActions = {
         }
       }
     }
+  },
+
+  _updateMainButtonAttributes() {
+    this.mainButtonNode.toggleAttribute(
+      "multiple-children",
+      PageActions.actions.length > 1
+    );
   },
 
   /**
@@ -327,15 +345,6 @@ var BrowserPageActions = {
     PanelMultiView.hidePopup(this.panelNode);
 
     let anchorNode = this.panelAnchorNodeForAction(action);
-    anchorNode.setAttribute("open", "true");
-    panelNode.addEventListener(
-      "popuphiding",
-      () => {
-        anchorNode.removeAttribute("open");
-      },
-      { once: true }
-    );
-
     PanelMultiView.openPopup(panelNode, anchorNode, {
       position: "bottomcenter topright",
       triggerEvent: event,
@@ -525,6 +534,9 @@ var BrowserPageActions = {
   _makeUrlbarButtonNode(action) {
     let buttonNode = document.createXULElement("image");
     buttonNode.classList.add("urlbar-icon", "urlbar-page-action");
+    if (action.extensionID) {
+      buttonNode.classList.add("urlbar-addon-page-action");
+    }
     buttonNode.setAttribute("actionid", action.id);
     buttonNode.setAttribute("role", "button");
     let commandHandler = event => {
@@ -545,6 +557,7 @@ var BrowserPageActions = {
     this._removeActionFromPanel(action);
     this._removeActionFromUrlbar(action);
     action.onRemovedFromWindow(window);
+    this._updateMainButtonAttributes();
   },
 
   _removeActionFromUrlbar(action) {
@@ -606,7 +619,17 @@ var BrowserPageActions = {
     urlbarNode,
     disabled = action.getDisabled(window)
   ) {
-    if (action.__transient) {
+    // When Proton is enabled, the extension page actions should behave similarly
+    // to a transient action, and be hidden from the urlbar overflow menu if they
+    // are disabled (as in the urlbar when the overflow menu isn't available)
+    //
+    // TODO(Bug 1704139): as a follow up we may look into just set on all
+    // extension pageActions `_transient: true`, at least once we sunset
+    // the proton preference and we don't need the pre-Proton behavior anymore,
+    // and remove this special case.
+    const isProtonExtensionAction = action.extensionID && gProton;
+
+    if (action.__transient || isProtonExtensionAction) {
       this.placeActionInPanel(action);
     } else {
       this._updateActionDisabledInPanel(action, panelNode, disabled);
@@ -725,14 +748,7 @@ var BrowserPageActions = {
   },
 
   doCommandForAction(action, event, buttonNode) {
-    // On mac, ctrl-click will send a context menu event from the widget, so we
-    // don't want to handle the click event when ctrl key is pressed.
-    if (
-      event &&
-      event.type == "click" &&
-      (event.button != 0 ||
-        (AppConstants.platform == "macosx" && event.ctrlKey))
-    ) {
+    if (event && event.type == "click" && event.button != 0) {
       return;
     }
     if (event && event.type == "keypress") {
@@ -920,7 +936,6 @@ var BrowserPageActions = {
    */
   showPanel(event = null) {
     this.panelNode.hidden = false;
-    this.mainButtonNode.setAttribute("open", "true");
     PanelMultiView.openPopup(this.panelNode, this.mainButtonNode, {
       position: "bottomcenter topright",
       triggerEvent: event,
@@ -940,23 +955,17 @@ var BrowserPageActions = {
       return;
     }
 
-    this._contextAction = this.actionForNode(popup.triggerNode);
-    if (!this._contextAction) {
+    let action = this.actionForNode(popup.triggerNode);
+    if (
+      !action ||
+      // In Proton, only extension actions provide a context menu.
+      (gProton && !action.extensionID)
+    ) {
+      this._contextAction = null;
       event.preventDefault();
       return;
     }
-
-    let state;
-    if (this._contextAction._isMozillaAction) {
-      state = this._contextAction.pinnedToUrlbar
-        ? "builtInPinned"
-        : "builtInUnpinned";
-    } else {
-      state = this._contextAction.pinnedToUrlbar
-        ? "extensionPinned"
-        : "extensionUnpinned";
-    }
-    popup.setAttribute("state", state);
+    this._contextAction = action;
 
     let removeExtension = popup.querySelector(".removeExtensionItem");
     let { extensionID } = this._contextAction;
@@ -967,24 +976,6 @@ var BrowserPageActions = {
         addon.permissions & AddonManager.PERM_CAN_UNINSTALL
       );
     }
-  },
-
-  /**
-   * Call this from the menu item in the context menu that toggles pinning.
-   */
-  togglePinningForContextAction() {
-    if (!this._contextAction) {
-      return;
-    }
-    let action = this._contextAction;
-    this._contextAction = null;
-
-    action.pinnedToUrlbar = !action.pinnedToUrlbar;
-    BrowserUsageTelemetry.recordWidgetChange(
-      action.id,
-      action.pinnedToUrlbar ? "page-action-buttons" : null,
-      "pageaction-context"
-    );
   },
 
   /**

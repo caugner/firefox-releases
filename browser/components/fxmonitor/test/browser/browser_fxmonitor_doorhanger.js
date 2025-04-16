@@ -50,6 +50,36 @@ async function clearWarnedHosts() {
   });
 }
 
+add_task(async function setup() {
+  // This test used to rely on the initial timer of
+  // TestUtils.waitForCondition. See bug 1700683.
+  let originalWaitForCondition = TestUtils.waitForCondition;
+  TestUtils.waitForCondition = async function(
+    condition,
+    msg,
+    interval = 100,
+    maxTries = 50
+  ) {
+    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    return originalWaitForCondition(condition, msg, interval, maxTries);
+  };
+  registerCleanupFunction(function() {
+    TestUtils.waitForCondition = originalWaitForCondition;
+  });
+
+  // Disable Proton. The Firefox Monitor doorhanger is disabled with Proton
+  // enabled, so most of these tests won't work in that configuration. We are,
+  // however, keeping these tests around for now until Proton ships.
+  //
+  // There is a test later in this file that checks that the panel doesn't appear
+  // with Proton enabled.
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.proton.doorhangers.enabled", false]],
+  });
+});
+
 add_task(async function test_main_flow() {
   info("Test that we show the first alert correctly for a recent breach.");
 

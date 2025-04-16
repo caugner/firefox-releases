@@ -171,6 +171,11 @@ pub mod desc {
                 kind: VertexAttributeKind::F32,
             },
             VertexAttribute {
+                name: "aScale",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
                 name: "aStartRadius",
                 count: 1,
                 kind: VertexAttributeKind::F32,
@@ -212,6 +217,11 @@ pub mod desc {
             },
             VertexAttribute {
                 name: "aCenter",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aScale",
                 count: 2,
                 kind: VertexAttributeKind::F32,
             },

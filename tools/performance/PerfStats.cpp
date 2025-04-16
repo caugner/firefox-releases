@@ -20,13 +20,14 @@ using namespace mozilla::gfx;
 
 namespace mozilla {
 
-static const char* const sMetricNames[] = {"DisplayList Building",
+static const char* const sMetricNames[] = {"DisplayListBuilding",
                                            "Rasterizing",
                                            "LayerBuilding",
-                                           "Layer Transactions",
+                                           "LayerTransactions",
                                            "Compositing",
                                            "Reflowing",
                                            "Styling",
+                                           "HttpChannelCompletion",
                                            "HttpChannelCompletion_Network",
                                            "HttpChannelCompletion_Cache"};
 
@@ -135,9 +136,8 @@ struct PerfStatsCollector {
         aParent->ManagedPBrowserParent();
 
     writer.StartArrayProperty("urls");
-    for (auto iter = browsers.ConstIter(); !iter.Done(); iter.Next()) {
-      RefPtr<BrowserParent> parent =
-          BrowserParent::GetFrom(iter.Get()->GetKey());
+    for (const auto& key : browsers) {
+      RefPtr<BrowserParent> parent = BrowserParent::GetFrom(key);
 
       CanonicalBrowsingContext* ctx = parent->GetBrowsingContext();
       if (!ctx) {

@@ -118,6 +118,17 @@ var Policies = {
     },
   },
 
+  AllowedDomainsForApps: {
+    onBeforeAddons(manager, param) {
+      Services.obs.addObserver(function(subject, topic, data) {
+        let channel = subject.QueryInterface(Ci.nsIHttpChannel);
+        if (channel.URI.host.endsWith(".google.com")) {
+          channel.setRequestHeader("X-GoogApps-Allowed-Domains", param, true);
+        }
+      }, "http-on-modify-request");
+    },
+  },
+
   AppAutoUpdate: {
     onBeforeUIStartup(manager, param) {
       // Logic feels a bit reversed here, but it's correct. If AppAutoUpdate is
@@ -428,6 +439,11 @@ var Policies = {
 
         setDefaultPref(
           "network.cookie.cookieBehavior",
+          newCookieBehavior,
+          param.Locked
+        );
+        setDefaultPref(
+          "network.cookie.cookieBehavior.pbmode",
           newCookieBehavior,
           param.Locked
         );
@@ -1514,7 +1530,9 @@ var Policies = {
         "general.autoScroll",
         "general.smoothScroll",
         "geo.",
+        "gfx.",
         "intl.",
+        "layers.",
         "layout.",
         "media.",
         "network.",

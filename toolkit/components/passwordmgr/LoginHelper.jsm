@@ -371,6 +371,8 @@ this.LoginHelper = {
   privateBrowsingCaptureEnabled: null,
   remoteRecipesEnabled: null,
   remoteRecipesCollection: "password-recipes",
+  relatedRealmsEnabled: null,
+  relatedRealmsCollection: "websites-with-shared-credential-backends",
   schemeUpgrades: null,
   showAutoCompleteFooter: null,
   showAutoCompleteImport: null,
@@ -468,7 +470,10 @@ this.LoginHelper = {
       "signon.userInputRequiredToCapture.enabled"
     );
     this.remoteRecipesEnabled = Services.prefs.getBoolPref(
-      "signon.recipes.remoteRecipesEnabled"
+      "signon.recipes.remoteRecipes.enabled"
+    );
+    this.relatedRealmsEnabled = Services.prefs.getBoolPref(
+      "signon.relatedRealms.enabled"
     );
   },
 
@@ -682,6 +687,8 @@ this.LoginHelper = {
       schemeUpgrades: false,
       acceptWildcardMatch: false,
       acceptDifferentSubdomains: false,
+      acceptRelatedRealms: false,
+      relatedRealms: [],
     }
   ) {
     if (aLoginOrigin == aSearchOrigin) {
@@ -717,6 +724,18 @@ this.LoginHelper = {
             (aOptions.schemeUpgrades && schemeMatches))
         ) {
           return true;
+        }
+        if (
+          aOptions.acceptRelatedRealms &&
+          aOptions.relatedRealms.length &&
+          (loginURI.scheme == searchURI.scheme ||
+            (aOptions.schemeUpgrades && schemeMatches))
+        ) {
+          for (let relatedOrigin of aOptions.relatedRealms) {
+            if (Services.eTLD.hasRootDomain(loginURI.host, relatedOrigin)) {
+              return true;
+            }
+          }
         }
       }
 
@@ -1302,6 +1321,99 @@ this.LoginHelper = {
       return false;
     }
     return true;
+  },
+
+  /**
+   * Infer whether an input field is a username field by searching
+   * 'username' keyword in its attributes
+   *
+   * @param {Element} element
+   *                  the field we want to check.
+   *
+   * @returns {boolean} True if any of the rules matches
+   */
+  isInferredUsernameField(element) {
+    const expr = /username/i;
+
+    let ac = element.getAutocompleteInfo()?.fieldName;
+    if (ac && ac == "username") {
+      return true;
+    }
+
+    if (
+      this._elementAttrsMatchRegex(element, expr) ||
+      this._hasLabelMatchingRegex(element, expr)
+    ) {
+      return true;
+    }
+
+    return false;
+  },
+
+  /**
+   * Infer whether an input field is an email field by searching
+   * 'email' keyword in its attributes.
+   *
+   * @param {Element} element
+   *                  the field we want to check.
+   *
+   * @returns {boolean} True if any of the rules matches
+   */
+  isInferredEmailField(element) {
+    const expr = /email/i;
+
+    if (element.type == "email") {
+      return true;
+    }
+
+    let ac = element.getAutocompleteInfo()?.fieldName;
+    if (ac && ac == "email") {
+      return true;
+    }
+
+    if (
+      this._elementAttrsMatchRegex(element, expr) ||
+      this._hasLabelMatchingRegex(element, expr)
+    ) {
+      return true;
+    }
+
+    return false;
+  },
+
+  /**
+   * Test whether the element has the keyword in its attributes.
+   * The tested attributes include id, name, className, and placeholder.
+   */
+  _elementAttrsMatchRegex(element, regex) {
+    if (
+      regex.test(element.id) ||
+      regex.test(element.name) ||
+      regex.test(element.className)
+    ) {
+      return true;
+    }
+
+    let placeholder = element.getAttribute("placeholder");
+    if (placeholder && regex.test(placeholder)) {
+      return true;
+    }
+    return false;
+  },
+
+  /**
+   * Test whether associated labels of the element have the keyword.
+   * This is a simplified rule of hasLabelMatchingRegex in NewPasswordModel.jsm
+   * Consider changing it if this is not good enough.
+   */
+  _hasLabelMatchingRegex(element, regex) {
+    if (element.labels !== null && element.labels.length) {
+      if (regex.test(element.labels[0].textContent)) {
+        return true;
+      }
+    }
+
+    return false;
   },
 
   /**

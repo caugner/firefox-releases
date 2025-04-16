@@ -129,6 +129,8 @@ nsMenuPopupFrame::nsMenuPopupFrame(ComputedStyle* aStyle,
       Preferences::GetBool("ui.panel.default_level_parent", false);
 }  // ctor
 
+nsMenuPopupFrame::~nsMenuPopupFrame() = default;
+
 void nsMenuPopupFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
                             nsIFrame* aPrevInFlow) {
   nsBoxFrame::Init(aContent, aParent, aPrevInFlow);
@@ -313,9 +315,13 @@ nsresult nsMenuPopupFrame::CreateWidgetForView(nsView* aView) {
     tag = parentContent->NodeInfo()->NameAtom();
   widgetData.mHasRemoteContent = remote;
   widgetData.mSupportTranslucency = mode == eTransparencyTransparent;
-  widgetData.mDropShadow =
-      !(mode == eTransparencyTransparent || tag == nsGkAtoms::menulist);
   widgetData.mPopupLevel = PopupLevel(widgetData.mNoAutoHide);
+
+  // The special cases are menulists and handling the Windows 10
+  // drop-shadow on menus with rounded borders.
+  widgetData.mDropShadow =
+      !(mode == eTransparencyTransparent || tag == nsGkAtoms::menulist) ||
+      StyleUIReset()->mWindowShadow == StyleWindowShadow::Cliprounded;
 
   // panels which have a parent level need a parent widget. This allows them to
   // always appear in front of the parent window but behind other windows that
@@ -488,7 +494,7 @@ void nsMenuPopupFrame::DidSetComputedStyle(ComputedStyle* aOldStyle) {
 
 void nsMenuPopupFrame::LayoutPopup(nsBoxLayoutState& aState,
                                    nsIFrame* aParentMenu, bool aSizedToPopup) {
-  if (IsLeaf()) {
+  if (IsLeaf() || IsNativeMenu()) {
     return;
   }
 
@@ -761,6 +767,7 @@ void nsMenuPopupFrame::InitializePopup(nsIContent* aAnchorContent,
   mXPos = aXPos;
   mYPos = aYPos;
   mAdjustOffsetForContextMenu = false;
+  mIsNativeMenu = false;
   mVFlip = false;
   mHFlip = false;
   mAlignmentOffset = 0;
@@ -899,6 +906,26 @@ void nsMenuPopupFrame::InitializePopupAtScreen(nsIContent* aTriggerContent,
   mPosition = POPUPPOSITION_UNKNOWN;
   mIsContextMenu = aIsContextMenu;
   mAdjustOffsetForContextMenu = aIsContextMenu;
+  mIsNativeMenu = false;
+  mAnchorType = MenuPopupAnchorType_Point;
+  mPositionedOffset = 0;
+}
+
+void nsMenuPopupFrame::InitializePopupAsNativeContextMenu(
+    nsIContent* aTriggerContent, int32_t aXPos, int32_t aYPos) {
+  mTriggerContent = aTriggerContent;
+  mPopupState = ePopupShowing;
+  mAnchorContent = nullptr;
+  mScreenRect = nsIntRect(aXPos, aYPos, 0, 0);
+  mXPos = 0;
+  mYPos = 0;
+  mFlip = FlipType_Default;
+  mPopupAnchor = POPUPALIGNMENT_NONE;
+  mPopupAlignment = POPUPALIGNMENT_NONE;
+  mPosition = POPUPPOSITION_UNKNOWN;
+  mIsContextMenu = true;
+  mAdjustOffsetForContextMenu = true;
+  mIsNativeMenu = true;
   mAnchorType = MenuPopupAnchorType_Point;
   mPositionedOffset = 0;
 }
@@ -953,6 +980,25 @@ void nsMenuPopupFrame::ShowPopup(bool aIsContextMenu) {
   mShouldAutoPosition = true;
 }
 
+void nsMenuPopupFrame::ClearTriggerContentIncludingDocument() {
+  // clear the trigger content if the popup is being closed. But don't clear
+  // it if the popup is just being made invisible as a popuphiding or command
+  if (mTriggerContent) {
+    // if the popup had a trigger node set, clear the global window popup node
+    // as well
+    Document* doc = mContent->GetUncomposedDoc();
+    if (doc) {
+      if (nsPIDOMWindowOuter* win = doc->GetWindow()) {
+        nsCOMPtr<nsPIWindowRoot> root = win->GetTopWindowRoot();
+        if (root) {
+          root->SetPopupNode(nullptr);
+        }
+      }
+    }
+  }
+  mTriggerContent = nullptr;
+}
+
 void nsMenuPopupFrame::HidePopup(bool aDeselectMenu, nsPopupState aNewState) {
   NS_ASSERTION(aNewState == ePopupClosed || aNewState == ePopupInvisible,
                "popup being set to unexpected state");
@@ -964,24 +1010,11 @@ void nsMenuPopupFrame::HidePopup(bool aDeselectMenu, nsPopupState aNewState) {
       mPopupState == ePopupPositioning)
     return;
 
-  // clear the trigger content if the popup is being closed. But don't clear
-  // it if the popup is just being made invisible as a popuphiding or command
-  // event may want to retrieve it.
   if (aNewState == ePopupClosed) {
-    // if the popup had a trigger node set, clear the global window popup node
-    // as well
-    if (mTriggerContent) {
-      Document* doc = mContent->GetUncomposedDoc();
-      if (doc) {
-        if (nsPIDOMWindowOuter* win = doc->GetWindow()) {
-          nsCOMPtr<nsPIWindowRoot> root = win->GetTopWindowRoot();
-          if (root) {
-            root->SetPopupNode(nullptr);
-          }
-        }
-      }
-    }
-    mTriggerContent = nullptr;
+    // clear the trigger content if the popup is being closed. But don't clear
+    // it if the popup is just being made invisible as a popuphiding or command
+    // event may want to retrieve it.
+    ClearTriggerContentIncludingDocument();
     mAnchorContent = nullptr;
   }
 

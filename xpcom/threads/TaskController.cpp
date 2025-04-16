@@ -14,6 +14,7 @@
 #include "mozilla/EventQueue.h"
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/InputTaskManager.h"
+#include "mozilla/VsyncTaskManager.h"
 #include "mozilla/IOInterposer.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/SchedulerGroup.h"
@@ -54,7 +55,7 @@ static int32_t GetPoolThreadCount() {
   return std::min<int32_t>(kMaximumPoolThreadCount, numCores - 1);
 }
 
-#if defined(MOZ_GECKO_PROFILER) && defined(MOZ_COLLECTING_RUNNABLE_TELEMETRY)
+#if defined(MOZ_COLLECTING_RUNNABLE_TELEMETRY)
 #  define AUTO_PROFILE_FOLLOWING_TASK(task)                                  \
     nsAutoCString name;                                                      \
     (task)->GetName(name);                                                   \
@@ -69,7 +70,7 @@ bool TaskManager::
         const MutexAutoLock& aProofOfLock, IterationType aIterationType) {
   mCurrentSuspended = IsSuspended(aProofOfLock);
 
-  if (aIterationType == IterationType::EVENT_LOOP_TURN) {
+  if (aIterationType == IterationType::EVENT_LOOP_TURN && !mCurrentSuspended) {
     int32_t oldModifier = mCurrentPriorityModifier;
     mCurrentPriorityModifier =
         GetPriorityModifierForEventLoopTurn(aProofOfLock);
@@ -128,6 +129,7 @@ static SetThreadDescriptionPtr sSetThreadDescriptionFunc = nullptr;
 
 bool TaskController::InitializeInternal() {
   InputTaskManager::Init();
+  VsyncTaskManager::Init();
   mMTProcessingRunnable = NS_NewRunnableFunction(
       "TaskController::ExecutePendingMTTasks()",
       []() { TaskController::Get()->ProcessPendingMTTask(); });
@@ -171,6 +173,7 @@ void TaskController::SetPerformanceCounterState(
 /* static */
 void TaskController::Shutdown() {
   InputTaskManager::Cleanup();
+  VsyncTaskManager::Cleanup();
   if (sSingleton) {
     sSingleton->ShutdownThreadPoolInternal();
     sSingleton->ShutdownInternal();
@@ -340,9 +343,7 @@ void TaskController::AddTask(already_AddRefed<Task>&& aTask) {
     task->mPriorityModifier = manager->mCurrentPriorityModifier;
   }
 
-#ifdef MOZ_GECKO_PROFILER
   task->mInsertionTime = TimeStamp::Now();
-#endif
 
 #ifdef DEBUG
   task->mIsInGraph = true;
@@ -578,7 +579,7 @@ bool TaskController::HasMainThreadPendingTasks() {
       }
     }
 
-    // Thi would break down if we have a non-suspended task depending on a
+    // This would break down if we have a non-suspended task depending on a
     // suspended task. This is why for the moment we do not allow tasks
     // to be dependent on tasks managed by another taskmanager.
     if (mMainThreadTasks.size() > totalSuspended) {
@@ -655,7 +656,6 @@ bool TaskController::ExecuteNextTaskOnlyMainThreadInternal(
 
 bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
     const MutexAutoLock& aProofOfLock) {
-#ifdef MOZ_GECKO_PROFILER
   nsCOMPtr<nsIThread> mainIThread;
   NS_GetMainThread(getter_AddRefs(mainIThread));
 
@@ -663,7 +663,6 @@ bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
   if (mainThread) {
     mainThread->SetRunningEventDelay(TimeDuration(), TimeStamp());
   }
-#endif
 
   uint32_t totalSuspended = 0;
   for (TaskManager* manager : mTaskManagers) {
@@ -739,7 +738,6 @@ bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
 
         TimeStamp now = TimeStamp::Now();
 
-#ifdef MOZ_GECKO_PROFILER
         if (mainThread) {
           if (task->GetPriority() < uint32_t(EventQueuePriority::InputHigh)) {
             mainThread->SetRunningEventDelay(TimeDuration(), now);
@@ -747,7 +745,6 @@ bool TaskController::DoExecuteNextTaskOnlyMainThreadInternal(
             mainThread->SetRunningEventDelay(now - task->mInsertionTime, now);
           }
         }
-#endif
 
         PerformanceCounterState::Snapshot snapshot =
             mPerformanceCounterState->RunnableWillRun(

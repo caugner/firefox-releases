@@ -506,8 +506,8 @@ nsresult nsHttpHandler::Init() {
     obsService->AddObserver(this, "network:reset-http3-excluded-list", true);
 
     if (!IsNeckoChild()) {
-      obsService->AddObserver(
-          this, "net:current-toplevel-outer-content-windowid", true);
+      obsService->AddObserver(this, "net:current-top-browsing-context-id",
+                              true);
     }
 
     // disabled as its a nop right now
@@ -2277,22 +2277,22 @@ nsHttpHandler::Observe(nsISupports* subject, const char* topic,
              static_cast<uint32_t>(rv)));
       }
     }
-  } else if (!strcmp(topic, "net:current-toplevel-outer-content-windowid")) {
+  } else if (!strcmp(topic, "net:current-top-browsing-context-id")) {
     // The window id will be updated by HttpConnectionMgrParent.
     if (XRE_IsParentProcess()) {
       nsCOMPtr<nsISupportsPRUint64> wrapper = do_QueryInterface(subject);
       MOZ_RELEASE_ASSERT(wrapper);
 
-      uint64_t windowId = 0;
-      wrapper->GetData(&windowId);
-      MOZ_ASSERT(windowId);
+      uint64_t id = 0;
+      wrapper->GetData(&id);
+      MOZ_ASSERT(id);
 
-      static uint64_t sCurrentTopLevelOuterContentWindowId = 0;
-      if (sCurrentTopLevelOuterContentWindowId != windowId) {
-        sCurrentTopLevelOuterContentWindowId = windowId;
+      static uint64_t sCurrentBrowsingContextId = 0;
+      if (sCurrentBrowsingContextId != id) {
+        sCurrentBrowsingContextId = id;
         if (mConnMgr) {
-          mConnMgr->UpdateCurrentTopLevelOuterContentWindowId(
-              sCurrentTopLevelOuterContentWindowId);
+          mConnMgr->UpdateCurrentTopBrowsingContextId(
+              sCurrentBrowsingContextId);
         }
       }
     }
@@ -2675,7 +2675,7 @@ void nsHttpHandler::ExcludeHttp2(const nsHttpConnectionInfo* ci) {
   mConnMgr->ExcludeHttp2(ci);
   if (!mExcludedHttp2Origins.Contains(ci->GetOrigin())) {
     MutexAutoLock lock(mHttpExclusionLock);
-    mExcludedHttp2Origins.PutEntry(ci->GetOrigin());
+    mExcludedHttp2Origins.Insert(ci->GetOrigin());
   }
 }
 
@@ -2687,11 +2687,11 @@ bool nsHttpHandler::IsHttp2Excluded(const nsHttpConnectionInfo* ci) {
 void nsHttpHandler::ExcludeHttp3(const nsHttpConnectionInfo* ci) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
-  mConnMgr->ExcludeHttp3(ci);
   if (!mExcludedHttp3Origins.Contains(ci->GetRoutedHost())) {
     MutexAutoLock lock(mHttpExclusionLock);
-    mExcludedHttp3Origins.PutEntry(ci->GetRoutedHost());
+    mExcludedHttp3Origins.Insert(ci->GetRoutedHost());
   }
+  mConnMgr->ExcludeHttp3(ci);
 }
 
 bool nsHttpHandler::IsHttp3Excluded(const nsACString& aRoutedHost) {
@@ -2869,7 +2869,7 @@ bool nsHttpHandler::UseHTTPSRRForSpeculativeConnection() const {
 void nsHttpHandler::ExcludeHTTPSRRHost(const nsACString& aHost) {
   MOZ_ASSERT(NS_IsMainThread());
 
-  mExcludedHostsForHTTPSRRUpgrade.PutEntry(aHost);
+  mExcludedHostsForHTTPSRRUpgrade.Insert(aHost);
 }
 
 bool nsHttpHandler::IsHostExcludedForHTTPSRR(const nsACString& aHost) {

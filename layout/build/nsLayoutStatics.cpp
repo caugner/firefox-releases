@@ -43,7 +43,6 @@
 #include "nsTextFrame.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsTextFragment.h"
-#include "nsMediaFeatures.h"
 #include "nsCORSListenerProxy.h"
 #include "nsHtml5Module.h"
 #include "nsHTMLTags.h"
@@ -127,6 +126,7 @@
 #include "nsThreadManager.h"
 #include "mozilla/css/ImageLoader.h"
 #include "gfxUserFontSet.h"
+#include "RestoreTabContentObserver.h"
 
 using namespace mozilla;
 using namespace mozilla::net;
@@ -291,6 +291,8 @@ nsresult nsLayoutStatics::Initialize() {
 
   ThirdPartyUtil::Startup();
 
+  RestoreTabContentObserver::Initialize();
+
   return NS_OK;
 }
 
@@ -317,7 +319,6 @@ void nsLayoutStatics::Shutdown() {
   IMEStateManager::Shutdown();
   EditorController::Shutdown();
   HTMLEditorController::Shutdown();
-  nsMediaFeatures::Shutdown();
   HTMLDNSPrefetch::Shutdown();
   nsCSSRendering::Shutdown();
   StaticPresData::Shutdown();
@@ -399,4 +400,6 @@ void nsLayoutStatics::Shutdown() {
   css::ImageLoader::Shutdown();
 
   mozilla::net::UrlClassifierFeatureFactory::Shutdown();
+
+  RestoreTabContentObserver::Shutdown();
 }

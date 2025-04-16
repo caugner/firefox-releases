@@ -88,6 +88,9 @@ const TEST_GLOBAL = {
   AppConstants: {
     MOZILLA_OFFICIAL: true,
     MOZ_APP_VERSION: "69.0a1",
+    isPlatformAndVersionAtMost() {
+      return false;
+    },
     platform: "win",
   },
   UpdateUtils: { getUpdateChannel() {} },
@@ -200,6 +203,9 @@ const TEST_GLOBAL = {
     importGlobalProperties() {},
     now: () => window.performance.now(),
     reportError() {},
+    cloneInto: a => {
+      return a;
+    },
   },
   dump() {},
   EveryWindow: {
@@ -209,6 +215,11 @@ const TEST_GLOBAL = {
   fetch() {},
   // eslint-disable-next-line object-shorthand
   Image: function() {}, // NB: This is a function/constructor
+  IOUtils: {
+    writeJSON() {
+      return Promise.resolve(0);
+    },
+  },
   NewTabUtils: {
     activityStreamProvider: {
       getTopFrecentSites: () => [],
@@ -235,6 +246,17 @@ const TEST_GLOBAL = {
       Path: {
         localProfileDir: "/",
       },
+    },
+  },
+  PathUtils: {
+    join(...parts) {
+      return parts[parts.length - 1];
+    },
+    getProfileDir() {
+      return Promise.resolve("/");
+    },
+    getLocalProfileDir() {
+      return Promise.resolve("/");
     },
   },
   PlacesUtils: {
@@ -417,7 +439,10 @@ const TEST_GLOBAL = {
     },
   },
   EventEmitter,
-  ShellService: { isDefaultBrowser: () => true },
+  ShellService: {
+    doesAppNeedPin: () => false,
+    isDefaultBrowser: () => true,
+  },
   FilterExpressions: {
     eval() {
       return Promise.resolve(false);
@@ -429,6 +454,9 @@ const TEST_GLOBAL = {
       return Promise.resolve(
         stringsIds.map(({ id, args }) => ({ value: { string_id: id, args } }))
       );
+    }
+    async formatValue(stringId) {
+      return Promise.resolve(stringId);
     }
   },
   FxAccountsConfig: {

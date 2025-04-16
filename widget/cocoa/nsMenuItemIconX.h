@@ -10,6 +10,8 @@
 #ifndef nsMenuItemIconX_h_
 #define nsMenuItemIconX_h_
 
+#import <Cocoa/Cocoa.h>
+
 #include "mozilla/widget/IconLoader.h"
 
 class nsIconLoaderService;
@@ -17,18 +19,24 @@ class nsIURI;
 class nsIContent;
 class nsIPrincipal;
 class imgRequestProxy;
-class nsMenuObjectX;
+class nsMenuParentX;
 
-#import <Cocoa/Cocoa.h>
+namespace mozilla {
+class ComputedStyle;
+}
 
 class nsMenuItemIconX final : public mozilla::widget::IconLoader::Listener {
  public:
-  explicit nsMenuItemIconX(nsMenuObjectX* aMenuItem);
+  class Listener {
+   public:
+    virtual void IconUpdated() = 0;
+  };
+
+  explicit nsMenuItemIconX(Listener* aListener);
   ~nsMenuItemIconX();
 
- public:
   // SetupIcon starts the icon load. Once the icon has loaded,
-  // nsMenuObjectX::IconUpdated will be called. The icon image needs to be
+  // nsMenuParentX::IconUpdated will be called. The icon image needs to be
   // retrieved from GetIconImage(). If aContent is an icon-less menuitem,
   // GetIconImage() will return nil. If it does have an icon, GetIconImage()
   // will return a transparent placeholder icon during the load and the actual
@@ -51,8 +59,9 @@ class nsMenuItemIconX final : public mozilla::widget::IconLoader::Listener {
   already_AddRefed<nsIURI> GetIconURI(nsIContent* aContent);
 
   nsCOMPtr<nsIContent> mContent;  // always non-null
-  nsMenuObjectX* mMenuObject;     // [weak]
+  Listener* mListener;            // [weak]
   nsIntRect mImageRegionRect;
+  RefPtr<mozilla::ComputedStyle> mComputedStyle;
   NSImage* mIconImage = nil;  // [strong]
   RefPtr<mozilla::widget::IconLoader> mIconLoader;
 };

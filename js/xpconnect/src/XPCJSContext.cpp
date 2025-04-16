@@ -42,6 +42,7 @@
 #include "js/ContextOptions.h"
 #include "js/MemoryMetrics.h"
 #include "js/OffThreadScriptCompilation.h"
+#include "js/WasmFeatures.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/Element.h"
@@ -53,6 +54,7 @@
 #include "mozilla/ProcessHangMonitor.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/SystemPrincipal.h"
+#include "mozilla/TaskController.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/Unused.h"
@@ -579,18 +581,18 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
   // Now is a good time to turn on profiling if it's pending.
   PROFILER_JS_INTERRUPT_CALLBACK();
 
-#ifdef MOZ_GECKO_PROFILER
-  nsDependentCString filename("unknown file");
-  JS::AutoFilename scriptFilename;
-  // Computing the line number can be very expensive (see bug 1330231 for
-  // example), so don't request it here.
-  if (JS::DescribeScriptedCaller(cx, &scriptFilename)) {
-    if (const char* file = scriptFilename.get()) {
-      filename.Assign(file, strlen(file));
+  if (profiler_can_accept_markers()) {
+    nsDependentCString filename("unknown file");
+    JS::AutoFilename scriptFilename;
+    // Computing the line number can be very expensive (see bug 1330231 for
+    // example), so don't request it here.
+    if (JS::DescribeScriptedCaller(cx, &scriptFilename)) {
+      if (const char* file = scriptFilename.get()) {
+        filename.Assign(file, strlen(file));
+      }
+      PROFILER_MARKER_TEXT("JS::InterruptCallback", JS, {}, filename);
     }
-    PROFILER_MARKER_TEXT("JS::InterruptCallback", JS, {}, filename);
   }
-#endif
 
   // Normally we record mSlowScriptCheckpoint when we start to process an
   // event. However, we can run JS outside of event handlers. This code takes
@@ -738,31 +740,6 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
     }
     return false;
   }
-  if (response == nsGlobalWindowInner::KillScriptGlobal) {
-    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-
-    if (!IsSandbox(global) || !obs) {
-      return false;
-    }
-
-    // Notify the extensions framework that the sandbox should be killed.
-    nsIXPConnect* xpc = nsContentUtils::XPConnect();
-    JS::RootedObject wrapper(cx, JS_NewPlainObject(cx));
-    nsCOMPtr<nsISupports> supports;
-
-    // Store the sandbox object on the wrappedJSObject property of the
-    // subject so that JS recipients can access the JS value directly.
-    if (!wrapper ||
-        !JS_DefineProperty(cx, wrapper, "wrappedJSObject", global,
-                           JSPROP_ENUMERATE) ||
-        NS_FAILED(xpc->WrapJS(cx, wrapper, NS_GET_IID(nsISupports),
-                              getter_AddRefs(supports)))) {
-      return false;
-    }
-
-    obs->NotifyObservers(supports, "kill-content-script-sandbox", nullptr);
-    return false;
-  }
 
   // The user chose to continue the script. Reset the timer, and disable this
   // machinery with a pref if the user opted out of future slow-script dialogs.
@@ -885,6 +862,10 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
       cx, JSJITCOMPILER_ION_FREQUENT_BAILOUT_THRESHOLD,
       StaticPrefs::
           javascript_options_ion_frequent_bailout_threshold_DoNotUseDirectly());
+  JS_SetGlobalJitCompilerOption(
+      cx, JSJITCOMPILER_INLINING_BYTECODE_MAX_LENGTH,
+      StaticPrefs::
+          javascript_options_inlining_bytecode_max_length_DoNotUseDirectly());
 
 #ifdef DEBUG
   JS_SetGlobalJitCompilerOption(
@@ -934,28 +915,15 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_trustedprincipals");
   bool useWasmOptimizing =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_optimizingjit");
-#ifdef ENABLE_WASM_CRANELIFT
-  // Cranelift->Ion transition.  When we land for phase 2, this goes away.
-  bool forceWasmIon = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_force_ion");
-#endif
   bool useWasmBaseline =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_baselinejit");
-  bool useWasmReftypes =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_reftypes");
-#ifdef ENABLE_WASM_FUNCTION_REFERENCES
-  bool useWasmFunctionReferences =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_function_references");
-#endif
-#ifdef ENABLE_WASM_GC
-  bool useWasmGc = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_gc");
-#endif
-#ifdef ENABLE_WASM_MULTI_VALUE
-  bool useWasmMultiValue =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_multi_value");
-#endif
-#ifdef ENABLE_WASM_SIMD
-  bool useWasmSimd = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_simd");
-#endif
+
+#define WASM_FEATURE(NAME, LOWER_NAME, COMPILE_PRED, COMPILER_PRED, FLAG_PRED, \
+                     SHELL, PREF)                                              \
+  bool useWasm##NAME = Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_" PREF);
+  JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE)
+#undef WASM_FEATURE
+
 #ifdef ENABLE_WASM_SIMD_WORMHOLE
   bool useWasmSimdWormhole = false;
 #  ifdef EARLY_BETA_OR_EARLIER
@@ -996,6 +964,9 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
   sWeakRefsExposeCleanupSome = Preferences::GetBool(
       JS_OPTIONS_DOT_STR "experimental.weakrefs.expose_cleanupSome");
 
+  bool topLevelAwaitEnabled =
+      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.top_level_await");
+
   // Require private fields disabled outside of nightly.
   bool privateFieldsEnabled = false;
   bool privateMethodsEnabled = false;
@@ -1006,13 +977,6 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_fields");
   privateMethodsEnabled =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_methods");
-#endif
-
-  // Require top level await disabled outside of nightly.
-  bool topLevelAwaitEnabled = false;
-#ifdef NIGHTLY_BUILD
-  topLevelAwaitEnabled =
-      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.top_level_await");
 #endif
 
 #ifdef JS_GC_ZEAL
@@ -1036,26 +1000,16 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       .setWasm(useWasm)
       .setWasmForTrustedPrinciples(useWasmTrustedPrincipals)
 #ifdef ENABLE_WASM_CRANELIFT
-      // Cranelift->Ion transition
-      .setWasmCranelift(useWasmOptimizing && !forceWasmIon)
-      .setWasmIon(useWasmOptimizing && forceWasmIon)
+      .setWasmCranelift(useWasmOptimizing)
+      .setWasmIon(false)
 #else
+      .setWasmCranelift(false)
       .setWasmIon(useWasmOptimizing)
 #endif
       .setWasmBaseline(useWasmBaseline)
-      .setWasmReftypes(useWasmReftypes)
-#ifdef ENABLE_WASM_FUNCTION_REFERENCES
-      .setWasmFunctionReferences(useWasmFunctionReferences)
-#endif
-#ifdef ENABLE_WASM_GC
-      .setWasmGc(useWasmGc)
-#endif
-#ifdef ENABLE_WASM_MULTI_VALUE
-      .setWasmMultiValue(useWasmMultiValue)
-#endif
-#ifdef ENABLE_WASM_SIMD
-      .setWasmSimd(useWasmSimd)
-#endif
+#define WASM_FEATURE(NAME, ...) .setWasm##NAME(useWasm##NAME)
+          JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE)
+#undef WASM_FEATURE
 #ifdef ENABLE_WASM_SIMD_WORMHOLE
       .setWasmSimdWormhole(useWasmSimdWormhole)
 #endif
@@ -1190,7 +1144,32 @@ CycleCollectedJSRuntime* XPCJSContext::CreateRuntime(JSContext* aCx) {
   return new XPCJSRuntime(aCx);
 }
 
+class HelperThreadTaskHandler : public Task {
+ public:
+  bool Run() override {
+    mOffThreadTask->runTask();
+    mOffThreadTask.reset();
+    return true;
+  }
+  explicit HelperThreadTaskHandler(js::UniquePtr<RunnableTask> task)
+      // TODO: priority should be updated in Bug 1703185.
+      : Task(false, EventQueuePriority::Normal),
+        mOffThreadTask(std::move(task)) {}
+
+ private:
+  ~HelperThreadTaskHandler() = default;
+  js::UniquePtr<RunnableTask> mOffThreadTask;
+};
+
+bool DispatchOffThreadTask(js::UniquePtr<RunnableTask> task) {
+  TaskController::Get()->AddTask(
+      MakeAndAddRef<HelperThreadTaskHandler>(std::move(task)));
+  return true;
+}
+
 nsresult XPCJSContext::Initialize() {
+  SetHelperThreadTaskCallback(&DispatchOffThreadTask);
+
   nsresult rv =
       CycleCollectedJSContext::Initialize(nullptr, JS::DefaultHeapMaxBytes);
   if (NS_WARN_IF(NS_FAILED(rv))) {

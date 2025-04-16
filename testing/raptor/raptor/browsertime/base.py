@@ -187,6 +187,16 @@ class Browsertime(Perftest):
                 "--browsertime.background_app",
                 test.get("background_app", "false"),
             ]
+        elif test.get("type", "") == "benchmark":
+            browsertime_script = [
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "..",
+                    "browsertime",
+                    "browsertime_benchmark.js",
+                )
+            ]
         else:
             browsertime_script = [
                 os.path.join(
@@ -289,7 +299,7 @@ class Browsertime(Perftest):
             browsertime_options.extend(["--video", "false", "--visualMetrics", "false"])
 
         # have browsertime use our newly-created conditioned-profile path
-        if self.using_condprof:
+        if self.config.get("conditioned_profile"):
             self.profile.profile = self.conditioned_profile_dir
 
         if self.config["gecko_profile"]:
@@ -359,20 +369,6 @@ class Browsertime(Perftest):
         # this will be used for btime --timeouts.pageLoad
         cmd = self._compose_cmd(test, timeout)
 
-        if test.get("type", "") == "benchmark":
-            cmd.extend(
-                [
-                    "--script",
-                    os.path.join(
-                        os.path.dirname(__file__),
-                        "..",
-                        "..",
-                        "browsertime",
-                        "browsertime_benchmark.js",
-                    ),
-                ]
-            )
-
         if test.get("type", "") == "scenario":
             # Change the timeout for scenarios since they
             # don't output much for a long period of time
@@ -433,6 +429,7 @@ class Browsertime(Perftest):
                 self.vismet_failed = False
 
                 def _vismet_line_handler(line):
+                    line = line.decode("utf-8")
                     LOG.info(line)
                     if "FAIL" in line:
                         self.vismet_failed = True
@@ -448,7 +445,9 @@ class Browsertime(Perftest):
                 if self.vismet_failed:
                     raise Exception(
                         "Browsertime visual metrics dependencies were not "
-                        "installed correctly."
+                        "installed correctly. Try removing the virtual environment at "
+                        "%s before running your command again."
+                        % os.environ["VIRTUAL_ENV"]
                     )
 
             proc = self.process_handler(cmd, processOutputLine=_line_handler, env=env)

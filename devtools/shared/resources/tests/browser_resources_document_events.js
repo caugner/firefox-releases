@@ -21,7 +21,7 @@ async function testDocumentEventResources() {
   const tab = await addTab("data:text/html,Document Events");
 
   const listener = new ResourceListener();
-  const { client, resourceWatcher, targetList } = await initResourceWatcher(
+  const { client, resourceWatcher, targetCommand } = await initResourceWatcher(
     tab
   );
 
@@ -39,6 +39,12 @@ async function testDocumentEventResources() {
     true,
     "Document events are fired even when the document was already loaded"
   );
+  let domLoadingResource = await onLoadingAtInit;
+  is(
+    domLoadingResource.shouldBeIgnoredAsRedundantWithTargetAvailable,
+    true,
+    "shouldBeIgnoredAsRedundantWithTargetAvailable is true for already loaded page"
+  );
 
   info("Check whether the document events are fired correctly when reloading");
   const onLoadingAtReloaded = listener.once("dom-loading");
@@ -52,7 +58,14 @@ async function testDocumentEventResources() {
   );
   ok(true, "Document events are fired after reloading");
 
-  targetList.destroy();
+  domLoadingResource = await onLoadingAtReloaded;
+  is(
+    domLoadingResource.shouldBeIgnoredAsRedundantWithTargetAvailable,
+    undefined,
+    "shouldBeIgnoredAsRedundantWithTargetAvailable is not set after reloading"
+  );
+
+  targetCommand.destroy();
   await client.close();
 }
 
@@ -61,7 +74,7 @@ async function testDocumentEventResourcesWithIgnoreExistingResources() {
 
   const tab = await addTab("data:text/html,Document Events");
 
-  const { client, resourceWatcher, targetList } = await initResourceWatcher(
+  const { client, resourceWatcher, targetCommand } = await initResourceWatcher(
     tab
   );
 
@@ -79,7 +92,7 @@ async function testDocumentEventResourcesWithIgnoreExistingResources() {
   await waitUntil(() => documentEvents.length === 3);
   assertEvents(...documentEvents);
 
-  targetList.destroy();
+  targetCommand.destroy();
   await client.close();
 }
 

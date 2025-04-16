@@ -73,6 +73,7 @@ class BrowserBridgeChild;
 class RemoteBrowser;
 struct RemotenessOptions;
 struct RemotenessChangeOptions;
+class SessionStoreChangeListener;
 
 namespace ipc {
 class StructuredCloneData;
@@ -222,22 +223,17 @@ class nsFrameLoader final : public nsStubMutationObserver,
 
   void RequestUpdatePosition(mozilla::ErrorResult& aRv);
 
-  bool RequestTabStateFlush(uint32_t aFlushId, bool aIsFinal = false);
+  already_AddRefed<Promise> RequestTabStateFlush(mozilla::ErrorResult& aRv);
 
   void RequestEpochUpdate(uint32_t aEpoch);
 
   void RequestSHistoryUpdate(bool aImmediately = false);
 
-  already_AddRefed<Promise> PrintPreview(
-      nsIPrintSettings* aPrintSettings,
-      const mozilla::dom::Optional<uint64_t>& aSourceOuterWindowID,
-      mozilla::ErrorResult& aRv);
+  already_AddRefed<Promise> PrintPreview(nsIPrintSettings* aPrintSettings,
+                                         BrowsingContext* aSourceBC,
+                                         mozilla::ErrorResult& aRv);
 
   void ExitPrintPreview();
-
-  already_AddRefed<Promise> Print(uint64_t aOuterWindowID,
-                                  nsIPrintSettings* aPrintSettings,
-                                  mozilla::ErrorResult& aRv);
 
   void StartPersistence(BrowsingContext* aContext,
                         nsIWebBrowserPersistDocumentReceiver* aRecv,
@@ -493,6 +489,8 @@ class nsFrameLoader final : public nsStubMutationObserver,
   // browsing context for a newly opened tab/window is ready.
   void InvokeBrowsingContextReadyCallback();
 
+  void RequestTabStateFlush();
+
   RefPtr<mozilla::dom::BrowsingContext> mPendingBrowsingContext;
   nsCOMPtr<nsIURI> mURIToLoad;
   nsCOMPtr<nsIPrincipal> mTriggeringPrincipal;
@@ -528,6 +526,8 @@ class nsFrameLoader final : public nsStubMutationObserver,
   mozilla::ScreenIntSize mLazySize;
 
   RefPtr<mozilla::dom::TabListener> mSessionStoreListener;
+
+  RefPtr<mozilla::dom::SessionStoreChangeListener> mSessionStoreChangeListener;
 
   nsCString mRemoteType;
 

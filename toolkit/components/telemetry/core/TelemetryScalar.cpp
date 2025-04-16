@@ -1140,8 +1140,7 @@ ScalarResult KeyedScalar::GetScalarForKey(const StaticMutexAutoLock& locker,
 
 size_t KeyedScalar::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) {
   size_t n = aMallocSizeOf(this);
-  for (auto iter = mScalarKeys.ConstIter(); !iter.Done(); iter.Next()) {
-    ScalarBase* scalar = iter.UserData();
+  for (const auto& scalar : mScalarKeys.Values()) {
     n += scalar->SizeOfIncludingThis(aMallocSizeOf);
   }
   return n;
@@ -3558,11 +3557,8 @@ size_t TelemetryScalar::GetScalarSizesOfIncludingThis(
 
   auto getSizeOf = [aMallocSizeOf](auto& storageMap) {
     size_t partial = 0;
-    for (auto iter = storageMap.ConstIter(); !iter.Done(); iter.Next()) {
-      auto scalarStorage = iter.UserData();
-      for (auto childIter = scalarStorage->ConstIter(); !childIter.Done();
-           childIter.Next()) {
-        auto scalar = childIter.UserData();
+    for (const auto& scalarStorage : storageMap.Values()) {
+      for (const auto& scalar : scalarStorage->Values()) {
         partial += scalar->SizeOfIncludingThis(aMallocSizeOf);
       }
     }
@@ -3744,7 +3740,7 @@ nsresult TelemetryScalar::GetAllStores(StringHashSet& set) {
     const char* name = &gScalarsStringTable[storeIdx];
     nsAutoCString store;
     store.AssignASCII(name);
-    if (!set.PutEntry(store)) {
+    if (!set.Insert(store, mozilla::fallible)) {
       return NS_ERROR_FAILURE;
     }
   }
@@ -3753,7 +3749,7 @@ nsresult TelemetryScalar::GetAllStores(StringHashSet& set) {
   for (auto& ptr : *gDynamicStoreNames) {
     nsAutoCString store;
     ptr->ToUTF8String(store);
-    if (!set.PutEntry(store)) {
+    if (!set.Insert(store, mozilla::fallible)) {
       return NS_ERROR_FAILURE;
     }
   }

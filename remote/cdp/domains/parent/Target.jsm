@@ -52,16 +52,18 @@ class Target extends Domain {
     return { browserContextId: identity.userContextId };
   }
 
-  disposeBrowserContext({ browserContextId }) {
+  disposeBrowserContext(options = {}) {
+    const { browserContextId } = options;
+
     ContextualIdentityService.remove(browserContextId);
     ContextualIdentityService.closeContainerTabs(browserContextId);
   }
 
   getTargets() {
-    const { targets } = this.session.target;
+    const { targetList } = this.session.target;
 
     const targetInfos = [];
-    for (const target of targets) {
+    for (const target of targetList) {
       if (target instanceof MainProcessTarget) {
         continue;
       }
@@ -72,23 +74,25 @@ class Target extends Domain {
     return { targetInfos };
   }
 
-  setDiscoverTargets({ discover }) {
-    const { targets } = this.session.target;
+  setDiscoverTargets(options = {}) {
+    const { discover } = options;
+    const { targetList } = this.session.target;
     if (discover) {
-      targets.on("target-created", this._onTargetCreated);
-      targets.on("target-destroyed", this._onTargetDestroyed);
+      targetList.on("target-created", this._onTargetCreated);
+      targetList.on("target-destroyed", this._onTargetDestroyed);
     } else {
-      targets.off("target-created", this._onTargetCreated);
-      targets.off("target-destroyed", this._onTargetDestroyed);
+      targetList.off("target-created", this._onTargetCreated);
+      targetList.off("target-destroyed", this._onTargetDestroyed);
     }
-    for (const target of targets) {
+    for (const target of targetList) {
       this._onTargetCreated("target-created", target);
     }
   }
 
-  async createTarget({ browserContextId }) {
-    const { targets } = this.session.target;
-    const onTarget = targets.once("target-created");
+  async createTarget(options = {}) {
+    const { browserContextId } = options;
+    const { targetList } = this.session.target;
+    const onTarget = targetList.once("target-created");
     const tab = TabManager.addTab({ userContextId: browserContextId });
     const target = await onTarget;
     if (tab.linkedBrowser != target.browser) {
@@ -99,9 +103,10 @@ class Target extends Domain {
     return { targetId: target.id };
   }
 
-  closeTarget({ targetId }) {
-    const { targets } = this.session.target;
-    const target = targets.getById(targetId);
+  closeTarget(options = {}) {
+    const { targetId } = options;
+    const { targetList } = this.session.target;
+    const target = targetList.getById(targetId);
 
     if (!target) {
       throw new Error(`Unable to find target with id '${targetId}'`);
@@ -110,9 +115,10 @@ class Target extends Domain {
     TabManager.removeTab(target.tab);
   }
 
-  async activateTarget({ targetId }) {
-    const { targets, window } = this.session.target;
-    const target = targets.getById(targetId);
+  async activateTarget(options = {}) {
+    const { targetId } = options;
+    const { targetList, window } = this.session.target;
+    const target = targetList.getById(targetId);
 
     if (!target) {
       throw new Error(`Unable to find target with id '${targetId}'`);
@@ -123,9 +129,10 @@ class Target extends Domain {
     TabManager.selectTab(target.tab);
   }
 
-  attachToTarget({ targetId }) {
-    const { targets } = this.session.target;
-    const target = targets.getById(targetId);
+  attachToTarget(options = {}) {
+    const { targetId } = options;
+    const { targetList } = this.session.target;
+    const target = targetList.getById(targetId);
 
     if (!target) {
       throw new Error(`Unable to find target with id '${targetId}'`);
@@ -149,7 +156,8 @@ class Target extends Domain {
 
   setAutoAttach() {}
 
-  sendMessageToTarget({ sessionId, message }) {
+  sendMessageToTarget(options = {}) {
+    const { sessionId, message } = options;
     const { connection } = this.session;
     connection.sendMessageToTarget(sessionId, message);
   }

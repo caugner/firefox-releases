@@ -39,6 +39,7 @@ var Startup = Cc["@mozilla.org/devtools/startup-clh;1"].getService(
 const {
   ResourceWatcher,
 } = require("devtools/shared/resources/resource-watcher");
+const { createCommandsDictionary } = require("devtools/shared/commands/index");
 
 const { BrowserLoader } = ChromeUtils.import(
   "resource://devtools/client/shared/browser-loader.js"
@@ -778,11 +779,8 @@ Toolbox.prototype = {
       // It exposes commands modules listed in devtools/shared/commands/index.js
       // which are an abstraction on top of RDP methods.
       // See devtools/shared/commands/README.md
-      this.commands = await this.descriptorFront.getCommands();
-
-      //TODO: complete the renaming of targetList everywhere
-      // But for now, still expose this name on Toolbox
-      this.targetList = this.commands.targetCommand;
+      // Bug 1700909 will make the commands be instantiated by gDevTools instead of the Toolbox.
+      this.commands = await createCommandsDictionary(this.descriptorFront);
 
       this.commands.targetCommand.on(
         "target-thread-wrong-order-on-resume",
@@ -946,7 +944,7 @@ Toolbox.prototype = {
         // Request the actor to restore the focus to the content page once the
         // target is detached. This typically happens when the console closes.
         // We restore the focus as it may have been stolen by the console input.
-        await this.commands.targetCommand.updateConfiguration({
+        await this.commands.targetConfigurationCommand.updateConfiguration({
           restoreFocus: true,
         });
       }
@@ -2081,7 +2079,9 @@ Toolbox.prototype = {
     const pref = "devtools.cache.disabled";
     const cacheDisabled = Services.prefs.getBoolPref(pref);
 
-    await this.commands.targetCommand.updateConfiguration({ cacheDisabled });
+    await this.commands.targetConfigurationCommand.updateConfiguration({
+      cacheDisabled,
+    });
 
     // This event is only emitted for tests in order to know when to reload
     if (flags.testing) {
@@ -2096,7 +2096,7 @@ Toolbox.prototype = {
   _applyServiceWorkersTestingSettings: function() {
     const pref = "devtools.serviceWorkers.testing.enabled";
     const serviceWorkersTestingEnabled = Services.prefs.getBoolPref(pref);
-    this.commands.targetCommand.updateConfiguration({
+    this.commands.targetConfigurationCommand.updateConfiguration({
       serviceWorkersTestingEnabled,
     });
   },
@@ -2107,7 +2107,9 @@ Toolbox.prototype = {
    */
   _applyJavascriptEnabledSettings: function() {
     const javascriptEnabled = this.target._javascriptEnabled;
-    this.commands.targetCommand.updateConfiguration({ javascriptEnabled });
+    this.commands.targetConfigurationCommand.updateConfiguration({
+      javascriptEnabled,
+    });
   },
 
   /**
@@ -2152,7 +2154,7 @@ Toolbox.prototype = {
       this.telemetry.toolClosed("paintflashing", this.sessionId, this);
     }
     this.isPaintFlashing = !this.isPaintFlashing;
-    return this.commands.targetCommand.updateConfiguration({
+    return this.commands.targetConfigurationCommand.updateConfiguration({
       paintFlashing: this.isPaintFlashing,
     });
   },
@@ -3004,11 +3006,12 @@ Toolbox.prototype = {
     this.setErrorCount(0);
     this.updateToolboxButtons();
     const toolId = this.currentToolId;
-    // For now, only inspector, webconsole and netmonitor fire "reloaded" event
+    // For now, only inspector, webconsole, netmonitor and accessibility fire "reloaded" event
     if (
       toolId != "inspector" &&
       toolId != "webconsole" &&
-      toolId != "netmonitor"
+      toolId != "netmonitor" &&
+      toolId != "accessibility"
     ) {
       return;
     }

@@ -31,7 +31,7 @@ InputQueue::~InputQueue() { mQueuedInputs.Clear(); }
 
 APZEventResult InputQueue::ReceiveInputEvent(
     const RefPtr<AsyncPanZoomController>& aTarget,
-    TargetConfirmationFlags aFlags, const InputData& aEvent,
+    TargetConfirmationFlags aFlags, InputData& aEvent,
     const Maybe<nsTArray<TouchBehaviorFlags>>& aTouchBehaviors) {
   APZThreadUtils::AssertOnControllerThread();
 
@@ -59,7 +59,7 @@ APZEventResult InputQueue::ReceiveInputEvent(
     }
 
     case MOUSE_INPUT: {
-      const MouseInput& event = aEvent.AsMouseInput();
+      MouseInput& event = aEvent.AsMouseInput();
       return ReceiveMouseInput(aTarget, aFlags, event);
     }
 
@@ -226,7 +226,7 @@ APZEventResult InputQueue::ReceiveTouchInput(
 
 APZEventResult InputQueue::ReceiveMouseInput(
     const RefPtr<AsyncPanZoomController>& aTarget,
-    TargetConfirmationFlags aFlags, const MouseInput& aEvent) {
+    TargetConfirmationFlags aFlags, MouseInput& aEvent) {
   APZEventResult result(aTarget, aFlags);
 
   // On a new mouse down we can have a new target so we must force a new block
@@ -269,6 +269,15 @@ APZEventResult InputQueue::ReceiveMouseInput(
     mActiveDragBlock = block;
 
     if (aFlags.mHitScrollThumb || !aFlags.mHitScrollbar) {
+      // If we're running autoscroll, we'll always cancel it during the
+      // following call of CancelAnimationsForNewBlock.  At this time,
+      // we don't want to fire `click` event on the web content for web-compat
+      // with Chrome.  Therefore, we notify widget of it with the flag.
+      if ((aEvent.mType == MouseInput::MOUSE_DOWN ||
+           aEvent.mType == MouseInput::MOUSE_UP) &&
+          block->GetOverscrollHandoffChain()->HasAutoscrollApzc()) {
+        aEvent.mPreventClickEvent = true;
+      }
       CancelAnimationsForNewBlock(block);
     }
     MaybeRequestContentResponse(aTarget, block);
@@ -403,6 +412,15 @@ APZEventResult InputQueue::ReceivePanGestureInput(
     return result;
   }
 
+  if (aEvent.mType == PanGestureInput::PANGESTURE_INTERRUPTED) {
+    if (RefPtr<PanGestureBlockState> block = mActivePanGestureBlock.get()) {
+      mQueuedInputs.AppendElement(MakeUnique<QueuedInput>(aEvent, *block));
+      ProcessQueue();
+    }
+    result.SetStatusAsIgnore();
+    return result;
+  }
+
   RefPtr<PanGestureBlockState> block;
   if (aEvent.mType != PanGestureInput::PANGESTURE_START) {
     block = mActivePanGestureBlock.get();
@@ -412,6 +430,15 @@ APZEventResult InputQueue::ReceivePanGestureInput(
   result.SetStatusAsConsumeDoDefault(aTarget);
 
   if (!block || block->WasInterrupted()) {
+    if (event.mType == PanGestureInput::PANGESTURE_MOMENTUMSTART ||
+        event.mType == PanGestureInput::PANGESTURE_MOMENTUMPAN ||
+        event.mType == PanGestureInput::PANGESTURE_MOMENTUMEND) {
+      // If there are momentum events after an interruption, discard them.
+      // However, if there is a non-momentum event (indicating the user
+      // continued scrolling on the touchpad), a new input block is started
+      // by turning the event into a pan-start below.
+      return result;
+    }
     if (event.mType != PanGestureInput::PANGESTURE_START) {
       // Only PANGESTURE_START events are allowed to start a new pan gesture
       // block, but we really want to start a new block here, so we magically
@@ -785,7 +812,8 @@ void InputQueue::ContentReceivedInputBlock(uint64_t aInputBlockId,
                                            bool aPreventDefault) {
   APZThreadUtils::AssertOnControllerThread();
 
-  INPQ_LOG("got a content response; block=%" PRIu64 "\n", aInputBlockId);
+  INPQ_LOG("got a content response; block=%" PRIu64 " preventDefault=%d\n",
+           aInputBlockId, aPreventDefault);
   bool success = false;
   InputBlockState* inputBlock = FindBlockForId(aInputBlockId, nullptr);
   if (inputBlock && inputBlock->AsCancelableBlock()) {
@@ -939,6 +967,8 @@ void InputQueue::ProcessQueue() {
       if (curBlock->ShouldDropEvents()) {
         if (curBlock->AsTouchBlock()) {
           target->ResetTouchInputState();
+        } else if (curBlock->AsPanGestureBlock()) {
+          target->ResetPanGestureInputState();
         }
       } else {
         UpdateActiveApzc(target);

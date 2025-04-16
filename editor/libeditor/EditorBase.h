@@ -273,7 +273,7 @@ class EditorBase : public nsIEditor,
       SelectionType aSelectionType = SelectionType::eNormal) const {
     if (aSelectionType == SelectionType::eNormal &&
         IsEditActionDataAvailable()) {
-      return SelectionRefPtr().get();
+      return &SelectionRef();
     }
     nsISelectionController* sc = GetSelectionController();
     if (!sc) {
@@ -287,6 +287,12 @@ class EditorBase : public nsIEditor,
    * Fast non-refcounting editor root element accessor
    */
   Element* GetRoot() const { return mRootElement; }
+
+  /**
+   * Likewise, but gets the text control element instead of the root for
+   * plaintext editors.
+   */
+  Element* GetExposedRoot() const;
 
   /**
    * Set or unset TextInputListener.  If setting non-nullptr when the editor
@@ -854,7 +860,14 @@ class EditorBase : public nsIEditor,
 #ifdef DEBUG
       mHasCanHandleChecked = true;
 #endif  // #ifdefn DEBUG
-      return mSelection && mEditorBase.IsInitialized();
+      // Don't allow to run new edit action when an edit action caused
+      // destroying the editor while it's being handled.
+      if (mEditAction != EditAction::eInitializing &&
+          mEditorWasDestroyedDuringHandlingEditAction) {
+        NS_WARNING("Editor was destroyed during an edit action being handled");
+        return false;
+      }
+      return IsDataAvailable();
     }
     [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
     CanHandleAndMaybeDispatchBeforeInputEvent() {
@@ -862,6 +875,10 @@ class EditorBase : public nsIEditor,
         return NS_ERROR_NOT_INITIALIZED;
       }
       return MaybeDispatchBeforeInputEvent();
+    }
+
+    [[nodiscard]] bool IsDataAvailable() const {
+      return mSelection && mEditorBase.IsInitialized();
     }
 
     /**
@@ -895,6 +912,16 @@ class EditorBase : public nsIEditor,
     }
 
     /**
+     * MarkAsHandled() is called before dispatching `input` event and notifying
+     * editor observers.  After this is called, any nested edit action become
+     * non illegal case.
+     */
+    void MarkAsHandled() {
+      MOZ_ASSERT(!mHandled);
+      mHandled = true;
+    }
+
+    /**
      * ShouldAlreadyHaveHandledBeforeInputEventDispatching() returns true if the
      * edit action requires to handle "beforeinput" event but not yet dispatched
      * it nor considered as not dispatched it and can dispatch it when this is
@@ -921,11 +948,14 @@ class EditorBase : public nsIEditor,
 
     bool IsCanceled() const { return mBeforeInputEventCanceled; }
 
-    const RefPtr<Selection>& SelectionRefPtr() const {
+    /**
+     * Returns a `Selection` for normal selection.  The lifetime is guaranteed
+     * during alive this instance in the stack.
+     */
+    MOZ_KNOWN_LIVE Selection& SelectionRef() const {
       MOZ_ASSERT(!mSelection ||
                  (mSelection->GetType() == SelectionType::eNormal));
-
-      return mSelection;
+      return *mSelection;
     }
 
     nsIPrincipal* GetPrincipal() const { return mPrincipal; }
@@ -1009,6 +1039,22 @@ class EditorBase : public nsIEditor,
     void Abort() { mAborted = true; }
     bool IsAborted() const { return mAborted; }
 
+    void OnEditorDestroy() {
+      if (!mHandled && mHasTriedToDispatchBeforeInputEvent) {
+        // Remember the editor was destroyed only when this edit action is being
+        // handled because they are caused by mutation event listeners or
+        // something other unexpected event listeners.  In the cases, new child
+        // edit action shouldn't been aborted.
+        mEditorWasDestroyedDuringHandlingEditAction = true;
+      }
+      if (mParentData) {
+        mParentData->OnEditorDestroy();
+      }
+    }
+    bool HasEditorDestroyedDuringHandlingEditAction() const {
+      return mEditorWasDestroyedDuringHandlingEditAction;
+    }
+
     void SetTopLevelEditSubAction(EditSubAction aEditSubAction,
                                   EDirection aDirection = eNone) {
       mTopLevelEditSubAction = aEditSubAction;
@@ -1074,7 +1120,7 @@ class EditorBase : public nsIEditor,
       }
     }
     EditSubAction GetTopLevelEditSubAction() const {
-      MOZ_ASSERT(CanHandle());
+      MOZ_ASSERT(IsDataAvailable());
       return mTopLevelEditSubAction;
     }
     EDirection GetDirectionOfTopLevelEditSubAction() const {
@@ -1131,6 +1177,9 @@ class EditorBase : public nsIEditor,
         // If we're not handling edit action, we don't need to handle
         // "beforeinput" event.
         case EditAction::eNotEditing:
+        // If we're being initialized, we may need to create a padding <br>
+        // element, but it shouldn't cause `beforeinput` event.
+        case EditAction::eInitializing:
         // If raw level transaction API is used, the API user needs to handle
         // both "beforeinput" event and "input" event if it's necessary.
         case EditAction::eUnknown:
@@ -1238,6 +1287,13 @@ class EditorBase : public nsIEditor,
     // Set to true when the edit action handler tries to dispatch a clipboard
     // event.
     bool mHasTriedToDispatchClipboardEvent;
+    // The editor instance may be destroyed once temporarily if `document.write`
+    // etc runs.  In such case, we should mark this flag of being handled
+    // edit action.
+    bool mEditorWasDestroyedDuringHandlingEditAction;
+    // This is set before dispatching `input` event and notifying editor
+    // observers.
+    bool mHandled;
 
 #ifdef DEBUG
     mutable bool mHasCanHandleChecked = false;
@@ -1291,7 +1347,7 @@ class EditorBase : public nsIEditor,
   }
 
   bool IsEditActionDataAvailable() const {
-    return mEditActionData && mEditActionData->CanHandle();
+    return mEditActionData && mEditActionData->IsDataAvailable();
   }
 
   bool IsTopLevelEditSubActionDataAvailable() const {
@@ -1304,19 +1360,17 @@ class EditorBase : public nsIEditor,
   }
 
   /**
-   * SelectionRefPtr() returns cached Selection.  This is pretty faster than
+   * SelectionRef() returns cached normal Selection.  This is pretty faster than
    * EditorBase::GetSelection() if available.
-   * Note that this never returns nullptr unless public methods ignore
-   * result of AutoEditActionDataSetter::CanHandle() and keep handling edit
-   * action but any methods should stop handling edit action if it returns
-   * false.
+   * Note that this never crash unless public methods ignore the result of
+   * AutoEditActionDataSetter::CanHandle() and keep handling edit action but any
+   * methods should stop handling edit action if it returns false.
    */
-  const RefPtr<Selection>& SelectionRefPtr() const {
+  MOZ_KNOWN_LIVE Selection& SelectionRef() const {
     MOZ_ASSERT(mEditActionData);
-    MOZ_ASSERT(mEditActionData->SelectionRefPtr()->GetType() ==
+    MOZ_ASSERT(mEditActionData->SelectionRef().GetType() ==
                SelectionType::eNormal);
-
-    return mEditActionData->SelectionRefPtr();
+    return mEditActionData->SelectionRef();
   }
 
   nsIPrincipal* GetEditActionPrincipal() const {
@@ -1860,12 +1914,6 @@ class EditorBase : public nsIEditor,
    * editors.
    */
   virtual Element* GetEditorRoot() const;
-
-  /**
-   * Likewise, but gets the text control element instead of the root for
-   * plaintext editors.
-   */
-  Element* GetExposedRoot() const;
 
   /**
    * Whether the editor is active on the DOM window.  Note that when this

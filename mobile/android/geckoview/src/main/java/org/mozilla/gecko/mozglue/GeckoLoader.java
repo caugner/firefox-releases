@@ -74,13 +74,15 @@ public final class GeckoLoader {
     }
 
     private static File getTmpDir(final Context context) {
-        final File tmpDir = context.getDir("tmpdir", Context.MODE_PRIVATE);
-        // check if the old tmp dir is there
-        final File oldDir = new File(tmpDir.getParentFile(), "app_tmp");
+        // Old directory
+        // TODO: Bug 1699845 delete this code in Gecko 95
+        final File oldDir = context.getDir("tmpdir", Context.MODE_PRIVATE);
         if (oldDir.exists()) {
             delTree(oldDir);
         }
-        return tmpDir;
+        // It's important that this folder is in the cache directory so users can actually
+        // clear it when it gets too big.
+        return new File(context.getCacheDir(), "gecko_temp");
     }
 
     private static String escapeDoubleQuotes(final String str) {
@@ -116,7 +118,8 @@ public final class GeckoLoader {
                                                           final boolean isChildProcess,
                                                           final String profilePath,
                                                           final Collection<String> env,
-                                                          final Map<String, Object> prefs) {
+                                                          final Map<String, Object> prefs,
+                                                          final boolean xpcshell) {
         for (final String e : env) {
             putenv(e);
         }
@@ -154,12 +157,15 @@ public final class GeckoLoader {
             setupInitialPrefs(prefs);
         }
 
-        // setup the tmp path
-        final File f = getTmpDir(context);
-        if (!f.exists()) {
-            f.mkdirs();
+        // Xpcshell tests set up their own temp directory
+        if (!xpcshell) {
+            // setup the tmp path
+            final File f = getTmpDir(context);
+            if (!f.exists()) {
+                f.mkdirs();
+            }
+            putenv("TMPDIR=" + f.getPath());
         }
-        putenv("TMPDIR=" + f.getPath());
 
         putenv("LANG=" + Locale.getDefault().toString());
 
@@ -494,7 +500,7 @@ public final class GeckoLoader {
     private static native void putenv(String map);
 
     // These methods are implemented in mozglue/android/APKOpen.cpp
-    public static native void nativeRun(String[] args, int prefsFd, int prefMapFd, int ipcFd, int crashFd, int crashAnnotationFd);
+    public static native void nativeRun(String[] args, int prefsFd, int prefMapFd, int ipcFd, int crashFd, int crashAnnotationFd, boolean xpcshell, String outFilePath);
     private static native void loadGeckoLibsNative();
     private static native void loadSQLiteLibsNative();
     private static native void loadNSSLibsNative();

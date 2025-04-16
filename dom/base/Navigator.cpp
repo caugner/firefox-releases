@@ -175,7 +175,6 @@ void Navigator::Invalidate() {
   mMimeTypes = nullptr;
 
   if (mPlugins) {
-    mPlugins->Invalidate();
     mPlugins = nullptr;
   }
 
@@ -483,7 +482,6 @@ nsPluginArray* Navigator::GetPlugins(ErrorResult& aRv) {
       return nullptr;
     }
     mPlugins = new nsPluginArray(mWindow);
-    mPlugins->Init();
   }
 
   return mPlugins;
@@ -513,15 +511,20 @@ StorageManager* Navigator::Storage() {
 }
 
 bool Navigator::CookieEnabled() {
-  bool cookieEnabled = (nsICookieManager::GetCookieBehavior() !=
-                        nsICookieService::BEHAVIOR_REJECT);
-
   // Check whether an exception overrides the global cookie behavior
   // Note that the code for getting the URI here matches that in
   // nsHTMLDocument::SetCookie.
   if (!mWindow || !mWindow->GetDocShell()) {
-    return cookieEnabled;
+    return nsICookieManager::GetCookieBehavior(false) !=
+           nsICookieService::BEHAVIOR_REJECT;
   }
+
+  nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(mWindow);
+  uint32_t cookieBehavior = loadContext
+                                ? nsICookieManager::GetCookieBehavior(
+                                      loadContext->UsePrivateBrowsing())
+                                : nsICookieManager::GetCookieBehavior(false);
+  bool cookieEnabled = cookieBehavior != nsICookieService::BEHAVIOR_REJECT;
 
   nsCOMPtr<Document> doc = mWindow->GetExtantDoc();
   if (!doc) {
@@ -1312,7 +1315,6 @@ void Navigator::MozGetUserMedia(const MediaStreamConstraints& aConstraints,
 }
 
 void Navigator::MozGetUserMediaDevices(
-    const MediaStreamConstraints& aConstraints,
     MozGetUserMediaDevicesSuccessCallback& aOnSuccess,
     NavigatorUserMediaErrorCallback& aOnError, uint64_t aInnerWindowID,
     const nsAString& aCallID, ErrorResult& aRv) {
@@ -1329,8 +1331,8 @@ void Navigator::MozGetUserMediaDevices(
   RefPtr<MediaManager> manager = MediaManager::Get();
   // XXXbz aOnError seems to be unused?
   nsCOMPtr<nsPIDOMWindowInner> window(mWindow);
-  aRv = manager->GetUserMediaDevices(window, aConstraints, aOnSuccess,
-                                     aInnerWindowID, aCallID);
+  aRv =
+      manager->GetUserMediaDevices(window, aOnSuccess, aInnerWindowID, aCallID);
 }
 
 //*****************************************************************************

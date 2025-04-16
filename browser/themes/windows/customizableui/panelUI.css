@@ -3,7 +3,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 %include ../../shared/customizableui/panelUI.inc.css
-%include ../../shared/customizableui/panelUI-custom-colors.inc.css
+
+@media (-moz-proton) {
+#customizationui-widget-panel[viewId="PanelUI-profiler"][type="arrow"][side="top"],
+#customizationui-widget-panel[viewId="PanelUI-profiler"][type="arrow"][side="bottom"] {
+  margin-inline: -13px;
+}
+
+#customizationui-widget-panel[viewId="PanelUI-profiler"][type="arrow"][side="left"],
+#customizationui-widget-panel[viewId="PanelUI-profiler"][type="arrow"][side="right"] {
+  margin-block: -13px;
+}
+} /** END Proton **/
 
 /* bookmark panel submenus */
 
@@ -14,6 +25,25 @@
   padding: 0;
   padding-top: 4px;
   padding-inline-start: 3px;
+}
+
+@media (-moz-proton-contextmenus) {
+@media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
+  /* Prevent the global arrowscrollbox rules from replacing our background. */
+  #BMB_bookmarksPopup::part(arrowscrollbox),
+  #BMB_bookmarksPopup menupopup[placespopup=true]::part(arrowscrollbox) {
+    background-color: var(--arrowpanel-background);
+  }
+
+  /* Override the menupopup shadow rule from windows/global/popup.css */
+  #BMB_bookmarksPopup {
+    -moz-window-shadow: none;
+  }
+
+  #BMB_bookmarksPopup menupopup[placespopup=true] {
+    margin-top: -8px;
+  }
+}
 }
 
 #BMB_bookmarksPopup menupopup[placespopup=true]::part(innerbox) {

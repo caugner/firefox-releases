@@ -11,7 +11,7 @@ login-filter =
 create-login-button = Create New Login
 
 fxaccounts-sign-in-text = Get your passwords on your other devices
-fxaccounts-sign-in-button = Sign in to { -sync-brand-short-name }
+fxaccounts-sign-in-sync-button = Sign in to sync
 fxaccounts-avatar-button =
   .title = Manage account
 
@@ -60,12 +60,12 @@ about-logins-list-item-vulnerable-password-icon =
 
 ## Introduction screen
 
-about-logins-login-intro-heading-logged-out = Looking for your saved logins? Set up { -sync-brand-short-name } or Import Them.
+about-logins-login-intro-heading-logged-out2 = Looking for your saved logins? Turn on sync or import them.
 about-logins-login-intro-heading-logged-in = No synced logins found.
 login-intro-description = If you saved your logins to { -brand-product-name } on a different device, here’s how to get them here:
-login-intro-instruction-fxa = Create or sign in to your { -fxaccount-brand-name } on the device where your logins are saved
-login-intro-instruction-fxa-settings = Make sure you’ve selected the Logins checkbox in { -sync-brand-short-name } Settings
-about-logins-intro-instruction-help = Visit <a data-l10n-name="help-link">{ -lockwise-brand-short-name } Support</a> for more help
+login-intro-instructions-fxa = Create or sign in to your { -fxaccount-brand-name(capitalization: "sentence") } on the device where your logins are saved.
+login-intro-instructions-fxa-settings = Go to Settings > Sync > Turn on syncing… Select the Logins and passwords checkbox.
+login-intro-instructions-fxa-help = Visit <a data-l10n-name="help-link">{ -lockwise-brand-short-name } Support</a> for more help.
 about-logins-intro-import = If your logins are saved in another browser, you can <a data-l10n-name="import-link">import them into { -lockwise-brand-short-name }</a>
 about-logins-intro-import2 = If your logins are saved outside of { -brand-product-name }, you can <a data-l10n-name="import-browser-link">import them from another browser</a> or <a data-l10n-name="import-file-link">from a file</a>
 
@@ -133,24 +133,6 @@ about-logins-primary-password-notification-message = Please enter your Primary P
 master-password-reload-button =
   .label = Log in
   .accesskey = L
-
-## Password Sync notification
-
-enable-password-sync-notification-message =
-  { PLATFORM() ->
-      [windows] Want your logins everywhere you use { -brand-product-name }? Go to your { -sync-brand-short-name } Options and select the Logins checkbox.
-     *[other] Want your logins everywhere you use { -brand-product-name }? Go to your { -sync-brand-short-name } Preferences and select the Logins checkbox.
-  }
-enable-password-sync-preferences-button =
-  .label =
-    { PLATFORM() ->
-        [windows] Visit { -sync-brand-short-name } Options
-       *[other] Visit { -sync-brand-short-name } Preferences
-    }
-  .accesskey = V
-about-logins-enable-password-sync-dont-ask-again-button =
-  .label = Don’t ask me again
-  .accesskey = D
 
 ## Dialogs
 
@@ -309,7 +291,7 @@ about-logins-import-dialog-error-unable-to-read-title = Unable to Parse File
 about-logins-import-dialog-error-unable-to-read-description = Make sure you selected a CSV or TSV file.
 about-logins-import-dialog-error-no-logins-imported = No logins have been imported
 about-logins-import-dialog-error-learn-more = Learn more
-about-logins-import-dialog-error-try-again = Try Again…
+about-logins-import-dialog-error-try-import-again = Try Import Again…
 about-logins-import-dialog-error-cancel = Cancel
 
 about-logins-import-report-title = Import Summary

@@ -467,26 +467,25 @@ bool nsXULElement::HasMenu() {
 }
 
 void nsXULElement::OpenMenu(bool aOpenFlag) {
-  nsMenuFrame* menu = do_QueryFrame(GetPrimaryFrame(FlushType::Frames));
+  // Flush frames first. It's not clear why this is needed, see bug 1704670.
+  if (Document* doc = GetComposedDoc()) {
+    doc->FlushPendingNotifications(FlushType::Frames);
+  }
 
   nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
   if (pm) {
     if (aOpenFlag) {
       // Nothing will happen if this element isn't a menu.
       pm->ShowMenu(this, false, false);
-    } else if (menu) {
-      nsMenuPopupFrame* popupFrame = menu->GetPopup();
-      if (popupFrame) {
-        pm->HidePopup(popupFrame->GetContent(), false, true, false, false);
-      }
+    } else {
+      // Nothing will happen if this element isn't a menu.
+      pm->HideMenu(this);
     }
   }
 }
 
 bool nsXULElement::PerformAccesskey(bool aKeyCausesActivation,
                                     bool aIsTrustedEvent) {
-  RefPtr<Element> element(this);
-
   if (IsXULElement(nsGkAtoms::label)) {
     nsAutoString control;
     GetAttr(kNameSpaceID_None, nsGkAtoms::control, control);
@@ -496,57 +495,63 @@ bool nsXULElement::PerformAccesskey(bool aKeyCausesActivation,
 
     // XXXsmaug Should we use ShadowRoot::GetElementById in case
     //          element is in Shadow DOM?
-    nsCOMPtr<Document> document = element->GetUncomposedDoc();
+    RefPtr<Document> document = GetUncomposedDoc();
     if (!document) {
       return false;
     }
 
-    element = document->GetElementById(control);
+    RefPtr<Element> element = document->GetElementById(control);
     if (!element) {
       return false;
     }
+
+    // XXXedgar, This is mainly for HTMLElement which doesn't do visible
+    // check in PerformAccesskey. We probably should always do visible
+    // check on HTMLElement even if the PerformAccesskey is not redirected from
+    // label XULelement per spec.
+    nsIFrame* frame = element->GetPrimaryFrame();
+    if (!frame || !frame->IsVisibleConsideringAncestors()) {
+      return false;
+    }
+
+    return element->PerformAccesskey(aKeyCausesActivation, aIsTrustedEvent);
   }
 
-  nsIFrame* frame = element->GetPrimaryFrame();
+  nsIFrame* frame = GetPrimaryFrame();
   if (!frame || !frame->IsVisibleConsideringAncestors()) {
     return false;
   }
 
   bool focused = false;
-  if (nsXULElement* elm = FromNode(element)) {
-    // Define behavior for each type of XUL element.
-    if (!elm->IsXULElement(nsGkAtoms::toolbarbutton)) {
-      if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
-        nsCOMPtr<Element> elementToFocus;
-        // for radio buttons, focus the radiogroup instead
-        if (elm->IsXULElement(nsGkAtoms::radio)) {
-          nsCOMPtr<nsIDOMXULSelectControlItemElement> controlItem =
-              elm->AsXULSelectControlItem();
-          if (controlItem) {
-            bool disabled;
-            controlItem->GetDisabled(&disabled);
-            if (!disabled) {
-              controlItem->GetControl(getter_AddRefs(elementToFocus));
-            }
+  // Define behavior for each type of XUL element.
+  if (!IsXULElement(nsGkAtoms::toolbarbutton)) {
+    if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
+      RefPtr<Element> elementToFocus = this;
+      // for radio buttons, focus the radiogroup instead
+      if (IsXULElement(nsGkAtoms::radio)) {
+        if (nsCOMPtr<nsIDOMXULSelectControlItemElement> controlItem =
+                AsXULSelectControlItem()) {
+          bool disabled;
+          controlItem->GetDisabled(&disabled);
+          if (!disabled) {
+            controlItem->GetControl(getter_AddRefs(elementToFocus));
           }
-        } else {
-          elementToFocus = elm;
-        }
-        if (elementToFocus) {
-          fm->SetFocus(elementToFocus, nsIFocusManager::FLAG_BYKEY);
-
-          // Return true if the element became focused.
-          nsPIDOMWindowOuter* window = OwnerDoc()->GetWindow();
-          focused = (window && window->GetFocusedElement());
         }
       }
+
+      if (elementToFocus) {
+        fm->SetFocus(elementToFocus, nsIFocusManager::FLAG_BYKEY);
+
+        // Return true if the element became focused.
+        nsPIDOMWindowOuter* window = OwnerDoc()->GetWindow();
+        focused = (window && window->GetFocusedElement() == elementToFocus);
+      }
     }
-    if (aKeyCausesActivation && !elm->IsXULElement(nsGkAtoms::menulist)) {
-      elm->ClickWithInputSource(MouseEvent_Binding::MOZ_SOURCE_KEYBOARD,
-                                aIsTrustedEvent);
-    }
-  } else {
-    return element->PerformAccesskey(aKeyCausesActivation, aIsTrustedEvent);
+  }
+
+  if (aKeyCausesActivation && !IsXULElement(nsGkAtoms::menulist)) {
+    ClickWithInputSource(MouseEvent_Binding::MOZ_SOURCE_KEYBOARD,
+                         aIsTrustedEvent);
   }
 
   return focused;
@@ -938,12 +943,14 @@ nsresult nsXULElement::DispatchXULCommand(const EventChainVisitor& aVisitor,
     // handling.
     RefPtr<Event> event = aVisitor.mDOMEvent;
     uint16_t inputSource = MouseEvent_Binding::MOZ_SOURCE_UNKNOWN;
+    int16_t button = 0;
     while (event) {
       NS_ENSURE_STATE(event->GetOriginalTarget() != commandElt);
       RefPtr<XULCommandEvent> commandEvent = event->AsXULCommandEvent();
       if (commandEvent) {
         event = commandEvent->GetSourceEvent();
         inputSource = commandEvent->InputSource();
+        button = commandEvent->Button();
       } else {
         event = nullptr;
       }
@@ -952,7 +959,7 @@ nsresult nsXULElement::DispatchXULCommand(const EventChainVisitor& aVisitor,
     nsContentUtils::DispatchXULCommand(
         commandElt, orig->IsTrusted(), MOZ_KnownLive(aVisitor.mDOMEvent),
         nullptr, orig->IsControl(), orig->IsAlt(), orig->IsShift(),
-        orig->IsMeta(), inputSource);
+        orig->IsMeta(), inputSource, button);
   } else {
     NS_WARNING("A XUL element is attached to a command that doesn't exist!\n");
   }

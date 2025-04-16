@@ -19,6 +19,7 @@
 #include "mozilla/dom/WindowContext.h"
 #include "nsDOMMutationObserver.h"
 #include "nsIDirectTaskDispatcher.h"
+#include "nsIXULRuntime.h"
 #include "nsProxyRelease.h"
 #include "nsThread.h"
 #if defined(XP_WIN)
@@ -181,6 +182,9 @@ void DocGroup::AddDocument(Document* aDocument) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!mDocuments.Contains(aDocument));
   MOZ_ASSERT(mBrowsingContextGroup);
+  MOZ_ASSERT_IF(
+      FissionAutostart() && !mDocuments.IsEmpty(),
+      mDocuments[0]->CrossOriginIsolated() == aDocument->CrossOriginIsolated());
   mDocuments.AppendElement(aDocument);
 }
 
@@ -377,7 +381,7 @@ nsresult DocGroup::QueueIframePostMessages(
     MOZ_ASSERT(mIframePostMessageQueue);
     MOZ_ASSERT(mIframePostMessageQueue->IsPaused());
 
-    mIframesUsedPostMessageQueue.PutEntry(aWindowId);
+    mIframesUsedPostMessageQueue.Insert(aWindowId);
 
     mIframePostMessageQueue->Dispatch(std::move(aRunnable), NS_DISPATCH_NORMAL);
     return NS_OK;
@@ -387,7 +391,7 @@ nsresult DocGroup::QueueIframePostMessages(
 
 void DocGroup::TryFlushIframePostMessages(uint64_t aWindowId) {
   if (DocGroup::TryToLoadIframesInBackground()) {
-    mIframesUsedPostMessageQueue.RemoveEntry(aWindowId);
+    mIframesUsedPostMessageQueue.Remove(aWindowId);
     if (mIframePostMessageQueue && mIframesUsedPostMessageQueue.IsEmpty()) {
       MOZ_ASSERT(mIframePostMessageQueue->IsPaused());
       nsresult rv = mIframePostMessageQueue->SetIsPaused(true);

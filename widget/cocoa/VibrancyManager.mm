@@ -6,15 +6,11 @@
 
 #include "VibrancyManager.h"
 
-#include "nsChildView.h"
-#include "nsCocoaFeatures.h"
 #import <objc/message.h>
 
-#if !defined(MAC_OS_X_VERSION_10_14) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_14
-enum {
-  NSVisualEffectMaterialToolTip NS_ENUM_AVAILABLE_MAC(10_14) = 17,
-};
-#endif
+#include "nsChildView.h"
+#include "nsCocoaFeatures.h"
+#include "SDKDeclarations.h"
 
 using namespace mozilla;
 
@@ -35,7 +31,7 @@ static NSAppearance* AppearanceForVibrancyType(VibrancyType aType) {
         return [NSAppearance appearanceNamed:NSAppearanceNameAqua];
       case VibrancyType::TITLEBAR_DARK:
         // This must always be dark (dark aqua), regardless of window appearance.
-        return [NSAppearance appearanceNamed:@"NSAppearanceNameDarkAqua"];
+        return [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
       case VibrancyType::TOOLTIP:
       case VibrancyType::MENU:
       case VibrancyType::HIGHLIGHTED_MENUITEM:
@@ -161,8 +157,8 @@ bool VibrancyManager::UpdateVibrantRegion(VibrancyType aType,
 
 LayoutDeviceIntRegion VibrancyManager::GetUnionOfVibrantRegions() const {
   LayoutDeviceIntRegion result;
-  for (auto it = mVibrantRegions.ConstIter(); !it.Done(); it.Next()) {
-    result.OrWith(it.UserData()->Region());
+  for (const auto& region : mVibrantRegions.Values()) {
+    result.OrWith(region->Region());
   }
   return result;
 }

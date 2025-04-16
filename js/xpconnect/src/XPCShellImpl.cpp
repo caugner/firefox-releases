@@ -49,6 +49,7 @@
 
 #ifdef ANDROID
 #  include <android/log.h>
+#  include "XREShellData.h"
 #endif
 
 #ifdef XP_WIN
@@ -1040,8 +1041,13 @@ int XRE_XPCShellMain(int argc, char** argv, char** envp,
   int result = 0;
   nsresult rv;
 
-  gErrFile = stderr;
+#ifdef ANDROID
+  gOutFile = aShellData->outFile;
+  gErrFile = aShellData->errFile;
+#else
   gOutFile = stdout;
+  gErrFile = stderr;
+#endif
   gInFile = stdin;
 
   NS_LogInit();
@@ -1195,8 +1201,7 @@ int XRE_XPCShellMain(int argc, char** argv, char** envp,
       argv += 2;
     }
 
-    nsCOMPtr<nsIServiceManager> servMan;
-    rv = NS_InitXPCOM(getter_AddRefs(servMan), appDir, &dirprovider);
+    rv = NS_InitXPCOM(nullptr, appDir, &dirprovider);
     if (NS_FAILED(rv)) {
       printf("NS_InitXPCOM failed!\n");
       return 1;

@@ -671,23 +671,6 @@ var EnvironmentData = {
     addonSection.appendChild(table);
   },
 
-  renderActivePlugins(addonObj, addonSection, sectionTitle) {
-    let table = document.createElement("table");
-    table.setAttribute("id", sectionTitle);
-    this.appendAddonSubsectionTitle(sectionTitle, table);
-
-    for (let plugin of addonObj) {
-      let data = explodeObject(plugin);
-      this.appendHeadingName(table, data.get("name"));
-
-      for (let [key, value] of data) {
-        this.appendRow(table, key, value);
-      }
-    }
-
-    addonSection.appendChild(table);
-  },
-
   renderAddonsObject(addonObj, addonSection, sectionTitle) {
     let table = document.createElement("table");
     table.setAttribute("id", sectionTitle);
@@ -740,11 +723,6 @@ var EnvironmentData = {
     addonSection.setAttribute("class", "subsection-data subdata");
     let addons = ping.environment.addons;
     this.renderAddonsObject(addons.activeAddons, addonSection, "activeAddons");
-    this.renderActivePlugins(
-      addons.activePlugins,
-      addonSection,
-      "activePlugins"
-    );
     this.renderKeyValueObject(addons.theme, addonSection, "theme");
     this.renderAddonsObject(
       addons.activeGMPlugins,
@@ -2386,8 +2364,6 @@ function openJsonInFirefoxJsonViewer(json) {
 
 function onLoad() {
   window.removeEventListener("load", onLoad);
-  Telemetry.scalarAdd("telemetry.about_telemetry_pageload", 1);
-
   // Set the text in the page header and elsewhere that needs the server owner.
   setupServerOwnerBranding();
 

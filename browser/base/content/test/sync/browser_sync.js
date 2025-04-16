@@ -84,6 +84,57 @@ add_task(async function test_navBar_button_visibility() {
   );
 });
 
+add_task(async function test_overflow_navBar_button_visibility() {
+  const button = document.getElementById("fxa-toolbar-menu-button");
+  info("proton enabled: " + CustomizableUI.protonToolbarEnabled);
+
+  let overflowPanel = document.getElementById("widget-overflow");
+  overflowPanel.setAttribute("animate", "false");
+  let navbar = document.getElementById(CustomizableUI.AREA_NAVBAR);
+  let originalWindowWidth = window.outerWidth;
+
+  registerCleanupFunction(function() {
+    overflowPanel.removeAttribute("animate");
+    window.resizeTo(originalWindowWidth, window.outerHeight);
+    return TestUtils.waitForCondition(
+      () => !navbar.hasAttribute("overflowing")
+    );
+  });
+
+  window.resizeTo(450, window.outerHeight);
+
+  await TestUtils.waitForCondition(() => navbar.hasAttribute("overflowing"));
+  ok(navbar.hasAttribute("overflowing"), "Should have an overflowing toolbar.");
+
+  let chevron = document.getElementById("nav-bar-overflow-button");
+  let shownPanelPromise = BrowserTestUtils.waitForEvent(
+    overflowPanel,
+    "popupshown"
+  );
+  chevron.click();
+  await shownPanelPromise;
+
+  ok(button, "fxa-toolbar-menu-button was found");
+
+  const state = {
+    status: UIState.STATUS_NOT_CONFIGURED,
+    syncEnabled: true,
+  };
+  gSync.updateAllUI(state);
+
+  is(
+    BrowserTestUtils.is_visible(button),
+    !CustomizableUI.protonToolbarEnabled,
+    "Check button visibility with STATUS_NOT_CONFIGURED"
+  );
+  let hidePanelPromise = BrowserTestUtils.waitForEvent(
+    overflowPanel,
+    "popuphidden"
+  );
+  chevron.click();
+  await hidePanelPromise;
+});
+
 add_task(async function setupForPanelTests() {
   /* Proton hides the FxA toolbar button when in the nav-bar and unconfigured.
      To test the panel in all states, we move it to the tabstrip toolbar where
@@ -141,6 +192,7 @@ add_task(async function test_ui_state_signedin() {
   }
 
   checkMenuBarItem("sync-syncnowitem");
+  checkPanelHeader();
   checkFxaToolbarButtonPanel({
     headerTitle: "Manage Account",
     headerDescription: "foo@bar.com",
@@ -161,9 +213,9 @@ add_task(async function test_ui_state_signedin() {
   await openMainPanel();
 
   checkPanelUIStatusBar({
-    label: "foo@bar.com",
-    fxastatus: "signedin",
-    syncing: false,
+    description: "foo@bar.com",
+    titleHidden: true,
+    hideFxAText: true,
   });
 
   await closeTabAndMainPanel();
@@ -305,7 +357,7 @@ add_task(async function test_ui_state_unconfigured() {
   if (!PanelUI.protonAppMenuEnabled) {
     let signedOffLabel = appMenuStatus.getAttribute("defaultlabel");
     checkPanelUIStatusBar({
-      label: signedOffLabel,
+      description: signedOffLabel,
     });
     checkFxaToolbarButtonPanel({
       headerTitle: signedOffLabel,
@@ -324,18 +376,24 @@ add_task(async function test_ui_state_unconfigured() {
   }
   checkFxAAvatar("not_configured");
 
+  let signedOffLabel;
   if (!PanelUI.protonAppMenuEnabled) {
     await closeFxaPanel();
-    await openMainPanel();
-
-    let signedOffLabel = appMenuStatus.getAttribute("defaultlabel");
-    checkPanelUIStatusBar({
-      label: signedOffLabel,
-    });
-    await closeTabAndMainPanel();
+    signedOffLabel = appMenuStatus.getAttribute("defaultlabel");
   } else {
-    BrowserTestUtils.removeTab(gBrowser.selectedTab);
+    signedOffLabel = gSync.fluentStrings.formatValueSync(
+      "appmenu-fxa-signed-in-label"
+    );
   }
+
+  await openMainPanel();
+
+  checkPanelUIStatusBar({
+    description: signedOffLabel,
+    titleHidden: true,
+    hideFxAText: false,
+  });
+  await closeTabAndMainPanel();
 });
 
 add_task(async function test_ui_state_syncdisabled() {
@@ -364,6 +422,7 @@ add_task(async function test_ui_state_syncdisabled() {
   }
 
   checkMenuBarItem("sync-enable");
+  checkPanelHeader();
   checkFxaToolbarButtonPanel({
     headerTitle: "Manage Account",
     headerDescription: "foo@bar.com",
@@ -385,9 +444,9 @@ add_task(async function test_ui_state_syncdisabled() {
   await openMainPanel();
 
   checkPanelUIStatusBar({
-    label: "foo@bar.com",
-    fxastatus: "signedin",
-    syncing: false,
+    description: "foo@bar.com",
+    titleHidden: true,
+    hideFxAText: true,
   });
 
   await closeTabAndMainPanel();
@@ -421,9 +480,10 @@ add_task(async function test_ui_state_unverified() {
   );
 
   checkMenuBarItem("sync-unverifieditem");
+  checkPanelHeader();
   checkFxaToolbarButtonPanel({
-    headerTitle: state.email,
-    headerDescription: expectedLabel,
+    headerTitle: expectedLabel,
+    headerDescription: state.email,
     enabledItems: [
       "PanelUI-fxa-menu-sendtab-button",
       "PanelUI-fxa-menu-setup-sync-button",
@@ -440,9 +500,10 @@ add_task(async function test_ui_state_unverified() {
   await openMainPanel();
 
   checkPanelUIStatusBar({
-    label: expectedLabel,
-    fxastatus: "unverified",
-    syncing: false,
+    description: PanelUI.protonAppMenuEnabled ? state.email : expectedLabel,
+    title: expectedLabel,
+    titleHidden: false,
+    hideFxAText: true,
   });
 
   await closeTabAndMainPanel();
@@ -471,13 +532,14 @@ add_task(async function test_ui_state_loginFailed() {
   }
 
   const expectedLabel = gSync.fluentStrings.formatValueSync(
-    "account-reconnect-to-fxa"
+    "account-disconnected2"
   );
 
   checkMenuBarItem("sync-reauthitem");
+  checkPanelHeader();
   checkFxaToolbarButtonPanel({
-    headerTitle: state.email,
-    headerDescription: expectedLabel,
+    headerTitle: expectedLabel,
+    headerDescription: state.email,
     enabledItems: [
       "PanelUI-fxa-menu-sendtab-button",
       "PanelUI-fxa-menu-setup-sync-button",
@@ -494,9 +556,10 @@ add_task(async function test_ui_state_loginFailed() {
   await openMainPanel();
 
   checkPanelUIStatusBar({
-    label: expectedLabel,
-    fxastatus: "login-failed",
-    syncing: false,
+    description: PanelUI.protonAppMenuEnabled ? state.email : expectedLabel,
+    title: expectedLabel,
+    titleHidden: false,
+    hideFxAText: true,
   });
 
   await closeTabAndMainPanel();
@@ -537,12 +600,44 @@ add_task(async function test_app_menu_fxa_disabled() {
   await BrowserTestUtils.closeWindow(newWin);
 });
 
-function checkPanelUIStatusBar({ label, fxastatus, syncing }) {
-  let labelID = PanelUI.protonAppMenuEnabled
-    ? "appMenu-fxa-label2"
-    : "appMenu-fxa-label";
-  let labelNode = PanelMultiView.getViewNode(document, labelID);
-  is(labelNode.getAttribute("label"), label, "fxa label has the right value");
+function checkPanelUIStatusBar({
+  description,
+  title,
+  titleHidden,
+  hideFxAText,
+}) {
+  if (PanelUI.protonAppMenuEnabled) {
+    checkAppMenuFxAText(hideFxAText);
+    let appMenuHeaderTitle = PanelMultiView.getViewNode(
+      document,
+      "appMenu-header-title"
+    );
+    let appMenuHeaderDescription = PanelMultiView.getViewNode(
+      document,
+      "appMenu-header-description"
+    );
+    is(
+      appMenuHeaderDescription.value,
+      description,
+      "app menu description has correct value"
+    );
+    is(
+      appMenuHeaderTitle.hidden,
+      titleHidden,
+      "title has correct hidden status"
+    );
+    if (!titleHidden) {
+      is(appMenuHeaderTitle.value, title, "title has correct value");
+    }
+  } else {
+    let labelID = "appMenu-fxa-label";
+    let labelNode = PanelMultiView.getViewNode(document, labelID);
+    is(
+      labelNode.getAttribute("label"),
+      description,
+      "fxa label has the right value"
+    );
+  }
 }
 
 function checkMenuBarItem(expectedShownItemId) {
@@ -555,6 +650,15 @@ function checkMenuBarItem(expectedShownItemId) {
       "sync-unverifieditem",
     ],
     expectedShownItemId
+  );
+}
+
+function checkPanelHeader() {
+  let fxaPanelView = PanelMultiView.getViewNode(document, "PanelUI-fxa");
+  is(
+    fxaPanelView.getAttribute("title"),
+    gSync.fluentStrings.formatValueSync("appmenu-fxa-header2"),
+    "Panel title is correct"
   );
 }
 
@@ -653,9 +757,9 @@ function checkFxAAvatar(fxaStatus) {
     const avatarURL = getComputedStyle(avatar).listStyleImage;
     const expected = {
       not_configured: 'url("chrome://browser/skin/fxa/avatar-empty.svg")',
-      unverified: 'url("chrome://browser/skin/fxa/avatar-confirm.svg")',
+      unverified: 'url("chrome://browser/skin/fxa/avatar.svg")',
       signedin: 'url("chrome://browser/skin/fxa/avatar.svg")',
-      "login-failed": 'url("chrome://browser/skin/fxa/avatar-alert.svg")',
+      "login-failed": 'url("chrome://browser/skin/fxa/avatar.svg")',
     };
     ok(
       avatarURL == expected[fxaStatus],
@@ -664,21 +768,10 @@ function checkFxAAvatar(fxaStatus) {
   }
 }
 
-// Only one item displayed at a time.
-function checkItemsDisplayed(itemsIds, expectedShownItemId) {
-  for (let id of itemsIds) {
-    if (id == expectedShownItemId) {
-      ok(
-        BrowserTestUtils.is_visible(document.getElementById(id)),
-        `view ${id} should be visible`
-      );
-    } else {
-      ok(
-        BrowserTestUtils.is_hidden(document.getElementById(id)),
-        `view ${id} should be hidden`
-      );
-    }
-  }
+function checkAppMenuFxAText(hideStatus) {
+  let fxaText = document.getElementById("appMenu-fxa-text");
+  let isHidden = fxaText.hidden || fxaText.style.visibility == "collapse";
+  ok(isHidden == hideStatus, "FxA text has correct hidden state");
 }
 
 // Only one item visible at a time.

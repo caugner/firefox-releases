@@ -17,25 +17,19 @@ add_task(async function() {
   // This preference helps destroying the content process when we close the tab
   await pushPref("dom.ipc.keepProcessesAlive.web", 1);
 
-  const client = await createLocalClient();
-  const mainRoot = client.mainRoot;
-
-  await testWatchTargets(mainRoot);
-  await testContentProcessTarget(mainRoot);
-  await testThrowingInOnAvailable(mainRoot);
-
-  await client.close();
+  await testWatchTargets();
+  await testContentProcessTarget();
+  await testThrowingInOnAvailable();
 });
 
-async function testWatchTargets(mainRoot) {
+async function testWatchTargets() {
   info("Test TargetCommand watchTargets function");
 
-  const targetDescriptor = await mainRoot.getMainProcess();
-  const commands = await targetDescriptor.getCommands();
-  const targetList = commands.targetCommand;
-  const { TYPES } = targetList;
+  const commands = await CommandsFactory.forMainProcess();
+  const targetCommand = commands.targetCommand;
+  const { TYPES } = targetCommand;
 
-  await targetList.startListening();
+  await targetCommand.startListening();
 
   // Note that ppmm also includes the parent process, which is considered as a frame rather than a process
   const originalProcessesCount = Services.ppmm.childCount - 1;
@@ -44,7 +38,7 @@ async function testWatchTargets(mainRoot) {
     "Check that onAvailable is called for processes already created *before* the call to watchTargets"
   );
   const targets = new Set();
-  const topLevelTarget = await targetDescriptor.getTarget();
+  const topLevelTarget = targetCommand.targetFront;
   const onAvailable = ({ targetFront }) => {
     if (targets.has(targetFront)) {
       ok(false, "The same target is notified multiple times via onAvailable");
@@ -80,7 +74,7 @@ async function testWatchTargets(mainRoot) {
     );
     targets.delete(targetFront);
   };
-  await targetList.watchTargets([TYPES.PROCESS], onAvailable, onDestroyed);
+  await targetCommand.watchTargets([TYPES.PROCESS], onAvailable, onDestroyed);
   is(
     targets.size,
     originalProcessesCount,
@@ -107,10 +101,10 @@ async function testWatchTargets(mainRoot) {
       if (previousTargets.has(targetFront)) {
         return;
       }
-      targetList.unwatchTargets([TYPES.PROCESS], onAvailable2);
+      targetCommand.unwatchTargets([TYPES.PROCESS], onAvailable2);
       resolve(targetFront);
     };
-    targetList.watchTargets([TYPES.PROCESS], onAvailable2);
+    targetCommand.watchTargets([TYPES.PROCESS], onAvailable2);
   });
   const tab1 = await BrowserTestUtils.openNewForegroundTab({
     gBrowser,
@@ -130,9 +124,9 @@ async function testWatchTargets(mainRoot) {
     const onAvailable3 = () => {};
     const onDestroyed3 = ({ targetFront }) => {
       resolve(targetFront);
-      targetList.unwatchTargets([TYPES.PROCESS], onAvailable3, onDestroyed3);
+      targetCommand.unwatchTargets([TYPES.PROCESS], onAvailable3, onDestroyed3);
     };
-    targetList.watchTargets([TYPES.PROCESS], onAvailable3, onDestroyed3);
+    targetCommand.watchTargets([TYPES.PROCESS], onAvailable3, onDestroyed3);
   });
 
   BrowserTestUtils.removeTab(tab1);
@@ -153,30 +147,30 @@ async function testWatchTargets(mainRoot) {
     "The destroyed target is the one that has been reported as created"
   );
 
-  targetList.unwatchTargets([TYPES.PROCESS], onAvailable, onDestroyed);
+  targetCommand.unwatchTargets([TYPES.PROCESS], onAvailable, onDestroyed);
 
-  targetList.destroy();
+  targetCommand.destroy();
 
-  // Also destroy the descriptor so that testThrowingInOnAvailable can get a fresh
-  // commands object and also a fresh TargetList instance
-  targetDescriptor.destroy();
+  await commands.destroy();
 }
 
-async function testContentProcessTarget(mainRoot) {
+async function testContentProcessTarget() {
   info("Test TargetCommand watchTargets with a content process target");
 
-  const processes = await mainRoot.listProcesses();
-  const commands = await processes[1].getCommands();
-  const targetList = commands.targetCommand;
-  const { TYPES } = targetList;
+  const {
+    osPid,
+  } = gBrowser.selectedBrowser.browsingContext.currentWindowGlobal;
+  const commands = await CommandsFactory.forProcess(osPid);
+  const targetCommand = commands.targetCommand;
+  const { TYPES } = targetCommand;
 
-  await targetList.startListening();
+  await targetCommand.startListening();
 
   // Assert that watchTargets is only called for the top level content process target
   // as listening for additional target is only enable for the parent process target.
   // See bug 1593928.
   const targets = new Set();
-  const topLevelTarget = await processes[1].getTarget();
+  const topLevelTarget = targetCommand.targetFront;
   const onAvailable = ({ targetFront }) => {
     if (targets.has(targetFront)) {
       // This may fail if the top level target is reported by LegacyImplementation
@@ -198,27 +192,28 @@ async function testContentProcessTarget(mainRoot) {
   const onDestroyed = _ => {
     ok(false, "onDestroyed should never be called in this test");
   };
-  await targetList.watchTargets([TYPES.PROCESS], onAvailable, onDestroyed);
+  await targetCommand.watchTargets([TYPES.PROCESS], onAvailable, onDestroyed);
 
   // This may fail if the top level target is reported by LegacyImplementation
   // to TargetCommand and registers a duplicated entry
   is(targets.size, 1, "We were only notified about the top level target");
 
-  targetList.unwatchTargets([TYPES.PROCESS], onAvailable, onDestroyed);
-  targetList.destroy();
+  targetCommand.unwatchTargets([TYPES.PROCESS], onAvailable, onDestroyed);
+  targetCommand.destroy();
+
+  await commands.destroy();
 }
 
-async function testThrowingInOnAvailable(mainRoot) {
+async function testThrowingInOnAvailable() {
   info(
     "Test TargetCommand watchTargets function when an exception is thrown in onAvailable callback"
   );
 
-  const targetDescriptor = await mainRoot.getMainProcess();
-  const commands = await targetDescriptor.getCommands();
-  const targetList = commands.targetCommand;
-  const { TYPES } = targetList;
+  const commands = await CommandsFactory.forMainProcess();
+  const targetCommand = commands.targetCommand;
+  const { TYPES } = targetCommand;
 
-  await targetList.startListening();
+  await targetCommand.startListening();
 
   // Note that ppmm also includes the parent process, which is considered as a frame rather than a process
   const originalProcessesCount = Services.ppmm.childCount - 1;
@@ -235,12 +230,14 @@ async function testThrowingInOnAvailable(mainRoot) {
     }
     targets.add(targetFront);
   };
-  await targetList.watchTargets([TYPES.PROCESS], onAvailable);
+  await targetCommand.watchTargets([TYPES.PROCESS], onAvailable);
   is(
     targets.size,
     originalProcessesCount - 1,
     "retrieved the expected number of processes via onAvailable. All but the first one where we have thrown."
   );
 
-  targetList.destroy();
+  targetCommand.destroy();
+
+  await commands.destroy();
 }

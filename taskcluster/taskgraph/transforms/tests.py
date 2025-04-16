@@ -248,6 +248,23 @@ TEST_VARIANTS = {
             },
         },
     },
+    "fission-webgl-ipc": {
+        # TODO: After 2021-05-01, verify this variant is still needed.
+        "description": "{description} with fission and WebGL IPC process enabled",
+        "suffix": "fis-gli",
+        "replace": {
+            "e10s": True,
+        },
+        "merge": {
+            "mozharness": {
+                "extra-options": [
+                    "--setpref=fission.autostart=true",
+                    "--setpref=dom.serviceWorkers.parent_intercept=true",
+                    "--setpref=webgl.out-of-process=true",
+                ],
+            },
+        },
+    },
     "socketprocess": {
         "description": "{description} with socket process enabled",
         "suffix": "spi",
@@ -393,26 +410,20 @@ test_description_schema = Schema(
         # build task's run-on-projects, meaning that tests run only on platforms
         # that are built.
         Optional("run-on-projects"): optionally_keyed_by(
-            "test-platform", "test-name", "variant", Any([text_type], "built-projects")
+            "app",
+            "subtest",
+            "test-platform",
+            "test-name",
+            "variant",
+            Any([text_type], "built-projects"),
         ),
         # When set only run on projects where the build would already be running.
         # This ensures tasks where this is True won't be the cause of the build
         # running on a project it otherwise wouldn't have.
         Optional("built-projects-only"): bool,
-        # Same as `run-on-projects` except it only applies to Fission tasks. Fission
-        # tasks will ignore `run_on_projects` and non-Fission tasks will ignore
-        # `fission-run-on-projects`.
-        Optional("fission-run-on-projects"): optionally_keyed_by(
-            "test-name", "test-platform", Any([text_type], "built-projects")
-        ),
         # the sheriffing tier for this task (default: set based on test platform)
         Optional("tier"): optionally_keyed_by(
-            "test-platform", "variant", Any(int, "default")
-        ),
-        # Same as `tier` except it only applies to Fission tasks. Fission tasks
-        # will ignore `tier` and non-Fission tasks will ignore `fission-tier`.
-        Optional("fission-tier"): optionally_keyed_by(
-            "test-platform", Any(int, "default")
+            "test-platform", "variant", "app", "subtest", Any(int, "default")
         ),
         # number of chunks to create for this task.  This can be keyed by test
         # platform by passing a dictionary in the `by-test-platform` key.  If the
@@ -595,6 +606,14 @@ test_description_schema = Schema(
         },
         # Opt-in to Python 3 support
         Optional("python-3"): bool,
+        # Raptor / browsertime specific keys that need to be here to support
+        # using `by-key` after `by-variant`. Ideally these keys should not exist
+        # in the tests.py schema and instead we'd split variants before the raptor
+        # transforms need them. See bug 1700774.
+        Optional("app"): text_type,
+        Optional("subtest"): text_type,
+        # Define if a given task supports artifact builds or not, see bug 1695325.
+        Optional("supports-artifact-builds"): bool,
     }
 )
 
@@ -612,7 +631,9 @@ def handle_keyed_by_mozharness(config, tasks):
     ]
     for task in tasks:
         for field in fields:
-            resolve_keyed_by(task, field, item_name=task["test-name"])
+            resolve_keyed_by(
+                task, field, item_name=task["test-name"], enforce_single_match=False
+            )
         yield task
 
 
@@ -666,6 +687,7 @@ def set_defaults(config, tasks):
         task.setdefault("checkout", False)
         task.setdefault("require-signed-extensions", False)
         task.setdefault("variants", [])
+        task.setdefault("supports-artifact-builds", True)
 
         task["mozharness"].setdefault("extra-options", [])
         task["mozharness"].setdefault("requires-signed-builds", False)
@@ -682,6 +704,7 @@ def resolve_keys(config, tasks):
             task,
             "require-signed-extensions",
             item_name=task["test-name"],
+            enforce_single_match=False,
             **{
                 "release-type": config.params["release_type"],
             }
@@ -817,7 +840,9 @@ def set_target(config, tasks):
         build_platform = task["build-platform"]
         target = None
         if "target" in task:
-            resolve_keyed_by(task, "target", item_name=task["test-name"])
+            resolve_keyed_by(
+                task, "target", item_name=task["test-name"], enforce_single_match=False
+            )
             target = task["target"]
         if not target:
             if build_platform.startswith("macosx"):
@@ -928,7 +953,6 @@ def handle_keyed_by(config, tasks):
         "e10s",
         "suite",
         "run-on-projects",
-        "fission-run-on-projects",
         "os-groups",
         "run-as-administrator",
         "workdir",
@@ -946,6 +970,7 @@ def handle_keyed_by(config, tasks):
                 field,
                 item_name=task["test-name"],
                 defer=["variant"],
+                enforce_single_match=False,
                 project=config.params["project"],
             )
         yield task
@@ -969,9 +994,6 @@ def setup_browsertime(config, tasks):
         if task["suite"] != "raptor" or "--browsertime" not in extra_options:
             yield task
             continue
-
-        # This is appropriate as the browsertime task variants mature.
-        task["tier"] = max(task["tier"], 1)
 
         ts = {
             "by-test-platform": {
@@ -1008,31 +1030,37 @@ def setup_browsertime(config, tasks):
                 "linux64-chromedriver-87",
                 "linux64-chromedriver-88",
                 "linux64-chromedriver-89",
+                "linux64-chromedriver-90",
             ],
             "linux.*": [
                 "linux64-chromedriver-87",
                 "linux64-chromedriver-88",
                 "linux64-chromedriver-89",
+                "linux64-chromedriver-90",
             ],
             "macosx.*": [
                 "mac64-chromedriver-87",
                 "mac64-chromedriver-88",
                 "mac64-chromedriver-89",
+                "mac64-chromedriver-90",
             ],
             "windows.*aarch64.*": [
                 "win32-chromedriver-87",
                 "win32-chromedriver-88",
                 "win32-chromedriver-89",
+                "win32-chromedriver-90",
             ],
             "windows.*-32.*": [
                 "win32-chromedriver-87",
                 "win32-chromedriver-88",
                 "win32-chromedriver-89",
+                "win32-chromedriver-90",
             ],
             "windows.*-64.*": [
                 "win32-chromedriver-87",
                 "win32-chromedriver-88",
                 "win32-chromedriver-89",
+                "win32-chromedriver-90",
             ],
         }
 
@@ -1200,10 +1228,6 @@ def split_variants(config, tasks):
             taskv["treeherder-symbol"] = join_symbol(group, symbol)
 
             taskv.update(variant.get("replace", {}))
-
-            if task["suite"] == "raptor":
-                taskv["tier"] = max(taskv["tier"], 2)
-
             yield merge(taskv, variant.get("merge", {}))
 
 
@@ -1220,6 +1244,7 @@ def handle_keyed_by_variant(config, tasks):
                 task,
                 field,
                 item_name=task["test-name"],
+                enforce_single_match=False,
                 variant=task["attributes"].get("unittest_variant"),
             )
         yield task
@@ -1325,10 +1350,9 @@ def handle_tier(config, tasks):
     specify a tier otherwise."""
     for task in tasks:
         if "tier" in task:
-            resolve_keyed_by(task, "tier", item_name=task["test-name"])
-
-        if "fission-tier" in task:
-            resolve_keyed_by(task, "fission-tier", item_name=task["test-name"])
+            resolve_keyed_by(
+                task, "tier", item_name=task["test-name"], enforce_single_match=False
+            )
 
         # only override if not set for the test
         if "tier" not in task or task["tier"] == "default":
@@ -1371,6 +1395,14 @@ def handle_tier(config, tasks):
                 "macosx1014-64-qr/opt",
                 "macosx1014-64-shippable-qr/opt",
                 "macosx1014-64-qr/debug",
+                "macosx1015-64/opt",
+                "macosx1015-64/debug",
+                "macosx1015-64-shippable/opt",
+                "macosx1015-64-devedition/opt",
+                "macosx1015-64-devedition-qr/opt",
+                "macosx1015-64-qr/opt",
+                "macosx1015-64-shippable-qr/opt",
+                "macosx1015-64-qr/debug",
                 "android-em-7.0-x86_64-shippable/opt",
                 "android-em-7.0-x86_64/debug",
                 "android-em-7.0-x86_64/opt",
@@ -1387,21 +1419,19 @@ def handle_tier(config, tasks):
 
 
 @transforms.add
-def handle_fission_attributes(config, tasks):
-    """Handle run_on_projects for fission tasks."""
+def apply_raptor_tier_optimization(config, tasks):
     for task in tasks:
+        if task["suite"] != "raptor":
+            yield task
+            continue
 
-        for attr in ("run-on-projects", "tier"):
-            fission_attr = task.pop("fission-{}".format(attr), None)
+        if not task["test-platform"].startswith("android-hw"):
+            task["optimization"] = {"skip-unless-expanded": None}
+            if task["tier"] > 1:
+                task["optimization"] = {"skip-unless-backstop": None}
 
-            if (
-                task["attributes"].get("unittest_variant")
-                not in ("fission", "geckoview-fission", "fission-xorigin")
-            ) or fission_attr is None:
-                continue
-
-            task[attr] = fission_attr
-
+        if task["attributes"].get("unittest_variant"):
+            task["tier"] = max(task["tier"], 2)
         yield task
 
 
@@ -1412,8 +1442,6 @@ def disable_try_only_platforms(config, tasks):
     for task in tasks:
         if any(re.match(k + "$", task["test-platform"]) for k in try_only_platforms):
             task["run-on-projects"] = []
-            if "fission-run-on-projects" in task:
-                task["fission-run-on-projects"] = []
         yield task
 
 
@@ -1877,6 +1905,7 @@ def make_job_description(config, tasks):
                 "build_type": attr_build_type,
                 "test_platform": task["test-platform"],
                 "test_chunk": str(task["this-chunk"]),
+                "supports-artifact-builds": task["supports-artifact-builds"],
                 attr_try_name: try_name,
             }
         )

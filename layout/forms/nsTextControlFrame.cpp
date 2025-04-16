@@ -583,28 +583,28 @@ LogicalSize nsTextControlFrame::ComputeAutoSize(
   return autoSize;
 }
 
-void nsTextControlFrame::ComputeBaseline(const ReflowInput& aReflowInput,
-                                         ReflowOutput& aDesiredSize) {
+Maybe<nscoord> nsTextControlFrame::ComputeBaseline(
+    const nsIFrame* aFrame, const ReflowInput& aReflowInput,
+    bool aForSingleLineControl) {
   // If we're layout-contained, we have no baseline.
   if (aReflowInput.mStyleDisplay->IsContainLayout()) {
-    mFirstBaseline = NS_INTRINSIC_ISIZE_UNKNOWN;
-    return;
+    return Nothing();
   }
   WritingMode wm = aReflowInput.GetWritingMode();
 
   // Calculate the baseline and store it in mFirstBaseline.
   nscoord lineHeight = aReflowInput.ComputedBSize();
-  float inflation = nsLayoutUtils::FontSizeInflationFor(this);
-  if (!IsSingleLineTextControl()) {
+  float inflation = nsLayoutUtils::FontSizeInflationFor(aFrame);
+  if (!aForSingleLineControl || lineHeight == NS_UNCONSTRAINEDSIZE) {
     lineHeight = ReflowInput::CalcLineHeight(
-        GetContent(), Style(), PresContext(), NS_UNCONSTRAINEDSIZE, inflation);
+        aFrame->GetContent(), aFrame->Style(), aFrame->PresContext(),
+        NS_UNCONSTRAINEDSIZE, inflation);
   }
   RefPtr<nsFontMetrics> fontMet =
-      nsLayoutUtils::GetFontMetricsForFrame(this, inflation);
-  mFirstBaseline = nsLayoutUtils::GetCenteredFontBaseline(fontMet, lineHeight,
-                                                          wm.IsLineInverted()) +
-                   aReflowInput.ComputedLogicalBorderPadding(wm).BStart(wm);
-  aDesiredSize.SetBlockStartAscent(mFirstBaseline);
+      nsLayoutUtils::GetFontMetricsForFrame(aFrame, inflation);
+  return Some(nsLayoutUtils::GetCenteredFontBaseline(fontMet, lineHeight,
+                                                     wm.IsLineInverted()) +
+              aReflowInput.ComputedLogicalBorderPadding(wm).BStart(wm));
 }
 
 void nsTextControlFrame::Reflow(nsPresContext* aPresContext,
@@ -620,7 +620,14 @@ void nsTextControlFrame::Reflow(nsPresContext* aPresContext,
   WritingMode wm = aReflowInput.GetWritingMode();
   aDesiredSize.SetSize(wm, aReflowInput.ComputedSizeWithBorderPadding(wm));
 
-  ComputeBaseline(aReflowInput, aDesiredSize);
+  {
+    auto baseline =
+        ComputeBaseline(this, aReflowInput, IsSingleLineTextControl());
+    mFirstBaseline = baseline.valueOr(NS_INTRINSIC_ISIZE_UNKNOWN);
+    if (baseline) {
+      aDesiredSize.SetBlockStartAscent(*baseline);
+    }
+  }
 
   // overflow handling
   aDesiredSize.SetOverflowAreasToDesiredBounds();
@@ -640,6 +647,12 @@ void nsTextControlFrame::Reflow(nsPresContext* aPresContext,
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
 }
 
+static bool IsButtonBox(const nsIFrame* aFrame) {
+  auto pseudoType = aFrame->Style()->GetPseudoType();
+  return pseudoType == PseudoStyleType::mozNumberSpinBox ||
+         pseudoType == PseudoStyleType::mozSearchClearButton;
+}
+
 void nsTextControlFrame::ReflowTextControlChild(
     nsIFrame* aKid, nsPresContext* aPresContext,
     const ReflowInput& aReflowInput, nsReflowStatus& aStatus,
@@ -650,9 +663,7 @@ void nsTextControlFrame::ReflowTextControlChild(
   LogicalSize availSize = aReflowInput.ComputedSizeWithPadding(wm);
   availSize.BSize(wm) = NS_UNCONSTRAINEDSIZE;
 
-  const bool isButtonBox =
-      aKid->Style()->GetPseudoType() == PseudoStyleType::mozNumberSpinBox ||
-      aKid->Style()->GetPseudoType() == PseudoStyleType::mozSearchClearButton;
+  const bool isButtonBox = IsButtonBox(aKid);
 
   ReflowInput kidReflowInput(aPresContext, aReflowInput, aKid, availSize,
                              Nothing(), ReflowInput::InitFlag::CallerWillInit);
@@ -1289,11 +1300,24 @@ void nsTextControlFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     BuildDisplayListForChild(aBuilder, kid, set);
   }
 
+  nsIFrame* buttonBox = nullptr;
   for (auto* kid : mFrames) {
     if (kid->GetContent() == mPlaceholderDiv) {
       continue;  // Handled above already.
     }
+    if (IsButtonBox(kid)) {
+      MOZ_ASSERT(!buttonBox);
+      buttonBox = kid;
+      continue;  // Handled below.
+    }
     BuildDisplayListForChild(aBuilder, kid, set);
+  }
+
+  if (buttonBox) {
+    // We add the display items for our button-box *after* all other children,
+    // in order to be sure these buttons paint & hit-test in front of the other
+    // components.
+    BuildDisplayListForChild(aBuilder, buttonBox, set);
   }
 }
 

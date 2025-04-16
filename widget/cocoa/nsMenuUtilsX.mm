@@ -6,6 +6,7 @@
 #include "nsMenuUtilsX.h"
 #include <unordered_set>
 
+#include "mozilla/EventForwards.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/Event.h"
@@ -13,7 +14,7 @@
 #include "nsMenuBarX.h"
 #include "nsMenuX.h"
 #include "nsMenuItemX.h"
-#include "nsStandaloneNativeMenu.h"
+#include "NativeMenuMac.h"
 #include "nsObjCExceptions.h"
 #include "nsCocoaUtils.h"
 #include "nsCocoaWindow.h"
@@ -24,7 +25,8 @@
 
 using namespace mozilla;
 
-void nsMenuUtilsX::DispatchCommandTo(nsIContent* aTargetContent) {
+void nsMenuUtilsX::DispatchCommandTo(nsIContent* aTargetContent,
+                                     NSEventModifierFlags aModifierFlags, int16_t aButton) {
   MOZ_ASSERT(aTargetContent, "null ptr");
 
   dom::Document* doc = aTargetContent->OwnerDoc();
@@ -32,12 +34,15 @@ void nsMenuUtilsX::DispatchCommandTo(nsIContent* aTargetContent) {
     RefPtr<dom::XULCommandEvent> event =
         new dom::XULCommandEvent(doc, doc->GetPresContext(), nullptr);
 
+    bool ctrlKey = aModifierFlags & NSEventModifierFlagControl;
+    bool altKey = aModifierFlags & NSEventModifierFlagOption;
+    bool shiftKey = aModifierFlags & NSEventModifierFlagShift;
+    bool cmdKey = aModifierFlags & NSEventModifierFlagCommand;
+
     IgnoredErrorResult rv;
     event->InitCommandEvent(u"command"_ns, true, true,
-                            nsGlobalWindowInner::Cast(doc->GetInnerWindow()), 0, false, false,
-                            false, false, nullptr, 0, rv);
-    // FIXME: Should probably figure out how to init this with the actual
-    // pressed keys, but this is a big old edge case anyway. -dwh
+                            nsGlobalWindowInner::Cast(doc->GetInnerWindow()), 0, ctrlKey, altKey,
+                            shiftKey, cmdKey, aButton, nullptr, 0, rv);
     if (!rv.Failed()) {
       event->SetTrusted(true);
       aTargetContent->DispatchEvent(*event);
@@ -186,54 +191,6 @@ bool nsMenuUtilsX::NodeIsHiddenOrCollapsed(nsIContent* aContent) {
                                              eCaseMatters) ||
           aContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::collapsed,
                                              nsGkAtoms::_true, eCaseMatters));
-}
-
-// Determines how many items are visible among the siblings in a menu that are
-// before the given child. This will not count the application menu.
-int nsMenuUtilsX::CalculateNativeInsertionPoint(nsMenuObjectX* aParent, nsMenuObjectX* aChild) {
-  int insertionPoint = 0;
-  nsMenuObjectTypeX parentType = aParent->MenuObjectType();
-  if (parentType == eMenuBarObjectType) {
-    nsMenuBarX* menubarParent = static_cast<nsMenuBarX*>(aParent);
-    uint32_t numMenus = menubarParent->GetMenuCount();
-    for (uint32_t i = 0; i < numMenus; i++) {
-      nsMenuX* currMenu = menubarParent->GetMenuAt(i);
-      if (currMenu == aChild) {
-        return insertionPoint;  // we found ourselves, break out
-      }
-      if (currMenu && currMenu->NativeNSMenuItem().menu) {
-        insertionPoint++;
-      }
-    }
-  } else if (parentType == eSubmenuObjectType || parentType == eStandaloneNativeMenuObjectType) {
-    nsMenuX* menuParent;
-    if (parentType == eSubmenuObjectType) {
-      menuParent = static_cast<nsMenuX*>(aParent);
-    } else {
-      menuParent = static_cast<nsStandaloneNativeMenu*>(aParent)->GetMenuXObject();
-    }
-
-    uint32_t numItems = menuParent->GetItemCount();
-    for (uint32_t i = 0; i < numItems; i++) {
-      // Using GetItemAt instead of GetVisibleItemAt to avoid O(N^2)
-      nsMenuObjectX* currItem = menuParent->GetItemAt(i);
-      if (currItem == aChild) {
-        return insertionPoint;  // we found ourselves, break out
-      }
-      NSMenuItem* nativeItem = nil;
-      nsMenuObjectTypeX currItemType = currItem->MenuObjectType();
-      if (currItemType == eSubmenuObjectType) {
-        nativeItem = static_cast<nsMenuX*>(currItem)->NativeNSMenuItem();
-      } else {
-        MOZ_RELEASE_ASSERT(currItemType == eMenuItemObjectType);
-        nativeItem = static_cast<nsMenuItemX*>(currItem)->NativeNSMenuItem();
-      }
-      if (nativeItem.menu) {
-        insertionPoint++;
-      }
-    }
-  }
-  return insertionPoint;
 }
 
 NSMenuItem* nsMenuUtilsX::NativeMenuItemWithLocation(NSMenu* aRootMenu, NSString* aLocationString,

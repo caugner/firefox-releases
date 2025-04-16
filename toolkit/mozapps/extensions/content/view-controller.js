@@ -6,7 +6,6 @@
 
 /* import-globals-from ../../../content/customElements.js */
 /* import-globals-from aboutaddonsCommon.js */
-/* import-globals-from aboutaddons.js */
 /* exported loadView */
 
 const { AddonManager } = ChromeUtils.import(
@@ -18,43 +17,6 @@ ChromeUtils.defineModuleGetter(
   "AMTelemetry",
   "resource://gre/modules/AddonManager.jsm"
 );
-
-window.addEventListener("unload", shutdown);
-
-window.promiseInitialized = new Promise(resolve => {
-  window.addEventListener("load", () => initialize(resolve), { once: true });
-});
-
-async function initialize(resolvePromiseInitialized) {
-  Services.obs.addObserver(sendEMPong, "EM-ping");
-  Services.obs.notifyObservers(window, "EM-loaded");
-
-  await gViewController.initialize().then(resolvePromiseInitialized);
-
-  // If the initial view has already been selected (by a call to loadView from
-  // the above notifications) then bail out now
-  if (gViewController.currentViewId) {
-    return;
-  }
-
-  if (history.state) {
-    // If there is a history state to restore then use that
-    gViewController.renderState(history.state);
-  } else if (!gViewController.currentViewId) {
-    // Fallback to the last category or first valid category view otherwise.
-    gViewController.loadView(
-      document.querySelector("categories-box").initialViewId
-    );
-  }
-}
-
-function shutdown() {
-  Services.obs.removeObserver(sendEMPong, "EM-ping");
-}
-
-function sendEMPong(aSubject, aTopic, aData) {
-  Services.obs.notifyObservers(window, "EM-pong");
-}
 
 async function recordViewTelemetry(param) {
   let type;
@@ -72,24 +34,76 @@ async function recordViewTelemetry(param) {
 
   let { currentViewId } = gViewController;
   let viewType = gViewController.parseViewId(currentViewId)?.type;
-  AMTelemetry.recordViewEvent({
+  let details = {
     view: viewType || "other",
     addon,
     type,
-  });
+  };
+
+  // The extensions list view does also include recommendations that may be
+  // recommended by TAAR, themes list view does not at the moment.
+  if (
+    viewType === "discover" ||
+    (viewType === "list" && type === "extension")
+  ) {
+    // DiscoveryAPI is defined in aboutaddons.js (which is technically loaded after
+    // this script, nevertheless we would never reach this if aboutaddons.js wasn't
+    // already executed and the about:addons views defined, which guarantees that
+    // DiscoveryAPI will always be defined here.
+    // (This telemetry collection is also covered by tests and so there will also be
+    // test failures if that isn't the case anymore).
+    const { DiscoveryAPI } = window;
+    details.taarEnabled = !!DiscoveryAPI.clientIdDiscoveryEnabled;
+  }
+
+  AMTelemetry.recordViewEvent(details);
 }
 
 // Used by external callers to load a specific view into the manager
-async function loadView(viewId) {
-  // Make sure to wait about:addons initialization before loading
-  // a view triggered by external callers.
-  await window.promiseInitialized;
-
+function loadView(viewId) {
+  if (!gViewController.readyForLoadView) {
+    throw new Error("loadView called before about:addons is initialized");
+  }
   gViewController.loadView(viewId);
 }
 
+/**
+ * Helper for saving and restoring the scroll offsets when a previously loaded
+ * view is accessed again.
+ */
+var ScrollOffsets = {
+  _key: null,
+  _offsets: new Map(),
+  canRestore: true,
+
+  setView(historyEntryId) {
+    this._key = historyEntryId;
+    this.canRestore = true;
+  },
+
+  getPosition() {
+    if (!this.canRestore) {
+      return { top: 0, left: 0 };
+    }
+    let { scrollTop: top, scrollLeft: left } = document.documentElement;
+    return { top, left };
+  },
+
+  save() {
+    if (this._key) {
+      this._offsets.set(this._key, this.getPosition());
+    }
+  },
+
+  restore() {
+    let { top = 0, left = 0 } = this._offsets.get(this._key) || {};
+    window.scrollTo({ top, left, behavior: "auto" });
+  },
+};
+
 var gViewController = {
   currentViewId: null,
+  readyForLoadView: false,
   get defaultViewId() {
     if (!isDiscoverEnabled()) {
       return "addons://list/extension";
@@ -103,30 +117,63 @@ var gViewController = {
   // was loaded, so start counting from a random value to avoid collisions.
   // This is used for scroll offsets in aboutaddons.js
   nextHistoryEntryId: Math.floor(Math.random() * 2 ** 32),
+  views: {},
 
-  async initialize() {
-    await initializeView({
-      loadViewFn: async view => {
-        let viewId = view.startsWith("addons://") ? view : `addons://${view}`;
-        await this.loadView(viewId);
-      },
-      replaceWithDefaultViewFn: async () => {
-        await this.resetState();
-      },
-    });
+  initialize(container) {
+    this.container = container;
 
-    window.addEventListener("popstate", e => {
-      this.renderState(e.state);
-    });
+    window.addEventListener("popstate", this);
+    window.addEventListener("unload", this, { once: true });
+    Services.obs.addObserver(this, "EM-ping");
   },
 
-  parseViewId(aViewId) {
+  handleEvent(e) {
+    if (e.type == "popstate") {
+      this.renderState(e.state);
+      return;
+    }
+
+    if (e.type == "unload") {
+      Services.obs.removeObserver(this, "EM-ping");
+      // eslint-disable-next-line no-useless-return
+      return;
+    }
+  },
+
+  observe(subject, topic, data) {
+    if (topic == "EM-ping") {
+      this.readyForLoadView = true;
+      Services.obs.notifyObservers(window, "EM-pong");
+    }
+  },
+
+  notifyEMLoaded() {
+    this.readyForLoadView = true;
+    Services.obs.notifyObservers(window, "EM-loaded");
+  },
+
+  notifyEMUpdateCheckFinished() {
+    // Notify the observer about a completed update check (currently only used in tests).
+    Services.obs.notifyObservers(null, "EM-update-check-finished");
+  },
+
+  defineView(viewName, renderFunction) {
+    if (this.views[viewName]) {
+      throw new Error(
+        `about:addons view ${viewName} should not be defined twice`
+      );
+    }
+    this.views[viewName] = renderFunction;
+  },
+
+  parseViewId(viewId) {
     const matchRegex = /^addons:\/\/([^\/]+)\/(.*)$/;
-    const [, viewType, viewParam] = aViewId.match(matchRegex) || [];
+    const [, viewType, viewParam] = viewId.match(matchRegex) || [];
     return { type: viewType, param: decodeURIComponent(viewParam) };
   },
 
   loadView(viewId, replace = false) {
+    viewId = viewId.startsWith("addons://") ? viewId : `addons://${viewId}`;
     if (viewId == this.currentViewId) {
       return Promise.resolve();
     }
@@ -147,30 +194,57 @@ var gViewController = {
     return this.renderState(state);
   },
 
-  renderState(state) {
-    const view = this.parseViewId(state.view);
-    const viewTypes = ["shortcuts", "list", "detail", "updates", "discover"];
+  async renderState(state) {
+    let { param, type } = this.parseViewId(state.view);
 
-    if (!view.type || !viewTypes.includes(view.type)) {
-      throw Components.Exception("Invalid view: " + view.type);
+    if (!type || this.views[type] == null) {
+      console.warn(`No view for ${type} ${param}, switching to default`);
+      this.resetState();
+      return;
     }
 
     this.currentViewId = state.view;
     this.isLoading = true;
 
-    recordViewTelemetry(view.param);
+    // Perform tasks before view load
+    recordViewTelemetry(param);
+    document.dispatchEvent(
+      new CustomEvent("view-selected", {
+        detail: { id: state.view, param, type },
+      })
+    );
 
-    let promiseLoad;
-    if (state.view != state.previousView) {
-      promiseLoad = showView(view.type, view.param, state).then(() => {
-        this.isLoading = false;
+    // Render the fragment
+    this.container.setAttribute("current-view", type);
+    let fragment = await this.views[type](param);
 
-        const event = document.createEvent("Events");
-        event.initEvent("ViewChanged", true, true);
-        document.dispatchEvent(event);
+    // Clear and append the fragment
+    if (fragment) {
+      ScrollOffsets.save();
+      ScrollOffsets.setView(state.historyEntryId);
+
+      this.container.textContent = "";
+      this.container.append(fragment);
+
+      // Most content has been rendered at this point. The only exception are
+      // recommendations in the discovery pane and extension/theme list, because
+      // they rely on remote data. If loaded before, then these may be rendered
+      // within one tick, so wait a frame before restoring scroll offsets.
+      await new Promise(resolve => {
+        window.requestAnimationFrame(() => {
+          ScrollOffsets.restore();
+          resolve();
+        });
       });
+    } else {
+      // Reset to default view if no given content
+      this.resetState();
+      return;
     }
-    return promiseLoad;
+
+    this.isLoading = false;
+
+    document.dispatchEvent(new CustomEvent("view-loaded"));
   },
 
   resetState() {

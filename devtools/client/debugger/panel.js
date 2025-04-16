@@ -51,7 +51,7 @@ class DebuggerPanel {
       selectors,
       client,
     } = await this.panelWin.Debugger.bootstrap({
-      targetList: this.toolbox.targetList,
+      commands: this.commands,
       resourceWatcher: this.toolbox.resourceWatcher,
       devToolsClient: this.toolbox.target.client,
       workers: {
@@ -65,7 +65,6 @@ class DebuggerPanel {
     this._store = store;
     this._selectors = selectors;
     this._client = client;
-    this.isReady = true;
 
     this.panelWin.document.addEventListener(
       "drag:start",

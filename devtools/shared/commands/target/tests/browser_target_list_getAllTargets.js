@@ -17,8 +17,6 @@ add_task(async function() {
   await pushPref("dom.ipc.processPrelaunch.enabled", false);
 
   info("Setup the test page with workers of all types");
-  const client = await createLocalClient();
-  const mainRoot = client.mainRoot;
 
   const tab = await addTab(FISSION_TEST_URL);
 
@@ -29,36 +27,39 @@ add_task(async function() {
   const sharedWorker = new SharedWorker(CHROME_WORKER_URL + "#shared-worker");
 
   info("Create a target list for the main process target");
-  const targetDescriptor = await mainRoot.getMainProcess();
-  const commands = await targetDescriptor.getCommands();
-  const targetList = commands.targetCommand;
-  const { TYPES } = targetList;
-  await targetList.startListening();
+  const commands = await CommandsFactory.forMainProcess();
+  const targetCommand = commands.targetCommand;
+  const { TYPES } = targetCommand;
+  await targetCommand.startListening();
 
   info("Check getAllTargets will throw when providing invalid arguments");
   Assert.throws(
-    () => targetList.getAllTargets(),
+    () => targetCommand.getAllTargets(),
     e => e.message === "getAllTargets expects a non-empty array of types"
   );
 
   Assert.throws(
-    () => targetList.getAllTargets([]),
+    () => targetCommand.getAllTargets([]),
     e => e.message === "getAllTargets expects a non-empty array of types"
   );
 
   info("Check getAllTargets returns consistent results with several types");
-  const workerTargets = targetList.getAllTargets([TYPES.WORKER]);
-  const serviceWorkerTargets = targetList.getAllTargets([TYPES.SERVICE_WORKER]);
-  const sharedWorkerTargets = targetList.getAllTargets([TYPES.SHARED_WORKER]);
-  const processTargets = targetList.getAllTargets([TYPES.PROCESS]);
-  const frameTargets = targetList.getAllTargets([TYPES.FRAME]);
+  const workerTargets = targetCommand.getAllTargets([TYPES.WORKER]);
+  const serviceWorkerTargets = targetCommand.getAllTargets([
+    TYPES.SERVICE_WORKER,
+  ]);
+  const sharedWorkerTargets = targetCommand.getAllTargets([
+    TYPES.SHARED_WORKER,
+  ]);
+  const processTargets = targetCommand.getAllTargets([TYPES.PROCESS]);
+  const frameTargets = targetCommand.getAllTargets([TYPES.FRAME]);
 
   const allWorkerTargetsReference = [
     ...workerTargets,
     ...serviceWorkerTargets,
     ...sharedWorkerTargets,
   ];
-  const allWorkerTargets = targetList.getAllTargets([
+  const allWorkerTargets = targetCommand.getAllTargets([
     TYPES.WORKER,
     TYPES.SERVICE_WORKER,
     TYPES.SHARED_WORKER,
@@ -80,7 +81,7 @@ add_task(async function() {
     ...processTargets,
     ...frameTargets,
   ];
-  const allTargets = targetList.getAllTargets(targetList.ALL_TYPES);
+  const allTargets = targetCommand.getAllTargets(targetCommand.ALL_TYPES);
   is(
     allTargets.length,
     allTargetsReference.length,
@@ -92,12 +93,12 @@ add_task(async function() {
     "getAllTargets(ALL_TYPES) returned the expected targets"
   );
 
-  targetList.destroy();
+  targetCommand.destroy();
 
   // Wait for all the targets to be fully attached so we don't have pending requests.
-  await waitForAllTargetsToBeAttached(targetList);
+  await waitForAllTargetsToBeAttached(targetCommand);
 
-  await client.close();
+  await commands.destroy();
   await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
     // registrationPromise is set by the test page.
     const registration = await content.wrappedJSObject.registrationPromise;

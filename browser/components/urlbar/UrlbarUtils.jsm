@@ -147,11 +147,10 @@ var UrlbarUtils = {
   // This defines icon locations that are commonly used in the UI.
   ICON: {
     // DEFAULT is defined lazily so it doesn't eagerly initialize PlacesUtils.
-    EXTENSION: "chrome://browser/content/extension.svg",
+    EXTENSION: "chrome://mozapps/skin/extensions/extension.svg",
     HISTORY: "chrome://browser/skin/history.svg",
     SEARCH_GLASS: "chrome://global/skin/icons/search-glass.svg",
-    SEARCH_GLASS_INVERTED: "chrome://browser/skin/search-glass-inverted.svg",
-    TIP: "chrome://browser/skin/tip.svg",
+    TIP: "chrome://global/skin/icons/lightbulb.svg",
   },
 
   // The number of results by which Page Up/Down move the selection.
@@ -189,27 +188,10 @@ var UrlbarUtils = {
   // path-like chars are admitted.
   REGEXP_SINGLE_WORD: /^[^\s@:/?#]+(:\d+)?$/,
 
-  // Names of engines shipped in Firefox that search the web in general.  These
-  // are used to update the input placeholder when entering search mode.
-  // TODO (Bug 1658661): Don't hardcode this list; store search engine category
-  // information someplace better.
-  WEB_ENGINE_NAMES: new Set([
-    "百度", // Baidu
-    "百度搜索", // "Baidu Search", the name of Baidu's OpenSearch engine.
-    "Bing",
-    "DuckDuckGo",
-    "Ecosia",
-    "Google",
-    "Qwant",
-    "Yandex",
-    "Яндекс", // Yandex, non-EN
-  ]),
-
   // Valid entry points for search mode. If adding a value here, please update
   // telemetry documentation and Scalars.yaml.
   SEARCH_MODE_ENTRY: new Set([
     "bookmarkmenu",
-    "handoff",
     "keywordoffer",
     "oneoff",
     "other",
@@ -497,7 +479,7 @@ var UrlbarUtils = {
    *   The reuslt's group.
    */
   getResultGroup(result) {
-    if (result.suggestedIndex >= 0) {
+    if (result.hasSuggestedIndex) {
       return UrlbarUtils.RESULT_GROUP.SUGGESTED_INDEX;
     }
     if (result.heuristic) {
@@ -1177,6 +1159,9 @@ UrlbarUtils.RESULT_PAYLOAD_SCHEMA = {
         type: "boolean",
       },
       isPrivateEngine: {
+        type: "boolean",
+      },
+      isGeneralPurposeEngine: {
         type: "boolean",
       },
       keyword: {

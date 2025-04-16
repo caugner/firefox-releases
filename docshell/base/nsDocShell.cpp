@@ -74,6 +74,9 @@
 #include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/SessionHistoryEntry.h"
 #include "mozilla/dom/SessionStorageManager.h"
+#include "mozilla/dom/SessionStoreChangeListener.h"
+#include "mozilla/dom/SessionStoreDataCollector.h"
+#include "mozilla/dom/SessionStoreUtils.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/dom/UserActivation.h"
@@ -160,7 +163,6 @@
 #include "nsIURILoader.h"
 #include "nsIViewSourceChannel.h"
 #include "nsIWebBrowserChrome.h"
-#include "nsIWebBrowserChrome3.h"
 #include "nsIWebBrowserChromeFocus.h"
 #include "nsIWebBrowserFind.h"
 #include "nsIWebProgress.h"
@@ -376,7 +378,6 @@ nsDocShell::nsDocShell(BrowsingContext* aBrowsingContext,
       mItemType(aBrowsingContext->IsContent() ? typeContent : typeChrome),
       mPreviousEntryIndex(-1),
       mLoadedEntryIndex(-1),
-      mChildOffset(0),
       mBusyFlags(BUSY_FLAGS_NONE),
       mAppType(nsIDocShell::APP_TYPE_UNKNOWN),
       mLoadType(0),
@@ -1023,7 +1024,7 @@ bool nsDocShell::MaybeHandleSubframeHistory(
         // it wasn't originally for some other frame.
         nsCOMPtr<nsISHEntry> shEntry;
         currentSH->GetChildSHEntryIfHasNoDynamicallyAddedChild(
-            mChildOffset, getter_AddRefs(shEntry));
+            mBrowsingContext->ChildOffset(), getter_AddRefs(shEntry));
         if (shEntry) {
           aLoadState->SetSHEntry(shEntry);
         }
@@ -1638,6 +1639,7 @@ nsDocShell::GatherCharsetMenuTelemetry() {
             Telemetry::LABELS_ENCODING_OVERRIDE_SITUATION_2::ChannelNonUtf8);
       }
       break;
+    case kCharsetFromXmlDeclaration:
     case kCharsetFromMetaPrescan:
     case kCharsetFromMetaTag:
       if (isFileURL) {
@@ -3010,12 +3012,6 @@ nsDocShell::SetTreeOwner(nsIDocShellTreeOwner* aTreeOwner) {
   return NS_OK;
 }
 
-void nsDocShell::SetChildOffset(int32_t aChildOffset) {
-  mChildOffset = aChildOffset;
-}
-
-int32_t nsDocShell::GetChildOffset() { return mChildOffset; }
-
 NS_IMETHODIMP
 nsDocShell::GetHistoryID(nsID& aID) {
   aID = mBrowsingContext->GetHistoryID();
@@ -3069,24 +3065,11 @@ nsDocShell::AddChild(nsIDocShellTreeItem* aChild) {
   NS_ASSERTION(!mChildList.IsEmpty(),
                "child list must not be empty after a successful add");
 
-  nsCOMPtr<nsIDocShell> childDocShell = do_QueryInterface(aChild);
-  bool dynamic = nsDocShell::Cast(childDocShell)->GetCreatedDynamically();
-  if (!dynamic) {
-    nsCOMPtr<nsISHEntry> currentSH;
-    bool oshe = false;
-    GetCurrentSHEntry(getter_AddRefs(currentSH), &oshe);
-    if (currentSH) {
-      currentSH->HasDynamicallyAddedChild(&dynamic);
-    }
-  }
-  childDocShell->SetChildOffset(dynamic ? -1 : mChildList.Length() - 1);
-
   /* Set the child's global history if the parent has one */
   if (mBrowsingContext->GetUseGlobalHistory()) {
     // childDocShell->SetUseGlobalHistory(true);
     // this should be set through BC inherit
-    MOZ_ASSERT(nsDocShell::Cast(childDocShell)
-                   ->mBrowsingContext->GetUseGlobalHistory());
+    MOZ_ASSERT(aChild->GetBrowsingContext()->GetUseGlobalHistory());
   }
 
   if (aChild->ItemType() != mItemType) {
@@ -5048,20 +5031,6 @@ nsDocShell::GetDefaultLoadFlags(uint32_t* aDefaultLoadFlags) {
 }
 
 NS_IMETHODIMP
-nsDocShell::SetMixedContentChannel(nsIChannel* aMixedContentChannel) {
-#ifdef DEBUG
-  // if the channel is non-null
-  if (aMixedContentChannel) {
-    NS_WARNING_ASSERTION(mBrowsingContext->IsTop(),
-                         "Setting mMixedContentChannel on a docshell that is "
-                         "not the root docshell");
-  }
-#endif
-  mMixedContentChannel = aMixedContentChannel;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDocShell::GetFailedChannel(nsIChannel** aFailedChannel) {
   NS_ENSURE_ARG_POINTER(aFailedChannel);
   Document* doc = GetDocument();
@@ -5070,13 +5039,6 @@ nsDocShell::GetFailedChannel(nsIChannel** aFailedChannel) {
     return NS_OK;
   }
   NS_IF_ADDREF(*aFailedChannel = doc->GetFailedChannel());
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocShell::GetMixedContentChannel(nsIChannel** aMixedContentChannel) {
-  NS_ENSURE_ARG_POINTER(aMixedContentChannel);
-  NS_IF_ADDREF(*aMixedContentChannel = mMixedContentChannel);
   return NS_OK;
 }
 
@@ -5368,7 +5330,7 @@ nsDocShell::ForceRefreshURI(nsIURI* aURI, nsIPrincipal* aPrincipal,
      * we have in mind (15000 ms as defined by REFRESH_REDIRECT_TIMER).
      * Pass a REPLACE flag to LoadURI().
      */
-    loadState->SetLoadType(LOAD_NORMAL_REPLACE);
+    loadState->SetLoadType(LOAD_REFRESH_REPLACE);
 
     /* For redirects we mimic HTTP, which passes the
      * original referrer.
@@ -5846,6 +5808,7 @@ nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
   // Determine if this type of load should update history
   switch (mLoadType) {
     case LOAD_NORMAL_REPLACE:
+    case LOAD_REFRESH_REPLACE:
     case LOAD_STOP_CONTENT_AND_REPLACE:
     case LOAD_RELOAD_BYPASS_CACHE:
     case LOAD_RELOAD_BYPASS_PROXY:
@@ -5908,7 +5871,13 @@ nsDocShell::OnStateChange(nsIWebProgress* aProgress, nsIRequest* aRequest,
         nsCOMPtr<nsIWidget> mainWidget;
         GetMainWidget(getter_AddRefs(mainWidget));
         if (mainWidget) {
-          mainWidget->SetCursor(eCursor_spinning, nullptr, 0, 0);
+          mainWidget->SetCursor(nsIWidget::Cursor{eCursor_spinning});
+        }
+      }
+
+      if constexpr (SessionStoreUtils::NATIVE_LISTENER) {
+        if (IsForceReloadType(mLoadType)) {
+          SessionStoreUtils::ResetSessionStore(mBrowsingContext);
         }
       }
     }
@@ -5924,10 +5893,11 @@ nsDocShell::OnStateChange(nsIWebProgress* aProgress, nsIRequest* aRequest,
       nsCOMPtr<nsIWidget> mainWidget;
       GetMainWidget(getter_AddRefs(mainWidget));
       if (mainWidget) {
-        mainWidget->SetCursor(eCursor_standard, nullptr, 0, 0);
+        mainWidget->SetCursor(nsIWidget::Cursor{eCursor_standard});
       }
     }
   }
+
   if ((~aStateFlags & (STATE_IS_DOCUMENT | STATE_STOP)) == 0) {
     nsCOMPtr<nsIWebProgress> webProgress =
         do_QueryInterface(GetAsSupports(this));
@@ -5965,20 +5935,6 @@ void nsDocShell::OnRedirectStateChange(nsIChannel* aOldChannel,
                                        uint32_t aStateFlags) {
   NS_ASSERTION(aStateFlags & STATE_REDIRECTING,
                "Calling OnRedirectStateChange when there is no redirect");
-
-  // If mixed content is allowed for the old channel, we forward
-  // the permission to the new channel if it has the same origin
-  // as the old one.
-  if (mMixedContentChannel && mMixedContentChannel == aOldChannel) {
-    nsresult rv =
-        nsContentUtils::CheckSameOrigin(mMixedContentChannel, aNewChannel);
-    if (NS_SUCCEEDED(rv)) {
-      SetMixedContentChannel(aNewChannel);  // Same origin: forward permission.
-    } else {
-      SetMixedContentChannel(
-          nullptr);  // Different origin: clear mMixedContentChannel.
-    }
-  }
 
   if (!(aStateFlags & STATE_IS_DOCUMENT)) {
     return;  // not a toplevel document
@@ -6669,6 +6625,17 @@ nsresult nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
     // If we have a host
     nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
     PredictorLearnRedirect(url, aChannel, loadInfo->GetOriginAttributes());
+  }
+
+  if constexpr (SessionStoreUtils::NATIVE_LISTENER) {
+    if (Document* document = GetDocument()) {
+      if (WindowGlobalChild* windowChild = document->GetWindowGlobalChild()) {
+        RefPtr<SessionStoreDataCollector> collector =
+            SessionStoreDataCollector::CollectSessionStoreData(windowChild);
+        collector->RecordInputChange();
+        collector->RecordScrollChange();
+      }
+    }
   }
 
   return NS_OK;
@@ -8732,7 +8699,6 @@ nsresult nsDocShell::PerformRetargeting(nsDocShellLoadState* aLoadState) {
       targetContext = newBC;
     }
   }
-
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(targetContext, rv);
 
@@ -8752,6 +8718,27 @@ nsresult nsDocShell::PerformRetargeting(nsDocShellLoadState* aLoadState) {
   // No forced download
   aLoadState->SetFileName(VoidString());
   return targetContext->InternalLoad(aLoadState);
+}
+
+static nsAutoCString RefMaybeNull(nsIURI* aURI) {
+  nsAutoCString result;
+  if (NS_FAILED(aURI->GetRef(result))) {
+    result.SetIsVoid(true);
+  }
+  return result;
+}
+
+uint32_t nsDocShell::GetSameDocumentNavigationFlags(nsIURI* aNewURI) {
+  uint32_t flags = LOCATION_CHANGE_SAME_DOCUMENT;
+
+  bool equal = false;
+  if (mCurrentURI &&
+      NS_SUCCEEDED(mCurrentURI->EqualsExceptRef(aNewURI, &equal)) && equal &&
+      RefMaybeNull(mCurrentURI) != RefMaybeNull(aNewURI)) {
+    flags |= LOCATION_CHANGE_HASHCHANGE;
+  }
+
+  return flags;
 }
 
 bool nsDocShell::IsSameDocumentNavigation(nsDocShellLoadState* aLoadState,
@@ -8798,6 +8785,23 @@ bool nsDocShell::IsSameDocumentNavigation(nsDocShellLoadState* aLoadState,
       if (NS_FAILED(currentExposableURI->EqualsExceptRef(
               aLoadState->URI(), &aState.mSameExceptHashes))) {
         aState.mSameExceptHashes = false;
+      }
+      // HTTPS-Only Mode upgrades schemes from http to https in Necko, hence we
+      // have to perform a special check here to avoid an actual navigation. If
+      // HTTPS-Only Mode is enabled and the two URIs are same-origin (modulo the
+      // fact that the new URI is currently http), then set mSameExceptHashes to
+      // true and only perform a fragment navigation.
+      if (!aState.mSameExceptHashes) {
+        nsCOMPtr<nsIChannel> docChannel = GetCurrentDocChannel();
+        if (docChannel) {
+          nsCOMPtr<nsILoadInfo> docLoadInfo = docChannel->LoadInfo();
+          if (!docLoadInfo->GetLoadErrorPage()) {
+            if (nsHTTPSOnlyUtils::IsEqualURIExceptSchemeAndRef(
+                    currentExposableURI, aLoadState->URI(), docLoadInfo)) {
+              aState.mSameExceptHashes = true;
+            }
+          }
+        }
       }
     }
   }
@@ -8851,7 +8855,6 @@ bool nsDocShell::IsSameDocumentNavigation(nsDocShellLoadState* aLoadState,
         (aState.mHistoryNavBetweenSameDoc && mOSHE != aLoadState->SHEntry()) ||
         (!aLoadState->SHEntry() && !aLoadState->PostDataStream() &&
          aState.mSameExceptHashes && aState.mNewURIHasRef);
-
     MOZ_LOG(gSHLog, LogLevel::Debug,
             ("nsDocShell %p NavBetweenSameDoc=%d is same doc = %d", this,
              aState.mHistoryNavBetweenSameDoc, doSameDocumentNavigation));
@@ -8955,6 +8958,10 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
     newURIPartitionedPrincipalToInherit = doc->PartitionedPrincipal();
     newCsp = doc->GetCsp();
   }
+
+  uint32_t locationChangeFlags =
+      GetSameDocumentNavigationFlags(aLoadState->URI());
+
   // Pass true for aCloneSHChildren, since we're not
   // changing documents here, so all of our subframes are
   // still relevant to the new session history entry.
@@ -9006,6 +9013,23 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
       }
     }
   } else {
+    if (mActiveEntry) {
+      mActiveEntry->SetScrollPosition(scrollPos.x, scrollPos.y);
+      if (mBrowsingContext) {
+        if (XRE_IsParentProcess()) {
+          SessionHistoryEntry* entry =
+              mBrowsingContext->Canonical()->GetActiveSessionHistoryEntry();
+          if (entry) {
+            entry->SetScrollPosition(scrollPos.x, scrollPos.y);
+          }
+        } else {
+          mozilla::Unused << ContentChild::GetSingleton()
+                                 ->SendSessionHistoryEntryScrollPosition(
+                                     mBrowsingContext, scrollPos.x,
+                                     scrollPos.y);
+        }
+      }
+    }
     if (mLoadingEntry) {
       if (!mLoadingEntry->mLoadIsFromSessionHistory) {
         // If we're not doing a history load, scroll restoration
@@ -9142,8 +9166,7 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
   }
 
   if (locationChangeNeeded) {
-    FireOnLocationChange(this, nullptr, aLoadState->URI(),
-                         LOCATION_CHANGE_SAME_DOCUMENT);
+    FireOnLocationChange(this, nullptr, aLoadState->URI(), locationChangeFlags);
   }
 
   /* Restore the original LSHE if we were loading something
@@ -9466,22 +9489,6 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
 
   if (mTiming && isNotDownload) {
     mTiming->NotifyUnloadAccepted(mCurrentURI);
-  }
-
-  // Check if the webbrowser chrome wants the load to proceed; this can be
-  // used to cancel attempts to load URIs in the wrong process. testing
-  // GetPendingRedirectedChannel() helps to avoid revisiting an earlier
-  // redirect decision.
-  nsCOMPtr<nsIWebBrowserChrome3> browserChrome3 = do_GetInterface(mTreeOwner);
-  if (browserChrome3 && !aLoadState->GetPendingRedirectedChannel()) {
-    bool shouldLoad;
-    rv = browserChrome3->ShouldLoadURI(
-        this, aLoadState->URI(), aLoadState->GetReferrerInfo(),
-        !!aLoadState->PostDataStream(), aLoadState->TriggeringPrincipal(),
-        aLoadState->Csp(), &shouldLoad);
-    if (NS_SUCCEEDED(rv) && !shouldLoad) {
-      return NS_OK;
-    }
   }
 
   // In e10s, in the parent process, we refuse to load anything other than
@@ -10093,10 +10100,6 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
     }
   }
 
-  if (httpChannelInternal && aBrowsingContext->GetSandboxFlags() != 0) {
-    httpChannelInternal->SetHasNonEmptySandboxingFlag(true);
-  }
-
   nsCOMPtr<nsIURI> rpURI;
   aLoadInfo->GetResultPrincipalURI(getter_AddRefs(rpURI));
   Maybe<nsCOMPtr<nsIURI>> originalResultPrincipalURI;
@@ -10172,6 +10175,11 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   if (NS_WARN_IF(!uriLoader)) {
     return NS_ERROR_UNEXPECTED;
   }
+
+  // Persist and sync layout history state before we load a new uri, as this
+  // might be our last chance to do so, in the content process.
+  PersistLayoutHistoryState();
+  SynchronizeLayoutHistoryState();
 
   nsresult rv;
   nsContentPolicyType contentPolicyType = DetermineContentType();
@@ -10630,34 +10638,10 @@ static nsresult AppendSegmentToString(nsIInputStream* aIn, void* aClosure,
   return openFlags;
 }
 
-void nsDocShell::UpdateMixedContentChannelForNewLoad(nsIChannel* aChannel) {
-  if (mLoadType == LOAD_NORMAL_ALLOW_MIXED_CONTENT ||
-      mLoadType == LOAD_RELOAD_ALLOW_MIXED_CONTENT) {
-    SetMixedContentChannel(aChannel);
-  } else if (mMixedContentChannel) {
-    /*
-     * If the user "Disables Protection on This Page", we call
-     * SetMixedContentChannel for the first time, otherwise
-     * mMixedContentChannel is still null.
-     * Later, if the new channel passes a same orign check, we remember the
-     * users decision by calling SetMixedContentChannel using the new channel.
-     * This way, the user does not have to click the disable protection button
-     * over and over for browsing the same site.
-     */
-    nsresult rv =
-        nsContentUtils::CheckSameOrigin(mMixedContentChannel, aChannel);
-    if (NS_FAILED(rv) || NS_FAILED(SetMixedContentChannel(aChannel))) {
-      SetMixedContentChannel(nullptr);
-    }
-  }
-}
-
 nsresult nsDocShell::OpenInitializedChannel(nsIChannel* aChannel,
                                             nsIURILoader* aURILoader,
                                             uint32_t aOpenFlags) {
   nsresult rv = NS_OK;
-
-  UpdateMixedContentChannelForNewLoad(aChannel);
 
   // If anything fails here, make sure to clear our initial ClientSource.
   auto cleanupInitialClient =
@@ -10714,8 +10698,6 @@ nsresult nsDocShell::OpenInitializedChannel(nsIChannel* aChannel,
 nsresult nsDocShell::OpenRedirectedChannel(nsDocShellLoadState* aLoadState) {
   nsCOMPtr<nsIChannel> channel = aLoadState->GetPendingRedirectedChannel();
   MOZ_ASSERT(channel);
-
-  UpdateMixedContentChannelForNewLoad(channel);
 
   // If anything fails here, make sure to clear our initial ClientSource.
   auto cleanupInitialClient =
@@ -11112,7 +11094,7 @@ bool nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
   // in session history.
   if (!mozilla::SessionHistoryInParent() && rootSH &&
       ((mLoadType & (LOAD_CMD_HISTORY | LOAD_CMD_RELOAD)) ||
-       mLoadType == LOAD_NORMAL_REPLACE)) {
+       mLoadType == LOAD_NORMAL_REPLACE || mLoadType == LOAD_REFRESH_REPLACE)) {
     mPreviousEntryIndex = rootSH->Index();
     if (!mozilla::SessionHistoryInParent()) {
       rootSH->LegacySHistory()->UpdateIndex();
@@ -11537,7 +11519,7 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
     aDocument->SetDocumentURI(aNewURI);
     SetCurrentURI(aNewURI, nullptr, /* aFireLocationChange */ true,
                   /* aIsInitialAboutBlank */ false,
-                  LOCATION_CHANGE_SAME_DOCUMENT);
+                  GetSameDocumentNavigationFlags(aNewURI));
 
     AddURIVisit(aNewURI, aCurrentURI, 0);
 
@@ -11864,7 +11846,8 @@ nsresult nsDocShell::AddToSessionHistory(
       MOZ_ALWAYS_SUCCEEDS(topWc->SetSHEntryHasUserInteraction(false));
     }
     if (!mOSHE || !LOAD_TYPE_HAS_FLAGS(mLoadType, LOAD_FLAGS_REPLACE_HISTORY)) {
-      rv = AddChildSHEntryToParent(entry, mChildOffset, aCloneChildren);
+      rv = AddChildSHEntryToParent(entry, mBrowsingContext->ChildOffset(),
+                                   aCloneChildren);
     }
   }
 
@@ -12216,22 +12199,23 @@ nsDocShell::MakeEditable(bool aInWaitForUriLoad) {
     return;
   }
 
-  nsresult rv = props->GetPropertyAsInterface(u"docshell.previousURI"_ns,
-                                              NS_GET_IID(nsIURI),
-                                              reinterpret_cast<void**>(aURI));
+  nsresult rv;
+  nsCOMPtr<nsIURI> uri(do_GetProperty(props, u"docshell.previousURI"_ns, &rv));
+  if (NS_SUCCEEDED(rv)) {
+    uri.forget(aURI);
 
-  if (NS_FAILED(rv)) {
-    // There is no last visit for this channel, so this must be the first
-    // link.  Link the visit to the referrer of this request, if any.
-    // Treat referrer as null if there is an error getting it.
-    (void)NS_GetReferrerFromChannel(aChannel, aURI);
-  } else {
     rv = props->GetPropertyAsUint32(u"docshell.previousFlags"_ns,
                                     aChannelRedirectFlags);
 
     NS_WARNING_ASSERTION(
         NS_SUCCEEDED(rv),
         "Could not fetch previous flags, URI will be treated like referrer");
+
+  } else {
+    // There is no last visit for this channel, so this must be the first
+    // link.  Link the visit to the referrer of this request, if any.
+    // Treat referrer as null if there is an error getting it.
+    NS_GetReferrerFromChannel(aChannel, aURI);
   }
 }
 
@@ -12761,21 +12745,13 @@ nsresult nsDocShell::OnLinkClick(
     return NS_OK;
   }
 
-  nsresult rv = NS_ERROR_FAILURE;
-  nsAutoString target;
-
-  nsCOMPtr<nsIWebBrowserChrome3> browserChrome3 = do_GetInterface(mTreeOwner);
   bool noOpenerImplied = false;
-  if (browserChrome3) {
-    rv = browserChrome3->OnBeforeLinkTraversal(aTargetSpec, aURI, aContent,
-                                               mIsAppTab, target);
+  nsAutoString target(aTargetSpec);
+  if (ShouldOpenInBlankTarget(aTargetSpec, aURI, aContent)) {
+    target = u"_blank";
     if (!aTargetSpec.Equals(target)) {
       noOpenerImplied = true;
     }
-  }
-
-  if (NS_FAILED(rv)) {
-    target = aTargetSpec;
   }
 
   RefPtr<nsDocShellLoadState> loadState = new nsDocShellLoadState(aURI);
@@ -12794,6 +12770,50 @@ nsresult nsDocShell::OnLinkClick(
       new OnLinkClickEvent(this, aContent, loadState, noOpenerImplied,
                            aIsTrusted, aTriggeringPrincipal);
   return Dispatch(TaskCategory::UI, ev.forget());
+}
+
+bool nsDocShell::ShouldOpenInBlankTarget(const nsAString& aOriginalTarget,
+                                         nsIURI* aLinkURI,
+                                         nsIContent* aContent) {
+  // Don't modify non-default targets.
+  if (!aOriginalTarget.IsEmpty()) {
+    return false;
+  }
+
+  // Only check targets that are in extension panels or app tabs.
+  // (isAppTab will be false for app tab subframes).
+  nsString mmGroup = mBrowsingContext->Top()->GetMessageManagerGroup();
+  if (!mmGroup.EqualsLiteral("webext-browsers") && !mIsAppTab) {
+    return false;
+  }
+
+  // External links from within app tabs should always open in new tabs
+  // instead of replacing the app tab's page (Bug 575561)
+  // nsIURI.host can throw for non-nsStandardURL nsIURIs. If we fail to
+  // get either host, just return false to use the original target.
+  nsAutoCString linkHost;
+  if (NS_FAILED(aLinkURI->GetHost(linkHost))) {
+    return false;
+  }
+
+  nsCOMPtr<nsIURI> docURI = aContent->OwnerDoc()->GetDocumentURIObject();
+  if (!docURI) {
+    return false;
+  }
+
+  nsAutoCString docHost;
+  if (NS_FAILED(docURI->GetHost(docHost))) {
+    return false;
+  }
+
+  if (linkHost.Equals(docHost)) {
+    return false;
+  }
+
+  // Special case: ignore "www" prefix if it is part of host string
+  return linkHost.Length() < docHost.Length()
+             ? !docHost.Equals("www."_ns + linkHost)
+             : !linkHost.Equals("www."_ns + docHost);
 }
 
 static bool IsElementAnchorOrArea(nsIContent* aContent) {

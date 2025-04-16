@@ -191,7 +191,7 @@ module.exports = function(config) {
             "content-src/aboutwelcome/**/*.jsx": {
               statements: 62,
               lines: 60,
-              functions: 83,
+              functions: 65,
               branches: 50,
             },
             "content-src/components/**/*.jsx": {

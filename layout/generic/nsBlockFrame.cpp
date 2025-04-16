@@ -1886,10 +1886,11 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
   if (NS_UNCONSTRAINEDSIZE != aReflowInput.ComputedBSize()) {
     // Note: We don't use blockEndEdgeOfChildren because it includes the
     // previous margin.
-    nscoord contentBSize = aState.mBCoord + nonCarriedOutBDirMargin;
-    finalSize.BSize(wm) =
-        ComputeFinalBSize(aReflowInput, aState.mReflowStatus, contentBSize,
-                          borderPadding, aState.mConsumedBSize);
+    const nscoord contentBSizeWithBStartBP =
+        aState.mBCoord + nonCarriedOutBDirMargin;
+    finalSize.BSize(wm) = ComputeFinalBSize(
+        aReflowInput, aState.mReflowStatus, contentBSizeWithBStartBP,
+        borderPadding, aState.mConsumedBSize);
 
     // If the content block-size is larger than the effective computed
     // block-size, we extend the block-size to contain all the content.
@@ -1897,10 +1898,11 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
     if (aReflowInput.mFlags.mIsBSizeSetByAspectRatio &&
         ShouldApplyAutomaticMinimumOnBlockAxis(wm, aReflowInput.mStyleDisplay,
                                                aReflowInput.mStylePosition)) {
-      // Note: finalSize.BSize(wm) includes border + padding, so we have to
-      // compare it with contentBSize + border + padding.
-      finalSize.BSize(wm) = std::max(
-          finalSize.BSize(wm), contentBSize + borderPadding.BStartEnd(wm));
+      // Note: finalSize.BSize(wm) is the border-box size, so we compare it with
+      // the content's block-size plus our border and padding..
+      finalSize.BSize(wm) =
+          std::max(finalSize.BSize(wm),
+                   contentBSizeWithBStartBP + borderPadding.BEnd(wm));
     }
 
     // Don't carry out a block-end margin when our BSize is fixed.
@@ -2053,6 +2055,19 @@ void nsBlockFrame::ConsiderBlockEndEdgeOfChildren(
   // REVIEW: For now, we do this for both visual and scrollable area,
   // although when we make scrollable overflow area not be a subset of
   // visual, we can change this.
+
+  if (Style()->GetPseudoType() == PseudoStyleType::scrolledContent) {
+    // If we are a scrolled inner frame, add our block-end padding to our
+    // children's block-end edge.
+    //
+    // Note: aBEndEdgeOfChildren already includes our own block-start padding
+    // because it is relative to our block-start edge of our border-box, which
+    // is the same as our padding-box here.
+    MOZ_ASSERT(GetLogicalUsedBorderAndPadding(wm) == GetLogicalUsedPadding(wm),
+               "A scrolled inner frame shouldn't have any border!");
+    aBEndEdgeOfChildren += GetLogicalUsedPadding(wm).BEnd(wm);
+  }
+
   // XXX Currently, overflow areas are stored as physical rects, so we have
   // to handle writing modes explicitly here. If we change overflow rects
   // to be stored logically, this can be simplified again.

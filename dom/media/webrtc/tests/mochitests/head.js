@@ -467,21 +467,20 @@ function setupEnvironment() {
   SpecialPowers.exactGC();
 }
 
-function runTestWhenReady(testFunc) {
+async function runTestWhenReady(testFunc) {
   setupEnvironment();
-  return testConfigured
-    .then(options => testFunc(options))
-    .catch(e => {
-      ok(
-        false,
-        "Error executing test: " +
-          e +
-          (typeof e.stack === "string"
-            ? " " + e.stack.split("\n").join(" ... ")
-            : "")
-      );
-      SimpleTest.finish();
-    });
+  const options = await testConfigured;
+  try {
+    await testFunc(options);
+  } catch (e) {
+    ok(
+      false,
+      `Error executing test: ${e}
+${e.stack ? e.stack : ""}`
+    );
+  } finally {
+    SimpleTest.finish();
+  }
 }
 
 /**

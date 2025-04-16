@@ -124,6 +124,7 @@
 #include "mozilla/net/AsyncUrlChannelClassifier.h"
 #include "mozilla/net/CookieJarSettings.h"
 #include "mozilla/net/NeckoChannelParams.h"
+#include "mozilla/net/OpaqueResponseUtils.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
 #include "HttpTrafficAnalyzer.h"
 #include "mozilla/net/SocketProcessParent.h"
@@ -456,22 +457,8 @@ nsresult nsHttpChannel::PrepareToConnect() {
   // notify "http-on-modify-request" observers
   CallOnModifyRequestObservers();
 
-  if (mCanceled) {
-    return mStatus;
-  }
-
-  if (mSuspendCount) {
-    // We abandon the connection here if there was one.
-    LOG(("Waiting until resume OnBeforeConnect [this=%p]\n", this));
-    MOZ_ASSERT(!mCallOnResume);
-    mCallOnResume = [](nsHttpChannel* self) {
-      self->HandleOnBeforeConnect();
-      return NS_OK;
-    };
-    return NS_OK;
-  }
-
-  return OnBeforeConnect();
+  return CallOrWaitForResume(
+      [](auto* self) { return self->OnBeforeConnect(); });
 }
 
 void nsHttpChannel::HandleContinueCancellingByURLClassifier(
@@ -495,27 +482,6 @@ void nsHttpChannel::HandleContinueCancellingByURLClassifier(
   LOG(("nsHttpChannel::HandleContinueCancellingByURLClassifier [this=%p]\n",
        this));
   ContinueCancellingByURLClassifier(aErrorCode);
-}
-
-void nsHttpChannel::HandleOnBeforeConnect() {
-  MOZ_ASSERT(!mCallOnResume, "How did that happen?");
-  nsresult rv;
-
-  if (mSuspendCount) {
-    LOG(("Waiting until resume OnBeforeConnect [this=%p]\n", this));
-    mCallOnResume = [](nsHttpChannel* self) {
-      self->HandleOnBeforeConnect();
-      return NS_OK;
-    };
-    return;
-  }
-
-  LOG(("nsHttpChannel::HandleOnBeforeConnect [this=%p]\n", this));
-  rv = OnBeforeConnect();
-  if (NS_FAILED(rv)) {
-    CloseCacheEntry(false);
-    Unused << AsyncAbort(rv);
-  }
 }
 
 nsresult nsHttpChannel::OnBeforeConnect() {
@@ -623,18 +589,6 @@ nsresult nsHttpChannel::MaybeUseHTTPSRRForUpgrade(bool aShouldUpgrade,
   }
 
   auto shouldSkipUpgradeWithHTTPSRR = [&]() -> bool {
-    if (LoadBeConservative()) {
-      return true;
-    }
-
-    // Skip upgrading channel triggered by system unless it is a top-level
-    // load.
-    if (mLoadInfo->TriggeringPrincipal()->IsSystemPrincipal() &&
-        mLoadInfo->GetExternalContentPolicyType() !=
-            ExtContentPolicy::TYPE_DOCUMENT) {
-      return true;
-    }
-
     nsAutoCString uriHost;
     mURI->GetAsciiHost(uriHost);
 
@@ -728,6 +682,7 @@ nsresult nsHttpChannel::ContinueOnBeforeConnect(bool aShouldUpgrade,
 
   if (LoadIsTRRServiceChannel()) {
     mCaps |= NS_HTTP_LARGE_KEEPALIVE;
+    mCaps |= NS_HTTP_DISALLOW_HTTPS_RR;
   }
 
   mCaps |= NS_HTTP_TRR_FLAGS_FROM_MODE(nsIRequest::GetTRRMode());
@@ -749,44 +704,10 @@ nsresult nsHttpChannel::ContinueOnBeforeConnect(bool aShouldUpgrade,
   // notify "http-on-before-connect" observers
   gHttpHandler->OnBeforeConnect(this);
 
-  // Check if request was cancelled during http-on-before-connect.
-  if (mCanceled) {
-    return mStatus;
-  }
-
-  if (mSuspendCount) {
-    // We abandon the connection here if there was one.
-    LOG(("Waiting until resume OnBeforeConnect [this=%p]\n", this));
-    MOZ_ASSERT(!mCallOnResume);
-    mCallOnResume = [](nsHttpChannel* self) {
-      self->OnBeforeConnectContinue();
-      return NS_OK;
-    };
-    return NS_OK;
-  }
-
-  return Connect();
-}
-
-void nsHttpChannel::OnBeforeConnectContinue() {
-  MOZ_ASSERT(!mCallOnResume, "How did that happen?");
-  nsresult rv;
-
-  if (mSuspendCount) {
-    LOG(("Waiting until resume OnBeforeConnect [this=%p]\n", this));
-    mCallOnResume = [](nsHttpChannel* self) {
-      self->OnBeforeConnectContinue();
-      return NS_OK;
-    };
-    return;
-  }
-
-  LOG(("nsHttpChannel::OnBeforeConnectContinue [this=%p]\n", this));
-  rv = Connect();
-  if (NS_FAILED(rv)) {
-    CloseCacheEntry(false);
-    Unused << AsyncAbort(rv);
-  }
+  return CallOrWaitForResume(
+      [](auto* self) {
+        return self->Connect();
+      });
 }
 
 nsresult nsHttpChannel::Connect() {
@@ -1476,7 +1397,7 @@ nsresult nsHttpChannel::SetupTransaction() {
     };
   }
 
-  EnsureTopLevelOuterContentWindowId();
+  EnsureTopBrowsingContextId();
   EnsureRequestContext();
 
   HttpTrafficCategory category = CreateTrafficCategory();
@@ -1491,7 +1412,7 @@ nsresult nsHttpChannel::SetupTransaction() {
   rv = mTransaction->Init(
       mCaps, mConnectionInfo, &mRequestHead, mUploadStream, mReqContentLength,
       LoadUploadStreamHasHeaders(), GetCurrentEventTarget(), callbacks, this,
-      mTopLevelOuterContentWindowId, category, mRequestContext, mClassOfService,
+      mTopBrowsingContextId, category, mRequestContext, mClassOfService,
       mInitialRwin, LoadResponseTimeoutEnabled(), mChannelId,
       std::move(observer), std::move(pushCallback), mTransWithPushedStream,
       mPushedStreamId);
@@ -1629,6 +1550,16 @@ nsresult nsHttpChannel::CallOnStartRequest() {
     return mStatus;
   }
 
+  // EnsureOpaqueResponseIsAllowed and EnsureOpauqeResponseIsAllowedAfterSniff
+  // are the checks for Opaque Response Blocking to ensure that we block as many
+  // cross-origin responses with CORS headers as possible that are not either
+  // Javascript or media to avoid leaking their contents through side channels.
+  if (!EnsureOpaqueResponseIsAllowed()) {
+    // XXXtt: Return an error code or make the response body null.
+    // We silence the error result now because we only want to get how many
+    // response will get allowed or blocked by ORB.
+  }
+
   // Allow consumers to override our content type
   if (mLoadFlags & LOAD_CALL_CONTENT_SNIFFERS) {
     // NOTE: We can have both a txn pump and a cache pump when the cache
@@ -1655,6 +1586,13 @@ nsresult nsHttpChannel::CallOnStartRequest() {
         trans->SetSniffedTypeToChannel(CallTypeSniffers, thisChannel);
       }
     }
+  }
+
+  auto isAllowedOrErr = EnsureOpaqueResponseIsAllowedAfterSniff();
+  if (isAllowedOrErr.isErr() || !isAllowedOrErr.inspect()) {
+    // XXXtt: Return an error code or make the response body null.
+    // We silence the error result now because we only want to get how many
+    // response will get allowed or blocked by ORB.
   }
 
   // Note that the code below should be synced with the code in
@@ -6086,7 +6024,7 @@ nsresult nsHttpChannel::CancelInternal(nsresult status) {
   }
 
   mCanceled = true;
-  mStatus = status;
+  mStatus = NS_FAILED(status) ? status : NS_ERROR_ABORT;
   if (mProxyRequest) mProxyRequest->Cancel(status);
   CancelNetworkRequest(status);
   mCacheInputStream.CloseAndRelease();
@@ -6324,7 +6262,7 @@ nsHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
 
   if (mCanceled) {
     ReleaseListeners();
-    return mStatus;
+    return NS_FAILED(mStatus) ? mStatus : NS_ERROR_FAILURE;
   }
 
   if (MaybeWaitForUploadStreamLength(listener, nullptr)) {
@@ -6345,12 +6283,11 @@ nsHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
     return rv;
   }
 
-  if (!mLoadGroup && !mCallbacks) {
-    // If no one called SetLoadGroup or SetNotificationCallbacks, the private
-    // state has not been updated on PrivateBrowsingChannel (which we derive
-    // from) Hence, we have to call UpdatePrivateBrowsing() here
-    UpdatePrivateBrowsing();
-  }
+  // If no one called SetLoadGroup or SetNotificationCallbacks, the private
+  // state has not been updated on PrivateBrowsingChannel (which we derive
+  // from) Same if the loadinfo has changed since the creation of the channel.
+  // Hence, we have to call UpdatePrivateBrowsing() here
+  UpdatePrivateBrowsing();
 
   AntiTrackingUtils::UpdateAntiTrackingInfoForChannel(this);
 
@@ -6413,7 +6350,7 @@ nsHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
   return NS_OK;
 }
 
-nsresult nsHttpChannel::AsyncOpenFinal(TimeStamp aTimeStamp) {
+void nsHttpChannel::AsyncOpenFinal(TimeStamp aTimeStamp) {
   // Added due to PauseTask/DelayHttpChannel
   if (mLoadGroup) mLoadGroup->AddRequest(this, nullptr);
 
@@ -6429,46 +6366,37 @@ nsresult nsHttpChannel::AsyncOpenFinal(TimeStamp aTimeStamp) {
   // just once and early, AsyncOpen is the best place.
   StoreCustomAuthHeader(mRequestHead.HasHeader(nsHttp::Authorization));
 
-  if (!NS_ShouldClassifyChannel(this)) {
-    return MaybeResolveProxyAndBeginConnect();
-  }
-
+  bool willCallback = false;
   // We are about to do an async lookup to check if the URI is a tracker. If
   // yes, this channel will be canceled by channel classifier.  Chances are the
   // lookup is not needed so CheckIsTrackerWithLocalTable() will return an
   // error and then we can MaybeResolveProxyAndBeginConnect() right away.
-  RefPtr<nsHttpChannel> self = this;
-  bool willCallback = NS_SUCCEEDED(
-      AsyncUrlChannelClassifier::CheckChannel(this, [self]() -> void {
-        nsCOMPtr<nsIURI> uri;
-        self->GetURI(getter_AddRefs(uri));
-        MOZ_ASSERT(uri);
+  if (NS_ShouldClassifyChannel(this)) {
+    RefPtr<nsHttpChannel> self = this;
+    willCallback = NS_SUCCEEDED(
+        AsyncUrlChannelClassifier::CheckChannel(this, [self]() -> void {
+          nsCOMPtr<nsIURI> uri;
+          self->GetURI(getter_AddRefs(uri));
+          MOZ_ASSERT(uri);
 
-        // Finish the AntiTracking Heuristic before BeginConnect().
-        FinishAntiTrackingRedirectHeuristic(self, uri);
+          // Finish the AntiTracking Heuristic before
+          // MaybeResolveProxyAndBeginConnect().
+          FinishAntiTrackingRedirectHeuristic(self, uri);
 
-        nsresult rv = self->MaybeResolveProxyAndBeginConnect();
-        if (NS_FAILED(rv)) {
-          // Since this error is thrown asynchronously so that the caller
-          // of BeginConnect() will not do clean up for us. We have to do
-          // it on our own.
-          self->CloseCacheEntry(false);
-          Unused << self->AsyncAbort(rv);
-        }
-      }));
+          self->MaybeResolveProxyAndBeginConnect();
+        }));
+  }
 
   if (!willCallback) {
     // We can do MaybeResolveProxyAndBeginConnect immediately if
     // CheckIsTrackerWithLocalTable is failed. Note that we don't need to
     // handle the failure because BeginConnect() will return synchronously and
     // the caller will be responsible for handling it.
-    return MaybeResolveProxyAndBeginConnect();
+    MaybeResolveProxyAndBeginConnect();
   }
-
-  return NS_OK;
 }
 
-nsresult nsHttpChannel::MaybeResolveProxyAndBeginConnect() {
+void nsHttpChannel::MaybeResolveProxyAndBeginConnect() {
   nsresult rv;
 
   // The common case for HTTP channels is to begin proxy resolution and return
@@ -6478,7 +6406,7 @@ nsresult nsHttpChannel::MaybeResolveProxyAndBeginConnect() {
   if (!mProxyInfo &&
       !(mLoadFlags & (LOAD_ONLY_FROM_CACHE | LOAD_NO_NETWORK_IO)) &&
       NS_SUCCEEDED(ResolveProxy())) {
-    return NS_OK;
+    return;
   }
 
   rv = BeginConnect();
@@ -6486,8 +6414,6 @@ nsresult nsHttpChannel::MaybeResolveProxyAndBeginConnect() {
     CloseCacheEntry(false);
     Unused << AsyncAbort(rv);
   }
-
-  return NS_OK;
 }
 
 nsresult nsHttpChannel::AsyncOpenOnTailUnblock() {
@@ -6527,7 +6453,7 @@ uint16_t nsHttpChannel::GetProxyDNSStrategy() {
 }
 
 // BeginConnect() SHOULD NOT call AsyncAbort(). AsyncAbort will be called by
-// functions that called BeginConnect if needed. Only AsyncOpenFinal,
+// functions that called BeginConnect if needed. Only
 // MaybeResolveProxyAndBeginConnect and OnProxyAvailable ever call
 // BeginConnect.
 nsresult nsHttpChannel::BeginConnect() {
@@ -6612,11 +6538,6 @@ nsresult nsHttpChannel::BeginConnect() {
                       !(mCaps & NS_HTTP_BE_CONSERVATIVE) &&
                       !LoadBeConservative() && LoadAllowHttp3();
 
-  // No need to lookup HTTPSSVC record if mHTTPSSVCRecord already contains a
-  // value.
-  StoreUseHTTPSSVC(StaticPrefs::network_dns_upgrade_with_https_rr() &&
-                   mHTTPSSVCRecord.isNothing());
-
   RefPtr<AltSvcMapping> mapping;
   if (!mConnectionInfo && LoadAllowAltSvc() &&  // per channel
       (http2Allowed || http3Allowed) && !(mLoadFlags & LOAD_FRESH_CONNECTION) &&
@@ -6644,7 +6565,7 @@ nsresult nsHttpChannel::BeginConnect() {
 
     nsCOMPtr<nsIConsoleService> consoleService =
         do_GetService(NS_CONSOLESERVICE_CONTRACTID);
-    if (consoleService) {
+    if (consoleService && !host.Equals(mapping->AlternateHost())) {
       nsAutoString message(u"Alternate Service Mapping found: "_ns);
       AppendASCIItoUTF16(scheme, message);
       message.AppendLiteral(u"://");
@@ -6665,9 +6586,6 @@ nsresult nsHttpChannel::BeginConnect() {
                                originAttributes);
     Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC, true);
     Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC_OE, !isHttps);
-
-    // Don't use HTTPSSVC record if we found altsvc mapping.
-    StoreUseHTTPSSVC(false);
   } else if (mConnectionInfo) {
     LOG(("nsHttpChannel %p Using channel supplied connection info", this));
     Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC, false);
@@ -6678,9 +6596,19 @@ nsresult nsHttpChannel::BeginConnect() {
     Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC, false);
   }
 
-  if (mConnectionInfo->UsingConnect()) {
-    StoreUseHTTPSSVC(false);
+  bool httpsRRAllowed =
+      !LoadBeConservative() && !(mCaps & NS_HTTP_BE_CONSERVATIVE) &&
+      !(mLoadInfo->TriggeringPrincipal()->IsSystemPrincipal() &&
+        mLoadInfo->GetExternalContentPolicyType() !=
+            ExtContentPolicy::TYPE_DOCUMENT) &&
+      !mConnectionInfo->UsingConnect();
+  if (!httpsRRAllowed) {
+    mCaps |= NS_HTTP_DISALLOW_HTTPS_RR;
   }
+  // No need to lookup HTTPSSVC record if mHTTPSSVCRecord already contains a
+  // value.
+  StoreUseHTTPSSVC(StaticPrefs::network_dns_upgrade_with_https_rr() &&
+                   httpsRRAllowed && mHTTPSSVCRecord.isNothing());
 
   // Need to re-ask the handler, since mConnectionInfo may not be the connInfo
   // we used earlier
@@ -6779,7 +6707,10 @@ nsresult nsHttpChannel::BeginConnect() {
     return NS_OK;
   }
 
-  rv = ContinueBeginConnectWithResult();
+  rv = CallOrWaitForResume(
+    [](nsHttpChannel* self) {
+      return self->PrepareToConnect();
+    });
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -6800,8 +6731,8 @@ nsresult nsHttpChannel::MaybeStartDNSPrefetch() {
   bool httpssvcQueried = false;
   // If https rr is not queried sucessfully, we have to reset mUseHTTPSSVC to
   // false. Otherwise, this channel may wait https rr forever.
-  auto resetUsHTTPSSVC =
-      MakeScopeExit([&] { StoreUseHTTPSSVC(httpssvcQueried); });
+  auto resetUsHTTPSSVC = MakeScopeExit(
+      [&] { StoreUseHTTPSSVC(LoadUseHTTPSSVC() && httpssvcQueried); });
 
   // Start a DNS lookup very early in case the real open is queued the DNS can
   // happen in parallel. Do not do so in the presence of an HTTP proxy as
@@ -6855,7 +6786,7 @@ nsresult nsHttpChannel::MaybeStartDNSPrefetch() {
     // not "prefetch", since DNS prefetch can be disabled by the pref.
     if (LoadUseHTTPSSVC() ||
         (gHttpHandler->UseHTTPSRRForSpeculativeConnection() &&
-         !mHTTPSSVCRecord && !mConnectionInfo->UsingConnect())) {
+         !mHTTPSSVCRecord && !(mCaps & NS_HTTP_DISALLOW_HTTPS_RR))) {
       MOZ_ASSERT(!mHTTPSSVCRecord);
 
       OriginAttributes originAttributes;
@@ -7031,44 +6962,6 @@ nsHttpChannel::SetPriority(int32_t value) {
   }
 
   return NS_OK;
-}
-
-nsresult nsHttpChannel::ContinueBeginConnectWithResult() {
-  LOG(("nsHttpChannel::ContinueBeginConnectWithResult [this=%p]", this));
-  MOZ_ASSERT(!mCallOnResume, "How did that happen?");
-
-  nsresult rv;
-
-  if (mSuspendCount) {
-    LOG(("Waiting until resume to do async connect [this=%p]\n", this));
-    mCallOnResume = [](nsHttpChannel* self) {
-      self->ContinueBeginConnect();
-      return NS_OK;
-    };
-    rv = NS_OK;
-  } else if (mCanceled) {
-    // We may have been cancelled already, by nsChannelClassifier in that
-    // case, we should not send the request to the server
-    rv = mStatus;
-  } else {
-    rv = PrepareToConnect();
-  }
-
-  LOG(
-      ("nsHttpChannel::ContinueBeginConnectWithResult result [this=%p "
-       "rv=%" PRIx32 " mCanceled=%u]\n",
-       this, static_cast<uint32_t>(rv), static_cast<bool>(mCanceled)));
-  return rv;
-}
-
-void nsHttpChannel::ContinueBeginConnect() {
-  LOG(("nsHttpChannel::ContinueBeginConnect this=%p", this));
-
-  nsresult rv = ContinueBeginConnectWithResult();
-  if (NS_FAILED(rv)) {
-    CloseCacheEntry(false);
-    Unused << AsyncAbort(rv);
-  }
 }
 
 //-----------------------------------------------------------------------------
@@ -9792,16 +9685,20 @@ nsresult nsHttpChannel::TriggerNetwork() {
   return ContinueConnect();
 }
 
-nsresult nsHttpChannel::MaybeRaceCacheWithNetwork() {
+void nsHttpChannel::MaybeRaceCacheWithNetwork() {
   nsresult rv;
 
   nsCOMPtr<nsINetworkLinkService> netLinkSvc =
       do_GetService(NS_NETWORK_LINK_SERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    return;
+  }
 
   uint32_t linkType;
   rv = netLinkSvc->GetLinkType(&linkType);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    return;
+  }
 
   if (!(linkType == nsINetworkLinkService::LINK_TYPE_ETHERNET ||
 #ifndef MOZ_WIDGET_ANDROID
@@ -9810,22 +9707,22 @@ nsresult nsHttpChannel::MaybeRaceCacheWithNetwork() {
 #endif
         linkType == nsINetworkLinkService::LINK_TYPE_USB ||
         linkType == nsINetworkLinkService::LINK_TYPE_WIFI)) {
-    return NS_OK;
+    return;
   }
 
   // Don't trigger the network if the load flags say so.
   if (mLoadFlags & (LOAD_ONLY_FROM_CACHE | LOAD_NO_NETWORK_IO)) {
-    return NS_OK;
+    return;
   }
 
   // We must not race if the channel has a failure status code.
   if (NS_FAILED(mStatus)) {
-    return NS_OK;
+    return;
   }
 
   // If a CORS Preflight is required we must not race.
   if (LoadRequireCORSPreflight() && !LoadIsCorsPreflightDone()) {
-    return NS_OK;
+    return;
   }
 
   if (CacheFileUtils::CachePerfStats::IsCacheSlow()) {
@@ -9850,7 +9747,7 @@ nsresult nsHttpChannel::MaybeRaceCacheWithNetwork() {
   LOG(("nsHttpChannel::MaybeRaceCacheWithNetwork [this=%p, delay=%u]\n", this,
        mRaceDelay));
 
-  return TriggerNetworkWithDelay(mRaceDelay);
+  TriggerNetworkWithDelay(mRaceDelay);
 }
 
 NS_IMETHODIMP
@@ -9972,6 +9869,62 @@ HttpChannelSecurityWarningReporter* nsHttpChannel::GetWarningReporter() {
   return mWarningReporter.get();
 }
 
+// Should only be called by nsMediaSniffer::GetMIMETypeFromContent and
+// imageLoader::GetMIMETypeFromContent when the content type can be
+// recognized by these sniffers.
+void nsHttpChannel::DisableIsOpaqueResponseAllowedAfterSniffCheck(
+    SnifferType aType) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+
+  if (mCheckIsOpaqueResponseAllowedAfterSniff) {
+    MOZ_ASSERT(mCachedOpaqueResponseBlockingPref);
+
+    // If the sniifer type is media and the request comes from a media element,
+    // we would like to check:
+    // - Whether the information provided by the media element shows it's an
+    // initial request.
+    // - Whether the response's status is either 200 or 206.
+    // - Whether the response's header shows it's the first partial response
+    // when the response's status is 206.
+    //
+    // If any of the results is false, then we set
+    // mBlockOpaqueResponseAfterSniff to true and block the response later.
+    if (aType == SnifferType::Media) {
+      MOZ_ASSERT(mLoadInfo);
+
+      bool isMediaRequest;
+      mLoadInfo->GetIsMediaRequest(&isMediaRequest);
+      if (isMediaRequest) {
+        bool isInitialRequest;
+        mLoadInfo->GetIsMediaInitialRequest(&isInitialRequest);
+        MOZ_ASSERT(isInitialRequest);
+
+        if (!isInitialRequest) {
+          mBlockOpaqueResponseAfterSniff = true;
+          ReportORBTelemetry("Blocked_NotAnInitialRequest"_ns);
+          return;
+        }
+
+        if (mResponseHead->Status() != 200 && mResponseHead->Status() != 206) {
+          mBlockOpaqueResponseAfterSniff = true;
+          ReportORBTelemetry("Blocked_Not200Or206"_ns);
+          return;
+        }
+
+        if (mResponseHead->Status() == 206 &&
+            !IsFirstPartialResponse(*mResponseHead)) {
+          mBlockOpaqueResponseAfterSniff = true;
+          ReportORBTelemetry("Blocked_InvaliidPartialResponse"_ns);
+          return;
+        }
+      }
+    }
+
+    mCheckIsOpaqueResponseAllowedAfterSniff = false;
+    ReportORBTelemetry("Allowed_SniffAsImageOrAudioOrVideo"_ns);
+  }
+}
+
 namespace {
 
 class CopyNonDefaultHeaderVisitor final : public nsIHttpHeaderVisitor {
@@ -10066,7 +10019,7 @@ void nsHttpChannel::ReEvaluateReferrerAfterTrackingStatusIsKnown() {
     Unused << mLoadInfo->GetCookieJarSettings(getter_AddRefs(cjs));
   }
   if (!cjs) {
-    cjs = net::CookieJarSettings::Create();
+    cjs = net::CookieJarSettings::Create(mLoadInfo->GetLoadingPrincipal());
   }
   if (cjs->GetRejectThirdPartyContexts()) {
     bool isPrivate = mLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;

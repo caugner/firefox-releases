@@ -116,8 +116,8 @@ button > hbox > label {
   margin-inline-start: 28px !important;
 }
 
-.checkbox-check {
-  margin-inline-end: 8px;
+checkbox {
+  margin-inline: 0;
 }
 
 .tail-with-learn-more {
@@ -142,9 +142,8 @@ button > hbox > label {
 }
 
 .spotlight {
-  background-color: var(--blue-40-a10);
-  outline: var(--blue-60) 1px dotted;
-  -moz-outline-radius: 2px;
+  background-color: color-mix(in srgb, var(--in-content-accent-color) 15%, transparent);
+  outline: var(--in-content-accent-color) 1px dotted;
   animation: fade-out 0.5s ease-out 2s forwards;
   /* Show the border to spotlight the components in high-contrast mode. */
   border: 1px solid transparent;
@@ -264,6 +263,8 @@ button > hbox > label {
   margin: 2px 0 6px;
   vertical-align: middle;
   width: 20px;
+  -moz-context-properties: fill;
+  fill: currentColor;
 }
 
 .extension-controlled-disabled {
@@ -284,6 +285,15 @@ button > hbox > label {
 
 #getStarted {
   font-size: 90%;
+}
+
+#FontsDialog menulist:empty {
+  /* When there's no menupopup, while the font builder is running,
+   * the height of the menulist would otherwise shrink. This throws
+   * off the height determination SubDialog.jsm does, which then
+   * leads to content being cut off. Fix by enforcing a minimum height
+   * when there's no content: */
+  min-height: max(32px, calc(1.4em + 16px));
 }
 
 #useDocumentColors {
@@ -349,29 +359,39 @@ button > hbox > label {
 }
 
 #handlersView > richlistitem {
-  min-height: 30px !important;
+  min-height: 30px;
 }
 
-#handlersView > richlistitem > hbox > hbox > menulist {
-  margin-block: 0;
-  margin-inline-end: 0;
+#handlersView .actionsMenu {
+  margin: 0;
   min-height: 0;
+  padding: 0;
+  border: none;
+  padding-inline-end: 8px;
+}
+
+#handlersView .actionsMenu::part(label) {
+  margin: 0;
 }
 
 .certManagerRichlistBox > richlistitem {
   min-height: 30px !important;
 }
 
+.typeIcon,
+.actionIcon,
+.actionsMenu::part(icon) {
+  height: 16px;
+  width: 16px;
+}
+
 .typeIcon {
   margin-inline: 10px 9px !important;
 }
 
+#handlersView .actionsMenu::part(icon),
 .actionIcon {
   margin-inline: 11px 8px !important;
-}
-
-.actionsMenu {
-  min-height: 36px;
 }
 
 .actionsMenu > menupopup > menuitem {
@@ -450,13 +470,13 @@ button > hbox > label {
 #blocklistsTree > treechildren::-moz-tree-image(selectionCol, checked) {
   list-style-image: url("chrome://global/skin/icons/check.svg");
   -moz-context-properties: fill, stroke;
-  fill: #2292d0;
+  fill: var(--in-content-accent-color);
 }
 
 #engineList > treechildren::-moz-tree-image(engineShown, checked, selected),
 #blocklistsTree > treechildren::-moz-tree-image(selectionCol, checked, selected) {
-  fill: white;
-  stroke: #0095dd;
+  fill: var(--in-content-item-selected-text);
+  stroke: var(--in-content-item-selected);
 }
 
 #engineList > treechildren::-moz-tree-row,
@@ -548,13 +568,22 @@ button > hbox > label {
   /* `transparent` will use the dialogText color in high-contrast themes and
      when page colors are disabled */
   border: 1px solid transparent;
-  border-radius: 3.5px;
+  border-radius: 8px;
   box-shadow: 0 2px 6px 0 rgba(0,0,0,0.3);
   display: -moz-box;
   margin: 0;
   padding: 0;
   overflow-x: auto;
 }
+
+@media (-moz-toolbar-prefers-color-scheme: dark) {
+  @media not (prefers-contrast) {
+    .dialogBox {
+      --in-content-page-background: #42414d;
+    }
+  }
+}
+
 
 .dialogBox[resizable="true"] {
   resize: both;
@@ -565,10 +594,19 @@ button > hbox > label {
 
 .dialogTitleBar {
   margin-top: 0;
-  padding: 3.5px 0;
-  background-color: var(--in-content-dialog-header-background);
+  padding: 6px 4px;
   border-bottom: 1px solid var(--in-content-border-color);
 }
+
+@media not (-moz-proton) {
+.dialogBox {
+  border-radius: 3.5px;
+}
+.dialogTitleBar {
+  padding: 3.5px 0;
+  background-color: var(--in-content-dialog-header-background);
+}
+} /*** END !proton ***/
 
 .dialogTitle {
   font-size: .9em;
@@ -582,6 +620,8 @@ button > hbox > label {
   background-color: transparent; /* override common.css, but keep hover/active states */
   min-width: 0;
   min-height: auto;
+  width: 20px;
+  height: 20px;
   padding: 0;
   margin-inline: 0 8px;
 }
@@ -1124,6 +1164,8 @@ richlistitem .text-link:hover {
   padding-inline-start: 38px;
   display: flex;
   align-items: center;
+  -moz-context-properties: fill;
+  fill: #FFBF00;
 }
 
 #pane-experimental-search-results-header:-moz-locale-dir(rtl),

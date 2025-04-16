@@ -21,12 +21,14 @@
 #include "nsPrimitiveHelpers.h"
 #include "nsImageToPixbuf.h"
 #include "nsStringStream.h"
+#include "nsIFileURL.h"
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/TimeStamp.h"
 #include "gfxPlatformGtk.h"
+#include "WidgetUtilsGtk.h"
 
 #include "imgIContainer.h"
 
@@ -44,6 +46,8 @@ const int kClipboardTimeout = 500000;
 // detect the HTML as UTF-8 encoded.
 static const char kHTMLMarkupPrefix[] =
     R"(<meta http-equiv="content-type" content="text/html; charset=utf-8">)";
+
+static const char kURIListMime[] = "text/uri-list";
 
 // Callback when someone asks us for the data
 void clipboard_get_cb(GtkClipboard* aGtkClipboard,
@@ -153,10 +157,11 @@ nsClipboard::SetData(nsITransferable* aTransferable, nsIClipboardOwner* aOwner,
   bool imagesAdded = false;
   for (uint32_t i = 0; i < flavors.Length(); i++) {
     nsCString& flavorStr = flavors[i];
+    LOGCLIP(("    processing target %s\n", flavorStr.get()));
 
     // Special case text/unicode since we can handle all of the string types.
     if (flavorStr.EqualsLiteral(kUnicodeMime)) {
-      LOGCLIP(("    text targets\n"));
+      LOGCLIP(("    adding TEXT targets\n"));
       gtk_target_list_add_text_targets(list, 0);
       continue;
     }
@@ -165,7 +170,7 @@ nsClipboard::SetData(nsITransferable* aTransferable, nsIClipboardOwner* aOwner,
       // Don't bother adding image targets twice
       if (!imagesAdded) {
         // accept any writable image type
-        LOGCLIP(("    image targets\n"));
+        LOGCLIP(("    adding IMAGE targets\n"));
         gtk_target_list_add_image_targets(list, 0, TRUE);
         imagesAdded = true;
       }
@@ -173,6 +178,7 @@ nsClipboard::SetData(nsITransferable* aTransferable, nsIClipboardOwner* aOwner,
     }
 
     // Add this to our list of valid targets
+    LOGCLIP(("    adding OTHER target %s\n", flavorStr.get()));
     GdkAtom atom = gdk_atom_intern(flavorStr.get(), FALSE);
     gtk_target_list_add(list, atom, 0, 0);
   }
@@ -184,14 +190,17 @@ nsClipboard::SetData(nsITransferable* aTransferable, nsIClipboardOwner* aOwner,
   gint numTargets;
   GtkTargetEntry* gtkTargets =
       gtk_target_table_new_from_list(list, &numTargets);
-
-  LOGCLIP(("    gtk_target_table_new_from_list() = %p\n", (void*)gtkTargets));
+  if (!gtkTargets) {
+    LOGCLIP(("    gtk_clipboard_set_with_data() failed!\n"));
+    // Clear references to the any old data and let GTK know that it is no
+    // longer available.
+    EmptyClipboard(aWhichClipboard);
+    return NS_ERROR_FAILURE;
+  }
 
   // Set getcallback and request to store data after an application exit
-  if (gtkTargets &&
-      gtk_clipboard_set_with_data(gtkClipboard, gtkTargets, numTargets,
+  if (gtk_clipboard_set_with_data(gtkClipboard, gtkTargets, numTargets,
                                   clipboard_get_cb, clipboard_clear_cb, this)) {
-    LOGCLIP(("    gtk_clipboard_set_with_data() is ok\n"));
     // We managed to set-up the clipboard so update internal state
     // We have to set it now because gtk_clipboard_set_with_data() calls
     // clipboard_clear_cb() which reset our internal state
@@ -207,8 +216,6 @@ nsClipboard::SetData(nsITransferable* aTransferable, nsIClipboardOwner* aOwner,
     rv = NS_OK;
   } else {
     LOGCLIP(("    gtk_clipboard_set_with_data() failed!\n"));
-    // Clear references to the any old data and let GTK know that it is no
-    // longer available.
     EmptyClipboard(aWhichClipboard);
     rv = NS_ERROR_FAILURE;
   }
@@ -310,6 +317,36 @@ nsClipboard::GetData(nsITransferable* aTransferable, int32_t aWhichClipboard) {
       free((void*)unicodeData);
 
       LOGCLIP(("    got unicode data, length %d\n", ucs2string.Length()));
+
+      mContext->ReleaseClipboardData(clipboardData);
+      return NS_OK;
+    }
+
+    if (flavorStr.EqualsLiteral(kFileMime)) {
+      LOGCLIP(("    Getting %s file clipboard data\n", flavorStr.get()));
+
+      uint32_t clipboardDataLength;
+      const char* clipboardData = mContext->GetClipboardData(
+          kURIListMime, aWhichClipboard, &clipboardDataLength);
+      if (!clipboardData) {
+        LOGCLIP(("    text/uri-list type is missing\n"));
+        continue;
+      }
+
+      nsDependentCSubstring data(clipboardData, clipboardDataLength);
+      nsTArray<nsCString> uris = mozilla::widget::ParseTextURIList(data);
+      if (!uris.IsEmpty()) {
+        nsCOMPtr<nsIURI> fileURI;
+        NS_NewURI(getter_AddRefs(fileURI), uris[0]);
+        if (nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(fileURI, &rv)) {
+          nsCOMPtr<nsIFile> file;
+          rv = fileURL->GetFile(getter_AddRefs(file));
+          if (NS_SUCCEEDED(rv)) {
+            aTransferable->SetTransferData(flavorStr.get(), file);
+            LOGCLIP(("    successfully set file to clipboard\n"));
+          }
+        }
+      }
 
       mContext->ReleaseClipboardData(clipboardData);
       return NS_OK;
@@ -419,6 +456,22 @@ nsClipboard::HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList,
     return NS_OK;
   }
 
+#ifdef MOZ_LOGGING
+  LOGCLIP(("    Clipboard content (target nums %d):\n", targetNums));
+  for (int32_t j = 0; j < targetNums; j++) {
+    gchar* atom_name = gdk_atom_name(targets[j]);
+    if (!atom_name) {
+      LOGCLIP(("        failed to get MIME\n"));
+      continue;
+    }
+    LOGCLIP(("        MIME %s\n", atom_name));
+  }
+  LOGCLIP(("    Asking for content:\n"));
+  for (auto& flavor : aFlavorList) {
+    LOGCLIP(("        MIME %s\n", flavor.get()));
+  }
+#endif
+
   // Walk through the provided types and try to match it to a
   // provided type.
   for (auto& flavor : aFlavorList) {
@@ -444,6 +497,12 @@ nsClipboard::HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList,
                !strcmp(atom_name, kJPEGImageMime)) {
         *_retval = true;
         LOGCLIP(("    has image/jpg\n"));
+      }
+      // application/x-moz-file should be treated like text/uri-list
+      else if (flavor.EqualsLiteral(kFileMime) &&
+               !strcmp(atom_name, kURIListMime)) {
+        *_retval = true;
+        LOGCLIP(("    has text/uri-list treating as application/x-moz-file"));
       }
 
       g_free(atom_name);

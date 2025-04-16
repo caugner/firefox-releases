@@ -43,12 +43,11 @@ const ORG_WORKER_URL = URL_ROOT_ORG_SSL + "test_sw_page_worker.js";
  *   - onDestroyed should be called for the .com worker
  */
 add_task(async function test_NavigationBetweenTwoDomains_NoDestroy() {
-  const { client, mainRoot } = await setupServiceWorkerNavigationTest();
+  await setupServiceWorkerNavigationTest();
 
   const tab = await addTab(COM_PAGE_URL);
 
-  const { hooks, targetList } = await watchServiceWorkerTargets({
-    mainRoot,
+  const { hooks, commands, targetCommand } = await watchServiceWorkerTargets({
     tab,
     destroyServiceWorkersOnNavigation: false,
   });
@@ -100,10 +99,10 @@ add_task(async function test_NavigationBetweenTwoDomains_NoDestroy() {
   await checkHooks(hooks, { available: 2, destroyed: 2, targets: [] });
 
   // Stop listening to avoid worker related requests
-  targetList.destroy();
+  targetCommand.destroy();
 
-  await client.waitForRequestsToSettle();
-  await client.close();
+  await commands.waitForRequestsToSettle();
+  await commands.destroy();
   await removeTab(tab);
 });
 
@@ -128,12 +127,11 @@ add_task(async function test_NavigationBetweenTwoDomains_NoDestroy() {
  *   - onDestroyed should be called for the .com worker
  */
 add_task(async function test_NavigationBetweenTwoDomains_WithDestroy() {
-  const { client, mainRoot } = await setupServiceWorkerNavigationTest();
+  await setupServiceWorkerNavigationTest();
 
   const tab = await addTab(COM_PAGE_URL);
 
-  const { hooks, targetList } = await watchServiceWorkerTargets({
-    mainRoot,
+  const { hooks, commands, targetCommand } = await watchServiceWorkerTargets({
     tab,
     destroyServiceWorkersOnNavigation: true,
   });
@@ -179,10 +177,10 @@ add_task(async function test_NavigationBetweenTwoDomains_WithDestroy() {
   await checkHooks(hooks, { available: 4, destroyed: 4, targets: [] });
 
   // Stop listening to avoid worker related requests
-  targetList.destroy();
+  targetCommand.destroy();
 
-  await client.waitForRequestsToSettle();
-  await client.close();
+  await commands.waitForRequestsToSettle();
+  await commands.destroy();
   await removeTab(tab);
 });
 
@@ -230,7 +228,7 @@ add_task(async function test_NavigationToPageWithExistingWorker_WithDestroy() {
 async function testNavigationToPageWithExistingWorker({
   destroyServiceWorkersOnNavigation,
 }) {
-  const { client, mainRoot } = await setupServiceWorkerNavigationTest();
+  await setupServiceWorkerNavigationTest();
 
   const tab = await addTab(COM_PAGE_URL);
 
@@ -245,8 +243,7 @@ async function testNavigationToPageWithExistingWorker({
   info("Wait until we have fully navigated to the .org page");
   await waitForRegistrationReady(tab, ORG_PAGE_URL);
 
-  const { hooks, targetList } = await watchServiceWorkerTargets({
-    mainRoot,
+  const { hooks, commands, targetCommand } = await watchServiceWorkerTargets({
     tab,
     destroyServiceWorkersOnNavigation,
   });
@@ -276,10 +273,10 @@ async function testNavigationToPageWithExistingWorker({
   await checkHooks(hooks, { available: 2, destroyed: 2, targets: [] });
 
   // Stop listening to avoid worker related requests
-  targetList.destroy();
+  targetCommand.destroy();
 
-  await client.waitForRequestsToSettle();
-  await client.close();
+  await commands.waitForRequestsToSettle();
+  await commands.destroy();
   await removeTab(tab);
 }
 
@@ -290,31 +287,24 @@ async function setupServiceWorkerNavigationTest() {
   // Disable the preloaded process as it creates processes intermittently
   // which forces the emission of RDP requests we aren't correctly waiting for.
   await pushPref("dom.ipc.processPrelaunch.enabled", false);
-
-  info("Setup the test page with workers of all types");
-  const client = await createLocalClient();
-  const mainRoot = client.mainRoot;
-  return { client, mainRoot };
 }
 
 async function watchServiceWorkerTargets({
   destroyServiceWorkersOnNavigation,
-  mainRoot,
   tab,
 }) {
   info("Create a target list for a tab target");
-  const descriptor = await mainRoot.getTab({ tab });
-  const commands = await descriptor.getCommands();
-  const targetList = commands.targetCommand;
+  const commands = await CommandsFactory.forTab(tab);
+  const targetCommand = commands.targetCommand;
 
   // Enable Service Worker listening.
-  targetList.listenForServiceWorkers = true;
+  targetCommand.listenForServiceWorkers = true;
   info(
-    "Set targetList.destroyServiceWorkersOnNavigation to " +
+    "Set targetCommand.destroyServiceWorkersOnNavigation to " +
       destroyServiceWorkersOnNavigation
   );
-  targetList.destroyServiceWorkersOnNavigation = destroyServiceWorkersOnNavigation;
-  await targetList.startListening();
+  targetCommand.destroyServiceWorkersOnNavigation = destroyServiceWorkersOnNavigation;
+  await targetCommand.startListening();
 
   // Setup onAvailable & onDestroyed callbacks so that we can check how many
   // times they are called and with which targetFront.
@@ -334,13 +324,13 @@ async function watchServiceWorkerTargets({
     hooks.targets.splice(hooks.targets.indexOf(targetFront), 1);
   };
 
-  await targetList.watchTargets(
-    [targetList.TYPES.SERVICE_WORKER],
+  await targetCommand.watchTargets(
+    [targetCommand.TYPES.SERVICE_WORKER],
     onAvailable,
     onDestroyed
   );
 
-  return { hooks, targetList };
+  return { hooks, commands, targetCommand };
 }
 
 async function unregisterServiceWorker(tab, expectedPageUrl) {

@@ -22,6 +22,7 @@ const TYPES = {
   WEBSOCKET: "websocket",
   // storage types
   CACHE_STORAGE: "Cache",
+  COOKIE: "cookies",
   LOCAL_STORAGE: "local-storage",
   SESSION_STORAGE: "session-storage",
 };
@@ -66,6 +67,9 @@ const FrameTargetResources = augmentResourceDictionary({
   },
   [TYPES.STYLESHEET]: {
     path: "devtools/server/actors/resources/stylesheets",
+  },
+  [TYPES.NETWORK_EVENT]: {
+    path: "devtools/server/actors/resources/network-events-content",
   },
   [TYPES.NETWORK_EVENT_STACKTRACE]: {
     path: "devtools/server/actors/resources/network-events-stacktraces",
@@ -120,6 +124,9 @@ const WorkerTargetResources = augmentResourceDictionary({
 const ParentProcessResources = augmentResourceDictionary({
   [TYPES.NETWORK_EVENT]: {
     path: "devtools/server/actors/resources/network-events",
+  },
+  [TYPES.COOKIE]: {
+    path: "devtools/server/actors/resources/storage-cookie",
   },
 });
 

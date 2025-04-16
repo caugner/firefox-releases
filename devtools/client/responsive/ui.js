@@ -14,19 +14,10 @@ const Constants = require("devtools/client/responsive/constants");
 const {
   ResourceWatcher,
 } = require("devtools/shared/resources/resource-watcher");
+const {
+  CommandsFactory,
+} = require("devtools/shared/commands/commands-factory");
 
-loader.lazyRequireGetter(
-  this,
-  "DevToolsClient",
-  "devtools/client/devtools-client",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "DevToolsServer",
-  "devtools/server/devtools-server",
-  true
-);
 loader.lazyRequireGetter(
   this,
   "throttlingProfiles",
@@ -122,7 +113,7 @@ class ResponsiveUI {
   }
 
   get currentTarget() {
-    return this.targetList.targetFront;
+    return this.commands.targetCommand.targetFront;
   }
 
   get watcherFront() {
@@ -322,7 +313,7 @@ class ResponsiveUI {
     // settings are left in a customized state.
     if (!isTabContentDestroying) {
       let reloadNeeded = false;
-      await this.updateDPPX();
+      await this.updateDPPX(null);
       reloadNeeded |=
         (await this.updateUserAgent()) && this.reloadOnChange("userAgent");
       reloadNeeded |=
@@ -336,8 +327,8 @@ class ResponsiveUI {
       // any resource & target anymore, the JSWindowActors will be unregistered
       // which will trigger an early destruction of the RDM target, before we
       // could finalize the cleanup.
-      this.targetList.unwatchTargets(
-        [this.targetList.TYPES.FRAME],
+      this.commands.targetCommand.unwatchTargets(
+        [this.commands.targetCommand.TYPES.FRAME],
         this.onTargetAvailable
       );
 
@@ -346,7 +337,7 @@ class ResponsiveUI {
         { onAvailable: this.onNetworkResourceAvailable }
       );
 
-      this.targetList.destroy();
+      this.commands.targetCommand.destroy();
     }
 
     // Show the browser UI now.
@@ -364,40 +355,27 @@ class ResponsiveUI {
     this.resizeHandleY = null;
     this.resizeToolbarObserver = null;
 
-    // Close the devtools client used to speak with responsive emulation actor.
+    // Destroying the commands will close the devtools client used to speak with responsive emulation actor.
     // The actor handles clearing any overrides itself, so it's not necessary to clear
     // anything on shutdown client side.
-    const clientClosed = this.client.close();
+    const commandsDestroyed = this.commands.destroy();
     if (!isTabContentDestroying) {
-      await clientClosed;
+      await commandsDestroyed;
     }
-    this.client = this.responsiveFront = null;
+    this.commands = this.responsiveFront = null;
     this.destroyed = true;
 
     return true;
   }
 
   async connectToServer() {
-    // The client being instantiated here is separate from the toolbox. It is being used
-    // separately and has a life cycle that doesn't correspond to the toolbox.
-    DevToolsServer.init();
-    DevToolsServer.registerAllActors();
-    this.client = new DevToolsClient(DevToolsServer.connectPipe());
-    await this.client.connect();
+    this.commands = await CommandsFactory.forTab(this.tab);
+    this.resourceWatcher = new ResourceWatcher(this.commands.targetCommand);
 
-    // Pass a proper `tab` filter option to getTab in order to create a
-    // "local" TabDescriptor, which handles target switching autonomously with
-    // its corresponding target-list.
-    const descriptor = await this.client.mainRoot.getTab({ tab: this.tab });
+    await this.commands.targetCommand.startListening();
 
-    const commands = await descriptor.getCommands();
-    this.targetList = commands.targetCommand;
-    this.resourceWatcher = new ResourceWatcher(this.targetList);
-
-    await this.targetList.startListening();
-
-    await this.targetList.watchTargets(
-      [this.targetList.TYPES.FRAME],
+    await this.commands.targetCommand.watchTargets(
+      [this.commands.targetCommand.TYPES.FRAME],
       this.onTargetAvailable
     );
 
@@ -575,7 +553,7 @@ class ResponsiveUI {
 
   async onRemoveDeviceAssociation() {
     let reloadNeeded = false;
-    await this.updateDPPX();
+    await this.updateDPPX(null);
     reloadNeeded |=
       (await this.updateUserAgent()) && this.reloadOnChange("userAgent");
     reloadNeeded |=
@@ -807,10 +785,15 @@ class ResponsiveUI {
       0
     );
 
-    const { type, angle } = this.getInitialViewportOrientation({
-      width,
-      height,
-    });
+    // Restore the previously set orientation, or get it from the initial viewport if it
+    // wasn't set yet.
+    const { type, angle } =
+      this.commands.targetConfigurationCommand.configuration
+        .rdmPaneOrientation ||
+      this.getInitialViewportOrientation({
+        width,
+        height,
+      });
 
     await this.updateDPPX(pixelRatio);
     await this.updateScreenOrientation(type, angle);
@@ -835,17 +818,13 @@ class ResponsiveUI {
   /**
    * Set or clear the emulated device pixel ratio.
    *
-   * @return boolean
-   *         Whether a reload is needed to apply the change.
-   *         (This is always immediate, so it's always false.)
+   * @param {Number|null} dppx: The ratio to simulate. Set to null to disable the
+   *                      simulation and roll back to the original ratio
    */
-  async updateDPPX(dppx) {
-    if (!dppx) {
-      await this.responsiveFront.clearDPPXOverride();
-      return false;
-    }
-    await this.responsiveFront.setDPPXOverride(dppx);
-    return false;
+  async updateDPPX(dppx = null) {
+    await this.commands.targetConfigurationCommand.updateConfiguration({
+      overrideDPPX: dppx,
+    });
   }
 
   /**
@@ -896,22 +875,23 @@ class ResponsiveUI {
   async updateTouchSimulation(enabled) {
     let reloadNeeded;
     if (enabled) {
+      reloadNeeded = await this.commands.targetConfigurationCommand.setTouchEventsOverride(
+        "enabled"
+      );
+
       const metaViewportEnabled = Services.prefs.getBoolPref(
         "devtools.responsive.metaViewport.enabled",
         false
       );
-
-      reloadNeeded = await this.responsiveFront.setTouchEventsOverride(
-        "enabled"
-      );
-
       if (metaViewportEnabled) {
         reloadNeeded |= await this.responsiveFront.setMetaViewportOverride(
           Ci.nsIDocShell.META_VIEWPORT_OVERRIDE_ENABLED
         );
       }
     } else {
-      reloadNeeded = await this.responsiveFront.clearTouchEventsOverride();
+      reloadNeeded = await this.commands.targetConfigurationCommand.setTouchEventsOverride(
+        null
+      );
       reloadNeeded |= await this.responsiveFront.clearMetaViewportOverride();
     }
     return reloadNeeded;
@@ -932,16 +912,13 @@ class ResponsiveUI {
    *        reloaded/navigated to, so we should not be simulating "orientationchange".
    */
   async updateScreenOrientation(type, angle, isViewportRotated = false) {
-    await this.responsiveFront.simulateScreenOrientationChange(
-      type,
-      angle,
-      isViewportRotated
+    await this.commands.targetConfigurationCommand.simulateScreenOrientationChange(
+      {
+        type,
+        angle,
+        isViewportRotated,
+      }
     );
-
-    // Used by tests.
-    if (!isViewportRotated) {
-      this.emit("only-viewport-orientation-changed");
-    }
   }
 
   /**

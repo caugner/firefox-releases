@@ -269,6 +269,10 @@ function PopupNotifications(tabbrowser, panel, iconBox, options = {}) {
     ) {
       let escAction = notification.notification.options.escAction;
       this._onButtonEvent(aEvent, escAction, "esc-press", notification);
+      // Without this preventDefault call, the event will be sent to the content page
+      // and our event listener might be called again after receiving a reply from
+      // the content process, which could accidentally dismiss another notification.
+      aEvent.preventDefault();
     }
   };
 
@@ -640,6 +644,17 @@ PopupNotifications.prototype = {
     let panelState = this.panel.state;
 
     return panelState == "showing" || panelState == "open";
+  },
+
+  /**
+   * Called by the consumer to indicate that the open panel should
+   * temporarily be hidden while the given panel is showing.
+   */
+  suppressWhileOpen(panel) {
+    this._hidePanel().catch(Cu.reportError);
+    panel.addEventListener("popuphidden", aEvent => {
+      this._update();
+    });
   },
 
   /**

@@ -17,6 +17,8 @@
 #include "mozilla/dom/BrowserBridgeChild.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/SecurityPolicyViolationEvent.h"
+#include "mozilla/dom/SessionStoreRestoreData.h"
+#include "mozilla/dom/SessionStoreDataCollector.h"
 #include "mozilla/dom/WindowGlobalActorsBinding.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/WindowContext.h"
@@ -24,6 +26,7 @@
 #include "mozilla/dom/InProcessParent.h"
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ScopeExit.h"
 #include "nsContentUtils.h"
 #include "nsDocShell.h"
 #include "nsFocusManager.h"
@@ -72,7 +75,7 @@ WindowGlobalChild::WindowGlobalChild(dom::WindowContext* aWindowContext,
   if (BrowsingContext()->GetParent()) {
     embedderInnerWindowID = BrowsingContext()->GetEmbedderInnerWindowId();
   }
-  profiler_register_page(BrowsingContext()->Id(), InnerWindowId(),
+  profiler_register_page(BrowsingContext()->BrowserId(), InnerWindowId(),
                          aDocumentURI->GetSpecOrDefault(),
                          embedderInnerWindowID);
 #endif
@@ -155,6 +158,7 @@ already_AddRefed<WindowGlobalChild> WindowGlobalChild::CreateDisconnected(
 
   RefPtr<WindowGlobalChild> windowChild = new WindowGlobalChild(
       windowContext, aInit.principal(), aInit.documentURI());
+  windowContext->mIsInProcess = true;
   windowContext->mWindowGlobalChild = windowChild;
   return windowChild.forget();
 }
@@ -214,9 +218,8 @@ void WindowGlobalChild::OnNewDocument(Document* aDocument) {
   txn.SetIsThirdPartyTrackingResourceWindow(
       nsContentUtils::IsThirdPartyTrackingResourceWindow(mWindowGlobal));
   txn.SetIsSecureContext(mWindowGlobal->IsSecureContext());
-  auto policy = aDocument->GetEmbedderPolicy();
-  if (policy.isSome()) {
-    txn.SetEmbedderPolicy(policy.ref());
+  if (auto policy = aDocument->GetEmbedderPolicy()) {
+    txn.SetEmbedderPolicy(*policy);
   }
 
   if (nsCOMPtr<nsIChannel> channel = aDocument->GetChannel()) {
@@ -231,15 +234,6 @@ void WindowGlobalChild::OnNewDocument(Document* aDocument) {
       NS_GetInnermostURI(aDocument->GetDocumentURI());
   if (innerDocURI) {
     txn.SetIsSecure(innerDocURI->SchemeIs("https"));
-  }
-  nsCOMPtr<nsIChannel> mixedChannel;
-  mWindowGlobal->GetDocShell()->GetMixedContentChannel(
-      getter_AddRefs(mixedChannel));
-  // A non null mixedContent channel on the docshell indicates,
-  // that the user has overriden mixed content to allow mixed
-  // content loads to happen.
-  if (mixedChannel && (mixedChannel == aDocument->GetChannel())) {
-    txn.SetAllowMixedContent(true);
   }
 
   MOZ_DIAGNOSTIC_ASSERT(mDocumentPrincipal->GetIsLocalIpAddress() ==
@@ -337,6 +331,11 @@ void WindowGlobalChild::Destroy() {
   if (!browserChild || !browserChild->IsDestroyed()) {
     SendDestroy();
   }
+
+  if (mSessionStoreDataCollector) {
+    mSessionStoreDataCollector->Cancel();
+    mSessionStoreDataCollector = nullptr;
+  }
 }
 
 mozilla::ipc::IPCResult WindowGlobalChild::RecvMakeFrameLocal(
@@ -382,12 +381,13 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvMakeFrameRemote(
   MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
           ("RecvMakeFrameRemote ID=%" PRIx64, aFrameContext.ContextId()));
 
-  // Immediately resolve the promise, acknowledging the request.
-  aResolve(true);
-
   if (!aLayersId.IsValid()) {
     return IPC_FAIL(this, "Received an invalid LayersId");
   }
+
+  // Resolve the promise when this function exits, as we'll have fully unloaded
+  // at that point.
+  auto scopeExit = MakeScopeExit([&] { aResolve(true); });
 
   // Get a BrowsingContext if we're not null or discarded. We don't want to
   // early-return before we connect the BrowserBridgeChild, as otherwise we'll
@@ -407,20 +407,20 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvMakeFrameRemote(
     return IPC_OK();
   }
 
+  auto deleteBridge =
+      MakeScopeExit([&] { BrowserBridgeChild::Send__delete__(bridge); });
+
   // Immediately tear down the actor if we don't have a valid FrameContext.
   if (NS_WARN_IF(aFrameContext.IsNullOrDiscarded())) {
-    BrowserBridgeChild::Send__delete__(bridge);
     return IPC_OK();
   }
 
   RefPtr<Element> embedderElt = frameContext->GetEmbedderElement();
   if (NS_WARN_IF(!embedderElt)) {
-    BrowserBridgeChild::Send__delete__(bridge);
     return IPC_OK();
   }
 
   if (NS_WARN_IF(embedderElt->GetOwnerGlobal() != GetWindowGlobal())) {
-    BrowserBridgeChild::Send__delete__(bridge);
     return IPC_OK();
   }
 
@@ -431,9 +431,11 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvMakeFrameRemote(
   IgnoredErrorResult rv;
   flo->ChangeRemotenessWithBridge(bridge, rv);
   if (NS_WARN_IF(rv.Failed())) {
-    BrowserBridgeChild::Send__delete__(bridge);
     return IPC_OK();
   }
+
+  // Everything succeeded, so don't delete the bridge.
+  deleteBridge.release();
 
   return IPC_OK();
 }
@@ -555,6 +557,13 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvSetContainerFeaturePolicy(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult WindowGlobalChild::RecvRestoreTabContent(
+    dom::SessionStoreRestoreData* aData, RestoreTabContentResolver&& aResolve) {
+  aData->RestoreInto(BrowsingContext());
+  aResolve(true);
+  return IPC_OK();
+}
+
 IPCResult WindowGlobalChild::RecvRawMessage(
     const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
     const Maybe<ClonedMessageData>& aStack) {
@@ -582,7 +591,7 @@ void WindowGlobalChild::SetDocumentURI(nsIURI* aDocumentURI) {
   if (BrowsingContext()->GetParent()) {
     embedderInnerWindowID = BrowsingContext()->GetEmbedderInnerWindowId();
   }
-  profiler_register_page(BrowsingContext()->Id(), InnerWindowId(),
+  profiler_register_page(BrowsingContext()->BrowserId(), InnerWindowId(),
                          aDocumentURI->GetSpecOrDefault(),
                          embedderInnerWindowID);
 #endif
@@ -673,8 +682,20 @@ nsISupports* WindowGlobalChild::GetParentObject() {
   return xpc::NativeGlobal(xpc::PrivilegedJunkScope());
 }
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowGlobalChild, mWindowGlobal,
-                                      mContainerFeaturePolicy, mWindowContext)
+void WindowGlobalChild::SetSessionStoreDataCollector(
+    SessionStoreDataCollector* aCollector) {
+  mSessionStoreDataCollector = aCollector;
+}
+
+SessionStoreDataCollector* WindowGlobalChild::GetSessionStoreDataCollector()
+    const {
+  return mSessionStoreDataCollector;
+}
+
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WEAK_PTR(WindowGlobalChild, mWindowGlobal,
+                                               mContainerFeaturePolicy,
+                                               mWindowContext,
+                                               mSessionStoreDataCollector)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WindowGlobalChild)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY

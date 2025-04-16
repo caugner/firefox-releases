@@ -1098,8 +1098,7 @@ bool HTMLImageElement::SupportedPictureSourceType(const nsAString& aType) {
   }
 
   return imgLoader::SupportImageWithMimeType(
-      NS_ConvertUTF16toUTF8(type).get(),
-      AcceptedMimeTypes::IMAGES_AND_DOCUMENTS);
+      NS_ConvertUTF16toUTF8(type), AcceptedMimeTypes::IMAGES_AND_DOCUMENTS);
 }
 
 bool HTMLImageElement::SourceElementMatches(Element* aSourceElement) {
@@ -1292,20 +1291,26 @@ void HTMLImageElement::StopLazyLoadingAndStartLoadIfNeeded(
   }
   mLazyLoading = false;
   Document* doc = OwnerDoc();
-  doc->GetLazyLoadImageObserver()->Unobserve(*this);
+  if (auto* obs = doc->GetLazyLoadImageObserver()) {
+    obs->Unobserve(*this);
+  }
   StartLoadingIfNeeded();
 
   if (aFromIntersectionObserver) {
     doc->IncLazyLoadImageStarted();
   } else {
     doc->DecLazyLoadImageCount();
-    doc->GetLazyLoadImageObserverViewport()->Unobserve(*this);
+    if (auto* obs = doc->GetLazyLoadImageObserverViewport()) {
+      obs->Unobserve(*this);
+    }
   }
 }
 
 void HTMLImageElement::LazyLoadImageReachedViewport() {
   Document* doc = OwnerDoc();
-  doc->GetLazyLoadImageObserverViewport()->Unobserve(*this);
+  if (auto* obs = doc->GetLazyLoadImageObserverViewport()) {
+    obs->Unobserve(*this);
+  }
   doc->IncLazyLoadImageReachViewport(!Complete());
 }
 

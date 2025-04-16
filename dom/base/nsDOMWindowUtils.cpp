@@ -1442,7 +1442,7 @@ nsDOMWindowUtils::GetTranslationNodes(nsINode* aRoot,
     return NS_ERROR_DOM_WRONG_DOCUMENT_ERR;
   }
 
-  nsTHashtable<nsPtrHashKey<nsIContent>> translationNodesHash(500);
+  nsTHashSet<nsIContent*> translationNodesHash(500);
   RefPtr<nsTranslationNodeList> list = new nsTranslationNodeList;
 
   uint32_t limit = 15000;
@@ -1469,7 +1469,7 @@ nsDOMWindowUtils::GetTranslationNodes(nsINode* aRoot,
     for (nsIContent* child = content->GetFirstChild(); child;
          child = child->GetNextSibling()) {
       if (child->IsText() && child->GetAsText()->HasTextForTranslation()) {
-        translationNodesHash.PutEntry(content);
+        translationNodesHash.Insert(content);
 
         nsIFrame* frame = content->GetPrimaryFrame();
         bool isTranslationRoot = frame && frame->IsBlockFrameOrSubclass();
@@ -3013,12 +3013,14 @@ nsDOMWindowUtils::ZoomToFocusedInput() {
   if (waitForRefresh) {
     waitForRefresh = false;
     if (nsPresContext* presContext = presShell->GetPresContext()) {
-      waitForRefresh = presContext->RegisterOneShotPostRefreshObserver(
-          new OneShotPostRefreshObserver(
-              presShell,
-              [widget = RefPtr<nsIWidget>(widget), presShellId, viewId, bounds,
-               flags](PresShell*, OneShotPostRefreshObserver*) {
-                widget->ZoomToRect(presShellId, viewId, bounds, flags);
+      waitForRefresh = presContext->RegisterManagedPostRefreshObserver(
+          new ManagedPostRefreshObserver(
+              presShell, [widget = RefPtr<nsIWidget>(widget), presShellId,
+                          viewId, bounds, flags](bool aWasCanceled) {
+                if (!aWasCanceled) {
+                  widget->ZoomToRect(presShellId, viewId, bounds, flags);
+                }
+                return ManagedPostRefreshObserver::Unregister::Yes;
               }));
     }
   }
@@ -3280,7 +3282,7 @@ nsDOMWindowUtils::IsPartOfOpaqueLayer(Element* aElement, bool* aResult) {
 NS_IMETHODIMP
 nsDOMWindowUtils::NumberOfAssignedPaintedLayers(
     const nsTArray<RefPtr<Element>>& aElements, uint32_t* aResult) {
-  nsTHashtable<nsPtrHashKey<PaintedLayer>> layers;
+  nsTHashSet<PaintedLayer*> layers;
   for (Element* element : aElements) {
     nsIFrame* frame = element->GetPrimaryFrame();
     if (!frame) {
@@ -3293,7 +3295,7 @@ nsDOMWindowUtils::NumberOfAssignedPaintedLayers(
       return NS_ERROR_FAILURE;
     }
 
-    layers.PutEntry(layer);
+    layers.Insert(layer);
   }
 
   *aResult = layers.Count();
@@ -3488,18 +3490,6 @@ nsDOMWindowUtils::GetPaintingSuppressed(bool* aPaintingSuppressed) {
 
   *aPaintingSuppressed = presShell->IsPaintingSuppressed();
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::GetPlugins(JSContext* cx,
-                             JS::MutableHandle<JS::Value> aPlugins) {
-  nsCOMPtr<Document> doc = GetDocument();
-  NS_ENSURE_STATE(doc);
-
-  nsTArray<nsIObjectLoadingContent*> plugins;
-  doc->GetPlugins(plugins);
-
-  return ToJSValue(cx, plugins, aPlugins) ? NS_OK : NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP

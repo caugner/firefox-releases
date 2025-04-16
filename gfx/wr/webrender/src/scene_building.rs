@@ -44,7 +44,7 @@ use api::{LineOrientation, LineStyle, NinePatchBorderSource, PipelineId, MixBlen
 use api::{PropertyBinding, ReferenceFrameKind, ScrollFrameDisplayItem, ScrollSensitivity};
 use api::{Shadow, SpaceAndClipInfo, SpatialId, StickyFrameDisplayItem, ImageMask, ItemTag};
 use api::{ClipMode, PrimitiveKeyKind, TransformStyle, YuvColorSpace, ColorRange, YuvData, TempFilterData};
-use api::{ReferenceTransformBinding, Rotation};
+use api::{ReferenceTransformBinding, Rotation, FillRule};
 use api::units::*;
 use crate::image_tiling::simplify_repeated_primitive;
 use crate::clip::{ClipChainId, ClipRegion, ClipItemKey, ClipStore, ClipItemKeyKind};
@@ -432,6 +432,8 @@ bitflags! {
     pub struct SliceFlags : u8 {
         /// Slice created by a prim that has PrimitiveFlags::IS_SCROLLBAR_CONTAINER
         const IS_SCROLLBAR = 1;
+        /// Represents a mix-blend container (can't split out compositor surfaces in this slice)
+        const IS_BLEND_CONTAINER = 2;
     }
 }
 
@@ -489,6 +491,9 @@ pub struct SceneBuilder<'a> {
     /// The current recursion depth of iframes encountered. Used to restrict picture
     /// caching slices to only the top-level content frame.
     iframe_size: Vec<LayoutSize>,
+
+    /// Clip-chain for root iframes applied to any tile caches created within this iframe
+    root_iframe_clip: Option<ClipChainId>,
 
     /// The current quality / performance settings for this scene.
     quality_settings: QualitySettings,
@@ -548,6 +553,7 @@ impl<'a> SceneBuilder<'a> {
             rf_mapper: ReferenceFrameMapper::new(),
             external_scroll_mapper: ScrollOffsetMapper::new(),
             iframe_size: Vec::new(),
+            root_iframe_clip: None,
             quality_settings: view.quality_settings,
             tile_cache_builder: TileCacheBuilder::new(),
             snap_to_device,
@@ -560,6 +566,7 @@ impl<'a> SceneBuilder<'a> {
             &builder.config,
             &mut builder.clip_store,
             &mut builder.prim_store,
+            builder.interners,
         );
 
         BuiltScene {
@@ -765,10 +772,20 @@ impl<'a> SceneBuilder<'a> {
                             None => continue,
                         };
 
+                        // Get a clip-chain id for the root clip for this pipeline. We will
+                        // add that as an unconditional clip to any tile cache created within
+                        // this iframe. This ensures these clips are handled by the tile cache
+                        // compositing code, which is more efficient and accurate than applying
+                        // these clips individually to each primitive.
+                        let clip_id = ClipId::root(info.pipeline_id);
+                        let clip_chain_id = self.get_clip_chain(clip_id);
+
                         // If this is a root iframe, force a new tile cache both before and after
                         // adding primitives for this iframe.
                         if self.iframe_size.is_empty() {
                             self.add_tile_cache_barrier_if_needed(SliceFlags::empty());
+                            assert!(self.root_iframe_clip.is_none());
+                            self.root_iframe_clip = Some(clip_chain_id);
                         }
 
                         self.rf_mapper.push_scope();
@@ -805,6 +822,8 @@ impl<'a> SceneBuilder<'a> {
 
                     self.clip_store.pop_clip_root();
                     if self.iframe_size.is_empty() {
+                        assert!(self.root_iframe_clip.is_some());
+                        self.root_iframe_clip = None;
                         self.add_tile_cache_barrier_if_needed(SliceFlags::empty());
                     }
 
@@ -1253,6 +1272,7 @@ impl<'a> SceneBuilder<'a> {
                     &mut center,
                     &mut tile_spacing,
                     info.gradient.radius,
+                    info.gradient.end_offset,
                     info.gradient.extend_mode,
                     &stops,
                     &mut |solid_rect, color| {
@@ -1275,7 +1295,7 @@ impl<'a> SceneBuilder<'a> {
                 // which can cause issues.
                 simplify_repeated_primitive(&tile_size, &mut tile_spacing, &mut prim_rect);
 
-                if !tile_size.to_i32().is_empty() {
+                if !tile_size.ceil().is_empty() {
                     layout.rect = prim_rect;
                     let prim_key_kind = self.create_radial_gradient_prim(
                         &layout,
@@ -1313,7 +1333,7 @@ impl<'a> SceneBuilder<'a> {
                     info.tile_size,
                 );
 
-                if !tile_size.to_i32().is_empty() {
+                if !tile_size.ceil().is_empty() {
                     let prim_key_kind = self.create_conic_gradient_prim(
                         &layout,
                         info.gradient.center,
@@ -1387,6 +1407,8 @@ impl<'a> SceneBuilder<'a> {
                     info.id,
                     &info.parent_space_and_clip,
                     &image_mask,
+                    info.fill_rule,
+                    item.points(),
                 );
             }
             DisplayItem::RoundedRectClip(ref info) => {
@@ -1489,7 +1511,8 @@ impl<'a> SceneBuilder<'a> {
             DisplayItem::SetGradientStops |
             DisplayItem::SetFilterOps |
             DisplayItem::SetFilterData |
-            DisplayItem::SetFilterPrimitives => {}
+            DisplayItem::SetFilterPrimitives |
+            DisplayItem::SetPoints => {}
 
             // Special items that are handled in the parent method
             DisplayItem::PushStackingContext(..) |
@@ -1655,6 +1678,7 @@ impl<'a> SceneBuilder<'a> {
                     self.interners,
                     &self.config,
                     &self.quality_settings,
+                    self.root_iframe_clip,
                 );
             }
         }
@@ -2004,6 +2028,8 @@ impl<'a> SceneBuilder<'a> {
                 &self.clip_store,
                 self.interners,
                 &self.config,
+                self.root_iframe_clip,
+                SliceFlags::IS_BLEND_CONTAINER,
             );
 
             return;
@@ -2326,6 +2352,8 @@ impl<'a> SceneBuilder<'a> {
         new_node_id: ClipId,
         space_and_clip: &SpaceAndClipInfo,
         image_mask: &ImageMask,
+        fill_rule: FillRule,
+        points_range: ItemRange<LayoutPoint>,
     ) {
         let spatial_node_index = self.id_to_index_mapper.get_spatial_node_index(space_and_clip.spatial_id);
 
@@ -2333,8 +2361,9 @@ impl<'a> SceneBuilder<'a> {
             &image_mask.rect,
             spatial_node_index,
         );
+        let points = points_range.iter().collect();
         let item = ClipItemKey {
-            kind: ClipItemKeyKind::image_mask(image_mask, snapped_mask_rect),
+            kind: ClipItemKeyKind::image_mask(image_mask, snapped_mask_rect, points, fill_rule),
         };
 
         let handle = self

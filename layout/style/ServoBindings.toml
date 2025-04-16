@@ -33,8 +33,8 @@ headers = [
     "mozilla/SizeOfState.h",
     "nsCSSProps.h",
     "nsContentUtils.h",
+    "nsMappedAttributes.h",
     "nsNameSpaceManager.h",
-    "nsMediaFeatures.h",
     "GeckoProfiler.h",
 ]
 raw-lines = [
@@ -71,12 +71,11 @@ rusty-enums = [
     "nsStyleSVGOpacitySource",
     "mozilla::dom::Document_DocumentTheme",
     "mozilla::dom::Document_Type",
+    "mozilla::LookAndFeel_IntID",
     "nsCSSUnit",
     "nsCSSFontDesc",
     "nsCSSPropertyID",
     "nsCSSCounterDesc",
-    "nsMediaFeature_RangeType",
-    "nsMediaFeature_ValueType",
     "nsresult",
     "nsAtom_AtomKind",
     "nsStyleImageLayers_LayerType",
@@ -102,7 +101,6 @@ rusty-enums = [
     "mozilla::StyleUserModify",
     "mozilla::StyleUserInput",
     "mozilla::StyleBoxDirection",
-    "mozilla::StyleTextJustify",
     "mozilla::StyleRubyAlign",
     "mozilla::StyleTextSizeAdjust",
     "mozilla::StyleHyphens",
@@ -165,7 +163,6 @@ rusty-enums = [
     "mozilla::StyleBackfaceVisibility",
     "mozilla::StyleBlend",
     "mozilla::StyleMaskComposite",
-    "mozilla::StyleControlCharacterVisibility",
     "mozilla::StyleWritingModeProperty",
 ]
 whitelist-vars = [
@@ -282,8 +279,6 @@ whitelist-types = [
     "nsAtom",
     "nsDynamicAtom",
     "nsMargin",
-    "nsMediaFeature",
-    "nsMediaFeatures",
     "nsRect",
     "nsresult",
     "nsSimpleContentList",
@@ -308,6 +303,7 @@ whitelist-types = [
     "nsStyleMargin",
     "nsStyleOutline",
     "nsStylePadding",
+    "nsStylePage",
     "nsStylePosition",
     "nsStyleSides",
     "nsStyleSVG",
@@ -392,6 +388,7 @@ opaque-types = [
     "nsTObserverArray",  # <- Inherits from nsAutoTObserverArray<T, 0>
     "nsTHashtable",  # <- Inheriting from inner typedefs that clang
                      #    doesn't expose properly.
+    "nsTBaseHashSet", # <- Ditto
     "nsBaseHashtable", "nsRefCountedHashtable", "nsClassHashtable",  # <- Ditto
     "mozilla::dom::Document_SelectorCache",  # <- Inherits from nsExpirationTracker<.., 4>
     "nsPIDOMWindow",  # <- Takes the vtable from a template parameter, and we can't
@@ -435,6 +432,8 @@ cbindgen-types = [
     { gecko = "StyleUnicodeRange", servo = "cssparser::UnicodeRange" },
     { gecko = "StyleOverflowWrap", servo = "crate::values::computed::OverflowWrap" },
     { gecko = "StyleWordBreak", servo = "crate::values::computed::WordBreak" },
+    { gecko = "StyleTextJustify", servo = "crate::values::computed::TextJustify" },
+    { gecko = "StyleMozControlCharacterVisibility", servo = "crate::values::computed::text::MozControlCharacterVisibility" },
     { gecko = "StyleLineBreak", servo = "crate::values::computed::LineBreak" },
     { gecko = "StyleUserSelect", servo = "crate::values::computed::UserSelect" },
     { gecko = "StyleBreakBetween", servo = "crate::values::computed::BreakBetween" },
@@ -507,6 +506,7 @@ cbindgen-types = [
     { gecko = "StyleFontFamilyNameSyntax", servo = "crate::values::computed::font::FontFamilyNameSyntax" },
     { gecko = "StyleGenericColor", servo = "crate::values::generics::color::Color" },
     { gecko = "StyleSystemColor", servo = "crate::values::specified::color::SystemColor" },
+    { gecko = "StyleSystemFont", servo = "crate::values::specified::font::SystemFont" },
     { gecko = "StyleGenericColorOrAuto", servo = "crate::values::generics::color::ColorOrAuto" },
     { gecko = "StyleGenericScrollbarColor", servo = "crate::values::generics::ui::ScrollbarColor" },
     { gecko = "StyleRGBA", servo = "cssparser::RGBA" },
@@ -581,6 +581,7 @@ cbindgen-types = [
     { gecko = "StyleFontSizeKeyword", servo = "crate::values::specified::font::FontSizeKeyword" },
     { gecko = "StyleDefaultFontSizes", servo = "crate::gecko::wrapper::DefaultFontSizes" },
     { gecko = "StyleCaptionSide", servo = "crate::values::computed::table::CaptionSide" },
+    { gecko = "StylePageSize", servo = "crate::values::computed::page::PageSize" },
 ]
 
 mapped-generic-types = [

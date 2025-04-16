@@ -63,8 +63,10 @@ add_task(async function test_panelview_bookmarks_delete() {
     });
     observer.observe(list, { childList: true });
   });
-  let placesContextDelete = document.getElementById("placesContext_delete");
-  EventUtils.synthesizeMouseAtCenter(placesContextDelete, {});
+  let placesContextDelete = document.getElementById(
+    "placesContext_deleteBookmark"
+  );
+  placesContext.activateItem(placesContextDelete, {});
   await promise;
 
   await gCUITestUtils.hideMainMenu();

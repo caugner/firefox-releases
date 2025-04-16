@@ -51,6 +51,9 @@ const { gDevTools } = require("devtools/client/framework/devtools");
 const {
   TabDescriptorFactory,
 } = require("devtools/client/framework/tab-descriptor-factory");
+const {
+  CommandsFactory,
+} = require("devtools/shared/commands/commands-factory");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 
 // This is overridden in files that load shared-head via loadSubScript.
@@ -349,11 +352,9 @@ async function safeCloseBrowserConsole({ clearOutput = false } = {}) {
   // It might happen that waitForAllTargetsToBeAttached does not resolve, so we set a
   // timeout of 1s before closing
   await Promise.race([
-    waitForAllTargetsToBeAttached(hud.targetList),
+    waitForAllTargetsToBeAttached(hud.commands.targetCommand),
     wait(1000),
   ]);
-
-  hud.targetList.destroy();
 
   info("Close the Browser Console");
   await BrowserConsoleManager.closeBrowserConsole();
@@ -363,12 +364,12 @@ async function safeCloseBrowserConsole({ clearOutput = false } = {}) {
 /**
  * Returns a Promise that resolves when all the targets are fully attached.
  *
- * @param {TargetList} targetList
+ * @param {TargetCommand} targetCommand
  */
-function waitForAllTargetsToBeAttached(targetList) {
+function waitForAllTargetsToBeAttached(targetCommand) {
   return Promise.allSettled(
-    targetList
-      .getAllTargets(targetList.ALL_TYPES)
+    targetCommand
+      .getAllTargets(targetCommand.ALL_TYPES)
       .map(target => target._onThreadInitialized)
   );
 }
@@ -465,7 +466,9 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
   // Navigating from/to pages loaded in the parent process, like about:robots,
   // also spawn new targets.
   // (If target switching is disabled, the toolbox will reboot)
-  const onTargetSwitched = toolbox.targetList.once("switched-target");
+  const onTargetSwitched = toolbox.commands.targetCommand.once(
+    "switched-target"
+  );
   // Otherwise, if we don't switch target, it is safe to wait for navigate event.
   const onNavigate = target.once("navigate");
 
@@ -485,6 +488,7 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
   info(`Load document "${uri}"`);
   const browser = gBrowser.selectedBrowser;
   const currentPID = browser.browsingContext.currentWindowGlobal.osPid;
+  const currentBrowsingContextID = browser.browsingContext.id;
   const onBrowserLoaded = BrowserTestUtils.browserLoaded(
     browser,
     false,
@@ -501,6 +505,8 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
   // while target may be updated slightly later.
   const switchedToAnotherProcess =
     currentPID !== browser.browsingContext.currentWindowGlobal.osPid;
+  const switchedToAnotherBrowsingContext =
+    currentBrowsingContextID !== browser.browsingContext.id;
 
   if (onPanelReloaded) {
     info(`Waiting for ${toolbox.currentToolId} to be reloaded…`);
@@ -508,9 +514,16 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
     info(`→ panel reloaded`);
   }
 
-  // If the tab navigated to another process or if the old target follows the
-  // window lifecycle, expect a target switching.
-  if (switchedToAnotherProcess || targetFollowsWindowLifecycle) {
+  // If:
+  // - the tab navigated to another process, or,
+  // - the tab navigated to another browsing context, or,
+  // - if the old target follows the window lifecycle
+  // then, expect a target switching.
+  if (
+    switchedToAnotherProcess ||
+    targetFollowsWindowLifecycle ||
+    switchedToAnotherBrowsingContext
+  ) {
     info(`Waiting for target switch…`);
     await onTargetSwitched;
     info(`→ switched-target emitted`);
@@ -534,8 +547,13 @@ async function navigateTo(uri, { isErrorPage = false } = {}) {
 async function createAndAttachTargetForTab(tab) {
   info("Creating and attaching to a local tab target");
 
-  const descriptor = await TabDescriptorFactory.createDescriptorForTab(tab);
-  const target = await descriptor.getTarget();
+  const commands = await CommandsFactory.forTab(tab);
+
+  // Initialize the TargetCommands which require some async stuff to be done
+  // before being fully ready. This will define the `targetCommand.targetFront` attribute.
+  await commands.targetCommand.startListening();
+
+  const target = commands.targetCommand.targetFront;
   await target.attach();
   return target;
 }
@@ -572,6 +590,12 @@ function waitForPanelReload(currentToolId, target, panel) {
       info("Waiting for netmonitor updates after page reload");
       await onReloaded;
     };
+  } else if (currentToolId == "accessibility") {
+    const onReloaded = panel.once("reloaded");
+    return async function() {
+      info("Waiting for accessibility updates after page reload");
+      await onReloaded;
+    };
   }
   return null;
 }
@@ -596,37 +620,6 @@ var openInspectorForURL = async function(url, hostType) {
 async function getActiveInspector() {
   const toolbox = await gDevTools.getToolboxForTab(gBrowser.selectedTab);
   return toolbox.getPanel("inspector");
-}
-
-/**
- * Simulate a key event from a <key> element.
- * @param {DOMNode} key
- */
-function synthesizeKeyFromKeyTag(key) {
-  is(key && key.tagName, "key", "Successfully retrieved the <key> node");
-
-  const modifiersAttr = key.getAttribute("modifiers");
-
-  let name = null;
-
-  if (key.getAttribute("keycode")) {
-    name = key.getAttribute("keycode");
-  } else if (key.getAttribute("key")) {
-    name = key.getAttribute("key");
-  }
-
-  isnot(name, null, "Successfully retrieved keycode/key");
-
-  const modifiers = {
-    shiftKey: !!modifiersAttr.match("shift"),
-    ctrlKey: !!modifiersAttr.match("control"),
-    altKey: !!modifiersAttr.match("alt"),
-    metaKey: !!modifiersAttr.match("meta"),
-    accelKey: !!modifiersAttr.match("accel"),
-  };
-
-  info("Synthesizing key " + name + " " + JSON.stringify(modifiers));
-  EventUtils.synthesizeKey(name, modifiers);
 }
 
 /**

@@ -9,6 +9,7 @@
 #include "nsIOService.h"
 #include "nsNSSIOLayer.h"
 #include "TransportSecurityInfo.h"
+#include "CertVerifier.h"
 #include "ssl.h"
 #include "sslexp.h"
 
@@ -398,7 +399,8 @@ SSLTokensCache::CollectReports(nsIHandleReportCallback* aHandleReport,
 // static
 void SSLTokensCache::Clear() {
   LOG(("SSLTokensCache::Clear"));
-  if (!StaticPrefs::network_ssl_tokens_cache_enabled()) {
+  if (!StaticPrefs::network_ssl_tokens_cache_enabled() &&
+      !StaticPrefs::network_http_http3_enable_0rtt()) {
     return;
   }
 

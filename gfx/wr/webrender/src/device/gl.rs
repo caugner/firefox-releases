@@ -39,6 +39,7 @@ use webrender_build::shader::{
     ProgramSourceDigest, ShaderKind, ShaderVersion, build_shader_main_string,
     build_shader_prefix_string, do_build_shader_string, shader_source_from_file,
 };
+use malloc_size_of::MallocSizeOfOps;
 
 /// Sequence number for frames, as tracked by the device layer.
 #[derive(Debug, Copy, Clone, PartialEq, Ord, Eq, PartialOrd)]
@@ -661,6 +662,7 @@ enum ProgramSourceType {
 pub struct ProgramSourceInfo {
     base_filename: &'static str,
     features: Vec<&'static str>,
+    full_name_cstr: Rc<std::ffi::CString>,
     source_type: ProgramSourceType,
     digest: ProgramSourceDigest,
 }
@@ -685,11 +687,11 @@ impl ProgramSourceInfo {
         // Hash the renderer name.
         hasher.write(device.capabilities.renderer_name.as_bytes());
 
-        let full_name = &Self::make_full_name(name, features);
+        let full_name = Self::make_full_name(name, features);
 
         let optimized_source = if device.use_optimized_shaders {
-            OPTIMIZED_SHADERS.get(&(gl_version, full_name)).or_else(|| {
-                warn!("Missing optimized shader source for {}", full_name);
+            OPTIMIZED_SHADERS.get(&(gl_version, &full_name)).or_else(|| {
+                warn!("Missing optimized shader source for {}", &full_name);
                 None
             })
         } else {
@@ -761,6 +763,7 @@ impl ProgramSourceInfo {
         ProgramSourceInfo {
             base_filename: name,
             features: features.to_vec(),
+            full_name_cstr: Rc::new(std::ffi::CString::new(full_name).unwrap()),
             source_type,
             digest: hasher.into(),
         }
@@ -1059,7 +1062,7 @@ pub struct Device {
     // device state
     bound_textures: [gl::GLuint; 16],
     bound_program: gl::GLuint,
-    bound_program_name: String,
+    bound_program_name: Rc<std::ffi::CString>,
     bound_vao: gl::GLuint,
     bound_read_fbo: (FBOId, DeviceIntPoint),
     bound_draw_fbo: FBOId,
@@ -1118,7 +1121,10 @@ pub struct Device {
     /// format, we fall back to glTexImage*.
     texture_storage_usage: TexStorageUsage,
 
-    optimal_pbo_stride: StrideAlignment,
+    /// Required stride alignment for pixel transfers. This may be required for
+    /// correctness reasons due to driver bugs, or for performance reasons to
+    /// ensure we remain on the fast-path for transfers.
+    required_pbo_stride: StrideAlignment,
 
     /// Whether we must ensure the source strings passed to glShaderSource()
     /// are null-terminated, to work around driver bugs.
@@ -1393,7 +1399,11 @@ impl Device {
             gl.get_integer_v(gl::MAX_TEXTURE_SIZE, &mut max_texture_size);
         }
 
-        let max_texture_size = max_texture_size[0];
+        // We cap the max texture size at 16384. Some hardware report higher
+        // capabilities but get very unstable with very large textures.
+        // Bug 1702494 tracks re-evaluating this cap.
+        let max_texture_size = max_texture_size[0].min(16384);
+
         let renderer_name = gl.get_string(gl::RENDERER);
         info!("Renderer: {}", renderer_name);
         info!("Max texture size: {}", max_texture_size);
@@ -1487,9 +1497,7 @@ impl Device {
         let supports_texture_storage = allow_texture_storage_support && !cfg!(target_os = "macos") &&
             match gl.get_type() {
                 gl::GlType::Gl => supports_extension(&extensions, "GL_ARB_texture_storage"),
-                // ES 3 technically always supports glTexStorage, but only check here for the extension
-                // necessary to interact with BGRA.
-                gl::GlType::Gles => supports_extension(&extensions, "GL_EXT_texture_storage"),
+                gl::GlType::Gles => true,
             };
         let supports_texture_swizzle = allow_texture_swizzling &&
             match gl.get_type() {
@@ -1516,27 +1524,21 @@ impl Device {
                 Swizzle::Rgba, // converted on uploads by the driver, no swizzling needed
                 TexStorageUsage::Never
             ),
-            // We can use glTexStorage with BGRA8 as the internal format.
-            gl::GlType::Gles if supports_gles_bgra && supports_texture_storage => (
+            // glTexStorage is always supported in GLES 3, but because the GL_EXT_texture_storage
+            // extension is supported we can use glTexStorage with BGRA8 as the internal format.
+            // Prefer BGRA textures over RGBA.
+            gl::GlType::Gles if supports_gles_bgra
+                && supports_extension(&extensions, "GL_EXT_texture_storage") =>
+            (
                 TextureFormatPair::from(ImageFormat::BGRA8),
                 TextureFormatPair { internal: gl::BGRA8_EXT, external: gl::BGRA_EXT },
                 gl::UNSIGNED_BYTE,
                 Swizzle::Rgba, // no conversion needed
                 TexStorageUsage::Always,
             ),
-            // For BGRA8 textures we must use the unsized BGRA internal
-            // format and glTexImage. If texture storage is supported we can
-            // use it for other formats, which is always the case for ES 3.
-            // We can't use glTexStorage with BGRA8 as the internal format.
-            gl::GlType::Gles if supports_gles_bgra && !avoid_tex_image => (
-                TextureFormatPair::from(ImageFormat::RGBA8),
-                TextureFormatPair::from(gl::BGRA_EXT),
-                gl::UNSIGNED_BYTE,
-                Swizzle::Rgba, // no conversion needed
-                TexStorageUsage::NonBGRA8,
-            ),
-            // BGRA is not supported as an internal format, therefore we will
-            // use RGBA. The swizzling will happen at the texture unit.
+            // BGRA is not supported as an internal format with glTexStorage, therefore we will
+            // use RGBA textures instead and pretend BGRA data is RGBA when uploading.
+            // The swizzling will happen at the texture unit.
             gl::GlType::Gles if supports_texture_swizzle => (
                 TextureFormatPair::from(ImageFormat::RGBA8),
                 TextureFormatPair { internal: gl::RGBA8, external: gl::RGBA },
@@ -1544,14 +1546,29 @@ impl Device {
                 Swizzle::Bgra, // pretend it's RGBA, rely on swizzling
                 TexStorageUsage::Always,
             ),
-            // BGRA and swizzling are not supported. We force the conversion done by the driver.
-            gl::GlType::Gles => (
-                TextureFormatPair::from(ImageFormat::RGBA8),
-                TextureFormatPair { internal: gl::RGBA8, external: gl::BGRA },
+            // BGRA is not supported as an internal format with glTexStorage, and we cannot use
+            // swizzling either. Therefore prefer BGRA textures over RGBA, but use glTexImage
+            // to initialize BGRA textures. glTexStorage can still be used for other formats.
+            gl::GlType::Gles if supports_gles_bgra && !avoid_tex_image => (
+                TextureFormatPair::from(ImageFormat::BGRA8),
+                TextureFormatPair::from(gl::BGRA_EXT),
                 gl::UNSIGNED_BYTE,
-                Swizzle::Rgba,
-                TexStorageUsage::Always,
+                Swizzle::Rgba, // no conversion needed
+                TexStorageUsage::NonBGRA8,
             ),
+            // Neither BGRA or swizzling are supported. GLES does not allow format conversion
+            // during upload so we must use RGBA textures and pretend BGRA data is RGBA when
+            // uploading. Images may be rendered incorrectly as a result.
+            gl::GlType::Gles => {
+                warn!("Neither BGRA or texture swizzling are supported. Images may be rendered incorrectly.");
+                (
+                    TextureFormatPair::from(ImageFormat::RGBA8),
+                    TextureFormatPair { internal: gl::RGBA8, external: gl::RGBA },
+                    gl::UNSIGNED_BYTE,
+                    Swizzle::Rgba,
+                    TexStorageUsage::Always,
+                )
+            }
         };
 
         let is_software_webrender = renderer_name.starts_with("Software WebRender");
@@ -1579,8 +1596,14 @@ impl Device {
             supports_extension(&extensions, "GL_ARB_copy_image")
         };
 
+        // We have seen crashes on x86 PowerVR Rogue G6430 devices during GPU cache
+        // updates using the scatter shader. It seems likely that GL_EXT_color_buffer_float
+        // is broken. See bug 1709408.
+        let is_x86_powervr_rogue_g6430 = renderer_name.starts_with("PowerVR Rogue G6430")
+            && cfg!(target_arch = "x86");
         let supports_color_buffer_float = match gl.get_type() {
             gl::GlType::Gl => true,
+            gl::GlType::Gles if is_x86_powervr_rogue_g6430 => false,
             gl::GlType::Gles => supports_extension(&extensions, "GL_EXT_color_buffer_float"),
         };
 
@@ -1632,12 +1655,19 @@ impl Device {
              //  (XXX: we apply this restriction to all GPUs to handle switching)
 
         let is_angle = renderer_name.starts_with("ANGLE");
+        let is_adreno_3xx = renderer_name.starts_with("Adreno (TM) 3");
 
-        // On certain GPUs PBO texture upload is only performed asynchronously
-        // if the stride of the data is a multiple of a certain value.
-        let optimal_pbo_stride = if is_adreno {
-            // On Adreno it must be a multiple of 64 pixels, meaning value in bytes
-            // varies with the texture format.
+        // Some GPUs require the stride of the data during texture uploads to be
+        // aligned to certain requirements, either for correctness or performance
+        // reasons.
+        let required_pbo_stride = if is_adreno_3xx {
+            // On Adreno 3xx, alignments of < 128 bytes can result in corrupted
+            // glyphs. See bug 1696039.
+            StrideAlignment::Bytes(NonZeroUsize::new(128).unwrap())
+        } else if is_adreno {
+            // On later Adreno devices it must be a multiple of 64 *pixels* to
+            // hit the fast path, meaning value in bytes varies with the texture
+            // format. This is purely an optimization.
             StrideAlignment::Pixels(NonZeroUsize::new(64).unwrap())
         } else if is_macos {
             // On AMD Mac, it must always be a multiple of 256 bytes.
@@ -1757,7 +1787,7 @@ impl Device {
 
             bound_textures: [0; 16],
             bound_program: 0,
-            bound_program_name: String::new(),
+            bound_program_name: Rc::new(std::ffi::CString::new("").unwrap()),
             bound_vao: 0,
             bound_read_fbo: (FBOId(0), DeviceIntPoint::zero()),
             bound_draw_fbo: FBOId(0),
@@ -1775,7 +1805,7 @@ impl Device {
             requires_null_terminated_shader_source,
             requires_unique_shader_source,
             requires_texture_external_unbind,
-            optimal_pbo_stride,
+            required_pbo_stride,
             dump_shader_source,
             surface_origin_is_top_left,
 
@@ -1846,8 +1876,8 @@ impl Device {
         return (self.max_depth_ids() - 1) as f32;
     }
 
-    pub fn optimal_pbo_stride(&self) -> StrideAlignment {
-        self.optimal_pbo_stride
+    pub fn required_pbo_stride(&self) -> StrideAlignment {
+        self.required_pbo_stride
     }
 
     pub fn upload_method(&self) -> &UploadMethod {
@@ -1940,7 +1970,12 @@ impl Device {
             self.gl.get_shader_iv(id, gl::COMPILE_STATUS, &mut status);
         }
         if status[0] == 0 {
-            error!("Failed to compile shader: {}\n{}", name, log);
+            let type_str = match shader_type {
+                gl::VERTEX_SHADER => "vertex",
+                gl::FRAGMENT_SHADER => "fragment",
+                _ => panic!("Unexpected shader type {:x}", shader_type),
+            };
+            error!("Failed to compile {} shader: {}\n{}", type_str, name, log);
             #[cfg(debug_assertions)]
             Self::print_shader_errors(source, &log);
             Err(ShaderError::Compilation(name.to_string(), log))
@@ -2207,7 +2242,7 @@ impl Device {
         let _guard = CrashAnnotatorGuard::new(
             &self.crash_annotator,
             CrashAnnotation::CompileShader,
-            &program.source_info.full_name()
+            &program.source_info.full_name_cstr
         );
 
         assert!(!program.is_initialized());
@@ -2253,7 +2288,7 @@ impl Device {
         if build_program {
             // Compile the vertex shader
             let vs_source = info.compute_source(self, ShaderKind::Vertex);
-            let vs_id = match self.compile_shader(&info.base_filename, gl::VERTEX_SHADER, &vs_source) {
+            let vs_id = match self.compile_shader(&info.full_name(), gl::VERTEX_SHADER, &vs_source) {
                     Ok(vs_id) => vs_id,
                     Err(err) => return Err(err),
                 };
@@ -2261,7 +2296,7 @@ impl Device {
             // Compile the fragment shader
             let fs_source = info.compute_source(self, ShaderKind::Fragment);
             let fs_id =
-                match self.compile_shader(&info.base_filename, gl::FRAGMENT_SHADER, &fs_source) {
+                match self.compile_shader(&info.full_name(), gl::FRAGMENT_SHADER, &fs_source) {
                     Ok(fs_id) => fs_id,
                     Err(err) => {
                         self.gl.delete_shader(vs_id);
@@ -2373,7 +2408,7 @@ impl Device {
         if self.bound_program != program.id {
             self.gl.use_program(program.id);
             self.bound_program = program.id;
-            self.bound_program_name = program.source_info.full_name();
+            self.bound_program_name = program.source_info.full_name_cstr.clone();
             self.program_mode_id = UniformLocation(program.u_mode);
         }
         true
@@ -2603,7 +2638,12 @@ impl Device {
     /// to allow tiled GPUs to avoid writing the contents back to memory.
     pub fn invalidate_depth_target(&mut self) {
         assert!(self.depth_available);
-        self.gl.invalidate_framebuffer(gl::DRAW_FRAMEBUFFER, &[gl::DEPTH_ATTACHMENT]);
+        let attachments = if self.bound_draw_fbo == self.default_draw_fbo {
+            &[gl::DEPTH] as &[gl::GLenum]
+        } else {
+            &[gl::DEPTH_ATTACHMENT] as &[gl::GLenum]
+        };
+        self.gl.invalidate_framebuffer(gl::DRAW_FRAMEBUFFER, attachments);
     }
 
     /// Notifies the device that a render target is about to be reused.
@@ -3044,7 +3084,7 @@ impl Device {
         let bytes_pp = format.bytes_per_pixel() as usize;
         let width_bytes = size.width as usize * bytes_pp;
 
-        let dst_stride = round_up_to_multiple(width_bytes, self.optimal_pbo_stride.num_bytes(format));
+        let dst_stride = round_up_to_multiple(width_bytes, self.required_pbo_stride.num_bytes(format));
 
         // The size of the chunk should only need to be (height - 1) * dst_stride + width_bytes,
         // however, the android emulator will error unless it is height * dst_stride.
@@ -3913,11 +3953,17 @@ impl Device {
     }
 
     /// Generates a memory report for the resources managed by the device layer.
-    pub fn report_memory(&self) -> MemoryReport {
+    pub fn report_memory(&self, size_op_funs: &MallocSizeOfOps) -> MemoryReport {
         let mut report = MemoryReport::default();
         for dim in self.depth_targets.keys() {
             report.depth_target_textures += depth_target_size_in_bytes(dim);
         }
+        #[cfg(feature = "sw_compositor")]
+        {
+            report.swgl += swgl::Context::report_memory(size_op_funs.size_of_op);
+        }
+        // unconditionally use size_op_funs
+        let _ = size_op_funs;
         report
     }
 }

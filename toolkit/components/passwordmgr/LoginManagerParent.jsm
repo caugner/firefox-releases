@@ -15,17 +15,18 @@ const LoginInfo = new Components.Constructor(
   "init"
 );
 
-XPCOMUtils.defineLazyGetter(this, "autocompleteFeature", () => {
-  const { ExperimentFeature } = ChromeUtils.import(
-    "resource://nimbus/ExperimentAPI.jsm"
+XPCOMUtils.defineLazyGetter(this, "LoginRelatedRealmsParent", () => {
+  const { LoginRelatedRealmsParent } = ChromeUtils.import(
+    "resource://gre/modules/LoginRelatedRealms.jsm"
   );
-  return new ExperimentFeature("password-autocomplete");
+  return new LoginRelatedRealmsParent();
 });
 
 XPCOMUtils.defineLazyGlobalGetters(this, ["URL"]);
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   ChromeMigrationUtils: "resource:///modules/ChromeMigrationUtils.jsm",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
   LoginHelper: "resource://gre/modules/LoginHelper.jsm",
   MigrationUtils: "resource:///modules/MigrationUtils.jsm",
   PasswordGenerator: "resource://gre/modules/PasswordGenerator.jsm",
@@ -186,6 +187,7 @@ class LoginManagerParent extends JSWindowActorParent {
    * @param {origin?} options.httpRealm To match on. Omit this argument to match all realms.
    * @param {boolean} options.acceptDifferentSubdomains Include results for eTLD+1 matches
    * @param {boolean} options.ignoreActionAndRealm Include all form and HTTP auth logins for the site
+   * @param {string[]} options.relatedRealms Related realms to match against when searching
    */
   static async searchAndDedupeLogins(
     formOrigin,
@@ -194,6 +196,7 @@ class LoginManagerParent extends JSWindowActorParent {
       formActionOrigin,
       httpRealm,
       ignoreActionAndRealm,
+      relatedRealms,
     } = {}
   ) {
     let logins;
@@ -208,6 +211,10 @@ class LoginManagerParent extends JSWindowActorParent {
       } else if (typeof httpRealm != "undefined") {
         matchData.httpRealm = httpRealm;
       }
+    }
+    if (LoginHelper.relatedRealmsEnabled) {
+      matchData.acceptRelatedRealms = LoginHelper.relatedRealmsEnabled;
+      matchData.relatedRealms = relatedRealms;
     }
     try {
       logins = await Services.logins.searchLoginsAsync(matchData);
@@ -328,7 +335,8 @@ class LoginManagerParent extends JSWindowActorParent {
         const profiles = await migrator.getSourceProfiles();
         if (
           profiles.length == 1 &&
-          autocompleteFeature.getValue()?.directMigrateSingleProfile
+          NimbusFeatures["password-autocomplete"].getValue()
+            ?.directMigrateSingleProfile
         ) {
           const loginAdded = new Promise(resolve => {
             const obs = (subject, topic, data) => {
@@ -535,11 +543,22 @@ class LoginManagerParent extends JSWindowActorParent {
         origin: formOrigin,
       });
     } else {
+      let relatedRealmsOrigins = [];
+      if (LoginHelper.relatedRealmsEnabled) {
+        relatedRealmsOrigins = await LoginRelatedRealmsParent.findRelatedRealms(
+          formOrigin
+        );
+      }
       logins = await LoginManagerParent.searchAndDedupeLogins(formOrigin, {
         formActionOrigin: actionOrigin,
         ignoreActionAndRealm: true,
         acceptDifferentSubdomains: LoginHelper.includeOtherSubdomainsInLookup,
+        relatedRealms: relatedRealmsOrigins,
       });
+      debug(
+        "Adding related logins on page load",
+        logins.map(l => l.origin)
+      );
     }
 
     log("sendLoginDataToChild:", logins.length, "deduped logins");
@@ -606,12 +625,18 @@ class LoginManagerParent extends JSWindowActorParent {
       logins = LoginHelper.vanillaObjectsToLogins(previousResult.logins);
     } else {
       log("Creating new autocomplete search result.");
-
+      let relatedRealmsOrigins = [];
+      if (LoginHelper.relatedRealmsEnabled) {
+        relatedRealmsOrigins = await LoginRelatedRealmsParent.findRelatedRealms(
+          formOrigin
+        );
+      }
       // Autocomplete results do not need to match actionOrigin or exact origin.
       logins = await LoginManagerParent.searchAndDedupeLogins(formOrigin, {
         formActionOrigin: actionOrigin,
         ignoreActionAndRealm: true,
         acceptDifferentSubdomains: LoginHelper.includeOtherSubdomainsInLookup,
+        relatedRealms: relatedRealmsOrigins,
       });
     }
 

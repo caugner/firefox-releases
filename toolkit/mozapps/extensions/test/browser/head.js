@@ -302,7 +302,7 @@ async function wait_for_view_load(
     }
 
     aManagerWindow.document.addEventListener(
-      "ViewChanged",
+      "view-loaded",
       function() {
         resolve(aManagerWindow);
       },
@@ -664,9 +664,6 @@ function MockProvider() {
       id: "extension",
       name: "Extensions",
       uiPriority: 4000,
-      flags:
-        AddonManager.TYPE_UI_VIEW_LIST |
-        AddonManager.TYPE_SUPPORTS_UNDO_RESTARTLESS_UNINSTALL,
     },
   ];
 
@@ -1444,20 +1441,6 @@ function waitForCondition(condition, nextTest, errorMsg) {
   };
 }
 
-function getTestPluginTag() {
-  let ph = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
-  let tags = ph.getPluginTags();
-
-  // Find the test plugin
-  for (let i = 0; i < tags.length; i++) {
-    if (tags[i].name == "Test Plug-in") {
-      return tags[i];
-    }
-  }
-  ok(false, "Unable to find plugin");
-  return null;
-}
-
 // Wait for and then acknowledge (by pressing the primary button) the
 // given notification.
 function promiseNotification(id = "addon-webext-permissions") {
@@ -1572,7 +1555,10 @@ function assertAboutAddonsTelemetryEvents(events, filters = {}) {
       filters.methods
         ? filters.methods.includes(actual)
         : ABOUT_ADDONS_METHODS.has(actual),
-    object: "aboutAddons",
+    object: actual =>
+      filters.objects
+        ? filters.objects.includes(actual)
+        : actual === "aboutAddons",
   });
 }
 

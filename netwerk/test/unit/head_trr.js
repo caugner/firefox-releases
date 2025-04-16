@@ -31,7 +31,7 @@ function trr_test_setup() {
   Services.prefs.setBoolPref("network.http.spdy.enabled", true);
   Services.prefs.setBoolPref("network.http.spdy.enabled.http2", true);
   // the TRR server is on 127.0.0.1
-  Services.prefs.setCharPref("network.trr.bootstrapAddress", "127.0.0.1");
+  Services.prefs.setCharPref("network.trr.bootstrapAddr", "127.0.0.1");
 
   // make all native resolve calls "secretly" resolve localhost instead
   Services.prefs.setBoolPref("network.dns.native-is-localhost", true);
@@ -67,7 +67,7 @@ function trr_clear_prefs() {
   Services.prefs.clearUserPref("network.trr.allow-rfc1918");
   Services.prefs.clearUserPref("network.trr.useGET");
   Services.prefs.clearUserPref("network.trr.confirmationNS");
-  Services.prefs.clearUserPref("network.trr.bootstrapAddress");
+  Services.prefs.clearUserPref("network.trr.bootstrapAddr");
   Services.prefs.clearUserPref("network.trr.blacklist-duration");
   Services.prefs.clearUserPref("network.trr.request_timeout_ms");
   Services.prefs.clearUserPref("network.trr.request_timeout_mode_trronly_ms");
@@ -108,6 +108,7 @@ class TRRDNSListener {
         trrServer: args[4] ?? "",
         expectEarlyFail: args[5] ?? "",
         flags: args[6] ?? 0,
+        type: args[7] ?? Ci.nsIDNSService.RESOLVE_TYPE_DEFAULT,
       };
     }
     this.expectedAnswer = this.options.expectedAnswer ?? undefined;
@@ -116,6 +117,7 @@ class TRRDNSListener {
     this.promise = new Promise(resolve => {
       this.resolve = resolve;
     });
+    this.type = this.options.type ?? Ci.nsIDNSService.RESOLVE_TYPE_DEFAULT;
     let trrServer = this.options.trrServer || "";
 
     const threadManager = Cc["@mozilla.org/thread-manager;1"].getService(
@@ -129,14 +131,14 @@ class TRRDNSListener {
       );
     }
 
-    let resolverInfo =
+    this.resolverInfo =
       trrServer == "" ? null : gDNS.newTRRResolverInfo(trrServer);
     try {
       this.request = gDNS.asyncResolve(
         this.name,
-        Ci.nsIDNSService.RESOLVE_TYPE_DEFAULT,
+        this.type,
         this.options.flags || 0,
-        resolverInfo,
+        this.resolverInfo,
         this,
         currentThread,
         {} // defaultOriginAttributes
@@ -162,6 +164,12 @@ class TRRDNSListener {
     }
 
     Assert.equal(inStatus, Cr.NS_OK, "Checking status");
+
+    if (this.type != Ci.nsIDNSService.RESOLVE_TYPE_DEFAULT) {
+      this.resolve([inRequest, inRecord, inStatus]);
+      return;
+    }
+
     inRecord.QueryInterface(Ci.nsIDNSAddrRecord);
     let answer = inRecord.getNextAddrAsString();
     Assert.equal(
@@ -214,6 +222,18 @@ class TRRDNSListener {
   then() {
     return this.promise.then.apply(this.promise, arguments);
   }
+
+  cancel(aStatus = Cr.NS_ERROR_ABORT) {
+    gDNS.cancelAsyncResolve(
+      this.name,
+      this.type,
+      this.options.flags || 0,
+      this.resolverInfo,
+      this,
+      aStatus,
+      {}
+    );
+  }
 }
 
 /// Implements a basic HTTP2 server
@@ -247,6 +267,10 @@ class TRRServerCode {
     // value: array [answer1, answer2]
     global.dns_query_answers = {};
 
+    // key: domain
+    // value: a map containing {key: type, value: number of requests}
+    global.dns_query_counts = {};
+
     global.http2 = require("http2");
     global.server = global.http2.createSecureServer(options, global.handler);
 
@@ -256,6 +280,13 @@ class TRRServerCode {
     global.ip = require(`${__dirname}/../node-ip`);
 
     return global.server.address().port;
+  }
+
+  static getRequestCount(domain, type) {
+    if (!global.dns_query_counts[domain]) {
+      return 0;
+    }
+    return global.dns_query_counts[domain][type] || 0;
   }
 }
 
@@ -291,12 +322,20 @@ function trrQueryHandler(req, resp, url) {
 
   function processRequest(req, resp, payload) {
     let dnsQuery = global.dnsPacket.decode(payload);
-    let response =
-      global.dns_query_answers[
-        `${dnsQuery.questions[0].name}/${dnsQuery.questions[0].type}`
-      ] || {};
+    let domain = dnsQuery.questions[0].name;
+    let type = dnsQuery.questions[0].type;
+    let response = global.dns_query_answers[`${domain}/${type}`] || {};
+
+    if (!global.dns_query_counts[domain]) {
+      global.dns_query_counts[domain] = {};
+    }
+    global.dns_query_counts[domain][type] =
+      global.dns_query_counts[domain][type] + 1 || 1;
 
     let flags = global.dnsPacket.RECURSION_DESIRED;
+    if (!response.answers && !response.flags) {
+      flags |= 2; // SERVFAIL
+    }
     flags |= response.flags || 0;
     let buf = global.dnsPacket.encode({
       type: "response",
@@ -398,5 +437,11 @@ class TRRServer {
       response
     )}`;
     return this.execute(text);
+  }
+
+  async requestCount(domain, type) {
+    return this.execute(
+      `TRRServerCode.getRequestCount("${domain}", "${type}")`
+    );
   }
 }

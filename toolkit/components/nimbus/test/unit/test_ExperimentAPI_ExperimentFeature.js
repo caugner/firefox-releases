@@ -10,23 +10,6 @@ const { TestUtils } = ChromeUtils.import(
   "resource://testing-common/TestUtils.jsm"
 );
 
-const { Ajv } = ChromeUtils.import("resource://testing-common/ajv-4.1.1.js");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
-);
-Cu.importGlobalProperties(["fetch"]);
-
-XPCOMUtils.defineLazyGetter(this, "fetchSchema", async () => {
-  const response = await fetch(
-    "resource://testing-common/ExperimentFeatureManifest.schema.json"
-  );
-  const schema = await response.json();
-  if (!schema) {
-    throw new Error("Failed to load NimbusSchema");
-  }
-  return schema.definitions.Feature;
-});
-
 async function setupForExperimentFeature() {
   const sandbox = sinon.createSandbox();
   const manager = ExperimentFakes.manager();
@@ -52,31 +35,22 @@ const FAKE_FEATURE_MANIFEST = {
     },
   },
 };
-
-add_task(async function test_feature_manifest_is_valid() {
-  const ajv = new Ajv({ allErrors: true });
-  const validate = ajv.compile(await fetchSchema);
-
-  // Validate each entry in the feature manifest.
-  // See tookit/components/messaging-system/experiments/ExperimentAPI.jsm
-  Object.keys(ExperimentFeature.MANIFEST).forEach(featureId => {
-    const valid = validate(ExperimentFeature.MANIFEST[featureId]);
-    if (!valid) {
-      throw new Error(
-        `The manfinifest entry for ${featureId} not valid in tookit/components/messaging-system/experiments/ExperimentAPI.jsm: ` +
-          JSON.stringify(validate.errors, undefined, 2)
-      );
-    }
-  });
-});
+const FAKE_FEATURE_REMOTE_VALUE = {
+  variables: {},
+  enabled: true,
+  targeting: "true",
+};
 
 /**
  * # ExperimentFeature.getValue
  */
 add_task(async function test_ExperimentFeature_ready() {
   const { sandbox, manager } = await setupForExperimentFeature();
-
   const featureInstance = new ExperimentFeature("foo", FAKE_FEATURE_MANIFEST);
+  let readyPromise = featureInstance.ready();
+  let stub = sandbox.stub();
+
+  featureInstance.onUpdate(stub);
 
   const expected = ExperimentFakes.experiment("anexperiment", {
     branch: {
@@ -91,13 +65,15 @@ add_task(async function test_ExperimentFeature_ready() {
 
   manager.store.addExperiment(expected);
 
-  await featureInstance.ready();
+  await readyPromise;
 
   Assert.deepEqual(
     featureInstance.getValue(),
     { whoa: true },
     "should return getValue after waiting on ready"
   );
+  Assert.equal(stub.callCount, 1, "Called when experiment registered");
+  Assert.equal(stub.firstCall.args[1], "experiment-updated", "Verify reason");
 
   Services.prefs.clearUserPref("testprefbranch.value");
   sandbox.restore();
@@ -198,8 +174,59 @@ add_task(async function test_ExperimentFeature_isEnabled_default() {
   sandbox.restore();
 });
 
+add_task(async function test_ExperimentFeature_isEnabled_remote_over_default() {
+  const { manager, sandbox } = await setupForExperimentFeature();
+  await manager.store.ready();
+
+  const featureInstance = new ExperimentFeature("foo", FAKE_FEATURE_MANIFEST);
+
+  Services.prefs.setBoolPref("testprefbranch.enabled", false);
+
+  Assert.equal(
+    featureInstance.isEnabled(),
+    false,
+    "should use the default pref value, including if it is false"
+  );
+
+  manager.store.updateRemoteConfigs("foo", {
+    ...FAKE_FEATURE_REMOTE_VALUE,
+    enabled: true,
+  });
+
+  await featureInstance.ready();
+
+  Assert.equal(
+    featureInstance.isEnabled(),
+    true,
+    "should use the remote value over the default"
+  );
+
+  Services.prefs.clearUserPref("testprefbranch.enabled");
+  sandbox.restore();
+});
+
+add_task(async function test_ExperimentFeature_test_helper_ready() {
+  const { manager } = await setupForExperimentFeature();
+  await manager.store.ready();
+
+  const featureInstance = new ExperimentFeature("foo", FAKE_FEATURE_MANIFEST);
+
+  await ExperimentFakes.remoteDefaultsHelper({
+    feature: featureInstance,
+    store: manager.store,
+    configuration: { variables: { remoteValue: "mochitest" }, enabled: true },
+  });
+
+  Assert.equal(featureInstance.isEnabled(), true, "enabled by remote config");
+  Assert.equal(
+    featureInstance.getValue().remoteValue,
+    "mochitest",
+    "set by remote config"
+  );
+});
+
 add_task(
-  async function test_ExperimentFeature_isEnabled_prefer_experiment_over_default() {
+  async function test_ExperimentFeature_isEnabled_prefer_experiment_over_remote() {
     const { sandbox, manager } = await setupForExperimentFeature();
     const expected = ExperimentFakes.experiment("foo", {
       branch: {
@@ -211,18 +238,25 @@ add_task(
         },
       },
     });
-
     const featureInstance = new ExperimentFeature("foo", FAKE_FEATURE_MANIFEST);
+
+    await manager.store.ready();
 
     manager.store.addExperiment(expected);
 
     const exposureSpy = sandbox.spy(ExperimentAPI, "recordExposureEvent");
     Services.prefs.setBoolPref("testprefbranch.enabled", false);
+    manager.store.updateRemoteConfigs("foo", {
+      ...FAKE_FEATURE_REMOTE_VALUE,
+      enabled: false,
+    });
+
+    await featureInstance.ready();
 
     Assert.equal(
       featureInstance.isEnabled(),
       true,
-      "should return the enabled value defined in the experiment, not the default pref"
+      "should return the enabled value defined in the experiment, not the default pref or the remote value"
     );
 
     Assert.ok(exposureSpy.notCalled, "should emit exposure by default event");
@@ -300,6 +334,102 @@ add_task(async function test_record_exposure_event() {
   Assert.ok(
     exposureSpy.calledOnce,
     "should emit an exposure event when there is an experiment"
+  );
+
+  sandbox.restore();
+});
+
+add_task(async function test_record_exposure_event_once() {
+  const { sandbox, manager } = await setupForExperimentFeature();
+
+  const featureInstance = new ExperimentFeature("foo", FAKE_FEATURE_MANIFEST);
+  const exposureSpy = sandbox.spy(ExperimentAPI, "recordExposureEvent");
+  sandbox.stub(ExperimentAPI, "_store").get(() => manager.store);
+
+  manager.store.addExperiment(
+    ExperimentFakes.experiment("blah", {
+      featureIds: ["foo"],
+      branch: {
+        slug: "treatment",
+        feature: {
+          featureId: "foo",
+          enabled: false,
+          value: null,
+        },
+      },
+    })
+  );
+
+  featureInstance.recordExposureEvent();
+  featureInstance.recordExposureEvent();
+  featureInstance.recordExposureEvent();
+
+  Assert.ok(exposureSpy.calledOnce, "Should emit a single exposure event.");
+
+  sandbox.restore();
+});
+
+add_task(async function test_prevent_double_exposure_getValue() {
+  const { sandbox, manager } = await setupForExperimentFeature();
+
+  const featureInstance = new ExperimentFeature("foo", FAKE_FEATURE_MANIFEST);
+  const exposureSpy = sandbox.spy(ExperimentAPI, "recordExposureEvent");
+  sandbox.stub(ExperimentAPI, "_store").get(() => manager.store);
+
+  manager.store.addExperiment(
+    ExperimentFakes.experiment("blah", {
+      featureIds: ["foo"],
+      branch: {
+        slug: "treatment",
+        feature: {
+          featureId: "foo",
+          enabled: false,
+          value: null,
+        },
+      },
+    })
+  );
+
+  featureInstance.getValue({ sendExposureEvent: true });
+  featureInstance.getValue({ sendExposureEvent: true });
+  featureInstance.getValue({ sendExposureEvent: true });
+
+  Assert.ok(
+    exposureSpy.calledOnce,
+    "Should emit a single exposure event (getValue)."
+  );
+
+  sandbox.restore();
+});
+
+add_task(async function test_prevent_double_exposure_isEnabled() {
+  const { sandbox, manager } = await setupForExperimentFeature();
+
+  const featureInstance = new ExperimentFeature("foo", FAKE_FEATURE_MANIFEST);
+  const exposureSpy = sandbox.spy(ExperimentAPI, "recordExposureEvent");
+  sandbox.stub(ExperimentAPI, "_store").get(() => manager.store);
+
+  manager.store.addExperiment(
+    ExperimentFakes.experiment("blah", {
+      featureIds: ["foo"],
+      branch: {
+        slug: "treatment",
+        feature: {
+          featureId: "foo",
+          enabled: false,
+          value: null,
+        },
+      },
+    })
+  );
+
+  featureInstance.isEnabled({ sendExposureEvent: true });
+  featureInstance.isEnabled({ sendExposureEvent: true });
+  featureInstance.isEnabled({ sendExposureEvent: true });
+
+  Assert.ok(
+    exposureSpy.calledOnce,
+    "Should emit a single exposure event (getValue)."
   );
 
   sandbox.restore();

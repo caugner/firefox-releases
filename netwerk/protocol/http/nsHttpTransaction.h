@@ -115,6 +115,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void RemoveDispatchedAsBlocking();
 
   void DisableSpdy() override;
+  void DoNotRemoveAltSvc() override { mDoNotRemoveAltSvc = true; }
   void DisableHttp3() override;
 
   nsHttpTransaction* QueryHttpTransaction() override { return this; }
@@ -145,9 +146,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // restart - this indicates that state for dev tools
   void Refused0RTT();
 
-  uint64_t TopLevelOuterContentWindowId() override {
-    return mTopLevelOuterContentWindowId;
-  }
+  uint64_t TopBrowsingContextId() override { return mTopBrowsingContextId; }
 
   void SetHttpTrailers(nsCString& aTrailers);
 
@@ -251,7 +250,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
       nsresult aErrorCode);
 
   void OnHttp3BackupTimer();
-  void OnBackupConnectionReady();
+  void OnBackupConnectionReady(bool aTriggeredByHTTPSRR);
   void OnFastFallbackTimer();
   void HandleFallback(nsHttpConnectionInfo* aFallbackConnInfo);
   void MaybeCancelFallbackTimer();
@@ -442,7 +441,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   TimeStamp mPendingTime;
   TimeDuration mPendingDurationTime;
 
-  uint64_t mTopLevelOuterContentWindowId;
+  uint64_t mTopBrowsingContextId;
 
   // For Rate Pacing via an EventTokenBucket
  public:

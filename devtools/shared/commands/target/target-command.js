@@ -8,19 +8,21 @@ const Services = require("Services");
 const EventEmitter = require("devtools/shared/event-emitter");
 
 const BROWSERTOOLBOX_FISSION_ENABLED = "devtools.browsertoolbox.fission";
+const SERVER_TARGET_SWITCHING_ENABLED =
+  "devtools.target-switching.server.enabled";
 
 const {
   LegacyProcessesWatcher,
-} = require("devtools/shared/resources/legacy-target-watchers/legacy-processes-watcher");
+} = require("devtools/shared/commands/target/legacy-target-watchers/legacy-processes-watcher");
 const {
   LegacyServiceWorkersWatcher,
-} = require("devtools/shared/resources/legacy-target-watchers/legacy-serviceworkers-watcher");
+} = require("devtools/shared/commands/target/legacy-target-watchers/legacy-serviceworkers-watcher");
 const {
   LegacySharedWorkersWatcher,
-} = require("devtools/shared/resources/legacy-target-watchers/legacy-sharedworkers-watcher");
+} = require("devtools/shared/commands/target/legacy-target-watchers/legacy-sharedworkers-watcher");
 const {
   LegacyWorkersWatcher,
-} = require("devtools/shared/resources/legacy-target-watchers/legacy-workers-watcher");
+} = require("devtools/shared/commands/target/legacy-target-watchers/legacy-workers-watcher");
 
 class TargetCommand extends EventEmitter {
   /**
@@ -144,7 +146,9 @@ class TargetCommand extends EventEmitter {
       for (const target of this._targets) {
         // We only consider the top level target to be switched
         const isDestroyedTargetSwitching = target == this.targetFront;
-        this._onTargetDestroyed(target, isDestroyedTargetSwitching);
+        this._onTargetDestroyed(target, {
+          isTargetSwitching: isDestroyedTargetSwitching,
+        });
       }
       // Stop listening to legacy listeners as we now have to listen
       // on the new target.
@@ -155,6 +159,7 @@ class TargetCommand extends EventEmitter {
 
       // Update the reference to the memoized top level target
       this.targetFront = targetFront;
+      this.descriptorFront.setTarget(targetFront);
     }
 
     // Map the descriptor typeName to a target type.
@@ -192,9 +197,44 @@ class TargetCommand extends EventEmitter {
 
     // To be consumed by tests triggering frame navigations, spawning workers...
     this.emitForTests("processed-available-target", targetFront);
+    if (isTargetSwitching) {
+      this.emitForTests("switched-target", targetFront);
+    }
   }
 
-  _onTargetDestroyed(targetFront, isTargetSwitching = false) {
+  /**
+   * Function fired everytime a target is destroyed.
+   *
+   * This is called either:
+   * - via target-destroyed event fired by the WatcherFront,
+   *   event which is a simple translation of the target-destroyed-form emitted by the WatcherActor.
+   *   Watcher Actor emits this is various condition when the debugged target is meant to be destroyed:
+   *   - the related target context is destroyed (tab closed, worker shut down, content process destroyed, ...),
+   *   - when the DevToolsServerConnection used on the server side to communicate to the client is closed.
+
+   * - by TargetCommand._onTargetAvailable, when a top level target switching happens and all previously
+   *   registered target fronts should be destroyed.
+
+   * - by the legacy Targets listeners, calling this method directly.
+   *   This usecase is meant to be removed someday when all target targets are supported by the Watcher.
+   *   (bug 1687459)
+   *
+   * @param {TargetFront} targetFront
+   *        The target that just got destroyed.
+   * @param Object options
+   *        Dictionary object with:
+   *        - `isTargetSwitching` optional boolean. To be set to true when this
+   *           is about the top level target which is being replaced by a new one.
+   *           The passed target should be still the one store in TargetCommand.targetFront
+   *           and will be replaced via a call to onTargetAvailable with a new target front.
+   *        - `shouldDestroyTargetFront` optional boolean. By default, the passed target
+   *           front will be destroyed. But in some cases like legacy listeners for service workers
+   *           we want to keep the front alive.
+   */
+  _onTargetDestroyed(
+    targetFront,
+    { isTargetSwitching = false, shouldDestroyTargetFront = true } = {}
+  ) {
     // The watcher actor may notify us about the destruction of the top level target.
     // But second argument to this method, isTargetSwitching is only passed from the frontend.
     // So automatically toggle the isTargetSwitching flag for server side destructions
@@ -207,6 +247,18 @@ class TargetCommand extends EventEmitter {
       isTargetSwitching,
     });
     this._targets.delete(targetFront);
+
+    if (shouldDestroyTargetFront) {
+      // When calling targetFront.destroy(), we will first call TargetFrontMixin.destroy,
+      // which will try to call `detach` RDP method.
+      // Unfortunately, this request will never complete in some cases like bfcache navigations.
+      // Because of that, the target front will never be completely destroy as it will prevent
+      // calling super.destroy and Front.destroy.
+      // Workaround that by manually calling Front class destroy method:
+      targetFront.baseFrontClassDestroy();
+
+      targetFront.destroy();
+    }
   }
 
   _setListening(type, value) {
@@ -233,6 +285,16 @@ class TargetCommand extends EventEmitter {
     }
 
     return !!this.watcherFront?.traits[type];
+  }
+
+  isServerTargetSwitchingEnabled() {
+    if (typeof this._isServerTargetSwitchingEnabled == "undefined") {
+      this._isServerTargetSwitchingEnabled = Services.prefs.getBoolPref(
+        SERVER_TARGET_SWITCHING_ENABLED,
+        false
+      );
+    }
+    return this._isServerTargetSwitchingEnabled;
   }
 
   /**
@@ -542,18 +604,15 @@ class TargetCommand extends EventEmitter {
    *        The BrowsingContextTargetFront instance that navigated to another process
    */
   async onLocalTabRemotenessChange(targetFront) {
+    if (this.isServerTargetSwitchingEnabled()) {
+      // For server-side target switchting, everything will be handled by the
+      // _onTargetAvailable callback.
+      return;
+    }
+
     // TabDescriptor may emit the event with a null targetFront, interpret that as if the previous target
     // has already been destroyed
     if (targetFront) {
-      // By default, we do close the DevToolsClient when the target is destroyed.
-      // This happens when we close the toolbox (Toolbox.destroy calls Target.destroy),
-      // or when the tab is closes, the server emits tabDetached and the target
-      // destroy itself.
-      // Here, in the context of the process switch, the current target will be destroyed
-      // due to a tabDetached event and a we will create a new one. But we want to reuse
-      // the same client.
-      targetFront.shouldCloseClient = false;
-
       // Wait for the target to be destroyed so that TabDescriptorFactory clears its memoized target for this tab
       await targetFront.once("target-destroyed");
     }
@@ -573,9 +632,8 @@ class TargetCommand extends EventEmitter {
    */
   async switchToTarget(newTarget) {
     // Notify about this new target to creation listeners
+    // _onTargetAvailable will also destroy all previous target before notifying about this new one.
     await this._onTargetAvailable(newTarget);
-
-    this.emit("switched-target", newTarget);
   }
 
   isTargetRegistered(targetFront) {
@@ -584,47 +642,6 @@ class TargetCommand extends EventEmitter {
 
   isDestroyed() {
     return this._isDestroyed;
-  }
-
-  /**
-   * Update the DevTools configuration on the server.
-   * TODO: This API is temporarily on the TargetCommand but should move to a
-   * command as soon as https://bugzilla.mozilla.org/show_bug.cgi?id=1691681
-   * lands.
-   */
-  async updateConfiguration(configuration) {
-    if (this.hasTargetWatcherSupport("target-configuration")) {
-      const targetConfigurationFront = await this.watcherFront.getTargetConfigurationActor();
-      await targetConfigurationFront.updateConfiguration(configuration);
-    } else {
-      await this.targetFront.reconfigure({ options: configuration });
-    }
-  }
-
-  /**
-   * Check if JavaScript is currently enabled.
-   * TODO: This API is temporarily on the TargetCommand but should move to a
-   * command as soon as https://bugzilla.mozilla.org/show_bug.cgi?id=1691681
-   * lands.
-   */
-  async isJavascriptEnabled(configuration) {
-    if (this.hasTargetWatcherSupport("target-configuration")) {
-      const targetConfigurationFront = await this.watcherFront.getTargetConfigurationActor();
-
-      const { javascriptEnabled } = targetConfigurationFront.configuration;
-      if (typeof javascriptEnabled === "undefined") {
-        // `javascriptEnabled` is first read by the target and then forwarded by
-        // the toolbox to the TargetConfigurationActor.
-        // If the TargetConfigurationActor does not know the value yet, fallback
-        // on the initial value cached by the target front.
-        return this.targetFront._javascriptEnabled;
-      }
-      return targetConfigurationFront.configuration.javascriptEnabled;
-    }
-
-    // For targets which don't support the Watcher + configuration actor, the
-    // javascriptEnabled setting can be read on the target front.
-    return this.targetFront._javascriptEnabled;
   }
 
   destroy() {

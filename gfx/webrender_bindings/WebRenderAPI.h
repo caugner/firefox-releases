@@ -245,6 +245,8 @@ class WebRenderAPI final {
 
   already_AddRefed<WebRenderAPI> Clone();
 
+  void DestroyRenderer();
+
   wr::WindowId GetId() const { return mId; }
 
   /// Do a non-blocking hit-testing query on a shared version of the hit
@@ -343,6 +345,7 @@ class WebRenderAPI final {
   bool mSupportsExternalBufferTextures;
   bool mCaptureSequence;
   layers::SyncHandle mSyncHandle;
+  bool mRendererDestroyed;
 
   // We maintain alive the root api to know when to shut the render backend
   // down, and the root api for the document to know when to delete the
@@ -369,7 +372,10 @@ class WebRenderAPI final {
 class MOZ_RAII AutoTransactionSender {
  public:
   AutoTransactionSender(WebRenderAPI* aApi, TransactionBuilder* aTxn)
-      : mApi(aApi), mTxn(aTxn) {}
+      : mApi(aApi), mTxn(aTxn) {
+    MOZ_RELEASE_ASSERT(mApi);
+    MOZ_RELEASE_ASSERT(aTxn);
+  }
 
   ~AutoTransactionSender() { mApi->SendTransaction(*mTxn); }
 
@@ -454,7 +460,9 @@ class DisplayListBuilder final {
       const Maybe<wr::WrSpaceAndClip>& aParent, const wr::LayoutRect& aClipRect,
       const nsTArray<wr::ComplexClipRegion>* aComplex = nullptr);
 
-  wr::WrClipId DefineImageMaskClip(const wr::ImageMask& aMask);
+  wr::WrClipId DefineImageMaskClip(const wr::ImageMask& aMask,
+                                   const nsTArray<wr::LayoutPoint>&,
+                                   wr::FillRule);
   wr::WrClipId DefineRoundedRectClip(const wr::ComplexClipRegion& aComplex);
   wr::WrClipId DefineRectClip(wr::LayoutRect aClipRect);
 

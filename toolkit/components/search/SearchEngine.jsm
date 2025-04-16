@@ -1122,10 +1122,18 @@ class SearchEngine {
    */
   removeExtensionOverride() {
     if (this.getAttr("overriddenBy")) {
-      this._urls = this._overriddenData.urls;
-      this._queryCharset = this._overriddenData.queryCharset;
-      this.__searchForm = this._overriddenData.searchForm;
-      delete this._overriddenData;
+      // If the attribute is set, but there is no data, skip it. Worst case,
+      // the urls will be reset on a restart.
+      if (this._overriddenData) {
+        this._urls = this._overriddenData.urls;
+        this._queryCharset = this._overriddenData.queryCharset;
+        this.__searchForm = this._overriddenData.searchForm;
+        delete this._overriddenData;
+      } else {
+        logConsole.error(
+          `${this._name} had overriddenBy set, but no _overriddenData`
+        );
+      }
       this.clearAttr("overriddenBy");
       SearchUtils.notifyAction(this, SearchUtils.MODIFIED_TYPE.CHANGED);
     }
@@ -1347,6 +1355,13 @@ class SearchEngine {
 
   get isAppProvided() {
     return !!(this._extensionID && this._isAppProvided);
+  }
+
+  get isGeneralPurposeEngine() {
+    return !!(
+      this._extensionID &&
+      SearchUtils.GENERAL_SEARCH_ENGINE_IDS.has(this._extensionID)
+    );
   }
 
   get _hasUpdates() {

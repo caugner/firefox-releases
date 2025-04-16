@@ -25,9 +25,6 @@ NetMonitorPanel.prototype = {
     });
 
     // Ready to go!
-    this.emit("ready");
-    this.isReady = true;
-
     return this;
   },
 

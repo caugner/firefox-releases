@@ -54,10 +54,10 @@ namespace IOUtils {
   /**
    * Attempts to safely write |data| to a file at |path|.
    *
-   * This operation can be made atomic by specifying the |tmpFile| option. If
+   * This operation can be made atomic by specifying the |tmpPath| option. If
    * specified, then this method ensures that the destination file is not
    * modified until the data is entirely written to the temporary file, after
-   * which point the |tmpFile| is moved to the specified |path|.
+   * which point the |tmpPath| is moved to the specified |path|.
    *
    * The target file can also be backed up to a |backupFile| before any writes
    * are performed to prevent data loss in case of corruption.
@@ -204,6 +204,12 @@ namespace IOUtils {
    * @return A promise that resolves to whether or not the given file exists.
    */
   Promise<boolean> exists(DOMString path);
+};
+
+[Exposed=Window]
+partial namespace IOUtils {
+  [Throws]
+  readonly attribute any profileBeforeChange;
 };
 
 /**

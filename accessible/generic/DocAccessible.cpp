@@ -38,6 +38,7 @@
 #include "nsIURI.h"
 #include "nsIWebNavigation.h"
 #include "nsFocusManager.h"
+#include "nsTHashSet.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/EventStates.h"
@@ -114,9 +115,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DocAccessible,
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNotificationController)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mVirtualCursor)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildDocuments)
-  for (const auto& hashEntry : tmp->mDependentIDsHashes) {
-    for (const auto& providerEntry : *hashEntry.GetData()) {
-      AttrRelProviders* providers = providerEntry.GetData().get();
+  for (const auto& hashEntry : tmp->mDependentIDsHashes.Values()) {
+    for (const auto& providers : hashEntry->Values()) {
       for (int32_t provIdx = providers->Length() - 1; provIdx >= 0; provIdx--) {
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(
             cb, "content of dependent ids hash entry of document accessible");
@@ -129,8 +129,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DocAccessible,
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAccessibleCache)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAnchorJumpElm)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mInvalidationList)
-  for (const auto& arEntry : tmp->mARIAOwnsHash) {
-    nsTArray<RefPtr<LocalAccessible>>* ar = arEntry.GetData().get();
+  for (const auto& ar : tmp->mARIAOwnsHash.Values()) {
     for (uint32_t i = 0; i < ar->Length(); i++) {
       NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mARIAOwnsHash entry item");
       cb.NoteXPCOMChild(ar->ElementAt(i));
@@ -1362,6 +1361,11 @@ LocalAccessible* DocAccessible::GetAccessibleOrContainer(
   return nullptr;
 }
 
+LocalAccessible* DocAccessible::GetContainerAccessible(nsINode* aNode) const {
+  return aNode ? GetAccessibleOrContainer(aNode->GetFlattenedTreeParentNode())
+               : nullptr;
+}
+
 LocalAccessible* DocAccessible::GetAccessibleOrDescendant(
     nsINode* aNode) const {
   LocalAccessible* acc = GetAccessible(aNode);
@@ -2033,7 +2037,7 @@ class InsertIterator final {
   TreeWalker mWalker;
 
   const nsTArray<nsCOMPtr<nsIContent>>* mNodes;
-  nsTHashtable<nsPtrHashKey<const nsIContent>> mProcessedNodes;
+  nsTHashSet<nsPtrHashKey<const nsIContent>> mProcessedNodes;
   uint32_t mNodesIdx;
 };
 

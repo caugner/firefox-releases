@@ -102,6 +102,9 @@ const CustomizableWidgets = [
         case "ViewShowing":
           this.onSubViewShowing(event);
           break;
+        case "unload":
+          this.onWindowUnload(event);
+          break;
         default:
           throw new Error(`Unsupported event for '${this.id}'`);
       }
@@ -135,6 +138,11 @@ const CustomizableWidgets = [
         "appMenuRecentlyClosedWindows"
       ).disabled = SessionStore.getClosedWindowCount(window) == 0;
 
+      PanelMultiView.getViewNode(
+        document,
+        "appMenuRestoreSession"
+      ).hidden = !SessionStore.canRestoreLastSession;
+
       // We restrict the amount of results to 42. Not 50, but 42. Why? Because 42.
       let query =
         "place:queryType=" +
@@ -161,6 +169,7 @@ const CustomizableWidgets = [
       // When the popup is hidden (thus the panelmultiview node as well), make
       // sure to stop listening to PlacesDatabase updates.
       panelview.panelMultiView.addEventListener("PanelMultiViewHidden", this);
+      window.addEventListener("unload", this);
     },
     onViewHiding(event) {
       log.debug("History view is being hidden!");
@@ -181,6 +190,11 @@ const CustomizableWidgets = [
         ).removeEventListener("ViewShowing", this);
       }
       panelMultiView.removeEventListener("PanelMultiViewHidden", this);
+    },
+    onWindowUnload(event) {
+      if (this._panelMenuView) {
+        delete this._panelMenuView;
+      }
     },
     onSubViewShowing(event) {
       let panelview = event.target;
@@ -277,7 +291,7 @@ const CustomizableWidgets = [
   {
     id: "add-ons-button",
     shortcutId: "key_openAddons",
-    tooltiptext: "add-ons-button.tooltiptext3",
+    l10nId: "toolbar-addons-themes-button",
     onCommand(aEvent) {
       let win = aEvent.target.ownerGlobal;
       win.BrowserOpenAddonsMgr();
@@ -614,6 +628,18 @@ if (Services.prefs.getBoolPref("identity.fxaccounts.enabled")) {
     onViewShowing(aEvent) {
       let panelview = aEvent.target;
       let doc = panelview.ownerDocument;
+      let window = doc.defaultView;
+
+      // While we support this panel for both Proton and non-Proton versions
+      // of the AppMenu, we only want to show icons for the non-Proton
+      // version. When Proton ships and we remove the non-Proton variant,
+      // we can remove the subviewbutton-iconic classes from the markup.
+      if (window.PanelUI.protonAppMenuEnabled) {
+        let toolbarbuttons = panelview.querySelectorAll("toolbarbutton");
+        for (let toolbarbutton of toolbarbuttons) {
+          toolbarbutton.classList.remove("subviewbutton-iconic");
+        }
+      }
 
       let syncNowBtn = panelview.querySelector(".syncnow-label");
       let l10nId = syncNowBtn.getAttribute(
@@ -663,19 +689,14 @@ if (!screenshotsDisabled) {
 
 let preferencesButton = {
   id: "preferences-button",
+  l10nId: "toolbar-settings-button",
   onCommand(aEvent) {
     let win = aEvent.target.ownerGlobal;
     win.openPreferences(undefined);
   },
 };
-if (AppConstants.platform == "win") {
-  preferencesButton.label = "preferences-button.labelWin";
-  preferencesButton.tooltiptext = "preferences-button.tooltipWin2";
-} else if (AppConstants.platform == "macosx") {
-  preferencesButton.tooltiptext = "preferences-button.tooltiptext.withshortcut";
+if (AppConstants.platform == "macosx") {
   preferencesButton.shortcutId = "key_preferencesCmdMac";
-} else {
-  preferencesButton.tooltiptext = "preferences-button.tooltiptext2";
 }
 CustomizableWidgets.push(preferencesButton);
 

@@ -202,18 +202,24 @@ class WidgetMouseEvent : public WidgetMouseEventBase,
   WidgetMouseEvent()
       : mReason(eReal),
         mContextMenuTrigger(eNormal),
-        mIgnoreRootScrollFrame(false),
         mClickCount(0),
-        mUseLegacyNonPrimaryDispatch(false) {}
+        mIgnoreRootScrollFrame(false),
+        mUseLegacyNonPrimaryDispatch(false),
+        mClickEventPrevented(false) {}
 
   WidgetMouseEvent(bool aIsTrusted, EventMessage aMessage, nsIWidget* aWidget,
                    EventClassID aEventClassID, Reason aReason)
       : WidgetMouseEventBase(aIsTrusted, aMessage, aWidget, aEventClassID),
         mReason(aReason),
         mContextMenuTrigger(eNormal),
-        mIgnoreRootScrollFrame(false),
         mClickCount(0),
-        mUseLegacyNonPrimaryDispatch(false) {}
+        mIgnoreRootScrollFrame(false),
+        mUseLegacyNonPrimaryDispatch(false),
+        mClickEventPrevented(false) {}
+
+#ifdef DEBUG
+  void AssertContextMenuEventButtonConsistency() const;
+#endif
 
  public:
   virtual WidgetMouseEvent* AsMouseEvent() override { return this; }
@@ -224,9 +230,10 @@ class WidgetMouseEvent : public WidgetMouseEventBase,
       : WidgetMouseEventBase(aIsTrusted, aMessage, aWidget, eMouseEventClass),
         mReason(aReason),
         mContextMenuTrigger(aContextMenuTrigger),
-        mIgnoreRootScrollFrame(false),
         mClickCount(0),
-        mUseLegacyNonPrimaryDispatch(false) {
+        mIgnoreRootScrollFrame(false),
+        mUseLegacyNonPrimaryDispatch(false),
+        mClickEventPrevented(false) {
     if (aMessage == eContextMenu) {
       mButton = (mContextMenuTrigger == eNormal) ? MouseButton::eSecondary
                                                  : MouseButton::ePrimary;
@@ -234,15 +241,7 @@ class WidgetMouseEvent : public WidgetMouseEventBase,
   }
 
 #ifdef DEBUG
-  virtual ~WidgetMouseEvent() {
-    NS_WARNING_ASSERTION(
-        mMessage != eContextMenu ||
-            (mButton == ((mContextMenuTrigger == eNormal)
-                             ? MouseButton::eSecondary
-                             : MouseButton::ePrimary) &&
-             (mContextMenuTrigger != eControlClick || IsControl())),
-        "Wrong button set to eContextMenu event?");
-  }
+  virtual ~WidgetMouseEvent() { AssertContextMenuEventButtonConsistency(); }
 #endif
 
   virtual WidgetEvent* Duplicate() const override {
@@ -276,26 +275,30 @@ class WidgetMouseEvent : public WidgetMouseEventBase,
   // a child widget or a puppet widget.
   Maybe<ExitFrom> mExitFrom;
 
-  // Whether the event should ignore scroll frame bounds during dispatch.
-  bool mIgnoreRootScrollFrame;
-
   // mClickCount may be non-zero value when mMessage is eMouseDown, eMouseUp,
   // eMouseClick or eMouseDoubleClick. The number is count of mouse clicks.
   // Otherwise, this must be 0.
   uint32_t mClickCount;
 
+  // Whether the event should ignore scroll frame bounds during dispatch.
+  bool mIgnoreRootScrollFrame;
+
   // Indicates whether the event should dispatch click events for non-primary
   // mouse buttons on window and document.
   bool mUseLegacyNonPrimaryDispatch;
+
+  // Whether the event shouldn't cause click event.
+  bool mClickEventPrevented;
 
   void AssignMouseEventData(const WidgetMouseEvent& aEvent, bool aCopyTargets) {
     AssignMouseEventBaseData(aEvent, aCopyTargets);
     AssignPointerHelperData(aEvent, /* aCopyCoalescedEvents */ true);
 
     mExitFrom = aEvent.mExitFrom;
-    mIgnoreRootScrollFrame = aEvent.mIgnoreRootScrollFrame;
     mClickCount = aEvent.mClickCount;
+    mIgnoreRootScrollFrame = aEvent.mIgnoreRootScrollFrame;
     mUseLegacyNonPrimaryDispatch = aEvent.mUseLegacyNonPrimaryDispatch;
+    mClickEventPrevented = aEvent.mClickEventPrevented;
   }
 
   /**
@@ -680,7 +683,8 @@ class WidgetPointerEvent : public WidgetMouseEvent {
   friend class mozilla::dom::PBrowserParent;
   friend class mozilla::dom::PBrowserChild;
 
-  WidgetPointerEvent() : mWidth(1), mHeight(1), mIsPrimary(true) {}
+  WidgetPointerEvent()
+      : mWidth(1), mHeight(1), mIsPrimary(true), mFromTouchEvent(false) {}
 
  public:
   virtual WidgetPointerEvent* AsPointerEvent() override { return this; }
@@ -689,10 +693,15 @@ class WidgetPointerEvent : public WidgetMouseEvent {
       : WidgetMouseEvent(aIsTrusted, aMsg, w, ePointerEventClass, eReal),
         mWidth(1),
         mHeight(1),
-        mIsPrimary(true) {}
+        mIsPrimary(true),
+        mFromTouchEvent(false) {}
 
   explicit WidgetPointerEvent(const WidgetMouseEvent& aEvent)
-      : WidgetMouseEvent(aEvent), mWidth(1), mHeight(1), mIsPrimary(true) {
+      : WidgetMouseEvent(aEvent),
+        mWidth(1),
+        mHeight(1),
+        mIsPrimary(true),
+        mFromTouchEvent(false) {
     mClass = ePointerEventClass;
   }
 
@@ -710,6 +719,7 @@ class WidgetPointerEvent : public WidgetMouseEvent {
   uint32_t mWidth;
   uint32_t mHeight;
   bool mIsPrimary;
+  bool mFromTouchEvent;
 
   // XXX Not tested by test_assign_event_data.html
   void AssignPointerEventData(const WidgetPointerEvent& aEvent,
@@ -719,6 +729,7 @@ class WidgetPointerEvent : public WidgetMouseEvent {
     mWidth = aEvent.mWidth;
     mHeight = aEvent.mHeight;
     mIsPrimary = aEvent.mIsPrimary;
+    mFromTouchEvent = aEvent.mFromTouchEvent;
   }
 };
 

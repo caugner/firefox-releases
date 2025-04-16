@@ -18,7 +18,7 @@
   display: none;
 }
 
-@supports -moz-bool-pref("browser.proton.tabs.enabled") {
+@media (-moz-proton) {
 :root[uidensity=compact] .tab-secondary-label,
 .tab-secondary-label:not([soundplaying], [muted], [activemedia-blocked], [pictureinpicture]),
 .tab-secondary-label:not([activemedia-blocked]) > .tab-icon-sound-blocked-label,
@@ -40,7 +40,7 @@
 }
 } /*** END proton ***/
 
-@supports not -moz-bool-pref("browser.proton.tabs.enabled") {
+@media not (-moz-proton) {
 .tab-icon-sound:not([activemedia-blocked]) > .tab-icon-sound-blocked-label,
 .tab-icon-sound[muted][activemedia-blocked] > .tab-icon-sound-blocked-label,
 .tab-icon-sound[activemedia-blocked] > .tab-icon-sound-playing-label,
@@ -62,6 +62,10 @@
 }
 } /*** END !proton ***/
 
+.tabbrowser-tab {
+  --tab-label-mask-size: 2em;
+}
+
 .tab-label {
   white-space: nowrap;
 }
@@ -77,13 +81,13 @@
 .tab-label-container[textoverflow][labeldirection=ltr]:not([pinned]),
 .tab-label-container[textoverflow]:not([labeldirection], [pinned]):-moz-locale-dir(ltr) {
   direction: ltr;
-  mask-image: linear-gradient(to left, transparent, black 2em);
+  mask-image: linear-gradient(to left, transparent, black var(--tab-label-mask-size));
 }
 
 .tab-label-container[textoverflow][labeldirection=rtl]:not([pinned]),
 .tab-label-container[textoverflow]:not([labeldirection], [pinned]):-moz-locale-dir(rtl) {
   direction: rtl;
-  mask-image: linear-gradient(to right, transparent, black 2em);
+  mask-image: linear-gradient(to right, transparent, black var(--tab-label-mask-size));
 }
 
 tabpanels {

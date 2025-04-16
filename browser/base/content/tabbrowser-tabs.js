@@ -70,6 +70,16 @@
       var tab = this.allTabs[0];
       tab.label = this.emptyTabTitle;
 
+      // Hide the secondary text for locales where it is unsupported due to size constraints.
+      const language = Services.locale.appLocaleAsBCP47;
+      const unsupportedLocales = Services.prefs.getCharPref(
+        "browser.tabs.secondaryTextUnsupportedLocales"
+      );
+      this.toggleAttribute(
+        "secondarytext-unsupported",
+        unsupportedLocales.split(",").includes(language.split("-")[0])
+      );
+
       this.newTabButton.setAttribute(
         "aria-label",
         GetDynamicShortcutTooltipText("tabs-newtab-button")
@@ -245,6 +255,7 @@
             animate: true,
             byMouse: event.mozInputSource == MouseEvent.MOZ_SOURCE_MOUSE,
           });
+          event.preventDefault();
         } else if (event.originalTarget.localName == "scrollbox") {
           // The user middleclicked on the tabstrip. Check whether the click
           // was dispatched on the open space of it.
@@ -671,15 +682,7 @@
           for (let tab of movingTabs) {
             tab.setAttribute("tabdrop-samewindow", "true");
             tab.style.transform = "translateX(" + newTranslateX + "px)";
-            let onTransitionEnd = transitionendEvent => {
-              if (
-                transitionendEvent.propertyName != "transform" ||
-                transitionendEvent.originalTarget != tab
-              ) {
-                return;
-              }
-              tab.removeEventListener("transitionend", onTransitionEnd);
-
+            let postTransitionCleanup = () => {
               tab.removeAttribute("tabdrop-samewindow");
 
               this._finishAnimateTabMove();
@@ -692,7 +695,22 @@
 
               gBrowser.syncThrobberAnimations(tab);
             };
-            tab.addEventListener("transitionend", onTransitionEnd);
+            if (gReduceMotion) {
+              postTransitionCleanup();
+            } else {
+              let onTransitionEnd = transitionendEvent => {
+                if (
+                  transitionendEvent.propertyName != "transform" ||
+                  transitionendEvent.originalTarget != tab
+                ) {
+                  return;
+                }
+                tab.removeEventListener("transitionend", onTransitionEnd);
+
+                postTransitionCleanup();
+              };
+              tab.addEventListener("transitionend", onTransitionEnd);
+            }
           }
         } else {
           this._finishAnimateTabMove();
@@ -1317,7 +1335,7 @@
 
     _positionPinnedTabs() {
       let tabs = this._getVisibleTabs();
-      let numPinned = tabs.filter(t => t.pinned).length;
+      let numPinned = gBrowser._numPinnedTabs;
       let doPosition =
         this.getAttribute("overflow") == "true" &&
         tabs.length > numPinned &&
@@ -1332,13 +1350,15 @@
         let uiDensity = document.documentElement.getAttribute("uidensity");
         if (!layoutData || layoutData.uiDensity != uiDensity) {
           let arrowScrollbox = this.arrowScrollbox;
-          let firstTab = tabs[0];
-          let firstTabCS = getComputedStyle(firstTab);
           layoutData = this._pinnedTabsLayoutCache = {
             uiDensity,
-            pinnedTabWidth: parseFloat(firstTabCS.width),
-            scrollButtonWidth: arrowScrollbox._scrollButtonDown.getBoundingClientRect()
-              .width,
+            pinnedTabWidth: tabs[0].getBoundingClientRect().width,
+            scrollStartOffset:
+              arrowScrollbox.scrollbox.getBoundingClientRect().left -
+              arrowScrollbox.getBoundingClientRect().left +
+              parseFloat(
+                getComputedStyle(arrowScrollbox.scrollbox).paddingInlineStart
+              ),
           };
         }
 
@@ -1348,7 +1368,7 @@
           width += layoutData.pinnedTabWidth;
           tab.style.setProperty(
             "margin-inline-start",
-            -(width + layoutData.scrollButtonWidth) + "px",
+            -(width + layoutData.scrollStartOffset) + "px",
             "important"
           );
           tab._pinnedUnscrollable = true;
@@ -1606,19 +1626,26 @@
 
         movingTab.groupingTabsData.translateX = shift;
 
-        let onTransitionEnd = transitionendEvent => {
-          if (
-            transitionendEvent.propertyName != "transform" ||
-            transitionendEvent.originalTarget != movingTab
-          ) {
-            return;
-          }
-          movingTab.removeEventListener("transitionend", onTransitionEnd);
+        let postTransitionCleanup = () => {
           movingTab.groupingTabsData.newIndex = movingTabNewIndex;
           movingTab.groupingTabsData.animate = false;
         };
+        if (gReduceMotion) {
+          postTransitionCleanup();
+        } else {
+          let onTransitionEnd = transitionendEvent => {
+            if (
+              transitionendEvent.propertyName != "transform" ||
+              transitionendEvent.originalTarget != movingTab
+            ) {
+              return;
+            }
+            movingTab.removeEventListener("transitionend", onTransitionEnd);
+            postTransitionCleanup();
+          };
 
-        movingTab.addEventListener("transitionend", onTransitionEnd);
+          movingTab.addEventListener("transitionend", onTransitionEnd);
+        }
 
         // Add animation data for tabs between movingTab (selected
         // tab moving towards the dragged tab) and draggedTab.

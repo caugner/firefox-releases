@@ -1,12 +1,12 @@
-/* global $:false, Handlebars:false */
+/* global Handlebars:false, thePKT_PANEL:false */
 /* import-globals-from messages.js */
 
 /*
-PKT_SIGNUP_OVERLAY is the view itself and contains all of the methods to manipute the overlay and messaging.
+PKT_PANEL_OVERLAY is the view itself and contains all of the methods to manipute the overlay and messaging.
 It does not contain any logic for saving or communication with the extension or server.
 */
 
-var PKT_SIGNUP_OVERLAY = function(options) {
+var PKT_PANEL_OVERLAY = function(options) {
   this.inited = false;
   this.active = false;
   this.delayedStateSaved = false;
@@ -24,45 +24,26 @@ var PKT_SIGNUP_OVERLAY = function(options) {
   this.loggedOutVariant = "control";
   this.dictJSON = {};
   this.initCloseTabEvents = function() {
-    function clickHelper(e, linkData) {
-      e.preventDefault();
-      thePKT_SIGNUP.sendMessage("PKT_openTabWithUrl", {
-        url: linkData.url,
-        activate: true,
-        source: linkData.source || "",
+    function clickHelper(selector, source) {
+      document.querySelector(selector)?.addEventListener(`click`, event => {
+        event.preventDefault();
+
+        thePKT_PANEL.sendMessage("PKT_openTabWithUrl", {
+          url: event.currentTarget.getAttribute(`href`),
+          activate: true,
+          source: source || "",
+        });
       });
     }
-    $(".pkt_ext_learnmore").click(function(e) {
-      clickHelper(e, {
-        source: "learn_more",
-        url: $(this).attr("href"),
-      });
-    });
-    $(".signup-btn-firefox").click(function(e) {
-      clickHelper(e, {
-        source: "sign_up_1",
-        url: $(this).attr("href"),
-      });
-    });
-    $(".signup-btn-email").click(function(e) {
-      clickHelper(e, {
-        source: "sign_up_2",
-        url: $(this).attr("href"),
-      });
-    });
-    $(".pkt_ext_login").click(function(e) {
-      clickHelper(e, {
-        source: "log_in",
-        url: $(this).attr("href"),
-      });
-    });
+
+    clickHelper(`.pkt_ext_learnmore`, `learn_more`);
+    clickHelper(`.signup-btn-firefox`, `sign_up_1`);
+    clickHelper(`.signup-btn-email`, `sign_up_2`);
+    clickHelper(`.pkt_ext_login`, `log_in`);
+
     // A generic click we don't do anything special for.
     // Was used for an experiment, possibly not needed anymore.
-    $(".signup-btn-tryitnow").click(function(e) {
-      clickHelper(e, {
-        url: $(this).attr("href"),
-      });
-    });
+    clickHelper(`.signup-btn-tryitnow`);
   };
   this.sanitizeText = function(s) {
     var sanitizeMap = {
@@ -82,10 +63,10 @@ var PKT_SIGNUP_OVERLAY = function(options) {
   this.getTranslations = function() {
     this.dictJSON = window.pocketStrings;
   };
-};
+  this.create = function() {
+    const parser = new DOMParser();
+    let elBody = document.querySelector(`body`);
 
-PKT_SIGNUP_OVERLAY.prototype = {
-  create() {
     var controlvariant = window.location.href.match(
       /controlvariant=([\w|\.]*)&?/
     );
@@ -127,12 +108,17 @@ PKT_SIGNUP_OVERLAY.prototype = {
 
     // extra modifier class for language
     if (this.locale) {
-      $("body").addClass("pkt_ext_signup_" + this.locale);
+      elBody.classList.add(`pkt_ext_signup_${this.locale}`);
     }
 
     // Create actual content
     if (this.variant == "overflow") {
-      $("body").append(Handlebars.templates.signup_shell(this.dictJSON));
+      elBody.append(
+        parser.parseFromString(
+          Handlebars.templates.signup_shell(this.dictJSON),
+          `text/html`
+        ).documentElement
+      );
     } else {
       // Logged Out Display Variants for MV Testing
       let variants = {
@@ -159,108 +145,24 @@ PKT_SIGNUP_OVERLAY.prototype = {
       }
 
       if (loggedOutVariantTemplate !== `signupstoryboard_shell`) {
-        $("body").addClass(`
-          los_variant los_${loggedOutVariantTemplate}
-        `);
+        elBody.classList.add(`los_variant`);
+        elBody.classList.add(`los_${loggedOutVariantTemplate}`);
       }
 
-      $("body").append(
-        Handlebars.templates[loggedOutVariantTemplate || variants.control](
-          this.dictJSON
-        )
+      elBody.append(
+        parser.parseFromString(
+          Handlebars.templates[loggedOutVariantTemplate || variants.control](
+            this.dictJSON
+          ),
+          `text/html`
+        ).documentElement
       );
     }
 
     // close events
     this.initCloseTabEvents();
-  },
-};
-
-// Layer between Bookmarklet and Extensions
-var PKT_SIGNUP = function() {};
-
-PKT_SIGNUP.prototype = {
-  init() {
-    if (this.inited) {
-      return;
-    }
-    this.panelId = pktPanelMessaging.panelIdFromURL(window.location.href);
-    this.overlay = new PKT_SIGNUP_OVERLAY();
-    this.setupMutationObserver();
-
-    this.inited = true;
-  },
-
-  sendMessage(messageId, payload, callback) {
-    pktPanelMessaging.sendMessage(messageId, this.panelId, payload, callback);
-  },
-
-  setupMutationObserver() {
-    // Select the node that will be observed for mutations
-    const targetNode = document.body;
-
-    // Options for the observer (which mutations to observe)
-    const config = { attributes: false, childList: true, subtree: true };
-
-    // Callback function to execute when mutations are observed
-    const callback = (mutationList, observer) => {
-      mutationList.forEach(mutation => {
-        switch (mutation.type) {
-          case "childList": {
-            /* One or more children have been added to and/or removed
-               from the tree.
-               (See mutation.addedNodes and mutation.removedNodes.) */
-            thePKT_SIGNUP.sendMessage("PKT_resizePanel", {
-              width: document.body.clientWidth,
-              height: document.body.clientHeight,
-            });
-            break;
-          }
-        }
-      });
-    };
-
-    // Create an observer instance linked to the callback function
-    const observer = new MutationObserver(callback);
-
-    // Start observing the target node for configured mutations
-    observer.observe(targetNode, config);
-  },
-
-  create() {
-    this.overlay.create();
 
     // tell back end we're ready
-    thePKT_SIGNUP.sendMessage("PKT_show_signup");
-  },
+    thePKT_PANEL.sendMessage("PKT_show_signup");
+  };
 };
-
-$(function() {
-  if (!window.thePKT_SIGNUP) {
-    var thePKT_SIGNUP = new PKT_SIGNUP();
-    /* global thePKT_SIGNUP */
-    window.thePKT_SIGNUP = thePKT_SIGNUP;
-    thePKT_SIGNUP.init();
-  }
-
-  var pocketHost = thePKT_SIGNUP.overlay.pockethost;
-  // send an async message to get string data
-  thePKT_SIGNUP.sendMessage(
-    "PKT_initL10N",
-    {
-      tos: [
-        "https://" + pocketHost + "/tos?s=ffi&t=tos&tv=panel_tryit",
-        "https://" +
-          pocketHost +
-          "/privacy?s=ffi&t=privacypolicy&tv=panel_tryit",
-      ],
-    },
-    function(resp) {
-      const { data } = resp;
-      window.pocketStrings = data.strings;
-      // Set the writing system direction
-      document.documentElement.setAttribute("dir", data.dir);
-      window.thePKT_SIGNUP.create();
-    }
-  );
-});

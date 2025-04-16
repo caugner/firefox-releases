@@ -220,7 +220,7 @@ const PREFS_CONFIG = new Map([
     "feeds.snippets",
     {
       title: "Show snippets on activity stream",
-      value: true,
+      value: false,
     },
   ],
   [
@@ -515,7 +515,7 @@ const FEEDS_DATA = [
     name: "section.highlights",
     factory: () => new HighlightsFeed(),
     title: "Fetches content recommendations from places db",
-    value: true,
+    value: false,
   },
   {
     name: "system.topstories",

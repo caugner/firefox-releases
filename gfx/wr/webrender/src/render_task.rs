@@ -5,7 +5,8 @@
 use api::{CompositeOperator, FilterPrimitive, FilterPrimitiveInput, FilterPrimitiveKind};
 use api::{LineStyle, LineOrientation, ClipMode, MixBlendMode, ColorF, ColorSpace};
 use api::units::*;
-use crate::clip::{ClipDataStore, ClipItemKind, ClipStore, ClipNodeRange, ClipNodeFlags};
+use crate::batch::BatchFilter;
+use crate::clip::{ClipDataStore, ClipItemKind, ClipStore, ClipNodeRange};
 use crate::spatial_tree::SpatialNodeIndex;
 use crate::filterdata::SFilterData;
 use crate::frame_builder::FrameBuilderConfig;
@@ -27,7 +28,6 @@ use crate::render_task_graph::{PassId, RenderTaskId, RenderTaskGraphBuilder};
 #[cfg(feature = "debugger")]
 use crate::render_task_graph::RenderTaskGraph;
 use crate::render_task_cache::{RenderTaskCacheEntryHandle, RenderTaskCacheKey, RenderTaskCacheKeyKind, RenderTaskParent};
-use crate::visibility::PrimitiveVisibilityMask;
 use smallvec::SmallVec;
 
 const FLOATS_PER_RENDER_TASK_INFO: usize = 8;
@@ -175,9 +175,7 @@ pub struct PictureTask {
     pub content_origin: DevicePoint,
     pub surface_spatial_node_index: SpatialNodeIndex,
     pub device_pixel_scale: DevicePixelScale,
-    /// A bitfield that describes which dirty regions should be included
-    /// in batches built for this picture task.
-    pub vis_mask: PrimitiveVisibilityMask,
+    pub batch_filter: Option<BatchFilter>,
     pub scissor_rect: Option<DeviceIntRect>,
     pub valid_rect: Option<DeviceIntRect>,
 }
@@ -393,7 +391,7 @@ impl RenderTaskKind {
         content_origin: DevicePoint,
         surface_spatial_node_index: SpatialNodeIndex,
         device_pixel_scale: DevicePixelScale,
-        vis_mask: PrimitiveVisibilityMask,
+        batch_filter: Option<BatchFilter>,
         scissor_rect: Option<DeviceIntRect>,
         valid_rect: Option<DeviceIntRect>,
     ) -> Self {
@@ -408,7 +406,7 @@ impl RenderTaskKind {
             can_merge,
             surface_spatial_node_index,
             device_pixel_scale,
-            vis_mask,
+            batch_filter,
             scissor_rect,
             valid_rect,
         })
@@ -570,24 +568,7 @@ impl RenderTaskKind {
                         }
                     ));
                 }
-                ClipItemKind::Rectangle { mode: ClipMode::Clip, .. } => {
-                    if !clip_instance.flags.contains(ClipNodeFlags::SAME_COORD_SYSTEM) {
-                        // This is conservative - it's only the case that we actually need
-                        // a clear here if we end up adding this mask via add_tiled_clip_mask,
-                        // but for simplicity we will just clear if any of these are encountered,
-                        // since they are rare.
-                        let clip_task = rg_builder.get_task_mut(clip_task_id);
-                        match clip_task.kind {
-                            RenderTaskKind::CacheMask(ref mut task) => {
-                                task.clear_to_one = true;
-                            }
-                            _ => {
-                                unreachable!();
-                            }
-                        }
-                    }
-                }
-                ClipItemKind::Rectangle { mode: ClipMode::ClipOut, .. } |
+                ClipItemKind::Rectangle { .. } |
                 ClipItemKind::RoundedRectangle { .. } |
                 ClipItemKind::Image { .. } => {}
             }

@@ -14,6 +14,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.AbstractSequentialList;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
@@ -86,6 +87,8 @@ public class GeckoSession {
     private static final int WINDOW_TRANSFER_OUT = 2; // Window has been transfer.
     // Window has been set due to another session being transferred to this one.
     private static final int WINDOW_TRANSFER_IN = 3;
+
+    private static final int DATA_URI_MAX_LENGTH = 2 * 1024 * 1024;
 
     private enum State implements NativeQueue.State {
         INITIAL(0),
@@ -466,8 +469,11 @@ public class GeckoSession {
                 Log.d(LOGTAG, "handleMessage " + event + " uri=" + message.getString("uri"));
                 if ("GeckoView:LocationChange".equals(event)) {
                     if (message.getBoolean("isTopLevel")) {
+                        final GeckoBundle[] perms = message.getBundleArray("permissions");
+                        final List<PermissionDelegate.ContentPermission> permList =
+                            PermissionDelegate.ContentPermission.fromBundleArray(perms);
                         delegate.onLocationChange(GeckoSession.this,
-                                                  message.getString("uri"));
+                                                  message.getString("uri"), permList);
                     }
                     delegate.onCanGoBack(GeckoSession.this,
                                          message.getBoolean("canGoBack"));
@@ -1734,6 +1740,12 @@ public class GeckoSession {
                     "Cannot specify both a referrer session and a referrer URI.");
         }
 
+        final NavigationDelegate navDelegate = mNavigationHandler.getDelegate();
+        final boolean isDataUriTooLong = !maybeCheckDataUriLength(request);
+        if (navDelegate == null && isDataUriTooLong) {
+            throw new IllegalArgumentException("data URI is too long");
+        }
+
         final int loadFlags = request.mIsDataUri
                 // If this is a data: load then we need to force allow it.
                 ? request.mLoadFlags | LOAD_FLAGS_FORCE_ALLOW_DATA_URI
@@ -1752,6 +1764,16 @@ public class GeckoSession {
 
         shouldLoadUri(loadRequest).getOrAccept(allowOrDeny -> {
             if (allowOrDeny == AllowOrDeny.DENY) {
+                return;
+            }
+
+            if (isDataUriTooLong) {
+                ThreadUtils.runOnUiThread(() -> {
+                    navDelegate.onLoadError(this, request.mUri,
+                                            new WebRequestError(WebRequestError.ERROR_DATA_URI_TOO_LONG,
+                                                                WebRequestError.ERROR_CATEGORY_URI,
+                                                                null));
+                });
                 return;
             }
 
@@ -2838,7 +2860,29 @@ public class GeckoSession {
                     new PromptDelegate.AutocompleteRequest<>(options);
 
                 res = delegate.onLoginSelect(session, request);
+                break;
+            }
+            case "Autocomplete:Select:CreditCard": {
+                final GeckoBundle[] optionBundles =
+                    message.getBundleArray("options");
 
+                if (optionBundles == null) {
+                    break;
+                }
+
+                final Autocomplete.CreditCardSelectOption[] options =
+                    new Autocomplete.CreditCardSelectOption[optionBundles.length];
+
+                for (int i = 0; i < options.length; ++i) {
+                    options[i] = Autocomplete.CreditCardSelectOption.fromBundle(
+                        optionBundles[i]);
+                }
+
+                final PromptDelegate.AutocompleteRequest
+                    <Autocomplete.CreditCardSelectOption> request =
+                    new PromptDelegate.AutocompleteRequest<>(options);
+
+                res = delegate.onCreditCardSelect(session, request);
                 break;
             }
             default: {
@@ -3645,7 +3689,19 @@ public class GeckoSession {
         * @param url The resource being loaded.
         */
         @UiThread
+        @DeprecationSchedule(id = "location-permissions", version = 92)
         default void onLocationChange(@NonNull final GeckoSession session, @Nullable final String url) {}
+
+        /**
+        * A view has started loading content from the network.
+        * @param session The GeckoSession that initiated the callback.
+        * @param url The resource being loaded.
+        * @param perms The permissions currently associated with this url.
+        */
+        @UiThread
+        default void onLocationChange(@NonNull GeckoSession session, @Nullable String url, final @NonNull List<PermissionDelegate.ContentPermission> perms) {
+            session.getNavigationDelegate().onLocationChange(session, url);
+        }
 
         /**
         * The view's ability to go back has changed.
@@ -5109,7 +5165,7 @@ public class GeckoSession {
          *
          *         Confirm the request with an {@link Autocomplete.Option}
          *         to trigger a
-         *         {@link Autocomplete.LoginStorageDelegate#onLoginSave} request
+         *         {@link Autocomplete.StorageDelegate#onLoginSave} request
          *         to save the given selection.
          *         The confirmed selection may be an entry out of the request's
          *         options, a modified option, or a freshly created login entry.
@@ -5147,6 +5203,34 @@ public class GeckoSession {
         default @Nullable GeckoResult<PromptResponse> onLoginSelect(
                 @NonNull final GeckoSession session,
                 @NonNull final AutocompleteRequest<Autocomplete.LoginSelectOption>
+                    request) {
+            return null;
+        }
+
+        /**
+         * Handle a credit card selection prompt request.
+         * This is triggered by the user focusing on a credit card input field.
+         *
+         * @param session The {@link GeckoSession} that triggered the request.
+         * @param request The {@link AutocompleteRequest} containing the request
+         *                details.
+         *
+         * @return A {@link GeckoResult} resolving to a {@link PromptResponse}
+         *
+         *         Confirm the request with an {@link Autocomplete.Option}
+         *         to let GeckoView fill out the credit card forms with the given
+         *         selection details.
+         *         The confirmed selection may be an entry out of the request's
+         *         options, a modified option, or a freshly created credit
+         *         card entry.
+         *
+         *         Dismiss the request to deny autocompletion for the detected
+         *         form.
+         */
+        @UiThread
+        default @Nullable GeckoResult<PromptResponse> onCreditCardSelect(
+                @NonNull final GeckoSession session,
+                @NonNull final AutocompleteRequest<Autocomplete.CreditCardSelectOption>
                     request) {
             return null;
         }
@@ -5364,6 +5448,110 @@ public class GeckoSession {
          * Permission for accessing system media keys used to decode DRM media.
          */
         int PERMISSION_MEDIA_KEY_SYSTEM_ACCESS = 6;
+
+        /**
+         * Represents a content permission -- including the type of permission,
+         * the present value of the permission, the URL the permission pertains to,
+         * and other information.
+         */
+        class ContentPermission {
+            @Retention(RetentionPolicy.SOURCE)
+            @IntDef({VALUE_PROMPT, VALUE_DENY, VALUE_ALLOW})
+            /* package */ @interface Value {}
+
+            /**
+             * The corresponding permission is currently set to default/prompt behavior.
+             */
+            final public static int VALUE_PROMPT = 3;
+
+            /**
+             * The corresponding permission is currently set to deny.
+             */
+            final public static int VALUE_DENY = 2;
+
+            /**
+             * The corresponding permission is currently set to allow.
+             */
+            final public static int VALUE_ALLOW = 1;
+
+            /**
+             * The URI associated with this content permission.
+             */
+            final public @NonNull String uri;
+
+            /**
+             * A boolean indicating whether this content permission is associated with
+             * private browsing.
+             */
+            final public boolean privateMode;
+
+            /**
+             * The type of this permission; one of {@link #PERMISSION_GEOLOCATION PERMISSION_*}.
+             */
+            final public int permission;
+
+            /**
+             * The value of the permission; one of {@link #VALUE_PROMPT VALUE_}.
+             */
+            final public @Value int value;
+
+            final private String mPrincipal;
+
+            protected ContentPermission() {
+                this.uri = "";
+                this.privateMode = false;
+                this.permission = PERMISSION_GEOLOCATION;
+                this.value = VALUE_ALLOW;
+                this.mPrincipal = "";
+            }
+
+            private ContentPermission(final @NonNull GeckoBundle bundle) {
+                this.uri = bundle.getString("uri");
+                this.mPrincipal = bundle.getString("principal");
+                this.privateMode = bundle.getBoolean("privateMode");
+
+                final String permission = bundle.getString("type");
+                this.permission = convertType(permission);
+
+                this.value = bundle.getInt("value");
+            }
+
+            private static int convertType(final @NonNull String type) {
+                if ("geolocation".equals(type)) {
+                    return PERMISSION_GEOLOCATION;
+                } else if ("desktop-notification".equals(type)) {
+                    return PERMISSION_DESKTOP_NOTIFICATION;
+                } else if ("persistent-storage".equals(type)) {
+                    return PERMISSION_PERSISTENT_STORAGE;
+                } else if ("xr".equals(type)) {
+                    return PERMISSION_XR;
+                } else if ("autoplay-media-inaudible".equals(type)) {
+                    return PERMISSION_AUTOPLAY_INAUDIBLE;
+                } else if ("autoplay-media-audible".equals(type)) {
+                    return PERMISSION_AUTOPLAY_AUDIBLE;
+                } else if ("media-key-system-access".equals(type)) {
+                    return PERMISSION_MEDIA_KEY_SYSTEM_ACCESS;
+                } else {
+                    return -1;
+                }
+            }
+
+            /* package */ static @NonNull ArrayList<ContentPermission> fromBundleArray(final @NonNull GeckoBundle[] bundleArray) {
+                final ArrayList<ContentPermission> res = new ArrayList<ContentPermission>();
+                if (bundleArray == null) {
+                    return res;
+                }
+
+                for (final GeckoBundle bundle : bundleArray) {
+                    final ContentPermission temp = new ContentPermission(bundle);
+                    if (temp.permission == -1 || temp.value < 1 || temp.value > 3) {
+                        continue;
+                    }
+                    res.add(temp);
+                }
+                return res;
+            }
+        }
 
         /**
          * Callback interface for notifying the result of a permission request.
@@ -6299,5 +6487,13 @@ public class GeckoSession {
         }
 
         return manifest;
+    }
+
+    private static boolean maybeCheckDataUriLength(final @NonNull Loader request) {
+        if (!request.mIsDataUri) {
+            return true;
+        }
+
+        return request.mUri.length() <= DATA_URI_MAX_LENGTH;
     }
 }

@@ -58,9 +58,9 @@ int64_t RoundUp(int64_t aX, int64_t aY);
 // Finally, the virtual padding size will be the result minus the response size.
 int64_t BodyGeneratePadding(int64_t aBodyFileSize, uint32_t aPaddingInfo);
 
-nsresult LockedDirectoryPaddingWrite(nsIFile& aBaseDir,
-                                     DirPaddingFile aPaddingFileType,
-                                     int64_t aPaddingSize);
+nsresult DirectoryPaddingWrite(nsIFile& aBaseDir,
+                               DirPaddingFile aPaddingFileType,
+                               int64_t aPaddingSize);
 
 const auto kMorgueDirectory = u"morgue"_ns;
 
@@ -89,8 +89,9 @@ Result<NotNull<nsCOMPtr<nsIFile>>, nsresult> BodyGetCacheDir(nsIFile& aBaseDir,
   // the name of the sub-directory.
   CACHE_TRY(cacheDir->Append(IntToString(aId.m3[7])));
 
-  CACHE_TRY(ToResult(cacheDir->Create(nsIFile::DIRECTORY_TYPE, 0755))
-                .orElse(ErrToDefaultOkOrErr<NS_ERROR_FILE_ALREADY_EXISTS, Ok>));
+  QM_TRY(
+      QM_OR_ELSE_WARN(ToResult(cacheDir->Create(nsIFile::DIRECTORY_TYPE, 0755)),
+                      ErrToDefaultOkOrErr<NS_ERROR_FILE_ALREADY_EXISTS>));
 
   return WrapNotNullUnchecked(std::move(cacheDir));
 }
@@ -101,8 +102,9 @@ nsresult BodyCreateDir(nsIFile& aBaseDir) {
   CACHE_TRY_INSPECT(const auto& bodyDir,
                     CloneFileAndAppend(aBaseDir, kMorgueDirectory));
 
-  CACHE_TRY(ToResult(bodyDir->Create(nsIFile::DIRECTORY_TYPE, 0755))
-                .orElse(ErrToDefaultOkOrErr<NS_ERROR_FILE_ALREADY_EXISTS, Ok>));
+  QM_TRY(
+      QM_OR_ELSE_WARN(ToResult(bodyDir->Create(nsIFile::DIRECTORY_TYPE, 0755)),
+                      ErrToDefaultOkOrErr<NS_ERROR_FILE_ALREADY_EXISTS>));
 
   return NS_OK;
 }
@@ -163,7 +165,7 @@ Result<std::pair<nsID, nsCOMPtr<nsISupports>>, nsresult> BodyStartWriteStream(
 }
 
 void BodyCancelWrite(nsISupports& aCopyContext) {
-  CACHE_TRY(NS_CancelAsyncCopy(&aCopyContext, NS_ERROR_ABORT), QM_VOID);
+  QM_WARNONLY_TRY(NS_CancelAsyncCopy(&aCopyContext, NS_ERROR_ABORT));
 
   // TODO The partially written file must be cleaned up after the async copy
   // makes its callback.
@@ -309,9 +311,9 @@ int64_t BodyGeneratePadding(const int64_t aBodyFileSize,
   return RoundUp(randomSize, kRoundUpNumber) - aBodyFileSize;
 }
 
-nsresult LockedDirectoryPaddingWrite(nsIFile& aBaseDir,
-                                     DirPaddingFile aPaddingFileType,
-                                     int64_t aPaddingSize) {
+nsresult DirectoryPaddingWrite(nsIFile& aBaseDir,
+                               DirPaddingFile aPaddingFileType,
+                               int64_t aPaddingSize) {
   MOZ_DIAGNOSTIC_ASSERT(aPaddingSize >= 0);
 
   CACHE_TRY_INSPECT(
@@ -432,8 +434,9 @@ Result<nsCOMPtr<nsIFile>, nsresult> GetMarkerFileHandle(
 nsresult CreateMarkerFile(const QuotaInfo& aQuotaInfo) {
   CACHE_TRY_INSPECT(const auto& marker, GetMarkerFileHandle(aQuotaInfo));
 
-  CACHE_TRY(ToResult(marker->Create(nsIFile::NORMAL_FILE_TYPE, 0644))
-                .orElse(MapAlreadyExistsToDefault));
+  QM_TRY(
+      QM_OR_ELSE_WARN(ToResult(marker->Create(nsIFile::NORMAL_FILE_TYPE, 0644)),
+                      MapAlreadyExistsToDefault));
 
   // Note, we don't need to fsync here.  We only care about actually
   // writing the marker if later modifications to the Cache are
@@ -503,10 +506,11 @@ nsresult RemoveNsIFile(const QuotaInfo& aQuotaInfo, nsIFile& aFile,
                        const bool aTrackQuota) {
   int64_t fileSize = 0;
   if (aTrackQuota) {
-    CACHE_TRY_INSPECT(const auto& maybeFileSize,
-                      MOZ_TO_RESULT_INVOKE(aFile, GetFileSize)
-                          .map(Some<int64_t>)
-                          .orElse(MapNotFoundToDefault<Maybe<int64_t>>));
+    CACHE_TRY_INSPECT(
+        const auto& maybeFileSize,
+        QM_OR_ELSE_WARN(
+            MOZ_TO_RESULT_INVOKE(aFile, GetFileSize).map(Some<int64_t>),
+            MapNotFoundToDefault<Maybe<int64_t>>));
 
     if (!maybeFileSize) {
       return NS_OK;
@@ -515,8 +519,8 @@ nsresult RemoveNsIFile(const QuotaInfo& aQuotaInfo, nsIFile& aFile,
     fileSize = *maybeFileSize;
   }
 
-  CACHE_TRY(ToResult(aFile.Remove(/* recursive */ false))
-                .orElse(MapNotFoundToDefault<>));
+  QM_TRY(QM_OR_ELSE_WARN(ToResult(aFile.Remove(/* recursive */ false)),
+                         MapNotFoundToDefault<>));
 
   if (fileSize > 0) {
     MOZ_ASSERT(aTrackQuota);
@@ -549,7 +553,7 @@ bool DirectoryPaddingFileExists(nsIFile& aBaseDir,
   CACHE_TRY_RETURN(MOZ_TO_RESULT_INVOKE(file, Exists), false);
 }
 
-Result<int64_t, nsresult> LockedDirectoryPaddingGet(nsIFile& aBaseDir) {
+Result<int64_t, nsresult> DirectoryPaddingGet(nsIFile& aBaseDir) {
   MOZ_DIAGNOSTIC_ASSERT(
       !DirectoryPaddingFileExists(aBaseDir, DirPaddingFile::TMP_FILE));
 
@@ -571,26 +575,26 @@ Result<int64_t, nsresult> LockedDirectoryPaddingGet(nsIFile& aBaseDir) {
       }));
 }
 
-nsresult LockedDirectoryPaddingInit(nsIFile& aBaseDir) {
-  CACHE_TRY(LockedDirectoryPaddingWrite(aBaseDir, DirPaddingFile::FILE, 0));
+nsresult DirectoryPaddingInit(nsIFile& aBaseDir) {
+  CACHE_TRY(DirectoryPaddingWrite(aBaseDir, DirPaddingFile::FILE, 0));
 
   return NS_OK;
 }
 
-nsresult LockedUpdateDirectoryPaddingFile(nsIFile& aBaseDir,
-                                          mozIStorageConnection& aConn,
-                                          const int64_t aIncreaseSize,
-                                          const int64_t aDecreaseSize,
-                                          const bool aTemporaryFileExist) {
+nsresult UpdateDirectoryPaddingFile(nsIFile& aBaseDir,
+                                    mozIStorageConnection& aConn,
+                                    const int64_t aIncreaseSize,
+                                    const int64_t aDecreaseSize,
+                                    const bool aTemporaryFileExist) {
   MOZ_DIAGNOSTIC_ASSERT(aIncreaseSize >= 0);
   MOZ_DIAGNOSTIC_ASSERT(aDecreaseSize >= 0);
 
   const auto directoryPaddingGetResult =
       aTemporaryFileExist ? Maybe<int64_t>{} : [&aBaseDir] {
-        CACHE_TRY_RETURN(LockedDirectoryPaddingGet(aBaseDir)
-                             .map(Some<int64_t>)
-                             .orElse(MapNotFoundToDefault<Maybe<int64_t>>),
-                         Maybe<int64_t>{});
+        CACHE_TRY_RETURN(
+            QM_OR_ELSE_WARN(DirectoryPaddingGet(aBaseDir).map(Some<int64_t>),
+                            MapNotFoundToDefault<Maybe<int64_t>>),
+            Maybe<int64_t>{});
       }();
 
   CACHE_TRY_INSPECT(
@@ -603,8 +607,7 @@ nsresult LockedUpdateDirectoryPaddingFile(nsIFile& aBaseDir,
 
           // Not delete the temporary padding file here, because we're going
           // to overwrite it below anyway.
-          CACHE_TRY(
-              LockedDirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::FILE));
+          CACHE_TRY(DirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::FILE));
 
           // We don't need to add the aIncreaseSize or aDecreaseSize here,
           // because it's already encompassed within the database.
@@ -635,8 +638,7 @@ nsresult LockedUpdateDirectoryPaddingFile(nsIFile& aBaseDir,
           // incorrect.
           // Delete padding file to indicate the padding size is incorrect for
           // avoiding error happening in the following lines.
-          CACHE_TRY(
-              LockedDirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::FILE));
+          CACHE_TRY(DirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::FILE));
 
           CACHE_TRY_UNWRAP(currentPaddingSize,
                            db::FindOverallPaddingSize(aConn));
@@ -661,13 +663,13 @@ nsresult LockedUpdateDirectoryPaddingFile(nsIFile& aBaseDir,
 
   MOZ_DIAGNOSTIC_ASSERT(currentPaddingSize >= 0);
 
-  CACHE_TRY(LockedDirectoryPaddingWrite(aBaseDir, DirPaddingFile::TMP_FILE,
-                                        currentPaddingSize));
+  CACHE_TRY(DirectoryPaddingWrite(aBaseDir, DirPaddingFile::TMP_FILE,
+                                  currentPaddingSize));
 
   return NS_OK;
 }
 
-nsresult LockedDirectoryPaddingFinalizeWrite(nsIFile& aBaseDir) {
+nsresult DirectoryPaddingFinalizeWrite(nsIFile& aBaseDir) {
   MOZ_DIAGNOSTIC_ASSERT(
       DirectoryPaddingFileExists(aBaseDir, DirPaddingFile::TMP_FILE));
 
@@ -680,36 +682,35 @@ nsresult LockedDirectoryPaddingFinalizeWrite(nsIFile& aBaseDir) {
   return NS_OK;
 }
 
-Result<int64_t, nsresult> LockedDirectoryPaddingRestore(
-    nsIFile& aBaseDir, mozIStorageConnection& aConn, const bool aMustRestore) {
+Result<int64_t, nsresult> DirectoryPaddingRestore(nsIFile& aBaseDir,
+                                                  mozIStorageConnection& aConn,
+                                                  const bool aMustRestore) {
   // The content of padding file is untrusted, so remove it here.
-  CACHE_TRY(LockedDirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::FILE));
+  CACHE_TRY(DirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::FILE));
 
   CACHE_TRY_INSPECT(const int64_t& paddingSize,
                     db::FindOverallPaddingSize(aConn));
   MOZ_DIAGNOSTIC_ASSERT(paddingSize >= 0);
 
-  CACHE_TRY(
-      LockedDirectoryPaddingWrite(aBaseDir, DirPaddingFile::FILE, paddingSize),
-      (aMustRestore ? Err(tryTempError)
-                    : Result<int64_t, nsresult>{paddingSize}));
+  CACHE_TRY(DirectoryPaddingWrite(aBaseDir, DirPaddingFile::FILE, paddingSize),
+            (aMustRestore ? Err(tryTempError)
+                          : Result<int64_t, nsresult>{paddingSize}));
 
-  CACHE_TRY(
-      LockedDirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::TMP_FILE));
+  CACHE_TRY(DirectoryPaddingDeleteFile(aBaseDir, DirPaddingFile::TMP_FILE));
 
   return paddingSize;
 }
 
-nsresult LockedDirectoryPaddingDeleteFile(nsIFile& aBaseDir,
-                                          DirPaddingFile aPaddingFileType) {
+nsresult DirectoryPaddingDeleteFile(nsIFile& aBaseDir,
+                                    DirPaddingFile aPaddingFileType) {
   CACHE_TRY_INSPECT(
       const auto& file,
       CloneFileAndAppend(aBaseDir, aPaddingFileType == DirPaddingFile::TMP_FILE
                                        ? nsLiteralString(PADDING_TMP_FILE_NAME)
                                        : nsLiteralString(PADDING_FILE_NAME)));
 
-  CACHE_TRY(ToResult(file->Remove(/* recursive */ false))
-                .orElse(MapNotFoundToDefault<>));
+  QM_TRY(QM_OR_ELSE_WARN(ToResult(file->Remove(/* recursive */ false)),
+                         MapNotFoundToDefault<>));
 
   return NS_OK;
 }

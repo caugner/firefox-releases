@@ -1499,7 +1499,7 @@ pub extern "C" fn Servo_StyleSheet_Empty(
     let global_style_data = &*GLOBAL_STYLE_DATA;
     let origin = mode_to_origin(mode);
     let shared_lock = &global_style_data.shared_lock;
-    Arc::new(StylesheetContents::from_str(
+    StylesheetContents::from_str(
         "",
         unsafe { dummy_url_data() }.clone(),
         origin,
@@ -1511,7 +1511,7 @@ pub extern "C" fn Servo_StyleSheet_Empty(
         /* use_counters = */ None,
         AllowImportRules::Yes,
         /* sanitization_data = */ None,
-    ))
+    )
     .into_strong()
 }
 
@@ -1562,7 +1562,7 @@ pub unsafe extern "C" fn Servo_StyleSheet_FromUTF8Bytes(
 
     let mut sanitization_data = SanitizationData::new(sanitization_kind);
 
-    let contents = Arc::new(StylesheetContents::from_str(
+    let contents = StylesheetContents::from_str(
         input,
         url_data.clone(),
         mode_to_origin(mode),
@@ -1574,7 +1574,7 @@ pub unsafe extern "C" fn Servo_StyleSheet_FromUTF8Bytes(
         use_counters,
         allow_import_rules,
         sanitization_data.as_mut(),
-    ));
+    );
 
     if let Some(data) = sanitization_data {
         sanitized_output
@@ -1635,12 +1635,12 @@ pub unsafe extern "C" fn Servo_StyleSheet_FromSharedData(
     shared_rules: &ServoCssRules,
 ) -> Strong<RawServoStyleSheetContents> {
     let shared_rules = Locked::<CssRules>::as_arc(&shared_rules);
-    Arc::new(StylesheetContents::from_shared_data(
+    StylesheetContents::from_shared_data(
         shared_rules.clone_arc(),
         Origin::UserAgent,
         UrlExtraData::new(extra_data),
         QuirksMode::NoQuirks,
-    ))
+    )
     .into_strong()
 }
 
@@ -2865,6 +2865,10 @@ macro_rules! apply_font_desc_list {
                 eCSSFontDesc_FontVariationSettings => variation_settings,
                 eCSSFontDesc_FontLanguageOverride => language_override,
                 eCSSFontDesc_Display => display,
+                eCSSFontDesc_AscentOverride => ascent_override,
+                eCSSFontDesc_DescentOverride => descent_override,
+                eCSSFontDesc_LineGapOverride => line_gap_override,
+                eCSSFontDesc_SizeAdjust => size_adjust,
             ]
             invalid: [
                 eCSSFontDesc_UNKNOWN,
@@ -2941,7 +2945,7 @@ macro_rules! simple_font_descriptor_getter_impl {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontWeight(
+pub extern "C" fn Servo_FontFaceRule_GetFontWeight(
     rule: &RawServoFontFaceRule,
     out: &mut font_face::ComputedFontWeightRange,
 ) -> bool {
@@ -2949,7 +2953,7 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFontWeight(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontStretch(
+pub extern "C" fn Servo_FontFaceRule_GetFontStretch(
     rule: &RawServoFontFaceRule,
     out: &mut font_face::ComputedFontStretchRange,
 ) -> bool {
@@ -2957,7 +2961,7 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFontStretch(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontStyle(
+pub extern "C" fn Servo_FontFaceRule_GetFontStyle(
     rule: &RawServoFontFaceRule,
     out: &mut font_face::ComputedFontStyleDescriptor,
 ) -> bool {
@@ -2965,7 +2969,7 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFontStyle(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontDisplay(
+pub extern "C" fn Servo_FontFaceRule_GetFontDisplay(
     rule: &RawServoFontFaceRule,
     out: &mut font_face::FontDisplay,
 ) -> bool {
@@ -2973,11 +2977,49 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFontDisplay(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetFontLanguageOverride(
+pub extern "C" fn Servo_FontFaceRule_GetFontLanguageOverride(
     rule: &RawServoFontFaceRule,
     out: &mut computed::FontLanguageOverride,
 ) -> bool {
     simple_font_descriptor_getter_impl!(rule, out, language_override, compute_non_system)
+}
+
+// Returns a Percentage of -1.0 if the override descriptor is present but 'normal'
+// rather than an actual percentage value.
+#[no_mangle]
+pub extern "C" fn Servo_FontFaceRule_GetAscentOverride(
+    rule: &RawServoFontFaceRule,
+    out: &mut computed::Percentage,
+) -> bool {
+    simple_font_descriptor_getter_impl!(rule, out, ascent_override, compute)
+}
+
+// Returns a Percentage of -1.0 if the override descriptor is present but 'normal'
+// rather than an actual percentage value.
+#[no_mangle]
+pub extern "C" fn Servo_FontFaceRule_GetDescentOverride(
+    rule: &RawServoFontFaceRule,
+    out: &mut computed::Percentage,
+) -> bool {
+    simple_font_descriptor_getter_impl!(rule, out, descent_override, compute)
+}
+
+// Returns a Percentage of -1.0 if the override descriptor is present but 'normal'
+// rather than an actual percentage value.
+#[no_mangle]
+pub extern "C" fn Servo_FontFaceRule_GetLineGapOverride(
+    rule: &RawServoFontFaceRule,
+    out: &mut computed::Percentage,
+) -> bool {
+    simple_font_descriptor_getter_impl!(rule, out, line_gap_override, compute)
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_FontFaceRule_GetSizeAdjust(
+    rule: &RawServoFontFaceRule,
+    out: &mut computed::Percentage,
+) -> bool {
+    simple_font_descriptor_getter_impl!(rule, out, size_adjust, compute)
 }
 
 #[no_mangle]
@@ -3102,7 +3144,7 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetFeatureSettings(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Servo_FontFaceRule_GetDescriptorCssText(
+pub extern "C" fn Servo_FontFaceRule_GetDescriptorCssText(
     rule: &RawServoFontFaceRule,
     desc: nsCSSFontDesc,
     result: &mut nsACString,
@@ -6747,7 +6789,7 @@ pub unsafe extern "C" fn Servo_ParseFontShorthandForMatching(
 
     *stretch = match font.font_stretch {
         FontStretch::Keyword(ref k) => k.compute().0,
-        FontStretch::Stretch(ref p) => p.get(),
+        FontStretch::Stretch(ref p) => p.0.get(),
         FontStretch::System(_) => return false,
     };
 

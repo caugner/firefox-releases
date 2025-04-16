@@ -8,6 +8,7 @@
 
 #include "GeckoProfiler.h"
 #include "InputTaskManager.h"
+#include "VsyncTaskManager.h"
 #include "nsIRunnable.h"
 #include "TaskController.h"
 
@@ -30,8 +31,8 @@ void EventQueueInternal<ItemsPerPage>::PutEvent(
   static_assert(
       static_cast<uint32_t>(nsIRunnablePriority::PRIORITY_INPUT_HIGH) ==
       static_cast<uint32_t>(EventQueuePriority::InputHigh));
-  static_assert(static_cast<uint32_t>(nsIRunnablePriority::PRIORITY_HIGH) ==
-                static_cast<uint32_t>(EventQueuePriority::High));
+  static_assert(static_cast<uint32_t>(nsIRunnablePriority::PRIORITY_VSYNC) ==
+                static_cast<uint32_t>(EventQueuePriority::Vsync));
 
   if (mForwardToTC) {
     TaskController* tc = TaskController::Get();
@@ -47,6 +48,8 @@ void EventQueueInternal<ItemsPerPage>::PutEvent(
     } else if (aPriority == EventQueuePriority::DeferredTimers ||
                aPriority == EventQueuePriority::Idle) {
       manager = TaskController::Get()->GetIdleTaskManager();
+    } else if (aPriority == EventQueuePriority::Vsync) {
+      manager = VsyncTaskManager::Get();
     }
 
     tc->DispatchRunnable(event.forget(), static_cast<uint32_t>(aPriority),
@@ -54,16 +57,13 @@ void EventQueueInternal<ItemsPerPage>::PutEvent(
     return;
   }
 
-#ifdef MOZ_GECKO_PROFILER
-  // Sigh, this doesn't check if this thread is being profiled
-  if (profiler_is_active()) {
+  if (profiler_thread_is_being_profiled()) {
     // check to see if the profiler has been enabled since the last PutEvent
     while (mDispatchTimes.Count() < mQueue.Count()) {
       mDispatchTimes.Push(TimeStamp());
     }
     mDispatchTimes.Push(aDelay ? TimeStamp::Now() - *aDelay : TimeStamp::Now());
   }
-#endif
 
   mQueue.Push(std::move(event));
 }
@@ -78,7 +78,6 @@ already_AddRefed<nsIRunnable> EventQueueInternal<ItemsPerPage>::GetEvent(
     return nullptr;
   }
 
-#ifdef MOZ_GECKO_PROFILER
   // We always want to clear the dispatch times, even if the profiler is turned
   // off, because we want to empty the (previously-collected) dispatch times, if
   // any, from when the profiler was turned on.  We only want to do something
@@ -99,7 +98,6 @@ already_AddRefed<nsIRunnable> EventQueueInternal<ItemsPerPage>::GetEvent(
       *aLastEventDelay = TimeDuration();
     }
   }
-#endif
 
   nsCOMPtr<nsIRunnable> result = mQueue.Pop();
   return result.forget();

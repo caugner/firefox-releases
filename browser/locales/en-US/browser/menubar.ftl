@@ -9,6 +9,8 @@
 
 ## Application Menu (macOS only)
 
+menu-application-preferences =
+    .label = Preferences
 menu-application-services =
     .label = Services
 menu-application-hide-this =
@@ -246,8 +248,8 @@ menu-tools-addons-and-themes =
 menu-tools-fxa-sign-in2 =
     .label = Sign In
     .accesskey = g
-menu-tools-turn-on-sync =
-    .label = Turn on { -sync-brand-short-name }…
+menu-tools-turn-on-sync2 =
+    .label = Turn on Sync…
     .accesskey = n
 menu-tools-sync-now =
     .label = Sync Now
@@ -272,17 +274,6 @@ menu-settings =
     .accesskey =
         { PLATFORM() ->
             [windows] S
-           *[other] n
-        }
-menu-preferences =
-    .label =
-        { PLATFORM() ->
-            [windows] Options
-           *[other] Preferences
-        }
-    .accesskey =
-        { PLATFORM() ->
-            [windows] O
            *[other] n
         }
 menu-tools-layout-debugger =

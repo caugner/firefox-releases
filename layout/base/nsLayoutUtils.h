@@ -83,6 +83,7 @@ class EffectSet;
 struct ActiveScrolledRoot;
 enum class ScrollOrigin : uint8_t;
 enum class StyleImageOrientation : uint8_t;
+enum class StyleSystemFont : uint8_t;
 enum class StyleScrollbarWidth : uint8_t;
 struct OverflowAreas;
 namespace dom {
@@ -495,8 +496,26 @@ class nsLayoutUtils {
    *
    * Just like IsProperAncestorFrameCrossDoc, except that it returns true when
    * aFrame == aAncestorFrame.
+   *
+   * TODO: Bug 1700245, all call sites of this function will be eventually
+   * replaced by IsAncestorFrameCrossDocInProcess.
    */
   static bool IsAncestorFrameCrossDoc(
+      const nsIFrame* aAncestorFrame, const nsIFrame* aFrame,
+      const nsIFrame* aCommonAncestor = nullptr);
+
+  /**
+   * IsAncestorFrameCrossDocInProcess checks whether aAncestorFrame is an
+   * ancestor of aFrame or equal to aFrame, looking across document boundaries
+   * in the same process.
+   * @param aCommonAncestor nullptr, or a common ancestor of aFrame and
+   * aAncestorFrame. If non-null, this can bound the search and speed up
+   * the function.
+   *
+   * Just like IsProperAncestorFrameCrossDoc, except that it returns true when
+   * aFrame == aAncestorFrame.
+   */
+  static bool IsAncestorFrameCrossDocInProcess(
       const nsIFrame* aAncestorFrame, const nsIFrame* aFrame,
       const nsIFrame* aCommonAncestor = nullptr);
 
@@ -1882,6 +1901,11 @@ class nsLayoutUtils {
    *                            appropriate scale and transform for drawing in
    *                            app units.
    *   @param aImage            The image.
+   *   @param aResolution       The resolution specified by the author for the
+   *                            image, in dppx. This will affect the intrinsic
+   *                            size of the image (so e.g., if resolution is 2,
+   *                            and the image is 100x100, the intrinsic size of
+   *                            the image will be 50x50).
    *   @param aDest             The area that the image should fill.
    *   @param aDirty            Pixels outside this area may be skipped.
    *   @param aSVGContext       Optionally provides an SVGImageContext.
@@ -1903,7 +1927,7 @@ class nsLayoutUtils {
    */
   static ImgDrawResult DrawSingleImage(
       gfxContext& aContext, nsPresContext* aPresContext, imgIContainer* aImage,
-      const SamplingFilter aSamplingFilter, const nsRect& aDest,
+      float aResolution, SamplingFilter aSamplingFilter, const nsRect& aDest,
       const nsRect& aDirty, const mozilla::Maybe<SVGImageContext>& aSVGContext,
       uint32_t aImageFlags, const nsPoint* aAnchorPoint = nullptr,
       const nsRect* aSourceArea = nullptr);
@@ -1924,7 +1948,7 @@ class nsLayoutUtils {
    * difference is that this one is simpler and is suited to places where we
    * have less information about the frame tree.
    */
-  static void ComputeSizeForDrawing(imgIContainer* aImage,
+  static void ComputeSizeForDrawing(imgIContainer* aImage, float aResolution,
                                     CSSIntSize& aImageSize,
                                     AspectRatio& aIntrinsicRatio,
                                     bool& aGotWidth, bool& aGotHeight);
@@ -1938,7 +1962,7 @@ class nsLayoutUtils {
    * dimensions, the corresponding dimension of aFallbackSize is used instead.
    */
   static CSSIntSize ComputeSizeForDrawingWithFallback(
-      imgIContainer* aImage, const nsSize& aFallbackSize);
+      imgIContainer* aImage, float aResolution, const nsSize& aFallbackSize);
 
   /**
    * Given the image container, frame, and dest rect, determine the best fitting
@@ -1991,6 +2015,15 @@ class nsLayoutUtils {
    */
   static bool HasNonZeroCornerOnSide(const mozilla::BorderRadius& aCorners,
                                      mozilla::Side aSide);
+
+  /**
+   * Return the border radius size (width, height) based only on the top-left
+   * corner. This is a special case used for drawing the Windows 10 drop-shadow,
+   * and only supports a specified length (not percentages) on the top-left
+   * corner.
+   */
+  static LayoutDeviceIntSize GetBorderRadiusForMenuDropShadow(
+      const nsIFrame* aFrame);
 
   /**
    * Determine if a widget is likely to require transparency or translucency.
@@ -2771,15 +2804,21 @@ class nsLayoutUtils {
    * of the scrolled content of |aRootScrollFrame|.
    * Where the element is contained inside a scrollable subframe, the
    * bounding rect is clipped to the bounds of the subframe.
+   * If non-null aOutNearestScrollClip will be filled in with the rect of the
+   * nearest scroll frame (excluding aRootScrollFrame) that is an ancestor of
+   * the frame of aContent, if such exists, in the same coords are the returned
+   * rect. This rect is used to clip the result.
    */
   static CSSRect GetBoundingContentRect(
-      const nsIContent* aContent, const nsIScrollableFrame* aRootScrollFrame);
+      const nsIContent* aContent, const nsIScrollableFrame* aRootScrollFrame,
+      mozilla::Maybe<CSSRect>* aOutNearestScrollClip = nullptr);
 
   /**
    * Similar to GetBoundingContentRect for nsIFrame.
    */
   static CSSRect GetBoundingFrameRect(
-      nsIFrame* aFrame, const nsIScrollableFrame* aRootScrollFrame);
+      nsIFrame* aFrame, const nsIScrollableFrame* aRootScrollFrame,
+      mozilla::Maybe<CSSRect>* aOutNearestScrollClip = nullptr);
 
   /**
    * Returns the first ancestor who is a float containing block.
@@ -2852,11 +2891,6 @@ class nsLayoutUtils {
   static nsPoint ComputeOffsetToUserSpace(nsDisplayListBuilder* aBuilder,
                                           nsIFrame* aFrame);
 
-  // Return the default value to be used for -moz-control-character-visibility,
-  // from preferences.
-  static mozilla::StyleControlCharacterVisibility
-  ControlCharVisibilityDefault();
-
   // Callers are responsible to ensure the user-font-set is up-to-date if
   // aUseUserFontSet is true.
   static already_AddRefed<nsFontMetrics> GetMetricsFor(
@@ -2865,7 +2899,7 @@ class nsLayoutUtils {
       bool aUseUserFontSet);
 
   static void ComputeSystemFont(nsFont* aSystemFont,
-                                mozilla::LookAndFeel::FontID aFontID,
+                                mozilla::StyleSystemFont aFontID,
                                 const nsFont* aDefaultVariableFont,
                                 const mozilla::dom::Document* aDocument);
 

@@ -6,7 +6,7 @@
   appearance: none;
   -moz-context-properties: fill, fill-opacity;
   list-style-image: url(chrome://global/skin/icons/close.svg);
-  border-radius: 2px;
+  border-radius: 4px;
   color: inherit !important;
   fill: currentColor;
   padding: 2px;
@@ -14,8 +14,23 @@
   height: auto;
 }
 
-.close-icon:hover {
-  background-color: color-mix(in srgb, currentColor 10%, transparent);
+@media not (-moz-proton) {
+.close-icon {
+  border-radius: 2px;
+}
+} /*** END !proton ***/
+
+@media not (prefers-contrast) {
+  .close-icon:hover {
+    background-color: color-mix(in srgb, currentColor 10%, transparent);
+  }
+}
+
+@media (prefers-contrast) {
+  .close-icon:hover {
+    outline: 1px solid currentColor;
+    outline-offset: -1px;
+  }
 }
 
 .close-icon:hover:active {

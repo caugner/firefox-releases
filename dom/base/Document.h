@@ -92,7 +92,7 @@
 #include "nsRefPtrHashtable.h"
 #include "nsString.h"
 #include "nsTArray.h"
-#include "nsTHashtable.h"
+#include "nsTHashSet.h"
 #include "nsTLiteralString.h"
 #include "nsTObserverArray.h"
 #include "nsThreadUtils.h"
@@ -195,6 +195,7 @@ class ErrorResult;
 class EventListenerManager;
 class FullscreenExit;
 class FullscreenRequest;
+class HTMLEditor;
 struct LangGroupFontPrefs;
 class PendingAnimationTracker;
 class PermissionDelegateHandler;
@@ -205,6 +206,7 @@ class SMILAnimationController;
 enum class StyleCursorKind : uint8_t;
 enum class StylePrefersColorScheme : uint8_t;
 enum class StyleRuleChangeKind : uint32_t;
+class TextEditor;
 template <typename>
 class OwningNonNull;
 struct URLExtraData;
@@ -1367,13 +1369,13 @@ class Document : public nsINode,
    * is removed.
    */
   void ScheduleSVGForPresAttrEvaluation(SVGElement* aSVG) {
-    mLazySVGPresElements.PutEntry(aSVG);
+    mLazySVGPresElements.Insert(aSVG);
   }
 
   // Unschedule an element scheduled by ScheduleFrameRequestCallback (e.g. for
   // when it is destroyed)
   void UnscheduleSVGForPresAttrEvaluation(SVGElement* aSVG) {
-    mLazySVGPresElements.RemoveEntry(aSVG);
+    mLazySVGPresElements.Remove(aSVG);
   }
 
   // Resolve all SVG pres attrs scheduled in ScheduleSVGForPresAttrEvaluation
@@ -1575,11 +1577,6 @@ class Document : public nsINode,
    * Do the tree-disconnection that ResetToURI and document.open need to do.
    */
   void DisconnectNodeTree();
-
-  /**
-   * Like IsEditingOn(), but will flush as needed first.
-   */
-  bool IsEditingOnAfterFlush();
 
   /**
    * MaybeDispatchCheckKeyPressEventModelEvent() dispatches
@@ -2434,11 +2431,11 @@ class Document : public nsINode,
   void AddStyleRelevantLink(Link* aLink) {
     NS_ASSERTION(aLink, "Passing in a null link.  Expect crashes RSN!");
 #ifdef DEBUG
-    nsPtrHashKey<Link>* entry = mStyledLinks.GetEntry(aLink);
-    NS_ASSERTION(!entry, "Document already knows about this Link!");
+    NS_ASSERTION(!mStyledLinks.Contains(aLink),
+                 "Document already knows about this Link!");
     mStyledLinksCleared = false;
 #endif
-    mStyledLinks.PutEntry(aLink);
+    mStyledLinks.Insert(aLink);
   }
 
   /**
@@ -2450,11 +2447,11 @@ class Document : public nsINode,
   void ForgetLink(Link* aLink) {
     NS_ASSERTION(aLink, "Passing in a null link.  Expect crashes RSN!");
 #ifdef DEBUG
-    nsPtrHashKey<Link>* entry = mStyledLinks.GetEntry(aLink);
-    NS_ASSERTION(entry || mStyledLinksCleared,
+    bool linkContained = mStyledLinks.Contains(aLink);
+    NS_ASSERTION(linkContained || mStyledLinksCleared,
                  "Document knows nothing about this Link!");
 #endif
-    mStyledLinks.RemoveEntry(aLink);
+    mStyledLinks.Remove(aLink);
   }
 
   // Refreshes the hrefs of all the links in the document.
@@ -3099,55 +3096,37 @@ class Document : public nsINode,
 
   dom::ImageTracker* ImageTracker();
 
-  // AddPlugin adds a plugin-related element to mPlugins when the element is
-  // added to the tree.
-  void AddPlugin(nsIObjectLoadingContent* aPlugin) {
-    MOZ_ASSERT(aPlugin);
-    mPlugins.PutEntry(aPlugin);
-  }
-
-  // RemovePlugin removes a plugin-related element to mPlugins when the
-  // element is removed from the tree.
-  void RemovePlugin(nsIObjectLoadingContent* aPlugin) {
-    MOZ_ASSERT(aPlugin);
-    mPlugins.RemoveEntry(aPlugin);
-  }
-
-  // GetPlugins returns the plugin-related elements from
-  // the frame and any subframes.
-  void GetPlugins(nsTArray<nsIObjectLoadingContent*>& aPlugins);
-
   // Adds an element to mResponsiveContent when the element is
   // added to the tree.
   void AddResponsiveContent(HTMLImageElement* aContent) {
     MOZ_ASSERT(aContent);
-    mResponsiveContent.PutEntry(aContent);
+    mResponsiveContent.Insert(aContent);
   }
 
   // Removes an element from mResponsiveContent when the element is
   // removed from the tree.
   void RemoveResponsiveContent(HTMLImageElement* aContent) {
     MOZ_ASSERT(aContent);
-    mResponsiveContent.RemoveEntry(aContent);
+    mResponsiveContent.Remove(aContent);
   }
 
   void ScheduleSVGUseElementShadowTreeUpdate(SVGUseElement&);
   void UnscheduleSVGUseElementShadowTreeUpdate(SVGUseElement& aElement) {
-    mSVGUseElementsNeedingShadowTreeUpdate.RemoveEntry(&aElement);
+    mSVGUseElementsNeedingShadowTreeUpdate.Remove(&aElement);
   }
 
   bool SVGUseElementNeedsShadowTreeUpdate(SVGUseElement& aElement) const {
-    return mSVGUseElementsNeedingShadowTreeUpdate.GetEntry(&aElement);
+    return mSVGUseElementsNeedingShadowTreeUpdate.Contains(&aElement);
   }
 
-  using ShadowRootSet = nsTHashtable<nsPtrHashKey<ShadowRoot>>;
+  using ShadowRootSet = nsTHashSet<ShadowRoot*>;
 
   void AddComposedDocShadowRoot(ShadowRoot& aShadowRoot) {
-    mComposedShadowRoots.PutEntry(&aShadowRoot);
+    mComposedShadowRoots.Insert(&aShadowRoot);
   }
 
   void RemoveComposedDocShadowRoot(ShadowRoot& aShadowRoot) {
-    mComposedShadowRoots.RemoveEntry(&aShadowRoot);
+    mComposedShadowRoots.Remove(&aShadowRoot);
   }
 
   // If you're considering using this, you probably want to use
@@ -3274,8 +3253,11 @@ class Document : public nsINode,
 
   WindowContext* GetTopLevelWindowContext() const;
 
-  Document* GetTopLevelContentDocument();
-  const Document* GetTopLevelContentDocument() const;
+  // If the top-level ancestor content document for this document is in the same
+  // process, returns it. Otherwise, returns null. This function is not
+  // Fission-compatible, and should not be used in new code.
+  Document* GetTopLevelContentDocumentIfSameProcess();
+  const Document* GetTopLevelContentDocumentIfSameProcess() const;
 
   // Returns the associated app window if this is a top-level chrome document,
   // null otherwise.
@@ -3368,19 +3350,19 @@ class Document : public nsINode,
   bool ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
                    const nsAString& aValue, nsIPrincipal& aSubjectPrincipal,
                    mozilla::ErrorResult& aRv);
-  bool QueryCommandEnabled(const nsAString& aHTMLCommandName,
-                           nsIPrincipal& aSubjectPrincipal,
-                           mozilla::ErrorResult& aRv);
-  bool QueryCommandIndeterm(const nsAString& aHTMLCommandName,
-                            mozilla::ErrorResult& aRv);
-  bool QueryCommandState(const nsAString& aHTMLCommandName,
-                         mozilla::ErrorResult& aRv);
-  bool QueryCommandSupported(const nsAString& aHTMLCommandName,
-                             mozilla::dom::CallerType aCallerType,
-                             mozilla::ErrorResult& aRv);
-  MOZ_CAN_RUN_SCRIPT
-  void QueryCommandValue(const nsAString& aHTMLCommandName, nsAString& aValue,
-                         mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT bool QueryCommandEnabled(const nsAString& aHTMLCommandName,
+                                              nsIPrincipal& aSubjectPrincipal,
+                                              mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT bool QueryCommandIndeterm(
+      const nsAString& aHTMLCommandName, mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT bool QueryCommandState(const nsAString& aHTMLCommandName,
+                                            mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT bool QueryCommandSupported(
+      const nsAString& aHTMLCommandName, mozilla::dom::CallerType aCallerType,
+      mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void QueryCommandValue(const nsAString& aHTMLCommandName,
+                                            nsAString& aValue,
+                                            mozilla::ErrorResult& aRv);
   nsIHTMLCollection* Applets();
   nsIHTMLCollection* Anchors();
   TimeStamp LastFocusTime() const;
@@ -3713,11 +3695,11 @@ class Document : public nsINode,
   void AddIntersectionObserver(DOMIntersectionObserver* aObserver) {
     MOZ_ASSERT(!mIntersectionObservers.Contains(aObserver),
                "Intersection observer already in the list");
-    mIntersectionObservers.PutEntry(aObserver);
+    mIntersectionObservers.Insert(aObserver);
   }
 
   void RemoveIntersectionObserver(DOMIntersectionObserver* aObserver) {
-    mIntersectionObservers.RemoveEntry(aObserver);
+    mIntersectionObservers.Remove(aObserver);
   }
 
   bool HasIntersectionObservers() const {
@@ -4147,30 +4129,79 @@ class Document : public nsINode,
     // Its callers don't need to check this.
     ExecCommandParam mExecCommandParam;  // uint8_t
     GetEditorCommandFunc* mGetEditorCommandFunc;
+    enum class CommandOnTextEditor : uint8_t {
+      Disabled,
+      Enabled,
+      FallThrough,  // Not disabled, but handled by HTMLEditor if there is one
+    };
+    CommandOnTextEditor mCommandOnTextEditor;
 
     InternalCommandData()
         : mXULCommandName(nullptr),
           mCommand(mozilla::Command::DoNothing),
           mExecCommandParam(ExecCommandParam::Ignore),
-          mGetEditorCommandFunc(nullptr) {}
+          mGetEditorCommandFunc(nullptr),
+          mCommandOnTextEditor(CommandOnTextEditor::Disabled) {}
     InternalCommandData(const char* aXULCommandName, mozilla::Command aCommand,
                         ExecCommandParam aExecCommandParam,
-                        GetEditorCommandFunc aGetEditorCommandFunc)
+                        GetEditorCommandFunc aGetEditorCommandFunc,
+                        CommandOnTextEditor aCommandOnTextEditor)
         : mXULCommandName(aXULCommandName),
           mCommand(aCommand),
           mExecCommandParam(aExecCommandParam),
-          mGetEditorCommandFunc(aGetEditorCommandFunc) {}
+          mGetEditorCommandFunc(aGetEditorCommandFunc),
+          mCommandOnTextEditor(aCommandOnTextEditor) {}
 
     bool IsAvailableOnlyWhenEditable() const {
       return mCommand != mozilla::Command::Cut &&
              mCommand != mozilla::Command::Copy &&
-             mCommand != mozilla::Command::Paste;
+             mCommand != mozilla::Command::Paste &&
+             mCommand != mozilla::Command::SetDocumentReadOnly &&
+             mCommand != mozilla::Command::GetHTML;
     }
     bool IsCutOrCopyCommand() const {
       return mCommand == mozilla::Command::Cut ||
              mCommand == mozilla::Command::Copy;
     }
     bool IsPasteCommand() const { return mCommand == mozilla::Command::Paste; }
+  };
+
+  /**
+   * AutoEditorCommandTarget considers which editor or global command manager
+   * handles given command.
+   */
+  class MOZ_RAII AutoEditorCommandTarget {
+   public:
+    MOZ_CAN_RUN_SCRIPT AutoEditorCommandTarget(
+        nsPresContext* aPresContext, const InternalCommandData& aCommandData);
+    AutoEditorCommandTarget() = delete;
+    explicit AutoEditorCommandTarget(const AutoEditorCommandTarget& aOther) =
+        delete;
+
+    bool DoNothing() const { return mDoNothing; }
+    MOZ_CAN_RUN_SCRIPT bool IsEditable(Document* aDocument) const;
+    bool IsEditor() const {
+      MOZ_ASSERT_IF(mEditorCommand, mActiveEditor || mHTMLEditor);
+      return !!mEditorCommand;
+    }
+
+    MOZ_CAN_RUN_SCRIPT bool IsCommandEnabled() const;
+    MOZ_CAN_RUN_SCRIPT nsresult DoCommand(nsIPrincipal* aPrincipal) const;
+    template <typename ParamType>
+    MOZ_CAN_RUN_SCRIPT nsresult DoCommandParam(const ParamType& aParam,
+                                               nsIPrincipal* aPrincipal) const;
+    MOZ_CAN_RUN_SCRIPT nsresult
+    GetCommandStateParams(nsCommandParams& aParams) const;
+
+   private:
+    // The returned editor's life is guaranteed while this instance is alive.
+    TextEditor* GetTargetEditor() const;
+
+    RefPtr<TextEditor> mActiveEditor;
+    RefPtr<HTMLEditor> mHTMLEditor;
+    RefPtr<EditorCommand> mEditorCommand;
+    const InternalCommandData& mCommandData;
+    bool mDoNothing = false;
   };
 
   /**
@@ -4368,7 +4399,7 @@ class Document : public nsINode,
   // See ShadowRoot::Bind and ShadowRoot::Unbind.
   ShadowRootSet mComposedShadowRoots;
 
-  using SVGUseElementSet = nsTHashtable<nsPtrHashKey<SVGUseElement>>;
+  using SVGUseElementSet = nsTHashSet<SVGUseElement*>;
 
   // The set of <svg:use> elements that need a shadow tree reclone because the
   // tree they map to has changed.
@@ -4380,10 +4411,10 @@ class Document : public nsINode,
   //
   // These are non-owning pointers, the elements are responsible for removing
   // themselves when they go away.
-  UniquePtr<nsTHashtable<nsPtrHashKey<nsISupports>>> mActivityObservers;
+  UniquePtr<nsTHashSet<nsISupports*>> mActivityObservers;
 
   // A hashtable of styled links keyed by address pointer.
-  nsTHashtable<nsPtrHashKey<Link>> mStyledLinks;
+  nsTHashSet<Link*> mStyledLinks;
 #ifdef DEBUG
   // Indicates whether mStyledLinks was cleared or not.  This is used to track
   // state so we can provide useful assertions to consumers of ForgetLink and
@@ -4983,7 +5014,7 @@ class Document : public nsINode,
   // The set of all the tracking script URLs.  URLs are added to this set by
   // calling NoteScriptTrackingStatus().  Currently we assume that a URL not
   // existing in the set means the corresponding script isn't a tracking script.
-  nsTHashtable<nsCStringHashKey> mTrackingScripts;
+  nsTHashSet<nsCString> mTrackingScripts;
 
   // Pointer to our parser if we're currently in the process of being
   // parsed into.
@@ -5049,7 +5080,7 @@ class Document : public nsINode,
   nsWeakPtr mScopeObject;
 
   // Array of intersection observers
-  nsTHashtable<nsPtrHashKey<DOMIntersectionObserver>> mIntersectionObservers;
+  nsTHashSet<DOMIntersectionObserver*> mIntersectionObservers;
 
   RefPtr<DOMIntersectionObserver> mLazyLoadImageObserver;
   // Used to measure how effective the lazyload thresholds are.
@@ -5067,10 +5098,7 @@ class Document : public nsINode,
   RefPtr<nsContentList> mImageMaps;
 
   // A set of responsive images keyed by address pointer.
-  nsTHashtable<nsPtrHashKey<HTMLImageElement>> mResponsiveContent;
-
-  // Tracking for plugins in the document.
-  nsTHashtable<nsPtrHashKey<nsIObjectLoadingContent>> mPlugins;
+  nsTHashSet<HTMLImageElement*> mResponsiveContent;
 
   RefPtr<DocumentTimeline> mDocumentTimeline;
   LinkedList<DocumentTimeline> mTimelines;
@@ -5136,9 +5164,9 @@ class Document : public nsINode,
   // We lazily calculate declaration blocks for SVG elements with mapped
   // attributes in Servo mode. This list contains all elements which need lazy
   // resolution.
-  nsTHashtable<nsPtrHashKey<SVGElement>> mLazySVGPresElements;
+  nsTHashSet<SVGElement*> mLazySVGPresElements;
 
-  nsTHashtable<nsRefPtrHashKey<nsAtom>> mLanguagesUsed;
+  nsTHashSet<RefPtr<nsAtom>> mLanguagesUsed;
 
   // TODO(emilio): Is this hot enough to warrant to be cached?
   RefPtr<nsAtom> mLanguageFromCharset;

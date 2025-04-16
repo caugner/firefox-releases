@@ -63,6 +63,7 @@ class SampleTime;
 class WebRenderScrollDataWrapper;
 struct AncestorTransform;
 struct ScrollThumbData;
+struct ZoomTarget;
 
 /**
  * ****************** NOTE ON LOCK ORDERING IN APZ **************************
@@ -224,7 +225,8 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * up. |aRect| must be given in CSS pixels, relative to the document.
    * |aFlags| is a combination of the ZoomToRectBehavior enum values.
    */
-  void ZoomToRect(const ScrollableLayerGuid& aGuid, const CSSRect& aRect,
+  void ZoomToRect(const ScrollableLayerGuid& aGuid,
+                  const ZoomTarget& aZoomTarget,
                   const uint32_t aFlags = DEFAULT_BEHAVIOR) override;
 
   /**
@@ -560,11 +562,18 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
     // If content that is fixed to the root-content APZC was hit,
     // the sides of the viewport to which the content is fixed.
     SideBits mFixedPosSides = SideBits::eNone;
+    // This is set to true If mTargetApzc is overscrolled and the
+    // event targeted the gap space ("gutter") created by the overscroll.
+    bool mHitOverscrollGutter = false;
 
     HitTestResult() = default;
     // Make it move-only.
     HitTestResult(HitTestResult&&) = default;
     HitTestResult& operator=(HitTestResult&&) = default;
+
+    // Make a copy of all the fields except mScrollbarNode (the field
+    // that makes this move-only).
+    HitTestResult CopyWithoutScrollbarNode() const;
   };
 
   /* Some helper functions to find an APZC given some identifying input. These
@@ -675,7 +684,28 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   HitTestResult GetTouchInputBlockAPZC(
       const MultiTouchInput& aEvent,
       nsTArray<TouchBehaviorFlags>* aOutTouchBehaviors);
-  APZEventResult ProcessTouchInput(MultiTouchInput& aInput);
+
+  /**
+   * A helper structure for use by ReceiveInputEvent() and its helpers.
+   */
+  struct InputHandlingState {
+    // A reference to the event being handled.
+    InputData& mEvent;
+
+    // The value that will be returned by ReceiveInputEvent().
+    APZEventResult mResult;
+
+    // If we performed a hit-test while handling this input event, or
+    // reused the result of a previous hit-test in the input block,
+    // this is populated with the result of the hit test.
+    HitTestResult mHit;
+
+    // Called at the end of ReceiveInputEvent() to perform any final
+    // computations, and then return mResult.
+    APZEventResult Finish();
+  };
+
+  void ProcessTouchInput(InputHandlingState& aState, MultiTouchInput& aInput);
   /**
    * Given a mouse-down event that hit a scroll thumb node, set up APZ
    * dragging of the scroll thumb.
@@ -720,6 +750,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   HitTestingTreeNode* PrepareNodeForLayer(
       const RecursiveMutexAutoLock& aProofOfTreeLock, const ScrollNode& aLayer,
       const FrameMetrics& aMetrics, LayersId aLayersId,
+      const Maybe<ZoomConstraints>& aZoomConstraints,
       const AncestorTransform& aAncestorTransform, HitTestingTreeNode* aParent,
       HitTestingTreeNode* aNextSibling, TreeBuildingState& aState);
   template <class ScrollNode>
@@ -736,9 +767,16 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   void NotifyScrollbarDragRejected(const ScrollableLayerGuid& aGuid) const;
   void NotifyAutoscrollRejected(const ScrollableLayerGuid& aGuid) const;
 
+  // Returns the transform that converts from |aNode|'s coordinates to
+  // the coordinates of |aNode|'s parent in the hit-testing tree.
+  // If the returned transform includes an overscroll transform,
+  // |aOutSourceOfOverscrollTransform| (if not nullptr) is populated
+  // with the APZC which is the source of that overscroll transform.
   // Requires the caller to hold mTreeLock.
   LayerToParentLayerMatrix4x4 ComputeTransformForNode(
-      const HitTestingTreeNode* aNode) const;
+      const HitTestingTreeNode* aNode,
+      const AsyncPanZoomController** aOutSourceOfOverscrollTransform =
+          nullptr) const;
 
   // Look up the GeckoContentController for the given layers id.
   static already_AddRefed<GeckoContentController> GetContentController(
@@ -960,7 +998,8 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * the main-thread gecko code. This can only be accessed on the updater
    * thread. */
   std::unordered_map<ScrollableLayerGuid, ZoomConstraints,
-                     ScrollableLayerGuid::HashFn>
+                     ScrollableLayerGuid::HashIgnoringPresShellFn,
+                     ScrollableLayerGuid::EqualIgnoringPresShellFn>
       mZoomConstraints;
   /* A list of keyboard shortcuts to use for translating keyboard inputs into
    * keyboard actions. This is gathered on the main thread from XBL bindings.

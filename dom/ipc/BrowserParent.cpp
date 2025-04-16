@@ -45,7 +45,6 @@
 #include "mozilla/layers/AsyncDragMetrics.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layout/RemoteLayerTreeOwner.h"
-#include "mozilla/plugins/PPluginWidgetParent.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
@@ -135,7 +134,6 @@
 #include "VsyncSource.h"
 
 #ifdef XP_WIN
-#  include "mozilla/plugins/PluginWidgetParent.h"
 #  include "FxRWindowManager.h"
 #endif
 
@@ -221,11 +219,6 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mChromeOffset{},
       mCreatingWindow(false),
       mDelayedFrameScripts{},
-      mCursor(eCursorInvalid),
-      mCustomCursor{},
-      mCustomCursorHotspotX(0),
-      mCustomCursorHotspotY(0),
-      mVerifyDropLinks{},
       mVsyncParent(nullptr),
       mMarkedDestroying(false),
       mIsDestroyed(false),
@@ -429,8 +422,8 @@ a11y::DocAccessibleParent* BrowserParent::GetTopLevelDocAccessible() const {
   // document accessible.
   const ManagedContainer<PDocAccessibleParent>& docs =
       ManagedPDocAccessibleParent();
-  for (auto iter = docs.ConstIter(); !iter.Done(); iter.Next()) {
-    auto doc = static_cast<a11y::DocAccessibleParent*>(iter.Get()->GetKey());
+  for (auto* key : docs) {
+    auto* doc = static_cast<a11y::DocAccessibleParent*>(key);
     // We want the document for this BrowserParent even if it's for an
     // embedded out-of-process iframe. Therefore, we use
     // IsTopLevelInContentProcess. In contrast, using IsToplevel would only
@@ -606,6 +599,7 @@ void BrowserParent::Deactivated() {
   PointerLockManager::ReleaseLockedRemoteTarget(this);
   PointerEventHandler::ReleasePointerCaptureRemoteTarget(this);
   PresShell::ReleaseCapturingRemoteTarget(this);
+  ProcessPriorityManager::ActivityChanged(this, /* aIsActive = */ false);
 }
 
 void BrowserParent::DestroyInternal() {
@@ -623,18 +617,6 @@ void BrowserParent::DestroyInternal() {
   // and auto-cleanup will kick in.  Otherwise, the child side will
   // destroy itself and send back __delete__().
   Unused << SendDestroy();
-
-#ifdef XP_WIN
-  // Let all PluginWidgets know we are tearing down. Prevents
-  // these objects from sending async events after the child side
-  // is shut down.
-  const ManagedContainer<PPluginWidgetParent>& kids =
-      ManagedPPluginWidgetParent();
-  for (auto iter = kids.ConstIter(); !iter.Done(); iter.Next()) {
-    static_cast<mozilla::plugins::PluginWidgetParent*>(iter.Get()->GetKey())
-        ->ParentDestroy();
-  }
-#endif
 }
 
 void BrowserParent::Destroy() {
@@ -739,25 +721,12 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
     if (why == AbnormalShutdown) {
       frameLoader->MaybeNotifyCrashed(mBrowsingContext, Manager()->ChildID(),
                                       GetIPCChannel());
-
-      auto* bridge = GetBrowserBridgeParent();
-      if (bridge && bridge->CanSend() && !mBrowsingContext->IsDiscarded()) {
-        MOZ_ASSERT(!mBrowsingContext->IsTop());
-
-        // Set the owner process of the root context belonging to a crashed
-        // process to the embedding process, since we'll be showing the crashed
-        // page in that process.
-        mBrowsingContext->SetOwnerProcessId(
-            bridge->Manager()->Manager()->ChildID());
-        MOZ_ALWAYS_SUCCEEDS(mBrowsingContext->SetCurrentInnerWindowId(0));
-
-        // Tell the browser bridge to show the subframe crashed page.
-        Unused << bridge->SendSubFrameCrashed();
-      }
     }
   }
 
   mFrameLoader = nullptr;
+
+  mBrowsingContext->BrowserParentDestroyed(this, why == AbnormalShutdown);
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvMoveFocus(
@@ -1355,6 +1324,28 @@ IPCResult BrowserParent::RecvNewWindowGlobal(
     return IPC_FAIL(this, "Cannot create without valid principal");
   }
 
+  // Ensure we never load a document with a content principal in
+  // the wrong type of webIsolated process
+  EnumSet<ContentParent::ValidatePrincipalOptions> validationOptions = {};
+  nsCOMPtr<nsIURI> docURI = aInit.documentURI();
+  if (docURI->SchemeIs("about") || docURI->SchemeIs("blob") ||
+      docURI->SchemeIs("chrome")) {
+    // XXXckerschb TODO - Do not use SystemPrincipal for:
+    // Bug 1700639: about:plugins
+    // Bug 1699385: Remove allowSystem for blobs
+    // Bug 1698087: chrome://devtools/content/shared/webextension-fallback.html
+    // chrome reftests, e.g.
+    //   * chrome://reftest/content/writing-mode/ua-style-sheet-button-1a-ref.html
+    //   * chrome://reftest/content/xul-document-load/test003.xhtml
+    //   * chrome://reftest/content/forms/input/text/centering-1.xhtml
+    validationOptions = {ContentParent::ValidatePrincipalOptions::AllowSystem};
+  }
+
+  if (!mManager->ValidatePrincipal(aInit.principal(), validationOptions)) {
+    ContentParent::LogAndAssertFailedPrincipalValidationInfo(aInit.principal(),
+                                                             __func__);
+  }
+
   // Construct our new WindowGlobalParent, bind, and initialize it.
   RefPtr<WindowGlobalParent> wgp =
       WindowGlobalParent::CreateDisconnected(aInit);
@@ -1396,15 +1387,11 @@ void BrowserParent::SendMouseEvent(const nsAString& aType, float aX, float aY,
 }
 
 void BrowserParent::MouseEnterIntoWidget() {
-  nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (widget) {
+  if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
     // When we mouseenter the remote target, the remote target's cursor should
     // become the current cursor.  When we mouseexit, we stop.
     mRemoteTargetSetsCursor = true;
-    if (mCursor != eCursorInvalid) {
-      widget->SetCursor(mCursor, mCustomCursor, mCustomCursorHotspotX,
-                        mCustomCursorHotspotY);
-    }
+    widget->SetCursor(mCursor);
   }
 
   // Mark that we have missed a mouse enter event, so that
@@ -1443,10 +1430,7 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
     // become the current cursor.  When we mouseexit, we stop.
     if (eMouseEnterIntoWidget == aEvent.mMessage) {
       mRemoteTargetSetsCursor = true;
-      if (mCursor != eCursorInvalid) {
-        widget->SetCursor(mCursor, mCustomCursor, mCustomCursorHotspotX,
-                          mCustomCursorHotspotY);
-      }
+      widget->SetCursor(mCursor);
     } else if (eMouseExitFromWidget == aEvent.mMessage) {
       mRemoteTargetSetsCursor = false;
     }
@@ -2154,7 +2138,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvAsyncMessage(
 mozilla::ipc::IPCResult BrowserParent::RecvSetCursor(
     const nsCursor& aCursor, const bool& aHasCustomCursor,
     const nsCString& aCursorData, const uint32_t& aWidth,
-    const uint32_t& aHeight, const uint32_t& aStride,
+    const uint32_t& aHeight, const float& aResolution, const uint32_t& aStride,
     const gfx::SurfaceFormat& aFormat, const uint32_t& aHotspotX,
     const uint32_t& aHotspotY, const bool& aForce) {
   nsCOMPtr<nsIWidget> widget = GetWidget();
@@ -2183,16 +2167,13 @@ mozilla::ipc::IPCResult BrowserParent::RecvSetCursor(
     cursorImage = image::ImageOps::CreateFromDrawable(drawable);
   }
 
-  mCursor = aCursor;
-  mCustomCursor = cursorImage;
-  mCustomCursorHotspotX = aHotspotX;
-  mCustomCursorHotspotY = aHotspotY;
-
+  mCursor = nsIWidget::Cursor{aCursor, std::move(cursorImage), aHotspotX,
+                              aHotspotY, aResolution};
   if (!mRemoteTargetSetsCursor) {
     return IPC_OK();
   }
 
-  widget->SetCursor(aCursor, cursorImage, aHotspotX, aHotspotY);
+  widget->SetCursor(mCursor);
   return IPC_OK();
 }
 
@@ -2907,48 +2888,16 @@ bool BrowserParent::ReconstructWebProgressAndRequest(
 
 mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
     const Maybe<nsCString>& aDocShellCaps, const Maybe<bool>& aPrivatedMode,
-    nsTArray<nsCString>&& aPositions, nsTArray<int32_t>&& aPositionDescendants,
-    const nsTArray<InputFormData>& aInputs,
-    const nsTArray<CollectedInputDataValue>& aIdVals,
-    const nsTArray<CollectedInputDataValue>& aXPathVals,
     nsTArray<nsCString>&& aOrigins, nsTArray<nsString>&& aKeys,
     nsTArray<nsString>&& aValues, const bool aIsFullStorage,
-    const bool aNeedCollectSHistory, const uint32_t& aFlushId,
-    const bool& aIsFinal, const uint32_t& aEpoch) {
+    const bool aNeedCollectSHistory, const bool& aIsFinal,
+    const uint32_t& aEpoch) {
   UpdateSessionStoreData data;
   if (aDocShellCaps.isSome()) {
     data.mDocShellCaps.Construct() = aDocShellCaps.value();
   }
   if (aPrivatedMode.isSome()) {
     data.mIsPrivate.Construct() = aPrivatedMode.value();
-  }
-  if (aPositions.Length() != 0) {
-    data.mPositions.Construct(std::move(aPositions));
-    data.mPositionDescendants.Construct(std::move(aPositionDescendants));
-  }
-  if (aIdVals.Length() != 0) {
-    SessionStoreUtils::ComposeInputData(aIdVals, data.mId.Construct());
-  }
-  if (aXPathVals.Length() != 0) {
-    SessionStoreUtils::ComposeInputData(aXPathVals, data.mXpath.Construct());
-  }
-  if (aInputs.Length() != 0) {
-    nsTArray<int> descendants, numId, numXPath;
-    nsTArray<nsString> innerHTML;
-    nsTArray<nsCString> url;
-    for (const InputFormData& input : aInputs) {
-      descendants.AppendElement(input.descendants);
-      numId.AppendElement(input.numId);
-      numXPath.AppendElement(input.numXPath);
-      innerHTML.AppendElement(input.innerHTML);
-      url.AppendElement(input.url);
-    }
-
-    data.mInputDescendants.Construct(std::move(descendants));
-    data.mNumId.Construct(std::move(numId));
-    data.mNumXPath.Construct(std::move(numXPath));
-    data.mInnerHTML.Construct(std::move(innerHTML));
-    data.mUrl.Construct(std::move(url));
   }
   // In normal case, we only update the storage when needed.
   // However, we need to reset the session storage(aOrigins.Length() will be 0)
@@ -2971,9 +2920,9 @@ mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
   bool ok = ToJSValue(jsapi.cx(), data, &dataVal);
   NS_ENSURE_TRUE(ok, IPC_OK());
 
-  nsresult rv = funcs->UpdateSessionStore(mFrameElement, mBrowsingContext,
-                                          aFlushId, aIsFinal, aEpoch, dataVal,
-                                          aNeedCollectSHistory);
+  nsresult rv = funcs->UpdateSessionStore(
+      mFrameElement, mBrowsingContext, aEpoch, dataVal, aNeedCollectSHistory);
+
   NS_ENSURE_SUCCESS(rv, IPC_OK());
 
   return IPC_OK();
@@ -3393,7 +3342,7 @@ void BrowserParent::SetRenderLayers(bool aEnabled) {
     mActiveInPriorityManager = aEnabled;
     // Let's inform the priority manager. This operation can end up with the
     // changing of the process priority.
-    ProcessPriorityManager::TabActivityChanged(this, aEnabled);
+    ProcessPriorityManager::ActivityChanged(this, aEnabled);
   }
 
   if (aEnabled == mRenderLayers) {
@@ -3460,7 +3409,7 @@ void BrowserParent::NotifyResolutionChanged() {
 
 void BrowserParent::Deprioritize() {
   if (mActiveInPriorityManager) {
-    ProcessPriorityManager::TabActivityChanged(this, false);
+    ProcessPriorityManager::ActivityChanged(this, false);
     mActiveInPriorityManager = false;
   }
 }
@@ -3700,22 +3649,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvRemoteIsReadyToHandleInputEvents() {
   // events.
   SetReadyToHandleInputEvents();
   return IPC_OK();
-}
-
-mozilla::plugins::PPluginWidgetParent*
-BrowserParent::AllocPPluginWidgetParent() {
-#ifdef XP_WIN
-  return new mozilla::plugins::PluginWidgetParent();
-#else
-  MOZ_ASSERT_UNREACHABLE("AllocPPluginWidgetParent only supports Windows");
-  return nullptr;
-#endif
-}
-
-bool BrowserParent::DeallocPPluginWidgetParent(
-    mozilla::plugins::PPluginWidgetParent* aActor) {
-  delete aActor;
-  return true;
 }
 
 PPaymentRequestParent* BrowserParent::AllocPPaymentRequestParent() {

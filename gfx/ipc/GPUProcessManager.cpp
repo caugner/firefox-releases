@@ -83,10 +83,12 @@ GPUProcessManager::GPUProcessManager()
       mNextNamespace(0),
       mIdNamespace(0),
       mResourceId(0),
-      mNumProcessAttempts(0),
+      mUnstableProcessAttempts(0),
+      mTotalProcessAttempts(0),
       mDeviceResetCount(0),
       mProcess(nullptr),
       mProcessToken(0),
+      mProcessStable(true),
       mGPUChild(nullptr) {
   MOZ_COUNT_CTOR(GPUProcessManager);
 
@@ -171,7 +173,22 @@ void GPUProcessManager::LaunchGPUProcess() {
   // Start the Vsync I/O thread so can use it as soon as the process launches.
   EnsureVsyncIOThread();
 
-  mNumProcessAttempts++;
+  // If the process didn't live long enough, reset the stable flag so that we
+  // don't end up in a restart loop.
+  auto newTime = TimeStamp::Now();
+  if (mTotalProcessAttempts > 0) {
+    auto delta = (int32_t)(newTime - mProcessAttemptLastTime).ToMilliseconds();
+    if (delta < StaticPrefs::layers_gpu_process_stable_min_uptime_ms()) {
+      mProcessStable = false;
+    }
+  }
+  mProcessAttemptLastTime = newTime;
+
+  if (!mProcessStable) {
+    mUnstableProcessAttempts++;
+  }
+  mTotalProcessAttempts++;
+  mProcessStable = false;
 
   std::vector<std::string> extraArgs;
   nsCString parentBuildID(mozilla::PlatformBuildID());
@@ -201,6 +218,10 @@ bool GPUProcessManager::MaybeDisableGPUProcess(const char* aMessage,
     return true;
   }
 
+  if (!aAllowRestart) {
+    gfxConfig::SetFailed(Feature::GPU_PROCESS, FeatureStatus::Failed, aMessage);
+  }
+
   bool wantRestart = gfxPlatform::FallbackFromAcceleration(
       FeatureStatus::Unavailable, "GPU Process is disabled",
       "FEATURE_FAILURE_GPU_PROCESS_DISABLED"_ns);
@@ -209,7 +230,10 @@ bool GPUProcessManager::MaybeDisableGPUProcess(const char* aMessage,
     return false;
   }
 
-  gfxConfig::SetFailed(Feature::GPU_PROCESS, FeatureStatus::Failed, aMessage);
+  if (aAllowRestart) {
+    gfxConfig::SetFailed(Feature::GPU_PROCESS, FeatureStatus::Failed, aMessage);
+  }
+
   gfxCriticalNote << aMessage;
 
   gfxPlatform::DisableGPUProcess();
@@ -405,8 +429,10 @@ void GPUProcessManager::OnProcessLaunchComplete(GPUProcessHost* aHost) {
 
   CrashReporter::AnnotateCrashReport(
       CrashReporter::Annotation::GPUProcessLaunchCount,
-      static_cast<int>(mNumProcessAttempts));
+      static_cast<int>(mTotalProcessAttempts));
 }
+
+void GPUProcessManager::OnProcessDeclaredStable() { mProcessStable = true; }
 
 static bool ShouldLimitDeviceResets(uint32_t count, int32_t deltaMilliseconds) {
   // We decide to limit by comparing the amount of resets that have happened
@@ -480,6 +506,10 @@ bool GPUProcessManager::DisableWebRenderConfig(wr::WebRenderError aError,
     wantRestart = gfxPlatform::FallbackFromAcceleration(
         gfx::FeatureStatus::Unavailable, "Failed to create new surface",
         "FEATURE_FAILURE_WEBRENDER_NEW_SURFACE"_ns);
+  } else if (aError == wr::WebRenderError::BEGIN_DRAW) {
+    wantRestart = gfxPlatform::FallbackFromAcceleration(
+        gfx::FeatureStatus::Unavailable, "BeginDraw() failed",
+        "FEATURE_FAILURE_WEBRENDER_BEGIN_DRAW"_ns);
   } else if (aError == wr::WebRenderError::EXCESSIVE_RESETS) {
     wantRestart = gfxPlatform::FallbackFromAcceleration(
         gfx::FeatureStatus::Unavailable, "Device resets exceeded threshold",
@@ -495,7 +525,7 @@ bool GPUProcessManager::DisableWebRenderConfig(wr::WebRenderError aError,
   // If we still have the GPU process, and we fallback to a new configuration
   // that prefers to have the GPU process, reset the counter.
   if (wantRestart && mProcess) {
-    mNumProcessAttempts = 1;
+    mUnstableProcessAttempts = 1;
   }
 
 #if defined(MOZ_WIDGET_ANDROID)
@@ -610,17 +640,17 @@ void GPUProcessManager::OnProcessUnexpectedShutdown(GPUProcessHost* aHost) {
   CompositorManagerChild::OnGPUProcessLost(aHost->GetProcessToken());
   DestroyProcess();
 
-  if (mNumProcessAttempts >
+  if (mUnstableProcessAttempts >
       uint32_t(StaticPrefs::layers_gpu_process_max_restarts())) {
     char disableMessage[64];
     SprintfLiteral(disableMessage, "GPU process disabled after %d attempts",
-                   mNumProcessAttempts);
+                   mTotalProcessAttempts);
     if (!MaybeDisableGPUProcess(disableMessage, /* aAllowRestart */ true)) {
       // Fallback wants the GPU process. Reset our counter.
-      mNumProcessAttempts = 0;
+      mUnstableProcessAttempts = 0;
       HandleProcessLost();
     }
-  } else if (mNumProcessAttempts >
+  } else if (mUnstableProcessAttempts >
                  uint32_t(StaticPrefs::
                               layers_gpu_process_max_restarts_with_decoder()) &&
              mDecodeVideoOnGpuProcess) {

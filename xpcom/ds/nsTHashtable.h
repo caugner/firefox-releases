@@ -161,9 +161,16 @@ class nsTHashtableKeyRange {
   auto cbegin() const { return begin(); }
   auto cend() const { return end(); }
 
+  uint32_t Count() const { return mHashtable.EntryCount(); }
+
  private:
   const PLDHashTable& mHashtable;
 };
+
+template <typename EntryType>
+auto RangeSize(const ::detail::nsTHashtableKeyRange<EntryType>& aRange) {
+  return aRange.Count();
+}
 
 }  // namespace detail
 
@@ -240,6 +247,9 @@ class MOZ_NEEDS_NO_VTABLE_TYPE nsTHashtable {
 
   nsTHashtable(nsTHashtable<EntryType>&& aOther);
   nsTHashtable<EntryType>& operator=(nsTHashtable<EntryType>&& aOther);
+
+  nsTHashtable(const nsTHashtable<EntryType>&) = delete;
+  nsTHashtable& operator=(const nsTHashtable<EntryType>&) = delete;
 
   /**
    * Return the generation number for the table. This increments whenever

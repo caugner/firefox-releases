@@ -41,7 +41,8 @@ Axis::Axis(AsyncPanZoomController* aAsyncPanZoomController)
       mAxisLocked(false),
       mAsyncPanZoomController(aAsyncPanZoomController),
       mOverscroll(0),
-      mMSDModel(0.0, 0.0, 0.0, 400.0, 1.2),
+      mMSDModel(0.0, 0.0, 0.0, StaticPrefs::apz_overscroll_spring_stiffness(),
+                StaticPrefs::apz_overscroll_damping()),
       mVelocityTracker(mAsyncPanZoomController->GetPlatformSpecificState()
                            ->CreateVelocityTracker(this)) {}
 
@@ -98,8 +99,6 @@ bool Axis::AdjustDisplacement(
     return false;
   }
 
-  EndOverscrollAnimation();
-
   ParentLayerCoord displacement = aDisplacement;
 
   // First consume any overscroll in the opposite direction along this axis.
@@ -111,6 +110,11 @@ bool Axis::AdjustDisplacement(
   }
   mOverscroll -= consumedOverscroll;
   displacement += consumedOverscroll;
+
+  if (consumedOverscroll != 0.0f) {
+    AXIS_LOG("%p|%s changed overscroll amount to %f\n", mAsyncPanZoomController,
+             Name(), mOverscroll.value);
+  }
 
   // Split the requested displacement into an allowed displacement that does
   // not overscroll, and an overscroll amount.
@@ -153,7 +157,7 @@ void Axis::OverscrollBy(ParentLayerCoord aOverscroll) {
   aOverscroll = ApplyResistance(aOverscroll);
   if (aOverscroll > 0) {
 #ifdef DEBUG
-    if (!FuzzyEqualsCoordinate(GetCompositionEnd().value, GetPageEnd().value)) {
+    if (!IsScrolledToEnd()) {
       nsPrintfCString message(
           "composition end (%f) is not equal (within error) to page end (%f)\n",
           GetCompositionEnd().value, GetPageEnd().value);
@@ -164,7 +168,7 @@ void Axis::OverscrollBy(ParentLayerCoord aOverscroll) {
     MOZ_ASSERT(mOverscroll >= 0);
   } else if (aOverscroll < 0) {
 #ifdef DEBUG
-    if (!FuzzyEqualsCoordinate(GetOrigin().value, GetPageStart().value)) {
+    if (!IsScrolledToStart()) {
       nsPrintfCString message(
           "composition origin (%f) is not equal (within error) to page origin "
           "(%f)\n",
@@ -176,6 +180,9 @@ void Axis::OverscrollBy(ParentLayerCoord aOverscroll) {
     MOZ_ASSERT(mOverscroll <= 0);
   }
   mOverscroll += aOverscroll;
+
+  AXIS_LOG("%p|%s changed overscroll amount to %f\n", mAsyncPanZoomController,
+           Name(), mOverscroll.value);
 }
 
 ParentLayerCoord Axis::GetOverscroll() const { return mOverscroll; }
@@ -185,12 +192,17 @@ void Axis::RestoreOverscroll(ParentLayerCoord aOverscroll) {
 }
 
 void Axis::StartOverscrollAnimation(float aVelocity) {
-  aVelocity = clamped(aVelocity / 2.0f, -20.0f, 20.0f);
+  const float maxVelocity = StaticPrefs::apz_overscroll_max_velocity();
+  aVelocity = clamped(aVelocity / 2.0f, -maxVelocity, maxVelocity);
   SetVelocity(aVelocity);
   mMSDModel.SetPosition(mOverscroll);
   // Convert velocity from ParentLayerCoords/millisecond to
   // ParentLayerCoords/second.
   mMSDModel.SetVelocity(DoGetVelocity() * 1000.0);
+
+  AXIS_LOG(
+      "%p|%s beginning overscroll animation with amount %f and velocity %f\n",
+      mAsyncPanZoomController, Name(), mOverscroll.value, DoGetVelocity());
 }
 
 void Axis::EndOverscrollAnimation() {
@@ -201,6 +213,9 @@ void Axis::EndOverscrollAnimation() {
 bool Axis::SampleOverscrollAnimation(const TimeDuration& aDelta) {
   mMSDModel.Simulate(aDelta);
   mOverscroll = mMSDModel.GetPosition();
+
+  AXIS_LOG("%p|%s changed overscroll amount to %f\n", mAsyncPanZoomController,
+           Name(), mOverscroll.value);
 
   if (mMSDModel.IsFinished(1.0)) {
     // "Jump" to the at-rest state. The jump shouldn't be noticeable as the
@@ -216,7 +231,34 @@ bool Axis::SampleOverscrollAnimation(const TimeDuration& aDelta) {
   return true;
 }
 
+bool Axis::IsOverscrollAnimationRunning() const {
+  return !mMSDModel.IsFinished(1.0);
+}
+
+bool Axis::IsOverscrollAnimationAlive() const {
+  // Unlike IsOverscrollAnimationRunning, check the position and the velocity to
+  // be sure that the animation has started but hasn't yet finished.
+  return mMSDModel.GetPosition() != 0.0 || mMSDModel.GetVelocity() != 0.0;
+}
+
 bool Axis::IsOverscrolled() const { return mOverscroll != 0.f; }
+
+bool Axis::IsScrolledToStart() const {
+  return FuzzyEqualsCoordinate(GetOrigin().value, GetPageStart().value);
+}
+
+bool Axis::IsScrolledToEnd() const {
+  return FuzzyEqualsCoordinate(GetCompositionEnd().value, GetPageEnd().value);
+}
+
+bool Axis::IsInInvalidOverscroll() const {
+  if (mOverscroll > 0) {
+    return !IsScrolledToEnd();
+  } else if (mOverscroll < 0) {
+    return !IsScrolledToStart();
+  }
+  return false;
+}
 
 void Axis::ClearOverscroll() {
   EndOverscrollAnimation();

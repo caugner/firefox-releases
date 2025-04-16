@@ -13,6 +13,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
+  UrlbarProviderQuickSuggest:
+    "resource:///modules/UrlbarProviderQuickSuggest.jsm",
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
   UrlbarSearchOneOffs: "resource:///modules/UrlbarSearchOneOffs.jsm",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.jsm",
@@ -676,7 +678,7 @@ class UrlbarView {
     ) {
       let engine = secondResult.payload.engine;
       this.window.A11yUtils.announce({
-        id: UrlbarUtils.WEB_ENGINE_NAMES.has(engine)
+        id: secondResult.payload.isGeneralPurposeEngine
           ? "urlbar-result-action-before-tabtosearch-web"
           : "urlbar-result-action-before-tabtosearch-other",
         args: { engine },
@@ -899,31 +901,36 @@ class UrlbarView {
    * reusing existing rows.
    * @param {number} rowIndex Index of the row to examine.
    * @param {UrlbarResult} result The result we'd like to apply.
-   * @param {number} firstSearchSuggestionIndex Index of the first search suggestion.
-   * @param {number} lastSearchSuggestionIndex Index of the last search suggestion.
-   * @param {UrlbarQueryContext} queryContext The current context.
+   * @param {boolean} seenSearchSuggestion Whether the view update has
+   *        encountered an existing row with a search suggestion result.
    * @returns {boolean} Whether the row can be updated to this result.
    */
-  _rowCanUpdateToResult(
-    rowIndex,
-    result,
-    firstSearchSuggestionIndex,
-    lastSearchSuggestionIndex,
-    queryContext
-  ) {
+  _rowCanUpdateToResult(rowIndex, result, seenSearchSuggestion) {
     // The heuristic result must always be current, thus it's always compatible.
     if (result.heuristic) {
       return true;
     }
     let row = this._rows.children[rowIndex];
-    // Don't reuse the final row if the result has a different suggested index
-    // since it sticks to the same spot in the view, making any flicker very
-    // noticeable.  This should apply to every row, but we want to avoid bug
-    // 1697517, so for now we use this narrow fix.
+    if (result.hasSuggestedIndex != row.result.hasSuggestedIndex) {
+      // Don't replace a suggestedIndex result with a non-suggestedIndex result
+      // or vice versa.
+      return false;
+    }
     if (
-      result.suggestedIndex !== row.result.suggestedIndex &&
-      rowIndex == queryContext.maxResults - 1
+      result.hasSuggestedIndex &&
+      result.suggestedIndex != row.result.suggestedIndex
     ) {
+      // Don't replace a suggestedIndex result with another suggestedIndex
+      // result if the suggestedIndex values are different.
+      return false;
+    }
+    if (
+      (result.providerName == "UrlbarProviderQuickSuggest") !=
+      (row.result.providerName == "UrlbarProviderQuickSuggest")
+    ) {
+      // Don't replace a quick suggest result with a non-quick suggest result or
+      // vice versa.
+      // TODO (Bug 1710518): Come up with a more general solution.
       return false;
     }
     let resultIsSearchSuggestion = this._resultIsSearchSuggestion(result);
@@ -937,7 +944,7 @@ class UrlbarView {
     // index range.
     // In practice we don't want to overwrite a search suggestion with a non
     // search suggestion, but we allow the opposite.
-    return resultIsSearchSuggestion && rowIndex >= firstSearchSuggestionIndex;
+    return resultIsSearchSuggestion && seenSearchSuggestion;
   }
 
   _updateResults(queryContext) {
@@ -945,61 +952,111 @@ class UrlbarView {
     // future we should make it support any type of result. Or, even better,
     // results should be grouped, thus we can directly update groups.
 
-    // Find where are existing search suggestions.
-    let firstSearchSuggestionIndex = -1;
-    let lastSearchSuggestionIndex = -1;
-    for (let i = 0; i < this._rows.children.length; ++i) {
-      let row = this._rows.children[i];
-      // Mark every row as stale, _updateRow will unmark them later.
-      row.setAttribute("stale", "true");
-      // Skip any row that isn't a search suggestion, or is non-visible because
-      // over maxResults.
-      if (
-        row.result.heuristic ||
-        i >= queryContext.maxResults ||
-        !this._resultIsSearchSuggestion(row.result)
-      ) {
-        continue;
-      }
-      if (firstSearchSuggestionIndex == -1) {
-        firstSearchSuggestionIndex = i;
-      }
-      lastSearchSuggestionIndex = i;
-    }
-
     // Walk rows and find an insertion index for results. To avoid flicker, we
     // skip rows until we find one compatible with the result we want to apply.
     // If we couldn't find a compatible range, we'll just update.
     let results = queryContext.results;
+    let rowIndex = 0;
     let resultIndex = 0;
+    let visibleSpanCount = 0;
+    let seenMisplacedResult = false;
+    let seenSearchSuggestion = false;
+
     // We can have more rows than the visible ones.
     for (
-      let rowIndex = 0;
+      ;
       rowIndex < this._rows.children.length && resultIndex < results.length;
       ++rowIndex
     ) {
       let row = this._rows.children[rowIndex];
-      let result = results[resultIndex];
-      if (
-        this._rowCanUpdateToResult(
-          rowIndex,
-          result,
-          firstSearchSuggestionIndex,
-          lastSearchSuggestionIndex,
-          queryContext
-        )
-      ) {
-        this._updateRow(row, result);
-        resultIndex++;
+      if (this._isElementVisible(row)) {
+        visibleSpanCount += UrlbarUtils.getSpanForResult(row.result);
+      }
+      // Continue updating rows as long as we haven't encountered a new
+      // suggestedIndex result that couldn't replace a current result.
+      if (!seenMisplacedResult) {
+        seenSearchSuggestion =
+          seenSearchSuggestion ||
+          (!row.result.heuristic && this._resultIsSearchSuggestion(row.result));
+        let result = results[resultIndex];
+        if (
+          this._rowCanUpdateToResult(rowIndex, result, seenSearchSuggestion)
+        ) {
+          // We can replace the row's current result with the new one.
+          this._updateRow(row, result);
+          resultIndex++;
+          continue;
+        }
+        if (
+          result.hasSuggestedIndex ||
+          row.result.hasSuggestedIndex ||
+          result.providerName == "UrlbarProviderQuickSuggest" ||
+          row.result.providerName == "UrlbarProviderQuickSuggest"
+        ) {
+          seenMisplacedResult = true;
+        }
+      }
+      row.setAttribute("stale", "true");
+    }
+
+    // Mark all the remaining rows as stale and update the visible span count.
+    // We include stale rows in the count because we should never show more than
+    // maxResults spans at one time.  Later we'll remove stale rows and unhide
+    // excess non-stale rows.
+    for (; rowIndex < this._rows.children.length; ++rowIndex) {
+      let row = this._rows.children[rowIndex];
+      row.setAttribute("stale", "true");
+      if (this._isElementVisible(row)) {
+        visibleSpanCount += UrlbarUtils.getSpanForResult(row.result);
       }
     }
+
     // Add remaining results, if we have fewer rows than results.
     for (; resultIndex < results.length; ++resultIndex) {
       let row = this._createRow();
-      this._updateRow(row, results[resultIndex]);
-      // Due to stale rows, we may have more rows than maxResults, thus we must
-      // hide them, and we'll revert this when stale rows are removed.
-      if (this._rows.children.length >= queryContext.maxResults) {
+      let result = results[resultIndex];
+      this._updateRow(row, result);
+      if (!seenMisplacedResult && result.hasSuggestedIndex) {
+        // We need to check whether the new suggestedIndex result will end up at
+        // its right index if we append it here. The "right" index is the final
+        // index the result will occupy once the update is done and all stale
+        // rows have been removed. We could use a more flexible definition, but
+        // we use this strict one in order to avoid all perceived flicker and
+        // movement of suggestedIndex results. Once stale rows are removed, the
+        // final number of rows in the view will be the new result count, so we
+        // base our arithmetic here on it.
+        let finalIndex =
+          result.suggestedIndex >= 0
+            ? Math.min(results.length - 1, result.suggestedIndex)
+            : Math.max(0, results.length + result.suggestedIndex);
+        if (this._rows.children.length != finalIndex) {
+          seenMisplacedResult = true;
+        }
+      }
+      if (
+        !seenMisplacedResult &&
+        result.providerName == "UrlbarProviderQuickSuggest"
+      ) {
+        // Quick suggest results always come last in the general bucket, so we
+        // can't know at this point what their right indexes will be. To avoid
+        // all possible flicker, don't make new quick suggest rows (and all rows
+        // after quick suggest rows) visible until stale rows are removed.
+        // TODO (Bug 1710518): Come up with a more general solution.
+        seenMisplacedResult = true;
+      }
+      let newVisibleSpanCount =
+        visibleSpanCount + UrlbarUtils.getSpanForResult(result);
+      if (
+        newVisibleSpanCount <= queryContext.maxResults &&
+        !seenMisplacedResult
+      ) {
+        // The new row can be visible.
+        visibleSpanCount = newVisibleSpanCount;
+      } else {
+        // The new row must be hidden at first because the view is already
+        // showing maxResults spans, or we encountered a new suggestedIndex
+        // result that couldn't be placed in the right spot. We'll show it when
+        // stale rows are removed.
         this._setRowVisibility(row, false);
       }
       this._rows.appendChild(row);
@@ -1341,7 +1398,7 @@ class UrlbarView {
           actionSetter = () => {
             this.document.l10n.setAttributes(
               action,
-              UrlbarUtils.WEB_ENGINE_NAMES.has(result.payload.engine)
+              result.payload.isGeneralPurposeEngine
                 ? "urlbar-result-action-tabtosearch-web"
                 : "urlbar-result-action-tabtosearch-other-engine",
               { engine: result.payload.engine }
@@ -1586,13 +1643,48 @@ class UrlbarView {
     }
   }
 
+  /**
+   * Performs a final pass over all rows in the view after a view update, stale
+   * rows are removed, and other changes to the number of rows. Sets `rowIndex`
+   * on each result, updates row labels, and performs other tasks that must be
+   * deferred until all rows have been updated.
+   */
   _updateIndices() {
+    // `currentLabel` is the last-seen row label as we iterate through the rows.
+    // When we encounter a label that's different from `currentLabel`, we add it
+    // to the row and set it to `currentLabel`; we remove the labels for all
+    // other rows, and therefore no label will appear adjacent to itself. (A
+    // label may appear more than once, but there will be at least one different
+    // label in between.) Each row's label is determined by `_rowLabel()`.
+    let currentLabel;
+
     let visibleRowsExist = false;
     for (let i = 0; i < this._rows.children.length; i++) {
       let item = this._rows.children[i];
       item.result.rowIndex = i;
-      visibleRowsExist = visibleRowsExist || this._isElementVisible(item);
+
+      let visible = this._isElementVisible(item);
+      visibleRowsExist = visibleRowsExist || visible;
+
+      // Show or hide the row's label as appropriate.
+      let label;
+      if (visible) {
+        label = this._rowLabel(item, currentLabel);
+        if (label) {
+          if (label == currentLabel) {
+            label = null;
+          } else {
+            currentLabel = label;
+          }
+        }
+      }
+      if (label) {
+        item.setAttribute("label", label);
+      } else {
+        item.removeAttribute("label");
+      }
     }
+
     let selectableElement = this._getFirstSelectableElement();
     let uiIndex = 0;
     while (selectableElement) {
@@ -1604,6 +1696,34 @@ class UrlbarView {
     } else {
       this.panel.setAttribute("noresults", "true");
     }
+  }
+
+  _rowLabel(row, currentLabel) {
+    // We only show Firefox Suggest-related labels if the feature is enabled and
+    // we're not showing top sites.
+    if (
+      UrlbarPrefs.get("firefoxSuggestLabelsEnabled") &&
+      this._queryContext?.searchString &&
+      !row.result.heuristic
+    ) {
+      switch (row.result.type) {
+        case UrlbarUtils.RESULT_TYPE.KEYWORD:
+        case UrlbarUtils.RESULT_TYPE.REMOTE_TAB:
+        case UrlbarUtils.RESULT_TYPE.TAB_SWITCH:
+        case UrlbarUtils.RESULT_TYPE.URL:
+          return UrlbarProviderQuickSuggest.featureName;
+        case UrlbarUtils.RESULT_TYPE.SEARCH:
+          // We only show the "<engine> suggestions" label if it's not the first
+          // label. This string is hardcoded en-US for now.
+          if (currentLabel && row.result.payload.suggestion) {
+            let engineName =
+              row.result.payload.engine || Services.search.defaultEngine.name;
+            return engineName + " suggestions";
+          }
+          break;
+      }
+    }
+    return null;
   }
 
   _setRowVisibility(row, visible) {
@@ -1618,6 +1738,7 @@ class UrlbarView {
       // again, we'll get new overflow events if needed.
       this._setElementOverflowing(row._elements.get("title"), false);
       this._setElementOverflowing(row._elements.get("url"), false);
+      this._setElementOverflowing(row._elements.get("tagsContainer"), false);
     }
   }
 
@@ -2192,7 +2313,8 @@ class UrlbarView {
     if (
       event.detail == 1 &&
       (event.target.classList.contains("urlbarView-url") ||
-        event.target.classList.contains("urlbarView-title"))
+        event.target.classList.contains("urlbarView-title") ||
+        event.target.classList.contains("urlbarView-tags"))
     ) {
       this._setElementOverflowing(event.target, true);
     }
@@ -2202,7 +2324,8 @@ class UrlbarView {
     if (
       event.detail == 1 &&
       (event.target.classList.contains("urlbarView-url") ||
-        event.target.classList.contains("urlbarView-title"))
+        event.target.classList.contains("urlbarView-title") ||
+        event.target.classList.contains("urlbarView-tags"))
     ) {
       this._setElementOverflowing(event.target, false);
     }

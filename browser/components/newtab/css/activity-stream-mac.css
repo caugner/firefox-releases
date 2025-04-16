@@ -31,7 +31,7 @@ input {
   display: none !important; }
 
 body {
-  --newtab-background-color: #F9F9FA;
+  --newtab-background-color: #F9F9FB;
   --newtab-border-primary-color: #B1B1B3;
   --newtab-border-secondary-color: #D7D7DB;
   --newtab-element-active-color: rgba(215, 215, 219, 0.6);
@@ -45,7 +45,7 @@ body {
   --newtab-link-primary-color: #0060DF;
   --newtab-link-secondary-color: #008EA4;
   --newtab-text-conditional-color: #4A4A4F;
-  --newtab-text-primary-color: #0C0C0D;
+  --newtab-text-primary-color: #15141a;
   --newtab-text-secondary-color: #737373;
   --newtab-textbox-background-color: #FFF;
   --newtab-textbox-border: rgba(12, 12, 13, 0.2);
@@ -96,6 +96,7 @@ body {
   --newtab-primary-action-background-off: #E9E9E9;
   --customize-menu-primary-text-color: #20123A;
   --customize-menu-check-fill: #FFF;
+  --customize-menu-check-fill-contrast: #000;
   --customize-menu-background: #FFF;
   --customize-menu-secondary-action-background: #F9F9FA;
   --customize-menu-secondary-action-background-hover: #EDEDF0;
@@ -128,7 +129,7 @@ body {
     --newtab-link-primary-color: #45A1FF;
     --newtab-link-secondary-color: #50BCB6;
     --newtab-text-conditional-color: #F9F9FA;
-    --newtab-text-primary-color: #F9F9FA;
+    --newtab-text-primary-color: #fbfbfe;
     --newtab-text-secondary-color: rgba(249, 249, 250, 0.8);
     --newtab-textbox-background-color: #38383D;
     --newtab-textbox-border: rgba(249, 249, 250, 0.2);
@@ -280,7 +281,7 @@ body {
   .icon.icon-check {
     background-image: url("chrome://global/skin/icons/check.svg"); }
   .icon.icon-download {
-    background-image: url("chrome://browser/skin/downloads/download-icons.svg#arrow-with-bar"); }
+    background-image: url("chrome://browser/skin/downloads/downloads.svg"); }
   .icon.icon-copy {
     background-image: url("chrome://browser/skin/edit-copy.svg"); }
   .icon.icon-open-file {
@@ -531,8 +532,7 @@ main {
   background-color: var(--newtab-background-button-color);
   color: var(--newtab-background-button-text-color);
   padding: 3px 10px;
-  min-height: 32px;
-  max-width: 117px; }
+  min-height: 32px; }
   .personalize-button:hover {
     background-color: var(--newtab-background-button-hover-color); }
   .personalize-button:active {
@@ -1303,7 +1303,7 @@ main {
     outline: 0;
     border: 1px solid var(--newtab-focus-border);
     box-shadow: 0 0 0 2px var(--newtab-focus-outline); }
-  .outer-wrapper.newtab-experience .search-wrapper.fake-focus .search-handoff-button {
+  .outer-wrapper.newtab-experience .search-wrapper.fake-focus:not(.search.disabled) .search-handoff-button {
     border: 1px solid var(--newtab-focus-border);
     box-shadow: 0 0 0 2px var(--newtab-focus-outline); }
   .outer-wrapper.newtab-experience .search-wrapper .search-handoff-button,
@@ -1322,7 +1322,9 @@ main {
     .outer-wrapper.newtab-experience .search-wrapper input:dir(rtl) {
       background-position-x: right 16px; }
   .outer-wrapper.newtab-experience .search-wrapper .search-handoff-button {
-    padding-inline-end: 15px; }
+    padding-inline-end: 15px;
+    fill: currentColor;
+    -moz-context-properties: fill; }
     .outer-wrapper.newtab-experience .search-wrapper .search-handoff-button .fake-caret {
       top: 18px;
       inset-inline-start: 52px; }
@@ -1447,20 +1449,19 @@ main {
   padding-inline-end: 48px;
   padding-inline-start: 46px;
   opacity: 1;
-  transition: opacity 500ms;
   width: 100%; }
   .search-handoff-button:dir(rtl) {
     background-position-x: right 12px; }
   .search-handoff-button:hover {
     box-shadow: 0 1px 4px 0 rgba(12, 12, 13, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.25); }
-  .fake-focus .search-handoff-button {
+  .fake-focus:not(.search-disabled) .search-handoff-button {
     border: 1px solid var(--newtab-textbox-focus-color);
     box-shadow: var(--newtab-textbox-focus-boxshadow); }
-    .fake-focus .search-handoff-button .fake-caret {
+    .fake-focus:not(.search-disabled) .search-handoff-button .fake-caret {
       display: block; }
-  .search-hidden .search-handoff-button {
-    opacity: 0;
-    visibility: hidden; }
+  .search-disabled .search-handoff-button {
+    opacity: 0.5;
+    box-shadow: none; }
   .search-handoff-button .fake-editable:focus {
     outline: none;
     caret-color: transparent; }
@@ -1698,6 +1699,9 @@ main {
   transform: translateX(435px);
   visibility: hidden;
   cursor: default; }
+  @media (forced-colors: active) {
+    .customize-menu {
+      border-inline-start: solid 1px; } }
   .customize-menu:dir(rtl) {
     transform: translateX(-435px); }
   .customize-menu.customize-animate-enter-done {
@@ -1776,6 +1780,9 @@ main {
       fill: var(--customize-menu-check-fill);
       background: url("chrome://global/skin/icons/check.svg") center no-repeat;
       background-color: var(--newtab-primary-action-background); }
+      @media (forced-colors: active) {
+        .home-section .section .sponsored-checkbox:checked {
+          fill: var(--customize-menu-check-fill-contrast); } }
     .home-section .section .sponsored-checkbox:active + .checkmark {
       fill: rgba(0, 0, 0, 0.15); }
     .home-section .section .selector {
@@ -1825,8 +1832,7 @@ main {
         background-color: var(--customize-menu-primary-action-text);
         transition: transform 250ms;
         border-radius: 50%;
-        outline: 1px solid rgba(0, 0, 0, 0.15);
-        -moz-outline-radius: 11px; }
+        outline: 1px solid rgba(0, 0, 0, 0.15); }
     .home-section .section .switch input:focus-visible + .slider {
       border: 1px solid var(--newtab-focus-border-selected);
       outline: 0;
@@ -1879,6 +1885,10 @@ main {
     background-size: 16px;
     padding-inline-start: 21px;
     margin-bottom: 20px; }
+    @media (forced-colors: active) {
+      .home-section .external-link {
+        padding: 8px 10px;
+        padding-inline-start: 21px; } }
     .home-section .external-link:dir(rtl) {
       background-position-x: right; }
   .home-section .external-link:hover {
@@ -3140,10 +3150,10 @@ main {
 
 .ds-navigation {
   color: #737373;
-  padding: 4px 0;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 500;
   line-height: 22px;
-  font-size: 11.5px; }
+  padding: 4px 0; }
   [lwt-newtab-brighttext] .ds-navigation {
     color: #D7D7DB; }
   @media (min-width: 1122px) {
@@ -3171,6 +3181,9 @@ main {
       color: #003EAA; }
   .ds-navigation .ds-navigation-header {
     padding-inline-end: 6px; }
+  .ds-navigation .ds-navigation-privacy {
+    padding-inline-start: 6px;
+    float: inline-end; }
 
 .ds-section-title {
   text-align: center;
@@ -4070,7 +4083,7 @@ main {
     background: none;
     border: 0;
     position: absolute;
-    top: 50%;
+    top: 20px;
     inset-inline-end: 12px;
     height: 16px;
     width: 16px;

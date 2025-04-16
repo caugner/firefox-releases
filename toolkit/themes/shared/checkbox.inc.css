@@ -5,7 +5,7 @@
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
 @namespace html url("http://www.w3.org/1999/xhtml");
 
-@supports -moz-bool-pref("browser.proton.enabled") {
+@media (-moz-proton) {
 checkbox {
   appearance: none;
   -moz-box-align: center;
@@ -32,10 +32,10 @@ checkbox[disabled="true"] {
   appearance: none;
   height: 16px;
   width: 16px;
-  border: 1px solid var(--checkbox-border-color, ThreeDDarkShadow);
+  color: var(--checkbox-border-color, ThreeDDarkShadow);
   background-color: var(--checkbox-unchecked-bgcolor, Field);
+  border: 1px solid currentColor;
   border-radius: 2px;
-  color: FieldText;
   margin-inline-end: 6px;
 }
 
@@ -50,10 +50,14 @@ checkbox:not([disabled="true"]):hover:active > .checkbox-check {
 .checkbox-check[checked] {
   border-color: var(--checkbox-checked-border-color, transparent);
   background-color: var(--checkbox-checked-bgcolor, -moz-accent-color);
-  list-style-image: url("chrome://global/skin/icons/check.svg");
+  background-image: url("chrome://global/skin/icons/check.svg");
+  background-position: center;
+  background-repeat: no-repeat;
   -moz-context-properties: fill;
   fill: currentColor;
   color: var(--checkbox-checked-color, -moz-accent-color-foreground);
+  /* Style the button also when printing with "Print Backgrounds" unchecked */
+  color-adjust: exact;
 }
 
 checkbox:not([disabled="true"]):hover > .checkbox-check[checked] {
@@ -66,7 +70,6 @@ checkbox:not([disabled="true"]):hover:active > .checkbox-check[checked] {
 
 checkbox:not([native]):-moz-focusring > .checkbox-check {
   outline: 2px solid var(--focus-outline-color, -moz-accent-color);
-  outline-offset: var(--focus-outline-offset, -1px);
-  box-shadow: 0 0 0 4px var(--buttons-box-shadow, rgba(10, 132, 255, 0.3));
+  outline-offset: var(--focus-outline-offset, 2px);
 }
 } /** END Proton **/

@@ -21,35 +21,34 @@
   --panel-separator-color: ThreeDLightShadow;
 
   --chrome-content-separator-color: ThreeDShadow;
+  --tabs-border-color: threedshadow;
 }
 
-@supports not -moz-bool-pref("browser.proton.enabled") {
+@media not (-moz-proton) {
 :root {
   --toolbarbutton-border-radius: 2px;
 }
 } /* END !proton */
 
-#navigator-toolbox {
-  --tabs-border-color: threedshadow;
-}
-
+@media not (-moz-proton) {
 #tabbrowser-tabs {
   --tab-line-color: highlight;
 }
+} /* end !proton */
 
 @media (-moz-windows-default-theme) {
   :root {
-    --toolbar-non-lwt-bgcolor: #f9f9fa;
     --toolbar-non-lwt-textcolor: #0c0c0d;
     --toolbar-non-lwt-bgimage: none;
-
-    --toolbarbutton-icon-fill-opacity: .7;
 
     --panel-separator-color: hsla(210,4%,10%,.14);
 
     --chrome-content-separator-color: #e1e1e2;
+  }
 
-    --toolbar-field-non-lwt-bgcolor: #f0f0f4;
+  @media not (-moz-proton) {
+  :root {
+    --toolbarbutton-icon-fill-opacity: .7;
   }
 
   #navigator-toolbox {
@@ -59,6 +58,7 @@
   #tabbrowser-tabs {
     --tab-line-color: #0a84ff;
   }
+  } /* END !proton */
 }
 
 :root:-moz-lwtheme {
@@ -71,9 +71,11 @@
   --panel-separator-color: rgba(249,249,250,.1);
 }
 
+@media not (-moz-proton) {
 #navigator-toolbox:-moz-lwtheme {
   --tabs-border-color: rgba(0,0,0,.3);
 }
+} /* END !proton */
 
 #menubar-items {
   -moz-box-orient: vertical; /* for flex hack */
@@ -109,21 +111,16 @@
       height: calc(var(--tab-min-height) - var(--tabs-navbar-shadow-size));
     }
     :root[tabsintitlebar][sizemode="normal"] #toolbar-menubar[autohide="true"] {
-      height: calc(var(--tab-min-height) + var(--space-above-tabbar) - var(--tabs-navbar-shadow-size));
+      height: calc(var(--tab-min-height) - var(--tabs-navbar-shadow-size));
     }
   }
-}
-
-:root[sizemode="normal"][chromehidden~="menubar"] #TabsToolbar > .toolbar-items,
-:root[sizemode="normal"] #toolbar-menubar[autohide="true"][inactive] + #TabsToolbar > .toolbar-items {
-  padding-top: var(--space-above-tabbar);
 }
 
 /* Add 4px extra margin on top of the tabs toolbar on Windows 7. */
 @media (-moz-os-version: windows-win7) {
   :root[sizemode="normal"][chromehidden~="menubar"] #TabsToolbar > .toolbar-items,
   :root[sizemode="normal"] #toolbar-menubar[autohide="true"][inactive] + #TabsToolbar > .toolbar-items {
-    padding-top: calc(var(--space-above-tabbar) + 4px);
+    padding-top: 4px;
   }
 }
 
@@ -139,7 +136,7 @@
   color: var(--toolbar-color);
 }
 
-@supports -moz-bool-pref("browser.proton.tabs.enabled") {
+@media (-moz-proton) {
 /* Add a fog for background tabs to be visible on Windows 7 glass window background */
 @media (-moz-os-version: windows-win7) {
   @media (-moz-windows-default-theme) {
@@ -150,7 +147,7 @@
 }
 } /*** END proton ***/
 
-@supports not -moz-bool-pref("browser.proton.tabs.enabled") {
+@media not (-moz-proton) {
 /*
  * Windows 7 draws the chrome background color as the tab background
  * instead of in the tabs toolbar.
@@ -532,9 +529,12 @@ menuitem.bookmark-item {
 %include ../shared/urlbar-searchbar.inc.css
 
 @media not (prefers-contrast) {
-  @supports -moz-bool-pref("browser.proton.urlbar.enabled") {
+  @media (-moz-proton) {
   :root:not(:-moz-lwtheme) #urlbar:not([focused="true"]) {
     --urlbar-box-bgcolor: white;
+  }
+  :root[lwt-default-theme-in-dark-mode] #urlbar:not([focused="true"]) {
+    --urlbar-box-bgcolor: var(--lwt-toolbar-field-focus);
   }
   } /*** END proton ***/
 }
@@ -572,20 +572,19 @@ menuitem.bookmark-item {
 
 @media (-moz-windows-default-theme: 0) {
   :root:not(:-moz-lwtheme) {
-    --urlbar-popup-url-color: -moz-nativehyperlinktext;
     --urlbar-popup-action-color: -moz-nativehyperlinktext;
+  }
 
-    --urlbarView-button-text: buttontext;
-    --urlbarView-button-background: buttonface;
-    --urlbarView-button-background-hover: buttonface;
-    --urlbarView-button-background-active: buttonface;
-    --urlbarView-button-border: threedshadow;
-    --urlbarView-primary-button-text: highlighttext;
-    --urlbarView-primary-button-background: highlight;
-    --urlbarView-primary-button-background-hover: highlight;
-    --urlbarView-primary-button-background-active: highlight;
+  :root:not(:-moz-lwtheme) .urlbarView-tip-button[selected] {
+    color: var(--buttons-primary-button-color, highlighttext);
   }
 }
+
+@media not (-moz-proton) {
+:root:not(:-moz-lwtheme) {
+  --urlbar-popup-url-color: -moz-nativehyperlinktext;
+}
+} /*** END !proton ***/
 
 /* Autocomplete */
 
@@ -624,7 +623,7 @@ menuitem.bookmark-item {
   }
 }
 
-@supports not -moz-bool-pref("browser.proton.tabs.enabled") {
+@media not (-moz-proton) {
 /* tabbrowser-tab focus ring */
 .keyboard-focused-tab > .tab-stack > .tab-content,
 .tabbrowser-tab:focus:not([aria-activedescendant]) > .tab-stack > .tab-content {
@@ -770,16 +769,86 @@ panel[touchmode] .PanelUI-subView #appMenu-zoom-controls > .subviewbutton-iconic
   margin-top: -4px;
 }
 
-@supports (-moz-bool-pref("browser.proton.contextmenus.enabled")) {
+@media (-moz-proton-contextmenus) {
 @media (-moz-windows-default-theme) and (-moz-os-version: windows-win10) {
-  #context-navigation {
+  /* :not([hidden]) to avoid the display: flex unhiding the item. */
+  #context-navigation:not([hidden]) {
     /* The Windows 10 version of the navigation area needs the scrollbox's
        background color, not the builtin "menu" color. */
     background-color: inherit;
-    /* The Win10 context menu wants the icons centered vertically in the
-       navigation group, not with a gap on the bottom. */
-    padding-bottom: 0;
+    padding: 0 0 4px;
+    /* Use modern flex box so we can use percentage widths to redistribute
+     * spacing manually. */
+    display: flex;
+    flex-direction: row;
+    /* We want the first and last icons to align with the text items which
+     * have 1em inline padding, and for icons to be centered within their
+     * hover state, so each icon of 16px needs 1em padding on both sides:
+     */
+    --menuitem-min-width: calc(2em + 16px);
+    /* The total width of the container should then be at least 4 times that: */
+    min-width: calc(4 * var(--menuitem-min-width));
   }
+
+  #context-navigation > .menuitem-iconic {
+    flex: 1 0 auto;
+  }
+
+  #context-navigation > .menuitem-iconic[_moz-menuactive="true"] {
+    /* We only show hover state on the icons. This ensures there is no
+     * dead space between icons, but the visible hover state is only
+     * around the icons, and all the icons' hover states match each other.
+     */
+    background-color: transparent;
+  }
+
+  #context-navigation > .menuitem-iconic > .menu-iconic-left {
+    margin: 0;
+    padding: 0;
+  }
+
+  /* override styles from shared/contextmenu.inc.css */
+  #context-navigation > .menuitem-iconic > .menu-iconic-left > .menu-iconic-icon {
+    width: var(--menuitem-min-width);
+    height: 32px;
+    padding: 8px 1em;
+    margin: 0;
+  }
+  #context-navigation > .menuitem-iconic[_moz-menuactive="true"]:not([disabled="true"]) > .menu-iconic-left > .menu-iconic-icon {
+    background-color: var(--menuitem-hover-background-color);
+  }
+  #context-navigation > .menuitem-iconic[_moz-menuactive="true"][disabled="true"] > .menu-iconic-left > .menu-iconic-icon {
+    background-color: var(--menuitem-disabled-hover-background-color);
+  }
+
+  /* If the menu is wider than the icons strictly need, the <menuitem> elements
+   * will stretch to pick up the extra space. In that case, the outer icons
+   * should align to the start/end of their containing <menuitem>: */
+  #context-navigation > .menuitem-iconic:first-child {
+    -moz-box-pack: start;
+  }
+
+  #context-navigation > .menuitem-iconic:last-child {
+    -moz-box-pack: end;
+  }
+
+  #context-navigation > .menuitem-iconic:last-child,
+  #context-navigation > .menuitem-iconic:first-child {
+    flex-grow: 0;
+    /* The first and last items start off as 16px + 2em, like the other ones.
+     * 100% is the width of the parent, which will be at least 4 * the width of
+     * an individual item (16px + 2em)
+     * So 100% - 4 item widths gets us the remaining available space if
+     * #context-navigation is wider than that.
+     * Then divide by 6 to get the 1/6 of that extra space, and add this space
+     * to the width of the first/last items.
+     * This ensures that the 3 visual gaps between the 4 icons are all the same
+     * size, with each 1/3 of the available space evenly distributed between
+     * the 2 items on either side of the gap.
+     */
+    width: calc(var(--menuitem-min-width) + calc(100% - 4 * var(--menuitem-min-width)) / 6);
+  }
+
 
   /* Other menu separators don't extend all the way to the menu edges, but the
      one below the navigation buttons in the content context menu should. */
@@ -787,29 +856,21 @@ panel[touchmode] .PanelUI-subView #appMenu-zoom-controls > .subviewbutton-iconic
     margin-top: 0;
     margin-inline: 0;
   }
-
-  /* We also have different navigation icons for Win10. */
-  #context-back {
-    list-style-image: url("chrome://browser/skin/menus/back.svg");
-  }
-  #context-forward {
-    list-style-image: url("chrome://browser/skin/menus/forward.svg");
-  }
-  #context-reload {
-    list-style-image: url("chrome://browser/skin/menus/reload.svg");
-  }
-  #context-bookmarkpage {
-    list-style-image: url("chrome://browser/skin/menus/bookmark-hollow.svg");
-  }
 }
 }
 
 %include browser-aero.css
 
+.cui-widget-panelview[id^=PanelUI-webext-] {
+  border-radius: var(--arrowpanel-border-radius);
+}
+
+@media not (-moz-proton) {
 @media (-moz-os-version: windows-win7) {
   .cui-widget-panelview[id^=PanelUI-webext-] {
     border-radius: 4px;
   }
+}
 }
 
 .webextension-popup-browser,

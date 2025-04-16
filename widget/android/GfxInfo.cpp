@@ -599,13 +599,18 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       const nsCString& gpu = mGLStrings->Renderer();
       NS_LossyConvertUTF16toASCII model(mModel);
 
-#ifdef NIGHTLY_BUILD
-      // On Nightly enable Webrender on all Adreno 4xx GPUs
-      isUnblocked |= gpu.Find("Adreno (TM) 4", /*ignoreCase*/ true) >= 0;
-#endif
-      // Enable Webrender on all Adreno 5xx and 6xx GPUs
-      isUnblocked |= gpu.Find("Adreno (TM) 5", /*ignoreCase*/ true) >= 0 ||
+      // Enable Webrender on all Adreno 4xx and 6xx GPUs
+      isUnblocked |= gpu.Find("Adreno (TM) 4", /*ignoreCase*/ true) >= 0 ||
                      gpu.Find("Adreno (TM) 6", /*ignoreCase*/ true) >= 0;
+
+      // Enable Webrender on all Adreno 5xx GPUs...
+      isUnblocked |=
+          gpu.Find("Adreno (TM) 5", /*ignoreCase*/ true) >= 0 &&
+          // Excluding 505 and 506 on Android 9 due to crashes during
+          // shader compilation. See bug 1609191.
+          !((gpu.Find("Adreno (TM) 505", /*ignoreCase*/ true) >= 0 ||
+             gpu.Find("Adreno (TM) 506", /*ignoreCase*/ true) >= 0) &&
+            mSDKVersion == 28);
 
       // Enable Webrender on all Mali-Txxx GPUs
       isUnblocked |= gpu.Find("Mali-T", /*ignoreCase*/ true) >= 0;
@@ -614,6 +619,9 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       isUnblocked |= gpu.Find("Mali-G", /*ignoreCase*/ true) >= 0 &&
                      // Excluding G31 due to bug 1689947.
                      gpu.Find("Mali-G31", /*ignoreCase*/ true) == kNotFound;
+
+      // Enable Webrender on all PowerVR Rogue GPUs
+      isUnblocked |= gpu.Find("PowerVR Rogue", /*ignoreCase*/ true) >= 0;
 
       if (!isUnblocked) {
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
@@ -640,14 +648,30 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       return NS_OK;
     }
 
+    if (aFeature == FEATURE_WEBRENDER_SHADER_CACHE) {
+      // Program binaries are known to be buggy on Adreno 3xx. While we haven't
+      // encountered any correctness or stability issues with them, loading them
+      // fails more often than not, so is a waste of time. Better to just not
+      // even attempt to cache them. See bug 1615574.
+      const bool isAdreno3xx = mGLStrings->Renderer().Find(
+                                   "Adreno (TM) 3", /*ignoreCase*/ true) >= 0;
+      if (isAdreno3xx) {
+        *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
+        aFailureId = "FEATURE_FAILURE_ADRENO_3XX";
+      } else {
+        *aStatus = nsIGfxInfo::FEATURE_STATUS_OK;
+      }
+    }
+
     if (aFeature == FEATURE_WEBRENDER_OPTIMIZED_SHADERS) {
-      // Optimized shaders result in completely broken rendering in at least one
-      // Mali-T6xx device. Disable on all T6xx as a precaution until we know
-      // more specifically which devices are affected. See bug 1689064 for
-      // details.
-      const bool isMaliT6xx =
-          mGLStrings->Renderer().Find("Mali-T6", /*ignoreCase*/ true) >= 0;
-      if (isMaliT6xx) {
+      // Optimized shaders result in completely broken rendering on some Mali-T
+      // devices. We have seen this on T6xx, T7xx, and T8xx on android versions
+      // up to 5.1, and on T6xx on versions up to android 7.1. As a precaution
+      // disable for all Mali-T regardless of version. See bug 1689064 and bug
+      // 1707283 for details.
+      const bool isMaliT =
+          mGLStrings->Renderer().Find("Mali-T", /*ignoreCase*/ true) >= 0;
+      if (isMaliT) {
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
         aFailureId = "FEATURE_FAILURE_BUG_1689064";
       } else {
@@ -655,6 +679,34 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       }
       return NS_OK;
     }
+
+#ifdef NIGHTLY_BUILD
+    if (aFeature == FEATURE_WEBRENDER_SOFTWARE) {
+      const bool isMali4xx =
+          mGLStrings->Renderer().Find("Mali-4", /*ignoreCase*/ true) >= 0;
+      if (isMali4xx) {
+        *aStatus = nsIGfxInfo::FEATURE_ALLOW_ALWAYS;
+      } else {
+        *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
+        aFailureId = "FEATURE_FAILURE_BUG_1703140";
+      }
+      return NS_OK;
+    }
+#endif
+  }
+
+  if (aFeature == FEATURE_GL_SWIZZLE) {
+    // Swizzling appears to be buggy on PowerVR Rogue devices with webrender.
+    // See bug 1704783.
+    const bool isPowerVRRogue =
+        mGLStrings->Renderer().Find("PowerVR Rogue", /*ignoreCase*/ true) >= 0;
+    if (isPowerVRRogue) {
+      *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
+      aFailureId = "FEATURE_FAILURE_POWERVR_ROGUE";
+    } else {
+      *aStatus = nsIGfxInfo::FEATURE_STATUS_OK;
+    }
+    return NS_OK;
   }
 
   return GfxInfoBase::GetFeatureStatusImpl(

@@ -39,6 +39,7 @@
 #include "mozilla/layers/UiCompositorControllerParent.h"
 #include "mozilla/layers/WebRenderImageHost.h"
 #include "mozilla/layers/WebRenderTextureHost.h"
+#include "mozilla/ProfilerMarkerTypes.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Unused.h"
@@ -48,10 +49,6 @@
 
 #ifdef XP_WIN
 #  include "mozilla/widget/WinCompositorWidget.h"
-#endif
-
-#ifdef MOZ_GECKO_PROFILER
-#  include "mozilla/ProfilerMarkerTypes.h"
 #endif
 
 bool is_in_main_thread() { return NS_IsMainThread(); }
@@ -83,24 +80,19 @@ void gecko_profiler_event_marker(const char* name) {
 
 void gecko_profiler_add_text_marker(const char* name, const char* text_bytes,
                                     size_t text_len, uint64_t microseconds) {
-#ifdef MOZ_GECKO_PROFILER
   if (profiler_thread_is_being_profiled()) {
     auto now = mozilla::TimeStamp::NowUnfuzzed();
-    auto start = now - mozilla::TimeDuration::FromMicroseconds(microseconds);
+    [[maybe_unused]] auto start =
+        now - mozilla::TimeDuration::FromMicroseconds(microseconds);
     PROFILER_MARKER_TEXT(
         mozilla::ProfilerString8View::WrapNullTerminatedString(name), GRAPHICS,
         mozilla::MarkerTiming::Interval(start, now),
         mozilla::ProfilerString8View(text_bytes, text_len));
   }
-#endif
 }
 
 bool gecko_profiler_thread_is_being_profiled() {
-#ifdef MOZ_GECKO_PROFILER
   return profiler_thread_is_being_profiled();
-#else
-  return false;
-#endif
 }
 
 bool is_glcontext_gles(void* const glcontext_ptr) {
@@ -257,14 +249,11 @@ class SceneBuiltNotification : public wr::NotificationHandler {
     CompositorThread()->Dispatch(NS_NewRunnableFunction(
         "SceneBuiltNotificationRunnable", [parent, epoch, startTime]() {
           auto endTime = TimeStamp::Now();
-#ifdef MOZ_GECKO_PROFILER
           if (profiler_can_accept_markers()) {
-            profiler_add_marker("CONTENT_FULL_PAINT_TIME",
-                                geckoprofiler::category::GRAPHICS,
-                                MarkerTiming::Interval(startTime, endTime),
-                                baseprofiler::markers::ContentBuildMarker{});
+            PROFILER_MARKER("CONTENT_FULL_PAINT_TIME", GRAPHICS,
+                            MarkerTiming::Interval(startTime, endTime),
+                            ContentBuildMarker);
           }
-#endif
           Telemetry::Accumulate(
               Telemetry::CONTENT_FULL_PAINT_TIME,
               static_cast<uint32_t>((endTime - startTime).ToMilliseconds()));
@@ -498,8 +487,13 @@ bool WebRenderBridgeParent::UpdateResources(
   wr::ShmSegmentsReader reader(aSmallShmems, aLargeShmems);
   UniquePtr<ScheduleSharedSurfaceRelease> scheduleRelease;
 
-  if (!aResourceUpdates.IsEmpty()) {
-    GPUParent::MaybeFlushMemory();
+  while (GPUParent::MaybeFlushMemory()) {
+    // If the GPU process has memory pressure, preemptively unmap some of our
+    // shared memory images. If we are in the parent process, the expiration
+    // tracker itself will listen for the memory pressure event.
+    if (!SharedSurfacesParent::AgeAndExpireOneGeneration()) {
+      break;
+    }
   }
 
   for (const auto& cmd : aResourceUpdates) {
@@ -1988,6 +1982,10 @@ mozilla::ipc::IPCResult WebRenderBridgeParent::RecvSetTestSampleTime(
   if (!mCompositorBridge->SetTestSampleTime(GetLayersId(), aTime)) {
     return IPC_FAIL_NO_REASON(this);
   }
+  if (RefPtr<OMTASampler> sampler = GetOMTASampler()) {
+    sampler->EnterTestMode();
+  }
+
   return IPC_OK();
 }
 
@@ -1997,6 +1995,10 @@ mozilla::ipc::IPCResult WebRenderBridgeParent::RecvLeaveTestMode() {
   }
 
   mCompositorBridge->LeaveTestMode(GetLayersId());
+  if (RefPtr<OMTASampler> sampler = GetOMTASampler()) {
+    sampler->LeaveTestMode();
+  }
+
   return IPC_OK();
 }
 
@@ -2489,6 +2491,7 @@ void WebRenderBridgeParent::ClearResources() {
 
   if (IsRootWebRenderBridgeParent()) {
     mCompositorScheduler->Destroy();
+    mApi->DestroyRenderer();
   }
 
   mCompositorScheduler = nullptr;

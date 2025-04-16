@@ -6,10 +6,8 @@
 
 ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
-let prefs;
 let h2Port;
 let h3Port;
-let listen;
 let trrServer;
 
 const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
@@ -18,14 +16,10 @@ const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
 const certOverrideService = Cc[
   "@mozilla.org/security/certoverride;1"
 ].getService(Ci.nsICertOverrideService);
-const threadManager = Cc["@mozilla.org/thread-manager;1"].getService(
-  Ci.nsIThreadManager
-);
-const mainThread = threadManager.currentThread;
-
-const defaultOriginAttributes = {};
 
 function setup() {
+  trr_test_setup();
+
   let env = Cc["@mozilla.org/process/environment;1"].getService(
     Ci.nsIEnvironment
   );
@@ -37,93 +31,36 @@ function setup() {
   Assert.notEqual(h3Port, null);
   Assert.notEqual(h3Port, "");
 
-  // Set to allow the cert presented by our H2 server
-  do_get_profile();
-  prefs = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefBranch);
-
-  prefs.setBoolPref("network.security.esni.enabled", false);
-  prefs.setBoolPref("network.http.spdy.enabled", true);
-  prefs.setBoolPref("network.http.spdy.enabled.http2", true);
-  // the TRR server is on 127.0.0.1
-  prefs.setCharPref("network.trr.bootstrapAddress", "127.0.0.1");
-
-  // make all native resolve calls "secretly" resolve localhost instead
-  prefs.setBoolPref("network.dns.native-is-localhost", true);
-
-  // 0 - off, 1 - race, 2 TRR first, 3 TRR only, 4 shadow
-  prefs.setIntPref("network.trr.mode", 2); // TRR first
-  prefs.setBoolPref("network.trr.wait-for-portal", false);
-  // don't confirm that TRR is working, just go!
-  prefs.setCharPref("network.trr.confirmationNS", "skip");
-
-  // So we can change the pref without clearing the cache to check a pushed
-  // record with a TRR path that fails.
-  Services.prefs.setBoolPref("network.trr.clear-cache-on-pref-change", false);
+  Services.prefs.setIntPref("network.trr.mode", Ci.nsIDNSService.MODE_TRRFIRST);
 
   Services.prefs.setBoolPref("network.dns.upgrade_with_https_rr", true);
   Services.prefs.setBoolPref("network.dns.use_https_rr_as_altsvc", true);
   Services.prefs.setBoolPref("network.dns.echconfig.enabled", true);
-
-  // The moz-http2 cert is for foo.example.com and is signed by http2-ca.pem
-  // so add that cert to the trust list as a signing cert.  // the foo.example.com domain name.
-  const certdb = Cc["@mozilla.org/security/x509certdb;1"].getService(
-    Ci.nsIX509CertDB
-  );
-  addCertFromFile(certdb, "http2-ca.pem", "CTu,u,u");
 }
 
 setup();
 registerCleanupFunction(async () => {
-  prefs.clearUserPref("network.security.esni.enabled");
-  prefs.clearUserPref("network.http.spdy.enabled");
-  prefs.clearUserPref("network.http.spdy.enabled.http2");
-  prefs.clearUserPref("network.dns.localDomains");
-  prefs.clearUserPref("network.dns.native-is-localhost");
-  prefs.clearUserPref("network.trr.mode");
-  prefs.clearUserPref("network.trr.uri");
-  prefs.clearUserPref("network.trr.credentials");
-  prefs.clearUserPref("network.trr.wait-for-portal");
-  prefs.clearUserPref("network.trr.allow-rfc1918");
-  prefs.clearUserPref("network.trr.useGET");
-  prefs.clearUserPref("network.trr.confirmationNS");
-  prefs.clearUserPref("network.trr.bootstrapAddress");
-  prefs.clearUserPref("network.trr.request-timeout");
-  prefs.clearUserPref("network.trr.clear-cache-on-pref-change");
-  prefs.clearUserPref("network.dns.upgrade_with_https_rr");
-  prefs.clearUserPref("network.dns.use_https_rr_as_altsvc");
-  prefs.clearUserPref("network.dns.echconfig.enabled");
-  prefs.clearUserPref("network.dns.echconfig.fallback_to_origin");
-  prefs.clearUserPref("network.dns.httpssvc.reset_exclustion_list");
-  prefs.clearUserPref("network.http.http3.enabled");
-  prefs.clearUserPref("network.dns.httpssvc.http3_fast_fallback_timeout");
+  trr_clear_prefs();
+  Services.prefs.clearUserPref("network.dns.upgrade_with_https_rr");
+  Services.prefs.clearUserPref("network.dns.use_https_rr_as_altsvc");
+  Services.prefs.clearUserPref("network.dns.echconfig.enabled");
+  Services.prefs.clearUserPref("network.dns.echconfig.fallback_to_origin");
+  Services.prefs.clearUserPref("network.dns.httpssvc.reset_exclustion_list");
+  Services.prefs.clearUserPref("network.http.http3.enabled");
+  Services.prefs.clearUserPref(
+    "network.dns.httpssvc.http3_fast_fallback_timeout"
+  );
+  Services.prefs.clearUserPref("network.http.speculative-parallel-limit");
   if (trrServer) {
     await trrServer.stop();
   }
 });
 
-class DNSListener {
-  constructor() {
-    this.promise = new Promise(resolve => {
-      this.resolve = resolve;
-    });
-  }
-  onLookupComplete(inRequest, inRecord, inStatus) {
-    this.resolve([inRequest, inRecord, inStatus]);
-  }
-  // So we can await this as a promise.
-  then() {
-    return this.promise.then.apply(this.promise, arguments);
-  }
-}
-
-DNSListener.prototype.QueryInterface = ChromeUtils.generateQI([
-  "nsIDNSListener",
-]);
-
 function makeChan(url) {
   let chan = NetUtil.newChannel({
     uri: url,
     loadUsingSystemPrincipal: true,
+    contentPolicyType: Ci.nsIContentPolicy.TYPE_DOCUMENT,
   }).QueryInterface(Ci.nsIHttpChannel);
   return chan;
 }
@@ -219,21 +156,9 @@ add_task(async function testFallbackToTheLastRecord() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.fallback.com",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.fallback.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   let chan = makeChan(`https://test.fallback.com:${h2Port}/server-timing`);
   let [req] = await channelOpenPromise(chan);
@@ -313,21 +238,9 @@ add_task(async function testFallbackToTheOrigin() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.foo.com",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.foo.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   let chan = makeChan(`https://test.foo.com:${h2Port}/server-timing`);
   let [req] = await channelOpenPromise(chan);
@@ -396,21 +309,9 @@ add_task(async function testAllRecordsFailed() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.bar.com",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.bar.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   // This channel should be failed.
   let chan = makeChan(`https://test.bar.com:${h2Port}/server-timing`);
@@ -457,21 +358,9 @@ add_task(async function testFallbackToTheOrigin2() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.example.com",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.example.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   let chan = makeChan(`https://test.example.com:${h2Port}/server-timing`);
   await channelOpenPromise(chan, CL_EXPECT_LATE_FAILURE | CL_ALLOW_UNKNOWN_CL);
@@ -563,21 +452,9 @@ add_task(async function testFallbackToTheOrigin3() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "vulnerable.com",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("vulnerable.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   let chan = makeChan(`https://vulnerable.com:${h2Port}/server-timing`);
   await channelOpenPromise(chan);
@@ -632,21 +509,9 @@ add_task(async function testResetExclusionList() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.reset.com",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.reset.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   // After this request, test.reset1.com and test.reset2.com should be both in
   // the exclusion list.
@@ -730,25 +595,13 @@ add_task(async function testH3Connection() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.h3.com",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.h3.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   let chan = makeChan(`https://test.h3.com`);
   let [req] = await channelOpenPromise(chan);
-  Assert.equal(req.protocolVersion, "h3");
+  Assert.equal(req.protocolVersion, "h3-27");
   let internal = req.QueryInterface(Ci.nsIHttpChannelInternal);
   Assert.equal(internal.remotePort, h3Port);
 
@@ -817,21 +670,9 @@ add_task(async function testFastfallbackToH2() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.fastfallback.com",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.fastfallback.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   let chan = makeChan(`https://test.fastfallback.com/server-timing`);
   let [req] = await channelOpenPromise(chan);
@@ -890,21 +731,9 @@ add_task(async function testFailedH3Connection() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.h3.org",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.h3.org", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   let chan = makeChan(`https://test.h3.org`);
   await channelOpenPromise(chan, CL_EXPECT_LATE_FAILURE | CL_ALLOW_UNKNOWN_CL);
@@ -973,25 +802,13 @@ add_task(async function testHttp3ExcludedList() {
     ],
   });
 
-  let listener = new DNSListener();
-
-  let request = dns.asyncResolve(
-    "test.h3_excluded.org",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  await new TRRDNSListener("test.h3_excluded.org", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
   chan = makeChan(`https://test.h3_excluded.org`);
   let [req] = await channelOpenPromise(chan);
-  Assert.equal(req.protocolVersion, "h3");
+  Assert.equal(req.protocolVersion, "h3-27");
   let internal = req.QueryInterface(Ci.nsIHttpChannelInternal);
   Assert.equal(internal.remotePort, h3Port);
 
@@ -1088,21 +905,12 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
     ],
   });
 
-  let listener = new DNSListener();
+  await new TRRDNSListener("www.h3_all_excluded.org", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
 
-  let request = dns.asyncResolve(
-    "www.h3_all_excluded.org",
-    dns.RESOLVE_TYPE_HTTPSSVC,
-    0,
-    null, // resolverInfo
-    listener,
-    mainThread,
-    defaultOriginAttributes
-  );
-
-  let [inRequest, , inStatus] = await listener;
-  Assert.equal(inRequest, request, "correct request was used");
-  Assert.equal(inStatus, Cr.NS_OK, "status OK");
+  Services.prefs.setIntPref("network.http.speculative-parallel-limit", 0);
+  Services.obs.notifyObservers(null, "net:prune-all-connections");
 
   // All HTTPS RRs are in http3 excluded list and all records are failed to
   // connect, so don't fallback to the origin one.
@@ -1125,7 +933,7 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
   // give the first record one more shot.
   chan = makeChan(`https://www.h3_all_excluded.org`);
   [req] = await channelOpenPromise(chan);
-  Assert.equal(req.protocolVersion, "h3");
+  Assert.equal(req.protocolVersion, "h3-27");
   let internal = req.QueryInterface(Ci.nsIHttpChannelInternal);
   Assert.equal(internal.remotePort, h3Port);
 

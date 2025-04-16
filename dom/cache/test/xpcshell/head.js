@@ -15,9 +15,15 @@ const NS_APP_USER_PROFILE_50_DIR = "ProfD";
 const osWindowsName = "WINNT";
 const pathDelimiter = "/";
 
+const persistentPersistence = "persistent";
+
 const storageDirName = "storage";
+const persistentPersistenceDirName = "permanent";
 const defaultPersistenceDirName = "default";
-const cacheClientDirName = "cache";
+
+function cacheClientDirName() {
+  return "cache";
+}
 
 // services required be initialized in order to run CacheStorage
 var ss = Cc["@mozilla.org/storage/service;1"].createInstance(
@@ -81,6 +87,10 @@ function initStorage() {
 
 function initTemporaryStorage() {
   return Services.qms.initTemporaryStorage();
+}
+
+function initPersistentOrigin(principal) {
+  return Services.qms.initializePersistentOrigin(principal);
 }
 
 function initTemporaryOrigin(principal) {
@@ -164,7 +174,7 @@ function create_test_profile(zipFileName) {
 
 function getCacheDir() {
   return getRelativeFile(
-    `${storageDirName}/${defaultPersistenceDirName}/chrome/${cacheClientDirName}`
+    `${storageDirName}/${defaultPersistenceDirName}/chrome/${cacheClientDirName()}`
   );
 }
 

@@ -377,6 +377,87 @@ function synthesizeNativeWheel(aTarget, aX, aY, aDeltaX, aDeltaY, aObserver) {
   return true;
 }
 
+// Synthesizes a native pan gesture event and returns immediately.
+// NOTE: This works only on Mac.
+// You can specify kCGScrollPhaseBegan = 1, kCGScrollPhaseChanged = 2 and
+// kCGScrollPhaseEnded = 4 for |aPhase|.
+function synthesizeNativePanGestureEvent(
+  aTarget,
+  aX,
+  aY,
+  aDeltaX,
+  aDeltaY,
+  aPhase,
+  aObserver
+) {
+  if (getPlatform() != "mac") {
+    throw new Error(
+      `synthesizeNativePanGestureEvent doesn't work on ${getPlatform()}`
+    );
+  }
+
+  var pt = coordinatesRelativeToScreen({
+    offsetX: aX,
+    offsetY: aY,
+    target: aTarget,
+  });
+  if (aDeltaX && aDeltaY) {
+    throw new Error(
+      "Simultaneous panning of horizontal and vertical is not supported."
+    );
+  }
+
+  aDeltaX = nativeScrollUnits(aTarget, aDeltaX);
+  aDeltaY = nativeScrollUnits(aTarget, aDeltaY);
+
+  var element = elementForTarget(aTarget);
+  var utils = utilsForTarget(aTarget);
+  utils.sendNativeMouseScrollEvent(
+    pt.x,
+    pt.y,
+    aPhase,
+    aDeltaX,
+    aDeltaY,
+    0 /* deltaZ */,
+    0 /* modifiers */,
+    0 /* scroll event unit pixel */,
+    element,
+    aObserver
+  );
+
+  return true;
+}
+
+// Synthesizes a native pan gesture event and resolve the returned promise once the
+// request has been successfully made to the OS.
+function promiseNativePanGestureEventAndWaitForObserver(
+  aElement,
+  aX,
+  aY,
+  aDeltaX,
+  aDeltaY,
+  aPhase
+) {
+  return new Promise(resolve => {
+    var observer = {
+      observe(aSubject, aTopic, aData) {
+        if (aTopic == "mousescrollevent") {
+          resolve();
+        }
+      },
+    };
+    synthesizeNativePanGestureEvent(
+      aElement,
+      aX,
+      aY,
+      aDeltaX,
+      aDeltaY,
+      aPhase,
+      observer
+    );
+  });
+}
+
 // Synthesizes a native mousewheel event and resolve the returned promise once the
 // request has been successfully made to the OS. This does not necessarily
 // guarantee that the OS generates the event we requested. See
@@ -458,7 +539,18 @@ function promiseNativeWheelAndWaitForScrollEvent(
   });
 }
 
-function synthesizeTouchpadPinch(scales, focusX, focusY) {
+async function synthesizeTouchpadPinch(scales, focusX, focusY, options) {
+  // Check for options, fill in defaults if appropriate.
+  let waitForTransformEnd =
+    options.waitForTransformEnd !== undefined
+      ? options.waitForTransformEnd
+      : true;
+  let waitForFrames =
+    options.waitForFrames !== undefined ? options.waitForFrames : false;
+
+  // Register the listener for the TransformEnd observer topic
+  let transformEndPromise = promiseTransformEnd();
+
   var modifierFlags = 0;
   var pt = coordinatesRelativeToScreen({
     offsetX: focusX,
@@ -476,6 +568,14 @@ function synthesizeTouchpadPinch(scales, focusX, focusY) {
       phase = SpecialPowers.DOMWindowUtils.PHASE_UPDATE;
     }
     utils.sendNativeTouchpadPinch(phase, scales[i], pt.x, pt.y, modifierFlags);
+    if (waitForFrames) {
+      await promiseFrame();
+    }
+  }
+
+  // Wait for TransformEnd to fire.
+  if (waitForTransformEnd) {
+    await transformEndPromise;
   }
 }
 // Synthesizes a native touch event and dispatches it. aX and aY in CSS pixels
@@ -753,20 +853,24 @@ function promiseNativeTouchDrag(
   });
 }
 
-function synthesizeNativeTap(aElement, aX, aY, aObserver = null) {
+function synthesizeNativeTap(aTarget, aX, aY, aObserver = null) {
   var pt = coordinatesRelativeToScreen({
     offsetX: aX,
     offsetY: aY,
-    target: aElement,
+    target: aTarget,
   });
-  var utils = SpecialPowers.getDOMWindowUtils(
-    aElement.ownerDocument.defaultView
-  );
+  let utils = utilsForTarget(aTarget);
   utils.sendNativeTouchTap(pt.x, pt.y, false, aObserver);
   return true;
 }
 
+// only currently implemented on macOS
 function synthesizeNativeTouchpadDoubleTap(aTarget, aX, aY) {
+  ok(
+    getPlatform() == "mac",
+    "only implemented on mac. implement sendNativeTouchpadDoubleTap for this platform," +
+      " see bug 1696802 for how it was done on macOS"
+  );
   let pt = coordinatesRelativeToScreen({
     offsetX: aX,
     offsetY: aY,
@@ -1181,17 +1285,19 @@ async function pinchZoomInWithTouch(focusX, focusY) {
 // to succeed. It returns after APZ has completed the zoom and reaches the end
 // of the transform. The focus point is expected to be in CSS coordinates
 // relative to the document body.
-async function pinchZoomInWithTouchpad(focusX, focusY) {
-  // Register the listener for the TransformEnd observer topic
-  let transformEndPromise = promiseTopic("APZ:TransformEnd");
-
+async function pinchZoomInWithTouchpad(focusX, focusY, options = {}) {
   var zoomIn = [
     1.0,
     1.019531,
     1.035156,
+    1.037156,
+    1.039156,
     1.054688,
+    1.056688,
     1.070312,
+    1.072312,
     1.089844,
+    1.091844,
     1.109375,
     1.128906,
     1.144531,
@@ -1215,14 +1321,10 @@ async function pinchZoomInWithTouchpad(focusX, focusY) {
     1.421875,
     1.0,
   ];
-  synthesizeTouchpadPinch(zoomIn, focusX, focusY);
-  // Wait for TransformEnd to fire.
-  await transformEndPromise;
+  await synthesizeTouchpadPinch(zoomIn, focusX, focusY, options);
 }
 
-async function pinchZoomOutWithTouchpad(focusX, focusY) {
-  // Register the listener for the TransformEnd observer topic
-  let transformEndPromise = promiseTopic("APZ:TransformEnd");
+async function pinchZoomOutWithTouchpad(focusX, focusY, options = {}) {
   // The last item equal one to indicate scale end
   var zoomOut = [
     1.0,
@@ -1250,14 +1352,10 @@ async function pinchZoomOutWithTouchpad(focusX, focusY) {
     0.933594,
     1.0,
   ];
-  synthesizeTouchpadPinch(zoomOut, focusX, focusY);
-  // Wait for TransformEnd to fire.
-  await transformEndPromise;
+  await synthesizeTouchpadPinch(zoomOut, focusX, focusY, options);
 }
 
-async function pinchZoomInOutWithTouchpad(focusX, focusY) {
-  // Register the listener for the TransformEnd observer topic
-  let transformEndPromise = promiseTopic("APZ:TransformEnd");
+async function pinchZoomInOutWithTouchpad(focusX, focusY, options = {}) {
   // Use the same scale for two events in a row to make sure the code handles this properly.
   var zoomInOut = [
     1.0,
@@ -1278,9 +1376,7 @@ async function pinchZoomInOutWithTouchpad(focusX, focusY) {
     1.0,
     1.0,
   ];
-  synthesizeTouchpadPinch(zoomInOut, focusX, focusY);
-  // Wait for TransformEnd to fire.
-  await transformEndPromise;
+  await synthesizeTouchpadPinch(zoomInOut, focusX, focusY, options);
 }
 // This generates a touch-based pinch gesture that is expected to succeed
 // and trigger an APZ:TransformEnd observer notification.
@@ -1339,4 +1435,22 @@ async function pinchZoomOutWithTouchAtCenter() {
   var zoom_out = pinchZoomOutTouchSequenceAtCenter();
   var touchIds = [0, 1];
   await synthesizeNativeTouchAndWaitForTransformEnd(zoom_out, touchIds);
+}
+
+// useTouchpad is only currently implemented on macOS
+async function doubleTapOn(element, x, y, useTouchpad) {
+  let transformEndPromise = promiseTransformEnd();
+
+  if (useTouchpad) {
+    synthesizeNativeTouchpadDoubleTap(element, x, y);
+  } else {
+    synthesizeNativeTap(element, x, y);
+    synthesizeNativeTap(element, x, y);
+  }
+
+  // Wait for the APZ:TransformEnd to fire
+  await transformEndPromise;
+
+  // Flush state so we can query an accurate resolution
+  await promiseApzFlushedRepaints();
 }

@@ -8,7 +8,11 @@
 // (please try to keep the list alphabetically sorted)
 /*eslint sort-keys: "error"*/
 const Commands = {
+  inspectedWindowCommand:
+    "devtools/shared/commands/inspected-window/inspected-window-command",
   targetCommand: "devtools/shared/commands/target/target-command",
+  targetConfigurationCommand:
+    "devtools/shared/commands/target-configuration/target-configuration-command",
 };
 
 /**
@@ -23,7 +27,27 @@ async function createCommandsDictionary(descriptorFront) {
   if (supportsWatcher) {
     watcherFront = await descriptorFront.getWatcher();
   }
-  const dictionary = {};
+  const { client } = descriptorFront;
+
+  const dictionary = {
+    // Expose both client and descriptor for legacy codebases, or tests.
+    // But ideally only commands should interact with these two objects
+    client,
+    descriptorFront,
+
+    // Expose for tests
+    waitForRequestsToSettle() {
+      return descriptorFront.client.waitForRequestsToSettle();
+    },
+
+    // We want to keep destroy being defined last
+    // eslint-disable-next-line sort-keys
+    async destroy() {
+      await descriptorFront.destroy();
+      await client.close();
+    },
+  };
+
   for (const name in Commands) {
     loader.lazyGetter(dictionary, name, () => {
       const Constructor = require(Commands[name]);

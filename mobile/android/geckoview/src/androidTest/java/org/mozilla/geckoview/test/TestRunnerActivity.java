@@ -34,6 +34,7 @@ import android.view.Surface;
 
 import java.util.ArrayDeque;
 import java.util.HashMap;
+import java.util.List;
 
 public class TestRunnerActivity extends Activity {
     private static final String LOGTAG = "TestRunnerActivity";
@@ -340,6 +341,11 @@ public class TestRunnerActivity extends Activity {
 
         final Intent intent = getIntent();
 
+        if ("org.mozilla.geckoview.test.XPCSHELL_TEST_MAIN".equals(intent.getAction())) {
+            // This activity is just a stub to run xpcshell tests in a service
+            return;
+        }
+
         if (sRuntime == null) {
             final GeckoRuntimeSettings.Builder runtimeSettingsBuilder =
                 new GeckoRuntimeSettings.Builder();
@@ -498,6 +504,9 @@ public class TestRunnerActivity extends Activity {
         }
     }
 
+    // Random start timestamp for the BrowsingDataDelegate API.
+    private static final int CLEAR_DATA_START_TIMESTAMP = 1234;
+
     private void refreshExtensionList() {
         webExtensionController().list().accept(extensions -> {
             mExtensions.clear();
@@ -516,7 +525,8 @@ public class TestRunnerActivity extends Activity {
                                 Type.HISTORY |
                                 Type.FORM_DATA |
                                 Type.DOWNLOADS;
-                        return GeckoResult.fromValue(new Settings(1234, types, types ));
+                        return GeckoResult.fromValue(new Settings(
+                                CLEAR_DATA_START_TIMESTAMP, types, types));
                     }
                 });
 

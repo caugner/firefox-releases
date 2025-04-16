@@ -61,6 +61,7 @@
 #endif
 
 #include "nsXULAppAPI.h"
+#include "nsIXULAppInfo.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsDirectoryServiceDefs.h"
 
@@ -755,6 +756,7 @@ WebRenderMemoryReporter::CollectReports(nsIHandleReportCallback* aHandleReport,
                       "texture-cache/structures");
         helper.Report(aReport.shader_cache, "shader-cache");
         helper.Report(aReport.display_list, "display-list");
+        helper.Report(aReport.swgl, "swgl");
         helper.Report(aReport.upload_staging_memory, "upload-stagin-memory");
 
         WEBRENDER_FOR_EACH_INTERNER(REPORT_INTERNER);
@@ -2152,7 +2154,8 @@ void gfxPlatform::InitializeCMS() {
      of this preference, which means nsIPrefBranch::GetBoolPref will
      typically throw (and leave its out-param untouched).
    */
-  if (StaticPrefs::gfx_color_management_force_srgb()) {
+  if (StaticPrefs::gfx_color_management_force_srgb() ||
+      StaticPrefs::gfx_color_management_native_srgb()) {
     gCMSOutputProfile = gCMSsRGBProfile;
   }
 
@@ -2662,6 +2665,18 @@ void gfxPlatform::InitWebRenderConfig() {
 
   bool hasHardware = gfxConfig::IsEnabled(Feature::WEBRENDER);
   bool hasSoftware = gfxConfig::IsEnabled(Feature::WEBRENDER_SOFTWARE);
+
+#if defined(XP_WIN) && !defined(EARLY_BETA_OR_EARLIER)
+  // If we have D3D11 compositing, and Software WebRender isn't forced on, then
+  // we should prefer D3D11 compositing over Software WebRender in late beta and
+  // release by default. We may chose to fallback to Software WebRender in
+  // gfxPlatform::FallbackFromAcceleration.
+  if (gfxConfig::IsEnabled(Feature::D3D11_COMPOSITING) &&
+      !gfxConfig::IsForcedOnByUser(Feature::WEBRENDER_SOFTWARE)) {
+    hasSoftware = false;
+  }
+#endif
+
   bool hasWebRender = hasHardware || hasSoftware;
 
 #ifdef XP_WIN
@@ -2670,7 +2685,7 @@ void gfxPlatform::InitWebRenderConfig() {
   }
 #endif
 
-  if (Preferences::GetBool("gfx.webrender.program-binary-disk", false)) {
+  if (gfxConfig::IsEnabled(Feature::WEBRENDER_SHADER_CACHE)) {
     gfxVars::SetUseWebRenderProgramBinaryDisk(hasWebRender);
   }
 
@@ -3302,6 +3317,14 @@ void gfxPlatform::NotifyCompositorCreated(LayersBackend aBackend) {
         Telemetry::ScalarID::GFX_COMPOSITOR,
         NS_ConvertUTF8toUTF16(GetLayersBackendName(mCompositorBackend)));
 
+    nsCString geckoVersion;
+    nsCOMPtr<nsIXULAppInfo> app = do_GetService("@mozilla.org/xre/app-info;1");
+    if (app) {
+      app->GetVersion(geckoVersion);
+    }
+    Telemetry::ScalarSet(Telemetry::ScalarID::GFX_LAST_COMPOSITOR_GECKO_VERSION,
+                         NS_ConvertASCIItoUTF16(geckoVersion));
+
     Telemetry::ScalarSet(
         Telemetry::ScalarID::GFX_FEATURE_WEBRENDER,
         NS_ConvertUTF8toUTF16(gfxConfig::GetFeature(gfx::Feature::WEBRENDER)
@@ -3328,11 +3351,19 @@ bool gfxPlatform::FallbackFromAcceleration(FeatureStatus aStatus,
         .ForceDisable(aStatus, aMessage, aFailureId);
   }
 
+  // Determine whether or not we are allowed to use Software WebRender in
+  // fallback without the GPU process. Either the pref is false, or the feature
+  // is enabled and we are currently still using it.
+  bool swglFallbackAllowed =
+      !StaticPrefs::
+          gfx_webrender_fallback_software_requires_gpu_process_AtStartup() ||
+      gfxConfig::IsEnabled(Feature::GPU_PROCESS);
+
 #ifdef XP_WIN
   // Before we disable D3D11 and HW_COMPOSITING, we should check if we can
   // fallback from WebRender to Software WebRender + D3D11 compositing.
   if (StaticPrefs::gfx_webrender_fallback_software_d3d11_AtStartup() &&
-      gfxVars::AllowSoftwareWebRenderD3D11() &&
+      swglFallbackAllowed && gfxVars::AllowSoftwareWebRenderD3D11() &&
       gfxConfig::IsEnabled(Feature::WEBRENDER_SOFTWARE) &&
       gfxConfig::IsEnabled(Feature::D3D11_COMPOSITING) &&
       gfxVars::UseWebRender() && !gfxVars::UseSoftwareWebRender()) {
@@ -3343,7 +3374,7 @@ bool gfxPlatform::FallbackFromAcceleration(FeatureStatus aStatus,
   }
 
   if (StaticPrefs::gfx_webrender_fallback_software_d3d11_AtStartup() &&
-      gfxVars::AllowSoftwareWebRenderD3D11() &&
+      swglFallbackAllowed && gfxVars::AllowSoftwareWebRenderD3D11() &&
       gfxVars::UseSoftwareWebRender()) {
     // Fallback from Software WebRender + D3D11 to Software WebRender.
     gfxCriticalNote << "Fallback SW-WR + D3D11 to SW-WR";
@@ -3353,13 +3384,24 @@ bool gfxPlatform::FallbackFromAcceleration(FeatureStatus aStatus,
 
   // We aren't using Software WebRender + D3D11 compositing, so turn off the
   // D3D11 and D2D.
-  if (gfxConfig::IsEnabled(Feature::D3D11_COMPOSITING)) {
-    gfxConfig::GetFeature(Feature::D3D11_COMPOSITING)
-        .ForceDisable(aStatus, aMessage, aFailureId);
-  }
   if (gfxConfig::IsEnabled(Feature::DIRECT2D)) {
     gfxConfig::GetFeature(Feature::DIRECT2D)
         .ForceDisable(aStatus, aMessage, aFailureId);
+  }
+  if (gfxConfig::IsEnabled(Feature::D3D11_COMPOSITING)) {
+    gfxConfig::GetFeature(Feature::D3D11_COMPOSITING)
+        .ForceDisable(aStatus, aMessage, aFailureId);
+
+    if (StaticPrefs::gfx_webrender_fallback_software_AtStartup() &&
+        swglFallbackAllowed &&
+        gfxConfig::IsEnabled(Feature::WEBRENDER_SOFTWARE) &&
+        !gfxVars::UseWebRender()) {
+      // Fallback from D3D11 to Software WebRender.
+      gfxCriticalNote << "Fallback D3D11 to SW-WR";
+      gfxVars::SetUseWebRender(true);
+      gfxVars::SetUseSoftwareWebRender(true);
+      return true;
+    }
   }
 #endif
 
@@ -3379,6 +3421,7 @@ bool gfxPlatform::FallbackFromAcceleration(FeatureStatus aStatus,
   }
 
   if (StaticPrefs::gfx_webrender_fallback_software_AtStartup() &&
+      swglFallbackAllowed &&
       gfxConfig::IsEnabled(Feature::WEBRENDER_SOFTWARE) &&
       !gfxVars::UseSoftwareWebRender()) {
     // Fallback from WebRender to Software WebRender.
@@ -3400,10 +3443,21 @@ bool gfxPlatform::FallbackFromAcceleration(FeatureStatus aStatus,
     return false;
   }
 
-  // Continue using Software WebRender.
-  gfxCriticalNoteOnce << "Fallback remains SW-WR";
   MOZ_ASSERT(gfxVars::UseWebRender());
-  MOZ_ASSERT(gfxVars::UseSoftwareWebRender());
+
+  if (!gfxVars::UseSoftwareWebRender()) {
+    // Software WebRender may be disabled due to a startup issue with the
+    // blocklist, despite it being our only fallback option based on the prefs.
+    // If WebRender is unable to be initialized, this means that user would
+    // otherwise get stuck with WebRender. As such, force a switch to Software
+    // WebRender in this case.
+    gfxCriticalNoteOnce << "Fallback WR to SW-WR, forced";
+    gfxVars::SetUseSoftwareWebRender(true);
+    return true;
+  }
+
+  // Continue using Software WebRender (disabled fallback to Basic).
+  gfxCriticalNoteOnce << "Fallback remains SW-WR";
   return false;
 }
 

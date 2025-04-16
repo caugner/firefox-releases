@@ -6,6 +6,11 @@ const { CommonDialog } = ChromeUtils.import(
   "resource://gre/modules/CommonDialog.jsm"
 );
 
+// imported by adjustableTitle.js loaded in the same context:
+/* globals PromptUtils */
+
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+
 var propBag, args, Dialog;
 
 function commonDialogOnLoad() {
@@ -20,6 +25,57 @@ function commonDialogOnLoad() {
 
   let dialog = document.getElementById("commonDialog");
 
+  let needIconifiedHeader =
+    args.modalType == Ci.nsIPrompt.MODAL_TYPE_CONTENT ||
+    ["promptUserAndPass", "promptPassword"].includes(args.promptType) ||
+    args.headerIconURL;
+  let root = document.documentElement;
+  if (needIconifiedHeader) {
+    root.setAttribute("neediconheader", "true");
+  }
+  let title = { raw: args.title };
+  let { promptPrincipal } = args;
+  if (PromptUtils.protonModals) {
+    if (promptPrincipal) {
+      if (promptPrincipal.isNullPrincipal) {
+        title = { l10nId: "common-dialog-title-null" };
+      } else if (promptPrincipal.isSystemPrincipal) {
+        title = { l10nId: "common-dialog-title-system" };
+        root.style.setProperty(
+          "--icon-url",
+          "url('chrome://branding/content/icon32.png')"
+        );
+      } else if (promptPrincipal.addonPolicy) {
+        title.raw = promptPrincipal.addonPolicy.name;
+      } else if (promptPrincipal.isContentPrincipal) {
+        try {
+          title.raw = promptPrincipal.URI.displayHostPort;
+        } catch (ex) {
+          // hostPort getter can throw, e.g. for about URIs.
+          title.raw = promptPrincipal.origin;
+        }
+        // hostPort can be empty for file URIs.
+        if (!title.raw) {
+          title.raw = promptPrincipal.prepath;
+        }
+      } else {
+        title = { l10nId: "common-dialog-title-unknown" };
+      }
+    } else if (args.authOrigin) {
+      title = { raw: args.authOrigin };
+    }
+    if (args.headerIconURL) {
+      root.style.setProperty("--icon-url", `url('${args.headerIconURL}')`);
+    }
+    dialog.setAttribute("buttonpack", "end");
+  }
+  // Fade and crop potentially long raw titles, e.g., origins and hostnames.
+  title.shouldUseMaskFade = title.raw && (args.authOrigin || promptPrincipal);
+  root.setAttribute("headertitle", JSON.stringify(title));
+  if (args.isInsecureAuth) {
+    dialog.setAttribute("insecureauth", "true");
+  }
+
   let ui = {
     prompt: window,
     loginContainer: document.getElementById("loginContainer"),
@@ -28,6 +84,7 @@ function commonDialogOnLoad() {
     password1Container: document.getElementById("password1Container"),
     password1Textbox: document.getElementById("password1Textbox"),
     password1Label: document.getElementById("password1Label"),
+    infoRow: document.getElementById("infoRow"),
     infoBody: document.getElementById("infoBody"),
     infoTitle: document.getElementById("infoTitle"),
     infoIcon: document.getElementById("infoIcon"),

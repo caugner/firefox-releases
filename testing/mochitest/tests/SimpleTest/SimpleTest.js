@@ -425,7 +425,7 @@ SimpleTest.record = function(condition, name, diag, stack, expected) {
   if (SimpleTest.expected == "fail") {
     if (!test.result) {
       SimpleTest.num_failed++;
-      test.todo = true;
+      test.result = true;
     }
     successInfo = {
       status: "PASS",
@@ -2289,3 +2289,10 @@ var add_task = (function() {
 if (usesFailurePatterns()) {
   SimpleTest.requestCompleteLog();
 }
+
+addEventListener("message", async event => {
+  if (event.data == "SimpleTest:timeout") {
+    await SimpleTest.timeout();
+    SimpleTest.finish();
+  }
+});

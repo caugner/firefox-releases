@@ -164,9 +164,11 @@ raptor-fetch-chromium:
 
 browsertime:
     - browsertime-tp6
+    - browsertime-tp6-essential
     - browsertime-tp6-live
     - browsertime-tp6-live-sheriffed
     - browsertime-benchmark
+    - browsertime-benchmark-wasm
     - browsertime-tp6-profiling
 
 # Raptor desktop power tests
@@ -202,6 +204,8 @@ desktop-screenshot-capture:
 ### Specific platform test sets
 
 # Linux
+linux32-gtest:
+    - gtest
 
 linux32-tests:
     - web-platform-tests
@@ -399,17 +403,6 @@ macosx1100-64-qr-failures-tests:
     - mochitest-browser-chrome-apple-silicon
 
 macosx1015-64-qr-tests:
-    - reftest
-
-# debug only
-macosx1015-64-tests:
-    - reftest
-
-macosx1014-64-tests:
-    - crashtest
-    - web-platform-tests-reftest
-
-macosx1014-64-qr-tests:
     - cppunit
     - crashtest
     - firefox-ui-functional-local
@@ -419,20 +412,29 @@ macosx1014-64-qr-tests:
     - jsreftest
     - marionette
     - mochitest-a11y
-    - mochitest-browser-chrome
     - mochitest-chrome
     - mochitest-chrome-gpu
-    - mochitest-devtools-chrome
     - mochitest-plain
     - mochitest-plain-gpu
-    - mochitest-media
     - mochitest-remote
     - mochitest-webgl1-core
     - mochitest-webgl1-ext
     - mochitest-webgl2-core
     - mochitest-webgl2-ext
     - mochitest-webgpu
+    - reftest
     - telemetry-tests-client
+
+# debug only
+macosx1015-64-tests:
+    - crashtest
+    - reftest
+    - web-platform-tests-reftest
+
+macosx1014-64-qr-tests:
+    - mochitest-browser-chrome
+    - mochitest-devtools-chrome
+    - mochitest-media
     - test-verify
     - test-verify-gpu
     - test-verify-wpt
@@ -542,18 +544,10 @@ android-hw-aarch64-raptor-cpu-memory-power:
     - raptor-scn-cpu-memory-power-idle-bg-geckoview
     - raptor-scn-cpu-memory-power-idle-bg-refbrow
 
-android-hw-aarch64-browsertime:
+android-hw-browsertime:
     - browsertime-power
     - browsertime-tp6m
-    - browsertime-tp6m-live
-    - browsertime-tp6m-profiling
-    - browsertime-speedometer-mobile
-    - browsertime-youtube-playback-mobile
-    - browsertime-unity-webgl-mobile
-
-android-hw-arm7-browsertime:
-    - browsertime-power
-    - browsertime-tp6m
+    - browsertime-tp6m-essential
     - browsertime-tp6m-live
     - browsertime-tp6m-profiling
     - browsertime-speedometer-mobile

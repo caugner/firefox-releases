@@ -264,7 +264,7 @@ class TestAsyncPanZoomController : public AsyncPanZoomController {
         mWaitForMainThread(false),
         mcc(aMcc) {}
 
-  APZEventResult ReceiveInputEvent(const InputData& aEvent) {
+  APZEventResult ReceiveInputEvent(InputData& aEvent) {
     // This is a function whose signature matches exactly the ReceiveInputEvent
     // on APZCTreeManager. This allows us to templates for functions like
     // TouchDown, TouchUp, etc so that we can reuse the code for dispatching
@@ -292,6 +292,11 @@ class TestAsyncPanZoomController : public AsyncPanZoomController {
     Metrics() = metrics;
   }
 
+  void SetScrollMetadata(const ScrollMetadata& aMetadata) {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    mScrollMetadata = aMetadata;
+  }
+
   FrameMetrics& GetFrameMetrics() {
     RecursiveMutexAutoLock lock(mRecursiveMutex);
     return mScrollMetadata.GetMetrics();
@@ -307,6 +312,7 @@ class TestAsyncPanZoomController : public AsyncPanZoomController {
     return mScrollMetadata.GetMetrics();
   }
 
+  using AsyncPanZoomController::GetOverscrollAmount;
   using AsyncPanZoomController::GetVelocityVector;
 
   void AssertStateIsReset() const {
@@ -369,6 +375,10 @@ class TestAsyncPanZoomController : public AsyncPanZoomController {
   }
 
   void SetWaitForMainThread() { mWaitForMainThread = true; }
+
+  bool IsOverscrollAnimationRunning() const {
+    return mState == PanZoomState::OVERSCROLL_ANIMATION;
+  }
 
  private:
   bool mWaitForMainThread;
@@ -891,24 +901,27 @@ void APZCTesterBase::PinchWithPinchInput(
   const TimeDuration TIME_BETWEEN_PINCH_INPUT =
       TimeDuration::FromMilliseconds(50);
 
-  APZEventResult actual = aTarget->ReceiveInputEvent(CreatePinchGestureInput(
-      PinchGestureInput::PINCHGESTURE_START, aFocus, 10.0, 10.0, mcc->Time()));
+  auto event = CreatePinchGestureInput(PinchGestureInput::PINCHGESTURE_START,
+                                       aFocus, 10.0, 10.0, mcc->Time());
+  APZEventResult actual = aTarget->ReceiveInputEvent(event);
   if (aOutEventStatuses) {
     (*aOutEventStatuses)[0] = actual.GetStatus();
   }
   mcc->AdvanceBy(TIME_BETWEEN_PINCH_INPUT);
 
-  actual = aTarget->ReceiveInputEvent(
+  event =
       CreatePinchGestureInput(PinchGestureInput::PINCHGESTURE_SCALE,
-                              aSecondFocus, 10.0 * aScale, 10.0, mcc->Time()));
+                              aSecondFocus, 10.0 * aScale, 10.0, mcc->Time());
+  actual = aTarget->ReceiveInputEvent(event);
   if (aOutEventStatuses) {
     (*aOutEventStatuses)[1] = actual.GetStatus();
   }
   mcc->AdvanceBy(TIME_BETWEEN_PINCH_INPUT);
 
-  actual = aTarget->ReceiveInputEvent(
+  event =
       CreatePinchGestureInput(PinchGestureInput::PINCHGESTURE_END, aSecondFocus,
-                              10.0 * aScale, 10.0 * aScale, mcc->Time()));
+                              10.0 * aScale, 10.0 * aScale, mcc->Time());
+  actual = aTarget->ReceiveInputEvent(event);
   if (aOutEventStatuses) {
     (*aOutEventStatuses)[2] = actual.GetStatus();
   }

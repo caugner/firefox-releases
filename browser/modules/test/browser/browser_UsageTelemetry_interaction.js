@@ -115,37 +115,57 @@ add_task(async function toolbarButtons() {
     await tabClose;
     click(document.querySelector("#PlacesToolbarItems .bookmark-item"));
 
-    click("pageActionButton");
-    let pagePanel = elem("pageActionPanel");
-    shown = BrowserTestUtils.waitForEvent(pagePanel, "popupshown");
-    await shown;
+    // Page action panel is removed in proton
+    if (gProton) {
+      click(customButton);
 
-    hidden = BrowserTestUtils.waitForEvent(pagePanel, "popuphidden");
-    click("pageAction-panel-copyURL");
-    await hidden;
+      assertInteractionScalars({
+        nav_bar: {
+          "stop-reload-button": 1,
+          "back-button": 2,
+          "12foo": 1,
+        },
+        tabs_bar: {
+          "alltabs-button": 1,
+          "tab-close-button": 1,
+        },
+        bookmarks_bar: {
+          "bookmark-item": 1,
+        },
+      });
+    } else {
+      click("pageActionButton");
+      let pagePanel = elem("pageActionPanel");
+      shown = BrowserTestUtils.waitForEvent(pagePanel, "popupshown");
+      await shown;
 
-    click(customButton);
+      hidden = BrowserTestUtils.waitForEvent(pagePanel, "popuphidden");
+      click("pageAction-panel-copyURL");
+      await hidden;
 
-    assertInteractionScalars({
-      nav_bar: {
-        "stop-reload-button": 1,
-        "back-button": 2,
-        "12foo": 1,
-      },
-      tabs_bar: {
-        "alltabs-button": 1,
-        "tab-close-button": 1,
-      },
-      bookmarks_bar: {
-        "bookmark-item": 1,
-      },
-      pageaction_urlbar: {
-        pageActionButton: 1,
-      },
-      pageaction_panel: {
-        copyURL: 1,
-      },
-    });
+      click(customButton);
+
+      assertInteractionScalars({
+        nav_bar: {
+          "stop-reload-button": 1,
+          "back-button": 2,
+          "12foo": 1,
+        },
+        tabs_bar: {
+          "alltabs-button": 1,
+          "tab-close-button": 1,
+        },
+        bookmarks_bar: {
+          "bookmark-item": 1,
+        },
+        pageaction_urlbar: {
+          pageActionButton: 1,
+        },
+        pageaction_panel: {
+          copyURL: 1,
+        },
+      });
+    }
 
     CustomizableUI.destroyWidget("12foo");
   });
@@ -166,7 +186,7 @@ add_task(async function contextMenu() {
     await shown;
 
     let hidden = BrowserTestUtils.waitForEvent(context, "popuphidden");
-    click("context_toggleMuteTab");
+    context.activateItem(document.getElementById("context_toggleMuteTab"));
     await hidden;
 
     assertInteractionScalars({

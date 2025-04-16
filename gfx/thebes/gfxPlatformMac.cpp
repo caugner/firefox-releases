@@ -35,7 +35,7 @@ using namespace mozilla;
 using namespace mozilla::gfx;
 using namespace mozilla::unicode;
 
-using mozilla::dom::SystemFontListEntry;
+using mozilla::dom::SystemFontList;
 
 // cribbed from CTFontManager.h
 enum { kAutoActivationDisabled = 1 };
@@ -113,8 +113,7 @@ gfxPlatformFontList* gfxPlatformMac::CreatePlatformFontList() {
   return nullptr;
 }
 
-void gfxPlatformMac::ReadSystemFontList(
-    nsTArray<SystemFontListEntry>* aFontList) {
+void gfxPlatformMac::ReadSystemFontList(SystemFontList* aFontList) {
   gfxMacPlatformFontList::PlatformFontList()->ReadSystemFontList(aFontList);
 }
 
@@ -659,12 +658,12 @@ void gfxPlatformMac::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
       aFontList.AppendElement("Zapf Dingbats");
     }
     aFontList.AppendElement("Geneva");
+    aFontList.AppendElement("STIXGeneral");
     aFontList.AppendElement("Apple Symbols");
     // Japanese fonts also cover a lot of miscellaneous symbols
     aFontList.AppendElement("Hiragino Sans");
     aFontList.AppendElement("Hiragino Kaku Gothic ProN");
   }
-  aFontList.AppendElement("STIXGeneral");
 
   // Arial Unicode MS has lots of glyphs for obscure characters; try it as a
   // last resort.

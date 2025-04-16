@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsTraceRefcnt.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/IntegerPrintfMacros.h"
@@ -136,7 +137,8 @@ static FILE* gRefcntsLog = nullptr;
 static FILE* gAllocLog = nullptr;
 static FILE* gCOMPtrLog = nullptr;
 
-static void WalkTheStackSavingLocations(std::vector<void*>& aLocations);
+static void WalkTheStackSavingLocations(std::vector<void*>& aLocations,
+                                        const void* aFirstFramePC);
 
 struct SerialNumberRecord {
   SerialNumberRecord()
@@ -325,8 +327,8 @@ static BloatEntry* GetBloatEntry(const char* aTypeName,
   return entry;
 }
 
-static void DumpSerialNumbers(const SerialHash::Iterator& aHashEntry, FILE* aFd,
-                              bool aDumpAsStringBuffer) {
+static void DumpSerialNumbers(const SerialHash::ConstIterator& aHashEntry,
+                              FILE* aFd, bool aDumpAsStringBuffer) {
   SerialNumberRecord* record = aHashEntry.UserData();
   auto* outputFile = aFd;
 #ifdef HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR
@@ -398,10 +400,9 @@ nsresult nsTraceRefcnt::DumpStatistics() {
   gLogging = NoLogging;
 
   BloatEntry total("TOTAL", 0);
-  for (auto iter = gBloatView->Iter(); !iter.Done(); iter.Next()) {
-    BloatEntry* entry = iter.UserData();
-    if (nsCRT::strcmp(entry->GetClassName(), "TOTAL") != 0) {
-      entry->Total(&total);
+  for (const auto& data : gBloatView->Values()) {
+    if (nsCRT::strcmp(data->GetClassName(), "TOTAL") != 0) {
+      data->Total(&total);
     }
   }
 
@@ -413,9 +414,9 @@ nsresult nsTraceRefcnt::DumpStatistics() {
   }
   const bool leaked = total.PrintDumpHeader(gBloatLog, msg);
 
-  nsTArray<BloatEntry*> entries;
-  for (auto iter = gBloatView->Iter(); !iter.Done(); iter.Next()) {
-    entries.AppendElement(iter.UserData());
+  nsTArray<BloatEntry*> entries(gBloatView->Count());
+  for (const auto& data : gBloatView->Values()) {
+    entries.AppendElement(data.get());
   }
 
   const uint32_t count = entries.Length();
@@ -439,7 +440,7 @@ nsresult nsTraceRefcnt::DumpStatistics() {
                                     gTypesToLog->Contains("nsStringBuffer");
 
     fprintf(gBloatLog, "\nSerial Numbers of Leaked Objects:\n");
-    for (auto iter = gSerialNumbers->Iter(); !iter.Done(); iter.Next()) {
+    for (auto iter = gSerialNumbers->ConstIter(); !iter.Done(); iter.Next()) {
       DumpSerialNumbers(iter, gBloatLog, onlyLoggingStringBuffers);
     }
   }
@@ -452,13 +453,13 @@ void nsTraceRefcnt::ResetStatistics() {
   gBloatView = nullptr;
 }
 
-static intptr_t GetSerialNumber(void* aPtr, bool aCreate) {
+static intptr_t GetSerialNumber(void* aPtr, bool aCreate, void* aFirstFramePC) {
   if (!aCreate) {
     auto record = gSerialNumbers->Get(aPtr);
     return record ? record->serialNumber : 0;
   }
 
-  gSerialNumbers->WithEntryHandle(aPtr, [](auto&& entry) {
+  gSerialNumbers->WithEntryHandle(aPtr, [aFirstFramePC](auto&& entry) {
     if (entry) {
       MOZ_CRASH(
           "If an object already has a serial number, we should be destroying "
@@ -466,7 +467,7 @@ static intptr_t GetSerialNumber(void* aPtr, bool aCreate) {
     }
 
     auto& record = entry.Insert(MakeUnique<SerialNumberRecord>());
-    WalkTheStackSavingLocations(record->allocationStack);
+    WalkTheStackSavingLocations(record->allocationStack, aFirstFramePC);
     if (gLogJSStacks) {
       record->SaveJSStack();
     }
@@ -743,29 +744,14 @@ static void EnsureWrite(FILE* aStream, const char* aBuf, size_t aLen) {
   }
 }
 
-static void PrintStackFrame(uint32_t aFrameNumber, void* aPC, void* aSP,
-                            void* aClosure) {
-  FILE* stream = (FILE*)aClosure;
-  MozCodeAddressDetails details;
-  static const size_t buflen = 1024;
-  char buf[buflen + 1];  // 1 for trailing '\n'
-
-  MozDescribeCodeAddress(aPC, &details);
-  MozFormatCodeAddressDetails(buf, buflen, aFrameNumber, aPC, &details);
-  size_t len = std::min(strlen(buf), buflen + 1 - 2);
-  buf[len++] = '\n';
-  buf[len] = '\0';
-  fflush(stream);
-  EnsureWrite(stream, buf, len);
-}
-
 static void PrintStackFrameCached(uint32_t aFrameNumber, void* aPC, void* aSP,
                                   void* aClosure) {
   auto stream = static_cast<FILE*>(aClosure);
-  static const size_t buflen = 1024;
+  static const int buflen = 1024;
   char buf[buflen + 5] = "    ";  // 5 for leading "    " and trailing '\n'
-  gCodeAddressService->GetLocation(aFrameNumber, aPC, buf + 4, buflen);
-  size_t len = std::min(strlen(buf), buflen + 5 - 2);
+  int len =
+      gCodeAddressService->GetLocation(aFrameNumber, aPC, buf + 4, buflen);
+  len = std::min(len, buflen + 1 - 2) + 4;
   buf[len++] = '\n';
   buf[len] = '\0';
   fflush(stream);
@@ -779,41 +765,28 @@ static void RecordStackFrame(uint32_t /*aFrameNumber*/, void* aPC,
 }
 }
 
-void nsTraceRefcnt::WalkTheStack(FILE* aStream, uint32_t aMaxFrames) {
-  MozStackWalk(PrintStackFrame, /* skipFrames */ 2, aMaxFrames, aStream);
-}
-
-#ifdef ANDROID
-void nsTraceRefcnt::WalkTheStack(void (*aWriter)(uint32_t, void*, void*,
-                                                 void*)) {
-  MozStackWalk(aWriter, /* skipFrames */ 2, /* maxFrames */ 0, nullptr);
-}
-#endif
-
 /**
- * This is a variant of |WalkTheStack| that uses |CodeAddressService| to cache
- * the results of |NS_DescribeCodeAddress|. If |WalkTheStackCached| is being
- * called frequently, it will be a few orders of magnitude faster than
- * |WalkTheStack|. However, the cache uses a lot of memory, which can cause
+ * This is a variant of |MozWalkTheStack| that uses |CodeAddressService| to
+ * cache the results of |NS_DescribeCodeAddress|. If |WalkTheStackCached| is
+ * being called frequently, it will be a few orders of magnitude faster than
+ * |MozWalkTheStack|. However, the cache uses a lot of memory, which can cause
  * OOM crashes. Therefore, this should only be used for things like refcount
  * logging which walk the stack extremely frequently.
  */
-static void WalkTheStackCached(FILE* aStream) {
+static void WalkTheStackCached(FILE* aStream, const void* aFirstFramePC) {
   if (!gCodeAddressService) {
     gCodeAddressService = new CodeAddressService<>();
   }
-  MozStackWalk(PrintStackFrameCached, /* skipFrames */ 2, /* maxFrames */ 0,
+  MozStackWalk(PrintStackFrameCached, aFirstFramePC, /* maxFrames */ 0,
                aStream);
 }
 
-static void WalkTheStackSavingLocations(std::vector<void*>& aLocations) {
+static void WalkTheStackSavingLocations(std::vector<void*>& aLocations,
+                                        const void* aFirstFramePC) {
   if (!gCodeAddressService) {
     gCodeAddressService = new CodeAddressService<>();
   }
-  static const int kFramesToSkip = 0 +  // this frame gets inlined
-                                   1 +  // GetSerialNumber
-                                   1;   // NS_LogCtor
-  MozStackWalk(RecordStackFrame, kFramesToSkip, /* maxFrames */ 0, &aLocations);
+  MozStackWalk(RecordStackFrame, aFirstFramePC, /* maxFrames */ 0, &aLocations);
 }
 
 //----------------------------------------------------------------------
@@ -900,7 +873,7 @@ void LogTerm() {
 
 }  // namespace mozilla
 
-EXPORT_XPCOM_API(void)
+EXPORT_XPCOM_API(MOZ_NEVER_INLINE void)
 NS_LogAddRef(void* aPtr, nsrefcnt aRefcnt, const char* aClass,
              uint32_t aClassSize) {
   ASSERT_ACTIVITY_IS_LEGAL;
@@ -926,7 +899,7 @@ NS_LogAddRef(void* aPtr, nsrefcnt aRefcnt, const char* aClass,
     bool loggingThisType = (!gTypesToLog || gTypesToLog->Contains(aClass));
     intptr_t serialno = 0;
     if (gSerialNumbers && loggingThisType) {
-      serialno = GetSerialNumber(aPtr, aRefcnt == 1);
+      serialno = GetSerialNumber(aPtr, aRefcnt == 1, CallerPC());
       MOZ_ASSERT(serialno != 0,
                  "Serial number requested for unrecognized pointer!  "
                  "Are you memmoving a refcounted object?");
@@ -940,7 +913,7 @@ NS_LogAddRef(void* aPtr, nsrefcnt aRefcnt, const char* aClass,
     if (aRefcnt == 1 && gAllocLog && loggingThisType && loggingThisObject) {
       fprintf(gAllocLog, "\n<%s> %p %" PRIdPTR " Create [thread %p]\n", aClass,
               aPtr, serialno, PR_GetCurrentThread());
-      WalkTheStackCached(gAllocLog);
+      WalkTheStackCached(gAllocLog, CallerPC());
     }
 
     if (gRefcntsLog && loggingThisType && loggingThisObject) {
@@ -948,13 +921,13 @@ NS_LogAddRef(void* aPtr, nsrefcnt aRefcnt, const char* aClass,
       fprintf(gRefcntsLog,
               "\n<%s> %p %" PRIuPTR " AddRef %" PRIuPTR " [thread %p]\n",
               aClass, aPtr, serialno, aRefcnt, PR_GetCurrentThread());
-      WalkTheStackCached(gRefcntsLog);
+      WalkTheStackCached(gRefcntsLog, CallerPC());
       fflush(gRefcntsLog);
     }
   }
 }
 
-EXPORT_XPCOM_API(void)
+EXPORT_XPCOM_API(MOZ_NEVER_INLINE void)
 NS_LogRelease(void* aPtr, nsrefcnt aRefcnt, const char* aClass) {
   ASSERT_ACTIVITY_IS_LEGAL;
   if (!gInitialized) {
@@ -976,7 +949,7 @@ NS_LogRelease(void* aPtr, nsrefcnt aRefcnt, const char* aClass) {
     bool loggingThisType = (!gTypesToLog || gTypesToLog->Contains(aClass));
     intptr_t serialno = 0;
     if (gSerialNumbers && loggingThisType) {
-      serialno = GetSerialNumber(aPtr, false);
+      serialno = GetSerialNumber(aPtr, false, CallerPC());
       MOZ_ASSERT(serialno != 0,
                  "Serial number requested for unrecognized pointer!  "
                  "Are you memmoving a refcounted object?");
@@ -992,7 +965,7 @@ NS_LogRelease(void* aPtr, nsrefcnt aRefcnt, const char* aClass) {
       fprintf(gRefcntsLog,
               "\n<%s> %p %" PRIuPTR " Release %" PRIuPTR " [thread %p]\n",
               aClass, aPtr, serialno, aRefcnt, PR_GetCurrentThread());
-      WalkTheStackCached(gRefcntsLog);
+      WalkTheStackCached(gRefcntsLog, CallerPC());
       fflush(gRefcntsLog);
     }
 
@@ -1002,7 +975,7 @@ NS_LogRelease(void* aPtr, nsrefcnt aRefcnt, const char* aClass) {
     if (aRefcnt == 0 && gAllocLog && loggingThisType && loggingThisObject) {
       fprintf(gAllocLog, "\n<%s> %p %" PRIdPTR " Destroy [thread %p]\n", aClass,
               aPtr, serialno, PR_GetCurrentThread());
-      WalkTheStackCached(gAllocLog);
+      WalkTheStackCached(gAllocLog, CallerPC());
     }
 
     if (aRefcnt == 0 && gSerialNumbers && loggingThisType) {
@@ -1011,7 +984,7 @@ NS_LogRelease(void* aPtr, nsrefcnt aRefcnt, const char* aClass) {
   }
 }
 
-EXPORT_XPCOM_API(void)
+EXPORT_XPCOM_API(MOZ_NEVER_INLINE void)
 NS_LogCtor(void* aPtr, const char* aType, uint32_t aInstanceSize) {
   ASSERT_ACTIVITY_IS_LEGAL;
   if (!gInitialized) {
@@ -1034,7 +1007,7 @@ NS_LogCtor(void* aPtr, const char* aType, uint32_t aInstanceSize) {
   bool loggingThisType = (!gTypesToLog || gTypesToLog->Contains(aType));
   intptr_t serialno = 0;
   if (gSerialNumbers && loggingThisType) {
-    serialno = GetSerialNumber(aPtr, true);
+    serialno = GetSerialNumber(aPtr, true, CallerPC());
     MOZ_ASSERT(serialno != 0,
                "GetSerialNumber should never return 0 when passed true");
   }
@@ -1043,11 +1016,11 @@ NS_LogCtor(void* aPtr, const char* aType, uint32_t aInstanceSize) {
   if (gAllocLog && loggingThisType && loggingThisObject) {
     fprintf(gAllocLog, "\n<%s> %p %" PRIdPTR " Ctor (%d)\n", aType, aPtr,
             serialno, aInstanceSize);
-    WalkTheStackCached(gAllocLog);
+    WalkTheStackCached(gAllocLog, CallerPC());
   }
 }
 
-EXPORT_XPCOM_API(void)
+EXPORT_XPCOM_API(MOZ_NEVER_INLINE void)
 NS_LogDtor(void* aPtr, const char* aType, uint32_t aInstanceSize) {
   ASSERT_ACTIVITY_IS_LEGAL;
   if (!gInitialized) {
@@ -1070,7 +1043,7 @@ NS_LogDtor(void* aPtr, const char* aType, uint32_t aInstanceSize) {
   bool loggingThisType = (!gTypesToLog || gTypesToLog->Contains(aType));
   intptr_t serialno = 0;
   if (gSerialNumbers && loggingThisType) {
-    serialno = GetSerialNumber(aPtr, false);
+    serialno = GetSerialNumber(aPtr, false, CallerPC());
     MOZ_ASSERT(serialno != 0,
                "Serial number requested for unrecognized pointer!  "
                "Are you memmoving a MOZ_COUNT_CTOR-tracked object?");
@@ -1084,11 +1057,11 @@ NS_LogDtor(void* aPtr, const char* aType, uint32_t aInstanceSize) {
   if (gAllocLog && loggingThisType && loggingThisObject) {
     fprintf(gAllocLog, "\n<%s> %p %" PRIdPTR " Dtor (%d)\n", aType, aPtr,
             serialno, aInstanceSize);
-    WalkTheStackCached(gAllocLog);
+    WalkTheStackCached(gAllocLog, CallerPC());
   }
 }
 
-EXPORT_XPCOM_API(void)
+EXPORT_XPCOM_API(MOZ_NEVER_INLINE void)
 NS_LogCOMPtrAddRef(void* aCOMPtr, nsISupports* aObject) {
 #ifdef HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR
   // Get the most-derived object.
@@ -1106,7 +1079,7 @@ NS_LogCOMPtrAddRef(void* aCOMPtr, nsISupports* aObject) {
   if (gLogging == FullLogging) {
     AutoTraceLogLock lock;
 
-    intptr_t serialno = GetSerialNumber(object, false);
+    intptr_t serialno = GetSerialNumber(object, false, CallerPC());
     if (serialno == 0) {
       return;
     }
@@ -1118,13 +1091,13 @@ NS_LogCOMPtrAddRef(void* aCOMPtr, nsISupports* aObject) {
     if (gCOMPtrLog && loggingThisObject) {
       fprintf(gCOMPtrLog, "\n<?> %p %" PRIdPTR " nsCOMPtrAddRef %d %p\n",
               object, serialno, count, aCOMPtr);
-      WalkTheStackCached(gCOMPtrLog);
+      WalkTheStackCached(gCOMPtrLog, CallerPC());
     }
   }
 #endif  // HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR
 }
 
-EXPORT_XPCOM_API(void)
+EXPORT_XPCOM_API(MOZ_NEVER_INLINE void)
 NS_LogCOMPtrRelease(void* aCOMPtr, nsISupports* aObject) {
 #ifdef HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR
   // Get the most-derived object.
@@ -1142,7 +1115,7 @@ NS_LogCOMPtrRelease(void* aCOMPtr, nsISupports* aObject) {
   if (gLogging == FullLogging) {
     AutoTraceLogLock lock;
 
-    intptr_t serialno = GetSerialNumber(object, false);
+    intptr_t serialno = GetSerialNumber(object, false, CallerPC());
     if (serialno == 0) {
       return;
     }
@@ -1154,7 +1127,7 @@ NS_LogCOMPtrRelease(void* aCOMPtr, nsISupports* aObject) {
     if (gCOMPtrLog && loggingThisObject) {
       fprintf(gCOMPtrLog, "\n<?> %p %" PRIdPTR " nsCOMPtrRelease %d %p\n",
               object, serialno, count, aCOMPtr);
-      WalkTheStackCached(gCOMPtrLog);
+      WalkTheStackCached(gCOMPtrLog, CallerPC());
     }
   }
 #endif  // HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR

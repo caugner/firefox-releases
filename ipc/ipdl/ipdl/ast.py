@@ -11,7 +11,7 @@ INSIDE_CPOW_NESTED = 3
 
 NORMAL_PRIORITY = 1
 INPUT_PRIORITY = 2
-HIGH_PRIORITY = 3
+VSYNC_PRIORITY = 3
 MEDIUMHIGH_PRIORITY = 4
 
 
@@ -349,16 +349,17 @@ class MessageDecl(Node):
         return {
             "normal": NORMAL_PRIORITY,
             "input": INPUT_PRIORITY,
-            "high": HIGH_PRIORITY,
+            "vsync": VSYNC_PRIORITY,
             "mediumhigh": MEDIUMHIGH_PRIORITY,
         }[self.attributes["Priority"].value]
 
 
 class Param(Node):
-    def __init__(self, loc, typespec, name):
+    def __init__(self, loc, typespec, name, attributes={}):
         Node.__init__(self, loc)
         self.name = name
         self.typespec = typespec
+        self.attributes = attributes
 
 
 class TypeSpec(Node):
@@ -416,3 +417,4 @@ class Decl(Node):
         self.loc = loc
         self.type = None
         self.scope = None
+        self.attributes = {}

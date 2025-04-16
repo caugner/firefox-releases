@@ -173,6 +173,7 @@ class BaseProcessLauncher {
 
   // Overrideable hooks. If superclass behavior is invoked, it's always at the
   // top of the override.
+  virtual bool SetChannel(IPC::Channel*) = 0;
   virtual bool DoSetup();
   virtual RefPtr<ProcessHandlePromise> DoLaunch() = 0;
   virtual bool DoFinishLaunch() { return true; };
@@ -212,7 +213,6 @@ class BaseProcessLauncher {
   char mPidString[32];
 
   // Set during launch.
-  IPC::Channel* mChannel = nullptr;
   IPC::Channel::ChannelId mChannelId;
   ScopedPRFileDesc mCrashAnnotationReadPipe;
   ScopedPRFileDesc mCrashAnnotationWritePipe;
@@ -229,6 +229,7 @@ class WindowsProcessLauncher : public BaseProcessLauncher {
         mCachedNtdllThunk(aHost->sCachedNtDllThunk) {}
 
  protected:
+  bool SetChannel(IPC::Channel*) override { return true; }
   virtual bool DoSetup() override;
   virtual RefPtr<ProcessHandlePromise> DoLaunch() override;
   virtual bool DoFinishLaunch() override;
@@ -252,6 +253,21 @@ class PosixProcessLauncher : public BaseProcessLauncher {
         mProfileDir(aHost->mProfileDir) {}
 
  protected:
+  bool SetChannel(IPC::Channel* aChannel) override {
+    // The source fd is owned by the channel; take ownership by
+    // dup()ing it and closing the channel's copy.  The destination fd
+    // is with respect to the not-yet-launched child process, so for
+    // this purpose it's just a number.
+    int origSrcFd;
+    aChannel->GetClientFileDescriptorMapping(&origSrcFd, &mChannelDstFd);
+    mChannelSrcFd.reset(dup(origSrcFd));
+    if (!mChannelSrcFd) {
+      return false;
+    }
+    aChannel->CloseClientFileDescriptor();
+    return true;
+  }
+
   virtual bool DoSetup() override;
   virtual RefPtr<ProcessHandlePromise> DoLaunch() override;
   virtual bool DoFinishLaunch() override;
@@ -259,6 +275,8 @@ class PosixProcessLauncher : public BaseProcessLauncher {
   nsCOMPtr<nsIFile> mProfileDir;
 
   std::vector<std::string> mChildArgv;
+  UniqueFileHandle mChannelSrcFd;
+  int mChannelDstFd;
 };
 
 #  if defined(XP_MACOSX)
@@ -588,9 +606,6 @@ void GeckoChildProcessHost::PrepareLaunch() {
 #endif
 
 #ifdef XP_WIN
-  if (mProcessType == GeckoProcessType_Plugin) {
-    InitWindowsGroupID();
-  }
 
 #  if defined(MOZ_SANDBOX)
   // We need to get the pref here as the process is launched off main thread.
@@ -1128,12 +1143,6 @@ bool PosixProcessLauncher::DoSetup() {
     const char* ld_library_path = PR_GetEnv("LD_LIBRARY_PATH");
     nsCString new_ld_lib_path(path.get());
 
-#    ifdef MOZ_WIDGET_GTK
-    if (mProcessType == GeckoProcessType_Plugin) {
-      new_ld_lib_path.AppendLiteral("/gtk2:");
-      new_ld_lib_path.Append(path.get());
-    }
-#    endif  // MOZ_WIDGET_GTK
     if (ld_library_path && *ld_library_path) {
       new_ld_lib_path.Append(':');
       new_ld_lib_path.Append(ld_library_path);
@@ -1142,25 +1151,13 @@ bool PosixProcessLauncher::DoSetup() {
 
 #  elif OS_MACOSX  // defined(OS_LINUX) || defined(OS_BSD)
     mLaunchOptions->env_map["DYLD_LIBRARY_PATH"] = path.get();
-    // XXX DYLD_INSERT_LIBRARIES should only be set when launching a plugin
-    //     process, and has no effect on other subprocesses (the hooks in
-    //     libplugin_child_interpose.dylib become noops).  But currently it
-    //     gets set when launching any kind of subprocess.
-    //
-    // Trigger "dyld interposing" for the dylib that contains
-    // plugin_child_interpose.mm.  This allows us to hook OS calls in the
-    // plugin process (ones that don't work correctly in a background
-    // process).  Don't break any other "dyld interposing" that has already
-    // been set up by whatever may have launched the browser.
-    const char* prevInterpose = PR_GetEnv("DYLD_INSERT_LIBRARIES");
-    nsCString interpose;
-    if (prevInterpose && strlen(prevInterpose) > 0) {
-      interpose.Assign(prevInterpose);
-      interpose.Append(':');
+
+    // DYLD_INSERT_LIBRARIES is currently unused by default but we allow
+    // it to be set by the external environment.
+    const char* interpose = PR_GetEnv("DYLD_INSERT_LIBRARIES");
+    if (interpose && strlen(interpose) > 0) {
+      mLaunchOptions->env_map["DYLD_INSERT_LIBRARIES"] = interpose;
     }
-    interpose.Append(path.get());
-    interpose.AppendLiteral("/libplugin_child_interpose.dylib");
-    mLaunchOptions->env_map["DYLD_INSERT_LIBRARIES"] = interpose.get();
 
     // Prevent connection attempts to diagnosticd(8) to save cycles. Log
     // messages can trigger these connection attempts, but access to
@@ -1178,10 +1175,8 @@ bool PosixProcessLauncher::DoSetup() {
 
   // remap the IPC socket fd to a well-known int, as the OS does for
   // STDOUT_FILENO, for example
-  int srcChannelFd, dstChannelFd;
-  mChannel->GetClientFileDescriptorMapping(&srcChannelFd, &dstChannelFd);
   mLaunchOptions->fds_to_remap.push_back(
-      std::pair<int, int>(srcChannelFd, dstChannelFd));
+      std::pair<int, int>(mChannelSrcFd.get(), mChannelDstFd));
 
   // no need for kProcessChannelID, the child process inherits the
   // other end of the socketpair() from us
@@ -1278,7 +1273,7 @@ bool PosixProcessLauncher::DoFinishLaunch() {
   // We're in the parent and the child was launched. Close the child FD in the
   // parent as soon as possible, which will allow the parent to detect when the
   // child closes its FD (either due to normal exit or due to crash).
-  mChannel->CloseClientFileDescriptor();
+  mChannelSrcFd = nullptr;
 
   return true;
 }
@@ -1434,15 +1429,6 @@ bool WindowsProcessLauncher::DoSetup() {
         mUseSandbox = true;
       }
       break;
-    case GeckoProcessType_Plugin:
-      if (mSandboxLevel > 0 && !PR_GetEnv("MOZ_DISABLE_NPAPI_SANDBOX")) {
-        if (!mResults.mSandboxBroker->SetSecurityLevelForPluginProcess(
-                mSandboxLevel)) {
-          return false;
-        }
-        mUseSandbox = true;
-      }
-      break;
     case GeckoProcessType_IPDLUnitTest:
       // XXX: We don't sandbox this process type yet
       break;
@@ -1584,7 +1570,6 @@ bool WindowsProcessLauncher::DoFinishLaunch() {
     switch (mProcessType) {
       case GeckoProcessType_Default:
         MOZ_CRASH("shouldn't be launching a parent process");
-      case GeckoProcessType_Plugin:
       case GeckoProcessType_IPDLUnitTest:
         // No handle duplication necessary.
         break;
@@ -1797,14 +1782,9 @@ RefPtr<ProcessLaunchPromise> BaseProcessLauncher::Launch(
   // data races with the IO thread (where e.g. OnChannelConnected may run
   // concurrently). The pool currently needs access to the channel, which is not
   // great.
-  //
-  // It's also unfortunate that we need to work with raw pointers to both the
-  // host and the channel. The assumption here is that the host (and therefore
-  // the channel) are never torn down until the return promise is resolved or
-  // rejected.
   aHost->InitializeChannel();
-  mChannel = aHost->GetChannel();
-  if (!mChannel) {
+  IPC::Channel* channel = aHost->GetChannel();
+  if (!channel || !SetChannel(channel)) {
     return ProcessLaunchPromise::CreateAndReject(LaunchError{}, __func__);
   }
   mChannelId = aHost->GetChannelId();

@@ -13,11 +13,11 @@
 
   <script type="application/javascript">
     function doTest() {
-      // <label> is generally not valid in MathML. In 88, it still creates an
-      // HTMLLabelAccessible, but it shouldn't crash.
+      // <label> is generally not valid in MathML and shouldn't create an HTMl
+      // label.
       testAccessibleTree("invalidLabel", {
         MATHML_MATH: [ {
-          LABEL: [ {
+          TEXT: [ {
             TEXT_LEAF: []
           } ],
         } ],

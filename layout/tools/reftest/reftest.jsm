@@ -8,7 +8,6 @@
 var EXPORTED_SYMBOLS = [
     "OnRefTestLoad",
     "OnRefTestUnload",
-    "getTestPlugin"
 ];
 
 Cu.import("resource://gre/modules/FileUtils.jsm");
@@ -132,20 +131,6 @@ function IDForEventTarget(event)
     }
 }
 
-function getTestPlugin(aName) {
-  var ph = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
-  var tags = ph.getPluginTags();
-
-  // Find the test plugin
-  for (var i = 0; i < tags.length; i++) {
-    if (tags[i].name == aName)
-      return tags[i];
-  }
-
-  logger.warning("Failed to find the test-plugin.");
-  return null;
-}
-
 function OnRefTestLoad(win)
 {
     g.crashDumpDir = Cc[NS_DIRECTORY_SERVICE_CONTRACTID]
@@ -201,20 +186,8 @@ function OnRefTestLoad(win)
       // TODO Bug 1156817: reftests don't have most of GeckoView infra so we
       // can't register this actor
       ChromeUtils.unregisterWindowActor("LoadURIDelegate");
-      ChromeUtils.unregisterWindowActor("WebBrowserChrome");
     } else {
       document.getElementById("reftest-window").appendChild(g.browser);
-    }
-
-    // reftests should have the test plugins enabled, not click-to-play
-    let plugin1 = getTestPlugin("Test Plug-in");
-    let plugin2 = getTestPlugin("Second Test Plug-in");
-    if (plugin1 && plugin2) {
-      g.testPluginEnabledStates = [plugin1.enabledState, plugin2.enabledState];
-      plugin1.enabledState = Ci.nsIPluginTag.STATE_ENABLED;
-      plugin2.enabledState = Ci.nsIPluginTag.STATE_ENABLED;
-    } else {
-      logger.warning("Could not get test plugin tags.");
     }
 
     g.browserMessageManager = g.browser.frameLoader.messageManager;
@@ -579,14 +552,6 @@ function StartTests()
 
 function OnRefTestUnload()
 {
-  let plugin1 = getTestPlugin("Test Plug-in");
-  let plugin2 = getTestPlugin("Second Test Plug-in");
-  if (plugin1 && plugin2) {
-    plugin1.enabledState = g.testPluginEnabledStates[0];
-    plugin2.enabledState = g.testPluginEnabledStates[1];
-  } else {
-    logger.warning("Failed to get test plugin tags.");
-  }
 }
 
 function AddURIUseCount(uri)
@@ -1732,7 +1697,7 @@ function RecvStartPrint(isPrintSelection, printRange)
                 getService(Ci.nsIPrefBranch);
     ps.printInColor = prefs.getBoolPref("print.print_in_color", true);
 
-    g.browser.print(g.browser.outerWindowID, ps)
+    g.browser.browsingContext.print(ps)
         .then(() => SendPrintDone(Cr.NS_OK, file.path))
         .catch(exception => SendPrintDone(exception.code, file.path));
 }

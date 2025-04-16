@@ -45,8 +45,8 @@ class nsDeviceSensors : public nsIDeviceSensors,
 
   void FireDOMLightEvent(mozilla::dom::EventTarget* aTarget, double value);
 
-  void FireDOMProximityEvent(mozilla::dom::EventTarget* aTarget, double aValue,
-                             double aMin, double aMax);
+  void MaybeFireDOMUserProximityEvent(mozilla::dom::EventTarget* aTarget,
+                                      double aValue, double aMax);
 
   void FireDOMUserProximityEvent(mozilla::dom::EventTarget* aTarget,
                                  bool aNear);

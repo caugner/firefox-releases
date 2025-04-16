@@ -277,6 +277,7 @@ class TabsUpdateFilterEventManager extends EventManager {
 
       let listener = event => {
         // Ignore any events prior to TabOpen
+        // and events that are triggered while tabs are swapped between windows.
         if (event.originalTarget.initializingTab) {
           return;
         }
@@ -1406,8 +1407,8 @@ this.tabs = class extends ExtensionAPI {
                   printSettings.footerStrRight = pageSettings.footerRight;
                 }
 
-                activeTab.linkedBrowser
-                  .print(activeTab.linkedBrowser.outerWindowID, printSettings)
+                activeTab.linkedBrowser.browsingContext
+                  .print(printSettings)
                   .then(() => resolve(retval == 0 ? "saved" : "replaced"))
                   .catch(() =>
                     resolve(retval == 0 ? "not_saved" : "not_replaced")

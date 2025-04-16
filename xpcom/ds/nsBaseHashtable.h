@@ -10,6 +10,7 @@
 #include <functional>
 #include <utility>
 
+#include "mozilla/dom/SafeRefPtr.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/RefPtr.h"
@@ -61,6 +62,22 @@ struct SmartPtrTraits<RefPtr<Pointee>> {
 };
 
 template <typename Pointee>
+struct SmartPtrTraits<SafeRefPtr<Pointee>> {
+  static constexpr bool IsSmartPointer = true;
+  static constexpr bool IsRefCounted = true;
+  using SmartPointerType = SafeRefPtr<Pointee>;
+  using PointeeType = Pointee;
+  using RawPointerType = Pointee*;
+  template <typename U>
+  using OtherSmartPtrType = SafeRefPtr<U>;
+
+  template <typename U, typename... Args>
+  static SmartPointerType NewObject(Args&&... aConstructionArgs) {
+    return MakeSafeRefPtr<U>(std::forward<Args>(aConstructionArgs)...);
+  }
+};
+
+template <typename Pointee>
 struct SmartPtrTraits<nsCOMPtr<Pointee>> {
   static constexpr bool IsSmartPointer = true;
   static constexpr bool IsRefCounted = true;
@@ -76,8 +93,6 @@ struct SmartPtrTraits<nsCOMPtr<Pointee>> {
   }
 };
 
-// XXX Add SafeRefPtr specialization
-
 template <class T>
 T* PtrGetWeak(T* aPtr) {
   return aPtr;
@@ -86,6 +101,11 @@ T* PtrGetWeak(T* aPtr) {
 template <class T>
 T* PtrGetWeak(const RefPtr<T>& aPtr) {
   return aPtr.get();
+}
+
+template <class T>
+T* PtrGetWeak(const SafeRefPtr<T>& aPtr) {
+  return aPtr.unsafeGetRawPtr();
 }
 
 template <class T>
@@ -148,9 +168,16 @@ class nsBaseHashtableValueRange {
   auto cbegin() const { return begin(); }
   auto cend() const { return end(); }
 
+  uint32_t Count() const { return mHashtable.EntryCount(); }
+
  private:
   const PLDHashTable& mHashtable;
 };
+
+template <typename EntryType>
+auto RangeSize(const detail::nsBaseHashtableValueRange<EntryType>& aRange) {
+  return aRange.Count();
+}
 
 }  // namespace mozilla::detail
 
@@ -363,13 +390,11 @@ class nsBaseHashtable
     static_assert(
         SmartPtrTraits::IsSmartPointer,
         "GetOrInsertNew can only be used with smart pointer data types");
-    return LookupOrInsertWith(std::move(aKey),
-                              [&] {
-                                return SmartPtrTraits::template NewObject<
-                                    typename SmartPtrTraits::PointeeType>(
-                                    std::forward<Args>(aConstructionArgs)...);
-                              })
-        .get();
+    return mozilla::detail::PtrGetWeak(LookupOrInsertWith(std::move(aKey), [&] {
+      return SmartPtrTraits::template NewObject<
+          typename SmartPtrTraits::PointeeType>(
+          std::forward<Args>(aConstructionArgs)...);
+    }));
   }
 
   /**
@@ -517,16 +542,17 @@ class nsBaseHashtable
     return value;
   }
 
+  template <typename HashtableRef>
   struct LookupResult {
    private:
     EntryType* mEntry;
-    nsBaseHashtable& mTable;
+    HashtableRef mTable;
 #ifdef DEBUG
     uint32_t mTableGeneration;
 #endif
 
    public:
-    LookupResult(EntryType* aEntry, nsBaseHashtable& aTable)
+    LookupResult(EntryType* aEntry, HashtableRef aTable)
         : mEntry(aEntry),
           mTable(aTable)
 #ifdef DEBUG
@@ -607,8 +633,12 @@ class nsBaseHashtable
    * lookups.  If you want to insert a new entry if one does not exist, then use
    * WithEntryHandle instead, see below.
    */
-  [[nodiscard]] LookupResult Lookup(KeyType aKey) {
-    return LookupResult(this->GetEntry(aKey), *this);
+  [[nodiscard]] auto Lookup(KeyType aKey) {
+    return LookupResult<nsBaseHashtable&>(this->GetEntry(aKey), *this);
+  }
+
+  [[nodiscard]] auto Lookup(KeyType aKey) const {
+    return LookupResult<const nsBaseHashtable&>(this->GetEntry(aKey), *this);
   }
 
   /**

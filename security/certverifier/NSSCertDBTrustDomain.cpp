@@ -108,15 +108,15 @@ NSSCertDBTrustDomain::NSSCertDBTrustDomain(
       mSCTListFromOCSPStapling(),
       mBuiltInRootsModule(SECMOD_FindModule(kRootModuleName)) {}
 
-static Result FindRootsWithSubject(UniqueSECMODModule& rootsModule,
-                                   SECItem subject,
-                                   /*out*/ Vector<Vector<uint8_t>>& roots) {
+static void FindRootsWithSubject(UniqueSECMODModule& rootsModule,
+                                 SECItem subject,
+                                 /*out*/ nsTArray<nsTArray<uint8_t>>& roots) {
   MOZ_ASSERT(rootsModule);
   for (int slotIndex = 0; slotIndex < rootsModule->slotCount; slotIndex++) {
     CERTCertificateList* rawResults = nullptr;
     if (PK11_FindRawCertsWithSubject(rootsModule->slots[slotIndex], &subject,
                                      &rawResults) != SECSuccess) {
-      return Result::FATAL_ERROR_LIBRARY_FAILURE;
+      continue;
     }
     // rawResults == nullptr means we didn't find any matching certificates
     if (!rawResults) {
@@ -124,17 +124,12 @@ static Result FindRootsWithSubject(UniqueSECMODModule& rootsModule,
     }
     UniqueCERTCertificateList results(rawResults);
     for (int certIndex = 0; certIndex < results->len; certIndex++) {
-      Vector<uint8_t> root;
-      if (!root.append(results->certs[certIndex].data,
-                       results->certs[certIndex].len)) {
-        return Result::FATAL_ERROR_NO_MEMORY;
-      }
-      if (!roots.append(std::move(root))) {
-        return Result::FATAL_ERROR_NO_MEMORY;
-      }
+      nsTArray<uint8_t> root;
+      root.AppendElements(results->certs[certIndex].data,
+                          results->certs[certIndex].len);
+      roots.AppendElement(std::move(root));
     }
   }
-  return Success;
 }
 
 // A self-signed issuer certificate should never be necessary in order to build
@@ -184,7 +179,7 @@ static bool ShouldSkipSelfSignedNonTrustAnchor(TrustDomain& trustDomain,
 
 static Result CheckCandidates(TrustDomain& trustDomain,
                               TrustDomain::IssuerChecker& checker,
-                              Vector<Input>& candidates,
+                              nsTArray<Input>& candidates,
                               Input* nameConstraintsInputPtr, bool& keepGoing) {
   for (Input candidate : candidates) {
     if (ShouldSkipSelfSignedNonTrustAnchor(trustDomain, candidate)) {
@@ -223,15 +218,13 @@ Result NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
 
   // First try all relevant certificates known to Gecko, which avoids calling
   // CERT_CreateSubjectCertList, because that can be expensive.
-  Vector<Input> geckoRootCandidates;
-  Vector<Input> geckoIntermediateCandidates;
+  nsTArray<Input> geckoRootCandidates;
+  nsTArray<Input> geckoIntermediateCandidates;
 
   if (!mCertStorage) {
     return Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
   nsTArray<uint8_t> subject;
-  // XXX(Bug 1631371) Check if this should use a fallible operation as it
-  // pretended earlier.
   subject.AppendElements(encodedIssuerName.UnsafeGetData(),
                          encodedIssuerName.GetLength());
   nsTArray<nsTArray<uint8_t>> certs;
@@ -246,29 +239,22 @@ Result NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
       continue;  // probably too big
     }
     // Currently we're only expecting intermediate certificates in cert storage.
-    if (!geckoIntermediateCandidates.append(certDER)) {
-      return Result::FATAL_ERROR_NO_MEMORY;
-    }
+    geckoIntermediateCandidates.AppendElement(std::move(certDER));
   }
 
   // We might not have this module if e.g. we're on a Linux distribution that
   // does something unexpected.
-  Vector<Vector<uint8_t>> builtInRoots;
+  nsTArray<nsTArray<uint8_t>> builtInRoots;
   if (mBuiltInRootsModule) {
-    Result rv = FindRootsWithSubject(mBuiltInRootsModule, encodedIssuerNameItem,
-                                     builtInRoots);
-    if (rv != Success) {
-      return rv;
-    }
+    FindRootsWithSubject(mBuiltInRootsModule, encodedIssuerNameItem,
+                         builtInRoots);
     for (const auto& root : builtInRoots) {
       Input rootInput;
-      rv = rootInput.Init(root.begin(), root.length());
+      Result rv = rootInput.Init(root.Elements(), root.Length());
       if (rv != Success) {
         continue;  // probably too big
       }
-      if (!geckoRootCandidates.append(rootInput)) {
-        return Result::FATAL_ERROR_NO_MEMORY;
-      }
+      geckoRootCandidates.AppendElement(rootInput);
     }
   } else {
     MOZ_LOG(gCertVerifierLog, LogLevel::Debug,
@@ -287,9 +273,7 @@ Result NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
     if (!InputsAreEqual(encodedIssuerName, root.GetSubject())) {
       continue;
     }
-    if (!geckoRootCandidates.append(thirdPartyRootInput)) {
-      return Result::FATAL_ERROR_NO_MEMORY;
-    }
+    geckoRootCandidates.AppendElement(thirdPartyRootInput);
   }
 
   for (const auto& thirdPartyIntermediateInput :
@@ -306,9 +290,7 @@ Result NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
     if (!InputsAreEqual(encodedIssuerName, intermediate.GetSubject())) {
       continue;
     }
-    if (!geckoIntermediateCandidates.append(thirdPartyIntermediateInput)) {
-      return Result::FATAL_ERROR_NO_MEMORY;
-    }
+    geckoIntermediateCandidates.AppendElement(thirdPartyIntermediateInput);
   }
 
   if (mExtraCertificates.isSome()) {
@@ -331,16 +313,12 @@ Result NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
       }
       // We assume that extra certificates (presumably from the TLS handshake)
       // are intermediates, since sending trust anchors would be superfluous.
-      if (!geckoIntermediateCandidates.append(certInput)) {
-        return Result::FATAL_ERROR_NO_MEMORY;
-      }
+      geckoIntermediateCandidates.AppendElement(certInput);
     }
   }
 
   // Try all root certs first and then all (presumably) intermediates.
-  if (!geckoRootCandidates.appendAll(std::move(geckoIntermediateCandidates))) {
-    return Result::FATAL_ERROR_NO_MEMORY;
-  }
+  geckoRootCandidates.AppendElements(std::move(geckoIntermediateCandidates));
 
   bool keepGoing = true;
   Result result = CheckCandidates(*this, checker, geckoRootCandidates,
@@ -352,38 +330,48 @@ Result NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
     return Success;
   }
 
-  // NSS seems not to differentiate between "no potential issuers found" and
-  // "there was an error trying to retrieve the potential issuers." We assume
-  // there was no error if CERT_CreateSubjectCertList returns nullptr.
+  nsTArray<nsTArray<uint8_t>> nssRootCandidates;
+  nsTArray<nsTArray<uint8_t>> nssIntermediateCandidates;
+  // NSS seems not to differentiate between "no potential issuers found"
+  // and "there was an error trying to retrieve the potential issuers." We
+  // assume there was no error if CERT_CreateSubjectCertList returns
+  // nullptr.
   UniqueCERTCertList candidates(CERT_CreateSubjectCertList(
       nullptr, CERT_GetDefaultCertDB(), &encodedIssuerNameItem, 0, false));
-  Vector<Input> nssRootCandidates;
-  Vector<Input> nssIntermediateCandidates;
   if (candidates) {
     for (CERTCertListNode* n = CERT_LIST_HEAD(candidates);
          !CERT_LIST_END(n, candidates); n = CERT_LIST_NEXT(n)) {
-      Input certDER;
-      Result rv = certDER.Init(n->cert->derCert.data, n->cert->derCert.len);
-      if (rv != Success) {
-        continue;  // probably too big
-      }
+      nsTArray<uint8_t> candidate;
+      candidate.AppendElements(n->cert->derCert.data, n->cert->derCert.len);
       if (n->cert->isRoot) {
-        if (!nssRootCandidates.append(certDER)) {
-          return Result::FATAL_ERROR_NO_MEMORY;
-        }
+        nssRootCandidates.AppendElement(std::move(candidate));
       } else {
-        if (!nssIntermediateCandidates.append(certDER)) {
-          return Result::FATAL_ERROR_NO_MEMORY;
-        }
+        nssIntermediateCandidates.AppendElement(std::move(candidate));
       }
     }
   }
-  if (!nssRootCandidates.appendAll(std::move(nssIntermediateCandidates))) {
-    return Result::FATAL_ERROR_NO_MEMORY;
+
+  nsTArray<Input> nssCandidates;
+  for (const auto& rootCandidate : nssRootCandidates) {
+    Input certDER;
+    Result rv = certDER.Init(rootCandidate.Elements(), rootCandidate.Length());
+    if (rv != Success) {
+      continue;  // probably too big
+    }
+    nssCandidates.AppendElement(std::move(certDER));
+  }
+  for (const auto& intermediateCandidate : nssIntermediateCandidates) {
+    Input certDER;
+    Result rv = certDER.Init(intermediateCandidate.Elements(),
+                             intermediateCandidate.Length());
+    if (rv != Success) {
+      continue;  // probably too big
+    }
+    nssCandidates.AppendElement(std::move(certDER));
   }
 
-  return CheckCandidates(*this, checker, nssRootCandidates,
-                         nameConstraintsInputPtr, keepGoing);
+  return CheckCandidates(*this, checker, nssCandidates, nameConstraintsInputPtr,
+                         keepGoing);
 }
 
 Result NSSCertDBTrustDomain::GetCertTrust(EndEntityOrCA endEntityOrCA,
@@ -442,36 +430,36 @@ Result NSSCertDBTrustDomain::GetCertTrust(EndEntityOrCA endEntityOrCA,
     }
   }
 
-  // XXX: This would be cleaner and more efficient if we could get the trust
-  // information without constructing a CERTCertificate here, but NSS doesn't
-  // expose it in any other easy-to-use fashion. The use of
+  // This would be cleaner and more efficient if we could get the trust
+  // information without constructing a CERTCertificate here, but NSS
+  // doesn't expose it in any other easy-to-use fashion. The use of
   // CERT_NewTempCertificate to get a CERTCertificate shouldn't be a
-  // performance problem for certificates already known to NSS because NSS will
-  // just find the existing CERTCertificate in its in-memory cache and return
-  // it. For certificates not already in NSS (namely third-party roots and
-  // intermediates), we want to avoid calling CERT_NewTempCertificate
-  // repeatedly, so we've already checked if the candidate certificate is a
-  // third-party certificate, above.
+  // performance problem for certificates already known to NSS because NSS
+  // will just find the existing CERTCertificate in its in-memory cache
+  // and return it. For certificates not already in NSS (namely
+  // third-party roots and intermediates), we want to avoid calling
+  // CERT_NewTempCertificate repeatedly, so we've already checked if the
+  // candidate certificate is a third-party certificate, above.
   SECItem candidateCertDERSECItem = UnsafeMapInputToSECItem(candidateCertDER);
   UniqueCERTCertificate candidateCert(CERT_NewTempCertificate(
       CERT_GetDefaultCertDB(), &candidateCertDERSECItem, nullptr, false, true));
   if (!candidateCert) {
     return MapPRErrorCodeToResult(PR_GetError());
   }
-  // XXX: CERT_GetCertTrust seems to be abusing SECStatus as a boolean, where
-  // SECSuccess means that there is a trust record and SECFailure means there
-  // is not a trust record. I looked at NSS's internal uses of
-  // CERT_GetCertTrust, and all that code uses the result as a boolean meaning
-  // "We have a trust record."
+  // NB: CERT_GetCertTrust seems to be abusing SECStatus as a boolean,
+  // where SECSuccess means that there is a trust record and SECFailure
+  // means there is not a trust record. I looked at NSS's internal uses of
+  // CERT_GetCertTrust, and all that code uses the result as a boolean
+  // meaning "We have a trust record."
   CERTCertTrust trust;
   if (CERT_GetCertTrust(candidateCert.get(), &trust) == SECSuccess) {
     uint32_t flags = SEC_GET_TRUST_FLAGS(&trust, mCertDBTrustType);
 
     // For DISTRUST, we use the CERTDB_TRUSTED or CERTDB_TRUSTED_CA bit,
-    // because we can have active distrust for either type of cert. Note that
-    // CERTDB_TERMINAL_RECORD means "stop trying to inherit trust" so if the
-    // relevant trust bit isn't set then that means the cert must be considered
-    // distrusted.
+    // because we can have active distrust for either type of cert. Note
+    // that CERTDB_TERMINAL_RECORD means "stop trying to inherit trust" so
+    // if the relevant trust bit isn't set then that means the cert must
+    // be considered distrusted.
     uint32_t relevantTrustBit = endEntityOrCA == EndEntityOrCA::MustBeCA
                                     ? CERTDB_TRUSTED_CA
                                     : CERTDB_TRUSTED;
@@ -487,13 +475,15 @@ Result NSSCertDBTrustDomain::GetCertTrust(EndEntityOrCA endEntityOrCA,
         trustLevel = TrustLevel::TrustAnchor;
         return Success;
       }
-      if (CertIsAuthoritativeForEVPolicy(candidateCert, policy)) {
+
+      nsTArray<uint8_t> certBytes(candidateCert->derCert.data,
+                                  candidateCert->derCert.len);
+      if (CertIsAuthoritativeForEVPolicy(certBytes, policy)) {
         trustLevel = TrustLevel::TrustAnchor;
         return Success;
       }
     }
   }
-
   trustLevel = TrustLevel::InheritsTrust;
   return Success;
 }

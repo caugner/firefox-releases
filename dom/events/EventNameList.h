@@ -326,8 +326,6 @@ WINDOW_ONLY_EVENT(deviceorientation, eDeviceOrientation, EventNameType_None,
                   eBasicEventClass)
 WINDOW_ONLY_EVENT(absolutedeviceorientation, eAbsoluteDeviceOrientation,
                   EventNameType_None, eBasicEventClass)
-WINDOW_ONLY_EVENT(deviceproximity, eDeviceProximity, EventNameType_None,
-                  eBasicEventClass)
 WINDOW_ONLY_EVENT(userproximity, eUserProximity, EventNameType_None,
                   eBasicEventClass)
 WINDOW_ONLY_EVENT(devicelight, eDeviceLight, EventNameType_None,
@@ -455,10 +453,10 @@ NON_IDL_EVENT(gamepadbuttonup, eGamepadButtonUp, EventNameType_None,
               eBasicEventClass)
 NON_IDL_EVENT(gamepadaxismove, eGamepadAxisMove, EventNameType_None,
               eBasicEventClass)
-NON_IDL_EVENT(gamepadconnected, eGamepadConnected, EventNameType_None,
-              eBasicEventClass)
-NON_IDL_EVENT(gamepaddisconnected, eGamepadDisconnected, EventNameType_None,
-              eBasicEventClass)
+WINDOW_EVENT(gamepadconnected, eGamepadConnected, EventNameType_None,
+             eBasicEventClass)
+WINDOW_EVENT(gamepaddisconnected, eGamepadDisconnected, EventNameType_None,
+             eBasicEventClass)
 
 // Simple gesture events
 NON_IDL_EVENT(MozSwipeGestureMayStart, eSwipeGestureMayStart,

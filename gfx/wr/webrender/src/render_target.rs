@@ -23,7 +23,6 @@ use crate::render_task::{RenderTaskKind, RenderTaskAddress};
 use crate::render_task::{RenderTask, ScalingTask, SvgFilterInfo};
 use crate::render_task_graph::{RenderTaskGraph, RenderTaskId};
 use crate::resource_cache::ResourceCache;
-use crate::visibility::PrimitiveVisibilityMask;
 
 const STYLE_SOLID: i32 = ((BorderStyle::Solid as i32) << 8) | ((BorderStyle::Solid as i32) << 16);
 const STYLE_MASK: i32 = 0x00FF_FF00;
@@ -305,7 +304,7 @@ impl RenderTarget for ColorRenderTarget {
                         ctx.batch_lookback_count,
                         *task_id,
                         (*task_id).into(),
-                        PrimitiveVisibilityMask::all(),
+                        None,
                         prealloc_batch_count,
                     );
 
@@ -525,10 +524,7 @@ impl RenderTarget for AlphaRenderTarget {
                 );
             }
             RenderTaskKind::CacheMask(ref task_info) => {
-                if task_info.clear_to_one {
-                    self.one_clears.push(task_id);
-                }
-                self.clip_batcher.add(
+                let clear_to_one = self.clip_batcher.add(
                     task_info.clip_node_range,
                     task_info.root_spatial_node_index,
                     render_tasks,
@@ -545,6 +541,9 @@ impl RenderTarget for AlphaRenderTarget {
                     target_rect.origin.to_f32(),
                     task_info.actual_rect.origin,
                 );
+                if task_info.clear_to_one || clear_to_one {
+                    self.one_clears.push(task_id);
+                }
             }
             RenderTaskKind::ClipRegion(ref region_task) => {
                 if region_task.clear_to_one {

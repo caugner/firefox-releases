@@ -152,8 +152,8 @@ Http2Session::Http2Session(nsISocketTransport* aSocketTransport,
 
   mPingThreshold = gHttpHandler->SpdyPingThreshold();
   mPreviousPingThreshold = mPingThreshold;
-  mCurrentForegroundTabOuterContentWindowId =
-      gHttpHandler->ConnMgr()->CurrentTopLevelOuterContentWindowId();
+  mCurrentTopBrowsingContextId =
+      gHttpHandler->ConnMgr()->CurrentTopBrowsingContextId();
 
   mEnableWebsockets = gHttpHandler->IsH2WebsocketsEnabled();
 
@@ -163,9 +163,7 @@ Http2Session::Http2Session(nsISocketTransport* aSocketTransport,
 }
 
 void Http2Session::Shutdown() {
-  for (auto iter = mStreamTransactionHash.Iter(); !iter.Done(); iter.Next()) {
-    auto stream = iter.UserData();
-
+  for (const auto& stream : mStreamTransactionHash.Values()) {
     // On a clean server hangup the server sets the GoAwayID to be the ID of
     // the last transaction it processed. If the ID of stream in the
     // local stream is greater than that it can safely be restarted because the
@@ -529,9 +527,8 @@ bool Http2Session::AddStream(nsAHttpTransaction* aHttpTransaction,
     return true;
   }
 
-  RefPtr<Http2Stream> refStream =
-      new Http2Stream(aHttpTransaction, this, aPriority,
-                      mCurrentForegroundTabOuterContentWindowId);
+  RefPtr<Http2Stream> refStream = new Http2Stream(
+      aHttpTransaction, this, aPriority, mCurrentTopBrowsingContextId);
 
   LOG3(("Http2Session::AddStream session=%p stream=%p serial=%" PRIu64 " "
         "NextID=0x%X (tentative)",
@@ -1669,9 +1666,8 @@ nsresult Http2Session::RecvSettings(Http2Session* self) {
 
         // SETTINGS only adjusts stream windows. Leave the session window alone.
         // We need to add the delta to all open streams (delta can be negative)
-        for (auto iter = self->mStreamTransactionHash.Iter(); !iter.Done();
-             iter.Next()) {
-          iter.Data()->UpdateServerReceiveWindow(delta);
+        for (const auto& stream : self->mStreamTransactionHash.Values()) {
+          stream->UpdateServerReceiveWindow(delta);
         }
       } break;
 
@@ -1901,9 +1897,9 @@ nsresult Http2Session::RecvPushPromise(Http2Session* self) {
   RefPtr<Http2PushTransactionBuffer> transactionBuffer =
       new Http2PushTransactionBuffer();
   transactionBuffer->SetConnection(self);
-  RefPtr<Http2PushedStream> pushedStream(new Http2PushedStream(
-      transactionBuffer, self, associatedStream, promisedID,
-      self->mCurrentForegroundTabOuterContentWindowId));
+  RefPtr<Http2PushedStream> pushedStream(
+      new Http2PushedStream(transactionBuffer, self, associatedStream,
+                            promisedID, self->mCurrentTopBrowsingContextId));
 
   rv = pushedStream->ConvertPushHeaders(&self->mDecompressor,
                                         self->mDecompressBuffer,
@@ -2129,13 +2125,11 @@ nsresult Http2Session::RecvGoAway(Http2Session* self) {
   // Find streams greater than the last-good ID and mark them for deletion
   // in the mGoAwayStreamsToRestart queue. The underlying transaction can be
   // restarted.
-  for (auto iter = self->mStreamTransactionHash.Iter(); !iter.Done();
-       iter.Next()) {
+  for (const auto& stream : self->mStreamTransactionHash.Values()) {
     // these streams were not processed by the server and can be restarted.
     // Do that after the enumerator completes to avoid the risk of
     // a restart event re-entrantly modifying this hash. Be sure not to restart
     // a pushed (even numbered) stream
-    auto stream = iter.UserData();
     if ((stream->StreamID() > self->mGoAwayID && (stream->StreamID() & 1)) ||
         !stream->HasRegisteredID()) {
       self->mGoAwayStreamsToRestart.Push(stream);
@@ -2267,11 +2261,9 @@ nsresult Http2Session::RecvWindowUpdate(Http2Session* self) {
     if ((oldRemoteWindow <= 0) && (self->mServerSessionWindow > 0)) {
       LOG3(
           ("Http2Session::RecvWindowUpdate %p restart session window\n", self));
-      for (auto iter = self->mStreamTransactionHash.Iter(); !iter.Done();
-           iter.Next()) {
+      for (const auto& stream : self->mStreamTransactionHash.Values()) {
         MOZ_ASSERT(self->mServerSessionWindow > 0);
 
-        auto stream = iter.UserData();
         if (!stream->BlockedOnRwin() || stream->ServerReceiveWindow() <= 0) {
           continue;
         }
@@ -3108,9 +3100,7 @@ nsresult Http2Session::WriteSegmentsAgain(nsAHttpSegmentWriter* writer,
       }
 
       // Go through and re-start all of our transactions with h2 disabled.
-      for (auto iter = mStreamTransactionHash.Iter(); !iter.Done();
-           iter.Next()) {
-        auto stream = iter.UserData();
+      for (const auto& stream : mStreamTransactionHash.Values()) {
         stream->Transaction()->DisableSpdy();
         CloseStream(stream, NS_ERROR_NET_RESET);
       }
@@ -4511,13 +4501,13 @@ bool Http2Session::RealJoinConnection(const nsACString& hostname, int32_t port,
   return joinedReturn;
 }
 
-void Http2Session::TopLevelOuterContentWindowIdChanged(uint64_t windowId) {
+void Http2Session::TopBrowsingContextIdChanged(uint64_t id) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
-  mCurrentForegroundTabOuterContentWindowId = windowId;
+  mCurrentTopBrowsingContextId = id;
 
-  for (auto iter = mStreamTransactionHash.Iter(); !iter.Done(); iter.Next()) {
-    iter.Data()->TopLevelOuterContentWindowIdChanged(windowId);
+  for (const auto& stream : mStreamTransactionHash.Values()) {
+    stream->TopBrowsingContextIdChanged(id);
   }
 }
 

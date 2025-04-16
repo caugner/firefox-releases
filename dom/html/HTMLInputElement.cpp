@@ -1127,7 +1127,7 @@ nsresult HTMLInputElement::Clone(dom::NodeInfo* aNodeInfo,
 
   it->DoneCreatingElement();
 
-  it->mLastValueChangeWasInteractive = mLastValueChangeWasInteractive;
+  it->SetLastValueChangeWasInteractive(mLastValueChangeWasInteractive);
   it.forget(aResult);
   return NS_OK;
 }
@@ -2738,15 +2738,29 @@ nsresult HTMLInputElement::SetValueInternal(
 }
 
 nsresult HTMLInputElement::SetValueChanged(bool aValueChanged) {
-  bool valueChangedBefore = mValueChanged;
-
+  if (mValueChanged == aValueChanged) {
+    return NS_OK;
+  }
   mValueChanged = aValueChanged;
+  UpdateTooLongValidityState();
+  UpdateTooShortValidityState();
+  // We need to do this unconditionally because the validity ui bits depend on
+  // this.
+  UpdateState(true);
+  return NS_OK;
+}
 
-  if (valueChangedBefore != aValueChanged) {
+void HTMLInputElement::SetLastValueChangeWasInteractive(bool aWasInteractive) {
+  if (aWasInteractive == mLastValueChangeWasInteractive) {
+    return;
+  }
+  mLastValueChangeWasInteractive = aWasInteractive;
+  const bool wasValid = IsValid();
+  UpdateTooLongValidityState();
+  UpdateTooShortValidityState();
+  if (wasValid != IsValid()) {
     UpdateState(true);
   }
-
-  return NS_OK;
 }
 
 void HTMLInputElement::SetCheckedChanged(bool aCheckedChanged) {
@@ -5041,12 +5055,18 @@ bool HTMLInputElement::ParseTime(const nsAString& aValue, uint32_t* aResult) {
 
 /* static */
 bool HTMLInputElement::IsDateTimeTypeSupported(uint8_t aDateTimeInputType) {
-  return aDateTimeInputType == NS_FORM_INPUT_DATE ||
-         aDateTimeInputType == NS_FORM_INPUT_TIME ||
-         ((aDateTimeInputType == NS_FORM_INPUT_MONTH ||
-           aDateTimeInputType == NS_FORM_INPUT_WEEK ||
-           aDateTimeInputType == NS_FORM_INPUT_DATETIME_LOCAL) &&
-          StaticPrefs::dom_forms_datetime_others());
+  switch (aDateTimeInputType) {
+    case NS_FORM_INPUT_DATE:
+    case NS_FORM_INPUT_TIME:
+      return true;
+    case NS_FORM_INPUT_DATETIME_LOCAL:
+      return StaticPrefs::dom_forms_datetime_local();
+    case NS_FORM_INPUT_MONTH:
+    case NS_FORM_INPUT_WEEK:
+      return StaticPrefs::dom_forms_datetime_others();
+    default:
+      return false;
+  }
 }
 
 bool HTMLInputElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
@@ -5133,8 +5153,8 @@ void HTMLInputElement::ImageInputMapAttributesIntoRule(
                                                                  aDecls);
   nsGenericHTMLFormElementWithState::MapImageMarginAttributeInto(aAttributes,
                                                                  aDecls);
-  nsGenericHTMLFormElementWithState::MapImageSizeAttributesInto(aAttributes,
-                                                                aDecls);
+  nsGenericHTMLFormElementWithState::MapImageSizeAttributesInto(
+      aAttributes, aDecls, MapAspectRatio::Yes);
   // Images treat align as "float"
   nsGenericHTMLFormElementWithState::MapImageAlignAttributeInto(aAttributes,
                                                                 aDecls);
@@ -5565,25 +5585,17 @@ void HTMLInputElement::SetDirectionFromValue(bool aNotify) {
   }
 }
 
-namespace {
-
-bool IsDateOrTime(uint8_t aType) {
-  return (aType == NS_FORM_INPUT_DATE) || (aType == NS_FORM_INPUT_TIME);
-}
-
-}  // namespace
-
 NS_IMETHODIMP
 HTMLInputElement::Reset() {
   // We should be able to reset all dirty flags regardless of the type.
   SetCheckedChanged(false);
   SetValueChanged(false);
-  mLastValueChangeWasInteractive = false;
+  SetLastValueChangeWasInteractive(false);
 
   switch (GetValueMode()) {
     case VALUE_MODE_VALUE: {
       nsresult result = SetDefaultValueAsValue();
-      if (IsDateOrTime(mType)) {
+      if (CreatesDateTimeWidget()) {
         // mFocusedValue has to be set here, so that `FireChangeEventIfNeeded`
         // can fire a change event if necessary.
         GetValue(mFocusedValue, CallerType::System);
@@ -5668,13 +5680,22 @@ HTMLInputElement::SubmitNamesValues(HTMLFormSubmission* aFormSubmission) {
         GetFilesOrDirectoriesInternal();
 
     if (files.IsEmpty()) {
-      aFormSubmission->AddNameBlobOrNullPair(name, nullptr);
-      return NS_OK;
+      NS_ENSURE_STATE(GetOwnerGlobal());
+      ErrorResult rv;
+      RefPtr<Blob> blob = Blob::CreateStringBlob(
+          GetOwnerGlobal(), ""_ns, u"application/octet-stream"_ns);
+      RefPtr<File> file = blob->ToFile(u""_ns, rv);
+
+      if (!rv.Failed()) {
+        aFormSubmission->AddNameBlobPair(name, file);
+      }
+
+      return rv.StealNSResult();
     }
 
     for (uint32_t i = 0; i < files.Length(); ++i) {
       if (files[i].IsFile()) {
-        aFormSubmission->AddNameBlobOrNullPair(name, files[i].GetAsFile());
+        aFormSubmission->AddNameBlobPair(name, files[i].GetAsFile());
       } else {
         MOZ_ASSERT(files[i].IsDirectory());
         aFormSubmission->AddNameDirectoryPair(name, files[i].GetAsDirectory());
@@ -5837,7 +5858,7 @@ void HTMLInputElement::DoneCreatingElement() {
     // before the type change.)
     SetValueInternal(aValue, ValueSetterOption::ByInternalAPI);
 
-    if (IsDateOrTime(mType)) {
+    if (CreatesDateTimeWidget()) {
       // mFocusedValue has to be set here, so that `FireChangeEventIfNeeded` can
       // fire a change event if necessary.
       mFocusedValue = aValue;
@@ -6011,8 +6032,7 @@ bool HTMLInputElement::RestoreState(PresState* aState) {
         SetValueInternal(inputState.get_TextContentData().value(),
                          ValueSetterOption::SetValueChanged);
         if (inputState.get_TextContentData().lastValueChangeWasInteractive()) {
-          mLastValueChangeWasInteractive = true;
-          UpdateState(true);
+          SetLastValueChangeWasInteractive(true);
         }
       }
       break;

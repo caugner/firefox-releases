@@ -51,34 +51,30 @@ body {
 
 /* TODO bug 1695280: Remove these media selectors and merge the rule below
    with the ruleset above. We must set background properties on :root and not
-   #navigator-toolbox on Windows due to our accent-color-in-title-bar
-   behaviour in Firefox <89 and a WebRender bug that hides the
-   minimize/maximize/close buttons on Windows 7/8 */
+   #navigator-toolbox on Windows 7/8 due to a WebRender bug that hides the
+   minimize/maximize/close buttons. */
 @media not (-moz-os-version: windows-win7) {
   @media not (-moz-os-version: windows-win8) {
-    @media not (-moz-os-version: windows-win10) {
-      #navigator-toolbox:-moz-lwtheme {
-        background-color: var(--lwt-accent-color);
-      }
-
-      /* When a theme defines both theme_frame and additional_backgrounds, show
-        the latter atop the former. */
-      :root[lwtheme-image] #navigator-toolbox {
-        background-image: var(--lwt-header-image), var(--lwt-additional-images);
-        background-repeat: no-repeat, var(--lwt-background-tiling);
-        background-position: right top, var(--lwt-background-alignment);
-      }
-
-      #navigator-toolbox:-moz-window-inactive:-moz-lwtheme {
-        background-color: var(--lwt-accent-color-inactive, var(--lwt-accent-color));
-      }
+    #navigator-toolbox:-moz-lwtheme {
+      background-color: var(--lwt-accent-color);
     }
+
+    /* When a theme defines both theme_frame and additional_backgrounds, show
+       the latter atop the former. */
+   :root[lwtheme-image] #navigator-toolbox {
+     background-image: var(--lwt-header-image), var(--lwt-additional-images);
+     background-repeat: no-repeat, var(--lwt-background-tiling);
+     background-position: right top, var(--lwt-background-alignment);
+   }
+
+   #navigator-toolbox:-moz-window-inactive:-moz-lwtheme {
+     background-color: var(--lwt-accent-color-inactive, var(--lwt-accent-color));
+   }
   }
 }
 /* TODO bug 1695280: Remove this block. */
 @media (-moz-os-version: windows-win7),
-       (-moz-os-version: windows-win8),
-       (-moz-os-version: windows-win10) {
+       (-moz-os-version: windows-win8) {
   :root:-moz-lwtheme {
     background-color: var(--lwt-accent-color);
   }
@@ -158,7 +154,7 @@ panelview[mainview] > .panel-header {
   transition: height var(--panelui-subview-transition-duration);
 }
 
-@supports -moz-bool-pref("browser.proton.doorhangers.enabled") {
+@media (-moz-proton-doorhangers) {
 :is(panel, menupopup)::part(arrow) {
   display: none;
 }
@@ -254,10 +250,12 @@ panelview[mainview] > .panel-header {
   pointer-events: none; /* avoid blocking dragover events on scroll buttons */
 }
 
-#tabbrowser-tabs[movingtab] > #tabbrowser-arrowscrollbox > .tabbrowser-tab[fadein]:not([selected]):not([multiselected]),
-.tabbrowser-tab[tab-grouping],
-.tabbrowser-tab[tabdrop-samewindow] {
-  transition: transform 200ms var(--animation-easing-function);
+@media (prefers-reduced-motion: no-preference) {
+  #tabbrowser-tabs[movingtab] > #tabbrowser-arrowscrollbox > .tabbrowser-tab[fadein]:not([selected]):not([multiselected]),
+  .tabbrowser-tab[tab-grouping],
+  .tabbrowser-tab[tabdrop-samewindow] {
+    transition: transform 200ms var(--animation-easing-function);
+  }
 }
 
 .tabbrowser-tab[tab-grouping][multiselected]:not([selected]) {
@@ -412,7 +410,7 @@ toolbarpaletteitem {
 :root[inDOMFullscreen] #fullscr-toggler,
 :root[inDOMFullscreen] #sidebar-box,
 :root[inDOMFullscreen] #sidebar-splitter,
-:root[inFullscreen]:not([OSXLionFullscreen]) toolbar:not([fullscreentoolbar=true]),
+:root[inFullscreen]:not([macOSNativeFullscreen]) toolbar:not([fullscreentoolbar=true]),
 :root[inFullscreen] .global-notificationbox {
   visibility: collapse;
 }
@@ -606,8 +604,12 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
     transparent 25px,
     rgba(255,255,255,.3) 25px,
     rgba(255,255,255,.3) 50px);
+  background-attachment: fixed;
   background-color: rgba(255,170,68,.8);
   color: black;
+  /* Override the usual breakout animation so the gradient doesn't shift around
+     when the panel opens. */
+  animation: none !important;
 }
 
 /* Show the url scheme in a static box when overflowing to the left */
@@ -775,6 +777,15 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
     display: none;
   }
 }
+
+@media (-moz-proton) {
+  /* The page actions menu is hidden by default, it is only shown in small
+     windows as the overflow target of multiple page action buttons */
+  #pageActionButton {
+    visibility: collapse;
+  }
+}
+
 /* 680px is just below half of popular 1366px wide screens, so when putting two
    browser windows next to each other on such a screen, they'll be above this
    threshold. */
@@ -782,16 +793,22 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
   /* Page action buttons are duplicated in the page action menu so we can
      safely hide them in small windows. */
   #pageActionSeparator,
-  #pageActionButton ~ .urlbar-page-action {
+  #pageActionButton[multiple-children] ~ .urlbar-page-action {
     display: none;
+  }
+
+  @media (-moz-proton) {
+    #pageActionButton[multiple-children] {
+      visibility: visible;
+    }
   }
 }
 @media (max-width: 550px) {
   #urlbar-container {
-    min-width: calc(225px + 24px + 2 * var(--toolbarbutton-inner-padding));
+    min-width: calc(216px + 24px + 2 * var(--toolbarbutton-inner-padding));
   }
   #nav-bar[downloadsbuttonshown] #urlbar-container {
-    min-width: 225px;
+    min-width: 216px;
   }
   #identity-icon-box {
     max-width: 70px;
@@ -800,6 +817,17 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
     display: none;
   }
 }
+
+@media not (-moz-proton) {
+@media (max-width: 550px) {
+  #urlbar-container {
+    min-width: calc(225px + 24px + 2 * var(--toolbarbutton-inner-padding));
+  }
+  #nav-bar[downloadsbuttonshown] #urlbar-container {
+    min-width: 225px;
+  }
+}
+} /*** END !proton ***/
 
 /* Flexible spacer sizing (gets overridden in the navbar) */
 toolbarpaletteitem[place=toolbar][id^=wrapper-customizableui-special-spring],
@@ -924,7 +952,7 @@ menupopup[emptyplacesresult="true"] > .hide-if-empty-places-result {
   /* Use -10px to hide the border and border-radius on the top */
   transform: translate(-50%, -10px);
 }
-:root[OSXLionFullscreen] .pointerlockfswarning[ontop] {
+:root[macOSNativeFullscreen] .pointerlockfswarning[ontop] {
   transform: translate(-50%, 80px);
 }
 
@@ -1023,11 +1051,8 @@ browser[tabmodalPromptShowing], browser[tabDialogShowing] {
 
 /*** Visibility of downloads indicator controls ***/
 
-/* Bug 924050: If we've loaded the indicator, for now we hide it in the menu panel,
-   and just show the icon. This is a hack to side-step very weird layout bugs that
-   seem to be caused by the indicator stack interacting with the menu panel. */
-#downloads-button[indicator]:not([cui-areatype="menu-panel"]) > .toolbarbutton-badge-stack > image.toolbarbutton-icon,
-#downloads-button[indicator][cui-areatype="menu-panel"] > .toolbarbutton-badge-stack > #downloads-indicator-anchor {
+/* Hide the default icon, show the anchor instead. */
+#downloads-button[indicator] > .toolbarbutton-badge-stack > image.toolbarbutton-icon {
   display: none;
 }
 
@@ -1050,8 +1075,12 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
   scrollbar-width: var(--content-select-scrollbar-width, auto);
 }
 
-#ContentSelectDropdown > menupopup::part(arrowscrollbox) {
+#ContentSelectDropdown > menupopup[customoptionstyling="true"]::part(arrowscrollbox) {
+  /* When authors specify a custom background, we use background-image to specify the author-supplied color.
+   * In that case, we don't want stuff like custom appearance or custom
+   * backgrounds, so we make sure to apply it on top of the default background. */
   background-image: var(--content-select-background-image, none);
+  background-color: -moz-Combobox;
 }
 
 /* Indent options in optgroups */
@@ -1061,11 +1090,15 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
 
 /* Give this menupopup an arrow panel styling */
 #BMB_bookmarksPopup {
-  appearance: none;
   background: transparent;
   border: none;
   /* The popup inherits -moz-image-region from the button, must reset it */
   -moz-image-region: auto;
+}
+
+#BMB_bookmarksPopup,
+#BMB_bookmarksPopup menupopup {
+  appearance: none;
 }
 
 @supports -moz-bool-pref("xul.panel-animations.enabled") {
@@ -1242,6 +1275,13 @@ toolbarpaletteitem[dragover] {
   display: -moz-box;
 }
 
+@media (-moz-proton) {
+#customization-lwtheme-button > .box-inherit > .button-menu-dropmarker,
+#customization-uidensity-button > .box-inherit > .button-menu-dropmarker {
+  display: -moz-box;
+}
+} /*** END proton ***/
+
 toolbarpaletteitem[place="palette"] {
   -moz-box-orient: vertical;
   width: 7em;
@@ -1264,6 +1304,10 @@ toolbarpaletteitem > toolbaritem {
   /* Prevent children from getting events */
   pointer-events: none;
   -moz-box-pack: center;
+}
+
+toolbarpaletteitem > #stop-reload-button {
+  -moz-box-pack: inherit;
 }
 
 :root[customizing=true] .addon-banner-item,
@@ -1382,17 +1426,6 @@ toolbarpaletteitem > toolbaritem {
   }
 }
 
-/* Page action context menu */
-#pageActionContextMenu > .pageActionContextMenuItem {
-  visibility: collapse;
-}
-#pageActionContextMenu[state=builtInPinned] > .pageActionContextMenuItem.builtInPinned,
-#pageActionContextMenu[state=builtInUnpinned] > .pageActionContextMenuItem.builtInUnpinned,
-#pageActionContextMenu[state=extensionPinned] > .pageActionContextMenuItem.extensionPinned,
-#pageActionContextMenu[state=extensionUnpinned] > .pageActionContextMenuItem.extensionUnpinned {
-  visibility: visible;
-}
-
 /* Print pending */
 .printSettingsBrowser {
   width: 250px !important;
@@ -1452,7 +1485,7 @@ printpreview-pagination:focus-within,
   opacity: 0;
 }
 
-@media (prefers-color-scheme: dark) {
+@media (-moz-toolbar-prefers-color-scheme: dark) {
   .previewStack {
     background-color: #2A2A2E;
     color: rgb(249, 249, 250);
@@ -1516,14 +1549,14 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
 
 .dialogBox {
   background-clip: content-box;
-  box-shadow: 0 2px 14px 0 rgba(58, 57, 68, 0.2);
+  box-shadow: 0 2px 14px 0 rgba(0, 0, 0, 0.2);
   display: -moz-box;
   margin: 0;
   padding: 0;
   overflow-x: auto;
 }
 
-@supports -moz-bool-pref("browser.proton.enabled") {
+@media (-moz-proton) {
 .dialogBox {
   border-radius: 8px;
 }
@@ -1600,7 +1633,7 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
   margin: 0;
   -moz-box-flex: 1;
   /* Default dialog dimensions */
-  width: 59.5ch;
+  width: 34em;
   /* will get overridden, but need to change the default so small
    * dialogs don't end up being 150px tall */
   height: 80px;
@@ -1614,7 +1647,11 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
 
 .dialogOverlay[topmost="true"],
 #window-modal-dialog::backdrop {
-  background-color: rgba(91, 91, 102, 0.45);
+  background-color: rgba(28, 27, 34, 0.45);
+}
+
+#window-modal-dialog.showToolbar::backdrop {
+  background: linear-gradient(transparent, rgba(28, 27, 34, 0.45) 20%);
 }
 
 /* For the window-modal dialog, the background is supplied by the HTML dialog
@@ -1633,8 +1670,10 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
  * End Dialogs
  */
 
+@media not (-moz-proton-doorhangers) {
 /* Password update/save doorhanger */
 #password-notification-username,
 #password-notification-password {
   margin-inline-start: 6px;
 }
+} /** END not Proton **/

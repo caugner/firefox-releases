@@ -5,6 +5,8 @@
 with Files("**"):
     BUG_COMPONENT = ("Firefox", "Address Bar")
 
+JAR_MANIFESTS += ["jar.mn"]
+
 EXTRA_JS_MODULES += [
     "UrlbarController.jsm",
     "UrlbarEventBufferer.jsm",
@@ -12,6 +14,7 @@ EXTRA_JS_MODULES += [
     "UrlbarMuxerUnifiedComplete.jsm",
     "UrlbarPrefs.jsm",
     "UrlbarProviderAutofill.jsm",
+    "UrlbarProviderCalculator.jsm",
     "UrlbarProviderExtension.jsm",
     "UrlbarProviderHeuristicFallback.jsm",
     "UrlbarProviderInterventions.jsm",
@@ -42,6 +45,7 @@ TESTING_JS_MODULES += [
 BROWSER_CHROME_MANIFESTS += [
     "tests/browser-proton/browser.ini",
     "tests/browser-tips/browser.ini",
+    "tests/browser-updateResults/browser.ini",
     "tests/browser/browser.ini",
     "tests/ext/browser/browser.ini",
 ]

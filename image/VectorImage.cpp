@@ -260,14 +260,12 @@ bool SVGDrawingCallback::operator()(gfxContext* aContext,
   RefPtr<PresShell> presShell = mSVGDocumentWrapper->GetPresShell();
   MOZ_ASSERT(presShell, "GetPresShell returned null for an SVG image?");
 
-#ifdef MOZ_GECKO_PROFILER
   Document* doc = presShell->GetDocument();
-  nsIURI* uri = doc ? doc->GetDocumentURI() : nullptr;
+  [[maybe_unused]] nsIURI* uri = doc ? doc->GetDocumentURI() : nullptr;
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING(
       "SVG Image drawing", GRAPHICS,
       nsPrintfCString("%dx%d %s", mSize.width, mSize.height,
                       uri ? uri->GetSpecOrDefault().get() : "N/A"));
-#endif
 
   gfxContextAutoSaveRestore contextRestorer(aContext);
 
@@ -648,9 +646,6 @@ Maybe<AspectRatio> VectorImage::GetIntrinsicRatio() {
 NS_IMETHODIMP_(Orientation)
 VectorImage::GetOrientation() { return Orientation(); }
 
-NS_IMETHODIMP_(bool)
-VectorImage::HandledOrientation() { return false; }
-
 //******************************************************************************
 NS_IMETHODIMP
 VectorImage::GetType(uint16_t* aType) {
@@ -728,6 +723,7 @@ VectorImage::GetFrame(uint32_t aWhichFrame, uint32_t aFlags) {
 NS_IMETHODIMP_(already_AddRefed<SourceSurface>)
 VectorImage::GetFrameAtSize(const IntSize& aSize, uint32_t aWhichFrame,
                             uint32_t aFlags) {
+  AutoProfilerImagePaintMarker PROFILER_RAII(this);
 #ifdef DEBUG
   NotifyDrawingObservers();
 #endif
@@ -1188,6 +1184,7 @@ void VectorImage::Show(gfxDrawable* aDrawable,
                              SurfaceFormat::OS_RGBA, aParams.samplingFilter,
                              aParams.flags, aParams.opacity, false);
 
+  AutoProfilerImagePaintMarker PROFILER_RAII(this);
 #ifdef DEBUG
   NotifyDrawingObservers();
 #endif

@@ -58,7 +58,7 @@ class PrincipalInfo;
 class GetUserMediaTask;
 class GetUserMediaWindowListener;
 class MediaManager;
-class SourceListener;
+class DeviceListener;
 
 class MediaDevice : public nsIMediaDevice {
  public:
@@ -83,7 +83,7 @@ class MediaDevice : public nsIMediaDevice {
 
   uint32_t GetBestFitnessDistance(
       const nsTArray<const NormalizedConstraintSet*>& aConstraintSets,
-      bool aIsChrome);
+      dom::CallerType aCallerType);
 
   nsresult Allocate(const dom::MediaTrackConstraints& aConstraints,
                     const MediaEnginePrefs& aPrefs, uint64_t aWindowId,
@@ -138,7 +138,7 @@ typedef MozPromise<RefPtr<AudioDeviceInfo>, nsresult, true> SinkInfoPromise;
 class MediaManager final : public nsIMediaManagerService,
                            public nsIMemoryReporter,
                            public nsIObserver {
-  friend SourceListener;
+  friend DeviceListener;
 
  public:
   static already_AddRefed<MediaManager> GetInstance();
@@ -204,8 +204,8 @@ class MediaManager final : public nsIMediaManagerService,
   static bool IsOn(const dom::OwningBooleanOrMediaTrackConstraints& aUnion) {
     return !aUnion.IsBoolean() || aUnion.GetAsBoolean();
   }
-  typedef dom::NavigatorUserMediaSuccessCallback GetUserMediaSuccessCallback;
-  typedef dom::NavigatorUserMediaErrorCallback GetUserMediaErrorCallback;
+  using GetUserMediaSuccessCallback = dom::NavigatorUserMediaSuccessCallback;
+  using GetUserMediaErrorCallback = dom::NavigatorUserMediaErrorCallback;
 
   MOZ_CAN_RUN_SCRIPT
   static void CallOnError(GetUserMediaErrorCallback& aCallback,
@@ -214,16 +214,18 @@ class MediaManager final : public nsIMediaManagerService,
   static void CallOnSuccess(GetUserMediaSuccessCallback& aCallback,
                             DOMMediaStream& aTrack);
 
-  typedef nsTArray<RefPtr<MediaDevice>> MediaDeviceSet;
-  typedef media::Refcountable<MediaDeviceSet> MediaDeviceSetRefCnt;
+  using MediaDeviceSet = nsTArray<RefPtr<MediaDevice>>;
+  using MediaDeviceSetRefCnt = media::Refcountable<MediaDeviceSet>;
 
-  typedef MozPromise<RefPtr<DOMMediaStream>, RefPtr<MediaMgrError>, true>
-      StreamPromise;
-  typedef MozPromise<RefPtr<MediaDeviceSetRefCnt>, RefPtr<MediaMgrError>, true>
-      DevicesPromise;
-  typedef MozPromise<bool, RefPtr<MediaMgrError>, true> MgrPromise;
-  typedef MozPromise<const char*, RefPtr<MediaMgrError>, true>
-      BadConstraintsPromise;
+  using StreamPromise =
+      MozPromise<RefPtr<DOMMediaStream>, RefPtr<MediaMgrError>, true>;
+  using DevicePromise =
+      MozPromise<RefPtr<MediaDevice>, RefPtr<MediaMgrError>, true>;
+  using DeviceSetPromise =
+      MozPromise<RefPtr<MediaDeviceSetRefCnt>, RefPtr<MediaMgrError>, true>;
+  using MgrPromise = MozPromise<bool, RefPtr<MediaMgrError>, true>;
+  using BadConstraintsPromise =
+      MozPromise<const char*, RefPtr<MediaMgrError>, true>;
 
   RefPtr<StreamPromise> GetUserMedia(
       nsPIDOMWindowInner* aWindow,
@@ -233,11 +235,10 @@ class MediaManager final : public nsIMediaManagerService,
   MOZ_CAN_RUN_SCRIPT
   nsresult GetUserMediaDevices(
       nsPIDOMWindowInner* aWindow,
-      const dom::MediaStreamConstraints& aConstraints,
       dom::MozGetUserMediaDevicesSuccessCallback& aOnSuccess,
       uint64_t aInnerWindowID = 0, const nsAString& aCallID = nsString());
-  RefPtr<DevicesPromise> EnumerateDevices(nsPIDOMWindowInner* aWindow,
-                                          dom::CallerType aCallerType);
+  RefPtr<DeviceSetPromise> EnumerateDevices(nsPIDOMWindowInner* aWindow,
+                                            dom::CallerType aCallerType);
 
   nsresult EnumerateDevices(nsPIDOMWindowInner* aWindow,
                             dom::Promise& aPromise);
@@ -318,7 +319,8 @@ class MediaManager final : public nsIMediaManagerService,
       const RefPtr<MediaDeviceSetRefCnt>& aOutDevices);
 
   RefPtr<BadConstraintsPromise> SelectSettings(
-      const dom::MediaStreamConstraints& aConstraints, bool aIsChrome,
+      const dom::MediaStreamConstraints& aConstraints,
+      dom::CallerType aCallerType,
       const RefPtr<MediaDeviceSetRefCnt>& aSources);
 
   void GetPref(nsIPrefBranch* aBranch, const char* aPref, const char* aData,

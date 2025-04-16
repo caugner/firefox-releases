@@ -201,10 +201,13 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   bool DataSentToChildProcess() { return LoadDataSentToChildProcess(); }
 
+  enum class SnifferType { Media, Image };
+  void DisableIsOpaqueResponseAllowedAfterSniffCheck(SnifferType aType);
+
  public: /* internal necko use only */
   uint32_t GetRequestTime() const { return mRequestTime; }
 
-  nsresult AsyncOpenFinal(TimeStamp aTimeStamp);
+  void AsyncOpenFinal(TimeStamp aTimeStamp);
 
   [[nodiscard]] nsresult OpenCacheEntry(bool usingSSL);
   [[nodiscard]] nsresult OpenCacheEntryInternal(
@@ -212,6 +215,10 @@ class nsHttpChannel final : public HttpBaseChannel,
   [[nodiscard]] nsresult ContinueConnect();
 
   [[nodiscard]] nsresult StartRedirectChannelToURI(nsIURI*, uint32_t);
+
+  SnifferCategoryType GetSnifferCategoryType() const {
+    return mSnifferCategoryType;
+  }
 
   // This allows cache entry to be marked as foreign even after channel itself
   // is gone.  Needed for e10s (see
@@ -267,7 +274,8 @@ class nsHttpChannel final : public HttpBaseChannel,
   base::ProcessId ProcessId();
 
   using ChildEndpointPromise =
-      MozPromise<ipc::Endpoint<extensions::PStreamFilterChild>, bool, true>;
+      MozPromise<mozilla::ipc::Endpoint<extensions::PStreamFilterChild>, bool,
+                 true>;
   [[nodiscard]] RefPtr<ChildEndpointPromise> AttachStreamFilter(
       base::ProcessId aChildProcessId);
 
@@ -302,7 +310,7 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   // Connections will only be established in this function.
   // (including DNS prefetch and speculative connection.)
-  nsresult MaybeResolveProxyAndBeginConnect();
+  void MaybeResolveProxyAndBeginConnect();
   nsresult MaybeStartDNSPrefetch();
 
   // Tells the channel to resolve the origin of the end server we are connecting
@@ -327,16 +335,12 @@ class nsHttpChannel final : public HttpBaseChannel,
   // is required, this funciton will just return NS_OK and BeginConnect()
   // will be called when callback. See Bug 1325054 for more information.
   nsresult BeginConnect();
-  [[nodiscard]] nsresult ContinueBeginConnectWithResult();
-  void ContinueBeginConnect();
   [[nodiscard]] nsresult PrepareToConnect();
-  void HandleOnBeforeConnect();
   [[nodiscard]] nsresult OnBeforeConnect();
   [[nodiscard]] nsresult ContinueOnBeforeConnect(
       bool aShouldUpgrade, nsresult aStatus, bool aUpgradeWithHTTPSRR = false);
   nsresult MaybeUseHTTPSRRForUpgrade(bool aShouldUpgrade, nsresult aStatus);
   void OnHTTPSRRAvailable(nsIDNSHTTPSSVCRecord* aRecord);
-  void OnBeforeConnectContinue();
   [[nodiscard]] nsresult Connect();
   void SpeculativeConnect();
   [[nodiscard]] nsresult SetupTransaction();
@@ -794,7 +798,7 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   // Determines if it's possible and advisable to race the network request
   // with the cache fetch, and proceeds to do so.
-  nsresult MaybeRaceCacheWithNetwork();
+  void MaybeRaceCacheWithNetwork();
 
   // Creates a new cache entry when network wins the race to ensure we have
   // the latest version of the resource in the cache. Otherwise we might return

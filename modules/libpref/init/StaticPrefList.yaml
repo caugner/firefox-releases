@@ -244,7 +244,7 @@
   # On Android, we want an opaque background to be visible under the page,
   # so layout should not force a default background.
 -   name: android.widget_paints_background
-    type: bool
+    type: RelaxedAtomicBool
     value: true
     mirror: always
 
@@ -297,7 +297,7 @@
 
 - name: apz.mac.enable_double_tap_zoom_touchpad_gesture
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 - name: apz.allow_immediate_handoff
@@ -526,6 +526,11 @@
     type: RelaxedAtomicBool
     value: true
     mirror: always
+
+-   name: apz.gtk.touchpad_pinch.three_fingers.enabled
+    type: RelaxedAtomicBool
+    value: false
+    mirror: always
 #endif
 
 - name: apz.keyboard.enabled
@@ -575,6 +580,18 @@
 
 - name: apz.overscroll.enabled
   type: RelaxedAtomicBool
+#if defined(XP_MACOSX)
+  value: true
+#else
+  value: false
+#endif
+  mirror: always
+
+# The "test async scroll offset" (used via reftest-async-scroll
+# or nsIDOMWindowUtils.setAsyncScrollOffset()) can be used to
+# trigger overscroll. Used for tests only.
+- name: apz.overscroll.test_async_scroll_offset.enabled
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -586,6 +603,21 @@
 - name: apz.overscroll.stop_distance_threshold
   type: AtomicFloat
   value: 5.0f
+  mirror: always
+
+- name: apz.overscroll.spring_stiffness
+  type: AtomicFloat
+  value: 200
+  mirror: always
+
+- name: apz.overscroll.damping
+  type: AtomicFloat
+  value: 1.1
+  mirror: always
+
+- name: apz.overscroll.max_velocity
+  type: AtomicFloat
+  value: 10
   mirror: always
 
 - name: apz.paint_skipping.enabled
@@ -685,6 +717,11 @@
   value: true
   mirror: always
 
+- name: apz.windows.check_for_pan_gesture_conversion
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 - name: apz.x_skate_highmem_adjust
   type: AtomicFloat
   value: 0.0f
@@ -725,7 +762,11 @@
 
 - name: apz.zoom_animation_duration_ms
   type: RelaxedAtomicInt32
+#if defined(MOZ_WIDGET_ANDROID)
   value: 250
+#else
+  value: 350
+#endif
   mirror: always
 
 - name: apz.scale_repaint_delay_ms
@@ -1006,7 +1047,7 @@
 # Whether focus rings are always shown by default.
 #
 # This is the initial value of nsWindowRoot::mShowFocusRings, but it can be
-# overridden by system preferences. 
+# overridden by system preferences.
 - name: browser.display.show_focus_rings
   type: bool
   value: false
@@ -1107,6 +1148,48 @@
   value: false
   mirror: always
 
+# Controls @media -moz-toolbar-prefers-color-scheme.
+#
+# Returns whether the toolbar is dark (0), light (1), or system (2).
+#
+# Default to "system", the theming code sets it appropriately.
+- name: browser.theme.toolbar-theme
+  type: RelaxedAtomicUint32
+  value: 2
+  mirror: always
+  rust: true
+
+# Enable Proton restyle. Requires restart.
+- name: browser.proton.enabled
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+  rust: true
+
+- name: browser.proton.contextmenus.enabled
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+  rust: true
+
+- name: browser.proton.modals.enabled
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+  rust: true
+
+- name: browser.proton.doorhangers.enabled
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+  rust: true
+
+- name: browser.proton.places-tooltip.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+  rust: true
+
 # Blocked plugin content
 - name: browser.safebrowsing.blockedURIs.enabled
   type: bool
@@ -1137,11 +1220,25 @@
   value: 512*1024
   mirror: always
 
-# ContentSessionStore prefs
+# SessionStore prefs
 # Maximum number of bytes of DOMSessionStorage data we collect per origin.
 - name: browser.sessionstore.dom_storage_limit
   type: uint32_t
   value: 2048
+  mirror: always
+
+# Minimal interval between two save operations in milliseconds (while the user is active).
+- name: browser.sessionstore.interval
+  type: uint32_t
+  value: 15000
+  mirror: always
+
+# Causes SessionStore to ignore non-final update messages from
+# browser tabs that were not caused by a flush from the parent.
+# This is a testing flag and should not be used by end-users.
+- name: browser.sessionstore.debug.no_auto_updates
+  type: bool
+  value: false
   mirror: always
 
 # If set, use DocumentChannel to directly initiate loads entirely
@@ -1168,7 +1265,7 @@
 #if !defined(ANDROID)
   value: true
 #else
-  value: false # Blocked by DocumentChannel, see Bug 1589982.
+  value: @IS_NIGHTLY_BUILD@
 #endif
   mirror: always
 
@@ -1179,8 +1276,27 @@
 #if !defined(ANDROID)
   value: true
 #else
-  value: false # Blocked by DocumentChannel, see Bug 1589982.
+  value: @IS_NIGHTLY_BUILD@
 #endif
+  mirror: always
+
+# When this pref is enabled then we use a separate content process for
+# top-level load of file:// URIs
+- name: browser.tabs.remote.separateFileUriProcess
+  type: RelaxedAtomicBool
+#if !defined(ANDROID)
+  value: true
+#else
+  value: false
+#endif
+  mirror: always
+
+# When this pref is enabled, opaque response is only allowed to enter the
+# content process if it's a response for media (audio, image, video), CSS, or
+# JavaScript.
+- name: browser.opaqueResponseBlocking
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # When true, zooming will be enabled on all sites, even ones that declare
@@ -1422,6 +1538,7 @@
   value: true
   mirror: always
 
+# KaiOS-only, see https://bugzilla.mozilla.org/show_bug.cgi?id=1699707#c10
 - name: device.sensors.ambientLight.enabled
   type: bool
   value: false
@@ -1437,6 +1554,7 @@
   value: true
   mirror: always
 
+# KaiOS-only, see https://bugzilla.mozilla.org/show_bug.cgi?id=1699707#c10
 - name: device.sensors.proximity.enabled
   type: bool
   value: false
@@ -1756,7 +1874,7 @@
 # Whether event timing will be gathered and returned by performance observer*
 - name: dom.enable_event_timing
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether performance.GetEntries* will contain an entry for the active document
@@ -1961,12 +2079,13 @@
 
 # The root margin for image lazy loading, defined as four (value, percentage)
 # pairs.
-#
-# (0px, 0px, 0px, 0px) by default, for now. We could also consider an
-# adaptative version of this.
 - name: dom.image-lazy-loading.root-margin.top
   type: float
+#if defined(EARLY_BETA_OR_EARLIER)
+  value: 600
+#else
   value: 300
+#endif
   mirror: always
 
 - name: dom.image-lazy-loading.root-margin.top.percentage
@@ -1976,7 +2095,11 @@
 
 - name: dom.image-lazy-loading.root-margin.bottom
   type: float
+#if defined(EARLY_BETA_OR_EARLIER)
+  value: 600
+#else
   value: 300
+#endif
   mirror: always
 
 - name: dom.image-lazy-loading.root-margin.bottom.percentage
@@ -1986,7 +2109,11 @@
 
 - name: dom.image-lazy-loading.root-margin.left
   type: float
+#if defined(EARLY_BETA_OR_EARLIER)
+  value: 600
+#else
   value: 300
+#endif
   mirror: always
 
 - name: dom.image-lazy-loading.root-margin.left.percentage
@@ -1996,7 +2123,11 @@
 
 - name: dom.image-lazy-loading.root-margin.right
   type: float
+#if defined(EARLY_BETA_OR_EARLIER)
+  value: 600
+#else
   value: 300
+#endif
   mirror: always
 
 - name: dom.image-lazy-loading.root-margin.right.percentage
@@ -2044,6 +2175,12 @@
 
 # Whether we allow BrowsingContextGroup to suspend input events
 - name: dom.input_events.canSuspendInBCG.enabled
+  type: bool
+  value: false
+  mirror: always
+
+# Whether we perform a more strict alignment with vsync for input events
+- name: dom.input_events.strict_input_vsync_alignment
   type: bool
   value: false
   mirror: always
@@ -2180,8 +2317,19 @@
   value: @IS_NIGHTLY_BUILD@
   mirror: always
 
-# Support for input type=month, type=week and type=datetime-local. By default,
-# disabled.
+# Support for input type=datetime-local.
+- name: dom.forms.datetime-local
+  type: bool
+  value: @IS_ANDROID@
+  mirror: always
+
+# Support for input type=datetime-local widget. Disabled for now.
+- name: dom.forms.datetime-local.widget
+  type: bool
+  value: false
+  mirror: always
+
+# Support for input type=month, type=week. By default, disabled.
 - name: dom.forms.datetime.others
   type: bool
   value: @IS_ANDROID@
@@ -2475,7 +2623,7 @@
 #if !defined(ANDROID)
   value: true
 #else
-  value: false # Blocked by DocumentChannel, see Bug 1589982.
+  value: @IS_NIGHTLY_BUILD@
 #endif
   mirror: once
 
@@ -2716,6 +2864,12 @@
   value: false
   mirror: always
 
+# Perform IPC based Principal vetting in ContentParent
+- name: dom.security.enforceIPCBasedPrincipalVetting
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # For testing purposes only: Flipping this pref to true allows
 # to skip the allowlist for about: pages and do not ship with a
 # CSP and NS_ASSERT right away.
@@ -2809,6 +2963,21 @@
 # If true checks for secure www connections when https fails
 # and gives the user suggestions on the error page
 - name: dom.security.https_only_mode_error_page_user_suggestions
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# If true, top-level request will get upgraded to HTTPS and
+# downgraded again if the request failed.
+- name: dom.security.https_only_mode_https_first
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# If true, top-level requests in Private Browsing Mode will get
+# upgraded to HTTPS. (If dom.security.https_only_mode_https_first
+# is set to true then this pref has no effect)
+- name: dom.security.https_only_mode_https_first_pbm
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -3340,7 +3509,7 @@
 # W3C pointer events draft.
 - name: dom.w3c_pointer_events.implicit_capture
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 # In case Touch API is enabled, this pref controls whether to support
@@ -4196,9 +4365,22 @@
   value: false
   mirror: always
 
+- name: gfx.color_management.native_srgb
+  type: RelaxedAtomicBool
+#if defined(XP_MACOSX)
+  value: true
+#else
+  value: false
+#endif
+  mirror: always
+
 - name: gfx.color_management.enablev4
   type: RelaxedAtomicBool
+#if defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
+  value: true
+#else
   value: false
+#endif
   mirror: always
 
 # 0 = Off, 1 = Full, 2 = Tagged Images Only.
@@ -4369,7 +4551,7 @@
 
 - name: gfx.e10s.font-list.shared
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: once
 
 # Whether to load fonts (e.g. Twemoji Mozilla) bundled with the application:
@@ -4753,13 +4935,23 @@
 # Whether or not to fallback from WebRender/WebRender Software to Basic.
 - name: gfx.webrender.fallback.basic
   type: bool
+#if defined(MOZ_WIDGET_ANDROID)
   value: true
+#else
+  value: @IS_NOT_EARLY_BETA_OR_EARLIER@
+#endif
   mirror: once
 
 # Whether or not to fallback from WebRender to Software WebRender.
 - name: gfx.webrender.fallback.software
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+#if defined(MOZ_WIDGET_ANDROID)
+  value: false
+#elif defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+  value: true
+#else
+  value: @IS_EARLY_BETA_OR_EARLIER@
+#endif
   mirror: once
 
 #ifdef XP_WIN
@@ -4769,6 +4961,25 @@
     value: @IS_NIGHTLY_BUILD@
     mirror: once
 #endif
+
+# Whether or not fallback to Software WebRender requires the GPU process.
+- name: gfx.webrender.fallback.software.requires-gpu-process
+  type: bool
+#if defined(XP_WIN)
+  value: @IS_NOT_EARLY_BETA_OR_EARLIER@
+#else
+  value: false
+#endif
+  mirror: once
+
+- name: gfx.webrender.program-binary-disk
+  type: bool
+#if defined(XP_WIN) || defined(ANDROID)
+  value: true
+#else
+  value: false
+#endif
+  mirror: once
 
 - name: gfx.webrender.use-optimized-shaders
   type: bool
@@ -4904,14 +5115,7 @@
 # software backend
 - name: gfx.webrender.software.unaccelerated-widget.allow
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
-  mirror: always
-
-# Whether to force widgets that don't support acceleration to use WebRender
-# software backend
-- name: gfx.webrender.software.unaccelerated-widget.force
-  type: RelaxedAtomicBool
-  value: false
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 # Whether to force widgets to don't support acceleration to use WebRender
@@ -5077,22 +5281,6 @@
   value: true
   mirror: always
 
-# Whether to honor orientation metadata (such as JPEG EXIF tags) by default.
-# When this pref is enabled, all images used by the platform will be correctly
-# re-oriented, except for content images (HTML <img> and CSS generated content
-# images) with image-orientation:none.
-- name: image.honor-orientation-metadata
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
-# Honor image orientation metadata in the naturalWidth and naturalHeight
-# APIs on HTMLImageElement.
-- name: image.honor_orientation_metadata.natural_size
-  type: bool
-  value: true
-  mirror: always
-
 # The threshold for inferring that changes to an <img> element's |src|
 # attribute by JavaScript represent an animation, in milliseconds. If the |src|
 # attribute is changing more frequently than this value, then we enter a
@@ -5149,6 +5337,27 @@
   type: RelaxedAtomicBool
   value: true
   mirror: always
+
+# Force unmapping of unused shared surfaces after a timeout period or when we
+# encounter virtual memory pressure. By default this is only enabled on 32-bit
+# Firefox.
+- name: image.mem.shared.unmap.force-enabled
+  type: bool
+  value: false
+  mirror: once
+
+# Minimum timeout to unmap shared surfaces since they have been last used,
+# in milliseconds.
+- name: image.mem.shared.unmap.min_expiration_ms
+  type: uint32_t
+  value: 60*1000
+  mirror: once
+
+# Mininum size for shared surfaces to consider unmapping, in kilobytes.
+- name: image.mem.shared.unmap.min_threshold_kb
+  type: uint32_t
+  value: 100
+  mirror: once
 
 # How much of the data in the surface cache is discarded when we get a memory
 # pressure notification, as a fraction. The discard factor is interpreted as a
@@ -5216,7 +5425,11 @@
 # Whether we attempt to decode AVIF images or not.
 - name: image.avif.enabled
   type: RelaxedAtomicBool
+#if defined(MOZ_AV1)
   value: false
+#else
+  value: false
+#endif
   mirror: always
 
 # Whether we use dav1d (true) or libaom (false) to decode AVIF image
@@ -5370,6 +5583,17 @@
   mirror: always  # LoadStartupJSPrefs
   do_not_use_directly: true
 
+# A threshold for Warp to decide whether a function can be inlined.
+# If the size of a function is smaller than this threshold, then it
+# may be inlined.
+#
+# NOTE: These must match JitOptions defaults.
+- name: javascript.options.inlining_bytecode_max_length
+  type: uint32_t
+  value: 130
+  mirror: always
+  do_not_use_directly: true
+
 - name: javascript.options.compact_on_user_inactive
   type: bool
   value: true
@@ -5422,13 +5646,13 @@
     type: bool
     value: false
     mirror: always
+#endif  // NIGHTLY_BUILD
 
   # Experimental support for Top-level Await in JavaScript.
 -   name: javascript.options.experimental.top_level_await
     type: bool
-    value: false
+    value: true
     mirror: always
-#endif  // NIGHTLY_BUILD
 
 # The amount of time we wait between a request to GC (due to leaving a page) and doing the actual GC, in ms.
 - name: javascript.options.gc_delay
@@ -5511,21 +5735,45 @@
 #endif
   mirror: always
 
+# SIMD is supported only on x86 and x64, with arm64 support imminent.
 #if defined(ENABLE_WASM_SIMD)
 -   name: javascript.options.wasm_simd
     type: bool
+#if defined(MOZ_AARCH64)
     value: @IS_NIGHTLY_BUILD@
+#else
+    value: true
+#endif
     mirror: always
 #endif  // defined(ENABLE_WASM_SIMD)
 
-#if defined(MOZ_AARCH64)
-# Cranelift->Ion transition.  Temporary switch.  When we land Phase 2
-# of the transition, this switch will disappear altogether.
-- name: javascript.options.wasm_force_ion
-  type: bool
-  value: false
-  mirror: always
-#endif
+#if defined(ENABLE_WASM_REFTYPES)
+-   name: javascript.options.wasm_reftypes
+    type: bool
+    value: true
+    mirror: always
+#endif // defined(ENABLE_WASM_REFTYPES)
+
+#if defined(ENABLE_WASM_EXCEPTIONS)
+-   name: javascript.options.wasm_exceptions
+    type: bool
+    value: false
+    mirror: always
+#endif // defined(ENABLE_WASM_EXCEPTIONS)
+
+#if defined(ENABLE_WASM_FUNCTION_REFERENCES)
+-   name: javascript.options.wasm_function_references
+    type: bool
+    value: false
+    mirror: always
+#endif // defined(ENABLE_WASM_FUNCTION_REFERENCES)
+
+#if defined(ENABLE_WASM_GC)
+-   name: javascript.options.wasm_gc
+    type: bool
+    value: false
+    mirror: always
+#endif // defined(ENABLE_WASM_GC)
 
 #if defined(ENABLE_WASM_SIMD_WORMHOLE) && defined(EARLY_BETA_OR_EARLIER)
   # This is x64-only and it would break unified macOS builds if
@@ -5538,10 +5786,10 @@
     mirror: always
 #endif
 
-# Experimental support for ArrayBuffers larger than 2 GB.
+# Support for ArrayBuffers larger than 2 GB on 64-bit systems
 - name: javascript.options.large_arraybuffers
   type: bool
-  value: false
+  value: true
   mirror: always  # LoadStartupJSPrefs
   do_not_use_directly: true
 
@@ -5851,17 +6099,33 @@
   value: 10000
   mirror: once
 
+# How many unstable GPU process restarts we allow for a given configuration.
 - name: layers.gpu-process.max_restarts
   type: RelaxedAtomicInt32
 #if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
   #if defined(NIGHTLY_BUILD)
-  value: 3
+  value: 6
   #else
-  value: 1
+  value: 3
   #endif
 #else
   value: 1
 #endif
+  mirror: always
+
+# How many frames we must render before declaring the GPU process stable, and
+# allow restarts without it counting against our maximum restarts.
+- name: layers.gpu-process.stable.frame-threshold
+  type: RelaxedAtomicUint32
+  value: 10
+  mirror: always
+
+# How many milliseconds the GPU process must have lived before we accept that
+# it is stable, and allow restarts without it counting against our maximum
+# restarts.
+- name: layers.gpu-process.stable.min-uptime-ms
+  type: RelaxedAtomicInt32
+  value: 4 * 60000
   mirror: always
 
 # Note: This pref will only be used if it is less than layers.gpu-process.max_restarts.
@@ -6254,15 +6518,6 @@
   mirror: always
   rust: true
 
-# Whether the `no-preference` value for `prefers-color-scheme` is parsed.
-#
-# It never matches regardless.
-- name: layout.css.prefers-color-scheme-no-preference.enabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-  rust: true
-
 # Whether the `:autofill` pseudo-class is exposed to content.
 - name: layout.css.autofill.enabled
   type: RelaxedAtomicBool
@@ -6277,10 +6532,17 @@
   mirror: always
   rust: true
 
+# Whether the `-moz-outline-radius` pseudo-class is exposed to content.
+- name: layout.css.moz-outline-radius.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+  rust: true
+
 # Whether the `aspect-ratio` in css-sizing-4 is enabled.
 - name: layout.css.aspect-ratio.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
   rust: true
 
@@ -6309,6 +6571,14 @@
   type: RelaxedAtomicBool
   value: true
   mirror: always
+
+# Whether the bloom filter optimization is applied to attribute names too, not
+# only classes / id / namespaces / etc.
+- name: layout.css.bloom-filter-attribute-names.enabled
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+  rust: true
 
 # Set the number of device pixels per CSS pixel. A value <= 0 means choose
 # automatically based on user settings for the platform (e.g., "UI scale factor"
@@ -6388,10 +6658,24 @@
   value: true
   mirror: always
 
+# Is support for the @font-face metrics override descriptors enabled?
+- name: layout.css.font-metrics-overrides.enabled
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+  rust: true
+
 # Is support for variation fonts enabled?
 - name: layout.css.font-variations.enabled
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+  rust: true
+
+# Is support for the size-adjust @font-face descriptor enabled?
+- name: layout.css.size-adjust.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
   rust: true
 
@@ -6429,13 +6713,6 @@
   type: bool
   value: true
   mirror: always
-
-# Is the initial value for the image-orientation property 'from-image'?
-- name: layout.css.image-orientation.initial-from-image
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
 
 # Is support for CSS initial-letter property enabled?
 - name: layout.css.initial-letter.enabled
@@ -6522,6 +6799,13 @@
   value: true
   mirror: always
 
+# Enables parsing size properties in page at-rules
+- name: layout.css.page-size.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+  rust: true
+
 # Dictates whether or not the prefers contrast media query will be
 # usable.
 #   true: prefers-contrast will toggle based on OS and browser settings.
@@ -6536,7 +6820,7 @@
 # Dictates whether or not the forced-colors media query is enabled.
 - name: layout.css.forced-colors.enabled
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
   rust: true
 
@@ -6963,13 +7247,6 @@
   value: true
   mirror: always
 
-# Are the width and height attributes on image-like elements mapped to the
-# internal-for-now aspect-ratio property?
-- name: layout.css.width-and-height-map-to-aspect-ratio.enabled
-  type: bool
-  value: true
-  mirror: always
-
 # Whether :is() and :where() ignore errors inside their selector lists
 # internally, rather than failing to parse altogether.
 #
@@ -7040,6 +7317,13 @@
 # Whether underscore should be treated as a word-breaking character for
 # word selection/arrow-key movement purposes.
 - name: layout.word_select.stop_at_underscore
+  type: bool
+  value: false
+  mirror: always
+
+# Should deprecated plugin behavior fallback to normal behavior or use
+# the experimental design.
+- name: layout.use-plugin-fallback
   type: bool
   value: false
   mirror: always
@@ -8411,6 +8695,12 @@
   value: false
   mirror: always
 
+# The cookieBehavior to be used in Private Browsing mode.
+- name: network.cookie.cookieBehavior.pbmode
+  type: RelaxedAtomicInt32
+  value: 0 # accept all cookies
+  mirror: always
+
 # Stale threshold for cookies in seconds.
 - name: network.cookie.staleThreshold
   type: uint32_t
@@ -8456,11 +8746,6 @@
 - name: network.cookie.thirdparty.nonsecureSessionOnly
   type: bool
   value: false
-  mirror: always
-
-- name: network.data.max-uri-length-mobile
-  type: RelaxedAtomicUint32
-  value: 2 * 1024 * 1024
   mirror: always
 
 # If we should attempt to race the cache and network.
@@ -9132,6 +9417,12 @@
   value: 100
   mirror: always
 
+# The global half open sockets allowed for creating a backup connection.
+- name: network.http.http3.parallel_fallback_conn_limit
+  type: RelaxedAtomicUint32
+  value: 32
+  mirror: always
+
 # When true, a http request will be upgraded to https when HTTPS RR is
 # available.
 - name: network.dns.upgrade_with_https_rr
@@ -9228,6 +9519,16 @@
 - name: nglayout.debug.widget_update_flashing
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+- name: nglayout.initialpaint.delay
+  type: int32_t
+  value: 5
+  mirror: always
+
+- name: nglayout.initialpaint.delay_in_oopif
+  type: int32_t
+  value: 5
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -9865,7 +10166,7 @@
 # Pref for mixed display content upgrading (images, audio, video).
 - name: security.mixed_content.upgrade_display_content
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: false
   mirror: always
 
 # Whether strict file origin policy is in effect. "False" is traditional.
@@ -10747,7 +11048,7 @@
 # entry in python/mozbuild/mozbuild/mozinfo.py and test_fission_autostart.py
 - name: widget.non-native-theme.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # The size in CSS pixels at full zoom of the minimum scrollbar width.
@@ -10758,6 +11059,13 @@
 #else
   value: 17
 #endif
+  mirror: always
+
+# Whether the active thumb color should always use the themed colors, even if
+# dark scrollbars are in use.
+- name: widget.non-native-theme.scrollbar.active-always-themed
+  type: bool
+  value: true
   mirror: always
 
 # Whether we use the Windows CSS scrollbar sizes, or the scrollbar sizes
@@ -10827,6 +11135,16 @@
   mirror: always
 
 #ifdef XP_MACOSX
+- name: widget.macos.native-context-menus
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
+- name: widget.macos.enable-pre-bigsur-workaround-for-dark-mode-context-menus
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 - name: widget.macos.respect-system-appearance
   type: RelaxedAtomicBool
   value: false
@@ -10835,6 +11153,37 @@
 
 # Whether to allow gtk dark themes in content.
 - name: widget.content.allow-gtk-dark-theme
+  type: bool
+  value: false
+  mirror: always
+
+# Whether selection colors get passed from the real GTK theme even if
+# allow-gtk-dark-theme is false.
+- name: widget.content.allow-gtk-dark-theme.selection
+  type: bool
+  value: true
+  mirror: always
+
+# Whether form control accent colors get passed from the real GTK theme even if
+# allow-gtk-dark-theme is false.
+- name: widget.content.allow-gtk-dark-theme.accent
+  type: bool
+  value: true
+  mirror: always
+
+# Whether the scrollbar thumb active color gets passed from the real GTK theme
+# even if allow-gtk-dark-theme is false.
+- name: widget.content.allow-gtk-dark-theme.scrollbar_active
+  type: bool
+  value: true
+  mirror: always
+
+# Whether other scrollbar colors get passed from the real GTK theme even if
+# allow-gtk-dark-theme is false.
+#
+# This is default false because light scrollbars usually match better websites,
+# and we have automatic scrollbar darkening.
+- name: widget.content.allow-gtk-dark-theme.scrollbar
   type: bool
   value: false
   mirror: always
@@ -10871,10 +11220,13 @@
   mirror: always
 #endif
 
-# Use smooth rendering for Wayland basic compositor.
+# Smooth rendering mode for Wayland basic compositor.
+# 0 - direct draw
+# 1 - basic caching
+# 2 - all caching
 - name: widget.wayland-smooth-rendering
-  type: RelaxedAtomicBool
-  value: false
+  type: RelaxedAtomicUint32
+  value: 1
   mirror: always
 
 # Use DMABuf backend for WebGL.
@@ -10889,15 +11241,6 @@
   value: true
   mirror: always
 #endif
-
-# Enable the RemoteLookAndFeel in content processes, which will cause all
-# LookAndFeel values to be queried in the parent process and sent to content
-# processes using IPC.  This is required for widgets to paint and behave
-# correctly when `security.sandbox.content.headless` is enabled.
-- name: widget.remote-look-and-feel
-  type: bool
-  value: true
-  mirror: once
 
 #---------------------------------------------------------------------------
 # Prefs starting with "xul."

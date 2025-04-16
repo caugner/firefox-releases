@@ -38,6 +38,7 @@
 
 #ifdef MOZ_WIDGET_GTK
 #  include <gdk/gdk.h>
+#  include <gtk/gtk.h>
 #  include "gfxPlatformGtk.h"
 #  include "mozilla/WidgetUtilsGtk.h"
 #endif
@@ -660,11 +661,6 @@ static void PrepareFontOptions(FcPattern* aPattern, int* aOutLoadFlags,
   *aOutSynthFlags = synthFlags;
 }
 
-#ifdef MOZ_WIDGET_GTK
-// defintion included below
-static void ApplyGdkScreenFontOptions(FcPattern* aPattern);
-#endif
-
 #ifdef MOZ_X11
 static bool GetXftInt(Display* aDisplay, const char* aName, int* aResult) {
   if (!aDisplay) {
@@ -708,22 +704,11 @@ static void PreparePattern(FcPattern* aPattern, bool aIsPrinterFont) {
     cairo_ft_font_options_substitute(options, aPattern);
     cairo_font_options_destroy(options);
     FcPatternAddBool(aPattern, PRINTING_FC_PROPERTY, FcTrue);
-  } else if (!gfxPlatform::IsHeadless()) {
 #ifdef MOZ_WIDGET_GTK
-    ApplyGdkScreenFontOptions(aPattern);
-
-#  ifdef MOZ_X11
-    FcValue value;
-    int lcdfilter;
-    if (FcPatternGet(aPattern, FC_LCD_FILTER, 0, &value) == FcResultNoMatch) {
-      GdkDisplay* dpy = gdk_display_get_default();
-      if (mozilla::widget::GdkIsX11Display(dpy) &&
-          GetXftInt(GDK_DISPLAY_XDISPLAY(dpy), "lcdfilter", &lcdfilter)) {
-        FcPatternAddInteger(aPattern, FC_LCD_FILTER, lcdfilter);
-      }
-    }
-#  endif  // MOZ_X11
-#endif    // MOZ_WIDGET_GTK
+  } else {
+    gfxFcPlatformFontList::PlatformFontList()->SubstituteSystemFontOptions(
+        aPattern);
+#endif  // MOZ_WIDGET_GTK
   }
 
   FcDefaultSubstitute(aPattern);
@@ -756,7 +741,7 @@ gfxFontconfigFontEntry::UnscaledFontCache::Lookup(const std::string& aFile,
 static inline gfxFloat SizeForStyle(gfxFontconfigFontEntry* aEntry,
                                     const gfxFontStyle& aStyle) {
   return aStyle.sizeAdjust >= 0.0 ? aStyle.GetAdjustedSize(aEntry->GetAspect())
-                                  : aStyle.size;
+                                  : aStyle.size * aEntry->mSizeAdjust;
 }
 
 static double ChooseFontSize(gfxFontconfigFontEntry* aEntry,
@@ -1022,7 +1007,8 @@ void gfxFontconfigFontFamily::FindStyleVariations(FontInfoData* aFontInfoData) {
   CheckForSimpleFamily();
 }
 
-void gfxFontconfigFontFamily::AddFontPattern(FcPattern* aFontPattern) {
+void gfxFontconfigFontFamily::AddFontPattern(FcPattern* aFontPattern,
+                                             bool aSingleName) {
   NS_ASSERTION(
       !mHasStyles,
       "font patterns must not be added to already enumerated families");
@@ -1041,7 +1027,11 @@ void gfxFontconfigFontFamily::AddFontPattern(FcPattern* aFontPattern) {
     }
   }
 
-  mFontPatterns.AppendElement(aFontPattern);
+  if (aSingleName) {
+    mFontPatterns.InsertElementAt(mUniqueNameFaceCount++, aFontPattern);
+  } else {
+    mFontPatterns.AppendElement(aFontPattern);
+  }
 }
 
 static const double kRejectDistance = 10000.0;
@@ -1272,6 +1262,9 @@ gfxFcPlatformFontList::~gfxFcPlatformFontList() {
     mCheckFontUpdatesTimer->Cancel();
     mCheckFontUpdatesTimer = nullptr;
   }
+#ifdef MOZ_WIDGET_GTK
+  ClearSystemFontOptions();
+#endif
 }
 
 void gfxFcPlatformFontList::AddFontSetFamilies(FcFontSet* aFontSet,
@@ -1357,25 +1350,26 @@ void gfxFcPlatformFontList::AddPatternToFontList(
     if (aAppFonts) {
       aFontFamily->SetFamilyContainsAppFonts(true);
     }
+  }
 
-    // Add pointers to other localized family names. Most fonts
-    // only have a single name, so the first call to GetString
-    // will usually not match
-    FcChar8* otherName;
-    int n = (cIndex == 0 ? 1 : 0);
-    while (FcPatternGetString(aFont, FC_FAMILY, n, &otherName) ==
-           FcResultMatch) {
-      nsAutoCString otherFamilyName(ToCharPtr(otherName));
-      AddOtherFamilyName(aFontFamily, otherFamilyName);
-      n++;
-      if (n == int(cIndex)) {
-        n++;  // skip over canonical name
-      }
+  // Add pointers to other localized family names. Most fonts
+  // only have a single name, so the first call to GetString
+  // will usually not match
+  FcChar8* otherName;
+  int n = (cIndex == 0 ? 1 : 0);
+  while (FcPatternGetString(aFont, FC_FAMILY, n, &otherName) == FcResultMatch) {
+    nsAutoCString otherFamilyName(ToCharPtr(otherName));
+    AddOtherFamilyName(aFontFamily, otherFamilyName);
+    n++;
+    if (n == int(cIndex)) {
+      n++;  // skip over canonical name
     }
   }
 
+  const bool singleName = n == 1;
+
   MOZ_ASSERT(aFontFamily, "font must belong to a font family");
-  aFontFamily->AddFontPattern(aFont);
+  aFontFamily->AddFontPattern(aFont, singleName);
 
   // map the psname, fullname ==> font family for local font lookups
   nsAutoCString psname, fullname;
@@ -1386,7 +1380,12 @@ void gfxFcPlatformFontList::AddPatternToFontList(
   }
   if (!fullname.IsEmpty()) {
     ToLowerCase(fullname);
-    mLocalNames.InsertOrUpdate(fullname, RefPtr{aFont});
+    mLocalNames.WithEntryHandle(fullname, [&](auto&& entry) {
+      if (entry && !singleName) {
+        return;
+      }
+      entry.InsertOrUpdate(RefPtr{aFont});
+    });
   }
 }
 
@@ -1399,6 +1398,8 @@ nsresult gfxFcPlatformFontList::InitFontListForPlatform() {
 
   mLocalNames.Clear();
   mFcSubstituteCache.Clear();
+
+  ClearSystemFontOptions();
 
   mAlwaysUseFontconfigGenerics = PrefFontListsUseOnlyGenerics();
   mOtherFamilyNamesInitialized = true;
@@ -1417,6 +1418,10 @@ nsresult gfxFcPlatformFontList::InitFontListForPlatform() {
     // Get font list that was passed during XPCOM startup
     // or in an UpdateFontList message.
     auto& fontList = dom::ContentChild::GetSingleton()->SystemFontList();
+
+#ifdef MOZ_WIDGET_GTK
+    UpdateSystemFontOptionsFromIpc(fontList.options());
+#endif
 
     // For fontconfig versions between 2.10.94 and 2.11.1 inclusive,
     // we need to escape any leading space in the charset element,
@@ -1439,7 +1444,7 @@ nsresult gfxFcPlatformFontList::InitFontListForPlatform() {
     int fcVersion = FcGetVersion();
     bool fcCharsetParseBug = fcVersion >= 21094 && fcVersion <= 21101;
 
-    for (FontPatternListEntry& fpe : fontList) {
+    for (FontPatternListEntry& fpe : fontList.entries()) {
       nsCString& patternStr = fpe.pattern();
       if (fcCharsetParseBug) {
         int32_t index = patternStr.Find(":charset= ");
@@ -1457,12 +1462,13 @@ nsresult gfxFcPlatformFontList::InitFontListForPlatform() {
     LOG_FONTLIST(
         ("got font list from chrome process: "
          "%u faces in %u families",
-         (unsigned)fontList.Length(), mFontFamilies.Count()));
+         (unsigned)fontList.entries().Length(), mFontFamilies.Count()));
 
-    fontList.Clear();
-
+    fontList.entries().Clear();
     return NS_OK;
   }
+
+  UpdateSystemFontOptions();
 
   UniquePtr<SandboxPolicy> policy;
 
@@ -1491,11 +1497,14 @@ nsresult gfxFcPlatformFontList::InitFontListForPlatform() {
   return NS_OK;
 }
 
-void gfxFcPlatformFontList::ReadSystemFontList(
-    nsTArray<FontPatternListEntry>* retValue) {
+void gfxFcPlatformFontList::ReadSystemFontList(dom::SystemFontList* retValue) {
   // Fontconfig versions below 2.9 drop the FC_FILE element in FcNameUnparse
   // (see https://bugs.freedesktop.org/show_bug.cgi?id=26718), so when using
   // an older version, we manually append it to the unparsed pattern.
+#ifdef MOZ_WIDGET_GTK
+  SystemFontOptionsToIpc(retValue->options());
+#endif
+
   if (FcGetVersion() < 20900) {
     for (const auto& entry : mFontFamilies) {
       auto* family = static_cast<gfxFontconfigFontFamily*>(entry.GetWeak());
@@ -1508,7 +1517,8 @@ void gfxFcPlatformFontList::ReadSystemFontList(
           patternStr.Append(":file=");
           patternStr.Append(file);
         }
-        retValue->AppendElement(FontPatternListEntry(patternStr, aAppFonts));
+        retValue->entries().AppendElement(
+            FontPatternListEntry(patternStr, aAppFonts));
         free(s);
       });
     }
@@ -1518,12 +1528,35 @@ void gfxFcPlatformFontList::ReadSystemFontList(
       family->AddFacesToFontList([&](FcPattern* aPat, bool aAppFonts) {
         char* s = (char*)FcNameUnparse(aPat);
         nsDependentCString patternStr(s);
-        retValue->AppendElement(FontPatternListEntry(patternStr, aAppFonts));
+        retValue->entries().AppendElement(
+            FontPatternListEntry(patternStr, aAppFonts));
         free(s);
       });
     }
   }
 }
+
+// Per family array of faces.
+class FacesData {
+  using FaceInitArray = AutoTArray<fontlist::Face::InitData, 8>;
+
+  FaceInitArray mFaces;
+
+  // Number of faces that have a single name. Faces that have multiple names are
+  // sorted last.
+  uint32_t mUniqueNameFaceCount = 0;
+
+ public:
+  void Add(fontlist::Face::InitData&& aData, bool aSingleName) {
+    if (aSingleName) {
+      mFaces.InsertElementAt(mUniqueNameFaceCount++, std::move(aData));
+    } else {
+      mFaces.AppendElement(std::move(aData));
+    }
+  }
+
+  const FaceInitArray& Get() const { return mFaces; }
+};
 
 void gfxFcPlatformFontList::InitSharedFontListForPlatform() {
   mLocalNames.Clear();
@@ -1535,11 +1568,19 @@ void gfxFcPlatformFontList::InitSharedFontListForPlatform() {
   mLastConfig = FcConfigGetCurrent();
 
   if (!XRE_IsParentProcess()) {
+#ifdef MOZ_WIDGET_GTK
+    auto& fontList = dom::ContentChild::GetSingleton()->SystemFontList();
+    UpdateSystemFontOptionsFromIpc(fontList.options());
+#endif
     // Content processes will access the shared-memory data created by the
     // parent, so they do not need to query fontconfig for the available
     // fonts themselves.
     return;
   }
+
+#ifdef MOZ_WIDGET_GTK
+  UpdateSystemFontOptions();
+#endif
 
 #ifdef MOZ_BUNDLED_FONTS
   if (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() != 0) {
@@ -1566,8 +1607,7 @@ void gfxFcPlatformFontList::InitSharedFontListForPlatform() {
 
   nsTArray<fontlist::Family::InitData> families;
 
-  using FaceInitArray = nsTArray<fontlist::Face::InitData>;
-  nsClassHashtable<nsCStringHashKey, FaceInitArray> faces;
+  nsClassHashtable<nsCStringHashKey, FacesData> faces;
 
   // Do we need to work around the fontconfig FcNameParse/FcNameUnparse bug
   // (present in versions between 2.10.94 and 2.11.1 inclusive)? See comment
@@ -1589,35 +1629,27 @@ void gfxFcPlatformFontList::InitSharedFontListForPlatform() {
     nsAutoCString keyName;
     keyName = ToCharPtr(canonical);
     ToLowerCase(keyName);
-    FaceInitArray* faceListPtr = nullptr;
+
+    aLastFamilyName = canonical;
+    aFamilyName = ToCharPtr(canonical);
 
     // Same canonical family name as the last one? Definitely no need to add a
     // new family record.
-    if (FcStrCmp(canonical, aLastFamilyName) == 0) {
-      faceListPtr = faces.Get(keyName);
-      MOZ_ASSERT(faceListPtr);
-    } else {
-      aLastFamilyName = canonical;
-      aFamilyName = ToCharPtr(canonical);
-
-      // Add new family record if one doesn't already exist.
-      faceListPtr =
-          faces
-              .LookupOrInsertWith(
-                  keyName,
-                  [&] {
-                    FontVisibility visibility =
-                        aAppFont ? FontVisibility::Base
-                                 : GetVisibilityForFamily(keyName);
-                    families.AppendElement(fontlist::Family::InitData(
-                        keyName, aFamilyName, fontlist::Family::kNoIndex,
-                        visibility,
-                        /*bundled*/ aAppFont, /*badUnderline*/ false));
-
-                    return MakeUnique<FaceInitArray>();
-                  })
-              .get();
-    }
+    auto* faceList =
+        faces
+            .LookupOrInsertWith(
+                keyName,
+                [&] {
+                  FontVisibility visibility =
+                      aAppFont ? FontVisibility::Base
+                               : GetVisibilityForFamily(keyName);
+                  families.AppendElement(fontlist::Family::InitData(
+                      keyName, aFamilyName, fontlist::Family::kNoIndex,
+                      visibility,
+                      /*bundled*/ aAppFont, /*badUnderline*/ false));
+                  return MakeUnique<FacesData>();
+                })
+            .get();
 
     char* s = (char*)FcNameUnparse(aPattern);
     nsAutoCString descriptor(s);
@@ -1637,23 +1669,8 @@ void gfxFcPlatformFontList::InitSharedFontListForPlatform() {
     SlantStyleRange style(FontSlantStyle::Normal());
     GetFontProperties(aPattern, &weight, &stretch, &style);
 
-    faceListPtr->AppendElement(
-        fontlist::Face::InitData{descriptor, 0, false, weight, stretch, style});
-    // map the psname, fullname ==> font family for local font lookups
-    nsAutoCString psname, fullname;
-    GetFaceNames(aPattern, aFamilyName, psname, fullname);
-    if (!psname.IsEmpty()) {
-      ToLowerCase(psname);
-      mLocalNameTable.InsertOrUpdate(
-          psname, fontlist::LocalFaceRec::InitData(keyName, descriptor));
-    }
-    if (!fullname.IsEmpty()) {
-      ToLowerCase(fullname);
-      if (fullname != psname) {
-        mLocalNameTable.InsertOrUpdate(
-            fullname, fontlist::LocalFaceRec::InitData(keyName, descriptor));
-      }
-    }
+    auto initData =
+        fontlist::Face::InitData{descriptor, 0, false, weight, stretch, style};
 
     // Add entries for any other localized family names. (Most fonts only have
     // a single family name, so the first call to GetString will usually fail).
@@ -1677,14 +1694,41 @@ void gfxFcPlatformFontList::InitSharedFontListForPlatform() {
                     visibility,
                     /*bundled*/ aAppFont, /*badUnderline*/ false));
 
-                return MakeUnique<FaceInitArray>();
+                return MakeUnique<FacesData>();
               })
-          ->AppendElement(fontlist::Face::InitData{descriptor, 0, false, weight,
-                                                   stretch, style});
+          .get()
+          ->Add(fontlist::Face::InitData(initData), /* singleName = */ false);
 
       n++;
       if (n == int(cIndex)) {
         n++;  // skip over canonical name
+      }
+    }
+
+    const bool singleName = n == 1;
+    faceList->Add(std::move(initData), singleName);
+
+    // map the psname, fullname ==> font family for local font lookups
+    nsAutoCString psname, fullname;
+    GetFaceNames(aPattern, aFamilyName, psname, fullname);
+    if (!psname.IsEmpty()) {
+      ToLowerCase(psname);
+      mLocalNameTable.InsertOrUpdate(
+          psname, fontlist::LocalFaceRec::InitData(keyName, descriptor));
+    }
+    if (!fullname.IsEmpty()) {
+      ToLowerCase(fullname);
+      if (fullname != psname) {
+        mLocalNameTable.WithEntryHandle(fullname, [&](auto&& entry) {
+          if (entry && !singleName) {
+            // We only override an existing entry if this is the only way to
+            // name this family. This prevents dubious aliases from clobbering
+            // the local name table.
+            return;
+          }
+          entry.InsertOrUpdate(
+              fontlist::LocalFaceRec::InitData(keyName, descriptor));
+        });
       }
     }
   };
@@ -1736,7 +1780,7 @@ void gfxFcPlatformFontList::InitSharedFontListForPlatform() {
   list->SetFamilyNames(families);
 
   for (uint32_t i = 0; i < families.Length(); i++) {
-    list->Families()[i].AddFaces(list, *faces.Get(families[i].mKey));
+    list->Families()[i].AddFaces(list, faces.Get(families[i].mKey)->Get());
   }
 }
 
@@ -2498,7 +2542,7 @@ void gfxFcPlatformFontList::ActivateBundledFonts() {
 #ifdef MOZ_WIDGET_GTK
 /***************************************************************************
  *
- * This function must be last in the file because it uses the system cairo
+ * These functions must be last in the file because it uses the system cairo
  * library.  Above this point the cairo library used is the tree cairo if
  * MOZ_TREE_CAIRO.
  */
@@ -2508,19 +2552,134 @@ void gfxFcPlatformFontList::ActivateBundledFonts() {
 // preprocessor macros.
 #    undef cairo_ft_font_options_substitute
 
+#    undef cairo_font_options_create
+#    undef cairo_font_options_destroy
+#    undef cairo_font_options_copy
+#    undef cairo_font_options_equal
+
+#    undef cairo_font_options_get_antialias
+#    undef cairo_font_options_set_antialias
+#    undef cairo_font_options_get_hint_style
+#    undef cairo_font_options_set_hint_style
+#    undef cairo_font_options_get_lcd_filter
+#    undef cairo_font_options_set_lcd_filter
+#    undef cairo_font_options_get_subpixel_order
+#    undef cairo_font_options_set_subpixel_order
+
 // The system cairo functions are not declared because the include paths cause
 // the gdk headers to pick up the tree cairo.h.
 extern "C" {
 NS_VISIBILITY_DEFAULT void cairo_ft_font_options_substitute(
     const cairo_font_options_t* options, FcPattern* pattern);
+
+NS_VISIBILITY_DEFAULT cairo_font_options_t* cairo_font_options_copy(
+    const cairo_font_options_t*);
+NS_VISIBILITY_DEFAULT cairo_font_options_t* cairo_font_options_create();
+NS_VISIBILITY_DEFAULT void cairo_font_options_destroy(cairo_font_options_t*);
+NS_VISIBILITY_DEFAULT cairo_bool_t cairo_font_options_equal(
+    const cairo_font_options_t*, const cairo_font_options_t*);
+
+NS_VISIBILITY_DEFAULT cairo_antialias_t
+cairo_font_options_get_antialias(const cairo_font_options_t*);
+NS_VISIBILITY_DEFAULT void cairo_font_options_set_antialias(
+    cairo_font_options_t*, cairo_antialias_t);
+NS_VISIBILITY_DEFAULT cairo_hint_style_t
+cairo_font_options_get_hint_style(const cairo_font_options_t*);
+NS_VISIBILITY_DEFAULT void cairo_font_options_set_hint_style(
+    cairo_font_options_t*, cairo_hint_style_t);
+NS_VISIBILITY_DEFAULT cairo_subpixel_order_t
+cairo_font_options_get_subpixel_order(const cairo_font_options_t*);
+NS_VISIBILITY_DEFAULT void cairo_font_options_set_subpixel_order(
+    cairo_font_options_t*, cairo_subpixel_order_t);
 }
 #  endif
 
-static void ApplyGdkScreenFontOptions(FcPattern* aPattern) {
+void gfxFcPlatformFontList::ClearSystemFontOptions() {
+  if (mSystemFontOptions) {
+    cairo_font_options_destroy(mSystemFontOptions);
+    mSystemFontOptions = nullptr;
+  }
+}
+
+bool gfxFcPlatformFontList::UpdateSystemFontOptions() {
+  MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
+
+  if (gfxPlatform::IsHeadless()) {
+    return false;
+  }
+
+#  ifdef MOZ_X11
+  {
+    // This one shouldn't change during the X session.
+    int lcdfilter;
+    GdkDisplay* dpy = gdk_display_get_default();
+    if (mozilla::widget::GdkIsX11Display(dpy) &&
+        GetXftInt(GDK_DISPLAY_XDISPLAY(dpy), "lcdfilter", &lcdfilter)) {
+      mFreetypeLcdSetting = lcdfilter;
+    }
+  }
+#  endif  // MOZ_X11
+
   const cairo_font_options_t* options =
       gdk_screen_get_font_options(gdk_screen_get_default());
+  if (!options) {
+    bool changed = !!mSystemFontOptions;
+    ClearSystemFontOptions();
+    return changed;
+  }
 
-  cairo_ft_font_options_substitute(options, aPattern);
+  cairo_font_options_t* newOptions = cairo_font_options_copy(options);
+
+  if (mSystemFontOptions &&
+      cairo_font_options_equal(mSystemFontOptions, options)) {
+    cairo_font_options_destroy(newOptions);
+    return false;
+  }
+
+  ClearSystemFontOptions();
+  mSystemFontOptions = newOptions;
+  return true;
+}
+
+void gfxFcPlatformFontList::SystemFontOptionsToIpc(
+    dom::SystemFontOptions& aOptions) {
+  aOptions.antialias() =
+      mSystemFontOptions ? cairo_font_options_get_antialias(mSystemFontOptions)
+                         : CAIRO_ANTIALIAS_DEFAULT;
+  aOptions.subpixelOrder() =
+      mSystemFontOptions
+          ? cairo_font_options_get_subpixel_order(mSystemFontOptions)
+          : CAIRO_SUBPIXEL_ORDER_DEFAULT;
+  aOptions.hintStyle() =
+      mSystemFontOptions ? cairo_font_options_get_hint_style(mSystemFontOptions)
+                         : CAIRO_HINT_STYLE_DEFAULT;
+  aOptions.lcdFilter() = mFreetypeLcdSetting;
+}
+
+void gfxFcPlatformFontList::UpdateSystemFontOptionsFromIpc(
+    const dom::SystemFontOptions& aOptions) {
+  ClearSystemFontOptions();
+  mSystemFontOptions = cairo_font_options_create();
+  cairo_font_options_set_antialias(mSystemFontOptions,
+                                   cairo_antialias_t(aOptions.antialias()));
+  cairo_font_options_set_hint_style(mSystemFontOptions,
+                                    cairo_hint_style_t(aOptions.hintStyle()));
+  cairo_font_options_set_subpixel_order(
+      mSystemFontOptions, cairo_subpixel_order_t(aOptions.subpixelOrder()));
+  mFreetypeLcdSetting = aOptions.lcdFilter();
+}
+
+void gfxFcPlatformFontList::SubstituteSystemFontOptions(FcPattern* aPattern) {
+  if (mSystemFontOptions) {
+    cairo_ft_font_options_substitute(mSystemFontOptions, aPattern);
+  }
+
+  if (mFreetypeLcdSetting != -1) {
+    FcValue value;
+    if (FcPatternGet(aPattern, FC_LCD_FILTER, 0, &value) == FcResultNoMatch) {
+      FcPatternAddInteger(aPattern, FC_LCD_FILTER, mFreetypeLcdSetting);
+    }
+  }
 }
 
 #endif  // MOZ_WIDGET_GTK

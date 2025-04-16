@@ -36,6 +36,7 @@ var localProviderModules = {
   UrlbarProviderUnifiedComplete:
     "resource:///modules/UrlbarProviderUnifiedComplete.jsm",
   UrlbarProviderAutofill: "resource:///modules/UrlbarProviderAutofill.jsm",
+  UrlbarProviderCalculator: "resource:///modules/UrlbarProviderCalculator.jsm",
   UrlbarProviderHeuristicFallback:
     "resource:///modules/UrlbarProviderHeuristicFallback.jsm",
   UrlbarProviderInterventions:
@@ -615,20 +616,6 @@ class Query {
     // so that it will be restarted the next time results are added.
     if (!this.context.results.length) {
       return;
-    }
-
-    // Crop results to the requested number, taking their result spans into
-    // account.
-    let resultCount = this.context.maxResults;
-    for (let i = 0; i < this.context.results.length; i++) {
-      resultCount -= UrlbarUtils.getSpanForResult(this.context.results[i]);
-      if (resultCount < 0) {
-        logger.debug(
-          `Splicing results from ${i} to crop results to ${this.context.maxResults}`
-        );
-        this.context.results.splice(i, this.context.results.length - i);
-        break;
-      }
     }
 
     this.context.firstResultChanged = !ObjectUtils.deepEqual(

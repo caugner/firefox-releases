@@ -39,6 +39,10 @@ async function testDoorHanger(
         "network.cookie.cookieBehavior",
         Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER,
       ],
+      [
+        "network.cookie.cookieBehavior.pbmode",
+        Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER,
+      ],
       ["privacy.trackingprotection.enabled", false],
       ["privacy.trackingprotection.pbmode.enabled", false],
       ["privacy.trackingprotection.annotate_channels", true],
@@ -235,6 +239,14 @@ async function testDoorHanger(
     ok(
       BrowserTestUtils.is_visible(permissionItem),
       "Permission item visible in the identity panel"
+    );
+    let permissionLearnMoreLink = document.getElementById(
+      "permission-popup-storage-access-permission-learn-more"
+    );
+    ok(permissionLearnMoreLink, "Permission learn more link exists");
+    ok(
+      BrowserTestUtils.is_visible(permissionLearnMoreLink),
+      "Permission learn more link is visible in the identity panel"
     );
     permissionPopupPromise = BrowserTestUtils.waitForEvent(
       gPermissionPanel._permissionPopup,

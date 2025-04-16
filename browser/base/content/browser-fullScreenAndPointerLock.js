@@ -323,12 +323,12 @@ var FullScreen = {
         (alwaysUsesNativeFullscreen || !document.fullscreenElement) &&
         AppConstants.platform == "macosx"
       ) {
-        document.documentElement.setAttribute("OSXLionFullscreen", true);
+        document.documentElement.setAttribute("macOSNativeFullscreen", true);
       }
     } else {
       gNavToolbox.removeAttribute("inFullscreen");
       document.documentElement.removeAttribute("inFullscreen");
-      document.documentElement.removeAttribute("OSXLionFullscreen");
+      document.documentElement.removeAttribute("macOSNativeFullscreen");
     }
 
     if (!document.fullscreenElement) {
@@ -379,10 +379,12 @@ var FullScreen = {
     if (shiftSize > 0) {
       toolbox.style.setProperty("transform", `translateY(${shiftSize}px)`);
       toolbox.style.setProperty("z-index", "2");
+      toolbox.style.setProperty("position", "relative");
       browserEl.style.setProperty("position", "relative");
     } else {
       toolbox.style.removeProperty("transform");
       toolbox.style.removeProperty("z-index");
+      toolbox.style.removeProperty("position");
       browserEl.style.removeProperty("position");
     }
   },
@@ -744,7 +746,7 @@ var FullScreen = {
     }
 
     // Track whether mouse is near the toolbox
-    if (trackMouse && AppConstants.platform != "macosx") {
+    if (trackMouse) {
       let rect = gBrowser.tabpanels.getBoundingClientRect();
       this._mouseTargetRect = {
         top: rect.top + 50,
@@ -768,10 +770,6 @@ var FullScreen = {
     }
     // a popup menu is open in chrome: don't collapse chrome
     if (this._isPopupOpen) {
-      return;
-    }
-    // On macOS we don't want to hide toolbars.
-    if (AppConstants.platform == "macosx") {
       return;
     }
 

@@ -218,7 +218,6 @@
 #include "InputData.h"
 
 #include "mozilla/Telemetry.h"
-#include "mozilla/plugins/PluginProcessParent.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/layers/IAPZCTreeManager.h"
 
@@ -252,7 +251,7 @@ uint32_t nsWindow::sInstanceCount = 0;
 bool nsWindow::sSwitchKeyboardLayout = false;
 BOOL nsWindow::sIsOleInitialized = FALSE;
 HCURSOR nsWindow::sHCursor = nullptr;
-imgIContainer* nsWindow::sCursorImgContainer = nullptr;
+nsIWidget::Cursor nsWindow::sCurrentCursor = {};
 nsWindow* nsWindow::sCurrentWindow = nullptr;
 bool nsWindow::sJustGotDeactivate = false;
 bool nsWindow::sJustGotActivate = false;
@@ -695,7 +694,7 @@ nsWindow::~nsWindow() {
       InkCollector::sInkCollector = nullptr;
     }
     IMEHandler::Terminate();
-    NS_IF_RELEASE(sCursorImgContainer);
+    sCurrentCursor = {};
     if (sIsOleInitialized) {
       ::OleFlushClipboard();
       ::OleUninitialize();
@@ -1654,7 +1653,7 @@ void nsWindow::Show(bool bState) {
 
         // Set the cursor before showing the window to avoid the default wait
         // cursor.
-        SetCursor(eCursor_standard, nullptr, 0, 0);
+        SetCursor(Cursor{eCursor_standard});
 
         switch (mSizeMode) {
           case nsSizeMode_Fullscreen:
@@ -1757,28 +1756,62 @@ bool nsWindow::IsVisible() const { return mIsVisible; }
  *
  **************************************************************/
 
+static bool ShouldHaveRoundedMenuDropShadow(nsWindow* aWindow) {
+  nsView* view = nsView::GetViewFor(aWindow);
+  return view && view->GetFrame() &&
+         view->GetFrame()->StyleUIReset()->mWindowShadow ==
+             StyleWindowShadow::Cliprounded;
+}
+
 // XP and Vista visual styles sometimes require window clipping regions to be
 // applied for proper transparency. These routines are called on size and move
 // operations.
 // XXX this is apparently still needed in Windows 7 and later
 void nsWindow::ClearThemeRegion() {
-  if (!HasGlass() &&
-      (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
-       (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypePanel))) {
+  if (mWindowType == eWindowType_popup &&
+      (mPopupType == ePopupTypeMenu || mPopupType == ePopupTypePanel) &&
+      ShouldHaveRoundedMenuDropShadow(this)) {
+    SetWindowRgn(mWnd, nullptr, false);
+  } else if (!HasGlass() &&
+             (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
+              (mPopupType == ePopupTypeTooltip ||
+               mPopupType == ePopupTypePanel))) {
     SetWindowRgn(mWnd, nullptr, false);
   }
 }
 
 void nsWindow::SetThemeRegion() {
+  // Clip the window to the rounded rect area of the popup if needed.
+  if (mWindowType == eWindowType_popup &&
+      (mPopupType == ePopupTypeMenu || mPopupType == ePopupTypePanel)) {
+    nsView* view = nsView::GetViewFor(this);
+    if (view) {
+      LayoutDeviceIntSize size =
+          nsLayoutUtils::GetBorderRadiusForMenuDropShadow(view->GetFrame());
+      if (size.width || size.height) {
+        int32_t width =
+            NSToIntRound(size.width * GetDesktopToDeviceScale().scale);
+        int32_t height =
+            NSToIntRound(size.height * GetDesktopToDeviceScale().scale);
+        HRGN region = CreateRoundRectRgn(0, 0, mBounds.Width() + 1,
+                                         mBounds.Height() + 1, width, height);
+        if (!SetWindowRgn(mWnd, region, false)) {
+          DeleteObject(region);  // region setting failed so delete the region.
+        }
+      }
+    }
+  }
+
   // Popup types that have a visual styles region applied (bug 376408). This can
   // be expanded for other window types as needed. The regions are applied
   // generically to the base window so default constants are used for part and
   // state. At some point we might need part and state values from
   // nsNativeThemeWin's GetThemePartAndState, but currently windows that change
   // shape based on state haven't come up.
-  if (!HasGlass() &&
-      (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
-       (mPopupType == ePopupTypeTooltip || mPopupType == ePopupTypePanel))) {
+  else if (!HasGlass() &&
+           (mWindowType == eWindowType_popup && !IsPopupWithTitleBar() &&
+            (mPopupType == ePopupTypeTooltip ||
+             mPopupType == ePopupTypePanel))) {
     HRGN hRgn = nullptr;
     RECT rect = {0, 0, mBounds.Width(), mBounds.Height()};
 
@@ -3134,34 +3167,29 @@ static HCURSOR CursorFor(nsCursor aCursor) {
   }
 }
 
-static HCURSOR CursorForImage(imgIContainer* aImageContainer,
-                              CSSIntPoint aHotspot,
+static HCURSOR CursorForImage(const nsIWidget::Cursor& aCursor,
                               CSSToLayoutDeviceScale aScale) {
-  if (!aImageContainer) {
+  if (!aCursor.IsCustom()) {
     return nullptr;
   }
 
-  int32_t width = 0;
-  int32_t height = 0;
-
-  if (NS_FAILED(aImageContainer->GetWidth(&width)) ||
-      NS_FAILED(aImageContainer->GetHeight(&height))) {
-    return nullptr;
-  }
+  nsIntSize size = nsIWidget::CustomCursorSize(aCursor);
 
   // Reject cursors greater than 128 pixels in either direction, to prevent
   // spoofing.
   // XXX ideally we should rescale. Also, we could modify the API to
   // allow trusted content to set larger cursors.
-  if (width > 128 || height > 128) {
+  if (size.width > 128 || size.height > 128) {
     return nullptr;
   }
 
-  LayoutDeviceIntSize size = RoundedToInt(CSSIntSize(width, height) * aScale);
-  LayoutDeviceIntPoint hotspot = RoundedToInt(aHotspot * aScale);
+  LayoutDeviceIntSize layoutSize =
+      RoundedToInt(CSSIntSize(size.width, size.height) * aScale);
+  LayoutDeviceIntPoint hotspot =
+      RoundedToInt(CSSIntPoint(aCursor.mHotspotX, aCursor.mHotspotY) * aScale);
   HCURSOR cursor;
-  nsresult rv =
-      nsWindowGfx::CreateIcon(aImageContainer, true, hotspot, size, &cursor);
+  nsresult rv = nsWindowGfx::CreateIcon(aCursor.mContainer, true, hotspot,
+                                        layoutSize, &cursor);
   if (NS_FAILED(rv)) {
     return nullptr;
   }
@@ -3170,23 +3198,18 @@ static HCURSOR CursorForImage(imgIContainer* aImageContainer,
 }
 
 // Setting the actual cursor
-void nsWindow::SetCursor(nsCursor aDefaultCursor, imgIContainer* aImageCursor,
-                         uint32_t aHotspotX, uint32_t aHotspotY) {
-  if (aImageCursor && sCursorImgContainer == aImageCursor && sHCursor) {
+void nsWindow::SetCursor(const Cursor& aCursor) {
+  if (sCurrentCursor == aCursor && sHCursor) {
     ::SetCursor(sHCursor);
     return;
   }
 
-  HCURSOR cursor = CursorForImage(
-      aImageCursor, CSSIntPoint(aHotspotX, aHotspotY), GetDefaultScale());
+  mCursor = aCursor;
+
+  HCURSOR cursor = CursorForImage(aCursor, GetDefaultScale());
   if (cursor) {
-    mCursor = eCursorInvalid;
     ::SetCursor(cursor);
-
-    NS_IF_RELEASE(sCursorImgContainer);
-    sCursorImgContainer = aImageCursor;
-    NS_ADDREF(sCursorImgContainer);
-
+    sCurrentCursor = aCursor;
     if (sHCursor) {
       ::DestroyIcon(sHCursor);
     }
@@ -3194,16 +3217,15 @@ void nsWindow::SetCursor(nsCursor aDefaultCursor, imgIContainer* aImageCursor,
     return;
   }
 
-  cursor = CursorFor(aDefaultCursor);
+  cursor = CursorFor(aCursor.mDefaultCursor);
   if (!cursor) {
     return;
   }
 
-  mCursor = aDefaultCursor;
   HCURSOR oldCursor = ::SetCursor(cursor);
+  sCurrentCursor = aCursor;
 
   if (sHCursor == oldCursor) {
-    NS_IF_RELEASE(sCursorImgContainer);
     if (sHCursor) {
       ::DestroyIcon(sHCursor);
     }
@@ -3721,36 +3743,12 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
   return nullptr;
 }
 
-static void SetChildStyleAndParent(HWND aChildWindow, HWND aParentWindow) {
-  // Make sure the window is styled to be a child window.
-  LONG_PTR style = GetWindowLongPtr(aChildWindow, GWL_STYLE);
-  style |= WS_CHILD;
-  style &= ~WS_POPUP;
-  SetWindowLongPtr(aChildWindow, GWL_STYLE, style);
-
-  // Do the reparenting. Note that this call will probably cause a sync native
-  // message to the process that owns the child window.
-  ::SetParent(aChildWindow, aParentWindow);
-}
-
 void nsWindow::SetNativeData(uint32_t aDataType, uintptr_t aVal) {
   switch (aDataType) {
     case NS_NATIVE_CHILD_WINDOW:
     case NS_NATIVE_CHILD_OF_SHAREABLE_WINDOW: {
-      HWND childHwnd = reinterpret_cast<HWND>(aVal);
-      DWORD childProc = 0;
-      GetWindowThreadProcessId(childHwnd, &childProc);
-      if (!PluginProcessParent::IsPluginProcessId(
-              static_cast<base::ProcessId>(childProc))) {
-        MOZ_ASSERT_UNREACHABLE(
-            "SetNativeData window origin was not a plugin process.");
-        break;
-      }
-      HWND parentHwnd = aDataType == NS_NATIVE_CHILD_WINDOW
-                            ? mWnd
-                            : WinUtils::GetTopLevelHWND(mWnd);
-      SetChildStyleAndParent(childHwnd, parentHwnd);
-      RecreateDirectManipulationIfNeeded();
+      MOZ_ASSERT_UNREACHABLE(
+          "SetNativeData window origin was not a plugin process.");
       break;
     }
     default:
@@ -4344,7 +4342,7 @@ bool nsWindow::DispatchStandardEvent(EventMessage aMsg) {
 }
 
 bool nsWindow::DispatchKeyboardEvent(WidgetKeyboardEvent* event) {
-  nsEventStatus status = DispatchInputEvent(event);
+  nsEventStatus status = DispatchInputEvent(event).mContentStatus;
   return ConvertStatus(status);
 }
 
@@ -4355,7 +4353,8 @@ bool nsWindow::DispatchContentCommandEvent(WidgetContentCommandEvent* aEvent) {
 }
 
 bool nsWindow::DispatchWheelEvent(WidgetWheelEvent* aEvent) {
-  nsEventStatus status = DispatchInputEvent(aEvent->AsInputEvent());
+  nsEventStatus status =
+      DispatchInputEvent(aEvent->AsInputEvent()).mContentStatus;
   return ConvertStatus(status);
 }
 
@@ -4496,11 +4495,6 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
   }
 
   if (WinUtils::GetIsMouseFromTouch(aEventMessage)) {
-    if (aEventMessage == eMouseDown) {
-      Telemetry::ScalarAdd(Telemetry::ScalarID::BROWSER_INPUT_TOUCH_EVENT_COUNT,
-                           1);
-    }
-
     if (mTouchWindow) {
       // If mTouchWindow is true, then we must have APZ enabled and be
       // feeding it raw touch events. In that case we only want to
@@ -4664,70 +4658,6 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
           ("Msg Time: %d Click Count: %d\n", curMsgTime, event.mClickCount));
 #endif
 
-  NPEvent pluginEvent;
-
-  switch (aEventMessage) {
-    case eMouseDown:
-      switch (aButton) {
-        case MouseButton::ePrimary:
-          pluginEvent.event = WM_LBUTTONDOWN;
-          break;
-        case MouseButton::eMiddle:
-          pluginEvent.event = WM_MBUTTONDOWN;
-          break;
-        case MouseButton::eSecondary:
-          pluginEvent.event = WM_RBUTTONDOWN;
-          break;
-        default:
-          break;
-      }
-      break;
-    case eMouseUp:
-      switch (aButton) {
-        case MouseButton::ePrimary:
-          pluginEvent.event = WM_LBUTTONUP;
-          break;
-        case MouseButton::eMiddle:
-          pluginEvent.event = WM_MBUTTONUP;
-          break;
-        case MouseButton::eSecondary:
-          pluginEvent.event = WM_RBUTTONUP;
-          break;
-        default:
-          break;
-      }
-      break;
-    case eMouseDoubleClick:
-      switch (aButton) {
-        case MouseButton::ePrimary:
-          pluginEvent.event = WM_LBUTTONDBLCLK;
-          break;
-        case MouseButton::eMiddle:
-          pluginEvent.event = WM_MBUTTONDBLCLK;
-          break;
-        case MouseButton::eSecondary:
-          pluginEvent.event = WM_RBUTTONDBLCLK;
-          break;
-        default:
-          break;
-      }
-      break;
-    case eMouseMove:
-      pluginEvent.event = WM_MOUSEMOVE;
-      break;
-    case eMouseExitFromWidget:
-      pluginEvent.event = WM_MOUSELEAVE;
-      break;
-    default:
-      pluginEvent.event = WM_NULL;
-      break;
-  }
-
-  pluginEvent.wParam = wParam;  // plugins NEED raw OS event flags!
-  pluginEvent.lParam = lParam;
-
-  event.mPluginEvent.Copy(pluginEvent);
-
   // call the event callback
   if (mWidgetListener) {
     if (aEventMessage == eMouseMove) {
@@ -4757,7 +4687,7 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
       }
     }
 
-    result = ConvertStatus(DispatchInputEvent(&event));
+    result = ConvertStatus(DispatchInputEvent(&event).mContentStatus);
 
     // Release the widget with NS_IF_RELEASE() just in case
     // the context menu key code in EventListenerManager::HandleEvent()
@@ -7046,26 +6976,19 @@ nsIntPoint nsWindow::GetTouchCoordinates(WPARAM wParam, LPARAM lParam) {
   return ret;
 }
 
-// Determine if the touch device that originated |aOSEvent| needs to have
-// touch events representing a two-finger gesture converted to pan
-// gesture events.
-// We only do this for touch devices with a specific name and identifiers.
-bool TouchDeviceNeedsPanGestureConversion(PTOUCHINPUT aOSEvent,
-                                          uint32_t aTouchCount) {
-  if (aTouchCount == 0) {
-    return false;
-  }
-  HANDLE source = aOSEvent[0].hSource;
+// Helper function for TouchDeviceNeedsPanGestureConversion(PTOUCHINPUT,
+// uint32_t).
+static bool TouchDeviceNeedsPanGestureConversion(HANDLE aSource) {
   std::string deviceName;
   UINT dataSize = 0;
   // The first call just queries how long the name string will be.
-  GetRawInputDeviceInfoA(source, RIDI_DEVICENAME, nullptr, &dataSize);
+  GetRawInputDeviceInfoA(aSource, RIDI_DEVICENAME, nullptr, &dataSize);
   if (!dataSize || dataSize > 0x10000) {
     return false;
   }
   deviceName.resize(dataSize);
   // The second call actually populates the string.
-  UINT result = GetRawInputDeviceInfoA(source, RIDI_DEVICENAME, &deviceName[0],
+  UINT result = GetRawInputDeviceInfoA(aSource, RIDI_DEVICENAME, &deviceName[0],
                                        &dataSize);
   if (result == UINT_MAX) {
     return false;
@@ -7087,7 +7010,7 @@ bool TouchDeviceNeedsPanGestureConversion(PTOUCHINPUT aOSEvent,
   deviceInfo.cbSize = sizeof(deviceInfo);
   dataSize = sizeof(deviceInfo);
   result =
-      GetRawInputDeviceInfoA(source, RIDI_DEVICEINFO, &deviceInfo, &dataSize);
+      GetRawInputDeviceInfoA(aSource, RIDI_DEVICEINFO, &deviceInfo, &dataSize);
   if (result == UINT_MAX) {
     return false;
   }
@@ -7099,12 +7022,36 @@ bool TouchDeviceNeedsPanGestureConversion(PTOUCHINPUT aOSEvent,
          deviceInfo.hid.usUsagePage == 13 && deviceInfo.hid.usUsage == 4;
 }
 
+// Determine if the touch device that originated |aOSEvent| needs to have
+// touch events representing a two-finger gesture converted to pan
+// gesture events.
+// We only do this for touch devices with a specific name and identifiers.
+static bool TouchDeviceNeedsPanGestureConversion(PTOUCHINPUT aOSEvent,
+                                                 uint32_t aTouchCount) {
+  if (!StaticPrefs::apz_windows_check_for_pan_gesture_conversion()) {
+    return false;
+  }
+  if (aTouchCount == 0) {
+    return false;
+  }
+  HANDLE source = aOSEvent[0].hSource;
+
+  // Cache the result of this computation for each touch device.
+  // Touch devices are identified by the HANDLE stored in the hSource
+  // field of TOUCHINPUT.
+  static std::map<HANDLE, bool> sResultCache;
+  auto [iter, inserted] = sResultCache.emplace(source, false);
+  if (inserted) {
+    iter->second = TouchDeviceNeedsPanGestureConversion(source);
+  }
+  return iter->second;
+}
+
 Maybe<PanGestureInput> nsWindow::ConvertTouchToPanGesture(
     const MultiTouchInput& aTouchInput, PTOUCHINPUT aOSEvent) {
-  // The first time this function is called, perform some checks on the
-  // touch device that originated the touch event, to see if it's a device
+  // Checks if the touch device that originated the touch event is one
   // for which we want to convert the touch events to pang gesture events.
-  static bool shouldConvert = TouchDeviceNeedsPanGestureConversion(
+  bool shouldConvert = TouchDeviceNeedsPanGestureConversion(
       aOSEvent, aTouchInput.mTouches.Length());
   if (!shouldConvert) {
     return Nothing();
@@ -7499,8 +7446,8 @@ void nsWindow::OnDestroy() {
   }
 
   // Destroy any custom cursor resources.
-  if (mCursor == eCursorInvalid) {
-    SetCursor(eCursor_standard, nullptr, 0, 0);
+  if (mCursor.IsCustom()) {
+    SetCursor(Cursor{eCursor_standard});
   }
 
   if (mCompositorWidgetDelegate) {
@@ -8550,12 +8497,6 @@ void nsWindow::PickerClosed() {
   if (!mPickerDisplayCount && mDestroyCalled) {
     Destroy();
   }
-}
-
-bool nsWindow::WidgetTypePrefersSoftwareWebRender() const {
-  return (mTransparencyMode == eTransparencyTransparent &&
-          StaticPrefs::gfx_webrender_software_unaccelerated_widget_allow()) ||
-         nsBaseWidget::WidgetTypePrefersSoftwareWebRender();
 }
 
 bool nsWindow::WidgetTypeSupportsAcceleration() {

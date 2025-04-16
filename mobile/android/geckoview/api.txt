@@ -118,6 +118,35 @@ package org.mozilla.geckoview {
     ctor protected Autocomplete();
   }
 
+  public static class Autocomplete.CreditCard {
+    ctor @AnyThread protected CreditCard();
+    field @NonNull public final String expirationMonth;
+    field @NonNull public final String expirationYear;
+    field @Nullable public final String guid;
+    field @NonNull public final String name;
+    field @NonNull public final String number;
+  }
+
+  public static class Autocomplete.CreditCard.Builder {
+    ctor @AnyThread public Builder();
+    method @AnyThread @NonNull public Autocomplete.CreditCard build();
+    method @AnyThread @NonNull public Autocomplete.CreditCard.Builder expirationMonth(@Nullable String);
+    method @AnyThread @NonNull public Autocomplete.CreditCard.Builder expirationYear(@Nullable String);
+    method @AnyThread @NonNull public Autocomplete.CreditCard.Builder guid(@Nullable String);
+    method @AnyThread @NonNull public Autocomplete.CreditCard.Builder name(@Nullable String);
+    method @AnyThread @NonNull public Autocomplete.CreditCard.Builder number(@Nullable String);
+  }
+
+  public static class Autocomplete.CreditCardSelectOption extends Autocomplete.SelectOption {
+    ctor public CreditCardSelectOption(@NonNull Autocomplete.CreditCard);
+  }
+
+  public static class Autocomplete.CreditCardSelectOption.Hint {
+    ctor public Hint();
+    field public static final int INSECURE_FORM = 2;
+    field public static final int NONE = 0;
+  }
+
   public static class Autocomplete.LoginEntry {
     ctor @AnyThread protected LoginEntry();
     field @Nullable public final String formActionOrigin;
@@ -143,30 +172,11 @@ package org.mozilla.geckoview {
     ctor public LoginSaveOption(@NonNull Autocomplete.LoginEntry);
   }
 
-  public static class Autocomplete.LoginSaveOption.Hint {
-    ctor protected Hint();
-    field public static final int GENERATED = 1;
-    field public static final int LOW_CONFIDENCE = 2;
-    field public static final int NONE = 0;
-  }
-
   public static class Autocomplete.LoginSelectOption extends Autocomplete.SelectOption {
     ctor public LoginSelectOption(@NonNull Autocomplete.LoginEntry);
   }
 
-  public static class Autocomplete.LoginSelectOption.Hint {
-    ctor public Hint();
-    field public static final int DUPLICATE_USERNAME = 4;
-    field public static final int GENERATED = 1;
-    field public static final int INSECURE_FORM = 2;
-    field public static final int MATCHING_ORIGIN = 8;
-    field public static final int NONE = 0;
-  }
-
-  public static interface Autocomplete.LoginStorageDelegate {
-    method @Nullable @UiThread default public GeckoResult<Autocomplete.LoginEntry[]> onLoginFetch(@NonNull String);
-    method @UiThread default public void onLoginSave(@NonNull Autocomplete.LoginEntry);
-    method @UiThread default public void onLoginUsed(@NonNull Autocomplete.LoginEntry, int);
+  @Deprecated @DeprecationSchedule(version=93,id="login-storage") public static interface Autocomplete.LoginStorageDelegate implements Autocomplete.StorageDelegate {
   }
 
   public abstract static class Autocomplete.Option<T> {
@@ -179,8 +189,31 @@ package org.mozilla.geckoview {
     ctor public SaveOption(@NonNull T, int);
   }
 
+  public static class Autocomplete.SaveOption.Hint {
+    ctor protected Hint();
+    field public static final int GENERATED = 1;
+    field public static final int LOW_CONFIDENCE = 2;
+    field public static final int NONE = 0;
+  }
+
   public abstract static class Autocomplete.SelectOption<T> extends Autocomplete.Option {
     ctor public SelectOption(@NonNull T, int);
+  }
+
+  public static class Autocomplete.SelectOption.Hint {
+    ctor public Hint();
+    field public static final int DUPLICATE_USERNAME = 4;
+    field public static final int GENERATED = 1;
+    field public static final int INSECURE_FORM = 2;
+    field public static final int MATCHING_ORIGIN = 8;
+    field public static final int NONE = 0;
+  }
+
+  public static interface Autocomplete.StorageDelegate {
+    method @Nullable @UiThread default public GeckoResult<Autocomplete.CreditCard[]> onCreditCardFetch();
+    method @Nullable @UiThread default public GeckoResult<Autocomplete.LoginEntry[]> onLoginFetch(@NonNull String);
+    method @UiThread default public void onLoginSave(@NonNull Autocomplete.LoginEntry);
+    method @UiThread default public void onLoginUsed(@NonNull Autocomplete.LoginEntry, int);
   }
 
   public static class Autocomplete.UsedField {
@@ -387,6 +420,7 @@ package org.mozilla.geckoview {
   @AnyThread public static class ContentBlocking.Settings extends RuntimeSettings {
     method public int getAntiTrackingCategories();
     method public int getCookieBehavior();
+    method public int getCookieBehaviorPrivateMode();
     method public int getCookieLifetime();
     method public boolean getCookiePurging();
     method public int getEnhancedTrackingProtectionLevel();
@@ -397,6 +431,7 @@ package org.mozilla.geckoview {
     method public boolean getStrictSocialTrackingProtection();
     method @NonNull public ContentBlocking.Settings setAntiTracking(int);
     method @NonNull public ContentBlocking.Settings setCookieBehavior(int);
+    method @NonNull public ContentBlocking.Settings setCookieBehaviorPrivateMode(int);
     method @NonNull public ContentBlocking.Settings setCookieLifetime(int);
     method @NonNull public ContentBlocking.Settings setCookiePurging(boolean);
     method @NonNull public ContentBlocking.Settings setEnhancedTrackingProtectionLevel(int);
@@ -412,6 +447,7 @@ package org.mozilla.geckoview {
     ctor public Builder();
     method @NonNull public ContentBlocking.Settings.Builder antiTracking(int);
     method @NonNull public ContentBlocking.Settings.Builder cookieBehavior(int);
+    method @NonNull public ContentBlocking.Settings.Builder cookieBehaviorPrivateMode(int);
     method @NonNull public ContentBlocking.Settings.Builder cookieLifetime(int);
     method @NonNull public ContentBlocking.Settings.Builder cookiePurging(boolean);
     method @NonNull public ContentBlocking.Settings.Builder enhancedTrackingProtectionLevel(int);
@@ -443,6 +479,7 @@ package org.mozilla.geckoview {
 
   public static class ContentBlockingController.Event {
     ctor protected Event();
+    field public static final int ALLOWED_TRACKING_CONTENT = 32;
     field public static final int BLOCKED_CRYPTOMINING_CONTENT = 2048;
     field public static final int BLOCKED_FINGERPRINTING_CONTENT = 64;
     field public static final int BLOCKED_SOCIALTRACKING_CONTENT = 65536;
@@ -579,10 +616,11 @@ package org.mozilla.geckoview {
     method @NonNull @UiThread public static GeckoRuntime create(@NonNull Context);
     method @NonNull @UiThread public static GeckoRuntime create(@NonNull Context, @NonNull GeckoRuntimeSettings);
     method @Nullable @UiThread public GeckoRuntime.ActivityDelegate getActivityDelegate();
+    method @Nullable @UiThread public Autocomplete.StorageDelegate getAutocompleteStorageDelegate();
     method @NonNull @UiThread public ContentBlockingController getContentBlockingController();
     method @NonNull @UiThread public static synchronized GeckoRuntime getDefault(@NonNull Context);
     method @Nullable @UiThread public GeckoRuntime.Delegate getDelegate();
-    method @Nullable @UiThread public Autocomplete.LoginStorageDelegate getLoginStorageDelegate();
+    method @Deprecated @DeprecationSchedule(version=93,id="login-storage") @Nullable @UiThread public Autocomplete.LoginStorageDelegate getLoginStorageDelegate();
     method @Nullable @UiThread public File getProfileDir();
     method @NonNull @UiThread public ProfilerController getProfilerController();
     method @AnyThread @NonNull public GeckoRuntimeSettings getSettings();
@@ -594,8 +632,9 @@ package org.mozilla.geckoview {
     method @UiThread public void orientationChanged(int);
     method @AnyThread public void readFromParcel(@NonNull Parcel);
     method @UiThread public void setActivityDelegate(@Nullable GeckoRuntime.ActivityDelegate);
+    method @UiThread public void setAutocompleteStorageDelegate(@Nullable Autocomplete.StorageDelegate);
     method @UiThread public void setDelegate(@Nullable GeckoRuntime.Delegate);
-    method @UiThread public void setLoginStorageDelegate(@Nullable Autocomplete.LoginStorageDelegate);
+    method @Deprecated @DeprecationSchedule(version=93,id="login-storage") @UiThread public void setLoginStorageDelegate(@Nullable Autocomplete.LoginStorageDelegate);
     method @UiThread public void setServiceWorkerDelegate(@Nullable GeckoRuntime.ServiceWorkerDelegate);
     method @UiThread public void setWebNotificationDelegate(@Nullable WebNotificationDelegate);
     method @AnyThread public void shutdown();
@@ -630,6 +669,7 @@ package org.mozilla.geckoview {
     method @Nullable public Float getDisplayDensityOverride();
     method @Nullable public Integer getDisplayDpiOverride();
     method public boolean getDoubleTapZoomingEnabled();
+    method public boolean getEnterpriseRootsEnabled();
     method @NonNull public Bundle getExtras();
     method public boolean getFontInflationEnabled();
     method public float getFontSizeFactor();
@@ -653,6 +693,7 @@ package org.mozilla.geckoview {
     method @NonNull public GeckoRuntimeSettings setAutomaticFontSizeAdjustment(boolean);
     method @NonNull public GeckoRuntimeSettings setConsoleOutputEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setDoubleTapZoomingEnabled(boolean);
+    method @NonNull public GeckoRuntimeSettings setEnterpriseRootsEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setFontInflationEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings setFontSizeFactor(float);
     method @NonNull public GeckoRuntimeSettings setForceUserScalableEnabled(boolean);
@@ -688,6 +729,7 @@ package org.mozilla.geckoview {
     method @NonNull public GeckoRuntimeSettings.Builder displayDensityOverride(float);
     method @NonNull public GeckoRuntimeSettings.Builder displayDpiOverride(int);
     method @NonNull public GeckoRuntimeSettings.Builder doubleTapZoomingEnabled(boolean);
+    method @NonNull public GeckoRuntimeSettings.Builder enterpiseRootsEnabled(boolean);
     method @NonNull public GeckoRuntimeSettings.Builder extras(@NonNull Bundle);
     method @NonNull public GeckoRuntimeSettings.Builder fontInflation(boolean);
     method @NonNull public GeckoRuntimeSettings.Builder fontSizeFactor(float);
@@ -899,7 +941,8 @@ package org.mozilla.geckoview {
     method @UiThread default public void onCanGoForward(@NonNull GeckoSession, boolean);
     method @Nullable @UiThread default public GeckoResult<String> onLoadError(@NonNull GeckoSession, @Nullable String, @NonNull WebRequestError);
     method @Nullable @UiThread default public GeckoResult<AllowOrDeny> onLoadRequest(@NonNull GeckoSession, @NonNull GeckoSession.NavigationDelegate.LoadRequest);
-    method @UiThread default public void onLocationChange(@NonNull GeckoSession, @Nullable String);
+    method @DeprecationSchedule(id="location-permissions",version=92) @UiThread default public void onLocationChange(@NonNull GeckoSession, @Nullable String);
+    method @UiThread default public void onLocationChange(@NonNull GeckoSession, @Nullable String, @NonNull List<GeckoSession.PermissionDelegate.ContentPermission>);
     method @Nullable @UiThread default public GeckoResult<GeckoSession> onNewSession(@NonNull GeckoSession, @NonNull String);
     method @Nullable @UiThread default public GeckoResult<AllowOrDeny> onSubframeLoadRequest(@NonNull GeckoSession, @NonNull GeckoSession.NavigationDelegate.LoadRequest);
     field public static final int LOAD_REQUEST_IS_REDIRECT = 8388608;
@@ -934,6 +977,17 @@ package org.mozilla.geckoview {
   public static interface GeckoSession.PermissionDelegate.Callback {
     method @UiThread default public void grant();
     method @UiThread default public void reject();
+  }
+
+  public static class GeckoSession.PermissionDelegate.ContentPermission {
+    ctor protected ContentPermission();
+    field public static final int VALUE_ALLOW = 1;
+    field public static final int VALUE_DENY = 2;
+    field public static final int VALUE_PROMPT = 3;
+    field public final int permission;
+    field public final boolean privateMode;
+    field @NonNull public final String uri;
+    field public final int value;
   }
 
   public static interface GeckoSession.PermissionDelegate.MediaCallback {
@@ -991,6 +1045,7 @@ package org.mozilla.geckoview {
     method @Nullable @UiThread default public GeckoResult<GeckoSession.PromptDelegate.PromptResponse> onButtonPrompt(@NonNull GeckoSession, @NonNull GeckoSession.PromptDelegate.ButtonPrompt);
     method @Nullable @UiThread default public GeckoResult<GeckoSession.PromptDelegate.PromptResponse> onChoicePrompt(@NonNull GeckoSession, @NonNull GeckoSession.PromptDelegate.ChoicePrompt);
     method @Nullable @UiThread default public GeckoResult<GeckoSession.PromptDelegate.PromptResponse> onColorPrompt(@NonNull GeckoSession, @NonNull GeckoSession.PromptDelegate.ColorPrompt);
+    method @Nullable @UiThread default public GeckoResult<GeckoSession.PromptDelegate.PromptResponse> onCreditCardSelect(@NonNull GeckoSession, @NonNull GeckoSession.PromptDelegate.AutocompleteRequest<Autocomplete.CreditCardSelectOption>);
     method @Nullable @UiThread default public GeckoResult<GeckoSession.PromptDelegate.PromptResponse> onDateTimePrompt(@NonNull GeckoSession, @NonNull GeckoSession.PromptDelegate.DateTimePrompt);
     method @Nullable @UiThread default public GeckoResult<GeckoSession.PromptDelegate.PromptResponse> onFilePrompt(@NonNull GeckoSession, @NonNull GeckoSession.PromptDelegate.FilePrompt);
     method @Nullable @UiThread default public GeckoResult<GeckoSession.PromptDelegate.PromptResponse> onLoginSave(@NonNull GeckoSession, @NonNull GeckoSession.PromptDelegate.AutocompleteRequest<Autocomplete.LoginSaveOption>);
@@ -1642,6 +1697,8 @@ package org.mozilla.geckoview {
     method @AnyThread @NonNull public GeckoResult<Void> clearData(long);
     method @AnyThread public void clearDataForSessionContext(@NonNull String);
     method @AnyThread @NonNull public GeckoResult<Void> clearDataFromHost(@NonNull String, long);
+    method @AnyThread @NonNull public GeckoResult<List<GeckoSession.PermissionDelegate.ContentPermission>> getAllPermissions();
+    method @AnyThread @NonNull public GeckoResult<List<GeckoSession.PermissionDelegate.ContentPermission>> getPermissions(@NonNull String);
   }
 
   public static class StorageController.ClearFlags {
@@ -2065,6 +2122,7 @@ package org.mozilla.geckoview {
     field public static final int ERROR_CONNECTION_REFUSED = 67;
     field public static final int ERROR_CONTENT_CRASHED = 68;
     field public static final int ERROR_CORRUPTED_CONTENT = 52;
+    field public static final int ERROR_DATA_URI_TOO_LONG = 117;
     field public static final int ERROR_FILE_ACCESS_DENIED = 101;
     field public static final int ERROR_FILE_NOT_FOUND = 85;
     field public static final int ERROR_INVALID_CONTENT_ENCODING = 84;

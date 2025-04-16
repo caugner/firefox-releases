@@ -9,6 +9,7 @@
 #include "nsWrapperCache.h"
 #include "ObjectModel.h"
 #include "mozilla/dom/TypedArray.h"
+#include "mozilla/webgpu/WebGPUTypes.h"
 
 namespace mozilla {
 class ErrorResult;
@@ -19,6 +20,8 @@ template <typename T>
 class Optional;
 template <typename T>
 class Sequence;
+struct GPUImageCopyTexture;
+struct GPUImageDataLayout;
 struct TextureCopyView;
 struct TextureDataLayout;
 typedef RangeEnforcedUnsignedLongSequenceOrGPUExtent3DDict GPUExtent3D;
@@ -45,9 +48,9 @@ class Queue final : public ObjectBase, public ChildOf<Device> {
                    uint64_t aDataOffset, const dom::Optional<uint64_t>& aSize,
                    ErrorResult& aRv);
 
-  void WriteTexture(const dom::GPUTextureCopyView& aDestination,
+  void WriteTexture(const dom::GPUImageCopyTexture& aDestination,
                     const dom::ArrayBufferViewOrArrayBuffer& aData,
-                    const dom::GPUTextureDataLayout& aDataLayout,
+                    const dom::GPUImageDataLayout& aDataLayout,
                     const dom::GPUExtent3D& aSize, ErrorResult& aRv);
 
  private:

@@ -577,12 +577,6 @@ var Impl = {
       ret.addons = this._addons;
     }
 
-    // TODO: Remove this when bug 1201837 lands.
-    let flashVersion = this.getFlashVersion();
-    if (flashVersion) {
-      ret.flashVersion = flashVersion;
-    }
-
     return ret;
   },
 
@@ -751,13 +745,20 @@ var Impl = {
       const isMobile = AppConstants.platform == "android";
       const isSubsession = isMobile ? false : !this._isClassicReason(reason);
 
-      Telemetry.scalarSet(
-        "browser.engagement.session_time_including_suspend",
-        Telemetry.msSinceProcessStartIncludingSuspend()
-      );
+      // The order of the next two msSinceProcessStart* calls is somewhat
+      // important. In theory, `session_time_including_suspend` is supposed to
+      // ALWAYS be lower or equal than `session_time_excluding_suspend` (because
+      // the former is a temporal superset of the latter). When a device has not
+      // been suspended since boot, we want the previous property to hold,
+      // regardless of the delay during or between the two
+      // `msSinceProcessStart*` calls.
       Telemetry.scalarSet(
         "browser.engagement.session_time_excluding_suspend",
         Telemetry.msSinceProcessStartExcludingSuspend()
+      );
+      Telemetry.scalarSet(
+        "browser.engagement.session_time_including_suspend",
+        Telemetry.msSinceProcessStartIncludingSuspend()
       );
 
       if (isMobile) {
@@ -939,21 +940,6 @@ var Impl = {
     })();
 
     return this._delayedInitTask;
-  },
-
-  getFlashVersion: function getFlashVersion() {
-    if (AppConstants.MOZ_APP_NAME == "firefox") {
-      let host = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
-      let tags = host.getPluginTags();
-
-      for (let i = 0; i < tags.length; i++) {
-        if (tags[i].name == "Shockwave Flash") {
-          return tags[i].version;
-        }
-      }
-    }
-
-    return null;
   },
 
   /**

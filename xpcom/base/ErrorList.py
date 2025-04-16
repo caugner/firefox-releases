@@ -660,6 +660,8 @@ with modules["FILES"]:
     errors["NS_ERROR_FILE_READ_ONLY"] = FAILURE(19)
     errors["NS_ERROR_FILE_DIR_NOT_EMPTY"] = FAILURE(20)
     errors["NS_ERROR_FILE_ACCESS_DENIED"] = FAILURE(21)
+    errors["NS_ERROR_FILE_FS_CORRUPTED"] = FAILURE(22)
+    errors["NS_ERROR_FILE_DEVICE_FAILURE"] = FAILURE(23)
 
     errors["NS_SUCCESS_FILE_DIRECTORY_EMPTY"] = SUCCESS(1)
     # Result codes used by nsIDirectoryServiceProvider2
@@ -788,6 +790,9 @@ with modules["DOM"]:
     # The request failed because there are too many recursive iframes or
     # objects being loaded.
     errors["NS_ERROR_RECURSIVE_DOCUMENT_LOAD"] = FAILURE(1038)
+
+    # WebExtension content script may not load this URL.
+    errors["NS_ERROR_DOM_WEBEXT_CONTENT_SCRIPT_URI"] = FAILURE(1039)
 
     # May be used to indicate when e.g. setting a property value didn't
     # actually change the value, like for obj.foo = "bar"; obj.foo = "bar";

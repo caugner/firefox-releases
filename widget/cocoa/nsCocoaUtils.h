@@ -10,7 +10,6 @@
 
 #include "nsRect.h"
 #include "imgIContainer.h"
-#include "npapi.h"
 #include "nsTArray.h"
 #include "Units.h"
 
@@ -190,6 +189,7 @@ class nsCocoaUtils {
   // expected to be desktop pixels, which are equal to Cocoa points
   // (by definition).
   static NSRect GeckoRectToCocoaRect(const mozilla::DesktopIntRect& geckoRect);
+  static NSPoint GeckoPointToCocoaPoint(const mozilla::DesktopPoint& aPoint);
 
   // Converts aGeckoRect in dev pixels to points in Cocoa coordinates
   static NSRect GeckoRectToCocoaRectDevPix(const mozilla::LayoutDeviceIntRect& aGeckoRect,
@@ -256,6 +256,8 @@ class nsCocoaUtils {
       Combines the two methods above. The caller owns the <code>NSImage</code>.
       @param aImage the image to extract a frame from
       @param aWhichFrame the frame to extract (see imgIContainer FRAME_*)
+      @param aComputedStyle the ComputedStyle of the element that the image is for, to support SVG
+                            context paint properties, can be null
       @param aResult the resulting NSImage
       @param scaleFactor the desired scale factor of the NSImage (2 for a retina display)
       @param aIsEntirelyBlack an outparam that, if non-null, will be set to a
@@ -264,6 +266,7 @@ class nsCocoaUtils {
       @return NS_OK if the conversion worked, NS_ERROR_FAILURE otherwise
    */
   static nsresult CreateNSImageFromImageContainer(imgIContainer* aImage, uint32_t aWhichFrame,
+                                                  const mozilla::ComputedStyle* aComputedStyle,
                                                   NSImage** aResult, CGFloat scaleFactor,
                                                   bool* aIsEntirelyBlack = nullptr);
 
@@ -272,6 +275,8 @@ class nsCocoaUtils {
       The caller owns the <code>NSImage</code>.
       @param aImage the image to extract a frame from
       @param aWhichFrame the frame to extract (see imgIContainer FRAME_*)
+      @param aComputedStyle the ComputedStyle of the element that the image is for, to support SVG
+                            context paint properties, can be null
       @param aResult the resulting NSImage
       @param aIsEntirelyBlack an outparam that, if non-null, will be set to a
                               bool that indicates whether the RGB values on all
@@ -279,8 +284,8 @@ class nsCocoaUtils {
       @return NS_OK if the conversion worked, NS_ERROR_FAILURE otherwise
    */
   static nsresult CreateDualRepresentationNSImageFromImageContainer(
-      imgIContainer* aImage, uint32_t aWhichFrame, NSImage** aResult,
-      bool* aIsEntirelyBlack = nullptr);
+      imgIContainer* aImage, uint32_t aWhichFrame, const mozilla::ComputedStyle* aComputedStyle,
+      NSImage** aResult, bool* aIsEntirelyBlack = nullptr);
 
   /**
    * Returns nsAString for aSrc.
@@ -322,11 +327,6 @@ class nsCocoaUtils {
   static NSEvent* MakeNewCococaEventFromWidgetEvent(const mozilla::WidgetKeyboardEvent& aKeyEvent,
                                                     NSInteger aWindowNumber,
                                                     NSGraphicsContext* aContext);
-
-  /**
-   * Initializes aNPCocoaEvent.
-   */
-  static void InitNPCocoaEvent(NPCocoaEvent* aNPCocoaEvent);
 
   /**
    * Initializes WidgetInputEvent for aNativeEvent or aModifiers.
@@ -377,6 +377,12 @@ class nsCocoaUtils {
    */
   static NSEventModifierFlags ConvertWidgetModifiersToMacModifierFlags(
       nsIWidget::Modifiers aNativeModifiers);
+
+  /**
+   * Get the mouse button, which depends on the event's type and buttonNumber.
+   * Returns MouseButton::ePrimary for non-mouse events.
+   */
+  static mozilla::MouseButton ButtonForEvent(NSEvent* aEvent);
 
   /**
    * Convert string with font attribute to NSMutableAttributedString

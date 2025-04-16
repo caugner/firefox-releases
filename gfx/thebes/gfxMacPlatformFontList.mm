@@ -822,11 +822,10 @@ gfxMacPlatformFontList::gfxMacPlatformFontList()
     : gfxPlatformFontList(false), mDefaultFont(nullptr), mUseSizeSensitiveSystemFont(false) {
   CheckFamilyList(kBaseFonts, ArrayLength(kBaseFonts));
 
-  // It appears to be sufficient to activate fonts in the parent process;
-  // they are then also usable in child processes.
-  // Likewise, only the parent process listens for OS font-changed notifications;
-  // after rebuilding its list, it will update the content processes.
-  if (XRE_IsParentProcess()) {
+  // On Catalina+, it appears to be sufficient to activate fonts in the parent process;
+  // they are then also usable in child processes. But on pre-Catalina systems we need
+  // to explicitly activate them in each child process (per bug 1704273).
+  if (XRE_IsParentProcess() || !nsCocoaFeatures::OnCatalinaOrLater()) {
 #ifdef MOZ_BUNDLED_FONTS
     // We activate bundled fonts if the pref is > 0 (on) or < 0 (auto), only an
     // explicit value of 0 (off) will disable them.
@@ -849,7 +848,11 @@ gfxMacPlatformFontList::gfxMacPlatformFontList()
         }
       }
     }
+  }
 
+  // Only the parent process listens for OS font-changed notifications;
+  // after rebuilding its list, it will update the content processes.
+  if (XRE_IsParentProcess()) {
     ::CFNotificationCenterAddObserver(::CFNotificationCenterGetLocalCenter(), this,
                                       RegisteredFontsChangedNotificationCallback,
                                       kCTFontManagerRegisteredFontsChangedNotification, 0,
@@ -918,16 +921,16 @@ void gfxMacPlatformFontList::AddFamily(CFStringRef aFamily) {
   AddFamily(nameUtf8, GetVisibilityForFamily(nameUtf8));
 }
 
-void gfxMacPlatformFontList::ReadSystemFontList(nsTArray<FontFamilyListEntry>* aList) {
+void gfxMacPlatformFontList::ReadSystemFontList(dom::SystemFontList* aList) {
   // Note: We rely on the records for mSystemTextFontFamilyName and
   // mSystemDisplayFontFamilyName (if present) being *before* the main
   // font list, so that those names are known in the content process
   // by the time we add the actual family records to the font list.
-  aList->AppendElement(FontFamilyListEntry(mSystemTextFontFamilyName, FontVisibility::Unknown,
-                                           kTextSizeSystemFontFamily));
+  aList->entries().AppendElement(FontFamilyListEntry(
+      mSystemTextFontFamilyName, FontVisibility::Unknown, kTextSizeSystemFontFamily));
   if (mUseSizeSensitiveSystemFont) {
-    aList->AppendElement(FontFamilyListEntry(mSystemDisplayFontFamilyName, FontVisibility::Unknown,
-                                             kDisplaySizeSystemFontFamily));
+    aList->entries().AppendElement(FontFamilyListEntry(
+        mSystemDisplayFontFamilyName, FontVisibility::Unknown, kDisplaySizeSystemFontFamily));
   }
   // Now collect the list of available families, with visibility attributes.
   for (auto f = mFontFamilies.Iter(); !f.Done(); f.Next()) {
@@ -935,7 +938,7 @@ void gfxMacPlatformFontList::ReadSystemFontList(nsTArray<FontFamilyListEntry>* a
     if (macFamily->IsSingleFaceFamily()) {
       continue;  // skip, this will be recreated separately in the child
     }
-    aList->AppendElement(
+    aList->entries().AppendElement(
         FontFamilyListEntry(macFamily->Name(), macFamily->Visibility(), kStandardFontFamily));
   }
 }
@@ -952,7 +955,7 @@ nsresult gfxMacPlatformFontList::InitFontListForPlatform() {
     // the GetXPCOMProcessAttributes message, because it's much faster than
     // querying Core Text again in the child.
     auto& fontList = dom::ContentChild::GetSingleton()->SystemFontList();
-    for (FontFamilyListEntry& ffe : fontList) {
+    for (FontFamilyListEntry& ffe : fontList.entries()) {
       switch (ffe.entryType()) {
         case kStandardFontFamily:
           // On Catalina or later, we pre-initialize system font-family entries
@@ -973,7 +976,7 @@ nsresult gfxMacPlatformFontList::InitFontListForPlatform() {
           break;
       }
     }
-    fontList.Clear();
+    fontList.entries().Clear();
   } else {
     // We're not a content process, so get the available fonts directly
     // from Core Text.
@@ -1548,10 +1551,9 @@ void gfxMacPlatformFontList::LookupSystemFont(LookAndFeel::FontID aSystemFontID,
   switch (aSystemFontID) {
     case LookAndFeel::FontID::MessageBox:
     case LookAndFeel::FontID::StatusBar:
-    case LookAndFeel::FontID::List:
-    case LookAndFeel::FontID::Field:
-    case LookAndFeel::FontID::Button:
-    case LookAndFeel::FontID::Widget:
+    case LookAndFeel::FontID::MozList:
+    case LookAndFeel::FontID::MozField:
+    case LookAndFeel::FontID::MozButton:
       font = [NSFont systemFontOfSize:[NSFont smallSystemFontSize]];
       systemFontName = (char*)kSystemFont_system;
       break;
@@ -1562,26 +1564,21 @@ void gfxMacPlatformFontList::LookupSystemFont(LookAndFeel::FontID aSystemFontID,
       break;
 
     case LookAndFeel::FontID::Icon:  // used in urlbar; tried labelFont, but too small
-    case LookAndFeel::FontID::Workspace:
-    case LookAndFeel::FontID::Desktop:
-    case LookAndFeel::FontID::Info:
+    case LookAndFeel::FontID::MozWorkspace:
+    case LookAndFeel::FontID::MozDesktop:
+    case LookAndFeel::FontID::MozInfo:
       font = [NSFont controlContentFontOfSize:0.0];
       systemFontName = (char*)kSystemFont_system;
       break;
 
-    case LookAndFeel::FontID::PullDownMenu:
+    case LookAndFeel::FontID::MozPullDownMenu:
       font = [NSFont menuBarFontOfSize:0.0];
-      systemFontName = (char*)kSystemFont_system;
-      break;
-
-    case LookAndFeel::FontID::Tooltips:
-      font = [NSFont toolTipsFontOfSize:0.0];
       systemFontName = (char*)kSystemFont_system;
       break;
 
     case LookAndFeel::FontID::Caption:
     case LookAndFeel::FontID::Menu:
-    case LookAndFeel::FontID::Dialog:
+    case LookAndFeel::FontID::MozDialog:
     default:
       font = [NSFont systemFontOfSize:0.0];
       systemFontName = (char*)kSystemFont_system;

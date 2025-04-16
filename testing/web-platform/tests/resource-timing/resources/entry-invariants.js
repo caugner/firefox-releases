@@ -111,7 +111,34 @@ const invariants = {
       "fetchStart",
       "responseEnd",
     ]);
-  }
+
+    assert_ordered_(entry, [
+      "fetchStart",
+      "responseEnd",
+    ]);
+  },
+
+  // Asserts that attributes of the given PerformanceResourceTiming entry match
+  // what the spec dictates for a resource fetched over HTTPS through a
+  // TAO enabled cross-origin redirect.
+  assert_tao_enabled_cross_origin_redirected_resource: entry => {
+    assert_positive_(entry, [
+      "redirectStart",
+    ]);
+    assert_ordered_(entry, [
+      "redirectStart",
+      "redirectEnd",
+      "fetchStart",
+      "domainLookupStart",
+      "domainLookupEnd",
+      "connectStart",
+      "secureConnectionStart",
+      "connectEnd",
+      "requestStart",
+      "responseStart",
+      "responseEnd",
+    ]);
+  },
 };
 
 // Given a resource-loader and a PerformanceResourceTiming validator, loads a

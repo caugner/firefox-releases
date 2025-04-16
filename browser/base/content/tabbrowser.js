@@ -826,9 +826,7 @@
       if (!browser._notificationBox) {
         browser._notificationBox = new MozElements.NotificationBox(element => {
           element.setAttribute("notificationside", "top");
-          if (
-            Services.prefs.getBoolPref("browser.proton.infobars.enabled", false)
-          ) {
+          if (gProton) {
             element.setAttribute(
               "name",
               `tab-notification-box-${this._nextNotificationBoxId++}`
@@ -1114,9 +1112,7 @@
 
       this._appendStatusPanel();
 
-      if (
-        Services.prefs.getBoolPref("browser.proton.infobars.enabled", false)
-      ) {
+      if (gProton) {
         this._updateVisibleNotificationBox(newBrowser);
       }
 
@@ -1468,7 +1464,8 @@
       if (!tab) {
         return;
       }
-      tab._sharingState = {};
+      // If WebRTC was used, leave object to enable tracking of grace periods.
+      tab._sharingState = tab._sharingState?.webRTC ? { webRTC: {} } : {};
       tab.removeAttribute("sharing");
       this._tabAttrModified(tab, ["sharing"]);
       if (aBrowser == this.selectedBrowser) {
@@ -1494,7 +1491,6 @@
             tab.setAttribute("sharing", aState.webRTC.sharing);
           }
         } else {
-          tab._sharingState.webRTC = null;
           tab.removeAttribute("sharing");
         }
         this._tabAttrModified(tab, ["sharing"]);
@@ -1651,7 +1647,6 @@
       var aFromExternal;
       var aRelatedToCurrent;
       var aAllowInheritPrincipal;
-      var aAllowMixedContent;
       var aSkipAnimation;
       var aForceNotRemote;
       var aPreferredRemoteType;
@@ -1681,7 +1676,6 @@
         aFromExternal = params.fromExternal;
         aRelatedToCurrent = params.relatedToCurrent;
         aAllowInheritPrincipal = !!params.allowInheritPrincipal;
-        aAllowMixedContent = params.allowMixedContent;
         aSkipAnimation = params.skipAnimation;
         aForceNotRemote = params.forceNotRemote;
         aPreferredRemoteType = params.preferredRemoteType;
@@ -1722,7 +1716,6 @@
         fromExternal: aFromExternal,
         relatedToCurrent: aRelatedToCurrent,
         skipAnimation: aSkipAnimation,
-        allowMixedContent: aAllowMixedContent,
         forceNotRemote: aForceNotRemote,
         createLazyBrowser: aCreateLazyBrowser,
         preferredRemoteType: aPreferredRemoteType,
@@ -2526,6 +2519,21 @@
       return this.addTab(aURI, params);
     },
 
+    addAdjacentNewTab(tab) {
+      Services.obs.notifyObservers(
+        {
+          wrappedJSObject: new Promise(resolve => {
+            this.selectedTab = this.addTrustedTab(BROWSER_NEW_TAB_URL, {
+              index: tab._tPos + 1,
+              userContextId: tab.userContextId,
+            });
+            resolve(this.selectedBrowser);
+          }),
+        },
+        "browser-open-newtab-start"
+      );
+    },
+
     /**
      * Must only be used sparingly for content that came from Chrome context
      * If in doubt use addWebTab
@@ -2540,7 +2548,6 @@
       aURI,
       {
         allowInheritPrincipal,
-        allowMixedContent,
         allowThirdPartyFixup,
         bulkOrderedOpen,
         charset,
@@ -2880,9 +2887,6 @@
             // XXX this code must be reviewed and changed when bug 1616353
             // lands.
             flags |= Ci.nsIWebNavigation.LOAD_FLAGS_FIRST_LOAD;
-          }
-          if (allowMixedContent) {
-            flags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_MIXED_CONTENT;
           }
           if (!allowInheritPrincipal) {
             flags |= Ci.nsIWebNavigation.LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
@@ -3805,7 +3809,7 @@
       }
 
       let notificationBox = this.readNotificationBox(browser);
-      notificationBox?.stack.remove();
+      notificationBox?._stack?.remove();
 
       if (aTab.linkedPanel) {
         if (!adoptedByTab && !gMultiProcessBrowser) {
@@ -4133,7 +4137,10 @@
       if (aOtherTab.hasAttribute("muted")) {
         aOurTab.setAttribute("muted", "true");
         aOurTab.muteReason = aOtherTab.muteReason;
-        ourBrowser.mute();
+        // For non-lazy tabs, mute() must be called.
+        if (aOurTab.linkedPanel) {
+          ourBrowser.mute();
+        }
         modifiedAttrs.push("muted");
       }
       if (aOtherTab.hasAttribute("soundplaying")) {
@@ -4166,7 +4173,13 @@
       // then do not switch docShells but retrieve the other tab's state
       // and apply it to our tab.
       if (isPending) {
+        // Tag tab so that the extension framework can ignore tab events that
+        // are triggered amidst the tab/browser restoration process
+        // (TabHide, TabPinned, TabUnpinned, "muted" attribute changes, etc.).
+        aOurTab.initializingTab = true;
+        delete ourBrowser._cachedCurrentURI;
         SessionStore.setTabState(aOurTab, SessionStore.getTabState(aOtherTab));
+        delete aOurTab.initializingTab;
 
         // Make sure to unregister any open URIs.
         this._swapRegisteredOpenURIs(ourBrowser, otherBrowser);
@@ -4450,7 +4463,7 @@
         aTab.selected ||
         aTab.closing ||
         // Tabs that are sharing the screen, microphone or camera cannot be hidden.
-        (aTab._sharingState && aTab._sharingState.webRTC)
+        aTab._sharingState?.webRTC?.sharing
       ) {
         return;
       }
@@ -5347,7 +5360,7 @@
       // When Picture-in-Picture is open, we repurpose '.tab-icon-sound' as
       // an inert Picture-in-Picture indicator, so we should display
       // the default tooltip
-      else if (!gProtonTabs && tab._overPlayingIcon && !tab.pictureinpicture) {
+      else if (tab._overPlayingIcon && !tab.pictureinpicture) {
         let stringID;
         if (tab.selected) {
           stringID = tab.linkedBrowser.audioMuted
@@ -6882,25 +6895,35 @@ var TabContextMenu = {
 
     // Disable "Close Tabs to the Left/Right" if there are no tabs
     // preceding/following it.
-    document.getElementById(
+    let closeTabsToTheStartItem = document.getElementById(
       "context_closeTabsToTheStart"
-    ).disabled = !gBrowser.getTabsToTheStartFrom(this.contextTab).length;
-    document.getElementById(
+    );
+    let noTabsToStart = !gBrowser.getTabsToTheStartFrom(this.contextTab).length;
+    closeTabsToTheStartItem.disabled = noTabsToStart;
+    let closeTabsToTheEndItem = document.getElementById(
       "context_closeTabsToTheEnd"
-    ).disabled = !gBrowser.getTabsToTheEndFrom(this.contextTab).length;
+    );
+    let noTabsToEnd = !gBrowser.getTabsToTheEndFrom(this.contextTab).length;
+    closeTabsToTheEndItem.disabled = noTabsToEnd;
 
     // Disable "Close other Tabs" if there are no unpinned tabs.
     let unpinnedTabsToClose = multiselectionContext
       ? gBrowser.visibleTabs.filter(t => !t.multiselected && !t.pinned).length
       : gBrowser.visibleTabs.filter(t => t != this.contextTab && !t.pinned)
           .length;
-    document.getElementById("context_closeOtherTabs").disabled =
-      unpinnedTabsToClose < 1;
+    let closeOtherTabsItem = document.getElementById("context_closeOtherTabs");
+    closeOtherTabsItem.disabled = unpinnedTabsToClose < 1;
 
     // Update the close item with how many tabs will close.
     document
       .getElementById("context_closeTab")
       .setAttribute("data-l10n-args", tabCountInfo);
+
+    // Disable "Close Multiple Tabs" if all sub menuitems are disabled
+    document.getElementById("context_closeTabOptions").disabled =
+      closeTabsToTheStartItem.disabled &&
+      closeTabsToTheEndItem.disabled &&
+      closeOtherTabsItem.disabled;
 
     // Hide "Bookmark Tab" for multiselection.
     // Update its state if visible.

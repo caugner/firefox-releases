@@ -10,6 +10,7 @@ include protocol PCompositorManager;
 include protocol PContentPermissionRequest;
 include protocol PCycleCollectWithLogs;
 include protocol PDocumentChannel;
+include protocol PExtensions;
 include protocol PExternalHelperApp;
 include protocol PHandlerService;
 include protocol PFileDescriptorSet;
@@ -24,7 +25,6 @@ include protocol PNecko;
 include protocol PStreamFilter;
 include protocol PGMPContent;
 include protocol PGMPService;
-include protocol PPluginModule;
 include protocol PGMP;
 include protocol PPrinting;
 include protocol PChildToParentStream;
@@ -51,7 +51,6 @@ include WindowGlobalTypes;
 include IPCBlob;
 include IPCStream;
 include PTabContext;
-include PluginTypes;
 include ProtocolTypes;
 include PBackgroundSharedTypes;
 include PContentPermission;
@@ -195,6 +194,22 @@ struct SystemFontListEntry {
     bool      appFontFamily;
 };
 #endif
+
+#ifdef MOZ_WIDGET_GTK
+struct SystemFontOptions {
+    int32_t antialias; // cairo_antialias_t
+    int32_t subpixelOrder; // cairo_subpixel_order_t
+    int32_t hintStyle; // cairo_hint_style_t
+    int32_t lcdFilter; // cairo_lcd_filter_t
+};
+#endif
+
+struct SystemFontList {
+    SystemFontListEntry[] entries;
+#ifdef MOZ_WIDGET_GTK
+    SystemFontOptions options;
+#endif
+};
 
 union SystemParameterValue {
   bool;
@@ -406,6 +421,7 @@ nested(upto inside_cpow) sync protocol PContent
     manages PBrowser;
     manages PContentPermissionRequest;
     manages PCycleCollectWithLogs;
+    manages PExtensions;
     manages PExternalHelperApp;
     manages PFileDescriptorSet;
     manages PHal;
@@ -469,6 +485,8 @@ parent:
     // this should be enough...
     async CloneDocumentTreeInto(MaybeDiscardedBrowsingContext aSourceBc,
                                 MaybeDiscardedBrowsingContext aTargetBc);
+
+    async PExtensions();
 
 child:
     async ConstructBrowser(ManagedEndpoint<PBrowserChild> browserEp,
@@ -579,7 +597,7 @@ child:
      * Tell the child that the system theme has changed, and that a repaint is
      * necessary.
      */
-    async ThemeChanged(LookAndFeelData lookAndFeelData, ThemeChangeKind aKind);
+    async ThemeChanged(FullLookAndFeel lookAndFeelData, ThemeChangeKind aKind);
 
     async UpdateSystemParameters(SystemParameterKVPair[] aUpdates);
 
@@ -601,7 +619,7 @@ child:
 
     async UpdateDictionaryList(nsCString[] dictionaries);
 
-    async UpdateFontList(SystemFontListEntry[] fontList);
+    async UpdateFontList(SystemFontList fontList);
 
     /**
      * The shared font list has been updated by the parent, so child processes
@@ -689,9 +707,9 @@ child:
 
     async SetXPCOMProcessAttributes(XPCOMInitData xpcomInit,
                                     StructuredCloneData initialData,
-                                    LookAndFeelData lookAndFeeldata,
+                                    FullLookAndFeel lookAndFeeldata,
                                     /* used on MacOSX/Linux/Android only: */
-                                    SystemFontListEntry[] systemFontList,
+                                    SystemFontList systemFontList,
                                     SharedMemoryHandle? sharedUASheetHandle,
                                     uintptr_t sharedUASheetAddress,
                                     SharedMemoryHandle[] sharedFontListBlocks);
@@ -776,18 +794,6 @@ child:
     async RefreshScreens(ScreenDetails[] aScreens);
 
     async PRemoteLazyInputStream(nsID aID, uint64_t aSize);
-
-    /**
-     * This call takes the set of plugins loaded in the chrome process, and
-     * sends them to the content process. However, in many cases this set will
-     * not have changed since the last SetPluginList message. To keep track of
-     * this, the chrome process increments an epoch number every time the set of
-     * plugins changes. The chrome process sends up the last epoch it observed.
-     * If the epoch last seen by the content process is the same, the content
-     * process ignores the update. Otherwise the content process updates its
-     * list and reloads its plugins.
-     **/
-    async SetPluginList(uint32_t pluginEpoch, PluginTag[] plugins, FakePluginTag[] fakePlugins);
 
     async ShareCodeCoverageMutex(CrossProcessMutexHandle handle);
     async FlushCodeCoverageCounters() returns (bool unused);
@@ -938,6 +944,12 @@ child:
   // Update the cached list of codec supported in the given process.
   async UpdateMediaCodecsSupported(RemoteDecodeIn aLocation, MediaCodecsSupported aSupported);
 
+  async FlushTabState(MaybeDiscardedBrowsingContext aBrowsingContext)
+      returns(bool aHadContext);
+
+  // Send the list of the supported mimetypes in the given process. GeckoView-specific
+  async DecoderSupportedMimeTypes(nsCString[] supportedTypes);
+
 parent:
 
     async SynchronizeLayoutHistoryState(MaybeDiscardedBrowsingContext aContext,
@@ -948,6 +960,8 @@ parent:
 
     async SessionHistoryEntryScrollRestorationIsManual(MaybeDiscardedBrowsingContext aContext,
                                                        bool aIsManual);
+    async SessionHistoryEntryScrollPosition(MaybeDiscardedBrowsingContext aContext,
+                                            int32_t aX, int32_t aY);
 
     async SessionHistoryEntryCacheKey(MaybeDiscardedBrowsingContext aContext,
                                       uint32_t aCacheKey);
@@ -966,23 +980,6 @@ parent:
 
     async InitStreamFilter(uint64_t channelId, nsString addonId)
         returns (Endpoint<PStreamFilterChild> aEndpoint);
-
-    /**
-     * This call connects the content process to a plugin process. This call
-     * returns an endpoint for a new PluginModuleParent. The corresponding
-     * PluginModuleChild will be started up in the plugin process.
-     */
-    sync LoadPlugin(uint32_t aPluginId)
-        returns (nsresult aResult, uint32_t aRunID, Endpoint<PPluginModuleParent> aEndpoint);
-
-    /**
-     * This call is used by asynchronous plugin instantiation to notify the
-     * content parent that it is now safe to initiate the plugin bridge for
-     * the specified plugin id. The endpoint for the content process part of the
-     * bridge is returned.
-     */
-    sync ConnectPluginBridge(uint32_t aPluginId)
-        returns (nsresult rv, Endpoint<PPluginModuleParent> aEndpoint);
 
     async PRemoteSpellcheckEngine();
 
@@ -1553,8 +1550,6 @@ parent:
 
     async AddMemoryReport(MemoryReport aReport);
 
-    async MaybeReloadPlugins();
-
     async BHRThreadHang(HangDetails aHangDetails);
 
     async AddPerformanceMetrics(nsID aID, PerformanceInfo[] aMetrics);
@@ -1790,7 +1785,7 @@ both:
                      CallerType aCallerType);
     async RaiseWindow(MaybeDiscardedBrowsingContext aContext, CallerType aCallerType, uint64_t aActionId);
     async ClearFocus(MaybeDiscardedBrowsingContext aContext);
-    async SetFocusedBrowsingContext(MaybeDiscardedBrowsingContext aContext);
+    async SetFocusedBrowsingContext(MaybeDiscardedBrowsingContext aContext, uint64_t aActionId);
     async SetActiveBrowsingContext(MaybeDiscardedBrowsingContext aContext, uint64_t aActionId);
     async UnsetActiveBrowsingContext(MaybeDiscardedBrowsingContext aContext, uint64_t aActionId);
     async SetFocusedElement(MaybeDiscardedBrowsingContext aContext, bool aNeedsFocus);
@@ -1810,10 +1805,15 @@ child:
                       MaybeDiscardedBrowsingContext aAncestorBrowsingContextToFocus,
                       bool aIsLeavingDocument, bool aAdjustWidget, uint64_t aActionId);
     async SetupFocusedAndActive(MaybeDiscardedBrowsingContext aFocusedBrowsingContext,
+                                uint64_t aActionIdForFocused,
                                 MaybeDiscardedBrowsingContext aActiveBrowsingContext,
                                 uint64_t aActionId);
-    async ReviseActiveBrowsingContext(uint64_t aOldActionId, MaybeDiscardedBrowsingContext aActiveBrowsingContext,
+    async ReviseActiveBrowsingContext(uint64_t aOldActionId,
+                                      MaybeDiscardedBrowsingContext aActiveBrowsingContext,
                                       uint64_t aNewActionId);
+    async ReviseFocusedBrowsingContext(uint64_t aOldActionId,
+                                       MaybeDiscardedBrowsingContext aFocusedBrowsingContext,
+                                       uint64_t aNewActionId);
 both:
     async MaybeExitFullscreen(MaybeDiscardedBrowsingContext aContext);
     async WindowPostMessage(MaybeDiscardedBrowsingContext aContext,

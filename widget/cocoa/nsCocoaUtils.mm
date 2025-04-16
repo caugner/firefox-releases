@@ -93,6 +93,10 @@ NSRect nsCocoaUtils::GeckoRectToCocoaRect(const DesktopIntRect& geckoRect) {
                     geckoRect.height);
 }
 
+NSPoint nsCocoaUtils::GeckoPointToCocoaPoint(const mozilla::DesktopPoint& aPoint) {
+  return NSMakePoint(aPoint.x, MenuBarScreenHeight() - aPoint.y);
+}
+
 NSRect nsCocoaUtils::GeckoRectToCocoaRectDevPix(const LayoutDeviceIntRect& aGeckoRect,
                                                 CGFloat aBackingScale) {
   return NSMakeRect(aGeckoRect.x / aBackingScale,
@@ -384,6 +388,7 @@ nsresult nsCocoaUtils::CreateNSImageFromCGImage(CGImageRef aInputImage, NSImage*
 }
 
 nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer* aImage, uint32_t aWhichFrame,
+                                                       const ComputedStyle* aComputedStyle,
                                                        NSImage** aResult, CGFloat scaleFactor,
                                                        bool* aIsEntirelyBlack) {
   RefPtr<SourceSurface> surface;
@@ -392,7 +397,7 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer* aImage, ui
   aImage->GetHeight(&height);
 
   // Render a vector image at the correct resolution on a retina display
-  if (aImage->GetType() == imgIContainer::TYPE_VECTOR && scaleFactor != 1.0f) {
+  if (aImage->GetType() == imgIContainer::TYPE_VECTOR) {
     IntSize scaledSize = IntSize::Ceil(width * scaleFactor, height * scaleFactor);
 
     RefPtr<DrawTarget> drawTarget = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
@@ -405,9 +410,13 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer* aImage, ui
     RefPtr<gfxContext> context = gfxContext::CreateOrNull(drawTarget);
     MOZ_ASSERT(context);
 
-    mozilla::image::ImgDrawResult res = aImage->Draw(
-        context, scaledSize, ImageRegion::Create(scaledSize), aWhichFrame, SamplingFilter::POINT,
-        /* no SVGImageContext */ Nothing(), imgIContainer::FLAG_SYNC_DECODE, 1.0);
+    Maybe<SVGImageContext> svgContext;
+    if (aComputedStyle) {
+      SVGImageContext::MaybeStoreContextPaint(svgContext, aComputedStyle, aImage);
+    }
+    mozilla::image::ImgDrawResult res =
+        aImage->Draw(context, scaledSize, ImageRegion::Create(scaledSize), aWhichFrame,
+                     SamplingFilter::POINT, svgContext, imgIContainer::FLAG_SYNC_DECODE, 1.0);
 
     if (res != mozilla::image::ImgDrawResult::SUCCESS) {
       return NS_ERROR_FAILURE;
@@ -440,10 +449,9 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer* aImage, ui
   return NS_OK;
 }
 
-nsresult nsCocoaUtils::CreateDualRepresentationNSImageFromImageContainer(imgIContainer* aImage,
-                                                                         uint32_t aWhichFrame,
-                                                                         NSImage** aResult,
-                                                                         bool* aIsEntirelyBlack) {
+nsresult nsCocoaUtils::CreateDualRepresentationNSImageFromImageContainer(
+    imgIContainer* aImage, uint32_t aWhichFrame, const ComputedStyle* aComputedStyle,
+    NSImage** aResult, bool* aIsEntirelyBlack) {
   int32_t width = 0, height = 0;
   aImage->GetWidth(&width);
   aImage->GetHeight(&height);
@@ -453,7 +461,7 @@ nsresult nsCocoaUtils::CreateDualRepresentationNSImageFromImageContainer(imgICon
 
   NSImage* newRepresentation = nil;
   nsresult rv = nsCocoaUtils::CreateNSImageFromImageContainer(
-      aImage, aWhichFrame, &newRepresentation, 1.0f, aIsEntirelyBlack);
+      aImage, aWhichFrame, aComputedStyle, &newRepresentation, 1.0f, aIsEntirelyBlack);
   if (NS_FAILED(rv) || !newRepresentation) {
     return NS_ERROR_FAILURE;
   }
@@ -463,8 +471,8 @@ nsresult nsCocoaUtils::CreateDualRepresentationNSImageFromImageContainer(imgICon
   [newRepresentation release];
   newRepresentation = nil;
 
-  rv = nsCocoaUtils::CreateNSImageFromImageContainer(aImage, aWhichFrame, &newRepresentation, 2.0f,
-                                                     aIsEntirelyBlack);
+  rv = nsCocoaUtils::CreateNSImageFromImageContainer(aImage, aWhichFrame, aComputedStyle,
+                                                     &newRepresentation, 2.0f, aIsEntirelyBlack);
   if (NS_FAILED(rv) || !newRepresentation) {
     return NS_ERROR_FAILURE;
   }
@@ -600,11 +608,6 @@ NSEvent* nsCocoaUtils::MakeNewCococaEventFromWidgetEvent(const WidgetKeyboardEve
 }
 
 // static
-void nsCocoaUtils::InitNPCocoaEvent(NPCocoaEvent* aNPCocoaEvent) {
-  memset(aNPCocoaEvent, 0, sizeof(NPCocoaEvent));
-}
-
-// static
 void nsCocoaUtils::InitInputEvent(WidgetInputEvent& aInputEvent, NSEvent* aNativeEvent) {
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
@@ -717,12 +720,9 @@ bool nsCocoaUtils::HiDPIEnabled() {
       if ([desc objectForKey:NSDeviceIsScreen] == nil) {
         continue;
       }
-      CGFloat scale = [screen respondsToSelector:@selector(backingScaleFactor)]
-                          ? [screen backingScaleFactor]
-                          : 1.0;
       // Currently, we only care about differentiating "1.0" and "2.0",
       // so we set one of the two low bits to record which.
-      if (scale > 1.0) {
+      if ([screen backingScaleFactor] > 1.0) {
         scaleFactors |= 2;
       } else {
         scaleFactors |= 1;
@@ -983,6 +983,36 @@ NSEventModifierFlags nsCocoaUtils::ConvertWidgetModifiersToMacModifierFlags(
     }
   }
   return modifierFlags;
+}
+
+mozilla::MouseButton nsCocoaUtils::ButtonForEvent(NSEvent* aEvent) {
+  switch (aEvent.type) {
+    case NSEventTypeLeftMouseDown:
+    case NSEventTypeLeftMouseDragged:
+    case NSEventTypeLeftMouseUp:
+      return MouseButton::ePrimary;
+    case NSEventTypeRightMouseDown:
+    case NSEventTypeRightMouseDragged:
+    case NSEventTypeRightMouseUp:
+      return MouseButton::eSecondary;
+    case NSEventTypeOtherMouseDown:
+    case NSEventTypeOtherMouseDragged:
+    case NSEventTypeOtherMouseUp:
+      switch (aEvent.buttonNumber) {
+        case 3:
+          return MouseButton::eX1;
+        case 4:
+          return MouseButton::eX2;
+        default:
+          // The middle button usually has button 2, but if this is a synthesized event (for which
+          // you cannot specify a buttonNumber), then the button will be 0. Treat all remaining
+          // OtherMouse events as the middle button.
+          return MouseButton::eMiddle;
+      }
+    default:
+      // Treat non-mouse events as the primary mouse button.
+      return MouseButton::ePrimary;
+  }
 }
 
 NSMutableAttributedString* nsCocoaUtils::GetNSMutableAttributedString(

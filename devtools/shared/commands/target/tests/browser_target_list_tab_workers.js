@@ -18,9 +18,6 @@ add_task(async function() {
   // which forces the emission of RDP requests we aren't correctly waiting for.
   await pushPref("dom.ipc.processPrelaunch.enabled", false);
 
-  const client = await createLocalClient();
-  const mainRoot = client.mainRoot;
-
   // The WorkerDebuggerManager#getWorkerDebuggerEnumerator method we're using to retrieve
   // workers loops through _all_ the workers in the process, which means it goes over workers
   // from other tabs as well. Here we add a few tabs that are not going to be used in the
@@ -32,26 +29,25 @@ add_task(async function() {
   const tab = await addTab(`${FISSION_TEST_URL}?&noServiceWorker`);
 
   // Create a TargetCommand for the tab
-  const descriptor = await mainRoot.getTab({ tab });
-  const target = await descriptor.getTarget();
-
+  const commands = await CommandsFactory.forTab(tab);
+  await commands.targetCommand.startListening();
   // Ensure attaching the target as BrowsingContextTargetActor.listWorkers
   // assert that the target actor is attached.
   // It isn't clear if this assertion is meaningful?
+  const target = commands.targetCommand.targetFront;
   await target.attach();
+  const targetCommand = commands.targetCommand;
 
-  const commands = await descriptor.getCommands();
-  const targetList = commands.targetCommand;
-  const { TYPES } = targetList;
+  const { TYPES } = targetCommand;
 
   // Workaround to allow listening for workers in the content toolbox
   // without the fission preferences
-  targetList.listenForWorkers = true;
+  targetCommand.listenForWorkers = true;
 
-  await targetList.startListening();
+  await targetCommand.startListening();
 
   info("Check that getAllTargets only returns dedicated workers");
-  const workers = await targetList.getAllTargets([
+  const workers = await targetCommand.getAllTargets([
     TYPES.WORKER,
     TYPES.SHARED_WORKER,
   ]);
@@ -93,7 +89,7 @@ add_task(async function() {
     destroyedTargets.push(targetFront);
   };
 
-  await targetList.watchTargets(
+  await targetCommand.watchTargets(
     [TYPES.WORKER, TYPES.SHARED_WORKER],
     onAvailable,
     onDestroy
@@ -314,16 +310,16 @@ add_task(async function() {
     "second spawned remote iframe worker target was destroyed"
   );
 
-  targetList.unwatchTargets(
+  targetCommand.unwatchTargets(
     [TYPES.WORKER, TYPES.SHARED_WORKER],
     onAvailable,
     onDestroy
   );
-  targetList.destroy();
+  targetCommand.destroy();
 
   info("Unregister service workers so they don't appear in other tests.");
-  await unregisterAllServiceWorkers(client);
+  await unregisterAllServiceWorkers(commands.client);
 
   BrowserTestUtils.removeTab(tab);
-  await client.close();
+  await commands.destroy();
 });

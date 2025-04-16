@@ -814,7 +814,7 @@ void CompositorBridgeParent::NotifyShadowTreeTransaction(
     bool aScheduleComposite, uint32_t aPaintSequenceNumber,
     bool aIsRepeatTransaction, bool aHitTestUpdate) {
   if (!aIsRepeatTransaction && mLayerManager && mLayerManager->GetRoot()) {
-    AutoResolveRefLayers resolve(mCompositionManager, this, nullptr);
+    AutoResolveRefLayers resolve(mCompositionManager, this);
 
     if (mApzUpdater) {
       mApzUpdater->UpdateFocusState(mRootLayerTreeID, aId, aFocusTarget);
@@ -2038,12 +2038,20 @@ static void UpdateControllerForLayersId(LayersId aLayersId,
 }
 
 ScopedLayerTreeRegistration::ScopedLayerTreeRegistration(
-    APZCTreeManager* aApzctm, LayersId aLayersId, Layer* aRoot,
-    GeckoContentController* aController)
+    LayersId aLayersId, Layer* aRoot, GeckoContentController* aController)
     : mLayersId(aLayersId) {
   EnsureLayerTreeMapReady();
   MonitorAutoLock lock(*sIndirectLayerTreesLock);
   sIndirectLayerTrees[aLayersId].mRoot = aRoot;
+  sIndirectLayerTrees[aLayersId].mController = aController;
+}
+
+ScopedLayerTreeRegistration::ScopedLayerTreeRegistration(
+    LayersId aLayersId, GeckoContentController* aController)
+    : mLayersId(aLayersId) {
+  EnsureLayerTreeMapReady();
+  MonitorAutoLock lock(*sIndirectLayerTreesLock);
+  sIndirectLayerTrees[aLayersId].mRoot = nullptr;
   sIndirectLayerTrees[aLayersId].mController = aController;
 }
 
@@ -2258,6 +2266,30 @@ void CompositorBridgeParent::NotifyDidRender(const VsyncId& aCompositeStartId,
   }
 }
 
+void CompositorBridgeParent::MaybeDeclareStable() {
+  MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+
+  static bool sStable = false;
+  if (!XRE_IsGPUProcess() || sStable) {
+    return;
+  }
+
+  // Once we render as many frames as the threshold, we declare this instance of
+  // the GPU process 'stable'. This causes the parent process to always respawn
+  // the GPU process if it crashes.
+  static uint32_t sFramesComposited = 0;
+
+  if (++sFramesComposited >=
+      StaticPrefs::layers_gpu_process_stable_frame_threshold()) {
+    sStable = true;
+
+    NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "gfx::GPUParent::SendDeclareStable", []() -> void {
+          Unused << GPUParent::GetSingleton()->SendDeclareStable();
+        }));
+  }
+}
+
 void CompositorBridgeParent::NotifyPipelineRendered(
     const wr::PipelineId& aPipelineId, const wr::Epoch& aEpoch,
     const VsyncId& aCompositeStartId, TimeStamp& aCompositeStart,
@@ -2299,6 +2331,8 @@ void CompositorBridgeParent::NotifyPipelineRendered(
     return;
   }
 
+  MaybeDeclareStable();
+
   LayersId layersId = isRoot ? LayersId{0} : wrBridge->GetLayersId();
   Unused << compBridge->SendDidComposite(layersId, *transactionId,
                                          aCompositeStart, aCompositeEnd);
@@ -2321,6 +2355,7 @@ void CompositorBridgeParent::NotifyDidComposite(TransactionId aTransactionId,
              "We should be going through NotifyDidRender and "
              "NotifyPipelineRendered instead");
 
+  MaybeDeclareStable();
   Unused << SendDidComposite(LayersId{0}, aTransactionId, aCompositeStart,
                              aCompositeEnd);
 

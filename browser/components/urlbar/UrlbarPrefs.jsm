@@ -5,8 +5,9 @@
 "use strict";
 
 /**
- * This module exports the UrlbarPrefs singleton, which manages
- * preferences for the urlbar.
+ * This module exports the UrlbarPrefs singleton, which manages preferences for
+ * the urlbar. It also provides access to urlbar Nimbus features as if they are
+ * preferences.
  */
 
 var EXPORTED_SYMBOLS = ["UrlbarPrefs", "UrlbarPrefsObserver"];
@@ -17,6 +18,7 @@ const { XPCOMUtils } = ChromeUtils.import(
 );
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
 
@@ -25,6 +27,11 @@ const PREF_URLBAR_BRANCH = "browser.urlbar.";
 // Prefs are defined as [pref name, default value] or [pref name, [default
 // value, type]].  In the former case, the getter method name is inferred from
 // the typeof the default value.
+//
+// NOTE: Don't name prefs (relative to the `browser.urlbar` branch) the same as
+// Nimbus urlbar features. Doing so would cause a name collision because pref
+// names and Nimbus feature names are both kept as keys in UrlbarPref's map. For
+// a list of Nimbus features, see: toolkit/components/nimbus/FeatureManifest.js
 const PREF_URLBAR_DEFAULTS = new Map([
   // Whether we announce to screen readers when tab-to-search results are
   // inserted.
@@ -159,15 +166,20 @@ const PREF_URLBAR_DEFAULTS = new Map([
   // Whether results will include top sites and the view will open on focus.
   ["suggest.topsites", true],
 
+  // Whether results will include a calculator.
+  ["suggest.calculator", false],
+
   // Whether results will include QuickSuggest suggestions.
   ["suggest.quicksuggest", true],
 
   // Whether the QuickSuggest experiment is enabled.
   ["quicksuggest.enabled", false],
 
-  // The index where we show QuickSuggest results, -1 means they
-  // will be shown as the last result.
-  ["quicksuggest.suggestedIndex", -1],
+  // Whether the user has seen the onboarding dialog.
+  ["quicksuggest.showedOnboardingDialog", false],
+
+  // Count the restarts before showing the onboarding dialog.
+  ["quicksuggest.seenRestarts", 0],
 
   // Whether to show QuickSuggest related logs.
   ["quicksuggest.log", false],
@@ -207,11 +219,6 @@ const PREF_URLBAR_DEFAULTS = new Map([
 ]);
 const PREF_OTHER_DEFAULTS = new Map([
   ["browser.fixup.dns_first_for_single_words", false],
-  // The Proton pref is here so it can follow a browser.proton.* structure like
-  // the other Proton subprefs, rather than a browser.urlbar.* structure.
-  // Once the address bar changes are stable, this pref will be replaed by the
-  // global Proton pref, browser.proton.enabled.
-  ["browser.proton.urlbar.enabled", false],
   ["browser.search.suggest.enabled", true],
   ["browser.search.suggest.enabled.private", false],
   ["keyword.enabled", true],
@@ -359,6 +366,7 @@ class Preferences {
     }
     this._observerWeakRefs = [];
     this.addObserver(this);
+    NimbusFeatures.urlbar.onUpdate(() => this._onNimbusUpdate());
   }
 
   /**
@@ -487,6 +495,23 @@ class Preferences {
   }
 
   /**
+   * Called when the `NimbusFeatures.urlbar` value changes.
+   */
+  _onNimbusUpdate() {
+    for (let key of Object.keys(this._nimbus)) {
+      this._map.delete(key);
+    }
+    this.__nimbus = null;
+  }
+
+  get _nimbus() {
+    if (!this.__nimbus) {
+      this.__nimbus = NimbusFeatures.urlbar.getValue();
+    }
+    return this.__nimbus;
+  }
+
+  /**
    * Returns the raw value of the given preference straight from Services.prefs.
    *
    * @param {string} pref
@@ -547,9 +572,13 @@ class Preferences {
     if (defaultValue === undefined) {
       branch = Services.prefs;
       defaultValue = PREF_OTHER_DEFAULTS.get(pref);
-    }
-    if (defaultValue === undefined) {
-      throw new Error("Trying to access an unknown pref " + pref);
+      if (defaultValue === undefined) {
+        let nimbus = this._getNimbusDescriptor(pref);
+        if (nimbus) {
+          return nimbus;
+        }
+        throw new Error("Trying to access an unknown pref " + pref);
+      }
     }
 
     let type;
@@ -571,6 +600,34 @@ class Preferences {
       // Float prefs are stored as Char.
       set: branch[`set${type == "Float" ? "Char" : type}Pref`],
       clear: branch.clearUserPref,
+    };
+  }
+
+  /**
+   * Returns a descriptor for the given Nimbus property, if it exists.
+   *
+   * @param {string} name
+   *   The name of the desired property in the object returned from
+   *   NimbusFeatures.urlbar.getValue().
+   * @returns {object}
+   *   An object describing the property's value with the following shape (same
+   *   as _getPrefDescriptor()):
+   *     { defaultValue, get, set, clear }
+   *   If the property doesn't exist, null is returned.
+   */
+  _getNimbusDescriptor(name) {
+    if (!this._nimbus.hasOwnProperty(name)) {
+      return null;
+    }
+    return {
+      defaultValue: this._nimbus[name],
+      get: () => this._nimbus[name],
+      set() {
+        throw new Error(`'${name}' is a Nimbus value and cannot be set`);
+      },
+      clear() {
+        throw new Error(`'${name}' is a Nimbus value and cannot be cleared`);
+      },
     };
   }
 

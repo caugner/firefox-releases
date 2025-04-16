@@ -136,11 +136,11 @@ bool HttpChannelParent::Init(const HttpChannelCreationArgs& aArgs) {
           a.preferCacheLoadOverBypass(), a.contentTypeHint(), a.corsMode(),
           a.redirectMode(), a.channelId(), a.integrityMetadata(),
           a.contentWindowId(), a.preferredAlternativeTypes(),
-          a.topLevelOuterContentWindowId(), a.launchServiceWorkerStart(),
+          a.topBrowsingContextId(), a.launchServiceWorkerStart(),
           a.launchServiceWorkerEnd(), a.dispatchFetchEventStart(),
           a.dispatchFetchEventEnd(), a.handleFetchEventStart(),
           a.handleFetchEventEnd(), a.forceMainDocumentChannel(),
-          a.navigationStartTimeStamp(), a.hasNonEmptySandboxingFlag());
+          a.navigationStartTimeStamp());
     }
     case HttpChannelCreationArgs::THttpChannelConnectArgs: {
       const HttpChannelConnectArgs& cArgs = aArgs.get_HttpChannelConnectArgs();
@@ -385,7 +385,7 @@ bool HttpChannelParent::DoAsyncOpen(
     const nsString& aIntegrityMetadata, const uint64_t& aContentWindowId,
     const nsTArray<PreferredAlternativeDataTypeParams>&
         aPreferredAlternativeTypes,
-    const uint64_t& aTopLevelOuterContentWindowId,
+    const uint64_t& aTopBrowsingContextId,
     const TimeStamp& aLaunchServiceWorkerStart,
     const TimeStamp& aLaunchServiceWorkerEnd,
     const TimeStamp& aDispatchFetchEventStart,
@@ -393,8 +393,7 @@ bool HttpChannelParent::DoAsyncOpen(
     const TimeStamp& aHandleFetchEventStart,
     const TimeStamp& aHandleFetchEventEnd,
     const bool& aForceMainDocumentChannel,
-    const TimeStamp& aNavigationStartTimeStamp,
-    const bool& aHasNonEmptySandboxingFlag) {
+    const TimeStamp& aNavigationStartTimeStamp) {
   nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
   if (!uri) {
     // URIParams does MOZ_ASSERT if null, but we need to protect opt builds from
@@ -407,9 +406,8 @@ bool HttpChannelParent::DoAsyncOpen(
   nsCOMPtr<nsIURI> topWindowUri = DeserializeURI(aTopWindowURI);
 
   LOG(("HttpChannelParent RecvAsyncOpen [this=%p uri=%s, gid=%" PRIu64
-       " topwinid=%" PRIx64 "]\n",
-       this, uri->GetSpecOrDefault().get(), aChannelId,
-       aTopLevelOuterContentWindowId));
+       " top bid=%" PRIx64 "]\n",
+       this, uri->GetSpecOrDefault().get(), aChannelId, aTopBrowsingContextId));
 
   nsresult rv;
 
@@ -442,7 +440,7 @@ bool HttpChannelParent::DoAsyncOpen(
   // Set the channelId allocated in child to the parent instance
   httpChannel->SetChannelId(aChannelId);
   httpChannel->SetTopLevelContentWindowId(aContentWindowId);
-  httpChannel->SetTopLevelOuterContentWindowId(aTopLevelOuterContentWindowId);
+  httpChannel->SetTopBrowsingContextId(aTopBrowsingContextId);
 
   httpChannel->SetIntegrityMetadata(aIntegrityMetadata);
 
@@ -476,10 +474,6 @@ bool HttpChannelParent::DoAsyncOpen(
 
   if (aForceMainDocumentChannel) {
     httpChannel->SetIsMainDocumentChannel(true);
-  }
-
-  if (aHasNonEmptySandboxingFlag) {
-    httpChannel->SetHasNonEmptySandboxingFlag(true);
   }
 
   for (uint32_t i = 0; i < requestHeaders.Length(); i++) {
