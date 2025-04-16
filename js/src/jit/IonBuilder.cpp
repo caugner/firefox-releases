@@ -25,6 +25,7 @@
 #include "jit/Lowering.h"
 #include "jit/MIRGraph.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
+#include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/Object.h"                // JS::GetReservedSlot
 #include "js/ScalarType.h"            // js::Scalar::Type
 #include "util/CheckedArithmetic.h"
@@ -8852,10 +8853,8 @@ AbortReasonOr<Ok> IonBuilder::jsop_getelem_dense(MDefinition* obj,
 }
 
 MInstruction* IonBuilder::addArrayBufferByteLength(MDefinition* obj) {
-  MLoadFixedSlot* ins = MLoadFixedSlot::New(
-      alloc(), obj, size_t(ArrayBufferObject::BYTE_LENGTH_SLOT));
+  auto* ins = MArrayBufferByteLengthInt32::New(alloc(), obj);
   current->add(ins);
-  ins->setResultType(MIRType::Int32);
   return ins;
 }
 
@@ -8878,7 +8877,8 @@ TypedArrayObject* IonBuilder::tryTypedArrayEmbedConstantElements(
   // TypedArrays are only singletons when created with a (Shared)ArrayBuffer
   // and a length greater or equal to |SINGLETON_BYTE_LENGTH|.
   MOZ_ASSERT(tarr->hasBuffer());
-  MOZ_ASSERT(tarr->byteLength() >= TypedArrayObject::SINGLETON_BYTE_LENGTH ||
+  MOZ_ASSERT(tarr->byteLength().get() >=
+                 TypedArrayObject::SINGLETON_BYTE_LENGTH ||
              tarr->hasDetachedBuffer());
 
   // TypedArrays using an ArrayBuffer don't have nursery-allocated data, see
@@ -8911,7 +8911,7 @@ void IonBuilder::addTypedArrayLengthAndData(MDefinition* obj,
 
     obj->setImplicitlyUsedUnchecked();
 
-    int32_t len = AssertedCast<int32_t>(tarr->length());
+    int32_t len = AssertedCast<int32_t>(tarr->length().deprecatedGetUint32());
     *length = MConstant::New(alloc(), Int32Value(len));
     current->add(*length);
 
@@ -8979,7 +8979,8 @@ MInstruction* IonBuilder::addTypedArrayByteOffset(MDefinition* obj) {
   if (TypedArrayObject* tarr = tryTypedArrayEmbedConstantElements(obj)) {
     obj->setImplicitlyUsedUnchecked();
 
-    int32_t offset = AssertedCast<int32_t>(tarr->byteOffset());
+    int32_t offset =
+        AssertedCast<int32_t>(tarr->byteOffset().deprecatedGetUint32());
     byteOffset = MConstant::New(alloc(), Int32Value(offset));
   } else {
     byteOffset = MArrayBufferViewByteOffset::New(alloc(), obj);
@@ -12777,25 +12778,6 @@ MInstruction* IonBuilder::addShapeGuard(MDefinition* obj, Shape* const shape) {
   if (failedShapeGuard_) {
     guard->setNotMovable();
   }
-
-  return guard;
-}
-
-MInstruction* IonBuilder::addGroupGuard(MDefinition* obj, ObjectGroup* group,
-                                        BailoutKind bailoutKind) {
-  MGuardObjectGroup* guard =
-      MGuardObjectGroup::New(alloc(), obj, group,
-                             /* bailOnEquality = */ false, bailoutKind);
-  current->add(guard);
-
-  // If a shape guard failed in the past, don't optimize group guards.
-  if (failedShapeGuard_) {
-    guard->setNotMovable();
-  }
-
-  LifoAlloc* lifoAlloc = alloc().lifoAlloc();
-  guard->setResultTypeSet(
-      lifoAlloc->new_<TemporaryTypeSet>(lifoAlloc, TypeSet::ObjectType(group)));
 
   return guard;
 }

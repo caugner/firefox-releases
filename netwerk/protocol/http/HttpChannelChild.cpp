@@ -485,6 +485,21 @@ void HttpChannelChild::OnStartRequest(
     return;
   }
 
+  // Remember whether HTTP3 is supported
+  if (mResponseHead && (mResponseHead->Version() == HttpVersion::v2_0) &&
+      (mResponseHead->Status() < 500) && (mResponseHead->Status() != 421)) {
+    nsAutoCString altSvc;
+    Unused << mResponseHead->GetHeader(nsHttp::Alternate_Service, altSvc);
+    if (!altSvc.IsEmpty() || nsHttp::IsReasonableHeaderValue(altSvc)) {
+      for (uint32_t i = 0; i < kHttp3VersionCount; i++) {
+        if (PL_strstr(altSvc.get(), kHttp3Versions[i].get())) {
+          mSupportsHTTP3 = true;
+          break;
+        }
+      }
+    }
+  }
+
   DoOnStartRequest(this, nullptr);
 }
 
@@ -2163,6 +2178,7 @@ nsresult HttpChannelChild::ContinueAsyncOpen() {
   openArgs.chooseApplicationCache() = mChooseApplicationCache;
   openArgs.appCacheClientID() = appCacheClientId;
   openArgs.allowSpdy() = mAllowSpdy;
+  openArgs.allowHttp3() = mAllowHttp3;
   openArgs.allowAltSvc() = mAllowAltSvc;
   openArgs.beConservative() = mBeConservative;
   openArgs.tlsFlags() = mTlsFlags;
@@ -2761,8 +2777,9 @@ void HttpChannelChild::GetClientSetCorsPreflightParameters(
 }
 
 NS_IMETHODIMP
-HttpChannelChild::RemoveCorsPreflightCacheEntry(nsIURI* aURI,
-                                                nsIPrincipal* aPrincipal) {
+HttpChannelChild::RemoveCorsPreflightCacheEntry(
+    nsIURI* aURI, nsIPrincipal* aPrincipal,
+    const OriginAttributes& aOriginAttributes) {
   URIParams uri;
   SerializeURI(aURI, uri);
   PrincipalInfo principalInfo;
@@ -2774,7 +2791,8 @@ HttpChannelChild::RemoveCorsPreflightCacheEntry(nsIURI* aURI,
   // Be careful to not attempt to send a message to the parent after the
   // actor has been destroyed.
   if (CanSend()) {
-    result = SendRemoveCorsPreflightCacheEntry(uri, principalInfo);
+    result = SendRemoveCorsPreflightCacheEntry(uri, principalInfo,
+                                               aOriginAttributes);
   }
   return result ? NS_OK : NS_ERROR_FAILURE;
 }

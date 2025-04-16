@@ -4159,6 +4159,7 @@ nsresult nsContentUtils::DispatchInputEvent(
   if (!useInputEvent) {
     MOZ_ASSERT(aEventMessage == eEditorInput);
     MOZ_ASSERT(aEditorInputType == EditorInputType::eUnknown);
+    MOZ_ASSERT(!aOptions.mNeverCancelable);
     // Dispatch "input" event with Event instance.
     WidgetEvent widgetEvent(true, eUnidentifiedEvent);
     widgetEvent.mSpecifiedEventType = nsGkAtoms::oninput;
@@ -4171,6 +4172,12 @@ nsresult nsContentUtils::DispatchInputEvent(
         ->RunDOMEventWhenSafe();
     return NS_OK;
   }
+
+  MOZ_ASSERT_IF(aEventMessage != eEditorBeforeInput,
+                !aOptions.mNeverCancelable);
+  MOZ_ASSERT_IF(
+      aEventMessage == eEditorBeforeInput && aOptions.mNeverCancelable,
+      aEditorInputType == EditorInputType::eInsertReplacementText);
 
   nsCOMPtr<nsIWidget> widget;
   if (aTextEditor) {
@@ -4202,7 +4209,7 @@ nsresult nsContentUtils::DispatchInputEvent(
   InternalEditorInputEvent inputEvent(true, aEventMessage, widget);
 
   inputEvent.mFlags.mCancelable =
-      aEventMessage == eEditorBeforeInput &&
+      !aOptions.mNeverCancelable && aEventMessage == eEditorBeforeInput &&
       IsCancelableBeforeInputEvent(aEditorInputType);
   MOZ_ASSERT(!inputEvent.mFlags.mCancelable || aEventStatus);
 
@@ -7170,20 +7177,24 @@ uint64_t nsContentUtils::GetInnerWindowID(nsILoadGroup* aLoadGroup) {
   return inner ? inner->WindowID() : 0;
 }
 
-nsresult nsContentUtils::GetHostOrIPv6WithBrackets(nsIURI* aURI,
-                                                   nsCString& aHost) {
-  aHost.Truncate();
-  nsresult rv = aURI->GetHost(aHost);
-  if (NS_FAILED(rv)) {  // Some URIs do not have a host
-    return rv;
-  }
-
+static void MaybeFixIPv6Host(nsACString& aHost) {
   if (aHost.FindChar(':') != -1) {  // Escape IPv6 address
     MOZ_ASSERT(!aHost.Length() ||
                (aHost[0] != '[' && aHost[aHost.Length() - 1] != ']'));
     aHost.Insert('[', 0);
     aHost.Append(']');
   }
+}
+
+nsresult nsContentUtils::GetHostOrIPv6WithBrackets(nsIURI* aURI,
+                                                   nsACString& aHost) {
+  aHost.Truncate();
+  nsresult rv = aURI->GetHost(aHost);
+  if (NS_FAILED(rv)) {  // Some URIs do not have a host
+    return rv;
+  }
+
+  MaybeFixIPv6Host(aHost);
 
   return NS_OK;
 }
@@ -7196,6 +7207,17 @@ nsresult nsContentUtils::GetHostOrIPv6WithBrackets(nsIURI* aURI,
     return rv;
   }
   CopyUTF8toUTF16(hostname, aHost);
+  return NS_OK;
+}
+
+nsresult nsContentUtils::GetHostOrIPv6WithBrackets(nsIPrincipal* aPrincipal,
+                                                   nsACString& aHost) {
+  nsresult rv = aPrincipal->GetAsciiHost(aHost);
+  if (NS_FAILED(rv)) {  // Some URIs do not have a host
+    return rv;
+  }
+
+  MaybeFixIPv6Host(aHost);
   return NS_OK;
 }
 
@@ -9046,8 +9068,9 @@ bool nsContentUtils::ComputeIsSecureContext(nsIChannel* aChannel) {
     return false;
   }
 
+  const RefPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+
   if (principal->IsSystemPrincipal()) {
-    nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
     // If the load would've been sandboxed, treat this load as an untrusted
     // load, as system code considers sandboxed resources insecure.
     return !loadInfo->GetLoadingSandboxed();
@@ -9055,6 +9078,13 @@ bool nsContentUtils::ComputeIsSecureContext(nsIChannel* aChannel) {
 
   if (principal->GetIsNullPrincipal()) {
     return false;
+  }
+
+  if (const RefPtr<WindowContext> windowContext =
+          WindowContext::GetById(loadInfo->GetInnerWindowID())) {
+    if (!windowContext->GetIsSecureContext()) {
+      return false;
+    }
   }
 
   return principal->GetIsOriginPotentiallyTrustworthy();

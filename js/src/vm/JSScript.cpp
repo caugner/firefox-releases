@@ -45,6 +45,7 @@
 #include "jit/JitOptions.h"
 #include "jit/JitRuntime.h"
 #include "js/CompileOptions.h"
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/MemoryMetrics.h"
 #include "js/Printf.h"
 #include "js/SourceText.h"
@@ -2281,6 +2282,14 @@ MOZ_MUST_USE bool ScriptSource::setRetrievedSource(JSContext* cx,
                                      SourceRetrievable::Yes);
 }
 
+bool js::IsOffThreadSourceCompressionEnabled() {
+  // If we don't have concurrent execution compression will contend with
+  // main-thread execution, in which case we disable. Similarly we don't want to
+  // block the thread pool if it is too small.
+  return HelperThreadState().cpuCount > 1 &&
+         HelperThreadState().threadCount > 1 && CanUseExtraThreads();
+}
+
 bool ScriptSource::tryCompressOffThread(JSContext* cx) {
   // Beware: |js::SynchronouslyCompressSource| assumes that this function is
   // only called once, just after a script has been compiled, and it's never
@@ -2306,11 +2315,8 @@ bool ScriptSource::tryCompressOffThread(JSContext* cx) {
   // Otherwise, enqueue a compression task to be processed when a major
   // GC is requested.
 
-  bool canCompressOffThread = HelperThreadState().cpuCount > 1 &&
-                              HelperThreadState().threadCount >= 2 &&
-                              CanUseExtraThreads();
   if (length() < ScriptSource::MinimumCompressibleLength ||
-      !canCompressOffThread) {
+      !IsOffThreadSourceCompressionEnabled()) {
     return true;
   }
 
@@ -3647,7 +3653,7 @@ bool PrivateScriptData::InitFromStencil(
     js::frontend::CompilationInfo& compilationInfo,
     js::frontend::CompilationGCOutput& gcOutput,
     const frontend::ScriptStencil& scriptStencil) {
-  uint32_t ngcthings = scriptStencil.gcThings.length();
+  uint32_t ngcthings = scriptStencil.gcThings.size();
 
   MOZ_ASSERT(ngcthings <= INDEX_LIMIT);
 
@@ -3791,12 +3797,11 @@ bool JSScript::fullyInitFromStencil(
   });
 
   /* The counts of indexed things must be checked during code generation. */
-  MOZ_ASSERT(scriptStencil.gcThings.length() <= INDEX_LIMIT);
+  MOZ_ASSERT(scriptStencil.gcThings.size() <= INDEX_LIMIT);
 
   // Note: These flags should already be correct when the BaseScript was
   // allocated.
   MOZ_ASSERT(script->immutableFlags() == scriptStencil.immutableFlags);
-  script->resetImmutableFlags(scriptStencil.immutableFlags);
 
   // Derive initial mutable flags
   script->resetArgsUsageAnalysis();
@@ -3857,9 +3862,10 @@ JSScript* JSScript::fromStencil(JSContext* cx,
     functionOrGlobal = fun;
   }
 
+  Rooted<ScriptSourceObject*> sourceObject(cx, gcOutput.sourceObject);
   RootedScript script(
-      cx, Create(cx, functionOrGlobal, gcOutput.sourceObject,
-                 scriptStencil.extent, scriptStencil.immutableFlags));
+      cx, Create(cx, functionOrGlobal, sourceObject, scriptStencil.extent,
+                 scriptStencil.immutableFlags));
   if (!script) {
     return nullptr;
   }
@@ -4027,11 +4033,11 @@ const js::SrcNote* js::GetSrcNote(JSContext* cx, JSScript* script,
   return GetSrcNote(cx->caches().gsnCache, script, pc);
 }
 
-unsigned js::PCToLineNumber(unsigned startLine, SrcNote* notes,
-                            jsbytecode* code, jsbytecode* pc,
+unsigned js::PCToLineNumber(unsigned startLine, unsigned startCol,
+                            SrcNote* notes, jsbytecode* code, jsbytecode* pc,
                             unsigned* columnp) {
   unsigned lineno = startLine;
-  unsigned column = 0;
+  unsigned column = startCol;
 
   /*
    * Walk through source notes accumulating their deltas, keeping track of
@@ -4049,7 +4055,7 @@ unsigned js::PCToLineNumber(unsigned startLine, SrcNote* notes,
 
     SrcNoteType type = sn->type();
     if (type == SrcNoteType::SetLine) {
-      lineno = SrcNote::SetLine::getLine(sn);
+      lineno = SrcNote::SetLine::getLine(sn, startLine);
       column = 0;
     } else if (type == SrcNoteType::NewLine) {
       lineno++;
@@ -4075,8 +4081,8 @@ unsigned js::PCToLineNumber(JSScript* script, jsbytecode* pc,
     return 0;
   }
 
-  return PCToLineNumber(script->lineno(), script->notes(), script->code(), pc,
-                        columnp);
+  return PCToLineNumber(script->lineno(), script->column(), script->notes(),
+                        script->code(), pc, columnp);
 }
 
 jsbytecode* js::LineNumberToPC(JSScript* script, unsigned target) {
@@ -4103,7 +4109,7 @@ jsbytecode* js::LineNumberToPC(JSScript* script, unsigned target) {
     offset += sn->delta();
     SrcNoteType type = sn->type();
     if (type == SrcNoteType::SetLine) {
-      lineno = SrcNote::SetLine::getLine(sn);
+      lineno = SrcNote::SetLine::getLine(sn, script->lineno());
     } else if (type == SrcNoteType::NewLine) {
       lineno++;
     }
@@ -4122,7 +4128,7 @@ JS_FRIEND_API unsigned js::GetScriptLineExtent(JSScript* script) {
     auto sn = *iter;
     SrcNoteType type = sn->type();
     if (type == SrcNoteType::SetLine) {
-      lineno = SrcNote::SetLine::getLine(sn);
+      lineno = SrcNote::SetLine::getLine(sn, script->lineno());
     } else if (type == SrcNoteType::NewLine) {
       lineno++;
     }
@@ -4513,8 +4519,6 @@ js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
     mozilla::Span<const ScopeNote> scopeNotes,
     mozilla::Span<const TryNote> tryNotes) {
   MOZ_RELEASE_ASSERT(code.Length() <= frontend::MaxBytecodeLength);
-  MOZ_ASSERT_IF(!resumeOffsets.IsEmpty(),
-                nfixed <= GeneratorObject::FixedSlotLimit);
 
   // There are 1-4 copies of SrcNoteType::Null appended after the source
   // notes. These are a combination of sentinel and padding values.
@@ -4719,6 +4723,15 @@ void js::SetFrameArgumentsObject(JSContext* cx, AbstractFramePtr frame,
     uint32_t frameSlot = bi.location().slot();
     if (IsOptimizedPlaceholderMagicValue(frame.unaliasedLocal(frameSlot))) {
       frame.unaliasedLocal(frameSlot) = ObjectValue(*argsobj);
+    }
+  }
+
+  // JS_OPTIMIZED_ARGUMENTS may also have been stored to a local slot
+  // during bailout. Update those local slots.
+  for (uint32_t i = 0; i < script->nfixed(); i++) {
+    Value& value = frame.unaliasedLocal(i);
+    if (value.isMagic() && value.whyMagic() == JS_OPTIMIZED_ARGUMENTS) {
+      frame.unaliasedLocal(i) = ObjectValue(*argsobj);
     }
   }
 }

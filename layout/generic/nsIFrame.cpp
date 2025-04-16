@@ -1626,7 +1626,7 @@ nsMargin nsIFrame::GetUsedPadding() const {
   return padding;
 }
 
-nsIFrame::Sides nsIFrame::GetSkipSides(const ReflowInput* aReflowInput) const {
+nsIFrame::Sides nsIFrame::GetSkipSides() const {
   if (MOZ_UNLIKELY(StyleBorder()->mBoxDecorationBreak ==
                    StyleBoxDecorationBreak::Clone) &&
       !HasAnyStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER)) {
@@ -1636,7 +1636,7 @@ nsIFrame::Sides nsIFrame::GetSkipSides(const ReflowInput* aReflowInput) const {
   // Convert the logical skip sides to physical sides using the frame's
   // writing mode
   WritingMode writingMode = GetWritingMode();
-  LogicalSides logicalSkip = GetLogicalSkipSides(aReflowInput);
+  LogicalSides logicalSkip = GetLogicalSkipSides();
   Sides skip;
 
   if (logicalSkip.BStart()) {
@@ -3663,16 +3663,17 @@ void nsIFrame::BuildDisplayListForStackingContext(
     // Revert to the dirtyrect coming in from the parent, without our transform
     // taken into account.
     aBuilder->SetVisibleRect(visibleRectOutsideTransform);
-    // Revert to the outer reference frame and offset because all display
-    // items we create from now on are outside the transform.
-    nsPoint toOuterReferenceFrame;
-    const nsIFrame* outerReferenceFrame = this;
+
     if (this != aBuilder->RootReferenceFrame()) {
-      outerReferenceFrame =
+      // Revert to the outer reference frame and offset because all display
+      // items we create from now on are outside the transform.
+      nsPoint toOuterReferenceFrame;
+      const nsIFrame* outerReferenceFrame =
           aBuilder->FindReferenceFrameFor(GetParent(), &toOuterReferenceFrame);
+
+      buildingDisplayList.SetReferenceFrameAndCurrentOffset(
+          outerReferenceFrame, toOuterReferenceFrame);
     }
-    buildingDisplayList.SetReferenceFrameAndCurrentOffset(
-        outerReferenceFrame, GetOffsetToCrossDoc(outerReferenceFrame));
 
     // We would like to block async animations for ancestors of ones not
     // prerendered in the preserve-3d tree. Now that we've finished processing
@@ -5721,7 +5722,7 @@ nscoord nsIFrame::GetPrefISize(gfxContext* aRenderingContext) {
 void nsIFrame::AddInlineMinISize(gfxContext* aRenderingContext,
                                  nsIFrame::InlineMinISizeData* aData) {
   nscoord isize = nsLayoutUtils::IntrinsicForContainer(
-      aRenderingContext, this, nsLayoutUtils::MIN_ISIZE);
+      aRenderingContext, this, IntrinsicISizeType::MinISize);
   aData->DefaultAddInlineMinISize(this, isize);
 }
 
@@ -5729,7 +5730,7 @@ void nsIFrame::AddInlineMinISize(gfxContext* aRenderingContext,
 void nsIFrame::AddInlinePrefISize(gfxContext* aRenderingContext,
                                   nsIFrame::InlinePrefISizeData* aData) {
   nscoord isize = nsLayoutUtils::IntrinsicForContainer(
-      aRenderingContext, this, nsLayoutUtils::PREF_ISIZE);
+      aRenderingContext, this, IntrinsicISizeType::PrefISize);
   aData->DefaultAddInlinePrefISize(isize);
 }
 
@@ -5974,7 +5975,9 @@ AspectRatio nsIFrame::GetAspectRatio() const {
   // return here.
 
   const StyleAspectRatio& aspectRatio = StylePosition()->mAspectRatio;
-  if (!aspectRatio.auto_) {
+  // If aspect-ratio is infinite, it behaves as auto.
+  // https://github.com/w3c/csswg-drafts/issues/4572
+  if (!aspectRatio.BehavesAsAuto()) {
     // Non-auto. Return the preferred aspect ratio from the aspect-ratio style.
     return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
@@ -5983,7 +5986,10 @@ AspectRatio nsIFrame::GetAspectRatio() const {
   if (auto intrinsicRatio = GetIntrinsicRatio()) {
     return intrinsicRatio;
   }
+
   if (aspectRatio.HasRatio()) {
+    // If there is no finite ratio, this returns 0. Just the same as the auto
+    // case.
     return aspectRatio.ratio.AsRatio().ToLayoutRatio();
   }
 
@@ -5996,9 +6002,6 @@ AspectRatio nsIFrame::GetIntrinsicRatio() const { return AspectRatio(); }
 static nscoord ComputeInlineSizeFromAspectRatio(
     WritingMode aWM, const StyleAspectRatio& aAspectRatio, nscoord aBlockSize,
     const LogicalSize& aBoxSizingAdjustment) {
-  MOZ_ASSERT(aAspectRatio.ratio.IsRatio());
-  // FIXME: We have to handle zero and infinity for aspect-ratio later.
-  // https://github.com/w3c/csswg-drafts/issues/4572
   MOZ_ASSERT(aAspectRatio.HasFiniteRatio(),
              "Infinite or zero ratio may have undefined behavior when "
              "computing the size");
@@ -6012,9 +6015,6 @@ static nscoord ComputeInlineSizeFromAspectRatio(
 static nscoord ComputeBlockSizeFromAspectRatio(
     WritingMode aWM, const StyleAspectRatio& aAspectRatio, nscoord aInlineSize,
     const LogicalSize& aBoxSizingAdjustment) {
-  MOZ_ASSERT(aAspectRatio.ratio.IsRatio());
-  // FIXME: We have to handle zero and infinity for aspect-ratio later.
-  // https://github.com/w3c/csswg-drafts/issues/4572
   MOZ_ASSERT(aAspectRatio.HasFiniteRatio(),
              "Infinite or zero ratio may have undefined behavior when "
              "computing the size");
@@ -6034,6 +6034,51 @@ static bool ShouldApplyAutomaticMinimumOnInlineAxis(
   // container.
   // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
   return !aDisplay->IsScrollableOverflow() && aPosition->MinISize(aWM).IsAuto();
+}
+
+struct MinMaxSize {
+  nscoord mMinSize = 0;
+  nscoord mMaxSize = NS_UNCONSTRAINEDSIZE;
+
+  nscoord ClampSizeToMinAndMax(nscoord aSize) const {
+    return NS_CSS_MINMAX(aSize, mMinSize, mMaxSize);
+  }
+};
+static MinMaxSize ComputeTransferredMinMaxInlineSize(
+    WritingMode aWM, const StyleAspectRatio& aAspectRatio,
+    const MinMaxSize& aMinMaxBSize, const LogicalSize& aBoxSizingAdjustment) {
+  // Note: the spec mentions that
+  // 1. This transferred minimum is capped by any definite preferred or maximum
+  //    size in the destination axis.
+  // 2. This transferred maximum is floored by any definite preferred or minimum
+  //    size in the destination axis
+  //
+  // https://drafts.csswg.org/css-sizing-4/#aspect-ratio
+  //
+  // The spec requires us to clamp these by the specified size (it calls it the
+  // preferred size). However, we actually don't need to worry about that,
+  // because we only use this if the inline size is indefinite.
+  //
+  // We do not need to clamp the transferred minimum and maximum as long as we
+  // always apply the transferred min/max size before the explicit min/max size,
+  // the result will be identical.
+
+  MinMaxSize transferredISize;
+
+  if (aMinMaxBSize.mMinSize > 0) {
+    transferredISize.mMinSize = ComputeInlineSizeFromAspectRatio(
+        aWM, aAspectRatio, aMinMaxBSize.mMinSize, aBoxSizingAdjustment);
+  }
+
+  if (aMinMaxBSize.mMaxSize != NS_UNCONSTRAINEDSIZE) {
+    transferredISize.mMaxSize = ComputeInlineSizeFromAspectRatio(
+        aWM, aAspectRatio, aMinMaxBSize.mMaxSize, aBoxSizingAdjustment);
+  }
+
+  // Minimum size wins over maximum size.
+  transferredISize.mMaxSize =
+      std::max(transferredISize.mMinSize, transferredISize.mMaxSize);
+  return transferredISize;
 }
 
 /* virtual */
@@ -6138,12 +6183,14 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
         mainAxisCoord = &maxContStyleCoord;
         // (Note: if our main axis is the block axis, then this 'max-content'
         // value will be treated like 'auto', via the IsAutoBSize() call below.)
-      } else if (!flexBasis->IsAuto()) {
+      } else if (flexBasis->IsSize() && !flexBasis->IsAuto()) {
         // For all other non-'auto' flex-basis values, we just swap in the
         // flex-basis itself for the main-size property.
         mainAxisCoord = &flexBasis->AsSize();
-      }  // else: flex-basis is 'auto', which is deferring to some explicit
-         // value in mainAxisCoord. So we proceed w/o touching mainAxisCoord.
+      } else {
+        // else: flex-basis is 'auto', or 'content' in a table wrapper frame
+        // which we ignore. So we proceed w/o touching mainAxisCoord.
+      }
     }
   }
 
@@ -6188,13 +6235,50 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
     }
   }
 
+  // Calculate and apply min max transferred size contraint.
+  // https://github.com/w3c/csswg-drafts/issues/5257
+  // If we have definite preferred size, the transferred minimum and maximum
+  // are clampled by it. This means transferred minimum and maximum don't have
+  // effects with definite preferred size.
+  //
+  // Note: The axis in which the preferred size calculation depends on this
+  // aspect ratio is called the ratio-dependent axis, and the resulting size
+  // is definite if its input sizes are also definite.
+  const bool isDefiniteISize =
+      inlineStyleCoord->IsLengthPercentage() ||
+      aspectRatioUsage == AspectRatioUsage::ToComputeISize;
+  const bool isFlexItemInlineAxisMainAxis =
+      isFlexItem && flexMainAxis == eLogicalAxisInline;
+  const auto& minBSizeCoord = stylePos->MinBSize(aWM);
+  const auto& maxBSizeCoord = stylePos->MaxBSize(aWM);
+  const bool isAutoMinBSize =
+      nsLayoutUtils::IsAutoBSize(minBSizeCoord, aCBSize.BSize(aWM));
+  const bool isAutoMaxBSize =
+      nsLayoutUtils::IsAutoBSize(maxBSizeCoord, aCBSize.BSize(aWM));
+  if (stylePos->mAspectRatio.HasFiniteRatio() && !isDefiniteISize &&
+      !isFlexItemInlineAxisMainAxis) {
+    const MinMaxSize minMaxBSize{
+        isAutoMinBSize ? 0
+                       : nsLayoutUtils::ComputeBSizeValue(
+                             aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
+                             minBSizeCoord.AsLengthPercentage()),
+        isAutoMaxBSize ? NS_UNCONSTRAINEDSIZE
+                       : nsLayoutUtils::ComputeBSizeValue(
+                             aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
+                             maxBSizeCoord.AsLengthPercentage())};
+    MinMaxSize transferredMinMaxISize = ComputeTransferredMinMaxInlineSize(
+        aWM, stylePos->mAspectRatio, minMaxBSize, boxSizingAdjust);
+
+    result.ISize(aWM) =
+        transferredMinMaxISize.ClampSizeToMinAndMax(result.ISize(aWM));
+  }
+
   // Flex items ignore their min & max sizing properties in their
   // flex container's main-axis.  (Those properties get applied later in
   // the flexbox algorithm.)
   const auto& maxISizeCoord = stylePos->MaxISize(aWM);
   nscoord maxISize = NS_UNCONSTRAINEDSIZE;
-  if (!maxISizeCoord.IsNone() &&
-      !(isFlexItem && flexMainAxis == eLogicalAxisInline)) {
+  if (!maxISizeCoord.IsNone() && !isFlexItemInlineAxisMainAxis) {
     maxISize = ComputeISizeValue(
         aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
         boxSizingToMarginEdgeISize, maxISizeCoord, aFlags);
@@ -6203,8 +6287,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
 
   const auto& minISizeCoord = stylePos->MinISize(aWM);
   nscoord minISize;
-  if (!minISizeCoord.IsAuto() &&
-      !(isFlexItem && flexMainAxis == eLogicalAxisInline)) {
+  if (!minISizeCoord.IsAuto() && !isFlexItemInlineAxisMainAxis) {
     minISize = ComputeISizeValue(
         aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
         boxSizingToMarginEdgeISize, minISizeCoord, aFlags);
@@ -6293,21 +6376,17 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
     }
   }
 
-  const auto& maxBSizeCoord = stylePos->MaxBSize(aWM);
-
   if (result.BSize(aWM) != NS_UNCONSTRAINEDSIZE) {
-    if (!nsLayoutUtils::IsAutoBSize(maxBSizeCoord, aCBSize.BSize(aWM)) &&
-        !(isFlexItem && flexMainAxis == eLogicalAxisBlock)) {
+    const bool isFlexItemBlockAxisMainAxis =
+        isFlexItem && flexMainAxis == eLogicalAxisBlock;
+    if (!isAutoMaxBSize && !isFlexItemBlockAxisMainAxis) {
       nscoord maxBSize = nsLayoutUtils::ComputeBSizeValue(
           aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
           maxBSizeCoord.AsLengthPercentage());
       result.BSize(aWM) = std::min(maxBSize, result.BSize(aWM));
     }
 
-    const auto& minBSizeCoord = stylePos->MinBSize(aWM);
-
-    if (!nsLayoutUtils::IsAutoBSize(minBSizeCoord, aCBSize.BSize(aWM)) &&
-        !(isFlexItem && flexMainAxis == eLogicalAxisBlock)) {
+    if (!isAutoMinBSize && !isFlexItemBlockAxisMainAxis) {
       nscoord minBSize = nsLayoutUtils::ComputeBSizeValue(
           aCBSize.BSize(aWM), boxSizingAdjust.BSize(aWM),
           minBSizeCoord.AsLengthPercentage());
@@ -8451,6 +8530,7 @@ nsresult nsIFrame::PeekOffsetForCharacter(nsPeekOffsetStruct* aPos,
       }
       next.mJumpedLine |= current.mJumpedLine;
       next.mMovedOverNonSelectableText |= current.mMovedOverNonSelectableText;
+      next.mHasSelectableFrame |= current.mHasSelectableFrame;
       current = next;
     }
 
@@ -8458,7 +8538,7 @@ nsresult nsIFrame::PeekOffsetForCharacter(nsPeekOffsetStruct* aPos,
     // the offset to be at the frame edge. Note that if we are extending the
     // selection, this doesn't matter.
     if (peekSearchState == FOUND && current.mMovedOverNonSelectableText &&
-        !aPos->mExtend) {
+        (!aPos->mExtend || current.mHasSelectableFrame)) {
       int32_t start, end;
       current.mFrame->GetOffsets(start, end);
       current.mOffset = aPos->mDirection == eDirNext ? 0 : end - start;
@@ -9020,6 +9100,9 @@ nsIFrame::SelectablePeekReport nsIFrame::GetFrameFromDirection(
 
     selectable = IsSelectable(traversedFrame);
     if (!selectable) {
+      if (traversedFrame->IsSelectable(nullptr)) {
+        result.mHasSelectableFrame = true;
+      }
       result.mMovedOverNonSelectableText = true;
     }
   }  // while (!selectable)
@@ -10338,14 +10421,6 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
                          nscoord aWidth, nscoord aHeight, bool aMoveFrame) {
   DO_GLOBAL_REFLOW_COUNT("nsBoxToBlockAdaptor");
 
-#ifdef DEBUG_REFLOW
-  nsAdaptorAddIndents();
-  printf("Reflowing: ");
-  mFrame->ListTag(stdout);
-  printf("\n");
-  gIndent2++;
-#endif
-
   nsBoxLayoutMetrics* metrics = BoxMetrics();
   if (MOZ_UNLIKELY(!metrics)) {
     // Can't proceed without BoxMetrics. This should only happen if something
@@ -10424,13 +10499,17 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
       parentReflowInput.SetComputedWidth(std::max(parentSize.width, 0));
     if (parentSize.height != NS_UNCONSTRAINEDSIZE)
       parentReflowInput.SetComputedHeight(std::max(parentSize.height, 0));
-    parentReflowInput.ComputedPhysicalMargin().SizeTo(0, 0, 0, 0);
+    parentReflowInput.SetComputedLogicalMargin(parentWM,
+                                               LogicalMargin(parentWM));
     // XXX use box methods
-    parentFrame->GetXULPadding(parentReflowInput.ComputedPhysicalPadding());
-    parentFrame->GetXULBorder(
-        parentReflowInput.ComputedPhysicalBorderPadding());
-    parentReflowInput.ComputedPhysicalBorderPadding() +=
-        parentReflowInput.ComputedPhysicalPadding();
+    nsMargin padding;
+    parentFrame->GetXULPadding(padding);
+    parentReflowInput.SetComputedLogicalPadding(
+        parentWM, LogicalMargin(parentWM, padding));
+    nsMargin border;
+    parentFrame->GetXULBorder(border);
+    parentReflowInput.SetComputedLogicalBorderPadding(
+        parentWM, LogicalMargin(parentWM, border + padding));
 
     // Construct the parent chain manually since constructing it normally
     // messes up dimensions.
@@ -10487,10 +10566,10 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
         reflowInput.SetComputedHeight(computedHeight);
       } else {
         reflowInput.SetComputedHeight(
-            ComputeSize(aRenderingContext, wm, logicalSize,
-                        logicalSize.ISize(wm),
-                        reflowInput.ComputedLogicalMargin().Size(wm),
-                        reflowInput.ComputedLogicalBorderPadding().Size(wm), {})
+            ComputeSize(
+                aRenderingContext, wm, logicalSize, logicalSize.ISize(wm),
+                reflowInput.ComputedLogicalMargin(wm).Size(wm),
+                reflowInput.ComputedLogicalBorderPadding(wm).Size(wm), {})
                 .mLogicalSize.Height(wm));
       }
     }
@@ -10514,15 +10593,6 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
     if (metrics->mLastSize.height != aHeight) {
       reflowInput.SetVResize(true);
     }
-
-#ifdef DEBUG_REFLOW
-    nsAdaptorAddIndents();
-    printf("Size=(%d,%d)\n", reflowInput.ComputedWidth(),
-           reflowInput.ComputedHeight());
-    nsAdaptorAddIndents();
-    nsAdaptorPrintReason(reflowInput);
-    printf("\n");
-#endif
 
     // place the child and reflow
 
@@ -10550,23 +10620,8 @@ void nsIFrame::BoxReflow(nsBoxLayoutState& aState, nsPresContext* aPresContext,
     aDesiredSize.SetBlockStartAscent(metrics->mBlockAscent);
   }
 
-#ifdef DEBUG_REFLOW
-  if (aHeight != NS_UNCONSTRAINEDSIZE && aDesiredSize.Height() != aHeight) {
-    nsAdaptorAddIndents();
-    printf("*****got taller!*****\n");
-  }
-  if (aWidth != NS_UNCONSTRAINEDSIZE && aDesiredSize.Width() != aWidth) {
-    nsAdaptorAddIndents();
-    printf("*****got wider!******\n");
-  }
-#endif
-
   metrics->mLastSize.width = aDesiredSize.Width();
   metrics->mLastSize.height = aDesiredSize.Height();
-
-#ifdef DEBUG_REFLOW
-  gIndent2--;
-#endif
 }
 
 nsBoxLayoutMetrics* nsIFrame::BoxMetrics() const {
@@ -11287,55 +11342,6 @@ nsIFrame::PhysicalAxes nsIFrame::ShouldApplyOverflowClipping(
   return clip ? PhysicalAxes::Both : PhysicalAxes::None;
 }
 
-// Box layout debugging
-#ifdef DEBUG_REFLOW
-int32_t gIndent2 = 0;
-
-void nsAdaptorAddIndents() {
-  for (int32_t i = 0; i < gIndent2; i++) {
-    printf(" ");
-  }
-}
-
-void nsAdaptorPrintReason(ReflowInput& aReflowInput) {
-  char* reflowReasonString;
-
-  switch (aReflowInput.reason) {
-    case eReflowReason_Initial:
-      reflowReasonString = "initial";
-      break;
-
-    case eReflowReason_Resize:
-      reflowReasonString = "resize";
-      break;
-    case eReflowReason_Dirty:
-      reflowReasonString = "dirty";
-      break;
-    case eReflowReason_StyleChange:
-      reflowReasonString = "stylechange";
-      break;
-    case eReflowReason_Incremental: {
-      switch (aReflowInput.reflowCommand->Type()) {
-        case eReflowType_StyleChanged:
-          reflowReasonString = "incremental (StyleChanged)";
-          break;
-        case eReflowType_ReflowDirty:
-          reflowReasonString = "incremental (ReflowDirty)";
-          break;
-        default:
-          reflowReasonString = "incremental (Unknown)";
-      }
-    } break;
-    default:
-      reflowReasonString = "unknown";
-      break;
-  }
-
-  printf("%s", reflowReasonString);
-}
-
-#endif
-
 #ifdef DEBUG
 static void GetTagName(nsIFrame* aFrame, nsIContent* aContent, int aResultSize,
                        char* aResult) {
@@ -11444,11 +11450,21 @@ DR_intrinsic_size_cookie::~DR_intrinsic_size_cookie() {
 
 DR_init_constraints_cookie::DR_init_constraints_cookie(
     nsIFrame* aFrame, ReflowInput* aState, nscoord aCBWidth, nscoord aCBHeight,
-    const nsMargin* aMargin, const nsMargin* aPadding)
+    const mozilla::Maybe<mozilla::LogicalMargin> aBorder,
+    const mozilla::Maybe<mozilla::LogicalMargin> aPadding)
     : mFrame(aFrame), mState(aState) {
   MOZ_COUNT_CTOR(DR_init_constraints_cookie);
+  nsMargin border;
+  if (aBorder) {
+    border = aBorder->GetPhysicalMargin(aFrame->GetWritingMode());
+  }
+  nsMargin padding;
+  if (aPadding) {
+    padding = aPadding->GetPhysicalMargin(aFrame->GetWritingMode());
+  }
   mValue = ReflowInput::DisplayInitConstraintsEnter(
-      mFrame, mState, aCBWidth, aCBHeight, aMargin, aPadding);
+      mFrame, mState, aCBWidth, aCBHeight, aBorder ? &border : nullptr,
+      aPadding ? &padding : nullptr);
 }
 
 DR_init_constraints_cookie::~DR_init_constraints_cookie() {
@@ -11456,16 +11472,24 @@ DR_init_constraints_cookie::~DR_init_constraints_cookie() {
   ReflowInput::DisplayInitConstraintsExit(mFrame, mState, mValue);
 }
 
-DR_init_offsets_cookie::DR_init_offsets_cookie(nsIFrame* aFrame,
-                                               SizeComputationInput* aState,
-                                               nscoord aPercentBasis,
-                                               WritingMode aCBWritingMode,
-                                               const nsMargin* aMargin,
-                                               const nsMargin* aPadding)
+DR_init_offsets_cookie::DR_init_offsets_cookie(
+    nsIFrame* aFrame, SizeComputationInput* aState, nscoord aPercentBasis,
+    WritingMode aCBWritingMode,
+    const mozilla::Maybe<mozilla::LogicalMargin> aBorder,
+    const mozilla::Maybe<mozilla::LogicalMargin> aPadding)
     : mFrame(aFrame), mState(aState) {
   MOZ_COUNT_CTOR(DR_init_offsets_cookie);
+  nsMargin border;
+  if (aBorder) {
+    border = aBorder->GetPhysicalMargin(aFrame->GetWritingMode());
+  }
+  nsMargin padding;
+  if (aPadding) {
+    padding = aPadding->GetPhysicalMargin(aFrame->GetWritingMode());
+  }
   mValue = SizeComputationInput::DisplayInitOffsetsEnter(
-      mFrame, mState, aPercentBasis, aCBWritingMode, aMargin, aPadding);
+      mFrame, mState, aPercentBasis, aCBWritingMode,
+      aBorder ? &border : nullptr, aPadding ? &padding : nullptr);
 }
 
 DR_init_offsets_cookie::~DR_init_offsets_cookie() {
@@ -11875,7 +11899,7 @@ void DR_State::InitFrameTypeTable() {
   AddFrameTypeInfo(LayoutFrameType::Page, "page", "page");
   AddFrameTypeInfo(LayoutFrameType::Placeholder, "place", "placeholder");
   AddFrameTypeInfo(LayoutFrameType::Canvas, "canvas", "canvas");
-  AddFrameTypeInfo(LayoutFrameType::Root, "root", "root");
+  AddFrameTypeInfo(LayoutFrameType::XULRoot, "xulroot", "xulroot");
   AddFrameTypeInfo(LayoutFrameType::Scroll, "scroll", "scroll");
   AddFrameTypeInfo(LayoutFrameType::TableCell, "cell", "tableCell");
   AddFrameTypeInfo(LayoutFrameType::TableCol, "col", "tableCol");
@@ -12360,7 +12384,8 @@ void ReflowInput::DisplayInitConstraintsExit(nsIFrame* aFrame,
     DR_state->PrettyUC(aState->ComputedMaxHeight(), cmxh, 16);
     printf("InitConstraints= cw=(%s <= %s <= %s) ch=(%s <= %s <= %s)", cmiw, cw,
            cmxw, cmih, ch, cmxh);
-    DR_state->PrintMargin("co", &aState->ComputedPhysicalOffsets());
+    const nsMargin m = aState->ComputedPhysicalOffsets();
+    DR_state->PrintMargin("co", &m);
     putchar('\n');
   }
   DR_state->DeleteTreeNode(*treeNode);
@@ -12407,9 +12432,12 @@ void SizeComputationInput::DisplayInitOffsetsExit(nsIFrame* aFrame,
   if (treeNode->mDisplay) {
     DR_state->DisplayFrameTypeInfo(aFrame, treeNode->mIndent);
     printf("InitOffsets=");
-    DR_state->PrintMargin("m", &aState->ComputedPhysicalMargin());
-    DR_state->PrintMargin("p", &aState->ComputedPhysicalPadding());
-    DR_state->PrintMargin("p+b", &aState->ComputedPhysicalBorderPadding());
+    const auto m = aState->ComputedPhysicalMargin();
+    DR_state->PrintMargin("m", &m);
+    const auto p = aState->ComputedPhysicalPadding();
+    DR_state->PrintMargin("p", &p);
+    const auto bp = aState->ComputedPhysicalBorderPadding();
+    DR_state->PrintMargin("b+p", &bp);
     putchar('\n');
   }
   DR_state->DeleteTreeNode(*treeNode);

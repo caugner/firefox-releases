@@ -1195,11 +1195,10 @@ void PresShell::Destroy() {
   // whether or not it's in responsive design mode. We omit unpainted presShells
   // because we get a handful of transient presShells that always report no
   // zoom, and those skew the numbers.
-  if (!mIsFirstPaint && mPresContext->IsRootContentDocumentCrossProcess()) {
-    Telemetry::HistogramID histogram = InRDMPane()
-                                           ? Telemetry::APZ_ZOOM_ACTIVITY_RDM
-                                           : Telemetry::APZ_ZOOM_ACTIVITY;
-    Telemetry::Accumulate(histogram, IsResolutionUpdatedByApz());
+  if (!mIsFirstPaint && mPresContext->IsRootContentDocumentCrossProcess() &&
+      !InRDMPane()) {
+    Telemetry::Accumulate(Telemetry::APZ_ZOOM_ACTIVITY,
+                          IsResolutionUpdatedByApz());
   }
 
   // dump out cumulative text perf metrics
@@ -2338,8 +2337,7 @@ NS_IMETHODIMP
 PresShell::PageMove(bool aForward, bool aExtend) {
   nsIFrame* frame = nullptr;
   if (!aExtend) {
-    frame = do_QueryFrame(
-        GetScrollableFrameToScroll(ScrollableDirection::Vertical));
+    frame = do_QueryFrame(GetScrollableFrameToScroll(VerticalScollDirection));
     // If there is no scrollable frame, get the frame to move caret instead.
   }
   if (!frame || frame->PresContext() != mPresContext) {
@@ -2359,7 +2357,7 @@ PresShell::PageMove(bool aForward, bool aExtend) {
 NS_IMETHODIMP
 PresShell::ScrollPage(bool aForward) {
   nsIScrollableFrame* scrollFrame =
-      GetScrollableFrameToScroll(ScrollableDirection::Vertical);
+      GetScrollableFrameToScroll(VerticalScollDirection);
   if (scrollFrame) {
     mozilla::Telemetry::Accumulate(
         mozilla::Telemetry::SCROLL_INPUT_METHODS,
@@ -2375,7 +2373,7 @@ PresShell::ScrollPage(bool aForward) {
 NS_IMETHODIMP
 PresShell::ScrollLine(bool aForward) {
   nsIScrollableFrame* scrollFrame =
-      GetScrollableFrameToScroll(ScrollableDirection::Vertical);
+      GetScrollableFrameToScroll(VerticalScollDirection);
   if (scrollFrame) {
     mozilla::Telemetry::Accumulate(
         mozilla::Telemetry::SCROLL_INPUT_METHODS,
@@ -2394,7 +2392,7 @@ PresShell::ScrollLine(bool aForward) {
 NS_IMETHODIMP
 PresShell::ScrollCharacter(bool aRight) {
   nsIScrollableFrame* scrollFrame =
-      GetScrollableFrameToScroll(ScrollableDirection::Horizontal);
+      GetScrollableFrameToScroll(HorizontalScrollDirection);
   if (scrollFrame) {
     mozilla::Telemetry::Accumulate(
         mozilla::Telemetry::SCROLL_INPUT_METHODS,
@@ -2413,7 +2411,7 @@ PresShell::ScrollCharacter(bool aRight) {
 NS_IMETHODIMP
 PresShell::CompleteScroll(bool aForward) {
   nsIScrollableFrame* scrollFrame =
-      GetScrollableFrameToScroll(ScrollableDirection::Vertical);
+      GetScrollableFrameToScroll(VerticalScollDirection);
   if (scrollFrame) {
     mozilla::Telemetry::Accumulate(
         mozilla::Telemetry::SCROLL_INPUT_METHODS,
@@ -2881,7 +2879,7 @@ already_AddRefed<nsIContent> PresShell::GetSelectedContentForScrolling() const {
 }
 
 nsIScrollableFrame* PresShell::GetScrollableFrameToScrollForContent(
-    nsIContent* aContent, ScrollableDirection aDirection) {
+    nsIContent* aContent, ScrollDirections aDirections) {
   nsIScrollableFrame* scrollFrame = nullptr;
   if (aContent) {
     nsIFrame* startFrame = aContent->GetPrimaryFrame();
@@ -2891,7 +2889,7 @@ nsIScrollableFrame* PresShell::GetScrollableFrameToScrollForContent(
         startFrame = scrollFrame->GetScrolledFrame();
       }
       scrollFrame = nsLayoutUtils::GetNearestScrollableFrameForDirection(
-          startFrame, aDirection);
+          startFrame, aDirections);
     }
   }
   if (!scrollFrame) {
@@ -2900,15 +2898,15 @@ nsIScrollableFrame* PresShell::GetScrollableFrameToScrollForContent(
       return nullptr;
     }
     scrollFrame = nsLayoutUtils::GetNearestScrollableFrameForDirection(
-        scrollFrame->GetScrolledFrame(), aDirection);
+        scrollFrame->GetScrolledFrame(), aDirections);
   }
   return scrollFrame;
 }
 
 nsIScrollableFrame* PresShell::GetScrollableFrameToScroll(
-    ScrollableDirection aDirection) {
+    ScrollDirections aDirections) {
   nsCOMPtr<nsIContent> content = GetContentForScrolling();
-  return GetScrollableFrameToScrollForContent(content.get(), aDirection);
+  return GetScrollableFrameToScrollForContent(content.get(), aDirections);
 }
 
 void PresShell::CancelAllPendingReflows() {
@@ -9613,9 +9611,9 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
     // Initialize reflow input with current used border and padding,
     // in case this was set specially by the parent frame when the reflow root
     // was reflowed by its parent.
-    nsMargin currentBorder = target->GetUsedBorder();
-    nsMargin currentPadding = target->GetUsedPadding();
-    reflowInput.Init(mPresContext, Nothing(), &currentBorder, &currentPadding);
+    reflowInput.Init(mPresContext, Nothing(),
+                     Some(target->GetLogicalUsedBorder(wm)),
+                     Some(target->GetLogicalUsedPadding(wm)));
   }
 
   // fix the computed height
@@ -9624,14 +9622,15 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
   if (size.BSize(wm) != NS_UNCONSTRAINEDSIZE) {
     nscoord computedBSize =
         size.BSize(wm) -
-        reflowInput.ComputedLogicalBorderPadding().BStartEnd(wm);
+        reflowInput.ComputedLogicalBorderPadding(wm).BStartEnd(wm);
     computedBSize = std::max(computedBSize, 0);
     reflowInput.SetComputedBSize(computedBSize);
   }
-  NS_ASSERTION(reflowInput.ComputedISize() ==
-                   size.ISize(wm) -
-                       reflowInput.ComputedLogicalBorderPadding().IStartEnd(wm),
-               "reflow input computed incorrect inline size");
+  NS_ASSERTION(
+      reflowInput.ComputedISize() ==
+          size.ISize(wm) -
+              reflowInput.ComputedLogicalBorderPadding(wm).IStartEnd(wm),
+      "reflow input computed incorrect inline size");
 
   mPresContext->ReflowStarted(aInterruptible);
   mIsReflowing = true;
@@ -9925,7 +9924,9 @@ PresShell::Observe(nsISupports* aSubject, const char* aTopic,
   }
 
   if (!nsCRT::strcmp(aTopic, "look-and-feel-changed")) {
-    ThemeChanged();
+    // See how LookAndFeel::NotifyChangedAllWindows encodes this.
+    auto kind = widget::ThemeChangeKind(reinterpret_cast<uintptr_t>(aData));
+    ThemeChanged(kind);
     return NS_OK;
   }
 

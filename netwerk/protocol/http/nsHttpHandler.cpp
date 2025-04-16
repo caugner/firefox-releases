@@ -2851,15 +2851,15 @@ void nsHttpHandler::ExcludeHttp3(const nsHttpConnectionInfo* ci) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
   mConnMgr->ExcludeHttp3(ci);
-  if (!mExcludedHttp3Origins.Contains(ci->GetOrigin())) {
+  if (!mExcludedHttp3Origins.Contains(ci->GetRoutedHost())) {
     MutexAutoLock lock(mHttpExclusionLock);
-    mExcludedHttp3Origins.PutEntry(ci->GetOrigin());
+    mExcludedHttp3Origins.PutEntry(ci->GetRoutedHost());
   }
 }
 
-bool nsHttpHandler::IsHttp3Excluded(const nsHttpConnectionInfo* ci) {
+bool nsHttpHandler::IsHttp3Excluded(const nsACString& aRoutedHost) {
   MutexAutoLock lock(mHttpExclusionLock);
-  return mExcludedHttp3Origins.Contains(ci->GetOrigin());
+  return mExcludedHttp3Origins.Contains(aRoutedHost);
 }
 
 HttpTrafficAnalyzer* nsHttpHandler::GetHttpTrafficAnalyzer() {
@@ -3026,6 +3026,10 @@ bool nsHttpHandler::EchConfigEnabled() const {
 bool nsHttpHandler::FallbackToOriginIfConfigsAreECHAndAllFailed() const {
   return StaticPrefs::
       network_dns_echconfig_fallback_to_origin_when_all_failed();
+}
+
+bool nsHttpHandler::UseHTTPSRRForSpeculativeConnection() const {
+  return StaticPrefs::network_dns_use_https_rr_for_speculative_connection();
 }
 
 }  // namespace mozilla::net
