@@ -331,7 +331,6 @@ static const char* gExactCallbackPrefs[] = {
     "intl.accept_languages",
     "layout.css.devPixelsPerPx",
     "layout.css.dpi",
-    "privacy.resistFingerprinting",
     "privacy.trackingprotection.enabled",
     "ui.use_standins_for_native_colors",
     nullptr,
@@ -577,7 +576,6 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
   // because that pref doesn't just affect the "live" value of the media query;
   // it affects whether it is parsed at all.
   if (prefName.EqualsLiteral("browser.display.document_color_use") ||
-      prefName.EqualsLiteral("privacy.resistFingerprinting") ||
       prefName.EqualsLiteral("browser.display.foreground_color") ||
       prefName.EqualsLiteral("browser.display.background_color")) {
     MediaFeatureValuesChanged({MediaFeatureChangeReason::PreferenceChange},
@@ -1004,11 +1002,13 @@ struct QueryContainerState {
   nscoord GetInlineSize() const { return LogicalSize(mWm, mSize).ISize(mWm); }
 
   bool Changed(const QueryContainerState& aNewState, StyleContainerType aType) {
-    if (aType & StyleContainerType::SIZE) {
-      return mSize != aNewState.mSize;
-    }
-    if (aType & StyleContainerType::INLINE_SIZE) {
-      return GetInlineSize() != aNewState.GetInlineSize();
+    switch (aType) {
+      case StyleContainerType::Normal:
+        break;
+      case StyleContainerType::Size:
+        return mSize != aNewState.mSize;
+      case StyleContainerType::InlineSize:
+        return GetInlineSize() != aNewState.GetInlineSize();
     }
     return false;
   }
@@ -1041,7 +1041,8 @@ bool nsPresContext::UpdateContainerQueryStyles() {
     }
 
     auto type = frame->StyleDisplay()->mContainerType;
-    MOZ_ASSERT(type, "Non-container frames shouldn't be in this type");
+    MOZ_ASSERT(type != StyleContainerType::Normal,
+               "Non-container frames shouldn't be in this type");
 
     if (!mUpdatedContainerQueryContents.EnsureInserted(frame->GetContent())) {
       continue;

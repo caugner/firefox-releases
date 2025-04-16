@@ -350,7 +350,6 @@ class nsContentUtils {
   static bool ShouldResistFingerprinting(nsIGlobalObject* aGlobalObject);
   static bool ShouldResistFingerprinting(nsIDocShell* aDocShell);
   // These functions are the new, nuanced functions
-  static bool ShouldResistFingerprinting(const Document* aDoc);
   static bool ShouldResistFingerprinting(nsIChannel* aChannel);
   static bool ShouldResistFingerprinting(nsILoadInfo* aPrincipal);
   // These functions are labeled as dangerous because they will do the wrong
@@ -2554,15 +2553,17 @@ class nsContentUtils {
    *
    * WARNING: This method mutates aPattern and aValue!
    *
-   * @param aValue    the string to check.
-   * @param aPattern  the string defining the pattern.
-   * @param aDocument the owner document of the element.
-   * @result          whether the given string is matches the pattern, or
-   *                  Nothing() if the pattern couldn't be evaluated.
+   * @param aValue       the string to check.
+   * @param aPattern     the string defining the pattern.
+   * @param aDocument    the owner document of the element.
+   * @param aHasMultiple whether or not there are multiple values.
+   * @result             whether the given string is matches the pattern, or
+   *                     Nothing() if the pattern couldn't be evaluated.
    */
   static mozilla::Maybe<bool> IsPatternMatching(nsAString& aValue,
                                                 nsAString& aPattern,
-                                                const Document* aDocument);
+                                                const Document* aDocument,
+                                                bool aHasMultiple = false);
 
   /**
    * Calling this adds support for
@@ -2858,21 +2859,6 @@ class nsContentUtils {
       nsPIDOMWindowOuter* aWindow, UIStateChangeType aShowFocusRings);
 
   /**
-   * Given an nsIFile, attempts to read it into aString.
-   *
-   * Note: Use sparingly! This causes main-thread I/O, which causes jank and all
-   * other bad things.
-   */
-  static nsresult SlurpFileToString(nsIFile* aFile, nsACString& aString);
-
-  /**
-   * Returns true if the mime service thinks this file contains an image.
-   *
-   * The content type is returned in aType.
-   */
-  static bool IsFileImage(nsIFile* aFile, nsACString& aType);
-
-  /**
    * Given an IPCDataTransferImageContainer construct an imgIContainer for the
    * image encoded by the transfer item.
    */
@@ -2886,15 +2872,18 @@ class nsContentUtils {
    */
   static bool IsFlavorImage(const nsACString& aFlavor);
 
+  static bool IPCDataTransferItemHasKnownFlavor(
+      const mozilla::dom::IPCDataTransferItem& aItem);
+
   static nsresult IPCTransferableToTransferable(
       const mozilla::dom::IPCDataTransfer& aDataTransfer, bool aAddDataFlavor,
-      nsITransferable* aTransferable);
+      nsITransferable* aTransferable, const bool aFilterUnknownFlavors);
 
   static nsresult IPCTransferableToTransferable(
       const mozilla::dom::IPCDataTransfer& aDataTransfer,
       const bool& aIsPrivateData, nsIPrincipal* aRequestingPrincipal,
       const nsContentPolicyType& aContentPolicyType, bool aAddDataFlavor,
-      nsITransferable* aTransferable);
+      nsITransferable* aTransferable, const bool aFilterUnknownFlavors);
 
   static nsresult IPCTransferableItemToVariant(
       const mozilla::dom::IPCDataTransferItem& aDataTransferItem,
@@ -3281,6 +3270,9 @@ class nsContentUtils {
   static int32_t GetCurrentInnerOrOuterWindowCount() {
     return sInnerOrOuterWindowCount;
   }
+
+  // Return an anonymized URI so that it can be safely exposed publicly.
+  static nsresult AnonymizeURI(nsIURI* aURI, nsCString& aAnonymizedURI);
 
   /**
    * Serializes a JSON-like JS::Value into a string.

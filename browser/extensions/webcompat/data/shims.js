@@ -189,7 +189,7 @@ const AVAILABLE_SHIMS = [
     onlyIfBlockedByETP: true,
   },
   {
-    id: "AdvertisingDotCom",
+    id: "AdvertisingCom",
     platform: "all",
     name: "advertising.com",
     bug: "1701685",
@@ -213,7 +213,7 @@ const AVAILABLE_SHIMS = [
         onlyIfBlockedByETP: true,
       },
       {
-        patterns: ["https://redirect.firefox.etp/adsafeprotected_pixel"],
+        patterns: ["https://redirect.firefox.etp/advertisingdotcom_pixel"],
         target: "tracking-pixel.png",
         types: ["image", "imageset", "xmlhttprequest"],
       },
@@ -603,21 +603,6 @@ const AVAILABLE_SHIMS = [
           "*://www.tripadvisor.com/*", // bug 1779536
           "*://www.office.com/*", // bug 1783921
         ],
-      },
-    ],
-  },
-  {
-    id: "StackBlitz",
-    platform: "all",
-    name: "StackBlitz",
-    bug: "1668408",
-    onlyIfDFPIActive: true,
-    contentScripts: [
-      {
-        js: "stackblitz.js",
-        matches: ["*://*.stackblitz.com/*", "*://*.stackblitz.io/*"],
-        runAt: "document_start",
-        allFrames: true,
       },
     ],
   },

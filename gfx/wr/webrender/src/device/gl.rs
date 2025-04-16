@@ -1165,6 +1165,10 @@ pub struct Device {
     /// at draw call time, neither of which is desirable.
     #[cfg(debug_assertions)]
     shader_is_ready: bool,
+
+    // count created/deleted textures to report in the profiler.
+    pub textures_created: u32,
+    pub textures_deleted: u32,
 }
 
 /// Contains the parameters necessary to bind a draw target.
@@ -1673,9 +1677,11 @@ impl Device {
         // Software webrender relies on the unoptimized shader source.
         let use_optimized_shaders = use_optimized_shaders && !is_software_webrender;
 
-        // On the android emulator, glShaderSource can crash if the source
-        // strings are not null-terminated. See bug 1591945.
-        let requires_null_terminated_shader_source = is_emulator;
+        // On the android emulator, and possibly some Mali devices, glShaderSource
+        // can crash if the source strings are not null-terminated.
+        // See bug 1591945 and bug 1799722.
+        let requires_null_terminated_shader_source = is_emulator || renderer_name == "Mali-T628"
+            || renderer_name == "Mali-T720" || renderer_name == "Mali-T760";
 
         // The android emulator gets confused if you don't explicitly unbind any texture
         // from GL_TEXTURE_EXTERNAL_OES before binding another to GL_TEXTURE_2D. See bug 1636085.
@@ -1894,6 +1900,9 @@ impl Device {
 
             #[cfg(debug_assertions)]
             shader_is_ready: false,
+
+            textures_created: 0,
+            textures_deleted: 0,
         }
     }
 
@@ -2089,6 +2098,9 @@ impl Device {
         {
             self.shader_is_ready = false;
         }
+
+        self.textures_created = 0;
+        self.textures_deleted = 0;
 
         // If our profiler state has changed, apply or remove the profiling
         // wrapper from our GL context.
@@ -2602,6 +2614,8 @@ impl Device {
             }
         }
 
+        self.textures_created += 1;
+
         texture
     }
 
@@ -2937,6 +2951,8 @@ impl Device {
                 *bound_texture = 0;
             }
         }
+
+        self.textures_deleted += 1;
 
         // Disarm the assert in Texture::drop().
         texture.id = 0;
