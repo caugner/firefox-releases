@@ -189,10 +189,14 @@ void Family::AddFaces(FontList* aList, const nsTArray<Face::InitData>& aFaces) {
     if (isSimple && !slots[i]) {
       facePtrs[i] = Pointer::Null();
     } else {
+      const auto* initData = isSimple ? slots[i] : &aFaces[i];
       Pointer fp = aList->Alloc(sizeof(Face));
-      auto face = static_cast<Face*>(fp.ToPtr(aList));
-      (void)new (face) Face(aList, isSimple ? *slots[i] : aFaces[i]);
+      auto* face = static_cast<Face*>(fp.ToPtr(aList));
+      (void)new (face) Face(aList, *initData);
       facePtrs[i] = fp;
+      if (initData->mCharMap) {
+        face->SetCharacterMap(aList, initData->mCharMap);
+      }
     }
   }
 
@@ -340,14 +344,23 @@ void Family::SearchAllFontsForChar(FontList* aList,
                                    GlobalFontMatch* aMatchData) {
   const SharedBitSet* charmap =
       static_cast<const SharedBitSet*>(mCharacterMap.ToPtr(aList));
+  if (!charmap) {
+    // If the face list is not yet initialized, or if character maps have
+    // not been loaded, go ahead and do this now (by sending a message to the
+    // parent process, if we're running in a child).
+    // After this, all faces should have their mCharacterMap set up, and the
+    // family's mCharacterMap should also be set; but in the code below we
+    // don't assume this all succeeded, so it still checks.
+    if (!gfxPlatformFontList::PlatformFontList()->InitializeFamily(this,
+                                                                   true)) {
+      return;
+    }
+    charmap = static_cast<const SharedBitSet*>(mCharacterMap.ToPtr(aList));
+  }
   if (charmap && !charmap->test(aMatchData->mCh)) {
     return;
   }
-  if (!IsInitialized()) {
-    if (!gfxPlatformFontList::PlatformFontList()->InitializeFamily(this)) {
-      return;
-    }
-  }
+
   uint32_t numFaces = NumFaces();
   uint32_t charMapsLoaded = 0;  // number of faces whose charmap is loaded
   Pointer* facePtrs = Faces(aList);
@@ -447,6 +460,9 @@ void Family::SetFacePtrs(FontList* aList, nsTArray<Pointer>& aFaces) {
 void Family::SetupFamilyCharMap(FontList* aList) {
   // Set the character map of the family to the union of all the face cmaps,
   // to allow font fallback searches to more rapidly reject the family.
+  if (!mCharacterMap.IsNull()) {
+    return;
+  }
   if (!XRE_IsParentProcess()) {
     // |this| could be a Family record in either the Families() or Aliases()
     // arrays
@@ -465,10 +481,13 @@ void Family::SetupFamilyCharMap(FontList* aList) {
   for (size_t i = 0; i < NumFaces(); i++) {
     auto f = static_cast<Face*>(faces[i].ToPtr(aList));
     if (!f) {
-      continue;
+      continue;  // Skip missing face (in an incomplete "simple" family)
     }
     auto faceMap = static_cast<SharedBitSet*>(f->mCharacterMap.ToPtr(aList));
-    MOZ_ASSERT(faceMap);
+    if (!faceMap) {
+      return;  // If there's a face where setting up the cmap failed or is not
+               // yet complete, just bail out of creating the family charmap.
+    }
     if (!firstMap) {
       firstMap = faceMap;
       firstMapShmPointer = f->mCharacterMap;

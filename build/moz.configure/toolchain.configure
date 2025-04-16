@@ -168,13 +168,11 @@ with only_when(host_is_osx | target_is_osx):
         if version < sdk_min_version:
             die('SDK version "%s" is too old. Please upgrade to at least %s. '
                 'You may need to point to it using --with-macos-sdk=<path> in your '
-                'mozconfig. Various SDK versions are available from '
-                'https://github.com/phracker/MacOSX-SDKs' % (version, sdk_min_version))
+                'mozconfig.' % (version, sdk_min_version))
         if version > sdk_max_version:
             die('SDK version "%s" is unsupported. Please downgrade to version '
                 '%s. You may need to point to it using --with-macos-sdk=<path> in '
-                'your mozconfig. Various SDK versions are available from '
-                'https://github.com/phracker/MacOSX-SDKs' % (version, sdk_max_version))
+                'your mozconfig.' % (version, sdk_max_version))
         return sdk
 
     set_config('MACOS_SDK_DIR', macos_sdk)
@@ -411,7 +409,7 @@ def get_compiler_info(compiler, language):
         #  if __has_warning("-Wunguarded-availability")
         %VERSION __clang_major__.__clang_minor__.__clang_patchlevel__
         #  endif
-        #elif defined(__GNUC__)
+        #elif defined(__GNUC__) && !defined(__MINGW32__)
         %COMPILER "gcc"
         %VERSION __GNUC__.__GNUC_MINOR__.__GNUC_PATCHLEVEL__
         #endif
@@ -541,7 +539,18 @@ def check_compiler(compiler, language, target):
     # --------------------------------------------------------------------
     has_target = False
     if info.type == 'clang':
-        if not info.kernel or info.kernel != target.kernel or \
+        # Add the target explicitly when the target is aarch64 macosx, because
+        # the clang target is named differently, and we need to work around
+        # https://github.com/rust-lang/rust-bindgen/issues/1871 and
+        # https://github.com/alexcrichton/cc-rs/issues/542 so we always want
+        # the target on the command line, even if the compiler would default to
+        # that.
+        if target.os == 'OSX' and target.cpu == 'aarch64':
+            if '--target=arm64-apple-darwin' not in compiler:
+                flags.append('--target=arm64-apple-darwin')
+            has_target = True
+
+        elif not info.kernel or info.kernel != target.kernel or \
                 not info.endianness or info.endianness != target.endianness:
             flags.append('--target=%s' % target.toolchain)
             has_target = True
@@ -688,16 +697,17 @@ def original_path():
 
 @template
 def toolchain_search_path_for(host_or_target):
-    vc_path = {
-        host: host_vc_compiler_path,
-        target: vc_compiler_path,
+    arch_alias, vc_path = {
+        host: ('host', host_vc_compiler_path),
+        target: ('target', vc_compiler_path),
     }[host_or_target]
 
-    @depends(vc_path, original_path, developer_options, mozbuild_state_path)
+    @depends(dependable(arch_alias), vc_path, original_path, developer_options,
+             mozbuild_state_path)
     @imports('os')
     @imports(_from='os', _import='environ')
-    def toolchain_search_path(vc_compiler_path, original_path, developer_options,
-                              mozbuild_state_path):
+    def toolchain_search_path(arch_alias, vc_compiler_path, original_path,
+                              developer_options, mozbuild_state_path):
         result = list(original_path)
 
         if vc_compiler_path:
@@ -725,8 +735,17 @@ def toolchain_search_path_for(host_or_target):
         result.append(rustup_path)
 
         if developer_options:
-            return bootstrapped + result
-        return result + bootstrapped
+            log.debug('Prioritizing mozbuild state dir in {} toolchain path because '
+                      'you are not building in release mode.'.format(arch_alias))
+            search_path = bootstrapped + result
+        else:
+            log.debug('Prioritizing system over mozbuild state dir in {} '
+                      'toolchain path because you are building in '
+                      'release mode.'.format(arch_alias))
+            search_path = result + bootstrapped
+
+        log.debug('Search path for {} toolchain: {}'.format(arch_alias, search_path))
+        return search_path
     return toolchain_search_path
 
 
@@ -770,7 +789,7 @@ def default_c_compilers(host_or_target, other_c_compiler=None):
     def default_c_compilers(host_or_target, target, toolchain_prefix,
                             *other_c_compiler):
         if host_or_target.kernel == 'WINNT':
-            supported = types = ('clang-cl', 'gcc', 'clang')
+            supported = types = ('clang-cl', 'clang')
         elif host_or_target.kernel == 'Darwin':
             types = ('clang',)
             supported = ('clang', 'gcc')
@@ -2007,6 +2026,13 @@ js_option('--enable-linker', nargs=1,
           when=is_linker_option_enabled)
 
 
+# No-op to enable depending on --enable-linker from default_elfhack in
+# toolkit/moz.configure.
+@depends('--enable-linker', when=is_linker_option_enabled)
+def enable_linker(linker):
+    return linker
+
+
 @depends('--enable-linker', c_compiler, developer_options, '--enable-gold',
          extra_toolchain_flags, target, when=is_linker_option_enabled)
 @checking('for linker', lambda x: x.KIND)
@@ -2445,10 +2471,10 @@ def rc_names(c_compiler, toolchain_prefix):
     if c_compiler.type in ('gcc', 'clang'):
         return tuple('%s%s' % (p, 'windres')
                      for p in ('',) + (toolchain_prefix or ()))
-    return ('rc.exe',)
+    return ('llvm-rc',)
 
 
-check_prog('RC', rc_names, paths=sdk_bin_path, when=target_is_windows)
+check_prog('RC', rc_names, paths=toolchain_search_path, when=target_is_windows)
 
 
 @depends(link, toolchain_prefix, c_compiler)

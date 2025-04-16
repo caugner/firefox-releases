@@ -38,11 +38,6 @@ XPCOMUtils.defineLazyGetter(this, "logConsole", () => {
 
 const USER_DEFINED = "searchTerms";
 
-// Custom search parameters
-const MOZ_PARAM_LOCALE = "moz:locale";
-const MOZ_PARAM_DIST_ID = "moz:distributionID";
-const MOZ_PARAM_OFFICIAL = "moz:official";
-
 // Supported OpenSearch parameters
 // See http://opensearch.a9.com/spec/1.1/querysyntax/#core
 const OS_PARAM_INPUT_ENCODING = "inputEncoding";
@@ -276,18 +271,32 @@ function ParamSubstitution(paramValue, searchTerms, engine) {
 
     // moz: parameters are only available for default search engines.
     if (name.startsWith("moz:") && engine.isAppProvided) {
-      // {moz:locale} and {moz:distributionID} are common
-      if (name == MOZ_PARAM_LOCALE) {
+      // {moz:locale} is common.
+      if (name == SearchUtils.MOZ_PARAM.LOCALE) {
         return Services.locale.requestedLocale;
       }
-      if (name == MOZ_PARAM_DIST_ID) {
+
+      // {moz:date}
+      if (name == SearchUtils.MOZ_PARAM.DATE) {
+        let date = new Date();
+        let pad = number => number.toString().padStart(2, "0");
+        return (
+          String(date.getFullYear()) +
+          pad(date.getMonth() + 1) +
+          pad(date.getDate()) +
+          pad(date.getHours())
+        );
+      }
+
+      // {moz:distributionID} and {moz:official} seem to have little use.
+      if (name == SearchUtils.MOZ_PARAM.DIST_ID) {
         return Services.prefs.getCharPref(
           SearchUtils.BROWSER_SEARCH_PREF + "distributionID",
           Services.appinfo.distributionID || ""
         );
       }
-      // {moz:official} seems to have little use.
-      if (name == MOZ_PARAM_OFFICIAL) {
+
+      if (name == SearchUtils.MOZ_PARAM.OFFICIAL) {
         if (
           Services.prefs.getBoolPref(
             SearchUtils.BROWSER_SEARCH_PREF + "official",
@@ -323,33 +332,6 @@ function ParamSubstitution(paramValue, searchTerms, engine) {
     // Don't replace unknown non-optional parameters.
     return match;
   });
-}
-
-const ENGINE_ALIASES = new Map([
-  ["google", ["@google"]],
-  ["amazondotcom", ["@amazon"]],
-  ["amazon", ["@amazon"]],
-  ["wikipedia", ["@wikipedia"]],
-  ["ebay", ["@ebay"]],
-  ["bing", ["@bing"]],
-  ["ddg", ["@duckduckgo", "@ddg"]],
-  ["yandex", ["@\u044F\u043D\u0434\u0435\u043A\u0441", "@yandex"]],
-  ["baidu", ["@\u767E\u5EA6", "@baidu"]],
-]);
-
-function getInternalAliases(engine) {
-  if (!engine.isAppProvided) {
-    return [];
-  }
-  for (let [name, aliases] of ENGINE_ALIASES) {
-    // This may match multiple engines (amazon vs amazondotcom), they
-    // shouldn't be installed together but if they are the first
-    // is picked.
-    if (engine._shortName.startsWith(name)) {
-      return aliases;
-    }
-  }
-  return [];
 }
 
 /**
@@ -613,6 +595,8 @@ class SearchEngine {
   _queryCharset = null;
   // The engine's raw SearchForm value (URL string pointing to a search form).
   __searchForm = null;
+  // Whether or not to send an attribution request to the server.
+  _sendAttributionRequest = false;
   // The number of days between update checks for new versions
   _updateInterval = null;
   // The url to check at for a new update
@@ -633,14 +617,14 @@ class SearchEngine {
   // notification sent. This allows to skip sending notifications during
   // initialization.
   _engineAddedToStore = false;
-  // The alias coming from the engine definition (via webextension
-  // keyword field for example) may be overridden in the metaData
-  // with a user defined alias.
-  _definedAlias = null;
+  // The aliases coming from the engine definition (via webextension
+  // keyword field for example).
+  _definedAliases = [];
   // The urls associated with this engine.
   _urls = [];
-  // Internal aliases for default engines only.
-  __internalAliases = null;
+  // The query parameter name of the search url, cached in memory to avoid
+  // repeated look-ups.
+  _searchUrlQueryParamName = null;
 
   /**
    * Constructor.
@@ -994,11 +978,20 @@ class SearchEngine {
     this._telemetryId = configuration.telemetryId;
     this._name = searchProvider.name.trim();
     this._regionParams = configuration.regionParams;
+    this._sendAttributionRequest =
+      configuration.sendAttributionRequest ?? false;
 
     if (shortName) {
       this._shortName = shortName;
     }
-    this._definedAlias = searchProvider.keyword?.trim() || null;
+
+    this._definedAliases = [];
+    if (Array.isArray(searchProvider.keyword)) {
+      this._definedAliases = searchProvider.keyword.map(k => k.trim());
+    } else if (searchProvider.keyword?.trim()) {
+      this._definedAliases = [searchProvider.keyword?.trim()];
+    }
+
     this._description = manifest.description;
     if (iconURL) {
       this._setIcon(iconURL, true);
@@ -1165,9 +1158,12 @@ class SearchEngine {
     this._metaData = json._metaData || {};
     this._orderHint = json._orderHint || null;
     this._telemetryId = json._telemetryId || null;
-    this._definedAlias = json._definedAlias || null;
+    this._definedAliases = json._definedAliases || [];
     // These changed keys in Firefox 80, maintain the old keys
     // for backwards compatibility.
+    if (json._definedAlias) {
+      this._definedAliases.push(json._definedAlias);
+    }
     this._filePath = json.filePath || json._filePath || null;
     this._extensionID = json.extensionID || json._extensionID || null;
     this._locale = json.extensionLocale || json._locale || null;
@@ -1220,7 +1216,7 @@ class SearchEngine {
       "_filePath",
       "_extensionID",
       "_locale",
-      "_definedAlias",
+      "_definedAliases",
     ];
 
     let json = {};
@@ -1253,13 +1249,38 @@ class SearchEngine {
   }
 
   // nsISearchEngine
+
+  /**
+   * Get the user-defined alias.
+   *
+   * @returns {string}
+   */
   get alias() {
-    return this.getAttr("alias") || this._definedAlias;
+    return this.getAttr("alias");
   }
+
+  /**
+   * Set the user-defined alias.
+   *
+   * @param {string} val
+   */
   set alias(val) {
     var value = val ? val.trim() : null;
     this.setAttr("alias", value);
     SearchUtils.notifyAction(this, SearchUtils.MODIFIED_TYPE.CHANGED);
+  }
+
+  /**
+   * Returns a list of aliases, including a user defined alias and
+   * a list defined by webextension keywords.
+   *
+   * @returns {Array}
+   */
+  get aliases() {
+    return [
+      ...(this.getAttr("alias") ? [this.getAttr("alias")] : []),
+      ...this._definedAliases,
+    ];
   }
 
   /**
@@ -1381,11 +1402,8 @@ class SearchEngine {
     return this._getSearchFormWithPurpose();
   }
 
-  get _internalAliases() {
-    if (!this.__internalAliases) {
-      this.__internalAliases = getInternalAliases(this);
-    }
-    return this.__internalAliases;
+  get sendAttributionRequest() {
+    return this._sendAttributionRequest;
   }
 
   _getSearchFormWithPurpose(purpose) {
@@ -1489,6 +1507,32 @@ class SearchEngine {
       );
     }
     return url.getSubmission(submissionData, this, purpose);
+  }
+
+  get searchUrlQueryParamName() {
+    if (this._searchUrlQueryParamName != null) {
+      return this._searchUrlQueryParamName;
+    }
+
+    let submission = this.getSubmission(
+      "{searchTerms}",
+      SearchUtils.URL_TYPE.SEARCH
+    );
+
+    if (submission.postData) {
+      Cu.reportError("searchUrlQueryParamName can't handle POST urls.");
+      return (this._searchUrlQueryParamName = "");
+    }
+
+    let queryParams = new URLSearchParams(submission.uri.query);
+    let searchUrlQueryParamName = "";
+    for (let [key, value] of queryParams) {
+      if (value == "{searchTerms}") {
+        searchUrlQueryParamName = key;
+      }
+    }
+
+    return (this._searchUrlQueryParamName = searchUrlQueryParamName);
   }
 
   // from nsISearchEngine

@@ -1302,9 +1302,26 @@ void nsContainerFrame::ReflowOverflowContainerChildren(
       }
       continue;
     }
-    // If the available vertical height has changed, we need to reflow
-    // even if the frame isn't dirty.
-    if (shouldReflowAllKids || frame->IsSubtreeDirty()) {
+
+    auto ScrollableOverflowExceedsAvailableBSize =
+        [this, &aReflowInput](nsIFrame* aFrame) {
+          if (aReflowInput.AvailableBSize() == NS_UNCONSTRAINEDSIZE) {
+            return false;
+          }
+          const auto parentWM = GetWritingMode();
+          const nscoord scrollableOverflowRectBEnd =
+              LogicalRect(parentWM,
+                          aFrame->ScrollableOverflowRectRelativeToParent(),
+                          GetSize())
+                  .BEnd(parentWM);
+          return scrollableOverflowRectBEnd > aReflowInput.AvailableBSize();
+        };
+
+    // If the available block-size has changed, or the existing scrollable
+    // overflow's block-end exceeds it, we need to reflow even if the frame
+    // isn't dirty.
+    if (shouldReflowAllKids || frame->IsSubtreeDirty() ||
+        ScrollableOverflowExceedsAvailableBSize(frame)) {
       // Get prev-in-flow
       nsIFrame* prevInFlow = frame->GetPrevInFlow();
       NS_ASSERTION(prevInFlow,
@@ -2556,12 +2573,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
         auto inlineAxisAlignment =
             isOrthogonal ? stylePos->UsedAlignSelf(GetParent()->Style())._0
                          : stylePos->UsedJustifySelf(GetParent()->Style())._0;
-        // Note: 'normal' means 'start' for elements with an intrinsic size
-        // or ratio in the relevant dimension, otherwise 'stretch'.
-        // https://drafts.csswg.org/css-grid/#grid-item-sizing
-        if ((inlineAxisAlignment == StyleAlignFlags::NORMAL &&
-             !hasIntrinsicISize && !logicalRatio) ||
-            inlineAxisAlignment == StyleAlignFlags::STRETCH) {
+        if (inlineAxisAlignment == StyleAlignFlags::STRETCH) {
           stretchI = eStretch;
         }
       }
@@ -2624,12 +2636,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
         auto blockAxisAlignment =
             !isOrthogonal ? stylePos->UsedAlignSelf(GetParent()->Style())._0
                           : stylePos->UsedJustifySelf(GetParent()->Style())._0;
-        // Note: 'normal' means 'start' for elements with an intrinsic size
-        // or ratio in the relevant dimension, otherwise 'stretch'.
-        // https://drafts.csswg.org/css-grid/#grid-item-sizing
-        if ((blockAxisAlignment == StyleAlignFlags::NORMAL &&
-             !hasIntrinsicBSize && !logicalRatio) ||
-            blockAxisAlignment == StyleAlignFlags::STRETCH) {
+        if (blockAxisAlignment == StyleAlignFlags::STRETCH) {
           stretchB = eStretch;
         }
       }
@@ -2717,33 +2724,31 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
         stretchB = (stretchI == eStretch ? eStretch : eStretchPreservingRatio);
       }
 
-      if (logicalRatio) {
-        if (stretchI == eStretch) {
-          tentISize = iSize;  // * / 'stretch'
-          if (stretchB == eStretch) {
-            tentBSize = bSize;  // 'stretch' / 'stretch'
-          } else if (stretchB == eStretchPreservingRatio) {
-            // 'normal' / 'stretch'
-            tentBSize = logicalRatio.Inverted().ApplyTo(iSize);
-          }
-        } else if (stretchB == eStretch) {
-          tentBSize = bSize;  // 'stretch' / * (except 'stretch')
-          if (stretchI == eStretchPreservingRatio) {
-            // 'stretch' / 'normal'
-            tentISize = logicalRatio.ApplyTo(bSize);
-          }
-        } else if (stretchI == eStretchPreservingRatio) {
-          tentISize = iSize;  // * (except 'stretch') / 'normal'
+      if (stretchI == eStretch) {
+        tentISize = iSize;  // * / 'stretch'
+        if (stretchB == eStretch) {
+          tentBSize = bSize;  // 'stretch' / 'stretch'
+        } else if (stretchB == eStretchPreservingRatio && logicalRatio) {
+          // 'normal' / 'stretch'
           tentBSize = logicalRatio.Inverted().ApplyTo(iSize);
-          if (stretchB == eStretchPreservingRatio && tentBSize > bSize) {
-            // Stretch within the CB size with preserved intrinsic ratio.
-            tentBSize = bSize;  // 'normal' / 'normal'
-            tentISize = logicalRatio.ApplyTo(bSize);
-          }
-        } else if (stretchB == eStretchPreservingRatio) {
-          tentBSize = bSize;  // 'normal' / * (except 'normal' and 'stretch')
+        }
+      } else if (stretchB == eStretch) {
+        tentBSize = bSize;  // 'stretch' / * (except 'stretch')
+        if (stretchI == eStretchPreservingRatio && logicalRatio) {
+          // 'stretch' / 'normal'
           tentISize = logicalRatio.ApplyTo(bSize);
         }
+      } else if (stretchI == eStretchPreservingRatio && logicalRatio) {
+        tentISize = iSize;  // * (except 'stretch') / 'normal'
+        tentBSize = logicalRatio.Inverted().ApplyTo(iSize);
+        if (stretchB == eStretchPreservingRatio && tentBSize > bSize) {
+          // Stretch within the CB size with preserved intrinsic ratio.
+          tentBSize = bSize;  // 'normal' / 'normal'
+          tentISize = logicalRatio.ApplyTo(bSize);
+        }
+      } else if (stretchB == eStretchPreservingRatio && logicalRatio) {
+        tentBSize = bSize;  // 'normal' / * (except 'normal' and 'stretch')
+        tentISize = logicalRatio.ApplyTo(bSize);
       }
 
       // ComputeAutoSizeWithIntrinsicDimensions preserves the ratio when

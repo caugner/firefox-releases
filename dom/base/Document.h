@@ -180,6 +180,7 @@ class ImageTracker;
 class HTMLAllCollection;
 class HTMLBodyElement;
 class HTMLMetaElement;
+class HTMLDialogElement;
 class HTMLSharedElement;
 class HTMLImageElement;
 struct LifecycleCallbackArgs;
@@ -1852,7 +1853,7 @@ class Document : public nsINode,
   void CleanupFullscreenState();
 
   // Pushes aElement onto the top layer
-  bool TopLayerPush(Element* aElement);
+  void TopLayerPush(Element* aElement);
 
   // Removes the topmost element which have aPredicate return true from the top
   // layer. The removed element, if any, is returned.
@@ -1864,10 +1865,14 @@ class Document : public nsINode,
 
   // Pushes the given element into the top of top layer and set fullscreen
   // flag.
-  bool SetFullscreenElement(Element* aElement);
+  void SetFullscreenElement(Element* aElement);
 
   // Cancel the dialog element if the document is blocked by the dialog
   void TryCancelDialog();
+
+  void SetBlockedByModalDialog(HTMLDialogElement&);
+
+  void UnsetBlockedByModalDialog(HTMLDialogElement&);
 
   /**
    * Called when a frame in a child process has entered fullscreen or when a
@@ -2024,7 +2029,7 @@ class Document : public nsINode,
 
   // Observation hooks for style data to propagate notifications
   // to document observers
-  void RuleChanged(StyleSheet&, css::Rule*);
+  void RuleChanged(StyleSheet&, css::Rule*, StyleRuleChangeKind);
   void RuleAdded(StyleSheet&, css::Rule&);
   void RuleRemoved(StyleSheet&, css::Rule&);
   void SheetCloned(StyleSheet&) {}
@@ -2151,9 +2156,7 @@ class Document : public nsINode,
     // When a document is set as TopLevelContentDocument, it must be
     // allowpaymentrequest. We handle the false case while a document is
     // appended in SetSubDocumentFor
-    if (aIsTopLevelContentDocument) {
-      SetAllowPaymentRequest(true);
-    }
+    SetAllowPaymentRequest(aIsTopLevelContentDocument);
   }
 
   bool IsContentDocument() const { return mIsContentDocument; }
@@ -2161,6 +2164,7 @@ class Document : public nsINode,
     mIsContentDocument = aIsContentDocument;
   }
 
+  void ProcessMETATag(HTMLMetaElement* aMetaElement);
   /**
    * Create an element with the specified name, prefix and namespace ID.
    * Returns null if element name parsing failed.
@@ -2629,6 +2633,13 @@ class Document : public nsINode,
            IsStaticDocument();
   }
 
+  void SetHasPrintCallbacks() {
+    MOZ_DIAGNOSTIC_ASSERT(IsStaticDocument());
+    mHasPrintCallbacks = true;
+  }
+
+  bool HasPrintCallbacks() const { return mHasPrintCallbacks; }
+
   /**
    * Register/Unregister the ActivityObserver into mActivityObservers to listen
    * the document's activity changes such as OnPageHide, visibility, activity.
@@ -2681,8 +2692,15 @@ class Document : public nsINode,
 
   uint32_t EventHandlingSuppressed() const { return mEventsSuppressed; }
 
-  bool IsEventHandlingEnabled() {
+  bool IsEventHandlingEnabled() const {
     return !EventHandlingSuppressed() && mScriptGlobalObject;
+  }
+
+  bool WouldScheduleFrameRequestCallbacks() const {
+    // If this function changes to depend on some other variable, make sure to
+    // call UpdateFrameRequestCallbackSchedulingState() calls to the places
+    // where that variable can change.
+    return mPresShell && IsEventHandlingEnabled();
   }
 
   void DecreaseEventSuppression() {
@@ -3016,7 +3034,7 @@ class Document : public nsINode,
    * throttled. We throttle requestAnimationFrame for documents which aren't
    * visible (e.g. scrolled out of the viewport).
    */
-  bool ShouldThrottleFrameRequests();
+  bool ShouldThrottleFrameRequests() const;
 
   // This returns true when the document tree is being teared down.
   bool InUnlinkOrDeletion() { return mInUnlinkOrDeletion; }
@@ -3084,6 +3102,9 @@ class Document : public nsINode,
   const ShadowRootSet& ComposedShadowRoots() const {
     return mComposedShadowRoots;
   }
+
+  // WebIDL method for chrome code.
+  void GetConnectedShadowRoots(nsTArray<RefPtr<ShadowRoot>>&) const;
 
   // Notifies any responsive content added by AddResponsiveContent upon media
   // features values changing.
@@ -3905,6 +3926,8 @@ class Document : public nsINode,
   void AddPendingFrameStaticClone(nsFrameLoaderOwner* aElement,
                                   nsFrameLoader* aStaticCloneOf);
 
+  bool ShouldAvoidNativeTheme() const;
+
  protected:
   void DoUpdateSVGUseElementShadowTrees();
 
@@ -4366,6 +4389,10 @@ class Document : public nsINode,
 
   // True while this document is being cloned to a static document.
   bool mCreatingStaticClone : 1;
+
+  // True if this static document has any <canvas> element with a
+  // mozPrintCallback property at the time of the clone.
+  bool mHasPrintCallbacks : 1;
 
   // True iff the document is being unlinked or deleted.
   bool mInUnlinkOrDeletion : 1;

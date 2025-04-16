@@ -847,7 +847,7 @@ nsXULAppInfo::EnsureContentProcess() {
   if (!XRE_IsParentProcess()) return NS_ERROR_NOT_AVAILABLE;
 
   RefPtr<ContentParent> unused =
-      ContentParent::GetNewOrUsedBrowserProcess(nullptr, DEFAULT_REMOTE_TYPE);
+      ContentParent::GetNewOrUsedBrowserProcess(DEFAULT_REMOTE_TYPE);
   return NS_OK;
 }
 
@@ -1205,8 +1205,8 @@ nsXULAppInfo::SaveMemoryReport() {
     return NS_ERROR_UNEXPECTED;
   }
 
-  rv = dumper->DumpMemoryReportsToNamedFile(path, this, file,
-                                            true /* anonymize */);
+  rv = dumper->DumpMemoryReportsToNamedFile(
+      path, this, file, true /* anonymize */, false /* minimizeMemoryUsage */);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -1450,7 +1450,6 @@ static void DumpHelp() {
       "  --new-instance     Open new instance, not a new window in running "
       "instance.\n"
 #endif
-      "  --UILocale <locale> Start with <locale> resources as UI Locale.\n"
       "  --safe-mode        Disables extensions and themes for this session.\n"
 #ifdef MOZ_BLOCK_PROFILE_DOWNGRADE
       "  --allow-downgrade  Allows downgrading a profile.\n"
@@ -2036,9 +2035,10 @@ static ReturnAbortOnError ShowProfileManager(
       NS_ENSURE_TRUE(appStartup, NS_ERROR_FAILURE);
 
       nsCOMPtr<mozIDOMWindowProxy> newWindow;
-      rv = windowWatcher->OpenWindow(nullptr, kProfileManagerURL, "_blank",
-                                     "centerscreen,chrome,modal,titlebar",
-                                     ioParamBlock, getter_AddRefs(newWindow));
+      rv = windowWatcher->OpenWindow(
+          nullptr, nsDependentCString(kProfileManagerURL), "_blank"_ns,
+          "centerscreen,chrome,modal,titlebar"_ns, ioParamBlock,
+          getter_AddRefs(newWindow));
 
       NS_ENSURE_SUCCESS_LOG(rv, rv);
 
@@ -2463,9 +2463,10 @@ static ReturnAbortOnError CheckDowngrade(nsIFile* aProfileDir,
       paramBlock->SetInt(0, flags);
 
       nsCOMPtr<mozIDOMWindowProxy> newWindow;
-      rv = windowWatcher->OpenWindow(nullptr, kProfileDowngradeURL, "_blank",
-                                     "centerscreen,chrome,modal,titlebar",
-                                     paramBlock, getter_AddRefs(newWindow));
+      rv = windowWatcher->OpenWindow(
+          nullptr, nsDependentCString(kProfileDowngradeURL), "_blank"_ns,
+          "centerscreen,chrome,modal,titlebar"_ns, paramBlock,
+          getter_AddRefs(newWindow));
       NS_ENSURE_SUCCESS(rv, rv);
 
       paramBlock->GetInt(1, &result);
@@ -3098,16 +3099,6 @@ int XREMain::XRE_mainInit(bool* aExitFlag) {
     }
     ChaosMode::SetChaosFeature(feature);
   }
-
-#ifdef MOZ_ASAN_REPORTER
-  // In ASan Reporter builds, we enable certain chaos features by default unless
-  // the user explicitly requests a particular set of features.
-  if (!PR_GetEnv("MOZ_CHAOSMODE")) {
-    ChaosMode::SetChaosFeature(static_cast<ChaosFeature>(
-        ChaosFeature::ThreadScheduling | ChaosFeature::NetworkScheduling |
-        ChaosFeature::TimerScheduling));
-  }
-#endif
 
   if (CheckArgExists("fxr")) {
     gFxREmbedded = true;
@@ -4818,15 +4809,15 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
 
   mozilla::LogModule::Init(gArgc, gArgv);
 
-#ifdef MOZ_CODE_COVERAGE
-  CodeCoverageHandler::Init();
-#endif
-
   NS_SetCurrentThreadName("MainThread");
 
   AUTO_BASE_PROFILER_LABEL("XREMain::XRE_main (around Gecko Profiler)", OTHER);
   AUTO_PROFILER_INIT;
   AUTO_PROFILER_LABEL("XREMain::XRE_main", OTHER);
+
+#ifdef MOZ_CODE_COVERAGE
+  CodeCoverageHandler::Init();
+#endif
 
   nsresult rv = NS_OK;
 
@@ -5132,8 +5123,8 @@ bool BrowserTabsRemoteAutostart() {
   }
   gBrowserTabsRemoteAutostartInitialized = true;
 
-  // If we're in the content process, we are running E10S.
-  if (XRE_IsContentProcess()) {
+  // If we're not in the parent process, we are running E10s.
+  if (!XRE_IsParentProcess()) {
     gBrowserTabsRemoteAutostart = true;
     return gBrowserTabsRemoteAutostart;
   }
@@ -5166,9 +5157,13 @@ bool BrowserTabsRemoteAutostart() {
   }
 
   // Uber override pref for emergency blocking
-  if (gBrowserTabsRemoteAutostart && EnvHasValue("MOZ_FORCE_DISABLE_E10S")) {
-    gBrowserTabsRemoteAutostart = false;
-    status = kE10sForceDisabled;
+  if (gBrowserTabsRemoteAutostart) {
+    const char* forceDisable = PR_GetEnv("MOZ_FORCE_DISABLE_E10S");
+    // The environment variable must match the application version to apply.
+    if (forceDisable && gAppData && !strcmp(forceDisable, gAppData->version)) {
+      gBrowserTabsRemoteAutostart = false;
+      status = kE10sForceDisabled;
+    }
   }
 
   gBrowserTabsRemoteStatus = status;

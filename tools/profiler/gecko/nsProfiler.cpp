@@ -188,12 +188,6 @@ nsProfiler::ResumeSampling() {
 }
 
 NS_IMETHODIMP
-nsProfiler::AddMarker(const char* aMarker) {
-  PROFILER_ADD_MARKER(aMarker, OTHER);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsProfiler::ClearAllPages() {
   profiler_clear_all_pages();
   return NS_OK;
@@ -997,7 +991,7 @@ void nsProfiler::FinishGathering() {
   // Close the root object of the generated JSON.
   mWriter->End();
 
-  UniquePtr<char[]> buf = mWriter->WriteFunc()->CopyData();
+  UniquePtr<char[]> buf = mWriter->ChunkedWriteFunc()->CopyData();
   size_t len = strlen(buf.get());
   nsCString result;
   result.Adopt(buf.release(), len);

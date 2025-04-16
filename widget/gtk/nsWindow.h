@@ -88,16 +88,6 @@ class CurrentX11TimeGetter;
 
 }  // namespace mozilla
 
-class OpaqueRegionState {
- public:
-  OpaqueRegionState() : mRect({-1, -1, -1, -1}), mSubtractedCorners(false){};
-  bool NeedsUpdate(GdkRectangle& aNewRect, bool aNewSubtractedCorners);
-
- private:
-  GdkRectangle mRect;
-  bool mSubtractedCorners;
-};
-
 class nsWindow final : public nsBaseWidget {
  public:
   typedef mozilla::gfx::DrawTarget DrawTarget;
@@ -221,7 +211,6 @@ class nsWindow final : public nsBaseWidget {
   gboolean OnKeyReleaseEvent(GdkEventKey* aEvent);
 
   void OnScrollEvent(GdkEventScroll* aEvent);
-  void OnVisibilityNotifyEvent(GdkEventVisibility* aEvent);
   void OnWindowStateEvent(GtkWidget* aWidget, GdkEventWindowState* aEvent);
   void OnDragDataReceivedEvent(GtkWidget* aWidget, GdkDragContext* aDragContext,
                                gint aX, gint aY,
@@ -229,6 +218,8 @@ class nsWindow final : public nsBaseWidget {
                                guint aTime, gpointer aData);
   gboolean OnPropertyNotifyEvent(GtkWidget* aWidget, GdkEventProperty* aEvent);
   gboolean OnTouchEvent(GdkEventTouch* aEvent);
+
+  void UpdateTopLevelOpaqueRegion();
 
   virtual already_AddRefed<mozilla::gfx::DrawTarget> StartRemoteDrawingInRegion(
       LayoutDeviceIntRegion& aInvalidRegion,
@@ -333,8 +324,6 @@ class nsWindow final : public nsBaseWidget {
   virtual void SetTransparencyMode(nsTransparencyMode aMode) override;
   virtual nsTransparencyMode GetTransparencyMode() override;
   virtual void SetWindowMouseTransparent(bool aIsTransparent) override;
-  virtual void UpdateOpaqueRegion(
-      const LayoutDeviceIntRegion& aOpaqueRegion) override;
   virtual nsresult ConfigureChildren(
       const nsTArray<Configuration>& aConfigurations) override;
   nsresult UpdateTranslucentWindowAlphaInternal(const nsIntRect& aRect,
@@ -499,12 +488,6 @@ class nsWindow final : public nsBaseWidget {
   void ClearCachedResources();
   nsIWidgetListener* GetListener();
 
-#ifdef MOZ_WAYLAND
-  void UpdateTopLevelOpaqueRegionWayland(bool aSubtractCorners);
-#endif
-  void UpdateTopLevelOpaqueRegionGtk(bool aSubtractCorners);
-  void UpdatePopupOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion);
-
   nsWindow* GetTransientForWindowIfPopup();
   bool IsHandlingTouchSequence(GdkEventSequence* aSequence);
 
@@ -513,6 +496,8 @@ class nsWindow final : public nsBaseWidget {
   void NativeMoveResizeWaylandPopup(GdkPoint* aPosition, GdkRectangle* aSize);
 
   GtkTextDirection GetTextDirection();
+
+  void AddCSDDecorationSize(int* aWidth, int* aHeight);
 
 #ifdef MOZ_X11
   typedef enum {GTK_WIDGET_COMPOSIDED_DEFAULT = 0,
@@ -531,7 +516,7 @@ class nsWindow final : public nsBaseWidget {
   bool mWindowShouldStartDragging = false;
   PlatformCompositorWidgetDelegate* mCompositorWidgetDelegate;
 
-  uint32_t mHasMappedToplevel : 1, mIsFullyObscured : 1, mRetryPointerGrab : 1;
+  uint32_t mHasMappedToplevel : 1, mRetryPointerGrab : 1;
   nsSizeMode mSizeState;
   float mAspectRatio;
   float mAspectRatioSaved;
@@ -653,9 +638,6 @@ class nsWindow final : public nsBaseWidget {
   // to force update mBounds after a size state change from a configure
   // event.
   bool mBoundsAreValid;
-
-  // Used to track opaque region changes for toplevel windows.
-  OpaqueRegionState mToplevelOpaqueRegionState;
 
   static bool DragInProgress(void);
 

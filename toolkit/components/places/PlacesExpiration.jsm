@@ -270,7 +270,7 @@ const EXPIRATION_QUERIES = {
             JOIN moz_origins o ON o.id = h.origin_id
             WHERE root = 0
               AND h.foreign_count = 0
-              AND expire_ms BETWEEN 1 AND strftime('%s','now','localtime','start of day','-180 days','utc') * 1000
+              AND i.expire_ms BETWEEN 1 AND strftime('%s','now','localtime','start of day','-180 days','utc') * 1000
               AND (
               h.id IN (
                 SELECT v.place_id
@@ -759,7 +759,6 @@ nsPlacesExpiration.prototype = {
       // idle only if history is dirty, to preserve mobile devices batteries.
       this.expireOnIdle = aNewStatus == STATUS.DIRTY;
     }
-    return aNewStatus;
   },
   get status() {
     return this._status;
@@ -786,7 +785,6 @@ nsPlacesExpiration.prototype = {
     } else {
       this._expireOnIdle = aExpireOnIdle;
     }
-    return this._expireOnIdle;
   },
   get expireOnIdle() {
     return this._expireOnIdle;

@@ -18,6 +18,7 @@
 #include "builtin/TypedObject.h"
 #include "gc/GCProbes.h"
 #include "jit/AtomicOp.h"
+#include "jit/AtomicOperations.h"
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineIC.h"
@@ -26,12 +27,15 @@
 #include "jit/Lowering.h"
 #include "jit/MIR.h"
 #include "jit/MoveEmitter.h"
+#include "jit/SharedICHelpers.h"
 #include "jit/Simulator.h"
 #include "js/Conversions.h"
 #include "js/Printf.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/ArrayBufferViewObject.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/TraceLogging.h"
+#include "vm/TypedArrayObject.h"
 
 #include "gc/Nursery-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
@@ -1078,12 +1082,7 @@ void MacroAssembler::initTypedArraySlots(Register obj, Register temp,
     for (size_t i = 0; i < numZeroPointers; i++) {
       storePtr(ImmWord(0), Address(obj, dataOffset + i * sizeof(char*)));
     }
-#ifdef DEBUG
-    if (nbytes == 0) {
-      store8(Imm32(TypedArrayObject::ZeroLengthArrayData),
-             Address(obj, dataSlotOffset));
-    }
-#endif
+    MOZ_ASSERT(nbytes > 0, "Zero-length TypedArrays need ZeroLengthArrayData");
   } else {
     if (lengthKind == TypedArrayLength::Fixed) {
       move32(Imm32(length), lengthReg);
@@ -1151,9 +1150,11 @@ void MacroAssembler::initGCSlots(Register obj, Register temp,
     fillSlotsWithUninitialized(Address(obj, offset), temp, startOfUninitialized,
                                std::min(startOfUndefined, nfixed));
 
-    offset = NativeObject::getFixedSlotOffset(startOfUndefined);
-    fillSlotsWithUndefined(Address(obj, offset), temp, startOfUndefined,
-                           nfixed);
+    if (startOfUndefined < nfixed) {
+      offset = NativeObject::getFixedSlotOffset(startOfUndefined);
+      fillSlotsWithUndefined(Address(obj, offset), temp, startOfUndefined,
+                             nfixed);
+    }
   }
 
   if (ndynamic) {
@@ -1798,6 +1799,73 @@ void MacroAssembler::debugAssertContextRealm(const void* realm,
   assumeUnreachable("Unexpected context realm");
   bind(&ok);
 #endif
+}
+
+void MacroAssembler::setIsCrossRealmArrayConstructor(Register obj,
+                                                     Register output) {
+#ifdef DEBUG
+  Label notProxy;
+  branchTestObjectIsProxy(false, obj, output, &notProxy);
+  assumeUnreachable("Unexpected proxy in setIsCrossRealmArrayConstructor");
+  bind(&notProxy);
+#endif
+
+  // The object's realm must not be cx->realm.
+  Label isFalse, done;
+  loadPtr(Address(obj, JSObject::offsetOfGroup()), output);
+  loadPtr(Address(output, ObjectGroup::offsetOfRealm()), output);
+  branchPtr(Assembler::Equal, AbsoluteAddress(ContextRealmPtr()), output,
+            &isFalse);
+
+  // The object must be a function.
+  branchTestObjClass(Assembler::NotEqual, obj, &JSFunction::class_, output, obj,
+                     &isFalse);
+
+  // The function must be the ArrayConstructor native.
+  branchPtr(Assembler::NotEqual,
+            Address(obj, JSFunction::offsetOfNativeOrEnv()),
+            ImmPtr(js::ArrayConstructor), &isFalse);
+
+  move32(Imm32(1), output);
+  jump(&done);
+
+  bind(&isFalse);
+  move32(Imm32(0), output);
+
+  bind(&done);
+}
+
+void MacroAssembler::setIsDefinitelyTypedArrayConstructor(Register obj,
+                                                          Register output) {
+  Label isFalse, isTrue, done;
+
+  // The object must be a function. (Wrappers are not supported.)
+  branchTestObjClass(Assembler::NotEqual, obj, &JSFunction::class_, output, obj,
+                     &isFalse);
+
+  // Load the native into |output|.
+  loadPtr(Address(obj, JSFunction::offsetOfNativeOrEnv()), output);
+
+  auto branchIsTypedArrayCtor = [&](Scalar::Type type) {
+    // The function must be a TypedArrayConstructor native (from any realm).
+    JSNative constructor = TypedArrayConstructorNative(type);
+    branchPtr(Assembler::Equal, output, ImmPtr(constructor), &isTrue);
+  };
+
+#define TYPED_ARRAY_CONSTRUCTOR_NATIVE(T, N) branchIsTypedArrayCtor(Scalar::N);
+  JS_FOR_EACH_TYPED_ARRAY(TYPED_ARRAY_CONSTRUCTOR_NATIVE)
+#undef TYPED_ARRAY_CONSTRUCTOR_NATIVE
+
+  // Falls through to the false case.
+
+  bind(&isFalse);
+  move32(Imm32(0), output);
+  jump(&done);
+
+  bind(&isTrue);
+  move32(Imm32(1), output);
+
+  bind(&done);
 }
 
 void MacroAssembler::guardGroupHasUnanalyzedNewScript(Register group,
@@ -3088,6 +3156,68 @@ void MacroAssembler::pow32(Register base, Register power, Register dest,
   bind(&done);
 }
 
+void MacroAssembler::signInt32(Register input, Register output) {
+  MOZ_ASSERT(input != output);
+
+  Label done;
+  move32(input, output);
+  rshift32Arithmetic(Imm32(31), output);
+  branch32(Assembler::LessThanOrEqual, input, Imm32(0), &done);
+  move32(Imm32(1), output);
+  bind(&done);
+}
+
+void MacroAssembler::signDouble(FloatRegister input, FloatRegister output) {
+  MOZ_ASSERT(input != output);
+
+  Label done, zeroOrNaN, negative;
+  loadConstantDouble(0.0, output);
+  branchDouble(Assembler::DoubleEqualOrUnordered, input, output, &zeroOrNaN);
+  branchDouble(Assembler::DoubleLessThan, input, output, &negative);
+
+  loadConstantDouble(1.0, output);
+  jump(&done);
+
+  bind(&negative);
+  loadConstantDouble(-1.0, output);
+  jump(&done);
+
+  bind(&zeroOrNaN);
+  moveDouble(input, output);
+
+  bind(&done);
+}
+
+void MacroAssembler::signDoubleToInt32(FloatRegister input, Register output,
+                                       FloatRegister temp, Label* fail) {
+  MOZ_ASSERT(input != temp);
+
+  Label done, zeroOrNaN, negative;
+  loadConstantDouble(0.0, temp);
+  branchDouble(Assembler::DoubleEqualOrUnordered, input, temp, &zeroOrNaN);
+  branchDouble(Assembler::DoubleLessThan, input, temp, &negative);
+
+  move32(Imm32(1), output);
+  jump(&done);
+
+  bind(&negative);
+  move32(Imm32(-1), output);
+  jump(&done);
+
+  // Fail for NaN and negative zero.
+  bind(&zeroOrNaN);
+  branchDouble(Assembler::DoubleUnordered, input, input, fail);
+
+  // The easiest way to distinguish -0.0 from 0.0 is that 1.0/-0.0
+  // is -Infinity instead of Infinity.
+  loadConstantDouble(1.0, temp);
+  divDouble(input, temp);
+  branchDouble(Assembler::DoubleLessThan, temp, input, fail);
+  move32(Imm32(0), output);
+
+  bind(&done);
+}
+
 void MacroAssembler::randomDouble(Register rng, FloatRegister dest,
                                   Register64 temp0, Register64 temp1) {
   using mozilla::non_crypto::XorShift128PlusRNG;
@@ -3148,6 +3278,53 @@ void MacroAssembler::randomDouble(Register rng, FloatRegister dest,
 
   // dest *= ScaleInv
   mulDoublePtr(ImmPtr(&ScaleInv), s0Reg.scratchReg(), dest);
+}
+
+void MacroAssembler::sameValueDouble(FloatRegister left, FloatRegister right,
+                                     FloatRegister temp, Register dest) {
+  Label nonEqual, isSameValue, isNotSameValue;
+  branchDouble(Assembler::DoubleNotEqualOrUnordered, left, right, &nonEqual);
+  {
+    // First, test for being equal to 0.0, which also includes -0.0.
+    loadConstantDouble(0.0, temp);
+    branchDouble(Assembler::DoubleNotEqual, left, temp, &isSameValue);
+
+    // The easiest way to distinguish -0.0 from 0.0 is that 1.0/-0.0
+    // is -Infinity instead of Infinity.
+    Label isNegInf;
+    loadConstantDouble(1.0, temp);
+    divDouble(left, temp);
+    branchDouble(Assembler::DoubleLessThan, temp, left, &isNegInf);
+    {
+      loadConstantDouble(1.0, temp);
+      divDouble(right, temp);
+      branchDouble(Assembler::DoubleGreaterThan, temp, right, &isSameValue);
+      jump(&isNotSameValue);
+    }
+    bind(&isNegInf);
+    {
+      loadConstantDouble(1.0, temp);
+      divDouble(right, temp);
+      branchDouble(Assembler::DoubleLessThan, temp, right, &isSameValue);
+      jump(&isNotSameValue);
+    }
+  }
+  bind(&nonEqual);
+  {
+    // Test if both values are NaN.
+    branchDouble(Assembler::DoubleOrdered, left, left, &isNotSameValue);
+    branchDouble(Assembler::DoubleOrdered, right, right, &isNotSameValue);
+  }
+
+  Label done;
+  bind(&isSameValue);
+  move32(Imm32(1), dest);
+  jump(&done);
+
+  bind(&isNotSameValue);
+  move32(Imm32(0), dest);
+
+  bind(&done);
 }
 
 void MacroAssembler::branchIfNotRegExpPrototypeOptimizable(Register proto,
@@ -3691,6 +3868,26 @@ void MacroAssembler::emitPreBarrierFastPath(JSRuntime* rt, MIRType type,
 }
 
 // ========================================================================
+// JS atomic operations.
+
+void MacroAssembler::atomicIsLockFreeJS(Register value, Register output) {
+  // Keep this in sync with isLockfreeJS() in jit/AtomicOperations.h.
+  MOZ_ASSERT(AtomicOperations::isLockfreeJS(1));  // Implementation artifact
+  MOZ_ASSERT(AtomicOperations::isLockfreeJS(2));  // Implementation artifact
+  MOZ_ASSERT(AtomicOperations::isLockfreeJS(4));  // Spec requirement
+  MOZ_ASSERT(
+      !AtomicOperations::isLockfreeJS(8));  // Implementation invariant, for now
+
+  Label done;
+  move32(Imm32(1), output);
+  branch32(Assembler::Equal, value, Imm32(4), &done);
+  branch32(Assembler::Equal, value, Imm32(2), &done);
+  branch32(Assembler::Equal, value, Imm32(1), &done);
+  move32(Imm32(0), output);
+  bind(&done);
+}
+
+// ========================================================================
 // Spectre Mitigations.
 
 void MacroAssembler::spectreMaskIndex(Register index, Register length,
@@ -3768,6 +3965,22 @@ void MacroAssembler::debugAssertObjHasFixedSlots(Register obj,
 #endif
 }
 
+void MacroAssembler::branchArrayIsNotPacked(Register array, Register temp1,
+                                            Register temp2, Label* label) {
+  loadPtr(Address(array, NativeObject::offsetOfElements()), temp1);
+
+  // Test length == initializedLength.
+  Label done;
+  Address initLength(temp1, ObjectElements::offsetOfInitializedLength());
+  load32(Address(temp1, ObjectElements::offsetOfLength()), temp2);
+  branch32(Assembler::NotEqual, initLength, temp2, label);
+
+  // Test the NON_PACKED flag.
+  Address flags(temp1, ObjectElements::offsetOfFlags());
+  branchTest32(Assembler::NonZero, flags, Imm32(ObjectElements::NON_PACKED),
+               label);
+}
+
 void MacroAssembler::setIsPackedArray(Register obj, Register output,
                                       Register temp) {
   // Ensure it's an ArrayObject.
@@ -3775,19 +3988,9 @@ void MacroAssembler::setIsPackedArray(Register obj, Register output,
   branchTestObjClass(Assembler::NotEqual, obj, &ArrayObject::class_, temp, obj,
                      &notPackedArray);
 
-  loadPtr(Address(obj, NativeObject::offsetOfElements()), temp);
+  branchArrayIsNotPacked(obj, temp, output, &notPackedArray);
 
-  // Test length == initializedLength.
   Label done;
-  Address initLength(temp, ObjectElements::offsetOfInitializedLength());
-  load32(Address(temp, ObjectElements::offsetOfLength()), output);
-  branch32(Assembler::NotEqual, initLength, output, &notPackedArray);
-
-  // Test the NON_PACKED flag.
-  Address flags(temp, ObjectElements::offsetOfFlags());
-  branchTest32(Assembler::NonZero, flags, Imm32(ObjectElements::NON_PACKED),
-               &notPackedArray);
-
   move32(Imm32(1), output);
   jump(&done);
 
@@ -3795,6 +3998,208 @@ void MacroAssembler::setIsPackedArray(Register obj, Register output,
   move32(Imm32(0), output);
 
   bind(&done);
+}
+
+void MacroAssembler::packedArrayPop(Register array, ValueOperand output,
+                                    Register temp1, Register temp2,
+                                    Label* fail) {
+  // Load obj->elements in temp1.
+  loadPtr(Address(array, NativeObject::offsetOfElements()), temp1);
+
+  // Check flags.
+  static constexpr uint32_t UnhandledFlags =
+      ObjectElements::Flags::NON_PACKED | ObjectElements::Flags::COPY_ON_WRITE |
+      ObjectElements::Flags::NONWRITABLE_ARRAY_LENGTH |
+      ObjectElements::Flags::NOT_EXTENSIBLE |
+      ObjectElements::Flags::MAYBE_IN_ITERATION;
+  Address flags(temp1, ObjectElements::offsetOfFlags());
+  branchTest32(Assembler::NonZero, flags, Imm32(UnhandledFlags), fail);
+
+  // Load length in temp2. Ensure length == initializedLength.
+  Address lengthAddr(temp1, ObjectElements::offsetOfLength());
+  Address initLengthAddr(temp1, ObjectElements::offsetOfInitializedLength());
+  load32(lengthAddr, temp2);
+  branch32(Assembler::NotEqual, initLengthAddr, temp2, fail);
+
+  // Result is |undefined| if length == 0.
+  Label notEmpty, done;
+  branchTest32(Assembler::NonZero, temp2, temp2, &notEmpty);
+  {
+    moveValue(UndefinedValue(), output);
+    jump(&done);
+  }
+
+  bind(&notEmpty);
+
+  // Load the last element.
+  sub32(Imm32(1), temp2);
+  BaseObjectElementIndex elementAddr(temp1, temp2);
+  loadValue(elementAddr, output);
+
+  // Pre-barrier the element because we're removing it from the array.
+  EmitPreBarrier(*this, elementAddr, MIRType::Value);
+
+  // Update length and initializedLength.
+  store32(temp2, lengthAddr);
+  store32(temp2, initLengthAddr);
+
+  bind(&done);
+}
+
+void MacroAssembler::packedArrayShift(Register array, ValueOperand output,
+                                      Register temp1, Register temp2,
+                                      LiveRegisterSet volatileRegs,
+                                      Label* fail) {
+  // Load obj->elements in temp1.
+  loadPtr(Address(array, NativeObject::offsetOfElements()), temp1);
+
+  // Check flags.
+  static constexpr uint32_t UnhandledFlags =
+      ObjectElements::Flags::NON_PACKED | ObjectElements::Flags::COPY_ON_WRITE |
+      ObjectElements::Flags::NONWRITABLE_ARRAY_LENGTH |
+      ObjectElements::Flags::NOT_EXTENSIBLE |
+      ObjectElements::Flags::MAYBE_IN_ITERATION;
+  Address flags(temp1, ObjectElements::offsetOfFlags());
+  branchTest32(Assembler::NonZero, flags, Imm32(UnhandledFlags), fail);
+
+  // Load length in temp2. Ensure length == initializedLength.
+  Address lengthAddr(temp1, ObjectElements::offsetOfLength());
+  Address initLengthAddr(temp1, ObjectElements::offsetOfInitializedLength());
+  load32(lengthAddr, temp2);
+  branch32(Assembler::NotEqual, initLengthAddr, temp2, fail);
+
+  // Result is |undefined| if length == 0.
+  Label notEmpty, done;
+  branchTest32(Assembler::NonZero, temp2, temp2, &notEmpty);
+  {
+    moveValue(UndefinedValue(), output);
+    jump(&done);
+  }
+
+  bind(&notEmpty);
+
+  // Load the first element.
+  Address elementAddr(temp1, 0);
+  loadValue(elementAddr, output);
+
+  // Pre-barrier the element because we're removing it from the array.
+  EmitPreBarrier(*this, elementAddr, MIRType::Value);
+
+  // Move the other elements.
+  {
+    // Ensure output and temp2 are in volatileRegs. Don't preserve temp1.
+    volatileRegs.takeUnchecked(temp1);
+    if (output.hasVolatileReg()) {
+      volatileRegs.addUnchecked(output);
+    }
+    if (temp2.volatile_()) {
+      volatileRegs.addUnchecked(temp2);
+    }
+
+    PushRegsInMask(volatileRegs);
+
+    setupUnalignedABICall(temp1);
+    passABIArg(array);
+    callWithABI(JS_FUNC_TO_DATA_PTR(void*, ArrayShiftMoveElements));
+
+    PopRegsInMask(volatileRegs);
+
+    // Reload the elements. The call may have updated it.
+    loadPtr(Address(array, NativeObject::offsetOfElements()), temp1);
+  }
+
+  // Update length and initializedLength.
+  sub32(Imm32(1), temp2);
+  store32(temp2, lengthAddr);
+  store32(temp2, initLengthAddr);
+
+  bind(&done);
+}
+
+static constexpr bool ValidateShiftRange(Scalar::Type from, Scalar::Type to) {
+  for (Scalar::Type type = from; type < to; type = Scalar::Type(type + 1)) {
+    if (TypedArrayShift(type) != TypedArrayShift(from)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void MacroAssembler::typedArrayElementShift(Register obj, Register output) {
+  static_assert(Scalar::Int8 == 0, "Int8 is the first typed array class");
+  static_assert(
+      (Scalar::BigUint64 - Scalar::Int8) == Scalar::MaxTypedArrayViewType - 1,
+      "BigUint64 is the last typed array class");
+
+  Label zero, one, two, three, done;
+
+  loadObjClassUnsafe(obj, output);
+
+  static_assert(ValidateShiftRange(Scalar::Int8, Scalar::Int16),
+                "shift amount is zero in [Int8, Int16)");
+  branchPtr(Assembler::Below, output,
+            ImmPtr(TypedArrayObject::classForType(Scalar::Int16)), &zero);
+
+  static_assert(ValidateShiftRange(Scalar::Int16, Scalar::Int32),
+                "shift amount is one in [Int16, Int32)");
+  branchPtr(Assembler::Below, output,
+            ImmPtr(TypedArrayObject::classForType(Scalar::Int32)), &one);
+
+  static_assert(ValidateShiftRange(Scalar::Int32, Scalar::Float64),
+                "shift amount is two in [Int32, Float64)");
+  branchPtr(Assembler::Below, output,
+            ImmPtr(TypedArrayObject::classForType(Scalar::Float64)), &two);
+
+  static_assert(ValidateShiftRange(Scalar::Float64, Scalar::Uint8Clamped),
+                "shift amount is three in [Float64, Uint8Clamped)");
+  branchPtr(Assembler::Below, output,
+            ImmPtr(TypedArrayObject::classForType(Scalar::Uint8Clamped)),
+            &three);
+
+  static_assert(ValidateShiftRange(Scalar::Uint8Clamped, Scalar::BigInt64),
+                "shift amount is zero in [Uint8Clamped, BigInt64)");
+  branchPtr(Assembler::Below, output,
+            ImmPtr(TypedArrayObject::classForType(Scalar::BigInt64)), &zero);
+
+  static_assert(
+      ValidateShiftRange(Scalar::BigInt64, Scalar::MaxTypedArrayViewType),
+      "shift amount is three in [BigInt64, MaxTypedArrayViewType)");
+  // Fall through for BigInt64 and BigUint64
+
+  bind(&three);
+  move32(Imm32(3), output);
+  jump(&done);
+
+  bind(&two);
+  move32(Imm32(2), output);
+  jump(&done);
+
+  bind(&one);
+  move32(Imm32(1), output);
+  jump(&done);
+
+  bind(&zero);
+  move32(Imm32(0), output);
+
+  bind(&done);
+}
+
+void MacroAssembler::branchIfClassIsNotTypedArray(Register clasp,
+                                                  Label* notTypedArray) {
+  static_assert(Scalar::Int8 == 0, "Int8 is the first typed array class");
+  const JSClass* firstTypedArrayClass =
+      TypedArrayObject::classForType(Scalar::Int8);
+
+  static_assert(
+      (Scalar::BigUint64 - Scalar::Int8) == Scalar::MaxTypedArrayViewType - 1,
+      "BigUint64 is the last typed array class");
+  const JSClass* lastTypedArrayClass =
+      TypedArrayObject::classForType(Scalar::BigUint64);
+
+  branchPtr(Assembler::Below, clasp, ImmPtr(firstTypedArrayClass),
+            notTypedArray);
+  branchPtr(Assembler::Above, clasp, ImmPtr(lastTypedArrayClass),
+            notTypedArray);
 }
 
 void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,

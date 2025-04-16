@@ -25,6 +25,7 @@
 #include "jsfriendapi.h"
 #include "js/Array.h"  // JS::GetArrayLength, JS::IsArrayObject, JS::NewArrayObject
 #include "js/CharacterEncoding.h"
+#include "js/experimental/TypedData.h"  // JS_GetArrayBufferViewType, JS_GetArrayBufferViewData, JS_GetTypedArrayLength, JS_IsTypedArrayObject
 #include "js/MemoryFunctions.h"
 
 #include "mozilla/dom/BindingUtils.h"
@@ -260,7 +261,7 @@ bool XPCConvert::NativeData2JS(JSContext* cx, MutableHandleValue d,
         }
 
         size_t written = LossyConvertUtf8toLatin1(
-            *utf8String, MakeSpan(reinterpret_cast<char*>(buffer.get()), len));
+            *utf8String, Span(reinterpret_cast<char*>(buffer.get()), len));
         buffer[written] = 0;
 
         // written can never exceed len, so the truncation is OK.
@@ -298,8 +299,8 @@ bool XPCConvert::NativeData2JS(JSContext* cx, MutableHandleValue d,
       // code units in the source. That's why it's OK to claim the
       // output buffer has len + 1 space but then still expect to
       // have space for the zero terminator.
-      size_t written = ConvertUtf8toUtf16(
-          *utf8String, MakeSpan(buffer.get(), allocLen.value()));
+      size_t written =
+          ConvertUtf8toUtf16(*utf8String, Span(buffer.get(), allocLen.value()));
       MOZ_RELEASE_ASSERT(written <= len);
       buffer[written] = 0;
 
@@ -685,7 +686,7 @@ bool XPCConvert::JSData2Native(JSContext* cx, void* d, HandleValue s,
       }
 
       mozilla::DebugOnly<size_t> written = JS::DeflateStringToUTF8Buffer(
-          linear, mozilla::MakeSpan(rs->BeginWriting(), utf8Length));
+          linear, mozilla::Span(rs->BeginWriting(), utf8Length));
       MOZ_ASSERT(written == utf8Length);
 
       return true;

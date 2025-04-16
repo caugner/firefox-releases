@@ -138,6 +138,8 @@ class WebPlatformTestsRunnerSetup(MozbuildObject):
         kwargs["channel"] = None
         kwargs["prompt"] = True
         kwargs["install_browser"] = False
+        kwargs["install_webdriver"] = None
+        kwargs["affected"] = None
 
         # Install the deps
         # We do this explicitly to avoid calling pip with options that aren't
@@ -336,7 +338,7 @@ def create_parser_testpaths():
 @CommandProvider
 class MachCommands(MachCommandBase):
     def setup(self):
-        self._activate_virtualenv()
+        self.activate_virtualenv()
 
     @Command("web-platform-tests",
              category="testing",

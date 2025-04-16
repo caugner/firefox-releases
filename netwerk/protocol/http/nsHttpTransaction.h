@@ -13,6 +13,7 @@
 #include "EventTokenBucket.h"
 #include "nsCOMPtr.h"
 #include "nsThreadUtils.h"
+#include "nsIDNSListener.h"
 #include "nsIInterfaceRequestor.h"
 #include "TimingStruct.h"
 #include "Http2Push.h"
@@ -48,13 +49,15 @@ class nsHttpTransaction final : public nsAHttpTransaction,
                                 public ATokenBucketEvent,
                                 public nsIInputStreamCallback,
                                 public nsIOutputStreamCallback,
-                                public ARefBase {
+                                public ARefBase,
+                                public nsIDNSListener {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSAHTTPTRANSACTION
   NS_DECL_HTTPTRANSACTIONSHELL
   NS_DECL_NSIINPUTSTREAMCALLBACK
   NS_DECL_NSIOUTPUTSTREAMCALLBACK
+  NS_DECL_NSIDNSLISTENER
 
   nsHttpTransaction();
 
@@ -73,6 +76,8 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void EnableKeepAlive() { mCaps |= NS_HTTP_ALLOW_KEEPALIVE; }
   void MakeSticky() { mCaps |= NS_HTTP_STICKY_CONNECTION; }
   void MakeNonSticky() override { mCaps &= ~NS_HTTP_STICKY_CONNECTION; }
+
+  void MakeDontWaitHTTPSSVC() { mCaps &= ~NS_HTTP_WAIT_HTTPSSVC_RESULT; }
 
   // SetPriority() may only be used by the connection manager.
   void SetPriority(int32_t priority) { mPriority = priority; }
@@ -144,6 +149,8 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // transaction.
   void OnPush(Http2PushedStreamWrapper* aStream);
 
+  void UpdateConnectionInfo(nsHttpConnectionInfo* aConnInfo);
+
  private:
   friend class DeleteHttpTransaction;
   virtual ~nsHttpTransaction();
@@ -182,6 +189,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // connection from very start of the authentication process.
   void CheckForStickyAuthScheme();
   void CheckForStickyAuthSchemeAt(nsHttpAtom const& header);
+  bool IsStickyAuthSchemeAt(nsACString const& auth);
 
   // Called from WriteSegments.  Checks for conditions whether to throttle
   // reading the content.  When this returns true, WriteSegments returns
@@ -232,6 +240,10 @@ class nsHttpTransaction final : public nsAHttpTransaction,
 
   RefPtr<nsAHttpConnection> mConnection;
   RefPtr<nsHttpConnectionInfo> mConnInfo;
+  // This is only set in UpdateConnectionInfo() when we have received a SVCB RR.
+  // When the SVCB connection is failed, this transaction will be restarted with
+  // this fallback connection info.
+  RefPtr<nsHttpConnectionInfo> mFallbackConnInfo;
   nsHttpRequestHead* mRequestHead;    // weak ref
   nsHttpResponseHead* mResponseHead;  // owning pointer
 
@@ -341,6 +353,10 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   UniquePtr<nsHttpHeaderArray> mForTakeResponseTrailers;
   bool mResponseTrailersTaken;
 
+  // Set when this transaction was restarted by call to Restart().  Used to tell
+  // the http channel to reset proxy authentication.
+  Atomic<bool> mRestarted;
+
   // The time when the transaction was submitted to the Connection Manager
   TimeStamp mPendingTime;
 
@@ -426,6 +442,8 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   OnPushCallback mOnPushCallback;
   nsDataHashtable<nsUint32HashKey, RefPtr<Http2PushedStreamWrapper>>
       mIDToStreamMap;
+
+  nsCOMPtr<nsICancelable> mDNSRequest;
 };
 
 }  // namespace net

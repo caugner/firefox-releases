@@ -346,7 +346,7 @@ class TaskGraphGenerator(object):
 
         # this is used for testing experimental optimization strategies
         strategies = os.environ.get('TASKGRAPH_OPTIMIZE_STRATEGIES',
-                                    parameters['try_task_config'].get('optimize-strategies'))
+                                    parameters.get('optimize_strategies'))
         if strategies:
             strategies = find_object(strategies)
 
@@ -363,7 +363,8 @@ class TaskGraphGenerator(object):
         yield verifications('optimized_task_graph', optimized_task_graph, graph_config, parameters)
 
         morphed_task_graph, label_to_taskid = morph(
-            optimized_task_graph, label_to_taskid, parameters, graph_config)
+            optimized_task_graph, label_to_taskid, parameters, graph_config,
+            self._decision_task_id)
 
         yield 'label_to_taskid', label_to_taskid
         yield verifications('morphed_task_graph', morphed_task_graph, graph_config, parameters)

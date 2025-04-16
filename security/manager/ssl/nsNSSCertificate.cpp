@@ -107,7 +107,6 @@ bool nsNSSCertificate::InitFromDER(char* certDER, int derLen) {
 
 nsNSSCertificate::nsNSSCertificate(CERTCertificate* cert)
     : mCert(nullptr),
-      mPermDelete(false),
       mCertType(CERT_TYPE_NOT_YET_INITIALIZED),
       mSubjectAltNames() {
   if (cert) {
@@ -118,23 +117,8 @@ nsNSSCertificate::nsNSSCertificate(CERTCertificate* cert)
 
 nsNSSCertificate::nsNSSCertificate()
     : mCert(nullptr),
-      mPermDelete(false),
       mCertType(CERT_TYPE_NOT_YET_INITIALIZED),
       mSubjectAltNames() {}
-
-nsNSSCertificate::~nsNSSCertificate() {
-  if (mPermDelete) {
-    if (mCertType == nsNSSCertificate::USER_CERT) {
-      nsCOMPtr<nsIInterfaceRequestor> cxt = new PipUIContext();
-      PK11_DeleteTokenCertAndKey(mCert.get(), cxt);
-    } else if (mCert->slot && !PK11_IsReadOnly(mCert->slot)) {
-      // If the list of built-ins does contain a non-removable
-      // copy of this certificate, our call will not remove
-      // the certificate permanently, but rather remove all trust.
-      SEC_DeletePermCertificate(mCert.get());
-    }
-  }
-}
 
 static uint32_t getCertType(CERTCertificate* cert) {
   nsNSSCertTrust trust(cert->trust);
@@ -184,21 +168,6 @@ nsNSSCertificate::GetIsBuiltInRoot(bool* aIsBuiltInRoot) {
   if (rv != pkix::Result::Success) {
     return NS_ERROR_FAILURE;
   }
-  return NS_OK;
-}
-
-nsresult nsNSSCertificate::MarkForPermDeletion() {
-  // make sure user is logged in to the token
-  nsCOMPtr<nsIInterfaceRequestor> ctx = new PipUIContext();
-
-  if (mCert->slot && PK11_NeedLogin(mCert->slot) &&
-      !PK11_NeedUserInit(mCert->slot) && !PK11_IsInternal(mCert->slot)) {
-    if (SECSuccess != PK11_Authenticate(mCert->slot, true, ctx)) {
-      return NS_ERROR_FAILURE;
-    }
-  }
-
-  mPermDelete = true;
   return NS_OK;
 }
 
@@ -599,7 +568,8 @@ nsNSSCertificate::GetIssuerName(nsAString& _issuerName) {
 NS_IMETHODIMP
 nsNSSCertificate::GetSerialNumber(nsAString& _serialNumber) {
   _serialNumber.Truncate();
-  UniquePORTString tmpstr(CERT_Hexify(&mCert->serialNumber, 1));
+  UniquePORTString tmpstr(
+      CERT_Hexify(&mCert->serialNumber, true /* use colon delimiters */));
   if (tmpstr) {
     _serialNumber = NS_ConvertASCIItoUTF16(tmpstr.get());
     return NS_OK;
@@ -617,8 +587,8 @@ nsresult nsNSSCertificate::GetCertificateHash(nsAString& aFingerprint,
     return rv;
   }
 
-  // CERT_Hexify's second argument is an int that is interpreted as a boolean
-  UniquePORTString fpStr(CERT_Hexify(const_cast<SECItem*>(&digest.get()), 1));
+  UniquePORTString fpStr(CERT_Hexify(const_cast<SECItem*>(&digest.get()),
+                                     true /* use colon delimiters */));
   if (!fpStr) {
     return NS_ERROR_FAILURE;
   }
@@ -833,7 +803,7 @@ nsNSSCertificate::Write(nsIObjectOutputStream* aStream) {
     return rv;
   }
   return aStream->WriteBytes(
-      AsBytes(MakeSpan(mCert->derCert.data, mCert->derCert.len)));
+      AsBytes(Span(mCert->derCert.data, mCert->derCert.len)));
 }
 
 // NB: Any updates (except disk-only fields) must be kept in sync with

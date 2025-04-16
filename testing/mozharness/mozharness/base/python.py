@@ -61,7 +61,7 @@ virtualenv_config_options = [
     [["--find-links"], {
         "action": "extend",
         "dest": "find_links",
-        "default": ["https://pypi.pub.build.mozilla.org/pub"],
+        "default": ["https://pypi.pub.build.mozilla.org/pub/"],
         "help": "URL to look for packages at"
     }],
     [["--pip-index"], {
@@ -366,6 +366,8 @@ class VirtualenvMixin(object):
             os.path.join('{base_work_dir}', 'mozharness'),
             '{abs_src_dir}',
         ]
+        if 'abs_src_dir' not in dirs and 'repo_path' in self.config:
+            dirs['abs_src_dir'] = os.path.normpath(self.config['repo_path'])
         for d in venv_search_dirs:
             file = os.path.join(d, 'third_party', 'python', 'virtualenv', 'virtualenv.py')
             try:

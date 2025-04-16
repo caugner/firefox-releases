@@ -306,8 +306,11 @@ static void DestroyRange(JSObject* iterator, Range* range) {
   }
 }
 
-bool MapIteratorObject::next(Handle<MapIteratorObject*> mapIterator,
-                             HandleArrayObject resultPairObj, JSContext* cx) {
+bool MapIteratorObject::next(MapIteratorObject* mapIterator,
+                             ArrayObject* resultPairObj) {
+  // IC code calls this directly.
+  AutoUnsafeCallWithABI unsafe;
+
   // Check invariants for inlined _GetNextMapEntryForIterator.
 
   // The array should be tenured, so that post-barrier can be done simply.
@@ -329,18 +332,20 @@ bool MapIteratorObject::next(Handle<MapIteratorObject*> mapIterator,
     return true;
   }
 
+  // Note: we don't need to call setDenseElementWithType because
+  // MapIteratorObject::createResultPair gave the elements unknown-types.
   switch (mapIterator->kind()) {
     case MapObject::Keys:
-      resultPairObj->setDenseElementWithType(cx, 0, range->front().key.get());
+      resultPairObj->setDenseElement(0, range->front().key.get());
       break;
 
     case MapObject::Values:
-      resultPairObj->setDenseElementWithType(cx, 1, range->front().value);
+      resultPairObj->setDenseElement(1, range->front().value);
       break;
 
     case MapObject::Entries: {
-      resultPairObj->setDenseElementWithType(cx, 0, range->front().key.get());
-      resultPairObj->setDenseElementWithType(cx, 1, range->front().value);
+      resultPairObj->setDenseElement(0, range->front().key.get());
+      resultPairObj->setDenseElement(1, range->front().value);
       break;
     }
   }
@@ -463,6 +468,9 @@ static void TraceKey(Range& r, const HashableValue& key, JSTracer* trc) {
     // other types the hash function only uses the bits of the Value.
     r.rekeyFront(newKey);
   }
+
+  // Clear newKey to avoid the barrier in ~PreBarriered.
+  newKey.unsafeClear();
 }
 
 void MapObject::trace(JSTracer* trc, JSObject* obj) {
@@ -1099,8 +1107,11 @@ size_t SetIteratorObject::objectMoved(JSObject* obj, JSObject* old) {
   return sizeof(ValueSet::Range);
 }
 
-bool SetIteratorObject::next(Handle<SetIteratorObject*> setIterator,
-                             HandleArrayObject resultObj, JSContext* cx) {
+bool SetIteratorObject::next(SetIteratorObject* setIterator,
+                             ArrayObject* resultObj) {
+  // IC code calls this directly.
+  AutoUnsafeCallWithABI unsafe;
+
   // Check invariants for inlined _GetNextSetEntryForIterator.
 
   // The array should be tenured, so that post-barrier can be done simply.
@@ -1122,7 +1133,9 @@ bool SetIteratorObject::next(Handle<SetIteratorObject*> setIterator,
     return true;
   }
 
-  resultObj->setDenseElementWithType(cx, 0, range->front().get());
+  // Note: we don't need to call setDenseElementWithType because
+  // SetIteratorObject::createResult gave the elements unknown-types.
+  resultObj->setDenseElement(0, range->front().get());
   range->popFront();
   return false;
 }

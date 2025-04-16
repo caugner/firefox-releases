@@ -60,7 +60,7 @@ global.loader = {
       global[name] = fn();
     } catch (_) {}
   },
-  lazyRequireGetter: (context, name, _path, destruct) => {
+  lazyRequireGetter: (context, names, _path, destruct) => {
     if (
       !_path ||
       _path.startsWith("resource://") ||
@@ -81,9 +81,15 @@ global.loader = {
       "devtools/client/shared/focus",
     ];
     if (!excluded.includes(_path)) {
-      // $FlowIgnore
-      const module = require(_path);
-      global[name] = destruct ? module[name] : module;
+      if (!Array.isArray(names)) {
+        names = [names];
+      }
+
+      for (const name of names) {
+        // $FlowIgnore
+        const module = require(_path);
+        global[name] = destruct ? module[name] : module;
+      }
     }
   },
 };
@@ -133,6 +139,7 @@ beforeEach(async () => {
   clearHistory();
   clearDocuments();
   prefs.projectDirectoryRoot = "";
+  prefs.projectDirectoryRootName = "";
   prefs.expressions = [];
 
   // Ensures window.dbg is there to track telemetry

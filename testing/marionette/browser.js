@@ -85,6 +85,23 @@ class MobileTabBrowser {
   get selectedTab() {
     return this.window.tab;
   }
+
+  set selectedTab(tab) {
+    if (tab != this.selectedTab) {
+      throw new Error("GeckoView only supports a single tab");
+    }
+
+    // Synthesize a custom TabSelect event to indicate that a tab has been
+    // selected even when we don't change it.
+    const event = this.window.CustomEvent("TabSelect", {
+      bubbles: true,
+      cancelable: false,
+      detail: {
+        previousTab: this.selectedTab,
+      },
+    });
+    this.window.document.dispatchEvent(event);
+  }
 }
 
 /**
@@ -114,14 +131,12 @@ browser.getBrowserForTab = function(tab) {
  *     Tab browser or null if it's not a browser window.
  */
 browser.getTabBrowser = function(window) {
-  // Firefox
-  if ("gBrowser" in window) {
-    return window.gBrowser;
-
-    // GeckoView
-  } else if ("browser" in window) {
+  // GeckoView
+  if (Services.androidBridge) {
     return new MobileTabBrowser(window);
-
+    // Firefox
+  } else if ("gBrowser" in window) {
+    return window.gBrowser;
     // Thunderbird
   } else if (window.document.getElementById("tabmail")) {
     return window.document.getElementById("tabmail");
@@ -247,26 +262,6 @@ browser.Context = class {
     // initialization been finished
     if (this.contentBrowser) {
       return this.contentBrowser.contentTitle;
-    }
-    throw new NoSuchWindowError(
-      "Current window does not have a content browser"
-    );
-  }
-
-  /**
-   * Returns the current URI of the content browser.
-   *
-   * @return {nsIURI}
-   *     Read-only property containing the currently loaded URL.
-   *
-   * @throws {NoSuchWindowError}
-   *     If the current ChromeWindow does not have a content browser.
-   */
-  get currentURI() {
-    // Bug 1363368 - contentBrowser could be null until we wait for its
-    // initialization been finished
-    if (this.contentBrowser) {
-      return this.contentBrowser.currentURI;
     }
     throw new NoSuchWindowError(
       "Current window does not have a content browser"
@@ -483,6 +478,9 @@ browser.Context = class {
    *      A boolean value which determins whether to focus
    *      the window. Defaults to true.
    *
+   * @return {Tab}
+   *     The selected tab.
+   *
    * @throws UnsupportedOperationError
    *     If tab handling for the current application isn't supported.
    */
@@ -495,7 +493,7 @@ browser.Context = class {
     }
 
     if (!this.tabBrowser) {
-      return;
+      return null;
     }
 
     if (typeof index == "undefined") {
@@ -505,24 +503,16 @@ browser.Context = class {
     }
 
     if (focus && this.tab != currentTab) {
-      let tabSelected = waitForEvent(this.window, "TabSelect");
-
-      switch (this.driver.appName) {
-        case "firefox":
-          this.tabBrowser.selectedTab = this.tab;
-          await tabSelected;
-          break;
-
-        default:
-          throw new UnsupportedOperationError(
-            `switchToTab() not supported in ${this.driver.appName}`
-          );
-      }
+      const tabSelected = waitForEvent(this.window, "TabSelect");
+      this.tabBrowser.selectedTab = this.tab;
+      await tabSelected;
     }
 
     // TODO(ato): Currently tied to curBrowser, but should be moved to
     // WebElement when introduced by https://bugzil.la/1400256.
     this.eventObserver = new WebElementEventTarget(this.messageManager);
+
+    return this.tab;
   }
 
   /**

@@ -123,7 +123,7 @@ class nsNSSComponent final : public nsINSSComponent, public nsIObserver {
 #ifdef DEBUG
   nsString mTestBuiltInRootHash;
 #endif
-  nsString mContentSigningRootHash;
+  nsCString mContentSigningRootHash;
   RefPtr<mozilla::psm::SharedCertVerifier> mDefaultCertVerifier;
   nsString mMitmCanaryIssuer;
   bool mMitmDetecionEnabled;
@@ -144,8 +144,8 @@ class nsNSSComponent final : public nsINSSComponent, public nsIObserver {
   // events scans the NSS certdb for preloaded intermediates that are in
   // cert_storage and thus can be removed. By default, the interval is 5
   // minutes.
+  nsCOMPtr<nsISerialEventTarget> mIntermediatePreloadingHealerTaskQueue;
   nsCOMPtr<nsITimer> mIntermediatePreloadingHealerTimer;
-  nsCOMPtr<nsISerialEventTarget> mBackgroundTaskQueue;
 };
 
 inline nsresult BlockUntilLoadableCertsLoaded() {

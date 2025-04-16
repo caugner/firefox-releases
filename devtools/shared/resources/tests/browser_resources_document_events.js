@@ -11,6 +11,11 @@ const {
 } = require("devtools/shared/resources/resource-watcher");
 
 add_task(async function() {
+  await testDocumentEventResources();
+  await testDocumentEventResourcesWithIgnoreExistingResources();
+});
+
+async function testDocumentEventResources() {
   info("Test ResourceWatcher for DOCUMENT_EVENT");
 
   // Open a test tab
@@ -54,11 +59,11 @@ add_task(async function() {
   );
   ok(true, "Document events are fired after reloading");
 
-  await targetList.stopListening();
+  await targetList.destroy();
   await client.close();
-});
+}
 
-add_task(async function() {
+async function testDocumentEventResourcesWithIgnoreExistingResources() {
   info("Test ignoreExistingResources option for DOCUMENT_EVENT");
 
   const tab = await addTab("data:text/html,Document Events");
@@ -83,9 +88,9 @@ add_task(async function() {
   await waitUntil(() => documentEvents.length === 3);
   assertEvents(...documentEvents);
 
-  await targetList.stopListening();
+  await targetList.destroy();
   await client.close();
-});
+}
 
 async function assertPromises(onLoading, onInteractive, onComplete) {
   const loadingEvent = await onLoading;

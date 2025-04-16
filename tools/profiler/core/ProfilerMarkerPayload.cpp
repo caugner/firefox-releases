@@ -7,7 +7,6 @@
 
 #include "GeckoProfiler.h"
 #include "ProfileBufferEntry.h"
-#include "ProfileJSONWriter.h"
 #include "ProfilerBacktrace.h"
 
 #include "gfxASurface.h"
@@ -16,6 +15,7 @@
 #include "mozilla/net/HttpBaseChannel.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProfileBufferEntrySerializationGeckoExtensions.h"
+#include "mozilla/ProfileJSONWriter.h"
 #include "mozilla/Sprintf.h"
 
 #include <inttypes.h>
@@ -136,12 +136,21 @@ ProfilerMarkerPayload::DeserializeCommonProps(
   return props;
 }
 
+// Deprecated: This function is providing a way for a few payloads to use the
+// start time and end time in their payloads, which is currently deprecated.
+// The startTime and endTime were removed from most payloads, in favor of
+// the MarkerPhase idea. However, IPC and Network markers still have them as
+// it was harder to upgrade the front-end without them.
+void ProfilerMarkerPayload::StreamStartEndTime(
+    SpliceableJSONWriter& aWriter, const TimeStamp& aProcessStartTime) const {
+  WriteTime(aWriter, aProcessStartTime, mCommonProps.mStartTime, "startTime");
+  WriteTime(aWriter, aProcessStartTime, mCommonProps.mEndTime, "endTime");
+}
+
 void ProfilerMarkerPayload::StreamCommonProps(
     const char* aMarkerType, SpliceableJSONWriter& aWriter,
     const TimeStamp& aProcessStartTime, UniqueStacks& aUniqueStacks) const {
   StreamType(aMarkerType, aWriter);
-  WriteTime(aWriter, aProcessStartTime, mCommonProps.mStartTime, "startTime");
-  WriteTime(aWriter, aProcessStartTime, mCommonProps.mEndTime, "endTime");
   if (mCommonProps.mInnerWindowID) {
     // Here, we are converting uint64_t to double. Both Browsing Context and
     // Inner Window IDs are creating using
@@ -619,9 +628,9 @@ void VsyncMarkerPayload::StreamPayload(SpliceableJSONWriter& aWriter,
 ProfileBufferEntryWriter::Length
 NetworkMarkerPayload::TagAndSerializationBytes() const {
   return CommonPropsTagAndSerializationBytes() +
-         ProfileBufferEntryWriter::SumBytes(mID, mURI, mRedirectURI, mType,
-                                            mPri, mCount, mTimings,
-                                            mCacheDisposition, mContentType);
+         ProfileBufferEntryWriter::SumBytes(
+             mID, mURI, mRedirectURI, mRequestMethod, mType, mPri, mCount,
+             mTimings, mCacheDisposition, mContentType);
 }
 
 void NetworkMarkerPayload::SerializeTagAndPayload(
@@ -631,6 +640,7 @@ void NetworkMarkerPayload::SerializeTagAndPayload(
   aEntryWriter.WriteObject(mID);
   aEntryWriter.WriteObject(mURI);
   aEntryWriter.WriteObject(mRedirectURI);
+  aEntryWriter.WriteObject(mRequestMethod);
   aEntryWriter.WriteObject(mType);
   aEntryWriter.WriteObject(mPri);
   aEntryWriter.WriteObject(mCount);
@@ -647,6 +657,7 @@ UniquePtr<ProfilerMarkerPayload> NetworkMarkerPayload::Deserialize(
   auto id = aEntryReader.ReadObject<int64_t>();
   auto uri = aEntryReader.ReadObject<UniqueFreePtr<char>>();
   auto redirectURI = aEntryReader.ReadObject<UniqueFreePtr<char>>();
+  auto requestMethod = aEntryReader.ReadObject<nsCString>();
   auto type = aEntryReader.ReadObject<NetworkLoadType>();
   auto pri = aEntryReader.ReadObject<int32_t>();
   auto count = aEntryReader.ReadObject<int64_t>();
@@ -654,8 +665,9 @@ UniquePtr<ProfilerMarkerPayload> NetworkMarkerPayload::Deserialize(
   auto cacheDisposition = aEntryReader.ReadObject<net::CacheDisposition>();
   auto contentType = aEntryReader.ReadObject<Maybe<nsAutoCString>>();
   return UniquePtr<ProfilerMarkerPayload>(new NetworkMarkerPayload(
-      std::move(props), id, std::move(uri), std::move(redirectURI), type, pri,
-      count, timings, cacheDisposition, std::move(contentType)));
+      std::move(props), id, std::move(uri), std::move(redirectURI),
+      std::move(requestMethod), type, pri, count, timings, cacheDisposition,
+      std::move(contentType)));
 }
 
 static const char* GetNetworkState(NetworkLoadType aType) {
@@ -692,6 +704,10 @@ void NetworkMarkerPayload::StreamPayload(SpliceableJSONWriter& aWriter,
                                          const TimeStamp& aProcessStartTime,
                                          UniqueStacks& aUniqueStacks) const {
   StreamCommonProps("Network", aWriter, aProcessStartTime, aUniqueStacks);
+  // This payload still streams a startTime and endTime property because it made
+  // the migration to MarkerTiming on the front-end easier.
+  StreamStartEndTime(aWriter, aProcessStartTime);
+
   aWriter.IntProperty("id", mID);
   const char* typeString = GetNetworkState(mType);
   const char* cacheString = GetCacheState(mCacheDisposition);
@@ -711,6 +727,7 @@ void NetworkMarkerPayload::StreamPayload(SpliceableJSONWriter& aWriter,
   if (mRedirectURI) {
     aWriter.StringProperty("RedirectURI", mRedirectURI.get());
   }
+  aWriter.StringProperty("requestMethod", mRequestMethod.get());
 
   if (mContentType.isSome()) {
     aWriter.StringProperty("contentType", mContentType.value().get());
@@ -1169,6 +1186,11 @@ void IPCMarkerPayload::StreamPayload(SpliceableJSONWriter& aWriter,
                                      UniqueStacks& aUniqueStacks) const {
   using namespace mozilla::ipc;
   StreamCommonProps("IPC", aWriter, aProcessStartTime, aUniqueStacks);
+
+  // This payload still streams a startTime and endTime property because it made
+  // the migration to MarkerTiming on the front-end easier.
+  StreamStartEndTime(aWriter, aProcessStartTime);
+
   aWriter.IntProperty("otherPid", mOtherPid);
   aWriter.IntProperty("messageSeqno", mMessageSeqno);
   aWriter.StringProperty("messageType",

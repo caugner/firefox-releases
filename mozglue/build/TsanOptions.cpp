@@ -129,6 +129,8 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1600895, bug 1647702
          "race:UpdateArenaPointersTyped<js::ObjectGroup>\n"
          "race:UpdateArenaPointersTyped<js::Shape>\n"
+         "race:UpdateArenaPointersTyped<JSObject>\n"
+         "race:JSObject::fixupAfterMovingGC\n"
 
          // Bug 1601286
          "race:setFlagBit\n"
@@ -148,6 +150,7 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:SkARGB32_Opaque_Blitter\n"
          "race:SkRasterPipelineBlitter\n"
          "race:Clamp_S32_D32_nofilter_trans_shaderproc\n"
+         "race:SkSpriteBlitter_Memcpy\n"
 
          // Bug 1601632
          "race:ScriptPreloader::MaybeFinishOffThreadDecode\n"
@@ -315,6 +318,9 @@ extern "C" const char* __tsan_default_suppressions() {
          // See bug 1653618
          "race:sctp_handle_tick\n"
          "race:sctp_handle_sack\n"
+
+         // See bug 1652530
+         "mutex:XErrorTrap\n"
 
       // End of suppressions.
       ;  // Please keep this semicolon.

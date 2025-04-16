@@ -151,29 +151,27 @@ NS_IMETHODIMP ParentProcessDocumentChannel::AsyncOpen(
   gHttpHandler->OnOpeningDocumentRequest(this);
 
   if (isDocumentLoad) {
-    GetDocShell()->GetBrowsingContext()->SetCurrentLoadIdentifier(
+    // Return value of setting synced field should be checked. See bug 1656492.
+    Unused << GetDocShell()->GetBrowsingContext()->SetCurrentLoadIdentifier(
         Some(mLoadState->GetLoadIdentifier()));
   }
 
   nsresult rv = NS_OK;
   Maybe<dom::ClientInfo> initialClientInfo = mInitialClientInfo;
 
-  const bool hasValidTransientUserGestureActivation =
-      docShell->GetBrowsingContext()->HasValidTransientUserGestureActivation();
-
   RefPtr<DocumentLoadListener::OpenPromise> promise;
   if (isDocumentLoad) {
     promise = mDocumentLoadListener->OpenDocument(
         mLoadState, mCacheKey, Some(mChannelId), mAsyncOpenTime, mTiming,
-        std::move(initialClientInfo), hasValidTransientUserGestureActivation,
-        Some(mUriModified), Some(mIsXFOError), 0 /* ProcessId */, &rv);
+        std::move(initialClientInfo), Some(mUriModified), Some(mIsXFOError),
+        0 /* ProcessId */, &rv);
   } else {
     promise = mDocumentLoadListener->OpenObject(
         mLoadState, mCacheKey, Some(mChannelId), mAsyncOpenTime, mTiming,
         std::move(initialClientInfo), InnerWindowIDForExtantDoc(docShell),
         mLoadFlags, mLoadInfo->InternalContentPolicyType(),
-        hasValidTransientUserGestureActivation,
-        UserActivation::IsHandlingUserInput(), 0 /* ProcessId */, &rv);
+        UserActivation::IsHandlingUserInput(), 0 /* ProcessId */,
+        nullptr /* ObjectUpgradeHandler */, &rv);
   }
 
   if (NS_FAILED(rv)) {

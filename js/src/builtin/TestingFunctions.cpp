@@ -55,6 +55,10 @@
 #include "js/CompileOptions.h"
 #include "js/Date.h"
 #include "js/Debug.h"
+#include "js/experimental/CodeCoverage.h"  // js::GetCodeCoverageSummary
+#include "js/experimental/TypedData.h"     // JS_GetObjectAsUint8Array
+#include "js/friend/DumpFunctions.h"  // js::Dump{Backtrace,Heap,Object}, JS::FormatStackDump, js::IgnoreNurseryObjects
+#include "js/friend/WindowProxy.h"    // js::ToWindowProxyIfWindow
 #include "js/HashTable.h"
 #include "js/LocaleSensitive.h"
 #include "js/PropertySpec.h"
@@ -116,8 +120,8 @@ using namespace js;
 using mozilla::ArrayLength;
 using mozilla::AssertedCast;
 using mozilla::AsWritableChars;
-using mozilla::MakeSpan;
 using mozilla::Maybe;
+using mozilla::Span;
 using mozilla::Tie;
 using mozilla::Tuple;
 
@@ -159,10 +163,15 @@ static bool GetRealmConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  bool privateFields =
-      cx->realm()->creationOptions().getPrivateClassFieldsEnabled();
+  bool privateFields = cx->options().privateClassFields();
   if (!JS_SetProperty(cx, info, "privateFields",
                       privateFields ? TrueHandleValue : FalseHandleValue)) {
+    return false;
+  }
+  bool privateMethods = cx->options().privateClassMethods();
+  if (!JS_SetProperty(cx, info, "privateMethods",
+                      privateFields && privateMethods ? TrueHandleValue
+                                                      : FalseHandleValue)) {
     return false;
   }
 
@@ -749,7 +758,8 @@ static bool IsProxy(JSContext* cx, unsigned argc, Value* vp) {
 
 static bool WasmIsSupported(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(wasm::HasSupport(cx));
+  args.rval().setBoolean(wasm::HasSupport(cx) &&
+                         wasm::AnyCompilerAvailable(cx));
   return true;
 }
 
@@ -790,18 +800,6 @@ static bool WasmHugeMemoryIsSupported(JSContext* cx, unsigned argc, Value* vp) {
 static bool WasmThreadsSupported(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setBoolean(wasm::ThreadsAvailable(cx));
-  return true;
-}
-
-static bool WasmBulkMemSupported(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-#ifdef ENABLE_WASM_BULKMEM_OPS
-  bool isSupported = true;
-#else
-  bool isSupported =
-      cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
-#endif
-  args.rval().setBoolean(isSupported);
   return true;
 }
 
@@ -867,30 +865,32 @@ static bool WasmCompileMode(JSContext* cx, unsigned argc, Value* vp) {
   bool baseline = wasm::BaselineAvailable(cx);
   bool ion = wasm::IonAvailable(cx);
   bool cranelift = wasm::CraneliftAvailable(cx);
+  bool none = !baseline && !ion && !cranelift;
+  bool tiered = baseline && (ion || cranelift);
 
   MOZ_ASSERT(!(ion && cranelift));
 
-  JSString* result;
-  if (!wasm::HasSupport(cx)) {
-    result = JS_NewStringCopyZ(cx, "none");
-  } else if (baseline && ion) {
-    result = JS_NewStringCopyZ(cx, "baseline+ion");
-  } else if (baseline && cranelift) {
-    result = JS_NewStringCopyZ(cx, "baseline+cranelift");
-  } else if (baseline) {
-    result = JS_NewStringCopyZ(cx, "baseline");
-  } else if (cranelift) {
-    result = JS_NewStringCopyZ(cx, "cranelift");
-  } else {
-    result = JS_NewStringCopyZ(cx, "ion");
-  }
-
-  if (!result) {
+  JSStringBuilder result(cx);
+  if (none && !result.append("none", 4)) {
     return false;
   }
-
-  args.rval().setString(result);
-  return true;
+  if (baseline && !result.append("baseline", 8)) {
+    return false;
+  }
+  if (tiered && !result.append("+", 1)) {
+    return false;
+  }
+  if (ion && !result.append("ion", 3)) {
+    return false;
+  }
+  if (cranelift && !result.append("cranelift", 9)) {
+    return false;
+  }
+  if (JSString* str = result.finishString()) {
+    args.rval().setString(str);
+    return true;
+  }
+  return false;
 }
 
 static bool WasmCraneliftDisabledByFeatures(JSContext* cx, unsigned argc,
@@ -3222,6 +3222,12 @@ static bool GetJitCompilerOptions(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool IsWarpEnabled(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setBoolean(jit::JitOptions.warpBuilder);
+  return true;
+}
+
 static bool SetIonCheckGraphCoherency(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   jit::JitOptions.checkGraphConsistency = ToBoolean(args.get(0));
@@ -4178,29 +4184,20 @@ static bool FindPath(JSContext* cx, unsigned argc, Value* vp) {
 
 static bool ShortestPaths(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  if (!args.requireAtLeast(cx, "shortestPaths", 3)) {
+  if (!args.requireAtLeast(cx, "shortestPaths", 1)) {
     return false;
   }
 
-  // We don't ToString non-objects given as 'start' or 'target', because this
-  // test is all about object identity, and ToString doesn't preserve that.
-  // Non-GCThing endpoints don't make much sense.
-  if (!args[0].isObject() && !args[0].isString() && !args[0].isSymbol()) {
+  if (!args[0].isObject() || !args[0].toObject().is<ArrayObject>()) {
     ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK, args[0],
-                     nullptr, "not an object, string, or symbol");
-    return false;
-  }
-
-  if (!args[1].isObject() || !args[1].toObject().is<ArrayObject>()) {
-    ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK, args[1],
                      nullptr, "not an array object");
     return false;
   }
 
-  RootedArrayObject objs(cx, &args[1].toObject().as<ArrayObject>());
+  RootedArrayObject objs(cx, &args[0].toObject().as<ArrayObject>());
   size_t length = objs->getDenseInitializedLength();
   if (length == 0) {
-    ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK, args[1],
+    ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK, args[0],
                      nullptr,
                      "not a dense array object with one or more elements");
     return false;
@@ -4215,14 +4212,51 @@ static bool ShortestPaths(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  int32_t maxNumPaths;
-  if (!JS::ToInt32(cx, args[2], &maxNumPaths)) {
-    return false;
-  }
-  if (maxNumPaths <= 0) {
-    ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK, args[2],
-                     nullptr, "not greater than 0");
-    return false;
+  RootedValue start(cx, NullValue());
+  int32_t maxNumPaths = 3;
+
+  if (!args.get(1).isUndefined()) {
+    if (!args[1].isObject()) {
+      ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK, args[1],
+                       nullptr, "not an options object");
+      return false;
+    }
+
+    RootedObject options(cx, &args[1].toObject());
+    bool exists;
+    if (!JS_HasProperty(cx, options, "start", &exists)) {
+      return false;
+    }
+    if (exists) {
+      if (!JS_GetProperty(cx, options, "start", &start)) {
+        return false;
+      }
+
+      // Non-GCThing endpoints don't make much sense.
+      if (!start.isGCThing()) {
+        ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK, start,
+                         nullptr, "not a GC thing");
+        return false;
+      }
+    }
+
+    RootedValue v(cx, Int32Value(maxNumPaths));
+    if (!JS_HasProperty(cx, options, "maxNumPaths", &exists)) {
+      return false;
+    }
+    if (exists) {
+      if (!JS_GetProperty(cx, options, "maxNumPaths", &v)) {
+        return false;
+      }
+      if (!JS::ToInt32(cx, v, &maxNumPaths)) {
+        return false;
+      }
+    }
+    if (maxNumPaths <= 0) {
+      ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK, v,
+                       nullptr, "not greater than 0");
+      return false;
+    }
   }
 
   // We accumulate the results into a GC-stable form, due to the fact that the
@@ -4233,7 +4267,21 @@ static bool ShortestPaths(JSContext* cx, unsigned argc, Value* vp) {
   Vector<Vector<Vector<JS::ubi::EdgeName>>> names(cx);
 
   {
-    JS::AutoCheckCannotGC noGC(cx);
+    mozilla::Maybe<JS::AutoCheckCannotGC> maybeNoGC;
+    JS::ubi::Node root;
+
+    JS::ubi::RootList rootList(cx, maybeNoGC, true);
+    if (start.isNull()) {
+      if (!rootList.init()) {
+        ReportOutOfMemory(cx);
+        return false;
+      }
+      root = JS::ubi::Node(&rootList);
+    } else {
+      maybeNoGC.emplace(cx);
+      root = JS::ubi::Node(start);
+    }
+    JS::AutoCheckCannotGC& noGC = maybeNoGC.ref();
 
     JS::ubi::NodeSet targets;
 
@@ -4246,7 +4294,6 @@ static bool ShortestPaths(JSContext* cx, unsigned argc, Value* vp) {
       }
     }
 
-    JS::ubi::Node root(args[0]);
     auto maybeShortestPaths = JS::ubi::ShortestPaths::Create(
         cx, noGC, maxNumPaths, root, std::move(targets));
     if (maybeShortestPaths.isNothing()) {
@@ -5718,7 +5765,7 @@ static bool EncodeAsUtf8InBuffer(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   Maybe<Tuple<size_t, size_t>> amounts = JS_EncodeStringToUTF8BufferPartial(
-      cx, args[0].toString(), AsWritableChars(MakeSpan(data, length)));
+      cx, args[0].toString(), AsWritableChars(Span(data, length)));
   if (!amounts) {
     ReportOutOfMemory(cx);
     return false;
@@ -6413,6 +6460,10 @@ gc::ZealModeHelpText),
 "getJitCompilerOptions()",
 "  Return an object describing some of the JIT compiler options.\n"),
 
+JS_FN_HELP("isWarpEnabled", IsWarpEnabled, 0, 0,
+"isWarpEnabled()",
+"  Return true if the Warp compiler is enabled.\n"),
+
     JS_FN_HELP("isAsmJSModule", IsAsmJSModule, 1, 0,
 "isAsmJSModule(fn)",
 "  Returns whether the given value is a function containing \"use asm\" that has been\n"
@@ -6452,11 +6503,6 @@ gc::ZealModeHelpText),
     JS_FN_HELP("wasmThreadsSupported", WasmThreadsSupported, 0, 0,
 "wasmThreadsSupported()",
 "  Returns a boolean indicating whether the WebAssembly threads proposal is\n"
-"  supported on the current device."),
-
-    JS_FN_HELP("wasmBulkMemSupported", WasmBulkMemSupported, 0, 0,
-"wasmBulkMemSupported()",
-"  Returns a boolean indicating whether the WebAssembly bulk memory proposal is\n"
 "  supported on the current device."),
 
     JS_FN_HELP("wasmSimdSupported", WasmSimdSupported, 0, 0,
@@ -6659,11 +6705,15 @@ gc::ZealModeHelpText),
 "  the last array element is implicitly |target|.\n"),
 
     JS_FN_HELP("shortestPaths", ShortestPaths, 3, 0,
-"shortestPaths(start, targets, maxNumPaths)",
+"shortestPaths(targets, options)",
 "  Return an array of arrays of shortest retaining paths. There is an array of\n"
-"  shortest retaining paths for each object in |targets|. The maximum number of\n"
-"  paths in each of those arrays is bounded by |maxNumPaths|. Each element in a\n"
-"  path is of the form |{ predecessor, edge }|."),
+"  shortest retaining paths for each object in |targets|. Each element in a path\n"
+"  is of the form |{ predecessor, edge }|. |options| may contain:\n"
+"  \n"
+"    maxNumPaths: The maximum number of paths returned in each of those arrays\n"
+"      (default 3).\n"
+"    start: The object to start all paths from. If not given, then\n"
+"      the starting point will be the set of GC roots."),
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
     JS_FN_HELP("dumpObject", DumpObject, 1, 0,

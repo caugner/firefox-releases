@@ -330,17 +330,17 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin, Pyt
         kwargs.setdefault('all_actions', ['clobber',
                                           'download-and-extract',
                                           'populate-webroot',
+                                          'create-virtualenv',
                                           'install-chrome-android',
                                           'install-chromium-distribution',
-                                          'create-virtualenv',
                                           'install',
                                           'run-tests',
                                           ])
         kwargs.setdefault('default_actions', ['clobber',
                                               'download-and-extract',
                                               'populate-webroot',
-                                              'install-chromium-distribution',
                                               'create-virtualenv',
+                                              'install-chromium-distribution',
                                               'install',
                                               'run-tests',
                                               ])
@@ -652,6 +652,8 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin, Pyt
             options.extend(['--no-conditioned-profile'])
         if self.config.get('enable_fission', False):
             options.extend(['--enable-fission'])
+        if self.config.get('verbose', False):
+            options.extend(['--verbose'])
         if self.config.get('extra_prefs'):
             options.extend(['--setpref={}'.format(i) for i in self.config.get('extra_prefs')])
 

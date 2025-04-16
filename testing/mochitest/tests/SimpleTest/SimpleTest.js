@@ -110,7 +110,12 @@ let xOriginRunner = {
       "*"
     );
   },
+  _lastAssertionCount: 0,
   testFinished(tests) {
+    var newAssertionCount = SpecialPowers.assertionCount();
+    var numAsserts = newAssertionCount - this._lastAssertionCount;
+    this._lastAssertionCount = newAssertionCount;
+    this.callHarnessMethod("runner", "addAssertionCount", numAsserts);
     this.callHarnessMethod("runner", "testFinished", tests);
   },
   structuredLogger: {
@@ -1420,7 +1425,8 @@ SimpleTest.timeout = async function() {
  **/
 SimpleTest.finish = function() {
   if (SimpleTest._alreadyFinished) {
-    var err = "[SimpleTest.finish()] this test already called finish!";
+    var err =
+      "TEST-UNEXPECTED-FAIL | SimpleTest | this test already called finish!";
     if (parentRunner) {
       parentRunner.structuredLogger.error(err);
     } else {

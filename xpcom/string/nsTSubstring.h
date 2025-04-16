@@ -138,9 +138,7 @@ class BulkWriteHandle final {
    *  2) RestartBulkWrite() is called
    *  3) BulkWriteHandle goes out of scope
    */
-  mozilla::Span<T> AsSpan() const {
-    return mozilla::MakeSpan(Elements(), Length());
-  }
+  auto AsSpan() const { return mozilla::Span<T>{Elements(), Length()}; }
 
   /**
    * Autoconvert to the buffer as writable Span.
@@ -938,12 +936,12 @@ class nsTSubstring : public mozilla::detail::nsTStringRepr<T> {
    */
 
   operator mozilla::Span<char_type>() {
-    return mozilla::MakeSpan(BeginWriting(), base_string_type::Length());
+    return mozilla::Span{BeginWriting(), base_string_type::Length()};
   }
 
   operator mozilla::Span<const char_type>() const {
-    return mozilla::MakeSpan(base_string_type::BeginReading(),
-                             base_string_type::Length());
+    return mozilla::Span{base_string_type::BeginReading(),
+                         base_string_type::Length()};
   }
 
   void Append(mozilla::Span<const char_type> aSpan) {
@@ -975,15 +973,15 @@ class nsTSubstring : public mozilla::detail::nsTStringRepr<T> {
 
   template <typename Q = T, typename EnableIfChar = mozilla::CharOnlyT<Q>>
   operator mozilla::Span<uint8_t>() {
-    return mozilla::MakeSpan(reinterpret_cast<uint8_t*>(BeginWriting()),
-                             base_string_type::Length());
+    return mozilla::Span{reinterpret_cast<uint8_t*>(BeginWriting()),
+                         base_string_type::Length()};
   }
 
   template <typename Q = T, typename EnableIfChar = mozilla::CharOnlyT<Q>>
   operator mozilla::Span<const uint8_t>() const {
-    return mozilla::MakeSpan(
+    return mozilla::Span{
         reinterpret_cast<const uint8_t*>(base_string_type::BeginReading()),
-        base_string_type::Length());
+        base_string_type::Length()};
   }
 
   template <typename Q = T, typename EnableIfChar = mozilla::CharOnlyT<Q>>
@@ -1193,11 +1191,6 @@ class nsTSubstring : public mozilla::detail::nsTStringRepr<T> {
    * performed when the string is already mutable and the requested
    * capacity is smaller than the current capacity.
    *
-   * aRv takes a reference to an nsresult that will be set to
-   * NS_OK on success or to NS_ERROR_OUT_OF_MEMORY on failure,
-   * because mozilla::Result cannot wrap move-only types at
-   * this time.
-   *
    * If this method returns successfully, you must not access
    * the string except through the returned BulkWriteHandle
    * until either the BulkWriteHandle goes out of scope or
@@ -1213,10 +1206,8 @@ class nsTSubstring : public mozilla::detail::nsTStringRepr<T> {
    *     content has been written, which results in a
    *     cache-friendly linear write pattern.
    */
-  mozilla::BulkWriteHandle<T> NS_FASTCALL BulkWrite(size_type aCapacity,
-                                                    size_type aPrefixToPreserve,
-                                                    bool aAllowShrinking,
-                                                    nsresult& aRv);
+  mozilla::Result<mozilla::BulkWriteHandle<T>, nsresult> NS_FASTCALL BulkWrite(
+      size_type aCapacity, size_type aPrefixToPreserve, bool aAllowShrinking);
 
   /**
    * THIS IS NOT REALLY A PUBLIC METHOD! DO NOT CALL FROM OUTSIDE
@@ -1448,20 +1439,6 @@ Span(nsTSubstring<char>&)->Span<char>;
 Span(const nsTSubstring<char>&)->Span<const char>;
 Span(nsTSubstring<char16_t>&)->Span<char16_t>;
 Span(const nsTSubstring<char16_t>&)->Span<const char16_t>;
-
-inline Span<char> MakeSpan(nsTSubstring<char>& aString) { return aString; }
-
-inline Span<const char> MakeSpan(const nsTSubstring<char>& aString) {
-  return aString;
-}
-
-inline Span<char16_t> MakeSpan(nsTSubstring<char16_t>& aString) {
-  return aString;
-}
-
-inline Span<const char16_t> MakeSpan(const nsTSubstring<char16_t>& aString) {
-  return aString;
-}
 
 }  // namespace mozilla
 

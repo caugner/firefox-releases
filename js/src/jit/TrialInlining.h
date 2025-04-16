@@ -49,6 +49,7 @@ class InliningRoot {
   void trace(JSTracer* trc);
 
   bool addInlinedScript(js::UniquePtr<ICScript> icScript);
+  void removeInlinedScript(ICScript* icScript);
 
   uint32_t numInlinedScripts() const { return inlinedScripts_.length(); }
 
@@ -84,7 +85,7 @@ class MOZ_RAII TrialInliner {
   MOZ_MUST_USE bool tryInlining();
   MOZ_MUST_USE bool maybeInlineCall(const ICEntry& entry, BytecodeLocation loc);
 
-  static bool canInline(JSFunction* target);
+  static bool canInline(JSFunction* target, HandleScript caller);
 
  private:
   ICStub* maybeSingleStub(const ICEntry& entry);
@@ -94,7 +95,7 @@ class MOZ_RAII TrialInliner {
   void replaceICStub(const ICEntry& entry, CacheIRWriter& writer,
                      CacheKind kind);
 
-  bool shouldInline(JSFunction* target, BytecodeLocation loc);
+  bool shouldInline(JSFunction* target, ICStub* stub, BytecodeLocation loc);
 
   JSContext* cx_;
   HandleScript script_;

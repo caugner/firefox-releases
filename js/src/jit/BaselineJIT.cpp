@@ -20,6 +20,7 @@
 #include "jit/CompileInfo.h"
 #include "jit/JitCommon.h"
 #include "jit/JitSpewer.h"
+#include "js/friend/StackLimits.h"  // js::CheckRecursionLimitWithStackPointer
 #include "util/Memory.h"
 #include "util/StructuredSpewer.h"
 #include "vm/Interpreter.h"
@@ -657,7 +658,7 @@ void BaselineScript::computeResumeNativeOffsets(
   // nullptr if compiler decided code was unreachable.
   auto computeNative = [this, &entries](uint32_t pcOffset) -> uint8_t* {
     mozilla::Span<const ResumeOffsetEntry> entriesSpan =
-        mozilla::MakeSpan(entries.begin(), entries.length());
+        mozilla::Span(entries.begin(), entries.length());
     size_t mid;
     if (!ComputeBinarySearchMid(entriesSpan, pcOffset, &mid)) {
       return nullptr;

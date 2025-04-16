@@ -177,15 +177,19 @@ MediaMetadataBase MediaStatusManager::CreateDefaultMetadata() const {
 }
 
 nsString MediaStatusManager::GetDefaultTitle() const {
+  // TODO : maybe need l10n? (bug1657701)
+  nsString defaultTitle;
+  defaultTitle.AssignLiteral("Firefox is playing media");
+
   RefPtr<CanonicalBrowsingContext> bc =
       CanonicalBrowsingContext::Get(mTopLevelBrowsingContextId);
   if (!bc) {
-    return EmptyString();
+    return defaultTitle;
   }
 
   RefPtr<WindowGlobalParent> globalParent = bc->GetCurrentWindowGlobal();
   if (!globalParent) {
-    return EmptyString();
+    return defaultTitle;
   }
 
   // The media metadata would be shown on the virtual controller interface. For
@@ -193,22 +197,13 @@ nsString MediaStatusManager::GetDefaultTitle() const {
   // and lockscreen. Therefore, what information we provide via metadata is
   // quite important, because if we're in private browsing, we don't want to
   // expose details about what website the user is browsing on the lockscreen.
-  nsString defaultTitle;
-  if (IsInPrivateBrowsing()) {
-    // TODO : maybe need l10n?
-    if (nsCOMPtr<nsIXULAppInfo> appInfo =
-            do_GetService("@mozilla.org/xre/app-info;1")) {
-      nsCString appName;
-      appInfo->GetName(appName);
-      CopyUTF8toUTF16(appName, defaultTitle);
-    } else {
-      defaultTitle.AssignLiteral("Firefox");
-    }
-    defaultTitle.AppendLiteral(" is playing media");
-  } else {
-    globalParent->GetDocumentTitle(defaultTitle);
+  // Therefore, using the default title when in the private browsing or the
+  // document title is empty. Otherwise, use the document title.
+  nsString documentTitle;
+  if (!IsInPrivateBrowsing()) {
+    globalParent->GetDocumentTitle(documentTitle);
   }
-  return defaultTitle;
+  return documentTitle.IsEmpty() ? defaultTitle : documentTitle;
 }
 
 nsString MediaStatusManager::GetDefaultFaviconURL() const {
@@ -302,6 +297,7 @@ void MediaStatusManager::UpdateActualPlaybackState() {
   LOG("UpdateActualPlaybackState : '%s'",
       ToMediaSessionPlaybackStateStr(mActualPlaybackState));
   HandleActualPlaybackStateChanged();
+  mPlaybackStateChangedEvent.Notify(mActualPlaybackState);
 }
 
 void MediaStatusManager::EnableAction(uint64_t aBrowsingContextId,
@@ -423,7 +419,7 @@ bool MediaStatusManager::IsInPrivateBrowsing() const {
   return nsContentUtils::IsInPrivateBrowsing(element->OwnerDoc());
 }
 
-MediaSessionPlaybackState MediaStatusManager::GetState() const {
+MediaSessionPlaybackState MediaStatusManager::PlaybackState() const {
   return mActualPlaybackState;
 }
 

@@ -287,8 +287,8 @@ bool ExtractVPXCodecDetails(const nsAString& aCodec, uint8_t& aProfile,
       // No more than 8 fields are expected.
       return false;
     }
-    *(fields[fieldsCount]) = static_cast<uint8_t>(
-        PromiseFlatString((*fieldsItr)).ToInteger(&rv, 10));
+    *(fields[fieldsCount]) =
+        static_cast<uint8_t>((*fieldsItr).ToInteger(&rv, 10));
     // We got invalid field value, parsing error.
     NS_ENSURE_SUCCESS(rv, false);
   }
@@ -434,15 +434,15 @@ bool ExtractH264CodecDetails(const nsAString& aCodec, uint8_t& aProfile,
 
   // Extract the profile_idc, constraint_flags and level_idc.
   nsresult rv = NS_OK;
-  aProfile = PromiseFlatString(Substring(aCodec, 5, 2)).ToInteger(&rv, 16);
+  aProfile = Substring(aCodec, 5, 2).ToInteger(&rv, 16);
   NS_ENSURE_SUCCESS(rv, false);
 
   // Constraint flags are stored on the 6 most significant bits, first two bits
   // are reserved_zero_2bits.
-  aConstraint = PromiseFlatString(Substring(aCodec, 7, 2)).ToInteger(&rv, 16);
+  aConstraint = Substring(aCodec, 7, 2).ToInteger(&rv, 16);
   NS_ENSURE_SUCCESS(rv, false);
 
-  aLevel = PromiseFlatString(Substring(aCodec, 9, 2)).ToInteger(&rv, 16);
+  aLevel = Substring(aCodec, 9, 2).ToInteger(&rv, 16);
   NS_ENSURE_SUCCESS(rv, false);
 
   if (aLevel == 9) {
@@ -468,7 +468,7 @@ nsresult GenerateRandomName(nsCString& aOutSalt, uint32_t aLength) {
   rv = rg->GenerateRandomBytes(requiredBytesLength, &buffer);
   if (NS_FAILED(rv)) return rv;
 
-  nsAutoCString temp;
+  nsCString temp;
   nsDependentCSubstring randomData(reinterpret_cast<const char*>(buffer),
                                    requiredBytesLength);
   rv = Base64Encode(randomData, temp);
@@ -476,7 +476,7 @@ nsresult GenerateRandomName(nsCString& aOutSalt, uint32_t aLength) {
   buffer = nullptr;
   if (NS_FAILED(rv)) return rv;
 
-  aOutSalt = temp;
+  aOutSalt = std::move(temp);
   return NS_OK;
 }
 

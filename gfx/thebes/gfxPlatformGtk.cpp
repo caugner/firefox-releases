@@ -95,18 +95,9 @@ gfxPlatformGtk::gfxPlatformGtk() {
 
   InitBackendPrefs(GetBackendPrefs());
 
-#ifdef MOZ_X11
-  if (mIsX11Display) {
-    mCompositorDisplay = XOpenDisplay(nullptr);
-    MOZ_ASSERT(mCompositorDisplay, "Failed to create compositor display!");
-  } else {
-    mCompositorDisplay = nullptr;
-  }
-#endif  // MOZ_X11
-
 #ifdef MOZ_WAYLAND
   mUseWebGLDmabufBackend =
-      IsWaylandDisplay() && GetDMABufDevice()->IsDMABufWebGLEnabled();
+      gfxVars::UseEGL() && GetDMABufDevice()->IsDMABufWebGLEnabled();
 #endif
 
   gPlatformFTLibrary = Factory::NewFTLibrary();
@@ -115,12 +106,6 @@ gfxPlatformGtk::gfxPlatformGtk() {
 }
 
 gfxPlatformGtk::~gfxPlatformGtk() {
-#ifdef MOZ_X11
-  if (mCompositorDisplay) {
-    XCloseDisplay(mCompositorDisplay);
-  }
-#endif  // MOZ_X11
-
   Factory::ReleaseFTLibrary(gPlatformFTLibrary);
   gPlatformFTLibrary = nullptr;
 }
@@ -224,14 +209,8 @@ static const char kFontSymbola[] = "Symbola";
 void gfxPlatformGtk::GetCommonFallbackFonts(uint32_t aCh, uint32_t aNextCh,
                                             Script aRunScript,
                                             nsTArray<const char*>& aFontList) {
-  EmojiPresentation emoji = GetEmojiPresentation(aCh);
-  if (emoji != EmojiPresentation::TextOnly) {
-    if (aNextCh == kVariationSelector16 ||
-        (aNextCh != kVariationSelector15 &&
-         emoji == EmojiPresentation::EmojiDefault)) {
-      // if char is followed by VS16, try for a color emoji glyph
-      aFontList.AppendElement(kFontTwemojiMozilla);
-    }
+  if (ShouldPreferEmojiFont(aCh, aNextCh)) {
+    aFontList.AppendElement(kFontTwemojiMozilla);
   }
 
   aFontList.AppendElement(kFontDejaVuSerif);

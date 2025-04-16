@@ -857,15 +857,19 @@ nsRect Element::GetClientAreaRect() {
 
   nsIFrame* frame;
   if (nsIScrollableFrame* sf = GetScrollFrame(&frame)) {
-    MOZ_ASSERT(frame);
     nsRect scrollPort = sf->GetScrollPortRect();
-    nsIFrame* scrollableAsFrame = do_QueryFrame(sf);
-    // We want the offset to be relative to `frame`, not `sf`... Except for the
-    // root scroll frame, which is an ancestor of frame rather than a descendant
-    // and thus this wouldn't particularly make sense.
-    if (frame != scrollableAsFrame && !sf->IsRootScrollFrameOfDocument()) {
-      scrollPort.MoveBy(scrollableAsFrame->GetOffsetTo(frame));
+
+    if (!sf->IsRootScrollFrameOfDocument()) {
+      MOZ_ASSERT(frame);
+      nsIFrame* scrollableAsFrame = do_QueryFrame(sf);
+      // We want the offset to be relative to `frame`, not `sf`... Except for
+      // the root scroll frame, which is an ancestor of frame rather than a
+      // descendant and thus this wouldn't particularly make sense.
+      if (frame != scrollableAsFrame) {
+        scrollPort.MoveBy(scrollableAsFrame->GetOffsetTo(frame));
+      }
     }
+
     // The scroll port value might be expanded to the minimum scale size, we
     // should limit the size to the ICB in such cases.
     scrollPort.SizeTo(sf->GetLayoutSize());
@@ -1025,7 +1029,8 @@ bool Element::CanAttachShadowDOM() const {
   // It will always have CustomElementData when the element is a valid custom
   // element or has is value.
   CustomElementData* ceData = GetCustomElementData();
-  if (StaticPrefs::dom_webcomponents_elementInternals_enabled() && ceData) {
+  if (StaticPrefs::dom_webcomponents_formAssociatedCustomElement_enabled() &&
+      ceData) {
     CustomElementDefinition* definition = ceData->GetCustomElementDefinition();
     // If the definition is null, the element possible hasn't yet upgraded.
     // Fallback to use LookupCustomElementDefinition to find its definition.
@@ -1366,17 +1371,17 @@ void Element::SetAttributeNS(const nsAString& aNamespaceURI,
                    aValue, aTriggeringPrincipal, true);
 }
 
-static already_AddRefed<BasePrincipal> CreateDevtoolsPrincipal(
-    nsIPrincipal* aPrincipal, nsIContentSecurityPolicy* aCsp) {
-  // Return an ExpandedPrincipal that subsumes aPrincipal, and expands aCSP
-  // to allow the actions that devtools needs to perform.
-  AutoTArray<nsCOMPtr<nsIPrincipal>, 1> allowList = {aPrincipal};
-  RefPtr<ExpandedPrincipal> dtPrincipal =
-      ExpandedPrincipal::Create(allowList, aPrincipal->OriginAttributesRef());
+already_AddRefed<nsIPrincipal> Element::CreateDevtoolsPrincipal() {
+  // Return an ExpandedPrincipal that subsumes this Element's Principal,
+  // and expands this Element's CSP to allow the actions that devtools
+  // needs to perform.
+  AutoTArray<nsCOMPtr<nsIPrincipal>, 1> allowList = {NodePrincipal()};
+  RefPtr<ExpandedPrincipal> dtPrincipal = ExpandedPrincipal::Create(
+      allowList, NodePrincipal()->OriginAttributesRef());
 
-  if (aCsp) {
+  if (nsIContentSecurityPolicy* csp = GetCsp()) {
     RefPtr<nsCSPContext> dtCsp = new nsCSPContext();
-    dtCsp->InitFromOther(static_cast<nsCSPContext*>(aCsp));
+    dtCsp->InitFromOther(static_cast<nsCSPContext*>(csp));
     dtCsp->SetSkipAllowInlineStyleCheck(true);
 
     dtPrincipal->SetCsp(dtCsp);
@@ -1389,8 +1394,7 @@ void Element::SetAttributeDevtools(const nsAString& aName,
                                    const nsAString& aValue,
                                    ErrorResult& aError) {
   // Run this through SetAttribute with a devtools-ready principal.
-  RefPtr<BasePrincipal> dtPrincipal =
-      CreateDevtoolsPrincipal(NodePrincipal(), GetCsp());
+  RefPtr<nsIPrincipal> dtPrincipal = CreateDevtoolsPrincipal();
   SetAttribute(aName, aValue, dtPrincipal, aError);
 }
 
@@ -1399,8 +1403,7 @@ void Element::SetAttributeDevtoolsNS(const nsAString& aNamespaceURI,
                                      const nsAString& aValue,
                                      ErrorResult& aError) {
   // Run this through SetAttributeNS with a devtools-ready principal.
-  RefPtr<BasePrincipal> dtPrincipal =
-      CreateDevtoolsPrincipal(NodePrincipal(), GetCsp());
+  RefPtr<nsIPrincipal> dtPrincipal = CreateDevtoolsPrincipal();
   SetAttributeNS(aNamespaceURI, aLocalName, aValue, dtPrincipal, aError);
 }
 
@@ -2416,8 +2419,7 @@ bool Element::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
       return true;
     }
 
-    if (aAttribute == nsGkAtoms::exportparts &&
-        StaticPrefs::layout_css_shadow_parts_enabled()) {
+    if (aAttribute == nsGkAtoms::exportparts) {
       aResult.ParsePartMapping(aValue);
       return true;
     }

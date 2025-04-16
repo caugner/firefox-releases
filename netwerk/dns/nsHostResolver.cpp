@@ -520,6 +520,7 @@ NS_IMPL_ISUPPORTS_INHERITED(TypeHostRecord, nsHostRecord, TypeHostRecord,
 
 TypeHostRecord::TypeHostRecord(const nsHostKey& key)
     : nsHostRecord(key),
+      DNSHTTPSSVCRecordBase(key.host),
       mTrrLock("TypeHostRecord.mTrrLock"),
       mResultsLock("TypeHostRecord.mResultsLock") {}
 
@@ -601,6 +602,25 @@ TypeHostRecord::GetRecords(nsTArray<RefPtr<nsISVCBRecord>>& aRecords) {
     aRecords.AppendElement(rec);
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TypeHostRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
+                                     nsISVCBRecord** aRecord) {
+  MutexAutoLock lock(mResultsLock);
+  if (!mResults.is<TypeRecordHTTPSSVC>()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  auto& results = mResults.as<TypeRecordHTTPSSVC>();
+  nsCOMPtr<nsISVCBRecord> result =
+      GetServiceModeRecordInternal(aNoHttp2, aNoHttp3, results);
+  if (!result) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  result.forget(aRecord);
   return NS_OK;
 }
 
@@ -1761,9 +1781,18 @@ static nsresult merge_rrset(AddrInfo* rrto, AddrInfo* rrfrom) {
     return NS_ERROR_NULL_POINTER;
   }
   NetAddrElement* element;
+  // Each of the arguments are all-IPv4 or all-IPv6 hence judging
+  // by the first element. This is true only for TRR resolutions.
+  bool isIPv6 = (element = rrfrom->mAddresses.getFirst()) &&
+                element->mAddress.raw.family == PR_AF_INET6;
   while ((element = rrfrom->mAddresses.getFirst())) {
-    element->remove();          // unlist from old
-    rrto->AddAddress(element);  // enlist on new
+    element->remove();  // unlist from old
+    if (isIPv6) {
+      // rrfrom has IPv6 so it should be first
+      rrto->mAddresses.insertFront(element);
+    } else {
+      rrto->mAddresses.insertBack(element);
+    }
   }
   return NS_OK;
 }

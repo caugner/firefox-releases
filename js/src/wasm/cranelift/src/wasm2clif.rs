@@ -59,19 +59,36 @@ fn imm64(offset: usize) -> ir::immediates::Imm64 {
 }
 
 /// Initialize a `Signature` from a wasm signature.
+///
+/// These signatures are used by Cranelift both to perform calls (e.g., to other
+/// Wasm functions, or back to JS or native code) and to generate code that
+/// accesses its own args and sets its return value(s) properly.
+///
+/// Note that the extension modes are in principle applicable to *both* sides of
+/// the call. They must be respected when setting up args for a callee, and when
+/// setting up a return value to a caller; they may be used/relied upon when
+/// using an arg that came from a caller, or using a return value that came from
+/// a callee.
 fn init_sig_from_wsig(
     call_conv: CallConv,
     wsig: bindings::FuncTypeWithId,
 ) -> WasmResult<ir::Signature> {
     let mut sig = ir::Signature::new(call_conv);
 
-    for arg in wsig.args()? {
-        sig.params.push(ir::AbiParam::new(arg));
+    for arg_type in wsig.args()? {
+        let arg = match arg_type {
+            // SpiderMonkey requires i32 arguments to callees (e.g., from Wasm
+            // back into JS or native code) to have their high 32 bits zero so
+            // that it can directly box them.
+            ir::types::I32 => ir::AbiParam::new(arg_type).uext(),
+            _ => ir::AbiParam::new(arg_type),
+        };
+        sig.params.push(arg);
     }
 
     for ret_type in wsig.results()? {
         let ret = match ret_type {
-            // Spidermonkey requires i32 returns to have their high 32 bits
+            // SpiderMonkey requires i32 returns to have their high 32 bits
             // zero so that it can directly box them.
             ir::types::I32 => ir::AbiParam::new(ret_type).uext(),
             _ => ir::AbiParam::new(ret_type),
@@ -109,6 +126,9 @@ enum FailureMode {
     NotZero {
         internal_ret: bool,
     },
+    /// The value returned by the function must be checked.  An error is deemed to have
+    /// happened if the value, when viewed as a signed 32-bit int, is negative.
+    IsNegativeI32,
     InvalidRef,
 }
 
@@ -252,6 +272,24 @@ const FN_POST_BARRIER: InstanceCall = InstanceCall {
     arguments: &[POINTER_TYPE],
     ret: None,
     failure_mode: FailureMode::Infallible,
+};
+const FN_WAIT_I32: InstanceCall = InstanceCall {
+    address: SymbolicAddress::WaitI32,
+    arguments: &[ir::types::I32, ir::types::I32, ir::types::I64],
+    ret: Some(ir::types::I32),
+    failure_mode: FailureMode::IsNegativeI32,
+};
+const FN_WAIT_I64: InstanceCall = InstanceCall {
+    address: SymbolicAddress::WaitI64,
+    arguments: &[ir::types::I32, ir::types::I64, ir::types::I64],
+    ret: Some(ir::types::I32),
+    failure_mode: FailureMode::IsNegativeI32,
+};
+const FN_WAKE: InstanceCall = InstanceCall {
+    address: SymbolicAddress::Wake,
+    arguments: &[ir::types::I32, ir::types::I32],
+    ret: Some(ir::types::I32),
+    failure_mode: FailureMode::IsNegativeI32,
 };
 
 // Custom trap codes specific to this embedding
@@ -621,6 +659,17 @@ impl<'static_env, 'module_env> TransEnv<'static_env, 'module_env> {
                 } else {
                     Some(ret)
                 }
+            }
+            FailureMode::IsNegativeI32 => {
+                let ty = pos.func.dfg.value_type(ret);
+                assert!(ty == ir::types::I32);
+                let f = pos.ins().ifcmp_imm(ret, i64::from(0));
+                pos.ins().trapif(
+                    IntCC::SignedLessThan,
+                    f,
+                    ir::TrapCode::User(TRAP_THROW_REPORTED),
+                );
+                Some(ret)
             }
             FailureMode::InvalidRef => {
                 let invalid = pos.ins().is_invalid(ret);
@@ -1246,6 +1295,40 @@ impl<'static_env, 'module_env> FuncEnvironment for TransEnv<'static_env, 'module
         debug_assert!(res.is_none());
 
         Ok(())
+    }
+
+    fn translate_atomic_wait(
+        &mut self,
+        mut pos: FuncCursor,
+        _index: MemoryIndex,
+        _heap: ir::Heap,
+        addr: ir::Value,
+        expected: ir::Value,
+        timeout: ir::Value,
+    ) -> WasmResult<ir::Value> {
+        let callee = match pos.func.dfg.value_type(expected) {
+            ir::types::I64 => &FN_WAIT_I64,
+            ir::types::I32 => &FN_WAIT_I32,
+            _ => {
+                return Err(WasmError::Unsupported(
+                    "atomic_wait is only supported for I32 and I64".to_string(),
+                ))
+            }
+        };
+        let ret = self.instance_call(&mut pos, callee, &[addr, expected, timeout]);
+        Ok(ret.unwrap())
+    }
+
+    fn translate_atomic_notify(
+        &mut self,
+        mut pos: FuncCursor,
+        _index: MemoryIndex,
+        _heap: ir::Heap,
+        addr: ir::Value,
+        count: ir::Value,
+    ) -> WasmResult<ir::Value> {
+        let ret = self.instance_call(&mut pos, &FN_WAKE, &[addr, count]);
+        Ok(ret.unwrap())
     }
 
     fn translate_loop_header(&mut self, mut pos: FuncCursor) -> WasmResult<()> {

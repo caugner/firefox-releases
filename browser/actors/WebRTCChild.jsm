@@ -122,6 +122,20 @@ class WebRTCChild extends JSWindowActorChild {
           aMessage.data
         );
         break;
+      case "webrtc:MuteCamera":
+        Services.obs.notifyObservers(
+          null,
+          "getUserMedia:muteVideo",
+          aMessage.data
+        );
+        break;
+      case "webrtc:UnmuteCamera":
+        Services.obs.notifyObservers(
+          null,
+          "getUserMedia:unmuteVideo",
+          aMessage.data
+        );
+        break;
     }
   }
 }
@@ -142,19 +156,6 @@ function getActorForWindow(window) {
 function handlePCRequest(aSubject, aTopic, aData) {
   let { windowID, innerWindowID, callID, isSecure } = aSubject;
   let contentWindow = Services.wm.getOuterWindowWithId(windowID);
-
-  let mm = getMessageManagerForWindow(contentWindow);
-  if (!mm) {
-    // Workaround for Bug 1207784. To use WebRTC, add-ons right now use
-    // hiddenWindow.mozRTCPeerConnection which is only privileged on OSX. Other
-    // platforms end up here without a message manager.
-    // TODO: Remove once there's a better way (1215591).
-
-    // Skip permission check in the absence of a message manager.
-    Services.obs.notifyObservers(null, "PeerConnection:response:allow", callID);
-    return;
-  }
-
   if (!contentWindow.pendingPeerConnectionRequests) {
     setupPendingListsInitially(contentWindow);
   }
@@ -504,15 +505,5 @@ function getTabStateForContentWindow(aContentWindow, aForRemove = false) {
 }
 
 function getInnerWindowIDForWindow(aContentWindow) {
-  return aContentWindow.windowUtils.currentInnerWindowID;
-}
-
-function getMessageManagerForWindow(aContentWindow) {
-  let docShell = aContentWindow.docShell;
-  if (!docShell) {
-    // Closed tab.
-    return null;
-  }
-
-  return docShell.messageManager;
+  return aContentWindow.windowGlobalChild.innerWindowId;
 }

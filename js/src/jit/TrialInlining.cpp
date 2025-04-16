@@ -8,6 +8,7 @@
 
 #include "jit/BaselineCacheIRCompiler.h"
 #include "jit/BaselineIC.h"
+#include "jit/Ion.h"  // TooManyFormalArguments
 
 #include "jit/BaselineFrame-inl.h"
 #include "vm/BytecodeIterator-inl.h"
@@ -24,6 +25,11 @@ bool DoTrialInlining(JSContext* cx, BaselineFrame* frame) {
   RootedScript script(cx, frame->script());
   ICScript* icScript = frame->icScript();
   bool isRecursive = !!icScript->inliningRoot();
+
+  const uint32_t MAX_INLINING_DEPTH = 5;
+  if (icScript->depth() > MAX_INLINING_DEPTH) {
+    return true;
+  }
 
   InliningRoot* root =
       isRecursive ? icScript->inliningRoot()
@@ -91,6 +97,7 @@ Maybe<InlinableCallData> FindInlinableCallData(ICStub* stub) {
 
     CacheOp op = reader.readOp();
     uint32_t argLength = CacheIROpArgLengths[size_t(op)];
+    mozilla::DebugOnly<const uint8_t*> argStart = reader.currentPosition();
 
     switch (op) {
       case CacheOp::GuardSpecificFunction:
@@ -140,7 +147,7 @@ Maybe<InlinableCallData> FindInlinableCallData(ICStub* stub) {
         reader.skip(argLength);
         break;
     }
-    MOZ_ASSERT(opStart + 1 + argLength == reader.currentPosition());
+    MOZ_ASSERT(argStart + argLength == reader.currentPosition());
   }
 
   if (data.isSome()) {
@@ -153,20 +160,25 @@ Maybe<InlinableCallData> FindInlinableCallData(ICStub* stub) {
 }
 
 /*static*/
-bool TrialInliner::canInline(JSFunction* target) {
+bool TrialInliner::canInline(JSFunction* target, HandleScript caller) {
   if (!target->hasJitScript()) {
     return false;
   }
   JSScript* script = target->nonLazyScript();
   if (!script->jitScript()->hasBaselineScript() || script->uninlineable() ||
-      script->needsArgsObj()) {
+      script->needsArgsObj() || script->isDebuggee()) {
+    return false;
+  }
+  // Don't inline cross-realm calls.
+  if (target->realm() != caller->realm()) {
     return false;
   }
   return true;
 }
 
-bool TrialInliner::shouldInline(JSFunction* target, BytecodeLocation loc) {
-  if (!canInline(target)) {
+bool TrialInliner::shouldInline(JSFunction* target, ICStub* stub,
+                                BytecodeLocation loc) {
+  if (!canInline(target, script_)) {
     return false;
   }
   JitSpew(JitSpew_WarpTrialInlining,
@@ -174,7 +186,32 @@ bool TrialInliner::shouldInline(JSFunction* target, BytecodeLocation loc) {
           CodeName(loc.getOp()), target->nonLazyScript()->filename(),
           target->nonLazyScript()->lineno(), target->nonLazyScript()->column());
 
-  // TODO: Actual heuristics
+  uint32_t entryCount = stub->getEnteredCount();
+  if (entryCount < JitOptions.inliningEntryThreshold) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: Entry count is %u (minimum %u)",
+            unsigned(entryCount), unsigned(JitOptions.inliningEntryThreshold));
+    return false;
+  }
+
+  if (!JitOptions.isSmallFunction(target->nonLazyScript())) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: Length is %u (maximum %u)",
+            unsigned(target->nonLazyScript()->length()),
+            unsigned(JitOptions.smallFunctionMaxBytecodeLength));
+    return false;
+  }
+
+  if (TooManyFormalArguments(target->nargs())) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: Too many formal arguments: %u",
+            unsigned(target->nargs()));
+    return false;
+  }
+
+  if (TooManyFormalArguments(loc.getCallArgc())) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: argc too large: %u",
+            unsigned(loc.getCallArgc()));
+    return false;
+  }
+
   return true;
 }
 
@@ -204,8 +241,9 @@ ICScript* TrialInliner::createInlinedICScript(JSFunction* target,
   // ICScript to give more precise control.
   const uint32_t InitialWarmUpCount = 0;
 
+  uint32_t depth = icScript_->depth() + 1;
   UniquePtr<ICScript> inlinedICScript(new (raw) ICScript(
-      targetJitScript, InitialWarmUpCount, allocSize, root_));
+      targetJitScript, InitialWarmUpCount, allocSize, depth, root_));
 
   {
     // Suppress GC. This matches the AutoEnterAnalysis in
@@ -249,7 +287,7 @@ bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
   }
 
   // Decide whether to inline the target.
-  if (!shouldInline(data->target, loc)) {
+  if (!shouldInline(data->target, stub, loc)) {
     return true;
   }
 
@@ -282,6 +320,7 @@ bool TrialInliner::tryInlining() {
     switch (op) {
       case JSOp::Call:
       case JSOp::CallIgnoresRv:
+      case JSOp::CallIter:
         if (!maybeInlineCall(icScript_->icEntry(icIndex), loc)) {
           return false;
         }
@@ -299,6 +338,13 @@ bool TrialInliner::tryInlining() {
 
 bool InliningRoot::addInlinedScript(UniquePtr<ICScript> icScript) {
   return inlinedScripts_.append(std::move(icScript));
+}
+
+void InliningRoot::removeInlinedScript(ICScript* icScript) {
+  inlinedScripts_.eraseIf(
+      [icScript](const UniquePtr<ICScript>& script) -> bool {
+        return script.get() == icScript;
+      });
 }
 
 void InliningRoot::trace(JSTracer* trc) {

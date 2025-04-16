@@ -343,13 +343,18 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
 
     #[inline]
     fn parse_is_and_where(&self) -> bool {
-        self.in_user_agent_stylesheet() ||
-            static_prefs::pref!("layout.css.is-where-selectors.enabled")
+        true
     }
 
     #[inline]
     fn parse_part(&self) -> bool {
-        self.chrome_rules_enabled() || static_prefs::pref!("layout.css.shadow-parts.enabled")
+        true
+    }
+
+    #[inline]
+    fn is_is_alias(&self, function: &str) -> bool {
+        static_prefs::pref!("layout.css.moz-any-is-is.enabled") &&
+            function.eq_ignore_ascii_case("-moz-any")
     }
 
     fn parse_non_ts_pseudo_class(

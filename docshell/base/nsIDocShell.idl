@@ -460,7 +460,7 @@ interface nsIDocShell : nsIDocShellTreeItem
    * Find out whether the docshell is currently in the middle of a page
    * transition. This is set just before the pagehide/unload events fire.
    */
-  readonly attribute boolean isInUnload;
+  [infallible] readonly attribute boolean isInUnload;
 
   /**
    * Disconnects this docshell's editor from its window, and stores the
@@ -481,24 +481,6 @@ interface nsIDocShell : nsIDocShellTreeItem
    * one of the documents under it is printing.
    */
   [noscript, notxpcom] void setIsPrinting(in boolean aIsPrinting);
-
-  /**
-   * This method should only be called on a docShell that has been specifically
-   * created to display a print preview document.  If the current document
-   * viewer isn't initialized for print preview when this method is called, it
-   * is replaced with a new viewer with an about:blank document (with the URL
-   * about:printpreview).  The viewer is then returned, ready for the print
-   * preview document to be constructed when viewer.printPreview() is called.
-   *
-   * The same viewer will be returned on subsequent calls since various bits of
-   * code assume that, once created, the viewer is never replaced.  Note,
-   * however, that the viewer's document will be replaced with a new document
-   * each time printPreview() is called on it (which is what we do to take
-   * account of print preview settings changes).  Replacing the document
-   * viewer's document breaks the normally unchanging 1:1 relationship between
-   * a document and its viewer, but that seems to be okay.
-   */
-  nsIWebBrowserPrint initOrReusePrintPreviewViewer();
 
   /**
    * Propagated to the print preview document viewer.  Must only be called on
@@ -799,8 +781,6 @@ interface nsIDocShell : nsIDocShellTreeItem
                                                                   in jsval asyncStack,
                                                                   in string asyncCause);
   [noscript,notxpcom,nostdcall] void notifyJSRunToCompletionStop();
-
-  [noscript] void GetOSHEId(out uint32_t aSHEntryId);
 
   /**
    * This attribute determines whether a document which is not about:blank has

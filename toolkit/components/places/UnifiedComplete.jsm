@@ -492,6 +492,7 @@ function Search(
     this._maxResults = queryContext.maxResults;
     this._userContextId = queryContext.userContextId;
     this._currentPage = queryContext.currentPage;
+    this._searchModeEngine = queryContext.searchMode?.engineName;
   } else {
     let params = new Set(searchParam.split(" "));
     this._enableActions = params.has("enable-actions");
@@ -514,6 +515,7 @@ function Search(
   // properly recognize token types.
   let { tokens } = UrlbarTokenizer.tokenize({
     searchString: unescapedSearchString,
+    trimmedSearchString: unescapedSearchString.trim(),
   });
 
   // This allows to handle leading or trailing restriction characters specially.
@@ -534,6 +536,14 @@ function Search(
     }
   }
 
+  // Eventually filter restriction tokens. In general it's a good idea, but if
+  // the consumer requested search mode, we should use the full string to avoid
+  // ignoring valid tokens.
+  this._searchTokens =
+    !queryContext || queryContext.shouldFilterRestrictionTokens
+      ? this.filterTokens(tokens)
+      : tokens;
+
   // The behavior can be set through:
   // 1. a specific restrictSource in the QueryContext
   // 2. typed restriction tokens
@@ -542,21 +552,15 @@ function Search(
     queryContext.restrictSource &&
     sourceToBehaviorMap.has(queryContext.restrictSource)
   ) {
-    this._searchTokens = tokens;
     this._behavior = 0;
     this.setBehavior("restrict");
     let behavior = sourceToBehaviorMap.get(queryContext.restrictSource);
     this.setBehavior(behavior);
 
-    if (behavior == "search" && queryContext.engineName) {
-      this._engineName = queryContext.engineName;
-    }
-
     // When we are in restrict mode, all the tokens are valid for searching, so
     // there is no _heuristicToken.
     this._heuristicToken = null;
   } else {
-    this._searchTokens = this.filterTokens(tokens);
     // The heuristic token is the first filtered search token, but only when it's
     // actually the first thing in the search string.  If a prefix or restriction
     // character occurs first, then the heurstic token is null.  We use the
@@ -787,6 +791,16 @@ Search.prototype = {
     if (this._trimmedOriginalSearchString == "@" && tokenAliasEngines.length) {
       this._autocompleteSearch.finishSearch(true);
       return;
+    }
+
+    // this._searchModeEngine is set if the user is in search mode. We fetch only
+    // local results with the same host as the search mode engine.
+    if (this._searchModeEngine && !this._keywordSubstitute) {
+      let engine = Services.search.getEngineByName(this._searchModeEngine);
+      this._keywordSubstitute = {
+        host: engine.getResultDomain(),
+        keyword: null,
+      };
     }
 
     // Add the first heuristic result, if any.  Set _addingHeuristicResult
@@ -1084,7 +1098,10 @@ Search.prototype = {
 
     this._addMatch(match);
     if (!this._keywordSubstitute) {
-      this._keywordSubstitute = entry.url.host;
+      this._keywordSubstitute = {
+        host: entry.url.host,
+        keyword,
+      };
     }
     return true;
   },
@@ -1103,7 +1120,10 @@ Search.prototype = {
     };
     this._addSearchEngineMatch(this._searchEngineAliasMatch);
     if (!this._keywordSubstitute) {
-      this._keywordSubstitute = engine.getResultDomain();
+      this._keywordSubstitute = {
+        host: engine.getResultDomain(),
+        keyword: alias,
+      };
     }
     return true;
   },
@@ -1573,6 +1593,10 @@ Search.prototype = {
   // results, caching the others. If at the end we don't find other results, we
   // can add these.
   _addAdaptiveQueryMatch(row) {
+    // We should only show filtered results in search mode.
+    if (this._searchModeEngine) {
+      return;
+    }
     // Allow one quarter of the results to be adaptive results.
     // Note: ideally adaptive results should have their own provider and the
     // results muxer should decide what to show.  But that's too complex to
@@ -1694,7 +1718,10 @@ Search.prototype = {
   get _keywordSubstitutedSearchString() {
     let tokens = this._searchTokens.map(t => t.value);
     if (this._keywordSubstitute) {
-      tokens = [this._keywordSubstitute, ...tokens.slice(1)];
+      tokens = [
+        this._keywordSubstitute.host,
+        ...tokens.slice(this._keywordSubstitute.keyword ? 1 : 0),
+      ];
     }
     return tokens.join(" ");
   },

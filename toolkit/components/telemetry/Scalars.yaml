@@ -212,7 +212,7 @@ browser.engagement:
       - 'main'
     record_into_store:
       - 'main'
-      - 'pre-account'
+      - 'account-ecosystem'
 
   unfiltered_uri_count:
     bug_numbers:
@@ -294,7 +294,27 @@ browser.engagement:
       - 'main'
     record_into_store:
       - 'main'
-      - 'pre-account'
+      - 'account-ecosystem'
+
+  profile_count:
+    bug_numbers:
+      - 1647422
+      - 1356265
+    description: >
+      The count of the browser profiles on the current system. This counts profiles that have been
+      used across all OS user accounts on machine since this probe was added. The value persists
+      across installs. A value of 0 is reported if there is an error determining the correct count.
+    expires: never
+    kind: uint
+    notification_emails:
+      - rtestard@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+    operating_systems:
+      - windows
 
 # The following section contains the browser engagement scalars.
 browser.engagement.navigation:
@@ -1708,6 +1728,41 @@ findbar:
     record_in_processes:
       - 'main'
 
+sidebar:
+  opened:
+    bug_numbers:
+      - 1648530
+    description: >
+      The number of times the sidebar was opened, per view (e.g.: bookmarks, history,
+      synced tabs).
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - emalysz@mozilla.com
+      - rtestard@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+  search:
+    bug_numbers:
+      - 1648524
+    description: >
+      The number of searches from the sidebar, per view (e.g.: bookmarks, history).
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - emalysz@mozilla.com
+      - rtestard@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
 os.environment:
   is_admin_without_uac:
     bug_numbers:
@@ -1735,7 +1790,7 @@ pictureinpicture:
     description: >
       The number of times a Picture-in-Picture window was opened, per trigger
       mechanism (e.g.: the video toggle, the context menu).
-    expires: "82"
+    expires: "87"
     kind: uint
     keyed: true
     notification_emails:
@@ -1754,7 +1809,7 @@ pictureinpicture:
       The number of times a Picture-in-Picture window was closed, per trigger
       mechanism (e.g.: the close button, the unpip button, originating tab going away,
       process shutdown, etc).
-    expires: "82"
+    expires: "87"
     kind: uint
     keyed: true
     notification_emails:
@@ -1917,23 +1972,6 @@ preferences:
       - 'fennec'
     record_in_processes:
       - main
-  prevent_accessibility_services:
-    bug_numbers:
-      - 1412358
-    description: >
-      Recorded on command event. Boolean stating if the preference checkbox for
-      preventing accessibility from accessing the browser (Privacy & Security)
-      was checked.
-    expires: "62"
-    kind: boolean
-    notification_emails:
-      - yzenevich@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'fennec'
-    record_in_processes:
-      - 'main'
 
 webrtc.video:
   recv_codec_used:
@@ -2570,7 +2608,7 @@ devtools.tooltip:
     bug_numbers:
       - 1553471
     description: >
-      Number of times a tooltip was shown, keyed by tooltip type. Currently supported types are "image", "font-family", "inactive-css" and "variable."
+      Number of times a tooltip was shown, keyed by tooltip type. Currently supported types are "image", "font-family", "inactive-css", "css-compatibility" and "variable."
     expires: never
     kind: uint
     keyed: true
@@ -2812,7 +2850,7 @@ devtools.accessibility:
     description: >
       Number of times accessibility simulation was activated (with mouse or keyboard)
       from the accessibility panel's toolbar. Keyed by the simulation type
-      (e.g. "DEUTERANOMALY").
+      (e.g. "DEUTERANOPIA").
     expires: never
     kind: uint
     keyed: true
@@ -3954,8 +3992,42 @@ printing:
     bug_numbers:
       - 1600623
     description: >
-      A counter incremented every time the print dialog is opened from print
-      preview.
+      A counter incremented every time the print dialog is opened from the old
+      print preview.
+    expires: never
+    kind: uint
+    notification_emails:
+      - jwatt@jwatt.org
+      - emalysz@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'content'
+
+  dialog_opened_via_preview_tm:
+    bug_numbers:
+      - 1657220
+    description: >
+      A counter incremented every time a user opens the system print dialog
+      from the print preview interface.
+    expires: never
+    kind: uint
+    notification_emails:
+      - jwatt@jwatt.org
+      - emalysz@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  dialog_via_preview_cancelled:
+    bug_numbers:
+      - 1600623
+    description: >
+      A counter incremented every time a print dialog opened from the old print
+      preview is cancelled.
     expires: never
     kind: uint
     notification_emails:
@@ -3966,12 +4038,12 @@ printing:
     record_in_processes:
       - 'content'
 
-  dialog_via_preview_cancelled:
+  dialog_via_preview_cancelled_tm:
     bug_numbers:
-      - 1600623
+      - 1657220
     description: >
-      A counter incremented every time a print dialog opened from print preview
-      is cancelled.
+      A counter incremented every time a user cancels a system print dialog
+      that they opened from the print preview interface.
     expires: never
     kind: uint
     notification_emails:
@@ -3980,7 +4052,7 @@ printing:
     products:
       - 'firefox'
     record_in_processes:
-      - 'content'
+      - 'main'
 
   error:
     bug_numbers:
@@ -4020,32 +4092,85 @@ printing:
     bug_numbers:
       - 1600623
     description: >
-      A counter incremented every time the user initiates print preview.
+      A counter incremented every time the user initiates the old print preview.
     expires: never
     kind: uint
     notification_emails:
       - jwatt@jwatt.org
+      - emalysz@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
     record_in_processes:
       - 'content'
 
-  preview_cancelled:
+  preview_opened_tm:
     bug_numbers:
-      - 1600623
+      - 1657220
     description: >
-      A counter incremented every time a print preview session exits without
-      printing.
+      A counter incremented every time a user opens print preview.
     expires: never
     kind: uint
     notification_emails:
       - jwatt@jwatt.org
+      - emalysz@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  preview_cancelled:
+    bug_numbers:
+      - 1600623
+    description: >
+      A counter incremented every time an old print preview session exits
+      without printing.
+    expires: never
+    kind: uint
+    notification_emails:
+      - jwatt@jwatt.org
+      - emalysz@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
     record_in_processes:
       - 'content'
+
+  preview_cancelled_tm:
+    bug_numbers:
+      - 1657220
+    description: >
+      A counter incremented every time a user exits print preview without
+      printing.
+    expires: never
+    kind: uint
+    notification_emails:
+      - jwatt@jwatt.org
+      - emalysz@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  settings_changed:
+    bug_numbers:
+      - 1653386
+    description: >
+      A count of how many times the user changed a setting in print preview,
+      broken down per setting.
+    keyed: true
+    expires: never
+    kind: uint
+    notification_emails:
+      - emalysz@mozilla.com
+      - rtestard@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - "firefox"
+    record_in_processes:
+      - 'main'
 
   silent_print:
     bug_numbers:
@@ -4432,6 +4557,7 @@ browser.search:
     bug_numbers:
       - 1614777
       - 1619954
+      - 1656135
     description: >
       Records bytes that have been transferred for search requests, including
       top-level documents, sub-resources, iframes and search suggestions.
@@ -4440,11 +4566,11 @@ browser.search:
         <search-provider-name>-pb
         sggt-<search-engine-id>
         sggt-<search-engine-id>-pb
-    expires: "82"
+    expires: "89"
     keyed: true
     kind: uint
     notification_emails:
-      - gachen@mozilla.com
+      - tihuang@mozilla.com
     products:
       - 'firefox'
     record_in_processes:
@@ -4581,6 +4707,24 @@ startup:
     record_in_processes:
       - 'main'
 
+  seconds_since_last_os_restart:
+    bug_numbers:
+      - 1654063
+    description: >
+      The time in seconds between the first browser window loading, and the
+      time the OS started. This can give us an indication of whether starting
+      the browser may have been the first thing the user did after starting
+      their computer.
+    expires: never
+    kind: uint
+    notification_emails:
+      - dothayer@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
 script.preloader:
   mainthread_recompile:
     bug_numbers:
@@ -4598,6 +4742,84 @@ script.preloader:
     products:
       - 'firefox'
       - 'fennec'
+    record_in_processes:
+      - 'main'
+      - 'content'
+
+wasm:
+  compile_time_baseline_us:
+    bug_numbers:
+      - 1656638
+    description:
+      How many microseconds we spent in the baseline WebAssembly compiler.
+    expires: "88"
+    keyed: false
+    kind: uint
+    notification_emails:
+      - cfallin@mozilla.com
+      - bbouvier@mozilla.com
+      - jseward@mozilla.com
+    release_channel_collection: opt-in
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+      - 'content'
+
+  compile_time_cranelift_us:
+    bug_numbers:
+      - 1656638
+    description:
+      How many microseconds we spent in the Cranelift WebAssembly compiler.
+    expires: "88"
+    keyed: false
+    kind: uint
+    notification_emails:
+      - cfallin@mozilla.com
+      - bbouvier@mozilla.com
+      - jseward@mozilla.com
+    release_channel_collection: opt-in
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  compile_time_ion_us:
+    bug_numbers:
+      - 1656638
+    description:
+      How many microseconds we spent in the IonMonkey WebAssembly compiler.
+    expires: "88"
+    keyed: false
+    kind: uint
+    notification_emails:
+      - cfallin@mozilla.com
+      - bbouvier@mozilla.com
+      - jseward@mozilla.com
+    release_channel_collection: opt-in
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+      - 'content'
+
+js:
+  run_time_us:
+    bug_numbers:
+      - 1656638
+    description:
+      How many microseconds we spent in running user code in SpiderMonkey,
+      including JavaScript code and WebAssembly code.
+    expires: "88"
+    keyed: false
+    kind: uint
+    notification_emails:
+      - cfallin@mozilla.com
+      - bbouvier@mozilla.com
+      - jseward@mozilla.com
+    release_channel_collection: opt-in
+    products:
+      - 'firefox'
     record_in_processes:
       - 'main'
       - 'content'
@@ -5060,6 +5282,25 @@ deletion.request:
     record_into_store:
       - 'deletion-request'
 
+  ecosystem_client_id:
+    bug_numbers:
+      - 1635662
+    description: >
+      An identifier used by the ecosystem ping, to delete all ecosystem
+      metrics collected from this profile if the user opts out of telemetry.
+    expires: never
+    kind: string
+    notification_emails:
+      - lina@mozilla.com
+      - sync-team@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+    record_into_store:
+      - 'deletion-request'
+
 policies:
   count:
     bug_numbers:
@@ -5152,6 +5393,24 @@ fog.eval:
       - 1647876
     description: >
       How many Telemetry stopwatch errors did we have while trying to measure user activity?
+      These could be attempts to start a started timer or finish an unstarted timer or so forth.
+      See Stopwatch::Start and Stopwatch::Finish for details.
+      For use in evaluating baseline engagement for Project FOG.
+    expires: '85'
+    kind: 'uint'
+    notification_emails:
+      - 'chutten@mozilla.com'
+    release_channel_collection: 'opt-out'
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
+  user_inactive_error:
+    bug_numbers:
+      - 1660887
+    description: >
+      How many Telemetry stopwatch errors did we have while trying to measure user inactivity?
       These could be attempts to start a started timer or finish an unstarted timer or so forth.
       See Stopwatch::Start and Stopwatch::Finish for details.
       For use in evaluating baseline engagement for Project FOG.

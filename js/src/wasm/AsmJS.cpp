@@ -41,6 +41,7 @@
 #include "js/BuildId.h"  // JS::BuildIdCharVector
 #include "js/MemoryMetrics.h"
 #include "js/Printf.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
 #include "js/Wrapper.h"
@@ -1713,6 +1714,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidatorShared {
     if (!seg) {
       return false;
     }
+    seg->elemType = RefType::func();
     seg->tableIndex = tableIndex;
     seg->offsetIfActive = Some(InitExpr::fromConstant(LitVal(uint32_t(0))));
     seg->elemFuncIndices = std::move(elems);
@@ -1994,7 +1996,8 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
     }
 
     env_.asmJSSigToTableIndex[sigIndex] = env_.tables.length();
-    if (!env_.tables.emplaceBack(TableKind::AsmJS, mask + 1, Nothing())) {
+    if (!env_.tables.emplaceBack(RefType::func(), mask + 1, Nothing(),
+                                 /*isAsmJS*/ true)) {
       return false;
     }
 
@@ -5856,7 +5859,7 @@ static bool CheckReturnType(FunctionValidatorShared& f, ParseNode* usepn,
 
   if (f.returnedType() != type) {
     return f.failf(usepn, "%s incompatible with previous return of type %s",
-                   ToCString(type), ToCString(f.returnedType()));
+                   ToString(type).get(), ToString(f.returnedType()).get());
   }
 
   return true;
@@ -6728,9 +6731,9 @@ static bool CheckBuffer(JSContext* cx, const AsmJSMetadata& metadata,
 
   if (!IsValidAsmJSHeapLength(memoryLength)) {
     UniqueChars msg(JS_smprintf(
-        "ArrayBuffer byteLength 0x%" PRIu64
+        "ArrayBuffer byteLength 0x%" PRIx64
         " is not a valid heap length. The next "
-        "valid length is 0x%" PRIu64,
+        "valid length is 0x%" PRIx64,
         memoryLength, RoundUpToNextValidAsmJSHeapLength(memoryLength)));
     if (!msg) {
       return false;
@@ -6743,8 +6746,8 @@ static bool CheckBuffer(JSContext* cx, const AsmJSMetadata& metadata,
   // byteLength has larger alignment.
   MOZ_ASSERT((metadata.minMemoryLength - 1) <= INT32_MAX);
   if (memoryLength < metadata.minMemoryLength) {
-    UniqueChars msg(JS_smprintf("ArrayBuffer byteLength of 0x%" PRIu64
-                                " is less than 0x%" PRIu64 " (the "
+    UniqueChars msg(JS_smprintf("ArrayBuffer byteLength of 0x%" PRIx64
+                                " is less than 0x%" PRIx64 " (the "
                                 "size implied "
                                 "by const heap accesses).",
                                 memoryLength, metadata.minMemoryLength));

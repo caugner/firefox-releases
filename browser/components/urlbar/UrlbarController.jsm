@@ -19,7 +19,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
-  URLBAR_SELECTED_RESULT_TYPES: "resource:///modules/BrowserUsageTelemetry.jsm",
 });
 
 const TELEMETRY_1ST_RESULT = "PLACES_AUTOCOMPLETE_1ST_RESULT_TIME_MS";
@@ -311,21 +310,7 @@ class UrlbarController {
         break;
       case KeyEvent.DOM_VK_RETURN:
         if (executeAction) {
-          if (
-            this.view.oneOffsRefresh &&
-            this.view.oneOffSearchButtons.selectedButton?.engine
-          ) {
-            this.input.setSearchMode(
-              this.view.oneOffSearchButtons.selectedButton.engine
-            );
-            this.view.oneOffSearchButtons.selectedButton = null;
-            this.input.startQuery({
-              allowAutofill: false,
-              event,
-            });
-          } else {
-            this.input.handleCommand(event);
-          }
+          this.input.handleCommand(event);
         }
         event.preventDefault();
         break;
@@ -400,13 +385,11 @@ class UrlbarController {
           this.input.selectionEnd == 0 &&
           !event.shiftKey
         ) {
-          this.input.setSearchMode(null);
-          if (this.input.value) {
-            this.input.startQuery({
-              allowAutofill: false,
-              event,
-            });
-          }
+          this.input.setSearchMode({});
+          this.input.startQuery({
+            allowAutofill: false,
+            event,
+          });
         }
       // Fall through.
       case KeyEvent.DOM_VK_DELETE:
@@ -531,7 +514,7 @@ class UrlbarController {
     // Do not modify existing telemetry types.  To add a new type:
     //
     // * Set telemetryType appropriately below.
-    // * Add the type to BrowserUsageTelemetry.URLBAR_SELECTED_RESULT_TYPES.
+    // * Add the type to UrlbarUtils.SELECTED_RESULT_TYPES.
     // * See n_values in Histograms.json for FX_URLBAR_SELECTED_RESULT_TYPE_2
     //   and FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE_2.  If your new type causes
     //   the number of types to become larger than n_values, you'll need to
@@ -596,10 +579,10 @@ class UrlbarController {
     Services.telemetry
       .getHistogramById("FX_URLBAR_SELECTED_RESULT_INDEX")
       .add(resultIndex);
-    if (telemetryType in URLBAR_SELECTED_RESULT_TYPES) {
+    if (telemetryType in UrlbarUtils.SELECTED_RESULT_TYPES) {
       Services.telemetry
         .getHistogramById("FX_URLBAR_SELECTED_RESULT_TYPE_2")
-        .add(URLBAR_SELECTED_RESULT_TYPES[telemetryType]);
+        .add(UrlbarUtils.SELECTED_RESULT_TYPES[telemetryType]);
       Services.telemetry
         .getKeyedHistogramById("FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE_2")
         .add(telemetryType, resultIndex);

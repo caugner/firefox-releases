@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "gc/Zone-inl.h"
+#include "js/shadow/Zone.h"  // JS::shadow::Zone
 
 #include <type_traits>
 
@@ -485,7 +486,7 @@ void Zone::discardJitCode(JSFreeOp* fop,
 }
 
 void JS::Zone::beforeClearDelegateInternal(JSObject* wrapper,
-                                               JSObject* delegate) {
+                                           JSObject* delegate) {
   MOZ_ASSERT(js::gc::detail::GetDelegate(wrapper) == delegate);
   MOZ_ASSERT(needsIncrementalBarrier());
   GCMarker::fromTracer(barrierTracer())->severWeakDelegate(wrapper, delegate);

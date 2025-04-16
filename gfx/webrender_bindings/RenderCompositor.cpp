@@ -29,10 +29,11 @@ namespace mozilla {
 namespace wr {
 
 void wr_compositor_add_surface(void* aCompositor, wr::NativeSurfaceId aId,
-                               wr::DeviceIntPoint aPosition,
-                               wr::DeviceIntRect aClipRect) {
+                               const wr::CompositorSurfaceTransform* aTransform,
+                               wr::DeviceIntRect aClipRect,
+                               wr::ImageRendering aImageRendering) {
   RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
-  compositor->AddSurface(aId, aPosition, aClipRect);
+  compositor->AddSurface(aId, *aTransform, aClipRect, aImageRendering);
 }
 
 void wr_compositor_begin_frame(void* aCompositor) {
@@ -55,6 +56,13 @@ void wr_compositor_create_surface(void* aCompositor, wr::NativeSurfaceId aId,
   compositor->CreateSurface(aId, aVirtualOffset, aTileSize, aIsOpaque);
 }
 
+void wr_compositor_create_external_surface(void* aCompositor,
+                                           wr::NativeSurfaceId aId,
+                                           bool aIsOpaque) {
+  RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
+  compositor->CreateExternalSurface(aId, aIsOpaque);
+}
+
 void wr_compositor_create_tile(void* aCompositor, wr::NativeSurfaceId aId,
                                int32_t aX, int32_t aY) {
   RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
@@ -70,6 +78,13 @@ void wr_compositor_destroy_tile(void* aCompositor, wr::NativeSurfaceId aId,
 void wr_compositor_destroy_surface(void* aCompositor, NativeSurfaceId aId) {
   RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
   compositor->DestroySurface(aId);
+}
+
+void wr_compositor_attach_external_image(void* aCompositor,
+                                         wr::NativeSurfaceId aId,
+                                         wr::ExternalImageId aExternalImage) {
+  RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
+  compositor->AttachExternalImage(aId, aExternalImage);
 }
 
 void wr_compositor_end_frame(void* aCompositor) {

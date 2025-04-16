@@ -16,7 +16,8 @@
 
 #include "frontend/BytecodeCompilation.h"
 #include "jit/IonCompileTask.h"
-#include "js/ContextOptions.h"  // JS::ContextOptions
+#include "js/ContextOptions.h"      // JS::ContextOptions
+#include "js/friend/StackLimits.h"  // js::ReportOverRecursed
 #include "js/SourceText.h"
 #include "js/UniquePtr.h"
 #include "js/Utility.h"
@@ -613,7 +614,8 @@ void ScriptParseTask<Unit>::parse(JSContext* cx) {
   }
 
   uint32_t len = data.length();
-  SourceExtent extent = SourceExtent::makeGlobalExtent(len, options);
+  SourceExtent extent =
+      SourceExtent::makeGlobalExtent(len, options.lineno, options.column);
   frontend::GlobalSharedContext globalsc(cx, scopeKind, compilationInfo,
                                          compilationInfo.directives, extent);
   JSScript* script =

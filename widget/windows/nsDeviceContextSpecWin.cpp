@@ -55,45 +55,8 @@ using namespace mozilla::widget;
 static const wchar_t kDriverName[] = L"WINSPOOL";
 
 //----------------------------------------------------------------------------------
-// The printer data is shared between the PrinterList and the
-// nsDeviceContextSpecWin The PrinterList creates the printer info but the
-// nsDeviceContextSpecWin cleans it up If it gets created (via the Page Setup
-// Dialog) but the user never prints anything then it will never be delete, so
-// this class takes care of that.
-class GlobalPrinters {
- public:
-  static GlobalPrinters* GetInstance() { return &mGlobalPrinters; }
-  ~GlobalPrinters() { FreeGlobalPrinters(); }
-
-  void FreeGlobalPrinters();
-
-  bool PrintersAreAllocated() { return mPrinters != nullptr; }
-  LPWSTR GetItemFromList(int32_t aInx) {
-    return mPrinters ? mPrinters->ElementAt(aInx) : nullptr;
-  }
-  nsresult EnumeratePrinterList();
-  void GetDefaultPrinterName(nsAString& aDefaultPrinterName);
-  uint32_t GetNumPrinters() { return mPrinters ? mPrinters->Length() : 0; }
-
- protected:
-  GlobalPrinters() {}
-  nsresult EnumerateNativePrinters();
-  void ReallocatePrinters();
-
-  static GlobalPrinters mGlobalPrinters;
-  static nsTArray<LPWSTR>* mPrinters;
-};
 //---------------
 // static members
-GlobalPrinters GlobalPrinters::mGlobalPrinters;
-nsTArray<LPWSTR>* GlobalPrinters::mPrinters = nullptr;
-
-struct AutoFreeGlobalPrinters {
-  ~AutoFreeGlobalPrinters() {
-    GlobalPrinters::GetInstance()->FreeGlobalPrinters();
-  }
-};
-
 //----------------------------------------------------------------------------------
 nsDeviceContextSpecWin::nsDeviceContextSpecWin()
     : mDevMode(nullptr)
@@ -111,15 +74,33 @@ NS_IMPL_ISUPPORTS(nsDeviceContextSpecWin, nsIDeviceContextSpec)
 nsDeviceContextSpecWin::~nsDeviceContextSpecWin() {
   SetDevMode(nullptr);
 
-  nsCOMPtr<nsIPrintSettingsWin> psWin(do_QueryInterface(mPrintSettings));
-  if (psWin) {
-    psWin->SetDeviceName(EmptyString());
-    psWin->SetDriverName(EmptyString());
-    psWin->SetDevMode(nullptr);
+  if (nsCOMPtr<nsIPrintSettingsWin> ps = do_QueryInterface(mPrintSettings)) {
+    ps->SetDeviceName(EmptyString());
+    ps->SetDriverName(EmptyString());
+    ps->SetDevMode(nullptr);
+  }
+}
+
+static bool GetDefaultPrinterName(nsAString& aDefaultPrinterName) {
+  DWORD length = 0;
+  GetDefaultPrinterW(nullptr, &length);
+
+  if (length) {
+    aDefaultPrinterName.SetLength(length);
+    if (GetDefaultPrinterW((LPWSTR)aDefaultPrinterName.BeginWriting(),
+                           &length)) {
+      // `length` includes the terminating null, so we subtract that from our
+      // string length.
+      aDefaultPrinterName.SetLength(length - 1);
+      PR_PL(("DEFAULT PRINTER [%s]\n",
+             NS_ConvertUTF16toUTF8(aDefaultPrinterName).get()));
+      return true;
+    }
   }
 
-  // Free them, we won't need them for a while
-  GlobalPrinters::GetInstance()->FreeGlobalPrinters();
+  aDefaultPrinterName.Truncate();
+  PR_PL(("NO DEFAULT PRINTER\n"));
+  return false;
 }
 
 //----------------------------------------------------------------------------------
@@ -137,7 +118,7 @@ NS_IMETHODIMP nsDeviceContextSpecWin::Init(nsIWidget* aWidget,
 
   // If there is no name then use the default printer
   if (printerName.IsEmpty()) {
-    GlobalPrinters::GetInstance()->GetDefaultPrinterName(printerName);
+    GetDefaultPrinterName(printerName);
   }
 
   // Gather telemetry on the print target type.
@@ -415,17 +396,6 @@ nsresult nsDeviceContextSpecWin::GetDataFromPrinter(const nsAString& aName,
                                                     nsIPrintSettings* aPS) {
   nsresult rv = NS_ERROR_FAILURE;
 
-  if (!GlobalPrinters::GetInstance()->PrintersAreAllocated()) {
-    rv = GlobalPrinters::GetInstance()->EnumeratePrinterList();
-    if (NS_FAILED(rv)) {
-      PR_PL(
-          ("***** nsDeviceContextSpecWin::GetDataFromPrinter - Couldn't "
-           "retrieve printers!\n"));
-      DISPLAY_LAST_ERROR
-    }
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
   nsHPRINTER hPrinter = nullptr;
   const nsString& flat = PromiseFlatString(aName);
   wchar_t* name =
@@ -512,16 +482,84 @@ nsresult nsDeviceContextSpecWin::GetDataFromPrinter(const nsAString& aName,
 //  Printer List
 //***********************************************************
 
-nsPrinterListWin::~nsPrinterListWin() {
-  GlobalPrinters::GetInstance()->FreeGlobalPrinters();
+nsPrinterListWin::~nsPrinterListWin() = default;
+
+// Helper to get the array of PRINTER_INFO_4 records from the OS into a
+// caller-supplied byte array; returns the number of records present.
+static unsigned GetPrinterInfo4(nsTArray<BYTE>& aBuffer) {
+  const DWORD kLevel = 4;
+  DWORD needed = 0;
+  DWORD count = 0;
+  const DWORD kFlags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS;
+  BOOL ok = EnumPrinters(kFlags,
+                         nullptr,  // Name
+                         kLevel,   // Level
+                         nullptr,  // pPrinterEnum
+                         0,        // cbBuf (buffer size)
+                         &needed,  // Bytes needed in buffer
+                         &count);
+  if (needed > 0) {
+    aBuffer.SetLength(needed);
+    ok = EnumPrinters(kFlags, nullptr, kLevel, aBuffer.Elements(),
+                      aBuffer.Length(), &needed, &count);
+  }
+  if (!ok || !count) {
+    return 0;
+  }
+  return count;
 }
 
-NS_IMPL_ISUPPORTS(nsPrinterListWin, nsIPrinterList)
+nsTArray<nsPrinterListBase::PrinterInfo> nsPrinterListWin::Printers() const {
+  PR_PL(("nsPrinterListWin::Printers\n"));
 
-NS_IMETHODIMP
-nsPrinterListWin::GetSystemDefaultPrinterName(nsAString& aName) {
-  GlobalPrinters::GetInstance()->GetDefaultPrinterName(aName);
-  return NS_OK;
+  AutoTArray<BYTE, 1024> buffer;
+  unsigned count = GetPrinterInfo4(buffer);
+
+  if (!count) {
+    PR_PL(("[No printers found]\n"));
+    return {};
+  }
+
+  const auto* printers =
+      reinterpret_cast<const PRINTER_INFO_4*>(buffer.Elements());
+  nsTArray<PrinterInfo> list;
+  for (unsigned i = 0; i < count; i++) {
+    list.AppendElement(PrinterInfo{nsString(printers[i].pPrinterName)});
+    PR_PL(("Printer Name: %s\n",
+           NS_ConvertUTF16toUTF8(printers[i].pPrinterName).get()));
+  }
+
+  return list;
+}
+
+Maybe<nsPrinterListBase::PrinterInfo> nsPrinterListWin::NamedPrinter(
+    nsString aName) const {
+  Maybe<PrinterInfo> rv;
+
+  AutoTArray<BYTE, 1024> buffer;
+  unsigned count = GetPrinterInfo4(buffer);
+
+  const auto* printers =
+      reinterpret_cast<const PRINTER_INFO_4*>(buffer.Elements());
+  for (unsigned i = 0; i < count; ++i) {
+    if (aName.Equals(nsString(printers[i].pPrinterName))) {
+      rv.emplace(PrinterInfo{aName});
+      break;
+    }
+  }
+
+  return rv;
+}
+
+RefPtr<nsIPrinter> nsPrinterListWin::CreatePrinter(PrinterInfo aInfo) const {
+  return nsPrinterWin::Create(std::move(aInfo.mName));
+}
+
+nsresult nsPrinterListWin::SystemDefaultPrinterName(nsAString& aName) const {
+  if (GetDefaultPrinterName(aName)) {
+    return NS_OK;
+  }
+  return NS_ERROR_NOT_AVAILABLE;
 }
 
 NS_IMETHODIMP
@@ -542,12 +580,6 @@ nsPrinterListWin::InitPrintSettingsFromPrinter(
 
   RefPtr<nsDeviceContextSpecWin> devSpecWin = new nsDeviceContextSpecWin();
   if (!devSpecWin) return NS_ERROR_OUT_OF_MEMORY;
-
-  if (NS_FAILED(GlobalPrinters::GetInstance()->EnumeratePrinterList())) {
-    return NS_ERROR_FAILURE;
-  }
-
-  AutoFreeGlobalPrinters autoFreeGlobalPrinters;
 
   // If the settings have already been initialized from prefs then pass these to
   // GetDataFromPrinter, so that they are saved to the printer.
@@ -585,151 +617,6 @@ nsPrinterListWin::InitPrintSettingsFromPrinter(
   MOZ_ASSERT(psWin);
   psWin->CopyFromNative(dc, devmode);
   ::DeleteDC(dc);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsPrinterListWin::GetPrinters(nsTArray<RefPtr<nsIPrinter>>& aPrinters) {
-  nsresult rv = GlobalPrinters::GetInstance()->EnumeratePrinterList();
-  if (NS_FAILED(rv)) {
-    PR_PL(
-        ("***** nsDeviceContextSpecWin::GetPrinters - Couldn't "
-         "retrieve printers!\n"));
-    return rv;
-  }
-
-  uint32_t numPrinters = GlobalPrinters::GetInstance()->GetNumPrinters();
-  for (uint32_t printerInx = 0; printerInx < numPrinters; ++printerInx) {
-    // wchar_t (used in LPWSTR) is 16 bits on Windows.
-    // https://docs.microsoft.com/en-us/cpp/cpp/char-wchar-t-char16-t-char32-t?view=vs-2019
-    LPWSTR name = GlobalPrinters::GetInstance()->GetItemFromList(printerInx);
-
-    nsAutoString printerName(name);
-    aPrinters.AppendElement(new nsPrinterWin(printerName));
-  }
-
-  return NS_OK;
-}
-
-//----------------------------------------------------------------------------------
-//-- Global Printers
-//----------------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------------
-// THe array hold the name and port for each printer
-void GlobalPrinters::ReallocatePrinters() {
-  if (PrintersAreAllocated()) {
-    FreeGlobalPrinters();
-  }
-  mPrinters = new nsTArray<LPWSTR>();
-  NS_ASSERTION(mPrinters, "Printers Array is NULL!");
-}
-
-//----------------------------------------------------------------------------------
-void GlobalPrinters::FreeGlobalPrinters() {
-  if (mPrinters != nullptr) {
-    for (uint32_t i = 0; i < mPrinters->Length(); i++) {
-      free(mPrinters->ElementAt(i));
-    }
-    delete mPrinters;
-    mPrinters = nullptr;
-  }
-}
-
-//----------------------------------------------------------------------------------
-nsresult GlobalPrinters::EnumerateNativePrinters() {
-  nsresult rv = NS_ERROR_GFX_PRINTER_NO_PRINTER_AVAILABLE;
-  PR_PL(("-----------------------\n"));
-  PR_PL(("EnumerateNativePrinters\n"));
-
-  WCHAR szDefaultPrinterName[1024];
-  DWORD status = GetProfileStringW(L"devices", 0, L",", szDefaultPrinterName,
-                                   ArrayLength(szDefaultPrinterName));
-  if (status > 0) {
-    DWORD count = 0;
-    LPWSTR sPtr = szDefaultPrinterName;
-    LPWSTR ePtr = szDefaultPrinterName + status;
-    LPWSTR prvPtr = sPtr;
-    while (sPtr < ePtr) {
-      if (*sPtr == 0) {
-        LPWSTR name = wcsdup(prvPtr);
-        mPrinters->AppendElement(name);
-        PR_PL(("Printer Name:    %s\n", prvPtr));
-        prvPtr = sPtr + 1;
-        count++;
-      }
-      sPtr++;
-    }
-    rv = NS_OK;
-  }
-  PR_PL(("-----------------------\n"));
-  return rv;
-}
-
-//------------------------------------------------------------------
-// Uses the GetProfileString to get the default printer from the registry
-void GlobalPrinters::GetDefaultPrinterName(nsAString& aDefaultPrinterName) {
-  aDefaultPrinterName.Truncate();
-  WCHAR szDefaultPrinterName[1024];
-  DWORD status =
-      GetProfileStringW(L"windows", L"device", 0, szDefaultPrinterName,
-                        ArrayLength(szDefaultPrinterName));
-  if (status > 0) {
-    WCHAR comma = ',';
-    LPWSTR sPtr = szDefaultPrinterName;
-    while (*sPtr != comma && *sPtr != 0) sPtr++;
-    if (*sPtr == comma) {
-      *sPtr = 0;
-    }
-    aDefaultPrinterName = szDefaultPrinterName;
-  } else {
-    aDefaultPrinterName = EmptyString();
-  }
-
-  PR_PL(
-      ("DEFAULT PRINTER [%s]\n", PromiseFlatString(aDefaultPrinterName).get()));
-}
-
-//----------------------------------------------------------------------------------
-// This goes and gets the list of available printers and puts
-// the default printer at the beginning of the list
-nsresult GlobalPrinters::EnumeratePrinterList() {
-  // reallocate and get a new list each time it is asked for
-  // this deletes the list and re-allocates them
-  ReallocatePrinters();
-
-  // any of these could only fail with an OUT_MEMORY_ERROR
-  // PRINTER_ENUM_LOCAL should get the network printers on Win95
-  nsresult rv = EnumerateNativePrinters();
-  if (NS_FAILED(rv)) return rv;
-
-  // get the name of the default printer
-  nsAutoString defPrinterName;
-  GetDefaultPrinterName(defPrinterName);
-
-  // put the default printer at the beginning of list
-  if (!defPrinterName.IsEmpty()) {
-    for (uint32_t i = 0; i < mPrinters->Length(); i++) {
-      LPWSTR name = mPrinters->ElementAt(i);
-      if (defPrinterName.Equals(name)) {
-        if (i > 0) {
-          LPWSTR ptr = mPrinters->ElementAt(0);
-          mPrinters->ElementAt(0) = name;
-          mPrinters->ElementAt(i) = ptr;
-        }
-        break;
-      }
-    }
-  }
-
-  // make sure we at least tried to get the printers
-  if (!PrintersAreAllocated()) {
-    PR_PL(
-        ("***** nsDeviceContextSpecWin::EnumeratePrinterList - Printers aren`t "
-         "allocated\n"));
-    return NS_ERROR_FAILURE;
-  }
 
   return NS_OK;
 }

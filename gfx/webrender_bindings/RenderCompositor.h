@@ -105,11 +105,16 @@ class RenderCompositor {
   virtual void CreateSurface(wr::NativeSurfaceId aId,
                              wr::DeviceIntPoint aVirtualOffset,
                              wr::DeviceIntSize aTileSize, bool aIsOpaque) {}
+  virtual void CreateExternalSurface(wr::NativeSurfaceId aId, bool aIsOpaque) {}
   virtual void DestroySurface(NativeSurfaceId aId) {}
   virtual void CreateTile(wr::NativeSurfaceId, int32_t aX, int32_t aY) {}
   virtual void DestroyTile(wr::NativeSurfaceId, int32_t aX, int32_t aY) {}
-  virtual void AddSurface(wr::NativeSurfaceId aId, wr::DeviceIntPoint aPosition,
-                          wr::DeviceIntRect aClipRect) {}
+  virtual void AttachExternalImage(wr::NativeSurfaceId aId,
+                                   wr::ExternalImageId aExternalImage) {}
+  virtual void AddSurface(wr::NativeSurfaceId aId,
+                          const wr::CompositorSurfaceTransform& aTransform,
+                          wr::DeviceIntRect aClipRect,
+                          wr::ImageRendering aImageRendering) {}
   virtual void EnableNativeCompositor(bool aEnable) {}
   virtual void DeInit() {}
   virtual CompositorCapabilities GetCompositorCapabilities() = 0;
@@ -127,7 +132,8 @@ class RenderCompositor {
   // result. It could happen when WebRender renders to multiple overlay layers.
   virtual bool MaybeReadback(const gfx::IntSize& aReadbackSize,
                              const wr::ImageFormat& aReadbackFormat,
-                             const Range<uint8_t>& aReadbackBuffer) {
+                             const Range<uint8_t>& aReadbackBuffer,
+                             bool* aNeedsYFlip) {
     return false;
   }
 

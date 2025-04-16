@@ -12,15 +12,8 @@ const {
 } = require("devtools/shared/resources/resource-watcher");
 
 add_task(async function() {
-  info("Test console messages legacy listener");
   await testConsoleMessagesResources();
   await testConsoleMessagesResourcesWithIgnoreExistingResources();
-
-  info("Test console messages server listener");
-  await pushPref("devtools.testing.enableServerWatcherSupport", true);
-  await testConsoleMessagesResources();
-  await testConsoleMessagesResourcesWithIgnoreExistingResources();
-  await pushPref("devtools.testing.enableServerWatcherSupport", false);
 });
 
 async function testConsoleMessagesResources() {
@@ -85,7 +78,7 @@ async function testConsoleMessagesResources() {
     "Got the expected number of runtime messages"
   );
 
-  targetList.stopListening();
+  targetList.destroy();
   await client.close();
 }
 
@@ -136,7 +129,7 @@ async function testConsoleMessagesResourcesWithIgnoreExistingResources() {
     checkConsoleAPICall(message, expected);
   }
 
-  await targetList.stopListening();
+  await targetList.destroy();
   await client.close();
 }
 

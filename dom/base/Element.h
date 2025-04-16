@@ -211,6 +211,11 @@ class Element : public FragmentOrElement {
    */
   void UpdateLinkState(EventStates aState);
 
+  /**
+   * Returns the current disabled state of the element.
+   */
+  bool IsDisabled() const { return State().HasState(NS_EVENT_STATE_DISABLED); }
+
   virtual int32_t TabIndexDefault() { return -1; }
 
   /**
@@ -623,9 +628,10 @@ class Element : public FragmentOrElement {
                                      FlushType aFlushType = FlushType::Layout);
 
  private:
-  // Need to allow the ESM, nsGlobalWindow, and the focus manager to
-  // set our state
+  // Need to allow the ESM, nsGlobalWindow, and the focus manager
+  // and Document to set our state
   friend class mozilla::EventStateManager;
+  friend class mozilla::dom::Document;
   friend class ::nsGlobalWindowInner;
   friend class ::nsGlobalWindowOuter;
   friend class ::nsFocusManager;
@@ -644,7 +650,8 @@ class Element : public FragmentOrElement {
   EventStates StyleStateFromLocks() const;
 
  protected:
-  // Methods for the ESM, nsGlobalWindow and focus manager to manage state bits.
+  // Methods for the ESM, nsGlobalWindow, focus manager and Document to
+  // manage state bits.
   // These will handle setting up script blockers when they notify, so no need
   // to do it in the callers unless desired.  States passed here must only be
   // those in EXTERNALLY_MANAGED_STATES.
@@ -1109,6 +1116,14 @@ class Element : public FragmentOrElement {
                     ErrorResult& aError) {
     SetAttribute(aName, aValue, nullptr, aError);
   }
+  /**
+   * This method creates a principal that subsumes this element's NodePrincipal
+   * and which has flags set for elevated permissions that devtools needs to
+   * operate on this element. The principal returned by this method is used by
+   * various devtools methods to permit otherwise blocked operations, without
+   * changing any other restrictions the NodePrincipal might have.
+   */
+  already_AddRefed<nsIPrincipal> CreateDevtoolsPrincipal();
   void SetAttributeDevtools(const nsAString& aName, const nsAString& aValue,
                             ErrorResult& aError);
   void SetAttributeDevtoolsNS(const nsAString& aNamespaceURI,

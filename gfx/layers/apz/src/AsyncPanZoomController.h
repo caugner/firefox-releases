@@ -10,6 +10,7 @@
 #include "CrossProcessMutex.h"
 #include "mozilla/layers/GeckoContentController.h"
 #include "mozilla/layers/RepaintRequest.h"
+#include "mozilla/layers/SampleTime.h"
 #include "mozilla/layers/ZoomConstraints.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
@@ -22,6 +23,7 @@
 #include "mozilla/UniquePtr.h"
 #include "InputData.h"
 #include "Axis.h"  // for Axis, Side, etc.
+#include "ExpectedGeckoMetrics.h"
 #include "InputQueue.h"
 #include "APZUtils.h"
 #include "Layers.h"  // for Layer::ScrollDirection
@@ -246,10 +248,10 @@ class AsyncPanZoomController {
    * The return value indicates whether or not any currently running animation
    * should continue. If true, the compositor should schedule another composite.
    */
-  bool AdvanceAnimations(const TimeStamp& aSampleTime);
+  bool AdvanceAnimations(const SampleTime& aSampleTime);
 
   bool UpdateAnimation(const RecursiveMutexAutoLock& aProofOfLock,
-                       const TimeStamp& aSampleTime,
+                       const SampleTime& aSampleTime,
                        nsTArray<RefPtr<Runnable>>* aOutDeferredTasks);
 
   // --------------------------------------------------------------------------
@@ -318,7 +320,7 @@ class AsyncPanZoomController {
    * See GetCheckerboardMagnitude for documentation of the
    * aClippedCompositionBounds argument that needs to be provided by the caller.
    */
-  void ReportCheckerboard(const TimeStamp& aSampleTime,
+  void ReportCheckerboard(const SampleTime& aSampleTime,
                           const ParentLayerRect& aClippedCompositionBounds);
 
   /**
@@ -528,9 +530,14 @@ class AsyncPanZoomController {
   const FrameMetrics& Metrics() const;
   FrameMetrics& Metrics();
 
+  /**
+   * Get the GeckoViewMetrics to be sent to Gecko for the current composite.
+   */
+  GeckoViewMetrics GetGeckoViewMetrics() const;
+
   // Helper function to compare root frame metrics and update them
   // Returns true when the metrics have changed and were updated.
-  bool UpdateRootFrameMetricsIfChanged(FrameMetrics& metrics);
+  bool UpdateRootFrameMetricsIfChanged(GeckoViewMetrics& aMetrics);
 
  private:
   // Get whether the horizontal content of the honoured target of auto-dir
@@ -544,7 +551,7 @@ class AsyncPanZoomController {
   virtual ~AsyncPanZoomController();
 
   // Returns the cached current frame time.
-  TimeStamp GetFrameTime() const;
+  SampleTime GetFrameTime() const;
 
   /**
    * Helper method for touches beginning. Sets everything up for panning and any
@@ -688,13 +695,13 @@ class AsyncPanZoomController {
   /**
    * Scroll the scroll frame to an X,Y offset.
    */
-  void SetScrollOffset(const CSSPoint& aOffset);
+  void SetVisualScrollOffset(const CSSPoint& aOffset);
 
   /**
    * Scroll the scroll frame to an X,Y offset, clamping the resulting scroll
    * offset to the scroll range.
    */
-  void ClampAndSetScrollOffset(const CSSPoint& aOffset);
+  void ClampAndSetVisualScrollOffset(const CSSPoint& aOffset);
 
   /**
    * Scroll the scroll frame by an X,Y offset.
@@ -992,10 +999,10 @@ class AsyncPanZoomController {
 
   // The last time the compositor has sampled the content transform for this
   // frame.
-  TimeStamp mLastSampleTime;
+  SampleTime mLastSampleTime;
 
   // The last sample time at which we submitted a checkerboarding report.
-  TimeStamp mLastCheckerboardReport;
+  SampleTime mLastCheckerboardReport;
 
   // Stores the previous focus point if there is a pinch gesture happening. Used
   // to allow panning by moving multiple fingers (thus moving the focus point).
@@ -1375,7 +1382,7 @@ class AsyncPanZoomController {
   // The initial velocity of the most recent fling.
   ParentLayerPoint mLastFlingVelocity;
   // The time at which the most recent fling started.
-  TimeStamp mLastFlingTime;
+  SampleTime mLastFlingTime;
   // Indicates if the repaint-during-pinch timer is currently set
   bool mPinchPaintTimerSet;
 
@@ -1406,6 +1413,9 @@ class AsyncPanZoomController {
   // point and in the given direction.
   float ComputePLPPI(ParentLayerPoint aPoint,
                      ParentLayerPoint aDirection) const;
+
+  Maybe<CSSPoint> GetCurrentAnimationDestination(
+      const RecursiveMutexAutoLock& aProofOfLock) const;
 
   /* ===================================================================
    * The functions and members in this section are used to make ancestor chains

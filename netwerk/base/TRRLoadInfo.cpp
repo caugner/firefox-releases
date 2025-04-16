@@ -93,6 +93,14 @@ NS_IMETHODIMP
 TRRLoadInfo::GetSandboxFlags(uint32_t* aResult) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
+NS_IMETHODIMP
+TRRLoadInfo::GetTriggeringSandboxFlags(uint32_t* aResult) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+NS_IMETHODIMP
+TRRLoadInfo::SetTriggeringSandboxFlags(uint32_t aResult) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
 
 NS_IMETHODIMP
 TRRLoadInfo::GetSecurityMode(uint32_t* aFlags) {
@@ -296,7 +304,6 @@ NS_IMETHODIMP
 TRRLoadInfo::GetInnerWindowID(uint64_t* aResult) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
-
 
 NS_IMETHODIMP
 TRRLoadInfo::GetBrowsingContextID(uint64_t* aResult) {

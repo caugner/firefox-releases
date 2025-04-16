@@ -110,6 +110,12 @@ urlbar-tip-icon-description =
 urlbar-search-tips-onboard = Type less, find more: Search { $engineName } right from your address bar.
 urlbar-search-tips-redirect-2 = Start your search in the address bar to see suggestions from { $engineName } and your browsing history.
 
+## Local search mode indicator labels in the urlbar
+
+urlbar-search-mode-bookmarks = Bookmarks
+urlbar-search-mode-tabs = Tabs
+urlbar-search-mode-history = History
+
 ##
 
 urlbar-geolocation-blocked =
@@ -189,6 +195,27 @@ search-one-offs-context-set-as-default =
 search-one-offs-context-set-as-default-private =
     .label = Set as Default Search Engine for Private Windows
     .accesskey = P
+
+# Search engine one-off buttons with an @alias shortcut/keyword.
+# Variables:
+#  $engineName (String): The name of the engine.
+#  $alias (String): The @alias shortcut/keyword.
+search-one-offs-engine-with-alias =
+    .tooltiptext = { $engineName } ({ $alias })
+
+## Local search mode one-off buttons
+## Variables:
+##  $restrict (String): The restriction token corresponding to the search mode.
+##    Restriction tokens are special characters users can type in the urlbar to
+##    restrict their searches to certain sources (e.g., "*" to search only
+##    bookmarks).
+
+search-one-offs-bookmarks =
+    .tooltiptext = Bookmarks ({ $restrict })
+search-one-offs-tabs =
+    .tooltiptext = Tabs ({ $restrict })
+search-one-offs-history =
+    .tooltiptext = History ({ $restrict })
 
 ## Bookmark Panel
 
@@ -300,10 +327,48 @@ enable-devtools-popup-description = To use the F12 shortcut, first open DevTools
 
 ## URL Bar
 
-urlbar-default-placeholder =
-  .defaultPlaceholder = Search or enter address
+# This placeholder is used when not in search mode and the user's default search
+# engine is unknown.
 urlbar-placeholder =
   .placeholder = Search or enter address
+
+# This placeholder is used in search mode with search engines that search the
+# entire web.
+# Variables
+#  $name (String): the name of a search engine that searches the entire Web
+#  (e.g. Google).
+urlbar-placeholder-search-mode-web-2 =
+  .placeholder = Search the Web
+  .aria-label = Search with { $name }
+
+# This placeholder is used in search mode with search engines that search a
+# specific site (e.g., Amazon).
+# Variables
+#  $name (String): the name of a search engine that searches a specific site
+#  (e.g. Amazon).
+urlbar-placeholder-search-mode-other-engine =
+  .placeholder = Enter search terms
+  .aria-label = Search { $name }
+
+# This placeholder is used when searching bookmarks.
+urlbar-placeholder-search-mode-other-bookmarks =
+  .placeholder = Enter search terms
+  .aria-label = Search bookmarks
+
+# This placeholder is used when searching history.
+urlbar-placeholder-search-mode-other-history =
+  .placeholder = Enter search terms
+  .aria-label = Search history
+
+# This placeholder is used when searching open tabs.
+urlbar-placeholder-search-mode-other-tabs =
+  .placeholder = Enter search terms
+  .aria-label = Search tabs
+
+# Variables
+#  $name (String): the name of the user's default search engine
+urlbar-placeholder-with-name =
+  .placeholder = Search with { $name } or enter address
 urlbar-remote-control-notification-anchor =
   .tooltiptext = Browser is under remote control
 urlbar-permissions-granted =

@@ -176,24 +176,24 @@ class AboutWelcome extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComp
       props
     } = this;
 
-    if (props.template === "multistage") {
-      return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_MultiStageAboutWelcome__WEBPACK_IMPORTED_MODULE_2__["MultiStageAboutWelcome"], {
-        screens: props.screens,
+    if (props.template === "simplified") {
+      return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_SimpleAboutWelcome__WEBPACK_IMPORTED_MODULE_3__["SimpleAboutWelcome"], {
         metricsFlowUri: this.state.metricsFlowUri,
         message_id: props.messageId,
-        utm_term: props.UTMTerm
+        utm_term: props.UTMTerm,
+        title: props.title,
+        subtitle: props.subtitle,
+        cards: props.cards,
+        startButton: props.startButton,
+        handleStartBtnClick: this.handleStartBtnClick
       });
     }
 
-    return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_SimpleAboutWelcome__WEBPACK_IMPORTED_MODULE_3__["SimpleAboutWelcome"], {
+    return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_components_MultiStageAboutWelcome__WEBPACK_IMPORTED_MODULE_2__["MultiStageAboutWelcome"], {
+      screens: props.screens,
       metricsFlowUri: this.state.metricsFlowUri,
       message_id: props.messageId,
-      utm_term: props.UTMTerm,
-      title: props.title,
-      subtitle: props.subtitle,
-      cards: props.cards,
-      startButton: props.startButton,
-      handleStartBtnClick: this.handleStartBtnClick
+      utm_term: props.UTMTerm
     });
   }
 
@@ -202,7 +202,7 @@ class AboutWelcome extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureComp
 AboutWelcome.defaultProps = _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_4__["DEFAULT_WELCOME_CONTENT"];
 
 function ComputeMessageId(experimentId, branchId, settings) {
-  let messageId = "ABOUT_WELCOME";
+  let messageId = "DEFAULT_ABOUTWELCOME";
   let UTMTerm = "default";
 
   if (settings.id && settings.screens) {
@@ -384,18 +384,36 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
       type,
       data
     } = action;
-    let url = new URL(data.args);
-    Object(_asrouter_templates_FirstRun_addUtmParams__WEBPACK_IMPORTED_MODULE_4__["addUtmParams"])(url, `aboutwelcome-${UTMTerm}-screen`);
 
-    if (action.addFlowParams && flowParams) {
-      url.searchParams.append("device_id", flowParams.deviceId);
-      url.searchParams.append("flow_id", flowParams.flowId);
-      url.searchParams.append("flow_begin_time", flowParams.flowBeginTime);
+    if (type === "SHOW_FIREFOX_ACCOUNTS") {
+      let params = { ..._asrouter_templates_FirstRun_addUtmParams__WEBPACK_IMPORTED_MODULE_4__["BASE_PARAMS"],
+        utm_term: `aboutwelcome-${UTMTerm}-screen`
+      };
+
+      if (action.addFlowParams && flowParams) {
+        params = { ...params,
+          ...flowParams
+        };
+      }
+
+      data = { ...data,
+        extraParams: params
+      };
+    } else if (type === "OPEN_URL") {
+      let url = new URL(data.args);
+      Object(_asrouter_templates_FirstRun_addUtmParams__WEBPACK_IMPORTED_MODULE_4__["addUtmParams"])(url, `aboutwelcome-${UTMTerm}-screen`);
+
+      if (action.addFlowParams && flowParams) {
+        url.searchParams.append("device_id", flowParams.deviceId);
+        url.searchParams.append("flow_id", flowParams.flowId);
+        url.searchParams.append("flow_begin_time", flowParams.flowBeginTime);
+      }
+
+      data = { ...data,
+        args: url.toString()
+      };
     }
 
-    data = { ...data,
-      args: url.toString()
-    };
     _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_3__["AboutWelcomeUtils"].handleUserAction({
       type,
       data
@@ -429,7 +447,7 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
       action
     } = targetContent;
 
-    if (action.type === "OPEN_URL") {
+    if (["OPEN_URL", "SHOW_FIREFOX_ACCOUNTS"].includes(action.type)) {
       this.handleOpenURL(action, props.flowParams, props.UTMTerm);
     } else if (action.type) {
       _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_3__["AboutWelcomeUtils"].handleUserAction(action); // Wait until migration closes to complete the action
@@ -507,8 +525,7 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
         })), this.props.content.tiles.data.map(({
           theme,
           label,
-          tooltip,
-          description
+          tooltip
         }) => react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
           key: theme + label,
           text: typeof tooltip === "object" ? tooltip : {}
@@ -527,10 +544,6 @@ class WelcomeScreen extends react__WEBPACK_IMPORTED_MODULE_0___default.a.PureCom
           text: label
         }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
           className: "text"
-        })), description && react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
-          text: description
-        }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("div", {
-          className: "theme-desc"
         })))))))) : null;
 
       case "video":
@@ -688,7 +701,29 @@ __webpack_require__.r(__webpack_exports__);
 
 
 const MS_STRING_PROP = "string_id";
+const ZAP_SIZE_THRESHOLD = 160;
+
+function calculateZapLength() {
+  let span = document.querySelector(".zap");
+
+  if (!span) {
+    return;
+  }
+
+  let rect = span.getBoundingClientRect();
+
+  if (rect && rect.width > ZAP_SIZE_THRESHOLD) {
+    span.classList.add("long");
+  } else {
+    span.classList.add("short");
+  }
+}
+
 const Zap = props => {
+  Object(react__WEBPACK_IMPORTED_MODULE_0__["useEffect"])(() => {
+    requestAnimationFrame(() => calculateZapLength());
+  });
+
   if (!props.text) {
     return null;
   }
@@ -700,7 +735,8 @@ const Zap = props => {
       }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("h1", {
         className: "welcomeZap"
       }, react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("span", {
-        "data-l10n-name": "zap"
+        "data-l10n-name": "zap",
+        className: "zap"
       })));
     } else if (typeof props.text === "string") {
       // Parse string to zap style last word of the props.text
@@ -708,7 +744,9 @@ const Zap = props => {
       let lastWord = `${titleArray.pop()}`;
       return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("h1", {
         className: "welcomeZap"
-      }, titleArray.join(" ").concat(" "), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("span", null, lastWord));
+      }, titleArray.join(" ").concat(" "), react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement("span", {
+        className: "zap"
+      }, lastWord));
     }
   } else {
     return react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__["Localized"], {
@@ -797,90 +835,147 @@ const AboutWelcomeUtils = {
 
 };
 const DEFAULT_WELCOME_CONTENT = {
-  title: {
-    string_id: "onboarding-welcome-header"
-  },
-  startButton: {
-    label: {
-      string_id: "onboarding-start-browsing-button-label"
-    },
-    message_id: "START_BROWSING_BUTTON",
-    action: {
-      type: "OPEN_AWESOME_BAR"
-    }
-  },
-  cards: [{
+  template: "multistage",
+  screens: [{
+    id: "AW_GET_STARTED",
+    order: 0,
     content: {
+      zap: true,
       title: {
-        string_id: "onboarding-data-sync-title"
+        string_id: "onboarding-multistage-welcome-header"
       },
-      text: {
-        string_id: "onboarding-data-sync-text2"
+      subtitle: {
+        string_id: "onboarding-multistage-welcome-subtitle"
       },
-      icon: "devices",
       primary_button: {
         label: {
-          string_id: "onboarding-data-sync-button2"
+          string_id: "onboarding-multistage-welcome-primary-button-label"
         },
         action: {
-          type: "OPEN_URL",
+          navigate: true
+        }
+      },
+      secondary_button: {
+        text: {
+          string_id: "onboarding-multistage-welcome-secondary-button-text"
+        },
+        label: {
+          string_id: "onboarding-multistage-welcome-secondary-button-label"
+        },
+        position: "top",
+        action: {
+          type: "SHOW_FIREFOX_ACCOUNTS",
           addFlowParams: true,
           data: {
-            args: "https://accounts.firefox.com/?service=sync&action=email&context=fx_desktop_v3&entrypoint=activity-stream-firstrun&style=trailhead",
-            where: "tabshifted"
+            entrypoint: "activity-stream-firstrun"
           }
         }
       }
-    },
-    id: "TRAILHEAD_CARD_2",
+    }
+  }, {
+    id: "AW_IMPORT_SETTINGS",
     order: 1,
-    blockOnClick: false
-  }, {
     content: {
+      zap: true,
+      disclaimer: {
+        string_id: "onboarding-import-sites-disclaimer"
+      },
       title: {
-        string_id: "onboarding-firefox-monitor-title"
+        string_id: "onboarding-multistage-import-header"
       },
-      text: {
-        string_id: "onboarding-firefox-monitor-text2"
+      subtitle: {
+        string_id: "onboarding-multistage-import-subtitle"
       },
-      icon: "ffmonitor",
+      tiles: {
+        type: "topsites",
+        info: true
+      },
       primary_button: {
         label: {
-          string_id: "onboarding-firefox-monitor-button"
+          string_id: "onboarding-multistage-import-primary-button-label"
         },
         action: {
-          type: "OPEN_URL",
-          data: {
-            args: "https://monitor.firefox.com/",
-            where: "tabshifted"
-          }
+          type: "SHOW_MIGRATION_WIZARD",
+          navigate: true
+        }
+      },
+      secondary_button: {
+        label: {
+          string_id: "onboarding-multistage-import-secondary-button-label"
+        },
+        action: {
+          navigate: true
         }
       }
-    },
-    id: "TRAILHEAD_CARD_3",
+    }
+  }, {
+    id: "AW_CHOOSE_THEME",
     order: 2,
-    blockOnClick: false
-  }, {
     content: {
+      zap: true,
       title: {
-        string_id: "onboarding-browse-privately-title"
+        string_id: "onboarding-multistage-theme-header"
       },
-      text: {
-        string_id: "onboarding-browse-privately-text"
+      subtitle: {
+        string_id: "onboarding-multistage-theme-subtitle"
       },
-      icon: "private",
+      tiles: {
+        type: "theme",
+        action: {
+          theme: "<event>"
+        },
+        data: [{
+          theme: "automatic",
+          label: {
+            string_id: "onboarding-multistage-theme-label-automatic"
+          },
+          tooltip: {
+            string_id: "onboarding-multistage-theme-tooltip-automatic"
+          }
+        }, {
+          theme: "light",
+          label: {
+            string_id: "onboarding-multistage-theme-label-light"
+          },
+          tooltip: {
+            string_id: "onboarding-multistage-theme-tooltip-light"
+          }
+        }, {
+          theme: "dark",
+          label: {
+            string_id: "onboarding-multistage-theme-label-dark"
+          },
+          tooltip: {
+            string_id: "onboarding-multistage-theme-tooltip-dark"
+          }
+        }, {
+          theme: "alpenglow",
+          label: {
+            string_id: "onboarding-multistage-theme-label-alpenglow"
+          },
+          tooltip: {
+            string_id: "onboarding-multistage-theme-tooltip-alpenglow"
+          }
+        }]
+      },
       primary_button: {
         label: {
-          string_id: "onboarding-browse-privately-button"
+          string_id: "onboarding-multistage-theme-primary-button-label"
         },
         action: {
-          type: "OPEN_PRIVATE_BROWSER_WINDOW"
+          navigate: true
+        }
+      },
+      secondary_button: {
+        label: {
+          string_id: "onboarding-multistage-theme-secondary-button-label"
+        },
+        action: {
+          theme: "automatic",
+          navigate: true
         }
       }
-    },
-    id: "TRAILHEAD_CARD_4",
-    order: 3,
-    blockOnClick: true
+    }
   }]
 };
 

@@ -9,7 +9,9 @@ with Files('**'):
 
 EXPORTS.mozilla.webrender += [
     'RenderBufferTextureHost.h',
+    'RenderBufferTextureHostSWGL.h',
     'RenderCompositor.h',
+    'RenderCompositorEGL.h',
     'RenderCompositorOGL.h',
     'RenderCompositorSWGL.h',
     'RenderEGLImageTextureHost.h',
@@ -17,8 +19,10 @@ EXPORTS.mozilla.webrender += [
     'RendererScreenshotGrabber.h',
     'RenderExternalTextureHost.h',
     'RenderSharedSurfaceTextureHost.h',
+    'RenderSharedSurfaceTextureHostSWGL.h',
     'RenderTextureHost.h',
     'RenderTextureHostOGL.h',
+    'RenderTextureHostSWGL.h',
     'RenderTextureHostWrapper.h',
     'RenderThread.h',
     'webrender_ffi.h',
@@ -29,7 +33,9 @@ EXPORTS.mozilla.webrender += [
 UNIFIED_SOURCES += [
     'Moz2DImageRenderer.cpp',
     'RenderBufferTextureHost.cpp',
+    'RenderBufferTextureHostSWGL.cpp',
     'RenderCompositor.cpp',
+    'RenderCompositorEGL.cpp',
     'RenderCompositorOGL.cpp',
     'RenderCompositorSWGL.cpp',
     'RenderEGLImageTextureHost.cpp',
@@ -37,8 +43,10 @@ UNIFIED_SOURCES += [
     'RendererScreenshotGrabber.cpp',
     'RenderExternalTextureHost.cpp',
     'RenderSharedSurfaceTextureHost.cpp',
+    'RenderSharedSurfaceTextureHostSWGL.cpp',
     'RenderTextureHost.cpp',
     'RenderTextureHostOGL.cpp',
+    'RenderTextureHostSWGL.cpp',
     'RenderTextureHostWrapper.cpp',
     'RenderThread.cpp',
     'WebRenderAPI.cpp',
@@ -49,22 +57,22 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
     EXPORTS.mozilla.webrender += [
         'RenderCompositorNative.h',
         'RenderMacIOSurfaceTextureHostOGL.h',
+        'RenderMacIOSurfaceTextureHostSWGL.h',
     ]
     UNIFIED_SOURCES += [
         'RenderCompositorNative.cpp',
         'RenderMacIOSurfaceTextureHostOGL.cpp',
+        'RenderMacIOSurfaceTextureHostSWGL.cpp',
     ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android':
     EXPORTS.mozilla.webrender += [
         'RenderAndroidHardwareBufferTextureHost.h',
         'RenderAndroidSurfaceTextureHostOGL.h',
-        'RenderCompositorEGL.h',
     ]
     UNIFIED_SOURCES += [
         'RenderAndroidHardwareBufferTextureHost.cpp',
         'RenderAndroidSurfaceTextureHostOGL.cpp',
-        'RenderCompositorEGL.cpp',
     ]
 
 if CONFIG['MOZ_ENABLE_D3D10_LAYER']:
@@ -84,11 +92,9 @@ if CONFIG['MOZ_ENABLE_D3D10_LAYER']:
 
 if CONFIG['MOZ_WAYLAND']:
     EXPORTS.mozilla.webrender += [
-        'RenderCompositorEGL.h',
         'RenderDMABUFTextureHostOGL.h',
     ]
     SOURCES += [
-        'RenderCompositorEGL.cpp',
         'RenderDMABUFTextureHostOGL.cpp',
     ]
 

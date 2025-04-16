@@ -95,7 +95,6 @@ class DMABufSurface {
   // Set and get a global surface UID. The UID is shared across process
   // and it's used to track surface lifetime in various parts of rendering
   // engine.
-  void SetUID(uint32_t aUID) { mUID = aUID; };
   uint32_t GetUID() const { return mUID; };
 
   // Creates a global reference counter objects attached to the surface.
@@ -261,7 +260,7 @@ class DMABufSurfaceYUV : public DMABufSurface {
   GLuint GetTexture(int aPlane = 0) { return mTexture[aPlane]; };
   EGLImageKHR GetEGLImage(int aPlane = 0) { return mEGLImage[aPlane]; };
 
-  uint32_t GetTextureCount() { return 2; };
+  uint32_t GetTextureCount();
 
   void SetYUVColorSpace(mozilla::gfx::YUVColorSpace aColorSpace) {
     mColorSpace = aColorSpace;
@@ -281,11 +280,10 @@ class DMABufSurfaceYUV : public DMABufSurface {
   bool Create(const mozilla::layers::SurfaceDescriptor& aDesc);
   bool Create(int aWidth, int aHeight, void** aPixelData, int* aLineSizes);
   bool CreateYUVPlane(int aPlane, int aWidth, int aHeight, int aDrmFormat);
+  void UpdateYUVPlane(int aPlane, void* aPixelData, int aLineSize);
 
   void ImportSurfaceDescriptor(
       const mozilla::layers::SurfaceDescriptorDMABuf& aDesc);
-
-  mozilla::gfx::SurfaceFormat mSurfaceFormat;
 
   int mWidth[DMABUF_BUFFER_PLANES];
   int mHeight[DMABUF_BUFFER_PLANES];

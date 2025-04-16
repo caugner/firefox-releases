@@ -2,10 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{ColorF, YuvColorSpace, YuvFormat, ImageRendering};
-use api::units::{DeviceRect, DeviceIntSize, DeviceIntRect, DeviceIntPoint, WorldRect};
-use api::units::{DevicePixelScale, DevicePoint, PictureRect, TexelRect};
+use api::{ColorF, YuvColorSpace, YuvFormat, ImageRendering, ExternalImageId};
+use api::units::*;
 use crate::batch::{resolve_image, get_buffer_kind};
+use euclid::Transform3D;
 use crate::gpu_cache::GpuCache;
 use crate::gpu_types::{ZBufferId, ZBufferIdGenerator};
 use crate::internal_types::TextureSource;
@@ -32,6 +32,10 @@ pub enum NativeSurfaceOperationDetails {
         tile_size: DeviceIntSize,
         is_opaque: bool,
     },
+    CreateExternalSurface {
+        id: NativeSurfaceId,
+        is_opaque: bool,
+    },
     DestroySurface {
         id: NativeSurfaceId,
     },
@@ -40,6 +44,10 @@ pub enum NativeSurfaceOperationDetails {
     },
     DestroyTile {
         id: NativeTileId,
+    },
+    AttachExternalImage {
+        id: NativeSurfaceId,
+        external_image: ExternalImageId,
     }
 }
 
@@ -105,11 +113,16 @@ pub enum ExternalSurfaceDependency {
 /// For now, we support only YUV images as compositor surfaces, but in future
 /// this will also support RGBA images.
 pub struct ExternalSurfaceDescriptor {
+    // Rectangle of this surface in owning picture's coordinate space
     pub local_rect: PictureRect,
-    pub world_rect: WorldRect,
+    // Rectangle of this surface in the compositor local space
+    // TODO(gw): Switch this to CompositorSurfaceRect (CompositorSurfacePixel) in compositor trait.
+    pub surface_rect: DeviceRect,
+    // Rectangle of this surface in true device pixels
     pub device_rect: DeviceRect,
     pub local_clip_rect: PictureRect,
     pub clip_rect: DeviceRect,
+    pub transform: CompositorSurfaceTransform,
     pub image_rendering: ImageRendering,
     pub z_id: ZBufferId,
     pub dependency: ExternalSurfaceDependency,
@@ -268,6 +281,15 @@ impl CompositorKind {
             CompositorKind::Native { virtual_surface_size, .. } => *virtual_surface_size,
         }
     }
+
+    // We currently only support transforms for Native compositors,
+    // bug 1655639 is filed for adding support to Draw.
+    pub fn supports_transforms(&self) -> bool {
+        match self {
+            CompositorKind::Draw { .. } => false,
+            CompositorKind::Native { .. } => true,
+        }
+    }
 }
 
 /// The backing surface kind for a tile. Same as `TileSurface`, minus
@@ -311,11 +333,13 @@ pub struct CompositeSurfaceDescriptor {
     pub surface_id: Option<NativeSurfaceId>,
     pub offset: DevicePoint,
     pub clip_rect: DeviceRect,
+    pub transform: CompositorSurfaceTransform,
     // A list of image keys and generations that this compositor surface
     // depends on. This avoids composites being skipped when the only
     // thing that has changed is the generation of an compositor surface
     // image dependency.
     pub image_dependencies: [ImageDependency; 3],
+    pub image_rendering: ImageRendering,
     // List of the surface information for each tile added to this virtual surface
     pub tile_descriptors: Vec<CompositeTileDescriptor>,
 }
@@ -447,7 +471,7 @@ impl CompositeState {
             opaque_tiles: Vec::new(),
             alpha_tiles: Vec::new(),
             clear_tiles: Vec::new(),
-            z_generator: ZBufferIdGenerator::new(0, max_depth_ids),
+            z_generator: ZBufferIdGenerator::new(max_depth_ids),
             dirty_rects_are_valid,
             compositor_kind,
             picture_caching_is_enabled,
@@ -553,7 +577,11 @@ impl CompositeState {
                     surface_id: tile_cache.native_surface.as_ref().map(|s| s.opaque),
                     offset: tile_cache.device_position,
                     clip_rect: device_clip_rect,
+                    transform: CompositorSurfaceTransform::translation(tile_cache.device_position.x,
+                                                                              tile_cache.device_position.y,
+                                                                              0.0),
                     image_dependencies: [ImageDependency::INVALID; 3],
+                    image_rendering: ImageRendering::CrispEdges,
                     tile_descriptors: opaque_tile_descriptors,
                 }
             );
@@ -670,11 +698,13 @@ impl CompositeState {
 
                     let image_buffer_kind = get_buffer_kind(planes[0].texture);
 
+                    // Only propagate flip_y if the compositor doesn't support transforms,
+                    // since otherwise it'll be handled as part of the transform.
                     self.external_surfaces.push(ResolvedExternalSurface {
                         color_data: ResolvedExternalSurfaceColorData::Rgb {
                             image_dependency: image_dependencies[0],
                             plane: planes[0],
-                            flip_y,
+                            flip_y: flip_y && !self.compositor_kind.supports_transforms(),
                         },
                         image_buffer_kind,
                         update_params,
@@ -684,7 +714,7 @@ impl CompositeState {
 
             let tile = CompositeTile {
                 surface,
-                rect: external_surface.device_rect,
+                rect: external_surface.surface_rect,
                 valid_rect: external_surface.device_rect.translate(-external_surface.device_rect.origin.to_vector()),
                 dirty_rect: external_surface.device_rect.translate(-external_surface.device_rect.origin.to_vector()),
                 clip_rect,
@@ -698,8 +728,10 @@ impl CompositeState {
                 CompositeSurfaceDescriptor {
                     surface_id: external_surface.native_surface_id,
                     offset: tile.rect.origin,
-                    clip_rect: tile.clip_rect,
+                    clip_rect,
+                    transform: external_surface.transform,
                     image_dependencies: image_dependencies,
+                    image_rendering: external_surface.image_rendering,
                     tile_descriptors: Vec::new(),
                 }
             );
@@ -714,7 +746,11 @@ impl CompositeState {
                     surface_id: tile_cache.native_surface.as_ref().map(|s| s.alpha),
                     offset: tile_cache.device_position,
                     clip_rect: device_clip_rect,
+                    transform: CompositorSurfaceTransform::translation(tile_cache.device_position.x,
+                                                                              tile_cache.device_position.y,
+                                                                              0.0),
                     image_dependencies: [ImageDependency::INVALID; 3],
+                    image_rendering: ImageRendering::CrispEdges,
                     tile_descriptors: alpha_tile_descriptors,
                 }
             );
@@ -810,6 +846,10 @@ pub struct CompositorCapabilities {
     pub virtual_surface_size: i32,
 }
 
+/// The transform type to apply to Compositor surfaces.
+pub struct CompositorSurfacePixel;
+pub type CompositorSurfaceTransform = Transform3D<f32, CompositorSurfacePixel, DevicePixel>;
+
 /// Defines an interface to a native (OS level) compositor. If supplied
 /// by the client application, then picture cache slices will be
 /// composited by the OS compositor, rather than drawn via WR batches.
@@ -820,6 +860,16 @@ pub trait Compositor {
         id: NativeSurfaceId,
         virtual_offset: DeviceIntPoint,
         tile_size: DeviceIntSize,
+        is_opaque: bool,
+    );
+
+    /// Create a new OS compositor surface that can be used with an
+    /// existing ExternalImageId, instead of being drawn to by WebRender.
+    /// Surfaces created by this can only be used with attach_external_image,
+    /// and not create_tile/destroy_tile/bind/unbind.
+    fn create_external_surface(
+        &mut self,
+        id: NativeSurfaceId,
         is_opaque: bool,
     );
 
@@ -844,6 +894,16 @@ pub trait Compositor {
     fn destroy_tile(
         &mut self,
         id: NativeTileId,
+    );
+
+    /// Attaches an ExternalImageId to an OS compositor surface created
+    /// by create_external_surface, and uses that as the contents of
+    /// the surface. It is expected that a single surface will have
+    /// many different images attached (like one for each video frame).
+    fn attach_external_image(
+        &mut self,
+        id: NativeSurfaceId,
+        external_image: ExternalImageId
     );
 
     /// Mark a tile as invalid before any surfaces are queued for
@@ -891,12 +951,12 @@ pub trait Compositor {
     //           We might need to change the interface to maintain a visual
     //           tree that can be mutated?
     // TODO(gw): We might need to add a concept of a hierachy in future.
-    // TODO(gw): In future, expand to support a more complete transform matrix.
     fn add_surface(
         &mut self,
         id: NativeSurfaceId,
-        position: DeviceIntPoint,
+        transform: CompositorSurfaceTransform,
         clip_rect: DeviceIntRect,
+        image_rendering: ImageRendering,
     );
 
     /// Commit any changes in the compositor tree for this frame. WR calls

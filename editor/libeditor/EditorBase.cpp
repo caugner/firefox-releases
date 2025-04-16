@@ -993,7 +993,8 @@ void EditorBase::BeginPlaceholderTransaction(nsStaticAtom& aTransactionName) {
   mPlaceholderBatch++;
 }
 
-void EditorBase::EndPlaceholderTransaction() {
+void EditorBase::EndPlaceholderTransaction(
+    ScrollSelectionIntoView aScrollSelectionIntoView) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(mPlaceholderBatch > 0,
              "zero or negative placeholder batch count when ending batch!");
@@ -1015,10 +1016,12 @@ void EditorBase::EndPlaceholderTransaction() {
     // flushed and PresShell/PresContext/Frames may be dead. See bug 418470.
     // XXX Even if we're destroyed, we need to keep handling below because
     //     this method changes a lot of status.  We should rewrite this safer.
-    DebugOnly<nsresult> rvIgnored = ScrollSelectionFocusIntoView();
-    NS_WARNING_ASSERTION(
-        NS_SUCCEEDED(rvIgnored),
-        "EditorBase::ScrollSelectionFocusIntoView() failed, but Ignored");
+    if (aScrollSelectionIntoView == ScrollSelectionIntoView::Yes) {
+      DebugOnly<nsresult> rvIgnored = ScrollSelectionFocusIntoView();
+      NS_WARNING_ASSERTION(
+          NS_SUCCEEDED(rvIgnored),
+          "EditorBase::ScrollSelectionFocusIntoView() failed, but Ignored");
+    }
 
     // cached for frame offset are Not available now
     SelectionRefPtr()->SetCanCacheFrameOffset(false);
@@ -1490,16 +1493,6 @@ already_AddRefed<Element> EditorBase::CreateNodeWithTransaction(
     TopLevelEditSubActionDataRef().DidCreateElement(*this, *newElement);
   }
 
-  if (!mActionListeners.IsEmpty()) {
-    for (auto& listener : mActionListeners.Clone()) {
-      DebugOnly<nsresult> rvIgnored = listener->DidCreateNode(
-          nsDependentAtomString(&aTagName), newElement, rv);
-      NS_WARNING_ASSERTION(
-          NS_SUCCEEDED(rvIgnored),
-          "nsIEditActionListener::DidCreateNode() failed, but ignored");
-    }
-  }
-
   return newElement.forget();
 }
 
@@ -1561,16 +1554,6 @@ nsresult EditorBase::InsertNodeWithTransaction(
 
   if (AsHTMLEditor()) {
     TopLevelEditSubActionDataRef().DidInsertContent(*this, aContentToInsert);
-  }
-
-  if (!mActionListeners.IsEmpty()) {
-    for (auto& listener : mActionListeners.Clone()) {
-      DebugOnly<nsresult> rvIgnored =
-          listener->DidInsertNode(&aContentToInsert, rv);
-      NS_WARNING_ASSERTION(
-          NS_SUCCEEDED(rvIgnored),
-          "nsIEditActionListener::DidInsertNode() failed, but ignored");
-    }
   }
 
   return rv;
@@ -2162,7 +2145,8 @@ NS_IMETHODIMP EditorBase::CloneAttributes(Element* aDestElement,
 
 void EditorBase::CloneAttributesWithTransaction(Element& aDestElement,
                                                 Element& aSourceElement) {
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
 
   // Use transaction system for undo only if destination is already in the
   // document
@@ -3364,12 +3348,13 @@ void EditorBase::DoAfterRedoTransaction() {
 
 already_AddRefed<EditAggregateTransaction>
 EditorBase::CreateTransactionForDeleteSelection(
-    HowToHandleCollapsedRange aHowToHandleCollapsedRange) {
+    HowToHandleCollapsedRange aHowToHandleCollapsedRange,
+    const AutoRangeArray& aRangesToDelete) {
   MOZ_ASSERT(IsEditActionDataAvailable());
-  MOZ_ASSERT(SelectionRefPtr()->RangeCount());
+  MOZ_ASSERT(!aRangesToDelete.Ranges().IsEmpty());
 
   // Check whether the selection is collapsed and we should do nothing:
-  if (NS_WARN_IF(SelectionRefPtr()->IsCollapsed() &&
+  if (NS_WARN_IF(aRangesToDelete.IsCollapsed() &&
                  aHowToHandleCollapsedRange ==
                      HowToHandleCollapsedRange::Ignore)) {
     return nullptr;
@@ -3378,18 +3363,12 @@ EditorBase::CreateTransactionForDeleteSelection(
   // allocate the out-param transaction
   RefPtr<EditAggregateTransaction> aggregateTransaction =
       EditAggregateTransaction::Create();
-  for (uint32_t rangeIdx = 0; rangeIdx < SelectionRefPtr()->RangeCount();
-       ++rangeIdx) {
-    const nsRange* range = SelectionRefPtr()->GetRangeAt(rangeIdx);
-    if (NS_WARN_IF(!range)) {
-      return nullptr;
-    }
-
+  for (const OwningNonNull<nsRange>& range : aRangesToDelete.Ranges()) {
     // Same with range as with selection; if it is collapsed and action
     // is eNone, do nothing.
     if (!range->Collapsed()) {
       RefPtr<DeleteRangeTransaction> deleteRangeTransaction =
-          DeleteRangeTransaction::Create(*this, *range);
+          DeleteRangeTransaction::Create(*this, range);
       // XXX Oh, not checking if deleteRangeTransaction can modify the range...
       DebugOnly<nsresult> rvIgnored =
           aggregateTransaction->AppendChild(deleteRangeTransaction);
@@ -3405,7 +3384,7 @@ EditorBase::CreateTransactionForDeleteSelection(
 
     // Let's extend the collapsed range to delete content around it.
     RefPtr<EditTransactionBase> deleteNodeOrTextTransaction =
-        CreateTransactionForCollapsedRange(*range, aHowToHandleCollapsedRange);
+        CreateTransactionForCollapsedRange(range, aHowToHandleCollapsedRange);
     // XXX When there are two or more ranges and at least one of them is
     //     not editable, deleteNodeOrTextTransaction may be nullptr.
     //     In such case, should we stop removing other ranges too?
@@ -3702,9 +3681,9 @@ nsresult EditorBase::DeleteSelectionAsAction(
 
   if (EditorUtils::IsFrameSelectionRequiredToExtendSelection(
           aDirectionAndAmount, *SelectionRefPtr())) {
-    // Although ExtendSelectionForDelete will use nsFrameSelection, if it
-    // still has dirty frame, nsFrameSelection doesn't extend selection
-    // since we block script.
+    // Although AutoRangeArray::ExtendAnchorFocusRangeFor() will use
+    // nsFrameSelection, if it still has dirty frame, nsFrameSelection doesn't
+    // extend selection since we block script.
     if (RefPtr<PresShell> presShell = GetPresShell()) {
       presShell->FlushPendingNotifications(FlushType::Layout);
       if (NS_WARN_IF(Destroyed())) {
@@ -3728,7 +3707,8 @@ nsresult EditorBase::DeleteSelectionAsAction(
   }
 
   // delete placeholder txns merge.
-  AutoPlaceholderBatch treatAsOneTransaction(*this, *nsGkAtoms::DeleteTxnName);
+  AutoPlaceholderBatch treatAsOneTransaction(*this, *nsGkAtoms::DeleteTxnName,
+                                             ScrollSelectionIntoView::Yes);
   rv = DeleteSelectionAsSubAction(aDirectionAndAmount, aStripWrappers);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "EditorBase::DeleteSelectionAsSubAction() failed");
@@ -3806,177 +3786,43 @@ nsresult EditorBase::DeleteSelectionAsSubAction(
   return NS_OK;
 }
 
-nsresult EditorBase::ExtendSelectionForDelete(
-    nsIEditor::EDirection* aDirectionAndAmount) {
-  MOZ_ASSERT(IsEditActionDataAvailable());
-
-  if (!EditorUtils::IsFrameSelectionRequiredToExtendSelection(
-          *aDirectionAndAmount, *SelectionRefPtr())) {
-    return NS_OK;
-  }
-
-  RefPtr<nsFrameSelection> frameSelection =
-      SelectionRefPtr()->GetFrameSelection();
-  if (NS_WARN_IF(!frameSelection)) {
-    return NS_ERROR_NOT_INITIALIZED;
-  }
-
-  Result<RefPtr<StaticRange>, nsresult> result(NS_ERROR_UNEXPECTED);
-  nsIEditor::EDirection directionAndAmountResult = *aDirectionAndAmount;
-  switch (*aDirectionAndAmount) {
-    case eNextWord:
-      result =
-          frameSelection->CreateRangeExtendedToNextWordBoundary<StaticRange>();
-      if (NS_WARN_IF(Destroyed())) {
-        return NS_ERROR_EDITOR_DESTROYED;
-      }
-      NS_WARNING_ASSERTION(
-          result.isOk(),
-          "nsFrameSelection::CreateRangeExtendedToNextWordBoundary() failed");
-      // DeleteSelectionWithTransaction() doesn't handle these actions
-      // because it's inside batching, so don't confuse it:
-      directionAndAmountResult = eNone;
-      break;
-    case ePreviousWord:
-      result = frameSelection
-                   ->CreateRangeExtendedToPreviousWordBoundary<StaticRange>();
-      if (NS_WARN_IF(Destroyed())) {
-        return NS_ERROR_EDITOR_DESTROYED;
-      }
-      NS_WARNING_ASSERTION(
-          result.isOk(),
-          "nsFrameSelection::CreateRangeExtendedToPreviousWordBoundary() "
-          "failed");
-      // DeleteSelectionWithTransaction() doesn't handle these actions
-      // because it's inside batching, so don't confuse it:
-      directionAndAmountResult = eNone;
-      break;
-    case eNext:
-      result =
-          frameSelection
-              ->CreateRangeExtendedToNextGraphemeClusterBoundary<StaticRange>();
-      if (NS_WARN_IF(Destroyed())) {
-        return NS_ERROR_EDITOR_DESTROYED;
-      }
-      NS_WARNING_ASSERTION(result.isOk(),
-                           "nsFrameSelection::"
-                           "CreateRangeExtendedToNextGraphemeClusterBoundary() "
-                           "failed");
-      // Don't set aDirectionAndAmount to eNone (see Bug 502259)
-      break;
-    case ePrevious: {
-      // Only extend the selection where the selection is after a UTF-16
-      // surrogate pair or a variation selector.
-      // For other cases we don't want to do that, in order
-      // to make sure that pressing backspace will only delete the last
-      // typed character.
-      // XXX This is odd if the previous one is a sequence for a grapheme
-      //     cluster.
-      EditorRawDOMPoint atStartOfSelection =
-          EditorBase::GetStartPoint(*SelectionRefPtr());
-      if (NS_WARN_IF(!atStartOfSelection.IsSet())) {
-        return NS_ERROR_FAILURE;
-      }
-
-      // node might be anonymous DIV, so we find better text node
-      EditorRawDOMPoint insertionPoint =
-          FindBetterInsertionPoint(atStartOfSelection);
-      if (!insertionPoint.IsSet()) {
-        NS_WARNING(
-            "EditorBase::FindBetterInsertionPoint() failed, but ignored");
-        return NS_OK;
-      }
-
-      if (!insertionPoint.IsInTextNode()) {
-        return NS_OK;
-      }
-
-      const nsTextFragment* data =
-          &insertionPoint.GetContainerAsText()->TextFragment();
-      uint32_t offset = insertionPoint.Offset();
-      if (!(offset > 1 &&
-            data->IsLowSurrogateFollowingHighSurrogateAt(offset - 1)) &&
-          !(offset > 0 &&
-            gfxFontUtils::IsVarSelector(data->CharAt(offset - 1)))) {
-        return NS_OK;
-      }
-      // Different from the `eNext` case, we look for character boundary.
-      // I'm not sure whether this inconsistency between "Delete" and
-      // "Backspace" is intentional or not.
-      result =
-          frameSelection
-              ->CreateRangeExtendedToPreviousCharacterBoundary<StaticRange>();
-      if (NS_WARN_IF(Destroyed())) {
-        return NS_ERROR_EDITOR_DESTROYED;
-      }
-      NS_WARNING_ASSERTION(
-          result.isOk(),
-          "nsFrameSelection::"
-          "CreateRangeExtendedToPreviousGraphemeClusterBoundary() failed");
-      break;
-    }
-    case eToBeginningOfLine:
-      result = frameSelection
-                   ->CreateRangeExtendedToPreviousHardLineBreak<StaticRange>();
-      if (NS_WARN_IF(Destroyed())) {
-        return NS_ERROR_EDITOR_DESTROYED;
-      }
-      NS_WARNING_ASSERTION(
-          result.isOk(),
-          "nsFrameSelection::CreateRangeExtendedToPreviousHardLineBreak() "
-          "failed");
-      directionAndAmountResult = eNone;
-      break;
-    case eToEndOfLine:
-      result =
-          frameSelection->CreateRangeExtendedToNextHardLineBreak<StaticRange>();
-      if (NS_WARN_IF(Destroyed())) {
-        return NS_ERROR_EDITOR_DESTROYED;
-      }
-      NS_WARNING_ASSERTION(
-          result.isOk(),
-          "nsFrameSelection::CreateRangeExtendedToNextHardLineBreak() failed");
-      directionAndAmountResult = eNext;
-      break;
-    default:
-      return NS_OK;
-  }
-
-  if (result.isErr()) {
-    return result.unwrapErr();
-  }
-  *aDirectionAndAmount = directionAndAmountResult;
-  StaticRange* range = result.inspect().get();
-  if (!range || NS_WARN_IF(!range->IsPositioned())) {
-    return NS_OK;
-  }
-  ErrorResult error;
-  MOZ_KnownLive(SelectionRefPtr())
-      ->SetStartAndEndInLimiter(range->StartRef().AsRaw(),
-                                range->EndRef().AsRaw(), error);
-  if (NS_WARN_IF(Destroyed())) {
-    error.SuppressException();
-    return NS_ERROR_EDITOR_DESTROYED;
-  }
-  NS_WARNING_ASSERTION(!error.Failed(),
-                       "Selection::SetBaseAndExtentInLimiter() failed");
-  return error.StealNSResult();
-}
-
 nsresult EditorBase::DeleteSelectionWithTransaction(
     nsIEditor::EDirection aDirectionAndAmount,
     nsIEditor::EStripWrappers aStripWrappers) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(aStripWrappers == eStrip || aStripWrappers == eNoStrip);
-
   if (NS_WARN_IF(Destroyed())) {
     return NS_ERROR_EDITOR_DESTROYED;
   }
 
+  AutoRangeArray rangesToDelete(*SelectionRefPtr());
+  if (NS_WARN_IF(rangesToDelete.Ranges().IsEmpty())) {
+    NS_ASSERTION(
+        false,
+        "For avoiding to throw incompatible exception for `execCommand`, fix "
+        "the caller");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsresult rv = DeleteRangesWithTransaction(aDirectionAndAmount, aStripWrappers,
+                                            rangesToDelete);
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                       "EditorBase::DeleteRangesWithTransaction() failed");
+  return rv;
+}
+
+nsresult EditorBase::DeleteRangesWithTransaction(
+    nsIEditor::EDirection aDirectionAndAmount,
+    nsIEditor::EStripWrappers aStripWrappers,
+    const AutoRangeArray& aRangesToDelete) {
+  MOZ_ASSERT(IsEditActionDataAvailable());
+  MOZ_ASSERT(!Destroyed());
+  MOZ_ASSERT(aStripWrappers == eStrip || aStripWrappers == eNoStrip);
+  MOZ_ASSERT(!aRangesToDelete.Ranges().IsEmpty());
+
   HowToHandleCollapsedRange howToHandleCollapsedRange =
       EditorBase::HowToHandleCollapsedRangeFor(aDirectionAndAmount);
-  if (NS_WARN_IF(!SelectionRefPtr()->RangeCount()) ||
-      NS_WARN_IF(SelectionRefPtr()->IsCollapsed() &&
+  if (NS_WARN_IF(aRangesToDelete.IsCollapsed() &&
                  howToHandleCollapsedRange ==
                      HowToHandleCollapsedRange::Ignore)) {
     NS_ASSERTION(
@@ -3987,7 +3833,8 @@ nsresult EditorBase::DeleteSelectionWithTransaction(
   }
 
   RefPtr<EditAggregateTransaction> deleteSelectionTransaction =
-      CreateTransactionForDeleteSelection(howToHandleCollapsedRange);
+      CreateTransactionForDeleteSelection(howToHandleCollapsedRange,
+                                          aRangesToDelete);
   if (!deleteSelectionTransaction) {
     NS_WARNING("EditorBase::CreateTransactionForDeleteSelection() failed");
     return NS_ERROR_FAILURE;
@@ -4033,8 +3880,8 @@ nsresult EditorBase::DeleteSelectionWithTransaction(
       //     this must have a bug since we only add the first range into
       //     the changed range.
       TopLevelEditSubActionDataRef().WillDeleteRange(
-          *this, EditorBase::GetStartPoint(*SelectionRefPtr()),
-          EditorBase::GetEndPoint(*SelectionRefPtr()));
+          *this, aRangesToDelete.GetStartPointOfFirstRange(),
+          aRangesToDelete.GetEndPointOfFirstRange());
     } else if (!deleteCharData) {
       TopLevelEditSubActionDataRef().WillDeleteContent(*this, *deleteContent);
     }
@@ -4043,15 +3890,18 @@ nsresult EditorBase::DeleteSelectionWithTransaction(
   // Notify nsIEditActionListener::WillDelete[Selection|Text]
   if (!mActionListeners.IsEmpty()) {
     if (!deleteContent) {
+      MOZ_ASSERT(!aRangesToDelete.Ranges().IsEmpty());
+      AutoTArray<RefPtr<nsRange>, 8> rangesToDelete(
+          aRangesToDelete.CloneRanges<RefPtr>());
       AutoActionListenerArray listeners(mActionListeners.Clone());
       for (auto& listener : listeners) {
         DebugOnly<nsresult> rvIgnored =
-            listener->WillDeleteSelection(SelectionRefPtr());
+            listener->WillDeleteRanges(rangesToDelete);
         NS_WARNING_ASSERTION(
             NS_SUCCEEDED(rvIgnored),
-            "nsIEditActionListener::WillDeleteSelection() failed, but ignored");
+            "nsIEditActionListener::WillDeleteRanges() failed, but ignored");
         MOZ_DIAGNOSTIC_ASSERT(!Destroyed(),
-                              "nsIEditActionListener::WillDeleteSelection() "
+                              "nsIEditActionListener::WillDeleteRanges() "
                               "must not destroy the editor");
       }
     } else if (deleteCharData) {
@@ -4093,21 +3943,8 @@ nsresult EditorBase::DeleteSelectionWithTransaction(
         "TextServicesDocument::DidDeleteNode() must not destroy the editor");
   }
 
-  // Notify nsIEditActionListener::DidDelete[Selection|Text|Node]
-  AutoActionListenerArray listeners(mActionListeners.Clone());
-  if (!deleteContent) {
-    for (auto& listener : mActionListeners) {
-      DebugOnly<nsresult> rvIgnored =
-          listener->DidDeleteSelection(SelectionRefPtr());
-      NS_WARNING_ASSERTION(
-          NS_SUCCEEDED(rvIgnored),
-          "nsIEditActionListener::DidDeleteSelection() failed, but ignored");
-      MOZ_DIAGNOSTIC_ASSERT(destroyedByTransaction || !Destroyed(),
-                            "nsIEditActionListener::DidDeleteSelection() must "
-                            "not destroy the editor");
-    }
-  } else if (!deleteCharData) {
-    for (auto& listener : mActionListeners) {
+  if (!mActionListeners.IsEmpty() && deleteContent && !deleteCharData) {
+    for (auto& listener : mActionListeners.Clone()) {
       DebugOnly<nsresult> rvIgnored =
           listener->DidDeleteNode(deleteContent, rv);
       NS_WARNING_ASSERTION(
@@ -5119,7 +4956,8 @@ nsresult EditorBase::InsertTextAsAction(const nsAString& aStringToInsert,
   if (!AsHTMLEditor()) {
     nsContentUtils::PlatformToDOMLineBreaks(stringToInsert);
   }
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   rv = InsertTextAsSubAction(stringToInsert);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "EditorBase::InsertTextAsSubAction() failed");
@@ -5171,7 +5009,8 @@ NS_IMETHODIMP EditorBase::InsertLineBreak() {
     return NS_ERROR_FAILURE;
   }
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   rv = InsertLineBreakAsSubAction();
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "EditorBase::InsertLineBreakAsSubAction() failed");
@@ -5208,9 +5047,8 @@ nsresult EditorBase::InsertLineBreakAsSubAction() {
  *****************************************************************************/
 
 EditorBase::AutoSelectionRestorer::AutoSelectionRestorer(
-    EditorBase& aEditorBase MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
+    EditorBase& aEditorBase)
     : mEditorBase(nullptr) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
   if (aEditorBase.ArePreservingSelection()) {
     // We already have initialized mParentData::mSavedSelection, so this must
     // be nested call.

@@ -14,6 +14,7 @@
 #include "js/Array.h"  // JS::IsArrayAnswer
 #include "js/CallNonGenericMethod.h"
 #include "js/Class.h"
+#include "js/shadow/Object.h"  // JS::shadow::Object
 
 namespace js {
 
@@ -317,21 +318,9 @@ class JS_FRIEND_API BaseProxyHandler {
                    HandleValue v, HandleValue receiver,
                    ObjectOpResult& result) const;
 
-  // Private fields don't use [[Has]], [[Get]] and [[Set]] semantics, as they
-  // technically use a weak-map semantics, however we end up on these paths with
-  // our implementation.
-  virtual bool hasPrivate(JSContext* cx, HandleObject proxy, HandleId id,
-                          bool* bp) const;
-  virtual bool getPrivate(JSContext* cx, HandleObject proxy,
-                          HandleValue receiver, HandleId id,
-                          MutableHandleValue vp) const;
-  virtual bool setPrivate(JSContext* cx, HandleObject proxy, HandleId id,
-                          HandleValue v, HandleValue receiver,
-                          ObjectOpResult& result) const;
-
-  virtual bool definePrivateField(JSContext* cx, HandleObject proxy,
-                                  HandleId id, Handle<PropertyDescriptor> desc,
-                                  ObjectOpResult& result) const;
+  // Use the ProxyExpando object for private fields, rather than taking the
+  // normal get/set/defineField paths.
+  virtual bool useProxyExpandoObjectForPrivateFields() const { return true; }
 
   /*
    * [[Call]] and [[Construct]] are standard internal methods but according
@@ -730,7 +719,7 @@ constexpr unsigned CheckProxyFlags() {
       (offsetof(js::detail::ProxyValueArray, reservedSlots) / sizeof(Value)) +
               ((Flags >> JSCLASS_RESERVED_SLOTS_SHIFT) &
                JSCLASS_RESERVED_SLOTS_MASK) <=
-          shadow::Object::MAX_FIXED_SLOTS,
+          JS::shadow::Object::MAX_FIXED_SLOTS,
       "ProxyValueArray size must not exceed max JSObject size");
 
   // Proxies must not have the JSCLASS_SKIP_NURSERY_FINALIZE flag set: they

@@ -365,20 +365,14 @@ void MacroAssembler::branchTestFunctionFlags(Register fun, uint32_t flags,
 void MacroAssembler::branchIfFunctionHasNoJitEntry(Register fun,
                                                    bool isConstructing,
                                                    Label* label) {
-  int32_t flags = FunctionFlags::BASESCRIPT | FunctionFlags::SELFHOSTLAZY;
-  if (!isConstructing) {
-    flags |= FunctionFlags::WASM_JIT_ENTRY;
-  }
+  uint16_t flags = FunctionFlags::HasJitEntryFlags(isConstructing);
   branchTestFunctionFlags(fun, flags, Assembler::Zero, label);
 }
 
 void MacroAssembler::branchIfFunctionHasJitEntry(Register fun,
                                                  bool isConstructing,
                                                  Label* label) {
-  int32_t flags = FunctionFlags::BASESCRIPT | FunctionFlags::SELFHOSTLAZY;
-  if (!isConstructing) {
-    flags |= FunctionFlags::WASM_JIT_ENTRY;
-  }
+  uint16_t flags = FunctionFlags::HasJitEntryFlags(isConstructing);
   branchTestFunctionFlags(fun, flags, Assembler::NonZero, label);
 }
 
@@ -627,6 +621,14 @@ void MacroAssembler::branchTestProxyHandlerFamily(Condition cond,
                                                   Register scratch,
                                                   const void* handlerp,
                                                   Label* label) {
+#ifdef DEBUG
+  Label ok;
+  loadObjClassUnsafe(proxy, scratch);
+  branchTestClassIsProxy(true, scratch, &ok);
+  assumeUnreachable("Expected ProxyObject in branchTestProxyHandlerFamily");
+  bind(&ok);
+#endif
+
   Address handlerAddr(proxy, ProxyObject::offsetOfHandler());
   loadPtr(handlerAddr, scratch);
   Address familyAddr(scratch, BaseProxyHandler::offsetOfFamily());

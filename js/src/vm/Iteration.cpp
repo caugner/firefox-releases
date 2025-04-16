@@ -126,9 +126,12 @@ static inline bool Enumerate(JSContext* cx, HandleObject pobj, jsid id,
   // Symbol-keyed properties and nonenumerable properties are skipped unless
   // the caller specifically asks for them. A caller can also filter out
   // non-symbols by asking for JSITER_SYMBOLSONLY. PrivateName symbols are
-  // always skipped.
+  // skipped unless JSITER_PRIVATE is passed.
   if (JSID_IS_SYMBOL(id)) {
-    if (!(flags & JSITER_SYMBOLS) || JSID_TO_SYMBOL(id)->isPrivateName()) {
+    if (!(flags & JSITER_SYMBOLS)) {
+      return true;
+    }
+    if (!(flags & JSITER_PRIVATE) && JSID_TO_SYMBOL(id)->isPrivateName()) {
       return true;
     }
   } else {
@@ -401,8 +404,6 @@ struct SortComparatorIds {
     RootedString astr(cx), bstr(cx);
     if (JSID_IS_SYMBOL(a)) {
       MOZ_ASSERT(JSID_IS_SYMBOL(b));
-      MOZ_ASSERT(!JSID_TO_SYMBOL(a)->isPrivateName());
-      MOZ_ASSERT(!JSID_TO_SYMBOL(b)->isPrivateName());
       JS::SymbolCode ca = JSID_TO_SYMBOL(a)->code();
       JS::SymbolCode cb = JSID_TO_SYMBOL(b)->code();
       if (ca != cb) {
@@ -552,7 +553,7 @@ JS_FRIEND_API bool js::GetPropertyKeys(JSContext* cx, HandleObject obj,
                                        MutableHandleIdVector props) {
   return Snapshot(cx, obj,
                   flags & (JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS |
-                           JSITER_SYMBOLSONLY),
+                           JSITER_SYMBOLSONLY | JSITER_PRIVATE),
                   props);
 }
 
@@ -908,6 +909,22 @@ bool js::EnumerateProperties(JSContext* cx, HandleObject obj,
   return Snapshot(cx, obj, 0, props);
 }
 
+#ifdef DEBUG
+static bool PrototypeMayHaveIndexedProperties(NativeObject* nobj) {
+  JSObject* proto = nobj->staticPrototype();
+  if (!proto) {
+    return false;
+  }
+
+  if (proto->is<NativeObject>() &&
+      proto->as<NativeObject>().getDenseInitializedLength() > 0) {
+    return true;
+  }
+
+  return ObjectMayHaveExtraIndexedProperties(proto);
+}
+#endif
+
 static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
   MOZ_ASSERT(!obj->is<PropertyIteratorObject>());
   MOZ_ASSERT(cx->compartment() == obj->compartment(),
@@ -931,10 +948,29 @@ static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
     return nullptr;
   }
 
-  if (obj->isSingleton() && !JSObject::setIteratedSingleton(cx, obj)) {
-    return nullptr;
+  if (IsTypeInferenceEnabled()) {
+    if (obj->isSingleton() && !JSObject::setIteratedSingleton(cx, obj)) {
+      return nullptr;
+    }
+    MarkObjectGroupFlags(cx, obj, OBJECT_FLAG_ITERATED);
   }
-  MarkObjectGroupFlags(cx, obj, OBJECT_FLAG_ITERATED);
+
+  // If the object has dense elements, mark the dense elements as
+  // maybe-in-iteration.
+  //
+  // The iterator is a snapshot so if indexed properties are added after this
+  // point we don't need to do anything. However, the object might have sparse
+  // elements now that can be densified later. To account for this, we set the
+  // maybe-in-iteration flag also in NativeObject::maybeDensifySparseElements.
+  //
+  // In debug builds, AssertDenseElementsNotIterated is used to check the flag
+  // is set correctly.
+  if (obj->is<NativeObject>() &&
+      obj->as<NativeObject>().getDenseInitializedLength() > 0) {
+    if (!obj->as<NativeObject>().markDenseElementsMaybeInIteration(cx)) {
+      return nullptr;
+    }
+  }
 
   PropertyIteratorObject* iterobj =
       CreatePropertyIterator(cx, obj, keys, numGuards, 0);
@@ -943,6 +979,14 @@ static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
   }
 
   cx->check(iterobj);
+
+#ifdef DEBUG
+  if (obj->is<NativeObject>()) {
+    if (PrototypeMayHaveIndexedProperties(&obj->as<NativeObject>())) {
+      iterobj->getNativeIterator()->setMaybeHasIndexedPropertiesFromProto();
+    }
+  }
+#endif
 
   // Cache the iterator object.
   if (numGuards > 0) {
@@ -1504,6 +1548,42 @@ bool js::SuppressDeletedElement(JSContext* cx, HandleObject obj,
   }
   return SuppressDeletedPropertyHelper(cx, obj, str);
 }
+
+#ifdef DEBUG
+void js::AssertDenseElementsNotIterated(NativeObject* obj) {
+  // Search for active iterators for |obj| and assert they don't contain any
+  // property keys that are dense elements. This is used to check correctness
+  // of the MAYBE_IN_ITERATION flag on ObjectElements.
+  //
+  // Ignore iterators that may contain indexed properties from objects on the
+  // prototype chain, as that can result in false positives. See bug 1656744.
+
+  // Limit the number of properties we check to avoid slowing down debug builds
+  // too much.
+  static constexpr uint32_t MaxPropsToCheck = 10;
+  uint32_t propsChecked = 0;
+
+  NativeIterator* enumeratorList = ObjectRealm::get(obj).enumerators;
+  NativeIterator* ni = enumeratorList->next();
+
+  while (ni != enumeratorList) {
+    if (ni->objectBeingIterated() == obj &&
+        !ni->maybeHasIndexedPropertiesFromProto()) {
+      for (GCPtrLinearString* idp = ni->nextProperty();
+           idp < ni->propertiesEnd(); ++idp) {
+        uint32_t index;
+        if (idp->get()->isIndex(&index)) {
+          MOZ_ASSERT(!obj->containsDenseElement(index));
+        }
+        if (++propsChecked > MaxPropsToCheck) {
+          return;
+        }
+      }
+    }
+    ni = ni->next();
+  }
+}
+#endif
 
 static const JSFunctionSpec iterator_methods[] = {
     JS_SELF_HOSTED_SYM_FN(iterator, "IteratorIdentity", 0, 0), JS_FS_END};

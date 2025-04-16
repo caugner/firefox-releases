@@ -45,7 +45,7 @@ namespace layers {
  */
 struct ScrollUpdateInfo {
   uint32_t mScrollGeneration;
-  CSSPoint mScrollOffset;
+  CSSPoint mLayoutScrollOffset;
   CSSPoint mBaseScrollOffset;
   bool mIsRelative;
 };
@@ -110,7 +110,7 @@ struct FrameMetrics {
         mExtraResolution(),
         mPaintRequestTime(),
         mScrollUpdateType(eNone),
-        mVisualViewportOffset(0, 0),
+        mVisualDestination(0, 0),
         mVisualScrollUpdateType(eNone),
         mIsRootContent(false),
         mIsRelative(false),
@@ -141,7 +141,7 @@ struct FrameMetrics {
            mExtraResolution == aOther.mExtraResolution &&
            mPaintRequestTime == aOther.mPaintRequestTime &&
            mScrollUpdateType == aOther.mScrollUpdateType &&
-           mVisualViewportOffset == aOther.mVisualViewportOffset &&
+           mVisualDestination == aOther.mVisualDestination &&
            mVisualScrollUpdateType == aOther.mVisualScrollUpdateType &&
            mIsRootContent == aOther.mIsRootContent &&
            mIsRelative == aOther.mIsRelative &&
@@ -251,7 +251,9 @@ struct FrameMetrics {
     return scrollRange;
   }
 
-  void ScrollBy(const CSSPoint& aPoint) { mScrollOffset += aPoint; }
+  void ScrollBy(const CSSPoint& aPoint) {
+    SetVisualScrollOffset(GetVisualScrollOffset() + aPoint);
+  }
 
   void ZoomBy(float aScale) { ZoomBy(gfxSize(aScale, aScale)); }
 
@@ -266,13 +268,11 @@ struct FrameMetrics {
    * the content frame metrics.
    */
   bool HasPendingScroll(const FrameMetrics& aContentFrameMetrics) const {
-    return mScrollOffset != aContentFrameMetrics.mBaseScrollOffset;
+    return GetVisualScrollOffset() !=
+           aContentFrameMetrics.GetVisualScrollOffset();
   }
 
-  void ApplyScrollUpdateFrom(const FrameMetrics& aOther) {
-    mScrollOffset = aOther.mScrollOffset;
-    mScrollGeneration = aOther.mScrollGeneration;
-  }
+  void ApplyScrollUpdateFrom(const FrameMetrics& aContentMetrics);
 
   void ApplySmoothScrollUpdateFrom(const FrameMetrics& aOther) {
     mSmoothScrollOffset = aOther.mSmoothScrollOffset;
@@ -289,38 +289,48 @@ struct FrameMetrics {
    */
   CSSPoint ApplyRelativeScrollUpdateFrom(const FrameMetrics& aOther) {
     MOZ_ASSERT(aOther.IsRelative());
-    CSSPoint origin = mScrollOffset;
-    CSSPoint delta = (aOther.mScrollOffset - aOther.mBaseScrollOffset);
-    ClampAndSetScrollOffset(mScrollOffset + delta);
+    CSSPoint origin = GetVisualScrollOffset();
+    CSSPoint delta =
+        (aOther.GetLayoutScrollOffset() - aOther.mBaseScrollOffset);
+    ClampAndSetVisualScrollOffset(origin + delta);
     mScrollGeneration = aOther.mScrollGeneration;
-    return mScrollOffset - origin;
+    return GetVisualScrollOffset() - origin;
   }
 
   /**
-   * Applies the relative scroll offset update contained in aOther to the
-   * smooth scroll destination offset contained in this. The scroll delta is
-   * clamped to the scrollable region.
+   * Applies the relative scroll offset update contained in aOther to the smooth
+   * scroll destination offset contained in this, or to the provided existing
+   * destination, if one is provided. The scroll delta is clamped to the
+   * scrollable region.
    */
-  void ApplyRelativeSmoothScrollUpdateFrom(const FrameMetrics& aOther) {
+  void ApplyRelativeSmoothScrollUpdateFrom(
+      const FrameMetrics& aOther, const Maybe<CSSPoint>& aExistingDestination) {
     MOZ_ASSERT(aOther.IsRelative());
     CSSPoint delta = (aOther.mSmoothScrollOffset - aOther.mBaseScrollOffset);
-    ClampAndSetSmoothScrollOffset(mScrollOffset + delta);
+    ClampAndSetSmoothScrollOffset(
+        aExistingDestination.valueOr(GetVisualScrollOffset()) + delta);
     mScrollGeneration = aOther.mScrollGeneration;
     mDoSmoothScroll = aOther.mDoSmoothScroll;
   }
 
-  void ApplyPureRelativeSmoothScrollUpdateFrom(const FrameMetrics& aOther,
-                                               bool aApplyToSmoothScroll) {
+  void ApplyPureRelativeSmoothScrollUpdateFrom(
+      const FrameMetrics& aOther, const Maybe<CSSPoint>& aExistingDestination,
+      bool aApplyToSmoothScroll) {
     MOZ_ASSERT(aOther.IsPureRelative() && aOther.mPureRelativeOffset.isSome());
+    // See AsyncPanZoomController::NotifyLayersUpdated where
+    // pureRelativeSmoothScrollRequested is handled for the explanation for the
+    // logic in this function.
     ClampAndSetSmoothScrollOffset(
-        (aApplyToSmoothScroll ? mSmoothScrollOffset : mScrollOffset) +
+        (aApplyToSmoothScroll
+             ? mSmoothScrollOffset
+             : aExistingDestination.valueOr(GetVisualScrollOffset())) +
         *aOther.mPureRelativeOffset);
     mScrollGeneration = aOther.mScrollGeneration;
     mDoSmoothScroll = true;
   }
 
   void UpdatePendingScrollInfo(const ScrollUpdateInfo& aInfo) {
-    mScrollOffset = aInfo.mScrollOffset;
+    SetLayoutScrollOffset(aInfo.mLayoutScrollOffset);
     mBaseScrollOffset = aInfo.mBaseScrollOffset;
     mScrollGeneration = aInfo.mScrollGeneration;
     mScrollUpdateType = ePending;
@@ -378,22 +388,26 @@ struct FrameMetrics {
 
   bool IsRootContent() const { return mIsRootContent; }
 
-  void SetScrollOffset(const CSSPoint& aScrollOffset) {
-    mScrollOffset = aScrollOffset;
-  }
-
   void SetBaseScrollOffset(const CSSPoint& aScrollOffset) {
     mBaseScrollOffset = aScrollOffset;
   }
 
   // Set scroll offset, first clamping to the scroll range.
-  void ClampAndSetScrollOffset(const CSSPoint& aScrollOffset) {
-    SetScrollOffset(CalculateScrollRange().ClampPoint(aScrollOffset));
+  void ClampAndSetVisualScrollOffset(const CSSPoint& aScrollOffset) {
+    SetVisualScrollOffset(CalculateScrollRange().ClampPoint(aScrollOffset));
   }
 
-  const CSSPoint& GetScrollOffset() const { return mScrollOffset; }
-
   const CSSPoint& GetBaseScrollOffset() const { return mBaseScrollOffset; }
+
+  CSSPoint GetLayoutScrollOffset() const { return mLayoutViewport.TopLeft(); }
+  void SetLayoutScrollOffset(const CSSPoint& aLayoutScrollOffset) {
+    mLayoutViewport.MoveTo(aLayoutScrollOffset);
+  }
+
+  const CSSPoint& GetVisualScrollOffset() const { return mScrollOffset; }
+  void SetVisualScrollOffset(const CSSPoint& aVisualScrollOffset) {
+    mScrollOffset = aVisualScrollOffset;
+  }
 
   void SetSmoothScrollOffset(const CSSPoint& aSmoothScrollDestination) {
     mSmoothScrollOffset = aSmoothScrollDestination;
@@ -468,7 +482,8 @@ struct FrameMetrics {
   const CSSRect& GetLayoutViewport() const { return mLayoutViewport; }
 
   CSSRect GetVisualViewport() const {
-    return CSSRect(mScrollOffset, CalculateCompositedSizeInCssPixels());
+    return CSSRect(GetVisualScrollOffset(),
+                   CalculateCompositedSizeInCssPixels());
   }
 
   void SetExtraResolution(const ScreenToLayerScale2D& aExtraResolution) {
@@ -504,12 +519,10 @@ struct FrameMetrics {
   }
   bool IsScrollInfoLayer() const { return mIsScrollInfoLayer; }
 
-  void SetVisualViewportOffset(const CSSPoint& aVisualViewportOffset) {
-    mVisualViewportOffset = aVisualViewportOffset;
+  void SetVisualDestination(const CSSPoint& aVisualDestination) {
+    mVisualDestination = aVisualDestination;
   }
-  const CSSPoint& GetVisualViewportOffset() const {
-    return mVisualViewportOffset;
-  }
+  const CSSPoint& GetVisualDestination() const { return mVisualDestination; }
 
   void SetVisualScrollUpdateType(ScrollOffsetUpdateType aUpdateType) {
     mVisualScrollUpdateType = aUpdateType;
@@ -698,13 +711,9 @@ struct FrameMetrics {
   // These fields are used when the main thread wants to set a visual viewport
   // offset that's distinct from the layout viewport offset.
   // In this case, mVisualScrollUpdateType is set to eMainThread, and
-  // mVisualViewportOffset is set to desired visual viewport offset (relative
+  // mVisualDestination is set to desired visual destination (relative
   // to the document, like mScrollOffset).
-  // TODO: Get rid of mVisualViewportOffset: between mViewport.TopLeft() and
-  //       mScrollOffset, we have enough storage for the two scroll offsets.
-  //       However, to avoid confusion, that first requires refactoring
-  //       existing to consistently use the two fields for those two purposes.
-  CSSPoint mVisualViewportOffset;
+  CSSPoint mVisualDestination;
   ScrollOffsetUpdateType mVisualScrollUpdateType;
 
   // 'fixed layer margins' on the main-thread. This is only used for the

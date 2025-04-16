@@ -1234,7 +1234,7 @@ def build_push_addons_payload(config, task, task_def):
         Required('name'): text_type,
         Required('path'): text_type,
         Required('version-path'): text_type,
-        Optional('revision-url'): text_type,
+        Optional('l10n-repo-url'): text_type,
         Optional('ignore-config'): object,
         Required('platform-configs'): [{
             Required('platforms'): [text_type],
@@ -1338,58 +1338,6 @@ def build_invalid_payload(config, task, task_def):
 })
 def build_dummy_payload(config, task, task_def):
     task_def['payload'] = {}
-
-
-@payload_builder('script-engine-autophone', schema={
-    Required('os'): Any('macosx', 'linux'),
-
-    # A link for an executable to download
-    Optional('context'): text_type,
-
-    # Tells the worker whether machine should reboot
-    # after the task is finished.
-    Optional('reboot'):
-    Any(False, 'always', 'never', 'on-exception', 'on-failure'),
-
-    # the command to run
-    Optional('command'): [taskref_or_string],
-
-    # environment variables
-    Optional('env'): {text_type: taskref_or_string},
-
-    # artifacts to extract from the task image after completion
-    Optional('artifacts'): [{
-        # type of artifact -- simple file, or recursive directory
-        Required('type'): Any('file', 'directory'),
-
-        # task image path from which to read artifact
-        Required('path'): text_type,
-
-        # name of the produced artifact (root of the names for
-        # type=directory)
-        Required('name'): text_type,
-    }],
-})
-def build_script_engine_autophone_payload(config, task, task_def):
-    worker = task['worker']
-    artifacts = map(lambda artifact: {
-        'name': artifact['name'],
-        'path': artifact['path'],
-        'type': artifact['type'],
-        'expires': task_def['expires'],
-    }, worker.get('artifacts', []))
-
-    task_def['payload'] = {
-        'context': worker['context'],
-        'command': worker['command'],
-        'env': worker['env'],
-        'artifacts': artifacts,
-    }
-    if worker.get('reboot'):
-        task_def['payload'] = worker['reboot']
-
-    if task.get('use-sccache'):
-        raise Exception('use-sccache not supported in taskcluster-worker')
 
 
 transforms = TransformSequence()

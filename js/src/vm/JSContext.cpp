@@ -41,7 +41,8 @@
 #include "jit/Ion.h"
 #include "jit/PcScriptCache.h"
 #include "js/CharacterEncoding.h"
-#include "js/ContextOptions.h"  // JS::ContextOptions
+#include "js/ContextOptions.h"      // JS::ContextOptions
+#include "js/friend/StackLimits.h"  // js::ReportOverRecursed
 #include "js/Printf.h"
 #ifdef JS_SIMULATOR_ARM
 #  include "jit/arm/Simulator-arm.h"
@@ -659,21 +660,6 @@ JSObject* js::CreateErrorNotesArray(JSContext* cx, JSErrorReport* report) {
   return notesArray;
 }
 
-const JSErrorFormatString js_ErrorFormatString[JSErr_Limit] = {
-#define MSG_DEF(name, count, exception, format) \
-  {#name, format, count, exception},
-#include "js.msg"
-#undef MSG_DEF
-};
-
-JS_FRIEND_API const JSErrorFormatString* js::GetErrorMessage(
-    void* userRef, const unsigned errorNumber) {
-  if (errorNumber > 0 && errorNumber < JSErr_Limit) {
-    return &js_ErrorFormatString[errorNumber];
-  }
-  return nullptr;
-}
-
 void JSContext::recoverFromOutOfMemory() {
   if (isHelperThreadContext()) {
     // Keep in sync with addPendingOutOfMemory.
@@ -901,6 +887,7 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
       atomsZoneFreeLists_(this),
       defaultFreeOp_(this, runtime, true),
       freeUnusedMemory(false),
+      measuringExecutionTime_(this, false),
       jitActivation(this, nullptr),
       isolate(this, nullptr),
       activation_(this, nullptr),
@@ -1211,10 +1198,7 @@ void AutoEnterOOMUnsafeRegion::crash(size_t size, const char* reason) {
   crash(reason);
 }
 
-AutoKeepAtoms::AutoKeepAtoms(
-    JSContext* cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-    : cx(cx) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+AutoKeepAtoms::AutoKeepAtoms(JSContext* cx) : cx(cx) {
   cx->zone()->keepAtoms();
 }
 

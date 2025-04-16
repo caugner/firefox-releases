@@ -14,9 +14,12 @@
 #  include "mozilla/a11y/ProxyAccessibleBase.h"
 #  include "nsAccessibilityService.h"
 #endif
+#include "mozilla/dom/BrowserHost.h"
+#include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/CancelContentJSOptionsBinding.h"
 #include "mozilla/dom/ChromeMessageSender.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/ContentProcessManager.h"
 #include "mozilla/dom/DataTransfer.h"
 #include "mozilla/dom/DataTransferItemList.h"
 #include "mozilla/dom/Event.h"
@@ -71,9 +74,11 @@
 #include "nsIURI.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsIWebProtocolHandlerRegistrar.h"
+#include "nsIWindowWatcher.h"
 #include "nsIXPConnect.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsIAppWindow.h"
+#include "nsQueryActor.h"
 #include "nsSHistory.h"
 #include "nsViewManager.h"
 #include "nsVariant.h"
@@ -633,6 +638,14 @@ void BrowserParent::Destroy() {
 
   Manager()->NotifyTabDestroying();
 
+  // This `AddKeepAlive` will be cleared if `mMarkedDestroying` is set in
+  // `ActorDestroy`. Out of caution, we don't add the `KeepAlive` if our IPC
+  // actor has somehow already been destroyed, as that would mean `ActorDestroy`
+  // won't be called.
+  if (CanRecv()) {
+    mBrowsingContext->Group()->AddKeepAlive();
+  }
+
   mMarkedDestroying = true;
 }
 
@@ -706,6 +719,13 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
     mIsDestroyed = true;
   }
 
+  // If we were shutting down normally, we held a reference to our
+  // BrowsingContextGroup in `BrowserParent::Destroy`. Clear that reference
+  // here.
+  if (mMarkedDestroying) {
+    mBrowsingContext->Group()->RemoveKeepAlive();
+  }
+
   // Tell our embedder that the tab is now going away unless we're an
   // out-of-process iframe.
   RefPtr<nsFrameLoader> frameLoader = GetFrameLoader(true);
@@ -732,7 +752,7 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
         // page in that process.
         mBrowsingContext->SetOwnerProcessId(
             bridge->Manager()->Manager()->ChildID());
-        mBrowsingContext->SetCurrentInnerWindowId(0);
+        MOZ_ALWAYS_SUCCEEDS(mBrowsingContext->SetCurrentInnerWindowId(0));
 
         // Tell the browser bridge to show the subframe crashed page.
         Unused << bridge->SendSubFrameCrashed();
@@ -1321,9 +1341,18 @@ IPCResult BrowserParent::RecvIndexedDBPermissionRequest(
 IPCResult BrowserParent::RecvNewWindowGlobal(
     ManagedEndpoint<PWindowGlobalParent>&& aEndpoint,
     const WindowGlobalInit& aInit) {
+  MOZ_DIAGNOSTIC_ASSERT(mBrowsingContext,
+                        "Should not receive messages after being unlinked");
   RefPtr<CanonicalBrowsingContext> browsingContext =
       CanonicalBrowsingContext::Get(aInit.context().mBrowsingContextId);
   if (!browsingContext) {
+    CrashReporter::AutoAnnotateCrashReport autoMissingBCId(
+        CrashReporter::Annotation::NewWindowMissingBCId,
+        static_cast<unsigned int>(aInit.context().mBrowsingContextId));
+    CrashReporter::AutoAnnotateCrashReport autoMissingBCIsTop(
+        CrashReporter::Annotation::NewWindowBCIsTop,
+        aInit.context().mBrowsingContextIsTop);
+
     return IPC_FAIL(this, "Cannot create for missing BrowsingContext");
   }
   if (!aInit.principal()) {
@@ -2304,8 +2333,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvEnableDisableCommands(
     return IPC_OK();
   }
 
-  nsCOMPtr<nsIBrowserController> browserController =
-      do_QueryActor("Controllers", aContext.get_canonical());
+  nsCOMPtr<nsIBrowserController> browserController = do_QueryActor(
+      "Controllers", aContext.get_canonical()->GetCurrentWindowGlobal());
   if (browserController) {
     browserController->EnableDisableCommands(aAction, aEnabledCommands,
                                              aDisabledCommands);

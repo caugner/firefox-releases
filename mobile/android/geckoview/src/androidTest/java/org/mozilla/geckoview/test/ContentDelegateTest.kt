@@ -229,6 +229,22 @@ class ContentDelegateTest : BaseSessionTest() {
         })
     }
 
+    @WithDisplay(width = 10, height = 10)
+    @Test fun paintStatusReset() {
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        sessionRule.waitUntilCalled(object : Callbacks.ContentDelegate {
+            @AssertCalled(count = 1)
+            override fun onFirstContentfulPaint(session: GeckoSession) {
+            }
+        })
+        mainSession.setActive(false)
+        sessionRule.waitUntilCalled(object : Callbacks.ContentDelegate {
+            @AssertCalled(count = 1)
+            override fun onPaintStatusReset(session: GeckoSession) {
+            }
+        })
+    }
+
     @Test fun webAppManifestPref() {
         val initialState = sessionRule.runtime.settings.getWebManifestEnabled()
         val jsToRun = "document.querySelector('link[rel=manifest]').relList.supports('manifest');"
@@ -308,6 +324,49 @@ class ContentDelegateTest : BaseSessionTest() {
             @AssertCalled(count = 1)
             override fun onMetaViewportFitChange(session: GeckoSession, viewportFit: String) {
                 assertThat("viewport-fit should match", viewportFit, equalTo("auto"))
+            }
+        })
+    }
+
+    @Test fun closeRequest() {
+        if (!sessionRule.env.isAutomation) {
+            sessionRule.setPrefsUntilTestEnd(mapOf("dom.allow_scripts_to_close_windows" to true))
+        }
+
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        mainSession.evaluateJS("window.close()")
+        mainSession.waitUntilCalled(object : Callbacks.ContentDelegate {
+            @AssertCalled(count = 1)
+            override fun onCloseRequest(session: GeckoSession) {
+            }
+        })
+    }
+
+    @Test fun windowOpenClose() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.disable_open_during_load" to false))
+
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        val newSession = sessionRule.createClosedSession()
+        mainSession.delegateDuringNextWait(object : Callbacks.NavigationDelegate {
+            @AssertCalled(count = 1)
+            override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
+                return GeckoResult.fromValue(newSession)
+            }
+        })
+
+        mainSession.evaluateJS("const w = window.open('about:blank'); w.close()")
+
+        newSession.waitUntilCalled(object : Callbacks.All {
+            @AssertCalled(count = 1)
+            override fun onCloseRequest(session: GeckoSession) {
+            }
+
+            @AssertCalled(count = 1)
+            override fun onPageStop(session: GeckoSession, success: Boolean) {
             }
         })
     }

@@ -5,19 +5,16 @@
 const { AddonManager } = ChromeUtils.import(
   "resource://gre/modules/AddonManager.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
-);
 
 const { RemoteSettings } = ChromeUtils.import(
   "resource://services-settings/remote-settings.js"
 );
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  FileUtils: "resource://gre/modules/FileUtils.jsm",
-});
+const { TelemetryController } = ChromeUtils.import(
+  "resource://gre/modules/TelemetryController.jsm"
+);
+
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const PREF_PIONEER_ID = "toolkit.telemetry.pioneerId";
 const PREF_PIONEER_NEW_STUDIES_AVAILABLE =
@@ -26,8 +23,9 @@ const PREF_PIONEER_COMPLETED_STUDIES =
   "toolkit.telemetry.pioneer-completed-studies";
 
 /**
- * This is the Remote Settings key that we use to get the list of available studies.
+ * Remote Settings keys for general content, and available studies.
  */
+const CONTENT_COLLECTION_KEY = "pioneer-content-v1";
 const STUDY_ADDON_COLLECTION_KEY = "pioneer-study-addons-v1";
 
 const STUDY_LEAVE_REASONS = {
@@ -35,6 +33,7 @@ const STUDY_LEAVE_REASONS = {
   STUDY_ENDED: "study-ended",
 };
 
+const PREF_TEST_CACHED_CONTENT = "toolkit.pioneer.testCachedContent";
 const PREF_TEST_CACHED_ADDONS = "toolkit.pioneer.testCachedAddons";
 const PREF_TEST_ADDONS = "toolkit.pioneer.testAddons";
 
@@ -50,22 +49,31 @@ function showEnrollmentStatus() {
   enrollmentButton.classList.toggle("primary", !pioneerId);
 }
 
+function toggleContentBasedOnLocale() {
+  const requestedLocale = Services.locale.requestedLocale;
+  if (requestedLocale !== "en-US") {
+    const localeNotificationBar = document.getElementById(
+      "locale-notification"
+    );
+    localeNotificationBar.style.display = "block";
+
+    const reportContent = document.getElementById("report-content");
+    reportContent.style.display = "none";
+  }
+}
+
 async function toggleEnrolled(studyAddonId, cachedAddons) {
   let addon;
   let install;
-  let cachedAddon;
 
-  for (cachedAddon of cachedAddons) {
-    if (studyAddonId == cachedAddon.addon_id) {
-      break;
-    }
-  }
+  const cachedAddon = cachedAddons.find(a => a.addon_id == studyAddonId);
 
   if (Cu.isInAutomation) {
-    let testAddons = Services.prefs.getStringPref(PREF_TEST_ADDONS, "[]");
-    testAddons = JSON.parse(testAddons);
     install = {
-      install: () => {
+      install: async () => {
+        let testAddons = Services.prefs.getStringPref(PREF_TEST_ADDONS, "[]");
+        testAddons = JSON.parse(testAddons);
+
         testAddons.push(studyAddonId);
         Services.prefs.setStringPref(
           PREF_TEST_ADDONS,
@@ -73,12 +81,18 @@ async function toggleEnrolled(studyAddonId, cachedAddons) {
         );
       },
     };
+
+    let testAddons = Services.prefs.getStringPref(PREF_TEST_ADDONS, "[]");
+    testAddons = JSON.parse(testAddons);
+
     for (const testAddon of testAddons) {
       if (testAddon == studyAddonId) {
         addon = {};
-        addon.install = () => {};
         addon.uninstall = () => {
-          Services.prefs.setStringPref(PREF_TEST_ADDONS, "[]");
+          Services.prefs.setStringPref(
+            PREF_TEST_ADDONS,
+            JSON.stringify(testAddons.filter(a => a.id != testAddon.id))
+          );
         };
       }
     }
@@ -95,10 +109,11 @@ async function toggleEnrolled(studyAddonId, cachedAddons) {
   const study = document.querySelector(`.card[id="${cachedAddon.addon_id}"`);
   const joinBtn = study.querySelector(".join-button");
 
-  // Check if this study is re-join-able before enrollment.
   if (addon) {
     joinBtn.disabled = true;
     await addon.uninstall();
+    await sendDeletionPing(studyAddonId);
+
     document.l10n.setAttributes(joinBtn, "pioneer-join-study");
     joinBtn.disabled = false;
 
@@ -129,22 +144,55 @@ async function toggleEnrolled(studyAddonId, cachedAddons) {
     await install.install();
     document.l10n.setAttributes(joinBtn, "pioneer-leave-study");
     joinBtn.disabled = false;
+
+    // Send an enrollment ping for this study. Note that this could be sent again
+    // if we are re-joining.
+    await sendEnrollmentPing(studyAddonId);
   }
 
   await updateStudy(cachedAddon.addon_id);
 }
 
 async function showAvailableStudies(cachedAddons) {
-  for (const cachedAddon of cachedAddons) {
+  const pioneerId = Services.prefs.getStringPref(PREF_PIONEER_ID, null);
+  const defaultAddons = cachedAddons.filter(a => a.isDefault);
+  if (pioneerId) {
+    for (const defaultAddon of defaultAddons) {
+      let addon;
+      let install;
+      if (Cu.isInAutomation) {
+        console.debug(defaultAddon);
+        install = {
+          install: async () => {
+            if (
+              defaultAddon.addon_id ==
+              "pioneer-v2-bad-default-example@mozilla.org"
+            ) {
+              throw new Error("Bad test default add-on");
+            }
+          },
+        };
+      } else {
+        addon = await AddonManager.getAddonByID(defaultAddon.addon_id);
+        install = await AddonManager.getInstallForURL(
+          defaultAddon.sourceURI.spec
+        );
+      }
+
+      if (!addon) {
+        // Any default add-ons are required, try to reinstall.
+        await install.install();
+      }
+    }
+  }
+
+  const studyAddons = cachedAddons.filter(a => !a.isDefault);
+  for (const cachedAddon of studyAddons) {
     if (!cachedAddon) {
       console.error(
         `about:pioneer - Study addon ID not found in cache: ${studyAddonId}`
       );
       return;
-    }
-
-    if (cachedAddon.isDefault) {
-      continue;
     }
 
     const studyAddonId = cachedAddon.addon_id;
@@ -183,7 +231,6 @@ async function showAvailableStudies(cachedAddons) {
     joinBtn.classList.add("primary");
     joinBtn.classList.add("join-button");
     document.l10n.setAttributes(joinBtn, "pioneer-join-study");
-    actions.appendChild(joinBtn);
 
     joinBtn.addEventListener("click", async () => {
       let addon;
@@ -192,7 +239,6 @@ async function showAvailableStudies(cachedAddons) {
         for (const testAddon of JSON.parse(testAddons)) {
           if (testAddon == studyAddonId) {
             addon = {};
-            addon.install = () => {};
             addon.uninstall = () => {
               Services.prefs.setStringPref(PREF_TEST_ADDONS, "[]");
             };
@@ -206,9 +252,27 @@ async function showAvailableStudies(cachedAddons) {
         `${joinOrLeave}-study-consent-dialog`
       );
       dialog.setAttribute("addon-id", cachedAddon.addon_id);
+      const consentText = dialog.querySelector(
+        `[id=${joinOrLeave}-study-consent]`
+      );
+
+      // Clears out any existing children with a single #text node.
+      consentText.textContent = "";
+      for (const line of cachedAddon[`${joinOrLeave}StudyConsent`].split(
+        "\n"
+      )) {
+        const li = document.createElement("li");
+        li.textContent = line;
+        consentText.appendChild(li);
+      }
+
       dialog.showModal();
       dialog.scrollTop = 0;
+
+      const openEvent = new Event("open");
+      dialog.dispatchEvent(openEvent);
     });
+    actions.appendChild(joinBtn);
 
     const studyDesc = document.createElement("div");
     studyDesc.setAttribute("class", "card-description");
@@ -255,7 +319,7 @@ async function showAvailableStudies(cachedAddons) {
   }
 
   const availableStudies = document.getElementById("header-available-studies");
-  document.l10n.setAttributes(availableStudies, "pioneer-available-studies");
+  document.l10n.setAttributes(availableStudies, "pioneer-current-studies");
 }
 
 async function updateStudy(studyAddonId) {
@@ -302,7 +366,7 @@ async function updateStudy(studyAddonId) {
       document.l10n.setAttributes(joinBtn, "pioneer-join-study");
     }
   } else {
-    document.l10n.setAttributes(joinBtn, "pioneer-join-study");
+    document.l10n.setAttributes(joinBtn, "pioneer-study-prompt");
     study.style.opacity = 0.5;
     joinBtn.disabled = true;
   }
@@ -366,10 +430,39 @@ async function setup(cachedAddons) {
         Services.prefs.setStringPref(PREF_PIONEER_ID, uuid);
         for (const cachedAddon of cachedAddons) {
           if (cachedAddon.isDefault) {
-            const install = await AddonManager.getInstallForURL(
-              cachedAddon.sourceURI.spec
-            );
-            install.install();
+            let install;
+            if (Cu.isInAutomation) {
+              install = {
+                install: async () => {
+                  if (
+                    cachedAddon.addon_id ==
+                    "pioneer-v2-bad-default-example@mozilla.org"
+                  ) {
+                    throw new Error("Bad test default add-on");
+                  }
+                },
+              };
+            } else {
+              install = await AddonManager.getInstallForURL(
+                cachedAddon.sourceURI.spec
+              );
+            }
+
+            try {
+              await install.install();
+            } catch (ex) {
+              // No need to throw here, we'll try again before letting users enroll in any studies.
+              console.error(
+                `Could not install default add-on ${cachedAddon.addon_id}`
+              );
+              const availableStudies = document.getElementById(
+                "available-studies"
+              );
+              document.l10n.setAttributes(
+                availableStudies,
+                "pioneer-no-current-studies"
+              );
+            }
           }
           const study = document.getElementById(cachedAddon.addon_id);
           if (study) {
@@ -378,23 +471,32 @@ async function setup(cachedAddons) {
         }
         document.querySelector("dialog").close();
       }
+      // A this point we should have a valid pioneer id, so we should be able to send
+      // the enrollment ping.
+      await sendEnrollmentPing();
+
       showEnrollmentStatus();
     });
 
   document
     .getElementById("leave-pioneer-accept-dialog-button")
     .addEventListener("click", async event => {
-      Services.prefs.clearUserPref(PREF_PIONEER_ID);
+      const completedStudies = Services.prefs.getStringPref(
+        PREF_PIONEER_COMPLETED_STUDIES,
+        "{}"
+      );
+      const studies = JSON.parse(completedStudies);
+
+      // Send a deletion ping for all completed studies the user has been a part of.
+      for (const studyAddonId in studies) {
+        await sendDeletionPing(studyAddonId);
+      }
+
       Services.prefs.clearUserPref(PREF_PIONEER_COMPLETED_STUDIES);
 
       for (const cachedAddon of cachedAddons) {
-        // Record any studies that have been marked as concluded on the server.
+        // Record any studies that have been marked as concluded on the server, in case they re-enroll.
         if ("studyEnded" in cachedAddon && cachedAddon.studyEnded === true) {
-          const completedStudies = Services.prefs.getStringPref(
-            PREF_PIONEER_COMPLETED_STUDIES,
-            "{}"
-          );
-          const studies = JSON.parse(completedStudies);
           studies[cachedAddon.addon_id] = STUDY_LEAVE_REASONS.STUDY_ENDED;
 
           Services.prefs.setStringPref(
@@ -402,16 +504,42 @@ async function setup(cachedAddons) {
             JSON.stringify(studies)
           );
         }
-        const addon = await AddonManager.getAddonByID(cachedAddon.addon_id);
+
+        let addon;
+        if (Cu.isInAutomation) {
+          addon = {};
+          addon.id = cachedAddon.addon_id;
+          addon.uninstall = () => {
+            let testAddons = Services.prefs.getStringPref(
+              PREF_TEST_ADDONS,
+              "[]"
+            );
+            testAddons = JSON.parse(testAddons);
+
+            Services.prefs.setStringPref(
+              PREF_TEST_ADDONS,
+              JSON.stringify(
+                testAddons.filter(a => a.id != cachedAddon.addon_id)
+              )
+            );
+          };
+        } else {
+          addon = await AddonManager.getAddonByID(cachedAddon.addon_id);
+        }
         if (addon) {
+          await sendDeletionPing(addon.id);
           await addon.uninstall();
         }
+      }
 
+      Services.prefs.clearUserPref(PREF_PIONEER_ID);
+      for (const cachedAddon of cachedAddons) {
         const study = document.getElementById(cachedAddon.addon_id);
         if (study) {
           await updateStudy(cachedAddon.addon_id);
         }
       }
+
       document.getElementById("leave-pioneer-consent-dialog").close();
       showEnrollmentStatus();
     });
@@ -421,9 +549,7 @@ async function setup(cachedAddons) {
     .addEventListener("click", async event => {
       const dialog = document.getElementById("join-study-consent-dialog");
       const studyAddonId = dialog.getAttribute("addon-id");
-      toggleEnrolled(studyAddonId, cachedAddons);
-
-      dialog.close();
+      toggleEnrolled(studyAddonId, cachedAddons).then(dialog.close());
     });
 
   document
@@ -431,9 +557,7 @@ async function setup(cachedAddons) {
     .addEventListener("click", async event => {
       const dialog = document.getElementById("leave-study-consent-dialog");
       const studyAddonId = dialog.getAttribute("addon-id");
-      toggleEnrolled(studyAddonId, cachedAddons);
-
-      dialog.close();
+      await toggleEnrolled(studyAddonId, cachedAddons).then(dialog.close());
     });
 
   const onAddonEvent = async addon => {
@@ -468,12 +592,67 @@ function removeBadge() {
   }
 }
 
+// Updates Pioneer HTML page contents from RemoteSettings.
+function updateContents(contents) {
+  for (const section of [
+    "title",
+    "joinPioneerConsent",
+    "leavePioneerConsent",
+  ]) {
+    if (contents && section in contents) {
+      // Generate a corresponding dom-id style ID for a camel-case domId style JS attribute.
+      // Dynamically set the tag type based on which section is getting updated.
+      let tagType = "li";
+      if (section === "title") {
+        tagType = "p";
+      }
+
+      const domId = section
+        .split(/(?=[A-Z])/)
+        .join("-")
+        .toLowerCase();
+      // Clears out any existing children with a single #text node.
+      document.getElementById(domId).textContent = "";
+      for (const line of contents[section].split("\n")) {
+        const entry = document.createElement(tagType);
+        entry.textContent = line;
+        document.getElementById(domId).appendChild(entry);
+      }
+    }
+  }
+  if ("privacyPolicy" in contents) {
+    const privacyPolicyLinks = document.getElementsByClassName(
+      "privacy-policy"
+    );
+
+    for (const privacyPolicyLink of privacyPolicyLinks) {
+      const privacyPolicyFormattedLink = Services.urlFormatter.formatURL(
+        contents.privacyPolicy
+      );
+      privacyPolicyLink.href = privacyPolicyFormattedLink;
+    }
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async domEvent => {
+  toggleContentBasedOnLocale();
+
   showEnrollmentStatus();
 
   document.addEventListener("focus", removeBadge);
   removeBadge();
 
+  const privacyPolicyLinks = document.querySelectorAll(
+    ".privacy-policy,.privacy-notice"
+  );
+  for (const privacyPolicyLink of privacyPolicyLinks) {
+    const privacyPolicyFormattedLink = Services.urlFormatter.formatURL(
+      privacyPolicyLink.href
+    );
+    privacyPolicyLink.href = privacyPolicyFormattedLink;
+  }
+
+  let cachedContent;
   let cachedAddons;
   if (Cu.isInAutomation) {
     let testCachedAddons = Services.prefs.getStringPref(
@@ -483,8 +662,22 @@ document.addEventListener("DOMContentLoaded", async domEvent => {
     if (testCachedAddons) {
       cachedAddons = JSON.parse(testCachedAddons);
     }
+
+    let testCachedContent = Services.prefs.getStringPref(
+      PREF_TEST_CACHED_CONTENT,
+      null
+    );
+    if (testCachedContent) {
+      cachedContent = JSON.parse(testCachedContent);
+    }
   } else {
+    cachedContent = await RemoteSettings(CONTENT_COLLECTION_KEY).get();
     cachedAddons = await RemoteSettings(STUDY_ADDON_COLLECTION_KEY).get();
+  }
+
+  // Replace existing contents immediately on page load.
+  for (const contents of cachedContent) {
+    updateContents(contents);
   }
 
   for (const cachedAddon of cachedAddons) {
@@ -505,113 +698,89 @@ document.addEventListener("DOMContentLoaded", async domEvent => {
   }
 
   await setup(cachedAddons);
-  await showAvailableStudies(cachedAddons);
+
+  try {
+    await showAvailableStudies(cachedAddons);
+  } catch (ex) {
+    // No need to throw here, we'll try again before letting users enroll in any studies.
+    console.error(`Could not show available studies`, ex);
+  }
 });
 
-/**
- * Prevent tab/shift-tab from leaving the modal dialog.
- * FIXME - this should be removed once bug 1322939 is fixed.
- */
-class TrappedDialog extends HTMLDialogElement {
-  static get observedAttributes() {
-    return ["open"];
-  }
+async function sendDeletionPing(studyAddonId) {
+  const type = "pioneer-study";
 
-  attributeChangedCallback(name, oldVal, newVal) {
-    if (name == "open") {
-      if (newVal != null) {
-        this.trapFocus();
-      } else {
-        this.untrapFocus();
-      }
-    }
-  }
+  const options = {
+    studyName: studyAddonId,
+    addPioneerId: true,
+    useEncryption: true,
+    // NOTE - while we're not actually sending useful data in this payload, the current Pioneer v2 Telemetry
+    // pipeline requires that pings are shaped this way so they are routed to the correct environment.
+    //
+    // At the moment, the public key used here isn't important but we do need to use *something*.
+    encryptionKeyId: "discarded",
+    publicKey: {
+      crv: "P-256",
+      kty: "EC",
+      x: "XLkI3NaY3-AF2nRMspC63BT1u0Y3moXYSfss7VuQ0mk",
+      y: "SB0KnIW-pqk85OIEYZenoNkEyOOp5GeWQhS1KeRtEUE",
+    },
+    schemaName: "deletion-request",
+    schemaVersion: 1,
+    // The schema namespace needs to be the study addon id, as we
+    // want to route the ping to the specific study table.
+    schemaNamespace: studyAddonId,
+  };
 
-  trapFocus() {
-    if (!this.trapped) {
-      this.trapped = true;
-      document.addEventListener("focusin", this);
-      document.addEventListener("keydown", this);
-    }
-  }
+  const payload = {
+    encryptedData: "",
+  };
 
-  untrapFocus() {
-    document.removeEventListener("focusin", this);
-    document.removeEventListener("keydown", this);
-    this.trapped = false;
-  }
-
-  handleEvent(e) {
-    if (
-      e.type == "focusin" &&
-      // FIXME this should focus on the document when reverse-cycling/shift-tabbing,
-      // but for now let's defer until bug 1322939 is fixed in Firefox 81. This will cause the Accept button to be selected when reversing.
-      // e.relatedTarget == null &&
-      !this.contains(e.target)
-    ) {
-      // Focus entered the document.
-      e.preventDefault();
-      this.focusWalker.currentNode = this;
-
-      // Focus the first focusable child.
-      this.focusWalker.nextNode();
-    } else if (
-      e.type == "keydown" &&
-      e.keyCode == e.DOM_VK_TAB &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.metaKey &&
-      (!this.contains(e.target) || e.target == this)
-    ) {
-      // Focus moved out of the dialog.
-      e.preventDefault();
-      let parentWin = window.docShell.chromeEventHandler.ownerGlobal;
-      let fm = Services.focus;
-
-      if (e.shiftKey) {
-        // Moving backwards out of the document.
-
-        // Focus the first element on the page.
-        this.focusWalker.currentNode = document;
-        //this.focusWalker.nextNode();
-
-        // Move backwards from there.
-        fm.moveFocus(parentWin, null, fm.MOVEFOCUS_BACKWARD, fm.FLAG_BYKEY);
-      } else if (e.target == document.documentElement) {
-        // Focus the first focusable child.
-        this.focusWalker.currentNode = this;
-        this.focusWalker.nextNode();
-      } else {
-        fm.moveFocus(parentWin, null, fm.MOVEFOCUS_ROOT, fm.FLAG_BYKEY);
-      }
-    }
-  }
-
-  get focusWalker() {
-    if (!this._focusWalker) {
-      this._focusWalker = document.createTreeWalker(
-        this,
-        NodeFilter.SHOW_ELEMENT,
-        {
-          acceptNode: node => {
-            // No need to look at hidden nodes.
-            if (node.hidden) {
-              return NodeFilter.FILTER_REJECT;
-            }
-
-            // Focus the node, if it worked then this is the node we want.
-            node.focus();
-            if (node === document.activeElement) {
-              return NodeFilter.FILTER_ACCEPT;
-            }
-
-            // Continue into child nodes if the parent couldn't be focused.
-            return NodeFilter.FILTER_SKIP;
-          },
-        }
-      );
-    }
-    return this._focusWalker;
-  }
+  await TelemetryController.submitExternalPing(type, payload, options);
 }
-customElements.define("trapped-dialog", TrappedDialog, { extends: "dialog" });
+
+/**
+ * Sends a Pioneer enrollment ping.
+ *
+ * The `creationDate` provided by the telemetry APIs will be used as the timestamp for
+ * considering the user enrolled in pioneer and/or the study.
+ *
+ * @param [studyAddonid=undefined] - optional study id. It's sent in the ping, if present,
+ * to signal that user enroled in the study.
+ */
+async function sendEnrollmentPing(studyAddonId) {
+  let options = {
+    studyName: "pioneer-meta",
+    addPioneerId: true,
+    useEncryption: true,
+    // NOTE - while we're not actually sending useful data in this payload, the current Pioneer v2 Telemetry
+    // pipeline requires that pings are shaped this way so they are routed to the correct environment.
+    //
+    // At the moment, the public key used here isn't important but we do need to use *something*.
+    encryptionKeyId: "discarded",
+    publicKey: {
+      crv: "P-256",
+      kty: "EC",
+      x: "XLkI3NaY3-AF2nRMspC63BT1u0Y3moXYSfss7VuQ0mk",
+      y: "SB0KnIW-pqk85OIEYZenoNkEyOOp5GeWQhS1KeRtEUE",
+    },
+    schemaName: "pioneer-enrollment",
+    schemaVersion: 1,
+    // Note that the schema namespace directly informs how data is segregated after ingestion.
+    // If this is an enrollment ping for the pioneer program (in contrast to the enrollment to
+    // a specific study), use a meta namespace.
+    schemaNamespace: "pioneer-meta",
+  };
+
+  // If we were provided with a study id, then this is an enrollment to a study.
+  // Send the id alongside with the data and change the schema namespace to simplify
+  // the work on the ingestion pipeline.
+  if (typeof studyAddonId != "undefined") {
+    options.studyName = studyAddonId;
+    // The schema namespace needs to be the study addon id, as we
+    // want to route the ping to the specific study table.
+    options.schemaNamespace = studyAddonId;
+  }
+
+  await TelemetryController.submitExternalPing("pioneer-study", {}, options);
+}

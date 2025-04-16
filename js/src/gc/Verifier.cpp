@@ -20,6 +20,7 @@
 #include "gc/PublicIterators.h"
 #include "gc/WeakMap.h"
 #include "gc/Zone.h"
+#include "js/friend/DumpFunctions.h"  // js::DumpObject
 #include "js/HashTable.h"
 #include "vm/JSContext.h"
 
@@ -186,7 +187,7 @@ void gc::GCRuntime::startVerifyPreBarriers() {
 
   JSContext* cx = rt->mainContextFromOwnThread();
 
-  if (IsIncrementalGCUnsafe(rt) != AbortReason::None ||
+  if (IsIncrementalGCUnsafe(rt) != GCAbortReason::None ||
       rt->hasHelperThreadZones()) {
     return;
   }
@@ -364,7 +365,7 @@ void gc::GCRuntime::endVerifyPreBarriers() {
   MOZ_ASSERT(incrementalState == State::Mark);
   incrementalState = State::NotActive;
 
-  if (!compartmentCreated && IsIncrementalGCUnsafe(rt) == AbortReason::None &&
+  if (!compartmentCreated && IsIncrementalGCUnsafe(rt) == GCAbortReason::None &&
       !rt->hasHelperThreadZones()) {
     CheckEdgeTracer cetrc(rt);
 
@@ -702,7 +703,7 @@ void js::gc::MarkingValidator::validate() {
       uintptr_t thing = arena->thingsStart();
       uintptr_t end = arena->thingsEnd();
       while (thing < end) {
-        auto cell = reinterpret_cast<TenuredCell*>(thing);
+        auto* cell = reinterpret_cast<TenuredCell*>(thing);
 
         /*
          * If a non-incremental GC wouldn't have collected a cell, then
@@ -1060,6 +1061,17 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
     fprintf(stderr, "(map %p is %s, key %p is %s, value %p is %s)\n", map,
             map->mapColor.name(), key, keyColor.name(), value,
             valueColor.name());
+#ifdef DEBUG
+    fprintf(stderr, "Key:\n");
+    key->dump();
+    if (auto delegate = MaybeGetDelegate(key); delegate) {
+      fprintf(stderr, "Delegate:\n");
+      delegate->dump();
+    }
+    fprintf(stderr, "Value:\n");
+    value->dump();
+#endif
+
     ok = false;
   }
 

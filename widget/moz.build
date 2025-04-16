@@ -110,6 +110,7 @@ XPIDL_SOURCES += [
     'nsIGfxInfo.idl',
     'nsIGfxInfoDebug.idl',
     'nsIPaper.idl',
+    'nsIPaperMargin.idl',
     'nsIPrinter.idl',
     'nsIPrinterList.idl',
     'nsIPrintSession.idl',
@@ -144,7 +145,7 @@ EXPORTS += [
     'nsIWidget.h',
     'nsIWidgetListener.h',
     'nsPaper.h',
-    'nsPrinter.h',
+    'nsPrinterListBase.h',
     'nsUserIdleService.h',
     'nsWidgetInitData.h',
     'nsWidgetsCID.h',
@@ -238,15 +239,19 @@ if CONFIG['MOZ_XUL'] and CONFIG['NS_PRINTING']:
     ]
     UNIFIED_SOURCES += [
         'nsDeviceContextSpecProxy.cpp',
+        'nsPaper.cpp',
+        'nsPaperMargin.cpp',
+        'nsPrinterBase.cpp',
+        'nsPrinterListBase.cpp',
         'nsPrintSession.cpp',
         'nsPrintSettingsService.cpp',
     ]
 
-    # The Windows sub-directory has its own implemenation of these.
-    if toolkit != 'windows':
+    if toolkit in ('cocoa', 'gtk'):
         UNIFIED_SOURCES += [
-            'nsPaper.cpp',
-            'nsPrinter.cpp',
+            'nsCUPSShim.cpp',
+            'nsPrinterCUPS.cpp',
+            'nsPrinterListCUPS.cpp',
         ]
 
 # nsBaseWidget.cpp needs to be built separately because of name clashes in the OS X headers
@@ -298,11 +303,6 @@ if toolkit in ('gtk', 'windows', 'cocoa', 'android'):
 if toolkit == 'gtk':
     XPIDL_SOURCES += [
         'nsIApplicationChooser.idl',
-    ]
-if toolkit in ('gtk', 'cocoa'):
-    UNIFIED_SOURCES += [
-        'CUPSPrinter.cpp',
-        'nsCUPSShim.cpp'
     ]
 
 DEFINES['MOZ_CROSS_PROCESS_IME'] = True

@@ -4,6 +4,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsPrintSettingsImpl.h"
+
+#include "nsCoord.h"
+#include "nsPaper.h"
 #include "nsReadableUtils.h"
 #include "nsIPrintSession.h"
 #include "mozilla/RefPtr.h"
@@ -55,6 +58,31 @@ nsPrintSettings::nsPrintSettings()
   mFooterStrs[0].AssignLiteral(
       "&PT");  // Use &P (Page Num Only) or &PT (Page Num of Page Total)
   mFooterStrs[2].AssignLiteral("&D");
+}
+
+void nsPrintSettings::InitWithInitializer(
+    const PrintSettingsInitializer& aSettings) {
+  const double kInchesPerPoint = 1.0 / 72.0;
+
+  SetPrinterName(aSettings.mPrinter);
+  SetPrintInColor(aSettings.mPrintInColor);
+  SetResolution(aSettings.mResolution);
+  SetPaperName(aSettings.mPaperInfo.mName);
+  SetPaperWidth(aSettings.mPaperInfo.mSize.Width() * kInchesPerPoint);
+  SetPaperHeight(aSettings.mPaperInfo.mSize.Height() * kInchesPerPoint);
+  SetPaperSizeUnit(nsIPrintSettings::kPaperSizeInches);
+
+  if (aSettings.mPaperInfo.mUnwriteableMargin) {
+    const auto& margin = aSettings.mPaperInfo.mUnwriteableMargin.value();
+    // Margins are stored internally in TWIPS, but the setters expect inches.
+    SetUnwriteableMarginTop(margin.top * kInchesPerPoint);
+    SetUnwriteableMarginRight(margin.right * kInchesPerPoint);
+    SetUnwriteableMarginBottom(margin.bottom * kInchesPerPoint);
+    SetUnwriteableMarginLeft(margin.left * kInchesPerPoint);
+  }
+
+  // Set this last because other setters may overwrite its value.
+  SetIsInitializedFromPrinter(true);
 }
 
 nsPrintSettings::nsPrintSettings(const nsPrintSettings& aPS) { *this = aPS; }
@@ -765,6 +793,7 @@ nsPrintSettings& nsPrintSettings::operator=(const nsPrintSettings& rhs) {
   mMargin = rhs.mMargin;
   mEdge = rhs.mEdge;
   mUnwriteableMargin = rhs.mUnwriteableMargin;
+  mPrintOptions = rhs.mPrintOptions;
   mScaling = rhs.mScaling;
   mPrintBGColors = rhs.mPrintBGColors;
   mPrintBGImages = rhs.mPrintBGImages;
@@ -772,9 +801,11 @@ nsPrintSettings& nsPrintSettings::operator=(const nsPrintSettings& rhs) {
   mTitle = rhs.mTitle;
   mURL = rhs.mURL;
   mIsCancelled = rhs.mIsCancelled;
+  mSaveOnCancel = rhs.mSaveOnCancel;
   mPrintSilent = rhs.mPrintSilent;
   mShrinkToFit = rhs.mShrinkToFit;
   mShowPrintProgress = rhs.mShowPrintProgress;
+  mShowMarginGuides = rhs.mShowMarginGuides;
   mPaperName = rhs.mPaperName;
   mPaperData = rhs.mPaperData;
   mPaperWidth = rhs.mPaperWidth;
@@ -783,11 +814,15 @@ nsPrintSettings& nsPrintSettings::operator=(const nsPrintSettings& rhs) {
   mPrintReversed = rhs.mPrintReversed;
   mPrintInColor = rhs.mPrintInColor;
   mOrientation = rhs.mOrientation;
+  mResolution = rhs.mResolution;
+  mDuplex = rhs.mDuplex;
   mNumCopies = rhs.mNumCopies;
   mPrinter = rhs.mPrinter;
   mPrintToFile = rhs.mPrintToFile;
   mToFileName = rhs.mToFileName;
   mOutputFormat = rhs.mOutputFormat;
+  mIsInitedFromPrinter = rhs.mIsInitedFromPrinter;
+  mIsInitedFromPrefs = rhs.mIsInitedFromPrefs;
   mPrintPageDelay = rhs.mPrintPageDelay;
 
   for (int32_t i = 0; i < NUM_HEAD_FOOT; i++) {
@@ -796,4 +831,24 @@ nsPrintSettings& nsPrintSettings::operator=(const nsPrintSettings& rhs) {
   }
 
   return *this;
+}
+
+void nsPrintSettings::SetDefaultFileName() {
+  nsAutoString filename;
+  nsresult rv = GetToFileName(filename);
+  if (NS_FAILED(rv) || filename.IsEmpty()) {
+    const char* path = PR_GetEnv("PWD");
+    if (!path) {
+      path = PR_GetEnv("HOME");
+    }
+
+    if (path) {
+      CopyUTF8toUTF16(mozilla::MakeStringSpan(path), filename);
+      filename.AppendLiteral("/mozilla.pdf");
+    } else {
+      filename.AssignLiteral("mozilla.pdf");
+    }
+
+    SetToFileName(filename);
+  }
 }

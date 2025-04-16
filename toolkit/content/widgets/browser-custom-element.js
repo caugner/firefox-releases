@@ -18,6 +18,10 @@
     "resource://gre/modules/BrowserUtils.jsm"
   );
 
+  const { XPCOMUtils } = ChromeUtils.import(
+    "resource://gre/modules/XPCOMUtils.jsm"
+  );
+
   let LazyModules = {};
 
   ChromeUtils.defineModuleGetter(
@@ -44,10 +48,12 @@
     "resource://gre/actors/PopupBlockingParent.jsm"
   );
 
-  ChromeUtils.defineModuleGetter(
-    LazyModules,
-    "XPCOMUtils",
-    "resource://gre/modules/XPCOMUtils.jsm"
+  let lazyPrefs = {};
+  XPCOMUtils.defineLazyPreferenceGetter(
+    lazyPrefs,
+    "sessionHistoryInParent",
+    "fission.sessionHistoryInParent",
+    false
   );
 
   const elementsToDestroyOnUnload = new Set();
@@ -90,7 +96,7 @@
       // between calls to destroy().
       this.progressListeners = [];
 
-      LazyModules.XPCOMUtils.defineLazyGetter(this, "popupBlocker", () => {
+      XPCOMUtils.defineLazyGetter(this, "popupBlocker", () => {
         return new LazyModules.PopupBlocker(this);
       });
 
@@ -206,19 +212,6 @@
       this._documentURI = null;
 
       this._documentContentType = null;
-
-      /**
-       * Weak reference to an optional frame loader that can be used to influence
-       * process selection for this browser.
-       * See nsIBrowser.sameProcessAsFrameLoader.
-       *
-       * tabbrowser sets "sameProcessAsFrameLoader" on some browsers before
-       * they are connected. This avoids clearing that out while we're doing
-       * the initial construct(), which is what would read it.
-       */
-      if (this.mInitialized) {
-        this._sameProcessAsFrameLoader = null;
-      }
 
       this._loadContext = null;
 
@@ -355,16 +348,6 @@
           this.contentDocument.documentContentType = aContentType;
         }
       }
-    }
-
-    set sameProcessAsFrameLoader(val) {
-      this._sameProcessAsFrameLoader = Cu.getWeakReference(val);
-    }
-
-    get sameProcessAsFrameLoader() {
-      return (
-        this._sameProcessAsFrameLoader && this._sameProcessAsFrameLoader.get()
-      );
     }
 
     get loadContext() {
@@ -1588,7 +1571,7 @@
       //            to the JS global of the current browser, which would rather
       //            easily create leaks while swapping.
       // IMPORTANT2: When the current browser element is removed from DOM,
-      //             which is quite common after a swpDocShells call, its
+      //             which is quite common after a swapDocShells call, its
       //             frame loader is destroyed, and that destroys the relevant
       //             message manager, which will remove the listeners.
       let event = new CustomEvent("SwapDocShells", { detail: aOtherBrowser });
@@ -1895,10 +1878,12 @@
       // history, and performing the `resumeRedirectedLoad`, in order to get
       // sesssion state set up correctly.
       // FIXME: This probably needs to be hookable by GeckoView.
-      let tabbrowser = this.getTabBrowser();
-      if (tabbrowser) {
-        tabbrowser.finishBrowserRemotenessChange(this, redirectLoadSwitchId);
-        return true;
+      if (!lazyPrefs.sessionHistoryInParent) {
+        let tabbrowser = this.getTabBrowser();
+        if (tabbrowser) {
+          tabbrowser.finishBrowserRemotenessChange(this, redirectLoadSwitchId);
+          return true;
+        }
       }
       return false;
     }

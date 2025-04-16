@@ -545,7 +545,6 @@ void LIRGeneratorX86Shared::lowerAtomicExchangeTypedArrayElement(
 
   LDefinition tempDef = LDefinition::BogusTemp();
   if (ins->arrayType() == Scalar::Uint32) {
-    // This restriction is bug 1077305.
     MOZ_ASSERT(ins->type() == MIRType::Double);
     tempDef = temp();
   }
@@ -746,12 +745,14 @@ void LIRGenerator::visitWasmBinarySimd128(MWasmBinarySimd128* ins) {
       rhs = tmp;
       break;
     }
-    case wasm::SimdOp::F32x4Max:
-    case wasm::SimdOp::F64x2Max:
     case wasm::SimdOp::I64x2Mul:
     case wasm::SimdOp::V8x16Swizzle:
       tempReg0 = tempSimd128();
       break;
+    case wasm::SimdOp::F32x4Min:
+    case wasm::SimdOp::F32x4Max:
+    case wasm::SimdOp::F64x2Min:
+    case wasm::SimdOp::F64x2Max:
     case wasm::SimdOp::I8x16LtU:
     case wasm::SimdOp::I8x16GtU:
     case wasm::SimdOp::I8x16LeU:
@@ -1680,7 +1681,53 @@ void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
   define(lir, ins);
 }
 
+bool LIRGeneratorX86Shared::canFoldReduceSimd128AndBranch(wasm::SimdOp op) {
+  switch (op) {
+    case wasm::SimdOp::I8x16AnyTrue:
+    case wasm::SimdOp::I16x8AnyTrue:
+    case wasm::SimdOp::I32x4AnyTrue:
+    case wasm::SimdOp::I8x16AllTrue:
+    case wasm::SimdOp::I16x8AllTrue:
+    case wasm::SimdOp::I32x4AllTrue:
+    case wasm::SimdOp::I16x8Bitmask:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool LIRGeneratorX86Shared::canEmitWasmReduceSimd128AtUses(
+    MWasmReduceSimd128* ins) {
+  if (!ins->canEmitAtUses()) {
+    return false;
+  }
+  // Only specific ops generating int32.
+  if (ins->type() != MIRType::Int32) {
+    return false;
+  }
+  if (!canFoldReduceSimd128AndBranch(ins->simdOp())) {
+    return false;
+  }
+  // If never used then defer (it will be removed).
+  MUseIterator iter(ins->usesBegin());
+  if (iter == ins->usesEnd()) {
+    return true;
+  }
+  // We require an MTest consumer.
+  MNode* node = iter->consumer();
+  if (!node->isDefinition() || !node->toDefinition()->isTest()) {
+    return false;
+  }
+  // Defer only if there's only one use.
+  iter++;
+  return iter == ins->usesEnd();
+}
+
 void LIRGenerator::visitWasmReduceSimd128(MWasmReduceSimd128* ins) {
+  if (canEmitWasmReduceSimd128AtUses(ins)) {
+    emitAtUses(ins);
+    return;
+  }
   if (ins->type() == MIRType::Int64) {
     auto* lir =
         new (alloc()) LWasmReduceSimd128ToInt64(useRegister(ins->input()));

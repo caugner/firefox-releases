@@ -518,12 +518,12 @@ nsresult XMLHttpRequestMainThread::AppendToResponseText(
       return NS_ERROR_OUT_OF_MEMORY;
     }
 
-    nsresult rv;
-    BulkWriteHandle<char16_t> handle =
-        helper.BulkWrite(destBufferLen.value(), rv);
-    if (NS_FAILED(rv)) {
-      return rv;
+    auto handleOrErr = helper.BulkWrite(destBufferLen.value());
+    if (handleOrErr.isErr()) {
+      return handleOrErr.unwrapErr();
     }
+
+    auto handle = handleOrErr.unwrap();
 
     uint32_t result;
     size_t read;
@@ -1333,8 +1333,7 @@ void XMLHttpRequestMainThread::ResumeEventDispatching() {
   MOZ_ASSERT(mEventDispatchingSuspended);
   mEventDispatchingSuspended = false;
 
-  nsTArray<PendingEvent> pendingEvents;
-  pendingEvents.SwapElements(mPendingEvents);
+  nsTArray<PendingEvent> pendingEvents = std::move(mPendingEvents);
 
   if (NS_FAILED(CheckCurrentGlobalCorrectness())) {
     return;
@@ -1591,7 +1590,7 @@ nsresult XMLHttpRequestMainThread::StreamReaderFunc(
     MOZ_ASSERT(!xmlHttpRequest->mResponseXML,
                "We shouldn't be parsing a doc here");
     rv = xmlHttpRequest->AppendToResponseText(
-        AsBytes(MakeSpan(fromRawSegment, count)));
+        AsBytes(Span(fromRawSegment, count)));
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
@@ -1605,7 +1604,7 @@ nsresult XMLHttpRequestMainThread::StreamReaderFunc(
     // stream is not supported.
     nsCOMPtr<nsIInputStream> copyStream;
     rv = NS_NewByteInputStream(getter_AddRefs(copyStream),
-                               MakeSpan(fromRawSegment, count),
+                               Span(fromRawSegment, count),
                                NS_ASSIGNMENT_DEPEND);
 
     if (NS_SUCCEEDED(rv) && xmlHttpRequest->mXMLParserStreamListener) {

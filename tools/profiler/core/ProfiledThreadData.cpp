@@ -7,10 +7,10 @@
 #include "ProfiledThreadData.h"
 
 #include "ProfileBuffer.h"
-#include "ProfileJSONWriter.h"
 
 #include "js/TraceLoggerAPI.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/ProfileJSONWriter.h"
 
 #if defined(GP_OS_darwin)
 #  include <pthread.h>
@@ -261,7 +261,9 @@ void StreamSamplesAndMarkers(const char* aName, int aThreadId,
     {
       JSONSchemaWriter schema(aWriter);
       schema.WriteField("name");
-      schema.WriteField("time");
+      schema.WriteField("startTime");
+      schema.WriteField("endTime");
+      schema.WriteField("phase");
       schema.WriteField("category");
       schema.WriteField("data");
     }

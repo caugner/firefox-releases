@@ -14,7 +14,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "jstypes.h"  // js::Bit
+
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
+#include "frontend/NameAnalysisTypes.h"   // PrivateNameKind
 #include "frontend/Stencil.h"
 #include "frontend/Token.h"
 #include "js/RootingAPI.h"
@@ -304,6 +307,7 @@ inline bool IsTypeofKind(ParseNodeKind kind) {
  * ClassMethod (ClassMethod)
  *   name: propertyName
  *   method: methodDefinition
+ *   initializerIfPrivate: initializer to stamp private method onto instance
  * Module (ModuleNode)
  *   body: statement list of the module
  *
@@ -485,6 +489,7 @@ inline bool IsTypeofKind(ParseNodeKind kind) {
  *          * CallExpr: Call expr without jump
  * PropertyNameExpr (NameNode)
  *   atom: property name being accessed
+ *   privateNameKind: kind of the name if private
  * DotExpr (PropertyAccess)
  *   left: MEMBER expr to left of '.'
  *   right: PropertyName to right of '.'
@@ -846,6 +851,7 @@ class NullaryNode : public ParseNode {
 
 class NameNode : public ParseNode {
   JSAtom* atom_; /* lexical name or label atom */
+  PrivateNameKind privateNameKind_ = PrivateNameKind::None;
 
  public:
   NameNode(ParseNodeKind kind, JSAtom* atom, const TokenPos& pos)
@@ -877,6 +883,12 @@ class NameNode : public ParseNode {
   }
 
   void setAtom(JSAtom* atom) { atom_ = atom; }
+
+  void setPrivateNameKind(PrivateNameKind privateNameKind) {
+    privateNameKind_ = privateNameKind;
+  }
+
+  PrivateNameKind privateNameKind() { return privateNameKind_; }
 };
 
 inline bool ParseNode::isName(PropertyName* name) const {
@@ -1108,12 +1120,7 @@ class ListNode : public ParseNode {
   // xflags bits.
 
   // Statement list has top-level function statements.
-  static constexpr uint32_t hasTopLevelFunctionDeclarationsBit = 0x01;
-
-  // One or more of
-  //   * array has holes
-  //   * array has spread node
-  static constexpr uint32_t hasArrayHoleOrSpreadBit = 0x02;
+  static constexpr uint32_t hasTopLevelFunctionDeclarationsBit = Bit(0);
 
   // Array/Object/Class initializer has non-constants.
   //   * array has holes
@@ -1126,10 +1133,10 @@ class ListNode : public ParseNode {
   //   * object/class spread property
   //   * object/class has method
   //   * object/class has computed property
-  static constexpr uint32_t hasNonConstInitializerBit = 0x04;
+  static constexpr uint32_t hasNonConstInitializerBit = Bit(1);
 
   // Flag set by the emitter after emitting top-level function statements.
-  static constexpr uint32_t emittedTopLevelFunctionDeclarationsBit = 0x08;
+  static constexpr uint32_t emittedTopLevelFunctionDeclarationsBit = Bit(2);
 
  public:
   ListNode(ParseNodeKind kind, const TokenPos& pos) : ParseNode(kind, pos) {
@@ -1205,11 +1212,6 @@ class ListNode : public ParseNode {
     return xflags & emittedTopLevelFunctionDeclarationsBit;
   }
 
-  MOZ_MUST_USE bool hasArrayHoleOrSpread() const {
-    MOZ_ASSERT(isKind(ParseNodeKind::ArrayExpr));
-    return xflags & hasArrayHoleOrSpreadBit;
-  }
-
   MOZ_MUST_USE bool hasNonConstInitializer() const {
     MOZ_ASSERT(isKind(ParseNodeKind::ArrayExpr) ||
                isKind(ParseNodeKind::ObjectExpr));
@@ -1225,11 +1227,6 @@ class ListNode : public ParseNode {
     MOZ_ASSERT(isKind(ParseNodeKind::StatementList));
     MOZ_ASSERT(hasTopLevelFunctionDeclarations());
     xflags |= emittedTopLevelFunctionDeclarationsBit;
-  }
-
-  void setHasArrayHoleOrSpread() {
-    MOZ_ASSERT(isKind(ParseNodeKind::ArrayExpr));
-    xflags |= hasArrayHoleOrSpreadBit;
   }
 
   void setHasNonConstInitializer() {
@@ -2067,6 +2064,7 @@ class CallNode : public BinaryNode {
 class ClassMethod : public BinaryNode {
   bool isStatic_;
   AccessorType accessorType_;
+  FunctionNode* initializerIfPrivate_;
 
  public:
   /*
@@ -2074,11 +2072,12 @@ class ClassMethod : public BinaryNode {
    * so explicitly define the beginning and end here.
    */
   ClassMethod(ParseNode* name, ParseNode* body, AccessorType accessorType,
-              bool isStatic)
+              bool isStatic, FunctionNode* initializerIfPrivate)
       : BinaryNode(ParseNodeKind::ClassMethod,
                    TokenPos(name->pn_pos.begin, body->pn_pos.end), name, body),
         isStatic_(isStatic),
-        accessorType_(accessorType) {}
+        accessorType_(accessorType),
+        initializerIfPrivate_(initializerIfPrivate) {}
 
   static bool test(const ParseNode& node) {
     bool match = node.isKind(ParseNodeKind::ClassMethod);
@@ -2093,6 +2092,8 @@ class ClassMethod : public BinaryNode {
   bool isStatic() const { return isStatic_; }
 
   AccessorType accessorType() const { return accessorType_; }
+
+  FunctionNode* initializerIfPrivate() const { return initializerIfPrivate_; }
 };
 
 class ClassField : public BinaryNode {

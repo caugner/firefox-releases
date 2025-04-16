@@ -20,6 +20,7 @@
 #include "jit/JitFrames.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "util/Memory.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 
@@ -6027,6 +6028,7 @@ void MacroAssemblerARM::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
       }
     }
   } else {
+    MOZ_ASSERT(!access.isZeroExtendSimd128Load());
     bool isFloat = output.isFloat();
     if (isFloat) {
       MOZ_ASSERT((byteSize == 4) == output.fpu().isSingle());

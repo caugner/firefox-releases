@@ -16,6 +16,7 @@
 #include "nsDocShell.h"
 #include "nsIContentInlines.h"
 #include "nsIContentViewer.h"
+#include "nsIPrintSettingsService.h"
 #include "mozilla/dom/Document.h"
 #include "nsPIDOMWindow.h"
 #include "nsIWebNavigation.h"
@@ -69,7 +70,6 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ExpandedPrincipal.h"
 #include "mozilla/FlushType.h"
-#include "mozilla/GuardObjects.h"
 #include "mozilla/HTMLEditor.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/Preferences.h"
@@ -81,6 +81,7 @@
 #include "mozilla/dom/FrameCrashedEvent.h"
 #include "mozilla/dom/FrameLoaderBinding.h"
 #include "mozilla/dom/MozFrameLoaderOwnerBinding.h"
+#include "mozilla/dom/PBrowser.h"
 #include "mozilla/dom/SessionStoreListener.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/XULFrameElement.h"
@@ -105,6 +106,7 @@
 #include "mozilla/dom/BrowserBridgeChild.h"
 #include "mozilla/dom/BrowserHost.h"
 #include "mozilla/dom/BrowserBridgeHost.h"
+#include "mozilla/dom/BrowsingContextGroup.h"
 
 #include "mozilla/dom/HTMLBodyElement.h"
 
@@ -131,6 +133,8 @@ using namespace mozilla::dom::ipc;
 using namespace mozilla::layers;
 using namespace mozilla::layout;
 typedef ScrollableLayerGuid::ViewID ViewID;
+
+using PrintPreviewResolver = std::function<void(const PrintPreviewResultInfo&)>;
 
 // Bug 136580: Limit to the number of nested content frames that can have the
 //             same URL. This is to stop content that is recursively loading
@@ -268,7 +272,8 @@ static bool IsTopContent(BrowsingContext* aParent, Element* aOwner) {
 static already_AddRefed<BrowsingContext> CreateBrowsingContext(
     Element* aOwner, nsIOpenWindowInfo* aOpenWindowInfo,
     BrowsingContextGroup* aSpecificGroup) {
-  MOZ_ASSERT(!aOpenWindowInfo || !aSpecificGroup);
+  MOZ_ASSERT(!aOpenWindowInfo || !aSpecificGroup,
+             "Only one of SpecificGroup and OpenWindowInfo may be provided!");
 
   // If we've got a pending BrowserParent from the content process, use the
   // BrowsingContext which was created for it.
@@ -350,47 +355,25 @@ static bool InitialLoadIsRemote(Element* aOwner) {
                              nsGkAtoms::_true, eCaseMatters);
 }
 
-static void GetInitialRemoteTypeAndProcess(Element* aOwner,
-                                           nsACString& aRemoteType,
-                                           uint64_t* aChildID) {
-  MOZ_ASSERT(XRE_IsParentProcess());
-  *aChildID = 0;
-
-  // Check if there is an explicit `remoteType` attribute which we should use.
-  nsAutoString remoteType;
-  bool hasRemoteType =
-      aOwner->GetAttr(kNameSpaceID_None, nsGkAtoms::RemoteType, remoteType);
-  if (!hasRemoteType || remoteType.IsEmpty()) {
-    hasRemoteType = false;
-    aRemoteType = DEFAULT_REMOTE_TYPE;
-  } else {
-    aRemoteType = NS_ConvertUTF16toUTF8(remoteType);
+static already_AddRefed<BrowsingContextGroup> InitialBrowsingContextGroup(
+    Element* aOwner) {
+  nsAutoString attrString;
+  if (aOwner->GetNameSpaceID() != kNameSpaceID_XUL ||
+      !aOwner->GetAttr(nsGkAtoms::initialBrowsingContextGroupId, attrString)) {
+    return nullptr;
   }
 
-  // Check if `sameProcessAsFrameLoader` was used to override the process.
-  nsCOMPtr<nsIBrowser> browser = aOwner->AsBrowser();
-  if (!browser) {
-    return;
+  // It's OK to read the attribute using a signed 64-bit integer parse, as an ID
+  // generated using `nsContentUtils::GenerateProcessSpecificId` (like BCG IDs)
+  // will only ever use 53 bits of precision, so it can be round-tripped through
+  // a JS number.
+  nsresult rv = NS_OK;
+  int64_t signedGroupId{attrString.ToInteger(&rv, 10)};
+  if (NS_FAILED(rv) || signedGroupId <= 0) {
+    return nullptr;
   }
-  RefPtr<nsFrameLoader> otherLoader;
-  browser->GetSameProcessAsFrameLoader(getter_AddRefs(otherLoader));
-  if (!otherLoader) {
-    return;
-  }
-  BrowserParent* browserParent = BrowserParent::GetFrom(otherLoader);
-  if (!browserParent) {
-    return;
-  }
-  RefPtr<ContentParent> contentParent = browserParent->Manager();
 
-  // NOTE: This assertion is known to fail in the wild. It is being kept around
-  // only to ensure that we don't land and test new code which breaks this
-  // desired invariant. (bug 1646328)
-  MOZ_ASSERT(!hasRemoteType || contentParent->GetRemoteType() == aRemoteType,
-             "If specified, remoteType attribute should match "
-             "sameProcessAsFrameLoader");
-  aRemoteType = contentParent->GetRemoteType();
-  *aChildID = contentParent->ChildID();
+  return BrowsingContextGroup::GetOrCreate(uint64_t(signedGroupId));
 }
 
 already_AddRefed<nsFrameLoader> nsFrameLoader::Create(
@@ -423,16 +406,29 @@ already_AddRefed<nsFrameLoader> nsFrameLoader::Create(
                       doc->IsStaticDocument()),
                  nullptr);
 
-  RefPtr<BrowsingContext> context = CreateBrowsingContext(
-      aOwner, aOpenWindowInfo, /* specificGroup */ nullptr);
+  RefPtr<BrowsingContextGroup> group = InitialBrowsingContextGroup(aOwner);
+  RefPtr<BrowsingContext> context =
+      CreateBrowsingContext(aOwner, aOpenWindowInfo, group);
   NS_ENSURE_TRUE(context, nullptr);
 
   bool isRemoteFrame = InitialLoadIsRemote(aOwner);
   RefPtr<nsFrameLoader> fl =
       new nsFrameLoader(aOwner, context, isRemoteFrame, aNetworkCreated);
   fl->mOpenWindowInfo = aOpenWindowInfo;
+
+  // If this is a toplevel initial remote frame, we're looking at a browser
+  // loaded in the parent process. Pull the remote type attribute off of the
+  // <browser> element to determine which remote type it should be loaded in, or
+  // use `DEFAULT_REMOTE_TYPE` if we can't tell.
   if (isRemoteFrame) {
-    GetInitialRemoteTypeAndProcess(aOwner, fl->mRemoteType, &fl->mChildID);
+    MOZ_ASSERT(XRE_IsParentProcess());
+    nsAutoString remoteType;
+    if (aOwner->GetAttr(kNameSpaceID_None, nsGkAtoms::RemoteType, remoteType) &&
+        !remoteType.IsEmpty()) {
+      CopyUTF16toUTF8(remoteType, fl->mRemoteType);
+    } else {
+      fl->mRemoteType = DEFAULT_REMOTE_TYPE;
+    }
   }
   return fl.forget();
 }
@@ -1374,19 +1370,17 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
 
 class MOZ_RAII AutoResetInFrameSwap final {
  public:
-  AutoResetInFrameSwap(
-      nsFrameLoader* aThisFrameLoader, nsFrameLoader* aOtherFrameLoader,
-      nsDocShell* aThisDocShell, nsDocShell* aOtherDocShell,
-      EventTarget* aThisEventTarget,
-      EventTarget* aOtherEventTarget MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+  AutoResetInFrameSwap(nsFrameLoader* aThisFrameLoader,
+                       nsFrameLoader* aOtherFrameLoader,
+                       nsDocShell* aThisDocShell, nsDocShell* aOtherDocShell,
+                       EventTarget* aThisEventTarget,
+                       EventTarget* aOtherEventTarget)
       : mThisFrameLoader(aThisFrameLoader),
         mOtherFrameLoader(aOtherFrameLoader),
         mThisDocShell(aThisDocShell),
         mOtherDocShell(aOtherDocShell),
         mThisEventTarget(aThisEventTarget),
         mOtherEventTarget(aOtherEventTarget) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-
     mThisFrameLoader->mInSwap = true;
     mOtherFrameLoader->mInSwap = true;
     mThisDocShell->SetInFrameSwap(true);
@@ -1433,7 +1427,6 @@ class MOZ_RAII AutoResetInFrameSwap final {
   RefPtr<nsDocShell> mOtherDocShell;
   nsCOMPtr<EventTarget> mThisEventTarget;
   nsCOMPtr<EventTarget> mOtherEventTarget;
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
@@ -1482,16 +1475,13 @@ nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  bool ourFullscreenAllowed =
-      ourContent->IsXULElement() ||
-      (OwnerIsMozBrowserFrame() &&
-       (ourContent->HasAttr(nsGkAtoms::allowfullscreen) ||
-        ourContent->HasAttr(nsGkAtoms::mozallowfullscreen)));
+  bool ourFullscreenAllowed = ourContent->IsXULElement() ||
+                              (OwnerIsMozBrowserFrame() &&
+                               ourContent->HasAttr(nsGkAtoms::allowfullscreen));
   bool otherFullscreenAllowed =
       otherContent->IsXULElement() ||
       (aOther->OwnerIsMozBrowserFrame() &&
-       (otherContent->HasAttr(nsGkAtoms::allowfullscreen) ||
-        otherContent->HasAttr(nsGkAtoms::mozallowfullscreen)));
+       otherContent->HasAttr(nsGkAtoms::allowfullscreen));
   if (ourFullscreenAllowed != otherFullscreenAllowed) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -2106,9 +2096,18 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
     return NS_ERROR_UNEXPECTED;
   }
 
+  if (doc->GetWindowContext()->IsDiscarded() ||
+      parentDocShell->GetBrowsingContext()->IsDiscarded()) {
+    // Don't allow subframe loads in discarded contexts.
+    // (see bug 1652085, bug 1656854)
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   if (!EnsureBrowsingContextAttached()) {
     return NS_ERROR_FAILURE;
   }
+
+  mPendingBrowsingContext->SetEmbedderElement(mOwnerContent);
 
   // nsDocShell::Create will attach itself to the passed browsing
   // context inside of nsDocShell::Create
@@ -2116,7 +2115,6 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
   NS_ENSURE_TRUE(docShell, NS_ERROR_FAILURE);
   mDocShell = docShell;
 
-  mPendingBrowsingContext->SetEmbedderElement(mOwnerContent);
   mPendingBrowsingContext->Embed();
 
   InvokeBrowsingContextReadyCallback();
@@ -2186,6 +2184,8 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
     NS_WARNING("Something wrong when creating the docshell for a frameloader!");
     return NS_ERROR_FAILURE;
   }
+
+  NS_ENSURE_STATE(mOwnerContent);
 
   // If we are an in-process browser, we want to set up our session history.
   if (mIsTopLevelContent && mOwnerContent->IsXULElement(nsGkAtoms::browser) &&
@@ -2323,6 +2323,10 @@ nsresult nsFrameLoader::CheckForRecursiveLoad(nsIURI* aURI) {
 }
 
 nsresult nsFrameLoader::GetWindowDimensions(nsIntRect& aRect) {
+  if (!mOwnerContent) {
+    return NS_ERROR_FAILURE;
+  }
+
   // Need to get outer window position here
   Document* doc = mOwnerContent->GetComposedDoc();
   if (!doc) {
@@ -2624,7 +2628,7 @@ bool nsFrameLoader::TryRemoteBrowserInternal() {
     nsAutoString frameName;
     mOwnerContent->GetAttr(kNameSpaceID_None, nsGkAtoms::name, frameName);
     if (nsContentUtils::IsOverridingWindowName(frameName)) {
-      mPendingBrowsingContext->SetName(frameName);
+      MOZ_ALWAYS_SUCCEEDS(mPendingBrowsingContext->SetName(frameName));
     }
     // Allow scripts to close the window if the browser specified so:
     if (mOwnerContent->AttrValueIs(kNameSpaceID_None,
@@ -2991,7 +2995,7 @@ void nsFrameLoader::ApplySandboxFlags(uint32_t sandboxFlags) {
     }
   }
 
-  context->SetSandboxFlags(sandboxFlags);
+  MOZ_ALWAYS_SUCCEEDS(context->SetSandboxFlags(sandboxFlags));
 }
 
 /* virtual */
@@ -3179,6 +3183,132 @@ class WebProgressListenerToPromise final : public nsIWebProgressListener {
 NS_IMPL_ISUPPORTS(WebProgressListenerToPromise, nsIWebProgressListener)
 #endif
 
+already_AddRefed<Promise> nsFrameLoader::PrintPreview(
+    nsIPrintSettings* aPrintSettings,
+    const Optional<uint64_t>& aSourceOuterWindowID, ErrorResult& aRv) {
+  auto* ownerDoc = GetOwnerDoc();
+  if (!ownerDoc) {
+    aRv.ThrowNotSupportedError("No owner document");
+    return nullptr;
+  }
+  RefPtr<Promise> promise = Promise::Create(ownerDoc->GetOwnerGlobal(), aRv);
+  if (!promise) {
+    return nullptr;
+  }
+
+#ifndef NS_PRINTING
+  promise->MaybeRejectWithNotSupportedError("Build does not support printing");
+  return promise.forget();
+#else
+  auto resolve = [promise](PrintPreviewResultInfo aInfo) {
+    if (aInfo.sheetCount() > 0) {
+      PrintPreviewSuccessInfo info;
+      info.mSheetCount = aInfo.sheetCount();
+      info.mTotalPageCount = aInfo.totalPageCount();
+      info.mHasSelection = aInfo.hasSelection();
+      promise->MaybeResolve(info);
+    } else {
+      promise->MaybeRejectWithUnknownError("Print preview failed");
+    }
+  };
+
+  if (auto* browserParent = GetBrowserParent()) {
+    nsCOMPtr<nsIPrintSettingsService> printSettingsSvc =
+        do_GetService("@mozilla.org/gfx/printsettings-service;1");
+    if (!printSettingsSvc) {
+      promise->MaybeRejectWithNotSupportedError("No nsIPrintSettingsService");
+      return promise.forget();
+    }
+
+    embedding::PrintData printData;
+    nsresult rv =
+        printSettingsSvc->SerializeToPrintData(aPrintSettings, &printData);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      promise->MaybeReject(ErrorResult(rv));
+      return promise.forget();
+    }
+
+    auto winID(aSourceOuterWindowID.WasPassed()
+                   ? Some(aSourceOuterWindowID.Value())
+                   : Nothing());
+
+    browserParent->SendPrintPreview(printData, winID)
+        ->Then(
+            GetMainThreadSerialEventTarget(), __func__, std::move(resolve),
+            [promise](const mozilla::ipc::ResponseRejectReason) {
+              promise->MaybeRejectWithUnknownError("Print preview IPC failed");
+            });
+
+    return promise.forget();
+  }
+
+  RefPtr<nsGlobalWindowOuter> sourceWindow;
+  if (aSourceOuterWindowID.WasPassed()) {
+    sourceWindow =
+        nsGlobalWindowOuter::GetOuterWindowWithId(aSourceOuterWindowID.Value());
+  } else {
+    auto* ourDocshell = static_cast<nsDocShell*>(GetExistingDocShell());
+    if (NS_WARN_IF(!ourDocshell)) {
+      promise->MaybeRejectWithNotSupportedError("No print preview docShell");
+      return promise.forget();
+    }
+    sourceWindow = nsGlobalWindowOuter::Cast(ourDocshell->GetWindow());
+  }
+  if (NS_WARN_IF(!sourceWindow)) {
+    promise->MaybeRejectWithNotSupportedError("No print preview source window");
+    return promise.forget();
+  }
+
+  nsIDocShell* docShellToCloneInto = nullptr;
+  if (aSourceOuterWindowID.WasPassed()) {
+    // We're going to call `Print()` below on a window that is not our own,
+    // which happens when we are creating a new print preview document instead
+    // of just applying a settings change to the existing PP document.  In this
+    // case we need to explicity pass our docShell as the docShell to clone
+    // into.
+    docShellToCloneInto = GetExistingDocShell();
+    if (NS_WARN_IF(!docShellToCloneInto)) {
+      promise->MaybeRejectWithNotSupportedError("No print preview docShell");
+      return promise.forget();
+    }
+  }
+
+  // Unfortunately we can't pass `resolve` directly here because IPDL, for now,
+  // unfortunately generates slightly different parameter types for functions
+  // taking PrintPreviewResultInfo in PBrowserParent vs. PBrowserChild.
+  ErrorResult rv;
+  sourceWindow->Print(
+      aPrintSettings,
+      /* aListener = */ nullptr, docShellToCloneInto,
+      nsGlobalWindowOuter::IsPreview::Yes,
+      nsGlobalWindowOuter::BlockUntilDone::No,
+      [resolve](const PrintPreviewResultInfo& aInfo) { resolve(aInfo); }, rv);
+  if (NS_WARN_IF(rv.Failed())) {
+    promise->MaybeReject(std::move(rv));
+  }
+
+  return promise.forget();
+#endif
+}
+
+void nsFrameLoader::ExitPrintPreview() {
+#ifdef NS_PRINTING
+  if (auto* browserParent = GetBrowserParent()) {
+    Unused << browserParent->SendExitPrintPreview();
+    return;
+  }
+  if (NS_WARN_IF(!GetExistingDocShell())) {
+    return;
+  }
+  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint =
+      do_GetInterface(ToSupports(GetExistingDocShell()->GetWindow()));
+  if (NS_WARN_IF(!webBrowserPrint)) {
+    return;
+  }
+  webBrowserPrint->ExitPrintPreview();
+#endif
+}
+
 already_AddRefed<Promise> nsFrameLoader::Print(uint64_t aOuterWindowID,
                                                nsIPrintSettings* aPrintSettings,
                                                ErrorResult& aRv) {
@@ -3212,23 +3342,21 @@ already_AddRefed<Promise> nsFrameLoader::Print(uint64_t aOuterWindowID,
     return promise.forget();
   }
 
-  nsGlobalWindowOuter* outerWindow =
+  RefPtr<nsGlobalWindowOuter> outerWindow =
       nsGlobalWindowOuter::GetOuterWindowWithId(aOuterWindowID);
   if (NS_WARN_IF(!outerWindow)) {
     promise->MaybeReject(ErrorResult(NS_ERROR_FAILURE));
     return promise.forget();
   }
 
-  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint =
-      do_GetInterface(ToSupports(outerWindow));
-  if (NS_WARN_IF(!webBrowserPrint)) {
-    promise->MaybeReject(ErrorResult(NS_ERROR_FAILURE));
-    return promise.forget();
-  }
-
-  nsresult rv = webBrowserPrint->Print(aPrintSettings, listener);
-  if (NS_FAILED(rv)) {
-    promise->MaybeReject(ErrorResult(rv));
+  ErrorResult rv;
+  outerWindow->Print(aPrintSettings, listener,
+                     /* aDocShellToCloneInto = */ nullptr,
+                     nsGlobalWindowOuter::IsPreview::No,
+                     nsGlobalWindowOuter::BlockUntilDone::No,
+                     /* aPrintPreviewCallback = */ nullptr, rv);
+  if (rv.Failed()) {
+    promise->MaybeReject(std::move(rv));
   }
 
   return promise.forget();

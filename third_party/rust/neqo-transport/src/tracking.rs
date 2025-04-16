@@ -10,6 +10,7 @@
 
 use std::collections::VecDeque;
 use std::convert::TryInto;
+use std::ops::{Index, IndexMut};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -63,31 +64,85 @@ impl From<PacketType> for PNSpace {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct PNSpaceSet {
+    initial: bool,
+    handshake: bool,
+    application_data: bool,
+}
+
+impl Index<PNSpace> for PNSpaceSet {
+    type Output = bool;
+
+    fn index(&self, space: PNSpace) -> &Self::Output {
+        match space {
+            PNSpace::Initial => &self.initial,
+            PNSpace::Handshake => &self.handshake,
+            PNSpace::ApplicationData => &self.application_data,
+        }
+    }
+}
+
+impl IndexMut<PNSpace> for PNSpaceSet {
+    fn index_mut(&mut self, space: PNSpace) -> &mut Self::Output {
+        match space {
+            PNSpace::Initial => &mut self.initial,
+            PNSpace::Handshake => &mut self.handshake,
+            PNSpace::ApplicationData => &mut self.application_data,
+        }
+    }
+}
+
+impl<T: AsRef<[PNSpace]>> From<T> for PNSpaceSet {
+    fn from(spaces: T) -> Self {
+        let mut v = Self::default();
+        for sp in spaces.as_ref() {
+            v[*sp] = true;
+        }
+        v
+    }
+}
+
+impl std::fmt::Debug for PNSpaceSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let mut first = true;
+        f.write_str("(")?;
+        for sp in PNSpace::iter() {
+            if self[*sp] {
+                if !first {
+                    f.write_str("+")?;
+                    first = false;
+                }
+                std::fmt::Display::fmt(sp, f)?;
+            }
+        }
+        f.write_str(")")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SentPacket {
     pub pt: PacketType,
-    pub pn: u64,
+    pub pn: PacketNumber,
     ack_eliciting: bool,
     pub time_sent: Instant,
     pub tokens: Rc<Vec<RecoveryToken>>,
 
     time_declared_lost: Option<Instant>,
-    /// After a PTO, the packet has been released.
+    /// After a PTO, this is true when the packet has been released.
     pto: bool,
 
-    in_flight: bool,
     pub size: usize,
 }
 
 impl SentPacket {
     pub fn new(
         pt: PacketType,
-        pn: u64,
+        pn: PacketNumber,
         time_sent: Instant,
         ack_eliciting: bool,
         tokens: Rc<Vec<RecoveryToken>>,
         size: usize,
-        in_flight: bool,
     ) -> Self {
         Self {
             pt,
@@ -98,19 +153,12 @@ impl SentPacket {
             time_declared_lost: None,
             pto: false,
             size,
-            in_flight,
         }
     }
 
     /// Returns `true` if the packet will elicit an ACK.
     pub fn ack_eliciting(&self) -> bool {
         self.ack_eliciting
-    }
-
-    /// Returns `true` if the packet counts requires congestion control accounting.
-    /// The specification uses the term "in flight" for this.
-    pub fn cc_in_flight(&self) -> bool {
-        self.in_flight
     }
 
     /// Whether the packet has been declared lost.
@@ -122,8 +170,10 @@ impl SentPacket {
     /// congestion controller is pending.
     /// Returns `true` if the packet counts as being "in flight",
     /// and has not previously been declared lost.
+    /// Note that this should count packets that contain only ACK and PADDING,
+    /// but we don't send PADDING, so we don't track that.
     pub fn cc_outstanding(&self) -> bool {
-        self.cc_in_flight() && !self.lost()
+        self.ack_eliciting() && !self.lost()
     }
 
     /// Declare the packet as lost.  Returns `true` if this is the first time.
@@ -144,6 +194,11 @@ impl SentPacket {
         } else {
             false
         }
+    }
+
+    /// Whether the packet contents were cleared out after a PTO.
+    pub fn pto_fired(&self) -> bool {
+        self.pto
     }
 
     /// On PTO, we need to get the recovery tokens so that we can ensure that
@@ -168,6 +223,13 @@ impl std::fmt::Display for PNSpace {
     }
 }
 
+/// `InsertionResult` tracks whether something was inserted for `PacketRange::add()`.
+pub enum InsertionResult {
+    Largest,
+    Smallest,
+    NotInserted,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PacketRange {
     largest: PacketNumber,
@@ -177,7 +239,7 @@ pub struct PacketRange {
 
 impl PacketRange {
     /// Make a single packet range.
-    pub fn new(pn: u64) -> Self {
+    pub fn new(pn: PacketNumber) -> Self {
         Self {
             largest: pn,
             smallest: pn,
@@ -196,36 +258,38 @@ impl PacketRange {
     }
 
     /// Return whether the given number is in the range.
-    pub fn contains(&self, pn: u64) -> bool {
+    pub fn contains(&self, pn: PacketNumber) -> bool {
         (pn >= self.smallest) && (pn <= self.largest)
     }
 
-    /// Maybe add a packet number to the range.  Returns true if it was added.
-    pub fn add(&mut self, pn: u64) -> bool {
+    /// Maybe add a packet number to the range.  Returns true if it was added
+    /// at the small end (which indicates that this might need merging with a
+    /// preceding range).
+    pub fn add(&mut self, pn: PacketNumber) -> InsertionResult {
         assert!(!self.contains(pn));
         // Only insert if this is adjacent the current range.
         if (self.largest + 1) == pn {
             qtrace!([self], "Adding largest {}", pn);
             self.largest += 1;
             self.ack_needed = true;
-            true
+            InsertionResult::Largest
         } else if self.smallest == (pn + 1) {
             qtrace!([self], "Adding smallest {}", pn);
             self.smallest -= 1;
             self.ack_needed = true;
-            true
+            InsertionResult::Smallest
         } else {
-            false
+            InsertionResult::NotInserted
         }
     }
 
-    /// Maybe merge a lower-numbered range into this.
-    pub fn merge_smaller(&mut self, other: &Self) {
+    /// Maybe merge a higher-numbered range into this.
+    fn merge_larger(&mut self, other: &Self) {
         qinfo!([self], "Merging {}", other);
         // This only works if they are immediately adjacent.
-        assert_eq!(self.smallest - 1, other.largest);
+        assert_eq!(self.largest + 1, other.smallest);
 
-        self.smallest = other.smallest;
+        self.largest = other.largest;
         self.ack_needed = self.ack_needed || other.ack_needed;
     }
 
@@ -234,7 +298,6 @@ impl PacketRange {
     /// Requires that other is equal to this, or a larger range.
     pub fn acknowledged(&mut self, other: &Self) {
         if (other.smallest <= self.smallest) && (other.largest >= self.largest) {
-            qinfo!([self], "Acknowledged");
             self.ack_needed = false;
         }
     }
@@ -248,7 +311,7 @@ impl ::std::fmt::Display for PacketRange {
 
 /// The ACK delay we use.
 pub const ACK_DELAY: Duration = Duration::from_millis(20); // 20ms
-pub const MAX_UNACKED_PKTS: u64 = 1;
+pub const MAX_UNACKED_PKTS: usize = 1;
 const MAX_TRACKED_RANGES: usize = 32;
 const MAX_ACKS_PER_FRAME: usize = 32;
 
@@ -271,7 +334,7 @@ pub struct RecvdPackets {
     largest_pn_time: Option<Instant>,
     // The time that we should be sending an ACK.
     ack_time: Option<Instant>,
-    pkts_since_last_ack: u64,
+    pkts_since_last_ack: usize,
 }
 
 impl RecvdPackets {
@@ -296,44 +359,38 @@ impl RecvdPackets {
     fn ack_now(&self, now: Instant) -> bool {
         match self.ack_time {
             Some(t) => t <= now,
-            _ => false,
+            None => false,
         }
     }
 
     // A simple addition of a packet number to the tracked set.
     // This doesn't do a binary search on the assumption that
     // new packets will generally be added to the start of the list.
-    fn add(&mut self, pn: u64) -> usize {
+    fn add(&mut self, pn: PacketNumber) {
         for i in 0..self.ranges.len() {
-            if self.ranges[i].add(pn) {
-                // Maybe merge two ranges.
-                let nxt = i + 1;
-                if (nxt < self.ranges.len()) && (pn - 1 == self.ranges[nxt].largest) {
-                    let smaller = self.ranges.remove(nxt).unwrap();
-                    self.ranges[i].merge_smaller(&smaller);
+            match self.ranges[i].add(pn) {
+                InsertionResult::Largest => return,
+                InsertionResult::Smallest => {
+                    // If this was the smallest, it might have filled a gap.
+                    let nxt = i + 1;
+                    if (nxt < self.ranges.len()) && (pn - 1 == self.ranges[nxt].largest) {
+                        let larger = self.ranges.remove(i).unwrap();
+                        self.ranges[i].merge_larger(&larger);
+                    }
+                    return;
                 }
-                return i;
-            }
-            if self.ranges[i].largest < pn {
-                self.ranges.insert(i, PacketRange::new(pn));
-                return i;
+                InsertionResult::NotInserted => {
+                    if self.ranges[i].largest < pn {
+                        self.ranges.insert(i, PacketRange::new(pn));
+                        return;
+                    }
+                }
             }
         }
         self.ranges.push_back(PacketRange::new(pn));
-        self.ranges.len() - 1
     }
 
-    /// Add the packet to the tracked set.
-    pub fn set_received(&mut self, now: Instant, pn: u64, ack_eliciting: bool) {
-        let next_in_order_pn = self.ranges.front().map_or(0, |pr| pr.largest + 1);
-        qdebug!([self], "next in order pn: {}", next_in_order_pn);
-        let i = self.add(pn);
-
-        // The new addition was the largest, so update the time we use for calculating ACK delay.
-        if i == 0 && pn == self.ranges[0].largest {
-            self.largest_pn_time = Some(now);
-        }
-
+    fn trim_ranges(&mut self) {
         // Limit the number of ranges that are tracked to MAX_TRACKED_RANGES.
         if self.ranges.len() > MAX_TRACKED_RANGES {
             let oldest = self.ranges.pop_back().unwrap();
@@ -344,6 +401,25 @@ impl RecvdPackets {
                 qdebug!([self], "Drop ACK range: {}", oldest);
             }
             self.min_tracked = oldest.largest + 1;
+        }
+    }
+
+    /// Add the packet to the tracked set.
+    pub fn set_received(&mut self, now: Instant, pn: PacketNumber, ack_eliciting: bool) {
+        let next_in_order_pn = self.ranges.front().map_or(0, |pr| pr.largest + 1);
+        qdebug!(
+            [self],
+            "received {}, next in order pn: {}",
+            pn,
+            next_in_order_pn
+        );
+
+        self.add(pn);
+        self.trim_ranges();
+
+        // The new addition was the largest, so update the time we use for calculating ACK delay.
+        if pn >= next_in_order_pn {
+            self.largest_pn_time = Some(now);
         }
 
         if ack_eliciting {
@@ -392,7 +468,7 @@ impl RecvdPackets {
             while cur.smallest > ack.largest {
                 cur = match range_iter.next() {
                     Some(c) => c,
-                    _ => return,
+                    None => return,
                 };
             }
             cur.acknowledged(&ack);
@@ -428,7 +504,7 @@ impl RecvdPackets {
 
         let first = match iter.next() {
             Some(v) => v,
-            _ => return None, // Nothing to send.
+            None => return None, // Nothing to send.
         };
         let mut ack_ranges = Vec::new();
         let mut last = first.smallest;
@@ -495,7 +571,7 @@ impl AckTracker {
                 self.spaces.shrink_to_fit();
                 sp
             }
-            _ => panic!("discarding application space"),
+            PNSpace::ApplicationData => panic!("discarding application space"),
         };
         assert_eq!(sp.unwrap().space, space, "dropping spaces out of order");
     }
@@ -556,11 +632,12 @@ impl Default for AckTracker {
 #[cfg(test)]
 mod tests {
     use super::{
-        AckTracker, Duration, Instant, PNSpace, RecoveryToken, RecvdPackets, ACK_DELAY,
+        AckTracker, Duration, Instant, PNSpace, PNSpaceSet, RecoveryToken, RecvdPackets, ACK_DELAY,
         MAX_TRACKED_RANGES, MAX_UNACKED_PKTS,
     };
     use lazy_static::lazy_static;
     use std::collections::HashSet;
+    use std::convert::TryFrom;
 
     lazy_static! {
         static ref NOW: Instant = Instant::now();
@@ -646,7 +723,8 @@ mod tests {
         assert!(!rp.ack_now(*NOW));
 
         // Some packets won't cause an ACK to be needed.
-        for num in 0..MAX_UNACKED_PKTS {
+        let max_unacked = u64::try_from(MAX_UNACKED_PKTS).unwrap();
+        for num in 0..max_unacked {
             rp.set_received(*NOW, num, true);
             assert_eq!(Some(*NOW + ACK_DELAY), rp.ack_time());
             assert!(!rp.ack_now(*NOW));
@@ -654,7 +732,7 @@ mod tests {
         }
 
         // Exceeding MAX_UNACKED_PKTS will move the ACK time to now.
-        rp.set_received(*NOW, MAX_UNACKED_PKTS, true);
+        rp.set_received(*NOW, max_unacked, true);
         assert_eq!(Some(*NOW), rp.ack_time());
         assert!(rp.ack_now(*NOW));
     }
@@ -782,5 +860,40 @@ mod tests {
             tracker.ack_time(*NOW + Duration::from_millis(1)),
             Some(*NOW)
         );
+    }
+
+    #[test]
+    fn pnspaceset_default() {
+        let set = PNSpaceSet::default();
+        assert!(!set[PNSpace::Initial]);
+        assert!(!set[PNSpace::Handshake]);
+        assert!(!set[PNSpace::ApplicationData]);
+    }
+
+    #[test]
+    fn pnspaceset_from() {
+        let set = PNSpaceSet::from(&[PNSpace::Initial]);
+        assert!(set[PNSpace::Initial]);
+        assert!(!set[PNSpace::Handshake]);
+        assert!(!set[PNSpace::ApplicationData]);
+
+        let set = PNSpaceSet::from(&[PNSpace::Handshake, PNSpace::Initial]);
+        assert!(set[PNSpace::Initial]);
+        assert!(set[PNSpace::Handshake]);
+        assert!(!set[PNSpace::ApplicationData]);
+
+        let set = PNSpaceSet::from(&[PNSpace::ApplicationData, PNSpace::ApplicationData]);
+        assert!(!set[PNSpace::Initial]);
+        assert!(!set[PNSpace::Handshake]);
+        assert!(set[PNSpace::ApplicationData]);
+    }
+
+    #[test]
+    fn pnspaceset_copy() {
+        let set = PNSpaceSet::from(&[PNSpace::Handshake, PNSpace::ApplicationData]);
+        let copy = set;
+        assert!(!copy[PNSpace::Initial]);
+        assert!(copy[PNSpace::Handshake]);
+        assert!(copy[PNSpace::ApplicationData]);
     }
 }

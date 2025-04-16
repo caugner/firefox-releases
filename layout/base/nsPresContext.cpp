@@ -83,7 +83,6 @@
 #include "mozilla/GlobalStyleSheetCache.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/StaticPrefs_layout.h"
-#include "mozilla/StaticPrefs_widget.h"
 #include "mozilla/StaticPrefs_zoom.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -161,11 +160,9 @@ static bool IsVisualCharset(NotNull<const Encoding*> aCharset) {
 }
 
 nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
-    : mType(aType),
-      mPresShell(nullptr),
+    : mPresShell(nullptr),
       mDocument(aDocument),
       mMedium(aType == eContext_Galley ? nsGkAtoms::screen : nsGkAtoms::print),
-      mInflationDisabledForShrinkWrap(false),
       mSystemFontScale(1.0),
       mTextZoom(1.0),
       mEffectiveTextZoom(1.0),
@@ -179,15 +176,17 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
       mPageScale(0.0),
       mPPScale(1.0f),
       mViewportScrollOverrideElement(nullptr),
-      mViewportScrollStyles(StyleOverflow::Auto, StyleOverflow::Auto),
-      mExistThrottledUpdates(false),
-      // mImageAnimationMode is initialised below, in constructor body
-      mImageAnimationModePref(imgIContainer::kNormalAnimMode),
-      mInterruptChecksToSkip(0),
-      mNextFrameRateMultiplier(0),
       mElementsRestyled(0),
       mFramesConstructed(0),
       mFramesReflowed(0),
+      mChangeHintForPrefChange(nsChangeHint(0)),
+      mInterruptChecksToSkip(0),
+      mNextFrameRateMultiplier(0),
+      mViewportScrollStyles(StyleOverflow::Auto, StyleOverflow::Auto),
+      // mImageAnimationMode is initialised below, in constructor body
+      mImageAnimationModePref(imgIContainer::kNormalAnimMode),
+      mType(aType),
+      mInflationDisabledForShrinkWrap(false),
       mInteractionTimeEnabled(true),
       mHasPendingInterrupt(false),
       mPendingInterruptFromTest(false),
@@ -204,7 +203,6 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
       mPrefScrollbarSide(0),
       mPendingThemeChanged(false),
       mPendingUIResolutionChanged(false),
-      mPrefChangePendingNeedsReflow(false),
       mPostedPrefChangedRunnable(false),
       mIsGlyph(false),
       mUsesExChUnits(false),
@@ -513,7 +511,7 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
       if (!mMissingFonts) {
         mMissingFonts = MakeUnique<gfxMissingFontRecorder>();
         // trigger reflow to detect missing fonts on the current page
-        mPrefChangePendingNeedsReflow = true;
+        mChangeHintForPrefChange |= NS_STYLE_HINT_REFLOW;
       }
     } else {
       if (mMissingFonts) {
@@ -522,28 +520,18 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
       mMissingFonts = nullptr;
     }
   }
-  if (StringBeginsWith(prefName, "font."_ns) ||
-      prefName.EqualsLiteral("intl.accept_languages")) {
-    // Changes to font family preferences don't change anything in the
-    // computed style data, so the style system won't generate a reflow
-    // hint for us.  We need to do that manually.
-
-    // FIXME We could probably also handle changes to
-    // browser.display.auto_quality_min_font_size here, but that
-    // probably also requires clearing the text run cache, so don't
-    // bother (yet, anyway).
-    mPrefChangePendingNeedsReflow = true;
-  }
-  if (StringBeginsWith(prefName, "bidi."_ns)) {
-    // Changes to bidi prefs need to trigger a reflow (see bug 443629)
-    mPrefChangePendingNeedsReflow = true;
-
-    // Changes to bidi.numeral also needs to empty the text run cache.
-    // This is handled in gfxTextRunWordCache.cpp.
-  }
-  if (StringBeginsWith(prefName, "gfx.font_rendering."_ns)) {
-    // Changes to font_rendering prefs need to trigger a reflow
-    mPrefChangePendingNeedsReflow = true;
+  if (prefName.EqualsLiteral("font.internaluseonly.changed")) {
+    mChangeHintForPrefChange |= nsChangeHint_ReconstructFrame;
+  } else if (StringBeginsWith(prefName, "font."_ns) ||
+             // Changes to font family preferences don't change anything in the
+             // computed style data, so the style system won't generate a reflow
+             // hint for us.  We need to do that manually.
+             prefName.EqualsLiteral("intl.accept_languages") ||
+             // Changes to bidi prefs need to trigger a reflow (see bug 443629)
+             StringBeginsWith(prefName, "bidi."_ns) ||
+             // Changes to font_rendering prefs need to trigger a reflow
+             StringBeginsWith(prefName, "gfx.font_rendering."_ns)) {
+    mChangeHintForPrefChange |= NS_STYLE_HINT_REFLOW;
   }
 
   // We will end up calling InvalidatePreferenceSheets one from each pres
@@ -600,15 +588,10 @@ void nsPresContext::UpdateAfterPreferencesChanged() {
   InvalidatePaintedLayers();
   mDeviceContext->FlushFontCache();
 
-  nsChangeHint hint = nsChangeHint(0);
-
-  if (mPrefChangePendingNeedsReflow) {
-    hint |= NS_STYLE_HINT_REFLOW;
-  }
-
   // Preferences require rerunning selector matching because we rebuild
   // the pref style sheet for some preference changes.
-  RebuildAllStyleData(hint, RestyleHint::RestyleSubtree());
+  RebuildAllStyleData(mChangeHintForPrefChange, RestyleHint::RestyleSubtree());
+  mChangeHintForPrefChange = nsChangeHint(0);
 }
 
 nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
@@ -1102,16 +1085,13 @@ static bool CheckOverflow(const ComputedStyle* aComputedStyle,
     return false;
   }
 
-  if (display->mOverflowX == StyleOverflow::Visible) {
-    MOZ_ASSERT(display->mOverflowY == StyleOverflow::Visible);
+  if (display->mOverflowX == StyleOverflow::Visible &&
+      display->mOverflowY == StyleOverflow::Visible) {
     return false;
   }
 
-  if (display->mOverflowX == StyleOverflow::MozHiddenUnscrollable) {
-    *aStyles = ScrollStyles(StyleOverflow::Hidden, StyleOverflow::Hidden);
-  } else {
-    *aStyles = ScrollStyles(*display);
-  }
+  *aStyles =
+      ScrollStyles(*display, ScrollStyles::MapOverflowToValidScrollStyle);
   return true;
 }
 
@@ -1192,7 +1172,6 @@ Element* nsPresContext::UpdateViewportScrollStylesOverride() {
 }
 
 bool nsPresContext::ElementWouldPropagateScrollStyles(const Element& aElement) {
-  MOZ_ASSERT(IsPaginated(), "Should only be called on paginated contexts");
   if (aElement.GetParent() && !aElement.IsHTMLElement(nsGkAtoms::body)) {
     // We certainly won't be propagating from this element.
     return false;
@@ -1320,8 +1299,7 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
 
 nsITheme* nsPresContext::EnsureTheme() {
   MOZ_ASSERT(!mTheme);
-  if (StaticPrefs::widget_disable_native_theme_for_content() &&
-      (!IsChrome() || XRE_IsContentProcess())) {
+  if (Document()->ShouldAvoidNativeTheme()) {
     mTheme = do_GetBasicNativeThemeDoNotUseDirectly();
   } else {
     mTheme = do_GetNativeThemeDoNotUseDirectly();
@@ -1368,9 +1346,9 @@ void nsPresContext::ThemeChangedInternal() {
     if (XRE_IsParentProcess()) {
       nsTArray<ContentParent*> cp;
       ContentParent::GetAll(cp);
-      auto cache = LookAndFeel::GetIntCache();
+      LookAndFeelCache lnfCache = LookAndFeel::GetCache();
       for (ContentParent* c : cp) {
-        Unused << c->SendThemeChanged(cache);
+        Unused << c->SendThemeChanged(lnfCache);
       }
     }
   }
@@ -1621,7 +1599,26 @@ void nsPresContext::SetPaginatedScrolling(bool aPaginated) {
 }
 
 void nsPresContext::SetPrintSettings(nsIPrintSettings* aPrintSettings) {
-  if (mMedium == nsGkAtoms::print) mPrintSettings = aPrintSettings;
+  if (mMedium != nsGkAtoms::print) {
+    return;
+  }
+
+  mPrintSettings = aPrintSettings;
+  mDefaultPageMargin = nsMargin();
+  if (!mPrintSettings) {
+    return;
+  }
+
+  nsIntMargin unwriteableTwips;
+  mPrintSettings->GetUnwriteableMarginInTwips(unwriteableTwips);
+  NS_ASSERTION(unwriteableTwips.top >= 0 && unwriteableTwips.right >= 0 &&
+                   unwriteableTwips.bottom >= 0 && unwriteableTwips.left >= 0,
+               "Unwriteable twips should be non-negative");
+
+  nsIntMargin marginTwips;
+  mPrintSettings->GetMarginInTwips(marginTwips);
+  mDefaultPageMargin =
+      nsPresContext::CSSTwipsToAppUnits(marginTwips + unwriteableTwips);
 }
 
 bool nsPresContext::EnsureVisible() {
@@ -1980,16 +1977,16 @@ void nsPresContext::ClearNotifySubDocInvalidationData(
 class DelayedFireDOMPaintEvent : public Runnable {
  public:
   DelayedFireDOMPaintEvent(
-      nsPresContext* aPresContext, nsTArray<nsRect>* aList,
+      nsPresContext* aPresContext, nsTArray<nsRect>&& aList,
       TransactionId aTransactionId,
       const mozilla::TimeStamp& aTimeStamp = mozilla::TimeStamp())
       : mozilla::Runnable("DelayedFireDOMPaintEvent"),
         mPresContext(aPresContext),
         mTransactionId(aTransactionId),
-        mTimeStamp(aTimeStamp) {
+        mTimeStamp(aTimeStamp),
+        mList(std::move(aList)) {
     MOZ_ASSERT(mPresContext->GetContainerWeak(),
                "DOMPaintEvent requested for a detached pres context");
-    mList.SwapElements(*aList);
   }
   NS_IMETHOD Run() override {
     // The pres context might have been detached during the delay -
@@ -2032,8 +2029,8 @@ void nsPresContext::NotifyRevokingDidPaint(TransactionId aTransactionId) {
   // If this is the only transaction, then we can send it immediately.
   if (mTransactions.Length() == 1) {
     nsCOMPtr<nsIRunnable> ev = new DelayedFireDOMPaintEvent(
-        this, &transaction->mInvalidations, transaction->mTransactionId,
-        mozilla::TimeStamp());
+        this, std::move(transaction->mInvalidations),
+        transaction->mTransactionId, mozilla::TimeStamp());
     nsContentUtils::AddScriptRunner(ev);
     mTransactions.RemoveElementAt(0);
   } else {
@@ -2081,7 +2078,7 @@ void nsPresContext::NotifyDidPaintForSubtree(
     if (mTransactions[i].mTransactionId <= aTransactionId) {
       if (!mTransactions[i].mInvalidations.IsEmpty()) {
         nsCOMPtr<nsIRunnable> ev = new DelayedFireDOMPaintEvent(
-            this, &mTransactions[i].mInvalidations,
+            this, std::move(mTransactions[i].mInvalidations),
             mTransactions[i].mTransactionId, aTimeStamp);
         nsContentUtils::AddScriptRunner(ev);
         sent = true;
@@ -2092,7 +2089,7 @@ void nsPresContext::NotifyDidPaintForSubtree(
       // we should fire a MozAfterPaint immediately.
       if (sent && mTransactions[i].mIsWaitingForPreviousTransaction) {
         nsCOMPtr<nsIRunnable> ev = new DelayedFireDOMPaintEvent(
-            this, &mTransactions[i].mInvalidations,
+            this, std::move(mTransactions[i].mInvalidations),
             mTransactions[i].mTransactionId, aTimeStamp);
         nsContentUtils::AddScriptRunner(ev);
         sent = true;
@@ -2105,8 +2102,8 @@ void nsPresContext::NotifyDidPaintForSubtree(
 
   if (!sent) {
     nsTArray<nsRect> dummy;
-    nsCOMPtr<nsIRunnable> ev =
-        new DelayedFireDOMPaintEvent(this, &dummy, aTransactionId, aTimeStamp);
+    nsCOMPtr<nsIRunnable> ev = new DelayedFireDOMPaintEvent(
+        this, std::move(dummy), aTransactionId, aTimeStamp);
     nsContentUtils::AddScriptRunner(ev);
   }
 
@@ -2367,6 +2364,16 @@ void nsPresContext::NotifyContentfulPaint() {
       }
     }
   }
+}
+
+void nsPresContext::NotifyPaintStatusReset() {
+  mHadNonBlankPaint = false;
+  mHadContentfulPaint = false;
+#if defined(MOZ_WIDGET_ANDROID)
+  (new AsyncEventDispatcher(mDocument, u"MozPaintStatusReset"_ns,
+                            CanBubble::eYes, ChromeOnlyDispatch::eYes))
+      ->PostDOMEvent();
+#endif
 }
 
 void nsPresContext::NotifyDOMContentFlushed() {
@@ -2706,8 +2713,8 @@ static void SortConfigurations(
     return;
   }
 
-  nsTArray<nsIWidget::Configuration> pluginsToMove;
-  pluginsToMove.SwapElements(*aConfigurations);
+  nsTArray<nsIWidget::Configuration> pluginsToMove =
+      std::move(*aConfigurations);
 
   // Our algorithm is quite naive. At each step we try to identify
   // a window that can be moved to its new location that won't overlap
@@ -2829,8 +2836,7 @@ void nsRootPresContext::AddWillPaintObserver(nsIRunnable* aRunnable) {
  */
 void nsRootPresContext::FlushWillPaintObservers() {
   mWillPaintFallbackEvent = nullptr;
-  nsTArray<nsCOMPtr<nsIRunnable>> observers;
-  observers.SwapElements(mWillPaintObservers);
+  nsTArray<nsCOMPtr<nsIRunnable>> observers = std::move(mWillPaintObservers);
   for (uint32_t i = 0; i < observers.Length(); ++i) {
     observers[i]->Run();
   }

@@ -187,12 +187,12 @@ class ContentParent final
    * 3. normal iframe
    */
   static RefPtr<ContentParent::LaunchPromise> GetNewOrUsedBrowserProcessAsync(
-      Element* aFrameElement, const nsACString& aRemoteType,
+      const nsACString& aRemoteType, BrowsingContextGroup* aGroup = nullptr,
       hal::ProcessPriority aPriority =
           hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
       bool aPreferUsed = false);
   static already_AddRefed<ContentParent> GetNewOrUsedBrowserProcess(
-      Element* aFrameElement, const nsACString& aRemoteType,
+      const nsACString& aRemoteType, BrowsingContextGroup* aGroup = nullptr,
       hal::ProcessPriority aPriority =
           hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
       bool aPreferUsed = false);
@@ -208,7 +208,7 @@ class ContentParent final
    * the process to be fully launched.
    */
   static already_AddRefed<ContentParent> GetNewOrUsedLaunchingBrowserProcess(
-      Element* aFrameElement, const nsACString& aRemoteType,
+      const nsACString& aRemoteType, BrowsingContextGroup* aGroup = nullptr,
       hal::ProcessPriority aPriority =
           hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
       bool aPreferUsed = false);
@@ -529,7 +529,8 @@ class ContentParent final
       PBrowserParent* aThisBrowserParent,
       const MaybeDiscarded<BrowsingContext>& aParent, PBrowserParent* aNewTab,
       const uint32_t& aChromeFlags, const bool& aCalledFromJS,
-      const bool& aWidthSpecified, nsIURI* aURIToLoad,
+      const bool& aWidthSpecified, const bool& aForPrinting,
+      const bool& aForPrintPreview, nsIURI* aURIToLoad,
       const nsCString& aFeatures, const float& aFullZoom,
       const IPC::Principal& aTriggeringPrincipal,
       nsIContentSecurityPolicy* aCsp, nsIReferrerInfo* aReferrerInfo,
@@ -547,6 +548,7 @@ class ContentParent final
 
   static void BroadcastBlobURLRegistration(
       const nsACString& aURI, BlobImpl* aBlobImpl, nsIPrincipal* aPrincipal,
+      const Maybe<nsID>& aAgentClusterId,
       ContentParent* aIgnoreThisCP = nullptr);
 
   static void BroadcastBlobURLUnregistration(
@@ -554,7 +556,8 @@ class ContentParent final
       ContentParent* aIgnoreThisCP = nullptr);
 
   mozilla::ipc::IPCResult RecvStoreAndBroadcastBlobURLRegistration(
-      const nsCString& aURI, const IPCBlob& aBlob, const Principal& aPrincipal);
+      const nsCString& aURI, const IPCBlob& aBlob, const Principal& aPrincipal,
+      const Maybe<nsID>& aAgentCluster);
 
   mozilla::ipc::IPCResult RecvUnstoreAndBroadcastBlobURLUnregistration(
       const nsCString& aURI, const Principal& aPrincipal);
@@ -641,8 +644,6 @@ class ContentParent final
 
   void OnCompositorDeviceReset() override;
 
-  static hal::ProcessPriority GetInitialProcessPriority(Element* aFrameElement);
-
   // Control the priority of the IPC messages for input events.
   void SetInputPriorityEventEnabled(bool aEnabled);
   bool IsInputPriorityEventEnabled() { return mIsInputPriorityEventEnabled; }
@@ -698,6 +699,13 @@ class ContentParent final
   PFileDescriptorSetParent* SendPFileDescriptorSetConstructor(
       const FileDescriptor& aFD) override;
 
+  mozilla::ipc::IPCResult RecvBlobURLDataRequest(
+      const nsCString& aBlobURL, nsIPrincipal* pTriggeringPrincipal,
+      nsIPrincipal* pLoadingPrincipal,
+      const OriginAttributes& aOriginAttributes,
+      const Maybe<nsID>& aAgentClusterId,
+      BlobURLDataRequestResolver&& aResolver);
+
  protected:
   bool CheckBrowsingContextEmbedder(CanonicalBrowsingContext* aBC,
                                     const char* aOperation) const;
@@ -742,7 +750,8 @@ class ContentParent final
   mozilla::ipc::IPCResult CommonCreateWindow(
       PBrowserParent* aThisTab, BrowsingContext* aParent, bool aSetOpener,
       const uint32_t& aChromeFlags, const bool& aCalledFromJS,
-      const bool& aWidthSpecified, nsIURI* aURIToLoad,
+      const bool& aWidthSpecified, const bool& aForPrinting,
+      const bool& aForPrintPreview, nsIURI* aURIToLoad,
       const nsCString& aFeatures, const float& aFullZoom,
       BrowserParent* aNextRemoteBrowser, const nsString& aName,
       nsresult& aResult, nsCOMPtr<nsIRemoteTab>& aNewRemoteTab,
@@ -885,7 +894,6 @@ class ContentParent final
       Endpoint<mozilla::ipc::PBackgroundParent>&& aEndpoint);
 
   mozilla::ipc::IPCResult RecvAddMemoryReport(const MemoryReport& aReport);
-  mozilla::ipc::IPCResult RecvFinishMemoryReport(const uint32_t& aGeneration);
   mozilla::ipc::IPCResult RecvAddPerformanceMetrics(
       const nsID& aID, nsTArray<PerformanceInfo>&& aMetrics);
 
@@ -1164,7 +1172,8 @@ class ContentParent final
       base::SharedMemoryHandle* aOut);
 
   mozilla::ipc::IPCResult RecvInitializeFamily(const uint32_t& aGeneration,
-                                               const uint32_t& aFamilyIndex);
+                                               const uint32_t& aFamilyIndex,
+                                               const bool& aLoadCmaps);
 
   mozilla::ipc::IPCResult RecvSetCharacterMap(
       const uint32_t& aGeneration, const mozilla::fontlist::Pointer& aFacePtr,
@@ -1317,8 +1326,8 @@ class ContentParent final
       NotifyOnHistoryReloadResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvHistoryCommit(
-      const MaybeDiscarded<BrowsingContext>& aContext,
-      const uint64_t& aSessionHistoryEntryID, const nsID& aChangeID);
+      const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
+      const nsID& aChangeID);
 
   mozilla::ipc::IPCResult RecvHistoryGo(
       const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
@@ -1329,7 +1338,18 @@ class ContentParent final
       const int32_t& aLength, const nsID& aChangeID);
 
   mozilla::ipc::IPCResult RecvSynchronizeLayoutHistoryState(
-      uint64_t aSessionHistoryEntryID, nsILayoutHistoryState* aState);
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      nsILayoutHistoryState* aState);
+
+  mozilla::ipc::IPCResult RecvSessionHistoryEntryTitle(
+      const MaybeDiscarded<BrowsingContext>& aContext, const nsString& aTitle);
+
+  mozilla::ipc::IPCResult RecvSessionHistoryEntryScrollRestorationIsManual(
+      const MaybeDiscarded<BrowsingContext>& aContext, const bool& aIsManual);
+
+  mozilla::ipc::IPCResult RecvSessionHistoryEntryCacheKey(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const uint32_t& aCacheKey);
 
   // Notify the ContentChild to enable the input event prioritization when
   // initializing.
@@ -1351,8 +1371,8 @@ class ContentParent final
                                const bool& aMinimizeMemoryUsage,
                                const Maybe<FileDescriptor>& aDMDFile) override;
 
-  void OnBrowsingContextGroupSubscribe(BrowsingContextGroup* aGroup);
-  void OnBrowsingContextGroupUnsubscribe(BrowsingContextGroup* aGroup);
+  void AddBrowsingContextGroup(BrowsingContextGroup* aGroup);
+  void RemoveBrowsingContextGroup(BrowsingContextGroup* aGroup);
 
   // See `BrowsingContext::mEpochs` for an explanation of this field.
   uint64_t GetBrowsingContextFieldEpoch() const {

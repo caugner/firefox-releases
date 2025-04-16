@@ -11,7 +11,7 @@ body {
   overflow-x: hidden;
 }
 #process-table {
-  -moz-user-select: none;
+  user-select: none;
   font-size: 1em;
   border-spacing: 0;
   background-color: var(--in-content-box-background);
@@ -42,19 +42,28 @@ tr {
   table-layout: fixed;
   width: 100%;
 }
-td:nth-child(1) {
-  width:  16%;
-}
+
 /* At least one column needs to have a flexible width,
-   so no width specified for td:nth-child(2) */
+   so no width specified for td:nth-child(1) aka column-name*/
+
+/* column-memory-resident */
+td:nth-child(2) {
+  width:  15%;
+}
+
+/* column-cpu-total */
 td:nth-child(3) {
-    width: 10%;
+    width: 15%;
 }
+
+/* column-pid */
 td:nth-child(4) {
-    width: 10%;
+  width: 10%;
 }
+
+/* column-cpu-threads */
 td:nth-child(5) {
-    width: 10%;
+  width: 5%;
 }
 
 #process-thead > tr {
@@ -166,6 +175,13 @@ td {
 }
 #process-tbody > tr.thread {
   font-size-adjust: 0.5;
+}
+
+/* column-name */
+
+/* When the process is reported as frozen, we display an hourglass before its name. */
+.process.hung > :nth-child(2)::before {
+  content: "⌛️";
 }
 
 /*

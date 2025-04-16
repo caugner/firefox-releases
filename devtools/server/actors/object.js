@@ -75,8 +75,6 @@ const proto = {
    *              Increment the actor's grip depth
    *          - decrementGripDepth
    *              Decrement the actor's grip depth
-   *          - globalDebugObject
-   *              The Debuggee Global Object as given by the ThreadActor
    */
   initialize(
     obj,
@@ -166,6 +164,7 @@ const proto = {
       extensible: this.obj.isExtensible(),
       frozen: this.obj.isFrozen(),
       sealed: this.obj.isSealed(),
+      isError: this.obj.isError,
     });
 
     this.hooks.incrementGripDepth();

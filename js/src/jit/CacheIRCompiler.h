@@ -12,14 +12,18 @@
 #include "jit/CacheIR.h"
 #include "jit/JitOptions.h"
 #include "jit/SharedICRegisters.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 
 namespace js {
+
+class TypedArrayObject;
+
 namespace jit {
 
 class BaselineCacheIRCompiler;
 class IonCacheIRCompiler;
 
-// [SMDDOC] CacheIR Value Representation and Tracking
+// [SMDOC] CacheIR Value Representation and Tracking
 //
 // While compiling an IC stub the CacheIR compiler needs to keep track of the
 // physical location for each logical piece of data we care about, as well as
@@ -816,6 +820,13 @@ class MOZ_RAII CacheIRCompiler {
 
   bool emitDoubleIncDecResult(bool isInc, NumberOperandId inputId);
 
+  using AtomicsReadWriteModifyFn = int32_t (*)(TypedArrayObject*, int32_t,
+                                               int32_t);
+
+  MOZ_MUST_USE bool emitAtomicsReadModifyWriteResult(
+      ObjOperandId objId, Int32OperandId indexId, Int32OperandId valueId,
+      Scalar::Type elementType, AtomicsReadWriteModifyFn fn);
+
   CACHE_IR_COMPILER_SHARED_GENERATED
 
   void emitLoadStubField(StubFieldOffset val, Register dest);
@@ -890,11 +901,6 @@ class MOZ_RAII CacheIRCompiler {
 #endif
 
  public:
-  // The maximum number of arguments passed to a spread call or
-  // fun_apply IC.  Keep this small to avoid controllable stack
-  // overflows by attackers passing large arrays.
-  static const uint32_t MAX_ARGS_ARRAY_LENGTH = 16;
-
   void callVMInternal(MacroAssembler& masm, VMFunctionId id);
   template <typename Fn, Fn fn>
   void callVM(MacroAssembler& masm);
@@ -1087,6 +1093,8 @@ class MOZ_RAII AutoCallVM {
   template <typename Fn>
   void storeResult();
 
+  void leaveBaselineStubFrame();
+
  public:
   AutoCallVM(MacroAssembler& masm, CacheIRCompiler* compiler,
              CacheRegisterAllocator& allocator);
@@ -1097,7 +1105,16 @@ class MOZ_RAII AutoCallVM {
   void call() {
     compiler_->callVM<Fn, fn>(masm_);
     storeResult<Fn>();
+    leaveBaselineStubFrame();
   }
+
+  template <typename Fn, Fn fn>
+  void callNoResult() {
+    compiler_->callVM<Fn, fn>(masm_);
+    leaveBaselineStubFrame();
+  }
+
+  ValueOperand outputValueReg() const { return output_->valueReg(); }
 };
 
 // RAII class to allocate FloatReg0 as a scratch register and release it when

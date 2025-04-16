@@ -1671,8 +1671,9 @@ void gfxMacPlatformFontList::ActivateFontsFromDir(nsIFile* aDir) {
   ::CFRelease(urls);
 }
 
-void gfxMacPlatformFontList::GetFacesInitDataForFamily(
-    const fontlist::Family* aFamily, nsTArray<fontlist::Face::InitData>& aFaces) const {
+void gfxMacPlatformFontList::GetFacesInitDataForFamily(const fontlist::Family* aFamily,
+                                                       nsTArray<fontlist::Face::InitData>& aFaces,
+                                                       bool aLoadCmaps) const {
   nsAutoreleasePool localPool;
 
   NS_ConvertUTF8toUTF16 name(aFamily->Key().AsString(SharedFontList()));
@@ -1733,6 +1734,22 @@ void gfxMacPlatformFontList::GetFacesInitDataForFamily(
 
     bool fixedPitch = (macTraits & NSFixedPitchFontMask) ? true : false;
 
+    RefPtr<gfxCharacterMap> charmap;
+    if (aLoadCmaps) {
+      CGFontRef font = CGFontCreateWithFontName(CFStringRef(psname));
+      if (font) {
+        uint32_t kCMAP = TRUETYPE_TAG('c', 'm', 'a', 'p');
+        CFDataRef data = CGFontCopyTableForTag(font, kCMAP);
+        if (data) {
+          uint32_t offset;
+          charmap = new gfxCharacterMap();
+          gfxFontUtils::ReadCMAP(CFDataGetBytePtr(data), CFDataGetLength(data), *charmap, offset);
+          CFRelease(data);
+        }
+        CGFontRelease(font);
+      }
+    }
+
     aFaces.AppendElement(fontlist::Face::InitData{
         NS_ConvertUTF16toUTF8(postscriptFontName),
         0,
@@ -1740,6 +1757,7 @@ void gfxMacPlatformFontList::GetFacesInitDataForFamily(
         WeightRange(FontWeight(cssWeight)),
         stretch,
         slantStyle,
+        charmap,
     });
   }
 }

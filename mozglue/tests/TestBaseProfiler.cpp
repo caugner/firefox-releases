@@ -7,9 +7,9 @@
 #include "BaseProfiler.h"
 
 #include "mozilla/Attributes.h"
+#include "mozilla/BaseProfileJSONWriter.h"
 
 #ifdef MOZ_GECKO_PROFILER
-#  include "BaseProfileJSONWriter.h"
 #  include "BaseProfilerMarkerPayload.h"
 #  include "mozilla/BlocksRingBuffer.h"
 #  include "mozilla/leb128iterator.h"
@@ -2862,10 +2862,10 @@ void TestBlocksRingBufferSerialization() {
 
   rb.Clear();
   int intArray[] = {1, 2, 3, 4, 5};
-  rb.PutObjects(MakeSpan(intArray));
+  rb.PutObjects(Span(intArray));
   rb.ReadEach([&](ProfileBufferEntryReader& aER) {
     int intArrayOut[sizeof(intArray) / sizeof(intArray[0])] = {0};
-    auto outSpan = MakeSpan(intArrayOut);
+    auto outSpan = Span(intArrayOut);
     aER.ReadIntoObject(outSpan);
     for (size_t i = 0; i < sizeof(intArray) / sizeof(intArray[0]); ++i) {
       MOZ_RELEASE_ASSERT(intArrayOut[i] == intArray[i]);

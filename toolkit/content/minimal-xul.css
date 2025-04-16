@@ -17,7 +17,7 @@
 
 * {
   -moz-user-focus: ignore;
-  -moz-user-select: none;
+  user-select: none;
   display: -moz-box;
   box-sizing: border-box;
 }
@@ -51,6 +51,10 @@
     -moz-list-reversed: initial;
     -moz-font-smoothing-background-color: initial;
     -moz-min-font-size-ratio: initial;
+    -moz-script-level: initial;
+    /* As long as inert implies pointer-events: none as it does now, we're
+     * good. */
+    -moz-inert: initial;
 
     /* Using initial is not sufficient for direction, since its initial value can
      * depend on the document's language.
@@ -85,7 +89,7 @@
      * cannot match :root, so no need to duplicate them.
      */
     -moz-user-focus: ignore;
-    -moz-user-select: none;
+    user-select: none;
     display: -moz-box;
     box-sizing: border-box;
   }
@@ -187,7 +191,7 @@ thumb[collapsed="true"] {
 }
 
 scrollbar, scrollbarbutton, scrollcorner, slider, thumb {
-  -moz-user-select: none;
+  user-select: none;
 }
 
 scrollcorner {

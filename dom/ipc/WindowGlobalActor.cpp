@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/WindowGlobalActor.h"
 
+#include "AutoplayPolicy.h"
 #include "nsContentUtils.h"
 #include "mozJSComponentLoader.h"
 #include "mozilla/ContentBlockingAllowList.h"
@@ -14,6 +15,7 @@
 #include "mozilla/dom/JSWindowActorParent.h"
 #include "mozilla/dom/JSWindowActorChild.h"
 #include "mozilla/dom/JSWindowActorProtocol.h"
+#include "mozilla/dom/PopupBlocker.h"
 #include "mozilla/net/CookieJarSettings.h"
 
 namespace mozilla {
@@ -42,6 +44,7 @@ WindowGlobalInit WindowGlobalActor::BaseInitializer(
   ctx.mInnerWindowId = aInnerWindowId;
   ctx.mOuterWindowId = aOuterWindowId;
   ctx.mBrowsingContextId = aBrowsingContext->Id();
+  ctx.mBrowsingContextIsTop = aBrowsingContext->IsTop();
 
   // If any synced fields need to be initialized from our BrowsingContext, we
   // can initialize them here.
@@ -93,6 +96,17 @@ WindowGlobalInit WindowGlobalActor::WindowInitializer(
   fields.mIsThirdPartyTrackingResourceWindow =
       nsContentUtils::IsThirdPartyTrackingResourceWindow(aWindow);
   fields.mIsSecureContext = aWindow->IsSecureContext();
+
+  // Initialze permission fields
+  fields.mAutoplayPermission =
+      AutoplayPolicy::GetSiteAutoplayPermission(init.principal());
+  fields.mPopupPermission = PopupBlocker::GetPopupPermission(init.principal());
+
+  // Initialize top level permission fields
+  if (aWindow->GetBrowsingContext()->IsTop()) {
+    fields.mShortcutsPermission =
+        nsGlobalWindowInner::GetShortcutsPermission(init.principal());
+  }
 
   auto policy = doc->GetEmbedderPolicy();
   if (policy.isSome()) {

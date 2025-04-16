@@ -46,9 +46,11 @@ namespace wasm {
 bool HasPlatformSupport(JSContext* cx);
 
 // Return whether WebAssembly is supported on this platform. This determines
-// whether the WebAssembly object is exposed to JS and takes into account
-// configuration options that disable various modes.  It also checks that at
-// least one compiler is (currently) available.
+// whether the WebAssembly object is exposed to JS in this context / realm and
+//
+// It does *not* guarantee that a compiler is actually available; that has to be
+// checked separately, as it is sometimes run-time variant, depending on whether
+// a debugger has been created or not.
 
 bool HasSupport(JSContext* cx);
 
@@ -65,6 +67,10 @@ bool HasSupport(JSContext* cx);
 bool BaselineAvailable(JSContext* cx);
 bool IonAvailable(JSContext* cx);
 bool CraneliftAvailable(JSContext* cx);
+
+// Test all three.
+
+bool AnyCompilerAvailable(JSContext* cx);
 
 // Predicates for white-box compiler disablement testing.
 //
@@ -97,7 +103,7 @@ bool StreamingCompilationAvailable(JSContext* cx);
 // optimizing compiler tier.
 bool CodeCachingAvailable(JSContext* cx);
 
-// General reference types (anyref, funcref) and operations on them.
+// General reference types (externref, funcref) and operations on them.
 bool ReftypesAvailable(JSContext* cx);
 
 // Experimental (ref T) types and structure types.
@@ -112,7 +118,7 @@ bool ThreadsAvailable(JSContext* cx);
 // SIMD data and operations.
 bool SimdAvailable(JSContext* cx);
 
-#if defined(ENABLE_WASM_SIMD)
+#if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
 // Report the result of a Simd simplification to the testing infrastructure.
 void ReportSimdAnalysis(const char* data);
 #endif
@@ -161,16 +167,16 @@ uint32_t ExportedFunctionToFuncIndex(JSFunction* fun);
 
 bool IsSharedWasmMemoryObject(JSObject* obj);
 
-// Check a value against the given reference type kind.  If the targetTypeKind
-// is RefType::Any then the test always passes, but the value may be boxed.  If
-// the test passes then the value is stored either in fnval (for RefType::Func)
-// or in refval (for other types); this split is not strictly necessary but is
-// convenient for the users of this function.
+// Check a value against the given reference type.  If the targetType
+// is RefType::Extern then the test always passes, but the value may be boxed.
+// If the test passes then the value is stored either in fnval (for
+// RefType::Func) or in refval (for other types); this split is not strictly
+// necessary but is convenient for the users of this function.
 //
 // This can return false if the type check fails, or if a boxing into AnyRef
 // throws an OOM.
-MOZ_MUST_USE bool CheckRefType(JSContext* cx, RefType::Kind targetTypeKind,
-                               HandleValue v, MutableHandleFunction fnval,
+MOZ_MUST_USE bool CheckRefType(JSContext* cx, RefType targetType, HandleValue v,
+                               MutableHandleFunction fnval,
                                MutableHandleAnyRef refval);
 
 }  // namespace wasm
@@ -444,7 +450,7 @@ class WasmTableObject : public NativeObject {
 
   static WasmTableObject* create(JSContext* cx, uint32_t initialLength,
                                  mozilla::Maybe<uint32_t> maximumLength,
-                                 wasm::TableKind tableKind, HandleObject proto);
+                                 wasm::RefType tableType, HandleObject proto);
   wasm::Table& table() const;
 };
 

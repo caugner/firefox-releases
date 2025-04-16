@@ -114,6 +114,14 @@ gmp-6.1.0:
         strip-components: 1
         add-prefix: gmp-source/
 
+go-1.14.4:
+    description: Golang 1.14.4 build tools
+    fetch:
+        type: static-url
+        url: https://dl.google.com/go/go1.14.4.linux-amd64.tar.gz
+        sha256: aed845e4185a0b2a3c3d5e1d0a35491702c55889192bb9c30e67a3de6849c067
+        size: 123711003
+
 iris-2.0:
     description: Iris_Firefox source code
     fetch:
@@ -292,14 +300,14 @@ cctools-port:
     fetch:
         type: git
         repo: https://github.com/tpoechtrager/cctools-port
-        revision: 4e1faecce83dc14108397a9fb6e7025411e4702d
+        revision: 43f32a4c61b5ba7fde011e816136c550b1b3146f
 
 libtapi:
     description: libtapi source code
     fetch:
         type: git
         repo: https://github.com/tpoechtrager/apple-libtapi
-        revision: 3efb201881e7a76a21e0554906cf306432539cef
+        revision: b4f141a16c7c82f75973429c92242a8c7de3ddb1
 
 libdmg-hfsplus:
     description: libdmg-hfsplug source code
@@ -416,6 +424,14 @@ clang-10:
         repo: https://github.com/llvm/llvm-project
         revision: d32170dbd5b0d54436537b6b75beaf44324e0c28
 
+civet-source:
+    description: Repository for external static analysis checks
+    fetch:
+        type: git
+        repo: git@github.com:mozilla-services/civet.git
+        revision: 1a7a27f0a3bede8f94ac1e7c73f400de797296b5
+        ssh-key: project/civet/github-deploy-key
+
 wasi-sdk:
     description: wasi-sdk source code
     fetch:
@@ -449,7 +465,7 @@ lucetc-source:
     fetch:
         type: git
         repo: https://github.com/PLSysSec/lucet_sandbox_compiler/
-        revision: a0a1ce981638109f1f76cd1eecf17a0436a20055
+        revision: 477d8fc53a64705a9d3fbcce9de92f4988558525
 
 dump-syms:
     description: dump_syms source code
@@ -492,3 +508,10 @@ sonatype-nexus:
         artifact-name: sonatype-nexus.tar.zst
         strip-components: 1
         add-prefix: sonatype-nexus/
+
+makecab:
+    description: makecab source code
+    fetch:
+        type: git
+        repo: https://github.com/luser/rust-makecab/
+        revision: d2bc6797648b7a834782714a55d339d2fd4e58c8

@@ -364,7 +364,10 @@ fn prepare_interned_prim_for_render(
             let prim_offset = prim_data.common.prim_rect.origin.to_vector() - run.reference_frame_relative_offset;
 
             let pic = &store.pictures[pic_context.pic_index.0];
-            let raster_space = pic.get_raster_space(frame_context.spatial_tree);
+            let raster_space = pic.get_raster_space_for_prim(
+                prim_spatial_node_index,
+                frame_context.spatial_tree
+            );
             let surface = &frame_state.surfaces[pic_context.surface_index.0];
             let prim_info = &scratch.prim_info[prim_instance.visibility_info.0 as usize];
             let root_scaling_factor = match pic.raster_config {
@@ -1729,7 +1732,7 @@ fn build_segments_if_needed(
 
         if write_brush_segment_description(
             prim_local_rect,
-            instance.local_clip_rect,
+            instance.clip_set.local_clip_rect,
             prim_clip_chain,
             &mut frame_state.segment_builder,
             frame_state.clip_store,
@@ -1798,7 +1801,7 @@ fn get_clipped_device_rect(
 ) -> Option<DeviceRect> {
     let unclipped_raster_rect = {
         let world_rect = *unclipped * Scale::new(1.0);
-        let raster_rect = world_rect * device_pixel_scale.inv();
+        let raster_rect = world_rect * device_pixel_scale.inverse();
 
         raster_rect.cast_unit()
     };

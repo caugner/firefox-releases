@@ -211,10 +211,7 @@ bool nsFrameSelection::IsValidSelectionPoint(nsINode* aNode) const {
 namespace mozilla {
 struct MOZ_RAII AutoPrepareFocusRange {
   AutoPrepareFocusRange(Selection* aSelection,
-                        const bool aMultiRangeSelection
-                            MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-
+                        const bool aMultiRangeSelection) {
     MOZ_ASSERT(aSelection);
     MOZ_ASSERT(aSelection->GetType() == SelectionType::eNormal);
 
@@ -321,7 +318,6 @@ struct MOZ_RAII AutoPrepareFocusRange {
   }
 
   Maybe<Selection::AutoUserInitiated> mUserSelect;
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 }  // namespace mozilla
@@ -971,13 +967,10 @@ nsPrevNextBidiLevels nsFrameSelection::GetPrevNextBidiLevels(
     return levels;
   }
 
-  nsIFrame* newFrame;
-  int32_t offset;
-  bool jumpedLine, movedOverNonSelectableText;
-  nsresult rv = currentFrame->GetFrameFromDirection(
-      direction, false, aJumpLines, true, false, &newFrame, &offset,
-      &jumpedLine, &movedOverNonSelectableText);
-  if (NS_FAILED(rv)) newFrame = nullptr;
+  nsIFrame* newFrame =
+      currentFrame
+          ->GetFrameFromDirection(direction, false, aJumpLines, true, false)
+          .mFrame;
 
   FrameBidiData currentBidi = currentFrame->GetBidiData();
   nsBidiLevel currentLevel = currentBidi.embeddingLevel;

@@ -181,8 +181,7 @@ void Http3Session::Shutdown() {
 Http3Session::~Http3Session() {
   LOG3(("Http3Session::~Http3Session %p", this));
 
-  Telemetry::Accumulate(Telemetry::HTTP3_REQUEST_PER_CONN,
-                        mTransactionCount);
+  Telemetry::Accumulate(Telemetry::HTTP3_REQUEST_PER_CONN, mTransactionCount);
 
   Shutdown();
 }
@@ -367,6 +366,19 @@ nsresult Http3Session::ProcessEvents(uint32_t count) {
         LOG(("Http3Session::ProcessEvents - Reset"));
         ResetRecvd(event.reset.stream_id, event.reset.error);
         break;
+      case Http3Event::Tag::StopSending:
+        LOG(("Http3Session::ProcessEvents - StopSeniding with error 0x%" PRIx64,
+             event.stop_sending.error));
+        if (event.stop_sending.error == HTTP3_APP_ERROR_NO_ERROR) {
+          RefPtr<Http3Stream> stream =
+              mStreamIdHash.Get(event.data_writable.stream_id);
+          if (stream) {
+            stream->StopSending();
+          }
+        } else {
+          ResetRecvd(event.reset.stream_id, event.reset.error);
+        }
+        break;
       case Http3Event::Tag::PushPromise:
         LOG(("Http3Session::ProcessEvents - PushPromise"));
         break;
@@ -397,6 +409,7 @@ nsresult Http3Session::ProcessEvents(uint32_t count) {
         mState = CONNECTED;
         SetSecInfo();
         mSocketControl->HandshakeCompleted();
+        gHttpHandler->ConnMgr()->ReportHttp3Connection(mSegmentReaderWriter);
         MaybeResumeSend();
         break;
       case Http3Event::Tag::GoawayReceived:

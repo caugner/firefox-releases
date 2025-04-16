@@ -50,7 +50,8 @@ ShadowRoot::ShadowRoot(Element* aElement, ShadowRootMode aMode,
     : DocumentFragment(std::move(aNodeInfo)),
       DocumentOrShadowRoot(this),
       mMode(aMode),
-      mIsUAWidget(false) {
+      mIsUAWidget(false),
+      mIsStaticUAWidget(false) {
   SetHost(aElement);
 
   // Nodes in a shadow tree should never store a value
@@ -95,6 +96,15 @@ JSObject* ShadowRoot::WrapNode(JSContext* aCx,
 }
 
 void ShadowRoot::CloneInternalDataFrom(ShadowRoot* aOther) {
+  MOZ_ASSERT(aOther->ShouldStaticClone());
+
+  if (aOther->IsUAWidget()) {
+    SetIsUAWidget();
+  }
+  if (aOther->IsStaticUAWidget()) {
+    SetIsStaticUAWidget();
+  }
+
   size_t sheetCount = aOther->SheetCount();
   for (size_t i = 0; i < sheetCount; ++i) {
     StyleSheet* sheet = aOther->SheetAt(i);
@@ -328,7 +338,8 @@ void ShadowRoot::RuleRemoved(StyleSheet& aSheet, css::Rule& aRule) {
   ApplicableRulesChanged();
 }
 
-void ShadowRoot::RuleChanged(StyleSheet& aSheet, css::Rule*) {
+void ShadowRoot::RuleChanged(StyleSheet& aSheet, css::Rule*,
+                             StyleRuleChangeKind) {
   if (!aSheet.IsApplicable()) {
     return;
   }

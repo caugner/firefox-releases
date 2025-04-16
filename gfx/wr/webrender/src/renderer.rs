@@ -37,29 +37,32 @@
 use api::{ApiMsg, BlobImageHandler, ColorF, ColorU, MixBlendMode};
 use api::{DocumentId, Epoch, ExternalImageHandler, ExternalImageId};
 use api::{ExternalImageSource, ExternalImageType, FontRenderMode, FrameMsg, ImageFormat};
-use api::{PipelineId, ImageRendering, Checkpoint, NotificationRequest, OutputImageHandler};
+use api::{PipelineId, ImageRendering, Checkpoint, NotificationRequest};
 use api::{DebugCommand, MemoryReport, VoidPtrToSizeFn, PremultipliedColorF};
 use api::{RenderApiSender, RenderNotifier, TextureTarget, SharedFontInstanceMap};
 #[cfg(feature = "replay")]
 use api::ExternalImage;
 use api::units::*;
+use api::channel::{unbounded_channel, Sender, Receiver};
 pub use api::DebugFlags;
 use core::time::Duration;
 use crate::batch::{AlphaBatchContainer, BatchKind, BatchFeatures, BatchTextures, BrushBatchKind, ClipBatchList};
 #[cfg(any(feature = "capture", feature = "replay"))]
 use crate::capture::{CaptureConfig, ExternalCaptureImage, PlainExternalImage};
-use crate::composite::{CompositeState, CompositeTileSurface, CompositeTile, ResolvedExternalSurface};
+use crate::composite::{CompositeState, CompositeTileSurface, CompositeTile, ResolvedExternalSurface, CompositorSurfaceTransform};
 use crate::composite::{CompositorKind, Compositor, NativeTileId, CompositeSurfaceFormat, ResolvedExternalSurfaceColorData};
 use crate::composite::{CompositorConfig, NativeSurfaceOperationDetails, NativeSurfaceId, NativeSurfaceOperation};
 use crate::c_str;
 use crate::debug_colors;
 use crate::debug_render::{DebugItem, DebugRenderer};
 use crate::device::{DepthFunction, Device, GpuFrameId, Program, UploadMethod, Texture, PBO};
-use crate::device::{DrawTarget, ExternalTexture, FBOId, ReadTarget, TextureSlot};
+use crate::device::{DrawTarget, ExternalTexture, ReadTarget, TextureSlot};
 use crate::device::{ShaderError, TextureFilter, TextureFlags,
              VertexUsageHint, VAO, VBO, CustomVAO};
 use crate::device::ProgramCache;
 use crate::device::query::GpuTimer;
+#[cfg(feature = "capture")]
+use crate::device::FBOId;
 use euclid::{rect, Transform3D, Scale, default};
 use crate::frame_builder::{Frame, ChasePrimitive, FrameBuilderConfig};
 use gleam::gl;
@@ -100,6 +103,7 @@ use crate::util::drain_filter;
 use std;
 use std::cmp;
 use std::collections::VecDeque;
+#[cfg(any(feature = "capture", feature = "replay"))]
 use std::collections::hash_map::Entry;
 use std::f32;
 use std::marker::PhantomData;
@@ -109,7 +113,6 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
 use std::cell::RefCell;
 use tracy_rs::register_thread_with_profiler;
@@ -628,7 +631,7 @@ pub(crate) mod desc {
         ],
     };
 
-    pub const CLIP: VertexDescriptor = VertexDescriptor {
+    pub const CLIP_RECT: VertexDescriptor = VertexDescriptor {
         vertex_attributes: &[
             VertexAttribute {
                 name: "aPosition",
@@ -637,26 +640,7 @@ pub(crate) mod desc {
             },
         ],
         instance_attributes: &[
-            VertexAttribute {
-                name: "aTransformIds",
-                count: 2,
-                kind: VertexAttributeKind::I32,
-            },
-            VertexAttribute {
-                name: "aClipDataResourceAddress",
-                count: 4,
-                kind: VertexAttributeKind::U16,
-            },
-            VertexAttribute {
-                name: "aClipLocalPos",
-                count: 2,
-                kind: VertexAttributeKind::F32,
-            },
-            VertexAttribute {
-                name: "aClipTileRect",
-                count: 4,
-                kind: VertexAttributeKind::F32,
-            },
+            // common clip attributes
             VertexAttribute {
                 name: "aClipDeviceArea",
                 count: 4,
@@ -670,6 +654,175 @@ pub(crate) mod desc {
             VertexAttribute {
                 name: "aDevicePixelScale",
                 count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aTransformIds",
+                count: 2,
+                kind: VertexAttributeKind::I32,
+            },
+            // specific clip attributes
+            VertexAttribute {
+                name: "aClipLocalPos",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipLocalRect",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipMode",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipRect_TL",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipRadii_TL",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipRect_TR",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipRadii_TR",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipRect_BL",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipRadii_BL",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipRect_BR",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipRadii_BR",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+        ],
+    };
+
+    pub const CLIP_BOX_SHADOW: VertexDescriptor = VertexDescriptor {
+        vertex_attributes: &[
+            VertexAttribute {
+                name: "aPosition",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+        ],
+        instance_attributes: &[
+            // common clip attributes
+            VertexAttribute {
+                name: "aClipDeviceArea",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipOrigins",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aDevicePixelScale",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aTransformIds",
+                count: 2,
+                kind: VertexAttributeKind::I32,
+            },
+            // specific clip attributes
+            VertexAttribute {
+                name: "aClipDataResourceAddress",
+                count: 2,
+                kind: VertexAttributeKind::U16,
+            },
+            VertexAttribute {
+                name: "aClipSrcRectSize",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipMode",
+                count: 1,
+                kind: VertexAttributeKind::I32,
+            },
+            VertexAttribute {
+                name: "aStretchMode",
+                count: 2,
+                kind: VertexAttributeKind::I32,
+            },
+            VertexAttribute {
+                name: "aClipDestRect",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+        ],
+    };
+
+    pub const CLIP_IMAGE: VertexDescriptor = VertexDescriptor {
+        vertex_attributes: &[
+            VertexAttribute {
+                name: "aPosition",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+        ],
+        instance_attributes: &[
+            // common clip attributes
+            VertexAttribute {
+                name: "aClipDeviceArea",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipOrigins",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aDevicePixelScale",
+                count: 1,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aTransformIds",
+                count: 2,
+                kind: VertexAttributeKind::I32,
+            },
+            // specific clip attributes
+            VertexAttribute {
+                name: "aClipTileRect",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aClipDataResourceAddress",
+                count: 2,
+                kind: VertexAttributeKind::U16,
+            },
+            VertexAttribute {
+                name: "aClipLocalRect",
+                count: 4,
                 kind: VertexAttributeKind::F32,
             },
         ],
@@ -918,7 +1071,9 @@ pub(crate) mod desc {
 pub(crate) enum VertexArrayKind {
     Primitive,
     Blur,
-    Clip,
+    ClipImage,
+    ClipRect,
+    ClipBoxShadow,
     VectorStencil,
     VectorCover,
     Border,
@@ -1848,11 +2003,6 @@ impl<T> VertexDataTexture<T> {
     }
 }
 
-struct FrameOutput {
-    last_access: GpuFrameId,
-    fbo_id: FBOId,
-}
-
 #[derive(PartialEq)]
 struct TargetSelector {
     size: DeviceIntSize,
@@ -1907,7 +2057,9 @@ impl LazyInitializedDebugRenderer {
 pub struct RendererVAOs {
     prim_vao: VAO,
     blur_vao: VAO,
-    clip_vao: VAO,
+    clip_rect_vao: VAO,
+    clip_box_shadow_vao: VAO,
+    clip_image_vao: VAO,
     border_vao: VAO,
     line_vao: VAO,
     scale_vao: VAO,
@@ -2090,17 +2242,9 @@ pub struct Renderer {
     /// application to provide external buffers for image data.
     external_image_handler: Option<Box<dyn ExternalImageHandler>>,
 
-    /// Optional trait object that allows the client
-    /// application to provide a texture handle to
-    /// copy the WR output to.
-    output_image_handler: Option<Box<dyn OutputImageHandler>>,
-
     /// Optional function pointers for measuring memory used by a given
     /// heap-allocated pointer.
     size_of_ops: Option<MallocSizeOfOps>,
-
-    // Currently allocated FBOs for output frames.
-    output_targets: FastHashMap<u32, FrameOutput>,
 
     pub renderer_errors: Vec<RendererError>,
 
@@ -2229,8 +2373,8 @@ impl Renderer {
 
         HAS_BEEN_INITIALIZED.store(true, Ordering::SeqCst);
 
-        let (api_tx, api_rx) = channel();
-        let (result_tx, result_rx) = channel();
+        let (api_tx, api_rx) = unbounded_channel();
+        let (result_tx, result_rx) = unbounded_channel();
         let gl_type = gl.get_type();
 
         let debug_server = new_debug_server(options.start_debug_server, api_tx.clone());
@@ -2393,7 +2537,9 @@ impl Renderer {
         device.update_vao_main_vertices(&prim_vao, &quad_vertices, VertexUsageHint::Static);
 
         let blur_vao = device.create_vao_with_new_instances(&desc::BLUR, &prim_vao);
-        let clip_vao = device.create_vao_with_new_instances(&desc::CLIP, &prim_vao);
+        let clip_rect_vao = device.create_vao_with_new_instances(&desc::CLIP_RECT, &prim_vao);
+        let clip_box_shadow_vao = device.create_vao_with_new_instances(&desc::CLIP_BOX_SHADOW, &prim_vao);
+        let clip_image_vao = device.create_vao_with_new_instances(&desc::CLIP_IMAGE, &prim_vao);
         let border_vao = device.create_vao_with_new_instances(&desc::BORDER, &prim_vao);
         let scale_vao = device.create_vao_with_new_instances(&desc::SCALE, &prim_vao);
         let line_vao = device.create_vao_with_new_instances(&desc::LINE, &prim_vao);
@@ -2550,7 +2696,7 @@ impl Renderer {
         })?;
 
         let low_priority_scene_tx = if options.support_low_priority_transactions {
-            let (low_priority_scene_tx, low_priority_scene_rx) = channel();
+            let (low_priority_scene_tx, low_priority_scene_rx) = unbounded_channel();
             let lp_builder = LowPrioritySceneBuilderThread {
                 rx: low_priority_scene_rx,
                 tx: scene_tx.clone(),
@@ -2690,7 +2836,9 @@ impl Renderer {
             vaos: RendererVAOs {
                 prim_vao,
                 blur_vao,
-                clip_vao,
+                clip_rect_vao,
+                clip_box_shadow_vao,
+                clip_image_vao,
                 border_vao,
                 scale_vao,
                 gradient_vao,
@@ -2705,9 +2853,7 @@ impl Renderer {
             pipeline_info: PipelineInfo::default(),
             dither_matrix_texture,
             external_image_handler: None,
-            output_image_handler: None,
             size_of_ops: make_size_of_ops(),
-            output_targets: FastHashMap::default(),
             cpu_profiles: VecDeque::new(),
             gpu_profiles: VecDeque::new(),
             gpu_cache_texture,
@@ -3232,11 +3378,6 @@ impl Renderer {
         self.external_image_handler = Some(handler);
     }
 
-    /// Set a callback for handling external outputs.
-    pub fn set_output_image_handler(&mut self, handler: Box<dyn OutputImageHandler>) {
-        self.output_image_handler = Some(handler);
-    }
-
     /// Retrieve (and clear) the current list of recorded frame profiles.
     pub fn get_frame_profiles(&mut self) -> (Vec<CpuProfile>, Vec<GpuProfile>) {
         let cpu_profiles = self.cpu_profiles.drain(..).collect();
@@ -3374,11 +3515,12 @@ impl Renderer {
 
                 compositor.add_surface(
                     NativeSurfaceId::DEBUG_OVERLAY,
-                    DeviceIntPoint::zero(),
+                    CompositorSurfaceTransform::identity(),
                     DeviceIntRect::new(
                         DeviceIntPoint::zero(),
                         self.debug_overlay_state.current_size.unwrap(),
                     ),
+                    ImageRendering::Auto,
                 );
             }
         }
@@ -3518,7 +3660,6 @@ impl Renderer {
                 self.draw_frame(
                     frame,
                     device_size,
-                    cpu_frame_id,
                     &mut results,
                     doc_index == 0,
                 );
@@ -3608,11 +3749,15 @@ impl Renderer {
             self.cpu_profiles.push_back(cpu_profile);
         }
 
-        if self.debug_flags.contains(DebugFlags::PROFILER_DBG) {
+        if self.debug_flags.intersects(DebugFlags::PROFILER_DBG | DebugFlags::PROFILER_CAPTURE) {
             if let Some(device_size) = device_size {
                 //TODO: take device/pixel ratio into equation?
                 if let Some(debug_renderer) = self.debug.get_mut(&mut self.device) {
-                    let style = if self.debug_flags.contains(DebugFlags::SMART_PROFILER) {
+                    let style = if !self.debug_flags.contains(DebugFlags::PROFILER_DBG) {
+                        // Don't draw the profiler, but collect samples for captures
+                        assert!(self.debug_flags.contains(DebugFlags::PROFILER_CAPTURE));
+                        ProfileStyle::NoDraw
+                    } else if self.debug_flags.contains(DebugFlags::SMART_PROFILER) {
                         ProfileStyle::Smart
                     } else if self.debug_flags.contains(DebugFlags::COMPACT_PROFILER) {
                         ProfileStyle::Compact
@@ -4722,7 +4867,6 @@ impl Renderer {
                         uv_rect.uv0.y = uv_rect.uv1.y;
                         uv_rect.uv1.y = y;
                     }
-
                     let instance = CompositeInstance::new_rgb(
                         surface_rect.to_f32(),
                         surface_rect.to_f32(),
@@ -5118,7 +5262,6 @@ impl Renderer {
         clear_depth: Option<f32>,
         render_tasks: &RenderTaskGraph,
         projection: &default::Transform3D<f32>,
-        frame_id: GpuFrameId,
         stats: &mut RendererStats,
     ) {
         profile_scope!("draw_color_target");
@@ -5250,49 +5393,6 @@ impl Renderer {
                 stats,
             );
         }
-
-        // For any registered image outputs on this render target,
-        // get the texture from caller and blit it.
-        for output in &target.outputs {
-            let handler = self.output_image_handler
-                .as_mut()
-                .expect("Found output image, but no handler set!");
-            if let Some((texture_id, output_size)) = handler.lock(output.pipeline_id) {
-                let fbo_id = match self.output_targets.entry(texture_id) {
-                    Entry::Vacant(entry) => {
-                        let fbo_id = self.device.create_fbo_for_external_texture(texture_id);
-                        entry.insert(FrameOutput {
-                            fbo_id,
-                            last_access: frame_id,
-                        });
-                        fbo_id
-                    }
-                    Entry::Occupied(mut entry) => {
-                        let target = entry.get_mut();
-                        target.last_access = frame_id;
-                        target.fbo_id
-                    }
-                };
-                let (src_rect, _) = render_tasks[output.task_id].get_target_rect();
-                if !self.device.surface_origin_is_top_left() {
-                    self.device.blit_render_target_invert_y(
-                        draw_target.into(),
-                        draw_target.to_framebuffer_rect(src_rect.translate(-content_origin.to_vector())),
-                        DrawTarget::External { fbo: fbo_id, size: output_size },
-                        output_size.into(),
-                    );
-                } else {
-                    self.device.blit_render_target(
-                        draw_target.into(),
-                        draw_target.to_framebuffer_rect(src_rect.translate(-content_origin.to_vector())),
-                        DrawTarget::External { fbo: fbo_id, size: output_size },
-                        output_size.into(),
-                        TextureFilter::Linear,
-                    );
-                }
-                handler.unlock(output.pipeline_id);
-            }
-        }
     }
 
     /// Draw all the instances in a clip batcher list to the current target.
@@ -5316,7 +5416,7 @@ impl Renderer {
             );
             self.draw_instanced_batch(
                 &list.slow_rectangles,
-                VertexArrayKind::Clip,
+                VertexArrayKind::ClipRect,
                 &BatchTextures::no_texture(),
                 stats,
             );
@@ -5330,7 +5430,7 @@ impl Renderer {
             );
             self.draw_instanced_batch(
                 &list.fast_rectangles,
-                VertexArrayKind::Clip,
+                VertexArrayKind::ClipRect,
                 &BatchTextures::no_texture(),
                 stats,
             );
@@ -5349,7 +5449,7 @@ impl Renderer {
                 .bind(&mut self.device, projection, &mut self.renderer_errors);
             self.draw_instanced_batch(
                 items,
-                VertexArrayKind::Clip,
+                VertexArrayKind::ClipBoxShadow,
                 &textures,
                 stats,
             );
@@ -5369,7 +5469,7 @@ impl Renderer {
                 .bind(&mut self.device, projection, &mut self.renderer_errors);
             self.draw_instanced_batch(
                 items,
-                VertexArrayKind::Clip,
+                VertexArrayKind::ClipImage,
                 &textures,
                 stats,
             );
@@ -5891,9 +5991,17 @@ impl Renderer {
                             let _inserted = self.allocated_native_surfaces.insert(id);
                             debug_assert!(_inserted, "bug: creating existing surface");
                             compositor.create_surface(
+                                    id,
+                                    virtual_offset,
+                                    tile_size,
+                                    is_opaque,
+                            );
+                        }
+                        NativeSurfaceOperationDetails::CreateExternalSurface { id, is_opaque } => {
+                            let _inserted = self.allocated_native_surfaces.insert(id);
+                            debug_assert!(_inserted, "bug: creating existing surface");
+                            compositor.create_external_surface(
                                 id,
-                                virtual_offset,
-                                tile_size,
                                 is_opaque,
                             );
                         }
@@ -5907,6 +6015,9 @@ impl Renderer {
                         }
                         NativeSurfaceOperationDetails::DestroyTile { id } => {
                             compositor.destroy_tile(id);
+                        }
+                        NativeSurfaceOperationDetails::AttachExternalImage { id, external_image } => {
+                            compositor.attach_external_image(id, external_image);
                         }
                     }
                 }
@@ -5923,7 +6034,6 @@ impl Renderer {
         &mut self,
         frame: &mut Frame,
         device_size: Option<DeviceIntSize>,
-        frame_id: GpuFrameId,
         results: &mut RenderResults,
         clear_framebuffer: bool,
     ) {
@@ -6088,7 +6198,6 @@ impl Renderer {
                                 None,
                                 &frame.render_tasks,
                                 &projection,
-                                frame_id,
                                 &mut results.stats,
                             );
                         }
@@ -6252,7 +6361,6 @@ impl Renderer {
                             clear_depth,
                             &frame.render_tasks,
                             &projection,
-                            frame_id,
                             &mut results.stats,
                         );
                     }
@@ -6283,16 +6391,6 @@ impl Renderer {
             self.draw_zoom_debug(device_size);
         }
         self.draw_epoch_debug();
-
-        // Garbage collect any frame outputs that weren't used this frame.
-        let device = &mut self.device;
-        self.output_targets
-            .retain(|_, target| if target.last_access != frame_id {
-                device.delete_fbo(target.fbo_id);
-                false
-            } else {
-                true
-            });
 
         frame.has_been_rendered = true;
     }
@@ -6802,7 +6900,9 @@ impl Renderer {
         self.texture_resolver.deinit(&mut self.device);
         self.device.delete_vao(self.vaos.prim_vao);
         self.device.delete_vao(self.vaos.resolve_vao);
-        self.device.delete_vao(self.vaos.clip_vao);
+        self.device.delete_vao(self.vaos.clip_rect_vao);
+        self.device.delete_vao(self.vaos.clip_box_shadow_vao);
+        self.device.delete_vao(self.vaos.clip_image_vao);
         self.device.delete_vao(self.vaos.gradient_vao);
         self.device.delete_vao(self.vaos.blur_vao);
         self.device.delete_vao(self.vaos.line_vao);
@@ -6814,9 +6914,6 @@ impl Renderer {
 
         self.debug.deinit(&mut self.device);
 
-        for (_, target) in self.output_targets {
-            self.device.delete_fbo(target.fbo_id);
-        }
         if let Ok(shaders) = Rc::try_unwrap(self.shaders) {
             shaders.into_inner().deinit(&mut self.device);
         }
@@ -7279,19 +7376,6 @@ impl ExternalImageHandler for DummyExternalImageHandler {
     fn unlock(&mut self, _key: ExternalImageId, _channel_index: u8) {}
 }
 
-#[cfg(feature = "replay")]
-struct VoidHandler;
-
-#[cfg(feature = "replay")]
-impl OutputImageHandler for VoidHandler {
-    fn lock(&mut self, _: PipelineId) -> Option<(u32, FramebufferIntSize)> {
-        None
-    }
-    fn unlock(&mut self, _: PipelineId) {
-        unreachable!()
-    }
-}
-
 #[derive(Default)]
 pub struct PipelineInfo {
     pub epochs: FastHashMap<(PipelineId, DocumentId), Epoch>,
@@ -7515,6 +7599,15 @@ impl Renderer {
 
         self.device.reset_read_target();
         self.device.end_frame();
+
+        let mut stats_file = fs::File::create(config.root.join("profiler-stats.txt"))
+            .expect(&format!("Unable to create profiler-stats.txt"));
+        if self.debug_flags.intersects(DebugFlags::PROFILER_DBG | DebugFlags::PROFILER_CAPTURE) {
+            self.profiler.dump_stats(&mut stats_file).unwrap();
+        } else {
+            writeln!(stats_file, "Turn on PROFILER_DBG or PROFILER_CAPTURE to get stats here!").unwrap();
+        }
+
         info!("done.");
     }
 
@@ -7669,7 +7762,6 @@ impl Renderer {
             self.device.end_frame();
         }
 
-        self.output_image_handler = Some(Box::new(VoidHandler) as Box<_>);
         self.external_image_handler = Some(Box::new(image_handler) as Box<_>);
         info!("done.");
     }
@@ -7678,7 +7770,9 @@ impl Renderer {
 fn get_vao(vertex_array_kind: VertexArrayKind, vaos: &RendererVAOs) -> &VAO {
     match vertex_array_kind {
         VertexArrayKind::Primitive => &vaos.prim_vao,
-        VertexArrayKind::Clip => &vaos.clip_vao,
+        VertexArrayKind::ClipImage => &vaos.clip_image_vao,
+        VertexArrayKind::ClipRect => &vaos.clip_rect_vao,
+        VertexArrayKind::ClipBoxShadow => &vaos.clip_box_shadow_vao,
         VertexArrayKind::Blur => &vaos.blur_vao,
         VertexArrayKind::VectorStencil | VertexArrayKind::VectorCover => unreachable!(),
         VertexArrayKind::Border => &vaos.border_vao,
@@ -7724,8 +7818,9 @@ impl CompositeState {
         for surface in &self.descriptor.surfaces {
             compositor.add_surface(
                 surface.surface_id.expect("bug: no native surface allocated"),
-                surface.offset.to_i32(),
+                surface.transform,
                 surface.clip_rect.to_i32(),
+                surface.image_rendering,
             );
         }
     }

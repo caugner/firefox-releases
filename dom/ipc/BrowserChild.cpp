@@ -122,6 +122,7 @@
 #include "nsPrintfCString.h"
 #include "nsQueryActor.h"
 #include "nsQueryObject.h"
+#include "nsRefreshDriver.h"
 #include "nsSandboxFlags.h"
 #include "nsString.h"
 #include "nsTHashtable.h"
@@ -158,8 +159,6 @@ using mozilla::layers::GeckoContentController;
 NS_IMPL_ISUPPORTS(ContentListener, nsIDOMEventListener)
 
 static const char BEFORE_FIRST_PAINT[] = "before-first-paint";
-
-nsTHashtable<nsPtrHashKey<BrowserChild>>* BrowserChild::sVisibleTabs;
 
 typedef nsDataHashtable<nsUint64HashKey, BrowserChild*> BrowserChildMap;
 static BrowserChildMap* sBrowserChildren;
@@ -525,8 +524,7 @@ nsresult BrowserChild::Init(mozIDOMWindowProxy* aParent,
   // frames.
   if (mIsTopLevel) {
     nsContentUtils::SetScrollbarsVisibility(
-        window->GetDocShell(),
-        !!(mChromeFlags & nsIWebBrowserChrome::CHROME_SCROLLBARS));
+        docShell, !!(mChromeFlags & nsIWebBrowserChrome::CHROME_SCROLLBARS));
   }
 
   nsWeakPtr weakPtrThis = do_GetWeakReference(
@@ -549,6 +547,11 @@ nsresult BrowserChild::Init(mozIDOMWindowProxy* aParent,
   rv = mSessionStoreListener->Init();
   NS_ENSURE_SUCCESS(rv, rv);
 #endif
+
+  // We've all set up, make sure our visibility state is consistent. This is
+  // important for OOP iframes, which start off as hidden.
+  UpdateVisibility();
+
   return NS_OK;
 }
 
@@ -562,7 +565,8 @@ void BrowserChild::NotifyTabContextUpdated() {
 
   // Set SANDBOXED_AUXILIARY_NAVIGATION flag if this is a receiver page.
   if (!PresentationURL().IsEmpty()) {
-    mBrowsingContext->SetSandboxFlags(SANDBOXED_AUXILIARY_NAVIGATION);
+    // Return value of setting synced field should be checked. See bug 1656492.
+    Unused << mBrowsingContext->SetSandboxFlags(SANDBOXED_AUXILIARY_NAVIGATION);
   }
 }
 
@@ -832,7 +836,8 @@ BrowserChild::ProvideWindow(nsIOpenWindowInfo* aOpenWindowInfo,
   RefPtr<BrowsingContext> parent = aOpenWindowInfo->GetParent();
 
   int32_t openLocation = nsWindowWatcher::GetWindowOpenLocation(
-      parent->GetDOMWindow(), aChromeFlags, aCalledFromJS, aWidthSpecified);
+      parent->GetDOMWindow(), aChromeFlags, aCalledFromJS, aWidthSpecified,
+      aOpenWindowInfo->GetIsForPrinting());
 
   // If it turns out we're opening in the current browser, just hand over the
   // current browser's docshell.
@@ -941,13 +946,6 @@ void BrowserChild::ActorDestroy(ActorDestroyReason why) {
 
 BrowserChild::~BrowserChild() {
   mAnonymousGlobalScopes.Clear();
-  if (sVisibleTabs) {
-    sVisibleTabs->RemoveEntry(this);
-    if (sVisibleTabs->IsEmpty()) {
-      delete sVisibleTabs;
-      sVisibleTabs = nullptr;
-    }
-  }
 
   DestroyWindow();
 
@@ -1383,16 +1381,7 @@ void BrowserChild::ZoomToRect(const uint32_t& aPresShellId,
 
 mozilla::ipc::IPCResult BrowserChild::RecvActivate() {
   MOZ_ASSERT(mWebBrowser);
-  // Ensure that the PresShell exists, otherwise focusing
-  // is definitely not going to work. GetPresShell should
-  // create a PresShell if one doesn't exist yet.
-  RefPtr<PresShell> presShell = GetTopLevelPresShell();
-  NS_ASSERTION(presShell, "Need a PresShell to activate!");
-  Unused << presShell;
-
-  if (presShell) {
-    mWebBrowser->FocusActivate();
-  }
+  mWebBrowser->FocusActivate();
   return IPC_OK();
 }
 
@@ -2256,18 +2245,81 @@ mozilla::ipc::IPCResult BrowserChild::RecvHandleAccessKey(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult BrowserChild::RecvPrintPreview(
+    const PrintData& aPrintData,
+    const mozilla::Maybe<uint64_t>& aSourceOuterWindowID,
+    PrintPreviewResolver&& aCallback) {
+#ifdef NS_PRINTING
+  // If we didn't succeed in passing off ownership of aCallback, then something
+  // went wrong.
+  auto sendCallbackError = MakeScopeExit([&] {
+    if (aCallback) {
+      aCallback(PrintPreviewResultInfo(0, 0, false));  // signal error
+    }
+  });
+
+  RefPtr<nsGlobalWindowOuter> sourceWindow;
+  if (aSourceOuterWindowID) {
+    sourceWindow =
+        nsGlobalWindowOuter::GetOuterWindowWithId(aSourceOuterWindowID.value());
+    if (NS_WARN_IF(!sourceWindow)) {
+      return IPC_OK();
+    }
+  } else {
+    nsCOMPtr<nsPIDOMWindowOuter> ourWindow = do_GetInterface(WebNavigation());
+    if (NS_WARN_IF(!ourWindow)) {
+      return IPC_OK();
+    }
+    sourceWindow = nsGlobalWindowOuter::Cast(ourWindow);
+  }
+
+  RefPtr<nsIPrintSettings> printSettings;
+  nsCOMPtr<nsIPrintSettingsService> printSettingsSvc =
+      do_GetService("@mozilla.org/gfx/printsettings-service;1");
+  if (NS_WARN_IF(!printSettingsSvc)) {
+    return IPC_OK();
+  }
+  printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
+  if (NS_WARN_IF(!printSettings)) {
+    return IPC_OK();
+  }
+  printSettingsSvc->DeserializeToPrintSettings(aPrintData, printSettings);
+
+  nsCOMPtr<nsIDocShell> docShellToCloneInto;
+  if (aSourceOuterWindowID) {
+    docShellToCloneInto = do_GetInterface(WebNavigation());
+    if (NS_WARN_IF(!docShellToCloneInto)) {
+      return IPC_OK();
+    }
+  }
+
+  sourceWindow->Print(printSettings,
+                      /* aListener = */ nullptr, docShellToCloneInto,
+                      nsGlobalWindowOuter::IsPreview::Yes,
+                      nsGlobalWindowOuter::BlockUntilDone::No,
+                      std::move(aCallback), IgnoreErrors());
+#endif
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserChild::RecvExitPrintPreview() {
+#ifdef NS_PRINTING
+  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint =
+      do_GetInterface(ToSupports(WebNavigation()));
+  if (NS_WARN_IF(!webBrowserPrint)) {
+    return IPC_OK();
+  }
+  webBrowserPrint->ExitPrintPreview();
+#endif
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult BrowserChild::RecvPrint(const uint64_t& aOuterWindowID,
                                                 const PrintData& aPrintData) {
 #ifdef NS_PRINTING
-  nsGlobalWindowOuter* outerWindow =
+  RefPtr<nsGlobalWindowOuter> outerWindow =
       nsGlobalWindowOuter::GetOuterWindowWithId(aOuterWindowID);
   if (NS_WARN_IF(!outerWindow)) {
-    return IPC_OK();
-  }
-
-  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint =
-      do_GetInterface(ToSupports(outerWindow));
-  if (NS_WARN_IF(!webBrowserPrint)) {
     return IPC_OK();
   }
 
@@ -2292,11 +2344,18 @@ mozilla::ipc::IPCResult BrowserChild::RecvPrint(const uint64_t& aOuterWindowID,
 
   printSettings->SetPrintSession(printSession);
   printSettingsSvc->DeserializeToPrintSettings(aPrintData, printSettings);
-  rv = webBrowserPrint->Print(printSettings, nullptr);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return IPC_OK();
+  {
+    IgnoredErrorResult rv;
+    outerWindow->Print(printSettings,
+                       /* aListener = */ nullptr,
+                       /* aWindowToCloneInto = */ nullptr,
+                       nsGlobalWindowOuter::IsPreview::No,
+                       nsGlobalWindowOuter::BlockUntilDone::No,
+                       /* aPrintPreviewCallback = */ nullptr, rv);
+    if (NS_WARN_IF(rv.Failed())) {
+      return IPC_OK();
+    }
   }
-
 #endif
   return IPC_OK();
 }
@@ -2777,11 +2836,6 @@ void BrowserChild::MakeVisible() {
     return;
   }
 
-  if (!sVisibleTabs) {
-    sVisibleTabs = new nsTHashtable<nsPtrHashKey<BrowserChild>>();
-  }
-  sVisibleTabs->PutEntry(this);
-
   if (mPuppetWidget) {
     mPuppetWidget->Show(true);
   }
@@ -2815,12 +2869,6 @@ void BrowserChild::MakeVisible() {
 }
 
 void BrowserChild::MakeHidden() {
-  if (sVisibleTabs) {
-    sVisibleTabs->RemoveEntry(this);
-    // We don't delete sVisibleTabs here when it's empty since that
-    // could cause a lot of churn. Instead, we wait until ~BrowserChild.
-  }
-
   if (!IsVisible()) {
     return;
   }
@@ -2866,9 +2914,9 @@ BrowserChild::GetMessageManager(ContentFrameMessageManager** aResult) {
 
 NS_IMETHODIMP
 BrowserChild::GetWebBrowserChrome(nsIWebBrowserChrome3** aWebBrowserChrome) {
-  nsCOMPtr<nsPIDOMWindowOuter> outer = do_GetInterface(WebNavigation());
+  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
   if (nsCOMPtr<nsIWebBrowserChrome3> chrome =
-          do_QueryActor("WebBrowserChrome", outer)) {
+          do_QueryActor("WebBrowserChrome", docShell->GetDocument())) {
     chrome.forget(aWebBrowserChrome);
   } else {
     // TODO: remove fallback
@@ -2996,6 +3044,13 @@ void BrowserChild::ClearCachedResources() {
   MOZ_ASSERT(lm);
 
   lm->ClearCachedResources();
+
+  if (nsCOMPtr<Document> document = GetTopLevelDocument()) {
+    nsPresContext* presContext = document->GetPresContext();
+    if (presContext) {
+      presContext->NotifyPaintStatusReset();
+    }
+  }
 }
 
 void BrowserChild::InvalidateLayers() {

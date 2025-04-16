@@ -1559,7 +1559,74 @@ void nsGlobalWindowInner::UpdateAutoplayPermission() {
   if (GetWindowContext()->GetAutoplayPermission() == perm) {
     return;
   }
-  GetWindowContext()->SetAutoplayPermission(perm);
+
+  // Setting autoplay permission on a discarded context has no effect.
+  Unused << GetWindowContext()->SetAutoplayPermission(perm);
+}
+
+void nsGlobalWindowInner::UpdateShortcutsPermission() {
+  if (!GetWindowContext() ||
+      !GetWindowContext()->GetBrowsingContext()->IsTop()) {
+    // We only cache the shortcuts permission on top-level WindowContexts
+    // since we always check the top-level principal for the permission.
+    return;
+  }
+
+  uint32_t perm = GetShortcutsPermission(GetPrincipal());
+
+  if (GetWindowContext()->GetShortcutsPermission() == perm) {
+    return;
+  }
+
+  // If the WindowContext is discarded this has no effect.
+  Unused << GetWindowContext()->SetShortcutsPermission(perm);
+}
+
+/* static */
+uint32_t nsGlobalWindowInner::GetShortcutsPermission(nsIPrincipal* aPrincipal) {
+  uint32_t perm = nsIPermissionManager::DENY_ACTION;
+  nsCOMPtr<nsIPermissionManager> permMgr =
+      mozilla::services::GetPermissionManager();
+  if (aPrincipal && permMgr) {
+    permMgr->TestExactPermissionFromPrincipal(aPrincipal, "shortcuts"_ns,
+                                              &perm);
+  }
+  return perm;
+}
+
+void nsGlobalWindowInner::UpdatePopupPermission() {
+  if (!GetWindowContext()) {
+    return;
+  }
+
+  uint32_t perm = PopupBlocker::GetPopupPermission(GetPrincipal());
+  if (GetWindowContext()->GetPopupPermission() == perm) {
+    return;
+  }
+
+  // If the WindowContext is discarded this has no effect.
+  Unused << GetWindowContext()->SetPopupPermission(perm);
+}
+
+void nsGlobalWindowInner::UpdatePermissions() {
+  if (!GetWindowContext()) {
+    return;
+  }
+
+  nsCOMPtr<nsIPrincipal> principal = GetPrincipal();
+  RefPtr<WindowContext> windowContext = GetWindowContext();
+
+  WindowContext::Transaction txn;
+  txn.SetAutoplayPermission(
+      AutoplayPolicy::GetSiteAutoplayPermission(principal));
+  txn.SetPopupPermission(PopupBlocker::GetPopupPermission(principal));
+
+  if (windowContext->IsTop()) {
+    txn.SetShortcutsPermission(GetShortcutsPermission(principal));
+  }
+
+  // Setting permissions on a discarded WindowContext has no effect
+  Unused << txn.Commit(windowContext);
 }
 
 void nsGlobalWindowInner::InitDocumentDependentState(JSContext* aCx) {
@@ -1586,8 +1653,11 @@ void nsGlobalWindowInner::InitDocumentDependentState(JSContext* aCx) {
   if (!mWindowGlobalChild) {
     mWindowGlobalChild = WindowGlobalChild::Create(this);
   }
+  MOZ_ASSERT(!GetWindowContext()->HasBeenUserGestureActivated(),
+             "WindowContext should always not have user gesture activation at "
+             "this point.");
 
-  UpdateAutoplayPermission();
+  UpdatePermissions();
 
   RefPtr<PermissionDelegateHandler> permDelegateHandler =
       mDoc->GetPermissionDelegateHandler();
@@ -1596,17 +1666,14 @@ void nsGlobalWindowInner::InitDocumentDependentState(JSContext* aCx) {
     permDelegateHandler->PopulateAllDelegatedPermissions();
   }
 
-  if (mWindowGlobalChild && GetBrowsingContext()) {
-    GetBrowsingContext()->NotifyResetUserGestureActivation();
-  }
-
 #if defined(MOZ_WIDGET_ANDROID)
   // When we insert the new document to the window in the top-level browsing
   // context, we should reset the status of the request which is used for the
   // previous document.
   if (mWindowGlobalChild && GetBrowsingContext() &&
       !GetBrowsingContext()->GetParent()) {
-    GetBrowsingContext()->ResetGVAutoplayRequestStatus();
+    // Return value of setting synced field should be checked. See bug 1656492.
+    Unused << GetBrowsingContext()->ResetGVAutoplayRequestStatus();
   }
 #endif
 
@@ -2593,7 +2660,8 @@ void nsGlobalWindowInner::SetActiveLoadingState(bool aIsLoading) {
       gTimeoutLog, mozilla::LogLevel::Debug,
       ("SetActiveLoadingState innerwindow %p: %d", (void*)this, aIsLoading));
   if (GetBrowsingContext()) {
-    GetBrowsingContext()->SetLoading(aIsLoading);
+    // Setting loading on a discarded context has no effect.
+    Unused << GetBrowsingContext()->SetLoading(aIsLoading);
   }
 
   if (!nsGlobalWindowInner::Cast(this)->IsChromeWindow()) {
@@ -3535,6 +3603,17 @@ void nsGlobalWindowInner::Stop(ErrorResult& aError) {
 
 void nsGlobalWindowInner::Print(ErrorResult& aError) {
   FORWARD_TO_OUTER_OR_THROW(PrintOuter, (aError), aError, );
+}
+
+Nullable<WindowProxyHolder> nsGlobalWindowInner::PrintPreview(
+    nsIPrintSettings* aSettings, nsIWebProgressListener* aListener,
+    nsIDocShell* aDocShellToCloneInto, ErrorResult& aError) {
+  FORWARD_TO_OUTER_OR_THROW(Print,
+                            (aSettings, aListener, aDocShellToCloneInto,
+                             nsGlobalWindowOuter::IsPreview::Yes,
+                             nsGlobalWindowOuter::BlockUntilDone::No,
+                             /* aPrintPreviewCallback = */ nullptr, aError),
+                            aError, nullptr);
 }
 
 void nsGlobalWindowInner::MoveTo(int32_t aXPos, int32_t aYPos,
@@ -4984,6 +5063,10 @@ nsresult nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
   if (!nsCRT::strcmp(aTopic, PERMISSION_CHANGED_TOPIC)) {
     nsCOMPtr<nsIPermission> perm(do_QueryInterface(aSubject));
     if (!perm) {
+      // A null permission indicates that the entire permission list
+      // was cleared.
+      MOZ_ASSERT(!nsCRT::strcmp(aData, u"cleared"));
+      UpdatePermissions();
       return NS_OK;
     }
 
@@ -4991,6 +5074,10 @@ nsresult nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
     perm->GetType(type);
     if (type == "autoplay-media"_ns) {
       UpdateAutoplayPermission();
+    } else if (type == "shortcuts"_ns) {
+      UpdateShortcutsPermission();
+    } else if (type == "popup"_ns) {
+      UpdatePopupPermission();
     }
 
     if (!mDoc) {

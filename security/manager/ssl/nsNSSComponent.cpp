@@ -2049,8 +2049,8 @@ nsresult nsNSSComponent::InitializeNSS() {
                            mTestBuiltInRootHash);
 #endif
     mContentSigningRootHash.Truncate();
-    Preferences::GetString("security.content.signature.root_hash",
-                           mContentSigningRootHash);
+    Preferences::GetCString("security.content.signature.root_hash",
+                            mContentSigningRootHash);
 
     mMitmCanaryIssuer.Truncate();
     Preferences::GetString("security.pki.mitm_canary_issuer",
@@ -2096,26 +2096,6 @@ nsresult nsNSSComponent::InitializeNSS() {
   }
 }
 
-NS_IMETHODIMP
-nsNSSComponent::DispatchTaskToSerialBackgroundQueue(nsIRunnable* task) {
-  if (!NS_IsMainThread()) {
-    nsCOMPtr<nsIRunnable> mainThreadRunnable(NS_NewRunnableFunction(
-        "DispatchTaskToSerialBackgroundQueue::mainThreadRunnable",
-        [self = RefPtr<nsNSSComponent>(this),
-         taskHandle = nsCOMPtr<nsIRunnable>(task)]() -> void {
-          nsresult rv = self->DispatchTaskToSerialBackgroundQueue(taskHandle);
-          Unused << NS_WARN_IF(NS_FAILED(rv));
-        }));
-    return NS_DispatchToMainThread(mainThreadRunnable.forget());
-  }
-
-  if (mBackgroundTaskQueue) {
-    return mBackgroundTaskQueue->Dispatch(task, NS_DISPATCH_EVENT_MAY_BLOCK);
-  }
-
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
 void nsNSSComponent::ShutdownNSS() {
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("nsNSSComponent::ShutdownNSS\n"));
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
@@ -2145,8 +2125,6 @@ void nsNSSComponent::ShutdownNSS() {
     mIntermediatePreloadingHealerTimer->Cancel();
     mIntermediatePreloadingHealerTimer = nullptr;
   }
-
-  mBackgroundTaskQueue = nullptr;
 
   // Release the default CertVerifier. This will cause any held NSS resources
   // to be released.
@@ -2335,14 +2313,6 @@ nsresult nsNSSComponent::Init() {
     return rv;
   }
 
-  rv = NS_CreateBackgroundTaskQueue("nsNSSComponent::mBackgroundTaskQueue",
-                                    getter_AddRefs(mBackgroundTaskQueue));
-  if (NS_FAILED(rv)) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Error,
-            ("NS_CreateBackgroundTaskQueue failed"));
-    return rv;
-  }
-
   rv = MaybeEnableIntermediatePreloadingHealer();
   if (NS_FAILED(rv)) {
     return rv;
@@ -2370,6 +2340,16 @@ nsresult nsNSSComponent::MaybeEnableIntermediatePreloadingHealer() {
     return NS_OK;
   }
 
+  if (!mIntermediatePreloadingHealerTaskQueue) {
+    nsresult rv = NS_CreateBackgroundTaskQueue(
+        "IntermediatePreloadingHealer",
+        getter_AddRefs(mIntermediatePreloadingHealerTaskQueue));
+    if (NS_FAILED(rv)) {
+      MOZ_LOG(gPIPNSSLog, LogLevel::Error,
+              ("NS_CreateBackgroundTaskQueue failed"));
+      return rv;
+    }
+  }
   uint32_t timerDelayMS = Preferences::GetUint(
       "security.intermediate_preloading_healer.timer_interval_ms",
       5 * 60 * 1000);
@@ -2377,7 +2357,7 @@ nsresult nsNSSComponent::MaybeEnableIntermediatePreloadingHealer() {
       getter_AddRefs(mIntermediatePreloadingHealerTimer),
       IntermediatePreloadingHealerCallback, nullptr, timerDelayMS,
       nsITimer::TYPE_REPEATING_SLACK_LOW_PRIORITY,
-      "IntermediatePreloadingHealer", mBackgroundTaskQueue);
+      "IntermediatePreloadingHealer", mIntermediatePreloadingHealerTaskQueue);
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Error,
             ("NS_NewTimerWithFuncCallback failed"));
@@ -2442,8 +2422,8 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
     } else if (prefName.EqualsLiteral("security.content.signature.root_hash")) {
       MutexAutoLock lock(mMutex);
       mContentSigningRootHash.Truncate();
-      Preferences::GetString("security.content.signature.root_hash",
-                             mContentSigningRootHash);
+      Preferences::GetCString("security.content.signature.root_hash",
+                              mContentSigningRootHash);
     } else if (prefName.Equals(kEnterpriseRootModePref) ||
                prefName.Equals(kFamilySafetyModePref)) {
       UnloadEnterpriseRoots();
@@ -2508,14 +2488,7 @@ nsresult nsNSSComponent::LogoutAuthenticatedPK11() {
     icos->ClearValidityOverride("all:temporary-certificates"_ns, 0);
   }
 
-  nsCOMPtr<nsIClientAuthRememberService> svc =
-      do_GetService(NS_CLIENTAUTHREMEMBERSERVICE_CONTRACTID);
-
-  if (svc) {
-    nsresult rv = svc->ClearRememberedDecisions();
-
-    Unused << NS_WARN_IF(NS_FAILED(rv));
-  }
+  nsNSSComponent::ClearSSLExternalAndInternalSessionCacheNative();
 
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
   if (os) {
@@ -2573,30 +2546,28 @@ nsNSSComponent::IsCertTestBuiltInRoot(CERTCertificate* cert, bool* result) {
 }
 
 NS_IMETHODIMP
-nsNSSComponent::IsCertContentSigningRoot(CERTCertificate* cert, bool* result) {
+nsNSSComponent::IsCertContentSigningRoot(const nsTArray<uint8_t>& cert,
+                                         bool* result) {
   NS_ENSURE_ARG_POINTER(result);
   *result = false;
 
-  RefPtr<nsNSSCertificate> nsc = nsNSSCertificate::Create(cert);
-  if (!nsc) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("creating nsNSSCertificate failed"));
-    return NS_ERROR_FAILURE;
+  if (cert.Length() > std::numeric_limits<uint32_t>::max()) {
+    return NS_ERROR_INVALID_ARG;
   }
-  nsAutoString certHash;
-  nsresult rv = nsc->GetSha256Fingerprint(certHash);
+  Digest digest;
+  nsresult rv =
+      digest.DigestBuf(SEC_OID_SHA256, cert.Elements(), cert.Length());
   if (NS_FAILED(rv)) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("getting cert fingerprint failed"));
     return rv;
+  }
+  UniquePORTString fingerprintCString(CERT_Hexify(
+      const_cast<SECItem*>(&digest.get()), true /* use colon delimiters */));
+  if (!fingerprintCString) {
+    return NS_ERROR_FAILURE;
   }
 
   MutexAutoLock lock(mMutex);
-
-  if (mContentSigningRootHash.IsEmpty()) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("mContentSigningRootHash is empty"));
-    return NS_ERROR_FAILURE;
-  }
-
-  *result = mContentSigningRootHash.Equals(certHash);
+  *result = mContentSigningRootHash.Equals(fingerprintCString.get());
   return NS_OK;
 }
 

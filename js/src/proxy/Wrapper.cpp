@@ -8,6 +8,7 @@
 
 #include "jsexn.h"
 
+#include "js/friend/WindowProxy.h"  // js::IsWindowProxy
 #include "js/Proxy.h"
 #include "vm/ErrorObject.h"
 #include "vm/JSContext.h"
@@ -192,34 +193,6 @@ bool ForwardingProxyHandler::hasOwn(JSContext* cx, HandleObject proxy,
   assertEnteredPolicy(cx, proxy, id, GET);
   RootedObject target(cx, proxy->as<ProxyObject>().target());
   return HasOwnProperty(cx, target, id, bp);
-}
-
-bool ForwardingProxyHandler::hasPrivate(JSContext* cx, HandleObject proxy,
-                                        HandleId id, bool* bp) const {
-  // Always use hasOwn, as private fields don't traverse prototypes.
-  return hasOwn(cx, proxy, id, bp);
-};
-bool ForwardingProxyHandler::getPrivate(JSContext* cx, HandleObject proxy,
-                                        HandleValue receiver, HandleId id,
-                                        MutableHandleValue vp) const {
-  return get(cx, proxy, receiver, id, vp);
-};
-bool ForwardingProxyHandler::setPrivate(JSContext* cx, HandleObject proxy,
-                                        HandleId id, HandleValue v,
-                                        HandleValue receiver,
-                                        ObjectOpResult& result) const {
-  if (hasPrototype()) {
-    return BaseProxyHandler::set(cx, proxy, id, v, receiver, result);
-  }
-
-  return set(cx, proxy, id, v, receiver, result);
-};
-
-bool ForwardingProxyHandler::definePrivateField(JSContext* cx,
-                                                HandleObject proxy, HandleId id,
-                                                Handle<PropertyDescriptor> desc,
-                                                ObjectOpResult& result) const {
-  return defineProperty(cx, proxy, id, desc, result);
 }
 
 bool ForwardingProxyHandler::getOwnEnumerablePropertyKeys(

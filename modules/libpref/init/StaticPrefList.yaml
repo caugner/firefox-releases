@@ -249,7 +249,11 @@
 
 - name: apz.allow_zooming
   type: RelaxedAtomicBool
-  value: @IS_ANDROID@
+#if defined(ANDROID)
+  value: true
+#else
+  value: @IS_NIGHTLY_BUILD@
+#endif
   mirror: always
 
 - name: apz.allow_zooming_out
@@ -507,7 +511,7 @@
 
 - name: apz.one_touch_pinch.enabled
   type: RelaxedAtomicBool
-  value: true
+  value: @IS_ANDROID@
   mirror: always
 
 - name: apz.overscroll.enabled
@@ -1069,26 +1073,6 @@
   value: 2048
   mirror: always
 
-# If set, use DocumentChannel with nsDocShell in place of HttpChannel.
-- name: browser.tabs.documentchannel
-  type: bool
-  value: true
-  mirror: always
-
-# If set, use DocumentChannel with parent process' sDocShell
-- name: browser.tabs.documentchannel.ppdc
-  type: bool
-  value: true
-  mirror: always
-
-# If set, use DocumentChannel to initiate loads from
-# parent-process BrowsingContexts in parallel with the content
-# process.
-- name: browser.tabs.documentchannel.parent-initiated
-  type: bool
-  value: true
-  mirror: always
-
 # If set, use DocumentChannel to directly initiate loads entirely
 # from parent-process BrowsingContexts
 - name: browser.tabs.documentchannel.parent-controlled
@@ -1516,6 +1500,12 @@
 
 # Block Insecure downloads from Secure Origins
 - name: dom.block_download_insecure
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+
+# Block all downloads in iframes with the sandboxed attribute
+- name: dom.block_download_in_sandboxed_iframes
   type: bool
   value: @IS_NIGHTLY_BUILD@
   mirror: always
@@ -2023,24 +2013,6 @@
   value: 0
   mirror: always
 
-# Don't use new input types.
-- name: dom.experimental_forms
-  type: bool
-  value: false
-  mirror: always
-
-# Enable <input type=color> by default. It will be turned off for remaining
-# platforms which don't have a color picker implemented yet.
-- name: dom.forms.color
-  type: bool
-  value: true
-  mirror: always
-# Is support for input type=date and type=time enabled?
-- name: dom.forms.datetime
-  type: bool
-  value: true
-  mirror: always
-
 # Support for input type=month, type=week and type=datetime-local. By default,
 # disabled.
 - name: dom.forms.datetime.others
@@ -2528,7 +2500,7 @@
 # soon as they are fetched.
 - name: dom.script_loader.external_scripts.speculative_omt_parse.enabled
   type: bool
-  value: false
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Speculatively compile non parser inserted scripts
@@ -2552,13 +2524,6 @@
 - name: dom.securecontext.whitelist_onions
   type: bool
   value: false
-  mirror: always
-
-# This pref enables FeaturePolicy logic and the parsing of 'allow' attribute in
-# HTMLIFrameElement objects.
-- name: dom.security.featurePolicy.enabled
-  type: bool
-  value: true
   mirror: always
 
 # This pref enables Sec-Fetch-* logic and causes corresponding
@@ -3242,8 +3207,8 @@
   value: false
   mirror: always
 
-# Is support for elementInternals enabled?
-- name: dom.webcomponents.elementInternals.enabled
+# Is support for form-associated custom element enabled?
+- name: dom.webcomponents.formAssociatedCustomElement.enabled
   type: bool
   value: @IS_NIGHTLY_BUILD@
   mirror: always
@@ -3545,7 +3510,7 @@
 # between process swaps.
 - name: fission.preserve_browsing_contexts
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Store the session history in the parent process, and access it over IPC
@@ -3559,6 +3524,15 @@
 # Setting this pref creates a privacy leak, but helps greatly with
 # debugging
 - name: fission.processOriginNames
+  type: bool
+  value: false
+  mirror: always
+
+# If true, allow process-switching documents loaded by <object> and <embed>
+# elements into a remote process.
+# NOTE: This pref has no impact outside of windows with the
+# `useRemoteSubframes` flag set.
+- name: fission.remoteObjectEmbed
   type: bool
   value: false
   mirror: always
@@ -4516,12 +4490,10 @@
 
 - name: gfx.webrender.enable-low-priority-pool
   type: RelaxedAtomicBool
-#if defined(XP_WIN)
-  value: true
-#elif defined(XP_LINUX) && !defined(ANDROID)
-  value: true
-#else
+#if defined(ANDROID)
   value: false
+#else
+  value: true
 #endif
   mirror: always
 
@@ -4571,6 +4543,12 @@
 #---------------------------------------------------------------------------
 # Prefs starting with "html5."
 #---------------------------------------------------------------------------
+
+# Turn HTML:inert on or off.
+- name: html5.inert.enabled
+  type: bool
+  value: false
+  mirror: always
 
 # Toggle which thread the HTML5 parser uses for stream parsing.
 - name: html5.offmainthread
@@ -4924,6 +4902,12 @@
 
   # Experimental support for Private Fields in JavaScript.
 - name: javascript.options.experimental.private_fields
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+  # Experimental support for Private Methods in JavaScript.
+- name: javascript.options.experimental.private_methods
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -5534,6 +5518,11 @@
   value: true
   mirror: once
 
+- name: layers.iosurfaceimage.recycle-limit
+  type: RelaxedAtomicUint32
+  value: 15
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "layout."
 #---------------------------------------------------------------------------
@@ -5637,9 +5626,14 @@
 
 # One of several prefs affecting the maximum area to pre-render when animating
 # a large element on the compositor.
+# This pref enables transform (and transform like properties) animations on a
+# large element run on the compositor with rendering partial area of the
+# element on the main thread instead of rendering the whole area.  Once the
+# animation tried to composite out of the partial rendered area, the animation
+# is rendered again with the latest visible partial area.
 - name: layout.animation.prerender.partial
   type: RelaxedAtomicBool
-  value: false
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # One of several prefs affecting the maximum area to pre-render when animating
@@ -5699,10 +5693,10 @@
   mirror: always
   rust: true
 
-# Whether `min()` / `max()` / `clamp()` are enabled.
-- name: layout.css.comparison-functions.enabled
+# Whether :-moz-any is an alias of the :is selector.
+- name: layout.css.moz-any-is-is.enabled
   type: RelaxedAtomicBool
-  value: true
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
   rust: true
 
@@ -5809,6 +5803,12 @@
   type: bool
   value: @IS_NOT_RELEASE_OR_BETA@
   mirror: always
+
+- name: layout.css.cross-fade.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+  rust: true
 
 # Is support for DOMMatrix enabled?
 - name: layout.css.DOMMatrix.enabled
@@ -5949,15 +5949,9 @@
 # Whether the ::-moz-focus-outer pseudo-class is parsed.
 - name: layout.css.moz-focus-outer.enabled
   type: RelaxedAtomicBool
-  value: @IS_NOT_NIGHTLY_BUILD@
-  mirror: always
-  rust: true
-
-# Whether the offset-* logical property aliases are enabled.
-- name: layout.css.offset-logical-properties.enabled
-  type: bool
   value: false
   mirror: always
+  rust: true
 
 # Is -moz-osx-font-smoothing enabled? (Only supported in OSX builds)
 - name: layout.css.osx-font-smoothing.enabled
@@ -5992,6 +5986,13 @@
 #   false: prefers-contrast will only parse and toggle in the browser
 #   chrome and ua.
 - name: layout.css.prefers-contrast.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+  rust: true
+
+# Dictates whether or not the forced-colors media query is enabled.
+- name: layout.css.forced-colors.enabled
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -6250,6 +6251,13 @@
   value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
+# Enables the <input type=search> custom layout frame with a clear icon.
+# Still needs tests and a web-exposed way to remove that icon, see bug 1654288.
+- name: layout.forms.input-type-search.enabled
+  type: bool
+  value: false
+  mirror: always
+
 # Pref to control browser frame rate, in Hz. A value <= 0 means choose
 # automatically based on knowledge of the platform (or 60Hz if no platform-
 # specific information is available).
@@ -6399,12 +6407,6 @@
   value: true
   mirror: always
 
-- name: layout.css.shadow-parts.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
-
 # Is support for CSS text-justify property enabled?
 - name: layout.css.text-justify.enabled
   type: bool
@@ -6416,17 +6418,6 @@
   type: bool
   value: true
   mirror: always
-
-# Is support for :is() and :where() enabled?
-#
-# TODO(emilio): when removing this pref it would make sense to implement
-# :-moz-any as an alias of :is or such, or maybe its own thing to preserve its
-# specificity.
-- name: layout.css.is-where-selectors.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
 
 # Is support for the ::file-chooser-button pseudo-element enabled?
 - name: layout.css.file-chooser-button.enabled
@@ -6988,7 +6979,7 @@
 # Use DRM display for VA-API ffmpeg video decoding on Linux
 - name: media.ffmpeg.vaapi-drm-display.enabled
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 #endif # MOZ_WAYLAND
 #endif  # MOZ_FFMPEG
@@ -7256,6 +7247,8 @@
   value: true
 #elif defined(XP_MACOSX)
   value: true
+#elif defined(MOZ_WIDGET_ANDROID)
+  value: @IS_EARLY_BETA_OR_EARLIER@
 #elif defined(XP_UNIX)
   value: true
 #else
@@ -7412,6 +7405,13 @@
   value: @IS_NOT_ANDROID@
   mirror: always
 
+# Turn off any cameras (but not mics) while in the background. This is desirable
+# on mobile.
+- name: media.getusermedia.camera.background.mute.enabled
+  type: bool
+  value: @IS_ANDROID@
+  mirror: always
+
 # WebRTC prefs follow
 
 # Enables RTCPeerConnection support. Note that, when true, this pref enables
@@ -7527,7 +7527,14 @@
 
 - name: media.hardwaremediakeys.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
+  mirror: always
+
+# If this pref is on, then `media.mediacontrol.stopcontrol.timer.ms` would take
+# effect and determine the timing to stop controlling media.
+- name: media.mediacontrol.stopcontrol.timer
+  type: bool
+  value: false
   mirror: always
 
 # If media is being paused after a certain period, then we would think that
@@ -7537,6 +7544,13 @@
 - name: media.mediacontrol.stopcontrol.timer.ms
   type: RelaxedAtomicUint32
   value: 60000
+  mirror: always
+
+# If this pref is on, we would stop controlling media after it reaches to the
+# end.
+- name: media.mediacontrol.stopcontrol.aftermediaends
+  type: bool
+  value: true
   mirror: always
 
 # We would only use media control to control media which duration is longer
@@ -8212,30 +8226,18 @@
   value: false
   mirror: always
 
-# This pref controls if TRR will still be enabled when a VPN is detected on
-# the system. Detection is not foolproof, and some VPNs may not be detected.
-# See bug 1565004 comment 3 for details.
-- name: network.trr.enable_when_vpn_detected
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# This pref controls if TRR will still be enabled when a proxy is detected
-- name: network.trr.enable_when_proxy_detected
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# This pref controls if TRR will still be enabled when NRPT rules are detected
-- name: network.trr.enable_when_nrpt_detected
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
 # This pref controls whether to use TRRServiceChannel off main thread.
 - name: network.trr.fetch_off_main_thread
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+
+# If this pref is false, a task will be dispatched to remove the file from the
+# disk and the pref will be set to true.
+# It can probably be removed after a few releases.
+- name: network.trr.blocklist_cleanup_done
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 # Allow the network changed event to get sent when a network topology or setup
@@ -8307,6 +8309,19 @@
 - name: network.http.http3.recvBufferSize
   type: RelaxedAtomicInt32
   value: 1048576
+  mirror: always
+
+# When true, a http request will be upgraded to https when HTTPS RR is
+# available.
+- name: network.dns.upgrade_with_https_rr
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+  # Whether to use HTTPS RR as AltSvc
+- name: network.dns.use_https_rr_as_altsvc
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -8449,6 +8464,20 @@
 - name: print.always_print_silent
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+# Whether tab_modal print UI is enabled.
+#
+# The tab modal print dialog is currently only for early beta or nightly.
+- name: print.tab_modal.enabled
+  type: RelaxedAtomicBool
+  value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: always
+
+# Whether we allow the print progress dialog to show up.
+- name: print.show_print_progress
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -8763,6 +8792,11 @@
   value: @IS_NIGHTLY_BUILD@
   mirror: always
 
+- name: privacy.partition.bloburl_per_agent_cluster
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+
 # By default, the network state isolation is not active when there is a proxy
 # setting. This pref forces the network isolation even in these scenarios.
 - name: privacy.partition.network_state.connection_with_proxy
@@ -9018,7 +9052,7 @@
 # Block Worker/SharedWorker scripts with wrong MIME type.
 - name: security.block_Worker_with_wrong_mime
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 # Cancel outgoing requests from SystemPrincipal
@@ -9614,6 +9648,11 @@
   value: false
   mirror: always
 
+- name: webgl.enable-debug-renderer-info
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 - name: webgl.enable-draft-extensions
   type: RelaxedAtomicBool
   value: false
@@ -9736,8 +9775,8 @@
 
 # Global user preference for disabling native theme in content processes.
 - name: widget.disable-native-theme-for-content
-  type: bool
-  value: @IS_ANDROID@
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 # Preference to disable dark scrollbar implementation.
@@ -9772,13 +9811,6 @@
 #ifdef NIGHTLY_BUILD
 # Keep those pref hidden on non-nightly builds to avoid people accidentally
 # turning it on.
-
-# Use DMABuf backend for Basic compositor.
-# For testing purposes only.
-- name: widget.wayland-dmabuf-basic-compositor.enabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
 
 # Use DMABuf for content textures.
 # For testing purposes only.

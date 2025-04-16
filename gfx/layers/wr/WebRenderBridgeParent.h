@@ -170,7 +170,8 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
       const FocusTarget& aFocusTarget) override;
   mozilla::ipc::IPCResult RecvParentCommands(
       nsTArray<WebRenderParentCommand>&& commands) override;
-  mozilla::ipc::IPCResult RecvGetSnapshot(PTextureParent* aTexture) override;
+  mozilla::ipc::IPCResult RecvGetSnapshot(PTextureParent* aTexture,
+                                          bool* aNeedsYFlip) override;
 
   mozilla::ipc::IPCResult RecvSetLayersObserverEpoch(
       const LayersObserverEpoch& aChildEpoch) override;
@@ -199,6 +200,8 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
       const float& aZoom) override;
   mozilla::ipc::IPCResult RecvFlushApzRepaints() override;
   mozilla::ipc::IPCResult RecvGetAPZTestData(APZTestData* data) override;
+  mozilla::ipc::IPCResult RecvGetFrameUniformity(
+      FrameUniformityData* aOutData) override;
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -343,8 +346,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
                               bool aValidTransaction,
                               bool aObserveLayersUpdate);
 
-  bool SetDisplayList(const LayoutDeviceRect& aRect,
-                      const wr::LayoutSize& aContentSize, ipc::ByteBuf&& aDL,
+  bool SetDisplayList(const LayoutDeviceRect& aRect, ipc::ByteBuf&& aDL,
                       const wr::BuiltDisplayListDescriptor& aDLDesc,
                       const nsTArray<OpUpdateResource>& aResourceUpdates,
                       const nsTArray<RefCountedShmem>& aSmallShmems,

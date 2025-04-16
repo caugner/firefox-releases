@@ -14,12 +14,13 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.jsm",
   AddonTestUtils: "resource://testing-common/AddonTestUtils.jsm",
   ExtensionTestUtils: "resource://testing-common/ExtensionXPCShellUtils.jsm",
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
   RemoteSettings: "resource://services-settings/remote-settings.js",
   SearchUtils: "resource://gre/modules/SearchUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
   sinon: "resource://testing-common/Sinon.jsm",
 });
+
+Cu.importGlobalProperties(["fetch"]);
 
 var EXPORTED_SYMBOLS = ["SearchTestUtils"];
 
@@ -77,11 +78,6 @@ var SearchTestUtils = Object.freeze({
     });
   },
 
-  parseJsonFromStream(aInputStream) {
-    let bytes = NetUtil.readInputStream(aInputStream, aInputStream.available());
-    return JSON.parse(new TextDecoder().decode(bytes));
-  },
-
   /**
    * Load engines from test data located in particular folders.
    *
@@ -101,23 +97,31 @@ var SearchTestUtils = Object.freeze({
       .getProtocolHandler("resource")
       .QueryInterface(Ci.nsIResProtocolHandler);
     resProt.setSubstitution("search-extensions", Services.io.newURI(url));
-    if (
-      Services.prefs.getBoolPref(
-        SearchUtils.BROWSER_SEARCH_PREF + "modernConfig"
-      )
-    ) {
-      const settings = await RemoteSettings(SearchUtils.SETTINGS_KEY);
-      if (config) {
-        sinon.stub(settings, "get").returns(config);
-      } else {
-        let chan = NetUtil.newChannel({
-          uri: "resource://search-extensions/engines.json",
-          loadUsingSystemPrincipal: true,
-        });
-        let json = this.parseJsonFromStream(chan.open());
-        sinon.stub(settings, "get").returns(json.data);
-      }
+
+    const settings = await RemoteSettings(SearchUtils.SETTINGS_KEY);
+    if (config) {
+      sinon.stub(settings, "get").returns(config);
+    } else {
+      let response = await fetch(`resource://search-extensions/engines.json`);
+      let json = await response.json();
+      sinon.stub(settings, "get").returns(json.data);
     }
+  },
+
+  async useMochitestEngines(testDir) {
+    // Replace the path we load search engines from with
+    // the path to our test data.
+    let resProt = Services.io
+      .getProtocolHandler("resource")
+      .QueryInterface(Ci.nsIResProtocolHandler);
+    let originalSubstitution = resProt.getSubstitution("search-extensions");
+    resProt.setSubstitution(
+      "search-extensions",
+      Services.io.newURI("file://" + testDir.path)
+    );
+    gTestGlobals.registerCleanupFunction(() => {
+      resProt.setSubstitution("search-extensions", originalSubstitution);
+    });
   },
 
   /**
@@ -283,12 +287,12 @@ var SearchTestUtils = Object.freeze({
    *
    * @param {Fun} registerCleanupFunction
    */
-  useMockIdleService(registerCleanupFunction) {
+  useMockIdleService() {
     let fakeIdleService = MockRegistrar.register(
       "@mozilla.org/widget/useridleservice;1",
       SearchTestUtils.idleService
     );
-    registerCleanupFunction(() => {
+    gTestGlobals.registerCleanupFunction(() => {
       MockRegistrar.unregister(fakeIdleService);
     });
   },
@@ -296,10 +300,14 @@ var SearchTestUtils = Object.freeze({
   /**
    * Simulates an update to the RemoteSettings configuration.
    *
-   * @param {object} config
+   * @param {object} [config]
    *  The new configuration.
    */
   async updateRemoteSettingsConfig(config) {
+    if (!config) {
+      let settings = RemoteSettings(SearchUtils.SETTINGS_KEY);
+      config = await settings.get();
+    }
     const reloadObserved = SearchTestUtils.promiseSearchNotification(
       "engines-reloaded"
     );

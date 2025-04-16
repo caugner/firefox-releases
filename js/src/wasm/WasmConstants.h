@@ -62,12 +62,14 @@ enum class TypeCode {
   // A function pointer with any signature
   FuncRef = 0x70,  // SLEB128(-0x10)
 
-  // A reference to any host type. This is exposed to JS as 'externref' and
-  // will eventually be renamed in code as well.
-  AnyRef = 0x6f,  // SLEB128(-0x11)
+  // A reference to any host value.
+  ExternRef = 0x6f,  // SLEB128(-0x11)
 
-  // Type constructor for reference types.
-  OptRef = 0x6c,
+  // Type constructor for nullable reference types.
+  NullableRef = 0x6c,  // SLEB128(-0x14)
+
+  // Type constructor for non-nullable reference types.
+  Ref = 0x6b,  // SLEB128(-0x15)
 
   // Type constructor for function types
   Func = 0x60,  // SLEB128(-0x20)
@@ -86,6 +88,16 @@ enum class TypeCode {
 // reference typecode then the logic in that function MUST change.
 
 static constexpr TypeCode LowestPrimitiveTypeCode = TypeCode::V128;
+
+// An arbitrary reference type used as the result of
+// UnpackTypeCodeTypeAbstracted() when a value type is a reference.
+
+static constexpr TypeCode AbstractReferenceTypeCode = TypeCode::ExternRef;
+
+// A type code used to represent (ref null? typeindex) whether or not the type
+// is encoded with 'Ref' or 'NullableRef'.
+
+static constexpr TypeCode AbstractReferenceTypeIndexCode = TypeCode::Ref;
 
 enum class FuncTypeIdDescKind { None, Immediate, Global };
 
@@ -404,6 +416,16 @@ enum class GcOp {
 };
 
 // Opcode list from the SIMD proposal post-renumbering in May, 2020.
+
+// Opcodes with suffix 'Experimental' are proposed but not standardized, and are
+// compatible with those same opcodes in V8.  No opcode labeled 'Experimental'
+// will ship in a Release build where SIMD is enabled by default.
+//
+// Once SIMD ships default-on in release builds, the following flag must be set
+// to false for RELEASE_OR_BETA.
+
+static constexpr bool SimdExperimentalEnabled = true;
+
 enum class SimdOp {
   V128Load = 0x00,
   I16x8LoadS8x8 = 0x01,
@@ -591,7 +613,7 @@ enum class SimdOp {
   I32x4MinU = 0xb7,
   I32x4MaxS = 0xb8,
   I32x4MaxU = 0xb9,
-  // AvgrS = 0xba
+  I32x4DotSI16x8Experimental = 0xba,
   // AvgrU = 0xbb
   // Unused = 0xbc
   // Unused = 0xbd
@@ -621,14 +643,14 @@ enum class SimdOp {
   I64x2Mul = 0xd5,
   // MinS = 0xd6
   // MinU = 0xd7
-  // MaxS = 0xd8
-  // MaxU = 0xd9
-  // AvgrS = 0xda
-  // AvgrU = 0xdb
-  // Unused = 0xdc
-  // Unused = 0xdd
-  // Unused = 0xde
-  // Unused = 0xdf
+  F32x4CeilExperimental = 0xd8,
+  F32x4FloorExperimental = 0xd9,
+  F32x4TruncExperimental = 0xda,
+  F32x4NearestExperimental = 0xdb,
+  F64x2CeilExperimental = 0xdc,
+  F64x2FloorExperimental = 0xdd,
+  F64x2TruncExperimental = 0xde,
+  F64x2NearestExperimental = 0xdf,
   F32x4Abs = 0xe0,
   F32x4Neg = 0xe1,
   // Round = 0xe2
@@ -639,8 +661,8 @@ enum class SimdOp {
   F32x4Div = 0xe7,
   F32x4Min = 0xe8,
   F32x4Max = 0xe9,
-  // PMin = 0xea
-  // PMax = 0xeb
+  F32x4PMinExperimental = 0xea,
+  F32x4PMaxExperimental = 0xeb,
   F64x2Abs = 0xec,
   F64x2Neg = 0xed,
   // Round = 0xee
@@ -651,13 +673,15 @@ enum class SimdOp {
   F64x2Div = 0xf3,
   F64x2Min = 0xf4,
   F64x2Max = 0xf5,
-  // PMin = 0xf6
-  // PMax = 0xf7
+  F64x2PMinExperimental = 0xf6,
+  F64x2PMaxExperimental = 0xf7,
   I32x4TruncSSatF32x4 = 0xf8,
   I32x4TruncUSatF32x4 = 0xf9,
   F32x4ConvertSI32x4 = 0xfa,
   F32x4ConvertUI32x4 = 0xfb,
-  // Unused = 0xfc and up
+  V128Load32ZeroExperimental = 0xfc,
+  V128Load64ZeroExperimental = 0xfd,
+  // Unused = 0xfe and up
 
   Limit
 };

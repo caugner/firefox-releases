@@ -455,12 +455,6 @@ struct nsExtraMimeTypeEntry {
   const char* mDescription;
 };
 
-#ifdef XP_MACOSX
-#  define MAC_TYPE(x) x
-#else
-#  define MAC_TYPE(x) 0
-#endif
-
 /**
  * This table lists all of the 'extra' content types that we can deduce from
  * particular file extensions.  These entries also ensure that we provide a good
@@ -493,7 +487,7 @@ static const nsExtraMimeTypeEntry extraMimeEntries[] = {
     {IMAGE_BMP, "bmp", "BMP Image"},
     {IMAGE_GIF, "gif", "GIF Image"},
     {IMAGE_ICO, "ico,cur", "ICO Image"},
-    {IMAGE_JPEG, "jpeg,jpg,jfif,pjpeg,pjp", "JPEG Image"},
+    {IMAGE_JPEG, "jpg,jpeg,jfif,pjpeg,pjp", "JPEG Image"},
     {IMAGE_PNG, "png", "PNG Image"},
     {IMAGE_APNG, "apng", "APNG Image"},
     {IMAGE_TIFF, "tiff,tif", "TIFF Image"},
@@ -529,10 +523,13 @@ static const nsExtraMimeTypeEntry extraMimeEntries[] = {
     {AUDIO_WAV, "wav", "Waveform Audio"},
     {VIDEO_3GPP, "3gpp,3gp", "3GPP Video"},
     {VIDEO_3GPP2, "3g2", "3GPP2 Video"},
+    {AUDIO_AAC, "aac", "AAC Audio"},
+    {AUDIO_FLAC, "flac", "FLAC Audio"},
     {AUDIO_MIDI, "mid", "Standard MIDI Audio"},
     {APPLICATION_WASM, "wasm", "WebAssembly Module"}};
 
-#undef MAC_TYPE
+static const nsDefaultMimeTypeEntry sForbiddenPrimaryExtensions[] = {
+    {IMAGE_JPEG, "jfif"}};
 
 /**
  * File extensions for which decoding should be disabled.
@@ -544,6 +541,16 @@ static const nsDefaultMimeTypeEntry nonDecodableExtensions[] = {
     {APPLICATION_ZIP, "zip"},
     {APPLICATION_COMPRESS, "z"},
     {APPLICATION_GZIP, "svgz"}};
+
+/**
+ * Primary extensions of types whose descriptions should be overwritten.
+ * This extension is concatenated with "ExtHandlerDescription" to look up the
+ * description in unknownContentType.properties.
+ * NOTE: These MUST be lower-case and ASCII.
+ */
+static const char* descriptionOverwriteExtensions[] = {
+    "avif", "pdf", "svg", "webp", "xml",
+};
 
 static StaticRefPtr<nsExternalHelperAppService> sExtHelperAppSvcSingleton;
 
@@ -669,7 +676,7 @@ NS_IMETHODIMP nsExternalHelperAppService::CreateListener(
     const nsACString& aMimeContentType, nsIRequest* aRequest,
     BrowsingContext* aContentContext, bool aForceSave,
     nsIInterfaceRequestor* aWindowContext,
-    nsExternalAppHandler** aStreamListener) {
+    nsIStreamListener** aStreamListener) {
   MOZ_ASSERT(!XRE_IsContentProcess());
 
   nsAutoString fileName;
@@ -818,10 +825,8 @@ NS_IMETHODIMP nsExternalHelperAppService::DoContent(
                                          aStreamListener);
   }
 
-  RefPtr<nsExternalAppHandler> handler;
   nsresult rv = CreateListener(aMimeContentType, aRequest, bc, aForceSave,
-                               aWindowContext, getter_AddRefs(handler));
-  handler.forget(aStreamListener);
+                               aWindowContext, aStreamListener);
   return rv;
 }
 
@@ -1187,6 +1192,7 @@ NS_INTERFACE_MAP_BEGIN(nsExternalAppHandler)
   NS_INTERFACE_MAP_ENTRY(nsICancelable)
   NS_INTERFACE_MAP_ENTRY(nsIBackgroundFileSaverObserver)
   NS_INTERFACE_MAP_ENTRY(nsINamed)
+  NS_INTERFACE_MAP_ENTRY_CONCRETE(nsExternalAppHandler)
 NS_INTERFACE_MAP_END
 
 nsExternalAppHandler::nsExternalAppHandler(
@@ -2573,28 +2579,6 @@ NS_IMETHODIMP nsExternalHelperAppService::GetFromTypeAndExtension(
     found = found || NS_SUCCEEDED(rv);
   }
 
-  // Next, overwrite with generic description if the extension is PDF
-  // since the file format is supported by Firefox and we don't want
-  // other brands positioning themselves as the sole viewer for a system.
-  if (aFileExt.LowerCaseEqualsASCII("pdf") ||
-      aFileExt.LowerCaseEqualsASCII(".pdf")) {
-    nsCOMPtr<nsIStringBundleService> bundleService =
-        do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsCOMPtr<nsIStringBundle> unknownContentTypeBundle;
-    rv = bundleService->CreateBundle(
-        "chrome://mozapps/locale/downloads/unknownContentType.properties",
-        getter_AddRefs(unknownContentTypeBundle));
-    if (NS_SUCCEEDED(rv)) {
-      nsAutoString pdfHandlerDescription;
-      rv = unknownContentTypeBundle->GetStringFromName("pdfHandlerDescription",
-                                                       pdfHandlerDescription);
-      if (NS_SUCCEEDED(rv)) {
-        (*_retval)->SetDescription(pdfHandlerDescription);
-      }
-    }
-  }
-
   // Now, let's see if we can find something in our datastore.
   // This will not overwrite the OS information that interests us
   // (i.e. default application, default app. description)
@@ -2650,6 +2634,17 @@ NS_IMETHODIMP nsExternalHelperAppService::GetFromTypeAndExtension(
     LOG(("Falling back to 'File' file description\n"));
   }
 
+  // Sometimes, OSes give us bad data. We have a set of forbidden extensions
+  // for some MIME types. If the primary extension is forbidden,
+  // overwrite it with a known-good one. See bug 1571247 for context.
+  nsAutoCString primaryExtension;
+  (*_retval)->GetPrimaryExtension(primaryExtension);
+  if (!primaryExtension.EqualsIgnoreCase(PromiseFlatCString(aFileExt).get())) {
+    if (MaybeReplacePrimaryExtension(primaryExtension, *_retval)) {
+      (*_retval)->GetPrimaryExtension(primaryExtension);
+    }
+  }
+
   // Finally, check if we got a file extension and if yes, if it is an
   // extension on the mimeinfo, in which case we want it to be the primary one
   if (!aFileExt.IsEmpty()) {
@@ -2657,17 +2652,49 @@ NS_IMETHODIMP nsExternalHelperAppService::GetFromTypeAndExtension(
     (*_retval)->ExtensionExists(aFileExt, &matches);
     LOG(("Extension '%s' matches mime info: %i\n",
          PromiseFlatCString(aFileExt).get(), matches));
-    if (matches) (*_retval)->SetPrimaryExtension(aFileExt);
+    if (matches) {
+      nsAutoCString fileExt;
+      ToLowerCase(aFileExt, fileExt);
+      (*_retval)->SetPrimaryExtension(fileExt);
+      primaryExtension = fileExt;
+    }
+  }
+
+  // Overwrite with a generic description if the primary extension for the
+  // type is in our list; these are file formats supported by Firefox and
+  // we don't want other brands positioning themselves as the sole viewer
+  // for a system.
+  if (!primaryExtension.IsEmpty()) {
+    for (const char* ext : descriptionOverwriteExtensions) {
+      if (primaryExtension.Equals(ext)) {
+        nsCOMPtr<nsIStringBundleService> bundleService =
+            do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
+        NS_ENSURE_SUCCESS(rv, rv);
+        nsCOMPtr<nsIStringBundle> unknownContentTypeBundle;
+        rv = bundleService->CreateBundle(
+            "chrome://mozapps/locale/downloads/unknownContentType.properties",
+            getter_AddRefs(unknownContentTypeBundle));
+        if (NS_SUCCEEDED(rv)) {
+          nsAutoCString stringName(ext);
+          stringName.AppendLiteral("ExtHandlerDescription");
+          nsAutoString handlerDescription;
+          rv = unknownContentTypeBundle->GetStringFromName(stringName.get(),
+                                                           handlerDescription);
+          if (NS_SUCCEEDED(rv)) {
+            (*_retval)->SetDescription(handlerDescription);
+          }
+        }
+        break;
+      }
+    }
   }
 
   if (LOG_ENABLED()) {
     nsAutoCString type;
     (*_retval)->GetMIMEType(type);
 
-    nsAutoCString ext;
-    (*_retval)->GetPrimaryExtension(ext);
     LOG(("MIME Info Summary: Type '%s', Primary Ext '%s'\n", type.get(),
-         ext.get()));
+         primaryExtension.get()));
   }
 
   return NS_OK;
@@ -2872,6 +2899,26 @@ nsresult nsExternalHelperAppService::FillMIMEInfoForExtensionFromExtras(
   bool found = GetTypeFromExtras(aExtension, type);
   if (!found) return NS_ERROR_NOT_AVAILABLE;
   return FillMIMEInfoForMimeTypeFromExtras(type, true, aMIMEInfo);
+}
+
+bool nsExternalHelperAppService::MaybeReplacePrimaryExtension(
+    const nsACString& aPrimaryExtension, nsIMIMEInfo* aMIMEInfo) {
+  for (const auto& entry : sForbiddenPrimaryExtensions) {
+    if (aPrimaryExtension.LowerCaseEqualsASCII(entry.mFileExtension)) {
+      nsDependentCString mime(entry.mMimeType);
+      for (const auto& extraEntry : extraMimeEntries) {
+        if (mime.LowerCaseEqualsASCII(extraEntry.mMimeType)) {
+          nsDependentCString goodExts(extraEntry.mFileExtensions);
+          int32_t commaPos = goodExts.FindChar(',');
+          commaPos = commaPos == kNotFound ? goodExts.Length() : commaPos;
+          auto goodExt = Substring(goodExts, 0, commaPos);
+          aMIMEInfo->SetPrimaryExtension(goodExt);
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 bool nsExternalHelperAppService::GetTypeFromExtras(const nsACString& aExtension,

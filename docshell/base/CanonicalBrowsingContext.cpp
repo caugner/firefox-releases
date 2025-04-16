@@ -158,6 +158,16 @@ void CanonicalBrowsingContext::ReplacedBy(
   }
   aNewContext->mWebProgress = std::move(mWebProgress);
   aNewContext->mFields.SetWithoutSyncing<IDX_BrowserId>(GetBrowserId());
+
+  if (mSessionHistory) {
+    mSessionHistory->SetBrowsingContext(aNewContext);
+    mSessionHistory.swap(aNewContext->mSessionHistory);
+  }
+
+  MOZ_ASSERT(aNewContext->mLoadingEntries.IsEmpty());
+  mLoadingEntries.SwapElements(aNewContext->mLoadingEntries);
+  MOZ_ASSERT(!aNewContext->mActiveEntry);
+  mActiveEntry.swap(aNewContext->mActiveEntry);
 }
 
 void CanonicalBrowsingContext::
@@ -271,37 +281,68 @@ nsISHistory* CanonicalBrowsingContext::GetSessionHistory() {
   return mSessionHistory;
 }
 
-UniquePtr<SessionHistoryInfo>
-CanonicalBrowsingContext::CreateSessionHistoryEntryForLoad(
-    nsDocShellLoadState* aLoadState, nsIChannel* aChannel) {
-  RefPtr<SessionHistoryEntry> entry =
-      new SessionHistoryEntry(aLoadState, aChannel);
-  mLoadingEntries.AppendElement(entry);
-  MOZ_ASSERT(SessionHistoryEntry::GetByInfoId(entry->Info().Id()) == entry);
-  return MakeUnique<SessionHistoryInfo>(entry->Info());
+SessionHistoryEntry* CanonicalBrowsingContext::GetActiveSessionHistoryEntry() {
+  return mActiveEntry;
 }
 
-void CanonicalBrowsingContext::SessionHistoryCommit(
-    uint64_t aSessionHistoryEntryId, const nsID& aChangeID) {
+UniquePtr<LoadingSessionHistoryInfo>
+CanonicalBrowsingContext::CreateLoadingSessionHistoryEntryForLoad(
+    nsDocShellLoadState* aLoadState, nsIChannel* aChannel) {
+  RefPtr<SessionHistoryEntry> entry;
+  const LoadingSessionHistoryInfo* existingLoadingInfo =
+      aLoadState->GetLoadingSessionHistoryInfo();
+  if (existingLoadingInfo) {
+    entry = SessionHistoryEntry::GetByLoadId(existingLoadingInfo->mLoadId);
+  } else {
+    entry = new SessionHistoryEntry(aLoadState, aChannel);
+  }
+  MOZ_DIAGNOSTIC_ASSERT(entry);
+
+  UniquePtr<LoadingSessionHistoryInfo> loadingInfo;
+  if (existingLoadingInfo) {
+    loadingInfo = MakeUnique<LoadingSessionHistoryInfo>(*existingLoadingInfo);
+  } else {
+    loadingInfo = MakeUnique<LoadingSessionHistoryInfo>(entry);
+  }
+
+  MOZ_ASSERT(SessionHistoryEntry::GetByLoadId(loadingInfo->mLoadId) == entry);
+  mLoadingEntries.AppendElement(
+      LoadingSessionHistoryEntry{loadingInfo->mLoadId, entry});
+  return loadingInfo;
+}
+
+void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
+                                                    const nsID& aChangeID) {
   for (size_t i = 0; i < mLoadingEntries.Length(); ++i) {
-    if (mLoadingEntries[i]->Info().Id() == aSessionHistoryEntryId) {
+    if (mLoadingEntries[i].mLoadId == aLoadId) {
       nsISHistory* shistory = GetSessionHistory();
       if (!shistory) {
+        SessionHistoryEntry::RemoveLoadId(aLoadId);
         mLoadingEntries.RemoveElementAt(i);
         return;
       }
 
       RefPtr<SessionHistoryEntry> oldActiveEntry = mActiveEntry.forget();
-      mActiveEntry = mLoadingEntries[i];
+      mActiveEntry = mLoadingEntries[i].mEntry;
+
+      SessionHistoryEntry::RemoveLoadId(aLoadId);
       mLoadingEntries.RemoveElementAt(i);
       if (IsTop()) {
-        shistory->AddEntry(mActiveEntry,
-                           /* FIXME aPersist = */ true);
+        nsCOMPtr<nsISHistory> existingSHistory = mActiveEntry->GetShistory();
+        if (existingSHistory) {
+          MOZ_ASSERT(existingSHistory == shistory);
+          shistory->UpdateIndex();
+        } else {
+          shistory->AddEntry(mActiveEntry,
+                             /* FIXME aPersist = */ true);
+        }
       } else {
         // FIXME Check if we're replacing before adding a child.
         // FIXME The old implementations adds it to the parent's mLSHE if there
         //       is one, need to figure out if that makes sense here (peterv
         //       doesn't think it would).
+        // FIXME if the loading entry is already in the session history, we
+        // shouldn't add a new entry.
         if (oldActiveEntry) {
           // FIXME Need to figure out the right value for aCloneChildren.
           shistory->AddChildSHEntryHelper(oldActiveEntry, mActiveEntry, Top(),
@@ -337,7 +378,8 @@ void CanonicalBrowsingContext::SessionHistoryCommit(
 void CanonicalBrowsingContext::NotifyOnHistoryReload(
     bool& aCanReload, Maybe<RefPtr<nsDocShellLoadState>>& aLoadState,
     Maybe<bool>& aReloadActiveEntry) {
-  GetSessionHistory()->NotifyOnHistoryReload(&aCanReload);
+  nsISHistory* shistory = GetSessionHistory();
+  shistory->NotifyOnHistoryReload(&aCanReload);
   if (!aCanReload) {
     return;
   }
@@ -348,9 +390,20 @@ void CanonicalBrowsingContext::NotifyOnHistoryReload(
     aReloadActiveEntry.emplace(true);
   } else if (!mLoadingEntries.IsEmpty()) {
     aLoadState.emplace();
-    mLoadingEntries.LastElement()->CreateLoadInfo(
+    mLoadingEntries.LastElement().mEntry->CreateLoadInfo(
         getter_AddRefs(aLoadState.ref()));
     aReloadActiveEntry.emplace(false);
+  }
+
+  if (aLoadState) {
+    int32_t index = 0;
+    int32_t requestedIndex = -1;
+    int32_t length = 0;
+    shistory->GetIndex(&index);
+    shistory->GetRequestedIndex(&requestedIndex);
+    shistory->GetCount(&length);
+    aLoadState.ref()->SetLoadIsFromSessionHistory(
+        requestedIndex >= 0 ? requestedIndex : index, length);
   }
   // If we don't have an active entry and we don't have a loading entry then
   // the nsDocShell will create a load state based on its document.
@@ -381,14 +434,15 @@ void CanonicalBrowsingContext::CanonicalDiscard() {
 }
 
 void CanonicalBrowsingContext::NotifyStartDelayedAutoplayMedia() {
-  if (!GetCurrentWindowGlobal()) {
+  WindowContext* windowContext = GetCurrentWindowContext();
+  if (!windowContext) {
     return;
   }
 
   // As this function would only be called when user click the play icon on the
-  // tab bar. That's clear user intent to play, so gesture activate the browsing
+  // tab bar. That's clear user intent to play, so gesture activate the window
   // context so that the block-autoplay logic allows the media to autoplay.
-  NotifyUserGestureActivation();
+  windowContext->NotifyUserGestureActivation();
   AUTOPLAY_LOG("NotifyStartDelayedAutoplayMedia for chrome bc 0x%08" PRIx64,
                Id());
   StartDelayedAutoplayMediaComponents();
@@ -400,10 +454,11 @@ void CanonicalBrowsingContext::NotifyStartDelayedAutoplayMedia() {
   });
 }
 
-void CanonicalBrowsingContext::NotifyMediaMutedChanged(bool aMuted) {
+void CanonicalBrowsingContext::NotifyMediaMutedChanged(bool aMuted,
+                                                       ErrorResult& aRv) {
   MOZ_ASSERT(!GetParent(),
              "Notify media mute change on non top-level context!");
-  SetMuted(aMuted);
+  SetMuted(aMuted, aRv);
 }
 
 uint32_t CanonicalBrowsingContext::CountSiteOrigins(
@@ -659,16 +714,11 @@ void CanonicalBrowsingContext::PendingRemotenessChange::Finish() {
                             mContentParent ? u"true"_ns : u"false"_ns,
                             /* notify */ true);
 
-    RefPtr<BrowsingContextGroup> specificGroup;
-    if (mSpecificGroupId != 0) {
-      specificGroup = BrowsingContextGroup::GetOrCreate(mSpecificGroupId);
-    }
-
     // The process has been created, hand off to nsFrameLoaderOwner to finish
     // the process switch.
     ErrorResult error;
     frameLoaderOwner->ChangeRemotenessToProcess(
-        mContentParent, mReplaceBrowsingContext, specificGroup, error);
+        mContentParent, mReplaceBrowsingContext, mSpecificGroup, error);
     if (error.Failed()) {
       Cancel(error.StealNSResult());
       return;
@@ -843,6 +893,12 @@ void CanonicalBrowsingContext::PendingRemotenessChange::Clear() {
     mContentParent = nullptr;
   }
 
+  // If we were given a specific group, stop keeping that group alive manually.
+  if (mSpecificGroup) {
+    mSpecificGroup->RemoveKeepAlive();
+    mSpecificGroup = nullptr;
+  }
+
   mPromise = nullptr;
   mTarget = nullptr;
   mPrepareToChangePromise = nullptr;
@@ -850,16 +906,15 @@ void CanonicalBrowsingContext::PendingRemotenessChange::Clear() {
 
 CanonicalBrowsingContext::PendingRemotenessChange::PendingRemotenessChange(
     CanonicalBrowsingContext* aTarget, RemotenessPromise::Private* aPromise,
-    uint64_t aPendingSwitchId, bool aReplaceBrowsingContext,
-    uint64_t aSpecificGroupId)
+    uint64_t aPendingSwitchId, bool aReplaceBrowsingContext)
     : mTarget(aTarget),
       mPromise(aPromise),
       mPendingSwitchId(aPendingSwitchId),
-      mSpecificGroupId(aSpecificGroupId),
       mReplaceBrowsingContext(aReplaceBrowsingContext) {}
 
 CanonicalBrowsingContext::PendingRemotenessChange::~PendingRemotenessChange() {
-  MOZ_ASSERT(!mPromise && !mTarget,
+  MOZ_ASSERT(!mPromise && !mTarget && !mContentParent && !mSpecificGroup &&
+                 !mPrepareToChangePromise,
              "should've already been Cancel() or Complete()-ed");
 }
 
@@ -936,10 +991,17 @@ CanonicalBrowsingContext::ChangeRemoteness(const nsACString& aRemoteType,
 
   // Switching to remote. Wait for new process to launch before switch.
   auto promise = MakeRefPtr<RemotenessPromise::Private>(__func__);
-  RefPtr<PendingRemotenessChange> change =
-      new PendingRemotenessChange(this, promise, aPendingSwitchId,
-                                  aReplaceBrowsingContext, aSpecificGroupId);
+  RefPtr<PendingRemotenessChange> change = new PendingRemotenessChange(
+      this, promise, aPendingSwitchId, aReplaceBrowsingContext);
   mPendingRemotenessChange = change;
+
+  // If a specific BrowsingContextGroup ID was specified for this load, make
+  // sure to keep it alive until the process switch is completed.
+  if (aSpecificGroupId) {
+    change->mSpecificGroup =
+        BrowsingContextGroup::GetOrCreate(aSpecificGroupId);
+    change->mSpecificGroup->AddKeepAlive();
+  }
 
   // Call `prepareToChangeRemoteness` in parallel with starting a new process
   // for <browser> loads.
@@ -962,9 +1024,20 @@ CanonicalBrowsingContext::ChangeRemoteness(const nsACString& aRemoteType,
   if (aRemoteType.IsEmpty()) {
     change->ProcessReady();
   } else {
+    // Try to predict which BrowsingContextGroup will be used for the final load
+    // in this BrowsingContext. This has to be accurate if switching into an
+    // existing group, as it will control what pool of processes will be used
+    // for process selection.
+    //
+    // It's _technically_ OK to provide a group here if we're actually going to
+    // switch into a brand new group, though it's sub-optimal, as it can
+    // restrict the set of processes we're using.
+    BrowsingContextGroup* finalGroup =
+        aReplaceBrowsingContext ? change->mSpecificGroup.get() : Group();
+
     change->mContentParent = ContentParent::GetNewOrUsedLaunchingBrowserProcess(
-        /* aFrameElement = */ nullptr,
         /* aRemoteType = */ aRemoteType,
+        /* aGroup = */ finalGroup,
         /* aPriority = */ hal::PROCESS_PRIORITY_FOREGROUND,
         /* aPreferUsed = */ false);
     if (!change->mContentParent) {
@@ -1052,7 +1125,6 @@ bool CanonicalBrowsingContext::LoadInParent(nsDocShellLoadState* aLoadState,
   // We currently only support starting loads directly from the
   // CanonicalBrowsingContext for top-level BCs.
   if (!IsTopContent() || !GetContentParent() ||
-      !StaticPrefs::browser_tabs_documentchannel() ||
       !StaticPrefs::browser_tabs_documentchannel_parent_controlled()) {
     return false;
   }
@@ -1077,8 +1149,6 @@ bool CanonicalBrowsingContext::AttemptSpeculativeLoadInParent(
   // We currently only support starting loads directly from the
   // CanonicalBrowsingContext for top-level BCs.
   if (!IsTopContent() || !GetContentParent() ||
-      !StaticPrefs::browser_tabs_documentchannel() ||
-      !StaticPrefs::browser_tabs_documentchannel_parent_initiated() ||
       StaticPrefs::browser_tabs_documentchannel_parent_controlled()) {
     return false;
   }
@@ -1103,7 +1173,12 @@ bool CanonicalBrowsingContext::StartDocumentLoad(
     mCurrentLoad->Cancel(NS_BINDING_ABORTED);
   }
   mCurrentLoad = aLoad;
-  SetCurrentLoadIdentifier(Some(aLoad->GetLoadIdentifier()));
+
+  if (NS_FAILED(SetCurrentLoadIdentifier(Some(aLoad->GetLoadIdentifier())))) {
+    mCurrentLoad = nullptr;
+    return false;
+  }
+
   return true;
 }
 
@@ -1111,7 +1186,9 @@ void CanonicalBrowsingContext::EndDocumentLoad(bool aForProcessSwitch) {
   mCurrentLoad = nullptr;
 
   if (!aForProcessSwitch) {
-    SetCurrentLoadIdentifier(Nothing());
+    // Resetting the current load identifier on a discarded context
+    // has no effect when a document load has finished.
+    Unused << SetCurrentLoadIdentifier(Nothing());
   }
 }
 

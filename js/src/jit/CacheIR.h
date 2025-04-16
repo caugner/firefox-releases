@@ -19,6 +19,7 @@
 #include "jit/ICState.h"
 #include "jit/MacroAssembler.h"
 #include "jit/Simulator.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/Iteration.h"
 #include "vm/Shape.h"
 
@@ -174,6 +175,7 @@ class TypedOperandId : public OperandId {
   _(BindName)             \
   _(In)                   \
   _(HasOwn)               \
+  _(CheckPrivateField)    \
   _(TypeOf)               \
   _(ToPropertyKey)        \
   _(InstanceOf)           \
@@ -365,7 +367,15 @@ enum class AttachDecision {
 // Set of arguments supported by GetIndexOfArgument.
 // Support for higher argument indices can be added easily, but is currently
 // unneeded.
-enum class ArgumentKind : uint8_t { Callee, This, NewTarget, Arg0, Arg1, Arg2 };
+enum class ArgumentKind : uint8_t {
+  Callee,
+  This,
+  NewTarget,
+  Arg0,
+  Arg1,
+  Arg2,
+  Arg3
+};
 
 // This function calculates the index of an argument based on the call flags.
 // addArgc is an out-parameter, indicating whether the value of argc should
@@ -416,6 +426,8 @@ inline int32_t GetIndexOfArgument(ArgumentKind kind, CallFlags flags,
       return flags.isConstructing() + hasArgumentArray - 2;
     case ArgumentKind::Arg2:
       return flags.isConstructing() + hasArgumentArray - 3;
+    case ArgumentKind::Arg3:
+      return flags.isConstructing() + hasArgumentArray - 4;
     case ArgumentKind::NewTarget:
       MOZ_ASSERT(flags.isConstructing());
       *addArgc = false;
@@ -429,6 +441,8 @@ inline int32_t GetIndexOfArgument(ArgumentKind kind, CallFlags flags,
 // in the IR, to keep the IR compact and the same size on all platforms.
 enum class GuardClassKind : uint8_t {
   Array,
+  ArrayBuffer,
+  SharedArrayBuffer,
   DataView,
   MappedArguments,
   UnmappedArguments,
@@ -497,8 +511,7 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   void assertSameCompartment(JSObject*);
 
   void writeOp(CacheOp op) {
-    MOZ_ASSERT(uint32_t(op) <= UINT8_MAX);
-    buffer_.writeByte(uint32_t(op));
+    buffer_.writeUnsigned15Bit(uint32_t(op));
     nextInstructionId_++;
 #ifdef DEBUG
     MOZ_ASSERT(currentOp_.isNothing(), "Missing call to assertLengthMatches?");
@@ -928,7 +941,7 @@ class MOZ_RAII CacheIRReader {
 
   bool more() const { return buffer_.more(); }
 
-  CacheOp readOp() { return CacheOp(buffer_.readByte()); }
+  CacheOp readOp() { return CacheOp(buffer_.readUnsigned15Bit()); }
 
   // Skip data not currently used.
   void skip() { buffer_.readByte(); }
@@ -1529,6 +1542,23 @@ class MOZ_RAII HasPropIRGenerator : public IRGenerator {
   AttachDecision tryAttachStub();
 };
 
+class MOZ_RAII CheckPrivateFieldIRGenerator : public IRGenerator {
+  HandleValue val_;
+  HandleValue idVal_;
+
+  AttachDecision tryAttachNative(JSObject* obj, ObjOperandId objId, jsid key,
+                                 ValOperandId keyId, bool hasOwn);
+
+  void trackAttached(const char* name);
+
+ public:
+  CheckPrivateFieldIRGenerator(JSContext* cx, HandleScript script,
+                               jsbytecode* pc, ICState::Mode mode,
+                               CacheKind cacheKind, HandleValue idVal,
+                               HandleValue val);
+  AttachDecision tryAttachStub();
+};
+
 class MOZ_RAII InstanceOfIRGenerator : public IRGenerator {
   HandleValue lhsVal_;
   HandleObject rhsObj_;
@@ -1591,13 +1621,28 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
 
   void emitNativeCalleeGuard(HandleFunction callee);
 
+  bool canAttachAtomicsReadWriteModify();
+
+  struct AtomicsReadWriteModifyOperands {
+    ObjOperandId objId;
+    Int32OperandId int32IndexId;
+    Int32OperandId int32ValueId;
+  };
+
+  AtomicsReadWriteModifyOperands emitAtomicsReadWriteModifyOperands(
+      HandleFunction callee);
+
   AttachDecision tryAttachArrayPush(HandleFunction callee);
+  AttachDecision tryAttachArrayPopShift(HandleFunction callee,
+                                        InlinableNative native);
   AttachDecision tryAttachArrayJoin(HandleFunction callee);
+  AttachDecision tryAttachArraySlice(HandleFunction callee);
   AttachDecision tryAttachArrayIsArray(HandleFunction callee);
   AttachDecision tryAttachDataViewGet(HandleFunction callee, Scalar::Type type);
   AttachDecision tryAttachDataViewSet(HandleFunction callee, Scalar::Type type);
   AttachDecision tryAttachUnsafeGetReservedSlot(HandleFunction callee,
                                                 InlinableNative native);
+  AttachDecision tryAttachUnsafeSetReservedSlot(HandleFunction callee);
   AttachDecision tryAttachIsSuspendedGenerator(HandleFunction callee);
   AttachDecision tryAttachToObject(HandleFunction callee,
                                    InlinableNative native);
@@ -1607,21 +1652,33 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachIsPackedArray(HandleFunction callee);
   AttachDecision tryAttachIsCallable(HandleFunction callee);
   AttachDecision tryAttachIsConstructor(HandleFunction callee);
+  AttachDecision tryAttachIsCrossRealmArrayConstructor(HandleFunction callee);
   AttachDecision tryAttachGuardToClass(HandleFunction callee,
                                        InlinableNative native);
-  AttachDecision tryAttachHasClass(HandleFunction callee, const JSClass* clasp);
+  AttachDecision tryAttachHasClass(HandleFunction callee, const JSClass* clasp,
+                                   bool isPossiblyWrapped);
   AttachDecision tryAttachRegExpMatcherSearcherTester(HandleFunction callee,
                                                       InlinableNative native);
   AttachDecision tryAttachRegExpPrototypeOptimizable(HandleFunction callee);
   AttachDecision tryAttachRegExpInstanceOptimizable(HandleFunction callee);
+  AttachDecision tryAttachGetFirstDollarIndex(HandleFunction callee);
   AttachDecision tryAttachSubstringKernel(HandleFunction callee);
+  AttachDecision tryAttachObjectHasPrototype(HandleFunction callee);
   AttachDecision tryAttachString(HandleFunction callee);
   AttachDecision tryAttachStringChar(HandleFunction callee, StringChar kind);
   AttachDecision tryAttachStringCharCodeAt(HandleFunction callee);
   AttachDecision tryAttachStringCharAt(HandleFunction callee);
   AttachDecision tryAttachStringFromCharCode(HandleFunction callee);
+  AttachDecision tryAttachStringFromCodePoint(HandleFunction callee);
+  AttachDecision tryAttachStringToLowerCase(HandleFunction callee);
+  AttachDecision tryAttachStringToUpperCase(HandleFunction callee);
+  AttachDecision tryAttachStringReplaceString(HandleFunction callee);
+  AttachDecision tryAttachStringSplitString(HandleFunction callee);
   AttachDecision tryAttachMathRandom(HandleFunction callee);
   AttachDecision tryAttachMathAbs(HandleFunction callee);
+  AttachDecision tryAttachMathClz32(HandleFunction callee);
+  AttachDecision tryAttachMathSign(HandleFunction callee);
+  AttachDecision tryAttachMathImul(HandleFunction callee);
   AttachDecision tryAttachMathFloor(HandleFunction callee);
   AttachDecision tryAttachMathCeil(HandleFunction callee);
   AttachDecision tryAttachMathTrunc(HandleFunction callee);
@@ -1634,6 +1691,43 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
                                        UnaryMathFunction fun);
   AttachDecision tryAttachMathPow(HandleFunction callee);
   AttachDecision tryAttachMathMinMax(HandleFunction callee, bool isMax);
+  AttachDecision tryAttachIsTypedArray(HandleFunction callee,
+                                       bool isPossiblyWrapped);
+  AttachDecision tryAttachIsTypedArrayConstructor(HandleFunction callee);
+  AttachDecision tryAttachTypedArrayByteOffset(HandleFunction callee);
+  AttachDecision tryAttachTypedArrayElementShift(HandleFunction callee);
+  AttachDecision tryAttachTypedArrayLength(HandleFunction callee,
+                                           bool isPossiblyWrapped);
+  AttachDecision tryAttachArrayBufferByteLength(HandleFunction callee,
+                                                bool isPossiblyWrapped);
+  AttachDecision tryAttachIsConstructing(HandleFunction callee);
+  AttachDecision tryAttachGetNextMapSetEntryForIterator(HandleFunction callee,
+                                                        bool isMap);
+  AttachDecision tryAttachFinishBoundFunctionInit(HandleFunction callee);
+  AttachDecision tryAttachNewArrayIterator(HandleFunction callee);
+  AttachDecision tryAttachNewStringIterator(HandleFunction callee);
+  AttachDecision tryAttachNewRegExpStringIterator(HandleFunction callee);
+  AttachDecision tryAttachArrayIteratorPrototypeOptimizable(
+      HandleFunction callee);
+  AttachDecision tryAttachObjectCreate(HandleFunction callee);
+  AttachDecision tryAttachArrayConstructor(HandleFunction callee);
+  AttachDecision tryAttachTypedArrayConstructor(HandleFunction callee);
+  AttachDecision tryAttachReflectGetPrototypeOf(HandleFunction callee);
+  AttachDecision tryAttachAtomicsCompareExchange(HandleFunction callee);
+  AttachDecision tryAttachAtomicsExchange(HandleFunction callee);
+  AttachDecision tryAttachAtomicsAdd(HandleFunction callee);
+  AttachDecision tryAttachAtomicsSub(HandleFunction callee);
+  AttachDecision tryAttachAtomicsAnd(HandleFunction callee);
+  AttachDecision tryAttachAtomicsOr(HandleFunction callee);
+  AttachDecision tryAttachAtomicsXor(HandleFunction callee);
+  AttachDecision tryAttachAtomicsLoad(HandleFunction callee);
+  AttachDecision tryAttachAtomicsStore(HandleFunction callee);
+  AttachDecision tryAttachAtomicsIsLockFree(HandleFunction callee);
+  AttachDecision tryAttachBoolean(HandleFunction callee);
+  AttachDecision tryAttachBailout(HandleFunction callee);
+  AttachDecision tryAttachAssertFloat32(HandleFunction callee);
+  AttachDecision tryAttachAssertRecoveredOnBailout(HandleFunction callee);
+  AttachDecision tryAttachObjectIs(HandleFunction callee);
 
   AttachDecision tryAttachFunCall(HandleFunction calleeFunc);
   AttachDecision tryAttachFunApply(HandleFunction calleeFunc);

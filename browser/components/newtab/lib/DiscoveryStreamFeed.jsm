@@ -30,6 +30,11 @@ const { actionTypes: at, actionCreators: ac } = ChromeUtils.import(
 );
 ChromeUtils.defineModuleGetter(
   this,
+  "Region",
+  "resource://gre/modules/Region.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
   "PersistentCache",
   "resource://activity-stream/lib/PersistentCache.jsm"
 );
@@ -172,6 +177,10 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     });
   }
 
+  get region() {
+    return Region.home;
+  }
+
   get showSpocs() {
     // Combine user-set sponsored opt-out with Mozilla-set config
     return (
@@ -259,7 +268,8 @@ this.DiscoveryStreamFeed = class DiscoveryStreamFeed {
     // 2. Hardcoded layouts don't have this already done for us.
     const endpoint = rawEndpoint
       .replace("$apiKey", apiKey)
-      .replace("$locale", this.locale);
+      .replace("$locale", this.locale)
+      .replace("$region", this.region);
 
     try {
       // Make sure the requested endpoint is allowed
@@ -1983,7 +1993,7 @@ getHardcodedLayout = isBasicLayout => ({
           feed: {
             embed_reference: null,
             url:
-              "https://getpocket.cdn.mozilla.net/v3/firefox/global-recs?version=3&consumer_key=$apiKey&locale_lang=$locale&count=30",
+              "https://getpocket.cdn.mozilla.net/v3/firefox/global-recs?version=3&consumer_key=$apiKey&locale_lang=$locale&region=$region&count=30",
           },
           spocs: {
             probability: 1,
@@ -2013,17 +2023,17 @@ getHardcodedLayout = isBasicLayout => ({
                 url: "https://getpocket.com/explore/must-reads?src=fx_new_tab",
               },
               {
-                name: "Productivity",
+                name: "Self Improvement",
                 url:
-                  "https://getpocket.com/explore/productivity?src=fx_new_tab",
+                  "https://getpocket.com/explore/self-improvement?src=fx_new_tab",
               },
               {
                 name: "Health",
                 url: "https://getpocket.com/explore/health?src=fx_new_tab",
               },
               {
-                name: "Finance",
-                url: "https://getpocket.com/explore/finance?src=fx_new_tab",
+                name: "Business",
+                url: "https://getpocket.com/explore/business?src=fx_new_tab",
               },
               {
                 name: "Technology",

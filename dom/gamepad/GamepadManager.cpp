@@ -45,6 +45,9 @@ bool sShutdown = false;
 
 StaticRefPtr<GamepadManager> gGamepadManagerSingleton;
 const uint32_t VR_GAMEPAD_IDX_OFFSET = 0x01 << 16;
+// A threshold value of axis move to determine the first
+// intent.
+const float AXIS_FIRST_INTENT_THRESHOLD_VALUE = 0.1f;
 
 }  // namespace
 
@@ -113,7 +116,7 @@ GamepadManager::Observe(nsISupports* aSubject, const char* aTopic,
 
 void GamepadManager::StopMonitoring() {
   for (uint32_t i = 0; i < mChannelChildren.Length(); ++i) {
-    mChannelChildren[i]->SendGamepadListenerRemoved();
+    PGamepadEventChannelChild::Send__delete__(mChannelChildren[i]);
   }
   if (gfx::VRManagerChild::IsCreated()) {
     gfx::VRManagerChild* vm = gfx::VRManagerChild::Get();
@@ -155,7 +158,6 @@ void GamepadManager::AddListener(nsGlobalWindowInner* aWindow) {
     }
 
     MOZ_ASSERT(initedChild == child);
-    child->SendGamepadListenerAdded();
     mChannelChildren.AppendElement(child);
 
     if (gfx::VRManagerChild::IsCreated()) {
@@ -417,6 +419,22 @@ already_AddRefed<GamepadManager> GamepadManager::GetService() {
   return service.forget();
 }
 
+bool GamepadManager::AxisMoveIsFirstIntent(nsGlobalWindowInner* aWindow,
+                                           uint32_t aIndex,
+                                           const GamepadChangeEvent& aEvent) {
+  const GamepadChangeEventBody& body = aEvent.body();
+  if (!WindowHasSeenGamepad(aWindow, aIndex) &&
+      body.type() == GamepadChangeEventBody::TGamepadAxisInformation) {
+    // Some controllers would send small axis values even they are just idle.
+    // To avoid controllers be activated without its first intent.
+    const GamepadAxisInformation& a = body.get_GamepadAxisInformation();
+    if (abs(a.value()) < AXIS_FIRST_INTENT_THRESHOLD_VALUE) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool GamepadManager::MaybeWindowHasSeenGamepad(nsGlobalWindowInner* aWindow,
                                                uint32_t aIndex) {
   if (!WindowHasSeenGamepad(aWindow, aIndex)) {
@@ -538,6 +556,9 @@ bool GamepadManager::SetGamepadByEvent(const GamepadChangeEvent& aEvent,
   const uint32_t index =
       GetGamepadIndexWithServiceType(aEvent.index(), aEvent.service_type());
   if (aWindow) {
+    if (!AxisMoveIsFirstIntent(aWindow, index, aEvent)) {
+      return false;
+    }
     firstTime = !MaybeWindowHasSeenGamepad(aWindow, index);
   }
 

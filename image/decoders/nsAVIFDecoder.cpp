@@ -182,24 +182,49 @@ bool nsAVIFDecoder::DecodeWithDav1d(const Mp4parseByteData& aPrimaryItem,
   aDecodedData.mStereoMode = StereoMode::MONO;
   aDecodedData.mColorDepth = ColorDepthForBitDepth(mDav1dPicture->p.bpc);
 
-  switch (mDav1dPicture->seq_hdr->pri) {
-    case DAV1D_COLOR_PRI_BT601:
+  switch (mDav1dPicture->seq_hdr->mtrx) {
+    case DAV1D_MC_BT601:
       aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT601;
       break;
-    case DAV1D_COLOR_PRI_BT709:
+    case DAV1D_MC_BT709:
       aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT709;
       break;
-    case DAV1D_COLOR_PRI_BT2020:
+    case DAV1D_MC_BT2020_NCL:
       aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT2020;
       break;
-    case DAV1D_COLOR_PRI_UNKNOWN:
-      aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::UNKNOWN;
+    case DAV1D_MC_BT2020_CL:
+      aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT2020;
+      break;
+    case DAV1D_MC_IDENTITY:
+      aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::Identity;
+      break;
+    case DAV1D_MC_CHROMAT_NCL:
+    case DAV1D_MC_CHROMAT_CL:
+    case DAV1D_MC_UNKNOWN:  // MIAF specific
+      switch (mDav1dPicture->seq_hdr->pri) {
+        case DAV1D_COLOR_PRI_BT601:
+          aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT601;
+          break;
+        case DAV1D_COLOR_PRI_BT709:
+          aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT709;
+          break;
+        case DAV1D_COLOR_PRI_BT2020:
+          aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT2020;
+          break;
+        default:
+          aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::UNKNOWN;
+          break;
+      }
       break;
     default:
       MOZ_LOG(sAVIFLog, LogLevel::Debug,
-              ("[this=%p] unsupported color primaries value: %u", this,
-               mDav1dPicture->seq_hdr->pri));
+              ("[this=%p] unsupported color matrix value: %u", this,
+               mDav1dPicture->seq_hdr->mtrx));
       aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::UNKNOWN;
+  }
+  if (aDecodedData.mYUVColorSpace == gfx::YUVColorSpace::UNKNOWN) {
+    // MIAF specific: UNKNOWN color space should be treated as BT601
+    aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT601;
   }
 
   aDecodedData.mColorRange = mDav1dPicture->seq_hdr->color_range
@@ -293,24 +318,50 @@ bool nsAVIFDecoder::DecodeWithAOM(const Mp4parseByteData& aPrimaryItem,
   aDecodedData.mStereoMode = StereoMode::MONO;
   aDecodedData.mColorDepth = ColorDepthForBitDepth(img->bit_depth);
 
-  switch (img->cp) {
-    case AOM_CICP_CP_BT_601:
+  switch (img->mc) {
+    case AOM_CICP_MC_BT_601:
       aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT601;
       break;
-    case AOM_CICP_CP_BT_709:
+    case AOM_CICP_MC_BT_709:
       aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT709;
       break;
-    case AOM_CICP_CP_BT_2020:
+    case AOM_CICP_MC_BT_2020_NCL:
       aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT2020;
       break;
-    case AOM_CICP_CP_UNSPECIFIED:
-      aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::UNKNOWN;
+    case AOM_CICP_MC_BT_2020_CL:
+      aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT2020;
+      break;
+    case AOM_CICP_MC_IDENTITY:
+      aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::Identity;
+      break;
+    case AOM_CICP_MC_CHROMAT_NCL:
+    case AOM_CICP_MC_CHROMAT_CL:
+    case AOM_CICP_MC_UNSPECIFIED:  // MIAF specific
+      switch (img->cp) {
+        case AOM_CICP_CP_BT_601:
+          aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT601;
+          break;
+        case AOM_CICP_CP_BT_709:
+          aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT709;
+          break;
+        case AOM_CICP_CP_BT_2020:
+          aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT2020;
+          break;
+        default:
+          aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::UNKNOWN;
+          break;
+      }
       break;
     default:
       MOZ_LOG(sAVIFLog, LogLevel::Debug,
-              ("[this=%p] unsupported aom_color_primaries value: %u", this,
-               img->cp));
+              ("[this=%p] unsupported aom_matrix_coefficients value: %u", this,
+               img->mc));
       aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::UNKNOWN;
+  }
+
+  if (aDecodedData.mYUVColorSpace == gfx::YUVColorSpace::UNKNOWN) {
+    // MIAF specific: UNKNOWN color space should be treated as BT601
+    aDecodedData.mYUVColorSpace = gfx::YUVColorSpace::BT601;
   }
 
   switch (img->range) {

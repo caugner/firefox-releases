@@ -26,8 +26,8 @@
 namespace js {
 
 namespace frontend {
-class ScopeCreationData;
-class EnvironmentShapeCreationData;
+class ScriptStencil;
+class ScopeStencil;
 };  // namespace frontend
 
 template <typename NameT>
@@ -36,6 +36,7 @@ class AbstractBaseScopeData;
 template <typename NameT>
 class AbstractBindingIter;
 
+class BindingIter;
 class ModuleObject;
 class AbstractScopePtr;
 
@@ -113,6 +114,7 @@ class AbstractBindingName {
 
  private:
   friend class AbstractBindingIter<NameT>;
+  friend class frontend::ScopeStencil;
 
   // This method should be called only for binding names in `vars` range in
   // BindingIter.
@@ -274,7 +276,8 @@ class WrappedPtrOperations<Scope*, Wrapper> {
 //
 class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
   friend class GCMarker;
-  friend class frontend::ScopeCreationData;
+  friend class frontend::ScopeStencil;
+  friend class js::BindingIter;
 
  protected:
   // The raw data pointer, stored in the cell header.
@@ -312,6 +315,15 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
 
   template <typename F>
   void applyScopeDataTyped(F&& f);
+
+  template <typename EnvironmentType>
+  static bool updateEnvShapeIfRequired(JSContext* cx, MutableHandleShape shape,
+                                       bool needsEnvironment);
+
+  template <typename EnvironmentType>
+  static bool updateEnvShapeIfRequired(JSContext* cx,
+                                       mozilla::Maybe<uint32_t>* envShape,
+                                       bool needsEnvironment);
 
  public:
   template <typename ConcreteScope>
@@ -360,6 +372,8 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
   bool hasEnvironment() const {
     return hasEnvironment(kind_, environmentShape());
   }
+
+  uint32_t firstFrameSlot() const;
 
   uint32_t chainLength() const;
   uint32_t environmentChainLength() const;
@@ -431,7 +445,7 @@ class LexicalScope : public Scope {
   friend class Scope;
   friend class BindingIter;
   friend class GCMarker;
-  friend class frontend::ScopeCreationData;
+  friend class frontend::ScopeStencil;
 
  public:
   // Data is public because it is created by the frontend. See
@@ -473,7 +487,6 @@ class LexicalScope : public Scope {
   template <typename ShapeType>
   static bool prepareForScopeCreation(JSContext* cx, ScopeKind kind,
                                       uint32_t firstFrameSlot,
-                                      Handle<AbstractScopePtr> enclosing,
                                       MutableHandle<UniquePtr<Data>> data,
                                       ShapeType envShape);
 
@@ -483,8 +496,6 @@ class LexicalScope : public Scope {
   static uint32_t nextFrameSlot(const AbstractScopePtr& scope);
 
  public:
-  uint32_t firstFrameSlot() const;
-
   uint32_t nextFrameSlot() const { return data().nextFrameSlot; }
 
   // Returns an empty shape for extensible global and non-syntactic lexical
@@ -593,15 +604,6 @@ class FunctionScope : public Scope {
                                       bool needsEnvironment, HandleFunction fun,
                                       ShapeType envShape);
 
-  static bool updateEnvShapeIfRequired(JSContext* cx, MutableHandleShape shape,
-                                       bool needsEnvironment,
-                                       bool hasParameterExprs);
-
-  static bool updateEnvShapeIfRequired(
-      JSContext* cx,
-      MutableHandle<frontend::EnvironmentShapeCreationData> shape,
-      bool needsEnvironment, bool hasParameterExprs);
-
   static FunctionScope* clone(JSContext* cx, Handle<FunctionScope*> scope,
                               HandleFunction fun, HandleScope enclosing);
 
@@ -635,8 +637,6 @@ class FunctionScope : public Scope {
   }
 
   static bool isSpecialName(JSContext* cx, JSAtom* name);
-
-  static Shape* getEmptyEnvironmentShape(JSContext* cx);
 };
 
 //
@@ -652,7 +652,7 @@ class VarScope : public Scope {
   friend class GCMarker;
   friend class BindingIter;
   friend class Scope;
-  friend class frontend::ScopeCreationData;
+  friend class frontend::ScopeStencil;
 
  public:
   // Data is public because it is created by the
@@ -695,23 +695,12 @@ class VarScope : public Scope {
                                       bool needsEnvironment,
                                       ShapeType envShape);
 
-  static bool updateEnvShapeIfRequired(JSContext* cx,
-                                       MutableHandleShape envShape,
-                                       bool needsEnvironment);
-  static bool updateEnvShapeIfRequired(
-      JSContext* cx,
-      MutableHandle<frontend::EnvironmentShapeCreationData> envShape,
-      bool needsEnvironment);
   Data& data() { return *static_cast<Data*>(rawData()); }
 
   const Data& data() const { return *static_cast<const Data*>(rawData()); }
 
  public:
-  uint32_t firstFrameSlot() const;
-
   uint32_t nextFrameSlot() const { return data().nextFrameSlot; }
-
-  static Shape* getEmptyEnvironmentShape(JSContext* cx);
 };
 
 template <>
@@ -834,7 +823,7 @@ class EvalScope : public Scope {
   friend class Scope;
   friend class BindingIter;
   friend class GCMarker;
-  friend class frontend::ScopeCreationData;
+  friend class frontend::ScopeStencil;
 
  public:
   // Data is public because it is created by the frontend. See
@@ -878,13 +867,6 @@ class EvalScope : public Scope {
                                       MutableHandle<UniquePtr<Data>> data,
                                       ShapeType envShape);
 
-  static bool updateEnvShapeIfRequired(JSContext* cx,
-                                       MutableHandleShape envShape,
-                                       ScopeKind scopeKind);
-  static bool updateEnvShapeIfRequired(
-      JSContext* cx,
-      MutableHandle<frontend::EnvironmentShapeCreationData> envShape,
-      ScopeKind scopeKind);
   Data& data() { return *static_cast<Data*>(rawData()); }
 
   const Data& data() const { return *static_cast<const Data*>(rawData()); }
@@ -906,8 +888,6 @@ class EvalScope : public Scope {
     }
     return !nearestVarScopeForDirectEval(enclosing())->is<GlobalScope>();
   }
-
-  static Shape* getEmptyEnvironmentShape(JSContext* cx);
 };
 
 template <>
@@ -928,7 +908,7 @@ class ModuleScope : public Scope {
   friend class BindingIter;
   friend class Scope;
   friend class AbstractScopePtr;
-  friend class frontend::ScopeCreationData;
+  friend class frontend::ScopeStencil;
   static const ScopeKind classScopeKind_ = ScopeKind::Module;
 
  public:
@@ -980,12 +960,6 @@ class ModuleScope : public Scope {
                                       HandleModuleObject module,
                                       ShapeType envShape);
 
-  static bool updateEnvShapeIfRequired(JSContext* cx,
-                                       MutableHandleShape envShape);
-  static bool updateEnvShapeIfRequired(
-      JSContext* cx,
-      MutableHandle<frontend::EnvironmentShapeCreationData> envShape);
-
   Data& data() { return *static_cast<Data*>(rawData()); }
 
   const Data& data() const { return *static_cast<const Data*>(rawData()); }
@@ -994,8 +968,6 @@ class ModuleScope : public Scope {
   uint32_t nextFrameSlot() const { return data().nextFrameSlot; }
 
   ModuleObject* module() const { return data().module; }
-
-  static Shape* getEmptyEnvironmentShape(JSContext* cx);
 };
 
 class WasmInstanceScope : public Scope {
@@ -1047,8 +1019,6 @@ class WasmInstanceScope : public Scope {
   uint32_t globalsStart() const { return data().globalsStart; }
 
   uint32_t namesCount() const { return data().length; }
-
-  static Shape* getEmptyEnvironmentShape(JSContext* cx);
 };
 
 // Scope corresponding to the wasm function. A WasmFunctionScope is used by
@@ -1090,9 +1060,6 @@ class WasmFunctionScope : public Scope {
   Data& data() { return *static_cast<Data*>(rawData()); }
 
   const Data& data() const { return *static_cast<const Data*>(rawData()); }
-
- public:
-  static Shape* getEmptyEnvironmentShape(JSContext* cx);
 };
 
 template <typename F>
@@ -1445,6 +1412,8 @@ class BindingIter : public AbstractBindingIter<JSAtom> {
   using Base = AbstractBindingIter<JSAtom>;
 
  public:
+  BindingIter(ScopeKind kind, BaseScopeData* data, uint32_t firstFrameSlot);
+
   explicit BindingIter(Scope* scope);
   explicit BindingIter(JSScript* script);
 
@@ -1460,6 +1429,12 @@ JSAtom* FrameSlotName(JSScript* script, jsbytecode* pc);
 
 Shape* EmptyEnvironmentShape(JSContext* cx, const JSClass* cls,
                              uint32_t numSlots, uint32_t baseShapeFlags);
+
+template <class T>
+Shape* EmptyEnvironmentShape(JSContext* cx) {
+  return EmptyEnvironmentShape(cx, &T::class_, T::RESERVED_SLOTS,
+                               T::BASESHAPE_FLAGS);
+}
 
 //
 // A refinement BindingIter that only iterates over positional formal

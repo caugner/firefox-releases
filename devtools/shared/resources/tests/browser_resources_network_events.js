@@ -10,7 +10,7 @@ const {
 } = require("devtools/shared/resources/resource-watcher");
 
 const EXAMPLE_DOMAIN = "https://example.com/";
-const TEST_URI = `${URL_ROOT_SSL}/network_document.html`;
+const TEST_URI = `${URL_ROOT_SSL}network_document.html`;
 
 add_task(async function() {
   info("Test network events legacy listener");
@@ -50,7 +50,7 @@ async function testNetworkEventResourcesWithExistingResources() {
         resourceType: ResourceWatcher.TYPES.NETWORK_EVENT,
         request: {
           url: `${EXAMPLE_DOMAIN}existing_post.html`,
-          method: ["POST"],
+          method: "POST",
         },
         // gets reset based on the type of request
         updates: [],
@@ -163,12 +163,18 @@ async function testNetworkEventResources(options) {
       }
     };
 
-    resourceWatcher.watchResources([ResourceWatcher.TYPES.NETWORK_EVENT], {
-      onAvailable: onResourceAvailable,
-      onUpdated: onResourceUpdated,
-    });
+    resourceWatcher
+      .watchResources([ResourceWatcher.TYPES.NETWORK_EVENT], {
+        onAvailable: onResourceAvailable,
+        onUpdated: onResourceUpdated,
+      })
+      .then(() => {
+        // We can only trigger the requests once `watchResources` settles, otherwise the
+        // thread might be paused.
+        triggerNetworkRequests(tab.linkedBrowser, EXISTING_REQUESTS_COMMANDS);
+      });
   });
-  await triggerNetworkRequests(tab.linkedBrowser, EXISTING_REQUESTS_COMMANDS);
+
   await waitOnAllExpectedUpdatesForExistingRequests;
 
   let {
@@ -191,6 +197,7 @@ async function testNetworkEventResources(options) {
       "Received a network event resource"
     );
     actualResourcesOnAvailable[resource.request.url] = {
+      resourceId: resource.resourceId,
       resourceType: resource.resourceType,
       request: resource.request,
       updates: [...resource.updates],
@@ -205,6 +212,7 @@ async function testNetworkEventResources(options) {
       "Received a network update event resource"
     );
     actualResourcesOnUpdated[resource.request.url] = {
+      resourceId: resource.resourceId,
       resourceType: resource.resourceType,
       request: resource.request,
       updates: [...resource.updates],
@@ -231,6 +239,13 @@ async function testNetworkEventResources(options) {
     Object.keys(actualResourcesOnAvailable).length,
     Object.keys(options.expectedResourcesOnAvailable).length,
     "Got the expected number of network events fired onAvailable"
+  );
+
+  // assert that the resourceId for the the available and updated events match
+  is(
+    actualResourcesOnAvailable[`${EXAMPLE_DOMAIN}live_get.html`].resourceId,
+    actualResourcesOnUpdated[`${EXAMPLE_DOMAIN}live_get.html`].resourceId,
+    "The resource id's are the same"
   );
 
   // assert the resources emitted when the network event is created
@@ -271,7 +286,7 @@ async function testNetworkEventResources(options) {
       onUpdated: onResourceUpdated,
     }
   );
-  await targetList.stopListening();
+  await targetList.destroy();
   await client.close();
   BrowserTestUtils.removeTab(tab);
 }

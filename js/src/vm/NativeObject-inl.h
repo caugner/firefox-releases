@@ -9,6 +9,7 @@
 
 #include "vm/NativeObject.h"
 
+#include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
 #include "builtin/TypedObject.h"
@@ -32,9 +33,19 @@ inline uint32_t NativeObject::numFixedSlotsMaybeForwarded() const {
   return gc::MaybeForwarded(lastProperty())->numFixedSlots();
 }
 
+inline void* NativeObject::getPrivateMaybeForwarded() const {
+  MOZ_ASSERT(MaybeForwardedObjectClass(this)->hasPrivate());
+  uint32_t nfixed = numFixedSlotsMaybeForwarded();
+  HeapSlot* end = &fixedSlots()[nfixed];
+  return *reinterpret_cast<void**>(end);
+}
+
 inline uint8_t* NativeObject::fixedData(size_t nslots) const {
-  MOZ_ASSERT(ClassCanHaveFixedData(getClass()));
-  MOZ_ASSERT(nslots == numFixedSlotsMaybeForwarded() + (hasPrivate() ? 1 : 0));
+  mozilla::DebugOnly<const JSClass*> clasp =
+      gc::MaybeForwardedObjectClass(this);
+  MOZ_ASSERT(ClassCanHaveFixedData(clasp));
+  MOZ_ASSERT(nslots ==
+             numFixedSlotsMaybeForwarded() + (clasp->hasPrivate() ? 1 : 0));
   return reinterpret_cast<uint8_t*>(&fixedSlots()[nslots]);
 }
 
@@ -292,20 +303,6 @@ inline void NativeObject::moveDenseElements(uint32_t dstStart,
             count * sizeof(HeapSlot));
     elementsRangeWriteBarrierPost(dstStart, count);
   }
-}
-
-inline void NativeObject::moveDenseElementsNoPreBarrier(uint32_t dstStart,
-                                                        uint32_t srcStart,
-                                                        uint32_t count) {
-  MOZ_ASSERT(!zone()->needsIncrementalBarrier());
-
-  MOZ_ASSERT(dstStart + count <= getDenseCapacity());
-  MOZ_ASSERT(srcStart + count <= getDenseCapacity());
-  MOZ_ASSERT(!denseElementsAreCopyOnWrite());
-  MOZ_ASSERT(isExtensible());
-
-  memmove(elements_ + dstStart, elements_ + srcStart, count * sizeof(HeapSlot));
-  elementsRangeWriteBarrierPost(dstStart, count);
 }
 
 inline void NativeObject::reverseDenseElementsNoPreBarrier(uint32_t length) {
@@ -614,6 +611,21 @@ inline js::gc::AllocKind NativeObject::allocKindForTenure() const {
 }
 
 inline js::GlobalObject& NativeObject::global() const { return nonCCWGlobal(); }
+
+inline bool NativeObject::denseElementsHaveMaybeInIterationFlag() {
+  if (!getElementsHeader()->maybeInIteration()) {
+    AssertDenseElementsNotIterated(this);
+    return false;
+  }
+  return true;
+}
+
+inline bool NativeObject::denseElementsMaybeInIteration() {
+  if (!denseElementsHaveMaybeInIterationFlag()) {
+    return false;
+  }
+  return ObjectRealm::get(this).objectMaybeInIteration(this);
+}
 
 /*
  * Call obj's resolve hook.

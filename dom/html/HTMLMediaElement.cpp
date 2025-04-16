@@ -426,6 +426,12 @@ class HTMLMediaElement::MediaControlKeyListener final
     if (!Owner()->Paused()) {
       NotifyMediaStartedPlaying();
     }
+    if (StaticPrefs::media_mediacontrol_testingevents_enabled()) {
+      auto dispatcher = MakeRefPtr<AsyncEventDispatcher>(
+          Owner(), u"MozStartMediaControl"_ns, CanBubble::eYes,
+          ChromeOnlyDispatch::eYes);
+      dispatcher->PostDOMEvent();
+    }
   }
 
   /**
@@ -448,6 +454,10 @@ class HTMLMediaElement::MediaControlKeyListener final
   }
 
   bool IsStarted() const { return mState != MediaPlaybackState::eStopped; }
+
+  bool IsPlaying() const override {
+    return Owner() ? !Owner()->Paused() : false;
+  }
 
   /**
    * Following methods should only be used after starting listener.
@@ -523,12 +533,15 @@ class HTMLMediaElement::MediaControlKeyListener final
     MOZ_ASSERT(NS_IsMainThread());
     MOZ_ASSERT(IsStarted());
     MEDIACONTROL_LOG("HandleEvent '%s'", ToMediaControlKeyStr(aKey));
-    if (aKey == MediaControlKey::Play && Owner()->Paused()) {
+    if (aKey == MediaControlKey::Play) {
       Owner()->Play();
-    } else if ((aKey == MediaControlKey::Pause ||
-                aKey == MediaControlKey::Stop) &&
-               !Owner()->Paused()) {
+    } else if (aKey == MediaControlKey::Pause) {
       Owner()->Pause();
+    } else {
+      MOZ_ASSERT(aKey == MediaControlKey::Stop,
+                 "Not supported key for media element!");
+      Owner()->Pause();
+      StopIfNeeded();
     }
   }
 
@@ -569,6 +582,10 @@ class HTMLMediaElement::MediaControlKeyListener final
   // might be different from the one that we used to initialize
   // `ContentMediaAgent`.
   BrowsingContext* GetCurrentBrowsingContext() const {
+    // Owner has been CCed, which would break the link of the weaker pointer.
+    if (!Owner()) {
+      return nullptr;
+    }
     nsPIDOMWindowInner* window = Owner()->OwnerDoc()->GetInnerWindow();
     return window ? window->GetBrowsingContext() : nullptr;
   }
@@ -589,7 +606,9 @@ class HTMLMediaElement::MediaControlKeyListener final
   }
 
   HTMLMediaElement* Owner() const {
-    MOZ_ASSERT(mElement);
+    // `mElement` would be clear during CC unlinked, but it would only happen
+    // after stopping the listener.
+    MOZ_ASSERT(mElement || !IsStarted());
     return mElement.get();
   }
 
@@ -1111,8 +1130,8 @@ class HTMLMediaElement::MediaElementTrackSource
     if (!mTrack) {
       return;
     }
-    mTrack->SetEnabled(aEnabled ? DisabledTrackMode::ENABLED
-                                : DisabledTrackMode::SILENCE_FREEZE);
+    mTrack->SetDisabledTrackMode(aEnabled ? DisabledTrackMode::ENABLED
+                                          : DisabledTrackMode::SILENCE_FREEZE);
   }
 
   void SetPrincipal(RefPtr<nsIPrincipal> aPrincipal) {
@@ -4480,6 +4499,7 @@ void HTMLMediaElement::PlayInternal(bool aHandlingUserInput) {
   AddRemoveSelfReference();
   UpdatePreloadAction();
   UpdateSrcMediaStreamPlaying();
+  StartMediaControlKeyListenerIfNeeded();
 
   // Once play() has been called in a user generated event handler,
   // it is allowed to autoplay. Note: we can reach here when not in
@@ -5658,6 +5678,9 @@ void HTMLMediaElement::PlaybackEnded() {
     mAutoplaying = true;
   }
 
+  if (StaticPrefs::media_mediacontrol_stopcontrol_aftermediaends()) {
+    mMediaControlKeyListener->StopIfNeeded();
+  }
   DispatchAsyncEvent(u"ended"_ns);
 }
 
@@ -6207,6 +6230,7 @@ void HTMLMediaElement::CheckAutoplayDataReady() {
   AddRemoveSelfReference();
   UpdateSrcMediaStreamPlaying();
   UpdateAudioChannelPlayingState();
+  StartMediaControlKeyListenerIfNeeded();
 
   if (mDecoder) {
     SetPlayedOrSeeked(true);
@@ -6629,10 +6653,17 @@ void HTMLMediaElement::NotifyOwnerDocumentActivityChanged() {
 }
 
 void HTMLMediaElement::NotifyFullScreenChanged() {
-  if (IsInFullScreen()) {
+  const bool isInFullScreen = IsInFullScreen();
+  if (isInFullScreen) {
     StartMediaControlKeyListenerIfNeeded();
-    MOZ_ASSERT(mMediaControlKeyListener->IsStarted(),
-               "Failed to start the listener when entering fullscreen!");
+    if (!mMediaControlKeyListener->IsStarted()) {
+      MEDIACONTROL_LOG("Failed to start the listener when entering fullscreen");
+    }
+  }
+  // Updating controller fullscreen state no matter the listener starts or not.
+  BrowsingContext* bc = OwnerDoc()->GetBrowsingContext();
+  if (RefPtr<IMediaInfoUpdater> updater = ContentMediaAgent::Get(bc)) {
+    updater->NotifyMediaFullScreenState(bc->Id(), isInFullScreen);
   }
 }
 
@@ -7890,7 +7921,16 @@ bool HTMLMediaElement::IsInFullScreen() const {
   return State().HasState(NS_EVENT_STATE_FULLSCREEN);
 }
 
+bool HTMLMediaElement::IsPlayable() const {
+  return (mDecoder || mSrcStream) && !HasError();
+}
+
 bool HTMLMediaElement::ShouldStartMediaControlKeyListener() const {
+  if (!IsPlayable()) {
+    MEDIACONTROL_LOG("Not start listener because media is not playable");
+    return false;
+  }
+
   if (IsBeingUsedInPictureInPictureMode()) {
     MEDIACONTROL_LOG("Start listener because of being used in PiP mode");
     return true;
@@ -7936,8 +7976,10 @@ void HTMLMediaElement::UpdateMediaControlAfterPictureInPictureModeChanged() {
     // When media enters PIP mode, we should ensure that the listener has been
     // started because we always want to control PIP video.
     StartMediaControlKeyListenerIfNeeded();
-    MOZ_ASSERT(mMediaControlKeyListener->IsStarted(),
-               "Failed to start listener when entering PIP mode");
+    if (!mMediaControlKeyListener->IsStarted()) {
+      MEDIACONTROL_LOG("Failed to start listener when entering PIP mode");
+    }
+    // Updating controller PIP state no matter the listener starts or not.
     mMediaControlKeyListener->SetPictureInPictureModeEnabled(true);
   } else {
     mMediaControlKeyListener->SetPictureInPictureModeEnabled(false);

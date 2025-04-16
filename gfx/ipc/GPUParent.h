@@ -39,7 +39,8 @@ class GPUParent final : public PGPUParent {
 
   mozilla::ipc::IPCResult RecvInit(nsTArray<GfxVarUpdate>&& vars,
                                    const DevicePrefs& devicePrefs,
-                                   nsTArray<LayerTreeIdMapping>&& mappings);
+                                   nsTArray<LayerTreeIdMapping>&& mappings,
+                                   nsTArray<GfxInfoFeatureStatus>&& features);
   mozilla::ipc::IPCResult RecvInitCompositorManager(
       Endpoint<PCompositorManagerParent>&& aEndpoint);
   mozilla::ipc::IPCResult RecvInitVsyncBridge(
@@ -76,7 +77,8 @@ class GPUParent final : public PGPUParent {
   mozilla::ipc::IPCResult RecvRequestMemoryReport(
       const uint32_t& generation, const bool& anonymize,
       const bool& minimizeMemoryUsage,
-      const Maybe<ipc::FileDescriptor>& DMDFile);
+      const Maybe<ipc::FileDescriptor>& DMDFile,
+      const RequestMemoryReportResolver& aResolver);
   mozilla::ipc::IPCResult RecvShutdownVR();
 
   mozilla::ipc::IPCResult RecvUpdatePerfStatsCollectionMask(

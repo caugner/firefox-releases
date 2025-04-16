@@ -530,7 +530,7 @@ impl FrameBuilder {
                 let spatial_node = &scene
                     .spatial_tree
                     .spatial_nodes[spatial_node_index.0 as usize];
-                spatial_node.is_ancestor_or_self_zooming
+                spatial_node.is_ancestor_or_self_zooming()
             });
 
         let mut composite_state = CompositeState::new(
@@ -579,7 +579,7 @@ impl FrameBuilder {
             );
 
             // Used to generated a unique z-buffer value per primitive.
-            let mut z_generator = ZBufferIdGenerator::new(layer, scene.config.max_depth_ids);
+            let mut z_generator = ZBufferIdGenerator::new(scene.config.max_depth_ids);
             let use_dual_source_blending = scene.config.dual_source_blending_is_enabled &&
                                            scene.config.dual_source_blending_is_supported;
 

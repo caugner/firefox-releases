@@ -15,6 +15,7 @@
 #include "jit/CompileInfo.h"
 #include "jit/IonScript.h"
 #include "jit/JitFrames.h"
+#include "js/ScalarType.h"
 #include "vm/Interpreter.h"
 
 namespace js {
@@ -902,6 +903,7 @@ MOZ_MUST_USE bool SetArrayLength(JSContext* cx, HandleObject obj,
 MOZ_MUST_USE bool CharCodeAt(JSContext* cx, HandleString str, int32_t index,
                              uint32_t* code);
 JSLinearString* StringFromCharCode(JSContext* cx, int32_t code);
+JSLinearString* StringFromCharCodeNoGC(JSContext* cx, int32_t code);
 JSString* StringFromCodePoint(JSContext* cx, int32_t codePoint);
 
 MOZ_MUST_USE bool SetProperty(JSContext* cx, HandleObject obj,
@@ -915,7 +917,7 @@ JSObject* NewCallObject(JSContext* cx, HandleShape shape,
 JSObject* NewStringObject(JSContext* cx, HandleString str);
 
 bool OperatorIn(JSContext* cx, HandleValue key, HandleObject obj, bool* out);
-bool OperatorInI(JSContext* cx, uint32_t index, HandleObject obj, bool* out);
+bool OperatorInI(JSContext* cx, int32_t index, HandleObject obj, bool* out);
 
 MOZ_MUST_USE bool GetIntrinsicValue(JSContext* cx, HandlePropertyName name,
                                     MutableHandleValue rval);
@@ -1160,6 +1162,20 @@ bool BigIntStringCompare(JSContext* cx, HandleBigInt x, HandleString y,
 template <ComparisonKind Kind>
 bool StringBigIntCompare(JSContext* cx, HandleString x, HandleBigInt y,
                          bool* res);
+
+using AtomicsCompareExchangeFn = int32_t (*)(TypedArrayObject*, int32_t,
+                                             int32_t, int32_t);
+
+using AtomicsReadWriteModifyFn = int32_t (*)(TypedArrayObject*, int32_t,
+                                             int32_t);
+
+AtomicsCompareExchangeFn AtomicsCompareExchange(Scalar::Type elementType);
+AtomicsReadWriteModifyFn AtomicsExchange(Scalar::Type elementType);
+AtomicsReadWriteModifyFn AtomicsAdd(Scalar::Type elementType);
+AtomicsReadWriteModifyFn AtomicsSub(Scalar::Type elementType);
+AtomicsReadWriteModifyFn AtomicsAnd(Scalar::Type elementType);
+AtomicsReadWriteModifyFn AtomicsOr(Scalar::Type elementType);
+AtomicsReadWriteModifyFn AtomicsXor(Scalar::Type elementType);
 
 enum class TailCallVMFunctionId;
 enum class VMFunctionId;

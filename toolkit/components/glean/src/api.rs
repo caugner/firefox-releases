@@ -20,7 +20,7 @@
 // FIXME: Remove when code gets actually used eventually (by initializing Glean).
 #![allow(dead_code)]
 
-use glean::ping_upload::{self, UploadResult};
+use fog::ping_upload::{self, UploadResult};
 use glean_core::{global_glean, setup_glean, Configuration, Glean, Result};
 use once_cell::sync::OnceCell;
 use url::Url;
@@ -157,8 +157,8 @@ fn register_uploader() {
             log::info!("FOG Ping uploader uploading to {:?}", url);
 
             let mut req = Request::post(url).body(ping_request.body.clone());
-            for (&header_key, header_value) in ping_request.headers.iter() {
-                req = req.header(header_key, header_value)?;
+            for (header_key, header_value) in &ping_request.headers {
+                req = req.header(header_key.to_owned(), header_value)?;
             }
 
             log::trace!(
@@ -184,4 +184,16 @@ fn register_uploader() {
             result
         );
     }
+}
+
+pub fn set_debug_view_tag(value: &str) -> bool {
+    with_glean_mut(|glean| glean.set_debug_view_tag(value))
+}
+
+pub fn submit_ping(ping_name: &str) -> Result<bool> {
+    with_glean_mut(|glean| glean.submit_ping_by_name(ping_name, None))
+}
+
+pub fn set_log_pings(value: bool) -> bool {
+    with_glean_mut(|glean| glean.set_log_pings(value))
 }

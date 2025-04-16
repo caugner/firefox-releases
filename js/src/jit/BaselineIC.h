@@ -1558,6 +1558,15 @@ class ICHasOwn_Fallback : public ICFallbackStub {
       : ICFallbackStub(ICStub::HasOwn_Fallback, stubCode) {}
 };
 
+// CheckPrivateField
+//      JSOp::CheckPrivateField
+class ICCheckPrivateField_Fallback : public ICFallbackStub {
+  friend class ICStubSpace;
+
+  explicit ICCheckPrivateField_Fallback(TrampolinePtr stubCode)
+      : ICFallbackStub(ICStub::CheckPrivateField_Fallback, stubCode) {}
+};
+
 // GetName
 //      JSOp::GetName
 //      JSOp::GetGName
@@ -1597,6 +1606,8 @@ class ICGetProp_Fallback : public ICMonitoredFallbackStub {
       : ICMonitoredFallbackStub(ICStub::GetProp_Fallback, stubCode) {}
 
  public:
+  // Whether this bytecode op called a getter. This is used by IonBuilder.
+  // To improve performance, the flag is not set if WarpBuilder is enabled.
   static const size_t ACCESSED_GETTER_BIT = 1;
 
   void noteAccessedGetter() { extra_ |= (1u << ACCESSED_GETTER_BIT); }
@@ -1863,6 +1874,12 @@ extern bool DoInFallback(JSContext* cx, BaselineFrame* frame,
 extern bool DoHasOwnFallback(JSContext* cx, BaselineFrame* frame,
                              ICHasOwn_Fallback* stub, HandleValue keyValue,
                              HandleValue objValue, MutableHandleValue res);
+
+extern bool DoCheckPrivateFieldFallback(JSContext* cx, BaselineFrame* frame,
+                                        ICCheckPrivateField_Fallback* stub,
+                                        HandleValue objValue,
+                                        HandleValue keyValue,
+                                        MutableHandleValue res);
 
 extern bool DoGetNameFallback(JSContext* cx, BaselineFrame* frame,
                               ICGetName_Fallback* stub, HandleObject envChain,

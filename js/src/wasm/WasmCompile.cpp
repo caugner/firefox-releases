@@ -94,8 +94,13 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
   bool forceTiering =
       cx->options().testWasmAwaitTier2() || JitOptions.wasmDelayTier2;
 
-  // The <Compiler>Available() predicates should ensure this.
-  MOZ_RELEASE_ASSERT(!(debug && (ion || cranelift)));
+  // The <Compiler>Available() predicates should ensure no failure here, but
+  // when we're fuzzing we allow inconsistent switches and the check may thus
+  // fail.  Let it go to a run-time error instead of crashing.
+  if (debug && (ion || cranelift)) {
+    JS_ReportErrorASCII(cx, "no WebAssembly compiler available");
+    return nullptr;
+  }
 
   if (forceTiering && !(baseline && (cranelift || ion))) {
     // This can happen only in testing, and in this case we don't have a
@@ -118,8 +123,7 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
   target->ionEnabled = ion;
   target->craneliftEnabled = cranelift;
   target->debugEnabled = debug;
-  target->sharedMemoryEnabled =
-      cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
+  target->sharedMemoryEnabled = wasm::ThreadsAvailable(cx);
   target->forceTiering = forceTiering;
   target->reftypesEnabled = wasm::ReftypesAvailable(cx);
   target->gcEnabled = wasm::GcTypesAvailable(cx);
@@ -565,7 +569,8 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
                                  const ShareableBytes& bytecode,
                                  UniqueChars* error,
                                  UniqueCharsVector* warnings,
-                                 JS::OptimizedEncodingListener* listener) {
+                                 JS::OptimizedEncodingListener* listener,
+                                 JSTelemetrySender telemetrySender) {
   Decoder d(bytecode.bytes, 0, error, warnings);
 
   CompilerEnvironment compilerEnv(args);
@@ -577,7 +582,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   }
 
   ModuleGenerator mg(args, &env, nullptr, error);
-  if (!mg.init()) {
+  if (!mg.init(nullptr, telemetrySender)) {
     return nullptr;
   }
 
@@ -593,7 +598,8 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
 }
 
 void wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
-                        const Module& module, Atomic<bool>* cancelled) {
+                        const Module& module, Atomic<bool>* cancelled,
+                        JSTelemetrySender telemetrySender) {
   UniqueChars error;
   Decoder d(bytecode, 0, &error);
 
@@ -623,7 +629,7 @@ void wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
   }
 
   ModuleGenerator mg(args, &env, cancelled, &error);
-  if (!mg.init()) {
+  if (!mg.init(nullptr, telemetrySender)) {
     return;
   }
 
@@ -723,7 +729,7 @@ SharedModule wasm::CompileStreaming(
     const ExclusiveBytesPtr& codeBytesEnd,
     const ExclusiveStreamEndData& exclusiveStreamEnd,
     const Atomic<bool>& cancelled, UniqueChars* error,
-    UniqueCharsVector* warnings) {
+    UniqueCharsVector* warnings, JSTelemetrySender telemetrySender) {
   CompilerEnvironment compilerEnv(args);
   ModuleEnvironment env(&compilerEnv, args.sharedMemoryEnabled
                                           ? Shareable::True
@@ -746,7 +752,7 @@ SharedModule wasm::CompileStreaming(
   }
 
   ModuleGenerator mg(args, &env, &cancelled, error);
-  if (!mg.init()) {
+  if (!mg.init(nullptr, telemetrySender)) {
     return nullptr;
   }
 

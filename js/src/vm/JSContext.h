@@ -61,11 +61,8 @@ class MOZ_RAII AutoCycleDetector {
  public:
   using Vector = GCVector<JSObject*, 8>;
 
-  AutoCycleDetector(JSContext* cx,
-                    HandleObject objArg MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : cx(cx), obj(cx, objArg), cyclic(true) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-  }
+  AutoCycleDetector(JSContext* cx, HandleObject objArg)
+      : cx(cx), obj(cx, objArg), cyclic(true) {}
 
   ~AutoCycleDetector();
 
@@ -77,7 +74,6 @@ class MOZ_RAII AutoCycleDetector {
   JSContext* cx;
   RootedObject obj;
   bool cyclic;
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 struct AutoResolving;
@@ -195,6 +191,10 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   // free unused memory.
   mozilla::Atomic<bool, mozilla::ReleaseAcquire> freeUnusedMemory;
 
+  // Are we currently timing execution? This flag ensures that we do not
+  // double-count execution time in reentrant situations.
+  js::ContextData<bool> measuringExecutionTime_;
+
  public:
   // This is used by helper threads to change the runtime their context is
   // currently operating on.
@@ -212,6 +212,11 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   bool shouldFreeUnusedMemory() const {
     return kind_ == js::ContextKind::HelperThread && freeUnusedMemory;
+  }
+
+  bool isMeasuringExecutionTime() const { return measuringExecutionTime_; }
+  void setIsMeasuringExecutionTime(bool value) {
+    measuringExecutionTime_ = value;
   }
 
   bool isMainThreadContext() const {
@@ -1016,9 +1021,8 @@ struct MOZ_RAII AutoResolving {
   enum Kind { LOOKUP, WATCH };
 
   AutoResolving(JSContext* cx, HandleObject obj, HandleId id,
-                Kind kind = LOOKUP MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+                Kind kind = LOOKUP)
       : context(cx), object(obj), id(id), kind(kind), link(cx->resolvingList) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     MOZ_ASSERT(obj);
     cx->resolvingList = this;
   }
@@ -1038,7 +1042,6 @@ struct MOZ_RAII AutoResolving {
   HandleId id;
   Kind const kind;
   AutoResolving* const link;
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 /*
@@ -1077,12 +1080,6 @@ extern bool ReportValueError(JSContext* cx, const unsigned errorNumber,
 
 JSObject* CreateErrorNotesArray(JSContext* cx, JSErrorReport* report);
 
-} /* namespace js */
-
-extern const JSErrorFormatString js_ErrorFormatString[JSErr_Limit];
-
-namespace js {
-
 /************************************************************************/
 
 /*
@@ -1107,14 +1104,10 @@ class MOZ_STACK_CLASS ExternalValueArray {
 class MOZ_RAII RootedExternalValueArray
     : public JS::Rooted<ExternalValueArray> {
  public:
-  RootedExternalValueArray(JSContext* cx, size_t len,
-                           Value* vec MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : JS::Rooted<ExternalValueArray>(cx, ExternalValueArray(len, vec)) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-  }
+  RootedExternalValueArray(JSContext* cx, size_t len, Value* vec)
+      : JS::Rooted<ExternalValueArray>(cx, ExternalValueArray(len, vec)) {}
 
  private:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 class AutoAssertNoPendingException {
@@ -1137,8 +1130,7 @@ class MOZ_RAII AutoLockScriptData {
   JSRuntime* runtime;
 
  public:
-  explicit AutoLockScriptData(JSRuntime* rt MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+  explicit AutoLockScriptData(JSRuntime* rt) {
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt) ||
                CurrentThreadIsParseThread());
     runtime = rt;
@@ -1161,8 +1153,6 @@ class MOZ_RAII AutoLockScriptData {
 #endif
     }
   }
-
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 // A token used to prove you can safely access the atoms zone. This zone is
@@ -1183,10 +1173,9 @@ class MOZ_STACK_CLASS AutoAccessAtomsZone {
 
 class MOZ_RAII AutoKeepAtoms {
   JSContext* cx;
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 
  public:
-  explicit AutoKeepAtoms(JSContext* cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
+  explicit AutoKeepAtoms(JSContext* cx);
   ~AutoKeepAtoms();
 };
 

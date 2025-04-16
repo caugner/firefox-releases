@@ -38,6 +38,7 @@ job-defaults:
                 by-test-platform:
                     (linux|windows|macos)(?!.*shippable).*: []
                     .*(?:shippable-qr).*: []
+                    windows.*(?!shippable-qr)shippable.*: []
                     default: ['mozilla-central']
             default:
                 by-test-platform:
@@ -46,8 +47,7 @@ job-defaults:
                     default: ['mozilla-beta', 'trunk']
     fission-run-on-projects:
         by-test-platform:
-            linux64-shippable-qr/opt: ['mozilla-central']
-            windows10-64-shippable-qr/opt: ['mozilla-central']
+            (linux64|windows10-64|macosx1014-64)-shippable-qr/opt: ['mozilla-central']
             default: []
 
 talos-bcv:
@@ -77,6 +77,7 @@ talos-bcv-profiling:
         by-test-platform:
             .*(?:shippable-qr|-qr)/.*: []
             (linux|windows|macos)(?!.*shippable)(?!.*-qr).*: []
+            windows10-64-shippable/opt: []
             default: ['mozilla-central']
     max-run-time: 1800
     mozharness:
@@ -115,6 +116,11 @@ talos-damp:
             macosx1014-64-shippable-qr/opt: ['mozilla-central']
             (linux|windows|macos)(?!.*shippable).*: []
             default: ['mozilla-beta', 'trunk']
+    fission-run-on-projects:
+        by-test-platform:
+            (linux64|windows10-64)-shippable-qr/opt: ['mozilla-central']
+            # Bug 1657864 - Disabled on macos for high frequency intermittents
+            default: []
 
     mozharness:
         extra-options:
@@ -436,6 +442,9 @@ talos-svgr:
     try-name: svgr
     treeherder-symbol: T(s)
     max-run-time: 1800
+    # Bug 1651311 - Disabled for high intermittent failure rate
+    run-on-projects: []
+    fission-run-on-projects: []
     mozharness:
         extra-options:
             - --suite=svgr
@@ -446,6 +455,9 @@ talos-svgr-profiling:
     treeherder-symbol: T-Prof(s)
     tier: 2
     max-run-time: 1800
+    # Bug 1651311 - Disabled for high intermittent failure rate
+    run-on-projects: []
+    fission-run-on-projects: []
     mozharness:
         extra-options:
             - --suite=svgr

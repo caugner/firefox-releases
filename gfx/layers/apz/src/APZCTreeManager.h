@@ -18,6 +18,7 @@
 #include "mozilla/gfx/Matrix.h"               // for Matrix4x4
 #include "mozilla/layers/APZInputBridge.h"    // for APZInputBridge
 #include "mozilla/layers/APZTestData.h"       // for APZTestData
+#include "mozilla/layers/APZUtils.h"          // for GeckoViewMetrics
 #include "mozilla/layers/IAPZCTreeManager.h"  // for IAPZCTreeManager
 #include "mozilla/layers/LayerAttributes.h"
 #include "mozilla/layers/LayersTypes.h"
@@ -50,11 +51,12 @@ class OverscrollHandoffChain;
 struct OverscrollHandoffState;
 class FocusTarget;
 struct FlingHandoffState;
-class LayerMetricsWrapper;
 class InputQueue;
 class GeckoContentController;
 class HitTestingTreeNode;
 class HitTestingTreeNodeAutoLock;
+class LayerMetricsWrapper;
+class SampleTime;
 class WebRenderScrollDataWrapper;
 struct AncestorTransform;
 struct ScrollThumbData;
@@ -192,7 +194,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * AsyncCompositionManager.
    */
   void SampleForWebRender(wr::TransactionWrapper& aTxn,
-                          const TimeStamp& aSampleTime,
+                          const SampleTime& aSampleTime,
                           const wr::WrPipelineIdEpochs* aEpochsBeingRendered);
 
   /**
@@ -200,7 +202,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * advancing to the next frame. The APZCs walked can be restricted to a
    * specific render root by providing that as the first argument.
    */
-  bool AdvanceAnimations(const TimeStamp& aSampleTime);
+  bool AdvanceAnimations(const SampleTime& aSampleTime);
 
   /**
    * Refer to the documentation of APZInputBridge::ReceiveInputEvent() and
@@ -525,7 +527,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
 
  public:
   // Public hook for gtests subclass
-  virtual TimeStamp GetFrameTime();
+  virtual SampleTime GetFrameTime();
 
   // Also used for controlling time during tests
   void SetTestSampleTime(const Maybe<TimeStamp>& aTime);
@@ -686,16 +688,14 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
    * @param aScrollThumbNode
    *     If this is the touch-start event, the node representing the scroll
    *     thumb we are starting to drag. Otherwise nullptr.
-   * @param aOutTargetGuid
-   *     The guid of the APZC for the scroll frame whose scroll thumb is
-   *     being dragged.
-   * @param aOutInputBlockId
-   *     The ID of the input block for the touch-drag gesture.
+   * @param aHitInfo
+   *     The hit-test flags for the touch input.
    * @return See ReceiveInputEvent() for what the return value means.
    */
   APZEventResult ProcessTouchInputForScrollbarDrag(
       MultiTouchInput& aInput,
-      const HitTestingTreeNodeAutoLock& aScrollThumbNode);
+      const HitTestingTreeNodeAutoLock& aScrollThumbNode,
+      const gfx::CompositorHitTestInfo& aHitInfo);
   void FlushRepaintsToClearScreenToGeckoTransform();
 
   void SynthesizePinchGestureFromMouseWheel(
@@ -734,7 +734,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
       LayersId aLayersId);
 
   bool AdvanceAnimationsInternal(const MutexAutoLock& aProofOfMapLock,
-                                 const TimeStamp& aSampleTime);
+                                 const SampleTime& aSampleTime);
 
   using ClippedCompositionBoundsMap =
       std::unordered_map<ScrollableLayerGuid, ParentLayerRect,
@@ -1019,7 +1019,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
 #if defined(MOZ_WIDGET_ANDROID)
  private:
   // Last Frame metrics sent to java through UIController.
-  FrameMetrics mLastRootMetrics;
+  GeckoViewMetrics mLastRootMetrics;
 #endif  // defined(MOZ_WIDGET_ANDROID)
 };
 

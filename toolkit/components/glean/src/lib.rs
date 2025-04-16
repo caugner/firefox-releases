@@ -19,7 +19,7 @@
 
 // No one is currently using the Glean SDK, so let's export it, so we know it gets
 // compiled.
-pub extern crate glean;
+pub extern crate fog;
 
 #[macro_use]
 extern crate cstr;
@@ -29,7 +29,7 @@ extern crate xpcom;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-use nserror::{nsresult, NS_ERROR_FAILURE, NS_OK};
+use nserror::{nsresult, NS_ERROR_FAILURE, NS_ERROR_NO_CONTENT, NS_OK};
 use nsstring::{nsACString, nsCStr};
 use xpcom::interfaces::{mozIViaduct, nsIObserver, nsIPrefBranch, nsISupports};
 use xpcom::{RefPtr, XpCom};
@@ -88,9 +88,10 @@ pub unsafe extern "C" fn fog_init(
     let configuration = Configuration {
         upload_enabled,
         data_path,
-        application_id: "org-mozilla-firefox".to_string(),
+        application_id: "firefox.desktop".to_string(),
         max_events: None,
         delay_ping_lifetime_io: false,
+        language_binding_name: "Rust".into(),
     };
 
     log::debug!("Configuration: {:#?}", configuration);
@@ -175,7 +176,7 @@ static mut PENDING_BUF: Vec<u8> = Vec::new();
 /// fog_give_ipc_buf on).
 #[no_mangle]
 pub unsafe extern "C" fn fog_serialize_ipc_buf() -> usize {
-    if let Some(buf) = glean::ipc::take_buf() {
+    if let Some(buf) = fog::ipc::take_buf() {
         PENDING_BUF = buf;
         PENDING_BUF.len()
     } else {
@@ -204,8 +205,44 @@ pub unsafe extern "C" fn fog_give_ipc_buf(buf: *mut u8, buf_len: usize) -> usize
 /// buf before and after this call.
 pub unsafe extern "C" fn fog_use_ipc_buf(buf: *const u8, buf_len: usize) {
     let slice = std::slice::from_raw_parts(buf, buf_len);
-    let _res = glean::ipc::replay_from_buf(slice);
+    let _res = fog::ipc::replay_from_buf(slice);
     /*if res.is_err() {
         // TODO: Record the error.
     }*/
+}
+
+#[no_mangle]
+/// Sets the debug tag for pings assembled in the future.
+/// Returns an error result if the provided value is not a valid tag.
+pub unsafe extern "C" fn fog_set_debug_view_tag(value: &nsACString) -> nsresult {
+    let result = api::set_debug_view_tag(&value.to_string());
+    if result {
+        return NS_OK;
+    } else {
+        return NS_ERROR_FAILURE;
+    }
+}
+
+#[no_mangle]
+/// Submits a ping by name.
+/// Returns NS_OK if the ping was successfully submitted, NS_ERROR_NO_CONTENT
+/// if the ping wasn't sent, or NS_ERROR_FAILURE if some part of the ping
+/// submission mechanism failed.
+pub unsafe extern "C" fn fog_submit_ping(ping_name: &nsACString) -> nsresult {
+    match api::submit_ping(&ping_name.to_string()) {
+        Ok(true) => NS_OK,
+        Ok(false) => NS_ERROR_NO_CONTENT,
+        _ => NS_ERROR_FAILURE,
+    }
+}
+
+#[no_mangle]
+/// Turns ping logging on or off.
+/// Returns an error if the logging failed to be configured.
+pub unsafe extern "C" fn fog_set_log_pings(value: bool) -> nsresult {
+    if api::set_log_pings(value) {
+        return NS_OK;
+    } else {
+        return NS_ERROR_FAILURE;
+    }
 }

@@ -239,9 +239,10 @@ class SceneBuiltNotification : public wr::NotificationHandler {
                     TagForDeserializer(Deserialize);
                 SerializeTagAndCommonProps(tag, aEntryWriter);
               }
-              void StreamPayload(SpliceableJSONWriter& aWriter,
-                                 const TimeStamp& aProcessStartTime,
-                                 UniqueStacks& aUniqueStacks) const override {
+              void StreamPayload(
+                  mozilla::baseprofiler::SpliceableJSONWriter& aWriter,
+                  const TimeStamp& aProcessStartTime,
+                  UniqueStacks& aUniqueStacks) const override {
                 StreamCommonProps("CONTENT_FULL_PAINT_TIME", aWriter,
                                   aProcessStartTime, aUniqueStacks);
               }
@@ -692,10 +693,13 @@ bool WebRenderBridgeParent::AddSharedExternalImage(
 
   mSharedSurfaceIds.insert(std::make_pair(key, aExtId));
 
+  auto imageType =
+      gfx::gfxVars::UseSoftwareWebRender()
+          ? wr::ExternalImageType::TextureHandle(wr::TextureTarget::Default)
+          : wr::ExternalImageType::Buffer();
   wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
                                  dSurf->GetFormat());
-  aResources.AddExternalImage(aKey, descriptor, aExtId,
-                              wr::ExternalImageType::Buffer(), 0);
+  aResources.AddExternalImage(aKey, descriptor, aExtId, imageType, 0);
   return true;
 }
 
@@ -803,11 +807,14 @@ bool WebRenderBridgeParent::UpdateSharedExternalImage(
     it->second = aExtId;
   }
 
+  auto imageType =
+      gfx::gfxVars::UseSoftwareWebRender()
+          ? wr::ExternalImageType::TextureHandle(wr::TextureTarget::Default)
+          : wr::ExternalImageType::Buffer();
   wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
                                  dSurf->GetFormat());
   aResources.UpdateExternalImageWithDirtyRect(
-      aKey, descriptor, aExtId, wr::ExternalImageType::Buffer(),
-      wr::ToDeviceIntRect(aDirtyRect), 0);
+      aKey, descriptor, aExtId, imageType, wr::ToDeviceIntRect(aDirtyRect), 0);
 
   return true;
 }
@@ -986,21 +993,25 @@ void WebRenderBridgeParent::SetAPZSampleTime() {
     return;
   }
   if (RefPtr<APZSampler> apz = cbp->GetAPZSampler()) {
-    TimeStamp animationTime = cbp->GetTestingTimeStamp().valueOr(
-        mCompositorScheduler->GetLastComposeTime());
+    SampleTime animationTime;
+    if (Maybe<TimeStamp> testTime = cbp->GetTestingTimeStamp()) {
+      animationTime = SampleTime::FromTest(*testTime);
+    } else {
+      animationTime = mCompositorScheduler->GetLastComposeTime();
+    }
     TimeDuration frameInterval = cbp->GetVsyncInterval();
     // As with the non-webrender codepath in AsyncCompositionManager, we want to
     // use the timestamp for the next vsync when advancing animations.
     if (frameInterval != TimeDuration::Forever()) {
-      animationTime += frameInterval;
+      animationTime = animationTime + frameInterval;
     }
     apz->SetSampleTime(animationTime);
   }
 }
 
 bool WebRenderBridgeParent::SetDisplayList(
-    const LayoutDeviceRect& aRect, const wr::LayoutSize& aContentSize,
-    ipc::ByteBuf&& aDL, const wr::BuiltDisplayListDescriptor& aDLDesc,
+    const LayoutDeviceRect& aRect, ipc::ByteBuf&& aDL,
+    const wr::BuiltDisplayListDescriptor& aDLDesc,
     const nsTArray<OpUpdateResource>& aResourceUpdates,
     const nsTArray<RefCountedShmem>& aSmallShmems,
     const nsTArray<ipc::Shmem>& aLargeShmems, const TimeStamp& aTxnStartTime,
@@ -1023,7 +1034,7 @@ bool WebRenderBridgeParent::SetDisplayList(
     gfx::DeviceColor clearColor(0.f, 0.f, 0.f, 0.f);
     aTxn.SetDisplayList(clearColor, aWrEpoch,
                         wr::ToLayoutSize(RoundedToInt(aRect).Size()),
-                        mPipelineId, aContentSize, aDLDesc, dlData);
+                        mPipelineId, aDLDesc, dlData);
 
     if (aObserveLayersUpdate) {
       aTxn.Notify(wr::Checkpoint::SceneBuilt,
@@ -1073,11 +1084,11 @@ bool WebRenderBridgeParent::ProcessDisplayListData(
   }
 
   if (aDisplayList.mDL &&
-      !SetDisplayList(aDisplayList.mRect, aDisplayList.mContentSize,
-                      std::move(aDisplayList.mDL.ref()), aDisplayList.mDLDesc,
-                      aDisplayList.mResourceUpdates, aDisplayList.mSmallShmems,
-                      aDisplayList.mLargeShmems, aTxnStartTime, txn, aWrEpoch,
-                      aValidTransaction, aObserveLayersUpdate)) {
+      !SetDisplayList(aDisplayList.mRect, std::move(aDisplayList.mDL.ref()),
+                      aDisplayList.mDLDesc, aDisplayList.mResourceUpdates,
+                      aDisplayList.mSmallShmems, aDisplayList.mLargeShmems,
+                      aTxnStartTime, txn, aWrEpoch, aValidTransaction,
+                      aObserveLayersUpdate)) {
     return false;
   }
   return true;
@@ -1352,8 +1363,8 @@ bool WebRenderBridgeParent::ProcessWebRenderParentCommands(
         const OpUpdateAsyncImagePipeline& op =
             cmd.get_OpUpdateAsyncImagePipeline();
         mAsyncImageManager->UpdateAsyncImagePipeline(
-            op.pipelineId(), op.scBounds(), op.scTransform(), op.scaleToSize(),
-            op.filter(), op.mixBlendMode(), op.scaleFromSize());
+            op.pipelineId(), op.scBounds(), op.rotation(), op.filter(),
+            op.mixBlendMode());
         mAsyncImageManager->ApplyAsyncImageForPipeline(op.pipelineId(), aTxn,
                                                        txnForImageBridge);
         break;
@@ -1517,18 +1528,21 @@ void WebRenderBridgeParent::MaybeCaptureScreenPixels() {
 
   IntSize size(client_size.width, client_size.height);
 
+  bool needsYFlip = false;
   mApi->Readback(TimeStamp::Now(), size, format,
-                 Range<uint8_t>(mem.get<uint8_t>(), buffer_size));
+                 Range<uint8_t>(mem.get<uint8_t>(), buffer_size), &needsYFlip);
 
   Unused << mScreenPixelsTarget->SendScreenPixels(
-      std::move(mem), ScreenIntSize(client_size.width, client_size.height));
+      std::move(mem), ScreenIntSize(client_size.width, client_size.height),
+      needsYFlip);
 
   mScreenPixelsTarget = nullptr;
 }
 #endif
 
 mozilla::ipc::IPCResult WebRenderBridgeParent::RecvGetSnapshot(
-    PTextureParent* aTexture) {
+    PTextureParent* aTexture, bool* aNeedsYFlip) {
+  *aNeedsYFlip = false;
   if (mDestroyed) {
     return IPC_OK();
   }
@@ -1580,7 +1594,7 @@ mozilla::ipc::IPCResult WebRenderBridgeParent::RecvGetSnapshot(
   FlushSceneBuilds();
   FlushFrameGeneration();
   mApi->Readback(start, size, bufferTexture->GetFormat(),
-                 Range<uint8_t>(buffer, buffer_size));
+                 Range<uint8_t>(buffer, buffer_size), aNeedsYFlip);
 
   return IPC_OK();
 }
@@ -1916,6 +1930,12 @@ mozilla::ipc::IPCResult WebRenderBridgeParent::RecvGetAPZTestData(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult WebRenderBridgeParent::RecvGetFrameUniformity(
+    FrameUniformityData* aOutData) {
+  mCompositorBridge->GetFrameUniformity(GetLayersId(), aOutData);
+  return IPC_OK();
+}
+
 void WebRenderBridgeParent::ActorDestroy(ActorDestroyReason aWhy) { Destroy(); }
 
 void WebRenderBridgeParent::ResetPreviousSampleTime() {
@@ -1935,7 +1955,7 @@ RefPtr<OMTASampler> WebRenderBridgeParent::GetOMTASampler() const {
 void WebRenderBridgeParent::SetOMTASampleTime() {
   MOZ_ASSERT(IsRootWebRenderBridgeParent());
   if (RefPtr<OMTASampler> sampler = GetOMTASampler()) {
-    sampler->SetSampleTime(mCompositorScheduler->GetLastComposeTime());
+    sampler->SetSampleTime(mCompositorScheduler->GetLastComposeTime().Time());
   }
 }
 
@@ -1961,10 +1981,12 @@ void WebRenderBridgeParent::CompositeToTarget(VsyncId aId,
   if (mPaused || !mReceivedDisplayList) {
     ResetPreviousSampleTime();
     mCompositionOpportunityId = mCompositionOpportunityId.Next();
+#ifdef MOZ_GECKO_PRFOILER
     TimeStamp now = TimeStamp::Now();
     PROFILER_ADD_TEXT_MARKER("SkippedComposite",
                              mPaused ? "Paused"_ns : "No display list"_ns,
                              JS::ProfilingCategoryPair::GRAPHICS, now, now);
+#endif  // MOZ_GECKO_PRFOILER
     return;
   }
 
@@ -1983,9 +2005,11 @@ void WebRenderBridgeParent::CompositeToTarget(VsyncId aId,
       }
     }
 
+#ifdef MOZ_GECKO_PROFILER
     TimeStamp now = TimeStamp::Now();
     PROFILER_ADD_TEXT_MARKER("SkippedComposite", "Too many pending frames"_ns,
                              JS::ProfilingCategoryPair::GRAPHICS, now, now);
+#endif  // MOZ_GECKO_PROFILER
     return;
   }
 

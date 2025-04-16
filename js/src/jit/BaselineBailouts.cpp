@@ -19,6 +19,7 @@
 #include "jit/mips64/Simulator-mips64.h"
 #include "jit/Recover.h"
 #include "jit/RematerializedFrame.h"
+#include "js/friend/StackLimits.h"  // js::CheckRecursionLimitWithStackPointerDontReport, js::ReportOverRecursed
 #include "js/Utility.h"
 #include "util/Memory.h"
 #include "vm/ArgumentsObject.h"
@@ -2027,6 +2028,16 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
     case BailoutKind::SpecificSymbolGuard:
     case BailoutKind::NonInt32ArrayLength:
     case BailoutKind::ProtoGuard:
+    case BailoutKind::ProxyGuard:
+    case BailoutKind::NotProxyGuard:
+    case BailoutKind::NotDOMProxyGuard:
+    case BailoutKind::NotArrayBufferMaybeSharedGuard:
+    case BailoutKind::MegamorphicAccess:
+    case BailoutKind::ArrayPopShift:
+    case BailoutKind::ArraySlice:
+    case BailoutKind::TagNotEqualGuard:
+    case BailoutKind::FunctionFlagsGuard:
+    case BailoutKind::FunctionKindGuard:
       // Do nothing.
       break;
 
@@ -2043,6 +2054,12 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
     case BailoutKind::DoubleOutput:
     case BailoutKind::ObjectIdentityOrTypeGuard:
       HandleBaselineInfoBailout(cx, outerScript, innerScript);
+      break;
+
+    case BailoutKind::NotOptimizedArgumentsGuard:
+      // Optimized-arguments escaped to a slow path. Disable the optimization to
+      // prevent bailout loops.
+      JSScript::argumentsOptimizationFailed(cx, innerScript);
       break;
 
     case BailoutKind::ArgumentCheck:

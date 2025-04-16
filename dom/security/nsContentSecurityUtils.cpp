@@ -302,9 +302,9 @@ FilenameTypeAndDetails nsContentSecurityUtils::FilenameToFilenameType(
   if (widget::WinUtils::PreparePathForTelemetry(strSanitizedPath, flags)) {
     DWORD cchDecodedUrl = INTERNET_MAX_URL_LENGTH;
     WCHAR szOut[INTERNET_MAX_URL_LENGTH];
-    HRESULT hr =
-        ::CoInternetParseUrl(fileName.get(), PARSE_SCHEMA, 0, szOut,
-                             INTERNET_MAX_URL_LENGTH, &cchDecodedUrl, 0);
+    HRESULT hr;
+    SAFECALL_URLMON_FUNC(CoInternetParseUrl, fileName.get(), PARSE_SCHEMA, 0,
+                         szOut, INTERNET_MAX_URL_LENGTH, &cchDecodedUrl, 0);
     if (hr == S_OK && cchDecodedUrl) {
       nsAutoString sanitizedPathAndScheme;
       sanitizedPathAndScheme.Append(szOut);
@@ -1132,7 +1132,7 @@ bool nsContentSecurityUtils::IsDownloadAllowed(
   nsCOMPtr<nsILoadInfo> secCheckLoadInfo =
       new LoadInfo(loadingPrincipal, loadInfo->TriggeringPrincipal(), nullptr,
                    nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK,
-                   nsIContentPolicy::TYPE_OTHER);
+                   nsIContentPolicy::TYPE_SAVEAS_DOWNLOAD);
 
   int16_t decission = nsIContentPolicy::ACCEPT;
   nsMixedContentBlocker::ShouldLoad(false,  //  aHadInsecureImageRedirect
@@ -1145,18 +1145,34 @@ bool nsContentSecurityUtils::IsDownloadAllowed(
   Telemetry::Accumulate(mozilla::Telemetry::MIXED_CONTENT_DOWNLOADS,
                         decission != nsIContentPolicy::ACCEPT);
 
-  if (!StaticPrefs::dom_block_download_insecure() ||
-      decission == nsIContentPolicy::ACCEPT) {
-    return true;
+  if (StaticPrefs::dom_block_download_insecure() &&
+      decission != nsIContentPolicy::ACCEPT) {
+    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+    if (httpChannel) {
+      LogMessageToConsole(httpChannel, "MixedContentBlockedDownload");
+    }
+    return false;
   }
 
   if (loadInfo->TriggeringPrincipal()->IsSystemPrincipal()) {
     return true;
   }
 
-  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
-  if (httpChannel) {
-    LogMessageToConsole(httpChannel, "MixedContentBlockedDownload");
+  if (!StaticPrefs::dom_block_download_in_sandboxed_iframes()) {
+    return true;
   }
-  return false;
+
+  uint32_t triggeringFlags = loadInfo->GetTriggeringSandboxFlags();
+  uint32_t currentflags = loadInfo->GetSandboxFlags();
+
+  if ((triggeringFlags & SANDBOXED_ALLOW_DOWNLOADS) ||
+      (currentflags & SANDBOXED_ALLOW_DOWNLOADS)) {
+    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+    if (httpChannel) {
+      LogMessageToConsole(httpChannel, "IframeSandboxBlockedDownload");
+    }
+    return false;
+  }
+
+  return true;
 }

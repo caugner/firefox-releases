@@ -511,6 +511,15 @@ static bool Locale(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+  // Steps 10-11.
+  RootedObject options(cx);
+  if (args.hasDefined(1)) {
+    options = ToObject(cx, args[1]);
+    if (!options) {
+      return false;
+    }
+  }
+
   // ApplyOptionsToTag, steps 2 and 9.
   LanguageTag tag(cx);
   if (!LanguageTagParser::parse(cx, tagLinearStr, tag)) {
@@ -521,13 +530,7 @@ static bool Locale(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // Steps 10-11.
-  if (args.hasDefined(1)) {
-    RootedObject options(cx, ToObject(cx, args[1]));
-    if (!options) {
-      return false;
-    }
-
+  if (options) {
     // Step 12.
     if (!ApplyOptionsToTag(cx, tag, options)) {
       return false;
@@ -1391,8 +1394,8 @@ bool js::intl_ValidateAndCanonicalizeUnicodeExtensionType(JSContext* cx,
   intl::AsciiToLowerCase(unicodeTypeChars.get(), unicodeTypeLength,
                          unicodeTypeChars.get());
 
-  auto key = mozilla::MakeSpan(unicodeKey, UnicodeKeyLength);
-  auto type = mozilla::MakeSpan(unicodeTypeChars.get(), unicodeTypeLength);
+  auto key = mozilla::Span(unicodeKey, UnicodeKeyLength);
+  auto type = mozilla::Span(unicodeTypeChars.get(), unicodeTypeLength);
 
   // Search if there's a replacement for the current Unicode keyword.
   JSString* result;

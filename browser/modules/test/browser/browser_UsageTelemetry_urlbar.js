@@ -19,9 +19,6 @@ const SUGGESTION_ENGINE_NAME =
 XPCOMUtils.defineLazyModuleGetters(this, {
   SearchTelemetry: "resource:///modules/SearchTelemetry.jsm",
   UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.jsm",
-  URLBAR_SELECTED_RESULT_TYPES: "resource:///modules/BrowserUsageTelemetry.jsm",
-  URLBAR_SELECTED_RESULT_METHODS:
-    "resource:///modules/BrowserUsageTelemetry.jsm",
 });
 
 function searchInAwesomebar(value, win = window) {
@@ -101,9 +98,6 @@ add_task(async function setup() {
   let originalEngine = await Services.search.getDefault();
   await Services.search.setDefault(engine);
 
-  // Give it some mock internal aliases.
-  engine.wrappedJSObject.__internalAliases = ["@mozaliasfoo", "@mozaliasbar"];
-
   // And the first one-off engine.
   await Services.search.moveEngine(engine, 0);
 
@@ -141,6 +135,16 @@ add_task(async function setup() {
     Services.prefs.setBoolPref(SUGGEST_URLBAR_PREF, suggestionsEnabled);
     await PlacesUtils.history.clear();
     Services.telemetry.setEventRecordingEnabled("navigation", false);
+  });
+});
+
+add_task(async function setup() {
+  // TODO: (Bug 1654680) Rewrite this test with update2 enabled.
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.urlbar.update2", false],
+      ["browser.urlbar.update2.oneOffsRefresh", false],
+    ],
   });
 });
 
@@ -221,7 +225,7 @@ add_task(async function test_simpleQuery() {
 
   TelemetryTestUtils.assertHistogram(
     resultTypeHist,
-    URLBAR_SELECTED_RESULT_TYPES.searchengine,
+    UrlbarUtils.SELECTED_RESULT_TYPES.searchengine,
     1
   );
 
@@ -234,7 +238,7 @@ add_task(async function test_simpleQuery() {
 
   TelemetryTestUtils.assertHistogram(
     resultMethodHist,
-    URLBAR_SELECTED_RESULT_METHODS.enter,
+    UrlbarTestUtils.SELECTED_RESULT_METHODS.enter,
     1
   );
 
@@ -256,9 +260,6 @@ add_task(async function test_searchAlias() {
   );
   let resultMethodHist = TelemetryTestUtils.getAndClearHistogram(
     "FX_URLBAR_SELECTED_RESULT_METHOD"
-  );
-  let search_hist = TelemetryTestUtils.getAndClearKeyedHistogram(
-    "SEARCH_COUNTS"
   );
 
   let tab = await BrowserTestUtils.openNewForegroundTab(
@@ -286,19 +287,6 @@ add_task(async function test_searchAlias() {
     "This search must only increment one entry in the scalar."
   );
 
-  // SEARCH_COUNTS should be incremented, but only the urlbar source since an
-  // internal @search keyword was not used.
-  TelemetryTestUtils.assertKeyedHistogramSum(
-    search_hist,
-    "other-MozSearch.urlbar",
-    1
-  );
-  TelemetryTestUtils.assertKeyedHistogramSum(
-    search_hist,
-    "other-MozSearch.alias",
-    undefined
-  );
-
   // Also check events.
   TelemetryTestUtils.assertEvents(
     [
@@ -318,7 +306,7 @@ add_task(async function test_searchAlias() {
 
   TelemetryTestUtils.assertHistogram(
     resultTypeHist,
-    URLBAR_SELECTED_RESULT_TYPES.searchengine,
+    UrlbarUtils.SELECTED_RESULT_TYPES.searchengine,
     1
   );
 
@@ -331,57 +319,8 @@ add_task(async function test_searchAlias() {
 
   TelemetryTestUtils.assertHistogram(
     resultMethodHist,
-    URLBAR_SELECTED_RESULT_METHODS.enter,
+    UrlbarTestUtils.SELECTED_RESULT_METHODS.enter,
     1
-  );
-
-  BrowserTestUtils.removeTab(tab);
-});
-
-add_task(async function test_internalSearchAlias() {
-  let search_hist = TelemetryTestUtils.getAndClearKeyedHistogram(
-    "SEARCH_COUNTS"
-  );
-
-  let tab = await BrowserTestUtils.openNewForegroundTab(
-    gBrowser,
-    "about:blank"
-  );
-
-  info("Search using an internal search alias.");
-  let p = BrowserTestUtils.browserLoaded(tab.linkedBrowser);
-  await searchInAwesomebar("@mozaliasfoo query");
-  EventUtils.synthesizeKey("KEY_Enter");
-  await p;
-
-  // SEARCH_COUNTS should be incremented, but only the alias source since an
-  // internal @search keyword was used.
-  TelemetryTestUtils.assertKeyedHistogramSum(
-    search_hist,
-    "other-MozSearch.urlbar",
-    undefined
-  );
-  TelemetryTestUtils.assertKeyedHistogramSum(
-    search_hist,
-    "other-MozSearch.alias",
-    1
-  );
-
-  info("Search using the other internal search alias.");
-  p = BrowserTestUtils.browserLoaded(tab.linkedBrowser);
-  await searchInAwesomebar("@mozaliasbar query");
-  EventUtils.synthesizeKey("KEY_Enter");
-  await p;
-
-  TelemetryTestUtils.assertKeyedHistogramSum(
-    search_hist,
-    "other-MozSearch.urlbar",
-    undefined
-  );
-  TelemetryTestUtils.assertKeyedHistogramSum(
-    search_hist,
-    "other-MozSearch.alias",
-    2
   );
 
   BrowserTestUtils.removeTab(tab);
@@ -469,7 +408,7 @@ add_task(async function test_oneOff_enter() {
 
   TelemetryTestUtils.assertHistogram(
     resultTypeHist,
-    URLBAR_SELECTED_RESULT_TYPES.searchengine,
+    UrlbarUtils.SELECTED_RESULT_TYPES.searchengine,
     1
   );
 
@@ -482,7 +421,7 @@ add_task(async function test_oneOff_enter() {
 
   TelemetryTestUtils.assertHistogram(
     resultMethodHist,
-    URLBAR_SELECTED_RESULT_METHODS.enter,
+    UrlbarTestUtils.SELECTED_RESULT_METHODS.enter,
     1
   );
 
@@ -518,7 +457,7 @@ add_task(async function test_oneOff_enterSelection() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.arrowEnterSelection,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection,
       1
     );
 
@@ -552,7 +491,7 @@ add_task(async function test_oneOff_click() {
 
   TelemetryTestUtils.assertHistogram(
     resultMethodHist,
-    URLBAR_SELECTED_RESULT_METHODS.click,
+    UrlbarTestUtils.SELECTED_RESULT_METHODS.click,
     1
   );
 
@@ -635,7 +574,7 @@ add_task(async function test_suggestion_click() {
 
     TelemetryTestUtils.assertHistogram(
       resultTypeHist,
-      URLBAR_SELECTED_RESULT_TYPES.searchsuggestion,
+      UrlbarUtils.SELECTED_RESULT_TYPES.searchsuggestion,
       1
     );
 
@@ -648,7 +587,7 @@ add_task(async function test_suggestion_click() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.click,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.click,
       1
     );
 
@@ -681,7 +620,7 @@ add_task(async function test_suggestion_arrowEnterSelection() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.arrowEnterSelection,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection,
       1
     );
 
@@ -713,7 +652,7 @@ add_task(async function test_suggestion_tabEnterSelection() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.tabEnterSelection,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.tabEnterSelection,
       1
     );
 
@@ -745,7 +684,7 @@ add_task(async function test_suggestion_enterSelection() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.enterSelection,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.enterSelection,
       1
     );
 
@@ -834,7 +773,7 @@ add_task(async function test_formHistory_click() {
 
     TelemetryTestUtils.assertHistogram(
       resultTypeHist,
-      URLBAR_SELECTED_RESULT_TYPES.formhistory,
+      UrlbarUtils.SELECTED_RESULT_TYPES.formhistory,
       1
     );
 
@@ -847,7 +786,7 @@ add_task(async function test_formHistory_click() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.click,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.click,
       1
     );
 
@@ -890,7 +829,7 @@ add_task(async function test_formHistory_arrowEnterSelection() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.arrowEnterSelection,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection,
       1
     );
 
@@ -932,7 +871,7 @@ add_task(async function test_formHistory_tabEnterSelection() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.tabEnterSelection,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.tabEnterSelection,
       1
     );
 
@@ -975,7 +914,7 @@ add_task(async function test_formHistory_enterSelection() {
 
     TelemetryTestUtils.assertHistogram(
       resultMethodHist,
-      URLBAR_SELECTED_RESULT_METHODS.enterSelection,
+      UrlbarTestUtils.SELECTED_RESULT_METHODS.enterSelection,
       1
     );
 

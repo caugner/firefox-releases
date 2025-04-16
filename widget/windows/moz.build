@@ -61,6 +61,7 @@ UNIFIED_SOURCES += [
     'nsDataObjCollection.cpp',
     'nsDragService.cpp',
     'nsLookAndFeel.cpp',
+    'nsNativeBasicThemeWin.cpp',
     'nsNativeDragSource.cpp',
     'nsNativeDragTarget.cpp',
     'nsNativeThemeWin.cpp',
@@ -122,7 +123,6 @@ SOURCES += [
 if CONFIG['NS_PRINTING']:
     UNIFIED_SOURCES += [
         'nsDeviceContextSpecWin.cpp',
-        'nsPaperWin.cpp',
         'nsPrintDialogUtil.cpp',
         'nsPrintDialogWin.cpp',
         'nsPrinterWin.cpp',
@@ -166,8 +166,6 @@ DEFINES['MOZ_UNICODE'] = True
 for var in ('MOZ_ENABLE_D3D10_LAYER'):
     if CONFIG[var]:
         DEFINES[var] = True
-
-RESFILE = 'widget.res'
 
 CXXFLAGS += CONFIG['MOZ_CAIRO_CFLAGS']
 

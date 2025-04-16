@@ -142,7 +142,8 @@ void WindowGlobalParent::Init() {
   // If there is no current window global, assume we're about to become it
   // optimistically.
   if (!BrowsingContext()->IsDiscarded()) {
-    BrowsingContext()->SetCurrentInnerWindowId(InnerWindowId());
+    MOZ_ALWAYS_SUCCEEDS(
+        BrowsingContext()->SetCurrentInnerWindowId(InnerWindowId()));
   }
 
   nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
@@ -292,15 +293,19 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvLoadURI(
 }
 
 mozilla::ipc::IPCResult WindowGlobalParent::RecvInternalLoad(
-    const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
     nsDocShellLoadState* aLoadState) {
-  if (aTargetBC.IsNullOrDiscarded()) {
+  if (!aLoadState->Target().IsEmpty() ||
+      aLoadState->TargetBrowsingContext().IsNull()) {
+    return IPC_FAIL(this, "must already be retargeted");
+  }
+  if (aLoadState->TargetBrowsingContext().IsDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
         ("ParentIPC: Trying to send a message with dead or detached context"));
     return IPC_OK();
   }
-  CanonicalBrowsingContext* targetBC = aTargetBC.get_canonical();
+  CanonicalBrowsingContext* targetBC =
+      aLoadState->TargetBrowsingContext().get_canonical();
 
   // FIXME: For cross-process loads, we should double check CanAccess() for the
   // source browsing context in the parent process.
@@ -474,8 +479,9 @@ void WindowGlobalParent::NotifyContentBlockingEvent(
 }
 
 already_AddRefed<JSWindowActorParent> WindowGlobalParent::GetActor(
-    const nsACString& aName, ErrorResult& aRv) {
-  return JSActorManager::GetActor(aName, aRv).downcast<JSWindowActorParent>();
+    JSContext* aCx, const nsACString& aName, ErrorResult& aRv) {
+  return JSActorManager::GetActor(aCx, aName, aRv)
+      .downcast<JSWindowActorParent>();
 }
 
 already_AddRefed<JSActor> WindowGlobalParent::InitJSActor(

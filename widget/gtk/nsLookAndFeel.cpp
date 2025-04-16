@@ -271,25 +271,22 @@ void nsLookAndFeel::RefreshImpl() {
   mInitialized = false;
 }
 
-nsTArray<LookAndFeelInt> nsLookAndFeel::GetIntCacheImpl() {
-  nsTArray<LookAndFeelInt> lookAndFeelIntCache =
-      nsXPLookAndFeel::GetIntCacheImpl();
+LookAndFeelCache nsLookAndFeel::GetCacheImpl() {
+  LookAndFeelCache cache = nsXPLookAndFeel::GetCacheImpl();
 
   const IntID kIdsToCache[] = {IntID::SystemUsesDarkTheme,
                                IntID::PrefersReducedMotion,
                                IntID::UseAccessibilityTheme};
 
   for (IntID id : kIdsToCache) {
-    lookAndFeelIntCache.AppendElement(
-        LookAndFeelInt{.id = id, .value = GetInt(id)});
+    cache.mInts.AppendElement(LookAndFeelInt{.id = id, .value = GetInt(id)});
   }
 
-  return lookAndFeelIntCache;
+  return cache;
 }
 
-void nsLookAndFeel::SetIntCacheImpl(
-    const nsTArray<LookAndFeelInt>& aLookAndFeelIntCache) {
-  for (const auto& entry : aLookAndFeelIntCache) {
+void nsLookAndFeel::SetCacheImpl(const LookAndFeelCache& aCache) {
+  for (const auto& entry : aCache.mInts) {
     switch (entry.id) {
       case IntID::SystemUsesDarkTheme:
         mSystemUsesDarkTheme = entry.value;
@@ -1281,8 +1278,8 @@ void nsLookAndFeel::EnsureInit() {
   // as -moz-gtk* media features.
   ButtonLayout buttonLayout[TOOLBAR_BUTTONS];
 
-  size_t activeButtons = GetGtkHeaderBarButtonLayout(MakeSpan(buttonLayout),
-                                                     &mCSDReversedPlacement);
+  size_t activeButtons =
+      GetGtkHeaderBarButtonLayout(Span(buttonLayout), &mCSDReversedPlacement);
   for (size_t i = 0; i < activeButtons; i++) {
     // We check if a button is represented on the right side of the tabbar.
     // Then we assign it a value from 3 to 5, instead of 0 to 2 when it is on

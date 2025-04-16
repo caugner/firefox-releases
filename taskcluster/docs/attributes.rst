@@ -45,7 +45,6 @@ Project names are the repositories.  They can be:
 * `mozilla-central`
 * `mozilla-beta`
 * `mozilla-release`
-* `mozilla-esr68`
 * `mozilla-esr78`
 * ... A partial list can be found in taskcluster/taskgraph/util/attributes.py
 
@@ -327,6 +326,13 @@ identify the current version of the artifacts. See :py:mod:`taskgraph.util.cache
        name: debian7-base
        type: docker-images.v2
 
+eager_indexes
+=============
+A list of strings of indexes to populate before the task ever completes. Some tasks (e.g. cached tasks) we
+want to exist in the index before they even run/complete. Our current use is to allow us to depend on an
+unfinished cached task in future pushes. This avoids extra overhead from multiple tasks running, and
+can allow us to have our results in just a bit earlier.
+
 required_signoffs
 =================
 A list of release signoffs that this kind requires, should the release also
@@ -359,6 +365,12 @@ If a task set this boolean attribute to `true`, it will be processed by the code
 review bot, the task will ran for every new Phabricator diff.
 Any supported and detected issue will be automatically reported on the
 Phabricator revision.
+
+resource-monitor
+================
+If a task set this boolean attribute to `true`, it will collect CPU, memory, and
+- if available - Disk and Network IO by running the resource-monitor utility,
+provided through fetches.
 
 retrigger
 =========

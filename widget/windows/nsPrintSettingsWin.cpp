@@ -6,7 +6,11 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "nsCRT.h"
+#include "nsDeviceContextSpecWin.h"
+#include "nsPrintSettingsImpl.h"
 #include "WinUtils.h"
+
+using namespace mozilla;
 
 // Using paper sizes from wingdi.h and the units given there, plus a little
 // extra research for the ones it doesn't give. Looks like the list hasn't
@@ -159,6 +163,101 @@ nsPrintSettingsWin::nsPrintSettingsWin(const nsPrintSettingsWin& aPS)
   *this = aPS;
 }
 
+void nsPrintSettingsWin::InitWithInitializer(
+    const PrintSettingsInitializer& aSettings) {
+  nsPrintSettings::InitWithInitializer(aSettings);
+
+  if (aSettings.mDevmodeWStorage.Length() < sizeof(DEVMODEW)) {
+    MOZ_DIAGNOSTIC_ASSERT(false, "Why did nsPrinterWin::DefaultSettings fail?");
+    return;
+  }
+
+  // SetDevMode copies the DEVMODE.
+  SetDevMode(const_cast<DEVMODEW*>(reinterpret_cast<const DEVMODEW*>(
+      aSettings.mDevmodeWStorage.Elements())));
+
+  if (mDevMode->dmFields & DM_ORIENTATION) {
+    SetOrientation(mDevMode->dmOrientation == DMORIENT_PORTRAIT
+                       ? kPortraitOrientation
+                       : kLandscapeOrientation);
+  }
+
+  if (mDevMode->dmFields & DM_COPIES) {
+    SetNumCopies(mDevMode->dmCopies);
+  }
+
+  if (mDevMode->dmFields & DM_SCALE) {
+    // Since we do the scaling, grab the DEVMODE value and reset it back to 100.
+    double scale = double(mDevMode->dmScale) / 100.0f;
+    if (mScaling == 1.0 || scale != 1.0) {
+      SetScaling(scale);
+    }
+    mDevMode->dmScale = 100;
+  }
+
+  if (mDevMode->dmFields & DM_PAPERSIZE) {
+    SetPaperData(mDevMode->dmPaperSize);
+    if (mDevMode->dmPaperSize > 0 &&
+        mDevMode->dmPaperSize < int32_t(ArrayLength(kPaperSizeUnits))) {
+      SetPaperSizeUnit(kPaperSizeUnits[mPaperData]);
+    }
+  } else {
+    SetPaperData(-1);
+  }
+
+  if (mDevMode->dmFields & DM_COLOR) {
+    SetPrintInColor(mDevMode->dmColor == DMCOLOR_COLOR);
+  }
+
+  if (mDevMode->dmFields & DM_DUPLEX) {
+    switch (mDevMode->dmDuplex) {
+      default:
+        MOZ_ASSERT_UNREACHABLE("bad value for dmDuplex field");
+        [[fallthrough]];
+      case DMDUP_SIMPLEX:
+        SetDuplex(kSimplex);
+        break;
+      case DMDUP_HORIZONTAL:
+        SetDuplex(kDuplexHorizontal);
+        break;
+      case DMDUP_VERTICAL:
+        SetDuplex(kDuplexVertical);
+        break;
+    }
+  }
+
+  // Set the paper sizes to match the unit.
+  double pointsToSizeUnit =
+      mPaperSizeUnit == kPaperSizeInches ? 1.0 / 72.0 : 25.4 / 72.0;
+  SetPaperWidth(aSettings.mPaperInfo.mSize.width * pointsToSizeUnit);
+  SetPaperHeight(aSettings.mPaperInfo.mSize.height * pointsToSizeUnit);
+
+  double printableWidthInPoints = aSettings.mPaperInfo.mSize.width;
+  double printableHeightInPoints = aSettings.mPaperInfo.mSize.height;
+  if (aSettings.mPaperInfo.mUnwriteableMargin.isSome()) {
+    const auto& margin = aSettings.mPaperInfo.mUnwriteableMargin.value();
+    printableWidthInPoints -= (margin.top + margin.bottom);
+    printableHeightInPoints -= (margin.left + margin.right);
+  }
+
+  // Keep these values in portrait format, so we can reflect our own changes
+  // to mOrientation.
+  if (mOrientation == kPortraitOrientation) {
+    mPrintableWidthInInches = printableWidthInPoints / POINTS_PER_INCH_FLOAT;
+    mPrintableHeightInInches = printableHeightInPoints / POINTS_PER_INCH_FLOAT;
+  } else {
+    mPrintableHeightInInches = printableWidthInPoints / POINTS_PER_INCH_FLOAT;
+    mPrintableWidthInInches = printableHeightInPoints / POINTS_PER_INCH_FLOAT;
+  }
+}
+
+already_AddRefed<nsIPrintSettings> CreatePlatformPrintSettings(
+    const PrintSettingsInitializer& aSettings) {
+  auto settings = MakeRefPtr<nsPrintSettingsWin>();
+  settings->InitWithInitializer(aSettings);
+  return settings.forget();
+}
+
 /** ---------------------------------------------------
  *  See documentation in nsPrintSettingsWin.h
  *	@update
@@ -289,6 +388,23 @@ void nsPrintSettingsWin::CopyFromNative(HDC aHdc, DEVMODEW* aDevMode) {
     mNumCopies = aDevMode->dmCopies;
   }
 
+  if (aDevMode->dmFields & DM_DUPLEX) {
+    switch (aDevMode->dmDuplex) {
+      default:
+        MOZ_ASSERT_UNREACHABLE("bad value for dmDuplex field");
+        [[fallthrough]];
+      case DMDUP_SIMPLEX:
+        mDuplex = kSimplex;
+        break;
+      case DMDUP_HORIZONTAL:
+        mDuplex = kDuplexHorizontal;
+        break;
+      case DMDUP_VERTICAL:
+        mDuplex = kDuplexVertical;
+        break;
+    }
+  }
+
   // Since we do the scaling, grab their value and reset back to 100.
   if (aDevMode->dmFields & DM_SCALE) {
     double scale = double(aDevMode->dmScale) / 100.0f;
@@ -307,6 +423,10 @@ void nsPrintSettingsWin::CopyFromNative(HDC aHdc, DEVMODEW* aDevMode) {
     }
   } else {
     mPaperData = -1;
+  }
+
+  if (aDevMode->dmFields & DM_COLOR) {
+    mPrintInColor = aDevMode->dmColor == DMCOLOR_COLOR;
   }
 
   InitUnwriteableMargin(aHdc);
@@ -357,6 +477,9 @@ void nsPrintSettingsWin::CopyToNative(DEVMODEW* aDevMode) {
     aDevMode->dmFields &= ~DM_PAPERSIZE;
   }
 
+  aDevMode->dmFields |= DM_COLOR;
+  aDevMode->dmColor = mPrintInColor ? DMCOLOR_COLOR : DMCOLOR_MONOCHROME;
+
   // The length and width in DEVMODE are always in tenths of a millimeter.
   double sizeUnitToTenthsOfAmm =
       10L * (mPaperSizeUnit == kPaperSizeInches ? MM_PER_INCH_FLOAT : 1L);
@@ -388,6 +511,25 @@ void nsPrintSettingsWin::CopyToNative(DEVMODEW* aDevMode) {
   // Setup Number of Copies
   aDevMode->dmCopies = mNumCopies;
   aDevMode->dmFields |= DM_COPIES;
+
+  // Setup Simplex/Duplex mode
+  switch (mDuplex) {
+    case kSimplex:
+      aDevMode->dmDuplex = DMDUP_SIMPLEX;
+      aDevMode->dmFields |= DM_DUPLEX;
+      break;
+    case kDuplexHorizontal:
+      aDevMode->dmDuplex = DMDUP_HORIZONTAL;
+      aDevMode->dmFields |= DM_DUPLEX;
+      break;
+    case kDuplexVertical:
+      aDevMode->dmDuplex = DMDUP_VERTICAL;
+      aDevMode->dmFields |= DM_DUPLEX;
+      break;
+    default:
+      MOZ_ASSERT_UNREACHABLE("bad value for duplex option");
+      break;
+  }
 }
 
 //-------------------------------------------
@@ -419,6 +561,9 @@ nsPrintSettingsWin& nsPrintSettingsWin::operator=(
   } else {
     mDevMode = nullptr;
   }
+
+  mPrintableWidthInInches = rhs.mPrintableWidthInInches;
+  mPrintableHeightInInches = rhs.mPrintableHeightInInches;
 
   return *this;
 }

@@ -348,7 +348,7 @@ public class GeckoSession implements Parcelable {
                 "GeckoView:ContentKill",
                 "GeckoView:ContextMenu",
                 "GeckoView:DOMMetaViewportFit",
-                "GeckoView:DOMTitleChanged",
+                "GeckoView:PageTitleChanged",
                 "GeckoView:DOMWindowClose",
                 "GeckoView:ExternalResponse",
                 "GeckoView:FocusRequest",
@@ -356,6 +356,7 @@ public class GeckoSession implements Parcelable {
                 "GeckoView:FullScreenExit",
                 "GeckoView:WebAppManifest",
                 "GeckoView:FirstContentfulPaint",
+                "GeckoView:PaintStatusReset",
             }
         ) {
             @Override
@@ -387,7 +388,7 @@ public class GeckoSession implements Parcelable {
                 } else if ("GeckoView:DOMMetaViewportFit".equals(event)) {
                     delegate.onMetaViewportFitChange(GeckoSession.this,
                                                      message.getString("viewportfit"));
-                } else if ("GeckoView:DOMTitleChanged".equals(event)) {
+                } else if ("GeckoView:PageTitleChanged".equals(event)) {
                     delegate.onTitleChange(GeckoSession.this,
                                            message.getString("title"));
                 } else if ("GeckoView:FocusRequest".equals(event)) {
@@ -413,6 +414,8 @@ public class GeckoSession implements Parcelable {
                     }
                 } else if ("GeckoView:FirstContentfulPaint".equals(event)) {
                     delegate.onFirstContentfulPaint(GeckoSession.this);
+                } else if ("GeckoView:PaintStatusReset".equals(event)) {
+                    delegate.onPaintStatusReset(GeckoSession.this);
                 }
             }
         };
@@ -883,14 +886,18 @@ public class GeckoSession implements Parcelable {
         }
     };
 
+    private final MediaSession.Handler mMediaSessionHandler =
+            new MediaSession.Handler(this);
 
     /* package */ int handlersCount;
 
-    private final GeckoSessionHandler<?>[] mSessionHandlers = new GeckoSessionHandler<?>[] {
-        mContentHandler, mHistoryHandler, mMediaHandler, mNavigationHandler,
-        mPermissionHandler, mProcessHangHandler, mProgressHandler, mScrollHandler,
-        mSelectionActionDelegate, mContentBlockingHandler
-    };
+    private final GeckoSessionHandler<?>[] mSessionHandlers =
+            new GeckoSessionHandler<?>[] {
+                mContentHandler, mHistoryHandler, mMediaHandler,
+                mNavigationHandler, mPermissionHandler, mProcessHangHandler,
+                mProgressHandler, mScrollHandler, mSelectionActionDelegate,
+                mContentBlockingHandler, mMediaSessionHandler
+            };
 
     private static class PermissionCallback implements
         PermissionDelegate.Callback, PermissionDelegate.MediaCallback {
@@ -1118,6 +1125,14 @@ public class GeckoSession implements Parcelable {
 
         @WrapForJNI(dispatchTo = "proxy")
         public native void attachAccessibility(SessionAccessibility.NativeProvider sessionAccessibility);
+
+        @WrapForJNI(dispatchTo = "proxy")
+        public native void attachMediaSessionController(
+            final MediaSession.Controller controller, final long id);
+
+        @WrapForJNI(dispatchTo = "proxy")
+        public native void detachMediaSessionController(
+            final MediaSession.Controller controller);
 
         @WrapForJNI(calledFrom = "gecko")
         private synchronized void onReady(final @Nullable NativeQueue queue) {
@@ -1466,6 +1481,9 @@ public class GeckoSession implements Parcelable {
         }
 
         onWindowChanged(WINDOW_CLOSE, /* inProgress */ true);
+
+        // We need to ensure the compositor releases any Surface it currently holds.
+        onSurfaceDestroyed();
 
         mWindow.close();
         mWindow.disposeNative();
@@ -2630,6 +2648,81 @@ public class GeckoSession implements Parcelable {
         return mMediaHandler.getDelegate();
     }
 
+    /**
+     * Set the media session delegate.
+     * This will replace the current handler.
+     * @param delegate An implementation of {@link MediaSession.Delegate}.
+     */
+    @AnyThread
+    public void setMediaSessionDelegate(
+            final @Nullable MediaSession.Delegate delegate) {
+        Log.d(LOGTAG, "setMediaSessionDelegate " + mWindow);
+        mMediaSessionHandler.setDelegate(delegate, this);
+    }
+
+    /**
+     * Get the media session delegate.
+     * @return The current media session delegate.
+     */
+    @AnyThread
+    public @Nullable MediaSession.Delegate getMediaSessionDelegate() {
+        return mMediaSessionHandler.getDelegate();
+    }
+
+    @UiThread
+    /* package */ void attachMediaSessionController(
+            final MediaSession.Controller controller) {
+        ThreadUtils.assertOnUiThread();
+
+        if (DEBUG) {
+            Log.d(LOGTAG,
+                    "attachMediaSessionController" +
+                    " isOpen=" + isOpen() +
+                    ", isEnabled=" + mMediaSessionHandler.isEnabled());
+        }
+
+        if (!isOpen() || !mMediaSessionHandler.isEnabled()) {
+            return;
+        }
+
+        if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
+            mWindow.attachMediaSessionController(controller, controller.getId());
+        } else {
+            GeckoThread.queueNativeCallUntil(
+                    GeckoThread.State.PROFILE_READY,
+                    mWindow, "attachMediaSessionController",
+                    MediaSession.Controller.class,
+                    controller,
+                    controller.getId());
+        }
+    }
+
+    @UiThread
+    /* package */ void detachMediaSessionController(
+            final MediaSession.Controller controller) {
+        ThreadUtils.assertOnUiThread();
+
+        if (DEBUG) {
+            Log.d(LOGTAG,
+                    "detachMediaSessionController" +
+                    " isOpen=" + isOpen() +
+                    ", isEnabled=" + mMediaSessionHandler.isEnabled());
+        }
+
+        if (!isOpen() || !mMediaSessionHandler.isEnabled()) {
+            return;
+        }
+
+        if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
+            mWindow.detachMediaSessionController(controller);
+        } else {
+            GeckoThread.queueNativeCallUntil(
+                    GeckoThread.State.PROFILE_READY,
+                    mWindow, "detachMediaSessionController",
+                    MediaSession.Controller.class,
+                    controller);
+        }
+    }
 
     /**
      * Get the current selection action delegate for this GeckoSession.
@@ -3247,9 +3340,10 @@ public class GeckoSession implements Parcelable {
         /**
          * Notification that the first content paint has occurred.
          * This callback is invoked for the first content paint after
-         * a page has been loaded. The function {@link #onFirstComposite(GeckoSession)}
-         * will be called once the compositor has started rendering. However, it is
-         * possible for the compositor to start rendering before there is any content to render.
+         * a page has been loaded, or after a {@link #onPaintStatusReset(GeckoSession)}
+         * event. The function {@link #onFirstComposite(GeckoSession)} will be called
+         * once the compositor has started rendering. However, it is possible for the
+         * compositor to start rendering before there is any content to render.
          * onFirstContentfulPaint() is called once some content has been rendered. It may be nothing
          * more than the page background color. It is not an indication that the whole page has
          * been rendered.
@@ -3257,6 +3351,21 @@ public class GeckoSession implements Parcelable {
          */
         @UiThread
         default void onFirstContentfulPaint(@NonNull GeckoSession session) {}
+
+        /**
+         * Notification that the paint status has been reset.
+         *
+         * This callback is invoked whenever the painted content is no longer being
+         * displayed. This can occur in response to the session being paused.
+         * After this has fired the compositor may continue rendering, but may not
+         * render the page content. This callback can therefore be used in conjunction
+         * with {@link #onFirstContentfulPaint(GeckoSession)} to determine when there is
+         * valid content being rendered.
+         *
+         * @param session The GeckoSession that had the paint status reset event.
+         */
+        @UiThread
+        default void onPaintStatusReset(@NonNull GeckoSession session) {}
 
         /**
          * This is fired when the loaded document has a valid Web App Manifest present.

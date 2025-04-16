@@ -9,7 +9,7 @@
 #include "mozilla/Maybe.h"                  // mozilla::Maybe
 #include "mozilla/OperatorNewExtensions.h"  // mozilla::KnownNotNull
 #include "mozilla/Range.h"                  // mozilla::Range
-#include "mozilla/Span.h"                   // mozilla::{Span, MakeSpan}
+#include "mozilla/Span.h"                   // mozilla::{Span, Span}
 #include "mozilla/Variant.h"                // mozilla::AsVariant
 
 #include <stddef.h>  // size_t
@@ -20,13 +20,13 @@
 #include "frontend/AbstractScopePtr.h"  // ScopeIndex
 #include "frontend/BytecodeSection.h"   // EmitScriptThingsVector
 #include "frontend/CompilationInfo.h"   // CompilationInfo
-#include "frontend/Parser.h"  // NewEmptyLexicalScopeData, NewEmptyGlobalScopeData
+#include "frontend/Parser.h"  // NewEmptyLexicalScopeData, NewEmptyGlobalScopeData, NewEmptyVarScopeData, NewEmptyFunctionScopeData
 #include "frontend/smoosh_generated.h"  // CVec, Smoosh*, smoosh_*
 #include "frontend/SourceNotes.h"       // SrcNote
-#include "frontend/Stencil.h"           // ScopeCreationData, RegExpIndex
-#include "frontend/TokenStream.h"       // TokenStreamAnyChars
-#include "gc/Rooting.h"                 // RootedScriptSourceObject
-#include "irregexp/RegExpAPI.h"         // irregexp::CheckPatternSyntax
+#include "frontend/Stencil.h"  // ScopeStencil, RegExpIndex, FunctionIndex, NullScriptThing
+#include "frontend/TokenStream.h"  // TokenStreamAnyChars
+#include "gc/Rooting.h"            // RootedScriptSourceObject
+#include "irregexp/RegExpAPI.h"    // irregexp::CheckPatternSyntax
 #include "js/CharacterEncoding.h"  // JS::UTF8Chars, UTF8CharsToNewTwoByteCharsZ
 #include "js/GCAPI.h"              // JS::AutoCheckCannotGC
 #include "js/GCVector.h"           // JS::RootedVector
@@ -92,11 +92,29 @@ void CopyBindingNames(JSContext* cx, CVec<SmooshBindingName>& from,
   }
 }
 
+void CopyBindingNames(JSContext* cx, CVec<COption<SmooshBindingName>>& from,
+                      JS::HandleVector<JSAtom*> allAtoms, BindingName* to) {
+  // We're setting trailing array's content before setting its length.
+  JS::AutoCheckCannotGC nogc(cx);
+
+  size_t numBindings = from.len;
+  for (size_t i = 0; i < numBindings; i++) {
+    COption<SmooshBindingName>& maybeName = from.data[i];
+    if (maybeName.IsSome()) {
+      SmooshBindingName& name = maybeName.AsSome();
+      new (mozilla::KnownNotNull, &to[i]) BindingName(
+          allAtoms[name.name], name.is_closed_over, name.is_top_level_function);
+    } else {
+      new (mozilla::KnownNotNull, &to[i]) BindingName(nullptr, false, false);
+    }
+  }
+}
+
 // Given the result of SmooshMonkey's parser, convert a list of scope data
-// into a list of ScopeCreationData.
-bool ConvertScopeCreationData(JSContext* cx, const SmooshResult& result,
-                              JS::HandleVector<JSAtom*> allAtoms,
-                              CompilationInfo& compilationInfo) {
+// into a list of ScopeStencil.
+bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
+                         JS::HandleVector<JSAtom*> allAtoms,
+                         CompilationInfo& compilationInfo) {
   auto& alloc = compilationInfo.allocScope.alloc();
 
   for (size_t i = 0; i < result.scopes.len; i++) {
@@ -121,8 +139,36 @@ bool ConvertScopeCreationData(JSContext* cx, const SmooshResult& result,
         data->constStart = global.const_start;
         data->length = numBindings;
 
-        if (!ScopeCreationData::create(cx, compilationInfo, ScopeKind::Global,
-                                       data, &index)) {
+        if (!ScopeStencil::createForGlobalScope(
+                cx, compilationInfo, ScopeKind::Global, data, &index)) {
+          return false;
+        }
+        break;
+      }
+      case SmooshScopeData::Tag::Var: {
+        auto& var = scopeData.AsVar();
+
+        size_t numBindings = var.bindings.len;
+
+        JS::Rooted<VarScope::Data*> data(
+            cx, NewEmptyVarScopeData(cx, alloc, numBindings));
+        if (!data) {
+          return false;
+        }
+
+        CopyBindingNames(cx, var.bindings, allAtoms,
+                         data->trailingNames.start());
+
+        // NOTE: data->nextFrameSlot is set in ScopeStencil::createForVarScope.
+
+        data->length = numBindings;
+
+        uint32_t firstFrameSlot = var.first_frame_slot;
+        ScopeIndex enclosingIndex(var.enclosing);
+        if (!ScopeStencil::createForVarScope(
+                cx, compilationInfo, ScopeKind::FunctionBodyVar, data,
+                firstFrameSlot, var.function_has_extensible_scope,
+                mozilla::Some(enclosingIndex), &index)) {
           return false;
         }
         break;
@@ -140,18 +186,52 @@ bool ConvertScopeCreationData(JSContext* cx, const SmooshResult& result,
         CopyBindingNames(cx, lexical.bindings, allAtoms,
                          data->trailingNames.start());
 
-        // NOTE: data->nextFrameSlot is set in ScopeCreationData::create.
+        // NOTE: data->nextFrameSlot is set in
+        // ScopeStencil::createForLexicalScope.
 
         data->constStart = lexical.const_start;
         data->length = numBindings;
 
         uint32_t firstFrameSlot = lexical.first_frame_slot;
         ScopeIndex enclosingIndex(lexical.enclosing);
-        Rooted<AbstractScopePtr> enclosing(
-            cx, AbstractScopePtr(compilationInfo, enclosingIndex));
-        if (!ScopeCreationData::create(cx, compilationInfo, ScopeKind::Lexical,
-                                       data, firstFrameSlot, enclosing,
-                                       &index)) {
+        if (!ScopeStencil::createForLexicalScope(
+                cx, compilationInfo, ScopeKind::Lexical, data, firstFrameSlot,
+                mozilla::Some(enclosingIndex), &index)) {
+          return false;
+        }
+        break;
+      }
+      case SmooshScopeData::Tag::Function: {
+        auto& function = scopeData.AsFunction();
+
+        size_t numBindings = function.bindings.len;
+        JS::Rooted<FunctionScope::Data*> data(
+            cx, NewEmptyFunctionScopeData(cx, alloc, numBindings));
+        if (!data) {
+          return false;
+        }
+
+        CopyBindingNames(cx, function.bindings, allAtoms,
+                         data->trailingNames.start());
+
+        // NOTE: data->nextFrameSlot is set in
+        // ScopeStencil::createForFunctionScope.
+
+        data->hasParameterExprs = function.has_parameter_exprs;
+        data->nonPositionalFormalStart = function.non_positional_formal_start;
+        data->varStart = function.var_start;
+        data->length = numBindings;
+
+        bool hasParameterExprs = function.has_parameter_exprs;
+        bool needsEnvironment = function.non_positional_formal_start;
+        FunctionIndex functionIndex = FunctionIndex(function.function_index);
+        bool isArrow = function.is_arrow;
+
+        ScopeIndex enclosingIndex(function.enclosing);
+        if (!ScopeStencil::createForFunctionScope(
+                cx, compilationInfo, data, hasParameterExprs, needsEnvironment,
+                functionIndex, isArrow, mozilla::Some(enclosingIndex),
+                &index)) {
           return false;
         }
         break;
@@ -166,7 +246,7 @@ bool ConvertScopeCreationData(JSContext* cx, const SmooshResult& result,
 }
 
 // Given the result of SmooshMonkey's parser, convert a list of RegExp data
-// into a list of RegExpCreationData.
+// into a list of RegExpStencil.
 bool ConvertRegExpData(JSContext* cx, const SmooshResult& result,
                        CompilationInfo& compilationInfo) {
   for (size_t i = 0; i < result.regexps.len; i++) {
@@ -234,7 +314,8 @@ bool ConvertRegExpData(JSContext* cx, const SmooshResult& result,
 
 // Convert SmooshImmutableScriptData into ImmutableScriptData.
 UniquePtr<ImmutableScriptData> ConvertImmutableScriptData(
-    JSContext* cx, const SmooshImmutableScriptData& smooshScriptData) {
+    JSContext* cx, const SmooshImmutableScriptData& smooshScriptData,
+    bool isFunction) {
   Vector<ScopeNote, 0, SystemAllocPolicy> scopeNotes;
   if (!scopeNotes.resize(smooshScriptData.scope_notes.len)) {
     return nullptr;
@@ -247,17 +328,13 @@ UniquePtr<ImmutableScriptData> ConvertImmutableScriptData(
     scopeNotes[i].parent = scopeNote.parent;
   }
 
-  // FIXME: Support functions.
-  bool isFunction = false;
-  int funLength = 0;
-
   return ImmutableScriptData::new_(
       cx, smooshScriptData.main_offset, smooshScriptData.nfixed,
       smooshScriptData.nslots, GCThingIndex(smooshScriptData.body_scope_index),
       smooshScriptData.num_ic_entries, smooshScriptData.num_bytecode_type_sets,
-      isFunction, funLength,
-      mozilla::MakeSpan(smooshScriptData.bytecode.data,
-                        smooshScriptData.bytecode.len),
+      isFunction, smooshScriptData.fun_length,
+      mozilla::Span(smooshScriptData.bytecode.data,
+                    smooshScriptData.bytecode.len),
       mozilla::Span<const SrcNote>(), mozilla::Span<const uint32_t>(),
       scopeNotes, mozilla::Span<const TryNote>());
 }
@@ -288,6 +365,11 @@ bool ConvertGCThings(JSContext* cx, const SmooshResult& result,
             mozilla::AsVariant(allAtoms[item.AsAtom()].get()));
         break;
       }
+      case SmooshGCThing::Tag::Function: {
+        gcThings.infallibleAppend(
+            mozilla::AsVariant(FunctionIndex(item.AsFunction())));
+        break;
+      }
       case SmooshGCThing::Tag::Scope: {
         gcThings.infallibleAppend(
             mozilla::AsVariant(ScopeIndex(item.AsScope())));
@@ -311,37 +393,64 @@ bool ConvertGCThings(JSContext* cx, const SmooshResult& result,
 // (until GC things gets removed from stencil) tracing API of the GC.
 bool ConvertScriptStencil(JSContext* cx, const SmooshResult& result,
                           const SmooshScriptStencil& smooshStencil,
-                          // FIXME: Store length in SmooshScriptStencil.
-                          size_t length, JS::HandleVector<JSAtom*> allAtoms,
+                          JS::HandleVector<JSAtom*> allAtoms,
                           CompilationInfo& compilationInfo,
                           MutableHandle<ScriptStencil> stencil) {
-  auto index = smooshStencil.immutable_script_data.AsSome();
-  auto immutableScriptData =
-      ConvertImmutableScriptData(cx, result.script_data_list.data[index]);
-  if (!immutableScriptData) {
-    return false;
-  }
-
-  // FIXME: Support extent.
-  stencil.get().extent = SourceExtent::makeGlobalExtent(length);
-
   using ImmutableFlags = js::ImmutableScriptFlagsEnum;
 
   const JS::ReadOnlyCompileOptions& options = compilationInfo.options;
 
-  stencil.get().immutableFlags = result.top_level_script.immutable_flags;
+  stencil.get().immutableFlags = smooshStencil.immutable_flags;
 
   // FIXME: The following flags should be set in jsparagus.
   stencil.get().immutableFlags.setFlag(ImmutableFlags::SelfHosted,
                                        options.selfHostingMode);
   stencil.get().immutableFlags.setFlag(ImmutableFlags::ForceStrict,
                                        options.forceStrictMode());
-  stencil.get().immutableFlags.setFlag(ImmutableFlags::NoScriptRval,
-                                       options.noScriptRval);
-  stencil.get().immutableFlags.setFlag(ImmutableFlags::TreatAsRunOnce,
-                                       options.isRunOnce);
+  stencil.get().immutableFlags.setFlag(ImmutableFlags::HasNonSyntacticScope,
+                                       options.nonSyntacticScope);
 
-  stencil.get().immutableScriptData = std::move(immutableScriptData);
+  if (&smooshStencil == &result.top_level_script) {
+    stencil.get().immutableFlags.setFlag(ImmutableFlags::TreatAsRunOnce,
+                                         options.isRunOnce);
+    stencil.get().immutableFlags.setFlag(ImmutableFlags::NoScriptRval,
+                                         options.noScriptRval);
+  }
+
+  bool isFunction =
+      stencil.get().immutableFlags.hasFlag(ImmutableFlags::IsFunction);
+
+  if (smooshStencil.immutable_script_data.IsSome()) {
+    auto index = smooshStencil.immutable_script_data.AsSome();
+    auto immutableScriptData = ConvertImmutableScriptData(
+        cx, result.script_data_list.data[index], isFunction);
+    if (!immutableScriptData) {
+      return false;
+    }
+    stencil.get().immutableScriptData = std::move(immutableScriptData);
+  }
+
+  stencil.get().extent.sourceStart = smooshStencil.extent.source_start;
+  stencil.get().extent.sourceEnd = smooshStencil.extent.source_end;
+  stencil.get().extent.toStringStart = smooshStencil.extent.to_string_start;
+  stencil.get().extent.toStringEnd = smooshStencil.extent.to_string_end;
+  stencil.get().extent.lineno = smooshStencil.extent.lineno;
+  stencil.get().extent.column = smooshStencil.extent.column;
+
+  if (isFunction) {
+    if (smooshStencil.fun_name.IsSome()) {
+      stencil.get().functionAtom = allAtoms[smooshStencil.fun_name.AsSome()];
+    }
+    stencil.get().functionFlags = FunctionFlags(smooshStencil.fun_flags);
+    stencil.get().nargs = smooshStencil.fun_nargs;
+    if (smooshStencil.lazy_function_enclosing_scope_index.IsSome()) {
+      stencil.get().lazyFunctionEnclosingScopeIndex_ = mozilla::Some(ScopeIndex(
+          smooshStencil.lazy_function_enclosing_scope_index.AsSome()));
+    }
+    stencil.get().isStandaloneFunction = smooshStencil.is_standalone_function;
+    stencil.get().wasFunctionEmitted = smooshStencil.was_function_emitted;
+    stencil.get().isSingletonFunction = smooshStencil.is_singleton_function;
+  }
 
   if (!ConvertGCThings(cx, result, smooshStencil, allAtoms, stencil)) {
     return false;
@@ -393,9 +502,9 @@ void ReportSmooshCompileError(JSContext* cx, ErrorMetadata&& metadata,
 }
 
 /* static */
-JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
-                                      JS::SourceText<Utf8Unit>& srcBuf,
-                                      bool* unimplemented) {
+bool Smoosh::compileGlobalScriptToStencil(CompilationInfo& compilationInfo,
+                                          JS::SourceText<Utf8Unit>& srcBuf,
+                                          bool* unimplemented) {
   // FIXME: check info members and return with *unimplemented = true
   //        if any field doesn't match to smoosh_run.
 
@@ -421,33 +530,55 @@ JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
     ReportSmooshCompileError(cx, std::move(metadata),
                              JSMSG_SMOOSH_COMPILE_ERROR,
                              reinterpret_cast<const char*>(result.error.data));
-    return nullptr;
+    return false;
   }
 
   if (result.unimplemented) {
     *unimplemented = true;
-    return nullptr;
+    return false;
   }
 
   *unimplemented = false;
 
   JS::RootedVector<JSAtom*> allAtoms(cx);
   if (!ConvertAtoms(cx, result, compilationInfo, &allAtoms)) {
-    return nullptr;
+    return false;
   }
 
-  if (!ConvertScopeCreationData(cx, result, allAtoms, compilationInfo)) {
-    return nullptr;
+  if (!ConvertScopeStencil(cx, result, allAtoms, compilationInfo)) {
+    return false;
   }
 
   if (!ConvertRegExpData(cx, result, compilationInfo)) {
-    return nullptr;
+    return false;
   }
 
-  // FIXME: Support functions.
-  if (!ConvertScriptStencil(cx, result, result.top_level_script, length,
-                            allAtoms, compilationInfo,
-                            &compilationInfo.topLevel)) {
+  if (!ConvertScriptStencil(cx, result, result.top_level_script, allAtoms,
+                            compilationInfo, &compilationInfo.topLevel)) {
+    return false;
+  }
+
+  if (!compilationInfo.funcData.reserve(result.functions.len)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < result.functions.len; i++) {
+    compilationInfo.funcData.infallibleEmplaceBack(cx);
+
+    if (!ConvertScriptStencil(cx, result, result.functions.data[i], allAtoms,
+                              compilationInfo, compilationInfo.funcData[i])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/* static */
+JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
+                                      JS::SourceText<Utf8Unit>& srcBuf,
+                                      bool* unimplemented) {
+  if (!compileGlobalScriptToStencil(compilationInfo, srcBuf, unimplemented)) {
     return nullptr;
   }
 
@@ -456,6 +587,7 @@ JSScript* Smoosh::compileGlobalScript(CompilationInfo& compilationInfo,
   }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
+  JSContext* cx = compilationInfo.cx;
   Sprinter sprinter(cx);
   if (!sprinter.init()) {
     return nullptr;

@@ -11,12 +11,12 @@
 #include <unordered_map>
 #include <vector>
 
-// Most WebIDL typedefs are identical to their OpenGL counterparts.
 #include "GLDefs.h"
 #include "mozilla/Casting.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Range.h"
 #include "mozilla/RefCounted.h"
+#include "mozilla/gfx/BuildConstants.h"
 #include "mozilla/gfx/Point.h"
 #include "mozilla/ipc/Shmem.h"
 #include "gfxTypes.h"
@@ -220,6 +220,7 @@ enum class WebGLExtensionID : uint8_t {
   EXT_texture_compression_bptc,
   EXT_texture_compression_rgtc,
   EXT_texture_filter_anisotropic,
+  EXT_texture_norm16,
   MOZ_debug,
   OES_element_index_uint,
   OES_fbo_render_mipmap,
@@ -245,11 +246,6 @@ enum class WebGLExtensionID : uint8_t {
   WEBGL_lose_context,
   Max
 };
-
-template <typename T>
-inline constexpr auto EnumValue(const T v) {
-  return static_cast<typename std::underlying_type<T>::type>(v);
-}
 
 class UniqueBuffer {
   // Like UniquePtr<>, but for void* and malloc/calloc/free.
@@ -735,10 +731,13 @@ class RawBuffer final {
         mLen(data.length()),
         mOwned(std::move(owned)) {}
 
+  explicit RawBuffer(const size_t len) : mLen(len) {}
+
   ~RawBuffer() = default;
 
   Range<const T> Data() const { return {mBegin, mLen}; }
-  const auto& begin() const { return mBegin; };
+  const auto& begin() const { return mBegin; }
+  const auto& size() const { return mLen; }
 
   RawBuffer() = default;
 
@@ -903,7 +902,14 @@ struct WebGLPixelStore final {
   bool mPremultiplyAlpha = false;
   bool mRequireFastPath = false;
 
+  static void AssertDefault(gl::GLContext& gl, const bool isWebgl2) {
+    WebGLPixelStore expected;
+    MOZ_ASSERT(expected.AssertCurrent(gl, isWebgl2));
+    Unused << expected;
+  }
+
   void Apply(gl::GLContext&, bool isWebgl2, const uvec3& uploadSize) const;
+  bool AssertCurrent(gl::GLContext&, bool isWebgl2) const;
 
   WebGLPixelStore ForUseWith(
       const GLenum target, const uvec3& uploadSize,

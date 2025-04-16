@@ -26,6 +26,7 @@
 #include "gc/GCProbes.h"
 #include "gc/Policy.h"
 #include "jit/JitCode.h"
+#include "js/friend/DumpFunctions.h"  // js::DumpObject
 #include "js/GCTypeMacros.h"  // JS_FOR_EACH_PUBLIC_{,TAGGED_}GC_POINTER_TYPE
 #include "js/SliceBudget.h"
 #include "util/DiagnosticAssertions.h"
@@ -833,8 +834,7 @@ void GCMarker::severWeakDelegate(JSObject* key, JSObject* delegate) {
 // 'delegate' is now the delegate of 'key'. Update weakmap marking state.
 void GCMarker::restoreWeakDelegate(JSObject* key, JSObject* delegate) {
   if (!key->zone()->needsIncrementalBarrier() ||
-      !delegate->zone()->needsIncrementalBarrier())
-  {
+      !delegate->zone()->needsIncrementalBarrier()) {
     MOZ_ASSERT(!key->zone()->gcWeakKeys(key).get(key),
                "non-collecting zone should not have populated gcWeakKeys");
     return;
@@ -983,6 +983,10 @@ JS_PUBLIC_API void js::gc::PerformIncrementalReadBarrier(JS::GCCellPtr thing) {
   // ExposeGCThingToActiveJS which has already checked the prerequisites for
   // performing a read barrier. This means we can skip a bunch of checks and
   // call info the tracer directly.
+
+  AutoGeckoProfilerEntry profilingStackFrame(
+      TlsContext.get(), "PerformIncrementalReadBarrier",
+      JS::ProfilingCategoryPair::GCCC_Barrier);
 
   MOZ_ASSERT(thing);
   MOZ_ASSERT(!JS::RuntimeHeapIsMajorCollecting());
@@ -1567,12 +1571,13 @@ void js::ObjectGroup::traceChildren(JSTracer* trc) {
 
   if (JSObject* descr = maybeTypeDescr()) {
     TraceManuallyBarrieredEdge(trc, &descr, "group_type_descr");
-    setTypeDescr(&descr->as<TypeDescr>());
+    MOZ_ASSERT(js::IsTypeDescrClass(MaybeForwardedObjectClass(descr)));
+    setTypeDescr(static_cast<TypeDescr*>(descr));
   }
 
   if (JSObject* fun = maybeInterpretedFunction()) {
     TraceManuallyBarrieredEdge(trc, &fun, "group_function");
-    setInterpretedFunction(&fun->as<JSFunction>());
+    setInterpretedFunction(&MaybeForwardedObjectAs<JSFunction>(fun));
   }
 }
 void js::GCMarker::lazilyMarkChildren(ObjectGroup* group) {
@@ -1664,7 +1669,7 @@ static void VisitTraceList(const Functor& f, const uint32_t* traceList,
     traceList++;
   }
   for (size_t i = 0; i < objectCount; i++) {
-    JSObject** objp = reinterpret_cast<JSObject**>(memory + *traceList);
+    auto** objp = reinterpret_cast<JSObject**>(memory + *traceList);
     if (*objp) {
       f(objp);
     }
@@ -2610,7 +2615,7 @@ void MarkStackIter::saveValueArray(
   MOZ_ASSERT(position() >= ValueArrayWords);
 
   MarkStack::TaggedPtr* ptr = &stack_.stack()[pos_ - ValueArrayWords];
-  auto dest = reinterpret_cast<MarkStack::SavedValueArray*>(ptr);
+  auto* dest = reinterpret_cast<MarkStack::SavedValueArray*>(ptr);
   *dest = savedArray;
   MOZ_ASSERT(peekTag() == MarkStack::SavedValueArrayTag);
 }
@@ -3045,7 +3050,7 @@ void TenuringTracer::traverse(JSObject** objp) {
   // We only ever visit the internals of objects after moving them to tenured.
   MOZ_ASSERT(!nursery().isInside(objp));
 
-  Cell** cellp = reinterpret_cast<Cell**>(objp);
+  auto** cellp = reinterpret_cast<Cell**>(objp);
   if (!IsInsideNursery(*cellp) || nursery().getForwardedPointer(cellp)) {
     return;
   }
@@ -3066,7 +3071,7 @@ void TenuringTracer::traverse(JSString** strp) {
   // We only ever visit the internals of strings after moving them to tenured.
   MOZ_ASSERT(!nursery().isInside(strp));
 
-  Cell** cellp = reinterpret_cast<Cell**>(strp);
+  auto** cellp = reinterpret_cast<Cell**>(strp);
   if (IsInsideNursery(*cellp) && !nursery().getForwardedPointer(cellp)) {
     *strp = moveToTenured(*strp);
   }
@@ -3077,7 +3082,7 @@ void TenuringTracer::traverse(JS::BigInt** bip) {
   // We only ever visit the internals of BigInts after moving them to tenured.
   MOZ_ASSERT(!nursery().isInside(bip));
 
-  Cell** cellp = reinterpret_cast<Cell**>(bip);
+  auto** cellp = reinterpret_cast<Cell**>(bip);
   if (IsInsideNursery(*cellp) && !nursery().getForwardedPointer(cellp)) {
     *bip = moveToTenured(*bip);
   }
@@ -3354,8 +3359,8 @@ void js::TenuringTracer::traceObject(JSObject* obj) {
   // during parsing and cannot contain nursery pointers.
   if (!nobj->hasEmptyElements() && !nobj->denseElementsAreCopyOnWrite() &&
       ObjectDenseElementsMayBeMarkable(nobj)) {
-    Value* elems = static_cast<HeapSlot*>(nobj->getDenseElements())
-                       ->unsafeUnbarrieredForTracing();
+    HeapSlotArray elements = nobj->getDenseElements();
+    Value* elems = elements.begin()->unsafeUnbarrieredForTracing();
     traceSlots(elems, elems + nobj->getDenseInitializedLength());
   }
 
@@ -3639,6 +3644,36 @@ JSString* js::TenuringTracer::moveToTenured(JSString* src) {
   Zone* zone = src->nurseryZone();
   zone->tenuredStrings++;
 
+  // If this string is in the StringToAtomCache, try to deduplicate it by using
+  // the atom. Don't do this for dependent strings because they're more
+  // complicated. See StringRelocationOverlay and DeduplicationStringHasher
+  // comments.
+  if (src->inStringToAtomCache() && src->isDeduplicatable() &&
+      !src->hasBase()) {
+    JSLinearString* linear = &src->asLinear();
+    JSAtom* atom = runtime()->caches().stringToAtomCache.lookup(linear);
+    MOZ_ASSERT(atom, "Why was the cache purged before minor GC?");
+
+    // Only deduplicate if both strings have the same encoding, to not confuse
+    // dependent strings.
+    if (src->hasTwoByteChars() == atom->hasTwoByteChars()) {
+      // The StringToAtomCache isn't used for inline strings (due to the minimum
+      // length) so canOwnDependentChars must be true for both src and atom.
+      // This means if there are dependent strings floating around using str's
+      // chars, they will be able to use the chars from the atom.
+      static_assert(StringToAtomCache::MinStringLength >
+                    JSFatInlineString::MAX_LENGTH_LATIN1);
+      static_assert(StringToAtomCache::MinStringLength >
+                    JSFatInlineString::MAX_LENGTH_TWO_BYTE);
+      MOZ_ASSERT(src->canOwnDependentChars());
+      MOZ_ASSERT(atom->canOwnDependentChars());
+
+      StringRelocationOverlay::forwardCell(src, atom);
+      gcprobes::PromoteToTenured(src, atom);
+      return atom;
+    }
+  }
+
   JSString* dst;
 
   // A live nursery string can only get deduplicated when:
@@ -3775,7 +3810,7 @@ JS::BigInt* js::TenuringTracer::moveToTenured(JS::BigInt* src) {
 void js::Nursery::collectToFixedPoint(TenuringTracer& mover,
                                       TenureCountCache& tenureCounts) {
   for (RelocationOverlay* p = mover.objHead; p; p = p->next()) {
-    JSObject* obj = static_cast<JSObject*>(p->forwardingAddress());
+    auto* obj = static_cast<JSObject*>(p->forwardingAddress());
     mover.traceObject(obj);
 
     TenureCount& entry = tenureCounts.findEntry(obj->groupRaw());
@@ -3788,7 +3823,7 @@ void js::Nursery::collectToFixedPoint(TenuringTracer& mover,
   }
 
   for (StringRelocationOverlay* p = mover.stringHead; p; p = p->next()) {
-    JSString* tenuredStr = static_cast<JSString*>(p->forwardingAddress());
+    auto* tenuredStr = static_cast<JSString*>(p->forwardingAddress());
     // To ensure the NON_DEDUP_BIT was reset properly.
     MOZ_ASSERT(tenuredStr->isDeduplicatable());
 
@@ -3977,7 +4012,7 @@ bool js::gc::IsMarkedInternal(JSRuntime* rt, T** thingp) {
 
   if (MightBeNurseryAllocated<T>::value && IsInsideNursery(*thingp)) {
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
-    Cell** cellp = reinterpret_cast<Cell**>(thingp);
+    auto** cellp = reinterpret_cast<Cell**>(thingp);
     return Nursery::getForwardedPointer(cellp);
   }
 
@@ -4269,7 +4304,8 @@ bool js::gc::UnmarkGrayGCThingUnchecked(JSRuntime* rt, JS::GCCellPtr thing) {
   MOZ_ASSERT(thing.asCell()->isMarkedGray());
 
   AutoGeckoProfilerEntry profilingStackFrame(
-      TlsContext.get(), "UnmarkGrayGCThing", JS::ProfilingCategoryPair::GCCC);
+      TlsContext.get(), "UnmarkGrayGCThing",
+      JS::ProfilingCategoryPair::GCCC_UnmarkGray);
 
   UnmarkGrayTracer unmarker(rt);
   unmarker.unmark(thing);

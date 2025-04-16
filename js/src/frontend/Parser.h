@@ -379,21 +379,17 @@ class MOZ_STACK_CLASS ParserBase : public ParserSharedBase,
   class Mark {
     friend class ParserBase;
     LifoAlloc::Mark mark;
-    FunctionBox* traceListHead;
-    size_t funcDataLength;
+    CompilationInfo::RewindToken token;
   };
   Mark mark() const {
     Mark m;
     m.mark = alloc_.mark();
-    m.traceListHead = compilationInfo_.traceListHead;
-    m.funcDataLength = compilationInfo_.funcData.length();
-    MOZ_ASSERT(compilationInfo_.functions.empty());
+    m.token = compilationInfo_.getRewindToken();
     return m;
   }
   void release(Mark m) {
     alloc_.release(m.mark);
-    compilationInfo_.traceListHead = m.traceListHead;
-    compilationInfo_.funcData.get().shrinkTo(m.funcDataLength);
+    compilationInfo_.rewind(m.token);
   }
 
  public:
@@ -1240,7 +1236,7 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
   ClassNodeType classDefinition(YieldHandling yieldHandling,
                                 ClassContext classContext,
                                 DefaultHandling defaultHandling);
-  struct ClassFields {
+  struct ClassInitializedMembers {
     // The number of instance class fields.
     size_t instanceFields = 0;
 
@@ -1252,23 +1248,29 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
 
     // The number of static class fields with computed property names.
     size_t staticFieldKeys = 0;
+
+    // The number of instance class private methods.
+    size_t privateMethods = 0;
   };
-  MOZ_MUST_USE bool classMember(YieldHandling yieldHandling,
-                                const ParseContext::ClassStatement& classStmt,
-                                HandlePropertyName className,
-                                uint32_t classStartOffset,
-                                HasHeritage hasHeritage,
-                                ClassFields& classFields,
-                                ListNodeType& classMembers, bool* done);
+  MOZ_MUST_USE bool classMember(
+      YieldHandling yieldHandling,
+      const ParseContext::ClassStatement& classStmt,
+      HandlePropertyName className, uint32_t classStartOffset,
+      HasHeritage hasHeritage, ClassInitializedMembers& classInitializedMembers,
+      ListNodeType& classMembers, bool* done);
   MOZ_MUST_USE bool finishClassConstructor(
       const ParseContext::ClassStatement& classStmt,
       HandlePropertyName className, HasHeritage hasHeritage,
       uint32_t classStartOffset, uint32_t classEndOffset,
-      const ClassFields& classFields, ListNodeType& classMembers);
+      const ClassInitializedMembers& classInitializedMembers,
+      ListNodeType& classMembers);
 
-  FunctionNodeType fieldInitializerOpt(Node name, HandleAtom atom,
-                                       ClassFields& classFields, bool isStatic,
-                                       HasHeritage hasHeritage);
+  FunctionNodeType privateMethodInitializer(HandleAtom propAtom,
+                                            HandleAtom storedMethodAtom);
+  FunctionNodeType fieldInitializerOpt(
+      Node name, HandleAtom atom,
+      ClassInitializedMembers& classInitializedMembers, bool isStatic,
+      HasHeritage hasHeritage);
   FunctionNodeType synthesizeConstructor(HandleAtom className,
                                          uint32_t classNameOffset,
                                          HasHeritage hasHeritage);
@@ -1414,6 +1416,9 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
 
   bool noteDeclaredName(HandlePropertyName name, DeclarationKind kind,
                         TokenPos pos);
+
+  bool noteDeclaredPrivateName(Node nameNode, HandlePropertyName name,
+                               PropertyType propType, TokenPos pos);
 
  private:
   inline bool asmJS(ListNodeType list);
@@ -1835,8 +1840,14 @@ class MOZ_STACK_CLASS AutoInParametersOfAsyncFunction {
 GlobalScope::Data* NewEmptyGlobalScopeData(JSContext* cx, LifoAlloc& alloc,
                                            uint32_t numBindings);
 
+VarScope::Data* NewEmptyVarScopeData(JSContext* cx, LifoAlloc& alloc,
+                                     uint32_t numBindings);
+
 LexicalScope::Data* NewEmptyLexicalScopeData(JSContext* cx, LifoAlloc& alloc,
                                              uint32_t numBindings);
+
+FunctionScope::Data* NewEmptyFunctionScopeData(JSContext* cx, LifoAlloc& alloc,
+                                               uint32_t numBindings);
 
 mozilla::Maybe<GlobalScope::Data*> NewGlobalScopeData(
     JSContext* context, ParseContext::Scope& scope, LifoAlloc& alloc,

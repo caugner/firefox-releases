@@ -497,6 +497,12 @@ nsresult HTMLCanvasElement::DispatchPrintCallback(nsITimerCallback* aCallback) {
 
 MOZ_CAN_RUN_SCRIPT
 void HTMLCanvasElement::CallPrintCallback() {
+  if (!mPrintState) {
+    // `mPrintState` might have been destroyed by cancelling the previous
+    // printing (especially the canvas frame destruction) during processing
+    // event loops in the printing.
+    return;
+  }
   RefPtr<PrintCallback> callback = GetMozPrintCallback();
   RefPtr<HTMLCanvasPrintState> state = mPrintState;
   callback->Call(*state);
@@ -523,10 +529,15 @@ HTMLCanvasElement* HTMLCanvasElement::GetOriginalCanvas() {
 nsresult HTMLCanvasElement::CopyInnerTo(HTMLCanvasElement* aDest) {
   nsresult rv = nsGenericHTMLElement::CopyInnerTo(aDest);
   NS_ENSURE_SUCCESS(rv, rv);
-  if (aDest->OwnerDoc()->IsStaticDocument()) {
+  Document* destDoc = aDest->OwnerDoc();
+  if (destDoc->IsStaticDocument()) {
     // The Firefox print preview code can create a static clone from an
     // existing static clone, so we may not be the original 'canvas' element.
     aDest->mOriginalCanvas = GetOriginalCanvas();
+
+    if (GetMozPrintCallback()) {
+      destDoc->SetHasPrintCallbacks();
+    }
 
     // We make sure that the canvas is not zero sized since that would cause
     // the DrawImage call below to return an error, which would cause printing

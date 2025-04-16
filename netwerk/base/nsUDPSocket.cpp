@@ -58,7 +58,8 @@ static nsresult ResolveHost(const nsACString& host,
   }
 
   nsCOMPtr<nsICancelable> tmpOutstanding;
-  return dns->AsyncResolveNative(host, 0, listener, nullptr, aOriginAttributes,
+  return dns->AsyncResolveNative(host, nsIDNSService::RESOLVE_TYPE_DEFAULT, 0,
+                                 nullptr, listener, nullptr, aOriginAttributes,
                                  getter_AddRefs(tmpOutstanding));
 }
 
@@ -173,10 +174,9 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsUDPMessage)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 nsUDPMessage::nsUDPMessage(NetAddr* aAddr, nsIOutputStream* aOutputStream,
-                           FallibleTArray<uint8_t>& aData)
-    : mOutputStream(aOutputStream) {
+                           FallibleTArray<uint8_t>&& aData)
+    : mOutputStream(aOutputStream), mData(std::move(aData)) {
   memcpy(&mAddr, aAddr, sizeof(NetAddr));
-  aData.SwapElements(mData);
 }
 
 nsUDPMessage::~nsUDPMessage() { DropJSObjects(this); }
@@ -328,10 +328,9 @@ namespace {
 class UDPMessageProxy final : public nsIUDPMessage {
  public:
   UDPMessageProxy(NetAddr* aAddr, nsIOutputStream* aOutputStream,
-                  FallibleTArray<uint8_t>& aData)
-      : mOutputStream(aOutputStream) {
+                  FallibleTArray<uint8_t>&& aData)
+      : mOutputStream(aOutputStream), mData(std::move(aData)) {
     memcpy(&mAddr, aAddr, sizeof(mAddr));
-    aData.SwapElements(mData);
   }
 
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -442,7 +441,7 @@ void nsUDPSocket::OnSocketReady(PRFileDesc* fd, int16_t outFlags) {
   NetAddr netAddr;
   PRNetAddrToNetAddr(&prClientAddr, &netAddr);
   nsCOMPtr<nsIUDPMessage> message =
-      new UDPMessageProxy(&netAddr, pipeOut, data);
+      new UDPMessageProxy(&netAddr, pipeOut, std::move(data));
   mListener->OnPacketReceived(this, message);
 }
 
@@ -843,7 +842,7 @@ SocketListenerProxy::OnPacketReceivedRunnable::Run() {
   FallibleTArray<uint8_t>& data = mMessage->GetDataAsTArray();
 
   nsCOMPtr<nsIUDPMessage> message =
-      new nsUDPMessage(&netAddr, outputStream, data);
+      new nsUDPMessage(&netAddr, outputStream, std::move(data));
   mListener->OnPacketReceived(mSocket, message);
   return NS_OK;
 }
@@ -937,7 +936,7 @@ SocketListenerProxyBackground::OnPacketReceivedRunnable::Run() {
 
   UDPSOCKET_LOG(("%s [this=%p], len %zu", __FUNCTION__, this, data.Length()));
   nsCOMPtr<nsIUDPMessage> message =
-      new UDPMessageProxy(&netAddr, outputStream, data);
+      new UDPMessageProxy(&netAddr, outputStream, std::move(data));
   mListener->OnPacketReceived(mSocket, message);
   return NS_OK;
 }
@@ -954,10 +953,8 @@ class PendingSend : public nsIDNSListener {
   NS_DECL_NSIDNSLISTENER
 
   PendingSend(nsUDPSocket* aSocket, uint16_t aPort,
-              FallibleTArray<uint8_t>& aData)
-      : mSocket(aSocket), mPort(aPort) {
-    mData.SwapElements(aData);
-  }
+              FallibleTArray<uint8_t>&& aData)
+      : mSocket(aSocket), mPort(aPort), mData(std::move(aData)) {}
 
  private:
   virtual ~PendingSend() = default;
@@ -970,13 +967,15 @@ class PendingSend : public nsIDNSListener {
 NS_IMPL_ISUPPORTS(PendingSend, nsIDNSListener)
 
 NS_IMETHODIMP
-PendingSend::OnLookupComplete(nsICancelable* request, nsIDNSRecord* rec,
+PendingSend::OnLookupComplete(nsICancelable* request, nsIDNSRecord* aRecord,
                               nsresult status) {
   if (NS_FAILED(status)) {
     NS_WARNING("Failed to send UDP packet due to DNS lookup failure");
     return NS_OK;
   }
 
+  nsCOMPtr<nsIDNSAddrRecord> rec = do_QueryInterface(aRecord);
+  MOZ_ASSERT(rec);
   NetAddr addr;
   if (NS_SUCCEEDED(rec->GetNextAddr(mPort, &addr))) {
     uint32_t count;
@@ -1007,13 +1006,15 @@ class PendingSendStream : public nsIDNSListener {
 NS_IMPL_ISUPPORTS(PendingSendStream, nsIDNSListener)
 
 NS_IMETHODIMP
-PendingSendStream::OnLookupComplete(nsICancelable* request, nsIDNSRecord* rec,
-                                    nsresult status) {
+PendingSendStream::OnLookupComplete(nsICancelable* request,
+                                    nsIDNSRecord* aRecord, nsresult status) {
   if (NS_FAILED(status)) {
     NS_WARNING("Failed to send UDP packet due to DNS lookup failure");
     return NS_OK;
   }
 
+  nsCOMPtr<nsIDNSAddrRecord> rec = do_QueryInterface(aRecord);
+  MOZ_ASSERT(rec);
   NetAddr addr;
   if (NS_SUCCEEDED(rec->GetNextAddr(mPort, &addr))) {
     nsresult rv = mSocket->SendBinaryStreamWithAddress(&addr, mStream);
@@ -1081,7 +1082,7 @@ nsUDPSocket::Send(const nsACString& aHost, uint16_t aPort,
   }
 
   nsCOMPtr<nsIDNSListener> listener =
-      new PendingSend(this, aPort, fallibleArray);
+      new PendingSend(this, aPort, std::move(fallibleArray));
 
   nsresult rv = ResolveHost(aHost, mOriginAttributes, listener);
   NS_ENSURE_SUCCESS(rv, rv);

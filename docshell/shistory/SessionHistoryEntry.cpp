@@ -15,8 +15,6 @@
 namespace mozilla {
 namespace dom {
 
-static uint64_t gNextHistoryEntryId = 0;
-
 SessionHistoryInfo::SessionHistoryInfo(nsDocShellLoadState* aLoadState,
                                        nsIChannel* aChannel)
     : mURI(aLoadState->URI()),
@@ -29,12 +27,12 @@ SessionHistoryInfo::SessionHistoryInfo(nsDocShellLoadState* aLoadState,
       mScrollPositionY(0),
       mSrcdocData(aLoadState->SrcdocData()),
       mBaseURI(aLoadState->BaseURI()),
-      mId(++gNextHistoryEntryId),
       mLoadReplace(aLoadState->LoadReplace()),
       mURIWasModified(false),
       /* FIXME Should this be aLoadState->IsSrcdocLoad()? */
       mIsSrcdocEntry(!aLoadState->SrcdocData().IsEmpty()),
       mScrollRestorationIsManual(false) {
+  MaybeUpdateTitleFromURI();
   bool isNoStore = false;
   if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel)) {
     Unused << httpChannel->IsNoStoreResponse(&isNoStore);
@@ -42,18 +40,55 @@ SessionHistoryInfo::SessionHistoryInfo(nsDocShellLoadState* aLoadState,
   }
 }
 
-static uint32_t gEntryID;
-nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>*
-    SessionHistoryEntry::sInfoIdToEntry = nullptr;
+void SessionHistoryInfo::MaybeUpdateTitleFromURI() {
+  if (mTitle.IsEmpty() && mURI) {
+    // Default title is the URL.
+    nsAutoCString spec;
+    if (NS_SUCCEEDED(mURI->GetSpec(spec))) {
+      AppendUTF8toUTF16(spec, mTitle);
+    }
+  }
+}
 
-SessionHistoryEntry* SessionHistoryEntry::GetByInfoId(uint64_t aId) {
+static uint64_t gLoadingSessionHistoryInfoLoadId = 0;
+
+nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>*
+    SessionHistoryEntry::sLoadIdToEntry = nullptr;
+
+LoadingSessionHistoryInfo::LoadingSessionHistoryInfo(
+    SessionHistoryEntry* aEntry)
+    : mInfo(aEntry->Info()), mLoadId(++gLoadingSessionHistoryInfoLoadId) {
+  if (!SessionHistoryEntry::sLoadIdToEntry) {
+    SessionHistoryEntry::sLoadIdToEntry =
+        new nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>();
+  }
+  SessionHistoryEntry::sLoadIdToEntry->Put(mLoadId, aEntry);
+}
+
+static uint32_t gEntryID;
+
+SessionHistoryEntry* SessionHistoryEntry::GetByLoadId(uint64_t aLoadId) {
   MOZ_ASSERT(XRE_IsParentProcess());
-  if (!sInfoIdToEntry) {
+  if (!sLoadIdToEntry) {
     return nullptr;
   }
 
-  return sInfoIdToEntry->Get(aId);
+  return sLoadIdToEntry->Get(aLoadId);
 }
+
+void SessionHistoryEntry::RemoveLoadId(uint64_t aLoadId) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+  if (!sLoadIdToEntry) {
+    return;
+  }
+
+  sLoadIdToEntry->Remove(aLoadId);
+}
+
+SessionHistoryEntry::SessionHistoryEntry()
+    : mInfo(new SessionHistoryInfo()),
+      mSharedInfo(new SHEntrySharedParentState()),
+      mID(++gEntryID) {}
 
 SessionHistoryEntry::SessionHistoryEntry(nsDocShellLoadState* aLoadState,
                                          nsIChannel* aChannel)
@@ -66,23 +101,20 @@ SessionHistoryEntry::SessionHistoryEntry(nsDocShellLoadState* aLoadState,
       aLoadState->PartitionedPrincipalToInherit();
   mSharedInfo->mCsp = aLoadState->Csp();
   // FIXME Set remaining shared fields!
-
-  if (!sInfoIdToEntry) {
-    sInfoIdToEntry =
-        new nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>();
-  }
-  sInfoIdToEntry->Put(Info().Id(), this);
 }
 
 SessionHistoryEntry::~SessionHistoryEntry() {
-  sInfoIdToEntry->Remove(Info().Id());
-  if (sInfoIdToEntry->IsEmpty()) {
-    delete sInfoIdToEntry;
-    sInfoIdToEntry = nullptr;
+  if (sLoadIdToEntry) {
+    sLoadIdToEntry->RemoveIf(
+        [this](auto& aIter) { return aIter.Data() == this; });
+    if (sLoadIdToEntry->IsEmpty()) {
+      delete sLoadIdToEntry;
+      sLoadIdToEntry = nullptr;
+    }
   }
 }
 
-NS_IMPL_ISUPPORTS(SessionHistoryEntry, nsISHEntry)
+NS_IMPL_ISUPPORTS(SessionHistoryEntry, nsISHEntry, SessionHistoryEntry)
 
 NS_IMETHODIMP
 SessionHistoryEntry::GetURI(nsIURI** aURI) {
@@ -419,9 +451,13 @@ SessionHistoryEntry::SetStateData(nsIStructuredCloneContainer* aStateData) {
   return NS_OK;
 }
 
+const nsID& SessionHistoryEntry::DocshellID() const {
+  return mSharedInfo->mDocShellID;
+}
+
 NS_IMETHODIMP
 SessionHistoryEntry::GetDocshellID(nsID& aDocshellID) {
-  aDocshellID = mSharedInfo->mDocShellID;
+  aDocshellID = DocshellID();
   return NS_OK;
 }
 
@@ -615,12 +651,12 @@ SessionHistoryEntry::ForgetEditorData() {
 
 NS_IMETHODIMP_(void)
 SessionHistoryEntry::SetEditorData(nsDocShellEditorData* aData) {
-  MOZ_CRASH("This lives in the child process");
+  NS_WARNING("This lives in the child process");
 }
 
 NS_IMETHODIMP_(bool)
 SessionHistoryEntry::HasDetachedEditor() {
-  MOZ_CRASH("This lives in the child process");
+  NS_WARNING("This lives in the child process");
   return false;
 }
 
@@ -675,14 +711,143 @@ SessionHistoryEntry::SetLoadTypeAsHistory() {
 NS_IMETHODIMP
 SessionHistoryEntry::AddChild(nsISHEntry* aChild, int32_t aOffset,
                               bool aUseRemoteSubframes) {
-  MOZ_CRASH("Need to implement this");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  nsCOMPtr<SessionHistoryEntry> child = do_QueryInterface(aChild);
+  MOZ_ASSERT(child);
+  AddChild(child, aOffset, aUseRemoteSubframes);
+
+  return NS_OK;
+}
+
+void SessionHistoryEntry::AddChild(SessionHistoryEntry* aChild, int32_t aOffset,
+                                   bool aUseRemoteSubframes) {
+  if (aChild) {
+    aChild->SetParent(this);
+  }
+
+  if (aOffset < 0) {
+    mChildren.AppendElement(aChild);
+    return;
+  }
+
+  //
+  // Bug 52670: Ensure children are added in order.
+  //
+  //  Later frames in the child list may load faster and get appended
+  //  before earlier frames, causing session history to be scrambled.
+  //  By growing the list here, they are added to the right position.
+
+  int32_t length = mChildren.Length();
+
+  //  Assert that aOffset will not be so high as to grow us a lot.
+  NS_ASSERTION(aOffset < length + 1023, "Large frames array!\n");
+
+  // If the new child is dynamically added, try to add it to aOffset, but if
+  // there are non-dynamically added children, the child must be after those.
+  if (aChild && aChild->IsDynamicallyAdded()) {
+    int32_t lastNonDyn = aOffset - 1;
+    for (int32_t i = aOffset; i < length; ++i) {
+      SessionHistoryEntry* entry = mChildren[i];
+      if (entry) {
+        if (entry->IsDynamicallyAdded()) {
+          break;
+        }
+
+        lastNonDyn = i;
+      }
+    }
+
+    // If aOffset is larger than Length(), we must first truncate the array.
+    if (aOffset > length) {
+      mChildren.SetLength(aOffset);
+    }
+
+    mChildren.InsertElementAt(lastNonDyn + 1, aChild);
+
+    return;
+  }
+
+  // If the new child isn't dynamically added, it should be set to aOffset.
+  // If there are dynamically added children before that, those must be moved
+  // to be after aOffset.
+  if (length > 0) {
+    int32_t start = std::min(length - 1, aOffset);
+    int32_t dynEntryIndex = -1;
+    DebugOnly<SessionHistoryEntry*> dynEntry = nullptr;
+    for (int32_t i = start; i >= 0; --i) {
+      SessionHistoryEntry* entry = mChildren[i];
+      if (entry) {
+        if (!entry->IsDynamicallyAdded()) {
+          break;
+        }
+
+        dynEntryIndex = i;
+        dynEntry = entry;
+      }
+    }
+
+    if (dynEntryIndex >= 0) {
+      mChildren.InsertElementsAt(dynEntryIndex, aOffset - dynEntryIndex + 1);
+      NS_ASSERTION(mChildren[aOffset + 1] == dynEntry, "Whaat?");
+    }
+  }
+
+  // Make sure there isn't anything at aOffset.
+  if ((uint32_t)aOffset < mChildren.Length()) {
+    SessionHistoryEntry* oldChild = mChildren[aOffset];
+    if (oldChild && oldChild != aChild) {
+      // Under Fission, this can happen when a network-created iframe starts
+      // out in-process, moves out-of-process, and then switches back. At that
+      // point, we'll create a new network-created DocShell at the same index
+      // where we already have an entry for the original network-created
+      // DocShell.
+      //
+      // This should ideally stop being an issue once the Fission-aware
+      // session history rewrite is complete.
+      NS_ASSERTION(
+          aUseRemoteSubframes,
+          "Adding a child where we already have a child? This may misbehave");
+      oldChild->SetParent(nullptr);
+    }
+  } else {
+    mChildren.SetLength(aOffset + 1);
+  }
+
+  mChildren.ReplaceElementAt(aOffset, aChild);
 }
 
 NS_IMETHODIMP
 SessionHistoryEntry::RemoveChild(nsISHEntry* aChild) {
-  MOZ_CRASH("Need to implement this");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  NS_ENSURE_TRUE(aChild, NS_ERROR_FAILURE);
+
+  nsCOMPtr<SessionHistoryEntry> child = do_QueryInterface(aChild);
+  MOZ_ASSERT(child);
+  RemoveChild(child);
+
+  return NS_OK;
+}
+
+void SessionHistoryEntry::RemoveChild(SessionHistoryEntry* aChild) {
+  bool childRemoved = false;
+  if (aChild->IsDynamicallyAdded()) {
+    childRemoved = mChildren.RemoveElement(aChild);
+  } else {
+    int32_t index = mChildren.IndexOf(aChild);
+    if (index >= 0) {
+      // Other alive non-dynamic child docshells still keep mChildOffset,
+      // so we don't want to change the indices here.
+      mChildren.ReplaceElementAt(index, nullptr);
+      childRemoved = true;
+    }
+  }
+
+  if (childRemoved) {
+    aChild->SetParent(nullptr);
+
+    // reduce the child count, i.e. remove empty children at the end
+    for (int32_t i = mChildren.Length() - 1; i >= 0 && !mChildren[i]; --i) {
+      mChildren.RemoveElementAt(i);
+    }
+  }
 }
 
 NS_IMETHODIMP
@@ -700,8 +865,27 @@ SessionHistoryEntry::GetChildSHEntryIfHasNoDynamicallyAddedChild(
 
 NS_IMETHODIMP
 SessionHistoryEntry::ReplaceChild(nsISHEntry* aNewChild) {
-  MOZ_CRASH("Need to implement this");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  NS_ENSURE_STATE(aNewChild);
+
+  nsCOMPtr<SessionHistoryEntry> newChild = do_QueryInterface(aNewChild);
+  MOZ_ASSERT(newChild);
+  return ReplaceChild(newChild) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+bool SessionHistoryEntry::ReplaceChild(SessionHistoryEntry* aNewChild) {
+  const nsID& docshellID = aNewChild->DocshellID();
+
+  for (uint32_t i = 0; i < mChildren.Length(); ++i) {
+    if (mChildren[i] && docshellID == mChildren[i]->DocshellID()) {
+      mChildren[i]->SetParent(nullptr);
+      mChildren.ReplaceElementAt(i, aNewChild);
+      aNewChild->SetParent(this);
+
+      return true;
+    }
+  }
+
+  return false;
 }
 
 NS_IMETHODIMP_(void)
@@ -770,93 +954,108 @@ NS_IMETHODIMP_(void)
 SessionHistoryEntry::SyncTreesForSubframeNavigation(
     nsISHEntry* aEntry, mozilla::dom::BrowsingContext* aTopBC,
     mozilla::dom::BrowsingContext* aIgnoreBC) {
-  MOZ_CRASH("Need to implement this");
+  NS_WARNING("Need to implement this");
 }
 
-void SessionHistoryEntry::UpdateLayoutHistoryState(
-    uint64_t aSessionHistoryEntryID, nsILayoutHistoryState* aState) {
-  SessionHistoryEntry* entry =
-      SessionHistoryEntry::GetByInfoId(aSessionHistoryEntryID);
-  if (entry) {
-    entry->SetLayoutHistoryState(aState);
+void SessionHistoryEntry::MaybeSynchronizeSharedStateToInfo(
+    nsISHEntry* aEntry) {
+  nsCOMPtr<SessionHistoryEntry> entry = do_QueryInterface(aEntry);
+  if (!entry) {
+    return;
   }
+
+  entry->mInfo->mCacheKey = entry->mSharedInfo->mCacheKey;
+  // XXX Add other member variables which live in mSharedInfo.
 }
 
 }  // namespace dom
 
 namespace ipc {
 
-void IPDLParamTraits<dom::SessionHistoryInfo>::Write(
+void IPDLParamTraits<dom::LoadingSessionHistoryInfo>::Write(
     IPC::Message* aMsg, IProtocol* aActor,
-    const dom::SessionHistoryInfo& aParam) {
-  dom::ClonedMessageData stateData;
-  if (aParam.mStateData) {
-    JSStructuredCloneData& data = aParam.mStateData->Data();
+    const dom::LoadingSessionHistoryInfo& aParam) {
+  Maybe<dom::ClonedMessageData> stateData;
+  if (aParam.mInfo.mStateData) {
+    stateData.emplace();
+    JSStructuredCloneData& data = aParam.mInfo.mStateData->Data();
     auto iter = data.Start();
     bool success;
-    stateData.data().data = data.Borrow(iter, data.Size(), &success);
+    stateData->data().data = data.Borrow(iter, data.Size(), &success);
     if (NS_WARN_IF(!success)) {
       return;
     }
-    MOZ_ASSERT(aParam.mStateData->PortIdentifiers().IsEmpty() &&
-               aParam.mStateData->BlobImpls().IsEmpty() &&
-               aParam.mStateData->InputStreams().IsEmpty());
+    MOZ_ASSERT(aParam.mInfo.mStateData->PortIdentifiers().IsEmpty() &&
+               aParam.mInfo.mStateData->BlobImpls().IsEmpty() &&
+               aParam.mInfo.mStateData->InputStreams().IsEmpty());
   }
 
-  WriteIPDLParam(aMsg, aActor, aParam.mURI);
-  WriteIPDLParam(aMsg, aActor, aParam.mOriginalURI);
-  WriteIPDLParam(aMsg, aActor, aParam.mResultPrincipalURI);
-  WriteIPDLParam(aMsg, aActor, aParam.mReferrerInfo);
-  WriteIPDLParam(aMsg, aActor, aParam.mTitle);
-  WriteIPDLParam(aMsg, aActor, aParam.mPostData);
-  WriteIPDLParam(aMsg, aActor, aParam.mLoadType);
-  WriteIPDLParam(aMsg, aActor, aParam.mScrollPositionX);
-  WriteIPDLParam(aMsg, aActor, aParam.mScrollPositionY);
+  const dom::SessionHistoryInfo& info = aParam.mInfo;
+  WriteIPDLParam(aMsg, aActor, info.mURI);
+  WriteIPDLParam(aMsg, aActor, info.mOriginalURI);
+  WriteIPDLParam(aMsg, aActor, info.mResultPrincipalURI);
+  WriteIPDLParam(aMsg, aActor, info.mReferrerInfo);
+  WriteIPDLParam(aMsg, aActor, info.mTitle);
+  WriteIPDLParam(aMsg, aActor, info.mPostData);
+  WriteIPDLParam(aMsg, aActor, info.mLoadType);
+  WriteIPDLParam(aMsg, aActor, info.mScrollPositionX);
+  WriteIPDLParam(aMsg, aActor, info.mScrollPositionY);
   WriteIPDLParam(aMsg, aActor, stateData);
-  WriteIPDLParam(aMsg, aActor, aParam.mSrcdocData);
-  WriteIPDLParam(aMsg, aActor, aParam.mBaseURI);
-  WriteIPDLParam(aMsg, aActor, aParam.mLayoutHistoryState);
-  WriteIPDLParam(aMsg, aActor, aParam.mId);
-  WriteIPDLParam(aMsg, aActor, aParam.mLoadReplace);
-  WriteIPDLParam(aMsg, aActor, aParam.mURIWasModified);
-  WriteIPDLParam(aMsg, aActor, aParam.mIsSrcdocEntry);
-  WriteIPDLParam(aMsg, aActor, aParam.mScrollRestorationIsManual);
-  WriteIPDLParam(aMsg, aActor, aParam.mPersist);
+  WriteIPDLParam(aMsg, aActor, info.mSrcdocData);
+  WriteIPDLParam(aMsg, aActor, info.mBaseURI);
+  WriteIPDLParam(aMsg, aActor, info.mLayoutHistoryState);
+  WriteIPDLParam(aMsg, aActor, info.mLoadReplace);
+  WriteIPDLParam(aMsg, aActor, info.mURIWasModified);
+  WriteIPDLParam(aMsg, aActor, info.mIsSrcdocEntry);
+  WriteIPDLParam(aMsg, aActor, info.mScrollRestorationIsManual);
+  WriteIPDLParam(aMsg, aActor, info.mPersist);
+  WriteIPDLParam(aMsg, aActor, aParam.mLoadId);
+  WriteIPDLParam(aMsg, aActor, aParam.mIsLoadFromSessionHistory);
+  WriteIPDLParam(aMsg, aActor, aParam.mRequestedIndex);
+  WriteIPDLParam(aMsg, aActor, aParam.mSessionHistoryLength);
 }
 
-bool IPDLParamTraits<dom::SessionHistoryInfo>::Read(
+bool IPDLParamTraits<dom::LoadingSessionHistoryInfo>::Read(
     const IPC::Message* aMsg, PickleIterator* aIter, IProtocol* aActor,
-    dom::SessionHistoryInfo* aResult) {
-  dom::ClonedMessageData stateData;
-  if (!ReadIPDLParam(aMsg, aIter, aActor, &aResult->mURI) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mOriginalURI) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mResultPrincipalURI) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mReferrerInfo) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mTitle) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mPostData) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mLoadType) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mScrollPositionX) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mScrollPositionY) ||
+    dom::LoadingSessionHistoryInfo* aResult) {
+  Maybe<dom::ClonedMessageData> stateData;
+
+  dom::SessionHistoryInfo& info = aResult->mInfo;
+  if (!ReadIPDLParam(aMsg, aIter, aActor, &info.mURI) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mOriginalURI) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mResultPrincipalURI) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mReferrerInfo) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mTitle) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mPostData) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mLoadType) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mScrollPositionX) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mScrollPositionY) ||
       !ReadIPDLParam(aMsg, aIter, aActor, &stateData) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mSrcdocData) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mBaseURI) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mLayoutHistoryState) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mId) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mLoadReplace) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mURIWasModified) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mIsSrcdocEntry) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mSrcdocData) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mBaseURI) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mLayoutHistoryState) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mLoadReplace) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mURIWasModified) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mIsSrcdocEntry) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mScrollRestorationIsManual) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &info.mPersist) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mLoadId) ||
       !ReadIPDLParam(aMsg, aIter, aActor,
-                     &aResult->mScrollRestorationIsManual) ||
-      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mPersist)) {
+                     &aResult->mIsLoadFromSessionHistory) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mRequestedIndex) ||
+      !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mSessionHistoryLength)) {
     aActor->FatalError("Error reading fields for SessionHistoryInfo");
     return false;
   }
-  aResult->mStateData = new nsStructuredCloneContainer();
-  if (aActor->GetSide() == ChildSide) {
-    UnpackClonedMessageDataForChild(stateData, *aResult->mStateData);
-  } else {
-    UnpackClonedMessageDataForParent(stateData, *aResult->mStateData);
+  if (stateData.isSome()) {
+    info.mStateData = new nsStructuredCloneContainer();
+    if (aActor->GetSide() == ChildSide) {
+      UnpackClonedMessageDataForChild(stateData.ref(), *info.mStateData);
+    } else {
+      UnpackClonedMessageDataForParent(stateData.ref(), *info.mStateData);
+    }
   }
+  MOZ_ASSERT_IF(stateData.isNothing(), !info.mStateData);
   return true;
 }
 

@@ -926,7 +926,9 @@ class nsContextMenu {
       if (
         !loginFillInfo ||
         !loginFillInfo.passwordField.found ||
-        documentURI.schemeIs("about")
+        documentURI.schemeIs("about") ||
+        this.browser.contentPrincipal.spec ==
+          "resource://pdf.js/web/viewer.html"
       ) {
         // Both generation and fill will default to disabled.
         return;
@@ -1339,6 +1341,7 @@ class nsContextMenu {
 
     openUILink(this.bgImageURL, e, {
       referrerInfo: this.contentData.referrerInfo,
+      forceAllowDataURI: true,
       triggeringPrincipal: this.principal,
       csp: this.csp,
     });
@@ -1882,7 +1885,7 @@ class nsContextMenu {
   }
 
   printFrame() {
-    PrintUtils.printWindow(this.actor.browsingContext);
+    PrintUtils.startPrintWindow(this.actor.browsingContext);
   }
 
   switchPageDirection() {

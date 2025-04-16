@@ -15,7 +15,9 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserTestUtils: "resource://testing-common/BrowserTestUtils.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  FormHistory: "resource://gre/modules/FormHistory.jsm",
+  FormHistoryTestUtils: "resource://testing-common/FormHistoryTestUtils.jsm",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  Services: "resource://gre/modules/Services.jsm",
   setTimeout: "resource://gre/modules/Timer.jsm",
   TestUtils: "resource://testing-common/TestUtils.jsm",
   UrlbarController: "resource:///modules/UrlbarController.jsm",
@@ -26,6 +28,22 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 
 var UrlbarTestUtils = {
   /**
+   * This maps the categories used by the FX_URLBAR_SELECTED_RESULT_METHOD and
+   * FX_SEARCHBAR_SELECTED_RESULT_METHOD histograms to their indexes in the
+   * `labels` array.  This only needs to be used by tests that need to map from
+   * category names to indexes in histogram snapshots.  Actual app code can use
+   * these category names directly when they add to a histogram.
+   */
+  SELECTED_RESULT_METHODS: {
+    enter: 0,
+    enterSelection: 1,
+    click: 2,
+    arrowEnterSelection: 3,
+    tabEnterSelection: 4,
+    rightClickEnter: 5,
+  },
+
+  /**
    * Running this init allows helpers to access test scope helpers, like Assert
    * and SimpleTest. Note this initialization is not enforced, thus helpers
    * should always check _testScope and provide a fallback path.
@@ -33,6 +51,10 @@ var UrlbarTestUtils = {
    */
   init(scope) {
     this._testScope = scope;
+    if (scope) {
+      this.Assert = scope.Assert;
+      this.EventUtils = scope.EventUtils;
+    }
   },
 
   /**
@@ -128,7 +150,8 @@ var UrlbarTestUtils = {
    * @returns {boolean} True if the buttons are visible.
    */
   getOneOffSearchButtonsVisible(win) {
-    return this.getOneOffSearchButtons(win).style.display != "none";
+    let buttons = this.getOneOffSearchButtons(win);
+    return buttons.style.display != "none" && !buttons.container.hidden;
   },
 
   /**
@@ -347,24 +370,245 @@ var UrlbarTestUtils = {
   },
 
   /**
-   * @param {object} win The browser window
-   * @param {string} [engineName]
-   * @returns {boolean} True if the UrlbarInput is in search mode. If
-   *   engineName is specified, only returns true if the search mode engine
-   *   matches.
+   * Asserts that the input is in a given search mode, or no search mode.
+   *
+   * @param {Window} window
+   *   The browser window.
+   * @param {object} expectedSearchMode
+   *   The expected search mode object.
+   * @note Can only be used if UrlbarTestUtils has been initialized with init().
    */
-  isInSearchMode(win, engineName = null) {
-    if (!!win.gURLBar.searchMode != win.gURLBar.hasAttribute("searchmode")) {
-      throw new Error(
-        "Urlbar should never be in search mode without the corresponding attribute."
+  async assertSearchMode(window, expectedSearchMode) {
+    this.Assert.equal(
+      !!window.gURLBar.searchMode,
+      window.gURLBar.hasAttribute("searchmode"),
+      "Urlbar should never be in search mode without the corresponding attribute."
+    );
+
+    if (!expectedSearchMode) {
+      this.Assert.ok(
+        !window.gURLBar.searchMode,
+        "gURLBar.searchMode not expected"
+      );
+
+      // Check the input's placeholder.
+      const prefName =
+        "browser.urlbar.placeholderName" +
+        (PrivateBrowsingUtils.isWindowPrivate(window) ? ".private" : "");
+      let engineName = Services.prefs.getStringPref(prefName, "");
+      this.Assert.deepEqual(
+        window.document.l10n.getAttributes(window.gURLBar.inputField),
+        engineName
+          ? { id: "urlbar-placeholder-with-name", args: { name: engineName } }
+          : { id: "urlbar-placeholder", args: null },
+        "Expected placeholder l10n when search mode is inactive"
+      );
+      return;
+    }
+
+    this.Assert.deepEqual(
+      window.gURLBar.searchMode,
+      expectedSearchMode,
+      "Expected searchMode"
+    );
+
+    // Check the textContent and l10n attributes of the indicator and label.
+    let expectedTextContent = "";
+    let expectedL10n = { id: null, args: null };
+    if (expectedSearchMode.engineName) {
+      expectedTextContent = expectedSearchMode.engineName;
+    } else if (expectedSearchMode.source) {
+      let name = UrlbarUtils.getResultSourceName(expectedSearchMode.source);
+      this.Assert.ok(name, "Expected result source should have a name");
+      expectedL10n = { id: `urlbar-search-mode-${name}`, args: null };
+    } else {
+      this.Assert.ok(false, "Unexpected searchMode");
+    }
+
+    for (let element of [
+      window.gURLBar._searchModeIndicatorTitle,
+      window.gURLBar._searchModeLabel,
+    ]) {
+      if (expectedTextContent) {
+        this.Assert.equal(
+          element.textContent,
+          expectedTextContent,
+          "Expected textContent"
+        );
+      }
+      this.Assert.deepEqual(
+        window.document.l10n.getAttributes(element),
+        expectedL10n,
+        "Expected l10n"
       );
     }
 
-    if (engineName) {
-      return win.gURLBar.searchMode.engineName == engineName;
+    // Check the input's placeholder.
+    let expectedPlaceholderL10n;
+    if (expectedSearchMode.engineName) {
+      expectedPlaceholderL10n = {
+        id: UrlbarUtils.WEB_ENGINE_NAMES.has(expectedSearchMode.engineName)
+          ? "urlbar-placeholder-search-mode-web-2"
+          : "urlbar-placeholder-search-mode-other-engine",
+        args: { name: expectedSearchMode.engineName },
+      };
+    } else if (expectedSearchMode.source) {
+      let name = UrlbarUtils.getResultSourceName(expectedSearchMode.source);
+      expectedPlaceholderL10n = {
+        id: `urlbar-placeholder-search-mode-other-${name}`,
+        args: null,
+      };
+    }
+    this.Assert.deepEqual(
+      window.document.l10n.getAttributes(window.gURLBar.inputField),
+      expectedPlaceholderL10n,
+      "Expected placeholder l10n when search mode is active"
+    );
+
+    // If this is an engine search mode, check that all results are either
+    // search results with the same engine or have the same host as the engine.
+    if (expectedSearchMode.engineName && this.isPopupOpen(window)) {
+      let resultCount = this.getResultCount(window);
+      for (let i = 0; i < resultCount; i++) {
+        let result = await this.getDetailsOfResultAt(window, i);
+        if (result.source == UrlbarUtils.RESULT_SOURCE.SEARCH) {
+          this.Assert.equal(
+            expectedSearchMode.engineName,
+            result.searchParams.engine,
+            "Search mode result matches engine name."
+          );
+        } else {
+          let engine = Services.search.getEngineByName(
+            expectedSearchMode.engineName
+          );
+          let engineHost = engine.getResultDomain();
+          let resultUrl = new URL(result.url);
+          // Use `includes` to allow results from engine subdomains.
+          this.Assert.ok(
+            resultUrl.host.includes(engineHost),
+            "Search mode result matches engine host."
+          );
+        }
+      }
+    }
+  },
+
+  /**
+   * Enters search mode by clicking a one-off.
+   * @param {object} window
+   * @param {object} searchMode
+   *   If given, the one-off matching this search mode will be clicked; it
+   *   should be a full search mode object as described in
+   *   UrlbarInput.setSearchMode.  If not given, the first one-off is clicked.
+   * @note Can only be used if UrlbarTestUtils has been initialized with init().
+   */
+  async enterSearchMode(window, searchMode = null) {
+    // Ensure any pending query is complete.
+    await this.promiseSearchComplete(window);
+
+    // Ensure the the one-offs are finished rebuilding and visible.
+    let oneOffs = this.getOneOffSearchButtons(window);
+    await TestUtils.waitForCondition(
+      () => !oneOffs._rebuilding,
+      "Waiting for one-offs to finish rebuilding"
+    );
+    this.Assert.equal(
+      UrlbarTestUtils.getOneOffSearchButtonsVisible(window),
+      true,
+      "One-offs are visible"
+    );
+
+    let buttons = oneOffs.getSelectableButtons(true);
+    if (!searchMode) {
+      searchMode = { engineName: buttons[0].engine.name };
+      if (UrlbarUtils.WEB_ENGINE_NAMES.has(searchMode.engineName)) {
+        searchMode.source = UrlbarUtils.RESULT_SOURCE.SEARCH;
+      }
     }
 
-    return !!win.gURLBar.searchMode;
+    let oneOff = buttons.find(o =>
+      searchMode.engineName
+        ? o.engine.name == searchMode.engineName
+        : o.source == searchMode.source
+    );
+    this.Assert.ok(oneOff, "Found one-off button for search mode");
+    this.EventUtils.synthesizeMouseAtCenter(oneOff, {}, window);
+    await this.promiseSearchComplete(window);
+    this.Assert.ok(this.isPopupOpen(window), "Urlbar view is still open.");
+    await this.assertSearchMode(window, searchMode);
+  },
+
+  /**
+   * Exits search mode.
+   * @param {object} window
+   * @param {boolean} options.backspace
+   *   Exits search mode by backspacing at the beginning of the search string.
+   * @param {boolean} options.clickClose
+   *   Exits search mode by clicking the close button on the search mode
+   *   indicator.
+   * @param {boolean} [waitForSearch]
+   *   Whether the test should wait for a search after exiting search mode.
+   *   Defaults to true.
+   * @note One and only one of `backspace` and `clickClose` should be passed
+   *       as true.
+   * @note Can only be used if UrlbarTestUtils has been initialized with init().
+   */
+  async exitSearchMode(
+    window,
+    { backspace, clickClose, waitForSearch = true }
+  ) {
+    let urlbar = window.gURLBar;
+    // If the Urlbar is not extended, ignore the clickClose parameter. The close
+    // button is not clickable in this state. This state might be encountered on
+    // Linux, where prefers-reduced-motion is enabled in automation.
+    if (!urlbar.hasAttribute("breakout-extend") && clickClose) {
+      if (waitForSearch) {
+        let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
+        urlbar.setSearchMode({});
+        await searchPromise;
+      } else {
+        urlbar.setSearchMode({});
+      }
+      return;
+    }
+
+    if (backspace) {
+      let urlbarValue = urlbar.value;
+      urlbar.selectionStart = urlbar.selectionEnd = 0;
+      if (waitForSearch) {
+        let searchPromise = this.promiseSearchComplete(window);
+        this.EventUtils.synthesizeKey("KEY_Backspace", {}, window);
+        await searchPromise;
+      } else {
+        this.EventUtils.synthesizeKey("KEY_Backspace", {}, window);
+      }
+      this.Assert.equal(
+        urlbar.value,
+        urlbarValue,
+        "Urlbar value hasn't changed."
+      );
+      this.assertSearchMode(window, null);
+    } else if (clickClose) {
+      // We need to hover the indicator to make the close button clickable in the
+      // test.
+      let indicator = urlbar.querySelector("#urlbar-search-mode-indicator");
+      this.EventUtils.synthesizeMouseAtCenter(
+        indicator,
+        { type: "mouseover" },
+        window
+      );
+      let closeButton = urlbar.querySelector(
+        "#urlbar-search-mode-indicator-close"
+      );
+      if (waitForSearch) {
+        let searchPromise = this.promiseSearchComplete(window);
+        this.EventUtils.synthesizeMouseAtCenter(closeButton, {}, window);
+        await searchPromise;
+      } else {
+        this.EventUtils.synthesizeMouseAtCenter(closeButton, {}, window);
+      }
+      await this.assertSearchMode(window, null);
+    }
   },
 
   /**
@@ -441,57 +685,17 @@ var UrlbarTestUtils = {
 
 UrlbarTestUtils.formHistory = {
   /**
-   * Performs an operation on the urlbar's form history.
-   *
-   * @param {object} updateObject
-   *   An object describing the form history operation.  See FormHistory.jsm.
-   * @param {object} window
-   *   The window containing the urlbar.
-   */
-  async update(
-    updateObject = {},
-    window = BrowserWindowTracker.getTopWindow()
-  ) {
-    await new Promise((resolve, reject) => {
-      FormHistory.update(
-        Object.assign(
-          {
-            fieldname: this.getFormHistoryName(window),
-          },
-          updateObject
-        ),
-        {
-          handleError(error) {
-            reject(error);
-          },
-          handleCompletion(errored) {
-            if (!errored) {
-              resolve();
-            }
-          },
-        }
-      );
-    });
-  },
-
-  /**
    * Adds values to the urlbar's form history.
    *
    * @param {array} values
-   *   The form history string values to remove.
+   *   The form history entries to remove.
    * @param {object} window
    *   The window containing the urlbar.
+   * @returns {Promise} resolved once the operation is complete.
    */
-  async add(values = [], window = BrowserWindowTracker.getTopWindow()) {
-    for (let value of values) {
-      await this.update(
-        {
-          value,
-          op: "bump",
-        },
-        window
-      );
-    }
+  add(values = [], window = BrowserWindowTracker.getTopWindow()) {
+    let fieldname = this.getFormHistoryName(window);
+    return FormHistoryTestUtils.add(fieldname, values);
   },
 
   /**
@@ -499,20 +703,14 @@ UrlbarTestUtils.formHistory = {
    * history, use clearFormHistory.
    *
    * @param {array} values
-   *   The form history string values to remove.
+   *   The form history entries to remove.
    * @param {object} window
    *   The window containing the urlbar.
+   * @returns {Promise} resolved once the operation is complete.
    */
-  async remove(values = [], window = BrowserWindowTracker.getTopWindow()) {
-    for (let value of values) {
-      await this.update(
-        {
-          value,
-          op: "remove",
-        },
-        window
-      );
-    }
+  remove(values = [], window = BrowserWindowTracker.getTopWindow()) {
+    let fieldname = this.getFormHistoryName(window);
+    return FormHistoryTestUtils.remove(fieldname, values);
   },
 
   /**
@@ -521,9 +719,11 @@ UrlbarTestUtils.formHistory = {
    *
    * @param {object} window
    *   The window containing the urlbar.
+   * @returns {Promise} resolved once the operation is complete.
    */
-  async clear(window = BrowserWindowTracker.getTopWindow()) {
-    await this.update({ op: "remove" }, window);
+  clear(window = BrowserWindowTracker.getTopWindow()) {
+    let fieldname = this.getFormHistoryName(window);
+    return FormHistoryTestUtils.clear(fieldname);
   },
 
   /**
@@ -537,31 +737,8 @@ UrlbarTestUtils.formHistory = {
    *   A promise resolved with an array of found form history entries.
    */
   search(criteria = {}, window = BrowserWindowTracker.getTopWindow()) {
-    return new Promise((resolve, reject) => {
-      let results = [];
-      FormHistory.search(
-        null,
-        Object.assign(
-          {
-            fieldname: this.getFormHistoryName(window),
-          },
-          criteria
-        ),
-        {
-          handleResult(result) {
-            results.push(result);
-          },
-          handleError(error) {
-            reject(error);
-          },
-          handleCompletion(errored) {
-            if (!errored) {
-              resolve(results);
-            }
-          },
-        }
-      );
-    });
+    let fieldname = this.getFormHistoryName(window);
+    return FormHistoryTestUtils.search(fieldname, criteria);
   },
 
   /**

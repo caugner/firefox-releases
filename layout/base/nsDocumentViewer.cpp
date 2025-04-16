@@ -10,7 +10,9 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
+#include "mozilla/StaticPrefs_print.h"
 #include "mozilla/Telemetry.h"
+#include "nsThreadUtils.h"
 #include "nscore.h"
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
@@ -47,6 +49,7 @@
 #include "mozilla/WeakPtr.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_javascript.h"
+#include "mozilla/StaticPrefs_print.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 
@@ -129,8 +132,17 @@
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 
+namespace mozilla {
+namespace dom {
+class PrintPreviewResultInfo;
+}  // namespace dom
+}  // namespace mozilla
+
 using namespace mozilla;
 using namespace mozilla::dom;
+
+using PrintPreviewResolver =
+    std::function<void(const mozilla::dom::PrintPreviewResultInfo&)>;
 
 //-----------------------------------------------------
 // LOGGING
@@ -400,6 +412,11 @@ class nsDocumentViewer final : public nsIContentViewer,
   // child widgets.
   bool ShouldAttachToTopLevel();
 
+  nsresult PrintPreviewScrollToPageForOldUI(int16_t aType, int32_t aPageNum);
+
+  std::tuple<const nsIFrame*, int32_t> GetCurrentSheetFrameAndPageNumber()
+      const;
+
  protected:
   // Returns the current viewmanager.  Might be null.
   nsViewManager* GetViewManager();
@@ -457,12 +474,6 @@ class nsDocumentViewer final : public nsIContentViewer,
   unsigned mClosingWhilePrinting : 1;
 
 #  if NS_PRINT_PREVIEW
-  // These data members support delayed printing when the document is loading
-  unsigned mPrintIsPending : 1;
-  unsigned mPrintDocIsFullyLoaded : 1;
-  nsCOMPtr<nsIPrintSettings> mCachedPrintSettings;
-  nsCOMPtr<nsIWebProgressListener> mCachedPrintWebProgressListner;
-
   RefPtr<nsPrintJob> mPrintJob;
 #  endif  // NS_PRINT_PREVIEW
 
@@ -508,8 +519,6 @@ void nsDocumentViewer::PrepareToStartLoad() {
   mDeferredWindowClose = false;
 
 #ifdef NS_PRINTING
-  mPrintIsPending = false;
-  mPrintDocIsFullyLoaded = false;
   mClosingWhilePrinting = false;
 
   // Make sure we have destroyed it and cleared the data member
@@ -535,11 +544,7 @@ nsDocumentViewer::nsDocumentViewer()
       mInPermitUnloadPrompt(false),
 #ifdef NS_PRINTING
       mClosingWhilePrinting(false),
-#  if NS_PRINT_PREVIEW
-      mPrintIsPending(false),
-      mPrintDocIsFullyLoaded(false),
-#  endif  // NS_PRINT_PREVIEW
-#endif    // NS_PRINTING
+#endif  // NS_PRINTING
       mHintCharsetSource(kCharsetUninitialized),
       mHintCharset(nullptr),
       mIsPageMode(false),
@@ -704,7 +709,13 @@ nsresult nsDocumentViewer::InitPresentationStuff(bool aDoInitialReflow) {
              "InitPresentationStuff must only be called when scripts are "
              "blocked");
 
-  if (GetIsPrintPreview()) return NS_OK;
+#ifdef NS_PRINTING
+  // When getting printed, either for print or print preview, the print job
+  // takes care of setting up the presentation of the document.
+  if (mPrintJob) {
+    return NS_OK;
+  }
+#endif
 
   NS_ASSERTION(!mPresShell, "Someone should have destroyed the presshell!");
 
@@ -1124,7 +1135,10 @@ nsDocumentViewer::LoadComplete(nsresult aStatus) {
   // pageshow, and that's pretty broken... Fortunately, this should be rare.
   // (It requires us to spin the event loop in onload handler, e.g. via sync
   // XHR, in order for the navigation-away to happen before onload completes.)
-  if (mDocument && mDocument->IsCurrentActiveDocument()) {
+  // We skip firing pageshow if we're currently handling unload, or if loading
+  // was explicitly aborted.
+  if (mDocument && mDocument->IsCurrentActiveDocument() &&
+      aStatus != NS_BINDING_ABORTED) {
     // Re-get window, since it might have changed during above firing of onload
     window = mDocument->GetWindow();
     if (window) {
@@ -1167,12 +1181,16 @@ nsDocumentViewer::LoadComplete(nsresult aStatus) {
 
 #ifdef NS_PRINTING
   // Check to see if someone tried to print during the load
-  if (mPrintIsPending) {
-    mPrintIsPending = false;
-    mPrintDocIsFullyLoaded = true;
-    Print(mCachedPrintSettings, mCachedPrintWebProgressListner);
-    mCachedPrintSettings = nullptr;
-    mCachedPrintWebProgressListner = nullptr;
+  if (window) {
+    auto* outerWin = nsGlobalWindowOuter::Cast(window);
+    outerWin->StopDelayingPrintingUntilAfterLoad();
+    if (outerWin->DelayedPrintUntilAfterLoad()) {
+      // We call into the inner because it ensures there's an active document
+      // and such.
+      if (RefPtr<nsPIDOMWindowInner> inner = window->GetCurrentInnerWindow()) {
+        nsGlobalWindowInner::Cast(inner)->Print(IgnoreErrors());
+      }
+    }
   }
 #endif
 
@@ -1531,14 +1549,6 @@ nsDocumentViewer::Close(nsISHEntry* aSHEntry) {
     mDocument->AddMutationObserver(mBFCachePreventionObserver);
   }
 
-#if defined(NS_PRINTING) && defined(NS_PRINT_PREVIEW)
-  // Turn scripting back on
-  // after PrintPreview had turned it off
-  if (GetIsPrintPreview() && mPrintJob) {
-    mPrintJob->TurnScriptingOn(true);
-  }
-#endif
-
 #ifdef NS_PRINTING
   // A Close was called while we were printing
   // so don't clear the ScriptGlobalObject
@@ -1604,10 +1614,8 @@ nsDocumentViewer::Destroy() {
   //
   // So we flip the bool to remember that the document is going away
   // and we can clean up and abort later after returning from the Print Dialog
-  if (mPrintJob) {
-    if (mPrintJob->CheckBeforeDestroy()) {
-      return NS_OK;
-    }
+  if (mPrintJob && mPrintJob->CheckBeforeDestroy()) {
+    return NS_OK;
   }
 #endif
 
@@ -1753,7 +1761,7 @@ nsDocumentViewer::Destroy() {
   if (mPrintJob) {
     RefPtr<nsPrintJob> printJob = std::move(mPrintJob);
 #  ifdef NS_PRINT_PREVIEW
-    if (printJob->IsDoingPrintPreview()) {
+    if (printJob->CreatedForPrintPreview()) {
       printJob->FinishPrintPreview();
     }
 #  endif
@@ -1847,7 +1855,7 @@ nsDocumentViewer::SetDocumentInternal(Document* aDocument,
       aDocument->SetNavigationTiming(mDocument->GetNavigationTiming());
     }
 
-    if (mDocument->IsStaticDocument()) {
+    if (mDocument && mDocument->IsStaticDocument()) {
       mDocument->Destroy();
     }
 
@@ -2222,14 +2230,15 @@ nsDocumentViewer::SetSticky(bool aSticky) {
 }
 
 NS_IMETHODIMP
-nsDocumentViewer::RequestWindowClose(bool* aCanClose) {
+nsDocumentViewer::RequestWindowClose(bool aIsPrintPending, bool* aCanClose) {
+  *aCanClose = true;
+
 #ifdef NS_PRINTING
-  if (mPrintIsPending || (mPrintJob && mPrintJob->GetIsPrinting())) {
+  if (aIsPrintPending || (mPrintJob && mPrintJob->GetIsPrinting())) {
     *aCanClose = false;
     mDeferredWindowClose = true;
-  } else
+  }
 #endif
-    *aCanClose = true;
 
   return NS_OK;
 }
@@ -3111,25 +3120,6 @@ nsDocumentViewer::Print(nsIPrintSettings* aPrintSettings,
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIDocShell> docShell(mContainer);
-  NS_ENSURE_STATE(docShell);
-
-  // Check to see if this document is still busy
-  // If it is busy and we aren't already "queued" up to print then
-  // Indicate there is a print pending and cache the args for later
-  auto busyFlags = docShell->GetBusyFlags();
-  if (busyFlags != nsIDocShell::BUSY_FLAGS_NONE &&
-      busyFlags & nsIDocShell::BUSY_FLAGS_PAGE_LOADING &&
-      !mPrintDocIsFullyLoaded) {
-    if (!mPrintIsPending) {
-      mCachedPrintSettings = aPrintSettings;
-      mCachedPrintWebProgressListner = aWebProgressListener;
-      mPrintIsPending = true;
-    }
-    PR_PL(("Printing Stopped - document is still busy!"));
-    return NS_ERROR_GFX_PRINTER_DOC_IS_BUSY;
-  }
-
   if (!mDocument || !mDeviceContext) {
     PR_PL(("Can't Print without a document and a device context"));
     return NS_ERROR_FAILURE;
@@ -3137,39 +3127,33 @@ nsDocumentViewer::Print(nsIPrintSettings* aPrintSettings,
 
   // If we are hosting a full-page plugin, tell it to print
   // first. It shows its own native print UI.
-  nsCOMPtr<nsIPluginDocument> pDoc(do_QueryInterface(mDocument));
-  if (pDoc) {
+  if (nsCOMPtr<nsIPluginDocument> pDoc = do_QueryInterface(mDocument)) {
     return pDoc->Print();
   }
 
-  nsresult rv;
-
-  // Our call to nsPrintJob::Print() may cause mPrintJob to be
-  // Release()'d in Destroy().  Therefore, we need to grab the instance with
-  // a local variable, so that it won't be deleted during its own method.
-  RefPtr<nsPrintJob> printJob = mPrintJob;
-  if (!printJob) {
-    printJob = new nsPrintJob();
-
-    rv = printJob->Initialize(this, mContainer, mDocument,
-                              float(AppUnitsPerCSSInch()) /
-                                  float(mDeviceContext->AppUnitsPerDevPixel()));
-    if (NS_FAILED(rv)) {
-      printJob->Destroy();
-      return rv;
-    }
-    mPrintJob = printJob;
-  } else if (printJob->GetIsPrinting()) {
-    // if we are printing another URL, then exit
-    // the reason we check here is because this method can be called while
-    // another is still in here (the printing dialog is a good example).
-    // the only time we can print more than one job at a time is the regression
-    // tests
-    rv = NS_ERROR_NOT_AVAILABLE;
-    printJob->FirePrintingErrorEvent(rv);
+  if (mPrintJob && mPrintJob->GetIsPrinting()) {
+    // If we are printing another URL, then exit.
+    // The reason we check here is because this method can be called while
+    // another is still in here (the printing dialog is a good example).  the
+    // only time we can print more than one job at a time is the regression
+    // tests.
+    nsresult rv = NS_ERROR_NOT_AVAILABLE;
+    RefPtr<nsPrintJob>(mPrintJob)->FirePrintingErrorEvent(rv);
     return rv;
   }
 
+  OnDonePrinting();
+  RefPtr<nsPrintJob> printJob = new nsPrintJob();
+  nsresult rv =
+      printJob->Initialize(this, mContainer, mDocument,
+                           float(AppUnitsPerCSSInch()) /
+                               float(mDeviceContext->AppUnitsPerDevPixel()));
+  if (NS_FAILED(rv)) {
+    printJob->Destroy();
+    return rv;
+  }
+
+  mPrintJob = printJob;
   rv = printJob->Print(mDocument, aPrintSettings, aWebProgressListener);
   if (NS_FAILED(rv)) {
     OnDonePrinting();
@@ -3179,15 +3163,11 @@ nsDocumentViewer::Print(nsIPrintSettings* aPrintSettings,
 
 NS_IMETHODIMP
 nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
-                               mozIDOMWindowProxy* aChildDOMWin,
-                               nsIWebProgressListener* aWebProgressListener) {
+                               nsIWebProgressListener* aWebProgressListener,
+                               PrintPreviewResolver&& aCallback) {
 #  ifdef NS_PRINT_PREVIEW
-  MOZ_ASSERT(IsInitializedForPrintPreview(),
-             "For print preview nsIWebBrowserPrint must be from "
-             "docshell.initOrReusePrintPreviewViewer!");
-
-  NS_ENSURE_ARG_POINTER(aChildDOMWin);
-  nsresult rv = NS_OK;
+  RefPtr<Document> doc = mDocument.get();
+  NS_ENSURE_STATE(doc);
 
   if (GetIsPrinting()) {
     nsPrintJob::CloseProgressDialog(aWebProgressListener);
@@ -3200,11 +3180,6 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryInterface(aChildDOMWin);
-  MOZ_ASSERT(window);
-  nsCOMPtr<Document> doc = window->GetDoc();
-  NS_ENSURE_STATE(doc);
-
   NS_ENSURE_STATE(!GetIsPrinting());
   // beforeprint event may have caused ContentViewer to be shutdown.
   NS_ENSURE_STATE(mContainer);
@@ -3213,22 +3188,26 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
   // Our call to nsPrintJob::PrintPreview() may cause mPrintJob to be
   // Release()'d in Destroy().  Therefore, we need to grab the instance with
   // a local variable, so that it won't be deleted during its own method.
-  RefPtr<nsPrintJob> printJob = mPrintJob;
-  if (!printJob) {
-    printJob = new nsPrintJob();
+  const bool hadPrintJob = !!mPrintJob;
+  OnDonePrinting();
 
-    rv = printJob->Initialize(this, mContainer, doc,
-                              float(AppUnitsPerCSSInch()) /
-                                  float(mDeviceContext->AppUnitsPerDevPixel()));
-    if (NS_FAILED(rv)) {
-      printJob->Destroy();
-      return rv;
-    }
-    mPrintJob = printJob;
+  RefPtr<nsPrintJob> printJob = new nsPrintJob();
 
+  nsresult rv =
+      printJob->Initialize(this, mContainer, doc,
+                           float(AppUnitsPerCSSInch()) /
+                               float(mDeviceContext->AppUnitsPerDevPixel()));
+  if (NS_FAILED(rv)) {
+    printJob->Destroy();
+    return rv;
+  }
+  mPrintJob = printJob;
+
+  if (!hadPrintJob && !StaticPrefs::print_tab_modal_enabled()) {
     Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_PREVIEW_OPENED, 1);
   }
-  rv = printJob->PrintPreview(doc, aPrintSettings, aWebProgressListener);
+  rv = printJob->PrintPreview(doc, aPrintSettings, aWebProgressListener,
+                              std::move(aCallback));
   if (NS_FAILED(rv)) {
     OnDonePrinting();
   }
@@ -3238,15 +3217,15 @@ nsDocumentViewer::PrintPreview(nsIPrintSettings* aPrintSettings,
 #  endif  // NS_PRINT_PREVIEW
 }
 
-//----------------------------------------------------------------------
-NS_IMETHODIMP
-nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
-  if (!GetIsPrintPreview() || mPrintJob->GetIsCreatingPrintPreview())
-    return NS_ERROR_FAILURE;
+nsresult nsDocumentViewer::PrintPreviewScrollToPageForOldUI(int16_t aType,
+                                                            int32_t aPageNum) {
+  MOZ_ASSERT(GetIsPrintPreview() && !mPrintJob->GetIsCreatingPrintPreview());
 
   nsIScrollableFrame* sf =
       mPrintJob->GetPrintPreviewPresShell()->GetRootScrollFrameAsScrollable();
-  if (!sf) return NS_OK;
+  if (!sf) {
+    return NS_OK;
+  }
 
   // Check to see if we can short circut scrolling to the top
   if (aType == nsIWebBrowserPrint::PRINTPREVIEW_HOME ||
@@ -3263,7 +3242,7 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
   }
 
   // Figure where we are currently scrolled to
-  nsPoint pt = sf->GetScrollPosition();
+  nsPoint currentScrollPosition = sf->GetScrollPosition();
 
   int32_t pageNum = 1;
   nsIFrame* fndPageFrame = nullptr;
@@ -3277,13 +3256,13 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
 
   // Now, locate the current page we are on and
   // and the page of the page number
-  for (nsIFrame* pageFrame : seqFrame->PrincipalChildList()) {
-    nsRect pageRect = pageFrame->GetRect();
-    if (pageRect.Contains(pageRect.x, pt.y)) {
-      currentPage = pageFrame;
+  for (nsIFrame* sheetFrame : seqFrame->PrincipalChildList()) {
+    nsRect sheetRect = sheetFrame->GetRect();
+    if (sheetRect.Contains(sheetRect.x, currentScrollPosition.y)) {
+      currentPage = sheetFrame;
     }
     if (pageNum == aPageNum) {
-      fndPageFrame = pageFrame;
+      fndPageFrame = sheetFrame;
       break;
     }
     pageNum++;
@@ -3316,8 +3295,199 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
   if (fndPageFrame) {
     nscoord newYPosn = nscoord(seqFrame->GetPrintPreviewScale() *
                                fndPageFrame->GetPosition().y);
-    sf->ScrollTo(nsPoint(pt.x, newYPosn), ScrollMode::Instant);
+    sf->ScrollTo(nsPoint(currentScrollPosition.x, newYPosn),
+                 ScrollMode::Instant);
   }
+  return NS_OK;
+}
+
+static const nsIFrame* GetTargetPageFrame(int32_t aTargetPageNum,
+                                          nsPageSequenceFrame* aSequenceFrame) {
+  MOZ_ASSERT(aTargetPageNum > 0 &&
+             aTargetPageNum < aSequenceFrame->PrincipalChildList().GetLength());
+
+  int32_t pageNum = 1;
+  for (const nsIFrame* sheetFrame : aSequenceFrame->PrincipalChildList()) {
+    if (pageNum == aTargetPageNum) {
+      return sheetFrame;
+    }
+    pageNum++;
+  }
+
+  MOZ_ASSERT_UNREACHABLE("Should have found the target frame");
+
+  return nullptr;
+}
+
+// Calculate the scroll position where the center of |aFrame| is positioned at
+// the center of |aScrollable|'s scroll port for the print preview.
+// So what we do for that is;
+// 1) Calculate the position of the center of |aFrame| in the print preview
+//    coordinates.
+// 2) Reduce the half height of the scroll port from the result of 1.
+static nscoord ScrollPositionForFrame(const nsIFrame* aFrame,
+                                      nsIScrollableFrame* aScrollable,
+                                      float aPreviewScale) {
+  // Note that even if the computed scroll position is out of the range of
+  // the scroll port, it gets clamped in nsIScrollableFrame::ScrollTo.
+  return nscoord(aPreviewScale * aFrame->GetRect().Center().y -
+                 float(aScrollable->GetScrollPortRect().height) / 2.0f);
+}
+
+//----------------------------------------------------------------------
+NS_IMETHODIMP
+nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
+  if (!GetIsPrintPreview() || mPrintJob->GetIsCreatingPrintPreview())
+    return NS_ERROR_FAILURE;
+
+  if (!StaticPrefs::print_tab_modal_enabled()) {
+    return PrintPreviewScrollToPageForOldUI(aType, aPageNum);
+  }
+
+  nsIScrollableFrame* sf =
+      mPrintJob->GetPrintPreviewPresShell()->GetRootScrollFrameAsScrollable();
+  if (!sf) return NS_OK;
+
+  auto [seqFrame, pageCount] = mPrintJob->GetSeqFrameAndCountPages();
+  Unused << pageCount;
+  if (!seqFrame) {
+    return NS_ERROR_FAILURE;
+  }
+
+  float previewScale = seqFrame->GetPrintPreviewScale();
+
+  nsPoint dest = sf->GetScrollPosition();
+
+  switch (aType) {
+    case nsIWebBrowserPrint::PRINTPREVIEW_HOME:
+      dest.y = 0;
+      break;
+    case nsIWebBrowserPrint::PRINTPREVIEW_END:
+      dest.y = sf->GetScrollRange().YMost();
+      break;
+    case nsIWebBrowserPrint::PRINTPREVIEW_PREV_PAGE:
+    case nsIWebBrowserPrint::PRINTPREVIEW_NEXT_PAGE: {
+      auto [currentFrame, currentPageNumber] =
+          GetCurrentSheetFrameAndPageNumber();
+      Unused << currentPageNumber;
+      if (!currentFrame) {
+        return NS_OK;
+      }
+
+      const nsIFrame* targetFrame = nullptr;
+      if (aType == nsIWebBrowserPrint::PRINTPREVIEW_PREV_PAGE) {
+        targetFrame = currentFrame->GetPrevInFlow();
+      } else {
+        targetFrame = currentFrame->GetNextInFlow();
+      }
+      if (!targetFrame) {
+        return NS_OK;
+      }
+
+      dest.y = ScrollPositionForFrame(targetFrame, sf, previewScale);
+      break;
+    }
+    case nsIWebBrowserPrint::PRINTPREVIEW_GOTO_PAGENUM: {
+      if (aPageNum < 0 || aPageNum > pageCount) {
+        return NS_ERROR_INVALID_ARG;
+      }
+
+      const nsIFrame* targetFrame = GetTargetPageFrame(aPageNum, seqFrame);
+      MOZ_ASSERT(targetFrame);
+
+      dest.y = ScrollPositionForFrame(targetFrame, sf, previewScale);
+      break;
+    }
+    default:
+      return NS_ERROR_INVALID_ARG;
+      break;
+  }
+
+  sf->ScrollTo(dest, ScrollMode::Instant);
+
+  return NS_OK;
+}
+
+std::tuple<const nsIFrame*, int32_t>
+nsDocumentViewer::GetCurrentSheetFrameAndPageNumber() const {
+  MOZ_ASSERT(mPrintJob);
+  MOZ_ASSERT(GetIsPrintPreview() && !mPrintJob->GetIsCreatingPrintPreview());
+
+  // in PP mPrtPreview->mPrintObject->mSeqFrame is null
+  auto [seqFrame, pageCount] = mPrintJob->GetSeqFrameAndCountPages();
+  Unused << pageCount;
+  if (!seqFrame) {
+    return {nullptr, 0};
+  }
+
+  nsIScrollableFrame* sf =
+      mPrintJob->GetPrintPreviewPresShell()->GetRootScrollFrameAsScrollable();
+  if (!sf) {
+    // No scrollable contents, returns 1 even if there are multiple pages.
+    return {seqFrame->PrincipalChildList().FirstChild(), 1};
+  }
+
+  nsPoint currentScrollPosition = sf->GetScrollPosition();
+  float halfwayPoint =
+      currentScrollPosition.y + float(sf->GetScrollPortRect().height) / 2.0f;
+  float lastDistanceFromHalfwayPoint = std::numeric_limits<float>::max();
+  int32_t pageNumber = 0;
+  const nsIFrame* currentSheet = nullptr;
+  float previewScale = seqFrame->GetPrintPreviewScale();
+  for (const nsIFrame* sheetFrame : seqFrame->PrincipalChildList()) {
+    nsRect sheetRect = sheetFrame->GetRect();
+    pageNumber++;
+    currentSheet = sheetFrame;
+
+    float bottomOfSheet = sheetRect.YMost() * previewScale;
+    if (bottomOfSheet < halfwayPoint) {
+      // If the bottom of the page is not yet over the halfway point, iterate
+      // the next frame to see if the next frame is over the halfway point and
+      // compare the distance from the halfway point.
+      lastDistanceFromHalfwayPoint = halfwayPoint - bottomOfSheet;
+      continue;
+    }
+
+    float topOfSheet = sheetRect.Y() * previewScale;
+    if (topOfSheet <= halfwayPoint) {
+      // If the top of the page is not yet over the halfway point or on the
+      // point, it's the current page.
+      break;
+    }
+
+    // Now the page rect is completely over the halfway point, compare the
+    // distances from the halfway point.
+    if ((topOfSheet - halfwayPoint) >= lastDistanceFromHalfwayPoint) {
+      // If the previous page distance is less than or equal to the current page
+      // distance, choose the previous one as the current.
+      pageNumber--;
+      MOZ_ASSERT(pageNumber > 0);
+      currentSheet = currentSheet->GetPrevInFlow();
+      MOZ_ASSERT(currentSheet);
+    }
+    break;
+  }
+
+  MOZ_ASSERT(pageNumber <= pageCount);
+  return {currentSheet, pageNumber};
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::GetPrintPreviewCurrentPageNumber(int32_t* aNumber) {
+  NS_ENSURE_ARG_POINTER(aNumber);
+  NS_ENSURE_TRUE(mPrintJob, NS_ERROR_FAILURE);
+  if (!GetIsPrintPreview() || mPrintJob->GetIsCreatingPrintPreview()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  auto [currentFrame, currentPageNumber] = GetCurrentSheetFrameAndPageNumber();
+  Unused << currentFrame;
+  if (!currentPageNumber) {
+    return NS_ERROR_FAILURE;
+  }
+
+  *aNumber = currentPageNumber;
+
   return NS_OK;
 }
 
@@ -3327,7 +3497,7 @@ nsDocumentViewer::GetDoingPrint(bool* aDoingPrint) {
   NS_ENSURE_ARG_POINTER(aDoingPrint);
 
   // XXX shouldn't this be GetDoingPrint() ?
-  *aDoingPrint = mPrintJob ? mPrintJob->IsDoingPrintPreview() : false;
+  *aDoingPrint = mPrintJob ? mPrintJob->CreatedForPrintPreview() : false;
   return NS_OK;
 }
 
@@ -3336,7 +3506,7 @@ NS_IMETHODIMP
 nsDocumentViewer::GetDoingPrintPreview(bool* aDoingPrintPreview) {
   NS_ENSURE_ARG_POINTER(aDoingPrintPreview);
 
-  *aDoingPrintPreview = mPrintJob ? mPrintJob->IsDoingPrintPreview() : false;
+  *aDoingPrintPreview = mPrintJob ? mPrintJob->CreatedForPrintPreview() : false;
   return NS_OK;
 }
 
@@ -3358,28 +3528,6 @@ nsDocumentViewer::Cancel() {
   return mPrintJob->Cancel();
 }
 
-#  ifdef NS_PRINT_PREVIEW
-// Reset ESM focus for all descendent doc shells.
-static void ResetFocusState(nsIDocShell* aDocShell) {
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (!fm) {
-    return;
-  }
-
-  nsTArray<RefPtr<nsIDocShell>> docShells;
-  aDocShell->GetAllDocShellsInSubtree(nsIDocShellTreeItem::typeContent,
-                                      nsIDocShell::ENUMERATE_FORWARDS,
-                                      docShells);
-
-  for (const auto& currentContainer : docShells) {
-    nsCOMPtr<nsPIDOMWindowOuter> win = do_GetInterface(currentContainer);
-    if (win) {
-      fm->ClearFocus(win);
-    }
-  }
-}
-#  endif  // NS_PRINT_PREVIEW
-
 NS_IMETHODIMP
 nsDocumentViewer::ExitPrintPreview() {
   NS_ENSURE_TRUE(mPrintJob, NS_ERROR_FAILURE);
@@ -3395,29 +3543,32 @@ nsDocumentViewer::ExitPrintPreview() {
     return NS_OK;
   }
 
-  if (!mPrintJob->HasEverPrinted()) {
+  if (!mPrintJob->HasEverPrinted() && !StaticPrefs::print_tab_modal_enabled()) {
     Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_PREVIEW_CANCELLED, 1);
   }
 
 #  ifdef NS_PRINT_PREVIEW
-  mPrintJob->TurnScriptingOn(true);
   mPrintJob->Destroy();
   mPrintJob = nullptr;
 
-  // Nowadays we use a static clone document for printing, and print preview is
-  // in a separate tab that gets closed after print preview finishes.  Probably
-  // nothing below this line is necessary anymore.
-
-  SetIsPrintPreview(false);
-
-  nsCOMPtr<nsIDocShell> docShell(mContainer);
-  ResetFocusState(docShell);
-
-  SetOverrideDPPX(mOverrideDPPX);
-  Show();
+  // Since the print preview implementation discards the window that was used
+  // to show the print preview, we skip certain cleanup that we would otherwise
+  // want to do.  Specifically, we do not call `SetIsPrintPreview(false)` to
+  // unblock navigation, we do not call `SetOverrideDPPX` to reset the
+  // devicePixelRatio, and we do not call `Show` to make such changes take
+  // affect.
 #  endif  // NS_PRINT_PREVIEW
 
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::GetRawNumPages(int32_t* aRawNumPages) {
+  NS_ENSURE_ARG_POINTER(aRawNumPages);
+  NS_ENSURE_TRUE(mPrintJob, NS_ERROR_FAILURE);
+
+  *aRawNumPages = mPrintJob->GetRawNumPages();
+  return *aRawNumPages > 0 ? NS_OK : NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP
@@ -3427,24 +3578,6 @@ nsDocumentViewer::GetPrintPreviewNumPages(int32_t* aPrintPreviewNumPages) {
 
   *aPrintPreviewNumPages = mPrintJob->GetPrintPreviewNumPages();
   return *aPrintPreviewNumPages > 0 ? NS_OK : NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-nsDocumentViewer::GetIsIFrameSelected(bool* aIsIFrameSelected) {
-  *aIsIFrameSelected = false;
-  NS_ENSURE_TRUE(mPrintJob, NS_ERROR_FAILURE);
-
-  *aIsIFrameSelected = mPrintJob->IsIFrameSelected();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocumentViewer::GetIsRangeSelection(bool* aIsRangeSelection) {
-  *aIsRangeSelection = false;
-  NS_ENSURE_TRUE(mPrintJob, NS_ERROR_FAILURE);
-
-  *aIsRangeSelection = mPrintJob->IsRangeSelection();
-  return NS_OK;
 }
 
 //----------------------------------------------------------------------------------
@@ -3534,7 +3667,7 @@ bool nsDocumentViewer::ShouldAttachToTopLevel() {
 
 //------------------------------------------------------------
 // XXX this always returns false for subdocuments
-bool nsDocumentViewer::GetIsPrinting() {
+bool nsDocumentViewer::GetIsPrinting() const {
 #ifdef NS_PRINTING
   if (mPrintJob) {
     return mPrintJob->GetIsPrinting();
@@ -3562,13 +3695,12 @@ void nsDocumentViewer::SetIsPrinting(bool aIsPrinting) {
 // The PrintJob holds the current value
 // this called from inside the DocViewer.
 // XXX it always returns false for subdocuments
-bool nsDocumentViewer::GetIsPrintPreview() {
+bool nsDocumentViewer::GetIsPrintPreview() const {
 #ifdef NS_PRINTING
-  if (mPrintJob) {
-    return mPrintJob->GetIsPrintPreview();
-  }
-#endif
+  return mPrintJob && mPrintJob->CreatedForPrintPreview();
+#else
   return false;
+#endif
 }
 
 //------------------------------------------------------------
@@ -3630,16 +3762,20 @@ void nsDocumentViewer::OnDonePrinting() {
   // So, the following clean up does nothing in such case.
   // (Do we need some of this for that case?)
   if (mPrintJob) {
-    RefPtr<nsPrintJob> printJob = mPrintJob;
+    RefPtr<nsPrintJob> printJob = std::move(mPrintJob);
     if (GetIsPrintPreview()) {
       printJob->DestroyPrintingData();
     } else {
-      mPrintJob = nullptr;
       printJob->Destroy();
     }
 
-    // We are done printing, now cleanup
-    if (mDeferredWindowClose) {
+    // We are done printing, now cleanup. For non-print-preview jobs, we are
+    // actually responsible for cleaning up our whole <browser> or window (see
+    // the OPEN_PRINT_BROWSER code), so gotta run window.close() too.
+    //
+    // For print preview jobs the front-end code is responsible for cleaning the
+    // UI.
+    if (mDeferredWindowClose || !printJob->CreatedForPrintPreview()) {
       mDeferredWindowClose = false;
       if (mContainer) {
         if (nsCOMPtr<nsPIDOMWindowOuter> win = mContainer->GetWindow()) {
@@ -3759,14 +3895,6 @@ void nsDocumentViewer::InvalidatePotentialSubDocDisplayItem() {
 void nsDocumentViewer::DestroyPresContext() {
   InvalidatePotentialSubDocDisplayItem();
   mPresContext = nullptr;
-}
-
-bool nsDocumentViewer::IsInitializedForPrintPreview() {
-  return mInitializedForPrintPreview;
-}
-
-void nsDocumentViewer::InitializeForPrintPreview() {
-  mInitializedForPrintPreview = true;
 }
 
 void nsDocumentViewer::SetPrintPreviewPresentation(nsViewManager* aViewManager,

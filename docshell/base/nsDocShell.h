@@ -65,6 +65,7 @@ class ClientInfo;
 class ClientSource;
 class EventTarget;
 class SessionHistoryInfo;
+struct LoadingSessionHistoryInfo;
 }  // namespace dom
 namespace net {
 class LoadInfo;
@@ -436,6 +437,15 @@ class nsDocShell final : public nsDocLoader,
       nsLoadFlags aLoadFlags, uint32_t aCacheKey, nsresult& rv,
       nsIChannel** aChannel);
 
+  // This is used to deal with errors resulting from a failed page load.
+  // Errors are handled as follows:
+  //   1. Check to see if it's a file not found error or bad content
+  //      encoding error.
+  //   2. Send the URI to a keyword server (if enabled)
+  //   3. If the error was DNS failure, then add www and .com to the URI
+  //      (if appropriate).
+  //   4. If the www .com additions don't work, try those with an HTTPS scheme
+  //      (if appropriate).
   static already_AddRefed<nsIURI> AttemptURIFixup(
       nsIChannel* aChannel, nsresult aStatus,
       const mozilla::Maybe<nsCString>& aOriginalURIString, uint32_t aLoadType,
@@ -490,7 +500,7 @@ class nsDocShell final : public nsDocLoader,
       mozilla::dom::BrowsingContext* aBrowsingContext, uint32_t aLoadType);
 
   void SetLoadingSessionHistoryInfo(
-      const mozilla::dom::SessionHistoryInfo& aInfo);
+      const mozilla::dom::LoadingSessionHistoryInfo& aLoadingInfo);
 
  private:  // member functions
   friend class nsDSURIContentListener;
@@ -1038,6 +1048,13 @@ class nsDocShell final : public nsDocLoader,
   // LoadGroup.
   void SetLoadGroupDefaultLoadFlags(nsLoadFlags aLoadFlags);
 
+  void SetTitleOnHistoryEntry();
+
+  void SetScrollRestorationIsManualOnHistoryEntry(nsISHEntry* aSHEntry,
+                                                  bool aIsManual);
+
+  void SetCacheKeyOnHistoryEntry(nsISHEntry* aSHEntry, uint32_t aCacheKey);
+
  private:  // data members
   nsID mHistoryID;
   nsString mTitle;
@@ -1101,7 +1118,7 @@ class nsDocShell final : public nsDocLoader,
 
   // These are only set when fission.sessionHistoryInParent is set.
   mozilla::UniquePtr<mozilla::dom::SessionHistoryInfo> mActiveEntry;
-  mozilla::UniquePtr<mozilla::dom::SessionHistoryInfo> mLoadingEntry;
+  mozilla::UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> mLoadingEntry;
 
   // Holds a weak pointer to a RestorePresentationEvent object if any that
   // holds a weak pointer back to us. We use this pointer to possibly revoke

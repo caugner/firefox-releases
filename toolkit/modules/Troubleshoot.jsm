@@ -436,6 +436,30 @@ var dataProviders = {
     );
   },
 
+  async environmentVariables(done) {
+    let Subprocess;
+    try {
+      // Subprocess is not available in all builds
+      Subprocess = ChromeUtils.import("resource://gre/modules/Subprocess.jsm")
+        .Subprocess;
+    } catch (ex) {
+      done({});
+      return;
+    }
+
+    let environment = Subprocess.getEnvironment();
+    let filteredEnvironment = {};
+    // Limit the environment variables to those that we
+    // know may affect Firefox to reduce leaking PII.
+    let filteredEnvironmentKeys = ["xre_", "moz_", "gdk", "display"];
+    for (let key of Object.keys(environment)) {
+      if (filteredEnvironmentKeys.some(k => key.toLowerCase().startsWith(k))) {
+        filteredEnvironment[key] = environment[key];
+      }
+    }
+    done(filteredEnvironment);
+  },
+
   modifiedPreferences: function modifiedPreferences(done) {
     done(getPrefList(name => Services.prefs.prefHasUserValue(name)));
   },

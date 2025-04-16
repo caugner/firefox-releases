@@ -51,6 +51,7 @@
 #include "nsIProgressEventSink.h"
 #include "nsIProtocolHandler.h"
 #include "nsImageModule.h"
+#include "nsMediaSniffer.h"
 #include "nsMimeTypes.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
@@ -2118,8 +2119,7 @@ imgLoader::LoadImageXPCOM(
 }
 
 static void MakeRequestStaticIfNeeded(
-    Document* aLoadingDocument,
-    imgRequestProxy** aProxyAboutToGetReturned) {
+    Document* aLoadingDocument, imgRequestProxy** aProxyAboutToGetReturned) {
   if (!aLoadingDocument || !aLoadingDocument->IsStaticDocument()) {
     return;
   }
@@ -2156,9 +2156,8 @@ nsresult imgLoader::LoadImage(
     return NS_ERROR_NULL_POINTER;
   }
 
-  auto makeStaticIfNeeded = mozilla::MakeScopeExit([&] {
-    MakeRequestStaticIfNeeded(aLoadingDocument, _retval);
-  });
+  auto makeStaticIfNeeded = mozilla::MakeScopeExit(
+      [&] { MakeRequestStaticIfNeeded(aLoadingDocument, _retval); });
 
 #ifdef MOZ_GECKO_PROFILER
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("imgLoader::LoadImage", NETWORK,
@@ -2518,9 +2517,8 @@ nsresult imgLoader::LoadImageWithChannel(nsIChannel* channel,
 
   MOZ_ASSERT(NS_UsePrivateBrowsing(channel) == mRespectPrivacy);
 
-  auto makeStaticIfNeeded = mozilla::MakeScopeExit([&] {
-    MakeRequestStaticIfNeeded(aLoadingDocument, _retval);
-  });
+  auto makeStaticIfNeeded = mozilla::MakeScopeExit(
+      [&] { MakeRequestStaticIfNeeded(aLoadingDocument, _retval); });
 
   LOG_SCOPE(gImgLog, "imgLoader::LoadImageWithChannel");
   RefPtr<imgRequest> request;
@@ -2731,6 +2729,8 @@ imgLoader::GetMIMETypeFromContent(nsIRequest* aRequest,
 nsresult imgLoader::GetMimeTypeFromContent(const char* aContents,
                                            uint32_t aLength,
                                            nsACString& aContentType) {
+  nsAutoCString detected;
+
   /* Is it a GIF? */
   if (aLength >= 6 &&
       (!strncmp(aContents, "GIF87a", 6) || !strncmp(aContents, "GIF89a", 6))) {
@@ -2782,6 +2782,10 @@ nsresult imgLoader::GetMimeTypeFromContent(const char* aContents,
              !memcmp(aContents + 8, "WEBP", 4)) {
     aContentType.AssignLiteral(IMAGE_WEBP);
 
+  } else if (MatchesMP4(reinterpret_cast<const uint8_t*>(aContents), aLength,
+                        detected) &&
+             detected.Equals(IMAGE_AVIF)) {
+    aContentType.AssignLiteral(IMAGE_AVIF);
   } else {
     /* none of the above?  I give up */
     return NS_ERROR_NOT_AVAILABLE;

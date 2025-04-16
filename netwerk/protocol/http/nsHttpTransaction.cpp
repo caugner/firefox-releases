@@ -28,6 +28,9 @@
 #include "nsHttpResponseHead.h"
 #include "nsICancelable.h"
 #include "nsIClassOfService.h"
+#include "nsIDNSByTypeRecord.h"
+#include "nsIDNSRecord.h"
+#include "nsIDNSService.h"
 #include "nsIEventTarget.h"
 #include "nsIHttpActivityObserver.h"
 #include "nsIHttpAuthenticator.h"
@@ -122,6 +125,7 @@ nsHttpTransaction::nsHttpTransaction()
       mResponseHeadTaken(false),
       mForTakeResponseTrailers(nullptr),
       mResponseTrailersTaken(false),
+      mRestarted(false),
       mTopLevelOuterContentWindowId(0),
       mSubmittedRatePacing(false),
       mPassedRatePacing(false),
@@ -423,6 +427,27 @@ nsresult nsHttpTransaction::Init(
     MOZ_ASSERT(trans);
     mPushedStream = trans->TakePushedStreamById(aPushedStreamId);
   }
+
+  if (gHttpHandler->UseHTTPSRRAsAltSvcEnabled()) {
+    nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
+    nsCOMPtr<nsIEventTarget> target;
+    Unused << gHttpHandler->GetSocketThreadTarget(getter_AddRefs(target));
+    if (dns && target) {
+      uint32_t flags =
+          nsIDNSService::GetFlagsFromTRRMode(mConnInfo->GetTRRMode());
+      if (mCaps & NS_HTTP_REFRESH_DNS) {
+        flags |= nsIDNSService::RESOLVE_BYPASS_CACHE;
+      }
+
+      rv = dns->AsyncResolveNative(
+          mConnInfo->GetOrigin(), nsIDNSService::RESOLVE_TYPE_HTTPSSVC, flags,
+          nullptr, this, target, mConnInfo->GetOriginAttributes(),
+          getter_AddRefs(mDNSRequest));
+      if (NS_FAILED(rv) && (mCaps & NS_HTTP_WAIT_HTTPSSVC_RESULT)) {
+        return rv;
+      }
+    }
+  }
   return NS_OK;
 }
 
@@ -433,7 +458,7 @@ nsresult nsHttpTransaction::AsyncRead(nsIStreamListener* listener,
       nsInputStreamPump::Create(getter_AddRefs(transactionPump), mPipeIn);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = transactionPump->AsyncRead(listener, nullptr);
+  rv = transactionPump->AsyncRead(listener);
   NS_ENSURE_SUCCESS(rv, rv);
 
   transactionPump.forget(pump);
@@ -519,6 +544,11 @@ void nsHttpTransaction::OnActivated() {
 
   if (mActivated) {
     return;
+  }
+
+  if (mDNSRequest) {
+    mDNSRequest->Cancel(NS_ERROR_ABORT);
+    mDNSRequest = nullptr;
   }
 
   if (mTrafficCategory != HttpTrafficCategory::eInvalid) {
@@ -981,7 +1011,7 @@ nsresult nsHttpTransaction::WriteSegments(nsAHttpSegmentWriter* writer,
 
 bool nsHttpTransaction::ProxyConnectFailed() { return mProxyConnectFailed; }
 
-bool nsHttpTransaction::DataAlreadySent() { return false; }
+bool nsHttpTransaction::DataSentToChildProcess() { return false; }
 
 nsISupports* nsHttpTransaction::SecurityInfo() { return mSecurityInfo; }
 
@@ -1158,7 +1188,8 @@ void nsHttpTransaction::Close(nsresult reason) {
   // the password mistakenly again from the user.
   if ((reason == NS_ERROR_NET_RESET || reason == NS_OK ||
        reason ==
-           psm::GetXPCOMFromNSSError(SSL_ERROR_DOWNGRADE_WITH_EARLY_DATA)) &&
+           psm::GetXPCOMFromNSSError(SSL_ERROR_DOWNGRADE_WITH_EARLY_DATA) ||
+       mFallbackConnInfo) &&
       (!(mCaps & NS_HTTP_STICKY_CONNECTION) ||
        (mCaps & NS_HTTP_CONNECTION_RESTARTABLE) ||
        (mEarlyDataDisposition == EARLY_425))) {
@@ -1188,10 +1219,32 @@ void nsHttpTransaction::Close(nsresult reason) {
     bool reallySentData =
         mSentData && (!mConnection || mConnection->BytesWritten());
 
+    // If this is true, it means we failed to use the HTTPSSVC connection info
+    // to connect to the server. We need to retry with the original connection
+    // info.
+    bool restartToFallbackConnInfo = !reallySentData && mFallbackConnInfo;
+
     if (reason ==
             psm::GetXPCOMFromNSSError(SSL_ERROR_DOWNGRADE_WITH_EARLY_DATA) ||
         (!mReceivedData && ((mRequestHead && mRequestHead->IsSafeMethod()) ||
-                            !reallySentData || connReused))) {
+                            !reallySentData || connReused)) ||
+        restartToFallbackConnInfo) {
+      if (restartToFallbackConnInfo) {
+        nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
+        if (dns) {
+          LOG(("add failed domain name [%s] -> [%s] to exclusion list",
+               mConnInfo->GetOrigin().get(), mConnInfo->GetRoutedHost().get()));
+          Unused << dns->ReportFailedSVCDomainName(mConnInfo->GetOrigin(),
+                                                   mConnInfo->GetRoutedHost());
+        }
+        mConnInfo = nullptr;
+        mFallbackConnInfo.swap(mConnInfo);
+        LOG(
+            ("transaction will be restarted with the fallback connection info "
+             "key=%s",
+             mConnInfo->HashKey().get()));
+      }
+
       // if restarting fails, then we must proceed to close the pipe,
       // which will notify the channel that the transaction failed.
 
@@ -1359,6 +1412,17 @@ nsresult nsHttpTransaction::Restart() {
   LOG(("restarting transaction @%p\n", this));
   mTunnelProvider = nullptr;
 
+  if (mRequestHead) {
+    // Dispatching on a new connection better w/o an ambient connection proxy
+    // auth request header to not confuse the proxy authenticator.
+    nsAutoCString proxyAuth;
+    if (NS_SUCCEEDED(
+            mRequestHead->GetHeader(nsHttp::Proxy_Authorization, proxyAuth)) &&
+        IsStickyAuthSchemeAt(proxyAuth)) {
+      Unused << mRequestHead->ClearHeader(nsHttp::Proxy_Authorization);
+    }
+  }
+
   // rewind streams in case we already wrote out the request
   nsCOMPtr<nsISeekableStream> seekable = do_QueryInterface(mRequestStream);
   if (seekable) seekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
@@ -1391,8 +1455,16 @@ nsresult nsHttpTransaction::Restart() {
 
   // Reset mDoNotRemoveAltSvc for the next try.
   mDoNotRemoveAltSvc = false;
+  mRestarted = true;
 
   return gHttpHandler->InitiateTransaction(this, mPriority);
+}
+
+bool nsHttpTransaction::TakeRestartedState() {
+  // This return true if the transaction has been restarted internally.  Used to
+  // let the consuming nsHttpChannel reset proxy authentication.  The flag is
+  // reset to false by this method.
+  return mRestarted.exchange(false);
 }
 
 char* nsHttpTransaction::LocateHttpStart(char* buf, uint32_t len,
@@ -2095,6 +2167,15 @@ void nsHttpTransaction::CheckForStickyAuthSchemeAt(nsHttpAtom const& header) {
     return;
   }
 
+  if (IsStickyAuthSchemeAt(auth)) {
+    LOG(("  connection made sticky"));
+    // This is enough to make this transaction keep it's current connection,
+    // prevents the connection from being released back to the pool.
+    mCaps |= NS_HTTP_STICKY_CONNECTION;
+  }
+}
+
+bool nsHttpTransaction::IsStickyAuthSchemeAt(nsACString const& auth) {
   Tokenizer p(auth);
   nsAutoCString schema;
   while (p.ReadWord(schema)) {
@@ -2116,11 +2197,7 @@ void nsHttpTransaction::CheckForStickyAuthSchemeAt(nsHttpAtom const& header) {
       nsresult rv = authenticator->GetAuthFlags(&flags);
       if (NS_SUCCEEDED(rv) &&
           (flags & nsIHttpAuthenticator::CONNECTION_BASED)) {
-        LOG(("  connection made sticky, found %s auth shema", schema.get()));
-        // This is enough to make this transaction keep it's current connection,
-        // prevents the connection from being released back to the pool.
-        mCaps |= NS_HTTP_STICKY_CONNECTION;
-        break;
+        return true;
       }
     }
 
@@ -2128,6 +2205,8 @@ void nsHttpTransaction::CheckForStickyAuthSchemeAt(nsHttpAtom const& header) {
     p.SkipUntil(Tokenizer::Token::NewLine());
     p.SkipWhites(Tokenizer::INCLUDE_NEW_LINE);
   }
+
+  return false;
 }
 
 const TimingStruct nsHttpTransaction::Timings() {
@@ -2337,7 +2416,7 @@ nsHttpTransaction::Release() {
 }
 
 NS_IMPL_QUERY_INTERFACE(nsHttpTransaction, nsIInputStreamCallback,
-                        nsIOutputStreamCallback)
+                        nsIOutputStreamCallback, nsIDNSListener)
 
 //-----------------------------------------------------------------------------
 // nsHttpTransaction::nsIInputStreamCallback
@@ -2598,6 +2677,60 @@ void nsHttpTransaction::NotifyTransactionObserver(nsresult reason) {
   TransactionObserverFunc obs = nullptr;
   std::swap(obs, mTransactionObserver);
   obs(std::move(result));
+}
+
+void nsHttpTransaction::UpdateConnectionInfo(nsHttpConnectionInfo* aConnInfo) {
+  MOZ_ASSERT(aConnInfo);
+
+  if (mActivated) {
+    MOZ_ASSERT(false, "Should not update conn info after activated");
+    return;
+  }
+
+  mFallbackConnInfo = mConnInfo->Clone();
+  mConnInfo = aConnInfo;
+}
+
+NS_IMETHODIMP nsHttpTransaction::OnLookupComplete(nsICancelable* aRequest,
+                                                  nsIDNSRecord* aRecord,
+                                                  nsresult aStatus) {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+
+  LOG(("nsHttpTransaction::OnLookupComplete [this=%p] mActivated=%d", this,
+       mActivated));
+
+  mDNSRequest = nullptr;
+
+  MakeDontWaitHTTPSSVC();
+
+  if (mActivated) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIDNSHTTPSSVCRecord> record = do_QueryInterface(aRecord);
+  if (!record || NS_FAILED(aStatus)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsISVCBRecord> svcbRecord;
+  if (NS_FAILED(record->GetServiceModeRecord(mCaps & NS_HTTP_DISALLOW_SPDY,
+                                             mCaps & NS_HTTP_DISALLOW_HTTP3,
+                                             getter_AddRefs(svcbRecord)))) {
+    LOG(("  no usable record!"));
+    return NS_ERROR_FAILURE;
+  }
+
+  RefPtr<nsHttpConnectionInfo> newInfo =
+      mConnInfo->CloneAndAdoptHTTPSSVCRecord(svcbRecord);
+  if (!gHttpHandler->ConnMgr()->MoveTransToHTTPSSVCConnEntry(this, newInfo)) {
+    // MoveTransToHTTPSSVCConnEntry() returning fail means this transaction is
+    // not in the connection entry's pending queue. This could happen if
+    // OnLookupComplete() is called before this transaction is added in the
+    // queue. We still need to update the connection info, so this transaction
+    // can be added to the right connection entry.
+    UpdateConnectionInfo(newInfo);
+  }
+  return NS_OK;
 }
 
 }  // namespace net

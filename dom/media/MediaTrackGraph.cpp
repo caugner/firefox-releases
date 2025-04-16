@@ -850,12 +850,27 @@ void MediaTrackGraphImpl::NotifyInputData(const AudioDataValue* aBuffer,
     return;
   }
 #endif
+  mInputData = aBuffer;
+  mInputFrames = aFrames;
+  mInputChannelCount = aChannels;
+}
+
+void MediaTrackGraphImpl::ProcessInputData() {
+  if (!mInputData) {
+    return;
+  }
+
   nsTArray<RefPtr<AudioDataListener>>* listeners =
       mInputDeviceUsers.GetValue(mInputDeviceID);
   MOZ_ASSERT(listeners);
   for (auto& listener : *listeners) {
-    listener->NotifyInputData(this, aBuffer, aFrames, aRate, aChannels);
+    listener->NotifyInputData(this, mInputData, mInputFrames, GraphRate(),
+                              mInputChannelCount);
   }
+
+  mInputData = nullptr;
+  mInputFrames = 0;
+  mInputChannelCount = 0;
 }
 
 void MediaTrackGraphImpl::DeviceChangedImpl() {
@@ -1381,6 +1396,8 @@ auto MediaTrackGraphImpl::OneIterationImpl(GraphTime aStateEnd,
     DemoteThreadFromRealTime();
   }
 
+  ProcessInputData();
+
   // Changes to LIFECYCLE_RUNNING occur before starting or reviving the graph
   // thread, and so the monitor need not be held to check mLifecycleState.
   // LIFECYCLE_THREAD_NOT_STARTED is possible when shutting down offline
@@ -1701,7 +1718,7 @@ void MediaTrackGraphImpl::RunInStableState(bool aSourceIsMTG) {
            LifecycleState_str[LifecycleStateRef()]));
     }
 
-    runnables.SwapElements(mUpdateRunnables);
+    runnables = std::move(mUpdateRunnables);
     for (uint32_t i = 0; i < mTrackUpdates.Length(); ++i) {
       TrackUpdate* update = &mTrackUpdates[i];
       if (update->mTrack) {
@@ -1729,7 +1746,7 @@ void MediaTrackGraphImpl::RunInStableState(bool aSourceIsMTG) {
     } else {
       if (LifecycleStateRef() <= LIFECYCLE_WAITING_FOR_MAIN_THREAD_CLEANUP) {
         MessageBlock* block = mBackMessageQueue.AppendElement();
-        block->mMessages.SwapElements(mCurrentTaskMessageQueue);
+        block->mMessages = std::move(mCurrentTaskMessageQueue);
         EnsureNextIteration();
       }
 
@@ -2164,7 +2181,7 @@ void MediaTrack::AddListenerImpl(
   if (mNotifiedEnded) {
     mTrackListeners.LastElement()->NotifyEnded(Graph());
   }
-  if (mDisabledMode == DisabledTrackMode::SILENCE_BLACK) {
+  if (CombinedDisabledMode() == DisabledTrackMode::SILENCE_BLACK) {
     mTrackListeners.LastElement()->NotifyEnabledStateChanged(Graph(), false);
   }
 }
@@ -2299,31 +2316,22 @@ void MediaTrack::RunAfterPendingUpdates(
   graph->AppendMessage(MakeUnique<Message>(this, runnable.forget()));
 }
 
-void MediaTrack::SetEnabledImpl(DisabledTrackMode aMode) {
-  if (aMode == DisabledTrackMode::ENABLED) {
-    mDisabledMode = DisabledTrackMode::ENABLED;
-    for (const auto& l : mTrackListeners) {
-      l->NotifyEnabledStateChanged(Graph(), true);
-    }
-  } else {
-    MOZ_DIAGNOSTIC_ASSERT(
-        mDisabledMode == DisabledTrackMode::ENABLED,
-        "Changing disabled track mode for a track is not allowed");
-    mDisabledMode = aMode;
-    if (aMode == DisabledTrackMode::SILENCE_BLACK) {
-      for (const auto& l : mTrackListeners) {
-        l->NotifyEnabledStateChanged(Graph(), false);
-      }
-    }
-  }
+void MediaTrack::SetDisabledTrackModeImpl(DisabledTrackMode aMode) {
+  MOZ_DIAGNOSTIC_ASSERT(
+      aMode == DisabledTrackMode::ENABLED ||
+          mDisabledMode == DisabledTrackMode::ENABLED,
+      "Changing disabled track mode for a track is not allowed");
+  DisabledTrackMode oldMode = CombinedDisabledMode();
+  mDisabledMode = aMode;
+  NotifyIfDisabledModeChangedFrom(oldMode);
 }
 
-void MediaTrack::SetEnabled(DisabledTrackMode aMode) {
+void MediaTrack::SetDisabledTrackMode(DisabledTrackMode aMode) {
   class Message : public ControlMessage {
    public:
     Message(MediaTrack* aTrack, DisabledTrackMode aMode)
         : ControlMessage(aTrack), mMode(aMode) {}
-    void Run() override { mTrack->SetEnabledImpl(mMode); }
+    void Run() override { mTrack->SetDisabledTrackModeImpl(mMode); }
     DisabledTrackMode mMode;
   };
   if (mMainThreadDestroyed) {
@@ -2405,6 +2413,24 @@ void MediaTrack::AdvanceTimeVaryingValuesToCurrentTime(GraphTime aCurrentTime,
 
   mForgottenTime = std::min(GetEnd() - 1, time);
   mSegment->ForgetUpTo(mForgottenTime);
+}
+
+void MediaTrack::NotifyIfDisabledModeChangedFrom(DisabledTrackMode aOldMode) {
+  DisabledTrackMode mode = CombinedDisabledMode();
+  if (aOldMode == mode) {
+    return;
+  }
+
+  for (const auto& listener : mTrackListeners) {
+    listener->NotifyEnabledStateChanged(
+        Graph(), mode != DisabledTrackMode::SILENCE_BLACK);
+  }
+
+  for (const auto& c : mConsumers) {
+    if (c->GetDestination()) {
+      c->GetDestination()->OnInputDisabledModeChanged(mode);
+    }
+  }
 }
 
 SourceMediaTrack::SourceMediaTrack(MediaSegment::Type aType,
@@ -2740,6 +2766,10 @@ void SourceMediaTrack::AddDirectListenerImpl(
   listener->NotifyDirectListenerInstalled(
       DirectMediaTrackListener::InstallationResult::SUCCESS);
 
+  if (mDisabledMode != DisabledTrackMode::ENABLED) {
+    listener->IncreaseDisabled(mDisabledMode);
+  }
+
   if (mEnded) {
     return;
   }
@@ -2786,6 +2816,9 @@ void SourceMediaTrack::RemoveDirectListenerImpl(
   for (int32_t i = mDirectTrackListeners.Length() - 1; i >= 0; --i) {
     const RefPtr<DirectMediaTrackListener>& l = mDirectTrackListeners[i];
     if (l == aListener) {
+      if (mDisabledMode != DisabledTrackMode::ENABLED) {
+        aListener->DecreaseDisabled(mDisabledMode);
+      }
       aListener->NotifyDirectListenerUninstalled();
       mDirectTrackListeners.RemoveElementAt(i);
     }
@@ -2807,7 +2840,7 @@ void SourceMediaTrack::End() {
   }
 }
 
-void SourceMediaTrack::SetEnabledImpl(DisabledTrackMode aMode) {
+void SourceMediaTrack::SetDisabledTrackModeImpl(DisabledTrackMode aMode) {
   {
     MutexAutoLock lock(mMutex);
     for (const auto& l : mDirectTrackListeners) {
@@ -2826,7 +2859,7 @@ void SourceMediaTrack::SetEnabledImpl(DisabledTrackMode aMode) {
       }
     }
   }
-  MediaTrack::SetEnabledImpl(aMode);
+  MediaTrack::SetDisabledTrackModeImpl(aMode);
 }
 
 void SourceMediaTrack::RemoveAllDirectListenersImpl() {
@@ -3013,6 +3046,9 @@ MediaTrackGraphImpl::MediaTrackGraphImpl(
       mPortCount(0),
       mInputDeviceID(nullptr),
       mOutputDeviceID(aOutputDeviceID),
+      mInputData(nullptr),
+      mInputChannelCount(0),
+      mInputFrames(0),
       mMonitor("MediaTrackGraphImpl"),
       mLifecycleState(LIFECYCLE_THREAD_NOT_STARTED),
       mPostedRunInStableStateEvent(false),

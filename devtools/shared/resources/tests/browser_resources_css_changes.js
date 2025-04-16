@@ -21,6 +21,12 @@ add_task(async function() {
     targetList,
   } = await initResourceWatcherAndTarget(tab);
 
+  // CSS_CHANGE watcher doesn't record modification made before watching,
+  // so we have to start watching before doing any DOM mutation.
+  await resourceWatcher.watchResources([ResourceWatcher.TYPES.CSS_CHANGE], {
+    onAvailable: () => {},
+  });
+
   const { walker } = await targetList.targetFront.getFront("inspector");
   const nodeList = await walker.querySelectorAll(walker.rootNode, "body");
   const body = (await nodeList.items())[0];
@@ -85,7 +91,7 @@ add_task(async function() {
   is(availableResources[2], existingResources[2], "3rd resource is correct");
   is(availableResources[3], existingResources[3], "4th resource is correct");
 
-  await targetList.stopListening();
+  await targetList.destroy();
   await client.close();
 });
 

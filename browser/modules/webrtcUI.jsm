@@ -364,9 +364,13 @@ var webrtcUI = {
         // presume that it's exempt from the tab switch warning.
         //
         // We use the permanentKey here so that the allowing of
-        // the tab survives tab tear-in and tear-out.
+        // the tab survives tab tear-in and tear-out. We ignore
+        // browsers that don't have permanentKey, since those aren't
+        // tabbrowser browsers.
         let browser = stream.topBrowsingContext.embedderElement;
-        this.allowedSharedBrowsers.add(browser.permanentKey);
+        if (browser.permanentKey) {
+          this.allowedSharedBrowsers.add(browser.permanentKey);
+        }
       }
     }
 
@@ -867,6 +871,8 @@ var webrtcUI = {
 };
 
 function getGlobalIndicator() {
+  webrtcUI.recordEvent("show_indicator", "show_indicator");
+
   if (!webrtcUI.useLegacyGlobalIndicator) {
     const INDICATOR_CHROME_URI =
       "chrome://browser/content/webrtcIndicator.xhtml";

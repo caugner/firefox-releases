@@ -925,7 +925,8 @@ static bool EvaluateInEnv(JSContext* cx, Handle<Env*> env,
     options.setForceStrictMode();
   }
 
-  SourceExtent extent = SourceExtent::makeGlobalExtent(chars.length(), options);
+  SourceExtent extent = SourceExtent::makeGlobalExtent(
+      chars.length(), options.lineno, options.column);
 
   SourceText<char16_t> srcBuf;
   if (!srcBuf.init(cx, chars.begin().get(), chars.length(),
@@ -1107,7 +1108,7 @@ Result<Completion> DebuggerFrame::eval(JSContext* cx, HandleDebuggerFrame frame,
 bool DebuggerFrame::isOnStack() const { return !!getPrivate(); }
 
 bool DebuggerFrame::isOnStackMaybeForwarded() const {
-  return !!getPrivate(numFixedSlotsMaybeForwarded());
+  return !!getPrivateMaybeForwarded();
 }
 
 OnStepHandler* DebuggerFrame::onStepHandler() const {

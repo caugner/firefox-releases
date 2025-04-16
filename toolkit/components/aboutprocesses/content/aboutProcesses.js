@@ -26,6 +26,8 @@ const ONE_GIGA = 1024 * 1024 * 1024;
 const ONE_MEGA = 1024 * 1024;
 const ONE_KILO = 1024;
 
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+
 /**
  * Returns a Promise that's resolved after the next turn of the event loop.
  *
@@ -127,6 +129,9 @@ var State = {
       // Total amount of CPU used, in ns (kernel).
       totalCpuKernel: cur.cpuKernel,
       slopeCpuKernel: null,
+      // Total amount of CPU used, in ns (user + kernel).
+      totalCpu: cur.cpuUser + cur.cpuKernel,
+      slopeCpu: null,
     };
     if (!prev) {
       return result;
@@ -136,6 +141,7 @@ var State = {
     }
     result.slopeCpuUser = (cur.cpuUser - prev.cpuUser) / deltaT;
     result.slopeCpuKernel = (cur.cpuKernel - prev.cpuKernel) / deltaT;
+    result.slopeCpu = result.slopeCpuKernel + result.slopeCpuUser;
     return result;
   },
 
@@ -148,15 +154,16 @@ var State = {
   _getProcessDelta(cur, prev) {
     let result = {
       pid: cur.pid,
+      childID: cur.childID,
       filename: cur.filename,
-      totalVirtualMemorySize: cur.virtualMemorySize,
-      deltaVirtualMemorySize: null,
-      totalResidentSize: cur.residentSetSize,
-      deltaResidentSize: null,
+      totalResidentUniqueSize: cur.residentUniqueSize,
+      deltaResidentUniqueSize: null,
       totalCpuUser: cur.cpuUser,
       slopeCpuUser: null,
       totalCpuKernel: cur.cpuKernel,
       slopeCpuKernel: null,
+      totalCpu: cur.cpuUser + cur.cpuKernel,
+      slopeCpu: null,
       type: cur.type,
       origin: cur.origin || "",
       threads: null,
@@ -183,11 +190,11 @@ var State = {
       }
       return this._getThreadDelta(curThread, prevThread, deltaT);
     });
-    result.deltaVirtualMemorySize =
-      cur.virtualMemorySize - prev.virtualMemorySize;
-    result.deltaResidentSize = cur.residentSetSize - prev.residentSetSize;
+    result.deltaResidentUniqueSize =
+      cur.residentUniqueSize - prev.residentUniqueSize;
     result.slopeCpuUser = (cur.cpuUser - prev.cpuUser) / deltaT;
     result.slopeCpuKernel = (cur.cpuKernel - prev.cpuKernel) / deltaT;
+    result.slopeCpu = result.slopeCpuUser + result.slopeCpuKernel;
     result.threads = threads;
     return result;
   },
@@ -249,77 +256,66 @@ var View = {
    * Append a row showing a single process (without its threads).
    *
    * @param {ProcessDelta} data The data to display.
-   * @param {bool} isOpen `true` if we're also displaying the threads of this process, `false` otherwise.
    * @return {DOMElement} The row displaying the process.
    */
-  appendProcessRow(data, isOpen) {
+  appendProcessRow(data) {
     let row = document.createElement("tr");
     row.classList.add("process");
 
-    // Column: pid / twisty image
+    if (data.isHung) {
+      row.classList.add("hung");
+    }
+
+    // Column: type / twisty image
     {
+      let content = data.origin ? `${data.origin} (${data.type})` : data.type;
       let elt = this._addCell(row, {
-        content: data.pid,
-        classes: ["pid", "root"],
+        content,
+        classes: ["type"],
       });
 
       if (data.threads.length) {
         let img = document.createElement("span");
         img.classList.add("twisty", "process");
-        if (isOpen) {
+        if (data.isOpen) {
           img.classList.add("open");
         }
         elt.insertBefore(img, elt.firstChild);
       }
     }
 
-    // Column: type
-    {
-      let content = data.origin ? `${data.origin} (${data.type})` : data.type;
-      this._addCell(row, {
-        content,
-        classes: ["type"],
-      });
-    }
-
     // Column: Resident size
     {
       let { formatedDelta, formatedValue } = this._formatMemoryAndDelta(
-        data.totalResidentSize,
-        data.deltaResidentSize
+        data.totalResidentUniqueSize,
+        data.deltaResidentUniqueSize
       );
       let content = formatedDelta
         ? `${formatedValue}${formatedDelta}`
         : formatedValue;
       this._addCell(row, {
         content,
-        classes: ["totalResidentSize"],
+        classes: ["totalMemorySize"],
       });
     }
 
-    // Column: CPU: User
+    // Column: CPU: User and Kernel
     {
-      let slope = this._formatPercentage(data.slopeCpuUser);
+      let slope = this._formatPercentage(data.slopeCpu);
       let content = `${slope} (${(
-        data.totalCpuUser / MS_PER_NS
+        data.totalCpu / MS_PER_NS
       ).toLocaleString(undefined, { maximumFractionDigits: 0 })}ms)`;
       this._addCell(row, {
         content,
-        classes: ["cpuUser"],
+        classes: ["cpu"],
       });
     }
 
-    // Column: CPU: Kernel
-    {
-      let slope = this._formatPercentage(data.slopeCpuKernel);
-      let content = `${slope} (${(
-        data.totalCpuKernel / MS_PER_NS
-      ).toLocaleString(undefined, { maximumFractionDigits: 0 })}ms)`;
-      this._addCell(row, {
-        content,
-        classes: ["cpuKernel"],
-      });
-    }
+    // Column: pid
+    this._addCell(row, {
+      content: data.pid,
+      classes: ["pid", "root"],
+    });
 
     // Column: Number of threads
     this._addCell(row, {
@@ -341,16 +337,10 @@ var View = {
     let row = document.createElement("tr");
     row.classList.add("thread");
 
-    // Column: id
-    this._addCell(row, {
-      content: data.tid,
-      classes: ["tid", "indent"],
-    });
-
     // Column: filename
     this._addCell(row, {
       content: data.name,
-      classes: ["name"],
+      classes: ["name", "indent"],
     });
 
     // Column: Resident size (empty)
@@ -359,29 +349,23 @@ var View = {
       classes: ["totalResidentSize"],
     });
 
-    // Column: CPU: User
+    // Column: CPU: User and Kernel
     {
-      let slope = this._formatPercentage(data.slopeCpuUser);
+      let slope = this._formatPercentage(data.slopeCpu);
       let text = `${slope} (${(
-        data.totalCpuUser / MS_PER_NS
+        data.totalCpu / MS_PER_NS
       ).toLocaleString(undefined, { maximumFractionDigits: 0 })} ms)`;
       this._addCell(row, {
         content: text,
-        classes: ["cpuUser"],
+        classes: ["cpu"],
       });
     }
 
-    // Column: CPU: Kernel
-    {
-      let slope = this._formatPercentage(data.slopeCpuKernel);
-      let text = `${slope} (${(
-        data.totalCpuKernel / MS_PER_NS
-      ).toLocaleString(undefined, { maximumFractionDigits: 0 })} ms)`;
-      this._addCell(row, {
-        content: text,
-        classes: ["cpuKernel"],
-      });
-    }
+    // Column: id
+    this._addCell(row, {
+      content: data.tid,
+      classes: ["tid"],
+    });
 
     // Column: Number of threads (empty)
     this._addCell(row, {
@@ -527,6 +511,10 @@ var View = {
 
 var Control = {
   _openItems: new Set(),
+  // The set of all processes reported as "hung" by the process hang monitor.
+  //
+  // type: Set<ChildID>
+  _hungItems: new Set(),
   _sortColumn: null,
   _sortAscendent: true,
   _removeSubtree(row) {
@@ -535,6 +523,8 @@ var Control = {
     }
   },
   init() {
+    this._initHangReports();
+
     let tbody = document.getElementById("process-tbody");
     tbody.addEventListener("click", event => {
       this._updateLastMouseEvent();
@@ -615,6 +605,29 @@ var Control = {
   _updateLastMouseEvent() {
     this._lastMouseEvent = Date.now();
   },
+  _initHangReports() {
+    const PROCESS_HANG_REPORT_NOTIFICATION = "process-hang-report";
+
+    // Receiving report of a hung child.
+    // Let's store if for our next update.
+    let hangReporter = report => {
+      report.QueryInterface(Ci.nsIHangReport);
+      this._hungItems.add(report.childID);
+    };
+    Services.obs.addObserver(hangReporter, PROCESS_HANG_REPORT_NOTIFICATION);
+
+    // Don't forget to unregister the reporter.
+    window.addEventListener(
+      "unload",
+      () => {
+        Services.obs.removeObserver(
+          hangReporter,
+          PROCESS_HANG_REPORT_NOTIFICATION
+        );
+      },
+      { once: true }
+    );
+  },
   async update() {
     await State.update();
 
@@ -644,13 +657,26 @@ var Control = {
     let openItems = this._openItems;
     this._openItems = new Set();
 
+    // Similarly, we reset `_hungItems`, based on the assumption that the process hang
+    // monitor will inform us again before the next update. Since the process hang monitor
+    // pings its clients about once per second and we update about once per 2 seconds
+    // (or more if the mouse moves), we should be ok.
+    let hungItems = this._hungItems;
+    this._hungItems = new Set();
+
     counters = this._sortProcesses(counters);
     let previousRow = null;
     let previousProcess = null;
     for (let process of counters) {
       let isOpen = openItems.has(process.pid);
+      process.isOpen = isOpen;
+
+      let isHung = process.childID && hungItems.has(process.childID);
+      process.isHung = isHung;
+
       let processRow = View.appendProcessRow(process, isOpen);
       processRow.process = process;
+
       let latestRow = processRow;
       if (isOpen) {
         this._openItems.add(process.pid);
@@ -688,18 +714,13 @@ var Control = {
         case "column-name":
           order = a.name.localeCompare(b.name);
           break;
-        case "column-cpu-user":
-          order = b.slopeCpuUser - a.slopeCpuUser;
+        case "column-cpu-total":
+          order = b.totalCpu - a.totalCpu;
           if (order == 0) {
-            order = b.totalCpuUser - a.totalCpuUser;
+            order = b.totalCpu - a.totalCpu;
           }
           break;
-        case "column-cpu-kernel":
-          order = b.slopeCpuKernel - a.slopeCpuKernel;
-          if (order == 0) {
-            order = b.totalCpuKernel - a.totalCpuKernel;
-          }
-          break;
+
         case "column-cpu-threads":
         case "column-memory-resident":
         case "column-type":
@@ -732,23 +753,17 @@ var Control = {
         case "column-name":
           order = String(a.name).localeCompare(b.name);
           break;
-        case "column-cpu-user":
-          order = b.slopeCpuUser - a.slopeCpuUser;
+        case "column-cpu-total":
+          order = b.totalCpu - a.totalCpu;
           if (order == 0) {
-            order = b.totalCpuUser - a.totalCpuUser;
-          }
-          break;
-        case "column-cpu-kernel":
-          order = b.slopeCpuKernel - a.slopeCpuKernel;
-          if (order == 0) {
-            order = b.totalCpuKernel - a.totalCpuKernel;
+            order = b.totalCpu - a.totalCpu;
           }
           break;
         case "column-cpu-threads":
           order = b.threads.length - a.threads.length;
           break;
         case "column-memory-resident":
-          order = b.totalResidentSize - a.totalResidentSize;
+          order = b.totalResidentUniqueSize - a.totalResidentUniqueSize;
           break;
         case null:
           // Default order: classify processes by group.

@@ -292,7 +292,7 @@ class ConfigureSandbox(dict):
         for b in ('None', 'False', 'True', 'int', 'bool', 'any', 'all', 'len',
                   'list', 'tuple', 'set', 'dict', 'isinstance', 'getattr',
                   'hasattr', 'enumerate', 'range', 'zip', 'AssertionError',
-                  '__build_class__',  # will be None on py2
+                  'ImportError', '__build_class__',  # will be None on py2
                   )
     }, __import__=forbidden_import, str=six.text_type)
 
@@ -430,7 +430,8 @@ class ConfigureSandbox(dict):
         self._paths.append(path)
         self._all_paths.add(path)
 
-        source = open(path, 'rb').read()
+        with open(path, 'rb') as fh:
+            source = fh.read()
 
         code = compile(source, path, 'exec')
 

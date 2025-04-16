@@ -1,4 +1,4 @@
-// |jit-test| skip-if: wasmCompileMode() != "ion" || !this.wasmSimdAnalysis
+// |jit-test| skip-if: !wasmSimdSupported() || wasmCompileMode() != "ion" || !this.wasmSimdAnalysis
 
 // White-box tests for SIMD optimizations.  These are sensitive to internal
 // details of the lowering logic, which is platform-dependent.
@@ -731,6 +731,54 @@ for ( let ty128 of ['f32x4','f64x2','i64x2'] ) {
     assertEq(wasmSimdAnalysis(), "simd128-to-scalar -> constant folded");
 }
 
+// Optimizing all_true, any_true, and bitmask that are used for control flow, also when negated.
+
+for ( let [ty128,size] of [['i8x16',1], ['i16x8',2], ['i32x4',4]] ) {
+    let all = iota(16/size).map(n => n*n);
+    let some = iota(16/size).map(n => n*(n % 3));
+    let none = iota(16/size).map(n => 0);
+    let inputs = [all, some, none];
+    let ops = { all_true: allTrue, any_true: anyTrue, bitmask };
+
+    for ( let op of ['any_true', 'all_true', 'bitmask'] ) {
+        let folded = op != 'bitmask' || size == 2;
+
+        let positive =
+            wasmCompile(
+                `(module
+                   (memory (export "mem") 1 1)
+                   (func $f (param v128) (result i32)
+                       (if (result i32) (${ty128}.${op} (local.get 0))
+                           (i32.const 42)
+                           (i32.const 37)))
+                   (func (export "run") (result i32)
+                     (call $f (v128.load (i32.const 16)))))`);
+        assertEq(wasmSimdAnalysis(), folded ? "simd128-to-scalar-and-branch -> folded" : "none");
+
+        let negative =
+            wasmCompile(
+                `(module
+                   (memory (export "mem") 1 1)
+                   (func $f (param v128) (result i32)
+                       (if (result i32) (i32.eqz (${ty128}.${op} (local.get 0)))
+                           (i32.const 42)
+                           (i32.const 37)))
+                   (func (export "run") (result i32)
+                     (call $f (v128.load (i32.const 16)))))`);
+        assertEq(wasmSimdAnalysis(), folded ? "simd128-to-scalar-and-branch -> folded" : "none");
+
+        for ( let inp of inputs ) {
+            let mem = new this[`Int${8*size}Array`](positive.exports.mem.buffer);
+            set(mem, 16/size, inp);
+            assertEq(positive.exports.run(), ops[op](inp) ? 42 : 37);
+
+            mem = new this[`Int${8*size}Array`](negative.exports.mem.buffer);
+            set(mem, 16/size, inp);
+            assertEq(negative.exports.run(), ops[op](inp) ? 37 : 42);
+        }
+    }
+}
+
 // Library
 
 function wasmCompile(text) {
@@ -779,4 +827,20 @@ function i32ToI8(xs) {
 
 function i16ToI8(xs) {
     return xs.map(x => [x*2, x*2+1]).flat();
+}
+
+function allTrue(xs) {
+    return xs.every(v => v != 0);
+}
+
+function anyTrue(xs) {
+    return xs.some(v => v != 0);
+}
+
+function bitmask(xs) {
+    let shift = 128/xs.length - 1;
+    let res = 0;
+    let k = 0;
+    xs.forEach(v => { res |= ((v >>> shift) & 1) << k; k++; });
+    return res;
 }

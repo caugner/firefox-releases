@@ -44,9 +44,12 @@ function getBrowser(panel) {
   browser.setAttribute("autocompletepopup", "PopupAutoComplete");
   browser.setAttribute("selectmenulist", "ContentSelectDropdown");
 
-  // Ensure that the browser is going to run in the same process of the other
+  // Ensure that the browser is going to run in the same bc group as the other
   // extension pages from the same addon.
-  browser.sameProcessAsFrameLoader = panel.extension.groupFrameLoader;
+  browser.setAttribute(
+    "initialBrowsingContextGroupId",
+    panel.extension.policy.browsingContextGroupId
+  );
 
   let readyPromise;
   if (panel.extension.remote) {

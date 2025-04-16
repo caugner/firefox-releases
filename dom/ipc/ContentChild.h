@@ -14,6 +14,7 @@
 #include "mozilla/dom/RemoteType.h"
 #include "mozilla/ipc/InputStreamUtils.h"
 #include "mozilla/ipc/ProtocolUtils.h"
+#include "mozilla/LookAndFeel.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "nsClassHashtable.h"
@@ -35,7 +36,6 @@ struct SubstitutionMapping;
 struct OverrideMapping;
 class nsIDomainPolicy;
 class nsIURIClassifierCallback;
-struct LookAndFeelInt;
 class nsDocShellLoadState;
 class nsFrameLoader;
 class nsIOpenWindowInfo;
@@ -104,15 +104,13 @@ class ContentChild final : public PContentChild,
     nsCString updateURL;
   };
 
-  nsresult ProvideWindowCommon(BrowserChild* aTabOpener,
-                               nsIOpenWindowInfo* aOpenWindowInfo,
-                               uint32_t aChromeFlags, bool aCalledFromJS,
-                               bool aWidthSpecified, nsIURI* aURI,
-                               const nsAString& aName,
-                               const nsACString& aFeatures, bool aForceNoOpener,
-                               bool aForceNoReferrer,
-                               nsDocShellLoadState* aLoadState,
-                               bool* aWindowIsNew, BrowsingContext** aReturn);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult ProvideWindowCommon(
+      BrowserChild* aTabOpener, nsIOpenWindowInfo* aOpenWindowInfo,
+      uint32_t aChromeFlags, bool aCalledFromJS, bool aWidthSpecified,
+      nsIURI* aURI, const nsAString& aName, const nsACString& aFeatures,
+      bool aForceNoOpener, bool aForceNoReferrer,
+      nsDocShellLoadState* aLoadState, bool* aWindowIsNew,
+      BrowsingContext** aReturn);
 
   bool Init(MessageLoop* aIOLoop, base::ProcessId aParentPid,
             const char* aParentBuildID, UniquePtr<IPC::Channel> aChannel,
@@ -301,7 +299,8 @@ class ContentChild final : public PContentChild,
                                                  const bool& haveBidiKeyboards);
 
   mozilla::ipc::IPCResult RecvNotifyVisited(nsTArray<VisitedQueryResult>&&);
-  mozilla::ipc::IPCResult RecvThemeChanged(nsTArray<LookAndFeelInt>&&);
+  mozilla::ipc::IPCResult RecvThemeChanged(
+      LookAndFeelCache&& aLookAndFeelCache);
 
   mozilla::ipc::IPCResult RecvUpdateSystemParameters(
       nsTArray<SystemParameterKVPair>&& aUpdates);
@@ -374,6 +373,8 @@ class ContentChild final : public PContentChild,
                                            const uint32_t& aMsaaID);
   mozilla::ipc::IPCResult RecvShutdownA11y();
 
+  mozilla::ipc::IPCResult RecvApplicationForeground();
+  mozilla::ipc::IPCResult RecvApplicationBackground();
   mozilla::ipc::IPCResult RecvGarbageCollect();
   mozilla::ipc::IPCResult RecvCycleCollect();
   mozilla::ipc::IPCResult RecvUnlinkGhosts();
@@ -485,7 +486,7 @@ class ContentChild final : public PContentChild,
 
   bool DeallocPFileDescriptorSetChild(PFileDescriptorSetChild*);
 
-  mozilla::ipc::IPCResult RecvConstructBrowser(
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvConstructBrowser(
       ManagedEndpoint<PBrowserChild>&& aBrowserEp,
       ManagedEndpoint<PWindowGlobalChild>&& aWindowEp, const TabId& aTabId,
       const IPCTabContext& aContext, const WindowGlobalInit& aWindowInit,
@@ -522,20 +523,21 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvBlobURLRegistration(
       const nsCString& aURI, const IPCBlob& aBlob,
-      const IPC::Principal& aPrincipal);
+      const IPC::Principal& aPrincipal, const Maybe<nsID>& aAgentClusterId);
 
   mozilla::ipc::IPCResult RecvBlobURLUnregistration(const nsCString& aURI);
 
   mozilla::ipc::IPCResult RecvRequestMemoryReport(
       const uint32_t& generation, const bool& anonymize,
-      const bool& minimizeMemoryUsage, const Maybe<FileDescriptor>& DMDFile);
+      const bool& minimizeMemoryUsage, const Maybe<FileDescriptor>& DMDFile,
+      const RequestMemoryReportResolver& aResolver);
 
   mozilla::ipc::IPCResult RecvGetUntrustedModulesData(
       GetUntrustedModulesDataResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvSetXPCOMProcessAttributes(
       XPCOMInitData&& aXPCOMInit, const StructuredCloneData& aInitialData,
-      nsTArray<LookAndFeelInt>&& aLookAndFeelIntCache,
+      LookAndFeelCache&& aLookAndFeelCache,
       nsTArray<SystemFontListEntry>&& aFontList,
       const Maybe<base::SharedMemoryHandle>& aSharedUASheetHandle,
       const uintptr_t& aSharedUASheetAddress,
@@ -600,7 +602,7 @@ class ContentChild final : public PContentChild,
   bool DeallocPSessionStorageObserverChild(
       PSessionStorageObserverChild* aActor);
 
-  nsTArray<LookAndFeelInt>& LookAndFeelCache() { return mLookAndFeelCache; }
+  LookAndFeelCache& BorrowLookAndFeelCache() { return mLookAndFeelCache; }
 
   /**
    * Helper function for protocols that use the GPU process when available.
@@ -768,7 +770,6 @@ class ContentChild final : public PContentChild,
       LoadURIResolver&& aResolve);
 
   mozilla::ipc::IPCResult RecvInternalLoad(
-      const MaybeDiscarded<BrowsingContext>& aContext,
       nsDocShellLoadState* aLoadState, bool aTakeFocus);
 
   mozilla::ipc::IPCResult RecvDisplayLoadError(
@@ -828,8 +829,8 @@ class ContentChild final : public PContentChild,
   // parent process and used to initialize gfx in the child. Currently used
   // only on MacOSX and Linux.
   nsTArray<mozilla::dom::SystemFontListEntry> mFontList;
-  // Temporary storage for nsXPLookAndFeel flags.
-  nsTArray<LookAndFeelInt> mLookAndFeelCache;
+  // Temporary storage for nsXPLookAndFeel cache info.
+  LookAndFeelCache mLookAndFeelCache;
   // Temporary storage for list of shared-fontlist memory blocks.
   nsTArray<base::SharedMemoryHandle> mSharedFontListBlocks;
 

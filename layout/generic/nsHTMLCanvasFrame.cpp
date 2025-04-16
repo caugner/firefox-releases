@@ -52,10 +52,16 @@ static IntrinsicSize IntrinsicSizeFromCanvasSize(
  *
  * @param aCanvasSizeInPx The canvas's size in CSS pixels, as returned
  *                        by GetCanvasSize().
+ * @param aFrame The frame we are computing.
  * @return The canvas's intrinsic ratio, as a nsSize.
  */
 static AspectRatio IntrinsicRatioFromCanvasSize(
-    const nsIntSize& aCanvasSizeInPx) {
+    const nsIntSize& aCanvasSizeInPx, const nsIFrame* aFrame) {
+  const StyleAspectRatio& aspectRatio = aFrame->StylePosition()->mAspectRatio;
+  if (!aspectRatio.auto_) {
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
   return AspectRatio::FromSize(aCanvasSizeInPx.width, aCanvasSizeInPx.height);
 }
 
@@ -86,7 +92,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
       // Need intrinsic size & ratio, for ComputeObjectDestRect:
       nsIntSize canvasSize = f->GetCanvasSize();
       IntrinsicSize intrinsicSize = IntrinsicSizeFromCanvasSize(canvasSize);
-      AspectRatio intrinsicRatio = IntrinsicRatioFromCanvasSize(canvasSize);
+      AspectRatio intrinsicRatio = IntrinsicRatioFromCanvasSize(canvasSize, f);
 
       const nsRect destRect = nsLayoutUtils::ComputeObjectDestRect(
           constraintRect, intrinsicSize, intrinsicRatio, f->StylePosition());
@@ -144,7 +150,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         IntrinsicSize intrinsicSize =
             IntrinsicSizeFromCanvasSize(canvasSizeInPx);
         AspectRatio intrinsicRatio =
-            IntrinsicRatioFromCanvasSize(canvasSizeInPx);
+            IntrinsicRatioFromCanvasSize(canvasSizeInPx, canvasFrame);
 
         nsRect area =
             mFrame->GetContentRectRelativeToSelf() + ToReferenceFrame();
@@ -165,17 +171,14 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         aBuilder.PushIFrame(r, !BackfaceIsHidden(), data->GetPipelineId().ref(),
                             /*ignoreMissingPipelines*/ false);
 
-        gfx::Matrix4x4 scTransform;
-        MaybeIntSize scaleToSize;
         LayoutDeviceRect scBounds(LayoutDevicePoint(0, 0), bounds.Size());
         wr::ImageRendering filter = wr::ToImageRendering(
             nsLayoutUtils::GetSamplingFilterForFrame(mFrame));
         wr::MixBlendMode mixBlendMode = wr::MixBlendMode::Normal;
         aManager->WrBridge()->AddWebRenderParentCommand(
-            OpUpdateAsyncImagePipeline(
-                data->GetPipelineId().value(), scBounds, scTransform,
-                scaleToSize, filter, mixBlendMode,
-                LayoutDeviceSize(canvasSizeInPx.width, canvasSizeInPx.height)));
+            OpUpdateAsyncImagePipeline(data->GetPipelineId().value(), scBounds,
+                                       VideoInfo::Rotation::kDegree_0, filter,
+                                       mixBlendMode));
         break;
       }
       case CanvasContextType::WebGPU: {
@@ -203,7 +206,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         IntrinsicSize intrinsicSize =
             IntrinsicSizeFromCanvasSize(canvasSizeInPx);
         AspectRatio intrinsicRatio =
-            IntrinsicRatioFromCanvasSize(canvasSizeInPx);
+            IntrinsicRatioFromCanvasSize(canvasSizeInPx, canvasFrame);
         nsRect area =
             mFrame->GetContentRectRelativeToSelf() + ToReferenceFrame();
         nsRect dest = nsLayoutUtils::ComputeObjectDestRect(
@@ -262,7 +265,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         IntrinsicSize intrinsicSize =
             IntrinsicSizeFromCanvasSize(canvasSizeInPx);
         AspectRatio intrinsicRatio =
-            IntrinsicRatioFromCanvasSize(canvasSizeInPx);
+            IntrinsicRatioFromCanvasSize(canvasSizeInPx, canvasFrame);
 
         nsRect area =
             mFrame->GetContentRectRelativeToSelf() + ToReferenceFrame();
@@ -331,6 +334,14 @@ void nsHTMLCanvasFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
   ActiveLayerTracker::NotifyContentChange(this);
 }
 
+void nsHTMLCanvasFrame::DestroyFrom(nsIFrame* aDestroyRoot,
+                                    PostDestroyData& aPostDestroyData) {
+  if (IsPrimaryFrame()) {
+    HTMLCanvasElement::FromNode(*mContent)->ResetPrintCallback();
+  }
+  nsContainerFrame::DestroyFrom(aDestroyRoot, aPostDestroyData);
+}
+
 nsHTMLCanvasFrame::~nsHTMLCanvasFrame() = default;
 
 nsIntSize nsHTMLCanvasFrame::GetCanvasSize() {
@@ -393,11 +404,12 @@ AspectRatio nsHTMLCanvasFrame::GetIntrinsicRatio() {
   if (StyleDisplay()->IsContainSize()) {
     return AspectRatio();
   }
-  return IntrinsicRatioFromCanvasSize(GetCanvasSize());
+
+  return IntrinsicRatioFromCanvasSize(GetCanvasSize(), this);
 }
 
 /* virtual */
-LogicalSize nsHTMLCanvasFrame::ComputeSize(
+nsIFrame::SizeComputationResult nsHTMLCanvasFrame::ComputeSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
     const LogicalSize& aBorder, const LogicalSize& aPadding,
@@ -410,12 +422,13 @@ LogicalSize nsHTMLCanvasFrame::ComputeSize(
   } else {
     nsIntSize canvasSizeInPx = GetCanvasSize();
     intrinsicSize = IntrinsicSizeFromCanvasSize(canvasSizeInPx);
-    intrinsicRatio = IntrinsicRatioFromCanvasSize(canvasSizeInPx);
+    intrinsicRatio = IntrinsicRatioFromCanvasSize(canvasSizeInPx, this);
   }
 
-  return ComputeSizeWithIntrinsicDimensions(
-      aRenderingContext, aWM, intrinsicSize, intrinsicRatio, aCBSize, aMargin,
-      aBorder, aPadding, aFlags);
+  return {ComputeSizeWithIntrinsicDimensions(
+              aRenderingContext, aWM, intrinsicSize, intrinsicRatio, aCBSize,
+              aMargin, aBorder, aPadding, aFlags),
+          AspectRatioUsage::None};
 }
 
 void nsHTMLCanvasFrame::Reflow(nsPresContext* aPresContext,
@@ -507,7 +520,8 @@ already_AddRefed<Layer> nsHTMLCanvasFrame::BuildLayer(
   if (!layer) return nullptr;
 
   IntrinsicSize intrinsicSize = IntrinsicSizeFromCanvasSize(canvasSizeInPx);
-  AspectRatio intrinsicRatio = IntrinsicRatioFromCanvasSize(canvasSizeInPx);
+  AspectRatio intrinsicRatio =
+      IntrinsicRatioFromCanvasSize(canvasSizeInPx, this);
 
   nsRect dest = nsLayoutUtils::ComputeObjectDestRect(
       area, intrinsicSize, intrinsicRatio, StylePosition());

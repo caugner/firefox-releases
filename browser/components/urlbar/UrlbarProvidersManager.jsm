@@ -193,7 +193,24 @@ class ProvidersManager {
     }
     // Providers can use queryContext.sources to decide whether they want to be
     // invoked or not.
-    updateSourcesIfEmpty(queryContext);
+    // The sources may be defined in the context, then the whole search string
+    // can be used for searching. Otherwise sources are extracted from prefs and
+    // restriction tokens, then restriction tokens must be filtered out of the
+    // search string.
+    let restrictToken = updateSourcesIfEmpty(queryContext);
+    if (restrictToken) {
+      queryContext.shouldFilterRestrictionTokens = true;
+      // If the restriction token has an equivalent source, then set it as
+      // restrictSource.
+      let restrictType = Object.entries(UrlbarTokenizer.RESTRICT).find(
+        e => e[1] == restrictToken.value
+      )?.[0];
+      if (
+        ["SEARCH", "HISTORY", "OPENPAGE", "BOOKMARK"].includes(restrictType)
+      ) {
+        queryContext.restrictSource = queryContext.sources[0];
+      }
+    }
     logger.debug(`Context sources ${queryContext.sources}`);
 
     let query = new Query(queryContext, controller, muxer, providers);
@@ -473,6 +490,16 @@ class Query {
       return;
     }
 
+    // When in search mode and the search string is empty, don't allow heuristic
+    // results since they don't make sense.
+    if (
+      result.heuristic &&
+      !this.context.trimmedSearchString &&
+      this.context.searchMode
+    ) {
+      return;
+    }
+
     // Check if the result source should be filtered out. Pay attention to the
     // heuristic result though, that is supposed to be added regardless.
     if (
@@ -591,10 +618,12 @@ class Query {
 /**
  * Updates in place the sources for a given UrlbarQueryContext.
  * @param {UrlbarQueryContext} context The query context to examine
+ * @returns {object} The restriction token that was used to set sources, or
+ *          undefined if there's no restriction token.
  */
 function updateSourcesIfEmpty(context) {
   if (context.sources && context.sources.length) {
-    return;
+    return false;
   }
   let acceptedSources = [];
   // There can be only one restrict token about sources.
@@ -667,4 +696,5 @@ function updateSourcesIfEmpty(context) {
     }
   }
   context.sources = acceptedSources;
+  return restrictToken;
 }

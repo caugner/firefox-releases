@@ -208,9 +208,14 @@ Inspector.prototype = {
     );
 
     await this.toolbox.resourceWatcher.watchResources(
-      [this.toolbox.resourceWatcher.TYPES.ROOT_NODE],
+      [
+        this.toolbox.resourceWatcher.TYPES.ROOT_NODE,
+        // To observe CSS change before opening changes view.
+        this.toolbox.resourceWatcher.TYPES.CSS_CHANGE,
+      ],
       { onAvailable: this.onResourceAvailable }
     );
+
     // Store the URL of the target page prior to navigation in order to ensure
     // telemetry counts in the Grid Inspector are not double counted on reload.
     this.previousURL = this.currentTarget.url;
@@ -1297,7 +1302,8 @@ Inspector.prototype = {
 
   onResourceAvailable: function({ resourceType, targetFront, resource }) {
     if (resourceType === this.toolbox.resourceWatcher.TYPES.ROOT_NODE) {
-      if (targetFront.isTopLevel) {
+      const isTopLevelTarget = !!targetFront.isTopLevel;
+      if (resource.isTopLevelDocument && isTopLevelTarget) {
         // Note: the resource (ie the root node here) will be fetched from the
         // walker later on in _getDefaultNodeForSelection.
         // We should update the inspector to directly use the node front

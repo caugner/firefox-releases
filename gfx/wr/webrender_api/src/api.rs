@@ -14,10 +14,10 @@ use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::u32;
-use std::sync::mpsc::{Sender, Receiver, channel};
 use time::precise_time_ns;
 // local imports
 use crate::{display_item as di, font};
+use crate::channel::{Sender, Receiver, single_msg_channel, unbounded_channel};
 use crate::color::{ColorU, ColorF};
 use crate::display_list::BuiltDisplayList;
 use crate::font::SharedFontInstanceMap;
@@ -246,7 +246,6 @@ impl Transaction {
     /// * `background`: The background color of this pipeline.
     /// * `viewport_size`: The size of the viewport for this frame.
     /// * `pipeline_id`: The ID of the pipeline that is supplying this display list.
-    /// * `content_size`: The total screen space size of this display list's display items.
     /// * `display_list`: The root Display list used in this frame.
     /// * `preserve_frame_state`: If a previous frame exists which matches this pipeline
     ///                           id, this setting determines if frame state (such as scrolling
@@ -256,7 +255,7 @@ impl Transaction {
         epoch: Epoch,
         background: Option<ColorF>,
         viewport_size: LayoutSize,
-        (pipeline_id, content_size, mut display_list): (PipelineId, LayoutSize, BuiltDisplayList),
+        (pipeline_id, mut display_list): (PipelineId, BuiltDisplayList),
         preserve_frame_state: bool,
     ) {
         display_list.set_send_time_ns(precise_time_ns());
@@ -267,7 +266,6 @@ impl Transaction {
                 pipeline_id,
                 background,
                 viewport_size,
-                content_size,
                 preserve_frame_state,
             }
         );
@@ -309,12 +307,6 @@ impl Transaction {
         );
     }
 
-    /// Enable copying of the output of this pipeline id to
-    /// an external texture for callers to consume.
-    pub fn enable_frame_output(&mut self, pipeline_id: PipelineId, enable: bool) {
-        self.scene_ops.push(SceneMsg::EnableFrameOutput(pipeline_id, enable));
-    }
-
     /// Scrolls the scrolling layer under the `cursor`
     ///
     /// WebRender looks for the layer closest to the user
@@ -323,7 +315,17 @@ impl Transaction {
         self.frame_ops.push(FrameMsg::Scroll(scroll_location, cursor));
     }
 
-    ///
+    /// Scrolls the node identified by the given external scroll id to the
+    /// given scroll position, relative to the pre-scrolled offset for the
+    /// scrolling layer. That is, providing an origin of (0,0) will reset
+    /// any WR-side scrolling and just render the display items at the
+    /// pre-scrolled offsets as provided in the display list. Larger `origin`
+    /// values will cause the layer to be scrolled further towards the end of
+    /// the scroll range.
+    /// If the ScrollClamping argument is set to clamp, the scroll position
+    /// is clamped to what WebRender understands to be the bounds of the
+    /// scroll range, based on the sizes of the scrollable content and the
+    /// scroll port.
     pub fn scroll_node_with_id(
         &mut self,
         origin: LayoutPoint,
@@ -791,8 +793,6 @@ pub enum SceneMsg {
     ///
     RemovePipeline(PipelineId),
     ///
-    EnableFrameOutput(PipelineId, bool),
-    ///
     SetDisplayList {
         ///
         display_list: BuiltDisplayList,
@@ -804,8 +804,6 @@ pub enum SceneMsg {
         background: Option<ColorF>,
         ///
         viewport_size: LayoutSize,
-        ///
-        content_size: LayoutSize,
         ///
         preserve_frame_state: bool,
     },
@@ -856,7 +854,6 @@ impl fmt::Debug for SceneMsg {
             SceneMsg::SetDisplayList { .. } => "SceneMsg::SetDisplayList",
             SceneMsg::SetPageZoom(..) => "SceneMsg::SetPageZoom",
             SceneMsg::RemovePipeline(..) => "SceneMsg::RemovePipeline",
-            SceneMsg::EnableFrameOutput(..) => "SceneMsg::EnableFrameOutput",
             SceneMsg::SetDocumentView { .. } => "SceneMsg::SetDocumentView",
             SceneMsg::SetRootPipeline(..) => "SceneMsg::SetRootPipeline",
             SceneMsg::SetQualitySettings { .. } => "SceneMsg::SetQualitySettings",
@@ -1290,7 +1287,7 @@ impl RenderApiSender {
 
     /// Creates a new resource API object with a dedicated namespace.
     pub fn create_api(&self) -> RenderApi {
-        let (sync_tx, sync_rx) = channel();
+        let (sync_tx, sync_rx) = single_msg_channel();
         let msg = ApiMsg::CloneApi(sync_tx);
         self.api_sender.send(msg).expect("Failed to send CloneApi message");
         let namespace_id = match sync_rx.recv() {
@@ -1415,6 +1412,8 @@ bitflags! {
         /// pictures that are too large (ie go back to old behavior that prevents those
         /// large pictures from establishing a raster root).
         const DISABLE_RASTER_ROOT_SCALING = 1 << 30;
+        /// Collect and dump profiler statistics to captures.
+        const PROFILER_CAPTURE = (1 as u32) << 31; // need "as u32" until we have cbindgen#556
     }
 }
 
@@ -1494,7 +1493,7 @@ impl RenderApi {
         key: font::FontInstanceKey,
         glyph_indices: Vec<font::GlyphIndex>,
     ) -> Vec<Option<font::GlyphDimensions>> {
-        let (sender, rx) = channel();
+        let (sender, rx) = single_msg_channel();
         let msg = ApiMsg::GetGlyphDimensions(font::GlyphDimensionRequest {
             key,
             glyph_indices,
@@ -1507,7 +1506,7 @@ impl RenderApi {
     /// Gets the glyph indices for the supplied string. These
     /// can be used to construct GlyphKeys.
     pub fn get_glyph_indices(&self, key: font::FontKey, text: &str) -> Vec<Option<u32>> {
-        let (sender, rx) = channel();
+        let (sender, rx) = single_msg_channel();
         let msg = ApiMsg::GetGlyphIndices(font::GlyphIndexRequest {
             key,
             text: text.to_string(),
@@ -1544,7 +1543,7 @@ impl RenderApi {
 
     /// Synchronously requests memory report.
     pub fn report_memory(&self, _ops: malloc_size_of::MallocSizeOfOps) -> MemoryReport {
-        let (tx, rx) = channel();
+        let (tx, rx) = single_msg_channel();
         self.api_sender.send(ApiMsg::ReportMemory(tx)).unwrap();
         *rx.recv().unwrap()
     }
@@ -1558,7 +1557,7 @@ impl RenderApi {
     /// Shut the WebRender instance down.
     pub fn shut_down(&self, synchronously: bool) {
         if synchronously {
-            let (tx, rx) = channel();
+            let (tx, rx) = single_msg_channel();
             self.api_sender.send(ApiMsg::ShutDown(Some(tx))).unwrap();
             rx.recv().unwrap();
         } else {
@@ -1684,7 +1683,7 @@ impl RenderApi {
                     point: WorldPoint,
                     flags: HitTestFlags)
                     -> HitTestResult {
-        let (tx, rx) = channel();
+        let (tx, rx) = single_msg_channel();
 
         self.send_frame_msg(
             document_id,
@@ -1695,7 +1694,7 @@ impl RenderApi {
 
     /// Synchronously request an object that can perform fast hit testing queries.
     pub fn request_hit_tester(&self, document_id: DocumentId) -> HitTesterRequest {
-        let (tx, rx) = channel();
+        let (tx, rx) = single_msg_channel();
         self.send_frame_msg(
             document_id,
             FrameMsg::RequestHitTester(tx)
@@ -1719,24 +1718,9 @@ impl RenderApi {
         );
     }
 
-    /// Setup the output region in the framebuffer for a given document.
-    /// Enable copying of the output of this pipeline id to
-    /// an external texture for callers to consume.
-    pub fn enable_frame_output(
-        &self,
-        document_id: DocumentId,
-        pipeline_id: PipelineId,
-        enable: bool,
-    ) {
-        self.send_scene_msg(
-            document_id,
-            SceneMsg::EnableFrameOutput(pipeline_id, enable),
-        );
-    }
-
     ///
     pub fn get_scroll_node_state(&self, document_id: DocumentId) -> Vec<ScrollNodeState> {
-        let (tx, rx) = channel();
+        let (tx, rx) = single_msg_channel();
         self.send_frame_msg(document_id, FrameMsg::GetScrollNodeState(tx));
         rx.recv().unwrap()
     }
@@ -1752,7 +1736,7 @@ impl RenderApi {
     /// ensures that any transactions (including ones deferred to the scene
     /// builder thread) have been processed.
     pub fn flush_scene_builder(&self) {
-        let (tx, rx) = channel();
+        let (tx, rx) = single_msg_channel();
         self.send_message(ApiMsg::FlushSceneBuilder(tx));
         rx.recv().unwrap(); // block until done
     }
@@ -1769,7 +1753,7 @@ impl RenderApi {
         // the capture we are about to load.
         self.flush_scene_builder();
 
-        let (tx, rx) = channel();
+        let (tx, rx) = unbounded_channel();
         let msg = ApiMsg::DebugCommand(DebugCommand::LoadCapture(path, ids, tx));
         self.send_message(msg);
 

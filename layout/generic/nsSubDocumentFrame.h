@@ -64,8 +64,8 @@ class nsSubDocumentFrame final : public nsAtomicContainerFrame,
       const mozilla::LogicalSize& aMargin, const mozilla::LogicalSize& aBorder,
       const mozilla::LogicalSize& aPadding, ComputeSizeFlags aFlags) override;
 
-  mozilla::LogicalSize ComputeSize(
-      gfxContext* aRenderingContext, mozilla::WritingMode aWritingMode,
+  SizeComputationResult ComputeSize(
+      gfxContext* aRenderingContext, mozilla::WritingMode aWM,
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
       const mozilla::LogicalSize& aMargin, const mozilla::LogicalSize& aBorder,
       const mozilla::LogicalSize& aPadding, ComputeSizeFlags aFlags) override;
@@ -131,8 +131,19 @@ class nsSubDocumentFrame final : public nsAtomicContainerFrame,
 
   bool IsInline() { return mIsInline; }
 
-  nscoord GetIntrinsicISize();
-  nscoord GetIntrinsicBSize();
+  nscoord GetIntrinsicBSize() {
+    auto size = GetIntrinsicSize();
+    Maybe<nscoord> bSize =
+        GetWritingMode().IsVertical() ? size.width : size.height;
+    return bSize.valueOr(0);
+  }
+
+  nscoord GetIntrinsicISize() {
+    auto size = GetIntrinsicSize();
+    Maybe<nscoord> iSize =
+        GetWritingMode().IsVertical() ? size.height : size.width;
+    return iSize.valueOr(0);
+  }
 
   // Show our document viewer. The document viewer is hidden via a script
   // runner, so that we can save and restore the presentation if we're
@@ -177,7 +188,7 @@ class nsDisplayRemote final : public nsPaintedDisplayItem {
   typedef mozilla::layers::StackingContextHelper StackingContextHelper;
   typedef mozilla::LayerState LayerState;
   typedef mozilla::LayoutDeviceRect LayoutDeviceRect;
-  typedef mozilla::LayoutDeviceIntPoint LayoutDeviceIntPoint;
+  typedef mozilla::LayoutDevicePoint LayoutDevicePoint;
 
  public:
   nsDisplayRemote(nsDisplayListBuilder* aBuilder, nsSubDocumentFrame* aFrame);
@@ -210,7 +221,7 @@ class nsDisplayRemote final : public nsPaintedDisplayItem {
 
   TabId mTabId;
   LayersId mLayersId;
-  LayoutDeviceIntPoint mOffset;
+  LayoutDevicePoint mOffset;
   EventRegionsOverride mEventRegionsOverride;
 };
 

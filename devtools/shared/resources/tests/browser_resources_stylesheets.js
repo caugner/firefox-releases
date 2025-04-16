@@ -80,9 +80,12 @@ add_task(async function() {
     EXISTING_RESOURCES.length,
     "Length of existing resources is correct"
   );
-  for (let i = 0; i < EXISTING_RESOURCES.length; i++) {
+  for (let i = 0; i < availableResources.length; i++) {
     const availableResource = availableResources[i];
-    const expectedResource = EXISTING_RESOURCES[i];
+    // We can not expect the resources to always be forwarded in the same order.
+    // See intermittent Bug 1655016.
+    const expectedResource = findMatchingExpectedResource(availableResource);
+    ok(expectedResource, "Found a matching expected resource for the resource");
     await assertResource(availableResource, expectedResource);
   }
 
@@ -123,14 +126,23 @@ add_task(async function() {
   info("Check whether the stylesheet actor is updated correctly or not");
   const firstResource = availableResources[0];
   await firstResource.styleSheet.update("", false);
+  const expectedResource = findMatchingExpectedResource(firstResource);
   await assertResource(
     availableResources[0],
-    Object.assign(EXISTING_RESOURCES[0], { styleText: "" })
+    Object.assign(expectedResource, { styleText: "" })
   );
 
-  await targetList.stopListening();
+  await targetList.destroy();
   await client.close();
 });
+
+function findMatchingExpectedResource(resource) {
+  return EXISTING_RESOURCES.find(
+    expected =>
+      resource.styleSheet.href === expected.href &&
+      resource.styleSheet.nodeHref === expected.nodeHref
+  );
+}
 
 async function assertResource(resource, expected) {
   const { resourceType, styleSheet, isNew } = resource;

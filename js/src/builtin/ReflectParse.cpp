@@ -21,6 +21,7 @@
 #include "frontend/ParseNode.h"
 #include "frontend/Parser.h"
 #include "js/CharacterEncoding.h"
+#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
 #include "js/StableStringChars.h"
 #include "vm/BigIntType.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
@@ -686,6 +687,9 @@ class NodeBuilder {
   MOZ_MUST_USE bool optionalExpression(HandleValue expr, TokenPos* pos,
                                        MutableHandleValue dst);
 
+  MOZ_MUST_USE bool deleteOptionalExpression(HandleValue expr, TokenPos* pos,
+                                             MutableHandleValue dst);
+
   MOZ_MUST_USE bool computedName(HandleValue name, TokenPos* pos,
                                  MutableHandleValue dst);
 
@@ -1267,6 +1271,11 @@ bool NodeBuilder::spreadExpression(HandleValue expr, TokenPos* pos,
 bool NodeBuilder::optionalExpression(HandleValue expr, TokenPos* pos,
                                      MutableHandleValue dst) {
   return newNode(AST_OPTIONAL_EXPR, pos, "expression", expr, dst);
+}
+
+bool NodeBuilder::deleteOptionalExpression(HandleValue expr, TokenPos* pos,
+                                           MutableHandleValue dst) {
+  return newNode(AST_DELETE_OPTIONAL_EXPR, pos, "expression", expr, dst);
 }
 
 bool NodeBuilder::propertyPattern(HandleValue key, HandleValue patt,
@@ -2838,6 +2847,12 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
              builder.unaryExpression(op, expr, &unaryNode->pn_pos, dst);
     }
 
+    case ParseNodeKind::DeleteOptionalChainExpr: {
+      RootedValue expr(cx);
+      return expression(pn->as<UnaryNode>().kid(), &expr) &&
+             builder.deleteOptionalExpression(expr, &pn->pn_pos, dst);
+    }
+
     case ParseNodeKind::OptionalChain: {
       RootedValue expr(cx);
       return expression(pn->as<UnaryNode>().kid(), &expr) &&
@@ -3746,7 +3761,8 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
     ModuleBuilder builder(cx, &parser);
 
     uint32_t len = chars.length();
-    SourceExtent extent = SourceExtent::makeGlobalExtent(len, options);
+    SourceExtent extent =
+        SourceExtent::makeGlobalExtent(len, options.lineno, options.column);
     ModuleSharedContext modulesc(cx, compilationInfo, builder, extent);
     pn = parser.moduleBody(&modulesc);
     if (!pn) {

@@ -641,7 +641,7 @@ static void LogPrincipal(nsIPrincipal* aPrincipal,
     nsAutoCString principalSpec;
     aPrincipal->GetAsciiSpec(principalSpec);
     MOZ_LOG(sCSMLog, LogLevel::Debug,
-            ("%s%s %s\n", aIndentationString.get(),
+            ("%s%s: %s\n", aIndentationString.get(),
              NS_ConvertUTF16toUTF8(aPrincipalName).get(), principalSpec.get()));
     return;
   }
@@ -746,7 +746,7 @@ static void DebugDoContentSecurityCheck(nsIChannel* aChannel,
             ("  - upgradeInsecureRequests: %s\n",
              aLoadInfo->GetUpgradeInsecureRequests() ? "true" : "false"));
     MOZ_LOG(sCSMLog, LogLevel::Verbose,
-            ("  - initalSecurityChecksDone: %s\n",
+            ("  - initialSecurityChecksDone: %s\n",
              aLoadInfo->GetInitialSecurityCheckDone() ? "true" : "false"));
     MOZ_LOG(sCSMLog, LogLevel::Verbose,
             ("  - allowDeprecatedSystemRequests: %s\n",
@@ -1069,7 +1069,7 @@ nsresult nsContentSecurityManager::doContentSecurityCheck(
   rv = CheckFTPSubresourceLoad(aChannel);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // now lets set the initalSecurityFlag for subsequent calls
+  // now lets set the initialSecurityFlag for subsequent calls
   loadInfo->SetInitialSecurityCheckDone(true);
 
   // all security checks passed - lets allow the load

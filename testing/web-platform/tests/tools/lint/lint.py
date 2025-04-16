@@ -206,6 +206,15 @@ def check_ahem_copy(repo_root, path):
     return []
 
 
+def check_tentative_directories(repo_root, path):
+    # type: (Text, Text) -> List[rules.Error]
+    path_parts = path.split(os.path.sep)
+    for directory in path_parts[:-1]:
+        if "tentative" in directory and directory != "tentative":
+            return [rules.TentativeDirectoryName.error(path)]
+    return []
+
+
 def check_git_ignore(repo_root, paths):
     # type: (Text, List[Text]) -> List[rules.Error]
     errors = []
@@ -889,7 +898,9 @@ def create_parser():
                         help="The WPT directory. Use this "
                         "option if the lint script exists outside the repository")
     parser.add_argument("--ignore-glob", type=ensure_text, action="append",
-                        help="Additional file glob to ignore (repeat to add more)")
+                        help="Additional file glob to ignore (repeat to add more). "
+                        "Globs are matched against paths relative to REPO_ROOT "
+                        "using fnmatch, except that path separators are normalized.")
     parser.add_argument("--all", action="store_true", help="If no paths are passed, try to lint the whole "
                         "working directory, not just files that changed")
     return parser
@@ -987,7 +998,7 @@ def lint(repo_root, paths, output_format, ignore_glob=None):
     return sum(itervalues(error_count))
 
 path_lints = [check_file_type, check_path_length, check_worker_collision, check_ahem_copy,
-              check_gitignore_file]
+              check_tentative_directories, check_gitignore_file]
 all_paths_lints = [check_css_globally_unique, check_unique_testharness_basenames]
 file_lints = [check_regexp_line, check_parsed, check_python_ast, check_script_metadata,
               check_ahem_system_font]

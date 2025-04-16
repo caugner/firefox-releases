@@ -126,6 +126,11 @@ class MOZ_RAII AutoGCSession : public AutoHeapSession {
   mozilla::Maybe<AutoCheckCanAccessAtomsDuringGC> maybeCheckAtomsAccess;
 };
 
+class MOZ_RAII AutoMajorGCProfilerEntry : public AutoGeckoProfilerEntry {
+ public:
+  explicit AutoMajorGCProfilerEntry(GCRuntime* gc);
+};
+
 class MOZ_RAII AutoTraceSession : public AutoLockAllAtoms,
                                   public AutoHeapSession {
  public:
@@ -164,7 +169,7 @@ class MOZ_RAII AutoEmptyNurseryAndPrepareForTracing : private AutoFinishGC,
         AutoTraceSession(cx->runtime()) {}
 };
 
-AbortReason IsIncrementalGCUnsafe(JSRuntime* rt);
+GCAbortReason IsIncrementalGCUnsafe(JSRuntime* rt);
 
 #ifdef JS_GC_ZEAL
 
@@ -225,6 +230,7 @@ struct MovingTracer final : public JS::CallbackTracer {
   bool onScopeEdge(Scope** scopep) override;
   bool onRegExpSharedEdge(RegExpShared** sharedp) override;
   bool onBigIntEdge(BigInt** bip) override;
+  bool onObjectGroupEdge(ObjectGroup** groupp) override;
   bool onChild(const JS::GCCellPtr& thing) override {
     MOZ_ASSERT(!thing.asCell()->isForwarded());
     return true;

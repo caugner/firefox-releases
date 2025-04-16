@@ -20,7 +20,7 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "CustomHighlighterActor",
+  ["CustomHighlighterActor", "isTypeRegistered", "register"],
   "devtools/server/actors/highlighters",
   true
 );
@@ -32,29 +32,11 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(this, "events", "devtools/shared/event-emitter");
 loader.lazyRequireGetter(
   this,
-  "getCurrentZoom",
+  ["getCurrentZoom", "isWindowIncluded", "isRemoteFrame"],
   "devtools/shared/layout/utils",
   true
 );
 loader.lazyRequireGetter(this, "InspectorUtils", "InspectorUtils");
-loader.lazyRequireGetter(
-  this,
-  "isDefunct",
-  "devtools/server/actors/utils/accessibility",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isTypeRegistered",
-  "devtools/server/actors/highlighters",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isWindowIncluded",
-  "devtools/shared/layout/utils",
-  true
-);
 loader.lazyRequireGetter(
   this,
   "isXUL",
@@ -63,19 +45,11 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "loadSheetForBackgroundCalculation",
-  "devtools/server/actors/utils/accessibility",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "register",
-  "devtools/server/actors/highlighters",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "removeSheetForBackgroundCalculation",
+  [
+    "isDefunct",
+    "loadSheetForBackgroundCalculation",
+    "removeSheetForBackgroundCalculation",
+  ],
   "devtools/server/actors/utils/accessibility",
   true
 );
@@ -83,12 +57,6 @@ loader.lazyRequireGetter(
   this,
   "accessibility",
   "devtools/shared/constants",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isRemoteFrame",
-  "devtools/shared/layout/utils",
   true
 );
 
@@ -287,25 +255,10 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
 
   get highlighter() {
     if (!this._highlighter) {
-      if (isXUL(this.rootWin)) {
-        if (!isTypeRegistered("XULWindowAccessibleHighlighter")) {
-          register("XULWindowAccessibleHighlighter", "xul-accessible");
-        }
-
-        this._highlighter = CustomHighlighterActor(
-          this,
-          "XULWindowAccessibleHighlighter"
-        );
-      } else {
-        if (!isTypeRegistered("AccessibleHighlighter")) {
-          register("AccessibleHighlighter", "accessible");
-        }
-
-        this._highlighter = CustomHighlighterActor(
-          this,
-          "AccessibleHighlighter"
-        );
+      if (!isTypeRegistered("AccessibleHighlighter")) {
+        register("AccessibleHighlighter", "accessible");
       }
+      this._highlighter = CustomHighlighterActor(this, "AccessibleHighlighter");
 
       this.manage(this._highlighter);
       this._highlighter.on("highlighter-event", this.onHighlighterEvent);
@@ -329,6 +282,10 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
 
   get rootDoc() {
     return this.targetActor && this.targetActor.window.document;
+  },
+
+  get isXUL() {
+    return isXUL(this.rootWin);
   },
 
   get colorMatrix() {
@@ -468,7 +425,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
       return this.once("document-ready").then(docAcc => this.addRef(docAcc));
     }
 
-    if (isXUL(this.rootWin)) {
+    if (this.isXUL) {
       const doc = this.addRef(this.getRawAccessibleFor(this.rootDoc));
       return Promise.resolve(doc);
     }
@@ -758,7 +715,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
    * @param  {Object} win
    *         Window where highlighting happens.
    */
-  clearStyles(win) {
+  async clearStyles(win) {
     const requests = this._loadedSheets.get(win);
     if (requests != null) {
       this._loadedSheets.set(win, requests + 1);
@@ -771,7 +728,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
     // taking a snapshot for contrast measurement).
     loadSheetForBackgroundCalculation(win);
     this._loadedSheets.set(win, 1);
-    this.hideHighlighter();
+    await this.hideHighlighter();
   },
 
   /**
@@ -782,7 +739,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
    * @param  {Object} win
    *         Window where highlighting was happenning.
    */
-  restoreStyles(win) {
+  async restoreStyles(win) {
     const requests = this._loadedSheets.get(win);
     if (!requests) {
       return;
@@ -793,25 +750,27 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
       return;
     }
 
-    this.showHighlighter();
+    await this.showHighlighter();
     removeSheetForBackgroundCalculation(win);
     this._loadedSheets.delete(win);
   },
 
-  hideHighlighter() {
+  async hideHighlighter() {
     // TODO: Fix this workaround that temporarily removes higlighter bounds
     // overlay that can interfere with the contrast ratio calculation.
     if (this._highlighter) {
       const highlighter = this._highlighter.instance;
+      await highlighter.isReady;
       highlighter.hideAccessibleBounds();
     }
   },
 
-  showHighlighter() {
+  async showHighlighter() {
     // TODO: Fix this workaround that temporarily removes higlighter bounds
     // overlay that can interfere with the contrast ratio calculation.
     if (this._highlighter) {
       const highlighter = this._highlighter.instance;
+      await highlighter.isReady;
       highlighter.showAccessibleBounds();
     }
   },
@@ -849,9 +808,15 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
     }
 
     const { name, role } = accessible;
-    const shown = this.highlighter.show(
+    const { highlighter } = this;
+    await highlighter.instance.isReady;
+    if (this._highlightingAccessible !== accessible) {
+      return false;
+    }
+
+    const shown = highlighter.show(
       { rawNode },
-      { ...options, ...bounds, name, role, audit }
+      { ...options, ...bounds, name, role, audit, isXUL: this.isXUL }
     );
     this._highlightingAccessible = null;
 
@@ -1119,7 +1084,8 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
     const target = event.originalTarget || event.target;
     const docAcc = this.getRawAccessibleFor(this.rootDoc);
     const win = target.ownerGlobal;
-    const scale = this.pixelRatio / getCurrentZoom(win);
+    const zoom = this.isXUL ? 1 : getCurrentZoom(win);
+    const scale = this.pixelRatio / zoom;
     const rawAccessible = docAcc.getDeepestChildAtPointInProcess(
       event.screenX * scale,
       event.screenY * scale

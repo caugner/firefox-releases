@@ -874,7 +874,7 @@ void HttpChannelChild::OnTransportAndData(const nsresult& aChannelStatus,
   nsCOMPtr<nsIInputStream> stringStream;
   nsresult rv =
       NS_NewByteInputStream(getter_AddRefs(stringStream),
-                            MakeSpan(aData).To(aCount), NS_ASSIGNMENT_DEPEND);
+                            Span(aData).To(aCount), NS_ASSIGNMENT_DEPEND);
   if (NS_FAILED(rv)) {
     Cancel(rv);
     return;
@@ -993,8 +993,12 @@ void HttpChannelChild::DoOnDataAvailable(nsIRequest* aRequest,
 void HttpChannelChild::ProcessOnStopRequest(
     const nsresult& aChannelStatus, const ResourceTimingStructArgs& aTiming,
     const nsHttpHeaderArray& aResponseTrailers,
-    const nsTArray<ConsoleReportCollected>& aConsoleReports) {
-  LOG(("HttpChannelChild::ProcessOnStopRequest [this=%p]\n", this));
+    nsTArray<ConsoleReportCollected>&& aConsoleReports,
+    bool aFromSocketProcess) {
+  LOG(
+      ("HttpChannelChild::ProcessOnStopRequest [this=%p, "
+       "aFromSocketProcess=%d]\n",
+       this, aFromSocketProcess));
   MOZ_ASSERT(OnSocketThread());
   MOZ_RELEASE_ASSERT(!mFlushedForDiversion,
                      "Should not be receiving any more callbacks from parent!");
@@ -1004,9 +1008,31 @@ void HttpChannelChild::ProcessOnStopRequest(
           this,
           [self = UnsafePtr<HttpChannelChild>(this), aChannelStatus, aTiming,
            aResponseTrailers,
-           consoleReports = CopyableTArray{aConsoleReports.Clone()}]() {
-            self->OnStopRequest(aChannelStatus, aTiming, aResponseTrailers,
-                                consoleReports);
+           consoleReports = CopyableTArray{aConsoleReports.Clone()},
+           aFromSocketProcess]() mutable {
+            self->OnStopRequest(aChannelStatus, aTiming, aResponseTrailers);
+            if (!aFromSocketProcess) {
+              self->DoOnConsoleReport(std::move(consoleReports));
+              self->ContinueOnStopRequest();
+            }
+          }),
+      mDivertingToParent);
+}
+
+void HttpChannelChild::ProcessOnConsoleReport(
+    nsTArray<ConsoleReportCollected>&& aConsoleReports) {
+  LOG(("HttpChannelChild::ProcessOnConsoleReport [this=%p]\n", this));
+  MOZ_ASSERT(OnSocketThread());
+  MOZ_RELEASE_ASSERT(!mFlushedForDiversion,
+                     "Should not be receiving any more callbacks from parent!");
+
+  mEventQ->RunOrEnqueue(
+      new NeckoTargetChannelFunctionEvent(
+          this,
+          [self = UnsafePtr<HttpChannelChild>(this),
+           consoleReports = CopyableTArray{aConsoleReports.Clone()}]() mutable {
+            self->DoOnConsoleReport(std::move(consoleReports));
+            self->ContinueOnStopRequest();
           }),
       mDivertingToParent);
 }
@@ -1022,10 +1048,28 @@ void HttpChannelChild::MaybeDivertOnStop(const nsresult& aChannelStatus) {
   }
 }
 
+void HttpChannelChild::DoOnConsoleReport(
+    nsTArray<ConsoleReportCollected>&& aConsoleReports) {
+  if (aConsoleReports.IsEmpty()) {
+    return;
+  }
+
+  for (ConsoleReportCollected& report : aConsoleReports) {
+    if (report.propertiesFile() <
+        nsContentUtils::PropertiesFile::PropertiesFile_COUNT) {
+      AddConsoleReport(report.errorFlags(), report.category(),
+                       nsContentUtils::PropertiesFile(report.propertiesFile()),
+                       report.sourceFileURI(), report.lineNumber(),
+                       report.columnNumber(), report.messageName(),
+                       report.stringParams());
+    }
+  }
+  MaybeFlushConsoleReports();
+}
+
 void HttpChannelChild::OnStopRequest(
     const nsresult& aChannelStatus, const ResourceTimingStructArgs& aTiming,
-    const nsHttpHeaderArray& aResponseTrailers,
-    const nsTArray<ConsoleReportCollected>& aConsoleReports) {
+    const nsHttpHeaderArray& aResponseTrailers) {
   LOG(("HttpChannelChild::OnStopRequest [this=%p status=%" PRIx32 "]\n", this,
        static_cast<uint32_t>(aChannelStatus)));
   MOZ_ASSERT(NS_IsMainThread());
@@ -1058,21 +1102,6 @@ void HttpChannelChild::OnStopRequest(
             }));
   }
 
-  if (!aConsoleReports.IsEmpty()) {
-    for (const ConsoleReportCollected& report : aConsoleReports) {
-      if (report.propertiesFile() <
-          nsContentUtils::PropertiesFile::PropertiesFile_COUNT) {
-        AddConsoleReport(
-            report.errorFlags(), report.category(),
-            nsContentUtils::PropertiesFile(report.propertiesFile()),
-            report.sourceFileURI(), report.lineNumber(), report.columnNumber(),
-            report.messageName(), report.stringParams());
-      }
-    }
-
-    MaybeFlushConsoleReports();
-  }
-
   nsCOMPtr<nsICompressConvStats> conv = do_QueryInterface(mCompressListener);
   if (conv) {
     conv->GetDecodedDataLength(&mDecodedBodySize);
@@ -1098,6 +1127,8 @@ void HttpChannelChild::OnStopRequest(
 
 #ifdef MOZ_GECKO_PROFILER
   if (profiler_can_accept_markers()) {
+    nsAutoCString requestMethod;
+    GetRequestMethod(requestMethod);
     nsAutoCString contentType;
     if (mResponseHead) {
       mResponseHead->ContentType(contentType);
@@ -1105,7 +1136,7 @@ void HttpChannelChild::OnStopRequest(
     int32_t priority = PRIORITY_NORMAL;
     GetPriority(&priority);
     profiler_add_network_marker(
-        mURI, priority, mChannelId, NetworkLoadType::LOAD_STOP,
+        mURI, requestMethod, priority, mChannelId, NetworkLoadType::LOAD_STOP,
         mLastStatusReported, TimeStamp::Now(), mTransferSize, kCacheUnknown,
         mLoadInfo->GetInnerWindowID(), &mTransactionTimings, nullptr,
         std::move(mSource), Some(nsDependentCString(contentType.get())));
@@ -1124,7 +1155,9 @@ void HttpChannelChild::OnStopRequest(
     DoOnStopRequest(this, aChannelStatus, nullptr);
     // DoOnStopRequest() calls ReleaseListeners()
   }
+}
 
+void HttpChannelChild::ContinueOnStopRequest() {
   // If unknownDecoder is involved and the received content is short we will
   // know whether we need to divert to parent only after OnStopRequest of the
   // listeners chain is called in DoOnStopRequest. At that moment
@@ -1155,7 +1188,7 @@ void HttpChannelChild::OnStopRequest(
   // message but request the cache entry to be kept by the parent.
   // If the channel has failed, the cache entry is in a non-writtable state and
   // we want to release it to not block following consumers.
-  if (NS_SUCCEEDED(aChannelStatus) && !mPreferredCachedAltDataTypes.IsEmpty()) {
+  if (NS_SUCCEEDED(mStatus) && !mPreferredCachedAltDataTypes.IsEmpty()) {
     mKeptAlive = true;
     SendDocumentChannelCleanup(false);  // don't clear cache entry
     return;
@@ -1712,14 +1745,16 @@ void HttpChannelChild::Redirect1Begin(
 
 #ifdef MOZ_GECKO_PROFILER
   if (profiler_can_accept_markers()) {
+    nsAutoCString requestMethod;
+    GetRequestMethod(requestMethod);
     nsAutoCString contentType;
     responseHead.ContentType(contentType);
 
     profiler_add_network_marker(
-        mURI, mPriority, mChannelId, NetworkLoadType::LOAD_REDIRECT,
-        mLastStatusReported, TimeStamp::Now(), 0, kCacheUnknown,
-        mLoadInfo->GetInnerWindowID(), &mTransactionTimings, uri,
-        std::move(mSource), Some(nsDependentCString(contentType.get())));
+        mURI, requestMethod, mPriority, mChannelId,
+        NetworkLoadType::LOAD_REDIRECT, mLastStatusReported, TimeStamp::Now(),
+        0, kCacheUnknown, mLoadInfo->GetInnerWindowID(), &mTransactionTimings,
+        uri, std::move(mSource), Some(nsDependentCString(contentType.get())));
   }
 #endif
 
@@ -2121,12 +2156,13 @@ HttpChannelChild::ConnectParent(uint32_t registrarId) {
 #endif
   }
 
-  MaybeConnectToSocketProcess();
-
   // Should wait for CompleteRedirectSetup to set the listener.
   mEventQ->Suspend();
   MOZ_ASSERT(!mSuspendForWaitCompleteRedirectSetup);
   mSuspendForWaitCompleteRedirectSetup = true;
+
+  // Connect to socket process after mEventQ is suspended.
+  MaybeConnectToSocketProcess();
 
   return NS_OK;
 }
@@ -2179,10 +2215,17 @@ HttpChannelChild::CompleteRedirectSetup(nsIStreamListener* aListener) {
    */
 
   mLastStatusReported = TimeStamp::Now();
-  PROFILER_ADD_NETWORK_MARKER(
-      mURI, mPriority, mChannelId, NetworkLoadType::LOAD_START,
-      mChannelCreationTimestamp, mLastStatusReported, 0, kCacheUnknown,
-      mLoadInfo->GetInnerWindowID(), nullptr, nullptr);
+#ifdef MOZ_GECKO_PROFILER
+  if (profiler_can_accept_markers()) {
+    nsAutoCString requestMethod;
+    GetRequestMethod(requestMethod);
+
+    profiler_add_network_marker(
+        mURI, requestMethod, mPriority, mChannelId, NetworkLoadType::LOAD_START,
+        mChannelCreationTimestamp, mLastStatusReported, 0, kCacheUnknown,
+        mLoadInfo->GetInnerWindowID(), nullptr, nullptr);
+  }
+#endif
   mIsPending = true;
   mWasOpened = true;
   mListener = aListener;
@@ -2567,11 +2610,17 @@ nsresult HttpChannelChild::AsyncOpenInternal(nsIStreamListener* aListener) {
   gHttpHandler->OnOpeningRequest(this);
 
   mLastStatusReported = TimeStamp::Now();
-  PROFILER_ADD_NETWORK_MARKER(
-      mURI, mPriority, mChannelId, NetworkLoadType::LOAD_START,
-      mChannelCreationTimestamp, mLastStatusReported, 0, kCacheUnknown,
-      mLoadInfo->GetInnerWindowID(), nullptr, nullptr);
+#ifdef MOZ_GECKO_PROFILER
+  if (profiler_can_accept_markers()) {
+    nsAutoCString requestMethod;
+    GetRequestMethod(requestMethod);
 
+    profiler_add_network_marker(
+        mURI, requestMethod, mPriority, mChannelId, NetworkLoadType::LOAD_START,
+        mChannelCreationTimestamp, mLastStatusReported, 0, kCacheUnknown,
+        mLoadInfo->GetInnerWindowID(), nullptr, nullptr);
+  }
+#endif
   mIsPending = true;
   mWasOpened = true;
   mListener = listener;
@@ -3870,7 +3919,7 @@ void HttpChannelChild::OverrideWithSynthesizedResponse(
 
   mSynthesizedCacheInfo = aCacheInfoChannel;
 
-  rv = mSynthesizedResponsePump->AsyncRead(aStreamListener, nullptr);
+  rv = mSynthesizedResponsePump->AsyncRead(aStreamListener);
   NS_ENSURE_SUCCESS_VOID(rv);
 
   // The pump is started, so take ownership of the body callback.  We

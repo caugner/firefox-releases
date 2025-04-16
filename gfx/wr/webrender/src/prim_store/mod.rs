@@ -10,12 +10,12 @@ use api::units::*;
 use euclid::{SideOffsets2D, Size2D};
 use malloc_size_of::MallocSizeOf;
 use crate::border::BorderSegmentCacheKey;
-use crate::clip::ClipChainId;
+use crate::clip::{ClipChainId, ClipSet};
 use crate::debug_render::DebugItem;
 use crate::scene_building::{CreateShadow, IsVisible};
 use crate::frame_builder::FrameBuildingState;
 use crate::glyph_rasterizer::GlyphKey;
-use crate::gpu_cache::{GpuCacheAddress, GpuCacheHandle, GpuDataRequest, ToGpuBlocks};
+use crate::gpu_cache::{GpuCacheAddress, GpuCacheHandle, GpuDataRequest};
 use crate::gpu_types::{BrushFlags};
 use crate::intern;
 use crate::picture::{PicturePrimitive, RecordedDirtyRegion};
@@ -689,15 +689,19 @@ impl BrushSegment {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 struct ClipRect {
     rect: LayoutRect,
     mode: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 struct ClipCorner {
     rect: LayoutRect,
     outer_radius_x: f32,
@@ -706,23 +710,7 @@ struct ClipCorner {
     inner_radius_y: f32,
 }
 
-impl ToGpuBlocks for ClipCorner {
-    fn write_gpu_blocks(&self, mut request: GpuDataRequest) {
-        self.write(&mut request)
-    }
-}
-
 impl ClipCorner {
-    fn write(&self, request: &mut GpuDataRequest) {
-        request.push(self.rect);
-        request.push([
-            self.outer_radius_x,
-            self.outer_radius_y,
-            self.inner_radius_x,
-            self.inner_radius_y,
-        ]);
-    }
-
     fn uniform(rect: LayoutRect, outer_radius: f32, inner_radius: f32) -> ClipCorner {
         ClipCorner {
             rect,
@@ -734,25 +722,10 @@ impl ClipCorner {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C)]
-pub struct ImageMaskData {
-    /// The local size of the whole masked area.
-    pub local_mask_size: LayoutSize,
-}
-
-impl ToGpuBlocks for ImageMaskData {
-    fn write_gpu_blocks(&self, mut request: GpuDataRequest) {
-        request.push([
-            self.local_mask_size.width,
-            self.local_mask_size.height,
-            0.0,
-            0.0,
-        ]);
-    }
-}
-
-#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct ClipData {
     rect: ClipRect,
     top_left: ClipCorner,
@@ -881,19 +854,6 @@ impl ClipData {
             ),
         }
     }
-
-    pub fn write(&self, request: &mut GpuDataRequest) {
-        request.push(self.rect.rect);
-        request.push([self.rect.mode, 0.0, 0.0, 0.0]);
-        for corner in &[
-            &self.top_left,
-            &self.top_right,
-            &self.bottom_left,
-            &self.bottom_right,
-        ] {
-            corner.write(request);
-        }
-    }
 }
 
 /// A hashable descriptor for nine-patches, used by image and
@@ -961,7 +921,7 @@ impl CreateShadow for PrimitiveKeyKind {
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct PrimitiveDebugId(pub usize);
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 pub enum PrimitiveInstanceKind {
     /// Direct reference to a Picture
@@ -1046,7 +1006,7 @@ pub enum PrimitiveInstanceKind {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct PrimitiveInstance {
     /// Identifies the kind of primitive this
@@ -1054,9 +1014,6 @@ pub struct PrimitiveInstance {
     /// the relevant information for the primitive
     /// can be found.
     pub kind: PrimitiveInstanceKind,
-
-    /// Local space clip rect for this instance
-    pub local_clip_rect: LayoutRect,
 
     #[cfg(debug_assertions)]
     pub id: PrimitiveDebugId,
@@ -1070,8 +1027,8 @@ pub struct PrimitiveInstance {
     /// visibility scratch buffer. If not visible, INVALID.
     pub visibility_info: PrimitiveVisibilityIndex,
 
-    /// ID of the clip chain that this primitive is clipped by.
-    pub clip_chain_id: ClipChainId,
+    /// All information and state related to clip(s) for this primitive
+    pub clip_set: ClipSet,
 }
 
 impl PrimitiveInstance {
@@ -1081,14 +1038,16 @@ impl PrimitiveInstance {
         clip_chain_id: ClipChainId,
     ) -> Self {
         PrimitiveInstance {
-            local_clip_rect,
             kind,
             #[cfg(debug_assertions)]
             prepared_frame_id: FrameId::INVALID,
             #[cfg(debug_assertions)]
             id: PrimitiveDebugId(NEXT_PRIM_ID.fetch_add(1, Ordering::Relaxed)),
             visibility_info: PrimitiveVisibilityIndex::INVALID,
-            clip_chain_id,
+            clip_set: ClipSet {
+                local_clip_rect,
+                clip_chain_id,
+            },
         }
     }
 

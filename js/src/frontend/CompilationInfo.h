@@ -30,6 +30,9 @@
 #include "vm/Realm.h"
 
 namespace js {
+
+class JSONPrinter;
+
 namespace frontend {
 
 // ScopeContext hold information derivied from the scope and environment chains
@@ -55,7 +58,7 @@ struct ScopeContext {
 
   // Class field initializer info if we are nested within a class constructor.
   // We may be an combination of arrow and eval context within the constructor.
-  mozilla::Maybe<FieldInitializers> fieldInitializers = {};
+  mozilla::Maybe<MemberInitializers> memberInitializers = {};
 
   explicit ScopeContext(Scope* scope, JSObject* enclosingEnv = nullptr) {
     computeAllowSyntax(scope);
@@ -173,10 +176,11 @@ struct MOZ_RAII CompilationInfo : public JS::CustomAutoRooter {
   UsedNameTracker usedNames;
   LifoAllocScope& allocScope;
 
-  // Hold onto the RegExpCreationData and BigIntCreationData that are allocated
-  // during parse to ensure correct destruction.
-  Vector<RegExpCreationData> regExpData;
-  Vector<BigIntCreationData> bigIntData;
+  // Hold onto the RegExpStencil, BigIntStencil, and ObjLiteralStencil that are
+  // allocated during parse to ensure correct destruction.
+  Vector<RegExpStencil> regExpData;
+  Vector<BigIntStencil> bigIntData;
+  Vector<ObjLiteralStencil> objLiteralData;
 
   // A Rooted vector to handle tracing of JSFunction*
   // and Atoms within.
@@ -194,14 +198,15 @@ struct MOZ_RAII CompilationInfo : public JS::CustomAutoRooter {
 
   // A rooted list of scopes created during this parse.
   //
-  // To ensure that ScopeCreationData's destructors fire, and thus our HeapPtr
-  // barriers, we store the scopeCreationData at this level so that they
+  // To ensure that ScopeStencil's destructors fire, and thus our HeapPtr
+  // barriers, we store the scopeData at this level so that they
   // can be safely destroyed, rather than LifoAllocing them with the rest of
   // the parser data structures.
   //
   // References to scopes are controlled via AbstractScopePtr, which holds onto
   // an index (and CompilationInfo reference).
-  JS::RootedVector<ScopeCreationData> scopeCreationData;
+  JS::RootedVector<js::Scope*> scopes;
+  JS::RootedVector<ScopeStencil> scopeData;
 
   // Module metadata if this is a module compile.
   JS::Rooted<StencilModuleMetadata> moduleMetadata;
@@ -219,6 +224,7 @@ struct MOZ_RAII CompilationInfo : public JS::CustomAutoRooter {
   struct RewindToken {
     FunctionBox* funbox = nullptr;
     size_t funcDataLength = 0;
+    size_t asmJSCount = 0;
   };
 
   RewindToken getRewindToken();
@@ -243,11 +249,13 @@ struct MOZ_RAII CompilationInfo : public JS::CustomAutoRooter {
         allocScope(alloc),
         regExpData(cx),
         bigIntData(cx),
+        objLiteralData(cx),
         functions(cx),
         funcData(cx),
         enclosingScope(cx),
         topLevel(cx),
-        scopeCreationData(cx),
+        scopes(cx),
+        scopeData(cx),
         moduleMetadata(cx),
         asmJS(cx),
         source_(cx),
@@ -292,6 +300,11 @@ struct MOZ_RAII CompilationInfo : public JS::CustomAutoRooter {
   ScriptStencilIterable functionScriptStencils() {
     return ScriptStencilIterable(this);
   }
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dumpStencil();
+  void dumpStencil(js::JSONPrinter& json);
+#endif
 };
 
 inline void ScriptStencilIterable::Iterator::next() {

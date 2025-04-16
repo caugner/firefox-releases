@@ -1026,11 +1026,6 @@ nsresult gfxUtils::EncodeSourceSurface(SourceSurface* aSurface,
     return NS_OK;
   }
 
-  // base 64, result will be null-terminated
-  nsCString encodedImg;
-  rv = Base64Encode(Substring(imgData.begin(), imgSize), encodedImg);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   nsCString stringBuf;
   nsACString& dataURI = aStrOut ? *aStrOut : stringBuf;
   dataURI.AppendLiteral("data:");
@@ -1056,7 +1051,8 @@ nsresult gfxUtils::EncodeSourceSurface(SourceSurface* aSurface,
   }
 
   dataURI.AppendLiteral(";base64,");
-  dataURI.Append(encodedImg);
+  rv = Base64EncodeAppend(imgData.begin(), imgSize, dataURI);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   if (aFile) {
 #ifdef ANDROID
@@ -1103,6 +1099,10 @@ const float kBT2020NarrowYCbCrToRGB_RowMajor[16] = {
     1.16438f,  0.00000f, 1.67867f, -0.91569f, 1.16438f, -0.18733f,
     -0.65042f, 0.34746f, 1.16438f, 2.14177f,  0.00000f, -1.14815f,
     0.00000f,  0.00000f, 0.00000f, 1.00000f};
+const float kIdentityNarrowYCbCrToRGB_RowMajor[16] = {
+    0.00000f,  0.00000f, 1.00000f, 0.00000f, 1.00000f, 0.00000f,
+    0.00000f, 0.00000f, 0.00000f, 1.00000f, 0.00000f, 0.00000f,
+    0.00000f,  0.00000f, 0.00000f, 1.00000f};
 
 /* static */ const float* gfxUtils::YuvToRgbMatrix4x3RowMajor(
     gfx::YUVColorSpace aYUVColorSpace) {
@@ -1112,6 +1112,7 @@ const float kBT2020NarrowYCbCrToRGB_RowMajor[16] = {
   static const float rec601[12] = X(kBT601NarrowYCbCrToRGB_RowMajor);
   static const float rec709[12] = X(kBT709NarrowYCbCrToRGB_RowMajor);
   static const float rec2020[12] = X(kBT2020NarrowYCbCrToRGB_RowMajor);
+  static const float identity[12] = X(kIdentityNarrowYCbCrToRGB_RowMajor);
 
 #undef X
 
@@ -1122,6 +1123,8 @@ const float kBT2020NarrowYCbCrToRGB_RowMajor[16] = {
       return rec709;
     case gfx::YUVColorSpace::BT2020:
       return rec2020;
+    case gfx::YUVColorSpace::Identity:
+      return identity;
     default:  // YUVColorSpace::UNKNOWN
       MOZ_ASSERT(false, "unknown aYUVColorSpace");
       return rec601;
@@ -1136,6 +1139,7 @@ const float kBT2020NarrowYCbCrToRGB_RowMajor[16] = {
   static const float rec601[9] = X(kBT601NarrowYCbCrToRGB_RowMajor);
   static const float rec709[9] = X(kBT709NarrowYCbCrToRGB_RowMajor);
   static const float rec2020[9] = X(kBT2020NarrowYCbCrToRGB_RowMajor);
+  static const float identity[9] = X(kIdentityNarrowYCbCrToRGB_RowMajor);
 
 #undef X
 
@@ -1146,6 +1150,8 @@ const float kBT2020NarrowYCbCrToRGB_RowMajor[16] = {
       return rec709;
     case YUVColorSpace::BT2020:
       return rec2020;
+    case YUVColorSpace::Identity:
+      return identity;
     default:  // YUVColorSpace::UNKNOWN
       MOZ_ASSERT(false, "unknown aYUVColorSpace");
       return rec601;
@@ -1163,6 +1169,7 @@ const float kBT2020NarrowYCbCrToRGB_RowMajor[16] = {
   static const float rec601[16] = X(kBT601NarrowYCbCrToRGB_RowMajor);
   static const float rec709[16] = X(kBT709NarrowYCbCrToRGB_RowMajor);
   static const float rec2020[16] = X(kBT2020NarrowYCbCrToRGB_RowMajor);
+  static const float identity[16] = X(kIdentityNarrowYCbCrToRGB_RowMajor);
 
 #undef X
 
@@ -1173,6 +1180,8 @@ const float kBT2020NarrowYCbCrToRGB_RowMajor[16] = {
       return rec709;
     case YUVColorSpace::BT2020:
       return rec2020;
+    case YUVColorSpace::Identity:
+      return identity;
     default:  // YUVColorSpace::UNKNOWN
       MOZ_ASSERT(false, "unknown aYUVColorSpace");
       return rec601;
@@ -1262,20 +1271,17 @@ nsCString gfxUtils::GetAsLZ4Base64Str(DataSourceSurface* aSourceSurface) {
     int nDataSize =
         LZ4::compress((char*)map.GetData(), dataSize, compressedData.get());
     if (nDataSize > 0) {
-      nsCString encodedImg;
-      nsresult rv =
-          Base64Encode(Substring(compressedData.get(), nDataSize), encodedImg);
+      nsCString string;
+      string.AppendPrintf("data:image/lz4bgra;base64,%i,%i,%i,",
+                          aSourceSurface->GetSize().width, map.GetStride(),
+                          aSourceSurface->GetSize().height);
+      nsresult rv = Base64EncodeAppend(compressedData.get(), nDataSize, string);
       if (rv == NS_OK) {
-        nsCString string("");
-        string.AppendPrintf("data:image/lz4bgra;base64,%i,%i,%i,",
-                            aSourceSurface->GetSize().width, map.GetStride(),
-                            aSourceSurface->GetSize().height);
-        string.Append(encodedImg);
         return string;
       }
     }
   }
-  return nsCString("");
+  return EmptyCString();
 }
 
 /* static */

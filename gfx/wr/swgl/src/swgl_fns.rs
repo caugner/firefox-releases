@@ -273,6 +273,7 @@ extern "C" {
         min_width: GLsizei,
         min_height: GLsizei,
     );
+    fn SetTextureParameter(tex: GLuint, pname: GLenum, param: GLint);
     fn DeleteTexture(n: GLuint);
     fn DeleteRenderbuffer(n: GLuint);
     fn DeleteFramebuffer(n: GLuint);
@@ -294,10 +295,14 @@ extern "C" {
         src_height: GLsizei,
         dst_x: GLint,
         dst_y: GLint,
+        dst_width: GLsizei,
+        dst_height: GLsizei,
         opaque: GLboolean,
         flip: GLboolean,
+        filter: GLenum,
     );
     fn CreateContext() -> *mut c_void;
+    fn ReferenceContext(ctx: *mut c_void);
     fn DestroyContext(ctx: *mut c_void);
     fn MakeCurrent(ctx: *mut c_void);
 }
@@ -308,6 +313,12 @@ pub struct Context(*mut c_void);
 impl Context {
     pub fn create() -> Self {
         Context(unsafe { CreateContext() })
+    }
+
+    pub fn reference(&self) {
+        unsafe {
+            ReferenceContext(self.0);
+        }
     }
 
     pub fn destroy(&self) {
@@ -360,6 +371,12 @@ impl Context {
                 min_width,
                 min_height,
             );
+        }
+    }
+
+    pub fn set_texture_parameter(&self, tex: GLuint, pname: GLenum, param: GLint) {
+        unsafe {
+            SetTextureParameter(tex, pname, param);
         }
     }
 
@@ -418,6 +435,7 @@ fn calculate_length(width: GLsizei, height: GLsizei, format: GLenum, pixel_type:
         UNSIGNED_SHORT => 2,
         SHORT => 2,
         FLOAT => 4,
+        UNSIGNED_INT_8_8_8_8_REV => 1,
         _ => panic!("unsupported pixel_type for read_pixels: {:?}", pixel_type),
     };
 
@@ -2277,11 +2295,14 @@ impl LockedResource {
         src_x: GLint,
         src_y: GLint,
         src_width: GLsizei,
-        src_height: GLint,
+        src_height: GLsizei,
         dst_x: GLint,
         dst_y: GLint,
+        dst_width: GLsizei,
+        dst_height: GLsizei,
         opaque: bool,
         flip: bool,
+        filter: GLenum,
     ) {
         unsafe {
             Composite(
@@ -2293,8 +2314,11 @@ impl LockedResource {
                 src_height,
                 dst_x,
                 dst_y,
+                dst_width,
+                dst_height,
                 opaque as GLboolean,
                 flip as GLboolean,
+                filter,
             );
         }
     }

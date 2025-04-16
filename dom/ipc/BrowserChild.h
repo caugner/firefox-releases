@@ -189,8 +189,8 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
                dom::BrowsingContext* aBrowsingContext, uint32_t aChromeFlags,
                bool aIsTopLevel);
 
-  nsresult Init(mozIDOMWindowProxy* aParent,
-                WindowGlobalChild* aInitialWindowChild);
+  MOZ_CAN_RUN_SCRIPT nsresult Init(mozIDOMWindowProxy* aParent,
+                                   WindowGlobalChild* aInitialWindowChild);
 
   /** Return a BrowserChild with the given attributes. */
   static already_AddRefed<BrowserChild> Create(
@@ -527,6 +527,13 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   mozilla::ipc::IPCResult RecvHandledWindowedPluginKeyEvent(
       const mozilla::NativeEventData& aKeyEventData, const bool& aIsConsumed);
 
+  mozilla::ipc::IPCResult RecvPrintPreview(
+      const PrintData& aPrintData,
+      const mozilla::Maybe<uint64_t>& aSourceOuterWindowID,
+      PrintPreviewResolver&& aCallback);
+
+  mozilla::ipc::IPCResult RecvExitPrintPreview();
+
   mozilla::ipc::IPCResult RecvPrint(const uint64_t& aOuterWindowID,
                                     const PrintData& aPrintData);
 
@@ -662,20 +669,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   void SetCancelContentJSEpoch(int32_t aEpoch) {
     mCancelContentJSEpoch = aEpoch;
-  }
-
-  static bool HasVisibleTabs() {
-    return sVisibleTabs && !sVisibleTabs->IsEmpty();
-  }
-
-  // Returns the set of BrowserChilds that are currently rendering layers. There
-  // can be multiple BrowserChilds in this state if Firefox has multiple windows
-  // open or is warming tabs up. There can also be zero BrowserChilds in this
-  // state. Note that this function should only be called if HasVisibleTabs()
-  // returns true.
-  static const nsTHashtable<nsPtrHashKey<BrowserChild>>& GetVisibleTabs() {
-    MOZ_ASSERT(HasVisibleTabs());
-    return *sVisibleTabs;
   }
 
   bool UpdateSessionStore(uint32_t aFlushId, bool aIsFinal = false);
@@ -933,12 +926,6 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   // Should only be accessed on main thread.
   Maybe<bool> mWindowSupportsProtectedMedia;
 #endif
-
-  // This state is used to keep track of the current visible tabs (the ones
-  // rendering layers). There may be more than one if there are multiple browser
-  // windows open, or tabs are being warmed up. There may be none if this
-  // process does not host any visible or warming tabs.
-  static nsTHashtable<nsPtrHashKey<BrowserChild>>* sVisibleTabs;
 
   DISALLOW_EVIL_CONSTRUCTORS(BrowserChild);
 };

@@ -32,6 +32,7 @@ Services.scriptloader.loadSubScript(
 var {
   BrowserConsoleManager,
 } = require("devtools/client/webconsole/browser-console-manager");
+
 var WCUL10n = require("devtools/client/webconsole/utils/l10n");
 const DOCS_GA_PARAMS = `?${new URLSearchParams({
   utm_source: "mozilla",
@@ -55,11 +56,6 @@ registerCleanupFunction(async function() {
   Services.prefs.getChildList("devtools.webconsole.filter").forEach(pref => {
     Services.prefs.clearUserPref(pref);
   });
-  const browserConsole = BrowserConsoleManager.getBrowserConsole();
-  if (browserConsole) {
-    await clearOutput(browserConsole);
-    await BrowserConsoleManager.toggleBrowserConsole();
-  }
 });
 
 /**
@@ -307,6 +303,7 @@ function keyboardExecuteAndWaitForMessage(
   matchingText,
   selector = ".message"
 ) {
+  hud.jsterm.focus();
   setInputValue(hud, input);
   const onMessage = waitForMessage(hud, matchingText, selector);
   if (isEditorModeEnabled(hud)) {

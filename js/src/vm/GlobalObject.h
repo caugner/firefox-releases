@@ -27,6 +27,7 @@
 #include "js/ErrorReport.h"
 #include "js/PropertyDescriptor.h"
 #include "js/RootingAPI.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/TypeDecls.h"
 #include "js/Value.h"
 #include "vm/JSContext.h"
@@ -198,6 +199,13 @@ class GlobalObject : public NativeObject {
       return nullptr;
     }
     return &global->getPrototype(key).toObject();
+  }
+
+  JSObject* maybeGetConstructor(JSProtoKey protoKey) const {
+    MOZ_ASSERT(JSProto_Null < protoKey);
+    MOZ_ASSERT(protoKey < JSProto_LIMIT);
+    const Value& v = getConstructor(protoKey);
+    return v.isObject() ? &v.toObject() : nullptr;
   }
 
   JSObject* maybeGetPrototype(JSProtoKey protoKey) const {

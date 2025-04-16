@@ -6,28 +6,28 @@
 #ifndef nsPrinterWin_h_
 #define nsPrinterWin_h_
 
-#include "nsIPrinter.h"
+#include "nsPrinterBase.h"
 
-#include "mozilla/Maybe.h"
-#include "nsIPaper.h"
-#include "nsISupportsImpl.h"
-#include "nsString.h"
-
-class nsPrinterWin final : public nsIPrinter {
+class nsPrinterWin final : public nsPrinterBase {
  public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIPRINTER
+  NS_IMETHOD GetName(nsAString& aName) override;
+  PrintSettingsInitializer DefaultSettings() const final;
+  bool SupportsDuplex() const final;
+  bool SupportsColor() const final;
+  bool SupportsCollation() const final;
+  nsTArray<mozilla::PaperInfo> PaperList() const final;
+  MarginDouble GetMarginsForPaper(uint64_t aId) const final;
+
   nsPrinterWin() = delete;
-  explicit nsPrinterWin(const nsAString& aName);
+  static already_AddRefed<nsPrinterWin> Create(const nsAString& aName);
 
  private:
+  explicit nsPrinterWin(const nsAString& aName);
   ~nsPrinterWin() = default;
 
   nsresult EnsurePaperList();
 
-  nsString mName;
-  nsTArray<RefPtr<nsIPaper>> mPaperList;
-  Maybe<bool> mSupportsDuplex;
+  const nsString mName;
 };
 
 #endif  // nsPrinterWin_h_

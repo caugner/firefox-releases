@@ -83,6 +83,7 @@ exports.POLL_SESSION = 1000 * 60 * 20; // 20 minutes
 exports.ONLOGIN_NOTIFICATION = "fxaccounts:onlogin";
 exports.ONVERIFIED_NOTIFICATION = "fxaccounts:onverified";
 exports.ONLOGOUT_NOTIFICATION = "fxaccounts:onlogout";
+exports.ON_PRELOGOUT_NOTIFICATION = "fxaccounts:on_pre_logout";
 // Internal to services/fxaccounts only
 exports.ON_DEVICE_CONNECTED_NOTIFICATION = "fxaccounts:device_connected";
 exports.ON_DEVICE_DISCONNECTED_NOTIFICATION = "fxaccounts:device_disconnected";
@@ -110,6 +111,7 @@ exports.COMMAND_SENDTAB = exports.COMMAND_PREFIX + exports.COMMAND_SENDTAB_TAIL;
 // OAuth
 exports.FX_OAUTH_CLIENT_ID = "5882386c6d801776";
 exports.SCOPE_PROFILE = "profile";
+exports.SCOPE_PROFILE_WRITE = "profile:write";
 exports.SCOPE_OLD_SYNC = "https://identity.mozilla.com/apps/oldsync";
 
 // OAuth metadata for other Firefox-related services that we might need to know about

@@ -804,8 +804,14 @@ void nsDisplayListBuilder::SetIsRelativeToLayoutViewport() {
 
 void nsDisplayListBuilder::UpdateShouldBuildAsyncZoomContainer() {
   Document* document = mReferenceFrame->PresContext()->Document();
+  // On desktop, we want to disable zooming in fullscreen mode (bug 1650488).
+  // On mobile (and RDM), we need zooming even in fullscreen mode to respect
+  // mobile viewport sizing (bug 1659761).
+  bool disableZoomingForFullscreen =
+      document->Fullscreen() &&
+      !document->GetPresShell()->UsesMobileViewportSizing();
   mBuildAsyncZoomContainer = !mIsRelativeToLayoutViewport &&
-                             !document->Fullscreen() &&
+                             !disableZoomingForFullscreen &&
                              nsLayoutUtils::AllowZoomingForDocument(document);
 }
 
@@ -4834,18 +4840,15 @@ bool nsDisplayCompositorHitTestInfo::CreateWebRenderCommands(
       aBuilder.GetContainingFixedPosSideBits(GetActiveScrolledRoot());
 
   // Insert a transparent rectangle with the hit-test info
-  aBuilder.SetHitTestInfo(scrollId, HitTestFlags(),
-                          sideBits.valueOr(SideBits::eNone));
-
   const LayoutDeviceRect devRect =
       LayoutDeviceRect::FromAppUnits(HitTestArea(), mAppUnitsPerDevPixel);
 
   const wr::LayoutRect rect = wr::ToLayoutRect(devRect);
 
   aBuilder.StartGroup(this);
-  aBuilder.PushHitTest(rect, rect, !BackfaceIsHidden());
+  aBuilder.PushHitTest(rect, rect, !BackfaceIsHidden(), scrollId,
+                       HitTestFlags(), sideBits.valueOr(SideBits::eNone));
   aBuilder.FinishGroup();
-  aBuilder.ClearHitTestInfo();
 
   return true;
 }
@@ -7132,14 +7135,13 @@ bool nsDisplayScrollInfoLayer::CreateWebRenderCommands(
   ScrollableLayerGuid::ViewID scrollId =
       nsLayoutUtils::FindOrCreateIDFor(mScrollFrame->GetContent());
 
-  aBuilder.SetHitTestInfo(scrollId, mHitInfo, SideBits::eNone);
   const LayoutDeviceRect devRect = LayoutDeviceRect::FromAppUnits(
       mHitArea, mScrollFrame->PresContext()->AppUnitsPerDevPixel());
 
   const wr::LayoutRect rect = wr::ToLayoutRect(devRect);
 
-  aBuilder.PushHitTest(rect, rect, !BackfaceIsHidden());
-  aBuilder.ClearHitTestInfo();
+  aBuilder.PushHitTest(rect, rect, !BackfaceIsHidden(), scrollId, mHitInfo,
+                       SideBits::eNone);
 
   return true;
 }

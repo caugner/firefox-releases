@@ -77,7 +77,10 @@ nsresult HTMLEditor::SetInlinePropertyAsAction(nsAtom& aProperty,
     return EditorBase::ToGenericNSResult(rv);
   }
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  // XXX Due to bug 1659276 and bug 1659924, we should not scroll selection
+  //     into view after setting the new style.
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::No);
 
   nsAtom* property = &aProperty;
   nsAtom* attribute = aAttribute;
@@ -220,7 +223,8 @@ nsresult HTMLEditor::SetInlinePropertyInternal(
     return result.Rv();
   }
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eInsertElement, nsIEditor::eNext, ignoredError);
@@ -239,7 +243,7 @@ nsresult HTMLEditor::SetInlinePropertyInternal(
     // XXX This is different from `SetCSSBackgroundColorWithTransaction()`.
     //     It refers `Selection::GetRangeAt()` in each time.  The result may
     //     be different if mutation event listener changes the `Selection`.
-    AutoRangeArray arrayOfRanges(SelectionRefPtr());
+    AutoSelectionRangeArray arrayOfRanges(SelectionRefPtr());
     for (auto& range : arrayOfRanges.mRanges) {
       // Adjust range to include any ancestors whose children are entirely
       // selected
@@ -1615,7 +1619,8 @@ nsresult HTMLEditor::RemoveAllInlinePropertiesAsAction(
     return EditorBase::ToGenericNSResult(rv);
   }
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eRemoveAllTextProperties, nsIEditor::eNext,
@@ -1788,7 +1793,8 @@ nsresult HTMLEditor::RemoveInlinePropertyInternal(
     return result.Rv();
   }
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eRemoveTextProperty, nsIEditor::eNext,
@@ -1807,10 +1813,10 @@ nsresult HTMLEditor::RemoveInlinePropertyInternal(
     for (HTMLStyle& style : removeStyles) {
       // Loop through the ranges in the selection.
       // XXX Although `Selection` will be restored by AutoSelectionRestorer,
-      //     AutoRangeArray just grabs the ranges in `Selection`.  Therefore,
-      //     modifying each range may notify selection listener.  So perhaps,
-      //     we should clone each range here instead.
-      AutoRangeArray arrayOfRanges(SelectionRefPtr());
+      //     AutoSelectionRangeArray just grabs the ranges in `Selection`.
+      //     Therefore, modifying each range may notify selection listener.  So
+      //     perhaps, we should clone each range here instead.
+      AutoSelectionRangeArray arrayOfRanges(SelectionRefPtr());
       for (auto& range : arrayOfRanges.mRanges) {
         if (style.mProperty == nsGkAtoms::name) {
           // Promote range if it starts or end in a named anchor and we want to
@@ -2149,7 +2155,8 @@ nsresult HTMLEditor::RelativeFontChange(FontSize aDir) {
   }
 
   // Wrap with txn batching, rules sniffing, and selection preservation code
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eSetTextProperty, nsIEditor::eNext, ignoredError);
@@ -2164,7 +2171,7 @@ nsresult HTMLEditor::RelativeFontChange(FontSize aDir) {
   AutoTransactionsConserveSelection dontChangeMySelection(*this);
 
   // Loop through the ranges in the selection
-  AutoRangeArray arrayOfRanges(SelectionRefPtr());
+  AutoSelectionRangeArray arrayOfRanges(SelectionRefPtr());
   for (auto& range : arrayOfRanges.mRanges) {
     // Adjust range to include any ancestors with entirely selected children
     nsresult rv = PromoteInlineRange(*range);

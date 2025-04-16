@@ -8462,6 +8462,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "-moz-hidden-unscrollable",
       "auto",
+      "clip",
       "hidden",
       "inherit",
       "initial",
@@ -8495,6 +8496,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "-moz-hidden-unscrollable",
       "auto",
+      "clip",
       "hidden",
       "inherit",
       "initial",
@@ -8513,6 +8515,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "-moz-hidden-unscrollable",
       "auto",
+      "clip",
       "hidden",
       "inherit",
       "initial",
@@ -8547,6 +8550,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "-moz-hidden-unscrollable",
       "auto",
+      "clip",
       "hidden",
       "inherit",
       "initial",
@@ -8565,6 +8569,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "-moz-hidden-unscrollable",
       "auto",
+      "clip",
       "hidden",
       "inherit",
       "initial",
@@ -11071,22 +11076,6 @@ exports.PREFERENCES = [
   [
     "-moz-font-language-override",
     "layout.css.prefixes.font-features"
-  ],
-  [
-    "offset-block-start",
-    "layout.css.offset-logical-properties.enabled"
-  ],
-  [
-    "offset-block-end",
-    "layout.css.offset-logical-properties.enabled"
-  ],
-  [
-    "offset-inline-start",
-    "layout.css.offset-logical-properties.enabled"
-  ],
-  [
-    "offset-inline-end",
-    "layout.css.offset-logical-properties.enabled"
   ],
   [
     "-moz-box-sizing",

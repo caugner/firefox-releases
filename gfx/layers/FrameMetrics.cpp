@@ -18,9 +18,14 @@ namespace layers {
 const ScrollableLayerGuid::ViewID ScrollableLayerGuid::NULL_SCROLL_ID = 0;
 
 void FrameMetrics::RecalculateLayoutViewportOffset() {
+  // For subframes, the visual and layout viewports coincide, so just
+  // keep the layout viewport offset in sync with the visual one.
   if (!mIsRootContent) {
+    mLayoutViewport.MoveTo(GetVisualScrollOffset());
     return;
   }
+  // For the root, the two viewports can diverge, but the layout
+  // viewport needs to keep enclosing the visual viewport.
   KeepLayoutViewportEnclosingVisualViewport(GetVisualViewport(),
                                             mScrollableRect, mLayoutViewport);
 }
@@ -86,6 +91,21 @@ void FrameMetrics::KeepLayoutViewportEnclosingVisualViewport(
   // Regardless of any adjustment above, the layout viewport is not allowed
   // to go outside the scrollable rect.
   aLayoutViewport = aLayoutViewport.MoveInsideAndClamp(aScrollableRect);
+}
+
+void FrameMetrics::ApplyScrollUpdateFrom(const FrameMetrics& aContentMetrics) {
+  // In applying a main-thread scroll update, try to preserve the relative
+  // offset between the visual and layout viewports.
+  CSSPoint relativeOffset = GetVisualScrollOffset() - GetLayoutScrollOffset();
+  MOZ_ASSERT(IsRootContent() || relativeOffset == CSSPoint());
+  // We need to set the two offsets together, otherwise a subsequent
+  // RecalculateLayoutViewportOffset() could see divergent layout and
+  // visual offsets.
+  SetLayoutScrollOffset(aContentMetrics.GetLayoutScrollOffset());
+  ClampAndSetVisualScrollOffset(aContentMetrics.GetLayoutScrollOffset() +
+                                relativeOffset);
+
+  mScrollGeneration = aContentMetrics.mScrollGeneration;
 }
 
 ScrollSnapInfo::ScrollSnapInfo()

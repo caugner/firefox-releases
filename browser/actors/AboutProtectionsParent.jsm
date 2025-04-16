@@ -67,6 +67,7 @@ const MONITOR_RESPONSE_PROPS = [
 
 let gTestOverride = null;
 let monitorResponse = null;
+let entrypoint = "direct";
 
 class AboutProtectionsParent extends JSWindowActorParent {
   constructor() {
@@ -149,6 +150,7 @@ class AboutProtectionsParent extends JSWindowActorParent {
    *
    * @return {{
    *            numLogins: Number,
+   *            potentiallyBreachedLogins: Number,
    *            mobileDeviceConnected: Boolean }}
    */
   async getLoginData() {
@@ -168,6 +170,16 @@ class AboutProtectionsParent extends JSWindowActorParent {
       Services.logins.countLogins("", "", "") -
       Services.logins.countLogins(FXA_PWDMGR_HOST, null, FXA_PWDMGR_REALM);
 
+    let potentiallyBreachedLogins = null;
+    // Get the stats for number of potentially breached Lockwise passwords
+    // if the Primary Password isn't locked.
+    if (userFacingLogins && Services.logins.isLoggedIn) {
+      const logins = await LoginHelper.getAllUserFacingLogins();
+      potentiallyBreachedLogins = await LoginBreaches.getPotentialBreachesByLoginGUID(
+        logins
+      );
+    }
+
     let mobileDeviceConnected =
       fxAccounts.device.recentDeviceList &&
       fxAccounts.device.recentDeviceList.filter(
@@ -176,6 +188,9 @@ class AboutProtectionsParent extends JSWindowActorParent {
 
     return {
       numLogins: userFacingLogins,
+      potentiallyBreachedLogins: potentiallyBreachedLogins
+        ? potentiallyBreachedLogins.size
+        : 0,
       mobileDeviceConnected,
     };
   }
@@ -187,7 +202,6 @@ class AboutProtectionsParent extends JSWindowActorParent {
    *            numBreaches: Number,
    *            passwords: Number,
    *            userEmail: String|null,
-   *            potentiallyBreachedLogins: Number,
    *            error: Boolean }}
    *         Monitor data.
    */
@@ -201,7 +215,6 @@ class AboutProtectionsParent extends JSWindowActorParent {
     }
 
     let monitorData = {};
-    let potentiallyBreachedLogins = null;
     let userEmail = null;
     let token = await this.getMonitorScopedOAuthToken();
 
@@ -209,14 +222,6 @@ class AboutProtectionsParent extends JSWindowActorParent {
       if (token) {
         monitorData = await this.fetchUserBreachStats(token);
 
-        // Get the stats for number of potentially breached Lockwise passwords if no master
-        // password is set.
-        if (!LoginHelper.isMasterPasswordSet()) {
-          const logins = await LoginHelper.getAllUserFacingLogins();
-          potentiallyBreachedLogins = await LoginBreaches.getPotentialBreachesByLoginGUID(
-            logins
-          );
-        }
         // Send back user's email so the protections report can direct them to the proper
         // OAuth flow on Monitor.
         const { email } = await fxAccounts.getSignedInUser();
@@ -256,9 +261,6 @@ class AboutProtectionsParent extends JSWindowActorParent {
     return {
       ...monitorData,
       userEmail,
-      potentiallyBreachedLogins: potentiallyBreachedLogins
-        ? potentiallyBreachedLogins.size
-        : 0,
       error: !!monitorData.errorMessage,
     };
   }
@@ -368,9 +370,7 @@ class AboutProtectionsParent extends JSWindowActorParent {
         return this.getMonitorData();
 
       case "FetchUserLoginsData":
-        let { potentiallyBreachedLogins } = await this.getMonitorData();
-        let loginsData = await this.getLoginData();
-        return { ...loginsData, potentiallyBreachedLogins };
+        return this.getLoginData();
 
       case "ClearMonitorCache":
         monitorResponse = null;
@@ -379,6 +379,13 @@ class AboutProtectionsParent extends JSWindowActorParent {
       case "GetShowProxyCard":
         let card = await this.shouldShowProxyCard();
         return card;
+
+      case "RecordEntryPoint":
+        entrypoint = aMessage.data.entrypoint;
+        break;
+
+      case "FetchEntryPoint":
+        return entrypoint;
     }
 
     return undefined;

@@ -1,6 +1,8 @@
 /* eslint-disable no-undef */
 const PAGE_NON_AUTOPLAY =
   "https://example.com/browser/dom/media/mediacontrol/tests/file_non_autoplay.html";
+const PAGE_EMPTY_TITLE_URL =
+  "https://example.com/browser/dom/media/mediacontrol/tests/file_empty_title.html";
 
 const testVideoId = "video";
 const defaultFaviconName = "defaultFavicon.svg";
@@ -45,11 +47,27 @@ add_task(async function testDefaultMetadataForPageWithoutMediaSession() {
   await playMedia(tab, testVideoId);
 
   info(`should use default metadata because of lacking of media session`);
-  await isUsingDefaultMetadata(tab);
+  await isGivenTabUsingDefaultMetadata(tab);
 
   info(`remove tab`);
   await BrowserTestUtils.removeTab(tab);
 });
+
+add_task(
+  async function testDefaultMetadataForEmptyTitlePageWithoutMediaSession() {
+    info(`open media page`);
+    const tab = await createTabAndLoad(PAGE_EMPTY_TITLE_URL);
+
+    info(`start media`);
+    await playMedia(tab, testVideoId);
+
+    info(`should use default metadata because of lacking of media session`);
+    await isGivenTabUsingDefaultMetadata(tab);
+
+    info(`remove tab`);
+    await BrowserTestUtils.removeTab(tab);
+  }
+);
 
 add_task(async function testDefaultMetadataForPageUsingEmptyMetadata() {
   info(`open media page`);
@@ -67,7 +85,7 @@ add_task(async function testDefaultMetadataForPageUsingEmptyMetadata() {
   });
 
   info(`should use default metadata because of empty media metadata`);
-  await isUsingDefaultMetadata(tab);
+  await isGivenTabUsingDefaultMetadata(tab);
 
   info(`remove tab`);
   await BrowserTestUtils.removeTab(tab);
@@ -84,7 +102,7 @@ add_task(async function testDefaultMetadataForPageUsingNullMetadata() {
   await setNullMediaMetadata(tab);
 
   info(`should use default metadata because of lacking of media metadata`);
-  await isUsingDefaultMetadata(tab);
+  await isGivenTabUsingDefaultMetadata(tab);
 
   info(`remove tab`);
   await BrowserTestUtils.removeTab(tab);
@@ -106,7 +124,7 @@ add_task(async function testMetadataWithEmptyTitleAndArtwork() {
   });
 
   info(`should use default metadata because of empty title and artwork`);
-  await isUsingDefaultMetadata(tab);
+  await isGivenTabUsingDefaultMetadata(tab);
 
   info(`remove tab`);
   await BrowserTestUtils.removeTab(tab);
@@ -126,7 +144,7 @@ add_task(async function testMetadataWithoutTitleAndArtwork() {
   });
 
   info(`should use default metadata because of lacking of title and artwork`);
-  await isUsingDefaultMetadata(tab);
+  await isGivenTabUsingDefaultMetadata(tab);
 
   info(`remove tab`);
   await BrowserTestUtils.removeTab(tab);
@@ -154,7 +172,7 @@ add_task(async function testMetadataInPrivateBrowsing() {
   await setMediaMetadata(tab, metadata);
 
   info(`should use default metadata because of in private browsing mode`);
-  await isUsingDefaultMetadata(tab, { isPrivateBrowsing: true });
+  await isGivenTabUsingDefaultMetadata(tab, { isPrivateBrowsing: true });
 
   info(`remove tab`);
   await BrowserTestUtils.removeTab(tab);
@@ -336,10 +354,14 @@ add_task(async function testMetadataAfterTabNavigation() {
  * The following are helper functions.
  */
 function setMediaMetadata(tab, metadata) {
+  const controller = tab.linkedBrowser.browsingContext.mediaController;
   const promise = SpecialPowers.spawn(tab.linkedBrowser, [metadata], data => {
     content.navigator.mediaSession.metadata = new content.MediaMetadata(data);
   });
-  return Promise.all([promise, waitUntilControllerMetadataChanged()]);
+  return Promise.all([
+    promise,
+    new Promise(r => (controller.onmetadatachange = r)),
+  ]);
 }
 
 function setNullMediaMetadata(tab) {

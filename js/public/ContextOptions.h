@@ -43,7 +43,9 @@ class JS_PUBLIC_API ContextOptions {
         trackNotImplemented_(false),
         trySmoosh_(false),
 #endif
-        fuzzing_(false) {
+        fuzzing_(false),
+        privateClassFields_(false),
+        privateClassMethods_(false) {
   }
 
   bool asmJS() const { return asmJS_; }
@@ -136,6 +138,18 @@ class JS_PUBLIC_API ContextOptions {
   bool disableIon() const { return disableIon_; }
   ContextOptions& setDisableIon() {
     disableIon_ = true;
+    return *this;
+  }
+
+  bool privateClassFields() const { return privateClassFields_; }
+  ContextOptions& setPrivateClassFields(bool enabled) {
+    privateClassFields_ = enabled;
+    return *this;
+  }
+
+  bool privateClassMethods() const { return privateClassMethods_; }
+  ContextOptions& setPrivateClassMethods(bool enabled) {
+    privateClassMethods_ = enabled;
     return *this;
   }
 
@@ -246,6 +260,8 @@ class JS_PUBLIC_API ContextOptions {
   bool trySmoosh_ : 1;
 #endif
   bool fuzzing_ : 1;
+  bool privateClassFields_ : 1;
+  bool privateClassMethods_ : 1;
 };
 
 JS_PUBLIC_API ContextOptions& ContextOptionsRef(JSContext* cx);

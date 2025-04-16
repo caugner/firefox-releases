@@ -75,7 +75,6 @@
 #include "mozilla/layout/VsyncChild.h"
 #include "VsyncSource.h"
 #include "mozilla/VsyncDispatcher.h"
-#include "nsThreadUtils.h"
 #include "mozilla/Unused.h"
 #include "mozilla/TimelineConsumers.h"
 #include "nsAnimationManager.h"
@@ -121,6 +120,8 @@ static mozilla::LazyLogModule sRefreshDriverLog("nsRefreshDriver");
 #else
 #  define REFRESH_WAIT_WARNING 1
 #endif
+
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(nsRefreshDriver::TickReasons);
 
 namespace {
 // `true` if we are currently in jank-critical mode.
@@ -360,8 +361,6 @@ class RefreshDriverTimer {
     mLastFireTime = now;
 
     LOG("[%p] ticking drivers...", this);
-    // RD is short for RefreshDriver
-    AUTO_PROFILER_TRACING_MARKER("Paint", "RefreshDriverTick", GRAPHICS);
 
     TickRefreshDrivers(aId, now, mContentRefreshDrivers);
     TickRefreshDrivers(aId, now, mRootRefreshDrivers);
@@ -1279,8 +1278,8 @@ void nsRefreshDriver::DispatchVisualViewportResizeEvents() {
   // We're taking a hint from scroll events and only dispatch the current set
   // of queued resize events. If additional events are posted in response to
   // the current events being dispatched, we'll dispatch them on the next tick.
-  VisualViewportResizeEventArray events;
-  events.SwapElements(mVisualViewportResizeEvents);
+  VisualViewportResizeEventArray events =
+      std::move(mVisualViewportResizeEvents);
   for (auto& event : events) {
     event->Run();
   }
@@ -1301,8 +1300,7 @@ void nsRefreshDriver::DispatchScrollEvents() {
   // However, dispatching a scroll event can potentially cause more scroll
   // events to be posted, so we move the initial set into a temporary array
   // first. (Newly posted scroll events will be dispatched on the next tick.)
-  ScrollEventArray events;
-  events.SwapElements(mScrollEvents);
+  ScrollEventArray events = std::move(mScrollEvents);
   for (auto& event : events) {
     event->Run();
   }
@@ -1319,8 +1317,8 @@ void nsRefreshDriver::DispatchVisualViewportScrollEvents() {
   // However, dispatching a scroll event can potentially cause more scroll
   // events to be posted, so we move the initial set into a temporary array
   // first. (Newly posted scroll events will be dispatched on the next tick.)
-  VisualViewportScrollEventArray events;
-  events.SwapElements(mVisualViewportScrollEvents);
+  VisualViewportScrollEventArray events =
+      std::move(mVisualViewportScrollEvents);
   for (auto& event : events) {
     event->Run();
   }
@@ -1399,6 +1397,12 @@ void nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags) {
 
   if (mTestControllingRefreshes) return;
 
+#ifdef MOZ_GECKO_PROFILER
+  if (!mRefreshTimerStartedCause) {
+    mRefreshTimerStartedCause = profiler_get_backtrace();
+  }
+#endif
+
   // will it already fire, and no other changes needed?
   if (mActiveTimer && !(aFlags & eForceAdjustTimer)) return;
 
@@ -1467,6 +1471,7 @@ void nsRefreshDriver::StopTimer() {
 
   mActiveTimer->RemoveRefreshDriver(this);
   mActiveTimer = nullptr;
+  mRefreshTimerStartedCause = nullptr;
 }
 
 uint32_t nsRefreshDriver::ObserverCount() const {
@@ -1520,6 +1525,76 @@ bool nsRefreshDriver::HasImageRequests() const {
   }
 
   return !mRequests.IsEmpty();
+}
+
+auto nsRefreshDriver::GetReasonsToTick() const -> TickReasons {
+  TickReasons reasons = TickReasons::eNone;
+  if (HasObservers()) {
+    reasons |= TickReasons::eHasObservers;
+  }
+  if (HasImageRequests()) {
+    reasons |= TickReasons::eHasImageRequests;
+  }
+  if (mNeedToUpdateIntersectionObservations) {
+    reasons |= TickReasons::eNeedsToUpdateIntersectionObservations;
+  }
+  if (!mVisualViewportResizeEvents.IsEmpty()) {
+    reasons |= TickReasons::eHasVisualViewportResizeEvents;
+  }
+  if (!mScrollEvents.IsEmpty()) {
+    reasons |= TickReasons::eHasScrollEvents;
+  }
+  if (!mVisualViewportScrollEvents.IsEmpty()) {
+    reasons |= TickReasons::eHasVisualVieportScrollEvents;
+  }
+  return reasons;
+}
+
+void nsRefreshDriver::AppendTickReasonsToString(TickReasons aReasons,
+                                                nsACString& aStr) const {
+  if (aReasons == TickReasons::eNone) {
+    aStr.AppendLiteral(" <none>");
+    return;
+  }
+
+  if (aReasons & TickReasons::eHasObservers) {
+    aStr.AppendLiteral(" HasObservers");
+  }
+  if (aReasons & TickReasons::eHasImageRequests) {
+    aStr.AppendLiteral(" HasImageRequests");
+  }
+  if (aReasons & TickReasons::eNeedsToUpdateIntersectionObservations) {
+    aStr.AppendLiteral(" NeedsToUpdateIntersectionObservations");
+  }
+  if (aReasons & TickReasons::eHasVisualViewportResizeEvents) {
+    aStr.AppendLiteral(" HasVisualViewportResizeEvents");
+  }
+  if (aReasons & TickReasons::eHasScrollEvents) {
+    aStr.AppendLiteral(" HasScrollEvents");
+  }
+  if (aReasons & TickReasons::eHasVisualVieportScrollEvents) {
+    aStr.AppendLiteral(" HasVisualVieportScrollEvents");
+  }
+}
+
+bool nsRefreshDriver::
+    ShouldKeepTimerRunningWhileWaitingForFirstContentfulPaint() {
+  // On top level content pages keep the timer running initially so that we
+  // paint the page soon enough.
+  if (mThrottled || mTestControllingRefreshes || !XRE_IsContentProcess() ||
+      !mPresContext->Document()->IsTopLevelContentDocument() ||
+      gfxPlatform::IsInLayoutAsapMode() || mPresContext->HadContentfulPaint() ||
+      mPresContext->Document()->GetReadyStateEnum() ==
+          Document::READYSTATE_COMPLETE) {
+    return false;
+  }
+  if (mBeforeFirstContentfulPaintTimerRunningLimit.IsNull()) {
+    // Don't let the timer to run forever, so limit to 4s for now.
+    mBeforeFirstContentfulPaintTimerRunningLimit =
+        TimeStamp::Now() + TimeDuration::FromSeconds(4.0f);
+  }
+
+  return TimeStamp::Now() <= mBeforeFirstContentfulPaintTimerRunningLimit;
 }
 
 nsRefreshDriver::ObserverArray& nsRefreshDriver::ArrayFor(
@@ -1768,6 +1843,7 @@ void nsRefreshDriver::RunFrameRequestCallbacks(TimeStamp aNowTime) {
         // MOZ_KnownLive is OK, because the stack array frameRequestCallbacks
         // keeps callback alive and the mCallback strong reference can't be
         // mutated by the call.
+        LogFrameRequestCallback::Run run(callback.mCallback);
         MOZ_KnownLive(callback.mCallback)->Call(timeStamp);
       }
     }
@@ -1835,8 +1911,6 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     return;
   }
 
-  AUTO_PROFILER_LABEL("nsRefreshDriver::Tick", LAYOUT);
-
   // We're either frozen or we were disconnected (likely in the middle
   // of a tick iteration).  Just do nothing here, since our
   // prescontext went away.
@@ -1881,12 +1955,14 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   mWarningThreshold = 1;
 
   RefPtr<PresShell> presShell = mPresContext->GetPresShell();
-  if (!presShell ||
-      (!HasObservers() && !HasImageRequests() &&
-       !mNeedToUpdateIntersectionObservations &&
-       mVisualViewportResizeEvents.IsEmpty() && mScrollEvents.IsEmpty() &&
-       mVisualViewportScrollEvents.IsEmpty())) {
-    // Things are being destroyed, or we no longer have any observers.
+  if (!presShell) {
+    StopTimer();
+    return;
+  }
+
+  TickReasons tickReasons = GetReasonsToTick();
+  if (tickReasons == TickReasons::eNone) {
+    // We no longer have any observers.
     // We don't want to stop the timer when observers are initially
     // removed, because sometimes observers can be added and removed
     // often depending on what other things are going on and in that
@@ -1895,25 +1971,28 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     // before stopping the timer.
     // On top level content pages keep the timer running initially so that we
     // paint the page soon enough.
-    if (presShell && !mThrottled && !mTestControllingRefreshes &&
-        XRE_IsContentProcess() &&
-        mPresContext->Document()->IsTopLevelContentDocument() &&
-        !gfxPlatform::IsInLayoutAsapMode() &&
-        !mPresContext->HadContentfulPaint() &&
-        mPresContext->Document()->GetReadyStateEnum() <
-            Document::READYSTATE_COMPLETE) {
-      if (mInitialTimerRunningLimit.IsNull()) {
-        mInitialTimerRunningLimit =
-            TimeStamp::Now() + TimeDuration::FromSeconds(4.0f);
-        // Don't let the timer to run forever, so limit to 4s for now.
-      } else if (mInitialTimerRunningLimit < TimeStamp::Now()) {
-        StopTimer();
-      }
+    if (ShouldKeepTimerRunningWhileWaitingForFirstContentfulPaint()) {
+      PROFILER_TRACING_MARKER(
+          "Paint", "RefreshDriver waiting for first contentful paint", GRAPHICS,
+          TRACING_EVENT);
     } else {
       StopTimer();
     }
     return;
   }
+
+  AUTO_PROFILER_LABEL("nsRefreshDriver::Tick", LAYOUT);
+
+  nsAutoCString profilerStr;
+#if MOZ_GECKO_PROFILER
+  if (profiler_can_accept_markers()) {
+    profilerStr.AppendLiteral("Tick reasons:");
+    AppendTickReasonsToString(tickReasons, profilerStr);
+  }
+#endif
+  AUTO_PROFILER_TEXT_MARKER_DOCSHELL_CAUSE(
+      "RefreshDriverTick", profilerStr, GRAPHICS, GetDocShell(mPresContext),
+      std::move(mRefreshTimerStartedCause));
 
   mResizeSuppressed = false;
 
@@ -1935,8 +2014,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     nsLayoutUtils::UpdateDisplayPortMarginsFromPendingMessages();
   }
 
-  AutoTArray<nsCOMPtr<nsIRunnable>, 16> earlyRunners;
-  earlyRunners.SwapElements(mEarlyRunners);
+  AutoTArray<nsCOMPtr<nsIRunnable>, 16> earlyRunners = std::move(mEarlyRunners);
   for (auto& runner : earlyRunners) {
     runner->Run();
   }
@@ -2029,6 +2107,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
           if (!mStyleFlushObservers.RemoveElement(rawPresShell)) {
             continue;
           }
+
+          LogPresShellObserver::Run run(rawPresShell, this);
+
           RefPtr<PresShell> presShell = rawPresShell;
           presShell->mObservingStyleFlushes = false;
           presShell->FlushPendingNotifications(
@@ -2055,6 +2136,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
         if (!mLayoutFlushObservers.RemoveElement(rawPresShell)) {
           continue;
         }
+
+        LogPresShellObserver::Run run(rawPresShell, this);
+
         RefPtr<PresShell> presShell = rawPresShell;
         presShell->mObservingLayoutFlushes = false;
         presShell->mWasLastReflowInterrupted = false;
@@ -2160,6 +2244,17 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   bool dispatchRunnablesAfterTick = false;
   if (mViewManagerFlushIsPending) {
     AutoRecordPhase paintRecord(&phasePaint);
+    nsCString transactionId;
+#if MOZ_GECKO_PROFILER
+    if (profiler_can_accept_markers()) {
+      transactionId.AppendLiteral("Transaction ID: ");
+      transactionId.AppendInt((uint64_t)mNextTransactionId);
+    }
+#endif
+    AUTO_PROFILER_TEXT_MARKER_CAUSE("ViewManagerFlush", transactionId, GRAPHICS,
+                                    Nothing(),
+                                    std::move(mViewManagerFlushCause));
+
     RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
 
     nsTArray<nsDocShell*> profilingDocShells;
@@ -2496,6 +2591,9 @@ void nsRefreshDriver::ScheduleViewManagerFlush() {
   NS_ASSERTION(mPresContext->IsRoot(),
                "Should only schedule view manager flush on root prescontexts");
   mViewManagerFlushIsPending = true;
+  if (!mViewManagerFlushCause) {
+    mViewManagerFlushCause = profiler_get_backtrace();
+  }
   mHasScheduleFlush = true;
   EnsureTimerStarted(eNeverAdjustTimer);
 }

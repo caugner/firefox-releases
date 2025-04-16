@@ -86,7 +86,8 @@ class WindowGlobalParent final : public WindowContext,
   already_AddRefed<WindowGlobalChild> GetChildActor();
 
   // Get a JS actor object by name.
-  already_AddRefed<JSWindowActorParent> GetActor(const nsACString& aName,
+  already_AddRefed<JSWindowActorParent> GetActor(JSContext* aCx,
+                                                 const nsACString& aName,
                                                  ErrorResult& aRv);
 
   // Get this actor's manager if it is not an in-process actor. Returns
@@ -206,9 +207,7 @@ class WindowGlobalParent final : public WindowContext,
   mozilla::ipc::IPCResult RecvLoadURI(
       const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
       nsDocShellLoadState* aLoadState, bool aSetNavigating);
-  mozilla::ipc::IPCResult RecvInternalLoad(
-      const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
-      nsDocShellLoadState* aLoadState);
+  mozilla::ipc::IPCResult RecvInternalLoad(nsDocShellLoadState* aLoadState);
   mozilla::ipc::IPCResult RecvUpdateDocumentURI(nsIURI* aURI);
   mozilla::ipc::IPCResult RecvUpdateDocumentPrincipal(
       nsIPrincipal* aNewDocumentPrincipal);

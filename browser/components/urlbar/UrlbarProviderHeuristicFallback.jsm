@@ -118,6 +118,17 @@ class ProviderHeuristicFallback extends UrlbarProvider {
   // TODO (bug 1054814): Use visited URLs to inform which scheme to use, if the
   // scheme isn't specificed.
   _matchUnknownUrl(queryContext) {
+    // The user may have typed something like "word?" to run a search.  We
+    // should not convert that to a URL.  We should also never convert actual
+    // URLs into URL results when search mode is active.
+    if (
+      (queryContext.restrictSource &&
+        queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.SEARCH) ||
+      queryContext.searchMode
+    ) {
+      return null;
+    }
+
     let unescapedSearchString = Services.textToSubURI.unEscapeURIForUI(
       queryContext.searchString
     );
@@ -127,16 +138,8 @@ class ProviderHeuristicFallback extends UrlbarProvider {
       // like http://http/ for it.
       return null;
     }
-    // The user may have typed something like "word?" to run a search, we should
-    // not convert that to a url.
-    if (
-      queryContext.restrictSource &&
-      queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.SEARCH
-    ) {
-      return null;
-    }
 
-    let searchUrl = queryContext.searchString.trim();
+    let searchUrl = queryContext.trimmedSearchString;
 
     if (queryContext.fixupError) {
       if (
@@ -217,8 +220,10 @@ class ProviderHeuristicFallback extends UrlbarProvider {
 
   async _defaultEngineSearchResult(queryContext) {
     let engine;
-    if (queryContext.engineName) {
-      engine = Services.search.getEngineByName(queryContext.engineName);
+    if (queryContext.searchMode?.engineName) {
+      engine = Services.search.getEngineByName(
+        queryContext.searchMode.engineName
+      );
     } else if (queryContext.isPrivate) {
       engine = Services.search.defaultPrivateEngine;
     } else {

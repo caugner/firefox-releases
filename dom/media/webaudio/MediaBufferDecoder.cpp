@@ -14,6 +14,7 @@
 #include "BufferMediaResource.h"
 #include "DecoderTraits.h"
 #include "MediaContainerType.h"
+#include "MediaDataDecoderProxy.h"
 #include "MediaDataDemuxer.h"
 #include "MediaQueue.h"
 #include "PDMFactory.h"
@@ -293,10 +294,12 @@ MediaResult MediaDecodeTask::CreateDecoder(const AudioInfo& info) {
       MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
                   nsPrintfCString("error creating %s decoder",
                                   TrackTypeToStr(TrackInfo::kAudioTrack)));
-  mDecoder = pdm->CreateDecoder(
-      {info, mPDecoderTaskQueue, &result, TrackInfo::kAudioTrack});
+  RefPtr<MediaDataDecoder> decoder =
+      pdm->CreateDecoder({info, &result, TrackInfo::kAudioTrack});
 
-  if (mDecoder) {
+  if (decoder) {
+    mDecoder = new MediaDataDecoderProxy(decoder.forget(),
+                                         do_AddRef(mPDecoderTaskQueue.get()));
     return NS_OK;
   }
 
@@ -656,13 +659,7 @@ void AsyncDecodeWebAudio(const char* aContentType, uint8_t* aBuffer,
                              WebAudioDecodeJob::UnknownError);
     aDecodeJob.mContext->Dispatch(event.forget());
   } else {
-    // If we did this without a temporary:
-    //   task->PControllerTaskQueue()->Dispatch(task.forget())
-    // we might evaluate the task.forget() before calling
-    //   OnPControllerTaskQueue().
-    // Enforce a non-crashy order-of-operations.
-    TaskQueue* taskQueue = task->PControllerTaskQueue();
-    nsresult rv = taskQueue->Dispatch(task.forget());
+    nsresult rv = task->PControllerTaskQueue()->Dispatch(task.forget());
     MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
     Unused << rv;
   }
@@ -707,13 +704,18 @@ void WebAudioDecodeJob::OnFailure(ErrorCode aErrorCode) {
   const char* errorMessage;
   switch (aErrorCode) {
     case UnknownContent:
-      errorMessage = "MediaDecodeAudioDataUnknownContentType";
+      errorMessage =
+          "The buffer passed to decodeAudioData contains an unknown content "
+          "type.";
       break;
     case InvalidContent:
-      errorMessage = "MediaDecodeAudioDataInvalidContent";
+      errorMessage =
+          "The buffer passed to decodeAudioData contains invalid content which "
+          "cannot be decoded successfully.";
       break;
     case NoAudio:
-      errorMessage = "MediaDecodeAudioDataNoAudio";
+      errorMessage =
+          "The buffer passed to decodeAudioData does not contain any audio.";
       break;
     case NoError:
       MOZ_FALLTHROUGH_ASSERT("Who passed NoError to OnFailure?");
@@ -722,29 +724,22 @@ void WebAudioDecodeJob::OnFailure(ErrorCode aErrorCode) {
     case UnknownError:
       [[fallthrough]];
     default:
-      errorMessage = "MediaDecodeAudioDataUnknownError";
+      errorMessage =
+          "An unknown error occurred while processing decodeAudioData.";
       break;
   }
 
-  Document* doc = nullptr;
-  if (nsPIDOMWindowInner* pWindow = mContext->GetParentObject()) {
-    doc = pWindow->GetExtantDoc();
-  }
-  nsContentUtils::ReportToConsole(nsIScriptError::errorFlag, "Media"_ns, doc,
-                                  nsContentUtils::eDOM_PROPERTIES,
-                                  errorMessage);
-
   // Ignore errors in calling the callback, since there is not much that we can
   // do about it here.
+  nsAutoCString errorString(errorMessage);
   if (mFailureCallback) {
-    nsAutoCString errorString(errorMessage);
     RefPtr<DOMException> exception = DOMException::Create(
         NS_ERROR_DOM_ENCODING_NOT_SUPPORTED_ERR, errorString);
     RefPtr<DecodeErrorCallback> callback(mFailureCallback);
     callback->Call(*exception);
   }
 
-  mPromise->MaybeReject(NS_ERROR_DOM_ENCODING_NOT_SUPPORTED_ERR);
+  mPromise->MaybeRejectWithEncodingError(errorString);
 
   mContext->RemoveFromDecodeQueue(this);
 }

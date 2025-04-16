@@ -84,7 +84,7 @@ using mozilla::gfx::IntSize from "mozilla/gfx/2D.h";
 using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
 using mozilla::dom::ContentParentId from "mozilla/dom/ipc/IdType.h";
 using mozilla::LayoutDeviceIntPoint from "Units.h";
-using struct LookAndFeelInt from "mozilla/widget/WidgetMessageUtils.h";
+using struct LookAndFeelCache from "mozilla/widget/WidgetMessageUtils.h";
 using class mozilla::dom::MessagePort from "mozilla/dom/MessagePort.h";
 using class mozilla::dom::ipc::StructuredCloneData from "mozilla/dom/ipc/StructuredCloneData.h";
 using mozilla::OriginAttributes from "mozilla/ipc/BackgroundUtils.h";
@@ -234,6 +234,7 @@ struct BlobURLRegistrationData
   nsCString url;
   IPCBlob blob;
   nsIPrincipal principal;
+  nsID? agentClusterId;
   bool revoked;
 };
 
@@ -286,13 +287,6 @@ struct GMPCapabilityData
     nsCString name;
     nsCString version;
     GMPAPITags[] capabilities;
-};
-
-struct GfxInfoFeatureStatus
-{
-    int32_t feature;
-    int32_t status;
-    nsCString failureId;
 };
 
 struct XPCOMInitData
@@ -378,6 +372,12 @@ union SyncedContextInitializer
 {
     BrowsingContextInitializer;
     WindowContextInitializer;
+};
+
+union BlobURLDataRequestResult
+{
+  IPCBlob;
+  nsresult;
 };
 
 /**
@@ -511,7 +511,9 @@ child:
     async RequestMemoryReport(uint32_t generation,
                               bool anonymize,
                               bool minimizeMemoryUsage,
-                              FileDescriptor? DMDFile);
+                              FileDescriptor? DMDFile)
+        returns (uint32_t aGeneration);
+
     async RequestPerformanceMetrics(nsID aID);
 
     /**
@@ -556,7 +558,7 @@ child:
      * Tell the child that the system theme has changed, and that a repaint
      * is necessary.
      */
-    async ThemeChanged(LookAndFeelInt[] lookAndFeelIntCache);
+    async ThemeChanged(LookAndFeelCache lookAndFeelCache);
 
     async UpdateSystemParameters(SystemParameterKVPair[] aUpdates);
 
@@ -608,6 +610,8 @@ child:
 
     async FlushMemory(nsString reason);
 
+    async ApplicationBackground();
+    async ApplicationForeground();
     async GarbageCollect();
     async CycleCollect();
     async UnlinkGhosts();
@@ -662,7 +666,7 @@ child:
 
     async SetXPCOMProcessAttributes(XPCOMInitData xpcomInit,
                                     StructuredCloneData initialData,
-                                    LookAndFeelInt[] lookAndFeelIntCache,
+                                    LookAndFeelCache lookAndFeelCache,
                                     /* used on MacOSX/Linux/Android only: */
                                     SystemFontListEntry[] systemFontList,
                                     SharedMemoryHandle? sharedUASheetHandle,
@@ -744,7 +748,8 @@ child:
     async GetFilesResponse(nsID aID, GetFilesResponseResult aResult);
 
     async BlobURLRegistration(nsCString aURI, IPCBlob aBlob,
-                              Principal aPrincipal);
+                              Principal aPrincipal,
+                              nsID? aAgentClusterId);
 
     async BlobURLUnregistration(nsCString aURI);
 
@@ -881,7 +886,7 @@ child:
     async LoadURI(MaybeDiscardedBrowsingContext aContext, nsDocShellLoadState aLoadState, bool aSetNavigating)
         returns (bool aSuccess);
 
-    async InternalLoad(MaybeDiscardedBrowsingContext aContext, nsDocShellLoadState aLoadState, bool aTakeFocus);
+    async InternalLoad(nsDocShellLoadState aLoadState, bool aTakeFocus);
 
     async DisplayLoadError(MaybeDiscardedBrowsingContext aContext, nsString aURI);
 
@@ -917,9 +922,17 @@ parent:
     async SessionHistoryUpdate(MaybeDiscardedBrowsingContext aTopContext,
                                int32_t aIndex, int32_t aLength, nsID aChangeID);
 
-    async SynchronizeLayoutHistoryState(uint64_t aSessionHistoryEntryID,
+    async SynchronizeLayoutHistoryState(MaybeDiscardedBrowsingContext aContext,
                                         nsILayoutHistoryState aState);
 
+    async SessionHistoryEntryTitle(MaybeDiscardedBrowsingContext aContext,
+                                   nsString aTitle);
+
+    async SessionHistoryEntryScrollRestorationIsManual(MaybeDiscardedBrowsingContext aContext,
+                                                       bool aIsManual);
+
+    async SessionHistoryEntryCacheKey(MaybeDiscardedBrowsingContext aContext,
+                                      uint32_t aCacheKey);
 
     async InitBackground(Endpoint<PBackgroundParent> aEndpoint);
 
@@ -1332,6 +1345,9 @@ parent:
      * @param aFamilyIndex
      *   The 0-based index of the Family within the font-list that a content
      *   process needs to use.
+     * @param aLoadCmaps
+     *   If true, the parent should eagerly load character maps for the faces
+     *   in the family.
      *
      * This is a sync message because the content process cannot complete its
      * font-matching until the family is fully populated with Face records.
@@ -1339,7 +1355,8 @@ parent:
      * and then have to reflow again once all the font information needed
      * becomes available.
      */
-    sync InitializeFamily(uint32_t aGeneration, uint32_t aFamilyIndex);
+    sync InitializeFamily(uint32_t aGeneration, uint32_t aFamilyIndex,
+                          bool aLoadCmaps);
 
     /**
      * Record the character map of a given Face in the font list.
@@ -1418,6 +1435,8 @@ parent:
                        uint32_t aChromeFlags,
                        bool aCalledFromJS,
                        bool aWidthSpecified,
+                       bool aForPrinting,
+                       bool aForPrintPreview,
                        nsIURI aURIToLoad,
                        nsCString aFeatures,
                        float aFullZoom,
@@ -1480,7 +1499,8 @@ parent:
      async DeleteGetFilesRequest(nsID aID);
 
      async StoreAndBroadcastBlobURLRegistration(nsCString url, IPCBlob blob,
-                                                Principal principal);
+                                                Principal principal,
+                                                nsID? aAgentClusterId);
 
      async UnstoreAndBroadcastBlobURLUnregistration(nsCString url, Principal principal);
 
@@ -1499,7 +1519,6 @@ parent:
                              IHandlerControlHolder aHandlerControl);
 
     async AddMemoryReport(MemoryReport aReport);
-    async FinishMemoryReport(uint32_t aGeneration);
 
     async MaybeReloadPlugins();
 
@@ -1643,11 +1662,17 @@ parent:
                      bool? reloadActiveEntry);
 
     async HistoryCommit(MaybeDiscardedBrowsingContext aContext,
-                        uint64_t aSessionHistoryEntryID,
-                        nsID aChangeID);
+                        uint64_t aLoadID, nsID aChangeID);
 
     async HistoryGo(MaybeDiscardedBrowsingContext aContext,
                     int32_t aOffset) returns(int32_t requestedIndex);
+
+    async BlobURLDataRequest(nsCString aBlobURL,
+                             nsIPrincipal aTriggeringPrincipal,
+                             nsIPrincipal aLoadingPrincipal,
+                             OriginAttributes aOriginAttributes,
+                             nsID? aAgentClusterId)
+      returns (BlobURLDataRequestResult aResult);
 
 both:
     async ScriptError(nsString message, nsString sourceName, nsString sourceLine,

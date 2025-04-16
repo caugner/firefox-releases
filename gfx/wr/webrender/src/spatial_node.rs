@@ -27,6 +27,29 @@ pub enum SpatialNodeType {
     ReferenceFrame(ReferenceFrameInfo),
 }
 
+bitflags! {
+    /// Bits of pre-calculated information about a given spatial node.
+    pub struct SpatialNodeFlags : u32 {
+        /// True if this node is transformed by an invertible transform.  If not, display items
+        /// transformed by this node will not be displayed and display items not transformed by this
+        /// node will not be clipped by clips that are transformed by this node.
+        const IS_INVERTIBLE = 1;
+
+        /// Whether this specific node is currently being async zoomed.
+        /// Should be set when a SetIsTransformAsyncZooming FrameMsg is received.
+        const IS_ASYNC_ZOOMING = 2;
+
+        /// Whether this node or any of its ancestors is being pinch zoomed.
+        /// This is calculated in update(). This will be used to decide whether
+        /// to override corresponding picture's raster space as an optimisation.
+        const IS_ANCESTOR_OR_SELF_ZOOMING = 4;
+
+        /// If true, this spatial node and all parents are guaranteed to never introduce
+        /// a transformation. Effectively means that this node implies local space == world space.
+        const IS_IDENTITY = 8;
+    }
+}
+
 /// Contains information common among all types of SpatialTree nodes.
 #[derive(Clone, Debug)]
 pub struct SpatialNode {
@@ -60,19 +83,8 @@ pub struct SpatialNode {
     /// The type of this node and any data associated with that node type.
     pub node_type: SpatialNodeType,
 
-    /// True if this node is transformed by an invertible transform.  If not, display items
-    /// transformed by this node will not be displayed and display items not transformed by this
-    /// node will not be clipped by clips that are transformed by this node.
-    pub invertible: bool,
-
-    /// Whether this specific node is currently being async zoomed.
-    /// Should be set when a SetIsTransformAsyncZooming FrameMsg is received.
-    pub is_async_zooming: bool,
-
-    /// Whether this node or any of its ancestors is being pinch zoomed.
-    /// This is calculated in update(). This will be used to decide whether
-    /// to override corresponding picture's raster space as an optimisation.
-    pub is_ancestor_or_self_zooming: bool,
+    /// Various flags related to the current state of this spatial node.
+    pub flags: SpatialNodeFlags,
 }
 
 fn compute_offset_from(
@@ -132,7 +144,11 @@ impl SpatialNode {
         pipeline_id: PipelineId,
         parent_index: Option<SpatialNodeIndex>,
         node_type: SpatialNodeType,
+        is_identity: bool,
     ) -> Self {
+        let mut flags = SpatialNodeFlags::IS_INVERTIBLE;
+        flags.set(SpatialNodeFlags::IS_IDENTITY, is_identity);
+
         SpatialNode {
             viewport_transform: ScaleOffset::identity(),
             content_transform: ScaleOffset::identity(),
@@ -143,10 +159,32 @@ impl SpatialNode {
             children: Vec::new(),
             pipeline_id,
             node_type,
-            invertible: true,
-            is_async_zooming: false,
-            is_ancestor_or_self_zooming: false,
+            flags,
         }
+    }
+
+    pub fn is_invertible(&self) -> bool {
+        self.flags.contains(SpatialNodeFlags::IS_INVERTIBLE)
+    }
+
+    pub fn is_async_zooming(&self) -> bool {
+        self.flags.contains(SpatialNodeFlags::IS_ASYNC_ZOOMING)
+    }
+
+    pub fn set_async_zooming(&mut self, value: bool) {
+        self.flags.set(SpatialNodeFlags::IS_ASYNC_ZOOMING, value);
+    }
+
+    pub fn is_ancestor_or_self_zooming(&self) -> bool {
+        self.flags.contains(SpatialNodeFlags::IS_ANCESTOR_OR_SELF_ZOOMING)
+    }
+
+    pub fn set_is_ancestor_or_self_zooming(&mut self, value: bool) {
+        self.flags.set(SpatialNodeFlags::IS_ANCESTOR_OR_SELF_ZOOMING, value);
+    }
+
+    pub fn is_identity(&self) -> bool {
+        self.flags.contains(SpatialNodeFlags::IS_IDENTITY)
     }
 
     pub fn new_scroll_frame(
@@ -158,21 +196,34 @@ impl SpatialNode {
         scroll_sensitivity: ScrollSensitivity,
         frame_kind: ScrollFrameKind,
         external_scroll_offset: LayoutVector2D,
+        parent_is_identity: bool,
     ) -> Self {
+        let scrollable_size = LayoutSize::new(
+            (content_size.width - frame_rect.size.width).max(0.0),
+            (content_size.height - frame_rect.size.height).max(0.0)
+        );
+
+        // TODO(gw): We might want to consider an epsilon check here, but we
+        //           generally only care about the root pipeline scroll frames,
+        //           which are fixed as zero.
+        let is_identity = scrollable_size == LayoutSize::zero();
+
         let node_type = SpatialNodeType::ScrollFrame(ScrollFrameInfo::new(
                 *frame_rect,
                 scroll_sensitivity,
-                LayoutSize::new(
-                    (content_size.width - frame_rect.size.width).max(0.0),
-                    (content_size.height - frame_rect.size.height).max(0.0)
-                ),
+                scrollable_size,
                 external_id,
                 frame_kind,
                 external_scroll_offset,
             )
         );
 
-        Self::new(pipeline_id, Some(parent_index), node_type)
+        Self::new(
+            pipeline_id,
+            Some(parent_index),
+            node_type,
+            parent_is_identity && is_identity,
+        )
     }
 
     pub fn new_reference_frame(
@@ -182,7 +233,19 @@ impl SpatialNode {
         kind: ReferenceFrameKind,
         origin_in_parent_reference_frame: LayoutVector2D,
         pipeline_id: PipelineId,
+        parent_is_identity: bool,
     ) -> Self {
+        let is_identity = match source_transform {
+            PropertyBinding::Value(m) => {
+                // TODO(gw): We might want to consider an epsilon check here, but we
+                //           generally only care about the root pipeline reference frames,
+                //           which are fixed as zero.
+                m == LayoutTransform::identity()
+            }
+            PropertyBinding::Binding(..) => {
+                false
+            }
+        };
         let info = ReferenceFrameInfo {
             transform_style,
             source_transform,
@@ -190,7 +253,12 @@ impl SpatialNode {
             origin_in_parent_reference_frame,
             invertible: true,
         };
-        Self::new(pipeline_id, parent_index, SpatialNodeType::ReferenceFrame(info))
+        Self::new(
+            pipeline_id,
+            parent_index,
+            SpatialNodeType::ReferenceFrame(info),
+            parent_is_identity && is_identity,
+        )
     }
 
     pub fn new_sticky_frame(
@@ -198,7 +266,12 @@ impl SpatialNode {
         sticky_frame_info: StickyFrameInfo,
         pipeline_id: PipelineId,
     ) -> Self {
-        Self::new(pipeline_id, Some(parent_index), SpatialNodeType::StickyFrame(sticky_frame_info))
+        Self::new(
+            pipeline_id,
+            Some(parent_index),
+            SpatialNodeType::StickyFrame(sticky_frame_info),
+            false,
+        )
     }
 
     pub fn add_child(&mut self, child: SpatialNodeIndex) {
@@ -259,7 +332,7 @@ impl SpatialNode {
         &mut self,
         state: &TransformUpdateState,
     ) {
-        self.invertible = false;
+        self.flags.remove(SpatialNodeFlags::IS_INVERTIBLE);
         self.viewport_transform = ScaleOffset::identity();
         self.content_transform = ScaleOffset::identity();
         self.coordinate_system_id = state.current_coordinate_system_id;
@@ -289,10 +362,10 @@ impl SpatialNode {
         };
 
         let is_parent_zooming = match self.parent {
-            Some(parent) => previous_spatial_nodes[parent.0 as usize].is_ancestor_or_self_zooming,
+            Some(parent) => previous_spatial_nodes[parent.0 as usize].is_ancestor_or_self_zooming(),
             _ => false,
         };
-        self.is_ancestor_or_self_zooming = self.is_async_zooming | is_parent_zooming;
+        self.set_is_ancestor_or_self_zooming(self.is_async_zooming() || is_parent_zooming);
 
         // If this node is a reference frame, we check if it has a non-invertible matrix.
         // For non-reference-frames we assume that they will produce only additional
@@ -301,7 +374,7 @@ impl SpatialNode {
             SpatialNodeType::ReferenceFrame(info) if !info.invertible => {
                 self.mark_uninvertible(state);
             }
-            _ => self.invertible = true,
+            _ => self.flags.insert(SpatialNodeFlags::IS_INVERTIBLE),
         }
     }
 
@@ -337,7 +410,7 @@ impl SpatialNode {
                             // perspective matrix using the scroll offset.
                             source_transform
                                 .pre_translate(scroll_offset)
-                                .post_translate(-scroll_offset)
+                                .then_translate(-scroll_offset)
                         }
                         ReferenceFrameKind::Perspective { scrolling_relative_to: None } |
                         ReferenceFrameKind::Transform | ReferenceFrameKind::Zoom => source_transform,
@@ -352,7 +425,7 @@ impl SpatialNode {
                     // between our reference frame and this node. Finally, we also include
                     // whatever local transformation this reference frame provides.
                     let relative_transform = resolved_transform
-                        .post_translate(snap_offset(state.parent_accumulated_scroll_offset, state.coordinate_system_relative_scale_offset.scale, global_device_pixel_scale))
+                        .then_translate(snap_offset(state.parent_accumulated_scroll_offset, state.coordinate_system_relative_scale_offset.scale, global_device_pixel_scale))
                         .to_transform()
                         .with_destination::<LayoutPixel>();
 
@@ -389,9 +462,9 @@ impl SpatialNode {
                     if reset_cs_id {
                         // If we break 2D axis alignment or have a perspective component, we need to start a
                         // new incompatible coordinate system with which we cannot share clips without masking.
-                        let transform = state.coordinate_system_relative_scale_offset
-                            .to_transform()
-                            .pre_transform(&relative_transform);
+                        let transform = relative_transform.then(
+                            &state.coordinate_system_relative_scale_offset.to_transform()
+                        );
 
                         // Push that new coordinate system and record the new id.
                         let coord_system = {
@@ -400,7 +473,7 @@ impl SpatialNode {
                             if parent_system.should_flatten {
                                 cur_transform.flatten_z_output();
                             }
-                            let world_transform = cur_transform.post_transform(&parent_system.world_transform);
+                            let world_transform = cur_transform.then(&parent_system.world_transform);
                             let determinant = world_transform.determinant();
                             info.invertible = determinant != 0.0 && !determinant.is_nan();
 
@@ -425,7 +498,7 @@ impl SpatialNode {
                 self.coordinate_system_id = state.current_coordinate_system_id;
                 self.viewport_transform = cs_scale_offset;
                 self.content_transform = cs_scale_offset;
-                self.invertible = info.invertible;
+                self.flags.set(SpatialNodeFlags::IS_INVERTIBLE, info.invertible);
             }
             _ => {
                 // We calculate this here to avoid a double-borrow later.
@@ -572,7 +645,7 @@ impl SpatialNode {
     }
 
     pub fn prepare_state_for_children(&self, state: &mut TransformUpdateState) {
-        if !self.invertible {
+        if !self.is_invertible() {
             state.invertible = false;
             return;
         }
@@ -783,7 +856,14 @@ pub struct ScrollFrameInfo {
     /// pre-scrolled in their local coordinates.
     pub external_scroll_offset: LayoutVector2D,
 
-    /// The current offset of this scroll node.
+    /// The negated scroll offset of this scroll node. including the
+    /// pre-scrolled amount. If, for example, a scroll node was pre-scrolled
+    /// to y=10 (10 pixels down from the initial unscrolled position), then
+    /// `external_scroll_offset` would be (0,10), and this `offset` field would
+    /// be (0,-10). If WebRender is then asked to change the scroll position by
+    /// an additional 10 pixels (without changing the pre-scroll amount in the
+    /// display list), `external_scroll_offset` would remain at (0,10) and
+    /// `offset` would change to (0,-20).
     pub offset: LayoutVector2D,
 }
 
@@ -819,14 +899,9 @@ impl ScrollFrameInfo {
         self,
         old_scroll_info: &ScrollFrameInfo
     ) -> ScrollFrameInfo {
-        let offset =
-            old_scroll_info.offset +
-            self.external_scroll_offset -
-            old_scroll_info.external_scroll_offset;
-
         ScrollFrameInfo {
             viewport_rect: self.viewport_rect,
-            offset,
+            offset: old_scroll_info.offset,
             scroll_sensitivity: self.scroll_sensitivity,
             scrollable_size: self.scrollable_size,
             external_id: self.external_id,
@@ -902,7 +977,7 @@ fn test_cst_perspective_relative_scroll() {
     let mut cst = SpatialTree::new();
     let pipeline_id = PipelineId::dummy();
     let ext_scroll_id = ExternalScrollId(1, pipeline_id);
-    let transform = LayoutTransform::create_perspective(100.0);
+    let transform = LayoutTransform::perspective(100.0);
 
     let root = cst.add_reference_frame(
         None,

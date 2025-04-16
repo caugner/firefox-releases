@@ -23,6 +23,8 @@ class nsIURI;
 namespace mozilla {
 namespace dom {
 
+struct LoadingSessionHistoryInfo;
+class SessionHistoryEntry;
 class SHEntrySharedParentState;
 
 // SessionHistoryInfo stores session history data for a load. It can be sent
@@ -45,11 +47,17 @@ class SessionHistoryInfo {
     return mScrollRestorationIsManual;
   }
   const nsAString& GetTitle() { return mTitle; }
+  void SetTitle(const nsAString& aTitle) { mTitle = aTitle; }
+
+  void SetScrollRestorationIsManual(bool aIsManual) {
+    mScrollRestorationIsManual = aIsManual;
+  }
+
+  void SetCacheKey(uint32_t aCacheKey) { mCacheKey = aCacheKey; }
+
   nsIURI* GetURI() const { return mURI; }
 
   bool GetURIWasModified() const { return mURIWasModified; }
-
-  uint64_t Id() const { return mId; }
 
   nsILayoutHistoryState* GetLayoutHistoryState() { return mLayoutHistoryState; }
 
@@ -59,7 +67,9 @@ class SessionHistoryInfo {
 
  private:
   friend class SessionHistoryEntry;
-  friend struct mozilla::ipc::IPDLParamTraits<SessionHistoryInfo>;
+  friend struct mozilla::ipc::IPDLParamTraits<LoadingSessionHistoryInfo>;
+
+  void MaybeUpdateTitleFromURI();
 
   nsCOMPtr<nsIURI> mURI;
   nsCOMPtr<nsIURI> mOriginalURI;
@@ -78,7 +88,9 @@ class SessionHistoryInfo {
   // SHEntrySharedParentState::mLayoutHistoryState
   nsCOMPtr<nsILayoutHistoryState> mLayoutHistoryState;
 
-  uint64_t mId = 0;
+  // mCacheKey is handled similar way to mLayoutHistoryState.
+  uint32_t mCacheKey = 0;
+
   bool mLoadReplace = false;
   bool mURIWasModified = false;
   bool mIsSrcdocEntry = false;
@@ -86,27 +98,67 @@ class SessionHistoryInfo {
   bool mPersist = false;
 };
 
+struct LoadingSessionHistoryInfo {
+  LoadingSessionHistoryInfo() = default;
+  explicit LoadingSessionHistoryInfo(SessionHistoryEntry* aEntry);
+
+  SessionHistoryInfo mInfo;
+
+  uint64_t mLoadId = 0;
+
+  // The following three member variables are used to inform about a load from
+  // the session history. The session-history-in-child approach has just
+  // an nsISHEntry in the nsDocShellLoadState and access to the nsISHistory,
+  // but session-history-in-parent needs to pass needed information explicitly
+  // to the relevant child process.
+  bool mIsLoadFromSessionHistory = false;
+  // mRequestedIndex and mSessionHistoryLength are relevant
+  // only if mIsLoadFromSessionHistory is true.
+  int32_t mRequestedIndex = -1;
+  int32_t mSessionHistoryLength = 0;
+};
+
 // SessionHistoryEntry is used to store session history data in the parent
 // process. It holds a SessionHistoryInfo, some state shared amongst multiple
 // SessionHistoryEntries, a parent and children.
+#define NS_SESSIONHISTORYENTRY_IID                   \
+  {                                                  \
+    0x5b66a244, 0x8cec, 0x4caa, {                    \
+      0xaa, 0x0a, 0x78, 0x92, 0xfd, 0x17, 0xa6, 0x67 \
+    }                                                \
+  }
+
 class SessionHistoryEntry : public nsISHEntry {
  public:
   SessionHistoryEntry(nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
-  explicit SessionHistoryEntry(SessionHistoryInfo* aInfo);
+  SessionHistoryEntry();
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSISHENTRY
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_SESSIONHISTORYENTRY_IID)
 
   const SessionHistoryInfo& Info() const { return *mInfo; }
 
-  // Get an entry based on SessionHistoryInfo's Id. Parent process only.
-  static SessionHistoryEntry* GetByInfoId(uint64_t aId);
+  void AddChild(SessionHistoryEntry* aChild, int32_t aOffset,
+                bool aUseRemoteSubframes);
+  void RemoveChild(SessionHistoryEntry* aChild);
+  // Finds the child with the same docshell ID as aNewChild, replaces it with
+  // aNewChild and returns true. If there is no child with the same docshell ID
+  // then it returns false.
+  bool ReplaceChild(SessionHistoryEntry* aNewChild);
 
-  static void UpdateLayoutHistoryState(uint64_t aSessionHistoryEntryID,
-                                       nsILayoutHistoryState* aState);
+  // Get an entry based on LoadingSessionHistoryInfo's mLoadId. Parent process
+  // only.
+  static SessionHistoryEntry* GetByLoadId(uint64_t aLoadId);
+  static void RemoveLoadId(uint64_t aLoadId);
+
+  static void MaybeSynchronizeSharedStateToInfo(nsISHEntry* aEntry);
 
  private:
+  friend struct LoadingSessionHistoryInfo;
   virtual ~SessionHistoryEntry();
+
+  const nsID& DocshellID() const;
 
   UniquePtr<SessionHistoryInfo> mInfo;
   RefPtr<SHEntrySharedParentState> mSharedInfo;
@@ -114,20 +166,22 @@ class SessionHistoryEntry : public nsISHEntry {
   uint32_t mID;
   nsTArray<RefPtr<SessionHistoryEntry>> mChildren;
 
-  static nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>* sInfoIdToEntry;
+  static nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>* sLoadIdToEntry;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(SessionHistoryEntry, NS_SESSIONHISTORYENTRY_IID)
 
 }  // namespace dom
 
 namespace ipc {
 
-// Allow sending SessionHistoryInfo objects over IPC.
+// Allow sending LoadingSessionHistoryInfo objects over IPC.
 template <>
-struct IPDLParamTraits<dom::SessionHistoryInfo> {
+struct IPDLParamTraits<dom::LoadingSessionHistoryInfo> {
   static void Write(IPC::Message* aMsg, IProtocol* aActor,
-                    const dom::SessionHistoryInfo& aParam);
+                    const dom::LoadingSessionHistoryInfo& aParam);
   static bool Read(const IPC::Message* aMsg, PickleIterator* aIter,
-                   IProtocol* aActor, dom::SessionHistoryInfo* aResult);
+                   IProtocol* aActor, dom::LoadingSessionHistoryInfo* aResult);
 };
 
 // Allow sending nsILayoutHistoryState objects over IPC.

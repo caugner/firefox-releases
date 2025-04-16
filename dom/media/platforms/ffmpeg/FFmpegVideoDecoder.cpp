@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "FFmpegVideoDecoder.h"
+
 #include "FFmpegLog.h"
 #include "ImageContainer.h"
 #include "MP4Decoder.h"
@@ -12,10 +13,10 @@
 #include "VPXDecoder.h"
 #include "mozilla/layers/KnowsCompositor.h"
 #ifdef MOZ_WAYLAND_USE_VAAPI
+#  include "H264.h"
 #  include "gfxPlatformGtk.h"
 #  include "mozilla/layers/DMABUFSurfaceImage.h"
 #  include "mozilla/widget/DMABufLibWrapper.h"
-#  include "H264.h"
 #endif
 
 #include "libavutil/pixfmt.h"
@@ -337,10 +338,10 @@ void FFmpegVideoDecoder<LIBAV_VER>::PtsCorrectionContext::Reset() {
 }
 
 FFmpegVideoDecoder<LIBAV_VER>::FFmpegVideoDecoder(
-    FFmpegLibWrapper* aLib, TaskQueue* aTaskQueue, const VideoInfo& aConfig,
+    FFmpegLibWrapper* aLib, const VideoInfo& aConfig,
     KnowsCompositor* aAllocator, ImageContainer* aImageContainer,
     bool aLowLatency, bool aDisableHardwareDecoding)
-    : FFmpegDataDecoder(aLib, aTaskQueue, GetCodecId(aConfig.mMimeType)),
+    : FFmpegDataDecoder(aLib, GetCodecId(aConfig.mMimeType)),
 #ifdef MOZ_WAYLAND_USE_VAAPI
       mVAAPIDeviceContext(nullptr),
       mDisableHardwareDecoding(aDisableHardwareDecoding),
@@ -435,12 +436,16 @@ void FFmpegVideoDecoder<LIBAV_VER>::InitVAAPICodecContext() {
   } else {
     mCodecContext->extra_hw_frames = EXTRA_HW_FRAMES;
   }
+  if (mLowLatency) {
+    mCodecContext->flags |= AV_CODEC_FLAG_LOW_DELAY;
+  }
 }
 #endif
 
 MediaResult FFmpegVideoDecoder<LIBAV_VER>::DoDecode(
     MediaRawData* aSample, uint8_t* aData, int aSize, bool* aGotFrame,
     MediaDataDecoder::DecodedData& aResults) {
+  MOZ_ASSERT(mTaskQueue->IsOnCurrentThread());
   AVPacket packet;
   mLib->av_init_packet(&packet);
 
@@ -586,7 +591,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::DoDecode(
 #endif
 }
 
-gfx::YUVColorSpace FFmpegVideoDecoder<LIBAV_VER>::GetFrameColorSpace() {
+gfx::YUVColorSpace FFmpegVideoDecoder<LIBAV_VER>::GetFrameColorSpace() const {
   if (mLib->av_frame_get_colorspace) {
     switch (mLib->av_frame_get_colorspace(mFrame)) {
 #if LIBAVCODEC_VERSION_MAJOR >= 55
@@ -608,7 +613,7 @@ gfx::YUVColorSpace FFmpegVideoDecoder<LIBAV_VER>::GetFrameColorSpace() {
 
 MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
     int64_t aOffset, int64_t aPts, int64_t aDuration,
-    MediaDataDecoder::DecodedData& aResults) {
+    MediaDataDecoder::DecodedData& aResults) const {
   FFMPEG_LOG("Got one frame output with pts=%" PRId64 " dts=%" PRId64
              " duration=%" PRId64 " opaque=%" PRId64,
              aPts, mFrame->pkt_dts, aDuration, mCodecContext->reordered_opaque);
@@ -777,14 +782,15 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageDMABuf(
                          RESULT_DETAIL("Unable to get DMABufSurfaceYUV"));
     }
 
-#  ifdef MOZ_LOGGING
-    static int uid = 0;
-    surface->SetUID(++uid);
-    FFMPEG_LOG("Created new DMABufSurface UID = %d", uid);
-#  endif
+    FFMPEG_LOG("Created new DMABufSurface UID = %d", surface->GetUID());
     mDMABufSurfaces.EmplaceBack(surface, mLib);
     surfaceWrapper = &(mDMABufSurfaces[mDMABufSurfaces.Length() - 1]);
   } else {
+    // Release VAAPI surface data before we reuse it.
+    if (mVAAPIDeviceContext) {
+      surfaceWrapper->ReleaseVAAPIData();
+    }
+
     surface = surfaceWrapper->GetDMABufSurface();
     bool ret;
 
@@ -827,6 +833,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageDMABuf(
 
 RefPtr<MediaDataDecoder::FlushPromise>
 FFmpegVideoDecoder<LIBAV_VER>::ProcessFlush() {
+  MOZ_ASSERT(mTaskQueue->IsOnCurrentThread());
   mPtsContext.Reset();
   mDurationMap.Clear();
   return FFmpegDataDecoder::ProcessFlush();
@@ -858,6 +865,7 @@ AVCodecID FFmpegVideoDecoder<LIBAV_VER>::GetCodecId(
 }
 
 void FFmpegVideoDecoder<LIBAV_VER>::ProcessShutdown() {
+  MOZ_ASSERT(mTaskQueue->IsOnCurrentThread());
 #ifdef MOZ_WAYLAND_USE_VAAPI
   ReleaseDMABufSurfaces();
   if (mVAAPIDeviceContext) {

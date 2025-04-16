@@ -33,6 +33,7 @@ var { assert } = DevToolsUtils;
 var { TabSources } = require("devtools/server/actors/utils/TabSources");
 var makeDebugger = require("devtools/server/actors/utils/make-debugger");
 const InspectorUtils = require("InspectorUtils");
+const Targets = require("devtools/server/actors/targets/index");
 const { TargetActorRegistry } = ChromeUtils.import(
   "resource://devtools/server/actors/targets/target-actor-registry.jsm"
 );
@@ -51,13 +52,7 @@ const Resources = require("devtools/server/actors/resources/index");
 
 loader.lazyRequireGetter(
   this,
-  "ThreadActor",
-  "devtools/server/actors/thread",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "unwrapDebuggerObjectGlobal",
+  ["ThreadActor", "unwrapDebuggerObjectGlobal"],
   "devtools/server/actors/thread",
   true
 );
@@ -71,19 +66,13 @@ loader.lazyImporter(this, "ExtensionContent", EXTENSION_CONTENT_JSM);
 
 loader.lazyRequireGetter(
   this,
-  "StyleSheetActor",
-  "devtools/server/actors/stylesheets",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "getSheetText",
+  ["StyleSheetActor", "getSheetText"],
   "devtools/server/actors/stylesheets",
   true
 );
 
 function getWindowID(window) {
-  return window.windowUtils.currentInnerWindowID;
+  return window.windowGlobalChild.innerWindowId;
 }
 
 function getDocShellChromeEventHandler(docShell) {
@@ -123,7 +112,7 @@ exports.getChildDocShells = getChildDocShells;
  */
 
 function getInnerId(window) {
-  return window.windowUtils.currentInnerWindowID;
+  return window.windowGlobalChild.innerWindowId;
 }
 
 const browsingContextTargetPrototype = {
@@ -311,6 +300,8 @@ const browsingContextTargetPrototype = {
       this
     );
     this.notifyResourceAvailable = this.notifyResourceAvailable.bind(this);
+    this.notifyResourceDestroyed = this.notifyResourceDestroyed.bind(this);
+    this.notifyResourceUpdated = this.notifyResourceUpdated.bind(this);
 
     TargetActorRegistry.registerTargetActor(this);
   },
@@ -324,11 +315,11 @@ const browsingContextTargetPrototype = {
    * which is a JSM and doesn't have a reference to a DevTools Loader.
    */
   watchTargetResources(resourceTypes) {
-    return Resources.watchTargetResources(this, resourceTypes);
+    return Resources.watchResources(this, resourceTypes);
   },
 
   unwatchTargetResources(resourceTypes) {
-    return Resources.unwatchTargetResources(this, resourceTypes);
+    return Resources.unwatchResources(this, resourceTypes);
   },
 
   /**
@@ -339,11 +330,26 @@ const browsingContextTargetPrototype = {
    *        It may contain actor IDs, actor forms, to be manually marshalled by the client.
    */
   notifyResourceAvailable(resources) {
-    if (!this.actorID) {
+    this._emitResourcesForm("resource-available-form", resources);
+  },
+
+  notifyResourceDestroyed(resources) {
+    this._emitResourcesForm("resource-destroyed-form", resources);
+  },
+
+  notifyResourceUpdated(resources) {
+    this._emitResourcesForm("resource-updated-form", resources);
+  },
+
+  /**
+   * Wrapper around emit for resource forms to bail early after destroy.
+   */
+  _emitResourcesForm(name, resources) {
+    if (this.isDestroyed()) {
       // Don't try to emit if the actor was destroyed.
       return;
     }
-    this.emit("resource-available-form", resources);
+    this.emit(name, resources);
   },
 
   traits: null,
@@ -380,7 +386,7 @@ const browsingContextTargetPrototype = {
    * Try to locate the console actor if it exists.
    */
   get _consoleActor() {
-    if (this.exited || !this.actorID) {
+    if (this.exited || this.isDestroyed()) {
       return null;
     }
     const form = this.form();
@@ -389,10 +395,7 @@ const browsingContextTargetPrototype = {
 
   _targetScopedActorPool: null,
 
-  /**
-   * A constant prefix that will be used to form the actor ID by the server.
-   */
-  typeName: "browsingContextTarget",
+  targetType: Targets.TYPES.FRAME,
 
   /**
    * An object on which listen for DOMWindowCreated and pageshow events.
@@ -430,8 +433,8 @@ const browsingContextTargetPrototype = {
   },
 
   get outerWindowID() {
-    if (this.window) {
-      return this.window.windowUtils.outerWindowID;
+    if (this.docShell) {
+      return this.docShell.outerWindowID;
     }
     return null;
   },
@@ -893,7 +896,7 @@ const browsingContextTargetPrototype = {
       .QueryInterface(Ci.nsIInterfaceRequestor)
       .getInterface(Ci.nsIWebProgress);
     const window = webProgress.DOMWindow;
-    const id = window.windowUtils.outerWindowID;
+    const id = docShell.outerWindowID;
     let parentID = undefined;
     // Ignore the parent of the original document on non-e10s firefox,
     // as we get the xul window as parent and don't care about it.
@@ -905,7 +908,7 @@ const browsingContextTargetPrototype = {
       window.parent != window &&
       window != this._originalWindow
     ) {
-      parentID = window.parent.windowUtils.outerWindowID;
+      parentID = window.parent.docShell.outerWindowID;
     }
 
     return {
@@ -952,7 +955,7 @@ const browsingContextTargetPrototype = {
     }
 
     webProgress = webProgress.QueryInterface(Ci.nsIWebProgress);
-    const id = webProgress.DOMWindow.windowUtils.outerWindowID;
+    const id = webProgress.DOMWindow.docShell.outerWindowID;
     this.emit("frameUpdate", {
       frames: [
         {

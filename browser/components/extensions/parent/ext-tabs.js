@@ -1256,32 +1256,17 @@ this.tabs = class extends ExtensionAPI {
         print() {
           let activeTab = getTabOrActive(null);
           let { PrintUtils } = activeTab.ownerGlobal;
-          PrintUtils.printWindow(activeTab.linkedBrowser.browsingContext);
+          PrintUtils.startPrintWindow(activeTab.linkedBrowser.browsingContext);
         },
 
-        printPreview() {
+        async printPreview() {
           let activeTab = getTabOrActive(null);
           let { PrintUtils, PrintPreviewListener } = activeTab.ownerGlobal;
-
-          return new Promise((resolve, reject) => {
-            let ppBrowser = PrintUtils.shouldSimplify
-              ? PrintPreviewListener.getSimplifiedPrintPreviewBrowser()
-              : PrintPreviewListener.getPrintPreviewBrowser();
-
-            let mm = ppBrowser.messageManager;
-
-            let onEntered = message => {
-              mm.removeMessageListener("Printing:Preview:Entered", onEntered);
-              if (message.data.failed) {
-                reject({ message: "Print preview failed" });
-              }
-              resolve();
-            };
-
-            mm.addMessageListener("Printing:Preview:Entered", onEntered);
-
-            PrintUtils.printPreview(PrintPreviewListener);
-          });
+          try {
+            await PrintUtils.printPreview(PrintPreviewListener);
+          } catch (ex) {
+            return Promise.reject({ message: "Print preview failed" });
+          }
         },
 
         saveAsPDF(pageSettings) {
@@ -1292,11 +1277,6 @@ this.tabs = class extends ExtensionAPI {
           let title = strBundle.GetStringFromName(
             "saveaspdf.saveasdialog.title"
           );
-
-          if (AppConstants.platform === "macosx") {
-            return Promise.reject({ message: "Not supported on Mac OS X" });
-          }
-
           let filename;
           if (
             pageSettings.toFileName !== null &&

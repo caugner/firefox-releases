@@ -19,6 +19,7 @@
 #include "gc/MaybeRooted.h"
 #include "jit/BaselineIC.h"
 #include "js/CharacterEncoding.h"
+#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit{,DontReport}
 #include "js/Result.h"
 #include "js/Value.h"
 #include "util/Memory.h"
@@ -128,7 +129,8 @@ bool ObjectElements::MakeElementsCopyOnWrite(JSContext* cx, NativeObject* obj) {
 }
 
 /* static */
-bool ObjectElements::PreventExtensions(JSContext* cx, NativeObject* obj) {
+bool ObjectElements::PrepareForPreventExtensions(JSContext* cx,
+                                                 NativeObject* obj) {
   if (!obj->maybeCopyElementsForWrite(cx)) {
     return false;
   }
@@ -142,6 +144,18 @@ bool ObjectElements::PreventExtensions(JSContext* cx, NativeObject* obj) {
   MOZ_ASSERT(obj->getElementsHeader()->numShiftedElements() == 0);
 
   return true;
+}
+
+/* static */
+void ObjectElements::PreventExtensions(NativeObject* obj) {
+  MOZ_ASSERT(!obj->denseElementsAreCopyOnWrite());
+  MOZ_ASSERT(!obj->isExtensible());
+  MOZ_ASSERT(obj->getElementsHeader()->numShiftedElements() == 0);
+  MOZ_ASSERT(obj->getDenseInitializedLength() == obj->getDenseCapacity());
+
+  if (!obj->hasEmptyElements()) {
+    obj->getElementsHeader()->setNotExtensible();
+  }
 }
 
 /* static */
@@ -583,6 +597,14 @@ DenseElementResult NativeObject::maybeDensifySparseElements(
   }
 
   obj->ensureDenseInitializedLength(cx, newInitializedLength, 0);
+
+  if (ObjectRealm::get(obj).objectMaybeInIteration(obj)) {
+    // Mark the densified elements as maybe-in-iteration. See also the comment
+    // in GetIterator.
+    if (!obj->markDenseElementsMaybeInIteration(cx)) {
+      return DenseElementResult::Failure;
+    }
+  }
 
   RootedValue value(cx);
 
@@ -2294,7 +2316,8 @@ static MOZ_ALWAYS_INLINE bool GetExistingProperty(
     return true;
   }
 
-  {
+  if (!jit::JitOptions.warpBuilder) {
+    // Set the accessed-getter flag for IonBuilder.
     jsbytecode* pc;
     JSScript* script = cx->currentScript(&pc);
     if (script && script->hasJitScript()) {

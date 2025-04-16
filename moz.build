@@ -74,6 +74,9 @@ with Files("**/*.rst"):
 with Files("**/*.md"):
     SCHEDULES.inclusive += ['docs']
 
+with Files("**/*.rs"):
+    SCHEDULES.inclusive += ['rusttests']
+
 with Files("**/reftest.list"):
     SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
     SCHEDULES.exclusive = ['reftest']
@@ -149,6 +152,7 @@ if CONFIG['ENABLE_CLANG_PLUGIN']:
     DIRS += ['build/clang-plugin']
 
 DIRS += [
+    'build',
     'config',
     'python',
     'testing/mozbase',
@@ -175,10 +179,6 @@ if not CONFIG['JS_STANDALONE'] or not CONFIG['MOZ_BUILD_APP']:
 
     GENERATED_FILES['buildid.h'].script = 'build/variables.py:buildid_header'
     GENERATED_FILES['source-repo.h'].script = 'build/variables.py:source_repo_header'
-
-    DIRS += [
-        'build',
-    ]
 
 DIRS += [
     'mfbt',

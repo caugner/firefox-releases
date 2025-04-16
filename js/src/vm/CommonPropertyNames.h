@@ -183,6 +183,8 @@
   MACRO(GeneratorThrow, GeneratorThrow, "GeneratorThrow")                      \
   MACRO(get, get, "get")                                                       \
   MACRO(GetAggregateError, GetAggregateError, "GetAggregateError")             \
+  MACRO(GetBuiltinConstructor, GetBuiltinConstructor, "GetBuiltinConstructor") \
+  MACRO(GetBuiltinPrototype, GetBuiltinPrototype, "GetBuiltinPrototype")       \
   MACRO(GetInternalError, GetInternalError, "GetInternalError")                \
   MACRO(getBigInt64, getBigInt64, "getBigInt64")                               \
   MACRO(getBigUint64, getBigUint64, "getBigUint64")                            \
@@ -313,6 +315,7 @@
   MACRO(NFKD, NFKD, "NFKD")                                                    \
   MACRO(noFilename, noFilename, "noFilename")                                  \
   MACRO(nonincrementalReason, nonincrementalReason, "nonincrementalReason")    \
+  MACRO(NoPrivateGetter, NoPrivateGetter, "NoPrivateGetter")                   \
   MACRO(noStack, noStack, "noStack")                                           \
   MACRO(notation, notation, "notation")                                        \
   MACRO(notes, notes, "notes")                                                 \
@@ -471,6 +474,7 @@
         "UnsafeGetStringFromReservedSlot")                                     \
   MACRO(UnsafeGetBooleanFromReservedSlot, UnsafeGetBooleanFromReservedSlot,    \
         "UnsafeGetBooleanFromReservedSlot")                                    \
+  MACRO(UnsafeSetReservedSlot, UnsafeSetReservedSlot, "UnsafeSetReservedSlot") \
   MACRO(unsized, unsized, "unsized")                                           \
   MACRO(unwatch, unwatch, "unwatch")                                           \
   MACRO(url, url, "url")                                                       \

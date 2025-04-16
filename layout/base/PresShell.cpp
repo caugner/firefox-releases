@@ -51,6 +51,7 @@
 #include "nsIContent.h"
 #include "mozilla/dom/BrowserBridgeChild.h"
 #include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/PopupBlocker.h"
@@ -120,7 +121,7 @@
 #include "nsStyleSheetService.h"
 #include "gfxUtils.h"
 #include "mozilla/SMILAnimationController.h"
-#include "mozilla/SVGContentUtils.h"
+#include "mozilla/dom/SVGAnimationElement.h"
 #include "mozilla/SVGObserverUtils.h"
 #include "mozilla/SVGFragmentIdentifier.h"
 #include "nsFrameSelection.h"
@@ -1061,7 +1062,7 @@ void PresShell::Init(nsPresContext* aPresContext, nsViewManager* aViewManager) {
     mZoomConstraintsClient->Init(this, mDocument);
 
     // We call this to create mMobileViewportManager, if it is needed.
-    UpdateViewportOverridden(false);
+    MaybeRecreateMobileViewportManager(false);
   }
 
   if (nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell()) {
@@ -2567,6 +2568,10 @@ void PresShell::EndLoad(Document* aDocument) {
   mDocumentLoading = false;
 }
 
+bool PresShell::IsLayoutFlushObserver() {
+  return GetPresContext()->RefreshDriver()->IsLayoutFlushObserver(this);
+}
+
 void PresShell::LoadComplete() {
   gfxTextPerfMetrics* tp = nullptr;
   if (mPresContext) {
@@ -3210,8 +3215,9 @@ nsresult PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll,
     }
 
     // If the target is an animation element, activate the animation
-    if (content->IsNodeOfType(nsINode::eANIMATION)) {
-      SVGContentUtils::ActivateByHyperlink(content.get());
+    nsCOMPtr<SVGAnimationElement> animationElement = do_QueryInterface(content);
+    if (animationElement) {
+      animationElement->ActivateByHyperlink();
     }
   } else {
     rv = NS_ERROR_FAILURE;
@@ -5818,8 +5824,8 @@ void PresShell::RebuildApproximateFrameVisibilityDisplayList(
 
   // Remove the entries of the mApproximatelyVisibleFrames hashtable and put
   // them in oldApproxVisibleFrames.
-  VisibleFrames oldApproximatelyVisibleFrames;
-  mApproximatelyVisibleFrames.SwapElements(oldApproximatelyVisibleFrames);
+  VisibleFrames oldApproximatelyVisibleFrames =
+      std::move(mApproximatelyVisibleFrames);
 
   MarkFramesInListApproximatelyVisible(aList);
 
@@ -5970,8 +5976,8 @@ void PresShell::RebuildApproximateFrameVisibility(
 
   // Remove the entries of the mApproximatelyVisibleFrames hashtable and put
   // them in oldApproximatelyVisibleFrames.
-  VisibleFrames oldApproximatelyVisibleFrames;
-  mApproximatelyVisibleFrames.SwapElements(oldApproximatelyVisibleFrames);
+  VisibleFrames oldApproximatelyVisibleFrames =
+      std::move(mApproximatelyVisibleFrames);
 
   nsRect vis(nsPoint(0, 0), rootFrame->GetSize());
   if (aRect) {
@@ -6253,6 +6259,9 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   // to configure the viewport and we only want to do that when we have
   // real content to paint. See Bug 798245
   if (mIsFirstPaint && !mPaintingSuppressed) {
+    MOZ_LOG(gLog, LogLevel::Debug,
+            ("PresShell::Paint, first paint, this=%p", this));
+
     layerManager->SetIsFirstPaint();
     mIsFirstPaint = false;
   }
@@ -6547,21 +6556,38 @@ already_AddRefed<nsIContent> PresShell::GetFocusedContentInOurWindow() const {
 }
 
 already_AddRefed<PresShell> PresShell::GetParentPresShellForEventHandling() {
-  NS_ENSURE_TRUE(mPresContext, nullptr);
+  if (!mPresContext) {
+    return nullptr;
+  }
 
   // Now, find the parent pres shell and send the event there
-  nsCOMPtr<nsIDocShellTreeItem> treeItem = mPresContext->GetDocShell();
-  if (!treeItem) {
-    treeItem = mForwardingContainer.get();
+  RefPtr<nsDocShell> docShell = mPresContext->GetDocShell();
+  if (!docShell) {
+    docShell = mForwardingContainer.get();
   }
 
   // Might have gone away, or never been around to start with
-  NS_ENSURE_TRUE(treeItem, nullptr);
+  if (!docShell) {
+    return nullptr;
+  }
 
-  nsCOMPtr<nsIDocShellTreeItem> parentTreeItem;
-  treeItem->GetInProcessParent(getter_AddRefs(parentTreeItem));
-  nsCOMPtr<nsIDocShell> parentDocShell = do_QueryInterface(parentTreeItem);
-  NS_ENSURE_TRUE(parentDocShell && treeItem != parentTreeItem, nullptr);
+  BrowsingContext* bc = docShell->GetBrowsingContext();
+  if (!bc) {
+    return nullptr;
+  }
+
+  RefPtr<BrowsingContext> parentBC;
+  if (XRE_IsParentProcess()) {
+    parentBC = bc->Canonical()->GetParentCrossChromeBoundary();
+  } else {
+    parentBC = bc->GetParent();
+  }
+
+  RefPtr<nsIDocShell> parentDocShell =
+      parentBC ? parentBC->GetDocShell() : nullptr;
+  if (!parentDocShell) {
+    return nullptr;
+  }
 
   RefPtr<PresShell> parentPresShell = parentDocShell->GetPresShell();
   return parentPresShell.forget();
@@ -6650,6 +6676,14 @@ void PresShell::RecordMouseLocation(WidgetGUIEvent* aEvent) {
     printf("[ps=%p]got mouse exit for %p\n", this, aEvent->mWidget);
     printf("[ps=%p]clearing mouse location\n", this);
 #endif
+  }
+}
+
+void PresShell::nsSynthMouseMoveEvent::Revoke() {
+  if (mPresShell) {
+    mPresShell->GetPresContext()->RefreshDriver()->RemoveRefreshObserver(
+        this, FlushType::Display);
+    mPresShell = nullptr;
   }
 }
 
@@ -10914,7 +10948,7 @@ Maybe<MobileViewportManager::ManagerType> UseMobileViewportManager(
   return Nothing();
 }
 
-void PresShell::UpdateViewportOverridden(bool aAfterInitialization) {
+void PresShell::MaybeRecreateMobileViewportManager(bool aAfterInitialization) {
   // Determine if we require a MobileViewportManager, and what kind if so. We
   // need one any time we allow resolution zooming for a document, and any time
   // we want to obey <meta name="viewport"> tags for it.
@@ -10928,6 +10962,7 @@ void PresShell::UpdateViewportOverridden(bool aAfterInitialization) {
   if (mvmType && mMobileViewportManager &&
       *mvmType == mMobileViewportManager->GetManagerType()) {
     // We need one and we have one of the correct type, so we're done.
+    return;
   }
 
   if (mMobileViewportManager) {
@@ -10987,7 +11022,7 @@ void PresShell::UpdateViewportOverridden(bool aAfterInitialization) {
 }
 
 bool PresShell::UsesMobileViewportSizing() const {
-  return GetIsViewportOverridden() &&
+  return mMobileViewportManager != nullptr &&
          nsLayoutUtils::ShouldHandleMetaViewport(mDocument);
 }
 

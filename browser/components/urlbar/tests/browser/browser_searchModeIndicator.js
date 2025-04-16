@@ -12,6 +12,14 @@ const TEST_QUERY = "test string";
 const DEFAULT_ENGINE_NAME = "Test";
 const SUGGESTIONS_ENGINE_NAME = "searchSuggestionEngine.xml";
 
+// These need to have different domains because otherwise new tab and/or
+// activity stream collapses them.
+const TOP_SITES_URLS = [
+  "http://top-site-0.com/",
+  "http://top-site-1.com/",
+  "http://top-site-2.com/",
+];
+
 let suggestionsEngine;
 let defaultEngine;
 
@@ -35,87 +43,33 @@ add_task(async function setup() {
     await Services.search.removeEngine(defaultEngine);
   });
 
-  SpecialPowers.pushPrefEnv({
+  // Set our top sites.
+  await PlacesUtils.history.clear();
+  await PlacesUtils.bookmarks.eraseEverything();
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      [
+        "browser.newtabpage.activity-stream.default.sites",
+        TOP_SITES_URLS.join(","),
+      ],
+    ],
+  });
+  await updateTopSites(sites =>
+    ObjectUtils.deepEqual(
+      sites.map(s => s.url),
+      TOP_SITES_URLS
+    )
+  );
+
+  await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.search.separatePrivateDefault.ui.enabled", false],
       ["browser.urlbar.update2", true],
+      ["browser.urlbar.update2.localOneOffs", true],
       ["browser.urlbar.update2.oneOffsRefresh", true],
     ],
   });
 });
-
-/**
- * Enters search mode by clicking the first one-off.
- * @param {object} window
- */
-async function enterSearchMode(window) {
-  let oneOffs = UrlbarTestUtils.getOneOffSearchButtons(
-    window
-  ).getSelectableButtons(true);
-  let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
-  EventUtils.synthesizeMouseAtCenter(oneOffs[0], {});
-  await searchPromise;
-  Assert.ok(UrlbarTestUtils.isPopupOpen(window), "Urlbar view is still open.");
-  Assert.ok(
-    UrlbarTestUtils.isInSearchMode(window, oneOffs[0].engine.name),
-    "The Urlbar is in search mode."
-  );
-}
-
-/**
- * Exits search mode.
- * @param {object} window
- * @param {boolean} options.backspace
- *   Exits search mode by backspacing at the beginning of the search string.
- * @param {boolean} options.clickClose
- *   Exits search mode by clicking the close button on the search mode
- *   indicator.
- * @param {boolean} [waitForSearch]
- *   Whether the test should wait for a search after exiting search mode.
- *   Defaults to true.
- * @note One and only one of `backspace` and `clickClose` should be passed
- *       as true.
- */
-async function exitSearchMode(
-  window,
-  { backspace, clickClose, waitForSearch = true }
-) {
-  if (backspace) {
-    let urlbarValue = gURLBar.value;
-    gURLBar.selectionStart = gURLBar.selectionEnd = 0;
-    if (waitForSearch) {
-      let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
-      EventUtils.synthesizeKey("KEY_Backspace");
-      await searchPromise;
-    } else {
-      EventUtils.synthesizeKey("KEY_Backspace");
-    }
-    Assert.equal(gURLBar.value, urlbarValue, "Urlbar value hasn't changed.");
-    Assert.ok(
-      !UrlbarTestUtils.isInSearchMode(window),
-      "The Urlbar is no longer in search mode."
-    );
-  } else if (clickClose) {
-    // We need to hover the indicator to make the close button clickable in the
-    // test.
-    let indicator = gURLBar.querySelector("#urlbar-search-mode-indicator");
-    EventUtils.synthesizeMouseAtCenter(indicator, { type: "mouseover" });
-    let closeButton = gURLBar.querySelector(
-      "#urlbar-search-mode-indicator-close"
-    );
-    if (waitForSearch) {
-      let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
-      EventUtils.synthesizeMouseAtCenter(closeButton, {});
-      await searchPromise;
-    } else {
-      EventUtils.synthesizeMouseAtCenter(closeButton, {});
-    }
-    Assert.ok(
-      !UrlbarTestUtils.isInSearchMode(window),
-      "The Urlbar is no longer in search mode."
-    );
-  }
-}
 
 async function verifySearchModeResultsAdded(window) {
   Assert.equal(
@@ -156,6 +110,22 @@ async function verifySearchModeResultsRemoved(window) {
   );
 }
 
+async function verifyTopSitesResultsAdded(window) {
+  Assert.equal(
+    UrlbarTestUtils.getResultCount(window),
+    TOP_SITES_URLS.length,
+    "Expected number of top sites results"
+  );
+  for (let i = 0; i < TOP_SITES_URLS; i++) {
+    let result = await UrlbarTestUtils.getDetailsOfResultAt(window, i);
+    Assert.equal(
+      result.url,
+      TOP_SITES_URLS[i],
+      `Expected top sites result URL at index ${i}`
+    );
+  }
+}
+
 // Tests that the indicator is removed when backspacing at the beginning of
 // the search string.
 add_task(async function backspace() {
@@ -164,51 +134,50 @@ add_task(async function backspace() {
     window,
     value: TEST_QUERY,
   });
-  await enterSearchMode(window);
+  await UrlbarTestUtils.enterSearchMode(window);
   await verifySearchModeResultsAdded(window);
-  await exitSearchMode(window, { backspace: true });
+  await UrlbarTestUtils.exitSearchMode(window, { backspace: true });
   await verifySearchModeResultsRemoved(window);
   Assert.ok(UrlbarTestUtils.isPopupOpen(window), "Urlbar view is open.");
 
-  // View open, no string.
-  // Open Top Sites.
+  // View open, no string (i.e., top sites).
   await UrlbarTestUtils.promisePopupOpen(window, () => {
     if (gURLBar.getAttribute("pageproxystate") == "invalid") {
       gURLBar.handleRevert();
     }
     EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
   });
-  await enterSearchMode(window);
-  await exitSearchMode(window, { backspace: true, waitForSearch: false });
+  await UrlbarTestUtils.enterSearchMode(window);
+  await UrlbarTestUtils.exitSearchMode(window, { backspace: true });
   Assert.ok(UrlbarTestUtils.isPopupOpen(window), "Urlbar view is open.");
+  await verifyTopSitesResultsAdded(window);
+  await UrlbarTestUtils.promisePopupClose(window);
 
   // View closed, with string.
-  // Open Top Sites.
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
     window,
     value: TEST_QUERY,
   });
-  await enterSearchMode(window);
+  await UrlbarTestUtils.enterSearchMode(window);
   await verifySearchModeResultsAdded(window);
-  UrlbarTestUtils.promisePopupClose(window);
-  await exitSearchMode(window, { backspace: true });
+  await UrlbarTestUtils.promisePopupClose(window);
+  await UrlbarTestUtils.exitSearchMode(window, { backspace: true });
   await verifySearchModeResultsRemoved(window);
   Assert.ok(UrlbarTestUtils.isPopupOpen(window), "Urlbar view is now open.");
 
-  // View closed, no string.
+  // View closed, no string (i.e., top sites).
   await UrlbarTestUtils.promisePopupOpen(window, () => {
     if (gURLBar.getAttribute("pageproxystate") == "invalid") {
       gURLBar.handleRevert();
     }
     EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
   });
-  await enterSearchMode(window);
-  UrlbarTestUtils.promisePopupClose(window);
-  await exitSearchMode(window, { backspace: true, waitForSearch: false });
-  Assert.ok(
-    !UrlbarTestUtils.isPopupOpen(window),
-    "Urlbar view is still closed."
-  );
+  await UrlbarTestUtils.enterSearchMode(window);
+  await UrlbarTestUtils.promisePopupClose(window);
+  await UrlbarTestUtils.exitSearchMode(window, { backspace: true });
+  Assert.ok(UrlbarTestUtils.isPopupOpen(window), "Urlbar view is open.");
+  await verifyTopSitesResultsAdded(window);
+  await UrlbarTestUtils.promisePopupClose(window);
 });
 
 // Tests the indicator's interaction with the ESC key.
@@ -217,52 +186,149 @@ add_task(async function escape() {
     window,
     value: TEST_QUERY,
   });
-  await enterSearchMode(window);
+  await UrlbarTestUtils.enterSearchMode(window);
   await verifySearchModeResultsAdded(window);
 
   EventUtils.synthesizeKey("KEY_Escape");
   Assert.ok(!UrlbarTestUtils.isPopupOpen(window, "UrlbarView is closed."));
   Assert.equal(gURLBar.value, TEST_QUERY, "Urlbar value hasn't changed.");
-  Assert.ok(
-    UrlbarTestUtils.isInSearchMode(window),
-    "The Urlbar is in search mode."
-  );
+
+  let oneOffs = UrlbarTestUtils.getOneOffSearchButtons(
+    window
+  ).getSelectableButtons(true);
+  await UrlbarTestUtils.assertSearchMode(window, {
+    engineName: oneOffs[0].engine.name,
+  });
 
   EventUtils.synthesizeKey("KEY_Escape");
   Assert.ok(!UrlbarTestUtils.isPopupOpen(window, "UrlbarView is closed."));
   Assert.ok(!gURLBar.value, "Urlbar value is empty.");
-  Assert.ok(
-    !UrlbarTestUtils.isInSearchMode(window),
-    "The Urlbar is not in search mode."
-  );
+  await UrlbarTestUtils.assertSearchMode(window, null);
 });
 
 // Tests that the indicator is removed when its close button is clicked.
 add_task(async function click_close() {
-  // Clicking close with the view open.
+  // Clicking close with the view open, with string.
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
     window,
     value: TEST_QUERY,
   });
-  await enterSearchMode(window);
+  await UrlbarTestUtils.enterSearchMode(window);
   await verifySearchModeResultsAdded(window);
-  await exitSearchMode(window, { clickClose: true });
+  await UrlbarTestUtils.exitSearchMode(window, { clickClose: true });
   await verifySearchModeResultsRemoved(window);
+  Assert.ok(UrlbarTestUtils.isPopupOpen(window), "Urlbar view is open.");
+  await UrlbarTestUtils.promisePopupClose(window);
 
-  // Clicking close with the view closed.
+  // Clicking close with the view open, no string (i.e., top sites).
+  await UrlbarTestUtils.promisePopupOpen(window, () => {
+    if (gURLBar.getAttribute("pageproxystate") == "invalid") {
+      gURLBar.handleRevert();
+    }
+    EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
+  });
+  await UrlbarTestUtils.enterSearchMode(window);
+  await UrlbarTestUtils.exitSearchMode(window, { clickClose: true });
+  Assert.ok(UrlbarTestUtils.isPopupOpen(window), "Urlbar view is open.");
+  await verifyTopSitesResultsAdded(window);
+  await UrlbarTestUtils.promisePopupClose(window);
+
+  // Clicking close with the view closed, with string.
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
     window,
     value: TEST_QUERY,
   });
-  await enterSearchMode(window);
-  UrlbarTestUtils.promisePopupClose(window);
-  if (gURLBar.hasAttribute("breakout-extend")) {
-    await exitSearchMode(window, { clickClose: true, waitForSearch: false });
-  } else {
-    // If the Urlbar is not extended when it is closed, do not finish this
-    // case. The close button is not clickable when the Urlbar is not
-    // extended. This scenario might be encountered on Linux, where
-    // prefers-reduced-motion is enabled in automation.
-    gURLBar.setSearchMode(null);
-  }
+  await UrlbarTestUtils.enterSearchMode(window);
+  await verifySearchModeResultsAdded(window);
+  await UrlbarTestUtils.promisePopupClose(window);
+  await UrlbarTestUtils.exitSearchMode(window, {
+    clickClose: true,
+    waitForSearch: false,
+  });
+  Assert.ok(!UrlbarTestUtils.isPopupOpen(window), "Urlbar view is closed.");
+
+  // Clicking close with the view closed, no string (i.e., top sites).
+  await UrlbarTestUtils.promisePopupOpen(window, () => {
+    if (gURLBar.getAttribute("pageproxystate") == "invalid") {
+      gURLBar.handleRevert();
+    }
+    EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
+  });
+  await UrlbarTestUtils.enterSearchMode(window);
+  await UrlbarTestUtils.promisePopupClose(window);
+  await UrlbarTestUtils.exitSearchMode(window, {
+    clickClose: true,
+    waitForSearch: false,
+  });
+  Assert.ok(!UrlbarTestUtils.isPopupOpen(window), "Urlbar view is closed.");
+});
+
+// Tests that Accel+K enters search mode with the default engine.
+add_task(async function keyboard_shortcut() {
+  await UrlbarTestUtils.assertSearchMode(window, null);
+  EventUtils.synthesizeKey("k", { accelKey: true });
+  await UrlbarTestUtils.assertSearchMode(window, {
+    source: UrlbarUtils.RESULT_SOURCE.SEARCH,
+    engineName: defaultEngine.name,
+  });
+  await UrlbarTestUtils.exitSearchMode(window, {
+    clickClose: true,
+    waitForSearch: false,
+  });
+});
+
+// Tests that the Tools:Search menu item enters search mode with the default
+// engine.
+add_task(async function menubar_item() {
+  await UrlbarTestUtils.assertSearchMode(window, null);
+  let command = window.document.getElementById("Tools:Search");
+  command.doCommand();
+  await UrlbarTestUtils.assertSearchMode(window, {
+    source: UrlbarUtils.RESULT_SOURCE.SEARCH,
+    engineName: defaultEngine.name,
+  });
+  await UrlbarTestUtils.exitSearchMode(window, {
+    clickClose: true,
+    waitForSearch: false,
+  });
+});
+
+// Tests that entering search mode invalidates pageproxystate and that
+// pageproxystate remains invalid after exiting search mode.
+add_task(async function invalidate_pageproxystate() {
+  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+    await UrlbarTestUtils.promisePopupOpen(window, () => {
+      EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
+    });
+    Assert.equal(gURLBar.getAttribute("pageproxystate"), "valid");
+    await UrlbarTestUtils.enterSearchMode(window);
+    Assert.equal(
+      gURLBar.getAttribute("pageproxystate"),
+      "invalid",
+      "Entering search mode should clear pageproxystate."
+    );
+    Assert.equal(gURLBar.value, "", "Urlbar value should be cleared.");
+    await UrlbarTestUtils.exitSearchMode(window, { clickClose: true });
+    Assert.equal(
+      gURLBar.getAttribute("pageproxystate"),
+      "invalid",
+      "Pageproxystate should still be invalid after exiting search mode."
+    );
+  });
+});
+
+// Tests that the user doesn't get trapped in search mode if the update2 pref
+// is disabled after entering search mode.
+add_task(async function pref_flip_while_enabled() {
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: TEST_QUERY,
+  });
+  await UrlbarTestUtils.enterSearchMode(window);
+  await verifySearchModeResultsAdded(window);
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.update2", false]],
+  });
+  await UrlbarTestUtils.assertSearchMode(window, null);
+  await SpecialPowers.popPrefEnv();
 });

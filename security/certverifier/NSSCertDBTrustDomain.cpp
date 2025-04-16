@@ -1250,8 +1250,19 @@ Result NSSCertDBTrustDomain::IsChainValid(const DERArray& certArray, Time time,
     bool enforceTestMode =
         (mPinningMode == CertVerifier::pinningEnforceTestMode);
     bool chainHasValidPins;
+
+    nsTArray<Span<const uint8_t>> derCertSpanList;
+    size_t numCerts = certArray.GetLength();
+    for (size_t i = numCerts; i > 0; --i) {
+      const Input* der = certArray.GetDER(i - 1);
+      if (!der) {
+        return Result::FATAL_ERROR_LIBRARY_FAILURE;
+      }
+      derCertSpanList.EmplaceBack(der->UnsafeGetData(), der->GetLength());
+    }
+
     nsrv = PublicKeyPinningService::ChainHasValidPins(
-        nssCertList, mHostname, time, enforceTestMode, mOriginAttributes,
+        derCertSpanList, mHostname, time, enforceTestMode, mOriginAttributes,
         chainHasValidPins, mPinningTelemetryInfo);
     if (NS_FAILED(nsrv)) {
       return Result::FATAL_ERROR_LIBRARY_FAILURE;
@@ -1809,11 +1820,6 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
   size_t numIntermediates = 0;
   for (CERTCertListNode* node = CERT_LIST_HEAD(certList);
        !CERT_LIST_END(node, certList); node = CERT_LIST_NEXT(node)) {
-    if (!node || !node->cert) {
-      // Something has gone wrong. This is best-effort, so just continue.
-      continue;
-    }
-
     if (isEndEntity) {
       // Skip the end-entity; we only want to store intermediates
       isEndEntity = false;
@@ -1826,11 +1832,7 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
       continue;
     }
 
-    PRBool isperm;
-    if (CERT_GetCertIsPerm(node->cert, &isperm) != SECSuccess) {
-      continue;
-    }
-    if (isperm) {
+    if (node->cert->isperm) {
       // We don't need to remember certs already stored in perm db.
       continue;
     }
@@ -1878,22 +1880,6 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
             if (AppShutdown::IsShuttingDown()) {
               return;
             }
-            if (!node || !node->cert) {
-              continue;
-            }
-            PRBool isperm;
-            if (CERT_GetCertIsPerm(node->cert, &isperm) != SECSuccess) {
-              continue;
-            }
-            if (isperm) {
-              // Multiple import tasks can be queued up, but only one runs at a
-              // time. In theory, if two separate connections made use of the
-              // same intermediate, the task that runs second could be trying
-              // to re-import an intermediate that has already been imported by
-              // the first task. This is unnecessary, so this check bails early
-              // in that case.
-              continue;
-            }
 
 #ifdef MOZ_NEW_CERT_STORAGE
             if (CertIsInCertStorage(node->cert, certStorage)) {
@@ -1925,12 +1911,8 @@ void SaveIntermediateCerts(const UniqueCERTCertList& certList) {
               }));
           Unused << NS_DispatchToMainThread(runnable.forget());
         }));
-    nsCOMPtr<nsINSSComponent> nssComponent(
-        do_GetService(PSM_COMPONENT_CONTRACTID));
-    if (nssComponent) {
-      Unused << nssComponent->DispatchTaskToSerialBackgroundQueue(
-          importCertsRunnable);
-    }
+    Unused << NS_DispatchToCurrentThreadQueue(importCertsRunnable.forget(),
+                                              EventQueuePriority::Idle);
   }
 }
 

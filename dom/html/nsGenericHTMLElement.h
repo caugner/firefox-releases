@@ -86,6 +86,10 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   void SetHidden(bool aHidden, mozilla::ErrorResult& aError) {
     SetHTMLBoolAttr(nsGkAtoms::hidden, aHidden, aError);
   }
+  bool Inert() const { return GetBoolAttr(nsGkAtoms::inert); }
+  void SetInert(bool aInert, mozilla::ErrorResult& aError) {
+    SetHTMLBoolAttr(nsGkAtoms::inert, aInert, aError);
+  }
   void Click(mozilla::dom::CallerType aCallerType);
   void GetAccessKey(nsString& aAccessKey) {
     GetHTMLAttr(nsGkAtoms::accesskey, aAccessKey);
@@ -624,13 +628,6 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
    * attributes in null namespace.
    */
   bool GetURIAttr(nsAtom* aAttr, nsAtom* aBaseAttr, nsIURI** aURI) const;
-
-  /**
-   * Returns the current disabled state of the element.
-   *
-   * TODO(emilio): Consider moving to Element?
-   */
-  bool IsDisabled() const { return State().HasState(NS_EVENT_STATE_DISABLED); }
 
   bool IsHidden() const {
     return HasAttr(kNameSpaceID_None, nsGkAtoms::hidden);

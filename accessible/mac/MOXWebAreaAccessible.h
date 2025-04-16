@@ -7,17 +7,64 @@
 
 #import "mozAccessible.h"
 
+namespace mozilla {
+namespace a11y {
+
+class Pivot;
+class PivotRule;
+
+}
+}
+
 @interface MOXWebAreaAccessible : mozAccessible
 // overrides
-- (NSURL* _Nullable)moxURL;
+- (NSURL*)moxURL;
 
 // overrides
-- (NSNumber* _Nullable)moxLoaded;
+- (NSNumber*)moxLoaded;
 
 // overrides
-- (NSNumber* _Nullable)moxLoadingProgress;
+- (NSNumber*)moxLoadingProgress;
+
+// override
+- (NSArray*)moxUIElementsForSearchPredicate:(NSDictionary*)searchPredicate;
+
+// override
+- (NSNumber*)moxUIElementCountForSearchPredicate:(NSDictionary*)searchPredicate;
 
 // overrides
 - (void)handleAccessibleEvent:(uint32_t)eventType;
+
+@end
+
+@interface MOXSearchInfo : NSObject {
+  // The gecko accessible of the web area, we need a reference
+  // to set the pivot's root. This is a weak ref.
+  mozilla::a11y::AccessibleOrProxy mWebArea;
+
+  // The gecko accessible we should start searching from.
+  // This is a weak ref.
+  mozilla::a11y::AccessibleOrProxy mStartElem;
+
+  // The amount of matches we should return
+  int mResultLimit;
+
+  // The array of search keys to use during this search
+  NSMutableArray* mSearchKeys;
+
+  // Set to YES if we should search forward, NO if backward
+  BOOL mSearchForward;
+
+  // Set to YES if we should match on immediate descendants only, NO otherwise
+  BOOL mImmediateDescendantsOnly;
+}
+
+- (id)initWithParameters:(NSDictionary*)params andRoot:(mozilla::a11y::AccessibleOrProxy)root;
+
+- (NSMutableArray*)getMatchesForRule:(mozilla::a11y::PivotRule&)rule;
+
+- (NSArray*)performSearch;
+
+- (void)dealloc;
 
 @end

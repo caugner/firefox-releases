@@ -25,6 +25,12 @@ add_task(async function() {
   await pushPref("devtools.browsertoolbox.fission", false);
   await pushPref("devtools.contenttoolbox.fission", false);
 
+  is(
+    gDevTools.isFissionContentToolboxEnabled(),
+    false,
+    "isFissionContentToolboxEnabled returns the expected value"
+  );
+
   // Test with Main process targets as top level target
   await testPreffedOffMainProcess(mainRoot, mainProcess);
 
@@ -93,7 +99,7 @@ async function testPreffedOffMainProcess(mainRoot, mainProcess) {
   );
   targetList.unwatchTargets([TargetList.TYPES.FRAME], onFrameAvailable);
 
-  targetList.stopListening();
+  targetList.destroy();
 }
 
 async function testPreffedOffTab(mainRoot) {
@@ -150,7 +156,7 @@ async function testPreffedOffTab(mainRoot) {
   );
   targetList.unwatchTargets([TargetList.TYPES.FRAME], onFrameAvailable);
 
-  targetList.stopListening();
+  targetList.destroy();
 
   BrowserTestUtils.removeTab(tab);
 }

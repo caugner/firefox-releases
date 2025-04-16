@@ -63,7 +63,7 @@ JitScript::JitScript(JSScript* script, Offset typeSetOffset,
       bytecodeTypeMapOffset_(bytecodeTypeMapOffset),
       endOffset_(endOffset),
       icScript_(this, script->getWarmUpCount(),
-                typeSetOffset - offsetOfICScript()) {
+                typeSetOffset - offsetOfICScript(), /*depth=*/0) {
   setTypesGeneration(script->zone()->types.generation);
 
   if (IsTypeInferenceEnabled()) {
@@ -292,6 +292,18 @@ ICScript* ICScript::findInlinedChild(uint32_t pcOffset) {
     }
   }
   MOZ_CRASH("Inlined child expected at pcOffset");
+}
+
+void ICScript::removeInlinedChild(uint32_t pcOffset) {
+  MOZ_ASSERT(inliningRoot());
+  ICScript* icScript = findInlinedChild(pcOffset);
+
+  inlinedChildren_->eraseIf([pcOffset](const CallSite& callsite) -> bool {
+    return callsite.pcOffset_ == pcOffset;
+  });
+
+  // The ICScript is owned by the inlining root. Remove it.
+  inliningRoot()->removeInlinedScript(icScript);
 }
 
 void JitScript::ensureProfileString(JSContext* cx, JSScript* script) {

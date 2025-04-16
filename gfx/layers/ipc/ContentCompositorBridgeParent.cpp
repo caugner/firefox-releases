@@ -385,7 +385,7 @@ void ContentCompositorBridgeParent::ShadowLayersUpdated(
         static const DeserializerTag tag = TagForDeserializer(Deserialize);
         SerializeTagAndCommonProps(tag, aEntryWriter);
       }
-      void StreamPayload(SpliceableJSONWriter& aWriter,
+      void StreamPayload(mozilla::baseprofiler::SpliceableJSONWriter& aWriter,
                          const TimeStamp& aProcessStartTime,
                          UniqueStacks& aUniqueStacks) const override {
         StreamCommonProps("CONTENT_FULL_PAINT_TIME", aWriter, aProcessStartTime,
@@ -557,6 +557,18 @@ void ContentCompositorBridgeParent::GetAPZTestData(const LayersId& aLayersId,
   }
 
   state->mParent->GetAPZTestData(aLayersId, aOutData);
+}
+
+void ContentCompositorBridgeParent::GetFrameUniformity(
+    const LayersId& aLayersId, FrameUniformityData* aOutData) {
+  MOZ_ASSERT(aLayersId.IsValid());
+  const CompositorBridgeParent::LayerTreeState* state =
+      CompositorBridgeParent::GetIndirectShadowTree(aLayersId);
+  if (!state || !state->mParent) {
+    return;
+  }
+
+  state->mParent->GetFrameUniformity(aLayersId, aOutData);
 }
 
 void ContentCompositorBridgeParent::SetConfirmedTargetAPZC(

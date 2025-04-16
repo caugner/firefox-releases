@@ -1552,8 +1552,10 @@ void nsSSLIOLayerHelpers::loadVersionFallbackLimit() {
 }
 
 void nsSSLIOLayerHelpers::clearStoredData() {
+  MOZ_ASSERT(NS_IsMainThread());
+  initInsecureFallbackSites();
+
   MutexAutoLock lock(mutex);
-  mInsecureFallbackSites.Clear();
   mTLSIntoleranceInfo.Clear();
 }
 
@@ -1911,6 +1913,10 @@ SECStatus nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
     info->SetSentClientCert();
     Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_CLIENT_CERT, u"sent"_ns,
                          1);
+    if (info->GetSSLVersionUsed() == nsISSLSocketControl::TLS_VERSION_1_3) {
+        Telemetry::Accumulate(Telemetry::TLS_1_3_CLIENT_AUTH_USES_PHA,
+                              info->IsHandshakeCompleted());
+    }
   }
 
   return SECSuccess;
@@ -2342,7 +2348,12 @@ void ClientAuthDataRunnable::RunOnTargetThread() {
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return;
     }
-    if (found && !rememberedDBKey.IsEmpty()) {
+    if (found) {
+      // An empty dbKey indicates that the user chose not to use a certificate
+      // and chose to remember this decision
+      if (rememberedDBKey.IsEmpty()) {
+        return;
+      }
       nsCOMPtr<nsIX509CertDB> certdb = do_GetService(NS_X509CERTDB_CONTRACTID);
       if (NS_WARN_IF(!certdb)) {
         return;

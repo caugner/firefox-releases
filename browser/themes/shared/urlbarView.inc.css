@@ -47,7 +47,7 @@
 
   display: block;
   text-shadow: none;
-  overflow: -moz-hidden-unscrollable;
+  overflow: clip;
   margin-inline: @urlbarViewMarginInline@;
   width: calc(100% - 2 * @urlbarViewMarginInline@);
 
@@ -67,6 +67,11 @@
 .urlbarView-results {
   padding-block: @urlbarViewPadding@;
   white-space: nowrap;
+}
+
+/* Vertically center the one-offs when no results are present. */
+.urlbarView[noresults] > .urlbarView-body-outer > .urlbarView-body-inner > .urlbarView-results {
+  padding-block: 0;
 }
 
 .urlbarView-row {
@@ -464,6 +469,10 @@
   flex-wrap: wrap;
 }
 
+.urlbarView[noresults] > .search-one-offs {
+  border-top: none;
+}
+
 #urlbar .search-panel-one-offs-container {
   /* Make sure horizontally we can fit four buttons, empty space, settings. */
   min-width: calc(4 * /* one-off with end margin */ 40px + /* settings with start margin */ 56px);
@@ -501,6 +510,41 @@
 
 #urlbar .search-one-offs-spacer {
   flex-grow: 1;
+}
+
+#urlbar-engine-one-off-item-bookmarks {
+  list-style-image: url("chrome://browser/skin/bookmark.svg");
+  fill: #0060df; /* Blue-60 */
+  fill-opacity: 1;
+  -moz-context-properties: fill, fill-opacity;
+}
+
+#urlbar-engine-one-off-item-tabs {
+  list-style-image: url("chrome://browser/skin/tab.svg");
+  fill: #008eaf; /* Teal-70 */
+  fill-opacity: 1;
+  -moz-context-properties: fill, fill-opacity;
+}
+
+#urlbar-engine-one-off-item-history {
+  list-style-image: url("chrome://browser/skin/history.svg");
+  fill: currentColor;
+  fill-opacity: .9;
+  -moz-context-properties: fill, fill-opacity;
+}
+
+:root[lwt-toolbar-field-brighttext] #urlbar-engine-one-off-item-bookmarks:not([selected]) {
+  fill: #0a84ff; /* Blue-50 */
+}
+
+:root[lwt-toolbar-field-brighttext] #urlbar-engine-one-off-item-tabs:not([selected]) {
+  fill: #00c8d7; /* Teal-60 */
+}
+
+#urlbar-engine-one-off-item-bookmarks[selected],
+#urlbar-engine-one-off-item-tabs[selected] {
+  fill: currentColor;
+  fill-opacity: .9;
 }
 
 /* search bar popup */

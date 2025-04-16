@@ -66,6 +66,7 @@ let RemotePageAccessManager = {
       RPMAddToHistogram: ["*"],
     },
     "about:httpsonlyerror": {
+      RPMGetFormatURLPref: ["app.support.baseURL"],
       RPMSendAsyncMessage: ["goBack", "openInsecure"],
     },
     "about:certificate": {
@@ -118,10 +119,13 @@ let RemotePageAccessManager = {
         "OpenSearchPreferences",
         "SearchHandoff",
       ],
-      RPMSendQuery: ["ShouldShowSearchBanner"],
+      RPMSendQuery: ["ShouldShowSearchBanner", "ShouldShowVPNPromo"],
       RPMAddMessageListener: ["*"],
       RPMRemoveMessageListener: ["*"],
-      RPMGetFormatURLPref: ["app.support.baseURL"],
+      RPMGetFormatURLPref: [
+        "app.support.baseURL",
+        "browser.privatebrowsing.vpnpromourl",
+      ],
       RPMIsWindowPrivate: ["*"],
     },
     "about:protections": {
@@ -130,6 +134,7 @@ let RemotePageAccessManager = {
         "OpenAboutLogins",
         "OpenSyncPreferences",
         "ClearMonitorCache",
+        "RecordEntryPoint",
       ],
       RPMSendQuery: [
         "FetchUserLoginsData",
@@ -137,6 +142,7 @@ let RemotePageAccessManager = {
         "FetchContentBlockingEvents",
         "FetchMobileDeviceConnected",
         "GetShowProxyCard",
+        "FetchEntryPoint",
       ],
       RPMAddMessageListener: ["*"],
       RPMRemoveMessageListener: ["*"],

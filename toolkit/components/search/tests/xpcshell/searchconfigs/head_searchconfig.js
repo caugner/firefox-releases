@@ -129,15 +129,6 @@ class SearchConfigTest {
       true
     );
 
-    // We need to force modern config off before we start. Modern config uses
-    // the results from the engine selector directly, whereas the legacy
-    // config uses the search service which needs to know we want to run
-    // it in legacy mode.
-    Services.prefs.setBoolPref(
-      SearchUtils.BROWSER_SEARCH_PREF + "modernConfig",
-      false
-    );
-
     await AddonTestUtils.promiseStartupManager();
     await Services.search.init();
 
@@ -158,11 +149,8 @@ class SearchConfigTest {
 
   /**
    * Runs the test.
-   * @param {boolean} useEngineSelector
-   *   Flag to run the tests against the SearchEngineSelector or use
-   *   existing list.json.
    */
-  async run(useEngineSelector = false) {
+  async run() {
     const locales = await this._getLocales();
     const regions = this._regions;
 
@@ -170,14 +158,7 @@ class SearchConfigTest {
     // when updating the requested/available locales.
     for (let region of regions) {
       for (let locale of locales) {
-        if (!useEngineSelector) {
-          await this._reinit(region, locale);
-        }
-        const engines = await this._getEngines(
-          useEngineSelector,
-          region,
-          locale
-        );
+        const engines = await this._getEngines(region, locale);
         this._assertEngineRules([engines[0]], region, locale, "default");
         const isPresent = this._assertAvailableEngines(region, locale, engines);
         if (isPresent) {
@@ -187,25 +168,22 @@ class SearchConfigTest {
     }
   }
 
-  async _getEngines(useEngineSelector, region, locale) {
-    if (useEngineSelector) {
-      let engines = [];
-      let configs = await engineSelector.fetchEngineConfiguration(
-        locale,
-        region || "default",
-        AppConstants.MOZ_APP_VERSION_DISPLAY.endsWith("esr")
-          ? "esr"
-          : AppConstants.MOZ_UPDATE_CHANNEL
+  async _getEngines(region, locale) {
+    let engines = [];
+    let configs = await engineSelector.fetchEngineConfiguration({
+      locale,
+      region: region || "default",
+      channel: AppConstants.MOZ_APP_VERSION_DISPLAY.endsWith("esr")
+        ? "esr"
+        : AppConstants.MOZ_UPDATE_CHANNEL,
+    });
+    for (let config of configs.engines) {
+      let engine = await Services.search.wrappedJSObject.makeEngineFromConfig(
+        config
       );
-      for (let config of configs.engines) {
-        let engine = await Services.search.wrappedJSObject.makeEngineFromConfig(
-          config
-        );
-        engines.push(engine);
-      }
-      return engines;
+      engines.push(engine);
     }
-    return Services.search.getVisibleEngines();
+    return engines;
   }
 
   /**
@@ -250,15 +228,7 @@ class SearchConfigTest {
     if (TEST_DEBUG) {
       return new Set(["by", "cn", "kz", "us", "ru", "tr", null]);
     }
-    const chunk =
-      Services.prefs.getIntPref("browser.search.config.test.section", -1) - 1;
-    const regions = [
-      ...Services.intl.getAvailableLocaleDisplayNames("region"),
-      null,
-    ];
-    const chunkSize = Math.ceil(regions.length / 4);
-    const startPoint = chunk * chunkSize;
-    return regions.slice(startPoint, startPoint + chunkSize);
+    return [...Services.intl.getAvailableLocaleDisplayNames("region"), null];
   }
 
   /**
@@ -480,7 +450,7 @@ class SearchConfigTest {
 
     if (this._config.aliases) {
       this.assertDeepEqual(
-        engine._internalAliases,
+        engine.aliases,
         this._config.aliases,
         "Should have the correct aliases for the engine"
       );
@@ -498,7 +468,7 @@ class SearchConfigTest {
       }
       if (rule.aliases) {
         this.assertDeepEqual(
-          engine._internalAliases,
+          engine.aliases,
           rule.aliases,
           "Should have the correct aliases for the engine"
         );

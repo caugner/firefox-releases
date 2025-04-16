@@ -64,9 +64,7 @@ namespace jit {
   _(SetIntrinsic)                        \
   _(ThrowMsg)                            \
   /* Private Fields */                   \
-  _(InitPrivateElem)                     \
-  _(GetPrivateElem)                      \
-  _(SetPrivateElem)                      \
+  _(InitLockedElem)                      \
   // === !! WARNING WARNING WARNING !! ===
   // Do you really want to sacrifice performance by not implementing this
   // operation in the optimizing compiler?
@@ -134,7 +132,6 @@ class MOZ_STACK_CLASS WarpBuilder : public WarpBuilderShared {
 
   WarpBuilder* callerBuilder() const { return callerBuilder_; }
   MResumePoint* callerResumePoint() const { return callerResumePoint_; }
-  CallInfo* inlineCallInfo() const { return inlineCallInfo_; }
 
   BytecodeSite* newBytecodeSite(BytecodeLocation loc);
 
@@ -185,6 +182,8 @@ class MOZ_STACK_CLASS WarpBuilder : public WarpBuilderShared {
   MConstant* globalLexicalEnvConstant();
   MDefinition* getCallee();
 
+  MDefinition* maybeGuardNotOptimizedArguments(MDefinition* def);
+
   MOZ_MUST_USE bool buildUnaryOp(BytecodeLocation loc);
   MOZ_MUST_USE bool buildBinaryOp(BytecodeLocation loc);
   MOZ_MUST_USE bool buildCompareOp(BytecodeLocation loc);
@@ -223,6 +222,8 @@ class MOZ_STACK_CLASS WarpBuilder : public WarpBuilderShared {
 
   MOZ_MUST_USE bool build();
   MOZ_MUST_USE bool buildInline();
+
+  CallInfo* inlineCallInfo() const { return inlineCallInfo_; }
 };
 
 }  // namespace jit

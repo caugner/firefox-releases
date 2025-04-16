@@ -25,7 +25,6 @@
 #include "mozilla/CallState.h"
 #include "mozilla/CORSMode.h"
 #include "mozilla/EventForwards.h"
-#include "mozilla/GuardObjects.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/TimeStamp.h"
@@ -3405,6 +3404,7 @@ nsContentUtils::InternalContentPolicyTypeToExternal(nsContentPolicyType aType) {
     case nsIContentPolicy::TYPE_INTERNAL_AUDIOWORKLET:
     case nsIContentPolicy::TYPE_INTERNAL_PAINTWORKLET:
     case nsIContentPolicy::TYPE_INTERNAL_CHROMEUTILS_COMPILED_SCRIPT:
+    case nsIContentPolicy::TYPE_INTERNAL_FRAME_MESSAGEMANAGER_SCRIPT:
       return nsIContentPolicy::TYPE_SCRIPT;
 
     case nsIContentPolicy::TYPE_INTERNAL_EMBED:
@@ -3440,6 +3440,9 @@ nsContentUtils::InternalContentPolicyTypeToExternal(nsContentPolicyType aType) {
     case nsIContentPolicy::TYPE_INTERNAL_FONT_PRELOAD:
       return nsIContentPolicy::TYPE_FONT;
 
+    case nsIContentPolicy::TYPE_INTERNAL_FETCH_PRELOAD:
+      return nsIContentPolicy::TYPE_FETCH;
+
     default:
       return aType;
   }
@@ -3461,14 +3464,10 @@ nsContentUtils::InternalContentPolicyTypeToExternalOrWorker(
 
 class MOZ_RAII nsAutoScriptBlocker {
  public:
-  explicit nsAutoScriptBlocker(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    nsContentUtils::AddScriptBlocker();
-  }
+  explicit nsAutoScriptBlocker() { nsContentUtils::AddScriptBlocker(); }
   ~nsAutoScriptBlocker() { nsContentUtils::RemoveScriptBlocker(); }
 
  private:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 class MOZ_STACK_CLASS nsAutoScriptBlockerSuppressNodeRemoved

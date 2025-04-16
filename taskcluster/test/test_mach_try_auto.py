@@ -75,23 +75,37 @@ def test_only_important_manifests(params, full_task_graph, filter_tasks):
             assert unimportant == []
 
 
-@pytest.mark.xfail(
-    reason="Bug 1641131 - shippable builds still showing up due to dependencies"
+@pytest.mark.parametrize(
+    "func",
+    (
+        pytest.param(
+            lambda t: t.kind == "build"
+            and "shippable" in t.attributes["build_platform"],
+            id="no shippable builds",
+        ),
+        pytest.param(
+            lambda t: t.kind == "build" and "fuzzing" in t.attributes["build_platform"],
+            id="no fuzzing builds",
+            marks=pytest.mark.xfail,
+        ),
+        pytest.param(
+            lambda t: t.kind == "build-signing",
+            id="no build-signing",
+            marks=pytest.mark.xfail,
+        ),
+        pytest.param(
+            lambda t: t.kind == "upload-symbols",
+            id="no upload-symbols",
+            marks=pytest.mark.xfail,
+        ),
+    ),
 )
-def test_no_shippable_builds(tgg, filter_tasks):
+def test_tasks_are_not_scheduled(tgg, filter_tasks, func):
     optimized_task_graph = tgg.optimized_task_graph
     # We can still sometimes get macosx64-shippable builds with |mach try
     # auto| due to TV tasks (since there is no 'opt' alternative for
     # macosx). Otherwise there shouldn't be any other shippable builds.
-    tasks = [
-        t.label
-        for t in filter_tasks(
-            optimized_task_graph,
-            lambda t: t.kind == "build"
-            and "shippable" in t.attributes["build_platform"]
-            and t.attributes["build_platform"] != "macosx64-shippable",
-        )
-    ]
+    tasks = [t.label for t in filter_tasks(optimized_task_graph, func)]
 
     assert tasks == []
 

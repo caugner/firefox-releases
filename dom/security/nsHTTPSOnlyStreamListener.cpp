@@ -41,8 +41,8 @@ nsHTTPSOnlyStreamListener::OnStartRequest(nsIRequest* request) {
 NS_IMETHODIMP
 nsHTTPSOnlyStreamListener::OnStopRequest(nsIRequest* request,
                                          nsresult aStatus) {
-  // DNS errors are unrelated to the HTTPS-Only mode, so they can be ignored.
-  if (nsHTTPSOnlyUtils::CouldBeHttpsOnlyError(aStatus)) {
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
+  if (nsHTTPSOnlyUtils::CouldBeHttpsOnlyError(channel, aStatus)) {
     RecordUpgradeTelemetry(request, aStatus);
     LogUpgradeFailure(request, aStatus);
   }
@@ -123,8 +123,6 @@ void nsHTTPSOnlyStreamListener::LogUpgradeFailure(nsIRequest* request,
   if (NS_FAILED(rv)) {
     return;
   }
-  nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
-  uint32_t innerWindowId = loadInfo->GetInnerWindowID();
 
   nsCOMPtr<nsIURI> uri;
   rv = channel->GetURI(getter_AddRefs(uri));
@@ -137,7 +135,9 @@ void nsHTTPSOnlyStreamListener::LogUpgradeFailure(nsIRequest* request,
       NS_ConvertUTF8toUTF16(nsPrintfCString("M%u-C%u",
                                             NS_ERROR_GET_MODULE(aStatus),
                                             NS_ERROR_GET_CODE(aStatus)))};
-  nsHTTPSOnlyUtils::LogLocalizedString(
-      "HTTPSOnlyFailedRequest", params, nsIScriptError::errorFlag,
-      innerWindowId, !!loadInfo->GetOriginAttributes().mPrivateBrowsingId, uri);
+
+  nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
+  nsHTTPSOnlyUtils::LogLocalizedString("HTTPSOnlyFailedRequest", params,
+                                       nsIScriptError::errorFlag, loadInfo,
+                                       uri);
 }

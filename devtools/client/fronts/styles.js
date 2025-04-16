@@ -66,13 +66,6 @@ class PageStyleFront extends FrontClassWithSpec(pageStyleSpec) {
   }
 
   async getApplied(node, options = {}) {
-    // If the getApplied method doesn't recreate the style cache itself, this
-    // means a call to cssLogic.highlight is required before trying to access
-    // the applied rules. Issue a request to getLayout if this is the case.
-    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1103993#c16.
-    if (!this._form.traits || !this._form.traits.getAppliedCreatesStyleCache) {
-      await this.getLayout(node);
-    }
     const ret = await super.getApplied(node, options);
     return ret.entries;
   }
@@ -198,6 +191,9 @@ class StyleRuleFront extends FrontClassWithSpec(styleRuleSpec) {
     return typeof this._form.authoredText === "string"
       ? this._form.authoredText
       : this._form.cssText;
+  }
+  get compatibilityIssues() {
+    return this._form.compatibilityIssues || [];
   }
   get declarations() {
     return this._form.declarations || [];

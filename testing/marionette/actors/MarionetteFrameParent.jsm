@@ -75,6 +75,10 @@ class MarionetteFrameParent extends JSWindowActorParent {
     });
   }
 
+  async getCurrentUrl() {
+    return this.sendQuery("MarionetteFrameParent:getCurrentUrl");
+  }
+
   async getElementAttribute(webEl, name) {
     return this.sendQuery("MarionetteFrameParent:getElementAttribute", {
       name,
@@ -87,5 +91,25 @@ class MarionetteFrameParent extends JSWindowActorParent {
       name,
       webEl,
     });
+  }
+
+  async switchToFrame(id) {
+    const {
+      browsingContextId,
+    } = await this.sendQuery("MarionetteFrameParent:switchToFrame", { id });
+
+    return {
+      browsingContext: BrowsingContext.get(browsingContextId),
+    };
+  }
+
+  async switchToParentFrame() {
+    const { browsingContextId } = await this.sendQuery(
+      "MarionetteFrameParent:switchToParentFrame"
+    );
+
+    return {
+      browsingContext: BrowsingContext.get(browsingContextId),
+    };
   }
 }

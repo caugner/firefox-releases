@@ -49,14 +49,13 @@ MACH_MODULES = [
     'python/mozbuild/mozbuild/artifact_commands.py',
     'python/mozbuild/mozbuild/backend/mach_commands.py',
     'python/mozbuild/mozbuild/build_commands.py',
-    'python/mozbuild/mozbuild/code-analysis/mach_commands.py',
+    'python/mozbuild/mozbuild/code_analysis/mach_commands.py',
     'python/mozbuild/mozbuild/compilation/codecomplete.py',
     'python/mozbuild/mozbuild/frontend/mach_commands.py',
     'python/mozbuild/mozbuild/vendor/mach_commands.py',
     'python/mozbuild/mozbuild/mach_commands.py',
     'python/mozperftest/mozperftest/mach_commands.py',
     'python/mozrelease/mozrelease/mach_commands.py',
-    'python/safety/mach_commands.py',
     'remote/mach_commands.py',
     'taskcluster/mach_commands.py',
     'testing/awsy/mach_commands.py',
@@ -197,9 +196,10 @@ def bootstrap(topsrcdir, mozilla_dir=None):
     # case. For default behavior, we educate users and give them an opportunity
     # to react. We always exit after creating the directory because users don't
     # like surprises.
-    sys.path[0:0] = [os.path.join(mozilla_dir, path)
-                     for path in search_path(mozilla_dir,
-                                             'build/virtualenv_packages.txt')]
+    sys.path[0:0] = [
+        os.path.join(mozilla_dir, path)
+        for path in search_path(mozilla_dir,
+                                'build/mach_virtualenv_packages.txt')]
     import mach.base
     import mach.main
     from mach.util import setenv
@@ -284,10 +284,12 @@ def bootstrap(topsrcdir, mozilla_dir=None):
 
     def should_skip_telemetry_submission(handler):
         # The user is performing a maintenance command.
-        if handler.name in ('bootstrap', 'doctor', 'mach-commands', 'vcs-setup',
-                            # We call mach environment in client.mk which would cause the
-                            # data submission to block the forward progress of make.
-                            'environment'):
+        if handler.name in (
+                'bootstrap', 'doctor', 'mach-commands', 'vcs-setup',
+                'create-mach-environment',
+                # We call mach environment in client.mk which would cause the
+                # data submission to block the forward progress of make.
+                'environment'):
             return True
 
         # Never submit data when running in automation or when running tests.

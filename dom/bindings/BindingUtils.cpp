@@ -19,6 +19,7 @@
 #include "mozilla/UseCounter.h"
 
 #include "AccessCheck.h"
+#include "js/friend/StackLimits.h"  // js::CheckRecursionLimitConservative
 #include "js/Id.h"
 #include "js/JSON.h"
 #include "js/StableStringChars.h"
@@ -2114,8 +2115,7 @@ bool DictionaryBase::ParseJSON(JSContext* aCx, const nsAString& aJSON,
   if (aJSON.IsEmpty()) {
     return true;
   }
-  return JS_ParseJSON(aCx, PromiseFlatString(aJSON).get(), aJSON.Length(),
-                      aVal);
+  return JS_ParseJSON(aCx, aJSON.BeginReading(), aJSON.Length(), aVal);
 }
 
 bool DictionaryBase::StringifyToJSON(JSContext* aCx, JS::Handle<JSObject*> aObj,
@@ -2207,7 +2207,7 @@ void UpdateReflectorGlobal(JSContext* aCx, JS::Handle<JSObject*> aObjArg,
       return;
     }
 
-    if (!JS_CopyPropertiesFrom(aCx, propertyHolder, copyFrom)) {
+    if (!JS_CopyOwnPropertiesAndPrivateFields(aCx, propertyHolder, copyFrom)) {
       aError.StealExceptionFromJSContext(aCx);
       return;
     }
@@ -2220,7 +2220,8 @@ void UpdateReflectorGlobal(JSContext* aCx, JS::Handle<JSObject*> aObjArg,
   //
   // NB: It's important to do this _after_ copying the properties to
   // propertyHolder. Otherwise, an object with |foo.x === foo| will
-  // crash when JS_CopyPropertiesFrom tries to call wrap() on foo.x.
+  // crash when JS_CopyOwnPropertiesAndPrivateFields tries to call wrap() on
+  // foo.x.
   js::SetReservedSlot(newobj, DOM_OBJECT_SLOT,
                       js::GetReservedSlot(aObj, DOM_OBJECT_SLOT));
   js::SetReservedSlot(aObj, DOM_OBJECT_SLOT, JS::PrivateValue(nullptr));
@@ -2242,7 +2243,8 @@ void UpdateReflectorGlobal(JSContext* aCx, JS::Handle<JSObject*> aObjArg,
       copyTo = aObj;
     }
 
-    if (!copyTo || !JS_CopyPropertiesFrom(aCx, copyTo, propertyHolder)) {
+    if (!copyTo ||
+        !JS_CopyOwnPropertiesAndPrivateFields(aCx, copyTo, propertyHolder)) {
       MOZ_CRASH();
     }
   }
@@ -2629,7 +2631,7 @@ bool NormalizeUSVString(binding_detail::FakeString<char16_t>& aString) {
   }
 
   char16_t* ptr = aString.BeginWriting();
-  auto span = MakeSpan(ptr, len);
+  auto span = Span(ptr, len);
   span[upTo] = 0xFFFD;
   EnsureUtf16ValiditySpan(span.From(upTo + 1));
   return true;

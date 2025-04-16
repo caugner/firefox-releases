@@ -36,6 +36,7 @@
 class nsDNSPrefetch;
 class nsICancelable;
 class nsIDNSRecord;
+class nsIDNSHTTPSSVCRecord;
 class nsIHttpChannelAuthProvider;
 class nsInputStreamPump;
 class nsITransportSecurityInfo;
@@ -198,7 +199,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   void SetWarningReporter(HttpChannelSecurityWarningReporter* aReporter);
   HttpChannelSecurityWarningReporter* GetWarningReporter();
 
-  bool OnDataAlreadySent() { return mDataAlreadySent; }
+  bool DataSentToChildProcess() { return mDataSentToChildProcess; }
 
  public: /* internal necko use only */
   uint32_t GetRequestTime() const { return mRequestTime; }
@@ -732,9 +733,12 @@ class nsHttpChannel final : public HttpBaseChannel,
   // True only when we have computed the value of the top window origin.
   uint32_t mTopWindowOriginComputed : 1;
 
-  // True if the data has already been sent from the socket process to the
-  // content process.
-  uint32_t mDataAlreadySent : 1;
+  // True if the data will be sent from the socket process to the
+  // content process directly.
+  uint32_t mDataSentToChildProcess : 1;
+
+  uint32_t mUseHTTPSSVC : 1;
+  uint32_t mWaitHTTPSSVCRecord : 1;
 
   // The origin of the top window, only valid when mTopWindowOriginComputed is
   // true.
@@ -812,6 +816,9 @@ class nsHttpChannel final : public HttpBaseChannel,
   nsresult TriggerNetworkWithDelay(uint32_t aDelay);
   nsresult TriggerNetwork();
   void CancelNetworkRequest(nsresult aStatus);
+
+  void SetHTTPSSVCRecord(nsIDNSHTTPSSVCRecord* aRecord);
+
   // Timer used to delay the network request, or to trigger the network
   // request if retrieving the cache entry takes too long.
   nsCOMPtr<nsITimer> mNetworkTriggerTimer;
@@ -844,6 +851,10 @@ class nsHttpChannel final : public HttpBaseChannel,
   // We update the value of mProxyConnectResponseCode when OnStartRequest is
   // called and reset the value when we switch to another failover proxy.
   int32_t mProxyConnectResponseCode;
+
+  // If this is not null, this will be used to update the connection info in
+  // nsHttpChannel::BeginConnect().
+  nsCOMPtr<nsIDNSHTTPSSVCRecord> mHTTPSSVCRecord;
 
  protected:
   virtual void DoNotifyListenerCleanup() override;

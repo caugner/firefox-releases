@@ -597,6 +597,11 @@ class MochitestArguments(ArgumentContainer):
           "help": "Run tests in verification mode: Run many times in different "
                   "ways, to see if there are intermittent failures.",
           }],
+        [["--verify-fission"],
+         {"action": "store_true",
+          "default": False,
+          "help": "Run tests once without Fission, once with Fission",
+          }],
         [["--verify-max-time"],
          {"type": int,
           "default": 3600,
@@ -860,7 +865,6 @@ class MochitestArguments(ArgumentContainer):
         if options.enable_fission:
             options.extraPrefs.append("fission.autostart=true")
             options.extraPrefs.append("dom.serviceWorkers.parent_intercept=true")
-            options.extraPrefs.append("browser.tabs.documentchannel=true")
 
         options.leakThresholds = {
             "default": options.defaultLeakThreshold,

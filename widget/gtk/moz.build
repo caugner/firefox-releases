@@ -41,6 +41,7 @@ UNIFIED_SOURCES += [
     'nsGtkKeyUtils.cpp',
     'nsImageToPixbuf.cpp',
     'nsLookAndFeel.cpp',
+    'nsNativeBasicThemeGTK.cpp',
     'nsNativeThemeGTK.cpp',
     'nsSound.cpp',
     'nsToolkit.cpp',
@@ -80,7 +81,6 @@ if CONFIG['NS_PRINTING']:
         'nsPrintDialogGTK.cpp',
         'nsPrintSettingsGTK.cpp',
         'nsPrintSettingsServiceGTK.cpp',
-        'nsPSPrinters.cpp',
     ]
 
 if CONFIG['MOZ_X11']:
@@ -134,6 +134,7 @@ FINAL_LIBRARY = 'xul'
 
 LOCAL_INCLUDES += [
     '/layout/base',
+    '/layout/forms',
     '/layout/generic',
     '/layout/xul',
     '/other-licenses/atk-1.0',

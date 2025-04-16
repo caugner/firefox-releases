@@ -9,7 +9,6 @@
 #include "mozilla/Attributes.h"        // for MOZ_STACK_CLASS, MOZ_RAII
 #include "mozilla/DebugOnly.h"         // for DebugOnly
 #include "mozilla/DoublyLinkedList.h"  // for DoublyLinkedList<>::Iterator
-#include "mozilla/GuardObjects.h"      // for MOZ_GUARD_OBJECT_NOTIFIER_PARAM
 #include "mozilla/HashTable.h"         // for HashSet<>::Range, HashMapEntry
 #include "mozilla/Maybe.h"             // for Maybe, Nothing, Some
 #include "mozilla/ScopeExit.h"         // for MakeScopeExit, ScopeExit
@@ -111,7 +110,8 @@
 #include "wasm/WasmTypes.h"           // for WasmInstanceObjectVector
 
 #include "debugger/DebugAPI-inl.h"
-#include "debugger/Frame-inl.h"    // for DebuggerFrame::hasGeneratorInfo
+#include "debugger/Environment-inl.h"  // for DebuggerEnvironment::owner
+#include "debugger/Frame-inl.h"        // for DebuggerFrame::hasGeneratorInfo
 #include "debugger/Object-inl.h"   // for DebuggerObject::owner and isInstance.
 #include "debugger/Script-inl.h"   // for DebuggerScript::getReferent
 #include "gc/GC-inl.h"             // for ZoneCellIter
@@ -2943,11 +2943,7 @@ class MOZ_RAII ExecutionObservableRealms
   HashSet<Zone*> zones_;
 
  public:
-  explicit ExecutionObservableRealms(
-      JSContext* cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : realms_(cx), zones_(cx) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-  }
+  explicit ExecutionObservableRealms(JSContext* cx) : realms_(cx), zones_(cx) {}
 
   bool add(Realm* realm) {
     return realms_.put(realm) && zones_.put(realm->zone());
@@ -2966,8 +2962,6 @@ class MOZ_RAII ExecutionObservableRealms
     // don't match.
     return iter.hasUsableAbstractFramePtr() && realms_.has(iter.realm());
   }
-
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 // Given a particular AbstractFramePtr F that has become observable, this
@@ -2979,11 +2973,7 @@ class MOZ_RAII ExecutionObservableFrame
   AbstractFramePtr frame_;
 
  public:
-  explicit ExecutionObservableFrame(
-      AbstractFramePtr frame MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : frame_(frame) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-  }
+  explicit ExecutionObservableFrame(AbstractFramePtr frame) : frame_(frame) {}
 
   Zone* singleZone() const override {
     // We never inline across realms, let alone across zones, so
@@ -3035,8 +3025,6 @@ class MOZ_RAII ExecutionObservableFrame
     return iter.hasUsableAbstractFramePtr() &&
            iter.abstractFramePtr() == frame_;
   }
-
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 class MOZ_RAII ExecutionObservableScript
@@ -3044,11 +3032,8 @@ class MOZ_RAII ExecutionObservableScript
   RootedScript script_;
 
  public:
-  ExecutionObservableScript(JSContext* cx,
-                            JSScript* script MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : script_(cx, script) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-  }
+  ExecutionObservableScript(JSContext* cx, JSScript* script)
+      : script_(cx, script) {}
 
   Zone* singleZone() const override { return script_->zone(); }
   JSScript* singleScriptForZoneInvalidation() const override { return script_; }
@@ -3071,8 +3056,6 @@ class MOZ_RAII ExecutionObservableScript
     return iter.hasUsableAbstractFramePtr() && !iter.isWasm() &&
            iter.abstractFramePtr().script() == script_;
   }
-
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 /* static */
@@ -4550,11 +4533,15 @@ bool Debugger::CallData::getNewestFrame() {
 }
 
 bool Debugger::CallData::clearAllBreakpoints() {
-  for (WeakGlobalObjectSet::Range r = dbg->debuggees.all(); !r.empty();
-       r.popFront()) {
-    DebugScript::clearBreakpointsIn(cx->runtime()->defaultFreeOp(),
-                                    r.front()->realm(), dbg, nullptr);
+  JSFreeOp* fop = cx->defaultFreeOp();
+  Breakpoint* nextbp;
+  for (Breakpoint* bp = dbg->firstBreakpoint(); bp; bp = nextbp) {
+    nextbp = bp->nextInDebugger();
+
+    bp->remove(fop);
   }
+  MOZ_ASSERT(!dbg->firstBreakpoint());
+
   return true;
 }
 

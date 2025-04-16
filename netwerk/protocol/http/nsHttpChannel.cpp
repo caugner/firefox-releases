@@ -386,7 +386,9 @@ nsHttpChannel::nsHttpChannel()
       mHasBeenIsolatedChecked(0),
       mIsIsolated(0),
       mTopWindowOriginComputed(0),
-      mDataAlreadySent(0),
+      mDataSentToChildProcess(0),
+      mUseHTTPSSVC(0),
+      mWaitHTTPSSVCRecord(0),
       mPushedStreamId(0),
       mLocalBlocklist(false),
       mOnTailUnblock(nullptr),
@@ -604,6 +606,15 @@ nsresult nsHttpChannel::OnBeforeConnect() {
       auto resultCallback = [self(self)](bool aResult, nsresult aStatus) {
         MOZ_ASSERT(NS_IsMainThread());
 
+        // We need to wait for HTTPSSVC record if there is no AltSvc or HSTS
+        // upgrade for this request.
+        if (!aResult && NS_SUCCEEDED(aStatus) && self->mUseHTTPSSVC) {
+          LOG(("nsHttpChannel Wait for HTTPSSVC record [this=%p]\n",
+               self.get()));
+          self->mWaitHTTPSSVCRecord = true;
+          return;
+        }
+
         nsresult rv = self->ContinueOnBeforeConnect(aResult, aStatus);
         if (NS_FAILED(rv)) {
           self->CloseCacheEntry(false);
@@ -697,6 +708,28 @@ nsresult nsHttpChannel::ContinueOnBeforeConnect(bool aShouldUpgrade,
   mConnectionInfo->SetTRRMode(nsIRequest::GetTRRMode());
   mConnectionInfo->SetIPv4Disabled(mCaps & NS_HTTP_DISABLE_IPV4);
   mConnectionInfo->SetIPv6Disabled(mCaps & NS_HTTP_DISABLE_IPV6);
+
+  if (mHTTPSSVCRecord) {
+    MOZ_ASSERT(mURI->SchemeIs("https"));
+
+    LOG((" Using connection info with HTTPSSVC record"));
+    nsCOMPtr<nsIDNSHTTPSSVCRecord> rec;
+    mHTTPSSVCRecord.swap(rec);
+
+    bool http3Allowed = !mUpgradeProtocolCallback && !mProxyInfo &&
+                        !(mCaps & NS_HTTP_BE_CONSERVATIVE) && !mBeConservative;
+
+    nsCOMPtr<nsISVCBRecord> record;
+    if (NS_SUCCEEDED(rec->GetServiceModeRecord(mCaps & NS_HTTP_DISALLOW_SPDY,
+                                               !http3Allowed,
+                                               getter_AddRefs(record)))) {
+      MOZ_ASSERT(record);
+
+      RefPtr<nsHttpConnectionInfo> newConnInfo =
+          mConnectionInfo->CloneAndAdoptHTTPSSVCRecord(record);
+      mConnectionInfo = std::move(newConnInfo);
+    }
+  }
 
   // notify "http-on-before-connect" observers
   gHttpHandler->OnBeforeConnect(this);
@@ -1352,6 +1385,13 @@ nsresult nsHttpChannel::SetupTransaction() {
     LOG1(("nsHttpChannel %p created HttpTransactionParent %p\n", this,
           transParent.get()));
 
+    // Since OnStopRequest could be sent to child process from socket process
+    // directly, we need to store these two values in HttpTransactionChild and
+    // forward to child process until HttpTransactionChild::OnStopRequest is
+    // called.
+    transParent->SetRedirectTimestamp(mRedirectStartTimeStamp,
+                                      mRedirectEndTimeStamp);
+
     SocketProcessParent* socketProcess = SocketProcessParent::GetSingleton();
     if (socketProcess) {
       Unused << socketProcess->SendPHttpTransactionConstructor(transParent);
@@ -1605,6 +1645,7 @@ nsresult EnsureMIMEOfScript(nsHttpChannel* aChannel, nsIURI* aURI,
     case nsIContentPolicy::TYPE_INTERNAL_MODULE:
     case nsIContentPolicy::TYPE_INTERNAL_MODULE_PRELOAD:
     case nsIContentPolicy::TYPE_INTERNAL_CHROMEUTILS_COMPILED_SCRIPT:
+    case nsIContentPolicy::TYPE_INTERNAL_FRAME_MESSAGEMANAGER_SCRIPT:
       AccumulateCategorical(
           Telemetry::LABELS_SCRIPT_BLOCK_INCORRECT_MIME_3::script_load);
       break;
@@ -1909,10 +1950,20 @@ nsresult nsHttpChannel::CallOnStartRequest() {
   });
 
   nsresult rv = EnsureMIMEOfScript(this, mURI, mResponseHead.get(), mLoadInfo);
-  NS_ENSURE_SUCCESS(rv, rv);
+  // Since ODA and OnStopRequest could be sent from socket process directly, we
+  // need to update the channel status before calling mListener->OnStartRequest.
+  // This is the only way to let child process discard the already received ODA
+  // messages.
+  if (NS_FAILED(rv)) {
+    mStatus = rv;
+    return mStatus;
+  }
 
   rv = ProcessXCTO(this, mURI, mResponseHead.get(), mLoadInfo);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    mStatus = rv;
+    return mStatus;
+  }
 
   WarnWrongMIMEOfScript(this, mURI, mResponseHead.get(), mLoadInfo);
 
@@ -2039,6 +2090,10 @@ nsresult nsHttpChannel::CallOnStartRequest() {
       return rv;
     }
     if (listener) {
+      MOZ_ASSERT(!mDataSentToChildProcess,
+                 "mDataSentToChildProcess being true means ODAs are sent to "
+                 "the child process directly. We MUST NOT apply content "
+                 "converter in this case.");
       mListener = listener;
       mCompressListener = listener;
       mHasAppliedConversion = true;
@@ -2704,6 +2759,7 @@ nsresult nsHttpChannel::ContinueProcessResponse3(nsresult rv) {
   rv = NS_OK;
 
   uint32_t httpStatus = mResponseHead->Status();
+  bool transactionRestarted = mTransaction->TakeRestartedState();
 
   // handle different server response categories.  Note that we handle
   // caching or not caching of error pages in
@@ -2795,6 +2851,13 @@ nsresult nsHttpChannel::ContinueProcessResponse3(nsresult rv) {
       break;
     case 401:
     case 407:
+      if (MOZ_UNLIKELY(httpStatus == 407 && transactionRestarted)) {
+        // The transaction has been internally restarted.  We want to
+        // authenticate to the proxy again, so reuse either cached credentials
+        // or use default credentials for NTLM/Negotiate.  This prevents
+        // considering the previously used creadentials as invalid.
+        mAuthProvider->ClearProxyIdent();
+      }
       if (MOZ_UNLIKELY(mCustomAuthHeader) && httpStatus == 401) {
         // When a custom auth header fails, we don't want to try
         // any cached credentials, nor we want to ask the user.
@@ -3151,6 +3214,11 @@ nsresult nsHttpChannel::ProxyFailover() {
   return AsyncDoReplaceWithProxy(pi);
 }
 
+void nsHttpChannel::SetHTTPSSVCRecord(nsIDNSHTTPSSVCRecord* aRecord) {
+  LOG(("nsHttpChannel::SetHTTPSSVCRecord [this=%p]\n", this));
+  mHTTPSSVCRecord = aRecord;
+}
+
 void nsHttpChannel::HandleAsyncRedirectChannelToHttps() {
   MOZ_ASSERT(!mCallOnResume, "How did that happen?");
 
@@ -3233,6 +3301,15 @@ nsresult nsHttpChannel::StartRedirectChannelToURI(nsIURI* upgradedURI,
 
   rv = SetupReplacementChannel(upgradedURI, newChannel, true, flags);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  if (mHTTPSSVCRecord) {
+    RefPtr<nsHttpChannel> httpChan = do_QueryObject(newChannel);
+    if (httpChan) {
+      nsCOMPtr<nsIDNSHTTPSSVCRecord> rec;
+      mHTTPSSVCRecord.swap(rec);
+      httpChan->SetHTTPSSVCRecord(rec);
+    }
+  }
 
   // Inform consumers about this fake redirect
   mRedirectChannel = newChannel;
@@ -5363,7 +5440,7 @@ nsresult nsHttpChannel::ReadFromCache(bool alreadyMarkedValid) {
     return rv;
   }
 
-  rv = mCachePump->AsyncRead(this, nullptr);
+  rv = mCachePump->AsyncRead(this);
   if (NS_FAILED(rv)) return rv;
 
   if (mTimingEnabled) mCacheReadStart = TimeStamp::Now();
@@ -6035,6 +6112,9 @@ nsresult nsHttpChannel::ContinueProcessRedirectionAfterFallback(nsresult rv) {
 
 #ifdef MOZ_GECKO_PROFILER
   if (profiler_can_accept_markers()) {
+    nsAutoCString requestMethod;
+    GetRequestMethod(requestMethod);
+
     int32_t priority = PRIORITY_NORMAL;
     GetPriority(&priority);
 
@@ -6049,10 +6129,10 @@ nsresult nsHttpChannel::ContinueProcessRedirectionAfterFallback(nsresult rv) {
     }
 
     profiler_add_network_marker(
-        mURI, priority, mChannelId, NetworkLoadType::LOAD_REDIRECT,
-        mLastStatusReported, TimeStamp::Now(), mLogicalOffset,
-        mCacheDisposition, mLoadInfo->GetInnerWindowID(), &timings,
-        mRedirectURI, std::move(mSource),
+        mURI, requestMethod, priority, mChannelId,
+        NetworkLoadType::LOAD_REDIRECT, mLastStatusReported, TimeStamp::Now(),
+        mLogicalOffset, mCacheDisposition, mLoadInfo->GetInnerWindowID(),
+        &timings, mRedirectURI, std::move(mSource),
         Some(nsDependentCString(contentType.get())));
   }
 #endif
@@ -6491,8 +6571,11 @@ nsHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
   mLastStatusReported =
       TimeStamp::Now();  // in case we enable the profiler after AsyncOpen()
   if (profiler_can_accept_markers()) {
+    nsAutoCString requestMethod;
+    GetRequestMethod(requestMethod);
+
     profiler_add_network_marker(
-        mURI, mPriority, mChannelId, NetworkLoadType::LOAD_START,
+        mURI, requestMethod, mPriority, mChannelId, NetworkLoadType::LOAD_START,
         mChannelCreationTimestamp, mLastStatusReported, 0, mCacheDisposition,
         mLoadInfo->GetInnerWindowID(), nullptr, nullptr);
   }
@@ -6770,12 +6853,20 @@ nsresult nsHttpChannel::BeginConnect() {
         this, originAttributes);
   }
 
+  gHttpHandler->MaybeAddAltSvcForTesting(mURI, mUsername, GetTopWindowOrigin(),
+                                         mPrivateBrowsing, IsIsolated(),
+                                         mCallbacks, originAttributes);
+
   RefPtr<nsHttpConnectionInfo> connInfo = new nsHttpConnectionInfo(
       host, port, EmptyCString(), mUsername, GetTopWindowOrigin(), proxyInfo,
       originAttributes, isHttps);
   mAllowAltSvc = (mAllowAltSvc && !gHttpHandler->IsSpdyBlacklisted(connInfo));
   bool http3Allowed = !mUpgradeProtocolCallback && !mProxyInfo &&
                       !(mCaps & NS_HTTP_BE_CONSERVATIVE) && !mBeConservative;
+
+  // No need to lookup HTTPSSVC record if we already have one.
+  mUseHTTPSSVC =
+      StaticPrefs::network_dns_upgrade_with_https_rr() && !mHTTPSSVCRecord;
 
   RefPtr<AltSvcMapping> mapping;
   if (!mConnectionInfo && mAllowAltSvc &&  // per channel
@@ -6825,6 +6916,9 @@ nsresult nsHttpChannel::BeginConnect() {
                                originAttributes);
     Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC, true);
     Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC_OE, !isHttps);
+
+    // Don't use HTTPSSVC record if we found altsvc mapping.
+    mUseHTTPSSVC = false;
   } else if (mConnectionInfo) {
     LOG(("nsHttpChannel %p Using channel supplied connection info", this));
     Telemetry::Accumulate(Telemetry::HTTP_TRANSACTION_USE_ALTSVC, false);
@@ -7000,6 +7094,14 @@ nsresult nsHttpChannel::MaybeStartDNSPrefetch() {
 
       // Resolved in OnLookupComplete.
       mDNSBlockingThenable = mDNSBlockingPromise.Ensure(__func__);
+    }
+
+    if (mUseHTTPSSVC) {
+      rv = mDNSPrefetch->FetchHTTPSSVC(mCaps & NS_HTTP_REFRESH_DNS);
+      if (NS_FAILED(rv)) {
+        LOG(("  FetchHTTPSSVC failed with 0x%08" PRIx32,
+             static_cast<uint32_t>(rv)));
+      }
     }
   }
 
@@ -7540,6 +7642,9 @@ nsHttpChannel::OnStartRequest(nsIRequest* request) {
 
   if (mTransaction) {
     mProxyConnectResponseCode = mTransaction->GetProxyConnectResponseCode();
+    if (request == mTransactionPump) {
+      mDataSentToChildProcess = mTransaction->DataSentToChildProcess();
+    }
 
     if (!mSecurityInfo && !mCachePump) {
       // grab the security info from the connection object; the transaction
@@ -8101,6 +8206,9 @@ nsresult nsHttpChannel::ContinueOnStopRequest(nsresult aStatus, bool aIsFromNet,
   if (profiler_can_accept_markers() && !mRedirectURI) {
     // Don't include this if we already redirected
     // These do allocations/frees/etc; avoid if not active
+    nsAutoCString requestMethod;
+    GetRequestMethod(requestMethod);
+
     nsCOMPtr<nsIURI> uri;
     GetURI(getter_AddRefs(uri));
     int32_t priority = PRIORITY_NORMAL;
@@ -8111,7 +8219,7 @@ nsresult nsHttpChannel::ContinueOnStopRequest(nsresult aStatus, bool aIsFromNet,
       mResponseHead->ContentType(contentType);
     }
     profiler_add_network_marker(
-        uri, priority, mChannelId, NetworkLoadType::LOAD_STOP,
+        uri, requestMethod, priority, mChannelId, NetworkLoadType::LOAD_STOP,
         mLastStatusReported, TimeStamp::Now(), mLogicalOffset,
         mCacheDisposition, mLoadInfo->GetInnerWindowID(), &mTransactionTimings,
         nullptr, std::move(mSource),
@@ -8282,10 +8390,6 @@ nsHttpChannel::OnDataAvailable(nsIRequest* request, nsIInputStream* input,
       seekable = nullptr;
     }
 
-    mDataAlreadySent = false;
-    if (mTransaction) {
-      mDataAlreadySent = mTransaction->DataAlreadySent();
-    }
     nsresult rv =
         mListener->OnDataAvailable(this, input, mLogicalOffset, count);
     if (NS_SUCCEEDED(rv)) {
@@ -9057,42 +9161,59 @@ nsHttpChannel::OnLookupComplete(nsICancelable* request, nsIDNSRecord* rec,
                                 nsresult status) {
   MOZ_ASSERT(NS_IsMainThread(), "Expecting DNS callback on main thread.");
 
+  nsCOMPtr<nsIDNSHTTPSSVCRecord> httpSSVCRecord = do_QueryInterface(rec);
   LOG(
       ("nsHttpChannel::OnLookupComplete [this=%p] prefetch complete%s: "
-       "%s status[0x%" PRIx32 "]\n",
+       "%s status[0x%" PRIx32 "], isHTTPSSVC=%d\n",
        this, mCaps & NS_HTTP_REFRESH_DNS ? ", refresh requested" : "",
        NS_SUCCEEDED(status) ? "success" : "failure",
-       static_cast<uint32_t>(status)));
+       static_cast<uint32_t>(status), !!httpSSVCRecord));
 
-  // We no longer need the dns prefetch object. Note: mDNSPrefetch could be
-  // validly null if OnStopRequest has already been called.
-  // We only need the domainLookup timestamps when not loading from cache
-  if (mDNSPrefetch && mDNSPrefetch->TimingsValid() && mTransaction) {
-    TimeStamp connectStart = mTransaction->GetConnectStart();
-    TimeStamp requestStart = mTransaction->GetRequestStart();
-    // We only set the domainLookup timestamps if we're not using a
-    // persistent connection.
-    if (requestStart.IsNull() && connectStart.IsNull()) {
-      mTransaction->SetDomainLookupStart(mDNSPrefetch->StartTimestamp());
-      mTransaction->SetDomainLookupEnd(mDNSPrefetch->EndTimestamp());
+  if (!httpSSVCRecord) {
+    // We no longer need the dns prefetch object. Note: mDNSPrefetch could be
+    // validly null if OnStopRequest has already been called.
+    // We only need the domainLookup timestamps when not loading from cache
+    if (mDNSPrefetch && mDNSPrefetch->TimingsValid() && mTransaction) {
+      TimeStamp connectStart = mTransaction->GetConnectStart();
+      TimeStamp requestStart = mTransaction->GetRequestStart();
+      // We only set the domainLookup timestamps if we're not using a
+      // persistent connection.
+      if (requestStart.IsNull() && connectStart.IsNull()) {
+        mTransaction->SetDomainLookupStart(mDNSPrefetch->StartTimestamp());
+        mTransaction->SetDomainLookupEnd(mDNSPrefetch->EndTimestamp());
+      }
     }
-  }
-  mDNSPrefetch = nullptr;
 
-  // Unset DNS cache refresh if it was requested,
-  if (mCaps & NS_HTTP_REFRESH_DNS) {
-    mCaps &= ~NS_HTTP_REFRESH_DNS;
-    if (mTransaction) {
-      mTransaction->SetDNSWasRefreshed();
+    // Unset DNS cache refresh if it was requested,
+    if (mCaps & NS_HTTP_REFRESH_DNS) {
+      mCaps &= ~NS_HTTP_REFRESH_DNS;
+      if (mTransaction) {
+        mTransaction->SetDNSWasRefreshed();
+      }
     }
+
+    if (!mDNSBlockingPromise.IsEmpty()) {
+      if (NS_SUCCEEDED(status)) {
+        nsCOMPtr<nsIDNSRecord> record(rec);
+        mDNSBlockingPromise.Resolve(record, __func__);
+      } else {
+        mDNSBlockingPromise.Reject(status, __func__);
+      }
+    }
+
+    return NS_OK;
   }
 
-  if (!mDNSBlockingPromise.IsEmpty()) {
-    if (NS_SUCCEEDED(status)) {
-      nsCOMPtr<nsIDNSRecord> record(rec);
-      mDNSBlockingPromise.Resolve(record, __func__);
-    } else {
-      mDNSBlockingPromise.Reject(status, __func__);
+  if (mWaitHTTPSSVCRecord) {
+    MOZ_ASSERT(mURI->SchemeIs("http"));
+    MOZ_ASSERT(!mHTTPSSVCRecord);
+
+    // This record will be used in the new redirect channel.
+    mHTTPSSVCRecord = httpSSVCRecord;
+    nsresult rv = ContinueOnBeforeConnect(true, status);
+    if (NS_FAILED(rv)) {
+      CloseCacheEntry(false);
+      Unused << AsyncAbort(rv);
     }
   }
 

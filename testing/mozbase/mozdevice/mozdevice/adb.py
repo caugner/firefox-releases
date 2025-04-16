@@ -6,8 +6,10 @@ from __future__ import absolute_import, print_function
 
 import io
 import os
+import pipes
 import posixpath
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -236,7 +238,8 @@ class ADBCommand(object):
             executed.
         :param str device_serial: The device's
             serial number if the adb command is to be executed against
-            a specific device.
+            a specific device. If it is not specified, ANDROID_SERIAL
+            from the environment will be used if it is set.
         :param int timeout: The maximum time in
             seconds for any spawned adb process to complete before
             throwing an ADBTimeoutError.  This timeout is per adb call. The
@@ -263,6 +266,7 @@ class ADBCommand(object):
         the stdout temporary file.
         """
         args = [self._adb_path]
+        device_serial = device_serial or os.environ.get('ANDROID_SERIAL')
         if self._adb_host:
             args.extend(['-H', self._adb_host])
         if self._adb_port:
@@ -298,7 +302,8 @@ class ADBCommand(object):
             executed.
         :param str device_serial: The device's
             serial number if the adb command is to be executed against
-            a specific device.
+            a specific device. If it is not specified, ANDROID_SERIAL
+            from the environment will be used if it is set.
         :param int timeout: The maximum time in seconds
             for any spawned adb process to complete before throwing
             an ADBTimeoutError.
@@ -561,6 +566,7 @@ def ADBDeviceFactory(device=None,
              :exc:`ADBTimeoutError`
 
     """
+    device = device or os.environ.get('ANDROID_SERIAL')
     if device is not None and device in ADBDEVICES:
         # We have already created an ADBDevice for this device, just re-use it.
         adbdevice = ADBDEVICES[device]
@@ -617,7 +623,9 @@ class ADBDevice(ADBCommand):
         be used to identify the device, otherwise the value of the usb
         key, prefixed with "usb:" is used.  If None is passed and
         there is exactly one device attached to the host, that device
-        is used. If there is more than one device attached, ValueError
+        is used. If None is passed and ANDROID_SERIAL is set in the environment,
+        that device is used. If there is more than one device attached and
+        device is None and ANDROID_SERIAL is not set in the environment, ValueError
         is raised. If no device is attached the constructor will block
         until a device is attached or the timeout is reached.
     :param str adb_host: host of the adb server to connect to.
@@ -958,6 +966,7 @@ class ADBDevice(ADBCommand):
             raise ADBError('Failed to complete boot in time')
 
     def _get_device_serial(self, device):
+        device = device or os.environ.get('ANDROID_SERIAL')
         if device is None:
             devices = ADBHost(adb=self._adb_path, adb_host=self._adb_host,
                               adb_port=self._adb_port).devices()
@@ -1066,18 +1075,19 @@ class ADBDevice(ADBCommand):
     @staticmethod
     def _quote(arg):
         """Utility function to return quoted version of command argument."""
-        # Replace with shlex.quote when we move totally to Python 3.3+?
-        if ADBDevice._should_quote(arg):
-            if "'" not in arg and '"' not in arg:
-                arg = '"%s"' % arg
-            elif "'" in arg and '"' not in arg:
-                arg = '"%s"' % arg
-            elif '"' in arg and "'" not in arg:
-                arg = "'%s'" % arg
-            else:
-                arg = '"%s"' % arg.replace(r'"', r'\"')
+        if hasattr(shlex, 'quote'):
+            quote = shlex.quote
+        elif hasattr(pipes, 'quote'):
+            quote = pipes.quote
+        else:
+            def quote(arg):
+                arg = arg or ''
+                re_unsafe = re.compile(r'[^\w@%+=:,./-]')
+                if re_unsafe.search(arg):
+                    arg = "'" + arg.replace("'", "'\"'\"'") + "'"
+                return arg
 
-        return arg
+        return quote(arg)
 
     @staticmethod
     def _escape_command_line(cmds):
@@ -1085,7 +1095,8 @@ class ADBDevice(ADBCommand):
         escaped and quoted version of the command as a string.
         """
         assert isinstance(cmds, list)
-        # Replace with shlex.join when we move totally to Python 3.8+?
+        # This is identical to shlex.join in Python 3.8. We can
+        # replace it should we ever get Python 3.8 as a minimum.
         quoted_cmd = " ".join([ADBDevice._quote(arg) for arg in cmds])
 
         return quoted_cmd
@@ -1668,7 +1679,7 @@ class ADBDevice(ADBCommand):
                     if line and len(line) > 0:
                         line = line.rstrip()
                         if self._verbose:
-                            self._logger.info(line)
+                            self._logger.info(six.ensure_str(line))
                         stdout_callback(line)
                     else:
                         # no new output, so sleep and poll
@@ -2047,7 +2058,7 @@ class ADBDevice(ADBCommand):
         """
 
         rv = self.command_output(["remount"], timeout=timeout)
-        if not rv.startswith("remount succeeded"):
+        if "remount succeeded" not in rv:
             raise ADBError("Unable to remount device")
 
     def batch_execute(self, commands, timeout=None, enable_run_as=False):
@@ -2668,11 +2679,11 @@ class ADBDevice(ADBCommand):
                 # instead read only the requested portion of the local file
                 if offset is not None and length is not None:
                     tf2.seek(offset)
-                    return six.ensure_str(tf2.read(length))
+                    return tf2.read(length)
                 if offset is not None:
                     tf2.seek(offset)
-                    return six.ensure_str(tf2.read())
-                return six.ensure_str(tf2.read())
+                    return tf2.read()
+                return tf2.read()
 
     def rm(self, path, recursive=False, force=False, timeout=None):
         """Delete files or directories on the device.

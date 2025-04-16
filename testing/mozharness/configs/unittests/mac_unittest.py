@@ -95,6 +95,7 @@ config = {
         },
         "xpcshell": {
             "options": [
+                "--self-test",
                 "--symbols-path=%(symbols_path)s",
                 "--test-plugin-path=%(test_plugin_path)s",
                 "--log-raw=%(raw_log_file)s",
@@ -180,6 +181,20 @@ config = {
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": False,
             "enabled": DISABLE_SCREEN_SAVER
+        },
+        {
+            "name": "disable_dock",
+            "cmd": ["defaults", "write", "com.apple.dock", "autohide", "-bool", "true"],
+            "architectures": ["64bit"],
+            "halt_on_failure": True,
+            "enabled": True
+        },
+        {
+            "name": "kill_dock",
+            "cmd": ["killall", "Dock"],
+            "architectures": ["64bit"],
+            "halt_on_failure": True,
+            "enabled": True
         },
         {
             "name": "run mouse & screen adjustment script",

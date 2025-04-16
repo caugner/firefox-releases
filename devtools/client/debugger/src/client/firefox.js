@@ -9,13 +9,15 @@ import { setupEvents, clientEvents } from "./firefox/events";
 import { features, prefs } from "../utils/prefs";
 
 let actions;
+let targetList;
 
 export async function onConnect(
   connection: any,
   _actions: Object
 ): Promise<void> {
-  const { devToolsClient, targetList } = connection;
+  const { devToolsClient, targetList: _targetList } = connection;
   actions = _actions;
+  targetList = _targetList;
 
   setupCommands({ devToolsClient, targetList });
   setupEvents({ actions, devToolsClient });
@@ -40,6 +42,19 @@ async function onTargetAvailable({
   targetFront,
   isTargetSwitching,
 }): Promise<void> {
+  const isBrowserToolbox = targetList.targetFront.isParentProcess;
+  const isNonTopLevelFrameTarget =
+    !targetFront.isTopLevel &&
+    targetFront.targetType === targetList.TYPES.FRAME;
+
+  if (isBrowserToolbox && isNonTopLevelFrameTarget) {
+    // In the BrowserToolbox, non-top-level frame targets are already
+    // debugged via content-process targets.
+    // Do not attach the thread here, as it was already done by the
+    // corresponding content-process target.
+    return;
+  }
+
   if (!targetFront.isTopLevel) {
     await actions.addTarget(targetFront);
     return;
@@ -53,11 +68,10 @@ async function onTargetAvailable({
     actions.willNavigate({ url: targetFront.url });
   }
 
-  // Make sure targetFront.threadFront is availabled and attached.
-  await targetFront.onThreadAttached;
-
+  // At this point, we expect the target and its thread to be attached.
   const { threadFront } = targetFront;
   if (!threadFront) {
+    console.error("The thread for", targetFront, "isn't attached.");
     return;
   }
 

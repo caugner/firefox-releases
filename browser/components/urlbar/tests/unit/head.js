@@ -429,6 +429,7 @@ function makeFormHistoryResult(queryContext, { suggestion, engineName }) {
     ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
       engine: engineName,
       suggestion: [suggestion, UrlbarUtils.HIGHLIGHT.SUGGESTED],
+      isSearchHistory: true,
       lowerCaseSuggestion: suggestion.toLocaleLowerCase(),
     })
   );
@@ -586,7 +587,11 @@ function makeSearchResult(
 ) {
   if (!keywordOffer) {
     keywordOffer = UrlbarUtils.KEYWORD_OFFER.NONE;
-    if (alias && !query.trim() && alias.startsWith("@")) {
+    if (
+      alias &&
+      !query.trim() &&
+      (UrlbarPrefs.get("update2") || alias.startsWith("@"))
+    ) {
       keywordOffer = heuristic
         ? UrlbarUtils.KEYWORD_OFFER.HIDE
         : UrlbarUtils.KEYWORD_OFFER.SHOW;
@@ -614,7 +619,7 @@ function makeSearchResult(
       keyword: [alias, UrlbarUtils.HIGHLIGHT.TYPED],
       // Check against undefined so consumers can pass in the empty string.
       query: [
-        typeof query != "undefined" ? query : queryContext.searchString.trim(),
+        typeof query != "undefined" ? query : queryContext.trimmedSearchString,
         UrlbarUtils.HIGHLIGHT.TYPED,
       ],
       isSearchHistory: false,

@@ -458,7 +458,7 @@ uint64_t Accessible::NativeLinkState() const { return 0; }
 
 bool Accessible::NativelyUnavailable() const {
   if (mContent->IsHTMLElement())
-    return mContent->AsElement()->State().HasState(NS_EVENT_STATE_DISABLED);
+    return mContent->AsElement()->IsDisabled();
 
   return mContent->IsElement() && mContent->AsElement()->AttrValueIs(
                                       kNameSpaceID_None, nsGkAtoms::disabled,
@@ -1718,9 +1718,14 @@ Relation Accessible::RelationByType(RelationType aType) const {
            * was called from, which is expected. */
           Pivot p = Pivot(currParent);
           PivotRoleRule rule(roles::RADIOBUTTON);
-          Accessible* match = currParent;
-          while ((match = p.Next(match, rule))) {
-            rel.AppendTarget(match);
+          AccessibleOrProxy wrappedParent = AccessibleOrProxy(currParent);
+          AccessibleOrProxy match = p.Next(wrappedParent, rule);
+          while (!match.IsNull()) {
+            MOZ_ASSERT(
+                !match.IsProxy(),
+                "We shouldn't find any proxy's while building our relation!");
+            rel.AppendTarget(match.AsAccessible());
+            match = p.Next(match, rule);
           }
         }
 

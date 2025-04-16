@@ -9,7 +9,7 @@
  * preferences for the urlbar.
  */
 
-var EXPORTED_SYMBOLS = ["UrlbarPrefs"];
+var EXPORTED_SYMBOLS = ["UrlbarPrefs", "UrlbarPrefsObserver"];
 
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
@@ -241,6 +241,8 @@ class Preferences {
     for (let pref of PREF_OTHER_DEFAULTS.keys()) {
       Services.prefs.addObserver(pref, this, true);
     }
+    this._observerWeakRefs = [];
+    this.addObserver(this);
   }
 
   /**
@@ -279,6 +281,20 @@ class Preferences {
   }
 
   /**
+   * Adds a preference observer.  Observers are held weakly.
+   *
+   * @param {object} observer
+   *        An object that must have a method named `onPrefChanged`, which will
+   *        be called when a urlbar preference changes.  It will be passed the
+   *        pref name.  For prefs in the `browser.urlbar.` branch, the name will
+   *        be relative to the branch.  For other prefs, the name will be the
+   *        full name.
+   */
+  addObserver(observer) {
+    this._observerWeakRefs.push(Cu.getWeakReference(observer));
+  }
+
+  /**
    * Observes preference changes.
    *
    * @param {nsISupports} subject
@@ -290,6 +306,26 @@ class Preferences {
     if (!PREF_URLBAR_DEFAULTS.has(pref) && !PREF_OTHER_DEFAULTS.has(pref)) {
       return;
     }
+    for (let i = 0; i < this._observerWeakRefs.length; ) {
+      let observer = this._observerWeakRefs[i].get();
+      if (!observer) {
+        // The observer has been GC'ed, so remove it from our list.
+        this._observerWeakRefs.splice(i, 1);
+      } else {
+        observer.onPrefChanged(pref);
+        ++i;
+      }
+    }
+  }
+
+  /**
+   * Called when a pref tracked by UrlbarPrefs changes.
+   *
+   * @param {string} pref
+   *        The name of the pref, relative to `browser.urlbar.` if the pref is
+   *        in that branch.
+   */
+  onPrefChanged(pref) {
     this._map.delete(pref);
     // Some prefs may influence others.
     if (pref == "matchBuckets") {

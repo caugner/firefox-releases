@@ -12,94 +12,41 @@ const { PSEUDO_CLASSES } = require("devtools/shared/css/constants");
 const { nodeSpec, nodeListSpec } = require("devtools/shared/specs/node");
 loader.lazyRequireGetter(
   this,
-  "getCssPath",
-  "devtools/shared/inspector/css-logic",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "getXPath",
-  "devtools/shared/inspector/css-logic",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "findCssSelector",
-  "devtools/shared/inspector/css-logic",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "findAllCssSelectors",
+  ["getCssPath", "getXPath", "findCssSelector", "findAllCssSelectors"],
   "devtools/shared/inspector/css-logic",
   true
 );
 
 loader.lazyRequireGetter(
   this,
-  "isAfterPseudoElement",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isAnonymous",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isBeforePseudoElement",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isDirectShadowHostChild",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isMarkerPseudoElement",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isNativeAnonymous",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isShadowHost",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isShadowRoot",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "getShadowRootMode",
-  "devtools/shared/layout/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "isRemoteFrame",
+  [
+    "isAfterPseudoElement",
+    "isAnonymous",
+    "isBeforePseudoElement",
+    "isDirectShadowHostChild",
+    "isMarkerPseudoElement",
+    "isNativeAnonymous",
+    "isShadowHost",
+    "isShadowRoot",
+    "getShadowRootMode",
+    "isRemoteFrame",
+  ],
   "devtools/shared/layout/utils",
   true
 );
 
 loader.lazyRequireGetter(
   this,
-  "InspectorActorUtils",
-  "devtools/server/actors/inspector/utils"
+  [
+    "getBackgroundColor",
+    "getClosestBackgroundColor",
+    "getNodeDisplayName",
+    "imageToImageData",
+    "isNodeDead",
+    "scrollbarTreeWalkerFilter",
+  ],
+  "devtools/server/actors/inspector/utils",
+  true
 );
 loader.lazyRequireGetter(
   this,
@@ -133,12 +80,6 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "scrollbarTreeWalkerFilter",
-  "devtools/server/actors/inspector/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
   "DOMHelpers",
   "devtools/shared/dom-helpers",
   true
@@ -166,6 +107,13 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
     this.currentDisplayType = this.displayType;
     this.wasDisplayed = this.isDisplayed;
     this.wasScrollable = this.isScrollable;
+
+    if (this.isScrollable) {
+      this.walker.updateOverflowCausingElements(
+        this,
+        this.walker.overflowCausingElementsMap
+      );
+    }
   },
 
   toString: function() {
@@ -200,7 +148,7 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
     }
 
     if (this.slotchangeListener) {
-      if (!InspectorActorUtils.isNodeDead(this)) {
+      if (!isNodeDead(this)) {
         this.rawNode.removeEventListener("slotchange", this.slotchangeListener);
       }
       this.slotchangeListener = null;
@@ -230,11 +178,13 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
       namespaceURI: this.rawNode.namespaceURI,
       nodeName: this.rawNode.nodeName,
       nodeValue: this.rawNode.nodeValue,
-      displayName: InspectorActorUtils.getNodeDisplayName(this.rawNode),
+      displayName: getNodeDisplayName(this.rawNode),
       numChildren: this.numChildren,
       inlineTextChild: inlineTextChild ? inlineTextChild.form() : undefined,
       displayType: this.displayType,
       isScrollable: this.isScrollable,
+      isTopLevelDocument: this.isTopLevelDocument,
+      causesOverflow: this.walker.overflowCausingElementsMap.has(this.rawNode),
 
       // doctype attributes
       name: this.rawNode.name,
@@ -261,10 +211,7 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
         this.rawNode.ownerDocument.contentType === "text/html",
       hasEventListeners: this._hasEventListeners,
       traits: {
-        // Added in FF72
-        supportsGetAllSelectors: true,
-        // Added in FF72
-        supportsWaitForFrameLoad: true,
+        supportsIsTopLevelDocument: true,
       },
     };
 
@@ -323,6 +270,10 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
     return isRemoteFrame(this.rawNode);
   },
 
+  get isTopLevelDocument() {
+    return this.rawNode === this.walker.rootDoc;
+  },
+
   // Estimate the number of children that the walker will return without making
   // a call to children() if possible.
   get numChildren() {
@@ -373,10 +324,7 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
    */
   get displayType() {
     // Consider all non-element nodes as displayed.
-    if (
-      InspectorActorUtils.isNodeDead(this) ||
-      this.rawNode.nodeType !== Node.ELEMENT_NODE
-    ) {
+    if (isNodeDead(this) || this.rawNode.nodeType !== Node.ELEMENT_NODE) {
       return null;
     }
 
@@ -630,14 +578,12 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
    * transfered in the longstring back to the client will be that much smaller
    */
   getImageData: function(maxDim) {
-    return InspectorActorUtils.imageToImageData(this.rawNode, maxDim).then(
-      imageData => {
-        return {
-          data: LongStringActor(this.conn, imageData.data),
-          size: imageData.size,
-        };
-      }
-    );
+    return imageToImageData(this.rawNode, maxDim).then(imageData => {
+      return {
+        data: LongStringActor(this.conn, imageData.data),
+        size: imageData.size,
+      };
+    });
   },
 
   /**
@@ -712,7 +658,7 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
    *         rgba(255, 255, 255, 1) if no background color is found.
    */
   getClosestBackgroundColor: function() {
-    return InspectorActorUtils.getClosestBackgroundColor(this.rawNode);
+    return getClosestBackgroundColor(this.rawNode);
   },
 
   /**
@@ -725,7 +671,7 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
    *         Object with one or more of the following properties: value, min, max
    */
   getBackgroundColor: function() {
-    return InspectorActorUtils.getBackgroundColor(this);
+    return getBackgroundColor(this);
   },
 
   /**
@@ -762,8 +708,6 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
  * Server side of a node list as returned by querySelectorAll()
  */
 const NodeListActor = protocol.ActorClassWithSpec(nodeListSpec, {
-  typeName: "domnodelist",
-
   initialize: function(walker, nodeList) {
     protocol.Actor.prototype.initialize.call(this);
     this.walker = walker;
@@ -810,7 +754,7 @@ const NodeListActor = protocol.ActorClassWithSpec(nodeListSpec, {
   items: function(start = 0, end = this.nodeList.length) {
     const items = Array.prototype.slice
       .call(this.nodeList, start, end)
-      .map(item => this.walker._ref(item));
+      .map(item => this.walker._getOrCreateNodeActor(item));
     return this.walker.attachElements(items);
   },
 

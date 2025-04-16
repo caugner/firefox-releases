@@ -51,8 +51,12 @@
 #include "js/GCAPI.h"
 #include "js/MemoryFunctions.h"
 #include "js/MemoryMetrics.h"
+#include "js/Stream.h"  // JS::AbortSignalIsAborted, JS::InitAbortSignalHandling
 #include "js/UbiNode.h"
 #include "js/UbiNodeUtils.h"
+#include "js/friend/UsageStatistics.h"  // JS_TELEMETRY_*, JS_SetAccumulateTelemetryCallback
+#include "js/friend/WindowProxy.h"  // js::SetWindowProxyClass
+#include "mozilla/dom/AbortSignalBinding.h"
 #include "mozilla/dom/GeneratedAtomList.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/Element.h"
@@ -1065,7 +1069,9 @@ size_t CompartmentPrivate::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) {
 void XPCJSRuntime::SystemIsBeingShutDown() {
   // We don't want to track wrapped JS roots after this point since we're
   // making them !IsValid anyway through SystemIsBeingShutDown.
-  mWrappedJSRoots = nullptr;
+  while (mWrappedJSRoots) {
+    mWrappedJSRoots->RemoveFromRootSet();
+  }
 }
 
 StaticAutoPtr<HelperThreadPool> gHelperThreads;
@@ -2636,13 +2642,20 @@ static void AccumulateTelemetryCallback(int id, uint32_t sample,
     case JS_TELEMETRY_GC_EFFECTIVENESS:
       Telemetry::Accumulate(Telemetry::GC_EFFECTIVENESS, sample);
       break;
-    case JS_TELEMETRY_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS:
-      Telemetry::Accumulate(
-          Telemetry::JS_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS, sample);
+    case JS_TELEMETRY_RUN_TIME_US:
+      Telemetry::ScalarAdd(Telemetry::ScalarID::JS_RUN_TIME_US, sample);
       break;
-    case JS_TELEMETRY_WEB_PARSER_COMPILE_LAZY_AFTER_MS:
-      Telemetry::Accumulate(Telemetry::JS_WEB_PARSER_COMPILE_LAZY_AFTER_MS,
-                            sample);
+    case JS_TELEMETRY_WASM_COMPILE_TIME_BASELINE_US:
+      Telemetry::ScalarAdd(Telemetry::ScalarID::WASM_COMPILE_TIME_BASELINE_US,
+                           sample);
+      break;
+    case JS_TELEMETRY_WASM_COMPILE_TIME_ION_US:
+      Telemetry::ScalarAdd(Telemetry::ScalarID::WASM_COMPILE_TIME_ION_US,
+                           sample);
+      break;
+    case JS_TELEMETRY_WASM_COMPILE_TIME_CRANELIFT_US:
+      Telemetry::ScalarAdd(Telemetry::ScalarID::WASM_COMPILE_TIME_CRANELIFT_US,
+                           sample);
       break;
     default:
       MOZ_ASSERT_UNREACHABLE("Unexpected JS_TELEMETRY id");
@@ -2983,7 +2996,20 @@ void XPCJSRuntime::Initialize(JSContext* cx) {
   JS_InitReadPrincipalsCallback(cx, nsJSPrincipals::ReadPrincipals);
   JS_SetAccumulateTelemetryCallback(cx, AccumulateTelemetryCallback);
   JS_SetSetUseCounterCallback(cx, SetUseCounterCallback);
+
   js::SetWindowProxyClass(cx, &OuterWindowProxyClass);
+
+  {
+    JS::AbortSignalIsAborted isAborted = [](JSObject* obj) {
+      dom::AbortSignal* domObj = dom::UnwrapDOMObject<dom::AbortSignal>(obj);
+      MOZ_ASSERT(domObj);
+      return domObj->Aborted();
+    };
+
+    JS::InitAbortSignalHandling(dom::AbortSignal_Binding::GetJSClass(),
+                                isAborted, cx);
+  }
+
   js::SetXrayJitInfo(&gXrayJitInfo);
   JS::SetProcessLargeAllocationFailureCallback(
       OnLargeAllocationFailureCallback);

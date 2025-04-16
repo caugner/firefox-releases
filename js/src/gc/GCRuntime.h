@@ -581,7 +581,7 @@ class GCRuntime {
 
   // WeakRefs
   bool registerWeakRef(HandleObject target, HandleObject weakRef);
-  void unregisterWeakRef(js::WeakRefObject* weakRef);
+  bool unregisterWeakRefWrapper(JSObject* wrapper);
   void traceKeptObjects(JSTracer* trc);
 
  private:
@@ -634,7 +634,7 @@ class GCRuntime {
                                         SliceBudget& budget);
   void checkZoneIsScheduled(Zone* zone, JS::GCReason reason,
                             const char* trigger);
-  IncrementalResult resetIncrementalGC(AbortReason reason);
+  IncrementalResult resetIncrementalGC(GCAbortReason reason);
 
   // Assert if the system state is such that we should never
   // receive a request to do GC work.
@@ -1028,7 +1028,6 @@ class GCRuntime {
       weakCachesToSweep;
   MainThreadData<bool> hasMarkedGrayRoots;
   MainThreadData<bool> abortSweepAfterCurrentGroup;
-  MainThreadData<bool> sweepMarkTaskStarted;
   MainThreadOrGCTaskData<IncrementalProgress> sweepMarkResult;
 
 #ifdef DEBUG

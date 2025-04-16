@@ -463,8 +463,11 @@ class _ToolbarPanelHub {
     );
   }
 
-  _hideAppmenuButton(win) {
-    this._hideElement(win.browser.ownerDocument, APPMENU_BUTTON_ID);
+  _hideAppmenuButton(win, windowClosed) {
+    // No need to do something if the window is going away
+    if (!windowClosed) {
+      this._hideElement(win.browser.ownerDocument, APPMENU_BUTTON_ID);
+    }
   }
 
   _showToolbarButton(win) {
@@ -478,13 +481,16 @@ class _ToolbarPanelHub {
   }
 
   _showElement(document, id, string_id) {
-    const el = document.getElementById(id);
+    const el = PanelMultiView.getViewNode(document, id);
     document.l10n.setAttributes(el, string_id);
     el.removeAttribute("hidden");
   }
 
   _hideElement(document, id) {
-    document.getElementById(id).setAttribute("hidden", true);
+    const el = PanelMultiView.getViewNode(document, id);
+    if (el) {
+      el.setAttribute("hidden", true);
+    }
   }
 
   _sendTelemetry(ping) {

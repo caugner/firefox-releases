@@ -200,12 +200,10 @@ class RestoreSelectionState : public Runnable {
 
 class MOZ_RAII AutoRestoreEditorState final {
  public:
-  explicit AutoRestoreEditorState(
-      TextEditor* aTextEditor MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+  explicit AutoRestoreEditorState(TextEditor* aTextEditor)
       : mTextEditor(aTextEditor),
         mSavedFlags(mTextEditor->Flags()),
         mSavedMaxLength(mTextEditor->MaxTextLength()) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     MOZ_ASSERT(mTextEditor);
 
     // EditorBase::SetFlags() is a virtual method.  Even though it does nothing
@@ -230,7 +228,6 @@ class MOZ_RAII AutoRestoreEditorState final {
   TextEditor* mTextEditor;
   uint32_t mSavedFlags;
   int32_t mSavedMaxLength;
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 /*****************************************************************************
@@ -239,10 +236,8 @@ class MOZ_RAII AutoRestoreEditorState final {
 
 class MOZ_RAII AutoDisableUndo final {
  public:
-  explicit AutoDisableUndo(
-      TextEditor* aTextEditor MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+  explicit AutoDisableUndo(TextEditor* aTextEditor)
       : mTextEditor(aTextEditor), mNumberOfMaximumTransactions(0) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     MOZ_ASSERT(mTextEditor);
 
     mNumberOfMaximumTransactions =
@@ -276,7 +271,6 @@ class MOZ_RAII AutoDisableUndo final {
  private:
   TextEditor* mTextEditor;
   int32_t mNumberOfMaximumTransactions;
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 static bool SuppressEventHandlers(nsPresContext* aPresContext) {
@@ -2574,6 +2568,9 @@ bool TextControlState::SetValue(const nsAString& aValue,
     aOldValue = nullptr;
   }
 
+  const bool wasHandlingSetValue =
+      mHandlingState && mHandlingState->IsHandling(TextControlAction::SetValue);
+
   ErrorResult error;
   AutoTextControlHandlingState handlingSetValue(
       *this, TextControlAction::SetValue, aValue, aOldValue, aFlags, error);
@@ -2652,25 +2649,23 @@ bool TextControlState::SetValue(const nsAString& aValue,
   }
 
   if (mTextEditor && mBoundFrame) {
-    AutoWeakFrame weakFrame(mBoundFrame);
-
     if (!SetValueWithTextEditor(handlingSetValue)) {
       return false;
-    }
-
-    if (!weakFrame.IsAlive()) {
-      return true;
     }
   } else if (!SetValueWithoutTextEditor(handlingSetValue)) {
     return false;
   }
 
-  // TODO(emilio): It seems wrong to pass ValueChangeKind::Script if
-  // BySetUserInput is in aFlags.
-  auto changeKind = (aFlags & eSetValue_Internal) ? ValueChangeKind::Internal
-                                                  : ValueChangeKind::Script;
+  // If we were handling SetValue() before, don't update the DOM state twice,
+  // just let the outer call do so.
+  if (!wasHandlingSetValue) {
+    // TODO(emilio): It seems wrong to pass ValueChangeKind::Script if
+    // BySetUserInput is in aFlags.
+    auto changeKind = (aFlags & eSetValue_Internal) ? ValueChangeKind::Internal
+                                                    : ValueChangeKind::Script;
 
-  handlingSetValue.GetTextControlElement()->OnValueChanged(changeKind);
+    handlingSetValue.GetTextControlElement()->OnValueChanged(changeKind);
+  }
   return true;
 }
 

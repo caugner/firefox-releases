@@ -983,7 +983,8 @@ nsresult HTMLEditor::InsertLineBreakAsAction(nsIPrincipal* aPrincipal) {
 
   // XXX This method may be called by "insertLineBreak" command.  So, using
   //     TypingTxnName here is odd in such case.
-  AutoPlaceholderBatch treatAsOneTransaction(*this, *nsGkAtoms::TypingTxnName);
+  AutoPlaceholderBatch treatAsOneTransaction(*this, *nsGkAtoms::TypingTxnName,
+                                             ScrollSelectionIntoView::Yes);
   rv = InsertBRElementAtSelectionWithTransaction();
   NS_WARNING_ASSERTION(
       NS_SUCCEEDED(rv),
@@ -1243,7 +1244,8 @@ nsresult HTMLEditor::ReplaceHeadContentsWithSourceWithTransaction(
   // Mac linebreaks: Map any remaining CR to LF:
   inputString.ReplaceSubstring(u"\r"_ns, u"\n"_ns);
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
 
   // Get the first range in the selection, for context:
   RefPtr<const nsRange> range = SelectionRefPtr()->GetRangeAt(0);
@@ -1347,7 +1349,8 @@ NS_IMETHODIMP HTMLEditor::RebuildDocumentFromSource(
   }
 
   // Time to change the document
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
 
   nsReadingIterator<char16_t> endtotal;
   aSourceString.EndReading(endtotal);
@@ -1625,7 +1628,8 @@ nsresult HTMLEditor::InsertElementAtSelectionAsAction(
 
   UndefineCaretBidiLevel();
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eInsertElement, nsIEditor::eNext, ignoredError);
@@ -2355,7 +2359,8 @@ nsresult HTMLEditor::FormatBlockContainerAsSubAction(nsAtom& aTagName) {
 
   MOZ_ASSERT(&aTagName != nsGkAtoms::dd && &aTagName != nsGkAtoms::dt);
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eCreateOrRemoveBlock, nsIEditor::eNext,
@@ -2937,7 +2942,8 @@ nsresult HTMLEditor::InsertLinkAroundSelectionAsAction(
     return NS_OK;
   }
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
 
   // Set all attributes found on the supplied anchor element
   RefPtr<nsDOMAttributeMap> attributeMap = anchor->Attributes();
@@ -4217,16 +4223,6 @@ already_AddRefed<nsIContent> HTMLEditor::SplitNodeWithTransaction(
                                newLeftContent);
   }
 
-  if (!mActionListeners.IsEmpty()) {
-    for (auto& listener : mActionListeners.Clone()) {
-      DebugOnly<nsresult> rvIgnored = listener->DidSplitNode(
-          aStartOfRightNode.GetContainer(), newLeftContent);
-      NS_WARNING_ASSERTION(
-          NS_SUCCEEDED(rvIgnored),
-          "nsIEditActionListener::DidSplitNode() failed, but ignored");
-    }
-  }
-
   if (aError.Failed()) {
     return nullptr;
   }
@@ -5445,7 +5441,8 @@ nsresult HTMLEditor::SetCSSBackgroundColorWithTransaction(
 
   bool selectionIsCollapsed = SelectionRefPtr()->IsCollapsed();
 
-  AutoPlaceholderBatch treatAsOneTransaction(*this);
+  AutoPlaceholderBatch treatAsOneTransaction(*this,
+                                             ScrollSelectionIntoView::Yes);
   IgnoredErrorResult ignoredError;
   AutoEditSubActionNotifier startToHandleEditSubAction(
       *this, EditSubAction::eInsertElement, nsIEditor::eNext, ignoredError);
@@ -5462,7 +5459,7 @@ nsresult HTMLEditor::SetCSSBackgroundColorWithTransaction(
 
     // Loop through the ranges in the selection
     // XXX This is different from `SetInlinePropertyInternal()`.  It uses
-    //     AutoRangeArray to store all ranges first.  The result may be
+    //     AutoSelectionRangeArray to store all ranges first.  The result may be
     //     different if mutation event listener changes the `Selection`.
     for (uint32_t i = 0; i < SelectionRefPtr()->RangeCount(); i++) {
       RefPtr<nsRange> range = SelectionRefPtr()->GetRangeAt(i);

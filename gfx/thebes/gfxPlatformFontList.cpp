@@ -807,12 +807,14 @@ void gfxPlatformFontList::UpdateFontList() {
 }
 
 bool gfxPlatformFontList::IsVisibleToCSS(const gfxFontFamily& aFamily) const {
-  return aFamily.Visibility() <= mVisibilityLevel;
+  return aFamily.Visibility() <= mVisibilityLevel ||
+         IsFontFamilyWhitelistActive();
 }
 
 bool gfxPlatformFontList::IsVisibleToCSS(
     const fontlist::Family& aFamily) const {
-  return aFamily.Visibility() <= mVisibilityLevel;
+  return aFamily.Visibility() <= mVisibilityLevel ||
+         IsFontFamilyWhitelistActive();
 }
 
 void gfxPlatformFontList::GetFontList(nsAtom* aLangGroup,
@@ -1262,9 +1264,10 @@ fontlist::Family* gfxPlatformFontList::FindSharedFamily(
 
 class InitializeFamilyRunnable : public mozilla::Runnable {
  public:
-  explicit InitializeFamilyRunnable(uint32_t aFamilyIndex)
+  explicit InitializeFamilyRunnable(uint32_t aFamilyIndex, bool aLoadCmaps)
       : Runnable("gfxPlatformFontList::InitializeFamilyRunnable"),
-        mIndex(aFamilyIndex) {}
+        mIndex(aFamilyIndex),
+        mLoadCmaps(aLoadCmaps) {}
 
   NS_IMETHOD Run() override {
     auto list = gfxPlatformFontList::PlatformFontList()->SharedFontList();
@@ -1277,15 +1280,17 @@ class InitializeFamilyRunnable : public mozilla::Runnable {
       return NS_OK;
     }
     dom::ContentChild::GetSingleton()->SendInitializeFamily(
-        list->GetGeneration(), mIndex);
+        list->GetGeneration(), mIndex, mLoadCmaps);
     return NS_OK;
   }
 
  private:
   uint32_t mIndex;
+  bool mLoadCmaps;
 };
 
-bool gfxPlatformFontList::InitializeFamily(fontlist::Family* aFamily) {
+bool gfxPlatformFontList::InitializeFamily(fontlist::Family* aFamily,
+                                           bool aLoadCmaps) {
   MOZ_ASSERT(SharedFontList());
   auto list = SharedFontList();
   if (!XRE_IsParentProcess()) {
@@ -1294,18 +1299,52 @@ bool gfxPlatformFontList::InitializeFamily(fontlist::Family* aFamily) {
       return false;
     }
     uint32_t index = aFamily - families;
-    MOZ_ASSERT(index < list->NumFamilies());
+    if (index >= list->NumFamilies()) {
+      return false;
+    }
     if (NS_IsMainThread()) {
       dom::ContentChild::GetSingleton()->SendInitializeFamily(
-          list->GetGeneration(), index);
+          list->GetGeneration(), index, aLoadCmaps);
     } else {
-      NS_DispatchToMainThread(new InitializeFamilyRunnable(index));
+      NS_DispatchToMainThread(new InitializeFamilyRunnable(index, aLoadCmaps));
     }
     return aFamily->IsInitialized();
   }
-  AutoTArray<fontlist::Face::InitData, 16> faceList;
-  GetFacesInitDataForFamily(aFamily, faceList);
-  aFamily->AddFaces(list, faceList);
+
+  if (!aFamily->IsInitialized()) {
+    // The usual case: we're being asked to populate the face list.
+    AutoTArray<fontlist::Face::InitData, 16> faceList;
+    GetFacesInitDataForFamily(aFamily, faceList, aLoadCmaps);
+    aFamily->AddFaces(list, faceList);
+  } else {
+    // The family's face list was already initialized, but if aLoadCmaps is
+    // true we also want to eagerly load character maps. This is used when a
+    // child process is doing SearchAllFontsForChar, to have the parent load
+    // all the cmaps at once and reduce IPC traffic (and content-process file
+    // access overhead, which is crippling for DirectWrite on Windows).
+    if (aLoadCmaps) {
+      auto* faces = aFamily->Faces(list);
+      if (faces) {
+        for (size_t i = 0; i < aFamily->NumFaces(); i++) {
+          auto* face = static_cast<fontlist::Face*>(faces[i].ToPtr(list));
+          if (face && face->mCharacterMap.IsNull()) {
+            // We don't want to cache this font entry, as the parent will most
+            // likely never use it again; it's just to populate the charmap for
+            // the benefit of the child process.
+            RefPtr<gfxFontEntry> fe = CreateFontEntry(face, aFamily);
+            if (fe) {
+              fe->ReadCMAP();
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (aLoadCmaps && aFamily->IsInitialized()) {
+    aFamily->SetupFamilyCharMap(list);
+  }
+
   return aFamily->IsInitialized();
 }
 
@@ -1722,6 +1761,12 @@ eFontPrefLang gfxPlatformFontList::GetFontPrefLangFor(uint32_t aCh) {
     case UBLOCK_CJK_UNIFIED_IDEOGRAPHS_EXTENSION_F:
     case UBLOCK_KANA_EXTENDED_A:
       return eFontPrefLang_CJKSet;
+    case UBLOCK_MATHEMATICAL_OPERATORS:
+    case UBLOCK_MATHEMATICAL_ALPHANUMERIC_SYMBOLS:
+    case UBLOCK_MISCELLANEOUS_MATHEMATICAL_SYMBOLS_A:
+    case UBLOCK_MISCELLANEOUS_MATHEMATICAL_SYMBOLS_B:
+    case UBLOCK_SUPPLEMENTAL_MATHEMATICAL_OPERATORS:
+      return eFontPrefLang_Mathematics;
     default:
       return eFontPrefLang_Others;
   }
@@ -2259,10 +2304,6 @@ void gfxPlatformFontList::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
   AddSizeOfExcludingThis(aMallocSizeOf, aSizes);
 }
 
-bool gfxPlatformFontList::IsFontFamilyWhitelistActive() {
-  return mFontFamilyWhitelistActive;
-}
-
 void gfxPlatformFontList::InitOtherFamilyNamesInternal(
     bool aDeferOtherFamilyNamesLoading) {
   if (mOtherFamilyNamesInitialized) {
@@ -2388,7 +2429,8 @@ void gfxPlatformFontList::ShareFontListToProcess(
 }
 
 void gfxPlatformFontList::InitializeFamily(uint32_t aGeneration,
-                                           uint32_t aFamilyIndex) {
+                                           uint32_t aFamilyIndex,
+                                           bool aLoadCmaps) {
   auto list = SharedFontList();
   MOZ_ASSERT(list);
   if (!list) {
@@ -2401,8 +2443,8 @@ void gfxPlatformFontList::InitializeFamily(uint32_t aGeneration,
     return;
   }
   fontlist::Family* family = list->Families() + aFamilyIndex;
-  if (!family->IsInitialized()) {
-    Unused << InitializeFamily(family);
+  if (!family->IsInitialized() || aLoadCmaps) {
+    Unused << InitializeFamily(family, aLoadCmaps);
   }
 }
 

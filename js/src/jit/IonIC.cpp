@@ -56,6 +56,8 @@ Register IonIC::scratchRegisterForEntryJump() {
       return asInIC()->temp();
     case CacheKind::HasOwn:
       return asHasOwnIC()->output();
+    case CacheKind::CheckPrivateField:
+      return asCheckPrivateFieldIC()->output();
     case CacheKind::GetIterator:
       return asGetIteratorIC()->temp1();
     case CacheKind::InstanceOf:
@@ -164,6 +166,9 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   // Override the return value if we are invalidated (bug 728188).
   IonScript* ionScript = outerScript->ionScript();
   AutoDetectInvalidation adi(cx, res, ionScript);
+
+  // Optimized-arguments and other magic values must not escape to Ion ICs.
+  MOZ_ASSERT(!val.isMagic());
 
   // If the IC is idempotent, we will redo the op in the interpreter.
   if (ic->idempotent()) {
@@ -492,6 +497,19 @@ bool IonHasOwnIC::update(JSContext* cx, HandleScript outerScript,
 
   *res = found;
   return true;
+}
+
+/* static */
+bool IonCheckPrivateFieldIC::update(JSContext* cx, HandleScript outerScript,
+                                    IonCheckPrivateFieldIC* ic, HandleValue val,
+                                    HandleValue idVal, bool* res) {
+  IonScript* ionScript = outerScript->ionScript();
+  jsbytecode* pc = ic->pc();
+
+  TryAttachIonStub<CheckPrivateFieldIRGenerator, IonCheckPrivateFieldIC>(
+      cx, ic, ionScript, CacheKind::CheckPrivateField, idVal, val);
+
+  return CheckPrivateFieldOperation(cx, pc, val, idVal, res);
 }
 
 /* static */

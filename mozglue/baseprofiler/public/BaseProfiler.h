@@ -25,6 +25,8 @@
 
 #ifndef MOZ_GECKO_PROFILER
 
+#  include "mozilla/UniquePtr.h"
+
 // This file can be #included unconditionally. However, everything within this
 // file must be guarded by a #ifdef MOZ_GECKO_PROFILER, *except* for the
 // following macros, which encapsulate the most common operations and thus
@@ -60,6 +62,23 @@
 
 #  define AUTO_PROFILER_STATS(name)
 
+namespace mozilla {
+class ProfileChunkedBuffer;
+
+namespace baseprofiler {
+struct ProfilerBacktrace {};
+using UniqueProfilerBacktrace = UniquePtr<ProfilerBacktrace>;
+static inline UniqueProfilerBacktrace profiler_get_backtrace() {
+  return nullptr;
+}
+
+static inline bool profiler_capture_backtrace(
+    ProfileChunkedBuffer& aChunkedBuffer) {
+  return false;
+}
+}  // namespace baseprofiler
+}  // namespace mozilla
+
 #else  // !MOZ_GECKO_PROFILER
 
 #  include "BaseProfilingStack.h"
@@ -67,7 +86,6 @@
 #  include "mozilla/Assertions.h"
 #  include "mozilla/Atomics.h"
 #  include "mozilla/Attributes.h"
-#  include "mozilla/GuardObjects.h"
 #  include "mozilla/Maybe.h"
 #  include "mozilla/PowerOfTwo.h"
 #  include "mozilla/Sprintf.h"
@@ -82,6 +100,7 @@
 namespace mozilla {
 
 class MallocAllocPolicy;
+class ProfileChunkedBuffer;
 template <class T, size_t MinInlineCapacity, class AllocPolicy>
 class Vector;
 
@@ -519,6 +538,7 @@ using UniqueProfilerBacktrace =
 // Immediately capture the current thread's call stack and return it. A no-op
 // if the profiler is inactive.
 MFBT_API UniqueProfilerBacktrace profiler_get_backtrace();
+MFBT_API bool profiler_capture_backtrace(ProfileChunkedBuffer& aChunkedBuffer);
 
 struct ProfilerStats {
   unsigned n = 0;
@@ -629,17 +649,12 @@ class StaticBaseProfilerStats {
 // `StaticBaseProfilerStats`.
 class MOZ_RAII AutoProfilerStats {
  public:
-  explicit AutoProfilerStats(
-      StaticBaseProfilerStats& aStats MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : mStats(aStats), mStart(TimeStamp::NowUnfuzzed()) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-  }
+  explicit AutoProfilerStats(StaticBaseProfilerStats& aStats)
+      : mStats(aStats), mStart(TimeStamp::NowUnfuzzed()) {}
 
   ~AutoProfilerStats() { mStats.AddDurationFrom(mStart); }
 
  private:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-
   StaticBaseProfilerStats& mStats;
   TimeStamp mStart;
 };
@@ -858,16 +873,13 @@ class MOZ_RAII AutoProfilerTextMarker {
   AutoProfilerTextMarker(const char* aMarkerName, const std::string& aText,
                          ProfilingCategoryPair aCategoryPair,
                          const Maybe<uint64_t>& aInnerWindowID,
-                         UniqueProfilerBacktrace&& aCause =
-                             nullptr MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+                         UniqueProfilerBacktrace&& aCause = nullptr)
       : mMarkerName(aMarkerName),
         mText(aText),
         mCategoryPair(aCategoryPair),
         mStartTime(TimeStamp::NowUnfuzzed()),
         mCause(std::move(aCause)),
-        mInnerWindowID(aInnerWindowID) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-  }
+        mInnerWindowID(aInnerWindowID) {}
 
   ~AutoProfilerTextMarker() {
     profiler_add_text_marker(mMarkerName, mText, mCategoryPair, mStartTime,
@@ -876,7 +888,6 @@ class MOZ_RAII AutoProfilerTextMarker {
   }
 
  protected:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   const char* mMarkerName;
   std::string mText;
   const ProfilingCategoryPair mCategoryPair;
@@ -924,24 +935,18 @@ MFBT_API void profiler_save_profile_to_file(const char* aFilename);
 
 class MOZ_RAII AutoProfilerInit {
  public:
-  explicit AutoProfilerInit(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    profiler_init(this);
-  }
+  explicit AutoProfilerInit() { profiler_init(this); }
 
   ~AutoProfilerInit() { profiler_shutdown(); }
 
  private:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 // Convenience class to register and unregister a thread with the profiler.
 // Needs to be the first object on the stack of the thread.
 class MOZ_RAII AutoProfilerRegisterThread final {
  public:
-  explicit AutoProfilerRegisterThread(
-      const char* aName MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+  explicit AutoProfilerRegisterThread(const char* aName) {
     profiler_register_thread(aName, this);
   }
 
@@ -951,29 +956,23 @@ class MOZ_RAII AutoProfilerRegisterThread final {
   AutoProfilerRegisterThread(const AutoProfilerRegisterThread&) = delete;
   AutoProfilerRegisterThread& operator=(const AutoProfilerRegisterThread&) =
       delete;
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 class MOZ_RAII AutoProfilerThreadSleep {
  public:
-  explicit AutoProfilerThreadSleep(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    profiler_thread_sleep();
-  }
+  explicit AutoProfilerThreadSleep() { profiler_thread_sleep(); }
 
   ~AutoProfilerThreadSleep() { profiler_thread_wake(); }
 
  private:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 // Temporarily wake up the profiling of a thread while servicing events such as
 // Asynchronous Procedure Calls (APCs).
 class MOZ_RAII AutoProfilerThreadWake {
  public:
-  explicit AutoProfilerThreadWake(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM)
+  explicit AutoProfilerThreadWake()
       : mIssuedWake(profiler_thread_is_sleeping()) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     if (mIssuedWake) {
       profiler_thread_wake();
     }
@@ -987,7 +986,6 @@ class MOZ_RAII AutoProfilerThreadWake {
   }
 
  private:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   bool mIssuedWake;
 };
 
@@ -1000,10 +998,7 @@ class MOZ_RAII AutoProfilerLabel {
   // This is the AUTO_BASE_PROFILER_LABEL and AUTO_BASE_PROFILER_LABEL_DYNAMIC
   // variant.
   AutoProfilerLabel(const char* aLabel, const char* aDynamicString,
-                    ProfilingCategoryPair aCategoryPair,
-                    uint32_t aFlags = 0 MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-
+                    ProfilingCategoryPair aCategoryPair, uint32_t aFlags = 0) {
     // Get the ProfilingStack from TLS.
     Push(GetProfilingStack(), aLabel, aDynamicString, aCategoryPair, aFlags);
   }
@@ -1031,8 +1026,6 @@ class MOZ_RAII AutoProfilerLabel {
   MFBT_API static ProfilingStack* GetProfilingStack();
 
  private:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-
   // We save a ProfilingStack pointer in the ctor so we don't have to redo the
   // TLS lookup in the dtor.
   ProfilingStack* mProfilingStack;
@@ -1046,26 +1039,23 @@ class MOZ_RAII AutoProfilerTracing {
  public:
   AutoProfilerTracing(const char* aCategoryString, const char* aMarkerName,
                       ProfilingCategoryPair aCategoryPair,
-                      const Maybe<uint64_t>& aInnerWindowID
-                          MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+                      const Maybe<uint64_t>& aInnerWindowID)
       : mCategoryString(aCategoryString),
         mMarkerName(aMarkerName),
         mCategoryPair(aCategoryPair),
         mInnerWindowID(aInnerWindowID) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     profiler_tracing_marker(mCategoryString, mMarkerName, aCategoryPair,
                             TRACING_INTERVAL_START, mInnerWindowID);
   }
 
-  AutoProfilerTracing(
-      const char* aCategoryString, const char* aMarkerName,
-      ProfilingCategoryPair aCategoryPair, UniqueProfilerBacktrace aBacktrace,
-      const Maybe<uint64_t>& aInnerWindowID MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+  AutoProfilerTracing(const char* aCategoryString, const char* aMarkerName,
+                      ProfilingCategoryPair aCategoryPair,
+                      UniqueProfilerBacktrace aBacktrace,
+                      const Maybe<uint64_t>& aInnerWindowID)
       : mCategoryString(aCategoryString),
         mMarkerName(aMarkerName),
         mCategoryPair(aCategoryPair),
         mInnerWindowID(aInnerWindowID) {
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     profiler_tracing_marker(mCategoryString, mMarkerName, aCategoryPair,
                             TRACING_INTERVAL_START, std::move(aBacktrace),
                             mInnerWindowID);
@@ -1077,7 +1067,6 @@ class MOZ_RAII AutoProfilerTracing {
   }
 
  protected:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   const char* mCategoryString;
   const char* mMarkerName;
   const ProfilingCategoryPair mCategoryPair;

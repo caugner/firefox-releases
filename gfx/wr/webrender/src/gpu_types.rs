@@ -2,12 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{AlphaType, DocumentLayer, PremultipliedColorF, YuvFormat, YuvColorSpace};
+use api::{AlphaType, PremultipliedColorF, YuvFormat, YuvColorSpace};
 use api::EdgeAaSegmentMask;
 use api::units::*;
 use crate::spatial_tree::{SpatialTree, ROOT_SPATIAL_NODE_INDEX, SpatialNodeIndex};
 use crate::gpu_cache::{GpuCacheAddress, GpuDataRequest};
 use crate::internal_types::FastHashMap;
+use crate::prim_store::ClipData;
 use crate::render_task::RenderTaskAddress;
 use crate::renderer::ShaderColorMode;
 use std::i32;
@@ -25,10 +26,6 @@ pub const VECS_PER_TRANSFORM: usize = 8;
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct ZBufferId(pub i32);
 
-const MAX_DOCUMENT_LAYERS : i8 = 1 << 3;
-const MAX_DOCUMENT_LAYER_VALUE : i8 = MAX_DOCUMENT_LAYERS / 2 - 1;
-const MIN_DOCUMENT_LAYER_VALUE : i8 = -MAX_DOCUMENT_LAYERS / 2;
-
 impl ZBufferId {
     pub fn invalid() -> Self {
         ZBufferId(i32::MAX)
@@ -39,26 +36,21 @@ impl ZBufferId {
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct ZBufferIdGenerator {
-    base: i32,
     next: i32,
-    max_items_per_document_layer: i32,
+    max_depth_ids: i32,
 }
 
 impl ZBufferIdGenerator {
-    pub fn new(layer: DocumentLayer, max_depth_ids: i32) -> Self {
-        debug_assert!(layer >= MIN_DOCUMENT_LAYER_VALUE);
-        debug_assert!(layer <= MAX_DOCUMENT_LAYER_VALUE);
-        let max_items_per_document_layer = max_depth_ids / MAX_DOCUMENT_LAYERS as i32;
+    pub fn new(max_depth_ids: i32) -> Self {
         ZBufferIdGenerator {
-            base: layer as i32 * max_items_per_document_layer,
             next: 0,
-            max_items_per_document_layer,
+            max_depth_ids,
         }
     }
 
     pub fn next(&mut self) -> ZBufferId {
-        debug_assert!(self.next < self.max_items_per_document_layer);
-        let id = ZBufferId(self.next + self.base);
+        debug_assert!(self.next < self.max_depth_ids);
+        let id = ZBufferId(self.next);
         self.next += 1;
         id
     }
@@ -177,6 +169,62 @@ pub struct BorderInstance {
     pub clip_params: [f32; 8],
 }
 
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+#[repr(C)]
+pub struct ClipMaskInstanceCommon {
+    pub sub_rect: DeviceRect,
+    pub task_origin: DevicePoint,
+    pub screen_origin: DevicePoint,
+    pub device_pixel_scale: f32,
+    pub clip_transform_id: TransformPaletteId,
+    pub prim_transform_id: TransformPaletteId,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+#[repr(C)]
+pub struct ClipMaskInstanceImage {
+    pub common: ClipMaskInstanceCommon,
+    pub tile_rect: LayoutRect,
+    pub resource_address: GpuCacheAddress,
+    pub local_rect: LayoutRect,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+#[repr(C)]
+pub struct ClipMaskInstanceRect {
+    pub common: ClipMaskInstanceCommon,
+    pub local_pos: LayoutPoint,
+    pub clip_data: ClipData,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+#[repr(C)]
+pub struct BoxShadowData {
+    pub src_rect_size: LayoutSize,
+    pub clip_mode: i32,
+    pub stretch_mode_x: i32,
+    pub stretch_mode_y: i32,
+    pub dest_rect: LayoutRect,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+#[repr(C)]
+pub struct ClipMaskInstanceBoxShadow {
+    pub common: ClipMaskInstanceCommon,
+    pub resource_address: GpuCacheAddress,
+    pub shadow_data: BoxShadowData,
+}
+
 /// A clipping primitive drawn into the clipping mask.
 /// Could be an image or a rectangle, which defines the
 /// way `address` is treated.
@@ -195,16 +243,6 @@ pub struct ClipMaskInstance {
     pub task_origin: DevicePoint,
     pub screen_origin: DevicePoint,
     pub device_pixel_scale: f32,
-}
-
-/// A border corner dot or dash drawn into the clipping mask.
-#[derive(Debug, Copy, Clone)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[repr(C)]
-pub struct ClipMaskBorderCornerDotDash {
-    pub clip_mask_instance: ClipMaskInstance,
-    pub dot_dash_data: [f32; 8],
 }
 
 // 16 bytes per instance should be enough for anyone!

@@ -26,7 +26,6 @@
 
 #include "jstypes.h"
 
-#include "frontend/NameAnalysisTypes.h"
 #include "frontend/SourceNotes.h"  // SrcNote
 #include "gc/Barrier.h"
 #include "gc/Rooting.h"
@@ -47,7 +46,7 @@
 #include "vm/Scope.h"
 #include "vm/Shape.h"
 #include "vm/SharedImmutableStringsCache.h"
-#include "vm/SharedStencil.h"  // js::GCThingIndex
+#include "vm/SharedStencil.h"  // js::GCThingIndex, js::SourceExtent
 #include "vm/Time.h"
 
 namespace JS {
@@ -69,23 +68,16 @@ struct IonScriptCounts;
 class JitScript;
 }  // namespace jit
 
-class AutoSweepJitScript;
 class ModuleObject;
 class RegExpObject;
 class ScriptSourceHolder;
 class SourceCompressionTask;
 class Shape;
-class DebugAPI;
 class DebugScript;
 
 namespace frontend {
 struct CompilationInfo;
-class FunctionIndex;
-class FunctionBox;
-class ModuleSharedContext;
 class ScriptStencil;
-
-class BinASTSourceMetadata {};
 }  // namespace frontend
 
 class ScriptCounts {
@@ -552,14 +544,6 @@ class ScriptSource {
   // This value is logically owned by the canonical ScriptSourceObject, and
   // will be released in the canonical SSO's finalizer.
   UniquePtr<XDRIncrementalEncoder> xdrEncoder_ = nullptr;
-
-  // Instant at which the first parse of this source ended, or null
-  // if the source hasn't been parsed yet.
-  //
-  // Used for statistics purposes, to determine how much time code spends
-  // syntax parsed before being full parsed, to help determine whether
-  // our syntax parse vs. full parse heuristics are correct.
-  mozilla::TimeStamp parseEnded_;
 
   // A string indicating how this source code was introduced into the system.
   // This is a constant, statically allocated C string, so does not need memory
@@ -1045,13 +1029,6 @@ class ScriptSource {
   // |buffer| is considered undefined.
   bool xdrFinalizeEncoder(JS::TranscodeBuffer& buffer);
 
-  const mozilla::TimeStamp parseEnded() const { return parseEnded_; }
-  // Inform `this` source that it has been fully parsed.
-  void recordParseEnded() {
-    MOZ_ASSERT(parseEnded_.IsNull());
-    parseEnded_ = ReallyNow();
-  }
-
  private:
   template <typename Unit,
             template <typename U, SourceRetrievable CanRetrieve> class Data,
@@ -1315,7 +1292,7 @@ class ScriptWarmUpData {
 static_assert(sizeof(ScriptWarmUpData) == sizeof(uintptr_t),
               "JIT code depends on ScriptWarmUpData being pointer-sized");
 
-struct FieldInitializers {
+struct MemberInitializers {
   static constexpr uint32_t MaxInitializers = INT32_MAX;
 
 #ifdef DEBUG
@@ -1324,20 +1301,20 @@ struct FieldInitializers {
 
   // This struct will eventually have a vector of constant values for optimizing
   // field initializers.
-  uint32_t numFieldInitializers = 0;
+  uint32_t numMemberInitializers = 0;
 
-  explicit FieldInitializers(uint32_t numFieldInitializers)
+  explicit MemberInitializers(uint32_t numMemberInitializers)
       :
 #ifdef DEBUG
         valid(true),
 #endif
-        numFieldInitializers(numFieldInitializers) {
+        numMemberInitializers(numMemberInitializers) {
   }
 
-  static FieldInitializers Invalid() { return FieldInitializers(); }
+  static MemberInitializers Invalid() { return MemberInitializers(); }
 
  private:
-  FieldInitializers() = default;
+  MemberInitializers() = default;
 };
 
 // [SMDOC] - JSScript data layout (unshared)
@@ -1355,7 +1332,8 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
 
   // Note: This is only defined for scripts with an enclosing scope. This
   // excludes lazy scripts with lazy parents.
-  js::FieldInitializers fieldInitializers_ = js::FieldInitializers::Invalid();
+  js::MemberInitializers memberInitializers_ =
+      js::MemberInitializers::Invalid();
 
   // End of fields.
 
@@ -1378,15 +1356,17 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
   // Accessors for typed array spans.
   mozilla::Span<JS::GCCellPtr> gcthings() {
     Offset offset = offsetOfGCThings();
-    return mozilla::MakeSpan(offsetToPointer<JS::GCCellPtr>(offset), ngcthings);
+    return mozilla::Span{offsetToPointer<JS::GCCellPtr>(offset), ngcthings};
   }
 
-  void setFieldInitializers(FieldInitializers fieldInitializers) {
-    MOZ_ASSERT(fieldInitializers_.valid == false,
-               "Only init FieldInitializers once");
-    fieldInitializers_ = fieldInitializers;
+  void setMemberInitializers(MemberInitializers memberInitializers) {
+    MOZ_ASSERT(memberInitializers_.valid == false,
+               "Only init MemberInitializers once");
+    memberInitializers_ = memberInitializers;
   }
-  const FieldInitializers& getFieldInitializers() { return fieldInitializers_; }
+  const MemberInitializers& getMemberInitializers() {
+    return memberInitializers_;
+  }
 
   // Allocate a new PrivateScriptData. Headers and GCPtrs are initialized.
   static PrivateScriptData* new_(JSContext* cx, uint32_t ngcthings);
@@ -1490,65 +1470,6 @@ struct RuntimeScriptData::Hasher {
 
 using RuntimeScriptDataTable =
     HashSet<RuntimeScriptData*, RuntimeScriptData::Hasher, SystemAllocPolicy>;
-
-// Range of characters in scriptSource which contains a script's source,
-// that is, the range used by the Parser to produce a script.
-//
-// For most functions the fields point to the following locations.
-//
-//   function * foo(a, b) { return a + b; }
-//   ^             ^                       ^
-//   |             |                       |
-//   |             sourceStart             sourceEnd
-//   |                                     |
-//   toStringStart                         toStringEnd
-//
-// For the special case of class constructors, the spec requires us to use an
-// alternate definition of toStringStart / toStringEnd.
-//
-//   class C { constructor() { this.field = 42; } }
-//   ^                    ^                      ^ ^
-//   |                    |                      | `---------`
-//   |                    sourceStart            sourceEnd   |
-//   |                                                       |
-//   toStringStart                                           toStringEnd
-//
-// NOTE: These are counted in Code Units from the start of the script source.
-//
-// Also included in the SourceExtent is the line and column numbers of the
-// sourceStart position. In most cases this is derived from the source text,
-// however in the case of dynamic functions it may be overriden by the
-// compilation options.
-struct SourceExtent {
-  SourceExtent() = default;
-
-  SourceExtent(uint32_t sourceStart, uint32_t sourceEnd, uint32_t toStringStart,
-               uint32_t toStringEnd, uint32_t lineno, uint32_t column)
-      : sourceStart(sourceStart),
-        sourceEnd(sourceEnd),
-        toStringStart(toStringStart),
-        toStringEnd(toStringEnd),
-        lineno(lineno),
-        column(column) {}
-
-  static SourceExtent makeGlobalExtent(uint32_t len) {
-    return SourceExtent(0, len, 0, len, 1, 0);
-  }
-
-  static SourceExtent makeGlobalExtent(
-      uint32_t len, const JS::ReadOnlyCompileOptions& options) {
-    return SourceExtent(0, len, 0, len, options.lineno, options.column);
-  }
-
-  uint32_t sourceStart = 0;
-  uint32_t sourceEnd = 0;
-  uint32_t toStringStart = 0;
-  uint32_t toStringEnd = 0;
-
-  // Line and column of |sourceStart_| position.
-  uint32_t lineno = 1;  // 1-indexed.
-  uint32_t column = 0;  // Count of Code Points
-};
 
 // [SMDOC] Script Representation (js::BaseScript)
 //
@@ -1958,13 +1879,13 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
     return data_ ? data_->gcthings() : mozilla::Span<JS::GCCellPtr>();
   }
 
-  void setFieldInitializers(FieldInitializers fieldInitializers) {
+  void setMemberInitializers(MemberInitializers memberInitializers) {
     MOZ_ASSERT(data_);
-    data_->setFieldInitializers(fieldInitializers);
+    data_->setMemberInitializers(memberInitializers);
   }
-  const FieldInitializers& getFieldInitializers() const {
+  const MemberInitializers& getMemberInitializers() const {
     MOZ_ASSERT(data_);
-    return data_->getFieldInitializers();
+    return data_->getMemberInitializers();
   }
 
   RuntimeScriptData* sharedData() const { return sharedData_; }
@@ -2038,6 +1959,9 @@ template <XDRMode mode>
 XDRResult XDRLazyScript(XDRState<mode>* xdr, HandleScope enclosingScope,
                         HandleScriptSourceObject sourceObject,
                         HandleFunction fun, MutableHandle<BaseScript*> lazy);
+
+template <XDRMode mode>
+XDRResult XDRSourceExtent(XDRState<mode>* xdr, SourceExtent* extent);
 
 /*
  * Code any constant value.

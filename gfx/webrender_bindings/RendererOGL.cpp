@@ -33,7 +33,16 @@ wr::WrExternalImage wr_renderer_lock_external_image(
                         << AsUint64(aId);
     return InvalidToWrExternalImage();
   }
-  return texture->Lock(aChannelIndex, renderer->gl(), aRendering);
+  if (auto* gl = renderer->gl()) {
+    return texture->Lock(aChannelIndex, gl, aRendering);
+  } else if (auto* swgl = renderer->swgl()) {
+    return texture->LockSWGL(aChannelIndex, swgl, aRendering);
+  } else {
+    gfxCriticalNoteOnce
+        << "No GL or SWGL context available to lock ExternalImage for extId:"
+        << AsUint64(aId);
+    return InvalidToWrExternalImage();
+  }
 }
 
 void wr_renderer_unlock_external_image(void* aObj, wr::ExternalImageId aId,
@@ -44,7 +53,11 @@ void wr_renderer_unlock_external_image(void* aObj, wr::ExternalImageId aId,
   if (!texture) {
     return;
   }
-  texture->Unlock();
+  if (renderer->gl()) {
+    texture->Unlock();
+  } else if (renderer->swgl()) {
+    texture->UnlockSWGL();
+  }
 }
 
 RendererOGL::RendererOGL(RefPtr<RenderThread>&& aThread,
@@ -101,7 +114,8 @@ static void DoWebRenderDisableNativeCompositor(
 RenderedFrameId RendererOGL::UpdateAndRender(
     const Maybe<gfx::IntSize>& aReadbackSize,
     const Maybe<wr::ImageFormat>& aReadbackFormat,
-    const Maybe<Range<uint8_t>>& aReadbackBuffer, RendererStats* aOutStats) {
+    const Maybe<Range<uint8_t>>& aReadbackBuffer, bool* aNeedsYFlip,
+    RendererStats* aOutStats) {
   mozilla::widget::WidgetRenderingContext widgetContext;
 
 #if defined(XP_MACOSX)
@@ -151,11 +165,18 @@ RenderedFrameId RendererOGL::UpdateAndRender(
     MOZ_ASSERT(aReadbackSize.isSome());
     MOZ_ASSERT(aReadbackFormat.isSome());
     if (!mCompositor->MaybeReadback(aReadbackSize.ref(), aReadbackFormat.ref(),
-                                    aReadbackBuffer.ref())) {
+                                    aReadbackBuffer.ref(), aNeedsYFlip)) {
       wr_renderer_readback(mRenderer, aReadbackSize.ref().width,
                            aReadbackSize.ref().height, aReadbackFormat.ref(),
                            &aReadbackBuffer.ref()[0],
                            aReadbackBuffer.ref().length());
+
+      // SWGL and ANGLE both draw the right way up, otherwise we will need a
+      // flip.
+      if (aNeedsYFlip) {
+        *aNeedsYFlip =
+            !gfx::gfxVars::UseSoftwareWebRender() && !mCompositor->UseANGLE();
+      }
     }
   }
 
@@ -239,6 +260,8 @@ layers::SyncObjectHost* RendererOGL::GetSyncObject() const {
 }
 
 gl::GLContext* RendererOGL::gl() const { return mCompositor->gl(); }
+
+void* RendererOGL::swgl() const { return mCompositor->swgl(); }
 
 void RendererOGL::SetFrameStartTime(const TimeStamp& aTime) {
   if (mFrameStartTime) {

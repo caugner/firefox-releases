@@ -7,35 +7,29 @@
 #ifndef frontend_Stencil_h
 #define frontend_Stencil_h
 
-#include "mozilla/Assertions.h"  // MOZ_ASSERT, MOZ_RELEASE_ASSERT
-#include "mozilla/CheckedInt.h"  // CheckedUint32
+#include "mozilla/Assertions.h"  // MOZ_ASSERT
 #include "mozilla/Maybe.h"       // mozilla::{Maybe, Nothing}
 #include "mozilla/Range.h"       // mozilla::Range
-#include "mozilla/Span.h"        // mozilla::Span
 
 #include <stdint.h>  // char16_t, uint8_t, uint32_t
 #include <stdlib.h>  // size_t
 
 #include "frontend/AbstractScopePtr.h"    // AbstractScopePtr, ScopeIndex
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
-#include "frontend/NameAnalysisTypes.h"   // AtomVector
-#include "frontend/ObjLiteral.h"          // ObjLiteralCreationData
+#include "frontend/ObjLiteral.h"          // ObjLiteralStencil
 #include "frontend/TypedIndex.h"          // TypedIndex
-#include "gc/Barrier.h"                   // HeapPtr, GCPtrAtom
-#include "gc/Rooting.h"  // HandleAtom, HandleModuleObject, HandleScriptSourceObject, MutableHandleScope
-#include "js/GCVariant.h"              // GC Support for mozilla::Variant
-#include "js/RegExpFlags.h"            // JS::RegExpFlags
-#include "js/RootingAPI.h"             // Handle
-#include "js/TypeDecls.h"              // JSContext,JSAtom,JSFunction
-#include "js/UniquePtr.h"              // js::UniquePtr
-#include "js/Utility.h"                // JS::FreePolicy, UniqueTwoByteChars
-#include "js/Vector.h"                 // js::Vector
-#include "util/Text.h"                 // DuplicateString
-#include "vm/BigIntType.h"             // ParseBigIntLiteral
-#include "vm/FunctionFlags.h"          // FunctionFlags
-#include "vm/GeneratorAndAsyncKind.h"  // GeneratorKind, FunctionAsyncKind
-#include "vm/JSScript.h"  // GeneratorKind, FunctionAsyncKind, FieldInitializers
-#include "vm/Runtime.h"   // ReportOutOfMemory
+#include "js/GCVariant.h"                 // GC Support for mozilla::Variant
+#include "js/RegExpFlags.h"               // JS::RegExpFlags
+#include "js/RootingAPI.h"                // Handle
+#include "js/TypeDecls.h"                 // JSContext,JSAtom,JSFunction
+#include "js/UniquePtr.h"                 // js::UniquePtr
+#include "js/Utility.h"                   // UniqueTwoByteChars
+#include "js/Vector.h"                    // js::Vector
+#include "util/Text.h"                    // DuplicateString
+#include "vm/BigIntType.h"                // ParseBigIntLiteral
+#include "vm/FunctionFlags.h"             // FunctionFlags
+#include "vm/GeneratorAndAsyncKind.h"     // GeneratorKind, FunctionAsyncKind
+#include "vm/JSScript.h"                  // MemberInitializers
 #include "vm/Scope.h"  // BaseScopeData, FunctionScope, LexicalScope, VarScope, GlobalScope, EvalScope, ModuleScope
 #include "vm/ScopeKind.h"      // ScopeKind
 #include "vm/SharedStencil.h"  // ImmutableScriptFlags, GCThingIndex
@@ -43,9 +37,16 @@
 
 class JS_PUBLIC_API JSTracer;
 
-namespace js::frontend {
+namespace js {
+
+class JSONPrinter;
+
+namespace frontend {
 
 struct CompilationInfo;
+class ScriptStencil;
+class RegExpStencil;
+class BigIntStencil;
 
 // [SMDOC] Script Stencil (Frontend Representation)
 //
@@ -56,16 +57,11 @@ struct CompilationInfo;
 //
 // Renaming to use the term stencil more broadly is still in progress.
 
-// Arbitrary typename to disambiguate TypedIndexes;
-class FunctionIndexType;
-
-// We need to be able to forward declare this type, so make a subclass
-// rather than just using.
-class FunctionIndex : public TypedIndex<FunctionIndexType> {
-  // Delegate constructors;
-  using Base = TypedIndex<FunctionIndexType>;
-  using Base::Base;
-};
+// Typed indices for the different stencil elements in the compilation result.
+using RegExpIndex = TypedIndex<RegExpStencil>;
+using BigIntIndex = TypedIndex<BigIntStencil>;
+using ObjLiteralIndex = TypedIndex<ObjLiteralStencil>;
+using FunctionIndex = TypedIndex<ScriptStencil>;
 
 FunctionFlags InitialFunctionFlags(FunctionSyntaxKind kind,
                                    GeneratorKind generatorKind,
@@ -75,13 +71,13 @@ FunctionFlags InitialFunctionFlags(FunctionSyntaxKind kind,
 
 // This owns a set of characters, previously syntax checked as a RegExp. Used
 // to avoid allocating the RegExp on the GC heap during parsing.
-class RegExpCreationData {
-  UniquePtr<char16_t[], JS::FreePolicy> buf_;
+class RegExpStencil {
+  UniqueTwoByteChars buf_;
   size_t length_ = 0;
   JS::RegExpFlags flags_;
 
  public:
-  RegExpCreationData() = default;
+  RegExpStencil() = default;
 
   MOZ_MUST_USE bool init(JSContext* cx, mozilla::Range<const char16_t> range,
                          JS::RegExpFlags flags) {
@@ -97,19 +93,22 @@ class RegExpCreationData {
   MOZ_MUST_USE bool init(JSContext* cx, JSAtom* pattern, JS::RegExpFlags flags);
 
   RegExpObject* createRegExp(JSContext* cx) const;
-};
 
-using RegExpIndex = TypedIndex<RegExpCreationData>;
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+  void dump(JSONPrinter& json);
+#endif
+};
 
 // This owns a set of characters guaranteed to parse into a BigInt via
 // ParseBigIntLiteral. Used to avoid allocating the BigInt on the
 // GC heap during parsing.
-class BigIntCreationData {
+class BigIntStencil {
   UniqueTwoByteChars buf_;
   size_t length_ = 0;
 
  public:
-  BigIntCreationData() = default;
+  BigIntStencil() = default;
 
   MOZ_MUST_USE bool init(JSContext* cx, const Vector<char16_t, 32>& buf) {
 #ifdef DEBUG
@@ -134,83 +133,27 @@ class BigIntCreationData {
     mozilla::Range<const char16_t> source(buf_.get(), length_);
     return js::BigIntLiteralIsZero(source);
   }
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+  void dump(JSONPrinter& json);
+#endif
 };
 
-using BigIntIndex = TypedIndex<BigIntCreationData>;
-
-class EnvironmentShapeCreationData {
-  // Data used to call CreateEnvShapeData
-  struct CreateEnvShapeData {
-    BindingIter freshBi;
-    const JSClass* cls;
-    uint32_t nextEnvironmentSlot;
-    uint32_t baseShapeFlags;
-
-    void trace(JSTracer* trc) { freshBi.trace(trc); }
-  };
-
-  // Data used to call EmptyEnvironmentShape
-  struct EmptyEnvShapeData {
-    const JSClass* cls;
-    uint32_t baseShapeFlags;
-    void trace(JSTracer* trc){
-        // Rather than having to expose this type as public to provide
-        // an IgnoreGCPolicy, just have an empty trace.
-    };
-  };
-
-  // Three different paths to creating an environment shape: Either we produce
-  // nullptr directly (represented by storing Nothing in the variant), or we
-  // call CreateEnvironmentShape, or we call EmptyEnvironmentShape.
-  mozilla::Variant<mozilla::Nothing, CreateEnvShapeData, EmptyEnvShapeData>
-      data_ = mozilla::AsVariant(mozilla::Nothing());
-
- public:
-  explicit operator bool() const { return !data_.is<mozilla::Nothing>(); }
-
-  // Setup for calling CreateEnvironmentShape
-  void set(const BindingIter& freshBi, const JSClass* cls,
-           uint32_t nextEnvironmentSlot, uint32_t baseShapeFlags) {
-    data_ = mozilla::AsVariant(
-        CreateEnvShapeData{freshBi, cls, nextEnvironmentSlot, baseShapeFlags});
-  }
-
-  // Setup for calling EmptyEnviornmentShape
-  void set(const JSClass* cls, uint32_t shapeFlags) {
-    data_ = mozilla::AsVariant(EmptyEnvShapeData{cls, shapeFlags});
-  }
-
-  // Reifiy this into an actual shape.
-  MOZ_MUST_USE bool createShape(JSContext* cx, MutableHandleShape shape);
-
-  void trace(JSTracer* trc) {
-    using DataGCPolicy = JS::GCPolicy<decltype(data_)>;
-    DataGCPolicy::trace(trc, &data_, "data_");
-  }
-};
-
-class ScopeCreationData {
-  friend class js::AbstractScopePtr;
-  friend class js::GCMarker;
-
-  // The enclosing scope if it exists
-  AbstractScopePtr enclosing_;
+class ScopeStencil {
+  // The enclosing scope. If Nothing, then the enclosing scope of the
+  // compilation applies.
+  mozilla::Maybe<ScopeIndex> enclosing_;
 
   // The kind determines data_.
   ScopeKind kind_;
 
-  // Data to reify an environment shape at creation time.
-  EnvironmentShapeCreationData environmentShape_;
+  // First frame slot to use, or LOCALNO_LIMIT if none are allowed.
+  uint32_t firstFrameSlot_;
 
-  // Once we've produced a scope from a scope creation data, there may still be
-  // AbstractScopePtrs refering to this ScopeCreationData, and if reification is
-  // requested multiple times, we should return the same scope rather than
-  // creating multiple sopes.
-  //
-  // As well, any queries that require data() to answer must be redirected to
-  // the scope once the scope has been reified, as the ScopeCreationData loses
-  // ownership of the data on reification.
-  HeapPtr<Scope*> scope_ = {};
+  // If Some, then an environment Shape must be created. The shape itself may
+  // have no slots if the environment may be extensible later.
+  mozilla::Maybe<uint32_t> numEnvironmentSlots_;
 
   // Canonical function if this is a FunctionScope.
   mozilla::Maybe<FunctionIndex> functionIndex_;
@@ -218,87 +161,91 @@ class ScopeCreationData {
   // True if this is a FunctionScope for an arrow function.
   bool isArrow_;
 
+  // The list of binding and scope-specific data. Note that the back pointers to
+  // the owning JSFunction / ModuleObject are not set until Stencils are
+  // converted to GC allocations.
   UniquePtr<BaseScopeData> data_;
 
  public:
-  ScopeCreationData(
-      JSContext* cx, ScopeKind kind, Handle<AbstractScopePtr> enclosing,
-      Handle<frontend::EnvironmentShapeCreationData> environmentShape,
-      UniquePtr<BaseScopeData> data = {},
-      mozilla::Maybe<FunctionIndex> functionIndex = mozilla::Nothing(),
-      bool isArrow = false)
+  ScopeStencil(ScopeKind kind, mozilla::Maybe<ScopeIndex> enclosing,
+               uint32_t firstFrameSlot,
+               mozilla::Maybe<uint32_t> numEnvironmentSlots,
+               UniquePtr<BaseScopeData> data = {},
+               mozilla::Maybe<FunctionIndex> functionIndex = mozilla::Nothing(),
+               bool isArrow = false)
       : enclosing_(enclosing),
         kind_(kind),
-        environmentShape_(environmentShape),  // Copied
+        firstFrameSlot_(firstFrameSlot),
+        numEnvironmentSlots_(numEnvironmentSlots),
         functionIndex_(functionIndex),
         isArrow_(isArrow),
         data_(std::move(data)) {}
 
+  static bool createForFunctionScope(
+      JSContext* cx, CompilationInfo& compilationInfo,
+      Handle<FunctionScope::Data*> dataArg, bool hasParameterExprs,
+      bool needsEnvironment, FunctionIndex functionIndex, bool isArrow,
+      mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
+
+  static bool createForLexicalScope(
+      JSContext* cx, CompilationInfo& compilationInfo, ScopeKind kind,
+      Handle<LexicalScope::Data*> dataArg, uint32_t firstFrameSlot,
+      mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
+
+  static bool createForVarScope(JSContext* cx, CompilationInfo& compilationInfo,
+                                ScopeKind kind, Handle<VarScope::Data*> dataArg,
+                                uint32_t firstFrameSlot, bool needsEnvironment,
+                                mozilla::Maybe<ScopeIndex> enclosing,
+                                ScopeIndex* index);
+
+  static bool createForGlobalScope(JSContext* cx,
+                                   CompilationInfo& compilationInfo,
+                                   ScopeKind kind,
+                                   Handle<GlobalScope::Data*> dataArg,
+                                   ScopeIndex* index);
+
+  static bool createForEvalScope(JSContext* cx,
+                                 CompilationInfo& compilationInfo,
+                                 ScopeKind kind,
+                                 Handle<EvalScope::Data*> dataArg,
+                                 mozilla::Maybe<ScopeIndex> enclosing,
+                                 ScopeIndex* index);
+
+  static bool createForModuleScope(JSContext* cx,
+                                   CompilationInfo& compilationInfo,
+                                   Handle<ModuleScope::Data*> dataArg,
+                                   mozilla::Maybe<ScopeIndex> enclosing,
+                                   ScopeIndex* index);
+
+  static bool createForWithScope(JSContext* cx,
+                                 CompilationInfo& compilationInfo,
+                                 mozilla::Maybe<ScopeIndex> enclosing,
+                                 ScopeIndex* index);
+
+  AbstractScopePtr enclosing(CompilationInfo& compilationInfo);
+
   ScopeKind kind() const { return kind_; }
-  AbstractScopePtr enclosing() { return enclosing_; }
-
-  Scope* getEnclosingScope(JSContext* cx);
-
-  // FunctionScope
-  static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
-                     Handle<FunctionScope::Data*> dataArg,
-                     bool hasParameterExprs, bool needsEnvironment,
-                     FunctionIndex functionIndex, bool isArrow,
-                     Handle<AbstractScopePtr> enclosing, ScopeIndex* index);
-
-  // LexicalScope
-  static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
-                     ScopeKind kind, Handle<LexicalScope::Data*> dataArg,
-                     uint32_t firstFrameSlot,
-                     Handle<AbstractScopePtr> enclosing, ScopeIndex* index);
-  // VarScope
-  static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
-                     ScopeKind kind, Handle<VarScope::Data*> dataArg,
-                     uint32_t firstFrameSlot, bool needsEnvironment,
-                     Handle<AbstractScopePtr> enclosing, ScopeIndex* index);
-
-  // GlobalScope
-  static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
-                     ScopeKind kind, Handle<GlobalScope::Data*> dataArg,
-                     ScopeIndex* index);
-
-  // EvalScope
-  static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
-                     ScopeKind kind, Handle<EvalScope::Data*> dataArg,
-                     Handle<AbstractScopePtr> enclosing, ScopeIndex* index);
-
-  // ModuleScope
-  static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
-                     Handle<ModuleScope::Data*> dataArg,
-                     Handle<AbstractScopePtr> enclosing, ScopeIndex* index);
-
-  // WithScope
-  static bool create(JSContext* cx, frontend::CompilationInfo& compilationInfo,
-                     Handle<AbstractScopePtr> enclosing, ScopeIndex* index);
 
   bool hasEnvironment() const {
     // Check if scope kind alone means we have an env shape, and
     // otherwise check if we have one created.
-    return Scope::hasEnvironment(kind(), !!environmentShape_);
+    bool hasEnvironmentShape = numEnvironmentSlots_.isSome();
+    return Scope::hasEnvironment(kind(), hasEnvironmentShape);
   }
-
-  // Valid for functions;
-  JSFunction* function(frontend::CompilationInfo& compilationInfo);
 
   bool isArrow() const { return isArrow_; }
-
-  bool hasScope() const { return scope_ != nullptr; }
-
-  Scope* getScope() const {
-    MOZ_ASSERT(hasScope());
-    return scope_;
-  }
 
   Scope* createScope(JSContext* cx, CompilationInfo& compilationInfo);
 
   void trace(JSTracer* trc);
 
   uint32_t nextFrameSlot() const;
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+  void dump(JSONPrinter& json);
+  void dumpFields(JSONPrinter& json);
+#endif
 
  private:
   // Non owning reference to data
@@ -314,19 +261,25 @@ class ScopeCreationData {
       CompilationInfo& compilationInfo);
 
   template <typename SpecificScopeType>
-  Scope* createSpecificScope(JSContext* cx, CompilationInfo& compilationInfo);
-
-  template <typename SpecificScopeType>
   uint32_t nextFrameSlot() const {
-    // If a scope has been allocated for the ScopeCreationData we no longer own
-    // data, so defer to scope
-    if (hasScope()) {
-      return getScope()->template as<SpecificScopeType>().nextFrameSlot();
-    }
+    // If a scope has been allocated for the ScopeStencil we no longer own data,
+    // so defer to scope
     return data<SpecificScopeType>().nextFrameSlot;
   }
+
+  template <typename SpecificEnvironmentType>
+  MOZ_MUST_USE bool createSpecificShape(JSContext* cx, ScopeKind kind,
+                                        BaseScopeData* scopeData,
+                                        MutableHandleShape shape);
+
+  template <typename SpecificScopeType, typename SpecificEnvironmentType>
+  Scope* createSpecificScope(JSContext* cx, CompilationInfo& compilationInfo);
 };
 
+// As an alternative to a ScopeIndex (which references a ScopeStencil), we may
+// instead refer to an existing scope from GlobalObject::emptyGlobalScope().
+//
+// NOTE: This is only used for the self-hosting global.
 class EmptyGlobalScopeType {};
 
 // See JSOp::Lambda for interepretation of this index.
@@ -435,6 +388,12 @@ class StencilModuleMetadata {
   bool initModule(JSContext* cx, JS::Handle<ModuleObject*> module);
 
   void trace(JSTracer* trc);
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+  void dump(JSONPrinter& json);
+  void dumpFields(JSONPrinter& json);
+#endif
 };
 
 // The lazy closed-over-binding info is represented by these types that will
@@ -445,9 +404,9 @@ using ScriptAtom = JSAtom*;
 // These types all end up being baked into GC things as part of stencil
 // instantiation.
 using ScriptThingVariant =
-    mozilla::Variant<ScriptAtom, NullScriptThing, BigIntIndex,
-                     ObjLiteralCreationData, RegExpIndex, ScopeIndex,
-                     FunctionIndex, EmptyGlobalScopeType>;
+    mozilla::Variant<ScriptAtom, NullScriptThing, BigIntIndex, ObjLiteralIndex,
+                     RegExpIndex, ScopeIndex, FunctionIndex,
+                     EmptyGlobalScopeType>;
 
 // A vector of things destined to be converted to GC things.
 using ScriptThingsVector = Vector<ScriptThingVariant>;
@@ -467,7 +426,7 @@ class ScriptStencil {
   ImmutableScriptFlags immutableFlags;
 
   // See `BaseScript::data_`.
-  mozilla::Maybe<FieldInitializers> fieldInitializers;
+  mozilla::Maybe<MemberInitializers> memberInitializers;
   ScriptThingsVector gcThings;
 
   // See `BaseScript::sharedData_`.
@@ -537,17 +496,15 @@ class ScriptStencil {
     MOZ_ASSERT_IF(result, !isFunction());
     return result;
   }
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+  void dump(JSONPrinter& json);
+  void dumpFields(JSONPrinter& json);
+#endif
 };
 
-} /* namespace js::frontend */
+} /* namespace frontend */
+} /* namespace js */
 
-namespace JS {
-template <>
-struct GCPolicy<js::frontend::ScopeCreationData*> {
-  static void trace(JSTracer* trc, js::frontend::ScopeCreationData** data,
-                    const char* name) {
-    (*data)->trace(trc);
-  }
-};
-}  // namespace JS
 #endif /* frontend_Stencil_h */

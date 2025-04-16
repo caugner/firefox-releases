@@ -81,8 +81,10 @@ class RenderCompositorANGLE : public RenderCompositor {
   void DestroySurface(NativeSurfaceId aId) override;
   void CreateTile(wr::NativeSurfaceId aId, int32_t aX, int32_t aY) override;
   void DestroyTile(wr::NativeSurfaceId aId, int32_t aX, int32_t aY) override;
-  void AddSurface(wr::NativeSurfaceId aId, wr::DeviceIntPoint aPosition,
-                  wr::DeviceIntRect aClipRect) override;
+  void AddSurface(wr::NativeSurfaceId aId,
+                  const wr::CompositorSurfaceTransform& aTransform,
+                  wr::DeviceIntRect aClipRect,
+                  wr::ImageRendering aImageRendering) override;
   void EnableNativeCompositor(bool aEnable) override;
   CompositorCapabilities GetCompositorCapabilities() override;
 
@@ -93,7 +95,8 @@ class RenderCompositorANGLE : public RenderCompositor {
 
   bool MaybeReadback(const gfx::IntSize& aReadbackSize,
                      const wr::ImageFormat& aReadbackFormat,
-                     const Range<uint8_t>& aReadbackBuffer) override;
+                     const Range<uint8_t>& aReadbackBuffer,
+                     bool* aNeedsYFlip) override;
 
  protected:
   bool UseCompositor();
@@ -109,7 +112,7 @@ class RenderCompositorANGLE : public RenderCompositor {
   void CreateSwapChainForDCompIfPossible(IDXGIFactory2* aDXGIFactory2);
   RefPtr<IDXGISwapChain1> CreateSwapChainForDComp(bool aUseTripleBuffering,
                                                   bool aUseAlpha);
-  bool SutdownEGLLibraryIfNecessary();
+  bool ShutdownEGLLibraryIfNecessary();
   RefPtr<ID3D11Query> GetD3D11Query();
   void ReleaseNativeCompositorResources();
   HWND GetCompositorHwnd();

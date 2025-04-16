@@ -26,13 +26,6 @@ httpServer.registerPathHandler(`/test_css_messages.html`, (req, res) => {
 const TEST_URI = `http://localhost:${httpServer.identity.primaryPort}/test_css_messages.html`;
 
 add_task(async function() {
-  info("Test css messages legacy listener");
-  await pushPref("devtools.testing.enableServerWatcherSupport", false);
-  await testWatchingCssMessages();
-  await testWatchingCachedCssMessages();
-
-  info("Test css messages server listener");
-  await pushPref("devtools.testing.enableServerWatcherSupport", true);
   await testWatchingCssMessages();
   await testWatchingCachedCssMessages();
 });
@@ -77,7 +70,7 @@ async function testWatchingCssMessages() {
   ok(true, "All the expected CSS messages were received");
 
   Services.console.reset();
-  targetList.stopListening();
+  targetList.destroy();
   await client.close();
 }
 
@@ -126,7 +119,7 @@ async function testWatchingCachedCssMessages() {
   is(receivedMessages.length, 3, "Cached messages were retrieved as expected");
 
   Services.console.reset();
-  targetList.stopListening();
+  targetList.destroy();
   await client.close();
 }
 

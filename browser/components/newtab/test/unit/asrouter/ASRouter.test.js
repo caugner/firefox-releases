@@ -183,7 +183,7 @@ describe("ASRouter", () => {
       ASRouterTriggerListeners,
       QueryCache,
       gURLBar: {},
-      multiStageAboutWelcome: null,
+      isSeparateAboutWelcome: true,
       AttributionCode: fakeAttributionCode,
       SnippetsTestMessageProvider,
       PanelTestProvider,
@@ -363,26 +363,26 @@ describe("ASRouter", () => {
         FAKE_LOCAL_MESSAGES.length + FAKE_REMOTE_MESSAGES.length
       );
     });
-    it("should load additional whitelisted hosts", async () => {
-      getStringPrefStub.returns('["whitelist.com"]');
+    it("should load additional allowed hosts", async () => {
+      getStringPrefStub.returns('["allow.com"]');
       await createRouterAndInit();
 
-      assert.propertyVal(Router.WHITELIST_HOSTS, "whitelist.com", "preview");
+      assert.propertyVal(Router.ALLOWLIST_HOSTS, "allow.com", "preview");
       // Should still include the defaults
-      assert.lengthOf(Object.keys(Router.WHITELIST_HOSTS), 3);
+      assert.lengthOf(Object.keys(Router.ALLOWLIST_HOSTS), 3);
     });
     it("should fallback to defaults if pref parsing fails", async () => {
       getStringPrefStub.returns("err");
       await createRouterAndInit();
 
-      assert.lengthOf(Object.keys(Router.WHITELIST_HOSTS), 2);
+      assert.lengthOf(Object.keys(Router.ALLOWLIST_HOSTS), 2);
       assert.propertyVal(
-        Router.WHITELIST_HOSTS,
+        Router.ALLOWLIST_HOSTS,
         "snippets-admin.mozilla.org",
         "preview"
       );
       assert.propertyVal(
-        Router.WHITELIST_HOSTS,
+        Router.ALLOWLIST_HOSTS,
         "activity-stream-icons.services.mozilla.com",
         "production"
       );
@@ -1744,7 +1744,7 @@ describe("ASRouter", () => {
           )
         );
       });
-      it("should not add a url that is not from a whitelisted host", async () => {
+      it("should not add a url that is not from an allowed host", async () => {
         const url = "https://mozilla.org";
         const msg = fakeAsyncMessage({
           type: "NEWTAB_MESSAGE_REQUEST",
@@ -1789,7 +1789,51 @@ describe("ASRouter", () => {
 
         assert.calledOnce(Router.sendNewTabMessage);
       });
-      it("should fallback to snippets if onboarding message provider returned none", async () => {
+      it("should hide extended triplets by default when browser.aboutwelcome.enabled is true", async () => {
+        const handleMessageRequestStub = sandbox.stub(
+          Router,
+          "handleMessageRequest"
+        );
+        handleMessageRequestStub
+          .withArgs({
+            template: "extended_triplets",
+          })
+          .resolves({ id: "foo" });
+        const msg = fakeAsyncMessage({
+          type: "NEWTAB_MESSAGE_REQUEST",
+          data: {},
+        });
+        await Router.onMessage(msg);
+
+        assert.calledOnce(handleMessageRequestStub);
+        assert.calledWithExactly(handleMessageRequestStub, {
+          provider: "snippets",
+        });
+      });
+      it("should show extended triplets when browser.aboutwelcome.enabled is false", async () => {
+        globals.set({ isSeparateAboutWelcome: false });
+        const handleMessageRequestStub = sandbox.stub(
+          Router,
+          "handleMessageRequest"
+        );
+        handleMessageRequestStub
+          .withArgs({
+            template: "extended_triplets",
+          })
+          .resolves({ id: "foo" });
+        const msg = fakeAsyncMessage({
+          type: "NEWTAB_MESSAGE_REQUEST",
+          data: {},
+        });
+        await Router.onMessage(msg);
+
+        assert.calledOnce(handleMessageRequestStub);
+        assert.calledWithExactly(handleMessageRequestStub, {
+          template: "extended_triplets",
+        });
+      });
+      it("should fallback to snippets if onboarding message provider returned none when browser.aboutwelcome.enabled is false", async () => {
+        globals.set({ isSeparateAboutWelcome: false });
         const handleMessageRequestStub = sandbox.stub(
           Router,
           "handleMessageRequest"
@@ -4012,32 +4056,6 @@ describe("ASRouter", () => {
         id: "unblock",
         value: true,
       });
-    });
-  });
-  describe("#hideExtendedTripletsOnMultiStageWelcome", () => {
-    it("should return false by default", async () => {
-      global.ExperimentAPI.getExperiment.returns(null);
-      let result = Router.hasMultiStageAboutWelcome();
-      assert.isFalse(result);
-    });
-    it("should return true if experiment has multistage template", async () => {
-      global.ExperimentAPI.getExperiment.returns({
-        branch: {
-          slug: "branch01",
-          value: { id: "id01", template: "multistage" },
-        },
-      });
-      let result = Router.hasMultiStageAboutWelcome();
-      assert.calledOnce(global.ExperimentAPI.getExperiment);
-      assert.calledWithExactly(global.ExperimentAPI.getExperiment, {
-        group: "aboutwelcome",
-      });
-      assert.isTrue(result);
-    });
-    it("should return false by default when fails to get ExperimentData", async () => {
-      global.ExperimentAPI.getExperiment.throws();
-      let result = Router.hasMultiStageAboutWelcome();
-      assert.isFalse(result);
     });
   });
   describe("#loadMessagesForProvider", () => {

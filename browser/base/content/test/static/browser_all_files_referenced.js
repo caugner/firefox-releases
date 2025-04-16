@@ -233,6 +233,15 @@ if (AppConstants.NIGHTLY_BUILD && AppConstants.platform != "win") {
   whitelist.push({ file: "chrome://fxr/content/fxrui.html" });
 }
 
+if (!AppConstants.NIGHTLY_BUILD || AppConstants.platform == "android") {
+  // Bug 1656680, should be removed after Bug 1651111 lands.
+  // The l10n build system can't package string files only for some platforms.
+  // Referenced by aboutGlean.html
+  whitelist.push({
+    file: "resource://gre/localization/en-US/toolkit/about/aboutGlean.ftl",
+  });
+}
+
 whitelist = new Set(
   whitelist
     .filter(
@@ -419,6 +428,14 @@ async function parseJsonManifest(uri) {
   if (data.theme_experiment && data.theme_experiment.stylesheet) {
     let stylesheet = uri.resolve(data.theme_experiment.stylesheet);
     gReferencesFromCode.set(stylesheet, null);
+  }
+
+  for (let themeKey of ["theme", "dark_theme"]) {
+    if (data?.[themeKey]?.images?.additional_backgrounds) {
+      for (let background of data[themeKey].images.additional_backgrounds) {
+        gReferencesFromCode.set(uri.resolve(background), null);
+      }
+    }
   }
 
   return null;

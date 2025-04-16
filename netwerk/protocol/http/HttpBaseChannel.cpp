@@ -1439,12 +1439,11 @@ NS_IMETHODIMP HttpBaseChannel::GetTopLevelContentWindowId(uint64_t* aWindowId) {
     if (loadContext) {
       nsCOMPtr<mozIDOMWindowProxy> topWindow;
       loadContext->GetTopWindow(getter_AddRefs(topWindow));
-      nsCOMPtr<nsIDOMWindowUtils> windowUtils;
       if (topWindow) {
-        windowUtils = nsGlobalWindowOuter::Cast(topWindow)->WindowUtils();
-      }
-      if (windowUtils) {
-        windowUtils->GetCurrentInnerWindowID(&mContentWindowId);
+        if (nsPIDOMWindowInner* inner =
+                nsPIDOMWindowOuter::From(topWindow)->GetCurrentInnerWindow()) {
+          mContentWindowId = inner->WindowID();
+        }
       }
     }
   }
@@ -4840,6 +4839,11 @@ void HttpBaseChannel::MaybeFlushConsoleReports() {
 }
 
 void HttpBaseChannel::DoDiagnosticAssertWhenOnStopNotCalledOnDestroy() {}
+
+NS_IMETHODIMP HttpBaseChannel::SetWaitForHTTPSSVCRecord() {
+  mCaps |= NS_HTTP_WAIT_HTTPSSVC_RESULT;
+  return NS_OK;
+}
 
 }  // namespace net
 }  // namespace mozilla

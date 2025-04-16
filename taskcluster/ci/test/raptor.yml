@@ -29,13 +29,11 @@ job-defaults:
                                     default: ["mozilla-central"]
                             cold:
                                 by-test-platform:
-                                    windows10-64-ref-hw-2017/opt: ["mozilla-central"]
                                     macosx.*64(?:-qr)?/opt: ["mozilla-central"]
                                     (linux|windows|macos)(?!.*shippable).*: []
                                     default: ["trunk", "mozilla-beta"]
                     default:
                         by-test-platform:
-                            windows10-64-ref-hw-2017/opt: ["mozilla-central"]
                             macosx.*64(?:-qr)?/opt: ["mozilla-central"]
                             (linux|windows|macos)(?!.*shippable).*: []
                             default: ["trunk", "mozilla-beta"]
@@ -49,7 +47,6 @@ job-defaults:
                             default: ["mozilla-central"]
                     default:
                         by-test-platform:
-                            windows10-64-ref-hw-2017/opt: ["mozilla-central"]
                             macosx.*64(?:-qr)?/opt: ["mozilla-central"]
                             (linux|windows|macos)(?!.*shippable).*: []
                             default: ["trunk", "mozilla-beta"]
@@ -573,7 +570,6 @@ raptor-youtube-playback-firefox:
     treeherder-symbol: Rap(ytp)
     run-on-projects:
         by-test-platform:
-            windows10-64-ref-hw-2017/opt: ['mozilla-central']
             (linux|windows|macos)(?!.*shippable).*: []
             default: ['mozilla-central']
     max-run-time: 3000
@@ -626,7 +622,11 @@ raptor-youtube-playback-av1-sfr-firefox:
     variants: ["fission"]
     try-name: raptor-youtube-playback-av1-sfr-firefox
     treeherder-symbol: Rap(ytp-av1-sfr)
-    run-on-projects: []
+    run-on-projects:
+        by-test-platform:
+            windows10-64-ref-hw-2017/opt: ['mozilla-central']
+            (linux|windows|macos)(?!.*shippable).*: []
+            default: ['mozilla-central']
     limit-platforms:
         - windows10-64-ref-hw-2017/opt
         - macosx1014-64-shippable/opt
@@ -643,7 +643,11 @@ raptor-youtube-playback-h264-sfr-firefox:
     variants: ["fission"]
     try-name: raptor-youtube-playback-h264-sfr-firefox
     treeherder-symbol: Rap(ytp-h264-sfr)
-    run-on-projects: []
+    run-on-projects:
+        by-test-platform:
+            windows10-64-ref-hw-2017/opt: ['mozilla-central']
+            (linux|windows|macos)(?!.*shippable).*: []
+            default: ['mozilla-central']
     max-run-time:
         by-test-platform:
             windows10-aarch64/opt: 3600
@@ -657,7 +661,11 @@ raptor-youtube-playback-h264-firefox:
     variants: ["fission"]
     try-name: raptor-youtube-playback-h264-firefox
     treeherder-symbol: Rap(ytp-h264)
-    run-on-projects: []
+    run-on-projects:
+        by-test-platform:
+            windows10-64-ref-hw-2017/opt: ['mozilla-central']
+            (linux|windows|macos)(?!.*shippable).*: []
+            default: ['mozilla-central']
     max-run-time: 3600
     tier: 2
     mozharness:
@@ -669,7 +677,11 @@ raptor-youtube-playback-vp9-sfr-firefox:
     variants: ["fission"]
     try-name: raptor-youtube-playback-vp9-sfr-firefox
     treeherder-symbol: Rap(ytp-vp9-sfr)
-    run-on-projects: []
+    run-on-projects:
+        by-test-platform:
+            windows10-64-ref-hw-2017/opt: ['mozilla-central']
+            (linux|windows|macos)(?!.*shippable).*: []
+            default: ['mozilla-central']
     max-run-time:
         by-test-platform:
             windows10-aarch64/opt: 3600
@@ -683,7 +695,11 @@ raptor-youtube-playback-widevine-hfr-firefox:
     variants: ["fission"]
     try-name: raptor-youtube-playback-widevine-hfr-firefox
     treeherder-symbol: Rap(ytp-widevine-hfr)
-    run-on-projects: []
+    run-on-projects:
+        by-test-platform:
+            windows10-64-ref-hw-2017/opt: ['mozilla-central']
+            (linux|windows|macos)(?!.*shippable).*: []
+            default: ['mozilla-central']
     max-run-time:
         by-test-platform:
             windows10-aarch64/opt: 3600
@@ -697,7 +713,11 @@ raptor-youtube-playback-widevine-h264-sfr-firefox:
     variants: ["fission"]
     try-name: raptor-youtube-playback-widevine-h264-sfr-firefox
     treeherder-symbol: Rap(ytp-widevine-h264-sfr)
-    run-on-projects: []
+    run-on-projects:
+        by-test-platform:
+            windows10-64-ref-hw-2017/opt: ['mozilla-central']
+            (linux|windows|macos)(?!.*shippable).*: []
+            default: ['mozilla-central']
     max-run-time:
         by-test-platform:
             windows10-aarch64/opt: 3600
@@ -711,7 +731,11 @@ raptor-youtube-playback-widevine-vp9-sfr-firefox:
     variants: ["fission"]
     try-name: raptor-youtube-playback-widevine-vp9-sfr-firefox
     treeherder-symbol: Rap(ytp-widevine-vp9-sfr)
-    run-on-projects: []
+    run-on-projects:
+        by-test-platform:
+            windows10-64-ref-hw-2017/opt: ['mozilla-central']
+            (linux|windows|macos)(?!.*shippable).*: []
+            default: ['mozilla-central']
     max-run-time:
         by-test-platform:
             windows10-aarch64/opt: 3600
@@ -748,7 +772,6 @@ raptor-jetstream2-firefox:
     treeherder-symbol: Rap(js2)
     run-on-projects:
         by-test-platform:
-            windows10-64-ref-hw-2017/opt: ['mozilla-central']
             (linux|windows|macos)(?!.*shippable).*: []
             default: ['mozilla-central']
     tier: 3

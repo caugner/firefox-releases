@@ -560,6 +560,29 @@ nsCString ConvertRequestHeadToString(nsHttpRequestHead& aRequestHead,
   return reqHeaderBuf;
 }
 
+bool SendDataInChunks(const nsCString& aData, uint64_t aOffset, uint32_t aCount,
+                      const std::function<bool(const nsCString&, uint64_t,
+                                               uint32_t)>& aSendFunc) {
+  static uint32_t const kCopyChunkSize = 128 * 1024;
+  uint32_t toRead = std::min<uint32_t>(aCount, kCopyChunkSize);
+
+  uint32_t start = 0;
+  while (aCount) {
+    nsCString data(Substring(aData, start, toRead));
+
+    if (!aSendFunc(data, aOffset, toRead)) {
+      return false;
+    }
+
+    aOffset += toRead;
+    start += toRead;
+    aCount -= toRead;
+    toRead = std::min<uint32_t>(aCount, kCopyChunkSize);
+  }
+
+  return true;
+}
+
 void NotifyActiveTabLoadOptimization() {
   if (gHttpHandler) {
     gHttpHandler->NotifyActiveTabLoadOptimization();
@@ -998,6 +1021,49 @@ nsresult HttpProxyResponseToErrorCode(uint32_t aStatusCode) {
   }
 
   return rv;
+}
+
+nsCString SelectAlpnFromAlpnList(const nsACString& aAlpnList, bool aNoHttp2,
+                                 bool aNoHttp3) {
+  nsCString h3Value;
+  nsCString h2Value;
+  nsCString h1Value;
+  // aAlpnList is a list of alpn-id and use comma as a delimiter.
+  nsCCharSeparatedTokenizer tokenizer(aAlpnList, ',');
+  nsAutoCString npnStr;
+  while (tokenizer.hasMoreTokens()) {
+    const nsACString& npnToken(tokenizer.nextToken());
+    bool isHttp3 = gHttpHandler->IsHttp3VersionSupported(npnToken);
+    if (isHttp3 && h3Value.IsEmpty()) {
+      h3Value.Assign(npnToken);
+    }
+
+    uint32_t spdyIndex;
+    SpdyInformation* spdyInfo = gHttpHandler->SpdyInfo();
+    if (NS_SUCCEEDED(spdyInfo->GetNPNIndex(npnToken, &spdyIndex)) &&
+        spdyInfo->ProtocolEnabled(spdyIndex) && h2Value.IsEmpty()) {
+      h2Value.Assign(npnToken);
+    }
+
+    if (npnToken.LowerCaseEqualsASCII("http/1.1") && h1Value.IsEmpty()) {
+      h1Value.Assign(npnToken);
+    }
+  }
+
+  if (!h3Value.IsEmpty() && gHttpHandler->IsHttp3Enabled() && !aNoHttp3) {
+    return h3Value;
+  }
+
+  if (!h2Value.IsEmpty() && gHttpHandler->IsSpdyEnabled() && !aNoHttp2) {
+    return h2Value;
+  }
+
+  if (!h1Value.IsEmpty()) {
+    return h1Value;
+  }
+
+  // If we are here, there is no supported alpn can be used.
+  return EmptyCString();
 }
 
 }  // namespace net

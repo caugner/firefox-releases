@@ -83,10 +83,14 @@ class PrintingChild extends ActorChild {
     switch (message.name) {
       case "Printing:Preview:Enter": {
         this.enterPrintPreview(
-          Services.wm.getOuterWindowWithId(data.windowID),
+          BrowsingContext.get(data.browsingContextId),
           data.simplifiedMode,
           data.changingBrowsers,
-          data.lastUsedPrinterName
+          data.lastUsedPrinterName,
+          data.outputFormat,
+          data.startPageRange,
+          data.endPageRange,
+          data.printRange
         );
         break;
       }
@@ -307,14 +311,36 @@ class PrintingChild extends ActorChild {
   }
 
   enterPrintPreview(
-    contentWindow,
+    browsingContext,
     simplifiedMode,
     changingBrowsers,
-    lastUsedPrinterName
+    lastUsedPrinterName,
+    outputFormat,
+    startPageRange,
+    endPageRange,
+    printRange
   ) {
     const { docShell } = this;
+
     try {
+      let contentWindow = browsingContext.window;
       let printSettings = this.getPrintSettings(lastUsedPrinterName);
+
+      // Disable the progress dialog for generating previews.
+      printSettings.showPrintProgress = !Services.prefs.getBoolPref(
+        "print.tab_modal.enabled",
+        false
+      );
+
+      if (outputFormat == printSettings.kOutputFormatPDF) {
+        printSettings.outputFormat = printSettings.kOutputFormatPDF;
+        printSettings.printToFile = true;
+      }
+
+      // TODO: waiting on the print preview to be updated in Bug 1659005
+      printSettings.startPageRange = startPageRange;
+      printSettings.endPageRange = endPageRange;
+      printSettings.printRange = printRange;
 
       // If we happen to be on simplified mode, we need to set docURL in order
       // to generate header/footer content correctly, since simplified tab has
@@ -327,13 +353,21 @@ class PrintingChild extends ActorChild {
       // printPreviewInitialize must be run in a separate runnable to avoid
       // touching a different TabGroup in our own runnable.
       let printPreviewInitialize = () => {
+        // During dispatching this function to the main-thread, the docshell
+        // might be destroyed, for example the print preview window gets closed
+        // soon after it's opened, in such case we should just simply bail out.
+        if (docShell.isBeingDestroyed()) {
+          this.mm.sendAsyncMessage("Printing:Preview:Entered", {
+            failed: true,
+          });
+          return;
+        }
+
         try {
           let listener = new PrintingListener(this.mm);
 
           this.printPreviewInitializingInfo = { changingBrowsers };
-          docShell
-            .initOrReusePrintPreviewViewer()
-            .printPreview(printSettings, contentWindow, listener);
+          contentWindow.printPreview(printSettings, listener, docShell);
         } catch (error) {
           // This might fail if we, for example, attempt to print a XUL document.
           // In that case, we inform the parent to bail out of print preview.
@@ -367,21 +401,22 @@ class PrintingChild extends ActorChild {
 
   exitPrintPreview(glo) {
     this.printPreviewInitializingInfo = null;
-    this.docShell.initOrReusePrintPreviewViewer().exitPrintPreview();
+    this.docShell.exitPrintPreview();
   }
 
   updatePageCount() {
-    let numPages = this.docShell.initOrReusePrintPreviewViewer()
-      .printPreviewNumPages;
+    let cv = this.docShell.contentViewer;
+    cv.QueryInterface(Ci.nsIWebBrowserPrint);
     this.mm.sendAsyncMessage("Printing:Preview:UpdatePageCount", {
-      numPages,
+      numPages: cv.printPreviewNumPages,
+      totalPages: cv.rawNumPages,
     });
   }
 
   navigate(navType, pageNum) {
-    this.docShell
-      .initOrReusePrintPreviewViewer()
-      .printPreviewScrollToPage(navType, pageNum);
+    let cv = this.docShell.contentViewer;
+    cv.QueryInterface(Ci.nsIWebBrowserPrint);
+    cv.printPreviewScrollToPage(navType, pageNum);
   }
 }
 

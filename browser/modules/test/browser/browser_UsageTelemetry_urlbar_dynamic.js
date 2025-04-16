@@ -13,9 +13,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   UrlbarResult: "resource:///modules/UrlbarResult.jsm",
   UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.jsm",
   UrlbarView: "resource:///modules/UrlbarView.jsm",
-  URLBAR_SELECTED_RESULT_TYPES: "resource:///modules/BrowserUsageTelemetry.jsm",
-  URLBAR_SELECTED_RESULT_METHODS:
-    "resource:///modules/BrowserUsageTelemetry.jsm",
 });
 
 const DYNAMIC_TYPE_NAME = "test";
@@ -106,7 +103,7 @@ add_task(async function test() {
     histograms,
     "dynamic",
     0,
-    URLBAR_SELECTED_RESULT_METHODS.enter
+    UrlbarTestUtils.SELECTED_RESULT_METHODS.enter
   );
 
   // Clean up for subsequent tests.
@@ -137,7 +134,7 @@ function assertHistogramResults(histograms, type, index, method) {
 
   TelemetryTestUtils.assertHistogram(
     histograms.resultTypeHist,
-    URLBAR_SELECTED_RESULT_TYPES[type],
+    UrlbarUtils.SELECTED_RESULT_TYPES[type],
     1
   );
 

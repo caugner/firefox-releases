@@ -32,6 +32,7 @@
 #include "nsTArray.h"
 
 class nsDocumentFragment;
+class nsFrameSelection;
 class nsHTMLDocument;
 class nsITransferable;
 class nsIClipboard;
@@ -1829,10 +1830,9 @@ class HTMLEditor final : public TextEditor,
    * line is empty) and the line ends with block boundary, inserts a `<br>`
    * element.
    */
-  template <typename EditorDOMPointType>
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   InsertBRElementIfHardLineIsEmptyAndEndsWithBlockBoundary(
-      const EditorDOMPointType& aPointToInsert);
+      const EditorDOMPoint& aPointToInsert);
 
   /**
    * Insert a `<br>` element if aElement is a block element and empty.
@@ -2022,21 +2022,28 @@ class HTMLEditor final : public TextEditor,
   DeleteNodeIfInvisibleAndEditableTextNode(nsIContent& aContent);
 
   /**
-   * DeleteTextAndTextNodesWithTransaction() removes text nodes which are in
-   * the given range and delete some characters in start and/or end of
-   * the range.
+   * DeleteTextAndTextNodesWithTransaction() removes text or text nodes in
+   * the given range.
    */
+  enum class TreatEmptyTextNodes {
+    // KeepIfContainerOfRangeBoundaries:
+    //   Will remove empty text nodes middle of the range, but keep empty
+    //   text nodes which are containers of range boundaries.
+    KeepIfContainerOfRangeBoundaries,
+    // Remove:
+    //   Will remove all empty text nodes.
+    Remove,
+    // RemoveAllEmptyInlineAncestors:
+    //   Will remove all empty text nodes and its inline ancestors which
+    //   become empty due to removing empty text nodes.
+    RemoveAllEmptyInlineAncestors,
+  };
   template <typename EditorDOMPointType>
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
-  DeleteTextAndTextNodesWithTransaction(const EditorDOMPointType& aStartPoint,
-                                        const EditorDOMPointType& aEndPoint);
-
-  /**
-   * If aPoint follows invisible `<br>` element, returns the invisible `<br>`
-   * element.  Otherwise, nullptr.
-   */
-  template <typename PT, typename CT>
-  Element* GetInvisibleBRElementAt(const EditorDOMPointBase<PT, CT>& aPoint);
+  DeleteTextAndTextNodesWithTransaction(
+      const EditorDOMPointType& aStartPoint,
+      const EditorDOMPointType& aEndPoint,
+      TreatEmptyTextNodes aTreatEmptyTextNodes);
 
   /**
    * JoinNodesWithTransaction() joins aLeftNode and aRightNode.  Content of
@@ -2357,44 +2364,6 @@ class HTMLEditor final : public TextEditor,
                                SplitAtEdges aSplitAtEdges);
 
   /**
-   * JoinNodesDeepWithTransaction() joins aLeftNode and aRightNode "deeply".
-   * First, they are joined simply, then, new right node is assumed as the
-   * child at length of the left node before joined and new left node is
-   * assumed as its previous sibling.  Then, they will be joined again.
-   * And then, these steps are repeated.
-   *
-   * @param aLeftContent    The node which will be removed form the tree.
-   * @param aRightContent   The node which will be inserted the contents of
-   *                        aRightContent.
-   * @return                The point of the first child of the last right node.
-   *                        The result is always set if this succeeded.
-   */
-  MOZ_CAN_RUN_SCRIPT Result<EditorDOMPoint, nsresult>
-  JoinNodesDeepWithTransaction(nsIContent& aLeftContent,
-                               nsIContent& aRightContent);
-
-  /**
-   * TryToJoinBlocksWithTransaction() tries to join two block elements.  The
-   * right element is always joined to the left element.  If the elements are
-   * the same type and not nested within each other,
-   * JoinEditableNodesWithTransaction() is called (example, joining two list
-   * items together into one).  If the elements are not the same type, or one
-   * is a descendant of the other, we instead destroy the right block placing
-   * its children into leftblock.
-   *
-   * @return            Sets canceled to true if the operation should do
-   *                    nothing anymore even if this doesn't join the blocks.
-   *                    Sets handled to true if this actually handles the
-   *                    request.  Note that this may set it to true even if this
-   *                    does not join the block.  E.g., if the blocks shouldn't
-   *                    be joined or it's impossible to join them but it's not
-   *                    unexpected case, this returns true with this.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
-  TryToJoinBlocksWithTransaction(nsIContent& aLeftContentInBlock,
-                                 nsIContent& aRightContentInBlock);
-
-  /**
    * GetGoodCaretPointFor() returns a good point to collapse `Selection`
    * after handling edit action with aDirectionAndAmount.
    *
@@ -2405,7 +2374,7 @@ class HTMLEditor final : public TextEditor,
    *                            Set the direction of handled edit action.
    */
   EditorDOMPoint GetGoodCaretPointFor(
-      nsIContent& aContent, nsIEditor::EDirection aDirectionAndAmount);
+      nsIContent& aContent, nsIEditor::EDirection aDirectionAndAmount) const;
 
   /**
    * RemoveEmptyInclusiveAncestorInlineElements() removes empty inclusive
@@ -2417,57 +2386,39 @@ class HTMLEditor final : public TextEditor,
   RemoveEmptyInclusiveAncestorInlineElements(nsIContent& aContent);
 
   /**
-   * MaybeDeleteTopMostEmptyAncestor() looks for top most empty block ancestor
-   * of aStartContent in aEditingHostElement.
-   * If found empty ancestor is a list item element, inserts a <br> element
-   * before its parent element if grand parent is a list element.  Then,
-   * collapse Selection to after the empty block.
-   * If found empty ancestor is not a list item element, collapse Selection to
-   * somewhere depending on aAction.
-   * Finally, removes the empty block ancestor.
+   * ExtendRangeToIncludeInvisibleNodes() extends aRange if there are some
+   * invisible nodes around it.
    *
-   * @param aStartContent       Start content to look for empty ancestors.
-   * @param aEditingHostElement Current editing host.
-   * @param aDirectionAndAmount If found empty ancestor block is a list item
-   *                            element, this is ignored.  Otherwise:
-   *                            - If eNext, eNextWord or eToEndOfLine, collapse
-   *                              Selection to after found empty ancestor.
-   *                            - If ePrevious, ePreviousWord or
-   *                              eToBeginningOfLine, collapse Selection to
-   *                              end of previous editable node.
-   *                            Otherwise, eNone is allowed but does nothing.
+   * @param aFrameSelection     If the caller wants range in selection limiter,
+   *                            set this to non-nullptr which knows the limiter.
+   * @param aRange              The range to be extended.  This must not be
+   *                            collapsed, must be positioned, and must not be
+   *                            in selection.
+   * @return                    true if succeeded to set the range.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
-  MaybeDeleteTopMostEmptyAncestor(nsIContent& aStartContent,
-                                  Element& aEditingHostElement,
-                                  nsIEditor::EDirection aDirectionAndAmount);
-
-  /**
-   * GetRangeExtendedToIncludeInvisibleNodes() returns extended range.
-   * If there are some invisible nodes around aAbstractRange, they may
-   * be included.
-   *
-   * @param aAbstractRange      Original range.  This must not be collapsed
-   *                            and must be positioned.
-   * @return                    Extended range.
-   */
-  already_AddRefed<dom::StaticRange> GetRangeExtendedToIncludeInvisibleNodes(
-      const dom::AbstractRange& aAbstractRange);
+  bool ExtendRangeToIncludeInvisibleNodes(
+      const nsFrameSelection* aFrameSelection, nsRange& aRange);
 
   /**
    * DeleteTextAndNormalizeSurroundingWhiteSpaces() deletes text between
-   * aStartToDelete and immediately before aEndToDelete.  If surrounding
-   * characters are white-spaces, this normalize them too.  Finally, inserts
-   * `<br>` element if it's required.
+   * aStartToDelete and immediately before aEndToDelete and return new caret
+   * position.  If surrounding characters are white-spaces, this normalize them
+   * too.  Finally, inserts `<br>` element if it's required.
    * Note that if you wants only normalizing white-spaces, you can set same
    * point to both aStartToDelete and aEndToDelete.  Then, this tries to
    * normalize white-space sequence containing previous character of
    * aStartToDelete.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  enum class DeleteDirection {
+    Forward,
+    Backward,
+  };
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<EditorDOMPoint, nsresult>
   DeleteTextAndNormalizeSurroundingWhiteSpaces(
       const EditorDOMPointInText& aStartToDelete,
-      const EditorDOMPointInText& aEndToDelete);
+      const EditorDOMPointInText& aEndToDelete,
+      TreatEmptyTextNodes aTreatEmptyTextNodes,
+      DeleteDirection aDeleteDirection);
 
   /**
    * ExtendRangeToDeleteWithNormalizingWhiteSpaces() is a helper method of
@@ -2635,7 +2586,7 @@ class HTMLEditor final : public TextEditor,
       const EditorDOMPoint& aPointToDelete);
 
   /**
-   * HandleDeleteCollapsedSelectionAtTextNode() handles deletion of
+   * HandleDeleteCollapsedSelectionAtVisibleChar() handles deletion of
    * collapsed selection in a text node.
    *
    * @param aDirectionAndAmount Direction of the deletion.
@@ -2644,7 +2595,7 @@ class HTMLEditor final : public TextEditor,
    *                            node.
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
-  HandleDeleteCollapsedSelectionAtTextNode(
+  HandleDeleteCollapsedSelectionAtVisibleChar(
       nsIEditor::EDirection aDirectionAndAmount,
       const EditorDOMPoint& aPointToDelete);
 
@@ -2652,11 +2603,10 @@ class HTMLEditor final : public TextEditor,
    * HandleDeleteCollapsedSelectionAtAtomicContent() handles deletion of
    * atomic elements like `<br>`, `<hr>`, `<img>`, `<input>`, etc and
    * data nodes except text node (e.g., comment node).
-   * If aAtomicContent is a invisible `<br>` element, this will call
-   * `WillDeleteSelection()` recursively after deleting it.
+   * Note that don't call this directly with `<hr>` element.  Instead, call
+   * `HandleDeleteCollapsedSelectionAtHRElement()`.
+   * Note that don't call this for invisible `<br>` element.
    *
-   * @param aDirectionAndAmount Direction of the deletion.
-   * @param aStripWrappers      Must be eStrip or eNoStrip.
    * @param aAtomicContent      The atomic content to be deleted.
    * @param aCaretPoint         The caret point (i.e., selection start or
    *                            end).
@@ -2665,15 +2615,422 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
   HandleDeleteCollapsedSelectionAtAtomicContent(
-      nsIEditor::EDirection aDirectionAndAmount,
-      nsIEditor::EStripWrappers aStripWrappers, nsIContent& aAtomicContent,
-      const EditorDOMPoint& aCaretPoint, WSRunScanner& aWSRunScannerAtCaret);
+      nsIContent& aAtomicContent, const EditorDOMPoint& aCaretPoint,
+      const WSRunScanner& aWSRunScannerAtCaret);
+
+  /**
+   * HandleDeleteCollapsedSelectionAtHRElement() handles deletion around
+   * `<hr>` element.  If aDirectionAndAmount is nsIEditor::ePrevious,
+   * aHTElement is removed only when caret is at next sibling of the `<hr>`
+   * element and inter line position is "left".  Otherwise, caret is moved
+   * and does not remove the `<hr>` elemnent.
+   * XXX Perhaps, we can get rid of this special handling because the other
+   *     browsers don't do this, and our `<hr>` element handling is really
+   *     odd.
+   *
+   * @param aDirectionAndAmount Direction of the deletion.
+   * @param aHRElement          The `<hr>` element to be removed.
+   * @param aCaretPoint         The caret point (i.e., selection start or
+   *                            end).
+   * @param aWSRunScannerAtCaret WSRunScanner instance which was initialized
+   *                             with the caret point.
+   */
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+  HandleDeleteCollapsedSelectionAtHRElement(
+      nsIEditor::EDirection aDirectionAndAmount, Element& aHRElement,
+      const EditorDOMPoint& aCaretPoint,
+      const WSRunScanner& aWSRunScannerAtCaret);
+
+  /**
+   * ShouldDeleteHRElement() checks whether aHRElement should be deleted
+   * when selection is collapsed at aCaretPoint.
+   */
+  Result<bool, nsresult> ShouldDeleteHRElement(
+      nsIEditor::EDirection aDirectionAndAmount, Element& aHRElement,
+      const EditorDOMPoint& aCaretPoint) const;
+
+  class MOZ_STACK_CLASS AutoEmptyBlockAncestorDeleter final {
+   public:
+    /**
+     * ScanEmptyBlockInclusiveAncestor() scans an inclusive ancestor element
+     * which is empty and a block element.  Then, stores the result and
+     * returns the found empty block element.
+     *
+     * @param aHTMLEditor         The HTMLEditor.
+     * @param aStartContent       Start content to look for empty ancestors.
+     * @param aEditingHostElement Current editing host.
+     */
+    [[nodiscard]] Element* ScanEmptyBlockInclusiveAncestor(
+        const HTMLEditor& aHTMLEditor, nsIContent& aStartContent,
+        Element& aEditingHostElement);
+
+    /**
+     * Deletes found empty block element by `ScanEmptyBlockInclusiveAncestor()`.
+     * If found one is a list item element, calls
+     * `MaybeInsertBRElementBeforeEmptyListItemElement()` before deleting
+     * the list item element.
+     * If found empty ancestor is not a list item element,
+     * `GetNewCaretPoisition()` will be called to determine new caret position.
+     * Finally, removes the empty block ancestor.
+     *
+     * @param aHTMLEditor         The HTMLEditor.
+     * @param aDirectionAndAmount If found empty ancestor block is a list item
+     *                            element, this is ignored.  Otherwise:
+     *                            - If eNext, eNextWord or eToEndOfLine,
+     *                              collapse Selection to after found empty
+     *                              ancestor.
+     *                            - If ePrevious, ePreviousWord or
+     *                              eToBeginningOfLine, collapse Selection to
+     *                              end of previous editable node.
+     *                            - Otherwise, eNone is allowed but does
+     *                              nothing.
+     */
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+    Run(HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount);
+
+   private:
+    /**
+     * MaybeInsertBRElementBeforeEmptyListItemElement() inserts a `<br>` element
+     * if `mEmptyInclusiveAncestorBlockElement` is a list item element which
+     * is first editable element in its parent, and its grand parent is not a
+     * list element, inserts a `<br>` element before the empty list item.
+     */
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<RefPtr<Element>, nsresult>
+    MaybeInsertBRElementBeforeEmptyListItemElement(HTMLEditor& aHTMLEditor);
+
+    /**
+     * GetNewCaretPoisition() returns new caret position after deleting
+     * `mEmptyInclusiveAncestorBlockElement`.
+     */
+    [[nodiscard]] Result<EditorDOMPoint, nsresult> GetNewCaretPoisition(
+        const HTMLEditor& aHTMLEditor,
+        nsIEditor::EDirection aDirectionAndAmount) const;
+
+    RefPtr<Element> mEmptyInclusiveAncestorBlockElement;
+  };
+
+  enum class SelectionWasCollapsed { Yes, No };
+  class MOZ_STACK_CLASS AutoBlockElementsJoiner final {
+   public:
+    /**
+     * PrepareToDeleteCollapsedSelectionAtCurrentBlockBoundary() considers
+     * left content and right content which are joined for handling deletion
+     * at current block boundary (i.e., at start or end of the current block).
+     *
+     * @param aHTMLEditor               The HTML editor.
+     * @param aDirectionAndAmount       Direction of the deletion.
+     * @param aCurrentBlockElement      The current block element.
+     * @param aCaretPoint               The caret point (i.e., selection start
+     *                                  or end).
+     * @return                          true if can continue to handle the
+     *                                  deletion.
+     */
+    bool PrepareToDeleteCollapsedSelectionAtCurrentBlockBoundary(
+        const HTMLEditor& aHTMLEditor,
+        nsIEditor::EDirection aDirectionAndAmount,
+        Element& aCurrentBlockElement, const EditorDOMPoint& aCaretPoint);
+
+    /**
+     * PrepareToDeleteCollapsedSelectionAtOtherBlockBoundary() considers
+     * left content and right content which are joined for handling deletion at
+     * other block boundary (i.e., immediately before or after a block).
+     *
+     * @param aHTMLEditor               The HTML editor.
+     * @param aDirectionAndAmount       Direction of the deletion.
+     * @param aOtherBlockElement        The block element which follows the
+     *                                  caret or is followed by caret.
+     * @param aCaretPoint               The caret point (i.e., selection start
+     *                                  or end).
+     * @param aWSRunScannerAtCaret      WSRunScanner instance which was
+     *                                  initialized with the caret point.
+     * @return                          true if can continue to handle the
+     *                                  deletion.
+     */
+    bool PrepareToDeleteCollapsedSelectionAtOtherBlockBoundary(
+        const HTMLEditor& aHTMLEditor,
+        nsIEditor::EDirection aDirectionAndAmount, Element& aOtherBlockElement,
+        const EditorDOMPoint& aCaretPoint,
+        const WSRunScanner& aWSRunScannerAtCaret);
+
+    /**
+     * PrepareToDeleteNonCollapsedRanges() considers left block element and
+     * right block element which are inclusive ancestor block element of
+     * start and end container of first range of aRangesToDelete.
+     *
+     * @param aHTMLEditor               The HTML editor.
+     * @param aRangesToDelete           Ranges to delete.  Must not be
+     *                                  collapsed.
+     * @return                          true if can continue to handle the
+     *                                  deletion.
+     */
+    bool PrepareToDeleteNonCollapsedRanges(
+        const HTMLEditor& aHTMLEditor, const AutoRangeArray& aRangesToDelete);
+
+    /**
+     * Run() executes the joining.
+     *
+     * @param aHTMLEditor               The HTML editor.
+     * @param aDirectionAndAmount       Direction of the deletion.
+     * @param aCaretPoint               The caret point (i.e., selection start
+     *                                  or end).
+     */
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+    Run(HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+        const EditorDOMPoint& aCaretPoint) {
+      switch (mMode) {
+        case Mode::JoinCurrentBlock: {
+          EditActionResult result =
+              HandleDeleteCollapsedSelectionAtCurrentBlockBoundary(aHTMLEditor,
+                                                                   aCaretPoint);
+          NS_WARNING_ASSERTION(
+              result.Succeeded(),
+              "AutoBlockElementsJoiner::"
+              "HandleDeleteCollapsedSelectionAtCurrentBlockBoundary() failed");
+          return result;
+        }
+        case Mode::JoinOtherBlock: {
+          EditActionResult result =
+              HandleDeleteCollapsedSelectionAtOtherBlockBoundary(aHTMLEditor,
+                                                                 aCaretPoint);
+          NS_WARNING_ASSERTION(
+              result.Succeeded(),
+              "AutoBlockElementsJoiner::"
+              "HandleDeleteCollapsedSelectionAtOtherBlockBoundary() failed");
+          return result;
+        }
+        case Mode::DeleteBRElement: {
+          EditActionResult result =
+              DeleteBRElement(aHTMLEditor, aDirectionAndAmount, aCaretPoint);
+          NS_WARNING_ASSERTION(
+              result.Succeeded(),
+              "AutoBlockElementsJoiner::DeleteBRElement() failed");
+          return result;
+        }
+        case Mode::JoinBlocksInSameParent:
+        case Mode::DeleteContentInRanges:
+        case Mode::DeleteNonCollapsedRanges:
+          MOZ_ASSERT_UNREACHABLE(
+              "This mode should be handled in the other Run()");
+          return EditActionResult(NS_ERROR_UNEXPECTED);
+        case Mode::NotInitialized:
+          return EditActionIgnored();
+      }
+      return EditActionResult(NS_ERROR_NOT_INITIALIZED);
+    }
+
+    /**
+     * Run() executes the joining.
+     *
+     * @param aHTMLEditor               The HTML editor.
+     * @param aDirectionAndAmount       Direction of the deletion.
+     * @param aStripWrappers            Whether delete or keep new empty
+     *                                  ancestor elements.
+     * @param aRangesToDelete           Ranges to delete.  Must not be
+     *                                  collapsed.
+     * @param aSelectionWasCollapsed    Whether selection was or was not
+     *                                  collapsed when starting to handle
+     *                                  deletion.
+     */
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+    Run(HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+        nsIEditor::EStripWrappers aStripWrappers,
+        AutoRangeArray& aRangesToDelete,
+        HTMLEditor::SelectionWasCollapsed aSelectionWasCollapsed) {
+      switch (mMode) {
+        case Mode::JoinCurrentBlock:
+        case Mode::JoinOtherBlock:
+        case Mode::DeleteBRElement:
+          MOZ_ASSERT_UNREACHABLE(
+              "This mode should be handled in the other Run()");
+          return EditActionResult(NS_ERROR_UNEXPECTED);
+        case Mode::JoinBlocksInSameParent: {
+          EditActionResult result =
+              JoinBlockElementsInSameParent(aHTMLEditor, aDirectionAndAmount,
+                                            aStripWrappers, aRangesToDelete);
+          NS_WARNING_ASSERTION(result.Succeeded(),
+                               "AutoBlockElementsJoiner::"
+                               "JoinBlockElementsInSameParent() failed");
+          return result;
+        }
+        case Mode::DeleteContentInRanges: {
+          EditActionResult result =
+              DeleteContentInRanges(aHTMLEditor, aDirectionAndAmount,
+                                    aStripWrappers, aRangesToDelete);
+          NS_WARNING_ASSERTION(
+              result.Succeeded(),
+              "AutoBlockElementsJoiner::DeleteContentInRanges() failed");
+          return result;
+        }
+        case Mode::DeleteNonCollapsedRanges: {
+          EditActionResult result = HandleDeleteNonCollapsedRanges(
+              aHTMLEditor, aDirectionAndAmount, aStripWrappers, aRangesToDelete,
+              aSelectionWasCollapsed);
+          NS_WARNING_ASSERTION(result.Succeeded(),
+                               "AutoBlockElementsJoiner::"
+                               "HandleDeleteNonCollapsedRange() failed");
+          return result;
+        }
+        case Mode::NotInitialized:
+          return EditActionIgnored();
+      }
+      return EditActionResult(NS_ERROR_NOT_INITIALIZED);
+    }
+
+    nsIContent* GetLeafContentInOtherBlockElement() const {
+      MOZ_ASSERT(mMode == Mode::JoinOtherBlock);
+      return mLeafContentInOtherBlock;
+    }
+
+    bool NeedsToFallbackToDeleteSelectionWithTransaction() const {
+      MOZ_ASSERT(mMode == Mode::JoinOtherBlock);
+      return mNeedsToFallbackToDeleteSelectionWithTransaction;
+    }
+
+   private:
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+    HandleDeleteCollapsedSelectionAtCurrentBlockBoundary(
+        HTMLEditor& aHTMLEditor, const EditorDOMPoint& aCaretPoint);
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+    HandleDeleteCollapsedSelectionAtOtherBlockBoundary(
+        HTMLEditor& aHTMLEditor, const EditorDOMPoint& aCaretPoint);
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+    JoinBlockElementsInSameParent(HTMLEditor& aHTMLEditor,
+                                  nsIEditor::EDirection aDirectionAndAmount,
+                                  nsIEditor::EStripWrappers aStripWrappers,
+                                  AutoRangeArray& aRangesToDelete);
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult DeleteBRElement(
+        HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+        const EditorDOMPoint& aCaretPoint);
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult DeleteContentInRanges(
+        HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+        nsIEditor::EStripWrappers aStripWrappers,
+        AutoRangeArray& aRangesToDelete);
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+    HandleDeleteNonCollapsedRanges(
+        HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+        nsIEditor::EStripWrappers aStripWrappers,
+        AutoRangeArray& aRangesToDelete,
+        HTMLEditor::SelectionWasCollapsed aSelectionWasCollapsed);
+
+    /**
+     * JoinNodesDeepWithTransaction() joins aLeftNode and aRightNode "deeply".
+     * First, they are joined simply, then, new right node is assumed as the
+     * child at length of the left node before joined and new left node is
+     * assumed as its previous sibling.  Then, they will be joined again.
+     * And then, these steps are repeated.
+     *
+     * @param aLeftContent    The node which will be removed form the tree.
+     * @param aRightContent   The node which will be inserted the contents of
+     *                        aRightContent.
+     * @return                The point of the first child of the last right
+     * node. The result is always set if this succeeded.
+     */
+    MOZ_CAN_RUN_SCRIPT Result<EditorDOMPoint, nsresult>
+    JoinNodesDeepWithTransaction(HTMLEditor& aHTMLEditor,
+                                 nsIContent& aLeftContent,
+                                 nsIContent& aRightContent);
+
+    /**
+     * DeleteNodesEntirelyInRangeButKeepTableStructure() removes nodes which are
+     * entirely in aRange.  Howevers, if some nodes are part of a table,
+     * removes all children of them instead.  I.e., this does not make damage to
+     * table structure at the range, but may remove table entirely if it's
+     * in the range.
+     *
+     * @return                  true if inclusive ancestor block elements at
+     *                          start and end of the range should be joined.
+     */
+    MOZ_CAN_RUN_SCRIPT Result<bool, nsresult>
+    DeleteNodesEntirelyInRangeButKeepTableStructure(
+        HTMLEditor& aHTMLEditor, nsRange& aRange,
+        HTMLEditor::SelectionWasCollapsed aSelectionWasCollapsed);
+
+    /**
+     * DeleteContentButKeepTableStructure() removes aContent if it's an element
+     * which is part of a table structure.  If it's a part of table structure,
+     * removes its all children recursively.  I.e., this may delete all of a
+     * table, but won't break table structure partially.
+     *
+     * @param aContent            The content which or whose all children should
+     *                            be removed.
+     */
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+    DeleteContentButKeepTableStructure(HTMLEditor& aHTMLEditor,
+                                       nsIContent& aContent);
+
+    /**
+     * DeleteTextAtStartAndEndOfRange() removes text if start and/or end of
+     * aRange is in a text node.
+     */
+    [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+    DeleteTextAtStartAndEndOfRange(HTMLEditor& aHTMLEditor, nsRange& aRange);
+
+    class MOZ_STACK_CLASS AutoInclusiveAncestorBlockElementsJoiner final {
+     public:
+      AutoInclusiveAncestorBlockElementsJoiner() = delete;
+      AutoInclusiveAncestorBlockElementsJoiner(
+          nsIContent& aInclusiveDescendantOfLeftBlockElement,
+          nsIContent& aInclusiveDescendantOfRightBlockElement)
+          : mInclusiveDescendantOfLeftBlockElement(
+                aInclusiveDescendantOfLeftBlockElement),
+            mInclusiveDescendantOfRightBlockElement(
+                aInclusiveDescendantOfRightBlockElement) {}
+
+      bool IsSet() const { return mLeftBlockElement && mRightBlockElement; }
+      bool IsSameBlockElement() const {
+        return mLeftBlockElement && mLeftBlockElement == mRightBlockElement;
+      }
+
+      /**
+       * Prepare for joining inclusive ancestor block elements.  When this
+       * returns error or "canceled" or "handled" state, don't call Run().
+       */
+      EditActionResult Prepare();
+
+      /**
+       * Join inclusive ancestor block elements which are found by preceding
+       * Preare() call.
+       * The right element is always joined to the left element.
+       * If the elements are the same type and not nested within each other,
+       * JoinEditableNodesWithTransaction() is called (example, joining two
+       * list items together into one).
+       * If the elements are not the same type, or one is a descendant of the
+       * other, we instead destroy the right block placing its children into
+       * left block.
+       */
+      [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+      Run(HTMLEditor& aHTMLEditor);
+
+     private:
+      OwningNonNull<nsIContent> mInclusiveDescendantOfLeftBlockElement;
+      OwningNonNull<nsIContent> mInclusiveDescendantOfRightBlockElement;
+      RefPtr<Element> mLeftBlockElement;
+      RefPtr<Element> mRightBlockElement;
+      Maybe<nsAtom*> mNewListElementTagNameOfRightListElement;
+    };
+
+    enum class Mode {
+      NotInitialized,
+      JoinCurrentBlock,
+      JoinOtherBlock,
+      JoinBlocksInSameParent,
+      DeleteBRElement,
+      DeleteContentInRanges,
+      DeleteNonCollapsedRanges,
+    };
+    nsCOMPtr<nsIContent> mLeftContent;
+    nsCOMPtr<nsIContent> mRightContent;
+    nsCOMPtr<nsIContent> mLeafContentInOtherBlock;
+    RefPtr<dom::HTMLBRElement> mBRElement;
+    Mode mMode = Mode::NotInitialized;
+    bool mNeedsToFallbackToDeleteSelectionWithTransaction = false;
+  };
 
   /**
    * HandleDeleteCollapsedSelectionAtOtherBlockBoundary() handles deletion at
    * other block boundary (i.e., immediately before or after a block).
-   * If this does not join blocks, `WillDeleteSelection()` may be called
-   * recursively.
+   * If this does not join blocks, `HandleDeleteSelectionInternal()` may be
+   * called recursively.
    *
    * @param aDirectionAndAmount Direction of the deletion.
    * @param aStripWrappers      Must be eStrip or eNoStrip.
@@ -2689,20 +3046,6 @@ class HTMLEditor final : public TextEditor,
       nsIEditor::EDirection aDirectionAndAmount,
       nsIEditor::EStripWrappers aStripWrappers, Element& aOtherBlockElement,
       const EditorDOMPoint& aCaretPoint, WSRunScanner& aWSRunScannerAtCaret);
-
-  /**
-   * HandleDeleteCollapsedSelectionAtCurrentBlockBoundary() handles deletion
-   * at current block boundary (i.e., at start or end of current block).
-   *
-   * @param aDirectionAndAmount         Direction of the deletion.
-   * @param aCurrentBlockElement        The current block element.
-   * @param aCaretPoint                 The caret point (i.e., selection start
-   *                                    or end).
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
-  HandleDeleteCollapsedSelectionAtCurrentBlockBoundary(
-      nsIEditor::EDirection aDirectionAndAmount, Element& aCurrentBlockElement,
-      const EditorDOMPoint& aCaretPoint);
 
   /**
    * DeleteUnnecessaryNodesAndCollapseSelection() removes unnecessary nodes
@@ -2727,51 +3070,58 @@ class HTMLEditor final : public TextEditor,
       const EditorDOMPoint& aSelectionEndPoint);
 
   /**
-   * HandleDeleteAroundCollapsedSelection() handles deletion with collapsed
-   * `Selection`.  Callers must guarantee that this is called only when
-   * `Selection` is collapsed.
+   * HandleDeleteAroundCollapsedRanges() handles deletion with collapsed
+   * ranges.  Callers must guarantee that this is called only when
+   * aRangesToDelete.IsCollapsed() returns true.
    *
    * @param aDirectionAndAmount Direction of the deletion.
    * @param aStripWrappers      Must be eStrip or eNoStrip.
+   * @param aRangesToDelete     Ranges to delete.  This `IsCollapsed()` must
+   *                            return true.
+   * @param aWSRunScannerAtCaret        Scanner instance which scanned from
+   *                                    caret point.
+   * @param aScanFromCaretPointResult   Scan result of aWSRunScannerAtCaret
+   *                                    toward aDirectionAndAmount.
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
-  HandleDeleteAroundCollapsedSelection(
+  HandleDeleteAroundCollapsedRanges(
       nsIEditor::EDirection aDirectionAndAmount,
-      nsIEditor::EStripWrappers aStripWrappers);
+      nsIEditor::EStripWrappers aStripWrappers, AutoRangeArray& aRangesToDelete,
+      const WSRunScanner& aWSRunScannerAtCaret,
+      const WSScanResult& aScanFromCaretPointResult);
 
   /**
-   * HandleDeleteNonCollapsedSelection() handles deletion with non-collapsed
-   * `Selection`.  Callers must guarantee that this is called only when
-   * `Selection` is NOT collapsed.
+   * HandleDeleteTextAroundCollapsedSelection() handles deletion of
+   * collapsed selection in a text node.
+   *
+   * @param aDirectionAndAmount Must be eNext or ePrevious.
+   * @param aCaretPoisition     The position where caret is.  This container
+   *                            must be a text node.
+   */
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
+  HandleDeleteTextAroundCollapsedSelection(
+      nsIEditor::EDirection aDirectionAndAmount,
+      const EditorDOMPoint& aCaretPosition);
+
+  /**
+   * HandleDeleteNonCollapsedRanges() handles deletion with non-collapsed
+   * ranges.  Callers must guarantee that this is called only when
+   * aRangesToDelete.IsCollapsed() returns false.
    *
    * @param aDirectionAndAmount         Direction of the deletion.
    * @param aStripWrappers              Must be eStrip or eNoStrip.
-   * @param aSelectionWasCollpased      If the caller extended `Selection`
+   * @param aRangesToDelete             The ranges to delete.
+   * @param aSelectionWasCollapsed      If the caller extended `Selection`
    *                                    from collapsed, set this to `Yes`.
    *                                    Otherwise, i.e., `Selection` is not
    *                                    collapsed from the beginning, set
    *                                    this to `No`.
    */
-  enum class SelectionWasCollapsed { Yes, No };
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
-  HandleDeleteNonCollapsedSelection(
-      nsIEditor::EDirection aDirectionAndAmount,
-      nsIEditor::EStripWrappers aStripWrappers,
-      SelectionWasCollapsed aSelectionWasCollapsed);
-
-  /**
-   * DeleteElementsExceptTableRelatedElements() removes elements except
-   * table related elements (except <table> itself) and their contents
-   * from the DOM tree.
-   *
-   * @param aNode               If this is not a table related element, this
-   *                            node will be removed from the DOM tree.
-   *                            Otherwise, this method calls itself recursively
-   *                            with its children.
-   *
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
-  DeleteElementsExceptTableRelatedElements(nsINode& aNode);
+  HandleDeleteNonCollapsedRanges(nsIEditor::EDirection aDirectionAndAmount,
+                                 nsIEditor::EStripWrappers aStripWrappers,
+                                 AutoRangeArray& aRangesToDelete,
+                                 SelectionWasCollapsed aSelectionWasCollapsed);
 
   /**
    * HandleDeleteSelectionInternal() is a helper method of
@@ -2783,7 +3133,8 @@ class HTMLEditor final : public TextEditor,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT EditActionResult
   HandleDeleteSelectionInternal(nsIEditor::EDirection aDirectionAndAmount,
-                                nsIEditor::EStripWrappers aStripWrappers);
+                                nsIEditor::EStripWrappers aStripWrappers,
+                                AutoRangeArray& aRangesToDelete);
 
   /**
    * This method handles "delete selection" commands.

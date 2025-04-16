@@ -26,6 +26,7 @@ import pprint
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -192,6 +193,7 @@ class ScriptMixin(PlatformMixin):
 
     env = None
     script_obj = None
+    ssl_context = None
 
     def query_filesize(self, file_path):
         self.info("Determining filesize for %s" % file_path)
@@ -407,7 +409,14 @@ class ScriptMixin(PlatformMixin):
         """
         # http://bugs.python.org/issue13359 - urllib2 does not automatically quote the URL
         url_quoted = quote(url, safe='%/:=&?~#+!$,;\'@()*[]|')
-        return urlopen(url_quoted, **kwargs)
+        # windows certificates need to be refreshed (https://bugs.python.org/issue36011)
+        if self.platform_name() in ('win64',) and platform.architecture()[0] in ('x64',):
+            if self.ssl_context is None:
+                self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS)
+                self.ssl_context.load_default_certs()
+            return urlopen(url_quoted, context=self.ssl_context, **kwargs)
+        else:
+            return urlopen(url_quoted, **kwargs)
 
     def fetch_url_into_memory(self, url):
         ''' Downloads a file from a url into memory instead of disk.
@@ -1930,10 +1939,12 @@ class BaseScript(ScriptMixin, LogMixin, object):
         )
         for k in dir(self):
             try:
-                item = getattr(self, k)
+                item = self._getattr(k)
             except Exception as e:
+                item = None
                 self.warning("BaseScript collecting decorated methods: "
                              "failure to get attribute {}: {}".format(k, str(e)))
+            if not item:
                 continue
 
             # We only decorate methods, so ignore other types.
@@ -1955,6 +1966,31 @@ class BaseScript(ScriptMixin, LogMixin, object):
 
             if hasattr(item, '_post_run_listener'):
                 self._listeners['post_run'].append(k)
+
+    def _getattr(self, name):
+        # `getattr(self, k)` will call the method `k` for any property
+        # access. If the property depends upon a module which has not
+        # been imported at the time the BaseScript initializer is
+        # executed, this property access will result in an
+        # Exception. Until Python 3's `inspect.getattr_static` is
+        # available, the simplest approach is to ignore the specific
+        # properties which are known to cause issues. Currently
+        # adb_path and device are ignored since they require the
+        # availablity of the mozdevice package which is not guaranteed
+        # when BaseScript is called.
+        property_list = set(['adb_path', 'device'])
+        if six.PY2:
+            if name in property_list:
+                item = None
+            else:
+                item = getattr(self, name)
+        else:
+            item = inspect.getattr_static(self, name)
+            if type(item) == property:
+                item = None
+            else:
+                item = getattr(self, name)
+        return item
 
     def _dump_config_hierarchy(self, cfg_files):
         """ interpret each config file used.
@@ -2027,7 +2063,7 @@ class BaseScript(ScriptMixin, LogMixin, object):
     def _possibly_run_method(self, method_name, error_if_missing=False):
         """This is here for run().
         """
-        if hasattr(self, method_name) and callable(getattr(self, method_name)):
+        if hasattr(self, method_name) and callable(self._getattr(method_name)):
             return getattr(self, method_name)()
         elif error_if_missing:
             self.error("No such method %s!" % method_name)

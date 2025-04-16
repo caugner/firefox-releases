@@ -47,7 +47,8 @@
 #include "frontend/ParseNodeVerify.h"
 #include "frontend/TokenStream.h"
 #include "irregexp/RegExpAPI.h"
-#include "js/RegExpFlags.h"  // JS::RegExpFlags
+#include "js/RegExpFlags.h"     // JS::RegExpFlags
+#include "util/StringBuffer.h"  // StringBuffer
 #include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/FunctionFlags.h"          // js::FunctionFlags
@@ -345,8 +346,8 @@ template <class ParseHandler, typename Unit>
 typename ParseHandler::ListNodeType GeneralParser<ParseHandler, Unit>::parse() {
   MOZ_ASSERT(checkOptionsCalled_);
 
-  SourceExtent extent =
-      SourceExtent::makeGlobalExtent(/* len = */ 0, options());
+  SourceExtent extent = SourceExtent::makeGlobalExtent(
+      /* len = */ 0, options().lineno, options().column);
   Directives directives(options().forceStrictMode());
   GlobalSharedContext globalsc(cx_, ScopeKind::Global,
                                this->getCompilationInfo(), directives, extent);
@@ -742,6 +743,59 @@ bool GeneralParser<ParseHandler, Unit>::noteDeclaredName(
   return true;
 }
 
+template <class ParseHandler, typename Unit>
+bool GeneralParser<ParseHandler, Unit>::noteDeclaredPrivateName(
+    Node nameNode, HandlePropertyName name, PropertyType propType,
+    TokenPos pos) {
+  ParseContext::Scope* scope = pc_->innermostScope();
+  AddDeclaredNamePtr p = scope->lookupDeclaredNameForAdd(name);
+
+  PrivateNameKind kind;
+  switch (propType) {
+    case PropertyType::Field:
+      kind = PrivateNameKind::Field;
+      break;
+    case PropertyType::Method:
+    case PropertyType::GeneratorMethod:
+    case PropertyType::AsyncMethod:
+    case PropertyType::AsyncGeneratorMethod:
+      kind = PrivateNameKind::Method;
+      break;
+    case PropertyType::Getter:
+      kind = PrivateNameKind::Getter;
+      break;
+    case PropertyType::Setter:
+      kind = PrivateNameKind::Setter;
+      break;
+    default:
+      kind = PrivateNameKind::None;
+  }
+
+  if (p) {
+    PrivateNameKind prevKind = p->value()->privateNameKind();
+    if ((prevKind == PrivateNameKind::Getter &&
+         kind == PrivateNameKind::Setter) ||
+        (prevKind == PrivateNameKind::Setter &&
+         kind == PrivateNameKind::Getter)) {
+      p->value()->setPrivateNameKind(PrivateNameKind::GetterSetter);
+      handler_.setPrivateNameKind(nameNode, PrivateNameKind::GetterSetter);
+      return true;
+    }
+
+    reportRedeclaration(name, p->value()->kind(), pos, p->value()->pos());
+    return false;
+  }
+
+  if (!scope->addDeclaredName(pc_, p, name, DeclarationKind::PrivateName,
+                              pos.begin)) {
+    return false;
+  }
+  scope->lookupDeclaredName(name)->value()->setPrivateNameKind(kind);
+  handler_.setPrivateNameKind(nameNode, kind);
+
+  return true;
+}
+
 bool ParserBase::noteUsedNameInternal(HandlePropertyName name,
                                       NameVisibility visibility,
                                       mozilla::Maybe<TokenPos> tokenPosition) {
@@ -858,6 +912,11 @@ GlobalScope::Data* NewEmptyGlobalScopeData(JSContext* cx, LifoAlloc& alloc,
 LexicalScope::Data* NewEmptyLexicalScopeData(JSContext* cx, LifoAlloc& alloc,
                                              uint32_t numBindings) {
   return NewEmptyBindingData<LexicalScope>(cx, alloc, numBindings);
+}
+
+FunctionScope::Data* NewEmptyFunctionScopeData(JSContext* cx, LifoAlloc& alloc,
+                                               uint32_t numBindings) {
+  return NewEmptyBindingData<FunctionScope>(cx, alloc, numBindings);
 }
 
 namespace detail {
@@ -1197,6 +1256,11 @@ bool FunctionScopeHasClosedOverBindings(ParseContext* pc) {
 Maybe<FunctionScope::Data*> ParserBase::newFunctionScopeData(
     ParseContext::Scope& scope, bool hasParameterExprs) {
   return NewFunctionScopeData(cx_, scope, hasParameterExprs, alloc_, pc_);
+}
+
+VarScope::Data* NewEmptyVarScopeData(JSContext* cx, LifoAlloc& alloc,
+                                     uint32_t numBindings) {
+  return NewEmptyBindingData<VarScope>(cx, alloc, numBindings);
 }
 
 Maybe<VarScope::Data*> NewVarScopeData(JSContext* cx,
@@ -2620,7 +2684,7 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
   // compilation.
   MOZ_ASSERT(fun->baseScript()->hasEnclosingScript());
   MOZ_ASSERT_IF(fun->isClassConstructor(),
-                !fun->baseScript()->getFieldInitializers().valid);
+                !fun->baseScript()->getMemberInitializers().valid);
 
   PropagateTransitiveParseFlags(funbox, pc_->sc());
 
@@ -3093,7 +3157,7 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneLazyFunction(
   funbox->initStandalone(this->getCompilationInfo().scopeContext, fun->flags(),
                          syntaxKind);
   if (fun->isClassConstructor()) {
-    funbox->setFieldInitializers(fun->baseScript()->getFieldInitializers());
+    funbox->setMemberInitializers(fun->baseScript()->getMemberInitializers());
   }
 
   Directives newDirectives = directives;
@@ -6963,7 +7027,7 @@ template <class ParseHandler, typename Unit>
 bool GeneralParser<ParseHandler, Unit>::classMember(
     YieldHandling yieldHandling, const ParseContext::ClassStatement& classStmt,
     HandlePropertyName className, uint32_t classStartOffset,
-    HasHeritage hasHeritage, ClassFields& classFields,
+    HasHeritage hasHeritage, ClassInitializedMembers& classInitializedMembers,
     ListNodeType& classMembers, bool* done) {
   *done = false;
 
@@ -7030,7 +7094,7 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
       }
 
       RootedPropertyName privateName(cx_, propAtom->asPropertyName());
-      if (!noteDeclaredName(privateName, DeclarationKind::PrivateName, pos())) {
+      if (!noteDeclaredPrivateName(propName, privateName, propType, pos())) {
         return false;
       }
     }
@@ -7040,13 +7104,13 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
     }
 
     if (isStatic) {
-      classFields.staticFields++;
+      classInitializedMembers.staticFields++;
     } else {
-      classFields.instanceFields++;
+      classInitializedMembers.instanceFields++;
     }
 
     FunctionNodeType initializer = fieldInitializerOpt(
-        propName, propAtom, classFields, isStatic, hasHeritage);
+        propName, propAtom, classInitializedMembers, isStatic, hasHeritage);
     if (!initializer) {
       return false;
     }
@@ -7069,13 +7133,6 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
       propType != PropertyType::GeneratorMethod &&
       propType != PropertyType::AsyncMethod &&
       propType != PropertyType::AsyncGeneratorMethod) {
-    errorAt(propNameOffset, JSMSG_BAD_METHOD_DEF);
-    return false;
-  }
-
-  if (handler_.isPrivateName(propName)) {
-    // Private methods aren't yet implemented.
-    // TODO: Adjust error message to mention private methods.
     errorAt(propNameOffset, JSMSG_BAD_METHOD_DEF);
     return false;
   }
@@ -7162,8 +7219,75 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
 
   AccessorType atype = ToAccessorType(propType);
 
-  Node method =
-      handler_.newClassMethodDefinition(propName, funNode, atype, isStatic);
+  Maybe<FunctionNodeType> initializerIfPrivate = Nothing();
+  if (handler_.isPrivateName(propName)) {
+    if (!options().privateClassMethods) {
+      // Private methods are not enabled.
+      errorAt(propNameOffset, JSMSG_BAD_METHOD_DEF);
+      return false;
+    }
+
+    if (propAtom == cx_->parserNames().hashConstructor) {
+      // #constructor is an invalid private name.
+      errorAt(propNameOffset, JSMSG_BAD_METHOD_DEF);
+      return false;
+    }
+
+    if (!abortIfSyntaxParser()) {
+      return false;
+    }
+
+    RootedPropertyName privateName(cx_, propAtom->asPropertyName());
+    if (!noteDeclaredPrivateName(propName, privateName, propType, pos())) {
+      return false;
+    }
+
+    // Private non-static methods are stamped onto every instance using
+    // initializers. Private static methods are stored directly on the
+    // constructor during class evaluation; see
+    // BytecodeEmitter::emitPropertyList.
+    if (!isStatic) {
+      classInitializedMembers.privateMethods++;
+
+      // Synthesize a name for the lexical variable that will store the
+      // private method body.
+      StringBuffer storedMethodName(cx_);
+      if (!storedMethodName.append(propAtom)) {
+        return false;
+      }
+      switch (atype) {
+        case AccessorType::None:
+          if (!storedMethodName.append(".method")) {
+            return false;
+          }
+          break;
+        case AccessorType::Getter:
+          if (!storedMethodName.append(".getter")) {
+            return false;
+          }
+          break;
+        case AccessorType::Setter:
+          if (!storedMethodName.append(".setter")) {
+            return false;
+          }
+          break;
+        default:
+          MOZ_CRASH("Invalid private method accessor type");
+      }
+      RootedAtom storedMethodAtom(cx_, storedMethodName.finishAtom());
+      RootedPropertyName storedMethodProp(cx_,
+                                          storedMethodAtom->asPropertyName());
+      if (!noteDeclaredName(storedMethodProp, DeclarationKind::Const, pos())) {
+        return false;
+      }
+
+      initializerIfPrivate =
+          Some(privateMethodInitializer(propAtom, storedMethodAtom));
+    }
+  }
+
+  Node method = handler_.newClassMethodDefinition(
+      propName, funNode, atype, isStatic, initializerIfPrivate);
   if (!method) {
     return false;
   }
@@ -7183,12 +7307,16 @@ template <class ParseHandler, typename Unit>
 bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
     const ParseContext::ClassStatement& classStmt, HandlePropertyName className,
     HasHeritage hasHeritage, uint32_t classStartOffset, uint32_t classEndOffset,
-    const ClassFields& classFields, ListNodeType& classMembers) {
+    const ClassInitializedMembers& classInitializedMembers,
+    ListNodeType& classMembers) {
   // Fields cannot re-use the constructor obtained via JSOp::ClassConstructor or
   // JSOp::DerivedConstructor due to needing to emit calls to the field
   // initializers in the constructor. So, synthesize a new one.
-  size_t numFields = classFields.instanceFields;
-  if (classStmt.constructorBox == nullptr && numFields > 0) {
+  size_t numPrivateMethods = classInitializedMembers.privateMethods;
+  size_t numFields = classInitializedMembers.instanceFields;
+
+  if (classStmt.constructorBox == nullptr &&
+      numFields + numPrivateMethods > 0) {
     MOZ_ASSERT(!options().selfHostingMode);
     // Unconditionally create the scope here, because it's always the
     // constructor.
@@ -7220,7 +7348,7 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
     }
     ClassMethodType method = handler_.newClassMethodDefinition(
         constructorNameNode, synthesizedCtor, AccessorType::None,
-        /* isStatic = */ false);
+        /* isStatic = */ false, Nothing());
     if (!method) {
       return false;
     }
@@ -7239,7 +7367,7 @@ bool GeneralParser<ParseHandler, Unit>::finishClassConstructor(
     // finished parsing the class.
     ctorbox->setCtorToStringEnd(classEndOffset);
 
-    if (numFields > 0) {
+    if (numFields + numPrivateMethods > 0) {
       // Field initialization need access to `this`.
       ctorbox->setCtorFunctionHasThisBinding();
     }
@@ -7341,11 +7469,12 @@ GeneralParser<ParseHandler, Unit>::classDefinition(
         return null();
       }
 
-      ClassFields classFields{};
+      ClassInitializedMembers classInitializedMembers{};
       for (;;) {
         bool done;
         if (!classMember(yieldHandling, classStmt, className, classStartOffset,
-                         hasHeritage, classFields, classMembers, &done)) {
+                         hasHeritage, classInitializedMembers, classMembers,
+                         &done)) {
           return null();
         }
         if (done) {
@@ -7353,21 +7482,21 @@ GeneralParser<ParseHandler, Unit>::classDefinition(
         }
       }
 
-      if (classFields.instanceFieldKeys > 0) {
+      if (classInitializedMembers.instanceFieldKeys > 0) {
         if (!noteDeclaredName(cx_->parserNames().dotFieldKeys,
                               DeclarationKind::Let, namePos)) {
           return null();
         }
       }
 
-      if (classFields.staticFields > 0) {
+      if (classInitializedMembers.staticFields > 0) {
         if (!noteDeclaredName(cx_->parserNames().dotStaticInitializers,
                               DeclarationKind::Let, namePos)) {
           return null();
         }
       }
 
-      if (classFields.staticFieldKeys > 0) {
+      if (classInitializedMembers.staticFieldKeys > 0) {
         if (!noteDeclaredName(cx_->parserNames().dotStaticFieldKeys,
                               DeclarationKind::Let, namePos)) {
           return null();
@@ -7376,8 +7505,8 @@ GeneralParser<ParseHandler, Unit>::classDefinition(
 
       classEndOffset = pos().end;
       if (!finishClassConstructor(classStmt, className, hasHeritage,
-                                  classStartOffset, classEndOffset, classFields,
-                                  classMembers)) {
+                                  classStartOffset, classEndOffset,
+                                  classInitializedMembers, classMembers)) {
         return null();
       }
 
@@ -7610,8 +7739,107 @@ GeneralParser<ParseHandler, Unit>::synthesizeConstructor(
 
 template <class ParseHandler, typename Unit>
 typename ParseHandler::FunctionNodeType
+GeneralParser<ParseHandler, Unit>::privateMethodInitializer(
+    HandleAtom propAtom, HandleAtom storedMethodAtom) {
+  // Synthesize an initializer function that the constructor can use to stamp a
+  // private method onto an instance object.
+  FunctionSyntaxKind syntaxKind = FunctionSyntaxKind::FieldInitializer;
+  FunctionAsyncKind asyncKind = FunctionAsyncKind::SyncFunction;
+  GeneratorKind generatorKind = GeneratorKind::NotGenerator;
+  bool isSelfHosting = options().selfHostingMode;
+  FunctionFlags flags =
+      InitialFunctionFlags(syntaxKind, generatorKind, asyncKind, isSelfHosting);
+  TokenPos firstTokenPos = pos();
+
+  FunctionNodeType funNode = handler_.newFunction(syntaxKind, firstTokenPos);
+  if (!funNode) {
+    return null();
+  }
+
+  Directives directives(true);
+  FunctionBox* funbox =
+      newFunctionBox(funNode, nullptr, flags, 0, directives, generatorKind,
+                     asyncKind, TopLevelFunction::No);
+  if (!funbox) {
+    return null();
+  }
+  funbox->initWithEnclosingParseContext(pc_, flags, syntaxKind);
+
+  // Push a SourceParseContext on to the stack.
+  ParseContext* outerpc = pc_;
+  SourceParseContext funpc(this, funbox, /* newDirectives = */ nullptr);
+  if (!funpc.init()) {
+    return null();
+  }
+  pc_->functionScope().useAsVarScope(pc_);
+
+  // Add empty parameter list.
+  ListNodeType argsbody =
+      handler_.newList(ParseNodeKind::ParamsBody, firstTokenPos);
+  if (!argsbody) {
+    return null();
+  }
+  handler_.setFunctionFormalParametersAndBody(funNode, argsbody);
+  setFunctionStartAtCurrentToken(funbox);
+  funbox->setArgCount(0);
+  funbox->usesThis = true;
+
+  // Note both the stored private method body and it's private name as being
+  // used in the initializer. They will be emitted into the method body in the
+  // BCE.
+  RootedPropertyName storedMethodName(cx_, storedMethodAtom->asPropertyName());
+  if (!noteUsedName(storedMethodName)) {
+    return null();
+  }
+  RootedPropertyName privateName(cx_, propAtom->asPropertyName());
+  NameNodeType privateNameNode = privateNameReference(privateName);
+  if (!privateNameNode) {
+    return null();
+  }
+
+  bool canSkipLazyClosedOverBindings = handler_.canSkipLazyClosedOverBindings();
+  if (!pc_->declareFunctionThis(usedNames_, canSkipLazyClosedOverBindings)) {
+    return null();
+  }
+
+  // Unlike field initializers, private method initializers are not created with
+  // a body of synthesized AST nodes. Instead, the body is left empty and the
+  // initializer is synthesized at the bytecode level.
+  // See BytecodeEmitter::emitPrivateMethodInitializer.
+  ListNodeType stmtList = handler_.newStatementList(firstTokenPos);
+  if (!stmtList) {
+    return null();
+  }
+  LexicalScopeNodeType initializerBody =
+      finishLexicalScope(pc_->varScope(), stmtList, ScopeKind::FunctionLexical);
+  if (!initializerBody) {
+    return null();
+  }
+  handler_.setBeginPosition(initializerBody, stmtList);
+  handler_.setEndPosition(initializerBody, stmtList);
+  handler_.setFunctionBody(funNode, initializerBody);
+
+  // Since the initializer doesn't correspond directly to any of the original
+  // source, set it's text position as being empty.
+  funbox->setStart(0, 0, 0);
+  funbox->setEnd(0);
+
+  if (!finishFunction()) {
+    return null();
+  }
+
+  if (!leaveInnerFunction(outerpc)) {
+    return null();
+  }
+
+  return funNode;
+}
+
+template <class ParseHandler, typename Unit>
+typename ParseHandler::FunctionNodeType
 GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
-    Node propName, HandleAtom propAtom, ClassFields& classFields, bool isStatic,
+    Node propName, HandleAtom propAtom,
+    ClassInitializedMembers& classInitializedMembers, bool isStatic,
     HasHeritage hasHeritage) {
   bool hasInitializer = false;
   if (!tokenStream.matchToken(&hasInitializer, TokenKind::Assign,
@@ -7740,9 +7968,9 @@ GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
 
     double fieldKeyIndex;
     if (isStatic) {
-      fieldKeyIndex = classFields.staticFieldKeys++;
+      fieldKeyIndex = classInitializedMembers.staticFieldKeys++;
     } else {
-      fieldKeyIndex = classFields.instanceFieldKeys++;
+      fieldKeyIndex = classInitializedMembers.instanceFieldKeys++;
     }
     Node fieldKeyIndexNode = handler_.newNumber(
         fieldKeyIndex, DecimalPoint::NoDecimal, wholeInitializerPos);
@@ -7763,11 +7991,11 @@ GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
     }
   } else if (handler_.isPrivateName(propName)) {
     // It would be nice if we could tweak this here such that only if
-    // HasHeritage::Yes we end up emitting InitPrivateElem, but otherwise we
+    // HasHeritage::Yes we end up emitting CheckPrivateField, but otherwise we
     // emit InitElem -- this is an optimization to minimize HasOwn checks
     // in InitElem for classes without heritage.
     //
-    // Further tweaking would be to ultimately only do InitPrivateElem for the
+    // Further tweaking would be to ultimately only do CheckPrivateField for the
     // -first- field in a derived class, which would suffice to match the
     // semantic check.
 
@@ -11199,10 +11427,16 @@ template class Parser<SyntaxParseHandler, char16_t>;
 
 CompilationInfo::RewindToken CompilationInfo::getRewindToken() {
   MOZ_ASSERT(functions.empty());
-  return RewindToken{traceListHead, funcData.length()};
+  return RewindToken{traceListHead, funcData.length(), asmJS.count()};
 }
 
 void CompilationInfo::rewind(const CompilationInfo::RewindToken& pos) {
+  if (asmJS.count() != pos.asmJSCount) {
+    for (size_t i = pos.funcDataLength; i < funcData.length(); i++) {
+      asmJS.remove(FunctionIndex(i));
+    }
+    MOZ_ASSERT(asmJS.count() == pos.asmJSCount);
+  }
   traceListHead = pos.funbox;
   funcData.get().shrinkTo(pos.funcDataLength);
 }

@@ -74,7 +74,7 @@ const HTTP_TEMPORARY_REDIRECT = 307;
  */
 function matchRequest(channel, filters) {
   // Log everything if no filter is specified
-  if (!filters.browsingContextID && !filters.window) {
+  if (!filters.browserId && !filters.window) {
     return true;
   }
 
@@ -105,10 +105,10 @@ function matchRequest(channel, filters) {
     }
   }
 
-  if (filters.browsingContextID) {
+  if (filters.browserId) {
     const topFrame = NetworkHelper.getTopFrameForRequest(channel);
     // topFrame is typically null for some chrome requests like favicons
-    if (topFrame && topFrame.browsingContext.id == filters.browsingContextID) {
+    if (topFrame && topFrame.browsingContext.browserId == filters.browserId) {
       return true;
     }
 
@@ -116,7 +116,8 @@ function matchRequest(channel, filters) {
     // look for it on channel.loadInfo instead.
     if (
       channel.loadInfo &&
-      channel.loadInfo.browsingContextID == filters.browsingContextID
+      channel.loadInfo.browsingContext &&
+      channel.loadInfo.browsingContext.browserId == filters.browserId
     ) {
       return true;
     }
@@ -137,7 +138,7 @@ exports.matchRequest = matchRequest;
  *        Object with the filters to use for network requests:
  *        - window (nsIDOMWindow): filter network requests by the associated
  *          window object.
- *        - browsingContextID (number): filter requests by their top frame's BrowsingContext.
+ *        - browserId (number): filter requests by their top frame's Browser Element.
  *        Filters are optional. If any of these filters match the request is
  *        logged (OR is applied). If no filter is provided then all requests are
  *        logged.
@@ -475,9 +476,9 @@ NetworkObserver.prototype = {
       const fromServiceWorker = this.interceptedChannels.has(channel);
       this.interceptedChannels.delete(channel);
 
-      // If this is a cached response, there never was a request event
-      // so we need to construct one here so the frontend gets all the
-      // expected events.
+      // If this is a cached response (which are also emitted by service worker requests),
+      // there never was a request event so we need to construct one here
+      // so the frontend gets all the expected events.
       let httpActivity = this.createOrGetActivityObject(channel);
       if (!httpActivity.owner) {
         httpActivity = this._createNetworkEvent(channel, {
@@ -485,6 +486,12 @@ NetworkObserver.prototype = {
           fromServiceWorker: fromServiceWorker,
         });
       }
+
+      // We need to send the request body to the frontend for
+      // the faked (cached/service worker request) event.
+      this._onRequestBodySent(httpActivity);
+      this._sendRequestBody(httpActivity);
+
       httpActivity.owner.addResponseStart(
         {
           httpVersion: response.httpVersion,
@@ -568,20 +575,7 @@ NetworkObserver.prototype = {
     switch (activitySubtype) {
       case gActivityDistributor.ACTIVITY_SUBTYPE_REQUEST_BODY_SENT:
         this._onRequestBodySent(httpActivity);
-        if (httpActivity.sentBody !== null) {
-          const limit = Services.prefs.getIntPref(
-            "devtools.netmonitor.requestBodyLimit"
-          );
-          const size = httpActivity.sentBody.length;
-          if (size > limit && limit > 0) {
-            httpActivity.sentBody = httpActivity.sentBody.substr(0, limit);
-          }
-          httpActivity.owner.addRequestPostData({
-            text: httpActivity.sentBody,
-            size: size,
-          });
-          httpActivity.sentBody = null;
-        }
+        this._sendRequestBody(httpActivity);
         break;
       case gActivityDistributor.ACTIVITY_SUBTYPE_RESPONSE_HEADER:
         this._onResponseHeader(httpActivity, extraStringData);
@@ -750,8 +744,8 @@ NetworkObserver.prototype = {
     if (channel.loadInfo) {
       causeType = channel.loadInfo.externalContentPolicyType;
       const { loadingPrincipal } = channel.loadInfo;
-      if (loadingPrincipal?.URI) {
-        causeUri = loadingPrincipal.URI.spec;
+      if (loadingPrincipal) {
+        causeUri = loadingPrincipal.spec;
       }
     }
 
@@ -1514,6 +1508,23 @@ NetworkObserver.prototype = {
       total: totalTime,
       offsets: offsets,
     };
+  },
+
+  _sendRequestBody: function(httpActivity) {
+    if (httpActivity.sentBody !== null) {
+      const limit = Services.prefs.getIntPref(
+        "devtools.netmonitor.requestBodyLimit"
+      );
+      const size = httpActivity.sentBody.length;
+      if (size > limit && limit > 0) {
+        httpActivity.sentBody = httpActivity.sentBody.substr(0, limit);
+      }
+      httpActivity.owner.addRequestPostData({
+        text: httpActivity.sentBody,
+        size: size,
+      });
+      httpActivity.sentBody = null;
+    }
   },
 
   /**

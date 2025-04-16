@@ -29,6 +29,12 @@
         "UrlbarProviderOpenTabs",
         "resource:///modules/UrlbarProviderOpenTabs.jsm"
       );
+      XPCOMUtils.defineLazyPreferenceGetter(
+        this,
+        "sessionHistoryInParent",
+        "fission.sessionHistoryInParent",
+        false
+      );
 
       Services.obs.addObserver(this, "contextual-identity-updated");
 
@@ -317,17 +323,20 @@
 
       let tabArgument = gBrowserInit.getTabToAdopt();
 
-      // We only need sameProcessAsFrameLoader in the case where we're passed a tab
-      let sameProcessAsFrameLoader;
       // If we have a tab argument with browser, we use its remoteType. Otherwise,
       // if e10s is disabled or there's a parent process opener (e.g. parent
       // process about: page) for the content tab, we use a parent
       // process remoteType. Otherwise, we check the URI to determine
       // what to do - if there isn't one, we default to the default remote type.
+      //
+      // When adopting a tab, we'll also use that tab's browsingContextGroupId,
+      // if available, to ensure we don't spawn a new process.
       let remoteType;
+      let initialBrowsingContextGroupId;
       if (tabArgument && tabArgument.linkedBrowser) {
         remoteType = tabArgument.linkedBrowser.remoteType;
-        sameProcessAsFrameLoader = tabArgument.linkedBrowser.frameLoader;
+        initialBrowsingContextGroupId =
+          tabArgument.linkedBrowser.browsingContext?.group.id;
       } else if (openWindowInfo) {
         userContextId = openWindowInfo.originAttributes.userContextId;
         if (openWindowInfo.isRemote) {
@@ -363,7 +372,7 @@
       let createOptions = {
         uriIsAboutBlank: false,
         userContextId,
-        sameProcessAsFrameLoader,
+        initialBrowsingContextGroupId,
         remoteType,
         openWindowInfo,
       };
@@ -790,6 +799,14 @@
         browser.tabModalPromptBox = new TabModalPromptBox(browser);
       }
       return browser.tabModalPromptBox;
+    },
+
+    getTabDialogBox(aBrowser) {
+      let browser = aBrowser || this.selectedBrowser;
+      if (!browser.tabDialogBox) {
+        browser.tabDialogBox = new TabDialogBox(browser);
+      }
+      return browser.tabDialogBox;
     },
 
     getTabFromAudioEvent(aEvent) {
@@ -1267,8 +1284,10 @@
 
       let newBrowser = this.getBrowserForTab(newTab);
 
-      // If there's a tabmodal prompt showing, focus it.
-      if (newBrowser.hasAttribute("tabmodalPromptShowing")) {
+      if (newBrowser.hasAttribute("tabDialogShowing")) {
+        newBrowser.tabDialogBox.focus();
+      } else if (newBrowser.hasAttribute("tabmodalPromptShowing")) {
+        // If there's a tabmodal prompt showing, focus it.
         let prompts = newBrowser.tabModalPromptBox.listPrompts();
         let prompt = prompts[prompts.length - 1];
         // @tabmodalPromptShowing is also set for other tab modal prompts
@@ -1548,7 +1567,7 @@
       var aForceNotRemote;
       var aPreferredRemoteType;
       var aUserContextId;
-      var aSameProcessAsFrameLoader;
+      var aInitialBrowsingContextGroupId;
       var aOriginPrincipal;
       var aOriginStoragePrincipal;
       var aOpenWindowInfo;
@@ -1578,7 +1597,7 @@
         aForceNotRemote = params.forceNotRemote;
         aPreferredRemoteType = params.preferredRemoteType;
         aUserContextId = params.userContextId;
-        aSameProcessAsFrameLoader = params.sameProcessAsFrameLoader;
+        aInitialBrowsingContextGroupId = params.initialBrowsingContextGroupId;
         aOriginPrincipal = params.originPrincipal;
         aOriginStoragePrincipal = params.originStoragePrincipal;
         aOpenWindowInfo = params.openWindowInfo;
@@ -1621,7 +1640,7 @@
         userContextId: aUserContextId,
         originPrincipal: aOriginPrincipal,
         originStoragePrincipal: aOriginStoragePrincipal,
-        sameProcessAsFrameLoader: aSameProcessAsFrameLoader,
+        initialBrowsingContextGroupId: aInitialBrowsingContextGroupId,
         openWindowInfo: aOpenWindowInfo,
         openerBrowser: aOpenerBrowser,
         focusUrlBar: aFocusUrlBar,
@@ -1814,7 +1833,6 @@
       listener.destroy();
 
       let oldDroppedLinkHandler = aBrowser.droppedLinkHandler;
-      let oldSameProcessAsFrameLoader = aBrowser.sameProcessAsFrameLoader;
       let oldUserTypedValue = aBrowser.userTypedValue;
       let hadStartedLoad = aBrowser.didStartLoadSinceLastUserTyping();
 
@@ -1822,14 +1840,6 @@
 
       // Make sure the browser is destroyed so it unregisters from observer notifications
       aBrowser.destroy();
-
-      // NB: This works with the hack in the browser constructor that
-      // turns this normal property into a field.
-      if (!shouldBeRemote || oldRemoteType == remoteType) {
-        // Only copy existing sameProcessAsFrameLoader when not switching
-        // remote type otherwise it would stop the switch.
-        aBrowser.sameProcessAsFrameLoader = oldSameProcessAsFrameLoader;
-      }
 
       if (shouldBeRemote) {
         aBrowser.setAttribute("remote", "true");
@@ -1964,7 +1974,7 @@
       name,
       openWindowInfo,
       remoteType,
-      sameProcessAsFrameLoader,
+      initialBrowsingContextGroupId,
       uriIsAboutBlank,
       userContextId,
       skipLoad,
@@ -1977,8 +1987,10 @@
 
       // Ensure that SessionStore has flushed any session history state from the
       // content process before we this browser's remoteness.
-      b.prepareToChangeRemoteness = () =>
-        SessionStore.prepareToChangeRemoteness(b);
+      if (!this.sessionHistoryInParent) {
+        b.prepareToChangeRemoteness = () =>
+          SessionStore.prepareToChangeRemoteness(b);
+      }
 
       const defaultBrowserAttributes = {
         contextmenu: "contentAreaContextMenu",
@@ -2025,8 +2037,16 @@
         b.setAttribute("preloadedState", "preloaded");
       }
 
-      if (sameProcessAsFrameLoader) {
-        b.sameProcessAsFrameLoader = sameProcessAsFrameLoader;
+      // Ensure that the browser will be created in a specific initial
+      // BrowsingContextGroup. This may change the process selection behaviour
+      // of the newly created browser, and is often used in combination with
+      // "remoteType" to ensure that the initial about:blank load occurs
+      // within the same process as another window.
+      if (initialBrowsingContextGroupId) {
+        b.setAttribute(
+          "initialBrowsingContextGroupId",
+          initialBrowsingContextGroupId
+        );
       }
 
       // Propagate information about the opening content window to the browser.
@@ -2438,7 +2458,7 @@
         preferredRemoteType,
         referrerInfo,
         relatedToCurrent,
-        sameProcessAsFrameLoader,
+        initialBrowsingContextGroupId,
         skipAnimation,
         skipBackgroundNotify,
         triggeringPrincipal,
@@ -2612,10 +2632,6 @@
               gFissionBrowser,
               preferredRemoteType
             );
-        if (sameProcessAsFrameLoader) {
-          remoteType =
-            sameProcessAsFrameLoader.browsingContext.currentRemoteType;
-        }
 
         // If we open a new tab with the newtab URL in the default
         // userContext, check if there is a preloaded browser ready.
@@ -2632,7 +2648,7 @@
             remoteType,
             uriIsAboutBlank,
             userContextId,
-            sameProcessAsFrameLoader,
+            initialBrowsingContextGroupId,
             openWindowInfo,
             name,
             skipLoad,
@@ -4417,7 +4433,7 @@
       let params = {
         eventDetail: { adoptedTab: aTab },
         preferredRemoteType: linkedBrowser.remoteType,
-        sameProcessAsFrameLoader: linkedBrowser.frameLoader,
+        initialBrowsingContextGroupId: linkedBrowser.browsingContext?.group.id,
         skipAnimation: true,
         index: aIndex,
         createLazyBrowser,
@@ -5200,7 +5216,7 @@
         this._uniquePanelIDCounter = 0;
       }
 
-      let outerID = window.windowUtils.outerWindowID;
+      let outerID = window.docShell.outerWindowID;
 
       // We want panel IDs to be globally unique, that's why we include the
       // window ID. We switched to a monotonic counter as Date.now() lead
@@ -6007,11 +6023,6 @@
           }
         }
       } else if (aStateFlags & STATE_STOP && aStateFlags & STATE_IS_NETWORK) {
-        if (--this.mRequestCount > 0 && aStatus == Cr.NS_ERROR_UNKNOWN_HOST) {
-          // to prevent bug 235825: wait for the request handled
-          // by the automatic keyword resolver
-          return;
-        }
         // since we (try to) only handle STATE_STOP of the last request,
         // the count of open requests should now be 0
         this.mRequestCount = 0;

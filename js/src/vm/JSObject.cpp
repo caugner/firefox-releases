@@ -36,6 +36,8 @@
 #include "gc/Policy.h"
 #include "jit/BaselineJIT.h"
 #include "js/CharacterEncoding.h"
+#include "js/friend/DumpFunctions.h"  // js::DumpObject
+#include "js/friend/WindowProxy.h"    // js::IsWindow, js::ToWindowProxyIfWindow
 #include "js/MemoryMetrics.h"
 #include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
 #include "js/PropertySpec.h"        // JSPropertySpec
@@ -992,10 +994,15 @@ JSObject* js::NewObjectWithGroupCommon(JSContext* cx, HandleObjectGroup group,
 }
 
 bool js::NewObjectScriptedCall(JSContext* cx, MutableHandleObject pobj) {
-  jsbytecode* pc;
-  RootedScript script(cx, cx->currentScript(&pc));
   gc::AllocKind allocKind = NewObjectGCKind(&PlainObject::class_);
   NewObjectKind newKind = GenericObject;
+
+  jsbytecode* pc = nullptr;
+  RootedScript script(cx);
+  if (IsTypeInferenceEnabled()) {
+    script = cx->currentScript(&pc);
+  }
+
   if (script &&
       ObjectGroup::useSingletonForAllocationSite(script, pc, JSProto_Object)) {
     newKind = SingletonObject;
@@ -1133,8 +1140,9 @@ JS_FRIEND_API bool JS_CopyPropertyFrom(JSContext* cx, HandleId id,
   return DefineProperty(cx, target, wrappedId, desc);
 }
 
-JS_FRIEND_API bool JS_CopyPropertiesFrom(JSContext* cx, HandleObject target,
-                                         HandleObject obj) {
+JS_FRIEND_API bool JS_CopyOwnPropertiesAndPrivateFields(JSContext* cx,
+                                                        HandleObject target,
+                                                        HandleObject obj) {
   // Both |obj| and |target| must not be CCWs because we need to enter their
   // realms below and CCWs are not associated with a single realm.
   MOZ_ASSERT(!IsCrossCompartmentWrapper(obj));
@@ -1143,8 +1151,10 @@ JS_FRIEND_API bool JS_CopyPropertiesFrom(JSContext* cx, HandleObject target,
   JSAutoRealm ar(cx, obj);
 
   RootedIdVector props(cx);
-  if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS,
-                       &props)) {
+  if (!GetPropertyKeys(
+          cx, obj,
+          JSITER_PRIVATE | JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS,
+          &props)) {
     return false;
   }
 
@@ -1534,14 +1544,16 @@ static MOZ_MUST_USE bool CopyProxyValuesBeforeSwap(
   // ensure we don't trace bogus values.
   gc::StoreBuffer& sb = cx->runtime()->gc.storeBuffer();
 
-  // Reserve space for the private slot and the reserved slots.
-  if (!values.reserve(1 + proxy->numReservedSlots())) {
+  // Reserve space for the expando, private slot and the reserved slots.
+  if (!values.reserve(2 + proxy->numReservedSlots())) {
     return false;
   }
 
   js::detail::ProxyValueArray* valArray =
       js::detail::GetProxyDataLayout(proxy)->values();
+  sb.unputValue(&valArray->expandoSlot);
   sb.unputValue(&valArray->privateSlot);
+  values.infallibleAppend(valArray->expandoSlot);
   values.infallibleAppend(valArray->privateSlot);
 
   for (size_t i = 0; i < proxy->numReservedSlots(); i++) {
@@ -1558,8 +1570,8 @@ bool ProxyObject::initExternalValueArrayAfterSwap(
 
   size_t nreserved = numReservedSlots();
 
-  // |values| contains the private slot and the reserved slots.
-  MOZ_ASSERT(values.length() == 1 + nreserved);
+  // |values| contains the expando slot, private slot and the reserved slots.
+  MOZ_ASSERT(values.length() == 2 + nreserved);
 
   size_t nbytes = js::detail::ProxyValueArray::sizeOf(nreserved);
 
@@ -1569,10 +1581,11 @@ bool ProxyObject::initExternalValueArrayAfterSwap(
     return false;
   }
 
-  valArray->privateSlot = values[0];
+  valArray->expandoSlot = values[0];
+  valArray->privateSlot = values[1];
 
   for (size_t i = 0; i < nreserved; i++) {
-    valArray->reservedSlots.slots[i] = values[i + 1];
+    valArray->reservedSlots.slots[i] = values[i + 2];
   }
 
   // Note: we allocate external slots iff the proxy had an inline
@@ -1863,6 +1876,10 @@ NativeObject* js::InitClass(JSContext* cx, HandleObject obj,
 }
 
 void JSObject::fixupAfterMovingGC() {
+  if (IsForwarded(groupRaw())) {
+    setGroupRaw(Forwarded(groupRaw()));
+  }
+
   // For copy-on-write objects that don't own their elements, fix up the
   // elements pointer if it points to inline elements in the owning object.
   if (is<NativeObject>()) {
@@ -2654,29 +2671,34 @@ bool js::PreventExtensions(JSContext* cx, HandleObject obj,
     // If the following assertion fails, there's somewhere else a missing
     // call to shrinkCapacityToInitializedLength() which needs to be found
     // and fixed.
-    MOZ_ASSERT_IF(obj->isNative(),
+    MOZ_ASSERT_IF(obj->is<NativeObject>(),
                   obj->as<NativeObject>().getDenseInitializedLength() ==
                       obj->as<NativeObject>().getDenseCapacity());
 
     return result.succeed();
   }
 
-  if (obj->isNative()) {
+  if (obj->is<NativeObject>()) {
     // Force lazy properties to be resolved.
-    if (!ResolveLazyProperties(cx, obj.as<NativeObject>())) {
+    HandleNativeObject nobj = obj.as<NativeObject>();
+    if (!ResolveLazyProperties(cx, nobj)) {
       return false;
     }
 
     // Prepare the elements. We have to do this before we mark the object
     // non-extensible; that's fine because these changes are not observable.
-    if (!ObjectElements::PreventExtensions(cx, &obj->as<NativeObject>())) {
+    if (!ObjectElements::PrepareForPreventExtensions(cx, nobj)) {
       return false;
     }
   }
 
+  // Finally, set the NOT_EXTENSIBLE flag on the BaseShape and ObjectElements.
   if (!JSObject::setFlags(cx, obj, BaseShape::NOT_EXTENSIBLE,
                           JSObject::GENERATE_SHAPE)) {
     return false;
+  }
+  if (obj->is<NativeObject>()) {
+    ObjectElements::PreventExtensions(&obj->as<NativeObject>());
   }
 
   return result.succeed();
@@ -3102,42 +3124,63 @@ bool js::IsPrototypeOf(JSContext* cx, HandleObject protoObj, JSObject* obj,
 }
 
 JSObject* js::PrimitiveToObject(JSContext* cx, const Value& v) {
-  if (v.isString()) {
-    Rooted<JSString*> str(cx, v.toString());
-    return StringObject::create(cx, str);
+  MOZ_ASSERT(v.isPrimitive());
+
+  switch (v.type()) {
+    case ValueType::String: {
+      Rooted<JSString*> str(cx, v.toString());
+      return StringObject::create(cx, str);
+    }
+    case ValueType::Double:
+    case ValueType::Int32:
+      return NumberObject::create(cx, v.toNumber());
+    case ValueType::Boolean:
+      return BooleanObject::create(cx, v.toBoolean());
+    case ValueType::Symbol: {
+      RootedSymbol symbol(cx, v.toSymbol());
+      return SymbolObject::create(cx, symbol);
+    }
+    case ValueType::BigInt: {
+      RootedBigInt bigInt(cx, v.toBigInt());
+      return BigIntObject::create(cx, bigInt);
+    }
+    case ValueType::Undefined:
+    case ValueType::Null:
+    case ValueType::Magic:
+    case ValueType::PrivateGCThing:
+    case ValueType::Object:
+      break;
   }
-  if (v.isNumber()) {
-    return NumberObject::create(cx, v.toNumber());
-  }
-  if (v.isBoolean()) {
-    return BooleanObject::create(cx, v.toBoolean());
-  }
-  if (v.isSymbol()) {
-    RootedSymbol symbol(cx, v.toSymbol());
-    return SymbolObject::create(cx, symbol);
-  }
-  MOZ_ASSERT(v.isBigInt());
-  RootedBigInt bigInt(cx, v.toBigInt());
-  return BigIntObject::create(cx, bigInt);
+
+  MOZ_CRASH("unexpected type");
 }
 
 // Like PrimitiveToObject, but returns the JSProtoKey of the prototype that
 // would be used without actually creating the object.
 JSProtoKey js::PrimitiveToProtoKey(JSContext* cx, const Value& v) {
-  if (v.isString()) {
-    return JSProto_String;
+  MOZ_ASSERT(v.isPrimitive());
+
+  switch (v.type()) {
+    case ValueType::String:
+      return JSProto_String;
+    case ValueType::Double:
+    case ValueType::Int32:
+      return JSProto_Number;
+    case ValueType::Boolean:
+      return JSProto_Boolean;
+    case ValueType::Symbol:
+      return JSProto_Symbol;
+    case ValueType::BigInt:
+      return JSProto_BigInt;
+    case ValueType::Undefined:
+    case ValueType::Null:
+    case ValueType::Magic:
+    case ValueType::PrivateGCThing:
+    case ValueType::Object:
+      break;
   }
-  if (v.isNumber()) {
-    return JSProto_Number;
-  }
-  if (v.isBoolean()) {
-    return JSProto_Boolean;
-  }
-  if (v.isSymbol()) {
-    return JSProto_Symbol;
-  }
-  MOZ_ASSERT(v.isBigInt());
-  return JSProto_BigInt;
+
+  MOZ_CRASH("unexpected type");
 }
 
 /*
@@ -3546,11 +3589,17 @@ void JSObject::dump(js::GenericPrinter& out) const {
     if (!nobj->denseElementsArePacked()) {
       out.put(" non_packed_elements");
     }
-    if (nobj->denseElementsAreSealed()) {
+    if (nobj->getElementsHeader()->isNotExtensible()) {
+      out.put(" not_extensible");
+    }
+    if (nobj->getElementsHeader()->isSealed()) {
       out.put(" sealed_elements");
     }
-    if (nobj->denseElementsAreFrozen()) {
+    if (nobj->getElementsHeader()->isFrozen()) {
       out.put(" frozen_elements");
+    }
+    if (nobj->getElementsHeader()->maybeInIteration()) {
+      out.put(" elements_maybe_in_iteration");
     }
   } else {
     out.put(" not_native\n");

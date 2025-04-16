@@ -74,6 +74,7 @@ import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.GeckoView;
 import org.mozilla.geckoview.MediaElement;
+import org.mozilla.geckoview.MediaSession;
 import org.mozilla.geckoview.OverscrollEdgeEffect;
 import org.mozilla.geckoview.PanZoomController;
 import org.mozilla.geckoview.ProfilerController;
@@ -345,12 +346,14 @@ package org.mozilla.geckoview {
     method public int getAntiTrackingCategories();
     method public int getCookieBehavior();
     method public int getCookieLifetime();
+    method public boolean getCookiePurging();
     method public int getEnhancedTrackingProtectionLevel();
     method public int getSafeBrowsingCategories();
     method public boolean getStrictSocialTrackingProtection();
     method @NonNull public ContentBlocking.Settings setAntiTracking(int);
     method @NonNull public ContentBlocking.Settings setCookieBehavior(int);
     method @NonNull public ContentBlocking.Settings setCookieLifetime(int);
+    method @NonNull public ContentBlocking.Settings setCookiePurging(boolean);
     method @NonNull public ContentBlocking.Settings setEnhancedTrackingProtectionLevel(int);
     method @NonNull public ContentBlocking.Settings setSafeBrowsing(int);
     method @NonNull public ContentBlocking.Settings setStrictSocialTrackingProtection(boolean);
@@ -362,6 +365,7 @@ package org.mozilla.geckoview {
     method @NonNull public ContentBlocking.Settings.Builder antiTracking(int);
     method @NonNull public ContentBlocking.Settings.Builder cookieBehavior(int);
     method @NonNull public ContentBlocking.Settings.Builder cookieLifetime(int);
+    method @NonNull public ContentBlocking.Settings.Builder cookiePurging(boolean);
     method @NonNull public ContentBlocking.Settings.Builder enhancedTrackingProtectionLevel(int);
     method @NonNull public ContentBlocking.Settings.Builder safeBrowsing(int);
     method @NonNull public ContentBlocking.Settings.Builder strictSocialTrackingProtection(boolean);
@@ -527,13 +531,11 @@ package org.mozilla.geckoview {
     method @UiThread public void orientationChanged();
     method @UiThread public void orientationChanged(int);
     method @AnyThread public void readFromParcel(@NonNull Parcel);
-    method @Deprecated @UiThread @NonNull public GeckoResult<Void> registerWebExtension(@NonNull WebExtension);
     method @UiThread public void setDelegate(@Nullable GeckoRuntime.Delegate);
     method @UiThread public void setLoginStorageDelegate(@Nullable Autocomplete.LoginStorageDelegate);
     method @UiThread public void setServiceWorkerDelegate(@Nullable GeckoRuntime.ServiceWorkerDelegate);
     method @UiThread public void setWebNotificationDelegate(@Nullable WebNotificationDelegate);
     method @AnyThread public void shutdown();
-    method @Deprecated @UiThread @NonNull public GeckoResult<Void> unregisterWebExtension(@NonNull WebExtension);
     field public static final String ACTION_CRASHED = "org.mozilla.gecko.ACTION_CRASHED";
     field public static final Parcelable.Creator<GeckoRuntime> CREATOR;
     field public static final String EXTRA_CRASH_FATAL = "fatal";
@@ -657,6 +659,7 @@ package org.mozilla.geckoview {
     method @AnyThread @NonNull public SessionFinder getFinder();
     method @AnyThread @Nullable public GeckoSession.HistoryDelegate getHistoryDelegate();
     method @AnyThread @Nullable public GeckoSession.MediaDelegate getMediaDelegate();
+    method @AnyThread @Nullable public MediaSession.Delegate getMediaSessionDelegate();
     method @UiThread @Nullable public GeckoSession.NavigationDelegate getNavigationDelegate();
     method @UiThread @NonNull public OverscrollEdgeEffect getOverscrollEdgeEffect();
     method @UiThread public void getPageToScreenMatrix(@NonNull Matrix);
@@ -704,6 +707,7 @@ package org.mozilla.geckoview {
     method @AnyThread public void setFocused(boolean);
     method @AnyThread public void setHistoryDelegate(@Nullable GeckoSession.HistoryDelegate);
     method @AnyThread public void setMediaDelegate(@Nullable GeckoSession.MediaDelegate);
+    method @AnyThread public void setMediaSessionDelegate(@Nullable MediaSession.Delegate);
     method @UiThread public void setNavigationDelegate(@Nullable GeckoSession.NavigationDelegate);
     method @UiThread public void setPermissionDelegate(@Nullable GeckoSession.PermissionDelegate);
     method @UiThread public void setProgressDelegate(@Nullable GeckoSession.ProgressDelegate);
@@ -742,6 +746,7 @@ package org.mozilla.geckoview {
     method @UiThread default public void onFullScreen(@NonNull GeckoSession, boolean);
     method @UiThread default public void onKill(@NonNull GeckoSession);
     method @UiThread default public void onMetaViewportFitChange(@NonNull GeckoSession, @NonNull String);
+    method @UiThread default public void onPaintStatusReset(@NonNull GeckoSession);
     method @UiThread @Nullable default public GeckoResult<SlowScriptResponse> onSlowScript(@NonNull GeckoSession, @NonNull String);
     method @UiThread default public void onTitleChange(@NonNull GeckoSession, @Nullable String);
     method @UiThread default public void onWebAppManifest(@NonNull GeckoSession, @NonNull JSONObject);
@@ -1336,6 +1341,73 @@ package org.mozilla.geckoview {
     field public final long width;
   }
 
+  @UiThread public class MediaSession {
+    ctor protected MediaSession(GeckoSession);
+    method public boolean isActive();
+    method public void muteAudio(boolean);
+    method public void nextTrack();
+    method public void pause();
+    method public void play();
+    method public void previousTrack();
+    method public void seekBackward();
+    method public void seekForward();
+    method public void seekTo(double, boolean);
+    method public void skipAd();
+    method public void stop();
+  }
+
+  @UiThread public static interface MediaSession.Delegate {
+    method default public void onActivated(@NonNull GeckoSession, @NonNull MediaSession);
+    method default public void onDeactivated(@NonNull GeckoSession, @NonNull MediaSession);
+    method default public void onFeatures(@NonNull GeckoSession, @NonNull MediaSession, long);
+    method default public void onFullscreen(@NonNull GeckoSession, @NonNull MediaSession, boolean, @Nullable MediaSession.ElementMetadata);
+    method default public void onMetadata(@NonNull GeckoSession, @NonNull MediaSession, @NonNull MediaSession.Metadata);
+    method default public void onPause(@NonNull GeckoSession, @NonNull MediaSession);
+    method default public void onPictureInPicture(@NonNull GeckoSession, @NonNull MediaSession, boolean);
+    method default public void onPlay(@NonNull GeckoSession, @NonNull MediaSession);
+    method default public void onPositionState(@NonNull GeckoSession, @NonNull MediaSession, @NonNull MediaSession.PositionState);
+    method default public void onStop(@NonNull GeckoSession, @NonNull MediaSession);
+  }
+
+  public static class MediaSession.ElementMetadata {
+    ctor public ElementMetadata(@Nullable String, double, long, long, int, int);
+    field public final int audioTrackCount;
+    field public final double duration;
+    field public final long height;
+    field @Nullable public final String source;
+    field public final int videoTrackCount;
+    field public final long width;
+  }
+
+  public static class MediaSession.Feature {
+    ctor public Feature();
+    field public static final long FOCUS = 512L;
+    field public static final long NEXT_TRACK = 128L;
+    field public static final long NONE = 0L;
+    field public static final long PAUSE = 2L;
+    field public static final long PLAY = 1L;
+    field public static final long PREVIOUS_TRACK = 256L;
+    field public static final long SEEK_BACKWARD = 32L;
+    field public static final long SEEK_FORWARD = 16L;
+    field public static final long SEEK_TO = 8L;
+    field public static final long SKIP_AD = 64L;
+    field public static final long STOP = 4L;
+  }
+
+  public static class MediaSession.Metadata {
+    ctor protected Metadata(@Nullable String, @Nullable String, @Nullable String);
+    field @Nullable public final String album;
+    field @Nullable public final String artist;
+    field @Nullable public final String title;
+  }
+
+  public static class MediaSession.PositionState {
+    ctor protected PositionState(double, double, double);
+    field public final double duration;
+    field public final double playbackRate;
+    field public final double position;
+  }
+
   @UiThread public final class OverscrollEdgeEffect {
     method public void draw(@NonNull Canvas);
     method @Nullable public Runnable getInvalidationCallback();
@@ -1483,8 +1555,6 @@ package org.mozilla.geckoview {
   }
 
   public class WebExtension {
-    ctor @Deprecated public WebExtension(@NonNull String, @NonNull String, long, @NonNull WebExtensionController);
-    ctor @Deprecated public WebExtension(@NonNull String, @NonNull WebExtensionController);
     method @UiThread @Nullable public WebExtension.TabDelegate getTabDelegate();
     method @AnyThread public void setActionDelegate(@Nullable WebExtension.ActionDelegate);
     method @UiThread public void setMessageDelegate(@Nullable WebExtension.MessageDelegate, @NonNull String);
@@ -1493,7 +1563,7 @@ package org.mozilla.geckoview {
     field @NonNull public final String id;
     field public final boolean isBuiltIn;
     field @NonNull public final String location;
-    field @Nullable public final WebExtension.MetaData metaData;
+    field @NonNull public final WebExtension.MetaData metaData;
   }
 
   @AnyThread public static class WebExtension.Action {
@@ -1694,11 +1764,6 @@ package org.mozilla.geckoview {
     method @Nullable default public GeckoResult<AllowOrDeny> onUpdatePrompt(@NonNull WebExtension, @NonNull WebExtension, @NonNull String[], @NonNull String[]);
   }
 
-  @Deprecated public static interface WebExtensionController.TabDelegate {
-    method @UiThread @NonNull default public GeckoResult<AllowOrDeny> onCloseTab(@Nullable WebExtension, @NonNull GeckoSession);
-    method @UiThread @Nullable default public GeckoResult<GeckoSession> onNewTab(@Nullable WebExtension, @Nullable String);
-  }
-
   @AnyThread public abstract class WebMessage {
     ctor protected WebMessage(@NonNull WebMessage.Builder);
     field @NonNull public final Map<String,String> headers;
@@ -1717,7 +1782,7 @@ package org.mozilla.geckoview {
     field @Nullable public final String imageUrl;
     field @Nullable public final String lang;
     field @NonNull public final boolean requireInteraction;
-    field @NonNull public final String source;
+    field @Nullable public final String source;
     field @NonNull public final String tag;
     field @Nullable public final String text;
     field @Nullable public final String textDirection;

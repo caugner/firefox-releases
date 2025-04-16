@@ -42,7 +42,6 @@
 #include "mozilla/CallState.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/GuardObjects.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/OwningNonNull.h"
 #include "mozilla/TimeStamp.h"
@@ -57,7 +56,7 @@
 #include "nsCheapSets.h"
 #include "mozilla/dom/ImageBitmapSource.h"
 #include "mozilla/UniquePtr.h"
-#include "nsRefreshDriver.h"
+#include "nsRefreshObservers.h"
 #include "nsThreadUtils.h"
 
 class nsIArray;
@@ -74,6 +73,7 @@ class nsIScriptTimeoutHandler;
 class nsIBrowserChild;
 class nsITimeoutHandler;
 class nsIWebBrowserChrome;
+class nsIWebProgressListener;
 class mozIDOMWindowProxy;
 
 class nsScreen;
@@ -675,6 +675,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
       const mozilla::dom::RequestInit& aInit,
       mozilla::dom::CallerType aCallerType, mozilla::ErrorResult& aRv);
   void Print(mozilla::ErrorResult& aError);
+  mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> PrintPreview(
+      nsIPrintSettings*, nsIWebProgressListener*, nsIDocShell*,
+      mozilla::ErrorResult&);
   void PostMessageMoz(JSContext* aCx, JS::Handle<JS::Value> aMessage,
                       const nsAString& aTargetOrigin,
                       const mozilla::dom::Sequence<JSObject*>& aTransfer,
@@ -1200,8 +1203,14 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   void FireFrameLoadEvent();
 
   void UpdateAutoplayPermission();
+  void UpdateShortcutsPermission();
+  void UpdatePopupPermission();
+
+  void UpdatePermissions();
 
  public:
+  static uint32_t GetShortcutsPermission(nsIPrincipal* aPrincipal);
+
   // Dispatch a runnable related to the global.
   virtual nsresult Dispatch(mozilla::TaskCategory aCategory,
                             already_AddRefed<nsIRunnable>&& aRunnable) override;

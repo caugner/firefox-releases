@@ -32,6 +32,30 @@ using layers::Stringify;
 MOZ_DEFINE_MALLOC_SIZE_OF(WebRenderMallocSizeOf)
 MOZ_DEFINE_MALLOC_ENCLOSING_SIZE_OF(WebRenderMallocEnclosingSizeOf)
 
+enum SideBitsPacked {
+  eSideBitsPackedTop = 0x1000,
+  eSideBitsPackedRight = 0x2000,
+  eSideBitsPackedBottom = 0x4000,
+  eSideBitsPackedLeft = 0x8000
+};
+
+static uint16_t SideBitsToHitInfoBits(SideBits aSideBits) {
+  uint16_t ret = 0;
+  if (aSideBits & SideBits::eTop) {
+    ret |= eSideBitsPackedTop;
+  }
+  if (aSideBits & SideBits::eRight) {
+    ret |= eSideBitsPackedRight;
+  }
+  if (aSideBits & SideBits::eBottom) {
+    ret |= eSideBitsPackedBottom;
+  }
+  if (aSideBits & SideBits::eLeft) {
+    ret |= eSideBitsPackedLeft;
+  }
+  return ret;
+}
+
 class NewRenderer : public RendererEvent {
  public:
   NewRenderer(wr::DocumentHandle** aDocHandle,
@@ -197,11 +221,10 @@ void TransactionBuilder::RemovePipeline(PipelineId aPipelineId) {
 void TransactionBuilder::SetDisplayList(
     const gfx::DeviceColor& aBgColor, Epoch aEpoch,
     const wr::LayoutSize& aViewportSize, wr::WrPipelineId pipeline_id,
-    const wr::LayoutSize& content_size,
     wr::BuiltDisplayListDescriptor dl_descriptor, wr::Vec<uint8_t>& dl_data) {
   wr_transaction_set_display_list(mTxn, aEpoch, ToColorF(aBgColor),
-                                  aViewportSize, pipeline_id, content_size,
-                                  dl_descriptor, &dl_data.inner);
+                                  aViewportSize, pipeline_id, dl_descriptor,
+                                  &dl_data.inner);
 }
 
 void TransactionBuilder::ClearDisplayList(Epoch aEpoch,
@@ -393,13 +416,6 @@ void WebRenderAPI::SendTransaction(TransactionBuilder& aTxn) {
   wr_api_send_transaction(mDocHandle, aTxn.Raw(), aTxn.UseSceneBuilderThread());
 }
 
-enum SideBitsPacked {
-  eSideBitsPackedTop = 0x1000,
-  eSideBitsPackedRight = 0x2000,
-  eSideBitsPackedBottom = 0x4000,
-  eSideBitsPackedLeft = 0x8000
-};
-
 SideBits ExtractSideBitsFromHitInfoBits(uint16_t& aHitInfoBits) {
   SideBits sideBits = SideBits::eNone;
   if (aHitInfoBits & eSideBitsPackedTop) {
@@ -442,17 +458,18 @@ std::vector<WrHitResult> WebRenderAPI::HitTest(const wr::WorldPoint& aPoint) {
 
 void WebRenderAPI::Readback(const TimeStamp& aStartTime, gfx::IntSize size,
                             const gfx::SurfaceFormat& aFormat,
-                            const Range<uint8_t>& buffer) {
+                            const Range<uint8_t>& buffer, bool* aNeedsYFlip) {
   class Readback : public RendererEvent {
    public:
     explicit Readback(layers::SynchronousTask* aTask, TimeStamp aStartTime,
                       gfx::IntSize aSize, const gfx::SurfaceFormat& aFormat,
-                      const Range<uint8_t>& aBuffer)
+                      const Range<uint8_t>& aBuffer, bool* aNeedsYFlip)
         : mTask(aTask),
           mStartTime(aStartTime),
           mSize(aSize),
           mFormat(aFormat),
-          mBuffer(aBuffer) {
+          mBuffer(aBuffer),
+          mNeedsYFlip(aNeedsYFlip) {
       MOZ_COUNT_CTOR(Readback);
     }
 
@@ -462,7 +479,7 @@ void WebRenderAPI::Readback(const TimeStamp& aStartTime, gfx::IntSize size,
       aRenderThread.UpdateAndRender(aWindowId, VsyncId(), mStartTime,
                                     /* aRender */ true, Some(mSize),
                                     wr::SurfaceFormatToImageFormat(mFormat),
-                                    Some(mBuffer));
+                                    Some(mBuffer), mNeedsYFlip);
       layers::AutoCompleteTask complete(mTask);
     }
 
@@ -471,13 +488,15 @@ void WebRenderAPI::Readback(const TimeStamp& aStartTime, gfx::IntSize size,
     gfx::IntSize mSize;
     gfx::SurfaceFormat mFormat;
     const Range<uint8_t>& mBuffer;
+    bool* mNeedsYFlip;
   };
 
   // Disable debug flags during readback. See bug 1436020.
   UpdateDebugFlags(0);
 
   layers::SynchronousTask task("Readback");
-  auto event = MakeUnique<Readback>(&task, aStartTime, size, aFormat, buffer);
+  auto event = MakeUnique<Readback>(&task, aStartTime, size, aFormat, buffer,
+                                    aNeedsYFlip);
   // This event will be passed from wr_backend thread to renderer thread. That
   // implies that all frame data have been processed when the renderer runs this
   // read-back event. Then, we could make sure this read-back event gets the
@@ -863,17 +882,14 @@ void WebRenderAPI::RunOnRenderThread(UniquePtr<RendererEvent> aEvent) {
   wr_api_send_external_event(mDocHandle, event);
 }
 
-DisplayListBuilder::DisplayListBuilder(PipelineId aId,
-                                       const wr::LayoutSize& aContentSize,
-                                       size_t aCapacity,
+DisplayListBuilder::DisplayListBuilder(PipelineId aId, size_t aCapacity,
                                        layers::DisplayItemCache* aCache)
     : mCurrentSpaceAndClipChain(wr::RootScrollNodeWithChain()),
       mActiveFixedPosTracker(nullptr),
       mPipelineId(aId),
-      mContentSize(aContentSize),
       mDisplayItemCache(aCache) {
   MOZ_COUNT_CTOR(DisplayListBuilder);
-  mWrState = wr_state_new(aId, aContentSize, aCapacity);
+  mWrState = wr_state_new(aId, aCapacity);
 
   if (mDisplayItemCache && mDisplayItemCache->IsEnabled()) {
     mDisplayItemCache->SetPipelineId(aId);
@@ -899,9 +915,8 @@ void DisplayListBuilder::DumpSerializedDisplayList() {
   wr_dump_serialized_display_list(mWrState);
 }
 
-void DisplayListBuilder::Finalize(wr::LayoutSize& aOutContentSize,
-                                  BuiltDisplayList& aOutDisplayList) {
-  wr_api_finalize_builder(mWrState, &aOutContentSize, &aOutDisplayList.dl_desc,
+void DisplayListBuilder::Finalize(BuiltDisplayList& aOutDisplayList) {
+  wr_api_finalize_builder(mWrState, &aOutDisplayList.dl_desc,
                           &aOutDisplayList.dl.inner);
 }
 
@@ -911,8 +926,7 @@ void DisplayListBuilder::Finalize(layers::DisplayListData& aOutTransaction) {
   }
 
   wr::VecU8 dl;
-  wr_api_finalize_builder(mWrState, &aOutTransaction.mContentSize,
-                          &aOutTransaction.mDLDesc, &dl.inner);
+  wr_api_finalize_builder(mWrState, &aOutTransaction.mDLDesc, &dl.inner);
   aOutTransaction.mDL.emplace(dl.inner.data, dl.inner.length,
                               dl.inner.capacity);
   aOutTransaction.mRemotePipelineIds = std::move(mRemotePipelineIds);
@@ -1116,14 +1130,24 @@ void DisplayListBuilder::PushRoundedRect(const wr::LayoutRect& aBounds,
                                    &spaceAndClip, aColor);
 }
 
-void DisplayListBuilder::PushHitTest(const wr::LayoutRect& aBounds,
-                                     const wr::LayoutRect& aClip,
-                                     bool aIsBackfaceVisible) {
+void DisplayListBuilder::PushHitTest(
+    const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
+    bool aIsBackfaceVisible,
+    const layers::ScrollableLayerGuid::ViewID& aScrollId,
+    gfx::CompositorHitTestInfo aHitInfo, SideBits aSideBits) {
   wr::LayoutRect clip = MergeClipLeaf(aClip);
   WRDL_LOG("PushHitTest b=%s cl=%s\n", mWrState, Stringify(aBounds).c_str(),
            Stringify(clip).c_str());
+
+  static_assert(gfx::DoesCompositorHitTestInfoFitIntoBits<12>(),
+                "CompositorHitTestFlags MAX value has to be less than number "
+                "of bits in uint16_t minus 4 for SideBitsPacked");
+
+  uint16_t hitInfoBits = static_cast<uint16_t>(aHitInfo.serialize()) |
+                         SideBitsToHitInfoBits(aSideBits);
+
   wr_dp_push_hit_test(mWrState, aBounds, clip, aIsBackfaceVisible,
-                      &mCurrentSpaceAndClipChain);
+                      &mCurrentSpaceAndClipChain, aScrollId, hitInfoBits);
 }
 
 void DisplayListBuilder::PushRectWithAnimation(
@@ -1227,13 +1251,14 @@ void DisplayListBuilder::PushImage(
     const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
     bool aIsBackfaceVisible, wr::ImageRendering aFilter, wr::ImageKey aImage,
     bool aPremultipliedAlpha, const wr::ColorF& aColor,
-    bool aPreferCompositorSurface) {
+    bool aPreferCompositorSurface, bool aSupportsExternalCompositing) {
   wr::LayoutRect clip = MergeClipLeaf(aClip);
   WRDL_LOG("PushImage b=%s cl=%s\n", mWrState, Stringify(aBounds).c_str(),
            Stringify(clip).c_str());
   wr_dp_push_image(mWrState, aBounds, clip, aIsBackfaceVisible,
                    &mCurrentSpaceAndClipChain, aFilter, aImage,
-                   aPremultipliedAlpha, aColor, aPreferCompositorSurface);
+                   aPremultipliedAlpha, aColor, aPreferCompositorSurface,
+                   aSupportsExternalCompositing);
 }
 
 void DisplayListBuilder::PushRepeatingImage(
@@ -1256,12 +1281,12 @@ void DisplayListBuilder::PushYCbCrPlanarImage(
     wr::ImageKey aImageChannel1, wr::ImageKey aImageChannel2,
     wr::WrColorDepth aColorDepth, wr::WrYuvColorSpace aColorSpace,
     wr::WrColorRange aColorRange, wr::ImageRendering aRendering,
-    bool aPreferCompositorSurface) {
-  wr_dp_push_yuv_planar_image(mWrState, aBounds, MergeClipLeaf(aClip),
-                              aIsBackfaceVisible, &mCurrentSpaceAndClipChain,
-                              aImageChannel0, aImageChannel1, aImageChannel2,
-                              aColorDepth, aColorSpace, aColorRange, aRendering,
-                              aPreferCompositorSurface);
+    bool aPreferCompositorSurface, bool aSupportsExternalCompositing) {
+  wr_dp_push_yuv_planar_image(
+      mWrState, aBounds, MergeClipLeaf(aClip), aIsBackfaceVisible,
+      &mCurrentSpaceAndClipChain, aImageChannel0, aImageChannel1,
+      aImageChannel2, aColorDepth, aColorSpace, aColorRange, aRendering,
+      aPreferCompositorSurface, aSupportsExternalCompositing);
 }
 
 void DisplayListBuilder::PushNV12Image(
@@ -1269,11 +1294,13 @@ void DisplayListBuilder::PushNV12Image(
     bool aIsBackfaceVisible, wr::ImageKey aImageChannel0,
     wr::ImageKey aImageChannel1, wr::WrColorDepth aColorDepth,
     wr::WrYuvColorSpace aColorSpace, wr::WrColorRange aColorRange,
-    wr::ImageRendering aRendering, bool aPreferCompositorSurface) {
+    wr::ImageRendering aRendering, bool aPreferCompositorSurface,
+    bool aSupportsExternalCompositing) {
   wr_dp_push_yuv_NV12_image(
       mWrState, aBounds, MergeClipLeaf(aClip), aIsBackfaceVisible,
       &mCurrentSpaceAndClipChain, aImageChannel0, aImageChannel1, aColorDepth,
-      aColorSpace, aColorRange, aRendering, aPreferCompositorSurface);
+      aColorSpace, aColorRange, aRendering, aPreferCompositorSurface,
+      aSupportsExternalCompositing);
 }
 
 void DisplayListBuilder::PushYCbCrInterleavedImage(
@@ -1281,11 +1308,12 @@ void DisplayListBuilder::PushYCbCrInterleavedImage(
     bool aIsBackfaceVisible, wr::ImageKey aImageChannel0,
     wr::WrColorDepth aColorDepth, wr::WrYuvColorSpace aColorSpace,
     wr::WrColorRange aColorRange, wr::ImageRendering aRendering,
-    bool aPreferCompositorSurface) {
+    bool aPreferCompositorSurface, bool aSupportsExternalCompositing) {
   wr_dp_push_yuv_interleaved_image(
       mWrState, aBounds, MergeClipLeaf(aClip), aIsBackfaceVisible,
       &mCurrentSpaceAndClipChain, aImageChannel0, aColorDepth, aColorSpace,
-      aColorRange, aRendering, aPreferCompositorSurface);
+      aColorRange, aRendering, aPreferCompositorSurface,
+      aSupportsExternalCompositing);
 }
 
 void DisplayListBuilder::PushIFrame(const wr::LayoutRect& aBounds,
@@ -1518,38 +1546,6 @@ Maybe<SideBits> DisplayListBuilder::GetContainingFixedPosSideBits(
              ? mActiveFixedPosTracker->GetSideBitsForASR(aAsr)
              : Nothing();
 }
-
-uint16_t SideBitsToHitInfoBits(SideBits aSideBits) {
-  uint16_t ret = 0;
-  if (aSideBits & SideBits::eTop) {
-    ret |= eSideBitsPackedTop;
-  }
-  if (aSideBits & SideBits::eRight) {
-    ret |= eSideBitsPackedRight;
-  }
-  if (aSideBits & SideBits::eBottom) {
-    ret |= eSideBitsPackedBottom;
-  }
-  if (aSideBits & SideBits::eLeft) {
-    ret |= eSideBitsPackedLeft;
-  }
-  return ret;
-}
-
-void DisplayListBuilder::SetHitTestInfo(
-    const layers::ScrollableLayerGuid::ViewID& aScrollId,
-    gfx::CompositorHitTestInfo aHitInfo, SideBits aSideBits) {
-  static_assert(gfx::DoesCompositorHitTestInfoFitIntoBits<12>(),
-                "CompositorHitTestFlags MAX value has to be less than number "
-                "of bits in uint16_t minus 4 for SideBitsPacked");
-
-  uint16_t hitInfoBits = static_cast<uint16_t>(aHitInfo.serialize()) |
-                         SideBitsToHitInfoBits(aSideBits);
-
-  wr_set_item_tag(mWrState, aScrollId, hitInfoBits);
-}
-
-void DisplayListBuilder::ClearHitTestInfo() { wr_clear_item_tag(mWrState); }
 
 DisplayListBuilder::FixedPosScrollTargetTracker::FixedPosScrollTargetTracker(
     DisplayListBuilder& aBuilder, const ActiveScrolledRoot* aAsr,

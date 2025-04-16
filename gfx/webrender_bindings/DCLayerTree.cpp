@@ -335,31 +335,60 @@ void DCLayerTree::DestroyTile(wr::NativeSurfaceId aId, int aX, int aY) {
   surface->DestroyTile(aX, aY);
 }
 
+template <typename T>
+static inline D2D1_RECT_F D2DRect(const T& aRect) {
+  return D2D1::RectF(aRect.X(), aRect.Y(), aRect.XMost(), aRect.YMost());
+}
+
+static inline D2D1_MATRIX_3X2_F D2DMatrix(const gfx::Matrix& aTransform) {
+  return D2D1::Matrix3x2F(aTransform._11, aTransform._12, aTransform._21,
+                          aTransform._22, aTransform._31, aTransform._32);
+}
+
 void DCLayerTree::AddSurface(wr::NativeSurfaceId aId,
-                             wr::DeviceIntPoint aPosition,
-                             wr::DeviceIntRect aClipRect) {
+                             const wr::CompositorSurfaceTransform& aTransform,
+                             wr::DeviceIntRect aClipRect,
+                             wr::ImageRendering aImageRendering) {
   auto it = mDCSurfaces.find(aId);
   MOZ_RELEASE_ASSERT(it != mDCSurfaces.end());
   const auto surface = it->second.get();
   const auto visual = surface->GetVisual();
 
   wr::DeviceIntPoint virtualOffset = surface->GetVirtualOffset();
-  aPosition.x -= virtualOffset.x;
-  aPosition.y -= virtualOffset.y;
 
-  // Place the visual - this changes frame to frame based on scroll position
-  // of the slice.
-  visual->SetOffsetX(aPosition.x);
-  visual->SetOffsetY(aPosition.y);
+  gfx::Matrix transform(aTransform.m11, aTransform.m12, aTransform.m21,
+                        aTransform.m22, aTransform.m41, aTransform.m42);
+  transform.PreTranslate(-virtualOffset.x, -virtualOffset.y);
 
+  // The DirectComposition API applies clipping *before* any transforms/offset,
+  // whereas we want the clip applied after.
+  // Right now, we only support rectilinear transforms, and then we transform
+  // our clip into pre-transform coordinate space for it to be applied there.
+  // DirectComposition does have an option for pre-transform clipping, if you
+  // create an explicit IDCompositionEffectGroup object and set a 3D transform
+  // on that. I suspect that will perform worse though, so we should only do
+  // that for complex transforms (which are never provided right now).
+  MOZ_ASSERT(transform.IsRectilinear());
+  gfx::Rect clip = transform.Inverse().TransformBounds(
+      gfx::Rect(aClipRect.origin.x, aClipRect.origin.y, aClipRect.size.width,
+                aClipRect.size.height));
   // Set the clip rect - converting from world space to the pre-offset space
   // that DC requires for rectangle clips.
-  D2D_RECT_F clip_rect;
-  clip_rect.left = aClipRect.origin.x - aPosition.x;
-  clip_rect.top = aClipRect.origin.y - aPosition.y;
-  clip_rect.right = clip_rect.left + aClipRect.size.width;
-  clip_rect.bottom = clip_rect.top + aClipRect.size.height;
-  visual->SetClip(clip_rect);
+  visual->SetClip(D2DRect(clip));
+
+  // TODO: The input matrix is a 4x4, but we only support a 3x2 at
+  // the D3D API level (unless we QI to IDCompositionVisual3, which might
+  // not be available?).
+  // Should we assert here, or restrict at the WR API level.
+  visual->SetTransform(D2DMatrix(transform));
+
+  if (aImageRendering == wr::ImageRendering::Auto) {
+    visual->SetBitmapInterpolationMode(
+        DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+  } else {
+    visual->SetBitmapInterpolationMode(
+        DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+  }
 
   mCurrentLayers.push_back(aId);
 }
@@ -561,8 +590,8 @@ GLuint DCLayerTree::CreateEGLSurfaceForCompositionSurface(
 
   // Construct an EGLImage wrapper around the D3D texture for ANGLE.
   const EGLint attribs[] = {LOCAL_EGL_NONE};
-  mEGLImage = egl->fCreateImage(egl->Display(), EGL_NO_CONTEXT,
-                                LOCAL_EGL_D3D11_TEXTURE_ANGLE, buffer, attribs);
+  mEGLImage = egl->fCreateImage(EGL_NO_CONTEXT, LOCAL_EGL_D3D11_TEXTURE_ANGLE,
+                                buffer, attribs);
 
   // Get the current FBO and RBO id, so we can restore them later
   GLint currentFboId, currentRboId;
@@ -604,7 +633,7 @@ void DCLayerTree::DestroyEGLSurface() {
   if (mEGLImage) {
     const auto& gle = gl::GLContextEGL::Cast(gl);
     const auto& egl = gle->mEgl;
-    egl->fDestroyImage(egl->Display(), mEGLImage);
+    egl->fDestroyImage(mEGLImage);
     mEGLImage = EGL_NO_IMAGE;
   }
 }

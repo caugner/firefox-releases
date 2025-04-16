@@ -185,6 +185,14 @@ pub extern "C" fn neqo_http3conn_process_output(conn: &mut NeqoHttp3Conn) -> u64
             }
             Output::Callback(to) => {
                 let timeout = to.as_millis() as u64;
+                // Necko resolution is in milliseconds whereas neqo resolution
+                // is in nanoseconds. If we called process_output too soon due
+                // to this difference, we might do few unnecessary loops until
+                // we waste the remaining time. To avoid it, we return 1ms when
+                // the timeout is less than 1ms.
+                if timeout == 0 {
+                    break 1;
+                }
                 break timeout;
             }
             Output::None => break std::u64::MAX,
@@ -301,10 +309,14 @@ pub extern "C" fn neqo_http3conn_fetch(
             return NS_ERROR_INVALID_ARG;
         }
     };
-    match conn
-        .conn
-        .fetch(Instant::now(), method_tmp, scheme_tmp, host_tmp, path_tmp, &hdrs)
-    {
+    match conn.conn.fetch(
+        Instant::now(),
+        method_tmp,
+        scheme_tmp,
+        host_tmp,
+        path_tmp,
+        &hdrs,
+    ) {
         Ok(id) => {
             *stream_id = id;
             NS_OK
@@ -390,6 +402,7 @@ pub enum Http3Event {
     /// A server has send STOP_SENDING frame.
     StopSending {
         stream_id: u64,
+        error: u64,
     },
     HeaderReady {
         stream_id: u64,
@@ -472,8 +485,8 @@ pub extern "C" fn neqo_http3conn_event(
     while let Some(evt) = conn.conn.next_event() {
         let fe = match evt {
             Http3ClientEvent::DataWritable { stream_id } => Http3Event::DataWritable { stream_id },
-            Http3ClientEvent::StopSending { stream_id, .. } => {
-                Http3Event::StopSending { stream_id }
+            Http3ClientEvent::StopSending { stream_id, error } => {
+                Http3Event::StopSending { stream_id, error }
             }
             Http3ClientEvent::HeaderReady {
                 stream_id,

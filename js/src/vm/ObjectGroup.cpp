@@ -17,6 +17,7 @@
 #include "gc/Policy.h"
 #include "gc/StoreBuffer.h"
 #include "js/CharacterEncoding.h"
+#include "js/friend/WindowProxy.h"  // js::IsWindow
 #include "js/UniquePtr.h"
 #include "vm/ArrayObject.h"
 #include "vm/ErrorObject.h"
@@ -1488,11 +1489,14 @@ ObjectGroup* ObjectGroup::callingAllocationSiteGroup(JSContext* cx,
                                                      HandleObject proto) {
   MOZ_ASSERT_IF(proto, key == JSProto_Array);
 
-  jsbytecode* pc;
-  RootedScript script(cx, cx->currentScript(&pc));
-  if (script) {
-    return allocationSiteGroup(cx, script, pc, key, proto);
+  if (IsTypeInferenceEnabled()) {
+    jsbytecode* pc;
+    RootedScript script(cx, cx->currentScript(&pc));
+    if (script) {
+      return allocationSiteGroup(cx, script, pc, key, proto);
+    }
   }
+
   if (proto) {
     return defaultNewGroup(cx, GetClassForProtoKey(key), TaggedProto(proto));
   }
@@ -1504,6 +1508,8 @@ bool ObjectGroup::setAllocationSiteObjectGroup(JSContext* cx,
                                                HandleScript script,
                                                jsbytecode* pc, HandleObject obj,
                                                bool singleton) {
+  MOZ_ASSERT(IsTypeInferenceEnabled());
+
   JSProtoKey key = JSCLASS_CACHED_PROTO_KEY(obj->getClass());
   MOZ_ASSERT(key != JSProto_Null);
   MOZ_ASSERT(singleton == useSingletonForAllocationSite(script, pc, key));

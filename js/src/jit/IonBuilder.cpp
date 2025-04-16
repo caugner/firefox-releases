@@ -22,8 +22,10 @@
 #include "jit/JitSpewer.h"
 #include "jit/Lowering.h"
 #include "jit/MIRGraph.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "util/CheckedArithmetic.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/BuiltinObjectKind.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
 #include "vm/BytecodeUtil.h"
@@ -2011,6 +2013,7 @@ AbortReasonOr<Ok> IonBuilder::inspectOpcode(JSOp op, bool* restarted) {
 
     case JSOp::InitElem:
     case JSOp::InitHiddenElem:
+    case JSOp::InitLockedElem:
       return jsop_initelem();
 
     case JSOp::InitElemInc:
@@ -2305,6 +2308,9 @@ AbortReasonOr<Ok> IonBuilder::inspectOpcode(JSOp op, bool* restarted) {
     case JSOp::HasOwn:
       return jsop_hasown();
 
+    case JSOp::CheckPrivateField:
+      return jsop_checkprivatefield();
+
     case JSOp::SetRval:
       MOZ_ASSERT(!script()->noScriptRval());
       current->setSlot(info().returnValueSlot(), current->pop());
@@ -2382,8 +2388,8 @@ AbortReasonOr<Ok> IonBuilder::inspectOpcode(JSOp op, bool* restarted) {
     case JSOp::ObjWithProto:
       return jsop_objwithproto();
 
-    case JSOp::FunctionProto:
-      return jsop_functionproto();
+    case JSOp::BuiltinObject:
+      return jsop_builtinobject();
 
     case JSOp::CheckReturn:
       return jsop_checkreturn();
@@ -2450,12 +2456,6 @@ AbortReasonOr<Ok> IonBuilder::inspectOpcode(JSOp op, bool* restarted) {
       // === !! WARNING WARNING WARNING !! ===
       // Do you really want to sacrifice performance by not implementing this
       // operation in the optimizing compiler?
-      break;
-
-    // Private Fields
-    case JSOp::InitPrivateElem:
-    case JSOp::GetPrivateElem:
-    case JSOp::SetPrivateElem:
       break;
 
     case JSOp::ForceInterpreter:
@@ -6374,10 +6374,6 @@ AbortReasonOr<Ok> IonBuilder::jsop_compare(JSOp op, MDefinition* left,
   bool emitted = false;
 
   if (!forceInlineCaches()) {
-    MOZ_TRY(compareTryCharacter(&emitted, op, left, right));
-    if (emitted) {
-      return Ok();
-    }
     MOZ_TRY(compareTrySpecialized(&emitted, op, left, right));
     if (emitted) {
       return Ok();
@@ -6408,79 +6404,6 @@ AbortReasonOr<Ok> IonBuilder::jsop_compare(JSOp op, MDefinition* left,
     MOZ_TRY(resumeAfter(ins));
   }
 
-  return Ok();
-}
-
-AbortReasonOr<Ok> IonBuilder::compareTryCharacter(bool* emitted, JSOp op,
-                                                  MDefinition* left,
-                                                  MDefinition* right) {
-  MOZ_ASSERT(*emitted == false);
-
-  // |str[i]| is compiled as |MFromCharCode(MCharCodeAt(str, i))|.
-  auto isCharAccess = [](MDefinition* ins) {
-    return ins->isFromCharCode() &&
-           ins->toFromCharCode()->input()->isCharCodeAt();
-  };
-
-  if (left->isConstant() || right->isConstant()) {
-    // Try to optimize |MConstant(string) <compare> (MFromCharCode MCharCodeAt)|
-    // as |MConstant(charcode) <compare> MCharCodeAt|.
-    MConstant* constant;
-    MDefinition* operand;
-    if (left->isConstant()) {
-      constant = left->toConstant();
-      operand = right;
-    } else {
-      constant = right->toConstant();
-      operand = left;
-    }
-
-    if (constant->type() != MIRType::String ||
-        constant->toString()->length() != 1 || !isCharAccess(operand)) {
-      return Ok();
-    }
-
-    char16_t charCode = constant->toString()->asAtom().latin1OrTwoByteChar(0);
-    constant->setImplicitlyUsedUnchecked();
-
-    MConstant* charCodeConst = MConstant::New(alloc(), Int32Value(charCode));
-    current->add(charCodeConst);
-
-    MDefinition* charCodeAt = operand->toFromCharCode()->input();
-    operand->setImplicitlyUsedUnchecked();
-
-    if (left == constant) {
-      left = charCodeConst;
-      right = charCodeAt;
-    } else {
-      left = charCodeAt;
-      right = charCodeConst;
-    }
-  } else if (isCharAccess(left) && isCharAccess(right)) {
-    // Try to optimize |(MFromCharCode MCharCodeAt) <compare> (MFromCharCode
-    // MCharCodeAt)| as |MCharCodeAt <compare> MCharCodeAt|.
-
-    MDefinition* leftCharCodeAt = left->toFromCharCode()->input();
-    left->setImplicitlyUsedUnchecked();
-
-    MDefinition* rightCharCodeAt = right->toFromCharCode()->input();
-    right->setImplicitlyUsedUnchecked();
-
-    left = leftCharCodeAt;
-    right = rightCharCodeAt;
-  } else {
-    return Ok();
-  }
-
-  MCompare* ins = MCompare::New(alloc(), left, right, op);
-  ins->setCompareType(MCompare::Compare_Int32);
-  ins->cacheOperandMightEmulateUndefined(constraints());
-
-  current->add(ins);
-  current->push(ins);
-
-  MOZ_ASSERT(!ins->isEffectful());
-  *emitted = true;
   return Ok();
 }
 
@@ -6864,7 +6787,8 @@ AbortReasonOr<Ok> IonBuilder::jsop_newobject() {
 }
 
 AbortReasonOr<Ok> IonBuilder::jsop_initelem() {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::InitElem || JSOp(*pc) == JSOp::InitHiddenElem);
+  MOZ_ASSERT(JSOp(*pc) == JSOp::InitElem || JSOp(*pc) == JSOp::InitHiddenElem ||
+             JSOp(*pc) == JSOp::InitLockedElem);
 
   MDefinition* value = current->pop();
   MDefinition* id = current->pop();
@@ -9756,7 +9680,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_checkobjcoercible() {
   MCheckObjCoercible* check = MCheckObjCoercible::New(alloc(), current->pop());
   current->add(check);
   current->push(check);
-  return Ok();
+  return resumeAfter(check);
 }
 
 AbortReasonOr<Ok> IonBuilder::jsop_checkclassheritage() {
@@ -12393,6 +12317,18 @@ AbortReasonOr<Ok> IonBuilder::jsop_hasown() {
   return Ok();
 }
 
+AbortReasonOr<Ok> IonBuilder::jsop_checkprivatefield() {
+  MDefinition* id = current->peek(-1);
+  MDefinition* obj = current->peek(-2);
+
+  MCheckPrivateFieldCache* ins = MCheckPrivateFieldCache::New(alloc(), obj, id);
+  current->add(ins);
+  current->push(ins);
+
+  MOZ_TRY(resumeAfter(ins));
+  return Ok();
+}
+
 AbortReasonOr<bool> IonBuilder::hasOnProtoChain(TypeSet::ObjectKey* key,
                                                 JSObject* protoObject,
                                                 bool* onProto) {
@@ -12690,17 +12626,17 @@ AbortReasonOr<Ok> IonBuilder::jsop_objwithproto() {
   return resumeAfter(ins);
 }
 
-AbortReasonOr<Ok> IonBuilder::jsop_functionproto() {
-  JSProtoKey key = JSProto_Function;
+AbortReasonOr<Ok> IonBuilder::jsop_builtinobject() {
+  auto kind = BuiltinObjectKind(GET_UINT8(pc));
 
-  // Bake in the prototype if it exists.
-  if (JSObject* proto = script()->global().maybeGetPrototype(key)) {
-    pushConstant(ObjectValue(*proto));
+  // Bake in the built-in if it exists.
+  if (JSObject* builtin = MaybeGetBuiltinObject(&script()->global(), kind)) {
+    pushConstant(ObjectValue(*builtin));
     return Ok();
   }
 
   // Otherwise emit code to generate it.
-  auto* ins = MFunctionProto::New(alloc());
+  auto* ins = MBuiltinObject::New(alloc(), kind);
   current->add(ins);
   current->push(ins);
   return resumeAfter(ins);

@@ -111,14 +111,20 @@ EmitterScope* EmitterScope::enclosing(BytecodeEmitter** bce) const {
   return nullptr;
 }
 
-AbstractScopePtr EmitterScope::enclosingScope(BytecodeEmitter* bce) const {
+mozilla::Maybe<ScopeIndex> EmitterScope::enclosingScopeIndex(
+    BytecodeEmitter* bce) const {
   if (EmitterScope* es = enclosing(&bce)) {
-    return es->scope(bce);
+    // NOTE: A value of Nothing for the ScopeIndex will occur when the enclosing
+    // scope is the empty-global-scope. This is only allowed for self-hosting
+    // code.
+    MOZ_ASSERT_IF(es->scopeIndex(bce).isNothing(),
+                  bce->emitterMode == BytecodeEmitter::SelfHosting);
+    return es->scopeIndex(bce);
   }
 
   // The enclosing script is already compiled or the current script is the
   // global script.
-  return AbstractScopePtr(bce->compilationInfo.enclosingScope);
+  return mozilla::Nothing();
 }
 
 /* static */
@@ -328,6 +334,10 @@ NameLocation EmitterScope::searchAndCache(BytecodeEmitter* bce, JSAtom* name) {
 }
 
 bool EmitterScope::internEmptyGlobalScopeAsBody(BytecodeEmitter* bce) {
+  // Only the self-hosted top-level script uses this. If this changes, you must
+  // update ScopeStencil::enclosing.
+  MOZ_ASSERT(bce->emitterMode == BytecodeEmitter::SelfHosting);
+
   Scope* scope = &bce->cx->global()->emptyGlobalScope();
   hasEnvironment_ = scope->hasEnvironment();
 
@@ -340,12 +350,11 @@ bool EmitterScope::internEmptyGlobalScopeAsBody(BytecodeEmitter* bce) {
 template <typename ScopeCreator>
 bool EmitterScope::internScopeCreationData(BytecodeEmitter* bce,
                                            ScopeCreator createScope) {
-  Rooted<AbstractScopePtr> enclosing(bce->cx, enclosingScope(bce));
   ScopeIndex index;
-  if (!createScope(bce->cx, enclosing, &index)) {
+  if (!createScope(bce->cx, enclosingScopeIndex(bce), &index)) {
     return false;
   }
-  auto scope = bce->compilationInfo.scopeCreationData[index.index];
+  auto scope = bce->compilationInfo.scopeData[index.index];
   hasEnvironment_ = scope.get().hasEnvironment();
   return bce->perScriptData().gcThingList().append(index, &scopeIndex_);
 }
@@ -483,10 +492,11 @@ bool EmitterScope::enterLexical(BytecodeEmitter* bce, ScopeKind kind,
   updateFrameFixedSlots(bce, bi);
 
   auto createScope = [kind, bindings, firstFrameSlot, bce](
-                         JSContext* cx, Handle<AbstractScopePtr> enclosing,
+                         JSContext* cx, mozilla::Maybe<ScopeIndex> enclosing,
                          ScopeIndex* index) {
-    return ScopeCreationData::create(cx, bce->compilationInfo, kind, bindings,
-                                     firstFrameSlot, enclosing, index);
+    return ScopeStencil::createForLexicalScope(cx, bce->compilationInfo, kind,
+                                               bindings, firstFrameSlot,
+                                               enclosing, index);
   };
   if (!internScopeCreationData(bce, createScope)) {
     return false;
@@ -542,11 +552,11 @@ bool EmitterScope::enterNamedLambda(BytecodeEmitter* bce, FunctionBox* funbox) {
       funbox->strict() ? ScopeKind::StrictNamedLambda : ScopeKind::NamedLambda;
 
   auto createScope = [funbox, scopeKind, bce](
-                         JSContext* cx, Handle<AbstractScopePtr> enclosing,
+                         JSContext* cx, mozilla::Maybe<ScopeIndex> enclosing,
                          ScopeIndex* index) {
-    return ScopeCreationData::create(cx, bce->compilationInfo, scopeKind,
-                                     funbox->namedLambdaBindings(),
-                                     LOCALNO_LIMIT, enclosing, index);
+    return ScopeStencil::createForLexicalScope(
+        cx, bce->compilationInfo, scopeKind, funbox->namedLambdaBindings(),
+        LOCALNO_LIMIT, enclosing, index);
   };
   if (!internScopeCreationData(bce, createScope)) {
     return false;
@@ -632,9 +642,9 @@ bool EmitterScope::enterFunction(BytecodeEmitter* bce, FunctionBox* funbox) {
   }
 
   auto createScope = [funbox, bce](JSContext* cx,
-                                   Handle<AbstractScopePtr> enclosing,
+                                   mozilla::Maybe<ScopeIndex> enclosing,
                                    ScopeIndex* index) {
-    return ScopeCreationData::create(
+    return ScopeStencil::createForFunctionScope(
         cx, bce->compilationInfo, funbox->functionScopeBindings(),
         funbox->hasParameterExprs,
         funbox->needsCallObjectRegardlessOfBindings(), funbox->index(),
@@ -692,9 +702,9 @@ bool EmitterScope::enterFunctionExtraBodyVar(BytecodeEmitter* bce,
 
   // Create and intern the VM scope.
   auto createScope = [funbox, firstFrameSlot, bce](
-                         JSContext* cx, Handle<AbstractScopePtr> enclosing,
+                         JSContext* cx, mozilla::Maybe<ScopeIndex> enclosing,
                          ScopeIndex* index) {
-    return ScopeCreationData::create(
+    return ScopeStencil::createForVarScope(
         cx, bce->compilationInfo, ScopeKind::FunctionBodyVar,
         funbox->extraVarScopeBindings(), firstFrameSlot,
         funbox->needsExtraBodyVarEnvironmentRegardlessOfBindings(), enclosing,
@@ -766,12 +776,12 @@ bool EmitterScope::enterGlobal(BytecodeEmitter* bce,
   }
 
   auto createScope = [globalsc, bce](JSContext* cx,
-                                     Handle<AbstractScopePtr> enclosing,
+                                     mozilla::Maybe<ScopeIndex> enclosing,
                                      ScopeIndex* index) {
-    MOZ_ASSERT(!enclosing.get());
-    return ScopeCreationData::create(cx, bce->compilationInfo,
-                                     globalsc->scopeKind(), globalsc->bindings,
-                                     index);
+    MOZ_ASSERT(enclosing.isNothing());
+    return ScopeStencil::createForGlobalScope(cx, bce->compilationInfo,
+                                              globalsc->scopeKind(),
+                                              globalsc->bindings, index);
   };
   if (!internBodyScopeCreationData(bce, createScope)) {
     return false;
@@ -834,12 +844,12 @@ bool EmitterScope::enterEval(BytecodeEmitter* bce, EvalSharedContext* evalsc) {
   // Create the `var` scope. Note that there is also a lexical scope, created
   // separately in emitScript().
   auto createScope = [evalsc, bce](JSContext* cx,
-                                   Handle<AbstractScopePtr> enclosing,
+                                   mozilla::Maybe<ScopeIndex> enclosing,
                                    ScopeIndex* index) {
     ScopeKind scopeKind =
         evalsc->strict() ? ScopeKind::StrictEval : ScopeKind::Eval;
-    return ScopeCreationData::create(cx, bce->compilationInfo, scopeKind,
-                                     evalsc->bindings, enclosing, index);
+    return ScopeStencil::createForEvalScope(cx, bce->compilationInfo, scopeKind,
+                                            evalsc->bindings, enclosing, index);
   };
   if (!internBodyScopeCreationData(bce, createScope)) {
     return false;
@@ -942,10 +952,10 @@ bool EmitterScope::enterModule(BytecodeEmitter* bce,
 
   // Create and intern the VM scope creation data.
   auto createScope = [modulesc, bce](JSContext* cx,
-                                     Handle<AbstractScopePtr> enclosing,
+                                     mozilla::Maybe<ScopeIndex> enclosing,
                                      ScopeIndex* index) {
-    return ScopeCreationData::create(cx, bce->compilationInfo,
-                                     modulesc->bindings, enclosing, index);
+    return ScopeStencil::createForModuleScope(
+        cx, bce->compilationInfo, modulesc->bindings, enclosing, index);
   };
   if (!internBodyScopeCreationData(bce, createScope)) {
     return false;
@@ -964,10 +974,10 @@ bool EmitterScope::enterWith(BytecodeEmitter* bce) {
   // 'with' make all accesses dynamic and unanalyzable.
   fallbackFreeNameLocation_ = Some(NameLocation::Dynamic());
 
-  auto createScope = [bce](JSContext* cx, Handle<AbstractScopePtr> enclosing,
+  auto createScope = [bce](JSContext* cx, mozilla::Maybe<ScopeIndex> enclosing,
                            ScopeIndex* index) {
-    return ScopeCreationData::create(cx, bce->compilationInfo, enclosing,
-                                     index);
+    return ScopeStencil::createForWithScope(cx, bce->compilationInfo, enclosing,
+                                            index);
   };
   if (!internScopeCreationData(bce, createScope)) {
     return false;
@@ -1052,7 +1062,8 @@ AbstractScopePtr EmitterScope::scope(const BytecodeEmitter* bce) const {
   return bce->perScriptData().gcThingList().getScope(index());
 }
 
-ScopeIndex EmitterScope::scopeIndex(const BytecodeEmitter* bce) const {
+mozilla::Maybe<ScopeIndex> EmitterScope::scopeIndex(
+    const BytecodeEmitter* bce) const {
   return bce->perScriptData().gcThingList().getScopeIndex(index());
 }
 

@@ -4265,7 +4265,7 @@ class CGUpdateMemberSlotsMethod(CGAbstractStaticMethod):
                 body += fill(
                     """
 
-                    static_assert(${slot} < js::shadow::Object::MAX_FIXED_SLOTS,
+                    static_assert(${slot} < JS::shadow::Object::MAX_FIXED_SLOTS,
                                   "Not enough fixed slots to fit '${interface}.${member}.  Ion's visitGetDOMMemberV/visitGetDOMMemberT assume StoreInSlot things are all in fixed slots.");
                     if (!get_${member}(aCx, aWrapper, aObject, args)) {
                       return false;
@@ -10504,10 +10504,10 @@ class CGEnum(CGThing):
             static_assert(static_cast<size_t>(${name}::EndGuard_) == Count,
                           "Mismatch between enum value and enum count");
 
-            inline Span<const char> GetString(${name} stringId) {
+            inline auto GetString(${name} stringId) {
               MOZ_ASSERT(static_cast<${type}>(stringId) < Count);
               const EnumEntry& entry = ${entry_array}[static_cast<${type}>(stringId)];
-              return MakeSpan(entry.value, entry.length);
+              return Span<const char>{entry.value, entry.length};
             }
             """,
             entry_array=ENUM_ENTRY_VARIABLE_NAME,
@@ -15491,6 +15491,8 @@ class CGBindingRoot(CGThing):
 
         bindingHeaders["js/Symbol.h"] = any(descriptorHasIteratorAlias(d) for d in descriptors)
 
+        bindingHeaders["js/shadow/Object.h"] = any(d.interface.hasMembersInSlots() for d in descriptors)
+
         def descriptorDeprecated(desc):
             iface = desc.interface
             return any(m.getExtendedAttribute("Deprecated") for m in iface.members + [iface])
@@ -15943,11 +15945,11 @@ class CGNativeMember(ClassMethod):
                     if (${declName}.IsNull()) {
                       aRetVal.SetNull();
                     } else {
-                      aRetVal.SetValue().SwapElements(${declName}.Value());
+                      aRetVal.SetValue() = std::move(${declName}.Value());
                     }
                     """)
             else:
-                returnCode = "aRetVal.SwapElements(${declName});\n"
+                returnCode = "aRetVal = std::move(${declName});\n"
             return "void", "", returnCode
         if type.isRecord():
             # If we want to handle record-of-record return values, we're

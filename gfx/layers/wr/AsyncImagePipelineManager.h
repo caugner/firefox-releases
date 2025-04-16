@@ -101,11 +101,9 @@ class AsyncImagePipelineManager final {
 
   void UpdateAsyncImagePipeline(const wr::PipelineId& aPipelineId,
                                 const LayoutDeviceRect& aScBounds,
-                                const gfx::Matrix4x4& aScTransform,
-                                const gfx::MaybeIntSize& aScaleToSize,
+                                VideoInfo::Rotation aRotation,
                                 const wr::ImageRendering& aFilter,
-                                const wr::MixBlendMode& aMixBlendMode,
-                                const LayoutDeviceSize& aScaleFromSize);
+                                const wr::MixBlendMode& aMixBlendMode);
   void ApplyAsyncImagesOfImageBridge(wr::TransactionBuilder& aSceneBuilderTxn,
                                      wr::TransactionBuilder& aFastTxn);
   void ApplyAsyncImageForPipeline(const wr::PipelineId& aPipelineId,
@@ -180,30 +178,23 @@ class AsyncImagePipelineManager final {
   struct AsyncImagePipeline {
     AsyncImagePipeline();
     void Update(const LayoutDeviceRect& aScBounds,
-                const gfx::Matrix4x4& aScTransform,
-                const gfx::MaybeIntSize& aScaleToSize,
+                VideoInfo::Rotation aRotation,
                 const wr::ImageRendering& aFilter,
-                const wr::MixBlendMode& aMixBlendMode,
-                const LayoutDeviceSize& aScaleFromSize) {
-      mIsChanged |=
-          !mScBounds.IsEqualEdges(aScBounds) || mScTransform != aScTransform ||
-          mScaleToSize != aScaleToSize || mFilter != aFilter ||
-          mMixBlendMode != aMixBlendMode || mScaleFromSize != aScaleFromSize;
+                const wr::MixBlendMode& aMixBlendMode) {
+      mIsChanged |= !mScBounds.IsEqualEdges(aScBounds) ||
+                    mRotation != aRotation || mFilter != aFilter ||
+                    mMixBlendMode != aMixBlendMode;
       mScBounds = aScBounds;
-      mScTransform = aScTransform;
-      mScaleToSize = aScaleToSize;
+      mRotation = aRotation;
       mFilter = aFilter;
       mMixBlendMode = aMixBlendMode;
-      mScaleFromSize = aScaleFromSize;
     }
 
     bool mInitialised;
     bool mIsChanged;
     bool mUseExternalImage;
     LayoutDeviceRect mScBounds;
-    LayoutDeviceSize mScaleFromSize;
-    gfx::Matrix4x4 mScTransform;
-    gfx::MaybeIntSize mScaleToSize;
+    VideoInfo::Rotation mRotation;
     wr::ImageRendering mFilter;
     wr::MixBlendMode mMixBlendMode;
     RefPtr<WebRenderImageHost> mImageHost;
@@ -254,15 +245,10 @@ class AsyncImagePipelineManager final {
 
   nsTArray<ImageCompositeNotificationInfo> mImageCompositeNotifications;
 
-  typedef std::vector<RefPtr<const wr::WebRenderPipelineInfo>>
-      PipelineInfoVector;
-
-  // PipelineInfo updates to be processed once a render has been submitted.
-  // This is only accessed on the render thread, so does not need a lock.
-  PipelineInfoVector mPendingUpdates;
   // PipelineInfo updates that have been submitted for rendering. This is
   // accessed on render and compositor threads, so requires a Lock.
-  std::vector<std::pair<wr::RenderedFrameId, PipelineInfoVector>>
+  std::vector<
+      std::pair<wr::RenderedFrameId, RefPtr<const wr::WebRenderPipelineInfo>>>
       mRenderSubmittedUpdates;
   Mutex mRenderSubmittedUpdatesLock;
 

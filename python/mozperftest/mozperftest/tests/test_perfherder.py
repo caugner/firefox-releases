@@ -64,6 +64,150 @@ def test_perfherder():
         assert "firstPaint" in subtest["name"]
 
 
+def test_perfherder_with_extra_options():
+    options = {
+        "perfherder": True,
+        "perfherder-stats": True,
+        "perfherder-prefix": "",
+        "perfherder-metrics": [
+            metric_fields("name:firstPaint,extraOptions:['option']"),
+            metric_fields("name:resource,extraOptions:['second-option']"),
+        ],
+    }
+
+    metrics, metadata, env = setup_env(options)
+
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
+
+    assert len(output["suites"]) == 1
+    assert sorted(output["suites"][0]["extraOptions"]) == sorted(
+        ["option", "second-option"]
+    )
+
+
+def test_perfherder_with_alerting():
+    options = {
+        "perfherder": True,
+        "perfherder-stats": True,
+        "perfherder-prefix": "",
+        "perfherder-metrics": [
+            metric_fields("name:firstPaint,extraOptions:['option']"),
+            metric_fields("name:resource,shouldAlert:True"),
+        ],
+    }
+
+    metrics, metadata, env = setup_env(options)
+
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
+
+    assert len(output["suites"]) == 1
+    assert sorted(output["suites"][0]["extraOptions"]) == sorted(["option"])
+    assert all(
+        [
+            subtest["shouldAlert"]
+            for subtest in output["suites"][0]["subtests"]
+            if "resource" in subtest["name"]
+        ]
+    )
+    assert not all(
+        [
+            subtest["shouldAlert"]
+            for subtest in output["suites"][0]["subtests"]
+            if "firstPaint" in subtest["name"]
+        ]
+    )
+
+
+def test_perfherder_with_subunits():
+    options = {
+        "perfherder": True,
+        "perfherder-stats": True,
+        "perfherder-prefix": "",
+        "perfherder-metrics": [
+            metric_fields("name:firstPaint,extraOptions:['option']"),
+            metric_fields("name:resource,shouldAlert:True,unit:a-unit"),
+        ],
+    }
+
+    metrics, metadata, env = setup_env(options)
+
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
+
+    assert len(output["suites"]) == 1
+    assert all(
+        [
+            subtest["unit"] == "a-unit"
+            for subtest in output["suites"][0]["subtests"]
+            if "resource" in subtest["name"]
+        ]
+    )
+    assert all(
+        [
+            subtest["unit"] == "ms"
+            for subtest in output["suites"][0]["subtests"]
+            if "firstPaint" in subtest["name"]
+        ]
+    )
+
+
+def test_perfherder_with_supraunits():
+    options = {
+        "perfherder": True,
+        "perfherder-stats": True,
+        "perfherder-prefix": "",
+        "perfherder-metrics": [
+            metric_fields("name:browsertime,unit:new-unit"),
+            metric_fields("name:firstPaint,extraOptions:['option']"),
+            metric_fields("name:resource,shouldAlert:True,unit:a-unit"),
+        ],
+    }
+
+    metrics, metadata, env = setup_env(options)
+
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
+
+    assert len(output["suites"]) == 1
+    assert output["suites"][0]["unit"] == "new-unit"
+    assert all(
+        [
+            subtest["unit"] == "a-unit"
+            for subtest in output["suites"][0]["subtests"]
+            if "resource" in subtest["name"]
+        ]
+    )
+    assert all(
+        [
+            subtest["unit"] == "new-unit"
+            for subtest in output["suites"][0]["subtests"]
+            if "firstPaint" in subtest["name"]
+        ]
+    )
+
+
 def test_perfherder_logcat():
     options = {
         "perfherder": True,
@@ -196,7 +340,8 @@ def test_perfherder_exlude_stats():
     assert len(output["suites"][0]["subtests"]) == 1
     assert output["suites"][0]["value"] > 0
 
-    # Check if only one firstPaint metric was obtained
+    # Check if only firstPaint metric was obtained with 2 replicates
+    assert len(output["suites"][0]["subtests"][0]["replicates"]) == 2
     assert (
         "browserScripts.timings.firstPaint"
         == output["suites"][0]["subtests"][0]["name"]
@@ -224,6 +369,41 @@ def test_perfherder_app_name():
     # Make sure that application setting is correct
     assert output["application"]["name"] == "fenix"
     assert "version" not in output["application"]
+
+
+def test_perfherder_split_by():
+    options = {
+        "perfherder": True,
+        "perfherder-prefix": "",
+        "perfherder-app": "fenix",
+        "perfherder-metrics": [metric_fields("firstPaint")],
+        "perfherder-split-by": "browserScripts.pageinfo.url",
+    }
+
+    metrics, metadata, env = setup_env(options)
+
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
+
+    # Sanity check
+    assert len(output["suites"]) == 1
+
+    # We should have 2 subtests (1 per URL)
+    assert len(output["suites"][0]["subtests"]) == 2
+
+    # Check to make sure that they were properly split
+    names = [subtest["name"] for subtest in output["suites"][0]["subtests"]]
+    assert sorted(names) == [
+        "browserScripts.timings.firstPaint https://www.mozilla.org/en-US/",
+        "browserScripts.timings.firstPaint https://www.sitespeed.io/",
+    ]
+    for i in range(2):
+        assert len(output["suites"][0]["subtests"][i]["replicates"]) == 1
 
 
 def test_perfherder_bad_app_name():

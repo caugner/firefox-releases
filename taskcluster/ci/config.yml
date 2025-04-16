@@ -61,6 +61,7 @@ treeherder:
         'R': 'Reftests'
         'R-1proc': 'Reftests without e10s'
         'R-fis': 'Reftests with fission enabled'
+        'R-swr': 'Reftests with software webrender enabled'
         'Rap': 'Raptor performance tests on Firefox'
         'Rap-1proc': 'Raptor performance tests on Firefox without e10s'
         'Rap-fis': 'Raptor performance tests on Firefox with fission enabled'
@@ -159,6 +160,7 @@ treeherder:
         'doc': 'Documentation'
         'GhS': 'GitHub Synchronization'
         'perftest': 'Performance tests'
+        'perftest-http3': 'Performance tests with HTTP/3'
 
 index:
     products:
@@ -212,15 +214,23 @@ release-promotion:
             product: firefox
             target-tasks-method: promote_desktop
             partial-updates: true
-        promote_firefox_partners:
+        promote_firefox_partner_repack:
             product: firefox
             rebuild-kinds:
                 - release-partner-repack
-                - release-partner-beetmover
                 - release-partner-repack-chunking-dummy
-                - release-partner-repackage-signing
-                - release-partner-repackage
-                - release-partner-signing
+                - release-partner-repack-signing
+                - release-partner-repack-notarization-part-1
+                - release-partner-repack-notarization-poller
+                - release-partner-repack-repackage
+                - release-partner-repack-repackage-signing
+                - release-partner-repack-beetmover
+            target-tasks-method: promote_desktop
+        promote_firefox_partner_attribution:
+            product: firefox
+            rebuild-kinds:
+                - release-partner-attribution
+                - release-partner-attribution-beetmover
             target-tasks-method: promote_desktop
         promote_firefox_rc:
             product: firefox
@@ -324,24 +334,6 @@ merge-automation:
             base-tag: "FIREFOX_ESR_{major_version}_BASE"
             from-repo: 'https://hg.mozilla.org/releases/mozilla-release'
             from-branch: 'release'
-            to-repo: 'https://hg.mozilla.org/releases/mozilla-esr68'
-            to-branch: 'esr68'
-        release-to-esr78:
-            fetch-version-from: "browser/config/version.txt"
-            version-files:
-                - filename: "browser/config/version_display.txt"
-                  new-suffix: 'esr'
-            replacements:
-                - - "build/mozconfig.common"
-                  - "# Enable enforcing that add-ons are signed by the trusted root"
-                  - "# Disable enforcing that add-ons are signed by the trusted root"
-                - - build/mozconfig.common
-                  - 'MOZ_REQUIRE_SIGNING=${MOZ_REQUIRE_SIGNING-1}'
-                  - 'MOZ_REQUIRE_SIGNING=${MOZ_REQUIRE_SIGNING-0}'
-            merge-old-head: false
-            base-tag: "FIREFOX_ESR_{major_version}_BASE"
-            from-repo: 'https://hg.mozilla.org/releases/mozilla-release'
-            from-branch: 'release'
             to-repo: 'https://hg.mozilla.org/releases/mozilla-esr78'
             to-branch: 'esr78'
         bump-central:
@@ -425,6 +417,16 @@ partner-urls:
                         by-release-level:
                             production: 'git@github.com:mozilla-partners/esr-repack-manifests.git'
                             staging: 'git@github.com:moz-releng-automation-stage/esr-repack-manifests.git'
+    release-partner-attribution:
+        by-release-product:
+            default: null
+            firefox:
+                by-release-type:
+                    default: null
+                    beta|release.*:
+                        by-release-level:
+                            production: 'git@github.com:mozilla-partners/repack-manifests.git'
+                            staging: 'git@github.com:moz-releng-automation-stage/repack-manifests.git'
     release-eme-free-repack:
         by-release-product:
             default: null
@@ -536,11 +538,6 @@ workers:
             implementation: treescript
             os: scriptworker
             worker-type: '{trust-domain}-1-tree-dev'
-        t-ap.*:
-            provisioner: proj-autophone
-            implementation: script-engine-autophone
-            os: linux
-            worker-type: 'gecko-{alias}'
         t-bitbar-gw.*:
             provisioner: proj-autophone
             implementation: generic-worker
@@ -600,7 +597,7 @@ workers:
             implementation: generic-worker
             os: windows
             worker-type: '{alias}'
-        t-win10-64(-hw|-ref-hw):
+        t-win10-64(-hw|-ref-hw|-1803-hw):
             provisioner: releng-hardware
             implementation: generic-worker
             os: windows

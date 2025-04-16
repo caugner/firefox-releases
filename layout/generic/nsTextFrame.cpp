@@ -8618,13 +8618,14 @@ void nsTextFrame::AddInlinePrefISize(gfxContext* aRenderingContext,
 }
 
 /* virtual */
-LogicalSize nsTextFrame::ComputeSize(
+nsIFrame::SizeComputationResult nsTextFrame::ComputeSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
     const LogicalSize& aBorder, const LogicalSize& aPadding,
     ComputeSizeFlags aFlags) {
   // Inlines and text don't compute size before reflow.
-  return LogicalSize(aWM, NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
+  return {LogicalSize(aWM, NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE),
+          AspectRatioUsage::None};
 }
 
 static nsRect RoundOut(const gfxRect& aRect) {
@@ -10023,6 +10024,15 @@ void nsTextFrame::List(FILE* out, const char* aPrefix, ListFlags aFlags) const {
     str += " SELECTED";
   }
   fprintf_stderr(out, "%s\n", str.get());
+}
+
+void nsTextFrame::ListTextRuns(FILE* out,
+                               nsTHashtable<nsVoidPtrHashKey>& aSeen) const {
+  if (!mTextRun || aSeen.Contains(mTextRun)) {
+    return;
+  }
+  aSeen.PutEntry(mTextRun);
+  mTextRun->Dump(out);
 }
 #endif
 

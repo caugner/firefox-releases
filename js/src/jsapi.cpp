@@ -56,6 +56,7 @@
 #include "js/ContextOptions.h"  // JS::ContextOptions{,Ref}
 #include "js/Conversions.h"
 #include "js/Date.h"
+#include "js/friend/StackLimits.h"  // js::CheckSystemRecursionLimit
 #include "js/Initialization.h"
 #include "js/JSON.h"
 #include "js/LocaleSensitive.h"
@@ -555,30 +556,23 @@ JS_PUBLIC_API void JS::LeaveRealm(JSContext* cx, JS::Realm* oldRealm) {
   cx->leaveRealm(oldRealm);
 }
 
-JSAutoRealm::JSAutoRealm(
-    JSContext* cx, JSObject* target MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
+JSAutoRealm::JSAutoRealm(JSContext* cx, JSObject* target)
     : cx_(cx), oldRealm_(cx->realm()) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
   MOZ_DIAGNOSTIC_ASSERT(!js::IsCrossCompartmentWrapper(target));
   AssertHeapIsIdleOrIterating();
   cx_->enterRealmOf(target);
 }
 
-JSAutoRealm::JSAutoRealm(
-    JSContext* cx, JSScript* target MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
+JSAutoRealm::JSAutoRealm(JSContext* cx, JSScript* target)
     : cx_(cx), oldRealm_(cx->realm()) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
   AssertHeapIsIdleOrIterating();
   cx_->enterRealmOf(target);
 }
 
 JSAutoRealm::~JSAutoRealm() { cx_->leaveRealm(oldRealm_); }
 
-JSAutoNullableRealm::JSAutoNullableRealm(
-    JSContext* cx,
-    JSObject* targetOrNull MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
+JSAutoNullableRealm::JSAutoNullableRealm(JSContext* cx, JSObject* targetOrNull)
     : cx_(cx), oldRealm_(cx->realm()) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
   AssertHeapIsIdleOrIterating();
   if (targetOrNull) {
     MOZ_DIAGNOSTIC_ASSERT(!js::IsCrossCompartmentWrapper(targetOrNull));
@@ -3471,6 +3465,7 @@ void JS::TransitiveCompileOptions::copyPODTransitiveOptions(
   hideScriptFromDebugger = rhs.hideScriptFromDebugger;
   nonSyntacticScope = rhs.nonSyntacticScope;
   privateClassFields = rhs.privateClassFields;
+  privateClassMethods = rhs.privateClassMethods;
 };
 
 void JS::ReadOnlyCompileOptions::copyPODNonTransitiveOptions(
@@ -3562,8 +3557,8 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
   }
   throwOnAsmJSValidationFailureOption =
       cx->options().throwOnAsmJSValidationFailure();
-  privateClassFields =
-      cx->realm()->creationOptions().getPrivateClassFieldsEnabled();
+  privateClassFields = cx->options().privateClassFields();
+  privateClassMethods = cx->options().privateClassMethods();
 
   sourcePragmas_ = cx->options().sourcePragmas();
 

@@ -132,7 +132,11 @@ add_task(async function topSitesShown() {
   }
 });
 
-add_task(async function selectSearchTopSite() {
+// This subtest can be removed when update2 is on by default.
+add_task(async function selectSearchTopSite_legacy() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.update2", false]],
+  });
   await updateTopSites(
     sites => sites && sites[0] && sites[0].searchTopSite,
     true
@@ -172,6 +176,54 @@ add_task(async function selectSearchTopSite() {
   await UrlbarTestUtils.promisePopupClose(window, () => {
     gURLBar.blur();
   });
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function selectSearchTopSite() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.update2", true]],
+  });
+  await updateTopSites(
+    sites => sites && sites[0] && sites[0].searchTopSite,
+    true
+  );
+  await UrlbarTestUtils.promisePopupOpen(window, () => {
+    if (gURLBar.getAttribute("pageproxystate") == "invalid") {
+      gURLBar.handleRevert();
+    }
+    EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
+  });
+  await UrlbarTestUtils.promiseSearchComplete(window);
+
+  let amazonSearch = await UrlbarTestUtils.waitForAutocompleteResultAt(
+    window,
+    0
+  );
+
+  Assert.equal(
+    amazonSearch.result.type,
+    UrlbarUtils.RESULT_TYPE.SEARCH,
+    "First result should have SEARCH type."
+  );
+
+  Assert.equal(
+    amazonSearch.result.payload.keyword,
+    "@amazon",
+    "First result should have the Amazon keyword."
+  );
+
+  let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
+  EventUtils.synthesizeMouseAtCenter(amazonSearch, {});
+  await searchPromise;
+  await UrlbarTestUtils.assertSearchMode(window, {
+    engineName: amazonSearch.result.payload.engine,
+  });
+  await UrlbarTestUtils.exitSearchMode(window, { backspace: true });
+
+  await UrlbarTestUtils.promisePopupClose(window, () => {
+    gURLBar.blur();
+  });
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async function topSitesBookmarksAndTabs() {

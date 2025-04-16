@@ -53,7 +53,7 @@ nsresult SVGGeometryElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
 }
 
 bool SVGGeometryElement::IsNodeOfType(uint32_t aFlags) const {
-  return !(aFlags & ~eSHAPE);
+  return !(aFlags & ~(eSHAPE | eUSE_TARGET));
 }
 
 bool SVGGeometryElement::AttributeDefinesGeometry(const nsAtom* aName) {
@@ -230,7 +230,7 @@ already_AddRefed<nsISVGPoint> SVGGeometryElement::GetPointAtLength(
     float distance, ErrorResult& rv) {
   RefPtr<Path> path = GetOrBuildPathForMeasuring();
   if (!path) {
-    rv.Throw(NS_ERROR_FAILURE);
+    rv.ThrowInvalidStateError("No path available for measuring");
     return nullptr;
   }
 

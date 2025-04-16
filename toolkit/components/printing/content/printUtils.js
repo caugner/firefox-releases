@@ -65,9 +65,24 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "PRINT_ALWAYS_SILENT",
+  "print.always_print_silent",
+  false
+);
+
+ChromeUtils.defineModuleGetter(
+  this,
+  "PromptUtils",
+  "resource://gre/modules/SharedPromptUtils.jsm"
+);
+
 var gFocusedElement = null;
 
 var PrintUtils = {
+  SAVE_TO_PDF_PRINTER: "Mozilla Save to PDF",
+
   init() {
     window.messageManager.addMessageListener("Printing:Error", this);
   },
@@ -113,21 +128,68 @@ var PrintUtils = {
     return null;
   },
 
+  getPreviewBrowser(sourceBrowser) {
+    let dialogBox = gBrowser.getTabDialogBox(sourceBrowser);
+    for (let dialog of dialogBox._dialogManager._dialogs) {
+      let browser = dialog._box.querySelector(".printPreviewBrowser");
+      if (browser) {
+        return browser;
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Updates the hidden state of the "Print preview" and "Page Setup"
+   * menu items in the file menu depending on the print tab modal pref.
+   * The print preview menu item is not available on mac.
+   */
+  updatePrintPreviewMenuHiddenState() {
+    let printPreviewMenuItem = document.getElementById("menu_printPreview");
+    if (printPreviewMenuItem) {
+      printPreviewMenuItem.hidden = PRINT_TAB_MODAL;
+    }
+    let pageSetupMenuItem = document.getElementById("menu_printSetup");
+    if (pageSetupMenuItem) {
+      pageSetupMenuItem.hidden = PRINT_TAB_MODAL;
+    }
+  },
+
   /**
    * Opens the tab modal version of the print UI for the current tab.
    *
    * @param aBrowsingContext
    *        The BrowsingContext of the window to print.
+   * @param aExistingPreviewBrowser
+   *        An existing browser created for printing from window.print().
+   * @return promise resolving when the dialog is open, rejected if the preview
+   *         fails.
    */
-  _openTabModalPrint(aBrowsingContext) {
-    let printPath = "chrome://global/content/print.html";
-    gBrowser.loadOneTab(
-      `${printPath}?browsingContextId=${aBrowsingContext.id}`,
-      {
-        inBackground: false,
-        relatedToCurrent: true,
-        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+  async _openTabModalPrint(aBrowsingContext, aExistingPreviewBrowser) {
+    let sourceBrowser = aBrowsingContext.top.embedderElement;
+    let previewBrowser = this.getPreviewBrowser(sourceBrowser);
+    if (previewBrowser) {
+      // Don't open another dialog if we're already printing.
+      //
+      // XXX This can be racy can't it? getPreviewBrowser looks at browser that
+      // we set up after opening the dialog. But I guess worst case we just
+      // open two dialogs so...
+      if (aExistingPreviewBrowser) {
+        aExistingPreviewBrowser.remove();
       }
+      return Promise.reject();
+    }
+
+    // Create a preview browser.
+    let args = PromptUtils.objectToPropBag({
+      previewBrowser: aExistingPreviewBrowser,
+    });
+    let dialogBox = gBrowser.getTabDialogBox(sourceBrowser);
+    return dialogBox.open(
+      `chrome://global/content/print.html?browsingContextId=${aBrowsingContext.id}`,
+      "resizable=no",
+      args,
+      { sizeTo: "available" }
     );
   },
 
@@ -137,13 +199,53 @@ var PrintUtils = {
    *
    * @param aBrowsingContext
    *        The BrowsingContext of the window to print.
+   *        Note that the browsing context could belong to a subframe of the
+   *        tab that called window.print, or similar shenanigans.
+   * @param aOpenWindowInfo
+   *        Non-null if this call comes from window.print(). This is the
+   *        nsIOpenWindowInfo object that has to be passed down to
+   *        createBrowser in order for the child process to clone into it.
    */
-  startPrintWindow(aBrowsingContext) {
-    if (PRINT_TAB_MODAL) {
-      this._openTabModalPrint(aBrowsingContext);
-    } else {
-      this.printWindow(aBrowsingContext);
+  startPrintWindow(aBrowsingContext, aOpenWindowInfo) {
+    let browser = null;
+    if (aOpenWindowInfo) {
+      browser = gBrowser.createBrowser({
+        remoteType: aBrowsingContext.currentRemoteType,
+        openWindowInfo: aOpenWindowInfo,
+        skipLoad: false,
+      });
+      // When the print process finishes, we get closed by
+      // nsDocumentViewer::OnDonePrinting, or by the print preview code.
+      //
+      // When that happens, we should remove us from the DOM if connected.
+      browser.addEventListener("DOMWindowClose", function(e) {
+        if (browser.isConnected) {
+          browser.remove();
+        }
+        e.stopPropagation();
+        e.preventDefault();
+      });
+      browser.style.visibility = "collapse";
+      document.documentElement.appendChild(browser);
     }
+
+    if (
+      PRINT_TAB_MODAL &&
+      !PRINT_ALWAYS_SILENT &&
+      (!aOpenWindowInfo || aOpenWindowInfo.isForPrintPreview)
+    ) {
+      this._openTabModalPrint(aBrowsingContext, browser).catch(() => {});
+      return browser;
+    }
+
+    if (browser) {
+      // Legacy print dialog or silent printing, the content process will print
+      // in this <browser>.
+      return browser;
+    }
+
+    this.printWindow(aBrowsingContext, null);
+    return null;
   },
 
   /**
@@ -184,7 +286,7 @@ var PrintUtils = {
 
     // At some point we should handle the Promise that this returns (report
     // rejection to telemetry?)
-    topBrowser.print(windowID, printSettings);
+    let promise = topBrowser.print(windowID, printSettings);
 
     if (printPreviewIsOpen) {
       if (this._shouldSimplify) {
@@ -195,6 +297,8 @@ var PrintUtils = {
     } else {
       this._logKeyedTelemetry("PRINT_COUNT", "WITHOUT_PREVIEW");
     }
+
+    return promise;
   },
 
   /**
@@ -238,8 +342,7 @@ var PrintUtils = {
    */
   printPreview(aListenerObj) {
     if (PRINT_TAB_MODAL) {
-      this._openTabModalPrint(aListenerObj.getSourceBrowser().browsingContext);
-      return;
+      return this._openTabModalPrint(gBrowser.selectedBrowser.browsingContext);
     }
 
     // If we already have a toolbar someone is calling printPreview() to get us
@@ -285,6 +388,11 @@ var PrintUtils = {
     let PPROMPTSVC = Cc[
       "@mozilla.org/embedcomp/printingprompt-service;1"
     ].getService(Ci.nsIPrintingPromptService);
+
+    let promise = new Promise((resolve, reject) => {
+      this._onEntered.push({ resolve, reject });
+    });
+
     // just in case we are already printing,
     // an error code could be returned if the Progress Dialog is already displayed
     try {
@@ -310,6 +418,7 @@ var PrintUtils = {
     } catch (e) {
       this._enterPrintPreview();
     }
+    return promise;
   },
 
   // "private" methods and members. Don't use them.
@@ -447,32 +556,49 @@ var PrintUtils = {
     return undefined;
   },
 
-  _setPrinterDefaultsForSelectedPrinter(aPSSVC, aPrintSettings) {
+  _setPrinterDefaultsForSelectedPrinter(
+    aPSSVC,
+    aPrintSettings,
+    defaultsOnly = false
+  ) {
     if (!aPrintSettings.printerName) {
       aPrintSettings.printerName = aPSSVC.lastUsedPrinterName;
     }
 
-    // First get any defaults from the printer
-    aPSSVC.initPrintSettingsFromPrinter(
-      aPrintSettings.printerName,
-      aPrintSettings
-    );
-    // now augment them with any values from last time
-    aPSSVC.initPrintSettingsFromPrefs(
-      aPrintSettings,
-      true,
-      aPrintSettings.kInitSaveAll
-    );
+    // First get any defaults from the printer. We want to skip this for Save to
+    // PDF since it isn't a real printer and will throw.
+    if (aPrintSettings.printerName != this.SAVE_TO_PDF_PRINTER) {
+      aPSSVC.initPrintSettingsFromPrinter(
+        aPrintSettings.printerName,
+        aPrintSettings
+      );
+    }
+
+    if (!defaultsOnly) {
+      // now augment them with any values from last time
+      aPSSVC.initPrintSettingsFromPrefs(
+        aPrintSettings,
+        true,
+        aPrintSettings.kInitSaveAll
+      );
+    }
   },
 
-  getPrintSettings() {
+  getPrintSettings(aPrinterName, defaultsOnly) {
     var printSettings;
     try {
       var PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
         Ci.nsIPrintSettingsService
       );
       printSettings = PSSVC.globalPrintSettings;
-      this._setPrinterDefaultsForSelectedPrinter(PSSVC, printSettings);
+      if (aPrinterName) {
+        printSettings.printerName = aPrinterName;
+      }
+      this._setPrinterDefaultsForSelectedPrinter(
+        PSSVC,
+        printSettings,
+        defaultsOnly
+      );
     } catch (e) {
       dump("getPrintSettings: " + e + "\n");
     }
@@ -506,6 +632,8 @@ var PrintUtils = {
   setSimplifiedMode(shouldSimplify) {
     this._shouldSimplify = shouldSimplify;
   },
+
+  _onEntered: [],
 
   /**
    * Currently, we create a new print preview browser to host the simplified
@@ -547,7 +675,7 @@ var PrintUtils = {
 
     let sendEnterPreviewMessage = function(browser, simplified) {
       mm.sendAsyncMessage("Printing:Preview:Enter", {
-        windowID: browser.outerWindowID,
+        browsingContextId: browser.browsingContext.id,
         simplifiedMode: simplified,
         changingBrowsers: changingPrintPreviewBrowsers,
         lastUsedPrinterName,
@@ -605,7 +733,14 @@ var PrintUtils = {
 
     let onEntered = message => {
       mm.removeMessageListener("Printing:Preview:Entered", onEntered);
-
+      for (let { resolve, reject } of this._onEntered) {
+        if (message.data.failed) {
+          reject();
+        } else {
+          resolve();
+        }
+      }
+      this._onEntered = [];
       if (message.data.failed) {
         // Something went wrong while putting the document into print preview
         // mode. Bail out.

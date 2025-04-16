@@ -63,14 +63,14 @@ Afterwards, you can run
 
 ::
 
-   $ python -m fuzzfetch -a --fuzzing --tests gtest -n firefox-fuzzing
+   $ python -m fuzzfetch -a --fuzzing --gtest -n firefox-fuzzing
 
 to fetch the latest optimized build. Alternatively, we offer non-ASan debug builds
 which you can download using
 
 ::
 
-   $ python -m fuzzfetch -d --fuzzing --tests gtest -n firefox-fuzzing
+   $ python -m fuzzfetch -d --fuzzing --gtest -n firefox-fuzzing
 
 In both commands, ``firefox-fuzzing`` indicates the name of the directory that
 will be created for the download.
@@ -161,7 +161,7 @@ non-determinism and loss of performance.
 
 If you are unsure if the fuzzing interface is the right approach for you or you
 require help in evaluating what could be done for your particular task, please
-don't hestitate to :ref:`contact us <Fuzzing#Contact Us>`.
+don't hestitate to :ref:`contact us <Fuzzing#contact-us>`.
 
 
 Develop the fuzzing code
@@ -309,7 +309,7 @@ reduce the amount of noise that libFuzzer sees.
 Build your code
 ^^^^^^^^^^^^^^^
 
-See the :ref:`Build instructions above <Build Requirements>` for instructions
+See the :ref:`Build instructions above <Local build requirements and flags>` for instructions
 how to modify your ``.mozconfig`` to create the appropriate build.
 
 

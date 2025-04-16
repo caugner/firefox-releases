@@ -395,6 +395,17 @@
   <label><html:h2 data-l10n-id="pane-privacy-logins-and-passwords-header" data-l10n-attrs="searchkeywords"/></label>
 
   <vbox id="passwordSettings">
+    <hbox id="passwordManagerExtensionContent"
+          class="extension-controlled"
+          align="center"
+          hidden="true">
+          <description control="disablePasswordManagerExtension"
+                       flex="1"/>
+          <button id="disablePasswordManagerExtension"
+                  class="extension-controlled-button accessory-button"
+                  data-l10n-id="disable-extension"
+                  hidden="true" />
+    </hbox>
     <hbox>
       <vbox flex="1">
         <hbox>
@@ -820,15 +831,6 @@
     </hbox>
   </hbox>
 
-  <vbox id="a11yPermissionsBox">
-    <hbox flex="1" align="center">
-      <checkbox id="a11yPrivacyCheckbox" class="tail-with-learn-more"
-                data-l10n-id="permissions-a11y-privacy-checkbox"/>
-      <label id="a11yLearnMoreLink" class="learnMore" is="text-link"
-             data-l10n-id="permissions-a11y-privacy-link"/>
-    </hbox>
-  </vbox>
-
 </groupbox>
 
 <!-- Firefox Data Collection and Use -->
@@ -1016,14 +1018,9 @@
 <!-- HTTPS-ONLY Mode -->
 <groupbox id="httpsOnlyBox" data-category="panePrivacy" hidden="true" hidehttpsonly="true">
   <label><html:h2 data-l10n-id="httpsonly-header"/></label>
-  <vbox data-subcategory="httpsonly">
-    <hbox align="start">
-      <image id="httpsOnlyShield"/>
-      <vbox flex="1">
-        <label id="httpsOnlyDescription" data-l10n-id="httpsonly-description"/>
-        <label id="httpsOnlyLearnMore" data-l10n-id="httpsonly-learn-more" class="learnMore" is="text-link"/>
-      </vbox>
-    </hbox>
+  <vbox data-subcategory="httpsonly" flex="1">
+    <label id="httpsOnlyDescription" data-l10n-id="httpsonly-description"/>
+    <label id="httpsOnlyLearnMore" data-l10n-id="httpsonly-learn-more" class="learnMore" is="text-link"/>
   </vbox>
   <vbox>
     <!-- Please don't remove the wrapping hbox/vbox/box for these elements. It's used to properly compute the search tooltip position. -->

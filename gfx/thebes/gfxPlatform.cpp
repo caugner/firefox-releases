@@ -615,6 +615,7 @@ static void WebRenderDebugPrefChangeCallback(const char* aPrefName, void*) {
   GFX_WEBRENDER_DEBUG(".glyph-flashing", wr::DebugFlags::GLYPH_FLASHING)
   GFX_WEBRENDER_DEBUG(".disable-raster-root-scaling",
                       wr::DebugFlags::DISABLE_RASTER_ROOT_SCALING)
+  GFX_WEBRENDER_DEBUG(".capture-profiler", wr::DebugFlags::PROFILER_CAPTURE)
 #undef GFX_WEBRENDER_DEBUG
 
   gfx::gfxVars::SetWebRenderDebugFlags(flags.bits);
@@ -3138,10 +3139,10 @@ void gfxPlatform::GetCMSSupportInfo(mozilla::widget::InfoObject& aObj) {
     return;
   }
 
-  char* encodedProfile = nullptr;
+  nsString encodedProfile;
   nsresult rv =
-      Base64Encode(reinterpret_cast<char*>(outputProfileData.Elements()),
-                   outputProfileData.Length(), &encodedProfile);
+      Base64Encode(reinterpret_cast<const char*>(outputProfileData.Elements()),
+                   outputProfileData.Length(), encodedProfile);
   if (!NS_SUCCEEDED(rv)) {
     nsPrintfCString msg("base64 encode failed 0x%08x",
                         static_cast<uint32_t>(rv));
@@ -3150,7 +3151,6 @@ void gfxPlatform::GetCMSSupportInfo(mozilla::widget::InfoObject& aObj) {
   }
 
   aObj.DefineProperty("CMSOutputProfile", encodedProfile);
-  free(encodedProfile);
 }
 
 void gfxPlatform::GetDisplayInfo(mozilla::widget::InfoObject& aObj) {
@@ -3206,6 +3206,7 @@ uint32_t gfxPlatform::TargetFrameRate() {
 
 /* static */
 bool gfxPlatform::UseDesktopZoomingScrollbars() {
+  // bug 1657822 to enable this by default
   return StaticPrefs::apz_allow_zooming() &&
          !StaticPrefs::apz_force_disable_desktop_zooming_scrollbars();
 }

@@ -8,6 +8,7 @@ import os
 
 from mozunit import main
 
+from buildconfig import topsrcdir
 import mach
 from mach.test.common import TestBase
 
@@ -22,12 +23,16 @@ class TestCommands(TestBase):
         'mach-debug-commands',
     ]
 
-    def _run_mach(self, args, context_handler=None):
+    def _run_mach(self, args):
         mach_dir = os.path.dirname(mach.__file__)
         providers = [
             'commands.py',
             os.path.join(mach_dir, 'commands', 'commandinfo.py'),
         ]
+
+        def context_handler(key):
+            if key == 'topdir':
+                return topsrcdir
 
         return TestBase._run_mach(self, args, providers,
                                   context_handler=context_handler)
@@ -50,25 +55,6 @@ class TestCommands(TestBase):
         result, stdout, stderr = self._run_mach(['mach-completion', 'cmd_foo'])
         assert result == 0
         assert stdout == self.format(['help', '--arg'])
-
-    def test_print_command(self):
-        result, stdout, stderr = self._run_mach(['--print-command', 'cmd_foo', '-flag'])
-        assert result == 0
-        assert stdout == 'cmd_foo\n'
-
-        result, stdout, stderr = self._run_mach(['--print-command', '-v', 'cmd_foo', '-flag'])
-        assert result == 0
-        assert stdout == 'cmd_foo\n'
-
-        result, stdout, stderr = self._run_mach(
-            ['--print-command', 'mach-completion', 'mach', 'cmd_foo', '-flag'])
-        assert result == 0
-        assert stdout == 'cmd_foo\n'
-
-        result, stdout, stderr = self._run_mach(
-            ['--print-command', 'mach-completion', 'mach', '-v', 'cmd_foo', '-flag'])
-        assert result == 0
-        assert stdout == 'cmd_foo\n'
 
 
 if __name__ == '__main__':

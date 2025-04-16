@@ -20,6 +20,8 @@
 #include "gc/Marking.h"
 #include "gc/MaybeRooted.h"
 #include "gc/ZoneAllocator.h"
+#include "js/shadow/Object.h"  // JS::shadow::Object
+#include "js/shadow/Zone.h"    // JS::shadow::Zone
 #include "js/Value.h"
 #include "vm/JSObject.h"
 #include "vm/Shape.h"
@@ -200,9 +202,14 @@ class ObjectElements {
     // is created and never changed.
     SHARED_MEMORY = 0x8,
 
-    // These elements are set to integrity level "sealed". This flag should
-    // only be set on non-extensible objects.
-    SEALED = 0x10,
+    // These elements are not extensible. If this flag is set, the object's
+    // BaseShape must also have the NOT_EXTENSIBLE flag. This exists on
+    // ObjectElements in addition to BaseShape to simplify JIT code.
+    NOT_EXTENSIBLE = 0x10,
+
+    // These elements are set to integrity level "sealed". If this flag is
+    // set, the NOT_EXTENSIBLE flag must be set as well.
+    SEALED = 0x20,
 
     // These elements are set to integrity level "frozen". If this flag is
     // set, the SEALED flag must be set as well.
@@ -211,11 +218,17 @@ class ObjectElements {
     // The BaseShape flag ensures a shape guard can be used to guard against
     // frozen elements. The ObjectElements flag is convenient for JIT code and
     // ObjectElements assertions.
-    FROZEN = 0x20,
+    FROZEN = 0x40,
 
     // If this flag is not set, the elements are guaranteed to contain no hole
     // values (the JS_ELEMENTS_HOLE MagicValue) in [0, initializedLength).
-    NON_PACKED = 0x40,
+    NON_PACKED = 0x80,
+
+    // If this flag is not set, there's definitely no for-in iterator that
+    // covers these dense elements so elements can be deleted without calling
+    // SuppressDeletedProperty. This is used by fast paths for various Array
+    // builtins. See also NativeObject::denseElementsMaybeInIteration.
+    MAYBE_IN_ITERATION = 0x100,
   };
 
   // The flags word stores both the flags and the number of shifted elements.
@@ -289,8 +302,8 @@ class ObjectElements {
   void addShiftedElements(uint32_t count) {
     MOZ_ASSERT(count < capacity);
     MOZ_ASSERT(count < initializedLength);
-    MOZ_ASSERT(!(flags &
-                 (NONWRITABLE_ARRAY_LENGTH | SEALED | FROZEN | COPY_ON_WRITE)));
+    MOZ_ASSERT(!(flags & (NONWRITABLE_ARRAY_LENGTH | NOT_EXTENSIBLE | SEALED |
+                          FROZEN | COPY_ON_WRITE)));
     uint32_t numShifted = numShiftedElements() + count;
     MOZ_ASSERT(numShifted <= MaxShiftedElements);
     flags = (numShifted << NumShiftedElementsShift) | (flags & FlagsMask);
@@ -299,8 +312,8 @@ class ObjectElements {
   }
   void unshiftShiftedElements(uint32_t count) {
     MOZ_ASSERT(count > 0);
-    MOZ_ASSERT(!(flags &
-                 (NONWRITABLE_ARRAY_LENGTH | SEALED | FROZEN | COPY_ON_WRITE)));
+    MOZ_ASSERT(!(flags & (NONWRITABLE_ARRAY_LENGTH | NOT_EXTENSIBLE | SEALED |
+                          FROZEN | COPY_ON_WRITE)));
     uint32_t numShifted = numShiftedElements();
     MOZ_ASSERT(count <= numShifted);
     numShifted -= count;
@@ -315,13 +328,24 @@ class ObjectElements {
 
   void markNonPacked() { flags |= NON_PACKED; }
 
+  void markMaybeInIteration() { flags |= MAYBE_IN_ITERATION; }
+  bool maybeInIteration() { return flags & MAYBE_IN_ITERATION; }
+
+  void setNotExtensible() {
+    MOZ_ASSERT(!isNotExtensible());
+    flags |= NOT_EXTENSIBLE;
+  }
+  bool isNotExtensible() { return flags & NOT_EXTENSIBLE; }
+
   void seal() {
+    MOZ_ASSERT(isNotExtensible());
     MOZ_ASSERT(!isSealed());
     MOZ_ASSERT(!isFrozen());
     MOZ_ASSERT(!isCopyOnWrite());
     flags |= SEALED;
   }
   void freeze() {
+    MOZ_ASSERT(isNotExtensible());
     MOZ_ASSERT(isSealed());
     MOZ_ASSERT(!isFrozen());
     MOZ_ASSERT(!isCopyOnWrite());
@@ -381,7 +405,9 @@ class ObjectElements {
   static void ConvertElementsToDoubles(JSContext* cx, uintptr_t elements);
   static bool MakeElementsCopyOnWrite(JSContext* cx, NativeObject* obj);
 
-  static MOZ_MUST_USE bool PreventExtensions(JSContext* cx, NativeObject* obj);
+  static MOZ_MUST_USE bool PrepareForPreventExtensions(JSContext* cx,
+                                                       NativeObject* obj);
+  static void PreventExtensions(NativeObject* obj);
   static MOZ_MUST_USE bool FreezeOrSeal(JSContext* cx, HandleNativeObject obj,
                                         IntegrityLevel level);
 
@@ -401,8 +427,9 @@ class ObjectElements {
 
   uint32_t numShiftedElements() const {
     uint32_t numShifted = flags >> NumShiftedElementsShift;
-    MOZ_ASSERT_IF(numShifted > 0, !(flags & (NONWRITABLE_ARRAY_LENGTH | SEALED |
-                                             FROZEN | COPY_ON_WRITE)));
+    MOZ_ASSERT_IF(numShifted > 0,
+                  !(flags & (NONWRITABLE_ARRAY_LENGTH | NOT_EXTENSIBLE |
+                             SEALED | FROZEN | COPY_ON_WRITE)));
     return numShifted;
   }
 
@@ -487,18 +514,18 @@ class NativeObject : public JSObject {
   static void staticAsserts() {
     static_assert(sizeof(NativeObject) == sizeof(JSObject_Slots0),
                   "native object size must match GC thing size");
-    static_assert(sizeof(NativeObject) == sizeof(shadow::Object),
+    static_assert(sizeof(NativeObject) == sizeof(JS::shadow::Object),
                   "shadow interface must match actual implementation");
     static_assert(sizeof(NativeObject) % sizeof(Value) == 0,
                   "fixed slots after an object must be aligned");
 
-    static_assert(offsetOfGroup() == offsetof(shadow::Object, group),
+    static_assert(offsetOfGroup() == offsetof(JS::shadow::Object, group),
                   "shadow type must match actual type");
     static_assert(
-        offsetof(NativeObject, slots_) == offsetof(shadow::Object, slots),
+        offsetof(NativeObject, slots_) == offsetof(JS::shadow::Object, slots),
         "shadow slots must match actual slots");
     static_assert(
-        offsetof(NativeObject, elements_) == offsetof(shadow::Object, _1),
+        offsetof(NativeObject, elements_) == offsetof(JS::shadow::Object, _1),
         "shadow placeholder must match actual elements");
 
     static_assert(MAX_FIXED_SLOTS <= Shape::FIXED_SLOTS_MAX,
@@ -731,7 +758,7 @@ class NativeObject : public JSObject {
   }
 
   uint32_t numFixedSlots() const {
-    return reinterpret_cast<const shadow::Object*>(this)->numFixedSlots();
+    return reinterpret_cast<const JS::shadow::Object*>(this)->numFixedSlots();
   }
 
   // Get the number of fixed slots when the shape pointer may have been
@@ -739,6 +766,10 @@ class NativeObject : public JSObject {
   // numFixedSlots() in a trace hook if you access an object that is not the
   // object being traced, since it may have a stale shape pointer.
   inline uint32_t numFixedSlotsMaybeForwarded() const;
+
+  // Get the private when the ObjectGroup pointer may have been forwarded by a
+  // moving GC.
+  inline void* getPrivateMaybeForwarded() const;
 
   uint32_t numUsedFixedSlots() const {
     uint32_t nslots = lastProperty()->slotSpan(getClass());
@@ -1037,7 +1068,8 @@ class NativeObject : public JSObject {
 
   // MAX_FIXED_SLOTS is the biggest number of fixed slots our GC
   // size classes will give an object.
-  static constexpr uint32_t MAX_FIXED_SLOTS = shadow::Object::MAX_FIXED_SLOTS;
+  static constexpr uint32_t MAX_FIXED_SLOTS =
+      JS::shadow::Object::MAX_FIXED_SLOTS;
 
  protected:
   MOZ_ALWAYS_INLINE bool updateSlotsForSpan(JSContext* cx, size_t oldSpan,
@@ -1305,8 +1337,6 @@ class NativeObject : public JSObject {
                                 uint32_t srcStart, uint32_t count);
   inline void moveDenseElements(uint32_t dstStart, uint32_t srcStart,
                                 uint32_t count);
-  inline void moveDenseElementsNoPreBarrier(uint32_t dstStart,
-                                            uint32_t srcStart, uint32_t count);
   inline void reverseDenseElementsNoPreBarrier(uint32_t length);
 
   inline DenseElementResult setOrExtendDenseElements(
@@ -1334,6 +1364,25 @@ class NativeObject : public JSObject {
   bool denseElementsArePacked() const {
     return getElementsHeader()->isPacked();
   }
+
+  MOZ_MUST_USE bool markDenseElementsMaybeInIteration(JSContext* cx) {
+    if (!maybeCopyElementsForWrite(cx)) {
+      return false;
+    }
+    getElementsHeader()->markMaybeInIteration();
+    return true;
+  }
+
+  // Return whether the object's dense elements might be in the midst of for-in
+  // iteration. We rely on this to be able to safely delete or move dense array
+  // elements without worrying about updating in-progress iterators.
+  // See bug 690622.
+  //
+  // Note that it's fine to return false if this object is on the prototype of
+  // another object: SuppressDeletedProperty only suppresses properties deleted
+  // from the iterated object itself.
+  inline bool denseElementsHaveMaybeInIterationFlag();
+  inline bool denseElementsMaybeInIteration();
 
   // Ensures that the object can hold at least index + extra elements. This
   // returns DenseElement_Success on success, DenseElement_Failed on failure

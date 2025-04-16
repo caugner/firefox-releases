@@ -72,6 +72,10 @@ interface nsIBrowserDOMWindow : nsISupports
    * found, revert to OPEN_NEWTAB behavior.
    */
   const short OPEN_SWITCHTAB     = 4;
+  /**
+   * Open in a hidden browser. Used for printing.
+   */
+  const short OPEN_PRINT_BROWSER = 4;
 
   /**
    * Values for createContentWindow's and openURI's aFlags parameter.
@@ -140,7 +144,6 @@ interface nsIBrowserDOMWindow : nsISupports
 
   /**
    * Load a URI.
-
    * @param aURI the URI to open. null is not allowed. To create the window
    *        without loading the URI, use createContentWindow instead.
    * @param aWhere see possible values described above.

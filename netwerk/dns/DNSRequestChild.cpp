@@ -36,10 +36,11 @@ void DNSRequestBase::SetIPCActor(DNSRequestActor* aActor) {
 // A simple class to provide nsIDNSRecord on the child
 //-----------------------------------------------------------------------------
 
-class ChildDNSRecord : public nsIDNSRecord {
+class ChildDNSRecord : public nsIDNSAddrRecord {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIDNSRECORD
+  NS_DECL_NSIDNSADDRRECORD
 
   ChildDNSRecord(const DNSRecord& reply, uint16_t flags);
 
@@ -55,7 +56,7 @@ class ChildDNSRecord : public nsIDNSRecord {
   bool mIsTRR;
 };
 
-NS_IMPL_ISUPPORTS(ChildDNSRecord, nsIDNSRecord)
+NS_IMPL_ISUPPORTS(ChildDNSRecord, nsIDNSRecord, nsIDNSAddrRecord)
 
 ChildDNSRecord::ChildDNSRecord(const DNSRecord& reply, uint16_t flags)
     : mCurrent(0), mFlags(flags) {
@@ -70,7 +71,7 @@ ChildDNSRecord::ChildDNSRecord(const DNSRecord& reply, uint16_t flags)
 }
 
 //-----------------------------------------------------------------------------
-// ChildDNSRecord::nsIDNSRecord
+// ChildDNSRecord::nsIDNSAddrRecord
 //-----------------------------------------------------------------------------
 
 NS_IMETHODIMP
@@ -173,15 +174,17 @@ ChildDNSRecord::ReportUnusable(uint16_t aPort) {
 
 class ChildDNSByTypeRecord : public nsIDNSByTypeRecord,
                              public nsIDNSTXTRecord,
-                             public nsIDNSHTTPSSVCRecord {
+                             public nsIDNSHTTPSSVCRecord,
+                             public DNSHTTPSSVCRecordBase {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
-  NS_FORWARD_SAFE_NSIDNSRECORD(((nsIDNSRecord*)nullptr))
+  NS_DECL_NSIDNSRECORD
   NS_DECL_NSIDNSBYTYPERECORD
   NS_DECL_NSIDNSTXTRECORD
   NS_DECL_NSIDNSHTTPSSVCRECORD
 
-  explicit ChildDNSByTypeRecord(const TypeRecordResultType& reply);
+  explicit ChildDNSByTypeRecord(const TypeRecordResultType& reply,
+                                const nsACString& aHost);
 
  private:
   virtual ~ChildDNSByTypeRecord() = default;
@@ -192,7 +195,9 @@ class ChildDNSByTypeRecord : public nsIDNSByTypeRecord,
 NS_IMPL_ISUPPORTS(ChildDNSByTypeRecord, nsIDNSByTypeRecord, nsIDNSRecord,
                   nsIDNSTXTRecord, nsIDNSHTTPSSVCRecord)
 
-ChildDNSByTypeRecord::ChildDNSByTypeRecord(const TypeRecordResultType& reply) {
+ChildDNSByTypeRecord::ChildDNSByTypeRecord(const TypeRecordResultType& reply,
+                                           const nsACString& aHost)
+    : DNSHTTPSSVCRecordBase(aHost) {
   mResults = reply;
 }
 
@@ -242,6 +247,24 @@ ChildDNSByTypeRecord::GetRecords(nsTArray<RefPtr<nsISVCBRecord>>& aRecords) {
     RefPtr<nsISVCBRecord> rec = new SVCBRecord(r);
     aRecords.AppendElement(rec);
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+ChildDNSByTypeRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
+                                           nsISVCBRecord** aRecord) {
+  if (!mResults.is<TypeRecordHTTPSSVC>()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  auto& results = mResults.as<TypeRecordHTTPSSVC>();
+  nsCOMPtr<nsISVCBRecord> result =
+      GetServiceModeRecordInternal(aNoHttp2, aNoHttp3, results);
+  if (!result) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  result.forget(aRecord);
   return NS_OK;
 }
 
@@ -382,7 +405,8 @@ bool DNSRequestSender::OnRecvLookupCompleted(const DNSRequestResponse& reply) {
     }
     case DNSRequestResponse::TIPCTypeRecord: {
       MOZ_ASSERT(mType != nsIDNSService::RESOLVE_TYPE_DEFAULT);
-      mResultRecord = new ChildDNSByTypeRecord(reply.get_IPCTypeRecord().mData);
+      mResultRecord =
+          new ChildDNSByTypeRecord(reply.get_IPCTypeRecord().mData, mHost);
       break;
     }
     default:

@@ -211,6 +211,10 @@ JSScript* frontend::CompileGlobalScript(CompilationInfo& compilationInfo,
     auto script =
         Smoosh::compileGlobalScript(compilationInfo, srcBuf, &unimplemented);
     if (!unimplemented) {
+      if (!compilationInfo.assignSource(srcBuf)) {
+        return nullptr;
+      }
+
       if (compilationInfo.cx->options().trackNotImplemented()) {
         rt->parserWatcherFile.put("1");
       }
@@ -496,10 +500,6 @@ JSScript* frontend::ScriptCompiler<Unit>::compileScript(
     MOZ_ASSERT(compilationInfo.script);
   }
 
-  // We have just finished parsing the source. Inform the source so that we
-  // can compute statistics (e.g. how much time our functions remain lazy).
-  compilationInfo.source()->recordParseEnded();
-
   // Enqueue an off-thread source compression task after finishing parsing.
   if (!compilationInfo.cx->isHelperThreadContext()) {
     if (!compilationInfo.source()->tryCompressOffThread(cx)) {
@@ -524,8 +524,8 @@ ModuleObject* frontend::ModuleCompiler<Unit>::compile(
   StencilModuleMetadata& moduleMetadata = compilationInfo.moduleMetadata.get();
 
   uint32_t len = this->sourceBuffer_.length();
-  SourceExtent extent =
-      SourceExtent::makeGlobalExtent(len, compilationInfo.options);
+  SourceExtent extent = SourceExtent::makeGlobalExtent(
+      len, compilationInfo.options.lineno, compilationInfo.options.column);
   ModuleSharedContext modulesc(cx, compilationInfo, builder, extent);
 
   ParseNode* pn = parser->moduleBody(&modulesc);
@@ -768,25 +768,6 @@ static bool CompileLazyFunctionImpl(JSContext* cx, Handle<BaseScript*> lazy,
       .setScriptSourceOffset(lazy->sourceStart())
       .setNoScriptRval(false)
       .setSelfHostingMode(false);
-
-  // Update statistics to find out if we are delazifying just after having
-  // lazified. Note that we are interested in the delta between end of
-  // syntax parsing and start of full parsing, so we do this now rather than
-  // after parsing below.
-  if (!lazy->scriptSource()->parseEnded().IsNull()) {
-    const mozilla::TimeDuration delta =
-        ReallyNow() - lazy->scriptSource()->parseEnded();
-
-    // Differentiate between web-facing and privileged code, to aid
-    // with optimization. Due to the number of calls to this function,
-    // we use `cx->runningWithTrustedPrincipals`, which is fast but
-    // will classify addons alongside with web-facing code.
-    const int HISTOGRAM =
-        cx->runningWithTrustedPrincipals()
-            ? JS_TELEMETRY_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS
-            : JS_TELEMETRY_WEB_PARSER_COMPILE_LAZY_AFTER_MS;
-    cx->runtime()->addTelemetry(HISTOGRAM, delta.ToMilliseconds());
-  }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   CompilationInfo compilationInfo(cx, allocScope, options,

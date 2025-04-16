@@ -221,13 +221,15 @@ nsEventStatus InputQueue::ReceiveMouseInput(
     block = new DragBlockState(aTarget, aFlags, aEvent);
 
     INPQ_LOG("started new drag block %p id %" PRIu64
-             " for %sconfirmed target %p\n",
+             " for %sconfirmed target %p and %s a scrollthumb\n",
              block, block->GetBlockId(), aFlags.mTargetConfirmed ? "" : "un",
-             aTarget.get());
+             aTarget.get(), aFlags.mHitScrollThumb ? "hits" : "doesn't hit");
 
     mActiveDragBlock = block;
 
-    CancelAnimationsForNewBlock(block);
+    if (aFlags.mHitScrollThumb) {
+      CancelAnimationsForNewBlock(block);
+    }
     MaybeRequestContentResponse(aTarget, block);
   }
 
@@ -677,6 +679,11 @@ InputBlockState* InputQueue::FindBlockForId(uint64_t aInputBlockId,
 }
 
 void InputQueue::MainThreadTimeout(uint64_t aInputBlockId) {
+  // It's possible that this function gets called after the controller thread
+  // was discarded during shutdown.
+  if (!APZThreadUtils::IsControllerThreadAlive()) {
+    return;
+  }
   APZThreadUtils::AssertOnControllerThread();
 
   INPQ_LOG("got a main thread timeout; block=%" PRIu64 "\n", aInputBlockId);

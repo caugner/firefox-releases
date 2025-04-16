@@ -258,7 +258,15 @@ class ContentPage {
     if (this.extension?.remote) {
       browser.setAttribute("remote", "true");
       browser.setAttribute("remoteType", "extension");
-      browser.sameProcessAsFrameLoader = this.extension.groupFrameLoader;
+    }
+
+    // Ensure that the extension is loaded into the correct
+    // BrowsingContextGroupID by default.
+    if (this.extension) {
+      browser.setAttribute(
+        "initialBrowsingContextGroupId",
+        this.extension.browsingContextGroupId
+      );
     }
 
     let awaitFrameLoader = Promise.resolve();

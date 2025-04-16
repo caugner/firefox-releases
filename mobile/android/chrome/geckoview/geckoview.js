@@ -15,6 +15,7 @@ var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyModuleGetters(this, {
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   EventDispatcher: "resource://gre/modules/Messaging.jsm",
+  GeckoViewActorManager: "resource://gre/modules/GeckoViewActorManager.jsm",
   GeckoViewSettings: "resource://gre/modules/GeckoViewSettings.jsm",
   GeckoViewUtils: "resource://gre/modules/GeckoViewUtils.jsm",
   HistogramStopwatch: "resource://gre/modules/GeckoViewTelemetry.jsm",
@@ -170,9 +171,7 @@ var ModuleManager = {
     // to collect it and restore it in the other process when switching.
     // TODO: This should go away when we migrate the history to the main
     // process Bug 1507287.
-    const { history } = await this.getActor("GeckoViewContent").sendQuery(
-      "CollectSessionState"
-    );
+    const { history } = await this.getActor("GeckoViewContent").collectState();
     // Ignore scroll and form data since we're navigating away from this page
     // anyway
     const sessionState = { history };
@@ -235,11 +234,7 @@ var ModuleManager = {
       module.enabled = true;
     });
 
-    this.messageManager.sendAsyncMessage(
-      "GeckoView:RestoreState",
-      sessionState
-    );
-
+    this.getActor("GeckoViewContent").restoreState(sessionState);
     this.browser.focus();
     return true;
   },
@@ -336,6 +331,15 @@ class ModuleInfo {
     this._manager = manager;
     this._name = name;
 
+    // We don't support having more than one main process script, so let's
+    // check that we're not accidentally defining two. We could support this if
+    // needed by making _impl an array for each phase impl.
+    if (onInit?.resource !== undefined && onEnable?.resource !== undefined) {
+      throw new Error(
+        "Only one main process script is allowed for each module."
+      );
+    }
+
     this._impl = null;
     this._contentModuleLoaded = false;
     this._enabled = false;
@@ -346,6 +350,10 @@ class ModuleInfo {
     // onInitBrowser() override. However, load content module after initializing
     // browser, because we don't have a message manager before then.
     this._loadResource(onInit);
+    this._loadActors(onInit);
+    if (this._enabledOnInit) {
+      this._loadActors(onEnable);
+    }
 
     this._onInitPhase = onInit;
     this._onEnablePhase = onEnable;
@@ -381,6 +389,14 @@ class ModuleInfo {
       this._impl.onDestroyBrowser();
     }
     this._contentModuleLoaded = false;
+  }
+
+  _loadActors(aPhase) {
+    if (!aPhase || !aPhase.actors) {
+      return;
+    }
+
+    GeckoViewActorManager.addJSWindowActors(aPhase.actors);
   }
 
   /**
@@ -445,6 +461,7 @@ class ModuleInfo {
     if (aEnabled) {
       this._loadResource(this._onEnablePhase);
       this._loadFrameScript(this._onEnablePhase);
+      this._loadActors(this._onEnablePhase);
       if (this._impl) {
         this._impl.onEnable();
         this._impl.onSettingsUpdate();
@@ -509,10 +526,54 @@ function startup() {
   const browser = createBrowser();
   ModuleManager.init(browser, [
     {
+      name: "ExtensionContent",
+      onInit: {
+        frameScript: "chrome://geckoview/content/extension-content.js",
+      },
+    },
+    {
       name: "GeckoViewContent",
       onInit: {
         resource: "resource://gre/modules/GeckoViewContent.jsm",
-        frameScript: "chrome://geckoview/content/GeckoViewContentChild.js",
+        actors: {
+          GeckoViewContent: {
+            parent: {
+              moduleURI: "resource:///actors/GeckoViewContentParent.jsm",
+            },
+            child: {
+              moduleURI: "resource:///actors/GeckoViewContentChild.jsm",
+              events: {
+                mozcaretstatechanged: { capture: true, mozSystemGroup: true },
+                pageshow: { mozSystemGroup: true },
+              },
+            },
+            allFrames: true,
+          },
+        },
+      },
+      onEnable: {
+        actors: {
+          ContentDelegate: {
+            parent: {
+              moduleURI: "resource:///actors/ContentDelegateParent.jsm",
+            },
+            child: {
+              moduleURI: "resource:///actors/ContentDelegateChild.jsm",
+              events: {
+                DOMContentLoaded: {},
+                DOMMetaViewportFitChanged: {},
+                "MozDOMFullscreen:Entered": {},
+                "MozDOMFullscreen:Exit": {},
+                "MozDOMFullscreen:Exited": {},
+                "MozDOMFullscreen:Request": {},
+                MozFirstContentfulPaint: {},
+                MozPaintStatusReset: {},
+                contextmenu: { capture: true },
+              },
+            },
+            allFrames: true,
+          },
+        },
       },
     },
     {
@@ -583,6 +644,13 @@ function startup() {
       name: "GeckoViewAutofill",
       onInit: {
         frameScript: "chrome://geckoview/content/GeckoViewAutofillChild.js",
+      },
+    },
+    {
+      name: "GeckoViewMediaControl",
+      onEnable: {
+        resource: "resource://gre/modules/GeckoViewMediaControl.jsm",
+        frameScript: "chrome://geckoview/content/GeckoViewMediaControlChild.js",
       },
     },
   ]);

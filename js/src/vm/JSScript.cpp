@@ -16,7 +16,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Span.h"  // mozilla::{Span,MakeSpan}
+#include "mozilla/Span.h"  // mozilla::{Span,Span}
 #include "mozilla/Sprintf.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"
@@ -249,20 +249,21 @@ template <XDRMode mode>
 XDRResult BaseScript::XDRLazyScriptData(XDRState<mode>* xdr,
                                         HandleScriptSourceObject sourceObject,
                                         Handle<BaseScript*> lazy,
-                                        bool hasFieldInitializers) {
+                                        bool hasMemberInitializers) {
   JSContext* cx = xdr->cx();
 
   RootedAtom atom(cx);
   RootedFunction func(cx);
 
-  if (hasFieldInitializers) {
-    uint32_t numFieldInitializers;
+  if (hasMemberInitializers) {
+    uint32_t numMemberInitializers;
     if (mode == XDR_ENCODE) {
-      numFieldInitializers = lazy->getFieldInitializers().numFieldInitializers;
+      numMemberInitializers =
+          lazy->getMemberInitializers().numMemberInitializers;
     }
-    MOZ_TRY(xdr->codeUint32(&numFieldInitializers));
+    MOZ_TRY(xdr->codeUint32(&numMemberInitializers));
     if (mode == XDR_DECODE) {
-      lazy->setFieldInitializers(FieldInitializers(numFieldInitializers));
+      lazy->setMemberInitializers(MemberInitializers(numMemberInitializers));
     }
   }
 
@@ -715,13 +716,14 @@ XDRResult js::PrivateScriptData::XDR(XDRState<mode>* xdr, HandleScript script,
       funOrMod->as<JSFunction>().isClassConstructor()) {
     MOZ_ASSERT(scriptEnclosingScope);
 
-    uint32_t numFieldInitializers;
+    uint32_t numMemberInitializers;
     if (mode == XDR_ENCODE) {
-      numFieldInitializers = data->getFieldInitializers().numFieldInitializers;
+      numMemberInitializers =
+          data->getMemberInitializers().numMemberInitializers;
     }
-    MOZ_TRY(xdr->codeUint32(&numFieldInitializers));
+    MOZ_TRY(xdr->codeUint32(&numMemberInitializers));
     if (mode == XDR_DECODE) {
-      data->setFieldInitializers(FieldInitializers(numFieldInitializers));
+      data->setMemberInitializers(MemberInitializers(numMemberInitializers));
     }
   }
 
@@ -946,6 +948,18 @@ template
     RuntimeScriptData::XDR(XDRState<XDR_DECODE>* xdr, HandleScript script);
 
 template <XDRMode mode>
+XDRResult js::XDRSourceExtent(XDRState<mode>* xdr, SourceExtent* extent) {
+  MOZ_TRY(xdr->codeUint32(&extent->sourceStart));
+  MOZ_TRY(xdr->codeUint32(&extent->sourceEnd));
+  MOZ_TRY(xdr->codeUint32(&extent->toStringStart));
+  MOZ_TRY(xdr->codeUint32(&extent->toStringEnd));
+  MOZ_TRY(xdr->codeUint32(&extent->lineno));
+  MOZ_TRY(xdr->codeUint32(&extent->column));
+
+  return Ok();
+}
+
+template <XDRMode mode>
 XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
                         HandleScriptSourceObject sourceObjectArg,
                         HandleObject funOrMod, MutableHandleScript scriptp) {
@@ -960,12 +974,7 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
 
   uint8_t xdrFlags = 0;
 
-  uint32_t sourceStart = 0;
-  uint32_t sourceEnd = 0;
-  uint32_t toStringStart = 0;
-  uint32_t toStringEnd = 0;
-  uint32_t lineno = 0;
-  uint32_t column = 0;
+  SourceExtent extent;
   uint32_t immutableFlags = 0;
 
   // NOTE: |mutableFlags| are not preserved by XDR.
@@ -1014,22 +1023,12 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
   MOZ_TRY(xdr->codeUint8(&xdrFlags));
 
   if (mode == XDR_ENCODE) {
-    sourceStart = script->sourceStart();
-    sourceEnd = script->sourceEnd();
-    toStringStart = script->toStringStart();
-    toStringEnd = script->toStringEnd();
+    extent = script->extent();
     immutableFlags = script->immutableFlags();
-    lineno = script->lineno();
-    column = script->column();
   }
 
-  MOZ_TRY(xdr->codeUint32(&sourceStart));
-  MOZ_TRY(xdr->codeUint32(&sourceEnd));
-  MOZ_TRY(xdr->codeUint32(&toStringStart));
-  MOZ_TRY(xdr->codeUint32(&toStringEnd));
+  MOZ_TRY(XDRSourceExtent(xdr, &extent));
   MOZ_TRY(xdr->codeUint32(&immutableFlags));
-  MOZ_TRY(xdr->codeUint32(&lineno));
-  MOZ_TRY(xdr->codeUint32(&column));
 
   RootedScriptSourceObject sourceObject(cx, sourceObjectArg);
   Maybe<CompileOptions> options;
@@ -1094,9 +1093,6 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
     RootedObject functionOrGlobal(
         cx, isFunctionScript ? static_cast<JSObject*>(funOrMod)
                              : static_cast<JSObject*>(cx->global()));
-
-    SourceExtent extent{sourceStart, sourceEnd, toStringStart,
-                        toStringEnd, lineno,    column};
 
     script = JSScript::Create(cx, functionOrGlobal, sourceObject, extent,
                               ImmutableScriptFlags(immutableFlags));
@@ -1189,13 +1185,7 @@ XDRResult js::XDRLazyScript(XDRState<mode>* xdr, HandleScope enclosingScope,
       ngcthings = lazy->gcthings().size();
     }
 
-    MOZ_TRY(xdr->codeUint32(&extent.sourceStart));
-    MOZ_TRY(xdr->codeUint32(&extent.sourceEnd));
-    MOZ_TRY(xdr->codeUint32(&extent.toStringStart));
-    MOZ_TRY(xdr->codeUint32(&extent.toStringEnd));
-    MOZ_TRY(xdr->codeUint32(&extent.lineno));
-    MOZ_TRY(xdr->codeUint32(&extent.column));
-
+    MOZ_TRY(XDRSourceExtent(xdr, &extent));
     MOZ_TRY(xdr->codeUint32(&immutableFlags));
     MOZ_TRY(xdr->codeUint32(&ngcthings));
 
@@ -1221,10 +1211,10 @@ XDRResult js::XDRLazyScript(XDRState<mode>* xdr, HandleScope enclosingScope,
 
   // FieldInitializer data is defined for class constructors, but only once
   // their enclosing script has been compiled.
-  bool hasFieldInitializers = fun->isClassConstructor() && enclosingScope;
+  bool hasMemberInitializers = fun->isClassConstructor() && enclosingScope;
 
   MOZ_TRY(BaseScript::XDRLazyScriptData(xdr, sourceObject, lazy,
-                                        hasFieldInitializers));
+                                        hasMemberInitializers));
 
   return Ok();
 }
@@ -3546,8 +3536,8 @@ bool PrivateScriptData::InitFromStencil(
     }
   }
 
-  if (stencil.fieldInitializers) {
-    script->setFieldInitializers(*stencil.fieldInitializers);
+  if (stencil.memberInitializers) {
+    script->setMemberInitializers(*stencil.memberInitializers);
   }
 
   return true;
@@ -4235,7 +4225,7 @@ bool PrivateScriptData::Clone(JSContext* cx, HandleScript src, HandleScript dst,
   }
   PrivateScriptData* dstData = dst->data_;
 
-  dstData->fieldInitializers_ = srcData->fieldInitializers_;
+  dstData->memberInitializers_ = srcData->memberInitializers_;
 
   {
     auto array = dstData->gcthings();
@@ -4641,6 +4631,13 @@ void JSScript::argumentsOptimizationFailed(JSContext* cx, HandleScript script) {
   MOZ_ASSERT(!script->isAsync());
 
   script->setFlag(MutableFlags::NeedsArgsObj);
+
+  // Warp code depends on the NeedsArgsObj flag so invalidate the script
+  // (including compilations inlining the script).
+  if (jit::JitOptions.warpBuilder) {
+    AutoEnterAnalysis enter(cx->runtime()->defaultFreeOp(), script->zone());
+    script->zone()->types.addPendingRecompile(cx, script);
+  }
 
   /*
    * By design, the arguments optimization is only made when there are no

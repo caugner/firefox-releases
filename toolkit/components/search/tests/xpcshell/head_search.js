@@ -31,6 +31,8 @@ const { ExtensionTestUtils } = ChromeUtils.import(
   "resource://testing-common/ExtensionXPCShellUtils.jsm"
 );
 
+SearchTestUtils.init(Assert, registerCleanupFunction);
+
 const PREF_SEARCH_URL = "geoSpecificDefaults.url";
 const NS_APP_SEARCH_DIR = "SrchPlugns";
 
@@ -49,12 +51,7 @@ var XULRuntime = Cc["@mozilla.org/xre/runtime;1"].getService(Ci.nsIXULRuntime);
 Services.prefs.setBoolPref("browser.search.log", true);
 Services.prefs.setBoolPref("browser.region.log", true);
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "gModernConfig",
-  SearchUtils.BROWSER_SEARCH_PREF + "modernConfig",
-  false
-);
+Services.prefs.setBoolPref("browser.search.modernConfig", true);
 
 AddonTestUtils.init(this, false);
 AddonTestUtils.createAppInfo(
@@ -84,8 +81,7 @@ SearchCache.CACHE_INVALIDATION_DELAY = 250;
  * @param {array} [config]
  *   An array which contains the configuration to set.
  * @returns {object|null}
- *   If this is the modern configuration, returns a stub for the method
- *   that the configuration is obtained from.
+ *   Returns a stub for the method that the configuration is obtained from.
  */
 async function useTestEngines(
   folder = "data",
@@ -100,19 +96,17 @@ async function useTestEngines(
     .getProtocolHandler("resource")
     .QueryInterface(Ci.nsIResProtocolHandler);
   resProt.setSubstitution("search-extensions", Services.io.newURI(url));
-  if (gModernConfig) {
-    const settings = await RemoteSettings(SearchUtils.SETTINGS_KEY);
-    if (config) {
-      return sinon.stub(settings, "get").returns(config);
-    }
-    let chan = NetUtil.newChannel({
-      uri: "resource://search-extensions/engines.json",
-      loadUsingSystemPrincipal: true,
-    });
-    let json = parseJsonFromStream(chan.open());
-    return sinon.stub(settings, "get").returns(json.data);
+
+  const settings = await RemoteSettings(SearchUtils.SETTINGS_KEY);
+  if (config) {
+    return sinon.stub(settings, "get").returns(config);
   }
-  return null;
+  let chan = NetUtil.newChannel({
+    uri: "resource://search-extensions/engines.json",
+    loadUsingSystemPrincipal: true,
+  });
+  let json = parseJsonFromStream(chan.open());
+  return sinon.stub(settings, "get").returns(json.data);
 }
 
 async function promiseCacheData() {

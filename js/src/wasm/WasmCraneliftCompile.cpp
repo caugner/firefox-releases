@@ -94,6 +94,12 @@ static inline SymbolicAddress ToSymbolicAddress(BD_SymbolicAddress bd) {
       return SymbolicAddress::PreBarrierFiltering;
     case BD_SymbolicAddress::PostBarrier:
       return SymbolicAddress::PostBarrierFiltering;
+    case BD_SymbolicAddress::WaitI32:
+      return SymbolicAddress::WaitI32;
+    case BD_SymbolicAddress::WaitI64:
+      return SymbolicAddress::WaitI64;
+    case BD_SymbolicAddress::Wake:
+      return SymbolicAddress::Wake;
     case BD_SymbolicAddress::Limit:
       break;
   }
@@ -602,7 +608,7 @@ BD_ConstantValue global_constantValue(const GlobalDesc* global) {
     case TypeCode::F64:
       v.u.f64 = value.f64();
       break;
-    case TypeCode::OptRef:
+    case TypeCode::NullableRef:
       v.u.r = value.ref().forCompiledCode();
       break;
     default:

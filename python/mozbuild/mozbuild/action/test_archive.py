@@ -40,7 +40,6 @@ TEST_HARNESS_BINS = [
     'SmokeDMD',
     'certutil',
     'crashinject',
-    'fileid',
     'geckodriver',
     'http3server',
     'minidumpwriter',
@@ -51,7 +50,6 @@ TEST_HARNESS_BINS = [
     'xpcshell',
 ]
 
-# The fileid utility depends on mozglue. See bug 1069556.
 TEST_HARNESS_DLLS = [
     'crashinjectdll',
     'mozglue'
@@ -284,14 +282,6 @@ ARCHIVE_FILES = {
             'pattern': '**',
             'dest': 'certs',
         },
-        {
-            'source': buildconfig.topobjdir,
-            'base': 'build/unix/elfhack',
-            'patterns': [
-                'elfhack%s' % buildconfig.substs['BIN_SUFFIX'],
-            ],
-            'dest': 'bin',
-        },
     ],
     'cppunittest': [
         {
@@ -516,7 +506,15 @@ ARCHIVE_FILES = {
         },
         {
             'source': buildconfig.topsrcdir,
-            'pattern': 'build/virtualenv_packages.txt'
+            'pattern': 'build/build_virtualenv_packages.txt'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'build/common_virtualenv_packages.txt'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'build/mach_virtualenv_packages.txt'
         },
         {
             'source': buildconfig.topsrcdir,
@@ -528,7 +526,32 @@ ARCHIVE_FILES = {
         },
         {
             'source': buildconfig.topsrcdir,
-            'pattern':  'testing/mozharness/**'
+            'pattern': 'testing/mozharness/**'
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'pattern': 'browser/config/**'
+        },
+        {
+            'source': buildconfig.topobjdir,
+            'base': '_tests/modules',
+            'pattern': '**',
+            'dest': 'bin/modules'
+        },
+        {
+            'source': buildconfig.topobjdir,
+            'base': 'dist/bin',
+            'patterns': ["browser/**", "chrome/**", "chrome.manifest",
+                         "components/**", "http3server", "*.ini",
+                         "localization/**", "modules/**",
+                         "update.locale", "greprefs.js"],
+            'dest': 'bin',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'netwerk/test/http3serverDB',
+            'pattern': '**',
+            'dest': 'netwerk/test/http3serverDB',
         }
     ],
     'condprof': [
@@ -640,6 +663,7 @@ ARCHIVE_FILES = {
                 'dns-packet/**',
                 'remotexpcshelltests.py',
                 'runxpcshelltests.py',
+                'selftest.py',
                 'xpcshellcommandline.py',
             ],
             'dest': 'xpcshell',

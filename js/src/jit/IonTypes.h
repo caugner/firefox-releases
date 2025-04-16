@@ -13,9 +13,9 @@
 #include <initializer_list>
 #include <stdint.h>
 
-#include "jsfriendapi.h"
 #include "jstypes.h"
 
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/Value.h"
 #include "vm/StringType.h"
 
@@ -170,11 +170,44 @@ enum class BailoutKind : uint8_t {
   // Bailout triggered by MGuardProto or MGuardNullProto.
   ProtoGuard,
 
+  // Bailout triggered by MGuardIsProxy.
+  ProxyGuard,
+
+  // Bailout triggered by MGuardIsNotProxy.
+  NotProxyGuard,
+
+  // Bailout triggered by MGuardIsNotDOMProxy.
+  NotDOMProxyGuard,
+
+  // Bailout triggered by MGuardIsNotArrayBufferMaybeShared.
+  NotArrayBufferMaybeSharedGuard,
+
+  // Bailout triggered by a megamorphic load or store.
+  MegamorphicAccess,
+
+  // Bailout triggered by MArrayPopShift.
+  ArrayPopShift,
+
+  // Bailout triggered by MArraySlice.
+  ArraySlice,
+
   // Bailout triggered by MGuardValue.
   ValueGuard,
 
+  // Bailout triggered by MGuardNotOptimizedArguments.
+  NotOptimizedArgumentsGuard,
+
   // Bailout triggered by MGuardNullOrUndefined.
   NullOrUndefinedGuard,
+
+  // Bailout triggered by MGuardTagNotEqual.
+  TagNotEqualGuard,
+
+  // Bailout triggered by MGuardFunctionFlags.
+  FunctionFlagsGuard,
+
+  // Bailout triggered by MGuardFunctionKind.
+  FunctionKindGuard,
 
   // When we're trying to use an uninitialized lexical.
   UninitializedLexical,
@@ -256,10 +289,32 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "BailoutKind::ShapeGuard";
     case BailoutKind::ProtoGuard:
       return "BailoutKind::ProtoGuard";
+    case BailoutKind::ProxyGuard:
+      return "BailoutKind::ProxyGuard";
+    case BailoutKind::NotProxyGuard:
+      return "BailoutKind::NotProxyGuard";
+    case BailoutKind::NotDOMProxyGuard:
+      return "BailoutKind::NotDOMProxyGuard";
+    case BailoutKind::NotArrayBufferMaybeSharedGuard:
+      return "BailoutKind::NotArrayBufferMaybeSharedGuard";
+    case BailoutKind::MegamorphicAccess:
+      return "BailoutKind::MegamorphicAccess";
+    case BailoutKind::ArrayPopShift:
+      return "BailoutKind::ArrayPopShift";
+    case BailoutKind::ArraySlice:
+      return "BailoutKind::ArraySlice";
     case BailoutKind::ValueGuard:
       return "BailoutKind::ValueGuard";
+    case BailoutKind::NotOptimizedArgumentsGuard:
+      return "BailoutKind::NotOptimizedArgumentsGuard";
     case BailoutKind::NullOrUndefinedGuard:
       return "BailoutKind::NullOrUndefinedGuard";
+    case BailoutKind::TagNotEqualGuard:
+      return "BailoutKind::TagNotEqualGuard";
+    case BailoutKind::FunctionFlagsGuard:
+      return "BailoutKind::FunctionFlagsGuard";
+    case BailoutKind::FunctionKindGuard:
+      return "BailoutKind::FunctionKindGuard";
     case BailoutKind::UninitializedLexical:
       return "BailoutKind::UninitializedLexical";
     case BailoutKind::IonExceptionDebugMode:

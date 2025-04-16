@@ -334,27 +334,6 @@ module.exports = {
     },
     {
       files: [
-        "browser/base/content/test/chrome/test_aboutCrashed.xhtml",
-        "browser/base/content/test/chrome/test_aboutRestartRequired.xhtml",
-        "browser/base/content/test/general/browser_tab_dragdrop2_frame1.xhtml",
-        "browser/components/places/tests/chrome/test_0_bug510634.xhtml",
-        "browser/components/places/tests/chrome/test_bug1163447_selectItems_through_shortcut.xhtml",
-        "browser/components/places/tests/chrome/test_0_bug510634.xhtml",
-        "browser/components/places/tests/chrome/test_bug1163447_selectItems_through_shortcut.xhtml",
-        "browser/components/places/tests/chrome/test_bug549192.xhtml",
-        "browser/components/places/tests/chrome/test_bug549491.xhtml",
-        "browser/components/places/tests/chrome/test_selectItems_on_nested_tree.xhtml",
-        "browser/components/places/tests/chrome/test_treeview_date.xhtml",
-      ],
-      rules: {
-        "mozilla/no-arbitrary-setTimeout": "off",
-        "object-shorthand": "off",
-        "no-undef": "off",
-        "no-unused-vars": "off",
-      },
-    },
-    {
-      files: [
         "accessible/tests/mochitest/actions/test_keys_menu.xhtml",
         "accessible/tests/mochitest/elm/test_listbox.xhtml",
         "accessible/tests/mochitest/events/test_focus_autocomplete.xhtml",
@@ -463,18 +442,6 @@ module.exports = {
         "no-undef": "off",
         "no-unused-vars": "off",
         "no-useless-call": "off",
-      },
-    },
-    {
-      files: [
-        "editor/composer/test/test_bug434998.xhtml",
-        "editor/libeditor/tests/test_bug607584.xhtml",
-        "editor/libeditor/tests/test_bug616590.xhtml",
-        "editor/libeditor/tests/test_bug780908.xhtml",
-      ],
-      rules: {
-        "object-shorthand": "off",
-        "no-undef": "off",
       },
     },
     {
@@ -955,12 +922,6 @@ module.exports = {
         "browser/components/downloads/content/indicator.js",
         "browser/components/payments/res/components/csc-input.js",
         "browser/components/payments/res/components/labelled-checkbox.js",
-        "browser/components/places/content/browserPlacesViews.js",
-        "browser/components/places/content/controller.js",
-        "browser/components/places/content/places-menupopup.js",
-        "browser/components/places/content/places-tree.js",
-        "browser/components/places/content/places.js",
-        "browser/components/places/content/treeView.js",
         "browser/components/pocket/content/Pocket.jsm",
         "browser/components/preferences/search.js",
         "browser/components/search/content/search-one-offs.js",
@@ -984,7 +945,6 @@ module.exports = {
         "toolkit/components/extensions/ExtensionParent.jsm",
         "toolkit/components/osfile/modules/osfile_async_front.jsm",
         "toolkit/components/osfile/modules/osfile_shared_allthreads.jsm",
-        "toolkit/components/places/PlacesExpiration.jsm",
         "toolkit/content/aboutSupport.js",
         "toolkit/content/customElements.js",
         "toolkit/content/preferencesBindings.js",

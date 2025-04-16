@@ -413,7 +413,7 @@ void TCPSocket::NotifyCopyComplete(nsresult aStatus) {
     // If we have pending data, we should send them, or fire
     // a drain event if we are waiting for it.
     if (!mPendingDataAfterStartTLS.IsEmpty()) {
-      mPendingData.SwapElements(mPendingDataAfterStartTLS);
+      mPendingData = std::move(mPendingDataAfterStartTLS);
       EnsureCopying();
       return;
     }
@@ -878,7 +878,7 @@ nsresult TCPSocket::CreateInputStreamPump() {
     mInputStreamPump->Suspend();
   }
 
-  rv = mInputStreamPump->AsyncRead(this, nullptr);
+  rv = mInputStreamPump->AsyncRead(this);
   NS_ENSURE_SUCCESS(rv, rv);
   return NS_OK;
 }

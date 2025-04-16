@@ -96,7 +96,7 @@
 //!
 //! ```
 
-use crate::binemit::{CodeInfo, CodeOffset, Stackmap};
+use crate::binemit::{CodeInfo, CodeOffset, StackMap};
 use crate::ir::condcodes::IntCC;
 use crate::ir::{Function, Type};
 use crate::result::CodegenResult;
@@ -123,12 +123,16 @@ pub mod blockorder;
 pub use blockorder::*;
 pub mod abi;
 pub use abi::*;
+pub mod abi_impl;
+pub use abi_impl::*;
 pub mod pretty_print;
 pub use pretty_print::*;
 pub mod buffer;
 pub use buffer::*;
 pub mod adapter;
 pub use adapter::*;
+pub mod helpers;
+pub use helpers::*;
 
 /// A machine instruction.
 pub trait MachInst: Clone + Debug {
@@ -279,7 +283,7 @@ pub trait MachInstEmitState<I: MachInst>: Default + Clone + Debug {
     fn new(abi: &dyn ABIBody<I = I>) -> Self;
     /// Update the emission state before emitting an instruction that is a
     /// safepoint.
-    fn pre_safepoint(&mut self, _stackmap: Stackmap) {}
+    fn pre_safepoint(&mut self, _stack_map: StackMap) {}
 }
 
 /// The result of a `MachBackend::compile_function()` call. Contains machine

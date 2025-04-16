@@ -59,6 +59,7 @@ class nsRange;
 
 namespace mozilla {
 class AlignStateAtSelection;
+class AutoRangeArray;
 class AutoSelectionRestorer;
 class AutoTopLevelEditSubActionNotifier;
 class AutoTransactionBatch;
@@ -699,6 +700,10 @@ class EditorBase : public nsIEditor,
     // to restore it.
     bool mRestoreContentEditableCount;
 
+    // If we explicitly normalized whitespaces around the changed range,
+    // set to true.
+    bool mDidNormalizeWhitespaces;
+
     /**
      * The following methods modifies some data of this struct and
      * `EditSubActionData` struct.  Currently, these are required only
@@ -747,6 +752,7 @@ class EditorBase : public nsIEditor,
       mDidDeleteNonCollapsedRange = false;
       mDidDeleteEmptyParentBlocks = false;
       mRestoreContentEditableCount = false;
+      mDidNormalizeWhitespaces = false;
     }
 
     /**
@@ -1918,7 +1924,9 @@ class EditorBase : public nsIEditor,
    */
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void BeginPlaceholderTransaction(
       nsStaticAtom& aTransactionName);
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY void EndPlaceholderTransaction();
+  enum class ScrollSelectionIntoView { No, Yes };
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void EndPlaceholderTransaction(
+      ScrollSelectionIntoView aScrollSelectionIntoView);
 
   void BeginUpdateViewBatch();
   MOZ_CAN_RUN_SCRIPT void EndUpdateViewBatch();
@@ -2189,21 +2197,14 @@ class EditorBase : public nsIEditor,
       case nsIEditor::eNextWord:
       case nsIEditor::eToBeginningOfLine:
       case nsIEditor::eToEndOfLine:
-        // If the amount is word or line,`ExtendSelectionForDelete()`
-        // must have already been extended collapsed ranges before.
+        // If the amount is word or
+        // line,`AutoRangeArray::ExtendAnchorFocusRangeFor()` must have already
+        // been extended collapsed ranges before.
         return HowToHandleCollapsedRange::Ignore;
     }
     MOZ_ASSERT_UNREACHABLE("Invalid nsIEditor::EDirection value");
     return HowToHandleCollapsedRange::Ignore;
   }
-
-  /**
-   * Extends the selection for given deletion operation
-   * If done, also update aDirectionAndAmount to what's actually left to do
-   * after the extension.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
-  ExtendSelectionForDelete(nsIEditor::EDirection* aDirectionAndAmount);
 
   /**
    * DeleteSelectionWithTransaction() removes selected content or content
@@ -2222,20 +2223,41 @@ class EditorBase : public nsIEditor,
                                  nsIEditor::EStripWrappers aStripWrappers);
 
   /**
-   * Create an aggregate transaction for delete selection.  The result may
-   * include DeleteNodeTransactions and/or DeleteTextTransactions as its
-   * children.
+   * DeleteRangesWithTransaction() removes content in aRangesToDelete or content
+   * around collapsed ranges in aRangesToDelete with transactions and remove
+   * empty inclusive ancestor inline elements of collapsed ranges after
+   * removing the contents.
+   *
+   * @param aDirectionAndAmount How much range should be removed.
+   * @param aStripWrappers      Whether the parent blocks should be removed
+   *                            when they become empty.
+   *                            Note that this must be `nsIEditor::eNoStrip`
+   *                            if this is a TextEditor because anyway it'll
+   *                            be ignored.
+   * @param aRangesToDelete     The ranges to delete content.
+   */
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  DeleteRangesWithTransaction(nsIEditor::EDirection aDirectionAndAmount,
+                              nsIEditor::EStripWrappers aStripWrappers,
+                              const AutoRangeArray& aRangesToDelete);
+
+  /**
+   * Create an aggregate transaction for delete the content in aRangesToDelete.
+   * The result may include DeleteNodeTransactions and/or DeleteTextTransactions
+   * as its children.
    *
    * @param aHowToHandleCollapsedRange
    *                            How to handle collapsed ranges.
-   * @return                    If it can remove the selection, returns an
-   *                            aggregate transaction which has some
+   * @param aRangesToDelete     The ranges to delete content.
+   * @return                    If it can remove the content in ranges, returns
+   *                            an aggregate transaction which has some
    *                            DeleteNodeTransactions and/or
    *                            DeleteTextTransactions as its children.
    */
   already_AddRefed<EditAggregateTransaction>
   CreateTransactionForDeleteSelection(
-      HowToHandleCollapsedRange aHowToHandleCollapsedRange);
+      HowToHandleCollapsedRange aHowToHandleCollapsedRange,
+      const AutoRangeArray& aRangesToDelete);
 
   /**
    * Create a transaction for removing the nodes and/or text around
@@ -2287,10 +2309,8 @@ class EditorBase : public nsIEditor,
    */
   class MOZ_RAII AutoTransactionBatch final {
    public:
-    MOZ_CAN_RUN_SCRIPT explicit AutoTransactionBatch(
-        EditorBase& aEditorBase MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+    MOZ_CAN_RUN_SCRIPT explicit AutoTransactionBatch(EditorBase& aEditorBase)
         : mEditorBase(aEditorBase) {
-      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
       MOZ_KnownLive(mEditorBase).BeginTransactionInternal();
     }
 
@@ -2300,7 +2320,6 @@ class EditorBase : public nsIEditor,
 
    protected:
     EditorBase& mEditorBase;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   };
 
   /**
@@ -2311,26 +2330,28 @@ class EditorBase : public nsIEditor,
    */
   class MOZ_RAII AutoPlaceholderBatch final {
    public:
-    explicit AutoPlaceholderBatch(
-        EditorBase& aEditorBase MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-        : mEditorBase(aEditorBase) {
-      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+    AutoPlaceholderBatch(EditorBase& aEditorBase,
+                         ScrollSelectionIntoView aScrollSelectionIntoView)
+        : mEditorBase(aEditorBase),
+          mScrollSelectionIntoView(aScrollSelectionIntoView) {
       mEditorBase->BeginPlaceholderTransaction(*nsGkAtoms::_empty);
     }
 
     AutoPlaceholderBatch(EditorBase& aEditorBase,
-                         nsStaticAtom& aTransactionName
-                             MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-        : mEditorBase(aEditorBase) {
-      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+                         nsStaticAtom& aTransactionName,
+                         ScrollSelectionIntoView aScrollSelectionIntoView)
+        : mEditorBase(aEditorBase),
+          mScrollSelectionIntoView(aScrollSelectionIntoView) {
       mEditorBase->BeginPlaceholderTransaction(aTransactionName);
     }
 
-    ~AutoPlaceholderBatch() { mEditorBase->EndPlaceholderTransaction(); }
+    ~AutoPlaceholderBatch() {
+      mEditorBase->EndPlaceholderTransaction(mScrollSelectionIntoView);
+    }
 
    protected:
     OwningNonNull<EditorBase> mEditorBase;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
+    ScrollSelectionIntoView mScrollSelectionIntoView;
   };
 
   /**
@@ -2343,8 +2364,7 @@ class EditorBase : public nsIEditor,
      * Constructor responsible for remembering all state needed to restore
      * aSelection.
      */
-    explicit AutoSelectionRestorer(
-        EditorBase& aEditorBase MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
+    explicit AutoSelectionRestorer(EditorBase& aEditorBase);
 
     /**
      * Destructor restores mSelection to its former state
@@ -2358,7 +2378,6 @@ class EditorBase : public nsIEditor,
 
    protected:
     EditorBase* mEditorBase;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   };
 
   /**
@@ -2369,10 +2388,8 @@ class EditorBase : public nsIEditor,
    public:
     MOZ_CAN_RUN_SCRIPT AutoEditSubActionNotifier(
         EditorBase& aEditorBase, EditSubAction aEditSubAction,
-        nsIEditor::EDirection aDirection,
-        ErrorResult& aRv MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+        nsIEditor::EDirection aDirection, ErrorResult& aRv)
         : mEditorBase(aEditorBase), mIsTopLevel(true) {
-      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
       // The top level edit sub action has already be set if this is nested call
       // XXX Looks like that this is not aware of unexpected nested edit action
       //     handling via selectionchange event listener or mutation event
@@ -2397,7 +2414,6 @@ class EditorBase : public nsIEditor,
    protected:
     EditorBase& mEditorBase;
     bool mIsTopLevel;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   };
 
   /**
@@ -2406,12 +2422,10 @@ class EditorBase : public nsIEditor,
    */
   class MOZ_RAII AutoTransactionsConserveSelection final {
    public:
-    explicit AutoTransactionsConserveSelection(
-        EditorBase& aEditorBase MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+    explicit AutoTransactionsConserveSelection(EditorBase& aEditorBase)
         : mEditorBase(aEditorBase),
           mAllowedTransactionsToChangeSelection(
               aEditorBase.AllowsTransactionsToChangeSelection()) {
-      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
       mEditorBase.MakeThisAllowTransactionsToChangeSelection(false);
     }
 
@@ -2423,7 +2437,6 @@ class EditorBase : public nsIEditor,
    protected:
     EditorBase& mEditorBase;
     bool mAllowedTransactionsToChangeSelection;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   };
 
   /***************************************************************************
@@ -2431,10 +2444,8 @@ class EditorBase : public nsIEditor,
    */
   class MOZ_RAII AutoUpdateViewBatch final {
    public:
-    MOZ_CAN_RUN_SCRIPT explicit AutoUpdateViewBatch(
-        EditorBase& aEditorBase MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+    MOZ_CAN_RUN_SCRIPT explicit AutoUpdateViewBatch(EditorBase& aEditorBase)
         : mEditorBase(aEditorBase) {
-      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
       mEditorBase.BeginUpdateViewBatch();
     }
 
@@ -2444,7 +2455,6 @@ class EditorBase : public nsIEditor,
 
    protected:
     EditorBase& mEditorBase;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   };
 
  protected:
@@ -2540,6 +2550,7 @@ class EditorBase : public nsIEditor,
   bool mIsHTMLEditorClass;
 
   friend class AlignStateAtSelection;
+  friend class AutoRangeArray;
   friend class CompositionTransaction;
   friend class CreateElementTransaction;
   friend class CSSEditUtils;

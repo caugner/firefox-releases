@@ -16,6 +16,11 @@ ChromeUtils.defineModuleGetter(
 );
 ChromeUtils.defineModuleGetter(
   this,
+  "PartnerLinkAttribution",
+  "resource:///modules/PartnerLinkAttribution.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
   "PlacesUtils",
   "resource://gre/modules/PlacesUtils.jsm"
 );
@@ -23,11 +28,6 @@ ChromeUtils.defineModuleGetter(
   this,
   "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "TopSiteAttribution",
-  "resource:///modules/TopSiteAttribution.jsm"
 );
 
 const LINK_BLOCKED_EVENT = "newtab-linkBlocked";
@@ -374,7 +374,7 @@ class PlacesFeed {
     const searchAliases =
       Services.search[
         isPrivateWindow ? "defaultPrivateEngine" : "defaultEngine"
-      ].wrappedJSObject.__internalAliases;
+      ].aliases;
     if (searchAliases && searchAliases.length) {
       return `${searchAliases[0]} `;
     }
@@ -504,8 +504,8 @@ class PlacesFeed {
         this.openLink(action);
         break;
       }
-      case at.TOP_SITES_ATTRIBUTION:
-        TopSiteAttribution.makeRequest(action.data);
+      case at.PARTNER_LINK_ATTRIBUTION:
+        PartnerLinkAttribution.makeRequest(action.data);
         break;
     }
   }

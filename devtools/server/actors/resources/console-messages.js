@@ -8,9 +8,12 @@ const {
   TYPES: { CONSOLE_MESSAGE },
 } = require("devtools/server/actors/resources/index");
 const { WebConsoleUtils } = require("devtools/server/actors/webconsole/utils");
-const {
-  ConsoleAPIListener,
-} = require("devtools/server/actors/webconsole/listeners/console-api");
+
+const consoleAPIListenerModule = isWorker
+  ? "devtools/server/actors/webconsole/worker-listeners"
+  : "devtools/server/actors/webconsole/listeners/console-api";
+const { ConsoleAPIListener } = require(consoleAPIListenerModule);
+
 const { isArray } = require("devtools/server/actors/object/utils");
 
 const {
@@ -61,11 +64,10 @@ class ConsoleMessageWatcher {
     this.listener = listener;
     listener.init();
 
-    // See `window` definition. It isn't always a DOM Window.
+    // It can happen that the targetActor does not have a window reference (e.g. in worker
+    // thread, targetActor exposes a workerGlobal property)
     const winStartTime =
-      targetActor.window && targetActor.window.performance
-        ? targetActor.window.performance.timing.navigationStart
-        : 0;
+      targetActor.window?.performance?.timing?.navigationStart || 0;
 
     const cachedMessages = listener.getCachedMessages(!targetActor.isRootActor);
     const messages = [];

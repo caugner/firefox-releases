@@ -6074,7 +6074,7 @@ void* nsContentUtils::AllocClassMatchingInfo(nsINode* aRootNode,
   // nsAttrValue::Equals is sensitive to order, so we'll send an array
   auto* info = new ClassMatchingInfo;
   if (attrValue.Type() == nsAttrValue::eAtomArray) {
-    info->mClasses.SwapElements(*(attrValue.GetAtomArrayValue()));
+    info->mClasses = std::move(*(attrValue.GetAtomArrayValue()));
   } else if (attrValue.Type() == nsAttrValue::eAtom) {
     info->mClasses.AppendElement(attrValue.GetAtomValue());
   }
@@ -7971,7 +7971,8 @@ bool nsContentUtils::IsPreloadType(nsContentPolicyType aType) {
           aType == nsIContentPolicy::TYPE_INTERNAL_MODULE_PRELOAD ||
           aType == nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD ||
           aType == nsIContentPolicy::TYPE_INTERNAL_STYLESHEET_PRELOAD ||
-          aType == nsIContentPolicy::TYPE_INTERNAL_FONT_PRELOAD);
+          aType == nsIContentPolicy::TYPE_INTERNAL_FONT_PRELOAD ||
+          aType == nsIContentPolicy::TYPE_INTERNAL_FETCH_PRELOAD);
 }
 
 /* static */
@@ -8279,11 +8280,12 @@ class StringBuilder {
     if (!mLength.isValid()) {
       return false;
     }
-    nsresult rv;
-    BulkAppender appender(aOut.BulkWrite(mLength.value(), 0, true, rv));
-    if (NS_FAILED(rv)) {
+    auto appenderOrErr = aOut.BulkWrite(mLength.value(), 0, true);
+    if (appenderOrErr.isErr()) {
       return false;
     }
+
+    BulkAppender appender{appenderOrErr.unwrap()};
 
     for (StringBuilder* current = this; current;
          current = current->mNext.get()) {
@@ -8301,26 +8303,26 @@ class StringBuilder {
             EncodeAttrString(*(u.mString), appender);
             break;
           case Unit::eLiteral:
-            appender.Append(MakeSpan(u.mLiteral, u.mLength));
+            appender.Append(Span(u.mLiteral, u.mLength));
             break;
           case Unit::eTextFragment:
             if (u.mTextFragment->Is2b()) {
-              appender.Append(MakeSpan(u.mTextFragment->Get2b(),
-                                       u.mTextFragment->GetLength()));
+              appender.Append(
+                  Span(u.mTextFragment->Get2b(), u.mTextFragment->GetLength()));
             } else {
-              appender.Append(MakeSpan(u.mTextFragment->Get1b(),
-                                       u.mTextFragment->GetLength()));
+              appender.Append(
+                  Span(u.mTextFragment->Get1b(), u.mTextFragment->GetLength()));
             }
             break;
           case Unit::eTextFragmentWithEncode:
             if (u.mTextFragment->Is2b()) {
-              EncodeTextFragment(MakeSpan(u.mTextFragment->Get2b(),
-                                          u.mTextFragment->GetLength()),
-                                 appender);
+              EncodeTextFragment(
+                  Span(u.mTextFragment->Get2b(), u.mTextFragment->GetLength()),
+                  appender);
             } else {
-              EncodeTextFragment(MakeSpan(u.mTextFragment->Get1b(),
-                                          u.mTextFragment->GetLength()),
-                                 appender);
+              EncodeTextFragment(
+                  Span(u.mTextFragment->Get1b(), u.mTextFragment->GetLength()),
+                  appender);
             }
             break;
           default:
@@ -9514,28 +9516,20 @@ bool nsContentUtils::ShouldBlockReservedKeys(WidgetKeyboardEvent* aKeyEvent) {
 
   if (isRemoteBrowser) {
     targetBrowser->GetContentPrincipal(getter_AddRefs(principal));
-  } else {
-    // Get the top-level document.
-    nsCOMPtr<nsIContent> content =
-        do_QueryInterface(aKeyEvent->mOriginalTarget);
-    if (content) {
-      Document* doc = content->GetUncomposedDoc();
-      if (doc) {
-        nsCOMPtr<nsIDocShellTreeItem> docShell = doc->GetDocShell();
-        if (docShell &&
-            docShell->ItemType() == nsIDocShellTreeItem::typeContent) {
-          nsCOMPtr<nsIDocShellTreeItem> rootItem;
-          docShell->GetInProcessSameTypeRootTreeItem(getter_AddRefs(rootItem));
-          if (rootItem && rootItem->GetDocument()) {
-            principal = rootItem->GetDocument()->NodePrincipal();
-          }
-        }
-      }
-    }
+    return principal ? nsContentUtils::IsSitePermDeny(principal, "shortcuts"_ns)
+                     : false;
   }
 
-  if (principal) {
-    return nsContentUtils::IsSitePermDeny(principal, "shortcuts"_ns);
+  nsCOMPtr<nsIContent> content = do_QueryInterface(aKeyEvent->mOriginalTarget);
+  if (content) {
+    Document* doc = content->GetUncomposedDoc();
+    if (doc) {
+      RefPtr<WindowContext> wc = doc->GetWindowContext();
+      if (wc) {
+        return wc->TopWindowContext()->GetShortcutsPermission() ==
+               nsIPermissionManager::DENY_ACTION;
+      }
+    }
   }
 
   return false;

@@ -23,7 +23,7 @@ interface mixin LoadContextMixin {
 
   readonly attribute boolean useRemoteSubframes;
 
-  [BinaryName="useTrackingProtectionWebIDL"]
+  [BinaryName="useTrackingProtectionWebIDL", SetterThrows]
   attribute boolean useTrackingProtection;
 
   [NewObject, Throws]
@@ -35,6 +35,8 @@ interface BrowsingContext {
   static BrowsingContext? get(unsigned long long aId);
 
   static BrowsingContext? getFromWindow(WindowProxy window);
+
+  sequence<BrowsingContext> getAllBrowsingContextsInSubtree();
 
   BrowsingContext? findChildWithName(DOMString name, BrowsingContext accessor);
   BrowsingContext? findWithName(DOMString name);
@@ -66,9 +68,9 @@ interface BrowsingContext {
 
   readonly attribute WindowContext? topWindowContext;
 
-  attribute [TreatNullAs=EmptyString] DOMString customPlatform;
+  [SetterThrows] attribute [TreatNullAs=EmptyString] DOMString customPlatform;
 
-  attribute [TreatNullAs=EmptyString] DOMString customUserAgent;
+  [SetterThrows] attribute [TreatNullAs=EmptyString] DOMString customUserAgent;
 
   readonly attribute DOMString embedderElementType;
 
@@ -84,28 +86,28 @@ interface BrowsingContext {
    * browsing context and of its parent document, if any.
    * See nsSandboxFlags.h for the possible flags.
    */
-  attribute unsigned long sandboxFlags;
+  [SetterThrows] attribute unsigned long sandboxFlags;
 
   // The inRDMPane flag indicates whether or not Responsive Design Mode is
   // active for the browsing context.
-  attribute boolean inRDMPane;
+  [SetterThrows] attribute boolean inRDMPane;
 
-  attribute float fullZoom;
+  [SetterThrows] attribute float fullZoom;
 
-  attribute float textZoom;
+  [SetterThrows] attribute float textZoom;
 
   /**
    * Whether this docshell should save entries in global history.
    */
-  attribute boolean useGlobalHistory;
+  [SetterThrows] attribute boolean useGlobalHistory;
 
   // Extension to give chrome JS the ability to set the window screen
   // orientation while in RDM.
-  void setRDMPaneOrientation(OrientationType type, float rotationAngle);
+  [Throws] void setRDMPaneOrientation(OrientationType type, float rotationAngle);
 
   // Extension to give chrome JS the ability to set a maxTouchPoints override
   // while in RDM.
-  void setRDMPaneMaxTouchPoints(octet maxTouchPoints);
+  [Throws] void setRDMPaneMaxTouchPoints(octet maxTouchPoints);
 
   // The watchedByDevTools flag indicates whether or not DevTools are currently
   // debugging this browsing context.
@@ -119,7 +121,7 @@ interface BrowsingContext {
    * another browser element this ID will remain the same but hosted under the
    * under the new browser element.
    */
-  attribute unsigned long long browserId;
+  [SetterThrows] attribute unsigned long long browserId;
 };
 
 BrowsingContext includes LoadContextMixin;
@@ -141,7 +143,7 @@ interface CanonicalBrowsingContext : BrowsingContext {
   readonly attribute WindowGlobalParent? embedderWindowGlobal;
 
   void notifyStartDelayedAutoplayMedia();
-  void notifyMediaMutedChanged(boolean muted);
+  [Throws] void notifyMediaMutedChanged(boolean muted);
 
   readonly attribute nsISecureBrowserUI? secureBrowserUI;
 

@@ -70,8 +70,10 @@ class DCLayerTree {
   void DestroySurface(NativeSurfaceId aId);
   void CreateTile(wr::NativeSurfaceId aId, int32_t aX, int32_t aY);
   void DestroyTile(wr::NativeSurfaceId aId, int32_t aX, int32_t aY);
-  void AddSurface(wr::NativeSurfaceId aId, wr::DeviceIntPoint aPosition,
-                  wr::DeviceIntRect aClipRect);
+  void AddSurface(wr::NativeSurfaceId aId,
+                  const wr::CompositorSurfaceTransform& aTransform,
+                  wr::DeviceIntRect aClipRect,
+                  wr::ImageRendering aImageRendering);
 
   gl::GLContext* GetGLContext() const { return mGL; }
   EGLConfig GetEGLConfig() const { return mEGLConfig; }

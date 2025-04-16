@@ -64,6 +64,9 @@ const PREF_ADDON_RECOMMENDATIONS_ENABLED = "browser.discovery.enabled";
 const PREF_PASSWORD_GENERATION_AVAILABLE = "signon.generation.available";
 const { BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN } = Ci.nsICookieService;
 
+const PASSWORD_MANAGER_PREF_ID = "services.passwordSavingEnabled";
+const PREF_PASSWORD_MANAGER_ENABLED = "signon.rememberSignons";
+
 XPCOMUtils.defineLazyGetter(this, "AlertsServiceDND", function() {
   try {
     let alertsService = Cc["@mozilla.org/alerts-service;1"]
@@ -447,9 +450,9 @@ var gPrivacyPane = {
     httpsOnlyBox.removeAttribute("hidehttpsonly");
 
     let link = document.getElementById("httpsOnlyLearnMore");
-    let httpsOnlyURL = Services.urlFormatter.formatURLPref(
-      "domsecurity.httpsonly.infoURL"
-    );
+    let httpsOnlyURL =
+      Services.urlFormatter.formatURLPref("app.support.baseURL") +
+      "https-only-prefs";
     link.setAttribute("href", httpsOnlyURL);
 
     setSyncFromPrefListener("httpsOnlyRadioGroup", () =>
@@ -512,10 +515,6 @@ var gPrivacyPane = {
       "change",
       gPrivacyPane.networkCookieBehaviorReadPrefs.bind(gPrivacyPane)
     );
-
-    setEventListener("a11yPrivacyCheckbox", "command", ev => {
-      this.updateA11yPrefs(ev.target.checked);
-    });
 
     setEventListener(
       "trackingProtectionExceptions",
@@ -600,6 +599,8 @@ var gPrivacyPane = {
 
     this._initPasswordGenerationUI();
     this._initMasterPasswordUI();
+
+    this.initListenersForExtensionControllingPasswordManager();
     // set up the breach alerts Learn More link with the correct URL
     const breachAlertsLearnMoreLink = document.getElementById(
       "breachAlertsLearnMoreLink"
@@ -741,7 +742,7 @@ var gPrivacyPane = {
       }
       this.initAddonRecommendationsCheckbox();
     }
-    this._initA11yState();
+
     let signonBundle = document.getElementById("signonBundle");
     let pkiBundle = document.getElementById("pkiBundle");
     appendSearchKeywords("showPasswords", [
@@ -781,7 +782,6 @@ var gPrivacyPane = {
    * Initializes the content blocking section.
    */
   initContentBlocking() {
-    setEventListener("changeBlockListLink", "click", this.showBlockLists);
     setEventListener(
       "contentBlockingTrackingProtectionCheckbox",
       "command",
@@ -2136,6 +2136,32 @@ var gPrivacyPane = {
   },
 
   /**
+   * Initalizes pref listeners for the password manager.
+   *
+   * This ensures that the user is always notified if an extension is controlling the password manager.
+   */
+  initListenersForExtensionControllingPasswordManager() {
+    this._passwordManagerCheckbox = document.getElementById("savePasswords");
+    this._disableExtensionButton = document.getElementById(
+      "disablePasswordManagerExtension"
+    );
+
+    this._disableExtensionButton.addEventListener(
+      "command",
+      makeDisableControllingExtension(
+        PREF_SETTING_TYPE,
+        PASSWORD_MANAGER_PREF_ID
+      )
+    );
+
+    initListenersForPrefChange(
+      PREF_SETTING_TYPE,
+      PASSWORD_MANAGER_PREF_ID,
+      this._passwordManagerCheckbox
+    );
+  },
+
+  /**
    * Enables/disables the add-ons Exceptions button depending on whether
    * or not add-on installation warnings are displayed.
    */
@@ -2487,49 +2513,5 @@ var gPrivacyPane = {
         );
         break;
     }
-  },
-
-  // Accessibility checkbox helpers
-  _initA11yState() {
-    this._initA11yString();
-    let checkbox = document.getElementById("a11yPrivacyCheckbox");
-    switch (Services.prefs.getIntPref("accessibility.force_disabled")) {
-      case 1: // access blocked
-        checkbox.checked = true;
-        break;
-      case -1: // a11y is forced on for testing
-      case 0: // access allowed
-        checkbox.checked = false;
-        break;
-    }
-  },
-
-  _initA11yString() {
-    let a11yLearnMoreLink = Services.urlFormatter.formatURLPref(
-      "accessibility.support.url"
-    );
-    document
-      .getElementById("a11yLearnMoreLink")
-      .setAttribute("href", a11yLearnMoreLink);
-  },
-
-  async updateA11yPrefs(checked) {
-    let buttonIndex = await confirmRestartPrompt(checked, 0, true, false);
-    if (buttonIndex == CONFIRM_RESTART_PROMPT_RESTART_NOW) {
-      Services.prefs.setIntPref(
-        "accessibility.force_disabled",
-        checked ? 1 : 0
-      );
-      Services.telemetry.scalarSet(
-        "preferences.prevent_accessibility_services",
-        true
-      );
-      Services.startup.quit(
-        Ci.nsIAppStartup.eAttemptQuit | Ci.nsIAppStartup.eRestart
-      );
-    }
-
-    // Revert the checkbox in case we didn't quit
-    document.getElementById("a11yPrivacyCheckbox").checked = !checked;
   },
 };

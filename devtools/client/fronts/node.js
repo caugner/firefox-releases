@@ -317,6 +317,16 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
     return !!this._form.isDocumentElement;
   }
 
+  get isTopLevelDocument() {
+    return this._form.isTopLevelDocument;
+  }
+
+  // Backward compatibility: needed when connecting to older servers.
+  // Can be removed when Firefox 81 is on the release channel.
+  set isTopLevelDocument(isTopLevelDocument) {
+    this._form.isTopLevelDocument = isTopLevelDocument;
+  }
+
   get isShadowRoot() {
     return this._form.isShadowRoot;
   }
@@ -387,6 +397,10 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
 
   get isScrollable() {
     return this._form.isScrollable;
+  }
+
+  get causesOverflow() {
+    return this._form.causesOverflow;
   }
 
   get isTreeDisplayed() {
@@ -525,7 +539,7 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
       console.warn("Tried to open remote connection to an invalid frame.");
       return null;
     }
-    if (this._remoteFrameTarget && this._remoteFrameTarget.actorID) {
+    if (this._remoteFrameTarget && !this._remoteFrameTarget.isDestroyed()) {
       return this._remoteFrameTarget;
     }
 
@@ -534,17 +548,6 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
       this._form.browsingContextID
     );
     return this._remoteFrameTarget;
-  }
-
-  async getAllSelectors() {
-    if (!this.traits.supportsGetAllSelectors) {
-      // Backward compatibility: if the server does not support getAllSelectors
-      // fallback on getUniqueSelector and wrap the response in an array.
-      // getAllSelectors was added in FF72.
-      const selector = await super.getUniqueSelector();
-      return [selector];
-    }
-    return super.getAllSelectors();
   }
 }
 

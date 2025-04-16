@@ -19,13 +19,12 @@ import org.mozilla.gecko.util.GeckoBundle;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Represents a WebExtension that may be used by GeckoView.
@@ -55,8 +54,7 @@ public class WebExtension {
     public final @WebExtensionFlags long flags;
 
     /** Provides information about this {@link WebExtension}. */
-    // TODO: move to @NonNull when we remove registerWebExtension
-    public final @Nullable MetaData metaData;
+    public final @NonNull MetaData metaData;
 
     /**
      * Whether this extension is built-in. Built-in extension can be installed
@@ -121,70 +119,6 @@ public class WebExtension {
         } else {
             metaData = null;
         }
-    }
-
-    /**
-     * Builds a WebExtension instance that can be loaded in GeckoView using
-     * {@link GeckoRuntime#registerWebExtension}
-     *
-     * @param location The WebExtension install location. It must be either a
-     *                 <code>resource:</code> URI to a folder inside the APK or
-     *                 a <code>file:</code> URL to a <code>.xpi</code> file.
-     * @param id Unique identifier for this WebExtension. This identifier must
-     *           either be a GUID or a string formatted like an email address.
-     *           E.g. <pre><code>
-     *              "extensionname@example.org"
-     *              "{daf44bf7-a45e-4450-979c-91cf07434c3d}"
-     *           </code></pre>
-     *
-     *           See also: <ul>
-     *           <li><a href="https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/browser_specific_settings">
-     *                  WebExtensions/manifest.json/browser_specific_settings
-     *               </a>
-     *           <li><a href="https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/WebExtensions_and_the_Add-on_ID#When_do_you_need_an_add-on_ID">
-     *                  WebExtensions/WebExtensions_and_the_Add-on_ID
-     *               </a>
-     *           </ul>
-     * @param flags {@link Flags} for this WebExtension.
-     * @param controller the current {@link WebExtensionController} instance
-     *
-     * @deprecated Use the return value of {@link WebExtensionController#installBuiltIn} instead.
-     *             This method will be removed in GeckoView 81.
-     */
-    @Deprecated
-    public WebExtension(final @NonNull String location, final @NonNull String id,
-                        final @WebExtensionFlags long flags,
-                        final @NonNull WebExtensionController controller) {
-        setDelegateController(controller.delegateFor(this));
-        this.location = location;
-        this.id = id;
-        this.flags = flags;
-
-        // TODO:
-        this.isBuiltIn = false;
-        this.metaData = null;
-    }
-
-    /**
-     * Builds a WebExtension instance that can be loaded in GeckoView using
-     * {@link GeckoRuntime#registerWebExtension}
-     * The <code>id</code> for this web extension will be automatically
-     * generated.
-     *
-     * All messaging from the web extension will be ignored.
-     *
-     * @param location The WebExtension install location. It must be either a
-     *                 <code>resource:</code> URI to a folder inside the APK or
-     *                 a <code>file:</code> URL to a <code>.xpi</code> file.
-     * @param controller the current {@link WebExtensionController} instance
-     *
-     * @deprecated Use the return value of {@link WebExtensionController#installBuiltIn} instead.
-     *             This method will be removed in GeckoView 81.
-     */
-    @Deprecated
-    public WebExtension(final @NonNull String location,
-                        final @NonNull WebExtensionController controller) {
-        this(location, "{" + UUID.randomUUID().toString() + "}", Flags.NONE, controller);
     }
 
     /**
@@ -326,7 +260,8 @@ public class WebExtension {
         /* package */ final long id;
         /* package */ PortDelegate delegate;
         /* package */ boolean disconnected = false;
-        /* package */ final WeakReference<Observer> observer;
+        /* package */ final EventDispatcher mEventDispatcher;
+        /* package */ boolean mListenersRegistered = false;
 
         /** {@link MessageSender} corresponding to this port. */
         public @NonNull final MessageSender sender;
@@ -334,27 +269,50 @@ public class WebExtension {
         /** The application identifier of the MessageDelegate that opened this port. */
         public @NonNull final String name;
 
-        /* package */ interface Observer {
-            void onDisconnectFromApp(Port port);
-            void onDelegateAttached(Port port);
-        }
-
         /** Override for tests. */
         protected Port() {
             this.id = -1;
             this.delegate = null;
-            this.observer = null;
             this.sender = null;
             this.name = null;
+            mEventDispatcher = null;
         }
 
-        /* package */ Port(final String name, final long id, final MessageSender sender,
-                           final Observer observer) {
+        /* package */ Port(final String name, final long id, final MessageSender sender) {
             this.id = id;
             this.delegate = null;
-            this.observer = new WeakReference<>(observer);
             this.sender = sender;
             this.name = name;
+            mEventDispatcher = EventDispatcher.byName("port:" + id);
+        }
+
+        private BundleEventListener mEventListener = new BundleEventListener() {
+            @Override
+            public void handleMessage(final String event, final GeckoBundle message,
+                                      final EventCallback callback) {
+                if ("GeckoView:WebExtension:Disconnect".equals(event)) {
+                    disconnectFromExtension(callback);
+                } else if ("GeckoView:WebExtension:PortMessage".equals(event)) {
+                    portMessage(message, callback);
+                }
+            }
+        };
+
+        private void disconnectFromExtension(final EventCallback callback) {
+            delegate.onDisconnect(this);
+            disconnected();
+        }
+
+        private void portMessage(final GeckoBundle bundle, final EventCallback callback) {
+            final Object content;
+            try {
+                content = bundle.toJSONObject().get("data");
+            } catch (JSONException ex) {
+                callback.sendError(ex);
+                return;
+            }
+
+            delegate.onPortMessage(content, this);
         }
 
         /**
@@ -363,16 +321,14 @@ public class WebExtension {
          * @param message {@link JSONObject} that will be sent to the WebExtension.
          */
         public void postMessage(final @NonNull JSONObject message) {
-            GeckoBundle args = new GeckoBundle(2);
-            args.putLong("portId", id);
+            GeckoBundle args = new GeckoBundle(1);
             try {
                 args.putBundle("message", GeckoBundle.fromJSONObject(message));
             } catch (JSONException ex) {
                 throw new RuntimeException(ex);
             }
 
-            EventDispatcher.getInstance()
-                    .dispatch("GeckoView:WebExtension:PortMessageFromApp", args);
+            mEventDispatcher.dispatch("GeckoView:WebExtension:PortMessageFromApp", args);
         }
 
         /**
@@ -383,15 +339,16 @@ public class WebExtension {
                 return;
             }
 
-            final Observer observer = this.observer.get();
-            if (observer != null) {
-                observer.onDisconnectFromApp(this);
-            }
-
             GeckoBundle args = new GeckoBundle(1);
             args.putLong("portId", id);
 
-            EventDispatcher.getInstance().dispatch("GeckoView:WebExtension:PortDisconnect", args);
+            mEventDispatcher.dispatch("GeckoView:WebExtension:PortDisconnect", args);
+            disconnected();
+        }
+
+        private void disconnected() {
+            unregisterListeners();
+            mEventDispatcher.shutdown();
             this.disconnected = true;
         }
 
@@ -403,10 +360,34 @@ public class WebExtension {
          */
         public void setDelegate(final @Nullable PortDelegate delegate) {
             this.delegate = delegate;
-            final Observer observer = this.observer.get();
-            if (observer != null) {
-                observer.onDelegateAttached(this);
+
+            if (delegate != null) {
+                registerListeners();
+            } else {
+                unregisterListeners();
             }
+        }
+
+        private void unregisterListeners() {
+            if (!mListenersRegistered) {
+                return;
+            }
+
+            mEventDispatcher.unregisterUiThreadListener(mEventListener,
+                    "GeckoView:WebExtension:Disconnect",
+                    "GeckoView:WebExtension:PortMessage");
+            mListenersRegistered = false;
+        }
+
+        private void registerListeners() {
+            if (mListenersRegistered) {
+                return;
+            }
+
+            mEventDispatcher.registerUiThreadListener(mEventListener,
+                    "GeckoView:WebExtension:Disconnect",
+                    "GeckoView:WebExtension:PortMessage");
+            mListenersRegistered = true;
         }
     }
 
@@ -424,8 +405,7 @@ public class WebExtension {
          * See also: <a href="https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs/remove">
          *     WebExtensions/API/tabs/remove</a>
          *
-         * @param source An instance of {@link WebExtension} or null if extension was not registered
-         *               with GeckoRuntime.registerWebextension
+         * @param source An instance of {@link WebExtension}
          * @param session An instance of {@link GeckoSession} to be closed.
          * @return GeckoResult.ALLOW if the tab will be closed, GeckoResult.DENY otherwise
          */
@@ -2117,6 +2097,213 @@ public class WebExtension {
 
             EventDispatcher.getInstance().dispatch(
                     "GeckoView:WebExtension:MenuClick", bundle);
+        }
+    }
+
+    // TODO: implement bug 1538348
+    /* package */ interface DownloadDelegate {
+        @AnyThread
+        default GeckoResult<WebExtension.Download> onDownload(WebExtension source, DownloadRequest request) {
+            return null;
+        }
+    }
+
+    // TODO: make public bug 1538348
+    /**
+     * Represents a download
+     * Instantiate using {@link WebExtensionController#createDownload}
+     */
+    static class Download {
+        /* package */ final String id;
+
+        private Download(final String id) {
+            this.id = id;
+        }
+
+        /* package */ void setDelegate(final Delegate delegate) { }
+
+        /* package */ GeckoResult<Void> update(final DownloadInfo data) {
+            return null;
+        }
+
+        /* package */ interface Delegate {
+
+            default GeckoResult<Void> onPause(WebExtension source, WebExtension.Download download) {
+                return null;
+            }
+
+            default GeckoResult<Void> onResume(WebExtension source, WebExtension.Download download) {
+                return null;
+            }
+
+            default GeckoResult<Void> onCancel(WebExtension source, WebExtension.Download download) {
+                return null;
+            }
+
+            default GeckoResult<Void> onErase(WebExtension source, WebExtension.Download download) {
+                return null;
+            }
+
+            default GeckoResult<Void> onOpen(WebExtension source, WebExtension.Download download) {
+                return null;
+            }
+
+            default GeckoResult<Void> onRemoveFile(WebExtension source, WebExtension.Download download) {
+                return null;
+            }
+        }
+
+        /* package */ interface DownloadInfo {
+            @IntDef(flag = true, value = { IN_PROGRESS, INTERRUPTED, COMPLETE })
+            /* package */ @interface DownloadStatusFlags {};
+
+            /**
+             * The app is currently receiving download data from the server.
+             */
+            /* package */ static final int IN_PROGRESS = 0;
+
+            /**
+             * An error broke the connection with the server.
+             */
+            /* package */ static final int INTERRUPTED = 1;
+
+            /**
+             * The download completed successfully.
+             */
+            /* package */ static final int COMPLETE = 1 << 1;
+
+            /**
+             * @return boolean indicating whether the download is paused
+             * i.e. if the download has stopped reading data from the host
+             * but has kept the connection open
+             */
+            default boolean paused() {
+                return false;
+            }
+
+            /**
+             * @return Date (in ISO 8601 format) representing
+             * the estimated number of milliseconds between the UNIX epoch
+             * and when this download is estimated to be completed
+             */
+            default Date estimatedEndTime() {
+                return null;
+            }
+
+            /**
+             * @return boolean indicating whether a currently-interrupted
+             * (e.g. paused) download can be resumed from the point where it was interrupted
+             */
+            default boolean canResume() {
+                return false;
+            }
+
+            /**
+             * @return number of bytes received so far from the host during the download;
+             * this does not take file compression into consideration
+             */
+            default long bytesReceived() {
+                return 0;
+            }
+
+            /**
+             * @return total number of bytes in the file being downloaded.
+             * This does not take file compression into consideration.
+             * A value of -1 here means that the total number of bytes is unknown
+             */
+            default long totalBytes() {
+                return 0;
+            }
+
+            /**
+             * @return Date representing the number of milliseconds between
+             * the UNIX epoch and when this download ended.
+             * This is null if the download has not yet finished
+             */
+            default Date endTime() {
+                return null;
+            }
+
+            /**
+             * @return boolean indicating whether a downloaded file still exists
+             */
+            default boolean fileExists() {
+                return false;
+            }
+
+            /**
+             * @return one of {@link DownloadStatusFlags} to indicate
+             * whether the download is in progress, interrupted or complete
+             */
+            default @DownloadStatusFlags int status() {
+                return 0;
+            }
+        }
+    }
+
+    // TODO: make public bug 1538348
+    /**
+     * Represents Web Extension API specific download request
+     */
+    static final class DownloadRequest {
+        /* package */ final WebRequest request;
+        /* package */ final @GeckoWebExecutor.FetchFlags int downloadFlags;
+        /* package */ final String filename;
+        /* package */ final @ConflictActionFlags int conflictActionFlag;
+
+        @IntDef(flag = true, value = { UNIQUIFY, OVERWRITE, PROMPT })
+        /* package */ @interface ConflictActionFlags {}
+
+        /**
+         * The app should modify the filename to make it unique
+         */
+        /* package */ static final int UNIQUIFY = 0;
+
+        /**
+         * The app should overwrite the old file with the newly-downloaded file
+         */
+        /* package */ static final int OVERWRITE = 1;
+
+        /**
+         * The app should prompt the user, asking them to choose whether to uniquify or overwrite
+         */
+        /* package */ static final int PROMPT = 1 << 1;
+
+        private DownloadRequest(final DownloadRequest.Builder builder) {
+            this.request = builder.mRequest;
+            this.downloadFlags = builder.mDownloadFlags;
+            this.filename = builder.mFilename;
+            this.conflictActionFlag = builder.mConflictActionFlag;
+        }
+
+        /* package */ class Builder {
+            private final WebRequest mRequest;
+            private @GeckoWebExecutor.FetchFlags int mDownloadFlags = 0;
+            private String mFilename = null;
+            private @ConflictActionFlags int mConflictActionFlag = UNIQUIFY;
+
+            /* package */ Builder(final WebRequest request) {
+                this.mRequest = request;
+            }
+
+            /* package */ Builder downloadFlags(final @GeckoWebExecutor.FetchFlags int flags) {
+                this.mDownloadFlags = flags;
+                return this;
+            }
+
+            /* package */ Builder filename(final String filename) {
+                this.mFilename = filename;
+                return this;
+            }
+
+            /* package */ Builder conflictAction(final @ConflictActionFlags int conflictActionFlag) {
+                this.mConflictActionFlag = conflictActionFlag;
+                return this;
+            }
+
+            /* package */ DownloadRequest build() {
+                return new DownloadRequest(this);
+            }
         }
     }
 }

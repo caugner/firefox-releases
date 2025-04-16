@@ -105,7 +105,7 @@ int32_t nsStandardURL::nsSegmentEncoder::EncodeSegmentCount(
 
   uint32_t origLen = aOut.Length();
 
-  Span<const char> span = MakeSpan(aStr + aSeg.mPos, aSeg.mLen);
+  Span<const char> span = Span(aStr + aSeg.mPos, aSeg.mLen);
 
   // first honor the origin charset if appropriate. as an optimization,
   // only do this if the segment is non-ASCII.  Further, if mEncoding is
@@ -115,7 +115,7 @@ int32_t nsStandardURL::nsSegmentEncoder::EncodeSegmentCount(
     if (upTo != span.Length()) {
       // we have to encode this segment
       char bufferArr[512];
-      Span<char> buffer = MakeSpan(bufferArr);
+      Span<char> buffer = Span(bufferArr);
 
       auto encoder = mEncoding->NewEncoder();
 
@@ -1524,7 +1524,7 @@ nsresult nsStandardURL::SetSpecWithEncoding(const nsACString& input,
     return NS_ERROR_MALFORMED_URI;
   }
 
-  // Make a backup of the curent URL
+  // Make a backup of the current URL
   nsStandardURL prevURL(false, false);
   prevURL.CopyMembers(this, eHonorRef, EmptyCString());
   Clear();
@@ -1780,6 +1780,7 @@ nsresult nsStandardURL::SetUsername(const nsACString& input) {
     }
     shift = ReplaceSegment(pos, len, escUsername);
     mUsername.mLen = escUsername.Length() > 0 ? escUsername.Length() : -1;
+    mUsername.mPos = pos;
   }
 
   if (shift) {

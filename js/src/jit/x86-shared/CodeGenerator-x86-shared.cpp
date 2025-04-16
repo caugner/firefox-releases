@@ -16,6 +16,7 @@
 #include "jit/JitRealm.h"
 #include "jit/Linker.h"
 #include "jit/RangeAnalysis.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/TraceLogging.h"
 
 #include "jit/MacroAssembler-inl.h"
@@ -1922,8 +1923,7 @@ void CodeGenerator::visitNearbyInt(LNearbyInt* lir) {
   FloatRegister output = ToFloatRegister(lir->output());
 
   RoundingMode roundingMode = lir->mir()->roundingMode();
-  masm.vroundsd(Assembler::ToX86RoundingMode(roundingMode), input, output,
-                output);
+  masm.vroundsd(Assembler::ToX86RoundingMode(roundingMode), input, output);
 }
 
 void CodeGenerator::visitNearbyIntF(LNearbyIntF* lir) {
@@ -1931,8 +1931,7 @@ void CodeGenerator::visitNearbyIntF(LNearbyIntF* lir) {
   FloatRegister output = ToFloatRegister(lir->output());
 
   RoundingMode roundingMode = lir->mir()->roundingMode();
-  masm.vroundss(Assembler::ToX86RoundingMode(roundingMode), input, output,
-                output);
+  masm.vroundss(Assembler::ToX86RoundingMode(roundingMode), input, output);
 }
 
 void CodeGenerator::visitEffectiveAddress(LEffectiveAddress* ins) {
@@ -2420,10 +2419,10 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.divFloat32x4(rhs, lhsDest);
       break;
     case wasm::SimdOp::F32x4Min:
-      masm.minFloat32x4(rhs, lhsDest);
+      masm.minFloat32x4(rhs, lhsDest, temp1, temp2);
       break;
     case wasm::SimdOp::F32x4Max:
-      masm.maxFloat32x4(rhs, lhsDest, temp1);
+      masm.maxFloat32x4(rhs, lhsDest, temp1, temp2);
       break;
     case wasm::SimdOp::F64x2Add:
       masm.addFloat64x2(rhs, lhsDest);
@@ -2438,10 +2437,10 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.divFloat64x2(rhs, lhsDest);
       break;
     case wasm::SimdOp::F64x2Min:
-      masm.minFloat64x2(rhs, lhsDest);
+      masm.minFloat64x2(rhs, lhsDest, temp1, temp2);
       break;
     case wasm::SimdOp::F64x2Max:
-      masm.maxFloat64x2(rhs, lhsDest, temp1);
+      masm.maxFloat64x2(rhs, lhsDest, temp1, temp2);
       break;
     case wasm::SimdOp::V8x16Swizzle:
       masm.swizzleInt8x16(rhs, lhsDest, temp1);
@@ -2589,6 +2588,21 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       break;
     case wasm::SimdOp::F64x2Ge:
       masm.compareFloat64x2(Assembler::GreaterThanOrEqual, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F32x4PMaxExperimental:
+      masm.pseudoMaxFloat32x4(rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F32x4PMinExperimental:
+      masm.pseudoMinFloat32x4(rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F64x2PMaxExperimental:
+      masm.pseudoMaxFloat64x2(rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F64x2PMinExperimental:
+      masm.pseudoMinFloat64x2(rhs, lhsDest);
+      break;
+    case wasm::SimdOp::I32x4DotSI16x8Experimental:
+      masm.widenDotInt16x8(rhs, lhsDest);
       break;
     default:
       MOZ_CRASH("Binary SimdOp not implemented");
@@ -3117,6 +3131,30 @@ void CodeGenerator::visitWasmUnarySimd128(LWasmUnarySimd128* ins) {
     case wasm::SimdOp::I32x4Abs:
       masm.absInt32x4(src, dest);
       break;
+    case wasm::SimdOp::F32x4CeilExperimental:
+      masm.ceilFloat32x4(src, dest);
+      break;
+    case wasm::SimdOp::F32x4FloorExperimental:
+      masm.floorFloat32x4(src, dest);
+      break;
+    case wasm::SimdOp::F32x4TruncExperimental:
+      masm.truncFloat32x4(src, dest);
+      break;
+    case wasm::SimdOp::F32x4NearestExperimental:
+      masm.nearestFloat32x4(src, dest);
+      break;
+    case wasm::SimdOp::F64x2CeilExperimental:
+      masm.ceilFloat64x2(src, dest);
+      break;
+    case wasm::SimdOp::F64x2FloorExperimental:
+      masm.floorFloat64x2(src, dest);
+      break;
+    case wasm::SimdOp::F64x2TruncExperimental:
+      masm.truncFloat64x2(src, dest);
+      break;
+    case wasm::SimdOp::F64x2NearestExperimental:
+      masm.nearestFloat64x2(src, dest);
+      break;
     default:
       MOZ_CRASH("Unary SimdOp not implemented");
   }
@@ -3178,6 +3216,58 @@ void CodeGenerator::visitWasmReduceSimd128(LWasmReduceSimd128* ins) {
       break;
     default:
       MOZ_CRASH("Reduce SimdOp not implemented");
+  }
+#else
+  MOZ_CRASH("No SIMD");
+#endif
+}
+
+void CodeGenerator::visitWasmReduceAndBranchSimd128(
+    LWasmReduceAndBranchSimd128* ins) {
+#ifdef ENABLE_WASM_SIMD
+  FloatRegister src = ToFloatRegister(ins->src());
+
+  switch (ins->simdOp()) {
+    case wasm::SimdOp::I8x16AnyTrue:
+    case wasm::SimdOp::I16x8AnyTrue:
+    case wasm::SimdOp::I32x4AnyTrue:
+      // Set the zero flag if all of the lanes are zero, and branch on that.
+      masm.vptest(src, src);
+      emitBranch(Assembler::NotEqual, ins->ifTrue(), ins->ifFalse());
+      break;
+    case wasm::SimdOp::I8x16AllTrue:
+    case wasm::SimdOp::I16x8AllTrue:
+    case wasm::SimdOp::I32x4AllTrue: {
+      // Compare all lanes to zero, set the zero flag if none of the lanes are
+      // zero, and branch on that.
+      ScratchSimd128Scope tmp(masm);
+      masm.vpxor(tmp, tmp, tmp);
+      switch (ins->simdOp()) {
+        case wasm::SimdOp::I8x16AllTrue:
+          masm.vpcmpeqb(Operand(src), tmp, tmp);
+          break;
+        case wasm::SimdOp::I16x8AllTrue:
+          masm.vpcmpeqw(Operand(src), tmp, tmp);
+          break;
+        case wasm::SimdOp::I32x4AllTrue:
+          masm.vpcmpeqd(Operand(src), tmp, tmp);
+          break;
+        default:
+          MOZ_CRASH();
+      }
+      masm.vptest(tmp, tmp);
+      emitBranch(Assembler::Equal, ins->ifTrue(), ins->ifFalse());
+      break;
+    }
+    case wasm::SimdOp::I16x8Bitmask: {
+      ScratchSimd128Scope tmp(masm);
+      masm.loadConstantSimd128Int(SimdConstant::SplatX8(0x8000), tmp);
+      masm.vptest(tmp, src);
+      emitBranch(Assembler::NotEqual, ins->ifTrue(), ins->ifFalse());
+      break;
+    }
+    default:
+      MOZ_CRASH("Reduce-and-branch SimdOp not implemented");
   }
 #else
   MOZ_CRASH("No SIMD");

@@ -24,13 +24,7 @@ const WalkerEventListener = require("devtools/client/inspector/shared/walker-eve
 
 loader.lazyRequireGetter(
   this,
-  "createDOMMutationBreakpoint",
-  "devtools/client/framework/actions/index",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "deleteDOMMutationBreakpoint",
+  ["createDOMMutationBreakpoint", "deleteDOMMutationBreakpoint"],
   "devtools/client/framework/actions/index",
   true
 );
@@ -362,6 +356,7 @@ function MarkupView(inspector, frame, controllerWindow) {
   this._walkerEventListener = new WalkerEventListener(this.inspector, {
     "display-change": this._onWalkerNodeStatesChanged,
     "scrollable-change": this._onWalkerNodeStatesChanged,
+    "overflow-change": this._onWalkerNodeStatesChanged,
     mutations: this._onWalkerMutations,
   });
 }
@@ -930,6 +925,10 @@ MarkupView.prototype = {
         "scrollable-change",
         this._onWalkerNodeStatesChanged
       );
+      nodeFront.walkerFront.on(
+        "overflow-change",
+        this._onWalkerNodeStatesChanged
+      );
       nodeFront.walkerFront.on("mutations", this._onWalkerMutations);
     }
 
@@ -1431,6 +1430,10 @@ MarkupView.prototype = {
       let target = mutation.target;
 
       if (mutation.type === "documentUnload") {
+        // Backward compatibility for FF80 or older.
+        // The documentUnload mutation was removed in FF81 in favor of the
+        // root-node resource.
+
         // Treat this as a childList change of the child (maybe the protocol
         // should do this).
         type = "childList";

@@ -12,7 +12,6 @@
 #include "frontend/AbstractScopePtr.h"  // ScopeIndex
 #include "frontend/CompilationInfo.h"
 #include "frontend/SharedContext.h"  // FunctionBox
-#include "frontend/Stencil.h"        // ScopeCreationData
 #include "vm/BytecodeUtil.h"         // INDEX_LIMIT, StackUses, StackDefs
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"     // JSContext
@@ -31,13 +30,18 @@ bool GCThingList::append(FunctionBox* funbox, GCThingIndex* index) {
 AbstractScopePtr GCThingList::getScope(size_t index) const {
   const ScriptThingVariant& elem = vector[index];
   if (elem.is<EmptyGlobalScopeType>()) {
+    MOZ_ASSERT(compilationInfo.enclosingScope == nullptr);
     return AbstractScopePtr(&compilationInfo.cx->global()->emptyGlobalScope());
   }
   return AbstractScopePtr(compilationInfo, elem.as<ScopeIndex>());
 }
 
-ScopeIndex GCThingList::getScopeIndex(size_t index) const {
-  return vector[index].as<ScopeIndex>();
+mozilla::Maybe<ScopeIndex> GCThingList::getScopeIndex(size_t index) const {
+  const ScriptThingVariant& elem = vector[index];
+  if (elem.is<EmptyGlobalScopeType>()) {
+    return mozilla::Nothing();
+  }
+  return mozilla::Some(vector[index].as<ScopeIndex>());
 }
 
 bool js::frontend::EmitScriptThingsVector(JSContext* cx,
@@ -65,7 +69,7 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
 
     bool operator()(const BigIntIndex& index) {
-      BigIntCreationData& data = compilationInfo.bigIntData[index];
+      BigIntStencil& data = compilationInfo.bigIntData[index];
       BigInt* bi = data.createBigInt(cx);
       if (!bi) {
         return false;
@@ -75,7 +79,7 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
 
     bool operator()(const RegExpIndex& rindex) {
-      RegExpCreationData& data = compilationInfo.regExpData[rindex];
+      RegExpStencil& data = compilationInfo.regExpData[rindex];
       RegExpObject* regexp = data.createRegExp(cx);
       if (!regexp) {
         return false;
@@ -84,7 +88,8 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
       return true;
     }
 
-    bool operator()(const ObjLiteralCreationData& data) {
+    bool operator()(const ObjLiteralIndex& index) {
+      ObjLiteralStencil& data = compilationInfo.objLiteralData[index];
       JSObject* obj = data.create(cx);
       if (!obj) {
         return false;
@@ -94,8 +99,7 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
 
     bool operator()(const ScopeIndex& index) {
-      ScopeCreationData& data = compilationInfo.scopeCreationData[index].get();
-      output[i] = JS::GCCellPtr(data.getScope());
+      output[i] = JS::GCCellPtr(compilationInfo.scopes[index].get());
       return true;
     }
 
@@ -159,7 +163,7 @@ void CGScopeNoteList::recordEndImpl(uint32_t index, uint32_t offset) {
   list[index].length = offset - list[index].start;
 }
 
-JSObject* ObjLiteralCreationData::create(JSContext* cx) const {
+JSObject* ObjLiteralStencil::create(JSContext* cx) const {
   return InterpretObjLiteral(cx, atoms_, writer_);
 }
 

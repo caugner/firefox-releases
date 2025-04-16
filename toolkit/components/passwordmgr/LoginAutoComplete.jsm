@@ -233,15 +233,33 @@ class GeneratedPasswordAutocompleteItem extends AutocompleteItem {
   }
 }
 
+class ImportableLearnMoreAutocompleteItem extends AutocompleteItem {
+  constructor() {
+    super("importableLearnMore");
+  }
+}
+
 class ImportableLoginsAutocompleteItem extends AutocompleteItem {
-  constructor(browserId, hostname) {
+  constructor(browserId, hostname, actor) {
     super("importableLogins");
     this.label = browserId;
     this.comment = hostname;
+    this._actor = actor;
+
+    // This is sent for every item (re)shown, but the parent will debounce to
+    // reduce the count by 1 total.
+    this._actor.sendAsyncMessage(
+      "PasswordManager:decreaseSuggestImportCount",
+      1
+    );
   }
 
   removeFromStorage() {
     Services.telemetry.recordEvent("exp_import", "event", "delete", this.label);
+    this._actor.sendAsyncMessage(
+      "PasswordManager:decreaseSuggestImportCount",
+      100
+    );
   }
 }
 
@@ -358,9 +376,11 @@ function LoginAutoCompleteResult(
     if (!logins.length && importableBrowsers) {
       this._rows.push(
         ...importableBrowsers.map(
-          browserId => new ImportableLoginsAutocompleteItem(browserId, hostname)
+          browserId =>
+            new ImportableLoginsAutocompleteItem(browserId, hostname, actor)
         )
       );
+      this._rows.push(new ImportableLearnMoreAutocompleteItem());
     }
 
     this._rows.push(
@@ -769,6 +789,12 @@ let gAutoCompleteListener = {
 
     let loginManager = window.windowGlobalChild.getActor("LoginManager");
     switch (selectedRowStyle) {
+      case "importableLearnMore":
+        loginManager.sendAsyncMessage(
+          "PasswordManager:OpenImportableLearnMore",
+          {}
+        );
+        break;
       case "importableLogins":
         loginManager.sendAsyncMessage(
           "PasswordManager:OpenMigrationWizard",

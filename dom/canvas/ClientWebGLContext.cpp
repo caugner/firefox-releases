@@ -7,6 +7,7 @@
 
 #include "ClientWebGLExtensions.h"
 #include "HostWebGLContext.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/dom/WebGLContextEvent.h"
 #include "mozilla/dom/WorkerCommon.h"
@@ -759,7 +760,7 @@ ClientWebGLContext::SetContextOptions(JSContext* cx,
   newOpts.xrCompatible = attributes.mXrCompatible;
   newOpts.powerPreference = attributes.mPowerPreference;
   newOpts.enableDebugRendererInfo =
-      Preferences::GetBool("webgl.enable-debug-renderer-info", false);
+      StaticPrefs::webgl_enable_debug_renderer_info();
   MOZ_ASSERT(mCanvasElement || mOffscreenCanvas);
   newOpts.shouldResistFingerprinting =
       mCanvasElement ?
@@ -914,6 +915,9 @@ RefPtr<gfx::SourceSurface> ClientWebGLContext::GetFrontBufferSnapshot(
     const auto format = nonPremultSurf->GetFormat();
     snapshot =
         gfx::Factory::CreateDataSourceSurface(size, format, /*zero=*/false);
+    if (!snapshot) {
+      gfxCriticalNote << "CreateDataSourceSurface failed for size " << size;
+    }
     gfxUtils::PremultiplyDataSurface(nonPremultSurf, snapshot);
   }
 
@@ -3083,8 +3087,8 @@ void ClientWebGLContext::BufferData(GLenum target, WebGLsizeiptr rawSize,
     return;
   }
 
-  const auto range = Range<const uint8_t>{nullptr, *size};
-  Run<RPROC(BufferData)>(target, RawBuffer<>(range), usage);
+  const auto data = RawBuffer<>{*size};
+  Run<RPROC(BufferData)>(target, data, usage);
 }
 
 void ClientWebGLContext::BufferData(
@@ -3727,7 +3731,7 @@ static std::string ToString(const js::Scalar::Type type) {
       break;
   }
   MOZ_ASSERT(false);
-  return std::string("#") + std::to_string(EnumValue(type));
+  return std::string("#") + std::to_string(UnderlyingValue(type));
 }
 
 /////////////////////////////////////////////////
@@ -5098,7 +5102,7 @@ static bool IsExtensionForbiddenForCaller(const WebGLExtensionID ext,
 
     case WebGLExtensionID::WEBGL_debug_renderer_info:
       return resistFingerprinting ||
-             !Preferences::GetBool("webgl.enable-debug-renderer-info", false);
+             !StaticPrefs::webgl_enable_debug_renderer_info();
 
     case WebGLExtensionID::WEBGL_debug_shaders:
       return resistFingerprinting;

@@ -74,6 +74,7 @@ namespace jit {
   _(BindVarOperation, js::BindVarOperation)                                    \
   _(BoxBoxableValue, js::wasm::BoxBoxableValue)                                \
   _(BoxNonStrictThis, js::BoxNonStrictThis)                                    \
+  _(BuiltinObjectOperation, js::BuiltinObjectOperation)                        \
   _(CallNativeGetter, js::jit::CallNativeGetter)                               \
   _(CallNativeGetterByValue, js::jit::CallNativeGetterByValue)                 \
   _(CallNativeSetter, js::jit::CallNativeSetter)                               \
@@ -83,6 +84,7 @@ namespace jit {
     js::CheckGlobalOrEvalDeclarationConflicts)                                 \
   _(CheckOverRecursed, js::jit::CheckOverRecursed)                             \
   _(CheckOverRecursedBaseline, js::jit::CheckOverRecursedBaseline)             \
+  _(CheckPrivateFieldOperation, js::CheckPrivateFieldOperation)                \
   _(CloneRegExpObject, js::CloneRegExpObject)                                  \
   _(ConcatStrings, js::ConcatStrings<CanGC>)                                   \
   _(ConvertElementsToDoubles, js::ObjectElements::ConvertElementsToDoubles)    \
@@ -125,7 +127,6 @@ namespace jit {
   _(FinishBoundFunctionInit, JSFunction::finishBoundFunctionInit)              \
   _(FreshenLexicalEnv, js::jit::FreshenLexicalEnv)                             \
   _(FunWithProtoOperation, js::FunWithProtoOperation)                          \
-  _(FunctionProtoOperation, js::FunctionProtoOperation)                        \
   _(GeneratorThrowOrReturn, js::jit::GeneratorThrowOrReturn)                   \
   _(GetAndClearException, js::GetAndClearException)                            \
   _(GetElementOperation, js::GetElementOperation)                              \
@@ -158,6 +159,7 @@ namespace jit {
   _(InvokeFunction, js::jit::InvokeFunction)                                   \
   _(IonBinaryArithICUpdate, js::jit::IonBinaryArithIC::update)                 \
   _(IonBindNameICUpdate, js::jit::IonBindNameIC::update)                       \
+  _(IonCheckPrivateFieldICUpdate, js::jit::IonCheckPrivateFieldIC::update)     \
   _(IonCompareICUpdate, js::jit::IonCompareIC::update)                         \
   _(IonCompileScriptForBaselineAtEntry,                                        \
     js::jit::IonCompileScriptForBaselineAtEntry)                               \
@@ -279,30 +281,33 @@ namespace jit {
 // The list below is for tail calls. The third argument specifies the number of
 // non-argument Values the VM wrapper should pop from the stack. This is used
 // for Baseline ICs.
-#define TAIL_CALL_VMFUNCTION_LIST(_)                              \
-  _(DoBinaryArithFallback, js::jit::DoBinaryArithFallback, 2)     \
-  _(DoBindNameFallback, js::jit::DoBindNameFallback, 0)           \
-  _(DoCompareFallback, js::jit::DoCompareFallback, 2)             \
-  _(DoConcatStringObject, js::jit::DoConcatStringObject, 2)       \
-  _(DoGetElemFallback, js::jit::DoGetElemFallback, 2)             \
-  _(DoGetElemSuperFallback, js::jit::DoGetElemSuperFallback, 3)   \
-  _(DoGetIntrinsicFallback, js::jit::DoGetIntrinsicFallback, 0)   \
-  _(DoGetIteratorFallback, js::jit::DoGetIteratorFallback, 1)     \
-  _(DoGetNameFallback, js::jit::DoGetNameFallback, 0)             \
-  _(DoGetPropFallback, js::jit::DoGetPropFallback, 1)             \
-  _(DoGetPropSuperFallback, js::jit::DoGetPropSuperFallback, 0)   \
-  _(DoHasOwnFallback, js::jit::DoHasOwnFallback, 2)               \
-  _(DoInFallback, js::jit::DoInFallback, 2)                       \
-  _(DoInstanceOfFallback, js::jit::DoInstanceOfFallback, 2)       \
-  _(DoNewArrayFallback, js::jit::DoNewArrayFallback, 0)           \
-  _(DoNewObjectFallback, js::jit::DoNewObjectFallback, 0)         \
-  _(DoRestFallback, js::jit::DoRestFallback, 0)                   \
-  _(DoSetElemFallback, js::jit::DoSetElemFallback, 2)             \
-  _(DoSetPropFallback, js::jit::DoSetPropFallback, 1)             \
-  _(DoToBoolFallback, js::jit::DoToBoolFallback, 0)               \
-  _(DoToPropertyKeyFallback, js::jit::DoToPropertyKeyFallback, 0) \
-  _(DoTypeMonitorFallback, js::jit::DoTypeMonitorFallback, 0)     \
-  _(DoTypeOfFallback, js::jit::DoTypeOfFallback, 0)               \
+//
+// This list is required to be alphabetized.
+#define TAIL_CALL_VMFUNCTION_LIST(_)                                      \
+  _(DoBinaryArithFallback, js::jit::DoBinaryArithFallback, 2)             \
+  _(DoBindNameFallback, js::jit::DoBindNameFallback, 0)                   \
+  _(DoCheckPrivateFieldFallback, js::jit::DoCheckPrivateFieldFallback, 2) \
+  _(DoCompareFallback, js::jit::DoCompareFallback, 2)                     \
+  _(DoConcatStringObject, js::jit::DoConcatStringObject, 2)               \
+  _(DoGetElemFallback, js::jit::DoGetElemFallback, 2)                     \
+  _(DoGetElemSuperFallback, js::jit::DoGetElemSuperFallback, 3)           \
+  _(DoGetIntrinsicFallback, js::jit::DoGetIntrinsicFallback, 0)           \
+  _(DoGetIteratorFallback, js::jit::DoGetIteratorFallback, 1)             \
+  _(DoGetNameFallback, js::jit::DoGetNameFallback, 0)                     \
+  _(DoGetPropFallback, js::jit::DoGetPropFallback, 1)                     \
+  _(DoGetPropSuperFallback, js::jit::DoGetPropSuperFallback, 0)           \
+  _(DoHasOwnFallback, js::jit::DoHasOwnFallback, 2)                       \
+  _(DoInFallback, js::jit::DoInFallback, 2)                               \
+  _(DoInstanceOfFallback, js::jit::DoInstanceOfFallback, 2)               \
+  _(DoNewArrayFallback, js::jit::DoNewArrayFallback, 0)                   \
+  _(DoNewObjectFallback, js::jit::DoNewObjectFallback, 0)                 \
+  _(DoRestFallback, js::jit::DoRestFallback, 0)                           \
+  _(DoSetElemFallback, js::jit::DoSetElemFallback, 2)                     \
+  _(DoSetPropFallback, js::jit::DoSetPropFallback, 1)                     \
+  _(DoToBoolFallback, js::jit::DoToBoolFallback, 0)                       \
+  _(DoToPropertyKeyFallback, js::jit::DoToPropertyKeyFallback, 0)         \
+  _(DoTypeMonitorFallback, js::jit::DoTypeMonitorFallback, 0)             \
+  _(DoTypeOfFallback, js::jit::DoTypeOfFallback, 0)                       \
   _(DoUnaryArithFallback, js::jit::DoUnaryArithFallback, 1)
 
 #define DEF_ID(name, ...) name,

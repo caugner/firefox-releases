@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "js/shadow/Realm.h"  // JS::shadow::Realm
 #include "vm/Realm-inl.h"
 
 #include "mozilla/MemoryReporting.h"
@@ -729,6 +730,10 @@ bool Realm::collectCoverage() const {
 }
 
 bool Realm::collectCoverageForPGO() const {
+  if (jit::JitOptions.warpBuilder) {
+    // Warp inserts bailouts based on the Baseline IC counters.
+    return false;
+  }
   return !jit::JitOptions.disablePgo;
 }
 
@@ -786,11 +791,9 @@ mozilla::HashCodeScrambler Realm::randomHashCodeScrambler() {
                                     randomKeyGenerator_.next());
 }
 
-AutoSetNewObjectMetadata::AutoSetNewObjectMetadata(
-    JSContext* cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
+AutoSetNewObjectMetadata::AutoSetNewObjectMetadata(JSContext* cx)
     : cx_(cx->isHelperThreadContext() ? nullptr : cx),
       prevState_(cx, cx->realm()->objectMetadataState_) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
   if (cx_) {
     cx_->realm()->objectMetadataState_ =
         NewObjectMetadataState(DelayMetadata());

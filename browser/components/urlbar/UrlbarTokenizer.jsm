@@ -226,13 +226,11 @@ var UrlbarTokenizer = {
    */
   tokenize(queryContext) {
     logger.info("Tokenizing", queryContext);
-    let searchString = queryContext.searchString;
-    if (!searchString.trim()) {
+    if (!queryContext.trimmedSearchString) {
       queryContext.tokens = [];
       return queryContext;
     }
-
-    let unfiltered = splitString(searchString);
+    let unfiltered = splitString(queryContext.searchString);
     let tokens = filterTokens(unfiltered);
     queryContext.tokens = tokens;
     return queryContext;
@@ -245,6 +243,7 @@ var UrlbarTokenizer = {
    */
   isRestrictionToken(token) {
     return (
+      token &&
       token.type >= this.TYPE.RESTRICT_HISTORY &&
       token.type <= this.TYPE.RESTRICT_URL
     );

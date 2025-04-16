@@ -83,19 +83,60 @@ class IssueItem extends PureComponent {
     return testDataSet;
   }
 
-  _renderCauses() {
-    const { deprecated, experimental } = this.props;
+  _renderAliases() {
+    const { property } = this.props;
+    let { aliases } = this.props;
 
-    if (!deprecated && !experimental) {
+    if (!aliases) {
       return null;
     }
 
-    let localizationId = "compatibility-issue-deprecated-experimental";
+    aliases = aliases.filter(alias => alias !== property);
 
-    if (!deprecated) {
-      localizationId = "compatibility-issue-experimental";
-    } else if (!experimental) {
+    if (aliases.length === 0) {
+      return null;
+    }
+
+    return dom.ul(
+      {
+        className: "compatibility-issue-item__aliases",
+      },
+      aliases.map(alias =>
+        dom.li(
+          {
+            key: alias,
+            className: "compatibility-issue-item__alias",
+          },
+          alias
+        )
+      )
+    );
+  }
+
+  _renderCauses() {
+    const { deprecated, experimental, prefixNeeded } = this.props;
+
+    if (!deprecated && !experimental && !prefixNeeded) {
+      return null;
+    }
+
+    let localizationId = "";
+
+    if (deprecated && experimental && prefixNeeded) {
+      localizationId =
+        "compatibility-issue-deprecated-experimental-prefixneeded";
+    } else if (deprecated && experimental) {
+      localizationId = "compatibility-issue-deprecated-experimental";
+    } else if (deprecated && prefixNeeded) {
+      localizationId = "compatibility-issue-deprecated-prefixneeded";
+    } else if (experimental && prefixNeeded) {
+      localizationId = "compatibility-issue-experimental-prefixneeded";
+    } else if (deprecated) {
       localizationId = "compatibility-issue-deprecated";
+    } else if (experimental) {
+      localizationId = "compatibility-issue-experimental";
+    } else if (prefixNeeded) {
+      localizationId = "compatibility-issue-prefixneeded";
     }
 
     return Localized(
@@ -188,6 +229,7 @@ class IssueItem extends PureComponent {
         ...this._getTestDataAttributes(),
       },
       this._renderDescription(),
+      this._renderAliases(),
       this._renderNodeList()
     );
   }

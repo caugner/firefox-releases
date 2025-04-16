@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsAppDirectoryServiceDefs.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsComponentManagerUtils.h"
 #include "nsICaptivePortalService.h"
@@ -56,7 +57,6 @@ TRRService::TRRService()
       mDisableECS(true),
       mSkipTRRWhenParentalControlEnabled(true),
       mDisableAfterFails(5),
-      mPlatformDisabledTRR(false),
       mTRRBLStorage("DataMutex::TRRBlocklist"),
       mConfirmationState(CONFIRM_INIT),
       mRetryConfirmInterval(1000),
@@ -119,6 +119,32 @@ const nsCString& TRRService::AutoDetectedKey() {
   return kTRRNotAutoDetectedKey.AsString();
 }
 
+static void RemoveTRRBlocklistFile() {
+  MOZ_ASSERT(NS_IsMainThread(), "Getting the profile dir on the main thread");
+
+  nsCOMPtr<nsIFile> file;
+  nsresult rv =
+      NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(file));
+  if (NS_FAILED(rv)) {
+    return;
+  }
+
+  rv = file->AppendNative("TRRBlacklist.txt"_ns);
+  if (NS_FAILED(rv)) {
+    return;
+  }
+
+  // Dispatch an async task that removes the blocklist file from the profile.
+  rv = NS_DispatchBackgroundTask(
+      NS_NewRunnableFunction("RemoveTRRBlocklistFile::Remove",
+                             [file] { file->Remove(false); }),
+      NS_DISPATCH_EVENT_MAY_BLOCK);
+  if (NS_FAILED(rv)) {
+    return;
+  }
+  Preferences::SetBool("network.trr.blocklist_cleanup_done", true);
+}
+
 nsresult TRRService::Init() {
   MOZ_ASSERT(NS_IsMainThread(), "wrong thread");
   if (mInitialized) {
@@ -163,6 +189,15 @@ nsresult TRRService::Init() {
     }
 
     sTRRBackgroundThread = thread;
+
+    if (!StaticPrefs::network_trr_blocklist_cleanup_done()) {
+      // Dispatch an idle task to the main thread that gets the profile dir
+      // then attempts to delete the blocklist file on a background thread.
+      Unused << NS_DispatchToMainThreadQueue(
+          NS_NewCancelableRunnableFunction("RemoveTRRBlocklistFile::GetDir",
+                                           [] { RemoveTRRBlocklistFile(); }),
+          EventQueuePriority::Idle);
+    }
   }
 
   LOG(("Initialized TRRService\n"));
@@ -547,7 +582,6 @@ TRRService::Observe(nsISupports* aSubject, const char* aTopic,
         link->GetDnsSuffixList(suffixList);
         RebuildSuffixList(std::move(suffixList));
       }
-      mPlatformDisabledTRR = CheckPlatformDNSStatus(link);
     }
 
     if (!strcmp(aTopic, NS_NETWORK_LINK_TOPIC) && mURISetByDetection) {
@@ -576,23 +610,6 @@ void TRRService::RebuildSuffixList(nsTArray<nsCString>&& aSuffixList) {
     LOG(("TRRService adding %s to suffix list", item.get()));
     mDNSSuffixDomains.PutEntry(item);
   }
-}
-
-// static
-bool TRRService::CheckPlatformDNSStatus(nsINetworkLinkService* aLinkService) {
-  if (!aLinkService) {
-    return false;
-  }
-
-  uint32_t platformIndications = nsINetworkLinkService::NONE_DETECTED;
-  aLinkService->GetPlatformDNSIndications(&platformIndications);
-  LOG(("TRRService platformIndications=%u", platformIndications));
-  return (!StaticPrefs::network_trr_enable_when_vpn_detected() &&
-          (platformIndications & nsINetworkLinkService::VPN_DETECTED)) ||
-         (!StaticPrefs::network_trr_enable_when_proxy_detected() &&
-          (platformIndications & nsINetworkLinkService::PROXY_DETECTED)) ||
-         (!StaticPrefs::network_trr_enable_when_nrpt_detected() &&
-          (platformIndications & nsINetworkLinkService::NRPT_DETECTED));
 }
 
 void TRRService::MaybeConfirm() {
@@ -733,12 +750,6 @@ bool TRRService::IsExcludedFromTRR(const nsACString& aHost) {
 bool TRRService::IsExcludedFromTRR_unlocked(const nsACString& aHost) {
   if (!NS_IsMainThread()) {
     mLock.AssertCurrentThreadOwns();
-  }
-
-  if (mPlatformDisabledTRR) {
-    LOG(("%s is excluded from TRR because of platform indications",
-         aHost.BeginReading()));
-    return true;
   }
 
   int32_t dot = 0;

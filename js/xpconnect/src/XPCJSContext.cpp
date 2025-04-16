@@ -93,12 +93,10 @@ static void WatchdogMain(void* arg);
 class Watchdog;
 class WatchdogManager;
 class MOZ_RAII AutoLockWatchdog final {
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   Watchdog* const mWatchdog;
 
  public:
-  explicit AutoLockWatchdog(
-      Watchdog* aWatchdog MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
+  explicit AutoLockWatchdog(Watchdog* aWatchdog);
   ~AutoLockWatchdog();
 };
 
@@ -450,10 +448,7 @@ class WatchdogManager {
   PRTime mTimestamps[kWatchdogTimestampCategoryCount - 1];
 };
 
-AutoLockWatchdog::AutoLockWatchdog(
-    Watchdog* aWatchdog MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-    : mWatchdog(aWatchdog) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+AutoLockWatchdog::AutoLockWatchdog(Watchdog* aWatchdog) : mWatchdog(aWatchdog) {
   if (mWatchdog) {
     PR_Lock(mWatchdog->GetLock());
   }
@@ -761,7 +756,6 @@ static mozilla::Atomic<bool> sPropertyErrorMessageFixEnabled(false);
 static mozilla::Atomic<bool> sWeakRefsEnabled(false);
 static mozilla::Atomic<bool> sWeakRefsExposeCleanupSome(false);
 static mozilla::Atomic<bool> sIteratorHelpersEnabled(false);
-static mozilla::Atomic<bool> sPrivateFieldsEnabled(false);
 
 static JS::WeakRefSpecifier GetWeakRefsEnabled() {
   if (!sWeakRefsEnabled) {
@@ -786,8 +780,7 @@ void xpc::SetPrefableRealmOptions(JS::RealmOptions& options) {
           StaticPrefs::javascript_options_writable_streams())
       .setPropertyErrorMessageFixEnabled(sPropertyErrorMessageFixEnabled)
       .setWeakRefsEnabled(GetWeakRefsEnabled())
-      .setIteratorHelpersEnabled(sIteratorHelpersEnabled)
-      .setPrivateClassFieldsEnabled(sPrivateFieldsEnabled);
+      .setIteratorHelpersEnabled(sIteratorHelpersEnabled);
 }
 
 static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
@@ -966,11 +959,17 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
   sWeakRefsEnabled = Preferences::GetBool(JS_OPTIONS_DOT_STR "weakrefs");
   sWeakRefsExposeCleanupSome = Preferences::GetBool(
       JS_OPTIONS_DOT_STR "experimental.weakrefs.expose_cleanupSome");
+
+  // Require private fields disabled outside of nightly.
+  bool privateFieldsEnabled = false;
+  bool privateMethodsEnabled = false;
 #ifdef NIGHTLY_BUILD
   sIteratorHelpersEnabled =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.iterator_helpers");
-  sPrivateFieldsEnabled =
+  privateFieldsEnabled =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_fields");
+  privateMethodsEnabled =
+      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_methods");
 #endif
 
 #ifdef JS_GC_ZEAL
@@ -1014,7 +1013,9 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       .setAsyncStack(useAsyncStack)
       .setAsyncStackCaptureDebuggeeOnly(useAsyncStackCaptureDebuggeeOnly)
       .setThrowOnDebuggeeWouldRun(throwOnDebuggeeWouldRun)
-      .setDumpStackOnDebuggeeWouldRun(dumpStackOnDebuggeeWouldRun);
+      .setDumpStackOnDebuggeeWouldRun(dumpStackOnDebuggeeWouldRun)
+      .setPrivateClassFields(privateFieldsEnabled)
+      .setPrivateClassMethods(privateMethodsEnabled);
 
   nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
   if (xr) {

@@ -37,6 +37,7 @@ module.exports = async function({
   function onNetworkEvent(packet) {
     const actor = packet.eventActor;
     const resource = {
+      resourceId: actor.channelId,
       resourceType: ResourceWatcher.TYPES.NETWORK_EVENT,
       _type: "NetworkEvent",
       timeStamp: actor.timeStamp,
@@ -59,6 +60,7 @@ module.exports = async function({
       isThirdPartyTrackingResource: actor.isThirdPartyTrackingResource,
       referrerPolicy: actor.referrerPolicy,
       blockedReason: actor.blockedReason,
+      blockingExtension: actor.blockingExtension,
       channelId: actor.channelId,
       updates: [],
     };
@@ -116,7 +118,7 @@ module.exports = async function({
         break;
     }
 
-    onUpdated(resource);
+    onUpdated([resource]);
 
     if (resource.blockedReason) {
       // Blocked requests

@@ -15,6 +15,7 @@
 #include "nsINode.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsPIDOMWindow.h"
+#include "nsRefreshDriver.h"
 #include "AnimationEvent.h"
 #include "BeforeUnloadEvent.h"
 #include "ClipboardEvent.h"
@@ -849,7 +850,7 @@ nsresult EventDispatcher::Dispatch(nsISupports* aTarget,
     if (!sCachedMainThreadChain) {
       sCachedMainThreadChain = new nsTArray<EventTargetChainItem>();
     }
-    chain.SwapElements(*sCachedMainThreadChain);
+    chain = std::move(*sCachedMainThreadChain);
     chain.SetCapacity(128);
   }
 
@@ -897,7 +898,10 @@ nsresult EventDispatcher::Dispatch(nsISupports* aTarget,
 
   // Create visitor object and start event dispatching.
   // GetEventTargetParent for the original target.
-  nsEventStatus status = aEventStatus ? *aEventStatus : nsEventStatus_eIgnore;
+  nsEventStatus status =
+      aDOMEvent && aDOMEvent->DefaultPrevented()
+          ? nsEventStatus_eConsumeNoDefault
+          : aEventStatus ? *aEventStatus : nsEventStatus_eIgnore;
   nsCOMPtr<EventTarget> targetForPreVisitor = aEvent->mTarget;
   EventChainPreVisitor preVisitor(aPresContext, aEvent, aDOMEvent, status,
                                   isInAnon, targetForPreVisitor);
@@ -1101,7 +1105,7 @@ nsresult EventDispatcher::Dispatch(nsISupports* aTarget,
   }
 
   if (!externalDOMEvent && preVisitor.mDOMEvent) {
-    // An dom::Event was created while dispatching the event.
+    // A dom::Event was created while dispatching the event.
     // Duplicate private data if someone holds a pointer to it.
     nsrefcnt rc = 0;
     NS_RELEASE2(preVisitor.mDOMEvent, rc);

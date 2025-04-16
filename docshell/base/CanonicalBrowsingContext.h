@@ -20,6 +20,7 @@
 #include "nsISecureBrowserUI.h"
 
 class nsISHistory;
+class nsSHistory;
 class nsBrowserStatusFilter;
 class nsSecureBrowserUI;
 
@@ -33,7 +34,7 @@ namespace dom {
 class BrowserParent;
 struct LoadURIOptions;
 class MediaController;
-class SessionHistoryInfo;
+struct LoadingSessionHistoryInfo;
 class SessionHistoryEntry;
 class WindowGlobalParent;
 
@@ -95,10 +96,11 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   Nullable<WindowProxyHolder> GetTopChromeWindow();
 
   nsISHistory* GetSessionHistory();
-  UniquePtr<SessionHistoryInfo> CreateSessionHistoryEntryForLoad(
+  SessionHistoryEntry* GetActiveSessionHistoryEntry();
+
+  UniquePtr<LoadingSessionHistoryInfo> CreateLoadingSessionHistoryEntryForLoad(
       nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
-  void SessionHistoryCommit(uint64_t aSessionHistoryEntryId,
-                            const nsID& aChangeID);
+  void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID);
 
   // Calls the session history listeners' OnHistoryReload, storing the result in
   // aCanReload. If aCanReload is set to true and we have an active or a loading
@@ -125,7 +127,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // This function is used to mute or unmute all media within a tab. It would
   // set the media mute property for the top level window and propagate it to
   // other top level windows in other processes.
-  void NotifyMediaMutedChanged(bool aMuted);
+  void NotifyMediaMutedChanged(bool aMuted, ErrorResult& aRv);
 
   // Return the number of unique site origins by iterating all given BCs,
   // including their subtrees.
@@ -223,8 +225,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     PendingRemotenessChange(CanonicalBrowsingContext* aTarget,
                             RemotenessPromise::Private* aPromise,
                             uint64_t aPendingSwitchId,
-                            bool aReplaceBrowsingContext,
-                            uint64_t aSpecificGroupId);
+                            bool aReplaceBrowsingContext);
 
     void Cancel(nsresult aRv);
 
@@ -240,9 +241,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     RefPtr<RemotenessPromise::Private> mPromise;
     RefPtr<GenericPromise> mPrepareToChangePromise;
     RefPtr<ContentParent> mContentParent;
+    RefPtr<BrowsingContextGroup> mSpecificGroup;
 
     uint64_t mPendingSwitchId;
-    uint64_t mSpecificGroupId;
     bool mReplaceBrowsingContext;
   };
 
@@ -273,7 +274,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // The current remoteness change which is in a pending state.
   RefPtr<PendingRemotenessChange> mPendingRemotenessChange;
 
-  nsCOMPtr<nsISHistory> mSessionHistory;
+  RefPtr<nsSHistory> mSessionHistory;
 
   // Tab media controller is used to control all media existing in the same
   // browsing context tree, so it would only exist in the top level browsing
@@ -282,7 +283,11 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   RefPtr<net::DocumentLoadListener> mCurrentLoad;
 
-  nsTArray<RefPtr<SessionHistoryEntry>> mLoadingEntries;
+  struct LoadingSessionHistoryEntry {
+    uint64_t mLoadId = 0;
+    RefPtr<SessionHistoryEntry> mEntry;
+  };
+  nsTArray<LoadingSessionHistoryEntry> mLoadingEntries;
   RefPtr<SessionHistoryEntry> mActiveEntry;
 
   RefPtr<nsSecureBrowserUI> mSecureBrowserUI;

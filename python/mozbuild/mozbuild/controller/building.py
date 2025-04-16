@@ -1300,7 +1300,8 @@ class BuildDriver(MozbuildObject):
             self.notify('Build complete' if not status else 'Build failed')
 
         if status:
-            if what and what not in ('faster', 'binaries'):
+            if what and any([target for target in what
+                             if target not in ('faster', 'binaries')]):
                 print('Hey! Builds initiated with `mach build '
                       '$A_SPECIFIC_TARGET` may not always work, even if the '
                       'code being built is correct. Consider doing a bare '
@@ -1510,6 +1511,12 @@ class BuildDriver(MozbuildObject):
             }, 'Adding make options from {path}\n    {content}')
 
         append_env['OBJDIR'] = mozpath.normsep(self.topobjdir)
+        if (mozpath.normpath(os.path.dirname(sys.executable)) not in
+            [mozpath.normpath(s) for s in
+             os.environ['PATH'].split(os.pathsep)]):
+            append_env['PATH'] = (
+                os.path.dirname(sys.executable) + os.pathsep +
+                os.environ['PATH'])
 
         return self._run_make(srcdir=True,
                               filename='client.mk',

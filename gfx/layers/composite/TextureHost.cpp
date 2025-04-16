@@ -32,6 +32,7 @@
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/webrender/RenderBufferTextureHost.h"
+#include "mozilla/webrender/RenderBufferTextureHostSWGL.h"
 #include "mozilla/webrender/RenderExternalTextureHost.h"
 #include "mozilla/webrender/RenderThread.h"
 #include "mozilla/webrender/WebRenderAPI.h"
@@ -457,8 +458,9 @@ void TextureHost::NotifyNotUsed() {
   }
 
   // Do not need to call NotifyNotUsed() if TextureHost does not have
-  // TextureFlags::RECYCLE flag.
-  if (!(GetFlags() & TextureFlags::RECYCLE)) {
+  // TextureFlags::RECYCLE flag nor TextureFlags::WAIT_HOST_USAGE_END flag.
+  if (!(GetFlags() & TextureFlags::RECYCLE) &&
+      !(GetFlags() & TextureFlags::WAIT_HOST_USAGE_END)) {
     return;
   }
 
@@ -675,6 +677,9 @@ void BufferTextureHost::CreateRenderTexture(
   if (UseExternalTextures()) {
     texture =
         new wr::RenderExternalTextureHost(GetBuffer(), GetBufferDescriptor());
+  } else if (gfx::gfxVars::UseSoftwareWebRender()) {
+    texture =
+        new wr::RenderBufferTextureHostSWGL(GetBuffer(), GetBufferDescriptor());
   } else {
     texture =
         new wr::RenderBufferTextureHost(GetBuffer(), GetBufferDescriptor());
@@ -700,7 +705,7 @@ void BufferTextureHost::PushResourceUpdates(
                     : &wr::TransactionBuilder::UpdateExternalImage;
 
   auto imageType =
-      UseExternalTextures()
+      UseExternalTextures() || gfx::gfxVars::UseSoftwareWebRender()
           ? wr::ExternalImageType::TextureHandle(wr::TextureTarget::Rect)
           : wr::ExternalImageType::Buffer();
 

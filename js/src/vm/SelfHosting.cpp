@@ -51,8 +51,10 @@
 #include "js/Date.h"
 #include "js/ErrorReport.h"  // JS::PrintError
 #include "js/Exception.h"
-#include "js/Modules.h"  // JS::GetModulePrivate
+#include "js/experimental/TypedData.h"  // JS_GetArrayBufferViewType
+#include "js/Modules.h"                 // JS::GetModulePrivate
 #include "js/PropertySpec.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/SourceText.h"  // JS::SourceText
 #include "js/StableStringChars.h"
 #include "js/Warnings.h"  // JS::{,Set}WarningReporter
@@ -150,8 +152,11 @@ static bool intrinsic_IsArray(JSContext* cx, unsigned argc, Value* vp) {
 static bool intrinsic_IsCrossRealmArrayConstructor(JSContext* cx, unsigned argc,
                                                    Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 1);
+  MOZ_ASSERT(args[0].isObject());
+
   bool result = false;
-  if (!IsCrossRealmArrayConstructor(cx, args[0], &result)) {
+  if (!IsCrossRealmArrayConstructor(cx, &args[0].toObject(), &result)) {
     return false;
   }
   args.rval().setBoolean(result);
@@ -285,42 +290,6 @@ static bool intrinsic_IsPossiblyWrappedInstanceOfBuiltin(JSContext* cx,
   }
 
   args.rval().setBoolean(obj->is<T>());
-  return true;
-}
-
-/**
- * Self-hosting intrinsic returning the original constructor for a builtin
- * the name of which is the first and only argument.
- *
- * The return value is guaranteed to be the original constructor even if
- * content code changed the named binding on the global object.
- *
- * This intrinsic shouldn't be called directly. Instead, the
- * `GetBuiltinConstructor` and `GetBuiltinPrototype` helper functions in
- * Utilities.js should be used, as they cache results, improving performance.
- */
-static bool intrinsic_GetBuiltinConstructor(JSContext* cx, unsigned argc,
-                                            Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 1);
-  RootedString str(cx, args[0].toString());
-  JSAtom* atom;
-  if (str->isAtom()) {
-    atom = &str->asAtom();
-  } else {
-    atom = AtomizeString(cx, str);
-    if (!atom) {
-      return false;
-    }
-  }
-  RootedId id(cx, AtomToId(atom));
-  JSProtoKey key = JS_IdToProtoKey(cx, id);
-  MOZ_ASSERT(key != JSProto_Null);
-  JSObject* ctor = GlobalObject::getOrCreateConstructor(cx, key);
-  if (!ctor) {
-    return false;
-  }
-  args.rval().setObject(*ctor);
   return true;
 }
 
@@ -725,14 +694,13 @@ static bool intrinsic_ObjectHasPrototype(JSContext* cx, unsigned argc,
                                          Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 2);
-  RootedObject obj(cx, &args[0].toObject());
-  RootedObject proto(cx, &args[1].toObject());
 
-  RootedObject actualProto(cx);
-  if (!GetPrototype(cx, obj, &actualProto)) {
-    return false;
-  }
+  // Self-hosted code calls this intrinsic with builtin prototypes. These are
+  // always native objects.
+  auto* obj = &args[0].toObject().as<NativeObject>();
+  auto* proto = &args[1].toObject().as<NativeObject>();
 
+  JSObject* actualProto = obj->staticPrototype();
   args.rval().setBoolean(actualProto == proto);
   return true;
 }
@@ -743,9 +711,10 @@ static bool intrinsic_UnsafeSetReservedSlot(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args.length() == 3);
   MOZ_ASSERT(args[0].isObject());
   MOZ_RELEASE_ASSERT(args[1].isInt32());
+  MOZ_ASSERT(args[1].toInt32() >= 0);
 
-  args[0].toObject().as<NativeObject>().setReservedSlot(
-      args[1].toPrivateUint32(), args[2]);
+  uint32_t slot = uint32_t(args[1].toInt32());
+  args[0].toObject().as<NativeObject>().setReservedSlot(slot, args[2]);
   args.rval().setUndefined();
   return true;
 }
@@ -756,9 +725,10 @@ static bool intrinsic_UnsafeGetReservedSlot(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args.length() == 2);
   MOZ_ASSERT(args[0].isObject());
   MOZ_RELEASE_ASSERT(args[1].isInt32());
+  MOZ_ASSERT(args[1].toInt32() >= 0);
 
-  args.rval().set(args[0].toObject().as<NativeObject>().getReservedSlot(
-      args[1].toPrivateUint32()));
+  uint32_t slot = uint32_t(args[1].toInt32());
+  args.rval().set(args[0].toObject().as<NativeObject>().getReservedSlot(slot));
   return true;
 }
 
@@ -798,6 +768,32 @@ static bool intrinsic_UnsafeGetBooleanFromReservedSlot(JSContext* cx,
     return false;
   }
   MOZ_ASSERT(vp->isBoolean());
+  return true;
+}
+
+static bool intrinsic_ThisTimeValue(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 1);
+  MOZ_ASSERT(args[0].isInt32());
+
+  const char* name = nullptr;
+
+  int32_t method = args[0].toInt32();
+  if (method == DATE_METHOD_LOCALE_TIME_STRING) {
+    name = "toLocaleTimeString";
+  } else if (method == DATE_METHOD_LOCALE_DATE_STRING) {
+    name = "toLocaleDateString";
+  } else {
+    MOZ_ASSERT(method == DATE_METHOD_LOCALE_STRING);
+    name = "toLocaleString";
+  }
+
+  auto* unwrapped = UnwrapAndTypeCheckThis<DateObject>(cx, args, name);
+  if (!unwrapped) {
+    return false;
+  }
+
+  args.rval().set(unwrapped->UTCTime());
   return true;
 }
 
@@ -848,11 +844,10 @@ static bool intrinsic_GetNextMapEntryForIterator(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args[0].toObject().is<MapIteratorObject>());
   MOZ_ASSERT(args[1].isObject());
 
-  Rooted<MapIteratorObject*> mapIterator(
-      cx, &args[0].toObject().as<MapIteratorObject>());
-  RootedArrayObject result(cx, &args[1].toObject().as<ArrayObject>());
+  MapIteratorObject* mapIterator = &args[0].toObject().as<MapIteratorObject>();
+  ArrayObject* result = &args[1].toObject().as<ArrayObject>();
 
-  args.rval().setBoolean(MapIteratorObject::next(mapIterator, result, cx));
+  args.rval().setBoolean(MapIteratorObject::next(mapIterator, result));
   return true;
 }
 
@@ -877,11 +872,10 @@ static bool intrinsic_GetNextSetEntryForIterator(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args[0].toObject().is<SetIteratorObject>());
   MOZ_ASSERT(args[1].isObject());
 
-  Rooted<SetIteratorObject*> setIterator(
-      cx, &args[0].toObject().as<SetIteratorObject>());
-  RootedArrayObject result(cx, &args[1].toObject().as<ArrayObject>());
+  SetIteratorObject* setIterator = &args[0].toObject().as<SetIteratorObject>();
+  ArrayObject* result = &args[1].toObject().as<ArrayObject>();
 
-  args.rval().setBoolean(SetIteratorObject::next(setIterator, result, cx));
+  args.rval().setBoolean(SetIteratorObject::next(setIterator, result));
   return true;
 }
 
@@ -1592,7 +1586,8 @@ static bool intrinsic_StringReplaceAllString(JSContext* cx, unsigned argc,
   return true;
 }
 
-bool js::intrinsic_StringSplitString(JSContext* cx, unsigned argc, Value* vp) {
+static bool intrinsic_StringSplitString(JSContext* cx, unsigned argc,
+                                        Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 2);
 
@@ -2142,6 +2137,17 @@ static bool intrinsic_NewAsyncIteratorHelper(JSContext* cx, unsigned argc,
   return true;
 }
 
+static bool intrinsic_NoPrivateGetter(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 0);
+
+  JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                            JSMSG_PRIVATE_SETTER_ONLY);
+
+  args.rval().setUndefined();
+  return false;
+}
+
 // The self-hosting global isn't initialized with the normal set of builtins.
 // Instead, individual C++-implemented functions that're required by
 // self-hosted code are defined as global functions. Accessing these
@@ -2213,7 +2219,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
                     IntrinsicIsCallable),
     JS_INLINABLE_FN("IsConstructor", intrinsic_IsConstructor, 1, 0,
                     IntrinsicIsConstructor),
-    JS_FN("GetBuiltinConstructorImpl", intrinsic_GetBuiltinConstructor, 1, 0),
     JS_FN("MakeConstructible", intrinsic_MakeConstructible, 2, 0),
     JS_FN("_ConstructFunction", intrinsic_ConstructFunction, 2, 0),
     JS_FN("ThrowRangeError", intrinsic_ThrowRangeError, 4, 0),
@@ -2262,6 +2267,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
 
     JS_FN("ThisNumberValueForToLocaleString", ThisNumberValueForToLocaleString,
           0, 0),
+
+    JS_FN("ThisTimeValue", intrinsic_ThisTimeValue, 1, 0),
 
     JS_INLINABLE_FN("IsPackedArray", intrinsic_IsPackedArray, 1, 0,
                     IntrinsicIsPackedArray),
@@ -2626,6 +2633,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("IntrinsicAsyncGeneratorThrow", AsyncGeneratorThrow, 1, 0),
 
     JS_FN("NewPrivateName", intrinsic_NewPrivateName, 1, 0),
+    JS_FN("NoPrivateGetter", intrinsic_NoPrivateGetter, 1, 0),
 
     JS_FS_END};
 

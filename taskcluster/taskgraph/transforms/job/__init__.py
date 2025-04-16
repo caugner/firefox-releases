@@ -88,6 +88,7 @@ job_description_schema = Schema({
             Required('artifact'): text_type,
             Optional('dest'): text_type,
             Optional('extract'): bool,
+            Optional('verify-hash'): bool,
         }],
     },
 
@@ -160,6 +161,47 @@ def set_label(config, jobs):
             job['label'] = '{}-{}'.format(config.kind, job['name'])
         if job.get('name'):
             del job['name']
+        yield job
+
+
+@transforms.add
+def add_resource_monitor(config, jobs):
+    for job in jobs:
+        if job.get('attributes', {}).get('resource-monitor'):
+            worker_implementation, worker_os = worker_type_implementation(
+                config.graph_config, job["worker-type"]
+            )
+            # Normalise worker os so that linux-bitbar and similar use linux tools.
+            worker_os = worker_os.split('-')[0]
+            # We don't currently support an Arm worker, due to gopsutil's indirect
+            # dependencies (go-ole)
+            if 'aarch64' in job["worker-type"]:
+                yield job
+                continue
+            elif 'win7' in job["worker-type"]:
+                arch = '32'
+            else:
+                arch = '64'
+            job.setdefault("fetches", {})
+            job["fetches"].setdefault("toolchain", [])
+            job["fetches"]["toolchain"].append("{}{}-resource-monitor".format(worker_os, arch))
+
+            if worker_implementation == 'docker-worker':
+                artifact_source = "/builds/worker/monitoring/resource-monitor.json"
+            else:
+                artifact_source = "monitoring/resource-monitor.json"
+            job["worker"].setdefault("artifacts", [])
+            job["worker"]["artifacts"].append(
+                {
+                    "name": "public/monitoring/resource-monitor.json",
+                    "type": "file",
+                    "path": artifact_source,
+                }
+            )
+            # Set env for output file
+            job["worker"].setdefault("env", {})
+            job["worker"]["env"]["RESOURCE_MONITOR_OUTPUT"] = artifact_source
+
         yield job
 
 
@@ -257,10 +299,12 @@ def use_fetches(config, jobs):
                         path = artifact
                         dest = None
                         extract = True
+                        verify_hash = False
                     else:
                         path = artifact['artifact']
                         dest = artifact.get('dest')
                         extract = artifact.get('extract', True)
+                        verify_hash = artifact.get('verify-hash', False)
 
                     fetch = {
                         'artifact': '{prefix}/{path}'.format(prefix=prefix, path=path)
@@ -270,6 +314,8 @@ def use_fetches(config, jobs):
                     }
                     if dest is not None:
                         fetch['dest'] = dest
+                    if verify_hash:
+                        fetch['verify-hash'] = verify_hash
                     job_fetches.append(fetch)
 
         if job.get('use-sccache') and not has_sccache:

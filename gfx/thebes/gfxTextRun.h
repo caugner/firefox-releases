@@ -27,9 +27,10 @@
 #include "harfbuzz/hb.h"
 #include "nsUnicodeScriptCodes.h"
 #include "nsColor.h"
+#include "nsFrameList.h"
 #include "X11UndefineNone.h"
 
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
 #  include <stdio.h>
 #endif
 
@@ -756,8 +757,8 @@ class gfxTextRun : public gfxShapedText {
     return advance;
   }
 
-#ifdef DEBUG
-  void Dump(FILE* aOutput);
+#ifdef DEBUG_FRAME_DUMP
+  void Dump(FILE* aOutput = stderr);
 #endif
 
  protected:
@@ -1302,7 +1303,8 @@ class gfxFontGroup final : public gfxTextRunFactory {
 
     bool IsSharedFamily() const { return mIsSharedFamily; }
     bool IsUserFontContainer() const {
-      return FontEntry()->mIsUserFontContainer;
+      gfxFontEntry* fe = FontEntry();
+      return fe && fe->mIsUserFontContainer;
     }
     bool IsLoading() const { return mLoading; }
     bool IsInvalid() const { return mInvalid; }
@@ -1319,8 +1321,8 @@ class gfxFontGroup final : public gfxTextRunFactory {
         return false;
       }
       MOZ_ASSERT(IsUserFontContainer());
-      return static_cast<gfxUserFontEntry*>(FontEntry())
-          ->CharacterInUnicodeRange(aCh);
+      auto* ufe = static_cast<gfxUserFontEntry*>(FontEntry());
+      return ufe && ufe->CharacterInUnicodeRange(aCh);
     }
 
     void SetFont(gfxFont* aFont) {

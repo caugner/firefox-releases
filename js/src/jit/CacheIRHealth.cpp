@@ -18,16 +18,27 @@ bool CacheIRHealth::spewStubHealth(AutoStructuredSpewer& spew, ICStub* stub) {
   const CacheIRStubInfo* stubInfo = stub->cacheIRStubInfo();
   CacheIRReader stubReader(stubInfo);
   uint32_t totalStubHealth = 0;
+
+  spew->beginListProperty("cacheIROps");
   while (stubReader.more()) {
     CacheOp op = stubReader.readOp();
     uint32_t opHealth = CacheIROpHealth[size_t(op)];
+    uint32_t argLength = CacheIROpArgLengths[size_t(op)];
+    const char* opName = CacheIROpNames[size_t(op)];
+
+    spew->beginObject();
     if (opHealth == UINT32_MAX) {
-      const char* opName = CacheIROpNames[size_t(op)];
       spew->property("unscoredOp", opName);
     } else {
+      spew->property("cacheIROp", opName);
+      spew->property("opHealth", opHealth);
       totalStubHealth += opHealth;
     }
+    spew->endObject();
+
+    stubReader.skip(argLength);
   }
+  spew->endList();  // cacheIROps
 
   spew->property("stubHealth", totalStubHealth);
   return true;
@@ -60,19 +71,27 @@ bool CacheIRHealth::spewHealthForStubsInCacheIREntry(AutoStructuredSpewer& spew,
   return true;
 }
 
-uint32_t CacheIRHealth::spewJSOpForCacheIRHealth(AutoStructuredSpewer& spew,
-                                                 unsigned pcOffset,
-                                                 jsbytecode next) {
-  JSOp op = JSOp(next);
-  const JSCodeSpec& cs = CodeSpec(op);
-  const uint32_t len = cs.length;
-  if (!len) {
-    return 0;
+void CacheIRHealth::spewJSOpAndCacheIRHealth(AutoStructuredSpewer& spew,
+                                             HandleScript script,
+                                             jit::ICEntry* entry,
+                                             jsbytecode* pc, JSOp op) {
+  spew->beginObject();
+  {
+    spew->property("op", CodeName(op));
+
+    if (pc == script->main()) {
+      spew->property("main", true);
+    }
+
+    // TODO: If a perf issue arises, look into improving the SrcNotes
+    // API call below.
+    unsigned column;
+    spew->property("lineno", PCToLineNumber(script, pc, &column));
+    spew->property("column", column);
+
+    spewHealthForStubsInCacheIREntry(spew, entry);
   }
-
-  spew->property("op", CodeName(op));
-
-  return len;
+  spew->endObject();
 }
 
 bool CacheIRHealth::rateMyCacheIR(JSContext* cx, HandleScript script) {
@@ -88,31 +107,32 @@ bool CacheIRHealth::rateMyCacheIR(JSContext* cx, HandleScript script) {
     jsbytecode* end = script->codeEnd();
     spew->beginListProperty("entries");
 
+    ICEntry* prevEntry = nullptr;
     while (next < end) {
       uint32_t len = 0;
-      spew->beginObject();
-      {
-        if (next == script->main()) {
-          spew->property("main", true);
-        }
+      uint32_t pcOffset = script->pcToOffset(next);
 
-        uint32_t pcOffset = script->pcToOffset(next);
-        jit::ICEntry* entry = jitScript->maybeICEntryFromPCOffset(pcOffset);
-
-        len = spewJSOpForCacheIRHealth(spew, pcOffset, *next);
-        MOZ_ASSERT(len);
-
-        if (entry && (entry->firstStub()->isFallback() ||
-                      ICStub::IsCacheIRKind(entry->firstStub()->kind()))) {
-          spewHealthForStubsInCacheIREntry(spew, entry);
-        }
+      jit::ICEntry* entry =
+          jitScript->maybeICEntryFromPCOffset(pcOffset, prevEntry);
+      if (entry) {
+        prevEntry = entry;
       }
-      spew->endObject();
+
+      JSOp op = JSOp(*next);
+      const JSCodeSpec& cs = CodeSpec(op);
+      len = cs.length;
+      MOZ_ASSERT(len);
+
+      if (entry && (entry->firstStub()->isFallback() ||
+                    ICStub::IsCacheIRKind(entry->firstStub()->kind()))) {
+        spewJSOpAndCacheIRHealth(spew, script, entry, next, op);
+      }
 
       next += len;
     }
+
+    spew->endList();  // entries
   }
-  spew->endList();  // entries
 
   return true;
 }

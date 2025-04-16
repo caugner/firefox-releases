@@ -483,8 +483,8 @@ nsresult nsHttpHandler::Init() {
   Preferences::RegisterPrefixCallbacks(nsHttpHandler::PrefsChanged,
                                        gCallbackPrefs, this);
   PrefsChanged(nullptr);
-  Telemetry::ScalarSet(
-      Telemetry::ScalarID::NETWORKING_HTTP3_ENABLED, mHttp3Enabled);
+  Telemetry::ScalarSet(Telemetry::ScalarID::NETWORKING_HTTP3_ENABLED,
+                       mHttp3Enabled);
 
   mMisc.AssignLiteral("rv:" MOZILLA_UAVERSION);
 
@@ -1061,15 +1061,13 @@ void nsHttpHandler::InitUserAgentComponents() {
     }
   }
 #  elif defined(XP_MACOSX)
-#    if defined(__ppc__)
-  mOscpu.AssignLiteral("PPC Mac OS X");
-#    elif defined(__i386__) || defined(__x86_64__)
-  mOscpu.AssignLiteral("Intel Mac OS X");
-#    endif
   SInt32 majorVersion = nsCocoaFeatures::macOSVersionMajor();
   SInt32 minorVersion = nsCocoaFeatures::macOSVersionMinor();
-  mOscpu += nsPrintfCString(" %d.%d", static_cast<int>(majorVersion),
-                            static_cast<int>(minorVersion));
+
+  // Always return an "Intel" UA string, even on ARM64 macOS like Safari does.
+  mOscpu =
+      nsPrintfCString("Intel Mac OS X %d.%d", static_cast<int>(majorVersion),
+                      static_cast<int>(minorVersion));
 #  elif defined(XP_UNIX)
   struct utsname name;
   int ret = uname(&name);
@@ -1995,6 +1993,23 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     }
   }
 
+  if (PREF_CHANGED(HTTP_PREF("http3.alt-svc-mapping-for-testing"))) {
+    nsAutoCString altSvcMappings;
+    rv = Preferences::GetCString(HTTP_PREF("http3.alt-svc-mapping-for-testing"),
+                                 altSvcMappings);
+    if (NS_SUCCEEDED(rv)) {
+      nsCCharSeparatedTokenizer tokenizer(altSvcMappings, ',');
+      while (tokenizer.hasMoreTokens()) {
+        nsAutoCString token(tokenizer.nextToken());
+        int32_t index = token.Find(";");
+        if (index != kNotFound) {
+          auto* map = new nsCString(Substring(token, index + 1));
+          mAltSvcMappingTemptativeMap.Put(Substring(token, 0, index), map);
+        }
+      }
+    }
+  }
+
   // Enable HTTP response timeout if TCP Keepalives are disabled.
   mResponseTimeoutEnabled =
       !mTCPKeepaliveShortLivedEnabled && !mTCPKeepaliveLongLivedEnabled;
@@ -2745,7 +2760,11 @@ void nsHttpHandler::ShutdownConnectionManager() {
 
 nsresult nsHttpHandler::NewChannelId(uint64_t& channelId) {
   channelId =
-      ((static_cast<uint64_t>(mProcessId) << 32) & 0xFFFFFFFF00000000LL) |
+      // channelId is sometimes passed to JavaScript code (e.g. devtools),
+      // and since on Linux PID_MAX_LIMIT is 2^22 we cannot
+      // shift PID more than 31 bits left. Otherwise resulting values
+      // will be exceed safe JavaScript integer range.
+      ((static_cast<uint64_t>(mProcessId) << 31) & 0xFFFFFFFF80000000LL) |
       mNextChannelId++;
   return NS_OK;
 }
@@ -2910,6 +2929,43 @@ void nsHttpHandler::SetHttpHandlerInitArgs(const HttpHandlerInitArgs& aArgs) {
 void nsHttpHandler::SetDeviceModelId(const nsCString& aModelId) {
   MOZ_ASSERT(XRE_IsSocketProcess());
   mDeviceModelId = aModelId;
+}
+
+void nsHttpHandler::MaybeAddAltSvcForTesting(
+    nsIURI* aUri, const nsACString& aUsername,
+    const nsACString& aTopWindowOrigin, bool aPrivateBrowsing, bool aIsolated,
+    nsIInterfaceRequestor* aCallbacks,
+    const OriginAttributes& aOriginAttributes) {
+  if (!IsHttp3Enabled() || mAltSvcMappingTemptativeMap.IsEmpty()) {
+    return;
+  }
+
+  bool isHttps = false;
+  if (NS_FAILED(aUri->SchemeIs("https", &isHttps)) || !isHttps) {
+    // Only set forr HTTPS.
+    return;
+  }
+
+  nsAutoCString originHost;
+  if (NS_FAILED(aUri->GetAsciiHost(originHost))) {
+    return;
+  }
+
+  nsCString* map = mAltSvcMappingTemptativeMap.Get(originHost);
+  if (map) {
+    int32_t originPort = 80;
+    aUri->GetPort(&originPort);
+    LOG(("nsHttpHandler::MaybeAddAltSvcForTesting for %s map: %s",
+         originHost.get(), PromiseFlatCString(*map).get()));
+    AltSvcMapping::ProcessHeader(*map, nsCString("https"), originHost,
+                                 originPort, aUsername, aTopWindowOrigin,
+                                 aPrivateBrowsing, aIsolated, aCallbacks,
+                                 nullptr, 0, aOriginAttributes, true);
+  }
+}
+
+bool nsHttpHandler::UseHTTPSRRAsAltSvcEnabled() const {
+  return StaticPrefs::network_dns_use_https_rr_as_altsvc();
 }
 
 }  // namespace mozilla::net

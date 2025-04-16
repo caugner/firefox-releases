@@ -62,26 +62,12 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "registerWalkerListeners",
-  "devtools/client/framework/actions/index",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "registerTarget",
-  "devtools/client/framework/actions/index",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "unregisterTarget",
-  "devtools/client/framework/actions/index",
-  true
-);
-
-loader.lazyRequireGetter(
-  this,
-  "selectTarget",
+  [
+    "registerWalkerListeners",
+    "registerTarget",
+    "selectTarget",
+    "unregisterTarget",
+  ],
   "devtools/client/framework/actions/index",
   true
 );
@@ -195,13 +181,6 @@ loader.lazyGetter(this, "registerHarOverlay", () => {
 
 loader.lazyRequireGetter(
   this,
-  "defaultThreadOptions",
-  "devtools/client/shared/thread-utils",
-  true
-);
-
-loader.lazyRequireGetter(
-  this,
   "NodeFront",
   "devtools/client/fronts/node",
   true
@@ -256,6 +235,10 @@ function Toolbox(
   this.telemetry = new Telemetry();
 
   this.targetList = new TargetList(target.client.mainRoot, target);
+  this.targetList.on(
+    "target-thread-wrong-order-on-resume",
+    this._onTargetThreadFrontResumeWrongOrder.bind(this)
+  );
   this.resourceWatcher = new ResourceWatcher(this.targetList);
 
   // The session ID is used to determine which telemetry events belong to which
@@ -557,7 +540,7 @@ Toolbox.prototype = {
   },
 
   get threadFront() {
-    return this._threadFront;
+    return this.targetList.targetFront.threadFront;
   },
 
   /**
@@ -715,16 +698,22 @@ Toolbox.prototype = {
       });
     }
 
-    await this._attachTarget(targetFront);
+    const { threadFront } = targetFront;
+    if (threadFront) {
+      // threadFront listeners are removed when the thread is destroyed
+      threadFront.on("paused", packet =>
+        this._onPausedState(packet, threadFront)
+      );
+      threadFront.on("resumed", () => this._onResumedState(threadFront));
+    }
 
     if (this.hostType !== Toolbox.HostType.PAGE) {
       await this.store.dispatch(registerTarget(targetFront));
     }
 
     if (targetFront.isTopLevel && isTargetSwitching) {
-      // Attach the toolbox to this new target
-      // This is done *after* the call to _attachTarget as these methods
-      // expect the target to be attached.
+      // These methods expect the target to be attached, which is guaranteed by the time
+      // _onTargetAvailable is called by the TargetList.
       await this._listFrames();
       await this.initPerformance();
     }
@@ -732,7 +721,10 @@ Toolbox.prototype = {
 
   _onTargetDestroyed({ targetFront }) {
     if (targetFront.isTopLevel) {
-      this.detachTarget();
+      this.target.off("inspect-object", this._onInspectObject);
+      this.target.off("will-navigate", this._onWillNavigate);
+      this.target.off("navigate", this._onNavigate);
+      this.target.off("frame-update", this._updateFrames);
     }
 
     if (this.hostType !== Toolbox.HostType.PAGE) {
@@ -740,64 +732,14 @@ Toolbox.prototype = {
     }
   },
 
-  /**
-   * This method focuses on attaching to one particular target.
-   * It ensure that the target actor is fully initialized and is watching for
-   * resources. We do that by calling its `attach` method.
-   * And we listen for thread actor events in order to update toolbox UI when
-   * we hit a breakpoint.
-   */
-  async _attachTarget(targetFront) {
-    await targetFront.attach();
-
-    // Do not attach to the thread of additional Frame targets, as they are
-    // already tracked by the content process targets. At least in the context
-    // of the Browser Toolbox.
-    // We would have to revisit that for the content toolboxes.
-    // Worker targets are attached to by the debugger so that the debugger
-    // has a chance to register breakpoints with the server.
-    if (
-      targetFront.isTopLevel ||
-      targetFront.targetType == TargetList.TYPES.PROCESS
-    ) {
-      const threadFront = await this._attachAndResumeThread(targetFront);
-      this._startThreadFrontListeners(threadFront);
-      if (targetFront.isTopLevel) {
-        this._threadFront = threadFront;
-      }
-    }
-  },
-
-  _startThreadFrontListeners: function(threadFront) {
-    // threadFront listeners are removed when the thread is destroyed
-    threadFront.on("paused", packet =>
-      this._onPausedState(packet, threadFront)
+  _onTargetThreadFrontResumeWrongOrder() {
+    const box = this.getNotificationBox();
+    box.appendNotification(
+      L10N.getStr("toolbox.resumeOrderWarning"),
+      "wrong-resume-order",
+      "",
+      box.PRIORITY_WARNING_HIGH
     );
-    threadFront.on("resumed", () => this._onResumedState(threadFront));
-  },
-
-  _attachAndResumeThread: async function(target) {
-    const options = defaultThreadOptions();
-    const threadFront = await target.attachThread(options);
-
-    try {
-      await threadFront.resume();
-    } catch (ex) {
-      // Interpret a possible error thrown by ThreadActor.resume
-      if (ex.error === "wrongOrder") {
-        const box = this.getNotificationBox();
-        box.appendNotification(
-          L10N.getStr("toolbox.resumeOrderWarning"),
-          "wrong-resume-order",
-          "",
-          box.PRIORITY_WARNING_HIGH
-        );
-      } else {
-        throw ex;
-      }
-    }
-
-    return threadFront;
   },
 
   /**
@@ -824,13 +766,12 @@ Toolbox.prototype = {
       // Optimization: fire up a few other things before waiting on
       // the iframe being ready (makes startup faster)
       await this.targetList.startListening();
-
       // The TargetList is created from Toolbox's constructor,
       // and Toolbox.open (i.e. this function) is called soon after.
       // It means that this call to TargetList.watchTargets is the first,
-      // and we are registering the first target listener.
-      // It is later important as we expect Toolbox._onTargetAvailable to be called first,
-      // before any other panel.
+      // and we are registering the first target listener, which means
+      // Toolbox._onTargetAvailable will be called first, before any other
+      // onTargetAvailable listener that might be registered on the targetList.
       await this.targetList.watchTargets(
         TargetList.ALL_TYPES,
         this._onTargetAvailable,
@@ -992,16 +933,6 @@ Toolbox.prototype = {
         // passing `e` to console.error, it is not on the stdout, so print it via dump.
         dump(e.stack + "\n");
       });
-  },
-
-  detachTarget() {
-    this.target.off("inspect-object", this._onInspectObject);
-    this.target.off("will-navigate", this._onWillNavigate);
-    this.target.off("navigate", this._onNavigate);
-    this.target.off("frame-update", this._updateFrames);
-
-    // Detach the thread
-    this._threadFront = null;
   },
 
   /**
@@ -1610,7 +1541,7 @@ Toolbox.prototype = {
       // If the debugger is paused, don't let the ESC key stop any pending navigation.
       // If the host is page, don't let the ESC stop the load of the webconsole frame.
       if (
-        this._threadFront.state == "paused" ||
+        this.threadFront.state == "paused" ||
         this.hostType === Toolbox.HostType.PAGE
       ) {
         e.preventDefault();
@@ -3712,7 +3643,7 @@ Toolbox.prototype = {
       this._onTargetDestroyed
     );
 
-    this.targetList.stopListening();
+    this.targetList.destroy();
 
     // Unregister buttons listeners
     this.toolbarButtons.forEach(button => {
@@ -3762,24 +3693,8 @@ Toolbox.prototype = {
             this._removeWindowListeners();
             this._removeChromeEventHandlerEvents();
 
-            // `location` may already be 'invalid' if the toolbox document is
-            // already in process of destruction. Otherwise if it is still
-            // around, ensure releasing toolbox document and triggering cleanup
-            // thanks to unload event. We do that precisely here, before
-            // nullifying the target as various cleanup code depends on the
-            // target attribute to be still
-            // defined.
-            try {
-              // If this toolbox displayed as a page, avoid to move to `about:blank`.
-              // For example in case of reloading, when the thread of processing of
-              // destroying the toolbox arrives at here after starting reloading process,
-              // although we should display same page, `about:blank` will display.
-              if (this.hostType !== Toolbox.HostType.PAGE) {
-                win.location.replace("about:blank");
-              }
-            } catch (e) {
-              // Do nothing;
-            }
+            // Notify toolbox-host-manager that the host can be destroyed.
+            this.emit("toolbox-unload");
 
             // Targets need to be notified that the toolbox is being torn down.
             // This is done after other destruction tasks since it may tear down

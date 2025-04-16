@@ -207,20 +207,24 @@ void GamepadPlatformService::AddChannelParent(
   MOZ_ASSERT(!mChannelParents.Contains(aParent));
 
   // We use mutex here to prevent race condition with monitor thread
-  MutexAutoLock autoLock(mMutex);
-  mChannelParents.AppendElement(aParent);
+  {
+    MutexAutoLock autoLock(mMutex);
+    mChannelParents.AppendElement(aParent);
 
-  // For a new GamepadEventChannel, we have to send the exising GamepadAdded
-  // to it to make it can have the same amount of gamepads with others.
-  if (mChannelParents.Length() > 1) {
-    for (const auto& evt : mGamepadAdded) {
-      GamepadChangeEventBody body(evt.second);
-      GamepadChangeEvent e(evt.first, GamepadServiceType::Standard, body);
-      aParent->DispatchUpdateEvent(e);
+    // For a new GamepadEventChannel, we have to send the exising GamepadAdded
+    // to it to make it can have the same amount of gamepads with others.
+    if (mChannelParents.Length() > 1) {
+      for (const auto& evt : mGamepadAdded) {
+        GamepadChangeEventBody body(evt.second);
+        GamepadChangeEvent e(evt.first, GamepadServiceType::Standard, body);
+        aParent->DispatchUpdateEvent(e);
+      }
     }
+
+    FlushPendingEvents();
   }
 
-  FlushPendingEvents();
+  StartGamepadMonitoring();
 }
 
 void GamepadPlatformService::FlushPendingEvents() {
@@ -250,23 +254,17 @@ void GamepadPlatformService::RemoveChannelParent(
   MOZ_ASSERT(mChannelParents.Contains(aParent));
 
   // We use mutex here to prevent race condition with monitor thread
-  MutexAutoLock autoLock(mMutex);
-  mChannelParents.RemoveElement(aParent);
-}
-
-bool GamepadPlatformService::HasGamepadListeners() {
-  // mChannelParents may be accessed by background thread in the
-  // same time, we use mutex to prevent possible race condtion
-  AssertIsOnBackgroundThread();
-
-  // We use mutex here to prevent race condition with monitor thread
-  MutexAutoLock autoLock(mMutex);
-  for (uint32_t i = 0; i < mChannelParents.Length(); i++) {
-    if (mChannelParents[i]->HasGamepadListener()) {
-      return true;
+  {
+    MutexAutoLock autoLock(mMutex);
+    mChannelParents.RemoveElement(aParent);
+    if (!mChannelParents.IsEmpty()) {
+      return;
     }
   }
-  return false;
+
+  StopGamepadMonitoring();
+  ResetGamepadIndexes();
+  MaybeShutdown();
 }
 
 void GamepadPlatformService::MaybeShutdown() {

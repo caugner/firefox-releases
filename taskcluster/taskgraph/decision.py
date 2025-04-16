@@ -72,8 +72,13 @@ PER_PROJECT_PARAMETERS = {
         'target_tasks_method': 'graphics_tasks',
     },
 
+    'autoland': {
+        'optimize_strategies': 'taskgraph.optimize:project.autoland',
+        'target_tasks_method': 'autoland_tasks',
+    },
+
     'mozilla-central': {
-        'target_tasks_method': 'default',
+        'target_tasks_method': 'mozilla_central_tasks',
         'release_type': 'nightly',
     },
 
@@ -85,11 +90,6 @@ PER_PROJECT_PARAMETERS = {
     'mozilla-release': {
         'target_tasks_method': 'mozilla_release_tasks',
         'release_type': 'release',
-    },
-
-    'mozilla-esr68': {
-        'target_tasks_method': 'mozilla_esr68_tasks',
-        'release_type': 'esr68',
     },
 
     'mozilla-esr78': {
@@ -105,11 +105,6 @@ PER_PROJECT_PARAMETERS = {
     'comm-beta': {
         'target_tasks_method': 'mozilla_beta_tasks',
         'release_type': 'beta',
-    },
-
-    'comm-esr68': {
-        'target_tasks_method': 'mozilla_esr68_tasks',
-        'release_type': 'release',
     },
 
     'comm-esr78': {
@@ -318,7 +313,6 @@ def get_decision_parameters(graph_config, options):
     parameters['filters'] = [
         'target_tasks_method',
     ]
-    parameters['optimize_target_tasks'] = True
     parameters['existing_tasks'] = {}
     parameters['do_not_optimize'] = []
     parameters['build_number'] = 1
@@ -327,10 +321,13 @@ def get_decision_parameters(graph_config, options):
     parameters['message'] = try_syntax_from_message(commit_message)
     parameters['hg_branch'] = get_hg_revision_branch(GECKO, revision=parameters['head_rev'])
     parameters['next_version'] = None
+    parameters['optimize_strategies'] = None
+    parameters['optimize_target_tasks'] = True
     parameters['phabricator_diff'] = None
     parameters['release_type'] = ''
     parameters['release_eta'] = ''
-    parameters['release_enable_partners'] = False
+    parameters['release_enable_partner_repack'] = False
+    parameters['release_enable_partner_attribution'] = False
     parameters['release_partners'] = []
     parameters['release_partner_config'] = {}
     parameters['release_partner_build_number'] = 1

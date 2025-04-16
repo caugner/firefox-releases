@@ -758,11 +758,12 @@ struct DIGroup {
     // cf. Bug 1455422.
     // wr::LayoutRect clip = wr::ToLayoutRect(bounds.Intersect(mVisibleRect));
 
-    aBuilder.SetHitTestInfo(mScrollId, hitInfo, SideBits::eNone);
+    aBuilder.PushHitTest(dest, dest, !backfaceHidden, mScrollId, hitInfo,
+                         SideBits::eNone);
+
     aBuilder.PushImage(dest, dest, !backfaceHidden,
                        wr::ToImageRendering(sampleFilter),
                        wr::AsImageKey(*mKey));
-    aBuilder.ClearHitTestInfo();
   }
 
   void PaintItemRange(Grouper* aGrouper, nsDisplayItem* aStartItem,
@@ -1856,17 +1857,11 @@ Maybe<wr::ImageKey> WebRenderCommandBuilder::CreateImageKey(
 
     LayoutDeviceRect rect = aAsyncImageBounds.value();
     LayoutDeviceRect scBounds(LayoutDevicePoint(0, 0), rect.Size());
-    gfx::MaybeIntSize scaleToSize;
-    if (!aContainer->GetScaleHint().IsEmpty()) {
-      scaleToSize = Some(aContainer->GetScaleHint());
-    }
-    gfx::Matrix4x4 transform =
-        gfx::Matrix4x4::From2D(aContainer->GetTransformHint());
     // TODO!
     // We appear to be using the image bridge for a lot (most/all?) of
     // layers-free image handling and that breaks frame consistency.
     imageData->CreateAsyncImageWebRenderCommands(
-        aBuilder, aContainer, aSc, rect, scBounds, transform, scaleToSize,
+        aBuilder, aContainer, aSc, rect, scBounds, aContainer->GetRotation(),
         aRendering, wr::MixBlendMode::Normal, !aItem->BackfaceIsHidden());
     return Nothing();
   }

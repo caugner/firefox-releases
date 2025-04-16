@@ -68,27 +68,27 @@ WINDOWS_WORKER_TYPES = {
     'windows7-32': {
       'virtual': 't-win7-32',
       'virtual-with-gpu': 't-win7-32-gpu',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows7-32-shippable': {
       'virtual': 't-win7-32',
       'virtual-with-gpu': 't-win7-32-gpu',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows7-32-devedition': {
       'virtual': 't-win7-32',
       'virtual-with-gpu': 't-win7-32-gpu',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows7-32-mingwclang': {
       'virtual': 't-win7-32',
       'virtual-with-gpu': 't-win7-32-gpu',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-64': {
       'virtual': 't-win10-64',
       'virtual-with-gpu': 't-win10-64-gpu-s',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-aarch64': {
       'virtual': 't-win64-aarch64-laptop',
@@ -98,37 +98,37 @@ WINDOWS_WORKER_TYPES = {
     'windows10-64-ccov': {
       'virtual': 't-win10-64',
       'virtual-with-gpu': 't-win10-64-gpu-s',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-64-devedition': {
       'virtual': 't-win10-64',
       'virtual-with-gpu': 't-win10-64-gpu-s',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-64-shippable': {
       'virtual': 't-win10-64',
       'virtual-with-gpu': 't-win10-64-gpu-s',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-64-asan': {
       'virtual': 't-win10-64',
       'virtual-with-gpu': 't-win10-64-gpu-s',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-64-qr': {
       'virtual': 't-win10-64',
       'virtual-with-gpu': 't-win10-64-gpu-s',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-64-shippable-qr': {
       'virtual': 't-win10-64',
       'virtual-with-gpu': 't-win10-64-gpu-s',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-64-mingwclang': {
       'virtual': 't-win10-64',
       'virtual-with-gpu': 't-win10-64-gpu-s',
-      'hardware': 't-win10-64-hw',
+      'hardware': 't-win10-64-1803-hw',
     },
     'windows10-64-ref-hw-2017': {
       'virtual': 't-win10-64',
@@ -191,8 +191,7 @@ TEST_VARIANTS = {
             'fission-run-on-projects': [],
             'mozharness': {
                 'extra-options': ['--setpref=fission.autostart=true',
-                                  '--setpref=dom.serviceWorkers.parent_intercept=true',
-                                  '--setpref=browser.tabs.documentchannel=true'],
+                                  '--setpref=dom.serviceWorkers.parent_intercept=true'],
             },
         },
     },
@@ -209,7 +208,6 @@ TEST_VARIANTS = {
             'mozharness': {
                 'extra-options': ['--setpref=fission.autostart=true',
                                   '--setpref=dom.serviceWorkers.parent_intercept=true',
-                                  '--setpref=browser.tabs.documentchannel=true',
                                   '--enable-xorigin-tests'],
             },
         },
@@ -244,6 +242,18 @@ TEST_VARIANTS = {
         'suffix': 'wr',
         'merge': {
             'webrender': True,
+        }
+    },
+    'webrender-sw': {
+        'description': "{description} with software webrender enabled",
+        'suffix': 'swr',
+        'merge': {
+            'webrender': True,
+            'mozharness': {
+                'extra-options': [
+                    '--setpref=gfx.webrender.software=true',
+                ],
+            }
         }
     },
     'webgl-ipc': {
@@ -1099,32 +1109,33 @@ def setup_browsertime(config, tasks):
         cd_fetches = {
             'android.*': [
                 'linux64-chromedriver-80',
-                'linux64-chromedriver-81'
+                'linux64-chromedriver-81',
+                'linux64-chromedriver-84'
             ],
             'linux.*': [
-                'linux64-chromedriver-79',
                 'linux64-chromedriver-80',
-                'linux64-chromedriver-81'
+                'linux64-chromedriver-81',
+                'linux64-chromedriver-84'
             ],
             'macosx.*': [
-                'mac64-chromedriver-79',
                 'mac64-chromedriver-80',
-                'mac64-chromedriver-81'
+                'mac64-chromedriver-81',
+                'mac64-chromedriver-84'
             ],
             'windows.*aarch64.*': [
-                'win32-chromedriver-79',
                 'win32-chromedriver-80',
-                'win32-chromedriver-81'
+                'win32-chromedriver-81',
+                'win32-chromedriver-84'
             ],
             'windows.*-32.*': [
-                'win32-chromedriver-79',
                 'win32-chromedriver-80',
-                'win32-chromedriver-81'
+                'win32-chromedriver-81',
+                'win32-chromedriver-84'
             ],
             'windows.*-64.*': [
-                'win32-chromedriver-79',
                 'win32-chromedriver-80',
-                'win32-chromedriver-81'
+                'win32-chromedriver-81',
+                'win32-chromedriver-84'
             ],
         }
 
@@ -1450,6 +1461,10 @@ def set_test_manifests(config, tasks):
         if task['suite'] in CHUNK_SUITES_BLACKLIST:
             yield task
             continue
+
+        # Set 'tests_grouped' to "1", so we can differentiate between suites that are
+        # chunked at the test runtime and those that are chunked in the taskgraph.
+        task.setdefault("tags", {})["tests_grouped"] = "1"
 
         if taskgraph.fast:
             # We want to avoid evaluating manifests when taskgraph.fast is set. But
@@ -1836,9 +1851,6 @@ def make_job_description(config, tasks):
             jobdesc['when'] = task['when']
         elif 'optimization' in task:
             jobdesc['optimization'] = task['optimization']
-        # Pushes generated by `mach try auto` should use the non-try optimizations.
-        elif config.params.is_try() and config.params['try_mode'] != 'try_auto':
-            jobdesc['optimization'] = {'test-try': schedules}
         elif set(schedules) & set(INCLUSIVE_COMPONENTS):
             jobdesc['optimization'] = {'test-inclusive': schedules}
         else:

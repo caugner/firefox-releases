@@ -91,7 +91,12 @@ def _get_optimizations(target_task_graph, strategies):
     return optimizations
 
 
-def _log_optimization(verb, opt_counts):
+def _log_optimization(verb, opt_counts, opt_reasons=None):
+    if opt_reasons:
+        message = "optimize: {label} {action} because of {reason}"
+        for label, (action, reason) in opt_reasons.items():
+            logger.debug(message.format(label=label, action=action, reason=reason))
+
     if opt_counts:
         logger.info(
             '{} '.format(verb.title()) +
@@ -108,44 +113,37 @@ def remove_tasks(target_task_graph, requested_tasks, params, optimizations, do_n
     Implement the "Removing Tasks" phase, returning a set of task labels of all removed tasks.
     """
     opt_counts = defaultdict(int)
+    opt_reasons = {}
     removed = set()
     reverse_links_dict = target_task_graph.graph.reverse_links_dict()
 
-    message = "optimize: {label} {verb} because of {reason}"
     for label in target_task_graph.graph.visit_preorder():
-        verb = "kept"
-
         # if we're not allowed to optimize, that's easy..
         if label in do_not_optimize:
-            logger.debug(message.format(label=label, verb=verb, reason="do not optimize"))
+            opt_reasons[label] = ("kept", "do not optimize")
             continue
 
         # if there are remaining tasks depending on this one, do not remove..
         if any(l not in removed for l in reverse_links_dict[label]):
-            logger.debug(message.format(label=label, verb=verb, reason="dependent tasks"))
+            opt_reasons[label] = ("kept", "dependent tasks")
             continue
 
         # Some tasks in the task graph only exist because they were required
         # by a task that has just been optimized away. They can now be removed.
         if label not in requested_tasks:
-            reason = "downstreams-optimized"
-            verb = "removed"
+            opt_counts['dependents-optimized'] += 1
+            opt_reasons[label] = ("removed", "dependents optimized")
             removed.add(label)
-            opt_counts['downstreams-optimized'] += 1
-            logger.debug(message.format(label=label, verb=verb, reason=reason))
 
         # call the optimization strategy
         task = target_task_graph.tasks[label]
         opt_by, opt, arg = optimizations(label)
         if opt.should_remove_task(task, params, arg):
-            verb = "removed"
-            removed.add(label)
             opt_counts[opt_by] += 1
+            opt_reasons[label] = ("removed", "'{}' strategy".format(opt_by))
+            removed.add(label)
 
-        reason = "'{}' strategy".format(opt_by)
-        logger.debug(message.format(label=label, verb=verb, reason=reason))
-
-    _log_optimization('removed', opt_counts)
+    _log_optimization('removed', opt_counts, opt_reasons)
     return removed
 
 
@@ -397,11 +395,12 @@ class Alias(CompositeStrategy):
 
 
 def split_bugbug_arg(arg):
-    """
-    The bugbug optimization strageies require passing an dict as
-    scratch space for communicating with downstream stratgies.
-    This function pass the provided argument to the first strategy,
-    and a fresh dictionary to the second stratgey.
+    """Split args for bugbug based strategies.
+
+    Many bugbug based optimizations require passing an empty dict by reference
+    to communicate to downstream strategies. This function passes the provided
+    arg to the first strategy and an empty dict to second (bugbug based)
+    strategy.
     """
     return (arg, {})
 
@@ -412,20 +411,61 @@ import_sibling_modules()
 
 # Register composite strategies.
 register_strategy('build', args=('skip-unless-schedules',))(Alias)
-register_strategy('build-optimized', args=(
-    Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=split_bugbug_arg),
-    'backstop',
-))(All)
-register_strategy('build-fuzzing', args=('push-interval-10',))(Alias)
-register_strategy('test', args=(
-    Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=split_bugbug_arg),
-    'backstop',
-))(All)
+register_strategy('build-fuzzing', args=('backstop-10-pushes-2-hours',))(Alias)
+register_strategy('test', args=('skip-unless-schedules',))(Alias)
 register_strategy('test-inclusive', args=('skip-unless-schedules',))(Alias)
-register_strategy('test-try', args=('skip-unless-schedules',))(Alias)
 
 
-# Strategy overrides used by |mach try| and/or shadow-scheduler tasks.
+# Strategy overrides used to tweak the default strategies. These are referenced
+# by the `optimize_strategies` parameter.
+
+class project(object):
+    """Strategies that should be applied per-project."""
+
+    # Optimize everything away, except on 20th pushes.
+    register_strategy('full-backstop', args=('backstop-20-pushes-4-hours',))(Alias)
+
+    # Optimize everything away, except on 10th pushes, where we run everything that was selected by
+    # bugbug for the last 10 pushes.
+    register_strategy(
+        'optimized-backstop',
+        args=(
+            'backstop-10-pushes-2-hours',
+            Any(
+                'skip-unless-schedules',
+                Any(
+                    'bugbug-reduced-manifests-fallback-last-10-pushes',
+                    'platform-disperse',
+                ),
+                split_args=split_bugbug_arg,
+            ),
+        ),
+    )(Any)
+
+    # The three strategies are part of an All composite strategy, which means they are linked
+    # by AND.
+    # - On 20th pushes, "full-backstop" will not allow the strategy to optimize anything away.
+    # - On 10th pushes, "full-backstop" allows the strategy to optimize things away, but
+    #   "optimized-backstop" will apply the relaxed bugbug optimization and will not allow the
+    #   normal bugbug optimization to apply.
+    # - On all other pushes, the normal bugbug optimization is applied.
+    autoland = {
+        'test': All(
+            'full-backstop',
+            'optimized-backstop',
+            Any('skip-unless-schedules', 'bugbug-reduced-fallback', split_args=split_bugbug_arg),
+        ),
+        'build': All(
+            'backstop-10-pushes-2-hours',
+            Any(
+                'skip-unless-schedules',
+                'bugbug-reduced-fallback',
+                split_args=split_bugbug_arg,
+            ),
+        ),
+    }
+    """Strategy overrides that apply to autoland."""
+
 
 class experimental(object):
     """Experimental strategies either under development or used as benchmarks.
@@ -525,12 +565,6 @@ class experimental(object):
         'test': Any('skip-unless-schedules', 'skip-unless-has-relevant-tests'),
     }
     """Runs task containing tests in the same directories as modified files."""
-
-    seta = {
-        'test': Any('skip-unless-schedules', 'seta'),
-    }
-    """Provides a stable history of SETA's performance in the event we make it
-    non-default in the future. Only useful as a benchmark."""
 
 
 class ExperimentalOverride(object):

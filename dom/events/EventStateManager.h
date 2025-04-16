@@ -15,7 +15,7 @@
 #include "nsCOMArray.h"
 #include "nsCycleCollectionParticipant.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/layers/APZUtils.h"
+#include "mozilla/layers/APZPublicUtils.h"
 #include "Units.h"
 #include "WheelHandlingHelper.h"  // for WheelDeltaAdjustmentStrategy
 
@@ -625,13 +625,6 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
       ACTION_SEND_TO_PLUGIN,
     };
     Action ComputeActionFor(const WidgetWheelEvent* aEvent);
-
-    /**
-     * Same as ComputeActionFor, but also records telemetry probes about the
-     * event. This is a member of WheelPrefs mostly to avoid exposing private
-     * members.
-     */
-    Action RecordTelemetryAndComputeActionFor(const WidgetWheelEvent* aEvent);
 
     /**
      * NeedToComputeLineOrPageDelta() returns if the aEvent needs to be

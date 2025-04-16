@@ -23,6 +23,7 @@
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "jit/TIOracle.h"
+#include "js/ScalarType.h"     // js::Scalar::Type
 #include "vm/SharedStencil.h"  // GCThingIndex
 
 namespace js {
@@ -425,8 +426,6 @@ class MOZ_STACK_CLASS IonBuilder {
       bool* emitted, JSOp op, MDefinition* left, MDefinition* right);
   AbortReasonOr<Ok> compareTryBinaryStub(bool* emitted, MDefinition* left,
                                          MDefinition* right);
-  AbortReasonOr<Ok> compareTryCharacter(bool* emitted, JSOp op,
-                                        MDefinition* left, MDefinition* right);
 
   // jsop_newarray helpers.
   AbortReasonOr<Ok> newArrayTryTemplateObject(bool* emitted,
@@ -652,6 +651,7 @@ class MOZ_STACK_CLASS IonBuilder {
   AbortReasonOr<Ok> jsop_iternext();
   AbortReasonOr<Ok> jsop_in();
   AbortReasonOr<Ok> jsop_hasown();
+  AbortReasonOr<Ok> jsop_checkprivatefield();
   AbortReasonOr<Ok> jsop_instanceof();
   AbortReasonOr<Ok> jsop_getaliasedvar(EnvironmentCoordinate ec);
   AbortReasonOr<Ok> jsop_setaliasedvar(EnvironmentCoordinate ec);
@@ -670,7 +670,7 @@ class MOZ_STACK_CLASS IonBuilder {
   AbortReasonOr<Ok> jsop_instrumentation_scriptid();
   AbortReasonOr<Ok> jsop_coalesce();
   AbortReasonOr<Ok> jsop_objwithproto();
-  AbortReasonOr<Ok> jsop_functionproto();
+  AbortReasonOr<Ok> jsop_builtinobject();
   AbortReasonOr<Ok> jsop_checkreturn();
   AbortReasonOr<Ok> jsop_checkthis();
   AbortReasonOr<Ok> jsop_checkthisreinit();
@@ -763,7 +763,6 @@ class MOZ_STACK_CLASS IonBuilder {
   // String natives.
   InliningResult inlineStringObject(CallInfo& callInfo);
   InliningResult inlineStrCharCodeAt(CallInfo& callInfo);
-  InliningResult inlineConstantCharCodeAt(CallInfo& callInfo);
   InliningResult inlineStrFromCharCode(CallInfo& callInfo);
   InliningResult inlineStrFromCodePoint(CallInfo& callInfo);
   InliningResult inlineStrCharAt(CallInfo& callInfo);

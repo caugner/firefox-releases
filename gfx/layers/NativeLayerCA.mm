@@ -19,6 +19,7 @@
 #include "GLContextProvider.h"
 #include "MozFramebuffer.h"
 #include "mozilla/layers/SurfacePoolCA.h"
+#include "mozilla/webrender/RenderMacIOSurfaceTextureHostOGL.h"
 #include "ScopedGLHelpers.h"
 
 @interface CALayer (PrivateSetContentsOpaque)
@@ -32,6 +33,7 @@ using gfx::IntPoint;
 using gfx::IntSize;
 using gfx::IntRect;
 using gfx::IntRegion;
+using gfx::Matrix4x4;
 using gfx::SurfaceFormat;
 using gl::GLContext;
 using gl::GLContextCGL;
@@ -92,6 +94,11 @@ already_AddRefed<NativeLayer> NativeLayerRootCA::CreateLayer(
     const IntSize& aSize, bool aIsOpaque, SurfacePoolHandle* aSurfacePoolHandle) {
   RefPtr<NativeLayer> layer =
       new NativeLayerCA(aSize, aIsOpaque, aSurfacePoolHandle->AsSurfacePoolHandleCA());
+  return layer.forget();
+}
+
+already_AddRefed<NativeLayer> NativeLayerRootCA::CreateLayerForExternalTexture(bool aIsOpaque) {
+  RefPtr<NativeLayer> layer = new NativeLayerCA(aIsOpaque);
   return layer.forget();
 }
 
@@ -376,6 +383,9 @@ NativeLayerCA::NativeLayerCA(const IntSize& aSize, bool aIsOpaque,
   MOZ_RELEASE_ASSERT(mSurfacePoolHandle, "Need a non-null surface pool handle.");
 }
 
+NativeLayerCA::NativeLayerCA(bool aIsOpaque)
+    : mMutex("NativeLayerCA"), mSurfacePoolHandle(nullptr), mIsOpaque(aIsOpaque) {}
+
 NativeLayerCA::~NativeLayerCA() {
   if (mInProgressLockedIOSurface) {
     mInProgressLockedIOSurface->Unlock(false);
@@ -391,6 +401,21 @@ NativeLayerCA::~NativeLayerCA() {
   for (const auto& surf : mSurfaces) {
     mSurfacePoolHandle->ReturnSurfaceToPool(surf.mEntry.mSurface);
   }
+}
+
+void NativeLayerCA::AttachExternalImage(wr::RenderTextureHost* aExternalImage) {
+  wr::RenderMacIOSurfaceTextureHostOGL* texture =
+      aExternalImage->AsRenderMacIOSurfaceTextureHostOGL();
+  MOZ_ASSERT(texture);
+  mTextureHost = texture;
+  mSize = texture->GetSize(0);
+  mDisplayRect = IntRect(IntPoint{}, mSize);
+
+  ForAllRepresentations([&](Representation& r) {
+    r.mMutatedFrontSurface = true;
+    r.mMutatedDisplayRect = true;
+    r.mMutatedSize = true;
+  });
 }
 
 void NativeLayerCA::SetSurfaceIsFlipped(bool aIsFlipped) {
@@ -425,6 +450,30 @@ void NativeLayerCA::SetPosition(const IntPoint& aPosition) {
 IntPoint NativeLayerCA::GetPosition() {
   MutexAutoLock lock(mMutex);
   return mPosition;
+}
+
+void NativeLayerCA::SetTransform(const Matrix4x4& aTransform) {
+  MutexAutoLock lock(mMutex);
+  MOZ_ASSERT(aTransform.IsRectilinear());
+
+  if (aTransform != mTransform) {
+    mTransform = aTransform;
+    ForAllRepresentations([&](Representation& r) { r.mMutatedTransform = true; });
+  }
+}
+
+void NativeLayerCA::SetSamplingFilter(gfx::SamplingFilter aSamplingFilter) {
+  MutexAutoLock lock(mMutex);
+
+  if (aSamplingFilter != mSamplingFilter) {
+    mSamplingFilter = aSamplingFilter;
+    ForAllRepresentations([&](Representation& r) { r.mMutatedSamplingFilter = true; });
+  }
+}
+
+Matrix4x4 NativeLayerCA::GetTransform() {
+  MutexAutoLock lock(mMutex);
+  return mTransform;
 }
 
 IntRect NativeLayerCA::GetRect() {
@@ -670,9 +719,15 @@ void NativeLayerCA::ForAllRepresentations(F aFn) {
 
 void NativeLayerCA::ApplyChanges(WhichRepresentation aRepresentation) {
   MutexAutoLock lock(mMutex);
+  CFTypeRefPtr<IOSurfaceRef> surface;
+  if (mFrontSurface) {
+    surface = mFrontSurface->mSurface;
+  } else if (mTextureHost) {
+    surface = mTextureHost->GetSurface()->GetIOSurfaceRef();
+  }
   GetRepresentation(aRepresentation)
-      .ApplyChanges(mSize, mIsOpaque, mPosition, mDisplayRect, mClipRect, mBackingScale,
-                    mSurfaceIsFlipped, mFrontSurface ? mFrontSurface->mSurface : nullptr);
+      .ApplyChanges(mSize, mIsOpaque, mPosition, mTransform, mDisplayRect, mClipRect, mBackingScale,
+                    mSurfaceIsFlipped, mSamplingFilter, surface);
 }
 
 CALayer* NativeLayerCA::UnderlyingCALayer(WhichRepresentation aRepresentation) {
@@ -680,12 +735,11 @@ CALayer* NativeLayerCA::UnderlyingCALayer(WhichRepresentation aRepresentation) {
   return GetRepresentation(aRepresentation).UnderlyingCALayer();
 }
 
-void NativeLayerCA::Representation::ApplyChanges(const IntSize& aSize, bool aIsOpaque,
-                                                 const IntPoint& aPosition,
-                                                 const IntRect& aDisplayRect,
-                                                 const Maybe<IntRect>& aClipRect,
-                                                 float aBackingScale, bool aSurfaceIsFlipped,
-                                                 CFTypeRefPtr<IOSurfaceRef> aFrontSurface) {
+void NativeLayerCA::Representation::ApplyChanges(
+    const IntSize& aSize, bool aIsOpaque, const IntPoint& aPosition, const Matrix4x4& aTransform,
+    const IntRect& aDisplayRect, const Maybe<IntRect>& aClipRect, float aBackingScale,
+    bool aSurfaceIsFlipped, gfx::SamplingFilter aSamplingFilter,
+    CFTypeRefPtr<IOSurfaceRef> aFrontSurface) {
   if (!mWrappingCALayer) {
     mWrappingCALayer = [[CALayer layer] retain];
     mWrappingCALayer.position = NSZeroPoint;
@@ -710,7 +764,7 @@ void NativeLayerCA::Representation::ApplyChanges(const IntSize& aSize, bool aIsO
   bool shouldTintOpaqueness = StaticPrefs::gfx_core_animation_tint_opaque();
   if (shouldTintOpaqueness && !mOpaquenessTintLayer) {
     mOpaquenessTintLayer = [[CALayer layer] retain];
-    mOpaquenessTintLayer.position = mContentCALayer.position;
+    mOpaquenessTintLayer.position = NSZeroPoint;
     mOpaquenessTintLayer.bounds = mContentCALayer.bounds;
     mOpaquenessTintLayer.anchorPoint = NSZeroPoint;
     mOpaquenessTintLayer.contentsGravity = kCAGravityTopLeft;
@@ -738,7 +792,7 @@ void NativeLayerCA::Representation::ApplyChanges(const IntSize& aSize, bool aIsO
   //  Important: Always use integral numbers for the width and height of your layer.
   // We hope that this refers to integral physical pixels, and not to integral logical coordinates.
 
-  if (mMutatedBackingScale) {
+  if (mMutatedBackingScale || mMutatedSize) {
     mContentCALayer.bounds =
         CGRectMake(0, 0, aSize.width / aBackingScale, aSize.height / aBackingScale);
     if (mOpaquenessTintLayer) {
@@ -747,17 +801,26 @@ void NativeLayerCA::Representation::ApplyChanges(const IntSize& aSize, bool aIsO
     mContentCALayer.contentsScale = aBackingScale;
   }
 
-  if (mMutatedBackingScale || mMutatedPosition || mMutatedDisplayRect || mMutatedClipRect) {
-    auto clipFromDisplayRect = aDisplayRect.IsEqualInterior(IntRect({}, aSize))
-                                   ? Nothing()
-                                   : Some(aDisplayRect + aPosition);
+  if (mMutatedBackingScale || mMutatedPosition || mMutatedDisplayRect || mMutatedClipRect ||
+      mMutatedTransform || mMutatedSurfaceIsFlipped || mMutatedSize) {
+    Maybe<IntRect> clipFromDisplayRect;
+    if (!aDisplayRect.IsEqualInterior(IntRect({}, aSize))) {
+      // When the display rect is a subset of the layer, then we want to guarantee that no
+      // pixels outside that rect are sampled, since they might be uninitialized.
+      // Transforming the display rect into a post-transform clip only maintains this if
+      // it's an integer translation, which is all we support for this case currently.
+      MOZ_ASSERT(aTransform.Is2DIntegerTranslation());
+      clipFromDisplayRect =
+          Some(RoundedToInt(aTransform.TransformBounds(IntRectToRect(aDisplayRect + aPosition))));
+    }
+
     auto effectiveClip = IntersectMaybeRects(aClipRect, clipFromDisplayRect);
-    auto globalClipOrigin = effectiveClip ? effectiveClip->TopLeft() : aPosition;
-    auto globalLayerOrigin = aPosition;
-    auto clipToLayerOffset = globalLayerOrigin - globalClipOrigin;
+    auto globalClipOrigin = effectiveClip ? effectiveClip->TopLeft() : IntPoint();
+    auto clipToLayerOffset = -globalClipOrigin;
 
     mWrappingCALayer.position =
         CGPointMake(globalClipOrigin.x / aBackingScale, globalClipOrigin.y / aBackingScale);
+
     if (effectiveClip) {
       mWrappingCALayer.masksToBounds = YES;
       mWrappingCALayer.bounds = CGRectMake(0, 0, effectiveClip->Width() / aBackingScale,
@@ -765,19 +828,34 @@ void NativeLayerCA::Representation::ApplyChanges(const IntSize& aSize, bool aIsO
     } else {
       mWrappingCALayer.masksToBounds = NO;
     }
-    mContentCALayer.position =
-        CGPointMake(clipToLayerOffset.x / aBackingScale, clipToLayerOffset.y / aBackingScale);
-    if (mOpaquenessTintLayer) {
-      mOpaquenessTintLayer.position = mContentCALayer.position;
-    }
-  }
 
-  if (mMutatedBackingScale || mMutatedSurfaceIsFlipped) {
+    Matrix4x4 transform = aTransform;
+    transform.PreTranslate(aPosition.x, aPosition.y, 0);
+    transform.PostTranslate(clipToLayerOffset.x, clipToLayerOffset.y, 0);
+
     if (aSurfaceIsFlipped) {
-      CGFloat height = aSize.height / aBackingScale;
-      mContentCALayer.affineTransform = CGAffineTransformMake(1.0, 0.0, 0.0, -1.0, 0.0, height);
-    } else {
-      mContentCALayer.affineTransform = CGAffineTransformIdentity;
+      transform.PreTranslate(0, aSize.height, 0).PreScale(1, -1, 1);
+    }
+
+    CATransform3D transformCA{transform._11,
+                              transform._12,
+                              transform._13,
+                              transform._14,
+                              transform._21,
+                              transform._22,
+                              transform._23,
+                              transform._24,
+                              transform._31,
+                              transform._32,
+                              transform._33,
+                              transform._34,
+                              transform._41 / aBackingScale,
+                              transform._42 / aBackingScale,
+                              transform._43,
+                              transform._44};
+    mContentCALayer.transform = transformCA;
+    if (mOpaquenessTintLayer) {
+      mOpaquenessTintLayer.transform = mContentCALayer.transform;
     }
   }
 
@@ -785,12 +863,25 @@ void NativeLayerCA::Representation::ApplyChanges(const IntSize& aSize, bool aIsO
     mContentCALayer.contents = (id)aFrontSurface.get();
   }
 
+  if (mMutatedSamplingFilter) {
+    if (aSamplingFilter == gfx::SamplingFilter::POINT) {
+      mContentCALayer.minificationFilter = kCAFilterNearest;
+      mContentCALayer.magnificationFilter = kCAFilterNearest;
+    } else {
+      mContentCALayer.minificationFilter = kCAFilterLinear;
+      mContentCALayer.magnificationFilter = kCAFilterLinear;
+    }
+  }
+
   mMutatedPosition = false;
+  mMutatedTransform = false;
   mMutatedBackingScale = false;
+  mMutatedSize = false;
   mMutatedSurfaceIsFlipped = false;
   mMutatedDisplayRect = false;
   mMutatedClipRect = false;
   mMutatedFrontSurface = false;
+  mMutatedSamplingFilter = false;
 }
 
 // Called when mMutex is already being held by the current thread.

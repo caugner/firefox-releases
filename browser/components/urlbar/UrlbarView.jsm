@@ -14,6 +14,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Services: "resource://gre/modules/Services.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
+  UrlbarSearchOneOffs: "resource:///modules/UrlbarSearchOneOffs.jsm",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
@@ -68,6 +69,10 @@ class UrlbarView {
     this._rows.addEventListener("overflow", this);
     this._rows.addEventListener("underflow", this);
 
+    // `noresults` is used to style the one-offs without their usual top border
+    // when no results are present.
+    this.panel.setAttribute("noresults", "true");
+
     this.controller.setView(this);
     this.controller.addQueryListener(this);
     // This is used by autoOpen to avoid flickering results when reopening
@@ -83,9 +88,7 @@ class UrlbarView {
 
   get oneOffSearchButtons() {
     if (!this._oneOffSearchButtons) {
-      this._oneOffSearchButtons = new this.window.SearchOneOffs(
-        this.panel.querySelector(".search-one-offs")
-      );
+      this._oneOffSearchButtons = new UrlbarSearchOneOffs(this);
       this._oneOffSearchButtons.addEventListener(
         "SelectedOneOffButtonChanged",
         this
@@ -368,6 +371,7 @@ class UrlbarView {
 
   clear() {
     this._rows.textContent = "";
+    this.panel.setAttribute("noresults", "true");
   }
 
   /**
@@ -497,17 +501,29 @@ class UrlbarView {
 
   onQueryFinished(queryContext) {
     this._cancelRemoveStaleRowsTimer();
-    if (!this._queryWasCancelled) {
-      // If the query has not been canceled and returned some results, remove
-      // stale rows immediately. If no results were returned, just clear and
-      // close the view.
-      if (this._queryUpdatedResults) {
-        this._removeStaleRows();
-      } else {
-        this.clear();
-        this.close();
-      }
+    if (this._queryWasCancelled) {
+      return;
     }
+
+    // If the query finished and it returned some results, remove stale rows.
+    if (this._queryUpdatedResults) {
+      this._removeStaleRows();
+      return;
+    }
+
+    // The query didn't return any results.  Clear the view.
+    this.clear();
+
+    // If search mode isn't active, close the view.
+    if (!this.input.searchMode) {
+      this.close();
+      return;
+    }
+
+    // Search mode is active.  Make sure the view is open and the one-offs are
+    // enabled.
+    this.oneOffSearchButtons.enable(true);
+    this._openPanel();
   }
 
   onQueryResults(queryContext) {
@@ -528,17 +544,19 @@ class UrlbarView {
         updateInput: false,
       });
 
-      // Hide the one-off search buttons if the search string is empty, or
-      // starts with a potential @ search alias or the search restriction
-      // character.
-      let trimmedValue = queryContext.searchString.trim();
-      this._enableOrDisableOneOffSearches(
-        ((UrlbarPrefs.get("update2") &&
-          UrlbarPrefs.get("update2.oneOffsRefresh")) ||
-          trimmedValue) &&
-          trimmedValue[0] != "@" &&
-          (trimmedValue[0] != UrlbarTokenizer.RESTRICT.SEARCH ||
-            trimmedValue.length != 1)
+      // Show the one-off search buttons unless any of the following are true:
+      //
+      // * The update 2 refresh is enabled but the first result is a search tip
+      // * The update 2 refresh is disabled and the search string is empty
+      // * The search string starts with an `@` or search restriction character
+      this.oneOffSearchButtons.enable(
+        ((this.oneOffsRefresh &&
+          firstResult.providerName != "UrlbarProviderSearchTips") ||
+          queryContext.trimmedSearchString) &&
+          queryContext.trimmedSearchString[0] != "@" &&
+          (queryContext.trimmedSearchString[0] !=
+            UrlbarTokenizer.RESTRICT.SEARCH ||
+            queryContext.trimmedSearchString.length != 1)
       );
 
       // Notify the input, so it can make adjustments based on the first result.
@@ -618,64 +636,6 @@ class UrlbarView {
     } else {
       throw new Error("Unrecognized UrlbarView event: " + event.type);
     }
-  }
-
-  /**
-   * This is called when a one-off is clicked and when "search in new tab"
-   * is selected from a one-off context menu. Can be removed when update2 is
-   * on by default.
-   * @param {Event} event
-   * @param {nsISearchEngine} engine
-   * @param {string} where
-   * @param {object} params
-   */
-  handleOneOffSearch(event, engine, where, params) {
-    this.input.handleCommand(event, where, params);
-  }
-
-  /**
-   * Handles a command from a one-off button.
-   *
-   * @param {Event} event The one-off selection event.
-   * @param {nsISearchEngine} engine The engine associated with the one-off.
-   * @returns {boolean} True if this handler managed the event.
-   */
-  oneOffsCommandHandler(event, engine) {
-    if (!this.oneOffsRefresh) {
-      return false;
-    }
-
-    this.input.setSearchMode(engine);
-    this.input.startQuery({
-      allowAutofill: false,
-      event,
-    });
-    return true;
-  }
-
-  /**
-   * Handles a click on a one-off button.
-   *
-   * @param {Event} event The one-off click event.
-   * @returns {boolean} True if this handler managed the event.
-   */
-  oneOffsClickHandler(event) {
-    if (!this.oneOffsRefresh) {
-      return false;
-    }
-
-    if (event.button == 2) {
-      return false; // ignore right clicks.
-    }
-
-    let button = event.originalTarget;
-    let engine = button.engine;
-
-    if (!engine) {
-      return false;
-    }
-
-    return this.oneOffsCommandHandler(event, engine);
   }
 
   static dynamicViewTemplatesByName = new Map();
@@ -1330,15 +1290,22 @@ class UrlbarView {
   }
 
   _updateIndices() {
+    let visibleRowsExist = false;
     for (let i = 0; i < this._rows.children.length; i++) {
       let item = this._rows.children[i];
       item.result.rowIndex = i;
+      visibleRowsExist = visibleRowsExist || this._isElementVisible(item);
     }
     let selectableElement = this._getFirstSelectableElement();
     let uiIndex = 0;
     while (selectableElement) {
       selectableElement.elementIndex = uiIndex++;
       selectableElement = this._getNextSelectableElement(selectableElement);
+    }
+    if (visibleRowsExist) {
+      this.panel.removeAttribute("noresults");
+    } else {
+      this.panel.setAttribute("noresults", "true");
     }
   }
 
@@ -1643,20 +1610,6 @@ class UrlbarView {
     tailPrefixCharNode.textContent = result.payload.tailPrefix;
   }
 
-  _enableOrDisableOneOffSearches(enable = true) {
-    if (enable) {
-      this.oneOffSearchButtons.telemetryOrigin = "urlbar";
-      this.oneOffSearchButtons.style.display = "";
-      this.oneOffSearchButtons.textbox = this.input.inputField;
-      this.oneOffSearchButtons.view = this;
-    } else {
-      this.oneOffSearchButtons.telemetryOrigin = null;
-      this.oneOffSearchButtons.style.display = "none";
-      this.oneOffSearchButtons.textbox = null;
-      this.oneOffSearchButtons.view = null;
-    }
-  }
-
   _enableOrDisableRowWrap() {
     if (getBoundsWithoutFlushing(this.input.textbox).width < 650) {
       this._rows.setAttribute("wrap", "true");
@@ -1771,13 +1724,6 @@ class UrlbarView {
         continue;
       }
 
-      if (
-        this.oneOffsRefresh &&
-        !result.heuristic &&
-        (!result.payload.inPrivateWindow || result.payload.isPrivateEngine)
-      ) {
-        continue;
-      }
       if (engine) {
         if (!result.payload.originalEngine) {
           result.payload.originalEngine = result.payload.engine;
@@ -1801,19 +1747,29 @@ class UrlbarView {
           [(engine && engine.name) || result.payload.engine]
         );
       }
-      // If we just changed the engine from the original engine and it had an
-      // icon, then make sure the result now uses the new engine's icon or
-      // failing that the default icon.  If we changed it back to the original
-      // engine, go back to the original or default icon.
-      let favicon = item.querySelector(".urlbarView-favicon");
-      if (engine && result.payload.icon) {
-        favicon.src =
-          (engine.iconURI && engine.iconURI.spec) ||
-          UrlbarUtils.ICON.SEARCH_GLASS;
-      } else if (!engine) {
-        favicon.src = result.payload.icon || UrlbarUtils.ICON.SEARCH_GLASS;
+
+      // Update result favicons.
+      if (
+        // Don't update the favicon on non-heuristic results when update2 is
+        // enabled.
+        !this.oneOffsRefresh ||
+        result.heuristic ||
+        (result.payload.inPrivateWindow && !result.payload.isPrivateEngine)
+      ) {
+        // If we just changed the engine from the original engine and it had an
+        // icon, then make sure the result now uses the new engine's icon or
+        // failing that the default icon.  If we changed it back to the original
+        // engine, go back to the original or default icon.
+        let favicon = item.querySelector(".urlbarView-favicon");
+        if (engine && result.payload.icon) {
+          favicon.src =
+            (engine.iconURI && engine.iconURI.spec) ||
+            UrlbarUtils.ICON.SEARCH_GLASS;
+        } else if (!engine) {
+          favicon.src = result.payload.icon || UrlbarUtils.ICON.SEARCH_GLASS;
+        }
+        favicon.src = this._iconForSearchResult(result, engine);
       }
-      favicon.src = this._iconForSearchResult(result, engine);
     }
   }
 

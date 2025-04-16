@@ -21,6 +21,7 @@
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlag, JS::RegExpFlags
+#include "js/ScalarType.h"   // js::Scalar::Type
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/JSObject.h"
@@ -1935,14 +1936,6 @@ IonBuilder::InliningResult IonBuilder::inlineStrCharCodeAt(CallInfo& callInfo) {
     return InliningStatus_NotInlined;
   }
 
-  // Check for STR.charCodeAt(IDX) where STR is a constant string and IDX is a
-  // constant integer.
-  InliningStatus constInlineStatus;
-  MOZ_TRY_VAR(constInlineStatus, inlineConstantCharCodeAt(callInfo));
-  if (constInlineStatus != InliningStatus_NotInlined) {
-    return constInlineStatus;
-  }
-
   callInfo.setImplicitlyUsedUnchecked();
 
   MInstruction* index = MToIntegerInt32::New(alloc(), callInfo.getArg(0));
@@ -1956,40 +1949,6 @@ IonBuilder::InliningResult IonBuilder::inlineStrCharCodeAt(CallInfo& callInfo) {
   MCharCodeAt* charCode = MCharCodeAt::New(alloc(), callInfo.thisArg(), index);
   current->add(charCode);
   current->push(charCode);
-  return InliningStatus_Inlined;
-}
-
-IonBuilder::InliningResult IonBuilder::inlineConstantCharCodeAt(
-    CallInfo& callInfo) {
-  if (!callInfo.thisArg()->maybeConstantValue() ||
-      !callInfo.getArg(0)->maybeConstantValue()) {
-    return InliningStatus_NotInlined;
-  }
-
-  MConstant* strval = callInfo.thisArg()->maybeConstantValue();
-  MConstant* idxval = callInfo.getArg(0)->maybeConstantValue();
-
-  if (strval->type() != MIRType::String || idxval->type() != MIRType::Int32) {
-    return InliningStatus_NotInlined;
-  }
-
-  JSString* str = strval->toString();
-  if (!str->isLinear()) {
-    return InliningStatus_NotInlined;
-  }
-
-  int32_t idx = idxval->toInt32();
-  if (idx < 0 || (uint32_t(idx) >= str->length())) {
-    return InliningStatus_NotInlined;
-  }
-
-  callInfo.setImplicitlyUsedUnchecked();
-
-  JSLinearString& linstr = str->asLinear();
-  char16_t ch = linstr.latin1OrTwoByteChar(idx);
-  MConstant* result = MConstant::New(alloc(), Int32Value(ch));
-  current->add(result);
-  current->push(result);
   return InliningStatus_Inlined;
 }
 
@@ -2437,9 +2396,7 @@ IonBuilder::InliningResult IonBuilder::inlineStringReplaceString(
   MInstruction* cte = MStringReplace::New(alloc(), strArg, patArg, replArg);
   current->add(cte);
   current->push(cte);
-  if (cte->isEffectful()) {
-    MOZ_TRY(resumeAfter(cte));
-  }
+
   return InliningStatus_Inlined;
 }
 
@@ -3314,6 +3271,7 @@ IonBuilder::InliningResult IonBuilder::inlineToObject(CallInfo& callInfo) {
     current->add(ins);
     current->push(ins);
 
+    MOZ_TRY(resumeAfter(ins));
     MOZ_TRY(
         pushTypeBarrier(ins, getInlineReturnTypeSet(), BarrierKind::TypeSet));
   }
@@ -3764,9 +3722,6 @@ bool IonBuilder::atomicsMeetsPreconditions(
       return checkResult == DontCheckAtomicResult ||
              getInlineReturnType() == MIRType::Int32;
     case Scalar::Uint32:
-      // Bug 1077305: it would be attractive to allow inlining even
-      // if the inline return type is Int32, which it will frequently
-      // be.
       return checkResult == DontCheckAtomicResult ||
              getInlineReturnType() == MIRType::Double;
     case Scalar::BigInt64:
@@ -4045,7 +4000,7 @@ IonBuilder::InliningResult IonBuilder::inlineWasmCall(CallInfo& callInfo,
         MOZ_CRASH("impossible per above check");
       case wasm::ValType::Ref:
         switch (sig.args()[i].refTypeKind()) {
-          case wasm::RefType::Any:
+          case wasm::RefType::Extern:
             // Transform the JS representation into an AnyRef representation.
             // The resulting type is MIRType::RefOrNull.  These cases are all
             // effect-free.

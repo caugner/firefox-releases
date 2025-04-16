@@ -21,6 +21,20 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+
+ChromeUtils.defineModuleGetter(
+  this,
+  "SetClipboardSearchString",
+  "resource://gre/modules/Finder.jsm"
+);
+
+ChromeUtils.defineModuleGetter(
+  this,
+  "PrivateBrowsingUtils",
+  "resource://gre/modules/PrivateBrowsingUtils.jsm"
+);
+
 var Svc = {};
 XPCOMUtils.defineLazyServiceGetter(
   Svc,
@@ -47,6 +61,7 @@ class PdfjsParent extends JSWindowActorParent {
   constructor() {
     super();
     this._boundToFindbar = null;
+    this._findFailedString = null;
   }
 
   didDestroy() {
@@ -67,6 +82,8 @@ class PdfjsParent extends JSWindowActorParent {
         return this._updateMatchesCount(aMsg);
       case "PDFJS:Parent:addEventListener":
         return this._addEventListener();
+      case "PDFJS:Parent:saveURL":
+        return this._saveURL(aMsg);
     }
     return undefined;
   }
@@ -77,6 +94,23 @@ class PdfjsParent extends JSWindowActorParent {
 
   get browser() {
     return this.browsingContext.top.embedderElement;
+  }
+
+  _saveURL(aMsg) {
+    const data = aMsg.data;
+    this.browser.ownerGlobal.saveURL(
+      data.blobUrl /* aURL */,
+      data.filename /* aFileName */,
+      null /* aFilePickerTitleKey */,
+      true /* aShouldBypassCache */,
+      false /* aSkipPrompt */,
+      null /* aReferrerInfo */,
+      null /* aSourceDocument */,
+      PrivateBrowsingUtils.isBrowserPrivate(
+        this.browser
+      ) /* aIsContentWindowPrivate */,
+      Services.scriptSecurityManager.getSystemPrincipal() /* aPrincipal */
+    );
   }
 
   _updateControlState(aMsg) {
@@ -90,6 +124,19 @@ class PdfjsParent extends JSWindowActorParent {
         return;
       }
       fb.updateControlState(data.result, data.findPrevious);
+
+      if (
+        data.result === Ci.nsITypeAheadFind.FIND_FOUND ||
+        data.result === Ci.nsITypeAheadFind.FIND_WRAPPED ||
+        (data.result === Ci.nsITypeAheadFind.FIND_PENDING &&
+          !this._findFailedString)
+      ) {
+        this._findFailedString = null;
+        SetClipboardSearchString(data.rawQuery);
+      } else if (!this._findFailedString) {
+        this._findFailedString = data.rawQuery;
+        SetClipboardSearchString(data.rawQuery);
+      }
 
       const matchesCount = this._requestMatchesCount(data.matchesCount);
       fb.onMatchesCountResult(matchesCount);
@@ -242,7 +289,7 @@ class PdfjsParent extends JSWindowActorParent {
       data.message,
       "pdfjs-fallback",
       null,
-      notificationBox.PRIORITY_WARNING_LOW,
+      notificationBox.PRIORITY_INFO_MEDIUM,
       buttons,
       function eventsCallback(eventType) {
         // Currently there is only one event "removed" but if there are any other

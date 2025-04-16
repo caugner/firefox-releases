@@ -7,6 +7,7 @@ use api::{DocumentId, PipelineId, ApiMsg, FrameMsg, SceneMsg, ResourceUpdate, Ex
 use api::{NotificationRequest, Checkpoint, IdNamespace, QualitySettings, TransactionMsg};
 use api::{ClipIntern, FilterDataIntern, MemoryReport, PrimitiveKeyKind, SharedFontInstanceMap};
 use api::{DocumentLayer, GlyphDimensionRequest, GlyphIndexRequest};
+use api::channel::{unbounded_channel, single_msg_channel, Receiver, Sender};
 use api::units::*;
 #[cfg(feature = "capture")]
 use crate::capture::CaptureConfig;
@@ -26,7 +27,6 @@ use crate::render_backend::SceneView;
 use crate::renderer::{PipelineInfo, SceneBuilderHooks};
 use crate::scene::{Scene, BuiltScene, SceneStats};
 use std::iter;
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::mem::replace;
 use time::precise_time_ns;
 use crate::util::drain_filter;
@@ -218,9 +218,6 @@ struct Document {
     interners: Interners,
     stats: SceneStats,
     view: SceneView,
-    /// A set of pipelines that the caller has requested be
-    /// made available as output textures.
-    output_pipelines: FastHashSet<PipelineId>,
 }
 
 impl Document {
@@ -229,7 +226,6 @@ impl Document {
             scene: Scene::new(),
             interners: Interners::default(),
             stats: SceneStats::empty(),
-            output_pipelines: FastHashSet::default(),
             view: SceneView {
                 device_rect,
                 layer,
@@ -269,9 +265,9 @@ impl SceneBuilderThreadChannels {
     pub fn new(
         api_tx: Sender<ApiMsg>
     ) -> (Self, Sender<SceneBuilderRequest>, Sender<BackendSceneBuilderRequest>, Receiver<SceneBuilderResult>) {
-        let (in_tx, in_rx) = channel();
-        let (out_tx, out_rx) = channel();
-        let (backend_tx, backend_rx) = channel();
+        let (in_tx, in_rx) = unbounded_channel();
+        let (out_tx, out_rx) = unbounded_channel();
+        let (backend_tx, backend_rx) = unbounded_channel();
         (
             Self {
                 rx: in_rx,
@@ -457,14 +453,11 @@ impl SceneBuilderThread {
             let mut built_scene = None;
             let mut interner_updates = None;
 
-            let output_pipelines = FastHashSet::default();
-
             if item.scene.has_root_pipeline() {
                 built_scene = Some(SceneBuilder::build(
                     &item.scene,
                     item.font_instances,
                     &item.view,
-                    &output_pipelines,
                     &self.config,
                     &mut item.interners,
                     &SceneStats::empty(),
@@ -482,7 +475,6 @@ impl SceneBuilderThread {
                     interners: item.interners,
                     stats: SceneStats::empty(),
                     view: item.view.clone(),
-                    output_pipelines,
                 },
             );
 
@@ -638,7 +630,6 @@ impl SceneBuilderThread {
                     pipeline_id,
                     background,
                     viewport_size,
-                    content_size,
                     display_list,
                     preserve_frame_state,
                 } => {
@@ -662,7 +653,6 @@ impl SceneBuilderThread {
                         display_list,
                         background,
                         viewport_size,
-                        content_size,
                     );
 
                     timings = Some(TransactionTimings {
@@ -690,13 +680,6 @@ impl SceneBuilderThread {
                     self.removed_pipelines.insert(pipeline_id);
                     removed_pipelines.push((pipeline_id, txn.document_id));
                 }
-                SceneMsg::EnableFrameOutput(pipeline_id, enable) => {
-                    if enable {
-                        doc.output_pipelines.insert(pipeline_id);
-                    } else {
-                        doc.output_pipelines.remove(&pipeline_id);
-                    }
-                }
             }
         }
 
@@ -710,7 +693,6 @@ impl SceneBuilderThread {
                 &scene,
                 self.font_instances.clone(),
                 &doc.view,
-                &doc.output_pipelines,
                 &self.config,
                 &mut doc.interners,
                 &doc.stats,
@@ -787,7 +769,7 @@ impl SceneBuilderThread {
                             .flatten().collect(),
                     };
 
-                    let (tx, rx) = channel();
+                    let (tx, rx) = single_msg_channel();
                     let txn = txns.iter().find(|txn| txn.built_scene.is_some()).unwrap();
                     hooks.pre_scene_swap(txn.scene_build_end_time - txn.scene_build_start_time);
 

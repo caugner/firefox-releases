@@ -34,7 +34,7 @@ TimeStamp ImageComposite::GetBiasedTime(const TimeStamp& aInput) const {
   }
 }
 
-void ImageComposite::UpdateBias(size_t aImageIndex) {
+void ImageComposite::UpdateBias(size_t aImageIndex, bool aFrameChanged) {
   MOZ_ASSERT(aImageIndex < ImagesCount());
 
   TimeStamp compositionTime = GetCompositionTime();
@@ -43,11 +43,23 @@ void ImageComposite::UpdateBias(size_t aImageIndex) {
                                 ? mImages[aImageIndex + 1].mTimeStamp
                                 : TimeStamp();
 
+#if MOZ_GECKO_PROFILER
+  if (profiler_can_accept_markers() && compositedImageTime && nextImageTime) {
+    TimeDuration offsetCurrent = compositedImageTime - compositionTime;
+    TimeDuration offsetNext = nextImageTime - compositionTime;
+    nsPrintfCString str("current %.2lfms, next %.2lfms",
+                        offsetCurrent.ToMilliseconds(),
+                        offsetNext.ToMilliseconds());
+    AUTO_PROFILER_TEXT_MARKER_CAUSE("Video frame offsets", str, GRAPHICS,
+                                    Nothing(), nullptr);
+  }
+#endif
+
   if (compositedImageTime.IsNull()) {
     mBias = ImageComposite::BIAS_NONE;
     return;
   }
-  TimeDuration threshold = TimeDuration::FromMilliseconds(1.0);
+  TimeDuration threshold = TimeDuration::FromMilliseconds(1.5);
   if (compositionTime - compositedImageTime < threshold &&
       compositionTime - compositedImageTime > -threshold) {
     // The chosen frame's time is very close to the composition time (probably
@@ -81,7 +93,15 @@ void ImageComposite::UpdateBias(size_t aImageIndex) {
     mBias = ImageComposite::BIAS_POSITIVE;
     return;
   }
-  mBias = ImageComposite::BIAS_NONE;
+  if (aFrameChanged) {
+    // The current and next video frames are a sufficient distance from the
+    // composition time and we can reliably pick the right frame without bias.
+    // Reset the bias.
+    // We only do this when the frame changed. Otherwise, when playing a 30fps
+    // video on a 60fps display, we'd keep resetting the bias during the "middle
+    // frames".
+    mBias = ImageComposite::BIAS_NONE;
+  }
 }
 
 int ImageComposite::ChooseImageIndex() {
@@ -92,40 +112,45 @@ int ImageComposite::ChooseImageIndex() {
   if (mImages.IsEmpty()) {
     return -1;
   }
-  TimeStamp now = GetCompositionTime();
 
-  if (now.IsNull()) {
-    // Not in a composition, so just return the last image we composited
-    // (if it's one of the current images).
-    for (uint32_t i = 0; i < mImages.Length(); ++i) {
-      if (mImages[i].mFrameID == mLastFrameID &&
-          mImages[i].mProducerID == mLastProducerID) {
-        return i;
-      }
-    }
-    return 0;
-  }
-
-  // We are inside a composition.
+  TimeStamp compositionTime = GetCompositionTime();
   auto compositionOpportunityId = GetCompositionOpportunityId();
+  if (compositionTime &&
+      compositionOpportunityId != mLastChooseImageIndexComposition) {
+    // We are inside a composition, in the first call to ChooseImageIndex during
+    // this composition.
+    // Find the newest frame whose biased timestamp is at or before
+    // `compositionTime`.
+    uint32_t imageIndex = 0;
+    while (imageIndex + 1 < mImages.Length() &&
+           GetBiasedTime(mImages[imageIndex + 1].mTimeStamp) <=
+               compositionTime) {
+      ++imageIndex;
+    }
 
-  // Find the newest frame whose biased timestamp is at or before `now`.
-  uint32_t result = 0;
-  while (result + 1 < mImages.Length() &&
-         GetBiasedTime(mImages[result + 1].mTimeStamp) <= now) {
-    ++result;
-  }
-
-  // If ChooseImageIndex is called for the first time during this composition,
-  // call UpdateCompositedFrame.
-  if (compositionOpportunityId != mLastChooseImageIndexComposition) {
     bool wasVisibleAtPreviousComposition =
         compositionOpportunityId == mLastChooseImageIndexComposition.Next();
-    UpdateCompositedFrame(result, wasVisibleAtPreviousComposition);
+
+    bool frameChanged =
+        UpdateCompositedFrame(imageIndex, wasVisibleAtPreviousComposition);
+    UpdateBias(imageIndex, frameChanged);
+
     mLastChooseImageIndexComposition = compositionOpportunityId;
+
+    return imageIndex;
   }
 
-  return result;
+  // We've been called before during this composition, or we're not in a
+  // composition. Just return the last image we picked (if it's one of the
+  // current images).
+  for (uint32_t i = 0; i < mImages.Length(); ++i) {
+    if (mImages[i].mFrameID == mLastFrameID &&
+        mImages[i].mProducerID == mLastProducerID) {
+      return i;
+    }
+  }
+
+  return 0;
 }
 
 const ImageComposite::TimedImage* ImageComposite::ChooseImage() {
@@ -169,7 +194,8 @@ void ImageComposite::SetImages(nsTArray<TimedImage>&& aNewImages) {
   mImages = std::move(aNewImages);
 }
 
-void ImageComposite::UpdateCompositedFrame(
+// Returns whether the frame changed.
+bool ImageComposite::UpdateCompositedFrame(
     int aImageIndex, bool aWasVisibleAtPreviousComposition) {
   MOZ_RELEASE_ASSERT(aImageIndex >= 0);
   MOZ_RELEASE_ASSERT(aImageIndex < static_cast<int>(mImages.Length()));
@@ -210,7 +236,8 @@ void ImageComposite::UpdateCompositedFrame(
 #endif
 
   if (mLastFrameID == image.mFrameID && mLastProducerID == image.mProducerID) {
-    return;
+    // The frame didn't change.
+    return false;
   }
 
   CountSkippedFrames(&image);
@@ -245,6 +272,8 @@ void ImageComposite::UpdateCompositedFrame(
   mLastFrameID = image.mFrameID;
   mLastProducerID = image.mProducerID;
   mLastFrameUpdateComposition = compositionOpportunityId;
+
+  return true;
 }
 
 void ImageComposite::OnFinishRendering(int aImageIndex,
@@ -264,12 +293,6 @@ void ImageComposite::OnFinishRendering(int aImageIndex,
         mLastProducerID);
     AppendImageCompositeNotification(info);
   }
-
-  // Update mBias. This can change which frame ChooseImage(Index) would
-  // return, and we don't want to do that until we've finished compositing
-  // since callers of ChooseImage(Index) assume the same image will be chosen
-  // during a given composition.
-  UpdateBias(aImageIndex);
 }
 
 const ImageComposite::TimedImage* ImageComposite::GetImage(

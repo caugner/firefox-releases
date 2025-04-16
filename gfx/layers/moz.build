@@ -90,11 +90,16 @@ EXPORTS.mozilla.dom += [
     'apz/util/CheckerboardReportService.h',
 ]
 
+EXPORTS.mozilla.gfx += [
+    'BuildConstants.h',
+]
+
 EXPORTS.mozilla.layers += [
     'AnimationHelper.h',
     'AnimationInfo.h',
     'AnimationStorageData.h',
     'apz/public/APZInputBridge.h',
+    'apz/public/APZPublicUtils.h',
     'apz/public/APZSampler.h',
     'apz/public/APZUpdater.h',
     'apz/public/CompositorController.h',
@@ -130,6 +135,7 @@ EXPORTS.mozilla.layers += [
     'basic/TextureHostBasic.h',
     'BSPTree.h',
     'BufferTexture.h',
+    'BuildConstants.h',
     'CanvasDrawEventRecorder.h',
     'CanvasRenderer.h',
     'client/CanvasClient.h',
@@ -243,6 +249,7 @@ EXPORTS.mozilla.layers += [
     'RenderTrace.h',
     'RepaintRequest.h',
     'RotatedBuffer.h',
+    'SampleTime.h',
     'ScrollableLayerGuid.h',
     'ShareableCanvasRenderer.h',
     'SourceSurfaceSharedData.h',
@@ -349,6 +356,7 @@ UNIFIED_SOURCES += [
     'AnimationInfo.cpp',
     'apz/src/APZCTreeManager.cpp',
     'apz/src/APZInputBridge.cpp',
+    'apz/src/APZPublicUtils.cpp',
     'apz/src/APZSampler.cpp',
     'apz/src/APZUpdater.cpp',
     'apz/src/APZUtils.cpp',
@@ -357,6 +365,7 @@ UNIFIED_SOURCES += [
     'apz/src/Axis.cpp',
     'apz/src/CheckerboardEvent.cpp',
     'apz/src/DragTracker.cpp',
+    'apz/src/ExpectedGeckoMetrics.cpp',
     'apz/src/FocusState.cpp',
     'apz/src/FocusTarget.cpp',
     'apz/src/GenericScrollAnimation.cpp',
@@ -519,6 +528,7 @@ UNIFIED_SOURCES += [
     'ReadbackProcessor.cpp',
     'RenderTrace.cpp',
     'RotatedBuffer.cpp',
+    'SampleTime.cpp',
     'ShareableCanvasRenderer.cpp',
     'SourceSurfaceSharedData.cpp',
     'SourceSurfaceVolatileData.cpp',
@@ -617,7 +627,6 @@ if CONFIG['ENABLE_TESTS']:
     DIRS += ['apz/test/gtest/mvm']
 
 MOCHITEST_MANIFESTS += ['apz/test/mochitest/mochitest.ini']
-MOCHITEST_CHROME_MANIFESTS += ['apz/test/mochitest/chrome.ini']
 BROWSER_CHROME_MANIFESTS += ['apz/test/mochitest/browser.ini']
 
 CXXFLAGS += CONFIG['MOZ_CAIRO_CFLAGS']

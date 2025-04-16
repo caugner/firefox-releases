@@ -166,8 +166,6 @@ nsPrintSettingsService::SerializeToPrintData(nsIPrintSettings* aSettings,
   // data->deviceName() default-initializes
   data->printableWidthInInches() = 0;
   data->printableHeightInInches() = 0;
-  data->isIFrameSelected() = false;
-  data->isRangeSelection() = false;
   // data->GTKPrintSettings() default-initializes
   // data->printJobName() default-initializes
   data->printAllPages() = true;
@@ -871,6 +869,38 @@ nsresult nsPrintSettingsService::_CreatePrintSettings(
 }
 
 NS_IMETHODIMP
+nsPrintSettingsService::GetDefaultPrintSettingsForPrinting(
+    nsIPrintSettings** aGlobalPrintSettings) {
+  nsresult rv = GetGlobalPrintSettings(aGlobalPrintSettings);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsIPrintSettings* settings = *aGlobalPrintSettings;
+
+  nsAutoString printerName;
+  settings->GetPrinterName(printerName);
+
+  bool shouldGetLastUsedPrinterName = printerName.IsEmpty();
+#ifdef MOZ_X11
+  // In Linux, GTK backend does not support per printer settings.
+  // Calling GetLastUsedPrinterName causes a sandbox violation (see Bug
+  // 1329216). The printer name is not needed anywhere else on Linux
+  // before it gets to the parent. In the parent, we will then query the
+  // last-used printer name if no name is set. Unless we are in the parent,
+  // we will skip this part.
+  if (!XRE_IsParentProcess()) {
+    shouldGetLastUsedPrinterName = false;
+  }
+#endif
+  if (shouldGetLastUsedPrinterName) {
+    GetLastUsedPrinterName(printerName);
+    settings->SetPrinterName(printerName);
+  }
+  InitPrintSettingsFromPrinter(printerName, settings);
+  InitPrintSettingsFromPrefs(settings, true, nsIPrintSettings::kInitSaveAll);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsPrintSettingsService::GetGlobalPrintSettings(
     nsIPrintSettings** aGlobalPrintSettings) {
   nsresult rv;
@@ -892,36 +922,8 @@ nsPrintSettingsService::GetNewPrintSettings(
 NS_IMETHODIMP
 nsPrintSettingsService::GetLastUsedPrinterName(
     nsAString& aLastUsedPrinterName) {
-  nsresult rv;
-  nsCOMPtr<nsIPrinterList> printerList =
-      do_GetService(NS_PRINTER_LIST_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   aLastUsedPrinterName.Truncate();
-
-  // Look up the printer from the last print job
-  nsAutoString lastUsedPrinterName;
-  Preferences::GetString(kPrinterName, lastUsedPrinterName);
-  if (!lastUsedPrinterName.IsEmpty()) {
-    // Verify it's still a valid printer
-
-    nsTArray<RefPtr<nsIPrinter>> printers;
-    rv = printerList->GetPrinters(printers);
-    if (NS_SUCCEEDED(rv)) {
-      for (nsIPrinter* printer : printers) {
-        nsAutoString printerName;
-        printer->GetName(printerName);
-        if (printerName.Equals(lastUsedPrinterName)) {
-          aLastUsedPrinterName = lastUsedPrinterName;
-          return NS_OK;
-        }
-      }
-    }
-  }
-
-  // There is no last printer preference, or it doesn't name a valid printer.
-  // Return the system default from the printer list.
-  printerList->GetSystemDefaultPrinterName(aLastUsedPrinterName);
+  Preferences::GetString(kPrinterName, aLastUsedPrinterName);
   return NS_OK;
 }
 

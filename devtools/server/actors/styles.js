@@ -32,6 +32,12 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
+  ["CSSRuleTypeName", "findCssSelector", "prettifyCSS"],
+  "devtools/shared/inspector/css-logic",
+  true
+);
+loader.lazyRequireGetter(
+  this,
   "getDefinedGeometryProperties",
   "devtools/server/actors/highlighters/geometry-editor",
   true
@@ -56,32 +62,8 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
-  "prettifyCSS",
-  "devtools/shared/inspector/css-logic",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "UPDATE_PRESERVING_RULES",
+  ["UPDATE_PRESERVING_RULES", "UPDATE_GENERAL"],
   "devtools/server/actors/stylesheets",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "UPDATE_GENERAL",
-  "devtools/server/actors/stylesheets",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "findCssSelector",
-  "devtools/shared/inspector/css-logic",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "CSSRuleTypeName",
-  "devtools/shared/inspector/css-logic",
   true
 );
 
@@ -184,11 +166,6 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
     return {
       actor: this.actorID,
       traits: {
-        // Whether the actor has had bug 1103993 fixed, which means that the
-        // getApplied method calls cssLogic.highlight(node) to recreate the
-        // style cache. Clients requesting getApplied from actors that have not
-        // been fixed must make sure cssLogic.highlight(node) was called before.
-        getAppliedCreatesStyleCache: true,
         // Whether the page supports values of font-stretch from CSS Fonts Level 4.
         fontStretchLevel4: CSS.supports("font-stretch: 100%"),
         // Whether the page supports values of font-style from CSS Fonts Level 4.
@@ -1109,6 +1086,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
     if (!this.styleElements.has(document)) {
       const style = document.createElementNS(XHTML_NS, "style");
       style.setAttribute("type", "text/css");
+      style.setDevtoolsAsTriggeringPrincipal();
       document.documentElement.appendChild(style);
       this.styleElements.set(document, style);
     }
@@ -1692,6 +1670,17 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
         decl.isNameValid = CSS.supports(decl.name, "initial");
         return decl;
       });
+
+      // Associate all the compatibility issues for the declarations with the
+      // form. Once Bug 1648339
+      // https://bugzilla.mozilla.org/show_bug.cgi?id=1648339
+      // is solved we can directly associate compatibility issue with the
+      // declaration themselves.
+      const compatibility = this.pageStyle.inspector.getCompatibility();
+      form.compatibilityIssues = compatibility.getCSSDeclarationBlockIssues(
+        declarations
+      );
+
       // Cache parsed declarations so we don't needlessly re-parse authoredText every time
       // we need to check previous property names and values when tracking changes.
       this._declarations = declarations;

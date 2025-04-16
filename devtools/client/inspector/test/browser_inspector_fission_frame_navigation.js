@@ -115,23 +115,14 @@ add_task(async function navigateFrameNotExpandedInMarkupView() {
 
 async function navigateIframeTo(inspector, url) {
   info("Navigate the test iframe to " + url);
-  const resourceWatcher = inspector.toolbox.resourceWatcher;
-  let onNewRoot;
-  if (isFissionEnabled()) {
-    // With Fission, the frame navigation will result in a new root-node
-    // resource.
-    onNewRoot = waitForResourceOnce(
-      resourceWatcher,
-      resourceWatcher.TYPES.ROOT_NODE
-    );
-  } else {
-    // Without Fission, the frame navigation is handled on the server and will
-    // create two (fake) mutations: frameLoad + childList.
-    onNewRoot = Promise.all([
-      waitForMutation(inspector, "childList"),
-      waitForMutation(inspector, "frameLoad"),
-    ]);
-  }
+
+  const { resourceWatcher, targetList } = inspector.toolbox;
+  const onTargetProcessed = waitForTargetProcessed(targetList, url);
+
+  const onNewRoot = waitForResourceOnce(
+    resourceWatcher,
+    resourceWatcher.TYPES.ROOT_NODE
+  );
 
   info("Update the src attribute of the iframe tag");
   await SpecialPowers.spawn(gBrowser.selectedBrowser, [url], function(_url) {
@@ -144,6 +135,30 @@ async function navigateIframeTo(inspector, url) {
   info("Wait for pending children updates");
   await inspector.markup._waitForChildren();
 
+  if (isFissionEnabled()) {
+    info("Wait until the new target has been processed by TargetList");
+    await onTargetProcessed;
+  }
+
   // Note: the newRootResult changes when the test runs with or without fission.
   return newRootResult;
+}
+
+/**
+ * Returns a promise that waits until the provided TargetList has fully
+ * processed a target with the provided URL.
+ * This will avoid navigating again before the new resource watchers have fully
+ * attached to the new target.
+ */
+function waitForTargetProcessed(targetList, url) {
+  return new Promise(resolve => {
+    const onTargetProcessed = targetFront => {
+      if (targetFront.url !== encodeURI(url)) {
+        return;
+      }
+      targetList.off("processed-available-target", onTargetProcessed);
+      resolve();
+    };
+    targetList.on("processed-available-target", onTargetProcessed);
+  });
 }

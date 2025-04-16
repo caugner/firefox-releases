@@ -609,8 +609,10 @@ class WebSocketServer(object):
         cmd += ['-H', '127.0.0.1', '-p', str(self.port), '-w', self._scriptdir,
                 '-l', os.path.join(self._scriptdir, "websock.log"),
                 '--log-level=debug', '--allow-handlers-outside-root-dir']
+        env = dict(os.environ)
+        env['PYTHONPATH'] = os.pathsep.join(sys.path)
         # start the process
-        self._process = mozprocess.ProcessHandler(cmd, cwd=SCRIPT_DIR)
+        self._process = mozprocess.ProcessHandler(cmd, cwd=SCRIPT_DIR, env=env)
         self._process.run()
         pid = self._process.pid
         self._log.info("runtests.py | Websocket server pid: %d" % pid)
@@ -2258,6 +2260,8 @@ toolbar#nav-bar {
         # Used to defer a possible IOError exception from Marionette
         marionette_exception = None
 
+        temp_file_paths = []
+
         # make sure we clean up after ourselves.
         try:
             # set process log environment variable
@@ -2345,8 +2349,6 @@ toolbar#nav-bar {
             gecko_id = "GECKO(%d)" % proc.pid
             self.log.process_start(gecko_id)
             self.message_logger.gecko_id = gecko_id
-
-            temp_file_paths = []
 
             try:
                 # start marionette and kick off the tests
@@ -2577,19 +2579,42 @@ toolbar#nav-bar {
                     break
             return result
 
-        steps = [
-            ("1. Run each test %d times in one browser." % VERIFY_REPEAT,
-             step1),
-            ("2. Run each test %d times in a new browser each time." %
-             VERIFY_REPEAT_SINGLE_BROWSER,
-             step2),
-            ("3. Run each test %d times in one browser, in chaos mode." %
-             VERIFY_REPEAT,
-             step3),
-            ("4. Run each test %d times in a new browser each time, "
-             "in chaos mode." % VERIFY_REPEAT_SINGLE_BROWSER,
-             step4),
-        ]
+        def fission_step(fission_pref):
+            stepOptions = copy.deepcopy(options)
+            stepOptions.extraPrefs.append(fission_pref)
+            stepOptions.keep_open = False
+            stepOptions.runUntilFailure = True
+            stepOptions.profilePath = None
+            result = self.runTests(stepOptions)
+            result = result or (-2 if self.countfail > 0 else 0)
+            self.message_logger.finish()
+            return result
+
+        def fission_step1():
+            return fission_step("fission.autostart=false")
+
+        def fission_step2():
+            return fission_step("fission.autostart=true")
+
+        if options.verify_fission:
+            steps = [
+                ("1. Run each test without fission.", fission_step1),
+                ("2. Run each test with fission.", fission_step2),
+            ]
+        else:
+            steps = [
+                ("1. Run each test %d times in one browser." % VERIFY_REPEAT,
+                 step1),
+                ("2. Run each test %d times in a new browser each time." %
+                 VERIFY_REPEAT_SINGLE_BROWSER,
+                 step2),
+                ("3. Run each test %d times in one browser, in chaos mode." %
+                 VERIFY_REPEAT,
+                 step3),
+                ("4. Run each test %d times in a new browser each time, "
+                 "in chaos mode." % VERIFY_REPEAT_SINGLE_BROWSER,
+                 step4),
+            ]
 
         stepResults = {}
         for (descr, step) in steps:
@@ -2652,7 +2677,10 @@ toolbar#nav-bar {
 
             "socketprocess_e10s": self.extraPrefs.get(
                 'network.process.enabled', False),
+            "socketprocess_networking": self.extraPrefs.get(
+                'network.http.network_access_on_socket_process.enabled', False),
             "verify": options.verify,
+            "verify_fission": options.verify_fission,
             "webrender": options.enable_webrender,
             "xorigin": options.xOriginTests,
         })
@@ -3271,7 +3299,7 @@ def run_test_harness(parser, options):
     if options.flavor in ('plain', 'browser', 'chrome'):
         options.runByManifest = True
 
-    if options.verify:
+    if options.verify or options.verify_fission:
         result = runner.verifyTests(options)
     else:
         result = runner.runTests(options)

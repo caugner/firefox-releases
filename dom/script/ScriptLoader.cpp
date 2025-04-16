@@ -31,6 +31,7 @@
 #include "mozilla/dom/ScriptDecoding.h"  // mozilla::dom::ScriptDecoding
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/SRILogHelper.h"
+#include "mozilla/dom/WindowContext.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -1061,7 +1062,13 @@ void ScriptLoader::FinishDynamicImport(JSContext* aCx,
   // Complete the dynamic import, report failures indicated by aResult or as a
   // pending exception on the context.
 
-  if (NS_FAILED(aResult)) {
+  JS::DynamicImportStatus status =
+      (NS_FAILED(aResult) || JS_IsExceptionPending(aCx))
+          ? JS::DynamicImportStatus::Failed
+          : JS::DynamicImportStatus::Ok;
+
+  if (NS_FAILED(aResult) &&
+      aResult != NS_SUCCESS_DOM_SCRIPT_EVALUATION_THREW_UNCATCHABLE) {
     MOZ_ASSERT(!JS_IsExceptionPending(aCx));
     JS_ReportErrorNumberUC(aCx, js::GetErrorMessage, nullptr,
                            JSMSG_DYNAMIC_IMPORT_FAILED);
@@ -1072,7 +1079,8 @@ void ScriptLoader::FinishDynamicImport(JSContext* aCx,
   JS::Rooted<JSString*> specifier(aCx, aRequest->mDynamicSpecifier);
   JS::Rooted<JSObject*> promise(aCx, aRequest->mDynamicPromise);
 
-  JS::FinishDynamicModuleImport(aCx, referencingScript, specifier, promise);
+  JS::FinishDynamicModuleImport(aCx, status, referencingScript, specifier,
+                                promise);
 
   // FinishDynamicModuleImport clears any pending exception.
   MOZ_ASSERT(!JS_IsExceptionPending(aCx));
@@ -2230,6 +2238,8 @@ static void OffThreadScriptLoaderCallback(JS::OffThreadToken* aToken,
       TimeStamp::NowUnfuzzed();
 #endif
 
+  LogRunnable::Run run(aRunnable);
+
   aRunnable->SetToken(aToken);
   NotifyOffThreadScriptLoadCompletedRunnable::Dispatch(aRunnable.forget());
 }
@@ -2282,6 +2292,10 @@ nsresult ScriptLoader::AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
 
   RefPtr<NotifyOffThreadScriptLoadCompletedRunnable> runnable =
       new NotifyOffThreadScriptLoadCompletedRunnable(aRequest, this);
+
+  // Emulate dispatch.  CompileOffThreadModule will call
+  // OffThreadScriptLoaderCallback were we will emulate run.
+  LogRunnable::LogDispatch(runnable);
 
 #ifdef MOZ_GECKO_PROFILER
   aRequest->mOffThreadParseStartTime = TimeStamp::NowUnfuzzed();
@@ -3302,13 +3316,18 @@ bool ScriptLoader::ReadyToExecuteParserBlockingScripts() {
     return false;
   }
 
-  for (Document* doc = mDocument; doc;
-       doc = doc->GetInProcessParentDocument()) {
-    ScriptLoader* ancestor = doc->ScriptLoader();
-    if (!ancestor->SelfReadyToExecuteParserBlockingScripts() &&
-        ancestor->AddPendingChildLoader(this)) {
-      AddParserBlockingScriptExecutionBlocker();
-      return false;
+  if (mDocument && mDocument->GetWindowContext()) {
+    for (WindowContext* wc =
+             mDocument->GetWindowContext()->GetParentWindowContext();
+         wc; wc = wc->GetParentWindowContext()) {
+      if (Document* doc = wc->GetDocument()) {
+        ScriptLoader* ancestor = doc->ScriptLoader();
+        if (!ancestor->SelfReadyToExecuteParserBlockingScripts() &&
+            ancestor->AddPendingChildLoader(this)) {
+          AddParserBlockingScriptExecutionBlocker();
+          return false;
+        }
+      }
     }
   }
 
@@ -3327,7 +3346,7 @@ static nsresult ConvertToUnicode(nsIChannel* aChannel, const uint8_t* aData,
     return NS_OK;
   }
 
-  auto data = MakeSpan(aData, aLength);
+  auto data = Span(aData, aLength);
 
   // The encoding info precedence is as follows from high to low:
   // The BOM
@@ -3391,7 +3410,7 @@ static nsresult ConvertToUnicode(nsIChannel* aChannel, const uint8_t* aData,
 
   signalOOM.release();
   aLengthOut = ScriptDecoding<Unit>::DecodeInto(
-      unicodeDecoder, data, MakeSpan(aBufOut, bufferLength.value()),
+      unicodeDecoder, data, Span(aBufOut, bufferLength.value()),
       /* aEndOfSource = */ true);
   return NS_OK;
 }

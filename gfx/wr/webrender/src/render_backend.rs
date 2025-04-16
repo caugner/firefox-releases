@@ -19,6 +19,7 @@ use api::units::*;
 use api::CaptureBits;
 #[cfg(feature = "replay")]
 use api::CapturedDocument;
+use api::channel::{single_msg_channel, Sender, Receiver};
 use crate::spatial_tree::SpatialNodeIndex;
 #[cfg(any(feature = "capture", feature = "replay"))]
 use crate::capture::CaptureConfig;
@@ -56,7 +57,6 @@ use serde_json;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Sender, Receiver};
 use std::time::{UNIX_EPOCH, SystemTime};
 use std::{mem, u32};
 #[cfg(feature = "capture")]
@@ -520,7 +520,7 @@ impl Document {
     }
 
     fn has_pixels(&self) -> bool {
-        !self.view.scene.device_rect.size.is_empty_or_negative()
+        !self.view.scene.device_rect.size.is_empty()
     }
 
     fn process_frame_msg(
@@ -616,8 +616,8 @@ impl Document {
                 let node = self.scene.spatial_tree.spatial_nodes.iter_mut()
                     .find(|node| node.is_transform_bound_to_property(animation_id));
                 if let Some(node) = node {
-                    if node.is_async_zooming != is_zooming {
-                        node.is_async_zooming = is_zooming;
+                    if node.is_async_zooming() != is_zooming {
+                        node.set_async_zooming(is_zooming);
                         self.frame_is_valid = false;
                     }
                 }
@@ -1112,7 +1112,7 @@ impl RenderBackend {
                 }
 
                 if let Some(ref tx) = result_tx {
-                    let (resume_tx, resume_rx) = channel();
+                    let (resume_tx, resume_rx) = single_msg_channel();
                     tx.send(SceneSwapResult::Complete(resume_tx)).unwrap();
                     // Block until the post-swap hook has completed on
                     // the scene builder thread. We need to do this before
