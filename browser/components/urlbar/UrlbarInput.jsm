@@ -196,6 +196,9 @@ class UrlbarInput {
     }
 
     this.window.addEventListener("mousedown", this);
+    if (AppConstants.platform == "win") {
+      this.window.addEventListener("draggableregionleftmousedown", this);
+    }
     this.textbox.addEventListener("mousedown", this);
     this._inputContainer.addEventListener("click", this);
 
@@ -494,18 +497,42 @@ class UrlbarInput {
     // the appropriate engine submission url.
     let browser = this.window.gBrowser.selectedBrowser;
     let lastLocationChange = browser.lastLocationChange;
-    UrlbarUtils.getHeuristicResultFor(url).then(newResult => {
-      // Because this happens asynchronously, we must verify that the browser
-      // location did not change in the meanwhile.
-      if (
-        where != "current" ||
-        browser.lastLocationChange == lastLocationChange
-      ) {
-        this.pickResult(newResult, event, null, browser);
-      }
-    });
-    // Don't add further handling here, the getHeuristicResultFor call above is
-    // our last resort.
+    UrlbarUtils.getHeuristicResultFor(url)
+      .then(newResult => {
+        // Because this happens asynchronously, we must verify that the browser
+        // location did not change in the meanwhile.
+        if (
+          where != "current" ||
+          browser.lastLocationChange == lastLocationChange
+        ) {
+          this.pickResult(newResult, event, null, browser);
+        }
+      })
+      .catch(ex => {
+        if (url) {
+          // Something went wrong, we should always have a heuristic result,
+          // otherwise it means we're not able to search at all, maybe because
+          // some parts of the profile are corrupt.
+          // The urlbar should still allow to search or visit the typed string,
+          // so that the user can look for help to resolve the problem.
+          let flags =
+            Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS |
+            Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP;
+          if (this.isPrivate) {
+            flags |= Ci.nsIURIFixup.FIXUP_FLAG_PRIVATE_CONTEXT;
+          }
+          let postData = {};
+          let uri = Services.uriFixup.createFixupURI(url, flags, postData);
+          if (
+            where != "current" ||
+            browser.lastLocationChange == lastLocationChange
+          ) {
+            openParams.postData = postData.value;
+            this._loadURL(uri.spec, where, openParams, null, browser);
+          }
+        }
+      });
+    // Don't add further handling here, the catch above is our last resort.
   }
 
   handleRevert() {
@@ -679,7 +706,7 @@ class UrlbarInput {
           // When fixing a single word to a search, the docShell would also
           // query the DNS and if resolved ask the user whether they would
           // rather visit that as a host. On a positive answer, it adds the host
-          // the the list that we use to make decisions.
+          // to the list that we use to make decisions.
           // Because we are directly asking for a search here, bypassing the
           // docShell, we need to do the same ourselves.
           // See also URIFixupChild.jsm and keyword-uri-fixup.
@@ -753,10 +780,25 @@ class UrlbarInput {
             Cu.reportError(`Provider not found: ${result.providerName}`);
             return;
           }
-          provider.tryMethod("pickResult", result);
+          provider.tryMethod("pickResult", result, element);
           return;
         }
         break;
+      }
+      case UrlbarUtils.RESULT_TYPE.DYNAMIC: {
+        this.handleRevert();
+        this.controller.engagementEvent.record(event, {
+          selIndex,
+          numChars: this._lastSearchString.length,
+          selType: this.controller.engagementEvent.typeFromElement(element),
+        });
+        let provider = UrlbarProvidersManager.getProvider(result.providerName);
+        if (!provider) {
+          Cu.reportError(`Provider not found: ${result.providerName}`);
+          return;
+        }
+        provider.tryMethod("pickResult", result, element);
+        return;
       }
       case UrlbarUtils.RESULT_TYPE.OMNIBOX: {
         this.controller.engagementEvent.record(event, {
@@ -850,8 +892,8 @@ class UrlbarInput {
         let { value, selectionStart, selectionEnd } = result.autofill;
         this._autofillValue(value, selectionStart, selectionEnd);
       } else {
-        // If the url is trimmed but it's invalid (for example it has a non
-        // whitelisted single word host, or an unknown domain suffix), trimming
+        // If the url is trimmed but it's invalid (for example it has an unknown
+        // single word host, or an unknown domain suffix), trimming
         // it would end up executing a search instead of visiting it.
         let allowTrim = true;
         if (
@@ -1533,6 +1575,7 @@ class UrlbarInput {
       }
     }
     uri = this.makeURIReadable(uri);
+    let displaySpec = uri.displaySpec;
 
     // If the entire URL is selected, just use the actual loaded URI,
     // unless we want a decoded URI, or it's a data: or javascript: URI,
@@ -1543,19 +1586,17 @@ class UrlbarInput {
       !uri.schemeIs("data") &&
       !UrlbarPrefs.get("decodeURLsOnCopy")
     ) {
-      return uri.displaySpec;
+      return displaySpec;
     }
 
     // Just the beginning of the URL is selected, or we want a decoded
     // url. First check for a trimmed value.
-    let spec = uri.displaySpec;
-    let trimmedSpec = this._trimValue(spec);
-    if (spec != trimmedSpec) {
-      // Prepend the portion that _trimValue removed from the beginning.
-      // This assumes _trimValue will only truncate the URL at
-      // the beginning or end (or both).
-      let trimmedSegments = spec.split(trimmedSpec);
-      selectedVal = trimmedSegments[0] + selectedVal;
+
+    if (
+      !selectedVal.startsWith(BrowserUtils.trimURLProtocol) &&
+      displaySpec != this._trimValue(displaySpec)
+    ) {
+      selectedVal = BrowserUtils.trimURLProtocol + selectedVal;
     }
 
     return selectedVal;
@@ -2090,6 +2131,12 @@ class UrlbarInput {
 
   _on_mouseover(event) {
     this._updateUrlTooltip();
+  }
+
+  _on_draggableregionleftmousedown(event) {
+    if (!UrlbarPrefs.get("ui.popup.disable_autohide")) {
+      this.view.close();
+    }
   }
 
   _on_mousedown(event) {

@@ -139,9 +139,9 @@ nsCSPContext::ShouldLoad(nsContentPolicyType aContentType,
   // This ShouldLoad function is called from nsCSPService::ShouldLoad,
   // which already checked a number of things, including:
   // * aContentLocation is not null; we can consume this without further checks
-  // * scheme is not a whitelisted scheme (about: chrome:, etc).
+  // * scheme is not a allowlisted scheme (about: chrome:, etc).
   // * CSP is enabled
-  // * Content Type is not whitelisted (CSP Reports, TYPE_DOCUMENT, etc).
+  // * Content Type is not allowlisted (CSP Reports, TYPE_DOCUMENT, etc).
   // * Fast Path for Apps
 
   // Default decision, CSP can revise it if there's a policy to enforce
@@ -593,11 +593,11 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
 
 NS_IMETHODIMP
 nsCSPContext::GetAllowsNavigateTo(nsIURI* aURI, bool aIsFormSubmission,
-                                  bool aWasRedirected, bool aEnforceWhitelist,
+                                  bool aWasRedirected, bool aEnforceAllowlist,
                                   bool* outAllowsNavigateTo) {
   /*
    * The matrix below shows the different values of (aWasRedirect,
-   * aEnforceWhitelist) for the three different checks we do.
+   * aEnforceAllowlist) for the three different checks we do.
    *
    *  Navigation    | Start Loading  | Initiate Redirect | Document
    *                | (nsDocShell)   | (nsCSPService)    |
@@ -625,7 +625,7 @@ nsCSPContext::GetAllowsNavigateTo(nsIURI* aURI, bool aIsFormSubmission,
   bool atLeastOneBlock = false;
   for (unsigned long i = 0; i < mPolicies.Length(); i++) {
     if (!mPolicies[i]->allowsNavigateTo(aURI, aWasRedirected,
-                                        aEnforceWhitelist)) {
+                                        aEnforceAllowlist)) {
       if (!mPolicies[i]->getReportOnlyFlag()) {
         atLeastOneBlock = true;
       }
@@ -1543,7 +1543,6 @@ nsresult nsCSPContext::AsyncReportViolation(
 NS_IMETHODIMP
 nsCSPContext::PermitsAncestry(nsILoadInfo* aLoadInfo,
                               bool* outPermitsAncestry) {
-  MOZ_ASSERT(XRE_IsParentProcess(), "frame-ancestor check only in parent");
   nsresult rv;
 
   *outPermitsAncestry = true;
@@ -1557,9 +1556,18 @@ nsCSPContext::PermitsAncestry(nsILoadInfo* aLoadInfo,
 
   while (ctx) {
     nsCOMPtr<nsIURI> currentURI;
-    WindowGlobalParent* window = ctx->Canonical()->GetCurrentWindowGlobal();
-    if (window) {
-      currentURI = window->GetDocumentURI();
+    // Generally permitsAncestry is consulted from within the
+    // DocumentLoadListener in the parent process. For loads of type object
+    // and embed it's called from the Document in the content process.
+    // After Bug 1646899 we should be able to remove that branching code for
+    // querying the currentURI.
+    if (XRE_IsParentProcess()) {
+      WindowGlobalParent* window = ctx->Canonical()->GetCurrentWindowGlobal();
+      if (window) {
+        currentURI = window->GetDocumentURI();
+      }
+    } else if (nsPIDOMWindowOuter* windowOuter = ctx->GetDOMWindow()) {
+      currentURI = windowOuter->GetDocumentURI();
     }
 
     if (currentURI) {
