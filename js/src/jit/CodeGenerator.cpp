@@ -72,7 +72,6 @@
 #include "vm/StaticStrings.h"
 #include "vm/StringObject.h"
 #include "vm/StringType.h"
-#include "vm/TraceLogging.h"
 #include "vm/TypedArrayObject.h"
 #ifdef MOZ_VTUNE
 #  include "vtune/VTuneWrapper.h"
@@ -1850,22 +1849,24 @@ void CodeGenerator::visitRegExp(LRegExp* lir) {
   masm.bind(ool->rejoin());
 }
 
-static const size_t InputOutputDataSize = sizeof(irregexp::InputOutputData);
+static constexpr size_t InputOutputDataSize = sizeof(irregexp::InputOutputData);
 
 // Amount of space to reserve on the stack when executing RegExps inline.
-static const size_t RegExpReservedStack =
+static constexpr size_t RegExpReservedStack =
     InputOutputDataSize + sizeof(MatchPairs) +
     RegExpObject::MaxPairCount * sizeof(MatchPair);
 
-static size_t RegExpPairsVectorStartOffset(size_t inputOutputDataStartOffset) {
-  return inputOutputDataStartOffset + InputOutputDataSize + sizeof(MatchPairs);
+static constexpr int32_t RegExpPairsVectorStartOffset(
+    int32_t inputOutputDataStartOffset) {
+  return inputOutputDataStartOffset + int32_t(InputOutputDataSize) +
+         int32_t(sizeof(MatchPairs));
 }
 
 static Address RegExpPairCountAddress(MacroAssembler& masm,
-                                      size_t inputOutputDataStartOffset) {
-  return Address(masm.getStackPointer(), inputOutputDataStartOffset +
-                                             InputOutputDataSize +
-                                             MatchPairs::offsetOfPairCount());
+                                      int32_t inputOutputDataStartOffset) {
+  return Address(FramePointer, inputOutputDataStartOffset +
+                                   int32_t(InputOutputDataSize) +
+                                   MatchPairs::offsetOfPairCount());
 }
 
 // When the unicode flag is set, if lastIndex points to a trail
@@ -1992,11 +1993,14 @@ static void UpdateRegExpStatics(MacroAssembler& masm, Register regexp,
 // allocated for on the stack, and try to execute a RegExp on a string input.
 // If the RegExp was successfully executed and matched the input, fallthrough.
 // Otherwise, jump to notFound or failure.
+//
+// inputOutputDataStartOffset is the offset relative to the frame pointer
+// register. This offset is negative for the RegExpTester stub.
 static bool PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm,
                                     Register regexp, Register input,
                                     Register lastIndex, Register temp1,
                                     Register temp2, Register temp3,
-                                    size_t inputOutputDataStartOffset,
+                                    int32_t inputOutputDataStartOffset,
                                     gc::InitialHeap initialStringHeap,
                                     Label* notFound, Label* failure) {
   JitSpew(JitSpew_Codegen, "# Emitting PrepareAndExecuteRegExp");
@@ -2038,28 +2042,28 @@ static bool PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm,
    *                                    +---------------+
    */
 
-  size_t ioOffset = inputOutputDataStartOffset;
-  size_t matchPairsOffset = ioOffset + sizeof(InputOutputData);
-  size_t pairsArrayOffset = matchPairsOffset + sizeof(MatchPairs);
+  int32_t ioOffset = inputOutputDataStartOffset;
+  int32_t matchPairsOffset = ioOffset + int32_t(sizeof(InputOutputData));
+  int32_t pairsArrayOffset = matchPairsOffset + int32_t(sizeof(MatchPairs));
 
-  Address inputStartAddress(masm.getStackPointer(),
-                            ioOffset + offsetof(InputOutputData, inputStart));
-  Address inputEndAddress(masm.getStackPointer(),
-                          ioOffset + offsetof(InputOutputData, inputEnd));
-  Address startIndexAddress(masm.getStackPointer(),
-                            ioOffset + offsetof(InputOutputData, startIndex));
-  Address matchesAddress(masm.getStackPointer(),
-                         ioOffset + offsetof(InputOutputData, matches));
+  Address inputStartAddress(FramePointer,
+                            ioOffset + InputOutputData::offsetOfInputStart());
+  Address inputEndAddress(FramePointer,
+                          ioOffset + InputOutputData::offsetOfInputEnd());
+  Address startIndexAddress(FramePointer,
+                            ioOffset + InputOutputData::offsetOfStartIndex());
+  Address matchesAddress(FramePointer,
+                         ioOffset + InputOutputData::offsetOfMatches());
 
-  Address matchPairsAddress(masm.getStackPointer(), matchPairsOffset);
-  Address pairCountAddress(masm.getStackPointer(),
+  Address matchPairsAddress(FramePointer, matchPairsOffset);
+  Address pairCountAddress(FramePointer,
                            matchPairsOffset + MatchPairs::offsetOfPairCount());
-  Address pairsPointerAddress(masm.getStackPointer(),
+  Address pairsPointerAddress(FramePointer,
                               matchPairsOffset + MatchPairs::offsetOfPairs());
 
-  Address pairsArrayAddress(masm.getStackPointer(), pairsArrayOffset);
-  Address firstMatchStartAddress(masm.getStackPointer(),
-                                 pairsArrayOffset + offsetof(MatchPair, start));
+  Address pairsArrayAddress(FramePointer, pairsArrayOffset);
+  Address firstMatchStartAddress(FramePointer,
+                                 pairsArrayOffset + MatchPair::offsetOfStart());
 
   // First, fill in a skeletal MatchPairs instance on the stack. This will be
   // passed to the OOL stub in the caller if we aren't able to execute the
@@ -2187,29 +2191,15 @@ static bool PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm,
     volatileRegs.add(regexp);
   }
 
-#ifdef JS_TRACE_LOGGING
-  if (TraceLogTextIdEnabled(TraceLogger_IrregexpExecute)) {
-    masm.loadTraceLogger(temp2);
-    masm.tracelogStartId(temp2, TraceLogger_IrregexpExecute);
-  }
-#endif
-
   // Execute the RegExp.
   masm.computeEffectiveAddress(
-      Address(masm.getStackPointer(), inputOutputDataStartOffset), temp2);
+      Address(FramePointer, inputOutputDataStartOffset), temp2);
   masm.PushRegsInMask(volatileRegs);
   masm.setupUnalignedABICall(temp3);
   masm.passABIArg(temp2);
   masm.callWithABI(codePointer);
   masm.storeCallInt32Result(temp1);
   masm.PopRegsInMask(volatileRegs);
-
-#ifdef JS_TRACE_LOGGING
-  if (TraceLogTextIdEnabled(TraceLogger_IrregexpExecute)) {
-    masm.loadTraceLogger(temp2);
-    masm.tracelogStopId(temp2, TraceLogger_IrregexpExecute);
-  }
-#endif
 
   masm.bind(&checkSuccess);
   masm.branch32(Assembler::Equal, temp1,
@@ -2374,17 +2364,15 @@ void CreateDependentString::generate(MacroAssembler& masm,
     masm.push(string_);
     masm.push(base);
 
-    // Adjust the start index address for the above pushes.
-    MOZ_ASSERT(startIndexAddress.base == masm.getStackPointer());
-    BaseIndex newStartIndexAddress = startIndexAddress;
-    newStartIndexAddress.offset += 2 * sizeof(void*);
+    MOZ_ASSERT(startIndexAddress.base == FramePointer,
+               "startIndexAddress is still valid after stack pushes");
 
     // Load chars pointer for the new string.
     masm.loadInlineStringCharsForStore(string_, string_);
 
     // Load the source characters pointer.
     masm.loadStringChars(base, temp2_, encoding_);
-    masm.load32(newStartIndexAddress, base);
+    masm.load32(startIndexAddress, base);
     masm.addToCharPtr(temp2_, base, encoding_);
 
     CopyStringChars(masm, string_, temp2_, temp1_, base, encoding_);
@@ -2568,9 +2556,12 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
 #ifdef JS_USE_LINK_REGISTER
   masm.pushReturnAddress();
 #endif
+  masm.push(FramePointer);
+  masm.moveStackPtrTo(FramePointer);
 
-  // The InputOutputData is placed above the return address on the stack.
-  size_t inputOutputDataStartOffset = sizeof(void*);
+  // The InputOutputData is placed above the frame pointer and return address on
+  // the stack.
+  int32_t inputOutputDataStartOffset = 2 * sizeof(void*);
 
   Label notFound, oolEntry;
   if (!PrepareAndExecuteRegExp(cx, masm, regexp, input, lastIndex, temp1, temp2,
@@ -2629,6 +2620,8 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
     * [SMDOC] Stack layout for the RegExpMatcher stub
     *
     *                                    +---------------+
+    *               FramePointer +-----> |Caller-FramePtr|
+    *                                    +---------------+
     *                                    |Return-Address |
     *                                    +---------------+
     * inputOutputDataStartOffset +-----> +---------------+
@@ -2663,7 +2656,7 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   Address pairCountAddress =
       RegExpPairCountAddress(masm, inputOutputDataStartOffset);
 
-  size_t pairsVectorStartOffset =
+  int32_t pairsVectorStartOffset =
       RegExpPairsVectorStartOffset(inputOutputDataStartOffset);
 
   // Incremented by one below for each match pair.
@@ -2675,10 +2668,10 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   BaseObjectElementIndex objectMatchElement(object, matchIndex, elementsOffset);
 
   // The current match pair's "start" and "limit" member.
-  BaseIndex matchPairStart(masm.getStackPointer(), matchIndex, TimesEight,
-                           pairsVectorStartOffset + offsetof(MatchPair, start));
-  BaseIndex matchPairLimit(masm.getStackPointer(), matchIndex, TimesEight,
-                           pairsVectorStartOffset + offsetof(MatchPair, limit));
+  BaseIndex matchPairStart(FramePointer, matchIndex, TimesEight,
+                           pairsVectorStartOffset + MatchPair::offsetOfStart());
+  BaseIndex matchPairLimit(FramePointer, matchIndex, TimesEight,
+                           pairsVectorStartOffset + MatchPair::offsetOfLimit());
 
   Label* depStrFailure = &oolEntry;
   Label restoreRegExpAndLastIndex;
@@ -2691,14 +2684,6 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
     // as a temporary. We restore its value at |restoreRegExpAndLastIndex|.
     masm.push(regexp);
     temp4 = regexp;
-
-    // Adjust offsets for the push.
-    MOZ_ASSERT(pairCountAddress.base == masm.getStackPointer());
-    MOZ_ASSERT(matchPairStart.base == masm.getStackPointer());
-    MOZ_ASSERT(matchPairLimit.base == masm.getStackPointer());
-    pairCountAddress.offset += sizeof(void*);
-    matchPairStart.offset += sizeof(void*);
-    matchPairLimit.offset += sizeof(void*);
   } else {
     temp4 = maybeTemp4;
   }
@@ -2711,22 +2696,11 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
     // as a temporary. We restore its value at |restoreRegExpAndLastIndex|.
     masm.push(lastIndex);
     temp5 = lastIndex;
-
-    // Adjust offsets for the push.
-    MOZ_ASSERT(pairCountAddress.base == masm.getStackPointer());
-    MOZ_ASSERT(matchPairStart.base == masm.getStackPointer());
-    MOZ_ASSERT(matchPairLimit.base == masm.getStackPointer());
-    pairCountAddress.offset += sizeof(void*);
-    matchPairStart.offset += sizeof(void*);
-    matchPairLimit.offset += sizeof(void*);
   } else {
     temp5 = maybeTemp5;
   }
 
   auto maybeRestoreRegExpAndLastIndex = [&]() {
-    // NOTE: pairCountAddress, matchPairStart, and matchPairLimit offsets
-    // aren't restored, because we don't read them after the loop.
-
     if (maybeTemp5 == InvalidReg) {
       masm.pop(lastIndex);
     }
@@ -2799,8 +2773,7 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
       Address(object, elementsOffset + ObjectElements::offsetOfLength()));
 
   Address firstMatchPairStartAddress(
-      masm.getStackPointer(),
-      pairsVectorStartOffset + offsetof(MatchPair, start));
+      FramePointer, pairsVectorStartOffset + MatchPair::offsetOfStart());
 
   masm.loadPtr(Address(object, NativeObject::offsetOfSlots()), temp2);
 
@@ -2812,10 +2785,12 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
 
   // All done!
   masm.tagValue(JSVAL_TYPE_OBJECT, object, result);
+  masm.pop(FramePointer);
   masm.ret();
 
   masm.bind(&notFound);
   masm.moveValue(NullValue(), result);
+  masm.pop(FramePointer);
   masm.ret();
 
   // Fallback paths for CreateDependentString.
@@ -2836,6 +2811,7 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   // be called.
   masm.bind(&oolEntry);
   masm.moveValue(UndefinedValue(), result);
+  masm.pop(FramePointer);
   masm.ret();
 
   Linker linker(masm);
@@ -2959,9 +2935,12 @@ JitCode* JitRealm::generateRegExpSearcherStub(JSContext* cx) {
 #ifdef JS_USE_LINK_REGISTER
   masm.pushReturnAddress();
 #endif
+  masm.push(FramePointer);
+  masm.moveStackPtrTo(FramePointer);
 
-  // The InputOutputData is placed above the return address on the stack.
-  size_t inputOutputDataStartOffset = sizeof(void*);
+  // The InputOutputData is placed above the frame pointer and return address on
+  // the stack.
+  int32_t inputOutputDataStartOffset = 2 * sizeof(void*);
 
   Label notFound, oolEntry;
   if (!PrepareAndExecuteRegExp(cx, masm, regexp, input, lastIndex, temp1, temp2,
@@ -2974,6 +2953,8 @@ JitCode* JitRealm::generateRegExpSearcherStub(JSContext* cx) {
     /*
      * [SMDOC] Stack layout for the RegExpSearcher stub
      *
+     *                                    +---------------+
+     *               FramePointer +-----> |Caller-FramePtr|
      *                                    +---------------+
      *                                    |Return-Address |
      *                                    +---------------+
@@ -3002,25 +2983,28 @@ JitCode* JitRealm::generateRegExpSearcherStub(JSContext* cx) {
      */
   // clang-format on
 
-  size_t pairsVectorStartOffset =
+  int32_t pairsVectorStartOffset =
       RegExpPairsVectorStartOffset(inputOutputDataStartOffset);
-  Address matchPairStart(masm.getStackPointer(),
-                         pairsVectorStartOffset + offsetof(MatchPair, start));
-  Address matchPairLimit(masm.getStackPointer(),
-                         pairsVectorStartOffset + offsetof(MatchPair, limit));
+  Address matchPairStart(FramePointer,
+                         pairsVectorStartOffset + MatchPair::offsetOfStart());
+  Address matchPairLimit(FramePointer,
+                         pairsVectorStartOffset + MatchPair::offsetOfLimit());
 
   masm.load32(matchPairStart, result);
   masm.load32(matchPairLimit, input);
   masm.lshiftPtr(Imm32(15), input);
   masm.or32(input, result);
+  masm.pop(FramePointer);
   masm.ret();
 
   masm.bind(&notFound);
   masm.move32(Imm32(RegExpSearcherResultNotFound), result);
+  masm.pop(FramePointer);
   masm.ret();
 
   masm.bind(&oolEntry);
   masm.move32(Imm32(RegExpSearcherResultFailed), result);
+  masm.pop(FramePointer);
   masm.ret();
 
   Linker linker(masm);
@@ -3124,6 +3108,8 @@ JitCode* JitRealm::generateRegExpTesterStub(JSContext* cx) {
 #ifdef JS_USE_LINK_REGISTER
   masm.pushReturnAddress();
 #endif
+  masm.push(FramePointer);
+  masm.moveStackPtrTo(FramePointer);
 
   // We are free to clobber all registers, as LRegExpTester is a call
   // instruction.
@@ -3138,24 +3124,31 @@ JitCode* JitRealm::generateRegExpTesterStub(JSContext* cx) {
 
   masm.reserveStack(RegExpReservedStack);
 
+  // In visitRegExpMatcher and visitRegExpSearcher, we reserve stack space
+  // before calling the stub. For RegExpTester we call the stub before reserving
+  // stack space, so the offset of the InputOutputData relative to the frame
+  // pointer is negative.
+  constexpr int32_t inputOutputDataStartOffset = -int32_t(RegExpReservedStack);
+
+  // On ARM64, load/store instructions can encode an immediate offset in the
+  // range [-256, 4095]. If we ever fail this assertion, it would be more
+  // efficient to store the data above the frame pointer similar to
+  // RegExpMatcher and RegExpSearcher.
+  static_assert(inputOutputDataStartOffset >= -256);
+
   Label notFound, oolEntry;
   if (!PrepareAndExecuteRegExp(cx, masm, regexp, input, lastIndex, temp1, temp2,
-                               temp3, 0, initialStringHeap, &notFound,
-                               &oolEntry)) {
+                               temp3, inputOutputDataStartOffset,
+                               initialStringHeap, &notFound, &oolEntry)) {
     return nullptr;
   }
 
   Label done;
 
-  // In visitRegExpMatcher and visitRegExpSearcher, we reserve stack space
-  // before calling the stub. For RegExpTester we call the stub before reserving
-  // stack space, so the offset of the InputOutputData is 0.
-  size_t inputOutputDataStartOffset = 0;
-
-  size_t pairsVectorStartOffset =
+  int32_t pairsVectorStartOffset =
       RegExpPairsVectorStartOffset(inputOutputDataStartOffset);
-  Address matchPairLimit(masm.getStackPointer(),
-                         pairsVectorStartOffset + offsetof(MatchPair, limit));
+  Address matchPairLimit(FramePointer,
+                         pairsVectorStartOffset + MatchPair::offsetOfLimit());
 
   // RegExpTester returns the end index of the match to update lastIndex.
   masm.load32(matchPairLimit, result);
@@ -3170,6 +3163,7 @@ JitCode* JitRealm::generateRegExpTesterStub(JSContext* cx) {
 
   masm.bind(&done);
   masm.freeStack(RegExpReservedStack);
+  masm.pop(FramePointer);
   masm.ret();
 
   Linker linker(masm);
@@ -3657,16 +3651,14 @@ void CodeGenerator::visitParameter(LParameter* lir) {}
 
 void CodeGenerator::visitCallee(LCallee* lir) {
   Register callee = ToRegister(lir->output());
-  Address ptr(masm.getStackPointer(),
-              frameSize() + JitFrameLayout::offsetOfCalleeToken());
+  Address ptr(FramePointer, JitFrameLayout::offsetOfCalleeToken());
 
   masm.loadFunctionFromCalleeToken(ptr, callee);
 }
 
 void CodeGenerator::visitIsConstructing(LIsConstructing* lir) {
   Register output = ToRegister(lir->output());
-  Address calleeToken(masm.getStackPointer(),
-                      frameSize() + JitFrameLayout::offsetOfCalleeToken());
+  Address calleeToken(FramePointer, JitFrameLayout::offsetOfCalleeToken());
   masm.loadPtr(calleeToken, output);
 
   // We must be inside a function.
@@ -3707,13 +3699,6 @@ void CodeGenerator::visitOsrEntry(LOsrEntry* lir) {
   // Remember the OSR entry offset into the code buffer.
   masm.flushBuffer();
   setOsrEntryOffset(masm.size());
-
-#ifdef JS_TRACE_LOGGING
-  if (JS::TraceLoggerSupported()) {
-    emitTracelogStopEvent(TraceLogger_Baseline);
-    emitTracelogStartEvent(TraceLogger_IonMonkey);
-  }
-#endif
 
   // Allocate the full frame for this function
   // Note we have a new entry here. So we reset MacroAssembler::framePushed()
@@ -3788,8 +3773,7 @@ void CodeGenerator::visitStackArgT(LStackArgT* lir) {
   uint32_t argslot = lir->argslot();
   MOZ_ASSERT(argslot - 1u < graph.argumentSlotCount());
 
-  int32_t stack_offset = StackOffsetOfPassedArg(argslot);
-  Address dest(masm.getStackPointer(), stack_offset);
+  Address dest = AddressOfPassedArg(argslot);
 
   if (arg->isFloatReg()) {
     masm.boxDouble(ToFloatRegister(arg), dest);
@@ -3805,9 +3789,7 @@ void CodeGenerator::visitStackArgV(LStackArgV* lir) {
   uint32_t argslot = lir->argslot();
   MOZ_ASSERT(argslot - 1u < graph.argumentSlotCount());
 
-  int32_t stack_offset = StackOffsetOfPassedArg(argslot);
-
-  masm.storeValue(val, Address(masm.getStackPointer(), stack_offset));
+  masm.storeValue(val, AddressOfPassedArg(argslot));
 }
 
 void CodeGenerator::visitMoveGroup(LMoveGroup* group) {
@@ -5068,8 +5050,7 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
   MOZ_ASSERT(target);
   MOZ_ASSERT(target->isNativeWithoutJitEntry());
 
-  int callargslot = call->argslot();
-  int unusedStack = StackOffsetOfPassedArg(callargslot);
+  int unusedStack = UnusedStackBytesForCall(call->paddedNumStackArgs());
 
   // Registers used for callWithABI() argument-passing.
   const Register argContextReg = ToRegister(call->getArgContextReg());
@@ -5116,10 +5097,6 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
 
   markSafepointAt(safepointOffset, call);
 
-  if (JS::TraceLoggerSupported()) {
-    emitTracelogStartEvent(TraceLogger_Call);
-  }
-
   // Construct and execute call.
   masm.setupAlignedABICall();
   masm.passABIArg(argContextReg);
@@ -5134,10 +5111,6 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
   }
   masm.callWithABI(DynamicFunction<JSNative>(native), MoveOp::GENERAL,
                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
-
-  if (JS::TraceLoggerSupported()) {
-    emitTracelogStopEvent(TraceLogger_Call);
-  }
 
   // Test for failure.
   masm.branchIfFalseBool(ReturnReg, masm.failureLabel());
@@ -5213,8 +5186,7 @@ void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
   MOZ_ASSERT(target->hasJitInfo());
   MOZ_ASSERT(call->mir()->isCallDOMNative());
 
-  int callargslot = call->argslot();
-  int unusedStack = StackOffsetOfPassedArg(callargslot);
+  int unusedStack = UnusedStackBytesForCall(call->paddedNumStackArgs());
 
   // Registers used for callWithABI() argument-passing.
   const Register argJSContext = ToRegister(call->getArgJSContext());
@@ -5367,7 +5339,7 @@ void CodeGenerator::visitCallGeneric(LCallGeneric* call) {
   Register calleereg = ToRegister(call->getFunction());
   Register objreg = ToRegister(call->getTempObject());
   Register nargsreg = ToRegister(call->getNargsReg());
-  uint32_t unusedStack = StackOffsetOfPassedArg(call->argslot());
+  uint32_t unusedStack = UnusedStackBytesForCall(call->paddedNumStackArgs());
   Label invoke, thunk, makeCall, end;
 
   // Known-target case is handled by LCallKnown.
@@ -5490,7 +5462,7 @@ void CodeGenerator::visitCallGeneric(LCallGeneric* call) {
 void CodeGenerator::visitCallKnown(LCallKnown* call) {
   Register calleereg = ToRegister(call->getFunction());
   Register objreg = ToRegister(call->getTempObject());
-  uint32_t unusedStack = StackOffsetOfPassedArg(call->argslot());
+  uint32_t unusedStack = UnusedStackBytesForCall(call->paddedNumStackArgs());
   WrappedFunction* target = call->getSingleTarget();
 
   // Native single targets (except wasm) are handled by LCallNative.
@@ -8100,6 +8072,8 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
           callBase->builtinMethodFailureMode());
       switchRealm = false;
       break;
+    case wasm::CalleeDesc::FuncRef:
+      MOZ_CRASH("NYI");
   }
 
   // Note the assembler offset for the associated LSafePoint.
@@ -10768,45 +10742,6 @@ void JitRuntime::generateDoubleToInt32ValueStub(MacroAssembler& masm) {
   masm.abiret();
 }
 
-bool JitRuntime::generateTLEventVM(MacroAssembler& masm,
-                                   const VMFunctionData& f, bool enter) {
-#ifdef JS_TRACE_LOGGING
-  bool vmEventEnabled = TraceLogTextIdEnabled(TraceLogger_VM);
-  bool vmSpecificEventEnabled = TraceLogTextIdEnabled(TraceLogger_VMSpecific);
-
-  if (vmEventEnabled || vmSpecificEventEnabled) {
-    AllocatableRegisterSet regs(RegisterSet::Volatile());
-    Register loggerReg = regs.takeAnyGeneral();
-    masm.Push(loggerReg);
-    masm.loadTraceLogger(loggerReg);
-
-    if (vmEventEnabled) {
-      if (enter) {
-        masm.tracelogStartId(loggerReg, TraceLogger_VM, /* force = */ true);
-      } else {
-        masm.tracelogStopId(loggerReg, TraceLogger_VM, /* force = */ true);
-      }
-    }
-    if (vmSpecificEventEnabled) {
-      TraceLoggerEvent event(f.name());
-      if (!event.hasTextId()) {
-        return false;
-      }
-
-      if (enter) {
-        masm.tracelogStartId(loggerReg, event.textId(), /* force = */ true);
-      } else {
-        masm.tracelogStopId(loggerReg, event.textId(), /* force = */ true);
-      }
-    }
-
-    masm.Pop(loggerReg);
-  }
-#endif
-
-  return true;
-}
-
 void CodeGenerator::visitCharCodeAt(LCharCodeAt* lir) {
   Register str = ToRegister(lir->str());
   Register index = ToRegister(lir->index());
@@ -11774,10 +11709,8 @@ void CodeGenerator::visitFrameArgumentsSlice(LFrameArgumentsSlice* lir) {
     Register index = temp;
     masm.move32(Imm32(0), index);
 
-    size_t argvOffset = frameSize() + JitFrameLayout::offsetOfActualArgs();
-    argvOffset += masm.PushRegsInMaskSizeInBytes(liveRegs);
-
-    BaseValueIndex argPtr(masm.getStackPointer(), argIndex, argvOffset);
+    size_t argvOffset = JitFrameLayout::offsetOfActualArgs();
+    BaseValueIndex argPtr(FramePointer, argIndex, argvOffset);
 
     Label loop;
     masm.bind(&loop);
@@ -11849,8 +11782,8 @@ void CodeGenerator::visitInlineArgumentsSlice(LInlineArgumentsSlice* lir) {
   Label done;
   if (count.is<Register>()) {
     masm.branch32(Assembler::Equal, count.as<Register>(), Imm32(0), &done);
-  } else {
-    MOZ_ASSERT(count.as<int32_t>() > 0);
+  } else if (count.as<int32_t>() == 0) {
+    return;
   }
 
   auto getArg = [&](uint32_t i) {
@@ -12129,15 +12062,15 @@ void CodeGenerator::visitArgumentsLength(LArgumentsLength* lir) {
 void CodeGenerator::visitGetFrameArgument(LGetFrameArgument* lir) {
   ValueOperand result = ToOutValue(lir);
   const LAllocation* index = lir->index();
-  size_t argvOffset = frameSize() + JitFrameLayout::offsetOfActualArgs();
+  size_t argvOffset = JitFrameLayout::offsetOfActualArgs();
 
   if (index->isConstant()) {
     int32_t i = index->toConstant()->toInt32();
-    Address argPtr(masm.getStackPointer(), sizeof(Value) * i + argvOffset);
+    Address argPtr(FramePointer, sizeof(Value) * i + argvOffset);
     masm.loadValue(argPtr, result);
   } else {
     Register i = ToRegister(index);
-    BaseValueIndex argPtr(masm.getStackPointer(), i, argvOffset);
+    BaseValueIndex argPtr(FramePointer, i, argvOffset);
     masm.loadValue(argPtr, result);
   }
 }
@@ -12147,12 +12080,12 @@ void CodeGenerator::visitGetFrameArgumentHole(LGetFrameArgumentHole* lir) {
   Register index = ToRegister(lir->index());
   Register length = ToRegister(lir->length());
   Register spectreTemp = ToTempRegisterOrInvalid(lir->temp0());
-  size_t argvOffset = frameSize() + JitFrameLayout::offsetOfActualArgs();
+  size_t argvOffset = JitFrameLayout::offsetOfActualArgs();
 
   Label outOfBounds, done;
   masm.spectreBoundsCheck32(index, length, spectreTemp, &outOfBounds);
 
-  BaseValueIndex argPtr(masm.getStackPointer(), index, argvOffset);
+  BaseValueIndex argPtr(FramePointer, index, argvOffset);
   masm.loadValue(argPtr, result);
   masm.jump(&done);
 
@@ -12194,44 +12127,46 @@ void CodeGenerator::visitRest(LRest* lir) {
     masm.movePtr(ImmPtr(nullptr), temp2);
   }
 
-  size_t actualsOffset = frameSize() + JitFrameLayout::offsetOfActualArgs();
-  masm.moveStackPtrTo(temp1);
+  // Set temp1 to the address of the first actual argument.
+  size_t actualsOffset = JitFrameLayout::offsetOfActualArgs();
+  masm.computeEffectiveAddress(Address(FramePointer, actualsOffset), temp1);
 
-  // Compute numActuals - numFormals.
+  // Compute array length: max(numActuals - numFormals, 0).
+  Register lengthReg;
   if (numFormals) {
+    lengthReg = temp0;
     Label emptyLength, joinLength;
-    masm.movePtr(numActuals, temp0);
-    masm.branch32(Assembler::LessThanOrEqual, temp0, Imm32(numFormals),
+    masm.branch32(Assembler::LessThanOrEqual, numActuals, Imm32(numFormals),
                   &emptyLength);
     {
-      masm.sub32(Imm32(numFormals), temp0);
+      masm.move32(numActuals, lengthReg);
+      masm.sub32(Imm32(numFormals), lengthReg);
 
-      // Compute actuals() + numFormals.
-      masm.addPtr(Imm32(sizeof(Value) * numFormals + actualsOffset), temp1);
+      // Skip formal arguments.
+      masm.addPtr(Imm32(sizeof(Value) * numFormals), temp1);
 
       masm.jump(&joinLength);
     }
     masm.bind(&emptyLength);
     {
-      masm.move32(Imm32(0), temp0);
+      masm.move32(Imm32(0), lengthReg);
 
-      // Point to the start of actuals() when the rest-array length is zero. We
-      // don't use |actuals() + numFormals| because |numFormals| can be any
-      // non-negative int32 value when this MRest was created from scalar
-      // replacement optimizations. And it seems questionable to compute a
-      // Value* pointer which points to who knows where.
-      masm.addPtr(Imm32(actualsOffset), temp1);
+      // Leave temp1 pointed to the start of actuals() when the rest-array
+      // length is zero. We don't use |actuals() + numFormals| because
+      // |numFormals| can be any non-negative int32 value when this MRest was
+      // created from scalar replacement optimizations. And it seems
+      // questionable to compute a Value* pointer which points to who knows
+      // where.
     }
     masm.bind(&joinLength);
   } else {
-    // Directly compute both values when there are no formals.
-    masm.addPtr(Imm32(actualsOffset), temp1);
-    masm.move32(numActuals, temp0);
+    // Use numActuals directly when there are no formals.
+    lengthReg = numActuals;
   }
 
   pushArg(temp2);
   pushArg(temp1);
-  pushArg(temp0);
+  pushArg(lengthReg);
 
   using Fn = JSObject* (*)(JSContext*, uint32_t, Value*, HandleObject);
   callVM<Fn, InitRestParameter>(lir);
@@ -12388,7 +12323,6 @@ bool CodeGenerator::generateWasm(
   AutoCreatedBy acb(masm, "CodeGenerator::generateWasm");
 
   JitSpew(JitSpew_Codegen, "# Emitting wasm code");
-  setUseWasmStackArgumentAbi();
 
   size_t nInboundStackArgBytes = StackArgAreaSizeUnaligned(argTypes);
 
@@ -12748,38 +12682,6 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
     Assembler::PatchDataWithValueCheck(CodeLocationLabel(code, label.offset),
                                        ImmPtr(entry), ImmPtr((void*)-1));
   }
-
-#ifdef JS_TRACE_LOGGING
-  bool TLFailed = false;
-
-  MOZ_ASSERT_IF(!JS::TraceLoggerSupported(), patchableTLEvents_.length() == 0);
-  for (uint32_t i = 0; i < patchableTLEvents_.length(); i++) {
-    TraceLoggerEvent event(patchableTLEvents_[i].event);
-    if (!event.hasTextId() || !ionScript->addTraceLoggerEvent(event)) {
-      TLFailed = true;
-      break;
-    }
-    Assembler::PatchDataWithValueCheck(
-        CodeLocationLabel(code, patchableTLEvents_[i].offset),
-        ImmPtr((void*)uintptr_t(event.textId())), ImmPtr((void*)0));
-  }
-
-  if (!TLFailed && patchableTLScripts_.length() > 0) {
-    MOZ_ASSERT(TraceLogTextIdEnabled(TraceLogger_Scripts));
-    TraceLoggerEvent event(TraceLogger_Scripts, script);
-    if (!event.hasTextId() || !ionScript->addTraceLoggerEvent(event)) {
-      TLFailed = true;
-    }
-    if (!TLFailed) {
-      uint32_t textId = event.textId();
-      for (uint32_t i = 0; i < patchableTLScripts_.length(); i++) {
-        Assembler::PatchDataWithValueCheck(
-            CodeLocationLabel(code, patchableTLScripts_[i]),
-            ImmPtr((void*)uintptr_t(textId)), ImmPtr((void*)0));
-      }
-    }
-  }
-#endif
 
   // for generating inline caches during the execution.
   if (runtimeData_.length()) {
@@ -15720,8 +15622,7 @@ void CodeGenerator::visitNewTarget(LNewTarget* ins) {
 
   // if (isConstructing) output = argv[Max(numActualArgs, numFormalArgs)]
   Label notConstructing, done;
-  Address calleeToken(masm.getStackPointer(),
-                      frameSize() + JitFrameLayout::offsetOfCalleeToken());
+  Address calleeToken(FramePointer, JitFrameLayout::offsetOfCalleeToken());
   masm.branchTestPtr(Assembler::Zero, calleeToken,
                      Imm32(CalleeToken_FunctionConstructing), &notConstructing);
 
@@ -15733,9 +15634,9 @@ void CodeGenerator::visitNewTarget(LNewTarget* ins) {
   size_t numFormalArgs = ins->mirRaw()->block()->info().nargs();
   masm.branchPtr(Assembler::Below, argvLen, Imm32(numFormalArgs), &useNFormals);
 
-  size_t argsOffset = frameSize() + JitFrameLayout::offsetOfActualArgs();
+  size_t argsOffset = JitFrameLayout::offsetOfActualArgs();
   {
-    BaseValueIndex newTarget(masm.getStackPointer(), argvLen, argsOffset);
+    BaseValueIndex newTarget(FramePointer, argvLen, argsOffset);
     masm.loadValue(newTarget, output);
     masm.jump(&done);
   }
@@ -15743,7 +15644,7 @@ void CodeGenerator::visitNewTarget(LNewTarget* ins) {
   masm.bind(&useNFormals);
 
   {
-    Address newTarget(masm.getStackPointer(),
+    Address newTarget(FramePointer,
                       argsOffset + (numFormalArgs * sizeof(Value)));
     masm.loadValue(newTarget, output);
     masm.jump(&done);
@@ -16920,7 +16821,10 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
         } else if (larg->isFloatReg()) {
           stackArgs.infallibleEmplaceBack(ToFloatRegister(larg));
         } else {
-          stackArgs.infallibleEmplaceBack(ToAddress(larg));
+          // Always use the stack pointer here because GenerateDirectCallFromJit
+          // depends on this.
+          Address addr = ToAddress<BaseRegForAddress::SP>(larg);
+          stackArgs.infallibleEmplaceBack(addr);
         }
         break;
       }

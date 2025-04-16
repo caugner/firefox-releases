@@ -19,12 +19,14 @@
 #include "js/Object.h"             // JS::GetClass
 #include "js/ProfilingStack.h"
 #include "GeckoProfiler.h"
+#include "mozJSModuleLoader.h"
 #include "nsJSEnvironment.h"
 #include "nsThreadUtils.h"
 #include "nsDOMJSUtils.h"
 
 #include "WrapperFactory.h"
 #include "AccessCheck.h"
+#include "JSServices.h"
 
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -90,7 +92,7 @@ void nsXPConnect::InitJSContext() {
   gSelf->mContext = xpccx;
   gSelf->mRuntime = xpccx->Runtime();
 
-  mozJSComponentLoader::InitStatics();
+  mozJSModuleLoader::InitStatics();
 
   // Initialize the script preloader cache.
   Unused << mozilla::ScriptPreloader::GetSingleton();
@@ -171,7 +173,7 @@ void nsXPConnect::ReleaseXPConnectSingleton() {
     NS_RELEASE2(xpc, cnt);
   }
 
-  mozJSComponentLoader::Shutdown();
+  mozJSModuleLoader::Shutdown();
 }
 
 // static
@@ -509,6 +511,10 @@ bool InitGlobalObject(JSContext* aJSContext, JS::Handle<JSObject*> aGlobal,
     // XPCCallContext gives us an active request needed to save/restore.
     if (!ObjectScope(aGlobal)->AttachComponentsObject(aJSContext) ||
         !XPCNativeWrapper::AttachNewConstructorObject(aJSContext, aGlobal)) {
+      return UnexpectedFailure(false);
+    }
+
+    if (!mozJSModuleLoader::Get()->DefineJSServices(aJSContext, aGlobal)) {
       return UnexpectedFailure(false);
     }
   }

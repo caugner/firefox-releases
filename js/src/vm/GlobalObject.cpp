@@ -31,6 +31,7 @@
 #include "builtin/Object.h"
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"
+#include "builtin/ShadowRealm.h"
 #include "builtin/Stream.h"
 #include "builtin/streams/QueueingStrategies.h"  // js::{ByteLength,Count}QueueingStrategy
 #include "builtin/streams/ReadableStream.h"  // js::ReadableStream
@@ -208,6 +209,9 @@ bool GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key) {
     case JSProto_Iterator:
     case JSProto_AsyncIterator:
       return !cx->realm()->creationOptions().getIteratorHelpersEnabled();
+
+    case JSProto_ShadowRealm:
+      return !cx->realm()->creationOptions().getShadowRealmsEnabled();
 
     default:
       MOZ_CRASH("unexpected JSProtoKey");
@@ -839,13 +843,6 @@ bool GlobalObject::createIntrinsicsHolder(JSContext* cx,
     return false;
   }
 
-  // Define a top-level property 'undefined' with the undefined value.
-  if (!DefineDataProperty(cx, intrinsicsHolder, cx->names().undefined,
-                          UndefinedHandleValue,
-                          JSPROP_PERMANENT | JSPROP_READONLY)) {
-    return false;
-  }
-
   // Install the intrinsics holder on the global.
   global->data().intrinsicsHolder.init(intrinsicsHolder);
   return true;
@@ -952,15 +949,6 @@ bool GlobalObject::addIntrinsicValue(JSContext* cx,
   }
   holder->initSlot(slot, value);
   return true;
-}
-
-/* static */
-bool GlobalObject::ensureModulePrototypesCreated(JSContext* cx,
-                                                 Handle<GlobalObject*> global) {
-  return getOrCreateModulePrototype(cx, global) &&
-         getOrCreateImportEntryPrototype(cx, global) &&
-         getOrCreateExportEntryPrototype(cx, global) &&
-         getOrCreateRequestedModulePrototype(cx, global);
 }
 
 /* static */
