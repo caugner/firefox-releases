@@ -8,6 +8,7 @@
 
 ChromeUtils.defineESModuleGetters(this, {
   BrowserUIUtils: "resource:///modules/BrowserUIUtils.sys.mjs",
+  CustomizableUI: "resource:///modules/CustomizableUI.sys.mjs",
   DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
   ExtensionControlledPopup:
     "resource:///modules/ExtensionControlledPopup.sys.mjs",
@@ -30,7 +31,6 @@ const TAB_ID_NONE = -1;
 ChromeUtils.defineLazyGetter(this, "tabHidePopup", () => {
   return new ExtensionControlledPopup({
     confirmedType: TAB_HIDE_CONFIRMED_TYPE,
-    anchorId: "alltabs-button",
     popupnotificationId: "extension-tab-hide-notification",
     descriptionId: "extension-tab-hide-notification-description",
     descriptionMessageId: "tabHideControlled.message",
@@ -1606,6 +1606,17 @@ this.tabs = class extends ExtensionAPIPersistent {
           }
           if (hidden.length) {
             let win = Services.wm.getMostRecentWindow("navigator:browser");
+
+            // Before showing the hidden tabs warning,
+            // move alltabs-button to somewhere visible if it isn't already.
+            if (!CustomizableUI.widgetIsLikelyVisible("alltabs-button", win)) {
+              CustomizableUI.addWidgetToArea(
+                "alltabs-button",
+                CustomizableUI.verticalTabsEnabled
+                  ? CustomizableUI.AREA_NAVBAR
+                  : CustomizableUI.AREA_TABSTRIP
+              );
+            }
             tabHidePopup.open(win, extension.id);
           }
           return hidden;

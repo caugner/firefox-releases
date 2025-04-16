@@ -631,8 +631,8 @@ D3D11TextureData* D3D11TextureData::Create(IntSize aSize, SurfaceFormat aFormat,
   RefPtr<gfx::FileHandleWrapper> handle =
       new gfx::FileHandleWrapper(UniqueFileHandle(sharedHandle));
 
-  D3D11TextureData* data = new D3D11TextureData(texture11, 0, std::move(handle),
-                                                aSize, aFormat, aFlags);
+  D3D11TextureData* data =
+      new D3D11TextureData(texture11, 0, handle, aSize, aFormat, aFlags);
 
   texture11->GetDevice(getter_AddRefs(device));
   if (XRE_IsGPUProcess() &&
@@ -1242,7 +1242,8 @@ void DXGITextureHostD3D11::PushResourceUpdates(
                                  wr::ImageBufferKind::TextureRect)
                            : wr::ExternalImageType::TextureHandle(
                                  wr::ImageBufferKind::TextureExternal);
-      (aResources.*method)(aImageKeys[0], descriptor, aExtID, imageType, 0);
+      (aResources.*method)(aImageKeys[0], descriptor, aExtID, imageType, 0,
+                           /* aNormalizedUvs */ false);
       break;
     }
     case gfx::SurfaceFormat::P010:
@@ -1268,8 +1269,10 @@ void DXGITextureHostD3D11::PushResourceUpdates(
                                  wr::ImageBufferKind::TextureRect)
                            : wr::ExternalImageType::TextureHandle(
                                  wr::ImageBufferKind::TextureExternal);
-      (aResources.*method)(aImageKeys[0], descriptor0, aExtID, imageType, 0);
-      (aResources.*method)(aImageKeys[1], descriptor1, aExtID, imageType, 1);
+      (aResources.*method)(aImageKeys[0], descriptor0, aExtID, imageType, 0,
+                           /* aNormalizedUvs */ false);
+      (aResources.*method)(aImageKeys[1], descriptor1, aExtID, imageType, 1,
+                           /* aNormalizedUvs */ false);
       break;
     }
     default: {
@@ -1418,9 +1421,12 @@ void DXGIYCbCrTextureHostD3D11::PushResourceUpdates(
   wr::ImageDescriptor descriptor0(mSizeY, gfx::SurfaceFormat::A8);
   // cb and cr
   wr::ImageDescriptor descriptor1(mSizeCbCr, gfx::SurfaceFormat::A8);
-  (aResources.*method)(aImageKeys[0], descriptor0, aExtID, imageType, 0);
-  (aResources.*method)(aImageKeys[1], descriptor1, aExtID, imageType, 1);
-  (aResources.*method)(aImageKeys[2], descriptor1, aExtID, imageType, 2);
+  (aResources.*method)(aImageKeys[0], descriptor0, aExtID, imageType, 0,
+                       /* aNormalizedUvs */ false);
+  (aResources.*method)(aImageKeys[1], descriptor1, aExtID, imageType, 1,
+                       /* aNormalizedUvs */ false);
+  (aResources.*method)(aImageKeys[2], descriptor1, aExtID, imageType, 2,
+                       /* aNormalizedUvs */ false);
 }
 
 void DXGIYCbCrTextureHostD3D11::PushDisplayItems(
