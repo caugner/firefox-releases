@@ -378,7 +378,7 @@ nsHttpConnectionInfo::CloneAndAdoptHTTPSSVCRecord(
     clone = new nsHttpConnectionInfo(
         mOrigin, mOriginPort, alpn ? Get<0>(*alpn) : EmptyCString(), mUsername,
         mTopWindowOrigin, mProxyInfo, mOriginAttributes, name,
-        port ? *port : mRoutedPort, mIsolated, isHttp3);
+        port ? *port : mOriginPort, mIsolated, isHttp3);
   }
 
   // Make sure the anonymous, insecure-scheme, and private flags are transferred
@@ -484,6 +484,9 @@ nsHttpConnectionInfo::DeserializeHttpConnectionInfoCloneArgs(
 void nsHttpConnectionInfo::CloneAsDirectRoute(nsHttpConnectionInfo** outCI) {
   if (mRoutedHost.IsEmpty()) {
     RefPtr<nsHttpConnectionInfo> clone = Clone();
+    // Explicitly set mIsHttp3 to false, since CloneAsDirectRoute() is used to
+    // create a non-http3 connection info.
+    clone->mIsHttp3 = false;
     clone.forget(outCI);
     return;
   }

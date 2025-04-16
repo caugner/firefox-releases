@@ -35,15 +35,18 @@
 #include "proxy/DeadObjectProxy.h"
 #include "util/Poison.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/BooleanObject.h"
 #include "vm/DateObject.h"
 #include "vm/ErrorObject.h"
 #include "vm/FrameIter.h"  // js::FrameIter
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/NumberObject.h"
 #include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/Printer.h"
 #include "vm/PromiseObject.h"  // js::PromiseObject
 #include "vm/Realm.h"
+#include "vm/StringObject.h"
 #include "vm/Time.h"
 #include "vm/WrapperObject.h"
 
@@ -127,25 +130,6 @@ JS_FRIEND_API bool JS_SplicePrototype(JSContext* cx, HandleObject obj,
 
   Rooted<TaggedProto> tagged(cx, TaggedProto(proto));
   return JSObject::splicePrototype(cx, obj, tagged);
-}
-
-JS_FRIEND_API JSObject* JS_NewObjectWithUniqueType(JSContext* cx,
-                                                   const JSClass* clasp,
-                                                   HandleObject proto) {
-  /*
-   * Create our object with a null proto and then splice in the correct proto
-   * after we setSingleton, so that we don't pollute the default
-   * ObjectGroup attached to our proto with information about our object, since
-   * we're not going to be using that ObjectGroup anyway.
-   */
-  RootedObject obj(cx, NewSingletonObjectWithGivenProto(cx, clasp, nullptr));
-  if (!obj) {
-    return nullptr;
-  }
-  if (!JS_SplicePrototype(cx, obj, proto)) {
-    return nullptr;
-  }
-  return obj;
 }
 
 JS_FRIEND_API JSObject* JS_NewObjectWithoutMetadata(

@@ -46,10 +46,12 @@ void LIRGeneratorX86Shared::lowerForShift(LInstructionHelper<1, 2, 0>* ins,
                                           MDefinition* rhs) {
   ins->setOperand(0, useRegisterAtStart(lhs));
 
-  // shift operator should be constant or in register ecx
-  // x86 can't shift a non-ecx register
+  // Shift operand should be constant or, unless BMI2 is available, in register
+  // ecx. x86 can't shift a non-ecx register.
   if (rhs->isConstant()) {
     ins->setOperand(1, useOrConstantAtStart(rhs));
+  } else if (Assembler::HasBMI2() && !mir->isRotate()) {
+    ins->setOperand(1, lhs != rhs ? useRegister(rhs) : useRegisterAtStart(rhs));
   } else {
     ins->setOperand(
         1, lhs != rhs ? useFixed(rhs, ecx) : useFixedAtStart(rhs, ecx));
@@ -74,10 +76,14 @@ void LIRGeneratorX86Shared::lowerForShiftInt64(
   static_assert(LRotateI64::Count == INT64_PIECES,
                 "Assume Count is located at INT64_PIECES.");
 
-  // shift operator should be constant or in register ecx
-  // x86 can't shift a non-ecx register
+  // Shift operand should be constant or, unless BMI2 is available, in register
+  // ecx. x86 can't shift a non-ecx register.
   if (rhs->isConstant()) {
     ins->setOperand(INT64_PIECES, useOrConstantAtStart(rhs));
+#ifdef JS_CODEGEN_X64
+  } else if (Assembler::HasBMI2() && !mir->isRotate()) {
+    ins->setOperand(INT64_PIECES, useRegister(rhs));
+#endif
   } else {
     // The operands are int64, but we only care about the lower 32 bits of
     // the RHS. On 32-bit, the code below will load that part in ecx and
@@ -154,7 +160,7 @@ void LIRGeneratorX86Shared::lowerMulI(MMul* mul, MDefinition* lhs,
       useRegisterAtStart(lhs),
       lhs != rhs ? useOrConstant(rhs) : useOrConstantAtStart(rhs), lhsCopy);
   if (mul->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, mul->bailoutKind());
   }
   defineReuseInput(lir, mul, 0);
 }
@@ -190,7 +196,7 @@ void LIRGeneratorX86Shared::lowerDivI(MDiv* div) {
             LDivPowTwoI(lhs, useRegister(div->lhs()), shift, rhs < 0);
       }
       if (div->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, div->bailoutKind());
       }
       defineReuseInput(lir, div, 0);
       return;
@@ -200,7 +206,7 @@ void LIRGeneratorX86Shared::lowerDivI(MDiv* div) {
       lir = new (alloc())
           LDivOrModConstantI(useRegister(div->lhs()), rhs, tempFixed(eax));
       if (div->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, div->bailoutKind());
       }
       defineFixed(lir, div, LAllocation(AnyRegister(edx)));
       return;
@@ -210,7 +216,7 @@ void LIRGeneratorX86Shared::lowerDivI(MDiv* div) {
   LDivI* lir = new (alloc())
       LDivI(useRegister(div->lhs()), useRegister(div->rhs()), tempFixed(edx));
   if (div->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, div->bailoutKind());
   }
   defineFixed(lir, div, LAllocation(AnyRegister(eax)));
 }
@@ -228,7 +234,7 @@ void LIRGeneratorX86Shared::lowerModI(MMod* mod) {
       LModPowTwoI* lir =
           new (alloc()) LModPowTwoI(useRegisterAtStart(mod->lhs()), shift);
       if (mod->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, mod->bailoutKind());
       }
       defineReuseInput(lir, mod, 0);
       return;
@@ -238,7 +244,7 @@ void LIRGeneratorX86Shared::lowerModI(MMod* mod) {
       lir = new (alloc())
           LDivOrModConstantI(useRegister(mod->lhs()), rhs, tempFixed(edx));
       if (mod->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, mod->bailoutKind());
       }
       defineFixed(lir, mod, LAllocation(AnyRegister(eax)));
       return;
@@ -248,7 +254,7 @@ void LIRGeneratorX86Shared::lowerModI(MMod* mod) {
   LModI* lir = new (alloc())
       LModI(useRegister(mod->lhs()), useRegister(mod->rhs()), tempFixed(eax));
   if (mod->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, mod->bailoutKind());
   }
   defineFixed(lir, mod, LAllocation(AnyRegister(edx)));
 }
@@ -366,14 +372,14 @@ void LIRGeneratorX86Shared::lowerUDiv(MDiv* div) {
     if (rhs != 0 && uint32_t(1) << shift == rhs) {
       LDivPowTwoI* lir = new (alloc()) LDivPowTwoI(lhs, lhs, shift, false);
       if (div->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, div->bailoutKind());
       }
       defineReuseInput(lir, div, 0);
     } else {
       LUDivOrModConstant* lir = new (alloc())
           LUDivOrModConstant(useRegister(div->lhs()), rhs, tempFixed(eax));
       if (div->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, div->bailoutKind());
       }
       defineFixed(lir, div, LAllocation(AnyRegister(edx)));
     }
@@ -383,7 +389,7 @@ void LIRGeneratorX86Shared::lowerUDiv(MDiv* div) {
   LUDivOrMod* lir = new (alloc()) LUDivOrMod(
       useRegister(div->lhs()), useRegister(div->rhs()), tempFixed(edx));
   if (div->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, div->bailoutKind());
   }
   defineFixed(lir, div, LAllocation(AnyRegister(eax)));
 }
@@ -397,14 +403,14 @@ void LIRGeneratorX86Shared::lowerUMod(MMod* mod) {
       LModPowTwoI* lir =
           new (alloc()) LModPowTwoI(useRegisterAtStart(mod->lhs()), shift);
       if (mod->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, mod->bailoutKind());
       }
       defineReuseInput(lir, mod, 0);
     } else {
       LUDivOrModConstant* lir = new (alloc())
           LUDivOrModConstant(useRegister(mod->lhs()), rhs, tempFixed(edx));
       if (mod->fallible()) {
-        assignSnapshot(lir, BailoutKind::DoubleOutput);
+        assignSnapshot(lir, mod->bailoutKind());
       }
       defineFixed(lir, mod, LAllocation(AnyRegister(eax)));
     }
@@ -414,7 +420,7 @@ void LIRGeneratorX86Shared::lowerUMod(MMod* mod) {
   LUDivOrMod* lir = new (alloc()) LUDivOrMod(
       useRegister(mod->lhs()), useRegister(mod->rhs()), tempFixed(eax));
   if (mod->fallible()) {
-    assignSnapshot(lir, BailoutKind::DoubleOutput);
+    assignSnapshot(lir, mod->bailoutKind());
   }
   defineFixed(lir, mod, LAllocation(AnyRegister(edx)));
 }
@@ -428,12 +434,19 @@ void LIRGeneratorX86Shared::lowerUrshD(MUrsh* mir) {
   MOZ_ASSERT(mir->type() == MIRType::Double);
 
 #ifdef JS_CODEGEN_X64
-  MOZ_ASSERT(ecx == rcx);
+  static_assert(ecx == rcx);
 #endif
 
+  // Without BMI2, x86 can only shift by ecx.
   LUse lhsUse = useRegisterAtStart(lhs);
-  LAllocation rhsAlloc =
-      rhs->isConstant() ? useOrConstant(rhs) : useFixed(rhs, ecx);
+  LAllocation rhsAlloc;
+  if (rhs->isConstant()) {
+    rhsAlloc = useOrConstant(rhs);
+  } else if (Assembler::HasBMI2()) {
+    rhsAlloc = useRegister(rhs);
+  } else {
+    rhsAlloc = useFixed(rhs, ecx);
+  }
 
   LUrshD* lir = new (alloc()) LUrshD(lhsUse, rhsAlloc, tempCopy(lhs, 0));
   define(lir, mir);
@@ -443,10 +456,12 @@ void LIRGeneratorX86Shared::lowerPowOfTwoI(MPow* mir) {
   int32_t base = mir->input()->toConstant()->toInt32();
   MDefinition* power = mir->power();
 
-  // shift operator should be in register ecx;
+  // Shift operand should be in register ecx, unless BMI2 is available.
   // x86 can't shift a non-ecx register.
-  auto* lir = new (alloc()) LPowOfTwoI(base, useFixed(power, ecx));
-  assignSnapshot(lir, BailoutKind::PrecisionLoss);
+  LAllocation powerAlloc =
+      Assembler::HasBMI2() ? useRegister(power) : useFixed(power, ecx);
+  auto* lir = new (alloc()) LPowOfTwoI(base, powerAlloc);
+  assignSnapshot(lir, mir->bailoutKind());
   define(lir, mir);
 }
 
@@ -954,6 +969,14 @@ bool MWasmBinarySimd128::specializeForConstantRhs() {
     case wasm::SimdOp::I32x4Ne:
     case wasm::SimdOp::I32x4GtS:
     case wasm::SimdOp::I32x4LeS:
+    case wasm::SimdOp::F32x4Eq:
+    case wasm::SimdOp::F32x4Ne:
+    case wasm::SimdOp::F32x4Lt:
+    case wasm::SimdOp::F32x4Le:
+    case wasm::SimdOp::F64x2Eq:
+    case wasm::SimdOp::F64x2Ne:
+    case wasm::SimdOp::F64x2Lt:
+    case wasm::SimdOp::F64x2Le:
     case wasm::SimdOp::I32x4DotSI16x8:
     case wasm::SimdOp::F32x4Add:
     case wasm::SimdOp::F64x2Add:

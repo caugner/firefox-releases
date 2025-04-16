@@ -40,11 +40,13 @@
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/Hal.h"
 #include "mozilla/IMEStateManager.h"
+#include "mozilla/ipc/Endpoint.h"
 #include "mozilla/layers/AsyncDragMetrics.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layout/RemoteLayerTreeOwner.h"
 #include "mozilla/plugins/PPluginWidgetParent.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/CookieJarSettings.h"
@@ -122,6 +124,7 @@
 #include "IHistory.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "GeckoProfiler.h"
 #include "MMPrinter.h"
 #include "SessionStoreFunctions.h"
 #include "mozilla/dom/CrashReport.h"
@@ -222,7 +225,6 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mCustomCursorHotspotX(0),
       mCustomCursorHotspotY(0),
       mVerifyDropLinks{},
-      mDocShellIsActive(false),
       mMarkedDestroying(false),
       mIsDestroyed(false),
       mRemoteTargetSetsCursor(false),
@@ -1076,7 +1078,9 @@ void BrowserParent::UpdateDimensions(const nsIntRect& rect,
   hal::GetCurrentScreenConfiguration(&config);
   hal::ScreenOrientation orientation = config.orientation();
   LayoutDeviceIntPoint clientOffset = GetClientOffset();
-  LayoutDeviceIntPoint chromeOffset = -GetChildProcessOffset();
+  LayoutDeviceIntPoint chromeOffset = !GetBrowserBridgeParent()
+                                          ? -GetChildProcessOffset()
+                                          : LayoutDeviceIntPoint();
 
   if (!mUpdatedDimensions || mOrientation != orientation ||
       mDimensions != size || !mRect.IsEqualEdges(rect) ||
@@ -1141,21 +1145,21 @@ void BrowserParent::HandleAccessKey(const WidgetKeyboardEvent& aEvent,
   }
 }
 
-void BrowserParent::Activate() {
+void BrowserParent::Activate(uint64_t aActionId) {
   LOGBROWSERFOCUS(("Activate %p", this));
   if (!mIsDestroyed) {
     SetTopLevelWebFocus(this);  // Intentionally inside "if"
-    Unused << SendActivate();
+    Unused << SendActivate(aActionId);
   }
 }
 
-void BrowserParent::Deactivate(bool aWindowLowering) {
+void BrowserParent::Deactivate(bool aWindowLowering, uint64_t aActionId) {
   LOGBROWSERFOCUS(("Deactivate %p", this));
   if (!aWindowLowering) {
     UnsetTopLevelWebFocus(this);  // Intentionally outside the next "if"
   }
   if (!mIsDestroyed) {
-    Unused << SendDeactivate();
+    Unused << SendDeactivate(aActionId);
   }
 }
 
@@ -1450,11 +1454,23 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
       MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
       return;
     }
+
+    if (!aEvent.mFlags.mIsSynthesizedForTests) {
+      DebugOnly<bool> ret =
+          isInputPriorityEventEnabled
+              ? SendRealMouseMoveEvent(aEvent, guid, blockId)
+              : SendNormalPriorityRealMouseMoveEvent(aEvent, guid, blockId);
+      NS_WARNING_ASSERTION(ret, "SendRealMouseMoveEvent() failed");
+      MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
+      return;
+    }
+
     DebugOnly<bool> ret =
         isInputPriorityEventEnabled
-            ? SendRealMouseMoveEvent(aEvent, guid, blockId)
-            : SendNormalPriorityRealMouseMoveEvent(aEvent, guid, blockId);
-    NS_WARNING_ASSERTION(ret, "SendRealMouseMoveEvent() failed");
+            ? SendRealMouseMoveEventForTests(aEvent, guid, blockId)
+            : SendNormalPriorityRealMouseMoveEventForTests(aEvent, guid,
+                                                           blockId);
+    NS_WARNING_ASSERTION(ret, "SendRealMouseMoveEventForTests() failed");
     MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
     return;
   }
@@ -1987,12 +2003,9 @@ bool BrowserParent::SendHandleTap(TapType aType,
     return false;
   }
   if ((aType == TapType::eSingleTap || aType == TapType::eSecondTap)) {
-    nsFocusManager* fm = nsFocusManager::GetFocusManager();
-    if (fm) {
-      RefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
-      if (frameLoader) {
-        RefPtr<Element> element = frameLoader->GetOwnerContent();
-        if (element) {
+    if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
+      if (RefPtr<nsFrameLoader> frameLoader = GetFrameLoader()) {
+        if (RefPtr<Element> element = frameLoader->GetOwnerContent()) {
           fm->SetFocus(element, nsIFocusManager::FLAG_BYMOUSE |
                                     nsIFocusManager::FLAG_BYTOUCH |
                                     nsIFocusManager::FLAG_NOSCROLL);
@@ -2567,21 +2580,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnStateChange(
     const nsresult aStatus,
     const Maybe<WebProgressStateChangeData>& aStateChangeData) {
   if (mSuspendedProgressEvents) {
-    nsCOMPtr<nsIURI> uri = aRequestData.requestURI();
-    const uint32_t startDocumentFlags =
-        nsIWebProgressListener::STATE_START |
-        nsIWebProgressListener::STATE_IS_DOCUMENT |
-        nsIWebProgressListener::STATE_IS_REQUEST |
-        nsIWebProgressListener::STATE_IS_WINDOW |
-        nsIWebProgressListener::STATE_IS_NETWORK;
-    // Once we get a load start from something that isn't the initial
-    // about:blank, we should stop blocking future state changes.
-    if ((aStateFlags & startDocumentFlags) == startDocumentFlags &&
-        (aWebProgressData && aWebProgressData->isTopLevel()) &&
-        (!uri || !NS_IsAboutBlank(uri))) {
-      mSuspendedProgressEvents = false;
-    }
-
     return IPC_OK();
   }
 
@@ -2916,7 +2914,7 @@ bool BrowserParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent) {
   }
   if (NS_WARN_IF(!mContentCache.HandleQueryContentEvent(
           aEvent, textInputHandlingWidget)) ||
-      NS_WARN_IF(!aEvent.mSucceeded)) {
+      NS_WARN_IF(aEvent.Failed())) {
     return true;
   }
   switch (aEvent.mMessage) {
@@ -2925,10 +2923,10 @@ bool BrowserParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent) {
     case eQueryEditorRect: {
       nsCOMPtr<nsIWidget> browserWidget = GetWidget();
       if (browserWidget != textInputHandlingWidget) {
-        aEvent.mReply.mRect += nsLayoutUtils::WidgetToWidgetOffset(
+        aEvent.mReply->mRect += nsLayoutUtils::WidgetToWidgetOffset(
             browserWidget, textInputHandlingWidget);
       }
-      aEvent.mReply.mRect = TransformChildToParent(aEvent.mReply.mRect);
+      aEvent.mReply->mRect = TransformChildToParent(aEvent.mReply->mRect);
       break;
     }
     default:
@@ -3356,29 +3354,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvRespondStartSwipeEvent(
   return IPC_OK();
 }
 
-bool BrowserParent::GetDocShellIsActive() { return mDocShellIsActive; }
-
-void BrowserParent::SetDocShellIsActive(bool isActive) {
-  mDocShellIsActive = isActive;
-  SetRenderLayers(isActive);
-  Unused << SendSetDocShellIsActive(isActive);
-
-  // update active accessible documents on windows
-#if defined(XP_WIN) && defined(ACCESSIBILITY)
-  if (a11y::Compatibility::IsDolphin()) {
-    if (a11y::DocAccessibleParent* tabDoc = GetTopLevelDocAccessible()) {
-      HWND window = tabDoc->GetEmulatedWindowHandle();
-      MOZ_ASSERT(window);
-      if (window) {
-        if (isActive) {
-          a11y::nsWinUtils::ShowNativeWindow(window);
-        } else {
-          a11y::nsWinUtils::HideNativeWindow(window);
-        }
-      }
-    }
-  }
-#endif
+bool BrowserParent::GetDocShellIsActive() {
+  return mBrowsingContext && mBrowsingContext->IsActive();
 }
 
 bool BrowserParent::GetHasPresented() { return mHasPresented; }

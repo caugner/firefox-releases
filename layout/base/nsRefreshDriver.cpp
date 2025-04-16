@@ -32,6 +32,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/DisplayPortUtils.h"
 #include "mozilla/InputTaskManager.h"
@@ -70,6 +71,7 @@
 #include "nsDocShell.h"
 #include "nsISimpleEnumerator.h"
 #include "nsJSEnvironment.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/Telemetry.h"
 
 #include "BackgroundChild.h"
@@ -1266,7 +1268,10 @@ void nsRefreshDriver::AddRefreshObserver(nsARefreshObserver* aObserver,
 #endif
   array.AppendElement(ObserverData{aObserver, aObserverDescription,
                                    TimeStamp::Now(), innerWindowID,
-                                   profiler_capture_backtrace(), aFlushType});
+#ifdef MOZ_GECKO_PROFILER
+                                   profiler_capture_backtrace(),
+#endif
+                                   aFlushType});
   EnsureTimerStarted();
 }
 
@@ -1413,6 +1418,11 @@ void nsRefreshDriver::NotifyDOMContentLoaded() {
   }
 }
 
+void nsRefreshDriver::RegisterCompositionPayload(
+    const mozilla::layers::CompositionPayload& aPayload) {
+  mCompositionPayloads.AppendElement(aPayload);
+}
+
 void nsRefreshDriver::RunDelayedEventsSoon() {
   // Place entries for delayed events into their corresponding normal list,
   // and schedule a refresh. When these delayed events run, if their document
@@ -1511,7 +1521,9 @@ void nsRefreshDriver::StopTimer() {
 
   mActiveTimer->RemoveRefreshDriver(this);
   mActiveTimer = nullptr;
+#ifdef MOZ_GECKO_PROFILER
   mRefreshTimerStartedCause = nullptr;
+#endif
 }
 
 uint32_t nsRefreshDriver::ObserverCount() const {
@@ -2055,6 +2067,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   TickReasons tickReasons = GetReasonsToTick();
   if (tickReasons == TickReasons::eNone) {
     // We no longer have any observers.
+    // Discard composition payloads because there is no paint.
+    mCompositionPayloads.Clear();
+
     // We don't want to stop the timer when observers are initially
     // removed, because sometimes observers can be added and removed
     // often depending on what other things are going on and in that
@@ -2064,9 +2079,8 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     // On top level content pages keep the timer running initially so that we
     // paint the page soon enough.
     if (ShouldKeepTimerRunningWhileWaitingForFirstContentfulPaint()) {
-      PROFILER_TRACING_MARKER(
-          "Paint", "RefreshDriver waiting for first contentful paint", GRAPHICS,
-          TRACING_EVENT);
+      PROFILER_MARKER("RefreshDriver waiting for first contentful paint",
+                      GRAPHICS, {}, Tracing, "Paint");
     } else {
       StopTimer();
     }
@@ -2076,18 +2090,18 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   AUTO_PROFILER_LABEL("nsRefreshDriver::Tick", LAYOUT);
 
   nsAutoCString profilerStr;
-#if MOZ_GECKO_PROFILER
+#ifdef MOZ_GECKO_PROFILER
   if (profiler_can_accept_markers()) {
     profilerStr.AppendLiteral("Tick reasons:");
     AppendTickReasonsToString(tickReasons, profilerStr);
   }
-#endif
   AUTO_PROFILER_MARKER_TEXT(
       "RefreshDriverTick", GRAPHICS,
       MarkerOptions(
           MarkerStack::TakeBacktrace(std::move(mRefreshTimerStartedCause)),
           MarkerInnerWindowIdFromDocShell(GetDocShell(mPresContext))),
       profilerStr);
+#endif
 
   mResizeSuppressed = false;
 
@@ -2340,7 +2354,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   if (mViewManagerFlushIsPending) {
     AutoRecordPhase paintRecord(&phasePaint);
     nsCString transactionId;
-#if MOZ_GECKO_PROFILER
+#ifdef MOZ_GECKO_PROFILER
     if (profiler_can_accept_markers()) {
       transactionId.AppendLiteral("Transaction ID: ");
       transactionId.AppendInt((uint64_t)mNextTransactionId);
@@ -2350,6 +2364,16 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
         "ViewManagerFlush", GRAPHICS,
         MarkerStack::TakeBacktrace(std::move(mViewManagerFlushCause)),
         transactionId);
+
+    // Forward our composition payloads to the layer manager.
+    if (!mCompositionPayloads.IsEmpty()) {
+      nsIWidget* widget = mPresContext->GetRootWidget();
+      layers::LayerManager* lm = widget ? widget->GetLayerManager() : nullptr;
+      if (lm) {
+        lm->RegisterPayloads(mCompositionPayloads);
+      }
+      mCompositionPayloads.Clear();
+    }
 
     RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
 
@@ -2397,6 +2421,9 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
 
     dispatchRunnablesAfterTick = true;
     mHasScheduleFlush = false;
+  } else {
+    // No paint happened, discard composition payloads.
+    mCompositionPayloads.Clear();
   }
 
   double totalMs = (TimeStamp::Now() - mTickStart).ToMilliseconds();
@@ -2688,9 +2715,11 @@ void nsRefreshDriver::ScheduleViewManagerFlush() {
   NS_ASSERTION(mPresContext->IsRoot(),
                "Should only schedule view manager flush on root prescontexts");
   mViewManagerFlushIsPending = true;
+#ifdef MOZ_GECKO_PROFILER
   if (!mViewManagerFlushCause) {
     mViewManagerFlushCause = profiler_capture_backtrace();
   }
+#endif
   mHasScheduleFlush = true;
   EnsureTimerStarted(eNeverAdjustTimer);
 }

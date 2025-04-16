@@ -1272,11 +1272,10 @@ void gfxDWriteFontList::GetFacesInitDataForFamily(
                      << aFamily->Key().AsString(SharedFontList()).get();
         continue;
       }
-      SlantStyleRange slant(dwstyle == DWRITE_FONT_STYLE_NORMAL
-                                ? FontSlantStyle::Normal()
-                                : dwstyle == DWRITE_FONT_STYLE_ITALIC
-                                      ? FontSlantStyle::Italic()
-                                      : FontSlantStyle::Oblique());
+      SlantStyleRange slant(
+          dwstyle == DWRITE_FONT_STYLE_NORMAL   ? FontSlantStyle::Normal()
+          : dwstyle == DWRITE_FONT_STYLE_ITALIC ? FontSlantStyle::Italic()
+                                                : FontSlantStyle::Oblique());
       aFaces.AppendElement(fontlist::Face::InitData{
           name, uint16_t(i), false, weight, stretch, slant, charmap});
     }
@@ -1475,6 +1474,7 @@ void gfxDWriteFontList::InitSharedFontListForPlatform() {
   if (FAILED(hr)) {
     Telemetry::Accumulate(Telemetry::DWRITEFONT_INIT_PROBLEM,
                           uint32_t(errGDIInterop));
+    mSharedFontList.reset(nullptr);
     return;
   }
 
@@ -1483,6 +1483,7 @@ void gfxDWriteFontList::InitSharedFontListForPlatform() {
   if (!mSystemFonts) {
     Telemetry::Accumulate(Telemetry::DWRITEFONT_INIT_PROBLEM,
                           uint32_t(errSystemFontCollection));
+    mSharedFontList.reset(nullptr);
     return;
   }
 #ifdef MOZ_BUNDLED_FONTS

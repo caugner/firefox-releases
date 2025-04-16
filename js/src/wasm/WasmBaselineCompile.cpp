@@ -1853,8 +1853,9 @@ class BaseStackFrame final : public BaseStackFrameAllocator {
   using LocalVector = Vector<Local, 16, SystemAllocPolicy>;
 
   // Initialize `localInfo` based on the types of `locals` and `args`.
-  bool setupLocals(const ValTypeVector& locals, const ArgTypeVector& args,
-                   bool debugEnabled, LocalVector* localInfo) {
+  MOZ_MUST_USE bool setupLocals(const ValTypeVector& locals,
+                                const ArgTypeVector& args, bool debugEnabled,
+                                LocalVector* localInfo) {
     if (!localInfo->reserve(locals.length())) {
       return false;
     }
@@ -3228,7 +3229,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   BaseOpIter iter_;
   const FuncCompileInput& func_;
   size_t lastReadCallSite_;
-  TempAllocator& alloc_;
+  TempAllocator::Fallible alloc_;
   const ValTypeVector& locals_;  // Types of parameters and locals
   bool deadCode_;  // Flag indicating we should decode & discard the opcode
   BCESet
@@ -3278,8 +3279,12 @@ class BaseCompiler final : public BaseCompilerInterface {
   MOZ_MUST_USE bool emitFunction();
   void emitInitStackLocals();
 
-  const FuncTypeWithId& funcType() const {
-    return *moduleEnv_.funcTypes[func_.index];
+  const FuncType& funcType() const {
+    return *moduleEnv_.funcs[func_.index].type;
+  }
+
+  const TypeIdDesc& funcTypeId() const {
+    return *moduleEnv_.funcs[func_.index].typeId;
   }
 
   // Used by some of the ScratchRegister implementations.
@@ -3703,6 +3708,8 @@ class BaseCompiler final : public BaseCompilerInterface {
   // StkVector& adds about 0.5% or more to the compiler's dynamic instruction
   // count.
   StkVector stk_;
+
+  static constexpr size_t MaxPushesPerOpcode = 10;
 
   // BaselineCompileFunctions() "lends" us the StkVector to use in this
   // BaseCompiler object, and that is installed in |stk_| in our constructor.
@@ -4912,9 +4919,15 @@ class BaseCompiler final : public BaseCompilerInterface {
     return Stk::StackResult(result.type(), offs);
   }
 
-  void pushResults(ResultType type, StackHeight resultsBase) {
+  MOZ_MUST_USE bool pushResults(ResultType type, StackHeight resultsBase) {
     if (type.empty()) {
-      return;
+      return true;
+    }
+
+    if (type.length() > 1) {
+      if (!stk_.reserve(stk_.length() + type.length() + MaxPushesPerOpcode)) {
+        return false;
+      }
     }
 
     // We need to push the results in reverse order, so first iterate through
@@ -4964,24 +4977,26 @@ class BaseCompiler final : public BaseCompilerInterface {
           break;
       }
     }
+
+    return true;
   }
 
-  void pushBlockResults(ResultType type) {
-    pushResults(type, controlItem().stackHeight);
+  MOZ_MUST_USE bool pushBlockResults(ResultType type) {
+    return pushResults(type, controlItem().stackHeight);
   }
 
   // A combination of popBlockResults + pushBlockResults, used when entering a
   // block with a control-flow join (loops) or split (if) to shuffle the
   // fallthrough block parameters into the locations expected by the
   // continuation.
-  void topBlockParams(ResultType type) {
+  MOZ_MUST_USE bool topBlockParams(ResultType type) {
     // This function should only be called when entering a block with a
     // control-flow join at the entry, where there are no live temporaries in
     // the current block.
     StackHeight base = controlItem().stackHeight;
     MOZ_ASSERT(fr.stackResultsBase(stackConsumed(type.length())) == base);
     popBlockResults(type, base, ContinuationKind::Fallthrough);
-    pushBlockResults(type);
+    return pushBlockResults(type);
   }
 
   // A combination of popBlockResults + pushBlockResults, used before branches
@@ -4989,9 +5004,10 @@ class BaseCompiler final : public BaseCompilerInterface {
   // is taken, the stack results will be shuffled down into place.  For br_if
   // that has fallthrough, the parameters for the untaken branch flow through to
   // the continuation.
-  StackHeight topBranchParams(ResultType type) {
+  MOZ_MUST_USE bool topBranchParams(ResultType type, StackHeight* height) {
     if (type.empty()) {
-      return fr.stackHeight();
+      *height = fr.stackHeight();
+      return true;
     }
     // There may be temporary values that need spilling; delay computation of
     // the stack results base until after the popRegisterResults(), which spills
@@ -5002,8 +5018,11 @@ class BaseCompiler final : public BaseCompilerInterface {
     if (!iter.done()) {
       popStackResults(iter, base);
     }
-    pushResults(type, base);
-    return base;
+    if (!pushResults(type, base)) {
+      return false;
+    }
+    *height = base;
+    return true;
   }
 
   // Conditional branches with fallthrough are preceded by a topBranchParams, so
@@ -5280,7 +5299,7 @@ class BaseCompiler final : public BaseCompilerInterface {
       }
     }
 
-    GenerateFunctionPrologue(masm, moduleEnv_.funcTypes[func_.index]->id,
+    GenerateFunctionPrologue(masm, *moduleEnv_.funcs[func_.index].typeId,
                              compilerEnv_.mode() == CompileMode::Tier1
                                  ? Some(func_.index)
                                  : Nothing(),
@@ -5899,15 +5918,15 @@ class BaseCompiler final : public BaseCompilerInterface {
 
   CodeOffset callIndirect(uint32_t funcTypeIndex, uint32_t tableIndex,
                           const Stk& indexVal, const FunctionCall& call) {
-    const FuncTypeWithId& funcType = moduleEnv_.types[funcTypeIndex].funcType();
-    MOZ_ASSERT(funcType.id.kind() != FuncTypeIdDescKind::None);
+    const TypeIdDesc& funcTypeId = moduleEnv_.typeIds[funcTypeIndex];
+    MOZ_ASSERT(funcTypeId.kind() != TypeIdDescKind::None);
 
     const TableDesc& table = moduleEnv_.tables[tableIndex];
 
     loadI32(indexVal, RegI32(WasmTableCallIndexReg));
 
     CallSiteDesc desc(call.lineOrBytecode, CallSiteDesc::Dynamic);
-    CalleeDesc callee = CalleeDesc::wasmTable(table, funcType.id);
+    CalleeDesc callee = CalleeDesc::wasmTable(table, funcTypeId);
     return masm.wasmCallIndirect(desc, callee, NeedsBoundsCheck(true));
   }
 
@@ -5934,8 +5953,8 @@ class BaseCompiler final : public BaseCompilerInterface {
         desc, instanceArg, builtin.identity, builtin.failureMode);
   }
 
-  void pushCallResults(const FunctionCall& call, ResultType type,
-                       const StackResultsLoc& loc) {
+  MOZ_MUST_USE bool pushCallResults(const FunctionCall& call, ResultType type,
+                                    const StackResultsLoc& loc) {
 #if defined(JS_CODEGEN_ARM)
     // pushResults currently bypasses special case code in captureReturnedFxx()
     // that converts GPR results to FPR results for systemABI+softFP.  If we
@@ -5944,7 +5963,7 @@ class BaseCompiler final : public BaseCompilerInterface {
     // registers - but that's OK.
     MOZ_ASSERT(!call.usesSystemAbi || call.hardFP);
 #endif
-    pushResults(type, fr.stackResultsBase(loc.bytes()));
+    return pushResults(type, fr.stackResultsBase(loc.bytes()));
   }
 
   //////////////////////////////////////////////////////////////////////
@@ -6529,7 +6548,7 @@ class BaseCompiler final : public BaseCompilerInterface {
     }
 
     uint32_t offsetGuardLimit =
-        GetOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
+        GetMaxOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
     if ((bceSafe_ & (BCESet(1) << local)) &&
         access->offset() < offsetGuardLimit) {
@@ -6551,7 +6570,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   void prepareMemoryAccess(MemoryAccessDesc* access, AccessCheck* check,
                            RegI32 tls, RegI32 ptr) {
     uint32_t offsetGuardLimit =
-        GetOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
+        GetMaxOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
     // Fold offset if necessary for further computations.
     if (access->offset() >= offsetGuardLimit ||
@@ -6720,9 +6739,9 @@ class BaseCompiler final : public BaseCompilerInterface {
     }
 #elif defined(JS_CODEGEN_ARM64)
     if (dest.tag == AnyReg::I64) {
-      masm.wasmLoadI64(*access, HeapReg, ptr, ptr, dest.i64());
+      masm.wasmLoadI64(*access, HeapReg, ptr, dest.i64());
     } else {
-      masm.wasmLoad(*access, HeapReg, ptr, ptr, dest.any());
+      masm.wasmLoad(*access, HeapReg, ptr, dest.any());
     }
 #else
     MOZ_CRASH("BaseCompiler platform hook: load");
@@ -6843,9 +6862,9 @@ class BaseCompiler final : public BaseCompilerInterface {
 #elif defined(JS_CODEGEN_ARM64)
     MOZ_ASSERT(temp.isInvalid());
     if (access->type() == Scalar::Int64) {
-      masm.wasmStoreI64(*access, src.i64(), HeapReg, ptr, ptr);
+      masm.wasmStoreI64(*access, src.i64(), HeapReg, ptr);
     } else {
-      masm.wasmStore(*access, src.any(), HeapReg, ptr, ptr);
+      masm.wasmStore(*access, src.any(), HeapReg, ptr);
     }
 #else
     MOZ_CRASH("BaseCompiler platform hook: store");
@@ -7069,9 +7088,41 @@ class BaseCompiler final : public BaseCompilerInterface {
 #endif
   }
 
-  void pop2xI32ForShiftOrRotate(RegI32* r0, RegI32* r1) {
+  void pop2xI32ForShift(RegI32* r0, RegI32* r1) {
 #if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+    // r1 must be ecx for a variable shift, unless BMI2 is available.
+    if (!Assembler::HasBMI2()) {
+      *r1 = popI32(specific_.ecx);
+      *r0 = popI32();
+      return;
+    }
+#endif
+    pop2xI32(r0, r1);
+  }
+
+  void pop2xI64ForShift(RegI64* r0, RegI64* r1) {
+#if defined(JS_CODEGEN_X86)
     // r1 must be ecx for a variable shift.
+    needI32(specific_.ecx);
+    *r1 = popI64ToSpecific(widenI32(specific_.ecx));
+    *r0 = popI64();
+#else
+#  if defined(JS_CODEGEN_X64)
+    // r1 must be rcx for a variable shift, unless BMI2 is available.
+    if (!Assembler::HasBMI2()) {
+      needI64(specific_.rcx);
+      *r1 = popI64ToSpecific(specific_.rcx);
+      *r0 = popI64();
+      return;
+    }
+#  endif
+    pop2xI64(r0, r1);
+#endif
+  }
+
+  void pop2xI32ForRotate(RegI32* r0, RegI32* r1) {
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+    // r1 must be ecx for a variable rotate.
     *r1 = popI32(specific_.ecx);
     *r0 = popI32();
 #else
@@ -7079,9 +7130,9 @@ class BaseCompiler final : public BaseCompilerInterface {
 #endif
   }
 
-  void pop2xI64ForShiftOrRotate(RegI64* r0, RegI64* r1) {
+  void pop2xI64ForRotate(RegI64* r0, RegI64* r1) {
 #if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
-    // r1 must be ecx for a variable shift.
+    // r1 must be ecx for a variable rotate.
     needI32(specific_.ecx);
     *r1 = popI64ToSpecific(widenI32(specific_.ecx));
     *r0 = popI64();
@@ -7958,9 +8009,13 @@ class BaseCompiler final : public BaseCompilerInterface {
   // Lhs "when applicable".
 
   template <typename Cond, typename Lhs, typename Rhs>
-  void jumpConditionalWithResults(BranchState* b, Cond cond, Lhs lhs, Rhs rhs) {
+  MOZ_MUST_USE bool jumpConditionalWithResults(BranchState* b, Cond cond,
+                                               Lhs lhs, Rhs rhs) {
     if (b->hasBlockResults()) {
-      StackHeight resultsBase = topBranchParams(b->resultType);
+      StackHeight resultsBase(0);
+      if (!topBranchParams(b->resultType, &resultsBase)) {
+        return false;
+      }
       if (b->stackHeight != resultsBase) {
         Label notTaken;
         branchTo(b->invertBranch ? cond : Assembler::InvertCondition(cond), lhs,
@@ -7971,12 +8026,13 @@ class BaseCompiler final : public BaseCompilerInterface {
                                         b->resultType);
         masm.jump(b->label);
         masm.bind(&notTaken);
-        return;
+        return true;
       }
     }
 
     branchTo(b->invertBranch ? Assembler::InvertCondition(cond) : cond, lhs,
              rhs, b->label);
+    return true;
   }
 
   // sniffConditionalControl{Cmp,Eqz} may modify the latentWhatever_ state in
@@ -7986,10 +8042,11 @@ class BaseCompiler final : public BaseCompilerInterface {
   // then the compiler MUST instead call resetLatentOp() to reset the state.
 
   template <typename Cond>
-  bool sniffConditionalControlCmp(Cond compareOp, ValType operandType);
-  bool sniffConditionalControlEqz(ValType operandType);
+  MOZ_MUST_USE bool sniffConditionalControlCmp(Cond compareOp,
+                                               ValType operandType);
+  MOZ_MUST_USE bool sniffConditionalControlEqz(ValType operandType);
   void emitBranchSetup(BranchState* b);
-  void emitBranchPerform(BranchState* b);
+  MOZ_MUST_USE bool emitBranchPerform(BranchState* b);
 
   //////////////////////////////////////////////////////////////////////
 
@@ -7998,6 +8055,11 @@ class BaseCompiler final : public BaseCompilerInterface {
   MOZ_MUST_USE bool emitLoop();
   MOZ_MUST_USE bool emitIf();
   MOZ_MUST_USE bool emitElse();
+#ifdef ENABLE_WASM_EXCEPTIONS
+  MOZ_MUST_USE bool emitTry();
+  MOZ_MUST_USE bool emitCatch();
+  MOZ_MUST_USE bool emitThrow();
+#endif
   MOZ_MUST_USE bool emitEnd();
   MOZ_MUST_USE bool emitBr();
   MOZ_MUST_USE bool emitBrIf();
@@ -8044,15 +8106,15 @@ class BaseCompiler final : public BaseCompilerInterface {
   template <bool isSetLocal>
   MOZ_MUST_USE bool emitSetOrTeeLocal(uint32_t slot);
 
-  void endBlock(ResultType type);
-  void endIfThen(ResultType type);
-  void endIfThenElse(ResultType type);
+  MOZ_MUST_USE bool endBlock(ResultType type);
+  MOZ_MUST_USE bool endIfThen(ResultType type);
+  MOZ_MUST_USE bool endIfThenElse(ResultType type);
 
   void doReturn(ContinuationKind kind);
   void pushReturnValueOfCall(const FunctionCall& call, MIRType type);
 
-  bool pushStackResultsForCall(const ResultType& type, RegPtr temp,
-                               StackResultsLoc* loc);
+  MOZ_MUST_USE bool pushStackResultsForCall(const ResultType& type, RegPtr temp,
+                                            StackResultsLoc* loc);
   void popStackResultsAfterCall(const StackResultsLoc& results,
                                 uint32_t stackArgBytes);
 
@@ -8911,7 +8973,7 @@ void BaseCompiler::emitShlI32() {
     pushI32(r);
   } else {
     RegI32 r, rs;
-    pop2xI32ForShiftOrRotate(&r, &rs);
+    pop2xI32ForShift(&r, &rs);
     maskShiftCount32(rs);
     masm.lshift32(rs, r);
     freeI32(rs);
@@ -8927,7 +8989,7 @@ void BaseCompiler::emitShlI64() {
     pushI64(r);
   } else {
     RegI64 r, rs;
-    pop2xI64ForShiftOrRotate(&r, &rs);
+    pop2xI64ForShift(&r, &rs);
     masm.lshift64(lowPart(rs), r);
     freeI64(rs);
     pushI64(r);
@@ -8942,7 +9004,7 @@ void BaseCompiler::emitShrI32() {
     pushI32(r);
   } else {
     RegI32 r, rs;
-    pop2xI32ForShiftOrRotate(&r, &rs);
+    pop2xI32ForShift(&r, &rs);
     maskShiftCount32(rs);
     masm.rshift32Arithmetic(rs, r);
     freeI32(rs);
@@ -8958,7 +9020,7 @@ void BaseCompiler::emitShrI64() {
     pushI64(r);
   } else {
     RegI64 r, rs;
-    pop2xI64ForShiftOrRotate(&r, &rs);
+    pop2xI64ForShift(&r, &rs);
     masm.rshift64Arithmetic(lowPart(rs), r);
     freeI64(rs);
     pushI64(r);
@@ -8973,7 +9035,7 @@ void BaseCompiler::emitShrU32() {
     pushI32(r);
   } else {
     RegI32 r, rs;
-    pop2xI32ForShiftOrRotate(&r, &rs);
+    pop2xI32ForShift(&r, &rs);
     maskShiftCount32(rs);
     masm.rshift32(rs, r);
     freeI32(rs);
@@ -8989,7 +9051,7 @@ void BaseCompiler::emitShrU64() {
     pushI64(r);
   } else {
     RegI64 r, rs;
-    pop2xI64ForShiftOrRotate(&r, &rs);
+    pop2xI64ForShift(&r, &rs);
     masm.rshift64(lowPart(rs), r);
     freeI64(rs);
     pushI64(r);
@@ -9004,7 +9066,7 @@ void BaseCompiler::emitRotrI32() {
     pushI32(r);
   } else {
     RegI32 r, rs;
-    pop2xI32ForShiftOrRotate(&r, &rs);
+    pop2xI32ForRotate(&r, &rs);
     masm.rotateRight(rs, r, r);
     freeI32(rs);
     pushI32(r);
@@ -9021,7 +9083,7 @@ void BaseCompiler::emitRotrI64() {
     pushI64(r);
   } else {
     RegI64 r, rs;
-    pop2xI64ForShiftOrRotate(&r, &rs);
+    pop2xI64ForRotate(&r, &rs);
     masm.rotateRight64(lowPart(rs), r, r, maybeHighPart(rs));
     freeI64(rs);
     pushI64(r);
@@ -9036,7 +9098,7 @@ void BaseCompiler::emitRotlI32() {
     pushI32(r);
   } else {
     RegI32 r, rs;
-    pop2xI32ForShiftOrRotate(&r, &rs);
+    pop2xI32ForRotate(&r, &rs);
     masm.rotateLeft(rs, r, r);
     freeI32(rs);
     pushI32(r);
@@ -9053,7 +9115,7 @@ void BaseCompiler::emitRotlI64() {
     pushI64(r);
   } else {
     RegI64 r, rs;
-    pop2xI64ForShiftOrRotate(&r, &rs);
+    pop2xI64ForRotate(&r, &rs);
     masm.rotateLeft64(lowPart(rs), r, r, maybeHighPart(rs));
     freeI64(rs);
     pushI64(r);
@@ -9526,14 +9588,19 @@ void BaseCompiler::emitBranchSetup(BranchState* b) {
   }
 }
 
-void BaseCompiler::emitBranchPerform(BranchState* b) {
+bool BaseCompiler::emitBranchPerform(BranchState* b) {
   switch (latentType_.kind()) {
     case ValType::I32: {
       if (b->i32.rhsImm) {
-        jumpConditionalWithResults(b, latentIntCmp_, b->i32.lhs,
-                                   Imm32(b->i32.imm));
+        if (!jumpConditionalWithResults(b, latentIntCmp_, b->i32.lhs,
+                                        Imm32(b->i32.imm))) {
+          return false;
+        }
       } else {
-        jumpConditionalWithResults(b, latentIntCmp_, b->i32.lhs, b->i32.rhs);
+        if (!jumpConditionalWithResults(b, latentIntCmp_, b->i32.lhs,
+                                        b->i32.rhs)) {
+          return false;
+        }
         freeI32(b->i32.rhs);
       }
       freeI32(b->i32.lhs);
@@ -9541,23 +9608,34 @@ void BaseCompiler::emitBranchPerform(BranchState* b) {
     }
     case ValType::I64: {
       if (b->i64.rhsImm) {
-        jumpConditionalWithResults(b, latentIntCmp_, b->i64.lhs,
-                                   Imm64(b->i64.imm));
+        if (!jumpConditionalWithResults(b, latentIntCmp_, b->i64.lhs,
+                                        Imm64(b->i64.imm))) {
+          return false;
+        }
       } else {
-        jumpConditionalWithResults(b, latentIntCmp_, b->i64.lhs, b->i64.rhs);
+        if (!jumpConditionalWithResults(b, latentIntCmp_, b->i64.lhs,
+                                        b->i64.rhs)) {
+          return false;
+        }
         freeI64(b->i64.rhs);
       }
       freeI64(b->i64.lhs);
       break;
     }
     case ValType::F32: {
-      jumpConditionalWithResults(b, latentDoubleCmp_, b->f32.lhs, b->f32.rhs);
+      if (!jumpConditionalWithResults(b, latentDoubleCmp_, b->f32.lhs,
+                                      b->f32.rhs)) {
+        return false;
+      }
       freeF32(b->f32.lhs);
       freeF32(b->f32.rhs);
       break;
     }
     case ValType::F64: {
-      jumpConditionalWithResults(b, latentDoubleCmp_, b->f64.lhs, b->f64.rhs);
+      if (!jumpConditionalWithResults(b, latentDoubleCmp_, b->f64.lhs,
+                                      b->f64.rhs)) {
+        return false;
+      }
       freeF64(b->f64.lhs);
       freeF64(b->f64.rhs);
       break;
@@ -9567,6 +9645,7 @@ void BaseCompiler::emitBranchPerform(BranchState* b) {
     }
   }
   resetLatentOp();
+  return true;
 }
 
 // For blocks and loops and ifs:
@@ -9597,7 +9676,7 @@ bool BaseCompiler::emitBlock() {
   return true;
 }
 
-void BaseCompiler::endBlock(ResultType type) {
+bool BaseCompiler::endBlock(ResultType type) {
   Control& block = controlItem();
 
   if (deadCode_) {
@@ -9622,10 +9701,14 @@ void BaseCompiler::endBlock(ResultType type) {
       captureResultRegisters(type);
       deadCode_ = false;
     }
-    pushBlockResults(type);
+    if (!pushBlockResults(type)) {
+      return false;
+    }
   }
 
   bceSafe_ = block.bceSafeOnExit;
+
+  return true;
 }
 
 bool BaseCompiler::emitLoop() {
@@ -9644,7 +9727,9 @@ bool BaseCompiler::emitLoop() {
   if (!deadCode_) {
     // Loop entry is a control join, so shuffle the entry parameters into the
     // well-known locations.
-    topBlockParams(params);
+    if (!topBlockParams(params)) {
+      return false;
+    }
     masm.nopAlign(CodeAlignment);
     masm.bind(&controlItem(0).label);
     // The interrupt check barfs if there are live registers.
@@ -9694,14 +9779,18 @@ bool BaseCompiler::emitIf() {
     // Because params can flow immediately to results in the case of an empty
     // "then" or "else" block, and the result of an if/then is a join in
     // general, we shuffle params eagerly to the result allocations.
-    topBlockParams(params);
-    emitBranchPerform(&b);
+    if (!topBlockParams(params)) {
+      return false;
+    }
+    if (!emitBranchPerform(&b)) {
+      return false;
+    }
   }
 
   return true;
 }
 
-void BaseCompiler::endIfThen(ResultType type) {
+bool BaseCompiler::endIfThen(ResultType type) {
   Control& ifThen = controlItem();
 
   // The parameters to the "if" logically flow to both the "then" and "else"
@@ -9738,10 +9827,14 @@ void BaseCompiler::endIfThen(ResultType type) {
 
   deadCode_ = ifThen.deadOnArrival;
   if (!deadCode_) {
-    pushBlockResults(type);
+    if (!pushBlockResults(type)) {
+      return false;
+    }
   }
 
   bceSafe_ = ifThen.bceSafeOnExit & ifThen.bceSafeOnEntry;
+
+  return true;
 }
 
 bool BaseCompiler::emitElse() {
@@ -9791,13 +9884,15 @@ bool BaseCompiler::emitElse() {
 
   if (!deadCode_) {
     captureResultRegisters(params);
-    pushBlockResults(params);
+    if (!pushBlockResults(params)) {
+      return false;
+    }
   }
 
   return true;
 }
 
-void BaseCompiler::endIfThenElse(ResultType type) {
+bool BaseCompiler::endIfThenElse(ResultType type) {
   Control& ifThenElse = controlItem();
 
   // The expression type is not a reliable guide to what we'll find
@@ -9840,8 +9935,12 @@ void BaseCompiler::endIfThenElse(ResultType type) {
   bceSafe_ = ifThenElse.bceSafeOnExit;
 
   if (!deadCode_) {
-    pushBlockResults(type);
+    if (!pushBlockResults(type)) {
+      return false;
+    }
   }
+
+  return true;
 }
 
 bool BaseCompiler::emitEnd() {
@@ -9854,24 +9953,40 @@ bool BaseCompiler::emitEnd() {
 
   switch (kind) {
     case LabelKind::Body:
-      endBlock(type);
+      if (!endBlock(type)) {
+        return false;
+      }
       doReturn(ContinuationKind::Fallthrough);
       iter_.popEnd();
       MOZ_ASSERT(iter_.controlStackEmpty());
       return iter_.readFunctionEnd(iter_.end());
     case LabelKind::Block:
-      endBlock(type);
+      if (!endBlock(type)) {
+        return false;
+      }
       break;
     case LabelKind::Loop:
       // The end of a loop isn't a branch target, so we can just leave its
       // results on the expression stack to be consumed by the outer block.
       break;
     case LabelKind::Then:
-      endIfThen(type);
+      if (!endIfThen(type)) {
+        return false;
+      }
       break;
     case LabelKind::Else:
-      endIfThenElse(type);
+      if (!endIfThenElse(type)) {
+        return false;
+      }
       break;
+#ifdef ENABLE_WASM_EXCEPTIONS
+    case LabelKind::Try:
+      MOZ_CRASH("NYI");
+      break;
+    case LabelKind::Catch:
+      MOZ_CRASH("NYI");
+      break;
+#endif
   }
 
   iter_.popEnd();
@@ -9930,9 +10045,7 @@ bool BaseCompiler::emitBrIf() {
 
   BranchState b(&target.label, target.stackHeight, InvertBranch(false), type);
   emitBranchSetup(&b);
-  emitBranchPerform(&b);
-
-  return true;
+  return emitBranchPerform(&b);
 }
 
 #ifdef ENABLE_WASM_FUNCTION_REFERENCES
@@ -9963,7 +10076,10 @@ bool BaseCompiler::emitBrOnNull() {
   if (b.hasBlockResults()) {
     freeResultRegisters(b.resultType);
   }
-  jumpConditionalWithResults(&b, Assembler::Equal, rp, ImmWord(NULLREF_VALUE));
+  if (!jumpConditionalWithResults(&b, Assembler::Equal, rp,
+                                  ImmWord(NULLREF_VALUE))) {
+    return false;
+  }
   pushRef(rp);
 
   return true;
@@ -9999,7 +10115,10 @@ bool BaseCompiler::emitBrTable() {
 
   freeIntegerResultRegisters(branchParams);
 
-  StackHeight resultsBase = topBranchParams(branchParams);
+  StackHeight resultsBase(0);
+  if (!topBranchParams(branchParams, &resultsBase)) {
+    return false;
+  }
 
   Label dispatchCode;
   masm.branch32(Assembler::Below, rc, Imm32(depths.length()), &dispatchCode);
@@ -10051,6 +10170,54 @@ bool BaseCompiler::emitBrTable() {
 
   return true;
 }
+
+#ifdef ENABLE_WASM_EXCEPTIONS
+bool BaseCompiler::emitTry() {
+  ResultType params;
+  if (!iter_.readTry(&params)) {
+    return false;
+  }
+
+  if (deadCode_) {
+    return true;
+  }
+
+  MOZ_CRASH("NYI");
+}
+
+bool BaseCompiler::emitCatch() {
+  LabelKind kind;
+  uint32_t eventIndex;
+  ResultType paramType, resultType;
+  NothingVector unused_tryValues;
+
+  if (!iter_.readCatch(&kind, &eventIndex, &paramType, &resultType,
+                       &unused_tryValues)) {
+    return false;
+  }
+
+  if (deadCode_) {
+    return true;
+  }
+
+  MOZ_CRASH("NYI");
+}
+
+bool BaseCompiler::emitThrow() {
+  uint32_t exnIndex;
+  NothingVector unused_argValues;
+
+  if (!iter_.readThrow(&exnIndex, &unused_argValues)) {
+    return false;
+  }
+
+  if (deadCode_) {
+    return true;
+  }
+
+  MOZ_CRASH("NYI");
+}
+#endif
 
 bool BaseCompiler::emitDrop() {
   if (!iter_.readDrop()) {
@@ -10268,7 +10435,7 @@ bool BaseCompiler::emitCall() {
 
   sync();
 
-  const FuncType& funcType = *moduleEnv_.funcTypes[funcIndex];
+  const FuncType& funcType = *moduleEnv_.funcs[funcIndex].type;
   bool import = moduleEnv_.funcIsImport(funcIndex);
 
   uint32_t numArgs = funcType.args().length();
@@ -10308,9 +10475,7 @@ bool BaseCompiler::emitCall() {
   popValueStackBy(numArgs);
 
   captureCallResultRegisters(resultType);
-  pushCallResults(baselineCall, resultType, results);
-
-  return true;
+  return pushCallResults(baselineCall, resultType, results);
 }
 
 bool BaseCompiler::emitCallIndirect() {
@@ -10330,7 +10495,7 @@ bool BaseCompiler::emitCallIndirect() {
 
   sync();
 
-  const FuncTypeWithId& funcType = moduleEnv_.types[funcTypeIndex].funcType();
+  const FuncType& funcType = moduleEnv_.types[funcTypeIndex].funcType();
 
   // Stack: ... arg1 .. argn callee
 
@@ -10365,9 +10530,7 @@ bool BaseCompiler::emitCallIndirect() {
   popValueStackBy(numArgs);
 
   captureCallResultRegisters(resultType);
-  pushCallResults(baselineCall, resultType, results);
-
-  return true;
+  return pushCallResults(baselineCall, resultType, results);
 }
 
 void BaseCompiler::emitRound(RoundingMode roundingMode, ValType operandType) {
@@ -10969,7 +11132,7 @@ RegI32 BaseCompiler::popMemoryAccess(MemoryAccessDesc* access,
     uint32_t addr = addrTemp;
 
     uint32_t offsetGuardLimit =
-        GetOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
+        GetMaxOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
     uint64_t ea = uint64_t(addr) + uint64_t(access->offset());
     uint64_t limit = moduleEnv_.minMemoryLength + offsetGuardLimit;
@@ -11255,7 +11418,9 @@ bool BaseCompiler::emitSelect(bool typed) {
     case ValType::I32: {
       RegI32 r, rs;
       pop2xI32(&r, &rs);
-      emitBranchPerform(&b);
+      if (!emitBranchPerform(&b)) {
+        return false;
+      }
       moveI32(rs, r);
       masm.bind(&done);
       freeI32(rs);
@@ -11275,7 +11440,9 @@ bool BaseCompiler::emitSelect(bool typed) {
       // use a double branch and a temporary boolean value for now.
       RegI32 temp = needI32();
       moveImm32(0, temp);
-      emitBranchPerform(&b);
+      if (!emitBranchPerform(&b)) {
+        return false;
+      }
       moveImm32(1, temp);
       masm.bind(&done);
 
@@ -11291,7 +11458,9 @@ bool BaseCompiler::emitSelect(bool typed) {
 #else
       RegI64 r, rs;
       pop2xI64(&r, &rs);
-      emitBranchPerform(&b);
+      if (!emitBranchPerform(&b)) {
+        return false;
+      }
       moveI64(rs, r);
       masm.bind(&done);
       freeI64(rs);
@@ -11302,7 +11471,9 @@ bool BaseCompiler::emitSelect(bool typed) {
     case ValType::F32: {
       RegF32 r, rs;
       pop2xF32(&r, &rs);
-      emitBranchPerform(&b);
+      if (!emitBranchPerform(&b)) {
+        return false;
+      }
       moveF32(rs, r);
       masm.bind(&done);
       freeF32(rs);
@@ -11312,7 +11483,9 @@ bool BaseCompiler::emitSelect(bool typed) {
     case ValType::F64: {
       RegF64 r, rs;
       pop2xF64(&r, &rs);
-      emitBranchPerform(&b);
+      if (!emitBranchPerform(&b)) {
+        return false;
+      }
       moveF64(rs, r);
       masm.bind(&done);
       freeF64(rs);
@@ -11323,7 +11496,9 @@ bool BaseCompiler::emitSelect(bool typed) {
     case ValType::V128: {
       RegV128 r, rs;
       pop2xV128(&r, &rs);
-      emitBranchPerform(&b);
+      if (!emitBranchPerform(&b)) {
+        return false;
+      }
       moveV128(rs, r);
       masm.bind(&done);
       freeV128(rs);
@@ -11334,7 +11509,9 @@ bool BaseCompiler::emitSelect(bool typed) {
     case ValType::Ref: {
       RegPtr r, rs;
       pop2xRef(&r, &rs);
-      emitBranchPerform(&b);
+      if (!emitBranchPerform(&b)) {
+        return false;
+      }
       moveRef(rs, r);
       masm.bind(&done);
       freeRef(rs);
@@ -12495,8 +12672,12 @@ bool BaseCompiler::emitStructNew() {
   // Returns null on OOM.
 
   const StructType& structType = moduleEnv_.types[typeIndex].structType();
+  const TypeIdDesc& structTypeId = moduleEnv_.typeIds[typeIndex];
+  RegPtr rst = needRef();
+  fr.loadTlsPtr(WasmTlsReg);
+  masm.loadWasmGlobalPtr(structTypeId.globalDataOffset(), rst);
+  pushRef(rst);
 
-  pushI32(structType.moduleIndex_);
   if (!emitInstanceCall(lineOrBytecode, SASigStructNew)) {
     return false;
   }
@@ -12521,7 +12702,7 @@ bool BaseCompiler::emitStructNew() {
 
   uint32_t fieldNo = structType.fields_.length();
   while (fieldNo-- > 0) {
-    uint32_t offs = structType.fields_[fieldNo].offset;
+    uint32_t offs = structType.objectBaseFieldOffset(fieldNo);
     switch (structType.fields_[fieldNo].type.kind()) {
       case ValType::I32: {
         RegI32 r = popI32();
@@ -12635,7 +12816,7 @@ bool BaseCompiler::emitStructGet() {
     masm.loadPtr(Address(rp, OutlineTypedObject::offsetOfData()), rp);
   }
 
-  uint32_t offs = structType.fields_[fieldIndex].offset;
+  uint32_t offs = structType.objectBaseFieldOffset(fieldIndex);
   switch (structType.fields_[fieldIndex].type.kind()) {
     case ValType::I32: {
       RegI32 r = needI32();
@@ -12736,7 +12917,7 @@ bool BaseCompiler::emitStructSet() {
     masm.loadPtr(Address(rp, OutlineTypedObject::offsetOfData()), rp);
   }
 
-  uint32_t offs = structType.fields_[fieldIndex].offset;
+  uint32_t offs = structType.objectBaseFieldOffset(fieldIndex);
   switch (structType.fields_[fieldIndex].type.kind()) {
     case ValType::I32: {
       masm.store32(ri, Address(rp, offs));
@@ -12799,8 +12980,10 @@ bool BaseCompiler::emitStructNarrow() {
 
   // struct.narrow validation ensures that these hold.
 
-  MOZ_ASSERT(inputType.isEqRef() || moduleEnv_.isStructType(inputType));
-  MOZ_ASSERT(outputType.isEqRef() || moduleEnv_.isStructType(outputType));
+  MOZ_ASSERT(inputType.isEqRef() ||
+             moduleEnv_.types.isStructType(inputType.refType()));
+  MOZ_ASSERT(outputType.isEqRef() ||
+             moduleEnv_.types.isStructType(outputType.refType()));
   MOZ_ASSERT_IF(outputType.isEqRef(), inputType.isEqRef());
 
   // EqRef -> EqRef is a no-op, just leave the value on the stack.
@@ -12812,10 +12995,13 @@ bool BaseCompiler::emitStructNarrow() {
   RegPtr rp = popRef();
 
   // Dynamic downcast eqref|(optref T) -> (optref U), leaves rp or null
-  const StructType& outputStruct =
-      moduleEnv_.types[outputType.refType().typeIndex()].structType();
+  const TypeIdDesc& outputStructTypeId =
+      moduleEnv_.typeIds[outputType.refType().typeIndex()];
+  RegPtr rst = needRef();
+  fr.loadTlsPtr(WasmTlsReg);
+  masm.loadWasmGlobalPtr(outputStructTypeId.globalDataOffset(), rst);
+  pushRef(rst);
 
-  pushI32(outputStruct.moduleIndex_);
   pushRef(rp);
   return emitInstanceCall(lineOrBytecode, SASigStructNarrow);
 }
@@ -13856,9 +14042,17 @@ bool BaseCompiler::emitVectorShiftRightI64x2(bool isUnsigned) {
   }
 #  endif
 
-#  if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+#  if defined(JS_CODEGEN_X86)
   needI32(specific_.ecx);
   RegI32 count = popI32ToSpecific(specific_.ecx);
+#  elif defined(JS_CODEGEN_X64)
+  RegI32 count;
+  if (Assembler::HasBMI2()) {
+    count = popI32();
+  } else {
+    needI32(specific_.ecx);
+    count = popI32ToSpecific(specific_.ecx);
+  }
 #  elif defined(JS_CODEGEN_ARM64)
   RegI32 count = popI32();
 #  endif
@@ -13933,8 +14127,6 @@ bool BaseCompiler::emitBody() {
   }
 
   initControl(controlItem(), ResultType::Empty());
-
-  uint32_t overhead = 0;
 
   for (;;) {
     Nothing unused_a, unused_b;
@@ -14036,25 +14228,7 @@ bool BaseCompiler::emitBody() {
     continue;             \
   }
 
-    // TODO / EVALUATE (bug 1316845): Not obvious that this attempt at
-    // reducing overhead is really paying off relative to making the check
-    // every iteration.
-
-    if (overhead == 0) {
-      // Check every 50 expressions -- a happy medium between
-      // memory usage and checking overhead.
-      overhead = 50;
-
-      // Checking every 50 expressions should be safe, as the
-      // baseline JIT does very little allocation per expression.
-      CHECK(alloc_.ensureBallast());
-
-      // The pushiest opcode is LOOP, which pushes two values
-      // per instance.
-      CHECK(stk_.reserve(stk_.length() + overhead * 2));
-    }
-
-    overhead--;
+    CHECK(stk_.reserve(stk_.length() + MaxPushesPerOpcode));
 
     OpBytes op;
     CHECK(iter_.readOp(&op));
@@ -14106,6 +14280,23 @@ bool BaseCompiler::emitBody() {
         CHECK_NEXT(emitIf());
       case uint16_t(Op::Else):
         CHECK_NEXT(emitElse());
+#ifdef ENABLE_WASM_EXCEPTIONS
+      case uint16_t(Op::Try):
+        if (!moduleEnv_.exceptionsEnabled()) {
+          return iter_.unrecognizedOpcode(&op);
+        }
+        CHECK_NEXT(emitTry());
+      case uint16_t(Op::Catch):
+        if (!moduleEnv_.exceptionsEnabled()) {
+          return iter_.unrecognizedOpcode(&op);
+        }
+        CHECK_NEXT(emitCatch());
+      case uint16_t(Op::Throw):
+        if (!moduleEnv_.exceptionsEnabled()) {
+          return iter_.unrecognizedOpcode(&op);
+        }
+        CHECK_NEXT(emitThrow());
+#endif
       case uint16_t(Op::Br):
         CHECK_NEXT(emitBr());
       case uint16_t(Op::BrIf):
@@ -15478,7 +15669,7 @@ BaseCompiler::BaseCompiler(const ModuleEnvironment& moduleEnv,
       iter_(moduleEnv, decoder),
       func_(func),
       lastReadCallSite_(0),
-      alloc_(*alloc),
+      alloc_(alloc->fallible()),
       locals_(locals),
       deadCode_(false),
       bceSafe_(0),
@@ -15581,7 +15772,7 @@ bool js::wasm::BaselineCompileFunctions(const ModuleEnvironment& moduleEnv,
   TempAllocator alloc(&lifo);
   JitContext jitContext(&alloc);
   MOZ_ASSERT(IsCompilingWasm());
-  WasmMacroAssembler masm(alloc);
+  WasmMacroAssembler masm(alloc, moduleEnv);
 
   // Swap in already-allocated empty vectors to avoid malloc/free.
   MOZ_ASSERT(code->empty());
@@ -15608,7 +15799,7 @@ bool js::wasm::BaselineCompileFunctions(const ModuleEnvironment& moduleEnv,
     // Build the local types vector.
 
     ValTypeVector locals;
-    if (!locals.appendAll(moduleEnv.funcTypes[func.index]->args())) {
+    if (!locals.appendAll(moduleEnv.funcs[func.index].type->args())) {
       return false;
     }
     if (!DecodeLocalEntries(d, moduleEnv.types, moduleEnv.features, &locals)) {

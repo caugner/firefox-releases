@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Localized } from "./MSLocalized";
 import { Zap } from "./Zap";
 import { AboutWelcomeUtils } from "../../lib/aboutwelcome-utils";
@@ -53,12 +53,13 @@ export const MultiStageAboutWelcome = props => {
 
   // Transition to next screen, opening about:home on last screen button CTA
   const handleTransition =
-    index < props.screens.length
-      ? useCallback(() => setScreenIndex(prevState => prevState + 1), [])
-      : AboutWelcomeUtils.handleUserAction({
-          type: "OPEN_ABOUT_PAGE",
-          data: { args: "home", where: "current" },
-        });
+    index < props.screens.length - 1
+      ? () => setScreenIndex(prevState => prevState + 1)
+      : () =>
+          AboutWelcomeUtils.handleUserAction({
+            type: "OPEN_ABOUT_PAGE",
+            data: { args: "home", where: "current" },
+          });
 
   // Update top sites with default sites by region when region is available
   const [region, setRegion] = useState(null);
@@ -82,19 +83,19 @@ export const MultiStageAboutWelcome = props => {
 
   const useImportable = props.message_id.includes("IMPORTABLE");
   // Track whether we have already sent the importable sites impression telemetry
-  const [importTelemetrySent, setImportTelemetrySent] = useState(null);
+  const importTelemetrySent = useRef(false);
   const [topSites, setTopSites] = useState([]);
   useEffect(() => {
     (async () => {
       let DEFAULT_SITES = await window.AWGetDefaultSites();
       const importable = JSON.parse(await window.AWGetImportableSites());
       const showImportable = useImportable && importable.length >= 5;
-      if (!importTelemetrySent) {
+      if (!importTelemetrySent.current) {
         AboutWelcomeUtils.sendImpressionTelemetry(`${props.message_id}_SITES`, {
           display: showImportable ? "importable" : "static",
           importable: importable.length,
         });
-        setImportTelemetrySent(true);
+        importTelemetrySent.current = true;
       }
       setTopSites(
         showImportable

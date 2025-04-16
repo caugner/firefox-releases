@@ -12,13 +12,17 @@
 #include <vector>
 
 #include "GLDefs.h"
+#include "ImageContainer.h"
 #include "mozilla/Casting.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Range.h"
 #include "mozilla/RefCounted.h"
+#include "mozilla/ResultVariant.h"
+#include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/BuildConstants.h"
 #include "mozilla/gfx/Point.h"
+#include "mozilla/gfx/Rect.h"
 #include "mozilla/ipc/Shmem.h"
 #include "gfxTypes.h"
 
@@ -441,12 +445,12 @@ struct avec2 {
   }
 };
 
-template<typename T>
+template <typename T>
 avec2<T> MinExtents(const avec2<T>& a, const avec2<T>& b) {
   return {std::min(a.x, b.x), std::min(a.y, b.y)};
 }
 
-template<typename T>
+template <typename T>
 avec2<T> MaxExtents(const avec2<T>& a, const avec2<T>& b) {
   return {std::max(a.x, b.x), std::max(a.y, b.y)};
 }

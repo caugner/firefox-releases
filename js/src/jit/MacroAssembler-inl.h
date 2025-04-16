@@ -17,6 +17,7 @@
 #include "jit/CompileWrappers.h"
 #include "jit/JitFrames.h"
 #include "jit/JSJitFrameIter.h"
+#include "util/DifferentialTesting.h"
 #include "vm/ProxyObject.h"
 #include "vm/Runtime.h"
 
@@ -810,10 +811,10 @@ void MacroAssembler::canonicalizeFloat(FloatRegister reg) {
 }
 
 void MacroAssembler::canonicalizeFloatIfDeterministic(FloatRegister reg) {
-#ifdef JS_MORE_DETERMINISTIC
   // See the comment in TypedArrayObjectTemplate::getElement.
-  canonicalizeFloat(reg);
-#endif  // JS_MORE_DETERMINISTIC
+  if (js::SupportDifferentialTesting()) {
+    canonicalizeFloat(reg);
+  }
 }
 
 void MacroAssembler::canonicalizeDouble(FloatRegister reg) {
@@ -824,10 +825,10 @@ void MacroAssembler::canonicalizeDouble(FloatRegister reg) {
 }
 
 void MacroAssembler::canonicalizeDoubleIfDeterministic(FloatRegister reg) {
-#ifdef JS_MORE_DETERMINISTIC
   // See the comment in TypedArrayObjectTemplate::getElement.
-  canonicalizeDouble(reg);
-#endif  // JS_MORE_DETERMINISTIC
+  if (js::SupportDifferentialTesting()) {
+    canonicalizeDouble(reg);
+  }
 }
 
 // ========================================================================
@@ -934,23 +935,6 @@ void MacroAssembler::reserveStack(uint32_t amount) {
   adjustFrame(amount);
 }
 #endif  // !JS_CODEGEN_ARM64
-
-template <typename EmitPreBarrier>
-void MacroAssembler::storeObjGroup(Register group, Register obj,
-                                   EmitPreBarrier emitPreBarrier) {
-  MOZ_ASSERT(group != obj);
-  Address groupAddr(obj, JSObject::offsetOfGroup());
-  emitPreBarrier(*this, groupAddr);
-  storePtr(group, groupAddr);
-}
-
-template <typename EmitPreBarrier>
-void MacroAssembler::storeObjGroup(ObjectGroup* group, Register obj,
-                                   EmitPreBarrier emitPreBarrier) {
-  Address groupAddr(obj, JSObject::offsetOfGroup());
-  emitPreBarrier(*this, groupAddr);
-  storePtr(ImmGCPtr(group), groupAddr);
-}
 
 template <typename EmitPreBarrier>
 void MacroAssembler::storeObjShape(Register shape, Register obj,

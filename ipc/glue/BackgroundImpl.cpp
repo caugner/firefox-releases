@@ -20,6 +20,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/Services.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/ContentChild.h"
@@ -27,6 +28,7 @@
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRef.h"
+#include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/ProtocolTypes.h"
 #include "mozilla/net/SocketProcessChild.h"
 #include "mozilla/net/SocketProcessBridgeChild.h"
@@ -587,7 +589,7 @@ class ChildImpl::ShutdownObserver final : public nsIObserver {
   ~ShutdownObserver() { AssertIsOnMainThread(); }
 };
 
-class ChildImpl::SendInitBackgroundRunnable final : public CancelableRunnable {
+class ChildImpl::SendInitBackgroundRunnable final : public DiscardableRunnable {
   nsCOMPtr<nsISerialEventTarget> mOwningEventTarget;
   RefPtr<StrongWorkerRef> mWorkerRef;
   Endpoint<PBackgroundParent> mParent;
@@ -614,7 +616,8 @@ class ChildImpl::SendInitBackgroundRunnable final : public CancelableRunnable {
       Endpoint<PBackgroundParent>&& aParent,
       std::function<void(Endpoint<PBackgroundParent>&& aParent)>&& aFunc,
       unsigned int aThreadLocalIndex)
-      : CancelableRunnable("Background::ChildImpl::SendInitBackgroundRunnable"),
+      : DiscardableRunnable(
+            "Background::ChildImpl::SendInitBackgroundRunnable"),
         mOwningEventTarget(GetCurrentSerialEventTarget()),
         mParent(std::move(aParent)),
         mMutex("SendInitBackgroundRunnable::mMutex"),

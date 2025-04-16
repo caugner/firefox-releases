@@ -22,12 +22,15 @@
 #include "mozilla/dom/WindowContext.h"
 #include "mozilla/dom/InProcessChild.h"
 #include "mozilla/dom/InProcessParent.h"
+#include "mozilla/ipc/Endpoint.h"
+#include "mozilla/PresShell.h"
 #include "nsContentUtils.h"
 #include "nsDocShell.h"
 #include "nsFocusManager.h"
 #include "nsFrameLoaderOwner.h"
 #include "nsGlobalWindowInner.h"
 #include "nsFrameLoaderOwner.h"
+#include "nsNetUtil.h"
 #include "nsQueryObject.h"
 #include "nsSerializationHelper.h"
 #include "nsFrameLoader.h"
@@ -441,13 +444,8 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvDrawSnapshot(
     const Maybe<IntRect>& aRect, const float& aScale,
     const nscolor& aBackgroundColor, const uint32_t& aFlags,
     DrawSnapshotResolver&& aResolve) {
-  nsCOMPtr<nsIDocShell> docShell = BrowsingContext()->GetDocShell();
-  if (!docShell) {
-    aResolve(gfx::PaintFragment{});
-    return IPC_OK();
-  }
-
-  aResolve(gfx::PaintFragment::Record(docShell, aRect, aScale, aBackgroundColor,
+  aResolve(gfx::PaintFragment::Record(BrowsingContext(), aRect, aScale,
+                                      aBackgroundColor,
                                       (gfx::CrossProcessPaintFlags)aFlags));
   return IPC_OK();
 }

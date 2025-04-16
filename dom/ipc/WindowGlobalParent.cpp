@@ -26,6 +26,7 @@
 #include "mozilla/dom/ChromeUtils.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/ServoCSSParser.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -34,12 +35,14 @@
 #include "mozJSComponentLoader.h"
 #include "nsContentUtils.h"
 #include "nsDocShell.h"
+#include "nsDocShellLoadState.h"
 #include "nsError.h"
 #include "nsFrameLoader.h"
 #include "nsFrameLoaderOwner.h"
 #include "nsGlobalWindowInner.h"
 #include "nsQueryObject.h"
 #include "nsFrameLoaderOwner.h"
+#include "nsNetUtil.h"
 #include "nsSerializationHelper.h"
 #include "nsIBrowser.h"
 #include "nsIPromptCollection.h"
@@ -210,11 +213,11 @@ already_AddRefed<WindowGlobalChild> WindowGlobalParent::GetChildActor() {
   return do_AddRef(static_cast<WindowGlobalChild*>(otherSide));
 }
 
-already_AddRefed<BrowserParent> WindowGlobalParent::GetBrowserParent() {
+BrowserParent* WindowGlobalParent::GetBrowserParent() {
   if (IsInProcess() || !CanSend()) {
     return nullptr;
   }
-  return do_AddRef(static_cast<BrowserParent*>(Manager()));
+  return static_cast<BrowserParent*>(Manager());
 }
 
 ContentParent* WindowGlobalParent::GetContentParent() {

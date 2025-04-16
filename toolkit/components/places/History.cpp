@@ -55,9 +55,6 @@ namespace places {
 ////////////////////////////////////////////////////////////////////////////////
 //// Global Defines
 
-#define URI_VISITED "visited"
-#define URI_NOT_VISITED "not visited"
-#define URI_VISITED_RESOLUTION_TOPIC "visited-status-resolution"
 // Observer event fired after a visit has been registered in the DB.
 #define URI_VISIT_SAVED "uri-visit-saved"
 
@@ -427,16 +424,6 @@ class VisitedQuery final : public AsyncStatementCallback {
       auto status = mIsVisited ? IHistory::VisitedStatus::Visited
                                : IHistory::VisitedStatus::Unvisited;
       history->NotifyVisited(mURI, status);
-    }
-
-    nsCOMPtr<nsIObserverService> observerService =
-        mozilla::services::GetObserverService();
-    if (observerService) {
-      static const char16_t visited[] = u"" URI_VISITED;
-      static const char16_t notVisited[] = u"" URI_NOT_VISITED;
-      const char16_t* status = mIsVisited ? visited : notVisited;
-      (void)observerService->NotifyObservers(mURI, URI_VISITED_RESOLUTION_TOPIC,
-                                             status);
     }
   }
 
@@ -1829,10 +1816,7 @@ History::VisitURI(nsIWidget* aWidget, nsIURI* aURI, nsIURI* aLastVisitedURI,
 
   nsresult rv;
   if (XRE_IsContentProcess()) {
-    bool canAddURI = false;
-    rv = nsNavHistory::CanAddURIToHistory(aURI, &canAddURI);
-    NS_ENSURE_SUCCESS(rv, rv);
-    if (!canAddURI) {
+    if (!BaseHistory::CanStore(aURI)) {
       return NS_OK;
     }
 

@@ -120,31 +120,23 @@ using namespace mozilla::a11y;
       RotorRule rule =
           mImmediateDescendantsOnly ? RotorRule(geckoRootAcc) : RotorRule();
 
-      if (mSearchForward) {
-        if ([mStartElem isKindOfClass:[MOXWebAreaAccessible class]]) {
-          if (id rootGroup =
-                  [static_cast<MOXWebAreaAccessible*>(mStartElem) rootGroup]) {
-            // Moving forward from web area, rootgroup; if it exists, is next.
-            [matches addObject:rootGroup];
-            if (mResultLimit == 1) {
-              // Found one match, continue in search keys for block.
-              continue;
-            }
+      if ([mStartElem isKindOfClass:[MOXWebAreaAccessible class]]) {
+        if (id rootGroup =
+                [static_cast<MOXWebAreaAccessible*>(mStartElem) rootGroup]) {
+          // Moving forward from web area, rootgroup; if it exists, is next.
+          [matches addObject:rootGroup];
+          if (mResultLimit == 1) {
+            // Found one match, continue in search keys for block.
+            continue;
           }
-        } else if (mImmediateDescendantsOnly && mStartElem != mRoot &&
-                   [mStartElem isKindOfClass:[MOXRootGroup class]]) {
-          // Moving forward from root group. If we don't match descendants,
-          // there is no match. Continue.
-          continue;
         }
-      } else if (!mSearchForward &&
-                 [mStartElem isKindOfClass:[MOXRootGroup class]]) {
-        // Moving backward from root group. Web area is next.
-        [matches addObject:[mStartElem moxParent]];
-        if (mResultLimit == 1) {
-          // Found one match, continue in search keys for block.
-          continue;
-        }
+      }
+
+      if (mImmediateDescendantsOnly && mStartElem != mRoot &&
+          [mStartElem isKindOfClass:[MOXRootGroup class]]) {
+        // Moving forward from root group. If we don't match descendants,
+        // there is no match. Continue.
+        continue;
       }
       [matches addObjectsFromArray:[self getMatchesForRule:rule]];
     }
@@ -323,10 +315,16 @@ using namespace mozilla::a11y;
     }
 
     if ([key isEqualToString:@"AXTextFieldSearchKey"]) {
-      RotorMacRoleRule rule =
-          mImmediateDescendantsOnly
-              ? RotorMacRoleRule(@"AXTextField", geckoRootAcc)
-              : RotorMacRoleRule(@"AXTextField");
+      RotorTextEntryRule rule = mImmediateDescendantsOnly
+                                    ? RotorTextEntryRule(geckoRootAcc)
+                                    : RotorTextEntryRule();
+      [matches addObjectsFromArray:[self getMatchesForRule:rule]];
+    }
+
+    if ([key isEqualToString:@"AXLiveRegionSearchKey"]) {
+      RotorLiveRegionRule rule = mImmediateDescendantsOnly
+                                     ? RotorLiveRegionRule(geckoRootAcc)
+                                     : RotorLiveRegionRule();
       [matches addObjectsFromArray:[self getMatchesForRule:rule]];
     }
   }

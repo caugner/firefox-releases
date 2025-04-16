@@ -23,7 +23,6 @@
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Range.h"
-#include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"
@@ -842,14 +841,14 @@ bool PerHandlerParser<ParseHandler>::
       // TODO-Stencil
       //   After closed-over-bindings are snapshotted in the handler,
       //   remove this.
-      auto mbNameId = this->compilationState_.parserAtoms.internJSAtom(
-          cx_, this->getCompilationInfo(), name);
-      if (mbNameId.isErr()) {
+      const ParserAtom* parserAtom =
+          this->compilationState_.parserAtoms.internJSAtom(
+              cx_, this->getCompilationInfo(), name);
+      if (!parserAtom) {
         return false;
       }
-      const ParserName* nameId = mbNameId.unwrap()->asName();
 
-      scope.lookupDeclaredName(nameId)->value()->setClosedOver();
+      scope.lookupDeclaredName(parserAtom->asName())->value()->setClosedOver();
       MOZ_ASSERT(slotCount > 0);
       slotCount--;
     }
@@ -1708,6 +1707,8 @@ ModuleNode* Parser<FullParseHandler, Unit>::moduleBody(
     ModuleSharedContext* modulesc) {
   MOZ_ASSERT(checkOptionsCalled_);
 
+  this->compilationInfo_.stencil.moduleMetadata.emplace();
+
   SourceParseContext modulepc(this, modulesc, nullptr);
   if (!modulepc.init()) {
     return null();
@@ -1733,6 +1734,16 @@ ModuleNode* Parser<FullParseHandler, Unit>::moduleBody(
   MOZ_ASSERT(stmtList->isKind(ParseNodeKind::StatementList));
   moduleNode->setBody(&stmtList->as<ListNode>());
 
+  if (pc_->isAsync()) {
+    if (!noteUsedName(cx_->parserNames().dotGenerator)) {
+      return null();
+    }
+
+    if (!pc_->declareTopLevelDotGeneratorName()) {
+      return null();
+    }
+  }
+
   TokenKind tt;
   if (!tokenStream.getToken(&tt, TokenStream::SlashIsRegExp)) {
     return null();
@@ -1742,15 +1753,21 @@ ModuleNode* Parser<FullParseHandler, Unit>::moduleBody(
     return null();
   }
 
+  // Set the module to async if an await keyword was found at the top level.
+  if (pc_->isAsync()) {
+    pc_->sc()->asModuleContext()->builder.noteAsync(
+        *this->compilationInfo_.stencil.moduleMetadata);
+  }
+
   // Generate the Import/Export tables and store in CompilationInfo.
   if (!modulesc->builder.buildTables(
-          this->compilationInfo_.stencil.moduleMetadata)) {
+          *this->compilationInfo_.stencil.moduleMetadata)) {
     return null();
   }
 
   // Check exported local bindings exist and mark them as closed over.
   StencilModuleMetadata& moduleMetadata =
-      this->compilationInfo_.stencil.moduleMetadata;
+      *this->compilationInfo_.stencil.moduleMetadata;
   for (auto entry : moduleMetadata.localExportEntries) {
     const ParserAtom* nameId =
         this->compilationInfo_.stencil.getParserAtomAt(cx_, entry.localName);
@@ -1941,6 +1958,7 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
 
   funbox->finishScriptFlags();
   funbox->copyFunctionFields(script);
+  funbox->copyScriptFields(script);
 
   return true;
 }
@@ -1990,7 +2008,7 @@ bool PerHandlerParser<SyntaxParseHandler>::finishFunction(
 
   // Allocate the `stencilThings` array without initializing it yet.
   mozilla::Span<TaggedScriptThingIndex> stencilThings =
-      NewScriptThingSpanUninitialized(cx_, compilationInfo_.stencil.alloc,
+      NewScriptThingSpanUninitialized(cx_, compilationInfo_.alloc,
                                       ngcthings.value());
   if (stencilThings.empty()) {
     return false;
@@ -2158,7 +2176,7 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneFunction(
   }
 
   // Function is not syntactically part of another script.
-  funbox->setIsStandalone(true);
+  MOZ_ASSERT(funbox->index() == CompilationInfo::TopLevelIndex);
 
   funbox->initStandalone(this->compilationState_.scopeContext, flags,
                          syntaxKind);
@@ -2335,7 +2353,11 @@ bool GeneralParser<ParseHandler, Unit>::matchOrInsertSemicolon(
      * we'd throw a confusing "unexpected token: (unexpected token)" error.
      */
     if (!pc_->isAsync() && anyChars.currentToken().type == TokenKind::Await) {
-      error(JSMSG_AWAIT_OUTSIDE_ASYNC);
+      if (!options().topLevelAwait) {
+        error(JSMSG_AWAIT_OUTSIDE_ASYNC);
+        return false;
+      }
+      error(JSMSG_AWAIT_OUTSIDE_ASYNC_OR_MODULE);
       return false;
     }
     if (!yieldExpressionsSupported() &&
@@ -2399,8 +2421,7 @@ const ParserAtom* ParserBase::prefixAccessorName(PropertyType propType,
 
   const ParserAtom* atoms[2] = {prefix, propAtom};
   auto atomsRange = mozilla::Range(atoms, 2);
-  return this->compilationState_.parserAtoms.concatAtoms(cx_, atomsRange)
-      .unwrapOr(nullptr);
+  return this->compilationState_.parserAtoms.concatAtoms(cx_, atomsRange);
 }
 
 template <class ParseHandler, typename Unit>
@@ -2744,10 +2765,8 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
   // TODO-Stencil: Consider for snapshotting.
   const ParserAtom* displayAtom = nullptr;
   if (fun->displayAtom()) {
-    displayAtom =
-        this->compilationState_.parserAtoms
-            .internJSAtom(cx_, this->compilationInfo_, fun->displayAtom())
-            .unwrapOr(nullptr);
+    displayAtom = this->compilationState_.parserAtoms.internJSAtom(
+        cx_, this->compilationInfo_, fun->displayAtom());
     if (!displayAtom) {
       return false;
     }
@@ -3236,10 +3255,8 @@ FunctionNode* Parser<FullParseHandler, Unit>::standaloneLazyFunction(
   // TODO-Stencil: Consider for snapshotting.
   const ParserAtom* displayAtom = nullptr;
   if (fun->displayAtom()) {
-    displayAtom =
-        this->compilationState_.parserAtoms
-            .internJSAtom(cx_, this->compilationInfo_, fun->displayAtom())
-            .unwrapOr(nullptr);
+    displayAtom = this->compilationState_.parserAtoms.internJSAtom(
+        cx_, this->compilationInfo_, fun->displayAtom());
     if (!displayAtom) {
       return null();
     }
@@ -3755,10 +3772,10 @@ bool GeneralParser<ParseHandler, Unit>::maybeParseDirective(
       if (pc_->isFunctionBox()) {
         FunctionBox* funbox = pc_->functionBox();
         if (!funbox->hasSimpleParameterList()) {
-          const char* parameterKind =
-              funbox->hasDestructuringArgs
-                  ? "destructuring"
-                  : funbox->hasParameterExprs ? "default" : "rest";
+          const char* parameterKind = funbox->hasDestructuringArgs
+                                          ? "destructuring"
+                                      : funbox->hasParameterExprs ? "default"
+                                                                  : "rest";
           errorAt(directivePos.begin, JSMSG_STRICT_NON_SIMPLE_PARAMS,
                   parameterKind);
           return false;
@@ -6265,10 +6282,17 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::forStatement(
   IteratorKind iterKind = IteratorKind::Sync;
   unsigned iflags = 0;
 
-  if (pc_->isAsync()) {
+  if (pc_->isAsync() ||
+      (options().topLevelAwait && pc_->sc()->isModuleContext())) {
     bool matched;
     if (!tokenStream.matchToken(&matched, TokenKind::Await)) {
       return null();
+    }
+
+    // If we come across a top level await here, mark the module as async.
+    if (matched && pc_->sc()->isModuleContext() && !pc_->isAsync()) {
+      pc_->sc()->asModuleContext()->setIsAsync();
+      MOZ_ASSERT(pc_->isAsync());
     }
 
     if (matched) {
@@ -6639,7 +6663,6 @@ GeneralParser<ParseHandler, Unit>::returnStatement(
   uint32_t begin = pos().begin;
 
   MOZ_ASSERT(pc_->isFunctionBox());
-  pc_->functionBox()->usesReturn = true;
 
   // Parse an optional operand.
   //
@@ -7900,7 +7923,6 @@ GeneralParser<ParseHandler, Unit>::privateMethodInitializer(
   handler_.setFunctionFormalParametersAndBody(funNode, argsbody);
   setFunctionStartAtCurrentToken(funbox);
   funbox->setArgCount(0);
-  funbox->usesThis = true;
 
   // Note both the stored private method body and it's private name as being
   // used in the initializer. They will be emitted into the method body in the
@@ -8037,7 +8059,6 @@ GeneralParser<ParseHandler, Unit>::fieldInitializerOpt(
   handler_.setFunctionFormalParametersAndBody(funNode, argsbody);
   funbox->setArgCount(0);
 
-  funbox->usesThis = true;
   NameNodeType thisName = newThisName();
   if (!thisName) {
     return null();
@@ -8270,6 +8291,19 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::statement(
     }
 
     default: {
+      // If we encounter an await in a module, and the module is not marked
+      // as async, mark the module as async.
+      if (tt == TokenKind::Await && !pc_->isAsync()) {
+        if (pc_->atModuleTopLevel()) {
+          if (!options().topLevelAwait) {
+            error(JSMSG_TOP_LEVEL_AWAIT_NOT_SUPPORTED);
+            return null();
+          }
+          pc_->sc()->asModuleContext()->setIsAsync();
+          MOZ_ASSERT(pc_->isAsync());
+        }
+      }
+
       // Avoid getting next token with SlashIsDiv.
       if (tt == TokenKind::Await && pc_->isAsync()) {
         return expressionStatement(yieldHandling);
@@ -8514,6 +8548,19 @@ GeneralParser<ParseHandler, Unit>::statementListItem(
     }
 
     default: {
+      // If we encounter an await in a module, and the module is not marked
+      // as async, mark the module as async.
+      if (tt == TokenKind::Await && !pc_->isAsync()) {
+        if (pc_->atModuleTopLevel()) {
+          if (!options().topLevelAwait) {
+            error(JSMSG_TOP_LEVEL_AWAIT_NOT_SUPPORTED);
+            return null();
+          }
+          pc_->sc()->asModuleContext()->setIsAsync();
+          MOZ_ASSERT(pc_->isAsync());
+        }
+      }
+
       // Avoid getting next token with SlashIsDiv.
       if (tt == TokenKind::Await && pc_->isAsync()) {
         return expressionStatement(yieldHandling);
@@ -9522,6 +9569,16 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::unaryExpr(
     }
 
     case TokenKind::Await: {
+      // If we encounter an await in a module, mark it as async.
+      if (!pc_->isAsync() && pc_->sc()->isModule()) {
+        if (!options().topLevelAwait) {
+          error(JSMSG_TOP_LEVEL_AWAIT_NOT_SUPPORTED);
+          return null();
+        }
+        pc_->sc()->asModuleContext()->setIsAsync();
+        MOZ_ASSERT(pc_->isAsync());
+      }
+
       if (pc_->isAsync()) {
         if (inParametersOfAsyncFunction()) {
           error(JSMSG_AWAIT_IN_PARAMETER);
@@ -9998,9 +10055,6 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::memberCall(
     // syntax.
     if (prop == cx_->parserNames().apply) {
       op = JSOp::FunApply;
-      if (pc_->isFunctionBox()) {
-        pc_->functionBox()->usesApply = true;
-      }
     } else if (prop == cx_->parserNames().call) {
       op = JSOp::FunCall;
     }
@@ -10296,9 +10350,8 @@ RegExpLiteral* Parser<FullParseHandler, Unit>::newRegExp() {
     }
   }
 
-  const ParserAtom* atom = this->compilationState_.parserAtoms
-                               .internChar16(cx_, chars.begin(), chars.length())
-                               .unwrapOr(nullptr);
+  const ParserAtom* atom = this->compilationState_.parserAtoms.internChar16(
+      cx_, chars.begin(), chars.length());
   if (!atom) {
     return nullptr;
   }
@@ -11430,9 +11483,6 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::primaryExpr(
     case TokenKind::False:
       return handler_.newBooleanLiteral(false, pos());
     case TokenKind::This: {
-      if (pc_->isFunctionBox()) {
-        pc_->functionBox()->usesThis = true;
-      }
       NameNodeType thisName = null();
       if (pc_->sc()->hasFunctionThisBinding()) {
         thisName = newThisName();

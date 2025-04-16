@@ -14,6 +14,7 @@
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
 #include "nsCycleCollectionParticipant.h"
+#include "nsRefPtrHashtable.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/layers/APZPublicUtils.h"
 #include "Units.h"
@@ -37,6 +38,7 @@ class EnterLeaveDispatcher;
 class EventStates;
 class IMEContentObserver;
 class ScrollbarsForWheel;
+class TextEditor;
 class WheelTransaction;
 
 namespace dom {
@@ -566,9 +568,9 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
    *                    false.  I.e., when this returns true and aExecute
    *                    is true, a target is executed or focused.
    */
-  bool LookForAccessKeyAndExecute(nsTArray<uint32_t>& aAccessCharCodes,
-                                  bool aIsTrustedEvent, bool aIsRepeat,
-                                  bool aExecute);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY bool LookForAccessKeyAndExecute(
+      nsTArray<uint32_t>& aAccessCharCodes, bool aIsTrustedEvent,
+      bool aIsRepeat, bool aExecute);
 
   //---------------------------------------------
   // DocShell Focus Traversal Methods

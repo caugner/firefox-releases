@@ -28,7 +28,6 @@
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSScript.h"
-#include "vm/TypeInference.h"
 
 namespace js {
 
@@ -65,15 +64,6 @@ MOZ_MUST_USE bool IonCompileScriptForBaselineOSR(JSContext* cx,
 MethodStatus CanEnterIon(JSContext* cx, RunState& state);
 
 MethodStatus Recompile(JSContext* cx, HandleScript script, bool force);
-
-// Walk the stack and invalidate active Ion frames for the invalid scripts.
-void Invalidate(TypeZone& types, JSFreeOp* fop,
-                const RecompileInfoVector& invalid, bool resetUses = true,
-                bool cancelOffThread = true);
-void Invalidate(JSContext* cx, const RecompileInfoVector& invalid,
-                bool resetUses = true, bool cancelOffThread = true);
-void Invalidate(JSContext* cx, JSScript* script, bool resetUses = true,
-                bool cancelOffThread = true);
 
 class MIRGenerator;
 class LIRGraph;
@@ -122,10 +112,10 @@ inline size_t NumLocalsAndArgs(JSScript* script) {
 // backend compilation.
 class MOZ_RAII AutoEnterIonBackend {
  public:
-  explicit AutoEnterIonBackend(bool safeForMinorGC) {
+  AutoEnterIonBackend() {
 #ifdef DEBUG
     JitContext* jcx = GetJitContext();
-    jcx->enterIonBackend(safeForMinorGC);
+    jcx->enterIonBackend();
 #endif
   }
 
@@ -148,14 +138,8 @@ inline bool IsIonEnabled(JSContext* cx) {
     return false;
   }
 
-  // If TI is disabled, Ion can only be used if WarpBuilder is enabled.
-  if (MOZ_LIKELY(IsTypeInferenceEnabled())) {
-    MOZ_ASSERT(!JitOptions.warpBuilder,
-               "Shouldn't enable WarpBuilder without disabling TI!");
-  } else {
-    if (!JitOptions.warpBuilder) {
-      return false;
-    }
+  if (!JitOptions.warpBuilder) {
+    return false;
   }
 
   if (MOZ_LIKELY(JitOptions.ion)) {

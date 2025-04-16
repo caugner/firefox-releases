@@ -245,10 +245,10 @@ NS_IMPL_ISUPPORTS(WebSocketImpl, nsIInterfaceRequestor, nsIWebSocketListener,
                   nsIObserver, nsISupportsWeakReference, nsIRequest,
                   nsIEventTarget, nsIWebSocketImpl)
 
-class CallDispatchConnectionCloseEvents final : public CancelableRunnable {
+class CallDispatchConnectionCloseEvents final : public DiscardableRunnable {
  public:
   explicit CallDispatchConnectionCloseEvents(WebSocketImpl* aWebSocketImpl)
-      : CancelableRunnable("dom::CallDispatchConnectionCloseEvents"),
+      : DiscardableRunnable("dom::CallDispatchConnectionCloseEvents"),
         mWebSocketImpl(aWebSocketImpl) {
     aWebSocketImpl->AssertIsOnTargetThread();
   }
@@ -911,6 +911,11 @@ WebSocket::WebSocket(nsIGlobalObject* aGlobal)
 }
 
 WebSocket::~WebSocket() = default;
+
+mozilla::Maybe<EventCallbackDebuggerNotificationType>
+WebSocket::GetDebuggerNotificationType() const {
+  return mozilla::Some(EventCallbackDebuggerNotificationType::Websocket);
+}
 
 JSObject* WebSocket::WrapObject(JSContext* cx,
                                 JS::Handle<JSObject*> aGivenProto) {

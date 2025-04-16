@@ -15,7 +15,6 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/RangedPtr.h"
-#include "mozilla/ScopeExit.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"
@@ -26,6 +25,7 @@
 
 #include "jsfriendapi.h"
 
+#include "builtin/Boolean.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/ParserAtom.h"
 #include "gc/Marking.h"

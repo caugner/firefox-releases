@@ -8,13 +8,13 @@
 #define mozilla_dom_BrowsingContext_h
 
 #include "GVAutoplayRequestUtils.h"
+#include "mozilla/ErrorResult.h"
 #include "mozilla/HalScreenConfiguration.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Span.h"
 #include "mozilla/Tuple.h"
-#include "mozilla/WeakPtr.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/FeaturePolicy.h"
 #include "mozilla/dom/LocationBase.h"
@@ -74,6 +74,13 @@ class WindowContext;
 struct WindowPostMessageOptions;
 class WindowProxyHolder;
 
+enum class ExplicitActiveStatus : uint8_t {
+  None,
+  Active,
+  Inactive,
+  EndGuard_,
+};
+
 // Fields are, by default, settable by any process and readable by any process.
 // Racy sets will be resolved as-if they occurred in the order the parent
 // process finds out about them.
@@ -89,13 +96,17 @@ class WindowProxyHolder;
 #define MOZ_EACH_BC_FIELD(FIELD)                                             \
   FIELD(Name, nsString)                                                      \
   FIELD(Closed, bool)                                                        \
-  FIELD(IsActive, bool)                                                      \
+  FIELD(ExplicitActive, ExplicitActiveStatus)                                \
   /* Top()-only. If true, new-playing media will be suspended when in an     \
    * inactive browsing context. */                                           \
   FIELD(SuspendMediaWhenInactive, bool)                                      \
   /* If true, we're within the nested event loop in window.open, and this    \
    * context may not be used as the target of a load */                      \
   FIELD(PendingInitialization, bool)                                         \
+  /* Indicates if the browser window is active for the purpose of the        \
+   * :-moz-window-inactive pseudoclass. Only read from or set on the         \
+   * top BrowsingContext. */                                                 \
+  FIELD(IsActiveBrowserWindowInternal, bool)                                 \
   FIELD(OpenerPolicy, nsILoadInfo::CrossOriginOpenerPolicy)                  \
   /* Current opener for the BrowsingContext. Weak reference */               \
   FIELD(OpenerId, uint64_t)                                                  \
@@ -105,15 +116,13 @@ class WindowProxyHolder;
   FIELD(CurrentInnerWindowId, uint64_t)                                      \
   FIELD(HadOriginalOpener, bool)                                             \
   FIELD(IsPopupSpam, bool)                                                   \
-  /* Controls whether the BrowsingContext is currently considered to be      \
-   * activated by a gesture */                                               \
-  FIELD(UserActivationState, UserActivation::State)                          \
   /* Hold the audio muted state and should be used on top level browsing     \
    * contexts only */                                                        \
   FIELD(Muted, bool)                                                         \
   FIELD(FeaturePolicy, RefPtr<mozilla::dom::FeaturePolicy>)                  \
   /* See nsSandboxFlags.h for the possible flags. */                         \
   FIELD(SandboxFlags, uint32_t)                                              \
+  FIELD(InitialSandboxFlags, uint32_t)                                       \
   /* A non-zero unique identifier for the browser element that is hosting    \
    * this                                                                    \
    * BrowsingContext tree. Every BrowsingContext in the element's tree will  \
@@ -287,6 +296,9 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   Document* GetDocument() const {
     return mDocShell ? mDocShell->GetDocument() : nullptr;
   }
+  Document* GetExtantDocument() const {
+    return mDocShell ? mDocShell->GetExtantDocument() : nullptr;
+  }
 
   // This cleans up remote outer window proxies that might have been left behind
   // when the browsing context went from being remote to local. It does this by
@@ -340,11 +352,11 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   void DisplayLoadError(const nsAString& aURI);
 
   // Determine if the current BrowsingContext is in the BFCache.
-  bool IsCached();
+  bool IsCached() const;
 
   // Check that this browsing context is targetable for navigations (i.e. that
   // it is neither closed, cached, nor discarded).
-  bool IsTargetable();
+  bool IsTargetable() const;
 
   // True if this browsing context is inactive and is able to be suspended.
   bool InactiveForSuspend() const;
@@ -463,7 +475,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool WatchedByDevTools();
   void SetWatchedByDevTools(bool aWatchedByDevTools, ErrorResult& aRv);
 
-  mozilla::dom::TouchEventsOverride TouchEventsOverride();
+  mozilla::dom::TouchEventsOverride TouchEventsOverride() const;
   void SetTouchEventsOverride(
       const enum TouchEventsOverride aTouchEventsOverride, ErrorResult& aRv);
   MOZ_MUST_USE nsresult
@@ -478,11 +490,22 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return GetSuspendMediaWhenInactive();
   }
 
+  bool IsActive() const;
+  void SetIsActive(bool aIsActive, mozilla::ErrorResult& aRv) {
+    SetExplicitActive(aIsActive ? ExplicitActiveStatus::Active
+                                : ExplicitActiveStatus::Inactive,
+                      aRv);
+  }
+
   bool AuthorStyleDisabledDefault() const {
     return GetAuthorStyleDisabledDefault();
   }
 
   bool UseGlobalHistory() const { return GetUseGlobalHistory(); }
+
+  bool GetIsActiveBrowserWindow();
+
+  void SetIsActiveBrowserWindow(bool aActive);
 
   uint64_t BrowserId() const { return GetBrowserId(); }
 
@@ -733,6 +756,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   GetTriggeringAndInheritPrincipalsForCurrentLoad();
 
   void HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
+                 bool aRequireUserInteraction,
                  std::function<void(int32_t&&)>&& aResolver);
 
   bool ShouldUpdateSessionHistory(uint32_t aLoadType);
@@ -849,7 +873,11 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
               ContentParent* aSource);
   void DidSet(FieldIndex<IDX_DisplayMode>, enum DisplayMode aOldValue);
 
-  void DidSet(FieldIndex<IDX_IsActive>, bool aOldValue);
+  void DidSet(FieldIndex<IDX_ExplicitActive>, ExplicitActiveStatus aOldValue);
+
+  bool CanSet(FieldIndex<IDX_IsActiveBrowserWindowInternal>, const bool& aValue,
+              ContentParent* aSource);
+  void DidSet(FieldIndex<IDX_IsActiveBrowserWindowInternal>, bool aOldValue);
 
   // Ensure that we only set the flag on the top level browsingContext.
   // And then, we do a pre-order walk in the tree to refresh the

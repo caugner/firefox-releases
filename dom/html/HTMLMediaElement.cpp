@@ -56,6 +56,7 @@
 #include "mozilla/NotNull.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/SVGObserverUtils.h"
@@ -100,10 +101,12 @@
 #include "nsIDocShell.h"
 #include "mozilla/dom/Document.h"
 #include "nsIFrame.h"
+#include "nsIHttpChannel.h"
 #include "nsIObserverService.h"
 #include "nsIRequest.h"
 #include "nsIScriptError.h"
 #include "nsISupportsPrimitives.h"
+#include "nsIThreadRetargetableStreamListener.h"
 #include "nsITimer.h"
 #include "nsJSUtils.h"
 #include "nsLayoutUtils.h"
@@ -4348,12 +4351,7 @@ void HTMLMediaElement::DispatchEventsWhenPlayWasNotAllowed() {
   if (StaticPrefs::media_autoplay_block_event_enabled()) {
     DispatchAsyncEvent(u"blocked"_ns);
   }
-#if defined(MOZ_WIDGET_ANDROID)
-  RefPtr<AsyncEventDispatcher> asyncDispatcher =
-      new AsyncEventDispatcher(this, u"MozAutoplayMediaBlocked"_ns,
-                               CanBubble::eYes, ChromeOnlyDispatch::eYes);
-  asyncDispatcher->PostDOMEvent();
-#endif
+  DispatchBlockEventForVideoControl();
   MaybeNotifyAutoplayBlocked();
   ReportToConsole(nsIScriptError::warningFlag, "BlockAutoplayError");
   mHasEverBeenBlockedForAutoplay = true;
@@ -4366,6 +4364,20 @@ void HTMLMediaElement::MaybeNotifyAutoplayBlocked() {
       new AsyncEventDispatcher(OwnerDoc(), u"GloballyAutoplayBlocked"_ns,
                                CanBubble::eYes, ChromeOnlyDispatch::eYes);
   asyncDispatcher->PostDOMEvent();
+}
+
+void HTMLMediaElement::DispatchBlockEventForVideoControl() {
+#if defined(MOZ_WIDGET_ANDROID)
+  nsVideoFrame* videoFrame = do_QueryFrame(GetPrimaryFrame());
+  if (!videoFrame || !videoFrame->GetVideoControls()) {
+    return;
+  }
+
+  RefPtr<AsyncEventDispatcher> asyncDispatcher = new AsyncEventDispatcher(
+      videoFrame->GetVideoControls(), u"MozNoControlsBlockedVideo"_ns,
+      CanBubble::eYes);
+  asyncDispatcher->PostDOMEvent();
+#endif
 }
 
 void HTMLMediaElement::PlayInternal(bool aHandlingUserInput) {
@@ -4923,6 +4935,7 @@ void HTMLMediaElement::UnbindFromTree(bool aNullParent) {
                              [self = RefPtr<HTMLMediaElement>(this)]() {
                                if (!self->IsInComposedDoc()) {
                                  self->PauseInternal();
+                                 self->mMediaControlKeyListener->StopIfNeeded();
                                }
                              });
   RunInStableState(task);
@@ -6513,7 +6526,7 @@ bool HTMLMediaElement::IsBeingDestroyed() {
 
 bool HTMLMediaElement::ShouldBeSuspendedByInactiveDocShell() const {
   BrowsingContext* bc = OwnerDoc()->GetBrowsingContext();
-  return bc && !bc->GetIsActive() && bc->Top()->GetSuspendMediaWhenInactive();
+  return bc && !bc->IsActive() && bc->Top()->GetSuspendMediaWhenInactive();
 }
 
 void HTMLMediaElement::NotifyOwnerDocumentActivityChanged() {
@@ -7252,10 +7265,9 @@ void HTMLMediaElement::SetDecoder(MediaDecoder* aDecoder) {
 }
 
 float HTMLMediaElement::ComputedVolume() const {
-  return mMuted
-             ? 0.0f
-             : mAudioChannelWrapper ? mAudioChannelWrapper->GetEffectiveVolume()
-                                    : mVolume;
+  return mMuted                 ? 0.0f
+         : mAudioChannelWrapper ? mAudioChannelWrapper->GetEffectiveVolume()
+                                : mVolume;
 }
 
 bool HTMLMediaElement::ComputedMuted() const {

@@ -9,6 +9,7 @@ const {
   EVALUATE_EXPRESSION,
   SET_TERMINAL_INPUT,
   SET_TERMINAL_EAGER_RESULT,
+  EDITOR_PRETTY_PRINT,
 } = require("devtools/client/webconsole/constants");
 const { getAllPrefs } = require("devtools/client/webconsole/selectors/prefs");
 const {
@@ -110,13 +111,7 @@ function evaluateExpression(expression, from = "input") {
       })
       .then(onSettled, onSettled);
 
-    // Before Firefox 77, the response did not have a `startTime` property, so we're using
-    // the `resultID`, which does contain the server time at which the evaluation started
-    // (its shape is `${timestamp}-${someId}`).
-    const serverConsoleCommandTimestamp =
-      response.startTime ||
-      (response.resultID && Number(response.resultID.replace(/\-\d*$/, ""))) ||
-      null;
+    const serverConsoleCommandTimestamp = response.startTime;
 
     // In case of remote debugging, it might happen that the debuggee page does not have
     // the exact same clock time as the client. This could cause some ordering issues
@@ -364,10 +359,17 @@ function getEagerEvaluationResult(response) {
   return result;
 }
 
+function prettyPrintEditor() {
+  return {
+    type: EDITOR_PRETTY_PRINT,
+  };
+}
+
 module.exports = {
   evaluateExpression,
   focusInput,
   setInputValue,
   terminalInputChanged,
   updateInstantEvaluationResultForCurrentExpression,
+  prettyPrintEditor,
 };

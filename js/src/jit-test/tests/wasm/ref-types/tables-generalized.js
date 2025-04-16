@@ -170,7 +170,7 @@ assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
        (func (result i32)
          (call_indirect (type $t) (i32.const 37))))`)),
                    WebAssembly.CompileError,
-                   /(indirect calls must go through a table of 'funcref')|(type mismatch)/);
+                   /(indirect calls must go through a table of 'funcref')|(indirect calls must go through a table of funcref)/);
 
 ///////////////////////////////////////////////////////////////////////////
 //
@@ -276,7 +276,7 @@ assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
            (func (export "set_ref") (param i32) (param externref)
              (table.set (local.get 0) (local.get 1))))`)),
                    WebAssembly.CompileError,
-                   /(type mismatch: expression has type externref but expected funcref)|(type mismatch: expected Some\(FuncRef\), found Some\(ExternRef\))/);
+                   /(type mismatch: expression has type externref but expected funcref)|(type mismatch: expected funcref, found externref)/);
 
 // table.set with non-i32 index - fails validation
 
@@ -360,7 +360,7 @@ assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
         (func (export "grow2") (param i32) (param externref) (result i32)
          (table.grow (local.get 1) (local.get 0))))`)),
                    WebAssembly.CompileError,
-                   /(type mismatch: expression has type externref but expected funcref)|(type mismatch: expected Some\(FuncRef\), found Some\(ExternRef\))/);
+                   /(type mismatch: expression has type externref but expected funcref)|(type mismatch: expected funcref, found externref)/);
 
 // Special case for private tables without a maximum
 

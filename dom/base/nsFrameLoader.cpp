@@ -9,6 +9,8 @@
  * handling of loads in it, recursion-checking).
  */
 
+#include "nsFrameLoader.h"
+
 #include "base/basictypes.h"
 
 #include "prenv.h"
@@ -30,7 +32,6 @@
 #include "nsUnicharUtils.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsFrameLoader.h"
 #include "nsFrameLoaderOwner.h"
 #include "nsIFrame.h"
 #include "nsIScrollableFrame.h"
@@ -53,6 +54,7 @@
 #include "nsIURI.h"
 #include "nsIXULRuntime.h"
 #include "nsNetUtil.h"
+#include "nsFocusManager.h"
 
 #include "nsGkAtoms.h"
 #include "nsNameSpaceManager.h"
@@ -76,6 +78,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/PresShellInlines.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/ChromeMessageSender.h"
@@ -891,15 +894,6 @@ static bool AllDescendantsOfType(BrowsingContext* aParent,
   return true;
 }
 
-static bool ParentWindowIsActive(Document* aDoc) {
-  nsCOMPtr<nsPIWindowRoot> root = nsContentUtils::GetWindowRoot(aDoc);
-  if (root) {
-    nsPIDOMWindowOuter* rootWin = root->GetWindow();
-    return rootWin && rootWin->IsActive();
-  }
-  return false;
-}
-
 void nsFrameLoader::MaybeShowFrame() {
   nsIFrame* frame = GetPrimaryFrameOfOwningContent();
   if (frame) {
@@ -1089,15 +1083,20 @@ bool nsFrameLoader::ShowRemoteFrame(const ScreenIntSize& size,
       return false;
     }
 
+    if (BrowserHost* bh = mRemoteBrowser->AsBrowserHost()) {
+      RefPtr<BrowsingContext> bc = bh->GetBrowsingContext()->Top();
+
+      // Set to the current activation of the window.
+      bc->SetIsActiveBrowserWindow(bc->GetIsActiveBrowserWindow());
+    }
+
     nsCOMPtr<nsISupports> container = mOwnerContent->OwnerDoc()->GetContainer();
     nsCOMPtr<nsIBaseWindow> baseWindow = do_QueryInterface(container);
     nsCOMPtr<nsIWidget> mainWidget;
     baseWindow->GetMainWidget(getter_AddRefs(mainWidget));
     nsSizeMode sizeMode =
         mainWidget ? mainWidget->SizeMode() : nsSizeMode_Normal;
-    OwnerShowInfo info(size, GetScrollbarPreference(mOwnerContent),
-                       ParentWindowIsActive(mOwnerContent->OwnerDoc()),
-                       sizeMode);
+    OwnerShowInfo info(size, GetScrollbarPreference(mOwnerContent), sizeMode);
     if (!mRemoteBrowser->Show(info)) {
       return false;
     }
@@ -1318,10 +1317,14 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
   otherBrowserParent->SetOwnerElement(ourContent);
 
   // Update window activation state for the swapped owner content.
-  Unused << browserParent->SendParentActivated(
-      ParentWindowIsActive(otherContent->OwnerDoc()));
-  Unused << otherBrowserParent->SendParentActivated(
-      ParentWindowIsActive(ourContent->OwnerDoc()));
+  bool ourActive = otherBc->GetIsActiveBrowserWindow();
+  bool otherActive = ourBc->GetIsActiveBrowserWindow();
+  if (ourBc->IsTop()) {
+    ourBc->SetIsActiveBrowserWindow(otherActive);
+  }
+  if (otherBc->IsTop()) {
+    otherBc->SetIsActiveBrowserWindow(ourActive);
+  }
 
   MaybeUpdatePrimaryBrowserParent(eBrowserParentChanged);
   aOther->MaybeUpdatePrimaryBrowserParent(eBrowserParentChanged);
@@ -1854,7 +1857,7 @@ void nsFrameLoader::StartDestroy(bool aForProcessSwitch) {
     if (aForProcessSwitch) {
       // This should suspend all future progress events from this BrowserParent,
       // since we're going to tear it down after stopping the docshell in it.
-      browserParent->SuspendProgressEventsUntilAfterNextLoadStarts();
+      browserParent->SuspendProgressEvents();
     }
   }
 
@@ -2063,6 +2066,8 @@ bool nsFrameLoader::OwnerIsMozBrowserFrame() {
   return browserFrame ? browserFrame->GetReallyIsBrowser() : false;
 }
 
+nsIContent* nsFrameLoader::GetParentObject() const { return mOwnerContent; }
+
 void nsFrameLoader::AssertSafeToInit() {
   MOZ_DIAGNOSTIC_ASSERT(nsContentUtils::IsSafeToRunScript() ||
                             mOwnerContent->OwnerDoc()->IsStaticDocument(),
@@ -2211,6 +2216,8 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
     sandboxFlags = iframe->GetSandboxFlags();
   }
   ApplySandboxFlags(sandboxFlags);
+  MOZ_ALWAYS_SUCCEEDS(mPendingBrowsingContext->SetInitialSandboxFlags(
+      mPendingBrowsingContext->GetSandboxFlags()));
 
   if (OwnerIsMozBrowserFrame()) {
     // For inproc frames, set the docshell properties.
@@ -2666,6 +2673,14 @@ bool nsFrameLoader::TryRemoteBrowser() {
   return false;
 }
 
+nsIFrame* nsFrameLoader::GetPrimaryFrameOfOwningContent() const {
+  return mOwnerContent ? mOwnerContent->GetPrimaryFrame() : nullptr;
+}
+
+Document* nsFrameLoader::GetOwnerDoc() const {
+  return mOwnerContent ? mOwnerContent->OwnerDoc() : nullptr;
+}
+
 bool nsFrameLoader::IsRemoteFrame() {
   if (mIsRemoteFrame) {
     MOZ_ASSERT(!GetDocShell(), "Found a remote frame with a DocShell");
@@ -2713,7 +2728,7 @@ void nsFrameLoader::ActivateRemoteFrame(ErrorResult& aRv) {
     return;
   }
 
-  browserParent->Activate();
+  browserParent->Activate(nsFocusManager::GenerateFocusActionId());
 }
 
 void nsFrameLoader::DeactivateRemoteFrame(ErrorResult& aRv) {
@@ -2723,7 +2738,7 @@ void nsFrameLoader::DeactivateRemoteFrame(ErrorResult& aRv) {
     return;
   }
 
-  browserParent->Deactivate(false);
+  browserParent->Deactivate(false, nsFocusManager::GenerateFocusActionId());
 }
 
 void nsFrameLoader::SendCrossProcessMouseEvent(const nsAString& aType, float aX,
@@ -3225,6 +3240,8 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
       info.mSheetCount = aInfo.sheetCount();
       info.mTotalPageCount = aInfo.totalPageCount();
       info.mHasSelection = aInfo.hasSelection();
+      info.mHasSelfSelection = aInfo.hasSelfSelection();
+      info.mIsEmpty = aInfo.isEmpty();
       promise->MaybeResolve(info);
     } else {
       promise->MaybeRejectWithUnknownError("Print preview failed");
@@ -3474,6 +3491,10 @@ void nsFrameLoader::StartPersistence(
   if (!context->GetDocShell() && XRE_IsParentProcess()) {
     CanonicalBrowsingContext* canonical =
         CanonicalBrowsingContext::Cast(context);
+    if (!canonical->GetCurrentWindowGlobal()) {
+      aRecv->OnError(NS_ERROR_NO_CONTENT);
+      return;
+    }
     RefPtr<BrowserParent> browserParent =
         canonical->GetCurrentWindowGlobal()->GetBrowserParent();
     browserParent->StartPersistence(canonical, aRecv, aRv);

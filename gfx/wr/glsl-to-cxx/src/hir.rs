@@ -2922,6 +2922,13 @@ pub fn ast_to_hir(state: &mut State, tu: &syntax::TranslationUnit) -> Translatio
     );
     declare_function(
         state,
+        "bvec3",
+        Some("make_bvec3"),
+        Type::new(BVec3),
+        vec![Type::new(Bool)],
+    );
+    declare_function(
+        state,
         "bvec4",
         Some("make_bvec4"),
         Type::new(BVec4),
@@ -3337,6 +3344,9 @@ pub fn ast_to_hir(state: &mut State, tu: &syntax::TranslationUnit) -> Translatio
     declare_function(state, "pow", None, Type::new(Vec3), vec![Type::new(Vec3)]);
     declare_function(state, "pow", None, Type::new(Float), vec![Type::new(Float)]);
     declare_function(state, "exp", None, Type::new(Float), vec![Type::new(Float)]);
+    declare_function(state, "exp2", None, Type::new(Float), vec![Type::new(Float)]);
+    declare_function(state, "log", None, Type::new(Float), vec![Type::new(Float)]);
+    declare_function(state, "log2", None, Type::new(Float), vec![Type::new(Float)]);
     declare_function(
         state,
         "inversesqrt",
@@ -3448,6 +3458,13 @@ pub fn ast_to_hir(state: &mut State, tu: &syntax::TranslationUnit) -> Translatio
         None,
         Type::new(Float),
         vec![Type::new(Float)],
+    );
+    declare_function(
+        state,
+        "fract",
+        None,
+        Type::new(Vec2),
+        vec![Type::new(Vec2)],
     );
     declare_function(state, "mod", None, Type::new(Vec2), vec![Type::new(Vec2)]);
     declare_function(state, "mod", None, Type::new(Float), vec![Type::new(Float)]);
@@ -3742,6 +3759,60 @@ pub fn ast_to_hir(state: &mut State, tu: &syntax::TranslationUnit) -> Translatio
             Type::new(Void),
             vec![Type::new(*s), Type::new(Vec2), Type::new(Vec4), Type::new(Bool),
                  Type::new(Int), Type::new(Vec2), Type::new(Int)],
+        );
+        declare_function(
+            state,
+            "swgl_commitTextureLinearYUV",
+            None,
+            Type::new(Void),
+            vec![Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(Int), Type::new(Int)],
+        );
+        declare_function(
+            state,
+            "swgl_commitTextureLinearYUV",
+            None,
+            Type::new(Void),
+            vec![Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(Int), Type::new(Int)],
+        );
+        declare_function(
+            state,
+            "swgl_commitTextureLinearYUV",
+            None,
+            Type::new(Void),
+            vec![Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(Int), Type::new(Int)],
+        );
+        declare_function(
+            state,
+            "swgl_commitTextureLinearColorYUV",
+            None,
+            Type::new(Void),
+            vec![Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(Int), Type::new(Int), Type::new(Float)],
+        );
+        declare_function(
+            state,
+            "swgl_commitTextureLinearColorYUV",
+            None,
+            Type::new(Void),
+            vec![Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(Int), Type::new(Int), Type::new(Float)],
+        );
+        declare_function(
+            state,
+            "swgl_commitTextureLinearColorYUV",
+            None,
+            Type::new(Void),
+            vec![Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(*s), Type::new(Vec2), Type::new(Int),
+                 Type::new(Int), Type::new(Int), Type::new(Float)],
         );
     }
 

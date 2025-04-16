@@ -242,6 +242,9 @@ const shortcutHandlers = {
  *         The inspector we're watching.
  * @param  {iframe} frame
  *         An iframe in which the caller has kindly loaded markup.xhtml.
+ * @param  {XULWindow} controllerWindow
+ *         Will enable the undo/redo feature from devtools/client/shared/undo.
+ *         Should be a XUL window, will typically point to the toolbox window.
  */
 function MarkupView(inspector, frame, controllerWindow) {
   EventEmitter.decorate(this);
@@ -1404,22 +1407,8 @@ MarkupView.prototype = {
    */
   _onWalkerMutations: function(mutations) {
     for (const mutation of mutations) {
-      let type = mutation.type;
-      let target = mutation.target;
-
-      if (mutation.type === "documentUnload") {
-        // Backward compatibility for FF80 or older.
-        // The documentUnload mutation was removed in FF81 in favor of the
-        // root-node resource.
-
-        // Treat this as a childList change of the child (maybe the protocol
-        // should do this).
-        type = "childList";
-        target = mutation.targetParent;
-        if (!target) {
-          continue;
-        }
-      }
+      const type = mutation.type;
+      const target = mutation.target;
 
       const container = this.getContainer(target);
       if (!container) {

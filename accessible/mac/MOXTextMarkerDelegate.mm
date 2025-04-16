@@ -75,6 +75,10 @@ static nsDataHashtable<nsUint64HashKey, MOXTextMarkerDelegate*> sDelegates;
   mSelection = nil;
 }
 
+- (mozilla::a11y::GeckoTextMarkerRange)selection {
+  return mozilla::a11y::GeckoTextMarkerRange(mGeckoDocAccessible, mSelection);
+}
+
 - (id)moxStartTextMarker {
   GeckoTextMarker geckoTextPoint(mGeckoDocAccessible, 0);
   return geckoTextPoint.CreateAXTextMarker();
@@ -287,7 +291,12 @@ static nsDataHashtable<nsUint64HashKey, MOXTextMarkerDelegate*> sDelegates;
     return nil;
   }
 
-  return GetNativeFromGeckoAccessible(geckoTextMarker.Leaf());
+  AccessibleOrProxy leaf = geckoTextMarker.Leaf();
+  if (leaf.IsNull()) {
+    return nil;
+  }
+
+  return GetNativeFromGeckoAccessible(leaf);
 }
 
 - (id)moxTextMarkerRangeForUIElement:(id)element {

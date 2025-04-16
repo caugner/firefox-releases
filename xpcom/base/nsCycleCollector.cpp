@@ -166,6 +166,7 @@
 #include <utility>
 
 #include "GeckoProfiler.h"
+#include "js/SliceBudget.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoGlobalTimelineMarker.h"
 #include "mozilla/Likely.h"
@@ -1333,10 +1334,10 @@ struct CCGraphDescriber : public LinkedListElement<CCGraphDescriber> {
   Type mType;
 };
 
-class LogStringMessageAsync : public CancelableRunnable {
+class LogStringMessageAsync : public DiscardableRunnable {
  public:
   explicit LogStringMessageAsync(const nsAString& aMsg)
-      : mozilla::CancelableRunnable("LogStringMessageAsync"), mMsg(aMsg) {}
+      : mozilla::DiscardableRunnable("LogStringMessageAsync"), mMsg(aMsg) {}
 
   NS_IMETHOD Run() override {
     nsCOMPtr<nsIConsoleService> cs =

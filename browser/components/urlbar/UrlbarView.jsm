@@ -800,7 +800,10 @@ class UrlbarView {
    *     Names must be unique within a view template, but they don't need to be
    *     globally unique.  i.e., two different view templates can use the same
    *     names, and other DOM elements can use the same names in their IDs and
-   *     classes.
+   *     classes.  The name also suffixes the dynamic element's ID: an element
+   *     with name `data` will get the ID `urlbarView-row-{unique number}-data`.
+   *     If there is no name provided for the root element, the root element
+   *     will not get an ID.
    *   {string} tag
    *     The tag name of the object.  It is required for all objects in the
    *     structure except the root object and declares the kind of element that
@@ -808,7 +811,9 @@ class UrlbarView {
    *   {object} [attributes]
    *     An optional mapping from attribute names to values.  For each
    *     name-value pair, an attribute is added to the element created for the
-   *     object.
+   *     object. The `id` attribute is reserved and cannot be set by the
+   *     provider. Element IDs are passed back to the provider in getViewUpdate
+   *     if they are needed.
    *   {array} [children]
    *     An optional list of children.  Each item in the array must be an object
    *     as described here.  For each item, a child element as described by the
@@ -1106,27 +1111,41 @@ class UrlbarView {
   _createRowContentForDynamicType(item, result) {
     let { dynamicType } = result.payload;
     let viewTemplate = UrlbarView.dynamicViewTemplatesByName.get(dynamicType);
-    this._buildViewForDynamicType(dynamicType, item._content, viewTemplate);
+    this._buildViewForDynamicType(
+      dynamicType,
+      item._content,
+      item._elements,
+      viewTemplate
+    );
   }
 
-  _buildViewForDynamicType(type, parentNode, template) {
+  _buildViewForDynamicType(type, parentNode, elementsByName, template) {
     // Add classes to parentNode's classList.
     for (let className of template.classList || []) {
       parentNode.classList.add(className);
     }
     // Set attributes on parentNode.
     for (let [name, value] of Object.entries(template.attributes || {})) {
+      if (name == "id") {
+        // We do not allow dynamic results to set IDs for their Nodes. IDs are
+        // managed by the view to ensure they are unique.
+        Cu.reportError(
+          "Dynamic results are prohibited from setting their own IDs."
+        );
+        continue;
+      }
       parentNode.setAttribute(name, value);
     }
     if (template.name) {
       parentNode.setAttribute("name", template.name);
+      elementsByName.set(template.name, parentNode);
     }
     // Recurse into children.
     for (let childTemplate of template.children || []) {
       let child = this._createElement(childTemplate.tag);
       child.classList.add(`urlbarView-dynamic-${type}-${childTemplate.name}`);
       parentNode.appendChild(child);
-      this._buildViewForDynamicType(type, child, childTemplate);
+      this._buildViewForDynamicType(type, child, elementsByName, childTemplate);
     }
   }
 
@@ -1372,12 +1391,14 @@ class UrlbarView {
     if (actionSetter) {
       actionSetter();
       item._originalActionSetter = actionSetter;
+      item.setAttribute("has-action", "true");
     } else {
       item._originalActionSetter = () => {
         action.removeAttribute("data-l10n-id");
         action.textContent = "";
       };
       item._originalActionSetter();
+      item.removeAttribute("has-action");
     }
 
     if (!title.hasAttribute("isurl")) {
@@ -1385,8 +1406,6 @@ class UrlbarView {
     } else {
       title.removeAttribute("dir");
     }
-
-    item._elements.get("titleSeparator").hidden = !actionSetter && !setURL;
   }
 
   /**
@@ -1476,16 +1495,47 @@ class UrlbarView {
   async _updateRowForDynamicType(item, result) {
     item.setAttribute("dynamicType", result.payload.dynamicType);
 
+    let idsByName = new Map();
+    for (let [name, node] of item._elements) {
+      node.id = `${item.id}-${name}`;
+      idsByName.set(name, node.id);
+    }
+
+    // First, apply highlighting. We do this before updating via getViewUpdate
+    // so the dynamic provider can override the highlighting by setting the
+    // textContent of the highlighted node, if it wishes.
+    for (let [payloadName, highlights] of Object.entries(
+      result.payloadHighlights
+    )) {
+      if (!highlights.length) {
+        continue;
+      }
+      // Highlighting only works if the dynamic element name is the same as the
+      // highlighted payload property name.
+      let nodeToHighlight = item.querySelector(`#${item.id}-${payloadName}`);
+      this._addTextContentWithHighlights(
+        nodeToHighlight,
+        result.payload[payloadName],
+        highlights
+      );
+    }
+
     // Get the view update from the result's provider.
     let provider = UrlbarProvidersManager.getProvider(result.providerName);
-    let viewUpdate = await provider.getViewUpdate(result);
+    let viewUpdate = await provider.getViewUpdate(result, idsByName);
 
     // Update each node in the view by name.
     for (let [nodeName, update] of Object.entries(viewUpdate)) {
-      let node = item.querySelector(
-        `.urlbarView-dynamic-${result.payload.dynamicType}-${nodeName}`
-      );
+      let node = item.querySelector(`#${item.id}-${nodeName}`);
       for (let [attrName, value] of Object.entries(update.attributes || {})) {
+        if (attrName == "id") {
+          // We do not allow dynamic results to set IDs for their Nodes. IDs are
+          // managed by the view to ensure they are unique.
+          Cu.reportError(
+            "Dynamic results are prohibited from setting their own IDs."
+          );
+          continue;
+        }
         node.setAttribute(attrName, value);
       }
       for (let [styleName, value] of Object.entries(update.style || {})) {
@@ -1919,31 +1969,12 @@ class UrlbarView {
 
     let engine = this.oneOffSearchButtons.selectedButton?.engine;
     let source = this.oneOffSearchButtons.selectedButton?.source;
-    switch (source) {
-      case UrlbarUtils.RESULT_SOURCE.BOOKMARKS:
-        source = {
-          attribute: "bookmarks",
-          l10nId: "urlbar-result-action-search-bookmarks",
-          icon: "chrome://browser/skin/bookmark.svg",
-        };
-        break;
-      case UrlbarUtils.RESULT_SOURCE.HISTORY:
-        source = {
-          attribute: "history",
-          l10nId: "urlbar-result-action-search-history",
-          icon: "chrome://browser/skin/history.svg",
-        };
-        break;
-      case UrlbarUtils.RESULT_SOURCE.TABS:
-        source = {
-          attribute: "tabs",
-          l10nId: "urlbar-result-action-search-tabs",
-          icon: "chrome://browser/skin/tab.svg",
-        };
-        break;
-      default:
-        source = null;
-        break;
+
+    let localSearchMode;
+    if (source) {
+      localSearchMode = UrlbarUtils.LOCAL_SEARCH_MODES.find(
+        m => m.source == source
+      );
     }
 
     for (let item of this._rows.children) {
@@ -1975,7 +2006,7 @@ class UrlbarView {
         this.oneOffsRefresh &&
         result.heuristic &&
         !engine &&
-        !source &&
+        !localSearchMode &&
         this.input.searchMode &&
         !this.input.searchMode.isPreview
       ) {
@@ -1988,7 +2019,11 @@ class UrlbarView {
 
       // If a one-off button is the only selection, force the heuristic result
       // to show its action text, so the engine name is visible.
-      if (result.heuristic && !this.selectedElement && (source || engine)) {
+      if (
+        result.heuristic &&
+        !this.selectedElement &&
+        (localSearchMode || engine)
+      ) {
         item.setAttribute("show-action-text", "true");
       } else {
         item.removeAttribute("show-action-text");
@@ -2017,26 +2052,35 @@ class UrlbarView {
         continue;
       }
 
-      // Update heuristic URL result titles to reflect the search string. This
-      // means we restyle a URL result to look like a search result. We override
-      // result-picking behaviour in UrlbarInput.pickResult.
-      if (
-        this.oneOffsRefresh &&
-        result.heuristic &&
-        result.type == UrlbarUtils.RESULT_TYPE.URL
-      ) {
+      // If the result is the heuristic and a one-off is selected (i.e.,
+      // localSearchMode || engine), then restyle it to look like a search
+      // result; otherwise, remove such styling. For restyled results, we
+      // override the usual result-picking behaviour in UrlbarInput.pickResult.
+      if (this.oneOffsRefresh && result.heuristic) {
         title.textContent =
-          source || engine
+          localSearchMode || engine
             ? this._queryContext.searchString
-            : result.payload.title;
+            : result.title;
+
+        // Set the restyled-search attribute so the action text and title
+        // separator are shown or hidden via CSS as appropriate.
+        if (localSearchMode || engine) {
+          item.setAttribute("restyled-search", "true");
+        } else {
+          item.removeAttribute("restyled-search");
+        }
       }
 
       // Update result action text.
-      if (source) {
+      if (localSearchMode) {
         // Update the result action text for a local one-off.
-        this.document.l10n.setAttributes(action, source.l10nId);
+        let name = UrlbarUtils.getResultSourceName(localSearchMode.source);
+        this.document.l10n.setAttributes(
+          action,
+          `urlbar-result-action-search-${name}`
+        );
         if (result.heuristic) {
-          item.setAttribute("source", source.attribute);
+          item.setAttribute("source", name);
         }
       } else if (engine && !result.payload.inPrivateWindow) {
         // Update the result action text for an engine one-off.
@@ -2060,12 +2104,8 @@ class UrlbarView {
       }
 
       // Update result favicons.
-      let iconOverride = source?.icon || engine?.iconURI?.spec;
-      if (
-        !iconOverride &&
-        (source || engine) &&
-        result.type == UrlbarUtils.RESULT_TYPE.URL
-      ) {
+      let iconOverride = localSearchMode?.icon || engine?.iconURI?.spec;
+      if (!iconOverride && (localSearchMode || engine)) {
         // For one-offs without an icon, do not allow restyled URL results to
         // use their own icons.
         iconOverride = UrlbarUtils.ICON.SEARCH_GLASS;

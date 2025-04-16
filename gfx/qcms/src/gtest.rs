@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod test {
     use crate::{
-        iccread::*, transform::*, transform_util::lut_inverse_interp16, QCMS_INTENT_DEFAULT,
-        QCMS_INTENT_PERCEPTUAL,
+        c_bindings::*, iccread::*, transform::*, transform_util::lut_inverse_interp16,
+        QCMS_INTENT_DEFAULT, QCMS_INTENT_PERCEPTUAL,
     };
     use libc::c_void;
     use std::ptr::null_mut;
@@ -160,7 +160,7 @@ mod test {
                 qcms_enable_avx()
             }
         };
-        let sRGB_profile = unsafe { crate::iccread::qcms_profile_sRGB() };
+        let sRGB_profile = crate::c_bindings::qcms_profile_sRGB();
 
         let mut Rec709Primaries = qcms_CIE_xyYTRIPLE {
             red: qcms_CIE_xyY {
@@ -179,7 +179,7 @@ mod test {
                 Y: 1.0f64,
             },
         };
-        let D65 = unsafe { qcms_white_point_sRGB() };
+        let D65 = qcms_white_point_sRGB();
         let other = unsafe { qcms_profile_create_rgb_with_gamma(D65, Rec709Primaries, 2.2) };
         unsafe { qcms_profile_precache_output_transform(&mut *other) };
 
@@ -212,7 +212,7 @@ mod test {
 
     #[test]
     fn gray_alpha() {
-        let sRGB_profile = unsafe { crate::iccread::qcms_profile_sRGB() };
+        let sRGB_profile = qcms_profile_sRGB();
         let other = unsafe { qcms_profile_create_gray_with_gamma(2.2) };
         unsafe { qcms_profile_precache_output_transform(&mut *other) };
 
@@ -299,7 +299,7 @@ mod test {
             unsafe { qcms_profile_from_memory(data.as_ptr() as *const c_void, data.len()) };
         assert_ne!(profile, std::ptr::null_mut());
 
-        let srgb_profile = unsafe { qcms_profile_sRGB() };
+        let srgb_profile = qcms_profile_sRGB();
         assert_ne!(srgb_profile, std::ptr::null_mut());
 
         unsafe { qcms_profile_precache_output_transform(&mut *srgb_profile) };
@@ -855,6 +855,43 @@ mod test {
             pt.out_profile = profile_from_path("lcms_samsung_syncmaster.icc");
             pt.TransformPrecachePlatformExt();
             pt.TearDown();
+        }
+    }
+
+    #[test]
+    fn v4_output() {
+        unsafe {
+            qcms_enable_iccv4();
+        }
+        let input = qcms_profile_sRGB();
+        // B2A0-ident.icc was created from the profile in bug 1679621
+        // manually edited using iccToXML/iccFromXML
+        let output = profile_from_path("B2A0-ident.icc");
+
+        let transform = unsafe {
+            qcms_transform_create(
+                &*input,
+                QCMS_DATA_RGB_8,
+                &*output,
+                QCMS_DATA_RGB_8,
+                QCMS_INTENT_PERCEPTUAL,
+            )
+        };
+        let src = [0u8, 60, 195];
+        let mut dst = [0u8, 0, 0];
+        unsafe {
+            qcms_transform_data(
+                transform,
+                src.as_ptr() as *const libc::c_void,
+                dst.as_mut_ptr() as *mut libc::c_void,
+                1,
+            );
+        }
+        assert_eq!(dst, [15, 16, 122]);
+        unsafe {
+            qcms_transform_release(transform);
+            qcms_profile_release(input);
+            qcms_profile_release(output);
         }
     }
 }

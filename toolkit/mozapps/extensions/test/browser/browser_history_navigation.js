@@ -75,11 +75,6 @@ function is_in_list(aManager, view, canGoBack, canGoForward) {
     "Should be on the right category"
   );
 
-  is(
-    get_current_view(aManager).id,
-    "html-view",
-    "the current view should be set to the HTML about:addons browser"
-  );
   doc = aManager.getHtmlBrowser().contentDocument;
   ok(
     doc.querySelector("addon-list"),
@@ -99,11 +94,6 @@ function is_in_detail(aManager, view, canGoBack, canGoForward) {
     "Should be on the right category"
   );
 
-  is(
-    get_current_view(aManager).id,
-    "html-view",
-    "the current view should be set to the HTML about:addons browser"
-  );
   doc = aManager.getHtmlBrowser().contentDocument;
   is(
     doc.querySelectorAll("addon-card").length,
@@ -115,11 +105,6 @@ function is_in_detail(aManager, view, canGoBack, canGoForward) {
 }
 
 function is_in_discovery(aManager, canGoBack, canGoForward) {
-  is(
-    get_current_view(aManager).id,
-    "html-view",
-    "the current view should be set to the HTML about:addons browser"
-  );
   const doc = aManager.getHtmlBrowser().contentDocument;
   ok(
     doc.querySelector("discovery-pane"),
@@ -199,7 +184,7 @@ add_task(async function test_navigate_between_webpage_and_aboutaddons() {
   ok(!gBrowser.canGoBack, "Should not be able to go back");
   ok(!gBrowser.canGoForward, "Should not be able to go forward");
 
-  await BrowserTestUtils.loadURI(gBrowser.selectedBrowser, "about:addons");
+  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, "about:addons");
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 
   let manager = await wait_for_manager_load(gBrowser.contentWindow);

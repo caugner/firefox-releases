@@ -33,6 +33,7 @@
 #include "mozilla/layers/CompositorBridgeParent.h"  // for CompositorBridgeParent, etc
 #include "mozilla/layers/LayerMetricsWrapper.h"
 #include "mozilla/layers/MatrixMessage.h"
+#include "mozilla/layers/UiCompositorControllerParent.h"
 #include "mozilla/layers/WebRenderScrollDataWrapper.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/mozalloc.h"     // for operator new
@@ -571,12 +572,8 @@ APZCTreeManager::UpdateHitTestingTreeImpl(const ScrollNode& aRoot,
                 *mAsyncZoomContainerSubtree),
         "If there is an async zoom container, all scroll nodes with root "
         "content scroll metadata should be inside it");
-    // TODO(bug 1534459): Avoid nested async zoom containers. They
-    // can't currently occur in production code, but that will become
-    // possible with either OOP iframes or desktop zooming (due to
-    // RDM), and will need to be guarded against.
-    // MOZ_ASSERT(!haveNestedAsyncZoomContainers,
-    //           "Should not have nested async zoom container");
+    MOZ_ASSERT(!haveNestedAsyncZoomContainers,
+               "Should not have nested async zoom container");
 
     // If we have perspective transforms deferred to children, do another
     // walk of the tree and actually apply them to the children.
@@ -708,22 +705,23 @@ void APZCTreeManager::UpdateHitTestingTree(
                            aPaintSequenceNumber);
 }
 
-void APZCTreeManager::SampleForWebRender(
-    wr::TransactionWrapper& aTxn, const SampleTime& aSampleTime,
-    const wr::WrPipelineIdEpochs* aEpochsBeingRendered) {
+void APZCTreeManager::SampleForWebRender(const Maybe<VsyncId>& aVsyncId,
+                                         wr::TransactionWrapper& aTxn,
+                                         const SampleTime& aSampleTime) {
   AssertOnSamplerThread();
   MutexAutoLock lock(mMapLock);
 
+  RefPtr<WebRenderBridgeParent> wrBridgeParent;
+  RefPtr<CompositorController> controller;
+  CompositorBridgeParent::CallWithIndirectShadowTree(
+      mRootLayersId, [&](LayerTreeState& aState) -> void {
+        controller = aState.GetCompositorController();
+        wrBridgeParent = aState.mWrBridge;
+      });
+
   bool activeAnimations = AdvanceAnimationsInternal(lock, aSampleTime);
-  if (activeAnimations) {
-    RefPtr<CompositorController> controller;
-    CompositorBridgeParent::CallWithIndirectShadowTree(
-        mRootLayersId, [&](LayerTreeState& aState) -> void {
-          controller = aState.GetCompositorController();
-        });
-    if (controller) {
-      controller->ScheduleRenderOnCompositorThread();
-    }
+  if (activeAnimations && controller) {
+    controller->ScheduleRenderOnCompositorThread();
   }
 
   nsTArray<wr::WrTransformProperty> transforms;
@@ -742,23 +740,8 @@ void APZCTreeManager::SampleForWebRender(
             .mTranslation;
 
     if (Maybe<CompositionPayload> payload = apzc->NotifyScrollSampling()) {
-      RefPtr<WebRenderBridgeParent> wrBridgeParent;
-      LayersId layersId = apzc->GetGuid().mLayersId;
-      CompositorBridgeParent::CallWithIndirectShadowTree(
-          layersId, [&](LayerTreeState& aState) -> void {
-            wrBridgeParent = aState.mWrBridge;
-          });
-
-      if (wrBridgeParent) {
-        wr::PipelineId pipelineId = wr::AsPipelineId(layersId);
-        for (size_t i = 0; i < aEpochsBeingRendered->Length(); i++) {
-          if ((*aEpochsBeingRendered)[i].pipeline_id == pipelineId) {
-            auto& epoch = (*aEpochsBeingRendered)[i].epoch;
-            wrBridgeParent->AddPendingScrollPayload(
-                *payload, std::make_pair(pipelineId, epoch));
-            break;
-          }
-        }
+      if (wrBridgeParent && aVsyncId) {
+        wrBridgeParent->AddPendingScrollPayload(*payload, *aVsyncId);
       }
     }
 

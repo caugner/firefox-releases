@@ -33,7 +33,17 @@ namespace js {
 namespace wasm {
 
 // The kind of a control-flow stack item.
-enum class LabelKind : uint8_t { Body, Block, Loop, Then, Else };
+enum class LabelKind : uint8_t {
+  Body,
+  Block,
+  Loop,
+  Then,
+  Else,
+#ifdef ENABLE_WASM_EXCEPTIONS
+  Try,
+  Catch,
+#endif
+};
 
 // The type of values on the operand stack during validation.  This is either a
 // ValType or the special type "Bottom".
@@ -176,6 +186,11 @@ enum class OpKind {
   VectorSelect,
   VectorShuffle,
 #  endif
+#  ifdef ENABLE_WASM_EXCEPTIONS
+  Catch,
+  Throw,
+  Try,
+#  endif
 };
 
 // Return the OpKind for a given Op. This is used for sanity-checking that
@@ -233,6 +248,14 @@ class ControlStackEntry {
     kind_ = LabelKind::Else;
     polymorphicBase_ = false;
   }
+
+#ifdef ENABLE_WASM_EXCEPTIONS
+  void switchToCatch() {
+    MOZ_ASSERT(kind() == LabelKind::Try);
+    kind_ = LabelKind::Catch;
+    polymorphicBase_ = false;
+  }
+#endif
 };
 
 template <typename Value>
@@ -416,6 +439,13 @@ class MOZ_STACK_CLASS OpIter : private Policy {
   MOZ_MUST_USE bool readBrTable(Uint32Vector* depths, uint32_t* defaultDepth,
                                 ResultType* defaultBranchValueType,
                                 ValueVector* branchValues, Value* index);
+#ifdef ENABLE_WASM_EXCEPTIONS
+  MOZ_MUST_USE bool readTry(ResultType* type);
+  MOZ_MUST_USE bool readCatch(LabelKind* kind, uint32_t* eventIndex,
+                              ResultType* paramType, ResultType* resultType,
+                              ValueVector* tryResults);
+  MOZ_MUST_USE bool readThrow(uint32_t* eventIndex, ValueVector* argValues);
+#endif
   MOZ_MUST_USE bool readUnreachable();
   MOZ_MUST_USE bool readDrop();
   MOZ_MUST_USE bool readUnary(ValType operandType, Value* input);
@@ -575,12 +605,7 @@ class MOZ_STACK_CLASS OpIter : private Policy {
 
 template <typename Policy>
 inline bool OpIter<Policy>::checkIsSubtypeOf(ValType actual, ValType expected) {
-  if (actual == expected) {
-    return true;
-  }
-
-  if (actual.isReference() && expected.isReference() &&
-      env_.isRefSubtypeOf(actual.refType(), expected.refType())) {
+  if (env_.types.isSubtypeOf(actual, expected)) {
     return true;
   }
 
@@ -924,11 +949,11 @@ inline bool OpIter<Policy>::readBlockType(BlockType* type) {
     return fail("invalid block type type index");
   }
 
-  if (!env_.types[x].isFuncType()) {
+  if (!env_.types.isFuncType(x)) {
     return fail("block type type index must be func type");
   }
 
-  *type = BlockType::Func(env_.types[x].funcType());
+  *type = BlockType::Func(env_.types.funcType(x));
 
   return true;
 #else
@@ -970,7 +995,7 @@ inline bool OpIter<Policy>::readFunctionStart(uint32_t funcIndex) {
   MOZ_ASSERT(valueStack_.empty());
   MOZ_ASSERT(controlStack_.empty());
   MOZ_ASSERT(op_.b0 == uint16_t(Op::Limit));
-  BlockType type = BlockType::FuncResults(*env_.funcTypes[funcIndex]);
+  BlockType type = BlockType::FuncResults(*env_.funcs[funcIndex].type);
   return pushControl(LabelKind::Body, type);
 }
 
@@ -1115,6 +1140,12 @@ inline bool OpIter<Policy>::readEnd(LabelKind* kind, ResultType* type,
     elseParamStack_.shrinkBy(nparams);
   }
 
+#ifdef ENABLE_WASM_EXCEPTIONS
+  if (block.kind() == LabelKind::Try) {
+    return fail("try without catch or unwind not allowed");
+  }
+#endif
+
   *kind = block.kind();
   return true;
 }
@@ -1249,6 +1280,74 @@ inline bool OpIter<Policy>::readBrTable(Uint32Vector* depths,
 }
 
 #undef UNKNOWN_ARITY
+
+#ifdef ENABLE_WASM_EXCEPTIONS
+template <typename Policy>
+inline bool OpIter<Policy>::readTry(ResultType* paramType) {
+  MOZ_ASSERT(Classify(op_) == OpKind::Try);
+
+  BlockType type;
+  if (!readBlockType(&type)) {
+    return false;
+  }
+
+  *paramType = type.params();
+  return pushControl(LabelKind::Try, type);
+}
+
+template <typename Policy>
+inline bool OpIter<Policy>::readCatch(LabelKind* kind, uint32_t* eventIndex,
+                                      ResultType* paramType,
+                                      ResultType* resultType,
+                                      ValueVector* tryResults) {
+  MOZ_ASSERT(Classify(op_) == OpKind::Catch);
+
+  if (!readVarU32(eventIndex)) {
+    return fail("expected event index");
+  }
+  if (*eventIndex >= env_.events.length()) {
+    return fail("event index out of range");
+  }
+
+  Control& block = controlStack_.back();
+  if (block.kind() != LabelKind::Try && block.kind() != LabelKind::Catch) {
+    return fail("catch can only be used within a try");
+  }
+  *kind = block.kind();
+  *paramType = block.type().params();
+
+  if (!checkStackAtEndOfBlock(resultType, tryResults)) {
+    return false;
+  }
+
+  valueStack_.shrinkTo(block.valueStackBase());
+  if (block.kind() == LabelKind::Try) {
+    block.switchToCatch();
+  }
+
+  return push(env_.events[*eventIndex].type);
+}
+
+template <typename Policy>
+inline bool OpIter<Policy>::readThrow(uint32_t* eventIndex,
+                                      ValueVector* argValues) {
+  MOZ_ASSERT(Classify(op_) == OpKind::Throw);
+
+  if (!readVarU32(eventIndex)) {
+    return fail("expected event index");
+  }
+  if (*eventIndex >= env_.events.length()) {
+    return fail("event index out of range");
+  }
+
+  if (!popWithType(env_.events[*eventIndex].type, argValues)) {
+    return false;
+  }
+
+  afterUnconditionalBranch();
+  return true;
+}
+#endif
 
 template <typename Policy>
 inline bool OpIter<Policy>::readUnreachable() {
@@ -1730,7 +1829,7 @@ inline bool OpIter<Policy>::readRefFunc(uint32_t* funcTypeIndex) {
   if (!readVarU32(funcTypeIndex)) {
     return fail("unable to read function index");
   }
-  if (*funcTypeIndex >= env_.funcTypes.length()) {
+  if (*funcTypeIndex >= env_.funcs.length()) {
     return fail("function index out of range");
   }
   if (!env_.validForRefFunc.getBit(*funcTypeIndex)) {
@@ -1854,11 +1953,11 @@ inline bool OpIter<Policy>::readCall(uint32_t* funcTypeIndex,
     return fail("unable to read call function index");
   }
 
-  if (*funcTypeIndex >= env_.funcTypes.length()) {
+  if (*funcTypeIndex >= env_.funcs.length()) {
     return fail("callee index out of range");
   }
 
-  const FuncType& funcType = *env_.funcTypes[*funcTypeIndex];
+  const FuncType& funcType = *env_.funcs[*funcTypeIndex].type;
 
   if (!popCallArgs(funcType.args(), argValues)) {
     return false;
@@ -1901,11 +2000,11 @@ inline bool OpIter<Policy>::readCallIndirect(uint32_t* funcTypeIndex,
     return false;
   }
 
-  if (!env_.types[*funcTypeIndex].isFuncType()) {
+  if (!env_.types.isFuncType(*funcTypeIndex)) {
     return fail("expected signature type");
   }
 
-  const FuncType& funcType = env_.types[*funcTypeIndex].funcType();
+  const FuncType& funcType = env_.types.funcType(*funcTypeIndex);
 
 #ifdef WASM_PRIVATE_REFTYPES
   if (env_.tables[*tableIndex].importedOrExported &&
@@ -1938,11 +2037,11 @@ inline bool OpIter<Policy>::readOldCallDirect(uint32_t numFuncImports,
 
   *funcTypeIndex = numFuncImports + funcDefIndex;
 
-  if (*funcTypeIndex >= env_.funcTypes.length()) {
+  if (*funcTypeIndex >= env_.funcs.length()) {
     return fail("callee index out of range");
   }
 
-  const FuncType& funcType = *env_.funcTypes[*funcTypeIndex];
+  const FuncType& funcType = *env_.funcs[*funcTypeIndex].type;
 
   if (!popCallArgs(funcType.args(), argValues)) {
     return false;
@@ -1965,11 +2064,11 @@ inline bool OpIter<Policy>::readOldCallIndirect(uint32_t* funcTypeIndex,
     return fail("signature index out of range");
   }
 
-  if (!env_.types[*funcTypeIndex].isFuncType()) {
+  if (!env_.types.isFuncType(*funcTypeIndex)) {
     return fail("expected signature type");
   }
 
-  const FuncType& funcType = env_.types[*funcTypeIndex].funcType();
+  const FuncType& funcType = env_.types.funcType(*funcTypeIndex);
 
   if (!popCallArgs(funcType.args(), argValues)) {
     return false;
@@ -2393,7 +2492,7 @@ inline bool OpIter<Policy>::readStructTypeIndex(uint32_t* typeIndex) {
     return fail("type index out of range");
   }
 
-  if (!env_.types[*typeIndex].isStructType()) {
+  if (!env_.types.isStructType(*typeIndex)) {
     return fail("not a struct type");
   }
 
@@ -2426,7 +2525,7 @@ inline bool OpIter<Policy>::readStructNew(uint32_t* typeIndex,
     return false;
   }
 
-  const StructType& str = env_.types[*typeIndex].structType();
+  const StructType& str = env_.types.structType(*typeIndex);
 
   if (!argValues->resize(str.fields_.length())) {
     return false;
@@ -2453,7 +2552,7 @@ inline bool OpIter<Policy>::readStructGet(uint32_t* typeIndex,
     return false;
   }
 
-  const StructType& structType = env_.types[*typeIndex].structType();
+  const StructType& structType = env_.types.structType(*typeIndex);
 
   if (!readFieldIndex(fieldIndex, structType)) {
     return false;
@@ -2477,7 +2576,7 @@ inline bool OpIter<Policy>::readStructSet(uint32_t* typeIndex,
     return false;
   }
 
-  const StructType& structType = env_.types[*typeIndex].structType();
+  const StructType& structType = env_.types.structType(*typeIndex);
 
   if (!readFieldIndex(fieldIndex, structType)) {
     return false;
@@ -2512,15 +2611,14 @@ inline bool OpIter<Policy>::readStructNarrow(ValType* inputType,
     return false;
   }
 
-  if (env_.isStructType(*inputType)) {
-    if (!env_.isStructType(*outputType)) {
+  if (env_.types.isStructType(inputType->refType())) {
+    if (!env_.types.isStructType(outputType->refType())) {
       return fail("invalid type combination in struct.narrow");
     }
 
-    const StructType& inputStruct =
-        env_.types[inputType->refType().typeIndex()].structType();
+    const StructType& inputStruct = env_.types.structType(inputType->refType());
     const StructType& outputStruct =
-        env_.types[outputType->refType().typeIndex()].structType();
+        env_.types.structType(outputType->refType());
 
     if (!outputStruct.hasPrefix(inputStruct)) {
       return fail("invalid narrowing operation");

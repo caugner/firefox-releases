@@ -135,10 +135,6 @@
 #  include "GeckoTaskTracer.h"
 #endif
 
-#ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
-#endif
-
 namespace mozilla {
 
 using namespace dom;
@@ -1667,13 +1663,14 @@ nsresult nsHttpChannel::CallOnStartRequest() {
   // in the pipeline to handle the content and pass it along to our
   // original listener. nsUnknownDecoder doesn't support detecting this type,
   // so we only need to insert this using the response header's mime type.
-  // We only do this for document loads, since we might want to send parts
-  // to the external protocol handler without leaving the parent process.
+  //
+  // We only do this for unwrapped document loads, since we might want to send
+  // parts to the external protocol handler without leaving the parent process.
   bool mustRunStreamFilterInParent = false;
   nsCOMPtr<nsIParentChannel> parentChannel;
   NS_QueryNotificationCallbacks(this, parentChannel);
   RefPtr<DocumentLoadListener> docListener = do_QueryObject(parentChannel);
-  if (mResponseHead && docListener) {
+  if (mResponseHead && docListener && docListener->GetChannel() == this) {
     nsAutoCString contentType;
     mResponseHead->ContentType(contentType);
 
@@ -9364,7 +9361,8 @@ void nsHttpChannel::MaybeWarnAboutAppCache() {
   nsCOMPtr<nsIDeprecationWarner> warner;
   GetCallback(warner);
   if (warner) {
-    warner->IssueWarning(Document::eAppCache, false);
+    warner->IssueWarning(static_cast<uint32_t>(DeprecatedOperations::eAppCache),
+                         false);
   }
 }
 
@@ -9373,16 +9371,34 @@ void nsHttpChannel::SetOriginHeader() {
   if (mRequestHead.IsGet() || mRequestHead.IsHead()) {
     return;
   }
+  if (mLoadInfo->TriggeringPrincipal()->IsSystemPrincipal()) {
+    // Do not set origin header for system principal contexts:
+    return;
+  }
   nsresult rv;
 
   nsAutoCString existingHeader;
   Unused << mRequestHead.GetHeader(nsHttp::Origin, existingHeader);
   if (!existingHeader.IsEmpty()) {
     LOG(("nsHttpChannel::SetOriginHeader Origin header already present"));
-    nsCOMPtr<nsIURI> uri;
-    rv = NS_NewURI(getter_AddRefs(uri), existingHeader);
-    if (NS_SUCCEEDED(rv) &&
-        ReferrerInfo::ShouldSetNullOriginHeader(this, uri)) {
+    // In case we already have an Origin header, check with referrerInfo
+    // if we should "null" it.
+    Unused << mRequestHead.GetHeader(nsHttp::Origin, existingHeader);
+    auto const shouldNullifyOriginHeader =
+        [&existingHeader](nsHttpChannel* self) {
+          if (self->mTaintedOriginFlag) {
+            return true;
+          }
+
+          nsCOMPtr<nsIURI> uri;
+          nsresult rv = NS_NewURI(getter_AddRefs(uri), existingHeader);
+          if (NS_FAILED(rv)) {
+            return false;
+          }
+          return ReferrerInfo::ShouldSetNullOriginHeader(self, uri);
+        };
+
+    if (shouldNullifyOriginHeader(this)) {
       LOG(("nsHttpChannel::SetOriginHeader null Origin by Referrer-Policy"));
       rv = mRequestHead.SetHeader(nsHttp::Origin, "null"_ns, false /* merge */);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
@@ -9390,33 +9406,30 @@ void nsHttpChannel::SetOriginHeader() {
     return;
   }
 
-  if (StaticPrefs::network_http_sendOriginHeader() == 0) {
-    // Origin header suppressed by user setting
-    return;
-  }
-
   nsCOMPtr<nsIURI> referrer;
   auto* basePrin = BasePrincipal::Cast(mLoadInfo->TriggeringPrincipal());
-  basePrin->GetURI(getter_AddRefs(referrer));
-  if (!referrer || !dom::ReferrerInfo::IsReferrerSchemeAllowed(referrer)) {
+  rv = basePrin->GetURI(getter_AddRefs(referrer));
+  if (NS_FAILED(rv)) {
     return;
   }
 
   nsAutoCString origin("null");
-  nsContentUtils::GetASCIIOrigin(referrer, origin);
 
-  // Restrict Origin to same-origin loads if requested by user
-  if (StaticPrefs::network_http_sendOriginHeader() == 1) {
-    nsAutoCString currentOrigin;
-    nsContentUtils::GetASCIIOrigin(mURI, currentOrigin);
-    if (!origin.EqualsIgnoreCase(currentOrigin.get())) {
-      // Origin header suppressed by user setting
-      return;
+  if (StaticPrefs::network_http_sendOriginHeader() != 0 && referrer &&
+      ReferrerInfo::IsReferrerSchemeAllowed(referrer) &&
+      !ReferrerInfo::ShouldSetNullOriginHeader(this, referrer) &&
+      !mTaintedOriginFlag) {
+    nsContentUtils::GetASCIIOrigin(referrer, origin);
+
+    // Restrict Origin to same-origin loads if requested by user
+    if (StaticPrefs::network_http_sendOriginHeader() == 1) {
+      nsAutoCString currentOrigin;
+      nsContentUtils::GetASCIIOrigin(mURI, currentOrigin);
+      if (!origin.EqualsIgnoreCase(currentOrigin.get())) {
+        // Origin header suppressed by user setting
+        origin.AssignLiteral("null");
+      }
     }
-  }
-
-  if (ReferrerInfo::ShouldSetNullOriginHeader(this, referrer)) {
-    origin.AssignLiteral("null");
   }
 
   rv = mRequestHead.SetHeader(nsHttp::Origin, origin, false /* merge */);
@@ -10035,7 +10048,8 @@ void nsHttpChannel::ReEvaluateReferrerAfterTrackingStatusIsKnown() {
               ReferrerInfo::GetDefaultReferrerPolicy(nullptr, nullptr,
                                                      isPrivate)) {
         nsCOMPtr<nsIReferrerInfo> newReferrerInfo =
-            referrerInfo->CloneWithNewPolicy(ReferrerPolicy::_empty);
+            referrerInfo->CloneWithNewPolicy(
+                ReferrerInfo::GetDefaultReferrerPolicy(this, mURI, isPrivate));
         // The arguments passed to SetReferrerInfoInternal here should mirror
         // the arguments passed in
         // HttpChannelChild::RecvOverrideReferrerInfoDuringBeginConnect().

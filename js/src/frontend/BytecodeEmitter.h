@@ -135,9 +135,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // Script contains finally block.
   bool hasTryFinally = false;
 
-  // True while emitting a lambda which is only expected to run once.
-  bool emittingRunOnceLambda = false;
-
   enum EmitterMode {
     Normal,
 
@@ -223,14 +220,18 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   mozilla::Maybe<NameLocation> locationOfNameBoundInScope(
       const ParserAtom* name, EmitterScope* target);
 
+  // Get the location of a name known to be bound in a given scope,
+  // starting at the source scope.
+  template <typename T>
+  mozilla::Maybe<NameLocation> locationOfNameBoundInScopeType(
+      const ParserAtom* name, EmitterScope* source);
+
   // Get the location of a name known to be bound in the function scope,
   // starting at the source scope.
   mozilla::Maybe<NameLocation> locationOfNameBoundInFunctionScope(
-      const ParserAtom* name, EmitterScope* source);
-
-  mozilla::Maybe<NameLocation> locationOfNameBoundInFunctionScope(
       const ParserAtom* name) {
-    return locationOfNameBoundInFunctionScope(name, innermostEmitterScope());
+    return locationOfNameBoundInScopeType<FunctionScope>(
+        name, innermostEmitterScope());
   }
 
   void setVarEmitterScope(EmitterScope* emitterScope) {
@@ -272,10 +273,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   bool isInLoop();
   MOZ_MUST_USE bool checkSingletonContext();
-
-  // Check whether our function is in a run-once context (a toplevel
-  // run-one script or a run-once lambda).
-  MOZ_MUST_USE bool checkRunOnceContext();
 
   bool needsImplicitThis();
 
@@ -361,6 +358,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitOptionalTree(
       ParseNode* pn, OptionalEmitter& oe,
       ValueUsage valueUsage = ValueUsage::WantValue);
+
+  MOZ_MUST_USE bool emitDeclarationInstantiation(ParseNode* body);
 
   // Emit global, eval, or module code for tree rooted at body. Always
   // encompasses the entire source.
@@ -505,7 +504,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // Is a field value OBJLITERAL-compatible?
   MOZ_MUST_USE bool isRHSObjLiteralCompatible(ParseNode* value);
 
-  MOZ_MUST_USE bool emitObjLiteralValue(ObjLiteralStencil* data,
+  MOZ_MUST_USE bool emitObjLiteralValue(ObjLiteralWriter& writer,
                                         ParseNode* value);
 
   enum class FieldPlacement { Instance, Static };
@@ -560,7 +559,13 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   MOZ_MUST_USE bool emitPrepareIteratorResult();
   MOZ_MUST_USE bool emitFinishIteratorResult(bool done);
-  MOZ_MUST_USE bool iteratorResultShape(GCThingIndex* shape);
+  MOZ_MUST_USE bool iteratorResultShape(GCThingIndex* outShape);
+
+  // Convert and add `writer` data to stencil.
+  // Iff it suceeds, `outIndex` out parameter is initialized to the index of the
+  // object in GC things vector.
+  MOZ_MUST_USE bool addObjLiteralData(ObjLiteralWriter& writer,
+                                      GCThingIndex* outIndex);
 
   MOZ_MUST_USE bool emitGetDotGeneratorInInnermostScope() {
     return emitGetDotGeneratorInScope(*innermostEmitterScope());
@@ -699,7 +704,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   MOZ_MUST_USE bool emitInitializer(ParseNode* initializer, ParseNode* pattern);
 
   MOZ_MUST_USE bool emitCallSiteObjectArray(ListNode* cookedOrRaw,
-                                            GCThingIndex* arrayIndex);
+                                            GCThingIndex* outArrayIndex);
   MOZ_MUST_USE bool emitCallSiteObject(CallSiteNode* callSiteObj);
   MOZ_MUST_USE bool emitTemplateString(ListNode* templateString);
   MOZ_MUST_USE bool emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,

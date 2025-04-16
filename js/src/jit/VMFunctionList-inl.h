@@ -38,9 +38,7 @@ namespace jit {
   _(ArgumentsObjectCreateForIon, js::ArgumentsObject::createForIon)            \
   _(ArrayConstructorOneArg, js::ArrayConstructorOneArg)                        \
   _(ArrayJoin, js::jit::ArrayJoin)                                             \
-  _(ArrayPopDense, js::jit::ArrayPopDense)                                     \
   _(ArrayPushDense, js::jit::ArrayPushDense)                                   \
-  _(ArrayShiftDense, js::jit::ArrayShiftDense)                                 \
   _(ArraySliceDense, js::ArraySliceDense)                                      \
   _(AsyncFunctionAwait, js::AsyncFunctionAwait)                                \
   _(AsyncFunctionResolve, js::AsyncFunctionResolve)                            \
@@ -81,15 +79,11 @@ namespace jit {
   _(CallNativeSetter, js::jit::CallNativeSetter)                               \
   _(CharCodeAt, js::jit::CharCodeAt)                                           \
   _(CheckClassHeritageOperation, js::CheckClassHeritageOperation)              \
-  _(CheckGlobalOrEvalDeclarationConflicts,                                     \
-    js::CheckGlobalOrEvalDeclarationConflicts)                                 \
   _(CheckOverRecursed, js::jit::CheckOverRecursed)                             \
   _(CheckOverRecursedBaseline, js::jit::CheckOverRecursedBaseline)             \
   _(CheckPrivateFieldOperation, js::CheckPrivateFieldOperation)                \
   _(CloneRegExpObject, js::CloneRegExpObject)                                  \
   _(ConcatStrings, js::ConcatStrings<CanGC>)                                   \
-  _(ConvertElementsToDoubles, js::ObjectElements::ConvertElementsToDoubles)    \
-  _(CopyElementsForWrite, js::NativeObject::CopyElementsForWrite)              \
   _(CopyLexicalEnvironmentObject, js::jit::CopyLexicalEnvironmentObject)       \
   _(CreateAsyncFromSyncIterator, js::CreateAsyncFromSyncIterator)              \
   _(CreateBigIntFromInt64, js::jit::CreateBigIntFromInt64)                     \
@@ -107,9 +101,6 @@ namespace jit {
   _(DebugLeaveThenRecreateLexicalEnv,                                          \
     js::jit::DebugLeaveThenRecreateLexicalEnv)                                 \
   _(Debug_CheckSelfHosted, js::Debug_CheckSelfHosted)                          \
-  _(DefFunOperation, js::DefFunOperation)                                      \
-  _(DefLexicalOperation, js::DefLexicalOperation)                              \
-  _(DefVarOperation, js::DefVarOperation)                                      \
   _(DelElemOperationNonStrict, js::DelElemOperation<false>)                    \
   _(DelElemOperationStrict, js::DelElemOperation<true>)                        \
   _(DelPropOperationNonStrict, js::DelPropOperation<false>)                    \
@@ -121,7 +112,6 @@ namespace jit {
   _(DoSpreadCallFallback, js::jit::DoSpreadCallFallback)                       \
   _(DoStringToInt64, js::jit::DoStringToInt64)                                 \
   _(DoTrialInlining, js::jit::DoTrialInlining)                                 \
-  _(DoTypeUpdateFallback, js::jit::DoTypeUpdateFallback)                       \
   _(EnterWith, js::jit::EnterWith)                                             \
   _(FinalSuspend, js::jit::FinalSuspend)                                       \
   _(FinishBoundFunctionInit, JSFunction::finishBoundFunctionInit)              \
@@ -129,7 +119,6 @@ namespace jit {
   _(FunWithProtoOperation, js::FunWithProtoOperation)                          \
   _(GeneratorThrowOrReturn, js::jit::GeneratorThrowOrReturn)                   \
   _(GetAndClearException, js::GetAndClearException)                            \
-  _(GetElementOperation, js::GetElementOperation)                              \
   _(GetFirstDollarIndexRaw, js::GetFirstDollarIndexRaw)                        \
   _(GetImportOperation, js::GetImportOperation)                                \
   _(GetIntrinsicValue, js::jit::GetIntrinsicValue)                             \
@@ -137,16 +126,14 @@ namespace jit {
   _(GetOrCreateModuleMetaObject, js::GetOrCreateModuleMetaObject)              \
   _(GetPrototypeOf, js::jit::GetPrototypeOf)                                   \
   _(GetSparseElementHelper, js::GetSparseElementHelper)                        \
-  _(GetValueProperty, js::GetValueProperty)                                    \
-  _(GlobalNameConflictsCheckFromIon, js::jit::GlobalNameConflictsCheckFromIon) \
+  _(GlobalDeclInstantiationFromIon, js::jit::GlobalDeclInstantiationFromIon)   \
+  _(GlobalOrEvalDeclInstantiation, js::GlobalOrEvalDeclInstantiation)          \
   _(GreaterThan, js::GreaterThan)                                              \
   _(GreaterThanOrEqual, js::GreaterThanOrEqual)                                \
   _(HandleDebugTrap, js::jit::HandleDebugTrap)                                 \
   _(ImplicitThisOperation, js::ImplicitThisOperation)                          \
   _(ImportMetaOperation, js::ImportMetaOperation)                              \
   _(InitElemGetterSetterOperation, js::InitElemGetterSetterOperation)          \
-  _(InitElemOperation, js::InitElemOperation)                                  \
-  _(InitElementArray, js::InitElementArray)                                    \
   _(InitFunctionEnvironmentObjects, js::jit::InitFunctionEnvironmentObjects)   \
   _(InitPropGetterSetterOperation, js::InitPropGetterSetterOperation)          \
   _(InitRestParameter, js::jit::InitRestParameter)                             \
@@ -195,12 +182,10 @@ namespace jit {
     js::NamedLambdaObject::createTemplateObject)                               \
   _(NativeGetElement, js::NativeGetElement)                                    \
   _(NewArgumentsObject, js::jit::NewArgumentsObject)                           \
-  _(NewArrayCopyOnWriteOperation, js::NewArrayCopyOnWriteOperation)            \
   _(NewArrayIterator, js::NewArrayIterator)                                    \
   _(NewArrayOperation, js::NewArrayOperation)                                  \
   _(NewArrayWithGroup, js::NewArrayWithGroup)                                  \
   _(NewCallObject, js::jit::NewCallObject)                                     \
-  _(NewDenseCopyOnWriteArray, js::NewDenseCopyOnWriteArray)                    \
   _(NewObjectOperation, js::NewObjectOperation)                                \
   _(NewObjectOperationWithTemplate, js::NewObjectOperationWithTemplate)        \
   _(NewRegExpStringIterator, js::NewRegExpStringIterator)                      \
@@ -217,7 +202,6 @@ namespace jit {
   _(ObjectCreateWithTemplate, js::ObjectCreateWithTemplate)                    \
   _(ObjectWithProtoOperation, js::ObjectWithProtoOperation)                    \
   _(OnDebuggerStatement, js::jit::OnDebuggerStatement)                         \
-  _(OperatorInI, js::jit::OperatorInI)                                         \
   _(OptimizeSpreadCall, js::OptimizeSpreadCall)                                \
   _(PopLexicalEnv, js::jit::PopLexicalEnv)                                     \
   _(ProcessCallSiteObjOperation, js::ProcessCallSiteObjOperation)              \
@@ -239,7 +223,6 @@ namespace jit {
   _(SetFunctionName, js::SetFunctionName)                                      \
   _(SetIntrinsicOperation, js::SetIntrinsicOperation)                          \
   _(SetObjectElementWithReceiver, js::SetObjectElementWithReceiver)            \
-  _(SetProperty, js::jit::SetProperty)                                         \
   _(SetPropertySuper, js::SetPropertySuper)                                    \
   _(StartDynamicModuleImport, js::StartDynamicModuleImport)                    \
   _(StrictlyEqual, js::jit::StrictlyEqual<js::jit::EqualityKind::Equal>)       \
@@ -307,7 +290,6 @@ namespace jit {
   _(DoSetPropFallback, js::jit::DoSetPropFallback, 1)                       \
   _(DoToBoolFallback, js::jit::DoToBoolFallback, 0)                         \
   _(DoToPropertyKeyFallback, js::jit::DoToPropertyKeyFallback, 0)           \
-  _(DoTypeMonitorFallback, js::jit::DoTypeMonitorFallback, 0)               \
   _(DoTypeOfFallback, js::jit::DoTypeOfFallback, 0)                         \
   _(DoUnaryArithFallback, js::jit::DoUnaryArithFallback, 1)
 

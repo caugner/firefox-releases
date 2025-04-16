@@ -303,7 +303,6 @@ static JSRuntime* GetSelectorRuntime(const CompilationSelector& selector) {
     JSRuntime* operator()(Zone* zone) { return zone->runtimeFromMainThread(); }
     JSRuntime* operator()(ZonesInState zbs) { return zbs.runtime; }
     JSRuntime* operator()(JSRuntime* runtime) { return runtime; }
-    JSRuntime* operator()(CompilationsUsingNursery cun) { return cun.runtime; }
   };
 
   return selector.match(Matcher());
@@ -316,9 +315,6 @@ static bool JitDataStructuresExist(const CompilationSelector& selector) {
     bool operator()(Zone* zone) { return !!zone->jitZone(); }
     bool operator()(ZonesInState zbs) { return zbs.runtime->hasJitRuntime(); }
     bool operator()(JSRuntime* runtime) { return runtime->hasJitRuntime(); }
-    bool operator()(CompilationsUsingNursery cun) {
-      return cun.runtime->hasJitRuntime();
-    }
   };
 
   return selector.match(Matcher());
@@ -340,10 +336,6 @@ static bool IonCompileTaskMatches(const CompilationSelector& selector,
     bool operator()(ZonesInState zbs) {
       return zbs.runtime == task_->script()->runtimeFromAnyThread() &&
              zbs.state == task_->script()->zoneFromAnyThread()->gcState();
-    }
-    bool operator()(CompilationsUsingNursery cun) {
-      return cun.runtime == task_->script()->runtimeFromAnyThread() &&
-             !task_->mirGen().safeForMinorGC();
     }
   };
 
@@ -596,6 +588,7 @@ void ParseTask::trace(JSTracer* trc) {
     compilationInfos_->trace(trc);
   }
   gcOutput_.trace(trc);
+  gcOutputForDelazification_.trace(trc);
 }
 
 size_t ParseTask::sizeOfExcludingThis(
@@ -709,7 +702,8 @@ bool ParseTask::instantiateStencils(JSContext* cx) {
   if (compilationInfo_) {
     result = frontend::InstantiateStencils(cx, *compilationInfo_, gcOutput_);
   } else {
-    result = frontend::InstantiateStencils(cx, *compilationInfos_, gcOutput_);
+    result = frontend::InstantiateStencils(cx, *compilationInfos_, gcOutput_,
+                                           gcOutputForDelazification_);
   }
 
   // Whatever happens to the top-level script compilation (even if it fails),
@@ -802,7 +796,8 @@ void ScriptDecodeTask::parse(JSContext* cx) {
     compilationInfos_ = std::move(compilationInfos.get());
 
     if (compilationInfos_) {
-      if (!frontend::PrepareForInstantiate(cx, *compilationInfos_, gcOutput_)) {
+      if (!frontend::PrepareForInstantiate(cx, *compilationInfos_, gcOutput_,
+                                           gcOutputForDelazification_)) {
         compilationInfos_ = nullptr;
       }
     }
@@ -1415,8 +1410,8 @@ void GlobalHelperThreadState::destroyHelperContexts(
 }
 
 #ifdef DEBUG
-bool GlobalHelperThreadState::isLockedByCurrentThread() const {
-  return gHelperThreadLock.ownedByCurrentThread();
+void GlobalHelperThreadState::assertIsLockedByCurrentThread() const {
+  gHelperThreadLock.assertOwnedByCurrentThread();
 }
 #endif  // DEBUG
 
@@ -1544,7 +1539,9 @@ static inline bool IsHelperThreadSimulatingOOM(js::ThreadType threadType) {
 
 void GlobalHelperThreadState::addSizeOfIncludingThis(
     JS::GlobalStats* stats, AutoLockHelperThreadState& lock) const {
-  MOZ_ASSERT(isLockedByCurrentThread());
+#ifdef DEBUG
+  assertIsLockedByCurrentThread();
+#endif
 
   mozilla::MallocSizeOf mallocSizeOf = stats->mallocSizeOf_;
   JS::HelperThreadStats& htStats = stats->helperThread;
@@ -2551,6 +2548,23 @@ bool GlobalHelperThreadState::submitTask(PromiseHelperTask* task) {
 
 void GlobalHelperThreadState::trace(JSTracer* trc) {
   AutoLockHelperThreadState lock;
+
+#ifdef DEBUG
+  // Since we hold the helper thread lock here we must disable GCMarker's
+  // checking of the atom marking bitmap since that also relies on taking the
+  // lock.
+  GCMarker* marker = nullptr;
+  if (trc->isMarkingTracer()) {
+    marker = GCMarker::fromTracer(trc);
+    marker->setCheckAtomMarking(false);
+  }
+  auto reenableAtomMarkingCheck = mozilla::MakeScopeExit([marker] {
+    if (marker) {
+      marker->setCheckAtomMarking(true);
+    }
+  });
+#endif
+
   for (auto task : ionWorklist(lock)) {
     task->alloc().lifoAlloc()->setReadWrite();
     task->trace(trc);

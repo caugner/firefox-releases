@@ -40,6 +40,7 @@
 #include "nsIObserverService.h"
 #include "nsCharSeparatedTokenizer.h"
 
+#include "nsComponentManagerUtils.h"
 #include "nsNetCID.h"
 #include "nsServiceManagerUtils.h"
 #include "nsCRT.h"
@@ -51,6 +52,7 @@
 #include "nsProxyRelease.h"
 #include "nsNetUtil.h"
 #include "nsINode.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
@@ -639,10 +641,10 @@ class CallOnServerClose final : public Runnable {
 // CallAcknowledge
 //-----------------------------------------------------------------------------
 
-class CallAcknowledge final : public CancelableRunnable {
+class CallAcknowledge final : public Runnable {
  public:
   CallAcknowledge(WebSocketChannel* aChannel, uint32_t aSize)
-      : CancelableRunnable("net::CallAcknowledge"),
+      : Runnable("net::CallAcknowledge"),
         mChannel(aChannel),
         mListenerMT(mChannel->mListenerMT),
         mSize(aSize) {}

@@ -92,7 +92,6 @@ linux64-mar-tools:
         toolchain-artifact: public/build/mar-tools.tar.xz
         resources:
             - build/moz.configure
-            - mfbt
             - modules/libmar/
             - moz.configure
             - other-licenses/bsdiff/
@@ -197,7 +196,7 @@ wrench-deps:
         fetch:
             - android-rs-glue
         toolchain:
-            - linux64-rust-1.43  # whatever m-c is built with
+            - linux64-rust-1.47  # whatever m-c is built with
 
 wgpu-deps:
     description: "Downloads all the crates needed for testing wgpu"
@@ -215,7 +214,7 @@ wgpu-deps:
         fetch:
             - android-rs-glue
         toolchain:
-            - linux64-rust-1.43  # whatever m-c is built with
+            - linux64-rust-1.47  # whatever m-c is built with
 
 linux64-lucetc:
     description: "lucetc build process"
@@ -355,7 +354,7 @@ macosx64-sdk-11.0:
     run:
         script: pack.sh
         arguments:
-            - /Applications/Xcode-12.2.Release.Candidate.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.0.sdk
+            - /Applications/Xcode-12.2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.0.sdk
         toolchain-artifact: project/gecko/mac-sdk/MacOSX11.0.sdk.tar.zst
     # Expiry similar to that of fetches
     expires-after: 1000 years

@@ -65,6 +65,58 @@ impl DatetimeMetric {
         }
     }
 
+    /// Sets the metric to a date/time including the timezone offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `year` - the year to set the metric to.
+    /// * `month` - the month to set the metric to (1-12).
+    /// * `day` - the day to set the metric to (1-based).
+    /// * `hour` - the hour to set the metric to (0-23).
+    /// * `minute` - the minute to set the metric to.
+    /// * `second` - the second to set the metric to.
+    /// * `nano` - the nanosecond fraction to the last whole second.
+    /// * `offset_seconds` - the timezone difference, in seconds, for the Eastern
+    ///   Hemisphere. Negative seconds mean Western Hemisphere.
+    #[cfg_attr(not(feature = "with-gecko"), allow(dead_code))]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn set_with_details(
+        &self,
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+        nano: u32,
+        offset_seconds: i32,
+    ) {
+        match self {
+            DatetimeMetric::Parent(p) => {
+                let metric = Arc::clone(&p);
+                dispatcher::launch(move || {
+                    metric.set_with_details(
+                        year,
+                        month,
+                        day,
+                        hour,
+                        minute,
+                        second,
+                        nano,
+                        offset_seconds,
+                    )
+                });
+            }
+            DatetimeMetric::Child(_) => {
+                log::error!(
+                    "Unable to set datetime metric {:?} in non-parent process. Ignoring.",
+                    self
+                );
+                // TODO: Record an error.
+            }
+        }
+    }
+
     /// **Test-only API.**
     ///
     /// Get the currently stored value.
@@ -82,7 +134,7 @@ impl DatetimeMetric {
     /// ## Return value
     ///
     /// Returns the stored value or `None` if nothing stored.
-    pub fn test_get_value(&self, storage_name: &str) -> Option<String> {
+    pub fn test_get_value<'a, S: Into<Option<&'a str>>>(&self, storage_name: S) -> Option<String> {
         match self {
             DatetimeMetric::Parent(p) => {
                 dispatcher::block_on_queue();
@@ -105,8 +157,37 @@ impl DatetimeMetricImpl {
         crate::with_glean(move |glean| self.0.set(glean, value))
     }
 
-    pub fn test_get_value(&self, storage_name: &str) -> Option<String> {
-        crate::with_glean(move |glean| self.0.test_get_value_as_string(glean, storage_name))
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn set_with_details(
+        &self,
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+        nano: u32,
+        offset_seconds: i32,
+    ) {
+        crate::with_glean(move |glean| {
+            self.0.set_with_details(
+                glean,
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                nano,
+                offset_seconds,
+            );
+        })
+    }
+
+    fn test_get_value<'a, S: Into<Option<&'a str>>>(&self, storage_name: S) -> Option<String> {
+        // FIXME(bug 1677448): This hack goes away when the type is implemented in RLB.
+        let storage = storage_name.into().expect("storage name required.");
+        crate::with_glean(move |glean| self.0.test_get_value_as_string(glean, storage))
     }
 }
 
@@ -117,6 +198,7 @@ mod test {
     use crate::{common_test::*, ipc, metrics};
 
     #[test]
+    #[ignore] // TODO: Enable them back when bug 1677448 lands.
     fn sets_datetime_value() {
         let _lock = lock_test();
 
@@ -134,6 +216,22 @@ mod test {
     }
 
     #[test]
+    #[ignore] // TODO: Enable them back when bug 1677448 lands.
+    fn sets_datetime_value_with_details() {
+        let _lock = lock_test();
+
+        let metric = &metrics::test_only_ipc::a_date;
+
+        metric.set_with_details(2020, 05, 07, 11, 58, 0, 0, 5 * 3600);
+
+        assert_eq!(
+            "2020-05-07T11:58:00+05:00",
+            metric.test_get_value("store1").unwrap()
+        );
+    }
+
+    #[test]
+    #[ignore] // TODO: Enable them back when bug 1677448 lands.
     fn datetime_ipc() {
         // DatetimeMetric doesn't support IPC.
         let _lock = lock_test();

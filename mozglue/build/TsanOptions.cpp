@@ -100,6 +100,8 @@ extern "C" const char* __tsan_default_suppressions() {
          "deadlock:mozilla::camera::LockAndDispatch\n"
          // Bug 1606804 - permanent
          "deadlock:third_party/rust/rkv/src/env.rs\n"
+         // Bug 1680655 - permanent
+         "deadlock:EncryptedClientHelloServer\n"
 
 
 
@@ -168,26 +170,18 @@ extern "C" const char* __tsan_default_suppressions() {
          // up due to "volatile" being too weak for this.
          "race:third_party/sqlite3/*\n"
          "deadlock:third_party/sqlite3/*\n"
-
-
-
-
-
-         // Lack of proper instrumentation for the Rust stdlib (fix this!).
+         // Bug 1674770 - permanent
+         // Upstream Bug: https://github.com/Amanieu/parking_lot/issues/257
          //
-         // All of these can potentially be removed if we fix Bug 1671691.
-
-         // Bug 1587513 - permanent
-         "race:std::sync::mutex::Mutex\n"
-         // Bug 1590423 - permanent
-         "race:sync..Arc\n"
-         "race:alloc::sync::Arc\n"
+         // parking_lot using incorrect atomic orderings in RwLock, upstream
+         // fix already up for review.
+         "race:StrongRuleNode::ensure_child\n"
          // No Bug - permanent
-         "race:third_party/rust/parking_lot_core/*\n"
-         // No Bug - permanent
-         "race:/rustc/*.rs\n"
-         "deadlock:/rustc/*.rs\n"
-         "thread:std::sys::unix::thread::Thread::new\n"
+         // Upstream Bug: https://github.com/rayon-rs/rayon/issues/812
+         //
+         // Probably a false-positive from crossbeam's deque not being
+         // understood by tsan.
+         "race:crossbeam_deque::Worker*::resize\n"
 
 
 
@@ -202,11 +196,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // These should all still be fixed because the compiler is incentivized
          // to combine/cache these accesses without proper atomic annotations.
 
-         // No Bug
-         "race:WalkDiskCacheRunnable::Run\n"
-         // No Bug - Modifying `mResolveAgain` while reading `mGetTtl`
-         "race:RemoveOrRefresh\n"
-         "race:nsHostResolver::ThreadFunc\n"
          // Bug 1614697
          "race:nsHttpChannel::OnCacheEntryCheck\n"
          "race:~AutoCacheWaitFlags\n"
@@ -217,9 +206,6 @@ extern "C" const char* __tsan_default_suppressions() {
 
          // The rest of these suppressions are miscellaneous issues in gecko
          // that should be investigated and ideally fixed.
-
-         // Bug 1619162
-         "race:currentNameHasEscapes\n"
 
          // Bug 1601600
          "race:SkARGB32_Blitter\n"
@@ -240,20 +226,17 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1606800
          "race:CallInitFunc\n"
 
+         // Bug 1606803
+         "race:ipv6_is_present\n"
+
          // Bug 1606864
          "race:nsSocketTransport::Close\n"
          "race:nsSocketTransport::OnSocketDetached\n"
+         "race:nsSocketTransport::OnMsgInputClosed\n"
+         "race:nsSocketTransport::OpenOutputStream\n"
 
          // Bug 1607138
          "race:gXPCOMThreadsShutDown\n"
-
-         // Bug 1607446
-         "race:nsJARChannel::Suspend\n"
-         "race:nsJARChannel::Resume\n"
-
-         // Bug 1607449
-         "race:fill_CERTCertificateFields\n"
-         "race:CERT_DestroyCertificate\n"
 
          // Bug 1608462
          "deadlock:ScriptPreloader::OffThreadDecodeCallback\n"
@@ -303,9 +286,20 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:CamerasParent::ActorDestroy\n"
          "race:CamerasParent::DispatchToVideoCaptureThread\n"
 
-         // Bug 1672230
-         "race:ScriptPreloader::Trace\n"
-         "race:ScriptPreloader::WriteCache\n"
+         // Bug 1623541
+         "race:VRShMem::PullSystemState\n"
+         "race:VRShMem::PushSystemState\n"
+
+         // Bug 1674776
+         "race:DocumentTimeline::GetCurrentTimeAsDuration\n"
+
+         // Bug 1674835
+         "race:nsHttpTransaction::ReadSegments\n"
+         "race:nsHttpTransaction::SecurityInfo\n"
+
+         // Bug 1680285
+         "race:style::traversal::note_children\n"
+         "race:style::matching::MatchMethods::apply_selector_flags\n"
 
       // End of suppressions.
       ;  // Please keep this semicolon.

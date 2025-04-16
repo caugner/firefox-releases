@@ -13,6 +13,7 @@
 #include "nsContentUtils.h"
 #include "nsProxyRelease.h"
 #include "nsContentSecurityManager.h"
+#include "nsComponentManagerUtils.h"
 
 #include "nsIFileURL.h"
 
@@ -499,7 +500,7 @@ nsresult nsJARChannel::CheckPendingEvents() {
 
   nsresult rv;
 
-  auto suspendCount = mPendingEvent.suspendCount;
+  uint32_t suspendCount = mPendingEvent.suspendCount;
   while (suspendCount--) {
     if (NS_WARN_IF(NS_FAILED(rv = mPump->Suspend()))) {
       return rv;
@@ -1051,6 +1052,7 @@ static void RecordEmptyFileEvent(const nsCString& aFileName) {
   // events.
   uint32_t from = findFilenameStart(aFileName);
 
+  Telemetry::SetEventRecordingEnabled("network.jar.channel"_ns, true);
   Telemetry::EventID eventType =
       Telemetry::EventID::NetworkJarChannel_Nodata_Onstop;
   Telemetry::RecordEvent(eventType, mozilla::Some(Substring(aFileName, from)),

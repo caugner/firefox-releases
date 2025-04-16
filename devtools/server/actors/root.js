@@ -125,11 +125,7 @@ exports.RootActor = protocol.ActorClassWithSpec(rootSpec, {
     this.applicationType = "browser";
 
     this.traits = {
-      sources: true,
       networkMonitor: true,
-      // Whether the storage inspector actor to inspect cookies, etc.
-      storageInspector: true,
-      bulk: true,
       // Whether root actor exposes chrome target actors and access to any window.
       // If allowChromeProcess is true, you can:
       // * get a ParentProcessTargetActor instance to debug chrome and any non-content
@@ -142,19 +138,8 @@ exports.RootActor = protocol.ActorClassWithSpec(rootSpec, {
       get allowChromeProcess() {
         return DevToolsServer.allowChromeProcess;
       },
-      // Whether or not the MemoryActor's heap snapshot abilities are
-      // fully equipped to handle heap snapshots for the memory tool. Fx44+
-      heapSnapshots: true,
-      // Version of perf actor. Fx65+
-      // Version 1 - Firefox 65: Introduces a duration-based buffer. It can be controlled
-      // by adding a `duration` property (in seconds) to the options passed to
-      // `front.startProfiler`. This is an optional parameter but it will throw an error if
-      // the profiled Firefox doesn't accept it.
-      perfActorVersion: 1,
-      // Supports watchpoints in the server for Fx71+
-      watchpoints: true,
-      // Added in Fx84 to expose the pref value to the client. Services.prefs is undefined
-      // in xpcshell tests.
+      // @backward-compat { version 84 } Expose the pref value to the client.
+      // Services.prefs is undefined in xpcshell tests.
       workerConsoleApiMessagesDispatchedToMainThread: Services.prefs
         ? Services.prefs.getBoolPref(
             "dom.worker.console.dispatch_events_to_main_thread"

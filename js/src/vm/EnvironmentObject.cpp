@@ -13,6 +13,8 @@
 #include "js/friend/WindowProxy.h"    // js::IsWindow, js::IsWindowProxy
 #include "vm/ArgumentsObject.h"
 #include "vm/AsyncFunction.h"
+#include "vm/BytecodeIterator.h"
+#include "vm/BytecodeLocation.h"
 #include "vm/GlobalObject.h"
 #include "vm/Iteration.h"
 #include "vm/JSObject.h"
@@ -22,23 +24,11 @@
 #include "vm/Xdr.h"
 #include "wasm/WasmInstance.h"
 
-#ifdef DEBUG
-#  include "vm/BytecodeIterator.h"
-#  include "vm/BytecodeLocation.h"
-#endif
-
 #include "gc/Marking-inl.h"
-#include "vm/JSAtom-inl.h"
-#include "vm/JSScript-inl.h"
+#include "vm/BytecodeIterator-inl.h"
+#include "vm/BytecodeLocation-inl.h"
 #include "vm/NativeObject-inl.h"
-#include "vm/ObjectGroup-inl.h"  // JSObject::setSingleton
 #include "vm/Stack-inl.h"
-#include "vm/TypeInference-inl.h"
-
-#ifdef DEBUG
-#  include "vm/BytecodeIterator-inl.h"
-#  include "vm/BytecodeLocation-inl.h"
-#endif
 
 using namespace js;
 
@@ -87,8 +77,8 @@ PropertyName* js::EnvironmentCoordinateNameSlow(JSScript* script,
 
 template <typename T>
 static T* CreateEnvironmentObject(JSContext* cx, HandleShape shape,
-                                  HandleObjectGroup group, gc::InitialHeap heap,
-                                  IsSingletonEnv isSingleton) {
+                                  HandleObjectGroup group,
+                                  gc::InitialHeap heap) {
   static_assert(std::is_base_of_v<EnvironmentObject, T>,
                 "T must be an EnvironmentObject");
 
@@ -101,33 +91,20 @@ static T* CreateEnvironmentObject(JSContext* cx, HandleShape shape,
   JS_TRY_VAR_OR_RETURN_NULL(
       cx, obj, NativeObject::create(cx, allocKind, heap, shape, group));
 
-  if (isSingleton == IsSingletonEnv::Yes) {
-    RootedObject objRoot(cx, obj);
-    if (!JSObject::setSingleton(cx, objRoot)) {
-      return nullptr;
-    }
-    obj = objRoot;
-  } else {
-    // Don't track property types for non-singleton environment objects. The
-    // JITs don't use them anyway.
-    MarkObjectGroupUnknownProperties(cx, group);
-  }
-
   return &obj->as<T>();
 }
 
 // As above, but the caller does not have to pass the group.
 template <typename T>
 static T* CreateEnvironmentObject(JSContext* cx, HandleShape shape,
-                                  gc::InitialHeap heap,
-                                  IsSingletonEnv isSingleton) {
+                                  gc::InitialHeap heap) {
   RootedObjectGroup group(
       cx, ObjectGroup::defaultNewGroup(cx, &T::class_, TaggedProto(nullptr)));
   if (!group) {
     return nullptr;
   }
 
-  return CreateEnvironmentObject<T>(cx, shape, group, heap, isSingleton);
+  return CreateEnvironmentObject<T>(cx, shape, group, heap);
 }
 
 // Helper function for simple environment objects that don't need the overloads
@@ -142,7 +119,7 @@ static T* CreateEnvironmentObject(JSContext* cx, HandleShape shape,
   }
 
   gc::InitialHeap heap = GetInitialHeap(newKind, group);
-  return CreateEnvironmentObject<T>(cx, shape, group, heap, IsSingletonEnv::No);
+  return CreateEnvironmentObject<T>(cx, shape, group, heap);
 }
 
 CallObject* CallObject::create(JSContext* cx, HandleShape shape,
@@ -150,8 +127,7 @@ CallObject* CallObject::create(JSContext* cx, HandleShape shape,
   MOZ_ASSERT(!group->singleton());
 
   gc::InitialHeap heap = GetInitialHeap(GenericObject, group);
-  return CreateEnvironmentObject<CallObject>(cx, shape, group, heap,
-                                             IsSingletonEnv::No);
+  return CreateEnvironmentObject<CallObject>(cx, shape, group, heap);
 }
 
 /*
@@ -169,8 +145,7 @@ CallObject* CallObject::createTemplateObject(JSContext* cx, HandleScript script,
   // The JITs assume the result is nursery allocated unless we collected the
   // nursery, so don't change |heap| here.
 
-  auto* callObj =
-      CreateEnvironmentObject<CallObject>(cx, shape, heap, IsSingletonEnv::No);
+  auto* callObj = CreateEnvironmentObject<CallObject>(cx, shape, heap);
   if (!callObj) {
     return nullptr;
   }
@@ -927,14 +902,14 @@ bool js::CreateNonSyntacticEnvironmentChain(JSContext* cx,
 /* static */
 LexicalEnvironmentObject* LexicalEnvironmentObject::createTemplateObject(
     JSContext* cx, HandleShape shape, HandleObject enclosing,
-    gc::InitialHeap heap, IsSingletonEnv isSingleton) {
+    gc::InitialHeap heap) {
   MOZ_ASSERT(shape->getObjectClass() == &LexicalEnvironmentObject::class_);
 
   // The JITs assume the result is nursery allocated unless we collected the
   // nursery, so don't change |heap| here.
 
-  auto* env = CreateEnvironmentObject<LexicalEnvironmentObject>(cx, shape, heap,
-                                                                isSingleton);
+  auto* env =
+      CreateEnvironmentObject<LexicalEnvironmentObject>(cx, shape, heap);
   if (!env) {
     return nullptr;
   }
@@ -957,7 +932,7 @@ LexicalEnvironmentObject* LexicalEnvironmentObject::create(
 
   RootedShape shape(cx, scope->environmentShape());
   LexicalEnvironmentObject* env =
-      createTemplateObject(cx, shape, enclosing, heap, IsSingletonEnv::No);
+      createTemplateObject(cx, shape, enclosing, heap);
   if (!env) {
     return nullptr;
   }
@@ -991,8 +966,8 @@ LexicalEnvironmentObject* LexicalEnvironmentObject::createGlobal(
   }
 
   LexicalEnvironmentObject* env =
-      LexicalEnvironmentObject::createTemplateObject(
-          cx, shape, global, gc::TenuredHeap, IsSingletonEnv::Yes);
+      LexicalEnvironmentObject::createTemplateObject(cx, shape, global,
+                                                     gc::TenuredHeap);
   if (!env) {
     return nullptr;
   }
@@ -1013,8 +988,8 @@ LexicalEnvironmentObject* LexicalEnvironmentObject::createNonSyntactic(
   }
 
   LexicalEnvironmentObject* env =
-      LexicalEnvironmentObject::createTemplateObject(
-          cx, shape, enclosing, gc::TenuredHeap, IsSingletonEnv::No);
+      LexicalEnvironmentObject::createTemplateObject(cx, shape, enclosing,
+                                                     gc::TenuredHeap);
   if (!env) {
     return nullptr;
   }
@@ -1040,8 +1015,7 @@ LexicalEnvironmentObject* LexicalEnvironmentObject::createHollowForDebug(
   // Debugger.Environment objects.
   RootedObject enclosingEnv(cx, &cx->global()->lexicalEnvironment());
   Rooted<LexicalEnvironmentObject*> env(
-      cx, createTemplateObject(cx, shape, enclosingEnv, gc::TenuredHeap,
-                               IsSingletonEnv::No));
+      cx, createTemplateObject(cx, shape, enclosingEnv, gc::TenuredHeap));
   if (!env) {
     return nullptr;
   }
@@ -1586,10 +1560,6 @@ class DebugEnvironmentProxyHandler : public BaseProxyHandler {
             *accessResult = ACCESS_LOST;
             return true;
           }
-        }
-
-        if (action == SET) {
-          jit::JitScript::MonitorArgType(cx, script, i, vp);
         }
       }
 
@@ -3368,11 +3338,10 @@ static bool GetThisValueForDebuggerEnvironmentIterMaybeOptimizedOut(
       // Figure out if we executed JSOp::FunctionThis and set it.
       bool executedInitThisOp = false;
       if (script->functionHasThisBinding()) {
-        for (jsbytecode* it = script->code(); it < script->codeEnd();
-             it = GetNextPc(it)) {
-          if (JSOp(*it) == JSOp::FunctionThis) {
+        for (const BytecodeLocation& loc : js::AllBytecodesIterable(script)) {
+          if (loc.getOp() == JSOp::FunctionThis) {
             // The next op after JSOp::FunctionThis always sets it.
-            executedInitThisOp = pc > GetNextPc(it);
+            executedInitThisOp = pc > GetNextPc(loc.toRawBytecode());
             break;
           }
         }
@@ -3570,6 +3539,168 @@ bool js::CheckCanDeclareGlobalBinding(JSContext* cx,
   return true;
 }
 
+// Add the var/let/const bindings to the variables environment of a global or
+// sloppy-eval script. The redeclaration checks should already have been
+// performed.
+static bool InitGlobalOrEvalDeclarations(
+    JSContext* cx, HandleScript script,
+    Handle<LexicalEnvironmentObject*> lexicalEnv, HandleObject varObj) {
+  Rooted<BindingIter> bi(cx, BindingIter(script));
+  for (; bi; bi++) {
+    if (bi.isTopLevelFunction()) {
+      continue;
+    }
+
+    RootedPropertyName name(cx, bi.name()->asPropertyName());
+    unsigned attrs = script->isForEval() ? JSPROP_ENUMERATE
+                                         : JSPROP_ENUMERATE | JSPROP_PERMANENT;
+
+    switch (bi.kind()) {
+      case BindingKind::Var: {
+        Rooted<PropertyResult> prop(cx);
+        RootedObject obj2(cx);
+        if (!LookupProperty(cx, varObj, name, &obj2, &prop)) {
+          return false;
+        }
+
+        if (!prop || (obj2 != varObj && varObj->is<GlobalObject>())) {
+          if (!DefineDataProperty(cx, varObj, name, UndefinedHandleValue,
+                                  attrs)) {
+            return false;
+          }
+        }
+
+        if (varObj->is<GlobalObject>()) {
+          if (!varObj->as<GlobalObject>().realm()->addToVarNames(cx, name)) {
+            return false;
+          }
+        }
+
+        break;
+      }
+
+      case BindingKind::Const:
+        attrs |= JSPROP_READONLY;
+        [[fallthrough]];
+
+      case BindingKind::Let: {
+        RootedId id(cx, NameToId(name));
+        RootedValue uninitialized(cx, MagicValue(JS_UNINITIALIZED_LEXICAL));
+        if (!NativeDefineDataProperty(cx, lexicalEnv, id, uninitialized,
+                                      attrs)) {
+          return false;
+        }
+
+        break;
+      }
+
+      default:
+        MOZ_CRASH("Expected binding kind");
+        return false;
+    }
+  }
+
+  return true;
+}
+
+// Define the hoisted top-level functions on the variables environment of a
+// global or sloppy-eval script. Redeclaration checks must already have been
+// performed.
+static bool InitHoistedFunctionDeclarations(JSContext* cx, HandleScript script,
+                                            HandleObject envChain,
+                                            HandleObject varObj,
+                                            GCThingIndex lastFun) {
+  // The inner-functions up to `lastFun` are the hoisted function declarations
+  // of the script. We must clone and bind them now.
+  for (size_t i = 0; i <= lastFun; ++i) {
+    const JS::GCCellPtr& thing = script->gcthings()[i];
+
+    // Skip the initial scopes. In practice, there is at most one variables and
+    // one lexical scope.
+    if (thing.is<js::Scope>()) {
+      MOZ_ASSERT(i < 2);
+      continue;
+    }
+
+    RootedFunction fun(cx, &thing.as<JSObject>().as<JSFunction>());
+    RootedPropertyName name(cx, fun->explicitName()->asPropertyName());
+
+    // Clone the function before exposing to script as a binding.
+    JSObject* clone = Lambda(cx, fun, envChain);
+    if (!clone) {
+      return false;
+    }
+    RootedValue rval(cx, ObjectValue(*clone));
+
+    Rooted<PropertyResult> prop(cx);
+    RootedObject pobj(cx);
+    if (!LookupProperty(cx, varObj, name, &pobj, &prop)) {
+      return false;
+    }
+
+    // ECMA requires functions defined when entering Eval code to be
+    // impermanent.
+    unsigned attrs = script->isForEval() ? JSPROP_ENUMERATE
+                                         : JSPROP_ENUMERATE | JSPROP_PERMANENT;
+
+    if (!prop || pobj != varObj) {
+      if (!DefineDataProperty(cx, varObj, name, rval, attrs)) {
+        return false;
+      }
+
+      if (varObj->is<GlobalObject>()) {
+        if (!varObj->as<GlobalObject>().realm()->addToVarNames(cx, name)) {
+          return false;
+        }
+      }
+
+      // Done processing this function.
+      continue;
+    }
+
+    /*
+     * A DebugEnvironmentProxy is okay here, and sometimes necessary. If
+     * Debugger.Frame.prototype.eval defines a function with the same name as an
+     * extant variable in the frame, the DebugEnvironmentProxy takes care of
+     * storing the function in the stack frame (for non-aliased variables) or on
+     * the scope object (for aliased).
+     */
+    MOZ_ASSERT(varObj->isNative() || varObj->is<DebugEnvironmentProxy>());
+    if (varObj->is<GlobalObject>()) {
+      Shape* shape = prop.shape();
+      if (shape->configurable()) {
+        if (!DefineDataProperty(cx, varObj, name, rval, attrs)) {
+          return false;
+        }
+      } else {
+        MOZ_ASSERT(shape->isDataDescriptor());
+        MOZ_ASSERT(shape->writable());
+        MOZ_ASSERT(shape->enumerable());
+      }
+
+      // Careful: the presence of a shape, even one appearing to derive from
+      // a variable declaration, doesn't mean it's in [[VarNames]].
+      if (!varObj->as<GlobalObject>().realm()->addToVarNames(cx, name)) {
+        return false;
+      }
+    }
+
+    /*
+     * Non-global properties, and global properties which we aren't simply
+     * redefining, must be set.  First, this preserves their attributes.
+     * Second, this will produce warnings and/or errors as necessary if the
+     * specified Call object property is not writable (const).
+     */
+
+    RootedId id(cx, NameToId(name));
+    if (!PutProperty(cx, varObj, id, rval, script->strict())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool js::CheckGlobalDeclarationConflicts(
     JSContext* cx, HandleScript script,
     Handle<LexicalEnvironmentObject*> lexicalEnv, HandleObject varObj) {
@@ -3738,26 +3869,30 @@ static bool CheckEvalDeclarationConflicts(JSContext* cx, HandleScript script,
   return true;
 }
 
-bool js::CheckGlobalOrEvalDeclarationConflicts(JSContext* cx,
-                                               HandleObject envChain,
-                                               HandleScript script) {
+bool js::GlobalOrEvalDeclInstantiation(JSContext* cx, HandleObject envChain,
+                                       HandleScript script,
+                                       GCThingIndex lastFun) {
   MOZ_ASSERT(script->isGlobalCode() || script->isForEval());
 
   RootedObject varObj(cx, &GetVariablesObject(envChain));
+  Rooted<LexicalEnvironmentObject*> lexicalEnv(cx);
 
   if (script->isForEval()) {
     if (!CheckEvalDeclarationConflicts(cx, script, envChain, varObj)) {
       return false;
     }
   } else {
-    Rooted<LexicalEnvironmentObject*> lexicalEnv(
-        cx, &NearestEnclosingExtensibleLexicalEnvironment(envChain));
+    lexicalEnv = &NearestEnclosingExtensibleLexicalEnvironment(envChain);
     if (!CheckGlobalDeclarationConflicts(cx, script, lexicalEnv, varObj)) {
       return false;
     }
   }
 
-  return true;
+  if (!InitGlobalOrEvalDeclarations(cx, script, lexicalEnv, varObj)) {
+    return false;
+  }
+
+  return InitHoistedFunctionDeclarations(cx, script, envChain, varObj, lastFun);
 }
 
 bool js::InitFunctionEnvironmentObjects(JSContext* cx, AbstractFramePtr frame) {

@@ -33,10 +33,8 @@ use crate::{
         lut_interp_linear_float,
     },
 };
-use ::libc::{self, calloc, free, malloc, memcpy};
 
-#[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct qcms_modular_transform {
     pub matrix: matrix,
     pub tx: f32,
@@ -46,13 +44,11 @@ pub struct qcms_modular_transform {
     pub input_clut_table_g: Option<Vec<f32>>,
     pub input_clut_table_b: Option<Vec<f32>>,
     pub input_clut_table_length: u16,
-    pub r_clut: *mut f32,
-    pub g_clut: *mut f32,
-    pub b_clut: *mut f32,
+    pub clut: Option<Vec<f32>>,
     pub grid_size: u16,
-    pub output_clut_table_r: *mut f32,
-    pub output_clut_table_g: *mut f32,
-    pub output_clut_table_b: *mut f32,
+    pub output_clut_table_r: Option<Vec<f32>>,
+    pub output_clut_table_g: Option<Vec<f32>>,
+    pub output_clut_table_b: Option<Vec<f32>>,
     pub output_clut_table_length: u16,
     pub output_gamma_lut_r: Option<Vec<u16>>,
     pub output_gamma_lut_g: Option<Vec<u16>>,
@@ -61,18 +57,17 @@ pub struct qcms_modular_transform {
     pub output_gamma_lut_g_length: usize,
     pub output_gamma_lut_b_length: usize,
     pub transform_module_fn: transform_module_fn_t,
-    pub next_transform: *mut qcms_modular_transform,
+    pub next_transform: Option<Box<qcms_modular_transform>>,
 }
-pub type transform_module_fn_t = Option<
-    unsafe extern "C" fn(_: *mut qcms_modular_transform, _: *mut f32, _: *mut f32, _: usize) -> (),
->;
+pub type transform_module_fn_t =
+    Option<unsafe fn(_: *const qcms_modular_transform, _: *mut f32, _: *mut f32, _: usize) -> ()>;
 
 #[inline]
 fn lerp(mut a: f32, mut b: f32, mut t: f32) -> f32 {
     return a * (1.0 - t) + b * t;
 }
 
-unsafe extern "C" fn build_lut_matrix(mut lut: Option<&lutType>) -> matrix {
+fn build_lut_matrix(mut lut: Option<&lutType>) -> matrix {
     let mut result: matrix = matrix {
         m: [[0.; 3]; 3],
         invalid: false,
@@ -89,12 +84,12 @@ unsafe extern "C" fn build_lut_matrix(mut lut: Option<&lutType>) -> matrix {
         result.m[2][2] = s15Fixed16Number_to_float((*lut).e22);
         result.invalid = false
     } else {
-        result = std::mem::zeroed();
+        result.m = Default::default();
         result.invalid = true
     }
     return result;
 }
-unsafe extern "C" fn build_mAB_matrix(lut: &lutmABType) -> matrix {
+fn build_mAB_matrix(lut: &lutmABType) -> matrix {
     let mut result: matrix = matrix {
         m: [[0.; 3]; 3],
         invalid: false,
@@ -114,8 +109,8 @@ unsafe extern "C" fn build_mAB_matrix(lut: &lutmABType) -> matrix {
     return result;
 }
 //Based on lcms cmsLab2XYZ
-unsafe extern "C" fn qcms_transform_module_LAB_to_XYZ(
-    mut transform: *mut qcms_modular_transform,
+unsafe fn transform_module_LAB_to_XYZ(
+    mut transform: *const qcms_modular_transform,
     mut src: *mut f32,
     mut dest: *mut f32,
     mut length: usize,
@@ -166,8 +161,8 @@ unsafe extern "C" fn qcms_transform_module_LAB_to_XYZ(
     }
 }
 //Based on lcms cmsXYZ2Lab
-unsafe extern "C" fn qcms_transform_module_XYZ_to_LAB(
-    mut transform: *mut qcms_modular_transform,
+unsafe fn transform_module_XYZ_to_LAB(
+    mut transform: *const qcms_modular_transform,
     mut src: *mut f32,
     mut dest: *mut f32,
     mut length: usize,
@@ -220,8 +215,8 @@ unsafe extern "C" fn qcms_transform_module_XYZ_to_LAB(
         i = i + 1
     }
 }
-unsafe extern "C" fn qcms_transform_module_clut_only(
-    mut transform: *mut qcms_modular_transform,
+unsafe fn transform_module_clut_only(
+    mut transform: *const qcms_modular_transform,
     mut src: *mut f32,
     mut dest: *mut f32,
     mut length: usize,
@@ -229,12 +224,14 @@ unsafe extern "C" fn qcms_transform_module_clut_only(
     let mut xy_len: i32 = 1;
     let mut x_len: i32 = (*transform).grid_size as i32;
     let mut len: i32 = x_len * x_len;
-    let mut r_table: *mut f32 = (*transform).r_clut;
-    let mut g_table: *mut f32 = (*transform).g_clut;
-    let mut b_table: *mut f32 = (*transform).b_clut;
+    let mut r_table: *const f32 = (*transform).clut.as_ref().unwrap().as_ptr().offset(0isize);
+    let mut g_table: *const f32 = (*transform).clut.as_ref().unwrap().as_ptr().offset(1isize);
+    let mut b_table: *const f32 = (*transform).clut.as_ref().unwrap().as_ptr().offset(2isize);
+
     let mut i: usize = 0;
-    let CLU =
-        |table: *mut f32, x, y, z| *table.offset(((x * len + y * x_len + z * xy_len) * 3) as isize);
+    let CLU = |table: *const f32, x, y, z| {
+        *table.offset(((x * len + y * x_len + z * xy_len) * 3) as isize)
+    };
 
     while i < length {
         debug_assert!((*transform).grid_size as i32 >= 1);
@@ -293,8 +290,8 @@ unsafe extern "C" fn qcms_transform_module_clut_only(
         i = i + 1
     }
 }
-unsafe extern "C" fn qcms_transform_module_clut(
-    mut transform: *mut qcms_modular_transform,
+unsafe fn transform_module_clut(
+    mut transform: *const qcms_modular_transform,
     mut src: *mut f32,
     mut dest: *mut f32,
     mut length: usize,
@@ -302,11 +299,12 @@ unsafe extern "C" fn qcms_transform_module_clut(
     let mut xy_len: i32 = 1;
     let mut x_len: i32 = (*transform).grid_size as i32;
     let mut len: i32 = x_len * x_len;
-    let mut r_table: *mut f32 = (*transform).r_clut;
-    let mut g_table: *mut f32 = (*transform).g_clut;
-    let mut b_table: *mut f32 = (*transform).b_clut;
-    let CLU =
-        |table: *mut f32, x, y, z| *table.offset(((x * len + y * x_len + z * xy_len) * 3) as isize);
+    let mut r_table: *const f32 = (*transform).clut.as_ref().unwrap().as_ptr().offset(0isize);
+    let mut g_table: *const f32 = (*transform).clut.as_ref().unwrap().as_ptr().offset(1isize);
+    let mut b_table: *const f32 = (*transform).clut.as_ref().unwrap().as_ptr().offset(2isize);
+    let CLU = |table: *const f32, x, y, z| {
+        *table.offset(((x * len + y * x_len + z * xy_len) * 3) as isize)
+    };
 
     let mut i: usize = 0;
     let input_clut_table_r = (*transform).input_clut_table_r.as_ref().unwrap();
@@ -359,27 +357,12 @@ unsafe extern "C" fn qcms_transform_module_clut(
         let mut b_x4: f32 = lerp(CLU(b_table, x, y_n, z_n), CLU(b_table, x_n, y_n, z_n), x_d);
         let mut b_y2: f32 = lerp(b_x3, b_x4, y_d);
         let mut clut_b: f32 = lerp(b_y1, b_y2, z_d);
-        let mut pcs_r: f32 = lut_interp_linear_float(
-            clut_r,
-            std::slice::from_raw_parts(
-                (*transform).output_clut_table_r,
-                (*transform).output_clut_table_length as usize,
-            ),
-        );
-        let mut pcs_g: f32 = lut_interp_linear_float(
-            clut_g,
-            std::slice::from_raw_parts(
-                (*transform).output_clut_table_g,
-                (*transform).output_clut_table_length as usize,
-            ),
-        );
-        let mut pcs_b: f32 = lut_interp_linear_float(
-            clut_b,
-            std::slice::from_raw_parts(
-                (*transform).output_clut_table_b,
-                (*transform).output_clut_table_length as usize,
-            ),
-        );
+        let mut pcs_r: f32 =
+            lut_interp_linear_float(clut_r, &(*transform).output_clut_table_r.as_ref().unwrap());
+        let mut pcs_g: f32 =
+            lut_interp_linear_float(clut_g, &(*transform).output_clut_table_g.as_ref().unwrap());
+        let mut pcs_b: f32 =
+            lut_interp_linear_float(clut_b, &(*transform).output_clut_table_b.as_ref().unwrap());
         let fresh21 = dest;
         dest = dest.offset(1);
         *fresh21 = clamp_float(pcs_r);
@@ -517,8 +500,8 @@ static void qcms_transform_module_tetra_clut(struct qcms_modular_transform *tran
     }
 }
 */
-unsafe extern "C" fn qcms_transform_module_gamma_table(
-    mut transform: *mut qcms_modular_transform,
+unsafe fn transform_module_gamma_table(
+    mut transform: *const qcms_modular_transform,
     mut src: *mut f32,
     mut dest: *mut f32,
     mut length: usize,
@@ -556,8 +539,8 @@ unsafe extern "C" fn qcms_transform_module_gamma_table(
         i = i + 1
     }
 }
-unsafe extern "C" fn qcms_transform_module_gamma_lut(
-    mut transform: *mut qcms_modular_transform,
+unsafe fn transform_module_gamma_lut(
+    mut transform: *const qcms_modular_transform,
     mut src: *mut f32,
     mut dest: *mut f32,
     mut length: usize,
@@ -600,8 +583,8 @@ unsafe extern "C" fn qcms_transform_module_gamma_lut(
         i = i + 1
     }
 }
-unsafe extern "C" fn qcms_transform_module_matrix_translate(
-    mut transform: *mut qcms_modular_transform,
+unsafe fn transform_module_matrix_translate(
+    mut transform: *const qcms_modular_transform,
     mut src: *mut f32,
     mut dest: *mut f32,
     mut length: usize,
@@ -650,8 +633,8 @@ unsafe extern "C" fn qcms_transform_module_matrix_translate(
         i = i + 1
     }
 }
-unsafe extern "C" fn qcms_transform_module_matrix(
-    mut transform: *mut qcms_modular_transform,
+unsafe fn transform_module_matrix(
+    mut transform: *const qcms_modular_transform,
     mut src: *mut f32,
     mut dest: *mut f32,
     mut length: usize,
@@ -697,373 +680,212 @@ unsafe extern "C" fn qcms_transform_module_matrix(
         i = i + 1
     }
 }
-unsafe extern "C" fn qcms_modular_transform_alloc() -> *mut qcms_modular_transform {
-    return calloc(1, ::std::mem::size_of::<qcms_modular_transform>())
-        as *mut qcms_modular_transform;
+fn modular_transform_alloc() -> Option<Box<qcms_modular_transform>> {
+    return Some(Box::new(Default::default()));
 }
-unsafe extern "C" fn qcms_modular_transform_release(mut transform: *mut qcms_modular_transform) {
-    let mut next_transform: *mut qcms_modular_transform;
-    while !transform.is_null() {
-        next_transform = (*transform).next_transform;
-
-        (*transform).input_clut_table_r = None;
-        (*transform).input_clut_table_g = None;
-        (*transform).input_clut_table_b = None;
-
-        if (*transform).r_clut.offset(1isize) == (*transform).g_clut
-            && (*transform).g_clut.offset(1isize) == (*transform).b_clut
-        {
-            if !(*transform).r_clut.is_null() {
-                free((*transform).r_clut as *mut libc::c_void);
-            }
-        } else {
-            if !(*transform).r_clut.is_null() {
-                free((*transform).r_clut as *mut libc::c_void);
-            }
-            if !(*transform).g_clut.is_null() {
-                free((*transform).g_clut as *mut libc::c_void);
-            }
-            if !(*transform).b_clut.is_null() {
-                free((*transform).b_clut as *mut libc::c_void);
-            }
-        }
-        if (*transform)
-            .output_clut_table_r
-            .offset((*transform).output_clut_table_length as i32 as isize)
-            == (*transform).output_clut_table_g
-            && (*transform)
-                .output_clut_table_g
-                .offset((*transform).output_clut_table_length as i32 as isize)
-                == (*transform).output_clut_table_b
-        {
-            if !(*transform).output_clut_table_r.is_null() {
-                free((*transform).output_clut_table_r as *mut libc::c_void);
-            }
-        } else {
-            if !(*transform).output_clut_table_r.is_null() {
-                free((*transform).output_clut_table_r as *mut libc::c_void);
-            }
-            if !(*transform).output_clut_table_g.is_null() {
-                free((*transform).output_clut_table_g as *mut libc::c_void);
-            }
-            if !(*transform).output_clut_table_b.is_null() {
-                free((*transform).output_clut_table_b as *mut libc::c_void);
-            }
-        }
-        if !(*transform).output_gamma_lut_r.is_none() {
-            (*transform).output_gamma_lut_r = None;
-        }
-        if !(*transform).output_gamma_lut_g.is_none() {
-            (*transform).output_gamma_lut_g = None;
-        }
-        if !(*transform).output_gamma_lut_b.is_none() {
-            (*transform).output_gamma_lut_b = None;
-        }
-        free(transform as *mut libc::c_void);
-        transform = next_transform
+fn modular_transform_release(mut t: Option<Box<qcms_modular_transform>>) {
+    // destroy a list of transforms non-recursively
+    let mut next_transform;
+    while let Some(mut transform) = t {
+        next_transform = std::mem::replace(&mut (*transform).next_transform, None);
+        t = next_transform
     }
 }
 /* Set transform to be the next element in the linked list. */
-unsafe extern "C" fn append_transform(
-    mut transform: *mut qcms_modular_transform,
-    mut next_transform: *mut *mut *mut qcms_modular_transform,
-) {
-    **next_transform = transform;
-    while !transform.is_null() {
-        *next_transform = &mut (*transform).next_transform;
-        transform = (*transform).next_transform
+fn append_transform(
+    mut transform: Option<Box<qcms_modular_transform>>,
+    mut next_transform: &mut Option<Box<qcms_modular_transform>>,
+) -> &mut Option<Box<qcms_modular_transform>> {
+    *next_transform = transform;
+    while next_transform.is_some() {
+        next_transform = &mut next_transform.as_mut().unwrap().next_transform;
     }
+    next_transform
 }
 /* reverse the transformation list (used by mBA) */
-unsafe extern "C" fn reverse_transform(
-    mut transform: *mut qcms_modular_transform,
-) -> *mut qcms_modular_transform {
-    let mut prev_transform: *mut qcms_modular_transform = 0 as *mut qcms_modular_transform;
-    while !transform.is_null() {
-        let mut next_transform: *mut qcms_modular_transform = (*transform).next_transform;
-        (*transform).next_transform = prev_transform;
+fn reverse_transform(
+    mut transform: Option<Box<qcms_modular_transform>>,
+) -> Option<Box<qcms_modular_transform>> {
+    let mut prev_transform = None;
+    while !transform.is_none() {
+        let mut next_transform = std::mem::replace(
+            &mut transform.as_mut().unwrap().next_transform,
+            prev_transform,
+        );
         prev_transform = transform;
         transform = next_transform
     }
     return prev_transform;
 }
-unsafe extern "C" fn qcms_modular_transform_create_mAB(
-    mut lut: &lutmABType,
-) -> *mut qcms_modular_transform {
-    let mut current_block: u64;
-    let mut first_transform: *mut qcms_modular_transform = 0 as *mut qcms_modular_transform;
-    let mut next_transform: *mut *mut qcms_modular_transform = &mut first_transform;
-    let mut transform: *mut qcms_modular_transform;
+fn modular_transform_create_mAB(mut lut: &lutmABType) -> Option<Box<qcms_modular_transform>> {
+    let mut first_transform = None;
+    let mut next_transform = &mut first_transform;
+    let mut transform;
     if !(*lut).a_curves[0].is_none() {
         let mut clut_length: usize;
-        let mut clut: *mut f32;
         // If the A curve is present this also implies the
         // presence of a CLUT.
         if (*lut).clut_table.is_none() {
-            current_block = 7590209878260659629;
-        } else {
-            // Prepare A curve.
-            transform = qcms_modular_transform_alloc();
-            if transform.is_null() {
-                current_block = 7590209878260659629;
-            } else {
-                append_transform(transform, &mut next_transform);
-                (*transform).input_clut_table_r =
-                    build_input_gamma_table((*lut).a_curves[0].as_deref());
-                (*transform).input_clut_table_g =
-                    build_input_gamma_table((*lut).a_curves[1].as_deref());
-                (*transform).input_clut_table_b =
-                    build_input_gamma_table((*lut).a_curves[2].as_deref());
-                (*transform).transform_module_fn = Some(
-                    qcms_transform_module_gamma_table
-                        as unsafe extern "C" fn(
-                            _: *mut qcms_modular_transform,
-                            _: *mut f32,
-                            _: *mut f32,
-                            _: usize,
-                        ) -> (),
-                );
-                if (*lut).num_grid_points[0] as i32 != (*lut).num_grid_points[1] as i32
-                    || (*lut).num_grid_points[1] as i32 != (*lut).num_grid_points[2] as i32
-                {
-                    //XXX: We don't currently support clut that are not squared!
-                    current_block = 7590209878260659629;
-                } else {
-                    // Prepare CLUT
-                    transform = qcms_modular_transform_alloc();
-                    if transform.is_null() {
-                        current_block = 7590209878260659629;
-                    } else {
-                        append_transform(transform, &mut next_transform);
-                        clut_length = (::std::mem::size_of::<f32>() as f64
-                            * ((*lut).num_grid_points[0] as f64).powf(3f64)
-                            * 3f64) as usize;
-                        clut = malloc(clut_length) as *mut f32;
-                        if clut.is_null() {
-                            current_block = 7590209878260659629;
-                        } else {
-                            memcpy(
-                                clut as *mut libc::c_void,
-                                (*lut).clut_table.as_ref().unwrap().as_ptr() as *const libc::c_void,
-                                clut_length,
-                            );
-                            (*transform).r_clut = clut.offset(0isize);
-                            (*transform).g_clut = clut.offset(1isize);
-                            (*transform).b_clut = clut.offset(2isize);
-                            (*transform).grid_size = (*lut).num_grid_points[0] as u16;
-                            (*transform).transform_module_fn = Some(
-                                qcms_transform_module_clut_only
-                                    as unsafe extern "C" fn(
-                                        _: *mut qcms_modular_transform,
-                                        _: *mut f32,
-                                        _: *mut f32,
-                                        _: usize,
-                                    )
-                                        -> (),
-                            );
-                            current_block = 10652014663920648156;
-                        }
-                    }
-                }
-            }
+            return None;
         }
+
+        // Prepare A curve.
+        transform = modular_transform_alloc();
+        if transform.is_none() {
+            return None;
+        }
+        transform.as_mut().unwrap().input_clut_table_r =
+            build_input_gamma_table((*lut).a_curves[0].as_deref());
+        transform.as_mut().unwrap().input_clut_table_g =
+            build_input_gamma_table((*lut).a_curves[1].as_deref());
+        transform.as_mut().unwrap().input_clut_table_b =
+            build_input_gamma_table((*lut).a_curves[2].as_deref());
+        transform.as_mut().unwrap().transform_module_fn = Some(transform_module_gamma_table);
+        next_transform = append_transform(transform, next_transform);
+
+        if (*lut).num_grid_points[0] as i32 != (*lut).num_grid_points[1] as i32
+            || (*lut).num_grid_points[1] as i32 != (*lut).num_grid_points[2] as i32
+        {
+            //XXX: We don't currently support clut that are not squared!
+            return None;
+        }
+
+        // Prepare CLUT
+        transform = modular_transform_alloc();
+        if transform.is_none() {
+            return None;
+        }
+
+        clut_length = ((*lut).num_grid_points[0] as usize).pow(3) * 3;
+        assert_eq!(clut_length, lut.clut_table.as_ref().unwrap().len());
+        transform.as_mut().unwrap().clut = lut.clut_table.clone();
+        transform.as_mut().unwrap().grid_size = (*lut).num_grid_points[0] as u16;
+        transform.as_mut().unwrap().transform_module_fn = Some(transform_module_clut_only);
+        next_transform = append_transform(transform, next_transform);
+    }
+
+    if !(*lut).m_curves[0].is_none() {
+        // M curve imples the presence of a Matrix
+
+        // Prepare M curve
+        transform = modular_transform_alloc();
+        if transform.is_none() {
+            return None;
+        }
+        transform.as_mut().unwrap().input_clut_table_r =
+            build_input_gamma_table((*lut).m_curves[0].as_deref());
+        transform.as_mut().unwrap().input_clut_table_g =
+            build_input_gamma_table((*lut).m_curves[1].as_deref());
+        transform.as_mut().unwrap().input_clut_table_b =
+            build_input_gamma_table((*lut).m_curves[2].as_deref());
+        transform.as_mut().unwrap().transform_module_fn = Some(transform_module_gamma_table);
+        next_transform = append_transform(transform, next_transform);
+
+        // Prepare Matrix
+        transform = modular_transform_alloc();
+        if transform.is_none() {
+            return None;
+        }
+        transform.as_mut().unwrap().matrix = build_mAB_matrix(lut);
+        if transform.as_mut().unwrap().matrix.invalid {
+            return None;
+        }
+        transform.as_mut().unwrap().tx = s15Fixed16Number_to_float((*lut).e03);
+        transform.as_mut().unwrap().ty = s15Fixed16Number_to_float((*lut).e13);
+        transform.as_mut().unwrap().tz = s15Fixed16Number_to_float((*lut).e23);
+        transform.as_mut().unwrap().transform_module_fn = Some(transform_module_matrix_translate);
+        next_transform = append_transform(transform, next_transform);
+    }
+
+    if !(*lut).b_curves[0].is_none() {
+        // Prepare B curve
+        transform = modular_transform_alloc();
+        if transform.is_none() {
+            return None;
+        }
+        transform.as_mut().unwrap().input_clut_table_r =
+            build_input_gamma_table((*lut).b_curves[0].as_deref());
+        transform.as_mut().unwrap().input_clut_table_g =
+            build_input_gamma_table((*lut).b_curves[1].as_deref());
+        transform.as_mut().unwrap().input_clut_table_b =
+            build_input_gamma_table((*lut).b_curves[2].as_deref());
+        transform.as_mut().unwrap().transform_module_fn = Some(transform_module_gamma_table);
+        append_transform(transform, next_transform);
     } else {
-        current_block = 10652014663920648156;
+        // B curve is mandatory
+        return None;
     }
-    match current_block {
-        10652014663920648156 => {
-            if !(*lut).m_curves[0].is_none() {
-                // M curve imples the presence of a Matrix
-                // Prepare M curve
-                transform = qcms_modular_transform_alloc();
-                if transform.is_null() {
-                    current_block = 7590209878260659629;
-                } else {
-                    append_transform(transform, &mut next_transform);
-                    (*transform).input_clut_table_r =
-                        build_input_gamma_table((*lut).m_curves[0].as_deref());
-                    (*transform).input_clut_table_g =
-                        build_input_gamma_table((*lut).m_curves[1].as_deref());
-                    (*transform).input_clut_table_b =
-                        build_input_gamma_table((*lut).m_curves[2].as_deref());
-                    (*transform).transform_module_fn = Some(
-                        qcms_transform_module_gamma_table
-                            as unsafe extern "C" fn(
-                                _: *mut qcms_modular_transform,
-                                _: *mut f32,
-                                _: *mut f32,
-                                _: usize,
-                            ) -> (),
-                    );
-                    // Prepare Matrix
-                    transform = qcms_modular_transform_alloc();
-                    if transform.is_null() {
-                        current_block = 7590209878260659629;
-                    } else {
-                        append_transform(transform, &mut next_transform);
-                        (*transform).matrix = build_mAB_matrix(lut);
-                        if (*transform).matrix.invalid {
-                            current_block = 7590209878260659629;
-                        } else {
-                            (*transform).tx = s15Fixed16Number_to_float((*lut).e03);
-                            (*transform).ty = s15Fixed16Number_to_float((*lut).e13);
-                            (*transform).tz = s15Fixed16Number_to_float((*lut).e23);
-                            (*transform).transform_module_fn = Some(
-                                qcms_transform_module_matrix_translate
-                                    as unsafe extern "C" fn(
-                                        _: *mut qcms_modular_transform,
-                                        _: *mut f32,
-                                        _: *mut f32,
-                                        _: usize,
-                                    )
-                                        -> (),
-                            );
-                            current_block = 980989089337379490;
-                        }
-                    }
-                }
-            } else {
-                current_block = 980989089337379490;
-            }
-            match current_block {
-                7590209878260659629 => {}
-                _ => {
-                    if !(*lut).b_curves[0].is_none() {
-                        // Prepare B curve
-                        transform = qcms_modular_transform_alloc();
-                        if !transform.is_null() {
-                            append_transform(transform, &mut next_transform);
-                            (*transform).input_clut_table_r =
-                                build_input_gamma_table((*lut).b_curves[0].as_deref());
-                            (*transform).input_clut_table_g =
-                                build_input_gamma_table((*lut).b_curves[1].as_deref());
-                            (*transform).input_clut_table_b =
-                                build_input_gamma_table((*lut).b_curves[2].as_deref());
-                            (*transform).transform_module_fn = Some(
-                                qcms_transform_module_gamma_table
-                                    as unsafe extern "C" fn(
-                                        _: *mut qcms_modular_transform,
-                                        _: *mut f32,
-                                        _: *mut f32,
-                                        _: usize,
-                                    )
-                                        -> (),
-                            );
-                            if (*lut).reversed {
-                                // mBA are identical to mAB except that the transformation order
-                                // is reversed
-                                first_transform = reverse_transform(first_transform)
-                            }
-                            return first_transform;
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
+
+    if (*lut).reversed {
+        // mBA are identical to mAB except that the transformation order
+        // is reversed
+        first_transform = reverse_transform(first_transform)
     }
-    // B curve is mandatory
-    qcms_modular_transform_release(first_transform);
-    return 0 as *mut qcms_modular_transform;
+    return first_transform;
 }
-unsafe extern "C" fn qcms_modular_transform_create_lut(
-    mut lut: &lutType,
-) -> *mut qcms_modular_transform {
-    let mut first_transform: *mut qcms_modular_transform = 0 as *mut qcms_modular_transform;
-    let mut next_transform: *mut *mut qcms_modular_transform = &mut first_transform;
+
+fn modular_transform_create_lut(mut lut: &lutType) -> Option<Box<qcms_modular_transform>> {
+    let mut first_transform = None;
+    let mut next_transform = &mut first_transform;
 
     let mut in_curve_len: usize;
     let mut clut_length: usize;
     let mut out_curve_len: usize;
     let mut in_curves: *mut f32;
-    let mut clut: *mut f32;
     let mut out_curves: *mut f32;
-    let mut transform: *mut qcms_modular_transform = qcms_modular_transform_alloc();
-    if !transform.is_null() {
-        append_transform(transform, &mut next_transform);
-        (*transform).matrix = build_lut_matrix(Some(lut));
-        if !(*transform).matrix.invalid {
-            (*transform).transform_module_fn = Some(
-                qcms_transform_module_matrix
-                    as unsafe extern "C" fn(
-                        _: *mut qcms_modular_transform,
-                        _: *mut f32,
-                        _: *mut f32,
-                        _: usize,
-                    ) -> (),
-            );
+    let mut transform = modular_transform_alloc();
+    if !transform.is_none() {
+        transform.as_mut().unwrap().matrix = build_lut_matrix(Some(lut));
+        if !transform.as_mut().unwrap().matrix.invalid {
+            transform.as_mut().unwrap().transform_module_fn = Some(transform_module_matrix);
+            next_transform = append_transform(transform, next_transform);
             // Prepare input curves
-            transform = qcms_modular_transform_alloc();
-            if !transform.is_null() {
-                append_transform(transform, &mut next_transform);
-                in_curve_len =
-                    ::std::mem::size_of::<f32>() * (*lut).num_input_table_entries as usize * 3;
-                in_curves = malloc(in_curve_len) as *mut f32;
-                if !in_curves.is_null() {
-                    memcpy(
-                        in_curves as *mut libc::c_void,
-                        (*lut).input_table.as_ptr() as *mut libc::c_void,
-                        in_curve_len,
-                    );
-                    // XXX: in_curves is unused
-                    free(in_curves as *mut libc::c_void);
-                    (*transform).input_clut_table_r = Some(
+            transform = modular_transform_alloc();
+            if !transform.is_none() {
+                if true {
+                    transform.as_mut().unwrap().input_clut_table_r = Some(
                         (*lut).input_table[0..(*lut).num_input_table_entries as usize].to_vec(),
                     );
-                    (*transform).input_clut_table_g = Some(
+                    transform.as_mut().unwrap().input_clut_table_g = Some(
                         (*lut).input_table[(*lut).num_input_table_entries as usize
                             ..(*lut).num_input_table_entries as usize * 2]
                             .to_vec(),
                     );
-                    (*transform).input_clut_table_b = Some(
+                    transform.as_mut().unwrap().input_clut_table_b = Some(
                         (*lut).input_table[(*lut).num_input_table_entries as usize * 2
                             ..(*lut).num_input_table_entries as usize * 3]
                             .to_vec(),
                     );
-                    (*transform).input_clut_table_length = (*lut).num_input_table_entries;
+                    transform.as_mut().unwrap().input_clut_table_length =
+                        (*lut).num_input_table_entries;
                     // Prepare table
-                    clut_length = (::std::mem::size_of::<f32>() as f64
-                        * ((*lut).num_clut_grid_points as f64).powf(3f64)
-                        * 3f64) as usize;
-                    clut = malloc(clut_length) as *mut f32;
-                    if !clut.is_null() {
-                        memcpy(
-                            clut as *mut libc::c_void,
-                            (*lut).clut_table.as_ptr() as *const libc::c_void,
-                            clut_length,
-                        );
-                        (*transform).r_clut = clut.offset(0isize);
-                        (*transform).g_clut = clut.offset(1isize);
-                        (*transform).b_clut = clut.offset(2isize);
-                        (*transform).grid_size = (*lut).num_clut_grid_points as u16;
+                    clut_length = ((*lut).num_clut_grid_points as usize).pow(3) * 3;
+                    if true {
+                        assert_eq!(clut_length, lut.clut_table.len());
+                        transform.as_mut().unwrap().clut = Some((*lut).clut_table.clone());
+
+                        transform.as_mut().unwrap().grid_size = (*lut).num_clut_grid_points as u16;
                         // Prepare output curves
-                        out_curve_len = ::std::mem::size_of::<f32>()
-                            * (*lut).num_output_table_entries as usize
-                            * 3;
-                        out_curves = malloc(out_curve_len) as *mut f32;
-                        if !out_curves.is_null() {
-                            memcpy(
-                                out_curves as *mut libc::c_void,
-                                (*lut).output_table.as_ptr() as *const libc::c_void,
-                                out_curve_len,
+                        if true {
+                            transform.as_mut().unwrap().output_clut_table_r = Some(
+                                (*lut).output_table[0..(*lut).num_output_table_entries as usize]
+                                    .to_vec(),
                             );
-                            (*transform).output_clut_table_r = out_curves
-                                .offset(((*lut).num_output_table_entries as i32 * 0) as isize);
-                            (*transform).output_clut_table_g = out_curves
-                                .offset(((*lut).num_output_table_entries as i32 * 1) as isize);
-                            (*transform).output_clut_table_b = out_curves
-                                .offset(((*lut).num_output_table_entries as i32 * 2) as isize);
-                            (*transform).output_clut_table_length = (*lut).num_output_table_entries;
-                            (*transform).transform_module_fn = Some(
-                                qcms_transform_module_clut
-                                    as unsafe extern "C" fn(
-                                        _: *mut qcms_modular_transform,
-                                        _: *mut f32,
-                                        _: *mut f32,
-                                        _: usize,
-                                    )
-                                        -> (),
+                            transform.as_mut().unwrap().output_clut_table_g = Some(
+                                (*lut).output_table[(*lut).num_output_table_entries as usize
+                                    ..(*lut).num_output_table_entries as usize * 2]
+                                    .to_vec(),
                             );
+                            transform.as_mut().unwrap().output_clut_table_b = Some(
+                                (*lut).output_table[(*lut).num_output_table_entries as usize * 2
+                                    ..(*lut).num_output_table_entries as usize * 3]
+                                    .to_vec(),
+                            );
+                            transform.as_mut().unwrap().output_clut_table_length =
+                                (*lut).num_output_table_entries;
+                            transform.as_mut().unwrap().transform_module_fn =
+                                Some(transform_module_clut);
+                            append_transform(transform, next_transform);
                             return first_transform;
                         }
                     }
@@ -1071,223 +893,153 @@ unsafe extern "C" fn qcms_modular_transform_create_lut(
             }
         }
     }
-    qcms_modular_transform_release(first_transform);
-    return 0 as *mut qcms_modular_transform;
+    modular_transform_release(first_transform);
+    return None;
 }
-#[no_mangle]
-pub unsafe extern "C" fn qcms_modular_transform_create_input(
-    mut in_0: &qcms_profile,
-) -> *mut qcms_modular_transform {
-    let mut current_block: u64;
-    let mut first_transform: *mut qcms_modular_transform = 0 as *mut qcms_modular_transform;
-    let mut next_transform: *mut *mut qcms_modular_transform = &mut first_transform;
+
+fn modular_transform_create_input(mut in_0: &qcms_profile) -> Option<Box<qcms_modular_transform>> {
+    let mut first_transform = None;
+    let mut next_transform = &mut first_transform;
     if !(*in_0).A2B0.is_none() {
-        let mut lut_transform: *mut qcms_modular_transform =
-            qcms_modular_transform_create_lut((*in_0).A2B0.as_deref().unwrap());
-        if lut_transform.is_null() {
-            current_block = 8903102000210989603;
+        let mut lut_transform = modular_transform_create_lut((*in_0).A2B0.as_deref().unwrap());
+        if lut_transform.is_none() {
+            return None;
         } else {
-            append_transform(lut_transform, &mut next_transform);
-            current_block = 10692455896603418738;
+            append_transform(lut_transform, next_transform);
         }
     } else if !(*in_0).mAB.is_none()
         && (*(*in_0).mAB.as_deref().unwrap()).num_in_channels as i32 == 3
         && (*(*in_0).mAB.as_deref().unwrap()).num_out_channels as i32 == 3
     {
-        let mut mAB_transform: *mut qcms_modular_transform =
-            qcms_modular_transform_create_mAB((*in_0).mAB.as_deref().unwrap());
-        if mAB_transform.is_null() {
-            current_block = 8903102000210989603;
+        let mut mAB_transform = modular_transform_create_mAB((*in_0).mAB.as_deref().unwrap());
+        if mAB_transform.is_none() {
+            return None;
         } else {
-            append_transform(mAB_transform, &mut next_transform);
-            current_block = 10692455896603418738;
+            append_transform(mAB_transform, next_transform);
         }
     } else {
-        let mut transform: *mut qcms_modular_transform = qcms_modular_transform_alloc();
-        if transform.is_null() {
-            current_block = 8903102000210989603;
+        let mut transform = modular_transform_alloc();
+        if transform.is_none() {
+            return None;
         } else {
-            append_transform(transform, &mut next_transform);
-            (*transform).input_clut_table_r = build_input_gamma_table((*in_0).redTRC.as_deref());
-            (*transform).input_clut_table_g = build_input_gamma_table((*in_0).greenTRC.as_deref());
-            (*transform).input_clut_table_b = build_input_gamma_table((*in_0).blueTRC.as_deref());
-            (*transform).transform_module_fn = Some(
-                qcms_transform_module_gamma_table
-                    as unsafe extern "C" fn(
-                        _: *mut qcms_modular_transform,
-                        _: *mut f32,
-                        _: *mut f32,
-                        _: usize,
-                    ) -> (),
-            );
-            if (*transform).input_clut_table_r.is_none()
-                || (*transform).input_clut_table_g.is_none()
-                || (*transform).input_clut_table_b.is_none()
+            transform.as_mut().unwrap().input_clut_table_r =
+                build_input_gamma_table((*in_0).redTRC.as_deref());
+            transform.as_mut().unwrap().input_clut_table_g =
+                build_input_gamma_table((*in_0).greenTRC.as_deref());
+            transform.as_mut().unwrap().input_clut_table_b =
+                build_input_gamma_table((*in_0).blueTRC.as_deref());
+            transform.as_mut().unwrap().transform_module_fn = Some(transform_module_gamma_table);
+            if transform.as_mut().unwrap().input_clut_table_r.is_none()
+                || transform.as_mut().unwrap().input_clut_table_g.is_none()
+                || transform.as_mut().unwrap().input_clut_table_b.is_none()
             {
-                current_block = 8903102000210989603;
+                append_transform(transform, next_transform);
+                return None;
             } else {
-                transform = qcms_modular_transform_alloc();
-                if transform.is_null() {
-                    current_block = 8903102000210989603;
+                next_transform = append_transform(transform, next_transform);
+                transform = modular_transform_alloc();
+                if transform.is_none() {
+                    return None;
                 } else {
-                    append_transform(transform, &mut next_transform);
-                    (*transform).matrix.m[0][0] = 1. / 1.999969482421875;
-                    (*transform).matrix.m[0][1] = 0.0;
-                    (*transform).matrix.m[0][2] = 0.0;
-                    (*transform).matrix.m[1][0] = 0.0;
-                    (*transform).matrix.m[1][1] = 1. / 1.999969482421875;
-                    (*transform).matrix.m[1][2] = 0.0;
-                    (*transform).matrix.m[2][0] = 0.0;
-                    (*transform).matrix.m[2][1] = 0.0;
-                    (*transform).matrix.m[2][2] = 1. / 1.999969482421875;
-                    (*transform).matrix.invalid = false;
-                    (*transform).transform_module_fn = Some(
-                        qcms_transform_module_matrix
-                            as unsafe extern "C" fn(
-                                _: *mut qcms_modular_transform,
-                                _: *mut f32,
-                                _: *mut f32,
-                                _: usize,
-                            ) -> (),
-                    );
-                    transform = qcms_modular_transform_alloc();
-                    if transform.is_null() {
-                        current_block = 8903102000210989603;
+                    transform.as_mut().unwrap().matrix.m[0][0] = 1. / 1.999969482421875;
+                    transform.as_mut().unwrap().matrix.m[0][1] = 0.0;
+                    transform.as_mut().unwrap().matrix.m[0][2] = 0.0;
+                    transform.as_mut().unwrap().matrix.m[1][0] = 0.0;
+                    transform.as_mut().unwrap().matrix.m[1][1] = 1. / 1.999969482421875;
+                    transform.as_mut().unwrap().matrix.m[1][2] = 0.0;
+                    transform.as_mut().unwrap().matrix.m[2][0] = 0.0;
+                    transform.as_mut().unwrap().matrix.m[2][1] = 0.0;
+                    transform.as_mut().unwrap().matrix.m[2][2] = 1. / 1.999969482421875;
+                    transform.as_mut().unwrap().matrix.invalid = false;
+                    transform.as_mut().unwrap().transform_module_fn = Some(transform_module_matrix);
+                    next_transform = append_transform(transform, next_transform);
+                    transform = modular_transform_alloc();
+                    if transform.is_none() {
+                        return None;
                     } else {
-                        append_transform(transform, &mut next_transform);
-                        (*transform).matrix = build_colorant_matrix(in_0);
-                        (*transform).transform_module_fn = Some(
-                            qcms_transform_module_matrix
-                                as unsafe extern "C" fn(
-                                    _: *mut qcms_modular_transform,
-                                    _: *mut f32,
-                                    _: *mut f32,
-                                    _: usize,
-                                ) -> (),
-                        );
-                        current_block = 10692455896603418738;
+                        transform.as_mut().unwrap().matrix = build_colorant_matrix(in_0);
+                        transform.as_mut().unwrap().transform_module_fn =
+                            Some(transform_module_matrix);
+                        append_transform(transform, next_transform);
                     }
                 }
             }
         }
     }
-    match current_block {
-        10692455896603418738 => return first_transform,
-        _ => {
-            qcms_modular_transform_release(first_transform);
-            return 0 as *mut qcms_modular_transform;
-        }
-    };
+    first_transform
 }
-unsafe extern "C" fn qcms_modular_transform_create_output(
-    mut out: &qcms_profile,
-) -> *mut qcms_modular_transform {
-    let mut current_block: u64;
-    let mut first_transform: *mut qcms_modular_transform = 0 as *mut qcms_modular_transform;
-    let mut next_transform: *mut *mut qcms_modular_transform = &mut first_transform;
+fn modular_transform_create_output(mut out: &qcms_profile) -> Option<Box<qcms_modular_transform>> {
+    let mut first_transform = None;
+    let mut next_transform = &mut first_transform;
     if !(*out).B2A0.is_none() {
-        let mut lut_transform: *mut qcms_modular_transform =
-            qcms_modular_transform_create_lut((*out).B2A0.as_deref().unwrap());
-        if lut_transform.is_null() {
-            current_block = 15713701561912628542;
+        let mut lut_transform = modular_transform_create_lut((*out).B2A0.as_deref().unwrap());
+        if lut_transform.is_none() {
+            return None;
         } else {
-            append_transform(lut_transform, &mut next_transform);
-            current_block = 13131896068329595644;
+            append_transform(lut_transform, next_transform);
         }
     } else if !(*out).mBA.is_none()
         && (*(*out).mBA.as_deref().unwrap()).num_in_channels as i32 == 3
         && (*(*out).mBA.as_deref().unwrap()).num_out_channels as i32 == 3
     {
-        let mut lut_transform_0: *mut qcms_modular_transform =
-            qcms_modular_transform_create_mAB((*out).mBA.as_deref().unwrap());
-        if lut_transform_0.is_null() {
-            current_block = 15713701561912628542;
+        let mut lut_transform_0 = modular_transform_create_mAB((*out).mBA.as_deref().unwrap());
+        if lut_transform_0.is_none() {
+            return None;
         } else {
-            append_transform(lut_transform_0, &mut next_transform);
-            current_block = 13131896068329595644;
+            append_transform(lut_transform_0, next_transform);
         }
     } else if !(*out).redTRC.is_none() && !(*out).greenTRC.is_none() && !(*out).blueTRC.is_none() {
-        let mut transform: *mut qcms_modular_transform = qcms_modular_transform_alloc();
-        if transform.is_null() {
-            current_block = 15713701561912628542;
+        let mut transform = modular_transform_alloc();
+        if transform.is_none() {
+            return None;
         } else {
-            append_transform(transform, &mut next_transform);
-            (*transform).matrix = matrix_invert(build_colorant_matrix(out));
-            (*transform).transform_module_fn = Some(
-                qcms_transform_module_matrix
-                    as unsafe extern "C" fn(
-                        _: *mut qcms_modular_transform,
-                        _: *mut f32,
-                        _: *mut f32,
-                        _: usize,
-                    ) -> (),
-            );
-            transform = qcms_modular_transform_alloc();
-            if transform.is_null() {
-                current_block = 15713701561912628542;
+            transform.as_mut().unwrap().matrix = matrix_invert(build_colorant_matrix(out));
+            transform.as_mut().unwrap().transform_module_fn = Some(transform_module_matrix);
+            next_transform = append_transform(transform, next_transform);
+            transform = modular_transform_alloc();
+            if transform.is_none() {
+                return None;
             } else {
-                append_transform(transform, &mut next_transform);
-                (*transform).matrix.m[0][0] = 1.999969482421875;
-                (*transform).matrix.m[0][1] = 0.0;
-                (*transform).matrix.m[0][2] = 0.0;
-                (*transform).matrix.m[1][0] = 0.0;
-                (*transform).matrix.m[1][1] = 1.999969482421875;
-                (*transform).matrix.m[1][2] = 0.0;
-                (*transform).matrix.m[2][0] = 0.0;
-                (*transform).matrix.m[2][1] = 0.0;
-                (*transform).matrix.m[2][2] = 1.999969482421875;
-                (*transform).matrix.invalid = false;
-                (*transform).transform_module_fn = Some(
-                    qcms_transform_module_matrix
-                        as unsafe extern "C" fn(
-                            _: *mut qcms_modular_transform,
-                            _: *mut f32,
-                            _: *mut f32,
-                            _: usize,
-                        ) -> (),
-                );
-                transform = qcms_modular_transform_alloc();
-                if transform.is_null() {
-                    current_block = 15713701561912628542;
+                transform.as_mut().unwrap().matrix.m[0][0] = 1.999969482421875;
+                transform.as_mut().unwrap().matrix.m[0][1] = 0.0;
+                transform.as_mut().unwrap().matrix.m[0][2] = 0.0;
+                transform.as_mut().unwrap().matrix.m[1][0] = 0.0;
+                transform.as_mut().unwrap().matrix.m[1][1] = 1.999969482421875;
+                transform.as_mut().unwrap().matrix.m[1][2] = 0.0;
+                transform.as_mut().unwrap().matrix.m[2][0] = 0.0;
+                transform.as_mut().unwrap().matrix.m[2][1] = 0.0;
+                transform.as_mut().unwrap().matrix.m[2][2] = 1.999969482421875;
+                transform.as_mut().unwrap().matrix.invalid = false;
+                transform.as_mut().unwrap().transform_module_fn = Some(transform_module_matrix);
+                next_transform = append_transform(transform, next_transform);
+                transform = modular_transform_alloc();
+                if transform.is_none() {
+                    return None;
                 } else {
-                    append_transform(transform, &mut next_transform);
-                    (*transform).output_gamma_lut_r =
+                    transform.as_mut().unwrap().output_gamma_lut_r =
                         Some(build_output_lut((*out).redTRC.as_deref().unwrap()));
-                    (*transform).output_gamma_lut_g =
+                    transform.as_mut().unwrap().output_gamma_lut_g =
                         Some(build_output_lut((*out).greenTRC.as_deref().unwrap()));
-                    (*transform).output_gamma_lut_b =
+                    transform.as_mut().unwrap().output_gamma_lut_b =
                         Some(build_output_lut((*out).blueTRC.as_deref().unwrap()));
-                    (*transform).transform_module_fn = Some(
-                        qcms_transform_module_gamma_lut
-                            as unsafe extern "C" fn(
-                                _: *mut qcms_modular_transform,
-                                _: *mut f32,
-                                _: *mut f32,
-                                _: usize,
-                            ) -> (),
-                    );
-                    if (*transform).output_gamma_lut_r.is_none()
-                        || (*transform).output_gamma_lut_g.is_none()
-                        || (*transform).output_gamma_lut_b.is_none()
+                    transform.as_mut().unwrap().transform_module_fn =
+                        Some(transform_module_gamma_lut);
+                    if transform.as_mut().unwrap().output_gamma_lut_r.is_none()
+                        || transform.as_mut().unwrap().output_gamma_lut_g.is_none()
+                        || transform.as_mut().unwrap().output_gamma_lut_b.is_none()
                     {
-                        current_block = 15713701561912628542;
+                        return None;
                     } else {
-                        current_block = 13131896068329595644;
+                        append_transform(transform, next_transform);
                     }
                 }
             }
         }
     } else {
         debug_assert!(false, "Unsupported output profile workflow.");
-        return 0 as *mut qcms_modular_transform;
+        return None;
     }
-    match current_block {
-        13131896068329595644 => return first_transform,
-        _ => {
-            qcms_modular_transform_release(first_transform);
-            return 0 as *mut qcms_modular_transform;
-        }
-    };
+    first_transform
 }
 /* Not Completed
 // Simplify the transformation chain to an equivalent transformation chain
@@ -1340,135 +1092,122 @@ remove_next:
     return transform;
 }
 */
-unsafe extern "C" fn qcms_modular_transform_create(
+fn modular_transform_create(
     mut in_0: &qcms_profile,
     mut out: &qcms_profile,
-) -> *mut qcms_modular_transform {
-    let mut current_block: u64;
-    let mut first_transform: *mut qcms_modular_transform = 0 as *mut qcms_modular_transform;
-    let mut next_transform: *mut *mut qcms_modular_transform = &mut first_transform;
+) -> Option<Box<qcms_modular_transform>> {
+    let mut first_transform = None;
+    let mut next_transform = &mut first_transform;
     if (*in_0).color_space == RGB_SIGNATURE {
-        let mut rgb_to_pcs: *mut qcms_modular_transform = qcms_modular_transform_create_input(in_0);
-        if !rgb_to_pcs.is_null() {
-            append_transform(rgb_to_pcs, &mut next_transform);
-            if (*in_0).pcs == LAB_SIGNATURE && (*out).pcs == XYZ_SIGNATURE {
-                let mut lab_to_pcs: *mut qcms_modular_transform = qcms_modular_transform_alloc();
-                if lab_to_pcs.is_null() {
-                    current_block = 8418824557173580938;
-                } else {
-                    append_transform(lab_to_pcs, &mut next_transform);
-                    (*lab_to_pcs).transform_module_fn = Some(qcms_transform_module_LAB_to_XYZ);
-                    current_block = 10599921512955367680;
-                }
-            } else {
-                current_block = 10599921512955367680;
-            }
-            match current_block {
-                8418824557173580938 => {}
-                _ =>
-                // This does not improve accuracy in practice, something is wrong here.
-                //if (in->chromaticAdaption.invalid == false) {
-                //	struct qcms_modular_transform* chromaticAdaption;
-                //	chromaticAdaption = qcms_modular_transform_alloc();
-                //	if (!chromaticAdaption)
-                //		goto fail;
-                //	append_transform(chromaticAdaption, &next_transform);
-                //	chromaticAdaption->matrix = matrix_invert(in->chromaticAdaption);
-                //	chromaticAdaption->transform_module_fn = qcms_transform_module_matrix;
-                //}
-                {
-                    if (*in_0).pcs == XYZ_SIGNATURE && (*out).pcs == LAB_SIGNATURE {
-                        let mut pcs_to_lab: *mut qcms_modular_transform =
-                            qcms_modular_transform_alloc();
-                        if pcs_to_lab.is_null() {
-                            current_block = 8418824557173580938;
-                        } else {
-                            append_transform(pcs_to_lab, &mut next_transform);
-                            (*pcs_to_lab).transform_module_fn =
-                                Some(qcms_transform_module_XYZ_to_LAB);
-                            current_block = 7175849428784450219;
-                        }
-                    } else {
-                        current_block = 7175849428784450219;
-                    }
-                    match current_block {
-                        8418824557173580938 => {}
-                        _ => {
-                            if (*out).color_space == RGB_SIGNATURE {
-                                let mut pcs_to_rgb: *mut qcms_modular_transform =
-                                    qcms_modular_transform_create_output(out);
-                                if !pcs_to_rgb.is_null() {
-                                    append_transform(pcs_to_rgb, &mut next_transform);
-                                    // Not Completed
-                                    //return qcms_modular_transform_reduce(first_transform);
-                                    return first_transform;
-                                }
-                            } else {
-                                debug_assert!(false, "output color space not supported");
-                            }
-                        }
-                    }
-                }
-            }
+        let mut rgb_to_pcs = modular_transform_create_input(in_0);
+        if rgb_to_pcs.is_none() {
+            return None;
         }
+        next_transform = append_transform(rgb_to_pcs, next_transform);
     } else {
         debug_assert!(false, "input color space not supported");
+        return None;
     }
-    qcms_modular_transform_release(first_transform);
-    return 0 as *mut qcms_modular_transform;
+
+    if (*in_0).pcs == LAB_SIGNATURE && (*out).pcs == XYZ_SIGNATURE {
+        let mut lab_to_pcs = modular_transform_alloc();
+        if lab_to_pcs.is_none() {
+            return None;
+        }
+        lab_to_pcs.as_mut().unwrap().transform_module_fn = Some(transform_module_LAB_to_XYZ);
+        next_transform = append_transform(lab_to_pcs, next_transform);
+    }
+
+    // This does not improve accuracy in practice, something is wrong here.
+    //if (in->chromaticAdaption.invalid == false) {
+    //	struct qcms_modular_transform* chromaticAdaption;
+    //	chromaticAdaption = qcms_modular_transform_alloc();
+    //	if (!chromaticAdaption)
+    //		goto fail;
+    //	append_transform(chromaticAdaption, &next_transform);
+    //	chromaticAdaption->matrix = matrix_invert(in->chromaticAdaption);
+    //	chromaticAdaption->transform_module_fn = qcms_transform_module_matrix;
+    //}
+
+    if (*in_0).pcs == XYZ_SIGNATURE && (*out).pcs == LAB_SIGNATURE {
+        let mut pcs_to_lab = modular_transform_alloc();
+        if pcs_to_lab.is_none() {
+            return None;
+        }
+        pcs_to_lab.as_mut().unwrap().transform_module_fn = Some(transform_module_XYZ_to_LAB);
+        next_transform = append_transform(pcs_to_lab, next_transform);
+    }
+
+    if (*out).color_space == RGB_SIGNATURE {
+        let mut pcs_to_rgb = modular_transform_create_output(out);
+        if pcs_to_rgb.is_none() {
+            return None;
+        }
+        append_transform(pcs_to_rgb, next_transform);
+    } else {
+        debug_assert!(false, "output color space not supported");
+    }
+
+    // Not Completed
+    //return qcms_modular_transform_reduce(first_transform);
+    return first_transform;
 }
-unsafe extern "C" fn qcms_modular_transform_data(
-    mut transform: *mut qcms_modular_transform,
-    mut src: *mut f32,
-    mut dest: *mut f32,
+unsafe fn modular_transform_data(
+    mut transform: Option<&qcms_modular_transform>,
+    mut src: Vec<f32>,
+    mut dest: Vec<f32>,
     mut len: usize,
-) -> *mut f32 {
-    while !transform.is_null() {
+) -> Option<Vec<f32>> {
+    while !transform.is_none() {
         // Keep swaping src/dest when performing a transform to use less memory.
-        let mut new_src: *mut f32 = dest;
-        let transform_fn: transform_module_fn_t = (*transform).transform_module_fn;
-        if transform_fn != Some(qcms_transform_module_gamma_table)
-            && transform_fn != Some(qcms_transform_module_gamma_lut)
-            && transform_fn != Some(qcms_transform_module_clut)
-            && transform_fn != Some(qcms_transform_module_clut_only)
-            && transform_fn != Some(qcms_transform_module_matrix)
-            && transform_fn != Some(qcms_transform_module_matrix_translate)
-            && transform_fn != Some(qcms_transform_module_LAB_to_XYZ)
-            && transform_fn != Some(qcms_transform_module_XYZ_to_LAB)
+        let transform_fn: transform_module_fn_t = transform.unwrap().transform_module_fn;
+        if transform_fn != Some(transform_module_gamma_table)
+            && transform_fn != Some(transform_module_gamma_lut)
+            && transform_fn != Some(transform_module_clut)
+            && transform_fn != Some(transform_module_clut_only)
+            && transform_fn != Some(transform_module_matrix)
+            && transform_fn != Some(transform_module_matrix_translate)
+            && transform_fn != Some(transform_module_LAB_to_XYZ)
+            && transform_fn != Some(transform_module_XYZ_to_LAB)
         {
             debug_assert!(false, "Unsupported transform module");
-            return 0 as *mut f32;
+            return None;
         }
-        if (*transform).grid_size as i32 <= 0
-            && (transform_fn == Some(qcms_transform_module_clut)
-                || transform_fn == Some(qcms_transform_module_clut_only))
+        if transform.unwrap().grid_size as i32 <= 0
+            && (transform_fn == Some(transform_module_clut)
+                || transform_fn == Some(transform_module_clut_only))
         {
             debug_assert!(false, "Invalid transform");
-            return 0 as *mut f32;
+            return None;
         }
-        (*transform)
+        transform
+            .unwrap()
             .transform_module_fn
-            .expect("non-null function pointer")(transform, src, dest, len);
-        dest = src;
-        src = new_src;
-        transform = (*transform).next_transform
+            .expect("non-null function pointer")(
+            transform.unwrap() as *const _ as *mut _,
+            src.as_mut_ptr(),
+            dest.as_mut_ptr(),
+            len,
+        );
+        std::mem::swap(&mut src, &mut dest);
+        transform = transform.unwrap().next_transform.as_deref();
     }
     // The results end up in the src buffer because of the switching
-    return src;
+    return Some(src);
 }
-#[no_mangle]
-pub unsafe extern "C" fn qcms_chain_transform(
+
+pub unsafe fn chain_transform(
     mut in_0: &qcms_profile,
     mut out: &qcms_profile,
-    mut src: *mut f32,
-    mut dest: *mut f32,
+    mut src: Vec<f32>,
+    mut dest: Vec<f32>,
     mut lutSize: usize,
-) -> *mut f32 {
-    let mut transform_list: *mut qcms_modular_transform = qcms_modular_transform_create(in_0, out);
-    if !transform_list.is_null() {
-        let mut lut: *mut f32 = qcms_modular_transform_data(transform_list, src, dest, lutSize / 3);
-        qcms_modular_transform_release(transform_list);
+) -> Option<Vec<f32>> {
+    let mut transform_list = modular_transform_create(in_0, out);
+    if !transform_list.is_none() {
+        let mut lut = modular_transform_data(transform_list.as_deref(), src, dest, lutSize / 3);
+        modular_transform_release(transform_list);
         return lut;
     }
-    return 0 as *mut f32;
+    return None;
 }

@@ -37,6 +37,7 @@
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/UniquePtr.h"
 #include "js/Wrapper.h"
+#include "util/DifferentialTesting.h"
 #include "util/Text.h"
 #include "util/Windows.h"
 #include "vm/ArrayBufferObject.h"
@@ -142,9 +143,6 @@ bool TypedArrayObject::ensureHasBuffer(JSContext* cx,
   tarray->setPrivate(buffer->dataPointer());
 
   tarray->setFixedSlot(TypedArrayObject::BUFFER_SLOT, ObjectValue(*buffer));
-
-  // Notify compiled jit code that the base pointer has moved.
-  MarkObjectStateChange(cx, tarray);
 
   return true;
 }
@@ -364,8 +362,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
 
     JSFunction* fun = NewFunctionWithProto(
         cx, class_constructor, 3, FunctionFlags::NATIVE_CTOR, nullptr,
-        ClassName(key, cx), ctorProto, gc::AllocKind::FUNCTION,
-        SingletonObject);
+        ClassName(key, cx), ctorProto, gc::AllocKind::FUNCTION, TenuredObject);
 
     if (fun) {
       fun->setJitInfo(&jit::JitInfo_TypedArrayConstructor);
@@ -402,51 +399,22 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
   }
 
   static TypedArrayObject* makeTypedInstance(JSContext* cx,
-                                             CreateSingleton createSingleton,
                                              HandleObjectGroup group,
                                              gc::AllocKind allocKind) {
-    if (createSingleton == CreateSingleton::Yes) {
-      MOZ_ASSERT(!group);
-      return newBuiltinClassInstance(cx, allocKind, SingletonObject);
-    }
-
     if (group) {
       MOZ_ASSERT(group->clasp() == instanceClass());
       NewObjectKind newKind = GenericObject;
-      {
-        AutoSweepObjectGroup sweep(group);
-        if (group->shouldPreTenure(sweep)) {
-          newKind = TenuredObject;
-        }
-      }
       return NewObjectWithGroup<TypedArrayObject>(cx, group, allocKind,
                                                   newKind);
     }
 
-    jsbytecode* pc = nullptr;
-    RootedScript script(cx);
-    if (IsTypeInferenceEnabled()) {
-      script = cx->currentScript(&pc);
-    }
-
-    Rooted<TypedArrayObject*> obj(
-        cx, newBuiltinClassInstance(cx, allocKind, GenericObject));
-    if (!obj) {
-      return nullptr;
-    }
-
-    if (script && !ObjectGroup::setAllocationSiteObjectGroup(
-                      cx, script, pc, obj, /* singleton = */ false)) {
-      return nullptr;
-    }
-
-    return obj;
+    return newBuiltinClassInstance(cx, allocKind, GenericObject);
   }
 
   static TypedArrayObject* makeInstance(
       JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
-      CreateSingleton createSingleton, BufferSize byteOffset, BufferSize len,
-      HandleObject proto, HandleObjectGroup group = nullptr) {
+      BufferSize byteOffset, BufferSize len, HandleObject proto,
+      HandleObjectGroup group = nullptr) {
     MOZ_ASSERT(len.get() < maxByteLength() / BYTES_PER_ELEMENT);
 
     gc::AllocKind allocKind =
@@ -470,7 +438,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       MOZ_ASSERT(!group);
       obj = makeProtoInstance(cx, proto, allocKind);
     } else {
-      obj = makeTypedInstance(cx, createSingleton, group, allocKind);
+      obj = makeTypedInstance(cx, group, allocKind);
     }
     if (!obj || !obj->init(cx, buffer, byteOffset, len, BYTES_PER_ELEMENT)) {
       return nullptr;
@@ -483,19 +451,12 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     MOZ_ASSERT(len >= 0);
     size_t nbytes;
     MOZ_ALWAYS_TRUE(CalculateAllocSize<NativeType>(len, &nbytes));
-    MOZ_ASSERT(nbytes < TypedArrayObject::SINGLETON_BYTE_LENGTH);
     bool fitsInline = nbytes <= INLINE_BUFFER_LIMIT;
     gc::AllocKind allocKind = !fitsInline ? gc::GetGCObjectKind(instanceClass())
                                           : AllocKindForLazyBuffer(nbytes);
     MOZ_ASSERT(allocKind >= gc::GetGCObjectKind(instanceClass()));
 
     AutoSetNewObjectMetadata metadata(cx);
-
-    jsbytecode* pc = nullptr;
-    RootedScript script(cx);
-    if (IsTypeInferenceEnabled()) {
-      script = cx->currentScript(&pc);
-    }
 
     Rooted<TypedArrayObject*> tarray(
         cx, newBuiltinClassInstance(cx, allocKind, TenuredObject));
@@ -509,11 +470,6 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     // won't be any elements to store. Therefore, we set the pointer to
     // nullptr and avoid allocating memory that will never be used.
     tarray->initPrivate(nullptr);
-
-    if (script && !ObjectGroup::setAllocationSiteObjectGroup(
-                      cx, script, pc, tarray, /* singleton = */ false)) {
-      return nullptr;
-    }
 
     return tarray;
   }
@@ -816,15 +772,9 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       return nullptr;
     }
 
-    CreateSingleton createSingleton = CreateSingleton::No;
-    if (!group && length.get() * BYTES_PER_ELEMENT >=
-                      TypedArrayObject::SINGLETON_BYTE_LENGTH) {
-      createSingleton = CreateSingleton::Yes;
-    }
-
     // Steps 13-17.
-    return makeInstance(cx, buffer, createSingleton, BufferSize(byteOffset),
-                        length, proto, group);
+    return makeInstance(cx, buffer, BufferSize(byteOffset), length, proto,
+                        group);
   }
 
   // Create a TypedArray object in another compartment.
@@ -884,8 +834,8 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
         return nullptr;
       }
 
-      typedArray = makeInstance(cx, unwrappedBuffer, CreateSingleton::No,
-                                BufferSize(byteOffset), length, wrappedProto);
+      typedArray = makeInstance(cx, unwrappedBuffer, BufferSize(byteOffset),
+                                length, wrappedProto);
       if (!typedArray) {
         return nullptr;
       }
@@ -959,8 +909,8 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       return nullptr;
     }
 
-    return makeInstance(cx, buffer, CreateSingleton::No, BufferSize(0),
-                        BufferSize(nelements), proto);
+    return makeInstance(cx, buffer, BufferSize(0), BufferSize(nelements),
+                        proto);
   }
 
   static bool AllocateArrayBuffer(JSContext* cx, HandleObject ctor,
@@ -1010,10 +960,10 @@ bool TypedArrayObjectTemplate<NativeType>::convertValue(JSContext* cx,
     return false;
   }
 
-#ifdef JS_MORE_DETERMINISTIC
-  // See the comment in ElementSpecific::doubleToNative.
-  d = JS::CanonicalizeNaN(d);
-#endif
+  if (js::SupportDifferentialTesting()) {
+    // See the comment in ElementSpecific::doubleToNative.
+    d = JS::CanonicalizeNaN(d);
+  }
 
   // Assign based on characteristics of the destination type
   if constexpr (ArrayTypeIsFloatingPoint()) {
@@ -1376,8 +1326,7 @@ template <typename T>
 
   // Steps 3-4 (remaining part), 20-23.
   Rooted<TypedArrayObject*> obj(
-      cx, makeInstance(cx, buffer, CreateSingleton::No, BufferSize(0),
-                       elementLength, proto, group));
+      cx, makeInstance(cx, buffer, BufferSize(0), elementLength, proto, group));
   if (!obj) {
     return nullptr;
   }
@@ -1445,8 +1394,8 @@ template <typename T>
     }
 
     Rooted<TypedArrayObject*> obj(
-        cx, makeInstance(cx, buffer, CreateSingleton::No, BufferSize(0),
-                         BufferSize(len), proto, group));
+        cx,
+        makeInstance(cx, buffer, BufferSize(0), BufferSize(len), proto, group));
     if (!obj) {
       return nullptr;
     }
@@ -1521,8 +1470,8 @@ template <typename T>
   }
 
   Rooted<TypedArrayObject*> obj(
-      cx, makeInstance(cx, buffer, CreateSingleton::No, BufferSize(0),
-                       BufferSize(len), proto, group));
+      cx,
+      makeInstance(cx, buffer, BufferSize(0), BufferSize(len), proto, group));
   if (!obj) {
     return nullptr;
   }
@@ -1563,10 +1512,6 @@ static bool GetTemplateObjectForNative(JSContext* cx,
 
     size_t nbytes;
     if (!js::CalculateAllocSize<T>(len, &nbytes)) {
-      return true;
-    }
-
-    if (nbytes >= TypedArrayObject::SINGLETON_BYTE_LENGTH) {
       return true;
     }
 
@@ -1942,6 +1887,9 @@ bool TypedArrayObject::set(JSContext* cx, unsigned argc, Value* vp) {
     JS_SELF_HOSTED_FN("includes", "TypedArrayIncludes", 2, 0),
     JS_SELF_HOSTED_FN("toString", "ArrayToString", 0, 0),
     JS_SELF_HOSTED_FN("toLocaleString", "TypedArrayToLocaleString", 2, 0),
+#ifdef NIGHTLY_BUILD
+    JS_SELF_HOSTED_FN("at", "TypedArrayAt", 1, 0),
+#endif
     JS_FS_END};
 
 /* static */ const JSFunctionSpec TypedArrayObject::staticFunctions[] = {
@@ -2717,4 +2665,8 @@ JS_FRIEND_API js::Scalar::Type JS_GetArrayBufferViewType(JSObject* obj) {
     return Scalar::MaxTypedArrayViewType;
   }
   MOZ_CRASH("invalid ArrayBufferView type");
+}
+
+JS_FRIEND_API size_t JS_MaxMovableTypedArraySize() {
+  return TypedArrayObject::INLINE_BUFFER_LIMIT;
 }

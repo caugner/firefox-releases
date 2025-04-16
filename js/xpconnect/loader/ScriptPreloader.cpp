@@ -22,6 +22,7 @@
 #include "mozilla/Unused.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/Document.h"
 
 #include "js/CompileOptions.h"  // JS::ReadOnlyCompileOptions
 #include "MainThreadUtils.h"
@@ -208,8 +209,7 @@ static void TraceOp(JSTracer* trc, void* data) {
 
 void ScriptPreloader::Trace(JSTracer* trc) {
   for (auto& script : IterHash(mScripts)) {
-    JS::TraceEdge(trc, &script->mScript,
-                  "ScriptPreloader::CachedScript.mScript");
+    script->mScript.Trace(trc);
   }
 }
 
@@ -801,7 +801,7 @@ void ScriptPreloader::NoteScript(const nsCString& url,
 
   if (!script->MaybeDropScript() && !script->mScript) {
     MOZ_ASSERT(jsscript);
-    script->mScript = jsscript;
+    script->mScript.Set(jsscript);
     script->mReadyToExecute = true;
   }
 
@@ -1018,7 +1018,7 @@ void ScriptPreloader::MaybeFinishOffThreadDecode() {
   for (auto script : mParsingScripts) {
     LOG(Debug, "Finished off-thread decode of %s\n", script->mURL.get());
     if (i < jsScripts.length()) {
-      script->mScript = jsScripts[i++];
+      script->mScript.Set(jsScripts[i++]);
     }
     script->mReadyToExecute = true;
   }
@@ -1116,11 +1116,30 @@ ScriptPreloader::CachedScript::CachedScript(ScriptPreloader& cache,
   mProcessTypes = {};
 }
 
+// JS::TraceEdge() can change the value of mScript, but not whether it is
+// null, so we don't update mHasScript to avoid a race.
+void ScriptPreloader::CachedScript::ScriptHolder::Trace(JSTracer* trc) {
+  JS::TraceEdge(trc, &mScript, "ScriptPreloader::CachedScript.mScript");
+}
+
+void ScriptPreloader::CachedScript::ScriptHolder::Set(
+    JS::HandleScript jsscript) {
+  MOZ_ASSERT(NS_IsMainThread());
+  mScript = jsscript;
+  mHasScript = mScript;
+}
+
+void ScriptPreloader::CachedScript::ScriptHolder::Clear() {
+  MOZ_ASSERT(NS_IsMainThread());
+  mScript = nullptr;
+  mHasScript = false;
+}
+
 bool ScriptPreloader::CachedScript::XDREncode(JSContext* cx) {
   auto cleanup = MakeScopeExit([&]() { MaybeDropScript(); });
 
-  JSAutoRealm ar(cx, mScript);
-  JS::RootedScript jsscript(cx, mScript);
+  JSAutoRealm ar(cx, mScript.Get());
+  JS::RootedScript jsscript(cx, mScript.Get());
 
   mXDRData.construct<JS::TranscodeBuffer>();
 
@@ -1139,8 +1158,8 @@ JSScript* ScriptPreloader::CachedScript::GetJSScript(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options) {
   MOZ_ASSERT(mReadyToExecute);
   if (mScript) {
-    if (JS::CheckCompileOptionsMatch(options, mScript)) {
-      return mScript;
+    if (JS::CheckCompileOptionsMatch(options, mScript.Get())) {
+      return mScript.Get();
     }
     LOG(Error, "Cached script %s has different options\n", mURL.get());
     MOZ_DIAGNOSTIC_ASSERT(false, "Cached script has different options");
@@ -1164,7 +1183,7 @@ JSScript* ScriptPreloader::CachedScript::GetJSScript(
 
   JS::RootedScript script(cx);
   if (JS::DecodeScript(cx, options, Range(), &script)) {
-    mScript = script;
+    mScript.Set(script);
 
     if (mCache.mSaveComplete) {
       FreeData();
@@ -1174,7 +1193,7 @@ JSScript* ScriptPreloader::CachedScript::GetJSScript(
   LOG(Debug, "Finished decoding in %fms",
       (TimeStamp::Now() - start).ToMilliseconds());
 
-  return mScript;
+  return mScript.Get();
 }
 
 // nsIAsyncShutdownBlocker

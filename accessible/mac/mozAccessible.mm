@@ -6,6 +6,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #import "mozAccessible.h"
+#include "MOXAccessibleBase.h"
 
 #import "MacUtils.h"
 #import "mozView.h"
@@ -40,7 +41,7 @@ using namespace mozilla::a11y;
 @interface mozAccessible ()
 - (BOOL)providesLabelNotTitle;
 
-- (nsStaticAtom*)ARIARole;
+- (void)maybePostLiveRegionChanged;
 @end
 
 @implementation mozAccessible
@@ -207,6 +208,12 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
     return [self stateWithMask:states::FOCUSABLE] == 0;
   }
 
+  if (selector == @selector(moxARIALive) ||
+      selector == @selector(moxARIAAtomic) ||
+      selector == @selector(moxARIARelevant)) {
+    return ![self moxIsLiveRegion];
+  }
+
   return [super moxBlockSelector:selector];
 }
 
@@ -258,6 +265,10 @@ static const uint64_t kCacheInitialized = ((uint64_t)0x1) << 63;
 
   return [MOXTextMarkerDelegate
       getOrCreateForDoc:mGeckoAccessible.AsProxy()->Document()];
+}
+
+- (BOOL)moxIsLiveRegion {
+  return mIsLiveRegion;
 }
 
 - (id)moxHitTest:(NSPoint)point {
@@ -538,6 +549,13 @@ struct RoleDescrComparator {
 };
 
 - (NSString*)moxRoleDescription {
+  if (NSString* ariaRoleDescription =
+          utils::GetAccAttr(self, "roledescription")) {
+    if ([ariaRoleDescription length]) {
+      return ariaRoleDescription;
+    }
+  }
+
   if (mRole == roles::FIGURE) return utils::LocalizedString(u"figure"_ns);
 
   if (mRole == roles::HEADING) return utils::LocalizedString(u"heading"_ns);
@@ -709,6 +727,23 @@ struct RoleDescrComparator {
   return utils::GetAccAttr(self, "current");
 }
 
+- (NSNumber*)moxARIAAtomic {
+  return @(utils::GetAccAttr(self, "atomic") != nil);
+}
+
+- (NSString*)moxARIALive {
+  return utils::GetAccAttr(self, "live");
+}
+
+- (NSString*)moxARIARelevant {
+  if (NSString* relevant = utils::GetAccAttr(self, "container-relevant")) {
+    return relevant;
+  }
+
+  // Default aria-relevant value
+  return @"additions text";
+}
+
 - (id)moxTitleUIElement {
   MOZ_ASSERT(!mGeckoAccessible.IsNull());
 
@@ -793,6 +828,33 @@ struct RoleDescrComparator {
   }
 
   return nil;
+}
+
+- (id)moxHighestEditableAncestor {
+  id highestAncestor = [self moxEditableAncestor];
+  while ([highestAncestor conformsToProtocol:@protocol(MOXAccessible)]) {
+    id ancestorParent = [highestAncestor moxUnignoredParent];
+    if (![ancestorParent conformsToProtocol:@protocol(MOXAccessible)]) {
+      break;
+    }
+
+    id higherAncestor = [ancestorParent moxEditableAncestor];
+
+    if (!higherAncestor) {
+      break;
+    }
+
+    highestAncestor = higherAncestor;
+  }
+
+  return highestAncestor;
+}
+
+- (id)moxFocusableAncestor {
+  // XXX: Checking focusable state up the chain can be expensive. For now,
+  // we can just return AXEditableAncestor since the main use case for this
+  // is rich text editing with links.
+  return [self moxEditableAncestor];
 }
 
 #ifndef RELEASE_OR_BETA
@@ -911,11 +973,20 @@ struct RoleDescrComparator {
   return NO;
 }
 
+- (void)maybePostLiveRegionChanged {
+  for (id element = self; [element conformsToProtocol:@protocol(MOXAccessible)];
+       element = [element moxUnignoredParent]) {
+    if ([element moxIsLiveRegion]) {
+      [element moxPostNotification:@"AXLiveRegionChanged"];
+      return;
+    }
+  }
+}
+
 - (void)handleAccessibleTextChangeEvent:(NSString*)change
                                inserted:(BOOL)isInserted
                             inContainer:(const AccessibleOrProxy&)container
                                      at:(int32_t)start {
-  // XXX: Eventually live region handling will go here.
 }
 
 - (void)handleAccessibleEvent:(uint32_t)eventType {
@@ -963,6 +1034,17 @@ struct RoleDescrComparator {
                  withUserInfo:userInfo];
       break;
     }
+    case nsIAccessibleEvent::EVENT_LIVE_REGION_ADDED:
+      mIsLiveRegion = true;
+      [self moxPostNotification:@"AXLiveRegionCreated"];
+      break;
+    case nsIAccessibleEvent::EVENT_LIVE_REGION_REMOVED:
+      mIsLiveRegion = false;
+      break;
+    case nsIAccessibleEvent::EVENT_REORDER:
+    case nsIAccessibleEvent::EVENT_NAME_CHANGE:
+      [self maybePostLiveRegionChanged];
+      break;
   }
 }
 

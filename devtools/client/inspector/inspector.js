@@ -206,7 +206,7 @@ Inspector.prototype = {
     // stylesheet resources before instanciating the inspector front since pageStyle
     // actor should refer the watcher.
     if (
-      this.toolbox.resourceWatcher.hasWatcherSupport(
+      this.toolbox.resourceWatcher.hasResourceWatcherSupport(
         this.toolbox.resourceWatcher.TYPES.STYLESHEET
       )
     ) {
@@ -1948,10 +1948,10 @@ Inspector.prototype = {
     );
   },
 
-  async inspectNodeActor(nodeActor, reason) {
-    const nodeFront = await this.inspectorFront.getNodeFrontFromNodeGrip({
-      actor: nodeActor,
-    });
+  async inspectNodeActor(nodeGrip, reason) {
+    const nodeFront = await this.inspectorFront.getNodeFrontFromNodeGrip(
+      nodeGrip
+    );
     if (!nodeFront) {
       console.error(
         "The object cannot be linked to the inspector, the " +

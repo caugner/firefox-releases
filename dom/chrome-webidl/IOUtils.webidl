@@ -59,10 +59,10 @@ namespace IOUtils {
    * @return Resolves with the number of bytes successfully written to the file,
    *         otherwise rejects with a DOMException.
    */
-  Promise<unsigned long long> writeAtomic(DOMString path, Uint8Array data, optional WriteAtomicOptions options = {});
+  Promise<unsigned long long> write(DOMString path, Uint8Array data, optional WriteOptions options = {});
   /**
    * Attempts to encode |string| to UTF-8, then safely write the result to a
-   * file at |path|. Works exactly like |writeAtomic|.
+   * file at |path|. Works exactly like |write|.
    *
    * @param path      An absolute file path.
    * @param string    A string to encode to UTF-8 and write to the file at path.
@@ -70,7 +70,7 @@ namespace IOUtils {
    * @return Resolves with the number of bytes successfully written to the file,
    *         otherwise rejects with a DOMException.
    */
-  Promise<unsigned long long> writeAtomicUTF8(DOMString path, DOMString string, optional WriteAtomicOptions options = {});
+  Promise<unsigned long long> writeUTF8(DOMString path, DOMString string, optional WriteOptions options = {});
   /**
    * Moves the file from |sourcePath| to |destPath|, creating necessary parents.
    * If |destPath| is a directory, then the source file will be moved into the
@@ -155,6 +155,30 @@ namespace IOUtils {
    *         DOMException.
    */
   Promise<sequence<DOMString>> getChildren(DOMString path);
+  /**
+   * Set the permissions of the file at |path|.
+   *
+   * Windows does not make a distinction between user, group, and other
+   * permissions like UNICES do. If a permission flag is set for any of user,
+   * group, or other has a permission, then all users will have that
+   * permission. Additionally, Windows does not support setting the
+   * "executable" permission.
+   *
+   * @param path        An absolute file path
+   * @param permissions The UNIX file mode representing the permissions.
+   *
+   * @return Resolves if the permissions were set successfully, otherwise
+   *         rejects with a DOMException.
+   */
+  Promise<void> setPermissions(DOMString path, unsigned long permissions);
+  /**
+   * Return whether or not the file exists at the given path.
+   *
+   * @param path An absolute file path.
+   *
+   * @return A promise that resolves to whether or not the given file exists.
+   */
+  Promise<boolean> exists(DOMString path);
 };
 
 /**
@@ -181,10 +205,10 @@ dictionary ReadOptions : ReadUTF8Options {
 };
 
 /**
- * Options to be passed to the |IOUtils.writeAtomic| and |writeAtomicUTF8|
+ * Options to be passed to the |IOUtils.write| and |writeUTF8|
  * methods.
  */
-dictionary WriteAtomicOptions {
+dictionary WriteOptions {
   /**
    * If specified, backup the destination file to this path before writing.
    */
@@ -252,6 +276,13 @@ dictionary MakeDirectoryOptions {
    * Otherwise, fail if the directory already exists.
    */
   boolean ignoreExisting = true;
+  /**
+   * The file mode to create the directory with.
+   *
+   * This is ignored on Windows.
+   */
+  unsigned long permissions = 0755;
+
 };
 
 /**
@@ -297,4 +328,20 @@ dictionary FileInfo {
    * since Epoch (1970-01-01T00:00:00.000Z).
    */
   long long lastModified;
+
+  /**
+   * The timestamp of file creation, represented in milliseconds since Epoch
+   * (1970-01-01T00:00:00.000Z).
+   *
+   * This is only available on MacOS and Windows.
+   */
+  long long creationTime;
+  /**
+   * The permissions of the file, expressed as a UNIX file mode.
+   *
+   * NB: Windows does not make a distinction between user, group, and other
+   * permissions like UNICES do. The user, group, and other parts will always
+   * be identical on Windows.
+   */
+  unsigned long permissions;
 };

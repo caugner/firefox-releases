@@ -74,6 +74,7 @@ EXPORTS.mozilla = [
     "NotNull.h",
     "Opaque.h",
     "OperatorNewExtensions.h",
+    "PairHash.h",
     "Path.h",
     "PodOperations.h",
     "Poison.h",
@@ -87,6 +88,7 @@ EXPORTS.mozilla = [
     "RefPtr.h",
     "Result.h",
     "ResultExtensions.h",
+    "ResultVariant.h",
     "ReverseIterator.h",
     "RollingMean.h",
     "Saturate.h",
@@ -169,8 +171,6 @@ UNIFIED_SOURCES += [
 
 if CONFIG["MOZ_BUILD_APP"] not in (
     "memory",
-    "tools/crashreporter",
-    "tools/update-packaging",
     "tools/update-programs",
 ):
     # Building MFBT tests adds a large overhead when building.

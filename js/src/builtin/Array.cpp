@@ -54,7 +54,6 @@
 #include "vm/IsGivenTypeObject-inl.h"
 #include "vm/JSAtom-inl.h"
 #include "vm/NativeObject-inl.h"
-#include "vm/ObjectGroup-inl.h"  // JSObject::setSingleton
 
 using namespace js;
 
@@ -539,13 +538,10 @@ static bool DeleteArrayElement(JSContext* cx, HandleObject obj, uint64_t index,
     if (index <= UINT32_MAX) {
       uint32_t idx = uint32_t(index);
       if (idx < aobj->getDenseInitializedLength()) {
-        if (!aobj->maybeCopyElementsForWrite(cx)) {
-          return false;
-        }
         if (idx + 1 == aobj->getDenseInitializedLength()) {
           aobj->setDenseInitializedLengthMaybeNonExtensible(cx, idx);
         } else {
-          aobj->setDenseElementHole(cx, idx);
+          aobj->setDenseElementHole(idx);
         }
         if (!SuppressDeletedElement(cx, obj, idx)) {
           return false;
@@ -674,10 +670,6 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
                         ObjectOpResult& result) {
   MOZ_ASSERT(id == NameToId(cx->names().length));
 
-  if (!arr->maybeCopyElementsForWrite(cx)) {
-    return false;
-  }
-
   // Step 1.
   uint32_t newLen;
   if (attrs & JSPROP_IGNORE_VALUE) {
@@ -772,10 +764,6 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
     // (non-configurable) elements.
     if (!arr->isIndexed() && !arr->denseElementsMaybeInIteration() &&
         !arr->denseElementsAreSealed()) {
-      if (!arr->maybeCopyElementsForWrite(cx)) {
-        return false;
-      }
-
       uint32_t oldCapacity = arr->getDenseCapacity();
       uint32_t oldInitializedLength = arr->getDenseInitializedLength();
       MOZ_ASSERT(oldCapacity >= oldInitializedLength);
@@ -908,7 +896,7 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
 
   // Update array length. Technically we should have been doing this
   // throughout the loop, in step 19.d.iii.
-  arr->setLength(cx, newLen);
+  arr->setLength(newLen);
 
   // Step 20.
   if (attrs & JSPROP_READONLY) {
@@ -961,7 +949,7 @@ static bool array_addProperty(JSContext* cx, HandleObject obj, HandleId id,
   if (index >= length) {
     MOZ_ASSERT(arr->lengthIsWritable(),
                "how'd this element get added if length is non-writable?");
-    arr->setLength(cx, index + 1);
+    arr->setLength(index + 1);
   }
   return true;
 }
@@ -1522,10 +1510,8 @@ static bool array_toLocaleString(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 /* vector must point to rooted memory. */
-static bool SetArrayElements(
-    JSContext* cx, HandleObject obj, uint64_t start, uint32_t count,
-    const Value* vector,
-    ShouldUpdateTypes updateTypes = ShouldUpdateTypes::Update) {
+static bool SetArrayElements(JSContext* cx, HandleObject obj, uint64_t start,
+                             uint32_t count, const Value* vector) {
   MOZ_ASSERT(count <= MAX_ARRAY_INDEX);
   MOZ_ASSERT(start + count < uint64_t(DOUBLE_INTEGRAL_PRECISION_LIMIT));
 
@@ -1535,8 +1521,8 @@ static bool SetArrayElements(
 
   if (!ObjectMayHaveExtraIndexedProperties(obj) && start <= UINT32_MAX) {
     NativeObject* nobj = &obj->as<NativeObject>();
-    DenseElementResult result = nobj->setOrExtendDenseElements(
-        cx, uint32_t(start), vector, count, updateTypes);
+    DenseElementResult result =
+        nobj->setOrExtendDenseElements(cx, uint32_t(start), vector, count);
     if (result != DenseElementResult::Incomplete) {
       return result == DenseElementResult::Success;
     }
@@ -1592,11 +1578,7 @@ static DenseElementResult ArrayReverseDenseKernel(JSContext* cx,
     }
 
     /* Fill out the array's initialized length to its proper length. */
-    obj->ensureDenseInitializedLength(cx, length, 0);
-  } else {
-    if (!obj->maybeCopyElementsForWrite(cx)) {
-      return DenseElementResult::Failure;
-    }
+    obj->ensureDenseInitializedLength(length, 0);
   }
 
   if (!obj->denseElementsMaybeInIteration() &&
@@ -1612,7 +1594,7 @@ static DenseElementResult ArrayReverseDenseKernel(JSContext* cx,
       return true;
     }
 
-    obj->setDenseElementHole(cx, index);
+    obj->setDenseElementHole(index);
     return SuppressDeletedProperty(cx, obj, INT_TO_JSID(index));
   };
 
@@ -2119,11 +2101,11 @@ static bool FillWithUndefined(JSContext* cx, HandleObject obj, uint32_t start,
 
     if (obj->is<ArrayObject>() &&
         start + count >= obj->as<ArrayObject>().length()) {
-      obj->as<ArrayObject>().setLengthInt32(start + count);
+      obj->as<ArrayObject>().setLength(start + count);
     }
 
     for (uint32_t i = 0; i < count; i++) {
-      nobj->setDenseElementWithType(cx, start + i, UndefinedHandleValue);
+      nobj->setDenseElement(start + i, UndefinedHandleValue);
     }
 
     return true;
@@ -2215,11 +2197,9 @@ bool js::intrinsic_ArrayNativeSort(JSContext* cx, unsigned argc, Value* vp) {
     undefs = 0;
     bool allStrings = true;
     bool allInts = true;
-    bool extraIndexed;
     RootedValue v(cx);
     if (IsPackedArray(obj)) {
       HandleArrayObject array = obj.as<ArrayObject>();
-      extraIndexed = false;
 
       for (uint32_t i = 0; i < len; i++) {
         if (!CheckForInterrupt(cx)) {
@@ -2237,8 +2217,6 @@ bool js::intrinsic_ArrayNativeSort(JSContext* cx, unsigned argc, Value* vp) {
         allInts = allInts && v.isInt32();
       }
     } else {
-      extraIndexed = ObjectMayHaveExtraIndexedProperties(obj);
-
       for (uint32_t i = 0; i < len; i++) {
         if (!CheckForInterrupt(cx)) {
           return false;
@@ -2308,13 +2286,7 @@ bool js::intrinsic_ArrayNativeSort(JSContext* cx, unsigned argc, Value* vp) {
       }
     }
 
-    // We can omit the type update when neither collecting the elements
-    // nor calling the default comparator can execute a (getter) function
-    // that might run user code.
-    ShouldUpdateTypes updateTypes = !extraIndexed && (allStrings || allInts)
-                                        ? ShouldUpdateTypes::DontUpdate
-                                        : ShouldUpdateTypes::Update;
-    if (!SetArrayElements(cx, obj, 0, uint32_t(n), vec.begin(), updateTypes)) {
+    if (!SetArrayElements(cx, obj, 0, uint32_t(n), vec.begin())) {
       return false;
     }
   }
@@ -2351,8 +2323,8 @@ bool js::NewbornArrayPush(JSContext* cx, HandleObject obj, const Value& v) {
   }
 
   arr->setDenseInitializedLength(length + 1);
-  arr->setLengthInt32(length + 1);
-  arr->initDenseElementWithType(cx, length, v);
+  arr->setLength(length + 1);
+  arr->initDenseElement(length, v);
   return true;
 }
 
@@ -2465,7 +2437,6 @@ void js::ArrayShiftMoveElements(ArrayObject* arr) {
   MOZ_ASSERT(arr->isExtensible());
   MOZ_ASSERT(arr->lengthIsWritable());
   MOZ_ASSERT_IF(jit::JitOptions.warpBuilder, IsPackedArray(arr));
-  MOZ_ASSERT(!arr->denseElementsAreCopyOnWrite());
   MOZ_ASSERT(!arr->denseElementsHaveMaybeInIterationFlag());
 
   size_t initlen = arr->getDenseInitializedLength();
@@ -2485,19 +2456,6 @@ static inline void SetInitializedLength(JSContext* cx, NativeObject* obj,
   if (initlen < oldInitlen) {
     obj->shrinkElements(cx, initlen);
   }
-}
-
-static MOZ_MUST_USE bool MoveDenseElements(JSContext* cx, NativeObject* obj,
-                                           uint32_t dstStart, uint32_t srcStart,
-                                           uint32_t length) {
-  MOZ_ASSERT(obj->isExtensible());
-
-  if (!obj->maybeCopyElementsForWrite(cx)) {
-    return false;
-  }
-
-  obj->moveDenseElements(dstStart, srcStart, length);
-  return true;
 }
 
 static DenseElementResult ArrayShiftDenseKernel(JSContext* cx, HandleObject obj,
@@ -2529,9 +2487,7 @@ static DenseElementResult ArrayShiftDenseKernel(JSContext* cx, HandleObject obj,
     return DenseElementResult::Success;
   }
 
-  if (!MoveDenseElements(cx, nobj, 0, 1, initlen - 1)) {
-    return DenseElementResult::Failure;
-  }
+  nobj->moveDenseElements(0, 1, initlen - 1);
 
   SetInitializedLength(cx, nobj, initlen - 1);
   return DenseElementResult::Success;
@@ -2679,7 +2635,7 @@ static bool array_unshift(JSContext* cx, unsigned argc, Value* vp) {
         }
       }
       for (uint32_t i = 0; i < args.length(); i++) {
-        nobj->setDenseElementWithType(cx, i, args[i]);
+        nobj->setDenseElement(i, args[i]);
       }
       optimized = true;
     } while (false);
@@ -2815,16 +2771,16 @@ static ArrayObject* CopyDenseArrayElements(JSContext* cx,
     newlength = std::min<uint32_t>(initlen - begin, count);
   }
 
-  ArrayObject* narr = NewFullyAllocatedArrayTryReuseGroup(cx, obj, newlength);
+  ArrayObject* narr = NewDenseFullyAllocatedArray(cx, newlength);
   if (!narr) {
     return nullptr;
   }
 
   MOZ_ASSERT(count >= narr->length());
-  narr->setLength(cx, count);
+  narr->setLength(count);
 
   if (newlength > 0) {
-    narr->initDenseElements(cx, obj, begin, newlength);
+    narr->initDenseElements(obj, begin, newlength);
   }
 
   return narr;
@@ -2862,7 +2818,7 @@ static bool CopyArrayElements(JSContext* cx, HandleObject obj, uint64_t begin,
 
           break;
         }
-        result->setDenseElementWithType(cx, index, value);
+        result->setDenseElement(index, value);
       }
     }
     startIndex = index + 1;
@@ -2971,7 +2927,7 @@ static bool array_splice_impl(JSContext* cx, unsigned argc, Value* vp,
       }
     } else {
       /* Step 9. */
-      arr = NewFullyAllocatedArrayTryReuseGroup(cx, obj, count);
+      arr = NewDenseFullyAllocatedArray(cx, count);
       if (!arr) {
         return false;
       }
@@ -3038,11 +2994,8 @@ static bool array_splice_impl(JSContext* cx, unsigned argc, Value* vp,
       /* Steps 15.a-b. */
       HandleArrayObject arr = obj.as<ArrayObject>();
       if (targetIndex != 0 || !arr->tryShiftDenseElements(sourceIndex)) {
-        if (!MoveDenseElements(cx, arr, uint32_t(targetIndex),
-                               uint32_t(sourceIndex),
-                               uint32_t(len - sourceIndex))) {
-          return false;
-        }
+        arr->moveDenseElements(uint32_t(targetIndex), uint32_t(sourceIndex),
+                               uint32_t(len - sourceIndex));
       }
 
       /* Steps 15.c-d. */
@@ -3382,11 +3335,6 @@ static JSObject* SliceArguments(JSContext* cx, Handle<ArgumentsObject*> argsobj,
   }
   result->setDenseInitializedLength(count);
 
-  MOZ_ASSERT(result->group()->unknownPropertiesDontCheckGeneration(),
-             "The default array group has unknown properties, so we can "
-             "directly initialize the"
-             "dense elements without needing to update the indexed type set.");
-
   for (uint32_t index = 0; index < count; index++) {
     const Value& v = argsobj->element(begin + index);
     result->initDenseElement(index, v);
@@ -3447,8 +3395,7 @@ static bool ArraySliceOrdinary(JSContext* cx, HandleObject obj, uint64_t begin,
     }
   }
 
-  RootedArrayObject narr(cx,
-                         NewPartlyAllocatedArrayTryReuseGroup(cx, obj, count));
+  RootedArrayObject narr(cx, NewDensePartlyAllocatedArray(cx, count));
   if (!narr) {
     return false;
   }
@@ -3596,12 +3543,12 @@ static bool ArraySliceDenseKernel(JSContext* cx, ArrayObject* arr,
       if (!result->ensureElements(cx, newlength)) {
         return false;
       }
-      result->initDenseElements(cx, arr, begin, newlength);
+      result->initDenseElements(arr, begin, newlength);
     }
   }
 
   MOZ_ASSERT(count >= result->length());
-  result->setLength(cx, count);
+  result->setLength(count);
 
   return true;
 }
@@ -3645,8 +3592,8 @@ static bool array_isArray(JSContext* cx, unsigned argc, Value* vp) {
 
 static bool ArrayFromCallArgs(JSContext* cx, CallArgs& args,
                               HandleObject proto = nullptr) {
-  ArrayObject* obj = NewCopiedArrayForCallingAllocationSite(
-      cx, args.array(), args.length(), proto);
+  ArrayObject* obj =
+      NewDenseCopiedArray(cx, args.length(), args.array(), proto);
   if (!obj) {
     return false;
   }
@@ -3754,6 +3701,11 @@ static const JSFunctionSpec array_methods[] = {
     JS_SELF_HOSTED_FN("flatMap", "ArrayFlatMap", 1, 0),
     JS_SELF_HOSTED_FN("flat", "ArrayFlat", 0, 0),
 
+/* Proposal */
+#ifdef NIGHTLY_BUILD
+    JS_SELF_HOSTED_FN("at", "ArrayAt", 1, 0),
+#endif
+
     JS_FS_END};
 
 static const JSFunctionSpec array_static_methods[] = {
@@ -3804,8 +3756,7 @@ static inline bool ArrayConstructorImpl(JSContext* cx, CallArgs& args,
     }
   }
 
-  ArrayObject* obj =
-      NewPartlyAllocatedArrayForCallingAllocationSite(cx, length, proto);
+  ArrayObject* obj = NewDensePartlyAllocatedArray(cx, length, proto);
   if (!obj) {
     return false;
   }
@@ -3846,9 +3797,8 @@ ArrayObject* js::ArrayConstructorOneArg(JSContext* cx,
   }
 
   uint32_t length = uint32_t(lengthInt);
-  RootedObjectGroup group(cx, templateObject->group());
-  ArrayObject* res = NewPartlyAllocatedArrayTryUseGroup(cx, group, length);
-  MOZ_ASSERT_IF(res, res->realm() == group->realm());
+  ArrayObject* res = NewDensePartlyAllocatedArray(cx, length);
+  MOZ_ASSERT_IF(res, res->realm() == templateObject->realm());
   return res;
 }
 
@@ -3878,21 +3828,8 @@ static JSObject* CreateArrayPrototype(JSContext* cx, JSProtoKey key) {
   RootedArrayObject arrayProto(
       cx, ArrayObject::createArray(cx, gc::AllocKind::OBJECT4, gc::TenuredHeap,
                                    shape, group, 0, metadata));
-  if (!arrayProto || !JSObject::setSingleton(cx, arrayProto) ||
-      !JSObject::setDelegate(cx, arrayProto) ||
+  if (!arrayProto || !JSObject::setDelegate(cx, arrayProto) ||
       !AddLengthProperty(cx, arrayProto)) {
-    return nullptr;
-  }
-
-  /*
-   * The default 'new' group of Array.prototype is required by type inference
-   * to have unknown properties, to simplify handling of e.g. heterogenous
-   * arrays in JSON and script literals and allows setDenseArrayElement to
-   * be used without updating the indexed type set for such default arrays.
-   */
-  ObjectGroupRealm& realm = ObjectGroupRealm::getForNewObject(cx);
-  if (!JSObject::setNewGroupUnknown(cx, realm, &ArrayObject::class_,
-                                    arrayProto)) {
     return nullptr;
   }
 
@@ -3903,7 +3840,7 @@ static bool array_proto_finish(JSContext* cx, JS::HandleObject ctor,
                                JS::HandleObject proto) {
   // Add Array.prototype[@@unscopables]. ECMA-262 draft (2016 Mar 19) 22.1.3.32.
   RootedObject unscopables(
-      cx, NewSingletonObjectWithGivenProto<PlainObject>(cx, nullptr));
+      cx, NewTenuredObjectWithGivenProto<PlainObject>(cx, nullptr));
   if (!unscopables) {
     return false;
   }
@@ -4008,7 +3945,7 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArray(JSContext* cx, uint32_t length,
         /* Fixup the elements pointer and length, which may be incorrect. */
         ArrayObject* arr = &obj->as<ArrayObject>();
         arr->setFixedElements();
-        arr->setLength(cx, length);
+        arr->setLength(length);
         if (maxLength > 0 &&
             !EnsureNewArrayElements(cx, arr, std::min(maxLength, length))) {
           return nullptr;
@@ -4052,9 +3989,7 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArray(JSContext* cx, uint32_t length,
     EmptyShape::insertInitialShape(cx, shape, proto);
   }
 
-  if (newKind == SingletonObject && !JSObject::setSingleton(cx, arr)) {
-    return nullptr;
-  }
+  MOZ_ASSERT(newKind != SingletonObject);
 
   if (isCachable) {
     NewObjectCache& cache = cx->caches().newObjectCache;
@@ -4086,6 +4021,13 @@ ArrayObject* JS_FASTCALL js::NewDenseFullyAllocatedArray(
     JSContext* cx, uint32_t length, HandleObject proto /* = nullptr */,
     NewObjectKind newKind /* = GenericObject */) {
   return NewArray<UINT32_MAX>(cx, length, proto, newKind);
+}
+
+ArrayObject* js::NewDensePartlyAllocatedArray(
+    JSContext* cx, uint32_t length, HandleObject proto /* = nullptr */,
+    NewObjectKind newKind /* = GenericObject */) {
+  return NewArray<ArrayObject::EagerAllocationMaxLength>(cx, length, proto,
+                                                         newKind);
 }
 
 ArrayObject* JS_FASTCALL js::NewDenseUnallocatedArray(
@@ -4141,173 +4083,9 @@ ArrayObject* js::NewDenseFullyAllocatedArrayWithTemplate(
   return arr;
 }
 
-ArrayObject* js::NewDenseCopyOnWriteArray(JSContext* cx,
-                                          HandleArrayObject templateObject) {
-  MOZ_ASSERT(!gc::IsInsideNursery(templateObject));
-
-  gc::InitialHeap heap = GetInitialHeap(GenericObject, templateObject->group());
-
-  ArrayObject* arr =
-      ArrayObject::createCopyOnWriteArray(cx, heap, templateObject);
-  if (!arr) {
-    return nullptr;
-  }
-
-  probes::CreateObject(cx, arr);
-  return arr;
-}
-
-// Return a new array with the specified length and allocated capacity (up to
-// maxLength), using the specified group if possible. If the specified group
-// cannot be used, ensure that the created array at least has the given
-// [[Prototype]].
-template <uint32_t maxLength>
-static inline ArrayObject* NewArrayTryUseGroup(
-    JSContext* cx, HandleObjectGroup group, size_t length,
-    NewObjectKind newKind = GenericObject) {
-  MOZ_ASSERT(newKind != SingletonObject);
-
-  {
-    AutoSweepObjectGroup sweep(group);
-    if (group->shouldPreTenure(sweep)) {
-      newKind = TenuredObject;
-    }
-  }
-
-  RootedObject proto(cx, group->proto().toObject());
-  ArrayObject* res = NewArray<maxLength>(cx, length, proto, newKind);
-  if (!res) {
-    return nullptr;
-  }
-
-  res->setGroup(group);
-
-  // If the length calculation overflowed, make sure that is marked for the
-  // new group.
-  if (res->length() > INT32_MAX) {
-    res->setLength(cx, res->length());
-  }
-
-  return res;
-}
-
-ArrayObject* js::NewFullyAllocatedArrayTryUseGroup(JSContext* cx,
-                                                   HandleObjectGroup group,
-                                                   size_t length,
-                                                   NewObjectKind newKind) {
-  return NewArrayTryUseGroup<UINT32_MAX>(cx, group, length, newKind);
-}
-
-ArrayObject* js::NewPartlyAllocatedArrayTryUseGroup(JSContext* cx,
-                                                    HandleObjectGroup group,
-                                                    size_t length) {
-  return NewArrayTryUseGroup<ArrayObject::EagerAllocationMaxLength>(cx, group,
-                                                                    length);
-}
-
-static bool CanReuseGroupForNewArray(JSObject* obj, JSContext* cx) {
-  if (!obj->is<ArrayObject>()) {
-    return false;
-  }
-  if (obj->as<ArrayObject>().realm() != cx->realm()) {
-    return false;
-  }
-  if (obj->staticPrototype() != cx->global()->maybeGetArrayPrototype()) {
-    return false;
-  }
-  return true;
-}
-
-// Return a new array with the default prototype and specified allocated
-// capacity and length. If possible, try to reuse the group of the input
-// object. The resulting array will either reuse the input object's group or
-// will have unknown property types.
-template <uint32_t maxLength>
-static inline ArrayObject* NewArrayTryReuseGroup(
-    JSContext* cx, HandleObject obj, size_t length,
-    NewObjectKind newKind = GenericObject) {
-  if (!CanReuseGroupForNewArray(obj, cx)) {
-    return NewArray<maxLength>(cx, length, nullptr, newKind);
-  }
-
-  RootedObjectGroup group(cx, JSObject::getGroup(cx, obj));
-  if (!group) {
-    return nullptr;
-  }
-
-  return NewArrayTryUseGroup<maxLength>(cx, group, length, newKind);
-}
-
-ArrayObject* js::NewFullyAllocatedArrayTryReuseGroup(JSContext* cx,
-                                                     HandleObject obj,
-                                                     size_t length,
-                                                     NewObjectKind newKind) {
-  return NewArrayTryReuseGroup<UINT32_MAX>(cx, obj, length, newKind);
-}
-
-ArrayObject* js::NewPartlyAllocatedArrayTryReuseGroup(JSContext* cx,
-                                                      HandleObject obj,
-                                                      size_t length) {
-  return NewArrayTryReuseGroup<ArrayObject::EagerAllocationMaxLength>(cx, obj,
-                                                                      length);
-}
-
-ArrayObject* js::NewFullyAllocatedArrayForCallingAllocationSite(
-    JSContext* cx, size_t length, NewObjectKind newKind) {
-  RootedObjectGroup group(
-      cx, ObjectGroup::callingAllocationSiteGroup(cx, JSProto_Array));
-  if (!group) {
-    return nullptr;
-  }
-  return NewArrayTryUseGroup<UINT32_MAX>(cx, group, length, newKind);
-}
-
-ArrayObject* js::NewPartlyAllocatedArrayForCallingAllocationSite(
-    JSContext* cx, size_t length, HandleObject proto) {
-  RootedObjectGroup group(
-      cx, ObjectGroup::callingAllocationSiteGroup(cx, JSProto_Array, proto));
-  if (!group) {
-    return nullptr;
-  }
-  return NewArrayTryUseGroup<ArrayObject::EagerAllocationMaxLength>(cx, group,
-                                                                    length);
-}
-
-ArrayObject* js::NewCopiedArrayTryUseGroup(JSContext* cx,
-                                           HandleObjectGroup group,
-                                           const Value* vp, size_t length,
-                                           NewObjectKind newKind,
-                                           ShouldUpdateTypes updateTypes) {
-  ArrayObject* obj =
-      NewFullyAllocatedArrayTryUseGroup(cx, group, length, newKind);
-  if (!obj) {
-    return nullptr;
-  }
-
-  DenseElementResult result =
-      obj->setOrExtendDenseElements(cx, 0, vp, length, updateTypes);
-  if (result == DenseElementResult::Failure) {
-    return nullptr;
-  }
-
-  MOZ_ASSERT(result == DenseElementResult::Success);
-  return obj;
-}
-
-ArrayObject* js::NewCopiedArrayForCallingAllocationSite(
-    JSContext* cx, const Value* vp, size_t length,
-    HandleObject proto /* = nullptr */) {
-  RootedObjectGroup group(
-      cx, ObjectGroup::callingAllocationSiteGroup(cx, JSProto_Array, proto));
-  if (!group) {
-    return nullptr;
-  }
-  return NewCopiedArrayTryUseGroup(cx, group, vp, length);
-}
-
+// TODO(no-TI): clean up.
 ArrayObject* js::NewArrayWithGroup(JSContext* cx, uint32_t length,
-                                   HandleObjectGroup group,
-                                   bool convertDoubleElements) {
+                                   HandleObjectGroup group) {
   // Ion can call this with a group from a different realm when calling
   // another realm's Array constructor.
   Maybe<AutoRealm> ar;
@@ -4316,16 +4094,7 @@ ArrayObject* js::NewArrayWithGroup(JSContext* cx, uint32_t length,
     ar.emplace(cx, group);
   }
 
-  ArrayObject* res = NewFullyAllocatedArrayTryUseGroup(cx, group, length);
-  if (!res) {
-    return nullptr;
-  }
-
-  if (convertDoubleElements) {
-    res->setShouldConvertDoubleElements();
-  }
-
-  return res;
+  return NewDenseFullyAllocatedArray(cx, length);
 }
 
 #ifdef DEBUG

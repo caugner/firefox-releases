@@ -82,9 +82,8 @@ bool TrialInliner::replaceICStub(const ICEntry& entry, CacheIRWriter& writer,
 
   // Note: AttachBaselineCacheIRStub never throws an exception.
   bool attached = false;
-  ICStub* newStub = AttachBaselineCacheIRStub(
-      cx(), writer, kind, BaselineCacheIRStubKind::Regular, script_, icScript_,
-      fallback, &attached);
+  ICStub* newStub = AttachBaselineCacheIRStub(cx(), writer, kind, script_,
+                                              icScript_, fallback, &attached);
   if (!newStub) {
     MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Candidate);
     ReportOutOfMemory(cx());
@@ -227,8 +226,7 @@ Maybe<InlinableCallData> FindInlinableCallData(ICStub* stub) {
           return mozilla::Nothing();
         }
         if (data.isSome()) {
-          MOZ_ASSERT(op == CacheOp::ReturnFromIC ||
-                     op == CacheOp::TypeMonitorResult);
+          MOZ_ASSERT(op == CacheOp::ReturnFromIC);
         }
         reader.skip(argLength);
         break;
@@ -298,8 +296,7 @@ Maybe<InlinableGetterData> FindInlinableGetterData(ICStub* stub) {
           return mozilla::Nothing();
         }
         if (data.isSome()) {
-          MOZ_ASSERT(op == CacheOp::ReturnFromIC ||
-                     op == CacheOp::TypeMonitorResult);
+          MOZ_ASSERT(op == CacheOp::ReturnFromIC);
         }
         reader.skip(argLength);
         break;
@@ -367,8 +364,7 @@ Maybe<InlinableSetterData> FindInlinableSetterData(ICStub* stub) {
           return mozilla::Nothing();
         }
         if (data.isSome()) {
-          MOZ_ASSERT(op == CacheOp::ReturnFromIC ||
-                     op == CacheOp::TypeMonitorResult);
+          MOZ_ASSERT(op == CacheOp::ReturnFromIC);
         }
         reader.skip(argLength);
         break;
@@ -485,7 +481,7 @@ ICScript* TrialInliner::createInlinedICScript(JSFunction* target,
       new (raw) ICScript(initialWarmUpCount, allocSize, depth, root_));
 
   {
-    // Suppress GC. This matches the AutoEnterAnalysis in
+    // Suppress GC. This matches the AutoSuppressGC in
     // JSScript::createJitScript. It is needed for allocating the
     // template object for JSOp::Rest and the object group for
     // JSOp::NewArray.
@@ -662,8 +658,6 @@ bool TrialInliner::tryInlining() {
         }
         break;
       case JSOp::GetProp:
-      case JSOp::CallProp:
-      case JSOp::Length:
         if (!maybeInlineGetter(entry, loc)) {
           return false;
         }

@@ -64,16 +64,6 @@ pub type PercentOrNone = generic::PercentOrNone<Percentage>;
 type LengthPercentageItemList = crate::OwnedSlice<generic::GradientItem<Color, LengthPercentage>>;
 
 #[cfg(feature = "gecko")]
-fn conic_gradients_enabled() -> bool {
-    static_prefs::pref!("layout.css.conic-gradient.enabled")
-}
-
-#[cfg(feature = "servo")]
-fn conic_gradients_enabled() -> bool {
-    false
-}
-
-#[cfg(feature = "gecko")]
 fn cross_fade_enabled() -> bool {
     static_prefs::pref!("layout.css.cross-fade.enabled")
 }
@@ -102,11 +92,9 @@ impl SpecifiedValueInfo for Gradient {
             "-webkit-repeating-radial-gradient",
             "-moz-repeating-radial-gradient",
             "-webkit-gradient",
+            "conic-gradient",
+            "repeating-conic-gradient",
         ]);
-
-        if conic_gradients_enabled() {
-            f(&["conic-gradient", "repeating-conic-gradient"]);
-        }
     }
 }
 
@@ -269,16 +257,14 @@ impl Parse for CrossFadeElement {
 }
 
 impl PercentOrNone {
-    fn parse_or_none<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Self {
+    fn parse_or_none<'i, 't>(context: &ParserContext, input: &mut Parser<'i, 't>) -> Self {
         // We clamp our values here as this is the way that Safari and
         // Chrome's implementation handle out-of-bounds percentages
         // but whether or not this behavior follows the specification
         // is still being discussed. See:
         // <https://github.com/w3c/csswg-drafts/issues/5333>
-        if let Ok(percent) = input.try_parse(|input| Percentage::parse_non_negative(context, input)) {
+        if let Ok(percent) = input.try_parse(|input| Percentage::parse_non_negative(context, input))
+        {
             Self::Percent(percent.clamp_to_hundred())
         } else {
             Self::None
@@ -339,10 +325,10 @@ impl Parse for Gradient {
             "-moz-repeating-radial-gradient" => {
                 (Shape::Radial, true, GradientCompatMode::Moz)
             },
-            "conic-gradient" if conic_gradients_enabled() => {
+            "conic-gradient" => {
                 (Shape::Conic, false, GradientCompatMode::Modern)
             },
-            "repeating-conic-gradient" if conic_gradients_enabled() => {
+            "repeating-conic-gradient" => {
                 (Shape::Conic, true, GradientCompatMode::Modern)
             },
             "-webkit-gradient" => {

@@ -145,6 +145,7 @@
 #include "threading/LockGuard.h"
 #include "threading/Thread.h"
 #include "util/CompleteFile.h"  // js::FileContents, js::ReadCompleteFile
+#include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "util/Windows.h"
@@ -518,6 +519,9 @@ bool shell::enableWasmSimd = true;
 bool shell::enableWasmVerbose = false;
 bool shell::enableTestWasmAwaitTier2 = false;
 bool shell::enableSourcePragmas = true;
+#ifdef ENABLE_WASM_EXCEPTIONS
+bool shell::enableWasmExceptions = false;
+#endif
 bool shell::enableAsyncStacks = false;
 bool shell::enableAsyncStackCaptureDebuggeeOnly = false;
 bool shell::enableStreams = false;
@@ -531,6 +535,7 @@ bool shell::enablePropertyErrorMessageFix = false;
 bool shell::enableIteratorHelpers = false;
 bool shell::enablePrivateClassFields = false;
 bool shell::enablePrivateClassMethods = false;
+bool shell::enableTopLevelAwait = false;
 bool shell::useOffThreadParseGlobal = true;
 #ifdef JS_GC_ZEAL
 uint32_t shell::gZealBits = 0;
@@ -2880,11 +2885,11 @@ static bool Help(JSContext* cx, unsigned argc, Value* vp);
 static bool Quit(JSContext* cx, unsigned argc, Value* vp) {
   ShellContext* sc = GetShellContext(cx);
 
-#ifdef JS_MORE_DETERMINISTIC
-  // Print a message to stderr in more-deterministic builds to help jsfunfuzz
+  // Print a message to stderr in differential testing to help jsfunfuzz
   // find uncatchable-exception bugs.
-  fprintf(stderr, "quit called\n");
-#endif
+  if (js::SupportDifferentialTesting()) {
+    fprintf(stderr, "quit called\n");
+  }
 
   CallArgs args = CallArgsFromVp(argc, vp);
   int32_t code;
@@ -2966,12 +2971,11 @@ static const char* ToSource(JSContext* cx, HandleValue vp, UniqueChars* bytes) {
 static bool AssertEq(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   if (!(args.length() == 2 || (args.length() == 3 && args[2].isString()))) {
-    JS_ReportErrorNumberASCII(
-        cx, my_GetErrorMessage, nullptr,
-        (args.length() < 2)
-            ? JSSMSG_NOT_ENOUGH_ARGS
-            : (args.length() == 3) ? JSSMSG_INVALID_ARGS : JSSMSG_TOO_MANY_ARGS,
-        "assertEq");
+    JS_ReportErrorNumberASCII(cx, my_GetErrorMessage, nullptr,
+                              (args.length() < 2)    ? JSSMSG_NOT_ENOUGH_ARGS
+                              : (args.length() == 3) ? JSSMSG_INVALID_ARGS
+                                                     : JSSMSG_TOO_MANY_ARGS,
+                              "assertEq");
     return false;
   }
 
@@ -4465,10 +4469,7 @@ static bool GroupOf(JSContext* cx, unsigned argc, JS::Value* vp) {
     return false;
   }
   RootedObject obj(cx, &args[0].toObject());
-  ObjectGroup* group = JSObject::getGroup(cx, obj);
-  if (!group) {
-    return false;
-  }
+  ObjectGroup* group = obj->group();
   args.rval().set(JS_NumberValue(double(uintptr_t(group) >> 3)));
   return true;
 }
@@ -4842,22 +4843,6 @@ static bool SetJitCompilerOption(JSContext* cx, unsigned argc, Value* vp) {
                         "Enabling or disabling the Baseline Interpreter at "
                         "runtime is not supported.");
     return false;
-  }
-
-  // Similarly, don't allow enabling or disabling Warp at runtime. Bytecode and
-  // VM data structures depend on whether TI is enabled/disabled.
-  if (opt == JSJITCOMPILER_WARP_ENABLE) {
-    uint32_t warpEnabled;
-    if (!JS_GetGlobalJitCompilerOption(cx, JSJITCOMPILER_WARP_ENABLE,
-                                       &warpEnabled)) {
-      return false;
-    }
-    if (bool(number) != warpEnabled) {
-      JS_ReportErrorASCII(
-          cx, "Enabling or disabling Warp at runtime is not supported.");
-      return false;
-    }
-    return true;
   }
 
   // Throw if disabling the JITs and there's JIT code on the stack, to avoid
@@ -5579,7 +5564,7 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::CompilationState compilationState(cx, allocScope, options,
-                                              compilationInfo.get().stencil);
+                                              compilationInfo.get());
 
   if (isAscii) {
     const Latin1Char* latin1 = stableChars.latin1Range().begin().get();
@@ -5606,6 +5591,14 @@ static bool DumpStencil(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 static bool Parse(JSContext* cx, unsigned argc, Value* vp) {
+  // Parse returns local scope information with variables ordered
+  // differently, depending on the underlying JIT implementation.
+  if (js::SupportDifferentialTesting()) {
+    JS_ReportErrorASCII(cx,
+                        "Function not available in differential testing mode.");
+    return false;
+  }
+
   return FrontendTest(cx, argc, vp, "parse", DumpType::ParseNode);
 }
 
@@ -5645,7 +5638,7 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::CompilationState compilationState(cx, allocScope, options,
-                                              compilationInfo.get().stencil);
+                                              compilationInfo.get());
 
   Parser<frontend::SyntaxParseHandler, char16_t> parser(
       cx, options, chars, length, false, compilationInfo.get(),
@@ -7030,14 +7023,6 @@ static bool IsLatin1(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool HasCopyOnWriteElements(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(
-      args.get(0).isObject() && args[0].toObject().isNative() &&
-      args[0].toObject().as<NativeObject>().denseElementsAreCopyOnWrite());
-  return true;
-}
-
 static bool EnableGeckoProfiling(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -7752,6 +7737,12 @@ static bool DumpScopeChain(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   RootedObject callee(cx, &args.callee());
 
+  if (js::SupportDifferentialTesting()) {
+    ReportUsageErrorASCII(
+        cx, callee, "Function not available in differential testing mode.");
+    return false;
+  }
+
   if (args.length() != 1) {
     ReportUsageErrorASCII(cx, callee, "Wrong number of arguments");
     return false;
@@ -7786,11 +7777,7 @@ static bool DumpScopeChain(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-#ifndef JS_MORE_DETERMINISTIC
-  // Don't dump anything in more-deterministic builds because the output
-  // includes pointer values.
   script->bodyScope()->dump();
-#endif
 
   args.rval().setUndefined();
   return true;
@@ -9125,10 +9112,6 @@ JS_FN_HELP("rateMyCacheIR", RateMyCacheIR, 0, 0,
 "isLatin1(s)",
 "  Return true iff the string's characters are stored as Latin1."),
 
-    JS_FN_HELP("hasCopyOnWriteElements", HasCopyOnWriteElements, 1, 0,
-"hasCopyOnWriteElements(o)",
-"  Return true iff the object has copy-on-write dense elements."),
-
     JS_FN_HELP("stackPointerInfo", StackPointerInfo, 0, 0,
 "stackPointerInfo()",
 "  Return an int32 value which corresponds to the offset of the latest stack\n"
@@ -10429,6 +10412,9 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
 #ifdef ENABLE_WASM_SIMD
   enableWasmSimd = !op.getBoolOption("no-wasm-simd");
 #endif
+#ifdef ENABLE_WASM_EXCEPTIONS
+  enableWasmExceptions = op.getBoolOption("wasm-exceptions");
+#endif
   enableWasmVerbose = op.getBoolOption("wasm-verbose");
   enableTestWasmAwaitTier2 = op.getBoolOption("test-wasm-await-tier2");
   enableSourcePragmas = !op.getBoolOption("no-source-pragmas");
@@ -10448,6 +10434,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   enablePrivateClassFields = op.getBoolOption("enable-private-fields") ||
                              op.getBoolOption("enable-private-methods");
   enablePrivateClassMethods = op.getBoolOption("enable-private-methods");
+  enableTopLevelAwait = op.getBoolOption("enable-top-level-await");
   useOffThreadParseGlobal = !op.getBoolOption("no-off-thread-parse-global");
 
   JS::ContextOptionsRef(cx)
@@ -10473,21 +10460,22 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
 #ifdef ENABLE_WASM_SIMD
       .setWasmSimd(enableWasmSimd)
 #endif
+#ifdef ENABLE_WASM_EXCEPTIONS
+      .setWasmExceptions(enableWasmExceptions)
+#endif
       .setWasmVerbose(enableWasmVerbose)
       .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
       .setSourcePragmas(enableSourcePragmas)
       .setAsyncStack(enableAsyncStacks)
       .setAsyncStackCaptureDebuggeeOnly(enableAsyncStackCaptureDebuggeeOnly)
       .setPrivateClassFields(enablePrivateClassFields)
-      .setPrivateClassMethods(enablePrivateClassMethods);
+      .setPrivateClassMethods(enablePrivateClassMethods)
+      .setTopLevelAwait(enableTopLevelAwait);
 
   JS::SetUseOffThreadParseGlobal(useOffThreadParseGlobal);
 
-  // First check some options that set default warm-up thresholds, so these
-  // thresholds can be overridden below by --ion-eager and other flags.
-  if (op.getBoolOption("no-warp")) {
-    jit::JitOptions.setWarpEnabled(false);
-  }
+  // Check --fast-warmup first because it sets default warm-up thresholds. These
+  // thresholds can then be overridden below by --ion-eager and other flags.
   if (op.getBoolOption("fast-warmup")) {
     jit::JitOptions.setFastWarmUp();
   }
@@ -10864,6 +10852,9 @@ static void SetWorkerContextOptions(JSContext* cx) {
 #ifdef ENABLE_WASM_SIMD
       .setWasmSimd(enableWasmSimd)
 #endif
+#ifdef ENABLE_WASM_EXCEPTIONS
+      .setWasmExceptions(enableWasmExceptions)
+#endif
       .setWasmReftypes(enableWasmReftypes)
       .setWasmVerbose(enableWasmVerbose)
       .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
@@ -11035,6 +11026,12 @@ static int Shell(JSContext* cx, OptionParser* op, char** envp) {
         (getenv("MOZ_FUZZING_SAFE") && getenv("MOZ_FUZZING_SAFE")[0] != '0');
   }
 
+#ifdef DEBUG
+  if (op->getBoolOption("differential-testing")) {
+    JS::SetSupportDifferentialTesting(true);
+  }
+#endif
+
   if (op->getBoolOption("disable-oom-functions")) {
     disableOOMFunctions = true;
   }
@@ -11093,14 +11090,6 @@ static int Shell(JSContext* cx, OptionParser* op, char** envp) {
     if (!js::DumpRealmPCCounts(cx)) {
       result = EXITCODE_OUT_OF_MEMORY;
     }
-  }
-
-  /*
-   * Dump remaining type inference results while we still have a context.
-   * This printing depends on atoms still existing.
-   */
-  for (CompartmentsIter c(cx->runtime()); !c.done(); c.next()) {
-    PrintTypes(cx, c, false);
   }
 
   return result;
@@ -11258,8 +11247,6 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "no-ion", "Disable IonMonkey") ||
       !op.addBoolOption('\0', "no-ion-for-main-context",
                         "Disable IonMonkey for the main context only") ||
-      !op.addBoolOption('\0', "warp", "Enable WarpBuilder (default)") ||
-      !op.addBoolOption('\0', "no-warp", "Disable WarpBuilder") ||
       !op.addIntOption('\0', "inlining-entry-threshold", "COUNT",
                        "The minimum stub entry count before trial-inlining a"
                        " call",
@@ -11271,8 +11258,14 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "no-asmjs", "Disable asm.js compilation") ||
       !op.addStringOption(
           '\0', "wasm-compiler", "[option]",
-          "Choose to enable a subset of the wasm compilers (valid options are "
-          "none/baseline/ion/cranelift/baseline+ion/baseline+cranelift)") ||
+          "Choose to enable a subset of the wasm compilers, valid options are "
+          "'none', 'baseline', 'ion', 'cranelift', 'optimizing', "
+          "'baseline+ion', "
+          "'baseline+cranelift', 'baseline+optimizing'. Choosing 'ion' when "
+          "Ion is "
+          "not available or 'cranelift' when Cranelift is not available will "
+          "fail; "
+          "use 'optimizing' for cross-compiler compatibility.") ||
       !op.addBoolOption('\0', "wasm-verbose",
                         "Enable WebAssembly verbose logging") ||
       !op.addBoolOption('\0', "disable-wasm-huge-memory",
@@ -11307,6 +11300,13 @@ int main(int argc, char** argv, char** envp) {
 #else
       !op.addBoolOption('\0', "no-wasm-simd", "No-op") ||
 #endif
+#ifdef ENABLE_WASM_EXCEPTIONS
+      !op.addBoolOption('\0', "wasm-exceptions",
+                        "Enable wasm exceptions features") ||
+#else
+      !op.addBoolOption('\0', "wasm-exceptions", "No-op") ||
+#endif
+
       !op.addBoolOption('\0', "no-native-regexp",
                         "Disable native regexp compilation") ||
       !op.addIntOption(
@@ -11348,6 +11348,8 @@ int main(int argc, char** argv, char** envp) {
                         "Enable private class fields") ||
       !op.addBoolOption('\0', "enable-private-methods",
                         "Enable private class methods") ||
+      !op.addBoolOption('\0', "enable-top-level-await",
+                        "Enable top-level await") ||
       !op.addBoolOption('\0', "no-off-thread-parse-global",
                         "Do not use parseGlobal in off-thread compilation and "
                         "instead instantiate stencil in main-thread") ||
@@ -11491,6 +11493,11 @@ int main(int argc, char** argv, char** envp) {
       !op.addBoolOption('\0', "fuzzing-safe",
                         "Don't expose functions that aren't safe for "
                         "fuzzers to call") ||
+#ifdef DEBUG
+      !op.addBoolOption('\0', "differential-testing",
+                        "Avoid random/undefined behavior that disturbs "
+                        "differential testing (correctness fuzzing)") ||
+#endif
       !op.addBoolOption('\0', "disable-oom-functions",
                         "Disable functions that cause "
                         "artificial OOMs") ||

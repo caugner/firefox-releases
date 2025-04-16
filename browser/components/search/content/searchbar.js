@@ -106,6 +106,10 @@
         "resource://gre/modules/FormHistory.jsm",
         {}
       ).FormHistory;
+      this.SearchSuggestionController = ChromeUtils.import(
+        "resource://gre/modules/SearchSuggestionController.jsm",
+        {}
+      ).SearchSuggestionController;
 
       Services.obs.addObserver(this.observer, "browser-search-engine-modified");
       Services.obs.addObserver(this.observer, "browser-search-service");
@@ -348,8 +352,9 @@
       let selection = this.telemetrySearchDetails;
       let oneOffRecorded = false;
 
-      BrowserUsageTelemetry.recordSearchbarSelectedResultMethod(
+      BrowserSearchTelemetry.recordSearchSuggestionSelectionMethod(
         aEvent,
+        "searchbar",
         selection ? selection.index : -1
       );
 
@@ -379,7 +384,10 @@
           if (!aEngine) {
             aEngine = this.currentEngine;
           }
-          BrowserSearch.recordOneoffSearchInTelemetry(aEngine, source, type);
+          BrowserSearchTelemetry.recordSearch(gBrowser, aEngine, source, {
+            type,
+            isOneOff: true,
+          });
         }
       }
 
@@ -407,7 +415,9 @@
       if (
         aData &&
         !PrivateBrowsingUtils.isWindowPrivate(window) &&
-        this.FormHistory.enabled
+        this.FormHistory.enabled &&
+        aData.length <=
+          this.SearchSuggestionController.SEARCH_HISTORY_MAX_VALUE_LENGTH
       ) {
         this.FormHistory.update(
           {
@@ -439,7 +449,12 @@
         selection: telemetrySearchDetails,
         url: submission.uri,
       };
-      BrowserSearch.recordSearchInTelemetry(engine, "searchbar", details);
+      BrowserSearchTelemetry.recordSearch(
+        gBrowser,
+        engine,
+        "searchbar",
+        details
+      );
       // null parameter below specifies HTML response for search
       let params = {
         postData: submission.postData,

@@ -10,7 +10,6 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/Variant.h"
 
 #include "jsapi.h"
 
@@ -124,6 +123,9 @@ extern bool enableWasmMultiValue;
 #ifdef ENABLE_WASM_SIMD
 extern bool enableWasmSimd;
 #endif
+#ifdef ENABLE_WASM_EXCEPTIONS
+extern bool enableWasmExceptions;
+#endif
 extern bool enableWasmVerbose;
 extern bool enableTestWasmAwaitTier2;
 extern bool enableSourcePragmas;
@@ -141,6 +143,7 @@ extern bool useOffThreadParseGlobal;
 extern bool enableIteratorHelpers;
 extern bool enablePrivateClassFields;
 extern bool enablePrivateClassMethods;
+extern bool enableTopLevelAwait;
 #ifdef JS_GC_ZEAL
 extern uint32_t gZealBits;
 extern uint32_t gZealFrequency;

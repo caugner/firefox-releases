@@ -251,6 +251,12 @@ bool CompositorD3D11::Initialize(nsCString* const out_failureReason) {
     if (!mSwapChain)
 #endif
     {
+      if (mWidget->AsWindows()->GetCompositorHwnd()) {
+        // Destroy compositor window.
+        mWidget->AsWindows()->DestroyCompositorWindow();
+        mHwnd = mWidget->AsWindows()->GetHwnd();
+      }
+
       DXGI_SWAP_CHAIN_DESC swapDesc;
       ::ZeroMemory(&swapDesc, sizeof(swapDesc));
       swapDesc.BufferDesc.Width = 0;
@@ -1425,7 +1431,7 @@ void CompositorD3D11::ForcePresent() {
   mSwapChain->GetDesc(&desc);
 
   if (desc.BufferDesc.Width == size.width &&
-      desc.BufferDesc.Height == size.height) {
+      desc.BufferDesc.Height == size.height && size == mBufferSize) {
     mSwapChain->Present(0, 0);
     if (mIsDoubleBuffered) {
       // Make sure we present what was the front buffer before that we know is
@@ -1528,6 +1534,9 @@ bool CompositorD3D11::VerifyBufferSize() {
     gfxCriticalNote << "D3D11 swap resize buffers failed " << hexa(hr) << " on "
                     << mSize;
     HandleError(hr);
+    mBufferSize = LayoutDeviceIntSize();
+  } else {
+    mBufferSize = mSize;
   }
 
   mBackBufferInvalid = mFrontBufferInvalid =

@@ -13,7 +13,9 @@
 #include "mozilla/EndianUtils.h"
 #include "mozilla/ErrorNames.h"
 #include "mozilla/ResultExtensions.h"
+#include "mozilla/Services.h"
 #include "mozilla/Span.h"
+#include "mozilla/StaticPtr.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/dom/IOUtilsBinding.h"
 #include "mozilla/dom/Promise.h"
@@ -31,20 +33,11 @@
 #include "nsStringFwd.h"
 #include "nsTArray.h"
 #include "nsThreadManager.h"
+#include "nsXULAppAPI.h"
 #include "prerror.h"
 #include "prio.h"
 #include "prtime.h"
 #include "prtypes.h"
-
-#define REJECT_IF_NULL_EVENT_TARGET(aEventTarget, aJSPromise)  \
-  do {                                                         \
-    if (!(aEventTarget)) {                                     \
-      (aJSPromise)                                             \
-          ->MaybeRejectWithAbortError(                         \
-              "Could not dispatch task to background thread"); \
-      return (aJSPromise).forget();                            \
-    }                                                          \
-  } while (false)
 
 #define REJECT_IF_SHUTTING_DOWN(aJSPromise)                       \
   do {                                                            \
@@ -66,8 +59,7 @@
     }                                                                    \
   } while (0)
 
-namespace mozilla {
-namespace dom {
+namespace mozilla::dom {
 
 // static helper functions
 
@@ -134,14 +126,15 @@ MOZ_MUST_USE inline bool ToJSValue(
   info.mType.Construct(aInternalFileInfo.mType);
   info.mSize.Construct(aInternalFileInfo.mSize);
   info.mLastModified.Construct(aInternalFileInfo.mLastModified);
+
+  if (aInternalFileInfo.mCreationTime.isSome()) {
+    info.mCreationTime.Construct(aInternalFileInfo.mCreationTime.ref());
+  }
+
+  info.mPermissions.Construct(aInternalFileInfo.mPermissions);
+
   return ToJSValue(aCx, info, aValue);
 }
-
-#ifdef XP_WIN
-constexpr char PathSeparator = u'\\';
-#else
-constexpr char PathSeparator = u'/';
-#endif
 
 // IOUtils implementation
 
@@ -153,50 +146,33 @@ StaticRefPtr<nsIAsyncShutdownClient> IOUtils::sBarrier;
 /* static */
 Atomic<bool> IOUtils::sShutdownStarted = Atomic<bool>(false);
 
-template <typename MozPromiseT, typename Fn, typename... Args>
-static RefPtr<MozPromiseT> InvokeToMozPromise(Fn aFunc, Args... aArgs) {
-  MOZ_ASSERT(!NS_IsMainThread());
-  auto rv = aFunc(std::forward<Args>(aArgs)...);
-  if (rv.isErr()) {
-    return MozPromiseT::CreateAndReject(rv.unwrapErr(), __func__);
-  }
-  return MozPromiseT::CreateAndResolve(rv.unwrap(), __func__);
-}
-
 /* static */
-template <typename OkT, typename Fn, typename... Args>
-already_AddRefed<Promise> IOUtils::RunOnBackgroundThread(
-    RefPtr<Promise>& aPromise, Fn aFunc, Args... aArgs) {
+template <typename OkT, typename Fn>
+void IOUtils::RunOnBackgroundThread(Promise* aPromise, Fn aFunc) {
   nsCOMPtr<nsISerialEventTarget> bg = GetBackgroundEventTarget();
-  REJECT_IF_NULL_EVENT_TARGET(bg, aPromise);
+  if (!bg) {
+    aPromise->MaybeRejectWithAbortError(
+        "Could not dispatch task to background thread");
+    return;
+  }
 
   InvokeAsync(
       bg, __func__,
-      [fn = aFunc, argsTuple = std::make_tuple(std::move(aArgs)...)]() mutable {
-        return std::apply(
-            [fn](Args... args) mutable {
-              using MozPromiseT = MozPromise<OkT, IOError, true>;
-              return InvokeToMozPromise<MozPromiseT>(
-                  fn, std::forward<Args>(args)...);
-            },
-            std::move(argsTuple));
+      [func = std::move(aFunc)]() {
+        Result<OkT, IOError> result = func();
+        if (result.isErr()) {
+          return IOPromise<OkT>::CreateAndReject(result.unwrapErr(), __func__);
+        }
+        return IOPromise<OkT>::CreateAndResolve(result.unwrap(), __func__);
       })
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
           [promise = RefPtr(aPromise)](const OkT& ok) {
-            if constexpr (std::is_same_v<OkT, nsTArray<uint8_t>>) {
-              TypedArrayCreator<Uint8Array> arr(ok);
-              promise->MaybeResolve(arr);
-            } else if constexpr (std::is_same_v<OkT, Ok>) {
-              promise->MaybeResolveWithUndefined();
-            } else {
-              promise->MaybeResolve(ok);
-            }
+            ResolveJSPromise(promise, ok);
           },
           [promise = RefPtr(aPromise)](const IOError& err) {
             RejectJSPromise(promise, err);
           });
-  return aPromise.forget();
 }
 
 /* static */
@@ -222,8 +198,12 @@ already_AddRefed<Promise> IOUtils::Read(GlobalObject& aGlobal,
     toRead.emplace(aOptions.mMaxBytes.Value());
   }
 
-  return RunOnBackgroundThread<nsTArray<uint8_t>>(
-      promise, &ReadSync, file.forget(), toRead, aOptions.mDecompress);
+  RunOnBackgroundThread<nsTArray<uint8_t>>(
+      promise,
+      [file = std::move(file), toRead, decompress = aOptions.mDecompress]() {
+        return ReadSync(file, toRead, decompress);
+      });
+  return promise.forget();
 }
 
 /* static */
@@ -236,15 +216,19 @@ already_AddRefed<Promise> IOUtils::ReadUTF8(GlobalObject& aGlobal,
 
   nsCOMPtr<nsIFile> file = new nsLocalFile();
   REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
+  RunOnBackgroundThread<nsString>(
+      promise, [file = std::move(file), decompress = aOptions.mDecompress]() {
+        return ReadUTF8Sync(file, decompress);
+      });
 
-  return RunOnBackgroundThread<nsString>(promise, &ReadUTF8Sync, file.forget(),
-                                         aOptions.mDecompress);
+  return promise.forget();
 }
 
 /* static */
-already_AddRefed<Promise> IOUtils::WriteAtomic(
-    GlobalObject& aGlobal, const nsAString& aPath, const Uint8Array& aData,
-    const WriteAtomicOptions& aOptions) {
+already_AddRefed<Promise> IOUtils::Write(GlobalObject& aGlobal,
+                                         const nsAString& aPath,
+                                         const Uint8Array& aData,
+                                         const WriteOptions& aOptions) {
   MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess());
   RefPtr<Promise> promise = CreateJSPromise(aGlobal);
   NS_ENSURE_TRUE(!!promise, nullptr);
@@ -261,20 +245,24 @@ already_AddRefed<Promise> IOUtils::WriteAtomic(
     return promise.forget();
   }
 
-  auto opts = InternalWriteAtomicOpts::FromBinding(aOptions);
+  auto opts = InternalWriteOpts::FromBinding(aOptions);
   if (opts.isErr()) {
     RejectJSPromise(promise, opts.unwrapErr());
     return promise.forget();
   }
 
-  return RunOnBackgroundThread<uint32_t>(
-      promise, &WriteAtomicSync, file.forget(), std::move(*buf), opts.unwrap());
+  RunOnBackgroundThread<uint32_t>(
+      promise, [file = std::move(file), buf = std::move(*buf),
+                opts = opts.unwrap()]() { return WriteSync(file, buf, opts); });
+
+  return promise.forget();
 }
 
 /* static */
-already_AddRefed<Promise> IOUtils::WriteAtomicUTF8(
-    GlobalObject& aGlobal, const nsAString& aPath, const nsAString& aString,
-    const WriteAtomicOptions& aOptions) {
+already_AddRefed<Promise> IOUtils::WriteUTF8(GlobalObject& aGlobal,
+                                             const nsAString& aPath,
+                                             const nsAString& aString,
+                                             const WriteOptions& aOptions) {
   MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess());
   RefPtr<Promise> promise = CreateJSPromise(aGlobal);
   NS_ENSURE_TRUE(!!promise, nullptr);
@@ -290,15 +278,18 @@ already_AddRefed<Promise> IOUtils::WriteAtomicUTF8(
     return promise.forget();
   }
 
-  auto opts = InternalWriteAtomicOpts::FromBinding(aOptions);
+  auto opts = InternalWriteOpts::FromBinding(aOptions);
   if (opts.isErr()) {
     RejectJSPromise(promise, opts.unwrapErr());
     return promise.forget();
   }
 
-  return RunOnBackgroundThread<uint32_t>(promise, &WriteAtomicUTF8Sync,
-                                         file.forget(), std::move(utf8Str),
-                                         opts.unwrap());
+  RunOnBackgroundThread<uint32_t>(
+      promise,
+      [file = std::move(file), utf8Str = std::move(utf8Str),
+       opts = opts.unwrap()]() { return WriteUTF8Sync(file, utf8Str, opts); });
+
+  return promise.forget();
 }
 
 /* static */
@@ -317,8 +308,13 @@ already_AddRefed<Promise> IOUtils::Move(GlobalObject& aGlobal,
   nsCOMPtr<nsIFile> destFile = new nsLocalFile();
   REJECT_IF_INIT_PATH_FAILED(destFile, aDestPath, promise);
 
-  return RunOnBackgroundThread<Ok>(promise, &MoveSync, sourceFile.forget(),
-                                   destFile.forget(), aOptions.mNoOverwrite);
+  RunOnBackgroundThread<Ok>(promise, [sourceFile = std::move(sourceFile),
+                                      destFile = std::move(destFile),
+                                      noOverwrite = aOptions.mNoOverwrite]() {
+    return MoveSync(sourceFile, destFile, noOverwrite);
+  });
+
+  return promise.forget();
 }
 
 /* static */
@@ -333,8 +329,13 @@ already_AddRefed<Promise> IOUtils::Remove(GlobalObject& aGlobal,
   nsCOMPtr<nsIFile> file = new nsLocalFile();
   REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
 
-  return RunOnBackgroundThread<Ok>(promise, &RemoveSync, file.forget(),
-                                   aOptions.mIgnoreAbsent, aOptions.mRecursive);
+  RunOnBackgroundThread<Ok>(
+      promise, [file = std::move(file), ignoreAbsent = aOptions.mIgnoreAbsent,
+                recursive = aOptions.mRecursive]() {
+        return RemoveSync(file, ignoreAbsent, recursive);
+      });
+
+  return promise.forget();
 }
 
 /* static */
@@ -349,9 +350,16 @@ already_AddRefed<Promise> IOUtils::MakeDirectory(
   nsCOMPtr<nsIFile> file = new nsLocalFile();
   REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
 
-  return RunOnBackgroundThread<Ok>(promise, &MakeDirectorySync, file.forget(),
-                                   aOptions.mCreateAncestors,
-                                   aOptions.mIgnoreExisting, 0777);
+  RunOnBackgroundThread<Ok>(
+      promise,
+      [file = std::move(file), createAncestors = aOptions.mCreateAncestors,
+       ignoreExisting = aOptions.mIgnoreExisting,
+       permissions = aOptions.mPermissions]() {
+        return MakeDirectorySync(file, createAncestors, ignoreExisting,
+                                 permissions);
+      });
+
+  return promise.forget();
 }
 
 already_AddRefed<Promise> IOUtils::Stat(GlobalObject& aGlobal,
@@ -364,8 +372,10 @@ already_AddRefed<Promise> IOUtils::Stat(GlobalObject& aGlobal,
   nsCOMPtr<nsIFile> file = new nsLocalFile();
   REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
 
-  return RunOnBackgroundThread<InternalFileInfo>(promise, &StatSync,
-                                                 file.forget());
+  RunOnBackgroundThread<InternalFileInfo>(
+      promise, [file = std::move(file)]() { return StatSync(file); });
+
+  return promise.forget();
 }
 
 /* static */
@@ -384,9 +394,14 @@ already_AddRefed<Promise> IOUtils::Copy(GlobalObject& aGlobal,
   nsCOMPtr<nsIFile> destFile = new nsLocalFile();
   REJECT_IF_INIT_PATH_FAILED(destFile, aDestPath, promise);
 
-  return RunOnBackgroundThread<Ok>(promise, &CopySync, sourceFile.forget(),
-                                   destFile.forget(), aOptions.mNoOverwrite,
-                                   aOptions.mRecursive);
+  RunOnBackgroundThread<Ok>(
+      promise,
+      [sourceFile = std::move(sourceFile), destFile = std::move(destFile),
+       noOverwrite = aOptions.mNoOverwrite, recursive = aOptions.mRecursive]() {
+        return CopySync(sourceFile, destFile, noOverwrite, recursive);
+      });
+
+  return promise.forget();
 }
 
 /* static */
@@ -405,8 +420,11 @@ already_AddRefed<Promise> IOUtils::Touch(
     newTime = Some(aModification.Value());
   }
 
-  return RunOnBackgroundThread<int64_t>(promise, &TouchSync, file.forget(),
-                                        newTime);
+  RunOnBackgroundThread<int64_t>(promise, [file = std::move(file), newTime]() {
+    return TouchSync(file, newTime);
+  });
+
+  return promise.forget();
 }
 
 /* static */
@@ -419,8 +437,45 @@ already_AddRefed<Promise> IOUtils::GetChildren(GlobalObject& aGlobal,
   nsCOMPtr<nsIFile> file = new nsLocalFile();
   REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
 
-  return RunOnBackgroundThread<nsTArray<nsString>>(promise, &GetChildrenSync,
-                                                   file.forget());
+  RunOnBackgroundThread<nsTArray<nsString>>(
+      promise, [file = std::move(file)]() { return GetChildrenSync(file); });
+
+  return promise.forget();
+}
+
+/* static */
+already_AddRefed<Promise> IOUtils::SetPermissions(GlobalObject& aGlobal,
+                                                  const nsAString& aPath,
+                                                  const uint32_t aPermissions) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+  RefPtr<Promise> promise = CreateJSPromise(aGlobal);
+  NS_ENSURE_TRUE(!!promise, nullptr);
+
+  nsCOMPtr<nsIFile> file = new nsLocalFile();
+  REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
+
+  RunOnBackgroundThread<Ok>(
+      promise, [file = std::move(file), permissions = aPermissions]() {
+        return SetPermissionsSync(file, permissions);
+      });
+
+  return promise.forget();
+}
+
+/* static */
+already_AddRefed<Promise> IOUtils::Exists(GlobalObject& aGlobal,
+                                          const nsAString& aPath) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+  RefPtr<Promise> promise = CreateJSPromise(aGlobal);
+  NS_ENSURE_TRUE(!!promise, nullptr);
+
+  nsCOMPtr<nsIFile> file = new nsLocalFile();
+  REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
+
+  RunOnBackgroundThread<bool>(
+      promise, [file = std::move(file)]() { return ExistsSync(file); });
+
+  return promise.forget();
 }
 
 /* static */
@@ -496,8 +551,20 @@ already_AddRefed<Promise> IOUtils::CreateJSPromise(GlobalObject& aGlobal) {
 }
 
 /* static */
-void IOUtils::RejectJSPromise(const RefPtr<Promise>& aPromise,
-                              const IOError& aError) {
+template <typename T>
+void IOUtils::ResolveJSPromise(Promise* aPromise, const T& aValue) {
+  if constexpr (std::is_same_v<T, nsTArray<uint8_t>>) {
+    TypedArrayCreator<Uint8Array> arr(aValue);
+    aPromise->MaybeResolve(arr);
+  } else if constexpr (std::is_same_v<T, Ok>) {
+    aPromise->MaybeResolveWithUndefined();
+  } else {
+    aPromise->MaybeResolve(aValue);
+  }
+}
+
+/* static */
+void IOUtils::RejectJSPromise(Promise* aPromise, const IOError& aError) {
   const auto& errMsg = aError.Message();
 
   switch (aError.Code()) {
@@ -555,11 +622,8 @@ void IOUtils::RejectJSPromise(const RefPtr<Promise>& aPromise,
 
 /* static */
 Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::ReadSync(
-    already_AddRefed<nsIFile> aFile, const Maybe<uint32_t>& aMaxBytes,
-    const bool aDecompress) {
+    nsIFile* aFile, const Maybe<uint32_t>& aMaxBytes, const bool aDecompress) {
   MOZ_ASSERT(!NS_IsMainThread());
-
-  nsCOMPtr<nsIFile> file = aFile;
 
   if (aMaxBytes.isSome() && aDecompress) {
     return Err(
@@ -570,10 +634,10 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::ReadSync(
 
   RefPtr<nsFileStream> stream = new nsFileStream();
   if (nsresult rv =
-          stream->Init(file, PR_RDONLY | nsIFile::OS_READAHEAD, 0666, 0);
+          stream->Init(aFile, PR_RDONLY | nsIFile::OS_READAHEAD, 0666, 0);
       NS_FAILED(rv)) {
     return Err(IOError(rv).WithMessage("Could not open the file at %s",
-                                       file->HumanReadablePath().get()));
+                                       aFile->HumanReadablePath().get()));
   }
   int64_t bufSize = 0;
 
@@ -586,7 +650,7 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::ReadSync(
     if (nsresult rv = stream->GetSize(&streamSize); NS_FAILED(rv)) {
       return Err(IOError(NS_ERROR_FILE_ACCESS_DENIED)
                      .WithMessage("Could not get info for the file at %s",
-                                  file->HumanReadablePath().get()));
+                                  aFile->HumanReadablePath().get()));
     }
     MOZ_RELEASE_ASSERT(streamSize >= 0);
 
@@ -595,7 +659,7 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::ReadSync(
           IOError(NS_ERROR_FILE_TOO_BIG)
               .WithMessage("Could not read the file at %s because it is too "
                            "large(size=%" PRId64 " bytes)",
-                           file->HumanReadablePath().get(), streamSize));
+                           aFile->HumanReadablePath().get(), streamSize));
     }
     bufSize = static_cast<uint32_t>(streamSize);
   } else {
@@ -606,7 +670,7 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::ReadSync(
   if (!buffer.SetCapacity(bufSize, fallible)) {
     return Err(IOError(NS_ERROR_OUT_OF_MEMORY)
                    .WithMessage("Could not allocate buffer to read file(%s)",
-                                file->HumanReadablePath().get()));
+                                aFile->HumanReadablePath().get()));
   }
 
   Span<char> toRead(reinterpret_cast<char*>(buffer.Elements()), bufSize);
@@ -620,7 +684,7 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::ReadSync(
         NS_FAILED(rv)) {
       return Err(IOError(rv).WithMessage(
           "Encountered an unexpected error while reading file(%s)",
-          file->HumanReadablePath().get()));
+          aFile->HumanReadablePath().get()));
     }
     if (bytesRead == 0) {
       break;
@@ -640,56 +704,55 @@ Result<nsTArray<uint8_t>, IOUtils::IOError> IOUtils::ReadSync(
 
 /* static */
 Result<nsString, IOUtils::IOError> IOUtils::ReadUTF8Sync(
-    already_AddRefed<nsIFile> aFile, const bool aDecompress) {
+    nsIFile* aFile, const bool aDecompress) {
   MOZ_ASSERT(!NS_IsMainThread());
 
-  nsCOMPtr<nsIFile> file = aFile;
-  return ReadSync(do_AddRef(file), Nothing(), aDecompress)
-      .andThen([file](const nsTArray<uint8_t>& bytes)
-                   -> Result<nsString, IOError> {
-        auto utf8Span = Span(reinterpret_cast<const char*>(bytes.Elements()),
-                             bytes.Length());
-        if (!IsUtf8(utf8Span)) {
-          return Err(
-              IOError(NS_ERROR_FILE_CORRUPTED)
-                  .WithMessage(
-                      "Could not read file(%s) because it is not UTF-8 encoded",
-                      file->HumanReadablePath().get()));
-        }
+  auto rv = ReadSync(aFile, Nothing(), aDecompress);
+  if (rv.isErr()) {
+    return Err(rv.unwrapErr());
+  }
 
-        nsDependentCSubstring utf8Str(utf8Span.Elements(), utf8Span.Length());
-        nsString utf16Str;
-        if (!CopyUTF8toUTF16(utf8Str, utf16Str, fallible)) {
-          return Err(
-              IOError(NS_ERROR_OUT_OF_MEMORY)
-                  .WithMessage("Could not allocate buffer to convert UTF-8 "
-                               "contents of file at (%s) to UTF-16",
-                               file->HumanReadablePath().get()));
-        }
+  const nsTArray<uint8_t> bytes = rv.unwrap();
+  auto utf8Span =
+      Span(reinterpret_cast<const char*>(bytes.Elements()), bytes.Length());
+  if (!IsUtf8(utf8Span)) {
+    return Err(
+        IOError(NS_ERROR_FILE_CORRUPTED)
+            .WithMessage(
+                "Could not read file(%s) because it is not UTF-8 encoded",
+                aFile->HumanReadablePath().get()));
+  }
 
-        return utf16Str;
-      });
+  nsDependentCSubstring utf8Str(utf8Span.Elements(), utf8Span.Length());
+  nsString utf16Str;
+  if (!CopyUTF8toUTF16(utf8Str, utf16Str, fallible)) {
+    return Err(IOError(NS_ERROR_OUT_OF_MEMORY)
+                   .WithMessage("Could not allocate buffer to convert UTF-8 "
+                                "contents of file at (%s) to UTF-16",
+                                aFile->HumanReadablePath().get()));
+  }
+
+  return utf16Str;
 }
 
 /* static */
-Result<uint32_t, IOUtils::IOError> IOUtils::WriteAtomicSync(
-    already_AddRefed<nsIFile> aFile, const Span<const uint8_t>& aByteArray,
-    IOUtils::InternalWriteAtomicOpts aOptions) {
+Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
+    nsIFile* aFile, const Span<const uint8_t>& aByteArray,
+    const IOUtils::InternalWriteOpts& aOptions) {
   MOZ_ASSERT(!NS_IsMainThread());
 
-  nsCOMPtr<nsIFile> destFile = aFile;
-  nsCOMPtr<nsIFile> backupFile = std::move(aOptions.mBackupFile);
-  nsCOMPtr<nsIFile> tempFile = std::move(aOptions.mTmpFile);
+  nsIFile* backupFile = aOptions.mBackupFile;
+  nsIFile* tempFile = aOptions.mTmpFile;
 
   bool exists = false;
-  MOZ_TRY(destFile->Exists(&exists));
+  MOZ_TRY(aFile->Exists(&exists));
 
   if (aOptions.mNoOverwrite && exists) {
     return Err(IOError(NS_ERROR_FILE_ALREADY_EXISTS)
                    .WithMessage("Refusing to overwrite the file at %s\n"
                                 "Specify `noOverwrite: false` to allow "
                                 "overwriting the destination",
-                                destFile->HumanReadablePath().get()));
+                                aFile->HumanReadablePath().get()));
   }
 
   // If backupFile was specified, perform the backup as a move.
@@ -701,25 +764,24 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteAtomicSync(
     // would end up overwriting `backupFile` and never actually write to the
     // file we were supposed to.
     nsCOMPtr<nsIFile> toMove;
-    MOZ_ALWAYS_SUCCEEDS(destFile->Clone(getter_AddRefs(toMove)));
+    MOZ_ALWAYS_SUCCEEDS(aFile->Clone(getter_AddRefs(toMove)));
 
-    if (MoveSync(toMove.forget(), do_AddRef(backupFile), aOptions.mNoOverwrite)
-            .isErr()) {
+    if (MoveSync(toMove, backupFile, aOptions.mNoOverwrite).isErr()) {
       return Err(IOError(NS_ERROR_FILE_COPY_OR_MOVE_FAILED)
                      .WithMessage("Failed to backup the source file(%s) to %s",
-                                  destFile->HumanReadablePath().get(),
+                                  aFile->HumanReadablePath().get(),
                                   backupFile->HumanReadablePath().get()));
     }
   }
 
   // If tempFile was specified, we will write to there first, then perform a
   // move to ensure the file ends up at the final requested destination.
-  nsCOMPtr<nsIFile> writeFile;
+  nsIFile* writeFile;
 
   if (tempFile) {
-    writeFile = tempFile.forget();
+    writeFile = tempFile;
   } else {
-    writeFile = destFile.forget();
+    writeFile = aFile;
   }
 
   int32_t flags = PR_WRONLY | PR_TRUNCATE | PR_CREATE_FILE;
@@ -778,93 +840,85 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteAtomicSync(
     }
   }
 
-  // If tmpFile was passed, destFile will be non-null. Check destFile against
-  // writeFile and if they differ, the operation is finished by performing a
-  // move.
-
-  if (destFile) {
+  // If tempFile was passed, check destFile against writeFile and, if they
+  // differ, the operation is finished by performing a move.
+  if (tempFile) {
     nsAutoStringN<256> destPath;
     nsAutoStringN<256> writePath;
 
-    MOZ_ALWAYS_SUCCEEDS(destFile->GetPath(destPath));
+    MOZ_ALWAYS_SUCCEEDS(aFile->GetPath(destPath));
     MOZ_ALWAYS_SUCCEEDS(writeFile->GetPath(writePath));
 
     // nsIFile::MoveToFollowingLinks will only update the path of the file if
     // the move succeeds.
-    if (destPath != writePath &&
-        MoveSync(do_AddRef(writeFile), do_AddRef(destFile), false).isErr()) {
+    if (destPath != writePath && MoveSync(writeFile, aFile, false).isErr()) {
       return Err(IOError(NS_ERROR_FILE_COPY_OR_MOVE_FAILED)
                      .WithMessage(
                          "Could not move temporary file(%s) to destination(%s)",
                          writeFile->HumanReadablePath().get(),
-                         destFile->HumanReadablePath().get()));
+                         aFile->HumanReadablePath().get()));
     }
   }
   return totalWritten;
 }
 
 /* static */
-Result<uint32_t, IOUtils::IOError> IOUtils::WriteAtomicUTF8Sync(
-    already_AddRefed<nsIFile> aFile, const nsCString& aUTF8String,
-    InternalWriteAtomicOpts aOptions) {
+Result<uint32_t, IOUtils::IOError> IOUtils::WriteUTF8Sync(
+    nsIFile* aFile, const nsCString& aUTF8String,
+    const InternalWriteOpts& aOptions) {
   MOZ_ASSERT(!NS_IsMainThread());
 
   Span utf8Bytes(reinterpret_cast<const uint8_t*>(aUTF8String.get()),
                  aUTF8String.Length());
 
-  return WriteAtomicSync(std::move(aFile), utf8Bytes, std::move(aOptions));
+  return WriteSync(aFile, utf8Bytes, aOptions);
 }
 
 /* static */
-Result<Ok, IOUtils::IOError> IOUtils::MoveSync(
-    already_AddRefed<nsIFile> aSourceFile, already_AddRefed<nsIFile> aDestFile,
-    bool aNoOverwrite) {
+Result<Ok, IOUtils::IOError> IOUtils::MoveSync(nsIFile* aSourceFile,
+                                               nsIFile* aDestFile,
+                                               bool aNoOverwrite) {
   MOZ_ASSERT(!NS_IsMainThread());
-
-  nsCOMPtr<nsIFile> sourceFile = aSourceFile;
-  nsCOMPtr<nsIFile> destFile = aDestFile;
 
   // Ensure the source file exists before continuing. If it doesn't exist,
   // subsequent operations can fail in different ways on different platforms.
   bool srcExists = false;
-  MOZ_TRY(sourceFile->Exists(&srcExists));
+  MOZ_TRY(aSourceFile->Exists(&srcExists));
   if (!srcExists) {
     return Err(
         IOError(NS_ERROR_FILE_NOT_FOUND)
             .WithMessage(
                 "Could not move source file(%s) because it does not exist",
-                sourceFile->HumanReadablePath().get()));
+                aSourceFile->HumanReadablePath().get()));
   }
 
-  return CopyOrMoveSync(&nsIFile::MoveToFollowingLinks, "move", sourceFile,
-                        destFile, aNoOverwrite);
+  return CopyOrMoveSync(&nsIFile::MoveToFollowingLinks, "move", aSourceFile,
+                        aDestFile, aNoOverwrite);
 }
 
 /* static */
-Result<Ok, IOUtils::IOError> IOUtils::CopySync(
-    already_AddRefed<nsIFile> aSourceFile, already_AddRefed<nsIFile> aDestFile,
-    bool aNoOverwrite, bool aRecursive) {
+Result<Ok, IOUtils::IOError> IOUtils::CopySync(nsIFile* aSourceFile,
+                                               nsIFile* aDestFile,
+                                               bool aNoOverwrite,
+                                               bool aRecursive) {
   MOZ_ASSERT(!NS_IsMainThread());
-
-  nsCOMPtr<nsIFile> sourceFile = aSourceFile;
-  nsCOMPtr<nsIFile> destFile = aDestFile;
 
   // Ensure the source file exists before continuing. If it doesn't exist,
   // subsequent operations can fail in different ways on different platforms.
   bool srcExists;
-  MOZ_TRY(sourceFile->Exists(&srcExists));
+  MOZ_TRY(aSourceFile->Exists(&srcExists));
   if (!srcExists) {
     return Err(
         IOError(NS_ERROR_FILE_NOT_FOUND)
             .WithMessage(
                 "Could not copy source file(%s) because it does not exist",
-                sourceFile->HumanReadablePath().get()));
+                aSourceFile->HumanReadablePath().get()));
   }
 
   // If source is a directory, fail immediately unless the recursive option is
   // true.
   bool srcIsDir = false;
-  MOZ_TRY(sourceFile->IsDirectory(&srcIsDir));
+  MOZ_TRY(aSourceFile->IsDirectory(&srcIsDir));
   if (srcIsDir && !aRecursive) {
     return Err(
         IOError(NS_ERROR_FILE_COPY_OR_MOVE_FAILED)
@@ -872,12 +926,12 @@ Result<Ok, IOUtils::IOError> IOUtils::CopySync(
                 "Refused to copy source directory(%s) to the destination(%s)\n"
                 "Specify the `recursive: true` option to allow copying "
                 "directories",
-                sourceFile->HumanReadablePath().get(),
-                destFile->HumanReadablePath().get()));
+                aSourceFile->HumanReadablePath().get(),
+                aDestFile->HumanReadablePath().get()));
   }
 
-  return CopyOrMoveSync(&nsIFile::CopyToFollowingLinks, "copy", sourceFile,
-                        destFile, aNoOverwrite);
+  return CopyOrMoveSync(&nsIFile::CopyToFollowingLinks, "copy", aSourceFile,
+                        aDestFile, aNoOverwrite);
 }
 
 /* static */
@@ -963,13 +1017,12 @@ Result<Ok, IOUtils::IOError> IOUtils::CopyOrMoveSync(CopyOrMoveFn aMethod,
 }
 
 /* static */
-Result<Ok, IOUtils::IOError> IOUtils::RemoveSync(
-    already_AddRefed<nsIFile> aFile, bool aIgnoreAbsent, bool aRecursive) {
+Result<Ok, IOUtils::IOError> IOUtils::RemoveSync(nsIFile* aFile,
+                                                 bool aIgnoreAbsent,
+                                                 bool aRecursive) {
   MOZ_ASSERT(!NS_IsMainThread());
 
-  nsCOMPtr<nsIFile> file = aFile;
-
-  nsresult rv = file->Remove(aRecursive);
+  nsresult rv = aFile->Remove(aRecursive);
   if (aIgnoreAbsent && IsFileNotFound(rv)) {
     return Ok();
   }
@@ -979,34 +1032,33 @@ Result<Ok, IOUtils::IOError> IOUtils::RemoveSync(
       return Err(err.WithMessage(
           "Could not remove the file at %s because it does not exist.\n"
           "Specify the `ignoreAbsent: true` option to mitigate this error",
-          file->HumanReadablePath().get()));
+          aFile->HumanReadablePath().get()));
     }
     if (rv == NS_ERROR_FILE_DIR_NOT_EMPTY) {
       return Err(err.WithMessage(
           "Could not remove the non-empty directory at %s.\n"
           "Specify the `recursive: true` option to mitigate this error",
-          file->HumanReadablePath().get()));
+          aFile->HumanReadablePath().get()));
     }
     return Err(err.WithMessage("Could not remove the file at %s",
-                               file->HumanReadablePath().get()));
+                               aFile->HumanReadablePath().get()));
   }
   return Ok();
 }
 
 /* static */
-Result<Ok, IOUtils::IOError> IOUtils::MakeDirectorySync(
-    already_AddRefed<nsIFile> aFile, bool aCreateAncestors,
-    bool aIgnoreExisting, int32_t aMode) {
+Result<Ok, IOUtils::IOError> IOUtils::MakeDirectorySync(nsIFile* aFile,
+                                                        bool aCreateAncestors,
+                                                        bool aIgnoreExisting,
+                                                        int32_t aMode) {
   MOZ_ASSERT(!NS_IsMainThread());
-
-  nsCOMPtr<nsIFile> file = aFile;
 
   // nsIFile::Create will create ancestor directories by default.
   // If the caller does not want this behaviour, then check and possibly
   // return an error.
   if (!aCreateAncestors) {
     nsCOMPtr<nsIFile> parent;
-    MOZ_TRY(file->GetParent(getter_AddRefs(parent)));
+    MOZ_TRY(aFile->GetParent(getter_AddRefs(parent)));
     bool parentExists = false;
     MOZ_TRY(parent->Exists(&parentExists));
     if (!parentExists) {
@@ -1014,11 +1066,11 @@ Result<Ok, IOUtils::IOError> IOUtils::MakeDirectorySync(
                      .WithMessage("Could not create directory at %s because "
                                   "the path has missing "
                                   "ancestor components",
-                                  file->HumanReadablePath().get()));
+                                  aFile->HumanReadablePath().get()));
     }
   }
 
-  nsresult rv = file->Create(nsIFile::DIRECTORY_TYPE, aMode);
+  nsresult rv = aFile->Create(nsIFile::DIRECTORY_TYPE, aMode);
   if (NS_FAILED(rv)) {
     if (rv == NS_ERROR_FILE_ALREADY_EXISTS) {
       // NB: We may report a success only if the target is an existing
@@ -1026,13 +1078,13 @@ Result<Ok, IOUtils::IOError> IOUtils::MakeDirectorySync(
       // an existing file, since trying to create a directory where a regular
       // file exists may be indicative of a logic error.
       bool isDirectory;
-      MOZ_TRY(file->IsDirectory(&isDirectory));
+      MOZ_TRY(aFile->IsDirectory(&isDirectory));
       if (!isDirectory) {
         return Err(IOError(NS_ERROR_FILE_NOT_DIRECTORY)
                        .WithMessage("Could not create directory because the "
                                     "target file(%s) exists "
                                     "and is not a directory",
-                                    file->HumanReadablePath().get()));
+                                    aFile->HumanReadablePath().get()));
       }
       // The directory exists.
       // The caller may suppress this error.
@@ -1044,34 +1096,32 @@ Result<Ok, IOUtils::IOError> IOUtils::MakeDirectorySync(
           "Could not create directory because it already exists at %s\n"
           "Specify the `ignoreExisting: true` option to mitigate this "
           "error",
-          file->HumanReadablePath().get()));
+          aFile->HumanReadablePath().get()));
     }
     return Err(IOError(rv).WithMessage("Could not create directory at %s",
-                                       file->HumanReadablePath().get()));
+                                       aFile->HumanReadablePath().get()));
   }
   return Ok();
 }
 
 Result<IOUtils::InternalFileInfo, IOUtils::IOError> IOUtils::StatSync(
-    already_AddRefed<nsIFile> aFile) {
+    nsIFile* aFile) {
   MOZ_ASSERT(!NS_IsMainThread());
 
-  nsCOMPtr<nsIFile> file = aFile;
-
   InternalFileInfo info;
-  MOZ_ALWAYS_SUCCEEDS(file->GetPath(info.mPath));
+  MOZ_ALWAYS_SUCCEEDS(aFile->GetPath(info.mPath));
 
   bool isRegular = false;
   // IsFile will stat and cache info in the file object. If the file doesn't
   // exist, or there is an access error, we'll discover it here.
   // Any subsequent errors are unexpected and will just be forwarded.
-  nsresult rv = file->IsFile(&isRegular);
+  nsresult rv = aFile->IsFile(&isRegular);
   if (NS_FAILED(rv)) {
     IOError err(rv);
     if (IsFileNotFound(rv)) {
       return Err(
           err.WithMessage("Could not stat file(%s) because it does not exist",
-                          file->HumanReadablePath().get()));
+                          aFile->HumanReadablePath().get()));
     }
     return Err(err);
   }
@@ -1080,28 +1130,36 @@ Result<IOUtils::InternalFileInfo, IOUtils::IOError> IOUtils::StatSync(
   info.mType = FileType::Regular;
   if (!isRegular) {
     bool isDir = false;
-    MOZ_TRY(file->IsDirectory(&isDir));
+    MOZ_TRY(aFile->IsDirectory(&isDir));
     info.mType = isDir ? FileType::Directory : FileType::Other;
   }
 
   int64_t size = -1;
   if (info.mType == FileType::Regular) {
-    MOZ_TRY(file->GetFileSize(&size));
+    MOZ_TRY(aFile->GetFileSize(&size));
   }
   info.mSize = size;
   PRTime lastModified = 0;
-  MOZ_TRY(file->GetLastModifiedTime(&lastModified));
+  MOZ_TRY(aFile->GetLastModifiedTime(&lastModified));
   info.mLastModified = static_cast<int64_t>(lastModified);
+
+  PRTime creationTime = 0;
+  if (nsresult rv = aFile->GetCreationTime(&creationTime); NS_SUCCEEDED(rv)) {
+    info.mCreationTime.emplace(static_cast<int64_t>(creationTime));
+  } else if (NS_FAILED(rv) && rv != NS_ERROR_NOT_IMPLEMENTED) {
+    // This field is only supported on some platforms.
+    return Err(IOError(rv));
+  }
+
+  MOZ_TRY(aFile->GetPermissions(&info.mPermissions));
 
   return info;
 }
 
 /* static */
 Result<int64_t, IOUtils::IOError> IOUtils::TouchSync(
-    already_AddRefed<nsIFile> aFile, const Maybe<int64_t>& aNewModTime) {
+    nsIFile* aFile, const Maybe<int64_t>& aNewModTime) {
   MOZ_ASSERT(!NS_IsMainThread());
-
-  nsCOMPtr<nsIFile> file = aFile;
 
   int64_t now = aNewModTime.valueOrFrom([]() {
     // NB: PR_Now reports time in microseconds since the Unix epoch
@@ -1127,17 +1185,17 @@ Result<int64_t, IOUtils::IOError> IOUtils::TouchSync(
                 "Refusing to set the modification time of file(%s) to 0.\n"
                 "To use the current system time, call `touch` with no "
                 "arguments",
-                file->HumanReadablePath().get()));
+                aFile->HumanReadablePath().get()));
   }
 
-  nsresult rv = file->SetLastModifiedTime(now);
+  nsresult rv = aFile->SetLastModifiedTime(now);
 
   if (NS_FAILED(rv)) {
     IOError err(rv);
     if (IsFileNotFound(rv)) {
       return Err(
           err.WithMessage("Could not touch file(%s) because it does not exist",
-                          file->HumanReadablePath().get()));
+                          aFile->HumanReadablePath().get()));
     }
     return Err(err);
   }
@@ -1146,24 +1204,22 @@ Result<int64_t, IOUtils::IOError> IOUtils::TouchSync(
 
 /* static */
 Result<nsTArray<nsString>, IOUtils::IOError> IOUtils::GetChildrenSync(
-    already_AddRefed<nsIFile> aFile) {
+    nsIFile* aFile) {
   MOZ_ASSERT(!NS_IsMainThread());
 
-  nsCOMPtr<nsIFile> file = aFile;
-
   nsCOMPtr<nsIDirectoryEnumerator> iter;
-  nsresult rv = file->GetDirectoryEntries(getter_AddRefs(iter));
+  nsresult rv = aFile->GetDirectoryEntries(getter_AddRefs(iter));
   if (NS_FAILED(rv)) {
     IOError err(rv);
     if (IsFileNotFound(rv)) {
       return Err(err.WithMessage(
           "Could not get children of file(%s) because it does not exist",
-          file->HumanReadablePath().get()));
+          aFile->HumanReadablePath().get()));
     }
     if (IsNotDirectory(rv)) {
       return Err(err.WithMessage(
           "Could not get children of file(%s) because it is not a directory",
-          file->HumanReadablePath().get()));
+          aFile->HumanReadablePath().get()));
     }
     return Err(err);
   }
@@ -1183,6 +1239,25 @@ Result<nsTArray<nsString>, IOUtils::IOError> IOUtils::GetChildrenSync(
   }
 
   return children;
+}
+
+/* static */
+Result<Ok, IOUtils::IOError> IOUtils::SetPermissionsSync(
+    nsIFile* aFile, const uint32_t aPermissions) {
+  MOZ_ASSERT(!NS_IsMainThread());
+
+  MOZ_TRY(aFile->SetPermissions(aPermissions));
+  return Ok{};
+}
+
+/* static */
+Result<bool, IOUtils::IOError> IOUtils::ExistsSync(nsIFile* aFile) {
+  MOZ_ASSERT(!NS_IsMainThread());
+
+  bool exists = false;
+  MOZ_TRY(aFile->Exists(&exists));
+
+  return exists;
 }
 
 /* static */
@@ -1310,10 +1385,9 @@ NS_IMETHODIMP IOUtilsShutdownBlocker::GetState(nsIPropertyBag** aState) {
   return NS_OK;
 }
 
-Result<IOUtils::InternalWriteAtomicOpts, IOUtils::IOError>
-IOUtils::InternalWriteAtomicOpts::FromBinding(
-    const WriteAtomicOptions& aOptions) {
-  InternalWriteAtomicOpts opts;
+Result<IOUtils::InternalWriteOpts, IOUtils::IOError>
+IOUtils::InternalWriteOpts::FromBinding(const WriteOptions& aOptions) {
+  InternalWriteOpts opts;
   opts.mFlush = aOptions.mFlush;
   opts.mNoOverwrite = aOptions.mNoOverwrite;
 
@@ -1342,9 +1416,7 @@ IOUtils::InternalWriteAtomicOpts::FromBinding(
   return opts;
 }
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom
 
-#undef REJECT_IF_NULL_EVENT_TARGET
 #undef REJECT_IF_SHUTTING_DOWN
 #undef REJECT_IF_INIT_PATH_FAILED

@@ -456,22 +456,6 @@ set_define("JS_MASM_VERBOSE", depends_if("--enable-masm-verbose")(lambda _: True
 set_config("JS_MASM_VERBOSE", depends_if("--enable-masm-verbose")(lambda _: True))
 
 
-option(
-    "--enable-more-deterministic",
-    env="JS_MORE_DETERMINISTIC",
-    help="Enable changes that make the shell more deterministic",
-)
-
-
-@depends("--enable-more-deterministic")
-def more_deterministic(value):
-    if value:
-        return True
-
-
-set_define("JS_MORE_DETERMINISTIC", more_deterministic)
-
-
 # CTypes
 # =======================================================
 @depends(js_standalone)
@@ -742,17 +726,13 @@ set_define("ENABLE_SHARED_MEMORY", enable_shared_memory)
 # Support for WebAssembly SIMD
 # =====================================================
 
-# Currently off by default for ARM64 (whether simulator or hardware)
-# and not properly supported by Cranelift, but can be enabled so as
-# to be tested with baseline.
-
 
 @depends("--enable-jit", "--enable-simulator", target)
 def default_wasm_simd(jit_enabled, simulator, target):
     if not jit_enabled or simulator:
         return
 
-    if target.cpu in ("x86_64", "x86"):
+    if target.cpu in ("x86_64", "x86", "aarch64"):
         return True
 
 
@@ -977,4 +957,27 @@ set_config(
 set_define(
     "ENABLE_WASM_TYPE_REFLECTIONS",
     depends_if("--enable-wasm-type-reflections")(lambda x: True),
+)
+
+# Support for WebAssembly exceptions
+# ==================================
+
+
+@depends(milestone.is_nightly, "--enable-wasm-multi-value")
+def default_wasm_exceptions(is_nightly, multi_value):
+    if multi_value and is_nightly:
+        return True
+
+
+option(
+    "--enable-wasm-exceptions",
+    default=default_wasm_exceptions,
+    help="{Enable|Disable} WebAssembly exceptions",
+)
+
+set_config(
+    "ENABLE_WASM_EXCEPTIONS", depends_if("--enable-wasm-exceptions")(lambda x: True)
+)
+set_define(
+    "ENABLE_WASM_EXCEPTIONS", depends_if("--enable-wasm-exceptions")(lambda x: True)
 )

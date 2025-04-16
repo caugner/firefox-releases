@@ -31,7 +31,7 @@ bincode = "1.0"
 bitflags = "1.2"
 byteorder = "1.0"
 cfg-if = "0.1.2"
-cstr = "0.1.2"
+cstr = "0.2"
 euclid = { version = "0.22.0", features = ["serde"] }
 fxhash = "0.2.1"
 gleam = "0.13.1"
@@ -58,7 +58,7 @@ tracy-rs = "0.1.2"
 derive_more = "0.99"
 
 [dev-dependencies]
-mozangle = "0.3.1"
+mozangle = "0.3.2"
 rand = "0.4"
 
 [target.'cfg(any(target_os = "android", all(unix, not(target_os = "macos"))))'.dependencies]
@@ -72,3 +72,4 @@ dwrote = "0.11"
 core-foundation = "0.9"
 core-graphics = "0.22"
 core-text = { version = "19", default-features = false }
+objc = "0.2"

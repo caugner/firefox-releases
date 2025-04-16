@@ -166,6 +166,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
     case DeviceFamily::MicrosoftAll:
     case DeviceFamily::ParallelsAll:
     case DeviceFamily::QualcommAll:
+    case DeviceFamily::AppleAll:
       return nullptr;
     default:
       break;
@@ -645,7 +646,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x190a);
       APPEND_DEVICE(0x190e);
 
-      // skylake gt2+
+      // skylake gt2
       APPEND_DEVICE(0x1912);
       APPEND_DEVICE(0x1913);
       APPEND_DEVICE(0x1915);
@@ -656,11 +657,16 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x191d);
       APPEND_DEVICE(0x191e);
       APPEND_DEVICE(0x1921);
+
+      // skylake gt3
       APPEND_DEVICE(0x1923);
       APPEND_DEVICE(0x1926);
       APPEND_DEVICE(0x1927);
       APPEND_DEVICE(0x192b);
+
+      // skylake gt4
       APPEND_DEVICE(0x1932);
+      APPEND_DEVICE(0x193a);
       APPEND_DEVICE(0x193b);
       APPEND_DEVICE(0x193d);
 
@@ -766,7 +772,6 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       // Carrizo
       APPEND_RANGE(0x9870, 0x9877);
 
-#ifdef EARLY_BETA_OR_EARLIER
       // Kaveri
       APPEND_RANGE(0x1304, 0x131d);
 
@@ -774,7 +779,6 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_RANGE(0x9440, 0x949f);
       APPEND_RANGE(0x94a0, 0x94b9);
       APPEND_RANGE(0x9540, 0x955f);
-#endif
 
       break;
     // This should never happen, but we get a warning if we don't handle this.
@@ -786,6 +790,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
     case DeviceFamily::MicrosoftAll:
     case DeviceFamily::ParallelsAll:
     case DeviceFamily::QualcommAll:
+    case DeviceFamily::AppleAll:
       NS_WARNING("Invalid DeviceFamily id");
       break;
   }
@@ -927,6 +932,9 @@ const nsAString& GfxDriverInfo::GetDeviceVendor(DeviceFamily id) {
     case DeviceFamily::ParallelsAll:
       vendor = DeviceVendor::Parallels;
       break;
+    case DeviceFamily::AppleAll:
+      vendor = DeviceVendor::Apple;
+      break;
     case DeviceFamily::QualcommAll:
       // Choose an arbitrary Qualcomm PCI VENdor ID for now.
       // TODO: This should be "QCOM" when Windows device ID parsing is reworked.
@@ -964,6 +972,7 @@ const nsAString& GfxDriverInfo::GetDeviceVendor(DeviceVendor id) {
     DECLARE_VENDOR_ID(Parallels, "0x1ab8");
     DECLARE_VENDOR_ID(VMWare, "0x15ad");
     DECLARE_VENDOR_ID(VirtualBox, "0x80ee");
+    DECLARE_VENDOR_ID(Apple, "0x106b");
     // Choose an arbitrary Qualcomm PCI VENdor ID for now.
     // TODO: This should be "QCOM" when Windows device ID parsing is reworked.
     DECLARE_VENDOR_ID(Qualcomm, "0x5143");
@@ -1001,6 +1010,8 @@ const nsAString& GfxDriverInfo::GetDriverVendor(DriverVendor id) {
     DECLARE_DRIVER_VENDOR_ID(MesaUnknown, "mesa/unknown");
     DECLARE_DRIVER_VENDOR_ID(MesaNouveau, "mesa/nouveau");
     DECLARE_DRIVER_VENDOR_ID(NonMesaAll, "non-mesa/all");
+    DECLARE_DRIVER_VENDOR_ID(HardwareMesaAll, "mesa/hw-all");
+    DECLARE_DRIVER_VENDOR_ID(SoftwareMesaAll, "mesa/sw-all");
     case DriverVendor::Max:  // Suppress a warning.
       DECLARE_DRIVER_VENDOR_ID(All, "");
   }

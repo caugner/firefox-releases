@@ -6,9 +6,11 @@
 #include "ClientWebGLContext.h"
 
 #include "ClientWebGLExtensions.h"
+#include "Layers.h"
 #include "gfxCrashReporterUtils.h"
 #include "HostWebGLContext.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/dom/WebGLContextEvent.h"
 #include "mozilla/dom/WorkerCommon.h"
@@ -580,6 +582,11 @@ static bool IsWebglOutOfProcessEnabled() {
   return useOop;
 }
 
+static inline bool StartsWith(const std::string& haystack,
+                              const std::string& needle) {
+  return haystack.find(needle) == 0;
+}
+
 bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
   const auto pNotLost = std::make_shared<webgl::NotLostData>(*this);
   auto& notLost = *pNotLost;
@@ -690,7 +697,13 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
     return Ok();
   }();
   if (!res.isOk()) {
-    notLost.info.error = res.unwrapErr();
+    auto str = res.unwrapErr();
+    if (StartsWith(str, "failIfMajorPerformanceCaveat")) {
+      str +=
+          " (about:config override available:"
+          " webgl.disable-fail-if-major-performance-caveat)";
+    }
+    notLost.info.error = str;
   }
   if (!notLost.info.error.empty()) {
     ThrowEvent_WebGLContextCreationError(notLost.info.error);
@@ -3887,9 +3900,12 @@ void webgl::TexUnpackBlobDesc::Shrink(const webgl::PackingInfo& pi) {
     const auto bytesPerRowStride =
         RoundUpToMultipleOf(bytesPerRowUnaligned, unpacking.mUnpackAlignment);
 
-    const auto bytesPerImageStride = bytesPerRowStride * unpacking.mUnpackImageHeight;
-    // SKIP_IMAGES is ignored for 2D targets, but at worst this just makes our shrinking less accurate.
-    const auto images = CheckedInt<size_t>(unpacking.mUnpackSkipImages) + size.z;
+    const auto bytesPerImageStride =
+        bytesPerRowStride * unpacking.mUnpackImageHeight;
+    // SKIP_IMAGES is ignored for 2D targets, but at worst this just makes our
+    // shrinking less accurate.
+    const auto images =
+        CheckedInt<size_t>(unpacking.mUnpackSkipImages) + size.z;
     const auto bytesUpperBound = bytesPerImageStride * images;
 
     if (bytesUpperBound.isValid()) {
@@ -3918,6 +3934,10 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
 
   // -
 
+  // Demarcate the region within which GC is disallowed. Typed arrays can move
+  // their data during a GC, so this will allow the rooting hazard analysis to
+  // report if a GC is possible while any data pointers extracted from the
+  // typed array are still live.
   dom::Uint8ClampedArray scopedArr;
 
   // -
@@ -3991,7 +4011,10 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
     return Some(webgl::TexUnpackBlobDesc{
         imageTarget, explicitSize, gfxAlphaType::NonPremult, {}, {}});
   }();
-  if (!desc) return;
+  if (!desc) {
+    scopedArr.Reset();
+    return;
+  }
 
   // -
   // Further, for uploads from TexImageSource, implied UNPACK_ROW_LENGTH and
@@ -4025,6 +4048,7 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
       EnqueueError(LOCAL_GL_INVALID_OPERATION,
                    "Non-DOM-Element uploads with alpha-premult"
                    " or y-flip do not support subrect selection.");
+      scopedArr.Reset(); // (For the hazard analysis) Done with the data.
       return;
     }
   }
@@ -4036,6 +4060,7 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
   desc->Shrink(pi);
   Run<RPROC(TexImage)>(static_cast<uint32_t>(level), respecFormat,
                        CastUvec3(offset), pi, std::move(*desc));
+  scopedArr.Reset(); // (For the hazard analysis) Done with the data.
 }
 
 void ClientWebGLContext::CompressedTexImage(bool sub, uint8_t funcDims,
@@ -4257,11 +4282,6 @@ void ClientWebGLContext::UniformData(const GLenum funcElemType,
   const FuncScope funcScope(*this, "uniform setter");
   if (IsContextLost()) return;
 
-  if (!mIsWebGL2 && transpose) {
-    EnqueueError(LOCAL_GL_INVALID_VALUE, "`transpose`:true requires WebGL 2.");
-    return;
-  }
-
   const auto& activeLinkResult = GetActiveLinkResult();
   if (!activeLinkResult) {
     EnqueueError(LOCAL_GL_INVALID_OPERATION, "No active linked Program.");
@@ -4287,56 +4307,57 @@ void ClientWebGLContext::UniformData(const GLenum funcElemType,
 
   // -
 
-  if (!loc) {
-    // We need to catch INVALID_VALUEs from bad-sized `bytes`. :S
-    // For non-null `loc`, the Host side handles this safely.
-    const auto lengthInType = bytes.length() / sizeof(float);
-    const auto channels = ElemTypeComponents(funcElemType);
-    if (!lengthInType || lengthInType % channels != 0) {
-      EnqueueError(LOCAL_GL_INVALID_VALUE,
-                   "`values` length (%u) must be a positive integer multiple "
-                   "of size of %s.",
-                   lengthInType, EnumString(funcElemType).c_str());
+  const auto channels = ElemTypeComponents(funcElemType);
+  if (!availCount || availCount % channels != 0) {
+    EnqueueError(LOCAL_GL_INVALID_VALUE,
+                 "`values` length (%u) must be a positive "
+                 "integer multiple of size of %s.",
+                 availCount, EnumString(funcElemType).c_str());
+    return;
+  }
+
+  // -
+
+  uint32_t locId = -1;
+  if (MOZ_LIKELY(loc)) {
+    locId = loc->mLocation;
+    if (!loc->ValidateUsable(*this, "location")) return;
+
+    // -
+
+    const auto& reqLinkInfo = loc->mParent.lock();
+    if (reqLinkInfo.get() != activeLinkResult) {
+      EnqueueError(LOCAL_GL_INVALID_OPERATION,
+                   "UniformLocation is not from the current active Program.");
       return;
     }
-    return;  // All that validation for a no-op!
-  }
-  if (!loc->ValidateUsable(*this, "location")) return;
 
-  // -
+    // -
 
-  const auto& reqLinkInfo = loc->mParent.lock();
-  if (reqLinkInfo.get() != activeLinkResult) {
-    EnqueueError(LOCAL_GL_INVALID_OPERATION,
-                 "UniformLocation is not from the current active Program.");
-    return;
-  }
-
-  // -
-
-  bool funcMatchesLocation = false;
-  for (const auto allowed : loc->mValidUploadElemTypes) {
-    funcMatchesLocation |= (funcElemType == allowed);
-  }
-  if (MOZ_UNLIKELY(!funcMatchesLocation)) {
-    std::string validSetters;
+    bool funcMatchesLocation = false;
     for (const auto allowed : loc->mValidUploadElemTypes) {
-      validSetters += EnumString(allowed);
-      validSetters += '/';
+      funcMatchesLocation |= (funcElemType == allowed);
     }
-    validSetters.pop_back();  // Cheekily discard the extra trailing '/'.
+    if (MOZ_UNLIKELY(!funcMatchesLocation)) {
+      std::string validSetters;
+      for (const auto allowed : loc->mValidUploadElemTypes) {
+        validSetters += EnumString(allowed);
+        validSetters += '/';
+      }
+      validSetters.pop_back();  // Cheekily discard the extra trailing '/'.
 
-    EnqueueError(LOCAL_GL_INVALID_OPERATION,
-                 "Uniform's `type` requires uniform setter of type %s.",
-                 validSetters.c_str());
-    return;
+      EnqueueError(LOCAL_GL_INVALID_OPERATION,
+                   "Uniform's `type` requires uniform setter of type %s.",
+                   validSetters.c_str());
+      return;
+    }
   }
 
   // -
 
   const auto ptr = bytes.begin().get() + (elemOffset * sizeof(float));
   const auto range = Range<const uint8_t>{ptr, availCount * sizeof(float)};
-  Run<RPROC(UniformData)>(loc->mLocation, transpose, RawBuffer<>(range));
+  Run<RPROC(UniformData)>(locId, transpose, RawBuffer<>(range));
 }
 
 // -

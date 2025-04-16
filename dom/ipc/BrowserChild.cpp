@@ -20,6 +20,7 @@
 #include "DocumentInlines.h"
 #include "EventStateManager.h"
 #include "FrameLayerBuilder.h"
+#include "GeckoProfiler.h"
 #include "Layers.h"
 #include "MMPrinter.h"
 #include "PermissionMessageUtils.h"
@@ -34,6 +35,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/EventListenerManager.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
@@ -65,6 +67,7 @@
 #include "mozilla/dom/Nullable.h"
 #include "mozilla/dom/PBrowser.h"
 #include "mozilla/dom/PaymentRequestChild.h"
+#include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/SessionStoreListener.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/dom/WindowProxyHolder.h"
@@ -321,7 +324,6 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
       mHasSiblings(false),
       mIsTransparent(false),
       mIPCOpen(false),
-      mParentIsActive(false),
       mDidSetRealShowInfo(false),
       mDidLoadURLInit(false),
       mSkipKeyPress(false),
@@ -1061,7 +1063,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvCloneDocumentTreeIntoSelf(
 
 void BrowserChild::DoFakeShow(const ParentShowInfo& aParentShowInfo) {
   OwnerShowInfo ownerInfo{ScreenIntSize(), ScrollbarPreference::Auto,
-                          mParentIsActive, nsSizeMode_Normal};
+                          nsSizeMode_Normal};
   RecvShow(aParentShowInfo, ownerInfo);
   mDidFakeShow = true;
 }
@@ -1105,7 +1107,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvShow(
   }
 
   ApplyParentShowInfo(aParentInfo);
-  RecvParentActivated(aOwnerInfo.parentWindowIsActive());
+
   if (!mIsTopLevel) {
     RecvScrollbarPreferenceChanged(aOwnerInfo.scrollbarPreference());
   }
@@ -1169,6 +1171,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvUpdateDimensions(
   mUnscaledOuterRect = aDimensionInfo.rect();
   mClientOffset = aDimensionInfo.clientOffset();
   mChromeOffset = aDimensionInfo.chromeOffset();
+  MOZ_ASSERT_IF(!IsTopLevel(), mChromeOffset == LayoutDeviceIntPoint());
 
   mOrientation = aDimensionInfo.orientation();
   SetUnscaledInnerSize(aDimensionInfo.size());
@@ -1417,27 +1420,15 @@ void BrowserChild::ZoomToRect(const uint32_t& aPresShellId,
   }
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvActivate() {
+mozilla::ipc::IPCResult BrowserChild::RecvActivate(uint64_t aActionId) {
   MOZ_ASSERT(mWebBrowser);
-  mWebBrowser->FocusActivate();
+  mWebBrowser->FocusActivate(aActionId);
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvDeactivate() {
+mozilla::ipc::IPCResult BrowserChild::RecvDeactivate(uint64_t aActionId) {
   MOZ_ASSERT(mWebBrowser);
-  mWebBrowser->FocusDeactivate();
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult BrowserChild::RecvParentActivated(
-    const bool& aActivated) {
-  mParentIsActive = aActivated;
-
-  nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  NS_ENSURE_TRUE(fm, IPC_OK());
-
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
-  fm->ParentActivated(window, aActivated);
+  mWebBrowser->FocusDeactivate(aActionId);
   return IPC_OK();
 }
 
@@ -1572,7 +1563,20 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealMouseMoveEvent(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult BrowserChild::RecvRealMouseMoveEventForTests(
+    const WidgetMouseEvent& aEvent, const ScrollableLayerGuid& aGuid,
+    const uint64_t& aInputBlockId) {
+  return RecvRealMouseMoveEvent(aEvent, aGuid, aInputBlockId);
+}
+
 mozilla::ipc::IPCResult BrowserChild::RecvNormalPriorityRealMouseMoveEvent(
+    const WidgetMouseEvent& aEvent, const ScrollableLayerGuid& aGuid,
+    const uint64_t& aInputBlockId) {
+  return RecvRealMouseMoveEvent(aEvent, aGuid, aInputBlockId);
+}
+
+mozilla::ipc::IPCResult
+BrowserChild::RecvNormalPriorityRealMouseMoveEventForTests(
     const WidgetMouseEvent& aEvent, const ScrollableLayerGuid& aGuid,
     const uint64_t& aInputBlockId) {
   return RecvRealMouseMoveEvent(aEvent, aGuid, aInputBlockId);
@@ -2295,7 +2299,8 @@ mozilla::ipc::IPCResult BrowserChild::RecvPrintPreview(
   // went wrong.
   auto sendCallbackError = MakeScopeExit([&] {
     if (aCallback) {
-      aCallback(PrintPreviewResultInfo(0, 0, false));  // signal error
+      aCallback(
+          PrintPreviewResultInfo(0, 0, false, false, false));  // signal error
     }
   });
 
@@ -2446,41 +2451,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvDestroy() {
   nsCOMPtr<nsIRunnable> deleteRunnable = new DelayedDeleteRunnable(this);
   MOZ_ALWAYS_SUCCEEDS(NS_DispatchToCurrentThread(deleteRunnable));
 
-  return IPC_OK();
-}
-
-void BrowserChild::AddPendingDocShellBlocker() { mPendingDocShellBlockers++; }
-
-void BrowserChild::RemovePendingDocShellBlocker() {
-  mPendingDocShellBlockers--;
-  if (!mPendingDocShellBlockers && mPendingDocShellReceivedMessage) {
-    mPendingDocShellReceivedMessage = false;
-    InternalSetDocShellIsActive(mPendingDocShellIsActive);
-  }
-  if (!mPendingDocShellBlockers && mPendingRenderLayersReceivedMessage) {
-    mPendingRenderLayersReceivedMessage = false;
-    RecvRenderLayers(mPendingRenderLayers, mPendingLayersObserverEpoch);
-  }
-}
-
-void BrowserChild::InternalSetDocShellIsActive(bool aIsActive) {
-  if (nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation())) {
-    docShell->SetIsActive(aIsActive);
-  }
-}
-
-mozilla::ipc::IPCResult BrowserChild::RecvSetDocShellIsActive(
-    const bool& aIsActive) {
-  // If we're currently waiting for window opening to complete, we need to hold
-  // off on setting the docshell active. We queue up the values we're receiving
-  // in the mWindowOpenDocShellActiveStatus.
-  if (mPendingDocShellBlockers > 0) {
-    mPendingDocShellReceivedMessage = true;
-    mPendingDocShellIsActive = aIsActive;
-    return IPC_OK();
-  }
-
-  InternalSetDocShellIsActive(aIsActive);
   return IPC_OK();
 }
 
@@ -2862,26 +2832,18 @@ void BrowserChild::MakeVisible() {
     return;
   }
 
-  // For top level stuff, the browser / tab-switcher is responsible of fixing
-  // the docshell state up explicitly via SetDocShellIsActive.
+  // The browser / tab-switcher is responsible of fixing the browsingContext
+  // state up explicitly via SetDocShellIsActive, which propagates to children
+  // automatically.
   //
   // We need it not to be observable, as this used via RecvRenderLayers and co.,
   // for stuff like async tab warming.
   //
   // We don't want to go through the docshell because we don't want to change
   // the visibility state of the document, which has side effects like firing
-  // events to content and unblocking media playback.
-  //
-  // FIXME(emilio): This feels a bit sketchy. Ideally we'd be able to just not
-  // update visibility of stuff in the tab warming case (we just want to paint
-  // once so that stuff is there already, really...), and use the docshell here
-  // all the time, but that makes some of the devtools tests fail (??).
-  if (mIsTopLevel) {
-    if (RefPtr<PresShell> presShell = docShell->GetPresShell()) {
-      presShell->SetIsActive(true);
-    }
-  } else {
-    docShell->SetIsActive(true);
+  // events to content, unblocking media playback, unthrottling timeouts...
+  if (RefPtr<PresShell> presShell = docShell->GetPresShell()) {
+    presShell->SetIsActive(true);
   }
 }
 
@@ -2913,8 +2875,8 @@ void BrowserChild::MakeHidden() {
                                                       nullptr);
         rootPresContext->ApplyPluginGeometryUpdates();
       }
+      presShell->SetIsActive(false);
     }
-    docShell->SetIsActive(false);
   }
 
   if (mPuppetWidget) {

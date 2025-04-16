@@ -105,7 +105,6 @@ namespace jit {
   _(NewObject)                 \
   _(NewTypedArray)             \
   _(NewArray)                  \
-  _(NewArrayCopyOnWrite)       \
   _(NewIterator)               \
   _(NewCallObject)             \
   _(CreateThisWithTemplate)    \
@@ -608,18 +607,9 @@ class RNewTypedArray final : public RInstruction {
 class RNewArray final : public RInstruction {
  private:
   uint32_t count_;
-  bool convertDoubleElements_;
 
  public:
   RINSTRUCTION_HEADER_NUM_OP_(NewArray, 1)
-
-  MOZ_MUST_USE bool recover(JSContext* cx,
-                            SnapshotIterator& iter) const override;
-};
-
-class RNewArrayCopyOnWrite final : public RInstruction {
- public:
-  RINSTRUCTION_HEADER_NUM_OP_(NewArrayCopyOnWrite, 1)
 
   MOZ_MUST_USE bool recover(JSContext* cx,
                             SnapshotIterator& iter) const override;

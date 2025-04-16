@@ -381,12 +381,8 @@ template <ComparisonKind Kind>
 bool StringsCompare(JSContext* cx, HandleString lhs, HandleString rhs,
                     bool* res);
 
-MOZ_MUST_USE bool ArrayPopDense(JSContext* cx, HandleObject obj,
-                                MutableHandleValue rval);
 MOZ_MUST_USE bool ArrayPushDense(JSContext* cx, HandleArrayObject arr,
                                  HandleValue v, uint32_t* length);
-MOZ_MUST_USE bool ArrayShiftDense(JSContext* cx, HandleObject obj,
-                                  MutableHandleValue rval);
 JSString* ArrayJoin(JSContext* cx, HandleObject array, HandleString sep);
 MOZ_MUST_USE bool SetArrayLength(JSContext* cx, HandleObject obj,
                                  HandleValue value, bool strict);
@@ -408,7 +404,6 @@ JSObject* NewCallObject(JSContext* cx, HandleShape shape,
 JSObject* NewStringObject(JSContext* cx, HandleString str);
 
 bool OperatorIn(JSContext* cx, HandleValue key, HandleObject obj, bool* out);
-bool OperatorInI(JSContext* cx, int32_t index, HandleObject obj, bool* out);
 
 MOZ_MUST_USE bool GetIntrinsicValue(JSContext* cx, HandlePropertyName name,
                                     MutableHandleValue rval);
@@ -463,8 +458,9 @@ MOZ_MUST_USE bool GeneratorThrowOrReturn(
     Handle<AbstractGeneratorObject*> genObj, HandleValue arg,
     int32_t resumeKindArg);
 
-MOZ_MUST_USE bool GlobalNameConflictsCheckFromIon(JSContext* cx,
-                                                  HandleScript script);
+MOZ_MUST_USE bool GlobalDeclInstantiationFromIon(JSContext* cx,
+                                                 HandleScript script,
+                                                 jsbytecode* pc);
 MOZ_MUST_USE bool InitFunctionEnvironmentObjects(JSContext* cx,
                                                  BaselineFrame* frame);
 
@@ -663,8 +659,6 @@ AtomicsReadWriteModifyFn AtomicsSub(Scalar::Type elementType);
 AtomicsReadWriteModifyFn AtomicsAnd(Scalar::Type elementType);
 AtomicsReadWriteModifyFn AtomicsOr(Scalar::Type elementType);
 AtomicsReadWriteModifyFn AtomicsXor(Scalar::Type elementType);
-
-bool GroupHasPropertyTypes(ObjectGroup* group, jsid* id, Value* v);
 
 // Functions used when JS_MASM_VERBOSE is enabled.
 void AssumeUnreachable(const char* output);

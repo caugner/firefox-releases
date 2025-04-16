@@ -51,6 +51,7 @@ activity_stream:
       "OPEN_NEW_WINDOW",
       "OPEN_PRIVATE_WINDOW",
       "PIN",
+      "PREF_CHANGED",
       "PREVIEW_REQUEST",
       "SAVE_TO_POCKET",
       "SEARCH",
@@ -684,6 +685,7 @@ normandy:
       addonVersion: For addon_study, the version of the addon for which the recipe ended.
       branch: The branch of the experiment that this client was on.
       enrollmentId: A unique ID for this enrollment that will be included in all related Telemetry.
+      changedPref: For preference_study, the preference that was detected to change that caused the unenrollment.
     bug_numbers: [1443560]
     notification_emails: ["normandy-notifications@mozilla.com"]
     products:
@@ -701,6 +703,7 @@ normandy:
     extra_keys:
       reason: A code describing the reason the unenroll failed.
       enrollmentId: A unique ID for this enrollment that will be included in all related Telemetry.
+      changedPref: For preference_study, the preference that was detected to change that caused the attempted unenrollment.
     bug_numbers: [1443560]
     notification_emails: ["normandy-notifications@mozilla.com"]
     products:
@@ -905,8 +908,8 @@ pwmgr:
       updates to the doorhanger may change whether a login is actually saved or updated, but will
       not impact the sent object.
     objects: ["save", "update"]
-    bug_numbers: [1650929, 1650941]
-    expiry_version: "86"
+    bug_numbers: [1650929, 1650941, 1678200]
+    expiry_version: "92"
     release_channel_collection: opt-out
     products: ["firefox"]
     record_in_processes: [main]
@@ -1879,14 +1882,14 @@ security.ui.protections:
       - 1643428
       - 1650468
       - 1661756
+      - 1678201
     description: >
       User arrived on the protection report. This also includes a 'value' attribute which defaults to 'direct' or will be the value that a referring website addds to the url. This also indicates if the vpn banner has been seen.
-    expiry_version: "86"
+    expiry_version: "97"
     record_in_processes: ["content"]
     release_channel_collection: opt-out
     notification_emails:
       - ewright@mozilla.com
-      - chsiang@mozilla.com
       - seceng-telemetry@mozilla.com
     products:
       - firefox
@@ -1901,14 +1904,14 @@ security.ui.protections:
       - 1610897
       - 1612091
       - 1643428
+      - 1678201
     description: >
       User closed on the protection report.
-    expiry_version: "86"
+    expiry_version: "97"
     record_in_processes: ["content"]
     release_channel_collection: opt-out
     notification_emails:
       - ewright@mozilla.com
-      - chsiang@mozilla.com
       - seceng-telemetry@mozilla.com
     products:
       - firefox
@@ -1924,6 +1927,7 @@ security.ui.protections:
       - 1637615
       - 1643428
       - 1661756
+      - 1678201
     description: >
       User interaction by click events on the protection report.
     objects: [
@@ -1942,12 +1946,11 @@ security.ui.protections:
       "vpn_app_link_android",
       "vpn_app_link_ios",
     ]
-    expiry_version: "86"
+    expiry_version: "97"
     record_in_processes: ["content"]
     release_channel_collection: opt-out
     notification_emails:
       - ewright@mozilla.com
-      - chsiang@mozilla.com
       - seceng-telemetry@mozilla.com
     products:
       - firefox
@@ -1960,17 +1963,17 @@ security.ui.app_menu:
       - 1603545
       - 1616229
       - 1643428
+      - 1678201
     description: >
       Privacy and Security click events on app menu.
     objects: [
       "open_full_report",
     ]
-    expiry_version: "86"
+    expiry_version: "97"
     record_in_processes:
       - main
     release_channel_collection: opt-out
     notification_emails:
-      - chsiang@mozilla.com
       - ewright@mozilla.com
       - seceng-telemetry@mozilla.com
     products:
@@ -1983,14 +1986,14 @@ security.ui.protectionspopup:
       - 1560327
       - 1607488
       - 1643428
+      - 1678201
     description: >
       How many times the protections panel was opened.
-    expiry_version: "86"
+    expiry_version: "97"
     notification_emails:
       - ewright@mozilla.com
       - nhnt11@mozilla.com
       - jhofmann@mozilla.com
-      - chsiang@mozilla.com
       - seceng-telemetry@mozilla.com
     release_channel_collection: opt-out
     record_in_processes:
@@ -2019,14 +2022,14 @@ security.ui.protectionspopup:
       - 1602015
       - 1607488
       - 1643428
+      - 1678201
     description: >
       User interaction by click events in the protections panel.
-    expiry_version: "86"
+    expiry_version: "97"
     notification_emails:
       - ewright@mozilla.com
       - nhnt11@mozilla.com
       - jhofmann@mozilla.com
-      - chsiang@mozilla.com
       - seceng-telemetry@mozilla.com
     release_channel_collection: opt-out
     record_in_processes:
@@ -2230,7 +2233,6 @@ pictureinpicture:
       screenY: The screen Y coordinate that the window was created at
     notification_emails:
       - mconley@mozilla.com
-      - astevenson@mozilla.com
     products:
       - "firefox"
       - "fennec"
@@ -2238,7 +2240,8 @@ pictureinpicture:
       - main
     bug_numbers:
       - 1560590
-    expiry_version: "86"
+      - 1678202
+    expiry_version: "92"
     release_channel_collection: opt-out
   resize:
     objects: ["player"]
@@ -2249,7 +2252,6 @@ pictureinpicture:
       height: The height that the window was resize to
     notification_emails:
       - mconley@mozilla.com
-      - astevenson@mozilla.com
     products:
       - "firefox"
       - "fennec"
@@ -2257,7 +2259,8 @@ pictureinpicture:
       - main
     bug_numbers:
       - 1560590
-    expiry_version: "86"
+      - 1678202
+    expiry_version: "92"
     release_channel_collection: opt-out
   move:
     objects: ["player"]
@@ -2268,7 +2271,6 @@ pictureinpicture:
       screenY: The screen Y coordinate that the window was moved to
     notification_emails:
       - mconley@mozilla.com
-      - astevenson@mozilla.com
     products:
       - "firefox"
       - "fennec"
@@ -2276,7 +2278,8 @@ pictureinpicture:
       - main
     bug_numbers:
       - 1560590
-    expiry_version: "86"
+      - 1678202
+    expiry_version: "92"
     release_channel_collection: opt-out
 
 doh:
@@ -2567,3 +2570,32 @@ ysod:
     extra_keys:
       error_code: Code of the XML Error (See `XML_Error` enum in expat.h for the list of errors where XML_ERROR_NONE is 0).
       location: Location as Row:Column of where the error happened.
+      last_line: The content of the last line that led to the error.
+      last_line_len: The length of the last line that led to the error.
+
+dom.quota.try:
+  error:
+    objects: [
+      "step",
+    ]
+    bug_numbers:
+      - 1665088
+    description: >
+      An event recorded on an error of the quota manager or its clients. Since errors are usually
+      propagated up the call chain, all such propagation steps are recorded for an error. This
+      is only active during specific contexts, in particular during storage initialization.
+      No dynamic data is included in the event beyond the error code which will be added through
+      Bug 1670555.
+    notification_emails:
+      - jvarga@mozilla.com
+      - sgiesecke@mozilla.com
+      - storage-telemetry@mozilla.com
+    products:
+      - firefox
+    expiry_version: "never"
+    record_in_processes: ["main", "content"]
+    extra_keys:
+      context: The context in which the error occurred, e.g. during a storage initialization. Telemetry events are only emitted for selected contexts.
+      module: The module (quota manager or one of its clients) where the error occured.
+      source_file: The name of the source code file where the error occured.
+      source_line: The line within source_file where the error occured.

@@ -1,3 +1,7 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
 import os
 import socket
 import sys
@@ -10,7 +14,7 @@ config = {
     "log_name": "raptor",
     "installer_path": "installer.exe",
     "virtualenv_path": VENV_PATH,
-    "virtualenv_modules": ["pywin32", "raptor", "mozinstall"],
+    "virtualenv_modules": ["pypiwin32==219", "raptor", "mozinstall"],
     "exes": {
         "python": PYTHON,
         "easy_install": [

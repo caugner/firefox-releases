@@ -11,23 +11,15 @@
 #include <utility>
 
 #include "mozilla/Atomics.h"
-#include "mozilla/IntegerPrintfMacros.h"
-#include "mozilla/Tuple.h"
 #include "mozilla/dom/DOMTypes.h"
-#include "mozilla/dom/ReferrerInfo.h"
-#include "mozilla/net/ChannelEventQueue.h"
 #include "mozilla/net/DNS.h"
 #include "mozilla/net/NeckoCommon.h"
 #include "mozilla/net/PrivateBrowsingChannel.h"
-#include "nsCOMArray.h"
 #include "nsCOMPtr.h"
 #include "nsHashPropertyBag.h"
 #include "nsHttp.h"
-#include "nsHttpConnectionInfo.h"
 #include "nsHttpHandler.h"
 #include "nsHttpRequestHead.h"
-#include "nsHttpResponseHead.h"
-#include "nsIApplicationCache.h"
 #include "nsIClassOfService.h"
 #include "nsIClassifiedChannel.h"
 #include "nsIConsoleReportCollector.h"
@@ -37,9 +29,7 @@
 #include "nsIHttpChannel.h"
 #include "nsIHttpChannelInternal.h"
 #include "nsILoadInfo.h"
-#include "nsIProgressEventSink.h"
 #include "nsIResumableChannel.h"
-#include "nsISecurityConsoleMessage.h"
 #include "nsIStringEnumerator.h"
 #include "nsISupportsPriority.h"
 #include "nsIThrottledInputChannel.h"
@@ -47,7 +37,6 @@
 #include "nsITraceableChannel.h"
 #include "nsIURI.h"
 #include "nsIUploadChannel2.h"
-#include "nsProxyInfo.h"
 #include "nsStringEnumerator.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
@@ -59,6 +48,7 @@
     }                                                \
   }
 
+class nsIProgressEventSink;
 class nsISecurityConsoleMessage;
 class nsIPrincipal;
 
@@ -248,7 +238,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
 
   using nsIClassifiedChannel::IsThirdPartyTrackingResource;
 
-  virtual void SetSource(UniqueProfilerBacktrace aSource) override {
+  virtual void SetSource(UniquePtr<ProfileChunkedBuffer> aSource) override {
     mSource = std::move(aSource);
   }
 
@@ -645,6 +635,9 @@ class HttpBaseChannel : public nsHashPropertyBag,
   nsCOMPtr<nsIEventTarget> mCurrentThread;
 
  private:
+  // WHATWG Fetch Standard 4.4. HTTP-redirect fetch, step 10
+  bool ShouldTaintReplacementChannelOrigin(nsIURI* aNewURI);
+
   // Proxy release all members above on main thread.
   void ReleaseMainThreadOnlyReferences();
 
@@ -756,7 +749,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
   Atomic<uint32_t, ReleaseAcquire> mThirdPartyClassificationFlags;
   Atomic<uint32_t, ReleaseAcquire> mFlashPluginState;
 
-  UniqueProfilerBacktrace mSource;
+  UniquePtr<ProfileChunkedBuffer> mSource;
 
   uint32_t mLoadFlags;
   uint32_t mCaps;
@@ -833,6 +826,9 @@ class HttpBaseChannel : public nsHashPropertyBag,
 
   // True if the docshell's sandboxing flag set is not empty.
   uint32_t mHasNonEmptySandboxingFlag : 1;
+
+  // Tainted origin flag of a request, specified by WHATWG Fetch Standard 2.2.5.
+  uint32_t mTaintedOriginFlag : 1;
 
   // An opaque flags for non-standard behavior of the TLS system.
   // It is unlikely this will need to be set outside of telemetry studies

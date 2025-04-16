@@ -162,7 +162,7 @@ def runs_on_central(task):
     return match_run_on_projects("mozilla-central", task["run-on-projects"])
 
 
-def gv_e10s_filter(task):
+def gv_e10s_multi_filter(task):
     return get_mobile_project(task) == "geckoview" and task["e10s"]
 
 
@@ -175,24 +175,24 @@ def fission_filter(task):
 
 
 TEST_VARIANTS = {
-    "geckoview-e10s-single": {
-        "description": "{description} with single-process e10s",
-        "filterfn": gv_e10s_filter,
+    "geckoview-e10s-multi": {
+        "description": "{description} with e10s-multi enabled",
+        "filterfn": gv_e10s_multi_filter,
         "replace": {
             "run-on-projects": ["trunk"],
         },
-        "suffix": "e10s-single",
+        "suffix": "e10s-multi",
         "merge": {
             "mozharness": {
                 "extra-options": [
-                    "--setpref=dom.ipc.processCount=1",
+                    "--setpref=dom.ipc.processCount=3",
                 ],
             },
         },
     },
     "geckoview-fission": {
         "description": "{description} with fission enabled",
-        "filterfn": gv_e10s_filter,
+        "filterfn": gv_e10s_multi_filter,
         "suffix": "fis",
         "merge": {
             # Ensures the default state is to not run anywhere.
@@ -286,12 +286,13 @@ TEST_VARIANTS = {
         },
     },
     "webgl-ipc": {
-        # TODO: After November 1st 2020, verify this variant is still needed.
+        # TODO: After 2021-02-01, verify this variant is still needed.
         "description": "{description} with WebGL IPC process enabled",
         "suffix": "gli",
         "replace": {
             "run-on-projects": {
                 "by-test-platform": {
+                    "linux.*-64.*": ["trunk"],
                     "mac.*": ["trunk"],
                     "win.*": ["trunk"],
                     "default": [],
@@ -571,6 +572,8 @@ test_description_schema = Schema(
         Optional("fetches"): {
             text_type: optionally_keyed_by("test-platform", [text_type])
         },
+        # Opt-in to Python 3 support
+        Optional("python-3"): bool,
     }
 )
 
@@ -921,6 +924,7 @@ def set_tier(config, tasks):
                 "macosx1014-64/debug",
                 "macosx1014-64-shippable/opt",
                 "macosx1014-64-devedition/opt",
+                "macosx1014-64-devedition-qr/opt",
                 "macosx1014-64-qr/opt",
                 "macosx1014-64-shippable-qr/opt",
                 "macosx1014-64-qr/debug",
@@ -1047,34 +1051,34 @@ def setup_browsertime(config, tasks):
 
         cd_fetches = {
             "android.*": [
-                "linux64-chromedriver-84",
                 "linux64-chromedriver-85",
                 "linux64-chromedriver-86",
+                "linux64-chromedriver-87",
             ],
             "linux.*": [
-                "linux64-chromedriver-84",
                 "linux64-chromedriver-85",
                 "linux64-chromedriver-86",
+                "linux64-chromedriver-87",
             ],
             "macosx.*": [
-                "mac64-chromedriver-84",
                 "mac64-chromedriver-85",
                 "mac64-chromedriver-86",
+                "mac64-chromedriver-87",
             ],
             "windows.*aarch64.*": [
-                "win32-chromedriver-84",
                 "win32-chromedriver-85",
                 "win32-chromedriver-86",
+                "win32-chromedriver-87",
             ],
             "windows.*-32.*": [
-                "win32-chromedriver-84",
                 "win32-chromedriver-85",
                 "win32-chromedriver-86",
+                "win32-chromedriver-87",
             ],
             "windows.*-64.*": [
-                "win32-chromedriver-84",
                 "win32-chromedriver-85",
                 "win32-chromedriver-86",
+                "win32-chromedriver-87",
             ],
         }
 

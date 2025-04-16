@@ -28,6 +28,7 @@
 #include "mozilla/PerfStats.h"
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/RangeUtils.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
@@ -53,6 +54,8 @@
 #include "mozilla/dom/BrowserBridgeChild.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/PopupBlocker.h"
@@ -1190,13 +1193,37 @@ void PresShell::Destroy() {
 
   AUTO_PROFILER_LABEL("PresShell::Destroy", LAYOUT);
 
-  // If we have a RCD that has been painted (mIsFirstPaint=false), then record
-  // whether or not it had an APZ zoom applied to it during its lifetime, and
-  // whether or not it's in responsive design mode. We omit unpainted presShells
-  // because we get a handful of transient presShells that always report no
-  // zoom, and those skew the numbers.
-  if (!mIsFirstPaint && mPresContext->IsRootContentDocumentCrossProcess() &&
-      !InRDMPane()) {
+  // Try to determine if the page is the user had a meaningful opportunity to
+  // zoom this page. This is not 100% accurate but should be "good enough" for
+  // telemetry purposes.
+  auto isUserZoomablePage = [&]() -> bool {
+    if (mIsFirstPaint) {
+      // Page was never painted, so it wasn't zoomable by the user. We get a
+      // handful of these "transient" presShells.
+      return false;
+    }
+    if (!mPresContext->IsRootContentDocumentCrossProcess()) {
+      // Not a root content document, so APZ doesn't support zooming it.
+      return false;
+    }
+    if (InRDMPane()) {
+      // Responsive design mode is a special case that we want to ignore here.
+      return false;
+    }
+    if (mDocument && mDocument->IsInitialDocument()) {
+      // Ignore initial about:blank page loads
+      return false;
+    }
+    if (XRE_IsContentProcess() &&
+        IsExtensionRemoteType(ContentChild::GetSingleton()->GetRemoteType())) {
+      // Also omit presShells from the extension process because they sometimes
+      // can't be zoomed by the user.
+      return false;
+    }
+    // Otherwise assume the page is user-zoomable.
+    return true;
+  };
+  if (isUserZoomablePage()) {
     Telemetry::Accumulate(Telemetry::APZ_ZOOM_ACTIVITY,
                           IsResolutionUpdatedByApz());
   }
@@ -2455,12 +2482,6 @@ PresShell::CompleteMove(bool aForward, bool aExtend) {
           nsISelectionController::SCROLL_FOR_CARET_MOVE);
 }
 
-NS_IMETHODIMP
-PresShell::SelectAll() {
-  RefPtr<nsFrameSelection> frameSelection = mSelection;
-  return frameSelection->SelectAll();
-}
-
 static void DoCheckVisibility(nsPresContext* aPresContext, nsIContent* aNode,
                               int16_t aStartOffset, int16_t aEndOffset,
                               bool* aRetval) {
@@ -2778,9 +2799,11 @@ void PresShell::FrameNeedsReflow(nsIFrame* aFrame,
       do {
         nsIFrame* f = stack.PopLastElement();
 
-        if (styleChange) {
-          if (f->IsPlaceholderFrame()) {
-            nsIFrame* oof = nsPlaceholderFrame::GetRealFrameForPlaceholder(f);
+        if (styleChange && f->IsPlaceholderFrame()) {
+          // Call `GetOutOfFlowFrame` directly because we can get here from
+          // frame destruction and the placeholder might be already torn down.
+          if (nsIFrame* oof =
+                  static_cast<nsPlaceholderFrame*>(f)->GetOutOfFlowFrame()) {
             if (!nsLayoutUtils::IsProperAncestorFrame(subtreeRoot, oof)) {
               // We have another distinct subtree we need to mark.
               subtrees.AppendElement(oof);
@@ -5359,6 +5382,11 @@ nsresult PresShell::SetResolutionAndScaleTo(float aResolution,
     MOZ_ASSERT(mResolution.isSome());
     return NS_OK;
   }
+
+  // GetResolution handles mResolution being nothing by returning 1 so this
+  // is checking that the resolution is actually changing.
+  bool resolutionUpdated = (aResolution != GetResolution());
+
   RenderingState state(this);
   state.mResolution = Some(aResolution);
   SetRenderingState(state);
@@ -5367,7 +5395,7 @@ nsresult PresShell::SetResolutionAndScaleTo(float aResolution,
   }
   if (aOrigin == ResolutionChangeOrigin::Apz) {
     mResolutionUpdatedByApz = true;
-  } else {
+  } else if (resolutionUpdated) {
     mResolutionUpdated = true;
   }
 
@@ -5378,7 +5406,7 @@ nsresult PresShell::SetResolutionAndScaleTo(float aResolution,
   return NS_OK;
 }
 
-float PresShell::GetCumulativeResolution() {
+float PresShell::GetCumulativeResolution() const {
   float resolution = GetResolution();
   nsPresContext* parentCtx = GetPresContext()->GetParentPresContext();
   if (parentCtx) {
@@ -9539,7 +9567,7 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
     innerWindowID = Some(window->WindowID());
   }
   AutoProfilerTracing tracingLayoutFlush(
-      "Paint", "Reflow", JS::ProfilingCategoryPair::LAYOUT,
+      "Paint", "Reflow", geckoprofiler::category::LAYOUT,
       std::move(mReflowCause), innerWindowID);
   mReflowCause = nullptr;
 #endif
@@ -9575,7 +9603,7 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
     size = target->GetLogicalSize();
   }
 
-  nsOverflowAreas oldOverflow;  // initialized and used only when !isRoot
+  OverflowAreas oldOverflow;  // initialized and used only when !isRoot
   if (!isRoot) {
     oldOverflow = target->GetOverflowAreas();
   }
@@ -10837,32 +10865,29 @@ nsAccessibilityService* PresShell::GetAccessibilityService() {
 
 // Asks our docshell whether we're active.
 void PresShell::QueryIsActive() {
-  nsCOMPtr<nsISupports> container = mPresContext->GetContainerWeak();
-  if (mDocument) {
-    Document* displayDoc = mDocument->GetDisplayDocument();
-    if (displayDoc) {
-      // Ok, we're an external resource document -- we need to use our display
-      // document's docshell to determine "IsActive" status, since we lack
-      // a container.
-      MOZ_ASSERT(!container,
-                 "external resource doc shouldn't have its own container");
-
-      nsPresContext* displayPresContext = displayDoc->GetPresContext();
-      if (displayPresContext) {
-        container = displayPresContext->GetContainerWeak();
-      }
-    }
+  Document* doc = mDocument;
+  if (!doc) {
+    return;
+  }
+  if (Document* displayDoc = doc->GetDisplayDocument()) {
+    // Ok, we're an external resource document -- we need to use our display
+    // document's docshell to determine "IsActive" status, since we lack
+    // a browsing context of our own.
+    MOZ_ASSERT(!doc->GetBrowsingContext(),
+               "external resource doc shouldn't have its own BC");
+    doc = displayDoc;
   }
 
-  nsCOMPtr<nsIDocShell> docshell(do_QueryInterface(container));
-  if (docshell) {
-    bool isActive;
-    nsresult rv = docshell->GetIsActive(&isActive);
+  if (BrowsingContext* bc = doc->GetBrowsingContext()) {
     // Even though in theory the docshell here could be "Inactive and
-    // Foreground", thus implying aIsHidden=false for SetIsActive(),
-    // this is a newly created PresShell so we'd like to invalidate anyway
-    // upon being made active to ensure that the contents get painted.
-    if (NS_SUCCEEDED(rv)) SetIsActive(isActive);
+    // Foreground", thus implying aIsHidden=false for SetIsActive(), this is a
+    // newly created PresShell so we'd like to invalidate anyway upon being made
+    // active to ensure that the contents get painted.
+    auto* browserChild = BrowserChild::GetFrom(doc->GetDocShell());
+    const bool hiddenInRemoteFrame = browserChild &&
+                                     !browserChild->IsTopLevel() &&
+                                     !browserChild->IsVisible();
+    SetIsActive(bc->IsActive() && !hiddenInRemoteFrame);
   }
 }
 

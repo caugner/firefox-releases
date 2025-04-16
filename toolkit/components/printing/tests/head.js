@@ -4,19 +4,47 @@ const { MockFilePicker } = SpecialPowers;
 let pickerMocked = false;
 
 class PrintHelper {
-  static async withTestPage(testFn) {
+  static async withTestPage(testFn, pagePathname) {
     await SpecialPowers.pushPrefEnv({
       set: [["print.tab_modal.enabled", true]],
     });
 
+    let pageUrl = pagePathname
+      ? this.getTestPageUrl(pagePathname)
+      : this.defaultTestPageUrl;
+    info("withTestPage: " + pageUrl);
+    let isPdf = pageUrl.endsWith(".pdf");
+
+    if (isPdf) {
+      await SpecialPowers.pushPrefEnv({
+        set: [["pdfjs.eventBusDispatchToDOM", true]],
+      });
+    }
+
     let taskReturn = await BrowserTestUtils.withNewTab(
-      this.defaultTestPageUrl,
+      isPdf ? "about:blank" : pageUrl,
       async function(browser) {
+        if (isPdf) {
+          let loaded = BrowserTestUtils.waitForContentEvent(
+            browser,
+            "documentloaded",
+            false,
+            null,
+            true
+          );
+          await SpecialPowers.spawn(browser, [pageUrl], contentUrl => {
+            content.location = contentUrl;
+          });
+          await loaded;
+        }
         await testFn(new PrintHelper(browser));
       }
     );
 
     await SpecialPowers.popPrefEnv();
+    if (isPdf) {
+      await SpecialPowers.popPrefEnv();
+    }
 
     // Reset all of the other printing prefs to their default.
     for (let name of Services.prefs.getChildList("print.")) {
@@ -27,12 +55,16 @@ class PrintHelper {
     return taskReturn;
   }
 
-  static get defaultTestPageUrl() {
+  static getTestPageUrl(pathName) {
     const testPath = getRootDirectory(gTestPath).replace(
       "chrome://mochitests/content",
       "http://example.com"
     );
-    return testPath + "simplifyArticleSample.html";
+    return testPath + pathName;
+  }
+
+  static get defaultTestPageUrl() {
+    return this.getTestPageUrl("simplifyArticleSample.html");
   }
 
   static createMockPaper(paperProperties = {}) {
@@ -188,7 +220,15 @@ class PrintHelper {
     };
   }
 
-  addMockPrinter(name = "Mock Printer", paperList = []) {
+  addMockPrinter(opts = {}) {
+    if (typeof opts == "string") {
+      opts = { name: opts };
+    }
+    let {
+      name = "Mock Printer",
+      paperList = [],
+      printerInfoPromise = Promise.resolve(),
+    } = opts;
     let PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
       Ci.nsIPrintSettingsService
     );
@@ -203,11 +243,11 @@ class PrintHelper {
       name,
       supportsColor: Promise.resolve(true),
       supportsMonochrome: Promise.resolve(true),
-      printerInfo: Promise.resolve({
+      printerInfo: printerInfoPromise.then(() => ({
         paperList,
         defaultSettings,
         QueryInterface: ChromeUtils.generateQI([Ci.nsIPrinterInfo]),
-      }),
+      })),
       QueryInterface: ChromeUtils.generateQI([Ci.nsIPrinter]),
     };
 
@@ -265,8 +305,14 @@ class PrintHelper {
     await BrowserTestUtils.waitForEvent(this.doc, "preview-updated");
   }
 
-  async waitForSettingsEvent() {
-    await BrowserTestUtils.waitForEvent(this.doc, "print-settings");
+  async waitForSettingsEvent(changeFn) {
+    let changed = BrowserTestUtils.waitForEvent(this.doc, "print-settings");
+    await changeFn?.();
+    await BrowserTestUtils.waitForCondition(
+      () => !this.win.PrintEventHandler._delayedSettingsChangeTask.isArmed,
+      "Wait for all delayed tasks to execute"
+    );
+    await changed;
   }
 
   click(el, { scroll = true } = {}) {

@@ -19,10 +19,36 @@
 #ifndef wasm_js_h
 #define wasm_js_h
 
-#include "gc/Policy.h"
-#include "gc/ZoneAllocator.h"
-#include "vm/NativeObject.h"
-#include "wasm/WasmTypes.h"
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+#include "mozilla/HashTable.h"   // DefaultHasher
+#include "mozilla/Maybe.h"       // mozilla::Maybe
+
+#include <stdint.h>  // int32_t, int64_t, uint32_t
+
+#include "gc/Barrier.h"        // HeapPtr
+#include "gc/ZoneAllocator.h"  // ZoneAllocPolicy
+#include "js/AllocPolicy.h"    // SystemAllocPolicy
+#include "js/Class.h"          // JSClassOps, ClassSpec
+#include "js/GCHashTable.h"    // GCHashMap, GCHashSet
+#include "js/GCVector.h"       // GCVector
+#include "js/PropertySpec.h"   // JSPropertySpec, JSFunctionSpec
+#include "js/RootingAPI.h"     // MovableCellHasher
+#include "js/SweepingAPI.h"    // JS::WeakCache
+#include "js/TypeDecls.h"  // HandleValue, HandleObject, MutableHandleObject, MutableHandleFunction
+#include "js/Vector.h"        // JS::Vector
+#include "vm/JSFunction.h"    // JSFunction
+#include "vm/NativeObject.h"  // NativeObject
+#include "wasm/WasmTypes.h"   // MutableHandleWasmInstanceObject, wasm::*
+
+class JSFreeOp;
+class JSObject;
+class JSTracer;
+struct JSContext;
+
+namespace JS {
+class CallArgs;
+class Value;
+}  // namespace JS
 
 namespace js {
 
@@ -38,6 +64,8 @@ class WasmInstanceScope;
 class SharedArrayRawBuffer;
 
 namespace wasm {
+
+struct ImportValues;
 
 // Return whether WebAssembly can in principle be compiled on this platform (ie
 // combination of hardware and OS), assuming at least one of the compilers that
@@ -129,6 +157,10 @@ bool SimdAvailable(JSContext* cx);
 void ReportSimdAnalysis(const char* data);
 #endif
 
+// Returns true if WebAssembly as configured by compile-time flags and run-time
+// options can support try/catch, throw, rethrow, and branch_on_exn (evolving).
+bool ExceptionsAvailable(JSContext* cx);
+
 // Compiles the given binary wasm module given the ArrayBufferObject
 // and links the module's imports with the given import object.
 
@@ -164,10 +196,6 @@ MOZ_MUST_USE bool DeserializeModule(JSContext* cx, const Bytes& serialized,
 // can be used for both wasm and asm.js, however.
 
 bool IsWasmExportedFunction(JSFunction* fun);
-MOZ_MUST_USE bool CheckFuncRefValue(JSContext* cx, HandleValue v,
-                                    MutableHandleFunction fun);
-MOZ_MUST_USE bool CheckEqRefValue(JSContext* cx, HandleValue v,
-                                  MutableHandleAnyRef vp);
 
 Instance& ExportedFunctionToInstance(JSFunction* fun);
 WasmInstanceObject* ExportedFunctionToInstanceObject(JSFunction* fun);
@@ -175,17 +203,6 @@ uint32_t ExportedFunctionToFuncIndex(JSFunction* fun);
 
 bool IsSharedWasmMemoryObject(JSObject* obj);
 
-// Check a value against the given reference type.  If the targetType
-// is RefType::Extern then the test always passes, but the value may be boxed.
-// If the test passes then the value is stored either in fnval (for
-// RefType::Func) or in refval (for other types); this split is not strictly
-// necessary but is convenient for the users of this function.
-//
-// This can return false if the type check fails, or if a boxing into AnyRef
-// throws an OOM.
-MOZ_MUST_USE bool CheckRefType(JSContext* cx, RefType targetType, HandleValue v,
-                               MutableHandleFunction fnval,
-                               MutableHandleAnyRef refval);
 
 // Abstractions that clarify that we are working on a 32-bit memory and check
 // that the buffer length does not exceed that's memory's fixed limits.
@@ -239,17 +256,16 @@ class WasmModuleObject : public NativeObject {
 STATIC_ASSERT_ANYREF_IS_JSOBJECT;
 
 class WasmGlobalObject : public NativeObject {
-  static const unsigned TYPE_SLOT = 0;
-  static const unsigned MUTABLE_SLOT = 1;
-  static const unsigned CELL_SLOT = 2;
+  static const unsigned MUTABLE_SLOT = 0;
+  static const unsigned VAL_SLOT = 1;
 
   static const JSClassOps classOps_;
   static const ClassSpec classSpec_;
   static void finalize(JSFreeOp*, JSObject* obj);
   static void trace(JSTracer* trc, JSObject* obj);
 
-  static bool typeGetterImpl(JSContext* cx, const CallArgs& args);
-  static bool typeGetter(JSContext* cx, unsigned argc, Value* vp);
+  static bool typeImpl(JSContext* cx, const CallArgs& args);
+  static bool type(JSContext* cx, unsigned argc, Value* vp);
 
   static bool valueGetterImpl(JSContext* cx, const CallArgs& args);
   static bool valueGetter(JSContext* cx, unsigned argc, Value* vp);
@@ -257,20 +273,7 @@ class WasmGlobalObject : public NativeObject {
   static bool valueSetter(JSContext* cx, unsigned argc, Value* vp);
 
  public:
-  // For exposed globals the Cell holds the value of the global; the
-  // instance's global area holds a pointer to the Cell.
-  union Cell {
-    int32_t i32;
-    int64_t i64;
-    float f32;
-    double f64;
-    wasm::V128 v128;
-    wasm::AnyRef ref;
-    Cell() : v128() {}
-    ~Cell() = default;
-  };
-
-  static const unsigned RESERVED_SLOTS = 3;
+  static const unsigned RESERVED_SLOTS = 2;
   static const JSClass class_;
   static const JSClass& protoClass_;
   static const JSPropertySpec properties[];
@@ -280,14 +283,11 @@ class WasmGlobalObject : public NativeObject {
 
   static WasmGlobalObject* create(JSContext* cx, wasm::HandleVal value,
                                   bool isMutable, HandleObject proto);
-  bool isNewborn() { return getReservedSlot(CELL_SLOT).isUndefined(); }
+  bool isNewborn() { return getReservedSlot(VAL_SLOT).isUndefined(); }
 
-  wasm::ValType type() const;
-  void setVal(JSContext* cx, wasm::HandleVal value);
-  void val(wasm::MutableHandleVal outval) const;
   bool isMutable() const;
-  bool value(JSContext* cx, MutableHandleValue out);
-  Cell* cell() const;
+  wasm::ValType type() const;
+  wasm::GCPtrVal& val() const;
 };
 
 // The class of WebAssembly.Instance. Each WasmInstanceObject owns a
@@ -318,13 +318,9 @@ class WasmInstanceObject : public NativeObject {
                               DefaultHasher<uint32_t>, ZoneAllocPolicy>;
   ExportMap& exports() const;
 
-  // WeakScopeMap maps from function index to js::Scope. This maps is weak
-  // to avoid holding scope objects alive. The scopes are normally created
-  // during debugging.
-  using ScopeMap =
-      JS::WeakCache<GCHashMap<uint32_t, WeakHeapPtr<WasmFunctionScope*>,
-                              DefaultHasher<uint32_t>, ZoneAllocPolicy>>;
-  ScopeMap& scopes() const;
+  // See the definition inside WasmJS.cpp.
+  class UnspecifiedScopeMap;
+  UnspecifiedScopeMap& scopes() const;
 
  public:
   static const unsigned RESERVED_SLOTS = 6;
@@ -340,9 +336,8 @@ class WasmInstanceObject : public NativeObject {
       const wasm::DataSegmentVector& dataSegments,
       const wasm::ElemSegmentVector& elemSegments, wasm::UniqueTlsData tlsData,
       HandleWasmMemoryObject memory,
+      Vector<RefPtr<wasm::ExceptionTag>, 0, SystemAllocPolicy>&& exceptionTags,
       Vector<RefPtr<wasm::Table>, 0, SystemAllocPolicy>&& tables,
-      GCVector<HeapPtr<StructTypeDescr*>, 0, SystemAllocPolicy>&&
-          structTypeDescrs,
       const JSFunctionVector& funcImports,
       const wasm::GlobalDescVector& globals,
       const wasm::ValVector& globalImportValues,
@@ -382,8 +377,8 @@ class WasmMemoryObject : public NativeObject {
   static void finalize(JSFreeOp* fop, JSObject* obj);
   static bool bufferGetterImpl(JSContext* cx, const CallArgs& args);
   static bool bufferGetter(JSContext* cx, unsigned argc, Value* vp);
-  static bool typeGetterImpl(JSContext* cx, const CallArgs& args);
-  static bool typeGetter(JSContext* cx, unsigned argc, Value* vp);
+  static bool typeImpl(JSContext* cx, const CallArgs& args);
+  static bool type(JSContext* cx, unsigned argc, Value* vp);
   static bool growImpl(JSContext* cx, const CallArgs& args);
   static bool grow(JSContext* cx, unsigned argc, Value* vp);
   static uint32_t growShared(HandleWasmMemoryObject memory, uint32_t delta);
@@ -447,10 +442,10 @@ class WasmTableObject : public NativeObject {
   bool isNewborn() const;
   static void finalize(JSFreeOp* fop, JSObject* obj);
   static void trace(JSTracer* trc, JSObject* obj);
-  static bool typeGetterImpl(JSContext* cx, const CallArgs& args);
-  static bool typeGetter(JSContext* cx, unsigned argc, Value* vp);
   static bool lengthGetterImpl(JSContext* cx, const CallArgs& args);
   static bool lengthGetter(JSContext* cx, unsigned argc, Value* vp);
+  static bool typeImpl(JSContext* cx, const CallArgs& args);
+  static bool type(JSContext* cx, unsigned argc, Value* vp);
   static bool getImpl(JSContext* cx, const CallArgs& args);
   static bool get(JSContext* cx, unsigned argc, Value* vp);
   static bool setImpl(JSContext* cx, const CallArgs& args);
@@ -476,22 +471,39 @@ class WasmTableObject : public NativeObject {
   wasm::Table& table() const;
 };
 
+// The class of WebAssembly.Exception. This class is used to track exception
+// types for exports and imports.
+
+class WasmExceptionObject : public NativeObject {
+  static const unsigned TAG_SLOT = 0;
+  static const unsigned TYPE_SLOT = 1;
+
+  static const JSClassOps classOps_;
+  static const ClassSpec classSpec_;
+  static void finalize(JSFreeOp*, JSObject* obj);
+  static void trace(JSTracer* trc, JSObject* obj);
+
+ public:
+  static const unsigned RESERVED_SLOTS = 2;
+  static const JSClass class_;
+  static const JSClass& protoClass_;
+  static const JSPropertySpec properties[];
+  static const JSFunctionSpec methods[];
+  static const JSFunctionSpec static_methods[];
+  static bool construct(JSContext*, unsigned, Value*);
+
+  static WasmExceptionObject* create(JSContext* cx, wasm::ResultType type,
+                                     HandleObject proto);
+  bool isNewborn() const;
+
+  wasm::ValTypeVector& valueTypes() const;
+  wasm::ExceptionTag& tag() const;
+};
+
 // The class of the WebAssembly global namespace object.
 
 class WasmNamespaceObject : public NativeObject {
  public:
-  enum Slot {
-    ArrayTypePrototype,
-    StructTypePrototype,
-    Int32Desc,
-    Int64Desc,
-    Float32Desc,
-    Float64Desc,
-    ObjectDesc,
-    WasmAnyRefDesc,
-    SlotCount
-  };
-
   static const JSClass class_;
 
  private:

@@ -34,6 +34,7 @@ STAGE = mozpath.join(buildconfig.topobjdir, "dist", "test-stage")
 TEST_HARNESS_BINS = [
     "BadCertAndPinningServer",
     "DelegatedCredentialsServer",
+    "EncryptedClientHelloServer",
     "GenerateOCSPResponse",
     "OCSPStaplingServer",
     "SanctionsTestServer",
@@ -51,22 +52,6 @@ TEST_HARNESS_BINS = [
 ]
 
 TEST_HARNESS_DLLS = ["crashinjectdll", "mozglue"]
-
-TEST_PLUGIN_DLLS = [
-    "npsecondtest",
-    "npswftest",
-    "nptest",
-    "nptestjava",
-    "npthirdtest",
-]
-
-TEST_PLUGIN_DIRS = [
-    "JavaTest.plugin/**",
-    "SecondTest.plugin/**",
-    "Test.plugin/**",
-    "ThirdTest.plugin/**",
-    "npswftest.plugin/**",
-]
 
 GMP_TEST_PLUGIN_DIRS = [
     "gmp-clearkey/**",
@@ -237,26 +222,6 @@ ARCHIVE_FILES = {
                 for f in TEST_HARNESS_DLLS
             ],
             "dest": "bin",
-        },
-        {
-            "source": buildconfig.topobjdir,
-            "base": "dist/plugins",
-            "patterns": [
-                "%s%s%s"
-                % (
-                    buildconfig.substs["DLL_PREFIX"],
-                    f,
-                    buildconfig.substs["DLL_SUFFIX"],
-                )
-                for f in TEST_PLUGIN_DLLS
-            ],
-            "dest": "bin/plugins",
-        },
-        {
-            "source": buildconfig.topobjdir,
-            "base": "dist/plugins",
-            "patterns": TEST_PLUGIN_DIRS,
-            "dest": "bin/plugins",
         },
         {
             "source": buildconfig.topobjdir,

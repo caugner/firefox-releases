@@ -17,6 +17,7 @@ $input-error-border: 1px solid $red-60;
 $input-error-boxshadow: textbox-shadow($red-60);
 $shadow-primary: 0 0 0 5px var(--newtab-card-active-outline-color);
 $shadow-secondary: 0 1px 4px 0 $grey-90-20;
+$newtab-focus-outline: 0 0 0 2px var(--newtab-focus-outline);
 
 // Default theme
 body {
@@ -38,6 +39,12 @@ body {
   --newtab-textbox-background-color: #{$white};
   --newtab-textbox-border: #{$grey-90-20};
   @include textbox-focus($blue-60); // sass-lint:disable-line mixins-before-declarations
+
+  // Background buttons
+  --newtab-background-button-color: #{$newtab-background-button-default-color};
+  --newtab-background-button-text-color: #{$newtab-background-button-default-text-color};
+  --newtab-background-button-hover-color: #{$newtab-background-button-default-hover-color};
+  --newtab-background-button-active-color: #{$newtab-background-button-default-active-color};
 
   // Buttons
   --newtab-button-primary-color: #{$blue-60};
@@ -87,12 +94,23 @@ body {
   --newtab-snippets-background-color: #{$white};
   --newtab-snippets-hairline-color: transparent;
 
-  // Trailhead
-  --trailhead-header-text-color: #{$trailhead-purple};
-  --trailhead-cards-background-color: #{$grey-20};
-  --trailhead-card-button-background-color: #{$grey-90-10};
-  --trailhead-card-button-background-hover-color: #{$grey-90-20};
-  --trailhead-card-button-background-active-color: #{$grey-90-30};
+  // New New Tab
+  --newtab-focus-outline: #{$newtab-focus-outline};
+  --newtab-focus-border: #{$blue-60};
+  --newtab-focus-border-selected: #{$newtab-card-tint};
+  --newtab-primary-action-background: #{$blue-60};
+  --newtab-primary-action-background-off: #{$newtab-primary-action-background-off};
+  --customize-menu-primary-text-color: #{$newtab-card-primary-text-color};
+  --customize-menu-check-fill: #{$white};
+  --customize-menu-background: #{$white};
+  --customize-menu-secondary-action-background: #{$grey-10};
+  --customize-menu-secondary-action-background-hover: #{$grey-20};
+  --customize-menu-secondary-action-background-active: #{$newtab-card-secondary-action-background-active};
+  --customize-menu-seperator-line-color: #{$newtab-card-separator-line-color};
+  --customize-menu-first-shadow: #{$newtab-card-firstshadow};
+  --customize-menu-second-shadow: #{$newtab-card-secondshadow};
+  --customize-menu-primary-action-text: #{$white};
+  --customize-menu-line-color: #{$newtab-card-line-color};
 
   &[lwt-newtab-brighttext] {
     // General styles
@@ -115,6 +133,12 @@ body {
     --newtab-textbox-background-color: #{$grey-70};
     --newtab-textbox-border: #{$grey-10-20};
     @include textbox-focus($blue-40); // sass-lint:disable-line mixins-before-declarations
+
+    // Background buttons.
+    --newtab-background-button-color: #{$newtab-background-button-darktheme-color};
+    --newtab-background-button-text-color: #{$newtab-background-button-darktheme-text-color};
+    --newtab-background-button-hover-color: #{$newtab-background-button-darktheme-hover-color};
+    --newtab-background-button-active-color: #{$newtab-background-button-darktheme-active-color};
 
     // Feed buttons
     --newtab-feed-button-background: #{$grey-70};
@@ -160,11 +184,22 @@ body {
     --newtab-snippets-background-color: #{$grey-70};
     --newtab-snippets-hairline-color: #{$white-10};
 
-    // Trailhead
-    --trailhead-header-text-color: #{$white-60};
-    --trailhead-cards-background-color: #{$grey-90-10};
-    --trailhead-card-button-background-color: #{$grey-90-30};
-    --trailhead-card-button-background-hover-color: #{$grey-90-50};
-    --trailhead-card-button-background-active-color: #{$grey-90-70};
+    // New New Tab
+    --newtab-focus-outline: #{$newtab-darktheme-focus-outline};
+    --newtab-focus-border: #{$newtab-darktheme-focus-border};
+    --newtab-focus-border-selected: #{$newtab-darktheme-focus-border-selected};
+    --newtab-primary-action-background: #{$newtab-darktheme-primary-action-background};
+    --newtab-primary-action-background-off: #{$newtab-darktheme-primary-action-background-off};
+    --customize-menu-primary-text-color: #{$newtab-card-darktheme-primary-text-color};
+    --customize-menu-check-fill: #{$newtab-card-darktheme-primary-text-color};
+    --customize-menu-background: #{$grey-70};
+    --customize-menu-secondary-action-background: #{$newtab-card-darktheme-secondary-action-background};
+    --customize-menu-secondary-action-background-hover: #{$newtab-card-darktheme-secondary-action-background-hover};
+    --customize-menu-secondary-action-background-active: #{$newtab-card-darktheme-secondary-action-background-active};
+    --customize-menu-seperator-line-color: #{$newtab-card-darktheme-separator-line-color};
+    --customize-menu-first-shadow: #{$newtab-card-darktheme-firstshadow};
+    --customize-menu-second-shadow: #{$newtab-darktheme-card-secondshadow};
+    --customize-menu-primary-action-text: #{$newtab-card-darktheme-primary-text-color};
+    --customize-menu-line-color: #{$newtab-card-darktheme-line-color};
   }
 }

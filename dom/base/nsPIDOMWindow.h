@@ -61,6 +61,7 @@ class DocGroup;
 class Document;
 class Element;
 class Location;
+class MediaKeys;
 class Navigator;
 class Performance;
 class Selection;
@@ -167,6 +168,21 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   void UnmuteAudioContexts();
 
   void SetAudioCapture(bool aCapture);
+
+  /**
+   * Associate this inner window with a MediaKeys instance.
+   */
+  void AddMediaKeysInstance(mozilla::dom::MediaKeys* aMediaKeysInstance);
+
+  /**
+   * Remove an association between this inner window and a MediaKeys instance.
+   */
+  void RemoveMediaKeysInstance(mozilla::dom::MediaKeys* aMediaKeysInstance);
+
+  /**
+   * Return if any MediaKeys instances are associated with this window.
+   */
+  bool HasActiveMediaKeysInstance();
 
   mozilla::dom::Performance* GetPerformance();
 
@@ -641,6 +657,11 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   // The AudioContexts created for the current document, if any.
   nsTArray<mozilla::dom::AudioContext*> mAudioContexts;  // Weak
 
+  // Instances of MediaKeys created in this inner window. Storing these allows
+  // us to shutdown MediaKeys when an inner windows is destroyed. We can also
+  // use the presence of MediaKeys to assess if a window has EME activity.
+  nsTArray<mozilla::dom::MediaKeys*> mMediaKeysInstances;  // Weak
+
   RefPtr<mozilla::dom::BrowsingContext> mBrowsingContext;
 
   // A unique (as long as our 64-bit counter doesn't roll over) id for
@@ -736,8 +757,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   mozilla::dom::Element* GetFrameElementInternal() const;
   void SetFrameElementInternal(mozilla::dom::Element* aFrameElement);
 
-  bool IsActive() { return mIsActive; }
-
   void SetDesktopModeViewport(bool aDesktopModeViewport) {
     mDesktopModeViewport = aDesktopModeViewport;
   }
@@ -766,8 +785,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
 
   virtual nsPIDOMWindowOuter* GetPrivateRoot() = 0;
 
-  virtual void ActivateOrDeactivate(bool aActivate) = 0;
-
   /**
    * |top| gets the root of the window hierarchy.
    *
@@ -793,10 +810,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
    * returns null if GetInProcessScriptableParent would return this window.
    */
   virtual nsPIDOMWindowOuter* GetInProcessScriptableParentOrNull() = 0;
-
-  virtual bool IsTopLevelWindowActive() = 0;
-
-  virtual void SetActive(bool aActive) { mIsActive = aActive; }
 
   virtual void SetIsBackground(bool aIsBackground) = 0;
 
@@ -1090,9 +1103,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   RefPtr<mozilla::dom::BrowsingContext> mBrowsingContext;
 
   uint32_t mModalStateDepth;
-
-  // Tracks activation state that's used for :-moz-window-inactive.
-  bool mIsActive;
 
   // Tracks whether our docshell is active.  If it is, mIsBackground
   // is false.  Too bad we have so many different concepts of

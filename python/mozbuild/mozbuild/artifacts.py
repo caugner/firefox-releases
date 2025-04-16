@@ -118,6 +118,7 @@ class ArtifactJob(object):
     test_artifact_patterns = {
         ("bin/BadCertAndPinningServer", ("bin", "bin")),
         ("bin/DelegatedCredentialsServer", ("bin", "bin")),
+        ("bin/EncryptedClientHelloServer", ("bin", "bin")),
         ("bin/GenerateOCSPResponse", ("bin", "bin")),
         ("bin/OCSPStaplingServer", ("bin", "bin")),
         ("bin/SanctionsTestServer", ("bin", "bin")),
@@ -547,21 +548,7 @@ class MacArtifactJob(ArtifactJob):
             "crashreporter.app/Contents/MacOS/crashreporter",
             "{product}",
             "{product}-bin",
-            "libfreebl3.dylib",
-            "libgraphitewasm.dylib",
-            "liblgpllibs.dylib",
-            # 'liblogalloc.dylib',
-            "libmozglue.dylib",
-            "libnss3.dylib",
-            "libnssckbi.dylib",
-            "libplugin_child_interpose.dylib",
-            # 'libreplace_jemalloc.dylib',
-            # 'libreplace_malloc.dylib',
-            "libmozavutil.dylib",
-            "libmozavcodec.dylib",
-            "liboggwasm.dylib",
-            "libosclientcerts.dylib",
-            "libsoftokn3.dylib",
+            "*.dylib",
             "minidump-analyzer",
             "pingsender",
             "plugin-container.app/Contents/MacOS/plugin-container",
@@ -688,6 +675,7 @@ class WinArtifactJob(ArtifactJob):
     test_artifact_patterns = {
         ("bin/BadCertAndPinningServer.exe", ("bin", "bin")),
         ("bin/DelegatedCredentialsServer.exe", ("bin", "bin")),
+        ("bin/EncryptedClientHelloServer.exe", ("bin", "bin")),
         ("bin/GenerateOCSPResponse.exe", ("bin", "bin")),
         ("bin/OCSPStaplingServer.exe", ("bin", "bin")),
         ("bin/SanctionsTestServer.exe", ("bin", "bin")),
@@ -746,14 +734,7 @@ class LinuxThunderbirdArtifactJob(ThunderbirdMixin, LinuxArtifactJob):
 
 
 class MacThunderbirdArtifactJob(ThunderbirdMixin, MacArtifactJob):
-    _paths_no_keep_path = MacArtifactJob._paths_no_keep_path
-    _paths_no_keep_path[1].extend(
-        [
-            "libldap60.dylib",
-            "libldif60.dylib",
-            "libprldap60.dylib",
-        ]
-    )
+    pass
 
 
 class WinThunderbirdArtifactJob(ThunderbirdMixin, WinArtifactJob):

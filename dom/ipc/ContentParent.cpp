@@ -15,15 +15,14 @@
 
 #include "chrome/common/process_watcher.h"
 #include "mozilla/Result.h"
+#include "mozilla/XREAppData.h"
+#include "nsComponentManagerUtils.h"
 #include "nsIBrowserDOMWindow.h"
 
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/PDocAccessible.h"
 #endif
 #include "GeckoProfiler.h"
-#ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
-#endif
 #include "GMPServiceParent.h"
 #include "HandlerServiceParent.h"
 #include "IHistory.h"
@@ -137,6 +136,7 @@
 #include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/CrashReporterHost.h"
+#include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/FileDescriptorSetParent.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/ipc/IPCStreamAlloc.h"
@@ -343,6 +343,10 @@ using namespace mozilla::psm;
 using namespace mozilla::widget;
 using mozilla::loader::PScriptCacheParent;
 using mozilla::Telemetry::ProcessID;
+
+extern mozilla::LazyLogModule gFocusLog;
+
+#define LOGFOCUS(args) MOZ_LOG(gFocusLog, mozilla::LogLevel::Debug, args)
 
 // XXX Workaround for bug 986973 to maintain the existing broken semantics
 template <>
@@ -660,6 +664,10 @@ void ContentParent::StartUp() {
     return;
   }
 
+  // From this point on, NS_WARNING, NS_ASSERTION, etc. should print out the
+  // PID along with the warning.
+  nsDebugImpl::SetMultiprocessMode("Parent");
+
   // Note: This reporter measures all ContentParents.
   RegisterStrongMemoryReporter(new ContentParentsMemoryReporter());
 
@@ -734,8 +742,12 @@ bool IsWebCoopCoepRemoteType(const nsACString& aContentProcessType) {
                           WITH_COOP_COEP_REMOTE_TYPE_PREFIX);
 }
 
-bool IsPriviligedMozillaRemoteType(const nsACString& aContentProcessType) {
+bool IsPrivilegedMozillaRemoteType(const nsACString& aContentProcessType) {
   return aContentProcessType == PRIVILEGEDMOZILLA_REMOTE_TYPE;
+}
+
+bool IsExtensionRemoteType(const nsACString& aContentProcessType) {
+  return aContentProcessType == EXTENSION_REMOTE_TYPE;
 }
 
 /*static*/
@@ -910,9 +922,7 @@ already_AddRefed<ContentParent> ContentParent::GetUsedBrowserProcess(
       if (profiler_thread_is_being_profiled()) {
         nsPrintfCString marker("Reused process %u",
                                (unsigned int)retval->ChildID());
-        TimeStamp now = TimeStamp::Now();
-        PROFILER_ADD_MARKER_WITH_PAYLOAD("Process", DOM, TextMarkerPayload,
-                                         (marker, now, now));
+        PROFILER_MARKER_TEXT("Process", DOM, {}, marker);
       }
 #endif
       MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
@@ -951,9 +961,7 @@ already_AddRefed<ContentParent> ContentParent::GetUsedBrowserProcess(
     if (profiler_thread_is_being_profiled()) {
       nsPrintfCString marker("Recycled process %u (%p)",
                              (unsigned int)recycled->ChildID(), recycled.get());
-      TimeStamp now = TimeStamp::Now();
-      PROFILER_ADD_MARKER_WITH_PAYLOAD("Process", DOM, TextMarkerPayload,
-                                       (marker, now, now));
+      PROFILER_MARKER_TEXT("Process", DOM, {}, marker);
     }
 #endif
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
@@ -976,9 +984,7 @@ already_AddRefed<ContentParent> ContentParent::GetUsedBrowserProcess(
     if (profiler_thread_is_being_profiled()) {
       nsPrintfCString marker("Assigned preallocated process %u",
                              (unsigned int)preallocated->ChildID());
-      TimeStamp now = TimeStamp::Now();
-      PROFILER_ADD_MARKER_WITH_PAYLOAD("Process", DOM, TextMarkerPayload,
-                                       (marker, now, now));
+      PROFILER_MARKER_TEXT("Process", DOM, {}, marker);
     }
 #endif
     MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
@@ -2415,9 +2421,10 @@ bool ContentParent::LaunchSubprocessResolve(bool aIsSync,
     nsPrintfCString marker("Process start%s for %u",
                            mIsAPreallocBlocker ? " (immediate)" : "",
                            (unsigned int)ChildID());
-    PROFILER_ADD_MARKER_WITH_PAYLOAD(
-        mIsAPreallocBlocker ? "Process Immediate Launch" : "Process Launch",
-        DOM, TextMarkerPayload, (marker, mLaunchTS, launchResumeTS));
+    PROFILER_MARKER_TEXT(
+        mIsAPreallocBlocker ? ProfilerString8View("Process Immediate Launch")
+                            : ProfilerString8View("Process Launch"),
+        DOM, MarkerTiming::Interval(mLaunchTS, launchResumeTS), marker);
   }
 #endif
 
@@ -2572,10 +2579,6 @@ ContentParent::ContentParent(const nsACString& aRemoteType, int32_t aJSPluginID)
   sContentParents->insertBack(this);
 
   mMessageManager = nsFrameMessageManager::NewProcessMessageManager(true);
-
-  // From this point on, NS_WARNING, NS_ASSERTION, etc. should print out the
-  // PID along with the warning.
-  nsDebugImpl::SetMultiprocessMode("Parent");
 
 #if defined(XP_WIN)
   if (XRE_IsParentProcess()) {
@@ -3664,6 +3667,19 @@ mozilla::ipc::IPCResult ContentParent::RecvCloneDocumentTreeInto(
     return IPC_OK();
   }
 
+  if (NS_WARN_IF(cp->GetRemoteType() == GetRemoteType())) {
+    // Wanted to switch to a target browsing context that's already local again.
+    // See bug 1676996 for how this can happen.
+    //
+    // Dropping the switch on the floor seems fine for this case, though we
+    // could also try to clone the local document.
+    //
+    // If the remote type matches & it's in the same group (which was confirmed
+    // by CloneIsLegal), it must be the exact same process.
+    MOZ_DIAGNOSTIC_ASSERT(cp == this);
+    return IPC_OK();
+  }
+
   target
       ->ChangeRemoteness(cp->GetRemoteType(), /* aLoadID = */ 0,
                          /* aReplaceBC = */ false, /* aSpecificGroupId = */ 0)
@@ -4306,23 +4322,11 @@ mozilla::ipc::IPCResult ContentParent::RecvExtProtocolChannelConnectParent(
   return IPC_OK();
 }
 
-bool ContentParent::HasNotificationPermission(
-    const IPC::Principal& aPrincipal) {
-  return true;
-}
-
 mozilla::ipc::IPCResult ContentParent::RecvShowAlert(
     nsIAlertNotification* aAlert) {
   if (!aAlert) {
     return IPC_FAIL_NO_REASON(this);
   }
-  nsCOMPtr<nsIPrincipal> principal;
-  nsresult rv = aAlert->GetPrincipal(getter_AddRefs(principal));
-  if (NS_WARN_IF(NS_FAILED(rv)) ||
-      !HasNotificationPermission(IPC::Principal(principal))) {
-    return IPC_OK();
-  }
-
   nsCOMPtr<nsIAlertsService> sysAlerts(components::Alerts::Service());
   if (sysAlerts) {
     sysAlerts->ShowAlert(aAlert, this);
@@ -4330,15 +4334,10 @@ mozilla::ipc::IPCResult ContentParent::RecvShowAlert(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult ContentParent::RecvCloseAlert(
-    const nsString& aName, const IPC::Principal& aPrincipal) {
-  if (!HasNotificationPermission(aPrincipal)) {
-    return IPC_OK();
-  }
-
+mozilla::ipc::IPCResult ContentParent::RecvCloseAlert(const nsString& aName) {
   nsCOMPtr<nsIAlertsService> sysAlerts(components::Alerts::Service());
   if (sysAlerts) {
-    sysAlerts->CloseAlert(aName, aPrincipal);
+    sysAlerts->CloseAlert(aName);
   }
 
   return IPC_OK();
@@ -4346,17 +4345,13 @@ mozilla::ipc::IPCResult ContentParent::RecvCloseAlert(
 
 mozilla::ipc::IPCResult ContentParent::RecvDisableNotifications(
     const IPC::Principal& aPrincipal) {
-  if (HasNotificationPermission(aPrincipal)) {
-    Unused << Notification::RemovePermission(aPrincipal);
-  }
+  Unused << Notification::RemovePermission(aPrincipal);
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvOpenNotificationSettings(
     const IPC::Principal& aPrincipal) {
-  if (HasNotificationPermission(aPrincipal)) {
-    Unused << Notification::OpenSettings(aPrincipal);
-  }
+  Unused << Notification::OpenSettings(aPrincipal);
   return IPC_OK();
 }
 
@@ -4436,7 +4431,7 @@ static int32_t AddGeolocationListener(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvAddGeolocationListener(
-    const IPC::Principal& aPrincipal, const bool& aHighAccuracy) {
+    const bool& aHighAccuracy) {
   // To ensure no geolocation updates are skipped, we always force the
   // creation of a new listener.
   RecvRemoveGeolocationListener();
@@ -4643,8 +4638,7 @@ nsresult ContentParent::DoSendAsyncMessage(const nsAString& aMessage,
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvCopyFavicon(
-    nsIURI* aOldURI, nsIURI* aNewURI, const IPC::Principal& aLoadingPrincipal,
-    const bool& aInPrivateBrowsing) {
+    nsIURI* aOldURI, nsIURI* aNewURI, const bool& aInPrivateBrowsing) {
   if (!aOldURI) {
     return IPC_FAIL(this, "aOldURI should not be null");
   }
@@ -4652,8 +4646,7 @@ mozilla::ipc::IPCResult ContentParent::RecvCopyFavicon(
     return IPC_FAIL(this, "aNewURI should not be null");
   }
 
-  nsDocShell::CopyFavicon(aOldURI, aNewURI, aLoadingPrincipal,
-                          aInPrivateBrowsing);
+  nsDocShell::CopyFavicon(aOldURI, aNewURI, aInPrivateBrowsing);
   return IPC_OK();
 }
 
@@ -4832,7 +4825,7 @@ void ContentParent::NotifyUpdatedDictionaries() {
   RefPtr<mozSpellChecker> spellChecker(mozSpellChecker::Create());
   MOZ_ASSERT(spellChecker, "No spell checker?");
 
-  nsTArray<nsString> dictionaries;
+  nsTArray<nsCString> dictionaries;
   spellChecker->GetDictionaryList(&dictionaries);
 
   for (auto* cp : AllProcesses(eLive)) {
@@ -6592,19 +6585,21 @@ mozilla::ipc::IPCResult ContentParent::RecvWindowBlur(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvRaiseWindow(
-    const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType) {
+    const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
+    uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
         ("ParentIPC: Trying to send a message to dead or detached context"));
     return IPC_OK();
   }
+
   CanonicalBrowsingContext* context = aContext.get_canonical();
 
   ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
   ContentParent* cp =
       cpm->GetContentProcessById(ContentParentId(context->OwnerProcessId()));
-  Unused << cp->SendRaiseWindow(context, aCallerType);
+  Unused << cp->SendRaiseWindow(context, aCallerType, aActionId);
   return IPC_OK();
 }
 
@@ -6673,7 +6668,7 @@ mozilla::ipc::IPCResult ContentParent::RecvSetFocusedBrowsingContext(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvSetActiveBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
@@ -6683,19 +6678,29 @@ mozilla::ipc::IPCResult ContentParent::RecvSetActiveBrowsingContext(
   CanonicalBrowsingContext* context = aContext.get_canonical();
 
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (fm) {
-    fm->SetActiveBrowsingContextInChrome(context);
+  if (!fm) {
+    return IPC_OK();
+  }
+
+  if (!fm->SetActiveBrowsingContextInChrome(context, aActionId)) {
+    LOGFOCUS(
+        ("Ignoring out-of-sequence attempt [%p] to set active browsing context "
+         "in parent.",
+         context));
+    Unused << SendReviseActiveBrowsingContext(
+        fm->GetActiveBrowsingContextInChrome(), aActionId);
+    return IPC_OK();
   }
 
   context->Group()->EachOtherParent(this, [&](ContentParent* aParent) {
-    Unused << aParent->SendSetActiveBrowsingContext(context);
+    Unused << aParent->SendSetActiveBrowsingContext(context, aActionId);
   });
 
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvUnsetActiveBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
@@ -6705,14 +6710,22 @@ mozilla::ipc::IPCResult ContentParent::RecvUnsetActiveBrowsingContext(
   CanonicalBrowsingContext* context = aContext.get_canonical();
 
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (fm) {
-    if (context == fm->GetActiveBrowsingContextInChrome()) {
-      fm->SetActiveBrowsingContextInChrome(nullptr);
-    }
+  if (!fm) {
+    return IPC_OK();
+  }
+
+  if (!fm->SetActiveBrowsingContextInChrome(nullptr, aActionId)) {
+    LOGFOCUS(
+        ("Ignoring out-of-sequence attempt to unset active browsing context in "
+         "parent [%p].",
+         context));
+    Unused << SendReviseActiveBrowsingContext(
+        fm->GetActiveBrowsingContextInChrome(), aActionId);
+    return IPC_OK();
   }
 
   context->Group()->EachOtherParent(this, [&](ContentParent* aParent) {
-    Unused << aParent->SendUnsetActiveBrowsingContext(context);
+    Unused << aParent->SendUnsetActiveBrowsingContext(context, aActionId);
   });
 
   return IPC_OK();
@@ -6757,13 +6770,22 @@ mozilla::ipc::IPCResult ContentParent::RecvFinalizeFocusOuter(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentParent::RecvInsertNewFocusActionId(
+    uint64_t aActionId) {
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
+  if (fm) {
+    fm->InsertNewFocusActionId(aActionId);
+  }
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentParent::RecvBlurToParent(
     const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
     const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
     const MaybeDiscarded<BrowsingContext>& aAncestorBrowsingContextToFocus,
     bool aIsLeavingDocument, bool aAdjustWidget,
     bool aBrowsingContextToClearHandled,
-    bool aAncestorBrowsingContextToFocusHandled) {
+    bool aAncestorBrowsingContextToFocusHandled, uint64_t aActionId) {
   if (aFocusedBrowsingContext.IsNullOrDiscarded()) {
     MOZ_LOG(
         BrowsingContext::GetLog(), LogLevel::Debug,
@@ -6804,9 +6826,10 @@ mozilla::ipc::IPCResult ContentParent::RecvBlurToParent(
 
   ContentParent* cp = cpm->GetContentProcessById(
       ContentParentId(focusedBrowsingContext->OwnerProcessId()));
-  Unused << cp->SendBlurToChild(
-      aFocusedBrowsingContext, aBrowsingContextToClear,
-      aAncestorBrowsingContextToFocus, aIsLeavingDocument, aAdjustWidget);
+  Unused << cp->SendBlurToChild(aFocusedBrowsingContext,
+                                aBrowsingContextToClear,
+                                aAncestorBrowsingContextToFocus,
+                                aIsLeavingDocument, aAdjustWidget, aActionId);
   return IPC_OK();
 }
 
@@ -6988,10 +7011,12 @@ mozilla::ipc::IPCResult ContentParent::RecvHistoryCommit(
 
 mozilla::ipc::IPCResult ContentParent::RecvHistoryGo(
     const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
-    uint64_t aHistoryEpoch, HistoryGoResolver&& aResolveRequestedIndex) {
+    uint64_t aHistoryEpoch, bool aRequireUserInteraction,
+    HistoryGoResolver&& aResolveRequestedIndex) {
   if (!aContext.IsDiscarded()) {
-    aContext.get_canonical()->HistoryGo(aOffset, aHistoryEpoch, Some(ChildID()),
-                                        std::move(aResolveRequestedIndex));
+    aContext.get_canonical()->HistoryGo(
+        aOffset, aHistoryEpoch, aRequireUserInteraction, Some(ChildID()),
+        std::move(aResolveRequestedIndex));
   }
   return IPC_OK();
 }

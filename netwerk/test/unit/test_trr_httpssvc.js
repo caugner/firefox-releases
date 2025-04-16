@@ -39,7 +39,6 @@ function setup() {
   do_get_profile();
   prefs = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefBranch);
 
-  prefs.setBoolPref("network.security.esni.enabled", false);
   prefs.setBoolPref("network.http.spdy.enabled", true);
   prefs.setBoolPref("network.http.spdy.enabled.http2", true);
   // the TRR server is on 127.0.0.1
@@ -69,7 +68,6 @@ function setup() {
 if (!inChildProcess()) {
   setup();
   registerCleanupFunction(() => {
-    prefs.clearUserPref("network.security.esni.enabled");
     prefs.clearUserPref("network.http.spdy.enabled");
     prefs.clearUserPref("network.http.spdy.enabled.http2");
     prefs.clearUserPref("network.dns.localDomains");
@@ -134,9 +132,9 @@ add_task(async function testHTTPSSVC() {
   Assert.equal(answer[0].priority, 1);
   Assert.equal(answer[0].name, "h3pool");
   Assert.equal(answer[0].values.length, 6);
-  Assert.equal(
+  Assert.deepEqual(
     answer[0].values[0].QueryInterface(Ci.nsISVCParamAlpn).alpn,
-    "h2,h3",
+    ["h2", "h3"],
     "got correct answer"
   );
   Assert.ok(
@@ -168,9 +166,9 @@ add_task(async function testHTTPSSVC() {
   Assert.equal(answer[1].priority, 2);
   Assert.equal(answer[1].name, "test.httpssvc.com");
   Assert.equal(answer[1].values.length, 4);
-  Assert.equal(
+  Assert.deepEqual(
     answer[1].values[0].QueryInterface(Ci.nsISVCParamAlpn).alpn,
-    "h2",
+    ["h2"],
     "got correct answer"
   );
   Assert.equal(
@@ -209,7 +207,9 @@ add_task(async function testHTTPSSVC() {
 
 add_task(async function test_aliasform() {
   let trrServer = new TRRServer();
-  registerCleanupFunction(async () => trrServer.stop());
+  registerCleanupFunction(async () => {
+    await trrServer.stop();
+  });
   await trrServer.start();
   dump(`port = ${trrServer.port}\n`);
 
@@ -310,7 +310,7 @@ add_task(async function test_aliasform() {
         priority: 1,
         name: "h3pool",
         values: [
-          { key: "alpn", value: "h2,h3" },
+          { key: "alpn", value: ["h2", "h3"] },
           { key: "no-default-alpn" },
           { key: "port", value: 8888 },
           { key: "ipv4hint", value: "1.2.3.4" },
@@ -396,7 +396,7 @@ add_task(async function test_aliasform() {
         priority: 1,
         name: "h3pool",
         values: [
-          { key: "alpn", value: "h2,h3" },
+          { key: "alpn", value: ["h2", "h3"] },
           { key: "no-default-alpn" },
           { key: "port", value: 8888 },
           { key: "ipv4hint", value: "1.2.3.4" },
@@ -452,7 +452,7 @@ add_task(async function test_aliasform() {
           { key: "ipv4hint", value: "1.2.3.4" },
           { key: "port", value: 8888 },
           { key: "no-default-alpn" },
-          { key: "alpn", value: "h2,h3" },
+          { key: "alpn", value: ["h2", "h3"] },
         ],
       },
     },
@@ -487,8 +487,8 @@ add_task(async function test_aliasform() {
         priority: 1,
         name: "h3pool",
         values: [
-          { key: "alpn", value: "h2,h3" },
-          { key: "alpn", value: "h2,h3,h4" },
+          { key: "alpn", value: ["h2", "h3"] },
+          { key: "alpn", value: ["h2", "h3", "h4"] },
         ],
       },
     },
@@ -524,7 +524,7 @@ add_task(async function test_aliasform() {
         name: "h3pool",
         values: [
           { key: "mandatory", value: ["key100"] },
-          { key: "alpn", value: "h2,h3" },
+          { key: "alpn", value: ["h2", "h3"] },
           { key: "key100" },
         ],
       },
@@ -568,7 +568,7 @@ add_task(async function test_aliasform() {
               "ipv6hint",
             ],
           },
-          { key: "alpn", value: "h2,h3" },
+          { key: "alpn", value: ["h2", "h3"] },
           { key: "no-default-alpn" },
           { key: "port", value: 8888 },
           { key: "ipv4hint", value: "1.2.3.4" },
@@ -634,7 +634,7 @@ add_task(async function test_aliasform() {
       data: {
         priority: 1,
         name: ".",
-        values: [{ key: "alpn", value: "h2,h3" }],
+        values: [{ key: "alpn", value: ["h2", "h3"] }],
       },
     },
   ]);

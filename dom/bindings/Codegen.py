@@ -1650,7 +1650,8 @@ def UnionTypes(unionTypes, config):
                     headers.add("mozilla/dom/ToJSValue.h")
                 elif f.isInterface():
                     if f.isSpiderMonkeyInterface():
-                        headers.add("jsfriendapi.h")
+                        headers.add("js/RootingAPI.h")
+                        headers.add("js/Value.h")
                         if f.isReadableStream():
                             headers.add("mozilla/dom/ReadableStream.h")
                         else:
@@ -1765,7 +1766,7 @@ def UnionConversions(unionTypes, config):
                     headers.add("mozilla/dom/ToJSValue.h")
                 elif f.isInterface():
                     if f.isSpiderMonkeyInterface():
-                        headers.add("jsfriendapi.h")
+                        headers.add("js/RootingAPI.h")
                         if f.isReadableStream():
                             headers.add("mozilla/dom/ReadableStream.h")
                         else:
@@ -8540,7 +8541,9 @@ def getRetvalDeclarationForType(returnType, descriptorProvider, isMember=False):
             return CGGeneric("nsString"), "ref", None, None, None
         return CGGeneric("DOMString"), "ref", None, None, None
     if returnType.isByteString() or returnType.isUTF8String():
-        return CGGeneric("nsCString"), "ref", None, None, None
+        if isMember:
+            return CGGeneric("nsCString"), "ref", None, None, None
+        return CGGeneric("nsAutoCString"), "ref", None, None, None
     if returnType.isEnum():
         result = CGGeneric(returnType.unroll().inner.identifier.name)
         if returnType.nullable():
@@ -9191,7 +9194,7 @@ class CGPerSignatureCall(CGThing):
                 CGGeneric(
                     dedent(
                         """
-                DeprecationWarning(cx, obj, Document::e%s);
+                DeprecationWarning(cx, obj, DeprecatedOperations::e%s);
                 """
                         % deprecated[0]
                     )
@@ -11483,7 +11486,7 @@ class CGSpecializedLenientSetter(CGSpecializedSetter):
         assert all(ord(c) < 128 for c in attrName)
         return dedent(
             """
-            DeprecationWarning(cx, obj, Document::eLenientSetter);
+            DeprecationWarning(cx, obj, DeprecatedOperations::eLenientSetter);
             return true;
             """
         )
@@ -17959,7 +17962,6 @@ class CGBindingRoot(CGThing):
                 "mozilla/dom/BindingDeclarations.h",
                 "mozilla/dom/Nullable.h",
                 "mozilla/ErrorResult.h",
-                "GeckoProfiler.h",
             ),
             True,
         )
@@ -17994,6 +17996,9 @@ class CGBindingRoot(CGThing):
             for d in descriptors
         )
 
+        # XXX Not sure when we actually need this
+        bindingHeaders["GeckoProfiler.h"] = True
+
         def descriptorHasCrossOriginProperties(desc):
             def hasCrossOriginProperty(m):
                 props = memberProperties(m, desc)
@@ -18011,7 +18016,7 @@ class CGBindingRoot(CGThing):
         bindingDeclareHeaders["jsapi.h"] = any(
             descriptorHasCrossOriginProperties(d) for d in descriptors
         )
-        bindingDeclareHeaders["jspubtd.h"] = not bindingDeclareHeaders["jsapi.h"]
+        bindingDeclareHeaders["js/TypeDecls.h"] = not bindingDeclareHeaders["jsapi.h"]
         bindingDeclareHeaders["js/RootingAPI.h"] = not bindingDeclareHeaders["jsapi.h"]
 
         def descriptorHasIteratorAlias(desc):

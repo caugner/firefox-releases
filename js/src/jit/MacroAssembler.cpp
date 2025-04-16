@@ -29,6 +29,7 @@
 #include "jit/MIR.h"
 #include "jit/MoveEmitter.h"
 #include "jit/SharedICHelpers.h"
+#include "jit/SharedICRegisters.h"
 #include "jit/Simulator.h"
 #include "js/Conversions.h"
 #include "js/friend/DOMProxy.h"  // JS::ExpandoAndGeneration
@@ -40,6 +41,7 @@
 #include "vm/TraceLogging.h"
 #include "vm/TypedArrayObject.h"
 #include "wasm/WasmTypes.h"
+#include "wasm/WasmValidate.h"
 
 #include "gc/Nursery-inl.h"
 #include "jit/ABIFunctionList-inl.h"
@@ -47,7 +49,6 @@
 #include "jit/TemplateObject-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -56,365 +57,6 @@ using JS::GenericNaN;
 using JS::ToInt32;
 
 using mozilla::CheckedInt;
-
-template <typename T>
-static void EmitTypeCheck(MacroAssembler& masm, Assembler::Condition cond,
-                          const T& src, TypeSet::Type type, Label* label) {
-  if (type.isAnyObject()) {
-    masm.branchTestObject(cond, src, label);
-    return;
-  }
-  switch (type.primitive()) {
-    case ValueType::Double:
-      // TI double type includes int32.
-      masm.branchTestNumber(cond, src, label);
-      break;
-    case ValueType::Int32:
-      masm.branchTestInt32(cond, src, label);
-      break;
-    case ValueType::Boolean:
-      masm.branchTestBoolean(cond, src, label);
-      break;
-    case ValueType::String:
-      masm.branchTestString(cond, src, label);
-      break;
-    case ValueType::Symbol:
-      masm.branchTestSymbol(cond, src, label);
-      break;
-    case ValueType::BigInt:
-      masm.branchTestBigInt(cond, src, label);
-      break;
-    case ValueType::Null:
-      masm.branchTestNull(cond, src, label);
-      break;
-    case ValueType::Undefined:
-      masm.branchTestUndefined(cond, src, label);
-      break;
-    case ValueType::Magic:
-      masm.branchTestMagic(cond, src, label);
-      break;
-    case ValueType::PrivateGCThing:
-    case ValueType::Object:
-      MOZ_CRASH("Unexpected type");
-  }
-}
-
-template <typename Source>
-void MacroAssembler::guardTypeSet(const Source& address, const TypeSet* types,
-                                  BarrierKind kind, Register unboxScratch,
-                                  Register objScratch,
-                                  Register spectreRegToZero, Label* miss) {
-  // unboxScratch may be InvalidReg on 32-bit platforms. It should only be
-  // used for extracting the Value tag or payload.
-  //
-  // objScratch may be InvalidReg if the TypeSet does not contain specific
-  // objects to guard on. It should only be used for guardObjectType.
-  //
-  // spectreRegToZero is a register that will be zeroed by guardObjectType on
-  // speculatively executed paths.
-
-  MOZ_ASSERT(kind == BarrierKind::TypeTagOnly || kind == BarrierKind::TypeSet);
-  MOZ_ASSERT(!types->unknown());
-
-  Label matched;
-  TypeSet::Type tests[] = {TypeSet::Int32Type(),    TypeSet::UndefinedType(),
-                           TypeSet::BooleanType(),  TypeSet::StringType(),
-                           TypeSet::SymbolType(),   TypeSet::BigIntType(),
-                           TypeSet::NullType(),     TypeSet::MagicArgType(),
-                           TypeSet::AnyObjectType()};
-
-  // The double type also implies Int32.
-  // So replace the int32 test with the double one.
-  if (types->hasType(TypeSet::DoubleType())) {
-    MOZ_ASSERT(types->hasType(TypeSet::Int32Type()));
-    tests[0] = TypeSet::DoubleType();
-  }
-
-  unsigned numBranches = 0;
-  for (size_t i = 0; i < mozilla::ArrayLength(tests); i++) {
-    if (types->hasType(tests[i])) {
-      numBranches++;
-    }
-  }
-
-  if (!types->unknownObject() && types->getObjectCount() > 0) {
-    numBranches++;
-  }
-
-  if (numBranches == 0) {
-    MOZ_ASSERT(types->empty());
-    jump(miss);
-    return;
-  }
-
-  Register tag = extractTag(address, unboxScratch);
-
-  // Emit all typed tests.
-  for (size_t i = 0; i < mozilla::ArrayLength(tests); i++) {
-    if (!types->hasType(tests[i])) {
-      continue;
-    }
-
-    if (--numBranches > 0) {
-      EmitTypeCheck(*this, Equal, tag, tests[i], &matched);
-    } else {
-      EmitTypeCheck(*this, NotEqual, tag, tests[i], miss);
-    }
-  }
-
-  // If we don't have specific objects to check for, we're done.
-  if (numBranches == 0) {
-    MOZ_ASSERT(types->unknownObject() || types->getObjectCount() == 0);
-    bind(&matched);
-    return;
-  }
-
-  // Test specific objects.
-  MOZ_ASSERT(objScratch != InvalidReg);
-  MOZ_ASSERT(objScratch != unboxScratch);
-
-  MOZ_ASSERT(numBranches == 1);
-  branchTestObject(NotEqual, tag, miss);
-
-  if (kind != BarrierKind::TypeTagOnly) {
-    Register obj = extractObject(address, unboxScratch);
-    guardObjectType(obj, types, objScratch, spectreRegToZero, miss);
-  } else {
-#ifdef DEBUG
-    Label fail;
-    Register obj = extractObject(address, unboxScratch);
-    guardObjectType(obj, types, objScratch, spectreRegToZero, &fail);
-    jump(&matched);
-
-    bind(&fail);
-    guardTypeSetMightBeIncomplete(types, obj, objScratch, &matched);
-    assumeUnreachable("Unexpected object type");
-#endif
-  }
-
-  bind(&matched);
-}
-
-template <>
-void MacroAssembler::guardTypeSet(const TypedOrValueRegister& reg,
-                                  const TypeSet* types, BarrierKind kind,
-                                  Register unboxScratch, Register objScratch,
-                                  Register spectreRegToZero, Label* miss) {
-  // See guardTypeSet comments above. This is a specialization for
-  // TypedOrValueRegister.
-
-  MOZ_ASSERT(kind == BarrierKind::TypeTagOnly || kind == BarrierKind::TypeSet);
-  MOZ_ASSERT(!types->unknown());
-
-  if (reg.hasValue()) {
-    guardTypeSet(reg.valueReg(), types, kind, unboxScratch, objScratch,
-                 spectreRegToZero, miss);
-    return;
-  }
-
-  MIRType valType = reg.type();
-  MOZ_ASSERT(valType != MIRType::Value);
-
-  if (valType != MIRType::Object) {
-    // Barrier always either succeeds or fails.
-    if (!types->hasType(TypeSet::PrimitiveType(valType))) {
-      jump(miss);
-    }
-    return;
-  }
-
-  if (types->unknownObject()) {
-    // Barrier always succeeds.
-    return;
-  }
-
-  if (types->getObjectCount() == 0) {
-    // Barrier always fails.
-    jump(miss);
-    return;
-  }
-
-  if (kind == BarrierKind::TypeTagOnly) {
-    // Barrier always succeeds. Assert the type matches in DEBUG builds.
-#ifdef DEBUG
-    Label fail, matched;
-    Register obj = reg.typedReg().gpr();
-    guardObjectType(obj, types, objScratch, spectreRegToZero, &fail);
-    jump(&matched);
-
-    bind(&fail);
-    guardTypeSetMightBeIncomplete(types, obj, objScratch, &matched);
-    assumeUnreachable("Unexpected object type");
-
-    bind(&matched);
-#endif
-    return;
-  }
-
-  MOZ_ASSERT(kind == BarrierKind::TypeSet);
-  MOZ_ASSERT(objScratch != InvalidReg);
-
-  // Test specific objects.
-  Register obj = reg.typedReg().gpr();
-  guardObjectType(obj, types, objScratch, spectreRegToZero, miss);
-}
-
-#ifdef DEBUG
-// guardTypeSetMightBeIncomplete is only used in DEBUG builds. If this ever
-// changes, we need to make sure it's Spectre-safe.
-void MacroAssembler::guardTypeSetMightBeIncomplete(const TypeSet* types,
-                                                   Register obj,
-                                                   Register scratch,
-                                                   Label* label) {
-  // Type set guards might miss when an object's group changes. In this case
-  // either its old group's properties will become unknown, or it will change
-  // to a native object with an original unboxed group. Jump to label if this
-  // might have happened for the input object.
-
-  if (types->unknownObject()) {
-    jump(label);
-    return;
-  }
-
-  for (size_t i = 0; i < types->getObjectCount(); i++) {
-    if (JSObject* singleton = getSingletonAndDelayBarrier(types, i)) {
-      movePtr(ImmGCPtr(singleton), scratch);
-      loadPtr(Address(scratch, JSObject::offsetOfGroup()), scratch);
-    } else if (ObjectGroup* group = getGroupAndDelayBarrier(types, i)) {
-      movePtr(ImmGCPtr(group), scratch);
-    } else {
-      continue;
-    }
-    branchTest32(Assembler::NonZero,
-                 Address(scratch, ObjectGroup::offsetOfFlags()),
-                 Imm32(OBJECT_FLAG_UNKNOWN_PROPERTIES), label);
-  }
-}
-#endif
-
-void MacroAssembler::guardObjectType(Register obj, const TypeSet* types,
-                                     Register scratch,
-                                     Register spectreRegToZero, Label* miss) {
-  MOZ_ASSERT(obj != scratch);
-  MOZ_ASSERT(!types->unknown());
-  MOZ_ASSERT(!types->hasType(TypeSet::AnyObjectType()));
-  MOZ_ASSERT_IF(types->getObjectCount() > 0, scratch != InvalidReg);
-
-  // Note: this method elides read barriers on values read from type sets, as
-  // this may be called off thread during Ion compilation. This is
-  // safe to do as the final JitCode object will be allocated during the
-  // incremental GC (or the compilation canceled before we start sweeping),
-  // see CodeGenerator::link. Other callers should use TypeSet::readBarrier
-  // to trigger the barrier on the contents of type sets passed in here.
-  Label matched;
-
-  bool hasSingletons = false;
-  bool hasObjectGroups = false;
-  unsigned numBranches = 0;
-
-  unsigned count = types->getObjectCount();
-  for (unsigned i = 0; i < count; i++) {
-    if (types->hasGroup(i)) {
-      hasObjectGroups = true;
-      numBranches++;
-    } else if (types->hasSingleton(i)) {
-      hasSingletons = true;
-      numBranches++;
-    }
-  }
-
-  if (numBranches == 0) {
-    jump(miss);
-    return;
-  }
-
-  if (JitOptions.spectreObjectMitigationsBarriers) {
-    move32(Imm32(0), scratch);
-  }
-
-  if (hasSingletons) {
-    for (unsigned i = 0; i < count; i++) {
-      JSObject* singleton = getSingletonAndDelayBarrier(types, i);
-      if (!singleton) {
-        continue;
-      }
-
-      if (JitOptions.spectreObjectMitigationsBarriers) {
-        if (--numBranches > 0) {
-          Label next;
-          branchPtr(NotEqual, obj, ImmGCPtr(singleton), &next);
-          spectreMovePtr(NotEqual, scratch, spectreRegToZero);
-          jump(&matched);
-          bind(&next);
-        } else {
-          branchPtr(NotEqual, obj, ImmGCPtr(singleton), miss);
-          spectreMovePtr(NotEqual, scratch, spectreRegToZero);
-        }
-      } else {
-        if (--numBranches > 0) {
-          branchPtr(Equal, obj, ImmGCPtr(singleton), &matched);
-        } else {
-          branchPtr(NotEqual, obj, ImmGCPtr(singleton), miss);
-        }
-      }
-    }
-  }
-
-  if (hasObjectGroups) {
-    comment("has object groups");
-
-    // If Spectre mitigations are enabled, we use the scratch register as
-    // zero register. Without mitigations we can use it to store the group.
-    Address groupAddr(obj, JSObject::offsetOfGroup());
-    if (!JitOptions.spectreObjectMitigationsBarriers) {
-      loadPtr(groupAddr, scratch);
-    }
-
-    for (unsigned i = 0; i < count; i++) {
-      ObjectGroup* group = getGroupAndDelayBarrier(types, i);
-      if (!group) {
-        continue;
-      }
-
-      if (!pendingObjectGroupReadBarriers_.append(group)) {
-        setOOM();
-        return;
-      }
-
-      if (JitOptions.spectreObjectMitigationsBarriers) {
-        if (--numBranches > 0) {
-          Label next;
-          branchPtr(NotEqual, groupAddr, ImmGCPtr(group), &next);
-          spectreMovePtr(NotEqual, scratch, spectreRegToZero);
-          jump(&matched);
-          bind(&next);
-        } else {
-          branchPtr(NotEqual, groupAddr, ImmGCPtr(group), miss);
-          spectreMovePtr(NotEqual, scratch, spectreRegToZero);
-        }
-      } else {
-        if (--numBranches > 0) {
-          branchPtr(Equal, scratch, ImmGCPtr(group), &matched);
-        } else {
-          branchPtr(NotEqual, scratch, ImmGCPtr(group), miss);
-        }
-      }
-    }
-  }
-
-  MOZ_ASSERT(numBranches == 0);
-
-  bind(&matched);
-}
-
-template void MacroAssembler::guardTypeSet(
-    const Address& address, const TypeSet* types, BarrierKind kind,
-    Register unboxScratch, Register objScratch, Register spectreRegToZero,
-    Label* miss);
-template void MacroAssembler::guardTypeSet(
-    const ValueOperand& value, const TypeSet* types, BarrierKind kind,
-    Register unboxScratch, Register objScratch, Register spectreRegToZero,
-    Label* miss);
 
 TrampolinePtr MacroAssembler::preBarrierTrampoline(MIRType type) {
   const JitRuntime* rt = GetJitContext()->runtime->jitRuntime();
@@ -791,13 +433,6 @@ void MacroAssembler::createGCObject(Register obj, Register temp,
     const NativeTemplateObject& ntemplate =
         templateObj.asNativeTemplateObject();
     nDynamicSlots = ntemplate.numDynamicSlots();
-
-    // Arrays with copy on write elements do not need fixed space for an
-    // elements header. The template object, which owns the original
-    // elements, might have another allocation kind.
-    if (ntemplate.denseElementsAreCopyOnWrite()) {
-      allocKind = gc::AllocKind::OBJECT0_BACKGROUND;
-    }
   }
 
   allocateObject(obj, temp, allocKind, nDynamicSlots, initialHeap, fail);
@@ -1196,9 +831,7 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
   if (templateObj.isNative()) {
     const NativeTemplateObject& ntemplate =
         templateObj.asNativeTemplateObject();
-    MOZ_ASSERT_IF(!ntemplate.denseElementsAreCopyOnWrite(),
-                  !ntemplate.hasDynamicElements());
-    MOZ_ASSERT_IF(ntemplate.convertDoubleElements(), ntemplate.isArrayObject());
+    MOZ_ASSERT(!ntemplate.hasDynamicElements());
 
     // If the object has dynamic slots, the slots member has already been
     // filled in.
@@ -1207,10 +840,7 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
                Address(obj, NativeObject::offsetOfSlots()));
     }
 
-    if (ntemplate.denseElementsAreCopyOnWrite()) {
-      storePtr(ImmPtr(ntemplate.getDenseElements()),
-               Address(obj, NativeObject::offsetOfElements()));
-    } else if (ntemplate.isArrayObject()) {
+    if (ntemplate.isArrayObject()) {
       int elementsOffset = NativeObject::offsetOfFixedElements();
 
       computeEffectiveAddress(Address(obj, elementsOffset), temp);
@@ -1225,9 +855,7 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
                                ObjectElements::offsetOfInitializedLength()));
       store32(Imm32(ntemplate.getArrayLength()),
               Address(obj, elementsOffset + ObjectElements::offsetOfLength()));
-      store32(Imm32(ntemplate.convertDoubleElements()
-                        ? ObjectElements::CONVERT_DOUBLE_ELEMENTS
-                        : 0),
+      store32(Imm32(0),
               Address(obj, elementsOffset + ObjectElements::offsetOfFlags()));
       MOZ_ASSERT(!ntemplate.hasPrivate());
     } else if (ntemplate.isArgumentsObject()) {
@@ -1929,26 +1557,6 @@ void MacroAssembler::loadJitActivation(Register dest) {
   loadPtr(Address(dest, offsetof(JSContext, activation_)), dest);
 }
 
-void MacroAssembler::guardGroupHasUnanalyzedNewScript(Register group,
-                                                      Register scratch,
-                                                      Label* fail) {
-  Label noNewScript;
-  load32(Address(group, ObjectGroup::offsetOfFlags()), scratch);
-  and32(Imm32(OBJECT_FLAG_ADDENDUM_MASK), scratch);
-  branch32(Assembler::NotEqual, scratch,
-           Imm32(uint32_t(ObjectGroup::Addendum_NewScript)
-                 << OBJECT_FLAG_ADDENDUM_SHIFT),
-           &noNewScript);
-
-  // Guard group->newScript()->preliminaryObjects is non-nullptr.
-  loadPtr(Address(group, ObjectGroup::offsetOfAddendum()), scratch);
-  branchPtr(Assembler::Equal,
-            Address(scratch, TypeNewScript::offsetOfPreliminaryObjects()),
-            ImmWord(0), fail);
-
-  bind(&noNewScript);
-}
-
 void MacroAssembler::guardSpecificAtom(Register str, JSAtom* atom,
                                        Register scratch,
                                        const LiveRegisterSet& volatileRegs,
@@ -2140,35 +1748,6 @@ void MacroAssembler::loadJitCodeRaw(Register func, Register dest) {
                 "jitCodeRaw_");
   loadPtr(Address(func, JSFunction::offsetOfScript()), dest);
   loadPtr(Address(dest, BaseScript::offsetOfJitCodeRaw()), dest);
-}
-
-void MacroAssembler::loadJitCodeNoArgCheck(Register func, Register dest) {
-#ifdef DEBUG
-  {
-    Label ok;
-    int32_t flags = FunctionFlags::BASESCRIPT;
-    branchTestFunctionFlags(func, flags, Assembler::NonZero, &ok);
-    assumeUnreachable("Function has no BaseScript!");
-    bind(&ok);
-  }
-#endif
-
-  static_assert(ScriptWarmUpData::JitScriptTag == 0,
-                "Code below depends on tag value");
-  Imm32 tagMask(ScriptWarmUpData::TagMask);
-
-  // Read jitCodeSkipArgCheck.
-  loadPtr(Address(func, JSFunction::offsetOfScript()), dest);
-  loadPtr(Address(dest, BaseScript::offsetOfWarmUpData()), dest);
-#ifdef DEBUG
-  {
-    Label ok;
-    branchTestPtr(Assembler::Zero, dest, tagMask, &ok);
-    assumeUnreachable("Function has no JitScript!");
-    bind(&ok);
-  }
-#endif
-  loadPtr(Address(dest, JitScript::offsetOfJitCodeSkipArgCheck()), dest);
 }
 
 void MacroAssembler::loadBaselineJitCodeRaw(Register func, Register dest,
@@ -2818,7 +2397,8 @@ void MacroAssembler::alignJitStackBasedOnNArgs(uint32_t argc) {
 // ===============================================================
 
 MacroAssembler::MacroAssembler(JSContext* cx)
-    : framePushed_(0),
+    : wasmMaxOffsetGuardLimit_(0),
+      framePushed_(0),
 #ifdef DEBUG
       inCall_(false),
 #endif
@@ -2837,7 +2417,8 @@ MacroAssembler::MacroAssembler(JSContext* cx)
 }
 
 MacroAssembler::MacroAssembler()
-    : framePushed_(0),
+    : wasmMaxOffsetGuardLimit_(0),
+      framePushed_(0),
 #ifdef DEBUG
       inCall_(false),
 #endif
@@ -2863,7 +2444,8 @@ MacroAssembler::MacroAssembler()
 }
 
 MacroAssembler::MacroAssembler(WasmToken, TempAllocator& alloc)
-    : framePushed_(0),
+    : wasmMaxOffsetGuardLimit_(0),
+      framePushed_(0),
 #ifdef DEBUG
       inCall_(false),
 #endif
@@ -2881,6 +2463,24 @@ MacroAssembler::MacroAssembler(WasmToken, TempAllocator& alloc)
   SetStackPointer64(sp);
   armbuffer_.id = 0;
 #endif
+}
+
+WasmMacroAssembler::WasmMacroAssembler(TempAllocator& alloc, bool limitedSize)
+    : MacroAssembler(WasmToken(), alloc) {
+  if (!limitedSize) {
+    setUnlimitedBuffer();
+  }
+}
+
+WasmMacroAssembler::WasmMacroAssembler(TempAllocator& alloc,
+                                       const wasm::ModuleEnvironment& env,
+                                       bool limitedSize)
+    : MacroAssembler(WasmToken(), alloc) {
+  setWasmMaxOffsetGuardLimit(
+      wasm::GetMaxOffsetGuardLimit(env.hugeMemoryEnabled()));
+  if (!limitedSize) {
+    setUnlimitedBuffer();
+  }
 }
 
 bool MacroAssembler::icBuildOOLFakeExitFrame(void* fakeReturnAddr,
@@ -3633,15 +3233,6 @@ void MacroAssembler::branchTestObjCompartment(
   branchPtr(cond, scratch, ImmPtr(compartment), label);
 }
 
-void MacroAssembler::branchIfObjGroupHasNoAddendum(Register obj,
-                                                   Register scratch,
-                                                   Label* label) {
-  MOZ_ASSERT(obj != scratch);
-  loadPtr(Address(obj, JSObject::offsetOfGroup()), scratch);
-  branchPtr(Assembler::Equal, Address(scratch, ObjectGroup::offsetOfAddendum()),
-            ImmWord(0), label);
-}
-
 void MacroAssembler::branchIfPretenuredGroup(const ObjectGroup* group,
                                              Register scratch, Label* label) {
   movePtr(ImmGCPtr(group), scratch);
@@ -3649,15 +3240,7 @@ void MacroAssembler::branchIfPretenuredGroup(const ObjectGroup* group,
 }
 
 void MacroAssembler::branchIfPretenuredGroup(Register group, Label* label) {
-  // To check for the pretenured flag we need OBJECT_FLAG_PRETENURED set, and
-  // OBJECT_FLAG_UNKNOWN_PROPERTIES unset, so check the latter first, and don't
-  // branch if it set.
-  Label unknownProperties;
-  branchTest32(Assembler::NonZero, Address(group, ObjectGroup::offsetOfFlags()),
-               Imm32(OBJECT_FLAG_UNKNOWN_PROPERTIES), &unknownProperties);
-  branchTest32(Assembler::NonZero, Address(group, ObjectGroup::offsetOfFlags()),
-               Imm32(OBJECT_FLAG_PRE_TENURE), label);
-  bind(&unknownProperties);
+  // TODO(no-TI): remove.
 }
 
 void MacroAssembler::branchIfNonNativeObj(Register obj, Register scratch,
@@ -3667,11 +3250,15 @@ void MacroAssembler::branchIfNonNativeObj(Register obj, Register scratch,
                Imm32(JSClass::NON_NATIVE), label);
 }
 
-void MacroAssembler::copyObjGroupNoPreBarrier(Register sourceObj,
-                                              Register destObj,
-                                              Register scratch) {
-  loadPtr(Address(sourceObj, JSObject::offsetOfGroup()), scratch);
-  storePtr(scratch, Address(destObj, JSObject::offsetOfGroup()));
+void MacroAssembler::branchIfObjectNotExtensible(Register obj, Register scratch,
+                                                 Label* label) {
+  loadPtr(Address(obj, JSObject::offsetOfShape()), scratch);
+  loadPtr(Address(scratch, Shape::offsetOfBaseShape()), scratch);
+
+  // Spectre-style checks are not needed here because we do not interpret data
+  // based on this check.
+  branchTest32(Assembler::NonZero, Address(scratch, BaseShape::offsetOfFlags()),
+               Imm32(js::BaseShape::NOT_EXTENSIBLE), label);
 }
 
 void MacroAssembler::maybeBranchTestType(MIRType type, MDefinition* maybeDef,
@@ -3878,15 +3465,15 @@ CodeOffset MacroAssembler::wasmCallIndirect(const wasm::CallSiteDesc& desc,
   MOZ_ASSERT(callee.which() == wasm::CalleeDesc::WasmTable);
 
   // Write the functype-id into the ABI functype-id register.
-  wasm::FuncTypeIdDesc funcTypeId = callee.wasmTableSigId();
+  wasm::TypeIdDesc funcTypeId = callee.wasmTableSigId();
   switch (funcTypeId.kind()) {
-    case wasm::FuncTypeIdDescKind::Global:
+    case wasm::TypeIdDescKind::Global:
       loadWasmGlobalPtr(funcTypeId.globalDataOffset(), WasmTableCallSigReg);
       break;
-    case wasm::FuncTypeIdDescKind::Immediate:
+    case wasm::TypeIdDescKind::Immediate:
       move32(Imm32(funcTypeId.immediate()), WasmTableCallSigReg);
       break;
-    case wasm::FuncTypeIdDescKind::None:
+    case wasm::TypeIdDescKind::None:
       break;
   }
 
@@ -4187,7 +3774,7 @@ void MacroAssembler::packedArrayPop(Register array, ValueOperand output,
 
   // Check flags.
   static constexpr uint32_t UnhandledFlags =
-      ObjectElements::Flags::NON_PACKED | ObjectElements::Flags::COPY_ON_WRITE |
+      ObjectElements::Flags::NON_PACKED |
       ObjectElements::Flags::NONWRITABLE_ARRAY_LENGTH |
       ObjectElements::Flags::NOT_EXTENSIBLE |
       ObjectElements::Flags::MAYBE_IN_ITERATION;
@@ -4234,7 +3821,7 @@ void MacroAssembler::packedArrayShift(Register array, ValueOperand output,
 
   // Check flags.
   static constexpr uint32_t UnhandledFlags =
-      ObjectElements::Flags::NON_PACKED | ObjectElements::Flags::COPY_ON_WRITE |
+      ObjectElements::Flags::NON_PACKED |
       ObjectElements::Flags::NONWRITABLE_ARRAY_LENGTH |
       ObjectElements::Flags::NOT_EXTENSIBLE |
       ObjectElements::Flags::MAYBE_IN_ITERATION;
@@ -4524,59 +4111,6 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
   storePtr(ImmPtr(nullptr), Address(temp1, NativeIterator::offsetOfNext()));
   storePtr(ImmPtr(nullptr), Address(temp1, NativeIterator::offsetOfPrev()));
 #endif
-}
-
-template <typename T, size_t N, typename P>
-static bool AddPendingReadBarrier(Vector<T*, N, P>& list, T* value) {
-  // Check if value is already present in tail of list.
-  // TODO: Consider using a hash table here.
-  const size_t TailWindow = 4;
-
-  size_t len = list.length();
-  for (size_t i = 0; i < std::min(len, TailWindow); i++) {
-    if (list[len - i - 1] == value) {
-      return true;
-    }
-  }
-
-  return list.append(value);
-}
-
-JSObject* MacroAssembler::getSingletonAndDelayBarrier(const TypeSet* types,
-                                                      size_t i) {
-  JSObject* object = types->getSingletonNoBarrier(i);
-  if (!object) {
-    return nullptr;
-  }
-
-  if (!AddPendingReadBarrier(pendingObjectReadBarriers_, object)) {
-    setOOM();
-  }
-
-  return object;
-}
-
-ObjectGroup* MacroAssembler::getGroupAndDelayBarrier(const TypeSet* types,
-                                                     size_t i) {
-  ObjectGroup* group = types->getGroupNoBarrier(i);
-  if (!group) {
-    return nullptr;
-  }
-
-  if (!AddPendingReadBarrier(pendingObjectGroupReadBarriers_, group)) {
-    setOOM();
-  }
-
-  return group;
-}
-
-void MacroAssembler::performPendingReadBarriers() {
-  for (JSObject* object : pendingObjectReadBarriers_) {
-    gc::ReadBarrier(object);
-  }
-  for (ObjectGroup* group : pendingObjectGroupReadBarriers_) {
-    gc::ReadBarrier(group);
-  }
 }
 
 // Can't push large frames blindly on windows, so we must touch frame memory

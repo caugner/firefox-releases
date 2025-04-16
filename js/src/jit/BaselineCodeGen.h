@@ -87,7 +87,6 @@ class BaselineCodeGen {
   void pushUint16BytecodeOperandArg(Register scratch);
 
   void loadInt32LengthBytecodeOperand(Register dest);
-  void loadInt32IndexBytecodeOperand(ValueOperand dest);
   void loadNumFormalArguments(Register dest);
 
   // Loads the current JSScript* in dest.
@@ -231,7 +230,6 @@ class BaselineCodeGen {
   MOZ_MUST_USE bool emitSetPropSuper(bool strict);
 
   MOZ_MUST_USE bool emitBindName(JSOp op);
-  MOZ_MUST_USE bool emitDefLexical(JSOp op);
 
   // Try to bake in the result of GETGNAME/BINDGNAME instead of using an IC.
   // Return true if we managed to optimize the op.
@@ -256,7 +254,6 @@ class BaselineCodeGen {
   MOZ_MUST_USE bool emitEpilogue();
   MOZ_MUST_USE bool emitOutOfLinePostBarrierSlot();
   MOZ_MUST_USE bool emitStackCheck();
-  MOZ_MUST_USE bool emitArgumentTypeChecks();
   MOZ_MUST_USE bool emitDebugPrologue();
   MOZ_MUST_USE bool emitDebugEpilogue();
 

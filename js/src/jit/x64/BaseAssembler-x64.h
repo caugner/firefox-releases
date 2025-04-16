@@ -200,6 +200,18 @@ class BaseAssemblerX64 : public BaseAssembler {
     m_formatter.twoByteOp64(OP2_BSF_GvEv, src, dst);
   }
 
+  void lzcntq_rr(RegisterID src, RegisterID dst) {
+    spew("lzcntq     %s, %s", GPReg64Name(src), GPReg64Name(dst));
+    m_formatter.legacySSEPrefix(VEX_SS);
+    m_formatter.twoByteOp64(OP2_LZCNT_GvEv, src, dst);
+  }
+
+  void tzcntq_rr(RegisterID src, RegisterID dst) {
+    spew("tzcntq     %s, %s", GPReg64Name(src), GPReg64Name(dst));
+    m_formatter.legacySSEPrefix(VEX_SS);
+    m_formatter.twoByteOp64(OP2_TZCNT_GvEv, src, dst);
+  }
+
   void popcntq_rr(RegisterID src, RegisterID dst) {
     spew("popcntq    %s, %s", GPReg64Name(src), GPReg64Name(dst));
     m_formatter.legacySSEPrefix(VEX_SS);
@@ -1121,6 +1133,73 @@ class BaseAssemblerX64 : public BaseAssembler {
     return twoByteRipOpSimd("vpcmpgtd", VEX_PD, OP2_PCMPGTD_VdqWdq, invalid_xmm,
                             dst);
   }
+  MOZ_MUST_USE JmpSrc vcmpeqps_ripr(XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmpps", VEX_PS, OP2_CMPPS_VpsWps,
+                               X86Encoding::ConditionCmp_EQ, invalid_xmm, dst);
+  }
+  MOZ_MUST_USE JmpSrc vcmpneqps_ripr(XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmpps", VEX_PS, OP2_CMPPS_VpsWps,
+                               X86Encoding::ConditionCmp_NEQ, invalid_xmm, dst);
+  }
+  MOZ_MUST_USE JmpSrc vcmpltps_ripr(XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmpps", VEX_PS, OP2_CMPPS_VpsWps,
+                               X86Encoding::ConditionCmp_LT, invalid_xmm, dst);
+  }
+  MOZ_MUST_USE JmpSrc vcmpleps_ripr(XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmpps", VEX_PS, OP2_CMPPS_VpsWps,
+                               X86Encoding::ConditionCmp_LE, invalid_xmm, dst);
+  }
+  MOZ_MUST_USE JmpSrc vcmpeqpd_ripr(XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmppd", VEX_PD, OP2_CMPPD_VpdWpd,
+                               X86Encoding::ConditionCmp_EQ, invalid_xmm, dst);
+  }
+  MOZ_MUST_USE JmpSrc vcmpneqpd_ripr(XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmppd", VEX_PD, OP2_CMPPD_VpdWpd,
+                               X86Encoding::ConditionCmp_NEQ, invalid_xmm, dst);
+  }
+  MOZ_MUST_USE JmpSrc vcmpltpd_ripr(XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmppd", VEX_PD, OP2_CMPPD_VpdWpd,
+                               X86Encoding::ConditionCmp_LT, invalid_xmm, dst);
+  }
+  MOZ_MUST_USE JmpSrc vcmplepd_ripr(XMMRegisterID dst) {
+    return twoByteRipOpImmSimd("vcmppd", VEX_PD, OP2_CMPPD_VpdWpd,
+                               X86Encoding::ConditionCmp_LE, invalid_xmm, dst);
+  }
+
+  // BMI instructions:
+
+  void sarxq_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
+    spew("sarxq      %s, %s, %s", GPReg64Name(src), GPReg64Name(shift),
+         GPReg64Name(dst));
+
+    RegisterID rm = src;
+    XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
+    int reg = dst;
+    m_formatter.threeByteOpVex64(VEX_SS /* = F3 */, OP3_SARX_GyEyBy, ESCAPE_38,
+                                 rm, src0, reg);
+  }
+
+  void shlxq_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
+    spew("shlxq      %s, %s, %s", GPReg64Name(src), GPReg64Name(shift),
+         GPReg64Name(dst));
+
+    RegisterID rm = src;
+    XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
+    int reg = dst;
+    m_formatter.threeByteOpVex64(VEX_PD /* = 66 */, OP3_SHLX_GyEyBy, ESCAPE_38,
+                                 rm, src0, reg);
+  }
+
+  void shrxq_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
+    spew("shrxq      %s, %s, %s", GPReg64Name(src), GPReg64Name(shift),
+         GPReg64Name(dst));
+
+    RegisterID rm = src;
+    XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
+    int reg = dst;
+    m_formatter.threeByteOpVex64(VEX_SD /* = F2 */, OP3_SHRX_GyEyBy, ESCAPE_38,
+                                 rm, src0, reg);
+  }
 
  private:
   MOZ_MUST_USE JmpSrc twoByteRipOpSimd(const char* name, VexOperandType ty,
@@ -1153,6 +1232,25 @@ class BaseAssemblerX64 : public BaseAssembler {
     } else {
       spew("%-11s" MEM_o32r ", %s, %s", name, ADDR_o32r(label.offset()),
            XMMRegName(src0), XMMRegName(dst));
+    }
+    return label;
+  }
+
+  MOZ_MUST_USE JmpSrc twoByteRipOpImmSimd(const char* name, VexOperandType ty,
+                                          TwoByteOpcodeID opcode, uint32_t imm,
+                                          XMMRegisterID src0,
+                                          XMMRegisterID dst) {
+    MOZ_ASSERT(useLegacySSEEncoding(src0, dst));
+    m_formatter.legacySSEPrefix(ty);
+    m_formatter.twoByteRipOp(opcode, 0, dst);
+    m_formatter.immediate8u(imm);
+    JmpSrc label(m_formatter.size(), /* bytes trailing the patch field = */ 1);
+    if (IsXMMReversedOperands(opcode)) {
+      spew("%-11s$0x%x, %s, " MEM_o32r "", legacySSEOpName(name), imm,
+           XMMRegName(dst), ADDR_o32r(label.offset()));
+    } else {
+      spew("%-11s$0x%x, " MEM_o32r ", %s", legacySSEOpName(name), imm,
+           ADDR_o32r(label.offset()), XMMRegName(dst));
     }
     return label;
   }

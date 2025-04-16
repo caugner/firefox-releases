@@ -738,6 +738,8 @@
 #  define RETURN_STATUS_OR_RESULT(_status, _rv) return _rv
 #endif
 
+class mozIStorageConnection;
+class mozIStorageStatement;
 class nsIFile;
 
 namespace mozilla {
@@ -800,7 +802,7 @@ Result<R, nsresult> ToResultGet(const Func& aFunc, Args&&... aArgs) {
 // Body must a function type accepting a V xvalue with a return type convertible
 // to Result<empty, E>.
 template <typename Step, typename Body>
-auto CollectEach(const Step& aStep, const Body& aBody)
+auto CollectEach(Step aStep, const Body& aBody)
     -> Result<mozilla::Ok, typename std::result_of_t<Step()>::err_type> {
   using StepResultType = typename std::result_of_t<Step()>::ok_type;
 
@@ -819,6 +821,30 @@ auto CollectEach(const Step& aStep, const Body& aBody)
   }
 
   return mozilla::Ok{};
+}
+
+// This is like std::reduce with a to-be-defined execution policy (we don't want
+// to std::terminate on an error, but probably it's fine to just propagate any
+// error that occurred), operating not on a pair of iterators but rather a
+// generator function.
+template <typename InputGenerator, typename T, typename BinaryOp>
+auto ReduceEach(InputGenerator aInputGenerator, T aInit,
+                const BinaryOp& aBinaryOp)
+    -> Result<T, typename std::invoke_result_t<InputGenerator>::err_type> {
+  T res = std::move(aInit);
+
+  // XXX This can be done in parallel!
+  MOZ_TRY(CollectEach(
+      std::move(aInputGenerator),
+      [&res, &aBinaryOp](const auto& element)
+          -> Result<Ok,
+                    typename std::invoke_result_t<InputGenerator>::err_type> {
+        MOZ_TRY_VAR(res, aBinaryOp(std::move(res), element));
+
+        return Ok{};
+      }));
+
+  return std::move(res);
 }
 
 template <typename Range, typename Body>
@@ -953,6 +979,36 @@ nsDependentCSubstring GetLeafName(const nsACString& aPath);
 Result<nsCOMPtr<nsIFile>, nsresult> CloneFileAndAppend(
     nsIFile& aDirectory, const nsAString& aPathElement);
 
+Result<nsCOMPtr<mozIStorageStatement>, nsresult> CreateStatement(
+    mozIStorageConnection& aConnection, const nsACString& aStatementString);
+
+enum class SingleStepResult { AssertHasResult, ReturnNullIfNoResult };
+
+template <SingleStepResult ResultHandling>
+using SingleStepSuccessType =
+    std::conditional_t<ResultHandling == SingleStepResult::AssertHasResult,
+                       NotNull<nsCOMPtr<mozIStorageStatement>>,
+                       nsCOMPtr<mozIStorageStatement>>;
+
+template <SingleStepResult ResultHandling>
+Result<SingleStepSuccessType<ResultHandling>, nsresult> ExecuteSingleStep(
+    nsCOMPtr<mozIStorageStatement>&& aStatement);
+
+// Creates a statement with the specified aStatementString, executes a single
+// step, and returns the statement.
+// Depending on the value ResultHandling,
+// - it is asserted that there is a result (default resp.
+//   SingleStepResult::AssertHasResult), and the success type is
+//   MovingNotNull<nsCOMPtr<mozIStorageStatement>>
+// - it is asserted that there is no result, and the success type is Ok
+// - in case there is no result, nullptr is returned, and the success type is
+//   nsCOMPtr<mozIStorageStatement>
+// Any other errors are always propagated.
+template <SingleStepResult ResultHandling = SingleStepResult::AssertHasResult>
+Result<SingleStepSuccessType<ResultHandling>, nsresult>
+CreateAndExecuteSingleStepStatement(mozIStorageConnection& aConnection,
+                                    const nsACString& aStatementString);
+
 void LogError(const nsLiteralCString& aModule, const nsACString& aExpr,
               const nsACString& aSourceFile, int32_t aSourceLine);
 
@@ -968,6 +1024,7 @@ Result<bool, nsresult> WarnIfFileIsUnknown(nsIFile& aFile,
 
 struct MOZ_STACK_CLASS ScopedLogExtraInfo {
   static constexpr const char kTagQuery[] = "query";
+  static constexpr const char kTagContext[] = "context";
 
 #ifdef QM_ENABLE_SCOPED_LOG_EXTRA_INFO
  private:
@@ -1005,6 +1062,7 @@ struct MOZ_STACK_CLASS ScopedLogExtraInfo {
   nsCString mCurrentValue;
 
   static MOZ_THREAD_LOCAL(const nsACString*) sQueryValue;
+  static MOZ_THREAD_LOCAL(const nsACString*) sContextValue;
 
   void AddInfo();
 #else
@@ -1045,6 +1103,19 @@ struct MOZ_STACK_CLASS ScopedLogExtraInfo {
 // directly, they should only be called from the QM_* macros.
 
 QM_META_HANDLE_ERROR("QuotaManager"_ns)
+
+template <SingleStepResult ResultHandling = SingleStepResult::AssertHasResult,
+          typename BindFunctor>
+Result<SingleStepSuccessType<ResultHandling>, nsresult>
+CreateAndExecuteSingleStepStatement(mozIStorageConnection& aConnection,
+                                    const nsACString& aStatementString,
+                                    BindFunctor aBindFunctor) {
+  QM_TRY_UNWRAP(auto stmt, CreateStatement(aConnection, aStatementString));
+
+  QM_TRY(aBindFunctor(*stmt));
+
+  return ExecuteSingleStep<ResultHandling>(std::move(stmt));
+}
 
 }  // namespace quota
 }  // namespace dom

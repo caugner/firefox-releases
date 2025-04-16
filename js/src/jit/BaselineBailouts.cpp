@@ -13,6 +13,7 @@
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
 #include "jit/CalleeToken.h"
+#include "jit/Invalidation.h"
 #include "jit/Ion.h"
 #include "jit/IonScript.h"
 #include "jit/JitFrames.h"
@@ -22,6 +23,7 @@
 #include "jit/mips64/Simulator-mips64.h"
 #include "jit/Recover.h"
 #include "jit/RematerializedFrame.h"
+#include "jit/SharedICRegisters.h"
 #include "js/friend/StackLimits.h"  // js::CheckRecursionLimitWithStackPointerDontReport, js::ReportOverRecursed
 #include "js/Utility.h"
 #include "util/Memory.h"
@@ -366,8 +368,6 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
 
   void setResumeAddr(void* resumeAddr) { header_->resumeAddr = resumeAddr; }
 
-  void setMonitorPC(jsbytecode* pc) { header_->monitorPC = pc; }
-
   void setFrameSizeOfInnerMostFrame(uint32_t size) {
     header_->frameSizeOfInnerMostFrame = size;
   }
@@ -606,103 +606,75 @@ bool BaselineStackBuilder::buildBaselineFrame() {
     flags |= BaselineFrame::DEBUGGEE;
   }
 
+  // Get |envChain|.
   JSObject* envChain = nullptr;
-  Value returnValue = UndefinedValue();
-  ArgumentsObject* argsObj = nullptr;
+  Value envChainSlot = iter_.read();
+  if (envChainSlot.isObject()) {
+    // The env slot has been updated from UndefinedValue. It must be the
+    // complete initial environment.
+    envChain = &envChainSlot.toObject();
 
-  BailoutKind bailoutKind = iter_.bailoutKind();
-  if (bailoutKind == BailoutKind::ArgumentCheck) {
-    // We may fail before the envChain slot is set. Skip it and use
-    // the function's initial environment.  This will be fixed up
-    // later if needed in |FinishBailoutToBaseline|, which calls
-    // |EnsureHasEnvironmentObjects|.
-    JitSpew(JitSpew_BaselineBailouts,
-            "      BailoutKind::ArgumentCheck! Using function's environment");
-    envChain = fun_->environment();
-
-    // Skip envChain.
-    iter_.skip();
-
-    // Skip return value.
-    iter_.skip();
-
-    // Scripts with |argumentsHasVarBinding| have an extra slot.
-    // Skip argsObj if present.
-    if (script_->argumentsHasVarBinding()) {
-      JitSpew(JitSpew_BaselineBailouts,
-              "      BailoutKind::ArgumentCheck for script with "
-              "argumentsHasVarBinding! "
-              "Using empty arguments object");
-      iter_.skip();
+    // Set the HAS_INITIAL_ENV flag if needed.
+    if (fun_ && fun_->needsFunctionEnvironmentObjects()) {
+      MOZ_ASSERT(fun_->nonLazyScript()->initialEnvironmentShape());
+      MOZ_ASSERT(!fun_->needsExtraBodyVarEnvironment());
+      flags |= BaselineFrame::HAS_INITIAL_ENV;
     }
   } else {
-    // Get |envChain|.
-    Value envChainSlot = iter_.read();
-    if (envChainSlot.isObject()) {
-      // The env slot has been updated from UndefinedValue. It must be the
-      // complete initial environment.
-      envChain = &envChainSlot.toObject();
+    MOZ_ASSERT(envChainSlot.isUndefined() ||
+               envChainSlot.isMagic(JS_OPTIMIZED_OUT));
+    MOZ_ASSERT(envChainSlotCanBeOptimized());
 
-      // Set the HAS_INITIAL_ENV flag if needed.
-      if (fun_ && fun_->needsFunctionEnvironmentObjects()) {
-        MOZ_ASSERT(fun_->nonLazyScript()->initialEnvironmentShape());
-        MOZ_ASSERT(!fun_->needsExtraBodyVarEnvironment());
-        flags |= BaselineFrame::HAS_INITIAL_ENV;
-      }
+    // The env slot has been optimized out.
+    // Get it from the function or script.
+    if (fun_) {
+      envChain = fun_->environment();
+    } else if (script_->module()) {
+      envChain = script_->module()->environment();
     } else {
-      MOZ_ASSERT(envChainSlot.isUndefined() ||
-                 envChainSlot.isMagic(JS_OPTIMIZED_OUT));
-      MOZ_ASSERT(envChainSlotCanBeOptimized());
-
-      // The env slot has been optimized out.
-      // Get it from the function or script.
-      if (fun_) {
-        envChain = fun_->environment();
-      } else if (script_->module()) {
-        envChain = script_->module()->environment();
-      } else {
-        // For global scripts without a non-syntactic env the env
-        // chain is the script's global lexical environment. (We do
-        // not compile scripts with a non-syntactic global scope).
-        // Also note that it's invalid to resume into the prologue in
-        // this case because the prologue expects the env chain in R1
-        // for eval and global scripts.
-        MOZ_ASSERT(!script_->isForEval());
-        MOZ_ASSERT(!script_->hasNonSyntacticScope());
-        envChain = &(script_->global().lexicalEnvironment());
-      }
-    }
-
-    // Get |returnValue| if present.
-    if (script_->noScriptRval()) {
-      // Don't use the return value (likely a JS_OPTIMIZED_OUT MagicValue) to
-      // not confuse Baseline.
-      iter_.skip();
-    } else {
-      returnValue = iter_.read();
-      flags |= BaselineFrame::HAS_RVAL;
-    }
-
-    // Get |argsObj| if present.
-    if (script_->argumentsHasVarBinding()) {
-      Value maybeArgsObj = iter_.read();
-      MOZ_ASSERT(maybeArgsObj.isObject() || maybeArgsObj.isUndefined() ||
-                 maybeArgsObj.isMagic(JS_OPTIMIZED_OUT));
-      if (maybeArgsObj.isObject()) {
-        argsObj = &maybeArgsObj.toObject().as<ArgumentsObject>();
-      }
+      // For global scripts without a non-syntactic env the env
+      // chain is the script's global lexical environment. (We do
+      // not compile scripts with a non-syntactic global scope).
+      // Also note that it's invalid to resume into the prologue in
+      // this case because the prologue expects the env chain in R1
+      // for eval and global scripts.
+      MOZ_ASSERT(!script_->isForEval());
+      MOZ_ASSERT(!script_->hasNonSyntacticScope());
+      envChain = &(script_->global().lexicalEnvironment());
     }
   }
-  MOZ_ASSERT(envChain);
 
   // Write |envChain|.
+  MOZ_ASSERT(envChain);
   JitSpew(JitSpew_BaselineBailouts, "      EnvChain=%p", envChain);
   blFrame()->setEnvironmentChain(envChain);
+
+  // Get |returnValue| if present.
+  Value returnValue = UndefinedValue();
+  if (script_->noScriptRval()) {
+    // Don't use the return value (likely a JS_OPTIMIZED_OUT MagicValue) to
+    // not confuse Baseline.
+    iter_.skip();
+  } else {
+    returnValue = iter_.read();
+    flags |= BaselineFrame::HAS_RVAL;
+  }
 
   // Write |returnValue|.
   JitSpew(JitSpew_BaselineBailouts, "      ReturnValue=%016" PRIx64,
           *((uint64_t*)&returnValue));
   blFrame()->setReturnValue(returnValue);
+
+  // Get |argsObj| if present.
+  ArgumentsObject* argsObj = nullptr;
+  if (script_->argumentsHasVarBinding()) {
+    Value maybeArgsObj = iter_.read();
+    MOZ_ASSERT(maybeArgsObj.isObject() || maybeArgsObj.isUndefined() ||
+               maybeArgsObj.isMagic(JS_OPTIMIZED_OUT));
+    if (maybeArgsObj.isObject()) {
+      argsObj = &maybeArgsObj.toObject().as<ArgumentsObject>();
+    }
+  }
 
   // Note: we do not need to initialize the scratchValue field in BaselineFrame.
 
@@ -710,10 +682,8 @@ bool BaselineStackBuilder::buildBaselineFrame() {
   blFrame()->setFlags(flags);
 
   // Write |icScript|.
-  if (JitOptions.warpBuilder) {
-    JitSpew(JitSpew_BaselineBailouts, "      ICScript=%p", icScript_);
-    blFrame()->setICScript(icScript_);
-  }
+  JitSpew(JitSpew_BaselineBailouts, "      ICScript=%p", icScript_);
+  blFrame()->setICScript(icScript_);
 
   // initArgsObjUnchecked modifies the frame's flags, so call it after setFlags.
   if (argsObj) {
@@ -912,17 +882,7 @@ bool BaselineStackBuilder::buildExpressionStack() {
           exprStackSlots());
   for (uint32_t i = 0; i < exprStackSlots(); i++) {
     Value v;
-
-    if (!iter_.moreFrames() && i == exprStackSlots() - 1 &&
-        cx_->hasIonReturnOverride()) {
-      // If coming from an invalidation bailout, and this is the topmost
-      // value, and a value override has been specified, don't read from the
-      // iterator. Otherwise, we risk using a garbage value.
-      // TODO(post-Warp): Remove value overrides and AutoDetectInvalidation.
-      iter_.skip();
-      JitSpew(JitSpew_BaselineBailouts, "      [Return Override]");
-      v = cx_->takeIonReturnOverride();
-    } else if (propagatingIonExceptionForDebugMode()) {
+    if (propagatingIonExceptionForDebugMode()) {
       // If we are in the middle of propagating an exception from Ion by
       // bailing to baseline due to debug mode, we might not have all
       // the stack if we are at the newest frame.
@@ -1146,16 +1106,6 @@ bool BaselineStackBuilder::buildStubFrame(uint32_t frameSize,
     return false;
   }
 
-  // Ensure we have a TypeMonitor fallback stub so we don't crash in JIT code
-  // when we try to enter it. See callers of offsetOfFallbackMonitorStub.
-  if (BytecodeOpHasTypeSet(op_) && IsTypeInferenceEnabled()) {
-    ICFallbackStub* fallbackStub = icEntry.fallbackStub();
-    if (!fallbackStub->toMonitoredFallbackStub()->getFallbackMonitorStub(
-            cx_, script_)) {
-      return false;
-    }
-  }
-
   // Push return address into ICCall_Scripted stub, immediately after the call.
   void* baselineCallReturnAddr = getStubReturnAddress();
   MOZ_ASSERT(baselineCallReturnAddr);
@@ -1312,11 +1262,6 @@ bool BaselineStackBuilder::finishLastFrame() {
     blFrame()->setInterpreterFields(script_, throwPC);
     resumeAddr = baselineInterp.interpretOpAddr().value;
   } else {
-    // If the opcode is monitored we should monitor the top stack value when
-    // we finish the bailout in FinishBailoutToBaseline.
-    if (resumeAfter() && BytecodeOpHasTypeSet(op_)) {
-      setMonitorPC(pc_);
-    }
     jsbytecode* resumePC = getResumePC();
     blFrame()->setInterpreterFields(script_, resumePC);
     resumeAddr = baselineInterp.interpretOpAddr().value;
@@ -1817,61 +1762,6 @@ static void InvalidateAfterBailout(JSContext* cx, HandleScript outerScript,
   Invalidate(cx, outerScript);
 }
 
-static void HandleBoundsCheckFailure(JSContext* cx, HandleScript outerScript,
-                                     HandleScript innerScript) {
-  JitSpew(JitSpew_IonBailouts,
-          "Bounds check failure %s:%u:%u, inlined into %s:%u:%u",
-          innerScript->filename(), innerScript->lineno(), innerScript->column(),
-          outerScript->filename(), outerScript->lineno(),
-          outerScript->column());
-
-  if (!innerScript->failedBoundsCheck()) {
-    innerScript->setFailedBoundsCheck();
-  }
-
-  InvalidateAfterBailout(cx, outerScript, "bounds check failure");
-  if (innerScript->hasIonScript()) {
-    Invalidate(cx, innerScript);
-  }
-}
-
-static void HandleShapeGuardFailure(JSContext* cx, HandleScript outerScript,
-                                    HandleScript innerScript) {
-  if (JitOptions.warpBuilder) {
-    // Warp handles this by invalidating when the IC stub changes.
-    return;
-  }
-
-  JitSpew(JitSpew_IonBailouts,
-          "Shape guard failure %s:%u:%u, inlined into %s:%u:%u",
-          innerScript->filename(), innerScript->lineno(), innerScript->column(),
-          outerScript->filename(), outerScript->lineno(),
-          outerScript->column());
-
-  // TODO: Currently this mimic's Ion's handling of this case.  Investigate
-  // setting the flag on innerScript as opposed to outerScript, and maybe
-  // invalidating both inner and outer scripts, instead of just the outer one.
-  outerScript->setFailedShapeGuard();
-
-  InvalidateAfterBailout(cx, outerScript, "shape guard failure");
-}
-
-static void HandleBaselineInfoBailout(JSContext* cx, HandleScript outerScript,
-                                      HandleScript innerScript) {
-  if (JitOptions.warpBuilder) {
-    // Warp handles this by invalidating when the IC stub changes.
-    return;
-  }
-
-  JitSpew(JitSpew_IonBailouts,
-          "Baseline info failure %s:%u:%u, inlined into %s:%u:%u",
-          innerScript->filename(), innerScript->lineno(), innerScript->column(),
-          outerScript->filename(), outerScript->lineno(),
-          outerScript->column());
-
-  InvalidateAfterBailout(cx, outerScript, "invalid baseline info");
-}
-
 static void HandleLexicalCheckFailure(JSContext* cx, HandleScript outerScript,
                                       HandleScript innerScript) {
   JitSpew(JitSpew_IonBailouts,
@@ -1962,29 +1852,6 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
   // Ensure the frame has a call object if it needs one.
   if (!EnsureHasEnvironmentObjects(cx, topFrame)) {
     return false;
-  }
-
-  // Monitor the top stack value if we are resuming after a JOF_TYPESET op.
-  if (jsbytecode* monitorPC = bailoutInfo->monitorPC) {
-    MOZ_ASSERT(BytecodeOpHasTypeSet(JSOp(*monitorPC)));
-    MOZ_ASSERT(GetNextPc(monitorPC) == topFrame->interpreterPC());
-
-    RootedScript script(cx, topFrame->script());
-    uint32_t monitorOffset = script->pcToOffset(monitorPC);
-    ICEntry& icEntry = script->jitScript()->icEntryFromPCOffset(monitorOffset);
-    ICFallbackStub* fallbackStub = icEntry.fallbackStub();
-
-    // Not every monitored op has a monitored fallback stub, e.g.
-    // JSOp::NewObject, which always returns the same type for a
-    // particular script/pc location.
-    if (fallbackStub->isMonitoredFallback()) {
-      ICMonitoredFallbackStub* stub = fallbackStub->toMonitoredFallbackStub();
-      uint32_t frameSize = bailoutInfo->frameSizeOfInnerMostFrame;
-      RootedValue val(cx, topFrame->topStackValue(frameSize));
-      if (!TypeMonitorResult(cx, stub, topFrame, script, monitorPC, val)) {
-        return false;
-      }
-    }
   }
 
   // Create arguments objects for bailed out frames, to maintain the invariant
@@ -2114,58 +1981,64 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
           innerScript->getWarmUpCount(), (unsigned)bailoutKind);
 
   switch (bailoutKind) {
-    // Normal bailouts.
+    case BailoutKind::TranspiledCacheIR:
+      // Do nothing. The baseline fallback code will invalidate the script
+      // if necessary to prevent bailout loops.
+      break;
+
+    case BailoutKind::SpeculativePhi:
+      // A value of an unexpected type flowed into a phi.
+      MOZ_ASSERT(!outerScript->hadSpeculativePhiBailout());
+      outerScript->setHadSpeculativePhiBailout();
+      InvalidateAfterBailout(cx, outerScript, "phi specialization failure");
+      break;
+
+    case BailoutKind::TypePolicy:
+      // A conversion inserted by a type policy failed.
+      // TODO: invalidate and disable recompilation if this happens too often.
+      break;
+
+    case BailoutKind::LICM:
+      // LICM may cause spurious bailouts by hoisting unreachable
+      // guards past branches.  To prevent bailout loops, when an
+      // instruction hoisted by LICM bails out, we set a flag on the
+      // IonScript and resume in baseline. If the guard would have
+      // been executed anyway, then the baseline fallback code will
+      // invalidate the script. Otherwise, the next time we reach this
+      // point, we will invalidate the script and disable LICM.
+      MOZ_ASSERT(!outerScript->hadLICMInvalidation());
+      if (outerScript->hasIonScript()) {
+        if (outerScript->ionScript()->hadLICMBailout()) {
+          outerScript->setHadLICMInvalidation();
+          InvalidateAfterBailout(cx, outerScript, "LICM failure");
+        } else {
+          outerScript->ionScript()->setHadLICMBailout();
+        }
+      }
+      break;
+
+    case BailoutKind::HoistBoundsCheck:
+      // An instruction hoisted or generated by tryHoistBoundsCheck bailed out.
+      MOZ_ASSERT(!outerScript->failedBoundsCheck());
+      outerScript->setFailedBoundsCheck();
+      InvalidateAfterBailout(cx, outerScript, "bounds check failure");
+      break;
+
+    case BailoutKind::EagerTruncation:
+      // An eager truncation generated by range analysis bailed out.
+      MOZ_ASSERT(!outerScript->hadEagerTruncationBailout());
+      outerScript->setHadEagerTruncationBailout();
+      InvalidateAfterBailout(cx, outerScript, "eager range analysis failure");
+      break;
+
+    case BailoutKind::TooManyArguments:
+      // A funapply or spread call had more than JIT_ARGS_LENGTH_MAX arguments.
+      // TODO: Invalidate and disable recompilation if this happens too often.
+      break;
+
     case BailoutKind::Inevitable:
     case BailoutKind::DuringVMCall:
-    case BailoutKind::TooManyArguments:
-    case BailoutKind::DynamicNameNotFound:
-    case BailoutKind::Overflow:
-    case BailoutKind::Round:
-    case BailoutKind::NonPrimitiveInput:
-    case BailoutKind::PrecisionLoss:
-    case BailoutKind::TypeBarrierO:
-    case BailoutKind::TypeBarrierV:
-    case BailoutKind::ValueGuard:
-    case BailoutKind::NullOrUndefinedGuard:
-    case BailoutKind::Hole:
-    case BailoutKind::NoDenseElementsGuard:
-    case BailoutKind::NegativeIndex:
-    case BailoutKind::NonInt32Input:
-    case BailoutKind::NonNumericInput:
-    case BailoutKind::NonBooleanInput:
-    case BailoutKind::NonObjectInput:
-    case BailoutKind::NonStringInput:
-    case BailoutKind::NonSymbolInput:
-    case BailoutKind::NonBigIntInput:
     case BailoutKind::Debugger:
-    case BailoutKind::SpecificAtomGuard:
-    case BailoutKind::SpecificSymbolGuard:
-    case BailoutKind::StringToIndexGuard:
-    case BailoutKind::StringToInt32Guard:
-    case BailoutKind::StringToDoubleGuard:
-    case BailoutKind::NonInt32ArrayLength:
-    case BailoutKind::FunctionLength:
-    case BailoutKind::FunctionName:
-    case BailoutKind::InvalidCodePoint:
-    case BailoutKind::ProtoGuard:
-    case BailoutKind::ProxyGuard:
-    case BailoutKind::NotProxyGuard:
-    case BailoutKind::NotDOMProxyGuard:
-    case BailoutKind::NotArrayBufferMaybeSharedGuard:
-    case BailoutKind::TypedArrayGuard:
-    case BailoutKind::MegamorphicAccess:
-    case BailoutKind::ArgumentsObjectAccess:
-    case BailoutKind::ArrayPopShift:
-    case BailoutKind::ArraySlice:
-    case BailoutKind::TagNotEqualGuard:
-    case BailoutKind::FunctionFlagsGuard:
-    case BailoutKind::FunctionIsNonBuiltinCtorGuard:
-    case BailoutKind::FunctionKindGuard:
-    case BailoutKind::FunctionScriptGuard:
-    case BailoutKind::PackedArrayGuard:
-    case BailoutKind::HasGetterSetterGuard:
-    case BailoutKind::DOMExpandoValueGenerationGuard:
-    case BailoutKind::DOMExpandoMissingOrShapeGuard:
       // Do nothing.
       break;
 
@@ -2175,37 +2048,25 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
       // script.
       break;
 
-    // Invalid assumption based on baseline code.
-    case BailoutKind::OverflowInvalidate:
-      outerScript->setHadOverflowBailout();
-      [[fallthrough]];
-    case BailoutKind::DoubleOutput:
-    case BailoutKind::ObjectIdentityOrTypeGuard:
-      HandleBaselineInfoBailout(cx, outerScript, innerScript);
-      break;
-
     case BailoutKind::NotOptimizedArgumentsGuard:
       // Optimized-arguments escaped to a slow path. Disable the optimization to
       // prevent bailout loops.
       JSScript::argumentsOptimizationFailed(cx, innerScript);
       break;
 
-    case BailoutKind::ArgumentCheck:
-      // Do nothing, bailout will resume before the argument monitor ICs.
-      break;
-    case BailoutKind::BoundsCheck:
-      HandleBoundsCheckFailure(cx, outerScript, innerScript);
-      break;
-    case BailoutKind::ShapeGuard:
-      HandleShapeGuardFailure(cx, outerScript, innerScript);
-      break;
     case BailoutKind::UninitializedLexical:
       HandleLexicalCheckFailure(cx, outerScript, innerScript);
       break;
+
     case BailoutKind::IonExceptionDebugMode:
       // Return false to resume in HandleException with reconstructed
       // baseline frame.
       return false;
+
+    case BailoutKind::OnStackInvalidation:
+      // The script has already been invalidated. There is nothing left to do.
+      break;
+
     default:
       MOZ_CRASH("Unknown bailout kind!");
   }

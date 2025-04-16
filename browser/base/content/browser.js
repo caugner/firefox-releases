@@ -20,6 +20,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.jsm",
   AMTelemetry: "resource://gre/modules/AddonManager.jsm",
   NewTabPagePreloading: "resource:///modules/NewTabPagePreloading.jsm",
+  BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
@@ -89,6 +90,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.jsm",
   fxAccounts: "resource://gre/modules/FxAccounts.jsm",
   webrtcUI: "resource:///modules/webrtcUI.jsm",
+  WebsiteFilter: "resource:///modules/policies/WebsiteFilter.jsm",
   ZoomUI: "resource:///modules/ZoomUI.jsm",
 });
 
@@ -550,6 +552,16 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "gAddonAbuseReportEnabled",
   "extensions.abuseReport.enabled",
   false
+);
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gProton",
+  "browser.proton.enabled",
+  false,
+  (pref, oldValue, newValue) => {
+    document.documentElement.toggleAttribute("proton", newValue);
+  }
 );
 
 customElements.setElementCreationCallback("translation-notification", () => {
@@ -1537,32 +1549,31 @@ function _loadURI(browser, uri, params = {}) {
     throw new Error("Cannot load with mismatched userContextId");
   }
 
-  let {
-    uriObject,
-    requiredRemoteType,
-    mustChangeProcess,
-    newFrameloader,
-  } = E10SUtils.shouldLoadURIInBrowser(
-    browser,
-    uri,
-    gMultiProcessBrowser,
-    gFissionBrowser,
-    loadFlags
-  );
-  if (uriObject && handleUriInChrome(browser, uriObject)) {
-    // If we've handled the URI in Chrome then just return here.
-    return;
-  }
-  if (newFrameloader) {
-    // If a new frameloader is needed for process reselection because this used
-    // to be a preloaded browser, clear the preloaded state now.
-    browser.removeAttribute("preloadedState");
+  // Attempt to perform URI fixup to see if we can handle this URI in chrome.
+  try {
+    let fixupFlags = Ci.nsIURIFixup.FIXUP_FLAG_NONE;
+    if (loadFlags & Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP) {
+      fixupFlags |= Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP;
+    }
+    if (loadFlags & Ci.nsIWebNavigation.LOAD_FLAGS_FIXUP_SCHEME_TYPOS) {
+      fixupFlags |= Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS;
+    }
+    if (PrivateBrowsingUtils.isBrowserPrivate(browser)) {
+      fixupFlags |= Ci.nsIURIFixup.FIXUP_FLAG_PRIVATE_CONTEXT;
+    }
+
+    let uriObject = Services.uriFixup.getFixupURIInfo(uri, fixupFlags)
+      .preferredURI;
+    if (uriObject && handleUriInChrome(browser, uriObject)) {
+      // If we've handled the URI in Chrome, then just return here.
+      return;
+    }
+  } catch (e) {
+    // getFixupURIInfo may throw. Gracefully recover and try to load the URI normally.
   }
 
-  // !requiredRemoteType means we're loading in the parent/this process.
-  if (!requiredRemoteType) {
-    browser.isNavigating = true;
-  }
+  // XXX(nika): Is `browser.isNavigating` necessary anymore?
+  browser.isNavigating = true;
   let loadURIOptions = {
     triggeringPrincipal,
     csp,
@@ -1572,96 +1583,9 @@ function _loadURI(browser, uri, params = {}) {
     hasValidUserGestureActivation,
   };
   try {
-    if (!mustChangeProcess) {
-      browser.webNavigation.loadURI(uri, loadURIOptions);
-    } else {
-      // Check if the current browser is allowed to unload.
-      let { permitUnload } = browser.permitUnload();
-      if (!permitUnload) {
-        return;
-      }
-
-      if (postData) {
-        postData = serializeInputStream(postData);
-      }
-
-      let loadParams = {
-        uri,
-        triggeringPrincipal: triggeringPrincipal
-          ? E10SUtils.serializePrincipal(triggeringPrincipal)
-          : null,
-        flags: loadFlags,
-        referrerInfo: E10SUtils.serializeReferrerInfo(referrerInfo),
-        remoteType: requiredRemoteType,
-        postData,
-        newFrameloader,
-        csp: csp ? gSerializationHelper.serializeToString(csp) : null,
-      };
-
-      if (userContextId) {
-        loadParams.userContextId = userContextId;
-      }
-
-      if (browser.webNavigation.maybeCancelContentJSExecution) {
-        let cancelContentJSEpoch = browser.webNavigation.maybeCancelContentJSExecution(
-          Ci.nsIRemoteTab.NAVIGATE_URL,
-          { uri: uriObject }
-        );
-        loadParams.cancelContentJSEpoch = cancelContentJSEpoch;
-      }
-      LoadInOtherProcess(browser, loadParams);
-    }
-  } catch (e) {
-    // If anything goes wrong when switching remoteness, just switch remoteness
-    // manually and load the URI.
-    // We might lose history that way but at least the browser loaded a page.
-    // This might be necessary if SessionStore wasn't initialized yet i.e.
-    // when the homepage is a non-remote page.
-    if (mustChangeProcess) {
-      Cu.reportError(e);
-      gBrowser.updateBrowserRemotenessByURL(browser, uri);
-
-      browser.webNavigation.loadURI(uri, loadURIOptions);
-    } else {
-      throw e;
-    }
+    browser.webNavigation.loadURI(uri, loadURIOptions);
   } finally {
-    if (!requiredRemoteType) {
-      browser.isNavigating = false;
-    }
-  }
-}
-
-// Starts a new load in the browser first switching the browser to the correct
-// process
-function LoadInOtherProcess(browser, loadOptions, historyIndex = -1) {
-  let tab = gBrowser.getTabForBrowser(browser);
-  SessionStore.navigateAndRestore(tab, loadOptions, historyIndex);
-}
-
-// Called when a docshell has attempted to load a page in an incorrect process.
-// This function is responsible for loading the page in the correct process.
-function RedirectLoad(browser, data) {
-  if (browser.getAttribute("preloadedState") === "consumed") {
-    browser.removeAttribute("preloadedState");
-    data.loadOptions.newFrameloader = true;
-  }
-
-  // We should only start the redirection if the browser window has finished
-  // starting up. Otherwise, we should wait until the startup is done.
-  if (gBrowserInit.delayedStartupFinished) {
-    LoadInOtherProcess(browser, data.loadOptions, data.historyIndex);
-  } else {
-    let delayedStartupFinished = (subject, topic) => {
-      if (topic == "browser-delayed-startup-finished" && subject == window) {
-        Services.obs.removeObserver(delayedStartupFinished, topic);
-        LoadInOtherProcess(browser, data.loadOptions, data.historyIndex);
-      }
-    };
-    Services.obs.addObserver(
-      delayedStartupFinished,
-      "browser-delayed-startup-finished"
-    );
+    browser.isNavigating = false;
   }
 }
 
@@ -1708,6 +1632,16 @@ var gBrowserInit = {
   },
 
   onBeforeInitialXULLayout() {
+    BookmarkingUI.updateEmptyToolbarMessage();
+    setToolbarVisibility(
+      BookmarkingUI.toolbar,
+      gBookmarksToolbar2h2020
+        ? gBookmarksToolbarVisibility
+        : gBookmarksToolbarVisibility == "always",
+      false,
+      false
+    );
+
     // Set a sane starting width/height for all resolutions on new profiles.
     if (Services.prefs.getBoolPref("privacy.resistFingerprinting")) {
       // When the fingerprinting resistance is enabled, making sure that we don't
@@ -1776,6 +1710,8 @@ var gBrowserInit = {
       document.documentElement.setAttribute("icon", "main-window");
     }
 
+    document.documentElement.toggleAttribute("proton", gProton);
+
     // Call this after we set attributes that might change toolbars' computed
     // text color.
     ToolbarIconColor.init();
@@ -1803,15 +1739,6 @@ var gBrowserInit = {
       let node = document.getElementById(area);
       CustomizableUI.registerToolbarNode(node);
     }
-    let bookmarksToolbarVisibility = gBookmarksToolbar2h2020
-      ? gBookmarksToolbarVisibility
-      : gBookmarksToolbarVisibility == "always";
-    setToolbarVisibility(
-      gNavToolbox.querySelector("#PersonalToolbar"),
-      bookmarksToolbarVisibility,
-      false,
-      false
-    );
     BrowserSearch.initPlaceHolder();
 
     // Hack to ensure that the various initial pages favicon is loaded
@@ -2361,6 +2288,10 @@ var gBrowserInit = {
     }
 
     scheduleIdleTask(() => {
+      PlacesToolbarHelper.startShowingToolbar();
+    });
+
+    scheduleIdleTask(() => {
       // Initialize the Sync UI
       gSync.init();
     });
@@ -2457,11 +2388,11 @@ var gBrowserInit = {
       //                      a tabbrowser, which will be replaced by this
       //                      window (for this case, all other arguments are
       //                      ignored).
-      if (!window.arguments || !window.arguments[0]) {
+      let uri = window.arguments?.[0];
+      if (!uri || uri instanceof window.XULElement) {
         return null;
       }
 
-      let uri = window.arguments[0];
       let defaultArgs = BrowserHandler.defaultArgs;
 
       // If the given URI is different from the homepage, we want to load it.
@@ -4494,7 +4425,9 @@ const BrowserSearch = {
       csp
     );
     if (engine) {
-      BrowserSearch.recordSearchInTelemetry(engine, "contextmenu", { url });
+      BrowserSearchTelemetry.recordSearch(gBrowser, engine, "contextmenu", {
+        url,
+      });
     }
   },
 
@@ -4511,7 +4444,7 @@ const BrowserSearch = {
       csp
     );
     if (engine) {
-      BrowserSearch.recordSearchInTelemetry(engine, "system", { url });
+      BrowserSearchTelemetry.recordSearch(gBrowser, engine, "system", { url });
     }
   },
 
@@ -4530,9 +4463,14 @@ const BrowserSearch = {
       tab
     );
 
-    BrowserSearch.recordSearchInTelemetry(result.engine, "webextension", {
-      url: result.url,
-    });
+    BrowserSearchTelemetry.recordSearch(
+      gBrowser,
+      result.engine,
+      "webextension",
+      {
+        url: result.url,
+      }
+    );
   },
 
   pasteAndSearch(event) {
@@ -4558,53 +4496,6 @@ const BrowserSearch = {
     );
     var where = newWindowPref == 3 ? "tab" : "window";
     openTrustedLinkIn(this.searchEnginesURL, where);
-  },
-
-  /**
-   * Helper to record a search with Telemetry.
-   *
-   * Telemetry records only search counts and nothing pertaining to the search itself.
-   *
-   * @param engine
-   *        (nsISearchEngine) The engine handling the search.
-   * @param source
-   *        (string) Where the search originated from. See BrowserUsageTelemetry for
-   *        allowed values.
-   * @param details [optional]
-   *        An optional parameter passed to |BrowserUsageTelemetry.recordSearch|.
-   *        See its documentation for allowed options.
-   *        Additionally, if the search was a suggested search, |details.selection|
-   *        indicates where the item was in the suggestion list and how the user
-   *        selected it: {selection: {index: The selected index, kind: "key" or "mouse"}}
-   */
-  recordSearchInTelemetry(engine, source, details = {}) {
-    try {
-      BrowserUsageTelemetry.recordSearch(gBrowser, engine, source, details);
-    } catch (ex) {
-      Cu.reportError(ex);
-    }
-  },
-
-  /**
-   * Helper to record a one-off search with Telemetry.
-   *
-   * Telemetry records only search counts and nothing pertaining to the search itself.
-   *
-   * @param engine
-   *        (nsISearchEngine) The engine handling the search.
-   * @param source
-   *        (string) Where the search originated from. See BrowserUsageTelemetry for
-   *        allowed values.
-   * @param type
-   *        (string) Indicates how the user selected the search item.
-   */
-  recordOneoffSearchInTelemetry(engine, source, type) {
-    try {
-      const details = { type, isOneOff: true };
-      BrowserUsageTelemetry.recordSearch(gBrowser, engine, source, details);
-    } catch (ex) {
-      Cu.reportError(ex);
-    }
   },
 };
 
@@ -5192,50 +5083,6 @@ var XULBrowserWindow = {
       linkNode,
       isAppTab
     );
-  },
-
-  // Check whether this URI should load in the current process
-  shouldLoadURI(
-    aDocShell,
-    aURI,
-    aReferrerInfo,
-    aHasPostData,
-    aTriggeringPrincipal,
-    aCsp
-  ) {
-    if (!gMultiProcessBrowser) {
-      return true;
-    }
-
-    let browser = aDocShell
-      .QueryInterface(Ci.nsIDocShellTreeItem)
-      .sameTypeRootTreeItem.QueryInterface(Ci.nsIDocShell).chromeEventHandler;
-
-    // Ignore loads that aren't in the main tabbrowser
-    if (
-      browser.localName != "browser" ||
-      !browser.getTabBrowser ||
-      browser.getTabBrowser() != gBrowser
-    ) {
-      return true;
-    }
-
-    if (!E10SUtils.shouldLoadURI(aDocShell, aURI, aHasPostData)) {
-      // XXX: Do we want to complain if we have post data but are still
-      // redirecting the load? Perhaps a telemetry probe? Theoretically we
-      // shouldn't do this, as it throws out data. See bug 1348018.
-      E10SUtils.redirectLoad(
-        aDocShell,
-        aURI,
-        aReferrerInfo,
-        aTriggeringPrincipal,
-        null,
-        aCsp
-      );
-      return false;
-    }
-
-    return true;
   },
 
   onProgressChange(
@@ -6254,9 +6101,9 @@ nsBrowserAccess.prototype = {
         // If we have an opener, that means that the caller is expecting access
         // to the nsIDOMWindow of the opened tab right away. For e10s windows,
         // this means forcing the newly opened browser to be non-remote so that
-        // we can hand back the nsIDOMWindow. The XULBrowserWindow.shouldLoadURI
-        // will do the job of shuttling off the newly opened browser to run in
-        // the right process once it starts loading a URI.
+        // we can hand back the nsIDOMWindow. DocumentLoadListener will do the
+        // job of shuttling off the newly opened browser to run in the right
+        // process once it starts loading a URI.
         let forceNotRemote = aOpenWindowInfo && !aOpenWindowInfo.isRemote;
         let userContextId = aOpenWindowInfo
           ? aOpenWindowInfo.originAttributes.userContextId
@@ -6611,7 +6458,7 @@ function setToolbarVisibility(
         isVisible = false;
         break;
       case "newtab":
-        let { currentURI } = gBrowser;
+        let currentURI = gBrowser?.currentURI;
         if (!gBrowserInit.domContentLoaded) {
           let uriToLoad = gBrowserInit.uriToLoadPromise;
           if (uriToLoad) {
@@ -6624,7 +6471,8 @@ function setToolbarVisibility(
             } catch (ex) {}
           }
         }
-        isVisible = BookmarkingUI.isOnNewTabPage({ currentURI });
+        isVisible =
+          !!currentURI && BookmarkingUI.isOnNewTabPage({ currentURI });
         break;
     }
   }
@@ -7442,31 +7290,6 @@ var gPageStyleMenu = {
     sheetData.filteredStyleSheets.push(...styleSheets.filteredStyleSheets);
     sheetData.preferredStyleSheetSet =
       sheetData.preferredStyleSheetSet || styleSheets.preferredStyleSheetSet;
-  },
-
-  /**
-   * Return an array of Objects representing stylesheets in a
-   * browser. Note that the pageshow event needs to fire in content
-   * before this information will be available.
-   *
-   * @param browser (optional)
-   *        The <xul:browser> to search for stylesheets. If omitted, this
-   *        defaults to the currently selected tab's browser.
-   * @returns Array
-   *        An Array of Objects representing stylesheets in the browser.
-   *        See the documentation for gPageStyleMenu for a description
-   *        of the Object structure.
-   */
-  getBrowserStyleSheets(browser) {
-    if (!browser) {
-      browser = gBrowser.selectedBrowser;
-    }
-
-    let data = this._pageStyleSheets.get(browser.permanentKey);
-    if (!data) {
-      return [];
-    }
-    return data.filteredStyleSheets;
   },
 
   clearBrowserStyleSheets(permanentKey) {

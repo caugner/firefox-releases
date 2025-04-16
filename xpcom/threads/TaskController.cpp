@@ -10,6 +10,7 @@
 #include "nsThreadUtils.h"
 #include <algorithm>
 #include <initializer_list>
+#include "GeckoProfiler.h"
 #include "mozilla/EventQueue.h"
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/InputTaskManager.h"
@@ -21,6 +22,7 @@
 #include "nsIThreadInternal.h"
 #include "nsQueryObject.h"
 #include "nsThread.h"
+#include "prenv.h"
 #include "prsystem.h"
 
 #ifdef XP_WIN
@@ -104,9 +106,10 @@ bool TaskController::Initialize() {
   return sSingleton->InitializeInternal();
 }
 
-void ThreadFuncPoolThread(TaskController* aController, size_t aIndex) {
-  mThreadPoolIndex = aIndex;
-  aController->RunPoolThread();
+void ThreadFuncPoolThread(void* aIndex) {
+  mThreadPoolIndex = *reinterpret_cast<int32_t*>(aIndex);
+  delete reinterpret_cast<int32_t*>(aIndex);
+  TaskController::Get()->RunPoolThread();
 }
 
 #ifdef XP_WIN
@@ -131,6 +134,9 @@ bool TaskController::InitializeInternal() {
   return true;
 }
 
+// Ample stack size allocated for applications like ImageLib's AV1 decoder.
+const PRUint32 sStackSize = 512u * 1024u;
+
 void TaskController::InitializeThreadPool() {
   mPoolInitializationMutex.AssertCurrentThreadOwns();
   MOZ_ASSERT(!mThreadPoolInitialized);
@@ -138,8 +144,11 @@ void TaskController::InitializeThreadPool() {
 
   int32_t poolSize = GetPoolThreadCount();
   for (int32_t i = 0; i < poolSize; i++) {
+    int32_t* index = new int32_t(i);
     mPoolThreads.push_back(
-        {std::make_unique<std::thread>(ThreadFuncPoolThread, this, i),
+        {PR_CreateThread(PR_USER_THREAD, ThreadFuncPoolThread, index,
+                         PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD,
+                         PR_JOINABLE_THREAD, 512u * 1024u),
          nullptr});
   }
 }
@@ -168,7 +177,7 @@ void TaskController::ShutdownThreadPoolInternal() {
     mThreadPoolCV.NotifyAll();
   }
   for (PoolThread& thread : mPoolThreads) {
-    thread.mThread->join();
+    PR_JoinThread(thread.mThread);
   }
 }
 
@@ -461,6 +470,16 @@ class RunnableTask : public Task {
 
   PerformanceCounter* GetPerformanceCounter() const override {
     return nsThread::GetPerformanceCounterBase(mRunnable);
+  }
+
+  virtual bool GetName(nsACString& aName) override {
+#ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
+    nsThread::GetLabeledRunnableName(mRunnable, aName,
+                                     EventQueuePriority(GetPriority()));
+    return true;
+#else
+    return false;
+#endif
   }
 
  private:

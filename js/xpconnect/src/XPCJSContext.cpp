@@ -63,9 +63,6 @@
 #include "nsIXULRuntime.h"
 #include "nsJSPrincipals.h"
 #include "ExpandedPrincipal.h"
-#ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
-#endif
 
 #if defined(XP_LINUX) && !defined(ANDROID)
 // For getrlimit and min/max.
@@ -591,9 +588,7 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
     if (const char* file = scriptFilename.get()) {
       filename.Assign(file, strlen(file));
     }
-    PROFILER_ADD_MARKER_WITH_PAYLOAD("JS::InterruptCallback", JS,
-                                     TextMarkerPayload,
-                                     (filename, TimeStamp::Now()));
+    PROFILER_MARKER_TEXT("JS::InterruptCallback", JS, {}, filename);
   }
 #endif
 
@@ -842,7 +837,6 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
   bool useBaselineInterp = Preferences::GetBool(JS_OPTIONS_DOT_STR "blinterp");
   bool useBaselineJit = Preferences::GetBool(JS_OPTIONS_DOT_STR "baselinejit");
   bool useIon = Preferences::GetBool(JS_OPTIONS_DOT_STR "ion");
-  bool useWarp = Preferences::GetBool(JS_OPTIONS_DOT_STR "warp");
   bool useJitForTrustedPrincipals =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "jit_trustedprincipals");
   bool useNativeRegExp =
@@ -906,7 +900,6 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_BASELINE_ENABLE,
                                 useBaselineJit);
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_ION_ENABLE, useIon);
-  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_WARP_ENABLE, useWarp);
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_JIT_TRUSTEDPRINCIPALS_ENABLE,
                                 useJitForTrustedPrincipals);
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_NATIVE_REGEXP_ENABLE,
@@ -1027,6 +1020,13 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.private_methods");
 #endif
 
+  // Require top level await disabled outside of nightly.
+  bool topLevelAwaitEnabled = false;
+#ifdef NIGHTLY_BUILD
+  topLevelAwaitEnabled =
+      Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.top_level_await");
+#endif
+
 #ifdef JS_GC_ZEAL
   int32_t zeal = Preferences::GetInt(JS_OPTIONS_DOT_STR "gczeal", -1);
   int32_t zeal_frequency = Preferences::GetInt(
@@ -1074,7 +1074,8 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       .setThrowOnDebuggeeWouldRun(throwOnDebuggeeWouldRun)
       .setDumpStackOnDebuggeeWouldRun(dumpStackOnDebuggeeWouldRun)
       .setPrivateClassFields(privateFieldsEnabled)
-      .setPrivateClassMethods(privateMethodsEnabled);
+      .setPrivateClassMethods(privateMethodsEnabled)
+      .setTopLevelAwait(topLevelAwaitEnabled);
 
   nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
   if (xr) {

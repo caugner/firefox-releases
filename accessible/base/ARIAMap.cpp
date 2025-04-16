@@ -43,7 +43,11 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     kUseMapRole,
     eNoValue,
     eNoAction,
+#if defined(XP_MACOSX)
+    eAssertiveLiveAttr,
+#else
     eNoLiveAttr,
+#endif
     eAlert,
     kNoReqStates
   },
@@ -1461,6 +1465,11 @@ bool aria::HasDefinedARIAHidden(nsIContent* aContent) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // AttrIterator class
+
+AttrIterator::AttrIterator(nsIContent* aContent)
+    : mElement(dom::Element::FromNode(aContent)), mAttrIdx(0) {
+  mAttrCount = mElement ? mElement->GetAttrCount() : 0;
+}
 
 bool AttrIterator::Next(nsAString& aAttrName, nsAString& aAttrValue) {
   while (mAttrIdx < mAttrCount) {

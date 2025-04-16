@@ -12,7 +12,6 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/StyleColorInlines.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/dom/Element.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
 #include "nscore.h"
@@ -22,10 +21,16 @@
 #include "mozilla/gfx/Types.h"
 #include "nsCoord.h"
 #include "nsColor.h"
+#include "nsStubMutationObserver.h"
 #include "nsStyleStruct.h"
 #include "mozilla/WritingModes.h"
 
+// XXX Avoid including this here by moving function bodies to the cpp file
+#include "mozilla/dom/Element.h"
+
 namespace mozilla {
+enum class FlushType : uint8_t;
+
 namespace dom {
 class DocGroup;
 class Element;
@@ -132,6 +137,10 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   NS_DECL_NSIMUTATIONOBSERVER_PARENTCHAINCHANGED
 
  private:
+  nsresult GetPropertyValue(const nsCSSPropertyID aPropID,
+                            const nsACString& aMaybeCustomPropertyNme,
+                            nsAString& aValue);
+
   virtual ~nsComputedDOMStyle();
 
   void AssertFlushedPendingReflows() {

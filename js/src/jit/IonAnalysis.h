@@ -22,11 +22,9 @@
 
 namespace js {
 
-class DPAConstraintInfo;
 class GenericPrinter;
 class ObjectGroup;
 class PlainObject;
-class TypeNewScriptInitializer;
 
 namespace jit {
 
@@ -169,12 +167,7 @@ class LinearSum {
 // Convert all components of a linear sum (except the constant)
 // and add any new instructions to the end of block.
 MDefinition* ConvertLinearSum(TempAllocator& alloc, MBasicBlock* block,
-                              const LinearSum& sum);
-
-MOZ_MUST_USE bool AnalyzeNewScriptDefiniteProperties(
-    JSContext* cx, DPAConstraintInfo& constraintInfo, JS::HandleFunction fun,
-    ObjectGroup* group, JS::Handle<PlainObject*> baseobj,
-    Vector<TypeNewScriptInitializer>* initializerList);
+                              const LinearSum& sum, BailoutKind bailoutKind);
 
 MOZ_MUST_USE bool AnalyzeArgumentsUsage(JSContext* cx, JSScript* script);
 

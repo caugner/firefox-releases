@@ -29,6 +29,8 @@
 #include "nsFrameSelection.h"
 #include "nsGenericHTMLElement.h"
 #include "nsIHapticFeedback.h"
+#include "nsIScrollableFrame.h"
+#include "nsServiceManagerUtils.h"
 
 namespace mozilla {
 
@@ -677,10 +679,6 @@ void AccessibleCaretManager::OnScrollStart() {
 }
 
 void AccessibleCaretManager::OnScrollEnd() {
-  if (mLastUpdateCaretMode != GetCaretMode()) {
-    return;
-  }
-
   AutoRestore<bool> saveAllowFlushingLayout(mAllowFlushingLayout);
   mAllowFlushingLayout = false;
 
@@ -712,10 +710,6 @@ void AccessibleCaretManager::OnScrollEnd() {
 }
 
 void AccessibleCaretManager::OnScrollPositionChanged() {
-  if (mLastUpdateCaretMode != GetCaretMode()) {
-    return;
-  }
-
   AutoRestore<bool> saveAllowFlushingLayout(mAllowFlushingLayout);
   mAllowFlushingLayout = false;
 
@@ -740,10 +734,6 @@ void AccessibleCaretManager::OnScrollPositionChanged() {
 }
 
 void AccessibleCaretManager::OnReflow() {
-  if (mLastUpdateCaretMode != GetCaretMode()) {
-    return;
-  }
-
   AutoRestore<bool> saveAllowFlushingLayout(mAllowFlushingLayout);
   mAllowFlushingLayout = false;
 
@@ -882,7 +872,7 @@ nsIFrame* AccessibleCaretManager::GetFocusableFrame(nsIFrame* aFrame) const {
 
 void AccessibleCaretManager::ChangeFocusToOrClearOldFocus(
     nsIFrame* aFrame) const {
-  nsFocusManager* fm = nsFocusManager::GetFocusManager();
+  RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager();
   MOZ_ASSERT(fm);
 
   if (aFrame) {

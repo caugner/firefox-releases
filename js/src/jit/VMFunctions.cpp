@@ -13,9 +13,9 @@
 #include "frontend/BytecodeCompiler.h"
 #include "jit/arm/Simulator-arm.h"
 #include "jit/AtomicOperations.h"
-#include "jit/AutoDetectInvalidation.h"
 #include "jit/BaselineIC.h"
 #include "jit/CalleeToken.h"
+#include "jit/Invalidation.h"
 #include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
 #include "jit/mips32/Simulator-mips32.h"
@@ -41,7 +41,6 @@
 #include "vm/NativeObject-inl.h"
 #include "vm/PlainObject-inl.h"  // js::CreateThis
 #include "vm/StringObject-inl.h"
-#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -905,50 +904,17 @@ template bool StringsCompare<ComparisonKind::LessThan>(JSContext* cx,
 template bool StringsCompare<ComparisonKind::GreaterThanOrEqual>(
     JSContext* cx, HandleString lhs, HandleString rhs, bool* res);
 
-bool ArrayPopDense(JSContext* cx, HandleObject obj, MutableHandleValue rval) {
-  MOZ_ASSERT(obj->is<ArrayObject>());
-
-  AutoDetectInvalidation adi(cx, rval);
-
-  JS::RootedValueArray<2> argv(cx);
-  argv[0].setUndefined();
-  argv[1].setObject(*obj);
-  if (!js::array_pop(cx, 0, argv.begin())) {
-    return false;
-  }
-
-  // If the result is |undefined|, the array was probably empty and we
-  // have to monitor the return value.
-  rval.set(argv[0]);
-  if (rval.isUndefined()) {
-    jsbytecode* pc;
-    JSScript* script = cx->currentScript(&pc);
-    JitScript::MonitorBytecodeType(cx, script, pc, rval);
-  }
-  return true;
-}
-
 bool ArrayPushDense(JSContext* cx, HandleArrayObject arr, HandleValue v,
                     uint32_t* length) {
   *length = arr->length();
-  DenseElementResult result = arr->setOrExtendDenseElements(
-      cx, *length, v.address(), 1, ShouldUpdateTypes::DontUpdate);
+  DenseElementResult result =
+      arr->setOrExtendDenseElements(cx, *length, v.address(), 1);
   if (result != DenseElementResult::Incomplete) {
     (*length)++;
     return result == DenseElementResult::Success;
   }
 
-  // AutoDetectInvalidation uses GetTopJitJSScript(cx)->ionScript(), but it's
-  // possible the setOrExtendDenseElements call already invalidated the
-  // IonScript. JSJitFrameIter::ionScript works when the script is invalidated
-  // so we use that instead.
-  JSJitFrameIter frame(cx->activation()->asJit());
-  MOZ_ASSERT(frame.type() == FrameType::Exit);
-  ++frame;
-  IonScript* ionScript = frame.ionScript();
-
   JS::RootedValueArray<3> argv(cx);
-  AutoDetectInvalidation adi(cx, argv[0], ionScript);
   argv[0].setUndefined();
   argv[1].setObject(*arr);
   argv[2].set(v);
@@ -956,45 +922,9 @@ bool ArrayPushDense(JSContext* cx, HandleArrayObject arr, HandleValue v,
     return false;
   }
 
-  if (argv[0].isInt32()) {
-    *length = argv[0].toInt32();
-    return true;
-  }
-
-  // Without TI this should not happen, we should have bailed out before
-  // calling the VM function if we are about to overflow.
-  MOZ_ASSERT(IsTypeInferenceEnabled());
-
-  // array_push changed the length to be larger than INT32_MAX. In this case
-  // OBJECT_FLAG_LENGTH_OVERFLOW was set, TI invalidated the script, and the
-  // AutoDetectInvalidation instance on the stack will replace *length with
-  // the actual return value during bailout.
-  MOZ_ASSERT(adi.shouldSetReturnOverride());
-  MOZ_ASSERT(argv[0].toDouble() == double(INT32_MAX) + 1);
-  *length = 0;
-  return true;
-}
-
-bool ArrayShiftDense(JSContext* cx, HandleObject obj, MutableHandleValue rval) {
-  MOZ_ASSERT(obj->is<ArrayObject>());
-
-  AutoDetectInvalidation adi(cx, rval);
-
-  JS::RootedValueArray<2> argv(cx);
-  argv[0].setUndefined();
-  argv[1].setObject(*obj);
-  if (!js::array_shift(cx, 0, argv.begin())) {
-    return false;
-  }
-
-  // If the result is |undefined|, the array was probably empty and we
-  // have to monitor the return value.
-  rval.set(argv[0]);
-  if (rval.isUndefined()) {
-    jsbytecode* pc;
-    JSScript* script = cx->currentScript(&pc);
-    JitScript::MonitorBytecodeType(cx, script, pc, rval);
-  }
+  // Length must fit in an int32 because we guard against overflow before
+  // calling this VM function.
+  *length = argv[0].toInt32();
   return true;
 }
 
@@ -1082,20 +1012,10 @@ bool SetProperty(JSContext* cx, HandleObject obj, HandlePropertyName name,
                  HandleValue value, bool strict, jsbytecode* pc) {
   RootedId id(cx, NameToId(name));
 
-  JSOp op = JSOp(*pc);
-
-  if (op == JSOp::SetAliasedVar || op == JSOp::InitAliasedLexical) {
-    // Aliased var assigns ignore readonly attributes on the property, as
-    // required for initializing 'const' closure variables.
-    Shape* shape = obj->as<NativeObject>().lookup(cx, name);
-    MOZ_ASSERT(shape && shape->isDataProperty());
-    obj->as<NativeObject>().setSlotWithType(cx, shape, value);
-    return true;
-  }
-
   RootedValue receiver(cx, ObjectValue(*obj));
   ObjectOpResult result;
   if (MOZ_LIKELY(!obj->getOpsSetProperty())) {
+    JSOp op = JSOp(*pc);
     if (op == JSOp::SetName || op == JSOp::StrictSetName ||
         op == JSOp::SetGName || op == JSOp::StrictSetGName) {
       if (!NativeSetProperty<Unqualified>(cx, obj.as<NativeObject>(), id, value,
@@ -1148,29 +1068,9 @@ bool OperatorIn(JSContext* cx, HandleValue key, HandleObject obj, bool* out) {
   return ToPropertyKey(cx, key, &id) && HasProperty(cx, obj, id, out);
 }
 
-bool OperatorInI(JSContext* cx, int32_t index, HandleObject obj, bool* out) {
-  RootedValue key(cx, Int32Value(index));
-  return OperatorIn(cx, key, obj, out);
-}
-
 bool GetIntrinsicValue(JSContext* cx, HandlePropertyName name,
                        MutableHandleValue rval) {
-  if (!GlobalObject::getIntrinsicValue(cx, cx->global(), name, rval)) {
-    return false;
-  }
-
-  // This function is called when we try to compile a cold getintrinsic
-  // op. MCallGetIntrinsicValue has an AliasSet of None for optimization
-  // purposes, as its side effect is not observable from JS. We are
-  // guaranteed to bail out after this function, but because of its AliasSet,
-  // type info will not be reflowed. Manually monitor here.
-  if (!JitOptions.warpBuilder) {
-    jsbytecode* pc;
-    JSScript* script = cx->currentScript(&pc);
-    JitScript::MonitorBytecodeType(cx, script, pc, rval);
-  }
-
-  return true;
+  return GlobalObject::getIntrinsicValue(cx, cx->global(), name, rval);
 }
 
 bool CreateThisFromIC(JSContext* cx, HandleObject callee,
@@ -1500,11 +1400,14 @@ bool GeneratorThrowOrReturn(JSContext* cx, BaselineFrame* frame,
   return false;
 }
 
-bool GlobalNameConflictsCheckFromIon(JSContext* cx, HandleScript script) {
-  Rooted<LexicalEnvironmentObject*> globalLexical(
-      cx, &cx->global()->lexicalEnvironment());
-  return CheckGlobalDeclarationConflicts(cx, script, globalLexical,
-                                         cx->global());
+bool GlobalDeclInstantiationFromIon(JSContext* cx, HandleScript script,
+                                    jsbytecode* pc) {
+  MOZ_ASSERT(!script->hasNonSyntacticScope());
+
+  RootedObject envChain(cx, &cx->global()->lexicalEnvironment());
+  GCThingIndex lastFun = GET_GCTHING_INDEX(pc);
+
+  return GlobalOrEvalDeclInstantiation(cx, envChain, script, lastFun);
 }
 
 bool InitFunctionEnvironmentObjects(JSContext* cx, BaselineFrame* frame) {
@@ -1548,22 +1451,12 @@ JSObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest,
         return nullptr;
       }
       arrRes->initDenseElements(rest, length);
-      arrRes->setLengthInt32(length);
+      arrRes->setLength(length);
     }
     return arrRes;
   }
 
-  NewObjectKind newKind;
-  {
-    AutoSweepObjectGroup sweep(templateObj->group());
-    newKind = templateObj->group()->shouldPreTenure(sweep) ? TenuredObject
-                                                           : GenericObject;
-  }
-  ArrayObject* arrRes = NewDenseCopiedArray(cx, length, rest, nullptr, newKind);
-  if (arrRes) {
-    arrRes->setGroup(templateObj->group());
-  }
-  return arrRes;
+  return NewDenseCopiedArray(cx, length, rest);
 }
 
 bool HandleDebugTrap(JSContext* cx, BaselineFrame* frame, uint8_t* retAddr) {
@@ -1759,11 +1652,10 @@ bool IonForcedInvalidation(JSContext* cx) {
 bool SetDenseElement(JSContext* cx, HandleNativeObject obj, int32_t index,
                      HandleValue value, bool strict) {
   // This function is called from Ion code for StoreElementHole's OOL path.
-  // In this case we know the object is native and that no type changes are
-  // needed.
+  // In this case we know the object is native.
 
-  DenseElementResult result = obj->setOrExtendDenseElements(
-      cx, index, value.address(), 1, ShouldUpdateTypes::DontUpdate);
+  DenseElementResult result =
+      obj->setOrExtendDenseElements(cx, index, value.address(), 1);
   if (result != DenseElementResult::Incomplete) {
     return result == DenseElementResult::Success;
   }
@@ -1795,9 +1687,7 @@ void AssertValidObjectPtr(JSContext* cx, JSObject* obj) {
   MOZ_ASSERT(obj->compartment() == cx->compartment());
   MOZ_ASSERT(obj->zoneFromAnyThread() == cx->zone());
   MOZ_ASSERT(obj->runtimeFromMainThread() == cx->runtime());
-
-  MOZ_ASSERT_IF(!obj->hasLazyGroup(),
-                obj->group()->clasp() == obj->shape()->getObjectClass());
+  MOZ_ASSERT(obj->group()->clasp() == obj->shape()->getObjectClass());
 
   if (obj->isTenured()) {
     MOZ_ASSERT(obj->isAligned());
@@ -2166,6 +2056,7 @@ template bool GetNativeDataPropertyByValuePure<true>(JSContext* cx,
 template bool GetNativeDataPropertyByValuePure<false>(JSContext* cx,
                                                       JSObject* obj, Value* vp);
 
+// TODO(no-TI): remove NeedsTypeBarrier.
 template <bool NeedsTypeBarrier>
 bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* val) {
@@ -2178,11 +2069,6 @@ bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
   NativeObject* nobj = &obj->as<NativeObject>();
   Shape* shape = nobj->lastProperty()->search(cx, NameToId(name));
   if (!shape || !shape->isDataProperty() || !shape->writable()) {
-    return false;
-  }
-
-  if (NeedsTypeBarrier && IsTypeInferenceEnabled() &&
-      !HasTypePropertyId(nobj, NameToId(name), *val)) {
     return false;
   }
 
@@ -2277,7 +2163,7 @@ bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj, Value* vp) {
         }
       }
     } else if (obj->is<TypedObject>()) {
-      if (obj->as<TypedObject>().typeDescr().hasProperty(cx->names(), id)) {
+      if (obj->as<TypedObject>().typeDescr().hasProperty(cx, id)) {
         vp[1].setBoolean(true);
         return true;
       }
@@ -2446,9 +2332,6 @@ bool DoConcatStringObject(JSContext* cx, HandleValue lhs, HandleValue rhs,
     }
   }
 
-  // Note: we don't have to call JitScript::MonitorBytecodeType because we
-  // monitored the string-type when attaching the IC stub.
-
   res.setString(str);
   return true;
 }
@@ -2478,16 +2361,17 @@ bool IsPossiblyWrappedTypedArray(JSContext* cx, JSObject* obj, bool* result) {
   return true;
 }
 
+// Called from CreateDependentString::generateFallback.
 void* AllocateString(JSContext* cx) {
   AutoUnsafeCallWithABI unsafe;
-  return js::AllocateString<JSString, NoGC>(cx, js::gc::TenuredHeap);
+  return js::AllocateString<JSString, NoGC>(cx, js::gc::DefaultHeap);
 }
-
 void* AllocateFatInlineString(JSContext* cx) {
   AutoUnsafeCallWithABI unsafe;
-  return js::AllocateString<JSFatInlineString, NoGC>(cx, js::gc::TenuredHeap);
+  return js::AllocateString<JSFatInlineString, NoGC>(cx, js::gc::DefaultHeap);
 }
 
+// Called to allocate a BigInt if inline allocation failed.
 void* AllocateBigIntNoGC(JSContext* cx, bool requestMinorGC) {
   AutoUnsafeCallWithABI unsafe;
 
@@ -2931,21 +2815,6 @@ AtomicsReadWriteModifyFn AtomicsXor(Scalar::Type elementType) {
     default:
       MOZ_CRASH("Unexpected TypedArray type");
   }
-}
-
-bool GroupHasPropertyTypes(ObjectGroup* group, jsid* id, Value* v) {
-  AutoUnsafeCallWithABI unsafe;
-  if (group->unknownPropertiesDontCheckGeneration()) {
-    return true;
-  }
-  HeapTypeSet* propTypes = group->maybeGetPropertyDontCheckGeneration(*id);
-  if (!propTypes) {
-    return true;
-  }
-  if (!propTypes->nonConstantProperty()) {
-    return false;
-  }
-  return propTypes->hasType(TypeSet::GetValueType(*v));
 }
 
 void AssumeUnreachable(const char* output) {

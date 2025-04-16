@@ -20,7 +20,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   CustomizableUITestUtils:
     "resource://testing-common/CustomizableUITestUtils.jsm",
   Region: "resource://gre/modules/Region.jsm",
-  SearchTelemetry: "resource:///modules/SearchTelemetry.jsm",
   SearchTestUtils: "resource://testing-common/SearchTestUtils.jsm",
   UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.jsm",
   HttpServer: "resource://testing-common/httpd.js",
@@ -80,11 +79,15 @@ add_task(async function setup() {
 
   // Make sure to restore the engine once we're done.
   registerCleanupFunction(async function() {
+    let settingsWritten = SearchTestUtils.promiseSearchNotification(
+      "write-settings-to-disk-complete"
+    );
     await SearchTestUtils.updateRemoteSettingsConfig();
     await gHttpServer.stop();
     gHttpServer = null;
     await PlacesUtils.history.clear();
     gCUITestUtils.removeSearchBar();
+    await settingsWritten;
   });
 });
 

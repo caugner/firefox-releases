@@ -35,8 +35,8 @@ loader.lazyRequireGetter(
 
 loader.lazyRequireGetter(
   this,
-  "NetworkActor",
-  "devtools/server/actors/network-monitor/network",
+  "NetworkParentActor",
+  "devtools/server/actors/network-monitor/network-parent",
   true
 );
 
@@ -108,15 +108,14 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
 
     return {
       actor: this.actorID,
+      // The resources and target traits should be removed all at the same time since the
+      // client has generic ways to deal with all of them (See Bug 1680280).
       traits: {
-        // FF77+ supports frames in Watcher actor
         [Targets.TYPES.FRAME]: true,
-        // FF84+ supports processes
         [Targets.TYPES.PROCESS]: true,
-        // FF84+ supports workers in Watcher actor for content toolbox.
         [Targets.TYPES.WORKER]: hasBrowserElement,
         resources: {
-          // FF81+ (bug 1642295) added support for:
+          // In Firefox 81 we added support for:
           // - CONSOLE_MESSAGE
           // - CSS_CHANGE
           // - CSS_MESSAGE
@@ -144,6 +143,7 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
             enableServerWatcher && hasBrowserElement,
           [Resources.TYPES.STYLESHEET]:
             enableServerWatcher && hasBrowserElement,
+          [Resources.TYPES.SOURCE]: hasBrowserElement,
         },
       },
     };
@@ -425,7 +425,7 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
    * @return {Object} actor
    *        The network actor.
    */
-  getNetworkActor() {
-    return new NetworkActor(this);
+  getNetworkParentActor() {
+    return new NetworkParentActor(this);
   },
 });

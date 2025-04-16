@@ -23,9 +23,7 @@ class MOZ_RAII IonCacheIRCompiler : public CacheIRCompiler {
   friend class AutoCallVM;
 
   IonCacheIRCompiler(JSContext* cx, const CacheIRWriter& writer, IonIC* ic,
-                     IonScript* ionScript,
-                     const PropertyTypeCheckInfo* typeCheckInfo,
-                     uint32_t stubDataOffset);
+                     IonScript* ionScript, uint32_t stubDataOffset);
 
   MOZ_MUST_USE bool init();
   JitCode* compile(IonICStub* stub);
@@ -38,10 +36,6 @@ class MOZ_RAII IonCacheIRCompiler : public CacheIRCompiler {
   const CacheIRWriter& writer_;
   IonIC* ic_;
   IonScript* ionScript_;
-
-  // Information necessary to generate property type checks. Non-null iff
-  // this is a SetProp/SetElem stub.
-  const PropertyTypeCheckInfo* typeCheckInfo_;
 
   Vector<CodeOffset, 4, SystemAllocPolicy> nextCodeOffsets_;
   mozilla::Maybe<LiveRegisterSet> liveRegs_;
@@ -62,10 +56,7 @@ class MOZ_RAII IonCacheIRCompiler : public CacheIRCompiler {
 
   MOZ_MUST_USE bool emitAddAndStoreSlotShared(
       CacheOp op, ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
-      bool changeGroup, uint32_t newGroupOffset, uint32_t newShapeOffset,
-      mozilla::Maybe<uint32_t> numNewSlotsOffset);
-
-  bool needsPostBarrier() const;
+      uint32_t newShapeOffset, mozilla::Maybe<uint32_t> numNewSlotsOffset);
 
   void pushStubCodePointer();
 

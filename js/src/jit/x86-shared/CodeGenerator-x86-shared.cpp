@@ -16,6 +16,7 @@
 #include "jit/JitRuntime.h"
 #include "jit/RangeAnalysis.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
+#include "util/DifferentialTesting.h"
 #include "vm/TraceLogging.h"
 
 #include "jit/MacroAssembler-inl.h"
@@ -1667,17 +1668,17 @@ void CodeGenerator::visitShiftI(LShiftI* ins) {
     switch (ins->bitop()) {
       case JSOp::Lsh:
         if (shift) {
-          masm.shll(Imm32(shift), lhs);
+          masm.lshift32(Imm32(shift), lhs);
         }
         break;
       case JSOp::Rsh:
         if (shift) {
-          masm.sarl(Imm32(shift), lhs);
+          masm.rshift32Arithmetic(Imm32(shift), lhs);
         }
         break;
       case JSOp::Ursh:
         if (shift) {
-          masm.shrl(Imm32(shift), lhs);
+          masm.rshift32(Imm32(shift), lhs);
         } else if (ins->mir()->toUrsh()->fallible()) {
           // x >>> 0 can overflow.
           masm.test32(lhs, lhs);
@@ -1688,16 +1689,16 @@ void CodeGenerator::visitShiftI(LShiftI* ins) {
         MOZ_CRASH("Unexpected shift op");
     }
   } else {
-    MOZ_ASSERT(ToRegister(rhs) == ecx);
+    Register shift = ToRegister(rhs);
     switch (ins->bitop()) {
       case JSOp::Lsh:
-        masm.shll_cl(lhs);
+        masm.lshift32(shift, lhs);
         break;
       case JSOp::Rsh:
-        masm.sarl_cl(lhs);
+        masm.rshift32Arithmetic(shift, lhs);
         break;
       case JSOp::Ursh:
-        masm.shrl_cl(lhs);
+        masm.rshift32(shift, lhs);
         if (ins->mir()->toUrsh()->fallible()) {
           // x >>> 0 can overflow.
           masm.test32(lhs, lhs);
@@ -1740,16 +1741,19 @@ void CodeGenerator::visitShiftI64(LShiftI64* lir) {
     return;
   }
 
-  MOZ_ASSERT(ToRegister(rhs) == ecx);
+  Register shift = ToRegister(rhs);
+#ifdef JS_CODEGEN_X86
+  MOZ_ASSERT(shift == ecx);
+#endif
   switch (lir->bitop()) {
     case JSOp::Lsh:
-      masm.lshift64(ecx, ToRegister64(lhs));
+      masm.lshift64(shift, ToRegister64(lhs));
       break;
     case JSOp::Rsh:
-      masm.rshift64Arithmetic(ecx, ToRegister64(lhs));
+      masm.rshift64Arithmetic(shift, ToRegister64(lhs));
       break;
     case JSOp::Ursh:
-      masm.rshift64(ecx, ToRegister64(lhs));
+      masm.rshift64(shift, ToRegister64(lhs));
       break;
     default:
       MOZ_CRASH("Unexpected shift op");
@@ -1769,8 +1773,8 @@ void CodeGenerator::visitUrshD(LUrshD* ins) {
       masm.shrl(Imm32(shift), lhs);
     }
   } else {
-    MOZ_ASSERT(ToRegister(rhs) == ecx);
-    masm.shrl_cl(lhs);
+    Register shift = ToRegister(rhs);
+    masm.rshift32(shift, lhs);
   }
 
   masm.convertUInt32ToDouble(lhs, out);
@@ -2149,7 +2153,11 @@ void CodeGeneratorX86Shared::visitOutOfLineWasmTruncateCheck(
 
 void CodeGeneratorX86Shared::canonicalizeIfDeterministic(
     Scalar::Type type, const LAllocation* value) {
-#ifdef JS_MORE_DETERMINISTIC
+#ifdef DEBUG
+  if (!js::SupportDifferentialTesting()) {
+    return;
+  }
+
   switch (type) {
     case Scalar::Float32: {
       FloatRegister in = ToFloatRegister(value);
@@ -2166,7 +2174,7 @@ void CodeGeneratorX86Shared::canonicalizeIfDeterministic(
       break;
     }
   }
-#endif  // JS_MORE_DETERMINISTIC
+#endif  // DEBUG
 }
 
 void CodeGenerator::visitCopySignF(LCopySignF* lir) {
@@ -2543,14 +2551,8 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
     case wasm::SimdOp::F32x4Lt:
       masm.compareFloat32x4(Assembler::LessThan, rhs, lhsDest);
       break;
-    case wasm::SimdOp::F32x4Gt:
-      masm.compareFloat32x4(Assembler::GreaterThan, rhs, lhsDest);
-      break;
     case wasm::SimdOp::F32x4Le:
       masm.compareFloat32x4(Assembler::LessThanOrEqual, rhs, lhsDest);
-      break;
-    case wasm::SimdOp::F32x4Ge:
-      masm.compareFloat32x4(Assembler::GreaterThanOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::F64x2Eq:
       masm.compareFloat64x2(Assembler::Equal, rhs, lhsDest);
@@ -2561,14 +2563,8 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
     case wasm::SimdOp::F64x2Lt:
       masm.compareFloat64x2(Assembler::LessThan, rhs, lhsDest);
       break;
-    case wasm::SimdOp::F64x2Gt:
-      masm.compareFloat64x2(Assembler::GreaterThan, rhs, lhsDest);
-      break;
     case wasm::SimdOp::F64x2Le:
       masm.compareFloat64x2(Assembler::LessThanOrEqual, rhs, lhsDest);
-      break;
-    case wasm::SimdOp::F64x2Ge:
-      masm.compareFloat64x2(Assembler::GreaterThanOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::F32x4PMax:
       // `lhsDest` is actually rhsDest, and `rhs` is actually lhs
@@ -2740,6 +2736,30 @@ void CodeGenerator::visitWasmBinarySimd128WithConstant(
       break;
     case wasm::SimdOp::I32x4LeS:
       masm.compareInt32x4(Assembler::LessThanOrEqual, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F32x4Eq:
+      masm.compareFloat32x4(Assembler::Equal, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F32x4Ne:
+      masm.compareFloat32x4(Assembler::NotEqual, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F32x4Lt:
+      masm.compareFloat32x4(Assembler::LessThan, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F32x4Le:
+      masm.compareFloat32x4(Assembler::LessThanOrEqual, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F64x2Eq:
+      masm.compareFloat64x2(Assembler::Equal, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F64x2Ne:
+      masm.compareFloat64x2(Assembler::NotEqual, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F64x2Lt:
+      masm.compareFloat64x2(Assembler::LessThan, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::F64x2Le:
+      masm.compareFloat64x2(Assembler::LessThanOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I32x4DotSI16x8:
       masm.widenDotInt16x8(rhs, lhsDest);

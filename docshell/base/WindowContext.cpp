@@ -11,6 +11,7 @@
 #include "mozilla/dom/SyncedContextInlines.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/PermissionDelegateIPCUtils.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/ClearOnShutdown.h"
@@ -92,6 +93,10 @@ WindowContext* WindowContext::TopWindowContext() {
 }
 
 bool WindowContext::IsTop() const { return mBrowsingContext->IsTop(); }
+
+bool WindowContext::SameOriginWithTop() const {
+  return mBrowsingContext->SameOriginWithTop();
+}
 
 nsIGlobalObject* WindowContext::GetParentObject() const {
   return xpc::NativeGlobal(xpc::PrivilegedJunkScope());
@@ -240,6 +245,22 @@ bool WindowContext::CanSet(
     const PermissionDelegateHandler::DelegatedPermissionList& aValue,
     ContentParent* aSource) {
   return CheckOnlyOwningProcessCanSet(aSource);
+}
+
+void WindowContext::DidSet(FieldIndex<IDX_SHEntryHasUserInteraction>,
+                           bool aOldValue) {
+  MOZ_ASSERT(
+      TopWindowContext() == this,
+      "SHEntryHasUserInteraction can only be set on the top window context");
+  // This field is set when the child notifies us of new user interaction, so we
+  // also set the currently active shentry in the parent as having interaction.
+  if (XRE_IsParentProcess() && mBrowsingContext) {
+    SessionHistoryEntry* activeEntry =
+        mBrowsingContext->Canonical()->GetActiveSessionHistoryEntry();
+    if (activeEntry && GetSHEntryHasUserInteraction()) {
+      activeEntry->SetHasUserInteraction(true);
+    }
+  }
 }
 
 void WindowContext::DidSet(FieldIndex<IDX_UserActivationState>) {

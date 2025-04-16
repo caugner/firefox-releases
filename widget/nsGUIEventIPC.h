@@ -6,10 +6,12 @@
 #ifndef nsGUIEventIPC_h__
 #define nsGUIEventIPC_h__
 
+#include "ipc/EnumSerializer.h"
 #include "ipc/IPCMessageUtils.h"
 #include "mozilla/ContentCache.h"
 #include "mozilla/GfxMessageUtils.h"
 #include "mozilla/dom/Touch.h"
+#include "mozilla/layers/LayersMessageUtils.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/TextEvents.h"
@@ -627,67 +629,6 @@ struct ParamTraits<mozilla::FontRange> {
 };
 
 template <>
-struct ParamTraits<mozilla::WidgetQueryContentEvent::Input> {
-  typedef mozilla::WidgetQueryContentEvent::Input paramType;
-  typedef mozilla::WidgetQueryContentEvent event;
-
-  static void Write(Message* aMsg, const paramType& aParam) {
-    WriteParam(aMsg, aParam.mOffset);
-    WriteParam(aMsg, aParam.mLength);
-    WriteParam(aMsg, mozilla::ToRawSelectionType(aParam.mSelectionType));
-  }
-
-  static bool Read(const Message* aMsg, PickleIterator* aIter,
-                   paramType* aResult) {
-    mozilla::RawSelectionType rawSelectionType = 0;
-    bool ok = ReadParam(aMsg, aIter, &aResult->mOffset) &&
-              ReadParam(aMsg, aIter, &aResult->mLength) &&
-              ReadParam(aMsg, aIter, &rawSelectionType);
-    aResult->mSelectionType = mozilla::ToSelectionType(rawSelectionType);
-    return ok;
-  }
-};
-
-template <>
-struct ParamTraits<mozilla::WidgetQueryContentEvent> {
-  typedef mozilla::WidgetQueryContentEvent paramType;
-
-  static void Write(Message* aMsg, const paramType& aParam) {
-    WriteParam(aMsg, static_cast<const mozilla::WidgetGUIEvent&>(aParam));
-    WriteParam(aMsg, aParam.mSucceeded);
-    WriteParam(aMsg, aParam.mUseNativeLineBreak);
-    WriteParam(aMsg, aParam.mWithFontRanges);
-    WriteParam(aMsg, aParam.mInput);
-    WriteParam(aMsg, aParam.mReply.mOffset);
-    WriteParam(aMsg, aParam.mReply.mTentativeCaretOffset);
-    WriteParam(aMsg, aParam.mReply.mString);
-    WriteParam(aMsg, aParam.mReply.mRect);
-    WriteParam(aMsg, aParam.mReply.mReversed);
-    WriteParam(aMsg, aParam.mReply.mHasSelection);
-    WriteParam(aMsg, aParam.mReply.mWidgetIsHit);
-    WriteParam(aMsg, aParam.mReply.mFontRanges);
-  }
-
-  static bool Read(const Message* aMsg, PickleIterator* aIter,
-                   paramType* aResult) {
-    return ReadParam(aMsg, aIter,
-                     static_cast<mozilla::WidgetGUIEvent*>(aResult)) &&
-           ReadParam(aMsg, aIter, &aResult->mSucceeded) &&
-           ReadParam(aMsg, aIter, &aResult->mUseNativeLineBreak) &&
-           ReadParam(aMsg, aIter, &aResult->mWithFontRanges) &&
-           ReadParam(aMsg, aIter, &aResult->mInput) &&
-           ReadParam(aMsg, aIter, &aResult->mReply.mOffset) &&
-           ReadParam(aMsg, aIter, &aResult->mReply.mTentativeCaretOffset) &&
-           ReadParam(aMsg, aIter, &aResult->mReply.mString) &&
-           ReadParam(aMsg, aIter, &aResult->mReply.mRect) &&
-           ReadParam(aMsg, aIter, &aResult->mReply.mReversed) &&
-           ReadParam(aMsg, aIter, &aResult->mReply.mHasSelection) &&
-           ReadParam(aMsg, aIter, &aResult->mReply.mWidgetIsHit) &&
-           ReadParam(aMsg, aIter, &aResult->mReply.mFontRanges);
-  }
-};
-
-template <>
 struct ParamTraits<mozilla::WidgetSelectionEvent> {
   typedef mozilla::WidgetSelectionEvent paramType;
 
@@ -1031,25 +972,77 @@ struct ParamTraits<mozilla::WritingMode> {
 };
 
 template <>
+struct ParamTraits<mozilla::ContentCache::Selection> {
+  typedef mozilla::ContentCache::Selection paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam) {
+    WriteParam(aMsg, aParam.mAnchor);
+    WriteParam(aMsg, aParam.mFocus);
+    WriteParam(aMsg, aParam.mWritingMode);
+    WriteParam(aMsg, aParam.mAnchorCharRects[0]);
+    WriteParam(aMsg, aParam.mAnchorCharRects[1]);
+    WriteParam(aMsg, aParam.mFocusCharRects[0]);
+    WriteParam(aMsg, aParam.mFocusCharRects[1]);
+    WriteParam(aMsg, aParam.mRect);
+  }
+
+  static bool Read(const Message* aMsg, PickleIterator* aIter,
+                   paramType* aResult) {
+    return ReadParam(aMsg, aIter, &aResult->mAnchor) &&
+           ReadParam(aMsg, aIter, &aResult->mFocus) &&
+           ReadParam(aMsg, aIter, &aResult->mWritingMode) &&
+           ReadParam(aMsg, aIter, &aResult->mAnchorCharRects[0]) &&
+           ReadParam(aMsg, aIter, &aResult->mAnchorCharRects[1]) &&
+           ReadParam(aMsg, aIter, &aResult->mFocusCharRects[0]) &&
+           ReadParam(aMsg, aIter, &aResult->mFocusCharRects[1]) &&
+           ReadParam(aMsg, aIter, &aResult->mRect);
+  }
+};
+
+template <>
+struct ParamTraits<mozilla::ContentCache::Caret> {
+  typedef mozilla::ContentCache::Caret paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam) {
+    WriteParam(aMsg, aParam.mOffset);
+    WriteParam(aMsg, aParam.mRect);
+  }
+
+  static bool Read(const Message* aMsg, PickleIterator* aIter,
+                   paramType* aResult) {
+    return ReadParam(aMsg, aIter, &aResult->mOffset) &&
+           ReadParam(aMsg, aIter, &aResult->mRect);
+  }
+};
+
+template <>
+struct ParamTraits<mozilla::ContentCache::TextRectArray> {
+  typedef mozilla::ContentCache::TextRectArray paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam) {
+    WriteParam(aMsg, aParam.mStart);
+    WriteParam(aMsg, aParam.mRects);
+  }
+
+  static bool Read(const Message* aMsg, PickleIterator* aIter,
+                   paramType* aResult) {
+    return ReadParam(aMsg, aIter, &aResult->mStart) &&
+           ReadParam(aMsg, aIter, &aResult->mRects);
+  }
+};
+
+template <>
 struct ParamTraits<mozilla::ContentCache> {
   typedef mozilla::ContentCache paramType;
 
   static void Write(Message* aMsg, const paramType& aParam) {
     WriteParam(aMsg, aParam.mCompositionStart);
     WriteParam(aMsg, aParam.mText);
-    WriteParam(aMsg, aParam.mSelection.mAnchor);
-    WriteParam(aMsg, aParam.mSelection.mFocus);
-    WriteParam(aMsg, aParam.mSelection.mWritingMode);
-    WriteParam(aMsg, aParam.mSelection.mAnchorCharRects[0]);
-    WriteParam(aMsg, aParam.mSelection.mAnchorCharRects[1]);
-    WriteParam(aMsg, aParam.mSelection.mFocusCharRects[0]);
-    WriteParam(aMsg, aParam.mSelection.mFocusCharRects[1]);
-    WriteParam(aMsg, aParam.mSelection.mRect);
+    WriteParam(aMsg, aParam.mSelection);
     WriteParam(aMsg, aParam.mFirstCharRect);
-    WriteParam(aMsg, aParam.mCaret.mOffset);
-    WriteParam(aMsg, aParam.mCaret.mRect);
-    WriteParam(aMsg, aParam.mTextRectArray.mStart);
-    WriteParam(aMsg, aParam.mTextRectArray.mRects);
+    WriteParam(aMsg, aParam.mCaret);
+    WriteParam(aMsg, aParam.mTextRectArray);
+    WriteParam(aMsg, aParam.mLastCommitStringTextRectArray);
     WriteParam(aMsg, aParam.mEditorRect);
   }
 
@@ -1057,19 +1050,11 @@ struct ParamTraits<mozilla::ContentCache> {
                    paramType* aResult) {
     return ReadParam(aMsg, aIter, &aResult->mCompositionStart) &&
            ReadParam(aMsg, aIter, &aResult->mText) &&
-           ReadParam(aMsg, aIter, &aResult->mSelection.mAnchor) &&
-           ReadParam(aMsg, aIter, &aResult->mSelection.mFocus) &&
-           ReadParam(aMsg, aIter, &aResult->mSelection.mWritingMode) &&
-           ReadParam(aMsg, aIter, &aResult->mSelection.mAnchorCharRects[0]) &&
-           ReadParam(aMsg, aIter, &aResult->mSelection.mAnchorCharRects[1]) &&
-           ReadParam(aMsg, aIter, &aResult->mSelection.mFocusCharRects[0]) &&
-           ReadParam(aMsg, aIter, &aResult->mSelection.mFocusCharRects[1]) &&
-           ReadParam(aMsg, aIter, &aResult->mSelection.mRect) &&
+           ReadParam(aMsg, aIter, &aResult->mSelection) &&
            ReadParam(aMsg, aIter, &aResult->mFirstCharRect) &&
-           ReadParam(aMsg, aIter, &aResult->mCaret.mOffset) &&
-           ReadParam(aMsg, aIter, &aResult->mCaret.mRect) &&
-           ReadParam(aMsg, aIter, &aResult->mTextRectArray.mStart) &&
-           ReadParam(aMsg, aIter, &aResult->mTextRectArray.mRects) &&
+           ReadParam(aMsg, aIter, &aResult->mCaret) &&
+           ReadParam(aMsg, aIter, &aResult->mTextRectArray) &&
+           ReadParam(aMsg, aIter, &aResult->mLastCommitStringTextRectArray) &&
            ReadParam(aMsg, aIter, &aResult->mEditorRect);
   }
 };

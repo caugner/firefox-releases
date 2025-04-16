@@ -387,7 +387,10 @@ const tests = [
   async function(win) {
     info("Type something and canonize");
     win.gURLBar.select();
-    let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
+    const promise = BrowserTestUtils.waitForDocLoadAndStopIt(
+      "https://www.example.com/",
+      gBrowser.selectedBrowser
+    );
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window: win,
       value: "example",
@@ -1056,7 +1059,6 @@ const tests = [
     await SpecialPowers.pushPrefEnv({
       set: [
         ["browser.urlbar.update2", true],
-        ["browser.urlbar.update2.tabToComplete", true],
         ["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0],
       ],
     });
@@ -1394,7 +1396,6 @@ const tests = [
     await SpecialPowers.pushPrefEnv({
       set: [
         ["browser.urlbar.update2", true],
-        ["browser.urlbar.update2.tabToComplete", true],
         ["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0],
       ],
     });

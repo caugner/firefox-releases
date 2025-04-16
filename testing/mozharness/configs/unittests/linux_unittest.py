@@ -1,3 +1,7 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
 import os
 import platform
 
@@ -30,6 +34,7 @@ else:
 #####
 config = {
     ###
+    "virtualenv_modules": ["six==1.13.0", "vcversioner==2.16.0.0"],
     "installer_path": INSTALLER_PATH,
     "binary_path": BINARY_PATH,
     "xpcshell_name": XPCSHELL_NAME,

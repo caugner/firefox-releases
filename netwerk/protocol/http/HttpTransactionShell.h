@@ -104,7 +104,7 @@ class HttpTransactionShell : public nsISupports {
   // Returning null if there is no trailer.
   virtual UniquePtr<nsHttpHeaderArray> TakeResponseTrailers() = 0;
 
-  virtual nsISupports* SecurityInfo() = 0;
+  virtual already_AddRefed<nsISupports> SecurityInfo() = 0;
   virtual void SetSecurityCallbacks(nsIInterfaceRequestor* aCallbacks) = 0;
 
   virtual void GetNetworkAddresses(NetAddr& self, NetAddr& peer,
@@ -133,6 +133,7 @@ class HttpTransactionShell : public nsISupports {
   virtual bool ResponseIsComplete() = 0;
   virtual int64_t GetTransferSize() = 0;
   virtual int64_t GetRequestSize() = 0;
+  virtual bool IsHttp3Used() = 0;
 
   // Called to notify that a requested DNS cache entry was refreshed.
   virtual void SetDNSWasRefreshed() = 0;
@@ -180,7 +181,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(HttpTransactionShell, HTTPTRANSACTIONSHELL_IID)
       override;                                                                \
   virtual UniquePtr<nsHttpResponseHead> TakeResponseHead() override;           \
   virtual UniquePtr<nsHttpHeaderArray> TakeResponseTrailers() override;        \
-  virtual nsISupports* SecurityInfo() override;                                \
+  virtual already_AddRefed<nsISupports> SecurityInfo() override;               \
   virtual void SetSecurityCallbacks(nsIInterfaceRequestor* aCallbacks)         \
       override;                                                                \
   virtual void GetNetworkAddresses(NetAddr& self, NetAddr& peer,               \
@@ -202,6 +203,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(HttpTransactionShell, HTTPTRANSACTIONSHELL_IID)
   virtual bool ResponseIsComplete() override;                                  \
   virtual int64_t GetTransferSize() override;                                  \
   virtual int64_t GetRequestSize() override;                                   \
+  virtual bool IsHttp3Used() override;                                         \
   virtual void SetDNSWasRefreshed() override;                                  \
   virtual void DontReuseConnection() override;                                 \
   virtual bool HasStickyConnection() const override;                           \

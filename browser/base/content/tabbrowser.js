@@ -968,9 +968,14 @@
           ? "Private"
           : "Default";
       if (title) {
+        // We're using a function rather than just using `title` as the
+        // new substring to avoid `$$`, `$'` etc. having a special
+        // meaning to `replace`.
+        // See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace#specifying_a_string_as_a_parameter
+        // and the documentation for functions for more info about this.
         return docElement.dataset["contentTitle" + dataSuffix].replace(
           "CONTENTTITLE",
-          title
+          () => title
         );
       }
 
@@ -1389,17 +1394,20 @@
         tab._sharingState = {};
       }
       tab._sharingState = Object.assign(tab._sharingState, aState);
-      if (aState.webRTC && aState.webRTC.sharing) {
-        if (aState.webRTC.paused) {
-          tab.removeAttribute("sharing");
+
+      if ("webRTC" in aState) {
+        if (tab._sharingState.webRTC?.sharing) {
+          if (tab._sharingState.webRTC.paused) {
+            tab.removeAttribute("sharing");
+          } else {
+            tab.setAttribute("sharing", aState.webRTC.sharing);
+          }
         } else {
-          tab.setAttribute("sharing", aState.webRTC.sharing);
+          tab._sharingState.webRTC = null;
+          tab.removeAttribute("sharing");
         }
-      } else {
-        tab._sharingState.webRTC = null;
-        tab.removeAttribute("sharing");
+        this._tabAttrModified(tab, ["sharing"]);
       }
-      this._tabAttrModified(tab, ["sharing"]);
 
       if (aBrowser == this.selectedBrowser) {
         gIdentityHandler.updateSharingIndicator();
@@ -3222,14 +3230,20 @@
       this.removeTabs(selectedTabs);
     },
 
-    removeTabs(tabs) {
+    removeTabs(
+      tabs,
+      { animate = true, suppressWarnAboutClosingWindow = false } = {}
+    ) {
       // When 'closeWindowWithLastTab' pref is enabled, closing all tabs
       // can be considered equivalent to closing the window.
       if (
         this.tabs.length == tabs.length &&
         Services.prefs.getBoolPref("browser.tabs.closeWindowWithLastTab")
       ) {
-        window.closeWindow(true, window.warnAboutClosingWindow);
+        window.closeWindow(
+          true,
+          suppressWarnAboutClosingWindow ? null : window.warnAboutClosingWindow
+        );
         return;
       }
 
@@ -3240,7 +3254,8 @@
       try {
         let tabsWithBeforeUnload = [];
         let lastToClose;
-        let aParams = { animate: true, prewarmed: true };
+        let aParams = { animate, prewarmed: true };
+
         for (let tab of tabs) {
           if (tab.selected) {
             lastToClose = tab;
@@ -3454,7 +3469,14 @@
         this._tabLayerCache.splice(tabCacheIndex, 1);
       }
 
-      this._blurTab(aTab);
+      // Delay hiding the the active tab if we're screen sharing.
+      // See Bug 1642747.
+      let screenShareInActiveTab =
+        aTab == this.selectedTab && aTab._sharingState?.webRTC?.screen;
+
+      if (!screenShareInActiveTab) {
+        this._blurTab(aTab);
+      }
 
       var closeWindow = false;
       var newTab = false;
@@ -4994,9 +5016,9 @@
       if (includeLabel) {
         label = tab._fullLabel || tab.getAttribute("label");
       }
-      if (AppConstants.NIGHTLY_BUILD) {
+      if (Services.prefs.getBoolPref("browser.tabs.tooltipsShowPid", false)) {
         if (tab.linkedBrowser) {
-          // On Nightly builds, show the PID of the content process, and if
+          // When enabled, show the PID of the content process, and if
           // we're running with fission enabled, try to include PIDs for
           // every remote subframe.
           let [contentPid, ...framePids] = E10SUtils.getBrowserPids(
@@ -5690,18 +5712,6 @@
             Ci.nsIWebProgress.NOTIFY_ALL
           );
 
-          // Restore the securityUI state.
-          let securityUI = browser.securityUI;
-          let state = securityUI
-            ? securityUI.state
-            : Ci.nsIWebProgressListener.STATE_IS_INSECURE;
-          this._callProgressListeners(
-            browser,
-            "onSecurityChange",
-            [browser.webProgress, null, state],
-            true,
-            false
-          );
           let cbEvent = browser.getContentBlockingEvents();
           // Include the true final argument to indicate that this event is
           // simulated (instead of being observed by the webProgressListener).

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include "ErrorList.h"
 #include "mozilla/Atomics.h"
+#include "mozilla/InitializedOnce.h"
 #include "mozilla/Result.h"
 #include "mozilla/dom/LocalStorageCommon.h"
 #include "mozilla/dom/ipc/IdType.h"
@@ -17,6 +18,7 @@
 #include "mozilla/dom/quota/QuotaCommon.h"
 #include "mozilla/dom/quota/QuotaInfo.h"
 #include "mozilla/fallible.h"
+#include "nsHashKeys.h"
 #include "nsISupports.h"
 #include "nsStringFwd.h"
 
@@ -57,6 +59,17 @@ class Client {
     TYPE_MAX
   };
 
+  class DirectoryLockIdTable final {
+    nsTHashtable<nsUint64HashKey> mIds;
+
+   public:
+    void Put(const int64_t aId) { mIds.PutEntry(aId); }
+
+    bool Has(const int64_t aId) const { return mIds.Contains(aId); }
+
+    bool Filled() const { return mIds.Count(); }
+  };
+
   static Type TypeMax() {
     if (CachedNextGenLocalStorageEnabled()) {
       return TYPE_MAX;
@@ -68,9 +81,7 @@ class Client {
 
   static bool TypeToText(Type aType, nsAString& aText, const fallible_t&);
 
-  static void TypeToText(Type aType, nsAString& aText);
-
-  static void TypeToText(Type aType, nsACString& aText);
+  static nsAutoCString TypeToText(Type aType);
 
   static bool TypeFromText(const nsAString& aText, Type& aType,
                            const fallible_t&);
@@ -83,6 +94,24 @@ class Client {
 
   static bool IsDeprecatedClient(const nsAString& aText) {
     return aText.EqualsLiteral(ASMJSCACHE_DIRECTORY_NAME);
+  }
+
+  template <typename T>
+  static bool IsLockForObjectContainedInLockTable(
+      const T& aObject, const DirectoryLockIdTable& aIds) {
+    const auto& maybeDirectoryLock = aObject.MaybeDirectoryLockRef();
+
+    MOZ_ASSERT(maybeDirectoryLock.isSome());
+
+    return aIds.Has(maybeDirectoryLock->Id());
+  }
+
+  template <typename T>
+  static bool IsLockForObjectAcquiredAndContainedInLockTable(
+      const T& aObject, const DirectoryLockIdTable& aIds) {
+    const auto& maybeDirectoryLock = aObject.MaybeDirectoryLockRef();
+
+    return maybeDirectoryLock && aIds.Has(maybeDirectoryLock->Id());
   }
 
   NS_INLINE_DECL_PURE_VIRTUAL_REFCOUNTING
@@ -128,15 +157,36 @@ class Client {
   virtual void ReleaseIOThreadObjects() = 0;
 
   // Methods which are called on the background thread.
-  virtual void AbortOperations(const nsACString& aOrigin) = 0;
+  virtual void AbortOperationsForLocks(
+      const DirectoryLockIdTable& aDirectoryLockIds) = 0;
 
   virtual void AbortOperationsForProcess(ContentParentId aContentParentId) = 0;
+
+  virtual void AbortAllOperations() = 0;
 
   virtual void StartIdleMaintenance() = 0;
 
   virtual void StopIdleMaintenance() = 0;
 
-  virtual void ShutdownWorkThreads() = 0;
+  // Returns true if there is work that needs to be waited for.
+  bool InitiateShutdownWorkThreads();
+  void FinalizeShutdownWorkThreads();
+
+  virtual bool IsShutdownCompleted() const = 0;
+
+  void MaybeRecordShutdownStep(const nsACString& aStepDescription);
+
+ private:
+  virtual void InitiateShutdown() = 0;
+  virtual nsCString GetShutdownStatus() const = 0;
+  virtual void ForceKillActors() = 0;
+  virtual void FinalizeShutdown() = 0;
+
+  // A timer that gets activated at shutdown to ensure we close all storages.
+  nsCOMPtr<nsITimer> mShutdownTimer;
+
+  nsCString mShutdownSteps;
+  LazyInitializedOnce<const TimeStamp> mShutdownStartedAt;
 
  protected:
   virtual ~Client() = default;

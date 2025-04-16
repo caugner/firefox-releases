@@ -9,7 +9,6 @@ const protocol = require("devtools/shared/protocol");
 const { LongStringActor } = require("devtools/server/actors/string");
 const { DevToolsServer } = require("devtools/server/devtools-server");
 const Services = require("Services");
-const defer = require("devtools/shared/defer");
 const { isWindowIncluded } = require("devtools/shared/layout/utils");
 const specs = require("devtools/shared/specs/storage");
 const { parseItemValue } = require("devtools/shared/storage/utils");
@@ -1626,10 +1625,10 @@ const extensionStorageHelpers = {
     switch (msg.json.method) {
       case "backToChild": {
         const [func, rv] = msg.json.args;
-        const deferred = this.unresolvedPromises.get(func);
-        if (deferred) {
+        const resolve = this.unresolvedPromises.get(func);
+        if (resolve) {
           this.unresolvedPromises.delete(func);
-          deferred.resolve(rv);
+          resolve(rv);
         }
         break;
       }
@@ -1652,9 +1651,9 @@ const extensionStorageHelpers = {
   },
 
   callParentProcessAsync(methodName, ...args) {
-    const deferred = defer();
-
-    this.unresolvedPromises.set(methodName, deferred);
+    const promise = new Promise(resolve => {
+      this.unresolvedPromises.set(methodName, resolve);
+    });
 
     this.ppmm.sendAsyncMessage(
       "debug:storage-extensionStorage-request-parent",
@@ -1664,7 +1663,7 @@ const extensionStorageHelpers = {
       }
     );
 
-    return deferred.promise;
+    return promise;
   },
 };
 
@@ -2699,10 +2698,10 @@ StorageActors.createActor(
         switch (msg.json.method) {
           case "backToChild": {
             const [func, rv] = msg.json.args;
-            const deferred = unresolvedPromises.get(func);
-            if (deferred) {
+            const resolve = unresolvedPromises.get(func);
+            if (resolve) {
               unresolvedPromises.delete(func);
-              deferred.resolve(rv);
+              resolve(rv);
             }
             break;
           }
@@ -2715,16 +2714,16 @@ StorageActors.createActor(
 
       const unresolvedPromises = new Map();
       function callParentProcessAsync(methodName, ...args) {
-        const deferred = defer();
-
-        unresolvedPromises.set(methodName, deferred);
+        const promise = new Promise(resolve => {
+          unresolvedPromises.set(methodName, resolve);
+        });
 
         mm.sendAsyncMessage("debug:storage-indexedDB-request-parent", {
           method: methodName,
           args: args,
         });
 
-        return deferred.promise;
+        return promise;
       }
     },
 
@@ -3403,13 +3402,31 @@ const StorageActor = protocol.ActorClassWithSpec(specs.storageSpec, {
     // Fetch all the inner iframe windows in this tab.
     this.fetchChildWindows(this.parentActor.docShell);
 
+    // Skip initializing storage actors already instanced as Resources
+    // by the watcher. This happens when the target is a tab.
+    const isAddonTarget = !!this.parentActor.addonId;
+    const isWatcherEnabled = !isAddonTarget && !this.parentActor.isRootActor;
+    const shallUseLegacyActors = Services.prefs.getBoolPref(
+      "devtools.storage.test.forceLegacyActors",
+      false
+    );
+    const resourcesInWatcher = {
+      localStorage: isWatcherEnabled,
+      sessionStorage: isWatcherEnabled,
+    };
+
     // Initialize the registered store types
     for (const [store, ActorConstructor] of storageTypePool) {
       // Only create the extensionStorage actor when the debugging target
       // is an extension.
-      if (store === "extensionStorage" && !this.parentActor.addonId) {
+      if (store === "extensionStorage" && !isAddonTarget) {
         continue;
       }
+      // Skip resource actors
+      if (resourcesInWatcher[store] && !shallUseLegacyActors) {
+        continue;
+      }
+
       this.childActorPool.set(store, new ActorConstructor(this));
     }
 

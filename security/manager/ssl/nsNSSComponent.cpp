@@ -43,6 +43,7 @@
 #include "nsIPrompt.h"
 #include "nsIProperties.h"
 #include "nsISerialEventTarget.h"
+#include "nsISiteSecurityService.h"
 #include "nsITimer.h"
 #include "nsITokenPasswordDialogs.h"
 #include "nsIWindowWatcher.h"
@@ -167,7 +168,7 @@ static const uint32_t OCSP_TIMEOUT_MILLISECONDS_SOFT_MAX = 5000;
 static const uint32_t OCSP_TIMEOUT_MILLISECONDS_HARD_DEFAULT = 10000;
 static const uint32_t OCSP_TIMEOUT_MILLISECONDS_HARD_MAX = 20000;
 
-static void GetRevocationBehaviorFromPrefs(
+void nsNSSComponent::GetRevocationBehaviorFromPrefs(
     /*out*/ CertVerifier::OcspDownloadConfig* odc,
     /*out*/ CertVerifier::OcspStrictConfig* osc,
     /*out*/ uint32_t* certShortLifetimeInDays,
@@ -218,7 +219,7 @@ static void GetRevocationBehaviorFromPrefs(
       std::min(hardTimeoutMillis, OCSP_TIMEOUT_MILLISECONDS_HARD_MAX);
   hardTimeout = TimeDuration::FromMilliseconds(hardTimeoutMillis);
 
-  nsNSSComponent::ClearSSLExternalAndInternalSessionCacheNative();
+  ClearSSLExternalAndInternalSessionCache();
 }
 
 nsNSSComponent::nsNSSComponent()
@@ -1475,17 +1476,6 @@ void nsNSSComponent::setValidationOptions(
       break;
   }
 
-  DistrustedCAPolicy defaultCAPolicyMode =
-      DistrustedCAPolicy::DistrustSymantecRoots;
-  DistrustedCAPolicy distrustedCAPolicy = static_cast<DistrustedCAPolicy>(
-      Preferences::GetUint("security.pki.distrust_ca_policy",
-                           static_cast<uint32_t>(defaultCAPolicyMode)));
-  // If distrustedCAPolicy sets any bits larger than the maximum mask, fall back
-  // to the default.
-  if (distrustedCAPolicy & ~DistrustedCAPolicyMaxAllowedValueMask) {
-    distrustedCAPolicy = defaultCAPolicyMode;
-  }
-
   CRLiteMode defaultCRLiteMode = CRLiteMode::Disabled;
   CRLiteMode crliteMode = static_cast<CRLiteMode>(Preferences::GetUint(
       "security.pki.crlite_mode", static_cast<uint32_t>(defaultCRLiteMode)));
@@ -1522,8 +1512,7 @@ void nsNSSComponent::setValidationOptions(
       odc, osc, softTimeout, hardTimeout, certShortLifetimeInDays,
       PublicSSLState()->PinningMode(), sha1Mode,
       PublicSSLState()->NameMatchingMode(), netscapeStepUpPolicy, ctMode,
-      distrustedCAPolicy, crliteMode, crliteCTMergeDelaySeconds,
-      mEnterpriseCerts);
+      crliteMode, crliteCTMergeDelaySeconds, mEnterpriseCerts);
 }
 
 void nsNSSComponent::UpdateCertVerifierWithEnterpriseRoots() {
@@ -1542,8 +1531,8 @@ void nsNSSComponent::UpdateCertVerifierWithEnterpriseRoots() {
       oldCertVerifier->mCertShortLifetimeInDays, oldCertVerifier->mPinningMode,
       oldCertVerifier->mSHA1Mode, oldCertVerifier->mNameMatchingMode,
       oldCertVerifier->mNetscapeStepUpPolicy, oldCertVerifier->mCTMode,
-      oldCertVerifier->mDistrustedCAPolicy, oldCertVerifier->mCRLiteMode,
-      oldCertVerifier->mCRLiteCTMergeDelaySeconds, mEnterpriseCerts);
+      oldCertVerifier->mCRLiteMode, oldCertVerifier->mCRLiteCTMergeDelaySeconds,
+      mEnterpriseCerts);
 }
 
 // Enable the TLS versions given in the prefs, defaulting to TLS 1.0 (min) and
@@ -2045,8 +2034,16 @@ nsresult nsNSSComponent::InitializeNSS() {
     return NS_ERROR_UNEXPECTED;
   }
 
-  nsCOMPtr<nsIClientAuthRememberService> cars =
-      do_GetService(NS_CLIENTAUTHREMEMBERSERVICE_CONTRACTID);
+  nsCOMPtr<nsICertOverrideService> certOverrideService(
+      do_GetService(NS_CERTOVERRIDE_CONTRACTID));
+  nsCOMPtr<nsIClientAuthRememberService> clientAuthRememberService(
+      do_GetService(NS_CLIENTAUTHREMEMBERSERVICE_CONTRACTID));
+  nsCOMPtr<nsISiteSecurityService> siteSecurityService(
+      do_GetService(NS_SSSERVICE_CONTRACTID));
+
+#ifdef MOZ_NEW_CERT_STORAGE
+  nsCOMPtr<nsICertStorage> certStorage(do_GetService(NS_CERT_STORAGE_CID));
+#endif
 
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("NSS Initialization done\n"));
 
@@ -2419,7 +2416,6 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
                    "security.OCSP.timeoutMilliseconds.soft") ||
                prefName.EqualsLiteral(
                    "security.OCSP.timeoutMilliseconds.hard") ||
-               prefName.EqualsLiteral("security.pki.distrust_ca_policy") ||
                prefName.EqualsLiteral("security.pki.crlite_mode") ||
                prefName.EqualsLiteral(
                    "security.pki.crlite_ct_merge_delay_seconds")) {
@@ -2459,7 +2455,7 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
       clearSessionCache = false;
     }
     if (clearSessionCache) {
-      ClearSSLExternalAndInternalSessionCacheNative();
+      ClearSSLExternalAndInternalSessionCache();
     }
 
     // Preferences that don't affect certificate verification.
@@ -2501,7 +2497,7 @@ nsresult nsNSSComponent::LogoutAuthenticatedPK11() {
     icos->ClearValidityOverride("all:temporary-certificates"_ns, 0);
   }
 
-  nsNSSComponent::ClearSSLExternalAndInternalSessionCacheNative();
+  ClearSSLExternalAndInternalSessionCache();
 
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
   if (os) {
@@ -2611,8 +2607,17 @@ nsNSSComponent::GetDefaultCertVerifier(SharedCertVerifier** result) {
 }
 
 // static
-void nsNSSComponent::ClearSSLExternalAndInternalSessionCacheNative() {
+void nsNSSComponent::DoClearSSLExternalAndInternalSessionCache() {
+  SSL_ClearSessionCache();
+  mozilla::net::SSLTokensCache::Clear();
+}
+
+NS_IMETHODIMP
+nsNSSComponent::ClearSSLExternalAndInternalSessionCache() {
   MOZ_ASSERT(XRE_IsParentProcess());
+  if (!XRE_IsParentProcess()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
 
   if (mozilla::net::nsIOService::UseSocketProcess()) {
     if (mozilla::net::gIOService) {
@@ -2623,17 +2628,6 @@ void nsNSSComponent::ClearSSLExternalAndInternalSessionCacheNative() {
     }
   }
   DoClearSSLExternalAndInternalSessionCache();
-}
-
-// static
-void nsNSSComponent::DoClearSSLExternalAndInternalSessionCache() {
-  SSL_ClearSessionCache();
-  mozilla::net::SSLTokensCache::Clear();
-}
-
-NS_IMETHODIMP
-nsNSSComponent::ClearSSLExternalAndInternalSessionCache() {
-  ClearSSLExternalAndInternalSessionCacheNative();
   return NS_OK;
 }
 

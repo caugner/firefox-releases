@@ -1048,9 +1048,7 @@ class ADBDevice(ADBCommand):
                     "attached and no device specified"
                 )
             if len(devices) == 0:
-                # We could error here, but this way we'll wait-for-device before we next
-                # run a command, which seems more friendly
-                return None
+                raise ADBError("No connected devices found.")
             device = devices[0]
 
         # Allow : in device serial if it matches a tcpip device serial.
@@ -1974,8 +1972,15 @@ class ADBDevice(ADBCommand):
             self._logger.warning(
                 "retryable logcat clear error?: {}. Retrying...".format(str(e))
             )
-            self.command_output(cmds, timeout=timeout)
-            self.shell_output("log logcat cleared", timeout=timeout)
+            try:
+                self.command_output(cmds, timeout=timeout)
+                self.shell_output("log logcat cleared", timeout=timeout)
+            except ADBProcessError as e2:
+                if "failed to clear" not in str(e):
+                    raise
+                self._logger.warning(
+                    "Ignoring failure to clear logcat: {}.".format(str(e2))
+                )
 
     def get_logcat(
         self,
@@ -3564,6 +3569,7 @@ class ADBDevice(ADBCommand):
                 "android.permission.ACCESS_FINE_LOCATION",
                 "android.permission.CAMERA",
                 "android.permission.RECORD_AUDIO",
+                "android.permission.ACCESS_WIFI_STATE",
             ]
             self._logger.info("Granting important runtime permissions to %s" % app_name)
             for permission in permissions:

@@ -9,18 +9,28 @@ import { ConfirmDialog } from "content-src/components/ConfirmDialog/ConfirmDialo
 import { connect } from "react-redux";
 import { DiscoveryStreamBase } from "content-src/components/DiscoveryStreamBase/DiscoveryStreamBase";
 import { ErrorBoundary } from "content-src/components/ErrorBoundary/ErrorBoundary";
+import { CustomizeMenu } from "content-src/components/CustomizeMenu/CustomizeMenu";
 import React from "react";
 import { Search } from "content-src/components/Search/Search";
 import { Sections } from "content-src/components/Sections/Sections";
+import { CSSTransition } from "react-transition-group";
 
-const PrefsButton = props => (
+export const PrefsButton = ({ onClick, icon }) => (
   <div className="prefs-button">
     <button
-      className="icon icon-settings"
-      onClick={props.onClick}
+      className={`icon ${icon || "icon-settings"}`}
+      onClick={onClick}
       data-l10n-id="newtab-settings-button"
     />
   </div>
+);
+
+export const PersonalizeButton = ({ onClick }) => (
+  <button
+    className="personalize-button"
+    onClick={onClick}
+    data-l10n-id="newtab-personalize-button-label"
+  />
 );
 
 // Returns a function will not be continuously triggered when called. The
@@ -102,8 +112,11 @@ export class BaseContent extends React.PureComponent {
   constructor(props) {
     super(props);
     this.openPreferences = this.openPreferences.bind(this);
+    this.openCustomizationMenu = this.openCustomizationMenu.bind(this);
+    this.closeCustomizationMenu = this.closeCustomizationMenu.bind(this);
     this.onWindowScroll = debounce(this.onWindowScroll.bind(this), 5);
-    this.state = { fixedSearch: false };
+    this.setPref = this.setPref.bind(this);
+    this.state = { fixedSearch: false, customizeMenuVisible: false };
   }
 
   componentDidMount() {
@@ -133,11 +146,26 @@ export class BaseContent extends React.PureComponent {
     this.props.dispatch(ac.UserEvent({ event: "OPEN_NEWTAB_PREFS" }));
   }
 
+  openCustomizationMenu() {
+    this.setState({ customizeMenuVisible: true });
+  }
+
+  closeCustomizationMenu() {
+    this.setState({ customizeMenuVisible: false });
+  }
+
+  setPref(pref, value) {
+    this.props.dispatch(ac.SetPref(pref, value));
+  }
+
   render() {
     const { props } = this;
     const { App } = props;
     const { initialized } = App;
     const prefs = props.Prefs.values;
+
+    // Values from experiment data
+    const { prefsButtonIcon } = prefs.featureConfig || {};
 
     const isDiscoveryStream =
       props.DiscoveryStream.config && props.DiscoveryStream.config.enabled;
@@ -157,6 +185,24 @@ export class BaseContent extends React.PureComponent {
       (!prefs["feeds.section.topstories"] ||
         (!prefs["feeds.system.topstories"] && prefs.region));
 
+    const customizationMenuEnabled = prefs["customizationMenu.enabled"];
+    const newNewtabExperienceEnabled = prefs["newNewtabExperience.enabled"];
+    const canShowCustomizationMenu =
+      customizationMenuEnabled || newNewtabExperienceEnabled;
+    const showCustomizationMenu =
+      canShowCustomizationMenu && this.state.customizeMenuVisible;
+    const enabledSections = {
+      topSitesEnabled: prefs["feeds.topsites"],
+      pocketEnabled: prefs["feeds.section.topstories"],
+      snippetsEnabled: prefs["feeds.snippets"],
+      highlightsEnabled: prefs["feeds.section.highlights"],
+      showSponsoredTopSitesEnabled: prefs.showSponsoredTopSites,
+      showSponsoredPocketEnabled: prefs.showSponsored,
+      topSitesRowsCount: prefs.topSitesRows,
+    };
+    const pocketRegion = prefs["feeds.system.topstories"];
+    const { mayHaveSponsoredTopSites } = prefs;
+
     const outerClassName = [
       "outer-wrapper",
       isDiscoveryStream && pocketEnabled && "ds-outer-wrapper-search-alignment",
@@ -173,6 +219,11 @@ export class BaseContent extends React.PureComponent {
 
     return (
       <div>
+        {canShowCustomizationMenu ? (
+          <PersonalizeButton onClick={this.openCustomizationMenu} />
+        ) : (
+          <PrefsButton onClick={this.openPreferences} icon={prefsButtonIcon} />
+        )}
         <div className={outerClassName}>
           <main>
             {prefs.showSearch && (
@@ -200,11 +251,28 @@ export class BaseContent extends React.PureComponent {
               ) : (
                 <Sections />
               )}
-              <PrefsButton onClick={this.openPreferences} />
             </div>
             <ConfirmDialog />
           </main>
         </div>
+        {canShowCustomizationMenu && (
+          <CSSTransition
+            timeout={0}
+            classNames="customize-animate"
+            in={showCustomizationMenu}
+            appear={true}
+          >
+            <CustomizeMenu
+              onClose={this.closeCustomizationMenu}
+              openPreferences={this.openPreferences}
+              setPref={this.setPref}
+              enabledSections={enabledSections}
+              pocketRegion={pocketRegion}
+              mayHaveSponsoredTopSites={mayHaveSponsoredTopSites}
+              dispatch={this.props.dispatch}
+            />
+          </CSSTransition>
+        )}
       </div>
     );
   }

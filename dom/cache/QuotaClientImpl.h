@@ -45,16 +45,17 @@ class CacheQuotaClient final : public quota::Client {
 
   virtual void ReleaseIOThreadObjects() override;
 
-  virtual void AbortOperations(const nsACString& aOrigin) override;
+  void AbortOperationsForLocks(
+      const DirectoryLockIdTable& aDirectoryLockIds) override;
 
   virtual void AbortOperationsForProcess(
       ContentParentId aContentParentId) override;
 
+  virtual void AbortAllOperations() override;
+
   virtual void StartIdleMaintenance() override;
 
   virtual void StopIdleMaintenance() override;
-
-  virtual void ShutdownWorkThreads() override;
 
   nsresult UpgradeStorageFrom2_0To2_1(nsIFile* aDirectory) override;
 
@@ -131,6 +132,12 @@ class CacheQuotaClient final : public quota::Client {
 
  private:
   ~CacheQuotaClient();
+
+  void InitiateShutdown() override;
+  bool IsShutdownCompleted() const override;
+  nsCString GetShutdownStatus() const override;
+  void ForceKillActors() override;
+  void FinalizeShutdown() override;
 
   Result<UsageInfo, nsresult> GetUsageForOriginInternal(
       PersistenceType aPersistenceType, const GroupAndOrigin& aGroupAndOrigin,

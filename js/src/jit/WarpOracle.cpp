@@ -28,6 +28,7 @@
 #include "vm/Instrumentation.h"
 #include "vm/Opcodes.h"
 
+#include "jit/InlineScriptTree-inl.h"
 #include "vm/BytecodeIterator-inl.h"
 #include "vm/BytecodeLocation-inl.h"
 #include "vm/EnvironmentObject-inl.h"
@@ -385,17 +386,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
         break;
       }
 
-      case JSOp::NewArrayCopyOnWrite: {
-        MOZ_CRASH("Bug 1626854: COW arrays disabled without TI for now");
-
-        // Fix up the copy-on-write ArrayObject if needed.
-        jsbytecode* pc = loc.toRawBytecode();
-        if (!ObjectGroup::getOrFixupCopyOnWriteObject(cx_, script_, pc)) {
-          return abort(AbortReason::Error);
-        }
-        break;
-      }
-
       case JSOp::GetImport: {
         PropertyName* name = loc.getPropertyName(script_);
         if (!AddWarpGetImport(alloc_, opSnapshots, offset, script_, name)) {
@@ -411,9 +401,8 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
           return abort(AbortReason::Disable, "asm.js module function lambda");
         }
 
-        // WarpBuilder relies on these conditions.
+        // WarpBuilder relies on this.
         MOZ_ASSERT(!fun->isSingleton());
-        MOZ_ASSERT(!ObjectGroup::useSingletonForClone(fun));
 
         if (!AddOpSnapshot<WarpLambda>(alloc_, opSnapshots, offset,
                                        fun->baseScript(), fun->flags(),
@@ -507,7 +496,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       }
 
       case JSOp::NewObject:
-      case JSOp::NewObjectWithGroup:
       case JSOp::NewInit: {
         const ICEntry& entry = getICEntry(loc);
         auto* stub = entry.fallbackStub()->toNewObject_Fallback();
@@ -537,10 +525,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::GetName:
       case JSOp::GetGName:
       case JSOp::GetProp:
-      case JSOp::CallProp:
-      case JSOp::Length:
       case JSOp::GetElem:
-      case JSOp::CallElem:
       case JSOp::SetProp:
       case JSOp::StrictSetProp:
       case JSOp::Call:
@@ -604,11 +589,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
         MOZ_TRY(maybeInlineIC(opSnapshots, loc));
         break;
 
-      case JSOp::InitElemArray:
-        // WarpBuilder does not use an IC for this op.
-        // TODO(post-Warp): do the same in Baseline.
-        break;
-
       case JSOp::Nop:
       case JSOp::NopDestructuring:
       case JSOp::TryDestructuring:
@@ -660,11 +640,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::DynamicImport:
       case JSOp::Not:
       case JSOp::ToString:
-      case JSOp::DefVar:
-      case JSOp::DefLet:
-      case JSOp::DefConst:
-      case JSOp::DefFun:
-      case JSOp::CheckGlobalOrEvalDecl:
+      case JSOp::GlobalOrEvalDeclInstantiation:
       case JSOp::BindVar:
       case JSOp::MutateProto:
       case JSOp::Callee:
@@ -676,7 +652,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::SetAliasedVar:
       case JSOp::InitAliasedLexical:
       case JSOp::EnvCallee:
-      case JSOp::IterNext:
       case JSOp::MoreIter:
       case JSOp::EndIter:
       case JSOp::IsNoIter:
@@ -700,6 +675,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::InitHomeObject:
       case JSOp::SuperBase:
       case JSOp::SuperFun:
+      case JSOp::InitElemArray:
       case JSOp::InitPropGetter:
       case JSOp::InitPropSetter:
       case JSOp::InitHiddenPropGetter:

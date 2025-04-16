@@ -63,13 +63,15 @@ class IOUtils final {
                                             const nsAString& aPath,
                                             const ReadUTF8Options& aOptions);
 
-  static already_AddRefed<Promise> WriteAtomic(
-      GlobalObject& aGlobal, const nsAString& aPath, const Uint8Array& aData,
-      const WriteAtomicOptions& aOptions);
+  static already_AddRefed<Promise> Write(GlobalObject& aGlobal,
+                                         const nsAString& aPath,
+                                         const Uint8Array& aData,
+                                         const WriteOptions& aOptions);
 
-  static already_AddRefed<Promise> WriteAtomicUTF8(
-      GlobalObject& aGlobal, const nsAString& aPath, const nsAString& aString,
-      const WriteAtomicOptions& aOptions);
+  static already_AddRefed<Promise> WriteUTF8(GlobalObject& aGlobal,
+                                             const nsAString& aPath,
+                                             const nsAString& aString,
+                                             const WriteOptions& aOptions);
 
   static already_AddRefed<Promise> Move(GlobalObject& aGlobal,
                                         const nsAString& aSourcePath,
@@ -99,14 +101,22 @@ class IOUtils final {
   static already_AddRefed<Promise> GetChildren(GlobalObject& aGlobal,
                                                const nsAString& aPath);
 
-  static bool IsAbsolutePath(const nsAString& aPath);
+  static already_AddRefed<Promise> SetPermissions(GlobalObject& aGlobal,
+                                                  const nsAString& aPath,
+                                                  const uint32_t aPermissions);
+
+  static already_AddRefed<Promise> Exists(GlobalObject& aGlobal,
+                                          const nsAString& aPath);
 
  private:
   ~IOUtils() = default;
 
+  template <typename T>
+  using IOPromise = MozPromise<T, IOError, true>;
+
   friend class IOUtilsShutdownBlocker;
   struct InternalFileInfo;
-  struct InternalWriteAtomicOpts;
+  struct InternalWriteOpts;
   class MozLZ4;
 
   static StaticDataMutex<StaticRefPtr<nsISerialEventTarget>>
@@ -114,15 +124,18 @@ class IOUtils final {
   static StaticRefPtr<nsIAsyncShutdownClient> sBarrier;
   static Atomic<bool> sShutdownStarted;
 
+  template <typename OkT, typename Fn, typename... Args>
+  static RefPtr<IOUtils::IOPromise<OkT>> InvokeToIOPromise(Fn aFunc,
+                                                           Args... aArgs);
+
   static already_AddRefed<nsIAsyncShutdownClient> GetShutdownBarrier();
 
   static already_AddRefed<nsISerialEventTarget> GetBackgroundEventTarget();
 
   static void SetShutdownHooks();
 
-  template <typename OkT, typename Fn, typename... Args>
-  static already_AddRefed<Promise> RunOnBackgroundThread(
-      RefPtr<Promise>& aPromise, Fn aFunc, Args... aArgs);
+  template <typename OkT, typename Fn>
+  static void RunOnBackgroundThread(Promise* aPromise, Fn aFunc);
 
   /**
    * Creates a new JS Promise.
@@ -137,10 +150,14 @@ class IOUtils final {
                                      JS::MutableHandle<JS::Value> aValue);
 
   /**
+   * Resolves |aPromise| with an appropriate JS value for |aValue|.
+   */
+  template <typename T>
+  static void ResolveJSPromise(Promise* aPromise, const T& aValue);
+  /**
    * Rejects |aPromise| with an appropriate |DOMException| describing |aError|.
    */
-  static void RejectJSPromise(const RefPtr<Promise>& aPromise,
-                              const IOError& aError);
+  static void RejectJSPromise(Promise* aPromise, const IOError& aError);
 
   /**
    * Attempts to read the entire file at |aPath| into a buffer.
@@ -155,8 +172,7 @@ class IOUtils final {
    *         error.
    */
   static Result<nsTArray<uint8_t>, IOError> ReadSync(
-      already_AddRefed<nsIFile> aFile, const Maybe<uint32_t>& aMaxBytes,
-      const bool aDecompress);
+      nsIFile* aFile, const Maybe<uint32_t>& aMaxBytes, const bool aDecompress);
 
   /**
    * Attempts to read the entire file at |aPath| as a UTF-8 string.
@@ -168,7 +184,7 @@ class IOUtils final {
    * @return The (decompressed) contents of the file re-encoded as a UTF-16
    *         string.
    */
-  static Result<nsString, IOError> ReadUTF8Sync(already_AddRefed<nsIFile> aFile,
+  static Result<nsString, IOError> ReadUTF8Sync(nsIFile* aFile,
                                                 const bool aDecompress);
 
   /**
@@ -183,9 +199,9 @@ class IOUtils final {
    * @return The number of bytes written to the file, or an error if the write
    *         failed or was incomplete.
    */
-  static Result<uint32_t, IOError> WriteAtomicSync(
-      already_AddRefed<nsIFile> aFile, const Span<const uint8_t>& aByteArray,
-      InternalWriteAtomicOpts aOptions);
+  static Result<uint32_t, IOError> WriteSync(
+      nsIFile* aFile, const Span<const uint8_t>& aByteArray,
+      const InternalWriteOpts& aOptions);
 
   /**
    * Attempt to write the entirety of |aUTF8String| to the file at |aFile|.
@@ -199,23 +215,9 @@ class IOUtils final {
    * @return The number of bytes written to the file, or an error if the write
    *         failed or was incomplete.
    */
-  static Result<uint32_t, IOError> WriteAtomicUTF8Sync(
-      already_AddRefed<nsIFile> aFile, const nsCString& aUTF8String,
-      InternalWriteAtomicOpts aOptions);
-
-  /**
-   * Attempts to write |aBytes| to the file pointed by |aFd|.
-   *
-   * @param aFd    An open PRFileDesc for the destination file to be
-   *               overwritten.
-   * @param aFile  The location of the file.
-   * @param aBytes The data to write to the file.
-   *
-   * @return The number of bytes written to the file, or an error if the write
-   *         failed or was incomplete.
-   */
-  static Result<uint32_t, IOError> WriteSync(PRFileDesc* aFd, nsIFile* aFile,
-                                             const Span<const uint8_t>& aBytes);
+  static Result<uint32_t, IOError> WriteUTF8Sync(
+      nsIFile* aFile, const nsCString& aUTF8String,
+      const InternalWriteOpts& aOptions);
 
   /**
    * Attempts to move the file located at |aSourceFile| to |aDestFile|.
@@ -228,8 +230,7 @@ class IOUtils final {
    *
    * @return Ok if the file was moved successfully, or an error.
    */
-  static Result<Ok, IOError> MoveSync(already_AddRefed<nsIFile> aSourceFile,
-                                      already_AddRefed<nsIFile> aDestFile,
+  static Result<Ok, IOError> MoveSync(nsIFile* aSourceFile, nsIFile* aDestFile,
                                       bool aNoOverwrite);
 
   /**
@@ -240,8 +241,7 @@ class IOUtils final {
    *
    * @return Ok if the operation was successful, or an error.
    */
-  static Result<Ok, IOError> CopySync(already_AddRefed<nsIFile> aSourceFile,
-                                      already_AddRefed<nsIFile> aDestFile,
+  static Result<Ok, IOError> CopySync(nsIFile* aSourceFile, nsIFile* aDestFile,
                                       bool aNoOverWrite, bool aRecursive);
 
   /**
@@ -276,8 +276,8 @@ class IOUtils final {
    *
    * @return Ok if the file was removed successfully, or an error.
    */
-  static Result<Ok, IOError> RemoveSync(already_AddRefed<nsIFile> aFile,
-                                        bool aIgnoreAbsent, bool aRecursive);
+  static Result<Ok, IOError> RemoveSync(nsIFile* aFile, bool aIgnoreAbsent,
+                                        bool aRecursive);
 
   /**
    * Attempts to create a new directory at |aFile|.
@@ -295,7 +295,7 @@ class IOUtils final {
    *
    * @return Ok if the directory was created successfully, or an error.
    */
-  static Result<Ok, IOError> MakeDirectorySync(already_AddRefed<nsIFile> aFile,
+  static Result<Ok, IOError> MakeDirectorySync(nsIFile* aFile,
                                                bool aCreateAncestors,
                                                bool aIgnoreExisting,
                                                int32_t aMode = 0777);
@@ -307,8 +307,7 @@ class IOUtils final {
    *
    * @return An |InternalFileInfo| struct if successful, or an error.
    */
-  static Result<IOUtils::InternalFileInfo, IOError> StatSync(
-      already_AddRefed<nsIFile> aFile);
+  static Result<IOUtils::InternalFileInfo, IOError> StatSync(nsIFile* aFile);
 
   /**
    * Attempts to update the last modification time of the file at |aFile|.
@@ -319,7 +318,7 @@ class IOUtils final {
    *
    * @return Timestamp of the file if the operation was successful, or an error.
    */
-  static Result<int64_t, IOError> TouchSync(already_AddRefed<nsIFile> aFile,
+  static Result<int64_t, IOError> TouchSync(nsIFile* aFile,
                                             const Maybe<int64_t>& aNewModTime);
 
   /**
@@ -330,8 +329,32 @@ class IOUtils final {
    * @return An array of absolute paths identifying the children of |aFile|.
    *         If there are no children, an empty array. Otherwise, an error.
    */
-  static Result<nsTArray<nsString>, IOError> GetChildrenSync(
-      already_AddRefed<nsIFile> aFile);
+  static Result<nsTArray<nsString>, IOError> GetChildrenSync(nsIFile* aFile);
+
+  /**
+   * Set the permissions of the given file.
+   *
+   * Windows does not make a distinction between user, group, and other
+   * permissions like UNICES do. If a permission flag is set for any of user,
+   * group, or other has a permission, then all users will have that
+   * permission.
+   *
+   * @param aFile        The location of the file.
+   * @param aPermissions The permissions to set, as a UNIX file mode.
+   *
+   * @return |Ok| if the permissions were successfully set, or an error.
+   */
+  static Result<Ok, IOError> SetPermissionsSync(nsIFile* aFile,
+                                                const uint32_t aPermissions);
+
+  /**
+   * Return whether or not the file exists.
+   *
+   * @param aFile The location of the file.
+   *
+   * @return Whether or not the file exists.
+   */
+  static Result<bool, IOError> ExistsSync(nsIFile* aFile);
 };
 
 /**
@@ -384,28 +407,30 @@ class IOUtils::IOError {
  */
 struct IOUtils::InternalFileInfo {
   nsString mPath;
-  FileType mType;
-  uint64_t mSize;
-  uint64_t mLastModified;
+  FileType mType = FileType::Other;
+  uint64_t mSize = 0;
+  uint64_t mLastModified = 0;
+  Maybe<uint64_t> mCreationTime;
+  uint32_t mPermissions = 0;
 };
 
 /**
  * This is an easier to work with representation of a
- * |mozilla::dom::WriteAtomicOptions| for private use in the |IOUtils|
+ * |mozilla::dom::WriteOptions| for private use in the |IOUtils|
  * implementation.
  *
  * Because web IDL dictionaries are not easily copy/moveable, this class is
  * used instead.
  */
-struct IOUtils::InternalWriteAtomicOpts {
+struct IOUtils::InternalWriteOpts {
   RefPtr<nsIFile> mBackupFile;
-  bool mFlush;
-  bool mNoOverwrite;
   RefPtr<nsIFile> mTmpFile;
-  bool mCompress;
+  bool mFlush = false;
+  bool mNoOverwrite = false;
+  bool mCompress = false;
 
-  static Result<InternalWriteAtomicOpts, IOUtils::IOError> FromBinding(
-      const WriteAtomicOptions& aOptions);
+  static Result<InternalWriteOpts, IOUtils::IOError> FromBinding(
+      const WriteOptions& aOptions);
 };
 
 /**

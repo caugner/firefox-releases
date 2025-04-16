@@ -2097,11 +2097,21 @@ class CreateMachEnvironment(MachCommandBase):
 
         manager.install_pip_package("zstandard>=0.9.0,<=0.13.0")
 
+        try:
+            # `mach` can handle it perfectly fine if `psutil` is missing, so
+            # there's no reason to freak out in this case.
+            manager.install_pip_package("psutil==5.7.0")
+        except subprocess.CalledProcessError:
+            print(
+                "Could not install psutil, so telemetry will be missing some "
+                "data. Continuing."
+            )
+
         if not PY2:
             # This can fail on some platforms. See
             # https://bugzilla.mozilla.org/show_bug.cgi?id=1660120
             try:
-                manager.install_pip_package("glean_sdk~=32.3.1")
+                manager.install_pip_package("glean_sdk~=33.7.0")
             except subprocess.CalledProcessError:
                 print(
                     "Could not install glean_sdk, so telemetry will not be "

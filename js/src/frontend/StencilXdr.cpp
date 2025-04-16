@@ -6,8 +6,10 @@
 
 #include "frontend/StencilXdr.h"  // StencilXDR
 
-#include <memory>
-#include <type_traits>
+#include <stddef.h>     // size_t
+#include <stdint.h>     // uint8_t, uint16_t, uint32_t
+#include <type_traits>  // std::has_unique_object_representations
+#include <utility>      // std::forward
 
 #include "vm/JSScript.h"      // js::CheckCompileOptionsMatch
 #include "vm/StencilEnums.h"  // js::ImmutableScriptFlagsEnum
@@ -23,9 +25,7 @@ template <XDRMode mode>
     HasSharedData,
     HasFunctionAtom,
     HasScopeIndex,
-    IsStandaloneFunction,
     WasFunctionEmitted,
-    IsSingletonFunction,
     AllowRelazify,
   };
 
@@ -71,14 +71,8 @@ template <XDRMode mode>
     xdrFields.scopeIndex =
         stencil.lazyFunctionEnclosingScopeIndex_.valueOr(ScopeIndex());
 
-    if (stencil.isStandaloneFunction) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::IsStandaloneFunction);
-    }
     if (stencil.wasFunctionEmitted) {
       xdrFlags |= 1 << uint8_t(XdrFlags::WasFunctionEmitted);
-    }
-    if (stencil.isSingletonFunction) {
-      xdrFlags |= 1 << uint8_t(XdrFlags::IsSingletonFunction);
     }
     if (stencil.allowRelazify) {
       xdrFlags |= 1 << uint8_t(XdrFlags::AllowRelazify);
@@ -136,14 +130,8 @@ template <XDRMode mode>
       stencil.lazyFunctionEnclosingScopeIndex_.emplace(xdrFields.scopeIndex);
     }
 
-    if (xdrFlags & (1 << uint8_t(XdrFlags::IsStandaloneFunction))) {
-      stencil.isStandaloneFunction = true;
-    }
     if (xdrFlags & (1 << uint8_t(XdrFlags::WasFunctionEmitted))) {
       stencil.wasFunctionEmitted = true;
-    }
-    if (xdrFlags & (1 << uint8_t(XdrFlags::IsSingletonFunction))) {
-      stencil.isSingletonFunction = true;
     }
     if (xdrFlags & (1 << uint8_t(XdrFlags::AllowRelazify))) {
       stencil.allowRelazify = true;
@@ -496,33 +484,35 @@ static XDRResult XDRVector(XDRState<mode>* xdr, VecType& vec,
   return Ok();
 }
 
-template <XDRMode mode>
-static XDRResult XDRObjLiteralWriter(XDRState<mode>* xdr,
-                                     ObjLiteralWriter& writer) {
-  uint8_t flags = 0;
-  uint32_t length = 0;
+template <XDRMode mode, typename T>
+static XDRResult XDRSpanContent(XDRState<mode>* xdr, mozilla::Span<T>& span) {
+#ifdef __cpp_lib_has_unique_object_representations
+  static_assert(std::has_unique_object_representations<T>(),
+                "span item structure must be fully packed");
+#endif
+
+  uint32_t size;
 
   if (mode == XDR_ENCODE) {
-    flags = writer.getFlags().serialize();
-    length = writer.getCode().size();
+    MOZ_ASSERT(span.size() <= UINT32_MAX);
+    size = span.size();
   }
 
-  MOZ_TRY(xdr->codeUint8(&flags));
-  MOZ_TRY(xdr->codeUint32(&length));
+  MOZ_TRY(xdr->codeUint32(&size));
 
-  if (mode == XDR_ENCODE) {
-    MOZ_TRY(xdr->codeBytes((void*)writer.getCode().data(), length));
-    return Ok();
+  if (mode == XDR_DECODE) {
+    MOZ_ASSERT(span.empty());
+    if (size > 0) {
+      auto* p = xdr->stencilAlloc().template newArrayUninitialized<T>(size);
+      if (!p) {
+        js::ReportOutOfMemory(xdr->cx());
+        return xdr->fail(JS::TranscodeResult_Throw);
+      }
+      span = mozilla::Span(p, size);
+    }
   }
 
-  MOZ_ASSERT(mode == XDR_DECODE);
-  ObjLiteralWriter::CodeVector codeVec;
-  if (!codeVec.appendN(0, length)) {
-    return xdr->fail(JS::TranscodeResult_Throw);
-  }
-  MOZ_TRY(xdr->codeBytes(codeVec.begin(), length));
-
-  writer.initializeForXDR(std::move(codeVec), flags);
+  MOZ_TRY(xdr->codeBytes(span.data(), sizeof(T) * size));
 
   return Ok();
 }
@@ -586,6 +576,19 @@ static XDRResult XDRStencilModuleMetadata(XDRState<mode>* xdr,
     for (GCThingIndex& entry : stencil.functionDecls) {
       MOZ_TRY(xdr->codeUint32(&entry.index));
     }
+  }
+
+  uint8_t isAsync = 0;
+  if (mode == XDR_ENCODE) {
+    if (stencil.isAsync) {
+      isAsync = stencil.isAsync ? 1 : 0;
+    }
+  }
+
+  MOZ_TRY(xdr->codeUint8(&isAsync));
+
+  if (mode == XDR_DECODE) {
+    stencil.isAsync = isAsync == 1;
   }
 
   return Ok();
@@ -722,12 +725,17 @@ template <XDRMode mode>
 template <XDRMode mode>
 /* static */ XDRResult StencilXDR::ObjLiteral(XDRState<mode>* xdr,
                                               ObjLiteralStencil& stencil) {
-  MOZ_TRY(XDRObjLiteralWriter(xdr, stencil.writer_));
+  uint8_t flags = 0;
 
-  MOZ_TRY(XDRVector(xdr, stencil.atoms_));
-  for (auto& entry : stencil.atoms_) {
-    MOZ_TRY(XDRTaggedParserAtomIndex(xdr, &entry));
+  if (mode == XDR_ENCODE) {
+    flags = stencil.flags_.serialize();
   }
+  MOZ_TRY(xdr->codeUint8(&flags));
+  if (mode == XDR_DECODE) {
+    stencil.flags_.deserialize(flags);
+  }
+
+  MOZ_TRY(XDRSpanContent(xdr, stencil.code_));
 
   return Ok();
 }
@@ -884,7 +892,11 @@ XDRResult XDRCompilationStencil(XDRState<mode>* xdr,
   }
 
   if (stencil.scriptData[CompilationInfo::TopLevelIndex].isModule()) {
-    MOZ_TRY(XDRStencilModuleMetadata(xdr, stencil.moduleMetadata));
+    if (mode == XDR_DECODE) {
+      stencil.moduleMetadata.emplace();
+    }
+
+    MOZ_TRY(XDRStencilModuleMetadata(xdr, *stencil.moduleMetadata));
   }
 
   return Ok();

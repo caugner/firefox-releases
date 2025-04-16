@@ -9,6 +9,7 @@
 #include "mozilla/ScopeExit.h"
 
 #include "jit/BaselineJIT.h"
+#include "jit/Invalidation.h"
 #include "jit/Ion.h"
 #include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
@@ -42,7 +43,6 @@ static_assert(!(FAKE_EXITFP_FOR_BAILOUT_ADDR & wasm::ExitOrJitEntryFPTag),
 bool jit::Bailout(BailoutStack* sp, BaselineBailoutInfo** bailoutInfo) {
   JSContext* cx = TlsContext.get();
   MOZ_ASSERT(bailoutInfo);
-  MOZ_ASSERT(!cx->hasIonReturnOverride());
 
   // We don't have an exit frame.
   MOZ_ASSERT(IsInRange(FAKE_EXITFP_FOR_BAILOUT, 0, 0x1000) &&
@@ -147,7 +147,11 @@ bool jit::InvalidationBailout(InvalidationBailoutStack* sp,
                                       bailoutInfo, /*exceptionInfo=*/nullptr);
   MOZ_ASSERT_IF(success, *bailoutInfo != nullptr);
 
-  if (!success) {
+  if (success) {
+    // Update the bailout kind.
+    (*bailoutInfo)->bailoutKind =
+        mozilla::Some(BailoutKind::OnStackInvalidation);
+  } else {
     MOZ_ASSERT(cx->isExceptionPending());
 
     // If the bailout failed, then bailout trampoline will pop the
@@ -288,8 +292,8 @@ void jit::CheckFrequentBailouts(JSContext* cx, JSScript* script,
       // the first execution bailout can be related to an inlined script,
       // so there is no need to penalize the caller.
       if (bailoutKind != BailoutKind::FirstExecution &&
-          !script->hadFrequentBailouts()) {
-        script->setHadFrequentBailouts();
+          !script->hadLICMInvalidation()) {
+        script->setHadLICMInvalidation();
       }
 
       JitSpew(JitSpew_IonInvalidate, "Invalidating due to too many bailouts");

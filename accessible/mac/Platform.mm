@@ -17,6 +17,12 @@
 #include "MOXWebAreaAccessible.h"
 
 #include "nsAppShell.h"
+#include "mozilla/Telemetry.h"
+
+// Available from 10.13 onwards; test availability at runtime before using
+@interface NSWorkspace (AvailableSinceHighSierra)
+@property(readonly) BOOL isVoiceOverEnabled;
+@end
 
 namespace mozilla {
 namespace a11y {
@@ -77,14 +83,16 @@ void ProxyDestroyed(ProxyAccessible* aProxy) {
 }
 
 void ProxyEvent(ProxyAccessible* aProxy, uint32_t aEventType) {
-  // ignore everything but focus-changed, value-changed, caret,
-  // selection, and document load complete events for now.
+  // Ignore event that we don't escape below, they aren't yet supported.
   if (aEventType != nsIAccessibleEvent::EVENT_FOCUS &&
       aEventType != nsIAccessibleEvent::EVENT_VALUE_CHANGE &&
       aEventType != nsIAccessibleEvent::EVENT_TEXT_VALUE_CHANGE &&
       aEventType != nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED &&
       aEventType != nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE &&
-      aEventType != nsIAccessibleEvent::EVENT_REORDER)
+      aEventType != nsIAccessibleEvent::EVENT_REORDER &&
+      aEventType != nsIAccessibleEvent::EVENT_LIVE_REGION_ADDED &&
+      aEventType != nsIAccessibleEvent::EVENT_LIVE_REGION_REMOVED &&
+      aEventType != nsIAccessibleEvent::EVENT_NAME_CHANGE)
     return;
 
   mozAccessible* wrapper = GetNativeFromGeckoAccessible(aProxy);
@@ -180,8 +188,18 @@ void ProxyRoleChangedEvent(ProxyAccessible* aTarget, const a11y::role& aRole) {
 @implementation GeckoNSApplication (a11y)
 
 - (void)accessibilitySetValue:(id)value forAttribute:(NSString*)attribute {
-  if ([attribute isEqualToString:@"AXEnhancedUserInterface"])
+  NSLog(@"Checking a11y");
+  if ([attribute isEqualToString:@"AXEnhancedUserInterface"]) {
     mozilla::a11y::sA11yShouldBeEnabled = ([value intValue] == 1);
+#if defined(MOZ_TELEMETRY_REPORTING)
+    if ([[NSWorkspace sharedWorkspace]
+            respondsToSelector:@selector(isVoiceOverEnabled)] &&
+        [[NSWorkspace sharedWorkspace] isVoiceOverEnabled]) {
+      Telemetry::ScalarSet(Telemetry::ScalarID::A11Y_INSTANTIATORS,
+                           u"VoiceOver"_ns);
+    }
+#endif  // defined(MOZ_TELEMETRY_REPORTING)
+  }
 
   return [super accessibilitySetValue:value forAttribute:attribute];
 }

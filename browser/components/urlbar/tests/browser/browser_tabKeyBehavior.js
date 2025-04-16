@@ -185,7 +185,6 @@ add_task(async function tabTabToSearch() {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.urlbar.update2", true],
-      ["browser.urlbar.update2.tabToComplete", true],
       ["browser.urlbar.update2.oneOffsRefresh", true],
     ],
   });
@@ -235,7 +234,6 @@ add_task(async function tabNoSearchStringSearchMode() {
     set: [
       ["browser.urlbar.update2", true],
       ["browser.urlbar.update2.oneOffsRefresh", true],
-      ["browser.urlbar.update2.localOneOffs", true],
     ],
   });
   await UrlbarTestUtils.promiseAutocompleteResultPopup({

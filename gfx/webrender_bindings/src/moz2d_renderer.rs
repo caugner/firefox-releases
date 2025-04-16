@@ -60,7 +60,7 @@ fn dump_bounds(blob: &[u8], dirty_rect: Box2d) {
 }
 
 /// Debug prints a blob's metadata.
-fn dump_index(blob: &[u8]) -> () {
+fn dump_index(blob: &[u8]) {
     let mut index = BlobReader::new(blob);
     // we might get an empty result here because sub groups are not tightly bound
     // and we'll sometimes have display items that end up with empty bounds in
@@ -107,7 +107,7 @@ struct BufReader<'a> {
 impl<'a> BufReader<'a> {
     /// Creates a reader over the given input.
     fn new(buf: &'a [u8]) -> BufReader<'a> {
-        BufReader { buf: buf, pos: 0 }
+        BufReader { buf, pos: 0 }
     }
 
     /// Transmute-deserializes a value of type T from the stream.
@@ -565,7 +565,7 @@ impl AsyncBlobImageRasterizer for Moz2dBlobRasterizer {
         let _marker = GeckoProfilerMarker::new(b"BlobRasterization\0");
 
         let requests: Vec<Job> = requests
-            .into_iter()
+            .iter()
             .map(|params| {
                 let command = &self.blob_commands[&params.request.key];
                 let blob = Arc::clone(&command.data);
@@ -613,6 +613,15 @@ impl AsyncBlobImageRasterizer for Moz2dBlobRasterizer {
     }
 }
 
+// a cross platform wrapper that creates an autorelease pool
+// on macOS
+fn autoreleasepool<T, F: FnOnce() -> T>(f: F) -> T {
+    #[cfg(target_os = "macos")]
+    { objc::rc::autoreleasepool(f) }
+    #[cfg(not(target_os = "macos"))]
+    { f() }
+}
+
 fn rasterize_blob(job: Job) -> (BlobImageRequest, BlobImageResult) {
     let descriptor = job.descriptor;
     let buf_size =
@@ -626,7 +635,7 @@ fn rasterize_blob(job: Job) -> (BlobImageRequest, BlobImageResult) {
     };
     assert!(descriptor.rect.size.width > 0 && descriptor.rect.size.height > 0);
 
-    let result = unsafe {
+    let result = autoreleasepool(|| { unsafe {
         if wr_moz2d_render_cb(
             ByteSlice::new(&job.commands[..]),
             descriptor.format,
@@ -650,7 +659,7 @@ fn rasterize_blob(job: Job) -> (BlobImageRequest, BlobImageResult) {
         } else {
             panic!("Moz2D replay problem");
         }
-    };
+    }});
 
     (job.request, result)
 }
@@ -789,8 +798,8 @@ impl Moz2dBlobImageHandler {
     pub fn new(workers: Arc<ThreadPool>, workers_low_priority: Arc<ThreadPool>) -> Self {
         Moz2dBlobImageHandler {
             blob_commands: HashMap::new(),
-            workers: workers,
-            workers_low_priority: workers_low_priority,
+            workers,
+            workers_low_priority,
             enable_multithreading: true,
         }
     }

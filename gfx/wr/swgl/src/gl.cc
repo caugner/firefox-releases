@@ -22,9 +22,42 @@
 #  define debugf(...) printf(__VA_ARGS__)
 #endif
 
+// #define PRINT_TIMINGS
+
 #ifdef _WIN32
 #  define ALWAYS_INLINE __forceinline
 #  define NO_INLINE __declspec(noinline)
+
+   // Including Windows.h brings a huge amount of namespace polution so just
+   // define a couple of things manually
+   typedef int                 BOOL;
+#  define WINAPI      __stdcall
+#  define DECLSPEC_IMPORT __declspec(dllimport)
+#  define WINBASEAPI DECLSPEC_IMPORT
+   typedef unsigned long       DWORD;
+   typedef long LONG;
+   typedef __int64 LONGLONG;
+#  define DUMMYSTRUCTNAME
+
+   typedef union _LARGE_INTEGER {
+      struct {
+          DWORD LowPart;
+          LONG HighPart;
+      } DUMMYSTRUCTNAME;
+      struct {
+          DWORD LowPart;
+          LONG HighPart;
+      } u;
+      LONGLONG QuadPart;
+   } LARGE_INTEGER;
+   extern "C" {
+    WINBASEAPI BOOL WINAPI
+    QueryPerformanceCounter(LARGE_INTEGER* lpPerformanceCount);
+
+    WINBASEAPI BOOL WINAPI
+    QueryPerformanceFrequency(LARGE_INTEGER* lpFrequency);
+   }
+
 #else
 #  define ALWAYS_INLINE __attribute__((always_inline)) inline
 #  define NO_INLINE __attribute__((noinline))
@@ -71,6 +104,12 @@ struct IntRect {
     x1 = min(x1, o.x1);
     y1 = min(y1, o.y1);
     return *this;
+  }
+
+  IntRect intersection(const IntRect& o) {
+    IntRect result = *this;
+    result.intersect(o);
+    return result;
   }
 
   // Scale from source-space to dest-space, optionally rounding inward
@@ -592,7 +631,17 @@ struct Texture {
       if (!buf || size > buf_size) {
         // Allocate with a SIMD register-sized tail of padding at the end so we
         // can safely read or write past the end of the texture with SIMD ops.
-        char* new_buf = (char*)realloc(buf, size + sizeof(Float));
+        // Currently only the flat Z-buffer texture needs this padding due to
+        // full-register loads and stores in check_depth and discard_depth. In
+        // case some code in the future accidentally uses a linear filter on a
+        // texture with less than 2 pixels per row, we also add this padding
+        // just to be safe. All other texture types and use-cases should be
+        // safe to omit padding.
+        size_t padding =
+            internal_format == GL_DEPTH_COMPONENT16 || max(width, min_width) < 2
+                ? sizeof(Float)
+                : 0;
+        char* new_buf = (char*)realloc(buf, size + padding);
         assert(new_buf);
         if (new_buf) {
           // Successfully reallocated the buffer, so go ahead and set it.
@@ -1541,7 +1590,15 @@ static uint64_t get_time_value() {
 #ifdef __MACH__
   return mach_absolute_time();
 #elif defined(_WIN32)
-  return uint64_t(clock()) * (1000000000ULL / CLOCKS_PER_SEC);
+  LARGE_INTEGER time;
+  static bool have_frequency = false;
+  static LARGE_INTEGER frequency;
+  if (!have_frequency) {
+    QueryPerformanceFrequency(&frequency);
+    have_frequency = true;
+  }
+  QueryPerformanceCounter(&time);
+  return time.QuadPart * 1000000000ULL / frequency.QuadPart;
 #else
   return ({
     struct timespec tp;
@@ -2808,34 +2865,73 @@ static inline WideRGBA8 blend_pixels_RGBA8(PackedRGBA8 pdst, WideRGBA8 src) {
   }
 }
 
-template <bool DISCARD>
-static inline void discard_output(uint32_t* buf, PackedRGBA8 mask) {
-  PackedRGBA8 dst = unaligned_load<PackedRGBA8>(buf);
+// Load a partial span > 0 and < 4 pixels.
+template <typename V, typename P>
+static ALWAYS_INLINE V partial_load_span(const P* src, int span) {
+  return bit_cast<V>(
+      (span >= 2
+           ? combine(unaligned_load<V2<P>>(src),
+                     V2<P>{span > 2 ? unaligned_load<P>(src + 2) : P(0), 0})
+           : V4<P>{unaligned_load<P>(src), 0, 0, 0}));
+}
+
+// Store a partial span > 0 and < 4 pixels.
+template <typename V, typename P>
+static ALWAYS_INLINE void partial_store_span(P* dst, V src, int span) {
+  auto pixels = bit_cast<V4<P>>(src);
+  if (span >= 2) {
+    unaligned_store(dst, lowHalf(pixels));
+    if (span > 2) {
+      unaligned_store(dst + 2, pixels.z);
+    }
+  } else {
+    unaligned_store(dst, pixels.x);
+  }
+}
+
+// Dispatcher that chooses when to load a full or partial span
+template <int SPAN, typename V, typename P>
+static ALWAYS_INLINE V load_span(const P* src) {
+  if (SPAN >= 4) {
+    return unaligned_load<V, P>(src);
+  } else {
+    return partial_load_span<V, P>(src, SPAN);
+  }
+}
+
+// Dispatcher that chooses when to store a full or partial span
+template <int SPAN, typename V, typename P>
+static ALWAYS_INLINE void store_span(P* dst, V src) {
+  if (SPAN >= 4) {
+    unaligned_store<V, P>(dst, src);
+  } else {
+    partial_store_span<V, P>(dst, src, SPAN);
+  }
+}
+
+template <bool DISCARD, int SPAN>
+static ALWAYS_INLINE void discard_output(uint32_t* buf, PackedRGBA8 mask) {
   WideRGBA8 r = pack_pixels_RGBA8();
+  PackedRGBA8 dst = load_span<SPAN, PackedRGBA8>(buf);
   if (blend_key) r = blend_pixels_RGBA8(dst, r);
   if (DISCARD)
     mask |= bit_cast<PackedRGBA8>(fragment_shader->swgl_IsPixelDiscarded);
-  unaligned_store(buf, (mask & dst) | (~mask & pack(r)));
+  store_span<SPAN>(buf, (mask & dst) | (~mask & pack(r)));
 }
 
-template <bool DISCARD>
-static inline void discard_output(uint32_t* buf) {
-  discard_output<DISCARD>(buf, 0);
-}
-
-template <>
-inline void discard_output<false>(uint32_t* buf) {
+template <bool DISCARD, int SPAN>
+static ALWAYS_INLINE void discard_output(uint32_t* buf) {
   WideRGBA8 r = pack_pixels_RGBA8();
-  if (blend_key) r = blend_pixels_RGBA8(unaligned_load<PackedRGBA8>(buf), r);
-  unaligned_store(buf, pack(r));
-}
-
-static inline PackedRGBA8 span_mask_RGBA8(int span) {
-  return bit_cast<PackedRGBA8>(I32(span) < I32{1, 2, 3, 4});
-}
-
-static inline PackedRGBA8 span_mask(uint32_t*, int span) {
-  return span_mask_RGBA8(span);
+  if (DISCARD) {
+    PackedRGBA8 dst = load_span<SPAN, PackedRGBA8>(buf);
+    if (blend_key) r = blend_pixels_RGBA8(dst, r);
+    PackedRGBA8 mask =
+        bit_cast<PackedRGBA8>(fragment_shader->swgl_IsPixelDiscarded);
+    store_span<SPAN>(buf, (mask & dst) | (~mask & pack(r)));
+  } else {
+    if (blend_key) r = blend_pixels_RGBA8(load_span<SPAN, PackedRGBA8>(buf), r);
+    store_span<SPAN>(buf, pack(r));
+  }
 }
 
 static inline WideR8 packR8(I32 a) {
@@ -2870,54 +2966,72 @@ static inline WideR8 blend_pixels_R8(WideR8 dst, WideR8 src) {
   }
 }
 
-template <bool DISCARD>
+template <bool DISCARD, int SPAN>
 static inline void discard_output(uint8_t* buf, WideR8 mask) {
-  WideR8 dst = unpack(unaligned_load<PackedR8>(buf));
   WideR8 r = pack_pixels_R8();
+  WideR8 dst = unpack(load_span<SPAN, PackedR8>(buf));
   if (blend_key) r = blend_pixels_R8(dst, r);
   if (DISCARD) mask |= packR8(fragment_shader->swgl_IsPixelDiscarded);
-  unaligned_store(buf, pack((mask & dst) | (~mask & r)));
+  store_span<SPAN>(buf, pack((mask & dst) | (~mask & r)));
 }
 
-template <bool DISCARD>
+template <bool DISCARD, int SPAN>
 static inline void discard_output(uint8_t* buf) {
-  discard_output<DISCARD>(buf, 0);
-}
-
-template <>
-inline void discard_output<false>(uint8_t* buf) {
   WideR8 r = pack_pixels_R8();
-  if (blend_key) r = blend_pixels_R8(unpack(unaligned_load<PackedR8>(buf)), r);
-  unaligned_store(buf, pack(r));
-}
-
-static inline WideR8 span_mask_R8(int span) {
-  return bit_cast<WideR8>(WideR8(span) < WideR8{1, 2, 3, 4});
-}
-
-static inline WideR8 span_mask(uint8_t*, int span) {
-  return span_mask_R8(span);
-}
-
-UNUSED static inline PackedRG8 span_mask_RG8(int span) {
-  return bit_cast<PackedRG8>(I16(span) < I16{1, 2, 3, 4});
+  if (DISCARD) {
+    WideR8 dst = unpack(load_span<SPAN, PackedR8>(buf));
+    if (blend_key) r = blend_pixels_R8(dst, r);
+    WideR8 mask = packR8(fragment_shader->swgl_IsPixelDiscarded);
+    store_span<SPAN>(buf, pack((mask & dst) | (~mask & r)));
+  } else {
+    if (blend_key)
+      r = blend_pixels_R8(unpack(load_span<SPAN, PackedR8>(buf)), r);
+    store_span<SPAN>(buf, pack(r));
+  }
 }
 
 template <bool DISCARD, bool W, typename P, typename M>
 static inline void commit_output(P* buf, M mask) {
   fragment_shader->run<W>();
-  discard_output<DISCARD>(buf, mask);
+  discard_output<DISCARD, 4>(buf, mask);
+}
+
+template <bool DISCARD, bool W, typename P, typename M>
+static inline void commit_output(P* buf, M mask, int span) {
+  fragment_shader->run<W>();
+  switch (span) {
+    case 1:
+      discard_output<DISCARD, 1>(buf, mask);
+      break;
+    case 2:
+      discard_output<DISCARD, 2>(buf, mask);
+      break;
+    default:
+      discard_output<DISCARD, 3>(buf, mask);
+      break;
+  }
 }
 
 template <bool DISCARD, bool W, typename P>
 static inline void commit_output(P* buf) {
   fragment_shader->run<W>();
-  discard_output<DISCARD>(buf);
+  discard_output<DISCARD, 4>(buf);
 }
 
 template <bool DISCARD, bool W, typename P>
 static inline void commit_output(P* buf, int span) {
-  commit_output<DISCARD, W>(buf, span_mask(buf, span));
+  fragment_shader->run<W>();
+  switch (span) {
+    case 1:
+      discard_output<DISCARD, 1>(buf);
+      break;
+    case 2:
+      discard_output<DISCARD, 2>(buf);
+      break;
+    default:
+      discard_output<DISCARD, 3>(buf);
+      break;
+  }
 }
 
 template <bool DISCARD, bool W, typename P, typename Z>
@@ -2937,13 +3051,14 @@ template <bool DISCARD, bool W, typename P, typename Z>
 static inline void commit_output(P* buf, Z z, DepthRun* zbuf, int span) {
   ZMask zmask;
   if (check_depth<DISCARD>(z, zbuf, zmask, span)) {
-    commit_output<DISCARD, W>(buf, convert_zmask(zmask, buf));
+    commit_output<DISCARD, W>(buf, convert_zmask(zmask, buf), span);
     if (DISCARD) {
       discard_depth(z, zbuf, zmask);
     }
   }
 }
 
+#include "composite.h"
 #include "swgl_ext.h"
 
 #pragma GCC diagnostic push
@@ -3037,7 +3152,7 @@ static ALWAYS_INLINE void draw_depth_span(uint16_t z, P* buf,
     // it were a full chunk. Mask off only the part of the chunk we want to
     // use.
     if (span > 0) {
-      commit_output<false, false>(buf, span_mask(buf, span));
+      commit_output<false, false>(buf, span);
       buf += span;
     }
     // Skip past any runs that fail the depth test.
@@ -3633,8 +3748,19 @@ static int clip_side(int nump, Point3D* p, Interpolants* interp, Point3D* outP,
         assert(numClip < nump + 2);
         float prevDist = prevCoord - prevSide * prev.w;
         float curDist = curCoord - prevSide * cur.w;
+        // It may happen that after we interpolate by the weight k that due to
+        // floating point rounding we've underestimated the value necessary to
+        // push it over the clipping boundary. Just in case, nudge the mantissa
+        // by a single increment so that we essentially round it up and move it
+        // further inside the clipping boundary. We use nextafter to do this in
+        // a portable fashion.
         float k = prevDist / (prevDist - curDist);
-        outP[numClip] = prev + (cur - prev) * k;
+        Point3D clipped = prev + (cur - prev) * k;
+        if (prevSide * clipped.select(AXIS) > clipped.w) {
+            k = nextafterf(k, 1.0f);
+            clipped = prev + (cur - prev) * k;
+        }
+        outP[numClip] = clipped;
         outInterp[numClip] = prevInterp + (curInterp - prevInterp) * k;
         numClip++;
       }
@@ -3645,8 +3771,17 @@ static int clip_side(int nump, Point3D* p, Interpolants* interp, Point3D* outP,
         assert(numClip < nump + 2);
         float prevDist = prevCoord - curSide * prev.w;
         float curDist = curCoord - curSide * cur.w;
+        // Calculate interpolation weight k and the nudge it inside clipping
+        // boundary with nextafter. Note that since we were previously inside
+        // and now crossing outside, we have to flip the nudge direction for
+        // the weight towards 0 instead of 1.
         float k = prevDist / (prevDist - curDist);
-        outP[numClip] = prev + (cur - prev) * k;
+        Point3D clipped = prev + (cur - prev) * k;
+        if (curSide * clipped.select(AXIS) > clipped.w) {
+            k = nextafterf(k, 0.0f);
+            clipped = prev + (cur - prev) * k;
+        }
+        outP[numClip] = clipped;
         outInterp[numClip] = prevInterp + (curInterp - prevInterp) * k;
         numClip++;
       }
@@ -3713,7 +3848,9 @@ static void draw_perspective(int nump, Interpolants interp_outs[4],
       vec3_scalar(ctx->viewport.x0, ctx->viewport.y0, 0.0f) + scale;
   if (test_none(pos.z <= -pos.w || pos.z >= pos.w)) {
     // No points cross the near or far planes, so no clipping required.
-    // Just divide coords by W and convert to viewport.
+    // Just divide coords by W and convert to viewport. We assume the W
+    // coordinate is non-zero and the reciprocal is finite since it would
+    // otherwise fail the test_none condition.
     Float w = 1.0f / pos.w;
     vec3 screen = pos.sel(X, Y, Z) * w * scale + offset;
     Point3D p[4] = {{screen.x.x, screen.y.x, screen.z.x, w.x},
@@ -3769,6 +3906,11 @@ static void draw_perspective(int nump, Interpolants interp_outs[4],
     // Divide coords by W and convert to viewport.
     for (int i = 0; i < nump; i++) {
       float w = 1.0f / p_clip[i].w;
+      // If the W coord is essentially zero, small enough that division would
+      // result in Inf/NaN, then just set the reciprocal itself to zero so that
+      // the coordinates becomes zeroed out, as the only valid point that
+      // satisfies -W <= X/Y/Z <= W is all zeroes.
+      if(!isfinite(w)) w = 0.0f;
       p_clip[i] = Point3D(p_clip[i].sel(X, Y, Z) * w * scale + offset, w);
     }
     draw_perspective_clipped(nump, p_clip, interp_clip, colortex, layer,
@@ -3793,6 +3935,11 @@ static void draw_quad(int nump, Texture& colortex, int layer,
   // Convert output of vertex shader to screen space.
   // Divide coords by W and convert to viewport.
   float w = 1.0f / pos.w.x;
+  // If the W coord is essentially zero, small enough that division would
+  // result in Inf/NaN, then just set the reciprocal itself to zero so that
+  // the coordinates becomes zeroed out, as the only valid point that
+  // satisfies -W <= X/Y/Z <= W is all zeroes.
+  if(!isfinite(w)) w = 0.0f;
   vec2 screen = (pos.sel(X, Y) * w + 1) * 0.5f *
                     vec2_scalar(ctx->viewport.width(), ctx->viewport.height()) +
                 vec2_scalar(ctx->viewport.x0, ctx->viewport.y0);
@@ -3953,8 +4100,8 @@ void DrawElementsInstanced(GLenum mode, GLsizei count, GLenum type,
     v.validate();
   }
 
-#ifndef NDEBUG
-  // uint64_t start = get_time_value();
+#ifdef PRINT_TIMINGS
+  uint64_t start = get_time_value();
 #endif
 
   ctx->shaded_rows = 0;
@@ -4006,17 +4153,23 @@ void DrawElementsInstanced(GLenum mode, GLsizei count, GLenum type,
     q.value += ctx->shaded_pixels;
   }
 
-#ifndef NDEBUG
-  // uint64_t end = get_time_value();
-  // debugf("draw(%d): %fms for %d pixels in %d rows (avg %f pixels/row, %f
-  // ns/pixel)\n", instancecount, double(end - start)/(1000.*1000.),
-  // ctx->shaded_pixels, ctx->shaded_rows,
-  // double(ctx->shaded_pixels)/ctx->shaded_rows, double(end -
-  // start)/max(ctx->shaded_pixels, 1));
+#ifdef PRINT_TIMINGS
+  uint64_t end = get_time_value();
+  printf("%7.3fms draw(%s, %d): %d pixels in %d rows (avg %f pixels/row, %fns/pixel)\n",
+         double(end - start)/(1000.*1000.),
+         ctx->programs[ctx->current_program].impl->get_name(),
+         instancecount,
+         ctx->shaded_pixels, ctx->shaded_rows,
+         double(ctx->shaded_pixels)/ctx->shaded_rows,
+         double(end - start)/max(ctx->shaded_pixels, 1));
 #endif
 }
 
-void Finish() {}
+void Finish() {
+#ifdef PRINT_TIMINGS
+  printf("Finish\n");
+#endif
+}
 
 void MakeCurrent(Context* c) {
   if (ctx == c) {
@@ -4058,4 +4211,3 @@ void DestroyContext(Context* c) {
 
 }  // extern "C"
 
-#include "composite.h"

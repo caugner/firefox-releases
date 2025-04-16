@@ -366,7 +366,7 @@ mingw-w64:
     fetch:
         type: git
         repo: https://git.code.sf.net/p/mingw-w64/mingw-w64
-        revision: bd8ca6c303658659496d0c440cf9f2baa8f7a5f0
+        revision: 660e09f3cb20f181b6d6435cb623d65a3922a063
 
 libunwind:
     description: libunwind source code
@@ -387,7 +387,7 @@ android-rs-glue:
     fetch:
         type: git
         repo: https://github.com/jamienicol/android-rs-glue
-        revision: 7a57ad320de79c74a57a8ce02b1dc69b1ea7332a
+        revision: 86d9cb4db7bf7a8052e6765d9f8caae6009107cb
 
 clang-5.0:
     description: clang 5.0.2 source code
@@ -431,6 +431,13 @@ clang-11:
         repo: https://github.com/llvm/llvm-project
         revision: 176249bd6732a8044d457092ed932768724a6f06
 
+rust-1.47.0-dev:
+    description: Rust 1.47.0-dev source code
+    fetch:
+        type: git
+        repo: https://github.com/rust-lang/rust/
+        revision: 18bf6b4f01a6feaf7259ba7cdae58031af1b7b39
+
 wasi-sdk:
     description: wasi-sdk source code
     fetch:
@@ -464,7 +471,7 @@ lucetc-source:
     fetch:
         type: git
         repo: https://github.com/PLSysSec/lucet_sandbox_compiler/
-        revision: 477d8fc53a64705a9d3fbcce9de92f4988558525
+        revision: cd07861d1c92147b35b538e6f94fde7d1986f9ad
 
 dump-syms:
     description: dump_syms source code

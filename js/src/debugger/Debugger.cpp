@@ -55,8 +55,9 @@
 #include "gc/ZoneAllocator.h"            // for ZoneAllocPolicy
 #include "jit/BaselineDebugModeOSR.h"  // for RecompileOnStackBaselineScriptsForDebugMode
 #include "jit/BaselineJIT.h"           // for FinishDiscardBaselineScript
-#include "jit/Ion.h"                   // for JitContext
-#include "jit/JitScript.h"             // for JitScript
+#include "jit/Invalidation.h"         // for RecompileInfoVector
+#include "jit/Ion.h"                  // for JitContext
+#include "jit/JitScript.h"            // for JitScript
 #include "jit/JSJitFrameIter.h"       // for InlineFrameIterator
 #include "jit/RematerializedFrame.h"  // for RematerializedFrame
 #include "js/Conversions.h"           // for ToBoolean, ToUint32
@@ -100,7 +101,6 @@
 #include "vm/Scope.h"                 // for Scope
 #include "vm/StringType.h"            // for JSString, PropertyName
 #include "vm/TraceLogging.h"          // for TraceLoggerForCurrentThread
-#include "vm/TypeInference.h"         // for TypeZone
 #include "vm/WrapperObject.h"         // for CrossCompartmentWrapperObject
 #include "wasm/WasmDebug.h"           // for DebugState
 #include "wasm/WasmInstance.h"        // for Instance
@@ -126,7 +126,6 @@
 #include "vm/ObjectOperations-inl.h"  // for GetProperty, HasProperty
 #include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
 #include "vm/Stack-inl.h"             // for AbstractFramePtr::script
-#include "vm/TypeInference-inl.h"     // for AutoEnterAnalysis
 
 namespace js {
 
@@ -650,8 +649,14 @@ bool Debugger::getFrame(JSContext* cx, const FrameIter& iter,
   if (!p) {
     Rooted<AbstractGeneratorObject*> genObj(cx);
     if (referent.isGeneratorFrame()) {
-      AutoRealm ar(cx, referent.callee());
-      genObj = GetGeneratorObjectForFrame(cx, referent);
+      if (referent.isFunctionFrame()) {
+        AutoRealm ar(cx, referent.callee());
+        genObj = GetGeneratorObjectForFrame(cx, referent);
+      } else {
+        MOZ_ASSERT(referent.isModuleFrame());
+        AutoRealm ar(cx, referent.script()->module());
+        genObj = GetGeneratorObjectForFrame(cx, referent);
+      }
 
       // If this frame has a generator associated with it, but no on-stack
       // Debugger.Frame object was found, there should not be a suspended
@@ -3129,13 +3134,14 @@ static inline void MarkJitScriptActiveIfObservable(
 
 static bool AppendAndInvalidateScript(JSContext* cx, Zone* zone,
                                       JSScript* script,
+                                      jit::RecompileInfoVector& invalid,
                                       Vector<JSScript*>& scripts) {
-  // Enter the script's realm as addPendingRecompile attempts to
+  // Enter the script's realm as AddPendingInvalidation attempts to
   // cancel off-thread compilations, whose books are kept on the
   // script's realm.
   MOZ_ASSERT(script->zone() == zone);
   AutoRealm ar(cx, script);
-  zone->types.addPendingRecompile(cx, script);
+  AddPendingInvalidation(invalid, script);
   return scripts.append(script);
 }
 
@@ -3153,10 +3159,10 @@ static bool UpdateExecutionObservabilityOfScriptsInZone(
   // Iterate through observable scripts, invalidating their Ion scripts and
   // appending them to a vector for discarding their baseline scripts later.
   {
-    AutoEnterAnalysis enter(fop, zone);
+    RecompileInfoVector invalid;
     if (JSScript* script = obs.singleScriptForZoneInvalidation()) {
       if (obs.shouldRecompileOrInvalidate(script)) {
-        if (!AppendAndInvalidateScript(cx, zone, script, scripts)) {
+        if (!AppendAndInvalidateScript(cx, zone, script, invalid, scripts)) {
           return false;
         }
       }
@@ -3168,12 +3174,13 @@ static bool UpdateExecutionObservabilityOfScriptsInZone(
         }
         JSScript* script = base->asJSScript();
         if (obs.shouldRecompileOrInvalidate(script)) {
-          if (!AppendAndInvalidateScript(cx, zone, script, scripts)) {
+          if (!AppendAndInvalidateScript(cx, zone, script, invalid, scripts)) {
             return false;
           }
         }
       }
     }
+    Invalidate(cx, invalid);
   }
 
   // Code below this point must be infallible to ensure the active bit of
@@ -4513,7 +4520,7 @@ bool Debugger::CallData::getDebuggees() {
   if (!arrobj) {
     return false;
   }
-  arrobj->ensureDenseInitializedLength(cx, 0, count);
+  arrobj->ensureDenseInitializedLength(0, count);
   for (i = 0; i < count; i++) {
     RootedValue v(cx, debuggees[i]);
     if (!dbg->wrapDebuggeeValue(cx, &v)) {
@@ -5523,7 +5530,7 @@ bool Debugger::CallData::findScripts() {
     return false;
   }
 
-  result->ensureDenseInitializedLength(cx, 0, resultLength);
+  result->ensureDenseInitializedLength(0, resultLength);
 
   for (size_t i = 0; i < scripts.length(); i++) {
     JSObject* scriptObject = dbg->wrapScript(cx, scripts[i]);
@@ -5651,7 +5658,7 @@ bool Debugger::CallData::findSources() {
     return false;
   }
 
-  result->ensureDenseInitializedLength(cx, 0, resultLength);
+  result->ensureDenseInitializedLength(0, resultLength);
 
   size_t i = 0;
   for (auto iter = sources.get().iter(); !iter.done(); iter.next()) {
@@ -5872,7 +5879,7 @@ bool Debugger::CallData::findObjects() {
     return false;
   }
 
-  result->ensureDenseInitializedLength(cx, 0, length);
+  result->ensureDenseInitializedLength(0, length);
 
   for (size_t i = 0; i < length; i++) {
     RootedValue debuggeeVal(cx, ObjectValue(*query.objects[i]));
@@ -6030,7 +6037,7 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::CompilationState compilationState(cx, allocScope, options,
-                                              compilationInfo.get().stencil);
+                                              compilationInfo.get());
 
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(

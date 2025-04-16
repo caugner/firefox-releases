@@ -4,7 +4,7 @@
 
 use super::super::shader_source::{OPTIMIZED_SHADERS, UNOPTIMIZED_SHADERS};
 use api::{ColorF, ImageDescriptor, ImageFormat};
-use api::{MixBlendMode, TextureTarget, VoidPtrToSizeFn};
+use api::{MixBlendMode, ImageBufferKind, VoidPtrToSizeFn};
 use api::units::*;
 use euclid::default::Transform3D;
 use gleam::gl;
@@ -150,12 +150,12 @@ fn depth_target_size_in_bytes(dimensions: &DeviceIntSize) -> usize {
     (pixels as usize) * 4
 }
 
-pub fn get_gl_target(target: TextureTarget) -> gl::GLuint {
+pub fn get_gl_target(target: ImageBufferKind) -> gl::GLuint {
     match target {
-        TextureTarget::Default => gl::TEXTURE_2D,
-        TextureTarget::Array => gl::TEXTURE_2D_ARRAY,
-        TextureTarget::Rect => gl::TEXTURE_RECTANGLE,
-        TextureTarget::External => gl::TEXTURE_EXTERNAL_OES,
+        ImageBufferKind::Texture2D => gl::TEXTURE_2D,
+        ImageBufferKind::Texture2DArray => gl::TEXTURE_2D_ARRAY,
+        ImageBufferKind::TextureRect => gl::TEXTURE_RECTANGLE,
+        ImageBufferKind::TextureExternal => gl::TEXTURE_EXTERNAL_OES,
     }
 }
 
@@ -383,7 +383,7 @@ pub struct ExternalTexture {
 impl ExternalTexture {
     pub fn new(
         id: u32,
-        target: TextureTarget,
+        target: ImageBufferKind,
         swizzle: Swizzle,
         uv_rect: TexelRect,
     ) -> Self {
@@ -484,6 +484,10 @@ impl Texture {
 
     pub fn used_in_frame(&self, frame_id: GpuFrameId) -> bool {
         self.last_frame_used == frame_id
+    }
+
+    pub fn is_render_target(&self) -> bool {
+        !self.fbos.is_empty()
     }
 
     /// Returns true if this texture was used within `threshold` frames of
@@ -941,10 +945,6 @@ pub struct Capabilities {
     /// bound to a non-0th layer of a texture array. This is buggy on
     /// Adreno devices.
     pub supports_blit_to_texture_array: bool,
-    /// Whether we can use the pixel local storage functionality that
-    /// is available on some mobile GPUs. This allows fast access to
-    /// the per-pixel tile memory.
-    pub supports_pixel_local_storage: bool,
     /// Whether advanced blend equations are supported.
     pub supports_advanced_blend_equation: bool,
     /// Whether dual-source blending is supported.
@@ -1317,7 +1317,6 @@ impl Device {
         use_optimized_shaders: bool,
         upload_method: UploadMethod,
         cached_programs: Option<Rc<ProgramCache>>,
-        allow_pixel_local_storage_support: bool,
         allow_texture_storage_support: bool,
         allow_texture_swizzling: bool,
         dump_shader_source: Option<String>,
@@ -1497,37 +1496,33 @@ impl Device {
             color_formats, bgra_formats, bgra8_sampling_swizzle, texture_storage_usage, depth_format);
 
         // On Mali-T devices glCopyImageSubData appears to stall the pipeline until any pending
-        // renders to the source texture have completed. Using an alternative such as
-        // glBlitFramebuffer is preferable on such devices, so pretend we don't support
-        // glCopyImageSubData. See bug 1669494.
-        // We cannot do the same on Mali-G devices, because glBlitFramebuffer can cause corruption.
-        // See bug 1669960.
-        let supports_copy_image_sub_data = if renderer_name.starts_with("Mali-T") {
+        // renders to the source texture have completed. On Mali-G, it has been observed to
+        // indefinitely hang in some circumstances. Using an alternative such as glBlitFramebuffer
+        // is preferable on such devices, so pretend we don't support glCopyImageSubData.
+        // See bugs 1669494 and 1677757.
+        let supports_copy_image_sub_data = if renderer_name.starts_with("Mali") {
             false
         } else {
             supports_extension(&extensions, "GL_EXT_copy_image") ||
             supports_extension(&extensions, "GL_ARB_copy_image")
         };
 
-        let supports_buffer_storage = supports_extension(&extensions, "GL_EXT_buffer_storage") ||
-            supports_extension(&extensions, "GL_ARB_buffer_storage");
+        let is_adreno = renderer_name.starts_with("Adreno");
+
+        // There appears to be a driver bug on older versions of the Adreno
+        // driver which prevents usage of persistenly mapped buffers.
+        // See bugs 1678585 and 1683936.
+        // TODO: only disable feature for affected driver versions.
+        let supports_buffer_storage = if is_adreno {
+            false
+        } else {
+            supports_extension(&extensions, "GL_EXT_buffer_storage") ||
+            supports_extension(&extensions, "GL_ARB_buffer_storage")
+        };
 
         // Due to a bug on Adreno devices, blitting to an fbo bound to
         // a non-0th layer of a texture array is not supported.
         let supports_blit_to_texture_array = !renderer_name.starts_with("Adreno");
-
-        // Check if the device supports the two extensions needed in order to use
-        // pixel local storage.
-        // TODO(gw): Consider if we can remove fb fetch / init, by using PLS for opaque pass too.
-        // TODO(gw): Support EXT_shader_framebuffer_fetch as well.
-        let ext_pixel_local_storage = supports_extension(&extensions, "GL_EXT_shader_pixel_local_storage");
-        let ext_framebuffer_fetch = supports_extension(&extensions, "GL_ARM_shader_framebuffer_fetch");
-        let supports_pixel_local_storage =
-            allow_pixel_local_storage_support &&
-            ext_framebuffer_fetch &&
-            ext_pixel_local_storage;
-
-        let is_adreno = renderer_name.starts_with("Adreno");
 
         // KHR_blend_equation_advanced renders incorrectly on Adreno
         // devices. This has only been confirmed up to Adreno 5xx, and has been
@@ -1607,7 +1602,6 @@ impl Device {
                 supports_copy_image_sub_data,
                 supports_buffer_storage,
                 supports_blit_to_texture_array,
-                supports_pixel_local_storage,
                 supports_advanced_blend_equation,
                 supports_dual_source_blending,
                 supports_khr_debug,
@@ -2215,7 +2209,7 @@ impl Device {
 
     pub fn create_texture(
         &mut self,
-        target: TextureTarget,
+        target: ImageBufferKind,
         format: ImageFormat,
         mut width: i32,
         mut height: i32,
@@ -2384,8 +2378,10 @@ impl Device {
             .tex_parameter_i(target, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as gl::GLint);
     }
 
-    /// Copies the contents from one renderable texture to another.
-    pub fn blit_renderable_texture(
+    /// Copies the entire contents of one texture to another. The dest texture must be at least
+    /// as large as the source texture in each dimension. No scaling is performed, so if the dest
+    /// texture is larger than the source texture then some of its pixels will not be written to.
+    pub fn copy_entire_texture(
         &mut self,
         dst: &mut Texture,
         src: &Texture,
@@ -2395,32 +2391,77 @@ impl Device {
         debug_assert!(dst.size.height >= src.size.height);
         debug_assert!(dst.layer_count >= src.layer_count);
 
+        self.copy_texture_sub_region(
+            src,
+            0,
+            0,
+            0,
+            dst,
+            0,
+            0,
+            0,
+            src.size.width as _,
+            src.size.height as _,
+            src.layer_count as _,
+        );
+    }
+
+    /// Copies the specified subregion from src_texture to dest_texture.
+    pub fn copy_texture_sub_region(
+        &mut self,
+        src_texture: &Texture,
+        src_x: usize,
+        src_y: usize,
+        src_z: LayerIndex,
+        dest_texture: &Texture,
+        dest_x: usize,
+        dest_y: usize,
+        dest_z: LayerIndex,
+        width: usize,
+        height: usize,
+        depth: LayerIndex,
+    ) {
         if self.capabilities.supports_copy_image_sub_data {
-            assert_ne!(src.id, dst.id,
-                    "glCopyImageSubData's behaviour is undefined if src and dst images are identical and the rectangles overlap.");
-            unsafe {
-                self.gl.copy_image_sub_data(src.id, src.target, 0,
-                                            0, 0, 0,
-                                            dst.id, dst.target, 0,
-                                            0, 0, 0,
-                                            src.size.width as _, src.size.height as _, src.layer_count);
-            }
-        } else {
-            let rect = FramebufferIntRect::new(
-                FramebufferIntPoint::zero(),
-                device_size_as_framebuffer_size(src.get_dimensions()),
+            assert_ne!(
+                src_texture.id, dest_texture.id,
+                "glCopyImageSubData's behaviour is undefined if src and dst images are identical and the rectangles overlap."
             );
-            for layer in 0..src.layer_count.min(dst.layer_count) as LayerIndex {
-                self.blit_render_target(
-                    ReadTarget::from_texture(src, layer),
-                    rect,
-                    DrawTarget::from_texture(dst, layer, false),
-                    rect,
-                    TextureFilter::Linear
+            unsafe {
+                self.gl.copy_image_sub_data(
+                    src_texture.id,
+                    src_texture.target,
+                    0,
+                    src_x as _,
+                    src_y as _,
+                    src_z as _,
+                    dest_texture.id,
+                    dest_texture.target,
+                    0,
+                    dest_x as _,
+                    dest_y as _,
+                    dest_z as _,
+                    width as _,
+                    height as _,
+                    depth as _,
                 );
             }
-            self.reset_draw_target();
-            self.reset_read_target();
+        } else {
+            for i in 0..depth as LayerIndex {
+                let src_offset = FramebufferIntPoint::new(src_x as i32, src_y as i32);
+                let dest_offset = FramebufferIntPoint::new(dest_x as i32, dest_y as i32);
+                let size = FramebufferIntSize::new(width as i32, height as i32);
+
+                self.blit_render_target(
+                    ReadTarget::from_texture(src_texture, src_z + i),
+                    FramebufferIntRect::new(src_offset, size),
+                    DrawTarget::from_texture(dest_texture, dest_z + i, false),
+                    FramebufferIntRect::new(dest_offset, size),
+                    // In most cases the filter shouldn't matter, as there is no scaling involved
+                    // in the blit. We were previously using Linear, but this caused issues when
+                    // blitting RGBAF32 textures on Mali, so use Nearest to be safe.
+                    TextureFilter::Nearest,
+                );
+            }
         }
     }
 
@@ -3087,7 +3128,7 @@ impl Device {
     }
 
     pub fn attach_read_texture_external(
-        &mut self, texture_id: gl::GLuint, target: TextureTarget, layer_id: i32
+        &mut self, texture_id: gl::GLuint, target: ImageBufferKind, layer_id: i32
     ) {
         self.attach_read_texture_raw(texture_id, get_gl_target(target), layer_id)
     }
@@ -3643,18 +3684,6 @@ impl Device {
 
     pub fn supports_extension(&self, extension: &str) -> bool {
         supports_extension(&self.extensions, extension)
-    }
-
-    /// Enable the pixel local storage functionality. Caller must
-    /// have already confirmed the device supports this.
-    pub fn enable_pixel_local_storage(&mut self, enable: bool) {
-        debug_assert!(self.capabilities.supports_pixel_local_storage);
-
-        if enable {
-            self.gl.enable(gl::SHADER_PIXEL_LOCAL_STORAGE_EXT);
-        } else {
-            self.gl.disable(gl::SHADER_PIXEL_LOCAL_STORAGE_EXT);
-        }
     }
 
     pub fn echo_driver_messages(&self) {

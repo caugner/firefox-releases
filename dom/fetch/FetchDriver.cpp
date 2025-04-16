@@ -10,6 +10,7 @@
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "mozilla/dom/Document.h"
 #include "nsICookieJarSettings.h"
+#include "nsIFile.h"
 #include "nsIInputStream.h"
 #include "nsIOutputStream.h"
 #include "nsIFileChannel.h"
@@ -1561,18 +1562,6 @@ void FetchDriver::SetRequestHeaders(nsIHttpChannel* aChannel,
     } else {
       DebugOnly<nsresult> rv = aChannel->SetRequestHeader(
           headers[i].mName, headers[i].mValue, alreadySet /* merge */);
-      MOZ_ASSERT(NS_SUCCEEDED(rv));
-    }
-  }
-
-  nsAutoCString method;
-  mRequest->GetMethod(method);
-  if (!method.EqualsLiteral("GET") && !method.EqualsLiteral("HEAD")) {
-    nsAutoString origin;
-    if (NS_SUCCEEDED(nsContentUtils::GetUTFOrigin(mPrincipal, origin))) {
-      DebugOnly<nsresult> rv = aChannel->SetRequestHeader(
-          nsDependentCString(net::nsHttp::Origin),
-          NS_ConvertUTF16toUTF8(origin), false /* merge */);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
   }

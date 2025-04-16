@@ -24,6 +24,8 @@
 #  include "nsXULAppAPI.h"
 #endif  // #ifdef DEBUG
 
+class nsIPrincipal;
+
 namespace IPC {
 template <typename T>
 struct ParamTraits;
@@ -480,7 +482,8 @@ class WidgetEvent : public WidgetEventTime {
         break;
       default:
         if (mMessage == eResize || mMessage == eMozVisualResize ||
-            mMessage == eMozVisualScroll || mMessage == eEditorInput) {
+            mMessage == eMozVisualScroll || mMessage == eEditorInput ||
+            mMessage == eFormSelect) {
           mFlags.mCancelable = false;
         } else {
           mFlags.mCancelable = true;

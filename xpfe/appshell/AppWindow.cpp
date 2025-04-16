@@ -11,6 +11,7 @@
 #include <algorithm>
 
 // Helper classes
+#include "GeckoProfiler.h"
 #include "nsPrintfCString.h"
 #include "nsString.h"
 #include "nsWidgetsCID.h"
@@ -49,12 +50,16 @@
 #include "nsFocusManager.h"
 #include "nsContentList.h"
 #include "nsIDOMWindowUtils.h"
+#include "nsServiceManagerUtils.h"
 
 #include "prenv.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/PresShell.h"
 #include "mozilla/Services.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/dom/BarProps.h"
+#include "mozilla/dom/DOMRect.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/ScriptSettings.h"
@@ -1798,6 +1803,16 @@ nsresult AppWindow::MaybeSaveEarlyWindowPersistentValues(
     return NS_OK;
   }
 
+  SkeletonUISettings settings;
+
+  settings.screenX = aRect.X();
+  settings.screenY = aRect.Y();
+  settings.width = aRect.Width();
+  settings.height = aRect.Height();
+
+  settings.maximized = mWindow->SizeMode() == nsSizeMode_Maximized;
+  settings.cssToDevPixelScaling = mWindow->GetDefaultScale().scale;
+
   nsCOMPtr<dom::Element> windowElement = GetWindowDOMElement();
   Document* doc = windowElement->GetComposedDoc();
   Element* urlbarEl = doc->GetElementById(u"urlbar"_ns);
@@ -1837,6 +1852,7 @@ nsresult AppWindow::MaybeSaveEarlyWindowPersistentValues(
   CSSPixelSpan urlbar;
   urlbar.start = urlbarX;
   urlbar.end = urlbar.start + urlbarWidth;
+  settings.urlbarSpan = urlbar;
 
   Element* navbar = doc->GetElementById(u"nav-bar"_ns);
 
@@ -1856,6 +1872,11 @@ nsresult AppWindow::MaybeSaveEarlyWindowPersistentValues(
     searchbar.start = 0;
     searchbar.end = 0;
   }
+  settings.searchbarSpan = searchbar;
+
+  Element* menubar = doc->GetElementById(u"toolbar-menubar"_ns);
+  menubar->GetAttribute(u"autohide"_ns, attributeValue);
+  settings.menubarShown = attributeValue.EqualsLiteral("false");
 
   ErrorResult err;
   nsCOMPtr<nsIHTMLCollection> toolbarSprings = navbar->GetElementsByTagNameNS(
@@ -1875,15 +1896,12 @@ nsresult AppWindow::MaybeSaveEarlyWindowPersistentValues(
     CSSPixelSpan spring;
     spring.start = springRect->X();
     spring.end = spring.start + springRect->Width();
-    if (!springs.append(spring)) {
+    if (!settings.springs.append(spring)) {
       return NS_ERROR_FAILURE;
     }
   }
 
-  PersistPreXULSkeletonUIValues(
-      aRect.X(), aRect.Y(), aRect.Width(), aRect.Height(),
-      mWindow->SizeMode() == nsSizeMode_Maximized, urlbar, searchbar, springs,
-      mWindow->GetDefaultScale().scale);
+  PersistPreXULSkeletonUIValues(settings);
 #endif
 
   return NS_OK;
@@ -2931,7 +2949,7 @@ void AppWindow::WindowActivated() {
       mDocShell ? mDocShell->GetWindow() : nullptr;
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm && window) {
-    fm->WindowRaised(window);
+    fm->WindowRaised(window, nsFocusManager::GenerateFocusActionId());
   }
 
   if (mChromeLoaded) {
@@ -2947,7 +2965,7 @@ void AppWindow::WindowDeactivated() {
       mDocShell ? mDocShell->GetWindow() : nullptr;
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm && window && !fm->IsTestMode()) {
-    fm->WindowLowered(window);
+    fm->WindowLowered(window, nsFocusManager::GenerateFocusActionId());
   }
 }
 

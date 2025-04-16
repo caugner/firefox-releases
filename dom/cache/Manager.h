@@ -10,6 +10,7 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/dom/SafeRefPtr.h"
 #include "mozilla/dom/cache/Types.h"
+#include "mozilla/dom/quota/Client.h"
 #include "CacheCommon.h"
 #include "nsCOMPtr.h"
 #include "nsISupportsImpl.h"
@@ -24,6 +25,13 @@ namespace mozilla {
 class ErrorResult;
 
 namespace dom {
+
+namespace quota {
+
+class DirectoryLock;
+
+}  // namespace quota
+
 namespace cache {
 
 class CacheOpArgs;
@@ -65,6 +73,9 @@ class StreamList;
 // is enforced by the Manager::Factory.  If content still holds references to
 // Cache DOM objects during shutdown, then all operations will begin rejecting.
 class Manager final : public SafeRefCounted<Manager> {
+  using Client = quota::Client;
+  using DirectoryLock = quota::DirectoryLock;
+
  public:
   // Callback interface implemented by clients of Manager, such as CacheParent
   // and CacheStorageParent.  In general, if you call a Manager method you
@@ -125,11 +136,17 @@ class Manager final : public SafeRefCounted<Manager> {
   static Result<SafeRefPtr<Manager>, nsresult> AcquireCreateIfNonExistent(
       const SafeRefPtr<ManagerId>& aManagerId);
 
-  // Synchronously shutdown.  This spins the event loop.
-  static void ShutdownAll();
+  static void InitiateShutdown();
 
-  // Cancel actions for given origin or all actions if passed string is null.
-  static void Abort(const nsACString& aOrigin);
+  static bool IsShutdownAllComplete();
+
+  static nsCString GetShutdownStatus();
+
+  // Cancel actions for given DirectoryLock ids.
+  static void Abort(const Client::DirectoryLockIdTable& aDirectoryLockIds);
+
+  // Cancel all actions.
+  static void AbortAll();
 
   // Must be called by Listener objects before they are destroyed.
   void RemoveListener(Listener* aListener);
@@ -155,6 +172,8 @@ class Manager final : public SafeRefCounted<Manager> {
   void ReleaseBodyId(const nsID& aBodyId);
 
   const ManagerId& GetManagerId() const;
+
+  Maybe<DirectoryLock&> MaybeDirectoryLockRef() const;
 
   // Methods to allow a StreamList to register themselves with the Manager.
   // StreamList objects must call RemoveStreamList() before they are destroyed.

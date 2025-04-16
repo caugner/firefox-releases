@@ -284,7 +284,7 @@ impl Profiler {
             float("Texture cache RGBA8 linear mem", "MB", TEXTURE_CACHE_RGBA8_LINEAR_MEM, expected(0.0..100.0)),
             int("Texture cache RGBA8 nearest regions", "", TEXTURE_CACHE_RGBA8_NEAREST_REGIONS, expected(0..100)),
             float("Texture cache RGBA8 nearest mem", "MB", TEXTURE_CACHE_RGBA8_NEAREST_MEM, expected(0.0..100.0)),
-            float("Texture cache shared mem", "", TEXTURE_CACHE_SHARED_MEM, expected(0.0..100.0)),
+            float("Texture cache shared mem", "MB", TEXTURE_CACHE_SHARED_MEM, expected(0.0..100.0)),
             float("Texture cache standalone mem", "MB", TEXTURE_CACHE_STANDALONE_MEM, expected(0.0..100.0)),
 
 
@@ -316,7 +316,7 @@ impl Profiler {
             int("Interned filter data", "", INTERNED_FILTER_DATA, Expected::none()),
             int("Interned backdrops", "", INTERNED_BACKDROPS, Expected::none()),
 
-            int("Texture cache glyphs regions", "", TEXTURE_CACHE_RGBA8_GLYPHS_REGIONS, expected(0..100)),
+            int("Texture cache glyphs regions", "", TEXTURE_CACHE_RGBA8_GLYPHS_REGIONS, expected(0..257)),
             float("Texture cache glyphs mem", "MB", TEXTURE_CACHE_RGBA8_GLYPHS_MEM, expected(0.0..100.0)),
         ];
 

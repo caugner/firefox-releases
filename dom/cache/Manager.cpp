@@ -8,6 +8,7 @@
 
 #include "mozilla/AutoRestore.h"
 #include "mozilla/Mutex.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/Unused.h"
@@ -20,6 +21,8 @@
 #include "mozilla/dom/cache/SavedTypes.h"
 #include "mozilla/dom/cache/StreamList.h"
 #include "mozilla/dom/cache/Types.h"
+#include "mozilla/dom/quota/Client.h"
+#include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozStorageHelper.h"
 #include "nsIInputStream.h"
@@ -31,6 +34,9 @@
 #include "QuotaClientImpl.h"
 
 namespace mozilla::dom::cache {
+
+using mozilla::dom::quota::Client;
+using mozilla::dom::quota::DirectoryLock;
 
 namespace {
 
@@ -251,10 +257,11 @@ class Manager::Factory {
       // cleaning up.  We need to tell the new manager about this so
       // that it won't actually start until the old manager is done.
       SafeRefPtr<Manager> oldManager = Acquire(*aManagerId, Closing);
-      ref->Init(oldManager ? SomeRef(*oldManager) : Nothing());
+      ref->Init(oldManager.maybeDeref());
 
       MOZ_ASSERT(!sFactory->mManagerList.Contains(ref));
-      sFactory->mManagerList.AppendElement(ref.unsafeGetRawPtr());
+      sFactory->mManagerList.AppendElement(
+          WrapNotNullUnchecked(ref.unsafeGetRawPtr()));
     }
 
     return ref;
@@ -266,36 +273,29 @@ class Manager::Factory {
 
     MOZ_ALWAYS_TRUE(sFactory->mManagerList.RemoveElement(&aManager));
 
+    CacheQuotaClient::Get()->MaybeRecordShutdownStep("Manager removed"_ns);
+
     // clean up the factory singleton if there are no more managers
     MaybeDestroyInstance();
   }
 
-  static void Abort(const nsACString& aOrigin) {
+  static void Abort(const Client::DirectoryLockIdTable& aDirectoryLockIds) {
     mozilla::ipc::AssertIsOnBackgroundThread();
 
-    if (!sFactory) {
-      return;
-    }
+    AbortMatching([&aDirectoryLockIds](const auto& manager) {
+      // Check if the Manager holds an acquired DirectoryLock. Origin clearing
+      // can't be blocked by this Manager if there is no acquired DirectoryLock.
+      // If there is an acquired DirectoryLock, check if the table contains the
+      // lock for the Manager.
+      return Client::IsLockForObjectAcquiredAndContainedInLockTable(
+          manager, aDirectoryLockIds);
+    });
+  }
 
-    MOZ_DIAGNOSTIC_ASSERT(!sFactory->mManagerList.IsEmpty());
+  static void AbortAll() {
+    mozilla::ipc::AssertIsOnBackgroundThread();
 
-    {
-      // Note that we are synchronously calling abort code here.  If any
-      // of the shutdown code synchronously decides to delete the Factory
-      // we need to delay that delete until the end of this method.
-      AutoRestore<bool> restore(sFactory->mInSyncAbortOrShutdown);
-      sFactory->mInSyncAbortOrShutdown = true;
-
-      for (auto* manager : sFactory->mManagerList.ForwardRange()) {
-        if (aOrigin.IsVoid() || manager->mManagerId->QuotaOrigin() == aOrigin) {
-          auto pinnedManager =
-              SafeRefPtr{manager, AcquireStrongRefFromRawPtr{}};
-          pinnedManager->Abort();
-        }
-      }
-    }
-
-    MaybeDestroyInstance();
+    AbortMatching([](const auto&) { return true; });
   }
 
   static void ShutdownAll() {
@@ -314,8 +314,9 @@ class Manager::Factory {
       AutoRestore<bool> restore(sFactory->mInSyncAbortOrShutdown);
       sFactory->mInSyncAbortOrShutdown = true;
 
-      for (auto* manager : sFactory->mManagerList.ForwardRange()) {
-        auto pinnedManager = SafeRefPtr{manager, AcquireStrongRefFromRawPtr{}};
+      for (const auto& manager : sFactory->mManagerList.ForwardRange()) {
+        auto pinnedManager =
+            SafeRefPtr{manager.get(), AcquireStrongRefFromRawPtr{}};
         pinnedManager->Shutdown();
       }
     }
@@ -326,6 +327,35 @@ class Manager::Factory {
   static bool IsShutdownAllComplete() {
     mozilla::ipc::AssertIsOnBackgroundThread();
     return !sFactory;
+  }
+
+  static nsCString GetShutdownStatus() {
+    mozilla::ipc::AssertIsOnBackgroundThread();
+
+    nsCString data;
+
+    if (sFactory && !sFactory->mManagerList.IsEmpty()) {
+      data.Append(
+          "Managers: "_ns +
+          IntToCString(static_cast<uint64_t>(sFactory->mManagerList.Length())) +
+          " ("_ns);
+
+      for (const auto& manager : sFactory->mManagerList.NonObservingRange()) {
+        data.Append(quota::AnonymizedOriginString(
+            manager->GetManagerId().QuotaOrigin()));
+
+        data.AppendLiteral(": ");
+
+        data.Append(manager->GetState() == State::Open ? "Open"_ns
+                                                       : "Closing"_ns);
+
+        data.AppendLiteral(", ");
+      }
+
+      data.AppendLiteral(" )");
+    }
+
+    return data;
   }
 
  private:
@@ -398,13 +428,42 @@ class Manager::Factory {
     // chains to an old Manager we want it to be the most recent one.
     const auto range = Reversed(sFactory->mManagerList.NonObservingRange());
     const auto foundIt = std::find_if(
-        range.begin(), range.end(), [aState, &aManagerId](const auto* manager) {
+        range.begin(), range.end(), [aState, &aManagerId](const auto& manager) {
           return aState == manager->GetState() &&
                  *manager->mManagerId == aManagerId;
         });
     return foundIt != range.end()
-               ? SafeRefPtr{*foundIt, AcquireStrongRefFromRawPtr{}}
+               ? SafeRefPtr{foundIt->get(), AcquireStrongRefFromRawPtr{}}
                : nullptr;
+  }
+
+  template <typename Condition>
+  static void AbortMatching(const Condition& aCondition) {
+    mozilla::ipc::AssertIsOnBackgroundThread();
+
+    if (!sFactory) {
+      return;
+    }
+
+    MOZ_DIAGNOSTIC_ASSERT(!sFactory->mManagerList.IsEmpty());
+
+    {
+      // Note that we are synchronously calling abort code here.  If any
+      // of the shutdown code synchronously decides to delete the Factory
+      // we need to delay that delete until the end of this method.
+      AutoRestore<bool> restore(sFactory->mInSyncAbortOrShutdown);
+      sFactory->mInSyncAbortOrShutdown = true;
+
+      for (const auto& manager : sFactory->mManagerList.ForwardRange()) {
+        if (aCondition(*manager)) {
+          auto pinnedManager =
+              SafeRefPtr{manager.get(), AcquireStrongRefFromRawPtr{}};
+          pinnedManager->Abort();
+        }
+      }
+    }
+
+    MaybeDestroyInstance();
   }
 
   // Singleton created on demand and deleted when last Manager is cleared
@@ -422,7 +481,7 @@ class Manager::Factory {
   // Weak references as we don't want to keep Manager objects alive forever.
   // When a Manager is destroyed it calls Factory::Remove() to clear itself.
   // PBackground thread only.
-  nsTObserverArray<Manager*> mManagerList;
+  nsTObserverArray<NotNull<Manager*>> mManagerList;
 
   // This flag is set when we are looping through the list and calling Abort()
   // or Shutdown() on each Manager.  We need to be careful not to synchronously
@@ -1551,22 +1610,38 @@ Result<SafeRefPtr<Manager>, nsresult> Manager::AcquireCreateIfNonExistent(
 }
 
 // static
-void Manager::ShutdownAll() {
+void Manager::InitiateShutdown() {
   mozilla::ipc::AssertIsOnBackgroundThread();
 
   Factory::ShutdownAll();
-
-  if (!mozilla::SpinEventLoopUntil(
-          []() { return Factory::IsShutdownAllComplete(); })) {
-    NS_WARNING("Something bad happened!");
-  }
 }
 
 // static
-void Manager::Abort(const nsACString& aOrigin) {
+bool Manager::IsShutdownAllComplete() {
   mozilla::ipc::AssertIsOnBackgroundThread();
 
-  Factory::Abort(aOrigin);
+  return Factory::IsShutdownAllComplete();
+}
+
+// static
+nsCString Manager::GetShutdownStatus() {
+  mozilla::ipc::AssertIsOnBackgroundThread();
+
+  return Factory::GetShutdownStatus();
+}
+
+// static
+void Manager::Abort(const Client::DirectoryLockIdTable& aDirectoryLockIds) {
+  mozilla::ipc::AssertIsOnBackgroundThread();
+
+  Factory::Abort(aDirectoryLockIds);
+}
+
+// static
+void Manager::AbortAll() {
+  mozilla::ipc::AssertIsOnBackgroundThread();
+
+  Factory::AbortAll();
 }
 
 void Manager::RemoveListener(Listener* aListener) {
@@ -1937,6 +2012,13 @@ void Manager::Shutdown() {
     pinnedContext->CancelAll();
     return;
   }
+}
+
+Maybe<DirectoryLock&> Manager::MaybeDirectoryLockRef() const {
+  NS_ASSERT_OWNINGTHREAD(Manager);
+  MOZ_DIAGNOSTIC_ASSERT(mContext);
+
+  return mContext->MaybeDirectoryLockRef();
 }
 
 void Manager::Abort() {

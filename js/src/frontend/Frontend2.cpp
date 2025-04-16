@@ -65,7 +65,7 @@ bool ConvertAtoms(JSContext* cx, const SmooshResult& result,
         smoosh_get_atom_at(result, i));
     auto len = smoosh_get_atom_len_at(result, i);
     const ParserAtom* atom =
-        compilationState.parserAtoms.internUtf8(cx, s, len).unwrapOr(nullptr);
+        compilationState.parserAtoms.internUtf8(cx, s, len);
     if (!atom) {
       return false;
     }
@@ -115,7 +115,7 @@ void CopyBindingNames(JSContext* cx, CVec<COption<SmooshBindingName>>& from,
 bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
                          Vector<const ParserAtom*>& allAtoms,
                          CompilationInfo& compilationInfo) {
-  LifoAlloc& alloc = compilationInfo.stencil.alloc;
+  LifoAlloc& alloc = compilationInfo.alloc;
 
   if (result.scopes.len > TaggedScriptThingIndex::IndexLimit) {
     ReportAllocationOverflow(cx);
@@ -145,7 +145,7 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         data->length = numBindings;
 
         if (!ScopeStencil::createForGlobalScope(
-                cx, compilationInfo.stencil, ScopeKind::Global, data, &index)) {
+                cx, compilationInfo, ScopeKind::Global, data, &index)) {
           return false;
         }
         break;
@@ -171,7 +171,7 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         uint32_t firstFrameSlot = var.first_frame_slot;
         ScopeIndex enclosingIndex(var.enclosing);
         if (!ScopeStencil::createForVarScope(
-                cx, compilationInfo.stencil, ScopeKind::FunctionBodyVar, data,
+                cx, compilationInfo, ScopeKind::FunctionBodyVar, data,
                 firstFrameSlot, var.function_has_extensible_scope,
                 mozilla::Some(enclosingIndex), &index)) {
           return false;
@@ -200,8 +200,8 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
         uint32_t firstFrameSlot = lexical.first_frame_slot;
         ScopeIndex enclosingIndex(lexical.enclosing);
         if (!ScopeStencil::createForLexicalScope(
-                cx, compilationInfo.stencil, ScopeKind::Lexical, data,
-                firstFrameSlot, mozilla::Some(enclosingIndex), &index)) {
+                cx, compilationInfo, ScopeKind::Lexical, data, firstFrameSlot,
+                mozilla::Some(enclosingIndex), &index)) {
           return false;
         }
         break;
@@ -234,9 +234,9 @@ bool ConvertScopeStencil(JSContext* cx, const SmooshResult& result,
 
         ScopeIndex enclosingIndex(function.enclosing);
         if (!ScopeStencil::createForFunctionScope(
-                cx, compilationInfo.stencil, data, hasParameterExprs,
-                needsEnvironment, functionIndex, isArrow,
-                mozilla::Some(enclosingIndex), &index)) {
+                cx, compilationInfo, data, hasParameterExprs, needsEnvironment,
+                functionIndex, isArrow, mozilla::Some(enclosingIndex),
+                &index)) {
           return false;
         }
         break;
@@ -310,8 +310,7 @@ bool ConvertRegExpData(JSContext* cx, const SmooshResult& result,
     const mozilla::Utf8Unit* sUtf8 =
         reinterpret_cast<const mozilla::Utf8Unit*>(s);
     const ParserAtom* atom =
-        compilationState.parserAtoms.internUtf8(cx, sUtf8, len)
-            .unwrapOr(nullptr);
+        compilationState.parserAtoms.internUtf8(cx, sUtf8, len);
     if (!atom) {
       return false;
     }
@@ -350,8 +349,7 @@ UniquePtr<ImmutableScriptData> ConvertImmutableScriptData(
   return ImmutableScriptData::new_(
       cx, smooshScriptData.main_offset, smooshScriptData.nfixed,
       smooshScriptData.nslots, GCThingIndex(smooshScriptData.body_scope_index),
-      smooshScriptData.num_ic_entries, smooshScriptData.num_bytecode_type_sets,
-      isFunction, smooshScriptData.fun_length,
+      smooshScriptData.num_ic_entries, isFunction, smooshScriptData.fun_length,
       mozilla::Span(smooshScriptData.bytecode.data,
                     smooshScriptData.bytecode.len),
       mozilla::Span<const SrcNote>(), mozilla::Span<const uint32_t>(),
@@ -479,12 +477,10 @@ bool ConvertScriptStencil(JSContext* cx, const SmooshResult& result,
       script.lazyFunctionEnclosingScopeIndex_ = mozilla::Some(ScopeIndex(
           smooshScript.lazy_function_enclosing_scope_index.AsSome()));
     }
-    script.isStandaloneFunction = smooshScript.is_standalone_function;
     script.wasFunctionEmitted = smooshScript.was_function_emitted;
-    script.isSingletonFunction = smooshScript.is_singleton_function;
   }
 
-  if (!ConvertGCThings(cx, result, smooshScript, compilationInfo.stencil.alloc,
+  if (!ConvertGCThings(cx, result, smooshScript, compilationInfo.alloc,
                        allAtoms, script)) {
     return false;
   }
@@ -576,7 +572,7 @@ bool Smoosh::compileGlobalScriptToStencil(JSContext* cx,
 
   Vector<const ParserAtom*> allAtoms(cx);
   CompilationState compilationState(
-      cx, allocScope, compilationInfo.input.options, compilationInfo.stencil);
+      cx, allocScope, compilationInfo.input.options, compilationInfo);
   if (!ConvertAtoms(cx, result, compilationState, allAtoms)) {
     return false;
   }
@@ -646,7 +642,7 @@ bool Smoosh::compileGlobalScript(JSContext* cx,
     return false;
   }
 
-  if (!compilationInfo.instantiateStencils(cx, gcOutput)) {
+  if (!CompilationInfo::instantiateStencils(cx, compilationInfo, gcOutput)) {
     return false;
   }
 

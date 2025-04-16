@@ -193,7 +193,7 @@ class GlobalHelperThreadState {
   void destroyHelperContexts(AutoLockHelperThreadState& lock);
 
 #ifdef DEBUG
-  bool isLockedByCurrentThread() const;
+  void assertIsLockedByCurrentThread() const;
 #endif
 
   enum CondVar {
@@ -525,6 +525,8 @@ struct ParseTask : public mozilla::LinkedListElement<ParseTask>,
   UniquePtr<frontend::CompilationInfoVector> compilationInfos_;
 
   frontend::CompilationGCOutput gcOutput_;
+
+  frontend::CompilationGCOutput gcOutputForDelazification_;
 
   // Any errors or warnings produced during compilation. These are reported
   // when finishing the script.

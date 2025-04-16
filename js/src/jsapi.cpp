@@ -76,6 +76,7 @@
 #include "js/Wrapper.h"
 #include "proxy/DOMProxy.h"
 #include "util/CompleteFile.h"
+#include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/AsyncFunction.h"
@@ -458,6 +459,13 @@ JS::ContextOptions& JS::ContextOptions::setWasmSimd(bool flag) {
   return *this;
 }
 
+JS::ContextOptions& JS::ContextOptions::setWasmExceptions(bool flag) {
+#ifdef ENABLE_WASM_EXCEPTIONS
+  wasmExceptions_ = flag;
+#endif
+  return *this;
+}
+
 JS::ContextOptions& JS::ContextOptions::setFuzzing(bool flag) {
 #ifdef FUZZING
   fuzzing_ = flag;
@@ -500,6 +508,11 @@ JS_PUBLIC_API bool JS::InitSelfHostedCode(JSContext* cx) {
 
 JS_PUBLIC_API const char* JS_GetImplementationVersion(void) {
   return "JavaScript-C" MOZILLA_VERSION;
+}
+
+JS_PUBLIC_API void JS_SetDestroyZoneCallback(JSContext* cx,
+                                             JSDestroyZoneCallback callback) {
+  cx->runtime()->destroyZoneCallback = callback;
 }
 
 JS_PUBLIC_API void JS_SetDestroyCompartmentCallback(
@@ -729,6 +742,8 @@ JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx, HandleObject origobj,
 
   AutoDisableProxyCheck adpc;
 
+  AutoEnterOOMUnsafeRegion oomUnsafe;
+
   JS::Compartment* destination = target->compartment();
 
   if (origobj->compartment() == destination) {
@@ -737,7 +752,7 @@ JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx, HandleObject origobj,
     // destination's cross compartment map and that the same
     // object will continue to work.
     AutoRealm ar(cx, origobj);
-    JSObject::swap(cx, origobj, target);
+    JSObject::swap(cx, origobj, target, oomUnsafe);
     newIdentity = origobj;
   } else if (ObjectWrapperMap::Ptr p = destination->lookupWrapper(origobj)) {
     // There might already be a wrapper for the original object in
@@ -751,7 +766,7 @@ JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx, HandleObject origobj,
     NukeCrossCompartmentWrapper(cx, newIdentity);
 
     AutoRealm ar(cx, newIdentity);
-    JSObject::swap(cx, newIdentity, target);
+    JSObject::swap(cx, newIdentity, target, oomUnsafe);
   } else {
     // Otherwise, we use |target| for the new identity object.
     newIdentity = target;
@@ -763,7 +778,7 @@ JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx, HandleObject origobj,
   // `newIdentity == origobj`, because this process also clears out any
   // cached wrapper state.
   if (!RemapAllWrappersForObject(cx, origobj, newIdentity)) {
-    MOZ_CRASH();
+    oomUnsafe.crash("JS_TransplantObject");
   }
 
   // Lastly, update the original object to point to the new one.
@@ -771,14 +786,16 @@ JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx, HandleObject origobj,
     RootedObject newIdentityWrapper(cx, newIdentity);
     AutoRealm ar(cx, origobj);
     if (!JS_WrapObject(cx, &newIdentityWrapper)) {
-      MOZ_CRASH();
+      MOZ_RELEASE_ASSERT(cx->isThrowingOutOfMemory() ||
+                         cx->isThrowingOverRecursed());
+      oomUnsafe.crash("JS_TransplantObject");
     }
     MOZ_ASSERT(Wrapper::wrappedObject(newIdentityWrapper) == newIdentity);
-    JSObject::swap(cx, origobj, newIdentityWrapper);
+    JSObject::swap(cx, origobj, newIdentityWrapper, oomUnsafe);
     if (origobj->compartment()->lookupWrapper(newIdentity)) {
       MOZ_ASSERT(origobj->is<CrossCompartmentWrapperObject>());
       if (!origobj->compartment()->putWrapper(cx, newIdentity, origobj)) {
-        MOZ_CRASH();
+        oomUnsafe.crash("JS_TransplantObject");
       }
     }
   }
@@ -844,7 +861,7 @@ JS_FRIEND_API void js::RemapRemoteWindowProxies(
   // correctly before we start wrapping it into other compartments.
   if (targetCompartmentProxy) {
     AutoRealm ar(cx, targetCompartmentProxy);
-    JSObject::swap(cx, targetCompartmentProxy, target);
+    JSObject::swap(cx, targetCompartmentProxy, target, oomUnsafe);
     target.set(targetCompartmentProxy);
   }
 
@@ -3461,6 +3478,7 @@ void JS::TransitiveCompileOptions::copyPODTransitiveOptions(
   nonSyntacticScope = rhs.nonSyntacticScope;
   privateClassFields = rhs.privateClassFields;
   privateClassMethods = rhs.privateClassMethods;
+  topLevelAwait = rhs.topLevelAwait;
   useStencilXDR = rhs.useStencilXDR;
   useOffThreadParseGlobal = rhs.useOffThreadParseGlobal;
 };
@@ -3556,6 +3574,7 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
       cx->options().throwOnAsmJSValidationFailure();
   privateClassFields = cx->options().privateClassFields();
   privateClassMethods = cx->options().privateClassMethods();
+  topLevelAwait = cx->options().topLevelAwait();
 
   useStencilXDR = !UseOffThreadParseGlobal();
   useOffThreadParseGlobal = UseOffThreadParseGlobal();
@@ -5305,9 +5324,6 @@ JS_PUBLIC_API void JS_SetGlobalJitCompilerOption(JSContext* cx,
     case JSJITCOMPILER_SPECTRE_JIT_TO_CXX_CALLS:
       jit::JitOptions.spectreJitToCxxCalls = !!value;
       break;
-    case JSJITCOMPILER_WARP_ENABLE:
-      jit::JitOptions.setWarpEnabled(!!value);
-      break;
     case JSJITCOMPILER_WASM_FOLD_OFFSETS:
       jit::JitOptions.wasmFoldOffsets = !!value;
       break;
@@ -5378,9 +5394,6 @@ JS_PUBLIC_API bool JS_GetGlobalJitCompilerOption(JSContext* cx,
       break;
     case JSJITCOMPILER_OFFTHREAD_COMPILATION_ENABLE:
       *valueOut = rt->canUseOffthreadIonCompilation();
-      break;
-    case JSJITCOMPILER_WARP_ENABLE:
-      *valueOut = jit::JitOptions.warpBuilder;
       break;
     case JSJITCOMPILER_WASM_FOLD_OFFSETS:
       *valueOut = jit::JitOptions.wasmFoldOffsets ? 1 : 0;
@@ -5763,8 +5776,9 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
   }
 
   Rooted<frontend::CompilationGCOutput> gcOutput(cx);
-  if (!frontend::InstantiateStencils(cx, compilationInfos.get(),
-                                     gcOutput.get())) {
+  Rooted<frontend::CompilationGCOutput> gcOutputForDelazification(cx);
+  if (!frontend::InstantiateStencils(cx, compilationInfos.get(), gcOutput.get(),
+                                     gcOutputForDelazification.get())) {
     return JS::TranscodeResult_Throw;
   }
 
@@ -5825,8 +5839,9 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
   }
 
   Rooted<frontend::CompilationGCOutput> gcOutput(cx);
-  if (!frontend::InstantiateStencils(cx, compilationInfos.get(),
-                                     gcOutput.get())) {
+  Rooted<frontend::CompilationGCOutput> gcOutputForDelazification(cx);
+  if (!frontend::InstantiateStencils(cx, compilationInfos.get(), gcOutput.get(),
+                                     gcOutputForDelazification.get())) {
     return JS::TranscodeResult_Throw;
   }
 
@@ -5961,4 +5976,16 @@ JS_PUBLIC_API void NoteIntentionalCrash() {
 #endif
 }
 
+#ifdef DEBUG
+bool gSupportDifferentialTesting = false;
+#endif  // DEBUG
+
 }  // namespace js
+
+#ifdef DEBUG
+
+JS_PUBLIC_API void JS::SetSupportDifferentialTesting(bool value) {
+  js::gSupportDifferentialTesting = value;
+}
+
+#endif  // DEBUG

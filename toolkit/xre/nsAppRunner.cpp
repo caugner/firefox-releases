@@ -274,6 +274,7 @@ static const char kPrefThemeId[] = "extensions.activeThemeID";
 static const char kPrefBrowserStartupBlankWindow[] =
     "browser.startup.blankWindow";
 static const char kPrefPreXulSkeletonUI[] = "browser.startup.preXulSkeletonUI";
+static const char kPrefDrawTabsInTitlebar[] = "browser.tabs.drawInTitlebar";
 #endif  // defined(XP_WIN)
 
 int gArgc;
@@ -1954,7 +1955,8 @@ static void ReflectSkeletonUIPrefToRegistry(const char* aPref, void* aData) {
 
   bool shouldBeEnabled =
       Preferences::GetBool(kPrefPreXulSkeletonUI, false) &&
-      Preferences::GetBool(kPrefBrowserStartupBlankWindow, false);
+      Preferences::GetBool(kPrefBrowserStartupBlankWindow, false) &&
+      Preferences::GetBool(kPrefDrawTabsInTitlebar, false);
   if (shouldBeEnabled && Preferences::HasUserValue(kPrefThemeId)) {
     nsCString themeId;
     Preferences::GetCString(kPrefThemeId, themeId);
@@ -1983,6 +1985,8 @@ static void SetupSkeletonUIPrefs() {
   Preferences::RegisterCallback(&ReflectSkeletonUIPrefToRegistry,
                                 kPrefBrowserStartupBlankWindow);
   Preferences::RegisterCallback(&ReflectSkeletonUIPrefToRegistry, kPrefThemeId);
+  Preferences::RegisterCallback(&ReflectSkeletonUIPrefToRegistry,
+                                kPrefDrawTabsInTitlebar);
 }
 
 #  if defined(MOZ_LAUNCHER_PROCESS)
@@ -2207,9 +2211,9 @@ nsresult LaunchChild(bool aBlankCommandLine) {
   PRStatus failed = PR_WaitProcess(process, &exitCode);
   if (failed || exitCode) return NS_ERROR_FAILURE;
 #      endif  // XP_UNIX
-#    endif    // WP_WIN
-#  endif      // WP_MACOSX
-#endif        // MOZ_WIDGET_ANDROID
+#    endif  // WP_WIN
+#  endif  // WP_MACOSX
+#endif  // MOZ_WIDGET_ANDROID
 
   return NS_ERROR_LAUNCHED_CHILD_PROCESS;
 }
@@ -4071,18 +4075,22 @@ static void PR_CALLBACK ReadAheadDlls_ThreadStart(void* arg) {
 
 #if defined(MOZ_WAYLAND)
 bool IsWaylandDisabled() {
-  const char* backendPref = PR_GetEnv("GDK_BACKEND");
-  if (backendPref && strcmp(backendPref, "wayland") == 0) {
-    return false;
+  // MOZ_ENABLE_WAYLAND is our primary Wayland on/off switch.
+  const char* waylandPref = PR_GetEnv("MOZ_ENABLE_WAYLAND");
+  bool enableWayland = (waylandPref && *waylandPref);
+  if (!enableWayland) {
+    const char* backendPref = PR_GetEnv("GDK_BACKEND");
+    enableWayland = (backendPref && strncmp(backendPref, "wayland", 7) == 0);
+    if (enableWayland) {
+      NS_WARNING(
+          "Wayland backend should be enabled by MOZ_ENABLE_WAYLAND=1."
+          "GDK_BACKEND is a Gtk3 debug variable and may cause various issues.");
+    }
   }
-  // Enable Wayland on Gtk+ >= 3.22 where we can expect recent enough
-  // compositor & libwayland interface.
-  bool disableWayland = (gtk_check_version(3, 22, 0) != nullptr);
-  if (!disableWayland) {
-    // Make X11 backend the default one unless MOZ_ENABLE_WAYLAND is set.
-    disableWayland = (PR_GetEnv("MOZ_ENABLE_WAYLAND") == nullptr);
+  if (enableWayland && gtk_check_version(3, 22, 0) != nullptr) {
+    NS_WARNING("Running Wayland backen on Gtk3 < 3.22. Expect issues/glitches");
   }
-  return disableWayland;
+  return !enableWayland;
 }
 #endif
 
@@ -4150,7 +4158,7 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
     }
   }
 #  endif /* DEBUG */
-#endif   /* FUZZING */
+#endif /* FUZZING */
 
 #if defined(XP_WIN)
   // Enable the HeapEnableTerminationOnCorruption exploit mitigation. We ignore
@@ -4687,7 +4695,7 @@ nsresult XREMain::XRE_mainRun() {
 #  if defined(MOZ_GECKO_PROFILER)
   mozilla::mscom::InitProfilerMarkers();
 #  endif  // defined(MOZ_GECKO_PROFILER)
-#endif    // defined(XP_WIN)
+#endif  // defined(XP_WIN)
 
   rv = mScopedXPCOM->SetWindowCreator(mNativeApp);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
@@ -5338,7 +5346,10 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
 
   XRE_DeinitCommandLine();
 
-  return NS_FAILED(rv) ? 1 : 0;
+  if (NS_FAILED(rv)) {
+    return 1;
+  }
+  return mozilla::AppShutdown::GetExitCode();
 }
 
 void XRE_StopLateWriteChecks(void) { mozilla::StopLateWriteChecks(); }

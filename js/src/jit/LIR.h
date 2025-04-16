@@ -1826,7 +1826,7 @@ class LIRGraph {
   // constantPool_ is a mozilla::Vector, not a js::Vector, because
   // js::Vector<Value> is prohibited as unsafe. This particular Vector of
   // Values is safe because it is only used within the scope of an
-  // AutoEnterAnalysis (in IonCompile), which inhibits GC.
+  // AutoSuppressGC (in IonCompile), which inhibits GC.
   mozilla::Vector<Value, 0, JitAllocPolicy> constantPool_;
   typedef HashMap<Value, uint32_t, ValueHasher, JitAllocPolicy> ConstantPoolMap;
   ConstantPoolMap constantPoolMap_;
@@ -1839,9 +1839,6 @@ class LIRGraph {
   uint32_t localSlotCount_;
   // Number of stack slots needed for argument construction for calls.
   uint32_t argumentSlotCount_;
-
-  // Snapshot taken before any LIR has been lowered.
-  LSnapshot* entrySnapshot_;
 
   MIRGraph& mir_;
 
@@ -1898,14 +1895,7 @@ class LIRGraph {
   MOZ_MUST_USE bool addConstantToPool(const Value& v, uint32_t* index);
   size_t numConstants() const { return constantPool_.length(); }
   Value* constantPool() { return &constantPool_[0]; }
-  void setEntrySnapshot(LSnapshot* snapshot) {
-    MOZ_ASSERT(!entrySnapshot_);
-    entrySnapshot_ = snapshot;
-  }
-  LSnapshot* entrySnapshot() const {
-    MOZ_ASSERT(entrySnapshot_);
-    return entrySnapshot_;
-  }
+
   bool noteNeedsSafepoint(LInstruction* ins);
   size_t numNonCallSafepoints() const { return nonCallSafepoints_.length(); }
   LInstruction* getNonCallSafepoint(size_t i) const {

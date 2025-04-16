@@ -709,8 +709,7 @@ void Accessible::TakeFocus() const {
     }
   }
 
-  nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (fm) {
+  if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
     dom::AutoHandlingUserInputStatePusher inputStatePusher(true);
     // XXXbz: Can we actually have a non-element content here?
     RefPtr<dom::Element> element = dom::Element::FromNodeOrNull(focusContent);
@@ -2129,6 +2128,10 @@ nsIFrame* Accessible::GetFrame() const {
 }
 
 nsINode* Accessible::GetNode() const { return mContent; }
+
+dom::Element* Accessible::Elm() const {
+  return dom::Element::FromNodeOrNull(mContent);
+}
 
 void Accessible::Language(nsAString& aLanguage) {
   aLanguage.Truncate();

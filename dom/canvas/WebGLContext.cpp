@@ -28,6 +28,7 @@
 #include "Layers.h"
 #include "LayerUserData.h"
 #include "mozilla/dom/BindingUtils.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/HTMLVideoElement.h"
 #include "mozilla/dom/ImageData.h"
@@ -551,7 +552,7 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
       if (webgl->gl->GetContextType() == gl::GLContextType::WGL &&
           !gl::sWGLLib.HasDXInterop2()) {
         failureId = "FEATURE_FAILURE_WEBGL_DXGL_INTEROP2"_ns;
-        return Err("Caveat: WGL without DXGLInterop2.");
+        return Err("failIfMajorPerformanceCaveat: WGL without DXGLInterop2.");
       }
 #endif
     }

@@ -4,7 +4,7 @@
 "use strict";
 
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { actionTypes: at } = ChromeUtils.import(
+const { actionTypes: at, actionCreators: ac } = ChromeUtils.import(
   "resource://activity-stream/common/Actions.jsm"
 );
 
@@ -26,14 +26,38 @@ const PREFS_BEFORE_SECTIONS = [
     id: "topsites",
     pref: {
       feed: "feeds.topsites",
-      titleString: "home-prefs-topsites-header",
-      descString: "home-prefs-topsites-description",
+      titleString:
+        Services.prefs.getBoolPref(
+          "browser.newtabpage.activity-stream.newNewtabExperience.enabled"
+        ) ||
+        Services.prefs.getBoolPref(
+          "browser.newtabpage.activity-stream.customizationMenu.enabled"
+        )
+          ? "home-prefs-shortcuts-header"
+          : "home-prefs-topsites-header",
+      descString:
+        Services.prefs.getBoolPref(
+          "browser.newtabpage.activity-stream.newNewtabExperience.enabled"
+        ) ||
+        Services.prefs.getBoolPref(
+          "browser.newtabpage.activity-stream.customizationMenu.enabled"
+        )
+          ? "home-prefs-shortcuts-description"
+          : "home-prefs-topsites-description",
       get nestedPrefs() {
         return Services.prefs.getBoolPref("browser.topsites.useRemoteSetting")
           ? [
               {
                 name: "showSponsoredTopSites",
-                titleString: "home-prefs-topsites-by-option-sponsored",
+                titleString:
+                  Services.prefs.getBoolPref(
+                    "browser.newtabpage.activity-stream.newNewtabExperience.enabled"
+                  ) ||
+                  Services.prefs.getBoolPref(
+                    "browser.newtabpage.activity-stream.customizationMenu.enabled"
+                  )
+                    ? "home-prefs-shortcuts-by-option-sponsored"
+                    : "home-prefs-topsites-by-option-sponsored",
               },
             ]
           : [];
@@ -51,7 +75,15 @@ const PREFS_AFTER_SECTIONS = [
     pref: {
       feed: "feeds.snippets",
       titleString: "home-prefs-snippets-header",
-      descString: "home-prefs-snippets-description",
+      descString:
+        Services.prefs.getBoolPref(
+          "browser.newtabpage.activity-stream.newNewtabExperience.enabled"
+        ) ||
+        Services.prefs.getBoolPref(
+          "browser.newtabpage.activity-stream.customizationMenu.enabled"
+        )
+          ? "home-prefs-snippets-description-new"
+          : "home-prefs-snippets-description",
     },
     icon: "info",
   },
@@ -95,6 +127,21 @@ this.AboutPreferences = class AboutPreferences {
       }
     });
     return sectionsCopy;
+  }
+
+  setupUserEvent(element, eventSource) {
+    element.addEventListener("command", e => {
+      const { checked } = e.target;
+      if (typeof checked === "boolean") {
+        this.store.dispatch(
+          ac.UserEvent({
+            event: "PREF_CHANGED",
+            source: eventSource,
+            value: { status: checked, menu_source: "ABOUT_PREFERENCES" },
+          })
+        );
+      }
+    });
   }
 
   observe(window) {
@@ -163,6 +210,7 @@ this.AboutPreferences = class AboutPreferences {
         maxRows,
         rowsPref,
         shouldHidePref,
+        eventSource,
       } = sectionData;
       const { feed: name, titleString = {}, descString, nestedPrefs = [] } =
         prefData || {};
@@ -183,6 +231,10 @@ this.AboutPreferences = class AboutPreferences {
       const checkbox = createAppend("checkbox", sectionVbox);
       checkbox.classList.add("section-checkbox");
       checkbox.setAttribute("src", iconUrl);
+      // Setup a user event if we have an event source for this pref.
+      if (eventSource) {
+        this.setupUserEvent(checkbox, eventSource);
+      }
       document.l10n.setAttributes(
         checkbox,
         getString(titleString),
@@ -250,6 +302,10 @@ this.AboutPreferences = class AboutPreferences {
       // Add a checkbox pref for any nested preferences
       nestedPrefs.forEach(nested => {
         const subcheck = createAppend("checkbox", detailVbox);
+        // Setup a user event if we have an event source for this pref.
+        if (nested.eventSource) {
+          this.setupUserEvent(subcheck, nested.eventSource);
+        }
         subcheck.classList.add("indent");
         document.l10n.setAttributes(subcheck, nested.titleString);
         linkPref(subcheck, nested.name, "bool");

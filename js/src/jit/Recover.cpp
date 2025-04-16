@@ -1232,13 +1232,11 @@ bool MNewArray::writeRecoverData(CompactBufferWriter& writer) const {
   MOZ_ASSERT(canRecoverOnBailout());
   writer.writeUnsigned(uint32_t(RInstruction::Recover_NewArray));
   writer.writeUnsigned(length());
-  writer.writeByte(uint8_t(convertDoubleElements()));
   return true;
 }
 
 RNewArray::RNewArray(CompactBufferReader& reader) {
   count_ = reader.readUnsigned();
-  convertDoubleElements_ = reader.readByte();
 }
 
 bool RNewArray::recover(JSContext* cx, SnapshotIterator& iter) const {
@@ -1246,32 +1244,7 @@ bool RNewArray::recover(JSContext* cx, SnapshotIterator& iter) const {
   RootedValue result(cx);
   RootedObjectGroup group(cx, templateObject->group());
 
-  ArrayObject* resultObject =
-      NewArrayWithGroup(cx, count_, group, convertDoubleElements_);
-  if (!resultObject) {
-    return false;
-  }
-
-  result.setObject(*resultObject);
-  iter.storeInstructionResult(result);
-  return true;
-}
-
-bool MNewArrayCopyOnWrite::writeRecoverData(CompactBufferWriter& writer) const {
-  MOZ_ASSERT(canRecoverOnBailout());
-  writer.writeUnsigned(uint32_t(RInstruction::Recover_NewArrayCopyOnWrite));
-  return true;
-}
-
-RNewArrayCopyOnWrite::RNewArrayCopyOnWrite(CompactBufferReader& reader) {}
-
-bool RNewArrayCopyOnWrite::recover(JSContext* cx,
-                                   SnapshotIterator& iter) const {
-  RootedArrayObject templateObject(cx,
-                                   &iter.read().toObject().as<ArrayObject>());
-  RootedValue result(cx);
-
-  ArrayObject* resultObject = NewDenseCopyOnWriteArray(cx, templateObject);
+  ArrayObject* resultObject = NewArrayWithGroup(cx, count_, group);
   if (!resultObject) {
     return false;
   }
@@ -1482,35 +1455,19 @@ bool RArrayState::recover(JSContext* cx, SnapshotIterator& iter) const {
   ArrayObject* object = &iter.read().toObject().as<ArrayObject>();
   uint32_t initLength = iter.read().toInt32();
 
-  if (!object->denseElementsAreCopyOnWrite()) {
-    MOZ_ASSERT(object->getDenseInitializedLength() == 0,
-               "initDenseElement call below relies on this");
-    object->setDenseInitializedLength(initLength);
+  MOZ_ASSERT(object->getDenseInitializedLength() == 0,
+             "initDenseElement call below relies on this");
+  object->setDenseInitializedLength(initLength);
 
-    for (size_t index = 0; index < numElements(); index++) {
-      Value val = iter.read();
+  for (size_t index = 0; index < numElements(); index++) {
+    Value val = iter.read();
 
-      if (index >= initLength) {
-        MOZ_ASSERT(val.isUndefined());
-        continue;
-      }
-
-      object->initDenseElement(index, val);
+    if (index >= initLength) {
+      MOZ_ASSERT(val.isUndefined());
+      continue;
     }
-  } else {
-    MOZ_RELEASE_ASSERT(object->getDenseInitializedLength() == numElements());
-    MOZ_RELEASE_ASSERT(initLength == numElements());
 
-    for (size_t index = 0; index < numElements(); index++) {
-      Value val = iter.read();
-      if (object->getDenseElement(index) == val) {
-        continue;
-      }
-      if (!object->maybeCopyElementsForWrite(cx)) {
-        return false;
-      }
-      object->setDenseElement(index, val);
-    }
+    object->initDenseElement(index, val);
   }
 
   result.setObject(*object);

@@ -38,7 +38,9 @@
 #include "mozilla/RemoteDecoderManagerChild.h"
 #include "mozilla/RemoteLazyInputStreamChild.h"
 #include "mozilla/SchedulerGroup.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/SharedStyleSheetCache.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_media.h"
@@ -47,6 +49,8 @@
 #include "mozilla/WebBrowserPersistDocumentChild.h"
 #include "mozilla/devtools/HeapSnapshotTempFileHelperChild.h"
 #include "mozilla/docshell/OfflineCacheUpdateChild.h"
+#include "mozilla/dom/AutoSuppressEventHandlingAndSuspend.h"
+#include "mozilla/dom/BlobImpl.h"
 #include "mozilla/dom/BrowserBridgeHost.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
@@ -86,6 +90,7 @@
 #include "mozilla/hal_sandbox/PHalChild.h"
 #include "mozilla/intl/LocaleService.h"
 #include "mozilla/ipc/BackgroundChild.h"
+#include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/FileDescriptorSetChild.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
@@ -1142,15 +1147,6 @@ nsresult ContentChild::ProvideWindowCommon(
   // we're going to need to return from this function, So we spin a nested event
   // loop until they get back to us.
 
-  // Prevent the docshell from becoming active while the nested event loop is
-  // spinning.
-  newChild->AddPendingDocShellBlocker();
-  auto removePendingDocShellBlocker = MakeScopeExit([&] {
-    if (newChild) {
-      newChild->RemovePendingDocShellBlocker();
-    }
-  });
-
   {
     // Suppress event handling for all contexts in our BrowsingContextGroup so
     // that event handlers cannot target our new window while it's still being
@@ -1643,7 +1639,7 @@ mozilla::ipc::IPCResult ContentChild::RecvSetProcessSandbox(
       CrashReporter::Annotation::ContentSandboxCapabilities,
       static_cast<int>(SandboxInfo::Get().AsInteger()));
 #  endif /* XP_LINUX && !OS_ANDROID */
-#endif   /* MOZ_SANDBOX */
+#endif /* MOZ_SANDBOX */
 
   return IPC_OK();
 }
@@ -1755,7 +1751,8 @@ mozilla::ipc::IPCResult ContentChild::RecvConstructBrowser(
   return IPC_OK();
 }
 
-void ContentChild::GetAvailableDictionaries(nsTArray<nsString>& aDictionaries) {
+void ContentChild::GetAvailableDictionaries(
+    nsTArray<nsCString>& aDictionaries) {
   aDictionaries = mAvailableDictionaries.Clone();
 }
 
@@ -2162,7 +2159,7 @@ void ContentChild::ActorDestroy(ActorDestroyReason why) {
   CrashReporterClient::DestroySingleton();
 
   XRE_ShutdownChildProcess();
-#endif    // NS_FREE_PERMANENT_DATA
+#endif  // NS_FREE_PERMANENT_DATA
 }
 
 void ContentChild::ProcessingError(Result aCode, const char* aReason) {
@@ -2392,7 +2389,7 @@ mozilla::ipc::IPCResult ContentChild::RecvGeolocationError(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvUpdateDictionaryList(
-    nsTArray<nsString>&& aDictionaries) {
+    nsTArray<nsCString>&& aDictionaries) {
   mAvailableDictionaries = std::move(aDictionaries);
   mozInlineSpellChecker::UpdateCanEnableInlineSpellChecking();
   return IPC_OK();
@@ -3752,7 +3749,8 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowBlur(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvRaiseWindow(
-    const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType) {
+    const MaybeDiscarded<BrowsingContext>& aContext, CallerType aCallerType,
+    uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3769,7 +3767,7 @@ mozilla::ipc::IPCResult ContentChild::RecvRaiseWindow(
 
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
-    fm->RaiseWindow(window, aCallerType);
+    fm->RaiseWindow(window, aCallerType, aActionId);
   }
   return IPC_OK();
 }
@@ -3829,7 +3827,7 @@ mozilla::ipc::IPCResult ContentChild::RecvSetFocusedBrowsingContext(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvSetActiveBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3856,7 +3854,7 @@ mozilla::ipc::IPCResult ContentChild::RecvAbortOrientationPendingPromises(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvUnsetActiveBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext) {
+    const MaybeDiscarded<BrowsingContext>& aContext, uint64_t aActionId) {
   if (aContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3910,7 +3908,7 @@ mozilla::ipc::IPCResult ContentChild::RecvBlurToChild(
     const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
     const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
     const MaybeDiscarded<BrowsingContext>& aAncestorBrowsingContextToFocus,
-    bool aIsLeavingDocument, bool aAdjustWidget) {
+    bool aIsLeavingDocument, bool aAdjustWidget, uint64_t aActionId) {
   if (aFocusedBrowsingContext.IsNullOrDiscarded()) {
     MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
             ("ChildIPC: Trying to send a message to dead or detached context"));
@@ -3927,7 +3925,7 @@ mozilla::ipc::IPCResult ContentChild::RecvBlurToChild(
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
     fm->BlurFromOtherProcess(aFocusedBrowsingContext.get(), toClear, toFocus,
-                             aIsLeavingDocument, aAdjustWidget);
+                             aIsLeavingDocument, aAdjustWidget, aActionId);
   }
   return IPC_OK();
 }
@@ -3945,6 +3943,16 @@ mozilla::ipc::IPCResult ContentChild::RecvSetupFocusedAndActive(
       fm->SetFocusedBrowsingContextFromOtherProcess(
           aFocusedBrowsingContext.get());
     }
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvReviseActiveBrowsingContext(
+    const MaybeDiscarded<BrowsingContext>& aActiveBrowsingContext,
+    uint64_t aActionId) {
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
+  if (fm && !aActiveBrowsingContext.IsNullOrDiscarded()) {
+    fm->ReviseActiveBrowsingContext(aActiveBrowsingContext.get(), aActionId);
   }
   return IPC_OK();
 }

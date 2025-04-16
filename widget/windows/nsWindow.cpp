@@ -65,6 +65,7 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/TimeStamp.h"
 
@@ -129,6 +130,7 @@
 #include "WidgetUtils.h"
 #include "WinContentSystemParameters.h"
 #include "nsIWidgetListener.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/Touch.h"
 #include "mozilla/gfx/2D.h"
@@ -147,6 +149,7 @@
 #include "InputDeviceUtils.h"
 #include "ScreenHelperWin.h"
 #include "mozilla/StaticPrefs_apz.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_layout.h"
 
 #include "nsIGfxInfo.h"
@@ -1594,11 +1597,16 @@ already_AddRefed<SourceSurface> nsWindow::GetFallbackScrollSnapshot(
  **************************************************************/
 
 void nsWindow::Show(bool bState) {
-  if (bState) {
+  if (bState && mIsShowingPreXULSkeletonUI) {
     // The first time we decide to actually show the window is when we decide
     // that we've taken over the window from the skeleton UI, and we should
     // no longer treat resizes / moves specially.
     mIsShowingPreXULSkeletonUI = false;
+    // Initialize the UI state - this would normally happen below, but since
+    // we're actually already showing, we won't hit it in the normal way.
+    ::SendMessageW(mWnd, WM_CHANGEUISTATE,
+                   MAKEWPARAM(UIS_INITIALIZE, UISF_HIDEFOCUS | UISF_HIDEACCEL),
+                   0);
   }
 
   if (mWindowType == eWindowType_popup) {

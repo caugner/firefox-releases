@@ -39,6 +39,7 @@
 #include "frontend/StencilXdr.h"   // frontend::StencilXdr::SharedData
 #include "gc/FreeOp.h"
 #include "jit/BaselineJIT.h"
+#include "jit/Invalidation.h"
 #include "jit/Ion.h"
 #include "jit/IonScript.h"
 #include "jit/JitCode.h"
@@ -689,6 +690,92 @@ void js::BaseScript::swapData(UniquePtr<PrivateScriptData>& other) {
   other.reset(tmp);
 }
 
+js::Scope* js::BaseScript::enclosingScope() const {
+  MOZ_ASSERT(!warmUpData_.isEnclosingScript(),
+             "Enclosing scope is not computed yet");
+
+  if (warmUpData_.isEnclosingScope()) {
+    return warmUpData_.toEnclosingScope();
+  }
+
+  MOZ_ASSERT(data_, "Script doesn't seem to be compiled");
+
+  return gcthings()[js::GCThingIndex::outermostScopeIndex()]
+      .as<Scope>()
+      .enclosing();
+}
+
+size_t JSScript::numAlwaysLiveFixedSlots() const {
+  if (bodyScope()->is<js::FunctionScope>()) {
+    return bodyScope()->as<js::FunctionScope>().nextFrameSlot();
+  }
+  if (bodyScope()->is<js::ModuleScope>()) {
+    return bodyScope()->as<js::ModuleScope>().nextFrameSlot();
+  }
+  return 0;
+}
+
+unsigned JSScript::numArgs() const {
+  if (bodyScope()->is<js::FunctionScope>()) {
+    return bodyScope()->as<js::FunctionScope>().numPositionalFormalParameters();
+  }
+  return 0;
+}
+
+bool JSScript::functionHasParameterExprs() const {
+  // Only functions have parameters.
+  js::Scope* scope = bodyScope();
+  if (!scope->is<js::FunctionScope>()) {
+    return false;
+  }
+  return scope->as<js::FunctionScope>().hasParameterExprs();
+}
+
+js::ModuleObject* JSScript::module() const {
+  if (bodyScope()->is<js::ModuleScope>()) {
+    return bodyScope()->as<js::ModuleScope>().module();
+  }
+  return nullptr;
+}
+
+bool JSScript::isGlobalCode() const {
+  return bodyScope()->is<js::GlobalScope>();
+}
+
+js::VarScope* JSScript::functionExtraBodyVarScope() const {
+  MOZ_ASSERT(functionHasExtraBodyVarScope());
+  for (JS::GCCellPtr gcThing : gcthings()) {
+    if (!gcThing.is<js::Scope>()) {
+      continue;
+    }
+    js::Scope* scope = &gcThing.as<js::Scope>();
+    if (scope->kind() == js::ScopeKind::FunctionBodyVar) {
+      return &scope->as<js::VarScope>();
+    }
+  }
+  MOZ_CRASH("Function extra body var scope not found");
+}
+
+bool JSScript::needsBodyEnvironment() const {
+  for (JS::GCCellPtr gcThing : gcthings()) {
+    if (!gcThing.is<js::Scope>()) {
+      continue;
+    }
+    js::Scope* scope = &gcThing.as<js::Scope>();
+    if (ScopeKindIsInBody(scope->kind()) && scope->hasEnvironment()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool JSScript::isDirectEvalInFunction() const {
+  if (!isForEval()) {
+    return false;
+  }
+  return bodyScope()->hasOnChain(js::ScopeKind::Function);
+}
+
 template <XDRMode mode>
 /* static */
 XDRResult js::PrivateScriptData::XDR(XDRState<mode>* xdr, HandleScript script,
@@ -888,7 +975,6 @@ XDRResult js::XDRImmutableScriptData(XDRState<mode>* xdr,
   MOZ_TRY(xdr->codeUint32(&isd->bodyScopeIndex.index));
   MOZ_TRY(xdr->codeUint32(&isd->numICEntries));
   MOZ_TRY(xdr->codeUint16(&isd->funLength));
-  MOZ_TRY(xdr->codeUint16(&isd->numBytecodeTypeSets));
 
   static_assert(sizeof(jsbytecode) == 1);
   static_assert(sizeof(SrcNote) == 1);
@@ -1249,25 +1335,6 @@ template XDRResult js::XDRLazyScript(XDRState<XDR_ENCODE>*, HandleScope,
 template XDRResult js::XDRLazyScript(XDRState<XDR_DECODE>*, HandleScope,
                                      HandleScriptSourceObject, HandleFunction,
                                      MutableHandle<BaseScript*>);
-
-void JSScript::setDefaultClassConstructorSpan(uint32_t start, uint32_t end,
-                                              unsigned line, unsigned column) {
-  extent_.toStringStart = start;
-  extent_.toStringEnd = end;
-  extent_.sourceStart = start;
-  extent_.sourceEnd = end;
-  extent_.lineno = line;
-  extent_.column = column;
-
-  // Since this script has been changed to point into the user's source, we
-  // can clear its self-hosted flag, allowing Debugger to see it.
-  clearFlag(ImmutableFlags::SelfHosted);
-
-  // Even though the script was cloned from the self-hosted template, we cannot
-  // delazify back to a SelfHostedLazyScript. The script is no longer marked as
-  // SelfHosted either.
-  clearAllowRelazify();
-}
 
 bool JSScript::initScriptCounts(JSContext* cx) {
   MOZ_ASSERT(!hasScriptCounts());
@@ -2745,7 +2812,7 @@ bool ScriptSource::xdrEncodeStencils(
   }
 
   for (auto& delazification : compilationInfos.delazifications) {
-    if (!xdrEncodeFunctionStencilWith(cx, delazification.stencil, xdrEncoder)) {
+    if (!xdrEncodeFunctionStencilWith(cx, delazification, xdrEncoder)) {
       return false;
     }
   }
@@ -3650,7 +3717,8 @@ PrivateScriptData* PrivateScriptData::new_(JSContext* cx, uint32_t ngcthings) {
 /* static */
 bool PrivateScriptData::InitFromStencil(
     JSContext* cx, js::HandleScript script,
-    js::frontend::CompilationInfo& compilationInfo,
+    js::frontend::CompilationInput& input,
+    js::frontend::CompilationStencil& stencil,
     js::frontend::CompilationGCOutput& gcOutput,
     const frontend::ScriptStencil& scriptStencil) {
   uint32_t ngcthings = scriptStencil.gcThings.size();
@@ -3664,7 +3732,7 @@ bool PrivateScriptData::InitFromStencil(
 
   js::PrivateScriptData* data = script->data_;
   if (ngcthings) {
-    if (!EmitScriptThingsVector(cx, compilationInfo, gcOutput,
+    if (!EmitScriptThingsVector(cx, input, stencil, gcOutput,
                                 scriptStencil.gcThings, data->gcthings())) {
       return false;
     }
@@ -3694,7 +3762,7 @@ void PrivateScriptData::trace(JSTracer* trc) {
 /*static*/
 JSScript* JSScript::Create(JSContext* cx, js::HandleObject functionOrGlobal,
                            js::HandleScriptSourceObject sourceObject,
-                           SourceExtent extent,
+                           const SourceExtent& extent,
                            js::ImmutableScriptFlags flags) {
   return static_cast<JSScript*>(
       BaseScript::New(cx, functionOrGlobal, sourceObject, extent, flags));
@@ -3745,10 +3813,10 @@ bool JSScript::createPrivateScriptData(JSContext* cx, HandleScript script,
 
 /* static */
 bool JSScript::fullyInitFromStencil(
-    JSContext* cx, frontend::CompilationInfo& compilationInfo,
+    JSContext* cx, js::frontend::CompilationInput& input,
+    js::frontend::CompilationStencil& stencil,
     frontend::CompilationGCOutput& gcOutput, HandleScript script,
     const frontend::ScriptStencil& scriptStencil, HandleFunction fun) {
-  ImmutableScriptFlags lazyFlags;
   MutableScriptFlags lazyMutableFlags;
   RootedScope lazyEnclosingScope(cx);
 
@@ -3773,7 +3841,6 @@ bool JSScript::fullyInitFromStencil(
   // If we are using an existing lazy script, record enough info to be able to
   // rollback on failure.
   if (script->isReadyForDelazification()) {
-    lazyFlags = script->immutableFlags_;
     lazyMutableFlags = script->mutableFlags_;
     lazyEnclosingScope = script->releaseEnclosingScope();
     script->swapData(lazyData.get());
@@ -3784,7 +3851,6 @@ bool JSScript::fullyInitFromStencil(
   // just need to clear bytecode to mark script as incomplete.
   auto rollbackGuard = mozilla::MakeScopeExit([&] {
     if (lazyEnclosingScope) {
-      script->immutableFlags_ = lazyFlags;
       script->mutableFlags_ = lazyMutableFlags;
       script->warmUpData_.initEnclosingScope(lazyEnclosingScope);
       script->swapData(lazyData.get());
@@ -3807,7 +3873,7 @@ bool JSScript::fullyInitFromStencil(
   script->resetArgsUsageAnalysis();
 
   // Create and initialize PrivateScriptData
-  if (!PrivateScriptData::InitFromStencil(cx, script, compilationInfo, gcOutput,
+  if (!PrivateScriptData::InitFromStencil(cx, script, input, stencil, gcOutput,
                                           scriptStencil)) {
     return false;
   }
@@ -3850,7 +3916,8 @@ bool JSScript::fullyInitFromStencil(
 }
 
 JSScript* JSScript::fromStencil(JSContext* cx,
-                                frontend::CompilationInfo& compilationInfo,
+                                js::frontend::CompilationInput& input,
+                                js::frontend::CompilationStencil& stencil,
                                 frontend::CompilationGCOutput& gcOutput,
                                 const frontend::ScriptStencil& scriptStencil,
                                 HandleFunction fun) {
@@ -3870,8 +3937,8 @@ JSScript* JSScript::fromStencil(JSContext* cx,
     return nullptr;
   }
 
-  if (!fullyInitFromStencil(cx, compilationInfo, gcOutput, script,
-                            scriptStencil, fun)) {
+  if (!fullyInitFromStencil(cx, input, stencil, gcOutput, script, scriptStencil,
+                            fun)) {
     return nullptr;
   }
 
@@ -4239,9 +4306,6 @@ static JSObject* CloneInnerInterpretedFunction(
   }
 
   MOZ_ASSERT(cloneScript->hasBytecode());
-  if (!JSFunction::setTypeForScriptedFunction(cx, clone)) {
-    return nullptr;
-  }
 
   return clone;
 }
@@ -4369,8 +4433,10 @@ bool PrivateScriptData::Clone(JSContext* cx, HandleScript src, HandleScript dst,
 static JSScript* CopyScriptImpl(JSContext* cx, HandleScript src,
                                 HandleObject functionOrGlobal,
                                 HandleScriptSourceObject sourceObject,
-                                MutableHandle<GCVector<Scope*>> scopes) {
-  if (src->treatAsRunOnce() && !src->isFunction()) {
+                                MutableHandle<GCVector<Scope*>> scopes,
+                                SourceExtent* maybeClassExtent = nullptr) {
+  if (src->treatAsRunOnce()) {
+    MOZ_ASSERT(!src->isFunction());
     JS_ReportErrorASCII(cx, "No cloning toplevel run-once scripts");
     return nullptr;
   }
@@ -4380,13 +4446,29 @@ static JSScript* CopyScriptImpl(JSContext* cx, HandleScript src,
   // Some embeddings are not careful to use ExposeObjectToActiveJS as needed.
   JS::AssertObjectIsNotGray(sourceObject);
 
+  // When cloning is for `MakeDefaultConstructor`, the SourceExtent will be
+  // provided by caller instead of copying from `src`.
+  SourceExtent extent = maybeClassExtent ? *maybeClassExtent : src->extent();
+
   ImmutableScriptFlags flags = src->immutableFlags();
   flags.setFlag(JSScript::ImmutableFlags::HasNonSyntacticScope,
                 scopes[0]->hasOnChain(ScopeKind::NonSyntactic));
 
+  // When this clone is for `MakeDefaultConstructor` we also want to clear the
+  // SelfHosted flag. This is a hack to do it here, but ensures that the flags
+  // are not modified after the JSScript is created.
+  if (maybeClassExtent) {
+    flags.clearFlag(JSScript::ImmutableFlags::SelfHosted);
+  }
+
+  // FunctionFlags and ImmutableScriptFlags should agree on self-hosting status.
+  MOZ_ASSERT_IF(functionOrGlobal->is<JSFunction>(),
+                functionOrGlobal->as<JSFunction>().isSelfHostedBuiltin() ==
+                    flags.hasFlag(JSScript::ImmutableFlags::SelfHosted));
+
   // Create a new JSScript to fill in.
-  RootedScript dst(cx, JSScript::Create(cx, functionOrGlobal, sourceObject,
-                                        src->extent(), flags));
+  RootedScript dst(
+      cx, JSScript::Create(cx, functionOrGlobal, sourceObject, extent, flags));
   if (!dst) {
     return nullptr;
   }
@@ -4443,9 +4525,10 @@ JSScript* js::CloneGlobalScript(JSContext* cx, ScopeKind scopeKind,
   return dst;
 }
 
-JSScript* js::CloneScriptIntoFunction(
-    JSContext* cx, HandleScope enclosingScope, HandleFunction fun,
-    HandleScript src, Handle<ScriptSourceObject*> sourceObject) {
+JSScript* js::CloneScriptIntoFunction(JSContext* cx, HandleScope enclosingScope,
+                                      HandleFunction fun, HandleScript src,
+                                      Handle<ScriptSourceObject*> sourceObject,
+                                      SourceExtent* maybeClassExtent) {
   // We are either delazifying a self-hosted lazy function or the function
   // should be in an inactive state.
   MOZ_ASSERT(fun->isIncomplete() || fun->hasSelfHostedLazyScript());
@@ -4479,7 +4562,8 @@ JSScript* js::CloneScriptIntoFunction(
 
   // Save flags in case we need to undo the early mutations.
   const FunctionFlags preservedFlags = fun->flags();
-  RootedScript dst(cx, CopyScriptImpl(cx, src, fun, sourceObject, &scopes));
+  RootedScript dst(cx, CopyScriptImpl(cx, src, fun, sourceObject, &scopes,
+                                      maybeClassExtent));
   if (!dst) {
     fun->setFlags(preservedFlags);
     return nullptr;
@@ -4512,9 +4596,9 @@ void CopySpan(const SourceSpan& source, TargetSpan target) {
 /* static */
 js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
     JSContext* cx, uint32_t mainOffset, uint32_t nfixed, uint32_t nslots,
-    GCThingIndex bodyScopeIndex, uint32_t numICEntries,
-    uint32_t numBytecodeTypeSets, bool isFunction, uint16_t funLength,
-    mozilla::Span<const jsbytecode> code, mozilla::Span<const SrcNote> notes,
+    GCThingIndex bodyScopeIndex, uint32_t numICEntries, bool isFunction,
+    uint16_t funLength, mozilla::Span<const jsbytecode> code,
+    mozilla::Span<const SrcNote> notes,
     mozilla::Span<const uint32_t> resumeOffsets,
     mozilla::Span<const ScopeNote> scopeNotes,
     mozilla::Span<const TryNote> tryNotes) {
@@ -4543,8 +4627,6 @@ js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
   data->nslots = nslots;
   data->bodyScopeIndex = bodyScopeIndex;
   data->numICEntries = numICEntries;
-  data->numBytecodeTypeSets = std::min<uint32_t>(
-      uint32_t(JSScript::MaxBytecodeTypeSets), numBytecodeTypeSets);
 
   if (isFunction) {
     data->funLength = funLength;
@@ -4761,8 +4843,9 @@ void JSScript::argumentsOptimizationFailed(JSContext* cx, HandleScript script) {
   // Warp code depends on the NeedsArgsObj flag so invalidate the script
   // (including compilations inlining the script).
   if (jit::JitOptions.warpBuilder) {
-    AutoEnterAnalysis enter(cx->runtime()->defaultFreeOp(), script->zone());
-    script->zone()->types.addPendingRecompile(cx, script);
+    jit::RecompileInfoVector invalid;
+    AddPendingInvalidation(invalid, script);
+    Invalidate(cx, invalid);
   }
 
   /*
@@ -4868,31 +4951,20 @@ BaseScript* BaseScript::CreateRawLazy(JSContext* cx, uint32_t ngcthings,
 
 void JSScript::updateJitCodeRaw(JSRuntime* rt) {
   MOZ_ASSERT(rt);
-  uint8_t* jitCodeSkipArgCheck;
   if (hasBaselineScript() && baselineScript()->hasPendingIonCompileTask()) {
     MOZ_ASSERT(!isIonCompilingOffThread());
     setJitCodeRaw(rt->jitRuntime()->lazyLinkStub().value);
-    jitCodeSkipArgCheck = jitCodeRaw();
   } else if (hasIonScript()) {
     jit::IonScript* ion = ionScript();
     setJitCodeRaw(ion->method()->raw());
-    jitCodeSkipArgCheck = jitCodeRaw() + ion->getSkipArgCheckEntryOffset();
   } else if (hasBaselineScript()) {
     setJitCodeRaw(baselineScript()->method()->raw());
-    jitCodeSkipArgCheck = jitCodeRaw();
   } else if (hasJitScript() && js::jit::IsBaselineInterpreterEnabled()) {
     setJitCodeRaw(rt->jitRuntime()->baselineInterpreter().codeRaw());
-    jitCodeSkipArgCheck = jitCodeRaw();
   } else {
     setJitCodeRaw(rt->jitRuntime()->interpreterStub().value);
-    jitCodeSkipArgCheck = jitCodeRaw();
   }
   MOZ_ASSERT(jitCodeRaw());
-  MOZ_ASSERT(jitCodeSkipArgCheck);
-
-  if (hasJitScript()) {
-    jitScript()->jitCodeSkipArgCheck_ = jitCodeSkipArgCheck;
-  }
 }
 
 bool JSScript::hasLoops() {

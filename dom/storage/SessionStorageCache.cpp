@@ -10,6 +10,7 @@
 #include "StorageIPC.h"
 #include "mozilla/dom/LSWriteOptimizer.h"
 #include "mozilla/dom/PBackgroundSessionStorageCache.h"
+#include "nsDOMString.h"
 
 namespace mozilla {
 namespace dom {
@@ -326,7 +327,7 @@ void SessionStorageCache::ClearActor() {
 bool SessionStorageCache::DataSet::ProcessUsageDelta(int64_t aDelta) {
   // Check limit per this origin
   uint64_t newOriginUsage = mOriginQuotaUsage + aDelta;
-  if (aDelta > 0 && newOriginUsage > LocalStorageManager::GetQuota()) {
+  if (aDelta > 0 && newOriginUsage > LocalStorageManager::GetOriginQuota()) {
     return false;
   }
 

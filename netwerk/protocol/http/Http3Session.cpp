@@ -186,8 +186,10 @@ nsresult Http3Session::Init(const nsHttpConnectionInfo* aConnInfo,
 void Http3Session::Shutdown() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
-  if ((mBeforeConnectedError || (mError == NS_ERROR_NET_HTTP3_PROTOCOL_ERROR)) &&
-      (mError != mozilla::psm::GetXPCOMFromNSSError(SSL_ERROR_BAD_CERT_DOMAIN))) {
+  if ((mBeforeConnectedError ||
+       (mError == NS_ERROR_NET_HTTP3_PROTOCOL_ERROR)) &&
+      (mError !=
+       mozilla::psm::GetXPCOMFromNSSError(SSL_ERROR_BAD_CERT_DOMAIN))) {
     gHttpHandler->ExcludeHttp3(mConnInfo);
   }
 
@@ -467,7 +469,6 @@ nsresult Http3Session::ProcessEvents(uint32_t count) {
       } break;
       case Http3Event::Tag::GoawayReceived:
         LOG(("Http3Session::ProcessEvents - GoawayReceived"));
-        MOZ_ASSERT(!mGoawayReceived);
         mGoawayReceived = true;
         break;
       case Http3Event::Tag::ConnectionClosing:

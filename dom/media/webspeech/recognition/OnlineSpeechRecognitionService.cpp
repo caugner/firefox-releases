@@ -14,6 +14,9 @@
 #include "SpeechRecognitionResult.h"
 #include "SpeechRecognitionResultList.h"
 #include "nsIObserverService.h"
+#include "mozilla/dom/Document.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/Services.h"
 #include "nsDirectoryServiceDefs.h"
@@ -21,6 +24,8 @@
 #include "nsMemory.h"
 #include "nsNetUtil.h"
 #include "nsContentUtils.h"
+#include "nsIChannel.h"
+#include "nsIHttpChannel.h"
 #include "nsIPrincipal.h"
 #include "nsIStreamListener.h"
 #include "nsIUploadChannel2.h"
@@ -96,14 +101,14 @@ OnlineSpeechRecognitionService::OnStopRequest(nsIRequest* aRequest,
   bool parsingSuccessful;
   nsAutoCString result;
   nsAutoCString hypoValue;
-  nsAutoString errorMsg;
+  nsAutoCString errorMsg;
   SpeechRecognitionErrorCode errorCode;
 
   SR_LOG("STT Result: %s", mBuf.get());
 
   if (NS_FAILED(aStatusCode)) {
     success = false;
-    errorMsg.Assign(u"Error connecting to the service."_ns);
+    errorMsg.AssignLiteral("Error connecting to the service.");
     errorCode = SpeechRecognitionErrorCode::Network;
   } else {
     success = true;
@@ -113,7 +118,7 @@ OnlineSpeechRecognitionService::OnStopRequest(nsIRequest* aRequest,
     if (!parsingSuccessful) {
       // there's an internal server error
       success = false;
-      errorMsg.Assign(u"Internal server error"_ns);
+      errorMsg.AssignLiteral("Internal server error");
       errorCode = SpeechRecognitionErrorCode::Network;
     } else {
       result.Assign(root.get("status", "error").asString().c_str());
@@ -124,13 +129,12 @@ OnlineSpeechRecognitionService::OnStopRequest(nsIRequest* aRequest,
           confidence = root["data"][0].get("confidence", "0").asFloat();
         } else {
           success = false;
-          errorMsg.Assign(u"Error reading result data."_ns);
+          errorMsg.AssignLiteral("Error reading result data.");
           errorCode = SpeechRecognitionErrorCode::Network;
         }
       } else {
         success = false;
-        NS_ConvertUTF8toUTF16 error(root.get("message", "").asString().c_str());
-        errorMsg.Assign(error);
+        errorMsg.Assign(root.get("message", "").asString().c_str());
         errorCode = SpeechRecognitionErrorCode::No_speech;
       }
     }
@@ -237,7 +241,7 @@ void OnlineSpeechRecognitionService::EncoderError() {
         }
         mRecognition->DispatchError(
             SpeechRecognition::EVENT_RECOGNITIONSERVICE_ERROR,
-            SpeechRecognitionErrorCode::Audio_capture, u"Encoder error"_ns);
+            SpeechRecognitionErrorCode::Audio_capture, "Encoder error");
       }));
 }
 
@@ -309,7 +313,7 @@ void OnlineSpeechRecognitionService::DoSTT() {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     mRecognition->DispatchError(
         SpeechRecognition::EVENT_RECOGNITIONSERVICE_ERROR,
-        SpeechRecognitionErrorCode::Network, u"Unknown URI"_ns);
+        SpeechRecognitionErrorCode::Network, "Unknown URI");
     return;
   }
 
@@ -324,7 +328,7 @@ void OnlineSpeechRecognitionService::DoSTT() {
   if (NS_WARN_IF(!window)) {
     mRecognition->DispatchError(
         SpeechRecognition::EVENT_RECOGNITIONSERVICE_ERROR,
-        SpeechRecognitionErrorCode::Aborted, u"No window"_ns);
+        SpeechRecognitionErrorCode::Aborted, "No window");
     return;
   }
 
@@ -332,7 +336,7 @@ void OnlineSpeechRecognitionService::DoSTT() {
   if (NS_WARN_IF(!doc)) {
     mRecognition->DispatchError(
         SpeechRecognition::EVENT_RECOGNITIONSERVICE_ERROR,
-        SpeechRecognitionErrorCode::Aborted, u"No document"_ns);
+        SpeechRecognitionErrorCode::Aborted, "No document");
   }
   rv = NS_NewChannel(getter_AddRefs(chan), uri, doc->NodePrincipal(), secFlags,
                      contentPolicy, nullptr, nullptr, nullptr, nullptr,
@@ -340,7 +344,7 @@ void OnlineSpeechRecognitionService::DoSTT() {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     mRecognition->DispatchError(
         SpeechRecognition::EVENT_RECOGNITIONSERVICE_ERROR,
-        SpeechRecognitionErrorCode::Network, u"Failed to open channel"_ns);
+        SpeechRecognitionErrorCode::Network, "Failed to open channel");
     return;
   }
 
@@ -385,7 +389,7 @@ void OnlineSpeechRecognitionService::DoSTT() {
     if (!audio.SetCapacity(length, fallible)) {
       mRecognition->DispatchError(
           SpeechRecognition::EVENT_RECOGNITIONSERVICE_ERROR,
-          SpeechRecognitionErrorCode::Audio_capture, u"Allocation error"_ns);
+          SpeechRecognitionErrorCode::Audio_capture, "Allocation error");
       return;
     }
 
@@ -399,7 +403,7 @@ void OnlineSpeechRecognitionService::DoSTT() {
     if (NS_WARN_IF(NS_FAILED(rv))) {
       mRecognition->DispatchError(
           SpeechRecognition::EVENT_RECOGNITIONSERVICE_ERROR,
-          SpeechRecognitionErrorCode::Network, u"Failed to open stream"_ns);
+          SpeechRecognitionErrorCode::Network, "Failed to open stream");
       return;
     }
     if (bodyStream) {
@@ -413,7 +417,7 @@ void OnlineSpeechRecognitionService::DoSTT() {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     mRecognition->DispatchError(
         SpeechRecognition::EVENT_RECOGNITIONSERVICE_ERROR,
-        SpeechRecognitionErrorCode::Network, u"Internal server error"_ns);
+        SpeechRecognitionErrorCode::Network, "Internal server error");
   }
 }
 

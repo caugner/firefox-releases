@@ -21,7 +21,6 @@
 #include "js/GCHashTable.h"
 #include "vm/AtomsTable.h"
 #include "vm/JSFunction.h"
-#include "vm/TypeInference.h"
 
 namespace js {
 
@@ -194,8 +193,6 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
  public:
   js::gc::ArenaLists arenas;
 
-  js::TypeZone types;
-
   // Per-zone data for use by an embedder.
   js::ZoneData<void*> data;
 
@@ -203,6 +200,10 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   js::ZoneData<uint32_t> tenuredBigInts;
 
   js::ZoneOrIonCompileData<uint64_t> nurseryAllocatedStrings;
+
+  // Number of marked/finalzied JSString/JSFatInlineString during major GC.
+  js::ZoneOrGCTaskData<size_t> markedStrings;
+  js::ZoneOrGCTaskData<size_t> finalizedStrings;
 
   js::ZoneData<bool> allocNurseryStrings;
   js::ZoneData<bool> allocNurseryBigInts;
@@ -399,7 +400,7 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
       ShouldDiscardJitScripts discardJitScripts = KeepJitScripts);
 
   void addSizeOfIncludingThis(
-      mozilla::MallocSizeOf mallocSizeOf, JS::CodeSizes* code, size_t* typePool,
+      mozilla::MallocSizeOf mallocSizeOf, JS::CodeSizes* code,
       size_t* regexpZone, size_t* jitZone, size_t* baselineStubsOptimized,
       size_t* uniqueIdMap, size_t* shapeCaches, size_t* atomsMarkBitmaps,
       size_t* compartmentObjects, size_t* crossCompartmentWrappersTables,
@@ -419,8 +420,6 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
     return js::gc::ZoneAllCellIter<T>(const_cast<Zone*>(this),
                                       std::forward<Args>(args)...);
   }
-
-  void beginSweepTypes();
 
   bool hasMarkedRealms();
 

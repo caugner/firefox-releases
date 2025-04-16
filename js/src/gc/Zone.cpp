@@ -15,6 +15,7 @@
 #include "gc/PublicIterators.h"
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
+#include "jit/Invalidation.h"
 #include "jit/Ion.h"
 #include "jit/JitZone.h"
 #include "vm/Runtime.h"
@@ -146,11 +147,12 @@ JS::Zone::Zone(JSRuntime* rt)
       helperThreadUse_(HelperThreadUse::None),
       helperThreadOwnerContext_(nullptr),
       arenas(this),
-      types(this),
       data(this, nullptr),
       tenuredStrings(this, 0),
       tenuredBigInts(this, 0),
       nurseryAllocatedStrings(this, 0),
+      markedStrings(this, 0),
+      finalizedStrings(this, 0),
       allocNurseryStrings(this, true),
       allocNurseryBigInts(this, true),
       suppressAllocationMetadataBuilder(this, false),
@@ -253,8 +255,6 @@ void Zone::changeGCState(GCState prev, GCState next) {
     needsIncrementalBarrier_ = isGCMarking();
   }
 }
-
-void Zone::beginSweepTypes() { types.beginSweep(); }
 
 template <class Pred>
 static void EraseIf(js::gc::WeakEntryVector& entries, Pred pred) {
@@ -479,10 +479,6 @@ void Zone::discardJitCode(JSFreeOp* fop,
     // stubs because the optimizedStubSpace will be purged below.
     if (discardBaselineCode) {
       jitScript->purgeOptimizedStubs(script);
-
-      // ICs were purged so the script will need to warm back up before it can
-      // be inlined during Ion compilation.
-      jitScript->clearIonCompiledOrInlined();
     }
 
     // Finally, reset the active flag.
@@ -658,12 +654,11 @@ void Zone::purgeAtomCache() {
 }
 
 void Zone::addSizeOfIncludingThis(
-    mozilla::MallocSizeOf mallocSizeOf, JS::CodeSizes* code, size_t* typePool,
-    size_t* regexpZone, size_t* jitZone, size_t* baselineStubsOptimized,
-    size_t* uniqueIdMap, size_t* shapeCaches, size_t* atomsMarkBitmaps,
-    size_t* compartmentObjects, size_t* crossCompartmentWrappersTables,
-    size_t* compartmentsPrivateData, size_t* scriptCountsMapArg) {
-  *typePool += types.typeLifoAlloc().sizeOfExcludingThis(mallocSizeOf);
+    mozilla::MallocSizeOf mallocSizeOf, JS::CodeSizes* code, size_t* regexpZone,
+    size_t* jitZone, size_t* baselineStubsOptimized, size_t* uniqueIdMap,
+    size_t* shapeCaches, size_t* atomsMarkBitmaps, size_t* compartmentObjects,
+    size_t* crossCompartmentWrappersTables, size_t* compartmentsPrivateData,
+    size_t* scriptCountsMapArg) {
   *regexpZone += regExps().sizeOfExcludingThis(mallocSizeOf);
   if (jitZone_) {
     jitZone_->addSizeOfIncludingThis(mallocSizeOf, code, jitZone,

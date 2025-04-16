@@ -813,6 +813,8 @@ SearchService.prototype = {
         );
       }
     }
+    let settings = await this._settings.get();
+    this._loadEnginesMetadataFromSettings(settings.engines);
 
     // Now set the sort out the default engines and notify as appropriate.
     this._currentEngine = null;
@@ -1029,6 +1031,27 @@ SearchService.prototype = {
       // keep checking isBuiltin for older settings.
       if (engineJSON._isAppProvided || engineJSON._isBuiltin) {
         ++skippedEngines;
+        continue;
+      }
+
+      // Some OpenSearch type engines are now obsolete and no longer supported.
+      // These were application provided engines that used to use the OpenSearch
+      // format before gecko transitioned to WebExtensions.
+      // These will sometimes have been missed in migration due to various
+      // reasons, and due to how the settings saves everything. We therefore
+      // explicitly ignore them here to drop them, and let the rest of the code
+      // fallback to the application/distribution default if necessary.
+      let loadPath = engineJSON._loadPath?.toLowerCase();
+      if (
+        loadPath &&
+        // Replaced by application provided in Firefox 79.
+        (loadPath.startsWith("[distribution]") ||
+          // Langpack engines moved in-app in Firefox 62.
+          // Note: these may be prefixed by jar:,
+          loadPath.includes("[app]/extensions/langpack") ||
+          loadPath.includes("[other]/langpack") ||
+          loadPath.includes("[profile]/extensions/langpack"))
+      ) {
         continue;
       }
 
@@ -1428,8 +1451,8 @@ SearchService.prototype = {
     return this._engines.get(engineName) || null;
   },
 
-  getEngineByAlias(alias) {
-    this._ensureInitialized();
+  async getEngineByAlias(alias) {
+    await this.init();
     for (var engine of this._engines.values()) {
       if (engine && engine.aliases.includes(alias)) {
         return engine;

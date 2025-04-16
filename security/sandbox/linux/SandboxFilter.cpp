@@ -297,8 +297,8 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
     auto buf = reinterpret_cast<statstruct*>(aArgs.args[2]);
     auto flags = static_cast<int>(aArgs.args[3]);
 
-    if (fd != AT_FDCWD && (flags & AT_EMPTY_PATH) != 0 &&
-        strcmp(path, "") == 0) {
+    if (fd != AT_FDCWD && (flags & AT_EMPTY_PATH) && path &&
+        !strcmp(path, "")) {
 #ifdef __NR_fstat64
       return DoSyscall(__NR_fstat64, fd, buf);
 #else
@@ -310,7 +310,7 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
       return BlockedSyscallTrap(aArgs, nullptr);
     }
 
-    if (fd != AT_FDCWD && path[0] != '/') {
+    if (fd != AT_FDCWD && path && path[0] != '/') {
       SANDBOX_LOG_ERROR("unsupported fd-relative fstatat(%d, \"%s\", %p, 0x%x)",
                         fd, path, buf, flags);
       return BlockedSyscallTrap(aArgs, nullptr);
@@ -619,12 +619,19 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
 
     switch (sysno) {
         // Timekeeping
-      case __NR_clock_nanosleep:
-      case __NR_clock_getres:
-#ifdef __NR_clock_gettime64
-      case __NR_clock_gettime64:
+        //
+        // (Note: the switch needs to start with a literal case, not a
+        // macro; otherwise clang-format gets confused.)
+      case __NR_gettimeofday:
+#ifdef __NR_time
+      case __NR_time:
 #endif
-      case __NR_clock_gettime: {
+      case __NR_nanosleep:
+        return Allow();
+
+      CASES_FOR_clock_gettime:
+      CASES_FOR_clock_getres:
+      CASES_FOR_clock_nanosleep : {
         // clockid_t can encode a pid or tid to monitor another
         // process or thread's CPU usage (see CPUCLOCK_PID and related
         // definitions in include/linux/posix-timers.h in the kernel
@@ -645,15 +652,8 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
             .Else(InvalidSyscall());
       }
 
-      case __NR_gettimeofday:
-#ifdef __NR_time
-      case __NR_time:
-#endif
-      case __NR_nanosleep:
-        return Allow();
-
         // Thread synchronization
-      case __NR_futex:
+      CASES_FOR_futex:
         // FIXME(bug 1441993): This could be more restrictive.
         return Allow();
 

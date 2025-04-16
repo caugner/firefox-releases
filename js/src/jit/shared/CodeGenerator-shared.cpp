@@ -69,7 +69,6 @@ CodeGeneratorShared::CodeGeneratorShared(MIRGenerator* gen, LIRGraph* graph,
       nativeToBytecodeNumRegions_(0),
       nativeToBytecodeScriptList_(nullptr),
       nativeToBytecodeScriptListLength_(0),
-      skipArgCheckEntryOffset_(0),
 #ifdef CHECK_OSIPOINT_REGISTERS
       checkOsiPointRegisters(JitOptions.checkOsiPointRegisters),
 #endif
@@ -341,10 +340,9 @@ void CodeGeneratorShared::encodeAllocation(LSnapshot* snapshot,
     mir = mir->toBox()->getOperand(0);
   }
 
-  MIRType type =
-      mir->isRecoveredOnBailout()
-          ? MIRType::None
-          : mir->isUnused() ? MIRType::MagicOptimizedOut : mir->type();
+  MIRType type = mir->isRecoveredOnBailout() ? MIRType::None
+                 : mir->isUnused()           ? MIRType::MagicOptimizedOut
+                                             : mir->type();
 
   RValueAllocation alloc;
 

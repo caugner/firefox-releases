@@ -12,6 +12,8 @@
 #include "GeckoProfiler.h"
 #include "GLContext.h"
 #include "GLContextProvider.h"
+#include "GLLibraryLoader.h"
+#include "Layers.h"
 #include "nsExceptionHandler.h"
 #include "mozilla/Range.h"
 #include "mozilla/StaticPrefs_gfx.h"
@@ -32,6 +34,7 @@
 #include "mozilla/layers/SharedSurfacesParent.h"
 #include "mozilla/layers/TextureHost.h"
 #include "mozilla/layers/AsyncImagePipelineManager.h"
+#include "mozilla/layers/UiCompositorControllerParent.h"
 #include "mozilla/layers/WebRenderImageHost.h"
 #include "mozilla/layers/WebRenderTextureHost.h"
 #include "mozilla/Telemetry.h"
@@ -45,7 +48,7 @@
 #endif
 
 #ifdef MOZ_GECKO_PROFILER
-#  include "ProfilerMarkerPayload.h"
+#  include "mozilla/ProfilerMarkerTypes.h"
 #endif
 
 bool is_in_main_thread() { return NS_IsMainThread(); }
@@ -59,26 +62,20 @@ bool is_in_render_thread() {
 }
 
 void gecko_profiler_start_marker(const char* name) {
-#ifdef MOZ_GECKO_PROFILER
-  profiler_tracing_marker("WebRender", name,
-                          JS::ProfilingCategoryPair::GRAPHICS,
-                          TRACING_INTERVAL_START);
-#endif
+  PROFILER_MARKER(mozilla::ProfilerString8View::WrapNullTerminatedString(name),
+                  GRAPHICS, mozilla::MarkerTiming::IntervalStart(), Tracing,
+                  "WebRender");
 }
 
 void gecko_profiler_end_marker(const char* name) {
-#ifdef MOZ_GECKO_PROFILER
-  profiler_tracing_marker("WebRender", name,
-                          JS::ProfilingCategoryPair::GRAPHICS,
-                          TRACING_INTERVAL_END);
-#endif
+  PROFILER_MARKER(mozilla::ProfilerString8View::WrapNullTerminatedString(name),
+                  GRAPHICS, mozilla::MarkerTiming::IntervalEnd(), Tracing,
+                  "WebRender");
 }
 
 void gecko_profiler_event_marker(const char* name) {
-#ifdef MOZ_GECKO_PROFILER
-  profiler_tracing_marker("WebRender", name,
-                          JS::ProfilingCategoryPair::GRAPHICS, TRACING_EVENT);
-#endif
+  PROFILER_MARKER(mozilla::ProfilerString8View::WrapNullTerminatedString(name),
+                  GRAPHICS, {}, Tracing, "WebRender");
 }
 
 void gecko_profiler_add_text_marker(const char* name, const char* text_bytes,
@@ -226,46 +223,10 @@ class SceneBuiltNotification : public wr::NotificationHandler {
           auto endTime = TimeStamp::Now();
 #ifdef MOZ_GECKO_PROFILER
           if (profiler_can_accept_markers()) {
-            class ContentFullPaintPayload : public ProfilerMarkerPayload {
-             public:
-              ContentFullPaintPayload(const mozilla::TimeStamp& aStartTime,
-                                      const mozilla::TimeStamp& aEndTime)
-                  : ProfilerMarkerPayload(aStartTime, aEndTime) {}
-              mozilla::ProfileBufferEntryWriter::Length
-              TagAndSerializationBytes() const override {
-                return CommonPropsTagAndSerializationBytes();
-              }
-              void SerializeTagAndPayload(mozilla::ProfileBufferEntryWriter&
-                                              aEntryWriter) const override {
-                static const DeserializerTag tag =
-                    TagForDeserializer(Deserialize);
-                SerializeTagAndCommonProps(tag, aEntryWriter);
-              }
-              void StreamPayload(
-                  mozilla::baseprofiler::SpliceableJSONWriter& aWriter,
-                  const TimeStamp& aProcessStartTime,
-                  UniqueStacks& aUniqueStacks) const override {
-                StreamCommonProps("CONTENT_FULL_PAINT_TIME", aWriter,
-                                  aProcessStartTime, aUniqueStacks);
-              }
-
-             private:
-              explicit ContentFullPaintPayload(CommonProps&& aCommonProps)
-                  : ProfilerMarkerPayload(std::move(aCommonProps)) {}
-              static mozilla::UniquePtr<ProfilerMarkerPayload> Deserialize(
-                  mozilla::ProfileBufferEntryReader& aEntryReader) {
-                ProfilerMarkerPayload::CommonProps props =
-                    DeserializeCommonProps(aEntryReader);
-                return UniquePtr<ProfilerMarkerPayload>(
-                    new ContentFullPaintPayload(std::move(props)));
-              }
-            };
-
-            AUTO_PROFILER_STATS(add_marker_with_ContentFullPaintPayload);
-            profiler_add_marker_for_thread(
-                profiler_current_thread_id(),
-                JS::ProfilingCategoryPair::GRAPHICS, "CONTENT_FULL_PAINT_TIME",
-                ContentFullPaintPayload(startTime, endTime));
+            profiler_add_marker("CONTENT_FULL_PAINT_TIME",
+                                geckoprofiler::category::GRAPHICS,
+                                MarkerTiming::Interval(startTime, endTime),
+                                baseprofiler::markers::ContentBuildMarker{});
           }
 #endif
           Telemetry::Accumulate(
@@ -437,6 +398,11 @@ void WebRenderBridgeParent::Destroy() {
     return;
   }
   mDestroyed = true;
+  if (mWebRenderBridgeRef) {
+    // Break mutual reference
+    mWebRenderBridgeRef->Clear();
+    mWebRenderBridgeRef = nullptr;
+  }
   ClearResources();
 }
 
@@ -709,7 +675,7 @@ bool WebRenderBridgeParent::AddSharedExternalImage(
 
   auto imageType =
       mApi->GetBackendType() == WebRenderBackend::SOFTWARE
-          ? wr::ExternalImageType::TextureHandle(wr::TextureTarget::Default)
+          ? wr::ExternalImageType::TextureHandle(wr::ImageBufferKind::Texture2D)
           : wr::ExternalImageType::Buffer();
   wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
                                  dSurf->GetFormat());
@@ -823,7 +789,7 @@ bool WebRenderBridgeParent::UpdateSharedExternalImage(
 
   auto imageType =
       mApi->GetBackendType() == WebRenderBackend::SOFTWARE
-          ? wr::ExternalImageType::TextureHandle(wr::TextureTarget::Default)
+          ? wr::ExternalImageType::TextureHandle(wr::ImageBufferKind::Texture2D)
           : wr::ExternalImageType::Buffer();
   wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
                                  dSurf->GetFormat());
@@ -927,23 +893,22 @@ WebRenderBridgeParent::GetCollectedFrames() {
 }
 
 void WebRenderBridgeParent::AddPendingScrollPayload(
-    CompositionPayload& aPayload,
-    const std::pair<wr::PipelineId, wr::Epoch>& aKey) {
+    CompositionPayload& aPayload, const VsyncId& aCompositeStartId) {
   auto pendingScrollPayloads = mPendingScrollPayloads.Lock();
   nsTArray<CompositionPayload>* payloads =
-      pendingScrollPayloads->LookupOrAdd(aKey);
+      pendingScrollPayloads->LookupOrAdd(aCompositeStartId.mId);
 
   payloads->AppendElement(aPayload);
 }
 
 nsTArray<CompositionPayload> WebRenderBridgeParent::TakePendingScrollPayload(
-    const std::pair<wr::PipelineId, wr::Epoch>& aKey) {
+    const VsyncId& aCompositeStartId) {
   auto pendingScrollPayloads = mPendingScrollPayloads.Lock();
   nsTArray<CompositionPayload> payload;
   if (nsTArray<CompositionPayload>* storedPayload =
-          pendingScrollPayloads->Get(aKey)) {
+          pendingScrollPayloads->Get(aCompositeStartId.mId)) {
     payload.AppendElements(std::move(*storedPayload));
-    pendingScrollPayloads->Remove(aKey);
+    pendingScrollPayloads->Remove(aCompositeStartId.mId);
   }
   return payload;
 }
@@ -2125,7 +2090,7 @@ void WebRenderBridgeParent::MaybeGenerateFrame(VsyncId aId,
 #endif
 
   MOZ_ASSERT(generateFrame);
-  fastTxn.GenerateFrame();
+  fastTxn.GenerateFrame(aId);
   mApi->SendTransaction(fastTxn);
 
 #if defined(MOZ_WIDGET_ANDROID)
@@ -2283,7 +2248,7 @@ TransactionId WebRenderBridgeParent::FlushTransactionIdsForEpoch(
       aUiController->NotifyFirstPaint();
     }
 
-    RecordCompositionPayloadsPresented(transactionId.mPayloads);
+    RecordCompositionPayloadsPresented(aEndTime, transactionId.mPayloads);
 
     id = transactionId.mId;
     mPendingTransactionIds.pop_front();
@@ -2504,6 +2469,39 @@ void WebRenderBridgeParent::ExtractImageCompositeNotifications(
     return;
   }
   mAsyncImageManager->FlushImageNotifications(aNotifications);
+}
+
+RefPtr<WebRenderBridgeParentRef>
+WebRenderBridgeParent::GetWebRenderBridgeParentRef() {
+  if (mDestroyed) {
+    return nullptr;
+  }
+
+  if (!mWebRenderBridgeRef) {
+    mWebRenderBridgeRef = new WebRenderBridgeParentRef(this);
+  }
+  return mWebRenderBridgeRef;
+}
+
+WebRenderBridgeParentRef::WebRenderBridgeParentRef(
+    WebRenderBridgeParent* aWebRenderBridge)
+    : mWebRenderBridge(aWebRenderBridge) {
+  MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+  MOZ_ASSERT(mWebRenderBridge);
+}
+
+RefPtr<WebRenderBridgeParent> WebRenderBridgeParentRef::WrBridge() {
+  return mWebRenderBridge;
+}
+
+void WebRenderBridgeParentRef::Clear() {
+  MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+  mWebRenderBridge = nullptr;
+}
+
+WebRenderBridgeParentRef::~WebRenderBridgeParentRef() {
+  MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+  MOZ_ASSERT(!mWebRenderBridge);
 }
 
 }  // namespace layers

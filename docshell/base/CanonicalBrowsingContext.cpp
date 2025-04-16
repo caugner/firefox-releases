@@ -158,6 +158,7 @@ void CanonicalBrowsingContext::MaybeAddAsProgressListener(
 void CanonicalBrowsingContext::ReplacedBy(
     CanonicalBrowsingContext* aNewContext) {
   MOZ_ASSERT(!aNewContext->EverAttached());
+  MOZ_ASSERT(IsTop() && aNewContext->IsTop());
   if (mStatusFilter) {
     mStatusFilter->RemoveProgressListener(mWebProgress);
     mStatusFilter = nullptr;
@@ -171,6 +172,10 @@ void CanonicalBrowsingContext::ReplacedBy(
     mSessionHistory.swap(aNewContext->mSessionHistory);
     RefPtr<ChildSHistory> childSHistory = ForgetChildSHistory();
     aNewContext->SetChildSHistory(childSHistory);
+  }
+
+  if (mozilla::SessionHistoryInParent()) {
+    BackgroundSessionStorageManager::PropagateManager(Id(), aNewContext->Id());
   }
 
   MOZ_ASSERT(aNewContext->mLoadingEntries.IsEmpty());
@@ -263,12 +268,18 @@ CanonicalBrowsingContext::GetParentCrossChromeBoundary() {
   return nullptr;
 }
 
-Nullable<WindowProxyHolder> CanonicalBrowsingContext::GetTopChromeWindow() {
+already_AddRefed<CanonicalBrowsingContext>
+CanonicalBrowsingContext::TopCrossChromeBoundary() {
   RefPtr<CanonicalBrowsingContext> bc(this);
   while (RefPtr<CanonicalBrowsingContext> parent =
              bc->GetParentCrossChromeBoundary()) {
     bc = parent.forget();
   }
+  return bc.forget();
+}
+
+Nullable<WindowProxyHolder> CanonicalBrowsingContext::GetTopChromeWindow() {
+  RefPtr<CanonicalBrowsingContext> bc = TopCrossChromeBoundary();
   if (bc->IsChrome()) {
     return WindowProxyHolder(bc.forget());
   }
@@ -428,6 +439,34 @@ CanonicalBrowsingContext::ReplaceLoadingSessionHistoryEntryForLoad(
   return MakeUnique<LoadingSessionHistoryInfo>(newEntry, aInfo->mLoadId);
 }
 
+void CanonicalBrowsingContext::CallOnAllTopDescendants(
+    const std::function<mozilla::CallState(CanonicalBrowsingContext*)>&
+        aCallback) {
+#ifdef DEBUG
+  RefPtr<CanonicalBrowsingContext> parent = GetParentCrossChromeBoundary();
+  MOZ_ASSERT(!parent, "Should only call on top chrome BC");
+#endif
+
+  nsTArray<RefPtr<BrowsingContextGroup>> groups;
+  BrowsingContextGroup::GetAllGroups(groups);
+  for (auto& browsingContextGroup : groups) {
+    for (auto& bc : browsingContextGroup->Toplevels()) {
+      if (bc == this) {
+        // Cannot be a descendent of myself so skip.
+        continue;
+      }
+
+      RefPtr<CanonicalBrowsingContext> top =
+          bc->Canonical()->TopCrossChromeBoundary();
+      if (top == this) {
+        if (aCallback(bc->Canonical()) == CallState::Stop) {
+          return;
+        }
+      }
+    }
+  }
+}
+
 void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
                                                     const nsID& aChangeID,
                                                     uint32_t aLoadType) {
@@ -534,6 +573,8 @@ void CanonicalBrowsingContext::SessionHistoryCommit(uint64_t aLoadId,
           }
         }
       }
+
+      ResetSHEntryHasUserInteractionCache();
 
       HistoryCommitIndexAndLength(aChangeID, caller);
 
@@ -650,6 +691,9 @@ void CanonicalBrowsingContext::SetActiveSessionHistoryEntry(
           UseRemoteSubframes());
     }
   }
+
+  ResetSHEntryHasUserInteractionCache();
+
   // FIXME Need to do the equivalent of EvictContentViewersOrReplaceEntry.
   HistoryCommitIndexAndLength(aChangeID, caller);
 }
@@ -667,6 +711,9 @@ void CanonicalBrowsingContext::ReplaceActiveSessionHistoryEntry(
     shistory->NotifyOnHistoryReplaceEntry();
     shistory->UpdateRootBrowsingContextState();
   }
+
+  ResetSHEntryHasUserInteractionCache();
+
   // FIXME Need to do the equivalent of EvictContentViewersOrReplaceEntry.
 }
 
@@ -702,8 +749,15 @@ void CanonicalBrowsingContext::RemoveFromSessionHistory() {
 }
 
 void CanonicalBrowsingContext::HistoryGo(
-    int32_t aOffset, uint64_t aHistoryEpoch, Maybe<ContentParentId> aContentId,
+    int32_t aOffset, uint64_t aHistoryEpoch, bool aRequireUserInteraction,
+    Maybe<ContentParentId> aContentId,
     std::function<void(int32_t&&)>&& aResolver) {
+  if (aRequireUserInteraction && aOffset != -1 && aOffset != 1) {
+    NS_ERROR(
+        "aRequireUserInteraction may only be used with an offset of -1 or 1");
+    return;
+  }
+
   nsSHistory* shistory = static_cast<nsSHistory*>(GetSessionHistory());
   if (!shistory) {
     return;
@@ -716,13 +770,25 @@ void CanonicalBrowsingContext::HistoryGo(
           ("HistoryGo(%d->%d) epoch %" PRIu64 "/id %" PRIu64, aOffset,
            (index + aOffset).value(), aHistoryEpoch,
            (uint64_t)(aContentId.isSome() ? aContentId.value() : 0)));
-  index += aOffset;
-  if (!index.isValid()) {
-    MOZ_LOG(gSHLog, LogLevel::Debug, ("Invalid index"));
-    return;
-  }
 
-  // FIXME userinteraction bits may needs tweaks here.
+  while (true) {
+    index += aOffset;
+    if (!index.isValid()) {
+      MOZ_LOG(gSHLog, LogLevel::Debug, ("Invalid index"));
+      return;
+    }
+
+    // Check for user interaction if desired, except for the first and last
+    // history entries. We compare with >= to account for the case where
+    // aOffset >= length.
+    if (!aRequireUserInteraction || index.value() >= shistory->Length() - 1 ||
+        index.value() <= 0) {
+      break;
+    }
+    if (shistory->HasUserInteractionAtIndex(index.value())) {
+      break;
+    }
+  }
 
   // Implement aborting additional history navigations from within the same
   // event spin of the content process.
@@ -1253,6 +1319,13 @@ CanonicalBrowsingContext::PendingRemotenessChange::~PendingRemotenessChange() {
              "should've already been Cancel() or Complete()-ed");
 }
 
+BrowserParent* CanonicalBrowsingContext::GetBrowserParent() const {
+  if (auto* wg = GetCurrentWindowGlobal()) {
+    return wg->GetBrowserParent();
+  }
+  return nullptr;
+}
+
 RefPtr<CanonicalBrowsingContext::RemotenessPromise>
 CanonicalBrowsingContext::ChangeRemoteness(const nsACString& aRemoteType,
                                            uint64_t aPendingSwitchId,
@@ -1303,7 +1376,7 @@ CanonicalBrowsingContext::ChangeRemoteness(const nsACString& aRemoteType,
       embedderWindowGlobal->GetBrowserParent();
   // Switching to local. No new process, so perform switch sync.
   if (embedderBrowser &&
-      aRemoteType.Equals(embedderBrowser->Manager()->GetRemoteType())) {
+      aRemoteType == embedderBrowser->Manager()->GetRemoteType()) {
     MOZ_DIAGNOSTIC_ASSERT(
         aPendingSwitchId,
         "We always have a PendingSwitchId, except for print-preview loads, "
@@ -1505,6 +1578,12 @@ bool CanonicalBrowsingContext::AttemptSpeculativeLoadInParent(
     return false;
   }
 
+  // Session-history-in-parent implementation relies currently on getting a
+  // round trip through a child process.
+  if (aLoadState->LoadIsFromSessionHistory()) {
+    return false;
+  }
+
   // If we successfully open the DocumentChannel, then it'll register
   // itself using aLoadIdentifier and be kept alive until it completes
   // loading.
@@ -1536,6 +1615,13 @@ void CanonicalBrowsingContext::EndDocumentLoad(bool aForProcessSwitch) {
     // Resetting the current load identifier on a discarded context
     // has no effect when a document load has finished.
     Unused << SetCurrentLoadIdentifier(Nothing());
+  }
+}
+
+void CanonicalBrowsingContext::ResetSHEntryHasUserInteractionCache() {
+  WindowContext* topWc = GetTopWindowContext();
+  if (topWc && !topWc->IsDiscarded()) {
+    MOZ_ALWAYS_SUCCEEDS(topWc->SetSHEntryHasUserInteraction(false));
   }
 }
 

@@ -1761,6 +1761,13 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DRIVER_LESS_THAN, GfxDriverInfo::allDriverVersions,
         "FEATURE_UNQUALIFIED_WEBRENDER_NVIDIA_BLOCKED");
 
+    // Block 8.56.1.15/16
+    APPEND_TO_DRIVER_BLOCKLIST2(OperatingSystem::Windows, DeviceFamily::AtiAll,
+                                nsIGfxInfo::FEATURE_WEBRENDER,
+                                nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
+                                DRIVER_LESS_THAN_OR_EQUAL, V(8, 56, 1, 16),
+                                "CRASHY_DRIVERS_BUG_1678808");
+
     ////////////////////////////////////
     // FEATURE_WEBRENDER - ALLOWLIST
 #ifdef EARLY_BETA_OR_EARLIER
@@ -1817,6 +1824,18 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_WEBRENDER_SCISSORED_CACHE_CLEARS,
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_FAILURE_BUG_1603515");
+
+    ////////////////////////////////////
+    // FEATURE_WEBRENDER_SOFTWARE - ALLOWLIST
+#ifdef NIGHTLY_BUILD
+    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
+        OperatingSystem::Windows, ScreenSizeStatus::SmallAndMedium,
+        BatteryStatus::All, DesktopEnvironment::All, WindowProtocol::All,
+        DriverVendor::All, DeviceFamily::All,
+        nsIGfxInfo::FEATURE_WEBRENDER_SOFTWARE,
+        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
+        V(0, 0, 0, 0), "FEATURE_ROLLOUT_NIGHTLY_SOFTWARE_WR_S_M_SCRN");
+#endif
   }
   return *sDriverInfo;
 }

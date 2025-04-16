@@ -382,7 +382,9 @@ class GCRuntime {
   void unlockGC() { lock.unlock(); }
 
 #ifdef DEBUG
-  bool currentThreadHasLockedGC() const { return lock.ownedByCurrentThread(); }
+  void assertCurrentThreadHasLockedGC() const {
+    lock.assertOwnedByCurrentThread();
+  }
 #endif  // DEBUG
 
   void setAlwaysPreserveCode() { alwaysPreserveCode = true; }
@@ -534,6 +536,8 @@ class GCRuntime {
   // Crawl the heap to check whether an arbitary pointer is within a cell of
   // the given kind.
   bool isPointerWithinTenuredCell(void* ptr, JS::TraceKind traceKind);
+
+  bool hasZone(Zone* target);
 #endif
 
   // Queue memory memory to be freed on a background thread if possible.
@@ -748,7 +752,6 @@ class GCRuntime {
   void sweepWeakRefs();
   IncrementalProgress endSweepingSweepGroup(JSFreeOp* fop, SliceBudget& budget);
   IncrementalProgress performSweepActions(SliceBudget& sliceBudget);
-  IncrementalProgress sweepTypeInformation(JSFreeOp* fop, SliceBudget& budget);
   void startSweepingAtomsTable();
   IncrementalProgress sweepAtomsTable(JSFreeOp* fop, SliceBudget& budget);
   IncrementalProgress sweepWeakCaches(JSFreeOp* fop, SliceBudget& budget);
@@ -772,7 +775,6 @@ class GCRuntime {
                                    SliceBudget& sliceBudget,
                                    AutoGCSession& session);
   void endCompactPhase();
-  void sweepTypesAfterCompacting(Zone* zone);
   void sweepZoneAfterCompacting(MovingTracer* trc, Zone* zone);
   bool canRelocateZone(Zone* zone) const;
   MOZ_MUST_USE bool relocateArenas(Zone* zone, JS::GCReason reason,
@@ -797,6 +799,7 @@ class GCRuntime {
   void maybeRequestGCAfterBackgroundTask(const AutoLockHelperThreadState& lock);
   void cancelRequestedGCAfterBackgroundTask();
   void finishCollection();
+  void maybeStopStringPretenuring();
   IncrementalProgress joinSweepMarkTask();
 
 #ifdef JS_GC_ZEAL
@@ -1236,7 +1239,6 @@ inline bool GCRuntime::hasIncrementalTwoSliceZealMode() {
          hasZealMode(ZealMode::YieldBeforeSweeping) ||
          hasZealMode(ZealMode::YieldBeforeSweepingAtoms) ||
          hasZealMode(ZealMode::YieldBeforeSweepingCaches) ||
-         hasZealMode(ZealMode::YieldBeforeSweepingTypes) ||
          hasZealMode(ZealMode::YieldBeforeSweepingObjects) ||
          hasZealMode(ZealMode::YieldBeforeSweepingNonObjects) ||
          hasZealMode(ZealMode::YieldBeforeSweepingShapeTrees) ||

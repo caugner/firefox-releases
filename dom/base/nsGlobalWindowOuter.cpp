@@ -14,6 +14,7 @@
 
 // Local Includes
 #include "Navigator.h"
+#include "mozilla/Encoding.h"
 #include "nsContentSecurityManager.h"
 #include "nsScreen.h"
 #include "nsHistory.h"
@@ -87,6 +88,7 @@
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Likely.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/Unused.h"
 
@@ -2649,9 +2651,7 @@ void nsGlobalWindowOuter::SetDocShell(nsDocShell* aDocShell) {
     }
   }
 
-  bool docShellActive;
-  mDocShell->GetIsActive(&docShellActive);
-  SetIsBackgroundInternal(!docShellActive);
+  SetIsBackgroundInternal(!mBrowsingContext->IsActive());
 }
 
 void nsGlobalWindowOuter::DetachFromDocShell(bool aIsBeingDiscarded) {
@@ -3344,7 +3344,7 @@ already_AddRefed<nsPIDOMWindowOuter> nsGlobalWindowOuter::GetContentInternal(
   nsCOMPtr<nsIDocShellTreeItem> primaryContent;
   if (aCallerType != CallerType::System) {
     if (mDoc) {
-      mDoc->WarnOnceAbout(Document::eWindowContentUntrusted);
+      mDoc->WarnOnceAbout(DeprecatedOperations::eWindowContentUntrusted);
     }
     // If we're called by non-chrome code, make sure we don't return
     // the primary content window if the calling tab is hidden. In
@@ -5134,14 +5134,18 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType) {
       parent = bc->Canonical()->GetParentCrossChromeBoundary();
     }
   }
+  uint64_t actionId = nsFocusManager::GenerateFocusActionId();
   if (parent) {
     if (!parent->IsInProcess()) {
       if (isActive) {
-        fm->WindowRaised(this);
+        fm->WindowRaised(this, actionId);
+        // XXX we still need to notify framer about the focus moves to OOP
+        // iframe to generate corresponding blur event for bug 1677474.
+      } else {
+        ContentChild* contentChild = ContentChild::GetSingleton();
+        MOZ_ASSERT(contentChild);
+        contentChild->SendFinalizeFocusOuter(bc, canFocus, aCallerType);
       }
-      ContentChild* contentChild = ContentChild::GetSingleton();
-      MOZ_ASSERT(contentChild);
-      contentChild->SendFinalizeFocusOuter(bc, canFocus, aCallerType);
       return;
     }
     nsCOMPtr<Document> parentdoc = parent->GetDocument();
@@ -5159,7 +5163,7 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType) {
     // if there is no parent, this must be a toplevel window, so raise the
     // window if canFocus is true. If this is a child process, the raise
     // window request will get forwarded to the parent by the puppet widget.
-    fm->RaiseWindow(this, aCallerType);
+    fm->RaiseWindow(this, aCallerType, actionId);
   }
 }
 
@@ -5755,12 +5759,36 @@ PopupBlocker::PopupControlState nsGlobalWindowOuter::RevisePopupAbuseLevel(
     }
   }
 
+  // HACK: Some pages using bogus library + UA sniffing call window.open() from
+  // a blank iframe, only on Firefox, see bug 1685056.
+  //
+  // This is a hack-around to preserve behavior in that particular and specific
+  // case, by consuming activation on the parent document, so we don't care
+  // about the InProcessParent bits not being fission-safe or what not.
+  auto ConsumeTransientUserActivationForMultiplePopupBlocking = [&]() -> bool {
+    if (mDoc->ConsumeTransientUserGestureActivation()) {
+      return true;
+    }
+    if (!mDoc->IsInitialDocument()) {
+      return false;
+    }
+    Document* parentDoc = mDoc->GetInProcessParentDocument();
+    if (!parentDoc ||
+        !parentDoc->NodePrincipal()->Equals(mDoc->NodePrincipal())) {
+      return false;
+    }
+    return parentDoc->ConsumeTransientUserGestureActivation();
+  };
+
   // If this popup is allowed, let's block any other for this event, forcing
   // PopupBlocker::openBlocked state.
   if ((abuse == PopupBlocker::openAllowed ||
        abuse == PopupBlocker::openControlled) &&
       StaticPrefs::dom_block_multiple_popups() && !IsPopupAllowed() &&
-      !PopupBlocker::TryUsePopupOpeningToken(mDoc->NodePrincipal())) {
+      !ConsumeTransientUserActivationForMultiplePopupBlocking()) {
+    nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns, mDoc,
+                                    nsContentUtils::eDOM_PROPERTIES,
+                                    "MultiplePopupsBlockedNoUserActivation");
     abuse = PopupBlocker::openBlocked;
   }
 
@@ -6750,79 +6778,6 @@ Location* nsGlobalWindowOuter::GetLocation() {
   FORWARD_TO_INNER(Location, (), nullptr);
 }
 
-void nsGlobalWindowOuter::ActivateOrDeactivate(bool aActivate) {
-  if (!mDoc) {
-    return;
-  }
-
-  // Set / unset mIsActive on the top level window, which is used for the
-  // :-moz-window-inactive pseudoclass, and its sheet (if any).
-  nsCOMPtr<nsIWidget> mainWidget = GetMainWidget();
-  nsCOMPtr<nsIWidget> topLevelWidget;
-  if (mainWidget) {
-    // Get the top level widget (if the main widget is a sheet, this will
-    // be the sheet's top (non-sheet) parent).
-    topLevelWidget = mainWidget->GetSheetWindowParent();
-    if (!topLevelWidget) {
-      topLevelWidget = mainWidget;
-    }
-  }
-
-  SetActive(aActivate);
-
-  if (mainWidget != topLevelWidget) {
-    // This is a workaround for the following problem:
-    // When a window with an open sheet gains or loses focus, only the sheet
-    // window receives the NS_ACTIVATE/NS_DEACTIVATE event.  However the
-    // styling of the containing top level window also needs to change.  We
-    // get around this by calling nsPIDOMWindow::SetActive() on both windows.
-
-    // Get the top level widget's nsGlobalWindowOuter
-    nsCOMPtr<nsPIDOMWindowOuter> topLevelWindow;
-
-    // widgetListener should be an AppWindow
-    nsIWidgetListener* listener = topLevelWidget->GetWidgetListener();
-    if (listener) {
-      nsCOMPtr<nsIAppWindow> window = listener->GetAppWindow();
-      nsCOMPtr<nsIInterfaceRequestor> req(do_QueryInterface(window));
-      topLevelWindow = do_GetInterface(req);
-    }
-
-    if (topLevelWindow) {
-      topLevelWindow->SetActive(aActivate);
-    }
-  }
-}
-
-static CallState NotifyDocumentTree(Document& aDocument) {
-  aDocument.EnumerateSubDocuments(NotifyDocumentTree);
-  aDocument.UpdateDocumentStates(NS_DOCUMENT_STATE_WINDOW_INACTIVE, true);
-  return CallState::Continue;
-}
-
-void nsGlobalWindowOuter::SetActive(bool aActive) {
-  nsPIDOMWindowOuter::SetActive(aActive);
-  if (mDoc) {
-    NotifyDocumentTree(*mDoc);
-  }
-}
-
-bool nsGlobalWindowOuter::IsTopLevelWindowActive() {
-  nsCOMPtr<nsIDocShellTreeItem> treeItem(GetDocShell());
-  if (!treeItem) {
-    return false;
-  }
-
-  nsCOMPtr<nsIDocShellTreeItem> rootItem;
-  treeItem->GetInProcessRootTreeItem(getter_AddRefs(rootItem));
-  if (!rootItem) {
-    return false;
-  }
-
-  nsCOMPtr<nsPIDOMWindowOuter> domWindow = rootItem->GetWindow();
-  return domWindow && domWindow->IsActive();
-}
-
 void nsGlobalWindowOuter::SetIsBackground(bool aIsBackground) {
   bool changed = aIsBackground != IsBackground();
   SetIsBackgroundInternal(aIsBackground);
@@ -7463,14 +7418,11 @@ nsresult nsGlobalWindowOuter::RestoreWindowState(nsISupports* aState) {
 
   // if a link is focused, refocus with the FLAG_SHOWRING flag set. This makes
   // it easy to tell which link was last clicked when going back a page.
-  Element* focusedElement = inner->GetFocusedElement();
+  RefPtr<Element> focusedElement = inner->GetFocusedElement();
   if (nsContentUtils::ContentIsLink(focusedElement)) {
-    nsFocusManager* fm = nsFocusManager::GetFocusManager();
-    if (fm) {
-      // XXXbz Do we need the stack strong ref here?
-      RefPtr<Element> kungFuDeathGrip(focusedElement);
-      fm->SetFocus(kungFuDeathGrip, nsIFocusManager::FLAG_NOSCROLL |
-                                        nsIFocusManager::FLAG_SHOWRING);
+    if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
+      fm->SetFocus(focusedElement, nsIFocusManager::FLAG_NOSCROLL |
+                                       nsIFocusManager::FLAG_SHOWRING);
     }
   }
 
@@ -7507,6 +7459,10 @@ nsIDOMWindowUtils* nsGlobalWindowOuter::WindowUtils() {
     mWindowUtils = new nsDOMWindowUtils(this);
   }
   return mWindowUtils;
+}
+
+bool nsGlobalWindowOuter::IsInSyncOperation() {
+  return GetExtantDoc() && GetExtantDoc()->IsInSyncOperation();
 }
 
 // Note: This call will lock the cursor, it will not change as it moves.
@@ -7790,7 +7746,6 @@ mozilla::dom::DocGroup* nsPIDOMWindowOuter::GetDocGroup() const {
 nsPIDOMWindowOuter::nsPIDOMWindowOuter(uint64_t aWindowID)
     : mFrameElement(nullptr),
       mModalStateDepth(0),
-      mIsActive(false),
       mIsBackground(false),
       mMediaSuspend(StaticPrefs::media_block_autoplay_until_in_foreground()
                         ? nsISuspendedTypes::SUSPENDED_BLOCK

@@ -350,6 +350,9 @@ struct JSRuntime {
    */
   js::MainThreadData<bool> allowRelazificationForTesting;
 
+  /* Zone destroy callback. */
+  js::MainThreadData<JSDestroyZoneCallback> destroyZoneCallback;
+
   /* Compartment destroy callback. */
   js::MainThreadData<JSDestroyCompartmentCallback> destroyCompartmentCallback;
 
@@ -394,7 +397,7 @@ struct JSRuntime {
   // Heap GC roots for PersistentRooted pointers.
   js::MainThreadData<mozilla::EnumeratedArray<
       JS::RootKind, JS::RootKind::Limit,
-      mozilla::LinkedList<JS::PersistentRooted<void*>>>>
+      mozilla::LinkedList<JS::PersistentRooted<JS::detail::RootListEntry*>>>>
       heapRoots;
 
   void tracePersistentRoots(JSTracer* trc);
@@ -549,13 +552,14 @@ struct JSRuntime {
   void decParseTaskRef() { numParseTasks--; }
 
 #ifdef DEBUG
-  bool currentThreadHasScriptDataAccess() const {
+  void assertCurrentThreadHasScriptDataAccess() const {
     if (!hasParseTasks()) {
-      return js::CurrentThreadCanAccessRuntime(this) &&
-             activeThreadHasScriptDataAccess;
+      MOZ_ASSERT(js::CurrentThreadCanAccessRuntime(this) &&
+                 activeThreadHasScriptDataAccess);
+      return;
     }
 
-    return scriptDataLock.ownedByCurrentThread();
+    scriptDataLock.assertOwnedByCurrentThread();
   }
 
   bool currentThreadHasAtomsTableAccess() const {

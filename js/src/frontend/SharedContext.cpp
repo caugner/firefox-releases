@@ -224,34 +224,36 @@ EvalSharedContext::EvalSharedContext(JSContext* cx,
   inWith_ = compilationState.scopeContext.inWith;
 }
 
+SuspendableContext::SuspendableContext(JSContext* cx, Kind kind,
+                                       CompilationInfo& compilationInfo,
+                                       Directives directives,
+                                       SourceExtent extent, bool isGenerator,
+                                       bool isAsync)
+    : SharedContext(cx, kind, compilationInfo, directives, extent) {
+  setFlag(ImmutableFlags::IsGenerator, isGenerator);
+  setFlag(ImmutableFlags::IsAsync, isAsync);
+}
+
 FunctionBox::FunctionBox(JSContext* cx, SourceExtent extent,
                          CompilationInfo& compilationInfo,
                          Directives directives, GeneratorKind generatorKind,
                          FunctionAsyncKind asyncKind, const ParserAtom* atom,
                          FunctionFlags flags, FunctionIndex index)
-    : SharedContext(cx, Kind::FunctionBox, compilationInfo, directives, extent),
+    : SuspendableContext(cx, Kind::FunctionBox, compilationInfo, directives,
+                         extent, generatorKind == GeneratorKind::Generator,
+                         asyncKind == FunctionAsyncKind::AsyncFunction),
       atom_(atom),
       funcDataIndex_(index),
       flags_(FunctionFlags::clearMutableflags(flags)),
       emitBytecode(false),
-      isStandalone_(false),
       wasEmitted_(false),
-      isSingleton_(false),
       isAnnexB(false),
       useAsm(false),
       hasParameterExprs(false),
       hasDestructuringArgs(false),
       hasDuplicateParameters(false),
       hasExprBody_(false),
-      usesApply(false),
-      usesThis(false),
-      usesReturn(false),
-      isFunctionFieldCopiedToStencil(false) {
-  setFlag(ImmutableFlags::IsGenerator,
-          generatorKind == GeneratorKind::Generator);
-  setFlag(ImmutableFlags::IsAsync,
-          asyncKind == FunctionAsyncKind::AsyncFunction);
-}
+      isFunctionFieldCopiedToStencil(false) {}
 
 void FunctionBox::initFromLazyFunction(JSFunction* fun) {
   BaseScript* lazy = fun->baseScript();
@@ -384,8 +386,9 @@ ModuleSharedContext::ModuleSharedContext(JSContext* cx,
                                          CompilationInfo& compilationInfo,
                                          ModuleBuilder& builder,
                                          SourceExtent extent)
-    : SharedContext(cx, Kind::Module, compilationInfo, Directives(true),
-                    extent),
+    : SuspendableContext(cx, Kind::Module, compilationInfo, Directives(true),
+                         extent, /* isGenerator = */ false,
+                         /* isAsync = */ false),
       bindings(nullptr),
       builder(builder) {
   thisBinding_ = ThisBinding::Module;
@@ -410,13 +413,10 @@ void FunctionBox::finishScriptFlags() {
 
   using ImmutableFlags = ImmutableScriptFlagsEnum;
   immutableFlags_.setFlag(ImmutableFlags::HasMappedArgsObj, hasMappedArgsObj());
-  immutableFlags_.setFlag(ImmutableFlags::IsLikelyConstructorWrapper,
-                          isLikelyConstructorWrapper());
 }
 
 void FunctionBox::copyScriptFields(ScriptStencil& script) {
   MOZ_ASSERT(&script == &functionStencil());
-  MOZ_ASSERT(!isAsmJSModule());
 
   SharedContext::copyScriptFields(script);
 
@@ -436,9 +436,7 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
   script.functionFlags = flags_;
   script.nargs = nargs_;
   script.lazyFunctionEnclosingScopeIndex_ = enclosingScopeIndex_;
-  script.isStandaloneFunction = isStandalone_;
   script.wasFunctionEmitted = wasEmitted_;
-  script.isSingletonFunction = isSingleton_;
 
   isFunctionFieldCopiedToStencil = true;
 }
@@ -475,11 +473,6 @@ void FunctionBox::copyUpdatedAtomAndFlags() {
 void FunctionBox::copyUpdatedWasEmitted() {
   ScriptStencil& script = functionStencil();
   script.wasFunctionEmitted = wasEmitted_;
-}
-
-void FunctionBox::copyUpdatedIsSingleton() {
-  ScriptStencil& script = functionStencil();
-  script.isSingletonFunction = isSingleton_;
 }
 
 }  // namespace frontend

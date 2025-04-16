@@ -9,7 +9,14 @@ function testRangeAtMarker(macDoc, marker, attribute, expected, msg) {
   is(stringForRange(macDoc, range), expected, msg);
 }
 
-function testUIElement(macDoc, marker, msg, expectedRole, expectedValue) {
+function testUIElement(
+  macDoc,
+  marker,
+  msg,
+  expectedRole,
+  expectedValue,
+  expectedRange
+) {
   let elem = macDoc.getParameterizedAttributeValue(
     "AXUIElementForTextMarker",
     marker
@@ -26,7 +33,7 @@ function testUIElement(macDoc, marker, msg, expectedRole, expectedValue) {
   );
   is(
     stringForRange(macDoc, elemRange),
-    expectedValue,
+    expectedRange,
     `${msg}: element range matches element value`
   );
 }
@@ -236,5 +243,23 @@ addAccessibleTask(
       [end, start]
     );
     is(stringForRange(macDoc, range), "ello good");
+  }
+);
+
+addAccessibleTask(
+  `<input id="input" value=""><a href="#">goodbye</a>`,
+  async (browser, accDoc) => {
+    let macDoc = accDoc.nativeInterface.QueryInterface(
+      Ci.nsIAccessibleMacInterface
+    );
+
+    let input = getNativeInterface(accDoc, "input");
+
+    let range = macDoc.getParameterizedAttributeValue(
+      "AXTextMarkerRangeForUIElement",
+      input
+    );
+
+    is(stringForRange(macDoc, range), "", "string value is correct");
   }
 );

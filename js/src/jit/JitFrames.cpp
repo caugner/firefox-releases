@@ -37,7 +37,6 @@
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
 #include "vm/TraceLogging.h"
-#include "vm/TypeInference.h"
 #include "wasm/WasmBuiltins.h"
 #include "wasm/WasmInstance.h"
 
@@ -47,7 +46,6 @@
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Probes-inl.h"
-#include "vm/TypeInference-inl.h"
 
 namespace js {
 namespace jit {
@@ -596,14 +594,6 @@ void HandleException(ResumeFromException* rfe) {
 
   JitSpew(JitSpew_IonInvalidate, "handling exception");
 
-  // Clear any Ion return override that's been set.
-  // This may happen if a callVM function causes an invalidation (setting the
-  // override), and then fails, bypassing the bailout handlers that would
-  // otherwise clear the return override.
-  if (cx->hasIonReturnOverride()) {
-    cx->takeIonReturnOverride();
-  }
-
   JitActivation* activation = cx->activation()->asJit();
 
 #ifdef CHECK_OSIPOINT_REGISTERS
@@ -1020,7 +1010,11 @@ static void TraceBaselineStubFrame(JSTracer* trc, const JSJitFrameIter& frame) {
 
   if (ICStub* stub = layout->maybeStubPtr()) {
     MOZ_ASSERT(stub->makesGCCalls());
-    stub->trace(trc);
+    if (stub->isFallback()) {
+      stub->toFallbackStub()->trace(trc);
+    } else {
+      stub->toCacheIRStub()->trace(trc);
+    }
   }
 }
 
@@ -1912,9 +1906,10 @@ bool SnapshotIterator::computeInstructionResults(
       return true;
     }
 
-    // Use AutoEnterAnalysis to avoid invoking the object metadata callback,
-    // which could try to walk the stack while bailing out.
-    AutoEnterAnalysis enter(cx);
+    // Avoid invoking the object metadata callback, which could try to walk the
+    // stack while bailing out.
+    gc::AutoSuppressGC suppressGC(cx);
+    js::AutoSuppressAllocationMetadataBuilder suppressMetadata(cx);
 
     // Fill with the results of recover instructions.
     SnapshotIterator s(*this);

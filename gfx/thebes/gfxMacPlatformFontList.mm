@@ -61,6 +61,7 @@
 #include "nsCharTraits.h"
 #include "nsCocoaFeatures.h"
 #include "nsCocoaUtils.h"
+#include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
 
@@ -1555,10 +1556,9 @@ void gfxMacPlatformFontList::LookupSystemFont(LookAndFeel::FontID aSystemFontID,
   aFontStyle.style =
       (traits & NSFontItalicTrait) ? FontSlantStyle::Italic() : FontSlantStyle::Normal();
   aFontStyle.weight = (traits & NSFontBoldTrait) ? FontWeight::Bold() : FontWeight::Normal();
-  aFontStyle.stretch =
-      (traits & NSFontExpandedTrait)
-          ? FontStretch::Expanded()
-          : (traits & NSFontCondensedTrait) ? FontStretch::Condensed() : FontStretch::Normal();
+  aFontStyle.stretch = (traits & NSFontExpandedTrait)    ? FontStretch::Expanded()
+                       : (traits & NSFontCondensedTrait) ? FontStretch::Condensed()
+                                                         : FontStretch::Normal();
   aFontStyle.size = [font pointSize];
   aFontStyle.systemFont = true;
 }

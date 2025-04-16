@@ -448,14 +448,14 @@ static bool EscapeRegExpPattern(StringBuffer& sb, const CharT* oldChars,
 }
 
 // ES6 draft rev32 21.2.3.2.4.
-JSAtom* js::EscapeRegExpPattern(JSContext* cx, HandleAtom src) {
+JSLinearString* js::EscapeRegExpPattern(JSContext* cx, HandleAtom src) {
   // Step 2.
   if (src->length() == 0) {
     return cx->names().emptyRegExp;
   }
 
   // We may never need to use |sb|. Start using it lazily.
-  StringBuffer sb(cx);
+  JSStringBuilder sb(cx);
 
   if (src->hasLatin1Chars()) {
     JS::AutoCheckCannotGC nogc;
@@ -470,17 +470,18 @@ JSAtom* js::EscapeRegExpPattern(JSContext* cx, HandleAtom src) {
   }
 
   // Step 3.
-  return sb.empty() ? src : sb.finishAtom();
+  return sb.empty() ? src : sb.finishString();
 }
 
 // ES6 draft rev32 21.2.5.14. Optimized for RegExpObject.
-JSLinearString* RegExpObject::toString(JSContext* cx) const {
+JSLinearString* RegExpObject::toString(JSContext* cx,
+                                       Handle<RegExpObject*> obj) {
   // Steps 3-4.
-  RootedAtom src(cx, getSource());
+  RootedAtom src(cx, obj->getSource());
   if (!src) {
     return nullptr;
   }
-  RootedAtom escapedSrc(cx, EscapeRegExpPattern(cx, src));
+  RootedLinearString escapedSrc(cx, EscapeRegExpPattern(cx, src));
 
   // Step 7.
   JSStringBuilder sb(cx);
@@ -495,22 +496,22 @@ JSLinearString* RegExpObject::toString(JSContext* cx) const {
   sb.infallibleAppend('/');
 
   // Steps 5-7.
-  if (global() && !sb.append('g')) {
+  if (obj->global() && !sb.append('g')) {
     return nullptr;
   }
-  if (ignoreCase() && !sb.append('i')) {
+  if (obj->ignoreCase() && !sb.append('i')) {
     return nullptr;
   }
-  if (multiline() && !sb.append('m')) {
+  if (obj->multiline() && !sb.append('m')) {
     return nullptr;
   }
-  if (dotAll() && !sb.append('s')) {
+  if (obj->dotAll() && !sb.append('s')) {
     return nullptr;
   }
-  if (unicode() && !sb.append('u')) {
+  if (obj->unicode() && !sb.append('u')) {
     return nullptr;
   }
-  if (sticky() && !sb.append('y')) {
+  if (obj->sticky() && !sb.append('y')) {
     return nullptr;
   }
 
@@ -612,22 +613,6 @@ void RegExpShared::finalize(JSFreeOp* fop) {
   tables.~JitCodeTables();
 }
 
-/* static */
-bool RegExpShared::compile(JSContext* cx, MutableHandleRegExpShared re,
-                           HandleLinearString input,
-                           RegExpShared::CodeKind codeKind) {
-  TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
-  AutoTraceLog logCompile(logger, TraceLogger_IrregexpCompile);
-
-  RootedAtom pattern(cx, re->getSource());
-  return compile(cx, re, pattern, input, codeKind);
-}
-
-bool RegExpShared::compile(JSContext* cx, MutableHandleRegExpShared re,
-                           HandleAtom pattern, HandleLinearString input,
-                           RegExpShared::CodeKind code) {
-  MOZ_CRASH("TODO");
-}
 /* static */
 bool RegExpShared::compileIfNecessary(JSContext* cx,
                                       MutableHandleRegExpShared re,
@@ -767,15 +752,6 @@ bool RegExpShared::initializeNamedCaptures(JSContext* cx, HandleRegExpShared re,
     return false;
   }
 
-  // Create a new group for the template.
-  Rooted<TaggedProto> proto(cx, templateObject->taggedProto());
-  ObjectGroup* group = ObjectGroupRealm::makeGroup(
-      cx, templateObject->realm(), templateObject->getClass(), proto);
-  if (!group) {
-    return false;
-  }
-  templateObject->setGroup(group);
-
   // Initialize the properties of the template.
   RootedId id(cx);
   RootedValue dummyString(cx, StringValue(cx->runtime()->emptyString));
@@ -786,7 +762,6 @@ bool RegExpShared::initializeNamedCaptures(JSContext* cx, HandleRegExpShared re,
                                   JSPROP_ENUMERATE)) {
       return false;
     }
-    AddTypePropertyId(cx, templateObject, id, UndefinedValue());
   }
 
   // Allocate the capture index array.
@@ -909,15 +884,6 @@ ArrayObject* RegExpRealm::createMatchResultTemplateObject(JSContext* cx) {
     return nullptr;
   }
 
-  // Create a new group for the template.
-  Rooted<TaggedProto> proto(cx, templateObject->taggedProto());
-  ObjectGroup* group = ObjectGroupRealm::makeGroup(
-      cx, templateObject->realm(), templateObject->getClass(), proto);
-  if (!group) {
-    return nullptr;
-  }
-  templateObject->setGroup(group);
-
   /* Set dummy index property */
   RootedValue index(cx, Int32Value(0));
   if (!NativeDefineDataProperty(cx, templateObject, cx->names().index, index,
@@ -938,8 +904,6 @@ ArrayObject* RegExpRealm::createMatchResultTemplateObject(JSContext* cx) {
                                 groupsVal, JSPROP_ENUMERATE)) {
     return nullptr;
   }
-  AddTypePropertyId(cx, templateObject, NameToId(cx->names().groups),
-                    TypeSet::AnyObjectType());
 
   // Make sure that the properties are in the right slots.
 #ifdef DEBUG
@@ -953,11 +917,6 @@ ArrayObject* RegExpRealm::createMatchResultTemplateObject(JSContext* cx) {
   MOZ_ASSERT(indexShape->slot() == MatchResultObjectIndexSlot &&
              indexShape->propidRef() == NameToId(cx->names().index));
 #endif
-
-  // Make sure type information reflects the indexed properties which might
-  // be added.
-  AddTypePropertyId(cx, templateObject, JSID_VOID, TypeSet::StringType());
-  AddTypePropertyId(cx, templateObject, JSID_VOID, TypeSet::UndefinedType());
 
   matchResultTemplateObject_.set(templateObject);
 

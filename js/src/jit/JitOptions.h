@@ -131,7 +131,6 @@ struct DefaultJitOptions {
   void resetFullIonWarmUpThreshold();
   void enableGvn(bool val);
   void setFastWarmUp();
-  void setWarpEnabled(bool enable);
 
   bool eagerIonCompilation() const { return normalIonWarmUpThreshold == 0; }
 };
@@ -147,9 +146,6 @@ inline bool IsBaselineInterpreterEnabled() {
 }
 
 }  // namespace jit
-
-inline bool IsTypeInferenceEnabled() { return !jit::JitOptions.warpBuilder; }
-
 }  // namespace js
 
 #endif /* jit_JitOptions_h */

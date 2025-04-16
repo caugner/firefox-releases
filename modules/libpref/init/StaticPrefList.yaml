@@ -230,6 +230,12 @@
     type: bool
     value: true
     mirror: always
+
+-   name: android.touch_resampling.enabled
+    type: RelaxedAtomicBool
+    value: true
+    mirror: always
+
 #endif
 
 #---------------------------------------------------------------------------
@@ -670,11 +676,6 @@
   value: 500
   mirror: always
 
-- name: apz.relative-update.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
 #---------------------------------------------------------------------------
 # Prefs starting with "beacon."
 #---------------------------------------------------------------------------
@@ -969,6 +970,18 @@
 #endif
   mirror: always
 
+# Whether we should always enable focus rings after focus was moved by keyboard.
+#
+# This behavior matches both historical and GTK / Windows focus behavior.
+#
+# :focus-visible is intended to provide better heuristics than this, so for now
+# we make this false whenever layout.css.focus-visible.enabled is enabled by
+# default.
+- name: browser.display.always_show_rings_after_key_focus
+  type: bool
+  value: false
+  mirror: always
+
 # In theory: 0 = never, 1 = quick, 2 = always, though we always just use it as
 # a bool!
 - name: browser.display.use_document_fonts
@@ -992,6 +1005,11 @@
   value: @IS_NOT_MOZILLA_OFFICIAL@
   mirror: always
 
+- name: browser.download.sanitize_non_media_extensions
+  type: bool
+  value: true
+  mirror: always
+
 # Image document's automatic image sizing.
 - name: browser.enable_automatic_image_resizing
   type: bool
@@ -1002,6 +1020,22 @@
 - name: browser.enable_click_image_resizing
   type: bool
   value: @IS_NOT_ANDROID@
+  mirror: always
+
+# The max url length we'll store in history.
+#
+# The default value is mostly a guess based on various facts:
+#
+# * IE didn't support urls longer than 2083 chars
+# * Sitemaps protocol used to support a maximum of 2048 chars
+# * Various SEO guides suggest to not go over 2000 chars
+# * Various apps/services are known to have issues over 2000 chars
+# * RFC 2616 - HTTP/1.1 suggests being cautious about depending
+#   on URI lengths above 255 bytes
+#
+- name: browser.history.maxUrlLength
+  type: uint32_t
+  value: 2000
   mirror: always
 
 # Render animations and videos as a solid color
@@ -1556,17 +1590,33 @@
   value: false
   mirror: always
 
+# Allow control characters appear in composition string.
+# When this is false, control characters except
+# CHARACTER TABULATION (horizontal tab) are removed from
+# both composition string and data attribute of compositionupdate
+# and compositionend events.
+- name: dom.compositionevent.allow_control_characters
+  type: bool
+  value: false
+  mirror: always
+
 # Is support for CSSPseudoElement enabled?
 - name: dom.css_pseudo_element.enabled
   type: bool
   value: false
   mirror: always
 
-# Any how many seconds we allow external protocol URLs in iframe when not in
+# After how many seconds we allow external protocol URLs in iframe when not in
 # single events
 - name: dom.delay.block_external_protocol_in_iframes
   type: uint32_t
   value: 10   # in seconds
+  mirror: always
+
+# Whether the above pref has any effect at all.
+- name: dom.delay.block_external_protocol_in_iframes.enabled
+  type: bool
+  value: @IS_NOT_NIGHTLY_BUILD@
   mirror: always
 
 # HTML <dialog> element
@@ -2180,6 +2230,11 @@
 - name: dom.media.silence_duration_for_audibility
   type: AtomicFloat
   value: 2.0f
+  mirror: always
+
+- name: dom.menuitem.enabled
+  type: bool
+  value: false
   mirror: always
 
 # Enable meta-viewport support in remote APZ-enabled frames.
@@ -2818,6 +2873,12 @@
   # Only allow relatively small amounts of data since performance of the
   # synchronous IO is very bad. We are enforcing simple per-origin quota only.
   value: 5 * 1024
+  mirror: always
+
+# Per-site quota for legacy LocalStorage implementation.
+- name: dom.storage.default_site_quota
+  type: RelaxedAtomicUint32
+  value: 25 * 1024
   mirror: always
 
 # Whether or not LSNG (Next Generation Local Storage) is enabled.
@@ -4065,7 +4126,7 @@
 
 - name: gfx.canvas.remote
   type: RelaxedAtomicBool
-#if defined(XP_WIN)
+#if defined(XP_WIN) && defined(EARLY_BETA_OR_EARLIER)
   value: true
 #else
   value: false
@@ -4189,13 +4250,7 @@
 
 - name: gfx.direct3d11.use-double-buffering
   type: RelaxedAtomicBool
-#ifdef XP_WIN
-  # Prefer flipping between two buffers over copying from our back buffer
-  # to the OS.
-  value: @IS_NIGHTLY_BUILD@
-#else
   value: false
-#endif
   mirror: always
 
 - name: gfx.direct3d11.enable-debug-layer
@@ -4470,7 +4525,7 @@
 #ifdef XP_WIN
 - name: gfx.webrender.enabled-no-gpu-process-with-angle-win
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: once
 #endif
 
@@ -4569,6 +4624,8 @@
   value: 25
   mirror: once
 
+# Number of damage rects we can give to the compositor for a new frame with
+# partial present. This controls whether partial present is used or not.
 - name: gfx.webrender.max-partial-present-rects
   type: uint32_t
 #if defined(XP_WIN) || defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GTK)
@@ -4576,6 +4633,14 @@
 #else
   value: 0
 #endif
+  mirror: once
+
+# Whether or not we can reuse the buffer contents using the GL buffer age
+# extension, if supported by the platform. This requires partial present
+# to be used.
+- name: gfx.webrender.allow-partial-present-buffer-age
+  type: bool
+  value: true
   mirror: once
 
 - name: gfx.webrender.enable-gpu-markers
@@ -4695,7 +4760,7 @@
 # Whether to use the D3D11 RenderCompositor when using WebRender software backend
 - name: gfx.webrender.software.d3d11
   type: bool
-  value: true 
+  value: true
   mirror: once
 
 # Use vsync events generated by hardware
@@ -5043,6 +5108,24 @@
   value: @IS_ANDROID@
   mirror: always
 
+#ifdef XP_WIN
+  # If true, automatically extend selection to cluster boundaries when
+  # TSF/TIP requests to select from/by middle of a cluster.
+-   name: intl.tsf.hack.extend_setting_selection_range_to_cluster_boundaries
+    type: bool
+    value: @IS_NOT_EARLY_BETA_OR_EARLIER@
+    mirror: always
+#endif
+
+# If you use legacy Chinese IME which puts an ideographic space to composition
+# string as placeholder, this pref might be useful.  If this is true and when
+# web contents forcibly commits composition (e.g., moving focus), the
+# ideographic space will be ignored (i.e., commits with empty string).
+- name: intl.ime.remove_placeholder_character_at_commit
+  type: bool
+  value: false
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "javascript."
 #---------------------------------------------------------------------------
@@ -5099,6 +5182,12 @@
   type: RelaxedAtomicBool
   value: false
   mirror: always
+
+  # Experimental support for Top-level Await in JavaScript.
+- name: javascript.options.experimental.top_level_await
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
 #endif
 
 # The amount of time we wait between a request to GC (due to leaving a page) and doing the actual GC, in ms.
@@ -5113,7 +5202,8 @@
   value: 10000
   mirror: always
 
-# Duration of the dom events full gc delay, in ms.
+# After doing a zonal GC, wait this much time (in ms) and then do a full GC,
+# unless one is already pending.
 - name: javascript.options.gc_delay.full
   type: uint32_t
   value: 60000
@@ -5532,11 +5622,7 @@
 
 - name: layers.mlgpu.enabled
   type: bool
-#if defined(XP_WIN)
-  value: true
-#else
   value: false
-#endif
   mirror: once
   do_not_use_directly: true
 
@@ -5943,11 +6029,12 @@
 
 # Whether the `:focus-visible` pseudo-class is enabled.
 #
-# TODO: There are various ambiguities in the spec about this, so we shouldn't
-# ship this until those are sorted out.
+# NOTE: You probably want to change the default value of
+# browser.display.always_show_rings_after_key_focus whenever you change the
+# default value of this pref.
 - name: layout.css.focus-visible.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
   rust: true
 
@@ -6015,13 +6102,6 @@
   type: bool
   value: false
   mirror: always
-
-# Is support for CSS conic-gradient enabled?
-- name: layout.css.conic-gradient.enabled
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-  rust: true
 
 # Should stray control characters be rendered visibly?
 - name: layout.css.control-characters.visible
@@ -6477,7 +6557,7 @@
 
 - name: layout.display-list.improve-fragmentation
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 # Are dynamic reflow roots enabled?
@@ -7142,11 +7222,7 @@
 - name: media.rdd-process.enabled
   type: RelaxedAtomicBool
 #if defined(XP_WIN)
-#if defined(_ARM64_)
-  value: false
-#else
   value: true
-#endif
 #elif defined(XP_MACOSX)
   value: true
 #elif defined(XP_LINUX) && !defined(ANDROID)
@@ -7154,6 +7230,11 @@
 #else
   value: false
 #endif
+  mirror: always
+
+- name: media.rdd-retryonfailure.enabled
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 - name: media.rdd-process.startup_timeout_ms
@@ -7171,12 +7252,12 @@
 #ifdef MOZ_FFVPX
 - name: media.rdd-ffvpx.enabled
   type: RelaxedAtomicBool
-#if defined(XP_WIN) && !defined(_ARM64_)
-  value: @IS_NIGHTLY_BUILD@
+#if defined(XP_WIN)
+  value: true
 #elif defined(XP_MACOSX)
-  value: @IS_NIGHTLY_BUILD@
+  value: true
 #elif defined(XP_LINUX) && !defined(ANDROID)
-  value: @IS_NIGHTLY_BUILD@
+  value: true
 #else
   value: false
 #endif
@@ -7186,29 +7267,25 @@
 #ifdef MOZ_WMF
 - name: media.rdd-wmf.enabled
   type: RelaxedAtomicBool
-#if defined(XP_WIN) && !defined(_ARM64_)
-  value: @IS_NIGHTLY_BUILD@
-#else
-  value: false
-#endif
+  value: true
   mirror: always
 #endif
 
 #ifdef MOZ_APPLEMEDIA
 - name: media.rdd-applemedia.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 #endif
 
 - name: media.rdd-theora.enabled
   type: RelaxedAtomicBool
-#if defined(XP_LINUX) && !defined(ANDROID)
-  value: @IS_NIGHTLY_BUILD@
-#elif defined(XP_WIN) && !defined(_ARM64_)
-  value: @IS_NIGHTLY_BUILD@
+#if defined(XP_WIN)
+  value: true
 #elif defined(XP_MACOSX)
-  value: @IS_NIGHTLY_BUILD@
+  value: true
+#elif defined(XP_LINUX) && !defined(ANDROID)
+  value: true
 #else
   value: false
 #endif
@@ -7216,11 +7293,11 @@
 
 - name: media.rdd-vorbis.enabled
   type: RelaxedAtomicBool
-#if defined(XP_LINUX) && !defined(ANDROID)
+#if defined(XP_WIN)
   value: true
 #elif defined(XP_MACOSX)
   value: true
-#elif defined(XP_WIN) && !defined(_ARM64_)
+#elif defined(XP_LINUX) && !defined(ANDROID)
   value: true
 #else
   value: false
@@ -7229,12 +7306,12 @@
 
 - name: media.rdd-vpx.enabled
   type: RelaxedAtomicBool
-#if defined(XP_LINUX) && !defined(ANDROID)
-  value: @IS_NIGHTLY_BUILD@
-#elif defined(XP_WIN) && !defined(_ARM64_)
-  value: @IS_NIGHTLY_BUILD@
+#if defined(XP_WIN)
+  value: true
 #elif defined(XP_MACOSX)
-  value: @IS_NIGHTLY_BUILD@
+  value: true
+#elif defined(XP_LINUX) && !defined(ANDROID)
+  value: true
 #else
   value: false
 #endif
@@ -7242,11 +7319,11 @@
 
 - name: media.rdd-wav.enabled
   type: RelaxedAtomicBool
-#if defined(XP_LINUX) && !defined(ANDROID)
-  value: true
-#elif defined(XP_WIN) && !defined(_ARM64_)
+#if defined(XP_WIN)
   value: true
 #elif defined(XP_MACOSX)
+  value: true
+#elif defined(XP_LINUX) && !defined(ANDROID)
   value: true
 #else
   value: false
@@ -7255,11 +7332,11 @@
 
 - name: media.rdd-opus.enabled
   type: RelaxedAtomicBool
-#if defined(XP_LINUX) && !defined(ANDROID)
-  value: true
-#elif defined(XP_WIN) && !defined(_ARM64_)
+#if defined(XP_WIN)
   value: true
 #elif defined(XP_MACOSX)
+  value: true
+#elif defined(XP_LINUX) && !defined(ANDROID)
   value: true
 #else
   value: false
@@ -8433,10 +8510,10 @@
   value: false
   mirror: always
 
-# Enables `<link rel="preload">` tag and `Link: rel=preload` respose header handling.
+# Enables `<link rel="preload">` tag and `Link: rel=preload` response header handling.
 - name: network.preload
   type: RelaxedAtomicBool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 # Whether to use the network process or not
@@ -8538,12 +8615,6 @@
 - name: network.http.stale_while_revalidate.enabled
   type: RelaxedAtomicBool
   value: true
-  mirror: always
-
-# Whether to use sni encryption.
-- name: network.security.esni.enabled
-  type: bool
-  value: false
   mirror: always
 
 # Whether to cache SSL resumption tokens in necko.
@@ -8770,6 +8841,13 @@
   value: false
   mirror: always
 
+# When a h3 transaction is inserted in the pending queue, the time (ms) we wait
+# to create a TCP backup connection.
+- name: network.http.http3.backup_timer_delay
+  type: RelaxedAtomicUint32
+  value: 100
+  mirror: always
+
 # When true, a http request will be upgraded to https when HTTPS RR is
 # available.
 - name: network.dns.upgrade_with_https_rr
@@ -8981,6 +9059,12 @@
 - name: print.tab_modal.enabled
   type: RelaxedAtomicBool
   value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: always
+
+# Whether the pages per sheet print setting is enabled.
+- name: print.pages_per_sheet.enabled
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 # Whether we allow the print progress dialog to show up.
@@ -9336,7 +9420,7 @@
 
 - name: privacy.partition.network_state
   type: RelaxedAtomicBool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 - name: privacy.partition.bloburl_per_agent_cluster
@@ -10397,7 +10481,7 @@
 #ifdef ANDROID
   value: 400
 #else
-  value: 300
+  value: 500
 #endif
   mirror: always
 

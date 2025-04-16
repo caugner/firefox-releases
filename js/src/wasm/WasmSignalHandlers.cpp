@@ -19,7 +19,6 @@
 #include "wasm/WasmSignalHandlers.h"
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/ScopeExit.h"
 #include "mozilla/ThreadLocal.h"
 
 #include "threading/Thread.h"
@@ -1125,12 +1124,12 @@ static bool EnsureLazyProcessSignalHandlers() {
 }
 
 bool wasm::EnsureFullSignalHandlers(JSContext* cx) {
-  if (cx->wasmTriedToInstallSignalHandlers) {
-    return cx->wasmHaveSignalHandlers;
+  if (cx->wasm().triedToInstallSignalHandlers) {
+    return cx->wasm().haveSignalHandlers;
   }
 
-  cx->wasmTriedToInstallSignalHandlers = true;
-  MOZ_RELEASE_ASSERT(!cx->wasmHaveSignalHandlers);
+  cx->wasm().triedToInstallSignalHandlers = true;
+  MOZ_RELEASE_ASSERT(!cx->wasm().haveSignalHandlers);
 
   {
     auto eagerInstallState = sEagerInstallState.lock();
@@ -1164,7 +1163,7 @@ bool wasm::EnsureFullSignalHandlers(JSContext* cx) {
   }
 #endif
 
-  cx->wasmHaveSignalHandlers = true;
+  cx->wasm().haveSignalHandlers = true;
   return true;
 }
 
