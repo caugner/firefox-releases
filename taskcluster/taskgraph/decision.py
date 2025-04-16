@@ -46,7 +46,7 @@ PER_PROJECT_PARAMETERS = {
     },
 
     'cedar': {
-        'target_tasks_method': 'cedar_tasks',
+        'target_tasks_method': 'default',
     },
 
     'oak': {
@@ -133,6 +133,17 @@ def full_task_graph_to_runnable_jobs(full_task_json):
     return runnable_jobs
 
 
+def try_syntax_from_message(message):
+    """
+    Parse the try syntax out of a commit message, returning '' if none is
+    found.
+    """
+    try_idx = message.find('try:')
+    if try_idx == -1:
+        return ''
+    return message[try_idx:].split('\n', 1)[0]
+
+
 def taskgraph_decision(options, parameters=None):
     """
     Run the decision task.  This function implements `mach taskgraph decision`,
@@ -177,7 +188,7 @@ def taskgraph_decision(options, parameters=None):
     write_artifact('label-to-taskid.json', tgg.label_to_taskid)
 
     # actually create the graph
-    create_tasks(tgg.morphed_task_graph, tgg.label_to_taskid, tgg.parameters)
+    create_tasks(tgg.graph_config, tgg.morphed_task_graph, tgg.label_to_taskid, tgg.parameters)
 
 
 def get_decision_parameters(config, options):
@@ -199,6 +210,7 @@ def get_decision_parameters(config, options):
         'owner',
         'level',
         'target_tasks_method',
+        'tasks_for',
     ] if n in options}
 
     for n in (
@@ -209,6 +221,8 @@ def get_decision_parameters(config, options):
     ):
         if n in options and options[n] is not None:
             parameters[n] = options[n]
+
+    commit_message = get_hg_commit_message(os.path.join(GECKO, product_dir))
 
     # Define default filter list, as most configurations shouldn't need
     # custom filters.
@@ -221,9 +235,10 @@ def get_decision_parameters(config, options):
     parameters['build_number'] = 1
     parameters['version'] = get_version(product_dir)
     parameters['app_version'] = get_app_version(product_dir)
-    parameters['message'] = get_hg_commit_message(GECKO)
+    parameters['message'] = try_syntax_from_message(commit_message)
     parameters['hg_branch'] = get_hg_revision_branch(GECKO, revision=parameters['head_rev'])
     parameters['next_version'] = None
+    parameters['phabricator_diff'] = None
     parameters['release_type'] = ''
     parameters['release_eta'] = ''
     parameters['release_enable_partners'] = False
@@ -261,6 +276,12 @@ def get_decision_parameters(config, options):
     # `target_tasks_method` has higher precedence than `project` parameters
     if options.get('target_tasks_method'):
         parameters['target_tasks_method'] = options['target_tasks_method']
+
+    # ..but can be overridden by the commit message: if it contains the special
+    # string "DONTBUILD" and this is an on-push decision task, then use the
+    # special 'nothing' target task method.
+    if 'DONTBUILD' in commit_message and options['tasks_for'] == 'hg-push':
+        parameters['target_tasks_method'] = 'nothing'
 
     # If the target method is nightly, we should build partials. This means
     # knowing what has been released previously.
@@ -318,7 +339,7 @@ def set_try_config(parameters, task_config_file):
     else:
         parameters['try_options'] = None
 
-    if parameters['try_mode']:
+    if parameters['try_mode'] == 'try_task_config':
         # The user has explicitly requested a set of jobs, so run them all
         # regardless of optimization.  Their dependencies can be optimized,
         # though.
