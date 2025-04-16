@@ -194,6 +194,10 @@ const char kAboutHomeOriginPrefix[] = "moz-safe-about:home";
 const char kIndexedDBOriginPrefix[] = "indexeddb://";
 const char kResourceOriginPrefix[] = "resource://";
 
+constexpr auto kStorageTelemetryKey = NS_LITERAL_CSTRING("Storage");
+constexpr auto kTempStorageTelemetryKey =
+    NS_LITERAL_CSTRING("TemporaryStorage");
+
 #define INDEXEDDB_DIRECTORY_NAME "indexedDB"
 #define STORAGE_DIRECTORY_NAME "storage"
 #define PERSISTENT_DIRECTORY_NAME "persistent"
@@ -677,6 +681,7 @@ class DirectoryLockImpl final : public DirectoryLock {
   // registraction/unregistration from updating origin access time, etc.
   const bool mInternal;
 
+  bool mRegistered;
   bool mInvalidated;
 
  public:
@@ -706,13 +711,17 @@ class DirectoryLockImpl final : public DirectoryLock {
 
   bool IsInternal() const { return mInternal; }
 
+  void SetRegistered(bool aRegistered) { mRegistered = aRegistered; }
+
   bool ShouldUpdateLockTable() {
     return !mInternal &&
            mPersistenceType.Value() != PERSISTENCE_TYPE_PERSISTENT;
   }
 
+  bool Overlaps(const DirectoryLockImpl& aLock) const;
+
   // Test whether this DirectoryLock needs to wait for the given lock.
-  bool MustWaitFor(const DirectoryLockImpl& aLock);
+  bool MustWaitFor(const DirectoryLockImpl& aLock) const;
 
   void AddBlockingLock(DirectoryLockImpl* aLock) {
     AssertIsOnOwningThread();
@@ -747,11 +756,23 @@ class DirectoryLockImpl final : public DirectoryLock {
 
   NS_INLINE_DECL_REFCOUNTING(DirectoryLockImpl, override)
 
-  void Log() override;
+  already_AddRefed<DirectoryLock> Specialize(PersistenceType aPersistenceType,
+                                             const nsACString& aGroup,
+                                             const nsACString& aOrigin,
+                                             Client::Type aClientType) const;
+
+  void Log() const;
 
  private:
   ~DirectoryLockImpl();
 };
+
+const DirectoryLockImpl* GetDirectoryLockImpl(
+    const DirectoryLock* aDirectoryLock) {
+  MOZ_ASSERT(aDirectoryLock);
+
+  return static_cast<const DirectoryLockImpl*>(aDirectoryLock);
+}
 
 class QuotaManager::Observer final : public nsIObserver {
   static Observer* sInstance;
@@ -1852,6 +1873,9 @@ StaticRefPtr<QuotaManager> gInstance;
 bool gCreateFailed = false;
 mozilla::Atomic<bool> gShutdown(false);
 
+// Constants for temporary storage limit computing.
+static const uint32_t kDefaultChunkSizeKB = 10 * 1024;
+
 class StorageOperationBase {
  protected:
   struct OriginProps;
@@ -2579,32 +2603,33 @@ nsresult GetBinaryInputStream(nsIFile* aDirectory, const nsAString& aFilename,
 }
 
 // This method computes and returns our best guess for the temporary storage
-// limit (in bytes), based on the amount of space users have free on their hard
-// drive and on given temporary storage usage (also in bytes).
-nsresult GetTemporaryStorageLimit(nsIFile* aDirectory, uint64_t aCurrentUsage,
-                                  uint64_t* aLimit) {
-  // Check for free space on device where temporary storage directory lives.
-  int64_t bytesAvailable;
-  nsresult rv = aDirectory->GetDiskSpaceAvailable(&bytesAvailable);
-  NS_ENSURE_SUCCESS(rv, rv);
+// limit (in bytes), based on available space.
+uint64_t GetTemporaryStorageLimit(uint64_t aAvailableSpaceBytes) {
+  // The fixed limit pref can be used to override temporary storage limit
+  // calculation.
+  if (StaticPrefs::dom_quotaManager_temporaryStorage_fixedLimit() >= 0) {
+    return static_cast<uint64_t>(
+               StaticPrefs::dom_quotaManager_temporaryStorage_fixedLimit()) *
+           1024;
+  }
 
-  NS_ASSERTION(bytesAvailable >= 0, "Negative bytes available?!");
+  uint64_t availableSpaceKB = aAvailableSpaceBytes / 1024;
 
-  uint64_t availableKB =
-      static_cast<uint64_t>((bytesAvailable + aCurrentUsage) / 1024);
-  uint32_t chunkSizeKB =
-      StaticPrefs::dom_quotaManager_temporaryStorage_chunkSize();
+  // Prevent division by zero below.
+  uint32_t chunkSizeKB;
+  if (StaticPrefs::dom_quotaManager_temporaryStorage_chunkSize()) {
+    chunkSizeKB = StaticPrefs::dom_quotaManager_temporaryStorage_chunkSize();
+  } else {
+    chunkSizeKB = kDefaultChunkSizeKB;
+  }
 
   // Grow/shrink in chunkSizeKB units, deliberately, so that in the common case
   // we don't shrink temporary storage and evict origin data every time we
   // initialize.
-  availableKB = (availableKB / chunkSizeKB) * chunkSizeKB;
+  availableSpaceKB = (availableSpaceKB / chunkSizeKB) * chunkSizeKB;
 
   // Allow temporary storage to consume up to half the available space.
-  uint64_t resultKB = availableKB * .50;
-
-  *aLimit = resultKB * 1024;
-  return NS_OK;
+  return availableSpaceKB * .50 * 1024;
 }
 
 }  // namespace
@@ -2667,6 +2692,15 @@ bool RecvShutdownQuotaManager() {
  * Directory lock
  ******************************************************************************/
 
+already_AddRefed<DirectoryLock> DirectoryLock::Specialize(
+    PersistenceType aPersistenceType, const nsACString& aGroup,
+    const nsACString& aOrigin, Client::Type aClientType) const {
+  return GetDirectoryLockImpl(this)->Specialize(aPersistenceType, aGroup,
+                                                aOrigin, aClientType);
+}
+
+void DirectoryLock::Log() const { GetDirectoryLockImpl(this)->Log(); }
+
 DirectoryLockImpl::DirectoryLockImpl(
     QuotaManager* aQuotaManager,
     const Nullable<PersistenceType>& aPersistenceType, const nsACString& aGroup,
@@ -2680,6 +2714,7 @@ DirectoryLockImpl::DirectoryLockImpl(
       mOpenListener(aOpenListener),
       mExclusive(aExclusive),
       mInternal(aInternal),
+      mRegistered(false),
       mInvalidated(false) {
   AssertIsOnOwningThread();
   MOZ_ASSERT(aQuotaManager);
@@ -2704,7 +2739,11 @@ DirectoryLockImpl::~DirectoryLockImpl() {
 
   mBlocking.Clear();
 
-  mQuotaManager->UnregisterDirectoryLock(this);
+  if (mRegistered) {
+    mQuotaManager->UnregisterDirectoryLock(this);
+  }
+
+  MOZ_ASSERT(!mRegistered);
 }
 
 #ifdef DEBUG
@@ -2716,35 +2755,42 @@ void DirectoryLockImpl::AssertIsOnOwningThread() const {
 
 #endif  // DEBUG
 
-bool DirectoryLockImpl::MustWaitFor(const DirectoryLockImpl& aExistingLock) {
+bool DirectoryLockImpl::Overlaps(const DirectoryLockImpl& aLock) const {
   AssertIsOnOwningThread();
 
-  // Waiting is never required if the ops in comparison represent shared locks.
-  if (!aExistingLock.mExclusive && !mExclusive) {
-    return false;
-  }
-
   // If the persistence types don't overlap, the op can proceed.
-  if (!aExistingLock.mPersistenceType.IsNull() && !mPersistenceType.IsNull() &&
-      aExistingLock.mPersistenceType.Value() != mPersistenceType.Value()) {
+  if (!aLock.mPersistenceType.IsNull() && !mPersistenceType.IsNull() &&
+      aLock.mPersistenceType.Value() != mPersistenceType.Value()) {
     return false;
   }
 
   // If the origin scopes don't overlap, the op can proceed.
-  bool match = aExistingLock.mOriginScope.Matches(mOriginScope);
+  bool match = aLock.mOriginScope.Matches(mOriginScope);
   if (!match) {
     return false;
   }
 
   // If the client types don't overlap, the op can proceed.
-  if (!aExistingLock.mClientType.IsNull() && !mClientType.IsNull() &&
-      aExistingLock.mClientType.Value() != mClientType.Value()) {
+  if (!aLock.mClientType.IsNull() && !mClientType.IsNull() &&
+      aLock.mClientType.Value() != mClientType.Value()) {
     return false;
   }
 
   // Otherwise, when all attributes overlap (persistence type, origin scope and
   // client type) the op must wait.
   return true;
+}
+
+bool DirectoryLockImpl::MustWaitFor(const DirectoryLockImpl& aLock) const {
+  AssertIsOnOwningThread();
+
+  // Waiting is never required if the ops in comparison represent shared locks.
+  if (!aLock.mExclusive && !mExclusive) {
+    return false;
+  }
+
+  // Wait if the ops overlap.
+  return Overlaps(aLock);
 }
 
 void DirectoryLockImpl::NotifyOpenListener() {
@@ -2763,7 +2809,59 @@ void DirectoryLockImpl::NotifyOpenListener() {
   mQuotaManager->RemovePendingDirectoryLock(this);
 }
 
-void DirectoryLockImpl::Log() {
+already_AddRefed<DirectoryLock> DirectoryLockImpl::Specialize(
+    PersistenceType aPersistenceType, const nsACString& aGroup,
+    const nsACString& aOrigin, Client::Type aClientType) const {
+  AssertIsOnOwningThread();
+  MOZ_ASSERT(aPersistenceType != PERSISTENCE_TYPE_INVALID);
+  MOZ_ASSERT(!aGroup.IsEmpty());
+  MOZ_ASSERT(!aOrigin.IsEmpty());
+  MOZ_ASSERT(aClientType < Client::TypeMax());
+  MOZ_ASSERT(!mOpenListener);
+  MOZ_ASSERT(mBlockedOn.IsEmpty());
+
+  if (NS_WARN_IF(mExclusive)) {
+    return nullptr;
+  }
+
+  RefPtr<DirectoryLockImpl> lock = new DirectoryLockImpl(
+      mQuotaManager, Nullable<PersistenceType>(aPersistenceType), aGroup,
+      OriginScope::FromOrigin(aOrigin), Nullable<Client::Type>(aClientType),
+      /* aExclusive */ false, mInternal, /* aOpenListener */ nullptr);
+
+  if (NS_WARN_IF(!Overlaps(*lock))) {
+    return nullptr;
+  }
+
+#ifdef DEBUG
+  for (uint32_t index = mQuotaManager->mDirectoryLocks.Length(); index > 0;
+       index--) {
+    DirectoryLockImpl* existingLock = mQuotaManager->mDirectoryLocks[index - 1];
+    if (existingLock != this && !existingLock->MustWaitFor(*this)) {
+      MOZ_ASSERT(!existingLock->MustWaitFor(*lock));
+    }
+  }
+#endif
+
+  for (const auto& blockedLock : mBlocking) {
+    MOZ_ASSERT(blockedLock);
+
+    if (blockedLock->MustWaitFor(*lock)) {
+      lock->AddBlockingLock(blockedLock);
+      blockedLock->AddBlockedOnLock(lock);
+    }
+  }
+
+  mQuotaManager->RegisterDirectoryLock(lock);
+
+  if (mInvalidated) {
+    lock->Invalidate();
+  }
+
+  return lock.forget();
+}
+
+void DirectoryLockImpl::Log() const {
   AssertIsOnOwningThread();
 
   if (!QM_LOG_TEST()) {
@@ -3335,6 +3433,9 @@ QuotaManager::QuotaManager()
     : mQuotaMutex("QuotaManager.mQuotaMutex"),
       mTemporaryStorageLimit(0),
       mTemporaryStorageUsage(0),
+      mNextDirectoryLockId(0),
+      mStorageInitializationAttempted(false),
+      mTemporaryStorageInitializationAttempted(false),
       mTemporaryStorageInitialized(false),
       mCacheUsable(false) {
   AssertIsOnOwningThread();
@@ -3525,6 +3626,8 @@ void QuotaManager::RegisterDirectoryLock(DirectoryLockImpl* aLock) {
     }
     array->AppendElement(aLock);
   }
+
+  aLock->SetRegistered(true);
 }
 
 void QuotaManager::UnregisterDirectoryLock(DirectoryLockImpl* aLock) {
@@ -3558,6 +3661,8 @@ void QuotaManager::UnregisterDirectoryLock(DirectoryLockImpl* aLock) {
       }
     }
   }
+
+  aLock->SetRegistered(false);
 }
 
 void QuotaManager::RemovePendingDirectoryLock(DirectoryLockImpl* aLock) {
@@ -4299,8 +4404,11 @@ nsresult QuotaManager::LoadQuota() {
 #endif
   }
 
+  const auto now = TimeStamp::Now();
   Telemetry::AccumulateTimeDelta(Telemetry::QM_REPOSITORIES_INITIALIZATION_TIME,
-                                 startTime, TimeStamp::Now());
+                                 startTime, now);
+  Telemetry::AccumulateTimeDelta(
+      Telemetry::QM_REPOSITORIES_INITIALIZATION_TIME_V2, startTime, now);
 
   if (mCacheUsable) {
     rv = InvalidateCache(mStorageConnection);
@@ -4978,13 +5086,6 @@ nsresult QuotaManager::InitializeOrigin(PersistenceType aPersistenceType,
 
       UNKNOWN_FILE_WARNING(leafName);
       REPORT_TELEMETRY_INIT_ERR(kQuotaInternalError, Ori_UnexpectedFile);
-
-#ifdef NIGHTLY_BUILD
-      Telemetry::ScalarSetMaximum(
-          Telemetry::ScalarID::QM_ORIGIN_DIRECTORY_UNEXPECTED_FILENAME,
-          leafName, 1);
-#endif
-
       RECORD_IN_NIGHTLY(statusKeeper, NS_ERROR_UNEXPECTED);
       CONTINUE_IN_NIGHTLY_RETURN_IN_OTHERS(NS_ERROR_UNEXPECTED);
     }
@@ -6130,8 +6231,21 @@ nsresult QuotaManager::EnsureStorageIsInitialized() {
   AssertIsOnIOThread();
 
   if (mStorageConnection) {
+    MOZ_ASSERT(mStorageInitializationAttempted);
     return NS_OK;
   }
+
+  auto autoReportTelemetry = MakeScopeExit([&]() {
+    Telemetry::Accumulate(Telemetry::QM_FIRST_INITIALIZATION_ATTEMPT,
+                          kStorageTelemetryKey,
+                          static_cast<uint32_t>(!!mStorageConnection));
+  });
+
+  if (mStorageInitializationAttempted) {
+    autoReportTelemetry.release();
+  }
+
+  mStorageInitializationAttempted = true;
 
   nsCOMPtr<nsIFile> storageFile;
   nsresult rv = NS_NewLocalFile(mBasePath, false, getter_AddRefs(storageFile));
@@ -6689,34 +6803,51 @@ nsresult QuotaManager::EnsureTemporaryStorageIsInitialized() {
   MOZ_ASSERT(mStorageConnection);
 
   if (mTemporaryStorageInitialized) {
+    MOZ_ASSERT(mTemporaryStorageInitializationAttempted);
     return NS_OK;
   }
 
+  auto autoReportTelemetry = MakeScopeExit([&]() {
+    Telemetry::Accumulate(Telemetry::QM_FIRST_INITIALIZATION_ATTEMPT,
+                          kTempStorageTelemetryKey,
+                          static_cast<uint32_t>(mTemporaryStorageInitialized));
+  });
+
+  if (mTemporaryStorageInitializationAttempted) {
+    autoReportTelemetry.release();
+  }
+
+  mTemporaryStorageInitializationAttempted = true;
+
   nsresult rv;
 
-  if (StaticPrefs::dom_quotaManager_temporaryStorage_fixedLimit() >= 0) {
-    mTemporaryStorageLimit =
-        static_cast<uint64_t>(
-            StaticPrefs::dom_quotaManager_temporaryStorage_fixedLimit()) *
-        1024;
-  } else {
-    nsCOMPtr<nsIFile> storageDir =
-        do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-
-    rv = storageDir->InitWithPath(GetStoragePath());
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-
-    rv = GetTemporaryStorageLimit(storageDir, mTemporaryStorageUsage,
-                                  &mTemporaryStorageLimit);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+  nsCOMPtr<nsIFile> storageDir =
+      do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
   }
+
+  rv = storageDir->InitWithPath(GetStoragePath());
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  // The storage directory must exist before calling GetDiskSpaceAvailable.
+  bool dummy;
+  rv = EnsureDirectory(storageDir, &dummy);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  // Check for available disk space users have on their device where storage
+  // directory lives.
+  int64_t diskSpaceAvailable;
+  rv = storageDir->GetDiskSpaceAvailable(&diskSpaceAvailable);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  MOZ_ASSERT(diskSpaceAvailable >= 0);
 
   rv = LoadQuota();
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -6724,6 +6855,14 @@ nsresult QuotaManager::EnsureTemporaryStorageIsInitialized() {
   }
 
   mTemporaryStorageInitialized = true;
+
+  // Available disk space shouldn't be used directly for temporary storage
+  // limit calculation since available disk space is affected by existing data
+  // stored in temporary storage. So we need to increase it by the temporary
+  // storage size (that has been calculated in LoadQuota) before passing to
+  // GetTemporaryStorageLimit..
+  mTemporaryStorageLimit = GetTemporaryStorageLimit(
+      /* aAvailableSpaceBytes */ diskSpaceAvailable + mTemporaryStorageUsage);
 
   CheckTemporaryStorageLimits();
 
@@ -6746,9 +6885,12 @@ void QuotaManager::ShutdownStorage() {
       mTemporaryStorageInitialized = false;
     }
 
+    mTemporaryStorageInitializationAttempted = false;
+
     ReleaseIOThreadObjects();
 
     mStorageConnection = nullptr;
+    mStorageInitializationAttempted = false;
   }
 }
 
@@ -7190,9 +7332,7 @@ bool QuotaManager::ParseOrigin(const nsACString& aOrigin, nsCString& aSpec,
 }
 
 // static
-void QuotaManager::InvalidateQuotaCache() {
-  gInvalidateQuotaCache = true;
-}
+void QuotaManager::InvalidateQuotaCache() { gInvalidateQuotaCache = true; }
 
 uint64_t QuotaManager::LockedCollectOriginsForEviction(
     uint64_t aMinSizeToBeFreed, nsTArray<RefPtr<DirectoryLockImpl>>& aLocks) {
