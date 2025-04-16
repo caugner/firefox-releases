@@ -6,9 +6,9 @@
 
 /**
  * This module exports a provider that offers input history (aka adaptive
- * history) results. These results map typed search string to history results.
- * That way, a user can find a particular history result again by typing the
- * same string.
+ * history) results. These results map typed search strings to Urlbar results.
+ * That way, a user can find a particular result again by typing the same
+ * string.
  */
 
 var EXPORTED_SYMBOLS = ["UrlbarProviderInputHistory"];
@@ -20,6 +20,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   UrlbarProvider: "resource:///modules/UrlbarUtils.jsm",
+  UrlbarProviderOpenTabs: "resource:///modules/UrlbarProviderOpenTabs.jsm",
   UrlbarResult: "resource:///modules/UrlbarResult.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
 });
@@ -96,7 +97,12 @@ class ProviderInputHistory extends UrlbarProvider {
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
   isActive(queryContext) {
-    return UrlbarPrefs.get("suggest.history") && !queryContext.searchMode;
+    return (
+      (UrlbarPrefs.get("suggest.history") ||
+        UrlbarPrefs.get("suggest.bookmark") ||
+        UrlbarPrefs.get("suggest.openpage")) &&
+      !queryContext.searchMode
+    );
   }
 
   /**
@@ -150,10 +156,14 @@ class ProviderInputHistory extends UrlbarProvider {
         continue;
       }
 
-      let resultSource = UrlbarUtils.RESULT_SOURCE.HISTORY;
+      let resultSource;
       if (bookmarked && UrlbarPrefs.get("suggest.bookmark")) {
         resultSource = UrlbarUtils.RESULT_SOURCE.BOOKMARKS;
         resultTitle = bookmarkTitle || historyTitle;
+      } else if (UrlbarPrefs.get("suggest.history")) {
+        resultSource = UrlbarUtils.RESULT_SOURCE.HISTORY;
+      } else {
+        continue;
       }
 
       let resultTags = tags
@@ -197,7 +207,10 @@ class ProviderInputHistory extends UrlbarProvider {
         search_string: queryContext.searchString,
         matchBehavior: Ci.mozIPlacesAutoComplete.MATCH_ANYWHERE,
         searchBehavior: UrlbarPrefs.get("defaultBehavior"),
-        userContextId: queryContext.userContextId,
+        userContextId: UrlbarProviderOpenTabs.getUserContextIdForOpenPagesTable(
+          queryContext.userContextId,
+          queryContext.isPrivate
+        ),
         maxResults: queryContext.maxResults,
       },
     ];

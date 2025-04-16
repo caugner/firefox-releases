@@ -161,6 +161,17 @@ class ProviderQuickSuggest extends UrlbarProvider {
     addCallback(this, result);
 
     this._addedResultInLastQuery = true;
+
+    // Record the Nimbus "exposure" event. Note that `recordExposureEvent` will
+    // make sure only one event gets recorded even it is called multiple times
+    // in the same browser session. However, it's an expensive call regardless,
+    // so do it only once per browser session and do it on idle.
+    if (!this._recordedExposureEvent) {
+      this._recordedExposureEvent = true;
+      Services.tm.idleDispatchToMainThread(() =>
+        NimbusFeatures.urlbar.recordExposureEvent()
+      );
+    }
   }
 
   /**
@@ -242,10 +253,14 @@ class ProviderQuickSuggest extends UrlbarProvider {
         sponsoredBlockId,
       } = result.payload;
       // impression
+      //
+      // Set `search_query` and `matched_keywords` to empty string, both of
+      // them are required fields for the impression, so we need to keep them
+      // in the payload. See bug 1725492 for more details.
       PartnerLinkAttribution.sendContextualServicesPing(
         {
-          search_query: details.searchString,
-          matched_keywords: details.searchString,
+          search_query: "",
+          matched_keywords: "",
           advertiser: sponsoredAdvertiser,
           block_id: sponsoredBlockId,
           position: telemetryResultIndex,
@@ -298,6 +313,7 @@ class ProviderQuickSuggest extends UrlbarProvider {
       TELEMETRY_EVENT_CATEGORY,
       UrlbarPrefs.get("quickSuggestEnabled")
     );
+
     // QuickSuggest is only loaded by the UrlBar on it's first query, however
     // there is work it can preload when idle instead of starting it on user
     // input. Referencing it here will trigger its import and init.
