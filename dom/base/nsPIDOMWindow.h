@@ -225,12 +225,41 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   }
 
   /**
-   * Call this to indiate that some node (this window, its document,
-   * or content in that document) has a text event listener in the default
-   * group.
+   * Call this to check whether some node (this window, its document,
+   * or content in that document) has a beforeinput event listener.
+   * Returing false may be wrong if some nodes have come from another document
+   * with `Document.adoptNode`.
    */
-  void SetHasTextEventListenerInDefaultGroup() {
-    mMayHaveTextEventListenerInDefaultGroup = true;
+  bool HasBeforeInputEventListenersForTelemetry() const {
+    return mMayHaveBeforeInputEventListenerForTelemetry;
+  }
+
+  /**
+   * Call this to indicate that some node (this window, its document,
+   * or content in that document) has a beforeinput event listener.
+   */
+  void SetHasBeforeInputEventListenersForTelemetry() {
+    mMayHaveBeforeInputEventListenerForTelemetry = true;
+  }
+
+  /**
+   * Call this to check whether some node (The document, or content in the
+   * document) has been observed by web apps with a mutation observer.
+   * (i.e., `MutationObserver.observe()` called by chrome script and addon's
+   * script does not make this returns true).
+   * Returing false may be wrong if some nodes have come from another document
+   * with `Document.adoptNode`.
+   */
+  bool MutationObserverHasObservedNodeForTelemetry() const {
+    return mMutationObserverHasObservedNodeForTelemetry;
+  }
+
+  /**
+   * Call this to indicate that some node (The document, or content in the
+   * document) is observed by web apps with a mutation observer.
+   */
+  void SetMutationObserverHasObservedNodeForTelemetry() {
+    mMutationObserverHasObservedNodeForTelemetry = true;
   }
 
   // Sets the event for window.event. Does NOT take ownership, so
@@ -597,9 +626,10 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   bool mMayHaveSelectionChangeEventListener;
   bool mMayHaveMouseEnterLeaveEventListener;
   bool mMayHavePointerEnterLeaveEventListener;
-  // Only for telemetry probe so that you can remove this after the
-  // telemetry stops working.
-  bool mMayHaveTextEventListenerInDefaultGroup;
+  // Only used for telemetry probes.  This may be wrong if some nodes have
+  // come from another document with `Document.adoptNode`.
+  bool mMayHaveBeforeInputEventListenerForTelemetry;
+  bool mMutationObserverHasObservedNodeForTelemetry;
 
   // Our inner window's outer window.
   nsCOMPtr<nsPIDOMWindowOuter> mOuterWindow;

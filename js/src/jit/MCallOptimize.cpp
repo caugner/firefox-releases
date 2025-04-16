@@ -13,10 +13,10 @@
 #include "builtin/MapObject.h"
 #include "builtin/String.h"
 #include "builtin/TestingFunctions.h"
-#include "builtin/TypedObject.h"
 #include "jit/BaselineInspector.h"
 #include "jit/InlinableNatives.h"
 #include "jit/IonBuilder.h"
+#include "jit/JitRealm.h"
 #include "jit/Lowering.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
@@ -944,7 +944,7 @@ IonBuilder::InliningResult IonBuilder::inlineArrayPush(CallInfo& callInfo) {
 
     // Restore the stack, such that resume points are created with the stack
     // as it was before the call.
-    if (!callInfo.pushPriorCallStack(&mirGen_, current)) {
+    if (!callInfo.pushPriorCallStack(current)) {
       return abort(AbortReason::Alloc);
     }
   }
@@ -3959,10 +3959,9 @@ IonBuilder::InliningResult IonBuilder::inlineWasmCall(CallInfo& callInfo,
 
   // If there are too many arguments, don't inline (we won't be able to store
   // the arguments in the LIR node).
-  static constexpr size_t MaxNumInlinedArgs = 8;
-  static_assert(MaxNumInlinedArgs <= MaxNumLInstructionOperands,
+  static_assert(wasm::MaxArgsForJitInlineCall <= MaxNumLInstructionOperands,
                 "inlined arguments can all be LIR operands");
-  if (sig.args().length() > MaxNumInlinedArgs) {
+  if (sig.args().length() > wasm::MaxArgsForJitInlineCall) {
     return InliningStatus_NotInlined;
   }
 

@@ -8,8 +8,9 @@ use super::super::{Connection, FixedConnectionIdManager};
 use super::{connect, default_client, default_server, exchange_ticket};
 use crate::events::ConnectionEvent;
 use crate::frame::StreamType;
-use crate::{Error, QuicVersion};
+use crate::{CongestionControlAlgorithm, Error, QuicVersion};
 
+use neqo_common::event::Provider;
 use neqo_crypto::{AllowZeroRtt, AntiReplay};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -26,7 +27,7 @@ fn zero_rtt_negotiate() {
     let token = exchange_ticket(&mut client, &mut server, now());
     let mut client = default_client();
     client
-        .enable_resumption(now(), &token[..])
+        .enable_resumption(now(), token)
         .expect("should set token");
     let mut server = default_server();
     connect(&mut client, &mut server);
@@ -43,7 +44,7 @@ fn zero_rtt_send_recv() {
     let token = exchange_ticket(&mut client, &mut server, now());
     let mut client = default_client();
     client
-        .enable_resumption(now(), &token[..])
+        .enable_resumption(now(), token)
         .expect("should set token");
     let mut server = default_server();
 
@@ -83,7 +84,7 @@ fn zero_rtt_send_coalesce() {
     let token = exchange_ticket(&mut client, &mut server, now());
     let mut client = default_client();
     client
-        .enable_resumption(now(), &token[..])
+        .enable_resumption(now(), token)
         .expect("should set token");
     let mut server = default_server();
 
@@ -126,12 +127,13 @@ fn zero_rtt_send_reject() {
     let token = exchange_ticket(&mut client, &mut server, now());
     let mut client = default_client();
     client
-        .enable_resumption(now(), &token[..])
+        .enable_resumption(now(), token)
         .expect("should set token");
     let mut server = Connection::new_server(
         test_fixture::DEFAULT_KEYS,
         test_fixture::DEFAULT_ALPN,
         Rc::new(RefCell::new(FixedConnectionIdManager::new(10))),
+        &CongestionControlAlgorithm::NewReno,
         QuicVersion::default(),
     )
     .unwrap();

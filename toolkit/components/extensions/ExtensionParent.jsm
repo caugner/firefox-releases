@@ -306,7 +306,7 @@ const ProxyMessenger = {
   getTopBrowsingContextId(tabId) {
     // If a tab alredy has content scripts, no need to check private browsing.
     let tab = apiManager.global.tabTracker.getTab(tabId, null);
-    if ((tab.browser || tab).getAttribute("pending") === "true") {
+    if (!tab || (tab.browser || tab).getAttribute("pending") === "true") {
       // No receivers in discarded tabs, so bail early to keep the browser lazy.
       throw new ExtensionError(ERROR_NO_RECEIVERS);
     }
@@ -681,7 +681,7 @@ class DevToolsExtensionPageContextParent extends ExtensionPageContextParent {
     if (!this._currentDevToolsTarget) {
       if (!this._pendingWatchTargetsPromise) {
         // When _onTargetAvailable is called, it will create a new target,
-        // via DevToolsShim.createTargetForTab. If this function is called multiple times
+        // via DevToolsShim.createDescriptorForTab. If this function is called multiple times
         // before this._currentDevToolsTarget is populated, we don't want to create X
         // new, duplicated targets, so we store the Promise returned by watchTargets, in
         // order to properly wait on subsequent calls.
@@ -735,10 +735,17 @@ class DevToolsExtensionPageContextParent extends ExtensionPageContextParent {
       return;
     }
 
-    this._currentDevToolsTarget = await DevToolsShim.createTargetForTab(
+    const descriptorFront = await DevToolsShim.createDescriptorForTab(
       targetFront.localTab
     );
-    this._currentDevToolsTarget.isDevToolsExtensionContext = true;
+
+    // Update the TabDescriptor `isDevToolsExtensionContext` flag.
+    // This is a duplicated target, attached to no toolbox, DevTools needs to
+    // handle it differently compared to a regular top-level target.
+    descriptorFront.isDevToolsExtensionContext = true;
+
+    this._currentDevToolsTarget = await descriptorFront.getTarget();
+
     await this._currentDevToolsTarget.attach();
   }
 

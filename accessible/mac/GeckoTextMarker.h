@@ -39,11 +39,8 @@ class GeckoTextMarker final {
 
   bool Previous();
 
-  // Return a word range left of the given offset.
-  GeckoTextMarkerRange LeftWordRange();
-
-  // Return a word range right of the given offset.
-  GeckoTextMarkerRange RightWordRange();
+  // Return a range with the given type relative to this marker.
+  GeckoTextMarkerRange Range(EWhichRange aRangeType);
 
   AccessibleOrProxy Leaf();
 
@@ -98,6 +95,11 @@ class GeckoTextMarkerRange final {
    * Return screen bounds of range.
    */
   NSValue* Bounds() const;
+
+  /**
+   * Set the current range as the DOM selection.
+   */
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void Select() const;
 
   GeckoTextMarker mStart;
   GeckoTextMarker mEnd;

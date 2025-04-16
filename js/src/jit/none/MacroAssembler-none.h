@@ -7,12 +7,14 @@
 #ifndef jit_none_MacroAssembler_none_h
 #define jit_none_MacroAssembler_none_h
 
-#include "jit/JitRealm.h"
 #include "jit/MoveResolver.h"
 #include "jit/shared/Assembler-shared.h"
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
+
+class CompactBufferReader;
 
 static constexpr Register StackPointer{Registers::invalid_reg};
 static constexpr Register FramePointer{Registers::invalid_reg};
@@ -587,7 +589,7 @@ class MacroAssemblerNone : public Assembler {
   void convertUInt32ToFloat32(Register, FloatRegister) { MOZ_CRASH(); }
   void incrementInt32Value(Address) { MOZ_CRASH(); }
   void ensureDouble(ValueOperand, FloatRegister, Label*) { MOZ_CRASH(); }
-  void handleFailureWithHandlerTail(void*) { MOZ_CRASH(); }
+  void handleFailureWithHandlerTail(Label*) { MOZ_CRASH(); }
 
   void buildFakeExitFrame(Register, uint32_t*) { MOZ_CRASH(); }
   bool buildOOLFakeExitFrame(void*) { MOZ_CRASH(); }

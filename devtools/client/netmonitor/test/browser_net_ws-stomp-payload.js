@@ -4,7 +4,8 @@
 "use strict";
 
 /**
- * Test that WS connection is established successfully and the truncated payload is correct.
+ * Test that WebSocket payloads containing a STOMP formatted message are parsed
+ * correctly and displayed in a user friendly way
  */
 
 add_task(async function() {
@@ -21,12 +22,14 @@ add_task(async function() {
   store.dispatch(Actions.batchEnable(false));
 
   // Wait for WS connections to be established + send messages
+  const onNetworkEvents = waitForNetworkEvents(monitor, 1);
   await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
     await content.wrappedJSObject.openConnection(0);
     content.wrappedJSObject.sendData(
       `SEND\nx-firefox-test:true\ncontent-length:17\n\n[{"key":"value"}]\u0000\n`
     );
   });
+  await onNetworkEvents;
 
   const requests = document.querySelectorAll(".request-list-item");
   is(requests.length, 1, "There should be one request");
@@ -59,7 +62,8 @@ add_task(async function() {
   // Wait for next tick to do async stuff (The MessagePayload component uses the async function getMessagePayload)
   await waitForTick();
   const waitForData = waitForDOM(document, "#message-formattedData");
-  EventUtils.sendMouseEvent({ type: "mousedown" }, frames[0]);
+  const [requestFrame] = frames;
+  EventUtils.sendMouseEvent({ type: "mousedown" }, requestFrame);
 
   await waitForData;
 

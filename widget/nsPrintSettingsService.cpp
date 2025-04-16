@@ -48,8 +48,6 @@ static const char kUnwriteableMarginBottom[] =
 static const char kUnwriteableMarginRight[] = "print_unwriteable_margin_right";
 
 // Prefs for Print Options
-static const char kPrintEvenPages[] = "print_evenpages";
-static const char kPrintOddPages[] = "print_oddpages";
 static const char kPrintHeaderStrLeft[] = "print_headerleft";
 static const char kPrintHeaderStrCenter[] = "print_headercenter";
 static const char kPrintHeaderStrRight[] = "print_headerright";
@@ -115,6 +113,11 @@ nsPrintSettingsService::SerializeToPrintData(nsIPrintSettings* aSettings,
   data->printBGColors() = aSettings->GetPrintBGColors();
   data->printBGImages() = aSettings->GetPrintBGImages();
 
+  data->honorPageRuleMargins() = aSettings->GetHonorPageRuleMargins();
+  data->showMarginGuides() = aSettings->GetShowMarginGuides();
+  data->isPrintSelectionRBEnabled() = aSettings->GetIsPrintSelectionRBEnabled();
+  data->printSelectionOnly() = aSettings->GetPrintSelectionOnly();
+
   aSettings->GetPrintRange(&data->printRange());
 
   aSettings->GetTitle(data->title());
@@ -157,8 +160,6 @@ nsPrintSettingsService::SerializeToPrintData(nsIPrintSettings* aSettings,
   aSettings->GetIsInitializedFromPrinter(&data->isInitializedFromPrinter());
   aSettings->GetIsInitializedFromPrefs(&data->isInitializedFromPrefs());
 
-  aSettings->GetPrintOptionsBits(&data->optionFlags());
-
   // Initialize the platform-specific values that don't
   // default-initialize, so that we don't send uninitialized data over
   // IPC (which leads to valgrind warnings, and, for bools, fatal
@@ -166,17 +167,6 @@ nsPrintSettingsService::SerializeToPrintData(nsIPrintSettings* aSettings,
   // data->driverName() default-initializes
   // data->deviceName() default-initializes
   // data->GTKPrintSettings() default-initializes
-  // data->printJobName() default-initializes
-  data->printAllPages() = true;
-  data->mustCollate() = false;
-  // data->disposition() default-initializes
-  data->pagesAcross() = 1;
-  data->pagesDown() = 1;
-  data->printTime() = 0;
-  data->detailedErrorReporting() = true;
-  // data->faxNumber() default-initializes
-  data->addHeaderAndFooter() = false;
-  data->fileNameExtensionHidden() = false;
 
   return NS_OK;
 }
@@ -211,6 +201,10 @@ nsPrintSettingsService::DeserializeToPrintSettings(const PrintData& data,
 
   settings->SetPrintBGColors(data.printBGColors());
   settings->SetPrintBGImages(data.printBGImages());
+  settings->SetHonorPageRuleMargins(data.honorPageRuleMargins());
+  settings->SetShowMarginGuides(data.showMarginGuides());
+  settings->SetIsPrintSelectionRBEnabled(data.isPrintSelectionRBEnabled());
+  settings->SetPrintSelectionOnly(data.printSelectionOnly());
   settings->SetPrintRange(data.printRange());
 
   settings->SetTitle(data.title());
@@ -255,8 +249,6 @@ nsPrintSettingsService::DeserializeToPrintSettings(const PrintData& data,
   settings->SetDuplex(data.duplex());
   settings->SetIsInitializedFromPrinter(data.isInitializedFromPrinter());
   settings->SetIsInitializedFromPrefs(data.isInitializedFromPrefs());
-
-  settings->SetPrintOptionsBits(data.optionFlags());
 
   return NS_OK;
 }
@@ -334,20 +326,12 @@ nsresult nsPrintSettingsService::ReadPrefs(nsIPrintSettings* aPS,
     }
 
     if (gotPaperSizeFromPrefs) {
-      // Impose some limits to purge at least some corrupt pref values to try to
-      // avoid bugs like bug 315687.  Sizes based on telemetry max/mins.
-      constexpr double minInMM = 10.0;
-      constexpr double maxInMM = 4500.0;
-      constexpr double minInIn = minInMM / 25.4;
-      constexpr double maxInIn = 100.0;  // (~2.4m) used since bug 315687
-
-      if ((paperSizeUnit == nsIPrintSettings::kPaperSizeMillimeters &&
-           (paperWidth < minInMM || paperWidth > maxInMM ||
-            paperHeight < minInMM || paperHeight > maxInMM)) ||
-          (paperWidth < minInIn || paperWidth > maxInIn ||
-           paperHeight < minInIn || paperHeight > maxInIn)) {
-        gotPaperSizeFromPrefs = false;
-      }
+      // Bug 315687: Sanity check paper size to avoid paper size values in
+      // mm when the size unit flag is inches. The value 100 is arbitrary
+      // and can be changed.
+      gotPaperSizeFromPrefs =
+          (paperSizeUnit != nsIPrintSettings::kPaperSizeInches) ||
+          (paperWidth < 100.0) || (paperHeight < 100.0);
     }
 
     if (gotPaperSizeFromPrefs) {
@@ -426,15 +410,6 @@ nsresult nsPrintSettingsService::ReadPrefs(nsIPrintSettings* aPS,
                              margin.right, kEdgeRight);
     if (MarginIsOK(margin)) {
       aPS->SetEdgeInTwips(margin);
-    }
-  }
-
-  if (aFlags & nsIPrintSettings::kInitSaveOddEvenPages) {
-    if (GETBOOLPREF(kPrintEvenPages, &b)) {
-      aPS->SetPrintOptions(nsIPrintSettings::kPrintEvenPages, b);
-    }
-    if (GETBOOLPREF(kPrintOddPages, &b)) {
-      aPS->SetPrintOptions(nsIPrintSettings::kPrintOddPages, b);
     }
   }
 
@@ -635,17 +610,6 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
   int32_t iVal;
   double dbl;
 
-  if (aFlags & nsIPrintSettings::kInitSaveOddEvenPages) {
-    if (NS_SUCCEEDED(
-            aPS->GetPrintOptions(nsIPrintSettings::kPrintEvenPages, &b))) {
-      Preferences::SetBool(GetPrefName(kPrintEvenPages, aPrinterName), b);
-    }
-    if (NS_SUCCEEDED(
-            aPS->GetPrintOptions(nsIPrintSettings::kPrintOddPages, &b))) {
-      Preferences::SetBool(GetPrefName(kPrintOddPages, aPrinterName), b);
-    }
-  }
-
   if (aFlags & nsIPrintSettings::kInitSaveHeaderLeft) {
     if (NS_SUCCEEDED(aPS->GetHeaderStrLeft(uStr))) {
       Preferences::SetString(GetPrefName(kPrintHeaderStrLeft, aPrinterName),
@@ -768,25 +732,6 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
 
   // Not Writing Out:
   //   Number of Copies
-
-  return NS_OK;
-}
-
-nsresult nsPrintSettingsService::_CreatePrintSettings(
-    nsIPrintSettings** _retval) {
-  // does not initially ref count
-  nsPrintSettings* printSettings = new nsPrintSettings();
-  NS_ENSURE_TRUE(printSettings, NS_ERROR_OUT_OF_MEMORY);
-
-  NS_ADDREF(*_retval = printSettings);  // ref count
-
-  nsString printerName;
-  nsresult rv = GetLastUsedPrinterName(printerName);
-  NS_ENSURE_SUCCESS(rv, rv);
-  (*_retval)->SetPrinterName(printerName);
-
-  (void)InitPrintSettingsFromPrefs(*_retval, false,
-                                   nsIPrintSettings::kInitSaveAll);
 
   return NS_OK;
 }
@@ -976,19 +921,26 @@ nsresult nsPrintSettingsService::ReadPrefDouble(const char* aPrefId,
 
   nsAutoCString str;
   nsresult rv = Preferences::GetCString(aPrefId, str);
-  if (NS_SUCCEEDED(rv) && !str.IsEmpty()) {
-    aVal = atof(str.get());
+  if (NS_FAILED(rv) || str.IsEmpty()) {
+    return NS_ERROR_NOT_AVAILABLE;
   }
-  return rv;
+
+  double value = str.ToDouble(&rv);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  aVal = value;
+  return NS_OK;
 }
 
 nsresult nsPrintSettingsService::WritePrefDouble(const char* aPrefId,
                                                  double aVal) {
   NS_ENSURE_ARG_POINTER(aPrefId);
 
-  nsPrintfCString str("%6.2f", aVal);
-  NS_ENSURE_TRUE(!str.IsEmpty(), NS_ERROR_FAILURE);
-
+  nsAutoCString str;
+  // We cast to a float so we only get up to 6 digits precision in the prefs.
+  str.AppendFloat((float)aVal);
   return Preferences::SetCString(aPrefId, str);
 }
 

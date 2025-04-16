@@ -656,7 +656,6 @@ fn main() {
         dim,
         args.is_present("rebuild"),
         args.is_present("no_subpixel_aa"),
-        args.is_present("no_picture_caching"),
         args.is_present("verbose"),
         args.is_present("no_scissor"),
         args.is_present("no_batch"),
@@ -693,7 +692,7 @@ fn main() {
             Some("gpu-cache") => png::ReadSurface::GpuCache,
             _ => panic!("Unknown surface argument value")
         };
-        let output_path = subargs.value_of("OUTPUT").map(|s| PathBuf::from(s));
+        let output_path = subargs.value_of("OUTPUT").map(PathBuf::from);
         let reader = YamlFrameReader::new_from_args(subargs);
         png::png(&mut wrench, surface, &mut window, reader, rx.unwrap(), output_path);
     } else if let Some(subargs) = args.subcommand_matches("reftest") {
@@ -844,11 +843,6 @@ fn render<'a>(
                     } => match vk {
                         VirtualKeyCode::Escape => {
                             return winit::ControlFlow::Break;
-                        }
-                        VirtualKeyCode::A => {
-                            debug_flags.toggle(DebugFlags::DISABLE_PICTURE_CACHING);
-                            wrench.api.send_debug_cmd(DebugCommand::SetFlags(debug_flags));
-                            do_render = true;
                         }
                         VirtualKeyCode::B => {
                             debug_flags.toggle(DebugFlags::INVALIDATION_DBG);

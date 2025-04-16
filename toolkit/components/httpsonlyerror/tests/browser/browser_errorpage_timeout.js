@@ -9,21 +9,28 @@
 // actual load gets cancelled.
 requestLongerTimeout(5);
 
-const TEST_PATH = getRootDirectory(gTestPath).replace(
+const TEST_PATH_HTTP = getRootDirectory(gTestPath).replace(
   "chrome://mochitests/content",
   "http://example.com"
 );
-const TIMEOUT_PAGE_URI = TEST_PATH + "file_errorpage_timeout_server.sjs";
+const TEST_PATH_HTTPS = getRootDirectory(gTestPath).replace(
+  "chrome://mochitests/content",
+  "https://example.com"
+);
+const TIMEOUT_PAGE_URI_HTTP =
+  TEST_PATH_HTTP + "file_errorpage_timeout_server.sjs";
+const TIMEOUT_PAGE_URI_HTTPS =
+  TEST_PATH_HTTPS + "file_errorpage_timeout_server.sjs";
 
 add_task(async function avoid_timeout_and_show_https_only_error_page() {
   await BrowserTestUtils.withNewTab("about:blank", async function(browser) {
     let loaded = BrowserTestUtils.browserLoaded(
       browser,
       false, // includeSubFrames = false, no need to includeSubFrames
-      TIMEOUT_PAGE_URI,
+      TIMEOUT_PAGE_URI_HTTPS, // Wait for upgraded page to timeout
       true // maybeErrorPage = true, because we need the error page to appear
     );
-    BrowserTestUtils.loadURI(browser, TIMEOUT_PAGE_URI);
+    BrowserTestUtils.loadURI(browser, TIMEOUT_PAGE_URI_HTTP);
     await loaded;
 
     await SpecialPowers.spawn(browser, [], async function() {
@@ -33,7 +40,7 @@ add_task(async function avoid_timeout_and_show_https_only_error_page() {
       // chaos mode, hence let's rather use an element id for verification
       // that the https-only mode error page has loaded.
       ok(
-        errorPage.includes("about-httpsonly-button-accept-and-continue"),
+        errorPage.includes("about-httpsonly-button-continue-to-site"),
         "Potential time-out in https-only mode should cause error page to appear!"
       );
     });

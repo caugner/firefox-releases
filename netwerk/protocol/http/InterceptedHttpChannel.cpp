@@ -553,6 +553,11 @@ InterceptedHttpChannel::SetupFallbackChannel(const char* aFallbackKey) {
 }
 
 NS_IMETHODIMP
+InterceptedHttpChannel::GetIsAuthChannel(bool* aIsAuthChannel) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
 InterceptedHttpChannel::SetPriority(int32_t aPriority) {
   mPriority = clamped<int32_t>(aPriority, INT16_MIN, INT16_MAX);
   return NS_OK;
@@ -743,7 +748,7 @@ InterceptedHttpChannel::StartSynthesizedResponse(
   // stream here so later code can be simpler.
   mBodyReader = aBody;
   if (!mBodyReader) {
-    rv = NS_NewCStringInputStream(getter_AddRefs(mBodyReader), EmptyCString());
+    rv = NS_NewCStringInputStream(getter_AddRefs(mBodyReader), ""_ns);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -909,7 +914,7 @@ InterceptedHttpChannel::SaveTimeStamps(void) {
   nsCString navigationOrSubresource =
       isNonSubresourceRequest ? "navigation"_ns : "subresource"_ns;
 
-  nsAutoCString subresourceKey(EmptyCString());
+  nsAutoCString subresourceKey(""_ns);
   GetSubresourceTimeStampKey(this, subresourceKey);
 
   // We may have null timestamps if the fetch dispatch runnable was cancelled
@@ -1023,6 +1028,12 @@ InterceptedHttpChannel::OnStartRequest(nsIRequest* aRequest) {
   rv = ComputeCrossOriginOpenerPolicyMismatch();
   if (rv == NS_ERROR_BLOCKED_BY_POLICY) {
     mStatus = NS_ERROR_BLOCKED_BY_POLICY;
+    Cancel(mStatus);
+  }
+
+  rv = ValidateMIMEType();
+  if (NS_FAILED(rv)) {
+    mStatus = rv;
     Cancel(mStatus);
   }
 

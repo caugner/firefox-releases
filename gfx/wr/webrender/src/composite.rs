@@ -200,10 +200,13 @@ pub enum CompositorConfig {
         /// then the operating system supports a form of 'partial present' where
         /// only dirty regions of the framebuffer need to be updated.
         max_partial_present_rects: usize,
-        /// If this is true, WR would draw the previous frame's dirty region when
+        /// If this is true, WR must draw the previous frames' dirty regions when
         /// doing a partial present. This is used for EGL which requires the front
         /// buffer to always be fully consistent.
         draw_previous_partial_present_regions: bool,
+        /// A client provided interface to a compositor handling partial present.
+        /// Required if webrender must query the backbuffer's age.
+        partial_present: Option<Box<dyn PartialPresentCompositor>>,
     },
     /// Use a native OS compositor to draw tiles. This requires clients to implement
     /// the Compositor trait, but can be significantly more power efficient on operating
@@ -229,6 +232,18 @@ impl CompositorConfig {
             }
         }
     }
+
+    pub fn partial_present(&mut self) -> Option<&mut Box<dyn PartialPresentCompositor>> {
+        match self {
+            CompositorConfig::Native { .. } => {
+                None
+            }
+            CompositorConfig::Draw { ref mut partial_present, .. } => {
+                partial_present.as_mut()
+            }
+        }
+    }
+
 }
 
 impl Default for CompositorConfig {
@@ -237,6 +252,7 @@ impl Default for CompositorConfig {
         CompositorConfig::Draw {
             max_partial_present_rects: 0,
             draw_previous_partial_present_regions: false,
+            partial_present: None,
         }
     }
 }
@@ -438,8 +454,6 @@ pub struct CompositeState {
     pub dirty_rects_are_valid: bool,
     /// The kind of compositor for picture cache tiles (e.g. drawn by WR, or OS compositor)
     pub compositor_kind: CompositorKind,
-    /// Picture caching may be disabled dynamically, based on debug flags, pinch zoom etc.
-    pub picture_caching_is_enabled: bool,
     /// The overall device pixel scale, used for tile occlusion conversions.
     global_device_pixel_scale: DevicePixelScale,
     /// List of registered occluders
@@ -453,20 +467,10 @@ impl CompositeState {
     /// during each frame construction and passed to the renderer.
     pub fn new(
         compositor_kind: CompositorKind,
-        mut picture_caching_is_enabled: bool,
         global_device_pixel_scale: DevicePixelScale,
         max_depth_ids: i32,
         dirty_rects_are_valid: bool,
     ) -> Self {
-        // The native compositor interface requires picture caching to work, so
-        // force it here and warn if it was disabled.
-        if let CompositorKind::Native { .. } = compositor_kind {
-            if !picture_caching_is_enabled {
-                warn!("Picture caching cannot be disabled in native compositor config");
-            }
-            picture_caching_is_enabled = true;
-        }
-
         CompositeState {
             opaque_tiles: Vec::new(),
             alpha_tiles: Vec::new(),
@@ -474,7 +478,6 @@ impl CompositeState {
             z_generator: ZBufferIdGenerator::new(max_depth_ids),
             dirty_rects_are_valid,
             compositor_kind,
-            picture_caching_is_enabled,
             global_device_pixel_scale,
             occluders: Occluders::new(),
             descriptor: CompositeDescriptor::empty(),
@@ -999,6 +1002,21 @@ pub trait Compositor {
     fn get_capabilities(&self) -> CompositorCapabilities;
 }
 
+/// Defines an interface to a non-native (application-level) Compositor which handles
+/// partial present. This is required if webrender must query the backbuffer's age.
+/// TODO: Use the Compositor trait for native and non-native compositors, and integrate
+/// this functionality there.
+pub trait PartialPresentCompositor {
+    /// Returns the age of the current backbuffer. This should be used, if
+    /// draw_previous_partial_present_regions is true, to determine the
+    /// region which must be rendered in addition to the current frame's dirty rect.
+    fn get_buffer_age(&self) -> usize;
+    /// Allows webrender to specify the total region that will be rendered to this frame,
+    /// ie the frame's dirty region and some previous frames' dirty regions, if applicable
+    /// (calculated using the buffer age). Must be called before anything has been rendered
+    /// to the main framebuffer.
+    fn set_buffer_damage_region(&mut self, rects: &[DeviceIntRect]);
+}
 
 /// Information about an opaque surface used to occlude tiles.
 #[cfg_attr(feature = "capture", derive(Serialize))]

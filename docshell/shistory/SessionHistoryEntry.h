@@ -35,12 +35,17 @@ class SessionHistoryInfo {
   SessionHistoryInfo() = default;
   SessionHistoryInfo(const SessionHistoryInfo& aInfo) = default;
   SessionHistoryInfo(nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
-  SessionHistoryInfo(const SessionHistoryInfo& aSharedStateFrom, nsIURI* aURI,
-                     const nsID& aDocShellID);
-  SessionHistoryInfo(nsIURI* aURI, const nsID& aDocShellID,
+  SessionHistoryInfo(const SessionHistoryInfo& aSharedStateFrom, nsIURI* aURI);
+  SessionHistoryInfo(const SessionHistoryInfo* aSharedStateFrom, nsIURI* aURI,
+                     const nsID& aDocShellID,
                      nsIPrincipal* aTriggeringPrincipal,
+                     nsIPrincipal* aPrincipalToInherit,
+                     nsIPrincipal* aPartitionedPrincipalToInherit,
                      nsIContentSecurityPolicy* aCsp,
                      const nsACString& aContentType);
+  SessionHistoryInfo(nsIChannel* aChannel, uint32_t aLoadType,
+                     nsIPrincipal* aPartitionedPrincipalToInherit,
+                     nsIContentSecurityPolicy* aCsp);
 
   void Reset(nsIURI* aURI, const nsID& aDocShellID, bool aDynamicCreation,
              nsIPrincipal* aTriggeringPrincipal,
@@ -72,7 +77,10 @@ class SessionHistoryInfo {
     return mScrollRestorationIsManual;
   }
   const nsAString& GetTitle() { return mTitle; }
-  void SetTitle(const nsAString& aTitle) { mTitle = aTitle; }
+  void SetTitle(const nsAString& aTitle) {
+    mTitle = aTitle;
+    MaybeUpdateTitleFromURI();
+  }
 
   const nsAString& GetName() { return mName; }
   void SetName(const nsAString& aName) { mName = aName; }
@@ -107,6 +115,7 @@ class SessionHistoryInfo {
   nsIContentSecurityPolicy* GetCsp() const;
 
   uint32_t GetCacheKey() const;
+  void SetCacheKey(uint32_t aCacheKey);
 
   bool IsSubFrame() const;
 
@@ -115,6 +124,8 @@ class SessionHistoryInfo {
   }
 
   void FillLoadInfo(nsDocShellLoadState& aLoadState) const;
+
+  uint32_t LoadType() { return mLoadType; }
 
  private:
   friend class SessionHistoryEntry;
@@ -140,11 +151,12 @@ class SessionHistoryInfo {
   bool mURIWasModified = false;
   bool mIsSrcdocEntry = false;
   bool mScrollRestorationIsManual = false;
-  bool mPersist = false;
+  bool mPersist = true;
 
   union SharedState {
     SharedState();
     explicit SharedState(const SharedState& aOther);
+    explicit SharedState(const Maybe<const SharedState&>& aOther);
     ~SharedState();
 
     SharedState& operator=(const SharedState& aOther);
@@ -166,6 +178,9 @@ class SessionHistoryInfo {
         : mParent(aParent) {}
     explicit SharedState(UniquePtr<SHEntrySharedState>&& aChild)
         : mChild(std::move(aChild)) {}
+
+    void Init();
+    void Init(const SharedState& aOther);
 
     // In the parent process this holds a strong reference to the refcounted
     // SHEntrySharedParentState. In the child processes this holds an owning
@@ -252,6 +267,7 @@ class SessionHistoryEntry : public nsISHEntry {
   // Get an entry based on LoadingSessionHistoryInfo's mLoadId. Parent process
   // only.
   static SessionHistoryEntry* GetByLoadId(uint64_t aLoadId);
+  static void SetByLoadId(uint64_t aLoadId, SessionHistoryEntry* aEntry);
   static void RemoveLoadId(uint64_t aLoadId);
 
   const nsTArray<RefPtr<SessionHistoryEntry>>& Children() { return mChildren; }

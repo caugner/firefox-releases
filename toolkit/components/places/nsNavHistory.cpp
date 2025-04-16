@@ -924,7 +924,9 @@ nsresult nsNavHistory::CanAddURIToHistory(nsIURI* aURI, bool* aCanAdd) {
       !scheme.EqualsLiteral("imap") && !scheme.EqualsLiteral("javascript") &&
       !scheme.EqualsLiteral("mailbox") && !scheme.EqualsLiteral("moz-anno") &&
       !scheme.EqualsLiteral("news") && !scheme.EqualsLiteral("page-icon") &&
-      !scheme.EqualsLiteral("resource") && !scheme.EqualsLiteral("view-source");
+      !scheme.EqualsLiteral("resource") &&
+      !scheme.EqualsLiteral("view-source") &&
+      !scheme.EqualsLiteral("moz-extension");
 
   return NS_OK;
 }
@@ -1020,8 +1022,8 @@ nsNavHistory::ExecuteQuery(nsINavHistoryQuery* aQuery,
     nsAutoCString queryUri;
     nsresult rv = QueryToQueryString(query, options, queryUri);
     NS_ENSURE_SUCCESS(rv, rv);
-    rootNode = new nsNavHistoryQueryResultNode(EmptyCString(), 0, queryUri,
-                                               query, options);
+    rootNode =
+        new nsNavHistoryQueryResultNode(""_ns, 0, queryUri, query, options);
   }
 
   // Create the result that will hold nodes.  Inject batching status into it.
@@ -3243,8 +3245,9 @@ void nsNavHistory::GetStringFromName(const char* aName, nsACString& aResult) {
 void nsNavHistory::GetMonthName(const PRExplodedTime& aTime,
                                 nsACString& aResult) {
   nsAutoString month;
-  nsresult rv = DateTimeFormat::FormatPRExplodedTime(
-      kDateFormatMonthLong, kTimeFormatNone, &aTime, month);
+  nsresult rv = mozilla::DateTimeFormat::GetCalendarSymbol(
+      mozilla::DateTimeFormat::Field::Month,
+      mozilla::DateTimeFormat::Style::Wide, &aTime, month);
   if (NS_FAILED(rv)) {
     aResult = nsPrintfCString("[%d]", aTime.tm_month + 1);
     return;
@@ -3256,8 +3259,8 @@ void nsNavHistory::GetMonthName(const PRExplodedTime& aTime,
 void nsNavHistory::GetMonthYear(const PRExplodedTime& aTime,
                                 nsACString& aResult) {
   nsAutoString monthYear;
-  nsresult rv = DateTimeFormat::FormatPRExplodedTime(
-      kDateFormatYearMonthLong, kTimeFormatNone, &aTime, monthYear);
+  nsresult rv = mozilla::DateTimeFormat::FormatDateTime(
+      &aTime, DateTimeFormat::Skeleton::yyyyMMMM, monthYear);
   if (NS_FAILED(rv)) {
     aResult = nsPrintfCString("[%d-%d]", aTime.tm_month + 1, aTime.tm_year);
     return;
@@ -3280,18 +3283,16 @@ namespace {
 static nsCString GetSimpleBookmarksQueryParent(
     const RefPtr<nsNavHistoryQuery>& aQuery,
     const RefPtr<nsNavHistoryQueryOptions>& aOptions) {
-  if (aQuery->Parents().Length() != 1) return EmptyCString();
+  if (aQuery->Parents().Length() != 1) return ""_ns;
 
   bool hasIt;
-  if (NS_SUCCEEDED(aQuery->GetHasBeginTime(&hasIt)) && hasIt)
-    return EmptyCString();
-  if (NS_SUCCEEDED(aQuery->GetHasEndTime(&hasIt)) && hasIt)
-    return EmptyCString();
-  if (!aQuery->Domain().IsVoid()) return EmptyCString();
-  if (aQuery->Uri()) return EmptyCString();
-  if (!aQuery->SearchTerms().IsEmpty()) return EmptyCString();
-  if (aQuery->Tags().Length() > 0) return EmptyCString();
-  if (aOptions->MaxResults() > 0) return EmptyCString();
+  if (NS_SUCCEEDED(aQuery->GetHasBeginTime(&hasIt)) && hasIt) return ""_ns;
+  if (NS_SUCCEEDED(aQuery->GetHasEndTime(&hasIt)) && hasIt) return ""_ns;
+  if (!aQuery->Domain().IsVoid()) return ""_ns;
+  if (aQuery->Uri()) return ""_ns;
+  if (!aQuery->SearchTerms().IsEmpty()) return ""_ns;
+  if (aQuery->Tags().Length() > 0) return ""_ns;
+  if (aOptions->MaxResults() > 0) return ""_ns;
 
   // Don't care about onlyBookmarked flag, since specifying a bookmark
   // folder is inferring onlyBookmarked.

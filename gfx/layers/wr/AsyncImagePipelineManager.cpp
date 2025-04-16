@@ -49,6 +49,10 @@ AsyncImagePipelineManager::AsyncImagePipelineManager(
       mAsyncImageEpoch{0},
       mWillGenerateFrame(false),
       mDestroyed(false),
+#ifdef XP_WIN
+      mUseWebRenderDCompVideoOverlayWin(
+          gfx::gfxVars::UseWebRenderDCompVideoOverlayWin()),
+#endif
       mRenderSubmittedUpdatesLock("SubmittedUpdatesLock"),
       mLastCompletedFrameId(0) {
   MOZ_COUNT_CTOR(AsyncImagePipelineManager);
@@ -319,6 +323,18 @@ void AsyncImagePipelineManager::ApplyAsyncImagesOfImageBridge(
     return;
   }
 
+#ifdef XP_WIN
+  // UseWebRenderDCompVideoOverlayWin() could be changed from true to false,
+  // when DCompVideoOverlay task is failed. In this case, DisplayItems need to
+  // be re-pushed to WebRender for disabling video overlay.
+  bool isChanged = mUseWebRenderDCompVideoOverlayWin !=
+                   gfx::gfxVars::UseWebRenderDCompVideoOverlayWin();
+  if (isChanged) {
+    mUseWebRenderDCompVideoOverlayWin =
+        gfx::gfxVars::UseWebRenderDCompVideoOverlayWin();
+  }
+#endif
+
   wr::Epoch epoch = GetNextImageEpoch();
 
   // We use a pipeline with a very small display list for each video element.
@@ -326,6 +342,13 @@ void AsyncImagePipelineManager::ApplyAsyncImagesOfImageBridge(
   for (auto iter = mAsyncImagePipelines.Iter(); !iter.Done(); iter.Next()) {
     wr::PipelineId pipelineId = wr::AsPipelineId(iter.Key());
     AsyncImagePipeline* pipeline = iter.UserData();
+
+#ifdef XP_WIN
+    if (isChanged) {
+      pipeline->mIsChanged = true;
+    }
+#endif
+
     // If aync image pipeline does not use ImageBridge, do not need to apply.
     if (!pipeline->mImageHost->GetAsyncRef()) {
       continue;
@@ -411,14 +434,19 @@ void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
     if (aPipeline->mUseExternalImage) {
       MOZ_ASSERT(aPipeline->mCurrentTexture->AsWebRenderTextureHost());
       Range<wr::ImageKey> range_keys(&keys[0], keys.Length());
-      bool prefer_compositor_surface =
-          IsOpaque(aPipeline->mCurrentTexture->GetFormat()) ||
+      TextureHost::PushDisplayItemFlagSet flags;
+      if (IsOpaque(aPipeline->mCurrentTexture->GetFormat()) ||
           bool(aPipeline->mCurrentTexture->GetFlags() &
-               TextureFlags::IS_OPAQUE);
+               TextureFlags::IS_OPAQUE)) {
+        flags += TextureHost::PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE;
+      }
+      if (mApi->SupportsExternalBufferTextures()) {
+        flags +=
+            TextureHost::PushDisplayItemFlag::SUPPORTS_EXTERNAL_BUFFER_TEXTURES;
+      }
       aPipeline->mCurrentTexture->PushDisplayItems(
           builder, wr::ToLayoutRect(rect), wr::ToLayoutRect(rect),
-          aPipeline->mFilter, range_keys,
-          /* aPreferCompositorSurface */ prefer_compositor_surface);
+          aPipeline->mFilter, range_keys, flags);
       HoldExternalImage(aPipelineId, aEpoch, aPipeline->mCurrentTexture);
     } else {
       MOZ_ASSERT(keys.Length() == 1);
@@ -608,6 +636,20 @@ void AsyncImagePipelineManager::ProcessPipelineRendered(
         holder->mTextureHostsUntilRenderSubmitted.begin(),
         holder->mTextureHostsUntilRenderSubmitted.end(),
         [&aEpoch](const auto& entry) { return aEpoch <= entry.mEpoch; });
+#ifdef MOZ_WIDGET_ANDROID
+    // Set release fence if TextureHost owns AndroidHardwareBuffer.
+    // The TextureHost handled by mTextureHostsUntilRenderSubmitted instead of
+    // mTextureHostsUntilRenderCompleted, since android fence could be used
+    // to wait until its end of usage by GPU.
+    for (auto it = holder->mTextureHostsUntilRenderSubmitted.begin();
+         it != firstSubmittedHostToKeep; ++it) {
+      const auto& entry = it;
+      if (entry->mTexture->GetAndroidHardwareBuffer()) {
+        ipc::FileDescriptor fenceFd = mReleaseFenceFd;
+        entry->mTexture->SetReleaseFence(std::move(fenceFd));
+      }
+    }
+#endif
     holder->mTextureHostsUntilRenderSubmitted.erase(
         holder->mTextureHostsUntilRenderSubmitted.begin(),
         firstSubmittedHostToKeep);
@@ -674,19 +716,6 @@ void AsyncImagePipelineManager::ProcessPipelineRemoved(
 
 void AsyncImagePipelineManager::CheckForTextureHostsNotUsedByGPU() {
   uint64_t lastCompletedFrameId = mLastCompletedFrameId;
-
-#ifdef MOZ_WIDGET_ANDROID
-  // Set release fence if TextureHost owns AndroidHardwareBuffer.
-  for (auto& it : mTexturesInUseByGPU) {
-    auto& textures = it.second;
-    for (auto& texture : textures) {
-      if (texture->mTexture->GetAndroidHardwareBuffer()) {
-        ipc::FileDescriptor fenceFd = mReleaseFenceFd;
-        texture->mTexture->SetReleaseFence(std::move(fenceFd));
-      }
-    }
-  }
-#endif
 
   // Find first entry after mLastCompletedFrameId and release all prior ones.
   auto firstTexturesToKeep =

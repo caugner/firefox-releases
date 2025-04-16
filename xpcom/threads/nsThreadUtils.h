@@ -11,7 +11,7 @@
 #include <utility>
 
 #include "MainThreadUtils.h"
-#include "mozilla/AbstractEventQueue.h"
+#include "mozilla/EventQueue.h"
 #include "mozilla/AbstractThread.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/Likely.h"
@@ -691,9 +691,9 @@ already_AddRefed<mozilla::CancelableRunnable> NS_NewCancelableRunnableFunction(
           mFunc{mozilla::Some(std::forward<Function>(aFunc))} {}
 
     NS_IMETHOD Run() override {
-      MOZ_ASSERT(mFunc);
-
-      (*mFunc)();
+      if (mFunc) {
+        (*mFunc)();
+      }
 
       return NS_OK;
     }

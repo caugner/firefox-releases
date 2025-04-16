@@ -2212,53 +2212,6 @@ void HTMLMediaElement::ShutdownDecoder() {
   mDecoder = nullptr;
 }
 
-void HTMLMediaElement::ReportPlayedTimeAfterBlockedTelemetry() {
-  if (!mHasPlayEverBeenBlocked) {
-    return;
-  }
-  mHasPlayEverBeenBlocked = false;
-
-  const double playTimeThreshold = 7.0;
-  const double playTimeAfterBlocked = mCurrentLoadPlayTime.Total();
-  if (playTimeAfterBlocked <= 0.0) {
-    return;
-  }
-
-  const bool isDurationLessThanTimeThresholdAndMediaPlayedToTheEnd =
-      Duration() < playTimeThreshold && Ended();
-  LOG(LogLevel::Debug, ("%p PLAYED_TIME_AFTER_AUTOPLAY_BLOCKED=%f, isVideo=%d",
-                        this, playTimeAfterBlocked, IsVideo()));
-  if (IsVideo() && playTimeAfterBlocked >= playTimeThreshold) {
-    AccumulateCategorical(
-        mozilla::Telemetry::LABELS_MEDIA_PLAYED_TIME_AFTER_AUTOPLAY_BLOCKED::
-            VPlayedMoreThan7s);
-  } else if (IsVideo() && playTimeAfterBlocked < playTimeThreshold) {
-    if (isDurationLessThanTimeThresholdAndMediaPlayedToTheEnd) {
-      AccumulateCategorical(
-          mozilla::Telemetry::LABELS_MEDIA_PLAYED_TIME_AFTER_AUTOPLAY_BLOCKED::
-              VPlayedToTheEnd);
-    } else {
-      AccumulateCategorical(
-          mozilla::Telemetry::LABELS_MEDIA_PLAYED_TIME_AFTER_AUTOPLAY_BLOCKED::
-              VPlayedLessThan7s);
-    }
-  } else if (!IsVideo() && playTimeAfterBlocked >= playTimeThreshold) {
-    AccumulateCategorical(
-        mozilla::Telemetry::LABELS_MEDIA_PLAYED_TIME_AFTER_AUTOPLAY_BLOCKED::
-            APlayedMoreThan7s);
-  } else if (!IsVideo() && playTimeAfterBlocked < playTimeThreshold) {
-    if (isDurationLessThanTimeThresholdAndMediaPlayedToTheEnd) {
-      AccumulateCategorical(
-          mozilla::Telemetry::LABELS_MEDIA_PLAYED_TIME_AFTER_AUTOPLAY_BLOCKED::
-              APlayedToTheEnd);
-    } else {
-      AccumulateCategorical(
-          mozilla::Telemetry::LABELS_MEDIA_PLAYED_TIME_AFTER_AUTOPLAY_BLOCKED::
-              APlayedLessThan7s);
-    }
-  }
-}
-
 void HTMLMediaElement::AbortExistingLoads() {
   // Abort any already-running instance of the resource selection algorithm.
   mLoadWaitStatus = NOT_WAITING;
@@ -4215,6 +4168,7 @@ void HTMLMediaElement::Init() {
       OwnerDoc()->GetInnerWindow());
 #endif
 
+  OwnerDoc()->SetDocTreeHadMedia();
   mShutdownObserver->Subscribe(this);
   mInitialized = true;
 }
@@ -4273,7 +4227,6 @@ HTMLMediaElement::~HTMLMediaElement() {
   mMediaControlKeyListener = nullptr;
 
   WakeLockRelease();
-  ReportPlayedTimeAfterBlockedTelemetry();
 
   DecoderDoctorLogger::LogDestruction(this);
 }
@@ -4304,21 +4257,6 @@ void HTMLMediaElement::SetPlayedOrSeeked(bool aValue) {
 }
 
 void HTMLMediaElement::NotifyXPCOMShutdown() { ShutdownDecoder(); }
-
-void HTMLMediaElement::UpdateHadAudibleAutoplayState() {
-  // If we're audible, and autoplaying...
-  if ((Volume() > 0.0 && !Muted()) &&
-      (!OwnerDoc()->HasBeenUserGestureActivated() || Autoplay())) {
-    OwnerDoc()->SetDocTreeHadAudibleMedia();
-    if (AutoplayPolicyTelemetryUtils::WouldBeAllowedToPlayIfAutoplayDisabled(
-            *this)) {
-      ScalarAdd(Telemetry::ScalarID::MEDIA_AUTOPLAY_WOULD_BE_ALLOWED_COUNT, 1);
-    } else {
-      ScalarAdd(Telemetry::ScalarID::MEDIA_AUTOPLAY_WOULD_NOT_BE_ALLOWED_COUNT,
-                1);
-    }
-  }
-}
 
 already_AddRefed<Promise> HTMLMediaElement::Play(ErrorResult& aRv) {
   LOG(LogLevel::Debug,
@@ -4374,8 +4312,6 @@ already_AddRefed<Promise> HTMLMediaElement::Play(ErrorResult& aRv) {
     return promise.forget();
   }
 
-  UpdateHadAudibleAutoplayState();
-
   const bool handlingUserInput = UserActivation::IsHandlingUserInput();
   mPendingPlayPromises.AppendElement(promise);
 
@@ -4403,7 +4339,6 @@ void HTMLMediaElement::DispatchEventsWhenPlayWasNotAllowed() {
 #endif
   MaybeNotifyAutoplayBlocked();
   ReportToConsole(nsIScriptError::warningFlag, "BlockAutoplayError");
-  mHasPlayEverBeenBlocked = true;
   mHasEverBeenBlockedForAutoplay = true;
 }
 
@@ -4819,7 +4754,7 @@ void HTMLMediaElement::ReportTelemetry() {
     }
   }
 
-  if (mMediaInfo.HasVideo() && mMediaInfo.mVideo.mImage.height > 0) {
+  if (mHadNonEmptyVideo) {
     // We have a valid video.
     double playTime = mPlayTime.Total();
     double hiddenPlayTime = mHiddenPlayTime.Total();
@@ -5386,7 +5321,7 @@ static already_AddRefed<AudioTrack> CreateAudioTrack(
   aStreamTrack->GetLabel(label, CallerType::System);
 
   return MediaTrackList::CreateAudioTrack(aOwnerGlobal, id, u"main"_ns, label,
-                                          EmptyString(), true, aStreamTrack);
+                                          u""_ns, true, aStreamTrack);
 }
 
 static already_AddRefed<VideoTrack> CreateVideoTrack(
@@ -5397,7 +5332,7 @@ static already_AddRefed<VideoTrack> CreateVideoTrack(
   aStreamTrack->GetLabel(label, CallerType::System);
 
   return MediaTrackList::CreateVideoTrack(aOwnerGlobal, id, u"main"_ns, label,
-                                          EmptyString(), aStreamTrack);
+                                          u""_ns, aStreamTrack);
 }
 
 void HTMLMediaElement::NotifyMediaStreamTrackAdded(
@@ -5702,6 +5637,8 @@ void HTMLMediaElement::SeekAborted() {
 }
 
 void HTMLMediaElement::NotifySuspendedByCache(bool aSuspendedByCache) {
+  LOG(LogLevel::Debug,
+      ("%p, mDownloadSuspendedByCache=%d", this, aSuspendedByCache));
   mDownloadSuspendedByCache = aSuspendedByCache;
 }
 
@@ -6189,7 +6126,6 @@ void HTMLMediaElement::CheckAutoplayDataReady() {
     return;
   }
 
-  UpdateHadAudibleAutoplayState();
   if (!AutoplayPolicy::IsAllowedToPlay(*this)) {
     DispatchEventsWhenPlayWasNotAllowed();
     return;
@@ -6365,12 +6301,6 @@ void HTMLMediaElement::DispatchAsyncEvent(const nsAString& aName) {
     mPlayTime.Pause();
     mCurrentLoadPlayTime.Pause();
     HiddenVideoStop();
-  }
-
-  // It would happen when (1) media aborts current load (2) media pauses (3)
-  // media end (4) media unbind from tree (because we would pause it)
-  if (aName.EqualsLiteral("pause")) {
-    ReportPlayedTimeAfterBlockedTelemetry();
   }
 }
 
@@ -6775,7 +6705,7 @@ void HTMLMediaElement::SetRequestHeaders(nsIHttpChannel* aChannel) {
   // and from seeking. So, disable the standard "Accept-Encoding: gzip,deflate"
   // that we usually send. See bug 614760.
   DebugOnly<nsresult> rv =
-      aChannel->SetRequestHeader("Accept-Encoding"_ns, EmptyCString(), false);
+      aChannel->SetRequestHeader("Accept-Encoding"_ns, ""_ns, false);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 
   // Set the Referrer header
@@ -7360,6 +7290,9 @@ void HTMLMediaElement::SetMediaInfo(const MediaInfo& aInfo) {
     mAudioChannelWrapper->AudioCaptureTrackChangeIfNeeded();
   }
   UpdateWakeLock();
+  if (mMediaInfo.HasVideo() && mMediaInfo.mVideo.mImage.height > 0) {
+    mHadNonEmptyVideo = true;
+  }
 }
 
 void HTMLMediaElement::AudioCaptureTrackChange(bool aCapture) {

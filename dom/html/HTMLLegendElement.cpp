@@ -83,7 +83,7 @@ void HTMLLegendElement::Focus(const FocusOptions& aOptions,
 
   // If the legend isn't focusable, focus whatever is focusable following
   // the legend instead, bug 81481.
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
     return;
   }
@@ -106,10 +106,7 @@ bool HTMLLegendElement::PerformAccesskey(bool aKeyCausesActivation,
 }
 
 already_AddRefed<HTMLFormElement> HTMLLegendElement::GetForm() {
-  Element* form = GetFormElement();
-  MOZ_ASSERT_IF(form, form->IsHTMLElement(nsGkAtoms::form));
-  RefPtr<HTMLFormElement> ret = static_cast<HTMLFormElement*>(form);
-  return ret.forget();
+  return do_AddRef(GetFormElement());
 }
 
 JSObject* HTMLLegendElement::WrapNode(JSContext* aCx,

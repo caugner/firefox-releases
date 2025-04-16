@@ -81,7 +81,7 @@ class UrlbarView {
 
     for (let viewTemplate of UrlbarView.dynamicViewTemplatesByName.values()) {
       if (viewTemplate.stylesheet) {
-        this._addDynamicStylesheet(viewTemplate.stylesheet);
+        addDynamicStylesheet(this.window, viewTemplate.stylesheet);
       }
     }
   }
@@ -309,16 +309,35 @@ class UrlbarView {
    * @param {boolean} options.reverse
    *   Set to true to select the previous item. By default the next item
    *   will be selected.
+   * @param {boolean} options.userPressedTab
+   *   Set to true if the user pressed Tab to select a result. Default false.
    */
-  selectBy(amount, { reverse = false } = {}) {
+  selectBy(amount, { reverse = false, userPressedTab = false } = {}) {
     if (!this.isOpen) {
       throw new Error(
         "UrlbarView: Cannot select an item if the view isn't open."
       );
     }
 
-    // Freeze results as the user is interacting with them.
-    this.controller.cancelQuery();
+    // Do not set aria-activedescendant if the user is moving to a
+    // tab-to-search result with the Tab key. If
+    // accessibility.tabToSearch.announceResults is set, the tab-to-search
+    // result was announced to the user as they typed. We don't set
+    // aria-activedescendant so the user doesn't think they have to press
+    // Enter to enter search mode. See bug 1647929.
+    function isSkippableTabToSearchAnnounce(selectedElt) {
+      return (
+        selectedElt?.result?.providerName == "TabToSearch" &&
+        userPressedTab &&
+        UrlbarPrefs.get("accessibility.tabToSearch.announceResults")
+      );
+    }
+
+    // Freeze results as the user is interacting with them, unless we are
+    // deferring events while waiting for critical results.
+    if (!this.input.eventBufferer.isDeferringEvents) {
+      this.controller.cancelQuery();
+    }
 
     let selectedElement = this._selectedElement;
 
@@ -330,9 +349,12 @@ class UrlbarView {
     let lastSelectableElement = this._getLastSelectableElement();
 
     if (!selectedElement) {
-      this._selectElement(
-        reverse ? lastSelectableElement : firstSelectableElement
-      );
+      selectedElement = reverse
+        ? lastSelectableElement
+        : firstSelectableElement;
+      this._selectElement(selectedElement, {
+        setAccessibleFocus: !isSkippableTabToSearchAnnounce(selectedElement),
+      });
       return;
     }
     let endReached = reverse
@@ -346,7 +368,9 @@ class UrlbarView {
           ? lastSelectableElement
           : firstSelectableElement;
       }
-      this._selectElement(selectedElement);
+      this._selectElement(selectedElement, {
+        setAccessibleFocus: !isSkippableTabToSearchAnnounce(selectedElement),
+      });
       return;
     }
 
@@ -362,7 +386,9 @@ class UrlbarView {
       }
       selectedElement = next;
     }
-    this._selectElement(selectedElement);
+    this._selectElement(selectedElement, {
+      setAccessibleFocus: !isSkippableTabToSearchAnnounce(selectedElement),
+    });
   }
 
   removeAccessibleFocus() {
@@ -387,8 +413,16 @@ class UrlbarView {
       return;
     }
 
+    // We exit search mode preview on close since the result previewing it is
+    // implicitly unselected.
+    if (this.input.searchMode?.isPreview) {
+      this.input.searchMode = null;
+    }
+
     this.removeAccessibleFocus();
     this.input.inputField.setAttribute("aria-expanded", "false");
+    this._openPanelInstance = null;
+    this._previousTabToSearchEngine = null;
 
     this.input.removeAttribute("open");
     this.input.endLayoutExtend();
@@ -433,8 +467,6 @@ class UrlbarView {
       this.input.getAttribute("pageproxystate") == "valid"
     ) {
       if (
-        // Do not show Top Sites in private windows.
-        !this.input.isPrivate &&
         !this.isOpen &&
         ["mousedown", "command"].includes(queryOptions.event.type)
       ) {
@@ -492,6 +524,10 @@ class UrlbarView {
   onQueryStarted(queryContext) {
     this._queryWasCancelled = false;
     this._queryUpdatedResults = false;
+    this._openPanelInstance = null;
+    if (!queryContext.searchString) {
+      this._previousTabToSearchEngine = null;
+    }
     this._startRemoveStaleRowsTimer();
   }
 
@@ -521,10 +557,15 @@ class UrlbarView {
       return;
     }
 
-    // Search mode is active.  Make sure the view is open and the one-offs are
-    // enabled.
-    this.oneOffSearchButtons.enable(true);
-    this._openPanel();
+    // Search mode is active.  If the one-offs should be shown, make sure they
+    // are enabled and show the view.
+    let openPanelInstance = (this._openPanelInstance = {});
+    this.oneOffSearchButtons.willHide().then(willHide => {
+      if (!willHide && openPanelInstance == this._openPanelInstance) {
+        this.oneOffSearchButtons.enable(true);
+        this._openPanel();
+      }
+    });
   }
 
   onQueryResults(queryContext) {
@@ -575,6 +616,25 @@ class UrlbarView {
       });
     }
 
+    // Announce tab-to-search results to screen readers as the user types.
+    // Check to make sure we don't announce the same engine multiple times in
+    // a row.
+    let secondResult = queryContext.results[1];
+    if (
+      secondResult?.providerName == "TabToSearch" &&
+      UrlbarPrefs.get("accessibility.tabToSearch.announceResults") &&
+      this._previousTabToSearchEngine != secondResult.payload.engine
+    ) {
+      let engine = secondResult.payload.engine;
+      this.window.A11yUtils.announce({
+        id: UrlbarUtils.WEB_ENGINE_NAMES.has(engine)
+          ? "urlbar-result-action-before-tabtosearch-web"
+          : "urlbar-result-action-before-tabtosearch-other",
+        args: { engine },
+      });
+      this._previousTabToSearchEngine = engine;
+    }
+
     // If we update the selected element, a new unique ID is generated for it.
     // We need to ensure that aria-activedescendant reflects this new ID.
     if (this.selectedElement && !this.oneOffSearchButtons.selectedButton) {
@@ -591,6 +651,17 @@ class UrlbarView {
       // if necessary.  Conversely, the heuristic result of the previous query
       // may have been an alias, so remove formatting if necessary.
       this.input.formatValue();
+    }
+
+    if (queryContext.deferUserSelectionProviders.size) {
+      // DeferUserSelectionProviders block user selection until the result is
+      // shown, so it's the view's duty to remove them.
+      // Doing it sooner, like when the results are added by the provider,
+      // would not suffice because there's still a delay before those results
+      // reach the view.
+      queryContext.results.forEach(r => {
+        queryContext.deferUserSelectionProviders.delete(r.providerName);
+      });
     }
   }
 
@@ -699,7 +770,7 @@ class UrlbarView {
     this.dynamicViewTemplatesByName.set(name, viewTemplate);
     if (viewTemplate.stylesheet) {
       for (let window of BrowserWindowTracker.orderedWindows) {
-        window.gURLBar.view._addDynamicStylesheet(viewTemplate.stylesheet);
+        addDynamicStylesheet(window, viewTemplate.stylesheet);
       }
     }
   }
@@ -719,7 +790,7 @@ class UrlbarView {
     this.dynamicViewTemplatesByName.delete(name);
     if (viewTemplate.stylesheet) {
       for (let window of BrowserWindowTracker.orderedWindows) {
-        window.gURLBar.view._removeDynamicStylesheet(viewTemplate.stylesheet);
+        removeDynamicStylesheet(window, viewTemplate.stylesheet);
       }
     }
   }
@@ -1059,6 +1130,8 @@ class UrlbarView {
       item.setAttribute("type", "dynamic");
       this._updateRowForDynamicType(item, result);
       return;
+    } else if (result.providerName == "TabToSearch") {
+      item.setAttribute("type", "tabtosearch");
     } else {
       item.removeAttribute("type");
     }
@@ -1073,18 +1146,8 @@ class UrlbarView {
       favicon.src = result.payload.icon || UrlbarUtils.ICON.DEFAULT;
     }
 
-    if (result.payload.isPinned) {
-      item.toggleAttribute("pinned", true);
-    } else {
-      item.removeAttribute("pinned");
-    }
-
     let title = item._elements.get("title");
-    this._addTextContentWithHighlights(
-      title,
-      result.title,
-      result.titleHighlights
-    );
+    this._setResultTitle(result, title);
 
     if (result.payload.tail && result.payload.tailOffsetIndex > 0) {
       this._fillTailSuggestionPrefix(item, result);
@@ -1117,42 +1180,79 @@ class UrlbarView {
       );
     }
 
-    let action = "";
+    let action = item._elements.get("action");
+    let actionSetter = null;
     let isVisitAction = false;
     let setURL = false;
     switch (result.type) {
       case UrlbarUtils.RESULT_TYPE.TAB_SWITCH:
-        action = UrlbarUtils.strings.GetStringFromName("switchToTab2");
+        actionSetter = () => {
+          this.document.l10n.setAttributes(
+            action,
+            "urlbar-result-action-switch-tab"
+          );
+        };
         setURL = true;
         break;
       case UrlbarUtils.RESULT_TYPE.REMOTE_TAB:
-        action = result.payload.device;
+        actionSetter = () => {
+          action.removeAttribute("data-l10n-id");
+          action.textContent = result.payload.device;
+        };
         setURL = true;
         break;
       case UrlbarUtils.RESULT_TYPE.SEARCH:
         if (result.payload.inPrivateWindow) {
           if (result.payload.isPrivateEngine) {
-            action = UrlbarUtils.strings.formatStringFromName(
-              "searchInPrivateWindowWithEngine",
-              [result.payload.engine]
-            );
+            actionSetter = () => {
+              this.document.l10n.setAttributes(
+                action,
+                "urlbar-result-action-search-in-private-w-engine",
+                { engine: result.payload.engine }
+              );
+            };
           } else {
-            action = UrlbarUtils.strings.GetStringFromName(
-              "searchInPrivateWindow"
-            );
+            actionSetter = () => {
+              this.document.l10n.setAttributes(
+                action,
+                "urlbar-result-action-search-in-private"
+              );
+            };
           }
-        } else {
-          action = UrlbarUtils.strings.formatStringFromName(
-            "searchWithEngine",
-            [result.payload.engine]
-          );
+        } else if (result.providerName == "TabToSearch") {
+          actionSetter = () => {
+            this.document.l10n.setAttributes(
+              action,
+              UrlbarUtils.WEB_ENGINE_NAMES.has(result.payload.engine)
+                ? "urlbar-result-action-tabtosearch-web"
+                : "urlbar-result-action-tabtosearch-other-engine",
+              { engine: result.payload.engine }
+            );
+          };
+        } else if (!this._shouldLocalizeSearchResultTitle(result)) {
+          // _shouldLocalizeSearchResultTitle is a temporary function that will
+          // be in place only during the update2 transitions. Right now it
+          // returns if the result is a keyword offer result and meets some
+          // other conditions. Post-update2 the conditional above will only
+          // check if the result is a keyword offer. Keyword offer results don't
+          // have action text.
+          actionSetter = () => {
+            this.document.l10n.setAttributes(
+              action,
+              "urlbar-result-action-search-w-engine",
+              { engine: result.payload.engine }
+            );
+          };
         }
         break;
       case UrlbarUtils.RESULT_TYPE.KEYWORD:
         isVisitAction = result.payload.input.trim() == result.payload.keyword;
         break;
       case UrlbarUtils.RESULT_TYPE.OMNIBOX:
-        action = result.payload.content;
+        actionSetter = () => {
+          action.removeAttribute("data-l10n-id");
+          action.textContent = result.payload.content;
+        };
         break;
       default:
         if (result.heuristic) {
@@ -1161,6 +1261,30 @@ class UrlbarView {
           setURL = true;
         }
         break;
+    }
+
+    if (result.providerName == "TabToSearch") {
+      action.toggleAttribute("slide-in", true);
+    } else {
+      action.removeAttribute("slide-in");
+    }
+
+    if (result.payload.isPinned) {
+      item.toggleAttribute("pinned", true);
+    } else {
+      item.removeAttribute("pinned");
+    }
+
+    if (result.payload.isSponsored) {
+      item.toggleAttribute("sponsored", true);
+      actionSetter = () => {
+        this.document.l10n.setAttributes(
+          action,
+          "urlbar-result-action-sponsored"
+        );
+      };
+    } else {
+      item.removeAttribute("sponsored");
     }
 
     let url = item._elements.get("url");
@@ -1182,12 +1306,24 @@ class UrlbarView {
     }
 
     if (isVisitAction) {
-      action = UrlbarUtils.strings.GetStringFromName("visit");
+      actionSetter = () => {
+        this.document.l10n.setAttributes(action, "urlbar-result-action-visit");
+      };
       title.setAttribute("isurl", "true");
     } else {
       title.removeAttribute("isurl");
     }
-    item._elements.get("action").textContent = action;
+
+    if (actionSetter) {
+      actionSetter();
+      item._originalActionSetter = actionSetter;
+    } else {
+      item._originalActionSetter = () => {
+        action.removeAttribute("data-l10n-id");
+        action.textContent = "";
+      };
+      item._originalActionSetter();
+    }
 
     if (!title.hasAttribute("isurl")) {
       title.setAttribute("dir", "auto");
@@ -1195,16 +1331,36 @@ class UrlbarView {
       title.removeAttribute("dir");
     }
 
-    item._elements.get("titleSeparator").hidden = !action && !setURL;
+    item._elements.get("titleSeparator").hidden = !actionSetter && !setURL;
   }
 
-  _iconForSearchResult(result, engineOverride = null) {
+  /**
+   * Returns true if we should localize a result's title. This is a helper
+   * function for the update2 transition period. It can be removed when the
+   * update2 pref is removed. At that point, its callers can instead just check
+   * !!result.payload.keywordOffer.
+   * @param {UrlbarResult} result A search result.
+   * @returns {boolean} True if we should localize a title for search results.
+   */
+  _shouldLocalizeSearchResultTitle(result) {
+    if (
+      result.type != UrlbarUtils.RESULT_TYPE.SEARCH ||
+      !result.payload.keywordOffer
+    ) {
+      return false;
+    }
+
+    return (
+      UrlbarPrefs.get("update2") ||
+      result.payload.keywordOffer == UrlbarUtils.KEYWORD_OFFER.HIDE
+    );
+  }
+
+  _iconForSearchResult(result, iconUrlOverride = null) {
     return (
       (result.source == UrlbarUtils.RESULT_SOURCE.HISTORY &&
         UrlbarUtils.ICON.HISTORY) ||
-      (engineOverride &&
-        engineOverride.iconURI &&
-        engineOverride.iconURI.spec) ||
+      iconUrlOverride ||
       result.payload.icon ||
       UrlbarUtils.ICON.SEARCH_GLASS
     );
@@ -1555,6 +1711,35 @@ class UrlbarView {
   }
 
   /**
+   * Sets `result`'s title in `titleNode`'s DOM.
+   * @param {UrlbarResult} result
+   *   The result for which the title is being set.
+   * @param {Node} titleNode
+   *   The DOM node for the result's tile.
+   */
+  _setResultTitle(result, titleNode) {
+    if (this._shouldLocalizeSearchResultTitle(result)) {
+      // Keyword offers are the only result that require a localized title.
+      // We localize the title instead of using the action text as a title
+      // because some keyword offer results use both a title and action text
+      // (e.g. tab-to-search).
+      this.document.l10n.setAttributes(
+        titleNode,
+        "urlbar-result-action-search-w-engine",
+        { engine: result.payload.engine }
+      );
+      return;
+    }
+
+    titleNode.removeAttribute("data-l10n-id");
+    this._addTextContentWithHighlights(
+      titleNode,
+      result.title,
+      result.titleHighlights
+    );
+  }
+
+  /**
    * Adds text content to a node, placing substrings that should be highlighted
    * inside <em> nodes.
    *
@@ -1660,47 +1845,6 @@ class UrlbarView {
     return true;
   }
 
-  /**
-   * Adds a dynamic result type stylesheet to the view's window.
-   *
-   * @param {string} stylesheetURL
-   *   The stylesheet's URL.
-   */
-  async _addDynamicStylesheet(stylesheetURL) {
-    // Try-catch all of these so that failing to load a stylesheet doesn't break
-    // callers and possibly the urlbar.  If a stylesheet does fail to load, the
-    // dynamic results that depend on it will appear broken, but at least we
-    // won't break the whole urlbar.
-    try {
-      let uri = Services.io.newURI(stylesheetURL);
-      let sheet = await styleSheetService.preloadSheetAsync(
-        uri,
-        Ci.nsIStyleSheetService.AGENT_SHEET
-      );
-      this.window.windowUtils.addSheet(sheet, Ci.nsIDOMWindowUtils.AGENT_SHEET);
-    } catch (ex) {
-      Cu.reportError(`Error adding dynamic stylesheet: ${ex}`);
-    }
-  }
-
-  /**
-   * Removes a dynamic result type stylesheet from the view's window.
-   *
-   * @param {string} stylesheetURL
-   *   The stylesheet's URL.
-   */
-  _removeDynamicStylesheet(stylesheetURL) {
-    // Try-catch for the same reason as desribed in _addDynamicStylesheet.
-    try {
-      this.window.windowUtils.removeSheetUsingURIString(
-        stylesheetURL,
-        Ci.nsIDOMWindowUtils.AGENT_SHEET
-      );
-    } catch (ex) {
-      Cu.reportError(`Error removing dynamic stylesheet: ${ex}`);
-    }
-  }
-
   // Event handlers below.
 
   _on_SelectedOneOffButtonChanged() {
@@ -1710,20 +1854,99 @@ class UrlbarView {
 
     // Update all search suggestion results to use the newly selected engine, or
     // if no engine is selected, revert to their original engines.
-    let engine =
-      this.oneOffSearchButtons.selectedButton &&
-      this.oneOffSearchButtons.selectedButton.engine;
+    let engine = this.oneOffSearchButtons.selectedButton?.engine;
+    let source = this.oneOffSearchButtons.selectedButton?.source;
+    switch (source) {
+      case UrlbarUtils.RESULT_SOURCE.BOOKMARKS:
+        source = {
+          attribute: "bookmarks",
+          l10nId: "urlbar-result-action-search-bookmarks",
+          icon: "chrome://browser/skin/bookmark.svg",
+        };
+        break;
+      case UrlbarUtils.RESULT_SOURCE.HISTORY:
+        source = {
+          attribute: "history",
+          l10nId: "urlbar-result-action-search-history",
+          icon: "chrome://browser/skin/history.svg",
+        };
+        break;
+      case UrlbarUtils.RESULT_SOURCE.TABS:
+        source = {
+          attribute: "tabs",
+          l10nId: "urlbar-result-action-search-tabs",
+          icon: "chrome://browser/skin/tab.svg",
+        };
+        break;
+      default:
+        source = null;
+        break;
+    }
 
     for (let item of this._rows.children) {
       let result = item.result;
+
+      let isPrivateSearchWithoutPrivateEngine =
+        result.payload.inPrivateWindow && !result.payload.isPrivateEngine;
+      let isSearchHistory =
+        result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
+        result.source == UrlbarUtils.RESULT_SOURCE.HISTORY;
+      let isSearchSuggestion = result.payload.suggestion && !isSearchHistory;
+
+      // For one-off buttons having a source, we update the action for the
+      // heuristic result, or for any non-heuristic that is a remote search
+      // suggestion or a private search with no private engine.
       if (
-        result.type != UrlbarUtils.RESULT_TYPE.SEARCH ||
-        (!result.heuristic &&
-          (!result.payload.suggestion ||
-            (result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
-              result.source == UrlbarUtils.RESULT_SOURCE.HISTORY)) &&
-          (!result.payload.inPrivateWindow || result.payload.isPrivateEngine))
+        !result.heuristic &&
+        !isSearchSuggestion &&
+        !isPrivateSearchWithoutPrivateEngine
       ) {
+        continue;
+      }
+
+      let action = item.querySelector(".urlbarView-action");
+      let favicon = item.querySelector(".urlbarView-favicon");
+
+      // If a one-off button is the only selection, force the heuristic result
+      // to show its action text, so the engine name is visible.
+      if (result.heuristic && !this.selectedElement && (source || engine)) {
+        item.setAttribute("show-action-text", "true");
+      } else {
+        item.removeAttribute("show-action-text");
+      }
+
+      if (source) {
+        // Update the result action text.
+        this.document.l10n.setAttributes(action, source.l10nId);
+        item._actionOverride = true;
+        // Update the result favicon.
+        if (result.heuristic) {
+          item.setAttribute("source", source.attribute);
+          favicon.src = this._iconForSearchResult(result, source?.icon);
+        }
+        // When a local one-off is selected we're done.
+        continue;
+      }
+
+      // If we replaced the action while a local one-off button was selected,
+      // now it should be restored. This happens for example if a local one-off
+      // is selected, and then the user presses DOWN to go to the next result.
+      if (item._actionOverride) {
+        if (item._originalActionSetter) {
+          item._originalActionSetter();
+          if (result.heuristic) {
+            favicon.src = result.payload.icon || UrlbarUtils.ICON.DEFAULT;
+          }
+        } else {
+          Cu.reportError("An item is missing the action setter");
+        }
+        item._actionOverride = false;
+        item.removeAttribute("source");
+      }
+
+      // For one-off buttons having an engine, we update the action only for
+      // search results. All the other cases were already skipped earlier.
+      if (result.type != UrlbarUtils.RESULT_TYPE.SEARCH) {
         continue;
       }
 
@@ -1736,18 +1959,13 @@ class UrlbarView {
         result.payload.engine = result.payload.originalEngine;
         delete result.payload.originalEngine;
       }
-      // If a one-off button is the only selection, force the heuristic result
-      // to show its action text, so the engine name is visible.
-      if (result.heuristic && engine && !this.selectedElement) {
-        item.setAttribute("show-action-text", "true");
-      } else {
-        item.removeAttribute("show-action-text");
-      }
+
+      // Update the result action text.
       if (!result.payload.inPrivateWindow) {
-        let action = item.querySelector(".urlbarView-action");
-        action.textContent = UrlbarUtils.strings.formatStringFromName(
-          "searchWithEngine",
-          [(engine && engine.name) || result.payload.engine]
+        this.document.l10n.setAttributes(
+          action,
+          "urlbar-result-action-search-w-engine",
+          { engine: (engine && engine.name) || result.payload.engine }
         );
       }
 
@@ -1763,15 +1981,7 @@ class UrlbarView {
         // icon, then make sure the result now uses the new engine's icon or
         // failing that the default icon.  If we changed it back to the original
         // engine, go back to the original or default icon.
-        let favicon = item.querySelector(".urlbarView-favicon");
-        if (engine && result.payload.icon) {
-          favicon.src =
-            (engine.iconURI && engine.iconURI.spec) ||
-            UrlbarUtils.ICON.SEARCH_GLASS;
-        } else if (!engine) {
-          favicon.src = result.payload.icon || UrlbarUtils.ICON.SEARCH_GLASS;
-        }
-        favicon.src = this._iconForSearchResult(result, engine);
+        favicon.src = this._iconForSearchResult(result, engine?.iconURI?.spec);
       }
     }
   }
@@ -1883,5 +2093,50 @@ class QueryContextCache {
 
   get(searchString) {
     return this._cache.find(e => e.searchString == searchString);
+  }
+}
+
+/**
+ * Adds a dynamic result type stylesheet to a specified window.
+ *
+ * @param {Window} window
+ *   The window to which to add the stylesheet.
+ * @param {string} stylesheetURL
+ *   The stylesheet's URL.
+ */
+async function addDynamicStylesheet(window, stylesheetURL) {
+  // Try-catch all of these so that failing to load a stylesheet doesn't break
+  // callers and possibly the urlbar.  If a stylesheet does fail to load, the
+  // dynamic results that depend on it will appear broken, but at least we
+  // won't break the whole urlbar.
+  try {
+    let uri = Services.io.newURI(stylesheetURL);
+    let sheet = await styleSheetService.preloadSheetAsync(
+      uri,
+      Ci.nsIStyleSheetService.AGENT_SHEET
+    );
+    window.windowUtils.addSheet(sheet, Ci.nsIDOMWindowUtils.AGENT_SHEET);
+  } catch (ex) {
+    Cu.reportError(`Error adding dynamic stylesheet: ${ex}`);
+  }
+}
+
+/**
+ * Removes a dynamic result type stylesheet from the view's window.
+ *
+ * @param {Window} window
+ *   The window from which to remove the stylesheet.
+ * @param {string} stylesheetURL
+ *   The stylesheet's URL.
+ */
+function removeDynamicStylesheet(window, stylesheetURL) {
+  // Try-catch for the same reason as desribed in addDynamicStylesheet.
+  try {
+    window.windowUtils.removeSheetUsingURIString(
+      stylesheetURL,
+      Ci.nsIDOMWindowUtils.AGENT_SHEET
+    );
+  } catch (ex) {
+    Cu.reportError(`Error removing dynamic stylesheet: ${ex}`);
   }
 }

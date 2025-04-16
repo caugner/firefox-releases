@@ -16,19 +16,21 @@
 #ifdef MOZ_GECKO_PROFILER
 
 #  include "BaseProfilingCategory.h"
+#  include "mozilla/Maybe.h"
 #  include "mozilla/ProfileChunkedBuffer.h"
 #  include "mozilla/TimeStamp.h"
 #  include "mozilla/UniquePtr.h"
+#  include "mozilla/Variant.h"
 
+#  include <initializer_list>
 #  include <string_view>
 #  include <string>
 #  include <type_traits>
 #  include <utility>
+#  include <vector>
 
-namespace mozilla::baseprofiler {
-// Implemented in platform.cpp
-MFBT_API int profiler_current_thread_id();
-}  // namespace mozilla::baseprofiler
+// TODO: Move common stuff to shared header instead.
+#  include "BaseProfiler.h"
 
 namespace mozilla {
 
@@ -211,54 +213,38 @@ class MOZ_STACK_CLASS ProfilerStringView {
 using ProfilerString8View = ProfilerStringView<char>;
 using ProfilerString16View = ProfilerStringView<char16_t>;
 
-// The classes below are all embedded in a `MarkerOptions` object.
-class MarkerOptions;
-
-// This compulsory marker option contains the required category information.
+// This compulsory marker parameter contains the required category information.
 class MarkerCategory {
  public:
-  // Constructor from category pair (aka sub-category) and category.
-  constexpr MarkerCategory(baseprofiler::ProfilingCategoryPair aCategoryPair,
-                           baseprofiler::ProfilingCategory aCategory)
-      : mCategoryPair(aCategoryPair), mCategory(aCategory) {}
+  // Constructor from category pair (includes both super- and sub-categories).
+  constexpr explicit MarkerCategory(
+      baseprofiler::ProfilingCategoryPair aCategoryPair)
+      : mCategoryPair(aCategoryPair) {}
 
+  // Returns the stored category pair.
   constexpr baseprofiler::ProfilingCategoryPair CategoryPair() const {
     return mCategoryPair;
   }
 
-  constexpr baseprofiler::ProfilingCategory Category() const {
-    return mCategory;
+  // Returns the super-category from the stored category pair.
+  baseprofiler::ProfilingCategory GetCategory() const {
+    return GetProfilingCategoryPairInfo(mCategoryPair).mCategory;
   }
 
-  // Create a MarkerOptions object from this category and options.
-  // Definition under MarkerOptions below.
-  template <typename... Options>
-  MarkerOptions WithOptions(Options&&... aOptions) const;
-
  private:
-  // The default constructor is only used during deserialization of
-  // MarkerOptions.
-  friend MarkerOptions;
-  constexpr MarkerCategory() = default;
-
-  friend ProfileBufferEntryReader::Deserializer<MarkerCategory>;
-
   baseprofiler::ProfilingCategoryPair mCategoryPair =
       baseprofiler::ProfilingCategoryPair::OTHER;
-  baseprofiler::ProfilingCategory mCategory =
-      baseprofiler::ProfilingCategory::OTHER;
 };
 
 namespace baseprofiler::category {
 
-// Each category-pair (aka subcategory) name constructs a MarkerCategory.
+// Each category pair name constructs a MarkerCategory.
 // E.g.: mozilla::baseprofiler::category::OTHER_Profiling
-// Profiler macros will take the category name alone.
+// Profiler macros will take the category name alone without namespace.
 // E.g.: `PROFILER_MARKER_UNTYPED("name", OTHER_Profiling)`
 #  define CATEGORY_ENUM_BEGIN_CATEGORY(name, labelAsString, color)
 #  define CATEGORY_ENUM_SUBCATEGORY(supercategory, name, labelAsString) \
-    static constexpr MarkerCategory name{ProfilingCategoryPair::name,   \
-                                         ProfilingCategory::supercategory};
+    static constexpr MarkerCategory name{ProfilingCategoryPair::name};
 #  define CATEGORY_ENUM_END_CATEGORY
 MOZ_PROFILING_CATEGORY_LIST(CATEGORY_ENUM_BEGIN_CATEGORY,
                             CATEGORY_ENUM_SUBCATEGORY,
@@ -269,11 +255,14 @@ MOZ_PROFILING_CATEGORY_LIST(CATEGORY_ENUM_BEGIN_CATEGORY,
 
 // Import `MarkerCategory` into this namespace. This will allow using this type
 // dynamically in macros that prepend `::mozilla::baseprofiler::category::` to
-// the given category, e.g.: E.g.:
+// the given category, e.g.:
 // `PROFILER_MARKER_UNTYPED("name", MarkerCategory(...))`
 using MarkerCategory = ::mozilla::MarkerCategory;
 
 }  // namespace baseprofiler::category
+
+// The classes below are all embedded in a `MarkerOptions` object.
+class MarkerOptions;
 
 // This marker option captures a given thread id.
 // If left unspecified (by default construction) during the add-marker call, the
@@ -289,6 +278,12 @@ class MarkerThreadId {
   // Use the current thread's id.
   static MarkerThreadId CurrentThread() {
     return MarkerThreadId(baseprofiler::profiler_current_thread_id());
+  }
+
+  // Use the main thread's id. This can be useful to record a marker from a
+  // possibly-unregistered thread, and display it in the main thread track.
+  static MarkerThreadId MainThread() {
+    return MarkerThreadId(baseprofiler::profiler_main_thread_id());
   }
 
   [[nodiscard]] constexpr int ThreadId() const { return mThreadId; }
@@ -571,6 +566,10 @@ class MarkerInnerWindowId {
   // Constructor with a specified inner window id.
   constexpr explicit MarkerInnerWindowId(uint64_t i) : mInnerWindowId(i) {}
 
+  // Constructor with either specified inner window id or Nothing.
+  constexpr explicit MarkerInnerWindowId(const Maybe<uint64_t>& i)
+      : mInnerWindowId(i.valueOr(scNoId)) {}
+
   // Explicit option with unspecified id.
   constexpr static MarkerInnerWindowId NoId() { return MarkerInnerWindowId{}; }
 
@@ -583,22 +582,15 @@ class MarkerInnerWindowId {
   uint64_t mInnerWindowId = scNoId;
 };
 
-// This class combines a compulsory category with the above marker options.
-// To provide options to add-marker functions, first pick a MarkerCategory
-// object, then options may be added with WithOptions(), e.g.:
-// `mozilla::baseprofiler::category::OTHER_profiling`
-// `mozilla::baseprofiler::category::DOM.WithOptions(
-//      MarkerThreadId(1), MarkerTiming::IntervalStart())`
+// This class combines each of the possible marker options above.
 class MarkerOptions {
  public:
-  // Implicit constructor from category.
-  constexpr MOZ_IMPLICIT MarkerOptions(const MarkerCategory& aCategory)
-      : mCategory(aCategory) {}
-
-  // Constructor from category and other options.
+  // Constructor from individual options (including none).
+  // Implicit to allow `{}` and one option type as-is.
+  // Options that are not provided here are defaulted. In particular, timing
+  // defaults to `MarkerTiming::InstantNow()` when the marker is recorded.
   template <typename... Options>
-  explicit MarkerOptions(const MarkerCategory& aCategory, Options&&... aOptions)
-      : mCategory(aCategory) {
+  MOZ_IMPLICIT MarkerOptions(Options&&... aOptions) {
     (Set(std::forward<Options>(aOptions)), ...);
   }
 
@@ -619,7 +611,6 @@ class MarkerOptions {
   // `options.Set(MarkerThreadId(123)).Set(MarkerTiming::IntervalEnd())`.
   // When passed to an add-marker function, it must be an rvalue, either created
   // on the spot, or `std::move`d from storage, e.g.:
-  // `PROFILER_MARKER_UNTYPED("...", OTHER.Set(...))`;
   // `PROFILER_MARKER_UNTYPED("...", std::move(options).Set(...))`;
   //
   // Options can be read by their name (without "Marker"), e.g.: `o.ThreadId()`.
@@ -639,7 +630,6 @@ class MarkerOptions {
                                                          \
     Marker##NAME& NAME##Ref() { return m##NAME; }
 
-  FUNCTIONS_ON_MEMBER(Category);
   FUNCTIONS_ON_MEMBER(ThreadId);
   FUNCTIONS_ON_MEMBER(Timing);
   FUNCTIONS_ON_MEMBER(Stack);
@@ -649,30 +639,11 @@ class MarkerOptions {
  private:
   friend ProfileBufferEntryReader::Deserializer<MarkerOptions>;
 
-  // The default constructor is only used during deserialization.
-  constexpr MarkerOptions() = default;
-
-  MarkerCategory mCategory;
   MarkerThreadId mThreadId;
   MarkerTiming mTiming;
   MarkerStack mStack;
   MarkerInnerWindowId mInnerWindowId;
 };
-
-template <typename... Options>
-MarkerOptions MarkerCategory::WithOptions(Options&&... aOptions) const {
-  return MarkerOptions(*this, std::forward<Options>(aOptions)...);
-}
-
-namespace baseprofiler::category {
-
-// Import `MarkerOptions` into this namespace. This will allow using this type
-// dynamically in macros that prepend `::mozilla::baseprofiler::category::` to
-// the given category, e.g.: E.g.:
-// `PROFILER_MARKER_UNTYPED("name", MarkerOptions(...))`
-using MarkerOptions = ::mozilla::MarkerOptions;
-
-}  // namespace baseprofiler::category
 
 }  // namespace mozilla
 
@@ -683,6 +654,207 @@ namespace mozilla::baseprofiler::markers {
 struct NoPayload final {};
 
 }  // namespace mozilla::baseprofiler::markers
+
+namespace mozilla {
+
+class JSONWriter;
+
+// This class collects all the information necessary to stream the JSON schema
+// that informs the front-end how to display a type of markers.
+// It will be created and populated in `MarkerTypeDisplay()` functions in each
+// marker type definition, see Add/Set functions.
+class MarkerSchema {
+ public:
+  enum class Location : unsigned {
+    markerChart,
+    markerTable,
+    // This adds markers to the main marker timeline in the header.
+    timelineOverview,
+    // In the timeline, this is a section that breaks out markers that are
+    // related to memory. When memory counters are enabled, this is its own
+    // track, otherwise it is displayed with the main thread.
+    timelineMemory,
+    // This adds markers to the IPC timeline area in the header.
+    timelineIPC,
+    // This adds markers to the FileIO timeline area in the header.
+    timelineFileIO,
+    // TODO - This is not supported yet.
+    stackChart
+  };
+
+  // Used as constructor parameter, to explicitly specify that the location (and
+  // other display options) are handled as a special case in the front-end.
+  // In this case, *no* schema will be output for this type.
+  struct SpecialFrontendLocation {};
+
+  enum class Format {
+    // ----------------------------------------------------
+    // String types.
+
+    // Show the URL, and handle PII sanitization
+    url,
+    // Show the file path, and handle PII sanitization.
+    filePath,
+    // Important, do not put URL or file path information here, as it will not
+    // be sanitized. Please be careful with including other types of PII here as
+    // well.
+    // e.g. "Label: Some String"
+    string,
+
+    // ----------------------------------------------------
+    // Numeric types
+
+    // For time data that represents a duration of time.
+    // e.g. "Label: 5s, 5ms, 5μs"
+    duration,
+    // Data that happened at a specific time, relative to the start of the
+    // profile. e.g. "Label: 15.5s, 20.5ms, 30.5μs"
+    time,
+    // The following are alternatives to display a time only in a specific unit
+    // of time.
+    seconds,       // "Label: 5s"
+    milliseconds,  // "Label: 5ms"
+    microseconds,  // "Label: 5μs"
+    nanoseconds,   // "Label: 5ns"
+    // e.g. "Label: 5.55mb, 5 bytes, 312.5kb"
+    bytes,
+    // This should be a value between 0 and 1.
+    // "Label: 50%"
+    percentage,
+    // The integer should be used for generic representations of numbers.
+    // Do not use it for time information.
+    // "Label: 52, 5,323, 1,234,567"
+    integer,
+    // The decimal should be used for generic representations of numbers.
+    // Do not use it for time information.
+    // "Label: 52.23, 0.0054, 123,456.78"
+    decimal
+  };
+
+  enum class Searchable { notSearchable, searchable };
+
+  // Marker schema, with a non-empty list of locations where markers should be
+  // shown.
+  // Tech note: Even though `aLocations` are templated arguments, they are
+  // assigned to an `enum class` object, so they can only be of that enum type.
+  template <typename... Locations>
+  explicit MarkerSchema(Location aLocation, Locations... aLocations)
+      : mLocations{aLocation, aLocations...} {}
+
+  // Marker schema for types that have special frontend handling.
+  // Nothing else should be set in this case.
+  // Implicit to allow quick return from MarkerTypeDisplay functions.
+  MOZ_IMPLICIT MarkerSchema(SpecialFrontendLocation) {}
+
+  // Caller must specify location(s) or SpecialFrontendLocation above.
+  MarkerSchema() = delete;
+
+  // Optional labels in the marker chart, the chart tooltip, and the marker
+  // table. If not provided, the marker "name" will be used. The given string
+  // can contain element keys in braces to include data elements streamed by
+  // `StreamJSONMarkerData()`. E.g.: "This is {text}"
+
+#  define LABEL_SETTER(name)                       \
+    MarkerSchema& Set##name(std::string a##name) { \
+      m##name = std::move(a##name);                \
+      return *this;                                \
+    }
+
+  LABEL_SETTER(ChartLabel)
+  LABEL_SETTER(TooltipLabel)
+  LABEL_SETTER(TableLabel)
+
+#  undef LABEL_SETTER
+
+  MarkerSchema& SetAllLabels(std::string aText) {
+    // Here we set the same text in each label.
+    // TODO: Move to a single "label" field once the front-end allows it.
+    SetChartLabel(aText);
+    SetTooltipLabel(aText);
+    SetTableLabel(std::move(aText));
+    return *this;
+  }
+
+  // Each data element that is streamed by `StreamJSONMarkerData()` can be
+  // displayed as indicated by using one of the `Add...` function below.
+  // Each `Add...` will add a line in the full marker description. Parameters:
+  // - `aKey`: Element property name as streamed by `StreamJSONMarkerData()`.
+  // - `aLabel`: Optional prefix. Defaults to the key name.
+  // - `aFormat`: How to format the data element value, see `Format` above.
+  // - `aSearchable`: Optional, indicates if the value is used in searches,
+  //   defaults to false.
+
+  MarkerSchema& AddKeyFormat(std::string aKey, Format aFormat) {
+    mData.emplace_back(mozilla::VariantType<DynamicData>{},
+                       DynamicData{std::move(aKey), mozilla::Nothing{}, aFormat,
+                                   mozilla::Nothing{}});
+    return *this;
+  }
+
+  MarkerSchema& AddKeyLabelFormat(std::string aKey, std::string aLabel,
+                                  Format aFormat) {
+    mData.emplace_back(
+        mozilla::VariantType<DynamicData>{},
+        DynamicData{std::move(aKey), mozilla::Some(std::move(aLabel)), aFormat,
+                    mozilla::Nothing{}});
+    return *this;
+  }
+
+  MarkerSchema& AddKeyFormatSearchable(std::string aKey, Format aFormat,
+                                       Searchable aSearchable) {
+    mData.emplace_back(mozilla::VariantType<DynamicData>{},
+                       DynamicData{std::move(aKey), mozilla::Nothing{}, aFormat,
+                                   mozilla::Some(aSearchable)});
+    return *this;
+  }
+
+  MarkerSchema& AddKeyLabelFormatSearchable(std::string aKey,
+                                            std::string aLabel, Format aFormat,
+                                            Searchable aSearchable) {
+    mData.emplace_back(
+        mozilla::VariantType<DynamicData>{},
+        DynamicData{std::move(aKey), mozilla::Some(std::move(aLabel)), aFormat,
+                    mozilla::Some(aSearchable)});
+    return *this;
+  }
+
+  // The display may also include static rows.
+
+  MarkerSchema& AddStaticLabelValue(std::string aLabel, std::string aValue) {
+    mData.emplace_back(mozilla::VariantType<StaticData>{},
+                       StaticData{std::move(aLabel), std::move(aValue)});
+    return *this;
+  }
+
+  // Internal streaming function.
+  MFBT_API void Stream(JSONWriter& aWriter, const Span<const char>& aName) &&;
+
+ private:
+  MFBT_API static Span<const char> LocationToStringSpan(Location aLocation);
+  MFBT_API static Span<const char> FormatToStringSpan(Format aFormat);
+
+  // List of marker display locations. Empty for SpecialFrontendLocation.
+  std::vector<Location> mLocations;
+  // Labels for different places.
+  std::string mChartLabel;
+  std::string mTooltipLabel;
+  std::string mTableLabel;
+  // Main display, made of zero or more rows of key+label+format or label+value.
+  struct DynamicData {
+    std::string mKey;
+    mozilla::Maybe<std::string> mLabel;
+    Format mFormat;
+    mozilla::Maybe<Searchable> mSearchable;
+  };
+  struct StaticData {
+    std::string mLabel;
+    std::string mValue;
+  };
+  using DataRow = mozilla::Variant<DynamicData, StaticData>;
+  std::vector<DataRow> mData;
+};
+
+}  // namespace mozilla
 
 #endif  // MOZ_GECKO_PROFILER
 

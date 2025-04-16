@@ -83,23 +83,16 @@ function trr_clear_prefs() {
 /// This class sends a DNS query and can be awaited as a promise to get the
 /// response.
 class TRRDNSListener {
-  constructor(
-    name,
-    expectedAnswer,
-    expectedSuccess = true,
-    delay,
-    trrServer = "",
-    expectEarlyFail = false,
-    options = {}
-  ) {
+  constructor(name, options = {}) {
     this.name = name;
-    this.expectedAnswer = expectedAnswer;
-    this.expectedSuccess = expectedSuccess;
-    this.delay = delay;
+    this.options = options;
+    this.expectedAnswer = options.expectedAnswer ?? undefined;
+    this.expectedSuccess = options.expectedSuccess ?? true;
+    this.delay = options.delay;
     this.promise = new Promise(resolve => {
       this.resolve = resolve;
     });
-    this.options = options;
+    let trrServer = options.trrServer || "";
 
     const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
       Ci.nsIDNSService
@@ -121,9 +114,9 @@ class TRRDNSListener {
         currentThread,
         {} // defaultOriginAttributes
       );
-      Assert.ok(!expectEarlyFail);
+      Assert.ok(!options.expectEarlyFail);
     } catch (e) {
-      Assert.ok(expectEarlyFail);
+      Assert.ok(options.expectEarlyFail);
       this.resolve([e]);
     }
   }
@@ -276,10 +269,18 @@ function trrQueryHandler(req, resp, url) {
         `${dnsQuery.questions[0].name}/${dnsQuery.questions[0].type}`
       ] || {};
 
+    let flags = global.dnsPacket.RECURSION_DESIRED;
+    if (
+      (!response.answers || !response.answers.length) &&
+      response.additionals &&
+      response.additionals.length > 0
+    ) {
+      flags |= global.dnsPacket.rcodes.toRcode("SERVFAIL");
+    }
     let buf = global.dnsPacket.encode({
       type: "response",
       id: dnsQuery.id,
-      flags: global.dnsPacket.RECURSION_DESIRED,
+      flags,
       questions: dnsQuery.questions,
       answers: response.answers || [],
       additionals: response.additionals || [],

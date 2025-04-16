@@ -91,6 +91,9 @@ extern "C" const char* __tsan_default_suppressions() {
          "deadlock:OCSPStaplingServer\n"
          // Bug 1643087 - permanent
          "deadlock:BadCertAndPinningServer\n"
+         // Bug 1606804 - permanent
+         "deadlock:cert_storage::SecurityState::open_db\n"
+         "deadlock:cert_storage::SecurityState::add_certs\n"
 
          // Bug 1153409
          "race:third_party/sqlite3/*\n"
@@ -115,22 +118,8 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:sync..Arc\n"
          "race:alloc::sync::Arc\n"
 
-         // Bug 1600572
-         "race:SchedulerGroup::CreateEventTargetFor\n"
-         "race:SystemGroupImpl::AddRef\n"
-         "race:SystemGroup::EventTargetFor\n"
-         "race:SchedulerEventTarget::AddRef\n"
-         "race:SchedulerEventTarget::Dispatch\n"
-         "race:MessageChannel::MessageTask::Post\n"
-
          // Bug 1600594
          "race:nsThread::SizeOfEventQueues\n"
-
-         // Bug 1600895, bug 1647702
-         "race:UpdateArenaPointersTyped<js::ObjectGroup>\n"
-         "race:UpdateArenaPointersTyped<js::Shape>\n"
-         "race:UpdateArenaPointersTyped<JSObject>\n"
-         "race:JSObject::fixupAfterMovingGC\n"
 
          // Bug 1601286
          "race:setFlagBit\n"
@@ -156,10 +145,6 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:ScriptPreloader::MaybeFinishOffThreadDecode\n"
          "race:ScriptPreloader::DoFinishOffThreadDecode\n"
 
-         // Bug 1601980
-         "race:image::RasterImage::StartDecoding\n"
-         "race:image::RasterImage::OnImageDataAvailable\n"
-
          // Bug 1606651
          "race:nsPluginTag::nsPluginTag\n"
          "race:nsFakePluginTag\n"
@@ -173,23 +158,12 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1606804
          "deadlock:third_party/rust/rkv/src/env.rs\n"
 
-         // Bug 1606860
-         "race:majorGCCount\n"
-         "race:incMajorGcNumber\n"
-
          // Bug 1606864
          "race:nsSocketTransport::Close\n"
          "race:nsSocketTransport::OnSocketDetached\n"
 
-         // Bug 1607212
-         "race:CacheEntry::InvokeCallback\n"
-
          // Bug 1607138
          "race:gXPCOMThreadsShutDown\n"
-
-         // Bug 1607426
-         "race:PACLoadComplete::Run\n"
-         "race:nsPACMan::ProcessPending\n"
 
          // Bug 1607446
          "race:nsJARChannel::Suspend\n"
@@ -209,10 +183,6 @@ extern "C" const char* __tsan_default_suppressions() {
 
          // Bug 1607706
          "race:TemporaryIPCBlobParent::CreateAndShareFile\n"
-
-         // Bug 1607712
-         "race:GtkCompositorWidget::NotifyClientSizeChanged\n"
-         "race:GtkCompositorWidget::GetClientSize\n"
 
          // Bug 1607762
          "race:nsHtml5OwningUTF16Buffer::Release\n"
@@ -236,15 +206,25 @@ extern "C" const char* __tsan_default_suppressions() {
          "race:_dl_deallocate_tls\n"
          "race:__libc_memalign\n"
 
-         // Bug 1615121
-         "race:CacheEntry::Purge\n"
-         "race:CacheEntry::MetaDataReady\n"
-
          // Bug 1615265
          "race:ScriptPreloader::OffThreadDecodeCallback\n"
 
          // Bug 1615569
          "race:mp_exptmod.max_window_bits\n"
+
+         // Bug 1664535
+         "race:setNeedsIncrementalBarrier\n"
+         "race:needsIncrementalBarrier\n"
+
+         // Bug 1664803
+         "race:Sampler::sSigHandlerCoordinator\n"
+
+         // Bug 1657739
+         "race:WebRtcAec_CreateAec\n"
+         "race:EchoSubtraction\n"
+
+         // Bug 1656068
+         "race:WebRtcAec_Create\n"
 
          // ~GLContextGLX unlocks a libGL mutex that cannot be seen
          // by TSan because libGL is not instrumented.

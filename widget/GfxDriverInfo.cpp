@@ -457,6 +457,15 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       break;
     case DeviceFamily::IntelRolloutWebRender:
 #ifdef EARLY_BETA_OR_EARLIER
+      // cherryview
+      APPEND_DEVICE(0x22b0);
+      APPEND_DEVICE(0x22b1);
+      APPEND_DEVICE(0x22b2);
+      APPEND_DEVICE(0x22b3);
+#endif
+
+      [[fallthrough]];
+    case DeviceFamily::IntelModernRolloutWebRender:
       // sandybridge gen6 gt1
       APPEND_DEVICE(0x0102);
       APPEND_DEVICE(0x0106);
@@ -467,10 +476,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x0116);
       APPEND_DEVICE(0x0122);
       APPEND_DEVICE(0x0126);
-#endif
 
-      [[fallthrough]];
-    case DeviceFamily::IntelModernRolloutWebRender:
       // ivybridge gen7 gt1
       APPEND_DEVICE(0x0152);
       APPEND_DEVICE(0x0156);
@@ -667,6 +673,12 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
 
       // icelake gt1,gt1.5,gt2
       APPEND_RANGE(0x8a50, 0x8a5d);
+
+      // rocketlake
+      APPEND_RANGE(0x4c8a, 0x4c9a);
+
+      // tigerlake
+      APPEND_RANGE(0x9a40, 0x9af8);
       break;
     case DeviceFamily::AtiRolloutWebRender:
       APPEND_RANGE(0x6600, 0x66af);
@@ -674,6 +686,7 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_RANGE(0x6780, 0x683f);
       APPEND_RANGE(0x6860, 0x687f);
       APPEND_RANGE(0x6900, 0x69ff);
+      APPEND_DEVICE(0x6fdf);
       APPEND_DEVICE(0x7300);
       APPEND_RANGE(0x7310, 0x738e);
       APPEND_RANGE(0x9830, 0x986f);
@@ -684,10 +697,6 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       // Renoir
       APPEND_DEVICE(0x1636);
 
-#ifdef EARLY_BETA_OR_EARLIER
-      // Stoney
-      APPEND_DEVICE(0x98e4);
-
       // Evergreen
       APPEND_RANGE(0x6840, 0x684b);
       APPEND_RANGE(0x6850, 0x685f);
@@ -695,6 +704,13 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_RANGE(0x9800, 0x980a);
       APPEND_RANGE(0x9640, 0x964f);
       APPEND_RANGE(0x6720, 0x677f);
+
+      // Stoney
+      APPEND_DEVICE(0x98e4);
+
+#ifdef EARLY_BETA_OR_EARLIER
+      // Carrizo
+      APPEND_RANGE(0x9870, 0x9877);
 #endif
 
       break;
@@ -919,6 +935,7 @@ const nsAString& GfxDriverInfo::GetDriverVendor(DriverVendor id) {
     DECLARE_DRIVER_VENDOR_ID(MesaSoftPipe, "mesa/softpipe");
     DECLARE_DRIVER_VENDOR_ID(MesaSWRast, "mesa/swrast");
     DECLARE_DRIVER_VENDOR_ID(MesaUnknown, "mesa/unknown");
+    DECLARE_DRIVER_VENDOR_ID(MesaNouveau, "mesa/nouveau");
     DECLARE_DRIVER_VENDOR_ID(NonMesaAll, "non-mesa/all");
     case DriverVendor::Max:  // Suppress a warning.
       DECLARE_DRIVER_VENDOR_ID(All, "");

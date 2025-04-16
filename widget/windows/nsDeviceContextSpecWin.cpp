@@ -43,8 +43,8 @@
 #  include "nsThreadUtils.h"
 #endif
 
-static mozilla::LazyLogModule kWidgetPrintingLogMod("printing-widget");
-#define PR_PL(_p1) MOZ_LOG(kWidgetPrintingLogMod, mozilla::LogLevel::Debug, _p1)
+extern mozilla::LazyLogModule gPrintingLog;
+#define PR_PL(_p1) MOZ_LOG(gPrintingLog, mozilla::LogLevel::Debug, _p1)
 
 using namespace mozilla;
 using namespace mozilla::gfx;
@@ -73,8 +73,8 @@ nsDeviceContextSpecWin::~nsDeviceContextSpecWin() {
   }
 
   if (nsCOMPtr<nsIPrintSettingsWin> ps = do_QueryInterface(mPrintSettings)) {
-    ps->SetDeviceName(EmptyString());
-    ps->SetDriverName(EmptyString());
+    ps->SetDeviceName(u""_ns);
+    ps->SetDriverName(u""_ns);
     ps->SetDevMode(nullptr);
   }
 }
@@ -586,7 +586,7 @@ Maybe<nsPrinterListBase::PrinterInfo> nsPrinterListWin::PrinterBySystemName(
 }
 
 RefPtr<nsIPrinter> nsPrinterListWin::CreatePrinter(PrinterInfo aInfo) const {
-  return nsPrinterWin::Create(std::move(aInfo.mName));
+  return nsPrinterWin::Create(mCommonPaperInfo, std::move(aInfo.mName));
 }
 
 nsresult nsPrinterListWin::SystemDefaultPrinterName(nsAString& aName) const {

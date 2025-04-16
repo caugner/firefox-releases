@@ -17,6 +17,7 @@
 
 #include "jsdate.h"
 #include "jsfriendapi.h"
+#include "jsmath.h"
 #include "selfhosted.out.h"
 
 #include "builtin/Array.h"
@@ -40,7 +41,6 @@
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/String.h"
-#include "builtin/TypedObject.h"
 #include "builtin/WeakMapObject.h"
 #include "frontend/ParserAtom.h"  // js::frontend::ParserAtom
 #include "gc/Marking.h"
@@ -85,6 +85,7 @@
 #include "vm/StringType.h"
 #include "vm/ToSource.h"  // js::ValueToSource
 #include "vm/TypedArrayObject.h"
+#include "vm/Uint8Clamped.h"
 #include "vm/WrapperObject.h"
 
 #include "gc/GC-inl.h"
@@ -2112,7 +2113,7 @@ static bool intrinsic_NewPrivateName(JSContext* cx, unsigned argc, Value* vp) {
   MOZ_ASSERT(args.length() == 1);
 
   RootedString desc(cx, args[0].toString());
-  auto* symbol = Symbol::new_(cx, JS::SymbolCode::PrivateNameSymbol, desc);
+  auto* symbol = JS::Symbol::new_(cx, JS::SymbolCode::PrivateNameSymbol, desc);
   if (!symbol) {
     return false;
   }
@@ -2434,40 +2435,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
                     0, IntrinsicGuardToSetObject),
     JS_FN("CallSetMethodIfWrapped",
           CallNonGenericSelfhostedMethod<Is<SetObject>>, 2, 0),
-
-    // See builtin/TypedObject.h for descriptors of the typedobj functions.
-    JS_FN("NewOpaqueTypedObject", js::NewOpaqueTypedObject, 3, 0),
-    JS_FN("NewDerivedTypedObject", js::NewDerivedTypedObject, 3, 0),
-    JS_FN("TypedObjectTypeDescr", js::TypedObjectTypeDescr, 1, 0),
-    JS_FN("ClampToUint8", js::ClampToUint8, 1, 0),
-    JS_FN("GetTypedObjectModule", js::GetTypedObjectModule, 0, 0),
-
-    JS_FN("ObjectIsTypeDescr", js::ObjectIsTypeDescr, 1, 0),
-    JS_FN("ObjectIsTypedObject", js::ObjectIsTypedObject, 1, 0),
-    JS_FN("TypeDescrIsArrayType", js::TypeDescrIsArrayType, 1, 0),
-    JS_FN("TypeDescrIsSimpleType", js::TypeDescrIsSimpleType, 1, 0),
-
-    JS_FN("IsBoxedWasmAnyRef", js::IsBoxedWasmAnyRef, 1, 0),
-    JS_FN("IsBoxableWasmAnyRef", js::IsBoxableWasmAnyRef, 1, 0),
-    JS_FN("BoxWasmAnyRef", js::BoxWasmAnyRef, 1, 0),
-    JS_FN("UnboxBoxedWasmAnyRef", js::UnboxBoxedWasmAnyRef, 1, 0),
-
-// clang-format off
-#define LOAD_AND_STORE_SCALAR_FN_DECLS(_constant, _type, _name)         \
-    JS_FN("Store_" #_name, js::StoreScalar##_type::Func, 3, 0),         \
-    JS_FN("Load_" #_name,  js::LoadScalar##_type::Func, 3, 0),
-    JS_FOR_EACH_UNIQUE_SCALAR_NUMBER_TYPE_REPR_CTYPE(LOAD_AND_STORE_SCALAR_FN_DECLS)
-    JS_FOR_EACH_SCALAR_BIGINT_TYPE_REPR(LOAD_AND_STORE_SCALAR_FN_DECLS)
-// clang-format on
-#undef LOAD_AND_STORE_SCALAR_FN_DECLS
-
-// clang-format off
-#define LOAD_AND_STORE_REFERENCE_FN_DECLS(_constant, _type, _name)      \
-    JS_FN("Store_" #_name, js::StoreReference##_name::Func, 3, 0),      \
-    JS_FN("Load_" #_name,  js::LoadReference##_name::Func, 3, 0),
-    JS_FOR_EACH_REFERENCE_TYPE_REPR(LOAD_AND_STORE_REFERENCE_FN_DECLS)
-// clang-format on
-#undef LOAD_AND_STORE_REFERENCE_FN_DECLS
 
 #ifdef JS_HAS_INTL_API
     // See builtin/intl/*.h for descriptions of the intl_* functions.

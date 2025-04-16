@@ -30,7 +30,6 @@ from slugid import nice as slugid
 from .task import Task
 from .graph import Graph
 from .taskgraph import TaskGraph
-from .util.taskcluster import get_task_definition
 from .util.workertypes import get_worker_type
 
 here = os.path.abspath(os.path.dirname(__file__))
@@ -69,7 +68,7 @@ def derive_misc_task(
 
     # this is why all docker image tasks are included in the target task graph: we
     # need to find them in label_to_taskid, even if nothing else required them
-    image_taskid = label_to_taskid["build-docker-image-" + image]
+    image_taskid = label_to_taskid["docker-image-" + image]
 
     provisioner_id, worker_type = get_worker_type(
         graph_config, "misc", parameters["level"], parameters.release_level()
@@ -120,17 +119,6 @@ def derive_misc_task(
     )
     task.task_id = slugid().decode('ascii')
     return task
-
-
-def get_decision_indexes(parameters, graph_config):
-    index_paths = []
-    if parameters["backstop"]:
-        index_paths.append("{trust-domain}.v2.{project}.latest.taskgraph.backstop")
-
-    subs = parameters.copy()
-    subs["trust-domain"] = graph_config["trust-domain"]
-
-    return [i.format(**subs) for i in index_paths]
 
 
 # these regular expressions capture route prefixes for which we have a star
@@ -198,36 +186,8 @@ def add_index_tasks(
     """
     logger.debug('Morphing: adding index tasks')
 
-    added = []
-
-    # Add an index task for the decision task itself.
-    index_paths = get_decision_indexes(parameters, graph_config)
-    if index_paths:
-        task_def = get_task_definition(decision_task_id)
-        decision_task = Task(
-            kind="decision",
-            label="decision",
-            description="decision task",
-            attributes={},
-            task=task_def,
-        )
-        decision_task.task_id = decision_task_id
-
-        added.append(
-            make_index_task(
-                decision_task,
-                taskgraph,
-                label_to_taskid,
-                parameters,
-                graph_config,
-                index_paths=index_paths,
-                index_rank=0,
-                purpose="index-task",
-                dependencies={},
-            )
-        )
-
     # Add indexes for tasks that exceed MAX_ROUTES.
+    added = []
     for label, task in six.iteritems(taskgraph.tasks):
         if len(task.task.get('routes', [])) <= MAX_ROUTES:
             continue

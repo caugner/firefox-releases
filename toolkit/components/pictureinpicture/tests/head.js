@@ -107,6 +107,7 @@ async function triggerPictureInPicture(browser, videoID) {
   let win = await domWindowOpened;
   await win.promiseDocumentFlushed(() => {});
   await videoReady;
+  await SimpleTest.promiseFocus(win);
   return win;
 }
 
@@ -161,7 +162,8 @@ async function ensureVideosReady(browser) {
     let videos = this.content.document.querySelectorAll("video");
     for (let video of videos) {
       if (video.readyState < content.HTMLMediaElement.HAVE_ENOUGH_DATA) {
-        await ContentTaskUtils.waitForEvent(video, "canplay");
+        info(`Waiting for 'canplaythrough' for '${video.id}'`);
+        await ContentTaskUtils.waitForEvent(video, "canplaythrough");
       }
     }
   });

@@ -19,7 +19,6 @@
 #include "mozilla/widget/CompositorWidget.h"
 #include "mozilla/widget/WinCompositorWidget.h"
 #include "MLGShaders.h"
-#include "LayersLogging.h"
 #include "TextureD3D11.h"
 #include "gfxConfig.h"
 #include "mozilla/StaticPrefs_layers.h"
@@ -1891,15 +1890,14 @@ void MLGDeviceD3D11::CopyTexture(MLGTexture* aDest,
   IntRect sourceBounds(IntPoint(0, 0), aSource->GetSize());
   if (!sourceBounds.Contains(aRect)) {
     gfxWarning() << "Attempt to read out-of-bounds in CopySubresourceRegion: "
-                 << Stringify(sourceBounds) << ", " << Stringify(aRect);
+                 << sourceBounds << ", " << aRect;
     return;
   }
 
   IntRect destBounds(IntPoint(0, 0), aDest->GetSize());
   if (!destBounds.Contains(IntRect(aTarget, aRect.Size()))) {
     gfxWarning() << "Attempt to write out-of-bounds in CopySubresourceRegion: "
-                 << Stringify(destBounds) << ", " << Stringify(aTarget) << ", "
-                 << Stringify(aRect.Size());
+                 << destBounds << ", " << aTarget << ", " << aRect.Size();
     return;
   }
 

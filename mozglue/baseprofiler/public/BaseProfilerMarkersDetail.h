@@ -42,23 +42,47 @@ inline ProfileChunkedBuffer& CachedBaseCoreBuffer() {
 }
 
 struct Streaming {
-  // A `Deserializer` is a free function that can read a serialized payload from
-  // an `EntryReader` and streams it as JSON object properties.
-  using Deserializer = void (*)(ProfileBufferEntryReader&, JSONWriter&);
+  // A `MarkerDataDeserializer` is a free function that can read a serialized
+  // payload from an `EntryReader` and streams it as JSON object properties.
+  using MarkerDataDeserializer = void (*)(ProfileBufferEntryReader&,
+                                          JSONWriter&);
+
+  // A `MarkerTypeNameFunction` is a free function that returns the name of the
+  // marker type.
+  using MarkerTypeNameFunction = Span<const char> (*)();
+
+  // A `MarkerSchemaFunction` is a free function that returns a
+  // `MarkerSchema`, which contains all the information needed to stream
+  // the display schema associated with a marker type.
+  using MarkerSchemaFunction = MarkerSchema (*)();
+
+  struct MarkerTypeFunctions {
+    MarkerDataDeserializer mMarkerDataDeserializer = nullptr;
+    MarkerTypeNameFunction mMarkerTypeNameFunction = nullptr;
+    MarkerSchemaFunction mMarkerSchemaFunction = nullptr;
+  };
 
   // A `DeserializerTag` will be added before the payload, to help select the
   // correct deserializer when reading back the payload.
   using DeserializerTag = uint8_t;
 
-  // Store a deserializer and get its `DeserializerTag`.
-  // This is intended to be only used once per deserializer, so it should be
-  // called to initialize a `static const` tag that will be re-used by all
-  // markers of the corresponding payload type.
-  MFBT_API static DeserializerTag TagForDeserializer(
-      Deserializer aDeserializer);
+  // Store a deserializer (and other marker-type-specific functions) and get its
+  // `DeserializerTag`.
+  // This is intended to be only used once per deserializer when a new marker
+  // type is used for the first time, so it should be called to initialize a
+  // `static const` tag that will be re-used by all markers of the corresponding
+  // payload type -- see use below.
+  MFBT_API static DeserializerTag TagForMarkerTypeFunctions(
+      MarkerDataDeserializer aDeserializer,
+      MarkerTypeNameFunction aMarkerTypeNameFunction,
+      MarkerSchemaFunction aMarkerSchemaFunction);
 
-  // Get the `Deserializer` for a given `DeserializerTag`.
-  MFBT_API static Deserializer DeserializerForTag(DeserializerTag aTag);
+  // Get the `MarkerDataDeserializer` for a given `DeserializerTag`.
+  MFBT_API static MarkerDataDeserializer DeserializerForTag(
+      DeserializerTag aTag);
+
+  // Retrieve all MarkerTypeFunctions's.
+  MFBT_API static Span<const MarkerTypeFunctions> MarkerTypeFunctionsArray();
 };
 
 // This helper will examine a marker type's `StreamJSONMarkerData` function, see
@@ -82,12 +106,12 @@ struct StreamFunctionTypeHelper<R(JSONWriter&, As...)> {
   // references-to-const, permitted implicit conversions can happen.
   static ProfileBufferBlockIndex Serialize(
       ProfileChunkedBuffer& aBuffer, const ProfilerString8View& aName,
-      MarkerOptions&& aOptions, Streaming::DeserializerTag aDeserializerTag,
-      const As&... aAs) {
+      const MarkerCategory& aCategory, MarkerOptions&& aOptions,
+      Streaming::DeserializerTag aDeserializerTag, const As&... aAs) {
     // Note that options are first after the entry kind, because they contain
     // the thread id, which is handled first to filter markers by threads.
     return aBuffer.PutObjects(ProfileBufferEntryKind::Marker, aOptions, aName,
-                              aDeserializerTag, aAs...);
+                              aCategory, aDeserializerTag, aAs...);
   }
 };
 
@@ -111,23 +135,27 @@ struct MarkerTypeSerialization {
   template <typename... Ts>
   static ProfileBufferBlockIndex Serialize(ProfileChunkedBuffer& aBuffer,
                                            const ProfilerString8View& aName,
+                                           const MarkerCategory& aCategory,
                                            MarkerOptions&& aOptions,
                                            const Ts&... aTs) {
     static_assert(!std::is_same_v<MarkerType,
                                   ::mozilla::baseprofiler::markers::NoPayload>,
                   "NoPayload should have been handled in the caller.");
+    // Register marker type functions, and get the tag for this deserializer.
     // Note that the tag is stored in a function-static object, and this
     // function is static in a templated struct, so there should only be one tag
     // per MarkerType.
     // Making the tag class-static may have been more efficient (to avoid a
     // thread-safe init check at every call), but random global static
     // initialization order would make it more complex to coordinate with
-    // `Streaming::TagForDeserializer()`, and also would add a (small) cost for
-    // everybody, even the majority of users not using the profiler.
+    // `Streaming::TagForMarkerTypeFunctions()`, and also would add a (small)
+    // cost for everybody, even the majority of users not using the profiler.
     static const Streaming::DeserializerTag tag =
-        Streaming::TagForDeserializer(Deserialize);
-    return StreamFunctionType::Serialize(aBuffer, aName, std::move(aOptions),
-                                         tag, aTs...);
+        Streaming::TagForMarkerTypeFunctions(Deserialize,
+                                             MarkerType::MarkerTypeName,
+                                             MarkerType::MarkerTypeDisplay);
+    return StreamFunctionType::Serialize(aBuffer, aName, aCategory,
+                                         std::move(aOptions), tag, aTs...);
   }
 
  private:
@@ -175,19 +203,46 @@ struct MarkerTypeSerialization<::mozilla::baseprofiler::markers::NoPayload> {
 template <typename MarkerType, typename... Ts>
 static ProfileBufferBlockIndex AddMarkerWithOptionalStackToBuffer(
     ProfileChunkedBuffer& aBuffer, const ProfilerString8View& aName,
-    MarkerOptions&& aOptions, const Ts&... aTs) {
+    const MarkerCategory& aCategory, MarkerOptions&& aOptions,
+    const Ts&... aTs) {
   if constexpr (std::is_same_v<MarkerType,
                                ::mozilla::baseprofiler::markers::NoPayload>) {
     static_assert(sizeof...(Ts) == 0,
                   "NoPayload does not accept any payload arguments.");
+    // Special case for NoPayload where there is a stack or inner window id:
+    // Because these options would be stored in the payload 'data' object, but
+    // there is no such object for NoPayload, we convert the marker to another
+    // type (without user fields in the 'data' object), so that the stack and/or
+    // inner window id are not lost.
+    // TODO: Remove this when bug 1646714 lands.
+    if (aOptions.Stack().GetChunkedBuffer() ||
+        !aOptions.InnerWindowId().IsUnspecified()) {
+      struct NoPayloadUserData {
+        static constexpr Span<const char> MarkerTypeName() {
+          return MakeStringSpan("NoPayloadUserData");
+        }
+        static void StreamJSONMarkerData(JSONWriter& aWriter) {
+          // No user payload.
+        }
+        static mozilla::MarkerSchema MarkerTypeDisplay() {
+          using MS = mozilla::MarkerSchema;
+          MS schema{MS::Location::markerChart, MS::Location::markerTable};
+          // No user data to display.
+          return schema;
+        }
+      };
+      return MarkerTypeSerialization<NoPayloadUserData>::Serialize(
+          aBuffer, aName, aCategory, std::move(aOptions));
+    }
+
     // Note that options are first after the entry kind, because they contain
     // the thread id, which is handled first to filter markers by threads.
     return aBuffer.PutObjects(
-        ProfileBufferEntryKind::Marker, std::move(aOptions), aName,
+        ProfileBufferEntryKind::Marker, std::move(aOptions), aName, aCategory,
         base_profiler_markers_detail::Streaming::DeserializerTag(0));
   } else {
     return MarkerTypeSerialization<MarkerType>::Serialize(
-        aBuffer, aName, std::move(aOptions), aTs...);
+        aBuffer, aName, aCategory, std::move(aOptions), aTs...);
   }
 }
 
@@ -201,7 +256,7 @@ using BacktraceCaptureFunction = bool (*)(ProfileChunkedBuffer&);
 template <typename MarkerType, typename... Ts>
 ProfileBufferBlockIndex AddMarkerToBuffer(
     ProfileChunkedBuffer& aBuffer, const ProfilerString8View& aName,
-    MarkerOptions&& aOptions,
+    const MarkerCategory& aCategory, MarkerOptions&& aOptions,
     BacktraceCaptureFunction aBacktraceCaptureFunction, const Ts&... aTs) {
   if (aOptions.ThreadId().IsUnspecified()) {
     // If yet unspecified, set thread to this thread where the marker is added.
@@ -226,11 +281,11 @@ ProfileBufferBlockIndex AddMarkerToBuffer(
         aBacktraceCaptureFunction(chunkedBuffer) ? &chunkedBuffer : nullptr);
     // This call must be made from here, while chunkedBuffer is in scope.
     return AddMarkerWithOptionalStackToBuffer<MarkerType>(
-        aBuffer, aName, std::move(aOptions), aTs...);
+        aBuffer, aName, aCategory, std::move(aOptions), aTs...);
   }
 
   return AddMarkerWithOptionalStackToBuffer<MarkerType>(
-      aBuffer, aName, std::move(aOptions), aTs...);
+      aBuffer, aName, aCategory, std::move(aOptions), aTs...);
 }
 
 template <typename NameCallback, typename StackCallback>
@@ -254,7 +309,7 @@ template <typename NameCallback, typename StackCallback>
   aWriter.StartArrayElement();
   {
     std::forward<NameCallback>(aNameCallback)(
-        aEntryReader.ReadObject<mozilla::ProfilerString8View>());
+        aEntryReader.ReadObject<ProfilerString8View>());
 
     const double startTime = options.Timing().GetStartTime();
     aWriter.DoubleElement(startTime);
@@ -264,7 +319,8 @@ template <typename NameCallback, typename StackCallback>
 
     aWriter.IntElement(static_cast<int64_t>(options.Timing().MarkerPhase()));
 
-    aWriter.IntElement(static_cast<int64_t>(options.Category().Category()));
+    MarkerCategory category = aEntryReader.ReadObject<MarkerCategory>();
+    aWriter.IntElement(static_cast<int64_t>(category.GetCategory()));
 
     if (const auto tag =
             aEntryReader.ReadObject<mozilla::base_profiler_markers_detail::
@@ -296,7 +352,7 @@ template <typename NameCallback, typename StackCallback>
         }
 
         // Stream the payload, including the type.
-        mozilla::base_profiler_markers_detail::Streaming::Deserializer
+        mozilla::base_profiler_markers_detail::Streaming::MarkerDataDeserializer
             deserializer = mozilla::base_profiler_markers_detail::Streaming::
                 DeserializerForTag(tag);
         MOZ_RELEASE_ASSERT(deserializer);
@@ -409,14 +465,12 @@ struct ProfileBufferEntryReader::Deserializer<ProfilerStringView<CHAR>> {
 template <>
 struct ProfileBufferEntryWriter::Serializer<MarkerCategory> {
   static Length Bytes(const MarkerCategory& aCategory) {
-    return ULEB128Size(static_cast<uint32_t>(aCategory.CategoryPair())) +
-           ULEB128Size(static_cast<uint32_t>(aCategory.Category()));
+    return ULEB128Size(static_cast<uint32_t>(aCategory.CategoryPair()));
   }
 
   static void Write(ProfileBufferEntryWriter& aEW,
                     const MarkerCategory& aCategory) {
     aEW.WriteULEB128(static_cast<uint32_t>(aCategory.CategoryPair()));
-    aEW.WriteULEB128(static_cast<uint32_t>(aCategory.Category()));
   }
 };
 
@@ -424,17 +478,12 @@ template <>
 struct ProfileBufferEntryReader::Deserializer<MarkerCategory> {
   static void ReadInto(ProfileBufferEntryReader& aER,
                        MarkerCategory& aCategory) {
-    aCategory.mCategoryPair = static_cast<baseprofiler::ProfilingCategoryPair>(
-        aER.ReadULEB128<uint32_t>());
-    aCategory.mCategory = static_cast<baseprofiler::ProfilingCategory>(
-        aER.ReadULEB128<uint32_t>());
+    aCategory = Read(aER);
   }
 
   static MarkerCategory Read(ProfileBufferEntryReader& aER) {
     return MarkerCategory(static_cast<baseprofiler::ProfilingCategoryPair>(
-                              aER.ReadULEB128<uint32_t>()),
-                          static_cast<baseprofiler::ProfilingCategory>(
-                              aER.ReadULEB128<uint32_t>()));
+        aER.ReadULEB128<uint32_t>()));
   }
 };
 
@@ -590,14 +639,13 @@ struct ProfileBufferEntryReader::Deserializer<MarkerStack> {
 template <>
 struct ProfileBufferEntryWriter::Serializer<MarkerOptions> {
   static Length Bytes(const MarkerOptions& aOptions) {
-    return SumBytes(aOptions.Category(), aOptions.ThreadId(), aOptions.Timing(),
-                    aOptions.Stack(), aOptions.InnerWindowId());
+    return SumBytes(aOptions.ThreadId(), aOptions.Timing(), aOptions.Stack(),
+                    aOptions.InnerWindowId());
   }
 
   static void Write(ProfileBufferEntryWriter& aEW,
                     const MarkerOptions& aOptions) {
-    aEW.WriteObjects(aOptions.Category(), aOptions.ThreadId(),
-                     aOptions.Timing(), aOptions.Stack(),
+    aEW.WriteObjects(aOptions.ThreadId(), aOptions.Timing(), aOptions.Stack(),
                      aOptions.InnerWindowId());
   }
 };
@@ -605,8 +653,7 @@ struct ProfileBufferEntryWriter::Serializer<MarkerOptions> {
 template <>
 struct ProfileBufferEntryReader::Deserializer<MarkerOptions> {
   static void ReadInto(ProfileBufferEntryReader& aER, MarkerOptions& aOptions) {
-    aER.ReadIntoObjects(aOptions.mCategory, aOptions.mThreadId,
-                        aOptions.mTiming, aOptions.mStack,
+    aER.ReadIntoObjects(aOptions.mThreadId, aOptions.mTiming, aOptions.mStack,
                         aOptions.mInnerWindowId);
   }
 

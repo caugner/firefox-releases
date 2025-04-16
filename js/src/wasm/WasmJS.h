@@ -106,6 +106,9 @@ bool CodeCachingAvailable(JSContext* cx);
 // General reference types (externref, funcref) and operations on them.
 bool ReftypesAvailable(JSContext* cx);
 
+// Typed functions reference support.
+bool FunctionReferencesAvailable(JSContext* cx);
+
 // Experimental (ref T) types and structure types.
 bool GcTypesAvailable(JSContext* cx);
 
@@ -160,6 +163,8 @@ MOZ_MUST_USE bool DeserializeModule(JSContext* cx, const Bytes& serialized,
 bool IsWasmExportedFunction(JSFunction* fun);
 MOZ_MUST_USE bool CheckFuncRefValue(JSContext* cx, HandleValue v,
                                     MutableHandleFunction fun);
+MOZ_MUST_USE bool CheckEqRefValue(JSContext* cx, HandleValue v,
+                                  MutableHandleAnyRef vp);
 
 Instance& ExportedFunctionToInstance(JSFunction* fun);
 WasmInstanceObject* ExportedFunctionToInstanceObject(JSFunction* fun);
@@ -180,10 +185,6 @@ MOZ_MUST_USE bool CheckRefType(JSContext* cx, RefType targetType, HandleValue v,
                                MutableHandleAnyRef refval);
 
 }  // namespace wasm
-
-// The class of the WebAssembly global namespace object.
-
-extern const JSClass WebAssemblyClass;
 
 // The class of WebAssembly.Module. Each WasmModuleObject owns a
 // wasm::Module. These objects are used both as content-facing JS objects and as
@@ -232,6 +233,9 @@ class WasmGlobalObject : public NativeObject {
   static const ClassSpec classSpec_;
   static void finalize(JSFreeOp*, JSObject* obj);
   static void trace(JSTracer* trc, JSObject* obj);
+
+  static bool typeGetterImpl(JSContext* cx, const CallArgs& args);
+  static bool typeGetter(JSContext* cx, unsigned argc, Value* vp);
 
   static bool valueGetterImpl(JSContext* cx, const CallArgs& args);
   static bool valueGetter(JSContext* cx, unsigned argc, Value* vp);
@@ -364,6 +368,8 @@ class WasmMemoryObject : public NativeObject {
   static void finalize(JSFreeOp* fop, JSObject* obj);
   static bool bufferGetterImpl(JSContext* cx, const CallArgs& args);
   static bool bufferGetter(JSContext* cx, unsigned argc, Value* vp);
+  static bool typeGetterImpl(JSContext* cx, const CallArgs& args);
+  static bool typeGetter(JSContext* cx, unsigned argc, Value* vp);
   static bool growImpl(JSContext* cx, const CallArgs& args);
   static bool grow(JSContext* cx, unsigned argc, Value* vp);
   static uint32_t growShared(HandleWasmMemoryObject memory, uint32_t delta);
@@ -427,6 +433,8 @@ class WasmTableObject : public NativeObject {
   bool isNewborn() const;
   static void finalize(JSFreeOp* fop, JSObject* obj);
   static void trace(JSTracer* trc, JSObject* obj);
+  static bool typeGetterImpl(JSContext* cx, const CallArgs& args);
+  static bool typeGetter(JSContext* cx, unsigned argc, Value* vp);
   static bool lengthGetterImpl(JSContext* cx, const CallArgs& args);
   static bool lengthGetter(JSContext* cx, unsigned argc, Value* vp);
   static bool getImpl(JSContext* cx, const CallArgs& args);
@@ -452,6 +460,28 @@ class WasmTableObject : public NativeObject {
                                  mozilla::Maybe<uint32_t> maximumLength,
                                  wasm::RefType tableType, HandleObject proto);
   wasm::Table& table() const;
+};
+
+// The class of the WebAssembly global namespace object.
+
+class WasmNamespaceObject : public NativeObject {
+ public:
+  enum Slot {
+    ArrayTypePrototype,
+    StructTypePrototype,
+    Int32Desc,
+    Int64Desc,
+    Float32Desc,
+    Float64Desc,
+    ObjectDesc,
+    WasmAnyRefDesc,
+    SlotCount
+  };
+
+  static const JSClass class_;
+
+ private:
+  static const ClassSpec classSpec_;
 };
 
 }  // namespace js

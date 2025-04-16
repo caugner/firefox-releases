@@ -122,6 +122,7 @@
 #include "mozilla/dom/localstorage/ActorsParent.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
 #include "mozilla/RemoteLazyInputStreamStorage.h"
+#include "nsLayoutUtils.h"
 #include "nsThreadManager.h"
 #include "mozilla/css/ImageLoader.h"
 #include "gfxUserFontSet.h"
@@ -300,7 +301,6 @@ void nsLayoutStatics::Shutdown() {
 
   if (XRE_IsParentProcess() || XRE_IsContentProcess()) {
     ShutdownServo();
-    URLExtraData::ReleaseDummy();
   }
 
   mozilla::dom::AbstractRange::Shutdown();

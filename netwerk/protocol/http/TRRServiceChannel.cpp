@@ -389,7 +389,7 @@ nsresult TRRServiceChannel::BeginConnect() {
   mRequestHead.SetOrigin(scheme, host, port);
 
   RefPtr<nsHttpConnectionInfo> connInfo = new nsHttpConnectionInfo(
-      host, port, EmptyCString(), mUsername, GetTopWindowOrigin(), proxyInfo,
+      host, port, ""_ns, mUsername, GetTopWindowOrigin(), proxyInfo,
       OriginAttributes(), isHttps);
   // TODO: Bug 1622778 for using AltService in socket process.
   mAllowAltSvc = XRE_IsParentProcess() && mAllowAltSvc;
@@ -1272,6 +1272,11 @@ TRRServiceChannel::LogMimeTypeMismatch(const nsACString& aMessageName,
 
 NS_IMETHODIMP
 TRRServiceChannel::SetupFallbackChannel(const char* aFallbackKey) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRServiceChannel::GetIsAuthChannel(bool* aIsAuthChannel) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

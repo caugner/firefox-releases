@@ -32,12 +32,16 @@ Http3Stream::Http3Stream(nsAHttpTransaction* httpTransaction,
       mSocketTransport(session->SocketTransport()),
       mTotalSent(0),
       mTotalRead(0),
-      mFin(false) {
+      mFin(false),
+      mSendingBlockedByFlowControlCount(0) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG3(("Http3Stream::Http3Stream [this=%p]", this));
 }
 
-void Http3Stream::Close(nsresult aResult) { mTransaction->Close(aResult); }
+void Http3Stream::Close(nsresult aResult) {
+  mRecvState = RECV_DONE;
+  mTransaction->Close(aResult);
+}
 
 bool Http3Stream::GetHeadersString(const char* buf, uint32_t avail,
                                    uint32_t* countUsed) {
@@ -185,6 +189,9 @@ nsresult Http3Stream::OnReadSegment(const char* buf, uint32_t count,
       break;
     case SENDING_BODY: {
       rv = mSession->SendRequestBody(mStreamId, buf, count, countRead);
+      if (rv == NS_BASE_STREAM_WOULD_BLOCK) {
+        mSendingBlockedByFlowControlCount++;
+      }
       MOZ_ASSERT(mRequestBodyLenRemaining >= *countRead,
                  "We cannot send more that than we promised.");
       if (mRequestBodyLenRemaining < *countRead) {
@@ -204,6 +211,9 @@ nsresult Http3Stream::OnReadSegment(const char* buf, uint32_t count,
                                         NS_NET_STATUS_WAITING_FOR, 0);
         mSession->CloseSendingSide(mStreamId);
         mSendState = SEND_DONE;
+        Telemetry::Accumulate(
+            Telemetry::HTTP3_SENDING_BLOCKED_BY_FLOW_CONTROL_PER_TRANS,
+            mSendingBlockedByFlowControlCount);
       }
     } break;
     case EARLY_RESPONSE:
@@ -294,7 +304,6 @@ nsresult Http3Stream::OnWriteSegment(char* buf, uint32_t count,
       }
     } break;
     case RECEIVED_FIN:
-    case RECEIVED_RESET:
       rv = NS_BASE_STREAM_CLOSED;
       mRecvState = RECV_DONE;
       break;
@@ -369,9 +378,32 @@ nsresult Http3Stream::WriteSegments(nsAHttpSegmentWriter* writer,
                                     uint32_t count, uint32_t* countWritten) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG(("Http3Stream::WriteSegments [this=%p]", this));
-  nsresult rv = mTransaction->WriteSegments(this, count, countWritten);
-  LOG(("Http3Stream::WriteSegments rv=0x%" PRIx32 " [this=%p]",
-       static_cast<uint32_t>(rv), this));
+  nsresult rv = NS_OK;
+  uint32_t countWrittenSingle = 0;
+  do {
+    rv = mTransaction->WriteSegments(this, count, &countWrittenSingle);
+    *countWritten += countWrittenSingle;
+    LOG(("Http3Stream::WriteSegments rv=0x%" PRIx32
+         " countWrittenSingle=%" PRIu32 " [this=%p]",
+         static_cast<uint32_t>(rv), countWrittenSingle, this));
+    if (mTransaction->IsDone()) {
+      // If a transaction has read the amount of data specified in
+      // Content-Length it is marked as done.The Http3Stream should be
+      // marked as done as well to start the process of cleanup and
+      // closure.
+      mRecvState = RECV_DONE;
+    }
+
+    // Repeat until the neqo stream buffer is empty, consumer is blocked
+    // or stream is done. In such a case countWrittenSingle will be 0.
+    // There is one exception to this: if a transaction only has read headers
+    // countWrittenSingle will be 0 (bug 1646701) a WriteSegments will not be
+    // triggered again and the transaction will not pickup the FIN bit. For this
+    // case (mRecvState == RECV_FIN) repeat the WriteSegments call one more
+    // time.
+  } while (NS_SUCCEEDED(rv) &&
+           ((countWrittenSingle > 0) || (mRecvState == RECEIVED_FIN)) &&
+           !Done());
   return rv;
 }
 
@@ -390,18 +422,22 @@ nsresult Http3Stream::Finish0RTT(bool aRestart) {
     if (trans) {
       trans->Refused0RTT();
     }
+
+    // Reset Http3Sream states as well.
+    mSendState = PREPARING_HEADERS;
+    mRecvState = READING_HEADERS;
+    mStreamId = UINT64_MAX;
+    mQueued = false;
+    mRequestBlockedOnRead = false;
+    mDataReceived = false;
+    mResetRecv = false;
+    mRequestBodyLenRemaining = 0;
+    mTotalSent = 0;
+    mTotalRead = 0;
+    mFin = false;
+    mSendingBlockedByFlowControlCount = 0;
+    mFlatResponseHeaders.TruncateLength(0);
   }
-  mSendState = PREPARING_HEADERS;
-  mRecvState = READING_HEADERS;
-  mStreamId = UINT64_MAX;
-  mQueued = false;
-  mRequestBlockedOnRead = false;
-  mDataReceived = false;
-  mResetRecv = false;
-  mRequestBodyLenRemaining = 0;
-  mTotalSent = 0;
-  mTotalRead = 0;
-  mFin = false;
 
   return rv;
 }

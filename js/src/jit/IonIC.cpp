@@ -6,8 +6,9 @@
 
 #include "jit/IonIC.h"
 
+#include "jit/AutoDetectInvalidation.h"
 #include "jit/CacheIRCompiler.h"
-#include "jit/Linker.h"
+#include "jit/VMFunctions.h"
 #include "util/DiagnosticAssertions.h"
 
 #include "jit/MacroAssembler-inl.h"
@@ -222,6 +223,15 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
     // Do not re-invalidate if the lookup already caused invalidation.
     if (outerScript->hasIonScript()) {
       Invalidate(cx, outerScript);
+    }
+
+    // IonBuilder::createScriptedThis does not use InvalidedIdempotentCache
+    // flag so prevent bailout-loop by disabling Ion for the script.
+    MOZ_ASSERT(ic->kind() == CacheKind::GetProp);
+    if (idVal.toString()->asAtom().asPropertyName() == cx->names().prototype) {
+      if (val.isObject() && val.toObject().is<JSFunction>()) {
+        outerScript->disableIon();
+      }
     }
 
     // We will redo the potentially effectful lookup in Baseline.

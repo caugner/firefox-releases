@@ -12,6 +12,7 @@
 #include "nsWindow.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/Likely.h"
+#include "mozilla/LookAndFeel.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
@@ -1346,6 +1347,14 @@ void IMContextWrapper::SetInputContext(nsWindow* aCaller,
         gint hints = GTK_INPUT_HINT_NONE;
         if (mInputContext.mHTMLInputInputmode.EqualsLiteral("none")) {
           hints |= GTK_INPUT_HINT_INHIBIT_OSK;
+        }
+
+        if (mInputContext.mAutocapitalize.EqualsLiteral("characters")) {
+          hints |= GTK_INPUT_HINT_UPPERCASE_CHARS;
+        } else if (mInputContext.mAutocapitalize.EqualsLiteral("sentences")) {
+          hints |= GTK_INPUT_HINT_UPPERCASE_SENTENCES;
+        } else if (mInputContext.mAutocapitalize.EqualsLiteral("words")) {
+          hints |= GTK_INPUT_HINT_UPPERCASE_WORDS;
         }
 
         g_object_set(currentContext, "input-hints", hints, nullptr);

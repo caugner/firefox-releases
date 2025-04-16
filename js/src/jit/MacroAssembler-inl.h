@@ -13,7 +13,14 @@
 #include "mozilla/MathAlgorithms.h"
 
 #include "gc/Zone.h"
+#include "jit/CalleeToken.h"
+#include "jit/CompileWrappers.h"
+#include "jit/JitFrames.h"
+#include "jit/JSJitFrameIter.h"
 #include "vm/ProxyObject.h"
+#include "vm/Runtime.h"
+
+#include "jit/ABIFunctionList-inl.h"
 
 #if defined(JS_CODEGEN_X86)
 #  include "jit/x86/MacroAssembler-x86-inl.h"
@@ -35,6 +42,40 @@
 
 namespace js {
 namespace jit {
+
+template <typename Sig>
+DynFn DynamicFunction(Sig fun) {
+  ABIFunctionSignature<Sig> sig;
+  return DynFn{sig.address(fun)};
+}
+
+// Helper for generatePreBarrier.
+inline DynFn JitMarkFunction(MIRType type) {
+  switch (type) {
+    case MIRType::Value: {
+      using Fn = void (*)(JSRuntime * rt, Value * vp);
+      return DynamicFunction<Fn>(MarkValueFromJit);
+    }
+    case MIRType::String: {
+      using Fn = void (*)(JSRuntime * rt, JSString * *stringp);
+      return DynamicFunction<Fn>(MarkStringFromJit);
+    }
+    case MIRType::Object: {
+      using Fn = void (*)(JSRuntime * rt, JSObject * *objp);
+      return DynamicFunction<Fn>(MarkObjectFromJit);
+    }
+    case MIRType::Shape: {
+      using Fn = void (*)(JSRuntime * rt, Shape * *shapep);
+      return DynamicFunction<Fn>(MarkShapeFromJit);
+    }
+    case MIRType::ObjectGroup: {
+      using Fn = void (*)(JSRuntime * rt, ObjectGroup * *groupp);
+      return DynamicFunction<Fn>(MarkObjectGroupFromJit);
+    }
+    default:
+      MOZ_CRASH();
+  }
+}
 
 //{{{ check_macroassembler_style
 // ===============================================================
@@ -97,6 +138,20 @@ void MacroAssembler::callWithABI(void* fun, MoveOp::Type result,
                                  CheckUnsafeCallWithABI check) {
   AutoProfilerCallInstrumentation profiler(*this);
   callWithABINoProfiler(fun, result, check);
+}
+
+void MacroAssembler::callWithABI(DynFn fun, MoveOp::Type result,
+                                 CheckUnsafeCallWithABI check) {
+  AutoProfilerCallInstrumentation profiler(*this);
+  callWithABINoProfiler(fun.address, result, check);
+}
+
+template <typename Sig, Sig fun>
+void MacroAssembler::callWithABI(MoveOp::Type result,
+                                 CheckUnsafeCallWithABI check) {
+  ABIFunction<Sig, fun> abiFun;
+  AutoProfilerCallInstrumentation profiler(*this);
+  callWithABINoProfiler(abiFun.address(), result, check);
 }
 
 void MacroAssembler::callWithABI(Register fun, MoveOp::Type result) {
@@ -361,6 +416,22 @@ void MacroAssembler::branchTestFunctionFlags(Register fun, uint32_t flags,
   int32_t bit = IMM32_16ADJ(flags);
   Address address(fun, JSFunction::offsetOfNargs());
   branchTest32(cond, address, Imm32(bit), label);
+}
+
+void MacroAssembler::branchIfNotFunctionIsNonBuiltinCtor(Register fun,
+                                                         Register scratch,
+                                                         Label* label) {
+  // Guard the function has the BASESCRIPT and CONSTRUCTOR flags and does NOT
+  // have the SELF_HOSTED flag.
+  // This is equivalent to JSFunction::isNonBuiltinConstructor.
+  constexpr uint32_t mask = FunctionFlags::BASESCRIPT |
+                            FunctionFlags::SELF_HOSTED |
+                            FunctionFlags::CONSTRUCTOR;
+  constexpr uint32_t expected =
+      FunctionFlags::BASESCRIPT | FunctionFlags::CONSTRUCTOR;
+  load16ZeroExtend(Address(fun, JSFunction::offsetOfFlags()), scratch);
+  and32(Imm32(mask), scratch);
+  branch32(Assembler::NotEqual, scratch, Imm32(expected), label);
 }
 
 void MacroAssembler::branchIfFunctionHasNoJitEntry(Register fun,

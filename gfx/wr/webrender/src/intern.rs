@@ -110,7 +110,7 @@ impl ItemUid {
 
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Debug, MallocSizeOf)]
+#[derive(Debug, MallocSizeOf, PartialEq)]
 pub struct Handle<I> {
     index: u32,
     epoch: Epoch,
@@ -418,6 +418,7 @@ enumerate_interners!(declare_interning_memory_report);
 
 /// Memory report for interning-related data structures.
 /// cbindgen:derive-eq=false
+/// cbindgen:derive-ostream=false
 #[repr(C)]
 #[derive(Clone, Debug, Default)]
 pub struct InterningMemoryReport {

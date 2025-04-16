@@ -5,7 +5,9 @@
 
 #include "nsNativeBasicTheme.h"
 
+#include "nsCSSColorUtils.h"
 #include "nsCSSRendering.h"
+#include "nsLayoutUtils.h"
 #include "PathHelpers.h"
 
 using namespace mozilla;
@@ -869,63 +871,131 @@ void nsNativeBasicTheme::PaintButton(nsIFrame* aFrame, DrawTarget* aDrawTarget,
   }
 }
 
-void nsNativeBasicTheme::PaintScrollbarthumbHorizontal(
-    DrawTarget* aDrawTarget, const Rect& aRect, const EventStates& aState) {
-  sRGBColor thumbColor = sScrollbarThumbColor;
-  if (aState.HasAllStates(NS_EVENT_STATE_HOVER | NS_EVENT_STATE_ACTIVE)) {
-    thumbColor = sScrollbarThumbColorActive;
-  } else if (aState.HasState(NS_EVENT_STATE_HOVER)) {
-    thumbColor = sScrollbarThumbColorHover;
+sRGBColor nsNativeBasicTheme::ComputeScrollbarthumbColor(
+    const ComputedStyle& aStyle, const EventStates& aElementState,
+    const EventStates& aDocumentState) {
+  const nsStyleUI* ui = aStyle.StyleUI();
+  nscolor color;
+  if (ui->mScrollbarColor.IsColors()) {
+    color = ui->mScrollbarColor.AsColors().thumb.CalcColor(aStyle);
+  } else if (aDocumentState.HasAllStates(NS_DOCUMENT_STATE_WINDOW_INACTIVE)) {
+    color = LookAndFeel::GetColor(
+        LookAndFeel::ColorID::ThemedScrollbarThumbInactive,
+        sScrollbarThumbColor.ToABGR());
+  } else if (aElementState.HasAllStates(NS_EVENT_STATE_ACTIVE)) {
+    color =
+        LookAndFeel::GetColor(LookAndFeel::ColorID::ThemedScrollbarThumbActive,
+                              sScrollbarThumbColorActive.ToABGR());
+  } else if (aElementState.HasAllStates(NS_EVENT_STATE_HOVER)) {
+    color =
+        LookAndFeel::GetColor(LookAndFeel::ColorID::ThemedScrollbarThumbHover,
+                              sScrollbarThumbColorHover.ToABGR());
+  } else {
+    color = LookAndFeel::GetColor(LookAndFeel::ColorID::ThemedScrollbarThumb,
+                                  sScrollbarThumbColor.ToABGR());
   }
+  return gfx::sRGBColor::FromABGR(color);
+}
+
+sRGBColor nsNativeBasicTheme::ComputeScrollbarColor(
+    const ComputedStyle& aStyle, const EventStates& aDocumentState,
+    bool aIsRoot) {
+  const nsStyleUI* ui = aStyle.StyleUI();
+  nscolor color;
+  if (ui->mScrollbarColor.IsColors()) {
+    color = ui->mScrollbarColor.AsColors().track.CalcColor(aStyle);
+  } else if (aDocumentState.HasAllStates(NS_DOCUMENT_STATE_WINDOW_INACTIVE)) {
+    color = LookAndFeel::GetColor(LookAndFeel::ColorID::ThemedScrollbarInactive,
+                                  sScrollbarColor.ToABGR());
+  } else {
+    color = LookAndFeel::GetColor(LookAndFeel::ColorID::ThemedScrollbar,
+                                  sScrollbarColor.ToABGR());
+  }
+  if (aIsRoot) {
+    // Root scrollbars must be opaque.
+    nscolor bg = LookAndFeel::GetColor(LookAndFeel::ColorID::WindowBackground,
+                                       NS_RGB(0xff, 0xff, 0xff));
+    color = NS_ComposeColors(bg, color);
+  }
+  return gfx::sRGBColor::FromABGR(color);
+}
+
+void nsNativeBasicTheme::PaintScrollbarthumbHorizontal(
+    DrawTarget* aDrawTarget, const Rect& aRect, const ComputedStyle& aStyle,
+    const EventStates& aElementState, const EventStates& aDocumentState) {
+  sRGBColor thumbColor =
+      ComputeScrollbarthumbColor(aStyle, aElementState, aDocumentState);
   aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(thumbColor)));
 }
 
 void nsNativeBasicTheme::PaintScrollbarthumbVertical(
-    DrawTarget* aDrawTarget, const Rect& aRect, const EventStates& aState) {
-  sRGBColor thumbColor = sScrollbarThumbColor;
-  if (aState.HasAllStates(NS_EVENT_STATE_HOVER | NS_EVENT_STATE_ACTIVE)) {
-    thumbColor = sScrollbarThumbColorActive;
-  } else if (aState.HasState(NS_EVENT_STATE_HOVER)) {
-    thumbColor = sScrollbarThumbColorHover;
-  }
+    DrawTarget* aDrawTarget, const Rect& aRect, const ComputedStyle& aStyle,
+    const EventStates& aElementState, const EventStates& aDocumentState) {
+  sRGBColor thumbColor =
+      ComputeScrollbarthumbColor(aStyle, aElementState, aDocumentState);
   aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(thumbColor)));
 }
 
-void nsNativeBasicTheme::PaintScrollbarHorizontal(DrawTarget* aDrawTarget,
-                                                  const Rect& aRect) {
-  aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(sScrollbarColor)));
-  RefPtr<PathBuilder> builder = aDrawTarget->CreatePathBuilder();
-  builder->MoveTo(Point(aRect.x, aRect.y));
-  builder->LineTo(Point(aRect.x + aRect.width, aRect.y));
-  RefPtr<Path> path = builder->Finish();
-  aDrawTarget->Stroke(path, ColorPattern(ToDeviceColor(sScrollbarBorderColor)));
+void nsNativeBasicTheme::PaintScrollbarHorizontal(
+    DrawTarget* aDrawTarget, const Rect& aRect, const ComputedStyle& aStyle,
+    const EventStates& aDocumentState, bool aIsRoot) {
+  sRGBColor scrollbarColor =
+      ComputeScrollbarColor(aStyle, aDocumentState, aIsRoot);
+  aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(scrollbarColor)));
+  // FIXME(heycam): We should probably derive the border color when custom
+  // scrollbar colors are in use too.  But for now, just skip painting it,
+  // to avoid ugliness.
+  if (aStyle.StyleUI()->mScrollbarColor.IsAuto()) {
+    RefPtr<PathBuilder> builder = aDrawTarget->CreatePathBuilder();
+    builder->MoveTo(Point(aRect.x, aRect.y));
+    builder->LineTo(Point(aRect.x + aRect.width, aRect.y));
+    RefPtr<Path> path = builder->Finish();
+    aDrawTarget->Stroke(path,
+                        ColorPattern(ToDeviceColor(sScrollbarBorderColor)));
+  }
 }
 
 void nsNativeBasicTheme::PaintScrollbarVerticalAndCorner(
-    DrawTarget* aDrawTarget, const Rect& aRect, uint32_t aDpiRatio) {
-  aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(sScrollbarColor)));
-  RefPtr<PathBuilder> builder = aDrawTarget->CreatePathBuilder();
-  builder->MoveTo(Point(aRect.x, aRect.y));
-  builder->LineTo(Point(aRect.x, aRect.y + aRect.height));
-  RefPtr<Path> path = builder->Finish();
-  aDrawTarget->Stroke(path, ColorPattern(ToDeviceColor(sScrollbarBorderColor)),
-                      StrokeOptions(1.0f * aDpiRatio));
+    DrawTarget* aDrawTarget, const Rect& aRect, const ComputedStyle& aStyle,
+    const EventStates& aDocumentState, uint32_t aDpiRatio, bool aIsRoot) {
+  sRGBColor scrollbarColor =
+      ComputeScrollbarColor(aStyle, aDocumentState, aIsRoot);
+  aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(scrollbarColor)));
+  // FIXME(heycam): We should probably derive the border color when custom
+  // scrollbar colors are in use too.  But for now, just skip painting it,
+  // to avoid ugliness.
+  if (aStyle.StyleUI()->mScrollbarColor.IsAuto()) {
+    RefPtr<PathBuilder> builder = aDrawTarget->CreatePathBuilder();
+    builder->MoveTo(Point(aRect.x, aRect.y));
+    builder->LineTo(Point(aRect.x, aRect.y + aRect.height));
+    RefPtr<Path> path = builder->Finish();
+    aDrawTarget->Stroke(path,
+                        ColorPattern(ToDeviceColor(sScrollbarBorderColor)),
+                        StrokeOptions(1.0f * aDpiRatio));
+  }
 }
 
-void nsNativeBasicTheme::PaintScrollbarbutton(DrawTarget* aDrawTarget,
-                                              StyleAppearance aAppearance,
-                                              const Rect& aRect,
-                                              const EventStates& aState,
-                                              uint32_t aDpiRatio) {
-  bool isActive =
-      aState.HasAllStates(NS_EVENT_STATE_HOVER | NS_EVENT_STATE_ACTIVE);
-  bool isHovered = aState.HasState(NS_EVENT_STATE_HOVER);
+void nsNativeBasicTheme::PaintScrollbarbutton(
+    DrawTarget* aDrawTarget, StyleAppearance aAppearance, const Rect& aRect,
+    const ComputedStyle& aStyle, const EventStates& aElementState,
+    const EventStates& aDocumentState, uint32_t aDpiRatio) {
+  bool isActive = aElementState.HasState(NS_EVENT_STATE_ACTIVE);
+  bool isHovered = aElementState.HasState(NS_EVENT_STATE_HOVER);
 
-  aDrawTarget->FillRect(
-      aRect, ColorPattern(
-                 ToDeviceColor(isActive ? sScrollbarButtonActiveColor
-                                        : isHovered ? sScrollbarButtonHoverColor
-                                                    : sScrollbarColor)));
+  bool hasCustomColor = aStyle.StyleUI()->mScrollbarColor.IsColors();
+  sRGBColor buttonColor;
+  if (hasCustomColor) {
+    // When scrollbar-color is in use, use the thumb color for the button.
+    buttonColor =
+        ComputeScrollbarthumbColor(aStyle, aElementState, aDocumentState);
+  } else if (isActive) {
+    buttonColor = sScrollbarButtonActiveColor;
+  } else if (!hasCustomColor && isHovered) {
+    buttonColor = sScrollbarButtonHoverColor;
+  } else {
+    buttonColor = sScrollbarColor;
+  }
+  aDrawTarget->FillRect(aRect, ColorPattern(ToDeviceColor(buttonColor)));
 
   // Start with Up arrow.
   int32_t arrowPolygonX[] = {3, 0, -3};
@@ -959,25 +1029,56 @@ void nsNativeBasicTheme::PaintScrollbarbutton(DrawTarget* aDrawTarget,
       return;
   }
 
+  sRGBColor arrowColor;
+  if (hasCustomColor) {
+    // When scrollbar-color is in use, derive the arrow color from the button
+    // color.
+    nscolor bg = buttonColor.ToABGR();
+    bool darken = NS_GetLuminosity(bg) >= NS_MAX_LUMINOSITY / 2;
+    if (isActive) {
+      float c = darken ? 0.0f : 1.0f;
+      arrowColor = sRGBColor(c, c, c);
+    } else {
+      uint8_t c = darken ? 0 : 255;
+      arrowColor = sRGBColor::FromABGR(NS_ComposeColors(bg, NS_RGBA(c, c, c, 160)));
+    }
+  } else if (isActive) {
+    arrowColor = sScrollbarArrowColorActive;
+  } else if (isHovered) {
+    arrowColor = sScrollbarArrowColorHover;
+  } else {
+    arrowColor = sScrollbarArrowColor;
+  }
   PaintArrow(aDrawTarget, aRect, arrowPolygonX, arrowPolygonY, arrowNumPoints,
-             arrowSize,
-             isActive
-                 ? sScrollbarArrowColorActive
-                 : isHovered ? sScrollbarArrowColorHover : sScrollbarArrowColor,
+             arrowSize, arrowColor,
              aDpiRatio);
 
-  RefPtr<PathBuilder> builder = aDrawTarget->CreatePathBuilder();
-  builder->MoveTo(Point(aRect.x, aRect.y));
-  if (aAppearance == StyleAppearance::ScrollbarbuttonUp ||
-      aAppearance == StyleAppearance::ScrollbarbuttonDown) {
-    builder->LineTo(Point(aRect.x, aRect.y + aRect.height));
-  } else {
-    builder->LineTo(Point(aRect.x + aRect.width, aRect.y));
-  }
+  // FIXME(heycam): We should probably derive the border color when custom
+  // scrollbar colors are in use too.  But for now, just skip painting it,
+  // to avoid ugliness.
+  if (!hasCustomColor) {
+    RefPtr<PathBuilder> builder = aDrawTarget->CreatePathBuilder();
+    builder->MoveTo(Point(aRect.x, aRect.y));
+    if (aAppearance == StyleAppearance::ScrollbarbuttonUp ||
+        aAppearance == StyleAppearance::ScrollbarbuttonDown) {
+      builder->LineTo(Point(aRect.x, aRect.y + aRect.height));
+    } else {
+      builder->LineTo(Point(aRect.x + aRect.width, aRect.y));
+    }
 
-  RefPtr<Path> path = builder->Finish();
-  aDrawTarget->Stroke(path, ColorPattern(ToDeviceColor(sScrollbarBorderColor)),
-                      StrokeOptions(1.0f * aDpiRatio));
+    RefPtr<Path> path = builder->Finish();
+    aDrawTarget->Stroke(path, ColorPattern(ToDeviceColor(sScrollbarBorderColor)),
+                        StrokeOptions(1.0f * aDpiRatio));
+  }
+}
+
+// Checks whether the frame is for a root <scrollbar> or <scrollcorner>, which
+// influences some platforms' scrollbar rendering.
+bool nsNativeBasicTheme::IsRootScrollbar(nsIFrame* aFrame) {
+  return CheckBooleanAttr(aFrame, nsGkAtoms::root_) &&
+         aFrame->PresContext()->IsRootContentDocument() &&
+         aFrame->GetContent() &&
+         aFrame->GetContent()->IsInNamespace(kNameSpaceID_XUL);
 }
 
 NS_IMETHODIMP
@@ -988,6 +1089,7 @@ nsNativeBasicTheme::DrawWidgetBackground(gfxContext* aContext, nsIFrame* aFrame,
   DrawTarget* dt = aContext->GetDrawTarget();
   const nscoord twipsPerPixel = aFrame->PresContext()->AppUnitsPerDevPixel();
   EventStates eventState = GetContentState(aFrame, aAppearance);
+  EventStates docState = aFrame->GetContent()->OwnerDoc()->GetDocumentState();
   Rect devPxRect = NSRectToSnappedRect(aRect, twipsPerPixel, *dt);
 
   if (aAppearance == StyleAppearance::MozMenulistArrowButton) {
@@ -1063,23 +1165,33 @@ nsNativeBasicTheme::DrawWidgetBackground(gfxContext* aContext, nsIFrame* aFrame,
       PaintMeterchunk(aFrame, dt, devPxRect, eventState, dpiRatio);
       break;
     case StyleAppearance::ScrollbarthumbHorizontal:
-      PaintScrollbarthumbHorizontal(dt, devPxRect, eventState);
+      PaintScrollbarthumbHorizontal(dt, devPxRect,
+                                    *nsLayoutUtils::StyleForScrollbar(aFrame),
+                                    eventState, docState);
       break;
     case StyleAppearance::ScrollbarthumbVertical:
-      PaintScrollbarthumbVertical(dt, devPxRect, eventState);
+      PaintScrollbarthumbVertical(dt, devPxRect,
+                                  *nsLayoutUtils::StyleForScrollbar(aFrame),
+                                  eventState, docState);
       break;
     case StyleAppearance::ScrollbarHorizontal:
-      PaintScrollbarHorizontal(dt, devPxRect);
+      PaintScrollbarHorizontal(dt, devPxRect,
+                               *nsLayoutUtils::StyleForScrollbar(aFrame),
+                               docState, IsRootScrollbar(aFrame));
       break;
     case StyleAppearance::ScrollbarVertical:
     case StyleAppearance::Scrollcorner:
-      PaintScrollbarVerticalAndCorner(dt, devPxRect, dpiRatio);
+      PaintScrollbarVerticalAndCorner(
+          dt, devPxRect, *nsLayoutUtils::StyleForScrollbar(aFrame), docState,
+          dpiRatio, IsRootScrollbar(aFrame));
       break;
     case StyleAppearance::ScrollbarbuttonUp:
     case StyleAppearance::ScrollbarbuttonDown:
     case StyleAppearance::ScrollbarbuttonLeft:
     case StyleAppearance::ScrollbarbuttonRight:
-      PaintScrollbarbutton(dt, aAppearance, devPxRect, eventState, dpiRatio);
+      PaintScrollbarbutton(dt, aAppearance, devPxRect,
+                           *nsLayoutUtils::StyleForScrollbar(aFrame),
+                           eventState, docState, dpiRatio);
       break;
     case StyleAppearance::Button:
       PaintButton(aFrame, dt, devPxRect, eventState, dpiRatio);
@@ -1256,6 +1368,31 @@ nsNativeBasicTheme::GetMinimumWidgetSize(nsPresContext* aPresContext,
       aResult->width =
           static_cast<uint32_t>(kMinimumSpinnerButtonWidth) * dpiRatio;
       break;
+    case StyleAppearance::Scrollbar:
+    case StyleAppearance::ScrollbarSmall:
+    case StyleAppearance::ScrollbarVertical:
+    case StyleAppearance::ScrollbarHorizontal:
+    case StyleAppearance::ScrollbarbuttonUp:
+    case StyleAppearance::ScrollbarbuttonDown:
+    case StyleAppearance::ScrollbarbuttonLeft:
+    case StyleAppearance::ScrollbarbuttonRight:
+    case StyleAppearance::ScrollbarthumbVertical:
+    case StyleAppearance::ScrollbarthumbHorizontal:
+    case StyleAppearance::ScrollbartrackHorizontal:
+    case StyleAppearance::ScrollbartrackVertical:
+    case StyleAppearance::Scrollcorner: {
+      ComputedStyle* style = nsLayoutUtils::StyleForScrollbar(aFrame);
+      if (style->StyleUIReset()->mScrollbarWidth == StyleScrollbarWidth::Thin) {
+        aResult->SizeTo(
+            static_cast<uint32_t>(kMinimumThinScrollbarSize) * dpiRatio,
+            static_cast<uint32_t>(kMinimumThinScrollbarSize) * dpiRatio);
+      } else {
+        aResult->SizeTo(
+            static_cast<uint32_t>(kMinimumScrollbarSize) * dpiRatio,
+            static_cast<uint32_t>(kMinimumScrollbarSize) * dpiRatio);
+      }
+      break;
+    }
     default:
       break;
   }
@@ -1300,8 +1437,9 @@ nsNativeBasicTheme::WidgetStateChanged(nsIFrame* aFrame,
 NS_IMETHODIMP
 nsNativeBasicTheme::ThemeChanged() { return NS_OK; }
 
-bool nsNativeBasicTheme::WidgetAppearanceDependsOnWindowFocus(StyleAppearance) {
-  return false;
+bool nsNativeBasicTheme::WidgetAppearanceDependsOnWindowFocus(
+    StyleAppearance aAppearance) {
+  return IsWidgetScrollbarPart(aAppearance);
 }
 
 nsITheme::ThemeGeometryType nsNativeBasicTheme::ThemeGeometryTypeForWidget(
@@ -1312,16 +1450,6 @@ nsITheme::ThemeGeometryType nsNativeBasicTheme::ThemeGeometryTypeForWidget(
 bool nsNativeBasicTheme::ThemeSupportsWidget(nsPresContext* aPresContext,
                                              nsIFrame* aFrame,
                                              StyleAppearance aAppearance) {
-  if (IsWidgetScrollbarPart(aAppearance)) {
-    const auto* style = nsLayoutUtils::StyleForScrollbar(aFrame);
-    // We don't currently handle custom scrollbars on nsNativeBasicTheme. We
-    // could, potentially.
-    if (style->StyleUI()->HasCustomScrollbars() ||
-        style->StyleUIReset()->mScrollbarWidth == StyleScrollbarWidth::Thin) {
-      return false;
-    }
-  }
-
   switch (aAppearance) {
     case StyleAppearance::Radio:
     case StyleAppearance::Checkbox:

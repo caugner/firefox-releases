@@ -107,6 +107,11 @@ async function getDefaultSites(child) {
   return Cu.cloneInto(defaultSites, child.contentWindow);
 }
 
+async function getSelectedTheme(child) {
+  let activeThemeId = await child.sendQuery("AWPage:GET_SELECTED_THEME");
+  return activeThemeId;
+}
+
 class AboutWelcomeChild extends JSWindowActorChild {
   actorCreated() {
     this.exportFunctions();
@@ -155,14 +160,18 @@ class AboutWelcomeChild extends JSWindowActorChild {
   exportFunctions() {
     let window = this.contentWindow;
 
-    Cu.exportFunction(this.AWGetStartupData.bind(this), window, {
-      defineAs: "AWGetStartupData",
+    Cu.exportFunction(this.AWGetExperimentData.bind(this), window, {
+      defineAs: "AWGetExperimentData",
+    });
+
+    Cu.exportFunction(this.AWGetAttributionData.bind(this), window, {
+      defineAs: "AWGetAttributionData",
     });
 
     // For local dev, checks for JSON content inside pref browser.aboutwelcome.overrideContent
-    // that is used to override default 3 cards welcome UI with multistage welcome
-    Cu.exportFunction(this.AWGetMultiStageScreens.bind(this), window, {
-      defineAs: "AWGetMultiStageScreens",
+    // that is used to override default welcome UI
+    Cu.exportFunction(this.AWGetWelcomeOverrideContent.bind(this), window, {
+      defineAs: "AWGetWelcomeOverrideContent",
     });
 
     Cu.exportFunction(this.AWGetFxAMetricsFlowURI.bind(this), window, {
@@ -175,6 +184,10 @@ class AboutWelcomeChild extends JSWindowActorChild {
 
     Cu.exportFunction(this.AWGetDefaultSites.bind(this), window, {
       defineAs: "AWGetDefaultSites",
+    });
+
+    Cu.exportFunction(this.AWGetSelectedTheme.bind(this), window, {
+      defineAs: "AWGetSelectedTheme",
     });
 
     Cu.exportFunction(this.AWWaitForRegionChange.bind(this), window, {
@@ -210,7 +223,7 @@ class AboutWelcomeChild extends JSWindowActorChild {
   /**
    * Send multistage welcome JSON data read from aboutwelcome.overrideConetent pref to page
    */
-  AWGetMultiStageScreens() {
+  AWGetWelcomeOverrideContent() {
     return Cu.cloneInto(
       multiStageAboutWelcomeContent || {},
       this.contentWindow
@@ -223,10 +236,72 @@ class AboutWelcomeChild extends JSWindowActorChild {
     );
   }
 
+  async getAddonInfo(attrbObj) {
+    let { content, source } = attrbObj;
+    try {
+      if (!content || source !== "addons.mozilla.org") {
+        return null;
+      }
+      // Attribution data can be double encoded
+      while (content.includes("%")) {
+        try {
+          const result = decodeURIComponent(content);
+          if (result === content) {
+            break;
+          }
+          content = result;
+        } catch (e) {
+          break;
+        }
+      }
+      return await this.sendQuery("AWPage:GET_ADDON_FROM_REPOSITORY", content);
+    } catch (e) {
+      Cu.reportError(
+        "Failed to get the latest add-on version for Return to AMO"
+      );
+      return null;
+    }
+  }
+
+  hasAMOAttribution(attributionData) {
+    return (
+      attributionData &&
+      attributionData.campaign === "non-fx-button" &&
+      attributionData.source === "addons.mozilla.org"
+    );
+  }
+
+  async formatAttributionData(attribution) {
+    let result = {};
+    if (this.hasAMOAttribution(attribution)) {
+      let extraProps = await this.getAddonInfo(attribution);
+      if (extraProps) {
+        result = {
+          template: "return_to_amo",
+          extraProps,
+        };
+      }
+    }
+    return result;
+  }
+
+  async getAttributionData() {
+    return Cu.cloneInto(
+      await this.formatAttributionData(
+        await this.sendQuery("AWPage:GET_ATTRIBUTION_DATA")
+      ),
+      this.contentWindow
+    );
+  }
+
+  AWGetAttributionData() {
+    return this.wrapPromise(this.getAttributionData());
+  }
+
   /**
    * Send initial data to page including experiment information
    */
-  AWGetStartupData() {
+  AWGetExperimentData() {
     let experimentData;
     try {
       // Note that we specifically don't wait for experiments to be loaded from disk so if
@@ -258,6 +333,10 @@ class AboutWelcomeChild extends JSWindowActorChild {
 
   AWGetDefaultSites() {
     return this.wrapPromise(getDefaultSites(this));
+  }
+
+  AWGetSelectedTheme() {
+    return this.wrapPromise(getSelectedTheme(this));
   }
 
   /**

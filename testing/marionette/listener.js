@@ -46,7 +46,6 @@ const contentId = content.docShell.browsingContext.id;
 const curContainer = {
   _frame: null,
   _parentFrame: null,
-  shadowRoot: null,
 
   get frame() {
     return this._frame;
@@ -56,7 +55,6 @@ const curContainer = {
     this._frame = frame;
     this._parentFrame = frame.parent;
     this.id = frame.browsingContext.id;
-    this.shadowRoot = null;
   },
 
   get parentFrame() {
@@ -138,16 +136,14 @@ let isElementSelectedFn = dispatch(isElementSelected);
 let clearElementFn = dispatch(clearElement);
 let isElementDisplayedFn = dispatch(isElementDisplayed);
 let getElementValueOfCssPropertyFn = dispatch(getElementValueOfCssProperty);
-let switchToShadowRootFn = dispatch(switchToShadowRoot);
 let singleTapFn = dispatch(singleTap);
 let performActionsFn = dispatch(performActions);
 let releaseActionsFn = dispatch(releaseActions);
 let actionChainFn = dispatch(actionChain);
 let multiActionFn = dispatch(multiAction);
-let executeFn = dispatch(execute);
-let executeInSandboxFn = dispatch(executeInSandbox);
+let executeScriptFn = dispatch(executeScript);
 let sendKeysToElementFn = dispatch(sendKeysToElement);
-let reftestWaitFn = dispatch(reftestWait);
+let setBrowsingContextIdFn = dispatch(setBrowsingContextId);
 
 function startListeners() {
   eventDispatcher.enable();
@@ -161,8 +157,7 @@ function startListeners() {
     "Marionette:DOM:RemoveEventListener",
     domRemoveEventListener
   );
-  addMessageListener("Marionette:execute", executeFn);
-  addMessageListener("Marionette:executeInSandbox", executeInSandboxFn);
+  addMessageListener("Marionette:executeScript", executeScriptFn);
   addMessageListener("Marionette:findElementContent", findElementContentFn);
   addMessageListener("Marionette:findElementsContent", findElementsContentFn);
   addMessageListener("Marionette:getActiveElement", getActiveElementFn);
@@ -184,14 +179,13 @@ function startListeners() {
   addMessageListener("Marionette:isElementSelected", isElementSelectedFn);
   addMessageListener("Marionette:multiAction", multiActionFn);
   addMessageListener("Marionette:performActions", performActionsFn);
-  addMessageListener("Marionette:reftestWait", reftestWaitFn);
   addMessageListener("Marionette:releaseActions", releaseActionsFn);
   addMessageListener("Marionette:sendKeysToElement", sendKeysToElementFn);
   addMessageListener("Marionette:Session:Delete", deleteSession);
+  addMessageListener("Marionette:setBrowsingContextId", setBrowsingContextIdFn);
   addMessageListener("Marionette:singleTap", singleTapFn);
   addMessageListener("Marionette:switchToFrame", switchToFrame);
   addMessageListener("Marionette:switchToParentFrame", switchToParentFrame);
-  addMessageListener("Marionette:switchToShadowRoot", switchToShadowRootFn);
 }
 
 function deregister() {
@@ -201,8 +195,7 @@ function deregister() {
   removeMessageListener("Marionette:clearElement", clearElementFn);
   removeMessageListener("Marionette:clickElement", clickElementFn);
   removeMessageListener("Marionette:Deregister", deregister);
-  removeMessageListener("Marionette:execute", executeFn);
-  removeMessageListener("Marionette:executeInSandbox", executeInSandboxFn);
+  removeMessageListener("Marionette:executeScript", executeScriptFn);
   removeMessageListener("Marionette:findElementContent", findElementContentFn);
   removeMessageListener(
     "Marionette:findElementsContent",
@@ -236,10 +229,13 @@ function deregister() {
   removeMessageListener("Marionette:releaseActions", releaseActionsFn);
   removeMessageListener("Marionette:sendKeysToElement", sendKeysToElementFn);
   removeMessageListener("Marionette:Session:Delete", deleteSession);
+  removeMessageListener(
+    "Marionette:setBrowsingContextId",
+    setBrowsingContextIdFn
+  );
   removeMessageListener("Marionette:singleTap", singleTapFn);
   removeMessageListener("Marionette:switchToFrame", switchToFrame);
   removeMessageListener("Marionette:switchToParentFrame", switchToParentFrame);
-  removeMessageListener("Marionette:switchToShadowRoot", switchToShadowRootFn);
 }
 
 function deleteSession() {
@@ -309,115 +305,23 @@ function sendError(err, uuid) {
   sendToServer(uuid, err);
 }
 
-async function execute(script, args, opts) {
-  let sb = sandbox.createMutable(curContainer.frame);
-  return evaluate.sandbox(sb, script, args, opts);
-}
+async function executeScript(script, args, opts = {}) {
+  let sb;
 
-async function executeInSandbox(script, args, opts) {
-  let sb = sandboxes.get(opts.sandboxName, opts.newSandbox);
-  return evaluate.sandbox(sb, script, args, opts);
-}
-
-function emitTouchEvent(type, touch) {
-  logger.info(
-    `Emitting Touch event of type ${type} ` +
-      `to element with id: ${touch.target.id} ` +
-      `and tag name: ${touch.target.tagName} ` +
-      `at coordinates (${touch.clientX}), ` +
-      `${touch.clientY}) relative to the viewport`
-  );
-
-  const win = curContainer.frame;
-  if (win.docShell.asyncPanZoomEnabled && legacyactions.scrolling) {
-    let ev = {
-      index: 0,
-      type,
-      id: touch.identifier,
-      clientX: touch.clientX,
-      clientY: touch.clientY,
-      screenX: touch.screenX,
-      screenY: touch.screenY,
-      radiusX: touch.radiusX,
-      radiusY: touch.radiusY,
-      rotation: touch.rotationAngle,
-      force: touch.force,
-    };
-    sendSyncMessage("Marionette:emitTouchEvent", ev);
-    return;
+  if (opts.useSandbox) {
+    sb = sandboxes.get(opts.sandboxName, opts.newSandbox);
+  } else {
+    sb = sandbox.createMutable(curContainer.frame);
   }
 
-  // we get here if we're not in asyncPacZoomEnabled land, or if we're
-  // the main process
-  win.windowUtils.sendTouchEvent(
-    type,
-    [touch.identifier],
-    [touch.clientX],
-    [touch.clientY],
-    [touch.radiusX],
-    [touch.radiusY],
-    [touch.rotationAngle],
-    [touch.force],
-    0
-  );
+  return evaluate.sandbox(sb, script, args, opts);
 }
 
 /**
- * Function that perform a single tap
+ * Function that performs a single tap.
  */
 async function singleTap(el, corx, cory, capabilities) {
-  // after this block, the element will be scrolled into view
-  let visible = element.isVisible(el, corx, cory);
-  if (!visible) {
-    throw new error.ElementNotInteractableError(
-      "Element is not currently visible and may not be manipulated"
-    );
-  }
-
-  let a11y = accessibility.get(capabilities["moz:accessibilityChecks"]);
-  let acc = await a11y.getAccessible(el, true);
-  a11y.assertVisible(acc, el, visible);
-  a11y.assertActionable(acc, el);
-  if (!curContainer.frame.document.createTouch) {
-    legacyactions.mouseEventsOnly = true;
-  }
-  let c = element.coordinates(el, corx, cory);
-  if (!legacyactions.mouseEventsOnly) {
-    let touchId = legacyactions.nextTouchId++;
-    let touch = createATouch(el, c.x, c.y, touchId);
-    emitTouchEvent("touchstart", touch);
-    emitTouchEvent("touchend", touch);
-  }
-  legacyactions.mouseTap(el.ownerDocument, c.x, c.y);
-}
-
-/**
- * Function to create a touch based on the element
- * corx and cory are relative to the viewport, id is the touchId
- */
-function createATouch(el, corx, cory, touchId) {
-  let doc = el.ownerDocument;
-  let win = doc.defaultView;
-  let [
-    clientX,
-    clientY,
-    pageX,
-    pageY,
-    screenX,
-    screenY,
-  ] = legacyactions.getCoordinateInfo(el, corx, cory);
-  let atouch = doc.createTouch(
-    win,
-    el,
-    touchId,
-    pageX,
-    pageY,
-    screenX,
-    screenY,
-    clientX,
-    clientY
-  );
-  return atouch;
+  return legacyactions.singleTap(el, corx, cory, capabilities);
 }
 
 /**
@@ -460,17 +364,7 @@ async function releaseActions() {
  * Start action chain on one finger.
  */
 function actionChain(chain, touchId) {
-  let touchProvider = {};
-  touchProvider.createATouch = createATouch;
-  touchProvider.emitTouchEvent = emitTouchEvent;
-
-  return legacyactions.dispatchActions(
-    chain,
-    touchId,
-    curContainer,
-    seenEls,
-    touchProvider
-  );
+  return legacyactions.dispatchActions(chain, touchId, curContainer, seenEls);
 }
 
 function emitMultiEvents(type, touch, touches) {
@@ -547,7 +441,7 @@ function setDispatch(batches, touches, batchIndex = 0) {
       case "press":
         el = seenEls.get(pack[2], curContainer.frame);
         c = element.coordinates(el, pack[3], pack[4]);
-        touch = createATouch(el, c.x, c.y, touchId);
+        touch = legacyactions.createATouch(el, c.x, c.y, touchId);
         multiLast[touchId] = touch;
         touches.push(touch);
         emitMultiEvents("touchstart", touch, touches);
@@ -565,7 +459,12 @@ function setDispatch(batches, touches, batchIndex = 0) {
       case "move":
         el = seenEls.get(pack[2], curContainer.frame);
         c = element.coordinates(el);
-        touch = createATouch(multiLast[touchId].target, c.x, c.y, touchId);
+        touch = legacyactions.createATouch(
+          multiLast[touchId].target,
+          c.x,
+          c.y,
+          touchId
+        );
         touchIndex = touches.indexOf(lastTouch);
         touches[touchIndex] = touch;
         multiLast[touchId] = touch;
@@ -725,6 +624,17 @@ function getBrowsingContextId(topContext = false) {
 }
 
 /**
+ * Set the current browsing context.
+ *
+ * @param {number} browsingContextId
+ *     Id of the current BrowsingContext.
+ */
+function setBrowsingContextId(browsingContextId) {
+  const bc = BrowsingContext.get(browsingContextId);
+  curContainer.frame = bc.window;
+}
+
+/**
  * Return the current visible URL.
  *
  * @return {string}
@@ -855,38 +765,6 @@ async function sendKeysToElement(el, val, capabilities) {
 /** Clear the text of an element. */
 function clearElement(el) {
   interaction.clearElement(el);
-}
-
-/** Switch the current context to the specified host's Shadow DOM. */
-function switchToShadowRoot(el) {
-  if (!element.isElement(el)) {
-    // If no host element is passed, attempt to find a parent shadow
-    // root or, if none found, unset the current shadow root
-    if (curContainer.shadowRoot) {
-      let parent;
-      try {
-        parent = curContainer.shadowRoot.host;
-      } catch (e) {
-        // There is a chance that host element is dead and we are trying to
-        // access a dead object.
-        curContainer.shadowRoot = null;
-        return;
-      }
-      while (parent && !(parent instanceof curContainer.frame.ShadowRoot)) {
-        parent = parent.parentNode;
-      }
-      curContainer.shadowRoot = parent;
-    }
-    return;
-  }
-
-  let foundShadowRoot = el.shadowRoot;
-  if (!foundShadowRoot) {
-    throw new error.NoSuchElementError(
-      pprint`Unable to locate shadow root: ${el}`
-    );
-  }
-  curContainer.shadowRoot = foundShadowRoot;
 }
 
 /**
@@ -1099,147 +977,6 @@ function getScreenshotRect({ el, full = true, scroll = true } = {}) {
   return rect;
 }
 
-function flushRendering() {
-  let content = curContainer.frame;
-  let anyPendingPaintsGeneratedInDescendants = false;
-
-  let windowUtils = content.windowUtils;
-
-  function flushWindow(win) {
-    let utils = win.windowUtils;
-    let afterPaintWasPending = utils.isMozAfterPaintPending;
-
-    let root = win.document.documentElement;
-    if (root) {
-      try {
-        // Flush pending restyles and reflows for this window (layout)
-        root.getBoundingClientRect();
-      } catch (e) {
-        logger.error("flushWindow failed", e);
-      }
-    }
-
-    if (!afterPaintWasPending && utils.isMozAfterPaintPending) {
-      anyPendingPaintsGeneratedInDescendants = true;
-    }
-
-    for (let i = 0; i < win.frames.length; ++i) {
-      flushWindow(win.frames[i]);
-    }
-  }
-  flushWindow(content);
-
-  if (
-    anyPendingPaintsGeneratedInDescendants &&
-    !windowUtils.isMozAfterPaintPending
-  ) {
-    logger.error(
-      "Descendant frame generated a MozAfterPaint event, " +
-        "but the root document doesn't have one!"
-    );
-  }
-}
-
-async function reftestWait(url, remote) {
-  let win = curContainer.frame;
-  let document = curContainer.frame.document;
-  let reftestWait;
-
-  if (document.location.href !== url || document.readyState != "complete") {
-    reftestWait = await documentLoad(win, url);
-    win = curContainer.frame;
-    document = curContainer.frame.document;
-  } else {
-    reftestWait = document.documentElement.classList.contains("reftest-wait");
-  }
-
-  logger.debug("Waiting for event loop to spin");
-  await new Promise(resolve => win.setTimeout(resolve, 0));
-
-  await paintComplete(win, remote);
-
-  let root = document.documentElement;
-  if (reftestWait) {
-    let event = new Event("TestRendered", { bubbles: true });
-    root.dispatchEvent(event);
-    logger.info("Emitted TestRendered event");
-    await reftestWaitRemoved(win, root);
-    await paintComplete(win, remote);
-  }
-  if (
-    win.innerWidth < document.documentElement.scrollWidth ||
-    win.innerHeight < document.documentElement.scrollHeight
-  ) {
-    logger.warn(
-      `${url} overflows viewport (width: ${document.documentElement.scrollWidth}, height: ${document.documentElement.scrollHeight})`
-    );
-  }
-}
-
-function documentLoad(win, url) {
-  logger.debug(truncate`Waiting for page load of ${url}`);
-  return new Promise(resolve => {
-    let maybeResolve = event => {
-      if (
-        event.target === curContainer.frame.document &&
-        event.target.location.href === url
-      ) {
-        let reftestWait = win.document.documentElement.classList.contains(
-          "reftest-wait"
-        );
-        removeEventListener("load", maybeResolve, { once: true });
-        resolve(reftestWait);
-      }
-    };
-    addEventListener("load", maybeResolve, true);
-  });
-}
-
-function paintComplete(win, remote) {
-  logger.debug("Waiting for rendering");
-  let windowUtils = content.windowUtils;
-  return new Promise(resolve => {
-    let maybeResolve = () => {
-      flushRendering();
-      if (remote) {
-        // Flush display (paint)
-        logger.debug("Force update of layer tree");
-        windowUtils.updateLayerTree();
-      }
-
-      if (windowUtils.isMozAfterPaintPending) {
-        logger.debug("isMozAfterPaintPending: true");
-        win.addEventListener("MozAfterPaint", maybeResolve, { once: true });
-      } else {
-        // resolve at the start of the next frame in case of leftover paints
-        logger.debug("isMozAfterPaintPending: false");
-        win.requestAnimationFrame(() => {
-          win.requestAnimationFrame(resolve);
-        });
-      }
-    };
-    maybeResolve();
-  });
-}
-
-function reftestWaitRemoved(win, root) {
-  logger.debug("Waiting for reftest-wait removal");
-  return new Promise(resolve => {
-    let observer = new win.MutationObserver(() => {
-      if (!root.classList.contains("reftest-wait")) {
-        observer.disconnect();
-        logger.debug("reftest-wait removed");
-        win.setTimeout(resolve, 0);
-      }
-    });
-    if (root.classList.contains("reftest-wait")) {
-      observer.observe(root, { attributes: true });
-    } else {
-      win.setTimeout(resolve, 0);
-    }
-  });
-}
-
 function domAddEventListener(msg) {
   eventObservers.add(msg.json.type);
 }
@@ -1266,8 +1003,6 @@ const eventDispatcher = {
     addEventListener("hashchange", this, true);
     addEventListener("pageshow", this, true);
 
-    Services.obs.addObserver(this, "webnavigation-destroy");
-
     this.enabled = true;
   },
 
@@ -1285,13 +1020,6 @@ const eventDispatcher = {
     removeEventListener("DOMContentLoaded", this, true);
     removeEventListener("hashchange", this, true);
     removeEventListener("pageshow", this, true);
-
-    // In case the observer was added before the frame script has been moved
-    // to a different process, it will no longer be available. Exceptions can
-    // be ignored.
-    try {
-      Services.obs.removeObserver(this, "webnavigation-destroy");
-    } catch (e) {}
 
     this.enabled = false;
   },
@@ -1328,21 +1056,6 @@ const eventDispatcher = {
       readyState: target.readyState,
       type,
     });
-  },
-
-  observe(subject, topic) {
-    subject.QueryInterface(Ci.nsIDocShell);
-
-    const browsingContext = subject.browsingContext;
-    const isFrame = browsingContext !== subject.browsingContext.top;
-
-    // The currently selected iframe has been closed
-    if (isFrame && browsingContext.id === curContainer.id) {
-      logger.trace(`Frame with id ${browsingContext.id} got removed`);
-      sendAsyncMessage("Marionette:FrameRemoved", {
-        browsingContextId: browsingContext.id,
-      });
-    }
   },
 };
 

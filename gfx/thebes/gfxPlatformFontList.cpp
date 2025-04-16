@@ -127,10 +127,6 @@ const gfxFontEntry::ScriptRange gfxPlatformFontList::sComplexScriptRanges[] = {
     {0, 0, 0, {0, 0, 0}}  // terminator
 };
 
-// prefs for the font info loader
-#define FONT_LOADER_DELAY_PREF "gfx.font_loader.delay"
-#define FONT_LOADER_INTERVAL_PREF "gfx.font_loader.interval"
-
 static const char* kObservedPrefs[] = {"font.",
                                        "font.name-list.",
                                        "intl.accept_languages",  // hmmmm...
@@ -492,7 +488,7 @@ nsresult gfxPlatformFontList::InitFontList() {
       }
       i.Data()->mShmemCharacterMap = nullptr;
       i.Data()->mShmemFace = nullptr;
-      i.Data()->mFamilyName = ""_ns;
+      i.Data()->mFamilyName.Truncate();
     }
     mFontEntries.Clear();
     mShmemCharMaps.Clear();
@@ -638,7 +634,7 @@ void gfxPlatformFontList::InitOtherFamilyNames(
   // (This is used so we can reliably run reftests that depend on localized
   // font-family names being available.)
   if (aDeferOtherFamilyNamesLoading &&
-      Preferences::GetUint(FONT_LOADER_DELAY_PREF) > 0) {
+      StaticPrefs::gfx_font_loader_delay_AtStartup() > 0) {
     if (!mPendingOtherFamilyNameTask) {
       RefPtr<mozilla::CancelableRunnable> task =
           new InitOtherFamilyNamesRunnable();
@@ -832,7 +828,7 @@ void gfxPlatformFontList::GetFontList(nsAtom* aLangGroup,
         // XXX TODO: filter families for aGenericFamily, if supported by
         // platform
         aListOfFonts.AppendElement(
-            NS_ConvertUTF8toUTF16(f.DisplayName().AsString(list)));
+            NS_ConvertUTF8toUTF16(list->LocalizedFamilyName(&f)));
       }
     }
     return;
@@ -1455,12 +1451,21 @@ bool gfxPlatformFontList::GetStandardFamilyName(const nsCString& aFontName,
   if (family.IsNull()) {
     return false;
   }
-  if (family.mIsShared) {
-    aFamilyName = family.mShared->DisplayName().AsString(SharedFontList());
+  return GetLocalizedFamilyName(FindFamily(aFontName), aFamilyName);
+}
+
+bool gfxPlatformFontList::GetLocalizedFamilyName(const FontFamily& aFamily,
+                                                 nsACString& aFamilyName) {
+  if (aFamily.mIsShared) {
+    if (aFamily.mShared) {
+      aFamilyName = SharedFontList()->LocalizedFamilyName(aFamily.mShared);
+      return true;
+    }
+  } else if (aFamily.mUnshared) {
+    aFamily.mUnshared->LocalizedName(aFamilyName);
     return true;
   }
-  family.mUnshared->LocalizedName(aFamilyName);
-  return true;
+  return false;  // leaving the aFamilyName outparam untouched
 }
 
 FamilyAndGeneric gfxPlatformFontList::GetDefaultFontFamily(
@@ -2104,7 +2109,7 @@ void gfxPlatformFontList::InitLoader() {
 }
 
 #define FONT_LOADER_MAX_TIMESLICE \
-  100  // max time for one pass through RunLoader = 100ms
+  20  // max time for one pass through RunLoader = 20ms
 
 bool gfxPlatformFontList::LoadFontInfo() {
   TimeStamp start = TimeStamp::Now();
@@ -2142,12 +2147,16 @@ bool gfxPlatformFontList::LoadFontInfo() {
       }
     }
 
-    // limit the time spent reading fonts in one pass
-    TimeDuration elapsed = TimeStamp::Now() - start;
-    if (elapsed.ToMilliseconds() > FONT_LOADER_MAX_TIMESLICE &&
-        i + 1 != endIndex) {
-      endIndex = i + 1;
-      break;
+    // Limit the time spent reading fonts in one pass, unless the font-loader
+    // delay was set to zero, in which case we run to completion even if it
+    // causes some jank.
+    if (StaticPrefs::gfx_font_loader_delay_AtStartup() > 0) {
+      TimeDuration elapsed = TimeStamp::Now() - start;
+      if (elapsed.ToMilliseconds() > FONT_LOADER_MAX_TIMESLICE &&
+          i + 1 != endIndex) {
+        endIndex = i + 1;
+        break;
+      }
     }
   }
 
@@ -2216,11 +2225,8 @@ void gfxPlatformFontList::CleanupLoader() {
 }
 
 void gfxPlatformFontList::GetPrefsAndStartLoader() {
-  uint32_t delay = std::max(1u, Preferences::GetUint(FONT_LOADER_DELAY_PREF));
-  uint32_t interval =
-      std::max(1u, Preferences::GetUint(FONT_LOADER_INTERVAL_PREF));
-
-  StartLoader(delay, interval);
+  uint32_t delay = std::max(1u, StaticPrefs::gfx_font_loader_delay_AtStartup());
+  StartLoader(delay);
 }
 
 void gfxPlatformFontList::ForceGlobalReflow() {

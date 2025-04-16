@@ -28,8 +28,6 @@ XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
-const PREF_E10S = "browser.tabs.remote.autostart";
-const PREF_FISSION = "fission.autostart";
 
 const SCREENSHOT_MODE = {
   unexpected: 0,
@@ -75,8 +73,8 @@ reftest.Runner = class {
     this.isPrint = null;
     this.windowUtils = null;
     this.lastURL = null;
-    this.useRemoteTabs = Preferences.get(PREF_E10S);
-    this.useRemoteSubframes = Preferences.get(PREF_FISSION);
+    this.useRemoteTabs = Services.appinfo.browserTabsRemoteAutostart;
+    this.useRemoteSubframes = Services.appinfo.fissionAutostart;
   }
 
   /**
@@ -109,6 +107,33 @@ reftest.Runner = class {
     if (isPrint) {
       this.loadPdfJs();
     }
+
+    ChromeUtils.registerWindowActor("MarionetteReftestFrame", {
+      kind: "JSWindowActor",
+      parent: {
+        moduleURI:
+          "chrome://marionette/content/actors/MarionetteReftestFrameParent.jsm",
+      },
+      child: {
+        moduleURI:
+          "chrome://marionette/content/actors/MarionetteReftestFrameChild.jsm",
+        events: {
+          load: { mozSystemGroup: true, capture: true },
+        },
+      },
+      allFrames: true,
+    });
+  }
+
+  /**
+   * Cleanup the environment once the reftest is finished.
+   */
+  teardown() {
+    // Abort the current test if any.
+    this.abort();
+
+    // Unregister the JSWindowActors.
+    ChromeUtils.unregisterWindowActor("MarionetteReftestFrame");
   }
 
   async ensureWindow(timeout, width, height) {
@@ -639,8 +664,16 @@ max-width: ${width}px; max-height: ${height}px`;
 
     this.ensureFocus(win);
 
-    // TODO: Move all the wait logic into the parent process (bug 1648444)
-    await this.driver.listener.reftestWait(url, this.useRemoteTabs);
+    // TODO: Move all the wait logic into the parent process (bug 1669787)
+    let isReftestReady = false;
+    while (!isReftestReady) {
+      // Note: We cannot compare the URL here. Before the navigation is complete
+      // currentWindowGlobal.documentURI.spec will still point to the old URL.
+      const actor = browsingContext.currentWindowGlobal.getActor(
+        "MarionetteReftestFrame"
+      );
+      isReftestReady = await actor.reftestWait(url, this.useRemoteTabs);
+    }
   }
 
   async screenshot(win, url, timeout) {

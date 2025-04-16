@@ -31,11 +31,19 @@ const ALLOW_SILENCING_NOTIFICATIONS = Services.prefs.getBoolPref(
   false
 );
 
+const SHOW_GLOBAL_MUTE_TOGGLES = Services.prefs.getBoolPref(
+  "privacy.webrtc.globalMuteToggles",
+  false
+);
+
 const INDICATOR_PATH = USING_LEGACY_INDICATOR
   ? "chrome://browser/content/webrtcLegacyIndicator.xhtml"
   : "chrome://browser/content/webrtcIndicator.xhtml";
 
 const IS_MAC = AppConstants.platform == "macosx";
+
+const SHARE_SCREEN = 1;
+const SHARE_WINDOW = 2;
 
 let observerTopics = [
   "getUserMedia:response:allow",
@@ -194,6 +202,19 @@ async function assertWebRTCIndicatorStatus(expected) {
       // are able to remove the tests for the legacy indicator.
       expected.screen = null;
       expected.window = true;
+    }
+
+    if (!USING_LEGACY_INDICATOR && !SHOW_GLOBAL_MUTE_TOGGLES) {
+      expected.video = false;
+      expected.audio = false;
+
+      let visible = docElt.getAttribute("visible") == "true";
+
+      if (!expected.screen && !expected.window && !expected.browserwindow) {
+        ok(!visible, "Indicator should not be visible in this configuation.");
+      } else {
+        ok(visible, "Indicator should be visible.");
+      }
     }
 
     for (let item of ["video", "audio", "screen", "window", "browserwindow"]) {
@@ -958,11 +979,21 @@ async function runTests(tests, options = {}) {
  * @param {<xul:browser} browser - The browser to share devices with.
  * @param {boolean} camera - True to share a camera device.
  * @param {boolean} mic - True to share a microphone device.
- * @param {boolean} screen - True to share a display device.
+ * @param {Number} [screenOrWin] - One of either SHARE_WINDOW or SHARE_SCREEN
+ *   to share a window or screen. Defaults to neither.
+ * @param {boolean} remember - True to persist the permission to the
+ *   SitePermissions database as SitePermissions.SCOPE_PERSISTENT. Note that
+ *   callers are responsible for clearing this persistent permission.
  * @return {Promise}
  * @resolves {undefined} - Once the sharing is complete.
  */
-async function shareDevices(browser, camera, mic, screen) {
+async function shareDevices(
+  browser,
+  camera,
+  mic,
+  screenOrWin = 0,
+  remember = false
+) {
   if (camera || mic) {
     let promise = promisePopupNotificationShown(
       "webRTC-shareDevices",
@@ -976,6 +1007,12 @@ async function shareDevices(browser, camera, mic, screen) {
     checkDeviceSelectors(mic, camera);
     let observerPromise1 = expectObserverCalled("getUserMedia:response:allow");
     let observerPromise2 = expectObserverCalled("recording-device-events");
+
+    let rememberCheck = PopupNotifications.panel.querySelector(
+      ".popup-notification-checkbox"
+    );
+    rememberCheck.checked = remember;
+
     promise = promiseMessage("ok", () => {
       PopupNotifications.panel.firstElementChild.button.click();
     });
@@ -985,7 +1022,7 @@ async function shareDevices(browser, camera, mic, screen) {
     await promise;
   }
 
-  if (screen) {
+  if (screenOrWin) {
     let promise = promisePopupNotificationShown(
       "webRTC-shareDevices",
       null,
@@ -999,9 +1036,29 @@ async function shareDevices(browser, camera, mic, screen) {
 
     let document = window.document;
 
-    // Select one of the windows / screens. It doesn't really matter which.
     let menulist = document.getElementById("webRTC-selectWindow-menulist");
-    menulist.getItemAtIndex(menulist.itemCount - 1).doCommand();
+    let displayMediaSource;
+
+    if (screenOrWin == SHARE_SCREEN) {
+      displayMediaSource = "screen";
+    } else if (screenOrWin == SHARE_WINDOW) {
+      displayMediaSource = "window";
+    } else {
+      throw new Error("Got an invalid argument to shareDevices.");
+    }
+
+    let menuitem = null;
+    for (let i = 0; i < menulist.itemCount; ++i) {
+      let current = menulist.getItemAtIndex(i);
+      if (current.mediaSource == displayMediaSource) {
+        menuitem = current;
+        break;
+      }
+    }
+
+    Assert.ok(menuitem, "Should have found an appropriate display menuitem");
+    menuitem.doCommand();
+
     let notification = window.PopupNotifications.panel.firstElementChild;
 
     let observerPromise1 = expectObserverCalled("getUserMedia:response:allow");

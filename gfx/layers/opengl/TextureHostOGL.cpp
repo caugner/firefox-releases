@@ -29,7 +29,7 @@
 #ifdef MOZ_WIDGET_ANDROID
 #  include "mozilla/layers/AndroidHardwareBuffer.h"
 #  include "mozilla/webrender/RenderAndroidHardwareBufferTextureHost.h"
-#  include "mozilla/webrender/RenderAndroidSurfaceTextureHostOGL.h"
+#  include "mozilla/webrender/RenderAndroidSurfaceTextureHost.h"
 #endif
 
 #ifdef MOZ_WAYLAND
@@ -657,8 +657,8 @@ void SurfaceTextureHost::DeallocateDeviceData() {
 void SurfaceTextureHost::CreateRenderTexture(
     const wr::ExternalImageId& aExternalImageId) {
   RefPtr<wr::RenderTextureHost> texture =
-      new wr::RenderAndroidSurfaceTextureHostOGL(mSurfTex, mSize, mFormat,
-                                                 mContinuousUpdate);
+      new wr::RenderAndroidSurfaceTextureHost(mSurfTex, mSize, mFormat,
+                                              mContinuousUpdate);
   wr::RenderThread::Get()->RegisterExternalImage(wr::AsUint64(aExternalImageId),
                                                  texture.forget());
 }
@@ -699,17 +699,18 @@ void SurfaceTextureHost::PushDisplayItems(wr::DisplayListBuilder& aBuilder,
                                           const wr::LayoutRect& aClip,
                                           wr::ImageRendering aFilter,
                                           const Range<wr::ImageKey>& aImageKeys,
-                                          const bool aPreferCompositorSurface) {
+                                          PushDisplayItemFlagSet aFlags) {
   switch (GetFormat()) {
     case gfx::SurfaceFormat::R8G8B8X8:
     case gfx::SurfaceFormat::R8G8B8A8:
     case gfx::SurfaceFormat::B8G8R8A8:
     case gfx::SurfaceFormat::B8G8R8X8: {
       MOZ_ASSERT(aImageKeys.length() == 1);
-      aBuilder.PushImage(aBounds, aClip, true, aFilter, aImageKeys[0],
-                         !(mFlags & TextureFlags::NON_PREMULTIPLIED),
-                         wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
-                         aPreferCompositorSurface);
+      aBuilder.PushImage(
+          aBounds, aClip, true, aFilter, aImageKeys[0],
+          !(mFlags & TextureFlags::NON_PREMULTIPLIED),
+          wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
+          aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE));
       break;
     }
     default: {
@@ -868,7 +869,14 @@ bool AndroidHardwareBufferTextureHost::Lock() {
     EGLSync sync =
         egl->fCreateSync(LOCAL_EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
     if (sync) {
-      egl->fClientWaitSync(sync, 0, LOCAL_EGL_FOREVER);
+      // Release fd here, since it is owned by EGLSync
+      Unused << rawFD.release();
+
+      if (egl->IsExtensionSupported(gl::EGLExtension::KHR_wait_sync)) {
+        egl->fWaitSync(sync, 0);
+      } else {
+        egl->fClientWaitSync(sync, 0, LOCAL_EGL_FOREVER);
+      }
       egl->fDestroySync(sync);
     } else {
       gfxCriticalNote << "Failed to create EGLSync from acquire fence fd";
@@ -987,18 +995,18 @@ void AndroidHardwareBufferTextureHost::PushResourceUpdates(
 void AndroidHardwareBufferTextureHost::PushDisplayItems(
     wr::DisplayListBuilder& aBuilder, const wr::LayoutRect& aBounds,
     const wr::LayoutRect& aClip, wr::ImageRendering aFilter,
-    const Range<wr::ImageKey>& aImageKeys,
-    const bool aPreferCompositorSurface) {
+    const Range<wr::ImageKey>& aImageKeys, PushDisplayItemFlagSet aFlags) {
   switch (GetFormat()) {
     case gfx::SurfaceFormat::R8G8B8X8:
     case gfx::SurfaceFormat::R8G8B8A8:
     case gfx::SurfaceFormat::B8G8R8A8:
     case gfx::SurfaceFormat::B8G8R8X8: {
       MOZ_ASSERT(aImageKeys.length() == 1);
-      aBuilder.PushImage(aBounds, aClip, true, aFilter, aImageKeys[0],
-                         !(mFlags & TextureFlags::NON_PREMULTIPLIED),
-                         wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
-                         aPreferCompositorSurface);
+      aBuilder.PushImage(
+          aBounds, aClip, true, aFilter, aImageKeys[0],
+          !(mFlags & TextureFlags::NON_PREMULTIPLIED),
+          wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
+          aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE));
       break;
     }
     default: {
@@ -1192,13 +1200,13 @@ void EGLImageTextureHost::PushResourceUpdates(
 void EGLImageTextureHost::PushDisplayItems(
     wr::DisplayListBuilder& aBuilder, const wr::LayoutRect& aBounds,
     const wr::LayoutRect& aClip, wr::ImageRendering aFilter,
-    const Range<wr::ImageKey>& aImageKeys,
-    const bool aPreferCompositorSurface) {
+    const Range<wr::ImageKey>& aImageKeys, PushDisplayItemFlagSet aFlags) {
   MOZ_ASSERT(aImageKeys.length() == 1);
-  aBuilder.PushImage(aBounds, aClip, true, aFilter, aImageKeys[0],
-                     !(mFlags & TextureFlags::NON_PREMULTIPLIED),
-                     wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
-                     aPreferCompositorSurface);
+  aBuilder.PushImage(
+      aBounds, aClip, true, aFilter, aImageKeys[0],
+      !(mFlags & TextureFlags::NON_PREMULTIPLIED),
+      wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
+      aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE));
 }
 
 //

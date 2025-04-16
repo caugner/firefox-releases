@@ -13,6 +13,7 @@
 #include "mozilla/MacroArgs.h"  // for MOZ_CONCAT
 #include "mozilla/TypedEnumBits.h"
 
+#include <iosfwd>  // for ostream
 #include <stddef.h>
 #include <stdint.h>
 
@@ -107,6 +108,8 @@ enum class SurfaceFormat : int8_t {
   OS_RGBA = A8R8G8B8_UINT32,
   OS_RGBX = X8R8G8B8_UINT32
 };
+
+std::ostream& operator<<(std::ostream& aOut, const SurfaceFormat& aFormat);
 
 // Represents the bit-shifts required to access color channels when the layout
 // is viewed as a uint32_t value.
@@ -413,6 +416,8 @@ enum class SamplingFilter : int8_t {
   SENTINEL  // one past the last valid value
 };
 
+std::ostream& operator<<(std::ostream& aOut, const SamplingFilter& aFilter);
+
 // clang-format off
 MOZ_DEFINE_ENUM_CLASS_WITH_BASE(PatternType, int8_t, (
   COLOR,
@@ -445,10 +450,11 @@ enum class LuminanceType : int8_t {
 /* Color is stored in non-premultiplied form in sRGB color space */
 struct sRGBColor {
  public:
-  sRGBColor() : r(0.0f), g(0.0f), b(0.0f), a(0.0f) {}
-  sRGBColor(Float aR, Float aG, Float aB, Float aA)
+  constexpr sRGBColor() : r(0.0f), g(0.0f), b(0.0f), a(0.0f) {}
+  constexpr sRGBColor(Float aR, Float aG, Float aB, Float aA)
       : r(aR), g(aG), b(aB), a(aA) {}
-  sRGBColor(Float aR, Float aG, Float aB) : r(aR), g(aG), b(aB), a(1.0f) {}
+  constexpr sRGBColor(Float aR, Float aG, Float aB)
+      : r(aR), g(aG), b(aB), a(1.0f) {}
 
   static sRGBColor White(float aA) { return sRGBColor(1.f, 1.f, 1.f, aA); }
 
@@ -571,6 +577,9 @@ struct DeviceColor {
   bool operator!=(const DeviceColor& aColor) const {
     return !(*this == aColor);
   }
+
+  friend std::ostream& operator<<(std::ostream& aOut,
+                                  const DeviceColor& aColor);
 
   Float r, g, b, a;
 };

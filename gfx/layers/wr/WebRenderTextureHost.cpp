@@ -49,7 +49,7 @@ WebRenderTextureHost::WebRenderTextureHost(
 
   MOZ_COUNT_CTOR(WebRenderTextureHost);
 
-  mWrappedTextureHost->EnsureRenderTexture(Some(aExternalImageId));
+  mExternalImageId = Some(aExternalImageId);
 }
 
 WebRenderTextureHost::~WebRenderTextureHost() {
@@ -57,9 +57,14 @@ WebRenderTextureHost::~WebRenderTextureHost() {
 }
 
 wr::ExternalImageId WebRenderTextureHost::GetExternalImageKey() {
+  if (IsValid()) {
+    mWrappedTextureHost->EnsureRenderTexture(mExternalImageId);
+  }
   MOZ_ASSERT(mWrappedTextureHost->mExternalImageId.isSome());
   return mWrappedTextureHost->mExternalImageId.ref();
 }
+
+bool WebRenderTextureHost::IsValid() { return mWrappedTextureHost->IsValid(); }
 
 bool WebRenderTextureHost::Lock() {
   MOZ_ASSERT(mWrappedTextureHost->AsBufferTextureHost());
@@ -202,12 +207,11 @@ void WebRenderTextureHost::PushResourceUpdates(
 void WebRenderTextureHost::PushDisplayItems(
     wr::DisplayListBuilder& aBuilder, const wr::LayoutRect& aBounds,
     const wr::LayoutRect& aClip, wr::ImageRendering aFilter,
-    const Range<wr::ImageKey>& aImageKeys,
-    const bool aPreferCompositorSurface) {
+    const Range<wr::ImageKey>& aImageKeys, PushDisplayItemFlagSet aFlags) {
   MOZ_ASSERT(aImageKeys.length() > 0);
 
   mWrappedTextureHost->PushDisplayItems(aBuilder, aBounds, aClip, aFilter,
-                                        aImageKeys, aPreferCompositorSurface);
+                                        aImageKeys, aFlags);
 }
 
 bool WebRenderTextureHost::NeedsYFlip() const {

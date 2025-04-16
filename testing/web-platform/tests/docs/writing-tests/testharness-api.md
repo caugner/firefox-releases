@@ -434,7 +434,7 @@ These functions are preferred over `step_timeout` as they end when a condition o
 `step_wait(cond, description, timeout=3000, interval=100)` is useful inside `promise_test`, e.g.:
 
 ```js
-promise_test(t => {
+promise_test(async t => {
   // …
   await t.step_wait(() => frame.contentDocument === null, "Frame navigated to a cross-origin document");
   // …
@@ -866,6 +866,8 @@ asserts that `expected` is an Array, and `actual` is equal to one of the
 members i.e. `expected.indexOf(actual) != -1`
 
 ### `assert_object_equals(actual, expected, description)`
+**DEPRECATED**: see [issue #2033](https://github.com/web-platform-tests/wpt/issues/2033).
+
 asserts that `actual` is an object and not null and that all enumerable
 properties on `actual` are own properties on `expected` with the same values,
 recursing if the value is an object and not null.

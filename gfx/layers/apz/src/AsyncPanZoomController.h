@@ -24,6 +24,7 @@
 #include "InputData.h"
 #include "Axis.h"  // for Axis, Side, etc.
 #include "ExpectedGeckoMetrics.h"
+#include "FlingAccelerator.h"
 #include "InputQueue.h"
 #include "APZUtils.h"
 #include "Layers.h"  // for Layer::ScrollDirection
@@ -338,14 +339,21 @@ class AsyncPanZoomController {
   static gfx::IntSize GetDisplayportAlignmentMultiplier(
       const ScreenSize& aBaseSize);
 
+  enum class ZoomInProgress {
+    No,
+    Yes,
+  };
+
   /**
    * Recalculates the displayport. Ideally, this should paint an area bigger
    * than the composite-to dimensions so that when you scroll down, you don't
    * checkerboard immediately. This includes a bunch of logic, including
-   * algorithms to bias painting in the direction of the velocity.
+   * algorithms to bias painting in the direction of the velocity and other
+   * such things.
    */
   static const ScreenMargin CalculatePendingDisplayPort(
-      const FrameMetrics& aFrameMetrics, const ParentLayerPoint& aVelocity);
+      const FrameMetrics& aFrameMetrics, const ParentLayerPoint& aVelocity,
+      ZoomInProgress aZoomInProgress);
 
   nsEventStatus HandleDragEvent(const MouseInput& aEvent,
                                 const AsyncDragMetrics& aDragMetrics,
@@ -842,6 +850,7 @@ class AsyncPanZoomController {
    */
   void RequestContentRepaint(const FrameMetrics& aFrameMetrics,
                              const ParentLayerPoint& aVelocity,
+                             const ScreenMargin& aDisplayportMargins,
                              RepaintUpdateType aUpdateType);
 
   /**
@@ -1387,10 +1396,8 @@ class AsyncPanZoomController {
   friend class GenericOverscrollEffect;
   friend class WidgetOverscrollEffect;
 
-  // The initial velocity of the most recent fling.
-  ParentLayerPoint mLastFlingVelocity;
-  // The time at which the most recent fling started.
-  SampleTime mLastFlingTime;
+  FlingAccelerator mFlingAccelerator;
+
   // Indicates if the repaint-during-pinch timer is currently set
   bool mPinchPaintTimerSet;
 

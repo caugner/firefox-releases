@@ -212,7 +212,6 @@ class nsContextMenu {
     this.onCTPPlugin = context.onCTPPlugin;
     this.onDRMMedia = context.onDRMMedia;
     this.onPiPVideo = context.onPiPVideo;
-    this.onMediaStreamVideo = context.onMediaStreamVideo;
     this.onEditable = context.onEditable;
     this.onImage = context.onImage;
     this.onKeywordField = context.onKeywordField;
@@ -484,7 +483,16 @@ class nsContextMenu {
     // View source is always OK, unless in directory listing.
     this.showItem(
       "context-viewpartialsource-selection",
-      !this.inAboutDevtoolsToolbox && this.isContentSelected
+      !this.inAboutDevtoolsToolbox &&
+        this.isContentSelected &&
+        this.selectionInfo.isDocumentLevelSelection
+    );
+
+    this.showItem(
+      "context-print-selection",
+      !this.inAboutDevtoolsToolbox &&
+        this.isContentSelected &&
+        this.selectionInfo.isDocumentLevelSelection
     );
 
     var shouldShow = !(
@@ -832,7 +840,6 @@ class nsContextMenu {
           "media.videocontrols.picture-in-picture.enabled"
         ) &&
         this.onVideo &&
-        !this.onMediaStreamVideo &&
         !this.target.ownerDocument.fullscreen;
       this.showItem("context-video-pictureinpicture", shouldDisplay);
     }
@@ -1885,7 +1892,19 @@ class nsContextMenu {
   }
 
   printFrame() {
-    PrintUtils.startPrintWindow(this.actor.browsingContext);
+    PrintUtils.startPrintWindow(
+      "context_print_frame",
+      this.actor.browsingContext
+    );
+  }
+
+  printSelection() {
+    PrintUtils.startPrintWindow(
+      "context_print_selection",
+      this.actor.browsingContext,
+      /* aOpenWindowInfo = */ null,
+      /* aPrintSelectionOnly = */ true
+    );
   }
 
   switchPageDirection() {

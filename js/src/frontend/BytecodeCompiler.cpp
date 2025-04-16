@@ -346,6 +346,32 @@ bool frontend::InstantiateStencils(JSContext* cx,
   return true;
 }
 
+bool frontend::InstantiateStencils(JSContext* cx,
+                                   CompilationInfoVector& compilationInfos,
+                                   CompilationGCOutput& gcOutput) {
+  {
+    AutoGeckoProfilerEntry pseudoFrame(cx, "stencil instantiate",
+                                       JS::ProfilingCategoryPair::JS_Parsing);
+
+    if (!compilationInfos.instantiateStencils(cx, gcOutput)) {
+      return false;
+    }
+  }
+
+  // Enqueue an off-thread source compression task after finishing parsing.
+  if (!cx->isHelperThreadContext()) {
+    if (!compilationInfos.initial.input.source()->tryCompressOffThread(cx)) {
+      return false;
+    }
+  }
+
+  tellDebuggerAboutCompiledScript(
+      cx, compilationInfos.initial.input.options.hideScriptFromDebugger,
+      gcOutput.script);
+
+  return true;
+}
+
 template <typename Unit>
 static JSScript* CompileGlobalScriptImpl(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
@@ -1000,6 +1026,13 @@ static bool CompileLazyFunctionToStencilImpl(JSContext* cx,
     return false;
   }
 
+  // NOTE: Only allow relazification if there was no lazy PrivateScriptData.
+  // This excludes non-leaf functions and all script class constructors.
+  bool hadLazyScriptData = lazy->hasPrivateScriptData();
+  bool isRelazifiableAfterDelazify = lazy->isRelazifiableAfterDelazify();
+  compilationInfo.stencil.scriptData[CompilationInfo::TopLevelIndex]
+      .allowRelazify = isRelazifiableAfterDelazify && !hadLazyScriptData;
+
   assertException.reset();
   return true;
 }
@@ -1142,10 +1175,17 @@ bool frontend::CompilationInput::initScriptSource(JSContext* cx) {
 }
 
 void CompilationInput::trace(JSTracer* trc) {
-  atoms.trace(trc);
+  atomCache.trace(trc);
   TraceNullableRoot(trc, &lazy, "compilation-input-lazy");
   source_.trace(trc);
   TraceNullableRoot(trc, &enclosingScope, "compilation-input-enclosing-scope");
 }
 
+void CompilationAtomCache::trace(JSTracer* trc) { atoms.trace(trc); }
+
 void CompilationInfo::trace(JSTracer* trc) { input.trace(trc); }
+
+void CompilationInfoVector::trace(JSTracer* trc) {
+  initial.trace(trc);
+  delazifications.trace(trc);
+}

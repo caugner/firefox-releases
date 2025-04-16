@@ -372,6 +372,7 @@ void Element::Focus(const FocusOptions& aOptions, CallerType aCallerType,
   // I.e., `focus({ preventScroll: true})` followed by `focus( { preventScroll:
   // false })` won't re-focus.
   if (fm->CanSkipFocus(this)) {
+    fm->NotifyOfReFocus(*this);
     fm->NeedsFlushBeforeEventHandling(this);
     return;
   }
@@ -407,7 +408,7 @@ void Element::Blur(mozilla::ErrorResult& aError) {
   }
 
   nsPIDOMWindowOuter* win = doc->GetWindow();
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (win && fm) {
     aError = fm->ClearFocus(win);
   }
@@ -1309,8 +1310,8 @@ bool Element::ToggleAttribute(const nsAString& aName,
       aError.Throw(NS_ERROR_OUT_OF_MEMORY);
       return false;
     }
-    aError = SetAttr(kNameSpaceID_None, nameAtom, EmptyString(),
-                     aTriggeringPrincipal, true);
+    aError = SetAttr(kNameSpaceID_None, nameAtom, u""_ns, aTriggeringPrincipal,
+                     true);
     return true;
   }
   if (aForce.WasPassed() && aForce.Value()) {
@@ -2956,7 +2957,7 @@ nsresult Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor) {
         aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
 
         if (IsInComposedDoc()) {
-          if (nsIFocusManager* fm = nsFocusManager::GetFocusManager()) {
+          if (nsFocusManager* fm = nsFocusManager::GetFocusManager()) {
             RefPtr<Element> kungFuDeathGrip(this);
             fm->SetFocus(kungFuDeathGrip, nsIFocusManager::FLAG_BYMOUSE |
                                               nsIFocusManager::FLAG_NOSCROLL);
@@ -3690,7 +3691,7 @@ TextEditor* Element::GetTextEditorInternal() {
 
 nsresult Element::SetBoolAttr(nsAtom* aAttr, bool aValue) {
   if (aValue) {
-    return SetAttr(kNameSpaceID_None, aAttr, EmptyString(), true);
+    return SetAttr(kNameSpaceID_None, aAttr, u""_ns, true);
   }
 
   return UnsetAttr(kNameSpaceID_None, aAttr, true);

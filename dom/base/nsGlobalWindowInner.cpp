@@ -1018,8 +1018,6 @@ nsGlobalWindowInner::~nsGlobalWindowInner() {
 
   Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_MUTATION_LISTENERS,
                         mMutationBits ? 1 : 0);
-  Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_TEXT_EVENT_LISTENERS,
-                        mMayHaveTextEventListenerInDefaultGroup ? 1 : 0);
 
   // An inner window is destroyed, pull it out of the outer window's
   // list if inner windows.
@@ -1059,6 +1057,15 @@ void nsGlobalWindowInner::FreeInnerObjects() {
     return;
   }
   StartDying();
+
+  if (mDoc && mDoc->GetWindowContext()) {
+    // The document is about to lose its window, so this is a good time to send
+    // our page use counters.
+    //
+    // (We also do this in Document::SetScriptGlobalObject(nullptr), which
+    // catches most cases of documents losing their window, but not all.)
+    mDoc->SendPageUseCounters();
+  }
 
   // Make sure that this is called before we null out the document and
   // other members that the window destroyed observers could
@@ -1381,8 +1388,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindowInner)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChromeFields.mMessageManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChromeFields.mGroupMessageManagers)
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPendingPromises)
-
   for (size_t i = 0; i < tmp->mDocumentFlushedResolvers.Length(); i++) {
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentFlushedResolvers[i]->mPromise);
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentFlushedResolvers[i]->mCallback);
@@ -1497,7 +1502,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mChromeFields.mGroupMessageManagers)
   }
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPendingPromises)
   for (size_t i = 0; i < tmp->mDocumentFlushedResolvers.Length(); i++) {
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocumentFlushedResolvers[i]->mPromise);
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocumentFlushedResolvers[i]->mCallback);
@@ -1686,13 +1690,9 @@ void nsGlobalWindowInner::InitDocumentDependentState(JSContext* aCx) {
 
   Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_MUTATION_LISTENERS,
                         mMutationBits ? 1 : 0);
-  Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_TEXT_EVENT_LISTENERS,
-                        mMayHaveTextEventListenerInDefaultGroup ? 1 : 0);
 
   // Clear our mutation bitfield.
   mMutationBits = 0;
-
-  mMayHaveTextEventListenerInDefaultGroup = false;
 }
 
 nsresult nsGlobalWindowInner::EnsureClientSource() {
@@ -3561,7 +3561,7 @@ void nsGlobalWindowInner::Dump(const nsAString& aStr) {
 
 void nsGlobalWindowInner::Alert(nsIPrincipal& aSubjectPrincipal,
                                 ErrorResult& aError) {
-  Alert(EmptyString(), aSubjectPrincipal, aError);
+  Alert(u""_ns, aSubjectPrincipal, aError);
 }
 
 void nsGlobalWindowInner::Alert(const nsAString& aMessage,
@@ -3622,7 +3622,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowInner::PrintPreview(
   FORWARD_TO_OUTER_OR_THROW(Print,
                             (aSettings, aListener, aDocShellToCloneInto,
                              nsGlobalWindowOuter::IsPreview::Yes,
-                             nsGlobalWindowOuter::BlockUntilDone::No,
+                             nsGlobalWindowOuter::IsForWindowDotPrint::No,
                              /* aPrintPreviewCallback = */ nullptr, aError),
                             aError, nullptr);
 }
@@ -4272,7 +4272,7 @@ void nsGlobalWindowInner::SetReadyForFocus() {
   bool oldNeedsFocus = mNeedsFocus;
   mNeedsFocus = false;
 
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
     fm->WindowShown(GetOuterWindow(), oldNeedsFocus);
   }
@@ -4283,7 +4283,7 @@ void nsGlobalWindowInner::PageHidden() {
   // no longer valid. Use the persisted field to determine if the document
   // is being destroyed.
 
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
     fm->WindowHidden(GetOuterWindow());
   }
@@ -6075,12 +6075,11 @@ bool nsGlobalWindowInner::RunTimeoutHandler(Timeout* aTimeout,
     timeout->mScriptHandler->GetDescription(handlerDescription);
     str.Append(handlerDescription);
   }
-  AUTO_PROFILER_MARKER_TEXT(
-      "setTimeout callback",
-      JS.WithOptions(
-          MarkerStack::TakeBacktrace(timeout->TakeProfilerBacktrace()),
-          MarkerInnerWindowId(mWindowID)),
-      str);
+  AUTO_PROFILER_MARKER_TEXT("setTimeout callback", JS,
+                            MarkerOptions(MarkerStack::TakeBacktrace(
+                                              timeout->TakeProfilerBacktrace()),
+                                          MarkerInnerWindowId(mWindowID)),
+                            str);
 #endif
 
   bool abortIntervalHandler;
@@ -6437,9 +6436,6 @@ void nsGlobalWindowInner::AddSizeOfIncludingThis(
     aWindowSizes.mDOMPerformanceResourceEntries =
         mPerformance->SizeOfResourceEntries(aWindowSizes.mState.mMallocSizeOf);
   }
-
-  aWindowSizes.mDOMOtherSize += mPendingPromises.ShallowSizeOfExcludingThis(
-      aWindowSizes.mState.mMallocSizeOf);
 }
 
 void nsGlobalWindowInner::AddGamepad(uint32_t aIndex, Gamepad* aGamepad) {
@@ -7492,7 +7488,8 @@ nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow,
       mMayHaveSelectionChangeEventListener(false),
       mMayHaveMouseEnterLeaveEventListener(false),
       mMayHavePointerEnterLeaveEventListener(false),
-      mMayHaveTextEventListenerInDefaultGroup(false),
+      mMayHaveBeforeInputEventListenerForTelemetry(false),
+      mMutationObserverHasObservedNodeForTelemetry(false),
       mOuterWindow(aOuterWindow),
       mWindowID(0),
       mHasNotifiedGlobalCreated(false),

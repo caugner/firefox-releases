@@ -94,6 +94,7 @@ struct LoadInfoArgs
   bool                        allowInsecureRedirectToDataURI;
   bool                        bypassCORSChecks;
   bool                        skipContentPolicyCheckForWebRequest;
+  bool                        originalFrameSrcLoad;
   bool                        forceInheritPrincipalDropped;
   uint64_t                    innerWindowID;
   uint64_t                    browsingContextID;
@@ -366,6 +367,7 @@ struct HttpConnectionInfoCloneArgs
   nsCString topWindowOrigin;
   bool isHttp3;
   bool hasIPHintAddress;
+  nsCString echConfig;
   ProxyInfoCloneArgs[] proxyInfo;
 };
 

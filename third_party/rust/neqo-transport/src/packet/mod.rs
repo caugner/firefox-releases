@@ -92,6 +92,7 @@ pub enum QuicVersion {
     Draft27,
     Draft28,
     Draft29,
+    Draft30,
 }
 
 impl QuicVersion {
@@ -100,6 +101,7 @@ impl QuicVersion {
             Self::Draft27 => 0xff00_0000 + 27,
             Self::Draft28 => 0xff00_0000 + 28,
             Self::Draft29 => 0xff00_0000 + 29,
+            Self::Draft30 => 0xff00_0000 + 30,
         }
     }
 }
@@ -120,6 +122,8 @@ impl TryFrom<Version> for QuicVersion {
             Ok(Self::Draft28)
         } else if ver == 0xff00_0000 + 29 {
             Ok(Self::Draft29)
+        } else if ver == 0xff00_0000 + 30 {
+            Ok(Self::Draft30)
         } else {
             Err(Error::VersionNegotiation)
         }
@@ -142,17 +146,26 @@ pub struct PacketBuilder {
     pn: PacketNumber,
     header: Range<usize>,
     offsets: PacketBuilderOffsets,
+    limit: usize,
 }
 
 impl PacketBuilder {
+    fn infer_limit(encoder: &Encoder) -> usize {
+        if encoder.capacity() > 64 {
+            encoder.capacity()
+        } else {
+            2048
+        }
+    }
+
     /// Start building a short header packet.
     #[allow(clippy::unknown_clippy_lints)] // Until we require rust 1.45.
     #[allow(clippy::reversed_empty_ranges)]
-    pub fn short(mut encoder: Encoder, key_phase: bool, dcid: &ConnectionId) -> Self {
+    pub fn short(mut encoder: Encoder, key_phase: bool, dcid: impl AsRef<[u8]>) -> Self {
         let header_start = encoder.len();
-        // TODO(mt) randomize the spin bit
         encoder.encode_byte(PACKET_BIT_SHORT | PACKET_BIT_FIXED_QUIC | (u8::from(key_phase) << 2));
-        encoder.encode(&dcid);
+        encoder.encode(dcid.as_ref());
+        let limit = Self::infer_limit(&encoder);
         Self {
             encoder,
             pn: u64::max_value(),
@@ -162,6 +175,7 @@ impl PacketBuilder {
                 pn: 0..0,
                 len: 0,
             },
+            limit,
         }
     }
 
@@ -174,14 +188,15 @@ impl PacketBuilder {
         mut encoder: Encoder,
         pt: PacketType,
         quic_version: QuicVersion,
-        dcid: &ConnectionId,
-        scid: &ConnectionId,
+        dcid: impl AsRef<[u8]>,
+        scid: impl AsRef<[u8]>,
     ) -> Self {
         let header_start = encoder.len();
         encoder.encode_byte(PACKET_BIT_LONG | PACKET_BIT_FIXED_QUIC | pt.code() << 4);
         encoder.encode_uint(4, quic_version.as_u32());
-        encoder.encode_vec(1, dcid);
-        encoder.encode_vec(1, scid);
+        encoder.encode_vec(1, dcid.as_ref());
+        encoder.encode_vec(1, scid.as_ref());
+        let limit = Self::infer_limit(&encoder);
         Self {
             encoder,
             pn: u64::max_value(),
@@ -191,11 +206,25 @@ impl PacketBuilder {
                 pn: 0..0,
                 len: 0,
             },
+            limit,
         }
     }
 
     fn is_long(&self) -> bool {
         self[self.header.start] & 0x80 == PACKET_BIT_LONG
+    }
+
+    /// This stores a value that can be used as a limit.  This does not cause
+    /// this limit to be enforced until encryption occurs.  Prior to that, it
+    /// is only used voluntarily by users of the builder, through `remaining()`.
+    pub fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+    }
+
+    /// How many bytes remain against the size limit for the builder.
+    #[must_use]
+    pub fn remaining(&self) -> usize {
+        self.limit - self.encoder.len()
     }
 
     /// Add unpredictable values for unprotected parts of the packet.
@@ -336,6 +365,7 @@ impl PacketBuilder {
         encoder.encode_uint(4, QuicVersion::Draft27.as_u32());
         encoder.encode_uint(4, QuicVersion::Draft28.as_u32());
         encoder.encode_uint(4, QuicVersion::Draft29.as_u32());
+        encoder.encode_uint(4, QuicVersion::Draft30.as_u32());
         // Add a greased version, using the randomness already generated.
         for g in &mut grease[..4] {
             *g = *g & 0xf0 | 0x0a;
@@ -540,7 +570,7 @@ impl<'a> PublicPacket<'a> {
 
     pub fn is_valid_initial(&self) -> bool {
         // Packet has to be an initial, with a DCID of 8 bytes, or a token.
-        // Assume that the Server class validates the token.
+        // Note: the Server class validates the token and checks the length.
         self.packet_type == PacketType::Initial
             && (self.dcid().len() >= 8 || !self.token.is_empty())
     }
@@ -567,7 +597,7 @@ impl<'a> PublicPacket<'a> {
         self.quic_version
     }
 
-    pub fn packet_len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.data.len()
     }
 
@@ -1018,6 +1048,12 @@ mod tests {
         0x8a, 0xa4, 0x57, 0x5e, 0x1e, 0x49,
     ];
 
+    const SAMPLE_RETRY_30: &[u8] = &[
+        0xff, 0xff, 0x00, 0x00, 0x1e, 0x00, 0x08, 0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5,
+        0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x2d, 0x3e, 0x04, 0x5d, 0x6d, 0x39, 0x20, 0x67, 0x89, 0x94,
+        0x37, 0x10, 0x8c, 0xe0, 0x0a, 0x61,
+    ];
+
     const RETRY_TOKEN: &[u8] = b"token";
 
     fn build_retry_single(quic_version: QuicVersion, sample_retry: &[u8]) {
@@ -1057,6 +1093,11 @@ mod tests {
     }
 
     #[test]
+    fn build_retry_30() {
+        build_retry_single(QuicVersion::Draft30, SAMPLE_RETRY_30);
+    }
+
+    #[test]
     fn build_retry_multiple() {
         // Run the build_retry test a few times.
         // Odds are approximately 1 in 8 that the full comparison doesn't happen
@@ -1065,6 +1106,7 @@ mod tests {
             build_retry_27();
             build_retry_28();
             build_retry_29();
+            build_retry_30();
         }
     }
 
@@ -1093,6 +1135,11 @@ mod tests {
     #[test]
     fn decode_retry_29() {
         decode_retry(QuicVersion::Draft29, SAMPLE_RETRY_29);
+    }
+
+    #[test]
+    fn decode_retry_30() {
+        decode_retry(QuicVersion::Draft30, SAMPLE_RETRY_30);
     }
 
     /// Check some packets that are clearly not valid Retry packets.
@@ -1131,7 +1178,7 @@ mod tests {
     const SAMPLE_VN: &[u8] = &[
         0x80, 0x00, 0x00, 0x00, 0x00, 0x08, 0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5, 0x08,
         0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08, 0xff, 0x00, 0x00, 0x1b, 0xff, 0x00, 0x00,
-        0x1c, 0xff, 0x00, 0x00, 0x1d, 0x0a, 0x0a, 0x0a, 0x0a,
+        0x1c, 0xff, 0x00, 0x00, 0x1d, 0xff, 0x00, 0x00, 0x1e, 0x0a, 0x0a, 0x0a, 0x0a,
     ];
 
     #[test]

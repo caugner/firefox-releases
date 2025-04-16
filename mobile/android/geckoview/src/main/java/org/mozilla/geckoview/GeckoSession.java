@@ -14,7 +14,6 @@ import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.AbstractSequentialList;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
@@ -1073,46 +1072,6 @@ public class GeckoSession {
         @WrapForJNI(dispatchTo = "proxy", stubName = "Close")
         private native void nativeClose();
 
-        // Assign a new set of Java session objects to the underlying Gecko window.
-        // This replaces previously assigned objects from open() or transfer() calls.
-        public synchronized void transfer(final GeckoSession owner,
-                                          final NativeQueue queue,
-                                          final Compositor compositor,
-                                          final EventDispatcher dispatcher,
-                                          final SessionAccessibility.NativeProvider sessionAccessibility,
-                                          final GeckoBundle initData) {
-            if (mNativeQueue == null) {
-                // Already closed.
-                return;
-            }
-
-            final GeckoSession oldOwner = mOwner.get();
-            if (oldOwner != null && owner != oldOwner) {
-                oldOwner.abandonWindow();
-            }
-
-            mOwner = new WeakReference<>(owner);
-
-            if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
-                nativeTransfer(queue, compositor, dispatcher, sessionAccessibility, initData);
-            } else {
-                GeckoThread.queueNativeCallUntil(GeckoThread.State.PROFILE_READY,
-                        this, "nativeTransfer",
-                        NativeQueue.class, queue,
-                        Compositor.class, compositor,
-                        EventDispatcher.class, dispatcher,
-                        SessionAccessibility.NativeProvider.class, sessionAccessibility,
-                        GeckoBundle.class, initData);
-            }
-
-            if (mNativeQueue != queue) {
-                // Reset the old queue to prevent old events from affecting this window.
-                // Gecko will call onReady later with the new queue if needed.
-                mNativeQueue.reset(State.INITIAL);
-                mNativeQueue = queue;
-            }
-        }
-
         @WrapForJNI(dispatchTo = "proxy", stubName = "Transfer")
         private native void nativeTransfer(NativeQueue queue, Compositor compositor,
                                            EventDispatcher dispatcher,
@@ -1124,14 +1083,6 @@ public class GeckoSession {
 
         @WrapForJNI(dispatchTo = "proxy")
         public native void attachAccessibility(SessionAccessibility.NativeProvider sessionAccessibility);
-
-        @WrapForJNI(dispatchTo = "proxy")
-        public native void attachMediaSessionController(
-            final MediaSession.Controller controller, final long id);
-
-        @WrapForJNI(dispatchTo = "proxy")
-        public native void detachMediaSessionController(
-            final MediaSession.Controller controller);
 
         @WrapForJNI(calledFrom = "gecko")
         private synchronized void onReady(final @Nullable NativeQueue queue) {
@@ -1286,36 +1237,6 @@ public class GeckoSession {
         onWindowChanged(WINDOW_TRANSFER_OUT, /* inProgress */ false);
     }
 
-    private void transferFrom(final Window window,
-                              final GeckoSessionSettings settings,
-                              final String id) {
-        if (isOpen()) {
-            // We will leak the existing Window if we transfer in another one.
-            throw new IllegalStateException("Session is open");
-        }
-
-        if (window != null) {
-            onWindowChanged(WINDOW_TRANSFER_IN, /* inProgress */ true);
-        }
-
-        mWindow = window;
-        mSettings = new GeckoSessionSettings(settings, this);
-        mId = id;
-
-        if (mWindow != null) {
-            mWindow.transfer(this, mNativeQueue, mCompositor,
-                    mEventDispatcher, mAccessibility != null ? mAccessibility.nativeProvider : null,
-                    createInitData());
-            onWindowChanged(WINDOW_TRANSFER_IN, /* inProgress */ false);
-            mWebExtensionController.setRuntime(mWindow.runtime);
-        }
-    }
-
-    /* package */ void transferFrom(final GeckoSession session) {
-        transferFrom(session.mWindow, session.mSettings, session.mId);
-        session.mWindow = null;
-    }
-
     /* package */ boolean equalsId(final GeckoSession other) {
         if (other == null) {
             return false;
@@ -1434,6 +1355,8 @@ public class GeckoSession {
 
         mWindow.close();
         mWindow.disposeNative();
+        // Can't access the compositor after we dispose of the window
+        mCompositorReady = false;
         mWindow = null;
 
         onWindowChanged(WINDOW_CLOSE, /* inProgress */ false);
@@ -1538,39 +1461,314 @@ public class GeckoSession {
     public static final int LOAD_FLAGS_REPLACE_HISTORY = 1 << 6;
 
     /**
-     * Formats the map of additional request headers into an ArrayList
-     * @param additionalHeaders Request headers to be formatted
-     * @return Correctly formatted request headers as a ArrayList
+     * Filter headers according to the CORS safelisted rules.
+     *
+     * See <a href="https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_request_header">
+     *  CORS-safelisted request header
+     * </a>.
      */
-    private ArrayList<String> additionalHeadersToStringArray(final @NonNull Map<String, String> additionalHeaders) {
-        ArrayList<String> headers = new ArrayList<String>();
-        for (String key : additionalHeaders.keySet()) {
-            // skip null key if one exists
-            if (key == null)
-                continue;
+    public static final int HEADER_FILTER_CORS_SAFELISTED = 1;
+    /**
+     * Allows most headers.
+     *
+     * Note: the <code>Host</code> and <code>Connection</code>
+     * headers are still ignored.
+     *
+     * This should only be used when input is hard-coded from the app or when
+     * properly sanitized, as some headers could cause unexpected consequences
+     * and security issues.
+     *
+     * Only use this if you know what you're doing.
+     */
+    public static final int HEADER_FILTER_UNRESTRICTED_UNSAFE = 2;
 
-            headers.add( String.format("%s:%s", key, additionalHeaders.get(key)) );
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(value = {HEADER_FILTER_CORS_SAFELISTED, HEADER_FILTER_UNRESTRICTED_UNSAFE})
+            /* package */ @interface HeaderFilter {}
+
+    /**
+     * Main entry point for loading URIs into a {@link GeckoSession}.
+     *
+     * The simplest use case is loading a URIs with no extra options, this can
+     * be accomplished by specifying the URI in {@link #uri} and then calling
+     * {@link #load}, e.g.
+     *
+     * <pre><code>
+     *     session.load(new Loader().uri("http://mozilla.org"));
+     * </code></pre>
+     *
+     * This class can also be used to load <code>data:</code> URIs, either from
+     * a <code>byte[]</code> array or a <code>String</code> using {@link
+     * #data}, e.g.
+     *
+     * <pre><code>
+     *     session.load(new Loader().data("the data:1234,5678", "text/plain"));
+     * </code></pre>
+     *
+     * This class also allows you to specify some extra data, e.g. you can set
+     * a referrer using {@link #referrer} which can either be a {@link
+     * GeckoSession} or a plain URL string. You can also specify some Load
+     * Flags using {@link #flags}.
+     *
+     * The class is structured as a Builder, so method calls can be easily
+     * chained, e.g.
+     *
+     * <pre><code>
+     *     session.load(new Loader()
+     *          .url("http://mozilla.org")
+     *          .referrer("http://my-referrer.com")
+     *          .flags(...));
+     * </code></pre>
+     */
+    @AnyThread
+    public static class Loader {
+        private String mUri;
+        private GeckoSession mReferrerSession;
+        private String mReferrerUri;
+        private GeckoBundle mHeaders;
+        private @LoadFlags int mLoadFlags = LOAD_FLAGS_NONE;
+        private boolean mIsDataUri;
+        private @HeaderFilter int mHeaderFilter = HEADER_FILTER_CORS_SAFELISTED;
+
+        private static @NonNull String createDataUri(@NonNull final byte[] bytes,
+                                                    @Nullable final String mimeType) {
+            return String.format("data:%s;base64,%s", mimeType != null ? mimeType : "",
+                    Base64.encodeToString(bytes, Base64.NO_WRAP));
         }
-        return headers;
+
+        private static @NonNull String createDataUri(@NonNull final String data,
+                                                    @Nullable final String mimeType) {
+            return String.format("data:%s,%s", mimeType != null ? mimeType : "", data);
+        }
+
+        /**
+         * Set the URI of the resource to load.
+         * @param uri a String containg the URI
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader uri(final @NonNull String uri) {
+            mUri = uri;
+            mIsDataUri = false;
+            return this;
+        }
+
+        /**
+         * Set the URI of the resource to load.
+         * @param uri a {@link Uri} instance
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader uri(final @NonNull Uri uri) {
+            mUri = uri.toString();
+            mIsDataUri = false;
+            return this;
+        }
+
+        /**
+         * Set the data URI of the resource to load.
+         * @param bytes a <code>byte</code> array containing the data to load.
+         * @param mimeType a <code>String</code> containing the mime type for this
+         *                 data URI, e.g. "text/plain"
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader data(final @NonNull byte[] bytes, final @Nullable String mimeType) {
+            mUri = createDataUri(bytes, mimeType);
+            mIsDataUri = true;
+            return this;
+        }
+
+        /**
+         * Set the data URI of the resource to load.
+         * @param data a <code>String</code> array containing the data to load.
+         * @param mimeType a <code>String</code> containing the mime type for this
+         *                 data URI, e.g. "text/plain"
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader data(final @NonNull String data, final @Nullable String mimeType) {
+            mUri = createDataUri(data, mimeType);
+            mIsDataUri = true;
+            return this;
+        }
+
+        /**
+         * Set the referrer for this load.
+         * @param referrer a <code>GeckoSession</code> that will be used as the referrer
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader referrer(final @NonNull GeckoSession referrer) {
+            mReferrerSession = referrer;
+            return this;
+        }
+
+        /**
+         * Set the referrer for this load.
+         * @param referrerUri a {@link Uri} that will be used as the referrer
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader referrer(final @NonNull Uri referrerUri) {
+            mReferrerUri = referrerUri != null ? referrerUri.toString() : null;
+            return this;
+        }
+
+        /**
+         * Set the referrer for this load.
+         * @param referrerUri a <code>String</code> containing the URI
+         *                 that will be used as the referrer
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader referrer(final @NonNull String referrerUri) {
+            mReferrerUri = referrerUri;
+            return this;
+        }
+
+        /**
+         * Add headers for this load.
+         *
+         * Note: only CORS safelisted headers are allowed by default. To modify this
+         * behavior use {@link #headerFilter}.
+         *
+         * See <a href="https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_request_header">
+         *  CORS-safelisted request header
+         * </a>.
+         *
+         * @param headers a <code>Map</code> containing headers that will
+         *                be added to this load.
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader additionalHeaders(final @NonNull Map<String, String> headers) {
+            final GeckoBundle bundle = new GeckoBundle(headers.size());
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                if (entry.getKey() == null) {
+                    // Ignore null keys
+                    continue;
+                }
+                bundle.putString(entry.getKey(), entry.getValue());
+            }
+            mHeaders = bundle;
+            return this;
+        }
+
+        /**
+         * Modify the header filter behavior. By default only CORS safelisted headers are allowed.
+         *
+         * @param filter one of the
+         *               {@link GeckoSession#HEADER_FILTER_CORS_SAFELISTED HEADER_FILTER_*}
+         *               constants.
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader headerFilter(final @HeaderFilter int filter) {
+            mHeaderFilter = filter;
+            return this;
+        }
+
+        /**
+         * Set the load flags for this load.
+         * @param flags the load flags to use, an OR-ed value of
+         *              {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*} that will be used as the referrer
+         * @return this {@link Loader} instance.
+         */
+        @NonNull
+        public Loader flags(final @LoadFlags int flags) {
+            mLoadFlags = flags;
+            return this;
+        }
+    }
+
+    /**
+     * Load page using the {@link Loader} specified.
+     *
+     * @param request Loader for this request.
+     * @see Loader
+     */
+    @AnyThread
+    public void load(final @NonNull Loader request) {
+        if (request.mUri == null) {
+            throw new IllegalArgumentException(
+                    "You need to specify at least one between `uri` and `data`.");
+        }
+
+        if (request.mReferrerUri != null && request.mReferrerSession != null) {
+            throw new IllegalArgumentException(
+                    "Cannot specify both a referrer session and a referrer URI.");
+        }
+
+        final int loadFlags = request.mIsDataUri
+                // If this is a data: load then we need to force allow it.
+                ? request.mLoadFlags | LOAD_FLAGS_FORCE_ALLOW_DATA_URI
+                : request.mLoadFlags;
+
+        // For performance reasons we short-circuit the delegate here
+        // instead of making Gecko call it for direct loadUri calls.
+        final NavigationDelegate.LoadRequest loadRequest =
+                new NavigationDelegate.LoadRequest(
+                        request.mUri,
+                        null, /* triggerUri */
+                        1, /* geckoTarget: OPEN_CURRENTWINDOW */
+                        0, /* flags */
+                        false, /* hasUserGesture */
+                        true /* isDirectNavigation */);
+
+        shouldLoadUri(loadRequest).getOrAccept(allowOrDeny -> {
+            if (allowOrDeny == AllowOrDeny.DENY) {
+                return;
+            }
+
+            final GeckoBundle msg = new GeckoBundle();
+            msg.putString("uri", request.mUri);
+            msg.putInt("flags", loadFlags);
+            msg.putInt("headerFilter", request.mHeaderFilter);
+
+            if (request.mReferrerUri != null) {
+                msg.putString("referrerUri", request.mReferrerUri);
+            }
+
+            if (request.mReferrerSession != null) {
+                msg.putString("referrerSessionId", request.mReferrerSession.mId);
+            }
+
+            if (request.mHeaders != null) {
+                msg.putBundle("headers", request.mHeaders);
+            }
+
+            mEventDispatcher.dispatch("GeckoView:LoadUri", msg);
+        });
     }
 
     /**
      * Load the given URI.
+     *
+     * Convenience method for <pre><code>
+     *     session.load(new Loader().uri(uri));
+     * </code></pre>
+     *
      * @param uri The URI of the resource to load.
      */
     @AnyThread
     public void loadUri(final @NonNull String uri) {
-        loadUri(uri, (GeckoSession)null, LOAD_FLAGS_NONE, (Map<String, String>) null);
+        load(new Loader().uri(uri));
     }
 
     /**
      * Load the given URI with specified HTTP request headers.
      * @param uri The URI of the resource to load.
      * @param additionalHeaders any additional request headers used with the load
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull String uri, final @Nullable Map<String, String> additionalHeaders) {
-        loadUri(uri, (GeckoSession)null, LOAD_FLAGS_NONE, additionalHeaders);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .additionalHeaders(additionalHeaders));
     }
 
     /**
@@ -1578,10 +1776,15 @@ public class GeckoSession {
      *
      * @param uri the URI to load
      * @param flags the load flags to use, an OR-ed value of {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*}
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull String uri, final @LoadFlags int flags) {
-        loadUri(uri, (GeckoSession)null, flags, (Map<String, String>) null);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .flags(flags));
     }
 
     /**
@@ -1590,11 +1793,17 @@ public class GeckoSession {
      * @param uri the URI to load
      * @param referrer the referrer, may be null
      * @param flags the load flags to use, an OR-ed value of {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*}
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull String uri, final @Nullable String referrer,
                         final @LoadFlags int flags) {
-        loadUri(uri, referrer, flags, (Map<String, String>) null);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .referrer(referrer)
+                .flags(flags));
     }
 
     /**
@@ -1604,22 +1813,18 @@ public class GeckoSession {
      * @param referrer the referrer, may be null
      * @param flags the load flags to use, an OR-ed value of {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*}
      * @param additionalHeaders any additional request headers used with the load
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull String uri, final @Nullable String referrer,
                         final @LoadFlags int flags, final @Nullable Map<String, String> additionalHeaders) {
-        final GeckoBundle msg = new GeckoBundle();
-        msg.putString("uri", uri);
-        msg.putInt("flags", flags);
-
-        if (referrer != null) {
-            msg.putString("referrerUri", referrer);
-        }
-
-        if (additionalHeaders != null) {
-            msg.putStringArray("headers", additionalHeadersToStringArray(additionalHeaders));
-        }
-        mEventDispatcher.dispatch("GeckoView:LoadUri", msg);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .referrer(referrer)
+                .flags(flags)
+                .additionalHeaders(additionalHeaders));
     }
 
     /**
@@ -1630,11 +1835,17 @@ public class GeckoSession {
      * @param uri the URI to load
      * @param referrer the referring GeckoSession, may be null
      * @param flags the load flags to use, an OR-ed value of {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*}
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull String uri, final @Nullable GeckoSession referrer,
                         final @LoadFlags int flags) {
-        loadUri(uri, referrer, flags, (Map<String, String>) null);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .referrer(referrer)
+                .flags(flags));
     }
 
     /**
@@ -1646,40 +1857,18 @@ public class GeckoSession {
      * @param referrer the referring GeckoSession, may be null
      * @param flags the load flags to use, an OR-ed value of {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*}
      * @param additionalHeaders any additional request headers used with the load
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull String uri, final @Nullable GeckoSession referrer,
                         final @LoadFlags int flags, final @Nullable Map<String, String> additionalHeaders) {
-        // For performance reasons we short-circuit the delegate here
-        // instead of making Gecko call it for direct loadUri calls.
-        final NavigationDelegate.LoadRequest request =
-                new NavigationDelegate.LoadRequest(
-                        uri,
-                        null, /* triggerUri */
-                        1, /* geckoTarget: OPEN_CURRENTWINDOW */
-                        0, /* flags */
-                        false, /* hasUserGesture */
-                        true /* isDirectNavigation */);
-
-        shouldLoadUri(request).getOrAccept(allowOrDeny -> {
-            if (allowOrDeny == AllowOrDeny.DENY) {
-                return;
-            }
-
-            final GeckoBundle msg = new GeckoBundle();
-            msg.putString("uri", uri);
-            msg.putInt("flags", flags);
-
-            if (referrer != null) {
-                msg.putString("referrerSessionId", referrer.mId);
-            }
-
-            if (additionalHeaders != null) {
-                msg.putStringArray("headers", additionalHeadersToStringArray(additionalHeaders));
-            }
-
-            mEventDispatcher.dispatch("GeckoView:LoadUri", msg);
-        });
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .referrer(referrer)
+                .additionalHeaders(additionalHeaders)
+                .flags(flags));
     }
 
     private GeckoResult<AllowOrDeny> shouldLoadUri(final NavigationDelegate.LoadRequest request) {
@@ -1710,30 +1899,44 @@ public class GeckoSession {
     /**
      * Load the given URI.
      * @param uri The URI of the resource to load.
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull Uri uri) {
-        loadUri(uri.toString(), (GeckoSession)null, LOAD_FLAGS_NONE, (Map<String, String>) null);
+        load(new Loader()
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .uri(uri));
     }
 
     /**
      * Load the given URI with specified HTTP request headers.
      * @param uri The URI of the resource to load.
      * @param additionalHeaders any additional request headers used with the load
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull Uri uri, final @Nullable Map<String, String> additionalHeaders) {
-        loadUri(uri.toString(), (GeckoSession)null, LOAD_FLAGS_NONE, additionalHeaders);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .additionalHeaders(additionalHeaders));
     }
 
     /**
      * Load the given URI with the specified referrer and load type.
      * @param uri the URI to load
      * @param flags the load flags to use, an OR-ed value of {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*}
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull Uri uri, final @LoadFlags int flags) {
-        loadUri(uri.toString(), (GeckoSession)null, flags, (Map<String, String>) null);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .flags(flags));
     }
 
     /**
@@ -1741,11 +1944,17 @@ public class GeckoSession {
      * @param uri the URI to load
      * @param referrer the Uri to use as the referrer
      * @param flags the load flags to use, an OR-ed value of {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*}
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull Uri uri, final @Nullable Uri referrer,
                         final @LoadFlags int flags) {
-        loadUri(uri.toString(), referrer != null ? referrer.toString() : null, flags, (Map<String, String>) null);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .referrer(referrer)
+                .flags(flags));
     }
 
     /**
@@ -1754,11 +1963,18 @@ public class GeckoSession {
      * @param referrer the Uri to use as the referrer
      * @param flags the load flags to use, an OR-ed value of {@link #LOAD_FLAGS_NONE LOAD_FLAGS_*}
      * @param additionalHeaders any additional request headers used with the load
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadUri(final @NonNull Uri uri, final @Nullable Uri referrer,
                         final @LoadFlags int flags, final @Nullable Map<String, String> additionalHeaders) {
-        loadUri(uri.toString(), referrer != null ? referrer.toString() : null, flags, additionalHeaders);
+        load(new Loader()
+                .uri(uri)
+                .headerFilter(HEADER_FILTER_UNRESTRICTED_UNSAFE)
+                .referrer(referrer)
+                .flags(flags)
+                .additionalHeaders(additionalHeaders));
     }
 
     /**
@@ -1767,15 +1983,12 @@ public class GeckoSession {
      * @param data a String representing the data
      * @param mimeType the mime type of the data, e.g. "text/plain". Maybe be null, in
      *                 which case the type is guessed.
-     *
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadString(@NonNull final String data, @Nullable final String mimeType) {
-        if (data == null) {
-            throw new IllegalArgumentException("data cannot be null");
-        }
-
-        loadUri(createDataUri(data, mimeType), (GeckoSession)null, LOAD_FLAGS_NONE);
+        load(new Loader().data(data, mimeType));
     }
 
     /**
@@ -1784,14 +1997,12 @@ public class GeckoSession {
      * @param bytes    the data to load
      * @param mimeType the mime type of the data, e.g. video/mp4. May be null, in which
      *                 case the type is guessed.
+     * @deprecated Use {@link #load} instead.
      */
     @AnyThread
+    @Deprecated
     public void loadData(@NonNull final byte[] bytes, @Nullable final String mimeType) {
-        if (bytes == null) {
-            throw new IllegalArgumentException("data cannot be null");
-        }
-
-        loadUri(createDataUri(bytes, mimeType), (GeckoSession)null, LOAD_FLAGS_FORCE_ALLOW_DATA_URI);
+        load(new Loader().data(bytes, mimeType));
     }
 
     /**
@@ -1801,10 +2012,10 @@ public class GeckoSession {
      * @return a URI String
      */
     @AnyThread
+    @Deprecated
     public static @NonNull String createDataUri(@NonNull final byte[] bytes,
                                                 @Nullable final String mimeType) {
-        return String.format("data:%s;base64,%s", mimeType != null ? mimeType : "",
-                             Base64.encodeToString(bytes, Base64.NO_WRAP));
+        return Loader.createDataUri(bytes, mimeType);
     }
 
     /**
@@ -1814,9 +2025,10 @@ public class GeckoSession {
      * @return a URI String
      */
     @AnyThread
+    @Deprecated
     public static @NonNull String createDataUri(@NonNull final String data,
                                                 @Nullable final String mimeType) {
-        return String.format("data:%s,%s", mimeType != null ? mimeType : "", data);
+        return Loader.createDataUri(data, mimeType);
     }
 
     /**
@@ -2603,7 +2815,6 @@ public class GeckoSession {
     @AnyThread
     public void setMediaSessionDelegate(
             final @Nullable MediaSession.Delegate delegate) {
-        Log.d(LOGTAG, "setMediaSessionDelegate " + mWindow);
         mMediaSessionHandler.setDelegate(delegate, this);
     }
 
@@ -2614,61 +2825,6 @@ public class GeckoSession {
     @AnyThread
     public @Nullable MediaSession.Delegate getMediaSessionDelegate() {
         return mMediaSessionHandler.getDelegate();
-    }
-
-    @UiThread
-    /* package */ void attachMediaSessionController(
-            final MediaSession.Controller controller) {
-        ThreadUtils.assertOnUiThread();
-
-        if (DEBUG) {
-            Log.d(LOGTAG,
-                    "attachMediaSessionController" +
-                    " isOpen=" + isOpen() +
-                    ", isEnabled=" + mMediaSessionHandler.isEnabled());
-        }
-
-        if (!isOpen() || !mMediaSessionHandler.isEnabled()) {
-            return;
-        }
-
-        if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
-            mWindow.attachMediaSessionController(controller, controller.getId());
-        } else {
-            GeckoThread.queueNativeCallUntil(
-                    GeckoThread.State.PROFILE_READY,
-                    mWindow, "attachMediaSessionController",
-                    MediaSession.Controller.class,
-                    controller,
-                    controller.getId());
-        }
-    }
-
-    @UiThread
-    /* package */ void detachMediaSessionController(
-            final MediaSession.Controller controller) {
-        ThreadUtils.assertOnUiThread();
-
-        if (DEBUG) {
-            Log.d(LOGTAG,
-                    "detachMediaSessionController" +
-                    " isOpen=" + isOpen() +
-                    ", isEnabled=" + mMediaSessionHandler.isEnabled());
-        }
-
-        if (!isOpen() || !mMediaSessionHandler.isEnabled()) {
-            return;
-        }
-
-        if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
-            mWindow.detachMediaSessionController(controller);
-        } else {
-            GeckoThread.queueNativeCallUntil(
-                    GeckoThread.State.PROFILE_READY,
-                    mWindow, "detachMediaSessionController",
-                    MediaSession.Controller.class,
-                    controller);
-        }
     }
 
     /**

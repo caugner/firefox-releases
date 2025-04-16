@@ -64,7 +64,6 @@
 #include "vm/TypedArrayObject.h"
 
 #include "builtin/Boolean-inl.h"
-#include "builtin/TypedObject-inl.h"
 #include "gc/Marking-inl.h"
 #include "vm/ArrayObject-inl.h"
 #include "vm/BooleanObject-inl.h"
@@ -83,6 +82,7 @@
 #include "vm/StringObject-inl.h"
 #include "vm/TypedArrayObject-inl.h"
 #include "vm/TypeInference-inl.h"
+#include "wasm/TypedObject-inl.h"
 
 using namespace js;
 
@@ -1101,9 +1101,8 @@ bool JSObject::nonNativeSetElement(JSContext* cx, HandleObject obj,
   return nonNativeSetProperty(cx, obj, id, v, receiver, result);
 }
 
-JS_FRIEND_API bool JS_CopyPropertyFrom(JSContext* cx, HandleId id,
-                                       HandleObject target, HandleObject obj,
-                                       PropertyCopyBehavior copyBehavior) {
+static bool CopyPropertyFrom(JSContext* cx, HandleId id, HandleObject target,
+                             HandleObject obj) {
   // |target| must not be a CCW because we need to enter its realm below and
   // CCWs are not associated with a single realm.
   MOZ_ASSERT(!IsCrossCompartmentWrapper(target));
@@ -1123,11 +1122,6 @@ JS_FRIEND_API bool JS_CopyPropertyFrom(JSContext* cx, HandleId id,
   }
   if (desc.setter() && !desc.hasSetterObject()) {
     return true;
-  }
-
-  if (copyBehavior == MakeNonConfigurableIntoConfigurable) {
-    // Mask off the JSPROP_PERMANENT bit.
-    desc.attributesRef() &= ~JSPROP_PERMANENT;
   }
 
   JSAutoRealm ar(cx, target);
@@ -1159,7 +1153,7 @@ JS_FRIEND_API bool JS_CopyOwnPropertiesAndPrivateFields(JSContext* cx,
   }
 
   for (size_t i = 0; i < props.length(); ++i) {
-    if (!JS_CopyPropertyFrom(cx, props[i], target, obj)) {
+    if (!CopyPropertyFrom(cx, props[i], target, obj)) {
       return false;
     }
   }
@@ -1229,8 +1223,7 @@ static bool DeepCloneValue(JSContext* cx, Value* vp) {
 
 JSObject* js::DeepCloneObjectLiteral(JSContext* cx, HandleObject obj) {
   /* NB: Keep this in sync with XDRObjectLiteral. */
-  MOZ_ASSERT_IF(obj->isSingleton(),
-                cx->realm()->behaviors().getSingletonsAsTemplates());
+  MOZ_ASSERT(!obj->isSingleton());
   MOZ_ASSERT(obj->is<PlainObject>() || obj->is<ArrayObject>());
 
   if (obj->is<ArrayObject>()) {
@@ -3286,20 +3279,20 @@ JSObject* js::GetThisObjectOfWith(JSObject* env) {
   return GetThisObject(env->as<WithEnvironmentObject>().withThis());
 }
 
-class GetObjectSlotNameFunctor : public JS::CallbackTracer::ContextFunctor {
+class GetObjectSlotNameFunctor : public JS::TracingContext::Functor {
   JSObject* obj;
 
  public:
   explicit GetObjectSlotNameFunctor(JSObject* ctx) : obj(ctx) {}
-  virtual void operator()(JS::CallbackTracer* trc, char* buf,
+  virtual void operator()(JS::TracingContext* trc, char* buf,
                           size_t bufsize) override;
 };
 
-void GetObjectSlotNameFunctor::operator()(JS::CallbackTracer* trc, char* buf,
+void GetObjectSlotNameFunctor::operator()(JS::TracingContext* tcx, char* buf,
                                           size_t bufsize) {
-  MOZ_ASSERT(trc->contextIndex() != JS::CallbackTracer::InvalidIndex);
+  MOZ_ASSERT(tcx->index() != JS::TracingContext::InvalidIndex);
 
-  uint32_t slot = uint32_t(trc->contextIndex());
+  uint32_t slot = uint32_t(tcx->index());
 
   Shape* shape;
   if (obj->isNative()) {
@@ -4028,35 +4021,6 @@ void JSObject::traceChildren(JSTracer* trc) {
   if (trc->isMarkingTracer()) {
     GCMarker::fromTracer(trc)->markImplicitEdges(this);
   }
-}
-
-static JSAtom* displayAtomFromObjectGroup(ObjectGroup& group) {
-  AutoSweepObjectGroup sweep(&group);
-  TypeNewScript* script = group.newScript(sweep);
-  if (!script) {
-    return nullptr;
-  }
-
-  return script->function()->displayAtom();
-}
-
-/* static */
-bool JSObject::constructorDisplayAtom(JSContext* cx, js::HandleObject obj,
-                                      js::MutableHandleAtom name) {
-  ObjectGroup* g = JSObject::getGroup(cx, obj);
-  if (!g) {
-    return false;
-  }
-
-  name.set(displayAtomFromObjectGroup(*g));
-  return true;
-}
-
-JSAtom* JSObject::maybeConstructorDisplayAtom() const {
-  if (hasLazyGroup()) {
-    return nullptr;
-  }
-  return displayAtomFromObjectGroup(*group());
 }
 
 // ES 2016 7.3.20.

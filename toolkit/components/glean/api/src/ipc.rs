@@ -41,11 +41,7 @@ impl MetricId {
 }
 
 /// Global singleton: pending IPC payload.
-static PAYLOAD: Lazy<Mutex<IPCPayload>> = Lazy::new(|| {
-    Mutex::new(IPCPayload {
-        counters: HashMap::new(),
-    })
-});
+static PAYLOAD: Lazy<Mutex<IPCPayload>> = Lazy::new(|| Mutex::new(IPCPayload::default()));
 
 pub fn with_ipc_payload<F, R>(f: F) -> R
 where

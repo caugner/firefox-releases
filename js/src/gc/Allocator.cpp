@@ -15,7 +15,6 @@
 #include "gc/GCLock.h"
 #include "gc/GCProbes.h"
 #include "gc/Nursery.h"
-#include "jit/JitRealm.h"
 #include "threading/CpuCount.h"
 #include "util/Poison.h"
 #include "vm/JSContext.h"
@@ -680,7 +679,7 @@ Arena* GCRuntime::allocateArena(Chunk* chunk, Zone* zone, AllocKind thingKind,
 
   // Trigger an incremental slice if needed.
   if (checkThresholds != ShouldCheckThresholds::DontCheckThresholds) {
-    maybeAllocTriggerZoneGC(zone);
+    maybeTriggerGCAfterAlloc(zone);
   }
 
   return arena;

@@ -146,6 +146,8 @@ describe("ASRouter", () => {
       allowedCodeKeys: ["foo", "bar", "baz"],
       _clearCache: () => sinon.stub(),
       getAttrDataAsync: () => Promise.resolve({ content: "addonID" }),
+      deleteFileAsync: () => Promise.resolve(),
+      writeAttributionFile: () => Promise.resolve(),
     };
     FakeBookmarkPanelHub = {
       init: sandbox.stub(),
@@ -186,6 +188,7 @@ describe("ASRouter", () => {
       AttributionCode: fakeAttributionCode,
       SnippetsTestMessageProvider,
       PanelTestProvider,
+      MacAttribution: { applicationPath: "" },
       BookmarkPanelHub: FakeBookmarkPanelHub,
       ToolbarBadgeHub: FakeToolbarBadgeHub,
       ToolbarPanelHub: FakeToolbarPanelHub,
@@ -2352,17 +2355,15 @@ describe("ASRouter", () => {
         let messages = [
           {
             id: "foo1",
-            forReachEvent: { sent: false },
+            forReachEvent: { sent: false, group: "cfr" },
             experimentSlug: "exp01",
             branchSlug: "branch01",
-            group: "cfr",
             template: "simple_template",
             trigger: { id: "foo" },
             content: { title: "Foo1", body: "Foo123-1" },
           },
           {
             id: "foo2",
-            group: "cfr",
             template: "simple_template",
             trigger: { id: "bar" },
             content: { title: "Foo2", body: "Foo123-2" },
@@ -2370,10 +2371,9 @@ describe("ASRouter", () => {
           },
           {
             id: "foo3",
-            forReachEvent: { sent: false },
+            forReachEvent: { sent: false, group: "cfr" },
             experimentSlug: "exp02",
             branchSlug: "branch02",
-            group: "cfr",
             template: "simple_template",
             trigger: { id: "foo" },
             content: { title: "Foo1", body: "Foo123-1" },
@@ -2394,10 +2394,9 @@ describe("ASRouter", () => {
         let messages = [
           {
             id: "foo1",
-            forReachEvent: { sent: true },
+            forReachEvent: { sent: true, group: "cfr" },
             experimentSlug: "exp01",
             branchSlug: "branch01",
-            group: "cfr",
             template: "simple_template",
             trigger: { id: "foo" },
             content: { title: "Foo1", body: "Foo123-1" },
@@ -2846,6 +2845,7 @@ describe("ASRouter", () => {
         assert.calledWithExactly(Router.forceAttribution, msg.data.data);
       });
       it("should force attribution and update providers", async () => {
+        sandbox.stub(AppConstants, "platform").value("");
         sandbox.stub(Router, "_updateMessageProviders");
         sandbox.stub(Router, "loadMessagesFromAllProviders");
         sandbox.stub(fakeAttributionCode, "_clearCache");
@@ -2862,13 +2862,13 @@ describe("ASRouter", () => {
         assert.calledOnce(Router.loadMessagesFromAllProviders);
       });
       it("should double encode on windows", async () => {
-        sandbox.stub(Router, "_writeAttributionFile");
+        sandbox.stub(fakeAttributionCode, "writeAttributionFile");
 
         Router.forceAttribution({ foo: "FOO!", eh: "NOPE", bar: "BAR?" });
 
         assert.notCalled(setReferrerUrl);
         assert.calledWithMatch(
-          Router._writeAttributionFile,
+          fakeAttributionCode.writeAttributionFile,
           "foo%3DFOO!%26bar%3DBAR%253F"
         );
       });
@@ -3864,7 +3864,10 @@ describe("ASRouter", () => {
       assert.equal(result.messages[1].id, "id02");
       assert.equal(result.messages[1].experimentSlug, "exp01");
       assert.equal(result.messages[1].branchSlug, "branch02");
-      assert.deepEqual(result.messages[1].forReachEvent, { sent: false });
+      assert.deepEqual(result.messages[1].forReachEvent, {
+        sent: false,
+        group: "cfr",
+      });
     });
     it("should fetch json from url", async () => {
       let result = await MessageLoaderUtils.loadMessagesForProvider({

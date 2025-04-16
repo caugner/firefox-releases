@@ -180,8 +180,8 @@ var BrowserUtils = {
 
     let secMan = Services.scriptSecurityManager;
     if (principal.isContentPrincipal) {
-      return secMan.createContentPrincipal(
-        principal.URI,
+      return secMan.principalWithOA(
+        principal,
         existingPrincipal.originAttributes
       );
     }
@@ -537,6 +537,7 @@ var BrowserUtils = {
     let url;
     let linkText;
 
+    let isDocumentLevelSelection = true;
     // try getting a selected text in text input.
     if (!selectionStr && focusedElement) {
       // Don't get the selection for password fields. See bug 565717.
@@ -547,6 +548,7 @@ var BrowserUtils = {
       ) {
         selection = focusedElement.editor.selection;
         selectionStr = selection.toString();
+        isDocumentLevelSelection = false;
       }
     }
 
@@ -600,10 +602,7 @@ var BrowserUtils = {
 
         if (delimitedAtStart && delimitedAtEnd) {
           try {
-            url = Services.uriFixup.createFixupURI(
-              linkText,
-              Services.uriFixup.FIXUP_FLAG_NONE
-            );
+            url = Services.uriFixup.getFixupURIInfo(linkText).preferredURI;
           } catch (ex) {}
         }
       }
@@ -623,6 +622,7 @@ var BrowserUtils = {
     return {
       text: selectionStr,
       docSelectionIsCollapsed: collapsed,
+      isDocumentLevelSelection,
       fullText,
       linkURL: url ? url.spec : null,
       linkText: url ? linkText : "",

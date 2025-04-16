@@ -168,6 +168,7 @@ class BrowserDOMWindow {
     // of a window.open call.
     if (where == Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER) {
       return PrintUtils.startPrintWindow(
+        "window_print",
         params.openWindowInfo.parent,
         params.openWindowInfo
       );
@@ -242,11 +243,6 @@ class BrowserDOMWindow {
       name,
       true
     );
-  }
-
-  isTabContentWindow(window) {
-    // This method is probably not needed anymore: bug 1602915
-    return gSSBBrowser.contentWindow == window;
   }
 
   canClose() {

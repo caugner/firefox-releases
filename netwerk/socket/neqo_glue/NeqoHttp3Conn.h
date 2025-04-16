@@ -15,9 +15,10 @@ class NeqoHttp3Conn final {
   static nsresult Init(const nsACString& aOrigin, const nsACString& aAlpn,
                        const nsACString& aLocalAddr,
                        const nsACString& aRemoteAddr, uint32_t aMaxTableSize,
-                       uint16_t aMaxBlockedStreams, NeqoHttp3Conn** aConn) {
+                       uint16_t aMaxBlockedStreams, const nsACString& aQlogDir,
+                       NeqoHttp3Conn** aConn) {
     return neqo_http3conn_new(&aOrigin, &aAlpn, &aLocalAddr, &aRemoteAddr,
-                              aMaxTableSize, aMaxBlockedStreams,
+                              aMaxTableSize, aMaxBlockedStreams, &aQlogDir,
                               (const mozilla::net::NeqoHttp3Conn**)aConn);
   }
 
@@ -48,8 +49,8 @@ class NeqoHttp3Conn final {
     return neqo_http3conn_get_data_to_send(this, &aData);
   }
 
-  nsresult GetEvent(Http3Event* aEvent, nsTArray<uint8_t>& aHeaderData) {
-    return neqo_http3conn_event(this, aEvent, &aHeaderData);
+  nsresult GetEvent(Http3Event* aEvent, nsTArray<uint8_t>& aData) {
+    return neqo_http3conn_event(this, aEvent, &aData);
   }
 
   nsresult Fetch(const nsACString& aMethod, const nsACString& aScheme,
@@ -78,10 +79,6 @@ class NeqoHttp3Conn final {
 
   void ResetStream(uint64_t aStreamId, uint64_t aError) {
     neqo_http3conn_reset_stream(this, aStreamId, aError);
-  }
-
-  void GetResumptionToken(nsTArray<uint8_t>& aToken) {
-    neqo_http3conn_resumption_token(this, &aToken);
   }
 
   void SetResumptionToken(nsTArray<uint8_t>& aToken) {

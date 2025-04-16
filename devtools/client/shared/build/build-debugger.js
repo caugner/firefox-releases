@@ -42,7 +42,6 @@ const mappingValues = Object.values(mappings);
 
 // Add two additional mappings that cannot be reused when creating the
 // webpack bundles.
-mappings["devtools-reps"] = "devtools/client/shared/components/reps/reps.js";
 mappings["devtools-source-map"] = "devtools/client/shared/source-map/index.js";
 
 function isRequire(t, node) {
@@ -53,11 +52,7 @@ function isRequire(t, node) {
 // Should be synchronized with vendors.js
 const VENDORS = [
   "classnames",
-  "devtools-components",
-  "devtools-config",
-  "devtools-contextmenu",
   "devtools-environment",
-  "devtools-modules",
   "devtools-splitter",
   "devtools-utils",
   "fuzzaldrin-plus",
@@ -67,54 +62,18 @@ const VENDORS = [
   "Svg",
 ];
 
-const moduleMapping = {
-  Telemetry: "devtools/client/shared/telemetry",
-  asyncStoreHelper: "devtools/client/shared/async-store-helper",
-  asyncStorage: "devtools/shared/async-storage",
-  PluralForm: "devtools/shared/plural-form",
-  DevToolsUtils: "devtools/shared/DevToolsUtils",
-  AppConstants: "resource://gre/modules/AppConstants.jsm",
-};
-
-/*
- * Updates devtools-modules imports such as
- * `import { Telemetry } from "devtools-modules"`
- * so that we can customize how we resolve certain modules in the package
- *
- * In the case of multiple declarations we need to move
- * the telemetry module into its own import.
- */
-function updateDevtoolsModulesImport(path, t) {
-  const specifiers = path.node.specifiers;
-
-  for (let i = 0; i < specifiers.length; i++) {
-    const specifier = specifiers[i];
-    const localName = specifier.local.name;
-    if (localName in moduleMapping) {
-      const newImport = t.importDeclaration(
-        [t.importDefaultSpecifier(specifier.local)],
-        t.stringLiteral(moduleMapping[localName])
-      );
-
-      if (specifiers.length > 1) {
-        path.insertAfter(newImport);
-        specifiers.splice(i, 1);
-      } else if (path.node.source) {
-        // Note we don't want to update import `Telemetry from "devtools-modules"`
-        if (path.node.specifiers[0].type !== "ImportDefaultSpecifier") {
-          path.replaceWith(newImport);
-        }
-      }
-    }
-  }
-}
-
 function shouldLazyLoad(value) {
   return (
     !value.includes("vendors") &&
     !value.includes("codemirror/") &&
     !value.endsWith(".properties") &&
-    !value.startsWith("devtools/")
+    !value.startsWith("devtools/") &&
+    // XXX: the lazyRequire rewriter (in transformMC) fails for this module, it
+    // evaluates `t.thisExpression()` as `void 0` instead of `this`. But the
+    // rewriter still works for other call sites and seems mandatory for the
+    // debugger to start successfully (lazy requires help to break circular
+    // dependencies).
+    value !== "resource://gre/modules/AppConstants.jsm"
   );
 }
 
@@ -131,10 +90,6 @@ function transformMC({ types: t }) {
         if (value && value.includes(".css")) {
           path.remove();
         }
-
-        if (value && value == "devtools-modules") {
-          updateDevtoolsModulesImport(path, t);
-        }
       },
 
       StringLiteral(path, state) {
@@ -146,8 +101,6 @@ function transformMC({ types: t }) {
         }
 
         // Handle require() to files mapped to other mozilla-central files.
-        // e.g. require("devtools-reps")
-        //   -> require("devtools/client/shared/components/reps/reps.js")
         if (Object.keys(mappings).includes(value)) {
           path.replaceWith(t.stringLiteral(mappings[value]));
           return;

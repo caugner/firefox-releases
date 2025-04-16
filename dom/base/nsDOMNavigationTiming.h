@@ -59,6 +59,18 @@ class nsDOMNavigationTiming final : public mozilla::RelativeTimeline {
     return mNavigationStart;
   }
 
+  mozilla::TimeStamp GetLoadEventStartTimeStamp() const {
+    return mLoadEventStart;
+  }
+
+  mozilla::TimeStamp GetDOMContentLoadedEventStartTimeStamp() const {
+    return mDOMContentLoadedEventStart;
+  }
+
+  mozilla::TimeStamp GetFirstContentfulPaintTimeStamp() const {
+    return mContentfulPaint;
+  }
+
   DOMTimeMilliSec GetUnloadEventStart() {
     return TimeStampToDOM(GetUnloadEventStartTimeStamp());
   }
@@ -184,6 +196,10 @@ class nsDOMNavigationTiming final : public mozilla::RelativeTimeline {
     timing->mNavigationStartHighRes = mNavigationStartHighRes;
     timing->mNavigationStart = mNavigationStart;
     return timing.forget();
+  }
+
+  bool DocShellHasBeenActiveSinceNavigationStart() {
+    return mDocShellHasBeenActiveSinceNavigationStart;
   }
 
  private:

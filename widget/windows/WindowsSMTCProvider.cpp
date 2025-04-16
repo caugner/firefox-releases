@@ -148,20 +148,18 @@ bool WindowsSMTCProvider::Open() {
     return false;
   }
 
-  if (!EnableControl(true)) {
-    LOG("Failed to enable SMTC control");
-    return false;
-  }
-
   if (!UpdateButtons()) {
     LOG("Failed to initialize the buttons");
-    Unused << EnableControl(false);
     return false;
   }
 
   if (!RegisterEvents()) {
     LOG("Failed to register SMTC key-event listener");
-    Unused << EnableControl(false);
+    return false;
+  }
+
+  if (!EnableControl(true)) {
+    LOG("Failed to enable SMTC control");
     return false;
   }
 
@@ -172,26 +170,19 @@ bool WindowsSMTCProvider::Open() {
 
 void WindowsSMTCProvider::Close() {
   MediaControlKeySource::Close();
-  if (mInitialized) {  // Prevent calling Set methods when init failed
+  // Prevent calling Set methods when init failed
+  if (mInitialized) {
     SetPlaybackState(mozilla::dom::MediaSessionPlaybackState::None);
+    UnregisterEvents();
+    ClearMetadata();
+    // We have observed an Windows issue, if we modify `mControls` , (such as
+    // setting metadata, disable buttons) before disabling control, and those
+    // operations are not done sequentially within a same main thread task,
+    // then it would cause a problem where the SMTC wasn't clean up completely
+    // and show the executable name.
     EnableControl(false);
     mInitialized = false;
   }
-
-  UnregisterEvents();
-
-  // Cancel the pending image fetch process
-  mImageFetchRequest.DisconnectIfExists();
-
-  CancelPendingStoreAsyncOperation();
-
-  // Clear the cached image urls
-  mThumbnailUrl = EmptyString();
-  mProcessingUrl = EmptyString();
-
-  mNextImageIndex = 0;
-
-  mSupportedKeys = 0;
 }
 
 void WindowsSMTCProvider::SetPlaybackState(
@@ -234,6 +225,19 @@ void WindowsSMTCProvider::SetMediaMetadata(
   SetMusicMetadata(aMetadata.mArtist.get(), aMetadata.mTitle.get(),
                    aMetadata.mAlbum.get());
   LoadThumbnail(aMetadata.mArtwork);
+}
+
+void WindowsSMTCProvider::ClearMetadata() {
+  MOZ_ASSERT(mDisplay);
+  if (FAILED(mDisplay->ClearAll())) {
+    LOG("Failed to clear SMTC display");
+  }
+  mImageFetchRequest.DisconnectIfExists();
+  CancelPendingStoreAsyncOperation();
+  mThumbnailUrl.Truncate();
+  mProcessingUrl.Truncate();
+  mNextImageIndex = 0;
+  mSupportedKeys = 0;
 }
 
 void WindowsSMTCProvider::SetSupportedMediaKeys(
@@ -475,7 +479,7 @@ void WindowsSMTCProvider::LoadImageAtIndex(const size_t aIndex) {
   if (aIndex >= mArtwork.Length()) {
     LOG("Stop loading thumbnail. No more available images");
     mImageFetchRequest.DisconnectIfExists();
-    mProcessingUrl = EmptyString();
+    mProcessingUrl.Truncate();
     return;
   }
 
@@ -645,7 +649,7 @@ bool WindowsSMTCProvider::SetThumbnail(const nsAString& aUrl) {
   auto cleanup =
       MakeScopeExit([this, self = RefPtr<WindowsSMTCProvider>(this)] {
         LOG("Clean mThumbnailUrl");
-        mThumbnailUrl = EmptyString();
+        mThumbnailUrl.Truncate();
       });
 
   if (FAILED(hr)) {
@@ -687,7 +691,7 @@ void WindowsSMTCProvider::ClearThumbnail() {
   hr = mDisplay->Update();
   MOZ_ASSERT(SUCCEEDED(hr));
   Unused << hr;
-  mThumbnailUrl = EmptyString();
+  mThumbnailUrl.Truncate();
 }
 
 bool WindowsSMTCProvider::UpdateThumbnail(const nsAString& aUrl) {
@@ -704,7 +708,7 @@ bool WindowsSMTCProvider::UpdateThumbnail(const nsAString& aUrl) {
     return false;
   }
 
-  mProcessingUrl = EmptyString();
+  mProcessingUrl.Truncate();
 
   if (!SetThumbnail(aUrl)) {
     LOG("Failed to update thumbnail");

@@ -1046,7 +1046,7 @@ class nsContentUtils {
    *   @param aCategory Name of module reporting error.
    *   @param aDocument Reference to the document which triggered the message.
    *   @param [aURI=nullptr] (Optional) URI of resource containing error.
-   *   @param [aSourceLine=EmptyString()] (Optional) The text of the line that
+   *   @param [aSourceLine=u""_ns] (Optional) The text of the line that
               contains the error (may be empty).
    *   @param [aLineNumber=0] (Optional) Line number within resource
               containing error.
@@ -1065,7 +1065,7 @@ class nsContentUtils {
   static nsresult ReportToConsoleNonLocalized(
       const nsAString& aErrorText, uint32_t aErrorFlags,
       const nsACString& aCategory, const Document* aDocument,
-      nsIURI* aURI = nullptr, const nsString& aSourceLine = EmptyString(),
+      nsIURI* aURI = nullptr, const nsString& aSourceLine = u""_ns,
       uint32_t aLineNumber = 0, uint32_t aColumnNumber = 0,
       MissingErrorLocationMode aLocationMode = eUSE_CALLING_LOCATION);
 
@@ -1078,7 +1078,7 @@ class nsContentUtils {
    *   @param [aInnerWindowID] Inner window ID for document which triggered the
    *          message.
    *   @param [aURI=nullptr] (Optional) URI of resource containing error.
-   *   @param [aSourceLine=EmptyString()] (Optional) The text of the line that
+   *   @param [aSourceLine=u""_ns] (Optional) The text of the line that
               contains the error (may be empty).
    *   @param [aLineNumber=0] (Optional) Line number within resource
               containing error.
@@ -1091,7 +1091,7 @@ class nsContentUtils {
   static nsresult ReportToConsoleByWindowID(
       const nsAString& aErrorText, uint32_t aErrorFlags,
       const nsACString& aCategory, uint64_t aInnerWindowID,
-      nsIURI* aURI = nullptr, const nsString& aSourceLine = EmptyString(),
+      nsIURI* aURI = nullptr, const nsString& aSourceLine = u""_ns,
       uint32_t aLineNumber = 0, uint32_t aColumnNumber = 0,
       MissingErrorLocationMode aLocationMode = eUSE_CALLING_LOCATION);
 
@@ -1105,7 +1105,7 @@ class nsContentUtils {
    *   @param [aParams=empty-array] (Optional) Parameters to be substituted into
               localized message.
    *   @param [aURI=nullptr] (Optional) URI of resource containing error.
-   *   @param [aSourceLine=EmptyString()] (Optional) The text of the line that
+   *   @param [aSourceLine=u""_ns] (Optional) The text of the line that
               contains the error (may be empty).
    *   @param [aLineNumber=0] (Optional) Line number within resource
               containing error.
@@ -1135,7 +1135,7 @@ class nsContentUtils {
       uint32_t aErrorFlags, const nsACString& aCategory,
       const Document* aDocument, PropertiesFile aFile, const char* aMessageName,
       const nsTArray<nsString>& aParams = nsTArray<nsString>(),
-      nsIURI* aURI = nullptr, const nsString& aSourceLine = EmptyString(),
+      nsIURI* aURI = nullptr, const nsString& aSourceLine = u""_ns,
       uint32_t aLineNumber = 0, uint32_t aColumnNumber = 0);
 
   static void ReportEmptyGetElementByIdArg(const Document* aDoc);
@@ -1831,6 +1831,25 @@ class nsContentUtils {
                                      nsAString& aResultBuffer, uint32_t aFlags,
                                      uint32_t aWrapCol);
 
+  /**
+   * Creates a 'loaded-as-data' HTML document that takes that principal,
+   * script global, and URL from the argument, which may be null.
+   */
+  static already_AddRefed<Document> CreateInertHTMLDocument(
+      const Document* aTemplate);
+
+  /**
+   * Creates a 'loaded-as-data' XML document that takes that principal,
+   * script global, and URL from the argument, which may be null.
+   */
+  static already_AddRefed<Document> CreateInertXMLDocument(
+      const Document* aTemplate);
+
+ private:
+  static already_AddRefed<Document> CreateInertDocument(
+      const Document* aTemplate, DocumentFlavor aFlavor);
+
+ public:
   /**
    * Sets the text contents of a node by replacing all existing children
    * with a single text child.
@@ -3275,6 +3294,13 @@ class nsContentUtils {
   static uint32_t SecondsFromPRTime(PRTime aTime) {
     return uint32_t(int64_t(aTime) / int64_t(PR_USEC_PER_SEC));
   }
+
+  /**
+   * Converts the given URL to a string and truncates it to the given length.
+   *
+   * Returns an empty string if aURL is null.
+   */
+  static nsCString TruncatedURLForDisplay(nsIURI* aURL, uint32_t aMaxLen = 128);
 
  private:
   static bool InitializeEventTable();

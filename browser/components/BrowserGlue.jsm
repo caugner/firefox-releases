@@ -312,8 +312,6 @@ let JSWINDOWACTORS = {
       events: {
         DOMWindowCreated: {},
         MozAfterPaint: {},
-        "MozDOMPointerLock:Entered": {},
-        "MozDOMPointerLock:Exited": {},
       },
     },
 
@@ -530,7 +528,6 @@ let JSWINDOWACTORS = {
     child: {
       moduleURI: "resource://pdf.js/PdfjsChild.jsm",
     },
-    enablePreference: PREF_PDFJS_ISDEFAULT_CACHE_STATE,
     allFrames: true,
   },
 
@@ -552,6 +549,22 @@ let JSWINDOWACTORS = {
       observers: ["decoder-doctor-notification"],
     },
 
+    allFrames: true,
+  },
+
+  PointerLock: {
+    parent: {
+      moduleURI: "resource:///actors/PointerLockParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/PointerLockChild.jsm",
+      events: {
+        "MozDOMPointerLock:Entered": {},
+        "MozDOMPointerLock:Exited": {},
+      },
+    },
+
+    messageManagerGroups: ["browsers"],
     allFrames: true,
   },
 
@@ -1796,6 +1809,7 @@ BrowserGlue.prototype = {
           // exists to expose prefs once we are confident of privacy implications)
           delete snapshotData.crashes;
           delete snapshotData.modifiedPreferences;
+          delete snapshotData.printingPreferences;
           channel.send(snapshotData, target);
         });
       }
@@ -1861,6 +1875,8 @@ BrowserGlue.prototype = {
 
     PageActions.init();
 
+    DoHController.init();
+
     this._firstWindowTelemetry(aWindow);
     this._firstWindowLoaded();
 
@@ -1893,6 +1909,10 @@ BrowserGlue.prototype = {
       this._updateAutoplayPref
     );
     Services.prefs.addObserver(
+      "media.hardwaremediakeys.enabled",
+      this._updateMediaControlPref
+    );
+    Services.prefs.addObserver(
       "privacy.trackingprotection",
       this._setPrefExpectations
     );
@@ -1911,6 +1931,16 @@ BrowserGlue.prototype = {
     if (blocked in labels) {
       telemetry.add(labels[blocked]);
     }
+  },
+
+  _updateMediaControlPref() {
+    const enabled = Services.prefs.getBoolPref(
+      "media.hardwaremediakeys.enabled"
+    );
+    const telemetry = Services.telemetry.getHistogramById(
+      "MEDIA_CONTROL_SETTING_CHANGE"
+    );
+    telemetry.add(enabled ? "EnableTotal" : "DisableTotal");
   },
 
   _setPrefExpectations() {
@@ -2371,7 +2401,6 @@ BrowserGlue.prototype = {
       this._showNewInstallModal();
     }
 
-    DoHController.init();
     FirefoxMonitor.init();
   },
 
@@ -2560,7 +2589,7 @@ BrowserGlue.prototype = {
       },
 
       // request startup of Chromium remote debugging protocol
-      // (observer will only be notified when --remote-debugger is passed)
+      // (observer will only be notified when --remote-debugging-port is passed)
       {
         condition: AppConstants.ENABLE_REMOTE_AGENT,
         task: () => {
@@ -2712,6 +2741,8 @@ BrowserGlue.prototype = {
       () => BrowserUsageTelemetry.reportProfileCount(),
 
       () => OsEnvironment.reportAllowedAppSources(),
+
+      () => Services.search.checkWebExtensionEngines(),
     ];
 
     for (let task of idleTasks) {
@@ -3237,7 +3268,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 97;
+    const UI_VERSION = 102;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3863,6 +3894,25 @@ BrowserGlue.prototype = {
         // case also we leave the "migration complete" percentage at 100, as no
         // further migration is needed.
       }
+    }
+
+    if (currentUIVersion < 98) {
+      Services.prefs.clearUserPref("browser.search.cohort");
+    }
+
+    if (currentUIVersion < 99) {
+      Services.prefs.clearUserPref("security.tls.version.enable-deprecated");
+    }
+
+    // For beta we have to move to 102 because 100 and 101 are used on nightly.
+    if (currentUIVersion < 102) {
+      // In Firefox 83, we moved to a dynamic button, so it needs to be removed
+      // from uiCustomization. This is done early enough that it doesn't
+      // impact adding new managed bookmarks.
+      const { CustomizableUI } = ChromeUtils.import(
+        "resource:///modules/CustomizableUI.jsm"
+      );
+      CustomizableUI.removeWidgetFromArea("managed-bookmarks");
     }
 
     // Update the migration version.

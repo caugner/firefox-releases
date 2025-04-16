@@ -12,7 +12,6 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
-#include "builtin/TypedObject.h"
 #include "gc/Allocator.h"
 #include "gc/GCProbes.h"
 #include "gc/MaybeRooted.h"
@@ -21,6 +20,7 @@
 #include "vm/JSContext.h"
 #include "vm/ProxyObject.h"
 #include "vm/TypedArrayObject.h"
+#include "wasm/TypedObject.h"
 
 #include "gc/Heap-inl.h"
 #include "gc/Marking-inl.h"
@@ -142,7 +142,7 @@ inline void NativeObject::markDenseElementsNotPacked(JSContext* cx) {
   }
 }
 
-inline void NativeObject::elementsRangeWriteBarrierPost(uint32_t start,
+inline void NativeObject::elementsRangePostWriteBarrier(uint32_t start,
                                                         uint32_t count) {
   if (!isTenured()) {
     return;
@@ -182,7 +182,7 @@ inline void NativeObject::copyDenseElements(uint32_t dstStart, const Value* src,
   } else {
     memcpy(reinterpret_cast<Value*>(&elements_[dstStart]), src,
            count * sizeof(Value));
-    elementsRangeWriteBarrierPost(dstStart, count);
+    elementsRangePostWriteBarrier(dstStart, count);
   }
 }
 
@@ -226,7 +226,48 @@ inline void NativeObject::initDenseElements(const Value* src, uint32_t count) {
 #endif
 
   memcpy(reinterpret_cast<Value*>(elements_), src, count * sizeof(Value));
-  elementsRangeWriteBarrierPost(0, count);
+  elementsRangePostWriteBarrier(0, count);
+}
+
+template <typename Iter>
+inline bool NativeObject::initDenseElementsFromRange(JSContext* cx, Iter begin,
+                                                     Iter end) {
+  // This method populates the elements of a particular Array that's an
+  // internal implementation detail of GeneratorObject. Failing any of the
+  // following means the Array has escaped and/or been mistreated.
+  MOZ_ASSERT(isExtensible());
+  MOZ_ASSERT(!isIndexed());
+  MOZ_ASSERT(is<ArrayObject>());
+  MOZ_ASSERT(as<ArrayObject>().lengthIsWritable());
+  MOZ_ASSERT(!denseElementsAreCopyOnWrite());
+  MOZ_ASSERT(!denseElementsAreFrozen());
+  MOZ_ASSERT(getElementsHeader()->numShiftedElements() == 0);
+
+  MOZ_ASSERT(getDenseInitializedLength() == 0);
+
+  auto size = end - begin;
+  uint32_t count = uint32_t(size);
+  MOZ_ASSERT(count <= uint32_t(INT32_MAX));
+  if (count > getDenseCapacity()) {
+    if (!growElements(cx, count)) {
+      return false;
+    }
+  }
+
+  HeapSlot* sp = elements_;
+  size_t slot = 0;
+  for (; begin != end; sp++, begin++) {
+    Value v = *begin;
+#ifdef DEBUG
+    checkStoredValue(v);
+#endif
+    sp->init(this, HeapSlot::Element, slot++, v);
+  }
+  MOZ_ASSERT(slot == count);
+
+  getElementsHeader()->initializedLength = count;
+  as<ArrayObject>().setLengthInt32(count);
+  return true;
 }
 
 inline bool NativeObject::tryShiftDenseElements(uint32_t count) {
@@ -301,7 +342,7 @@ inline void NativeObject::moveDenseElements(uint32_t dstStart,
   } else {
     memmove(elements_ + dstStart, elements_ + srcStart,
             count * sizeof(HeapSlot));
-    elementsRangeWriteBarrierPost(dstStart, count);
+    elementsRangePostWriteBarrier(dstStart, count);
   }
 }
 
@@ -326,7 +367,7 @@ inline void NativeObject::reverseDenseElementsNoPreBarrier(uint32_t length) {
     --valHi;
   } while (valLo < valHi);
 
-  elementsRangeWriteBarrierPost(0, length);
+  elementsRangePostWriteBarrier(0, length);
 }
 
 inline void NativeObject::ensureDenseInitializedLength(JSContext* cx,
@@ -500,7 +541,7 @@ inline bool NativeObject::isInWholeCellBuffer() const {
   return cells && cells->hasCell(cell);
 }
 
-/* static */ inline JS::Result<NativeObject*, JS::OOM&> NativeObject::create(
+/* static */ inline JS::Result<NativeObject*, JS::OOM> NativeObject::create(
     JSContext* cx, js::gc::AllocKind kind, js::gc::InitialHeap heap,
     js::HandleShape shape, js::HandleObjectGroup group) {
   debugCheckNewObject(group, shape, kind, heap);

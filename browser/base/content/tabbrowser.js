@@ -29,12 +29,6 @@
         "UrlbarProviderOpenTabs",
         "resource:///modules/UrlbarProviderOpenTabs.jsm"
       );
-      XPCOMUtils.defineLazyPreferenceGetter(
-        this,
-        "sessionHistoryInParent",
-        "fission.sessionHistoryInParent",
-        false
-      );
 
       Services.obs.addObserver(this, "contextual-identity-updated");
 
@@ -1984,7 +1978,7 @@
 
       // Ensure that SessionStore has flushed any session history state from the
       // content process before we this browser's remoteness.
-      if (!this.sessionHistoryInParent) {
+      if (!Services.appinfo.sessionHistoryInParent) {
         b.prepareToChangeRemoteness = () =>
           SessionStore.prepareToChangeRemoteness(b);
       }
@@ -2135,7 +2129,7 @@
             getter = () => browser.getAttribute("remote") == "true";
             break;
           case "permitUnload":
-            getter = () => () => ({ permitUnload: true, timedOut: false });
+            getter = () => () => ({ permitUnload: true });
             break;
           case "reload":
           case "reloadWithFlags":
@@ -2307,9 +2301,7 @@
 
     _mayDiscardBrowser(aTab, aForceDiscard) {
       let browser = aTab.linkedBrowser;
-      let permitUnloadFlags = aForceDiscard
-        ? browser.dontPromptAndUnload
-        : browser.dontPromptAndDontUnload;
+      let action = aForceDiscard ? "unload" : "dontUnload";
 
       if (
         !aTab ||
@@ -2318,7 +2310,7 @@
         this._windowIsClosing ||
         !browser.isConnected ||
         !browser.isRemoteBrowser ||
-        !browser.permitUnload(permitUnloadFlags).permitUnload
+        !browser.permitUnload(action).permitUnload
       ) {
         return false;
       }
@@ -3386,7 +3378,7 @@
     _hasBeforeUnload(aTab) {
       let browser = aTab.linkedBrowser;
       if (browser.isRemoteBrowser && browser.frameLoader) {
-        return PermitUnloader.hasBeforeUnload(browser.frameLoader);
+        return browser.hasBeforeUnload;
       }
       return false;
     },
@@ -3426,15 +3418,15 @@
         // processes the event queue and may lead to another removeTab()
         // call before permitUnload() returns.
         aTab._pendingPermitUnload = true;
-        let { permitUnload, timedOut } = browser.permitUnload();
-        delete aTab._pendingPermitUnload;
+        let { permitUnload } = browser.permitUnload();
+        aTab._pendingPermitUnload = false;
 
         TelemetryStopwatch.finish("FX_TAB_CLOSE_PERMIT_UNLOAD_TIME_MS", aTab);
 
         // If we were closed during onbeforeunload, we return false now
         // so we don't (try to) close the same tab again. Of course, we
         // also stop if the unload was cancelled by the user:
-        if (aTab.closing || (!timedOut && !permitUnload)) {
+        if (aTab.closing || !permitUnload) {
           return false;
         }
       }
@@ -5057,7 +5049,11 @@
               affectedTabsLength,
               gTabBrowserBundle.GetStringFromName("tabs.closeTabs.tooltip")
             ).replace("#1", affectedTabsLength);
-      } else if (tab._overPlayingIcon) {
+      }
+      // When Picture-in-Picture is open, we repurpose '.tab-icon-sound' as
+      // an inert Picture-in-Picture indicator, so we should display
+      // the default tooltip
+      else if (tab._overPlayingIcon && !tab.pictureinpicture) {
         let stringID;
         if (tab.selected) {
           stringID = tab.linkedBrowser.audioMuted
@@ -6745,9 +6741,11 @@ var TabContextMenu = {
           { userContextId }
         );
       } else if (triggeringPrincipal.isContentPrincipal) {
-        triggeringPrincipal = Services.scriptSecurityManager.createContentPrincipal(
-          triggeringPrincipal.URI,
-          { userContextId }
+        triggeringPrincipal = Services.scriptSecurityManager.principalWithOA(
+          triggeringPrincipal,
+          {
+            userContextId,
+          }
         );
       }
 

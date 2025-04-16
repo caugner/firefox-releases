@@ -11,6 +11,8 @@ use crate::send_message::SendMessageEvents;
 use crate::Header;
 use crate::RecvMessageEvents;
 
+use neqo_common::event::Provider as EventProvider;
+use neqo_crypto::ResumptionToken;
 use neqo_transport::{AppError, StreamType};
 
 use std::cell::RefCell;
@@ -53,6 +55,8 @@ pub enum Http3ClientEvent {
     RequestsCreatable,
     /// Cert authentication needed
     AuthenticationNeeded,
+    /// A new resumption token.
+    ResumptionToken(ResumptionToken),
     /// Zero Rtt has been rejected.
     ZeroRttRejected,
     /// Client has received a GOAWAY frame
@@ -142,6 +146,11 @@ impl Http3ClientEvents {
         self.insert(Http3ClientEvent::AuthenticationNeeded);
     }
 
+    /// Add a new resumption token event.
+    pub(crate) fn resumption_token(&self, token: ResumptionToken) {
+        self.insert(Http3ClientEvent::ResumptionToken(token));
+    }
+
     /// Add a new `ZeroRttRejected` event.
     pub(crate) fn zero_rtt_rejected(&self) {
         self.insert(Http3ClientEvent::ZeroRttRejected);
@@ -151,21 +160,6 @@ impl Http3ClientEvents {
     pub(crate) fn goaway_received(&self) {
         self.remove(|evt| matches!(evt, Http3ClientEvent::RequestsCreatable));
         self.insert(Http3ClientEvent::GoawayReceived);
-    }
-
-    /// Take all events currently in the queue.
-    pub(crate) fn events(&self) -> impl Iterator<Item = Http3ClientEvent> {
-        self.events.replace(VecDeque::new()).into_iter()
-    }
-
-    /// Check if there is any event present.
-    pub fn has_events(&self) -> bool {
-        !self.events.borrow().is_empty()
-    }
-
-    /// Take the first event.
-    pub fn next_event(&self) -> Option<Http3ClientEvent> {
-        self.events.borrow_mut().pop_front()
     }
 
     pub fn insert(&self, event: Http3ClientEvent) {
@@ -224,5 +218,19 @@ impl Http3ClientEvents {
                 | Http3ClientEvent::PushDataReadable{ push_id: x, .. }
                 | Http3ClientEvent::PushCanceled{ push_id: x, .. } if *x == push_id)
         });
+    }
+}
+
+impl EventProvider for Http3ClientEvents {
+    type Event = Http3ClientEvent;
+
+    /// Check if there is any event present.
+    fn has_events(&self) -> bool {
+        !self.events.borrow().is_empty()
+    }
+
+    /// Take the first event.
+    fn next_event(&mut self) -> Option<Self::Event> {
+        self.events.borrow_mut().pop_front()
     }
 }

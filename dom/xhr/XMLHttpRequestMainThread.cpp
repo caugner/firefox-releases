@@ -2010,7 +2010,7 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest* request) {
     }
 
     // Create an empty document from it.
-    const nsAString& emptyStr = EmptyString();
+    const auto& emptyStr = u""_ns;
     nsIGlobalObject* global = DOMEventTargetHelper::GetParentObject();
 
     nsCOMPtr<nsIPrincipal> requestingPrincipal;
@@ -4031,6 +4031,12 @@ void RequestHeaders::ApplyToChannel(nsIHttpChannel* aChannel,
          header.mName.LowerCaseEqualsASCII("content-language") ||
          header.mName.LowerCaseEqualsASCII("content-location"))) {
       continue;
+    }
+    // Update referrerInfo to override referrer header in system privileged.
+    if (header.mName.LowerCaseEqualsASCII("referer")) {
+      DebugOnly<nsresult> rv = aChannel->SetNewReferrerInfo(
+          header.mValue, nsIReferrerInfo::ReferrerPolicyIDL::UNSAFE_URL, true);
+      MOZ_ASSERT(NS_SUCCEEDED(rv));
     }
     if (header.mValue.IsEmpty()) {
       DebugOnly<nsresult> rv = aChannel->SetEmptyRequestHeader(header.mName);

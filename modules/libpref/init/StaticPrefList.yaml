@@ -249,11 +249,7 @@
 
 - name: apz.allow_zooming
   type: RelaxedAtomicBool
-#if defined(ANDROID)
   value: true
-#else
-  value: @IS_NIGHTLY_BUILD@
-#endif
   mirror: always
 
 - name: apz.allow_zooming_out
@@ -459,7 +455,7 @@
 # new scrollbar code for desktop zooming
 - name: apz.force_disable_desktop_zooming_scrollbars
   type: RelaxedAtomicBool
-  value: true
+  value: @IS_ANDROID@
   mirror: always
 
 #ifdef MOZ_WIDGET_GTK
@@ -623,7 +619,7 @@
 
 - name: apz.windows.use_direct_manipulation
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 - name: apz.x_skate_highmem_adjust
@@ -1015,6 +1011,11 @@
 # Render animations and videos as a solid color
 - name: browser.measurement.render_anims_and_video_solid
   type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+- name: browser.navigation.requireUserInteraction
+  type: bool
   value: false
   mirror: always
 
@@ -1559,26 +1560,11 @@
   value: false
   mirror: always
 
-# Whether Mozilla specific "text" event should be dispatched only in the
-# system group or not in content.
-- name: dom.compositionevent.text.dispatch_only_system_group_in_content
-  type: bool
-  value: true
-  mirror: always
-
 # Is support for CSSPseudoElement enabled?
 - name: dom.css_pseudo_element.enabled
   type: bool
   value: false
   mirror: always
-
-# Disable moz* APIs in DataTransfer.
-# Should be accessed via DataTransfer::MozAtAPIsEnabled.
-- name: dom.datatransfer.mozAtAPIs
-  type: bool
-  value: false
-  mirror: always
-  do_not_use_directly: true
 
 # Any how many seconds we allow external protocol URLs in iframe when not in
 # single events
@@ -1881,9 +1867,15 @@
   value: false
   mirror: always
 
+# Enable indexedDB in private browsing mode.
+- name: dom.indexedDB.privateBrowsing.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 - name: dom.input_events.beforeinput.enabled
   type: bool
-  value: false
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 # Whether we conform to Input Events Level 1 or Input Events Level 2.
@@ -2011,6 +2003,12 @@
 - name: dom.ipc.processPriorityManager.backgroundGracePeriodMS
   type: uint32_t
   value: 0
+  mirror: always
+
+# Is support for HTMLElement.autocapitalize enabled?
+- name: dom.forms.autocapitalize
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Support for input type=month, type=week and type=datetime-local. By default,
@@ -2191,6 +2189,19 @@
 - name: dom.mutation-events.cssom.disabled
   type: bool
   value: true
+  mirror: always
+
+# Limit of location change caused by content scripts in a time span per
+# BrowsingContext. This includes calls to History and Location APIs.
+- name: dom.navigation.locationChangeRateLimit.count
+  type: uint32_t
+  value: 200
+  mirror: always
+
+# Time span in seconds for location change rate limit.
+- name: dom.navigation.locationChangeRateLimit.timespan
+  type: uint32_t
+  value: 10
   mirror: always
 
 # Network Information API
@@ -2550,11 +2561,6 @@
 - name: dom.security.featurePolicy.header.enabled
   type: bool
   value: false
-  mirror: always
-
-- name: dom.security.respect_document_nosniff
-  type: RelaxedAtomicBool
-  value: true
   mirror: always
 
 - name: dom.security.featurePolicy.experimental.enabled
@@ -3554,17 +3560,31 @@
 #---------------------------------------------------------------------------
 
 # Whether to enable Fission in new windows by default.
-# IMPORTANT: This preference should *almost never* be checked directly, since
-# any session can contain a mix of Fission and non-Fission windows. Instead,
+# IMPORTANT: This preference should *never* be checked directly, since any
+# session can contain a mix of Fission and non-Fission windows. Instead,
 # callers should check whether the relevant nsILoadContext has the
 # `useRemoteSubframes` flag set.
+# Callers which cannot use `useRemoteSubframes` must use
+# `Services.appinfo.fissionAutostart` or `mozilla::FissionAutostart()` to check
+# if fission is enabled by default.
 # Note: This is overridden in all.js on RELEASE_OR_BETA in order to add the
 # locked attribute.
 - name: fission.autostart
   type: bool
   value: false
-  mirror: once
-  do_not_use_directly: true
+  mirror: never
+
+# Prefs used by normandy to orchestrate the fission experiment. For more
+# details, see the comments in nsAppRunner.cpp.
+- name: fission.experiment.enrollmentStatus
+  type: uint32_t
+  value: 0
+  mirror: never
+
+- name: fission.experiment.startupEnrollmentStatus
+  type: uint32_t
+  value: 0
+  mirror: never
 
 # This pref has no effect within fission windows, it only controls the
 # behaviour within non-fission windows. If true, preserve browsing contexts
@@ -3579,7 +3599,8 @@
 - name: fission.sessionHistoryInParent
   type: bool
   value: false
-  mirror: always
+  mirror: once
+  do_not_use_directly: true
 
 # Allow renaming of process names to the origin on nightly
 # Setting this pref creates a privacy leak, but helps greatly with
@@ -3594,6 +3615,13 @@
 # NOTE: This pref has no impact outside of windows with the
 # `useRemoteSubframes` flag set.
 - name: fission.remoteObjectEmbed
+  type: bool
+  value: true
+  mirror: always
+
+# If true, show option for opening a non-Fission window in a menu, when Fission
+# is enabled.
+- name: fission.openNonFissionWindowOption
   type: bool
   value: false
   mirror: always
@@ -4187,7 +4215,16 @@
 
 - name: gfx.e10s.font-list.shared
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: @IS_EARLY_BETA_OR_EARLIER@
+  mirror: once
+
+- name: gfx.font_loader.delay
+  type: uint32_t
+#if defined(XP_WIN)
+  value: 60000
+#else
+  value: 8000
+#endif
   mirror: once
 
 # Disable antialiasing of Ahem, for use in tests.
@@ -4458,11 +4495,6 @@
   value: 64
   mirror: always
 
-- name: gfx.webrender.picture-caching
-  type: RelaxedAtomicBool
-  value: true
-  mirror: always
-
 - name: gfx.webrender.enable-multithreading
   type: bool
   value: true
@@ -4503,7 +4535,7 @@
 
 - name: gfx.webrender.max-partial-present-rects
   type: uint32_t
-#if defined(XP_WIN)
+#if defined(XP_WIN) || defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GTK)
   value: 1
 #else
   value: 0
@@ -4605,6 +4637,18 @@
   value: true
   mirror: once
 #endif
+
+ # Width of WebRender tile size
+- name: gfx.webrender.picture-tile-width
+  type: RelaxedAtomicInt32
+  value: 1024
+  mirror: always
+
+ # Width of WebRender tile size
+- name: gfx.webrender.picture-tile-height
+  type: RelaxedAtomicInt32
+  value: 512
+  mirror: always
 
 # Use vsync events generated by hardware
 - name: gfx.work-around-driver-bugs
@@ -5392,6 +5436,11 @@
   value: 5000
   mirror: once
 
+- name: layers.gpu-process.crash-also-crashes-browser
+  type: bool
+  value: false
+  mirror: always
+
 - name: layers.low-precision-buffer
   type: RelaxedAtomicBool
   value: false
@@ -5806,7 +5855,7 @@
 # Whether :-moz-any is an alias of the :is selector.
 - name: layout.css.moz-any-is-is.enabled
   type: RelaxedAtomicBool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
   rust: true
 
@@ -5897,7 +5946,7 @@
 # Is support for CSS conic-gradient enabled?
 - name: layout.css.conic-gradient.enabled
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
   rust: true
 
@@ -6032,13 +6081,6 @@
   mirror: always
   rust: true
 
-# Expose the media query -moz-touch-enabled to web content.
-- name: layout.css.moz-touch-enabled.enabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-  rust: true
-
 # Pref to control whether the ::marker property restrictions defined in [1]
 # apply.
 #
@@ -6046,6 +6088,21 @@
 - name: layout.css.marker.restricted
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+  rust: true
+
+# Is support for math-style enabled?
+- name: layout.css.math-style.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+  rust: true
+
+# Is support for math-depth enabled?
+# This must not be enabled until implementation is complete (see bug 1667090).
+- name: layout.css.math-depth.enabled
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
   rust: true
 
@@ -6640,20 +6697,20 @@
 # fontsize, fontstyle and fontweight.
 - name: mathml.deprecated_style_attributes.disabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether to disable deprecated "radical" notation for the menclose element.
 - name: mathml.deprecated_menclose_notation_radical.disabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether to disable legacy names "small", "normal" and "big" for the
 # mathsize attribute.
 - name: mathml.mathsize_names.disabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether to disable legacy names "thickmathspace", "mediummathspace",
@@ -6666,7 +6723,7 @@
 # Whether to disable the mfrac bevelled  attribute.
 - name: mathml.mfrac_bevelled_attribute.disabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether to disable the mfenced element.
@@ -6679,17 +6736,31 @@
 # linethickness attribute of the mfrac element.
 - name: mathml.mfrac_linethickness_names.disabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether to disable deprecated numalign/denomalign/align attributes
 - name: mathml.deprecated_alignment_attributes.disabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether to disable subscriptshift and superscriptshift attributes.
 - name: mathml.script_shift_attributes.disabled
+  type: bool
+  value: true
+  mirror: always
+
+# Whether to disable the scriptminsize attribute.
+# Note that this only disables parsing, not the default effect when no attribute
+# is unspecified.
+- name: mathml.scriptminsize_attribute.disabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+
+# Whether to disable the scriptsizemultiplier attribute.
+- name: mathml.scriptsizemultiplier_attribute.disabled
   type: bool
   value: @IS_NIGHTLY_BUILD@
   mirror: always
@@ -6697,13 +6768,18 @@
 # Whether to disable support for XLink on MathML elements.
 - name: mathml.xlink.disabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether to disable support for stretching operators with STIXGeneral fonts.
+# macos still has the deprecated STIXGeneral font pre-installed.
 - name: mathml.stixgeneral_operator_stretching.disabled
   type: bool
+#if defined(XP_MACOSX)
   value: @IS_NIGHTLY_BUILD@
+#else
+  value: true
+#endif
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -7559,11 +7635,7 @@
   # acceleration for decoding.
 -   name: media.navigator.mediadatadecoder_vpx_enabled
     type: RelaxedAtomicBool
-  #if defined(NIGHTLY_BUILD)
     value: true
-  #else
-    value: false
-  #endif
     mirror: always
 
   # Use MediaDataDecoder API for H264 in WebRTC. This includes hardware
@@ -8241,6 +8313,14 @@
   value: 2000
   mirror: always
 
+# When true on Windows DNS resolutions for single label domains
+# (domains that don't contain a dot) will be resolved using the DnsQuery
+# API instead of PR_GetAddrInfoByName
+- name: network.dns.dns_query_single_label
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # The proxy type. See nsIProtocolProxyService.idl
 #     PROXYCONFIG_DIRECT   = 0
 #     PROXYCONFIG_MANUAL   = 1
@@ -8409,6 +8489,20 @@
   value: 5
   mirror: always
 
+# Retry with no TRR when the response contained only 0.0.0.0 or ::
+- name: network.trr.fallback-on-zero-response
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# If true we parse the /etc/hosts file and exclude any host names from TRR.
+# Reading the file is only done once, when TRR is first enabled - this could be
+# soon after startup or when the pref is flipped.
+- name: network.trr.exclude-etc-hosts
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # Allow the network changed event to get sent when a network topology or setup
 # change is noticed while running.
 - name: network.notify.changed
@@ -8480,6 +8574,11 @@
   value: 1048576
   mirror: always
 
+- name: network.http.http3.enable_qlog
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # When true, a http request will be upgraded to https when HTTPS RR is
 # available.
 - name: network.dns.upgrade_with_https_rr
@@ -8487,10 +8586,45 @@
   value: false
   mirror: always
 
-  # Whether to use HTTPS RR as AltSvc
+# Whether to use HTTPS RR as AltSvc
 - name: network.dns.use_https_rr_as_altsvc
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+# Whether to check for NAT64 using the system resolver
+- name: network.connectivity-service.nat64-check
+  type: bool
+  value: true
+  mirror: always
+
+# Whether to enable echconfig.
+- name: network.dns.echconfig.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# This pref needs to be worked together with network.dns.echconfig.enabled
+# being true and there is no record without ECHConfig.
+# When we try all records with ECHConfig in HTTPS RRs and still can't connect,
+# this pref indicate whether we can fallback to the origin server.
+- name: network.dns.echconfig.fallback_to_origin_when_all_failed
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
+# When true, reset the exclusion list when all records are excluded.
+- name: network.dns.httpssvc.reset_exclustion_list
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
+# If the http3 connection cannot be ready after the timeout value here, the
+# transaction will start another non-http3 conneciton.
+# Setting this value to 0 indicates this feature is disabled.
+- name: network.dns.httpssvc.http3_fast_fallback_timeout
+  type: RelaxedAtomicUint32
+  value: 50
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -8671,6 +8805,12 @@
 - name: print.default_dpi
   type: float
   value: 144.0f
+  mirror: always
+
+# Whether support for monochrome printing is enabled for CUPS.
+- name: print.cups.monochrome.enabled
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -8982,7 +9122,7 @@
 
 - name: privacy.partition.network_state
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
 - name: privacy.partition.bloburl_per_agent_cluster
@@ -9042,11 +9182,6 @@
   value: true
   mirror: always
 
-- name: security.csp.enableStrictDynamic
-  type: bool
-  value: true
-  mirror: always
-
 - name: security.csp.reporting.script-sample.max-length
   type: int32_t
   value: 40
@@ -9058,16 +9193,6 @@
 - name: security.caps.allow_uri_is_ui_resource_in_checkloaduriflags
   type: bool
   value: false
-  mirror: always
-
-# TODO: Bug 1324406: Treat 'data:' documents as unique, opaque origins
-# If true, data: URIs will be treated as unique opaque origins, hence will use
-# a NullPrincipal as the security context.
-# Otherwise it will inherit the origin from parent node, this is the legacy
-# behavior of Firefox.
-- name: security.data_uri.unique_opaque_origin
-  type: RelaxedAtomicBool
-  value: true
   mirror: always
 
 # If true, all toplevel data: URI navigations will be blocked.
@@ -9233,18 +9358,6 @@
 - name: security.webauth.u2f
   type: bool
   value: @IS_NOT_ANDROID@
-  mirror: always
-
-# Block scripts with _some_ wrong MIME types such as image/, video/ or text/csv
-- name: security.block_script_with_wrong_mime
-  type: bool
-  value: true
-  mirror: always
-
-# Block scripts with wrong MIME type when loading via importScripts().
-- name: security.block_importScripts_with_wrong_mime
-  type: bool
-  value: true
   mirror: always
 
 # Block Worker/SharedWorker scripts with wrong MIME type.
@@ -9419,11 +9532,7 @@
 #ifdef MOZ_CODE_COVERAGE
   value: 0
 #else
-  #ifdef NIGHTLY_BUILD
   value: 3
-  #else
-  value: 1
-  #endif
 #endif
   mirror: always
 
@@ -9602,7 +9711,7 @@
 
 - name: ui.touch.radius.enabled
   type: bool
-  value: false
+  value: @IS_ANDROID@
   mirror: always
 
 - name: ui.touch.radius.topmm
@@ -9863,7 +9972,7 @@
 
 - name: webgl.enable-surface-texture
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 - name: webgl.enable-ahardwarebuffer
@@ -9927,6 +10036,15 @@
   mirror: always
 
 - name: webgl.out-of-process
+  type: RelaxedAtomicBool
+#if defined(XP_MACOSX) || defined(XP_WIN)
+  value: @IS_NIGHTLY_OR_DEV_EDITION@
+#else
+  value: false
+#endif
+  mirror: always
+
+- name: webgl.out-of-process.force
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -10011,6 +10129,12 @@
 # Whether to use gtk high contrast themes to disable content styling like on
 # windows high contrast mode.
 - name: widget.content.gtk-high-contrast.enabled
+  type: bool
+  value: true
+  mirror: always
+
+# Whether to pause the compositor when a native window is minimized.
+- name: widget.pause-compositor-when-minimized
   type: bool
   value: true
   mirror: always

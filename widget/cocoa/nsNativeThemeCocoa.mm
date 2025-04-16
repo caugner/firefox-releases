@@ -304,8 +304,13 @@ static void DrawCellIncludingFocusRing(NSCell* aCell, NSRect aWithFrame, NSView*
 
 - (BOOL)_isToolbarMode {
   // This function is called during -[NSSearchFieldCell drawWithFrame:inView:].
-  // Returning YES from it selects the style that's appropriate for search
-  // fields inside toolbars.
+  // On earlier macOS versions, returning YES from it selects the style
+  // that's appropriate for search fields inside toolbars. On Big Sur,
+  // returning YES causes the search field to be drawn incorrectly, with
+  // the toolbar gradient appearing as the field background.
+  if (nsCocoaFeatures::OnBigSurOrLater()) {
+    return NO;
+  }
   return YES;
 }
 
@@ -1213,9 +1218,10 @@ void nsNativeThemeCocoa::DrawMenuSeparator(CGContextRef cgContext, const CGRect&
     separatorRect.size.height = 1;
     separatorRect.size.width -= 42;
     separatorRect.origin.x += 21;
-    // Use a gray color similar to the native separator
-    DeviceColor color = ToDeviceColor(mozilla::gfx::sRGBColor::FromU8(211, 211, 211, 255));
-    CGContextSetRGBFillColor(cgContext, color.r, color.g, color.b, color.a);
+    // Use transparent black with an alpha similar to the native separator.
+    // The values 231 (menu background) and 205 (separator color) have been
+    // sampled from a window screenshot of a native context menu.
+    CGContextSetRGBFillColor(cgContext, 0.0, 0.0, 0.0, (231 - 205) / 231.0);
     CGContextFillRect(cgContext, separatorRect);
     return;
   }
@@ -2179,9 +2185,82 @@ static SegmentedControlRenderSettings RenderSettingsForSegmentType(
   }
 }
 
+void nsNativeThemeCocoa::DrawSegmentBackground(CGContextRef cgContext, const HIRect& inBoxRect,
+                                               const SegmentParams& aParams) {
+  // On earlier macOS versions, the segment background is automatically
+  // drawn correctly and this method should not be used. ASSERT here
+  // to catch unnecessary usage, but the method implementation is not
+  // dependent on Big Sur in any way.
+  MOZ_ASSERT(nsCocoaFeatures::OnBigSurOrLater());
+
+  // Use colors resembling 10.15.
+  if (aParams.selected) {
+    DeviceColor color = ToDeviceColor(mozilla::gfx::sRGBColor::FromU8(93, 93, 93, 255));
+    CGContextSetRGBFillColor(cgContext, color.r, color.g, color.b, color.a);
+  } else {
+    DeviceColor color = ToDeviceColor(mozilla::gfx::sRGBColor::FromU8(247, 247, 247, 255));
+    CGContextSetRGBFillColor(cgContext, color.r, color.g, color.b, color.a);
+  }
+
+  // Create a rect for the background fill.
+  CGRect bgRect = inBoxRect;
+  bgRect.size.height -= 3.0;
+  bgRect.size.width -= 4.0;
+  bgRect.origin.x += 2.0;
+  bgRect.origin.y += 1.0;
+
+  // Round the corners unless the button is a middle button. Buttons in
+  // a grouping but on the edge will have the inner edge filled below.
+  if (aParams.atLeftEnd || aParams.atRightEnd) {
+    CGPathRef path = CGPathCreateWithRoundedRect(bgRect, 5, 4, nullptr);
+    CGContextAddPath(cgContext, path);
+    CGPathRelease(path);
+    CGContextClosePath(cgContext);
+    CGContextFillPath(cgContext);
+  }
+
+  // Handle buttons grouped together where either or both of
+  // the side edges do not have curved corners.
+  if (!aParams.atLeftEnd && aParams.atRightEnd) {
+    // Shift the rect left to draw the left side of the
+    // rect with right angle corners leaving the right side
+    // to have rounded corners drawn with the curve above.
+    // For example, the left side of the forward button in
+    // the Library window.
+    CGRect leftRectEdge = bgRect;
+    leftRectEdge.size.width -= 10;
+    leftRectEdge.origin.x -= 2;
+    CGContextFillRect(cgContext, leftRectEdge);
+  } else if (aParams.atLeftEnd && !aParams.atRightEnd) {
+    // Shift the rect right to draw the right side of the
+    // rect with right angle corners leaving the left side
+    // to have rounded corners drawn with the curve above.
+    // For example, the right side of the back button in
+    // the Library window.
+    CGRect rightRectEdge = bgRect;
+    rightRectEdge.size.width -= 10;
+    rightRectEdge.origin.x += 12;
+    CGContextFillRect(cgContext, rightRectEdge);
+  } else if (!aParams.atLeftEnd && !aParams.atRightEnd) {
+    // The middle button in a group of buttons. Widen the
+    // background rect to meet adjacent buttons seamlessly.
+    CGRect middleRect = bgRect;
+    middleRect.size.width += 4;
+    middleRect.origin.x -= 2;
+    CGContextFillRect(cgContext, middleRect);
+  }
+}
+
 void nsNativeThemeCocoa::DrawSegment(CGContextRef cgContext, const HIRect& inBoxRect,
                                      const SegmentParams& aParams) {
   SegmentedControlRenderSettings renderSettings = RenderSettingsForSegmentType(aParams.segmentType);
+
+  // On Big Sur, manually draw the background of the buttons to workaround a
+  // change in Big Sur where the backround is filled with the toolbar gradient.
+  if (nsCocoaFeatures::OnBigSurOrLater() &&
+      (aParams.segmentType == nsNativeThemeCocoa::SegmentType::eToolbarButton)) {
+    DrawSegmentBackground(cgContext, inBoxRect, aParams);
+  }
 
   NSControlSize controlSize = FindControlSize(inBoxRect.size.height, renderSettings.heights, 4.0f);
   CGRect drawRect = SeparatorAdjustedRect(inBoxRect, aParams);
@@ -2390,68 +2469,74 @@ nsNativeThemeCocoa::ScrollbarParams nsNativeThemeCocoa::ComputeScrollbarParams(n
       params.faceColor = colors.thumb.CalcColor(*style);
     }
   }
+
   return params;
 }
 
 void nsNativeThemeCocoa::DrawScrollbarThumb(CGContextRef cgContext, const CGRect& inBoxRect,
                                             ScrollbarParams aParams) {
-  CGRect drawRect = inBoxRect;
-  if (aParams.custom) {
-    const CGFloat kWidthRatio = 8.0f / 15.0f;
-    const CGFloat kLengthReductionRatio = 2.0f / 15.0f;
-    const CGFloat kOrthogonalDirOffset = 4.0f / 15.0f;
-    const CGFloat kParallelDirOffset = 1.0f / 15.0f;
-    CGFloat baseSize, cornerWidth;
-    CGRect thumbRect = inBoxRect;
-    if (aParams.horizontal) {
-      baseSize = inBoxRect.size.height;
-      thumbRect.size.height *= kWidthRatio;
-      thumbRect.size.width -= baseSize * kLengthReductionRatio;
-      thumbRect.origin.y += baseSize * kOrthogonalDirOffset;
-      thumbRect.origin.x += baseSize * kParallelDirOffset;
-      cornerWidth = thumbRect.size.height / 2.0f;
-    } else {
-      baseSize = inBoxRect.size.width;
-      thumbRect.size.width *= kWidthRatio;
-      thumbRect.size.height -= baseSize * kLengthReductionRatio;
-      thumbRect.origin.x += baseSize * kOrthogonalDirOffset;
-      thumbRect.origin.y += baseSize * kParallelDirOffset;
-      cornerWidth = thumbRect.size.width / 2.0f;
+  // Compute the thumb thickness. This varies based on aParams.small, aParams.overlay and
+  // aParams.rolledOver. non-overlay: 6 / 8, overlay non-hovered: 5 / 7, overlay hovered: 9 / 11
+  CGFloat thickness = aParams.small ? 6.0f : 8.0f;
+  if (aParams.overlay) {
+    thickness -= 1.0f;
+    if (aParams.rolledOver) {
+      thickness += 4.0f;
     }
-    CGPathRef path = CGPathCreateWithRoundedRect(thumbRect, cornerWidth, cornerWidth, nullptr);
-    CGContextAddPath(cgContext, path);
-    CGPathRelease(path);
-    SetCGContextFillColor(cgContext, aParams.faceColor);
-    CGContextFillPath(cgContext);
-    return;
   }
 
-  if (aParams.overlay && !aParams.rolledOver) {
-    if (aParams.horizontal) {
-      drawRect.origin.y += 4;
-      drawRect.size.height -= 4;
+  // Compute the thumb rect.
+  CGFloat outerSpacing = (aParams.overlay || aParams.small) ? 1.0f : 2.0f;
+  CGRect thumbRect = CGRectInset(inBoxRect, 1.0f, 1.0f);
+  if (aParams.horizontal) {
+    thumbRect.origin.y = CGRectGetMaxY(thumbRect) - outerSpacing - thickness;
+    thumbRect.size.height = thickness;
+  } else {
+    if (aParams.rtl) {
+      thumbRect.origin.x = thumbRect.origin.x + outerSpacing;
     } else {
-      if (!aParams.rtl) {
-        drawRect.origin.x += 4;
-      }
-      drawRect.size.width -= 4;
+      thumbRect.origin.x = CGRectGetMaxX(thumbRect) - outerSpacing - thickness;
+    }
+    thumbRect.size.width = thickness;
+  }
+
+  // Compute the thumb fill color.
+  nscolor faceColor;
+  if (aParams.custom) {
+    faceColor = aParams.faceColor;
+  } else {
+    if (aParams.overlay) {
+      faceColor = aParams.onDarkBackground ? NS_RGBA(255, 255, 255, 128) : NS_RGBA(0, 0, 0, 128);
+    } else {
+      faceColor = aParams.rolledOver ? NS_RGBA(125, 125, 125, 255) : NS_RGBA(194, 194, 194, 255);
     }
   }
-  NSDictionary* options = @{
-    @"widget" : (aParams.overlay ? @"kCUIWidgetOverlayScrollBar" : @"scrollbar"),
-    @"size" : (aParams.small ? @"small" : @"regular"),
-    @"kCUIOrientationKey" : (aParams.horizontal ? @"kCUIOrientHorizontal" : @"kCUIOrientVertical"),
-    @"kCUIVariantKey" : (aParams.overlay && aParams.onDarkBackground ? @"kCUIVariantWhite" : @""),
-    @"indiconly" : [NSNumber numberWithBool:YES],
-    @"kCUIThumbProportionKey" : [NSNumber numberWithBool:YES],
-    @"is.flipped" : [NSNumber numberWithBool:YES],
-  };
-  if (aParams.rolledOver) {
-    NSMutableDictionary* mutableOptions = [options mutableCopy];
-    [mutableOptions setObject:@"rollover" forKey:@"state"];
-    options = mutableOptions;
+
+  // Fill the thumb shape with the color.
+  CGFloat cornerRadius = (aParams.horizontal ? thumbRect.size.height : thumbRect.size.width) / 2.0f;
+  CGPathRef path = CGPathCreateWithRoundedRect(thumbRect, cornerRadius, cornerRadius, nullptr);
+  CGContextAddPath(cgContext, path);
+  CGPathRelease(path);
+  SetCGContextFillColor(cgContext, faceColor);
+  CGContextFillPath(cgContext);
+
+  // Overlay scrollbars have an additional stroke around the fill.
+  if (aParams.overlay) {
+    CGFloat strokeOutset = aParams.onDarkBackground ? 0.3f : 0.5f;
+    CGFloat strokeWidth = aParams.onDarkBackground ? 0.6f : 0.8f;
+    nscolor strokeColor =
+        aParams.onDarkBackground ? NS_RGBA(0, 0, 0, 48) : NS_RGBA(255, 255, 255, 48);
+    CGRect thumbStrokeRect = CGRectInset(thumbRect, -strokeOutset, -strokeOutset);
+    CGFloat strokeRadius =
+        (aParams.horizontal ? thumbStrokeRect.size.height : thumbStrokeRect.size.width) / 2.0f;
+    CGPathRef path =
+        CGPathCreateWithRoundedRect(thumbStrokeRect, strokeRadius, strokeRadius, nullptr);
+    CGContextAddPath(cgContext, path);
+    CGPathRelease(path);
+    SetCGContextStrokeColor(cgContext, strokeColor);
+    CGContextSetLineWidth(cgContext, strokeWidth);
+    CGContextStrokePath(cgContext);
   }
-  RenderWithCoreUI(drawRect, cgContext, options, true);
 }
 
 struct ScrollbarTrackDecorationColors {
@@ -2482,73 +2567,59 @@ void nsNativeThemeCocoa::DrawScrollbarTrack(CGContextRef cgContext, const CGRect
     return;
   }
 
-  if (!aParams.custom) {
-    RenderWithCoreUI(
-        inBoxRect, cgContext,
-        [NSDictionary
-            dictionaryWithObjectsAndKeys:(aParams.overlay ? @"kCUIWidgetOverlayScrollBar"
-                                                          : @"scrollbar"),
-                                         @"widget", (aParams.small ? @"small" : @"regular"),
-                                         @"size",
-                                         (aParams.horizontal ? @"kCUIOrientHorizontal"
-                                                             : @"kCUIOrientVertical"),
-                                         @"kCUIOrientationKey",
-                                         (aParams.onDarkBackground ? @"kCUIVariantWhite" : @""),
-                                         @"kCUIVariantKey", [NSNumber numberWithBool:YES],
-                                         @"noindicator", [NSNumber numberWithBool:YES],
-                                         @"kCUIThumbProportionKey", [NSNumber numberWithBool:YES],
-                                         @"is.flipped", nil],
-        true);
-    return;
+  nscolor trackColor;
+  if (aParams.custom) {
+    trackColor = aParams.trackColor;
+  } else {
+    if (aParams.overlay) {
+      trackColor =
+          aParams.onDarkBackground ? NS_RGBA(201, 201, 201, 38) : NS_RGBA(250, 250, 250, 191);
+    } else {
+      trackColor = NS_RGBA(250, 250, 250, 255);
+    }
   }
 
-  // Paint the background color
-  SetCGContextFillColor(cgContext, aParams.trackColor);
-  CGContextFillRect(cgContext, inBoxRect);
-  // Paint decorations
-  ScrollbarTrackDecorationColors colors = ComputeScrollbarTrackDecorationColors(aParams.trackColor);
-  CGPoint innerPoints[2];
-  CGPoint shadowPoints[2];
-  CGPoint outerPoints[2];
-  if (aParams.horizontal) {
-    innerPoints[0].x = inBoxRect.origin.x;
-    innerPoints[0].y = inBoxRect.origin.y + 0.5f;
-    innerPoints[1].x = innerPoints[0].x + inBoxRect.size.width;
-    innerPoints[1].y = innerPoints[0].y;
-    shadowPoints[0].x = innerPoints[0].x;
-    shadowPoints[0].y = innerPoints[0].y + 1.0f;
-    shadowPoints[1].x = innerPoints[1].x;
-    shadowPoints[1].y = shadowPoints[0].y;
-    outerPoints[0].x = innerPoints[0].x;
-    outerPoints[0].y = innerPoints[0].y + inBoxRect.size.height - 1;
-    outerPoints[1].x = innerPoints[1].x;
-    outerPoints[1].y = outerPoints[0].y;
-  } else {
-    if (aParams.rtl) {
-      innerPoints[0].x = inBoxRect.origin.x + inBoxRect.size.width - 0.5f;
-      shadowPoints[0].x = innerPoints[0].x - 1.0f;
-      outerPoints[0].x = inBoxRect.origin.x + 0.5f;
+  CGFloat thickness = aParams.horizontal ? inBoxRect.size.height : inBoxRect.size.width;
+
+  // The scrollbar track is drawn as multiple non-overlapping segments, which make up lines of
+  // different widths and with slightly different shading.
+  ScrollbarTrackDecorationColors colors = ComputeScrollbarTrackDecorationColors(trackColor);
+  struct {
+    nscolor color;
+    CGFloat thickness;
+  } segments[] = {
+      {colors.mInnerColor, 1.0f},
+      {colors.mShadowColor, 1.0f},
+      {trackColor, thickness - 3.0f},
+      {colors.mOuterColor, 1.0f},
+  };
+
+  // Iterate over the segments "from inside to outside" and fill each segment.
+  // For horizontal scrollbars, iterate top to bottom.
+  // For vertical scrollbars, iterate left to right or right to left based on aParams.rtl.
+  CGRect segmentRect = inBoxRect;
+  for (const auto& segment : segments) {
+    if (aParams.horizontal) {
+      segmentRect.size.height = segment.thickness;
     } else {
-      innerPoints[0].x = inBoxRect.origin.x + 0.5f;
-      shadowPoints[0].x = innerPoints[0].x + 1.0f;
-      outerPoints[0].x = inBoxRect.origin.x + inBoxRect.size.width - 0.5f;
+      if (aParams.rtl) {
+        CGFloat rightEdge = segmentRect.origin.x + segmentRect.size.width;
+        segmentRect.origin.x = rightEdge - segment.thickness;
+      }
+      segmentRect.size.width = segment.thickness;
     }
-    innerPoints[0].y = inBoxRect.origin.y;
-    innerPoints[1].x = innerPoints[0].x;
-    innerPoints[1].y = innerPoints[0].y + inBoxRect.size.height;
-    shadowPoints[0].y = innerPoints[0].y;
-    shadowPoints[1].x = shadowPoints[0].x;
-    shadowPoints[1].y = innerPoints[1].y;
-    outerPoints[0].y = innerPoints[0].y;
-    outerPoints[1].x = outerPoints[0].x;
-    outerPoints[1].y = innerPoints[1].y;
+    SetCGContextFillColor(cgContext, segment.color);
+    CGContextFillRect(cgContext, segmentRect);
+    if (aParams.horizontal) {
+      segmentRect.origin.y += segment.thickness;
+    } else {
+      if (aParams.rtl) {
+        segmentRect.origin.x -= segment.thickness;
+      } else {
+        segmentRect.origin.x += segment.thickness;
+      }
+    }
   }
-  SetCGContextStrokeColor(cgContext, colors.mInnerColor);
-  CGContextStrokeLineSegments(cgContext, innerPoints, 2);
-  SetCGContextStrokeColor(cgContext, colors.mShadowColor);
-  CGContextStrokeLineSegments(cgContext, shadowPoints, 2);
-  SetCGContextStrokeColor(cgContext, colors.mOuterColor);
-  CGContextStrokeLineSegments(cgContext, outerPoints, 2);
 }
 
 void nsNativeThemeCocoa::DrawScrollCorner(CGContextRef cgContext, const CGRect& inBoxRect,
@@ -2784,10 +2855,6 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
         // and black text.)
         EventStates docState = aFrame->GetContent()->OwnerDoc()->GetDocumentState();
         bool isInActiveWindow = !docState.HasState(NS_DOCUMENT_STATE_WINDOW_INACTIVE);
-        if (!IsDisabled(aFrame, eventState) && isInActiveWindow &&
-            !QueueAnimatedContentForRefresh(aFrame->GetContent(), 10)) {
-          NS_WARNING("Unable to animate button!");
-        }
         bool hasDefaultButtonLook = isInActiveWindow && !eventState.HasState(NS_EVENT_STATE_ACTIVE);
         ButtonType buttonType =
             hasDefaultButtonLook ? ButtonType::eDefaultPushButton : ButtonType::eRegularPushButton;
@@ -2952,8 +3019,7 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
       return Some(WidgetInfo::SearchField(ComputeSearchFieldParams(aFrame, eventState)));
 
     case StyleAppearance::ProgressBar: {
-      // Don't request repaints for scrollbars at 100% because those don't animate.
-      if (GetProgressValue(aFrame) < GetProgressMaxValue(aFrame)) {
+      if (IsIndeterminateProgress(aFrame, eventState)) {
         if (!QueueAnimatedContentForRefresh(aFrame->GetContent(), 30)) {
           NS_WARNING("Unable to animate progressbar!");
         }
@@ -3506,6 +3572,7 @@ LayoutDeviceIntMargin nsNativeThemeCocoa::DirectionAwareMargin(const LayoutDevic
 static const LayoutDeviceIntMargin kAquaDropdownBorder(1, 22, 2, 5);
 static const LayoutDeviceIntMargin kAquaComboboxBorder(3, 20, 3, 4);
 static const LayoutDeviceIntMargin kAquaSearchfieldBorder(3, 5, 2, 19);
+static const LayoutDeviceIntMargin kAquaSearchfieldBorderBigSur(5, 5, 4, 26);
 
 LayoutDeviceIntMargin nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aContext,
                                                           nsIFrame* aFrame,
@@ -3543,7 +3610,7 @@ LayoutDeviceIntMargin nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aCont
       result = DirectionAwareMargin(kAquaDropdownBorder, aFrame);
       break;
 
-   case StyleAppearance::Menuarrow:
+    case StyleAppearance::Menuarrow:
       if (nsCocoaFeatures::OnBigSurOrLater()) {
         result.SizeTo(0, 0, 0, 28);
       }
@@ -3567,9 +3634,12 @@ LayoutDeviceIntMargin nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aCont
       result.SizeTo(1, 1, 1, 1);
       break;
 
-    case StyleAppearance::Searchfield:
-      result = DirectionAwareMargin(kAquaSearchfieldBorder, aFrame);
+    case StyleAppearance::Searchfield: {
+      auto border = nsCocoaFeatures::OnBigSurOrLater() ? kAquaSearchfieldBorderBigSur
+                                                       : kAquaSearchfieldBorder;
+      result = DirectionAwareMargin(border, aFrame);
       break;
+    }
 
     case StyleAppearance::Listbox: {
       SInt32 frameOutset = 0;
@@ -3641,6 +3711,7 @@ bool nsNativeThemeCocoa::GetWidgetPadding(nsDeviceContext* aContext, nsIFrame* a
       return true;
 
     case StyleAppearance::Menuarrow:
+    case StyleAppearance::Searchfield:
       if (nsCocoaFeatures::OnBigSurOrLater()) {
         return true;
       }
@@ -3881,19 +3952,14 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext, nsIFrame* 
         } else {
           aResult->SizeTo(16, 16);
         }
-        break;
+      } else {
+        if (IsSmallScrollbar(aFrame)) {
+          aResult->SizeTo(11, 11);
+        } else {
+          aResult->SizeTo(15, 15);
+        }
       }
 
-      // yeah, i know i'm cheating a little here, but i figure that it
-      // really doesn't matter if the scrollbar is vertical or horizontal
-      // and the width metric is a really good metric for every piece
-      // of the scrollbar.
-
-      int32_t themeMetric =
-          IsSmallScrollbar(aFrame) ? kThemeMetricSmallScrollBarWidth : kThemeMetricScrollBarWidth;
-      SInt32 scrollbarWidth = 0;
-      ::GetThemeMetric(themeMetric, &scrollbarWidth);
-      aResult->SizeTo(scrollbarWidth, scrollbarWidth);
       break;
     }
 

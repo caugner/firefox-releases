@@ -56,7 +56,6 @@ const prefs = {
   TRR_SELECT_DRY_RUN_RESULT_PREF: "doh-rollout.trr-selection.dry-run-result",
   PROVIDER_STEERING_PREF: "doh-rollout.provider-steering.enabled",
   PROVIDER_STEERING_LIST_PREF: "doh-rollout.provider-steering.provider-list",
-  PROFILE_CREATION_THRESHOLD_PREF: "doh-rollout.profileCreationThreshold",
 };
 
 const CFR_PREF = "browser.newtabpage.activity-stream.asrouter.providers.cfr";
@@ -91,37 +90,30 @@ async function setup() {
   // controlled e.g. via Normandy, but for testing let's enable.
   Preferences.set(prefs.PROVIDER_STEERING_PREF, true);
 
-  // Check that the default value of the clearModeOnShutdown pref is true. This
-  // forces us to update tests in the future if/when we change the defaut. When
-  // the time comes, browser_cleanFlow.js needs to be updated to test when this
-  // pref is true. Currently since the default is true, it tests the false case.
-  is(
-    Preferences.get(prefs.CLEAR_ON_SHUTDOWN_PREF),
-    true,
-    "Clear mode on shutdown is enabled."
-  );
+  // Clear mode on shutdown by default.
+  Preferences.set(prefs.CLEAR_ON_SHUTDOWN_PREF, true);
 
   // Set up heuristics, all passing by default.
 
   // Google safesearch overrides
-  gDNSOverride.addIPOverride("www.google.com", "1.1.1.1");
-  gDNSOverride.addIPOverride("google.com", "1.1.1.1");
-  gDNSOverride.addIPOverride("forcesafesearch.google.com", "1.1.1.2");
+  gDNSOverride.addIPOverride("www.google.com.", "1.1.1.1");
+  gDNSOverride.addIPOverride("google.com.", "1.1.1.1");
+  gDNSOverride.addIPOverride("forcesafesearch.google.com.", "1.1.1.2");
 
   // YouTube safesearch overrides
-  gDNSOverride.addIPOverride("www.youtube.com", "2.1.1.1");
-  gDNSOverride.addIPOverride("m.youtube.com", "2.1.1.1");
-  gDNSOverride.addIPOverride("youtubei.googleapis.com", "2.1.1.1");
-  gDNSOverride.addIPOverride("youtube.googleapis.com", "2.1.1.1");
-  gDNSOverride.addIPOverride("www.youtube-nocookie.com", "2.1.1.1");
-  gDNSOverride.addIPOverride("restrict.youtube.com", "2.1.1.2");
-  gDNSOverride.addIPOverride("restrictmoderate.youtube.com", "2.1.1.2");
+  gDNSOverride.addIPOverride("www.youtube.com.", "2.1.1.1");
+  gDNSOverride.addIPOverride("m.youtube.com.", "2.1.1.1");
+  gDNSOverride.addIPOverride("youtubei.googleapis.com.", "2.1.1.1");
+  gDNSOverride.addIPOverride("youtube.googleapis.com.", "2.1.1.1");
+  gDNSOverride.addIPOverride("www.youtube-nocookie.com.", "2.1.1.1");
+  gDNSOverride.addIPOverride("restrict.youtube.com.", "2.1.1.2");
+  gDNSOverride.addIPOverride("restrictmoderate.youtube.com.", "2.1.1.2");
 
   // Zscaler override
-  gDNSOverride.addIPOverride("sitereview.zscaler.com", "3.1.1.1");
+  gDNSOverride.addIPOverride("sitereview.zscaler.com.", "3.1.1.1");
 
   // Global canary
-  gDNSOverride.addIPOverride("use-application-dns.net", "4.1.1.1");
+  gDNSOverride.addIPOverride("use-application-dns.net.", "4.1.1.1");
 
   registerCleanupFunction(async () => {
     Services.telemetry.canRecordExtended = oldCanRecord;
@@ -257,13 +249,13 @@ async function restartDoHController() {
 // or disabled correctly. We use the zscaler canary arbitrarily here, individual
 // heuristics are tested separately.
 function setPassingHeuristics() {
-  gDNSOverride.clearHostOverride("sitereview.zscaler.com");
-  gDNSOverride.addIPOverride("sitereview.zscaler.com", "3.1.1.1");
+  gDNSOverride.clearHostOverride("sitereview.zscaler.com.");
+  gDNSOverride.addIPOverride("sitereview.zscaler.com.", "3.1.1.1");
 }
 
 function setFailingHeuristics() {
-  gDNSOverride.clearHostOverride("sitereview.zscaler.com");
-  gDNSOverride.addIPOverride("sitereview.zscaler.com", "213.152.228.242");
+  gDNSOverride.clearHostOverride("sitereview.zscaler.com.");
+  gDNSOverride.addIPOverride("sitereview.zscaler.com.", "213.152.228.242");
 }
 
 async function waitForDoorhanger() {

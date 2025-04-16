@@ -714,6 +714,7 @@ var Policies = {
       if (param) {
         setAndLockPref("datareporting.healthreport.uploadEnabled", false);
         setAndLockPref("datareporting.policy.dataSubmissionEnabled", false);
+        setAndLockPref("toolkit.telemetry.archive.enabled", false);
         blockAboutPage(manager, "about:telemetry");
       }
     },
@@ -1321,7 +1322,7 @@ var Policies = {
 
   OverrideFirstRunPage: {
     onProfileAfterChange(manager, param) {
-      let url = param ? param.href : "";
+      let url = param ? param : "";
       setAndLockPref("startup.homepage_welcome_url", url);
       setAndLockPref("browser.aboutwelcome.enabled", false);
     },
@@ -1475,6 +1476,8 @@ var Policies = {
         "datareporting.policy.",
         "dom.",
         "extensions.",
+        "general.autoScroll",
+        "general.smoothScroll",
         "geo.",
         "intl.",
         "layout.",
@@ -1482,6 +1485,7 @@ var Policies = {
         "network.",
         "places.",
         "print.",
+        "signon.",
         "ui.",
         "widget.",
       ];
@@ -2011,10 +2015,7 @@ var Policies = {
 
   WebsiteFilter: {
     onBeforeUIStartup(manager, param) {
-      this.filter = new WebsiteFilter(
-        param.Block || [],
-        param.Exceptions || []
-      );
+      WebsiteFilter.init(param.Block || [], param.Exceptions || []);
     },
   },
 };

@@ -13,11 +13,12 @@
 
 #include "builtin/Eval.h"
 #include "builtin/ModuleObject.h"
-#include "builtin/TypedObject.h"
 #include "frontend/SourceNotes.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineInspector.h"
 #include "jit/CacheIR.h"
+#include "jit/CompileInfo.h"
+#include "jit/InlineScriptTree.h"
 #include "jit/Ion.h"
 #include "jit/IonOptimizationLevels.h"
 #include "jit/JitSpewer.h"
@@ -38,9 +39,11 @@
 #include "vm/RegExpStatics.h"
 #include "vm/SelfHosting.h"
 #include "vm/TraceLogging.h"
+#include "wasm/TypedObject.h"
 
 #include "gc/Nursery-inl.h"
 #include "jit/CompileInfo-inl.h"
+#include "jit/InlineScriptTree-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
 #include "vm/BytecodeIterator-inl.h"
 #include "vm/BytecodeLocation-inl.h"
@@ -177,7 +180,7 @@ IonBuilder::IonBuilder(JSContext* analysisContext, MIRGenerator& mirGen,
       inlineCallInfo_(nullptr),
       maybeFallbackFunctionGetter_(nullptr) {
   script_ = info_->script();
-  pc = info_->startPC();
+  pc = script_->code();
 
   // The script must have a JitScript. Compilation requires a BaselineScript
   // too.
@@ -3960,7 +3963,7 @@ IonBuilder::InliningResult IonBuilder::inlineScriptedCall(CallInfo& callInfo,
   }
 
   // Capture formals in the outer resume point.
-  if (!callInfo.pushCallStack(&mirGen_, current)) {
+  if (!callInfo.pushCallStack(current)) {
     return abort(AbortReason::Alloc);
   }
 
@@ -4793,7 +4796,7 @@ AbortReasonOr<Ok> IonBuilder::inlineCalls(CallInfo& callInfo,
 
   MBasicBlock* dispatchBlock = current;
   callInfo.setImplicitlyUsedUnchecked();
-  if (!callInfo.pushCallStack(&mirGen_, dispatchBlock)) {
+  if (!callInfo.pushCallStack(dispatchBlock)) {
     return abort(AbortReason::Alloc);
   }
 
@@ -5155,31 +5158,18 @@ MDefinition* IonBuilder::createThisScripted(MDefinition* callee,
   // explicit operation in the bytecode, we cannot use resumeAfter().
   // Getters may not override |prototype| fetching, so this operation is
   // indeed idempotent.
-  // - First try an idempotent property cache.
-  // - Upon failing idempotent property cache, we can't use a non-idempotent
-  //   cache, therefore we fallback to CallGetProperty
   //
-  // Note: both CallGetProperty and GetPropertyCache can trigger a GC,
-  //       and thus invalidation.
-  MInstruction* getProto;
-  if (!invalidatedIdempotentCache()) {
-    MConstant* id = constant(StringValue(names().prototype));
-    MGetPropertyCache* getPropCache =
-        MGetPropertyCache::New(alloc(), newTarget, id,
-                               /* monitored = */ false);
-    getPropCache->setIdempotent();
-    getProto = getPropCache;
-  } else {
-    MCallGetProperty* callGetProp =
-        MCallGetProperty::New(alloc(), newTarget, names().prototype);
-    callGetProp->setIdempotent();
-    getProto = callGetProp;
-  }
-  current->add(getProto);
+  // Note: GetPropertyCache can trigger a GC, and thus invalidation.
+  MConstant* id = constant(StringValue(names().prototype));
+  MGetPropertyCache* getPropCache =
+      MGetPropertyCache::New(alloc(), newTarget, id,
+                              /* monitored = */ false);
+  getPropCache->setIdempotent();
+  current->add(getPropCache);
 
   // Create this from prototype
   MCreateThisWithProto* createThis =
-      MCreateThisWithProto::New(alloc(), callee, newTarget, getProto);
+      MCreateThisWithProto::New(alloc(), callee, newTarget, getPropCache);
   current->add(createThis);
 
   return createThis;
@@ -5442,7 +5432,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_funcall(uint32_t argc) {
   // Save prior call stack in case we need to resolve during bailout
   // recovery of inner inlined function. This includes the JSFunction and the
   // 'call' native function.
-  if (!callInfo.savePriorCallStack(&mirGen_, current, argc + 2)) {
+  if (!callInfo.savePriorCallStack(current, argc + 2)) {
     return abort(AbortReason::Alloc);
   }
 
@@ -5790,8 +5780,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_funapplyarray(uint32_t argc) {
   return pushTypeBarrier(apply, types, BarrierKind::TypeSet);
 }
 
-bool CallInfo::savePriorCallStack(MIRGenerator* mir, MBasicBlock* current,
-                                  size_t peekDepth) {
+bool CallInfo::savePriorCallStack(MBasicBlock* current, size_t peekDepth) {
   MOZ_ASSERT(priorArgs_.empty());
   if (!priorArgs_.reserve(peekDepth)) {
     return false;
@@ -5866,7 +5855,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_funapplyarguments(uint32_t argc) {
 
   CallInfo callInfo(alloc(), pc, /* constructing = */ false,
                     /* ignoresReturnValue = */ BytecodeIsPopped(pc));
-  if (!callInfo.savePriorCallStack(&mirGen_, current, 4)) {
+  if (!callInfo.savePriorCallStack(current, 4)) {
     return abort(AbortReason::Alloc);
   }
 
@@ -11648,15 +11637,6 @@ AbortReasonOr<Ok> IonBuilder::jsop_regexp(RegExpObject* reobj) {
 }
 
 AbortReasonOr<Ok> IonBuilder::jsop_object(JSObject* obj) {
-  if (mirGen_.options.cloneSingletons()) {
-    MCloneLiteral* clone =
-        MCloneLiteral::New(alloc(), constant(ObjectValue(*obj)));
-    current->add(clone);
-    current->push(clone);
-    return resumeAfter(clone);
-  }
-
-  realm->setSingletonsAsValues();
   pushConstant(ObjectValue(*obj));
   return Ok();
 }

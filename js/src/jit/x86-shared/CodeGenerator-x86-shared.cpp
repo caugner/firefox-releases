@@ -12,9 +12,8 @@
 #include "jsmath.h"
 
 #include "jit/CodeGenerator.h"
-#include "jit/JitFrames.h"
-#include "jit/JitRealm.h"
-#include "jit/Linker.h"
+#include "jit/InlineScriptTree.h"
+#include "jit/JitRuntime.h"
 #include "jit/RangeAnalysis.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/TraceLogging.h"
@@ -343,6 +342,12 @@ void CodeGenerator::visitWasmSelect(LWasmSelect* ins) {
       masm.moveDouble(ToFloatRegister(ins->falseExpr()), out);
     } else {
       masm.loadDouble(falseExpr, out);
+    }
+  } else if (mirType == MIRType::Simd128) {
+    if (falseExpr.kind() == Operand::FPREG) {
+      masm.moveSimd128(ToFloatRegister(ins->falseExpr()), out);
+    } else {
+      masm.loadUnalignedSimd128(falseExpr, out);
     }
   } else {
     MOZ_CRASH("unhandled type in visitWasmSelect!");
@@ -1923,7 +1928,7 @@ void CodeGenerator::visitNearbyInt(LNearbyInt* lir) {
   FloatRegister output = ToFloatRegister(lir->output());
 
   RoundingMode roundingMode = lir->mir()->roundingMode();
-  masm.vroundsd(Assembler::ToX86RoundingMode(roundingMode), input, output);
+  masm.nearbyIntDouble(roundingMode, input, output);
 }
 
 void CodeGenerator::visitNearbyIntF(LNearbyIntF* lir) {
@@ -1931,7 +1936,7 @@ void CodeGenerator::visitNearbyIntF(LNearbyIntF* lir) {
   FloatRegister output = ToFloatRegister(lir->output());
 
   RoundingMode roundingMode = lir->mir()->roundingMode();
-  masm.vroundss(Assembler::ToX86RoundingMode(roundingMode), input, output);
+  masm.nearbyIntFloat32(roundingMode, input, output);
 }
 
 void CodeGenerator::visitEffectiveAddress(LEffectiveAddress* ins) {
@@ -2308,10 +2313,10 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.bitwiseNotAndSimd128(rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16AvgrU:
-      masm.averageInt8x16(rhs, lhsDest);
+      masm.unsignedAverageInt8x16(rhs, lhsDest);
       break;
     case wasm::SimdOp::I16x8AvgrU:
-      masm.averageInt16x8(rhs, lhsDest);
+      masm.unsignedAverageInt16x8(rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16Add:
       masm.addInt8x16(rhs, lhsDest);
@@ -2589,19 +2594,19 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
     case wasm::SimdOp::F64x2Ge:
       masm.compareFloat64x2(Assembler::GreaterThanOrEqual, rhs, lhsDest);
       break;
-    case wasm::SimdOp::F32x4PMaxExperimental:
+    case wasm::SimdOp::F32x4PMax:
       masm.pseudoMaxFloat32x4(rhs, lhsDest);
       break;
-    case wasm::SimdOp::F32x4PMinExperimental:
+    case wasm::SimdOp::F32x4PMin:
       masm.pseudoMinFloat32x4(rhs, lhsDest);
       break;
-    case wasm::SimdOp::F64x2PMaxExperimental:
+    case wasm::SimdOp::F64x2PMax:
       masm.pseudoMaxFloat64x2(rhs, lhsDest);
       break;
-    case wasm::SimdOp::F64x2PMinExperimental:
+    case wasm::SimdOp::F64x2PMin:
       masm.pseudoMinFloat64x2(rhs, lhsDest);
       break;
-    case wasm::SimdOp::I32x4DotSI16x8Experimental:
+    case wasm::SimdOp::I32x4DotSI16x8:
       masm.widenDotInt16x8(rhs, lhsDest);
       break;
     default:
@@ -3131,28 +3136,28 @@ void CodeGenerator::visitWasmUnarySimd128(LWasmUnarySimd128* ins) {
     case wasm::SimdOp::I32x4Abs:
       masm.absInt32x4(src, dest);
       break;
-    case wasm::SimdOp::F32x4CeilExperimental:
+    case wasm::SimdOp::F32x4Ceil:
       masm.ceilFloat32x4(src, dest);
       break;
-    case wasm::SimdOp::F32x4FloorExperimental:
+    case wasm::SimdOp::F32x4Floor:
       masm.floorFloat32x4(src, dest);
       break;
-    case wasm::SimdOp::F32x4TruncExperimental:
+    case wasm::SimdOp::F32x4Trunc:
       masm.truncFloat32x4(src, dest);
       break;
-    case wasm::SimdOp::F32x4NearestExperimental:
+    case wasm::SimdOp::F32x4Nearest:
       masm.nearestFloat32x4(src, dest);
       break;
-    case wasm::SimdOp::F64x2CeilExperimental:
+    case wasm::SimdOp::F64x2Ceil:
       masm.ceilFloat64x2(src, dest);
       break;
-    case wasm::SimdOp::F64x2FloorExperimental:
+    case wasm::SimdOp::F64x2Floor:
       masm.floorFloat64x2(src, dest);
       break;
-    case wasm::SimdOp::F64x2TruncExperimental:
+    case wasm::SimdOp::F64x2Trunc:
       masm.truncFloat64x2(src, dest);
       break;
-    case wasm::SimdOp::F64x2NearestExperimental:
+    case wasm::SimdOp::F64x2Nearest:
       masm.nearestFloat64x2(src, dest);
       break;
     default:

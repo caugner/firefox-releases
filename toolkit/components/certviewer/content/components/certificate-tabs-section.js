@@ -41,6 +41,12 @@ export class CertificateTabsSection extends HTMLElement {
     tab.classList.add("tab");
     if (this.isAboutCertificate) {
       tab.setAttribute("data-l10n-id", tabName);
+    } else {
+      // Display tabs on `about:certificate?cert=` pages as dir=auto
+      // to avoid text like `mozilla.org.*` in RTL.
+      // Not needed in the standalone version of about:certificate
+      // because the tab text there should be localized.
+      tab.dir = "auto";
     }
     this.tabsElement.appendChild(tab);
 

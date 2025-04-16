@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmReftypesEnabled() || !wasmGcEnabled()
+// |jit-test| skip-if: !wasmGcEnabled()
 
 // Parsing and resolving.
 
@@ -15,9 +15,9 @@ var text = `(module
                    (field $even.x i32)
                    (field $to_odd (ref null $odd))))
 
-      ;; Use externref on the API since struct types cannot be exposed outside the module yet.
+      ;; Use eqref on the API since struct types cannot be exposed outside the module yet.
 
-      (import "m" "f" (func $imp (param externref) (result externref)))
+      (import "m" "f" (func $imp (param eqref) (result eqref)))
 
       ;; The bodies do nothing since we have no operations on structs yet.
       ;; Note none of these functions are exported, as they use Ref types in their signatures.
@@ -72,13 +72,13 @@ new WebAssembly.Module(wasmTextToBinary(`
    (ref.is_null (local.get 0))))
 `))
 
-// Automatic upcast to externref
+// Automatic upcast to eqref
 
 new WebAssembly.Module(wasmTextToBinary(`
 (module
  (type $s (struct (field i32)))
  (func $f (param (ref null $s)) (call $g (local.get 0)))
- (func $g (param externref) (unreachable)))
+ (func $g (param eqref) (unreachable)))
 `));
 
 // Misc failure modes
@@ -107,7 +107,7 @@ assertErrorMessage(() => wasmEvalText(`
  (func $f (param (ref null $s)) (unreachable))
  (func $g (param (ref null $t)) (call $f (local.get 0)))
 )`),
-WebAssembly.CompileError, /expression has type ref null.*but expected ref null/);
+WebAssembly.CompileError, /expression has type \(ref null.*\) but expected \(ref null.*\)/);
 
 assertErrorMessage(() => wasmEvalText(`
 (module
@@ -116,7 +116,7 @@ assertErrorMessage(() => wasmEvalText(`
  (func $f (param (ref null $s)) (unreachable))
  (func $g (param (ref null $t)) (call $f (local.get 0)))
 )`),
-WebAssembly.CompileError, /expression has type ref null.*but expected ref null/);
+WebAssembly.CompileError, /expression has type \(ref null.*\) but expected \(ref null.*\)/);
 
 // Ref type mismatch in assignment to local but the prefix rule allows
 // the assignment to succeed if the structs are the same.
@@ -134,7 +134,7 @@ assertErrorMessage(() => wasmEvalText(`
  (type $t (struct (field f32)))
  (func $f (param (ref null $s)) (local (ref null $t)) (local.set 1 (local.get 0))))
 `),
-WebAssembly.CompileError, /expression has type ref null.*but expected ref null/);
+WebAssembly.CompileError, /expression has type \(ref null.*\) but expected \(ref null.*\)/);
 
 assertErrorMessage(() => wasmEvalText(`
 (module
@@ -143,7 +143,7 @@ assertErrorMessage(() => wasmEvalText(`
  (func $f (param (ref null $s)) (unreachable))
  (func $g (param (ref null $t)) (call $f (local.get 0)))
 )`),
-WebAssembly.CompileError, /expression has type ref null.*but expected ref null/);
+WebAssembly.CompileError, /expression has type \(ref null.*\) but expected \(ref null.*\)/);
 
 // Ref type mismatch in return but the prefix rule allows the return
 // to succeed if the structs are the same.
@@ -161,7 +161,7 @@ assertErrorMessage(() => wasmEvalText(`
  (type $t (struct (field f32)))
  (func $f (param (ref null $s)) (result (ref null $t)) (local.get 0)))
 `),
-WebAssembly.CompileError, /expression has type ref null.*but expected ref null/);
+WebAssembly.CompileError, /expression has type \(ref null.*\) but expected \(ref null.*\)/);
 
 assertErrorMessage(() => wasmEvalText(`
 (module
@@ -169,7 +169,7 @@ assertErrorMessage(() => wasmEvalText(`
  (type $t (struct (field (mut i32))))
  (func $f (param (ref null $s)) (result (ref null $t)) (local.get 0)))
 `),
-WebAssembly.CompileError, /expression has type ref null.*but expected ref null/);
+WebAssembly.CompileError, /expression has type \(ref null.*\) but expected \(ref null.*\)/);
 
 // Ref type can't reference a function type
 
@@ -187,12 +187,12 @@ assertErrorMessage(() => wasmEvalText(`
 `),
 WebAssembly.CompileError, /does not reference a struct type/);
 
-// No automatic downcast from externref
+// No automatic downcast from eqref
 
 assertErrorMessage(() => wasmEvalText(`
 (module
  (type $s (struct (field i32)))
- (func $f (param externref) (call $g (local.get 0)))
+ (func $f (param eqref) (call $g (local.get 0)))
  (func $g (param (ref null $s)) (unreachable)))
 `),
-WebAssembly.CompileError, /expression has type externref but expected ref null/);
+WebAssembly.CompileError, /expression has type eqref but expected \(ref null.*\)/);

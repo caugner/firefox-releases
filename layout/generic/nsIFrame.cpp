@@ -16,6 +16,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/DisplayPortUtils.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/dom/ImageTracker.h"
 #include "mozilla/dom/Selection.h"
@@ -3270,9 +3271,10 @@ void nsIFrame::BuildDisplayListForStackingContext(
           nsLayoutUtils::GetNearestScrollableFrame(
               GetParent(), nsLayoutUtils::SCROLLABLE_SAME_DOC |
                                nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN));
-  bool useFixedPosition = disp->mPosition == StylePositionProperty::Fixed &&
-                          (nsLayoutUtils::IsFixedPosFrameInDisplayPort(this) ||
-                           BuilderHasScrolledClip(aBuilder));
+  bool useFixedPosition =
+      disp->mPosition == StylePositionProperty::Fixed &&
+      (DisplayPortUtils::IsFixedPosFrameInDisplayPort(this) ||
+       BuilderHasScrolledClip(aBuilder));
 
   nsDisplayListBuilder::AutoBuildingDisplayList buildingDisplayList(
       aBuilder, this, visibleRect, dirtyRect, isTransformed);
@@ -5962,8 +5964,34 @@ IntrinsicSize nsIFrame::GetIntrinsicSize() {
   return IntrinsicSize();  // default is width/height set to eStyleUnit_None
 }
 
+AspectRatio nsIFrame::GetAspectRatio() const {
+  // Per spec, 'aspect-ratio' property applies to all elements except inline
+  // boxes and internal ruby or table boxes.
+  // https://drafts.csswg.org/css-sizing-4/#aspect-ratio
+  //
+  // Bug 1667501: If any caller is used for the elements supporting and not
+  // supporting 'aspect-ratio', we may need to add explicit exclusion to early
+  // return here.
+
+  const StyleAspectRatio& aspectRatio = StylePosition()->mAspectRatio;
+  if (!aspectRatio.auto_) {
+    // Non-auto. Return the preferred aspect ratio from the aspect-ratio style.
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
+  // The rest of the cases are when aspect-ratio has 'auto'.
+  if (auto intrinsicRatio = GetIntrinsicRatio()) {
+    return intrinsicRatio;
+  }
+  if (aspectRatio.HasRatio()) {
+    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  }
+
+  return AspectRatio();
+}
+
 /* virtual */
-AspectRatio nsIFrame::GetIntrinsicRatio() { return AspectRatio(); }
+AspectRatio nsIFrame::GetIntrinsicRatio() const { return AspectRatio(); }
 
 static nscoord ComputeInlineSizeFromAspectRatio(
     WritingMode aWM, const StyleAspectRatio& aAspectRatio, nscoord aBlockSize,
@@ -6058,6 +6086,11 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
   // flex container's main axis.
   LogicalAxis flexMainAxis =
       eLogicalAxisInline;  // (init to make valgrind happy)
+
+  // The holder of the imposed main size pointer. This is used for adjusting the
+  // main size of the flex item after we resolve its flexible length.
+  Maybe<StyleSize> imposedMainSizeStyleCoord;
+
   if (isFlexItem) {
     // Flex items use their "flex-basis" property in place of their main-size
     // property for sizing purposes, *unless* they have "flex-basis:auto", in
@@ -6075,31 +6108,50 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
         (flexMainAxis == eLogicalAxisInline ? inlineStyleCoord
                                             : blockStyleCoord);
 
-    // NOTE: If we're a table-wrapper frame, we skip this clause and just stick
-    // with 'main-size:auto' behavior (which -- unlike 'content'
-    // i.e. 'max-content' -- will give us the ability to honor percent sizes on
-    // our table-box child when resolving the flex base size). The flexbox spec
-    // doesn't call for this special case, but webcompat & regression-avoidance
-    // seems to require it, for the time being... Tables sure are special.
-    if (nsFlexContainerFrame::IsUsedFlexBasisContent(*flexBasis,
-                                                     *mainAxisCoord) &&
-        MOZ_LIKELY(!IsTableWrapperFrame())) {
-      static const StyleSize maxContStyleCoord(
-          StyleSize::ExtremumLength(StyleExtremumLength::MaxContent));
-      mainAxisCoord = &maxContStyleCoord;
-      // (Note: if our main axis is the block axis, then this 'max-content'
-      // value will be treated like 'auto', via the IsAutoBSize() call below.)
-    } else if (!flexBasis->IsAuto()) {
-      // For all other non-'auto' flex-basis values, we just swap in the
-      // flex-basis itself for the main-size property.
-      mainAxisCoord = &flexBasis->AsSize();
-    }  // else: flex-basis is 'auto', which is deferring to some explicit value
-       // in mainAxisCoord. So we proceed w/o touching mainAxisCoord.
+    // If FlexItemMainSizeOverride frame-property is set, then that means the
+    // flex container is imposing a main-size on this flex item for it to use
+    // as its size in the container's main axis.
+    bool didImposeMainSize;
+    nscoord imposedMainSize =
+        GetProperty(nsIFrame::FlexItemMainSizeOverride(), &didImposeMainSize);
+    if (didImposeMainSize) {
+      imposedMainSizeStyleCoord = Some(StyleSize::LengthPercentage(
+          LengthPercentage::FromAppUnits(imposedMainSize)));
+      if (flexMainAxis == eLogicalAxisInline) {
+        inlineStyleCoord = imposedMainSizeStyleCoord.ptr();
+      } else {
+        blockStyleCoord = imposedMainSizeStyleCoord.ptr();
+      }
+    } else {
+      // NOTE: If we're a table-wrapper frame, we skip this clause and just
+      // stick with 'main-size:auto' behavior (which -- unlike 'content' i.e.
+      // 'max-content' -- will give us the ability to honor percent sizes on our
+      // table-box child when resolving the flex base size). The flexbox spec
+      // doesn't call for this special case, but webcompat &
+      // regression-avoidance seems to require it, for the time being... Tables
+      // sure are special.
+      if (nsFlexContainerFrame::IsUsedFlexBasisContent(*flexBasis,
+                                                       *mainAxisCoord) &&
+          MOZ_LIKELY(!IsTableWrapperFrame())) {
+        static const StyleSize maxContStyleCoord(
+            StyleSize::ExtremumLength(StyleExtremumLength::MaxContent));
+        mainAxisCoord = &maxContStyleCoord;
+        // (Note: if our main axis is the block axis, then this 'max-content'
+        // value will be treated like 'auto', via the IsAutoBSize() call below.)
+      } else if (!flexBasis->IsAuto()) {
+        // For all other non-'auto' flex-basis values, we just swap in the
+        // flex-basis itself for the main-size property.
+        mainAxisCoord = &flexBasis->AsSize();
+      }  // else: flex-basis is 'auto', which is deferring to some explicit
+         // value in mainAxisCoord. So we proceed w/o touching mainAxisCoord.
+    }
   }
 
   const bool isOrthogonal = aWM.IsOrthogonalTo(alignCB->GetWritingMode());
+  const bool isAutoISize = inlineStyleCoord->IsAuto() ||
+                           aFlags.contains(ComputeSizeFlag::UseAutoISize);
   // Compute inline-axis size
-  if (!inlineStyleCoord->IsAuto()) {
+  if (!isAutoISize) {
     result.ISize(aWM) = ComputeISizeValue(
         aRenderingContext, aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
         boxSizingToMarginEdgeISize, *inlineStyleCoord, aFlags);
@@ -6112,7 +6164,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
     result.ISize(aWM) = ComputeInlineSizeFromAspectRatio(
         aWM, stylePos->mAspectRatio, bSize, boxSizingAdjust);
     aspectRatioUsage = AspectRatioUsage::ToComputeISize;
-  } else if (MOZ_UNLIKELY(isGridItem) && !IS_TRUE_OVERFLOW_CONTAINER(this)) {
+  } else if (MOZ_UNLIKELY(isGridItem) && !IsTrueOverflowContainer()) {
     // 'auto' inline-size for grid-level box - fill the CB for 'stretch' /
     // 'normal' and clamp it to the CB if requested:
     bool stretch = false;
@@ -6196,7 +6248,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
   result.ISize(aWM) = std::max(minISize, result.ISize(aWM));
 
   // Compute block-axis size
-  // (but not if we have auto bsize or if we received the "eUseAutoBSize"
+  // (but not if we have auto bsize or if we received the "UseAutoBSize"
   // flag -- then, we'll just stick with the bsize that we already calculated
   // in the initial ComputeAutoSize() call.)
   if (!aFlags.contains(ComputeSizeFlag::UseAutoBSize)) {
@@ -6211,7 +6263,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
       MOZ_ASSERT(aspectRatioUsage == AspectRatioUsage::None);
       aspectRatioUsage = AspectRatioUsage::ToComputeBSize;
     } else if (MOZ_UNLIKELY(isGridItem) && blockStyleCoord->IsAuto() &&
-               !IS_TRUE_OVERFLOW_CONTAINER(this) &&
+               !IsTrueOverflowContainer() &&
                !alignCB->IsMasonry(isOrthogonal ? eLogicalAxisInline
                                                 : eLogicalAxisBlock)) {
       auto cbSize = aCBSize.BSize(aWM);
@@ -6312,7 +6364,8 @@ LogicalSize nsIFrame::ComputeAutoSize(
   LogicalSize result(aWM, 0xdeadbeef, NS_UNCONSTRAINEDSIZE);
 
   // don't bother setting it if the result won't be used
-  if (StylePosition()->ISize(aWM).IsAuto()) {
+  if (StylePosition()->ISize(aWM).IsAuto() ||
+      aFlags.contains(ComputeSizeFlag::UseAutoISize)) {
     nscoord availBased =
         aAvailableISize - aMargin.ISize(aWM) - aBorderPadding.ISize(aWM);
     result.ISize(aWM) = ShrinkWidthToFit(aRenderingContext, availBased, aFlags);
@@ -6389,13 +6442,9 @@ nscoord nsIFrame::ComputeISizeValue(gfxContext* aRenderingContext,
   return 0;
 }
 
-nscoord nsIFrame::ComputeISizeValue(gfxContext* aRenderingContext,
-                                    nscoord aContainingBlockISize,
+nscoord nsIFrame::ComputeISizeValue(nscoord aContainingBlockISize,
                                     nscoord aContentEdgeToBoxSizing,
-                                    nscoord aBoxSizingToMarginEdge,
-                                    const LengthPercentage& aCoord,
-                                    ComputeSizeFlags aFlags) {
-  MOZ_ASSERT(aRenderingContext, "non-null rendering context expected");
+                                    const LengthPercentage& aSize) {
   LAYOUT_WARN_IF_FALSE(
       aContainingBlockISize != NS_UNCONSTRAINEDSIZE,
       "have unconstrained inline-size; this should only result from "
@@ -6403,7 +6452,7 @@ nscoord nsIFrame::ComputeISizeValue(gfxContext* aRenderingContext,
       "calculation");
   NS_ASSERTION(aContainingBlockISize >= 0, "inline-size less than zero");
 
-  nscoord result = aCoord.Resolve(aContainingBlockISize);
+  nscoord result = aSize.Resolve(aContainingBlockISize);
   // The result of a calc() expression might be less than 0; we
   // should clamp at runtime (below).  (Percentages and coords that
   // are less than 0 have already been dropped by the parser.)
@@ -6897,7 +6946,7 @@ Matrix4x4Flagged nsIFrame::GetTransformMatrix(ViewportType aViewportType,
            ViewportUtils::IsZoomedContentRoot(aAncestor) ||
            ((aFlags & STOP_AT_STACKING_CONTEXT_AND_DISPLAY_PORT) &&
             (aAncestor->IsStackingContext() ||
-             nsLayoutUtils::FrameHasDisplayPort(aAncestor, aCurrent)));
+             DisplayPortUtils::FrameHasDisplayPort(aAncestor, aCurrent)));
   };
   while (*aOutAncestor != aStopAtAncestor.mFrame &&
          !shouldStopAt(current, *aOutAncestor, aFlags)) {
@@ -8620,22 +8669,11 @@ nsresult nsIFrame::PeekOffsetForLineEdge(nsPeekOffsetStruct* aPos) {
 
   if (aPos->mVisual && PresContext()->BidiEnabled()) {
     nsIFrame* firstFrame;
-    bool lineIsRTL = it->GetDirection();
     bool isReordered;
     nsIFrame* lastFrame;
     MOZ_TRY(
         it->CheckLineOrder(thisLine, &isReordered, &firstFrame, &lastFrame));
     baseFrame = endOfLine ? lastFrame : firstFrame;
-    if (baseFrame) {
-      bool frameIsRTL =
-          (nsBidiPresUtils::FrameDirection(baseFrame) == NSBIDI_RTL);
-      // If the direction of the frame on the edge is opposite to
-      // that of the line, we'll need to drill down to its opposite
-      // end, so reverse endOfLine.
-      if (frameIsRTL != lineIsRTL) {
-        endOfLine = !endOfLine;
-      }
-    }
   } else {
     auto line = it->GetLine(thisLine).unwrap();
 
@@ -11063,6 +11101,10 @@ CompositorHitTestInfo nsIFrame::GetCompositorHitTestInfo(
     if (pluginFrame && pluginFrame->WantsToHandleWheelEventAsDefaultAction()) {
       result += CompositorHitTestFlags::eApzAwareListeners;
     }
+  } else if (IsRangeFrame()) {
+    // Range frames handle touch events directly without having a touch listener
+    // so we need to let APZ know that this area cares about events.
+    result += CompositorHitTestFlags::eApzAwareListeners;
   }
 
   if (aBuilder->IsTouchEventPrefEnabledDoc()) {

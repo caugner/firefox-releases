@@ -87,6 +87,9 @@ class Front extends Pool {
     // the front is destroyed.
     while (this._requests && this._requests.length > 0) {
       const { deferred, to, type, stack } = this._requests.shift();
+      // Note: many tests are ignoring `Connection closed` promise rejections,
+      // via PromiseTestUtils.allowMatchingRejectionsGlobally.
+      // Do not update the message without updating the tests.
       const msg =
         "Connection closed, pending request to " +
         to +
@@ -144,7 +147,10 @@ class Front extends Pool {
     }
 
     // Call listeners registered via `watchFronts` method
-    this._frontCreationListeners.emit(front.typeName, front);
+    // (ignore if this front has been destroyed)
+    if (this._frontCreationListeners) {
+      this._frontCreationListeners.emit(front.typeName, front);
+    }
   }
 
   async unmanage(front) {
@@ -281,6 +287,12 @@ class Front extends Pool {
    * Handler for incoming packets from the client's actor.
    */
   onPacket(packet) {
+    if (this.isDestroyed()) {
+      // If the Front was already destroyed, all the requests have been purged
+      // and rejected with detailed error messages in purgeRequestsForDestroy.
+      return;
+    }
+
     // Pick off event packets
     const type = packet.type || undefined;
     if (this._clientSpec.events && this._clientSpec.events.has(type)) {

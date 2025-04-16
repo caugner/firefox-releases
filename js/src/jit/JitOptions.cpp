@@ -119,7 +119,7 @@ DefaultJitOptions::DefaultJitOptions() {
 
   // Toggles whether the use of multiple Ion optimization levels is globally
   // disabled.
-  SET_DEFAULT(disableOptimizationLevels, false);
+  SET_DEFAULT(disableOptimizationLevels, true);
 
   // Whether the Baseline Interpreter is enabled.
   SET_DEFAULT(baselineInterpreter, true);
@@ -130,13 +130,8 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether the IonMonkey JIT is enabled.
   SET_DEFAULT(ion, true);
 
-#ifdef NIGHTLY_BUILD
-  // Whether TI is enabled.
-  SET_DEFAULT(typeInference, true);
-#endif
-
   // Whether Ion uses WarpBuilder as MIR builder.
-  SET_DEFAULT(warpBuilder, false);
+  SET_DEFAULT(warpBuilder, true);
 
   // Whether the IonMonkey and Baseline JITs are enabled for Trusted Principals.
   // (Ignored if ion or baselineJit is set to true.)
@@ -184,7 +179,7 @@ DefaultJitOptions::DefaultJitOptions() {
   // How many invocations or loop iterations are needed before functions
   // are compiled with the Ion compiler at OptimizationLevel::Normal.
   // Duplicated in all.js - ensure both match.
-  SET_DEFAULT(normalIonWarmUpThreshold, 1000);
+  SET_DEFAULT(normalIonWarmUpThreshold, 1500);
 
   // How many invocations or loop iterations are needed before functions
   // are compiled with the Ion compiler at OptimizationLevel::Full.
@@ -351,13 +346,10 @@ void DefaultJitOptions::setFastWarmUp() {
 }
 
 void DefaultJitOptions::setWarpEnabled(bool enable) {
-#ifdef NIGHTLY_BUILD
-  // WarpBuilder requires TI to be disabled and doesn't use optimization levels.
-  typeInference = !enable;
+  // WarpBuilder doesn't use optimization levels.
   warpBuilder = enable;
   disableOptimizationLevels = enable;
   normalIonWarmUpThreshold = enable ? 1500 : 1000;
-#endif
 }
 
 void DefaultJitOptions::setNormalIonWarmUpThreshold(uint32_t warmUpThreshold) {

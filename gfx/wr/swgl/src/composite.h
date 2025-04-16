@@ -2,6 +2,29 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// Load a partial span > 0 and < 4 pixels.
+template <typename V, typename P>
+static ALWAYS_INLINE V partial_load_span(P* src, int span) {
+  return bit_cast<V>(
+      (span >= 2 ? combine(unaligned_load<V2<P>>(src),
+                           V2<P>{span > 2 ? unaligned_load<P>(src + 2) : 0, 0})
+                 : V4<P>{unaligned_load<P>(src), 0, 0, 0}));
+}
+
+// Store a partial span > 0 and < 4 pixels.
+template <typename V, typename P>
+static ALWAYS_INLINE void partial_store_span(P* dst, V src, int span) {
+  auto pixels = bit_cast<V4<P>>(src);
+  if (span >= 2) {
+    unaligned_store(dst, lowHalf(pixels));
+    if (span > 2) {
+      unaligned_store(dst + 2, pixels.z);
+    }
+  } else {
+    unaligned_store(dst, pixels.x);
+  }
+}
+
 template <typename P>
 static inline void scale_row(P* dst, int dstWidth, const P* src, int srcWidth,
                              int span) {
@@ -15,9 +38,10 @@ static inline void scale_row(P* dst, int dstWidth, const P* src, int srcWidth,
   }
 }
 
-static void scale_blit(Texture& srctex, const IntRect& srcReq, int srcZ,
-                       Texture& dsttex, const IntRect& dstReq, int dstZ,
-                       bool invertY, int bandOffset, int bandHeight) {
+static NO_INLINE void scale_blit(Texture& srctex, const IntRect& srcReq,
+                                 int srcZ, Texture& dsttex,
+                                 const IntRect& dstReq, int dstZ, bool invertY,
+                                 int bandOffset, int bandHeight) {
   // Cache scaling ratios
   int srcWidth = srcReq.width();
   int srcHeight = srcReq.height();
@@ -53,7 +77,8 @@ static void scale_blit(Texture& srctex, const IntRect& srcReq, int srcZ,
   dest += destStride * bandOffset;
   src += srcStride * (frac / dstHeight);
   frac %= dstHeight;
-  for (int rows = min(dstBounds.height(), bandHeight); rows > 0; rows--) {
+  for (int rows = min(dstBounds.height() - bandOffset, bandHeight); rows > 0;
+       rows--) {
     if (srcWidth == dstWidth) {
       // No scaling, so just do a fast copy.
       memcpy(dest, src, span * bpp);
@@ -94,9 +119,7 @@ static void linear_row_blit(uint32_t* dest, int span, const vec2_scalar& srcUV,
   }
   if (span > 0) {
     auto srcpx = textureLinearPackedRGBA8(sampler, ivec2(uv), srcZOffset);
-    auto mask = span_mask_RGBA8(span);
-    auto dstpx = unaligned_load<PackedRGBA8>(dest);
-    unaligned_store(dest, (mask & dstpx) | (~mask & srcpx));
+    partial_store_span(dest, srcpx, span);
   }
 }
 
@@ -112,9 +135,7 @@ static void linear_row_blit(uint8_t* dest, int span, const vec2_scalar& srcUV,
   }
   if (span > 0) {
     auto srcpx = textureLinearPackedR8(sampler, ivec2(uv), srcZOffset);
-    auto mask = span_mask_R8(span);
-    auto dstpx = unpack(unaligned_load<PackedR8>(dest));
-    unaligned_store(dest, pack((mask & dstpx) | (~mask & srcpx)));
+    partial_store_span(dest, pack(srcpx), span);
   }
 }
 
@@ -130,15 +151,14 @@ static void linear_row_blit(uint16_t* dest, int span, const vec2_scalar& srcUV,
   }
   if (span > 0) {
     auto srcpx = textureLinearPackedRG8(sampler, ivec2(uv), srcZOffset);
-    auto mask = span_mask_RG8(span);
-    auto dstpx = unaligned_load<PackedRG8>(dest);
-    unaligned_store(dest, (mask & dstpx) | (~mask & srcpx));
+    partial_store_span(dest, srcpx, span);
   }
 }
 
-static void linear_blit(Texture& srctex, const IntRect& srcReq, int srcZ,
-                        Texture& dsttex, const IntRect& dstReq, int dstZ,
-                        bool invertY, int bandOffset, int bandHeight) {
+static NO_INLINE void linear_blit(Texture& srctex, const IntRect& srcReq,
+                                  int srcZ, Texture& dsttex,
+                                  const IntRect& dstReq, int dstZ, bool invertY,
+                                  int bandOffset, int bandHeight) {
   assert(srctex.internal_format == GL_RGBA8 ||
          srctex.internal_format == GL_R8 || srctex.internal_format == GL_RG8);
   // Compute valid dest bounds
@@ -173,7 +193,8 @@ static void linear_blit(Texture& srctex, const IntRect& srcReq, int srcZ,
   dest += destStride * bandOffset;
   srcUV.y += srcDUV.y * bandOffset;
   int span = dstBounds.width();
-  for (int rows = min(dstBounds.height(), bandHeight); rows > 0; rows--) {
+  for (int rows = min(dstBounds.height() - bandOffset, bandHeight); rows > 0;
+       rows--) {
     switch (bpp) {
       case 1:
         linear_row_blit((uint8_t*)dest, span, srcUV, srcDUV.x, srcZOffset,
@@ -211,18 +232,16 @@ static void linear_row_composite(uint32_t* dest, int span,
   }
   if (span > 0) {
     WideRGBA8 srcpx = textureLinearUnpackedRGBA8(sampler, ivec2(uv), 0);
-    PackedRGBA8 dstpx = unaligned_load<PackedRGBA8>(dest);
-    WideRGBA8 dstpxu = unpack(dstpx);
-    PackedRGBA8 r = pack(srcpx + dstpxu - muldiv255(dstpxu, alphas(srcpx)));
-
-    auto mask = span_mask_RGBA8(span);
-    unaligned_store(dest, (mask & dstpx) | (~mask & r));
+    WideRGBA8 dstpx = unpack(partial_load_span<PackedRGBA8>(dest, span));
+    PackedRGBA8 r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
+    partial_store_span(dest, r, span);
   }
 }
 
-static void linear_composite(Texture& srctex, const IntRect& srcReq,
-                             Texture& dsttex, const IntRect& dstReq,
-                             bool invertY, int bandOffset, int bandHeight) {
+static NO_INLINE void linear_composite(Texture& srctex, const IntRect& srcReq,
+                                       Texture& dsttex, const IntRect& dstReq,
+                                       bool invertY, int bandOffset,
+                                       int bandHeight) {
   assert(srctex.bpp() == 4);
   assert(dsttex.bpp() == 4);
   // Compute valid dest bounds
@@ -254,7 +273,8 @@ static void linear_composite(Texture& srctex, const IntRect& srcReq,
   dest += destStride * bandOffset;
   srcUV.y += srcDUV.y * bandOffset;
   int span = dstBounds.width();
-  for (int rows = min(dstBounds.height(), bandHeight); rows > 0; rows--) {
+  for (int rows = min(dstBounds.height() - bandOffset, bandHeight); rows > 0;
+       rows--) {
     linear_row_composite((uint32_t*)dest, span, srcUV, srcDUV.x, &sampler);
     dest += destStride;
     srcUV.y += srcDUV.y;
@@ -361,6 +381,49 @@ void* GetResourceBuffer(LockedTexture* resource, int32_t* width,
   return resource->buf;
 }
 
+static void unscaled_row_composite(uint32_t* dest, const uint32_t* src,
+                                   int span) {
+  const uint32_t* end = src + span;
+  while (src + 4 <= end) {
+    WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
+    WideRGBA8 dstpx = unpack(unaligned_load<PackedRGBA8>(dest));
+    PackedRGBA8 r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
+    unaligned_store(dest, r);
+    src += 4;
+    dest += 4;
+  }
+  if (src < end) {
+    WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
+    WideRGBA8 dstpx = unpack(partial_load_span<PackedRGBA8>(dest, end - src));
+    auto r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
+    partial_store_span(dest, r, end - src);
+  }
+}
+
+static NO_INLINE void unscaled_composite(Texture& srctex, const IntRect& srcReq,
+                                         Texture& dsttex, const IntRect& dstReq,
+                                         bool invertY, int bandOffset,
+                                         int bandHeight) {
+  IntRect bounds = dsttex.sample_bounds(dstReq, invertY);
+  bounds.intersect(srctex.sample_bounds(srcReq));
+  char* dest = dsttex.sample_ptr(dstReq, bounds, 0, invertY);
+  char* src = srctex.sample_ptr(srcReq, bounds, 0);
+  int srcStride = srctex.stride();
+  int destStride = dsttex.stride();
+  if (invertY) {
+    destStride = -destStride;
+  }
+  dest += destStride * bandOffset;
+  src += srcStride * bandOffset;
+  for (int rows = min(bounds.height() - bandOffset, bandHeight); rows > 0;
+       rows--) {
+    unscaled_row_composite((uint32_t*)dest, (const uint32_t*)src,
+                           bounds.width());
+    dest += destStride;
+    src += srcStride;
+  }
+}
+
 // Extension for optimized compositing of textures or framebuffers that may be
 // safely used across threads. The source and destination must be locked to
 // ensure that they can be safely accessed while the SWGL context might be used
@@ -384,54 +447,19 @@ void Composite(LockedTexture* lockedDst, LockedTexture* lockedSrc, GLint srcX,
 
   if (opaque) {
     if (!srcReq.same_size(dstReq) && filter == GL_LINEAR) {
-      linear_blit(srctex, srcReq, 0, dsttex, dstReq, 0, flip, bandOffset, bandHeight);
+      linear_blit(srctex, srcReq, 0, dsttex, dstReq, 0, flip, bandOffset,
+                  bandHeight);
     } else {
-      scale_blit(srctex, srcReq, 0, dsttex, dstReq, 0, flip, bandOffset, bandHeight);
+      scale_blit(srctex, srcReq, 0, dsttex, dstReq, 0, flip, bandOffset,
+                 bandHeight);
     }
   } else {
-    if (!srcReq.same_size(dstReq) || filter == GL_LINEAR) {
-      linear_composite(srctex, srcReq, dsttex, dstReq, flip, bandOffset, bandHeight);
+    if (!srcReq.same_size(dstReq)) {
+      linear_composite(srctex, srcReq, dsttex, dstReq, flip, bandOffset,
+                       bandHeight);
     } else {
-      const int bpp = 4;
-      IntRect bounds = dsttex.sample_bounds(dstReq, flip);
-      bounds.intersect(srctex.sample_bounds(srcReq));
-      char* dest = dsttex.sample_ptr(dstReq, bounds, 0, flip);
-      char* src = srctex.sample_ptr(srcReq, bounds, 0);
-      int srcStride = srctex.stride();
-      int destStride = dsttex.stride();
-      if (flip) {
-        destStride = -destStride;
-      }
-      dest += destStride * bandOffset;
-      src += srcStride * bandOffset;
-      for (int rows = min(bounds.height(), bandHeight); rows > 0; rows--) {
-        char* end = src + bounds.width() * bpp;
-        while (src + 4 * bpp <= end) {
-          WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
-          WideRGBA8 dstpx = unpack(unaligned_load<PackedRGBA8>(dest));
-          PackedRGBA8 r = pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx)));
-          unaligned_store(dest, r);
-          src += 4 * bpp;
-          dest += 4 * bpp;
-        }
-        if (src < end) {
-          WideRGBA8 srcpx = unpack(unaligned_load<PackedRGBA8>(src));
-          WideRGBA8 dstpx = unpack(unaligned_load<PackedRGBA8>(dest));
-          U32 r = bit_cast<U32>(
-              pack(srcpx + dstpx - muldiv255(dstpx, alphas(srcpx))));
-          unaligned_store(dest, r.x);
-          if (src + bpp < end) {
-            unaligned_store(dest + bpp, r.y);
-            if (src + 2 * bpp < end) {
-              unaligned_store(dest + 2 * bpp, r.z);
-            }
-          }
-          dest += end - src;
-          src = end;
-        }
-        dest += destStride - bounds.width() * bpp;
-        src += srcStride - bounds.width() * bpp;
-      }
+      unscaled_composite(srctex, srcReq, dsttex, dstReq, flip, bandOffset,
+                         bandHeight);
     }
   }
 }
@@ -701,9 +729,7 @@ static void linear_row_yuv(uint32_t* dest, int span, const vec2_scalar& srcUV,
     auto uvPx = textureLinearRowPairedR8(&sampler[1], &sampler[2], cU, cOffsetV,
                                          cStrideV, cFracV);
     auto srcpx = YUVConverter<COLOR_SPACE>::convert(yPx, uvPx);
-    auto mask = span_mask_RGBA8(span);
-    auto dstpx = unaligned_load<PackedRGBA8>(dest);
-    unaligned_store(dest, (mask & dstpx) | (~mask & srcpx));
+    partial_store_span(dest, srcpx, span);
   }
 }
 
@@ -750,7 +776,8 @@ static void linear_convert_yuv(Texture& ytex, Texture& utex, Texture& vtex,
   srcUV.y += srcDUV.y * bandOffset;
   chromaUV.y += chromaDUV.y * bandOffset;
   int span = dstBounds.width();
-  for (int rows = min(dstBounds.height(), bandHeight); rows > 0; rows--) {
+  for (int rows = min(dstBounds.height() - bandOffset, bandHeight); rows > 0;
+       rows--) {
     switch (colorSpace) {
       case REC_601:
         linear_row_yuv<REC_601>((uint32_t*)dest, span, srcUV, srcDUV.x,
@@ -809,8 +836,8 @@ void CompositeYUV(LockedTexture* lockedDst, LockedTexture* lockedY,
   // For now, always use a linear filter path that would be required for
   // scaling. Further fast-paths for non-scaled video might be desirable in the
   // future.
-  linear_convert_yuv(ytex, utex, vtex, colorSpace, srcReq, dsttex, dstReq,
-                     flip, bandOffset, bandHeight);
+  linear_convert_yuv(ytex, utex, vtex, colorSpace, srcReq, dsttex, dstReq, flip,
+                     bandOffset, bandHeight);
 }
 
 }  // extern "C"

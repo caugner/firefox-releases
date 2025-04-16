@@ -26,6 +26,7 @@
 #include "mozilla/StaticPrefs_editor.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TextServicesDocument.h"
 #include "mozilla/css/Loader.h"
@@ -130,6 +131,32 @@ HTMLEditor::HTMLEditor()
 }
 
 HTMLEditor::~HTMLEditor() {
+  // Collect the data of `beforeinput` event only when it's enabled because
+  // web apps should switch their behavior with feature detection with
+  // checking `onbeforeinput` or `getTargetRanges`.
+  if (StaticPrefs::dom_input_events_beforeinput_enabled()) {
+    Telemetry::Accumulate(
+        Telemetry::HTMLEDITORS_WITH_BEFOREINPUT_LISTENERS,
+        MayHaveBeforeInputEventListenersForTelemetry() ? 1 : 0);
+    Telemetry::Accumulate(
+        Telemetry::HTMLEDITORS_OVERRIDDEN_BY_BEFOREINPUT_LISTENERS,
+        mHasBeforeInputBeenCanceled ? 1 : 0);
+    Telemetry::Accumulate(
+        Telemetry::
+            HTMLEDITORS_WITH_MUTATION_LISTENERS_WITHOUT_BEFOREINPUT_LISTENERS,
+        !MayHaveBeforeInputEventListenersForTelemetry() &&
+                MayHaveMutationEventListeners()
+            ? 1
+            : 0);
+    Telemetry::Accumulate(
+        Telemetry::
+            HTMLEDITORS_WITH_MUTATION_OBSERVERS_WITHOUT_BEFOREINPUT_LISTENERS,
+        !MayHaveBeforeInputEventListenersForTelemetry() &&
+                MutationObserverHasObservedNodeForTelemetry()
+            ? 1
+            : 0);
+  }
+
   mTypeInState = nullptr;
 
   if (mDisabledLinkHandling) {
@@ -1697,7 +1724,7 @@ nsresult HTMLEditor::InsertElementAtSelectionAsAction(
     // For all other tags, we insert AFTER the selection
     if (HTMLEditUtils::IsNamedAnchor(aElement)) {
       IgnoredErrorResult ignoredError;
-      SelectionRefPtr()->CollapseToStart(ignoredError);
+      MOZ_KnownLive(SelectionRefPtr())->CollapseToStart(ignoredError);
       if (NS_WARN_IF(Destroyed())) {
         return EditorBase::ToGenericNSResult(NS_ERROR_EDITOR_DESTROYED);
       }
@@ -1705,7 +1732,7 @@ nsresult HTMLEditor::InsertElementAtSelectionAsAction(
                            "Selection::CollapseToStart() failed, but ignored");
     } else {
       IgnoredErrorResult ignoredError;
-      SelectionRefPtr()->CollapseToEnd(ignoredError);
+      MOZ_KnownLive(SelectionRefPtr())->CollapseToEnd(ignoredError);
       if (NS_WARN_IF(Destroyed())) {
         return EditorBase::ToGenericNSResult(NS_ERROR_EDITOR_DESTROYED);
       }
@@ -1805,11 +1832,8 @@ EditorDOMPoint HTMLEditor::InsertNodeIntoProperAncestorWithTransaction(
     if (!pointToInsert.IsInContentNode() ||
         !EditorUtils::IsEditableContent(*pointToInsert.ContainerAsContent(),
                                         EditorType::HTML)) {
-      // There's no suitable place to put the node in this editing host.  Maybe
-      // someone is trying to put block content in a span.  So just put it
-      // where we were originally asked.
-      pointToInsert = aPointToInsert;
-      break;
+      // There's no suitable place to put the node in this editing host.
+      return EditorDOMPoint();
     }
   }
 
@@ -1938,7 +1962,7 @@ nsresult HTMLEditor::SetParagraphFormatAsAction(
   MOZ_ASSERT(tagName);
   if (tagName == nsGkAtoms::dd || tagName == nsGkAtoms::dt) {
     EditActionResult result = MakeOrChangeListAndListItemAsSubAction(
-        *tagName, EmptyString(), SelectAllOfCurrentList::No);
+        *tagName, u""_ns, SelectAllOfCurrentList::No);
     NS_WARNING_ASSERTION(result.Succeeded(),
                          "HTMLEditor::MakeOrChangeListAndListItemAsSubAction("
                          "SelectAllOfCurrentList::No) failed");
@@ -2832,7 +2856,7 @@ already_AddRefed<Element> HTMLEditor::CreateElementWithDefaults(
   // Mark the new element dirty, so it will be formatted
   // XXX Don't we need to check the error result of setting _moz_dirty attr?
   IgnoredErrorResult ignoredError;
-  newElement->SetAttribute(u"_moz_dirty"_ns, EmptyString(), ignoredError);
+  newElement->SetAttribute(u"_moz_dirty"_ns, u""_ns, ignoredError);
   NS_WARNING_ASSERTION(!ignoredError.Failed(),
                        "Element::SetAttribute(_moz_dirty) failed, but ignored");
   ignoredError.SuppressException();
@@ -3822,18 +3846,33 @@ nsresult HTMLEditor::SelectAllInternal() {
     return NS_ERROR_FAILURE;
   }
 
-  nsIContent* anchorContent = anchorNode->AsContent();
+  nsCOMPtr<nsIContent> anchorContent = anchorNode->AsContent();
   nsIContent* rootContent;
   if (anchorContent->HasIndependentSelection()) {
     SelectionRefPtr()->SetAncestorLimiter(nullptr);
     rootContent = mRootElement;
+    if (NS_WARN_IF(!rootContent)) {
+      return NS_ERROR_UNEXPECTED;
+    }
   } else {
     RefPtr<PresShell> presShell = GetPresShell();
     rootContent = anchorContent->GetSelectionRootContent(presShell);
-  }
-
-  if (NS_WARN_IF(!rootContent)) {
-    return NS_ERROR_UNEXPECTED;
+    if (NS_WARN_IF(!rootContent)) {
+      return NS_ERROR_UNEXPECTED;
+    }
+    // If the document is HTML document (not XHTML document), we should
+    // select all children of the `<body>` element instead of `<html>`
+    // element.
+    if (Document* document = GetDocument()) {
+      if (document->IsHTMLDocument()) {
+        if (HTMLBodyElement* bodyElement = document->GetBodyElement()) {
+          if (nsContentUtils::ContentIsFlattenedTreeDescendantOf(bodyElement,
+                                                                 rootContent)) {
+            rootContent = bodyElement;
+          }
+        }
+      }
+    }
   }
 
   Maybe<Selection::AutoUserInitiated> userSelection;
@@ -4679,8 +4718,10 @@ nsresult HTMLEditor::DoJoinNodes(nsIContent& aContentToKeep,
 
   if (allowedTransactionsToChangeSelection) {
     // Editor wants us to set selection at join point.
-    DebugOnly<nsresult> rvIgnored = SelectionRefPtr()->CollapseInLimiter(
-        &aContentToKeep, AssertedCast<int32_t>(firstNodeLength));
+    DebugOnly<nsresult> rvIgnored =
+        MOZ_KnownLive(SelectionRefPtr())
+            ->CollapseInLimiter(&aContentToKeep,
+                                AssertedCast<int32_t>(firstNodeLength));
     if (NS_WARN_IF(Destroyed())) {
       return NS_ERROR_EDITOR_DESTROYED;
     }
@@ -4765,7 +4806,8 @@ already_AddRefed<Element> HTMLEditor::DeleteSelectionAndCreateElement(
   EditorRawDOMPoint afterNewElement(EditorRawDOMPoint::After(newElement));
   MOZ_ASSERT(afterNewElement.IsSetAndValid());
   IgnoredErrorResult ignoredError;
-  SelectionRefPtr()->CollapseInLimiter(afterNewElement, ignoredError);
+  MOZ_KnownLive(SelectionRefPtr())
+      ->CollapseInLimiter(afterNewElement, ignoredError);
   if (ignoredError.Failed()) {
     NS_WARNING("Selection::CollapseInLimiter() failed");
     // XXX Even if it succeeded to create new element, this returns error
@@ -4813,7 +4855,8 @@ nsresult HTMLEditor::DeleteSelectionAndPrepareToCreateNode() {
       return NS_ERROR_FAILURE;
     }
     ErrorResult error;
-    SelectionRefPtr()->CollapseInLimiter(atAnchorContainer, error);
+    MOZ_KnownLive(SelectionRefPtr())
+        ->CollapseInLimiter(atAnchorContainer, error);
     NS_WARNING_ASSERTION(!error.Failed(),
                          "Selection::CollapseInLimiter() failed");
     return error.StealNSResult();
@@ -4825,7 +4868,8 @@ nsresult HTMLEditor::DeleteSelectionAndPrepareToCreateNode() {
       return NS_ERROR_FAILURE;
     }
     ErrorResult error;
-    SelectionRefPtr()->CollapseInLimiter(afterAnchorContainer, error);
+    MOZ_KnownLive(SelectionRefPtr())
+        ->CollapseInLimiter(afterAnchorContainer, error);
     NS_WARNING_ASSERTION(!error.Failed(),
                          "Selection::CollapseInLimiter() failed");
     return error.StealNSResult();
@@ -4843,7 +4887,7 @@ nsresult HTMLEditor::DeleteSelectionAndPrepareToCreateNode() {
     return NS_ERROR_FAILURE;
   }
   MOZ_ASSERT(atRightNode.IsSetAndValid());
-  SelectionRefPtr()->CollapseInLimiter(atRightNode, error);
+  MOZ_KnownLive(SelectionRefPtr())->CollapseInLimiter(atRightNode, error);
   NS_WARNING_ASSERTION(!error.Failed(),
                        "Selection::CollapseInLimiter() failed");
   return error.StealNSResult();
@@ -6283,7 +6327,25 @@ nsresult HTMLEditor::GetPreferredIMEState(IMEState* aState) {
 
 already_AddRefed<Element> HTMLEditor::GetInputEventTargetElement() const {
   RefPtr<Element> target = GetActiveEditingHost();
-  return target.forget();
+  if (target) {
+    return target.forget();
+  }
+
+  // When there is no active editing host due to focus node is a
+  // non-editable node, we should look for its editable parent to
+  // dispatch `beforeinput` event.
+  nsIContent* focusContent =
+      nsIContent::FromNodeOrNull(SelectionRefPtr()->GetFocusNode());
+  if (!focusContent || focusContent->IsEditable()) {
+    return nullptr;
+  }
+  for (Element* element : focusContent->AncestorsOfType<Element>()) {
+    if (element->IsEditable()) {
+      target = element->GetEditingHost();
+      return target.forget();
+    }
+  }
+  return nullptr;
 }
 
 Element* HTMLEditor::GetEditorRoot() const { return GetActiveEditingHost(); }

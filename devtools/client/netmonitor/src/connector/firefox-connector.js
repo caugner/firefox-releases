@@ -73,10 +73,7 @@ class FirefoxConnector {
     );
 
     await this.toolbox.resourceWatcher.watchResources(
-      [
-        this.toolbox.resourceWatcher.TYPES.DOCUMENT_EVENT,
-        this.toolbox.resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE,
-      ],
+      [this.toolbox.resourceWatcher.TYPES.DOCUMENT_EVENT],
       { onAvailable: this.onResourceAvailable }
     );
   }
@@ -95,10 +92,7 @@ class FirefoxConnector {
     );
 
     this.toolbox.resourceWatcher.unwatchResources(
-      [
-        this.toolbox.resourceWatcher.TYPES.DOCUMENT_EVENT,
-        this.toolbox.resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE,
-      ],
+      [this.toolbox.resourceWatcher.TYPES.DOCUMENT_EVENT],
       { onAvailable: this.onResourceAvailable }
     );
 
@@ -148,8 +142,13 @@ class FirefoxConnector {
       owner: this.owner,
     });
 
-    // Register all listeners
-    await this.addListeners();
+    // Register target listeners if we switched to a new top level one
+    if (isTargetSwitching) {
+      await this.addTargetListeners();
+    } else {
+      // Otherwise, this is the first top level target, so register all the listeners
+      await this.addListeners();
+    }
 
     // Initialize Responsive Emulation front for network throttling.
     this.responsiveFront = await this.currentTarget.getFront("responsive");
@@ -227,7 +226,10 @@ class FirefoxConnector {
   }
 
   async addListeners(ignoreExistingResources = false) {
-    const targetResources = [this.toolbox.resourceWatcher.TYPES.NETWORK_EVENT];
+    const targetResources = [
+      this.toolbox.resourceWatcher.TYPES.NETWORK_EVENT,
+      this.toolbox.resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE,
+    ];
     if (Services.prefs.getBoolPref("devtools.netmonitor.features.webSockets")) {
       targetResources.push(this.toolbox.resourceWatcher.TYPES.WEBSOCKET);
     }
@@ -238,6 +240,10 @@ class FirefoxConnector {
       ignoreExistingResources,
     });
 
+    await this.addTargetListeners();
+  }
+
+  async addTargetListeners() {
     // Support for EventSource monitoring is currently hidden behind this pref.
     if (
       Services.prefs.getBoolPref(
@@ -259,6 +265,7 @@ class FirefoxConnector {
     this.toolbox.resourceWatcher.unwatchResources(
       [
         this.toolbox.resourceWatcher.TYPES.NETWORK_EVENT,
+        this.toolbox.resourceWatcher.TYPES.NETWORK_EVENT_STACKTRACE,
         this.toolbox.resourceWatcher.TYPES.WEBSOCKET,
       ],
       {

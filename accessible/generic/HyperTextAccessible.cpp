@@ -8,6 +8,7 @@
 
 #include "Accessible-inl.h"
 #include "nsAccessibilityService.h"
+#include "nsAccessiblePivot.h"
 #include "nsIAccessibleTypes.h"
 #include "DocAccessible.h"
 #include "HTMLListAccessible.h"
@@ -38,6 +39,7 @@
 #include "mozilla/HTMLEditor.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLBRElement.h"
@@ -48,6 +50,116 @@
 
 using namespace mozilla;
 using namespace mozilla::a11y;
+
+/**
+ * This class is used in HyperTextAccessible to search for paragraph
+ * boundaries.
+ */
+class ParagraphBoundaryRule : public PivotRule {
+ public:
+  explicit ParagraphBoundaryRule(Accessible* aAnchor,
+                                 uint32_t aAnchorTextoffset,
+                                 nsDirection aDirection,
+                                 bool aSkipAnchorSubtree = false)
+      : mAnchor(aAnchor),
+        mAnchorTextOffset(aAnchorTextoffset),
+        mDirection(aDirection),
+        mSkipAnchorSubtree(aSkipAnchorSubtree),
+        mLastMatchTextOffset(0) {}
+
+  virtual uint16_t Match(const AccessibleOrProxy& aAccOrProxy) override {
+    MOZ_ASSERT(aAccOrProxy.IsAccessible());
+    Accessible* acc = aAccOrProxy.AsAccessible();
+    if (acc->IsOuterDoc()) {
+      // The child document might be remote and we can't (and don't want to)
+      // handle remote documents. Also, iframes are inline anyway and thus
+      // can't be paragraph boundaries. Therefore, skip this unconditionally.
+      return nsIAccessibleTraversalRule::FILTER_IGNORE_SUBTREE;
+    }
+
+    uint16_t result = nsIAccessibleTraversalRule::FILTER_IGNORE;
+    if (mSkipAnchorSubtree && acc == mAnchor) {
+      result |= nsIAccessibleTraversalRule::FILTER_IGNORE_SUBTREE;
+    }
+
+    // First, deal with the case that we encountered a line break, for example,
+    // a br in a paragraph.
+    if (acc->Role() == roles::WHITESPACE) {
+      result |= nsIAccessibleTraversalRule::FILTER_MATCH;
+      return result;
+    }
+
+    // Now, deal with the case that we encounter a new block level accessible.
+    // This also means a new paragraph boundary start.
+    nsIFrame* frame = acc->GetFrame();
+    if (frame && frame->IsBlockFrame()) {
+      result |= nsIAccessibleTraversalRule::FILTER_MATCH;
+      return result;
+    }
+
+    // A text leaf can contain a line break if it's pre-formatted text.
+    if (acc->IsTextLeaf()) {
+      nsAutoString name;
+      acc->Name(name);
+      int32_t offset;
+      if (mDirection == eDirPrevious) {
+        if (acc == mAnchor && mAnchorTextOffset == 0) {
+          // We're already at the start of this node, so there can be no line
+          // break before.
+          return result;
+        }
+        // If we began on a line break, we don't want to match it, so search
+        // from 1 before our anchor offset.
+        offset =
+            name.RFindChar('\n', acc == mAnchor ? mAnchorTextOffset - 1 : -1);
+      } else {
+        offset = name.FindChar('\n', acc == mAnchor ? mAnchorTextOffset : 0);
+      }
+      if (offset != -1) {
+        // Line ebreak!
+        mLastMatchTextOffset = offset;
+        result |= nsIAccessibleTraversalRule::FILTER_MATCH;
+      }
+    }
+
+    return result;
+  }
+
+  // This is only valid if the last match was a text leaf. It returns the
+  // offset of the line break character in that text leaf.
+  uint32_t GetLastMatchTextOffset() { return mLastMatchTextOffset; }
+
+ private:
+  Accessible* mAnchor;
+  uint32_t mAnchorTextOffset;
+  nsDirection mDirection;
+  bool mSkipAnchorSubtree;
+  uint32_t mLastMatchTextOffset;
+};
+
+/**
+ * This class is used in HyperTextAccessible::FindParagraphStartOffset to
+ * search forward exactly one step from a match found by the above.
+ * It should only be initialized with a boundary, and it will skip that
+ * boundary's sub tree if it is a block element boundary.
+ */
+class SkipParagraphBoundaryRule : public PivotRule {
+ public:
+  explicit SkipParagraphBoundaryRule(AccessibleOrProxy& aBoundary)
+      : mBoundary(aBoundary) {}
+
+  virtual uint16_t Match(const AccessibleOrProxy& aAccOrProxy) override {
+    MOZ_ASSERT(aAccOrProxy.IsAccessible());
+    // If matching the boundary, skip its sub tree.
+    if (aAccOrProxy == mBoundary) {
+      return nsIAccessibleTraversalRule::FILTER_IGNORE_SUBTREE;
+    }
+    return nsIAccessibleTraversalRule::FILTER_MATCH;
+  }
+
+ private:
+  AccessibleOrProxy& mBoundary;
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // HyperTextAccessible
@@ -322,56 +434,6 @@ uint32_t HyperTextAccessible::TransformOffset(Accessible* aDescendant,
   return CharacterCount();
 }
 
-/**
- * GetElementAsContentOf() returns a content representing an element which is
- * or includes aNode.
- *
- * XXX This method is enough to retrieve ::before or ::after pseudo element.
- *     So, if you want to use this for other purpose, you might need to check
- *     ancestors too.
- */
-static nsIContent* GetElementAsContentOf(nsINode* aNode) {
-  if (auto* element = dom::Element::FromNode(aNode)) {
-    return element;
-  }
-  return aNode->GetParentElement();
-}
-
-bool HyperTextAccessible::OffsetsToDOMRange(int32_t aStartOffset,
-                                            int32_t aEndOffset,
-                                            nsRange* aRange) const {
-  DOMPoint startPoint = OffsetToDOMPoint(aStartOffset);
-  if (!startPoint.node) return false;
-
-  // HyperTextAccessible manages pseudo elements generated by ::before or
-  // ::after.  However, contents of them are not in the DOM tree normally.
-  // Therefore, they are not selectable and editable.  So, when this creates
-  // a DOM range, it should not start from nor end in any pseudo contents.
-
-  nsIContent* container = GetElementAsContentOf(startPoint.node);
-  DOMPoint startPointForDOMRange =
-      ClosestNotGeneratedDOMPoint(startPoint, container);
-  aRange->SetStart(startPointForDOMRange.node, startPointForDOMRange.idx);
-
-  // If the caller wants collapsed range, let's collapse the range to its start.
-  if (aStartOffset == aEndOffset) {
-    aRange->Collapse(true);
-    return true;
-  }
-
-  DOMPoint endPoint = OffsetToDOMPoint(aEndOffset);
-  if (!endPoint.node) return false;
-
-  if (startPoint.node != endPoint.node) {
-    container = GetElementAsContentOf(endPoint.node);
-  }
-
-  DOMPoint endPointForDOMRange =
-      ClosestNotGeneratedDOMPoint(endPoint, container);
-  aRange->SetEnd(endPointForDOMRange.node, endPointForDOMRange.idx);
-  return true;
-}
-
 DOMPoint HyperTextAccessible::OffsetToDOMPoint(int32_t aOffset) const {
   // 0 offset is valid even if no children. In this case the associated editor
   // is empty so return a DOM point for editor root element.
@@ -418,34 +480,6 @@ DOMPoint HyperTextAccessible::OffsetToDOMPoint(int32_t aOffset) const {
                     : DOMPoint();
 }
 
-DOMPoint HyperTextAccessible::ClosestNotGeneratedDOMPoint(
-    const DOMPoint& aDOMPoint, nsIContent* aElementContent) const {
-  MOZ_ASSERT(aDOMPoint.node, "The node must not be null");
-
-  // ::before pseudo element
-  if (aElementContent &&
-      aElementContent->IsGeneratedContentContainerForBefore()) {
-    MOZ_ASSERT(aElementContent->GetParent(),
-               "::before must have parent element");
-    // The first child of its parent (i.e., immediately after the ::before) is
-    // good point for a DOM range.
-    return DOMPoint(aElementContent->GetParent(), 0);
-  }
-
-  // ::after pseudo element
-  if (aElementContent &&
-      aElementContent->IsGeneratedContentContainerForAfter()) {
-    MOZ_ASSERT(aElementContent->GetParent(),
-               "::after must have parent element");
-    // The end of its parent (i.e., immediately before the ::after) is good
-    // point for a DOM range.
-    return DOMPoint(aElementContent->GetParent(),
-                    aElementContent->GetParent()->GetChildCount());
-  }
-
-  return aDOMPoint;
-}
-
 uint32_t HyperTextAccessible::FindOffset(uint32_t aOffset,
                                          nsDirection aDirection,
                                          nsSelectionAmount aAmount,
@@ -490,7 +524,6 @@ uint32_t HyperTextAccessible::FindOffset(uint32_t aOffset,
         switch (aAmount) {
           case eSelectLine:
           case eSelectEndLine:
-          case eSelectParagraph:
             // Ask a text leaf next (if not empty) to the bullet for an offset
             // since list item may be multiline.
             return nextOffset < CharacterCount()
@@ -552,13 +585,11 @@ uint32_t HyperTextAccessible::FindOffset(uint32_t aOffset,
   uint32_t hyperTextOffset = DOMPointToOffset(
       pos.mResultContent, pos.mContentOffset, aDirection == eDirNext);
 
-  if ((fallBackToSelectEndLine || aAmount == eSelectParagraph) &&
-      IsLineEndCharAt(hyperTextOffset)) {
+  if (fallBackToSelectEndLine && IsLineEndCharAt(hyperTextOffset)) {
     // We used eSelectEndLine, but the caller requested eSelectLine.
-    // Or, we were asked for the paragraph.
-    // If there's a '\n' at the end of the line, eSelectEndLine and
-    // eSelectParagraph will stop on it rather than after it. This is not what
-    // we want, since the caller wants the next line, not the same line.
+    // If there's a '\n' at the end of the line, eSelectEndLine will stop on
+    // it rather than after it. This is not what we want, since the caller
+    // wants the next line, not the same line.
     ++hyperTextOffset;
   }
 
@@ -568,8 +599,7 @@ uint32_t HyperTextAccessible::FindOffset(uint32_t aOffset,
     if (hyperTextOffset == CharacterCount()) return 0;
 
     // PeekOffset stops right before bullet so return 0 to workaround it.
-    if (IsHTMLListItem() &&
-        (aAmount == eSelectBeginLine || aAmount == eSelectParagraph) &&
+    if (IsHTMLListItem() && aAmount == eSelectBeginLine &&
         hyperTextOffset > 0) {
       Accessible* prevOffsetChild = GetChildAtOffset(hyperTextOffset - 1);
       if (prevOffsetChild == AsHTMLListItem()->Bullet()) return 0;
@@ -577,6 +607,101 @@ uint32_t HyperTextAccessible::FindOffset(uint32_t aOffset,
   }
 
   return hyperTextOffset;
+}
+
+uint32_t HyperTextAccessible::FindWordBoundary(
+    uint32_t aOffset, nsDirection aDirection,
+    EWordMovementType aWordMovementType) {
+  uint32_t orig =
+      FindOffset(aOffset, aDirection, eSelectWord, aWordMovementType);
+  if (aWordMovementType != eStartWord) {
+    return orig;
+  }
+  if (aDirection == eDirPrevious) {
+    // When layout.word_select.stop_at_punctuation is true (the default),
+    // for a word beginning with punctuation, layout treats the punctuation
+    // as the start of the word when moving next. However, when moving
+    // previous, layout stops *after* the punctuation. We want to be
+    // consistent regardless of movement direction and always treat punctuation
+    // as the start of a word.
+    if (!StaticPrefs::layout_word_select_stop_at_punctuation()) {
+      return orig;
+    }
+    // Case 1: Example: "a @"
+    // If aOffset is 2 or 3, orig will be 0, but it should be 2. That is,
+    // previous word moved back too far.
+    Accessible* child = GetChildAtOffset(orig);
+    if (child && child->IsHyperText()) {
+      // For a multi-word embedded object, previous word correctly goes back
+      // to the start of the word (the embedded object). Next word (below)
+      // incorrectly stops after the embedded object in this case, so return
+      // the already correct result.
+      // Example: "a x y b", where "x y" is an embedded link
+      // If aOffset is 4, orig will be 2, which is correct.
+      // If we get the next word (below), we'll end up returning 3 instead.
+      return orig;
+    }
+    uint32_t next = FindOffset(orig, eDirNext, eSelectWord, eStartWord);
+    if (next < aOffset) {
+      // Next word stopped on punctuation.
+      return next;
+    }
+    // case 2: example: "a @@b"
+    // If aOffset is 2, 3 or 4, orig will be 4, but it should be 2. That is,
+    // previous word didn't go back far enough.
+    if (orig == 0) {
+      return orig;
+    }
+    // Walk backwards by offset, getting the next word.
+    // In the loop, o is unsigned, so o >= 0 will always be true and won't
+    // prevent us from decrementing at 0. Instead, we check that o doesn't
+    // wrap around.
+    for (uint32_t o = orig - 1; o < orig; --o) {
+      next = FindOffset(o, eDirNext, eSelectWord, eStartWord);
+      if (next == orig) {
+        // Next word and previous word were consistent. This
+        // punctuation problem isn't applicable here.
+        break;
+      }
+      if (next < orig) {
+        // Next word stopped on punctuation.
+        return next;
+      }
+    }
+  } else {
+    // When layout.word_select.stop_at_punctuation is true (the default),
+    // when positioned on punctuation in the middle of a word, next word skips
+    // the rest of the word. However, when positioned before the punctuation,
+    // next word moves just after the punctuation. We want to be consistent
+    // regardless of starting position and always stop just after the
+    // punctuation.
+    // Next word can move too far when positioned on white space too.
+    // Example: "a b@c"
+    // If aOffset is 3, orig will be 5, but it should be 4. That is, next word
+    // moved too far.
+    if (aOffset == 0) {
+      return orig;
+    }
+    uint32_t prev = FindOffset(orig, eDirPrevious, eSelectWord, eStartWord);
+    if (prev <= aOffset) {
+      // orig definitely isn't too far forward.
+      return orig;
+    }
+    // Walk backwards by offset, getting the next word.
+    // In the loop, o is unsigned, so o >= 0 will always be true and won't
+    // prevent us from decrementing at 0. Instead, we check that o doesn't
+    // wrap around.
+    for (uint32_t o = aOffset - 1; o < aOffset; --o) {
+      uint32_t next = FindOffset(o, eDirNext, eSelectWord, eStartWord);
+      if (next > aOffset && next < orig) {
+        return next;
+      }
+      if (next <= aOffset) {
+        break;
+      }
+    }
+  }
+  return orig;
 }
 
 uint32_t HyperTextAccessible::FindLineBoundary(
@@ -643,6 +768,110 @@ uint32_t HyperTextAccessible::FindLineBoundary(
   }
 
   return 0;
+}
+
+int32_t HyperTextAccessible::FindParagraphStartOffset(uint32_t aOffset) {
+  // Because layout often gives us offsets that are incompatible with
+  // accessibility API requirements, for example when a paragraph contains
+  // presentational line breaks as found in Google Docs, use the accessibility
+  // tree to find the start offset instead.
+  Accessible* child = GetChildAtOffset(aOffset);
+  if (!child) {
+    return -1;  // Invalid offset
+  }
+
+  // Use the pivot class to search for the start  offset.
+  Pivot p = Pivot(this);
+  ParagraphBoundaryRule boundaryRule = ParagraphBoundaryRule(
+      child, child->IsTextLeaf() ? aOffset - GetChildOffset(child) : 0,
+      eDirPrevious);
+  AccessibleOrProxy wrappedChild = AccessibleOrProxy(child);
+  AccessibleOrProxy match = p.Prev(wrappedChild, boundaryRule, true);
+  if (match.IsNull() || match.AsAccessible() == this) {
+    // Found nothing, or pivot found the root of the search, startOffset is 0.
+    // This will include all relevant text nodes.
+    return 0;
+  }
+
+  if (match == wrappedChild) {
+    // We started out on a boundary.
+    if (match.Role() == roles::WHITESPACE) {
+      // We are on a line break boundary, so force pivot to find the previous
+      // boundary. What we want is any text before this, if any.
+      match = p.Prev(match, boundaryRule);
+      if (match.IsNull() || match.AsAccessible() == this) {
+        // Same as before, we landed on the root, so offset is definitely 0.
+        return 0;
+      }
+    } else if (!match.AsAccessible()->IsTextLeaf()) {
+      // The match is a block element, which is always a starting point, so
+      // just return its offset.
+      return TransformOffset(match.AsAccessible(), 0, false);
+    }
+  }
+
+  if (match.AsAccessible()->IsTextLeaf()) {
+    // ParagraphBoundaryRule only returns a text leaf if it contains a line
+    // break. We want to stop after that.
+    return TransformOffset(match.AsAccessible(),
+                           boundaryRule.GetLastMatchTextOffset() + 1, false);
+  }
+
+  // This is a previous boundary, we don't want to include it itself.
+  // So, walk forward one accessible, excluding the descendants of this
+  // boundary if it is a block element. The below call to Next should always be
+  // initialized with a boundary.
+  SkipParagraphBoundaryRule goForwardOneRule = SkipParagraphBoundaryRule(match);
+  match = p.Next(match, goForwardOneRule);
+  // We already know that the search skipped over at least one accessible,
+  // so match can't be null. Get its transformed offset.
+  MOZ_ASSERT(!match.IsNull());
+  return TransformOffset(match.AsAccessible(), 0, false);
+}
+
+int32_t HyperTextAccessible::FindParagraphEndOffset(uint32_t aOffset) {
+  // Because layout often gives us offsets that are incompatible with
+  // accessibility API requirements, for example when a paragraph contains
+  // presentational line breaks as found in Google Docs, use the accessibility
+  // tree to find the end offset instead.
+  Accessible* child = GetChildAtOffset(aOffset);
+  if (!child) {
+    return -1;  // invalid offset
+  }
+
+  // Use the pivot class to search for the end offset.
+  Pivot p = Pivot(this);
+  AccessibleOrProxy wrappedChild = AccessibleOrProxy(child);
+  ParagraphBoundaryRule boundaryRule = ParagraphBoundaryRule(
+      child, child->IsTextLeaf() ? aOffset - GetChildOffset(child) : 0,
+      eDirNext,
+      // In order to encompass all paragraphs inside embedded objects, not just
+      // the first, we want to skip the anchor's subtree.
+      /* aSkipAnchorSubtree */ true);
+  // Search forward for the end offset, including wrappedChild. We don't want
+  // to go beyond this point if this offset indicates a paragraph boundary.
+  AccessibleOrProxy match = p.Next(wrappedChild, boundaryRule, true);
+  if (!match.IsNull()) {
+    // Found something of relevance, adjust end offset.
+    Accessible* matchAcc = match.AsAccessible();
+    uint32_t matchOffset;
+    if (matchAcc->IsTextLeaf()) {
+      // ParagraphBoundaryRule only returns a text leaf if it contains a line
+      // break.
+      matchOffset = boundaryRule.GetLastMatchTextOffset() + 1;
+    } else if (matchAcc->Role() != roles::WHITESPACE && matchAcc != child) {
+      // We found a block boundary that wasn't our origin. We want to stop
+      // right on it, not after it, since we don't want to include the content
+      // of the block.
+      matchOffset = 0;
+    } else {
+      matchOffset = nsAccUtils::TextLength(matchAcc);
+    }
+    return TransformOffset(matchAcc, matchOffset, true);
+  }
+
+  // Didn't find anything, end offset is character count.
+  return CharacterCount();
 }
 
 void HyperTextAccessible::TextBeforeOffset(int32_t aOffset,
@@ -797,33 +1026,8 @@ void HyperTextAccessible::TextAtOffset(int32_t aOffset,
         break;
       }
 
-      if (IsLineEndCharAt(adjustedOffset)) {
-        // Layout gives us different results for a paragraph with line breaks.
-        // For the text, we get the text, for the line break, we get the text
-        // with the line break included. We adjust for the former case in
-        // FindOffset. However, querying on the whitespace also gives us text
-        // from the next chunk, which is never what we want. So, adjust the
-        // offset to make sure we always get the text with the '\n' included.
-        if (adjustedOffset == 0 || IsLineEndCharAt(adjustedOffset - 1)) {
-          // However, if the line break is at the start of the enclosing
-          // paragraph, or the character before this is also a line break, we
-          // want this to be only '\n'. In addition, layout would still
-          // give us the text of the next chunk here, too, which is still
-          // not what we want, either.
-          *aStartOffset = adjustedOffset;
-          *aEndOffset = adjustedOffset + 1;
-          TextSubstring(*aStartOffset, *aEndOffset, aText);
-          break;
-        }
-
-        // We're on a non-line-end character, adjust the offset and
-        // calculate the paragraph text and offsets as usual.
-        adjustedOffset--;
-      }
-
-      *aStartOffset =
-          FindOffset(adjustedOffset, eDirPrevious, eSelectParagraph);
-      *aEndOffset = FindOffset(adjustedOffset, eDirNext, eSelectParagraph);
+      *aStartOffset = FindParagraphStartOffset(adjustedOffset);
+      *aEndOffset = FindParagraphEndOffset(adjustedOffset);
       TextSubstring(*aStartOffset, *aEndOffset, aText);
       break;
     }
@@ -1634,41 +1838,8 @@ bool HyperTextAccessible::SetSelectionBoundsAt(int32_t aSelectionNum,
     return false;
   }
 
-  RefPtr<dom::Selection> domSel = DOMSelection();
-  if (!domSel) return false;
-
-  RefPtr<nsRange> range;
-  uint32_t rangeCount = domSel->RangeCount();
-  if (aSelectionNum == static_cast<int32_t>(rangeCount)) {
-    range = nsRange::Create(mContent);
-  } else {
-    range = domSel->GetRangeAt(aSelectionNum);
-  }
-
-  if (!range) return false;
-
-  if (!OffsetsToDOMRange(std::min(startOffset, endOffset),
-                         std::max(startOffset, endOffset), range))
-    return false;
-
-  // If this is not a new range, notify selection listeners that the existing
-  // selection range has changed. Otherwise, just add the new range.
-  if (aSelectionNum != static_cast<int32_t>(rangeCount)) {
-    domSel->RemoveRangeAndUnselectFramesAndNotifyListeners(*range,
-                                                           IgnoreErrors());
-  }
-
-  IgnoredErrorResult err;
-  domSel->AddRangeAndSelectFramesAndNotifyListeners(*range, err);
-
-  if (!err.Failed()) {
-    // Changing the direction of the selection assures that the caret
-    // will be at the logical end of the selection.
-    domSel->SetDirection(startOffset < endOffset ? eDirNext : eDirPrevious);
-    return true;
-  }
-
-  return false;
+  TextRange range(this, this, startOffset, this, endOffset);
+  return range.SetSelectionAt(aSelectionNum);
 }
 
 bool HyperTextAccessible::RemoveFromSelection(int32_t aSelectionNum) {
@@ -1688,9 +1859,8 @@ bool HyperTextAccessible::RemoveFromSelection(int32_t aSelectionNum) {
 void HyperTextAccessible::ScrollSubstringTo(int32_t aStartOffset,
                                             int32_t aEndOffset,
                                             uint32_t aScrollType) {
-  RefPtr<nsRange> range = nsRange::Create(mContent);
-  if (OffsetsToDOMRange(aStartOffset, aEndOffset, range))
-    nsCoreUtils::ScrollSubstringTo(GetFrame(), range, aScrollType);
+  TextRange range(this, this, aStartOffset, this, aEndOffset);
+  range.ScrollIntoView(aScrollType);
 }
 
 void HyperTextAccessible::ScrollSubstringToPoint(int32_t aStartOffset,
@@ -1703,8 +1873,11 @@ void HyperTextAccessible::ScrollSubstringToPoint(int32_t aStartOffset,
   nsIntPoint coords =
       nsAccUtils::ConvertToScreenCoords(aX, aY, aCoordinateType, this);
 
-  RefPtr<nsRange> range = nsRange::Create(mContent);
-  if (!OffsetsToDOMRange(aStartOffset, aEndOffset, range)) return;
+  RefPtr<nsRange> domRange = nsRange::Create(mContent);
+  TextRange range(this, this, aStartOffset, this, aEndOffset);
+  if (!range.AssignDOMRange(domRange)) {
+    return;
+  }
 
   nsPresContext* presContext = frame->PresContext();
   nsPoint coordsInAppUnits =
@@ -1732,7 +1905,7 @@ void HyperTextAccessible::ScrollSubstringToPoint(int32_t aStartOffset,
         int16_t vPercent = offsetPointY * 100 / size.height;
 
         nsresult rv = nsCoreUtils::ScrollSubstringTo(
-            frame, range, ScrollAxis(vPercent, WhenToScroll::Always),
+            frame, domRange, ScrollAxis(vPercent, WhenToScroll::Always),
             ScrollAxis(hPercent, WhenToScroll::Always));
         if (NS_FAILED(rv)) return;
 

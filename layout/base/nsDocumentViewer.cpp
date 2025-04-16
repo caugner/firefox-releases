@@ -91,7 +91,7 @@
 #include "nsIPromptCollection.h"
 #include "nsIPromptService.h"
 #include "imgIContainer.h"  // image animation mode constants
-
+#include "nsIXULRuntime.h"
 #include "nsSandboxFlags.h"
 
 #include "mozilla/DocLoadingTimelineMarker.h"
@@ -153,7 +153,7 @@ using PrintPreviewResolver =
 extern mozilla::LazyLogModule gPageCacheLog;
 
 #ifdef NS_PRINTING
-static mozilla::LazyLogModule gPrintingLog("printing");
+mozilla::LazyLogModule gPrintingLog("printing");
 
 #  define PR_PL(_p1) MOZ_LOG(gPrintingLog, mozilla::LogLevel::Debug, _p1);
 #endif  // NS_PRINTING
@@ -408,8 +408,7 @@ class nsDocumentViewer final : public nsIContentViewer,
 
   nsresult PrintPreviewScrollToPageForOldUI(int16_t aType, int32_t aPageNum);
 
-  std::tuple<const nsIFrame*, int32_t> GetCurrentSheetFrameAndPageNumber()
-      const;
+  std::tuple<const nsIFrame*, int32_t> GetCurrentSheetFrameAndNumber() const;
 
  protected:
   // Returns the current viewmanager.  Might be null.
@@ -1161,10 +1160,9 @@ nsDocumentViewer::LoadComplete(nsresult aStatus) {
       }
     }
   }
-  // Release the JS bytecode cache from its wait on the load event, and
-  // potentially dispatch the encoding of the bytecode.
-  if (mDocument && mDocument->ScriptLoader()) {
-    mDocument->ScriptLoader()->LoadEventFired();
+
+  if (mDocument && !restoring) {
+    mDocument->LoadEventFired();
   }
 
   // It's probably a good idea to GC soon since we have finished loading.
@@ -1201,29 +1199,110 @@ bool nsDocumentViewer::GetLoadCompleted() { return mLoaded; }
 bool nsDocumentViewer::GetIsStopped() { return mStopped; }
 
 NS_IMETHODIMP
-nsDocumentViewer::PermitUnload(uint32_t aPermitUnloadFlags,
+nsDocumentViewer::PermitUnload(PermitUnloadAction aAction,
                                bool* aPermitUnload) {
-  return PermitUnloadInternal(&aPermitUnloadFlags, aPermitUnload);
-}
+  // We're going to be running JS and nested event loops, which could cause our
+  // DocShell to be destroyed. Make sure we stay alive until the end of the
+  // function.
+  RefPtr<nsDocumentViewer> kungFuDeathGrip(this);
 
-nsresult nsDocumentViewer::PermitUnloadInternal(uint32_t* aPermitUnloadFlags,
-                                                bool* aPermitUnload) {
-  AutoDontWarnAboutSyncXHR disableSyncXHRWarning;
+  if (StaticPrefs::dom_disable_beforeunload()) {
+    aAction = eDontPromptAndUnload;
+  }
 
-  nsresult rv = NS_OK;
   *aPermitUnload = true;
 
-  if (!mDocument || mInPermitUnload || mInPermitUnloadPrompt) {
+  RefPtr<BrowsingContext> bc = mContainer->GetBrowsingContext();
+  if (!bc) {
     return NS_OK;
   }
 
-  // First, get the script global object from the document...
-  nsPIDOMWindowOuter* window = mDocument->GetWindow();
+  // Per spec, we need to increase the ignore-opens-during-unload counter while
+  // dispatching the "beforeunload" event on both the document we're currently
+  // dispatching the event to and the document that we explicitly asked to
+  // unload.
+  IgnoreOpensDuringUnload ignoreOpens(mDocument);
 
+  bool foundBlocker = false;
+  bool foundOOPListener = false;
+  bc->PreOrderWalk([&](BrowsingContext* aBC) {
+    if (!aBC->IsInProcess()) {
+      WindowContext* wc = aBC->GetCurrentWindowContext();
+      if (wc && wc->HasBeforeUnload()) {
+        foundOOPListener = true;
+      }
+    } else if (aBC->GetDocShell()) {
+      nsCOMPtr<nsIContentViewer> contentViewer(
+          aBC->GetDocShell()->GetContentViewer());
+      if (contentViewer &&
+          contentViewer->DispatchBeforeUnload() == eRequestBlockNavigation) {
+        foundBlocker = true;
+      }
+    }
+  });
+
+  if (!foundOOPListener) {
+    if (!foundBlocker) {
+      return NS_OK;
+    }
+    if (aAction != ePrompt) {
+      *aPermitUnload = aAction == eDontPromptAndUnload;
+      return NS_OK;
+    }
+  }
+
+  // NB: we nullcheck mDocument because it might now be dead as a result of
+  // the event being dispatched.
+  RefPtr<WindowGlobalChild> wgc(mDocument ? mDocument->GetWindowGlobalChild()
+                                          : nullptr);
+  if (!wgc) {
+    return NS_OK;
+  }
+
+  nsAutoSyncOperation sync(mDocument);
+  AutoSuppressEventHandlingAndSuspend seh(bc->Group());
+
+  mInPermitUnloadPrompt = true;
+
+  bool done = false;
+  wgc->SendCheckPermitUnload(
+      foundBlocker, aAction,
+      [&](bool aPermit) {
+        done = true;
+        *aPermitUnload = aPermit;
+      },
+      [&](auto) {
+        // If the prompt aborted, we tell our consumer that it is not allowed
+        // to unload the page. One reason that prompts abort is that the user
+        // performed some action that caused the page to unload while our prompt
+        // was active. In those cases we don't want our consumer to also unload
+        // the page.
+        //
+        // XXX: Are there other cases where prompts can abort? Is it ok to
+        //      prevent unloading the page in those cases?
+        done = true;
+        *aPermitUnload = false;
+      });
+
+  SpinEventLoopUntil([&]() { return done; });
+
+  mInPermitUnloadPrompt = false;
+  return NS_OK;
+}
+
+PermitUnloadResult nsDocumentViewer::DispatchBeforeUnload() {
+  AutoDontWarnAboutSyncXHR disableSyncXHRWarning;
+
+  if (!mDocument || mInPermitUnload || mInPermitUnloadPrompt) {
+    return eAllowNavigation;
+  }
+
+  // First, get the script global object from the document...
+  auto* window = nsGlobalWindowOuter::Cast(mDocument->GetWindow());
   if (!window) {
     // This is odd, but not fatal
     NS_WARNING("window not set for document!");
-    return NS_OK;
+    return eAllowNavigation;
   }
 
   NS_ASSERTION(nsContentUtils::IsSafeToRunScript(), "This is unsafe");
@@ -1250,109 +1329,35 @@ nsresult nsDocumentViewer::PermitUnloadInternal(uint32_t* aPermitUnloadFlags,
   // onbeforeunload event, don't let that happen. (see also bug#331040)
   RefPtr<nsDocumentViewer> kungFuDeathGrip(this);
 
-  bool dialogsAreEnabled = false;
   {
     // Never permit popups from the beforeunload handler, no matter
     // how we get here.
     AutoPopupStatePusher popupStatePusher(PopupBlocker::openAbused, true);
 
     // Never permit dialogs from the beforeunload handler
-    nsGlobalWindowOuter* globalWindow = nsGlobalWindowOuter::Cast(window);
-    dialogsAreEnabled = globalWindow->AreDialogsEnabled();
-    nsGlobalWindowOuter::TemporarilyDisableDialogs disableDialogs(globalWindow);
+    nsGlobalWindowOuter::TemporarilyDisableDialogs disableDialogs(window);
 
     Document::PageUnloadingEventTimeStamp timestamp(mDocument);
 
     mInPermitUnload = true;
-    EventDispatcher::DispatchDOMEvent(window, nullptr, event, mPresContext,
-                                      nullptr);
+    EventDispatcher::DispatchDOMEvent(ToSupports(window), nullptr, event,
+                                      mPresContext, nullptr);
     mInPermitUnload = false;
   }
 
-  nsCOMPtr<nsIDocShell> docShell(mContainer);
   nsAutoString text;
   event->GetReturnValue(text);
 
-  if (StaticPrefs::dom_disable_beforeunload()) {
-    *aPermitUnloadFlags = eDontPromptAndUnload;
-  }
-
   // NB: we nullcheck mDocument because it might now be dead as a result of
   // the event being dispatched.
-  if (*aPermitUnloadFlags != eDontPromptAndUnload && dialogsAreEnabled &&
-      mDocument && !(mDocument->GetSandboxFlags() & SANDBOXED_MODALS) &&
+  if (window->AreDialogsEnabled() && mDocument &&
+      !(mDocument->GetSandboxFlags() & SANDBOXED_MODALS) &&
       (!StaticPrefs::dom_require_user_interaction_for_beforeunload() ||
        mDocument->UserHasInteracted()) &&
       (event->WidgetEventPtr()->DefaultPrevented() || !text.IsEmpty())) {
-    // If the consumer wants prompt requests to just stop unloading, we don't
-    // need to prompt and can return immediately.
-    if (*aPermitUnloadFlags == eDontPromptAndDontUnload) {
-      *aPermitUnload = false;
-      return NS_OK;
-    }
-
-    // Ask the user if it's ok to unload the current page
-
-    nsCOMPtr<nsIPromptCollection> prompt =
-        do_GetService("@mozilla.org/embedcomp/prompt-collection;1");
-
-    if (prompt) {
-      nsAutoSyncOperation sync(mDocument);
-      mInPermitUnloadPrompt = true;
-      mozilla::Telemetry::Accumulate(
-          mozilla::Telemetry::ONBEFOREUNLOAD_PROMPT_COUNT, 1);
-      rv = prompt->BeforeUnloadCheck(docShell->GetBrowsingContext(),
-                                     aPermitUnload);
-      mInPermitUnloadPrompt = false;
-
-      // If the prompt aborted, we tell our consumer that it is not allowed
-      // to unload the page. One reason that prompts abort is that the user
-      // performed some action that caused the page to unload while our prompt
-      // was active. In those cases we don't want our consumer to also unload
-      // the page.
-      //
-      // XXX: Are there other cases where prompts can abort? Is it ok to
-      //      prevent unloading the page in those cases?
-      if (NS_FAILED(rv)) {
-        mozilla::Telemetry::Accumulate(
-            mozilla::Telemetry::ONBEFOREUNLOAD_PROMPT_ACTION, 2);
-        *aPermitUnload = false;
-        return NS_OK;
-      }
-
-      mozilla::Telemetry::Accumulate(
-          mozilla::Telemetry::ONBEFOREUNLOAD_PROMPT_ACTION,
-          (*aPermitUnload ? 1 : 0));
-      // If the user decided to go ahead, make sure not to prompt the user again
-      // by toggling the internal prompting bool to false:
-      if (*aPermitUnload) {
-        *aPermitUnloadFlags = eDontPromptAndUnload;
-      }
-    }
+    return eRequestBlockNavigation;
   }
-
-  if (docShell) {
-    int32_t childCount;
-    docShell->GetInProcessChildCount(&childCount);
-
-    for (int32_t i = 0; i < childCount && *aPermitUnload; ++i) {
-      nsCOMPtr<nsIDocShellTreeItem> item;
-      docShell->GetInProcessChildAt(i, getter_AddRefs(item));
-
-      nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(item));
-
-      if (docShell) {
-        nsCOMPtr<nsIContentViewer> cv;
-        docShell->GetContentViewer(getter_AddRefs(cv));
-
-        if (cv) {
-          cv->PermitUnloadInternal(aPermitUnloadFlags, aPermitUnload);
-        }
-      }
-    }
-  }
-
-  return NS_OK;
+  return eAllowNavigation;
 }
 
 NS_IMETHODIMP
@@ -2064,7 +2069,7 @@ nsDocumentViewer::Show(void) {
       treeItem->GetInProcessSameTypeRootTreeItem(getter_AddRefs(root));
       nsCOMPtr<nsIWebNavigation> webNav = do_QueryInterface(root);
       RefPtr<ChildSHistory> history = webNav->GetSessionHistory();
-      if (!StaticPrefs::fission_sessionHistoryInParent() && history) {
+      if (!mozilla::SessionHistoryInParent() && history) {
         int32_t prevIndex, loadedIndex;
         nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(treeItem);
         docShell->GetPreviousEntryIndex(&prevIndex);
@@ -2405,7 +2410,7 @@ mozilla::dom::Selection* nsDocumentViewer::GetDocumentSelection() {
  * ============================================================================
  */
 
-NS_IMETHODIMP nsDocumentViewer::ClearSelection() {
+MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsDocumentViewer::ClearSelection() {
   // use nsCopySupport::GetSelectionForCopy() ?
   RefPtr<mozilla::dom::Selection> selection = GetDocumentSelection();
   if (!selection) {
@@ -2626,12 +2631,6 @@ nsDocumentViewer::SetAuthorStyleDisabled(bool aStyleDisabled) {
   if (mPresShell) {
     mPresShell->SetAuthorStyleDisabled(aStyleDisabled);
   }
-
-  auto children = [aStyleDisabled](nsDocumentViewer* aChild) {
-    aChild->SetAuthorStyleDisabled(aStyleDisabled);
-  };
-
-  CallChildren(children);
   return NS_OK;
 }
 
@@ -3211,7 +3210,7 @@ nsresult nsDocumentViewer::PrintPreviewScrollToPageForOldUI(int16_t aType,
   }
 
   // in PP mPrtPreview->mPrintObject->mSeqFrame is null
-  auto [seqFrame, pageCount] = mPrintJob->GetSeqFrameAndCountPages();
+  auto [seqFrame, sheetCount] = mPrintJob->GetSeqFrameAndCountSheets();
   if (!seqFrame) {
     return NS_ERROR_FAILURE;
   }
@@ -3226,7 +3225,7 @@ nsresult nsDocumentViewer::PrintPreviewScrollToPageForOldUI(int16_t aType,
   // If it is "End" then just do a "goto" to the last page
   if (aType == nsIWebBrowserPrint::PRINTPREVIEW_END) {
     aType = nsIWebBrowserPrint::PRINTPREVIEW_GOTO_PAGENUM;
-    aPageNum = pageCount;
+    aPageNum = sheetCount;
   }
 
   // Now, locate the current page we are on and
@@ -3262,7 +3261,7 @@ nsresult nsDocumentViewer::PrintPreviewScrollToPageForOldUI(int16_t aType,
       return NS_OK;
     }
   } else {  // If we get here we are doing "GoTo"
-    if (aPageNum < 0 || aPageNum > pageCount) {
+    if (aPageNum < 0 || aPageNum > sheetCount) {
       return NS_OK;
     }
   }
@@ -3323,8 +3322,8 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
       mPrintJob->GetPrintPreviewPresShell()->GetRootScrollFrameAsScrollable();
   if (!sf) return NS_OK;
 
-  auto [seqFrame, pageCount] = mPrintJob->GetSeqFrameAndCountPages();
-  Unused << pageCount;
+  auto [seqFrame, sheetCount] = mPrintJob->GetSeqFrameAndCountSheets();
+  Unused << sheetCount;
   if (!seqFrame) {
     return NS_ERROR_FAILURE;
   }
@@ -3342,9 +3341,8 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
       break;
     case nsIWebBrowserPrint::PRINTPREVIEW_PREV_PAGE:
     case nsIWebBrowserPrint::PRINTPREVIEW_NEXT_PAGE: {
-      auto [currentFrame, currentPageNumber] =
-          GetCurrentSheetFrameAndPageNumber();
-      Unused << currentPageNumber;
+      auto [currentFrame, currentSheetNumber] = GetCurrentSheetFrameAndNumber();
+      Unused << currentSheetNumber;
       if (!currentFrame) {
         return NS_OK;
       }
@@ -3363,7 +3361,7 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
       break;
     }
     case nsIWebBrowserPrint::PRINTPREVIEW_GOTO_PAGENUM: {
-      if (aPageNum < 0 || aPageNum > pageCount) {
+      if (aPageNum < 0 || aPageNum > sheetCount) {
         return NS_ERROR_INVALID_ARG;
       }
 
@@ -3384,13 +3382,13 @@ nsDocumentViewer::PrintPreviewScrollToPage(int16_t aType, int32_t aPageNum) {
 }
 
 std::tuple<const nsIFrame*, int32_t>
-nsDocumentViewer::GetCurrentSheetFrameAndPageNumber() const {
+nsDocumentViewer::GetCurrentSheetFrameAndNumber() const {
   MOZ_ASSERT(mPrintJob);
   MOZ_ASSERT(GetIsPrintPreview() && !mPrintJob->GetIsCreatingPrintPreview());
 
   // in PP mPrtPreview->mPrintObject->mSeqFrame is null
-  auto [seqFrame, pageCount] = mPrintJob->GetSeqFrameAndCountPages();
-  Unused << pageCount;
+  auto [seqFrame, sheetCount] = mPrintJob->GetSeqFrameAndCountSheets();
+  Unused << sheetCount;
   if (!seqFrame) {
     return {nullptr, 0};
   }
@@ -3398,7 +3396,7 @@ nsDocumentViewer::GetCurrentSheetFrameAndPageNumber() const {
   nsIScrollableFrame* sf =
       mPrintJob->GetPrintPreviewPresShell()->GetRootScrollFrameAsScrollable();
   if (!sf) {
-    // No scrollable contents, returns 1 even if there are multiple pages.
+    // No scrollable contents, returns 1 even if there are multiple sheets.
     return {seqFrame->PrincipalChildList().FirstChild(), 1};
   }
 
@@ -3406,17 +3404,17 @@ nsDocumentViewer::GetCurrentSheetFrameAndPageNumber() const {
   float halfwayPoint =
       currentScrollPosition.y + float(sf->GetScrollPortRect().height) / 2.0f;
   float lastDistanceFromHalfwayPoint = std::numeric_limits<float>::max();
-  int32_t pageNumber = 0;
+  int32_t sheetNumber = 0;
   const nsIFrame* currentSheet = nullptr;
   float previewScale = seqFrame->GetPrintPreviewScale();
   for (const nsIFrame* sheetFrame : seqFrame->PrincipalChildList()) {
     nsRect sheetRect = sheetFrame->GetRect();
-    pageNumber++;
+    sheetNumber++;
     currentSheet = sheetFrame;
 
     float bottomOfSheet = sheetRect.YMost() * previewScale;
     if (bottomOfSheet < halfwayPoint) {
-      // If the bottom of the page is not yet over the halfway point, iterate
+      // If the bottom of the sheet is not yet over the halfway point, iterate
       // the next frame to see if the next frame is over the halfway point and
       // compare the distance from the halfway point.
       lastDistanceFromHalfwayPoint = halfwayPoint - bottomOfSheet;
@@ -3425,28 +3423,31 @@ nsDocumentViewer::GetCurrentSheetFrameAndPageNumber() const {
 
     float topOfSheet = sheetRect.Y() * previewScale;
     if (topOfSheet <= halfwayPoint) {
-      // If the top of the page is not yet over the halfway point or on the
-      // point, it's the current page.
+      // If the top of the sheet is not yet over the halfway point or on the
+      // point, it's the current sheet.
       break;
     }
 
-    // Now the page rect is completely over the halfway point, compare the
+    // Now the sheet rect is completely over the halfway point, compare the
     // distances from the halfway point.
     if ((topOfSheet - halfwayPoint) >= lastDistanceFromHalfwayPoint) {
-      // If the previous page distance is less than or equal to the current page
-      // distance, choose the previous one as the current.
-      pageNumber--;
-      MOZ_ASSERT(pageNumber > 0);
+      // If the previous sheet distance is less than or equal to the current
+      // sheet distance, choose the previous one as the current.
+      sheetNumber--;
+      MOZ_ASSERT(sheetNumber > 0);
       currentSheet = currentSheet->GetPrevInFlow();
       MOZ_ASSERT(currentSheet);
     }
     break;
   }
 
-  MOZ_ASSERT(pageNumber <= pageCount);
-  return {currentSheet, pageNumber};
+  MOZ_ASSERT(sheetNumber <= sheetCount);
+  return {currentSheet, sheetNumber};
 }
 
+// XXXdholbert As noted in nsIWebBrowserPrint.idl, this API (the IDL attr
+// 'printPreviewCurrentPageNumber') is misnamed and needs s/Page/Sheet/.  See
+// bug 1669762.
 NS_IMETHODIMP
 nsDocumentViewer::GetPrintPreviewCurrentPageNumber(int32_t* aNumber) {
   NS_ENSURE_ARG_POINTER(aNumber);
@@ -3455,13 +3456,13 @@ nsDocumentViewer::GetPrintPreviewCurrentPageNumber(int32_t* aNumber) {
     return NS_ERROR_FAILURE;
   }
 
-  auto [currentFrame, currentPageNumber] = GetCurrentSheetFrameAndPageNumber();
+  auto [currentFrame, currentSheetNumber] = GetCurrentSheetFrameAndNumber();
   Unused << currentFrame;
-  if (!currentPageNumber) {
+  if (!currentSheetNumber) {
     return NS_ERROR_FAILURE;
   }
 
-  *aNumber = currentPageNumber;
+  *aNumber = currentSheetNumber;
 
   return NS_OK;
 }
@@ -3546,12 +3547,14 @@ nsDocumentViewer::GetRawNumPages(int32_t* aRawNumPages) {
   return *aRawNumPages > 0 ? NS_OK : NS_ERROR_FAILURE;
 }
 
+// XXXdholbert As noted in nsIWebBrowserPrint.idl, this API (the IDL attr
+// 'printPreviewNumPages') is misnamed and needs s/Page/Sheet/.
+// See bug 1669762.
 NS_IMETHODIMP
 nsDocumentViewer::GetPrintPreviewNumPages(int32_t* aPrintPreviewNumPages) {
   NS_ENSURE_ARG_POINTER(aPrintPreviewNumPages);
   NS_ENSURE_TRUE(mPrintJob, NS_ERROR_FAILURE);
-
-  *aPrintPreviewNumPages = mPrintJob->GetPrintPreviewNumPages();
+  *aPrintPreviewNumPages = mPrintJob->GetPrintPreviewNumSheets();
   return *aPrintPreviewNumPages > 0 ? NS_OK : NS_ERROR_FAILURE;
 }
 

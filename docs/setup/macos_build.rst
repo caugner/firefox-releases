@@ -1,4 +1,4 @@
-Building Firefox On MacOS
+Building Firefox On macOS
 =========================
 
 This document will help you get set up to build Firefox on your own
@@ -27,8 +27,8 @@ You will need administrator permissions on your machine to install these
 prerequisites. (You can verify that you have these permissions in System
 Preferences -> Users & Groups.)
 
-See `1.1 Install Xcode and Xcode command line tools <#xcode>`_ and `1.2
-Get the local macOS SDK <#macossdk>`_ for more information on how to
+See :ref:`1.1 Install Xcode and Xcode command line tools <xcode>` and :ref:`1.2
+Get the local macOS SDK <macossdk>` for more information on how to
 install these prerequisites.
 
 .. rubric:: Getting the source
@@ -46,8 +46,8 @@ that will do the rest:
     # download the bootstrap script
     curl https://hg.mozilla.org/mozilla-central/raw-file/default/python/mozboot/bin/bootstrap.py -o bootstrap.py
 
-If you don't have Python 3.6 or later or Mercurial installed, see `2.1a Install
-dependencies via Homebrew <#install-via-homebrew>`_ for more information on how
+If you don't have Python 3.6 or later or Mercurial installed, see :ref:`2.1a Install
+dependencies via Homebrew <#install-via-homebrew>` for more information on how
 to do so. Then in your terminal from above start the bootstrapper like this:
 
 .. code-block:: shell
@@ -62,7 +62,7 @@ source code. If you prefer to work with git, use this command instead:
     python3 bootstrap.py --vcs=git
 
 If you don't have `Homebrew <https://brew.sh/>`_ or
-`Ports <https://www.macports.org/>`_ installed - software package
+`Ports <https://www.macports.org/>`__ installed - software package
 managers that will let us install some programs we'll need - you'll be
 asked to pick one. Either will work, but most Mozilla developers use
 Homebrew.
@@ -77,7 +77,7 @@ make sure you do it manually afterward before moving onto the next step.
 Now we tie it all together.
 
 In your terminal window, ``cd`` to your Mozilla source directory chosen
-before (``mozilla-unified``) and type:
+before and type:
 
 .. code-block:: shell
 
@@ -130,20 +130,20 @@ You first need to install Xcode, for which you have two options but both
 require you to sign in with an Apple ID:
 
 -  From Apple Developer Download page - `direct
-   link <https://developer.apple.com/download/release/>`_. Install the
+   link <https://developer.apple.com/download/release/>`__. Install the
    latest **release** (non-beta) version of Xcode, open ``Xcode.xip``,
    and then **before** **running the extracted Xcode.app, move it from
    the download folder to /Applications**. (Running it from another
    location may screw up various build paths, homebrew builds, etc. Fix
    by running ``sudo xcode-select -switch /Applications/Xcode.app`` )
 -  From the Mac App Store - `direct
-   link <https://apps.apple.com/us/app/xcode>`_.
+   link <https://apps.apple.com/us/app/xcode>`__.
 
 Open /Applications/Xcode.app and let it do its initial first run and
 setup stuff.
 
 Install the Xcode command line tools by
-running \ ``xcode-select --install`` in your terminal.
+running ``xcode-select --install`` in your terminal.
 
 .. _macossdk:
 
@@ -159,7 +159,7 @@ other SDKs and that's why we recommend this specific version.
 
 To get the 10.11 SDK, first download Xcode 7.3.1 from the `More
 Downloads for Apple
-Developers <https://developer.apple.com/download/more/>`_ page. Once
+Developers <https://developer.apple.com/download/more/>`__ page. Once
 downloaded, mount the .dmg file. Then in the Terminal run the following:
 
 .. code-block:: shell
@@ -186,7 +186,7 @@ whatever package manager you prefer.
 2.1a Install dependencies via Homebrew
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-`Homebrew <http://brew.sh/>`_ is "the missing package manager for
+`Homebrew <http://brew.sh/>`__ is "the missing package manager for
 macOS." It provides a simple command-line interface to install packages,
 typically by compiling them from source.
 
@@ -260,21 +260,22 @@ Mozilla's source code is hosted in Mercurial repositories. You use
 Mercurial to interact with these repositories. There are many ways to
 install Mercurial on macOS:
 
-#. Install `official builds from
+1. Install `official builds from
    Selenic <http://mercurial.selenic.com/>`_
-#. Install via MacPorts:
 
-.. code-block:: shell
-
-       sudo port install mercurial
-
-#. Install via Homebrew:
+2. Install via Homebrew:
 
 .. code-block:: shell
 
        brew install mercurial
 
-#. Install via Pip:
+3. Install via MacPorts:
+
+.. code-block:: shell
+
+       sudo port install mercurial
+
+4. Install via Pip:
 
 .. code-block:: shell
 
@@ -310,7 +311,7 @@ Using Mercurial <Mercurial Overview>` for the
 complete instructions.
 
 If you are interested in Firefox development only then run the following
-command, which will create a new directory, ``mozilla-unified``, in the
+command, which will create a new directory, ``mozilla-central``, in the
 current one with the contents of the remote repository.
 
 Below command will take many minutes to run, as it will be copying a
@@ -318,8 +319,8 @@ couple hundred megabytes of data over the internet.
 
 .. code::
 
-    hg clone https://hg.mozilla.org/mozilla-unified/
-    cd mozilla-unified
+    hg clone https://hg.mozilla.org/mozilla-central/
+    cd mozilla-central
 
 (If you are building Firefox for Android, you should now return to the
 `Android build instructions <https://wiki.mozilla.org/Mobile/Fennec/Android#Mac_OS_X>`_.)
@@ -328,8 +329,7 @@ couple hundred megabytes of data over the internet.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 In your checked out source tree create a new file, ``mozconfig``, which
-will contain your build options. For more on this file, see `Configuring
-Build Options <https://developer.mozilla.org/en/Configuring_Build_Options>`_.
+will contain your build options. For more on this file, see :ref:`Configuring Build Options`.
 
 To get started quickly, create the file with the following contents:
 
@@ -386,7 +386,7 @@ Hardware requirements
 There are no specific hardware requirements, provided that the hardware
 accommodates all of the `software <#Software_Requirements>`_ required
 to build Firefox. Firefox can take a long time to build, so more CPU,
-more RAM and lots of fast disks are always recommended.
+more RAM and lots of fast disk space are always recommended.
 
 -  **Processor:** Intel CPUs are required. Building for PowerPC chips is
    not supported.
@@ -396,32 +396,27 @@ more RAM and lots of fast disks are always recommended.
 Software requirements
 ---------------------
 
--  **Operating System:** Mac OS X 10.9 or later. It is advisable to
+-  **Operating System:** macOS 10.11 or later. It is advisable to
    upgrade to the latest “point” release by running Software Update,
    found in the Apple menu. You will need administrative privileges to
    set up your development environment
--  **Development Environment:** Xcode. You can obtain from the App
+-  **Development Environment:** Xcode. You can obtain this from the App
    Store.
--  **Package Management:** Either
-   *`MacPorts <http://www.macports.org/>`_* or Homebrew.
+-  **Package Management:** Either Homebrew or
+   `MacPorts <http://www.macports.org/>`_.
 
 These options are specific to Mozilla builds for macOS. For a more
 general overview of build options and the ``mozconfig`` file, see
-`Configuring Build Options <https://developer.mozilla.org/en/Configuring_Build_Options>`_. For
-specific information on configuring to build a universal binary, see
-`Mac OS X Universal Binaries <https://developer.mozilla.org/en/Mac_OS_X_Universal_Binaries>`_.
+:ref:`Configuring Build Options`.
 
 -  **Compiler:** Firefox releases are no longer built with gcc-4.8 or
    earlier. A recent copy of clang is needed.
 
    -  There are some options on where to get clang:
 
-      -  Newer versions of Xcode. The one in Xcode 7.0 or newer and the
-         open source 3.6 release should work.
-         (Xcode 6.4 is based on pre-release of clang 3.6, that doesn't
-         match to requirement.)
+      -  Newer versions of Xcode.
       -  Following the instructions in the `clang
-         website <http://clang.llvm.org/get_started.html>`_ for
+         website <http://clang.llvm.org/get_started.html>`__ for
          information on how to get it.
       -  Using some of the package managers (see above).
 
@@ -431,26 +426,23 @@ specific information on configuring to build a universal binary, see
 The following options, specified with ``ac_add_options``, are lines that
 are intended to be added to your ``mozconfig`` file.
 
--  macOS **SDK:** This selects the version of the system headers and
+-  **macOS SDK:** This selects the version of the system headers and
    libraries to build against, ensuring that the product you build will
    be able to run on older systems with less complete APIs available.
    Selecting an SDK with this option overrides the default headers and
    libraries in ``/usr/include``, ``/usr/lib``, and ``/System/Library``.
-   Mac macOS SDKs are installed in ``/Developer/SDKs`` during the `Xcode
-   installation <#Software_Requirements>`_ by selecting the **Cross
-   Development** category in the installer’s **Customize** screen.
 
-.. code-block:: shell
+   .. code-block:: shell
 
-       ac_add_options --with-macos-sdk=/path/to/SDK
+         ac_add_options --with-macos-sdk=/path/to/SDK
 
-   Official trunk builds use ``/Developer/SDKs/MacOSX10.11.sdk``. Check
-   ```build/macosx/universal/mozconfig.common`` <https://dxr.mozilla.org/mozilla-central/source/build/macosx/cross-mozconfig.common#23>`_
+   Official trunk builds use `MacOSX10.11.sdk`. Check
+   `build/macosx/universal/mozconfig.common <https://searchfox.org/mozilla-central/source/build/macosx/cross-mozconfig.common>`__
    for the SDK version used for official builds of any particular source
    release.
 
    Applications built against a particular SDK will usually run on
-   earlier versions of Mac macOS as long as they are careful not to use
+   earlier versions of macOS as long as they are careful not to use
    features or frameworks only available on later versions. Note that
    some frameworks (notably AppKit) behave differently at runtime
    depending on which SDK was used at build time. This may be the source
@@ -477,11 +469,9 @@ Troubleshooting
 -  **If configure (or generally building with clang) fails with
    ``fatal error: 'stdio.h' file not found``:** Make sure the Xcode
    command line tools are installed by running.
-   ``xcode-select --install``. [jgilbert] found this necessary during an
-   install for 10.9.
+   ``xcode-select --install``.
 -  **For inexplicable errors in the configure phase:** Review all
    modifications of your PATH in .bash\_profile, .bash\_rc or whatever
    configuration file you're using for your chosen shell. Removing all
    modifications and then re-adding them one-by-one can narrow down
    problems.
-

@@ -226,9 +226,9 @@ nsStyleFont::nsStyleFont(const nsStyleFont& aSrc)
       mFontSizeOffset(aSrc.mFontSizeOffset),
       mFontSizeKeyword(aSrc.mFontSizeKeyword),
       mGenericID(aSrc.mGenericID),
-      mScriptLevel(aSrc.mScriptLevel),
+      mMathDepth(aSrc.mMathDepth),
       mMathVariant(aSrc.mMathVariant),
-      mMathDisplay(aSrc.mMathDisplay),
+      mMathStyle(aSrc.mMathStyle),
       mMinFontSizeRatio(aSrc.mMinFontSizeRatio),
       mExplicitLanguage(aSrc.mExplicitLanguage),
       mAllowZoomAndMinSize(aSrc.mAllowZoomAndMinSize),
@@ -247,9 +247,9 @@ nsStyleFont::nsStyleFont(const Document& aDocument)
       mFontSizeOffset{0},
       mFontSizeKeyword(StyleFontSizeKeyword::Medium),
       mGenericID(StyleGenericFontFamily::None),
-      mScriptLevel(0),
+      mMathDepth(0),
       mMathVariant(NS_MATHML_MATHVARIANT_NONE),
-      mMathDisplay(NS_MATHML_DISPLAYSTYLE_INLINE),
+      mMathStyle(NS_STYLE_MATH_STYLE_NORMAL),
       mMinFontSizeRatio(100),  // 100%
       mExplicitLanguage(false),
       mAllowZoomAndMinSize(true),
@@ -276,7 +276,7 @@ nsChangeHint nsStyleFont::CalcDifference(const nsStyleFont& aNewData) const {
   if (mSize != aNewData.mSize || mLanguage != aNewData.mLanguage ||
       mExplicitLanguage != aNewData.mExplicitLanguage ||
       mMathVariant != aNewData.mMathVariant ||
-      mMathDisplay != aNewData.mMathDisplay ||
+      mMathStyle != aNewData.mMathStyle ||
       mMinFontSizeRatio != aNewData.mMinFontSizeRatio) {
     return NS_STYLE_HINT_REFLOW;
   }
@@ -293,8 +293,7 @@ nsChangeHint nsStyleFont::CalcDifference(const nsStyleFont& aNewData) const {
   }
 
   // XXX Should any of these cause a non-nsChangeHint_NeutralChange change?
-  if (mGenericID != aNewData.mGenericID ||
-      mScriptLevel != aNewData.mScriptLevel ||
+  if (mGenericID != aNewData.mGenericID || mMathDepth != aNewData.mMathDepth ||
       mScriptUnconstrainedSize != aNewData.mScriptUnconstrainedSize ||
       mScriptMinSize != aNewData.mScriptMinSize ||
       mScriptSizeMultiplier != aNewData.mScriptSizeMultiplier) {

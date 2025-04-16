@@ -240,6 +240,7 @@ function makeChan(url, mode) {
 add_task(
   { skip_if: () => mozinfo.os == "mac" },
   async function test_trr_flags() {
+    Services.prefs.setBoolPref("network.trr.fallback-on-zero-response", true);
     let httpserv = new HttpServer();
     httpserv.registerPathHandler("/", function handler(metadata, response) {
       let content = "ok";
@@ -348,6 +349,7 @@ add_task(
     await new Promise(resolve => chan.asyncOpen(new ChannelListener(resolve)));
 
     await new Promise(resolve => httpserv.stop(resolve));
+    Services.prefs.clearUserPref("network.trr.fallback-on-zero-response");
   }
 );
 
@@ -580,6 +582,19 @@ add_task(async function test7() {
     !Components.isSuccessCode(inStatus),
     `${inStatus} should be an error code`
   );
+  Services.prefs.setCharPref(
+    "network.trr.uri",
+    `https://foo.example.com:${h2Port}/doh?responseIP=::ffff:192.168.0.1`
+  );
+  [, , inStatus] = await new DNSListener(
+    "rfc1918-ipv6.example.com",
+    undefined,
+    false
+  );
+  Assert.ok(
+    !Components.isSuccessCode(inStatus),
+    `${inStatus} should be an error code`
+  );
 });
 
 // verify RFC1918 address from the server is fine when told so
@@ -592,6 +607,11 @@ add_task(async function test8() {
   );
   Services.prefs.setBoolPref("network.trr.allow-rfc1918", true);
   await new DNSListener("rfc1918.example.com", "192.168.0.1");
+  Services.prefs.setCharPref(
+    "network.trr.uri",
+    `https://foo.example.com:${h2Port}/doh?responseIP=::ffff:192.168.0.1`
+  );
+  await new DNSListener("rfc1918-ipv6.example.com", "::ffff:192.168.0.1");
 });
 
 // use GET and disable ECS (makes a larger request)
@@ -1001,7 +1021,7 @@ add_task(async function test24k() {
   await new DNSListener("bar.example.com", "127.0.0.1");
 });
 
-// TRR-only that resolving localhost with TRR-only mode will use the remote
+// TRR-only that resolving excluded with TRR-only mode will use the remote
 // resolver if it's not in the excluded domains
 add_task(async function test25() {
   dns.clearCache(true);
@@ -1013,27 +1033,27 @@ add_task(async function test25() {
     `https://foo.example.com:${h2Port}/doh?responseIP=192.192.192.192`
   );
 
-  await new DNSListener("localhost", "192.192.192.192", true);
+  await new DNSListener("excluded", "192.192.192.192", true);
 });
 
-// TRR-only check that localhost goes directly to native lookup when in the excluded-domains
+// TRR-only check that excluded goes directly to native lookup when in the excluded-domains
 add_task(async function test25b() {
   dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3); // TRR-only
-  Services.prefs.setCharPref("network.trr.excluded-domains", "localhost");
+  Services.prefs.setCharPref("network.trr.excluded-domains", "excluded");
   Services.prefs.setCharPref(
     "network.trr.uri",
     `https://foo.example.com:${h2Port}/doh?responseIP=192.192.192.192`
   );
 
-  await new DNSListener("localhost", "127.0.0.1");
+  await new DNSListener("excluded", "127.0.0.1");
 });
 
 // TRR-only check that test.local is resolved via native DNS
 add_task(async function test25c() {
   dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3); // TRR-only
-  Services.prefs.setCharPref("network.trr.excluded-domains", "localhost,local");
+  Services.prefs.setCharPref("network.trr.excluded-domains", "excluded,local");
   Services.prefs.setCharPref(
     "network.trr.uri",
     `https://foo.example.com:${h2Port}/doh?responseIP=192.192.192.192`
@@ -1048,7 +1068,7 @@ add_task(async function test25d() {
   Services.prefs.setIntPref("network.trr.mode", 3); // TRR-only
   Services.prefs.setCharPref(
     "network.trr.excluded-domains",
-    "localhost,local,other"
+    "excluded,local,other"
   );
   Services.prefs.setCharPref(
     "network.trr.uri",
@@ -1113,21 +1133,21 @@ add_task(async function test25f() {
   await SetParentalControlEnabled(false);
 });
 
-// TRR-only check that localhost goes directly to native lookup when in the builtin-excluded-domains
+// TRR-only check that excluded goes directly to native lookup when in the builtin-excluded-domains
 add_task(async function test25g() {
   dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3); // TRR-only
   Services.prefs.setCharPref("network.trr.excluded-domains", "");
   Services.prefs.setCharPref(
     "network.trr.builtin-excluded-domains",
-    "localhost"
+    "excluded"
   );
   Services.prefs.setCharPref(
     "network.trr.uri",
     `https://foo.example.com:${h2Port}/doh?responseIP=192.192.192.192`
   );
 
-  await new DNSListener("localhost", "127.0.0.1");
+  await new DNSListener("excluded", "127.0.0.1");
 });
 
 // TRR-only check that test.local is resolved via native DNS
@@ -1136,7 +1156,7 @@ add_task(async function test25h() {
   Services.prefs.setIntPref("network.trr.mode", 3); // TRR-only
   Services.prefs.setCharPref(
     "network.trr.builtin-excluded-domains",
-    "localhost,local"
+    "excluded,local"
   );
   Services.prefs.setCharPref(
     "network.trr.uri",
@@ -1152,7 +1172,7 @@ add_task(async function test25i() {
   Services.prefs.setIntPref("network.trr.mode", 3); // TRR-only
   Services.prefs.setCharPref(
     "network.trr.builtin-excluded-domains",
-    "localhost,local,other"
+    "excluded,local,other"
   );
   Services.prefs.setCharPref(
     "network.trr.uri",
@@ -1197,7 +1217,7 @@ add_task(async function test_connection_closed() {
 add_task(async function test_connection_closed_no_bootstrap() {
   dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3); // TRR-only
-  Services.prefs.setCharPref("network.trr.excluded-domains", "localhost,local");
+  Services.prefs.setCharPref("network.trr.excluded-domains", "excluded,local");
   Services.prefs.setCharPref(
     "network.trr.uri",
     `https://foo.example.com:${h2Port}/doh?responseIP=3.3.3.3`
@@ -1219,7 +1239,7 @@ add_task(async function test_connection_closed_no_bootstrap() {
 add_task(async function test_connection_closed_no_bootstrap_localhost() {
   dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3); // TRR-only
-  Services.prefs.setCharPref("network.trr.excluded-domains", "localhost");
+  Services.prefs.setCharPref("network.trr.excluded-domains", "excluded");
   Services.prefs.setCharPref(
     "network.trr.uri",
     `https://localhost:${h2Port}/doh?responseIP=3.3.3.3`
@@ -2067,4 +2087,53 @@ add_task(async function test_ipv6_trr_fallback() {
 
   override.clearOverrides();
   await httpserver.stop();
+});
+
+add_task(async function test_no_retry_without_doh() {
+  // See bug 1648147 - if the TRR returns 0.0.0.0 we should not retry with DNS
+  Services.prefs.setBoolPref("network.trr.fallback-on-zero-response", false);
+
+  async function test(url, ip) {
+    Services.prefs.setIntPref("network.trr.mode", 2);
+    Services.prefs.setCharPref(
+      "network.trr.uri",
+      `https://foo.example.com:${h2Port}/doh?responseIP=${ip}`
+    );
+
+    // Requests to 0.0.0.0 are usually directed to localhost, so let's use a port
+    // we know isn't being used - 666 (Doom)
+    let chan = makeChan(url, Ci.nsIRequest.TRR_DEFAULT_MODE);
+    let resolutions = 0;
+    let statusCounter = {
+      statusCount: {},
+      QueryInterface: ChromeUtils.generateQI([
+        "nsIInterfaceRequestor",
+        "nsIProgressEventSink",
+      ]),
+      getInterface(iid) {
+        return this.QueryInterface(iid);
+      },
+      onProgress(request, progress, progressMax) {},
+      onStatus(request, status, statusArg) {
+        this.statusCount[status] = 1 + (this.statusCount[status] || 0);
+      },
+    };
+    chan.notificationCallbacks = statusCounter;
+    let req = await new Promise(resolve =>
+      chan.asyncOpen(new ChannelListener(resolve, null, CL_EXPECT_FAILURE))
+    );
+    equal(
+      statusCounter.statusCount[0x804b000b],
+      1,
+      "Expecting only one instance of NS_NET_STATUS_RESOLVED_HOST"
+    );
+    equal(
+      statusCounter.statusCount[0x804b0007],
+      1,
+      "Expecting only one instance of NS_NET_STATUS_CONNECTING_TO"
+    );
+  }
+
+  await test(`http://unknown.ipv4.stuff:666/path`, "0.0.0.0");
+  await test(`http://unknown.ipv6.stuff:666/path`, "::");
 });

@@ -6,6 +6,8 @@
 
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
 
+#include "jsmath.h"
+
 #include "jit/JitFrames.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
@@ -1968,6 +1970,18 @@ void MacroAssembler::roundDoubleToInt32(FloatRegister src, Register dest,
   }
 
   bind(&end);
+}
+
+void MacroAssembler::nearbyIntDouble(RoundingMode mode, FloatRegister src,
+                                     FloatRegister dest) {
+  MOZ_ASSERT(HasRoundInstruction(mode));
+  vroundsd(Assembler::ToX86RoundingMode(mode), src, dest);
+}
+
+void MacroAssembler::nearbyIntFloat32(RoundingMode mode, FloatRegister src,
+                                      FloatRegister dest) {
+  MOZ_ASSERT(HasRoundInstruction(mode));
+  vroundss(Assembler::ToX86RoundingMode(mode), src, dest);
 }
 
 //}}} check_macroassembler_style

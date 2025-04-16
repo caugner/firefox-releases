@@ -225,6 +225,13 @@ void WindowGlobalChild::OnNewDocument(Document* aDocument) {
     txn.SetEmbedderPolicy(policy.ref());
   }
 
+  if (nsCOMPtr<nsIChannel> channel = aDocument->GetChannel()) {
+    nsCOMPtr<nsILoadInfo> loadInfo(channel->LoadInfo());
+    txn.SetIsOriginalFrameSource(loadInfo->GetOriginalFrameSrcLoad());
+  } else {
+    txn.SetIsOriginalFrameSource(false);
+  }
+
   // Init Mixed Content Fields
   nsCOMPtr<nsIURI> innerDocURI =
       NS_GetInnermostURI(aDocument->GetDocumentURI());
@@ -304,7 +311,7 @@ bool WindowGlobalChild::IsProcessRoot() {
 void WindowGlobalChild::BeforeUnloadAdded() {
   // Don't bother notifying the parent if we don't have an IPC link open.
   if (mBeforeUnloadListeners == 0 && CanSend()) {
-    SendSetHasBeforeUnload(true);
+    Unused << mWindowContext->SetHasBeforeUnload(true);
   }
 
   mBeforeUnloadListeners++;
@@ -315,9 +322,8 @@ void WindowGlobalChild::BeforeUnloadRemoved() {
   mBeforeUnloadListeners--;
   MOZ_ASSERT(mBeforeUnloadListeners >= 0);
 
-  // Don't bother notifying the parent if we don't have an IPC link open.
-  if (mBeforeUnloadListeners == 0 && CanSend()) {
-    SendSetHasBeforeUnload(false);
+  if (mBeforeUnloadListeners == 0) {
+    Unused << mWindowContext->SetHasBeforeUnload(false);
   }
 }
 
@@ -545,13 +551,29 @@ mozilla::ipc::IPCResult WindowGlobalChild::RecvAddBlockedFrameNodeByClassifier(
   return IPC_OK();
 }
 
-IPCResult WindowGlobalChild::RecvRawMessage(const JSActorMessageMeta& aMeta,
-                                            const ClonedMessageData& aData,
-                                            const ClonedMessageData& aStack) {
-  StructuredCloneData data;
-  data.BorrowFromClonedMessageDataForChild(aData);
-  StructuredCloneData stack;
-  stack.BorrowFromClonedMessageDataForChild(aStack);
+mozilla::ipc::IPCResult WindowGlobalChild::RecvResetScalingZoom() {
+  if (Document* doc = mWindowGlobal->GetExtantDoc()) {
+    if (PresShell* ps = doc->GetPresShell()) {
+      ps->SetResolutionAndScaleTo(1.0,
+                                  ResolutionChangeOrigin::MainThreadAdjustment);
+    }
+  }
+  return IPC_OK();
+}
+
+IPCResult WindowGlobalChild::RecvRawMessage(
+    const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
+    const Maybe<ClonedMessageData>& aStack) {
+  Maybe<StructuredCloneData> data;
+  if (aData) {
+    data.emplace();
+    data->BorrowFromClonedMessageDataForChild(*aData);
+  }
+  Maybe<StructuredCloneData> stack;
+  if (aStack) {
+    stack.emplace();
+    stack->BorrowFromClonedMessageDataForChild(*aStack);
+  }
   ReceiveRawMessage(aMeta, std::move(data), std::move(stack));
   return IPC_OK();
 }

@@ -605,33 +605,6 @@ bool BackgroundChildImpl::DeallocPMIDIManagerChild(PMIDIManagerChild* aActor) {
   return true;
 }
 
-// Gamepad API Background IPC
-dom::PGamepadEventChannelChild*
-BackgroundChildImpl::AllocPGamepadEventChannelChild() {
-  MOZ_CRASH("PGamepadEventChannelChild actor should be manually constructed!");
-  return nullptr;
-}
-
-bool BackgroundChildImpl::DeallocPGamepadEventChannelChild(
-    PGamepadEventChannelChild* aActor) {
-  MOZ_ASSERT(aActor);
-  delete static_cast<dom::GamepadEventChannelChild*>(aActor);
-  return true;
-}
-
-dom::PGamepadTestChannelChild*
-BackgroundChildImpl::AllocPGamepadTestChannelChild() {
-  MOZ_CRASH("PGamepadTestChannelChild actor should be manually constructed!");
-  return nullptr;
-}
-
-bool BackgroundChildImpl::DeallocPGamepadTestChannelChild(
-    PGamepadTestChannelChild* aActor) {
-  MOZ_ASSERT(aActor);
-  delete static_cast<dom::GamepadTestChannelChild*>(aActor);
-  return true;
-}
-
 mozilla::dom::PClientManagerChild*
 BackgroundChildImpl::AllocPClientManagerChild() {
   return mozilla::dom::AllocClientManagerChild();

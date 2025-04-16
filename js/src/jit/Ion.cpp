@@ -18,15 +18,19 @@
 #include "gc/PublicIterators.h"
 #include "jit/AliasAnalysis.h"
 #include "jit/AlignmentMaskAnalysis.h"
+#include "jit/AutoWritableJitCode.h"
 #include "jit/BacktrackingAllocator.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineInspector.h"
 #include "jit/BaselineJIT.h"
 #include "jit/CacheIRSpewer.h"
 #include "jit/CodeGenerator.h"
+#include "jit/CompileInfo.h"
 #include "jit/EdgeCaseAnalysis.h"
 #include "jit/EffectiveAddressAnalysis.h"
+#include "jit/ExecutableAllocator.h"
 #include "jit/FoldLinearArithConstants.h"
+#include "jit/InlineScriptTree.h"
 #include "jit/InstructionReordering.h"
 #include "jit/IonAnalysis.h"
 #include "jit/IonBuilder.h"
@@ -36,8 +40,11 @@
 #include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitCommon.h"
+#include "jit/JitFrames.h"
 #include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
+#include "jit/JitZone.h"
 #include "jit/LICM.h"
 #include "jit/Linker.h"
 #include "jit/LIR.h"
@@ -45,6 +52,7 @@
 #include "jit/PerfSpewer.h"
 #include "jit/RangeAnalysis.h"
 #include "jit/ScalarReplacement.h"
+#include "jit/ScriptFromCalleeToken.h"
 #include "jit/Sink.h"
 #include "jit/ValueNumbering.h"
 #include "jit/WarpBuilder.h"
@@ -63,8 +71,8 @@
 
 #include "debugger/DebugAPI-inl.h"
 #include "gc/GC-inl.h"
-#include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
+#include "jit/SafepointIndex-inl.h"
 #include "jit/shared/Lowering-shared-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/GeckoProfiler-inl.h"
@@ -77,6 +85,7 @@
 #  include <sys/system_properties.h>
 #endif
 
+using mozilla::CheckedInt;
 using mozilla::DebugOnly;
 
 using namespace js;
@@ -221,8 +230,7 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
   generateProfilerExitFrameTailStub(masm, &profilerExitTail);
 
   JitSpew(JitSpew_Codegen, "# Emitting exception tail stub");
-  void* handler = JS_FUNC_TO_DATA_PTR(void*, jit::HandleException);
-  generateExceptionTailStub(masm, handler, &profilerExitTail);
+  generateExceptionTailStub(masm, &profilerExitTail);
 
   Linker linker(masm);
   trampolineCode_ = linker.newCode(cx, CodeKind::Other);
@@ -398,7 +406,8 @@ uint8_t* jit::LazyLinkTopActivation(JSContext* cx,
 }
 
 /* static */
-void JitRuntime::Trace(JSTracer* trc, const AutoAccessAtomsZone& access) {
+void JitRuntime::TraceAtomZoneRoots(JSTracer* trc,
+                                    const AutoAccessAtomsZone& access) {
   MOZ_ASSERT(!JS::RuntimeHeapIsMinorCollecting());
 
   // Shared stubs are allocated in the atoms zone, so do not iterate
@@ -738,7 +747,7 @@ void IonScript::trace(JSTracer* trc) {
 }
 
 /* static */
-void IonScript::writeBarrierPre(Zone* zone, IonScript* ionScript) {
+void IonScript::preWriteBarrier(Zone* zone, IonScript* ionScript) {
   if (zone->needsIncrementalBarrier()) {
     ionScript->trace(zone->barrierTracer());
   }
@@ -2714,12 +2723,12 @@ void jit::Invalidate(JSContext* cx, JSScript* script, bool resetUses,
     }
 
     // Construct the descriptive string.
-    UniqueChars buf = JS_smprintf("Invalidate %s:%u:%u", filename,
-                                  script->lineno(), script->column());
+    UniqueChars buf =
+        JS_smprintf("%s:%u:%u", filename, script->lineno(), script->column());
 
     // Ignore the event on allocation failure.
     if (buf) {
-      cx->runtime()->geckoProfiler().markEvent(buf.get());
+      cx->runtime()->geckoProfiler().markEvent("Invalidate", buf.get());
     }
   }
 

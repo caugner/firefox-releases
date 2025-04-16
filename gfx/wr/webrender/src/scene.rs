@@ -8,7 +8,7 @@ use api::units::*;
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use crate::render_api::MemoryReport;
 use crate::composite::CompositorKind;
-use crate::clip::{ClipStore, ClipDataStore};
+use crate::clip::ClipStore;
 use crate::spatial_tree::SpatialTree;
 use crate::frame_builder::{ChasePrimitive, FrameBuilderConfig};
 use crate::hit_test::{HitTester, HitTestingScene, HitTestingSceneStats};
@@ -296,7 +296,6 @@ impl BuiltScene {
                 dual_source_blending_is_enabled: true,
                 dual_source_blending_is_supported: false,
                 chase_primitive: ChasePrimitive::Nothing,
-                global_enable_picture_caching: false,
                 testing: false,
                 gpu_supports_fast_clears: false,
                 gpu_supports_advanced_blend: false,
@@ -320,15 +319,10 @@ impl BuiltScene {
         }
     }
 
-    pub fn create_hit_tester(
-        &mut self,
-        clip_data_store: &ClipDataStore,
-    ) -> HitTester {
+    pub fn create_hit_tester(&mut self) -> HitTester {
         HitTester::new(
             Arc::clone(&self.hit_testing_scene),
             &self.spatial_tree,
-            &self.clip_store,
-            clip_data_store,
         )
     }
 }

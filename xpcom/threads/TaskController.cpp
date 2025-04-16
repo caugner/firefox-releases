@@ -10,7 +10,7 @@
 #include "nsThreadUtils.h"
 #include <algorithm>
 #include <initializer_list>
-#include "mozilla/AbstractEventQueue.h"
+#include "mozilla/EventQueue.h"
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/InputTaskManager.h"
 #include "mozilla/StaticMutex.h"
@@ -24,7 +24,7 @@
 namespace mozilla {
 
 std::unique_ptr<TaskController> TaskController::sSingleton;
-uint64_t Task::sCurrentTaskSeqNo = 0;
+std::atomic<uint64_t> Task::sCurrentTaskSeqNo = 0;
 
 bool TaskManager::
     UpdateCachesForCurrentIterationAndReportPriorityModifierChanged(
@@ -79,6 +79,7 @@ bool TaskController::Initialize() {
 }
 
 bool TaskController::InitializeInternal() {
+  InputTaskManager::Init();
   mMTProcessingRunnable = NS_NewRunnableFunction(
       "TaskController::ExecutePendingMTTasks()",
       []() { TaskController::Get()->ProcessPendingMTTask(); });

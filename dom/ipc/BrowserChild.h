@@ -106,7 +106,6 @@ class BrowserChildMessageManager : public ContentFrameMessageManager,
   virtual already_AddRefed<nsIDocShell> GetDocShell(
       ErrorResult& aError) override;
   virtual already_AddRefed<nsIEventTarget> GetTabEventTarget() override;
-  virtual uint64_t ChromeOuterWindowID() override;
 
   NS_FORWARD_SAFE_NSIMESSAGESENDER(mMessageManager)
 
@@ -259,6 +258,9 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
 
   mozilla::ipc::IPCResult RecvResumeLoad(const uint64_t& aPendingSwitchID,
                                          const ParentShowInfo&);
+
+  mozilla::ipc::IPCResult RecvCloneDocumentTreeIntoSelf(
+      const MaybeDiscarded<BrowsingContext>& aSourceBC);
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvShow(const ParentShowInfo&, const OwnerShowInfo&);
@@ -573,7 +575,7 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
   ScreenIntSize GetInnerSize();
   CSSSize GetUnscaledInnerSize() { return mUnscaledInnerSize; }
 
-  Maybe<LayoutDeviceIntRect> GetVisibleRect() const;
+  Maybe<nsRect> GetVisibleRect() const;
 
   // Call RecvShow(nsIntSize(0, 0)) and block future calls to RecvShow().
   void DoFakeShow(const ParentShowInfo&);

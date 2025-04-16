@@ -34,6 +34,8 @@
 #include "nsIScreenManager.h"
 #include "nsIWidgetListener.h"
 #include "VibrancyManager.h"
+#include "nsPresContext.h"
+#include "nsDocShell.h"
 
 #include "gfxPlatform.h"
 #include "qcms.h"
@@ -44,6 +46,7 @@
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_widget.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/layers/CompositorBridgeChild.h"
 #include <algorithm>
 
 namespace mozilla {
@@ -499,8 +502,7 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect& aRect, nsBorderStyle aB
       [mWindow setCollectionBehavior:behavior];
     }
   } else {
-    // Make sure that regular windows are opaque from the start, so that
-    // nsChildView::WidgetTypeSupportsAcceleration returns true for them.
+    // Non-popup windows are always opaque.
     [mWindow setOpaque:YES];
   }
 
@@ -1074,15 +1076,16 @@ nsTransparencyMode nsCocoaWindow::GetTransparencyMode() {
   NS_OBJC_END_TRY_ABORT_BLOCK_RETURN(eTransparencyOpaque);
 }
 
-// This is called from nsMenuPopupFrame when making a popup transparent, or
-// from nsChildView::SetTransparencyMode for other window types.
+// This is called from nsMenuPopupFrame when making a popup transparent.
 void nsCocoaWindow::SetTransparencyMode(nsTransparencyMode aMode) {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
-  if (!mWindow) return;
+  // Only respect calls for popup windows.
+  if (!mWindow || mWindowType != eWindowType_popup) {
+    return;
+  }
 
-  // Transparent windows are only supported on popups.
-  BOOL isTransparent = aMode == eTransparencyTransparent && mWindowType == eWindowType_popup;
+  BOOL isTransparent = aMode == eTransparencyTransparent;
   BOOL currentTransparency = ![mWindow isOpaque];
   if (isTransparent != currentTransparency) {
     [mWindow setOpaque:!isTransparent];
@@ -2072,6 +2075,14 @@ void nsCocoaWindow::DispatchSizeModeEvent() {
   if (mWidgetListener) {
     mWidgetListener->SizeModeChanged(newMode);
   }
+
+  if (StaticPrefs::widget_pause_compositor_when_minimized()) {
+    if (newMode == nsSizeMode_Minimized) {
+      PauseCompositor();
+    } else {
+      ResumeCompositor();
+    }
+  }
 }
 
 void nsCocoaWindow::DispatchOcclusionEvent() {
@@ -2103,6 +2114,72 @@ void nsCocoaWindow::ReportSizeEvent() {
   }
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
+}
+
+void nsCocoaWindow::PauseCompositor() {
+  nsIWidget* mainChildView = static_cast<nsIWidget*>([[mWindow mainChildView] widget]);
+  if (!mainChildView) {
+    return;
+  }
+  CompositorBridgeChild* remoteRenderer = mainChildView->GetRemoteRenderer();
+  if (!remoteRenderer) {
+    return;
+  }
+  remoteRenderer->SendPause();
+
+  // Now that the compositor has paused, we also try to mark the browser window
+  // docshell inactive to stop any animations. This does not affect docshells
+  // for browsers in other processes, but browser UI code should be managing
+  // their active state appropriately.
+  if (!mWidgetListener) {
+    return;
+  }
+  PresShell* presShell = mWidgetListener->GetPresShell();
+  if (!presShell) {
+    return;
+  }
+  nsPresContext* presContext = presShell->GetPresContext();
+  if (!presContext) {
+    return;
+  }
+  nsDocShell* docShell = presContext->GetDocShell();
+  if (!docShell) {
+    return;
+  }
+  docShell->SetIsActive(false);
+}
+
+void nsCocoaWindow::ResumeCompositor() {
+  nsIWidget* mainChildView = static_cast<nsIWidget*>([[mWindow mainChildView] widget]);
+  if (!mainChildView) {
+    return;
+  }
+  CompositorBridgeChild* remoteRenderer = mainChildView->GetRemoteRenderer();
+  if (!remoteRenderer) {
+    return;
+  }
+  remoteRenderer->SendResume();
+
+  // Now that the compositor has resumed, we also try to mark the browser window
+  // docshell active to restart any animations. This does not affect docshells
+  // for browsers in other processes, but browser UI code should be managing
+  // their active state appropriately.
+  if (!mWidgetListener) {
+    return;
+  }
+  PresShell* presShell = mWidgetListener->GetPresShell();
+  if (!presShell) {
+    return;
+  }
+  nsPresContext* presContext = presShell->GetPresContext();
+  if (!presContext) {
+    return;
+  }
+  nsDocShell* docShell = presContext->GetDocShell();
+  if (!docShell) {
+    return;
+  }
+  docShell->SetIsActive(true);
 }
 
 void nsCocoaWindow::SetMenuBar(nsMenuBarX* aMenuBar) {

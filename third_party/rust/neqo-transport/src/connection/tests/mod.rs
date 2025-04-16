@@ -9,20 +9,21 @@
 use super::{
     Connection, ConnectionError, FixedConnectionIdManager, Output, State, LOCAL_IDLE_TIMEOUT,
 };
+use crate::addr_valid::{AddressValidation, ValidateAddress};
 use crate::cc::CWND_INITIAL_PKTS;
 use crate::events::ConnectionEvent;
 use crate::frame::StreamType;
 use crate::path::PATH_MTU_V6;
 use crate::recovery::ACK_ONLY_SIZE_LIMIT;
-use crate::QuicVersion;
+use crate::{CongestionControlAlgorithm, QuicVersion};
 
 use std::cell::RefCell;
 use std::mem;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use neqo_common::{qdebug, qtrace, Datagram, Decoder};
-use neqo_crypto::{AllowZeroRtt, AuthenticationStatus};
+use neqo_common::{event::Provider, qdebug, qtrace, Datagram, Decoder};
+use neqo_crypto::{AllowZeroRtt, AuthenticationStatus, ResumptionToken};
 use test_fixture::{self, fixture_init, loopback, now};
 
 // All the tests.
@@ -37,6 +38,7 @@ mod stream;
 mod vn;
 mod zerortt;
 
+const DEFAULT_RTT: Duration = Duration::from_millis(100);
 const AT_LEAST_PTO: Duration = Duration::from_secs(1);
 const DEFAULT_STREAM_DATA: &[u8] = b"message";
 
@@ -54,6 +56,7 @@ pub fn default_client() -> Connection {
         Rc::new(RefCell::new(FixedConnectionIdManager::new(3))),
         loopback(),
         loopback(),
+        &CongestionControlAlgorithm::NewReno,
         QuicVersion::default(),
     )
     .expect("create a default client")
@@ -65,6 +68,7 @@ pub fn default_server() -> Connection {
         test_fixture::DEFAULT_KEYS,
         test_fixture::DEFAULT_ALPN,
         Rc::new(RefCell::new(FixedConnectionIdManager::new(5))),
+        &CongestionControlAlgorithm::NewReno,
         QuicVersion::default(),
     )
     .expect("create a default server");
@@ -143,13 +147,20 @@ fn assert_error(c: &Connection, err: &ConnectionError) {
     }
 }
 
-fn exchange_ticket(client: &mut Connection, server: &mut Connection, now: Instant) -> Vec<u8> {
+fn exchange_ticket(
+    client: &mut Connection,
+    server: &mut Connection,
+    now: Instant,
+) -> ResumptionToken {
+    let validation = AddressValidation::new(now, ValidateAddress::NoToken).unwrap();
+    let validation = Rc::new(RefCell::new(validation));
+    server.set_validation(Rc::clone(&validation));
     server.send_ticket(now, &[]).expect("can send ticket");
     let ticket = server.process_output(now).dgram();
     assert!(ticket.is_some());
     client.process_input(ticket.unwrap(), now);
     assert_eq!(*client.state(), State::Confirmed);
-    client.resumption_token().expect("should have token")
+    get_tokens(client).pop().expect("should have token")
 }
 
 /// Connect with an RTT and then force both peers to be idle.
@@ -318,4 +329,17 @@ fn split_datagram(d: &Datagram) -> (Datagram, Option<Datagram>) {
         Datagram::new(d.source(), d.destination(), a),
         b.map(|b| Datagram::new(d.source(), d.destination(), b)),
     )
+}
+
+fn get_tokens(client: &mut Connection) -> Vec<ResumptionToken> {
+    client
+        .events()
+        .filter_map(|e| {
+            if let ConnectionEvent::ResumptionToken(token) = e {
+                Some(token)
+            } else {
+                None
+            }
+        })
+        .collect()
 }

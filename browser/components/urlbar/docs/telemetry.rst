@@ -136,6 +136,10 @@ urlbar.tips
     Incremented when the user picks the update_web search intervention.
   - ``intervention_update_web-shown``
     Incremented when the update_web search intervention is shown.
+  - ``tabtosearch_onboard-shown``
+    Incremented when a tab-to-search onboarding result is shown. Please note
+    that the number of times tab-to-search onboarding results are picked is
+    the sum of all keys in ``urlbar.searchmode.tabtosearch_onboard``.
   - ``searchTip_onboard-picked``
     Incremented when the user picks the onboarding search tip.
   - ``searchTip_onboard-shown``
@@ -150,6 +154,9 @@ urlbar.searchmode.*
   time search mode is entered in the Urlbar. The suffix on the scalar name
   describes how search mode was entered. Possibilities include:
 
+  - ``bookmarkmenu``
+    Used when the user selects the Search Bookmarks menu item in the Library
+    menu.
   - ``handoff``
     Used when the user uses the search box on the new tab page and is handed off
     to the address bar.
@@ -160,10 +167,22 @@ urlbar.searchmode.*
   - ``shortcut``
     Used when the user enters search mode with a keyboard shortcut or menu bar
     item (e.g. ``Accel+K``).
+  - ``tabmenu``
+    Used when the user selects the Search Tabs menu item in the tab overflow
+    menu.
+  - ``tabtosearch``
+    Used when the user selects a tab-to-search result. These results suggest a
+    search engine when the search engine's domain is autofilled.
+  - ``tabtosearch_onboard``
+    Used when the user selects a tab-to-search onboarding result. These are
+    shown the first few times the user encounters a tab-to-search result.
   - ``topsites_newtab``
     Used when the user selects a search shortcut Top Site from the New Tab Page.
   - ``topsites_urlbar``
     Used when the user selects a search shortcut Top Site from the Urlbar.
+  - ``touchbar``
+    Used when the user taps a search shortct on the Touch Bar, available on some
+    Macs.
   - ``typed``
     Used when the user types an engine alias in the Urlbar.
   - ``other``
@@ -182,6 +201,26 @@ urlbar.searchmode.*
   Amazon.ca, Amazon.de, etc.) to "Amazon" and we flatten all localized
   Wikipedia sites (Wikipedia (en), Wikipedia (fr), etc.) to "Wikipedia". This
   is done to reduce the number of keys used by these scalars.
+
+urlbar.picked.searchmode.*
+  This is a set of keyed scalars whose values are uints incremented each time a
+  result is picked from the Urlbar while the Urlbar is in search mode. The
+  suffix on the scalar name is the search mode entry point. The keys for the
+  scalars are the 0-based index of the result in the urlbar panel when it was
+  picked.
+
+  .. note::
+    These scalars share elements of both ``urlbar.picked.*`` and
+    ``urlbar.searchmode.*``. Scalar name suffixes are search mode entry points,
+    like ``urlbar.searchmode.*``. The keys for these scalars are result indices,
+    like ``urlbar.picked.*``.
+
+  .. note::
+    These data are a subset of the data recorded by ``urlbar.picked.*``. For
+    example, if the user enters search mode by clicking a one-off then selects
+    a Google search suggestion at index 2, we would record in **both**
+    ``urlbar.picked.searchsuggestion`` and ``urlbar.picked.searchmode.oneoff``.
+
 
 Event Telemetry
 ---------------
@@ -258,7 +297,11 @@ Event Extra
     It can be one of: ``none``, ``autofill``, ``visit``, ``bookmark``,
     ``history``, ``keyword``, ``search``, ``searchsuggestion``, ``switchtab``,
     ``remotetab``, ``extension``, ``oneoff``, ``keywordoffer``, ``canonized``,
-    ``tip``, ``tiphelp``, ``formhistory``
+    ``tip``, ``tiphelp``, ``formhistory``, ``tabtosearch``
+    In practice, ``tabtosearch`` should not appear in real event telemetry.
+    Opening a tab-to-search result enters search mode and entering search mode
+    does not currently mark the end of an engagement. It is noted here for
+    completeness.
   - ``selIndex``
     Index of the selected result in the urlbar panel, or -1 for no selection.
     There won't be a selection when a one-off button is the only selection, and
@@ -267,6 +310,13 @@ Event Extra
     directly decide whether to search or visit the given string without having
     a fully built result.
     This is only present for ``engagement`` events.
+  - ``provider``
+    The name of the result provider for the selected result. Existing values
+    are: ``HeuristicFallback``, ``Autofill``, ``UnifiedComplete``,
+    ``TokenAliasEngines``, ``SearchSuggestions``, ``UrlbarProviderTopSites``.
+    Values can also be defined by `URLBar provider experiments`_.
+
+    .. _URLBar provider experiments: experiments.html#developing-address-bar-extensions
 
 Search probes relevant to the Address Bar
 -----------------------------------------

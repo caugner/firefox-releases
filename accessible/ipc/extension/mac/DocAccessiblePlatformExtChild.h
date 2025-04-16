@@ -16,12 +16,9 @@ class DocAccessibleChild;
 
 class DocAccessiblePlatformExtChild : public PDocAccessiblePlatformExtChild {
  public:
-  mozilla::ipc::IPCResult RecvLeftWordAt(
-      const uint64_t& aID, const int32_t& aOffset, uint64_t* aStartContainer,
-      int32_t* aStartOffset, uint64_t* aEndContainer, int32_t* aEndOffset);
-
-  mozilla::ipc::IPCResult RecvRightWordAt(
-      const uint64_t& aID, const int32_t& aOffset, uint64_t* aStartContainer,
+  mozilla::ipc::IPCResult RecvRangeAt(
+      const uint64_t& aID, const int32_t& aOffset,
+      const EWhichRange& aRangeType, uint64_t* aStartContainer,
       int32_t* aStartOffset, uint64_t* aEndContainer, int32_t* aEndOffset);
 
   mozilla::ipc::IPCResult RecvNextClusterAt(const uint64_t& aID,
@@ -65,6 +62,10 @@ class DocAccessiblePlatformExtChild : public PDocAccessiblePlatformExtChild {
   mozilla::ipc::IPCResult RecvLeafAtOffset(const uint64_t& aID,
                                            const int32_t& aOffset,
                                            uint64_t* aLeaf);
+
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvSelectRange(
+      const uint64_t& aID, const int32_t& aStartOffset,
+      const uint64_t& aEndContainer, const int32_t& aEndOffset);
 
  private:
   HyperTextAccessibleWrap* IdToHyperTextAccessibleWrap(

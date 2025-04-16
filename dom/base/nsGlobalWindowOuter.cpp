@@ -23,6 +23,7 @@
 #include "nsIWebProgressListener.h"
 #include "mozilla/AntiTrackingUtils.h"
 #include "mozilla/ContentBlocking.h"
+#include "mozilla/dom/AutoPrintEventDispatcher.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowsingContextBinding.h"
@@ -82,6 +83,7 @@
 #include "js/friend/WindowProxy.h"  // js::IsWindowProxy, js::SetWindowProxy
 #include "js/PropertySpec.h"
 #include "js/Wrapper.h"
+#include "nsLayoutUtils.h"
 #include "nsReadableUtils.h"
 #include "nsJSEnvironment.h"
 #include "mozilla/dom/ScriptSettings.h"
@@ -166,7 +168,7 @@
 #include "mozilla/dom/CustomEvent.h"
 #include "nsIScreenManager.h"
 #include "nsIClassifiedChannel.h"
-
+#include "nsIXULRuntime.h"
 #include "xpcprivate.h"
 
 #ifdef NS_PRINTING
@@ -1446,7 +1448,7 @@ nsGlobalWindowOuter::~nsGlobalWindowOuter() {
       }
     }
     js::SetProxyReservedSlot(proxy, OUTER_WINDOW_SLOT,
-                             js::PrivateValue(nullptr));
+                             JS::PrivateValue(nullptr));
   }
 
   // An outer window is destroyed with inner windows still possibly
@@ -2270,7 +2272,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
       MOZ_ASSERT(js::IsWindowProxy(outer));
 
       js::SetProxyReservedSlot(outer, OUTER_WINDOW_SLOT,
-                               js::PrivateValue(ToSupports(this)));
+                               JS::PrivateValue(ToSupports(this)));
 
       // Inform the nsJSContext, which is the canonical holder of the outer.
       mContext->SetWindowProxy(outer);
@@ -2289,9 +2291,9 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
       MOZ_ASSERT(js::IsWindowProxy(obj));
 
       js::SetProxyReservedSlot(obj, OUTER_WINDOW_SLOT,
-                               js::PrivateValue(nullptr));
+                               JS::PrivateValue(nullptr));
       js::SetProxyReservedSlot(outerObject, OUTER_WINDOW_SLOT,
-                               js::PrivateValue(nullptr));
+                               JS::PrivateValue(nullptr));
       js::SetProxyReservedSlot(obj, HOLDER_WEAKMAP_SLOT, JS::UndefinedValue());
 
 #ifdef NIGHTLY_BUILD
@@ -2307,7 +2309,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
       }
 
       js::SetProxyReservedSlot(outerObject, OUTER_WINDOW_SLOT,
-                               js::PrivateValue(ToSupports(this)));
+                               JS::PrivateValue(ToSupports(this)));
 
       SetWrapper(outerObject);
 
@@ -2494,6 +2496,10 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
   mStorageAccessPermissionGranted = ContentBlocking::ShouldAllowAccessFor(
       newInnerWindow, aDocument->GetDocumentURI(), nullptr);
 
+  // Do this here rather than in say the Document constructor, since
+  // we need a WindowContext available.
+  mDoc->InitUseCounters();
+
   return NS_OK;
 }
 
@@ -2525,7 +2531,7 @@ void nsGlobalWindowOuter::PrepareForProcessChange(JSObject* aProxy) {
   MOZ_ASSERT(bc->GetWindowProxy() == localProxy);
   bc->ClearWindowProxy();
   js::SetProxyReservedSlot(localProxy, OUTER_WINDOW_SLOT,
-                           js::PrivateValue(nullptr));
+                           JS::PrivateValue(nullptr));
   js::SetProxyReservedSlot(localProxy, HOLDER_WEAKMAP_SLOT,
                            JS::UndefinedValue());
 
@@ -2605,7 +2611,7 @@ void nsGlobalWindowOuter::DispatchDOMWindowCreated() {
   }
 }
 
-void nsGlobalWindowOuter::ClearStatus() { SetStatusOuter(EmptyString()); }
+void nsGlobalWindowOuter::ClearStatus() { SetStatusOuter(u""_ns); }
 
 void nsGlobalWindowOuter::SetDocShell(nsDocShell* aDocShell) {
   MOZ_ASSERT(aDocShell);
@@ -5190,7 +5196,7 @@ void nsGlobalWindowOuter::BlurOuter() {
     siteWindow->Blur();
 
     // if the root is focused, clear the focus
-    nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+    nsFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm && mDoc) {
       RefPtr<Element> element;
       fm->GetFocusedElementForWindow(this, false, nullptr,
@@ -5203,34 +5209,16 @@ void nsGlobalWindowOuter::BlurOuter() {
 }
 
 void nsGlobalWindowOuter::StopOuter(ErrorResult& aError) {
-  nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mDocShell));
-  if (webNav) {
-    aError = webNav->Stop(nsIWebNavigation::STOP_ALL);
-  }
-}
-
-static CallState CollectDocuments(Document& aDoc,
-                                  nsTArray<nsCOMPtr<Document>>& aDocs) {
-  aDocs.AppendElement(&aDoc);
-  auto recurse = [&aDocs](Document& aSubDoc) {
-    return CollectDocuments(aSubDoc, aDocs);
-  };
-  aDoc.EnumerateSubDocuments(recurse);
-  return CallState::Continue;
-}
-
-static void DispatchPrintEventToWindowTree(Document& aDoc,
-                                           const nsAString& aEvent) {
-  if (aDoc.IsStaticDocument()) {
+  // IsNavigationAllowed checks are usually done in nsDocShell directly,
+  // however nsDocShell::Stop has a bunch of internal users that would fail
+  // the IsNavigationAllowed check.
+  if (!mDocShell || !nsDocShell::Cast(mDocShell)->IsNavigationAllowed()) {
     return;
   }
 
-  nsTArray<nsCOMPtr<Document>> targets;
-  CollectDocuments(aDoc, targets);
-  for (nsCOMPtr<Document>& doc : targets) {
-    nsContentUtils::DispatchTrustedEvent(doc, doc->GetWindow(), aEvent,
-                                         CanBubble::eNo, Cancelable::eNo,
-                                         nullptr);
+  nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mDocShell));
+  if (webNav) {
+    aError = webNav->Stop(nsIWebNavigation::STOP_ALL);
   }
 }
 
@@ -5258,21 +5246,6 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
   }
 
 #ifdef NS_PRINTING
-  nsCOMPtr<nsIPrintSettingsService> printSettingsService =
-      do_GetService("@mozilla.org/gfx/printsettings-service;1");
-  if (!printSettingsService) {
-    // we currently return here in headless mode - should we?
-    aError.ThrowNotSupportedError("No print settings service");
-    return;
-  }
-
-  nsCOMPtr<nsIPrintSettings> settings;
-  aError = printSettingsService->GetDefaultPrintSettingsForPrinting(
-      getter_AddRefs(settings));
-  if (aError.Failed()) {
-    return;
-  }
-
   RefPtr<BrowsingContext> top =
       mBrowsingContext ? mBrowsingContext->Top() : nullptr;
   bool oldIsPrinting = top && top->GetIsPrinting();
@@ -5288,21 +5261,15 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
 
   const bool isPreview = StaticPrefs::print_tab_modal_enabled() &&
                          !StaticPrefs::print_always_print_silent();
-  if (isPreview) {
-    // When printing with the new UI, we don't want to show the print progress
-    // dialog no matter what.
-    settings->SetShowPrintProgress(false);
-  }
-
-  Print(settings, nullptr, nullptr, IsPreview(isPreview),
-        BlockUntilDone(isPreview), nullptr, aError);
+  Print(nullptr, nullptr, nullptr, IsPreview(isPreview),
+        IsForWindowDotPrint::Yes, nullptr, aError);
 #endif
 }
 
 Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     nsIPrintSettings* aPrintSettings, nsIWebProgressListener* aListener,
     nsIDocShell* aDocShellToCloneInto, IsPreview aIsPreview,
-    BlockUntilDone aBlockUntilDone,
+    IsForWindowDotPrint aForWindowDotPrint,
     PrintPreviewResolver&& aPrintPreviewCallback, ErrorResult& aError) {
 #ifdef NS_PRINTING
   nsCOMPtr<nsIPrintSettingsService> printSettingsService =
@@ -5333,14 +5300,12 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
   nsCOMPtr<nsIContentViewer> cv;
   RefPtr<BrowsingContext> bc;
   bool hasPrintCallbacks = false;
-  if (docToPrint->IsStaticDocument() && aIsPreview == IsPreview::Yes) {
-    MOZ_DIAGNOSTIC_ASSERT(aBlockUntilDone == BlockUntilDone::No);
+  if (docToPrint->IsStaticDocument() &&
+      (aIsPreview == IsPreview::Yes ||
+       StaticPrefs::print_tab_modal_enabled())) {
+    MOZ_DIAGNOSTIC_ASSERT(aForWindowDotPrint == IsForWindowDotPrint::No);
     // We're already a print preview window, just reuse our browsing context /
     // content viewer.
-    //
-    // TODO(emilio): When the old print preview UI is gone and the new print UI
-    // auto-closes when printing (bug 1659624), we can remove the aIsPreview
-    // condition and just reuse the document for printing as well.
     bc = sourceBC;
     nsCOMPtr<nsIDocShell> docShell = bc->GetDocShell();
     if (!docShell) {
@@ -5361,9 +5326,10 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
       bc = aDocShellToCloneInto->GetBrowsingContext();
     } else {
       AutoNoJSAPI nojsapi;
-      auto printKind = aIsPreview == IsPreview::Yes ? PrintKind::PrintPreview
-                                                    : PrintKind::Print;
-      aError = OpenInternal(EmptyString(), EmptyString(), EmptyString(),
+      auto printKind = aForWindowDotPrint == IsForWindowDotPrint::Yes
+                           ? PrintKind::WindowDotPrint
+                           : PrintKind::InternalPrint;
+      aError = OpenInternal(u""_ns, u""_ns, u""_ns,
                             false,             // aDialog
                             false,             // aContentModal
                             true,              // aCalledNoScript
@@ -5415,9 +5381,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     }
 
     // TODO(emilio): Should dispatch this to OOP iframes too.
-    DispatchPrintEventToWindowTree(*docToPrint, u"beforeprint"_ns);
-    auto dispatchAfterPrint = MakeScopeExit(
-        [&] { DispatchPrintEventToWindowTree(*docToPrint, u"afterprint"_ns); });
+    AutoPrintEventDispatcher dispatcher(*docToPrint);
 
     nsAutoScriptBlocker blockScripts;
     RefPtr<Document> clone =
@@ -5436,23 +5400,29 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
   }
 
   if (aIsPreview == IsPreview::Yes) {
-    aError = webBrowserPrint->PrintPreview(aPrintSettings, aListener,
-                                           std::move(aPrintPreviewCallback));
-    if (aError.Failed()) {
-      return nullptr;
+    // When using the new print preview UI from window.print() this would be
+    // wasted work (and use probably-incorrect settings). So skip it, the
+    // preview UI will take care of calling PrintPreview again.
+    if (aForWindowDotPrint == IsForWindowDotPrint::No) {
+      aError = webBrowserPrint->PrintPreview(aPrintSettings, aListener,
+                                             std::move(aPrintPreviewCallback));
+      if (aError.Failed()) {
+        return nullptr;
+      }
     }
   } else {
     // Historically we've eaten this error.
     webBrowserPrint->Print(aPrintSettings, aListener);
   }
 
-  // When aBlockUntilDone is true, we usually want to block until the print
-  // dialog is hidden. But we can't really do that if we have print callbacks,
-  // because we are inside a sync operation, and we want to run microtasks / etc
-  // that the print callbacks may create.
+  // When using window.print() with the new UI, we usually want to block until
+  // the print dialog is hidden. But we can't really do that if we have print
+  // callbacks, because we are inside a sync operation, and we want to run
+  // microtasks / etc that the print callbacks may create.
   //
   // It is really awkward to have this subtle behavior difference...
-  if (aBlockUntilDone == BlockUntilDone::Yes && !hasPrintCallbacks) {
+  if (aIsPreview == IsPreview::Yes &&
+      aForWindowDotPrint == IsForWindowDotPrint::Yes && !hasPrintCallbacks) {
     SpinEventLoopUntil([&] { return bc->IsDiscarded(); });
   }
 
@@ -6038,8 +6008,8 @@ bool nsGlobalWindowOuter::GatherPostMessageData(
     }
 
     nsresult rv = NS_MutateURI(targetOriginURI)
-                      .SetUserPass(EmptyCString())
-                      .SetPathQueryRef(EmptyCString())
+                      .SetUserPass(""_ns)
+                      .SetPathQueryRef(""_ns)
                       .Finalize(aTargetOriginURI);
     if (NS_FAILED(rv)) {
       return false;
@@ -6343,7 +6313,7 @@ bool nsGlobalWindowOuter::IsOnlyTopLevelDocumentInSHistory() {
   // Disabled since IsFrame() is buggy in Fission
   // MOZ_ASSERT(mBrowsingContext->IsTop());
 
-  if (StaticPrefs::fission_sessionHistoryInParent()) {
+  if (mozilla::SessionHistoryInParent()) {
     return mBrowsingContext->GetIsSingleToplevelInHistory();
   }
 
@@ -6423,44 +6393,12 @@ void nsGlobalWindowOuter::ReallyCloseWindow() {
   mHavePendingClose = true;
 
   nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = GetTreeOwnerWindow();
-
-  // If there's no treeOwnerAsWin, this window must already be closed.
-
-  if (treeOwnerAsWin) {
-    // but if we're a browser window we could be in some nasty
-    // self-destroying cascade that we should mostly ignore
-
-    if (mDocShell) {
-      nsCOMPtr<nsIBrowserDOMWindow> bwin;
-      nsCOMPtr<nsIDocShellTreeItem> rootItem;
-      mDocShell->GetInProcessRootTreeItem(getter_AddRefs(rootItem));
-      nsCOMPtr<nsPIDOMWindowOuter> rootWin =
-          rootItem ? rootItem->GetWindow() : nullptr;
-      nsCOMPtr<nsIDOMChromeWindow> chromeWin(do_QueryInterface(rootWin));
-      if (chromeWin) chromeWin->GetBrowserDOMWindow(getter_AddRefs(bwin));
-
-      if (rootWin) {
-        /* Normally we destroy the entire window, but not if
-           this DOM window belongs to a tabbed browser and doesn't
-           correspond to a tab. This allows a well-behaved tab
-           to destroy the container as it should but is a final measure
-           to prevent an errant tab from doing so when it shouldn't.
-           This works because we reach this code when we shouldn't only
-           in the particular circumstance that we belong to a tab
-           that has just been closed (and is therefore already missing
-           from the list of browsers) (and has an unload handler
-           that closes the window). */
-        // XXXbz now that we have mHavePendingClose, is this needed?
-        bool isTab;
-        if (rootWin == this || !bwin ||
-            (NS_SUCCEEDED(bwin->IsTabContentWindow(this, &isTab)) && isTab)) {
-          treeOwnerAsWin->Destroy();
-        }
-      }
-    }
-
-    CleanUp();
+  if (!treeOwnerAsWin) {
+    return;
   }
+
+  treeOwnerAsWin->Destroy();
+  CleanUp();
 }
 
 void nsGlobalWindowOuter::EnterModalState() {
@@ -7291,10 +7229,10 @@ nsresult nsGlobalWindowOuter::OpenInternal(
     switch (aPrintKind) {
       case PrintKind::None:
         return nsPIWindowWatcher::PRINT_NONE;
-      case PrintKind::Print:
-        return nsPIWindowWatcher::PRINT_REGULAR;
-      case PrintKind::PrintPreview:
-        return nsPIWindowWatcher::PRINT_PREVIEW;
+      case PrintKind::InternalPrint:
+        return nsPIWindowWatcher::PRINT_INTERNAL;
+      case PrintKind::WindowDotPrint:
+        return nsPIWindowWatcher::PRINT_WINDOW_DOT_PRINT;
     }
     MOZ_ASSERT_UNREACHABLE("Wat");
     return nsPIWindowWatcher::PRINT_NONE;
@@ -7539,7 +7477,7 @@ nsresult nsGlobalWindowOuter::RestoreWindowState(nsISupports* aState) {
   // it easy to tell which link was last clicked when going back a page.
   Element* focusedElement = inner->GetFocusedElement();
   if (nsContentUtils::ContentIsLink(focusedElement)) {
-    nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+    nsFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm) {
       // XXXbz Do we need the stack strong ref here?
       RefPtr<Element> kungFuDeathGrip(focusedElement);

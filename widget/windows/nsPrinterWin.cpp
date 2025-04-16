@@ -19,16 +19,19 @@ using namespace mozilla;
 using namespace mozilla::gfx;
 using namespace mozilla::widget;
 
-static const double kTenthMMToPoint = 72.0 / 254.0;
+static const double kPointsPerTenthMM = 72.0 / 254.0;
 static const double kPointsPerInch = 72.0;
 
-nsPrinterWin::nsPrinterWin(const nsAString& aName)
-    : mName(aName),
+nsPrinterWin::nsPrinterWin(const CommonPaperInfoArray* aArray,
+                           const nsAString& aName)
+    : nsPrinterBase(aArray),
+      mName(aName),
       mDefaultDevmodeWStorage("nsPrinterWin::mDefaultDevmodeWStorage") {}
 
 // static
-already_AddRefed<nsPrinterWin> nsPrinterWin::Create(const nsAString& aName) {
-  return do_AddRef(new nsPrinterWin(aName));
+already_AddRefed<nsPrinterWin> nsPrinterWin::Create(
+    const CommonPaperInfoArray* aArray, const nsAString& aName) {
+  return do_AddRef(new nsPrinterWin(aArray, aName));
 }
 
 nsTArray<uint8_t> nsPrinterWin::CopyDefaultDevmodeW() const {
@@ -269,8 +272,8 @@ nsTArray<mozilla::PaperInfo> nsPrinterWin::PaperList() const {
     auto firstNull =
         std::find(paperNames[i].cbegin(), paperNames[i].cend(), L'\0');
     auto nameLength = firstNull - paperNames[i].cbegin();
-    double width = paperSizes[i].x * kTenthMMToPoint;
-    double height = paperSizes[i].y * kTenthMMToPoint;
+    double width = paperSizes[i].x * kPointsPerTenthMM;
+    double height = paperSizes[i].y * kPointsPerTenthMM;
 
     // Skip if no name or invalid size.
     if (!nameLength || width <= 0 || height <= 0) {

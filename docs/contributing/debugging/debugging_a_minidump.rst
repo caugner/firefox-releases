@@ -31,9 +31,9 @@ access and where to find minidump files for crash reports, consult the
 Using the MS Visual Studio debugger
 -----------------------------------
 
-#. Set up the debugger to `use the Mozilla symbol
-   server <https://developer.mozilla.org/en/Using_the_Mozilla_symbol_server>`__ and `source
-   server <https://developer.mozilla.org/en-US/docs/Mozilla/Using_the_Mozilla_source_server>`__\.
+#. Set up the debugger to :ref:`use the Mozilla symbol
+   server <Using The Mozilla Symbol Server>` and
+   :ref:`source server <Using The Mozilla Source Server>`.
 #. Double-click on the minidump file to open it in the debugger.
 #. When it loads, click the green icon in the visual studio debugger
    toolbar that looks like a play button.
@@ -114,9 +114,8 @@ build Breakpad, the binary will be at
 ``src/tools/linux/md2core/minidump-2-core``. Running the binary with the
 path to a Linux minidump will generate a core file on stdout which can
 then be loaded in gdb as usual. You will need to manually download the
-matching Firefox binaries, but then you can use the `GDB Python
-script <https://developer.mozilla.org/en/Using_the_Mozilla_symbol_server#Downloading_symbols_on_Linux_Mac_OS_X>`__
-to download symbols.
+matching Firefox binaries, but then you can use the :ref:`GDB Python
+script <Downloading_symbols_on_Linux_Mac_OS_X>` to download symbols.
 
 The ``minidump-2-core`` source does not currently handle processing
 minidumps from a different CPU architecture than the system it was

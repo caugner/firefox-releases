@@ -1372,6 +1372,11 @@ void EventStateManager::DispatchCrossProcessEvent(WidgetEvent* aEvent,
         return;
       }
 
+      if (BrowserParent* pointerLockedRemote =
+              BrowserParent::GetPointerLockedRemoteTarget()) {
+        remote = pointerLockedRemote;
+      }
+
       // If a mouse is over a remote target A, and then moves to
       // remote target B, we'd deliver the event directly to remote target B
       // after the moving, A would never get notified that the mouse left.
@@ -2320,9 +2325,11 @@ void EventStateManager::DoScrollHistory(int32_t direction) {
       // This is doing user-initiated history traversal, hence we want
       // to require that history entries we navigate to have user interaction.
       if (direction > 0)
-        webNav->GoBack(/* aRequireUserInteraction = */ true);
+        webNav->GoBack(
+            StaticPrefs::browser_navigation_requireUserInteraction());
       else
-        webNav->GoForward(/* aRequireUserInteraction = */ true);
+        webNav->GoForward(
+            StaticPrefs::browser_navigation_requireUserInteraction());
     }
   }
 }
@@ -3143,7 +3150,7 @@ void EventStateManager::PostHandleKeyboardEvent(
         }
 
         EnsureDocument(mPresContext);
-        nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+        nsFocusManager* fm = nsFocusManager::GetFocusManager();
         if (fm && mDocument) {
           // Shift focus forward or back depending on shift key
           bool isDocMove = aKeyboardEvent->IsControl() ||
@@ -3324,7 +3331,7 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
 
         MOZ_ASSERT_IF(newFocus, newFocus->IsElement());
 
-        nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+        nsFocusManager* fm = nsFocusManager::GetFocusManager();
         if (fm) {
           // if something was found to focus, focus it. Otherwise, if the
           // element that was clicked doesn't have -moz-user-focus: ignore,
@@ -3894,9 +3901,13 @@ static bool ShouldBlockCustomCursor(nsPresContext* aPresContext,
   nsPoint point = nsLayoutUtils::GetEventCoordinatesRelativeTo(
       aEvent, RelativeTo{topLevel->PresShell()->GetRootFrame()});
 
-  nsSize size(CSSPixel::ToAppUnits(width), CSSPixel::ToAppUnits(height));
-  nsPoint hotspot(CSSPixel::ToAppUnits(aCursor.mHotspot.x),
-                  CSSPixel::ToAppUnits(aCursor.mHotspot.y));
+  // The cursor size won't be affected by our full zoom in the parent process,
+  // so undo that before checking the rect.
+  float zoom = topLevel->GetFullZoom();
+  nsSize size(CSSPixel::ToAppUnits(width / zoom),
+              CSSPixel::ToAppUnits(height / zoom));
+  nsPoint hotspot(CSSPixel::ToAppUnits(aCursor.mHotspot.x / zoom),
+                  CSSPixel::ToAppUnits(aCursor.mHotspot.y / zoom));
 
   nsRect cursorRect(point - hotspot, size);
   return !topLevel->GetVisibleArea().Contains(cursorRect);
@@ -5422,6 +5433,14 @@ void EventStateManager::UpdateAncestorState(nsIContent* aStartNode,
   }
 }
 
+// static
+bool CanContentHaveActiveState(nsIContent& aContent) {
+  // Editable content can never become active since their default actions
+  // are disabled.  Watch out for editable content in native anonymous
+  // subtrees though, as they belong to text controls.
+  return !aContent.IsEditable() || aContent.IsInNativeAnonymousSubtree();
+}
+
 bool EventStateManager::SetContentState(nsIContent* aContent,
                                         EventStates aState) {
   MOZ_ASSERT(ManagesState(aState), "Unexpected state");
@@ -5444,11 +5463,7 @@ bool EventStateManager::SetContentState(nsIContent* aContent,
     }
 
     if (aState == NS_EVENT_STATE_ACTIVE) {
-      // Editable content can never become active since their default actions
-      // are disabled.  Watch out for editable content in native anonymous
-      // subtrees though, as they belong to text controls.
-      if (aContent && aContent->IsEditable() &&
-          !aContent->IsInNativeAnonymousSubtree()) {
+      if (aContent && !CanContentHaveActiveState(*aContent)) {
         aContent = nullptr;
       }
       if (aContent != mActiveContent) {
@@ -5588,7 +5603,8 @@ void EventStateManager::RemoveNodeFromChainIfNeeded(EventStates aState,
     // Also, NAC is not observable and NAC being removed will go away soon.
     leaf = newLeaf;
   }
-  MOZ_ASSERT(leaf == newLeaf);
+  MOZ_ASSERT(leaf == newLeaf || (aState == NS_EVENT_STATE_ACTIVE && !leaf &&
+                                 !CanContentHaveActiveState(*newLeaf)));
 }
 
 void EventStateManager::NativeAnonymousContentRemoved(nsIContent* aContent) {
@@ -5698,7 +5714,7 @@ void EventStateManager::FlushLayout(nsPresContext* aPresContext) {
 }
 
 nsIContent* EventStateManager::GetFocusedContent() {
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   EnsureDocument(mPresContext);
   if (!fm || !mDocument) return nullptr;
 

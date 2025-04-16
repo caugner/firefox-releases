@@ -7,11 +7,11 @@
 #ifndef jit_x64_MacroAssembler_x64_h
 #define jit_x64_MacroAssembler_x64_h
 
-#include "jit/JitFrames.h"
 #include "jit/MoveResolver.h"
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
 #include "js/HeapAPI.h"
 #include "vm/BigIntType.h"  // JS::BigInt
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
@@ -144,20 +144,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
       movl(Imm32(Upper32Of(GetShiftedTag(type))), ToUpper32(Operand(dest)));
     } else {
       ScratchRegisterScope scratch(asMasm());
-#ifdef NIGHTLY_BUILD
-      // Bug 1485209 - Diagnostic assert for constructing Values with
-      // nullptr or misaligned (eg poisoned) JSObject/JSString pointers.
-      if (type == JSVAL_TYPE_OBJECT || type == JSVAL_TYPE_STRING) {
-        Label crash, ok;
-        testPtr(reg, Imm32(js::gc::CellAlignMask));
-        j(Assembler::NonZero, &crash);
-        testPtr(reg, reg);
-        j(Assembler::NonZero, &ok);
-        bind(&crash);
-        breakpoint();
-        bind(&ok);
-      }
-#endif
       boxValue(type, reg, scratch);
       movq(scratch, Operand(dest));
     }
@@ -1038,7 +1024,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
                            Label* failure);
 
  public:
-  void handleFailureWithHandlerTail(void* handler, Label* profilerExitTail);
+  void handleFailureWithHandlerTail(Label* profilerExitTail);
 
   // Instrumentation for entering and leaving the profiler.
   void profilerEnterFrame(Register framePtr, Register scratch);

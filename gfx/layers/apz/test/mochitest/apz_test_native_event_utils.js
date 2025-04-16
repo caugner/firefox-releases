@@ -339,17 +339,43 @@ function synthesizeNativeWheelAndWaitForWheelEvent(
   aDeltaY,
   aCallback
 ) {
-  var targetWindow = windowForTarget(aTarget);
-  targetWindow.addEventListener(
-    "wheel",
-    function(e) {
-      if (aCallback) {
-        setTimeout(aCallback, 0);
-      }
-    },
-    { once: true }
+  let p = promiseNativeWheelAndWaitForWheelEvent(
+    aTarget,
+    aX,
+    aY,
+    aDeltaX,
+    aDeltaY
   );
-  return synthesizeNativeWheel(aTarget, aX, aY, aDeltaX, aDeltaY);
+  if (aCallback) {
+    p.then(aCallback);
+  }
+  return true;
+}
+
+// Same as synthesizeNativeWheelAndWaitForWheelEvent, except returns a promise
+// instead of taking a callback
+function promiseNativeWheelAndWaitForWheelEvent(
+  aTarget,
+  aX,
+  aY,
+  aDeltaX,
+  aDeltaY
+) {
+  return new Promise((resolve, reject) => {
+    var targetWindow = windowForTarget(aTarget);
+    targetWindow.addEventListener(
+      "wheel",
+      function(e) {
+        setTimeout(resolve, 0);
+      },
+      { once: true }
+    );
+    try {
+      synthesizeNativeWheel(aTarget, aX, aY, aDeltaX, aDeltaY);
+    } catch (e) {
+      reject();
+    }
+  });
 }
 
 // Synthesizes a native mousewheel event and invokes the callback once the
@@ -365,15 +391,40 @@ function synthesizeNativeWheelAndWaitForScrollEvent(
   aDeltaY,
   aCallback
 ) {
-  var targetWindow = windowForTarget(aTarget);
-  targetWindow.addEventListener(
-    "scroll",
-    function() {
-      setTimeout(aCallback, 0);
-    },
-    { capture: true, once: true }
-  ); // scroll events don't always bubble
-  return synthesizeNativeWheel(aTarget, aX, aY, aDeltaX, aDeltaY);
+  promiseNativeWheelAndWaitForScrollEvent(
+    aTarget,
+    aX,
+    aY,
+    aDeltaX,
+    aDeltaY
+  ).then(aCallback);
+  return true;
+}
+
+// Same as synthesizeNativeWheelAndWaitForScrollEvent, but returns a promise
+// instead of taking a callback
+function promiseNativeWheelAndWaitForScrollEvent(
+  aTarget,
+  aX,
+  aY,
+  aDeltaX,
+  aDeltaY
+) {
+  return new Promise((resolve, reject) => {
+    var targetWindow = windowForTarget(aTarget);
+    targetWindow.addEventListener(
+      "scroll",
+      function() {
+        setTimeout(resolve, 0);
+      },
+      { capture: true, once: true }
+    ); // scroll events don't always bubble
+    try {
+      synthesizeNativeWheel(aTarget, aX, aY, aDeltaX, aDeltaY);
+    } catch (e) {
+      reject();
+    }
+  });
 }
 
 // Synthesizes a native mouse move event and returns immediately.
@@ -397,15 +448,28 @@ function synthesizeNativeMouseMoveAndWaitForMoveEvent(
   aY,
   aCallback
 ) {
-  var targetWindow = windowForTarget(aTarget);
-  targetWindow.addEventListener(
-    "mousemove",
-    function(e) {
-      setTimeout(aCallback, 0);
-    },
-    { once: true }
-  );
-  return synthesizeNativeMouseMove(aTarget, aX, aY);
+  promiseNativeMouseMoveAndWaitForMoveEvent(aTarget, aX, aY).then(aCallback);
+  return true;
+}
+
+// Same as synthesizeNativeMouseMoveAndWaitForMoveEvent but returns a promise
+// instead of taking a callback.
+function promiseNativeMouseMoveAndWaitForMoveEvent(aTarget, aX, aY) {
+  return new Promise((resolve, reject) => {
+    var targetWindow = windowForTarget(aTarget);
+    targetWindow.addEventListener(
+      "mousemove",
+      function(e) {
+        setTimeout(resolve, 0);
+      },
+      { once: true }
+    );
+    try {
+      synthesizeNativeMouseMove(aTarget, aX, aY);
+    } catch (e) {
+      reject();
+    }
+  });
 }
 
 // Synthesizes a native touch event and dispatches it. aX and aY in CSS pixels
@@ -655,37 +719,18 @@ function moveMouseAndScrollWheelOver(
   waitForScroll = true,
   scrollDelta = 10
 ) {
-  return synthesizeNativeMouseMoveAndWaitForMoveEvent(
+  promiseMoveMouseAndScrollWheelOver(
     target,
     dx,
     dy,
-    function() {
-      if (waitForScroll) {
-        synthesizeNativeWheelAndWaitForScrollEvent(
-          target,
-          dx,
-          dy,
-          0,
-          -scrollDelta,
-          testDriver
-        );
-      } else {
-        synthesizeNativeWheelAndWaitForWheelEvent(
-          target,
-          dx,
-          dy,
-          0,
-          -scrollDelta,
-          testDriver
-        );
-      }
-    }
-  );
+    waitForScroll,
+    scrollDelta
+  ).then(testDriver);
+  return true;
 }
 
 // Same as moveMouseAndScrollWheelOver, but returns a promise instead of taking
-// a callback function. Eventually we should convert all these callback-taking
-// functions into promise-producing functions but for now this is a stopgap.
+// a callback function.
 function promiseMoveMouseAndScrollWheelOver(
   target,
   dx,
@@ -693,16 +738,17 @@ function promiseMoveMouseAndScrollWheelOver(
   waitForScroll = true,
   scrollDelta = 10
 ) {
-  return new Promise(resolve => {
-    moveMouseAndScrollWheelOver(
-      target,
-      dx,
-      dy,
-      resolve,
-      waitForScroll,
-      scrollDelta
+  let p = promiseNativeMouseMoveAndWaitForMoveEvent(target, dx, dy);
+  if (waitForScroll) {
+    p = p.then(() =>
+      promiseNativeWheelAndWaitForScrollEvent(target, dx, dy, 0, -scrollDelta)
     );
-  });
+  } else {
+    p = p.then(() =>
+      promiseNativeWheelAndWaitForWheelEvent(target, dx, dy, 0, -scrollDelta)
+    );
+  }
+  return p;
 }
 
 // Synthesizes events to drag |target|'s vertical scrollbar by the distance
@@ -862,7 +908,8 @@ async function promiseNativeMouseDrag(
 }
 
 // Synthesizes a native touch sequence of events corresponding to a pinch-zoom-in
-// at the given focus point.
+// at the given focus point. The focus point must be specified in CSS coordinates
+// relative to the document body.
 function* pinchZoomInTouchSequence(focusX, focusY) {
   // prettier-ignore
   var zoom_in = [
@@ -876,42 +923,6 @@ function* pinchZoomInTouchSequence(focusX, focusY) {
 
   var touchIds = [0, 1];
   yield* synthesizeNativeTouchSequences(document.body, zoom_in, null, touchIds);
-}
-
-// Synthesizes a native touch sequence of events corresponding to a
-// pinch-zoom-out at the center of the window.
-function* pinchZoomOutTouchSequenceAtCenter() {
-  // Divide the half of visual viewport size by 8, then cause touch events
-  // starting from the 7th furthest away from the center towards the center.
-  const deltaX = window.visualViewport.width / 16;
-  const deltaY = window.visualViewport.height / 16;
-  const centerX =
-    window.visualViewport.pageLeft + window.visualViewport.width / 2;
-  const centerY =
-    window.visualViewport.pageTop + window.visualViewport.height / 2;
-  // prettier-ignore
-  var zoom_out = [
-      [ { x: centerX - (deltaX * 6), y: centerY - (deltaY * 6) },
-        { x: centerX + (deltaX * 6), y: centerY + (deltaY * 6) } ],
-      [ { x: centerX - (deltaX * 5), y: centerY - (deltaY * 5) },
-        { x: centerX + (deltaX * 5), y: centerY + (deltaY * 5) } ],
-      [ { x: centerX - (deltaX * 4), y: centerY - (deltaY * 4) },
-        { x: centerX + (deltaX * 4), y: centerY + (deltaY * 4) } ],
-      [ { x: centerX - (deltaX * 3), y: centerY - (deltaY * 3) },
-        { x: centerX + (deltaX * 3), y: centerY + (deltaY * 3) } ],
-      [ { x: centerX - (deltaX * 2), y: centerY - (deltaY * 2) },
-        { x: centerX + (deltaX * 2), y: centerY + (deltaY * 2) } ],
-      [ { x: centerX - (deltaX * 1), y: centerY - (deltaY * 1) },
-        { x: centerX + (deltaX * 1), y: centerY + (deltaY * 1) } ],
-  ];
-
-  var touchIds = [0, 1];
-  yield* synthesizeNativeTouchSequences(
-    document.body,
-    zoom_out,
-    null,
-    touchIds
-  );
 }
 
 // Returns a promise that is resolved when the observer service dispatches a
@@ -935,9 +946,15 @@ function promiseTopic(aTopic) {
   });
 }
 
+// Returns a promise that is resolved when a APZ transform ends.
+function promiseTransformEnd() {
+  return promiseTopic("APZ:TransformEnd");
+}
+
 // This generates a touch-based pinch zoom-in gesture that is expected
 // to succeed. It returns after APZ has completed the zoom and reaches the end
-// of the transform.
+// of the transform. The focus point is expected to be in CSS coordinates
+// relative to the document body.
 async function pinchZoomInWithTouch(focusX, focusY) {
   // Register the listener for the TransformEnd observer topic
   let transformEndPromise = promiseTopic("APZ:TransformEnd");
@@ -955,15 +972,25 @@ async function pinchZoomInWithTouch(focusX, focusY) {
   await transformEndPromise;
 }
 
-// This generates a touch-based pinch zoom-out gesture that is expected
-// to succeed. It returns after APZ has completed the zoom and reaches the end
-// of the transform.
-async function pinchZoomOutWithTouchAtCenter() {
+// This generates a touch-based pinch gesture that is expected to succeed
+// and trigger an APZ:TransformEnd observer notification.
+// It returns after that notification has been dispatched.
+// The coordinates of touch events in `touchSequence` are expected to be
+// in CSS coordinates relative to the document body.
+async function synthesizeNativeTouchAndWaitForTransformEnd(
+  touchSequence,
+  touchIds
+) {
   // Register the listener for the TransformEnd observer topic
   let transformEndPromise = promiseTopic("APZ:TransformEnd");
 
   // Dispatch all the touch events
-  let generator = pinchZoomOutTouchSequenceAtCenter();
+  let generator = synthesizeNativeTouchSequences(
+    document.body,
+    touchSequence,
+    null,
+    touchIds
+  );
   while (true) {
     let yieldResult = generator.next();
     if (yieldResult.done) {
@@ -973,4 +1000,44 @@ async function pinchZoomOutWithTouchAtCenter() {
 
   // Wait for TransformEnd to fire.
   await transformEndPromise;
+}
+
+// Returns a touch sequence for a pinch-zoom-out operation in the center
+// of the visual viewport. The touch sequence returned is in CSS coordinates
+// relative to the document body.
+function pinchZoomOutTouchSequenceAtCenter() {
+  // Divide the half of visual viewport size by 8, then cause touch events
+  // starting from the 7th furthest away from the center towards the center.
+  const deltaX = window.visualViewport.width / 16;
+  const deltaY = window.visualViewport.height / 16;
+  const centerX =
+    window.visualViewport.pageLeft + window.visualViewport.width / 2;
+  const centerY =
+    window.visualViewport.pageTop + window.visualViewport.height / 2;
+  // prettier-ignore
+  var zoom_out = [
+      [ { x: centerX - (deltaX * 6), y: centerY - (deltaY * 6) },
+        { x: centerX + (deltaX * 6), y: centerY + (deltaY * 6) } ],
+      [ { x: centerX - (deltaX * 5), y: centerY - (deltaY * 5) },
+        { x: centerX + (deltaX * 5), y: centerY + (deltaY * 5) } ],
+      [ { x: centerX - (deltaX * 4), y: centerY - (deltaY * 4) },
+        { x: centerX + (deltaX * 4), y: centerY + (deltaY * 4) } ],
+      [ { x: centerX - (deltaX * 3), y: centerY - (deltaY * 3) },
+        { x: centerX + (deltaX * 3), y: centerY + (deltaY * 3) } ],
+      [ { x: centerX - (deltaX * 2), y: centerY - (deltaY * 2) },
+        { x: centerX + (deltaX * 2), y: centerY + (deltaY * 2) } ],
+      [ { x: centerX - (deltaX * 1), y: centerY - (deltaY * 1) },
+        { x: centerX + (deltaX * 1), y: centerY + (deltaY * 1) } ],
+  ];
+  return zoom_out;
+}
+
+// This generates a touch-based pinch zoom-out gesture that is expected
+// to succeed. It returns after APZ has completed the zoom and reaches the end
+// of the transform. The touch inputs are directed to the center of the
+// current visual viewport.
+async function pinchZoomOutWithTouchAtCenter() {
+  var zoom_out = pinchZoomOutTouchSequenceAtCenter();
+  var touchIds = [0, 1];
+  await synthesizeNativeTouchAndWaitForTransformEnd(zoom_out, touchIds);
 }

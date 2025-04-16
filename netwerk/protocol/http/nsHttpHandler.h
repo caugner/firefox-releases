@@ -168,7 +168,6 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
     return mCriticalRequestPrioritization;
   }
 
-  bool IsDocumentNosniffEnabled() { return mRespectDocumentNoSniff; }
   bool UseH2Deps() { return mUseH2Deps; }
   bool IsH2WebsocketsEnabled() { return mEnableH2Websockets; }
 
@@ -471,6 +470,8 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
     return mMaxHttpResponseHeaderSize;
   }
 
+  const nsCString& Http3QlogDir();
+
   float FocusedWindowTransactionRatio() const {
     return mFocusedWindowTransactionRatio;
   }
@@ -504,6 +505,13 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
                                 const OriginAttributes& aOriginAttributes);
 
   bool UseHTTPSRRAsAltSvcEnabled() const;
+
+  bool EchConfigEnabled() const;
+  // When EchConfig is enabled and all records with echConfig are failed, this
+  // functon indicate whether we can fallback to the origin server.
+  // In the case an HTTPS RRSet contains some RRs with echConfig and some
+  // without, we always fallback to the origin one.
+  bool FallbackToOriginIfConfigsAreECHAndAllFailed() const;
 
  private:
   nsHttpHandler();
@@ -716,9 +724,6 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   // while those elements load.
   bool mCriticalRequestPrioritization;
 
-  // Whether to respect X-Content-Type nosniff on Page loads
-  bool mRespectDocumentNoSniff;
-
   // TCP Keepalive configuration values.
 
   // True if TCP keepalive is enabled for short-lived conns.
@@ -753,6 +758,7 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   Atomic<uint32_t, Relaxed>
       mHttp3MaxBlockedStreams;  // uint16_t is enough here, but Atomic only
                                 // supports uint32_t or uint64_t.
+  nsCString mHttp3QlogDir;
 
   // The max size (in bytes) for received Http response header.
   uint32_t mMaxHttpResponseHeaderSize;

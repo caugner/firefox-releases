@@ -1049,12 +1049,8 @@ nsresult OpenOp::Open() {
   } else {
     MOZ_ASSERT(principalInfo.type() == PrincipalInfo::TContentPrincipalInfo);
 
-    auto principalOrErr = PrincipalInfoToPrincipal(principalInfo);
-    if (NS_WARN_IF(principalOrErr.isErr())) {
-      return principalOrErr.unwrapErr();
-    }
-
-    nsCOMPtr<nsIPrincipal> principal = principalOrErr.unwrap();
+    SDB_TRY_INSPECT(const auto& principal,
+                    PrincipalInfoToPrincipal(principalInfo));
 
     nsresult rv = QuotaManager::GetInfoFromPrincipal(principal, &mSuffix,
                                                      &mGroup, &mOrigin);
@@ -1172,15 +1168,13 @@ nsresult OpenOp::DatabaseWork() {
   QuotaManager* quotaManager = QuotaManager::Get();
   MOZ_ASSERT(quotaManager);
 
-  nsCOMPtr<nsIFile> dbDirectory;
-  nsresult rv = quotaManager->EnsureStorageAndOriginIsInitialized(
-      GetConnection()->GetPersistenceType(), mSuffix, mGroup, mOrigin,
-      mozilla::dom::quota::Client::SDB, getter_AddRefs(dbDirectory));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  SDB_TRY_INSPECT(const auto& dbDirectory,
+                  quotaManager->EnsureStorageAndOriginIsInitialized(
+                      GetConnection()->GetPersistenceType(), mSuffix, mGroup,
+                      mOrigin, mozilla::dom::quota::Client::SDB));
 
-  rv = dbDirectory->Append(NS_LITERAL_STRING_FROM_CSTRING(SDB_DIRECTORY_NAME));
+  nsresult rv =
+      dbDirectory->Append(NS_LITERAL_STRING_FROM_CSTRING(SDB_DIRECTORY_NAME));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -1653,8 +1647,8 @@ Result<UsageInfo, nsresult> QuotaClient::GetUsageForOrigin(
   QuotaManager* quotaManager = QuotaManager::Get();
   MOZ_ASSERT(quotaManager);
 
-  SDB_TRY_VAR(auto directory,
-              quotaManager->GetDirectoryForOrigin(aPersistenceType, aOrigin));
+  SDB_TRY_UNWRAP(auto directory, quotaManager->GetDirectoryForOrigin(
+                                     aPersistenceType, aOrigin));
 
   MOZ_ASSERT(directory);
 

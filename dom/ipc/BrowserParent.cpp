@@ -122,6 +122,7 @@
 #include "SessionStoreFunctions.h"
 #include "mozilla/dom/CrashReport.h"
 #include "nsISecureBrowserUI.h"
+#include "nsIXULRuntime.h"
 
 #ifdef XP_WIN
 #  include "mozilla/plugins/PluginWidgetParent.h"
@@ -161,6 +162,8 @@ BrowserParent* BrowserParent::sFocus = nullptr;
 BrowserParent* BrowserParent::sTopLevelWebFocus = nullptr;
 /* static */
 BrowserParent* BrowserParent::sLastMouseRemoteTarget = nullptr;
+/* static */
+BrowserParent* BrowserParent::sPointerLockedRemoteTarget = nullptr;
 
 // The flags passed by the webProgress notifications are 16 bits shifted
 // from the ones registered by webProgressListeners.
@@ -243,6 +246,11 @@ BrowserParent* BrowserParent::GetFocused() { return sFocus; }
 /* static */
 BrowserParent* BrowserParent::GetLastMouseRemoteTarget() {
   return sLastMouseRemoteTarget;
+}
+
+/* static */
+BrowserParent* BrowserParent::GetPointerLockedRemoteTarget() {
+  return sPointerLockedRemoteTarget;
 }
 
 /*static*/
@@ -463,7 +471,7 @@ ParentShowInfo BrowserParent::GetShowInfo() {
                           mDefaultScale.scale);
   }
 
-  return ParentShowInfo(EmptyString(), false, false, mDPI, mRounding,
+  return ParentShowInfo(u""_ns, false, false, mDPI, mRounding,
                         mDefaultScale.scale);
 }
 
@@ -592,6 +600,7 @@ void BrowserParent::RemoveWindowListeners() {
 void BrowserParent::DestroyInternal() {
   UnsetTopLevelWebFocus(this);
   UnsetLastMouseRemoteTarget(this);
+  UnsetPointerLockedRemoteTarget(this);
 
   RemoveWindowListeners();
 
@@ -673,6 +682,7 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
   // case of a crash.
   BrowserParent::UnsetTopLevelWebFocus(this);
   BrowserParent::UnsetLastMouseRemoteTarget(this);
+  BrowserParent::UnsetPointerLockedRemoteTarget(this);
 
   if (why == AbnormalShutdown) {
     // dom_reporting_header must also be enabled for the report to be sent.
@@ -753,7 +763,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvMoveFocus(
     return IPC_OK();
   }
 
-  nsCOMPtr<nsIFocusManager> fm = nsFocusManager::GetFocusManager();
+  RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager();
   if (fm) {
     RefPtr<Element> dummy;
 
@@ -1297,14 +1307,14 @@ IPCResult BrowserParent::RecvIndexedDBPermissionRequest(
       new indexedDB::PermissionRequestHelper(mFrameElement, principal,
                                              aResolve);
 
-  indexedDB::PermissionRequestBase::PermissionValue permission;
-  nsresult rv = actor->PromptIfNeeded(&permission);
-  if (NS_FAILED(rv)) {
+  mozilla::Result permissionOrErr = actor->PromptIfNeeded();
+  if (permissionOrErr.isErr()) {
     return IPC_FAIL_NO_REASON(this);
   }
 
-  if (permission != indexedDB::PermissionRequestBase::kPermissionPrompt) {
-    aResolve(permission);
+  if (permissionOrErr.inspect() !=
+      indexedDB::PermissionRequestBase::kPermissionPrompt) {
+    aResolve(permissionOrErr.inspect());
   }
 
   return IPC_OK();
@@ -1973,7 +1983,7 @@ bool BrowserParent::SendHandleTap(TapType aType,
     return false;
   }
   if ((aType == TapType::eSingleTap || aType == TapType::eSecondTap)) {
-    nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+    nsFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm) {
       RefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
       if (frameLoader) {
@@ -2678,7 +2688,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
   // the current window global, but that happens before this and we have a lot
   // of tests that depend on the specific ordering of messages.
   if (!(aFlags & nsIWebProgressListener::LOCATION_CHANGE_SAME_DOCUMENT)) {
-    GetBrowsingContext()->UpdateSecurityStateForLocationOrMixedContentChange();
+    GetBrowsingContext()->UpdateSecurityState();
   }
   return IPC_OK();
 }
@@ -2873,9 +2883,24 @@ mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
   bool ok = ToJSValue(jsapi.cx(), data, &dataVal);
   NS_ENSURE_TRUE(ok, IPC_OK());
 
-  nsresult rv = funcs->UpdateSessionStore(
-      mFrameElement, aFlushId, aIsFinal, aEpoch, dataVal, aNeedCollectSHistory);
+  nsresult rv = funcs->UpdateSessionStore(mFrameElement, mBrowsingContext,
+                                          aFlushId, aIsFinal, aEpoch, dataVal,
+                                          aNeedCollectSHistory);
   NS_ENSURE_SUCCESS(rv, IPC_OK());
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserParent::RecvIntrinsicSizeOrRatioChanged(
+    const Maybe<IntrinsicSize>& aIntrinsicSize,
+    const Maybe<AspectRatio>& aIntrinsicRatio) {
+  BrowserBridgeParent* bridge = GetBrowserBridgeParent();
+  if (!bridge || !bridge->CanSend()) {
+    return IPC_OK();
+  }
+
+  Unused << bridge->SendIntrinsicSizeOrRatioChanged(aIntrinsicSize,
+                                                    aIntrinsicRatio);
 
   return IPC_OK();
 }
@@ -3052,6 +3077,14 @@ void BrowserParent::UnsetTopLevelWebFocusAll() {
 void BrowserParent::UnsetLastMouseRemoteTarget(BrowserParent* aBrowserParent) {
   if (sLastMouseRemoteTarget == aBrowserParent) {
     sLastMouseRemoteTarget = nullptr;
+  }
+}
+
+/* static */
+void BrowserParent::UnsetPointerLockedRemoteTarget(
+    BrowserParent* aBrowserParent) {
+  if (sPointerLockedRemoteTarget == aBrowserParent) {
+    sPointerLockedRemoteTarget = nullptr;
   }
 }
 
@@ -3488,7 +3521,7 @@ bool BrowserParent::CanCancelContentJS(
     nsIURI* aNavigationURI) const {
   // Pre-checking if we can cancel content js in the parent is only
   // supported when session history in the parent is enabled.
-  if (!StaticPrefs::fission_sessionHistoryInParent()) {
+  if (!mozilla::SessionHistoryInParent()) {
     // If session history in the parent isn't enabled, this check will
     // be fully done in BrowserChild::CanCancelContentJS
     return true;
@@ -3858,7 +3891,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvAsyncAuthPrompt(
   uint32_t promptFlags = nsIAuthInformation::AUTH_HOST;
 
   RefPtr<nsAuthInformationHolder> holder =
-      new nsAuthInformationHolder(promptFlags, aRealm, EmptyCString());
+      new nsAuthInformationHolder(promptFlags, aRealm, ""_ns);
 
   uint32_t level = nsIAuthPrompt2::LEVEL_NONE;
   nsCOMPtr<nsICancelable> dummy;
@@ -4122,6 +4155,31 @@ mozilla::ipc::IPCResult BrowserParent::RecvIsWindowSupportingWebVR(
   aResolve(true);
 #endif
 
+  return IPC_OK();
+}
+
+bool BrowserParent::SetPointerLock() {
+  if (sPointerLockedRemoteTarget) {
+    return sPointerLockedRemoteTarget == this;
+  }
+
+  sPointerLockedRemoteTarget = this;
+  return true;
+}
+
+mozilla::ipc::IPCResult BrowserParent::RecvRequestPointerLock(
+    RequestPointerLockResolver&& aResolve) {
+  nsCString error;
+  if (!SetPointerLock()) {
+    error = "PointerLockDeniedInUse";
+  }
+  aResolve(error);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserParent::RecvReleasePointerLock() {
+  MOZ_ASSERT_IF(sPointerLockedRemoteTarget, sPointerLockedRemoteTarget == this);
+  UnsetPointerLockedRemoteTarget(this);
   return IPC_OK();
 }
 

@@ -373,6 +373,10 @@ class nsDocShell final : public nsDocLoader,
   // Update any pointers (mOSHE or mLSHE) to aOldEntry to point to aNewEntry
   void SwapHistoryEntries(nsISHEntry* aOldEntry, nsISHEntry* aNewEntry);
 
+  bool GetCreatedDynamically() const {
+    return mBrowsingContext && mBrowsingContext->CreatedDynamically();
+  }
+
   mozilla::gfx::Matrix5x4* GetColorMatrix() { return mColorMatrix.get(); }
 
   static bool SandboxFlagsImplyCookies(const uint32_t& aSandboxFlags);
@@ -702,6 +706,7 @@ class nsDocShell final : public nsDocLoader,
   nsresult ScrollToAnchor(bool aCurHasRef, bool aNewHasRef,
                           nsACString& aNewHash, uint32_t aLoadType);
 
+ private:
   // Returns true if would have called FireOnLocationChange,
   // but did not because aFireOnLocationChange was false on entry.
   // In this case it is the caller's responsibility to ensure
@@ -720,10 +725,10 @@ class nsDocShell final : public nsDocLoader,
                 nsIPrincipal* aTriggeringPrincipal,
                 nsIPrincipal* aPrincipalToInherit,
                 nsIPrincipal* aPartitionedPrincipalToInehrit,
-                uint32_t aLoadType, nsIContentSecurityPolicy* aCsp,
-                bool aFireOnLocationChange, bool aAddToGlobalHistory,
-                bool aCloneSHChildren);
+                nsIContentSecurityPolicy* aCsp, bool aFireOnLocationChange,
+                bool aAddToGlobalHistory, bool aCloneSHChildren);
 
+ public:
   // Helper method that is called when a new document (including any
   // sub-documents - ie. frames) has been completely loaded.
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
@@ -815,8 +820,7 @@ class nsDocShell final : public nsDocLoader,
       nsIWidget* aWidget, uint32_t aLoadType);
 
   static already_AddRefed<nsIURIFixupInfo> KeywordToURI(
-      const nsACString& aKeyword, bool aIsPrivateContext,
-      nsIInputStream** aPostData);
+      const nsACString& aKeyword, bool aIsPrivateContext);
 
   // Sets the current document's current state object to the given SHEntry's
   // state object. The current state object is eventually given to the page
@@ -1009,7 +1013,8 @@ class nsDocShell final : public nsDocLoader,
   nsresult EnsureCommandHandler();
   nsresult RefreshURIFromQueue();
   nsresult Embed(nsIContentViewer* aContentViewer,
-                 mozilla::dom::WindowGlobalChild* aWindowActor = nullptr);
+                 mozilla::dom::WindowGlobalChild* aWindowActor = nullptr,
+                 bool aIsTransientAboutBlank = false);
   nsPresContext* GetEldestPresContext();
   nsresult CheckLoadingPermissions();
   nsresult LoadHistoryEntry(nsISHEntry* aEntry, uint32_t aLoadType);
@@ -1098,10 +1103,9 @@ class nsDocShell final : public nsDocLoader,
   // Sets the active entry to the current loading entry. If aCommit is true then
   // SessionHistoryCommit will be called on the CanonicalBrowsingContext
   // (directly or over IPC).
-  void MoveLoadingToActiveEntry(bool aCommit);
+  void MoveLoadingToActiveEntry();
 
  private:  // data members
-  nsID mHistoryID;
   nsString mTitle;
   nsCString mOriginalUriString;
   nsTObserverArray<nsWeakPtr> mPrivacyObservers;
@@ -1231,10 +1235,6 @@ class nsDocShell final : public nsDocLoader,
   uint32_t mLoadType;
   uint32_t mFailedLoadType;
 
-  // This represents the CSS display-mode we are currently using. This is mostly
-  // used for media queries.
-  DisplayMode mDisplayMode;
-
   // A depth count of how many times NotifyRunToCompletionStart
   // has been called without a matching NotifyRunToCompletionStop.
   uint32_t mJSRunToCompletionDepth;
@@ -1252,6 +1252,7 @@ class nsDocShell final : public nsDocLoader,
   bool mCreatingDocument;  // (should be) debugging only
 #ifdef DEBUG
   bool mInEnsureScriptEnv;
+  uint64_t mDocShellID = 0;
 #endif
 
   bool mInitialized : 1;

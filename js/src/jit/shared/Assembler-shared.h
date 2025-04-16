@@ -11,13 +11,17 @@
 
 #include <limits.h>
 
+#include "gc/Barrier.h"
 #include "jit/AtomicOp.h"
 #include "jit/JitAllocPolicy.h"
+#include "jit/JitCode.h"
+#include "jit/JitContext.h"
 #include "jit/Label.h"
 #include "jit/Registers.h"
 #include "jit/RegisterSets.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/HelperThreads.h"
+#include "vm/NativeObject.h"
 #include "wasm/WasmTypes.h"
 
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
@@ -33,10 +37,10 @@
 #  define JS_CODELABEL_LINKMODE
 #endif
 
-using mozilla::CheckedInt;
-
 namespace js {
 namespace jit {
+
+enum class FrameType;
 
 namespace Disassembler {
 class HeapAccess;
@@ -267,6 +271,8 @@ struct Address {
 #if JS_BITS_PER_WORD == 32
 
 static inline Address LowWord(const Address& address) {
+  using mozilla::CheckedInt;
+
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64LOW_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -274,6 +280,8 @@ static inline Address LowWord(const Address& address) {
 }
 
 static inline Address HighWord(const Address& address) {
+  using mozilla::CheckedInt;
+
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64HIGH_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -304,6 +312,8 @@ struct BaseIndex {
 #if JS_BITS_PER_WORD == 32
 
 static inline BaseIndex LowWord(const BaseIndex& address) {
+  using mozilla::CheckedInt;
+
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64LOW_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -311,6 +321,8 @@ static inline BaseIndex LowWord(const BaseIndex& address) {
 }
 
 static inline BaseIndex HighWord(const BaseIndex& address) {
+  using mozilla::CheckedInt;
+
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64HIGH_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -526,19 +538,6 @@ class MemoryAccessDesc {
   void clearOffset() { offset_ = 0; }
   void setOffset(uint32_t offset) { offset_ = offset; }
 };
-
-// Summarizes a global access for a mutable (in asm.js) or immutable value (in
-// asm.js or the wasm MVP) that needs to get patched later.
-
-struct GlobalAccess {
-  GlobalAccess(jit::CodeOffset patchAt, unsigned globalDataOffset)
-      : patchAt(patchAt), globalDataOffset(globalDataOffset) {}
-
-  jit::CodeOffset patchAt;
-  unsigned globalDataOffset;
-};
-
-typedef Vector<GlobalAccess, 0, SystemAllocPolicy> GlobalAccessVector;
 
 }  // namespace wasm
 

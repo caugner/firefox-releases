@@ -1253,7 +1253,7 @@ const selectors = {
     `.expressions-list .expression-container:nth-child(${i}) .object-delimiter + *`,
   expressionClose: i =>
     `.expressions-list .expression-container:nth-child(${i}) .close`,
-  expressionInput: ".expressions-list  input.input-expression",
+  expressionInput: ".watch-expressions-pane input.input-expression",
   expressionNodes: ".expressions-list .tree-node",
   expressionPlus: ".watch-expressions-pane button.plus",
   expressionRefresh: ".watch-expressions-pane button.refresh",
@@ -1813,9 +1813,10 @@ async function waitForBreakableLine(dbg, source, lineNumber) {
 async function waitForSourceCount(dbg, i) {
   // We are forced to wait until the DOM nodes appear because the
   // source tree batches its rendering.
+  info(`waiting for ${i} sources`);
   await waitUntil(() => {
     return findAllElements(dbg, "sourceNodes").length === i;
-  }, `waiting for ${i} sources`);
+  });
 }
 
 async function assertSourceCount(dbg, count) {

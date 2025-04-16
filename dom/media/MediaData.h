@@ -181,10 +181,15 @@ class AlignedBuffer {
   // Size in bytes of extra space allocated for padding.
   static size_t AlignmentPaddingSize() { return AlignmentOffset() * 2; }
 
-  void PopFront(size_t aSize) {
-    MOZ_DIAGNOSTIC_ASSERT(mLength >= aSize, "Popping too many frames");
-    PodMove(mData, mData + aSize, mLength - aSize);
-    mLength -= aSize;
+  void PopFront(size_t aCount) {
+    MOZ_DIAGNOSTIC_ASSERT(mLength >= aCount, "Popping too many elements.");
+    PodMove(mData, mData + aCount, mLength - aCount);
+    mLength -= aCount;
+  }
+
+  void PopBack(size_t aCount) {
+    MOZ_DIAGNOSTIC_ASSERT(mLength >= aCount, "Popping too many elements.");
+    mLength -= aCount;
   }
 
  private:
@@ -236,9 +241,9 @@ class AlignedBuffer {
     return true;
   }
   Type* mData;
-  size_t mLength;
+  size_t mLength;  // number of elements
   UniquePtr<uint8_t[]> mBuffer;
-  size_t mCapacity;
+  size_t mCapacity;  // in bytes
 };
 
 typedef AlignedBuffer<uint8_t> AlignedByteBuffer;
@@ -395,6 +400,7 @@ class AudioData : public MediaData {
   ~AudioData() = default;
 
  private:
+  friend class ArrayOfRemoteAudioData;
   AudioDataValue* GetAdjustedData() const;
   media::TimeUnit mOriginalTime;
   // mFrames frames, each with mChannels values
@@ -619,6 +625,8 @@ class MediaRawData final : public MediaData {
   MediaRawData(const uint8_t* aData, size_t aSize);
   MediaRawData(const uint8_t* aData, size_t aSize, const uint8_t* aAlphaData,
                size_t aAlphaSize);
+  explicit MediaRawData(AlignedByteBuffer&& aData);
+  MediaRawData(AlignedByteBuffer&& aData, AlignedByteBuffer&& aAlphaData);
 
   // Pointer to data or null if not-yet allocated
   const uint8_t* Data() const { return mBuffer.Data(); }
@@ -667,6 +675,7 @@ class MediaRawData final : public MediaData {
 
  private:
   friend class MediaRawDataWriter;
+  friend class ArrayOfRemoteMediaRawData;
   AlignedByteBuffer mBuffer;
   AlignedByteBuffer mAlphaBuffer;
   CryptoSample mCryptoInternal;

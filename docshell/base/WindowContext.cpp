@@ -74,6 +74,11 @@ Document* WindowContext::GetDocument() const {
   return innerWindow ? innerWindow->GetDocument() : nullptr;
 }
 
+Document* WindowContext::GetExtantDoc() const {
+  nsGlobalWindowInner* innerWindow = GetInnerWindow();
+  return innerWindow ? innerWindow->GetExtantDoc() : nullptr;
+}
+
 WindowContext* WindowContext::GetParentWindowContext() {
   return mBrowsingContext->GetParentWindowContext();
 }
@@ -156,6 +161,12 @@ bool WindowContext::CanSet(FieldIndex<IDX_AllowMixedContent>,
   return CheckOnlyOwningProcessCanSet(aSource);
 }
 
+bool WindowContext::CanSet(FieldIndex<IDX_HasBeforeUnload>,
+                           const bool& aHasBeforeUnload,
+                           ContentParent* aSource) {
+  return CheckOnlyOwningProcessCanSet(aSource);
+}
+
 bool WindowContext::CanSet(FieldIndex<IDX_CookieBehavior>,
                            const Maybe<uint32_t>& aValue,
                            ContentParent* aSource) {
@@ -185,8 +196,14 @@ bool WindowContext::CanSet(FieldIndex<IDX_IsSecureContext>,
   return CheckOnlyOwningProcessCanSet(aSource);
 }
 
-bool WindowContext::CanSet(FieldIndex<IDX_DocTreeHadAudibleMedia>,
-                           const bool& aValue, ContentParent* aSource) {
+bool WindowContext::CanSet(FieldIndex<IDX_IsOriginalFrameSource>,
+                           const bool& aIsOriginalFrameSource,
+                           ContentParent* aSource) {
+  return CheckOnlyOwningProcessCanSet(aSource);
+}
+
+bool WindowContext::CanSet(FieldIndex<IDX_DocTreeHadMedia>, const bool& aValue,
+                           ContentParent* aSource) {
   return IsTop();
 }
 
@@ -317,21 +334,23 @@ void WindowContext::Discard() {
   Group()->Unregister(this);
 }
 
-void WindowContext::AddMixedContentSecurityState(uint32_t aStateFlags) {
+void WindowContext::AddSecurityState(uint32_t aStateFlags) {
   MOZ_ASSERT(TopWindowContext() == this);
   MOZ_ASSERT((aStateFlags &
               (nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT |
                nsIWebProgressListener::STATE_LOADED_MIXED_ACTIVE_CONTENT |
                nsIWebProgressListener::STATE_BLOCKED_MIXED_DISPLAY_CONTENT |
-               nsIWebProgressListener::STATE_BLOCKED_MIXED_ACTIVE_CONTENT)) ==
+               nsIWebProgressListener::STATE_BLOCKED_MIXED_ACTIVE_CONTENT |
+               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADED |
+               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADE_FAILED)) ==
                  aStateFlags,
              "Invalid flags specified!");
 
   if (XRE_IsParentProcess()) {
-    Canonical()->AddMixedContentSecurityState(aStateFlags);
+    Canonical()->AddSecurityState(aStateFlags);
   } else {
     ContentChild* child = ContentChild::GetSingleton();
-    child->SendAddMixedContentSecurityState(this, aStateFlags);
+    child->SendAddSecurityState(this, aStateFlags);
   }
 }
 

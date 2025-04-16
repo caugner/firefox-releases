@@ -16,14 +16,14 @@
 browser-main-window =
   .data-title-default = { -brand-full-name }
   .data-title-private = { -brand-full-name } (Private Browsing)
-  .data-content-title-default = { $content-title } - { -brand-full-name }
-  .data-content-title-private = { $content-title } - { -brand-full-name } (Private Browsing)
+  .data-content-title-default = { $content-title } — { -brand-full-name }
+  .data-content-title-private = { $content-title } — { -brand-full-name } (Private Browsing)
 
 # These are the default window titles on macOS. The first two are for use when
 # there is no content title:
 #
 # "default" - "Mozilla Firefox"
-# "private" - "Mozilla Firefox - (Private Browsing)"
+# "private" - "Mozilla Firefox — (Private Browsing)"
 #
 # The last two are for use when there *is* a content title.
 # Do not use the brand name in the last two attributes, as we do on non-macOS.
@@ -35,9 +35,9 @@ browser-main-window =
 #  $content-title (String): the title of the web content.
 browser-main-window-mac =
   .data-title-default = { -brand-full-name }
-  .data-title-private = { -brand-full-name } - (Private Browsing)
+  .data-title-private = { -brand-full-name } — (Private Browsing)
   .data-content-title-default = { $content-title }
-  .data-content-title-private = { $content-title } - (Private Browsing)
+  .data-content-title-private = { $content-title } — (Private Browsing)
 
 # This gets set as the initial title, and is overridden as soon as we start
 # updating the titlebar based on loaded tabs or private browsing state.
@@ -110,6 +110,10 @@ urlbar-tip-icon-description =
 urlbar-search-tips-onboard = Type less, find more: Search { $engineName } right from your address bar.
 urlbar-search-tips-redirect-2 = Start your search in the address bar to see suggestions from { $engineName } and your browsing history.
 
+# Prompts users to use the Urlbar when they are typing in the domain of a
+# search engine, e.g. google.com or amazon.com.
+urlbar-tabtosearch-onboard = Select this shortcut to find what you need faster.
+
 ## Local search mode indicator labels in the urlbar
 
 urlbar-search-mode-bookmarks = Bookmarks
@@ -164,6 +168,51 @@ page-action-remove-from-urlbar =
 page-action-remove-extension =
     .label = Remove Extension
 
+## Page Action menu
+
+# Variables
+# $tabCount (integer) - Number of tabs selected
+page-action-send-tabs-panel =
+  .label = { $tabCount ->
+      [1] Send Tab to Device
+     *[other] Send { $tabCount } Tabs to Device
+  }
+page-action-send-tabs-urlbar =
+  .tooltiptext = { $tabCount ->
+      [1] Send Tab to Device
+     *[other] Send { $tabCount } Tabs to Device
+  }
+page-action-pocket-panel =
+  .label = Save Page to { -pocket-brand-name }
+page-action-copy-url-panel =
+  .label = Copy Link
+page-action-copy-url-urlbar =
+  .tooltiptext = Copy Link
+page-action-email-link-panel =
+  .label = Email Link…
+page-action-email-link-urlbar =
+  .tooltiptext = Email Link…
+page-action-share-url-panel =
+  .label = Share
+page-action-share-url-urlbar =
+  .tooltiptext = Share
+page-action-share-more-panel =
+  .label = More…
+page-action-send-tab-not-ready =
+  .label = Syncing Devices…
+# "Pin" is being used as a metaphor for expressing the fact that these tabs
+# are "pinned" to the left edge of the tabstrip. Really we just want the
+# string to express the idea that this is a lightweight and reversible
+# action that keeps your tab where you can reach it easily.
+page-action-pin-tab-panel =
+  .label = Pin Tab
+page-action-pin-tab-urlbar =
+  .tooltiptext = Pin Tab
+page-action-unpin-tab-panel =
+  .label = Unpin Tab
+page-action-unpin-tab-urlbar =
+  .tooltiptext = Unpin Tab
+
 ## Auto-hide Context Menu
 
 full-screen-autohide =
@@ -175,7 +224,7 @@ full-screen-exit =
 
 ## Search Engine selection buttons (one-offs)
 
-# This string prompts the user to use the list of one-click search engines in
+# This string prompts the user to use the list of search shortcuts in
 # the Urlbar and searchbar.
 search-one-offs-with-title = This time, search with:
 
@@ -245,6 +294,19 @@ identity-passive-loaded = Parts of this page are not secure (such as images).
 identity-active-loaded = You have disabled protection on this page.
 identity-weak-encryption = This page uses weak encryption.
 identity-insecure-login-forms = Logins entered on this page could be compromised.
+
+identity-https-only-connection-upgraded = (upgraded to HTTPS)
+identity-https-only-label = HTTPS-Only Mode
+identity-https-only-dropdown-on =
+    .label = On
+identity-https-only-dropdown-off =
+    .label = Off
+identity-https-only-dropdown-off-temporarily =
+    .label = Off temporarily
+identity-https-only-info-turn-on2 = Turn on HTTPS-Only Mode for this site if you want { -brand-short-name } to upgrade the connection when possible.
+identity-https-only-info-turn-off2 = If the page seems broken, you may want to turn off HTTPS-Only Mode for this site to reload using insecure HTTP.
+identity-https-only-info-no-upgrade = Unable to upgrade connection from HTTP.
+
 identity-permissions =
     .value = Permissions
 identity-permissions-reload-hint = You may need to reload the page for changes to apply.
@@ -387,6 +449,53 @@ urlbar-page-action-button =
 urlbar-pocket-button =
   .tooltiptext = Save to { -pocket-brand-name }
 
+## Action text shown in urlbar results, usually appended after the search
+## string or the url, like "result value - action text".
+
+# Used when the private browsing engine differs from the default engine.
+# The "with" format was chosen because the search engine name can end with
+# "Search", and we would like to avoid strings like "Search MSN Search".
+# Variables
+#  $engine (String): the name of a search engine
+urlbar-result-action-search-in-private-w-engine = Search with { $engine } in a Private Window
+# Used when the private browsing engine is the same as the default engine.
+urlbar-result-action-search-in-private = Search in a Private Window
+# The "with" format was chosen because the search engine name can end with
+# "Search", and we would like to avoid strings like "Search MSN Search".
+# Variables
+#  $engine (String): the name of a search engine
+urlbar-result-action-search-w-engine = Search with { $engine }
+urlbar-result-action-sponsored = Sponsored
+urlbar-result-action-switch-tab = Switch to Tab
+urlbar-result-action-visit = Visit
+# Directs a user to press the Tab key to perform a search with the specified
+# engine.
+# Variables
+#  $engine (String): the name of a search engine that searches the entire Web
+#  (e.g. Google).
+urlbar-result-action-before-tabtosearch-web = Press Tab to search with { $engine }
+# Directs a user to press the Tab key to perform a search with the specified
+# engine.
+# Variables
+#  $engine (String): the name of a search engine that searches a specific site
+#  (e.g. Amazon).
+urlbar-result-action-before-tabtosearch-other = Press Tab to search { $engine }
+# Variables
+#  $engine (String): the name of a search engine that searches the entire Web
+#  (e.g. Google).
+urlbar-result-action-tabtosearch-web = Search with { $engine } directly from the address bar
+# Variables
+#  $engine (String): the name of a search engine that searches a specific site
+#  (e.g. Amazon).
+urlbar-result-action-tabtosearch-other-engine = Search { $engine } directly from the address bar
+
+## Action text shown in urlbar results, usually appended after the search
+## string or the url, like "result value - action text".
+## In these actions "Search" is a verb, followed by where the search is performed.
+
+urlbar-result-action-search-bookmarks = Search Bookmarks
+urlbar-result-action-search-history = Search History
+urlbar-result-action-search-tabs = Search Tabs
 
 ## Full Screen and Pointer Lock UI
 

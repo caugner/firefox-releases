@@ -18,7 +18,9 @@
 
 #include "wasm/WasmFrameIter.h"
 
+#include "jit/JitFrames.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
+#include "vm/JSContext.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmStubs.h"
 
@@ -1323,13 +1325,7 @@ static const char* ThunkedNativeToDescription(SymbolicAddress func) {
     case SymbolicAddress::HandleDebugTrap:
     case SymbolicAddress::HandleThrow:
     case SymbolicAddress::HandleTrap:
-    case SymbolicAddress::CallImport_Void:
-    case SymbolicAddress::CallImport_I32:
-    case SymbolicAddress::CallImport_I64:
-    case SymbolicAddress::CallImport_V128:
-    case SymbolicAddress::CallImport_F64:
-    case SymbolicAddress::CallImport_FuncRef:
-    case SymbolicAddress::CallImport_AnyRef:
+    case SymbolicAddress::CallImport_General:
     case SymbolicAddress::CoerceInPlace_ToInt32:
     case SymbolicAddress::CoerceInPlace_ToNumber:
     case SymbolicAddress::CoerceInPlace_ToBigInt:

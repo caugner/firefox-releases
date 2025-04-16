@@ -324,9 +324,6 @@ class ContentParent final
   static void SendAsyncUpdate(nsIWidget* aWidget);
 #endif
 
-  // Let managees query if it is safe to send messages.
-  bool IsDestroyed() const { return !mIPCOpen; }
-
   mozilla::ipc::IPCResult RecvCreateGMPService();
 
   mozilla::ipc::IPCResult RecvLoadPlugin(
@@ -530,7 +527,7 @@ class ContentParent final
       const MaybeDiscarded<BrowsingContext>& aParent, PBrowserParent* aNewTab,
       const uint32_t& aChromeFlags, const bool& aCalledFromJS,
       const bool& aWidthSpecified, const bool& aForPrinting,
-      const bool& aForPrintPreview, nsIURI* aURIToLoad,
+      const bool& aForWindowDotPrint, nsIURI* aURIToLoad,
       const nsCString& aFeatures, const float& aFullZoom,
       const IPC::Principal& aTriggeringPrincipal,
       nsIContentSecurityPolicy* aCsp, nsIReferrerInfo* aReferrerInfo,
@@ -739,6 +736,16 @@ class ContentParent final
       sJSPluginContentParents;
   static UniquePtr<LinkedList<ContentParent>> sContentParents;
 
+  /**
+   * In order to avoid rapidly creating and destroying content processes when
+   * running under e10s, we may keep alive a single unused "web" content
+   * process if it previously had a very short lifetime.
+   *
+   * This process will be re-used during process selection, avoiding spawning a
+   * new process, if the "web" remote type is being requested.
+   */
+  static StaticRefPtr<ContentParent> sRecycledE10SProcess;
+
   void AddShutdownBlockers();
   void RemoveShutdownBlockers();
 
@@ -754,7 +761,7 @@ class ContentParent final
       PBrowserParent* aThisTab, BrowsingContext* aParent, bool aSetOpener,
       const uint32_t& aChromeFlags, const bool& aCalledFromJS,
       const bool& aWidthSpecified, const bool& aForPrinting,
-      const bool& aForPrintPreview, nsIURI* aURIToLoad,
+      const bool& aForWindowDotPrint, nsIURI* aURIToLoad,
       const nsCString& aFeatures, const float& aFullZoom,
       BrowserParent* aNextRemoteBrowser, const nsString& aName,
       nsresult& aResult, nsCOMPtr<nsIRemoteTab>& aNewRemoteTab,
@@ -763,8 +770,7 @@ class ContentParent final
       bool aLoadUri, nsIContentSecurityPolicy* aCsp,
       const OriginAttributes& aOriginAttributes);
 
-  explicit ContentParent(int32_t aPluginID)
-      : ContentParent(EmptyCString(), aPluginID) {}
+  explicit ContentParent(int32_t aPluginID) : ContentParent(""_ns, aPluginID) {}
   explicit ContentParent(const nsACString& aRemoteType)
       : ContentParent(aRemoteType, nsFakePluginTag::NOT_JSPLUGIN) {}
 
@@ -813,6 +819,14 @@ class ContentParent final
   bool TryToRecycle();
 
   /**
+   * If this process is currently being recycled, unmark it as the recycled
+   * content process.
+   * If `aForeground` is true, will also restore the process' foreground
+   * priority if it was previously the recycled content process.
+   */
+  void StopRecycling(bool aForeground = true);
+
+  /**
    * Removing it from the static array so it won't be returned for new tabs in
    * GetNewOrUsedBrowserProcess.
    */
@@ -830,16 +844,24 @@ class ContentParent final
   bool ShouldKeepProcessAlive();
 
   /**
-   * Mark this ContentParent as "troubled". This means that it is still alive,
-   * but it won't be returned for new tabs in GetNewOrUsedBrowserProcess.
-   */
-  void MarkAsTroubled();
-
-  /**
    * Mark this ContentParent as dead for the purposes of Get*().
    * This method is idempotent.
    */
   void MarkAsDead();
+
+  /**
+   * Check if this process is ready to be shut down, and if it is, begin the
+   * shutdown process. Should be called whenever a change occurs which could
+   * cause the decisions made by `ShouldKeepProcessAlive` to change.
+   *
+   * @param aExpectedBrowserCount The number of PBrowser actors which should
+   *                              not block shutdown. This should usually be 0.
+   * @param aSendShutDown If true, will send the shutdown message in addition
+   *                      to marking the process as dead and starting the force
+   *                      kill timer.
+   */
+  void MaybeBeginShutDown(uint32_t aExpectedBrowserCount = 0,
+                          bool aSendShutDown = true);
 
   /**
    * How we will shut down this ContentParent and its subprocess.
@@ -901,6 +923,10 @@ class ContentParent final
       const nsID& aID, nsTArray<PerformanceInfo>&& aMetrics);
 
   bool DeallocPRemoteSpellcheckEngineParent(PRemoteSpellcheckEngineParent*);
+
+  mozilla::ipc::IPCResult RecvCloneDocumentTreeInto(
+      const MaybeDiscarded<BrowsingContext>& aSource,
+      const MaybeDiscarded<BrowsingContext>& aTarget);
 
   mozilla::ipc::IPCResult RecvConstructPopupBrowser(
       ManagedEndpoint<PBrowserParent>&& actor,
@@ -1100,7 +1126,7 @@ class ContentParent final
       const MaybeDiscarded<WindowContext>& aContext,
       WindowContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
 
-  mozilla::ipc::IPCResult RecvAddMixedContentSecurityState(
+  mozilla::ipc::IPCResult RecvAddSecurityState(
       const MaybeDiscarded<WindowContext>& aContext, uint32_t aStateFlags);
 
   mozilla::ipc::IPCResult RecvFirstIdle();
@@ -1175,7 +1201,7 @@ class ContentParent final
       const mozilla::fontlist::Pointer& aFamilyPtr);
 
   mozilla::ipc::IPCResult RecvGetHyphDict(
-      nsIURI* aURIParams, mozilla::ipc::SharedMemoryBasic::Handle* aOutHandle,
+      nsIURI* aURIParams, base::SharedMemoryHandle* aOutHandle,
       uint32_t* aOutSize);
 
   mozilla::ipc::IPCResult RecvNotifyBenchmarkResult(const nsString& aCodecName,
@@ -1292,24 +1318,19 @@ class ContentParent final
       ModulePaths&& aModPaths, bool aRunAtNormalPriority,
       GetModulesTrustResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvSessionStorageData(
-      uint64_t aTopContextId, const nsACString& aOriginAttrs,
-      const nsACString& aOriginKey, const nsTArray<KeyValuePair>& aDefaultData,
-      const nsTArray<KeyValuePair>& aSessionData);
-
   mozilla::ipc::IPCResult RecvReportServiceWorkerShutdownProgress(
       uint32_t aShutdownStateId,
       ServiceWorkerShutdownState::Progress aProgress);
 
-  mozilla::ipc::IPCResult RecvRawMessage(const JSActorMessageMeta& aMeta,
-                                         const ClonedMessageData& aData,
-                                         const ClonedMessageData& aStack);
+  mozilla::ipc::IPCResult RecvRawMessage(
+      const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
+      const Maybe<ClonedMessageData>& aStack);
 
   mozilla::ipc::IPCResult RecvAbortOtherOrientationPendingPromises(
       const MaybeDiscarded<BrowsingContext>& aContext);
 
   mozilla::ipc::IPCResult RecvNotifyOnHistoryReload(
-      const MaybeDiscarded<BrowsingContext>& aContext,
+      const MaybeDiscarded<BrowsingContext>& aContext, const bool& aForceReload,
       NotifyOnHistoryReloadResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvHistoryCommit(
@@ -1346,15 +1367,11 @@ class ContentParent final
       const MaybeDiscarded<BrowsingContext>& aContext,
       GetLoadingSessionHistoryInfoFromParentResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntryForTop(
+  mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntry(
       const MaybeDiscarded<BrowsingContext>& aContext,
       const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
-      uint32_t aLoadType, const nsID& aChangeID);
-
-  mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntryForFrame(
-      const MaybeDiscarded<BrowsingContext>& aContext,
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
-      int32_t aChildOffset, const nsID& aChangeID);
+      uint32_t aLoadType, int32_t aChildOffset, uint32_t aUpdatedCacheKey,
+      const nsID& aChangeID);
 
   mozilla::ipc::IPCResult RecvReplaceActiveSessionHistoryEntry(
       const MaybeDiscarded<BrowsingContext>& aContext,
@@ -1498,7 +1515,6 @@ class ContentParent final
   uint8_t mCalledKillHard : 1;
   uint8_t mCreatedPairedMinidumps : 1;
   uint8_t mShutdownPending : 1;
-  uint8_t mIPCOpen : 1;
 
   // True if the input event queue on the main thread of the content process is
   // enabled.

@@ -61,7 +61,9 @@ async function testNetworkEventResourcesWithExistingResources() {
           url: `${EXAMPLE_DOMAIN}live_get.html`,
           method: "GET",
         },
-        updates: [],
+        // Throttling makes us receive the available event
+        // after processing all the updates events
+        updates: UPDATES,
       },
     },
     expectedResourcesOnUpdated: {
@@ -92,7 +94,9 @@ async function testNetworkEventResourcesWithoutExistingResources() {
           url: `${EXAMPLE_DOMAIN}live_get.html`,
           method: "GET",
         },
-        updates: [],
+        // Throttling makes us receive the available event
+        // after processing all the updates events
+        updates: UPDATES,
       },
     },
     expectedResourcesOnUpdated: {
@@ -276,6 +280,11 @@ async function testNetworkEventResources(options) {
     const expected = options.expectedResourcesOnUpdated[key];
     const actual = actualResourcesOnUpdated[key];
     assertResources(actual, expected);
+    is(
+      actual.updates.length,
+      expected.updates.length,
+      "The number of updates is correct"
+    );
   }
 
   await resourceWatcher.unwatchResources(
@@ -307,11 +316,6 @@ function assertResources(actual, expected) {
   );
   is(actual.request.url, expected.request.url, "The url is correct");
   is(actual.request.method, expected.request.method, "The method is correct");
-  is(
-    actual.updates.length,
-    expected.updates.length,
-    "The number of updates is correct"
-  );
 }
 
 const EXISTING_REQUESTS_COMMANDS = [

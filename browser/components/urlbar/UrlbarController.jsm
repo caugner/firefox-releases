@@ -320,21 +320,30 @@ class UrlbarController {
       case KeyEvent.DOM_VK_TAB:
         // It's always possible to tab through results when the urlbar was
         // focused with the mouse, or has a search string.
+        // We allow tabbing without a search string when in search mode preview,
+        // since that means the user has interacted with the Urlbar since
+        // opening it.
         // When there's no search string, we want to focus the next toolbar item
         // instead, for accessibility reasons.
         let allowTabbingThroughResults =
           this.input.focusedViaMousedown ||
+          this.input.searchMode?.isPreview ||
           (this.input.value &&
             this.input.getAttribute("pageproxystate") != "valid");
         if (
-          this.view.isOpen &&
+          // Even if the view is closed, we may be waiting results, and in
+          // such a case we don't want to tab out of the urlbar.
+          (this.view.isOpen || !executeAction) &&
           !event.ctrlKey &&
           !event.altKey &&
           allowTabbingThroughResults
         ) {
           if (executeAction) {
             this.userSelectionBehavior = "tab";
-            this.view.selectBy(1, { reverse: event.shiftKey });
+            this.view.selectBy(1, {
+              reverse: event.shiftKey,
+              userPressedTab: true,
+            });
           }
           event.preventDefault();
         }
@@ -377,7 +386,7 @@ class UrlbarController {
         break;
       case KeyEvent.DOM_VK_RIGHT:
       case KeyEvent.DOM_VK_END:
-        this.input.maybePromoteKeywordToSearchMode({
+        this.input.maybePromoteResultToSearchMode({
           entry: "typed",
         });
       // Fall through.
@@ -392,7 +401,8 @@ class UrlbarController {
           this.input.selectionEnd == 0 &&
           !event.shiftKey
         ) {
-          this.input.setSearchMode({});
+          this.input.searchMode = null;
+          this.input.view.oneOffSearchButtons.selectedButton = null;
           this.input.startQuery({
             allowAutofill: false,
             event,
@@ -513,6 +523,13 @@ class UrlbarController {
       selectedResult,
       this._userSelectionBehavior
     );
+    if (this.input.searchMode) {
+      Services.telemetry.keyedScalarAdd(
+        `urlbar.picked.searchmode.${this.input.searchMode.entry}`,
+        resultIndex,
+        1
+      );
+    }
 
     if (!result) {
       return;
@@ -537,6 +554,8 @@ class UrlbarController {
       case UrlbarUtils.RESULT_TYPE.SEARCH:
         if (result.source == UrlbarUtils.RESULT_SOURCE.HISTORY) {
           telemetryType = "formhistory";
+        } else if (result.providerName == "TabToSearch") {
+          telemetryType = "tabtosearch";
         } else {
           telemetryType = result.payload.suggestion
             ? "searchsuggestion"
@@ -631,11 +650,15 @@ class UrlbarController {
     queryContext.results.splice(index, 1);
     this.notify(NOTIFICATIONS.QUERY_RESULT_REMOVED, index);
 
-    // form history
+    // Form history or url restyled as search.
     if (selectedResult.type == UrlbarUtils.RESULT_TYPE.SEARCH) {
       if (!queryContext.formHistoryName) {
         return false;
       }
+      // Generate the search url to remove it from browsing history.
+      let { url } = UrlbarUtils.getUrlFromResult(selectedResult);
+      PlacesUtils.history.remove(url).catch(Cu.reportError);
+      // Now remove form history.
       FormHistory.update(
         {
           op: "remove",
@@ -651,7 +674,7 @@ class UrlbarController {
       return true;
     }
 
-    // Places history
+    // Remove browsing history entries from Places.
     PlacesUtils.history
       .remove(selectedResult.payload.url)
       .catch(Cu.reportError);
@@ -783,6 +806,8 @@ class TelemetryEvent {
    *        for "blur". One of "none", "autofill", "visit", "bookmark",
    *        "history", "keyword", "search", "searchsuggestion", "switchtab",
    *         "remotetab", "extension", "oneoff".
+   * @param {string} details.provider The name of the provider for the selected
+   *        result.
    * @note event can be null, that usually happens for paste&go or drop&go.
    *       If there's no _startEventInfo this is a no-op.
    */
@@ -864,6 +889,7 @@ class TelemetryEvent {
     if (method == "engagement") {
       extra.selIndex = details.selIndex.toString();
       extra.selType = details.selType;
+      extra.provider = details.provider || "";
     }
 
     // We invoke recordEvent regardless, if recording is disabled this won't
@@ -908,6 +934,9 @@ class TelemetryEvent {
         case UrlbarUtils.RESULT_TYPE.SEARCH:
           if (row.result.source == UrlbarUtils.RESULT_SOURCE.HISTORY) {
             return "formhistory";
+          }
+          if (row.result.providerName == "TabToSearch") {
+            return "tabtosearch";
           }
           return row.result.payload.suggestion ? "searchsuggestion" : "search";
         case UrlbarUtils.RESULT_TYPE.URL:

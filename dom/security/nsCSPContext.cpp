@@ -219,9 +219,9 @@ bool nsCSPContext::permitsInternal(
             aOriginalURIIfRedirect, /* in case of redirect originalURI is not
                                        null */
             violatedDirective, p,   /* policy index        */
-            EmptyString(),          /* no observer subject */
+            u""_ns,                 /* no observer subject */
             spec,                   /* source file      */
-            EmptyString(),          /* no script sample    */
+            u""_ns,                 /* no script sample    */
             lineNumber,             /* line number      */
             columnNumber);          /*  column number    */
       }
@@ -449,7 +449,7 @@ nsCSPContext::GetAllowsEval(bool* outShouldReportViolation,
 
   for (uint32_t i = 0; i < mPolicies.Length(); i++) {
     if (!mPolicies[i]->allows(nsIContentPolicy::TYPE_SCRIPT, CSP_UNSAFE_EVAL,
-                              EmptyString(), false)) {
+                              u""_ns, false)) {
       // policy is violated: must report the violation and allow the inline
       // script if the policy is report-only.
       *outShouldReportViolation = true;
@@ -538,12 +538,12 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
   }
 
   EnsureIPCPoliciesRead();
-  nsAutoString content(EmptyString());
+  nsAutoString content(u""_ns);
 
   // always iterate all policies, otherwise we might not send out all reports
   for (uint32_t i = 0; i < mPolicies.Length(); i++) {
     bool allowed =
-        mPolicies[i]->allows(aContentType, CSP_UNSAFE_INLINE, EmptyString(),
+        mPolicies[i]->allows(aContentType, CSP_UNSAFE_INLINE, u""_ns,
                              aParserCreated) ||
         mPolicies[i]->allows(aContentType, CSP_NONCE, aNonce, aParserCreated);
 
@@ -661,9 +661,9 @@ nsCSPContext::GetAllowsNavigateTo(nsIURI* aURI, bool aIsFormSubmission,
           nullptr,                                    // aOriginalURI
           u"navigate-to"_ns,                          // aViolatedDirective
           i,                                          // aViolatedPolicyIndex
-          EmptyString(),                              // aObserverSubject
+          u""_ns,                                     // aObserverSubject
           NS_ConvertUTF8toUTF16(spec),                // aSourceFile
-          EmptyString(),                              // aScriptSample
+          u""_ns,                                     // aScriptSample
           lineNumber,                                 // aLineNum
           columnNumber);                              // aColumnNum
       NS_ENSURE_SUCCESS(rv, rv);
@@ -715,11 +715,11 @@ nsCSPContext::GetAllowsNavigateTo(nsIURI* aURI, bool aIsFormSubmission,
       mPolicies[p]->getDirectiveStringAndReportSampleForContentType(           \
           nsIContentPolicy::TYPE_##contentPolicyType, violatedDirective,       \
           &reportSample);                                                      \
-      AsyncReportViolation(                                                    \
-          aTriggeringElement, aCSPEventListener, nullptr,                      \
-          blockedContentSource, nullptr, violatedDirective, p,                 \
-          NS_LITERAL_STRING_FROM_CSTRING(observerTopic), aSourceFile,          \
-          reportSample ? aScriptSample : EmptyString(), aLineNum, aColumnNum); \
+      AsyncReportViolation(aTriggeringElement, aCSPEventListener, nullptr,     \
+                           blockedContentSource, nullptr, violatedDirective,   \
+                           p, NS_LITERAL_STRING_FROM_CSTRING(observerTopic),   \
+                           aSourceFile, reportSample ? aScriptSample : u""_ns, \
+                           aLineNum, aColumnNum);                              \
     }                                                                          \
     PR_END_MACRO;                                                              \
     break
@@ -1550,7 +1550,7 @@ nsCSPContext::PermitsAncestry(nsILoadInfo* aLoadInfo,
   nsCOMPtr<nsIURI> uriClone;
 
   while (ctx) {
-    nsCOMPtr<nsIURI> currentURI;
+    nsCOMPtr<nsIPrincipal> currentPrincipal;
     // Generally permitsAncestry is consulted from within the
     // DocumentLoadListener in the parent process. For loads of type object
     // and embed it's called from the Document in the content process.
@@ -1559,28 +1559,37 @@ nsCSPContext::PermitsAncestry(nsILoadInfo* aLoadInfo,
     if (XRE_IsParentProcess()) {
       WindowGlobalParent* window = ctx->Canonical()->GetCurrentWindowGlobal();
       if (window) {
-        currentURI = window->GetDocumentURI();
+        // Using the URI of the Principal and not the document because e.g.
+        // about:blank inherits the principal and hence the URI of the
+        // document does not reflect the security context of the document.
+        currentPrincipal = window->DocumentPrincipal();
       }
     } else if (nsPIDOMWindowOuter* windowOuter = ctx->GetDOMWindow()) {
-      currentURI = windowOuter->GetDocumentURI();
+      currentPrincipal = nsGlobalWindowOuter::Cast(windowOuter)->GetPrincipal();
     }
 
-    if (currentURI) {
-      nsAutoCString spec;
-      currentURI->GetSpec(spec);
-      // delete the userpass from the URI.
-      rv = NS_MutateURI(currentURI)
-               .SetRef(EmptyCString())
-               .SetUserPass(EmptyCString())
-               .Finalize(uriClone);
+    if (currentPrincipal) {
+      nsCOMPtr<nsIURI> currentURI;
+      auto* currentBasePrincipal = BasePrincipal::Cast(currentPrincipal);
+      currentBasePrincipal->GetURI(getter_AddRefs(currentURI));
 
-      // If setUserPass fails for some reason, just return a clone of the
-      // current URI
-      if (NS_FAILED(rv)) {
-        rv = NS_GetURIWithoutRef(currentURI, getter_AddRefs(uriClone));
-        NS_ENSURE_SUCCESS(rv, rv);
+      if (currentURI) {
+        nsAutoCString spec;
+        currentURI->GetSpec(spec);
+        // delete the userpass from the URI.
+        rv = NS_MutateURI(currentURI)
+                 .SetRef(""_ns)
+                 .SetUserPass(""_ns)
+                 .Finalize(uriClone);
+
+        // If setUserPass fails for some reason, just return a clone of the
+        // current URI
+        if (NS_FAILED(rv)) {
+          rv = NS_GetURIWithoutRef(currentURI, getter_AddRefs(uriClone));
+          NS_ENSURE_SUCCESS(rv, rv);
+        }
+        ancestorsArray.AppendElement(uriClone);
       }
-      ancestorsArray.AppendElement(uriClone);
     }
     ctx = ctx->GetParent();
   }
@@ -1607,11 +1616,11 @@ nsCSPContext::PermitsAncestry(nsILoadInfo* aLoadInfo,
                         nullptr,  // triggering element
                         nullptr,  // nsICSPEventListener
                         ancestorsArray[a],
-                        nullptr,        // no redirect here.
-                        EmptyString(),  // no nonce
-                        false,          // not a preload.
-                        true,           // specific, do not use default-src
-                        true,           // send violation reports
+                        nullptr,  // no redirect here.
+                        u""_ns,   // no nonce
+                        false,    // not a preload.
+                        true,     // specific, do not use default-src
+                        true,     // send violation reports
                         okToSendAncestor,
                         false);  // not parser created
     if (!permits) {
@@ -1644,9 +1653,9 @@ nsCSPContext::Permits(Element* aTriggeringElement,
 
   *outPermits =
       permitsInternal(aDir, aTriggeringElement, aCSPEventListener, aURI,
-                      nullptr,        // no original (pre-redirect) URI
-                      EmptyString(),  // no nonce
-                      false,          // not a preload.
+                      nullptr,  // no original (pre-redirect) URI
+                      u""_ns,   // no nonce
+                      false,    // not a preload.
                       aSpecific,
                       true,    // send violation reports
                       true,    // send blocked URI in violation reports
@@ -1716,8 +1725,8 @@ nsCSPContext::GetCSPSandboxFlags(uint32_t* aOutSandboxFlags) {
            NS_ConvertUTF16toUTF8(policy).get()));
 
       AutoTArray<nsString, 1> params = {policy};
-      logToConsole("ignoringReportOnlyDirective", params, EmptyString(),
-                   EmptyString(), 0, 0, nsIScriptError::warningFlag);
+      logToConsole("ignoringReportOnlyDirective", params, u""_ns, u""_ns, 0, 0,
+                   nsIScriptError::warningFlag);
     }
   }
 

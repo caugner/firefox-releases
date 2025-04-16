@@ -215,6 +215,9 @@ Preferences.addAll([
     id: "media.videocontrols.picture-in-picture.video-toggle.enabled",
     type: "bool",
   },
+
+  // Media
+  { id: "media.hardwaremediakeys.enabled", type: "bool" },
 ]);
 
 if (AppConstants.HAVE_SHELL_SERVICE) {
@@ -527,6 +530,27 @@ var gMainPane = {
       "command",
       gMainPane.showContainerSettings
     );
+
+    // For media control toggle button, we support it on Windows 8.1+ (NT6.3),
+    // MacOs 10.4+ (darwin8.0, but we already don't support that) and
+    // gtk-based Linux.
+    if (
+      AppConstants.isPlatformAndVersionAtLeast("win", "6.3") ||
+      AppConstants.platform == "macosx" ||
+      AppConstants.MOZ_WIDGET_GTK
+    ) {
+      document.getElementById("mediaControlBox").hidden = false;
+      let mediaControlLearnMoreUrl =
+        Services.urlFormatter.formatURLPref("app.support.baseURL") +
+        "media-keyboard-control";
+      let link = document.getElementById("mediaControlLearnMore");
+      link.setAttribute("href", mediaControlLearnMoreUrl);
+      setEventListener(
+        "mediaControlToggleEnabled",
+        "command",
+        gMainPane.updateMediaControlTelemetry
+      );
+    }
 
     // Initializes the fonts dropdowns displayed in this pane.
     this._rebuildFonts();
@@ -1525,6 +1549,14 @@ var gMainPane = {
     gotoPref("containers");
   },
 
+  updateMediaControlTelemetry() {
+    const telemetry = Services.telemetry.getHistogramById(
+      "MEDIA_CONTROL_SETTING_CHANGE"
+    );
+    const checkbox = document.getElementById("mediaControlToggleEnabled");
+    telemetry.add(checkbox.checked ? "EnableFromUI" : "DisableFromUI");
+  },
+
   /**
    * ui.osk.enabled
    * - when set to true, subject to other conditions, we may sometimes invoke
@@ -1834,7 +1866,7 @@ var gMainPane = {
     let um = Cc["@mozilla.org/updates/update-manager;1"].getService(
       Ci.nsIUpdateManager
     );
-    if (!um.activeUpdate) {
+    if (!um.readyUpdate && !um.downloadingUpdate) {
       return;
     }
 
@@ -1874,7 +1906,8 @@ var gMainPane = {
         Ci.nsIApplicationUpdateService
       );
       aus.stopDownload();
-      um.cleanupActiveUpdate();
+      um.cleanupReadyUpdate();
+      um.cleanupDownloadingUpdate();
     }
   },
 

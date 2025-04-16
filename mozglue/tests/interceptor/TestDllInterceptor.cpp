@@ -707,6 +707,7 @@ bool TestShortDetour() {
 }
 
 constexpr uintptr_t NoStubAddressCheck = 0;
+constexpr uintptr_t ExpectedFail = 1;
 struct TestCase {
   const char* mFunctionName;
   uintptr_t mExpectedStub;
@@ -730,6 +731,9 @@ struct TestCase {
     // Passing NoStubAddressCheck as the following testcases return
     // a trampoline address instead of the original destination.
     TestCase("NearJump", NoStubAddressCheck),
+    TestCase("OpcodeFF", NoStubAddressCheck),
+    TestCase("IndirectCall", NoStubAddressCheck),
+    TestCase("MovImm64", NoStubAddressCheck),
 #    elif defined(_M_IX86)
     // Skip the stub address check as we always generate a trampoline for x86.
     TestCase("PushRet", NoStubAddressCheck),
@@ -739,8 +743,12 @@ struct TestCase {
     TestCase("LockPrefix", NoStubAddressCheck),
     TestCase("LooksLikeLockPrefix", NoStubAddressCheck),
 #    endif
-#  endif  // MOZ_CODE_COVERAGE
-#endif    // defined(__clang__)
+#    if !defined(DEBUG)
+    // Skip on Debug build because it hits MOZ_ASSERT_UNREACHABLE.
+    TestCase("UnsupportedOp", ExpectedFail),
+#    endif  // !defined(DEBUG)
+#  endif    // MOZ_CODE_COVERAGE
+#endif      // defined(__clang__)
 };
 
 template <typename InterceptorType>
@@ -760,6 +768,35 @@ bool TestAssemblyFunctions() {
     typename InterceptorType::template FuncHookType<void (*)()> hook;
     bool result =
         hook.Set(interceptor, testCase.mFunctionName, patchedFunction);
+    if (testCase.mExpectedStub == ExpectedFail) {
+      if (result) {
+        printf(
+            "TEST-FAILED | WindowsDllInterceptor | "
+            "Unexpectedly succeeded to detour %s.\n",
+            testCase.mFunctionName);
+        return false;
+      }
+#if defined(NIGHTLY_BUILD)
+      const Maybe<DetourError>& maybeError = interceptor.GetLastDetourError();
+      if (maybeError.isNothing()) {
+        printf(
+            "TEST-FAILED | WindowsDllInterceptor | "
+            "DetourError was not set on detour error.\n");
+        return false;
+      }
+      if (maybeError.ref().mErrorCode !=
+          DetourResultCode::DETOUR_PATCHER_CREATE_TRAMPOLINE_ERROR) {
+        printf(
+            "TEST-FAILED | WindowsDllInterceptor | "
+            "A wrong detour errorcode was set on detour error.\n");
+        return false;
+      }
+#endif  // defined(NIGHTLY_BUILD)
+      printf("TEST-PASS | WindowsDllInterceptor | %s\n",
+             testCase.mFunctionName);
+      continue;
+    }
+
     if (!result) {
       printf(
           "TEST-FAILED | WindowsDllInterceptor | "

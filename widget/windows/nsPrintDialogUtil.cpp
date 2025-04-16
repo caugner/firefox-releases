@@ -215,9 +215,7 @@ static nsresult ShowNativePrintDialog(HWND aHWnd,
       PD_ALLPAGES | PD_RETURNIC | PD_USEDEVMODECOPIESANDCOLLATE | PD_COLLATE;
 
   // if there is a current selection then enable the "Selection" radio button
-  bool isOn;
-  aPrintSettings->GetPrintOptions(nsIPrintSettings::kEnableSelectionRB, &isOn);
-  if (!isOn) {
+  if (!aPrintSettings->GetIsPrintSelectionRBEnabled()) {
     prntdlg.Flags |= PD_NOSELECTION;
   }
 
@@ -288,7 +286,7 @@ static nsresult ShowNativePrintDialog(HWND aHWnd,
     } else {
       // clear "print to file" info
       aPrintSettings->SetPrintToFile(false);
-      aPrintSettings->SetToFileName(EmptyString());
+      aPrintSettings->SetToFileName(u""_ns);
     }
 
     nsCOMPtr<nsIPrintSettingsWin> psWin(do_QueryInterface(aPrintSettings));
@@ -303,15 +301,12 @@ static nsresult ShowNativePrintDialog(HWND aHWnd,
     // fill the print options with the info from the dialog
 
     aPrintSettings->SetPrinterName(nsDependentString(device));
+    aPrintSettings->SetPrintSelectionOnly(prntdlg.Flags & PD_SELECTION);
 
-    if (prntdlg.Flags & PD_SELECTION) {
-      aPrintSettings->SetPrintRange(nsIPrintSettings::kRangeSelection);
-
-    } else if (prntdlg.Flags & PD_PAGENUMS) {
+    if (prntdlg.Flags & PD_PAGENUMS) {
       aPrintSettings->SetPrintRange(nsIPrintSettings::kRangeSpecifiedPageRange);
       aPrintSettings->SetStartPageRange(prntdlg.nFromPage);
       aPrintSettings->SetEndPageRange(prntdlg.nToPage);
-
     } else {  // (prntdlg.Flags & PD_ALLPAGES)
       aPrintSettings->SetPrintRange(nsIPrintSettings::kRangeAllPages);
     }

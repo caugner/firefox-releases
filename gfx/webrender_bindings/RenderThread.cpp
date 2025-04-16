@@ -9,7 +9,7 @@
 #include "GLContext.h"
 #include "RenderThread.h"
 #include "nsThreadUtils.h"
-#include "mtransport/runnable_utils.h"
+#include "transport/runnable_utils.h"
 #include "mozilla/layers/AsyncImagePipelineManager.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/GPUParent.h"
@@ -35,7 +35,7 @@
 
 #ifdef MOZ_WIDGET_ANDROID
 #  include "GLLibraryEGL.h"
-#  include "mozilla/webrender/RenderAndroidSurfaceTextureHostOGL.h"
+#  include "mozilla/webrender/RenderAndroidSurfaceTextureHost.h"
 #endif
 
 #ifdef MOZ_WIDGET_GTK
@@ -632,7 +632,6 @@ void RenderThread::UnregisterExternalImage(uint64_t aExternalImageId) {
     return;
   }
   auto it = mRenderTextures.find(aExternalImageId);
-  MOZ_ASSERT(it != mRenderTextures.end());
   if (it == mRenderTextures.end()) {
     return;
   }

@@ -6,6 +6,8 @@
 #ifndef nsPageSequenceFrame_h___
 #define nsPageSequenceFrame_h___
 
+#include <tuple>
+
 #include "mozilla/Attributes.h"
 #include "mozilla/UniquePtr.h"
 #include "nsContainerFrame.h"
@@ -21,6 +23,27 @@ class HTMLCanvasElement;
 
 }  // namespace dom
 }  // namespace mozilla
+
+//-----------------------------------------------
+// This class is used to manage some static data about the layout
+// characteristics of our various "Pages Per Sheet" options.
+struct nsPagesPerSheetInfo {
+  static const nsPagesPerSheetInfo& LookupInfo(int32_t aPPS);
+
+  uint16_t mNumPages;
+  uint16_t mNumRows;
+  uint16_t mNumCols;
+
+  std::tuple<uint16_t, uint16_t> GetRowAndColFromIdx(
+      uint16_t aIdxOnSheet) const {
+    // Compute the row index by *dividing* the item's ordinal position by how
+    // many items fit in each row (i.e. the number of columns), and flooring.
+    // Compute the column index by getting the remainder of that division:
+    // Notably, mNumRows is irrelevant to this computation; that's because
+    // we're adding new items column-by-column rather than row-by-row.
+    return {aIdxOnSheet / mNumCols, aIdxOnSheet % mNumCols};
+  }
+};
 
 /**
  * This class maintains various shared data that is used by printing-related
@@ -40,9 +63,19 @@ class nsSharedPageData {
   // that it's reflowed the final page):
   int32_t mRawNumPages = 0;
 
-  // Page range info (only relevant if mDoingPageRange is true):
+  // Smallest included page num. 1-based. Only used if mDoingPageRange is true.
   int32_t mFromPageNum = 0;
+
+  // Largest included page num. 1-based. Only used if mDoingPageRange is true.
   int32_t mToPageNum = 0;
+
+  // If there's more than one page-range, then its components are stored here
+  // as pairs of (start,end).  They're stored in the order provided (not
+  // necessarily in ascending order). The most extreme included values will
+  // still be stored in mFromPageNum and mToPageNum, so that entirely
+  // out-of-bounds pages can be easily filtered out without needing to inspect
+  // this array. As above, the values are 1-based, and this member is only used
+  // if mDoingPageRange is true.
   nsTArray<int32_t> mPageRanges;
 
   // Margin for headers and footers; it defaults to 4/100 of an inch on UNIX
@@ -59,12 +92,23 @@ class nsSharedPageData {
 
   // True if the current print operation uses one or more print ranges:
   bool mDoingPageRange = false;
+
+  // Lazy getter, to look up our pages-per-sheet info based on mPrintSettings
+  // (if it's available).  The result is stored in our mPagesPerSheetInfo
+  // member-var to speed up subsequent lookups.
+  // This API is infallible; in failure cases, it just returns the info struct
+  // that corresponds to 1 page per sheet.
+  const nsPagesPerSheetInfo* PagesPerSheetInfo();
+
+ private:
+  const nsPagesPerSheetInfo* mPagesPerSheetInfo = nullptr;
 };
 
 // Page sequence frame class. Manages a series of pages, in paginated mode.
 // (Strictly speaking, this frame's direct children are PrintedSheetFrame
 // instances, and each of those will usually contain one nsPageFrame, depending
-// on the "pages-per-sheet" setting.)
+// on the "pages-per-sheet" setting and whether the print operation is
+// restricted to a custom page range.)
 class nsPageSequenceFrame final : public nsContainerFrame {
   using LogicalSize = mozilla::LogicalSize;
 
@@ -94,13 +138,14 @@ class nsPageSequenceFrame final : public nsContainerFrame {
   nsresult StartPrint(nsPresContext* aPresContext,
                       nsIPrintSettings* aPrintSettings,
                       const nsAString& aDocTitle, const nsAString& aDocURL);
-  nsresult PrePrintNextPage(nsITimerCallback* aCallback, bool* aDone);
-  nsresult PrintNextPage();
+  nsresult PrePrintNextSheet(nsITimerCallback* aCallback, bool* aDone);
+  nsresult PrintNextSheet();
   void ResetPrintCanvasList();
-  int32_t GetCurrentPageNum() const { return mPageNum; }
+
+  uint32_t GetCurrentSheetIdx() const { return mCurrentSheetIdx; }
+
   int32_t GetRawNumPages() const { return mPageData->mRawNumPages; }
-  bool IsDoingPrintRange() const { return mPageData->mDoingPageRange; }
-  void GetPrintRange(int32_t* aFromPage, int32_t* aToPage) const;
+
   nsresult DoPageEnd();
 
   // We must allow Print Preview UI to have a background, no matter what the
@@ -138,8 +183,7 @@ class nsPageSequenceFrame final : public nsContainerFrame {
                                  nscoord aChildPaddingBoxWidth,
                                  const nsMargin& aChildPhysicalMargin);
 
-  void DetermineWhetherToPrintPage();
-  nsIFrame* GetCurrentPageFrame();
+  nsIFrame* GetCurrentSheetFrame();
 
   nsSize mSize;
 
@@ -160,13 +204,12 @@ class nsPageSequenceFrame final : public nsContainerFrame {
   // Data shared by all the nsPageFrames:
   mozilla::UniquePtr<nsSharedPageData> mPageData;
 
-  // Async Printing
-  int32_t mPageNum;
+  // The zero-based index of the PrintedSheetFrame child that is being printed
+  // (or about-to-be-printed), in an async print operation.
+  // This is an index into our PrincipalChildList, effectively.
+  uint32_t mCurrentSheetIdx = 0;
 
   nsTArray<RefPtr<mozilla::dom::HTMLCanvasElement> > mCurrentCanvasList;
-
-  // Asynch Printing
-  bool mPrintThisPage;
 
   bool mCalledBeginPage;
 

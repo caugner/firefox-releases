@@ -8,7 +8,10 @@
 
 #include "mozilla/DebugOnly.h"
 
+#include "jit/BaselineFrame.h"
 #include "jit/CacheIR.h"
+#include "jit/CompileInfo.h"
+#include "jit/InlineScriptTree.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
@@ -1492,9 +1495,6 @@ bool WarpBuilder::build_Not(BytecodeLocation loc) {
 bool WarpBuilder::build_ToString(BytecodeLocation loc) {
   MDefinition* value = current->pop();
 
-  // TODO: Consider making MToString non-effectul similar to Ion. That way GVN
-  // will be able to fold away MToString(string) automatically. For now simply
-  // handle this case here.
   if (value->type() == MIRType::String) {
     value->setImplicitlyUsedUnchecked();
     current->push(value);
@@ -1505,8 +1505,10 @@ bool WarpBuilder::build_ToString(BytecodeLocation loc) {
       MToString::New(alloc(), value, MToString::SideEffectHandling::Supported);
   current->add(ins);
   current->push(ins);
-  MOZ_ASSERT(ins->isEffectful());
-  return resumeAfter(ins, loc);
+  if (ins->isEffectful()) {
+    return resumeAfter(ins, loc);
+  }
+  return true;
 }
 
 bool WarpBuilder::usesEnvironmentChain() const {
@@ -1767,6 +1769,16 @@ bool WarpBuilder::build_IsNoIter(BytecodeLocation) {
   return true;
 }
 
+bool WarpBuilder::transpileCall(BytecodeLocation loc,
+                                const WarpCacheIR* cacheIRSnapshot,
+                                CallInfo* callInfo) {
+  // Synthesize the constant number of arguments for this call op.
+  auto* argc = MConstant::New(alloc(), Int32Value(callInfo->argc()));
+  current->add(argc);
+
+  return TranspileCacheIRToMIR(this, loc, cacheIRSnapshot, {argc}, callInfo);
+}
+
 bool WarpBuilder::buildCallOp(BytecodeLocation loc) {
   uint32_t argc = loc.getCallArgc();
   JSOp op = loc.getOp();
@@ -1780,11 +1792,20 @@ bool WarpBuilder::buildCallOp(BytecodeLocation loc) {
   }
 
   if (const auto* inliningSnapshot = getOpSnapshot<WarpInlinedCall>(loc)) {
+    // Transpile the CacheIR to generate the correct guards before
+    // inlining.  In this case, CacheOp::CallInlinedFunction updates
+    // the CallInfo, but does not generate a call.
+    callInfo.markAsInlined();
+    if (!transpileCall(loc, inliningSnapshot->cacheIRSnapshot(), &callInfo)) {
+      return false;
+    }
+
+    // Generate the body of the inlined function.
     return buildInlinedCall(loc, inliningSnapshot, callInfo);
   }
 
   if (auto* cacheIRSnapshot = getOpSnapshot<WarpCacheIR>(loc)) {
-    return TranspileCacheIRToMIR(this, loc, cacheIRSnapshot, callInfo);
+    return transpileCall(loc, cacheIRSnapshot, &callInfo);
   }
 
   if (getOpSnapshot<WarpBailout>(loc)) {
@@ -2324,15 +2345,6 @@ bool WarpBuilder::build_Object(BytecodeLocation loc) {
   JSObject* obj = loc.getObject(script_);
   MConstant* objConst = constant(ObjectValue(*obj));
 
-  if (mirGen().options.cloneSingletons()) {
-    auto* clone = MCloneLiteral::New(alloc(), objConst);
-    current->add(clone);
-    current->push(clone);
-    return resumeAfter(clone, loc);
-  }
-
-  // WarpOracle called realm->setSingletonsAsValues() so we can just push the
-  // object here.
   current->push(objConst);
   return true;
 }
@@ -2653,7 +2665,7 @@ bool WarpBuilder::build_SpreadCall(BytecodeLocation loc) {
   callInfo.initForSpreadCall(current);
 
   if (auto* cacheIRSnapshot = getOpSnapshot<WarpCacheIR>(loc)) {
-    return TranspileCacheIRToMIR(this, loc, cacheIRSnapshot, callInfo);
+    return transpileCall(loc, cacheIRSnapshot, &callInfo);
   }
 
   MInstruction* call = makeSpreadCall(callInfo);
@@ -2917,11 +2929,7 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
   MOZ_ASSERT(numInputs == NumInputsForCacheKind(kind));
 
   if (auto* cacheIRSnapshot = getOpSnapshot<WarpCacheIR>(loc)) {
-    MDefinitionStackVector inputs_;
-    if (!inputs_.append(inputs.begin(), inputs.end())) {
-      return false;
-    }
-    return TranspileCacheIRToMIR(this, loc, cacheIRSnapshot, inputs_);
+    return TranspileCacheIRToMIR(this, loc, cacheIRSnapshot, inputs);
   }
 
   if (getOpSnapshot<WarpBailout>(loc)) {
@@ -2929,6 +2937,20 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
       input->setImplicitlyUsedUnchecked();
     }
     return buildBailoutForColdIC(loc, kind);
+  }
+
+  if (const auto* inliningSnapshot = getOpSnapshot<WarpInlinedCall>(loc)) {
+    // The CallInfo will be initialized by the transpiler.
+    jsbytecode* pc = loc.toRawBytecode();
+    bool ignoresRval = BytecodeIsPopped(pc);
+    CallInfo callInfo(alloc(), pc, /*constructing =*/false, ignoresRval);
+    callInfo.markAsInlined();
+
+    if (!TranspileCacheIRToMIR(this, loc, inliningSnapshot->cacheIRSnapshot(),
+                               inputs, &callInfo)) {
+      return false;
+    }
+    return buildInlinedCall(loc, inliningSnapshot, callInfo);
   }
 
   // Work around std::initializer_list not defining operator[].
@@ -3193,22 +3215,18 @@ MDefinition* WarpBuilder::maybeGuardNotOptimizedArguments(MDefinition* def) {
 bool WarpBuilder::buildInlinedCall(BytecodeLocation loc,
                                    const WarpInlinedCall* inlineSnapshot,
                                    CallInfo& callInfo) {
-  // We transpile the CacheIR to generate the correct guards before
-  // inlining.  In this case, CacheOp::CallInlinedFunction updates the
-  // CallInfo, but does not generate a call. The body of the inlined
-  // function is generated below.
-  callInfo.markAsInlined();
-  if (!TranspileCacheIRToMIR(this, loc, inlineSnapshot->cacheIRSnapshot(),
-                             callInfo)) {
-    return false;
-  }
-
   jsbytecode* pc = loc.toRawBytecode();
+
+  if (callInfo.isSetter()) {
+    // build_SetProp pushes the rhs argument onto the stack. Remove it
+    // in preparation for pushCallStack.
+    current->pop();
+  }
 
   callInfo.setImplicitlyUsedUnchecked();
 
   // Capture formals in the outer resume point.
-  if (!callInfo.pushCallStack(&mirGen(), current)) {
+  if (!callInfo.pushCallStack(current)) {
     return false;
   }
   MResumePoint* outerResumePoint =
@@ -3311,9 +3329,9 @@ MDefinition* WarpBuilder::patchInlinedReturn(CompileInfo* calleeCompileInfo,
     auto* filter = MReturnFromCtor::New(alloc(), rdef, callInfo.thisArg());
     exit->add(filter);
     rdef = filter;
-  }
-  if (callInfo.isSetter()) {
-    MOZ_CRASH("TODO");
+  } else if (callInfo.isSetter()) {
+    // Setters return the rhs argument, not whatever value is returned.
+    rdef = callInfo.getArg(0);
   }
 
   exit->end(MGoto::New(alloc(), returnBlock));

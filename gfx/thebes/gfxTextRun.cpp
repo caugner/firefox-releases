@@ -1468,16 +1468,15 @@ void gfxTextRun::CopyGlyphDataFrom(gfxTextRun* aSource, Range aRange,
     if (!g.IsSimpleGlyph()) {
       uint32_t count = g.GetGlyphCount();
       if (count > 0) {
-        DetailedGlyph* dst = AllocateDetailedGlyphs(i + aDest, count);
-        if (dst) {
-          DetailedGlyph* src = aSource->GetDetailedGlyphs(i + aRange.start);
-          if (src) {
-            ::memcpy(dst, src, count * sizeof(DetailedGlyph));
-          } else {
-            g.SetMissing(0);
-          }
+        // DetailedGlyphs allocation is infallible, so this should never be
+        // null unless the source textrun is somehow broken.
+        DetailedGlyph* src = aSource->GetDetailedGlyphs(i + aRange.start);
+        MOZ_ASSERT(src, "missing DetailedGlyphs?");
+        if (src) {
+          DetailedGlyph* dst = AllocateDetailedGlyphs(i + aDest, count);
+          ::memcpy(dst, src, count * sizeof(DetailedGlyph));
         } else {
-          g.SetMissing(0);
+          g.SetMissing();
         }
       }
     }
@@ -3037,6 +3036,10 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
   bool isVarSelector = gfxFontUtils::IsVarSelector(aCh);
   bool nextIsVarSelector = gfxFontUtils::IsVarSelector(aNextCh);
 
+  // For Unicode hyphens, if not supported in the font then we'll try for
+  // the ASCII hyphen-minus as a fallback.
+  uint32_t fallbackChar = (aCh == 0x2010 || aCh == 0x2011) ? '-' : 0;
+
   // Whether we've seen a font that is currently loading a resource that may
   // provide this character (so we should not start a new load).
   bool loading = false;
@@ -3079,7 +3082,8 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
       !nextIsVarSelector && presentation == eFontPresentation::Any) {
     gfxFont* firstFont = GetFontAt(0, aCh, &loading);
     if (firstFont) {
-      if (firstFont->HasCharacter(aCh)) {
+      if (firstFont->HasCharacter(aCh) ||
+          (fallbackChar && firstFont->HasCharacter(fallbackChar))) {
         *aMatchType = {FontMatchType::Kind::kFontGroup, mFonts[0].Generic()};
         return firstFont;
       }
@@ -3179,7 +3183,8 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
     gfxFont* font = ff.Font();
     if (font) {
       // if available, use already-made gfxFont and check for character
-      if (font->HasCharacter(aCh)) {
+      if (font->HasCharacter(aCh) ||
+          (fallbackChar && font->HasCharacter(fallbackChar))) {
         if (CheckCandidate(font,
                            {FontMatchType::Kind::kFontGroup, ff.Generic()})) {
           return font;
@@ -3211,7 +3216,8 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
         }
 
         gfxFontEntry* pfe = ufe->GetPlatformFontEntry();
-        if (pfe && pfe->HasCharacter(aCh)) {
+        if (pfe && (pfe->HasCharacter(aCh) ||
+                    (fallbackChar && pfe->HasCharacter(fallbackChar)))) {
           font = GetFontAt(i, aCh, &loading);
           if (font) {
             if (CheckCandidate(font, {FontMatchType::Kind::kFontGroup,
@@ -3220,7 +3226,8 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
             }
           }
         }
-      } else if (fe && fe->HasCharacter(aCh)) {
+      } else if (fe && (fe->HasCharacter(aCh) ||
+                        (fallbackChar && fe->HasCharacter(fallbackChar)))) {
         // for normal platform fonts, after checking the cmap
         // build the font via GetFontAt
         font = GetFontAt(i, aCh, &loading);
@@ -3275,7 +3282,8 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
 
   if (fontListLength == 0) {
     gfxFont* defaultFont = GetDefaultFont();
-    if (defaultFont->HasCharacter(aCh)) {
+    if (defaultFont->HasCharacter(aCh) ||
+        (fallbackChar && defaultFont->HasCharacter(fallbackChar))) {
       if (CheckCandidate(defaultFont, FontMatchType::Kind::kFontGroup)) {
         return defaultFont;
       }
@@ -3317,7 +3325,9 @@ gfxFont* gfxFontGroup::FindFontForChar(uint32_t aCh, uint32_t aPrevCh,
   // 3. use fallback fonts
   // -- before searching for something else check the font used for the
   //    previous character
-  if (aPrevMatchedFont && aPrevMatchedFont->HasCharacter(aCh)) {
+  if (aPrevMatchedFont &&
+      (aPrevMatchedFont->HasCharacter(aCh) ||
+       (fallbackChar && aPrevMatchedFont->HasCharacter(fallbackChar)))) {
     if (CheckCandidate(aPrevMatchedFont,
                        FontMatchType::Kind::kSystemFallback)) {
       return aPrevMatchedFont;

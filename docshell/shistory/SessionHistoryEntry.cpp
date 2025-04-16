@@ -10,8 +10,11 @@
 #include "nsStructuredCloneContainer.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/PresState.h"
+#include "mozilla/Tuple.h"
 #include "mozilla/dom/nsCSPContext.h"
 #include "mozilla/ipc/IPDLParamTraits.h"
+
+extern mozilla::LazyLogModule gSHLog;
 
 namespace mozilla {
 namespace dom {
@@ -35,28 +38,64 @@ SessionHistoryInfo::SessionHistoryInfo(nsDocShellLoadState* aLoadState,
           /* FIXME Is this correct? */
           aLoadState->TypeHint())) {
   MaybeUpdateTitleFromURI();
-  bool isNoStore = false;
-  if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel)) {
-    Unused << httpChannel->IsNoStoreResponse(&isNoStore);
-    mPersist = !isNoStore;
-  }
 }
 
 SessionHistoryInfo::SessionHistoryInfo(
-    const SessionHistoryInfo& aSharedStateFrom, nsIURI* aURI,
-    const nsID& aDocShellID)
+    const SessionHistoryInfo& aSharedStateFrom, nsIURI* aURI)
     : mURI(aURI), mSharedState(aSharedStateFrom.mSharedState) {
   MaybeUpdateTitleFromURI();
 }
 
-SessionHistoryInfo::SessionHistoryInfo(nsIURI* aURI, const nsID& aDocShellID,
-                                       nsIPrincipal* aTriggeringPrincipal,
-                                       nsIContentSecurityPolicy* aCsp,
-                                       const nsACString& aContentType)
+SessionHistoryInfo::SessionHistoryInfo(
+    const SessionHistoryInfo* aSharedStateFrom, nsIURI* aURI,
+    const nsID& aDocShellID, nsIPrincipal* aTriggeringPrincipal,
+    nsIPrincipal* aPrincipalToInherit,
+    nsIPrincipal* aPartitionedPrincipalToInherit,
+    nsIContentSecurityPolicy* aCsp, const nsACString& aContentType)
     : mURI(aURI),
-      mSharedState(SharedState::Create(aTriggeringPrincipal, nullptr, nullptr,
-                                       aCsp, aContentType)) {
+      mSharedState(aSharedStateFrom ? SomeRef(aSharedStateFrom->mSharedState)
+                                    : Nothing()) {
+  mSharedState.Get()->mTriggeringPrincipal = aTriggeringPrincipal;
+  mSharedState.Get()->mPrincipalToInherit = aPrincipalToInherit;
+  mSharedState.Get()->mPartitionedPrincipalToInherit =
+      aPartitionedPrincipalToInherit;
+  mSharedState.Get()->mCsp = aCsp;
+  mSharedState.Get()->mContentType = aContentType;
+
   MaybeUpdateTitleFromURI();
+}
+
+SessionHistoryInfo::SessionHistoryInfo(
+    nsIChannel* aChannel, uint32_t aLoadType,
+    nsIPrincipal* aPartitionedPrincipalToInherit,
+    nsIContentSecurityPolicy* aCsp) {
+  aChannel->GetURI(getter_AddRefs(mURI));
+  mLoadType = aLoadType;
+
+  nsCOMPtr<nsILoadInfo> loadInfo;
+  aChannel->GetLoadInfo(getter_AddRefs(loadInfo));
+
+  loadInfo->GetResultPrincipalURI(getter_AddRefs(mResultPrincipalURI));
+  loadInfo->GetTriggeringPrincipal(
+      getter_AddRefs(mSharedState.Get()->mTriggeringPrincipal));
+  loadInfo->GetPrincipalToInherit(
+      getter_AddRefs(mSharedState.Get()->mPrincipalToInherit));
+
+  mSharedState.Get()->mPartitionedPrincipalToInherit =
+      aPartitionedPrincipalToInherit;
+  mSharedState.Get()->mCsp = aCsp;
+  aChannel->GetContentType(mSharedState.Get()->mContentType);
+  aChannel->GetOriginalURI(getter_AddRefs(mOriginalURI));
+
+  uint32_t loadFlags;
+  aChannel->GetLoadFlags(&loadFlags);
+  mLoadReplace = !!(loadFlags & nsIChannel::LOAD_REPLACE);
+
+  MaybeUpdateTitleFromURI();
+
+  if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel)) {
+    mReferrerInfo = httpChannel->GetReferrerInfo();
+  }
 }
 
 void SessionHistoryInfo::Reset(nsIURI* aURI, const nsID& aDocShellID,
@@ -139,6 +178,10 @@ uint32_t SessionHistoryInfo::GetCacheKey() const {
   return mSharedState.Get()->mCacheKey;
 }
 
+void SessionHistoryInfo::SetCacheKey(uint32_t aCacheKey) {
+  mSharedState.Get()->mCacheKey = aCacheKey;
+}
+
 bool SessionHistoryInfo::IsSubFrame() const {
   return mSharedState.Get()->mIsFrameNavigation;
 }
@@ -195,23 +238,19 @@ SessionHistoryInfo::SharedState SessionHistoryInfo::SharedState::Create(
       aCsp, aContentType));
 }
 
-SessionHistoryInfo::SharedState::SharedState() {
-  if (XRE_IsParentProcess()) {
-    new (&mParent)
-        RefPtr<SHEntrySharedParentState>(new SHEntrySharedParentState());
-  } else {
-    new (&mChild)
-        UniquePtr<SHEntrySharedState>(MakeUnique<SHEntrySharedState>());
-  }
-}
+SessionHistoryInfo::SharedState::SharedState() { Init(); }
 
 SessionHistoryInfo::SharedState::SharedState(
     const SessionHistoryInfo::SharedState& aOther) {
-  if (XRE_IsParentProcess()) {
-    new (&mParent) RefPtr<SHEntrySharedParentState>(aOther.mParent);
+  Init(aOther);
+}
+
+SessionHistoryInfo::SharedState::SharedState(
+    const Maybe<const SessionHistoryInfo::SharedState&>& aOther) {
+  if (aOther.isSome()) {
+    Init(aOther.ref());
   } else {
-    new (&mChild) UniquePtr<SHEntrySharedState>(
-        MakeUnique<SHEntrySharedState>(*aOther.mChild));
+    Init();
   }
 }
 
@@ -252,6 +291,26 @@ void SessionHistoryInfo::SharedState::ChangeId(uint64_t aId) {
   }
 }
 
+void SessionHistoryInfo::SharedState::Init() {
+  if (XRE_IsParentProcess()) {
+    new (&mParent)
+        RefPtr<SHEntrySharedParentState>(new SHEntrySharedParentState());
+  } else {
+    new (&mChild)
+        UniquePtr<SHEntrySharedState>(MakeUnique<SHEntrySharedState>());
+  }
+}
+
+void SessionHistoryInfo::SharedState::Init(
+    const SessionHistoryInfo::SharedState& aOther) {
+  if (XRE_IsParentProcess()) {
+    new (&mParent) RefPtr<SHEntrySharedParentState>(aOther.mParent);
+  } else {
+    new (&mChild) UniquePtr<SHEntrySharedState>(
+        MakeUnique<SHEntrySharedState>(*aOther.mChild));
+  }
+}
+
 static uint64_t gLoadingSessionHistoryInfoLoadId = 0;
 
 nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>*
@@ -260,11 +319,7 @@ nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>*
 LoadingSessionHistoryInfo::LoadingSessionHistoryInfo(
     SessionHistoryEntry* aEntry)
     : mInfo(aEntry->Info()), mLoadId(++gLoadingSessionHistoryInfoLoadId) {
-  if (!SessionHistoryEntry::sLoadIdToEntry) {
-    SessionHistoryEntry::sLoadIdToEntry =
-        new nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>();
-  }
-  SessionHistoryEntry::sLoadIdToEntry->Put(mLoadId, aEntry);
+  SessionHistoryEntry::SetByLoadId(mLoadId, aEntry);
 }
 
 LoadingSessionHistoryInfo::LoadingSessionHistoryInfo(
@@ -297,12 +352,27 @@ SessionHistoryEntry* SessionHistoryEntry::GetByLoadId(uint64_t aLoadId) {
   return sLoadIdToEntry->Get(aLoadId);
 }
 
+void SessionHistoryEntry::SetByLoadId(uint64_t aLoadId,
+                                      SessionHistoryEntry* aEntry) {
+  if (!sLoadIdToEntry) {
+    sLoadIdToEntry =
+        new nsDataHashtable<nsUint64HashKey, SessionHistoryEntry*>();
+  }
+
+  MOZ_LOG(
+      gSHLog, LogLevel::Verbose,
+      ("SessionHistoryEntry::SetByLoadId(%" PRIu64 " - %p", aLoadId, aEntry));
+  sLoadIdToEntry->Put(aLoadId, aEntry);
+}
+
 void SessionHistoryEntry::RemoveLoadId(uint64_t aLoadId) {
   MOZ_ASSERT(XRE_IsParentProcess());
   if (!sLoadIdToEntry) {
     return;
   }
 
+  MOZ_LOG(gSHLog, LogLevel::Verbose,
+          ("SHEntry::RemoveLoadId(%" PRIu64 ")", aLoadId));
   sLoadIdToEntry->Remove(aLoadId);
 }
 
@@ -400,7 +470,7 @@ SessionHistoryEntry::GetTitle(nsAString& aTitle) {
 
 NS_IMETHODIMP
 SessionHistoryEntry::SetTitle(const nsAString& aTitle) {
-  mInfo->mTitle = aTitle;
+  mInfo->SetTitle(aTitle);
   return NS_OK;
 }
 
@@ -938,8 +1008,13 @@ SessionHistoryEntry::HasBFCacheEntry(nsIBFCacheEntry* aEntry) {
 
 NS_IMETHODIMP
 SessionHistoryEntry::AdoptBFCacheEntry(nsISHEntry* aEntry) {
-  NS_WARNING("This lives in the child process");
-  return NS_ERROR_FAILURE;
+  nsCOMPtr<SessionHistoryEntry> she = do_QueryInterface(aEntry);
+  NS_ENSURE_STATE(she && she->mInfo->mSharedState.Get());
+
+  mInfo->mSharedState =
+      static_cast<SessionHistoryEntry*>(aEntry)->mInfo->mSharedState;
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1249,13 +1324,17 @@ namespace ipc {
 void IPDLParamTraits<dom::SessionHistoryInfo>::Write(
     IPC::Message* aMsg, IProtocol* aActor,
     const dom::SessionHistoryInfo& aParam) {
-  Maybe<dom::ClonedMessageData> stateData;
+  Maybe<Tuple<uint32_t, dom::ClonedMessageData>> stateData;
   if (aParam.mStateData) {
     stateData.emplace();
+    uint32_t version;
+    NS_ENSURE_SUCCESS_VOID(aParam.mStateData->GetFormatVersion(&version));
+    Get<0>(*stateData) = version;
+
     JSStructuredCloneData& data = aParam.mStateData->Data();
     auto iter = data.Start();
     bool success;
-    stateData->data().data = data.Borrow(iter, data.Size(), &success);
+    Get<1>(*stateData).data().data = data.Borrow(iter, data.Size(), &success);
     if (NS_WARN_IF(!success)) {
       return;
     }
@@ -1297,7 +1376,7 @@ void IPDLParamTraits<dom::SessionHistoryInfo>::Write(
 bool IPDLParamTraits<dom::SessionHistoryInfo>::Read(
     const IPC::Message* aMsg, PickleIterator* aIter, IProtocol* aActor,
     dom::SessionHistoryInfo* aResult) {
-  Maybe<dom::ClonedMessageData> stateData;
+  Maybe<Tuple<uint32_t, dom::ClonedMessageData>> stateData;
   uint64_t sharedId;
   if (!ReadIPDLParam(aMsg, aIter, aActor, &aResult->mURI) ||
       !ReadIPDLParam(aMsg, aIter, aActor, &aResult->mOriginalURI) ||
@@ -1390,11 +1469,14 @@ bool IPDLParamTraits<dom::SessionHistoryInfo>::Read(
   }
 
   if (stateData.isSome()) {
-    aResult->mStateData = new nsStructuredCloneContainer();
+    uint32_t version = Get<0>(*stateData);
+    aResult->mStateData = new nsStructuredCloneContainer(version);
     if (aActor->GetSide() == ChildSide) {
-      aResult->mStateData->StealFromClonedMessageDataForChild(stateData.ref());
+      aResult->mStateData->StealFromClonedMessageDataForChild(
+          Get<1>(*stateData));
     } else {
-      aResult->mStateData->StealFromClonedMessageDataForParent(stateData.ref());
+      aResult->mStateData->StealFromClonedMessageDataForParent(
+          Get<1>(*stateData));
     }
   }
   MOZ_ASSERT_IF(stateData.isNothing(), !aResult->mStateData);

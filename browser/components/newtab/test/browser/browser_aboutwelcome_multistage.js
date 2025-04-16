@@ -3,6 +3,9 @@
 const { ExperimentAPI } = ChromeUtils.import(
   "resource://messaging-system/experiments/ExperimentAPI.jsm"
 );
+const { ExperimentFakes } = ChromeUtils.import(
+  "resource://testing-common/MSTestUtils.jsm"
+);
 
 const SEPARATE_ABOUT_WELCOME_PREF = "browser.aboutwelcome.enabled";
 const ABOUT_WELCOME_OVERRIDE_CONTENT_PREF =
@@ -183,8 +186,9 @@ async function onButtonClick(browser, elementId) {
  */
 add_task(async function test_multistage_zeroOnboarding_experimentAPI() {
   await setAboutWelcomePref(true);
-  let updatePromise = new Promise(resolve =>
-    ExperimentAPI._store.on("update:mochitest-1-aboutwelcome", resolve)
+  let updatePromise = ExperimentFakes.waitForExperimentUpdate(
+    ExperimentAPI,
+    "mochitest-1-aboutwelcome"
   );
   ExperimentAPI._store.addExperiment({
     slug: "mochitest-1-aboutwelcome",
@@ -219,7 +223,7 @@ add_task(async function test_multistage_zeroOnboarding_experimentAPI() {
     // Expected selectors:
     ["div.search-wrapper", "body.activity-stream"],
     // Unexpected selectors:
-    ["div.multistageContainer", "main.AW_STEP1"]
+    ["div.onboardingContainer", "main.AW_STEP1"]
   );
 
   ExperimentAPI._store._deleteForTests("mochitest-1-aboutwelcome");
@@ -232,8 +236,9 @@ add_task(async function test_multistage_zeroOnboarding_experimentAPI() {
 add_task(async function test_multistage_aboutwelcome_experimentAPI() {
   await setAboutWelcomePref(true);
   await setAboutWelcomeMultiStage({});
-  let updatePromise = new Promise(resolve =>
-    ExperimentAPI._store.on("update:mochitest-aboutwelcome", resolve)
+  let updatePromise = ExperimentFakes.waitForExperimentUpdate(
+    ExperimentAPI,
+    "mochitest-aboutwelcome"
   );
   ExperimentAPI._store.addExperiment({
     slug: "mochitest-aboutwelcome",
@@ -267,7 +272,7 @@ add_task(async function test_multistage_aboutwelcome_experimentAPI() {
     "multistage step 1",
     // Expected selectors:
     [
-      "div.multistageContainer",
+      "div.onboardingContainer",
       "main.AW_STEP1",
       "h1.welcomeZap",
       "span.zap.short",
@@ -287,7 +292,7 @@ add_task(async function test_multistage_aboutwelcome_experimentAPI() {
     "multistage step 2",
     // Expected selectors:
     [
-      "div.multistageContainer",
+      "div.onboardingContainer",
       "main.AW_STEP2",
       "button.secondary",
       "h1.welcomeZap",
@@ -303,7 +308,7 @@ add_task(async function test_multistage_aboutwelcome_experimentAPI() {
     "multistage step 3",
     // Expected selectors:
     [
-      "div.multistageContainer",
+      "div.onboardingContainer",
       "main.AW_STEP3",
       "div.brand-logo",
       "div.welcome-text",
@@ -318,7 +323,7 @@ add_task(async function test_multistage_aboutwelcome_experimentAPI() {
     // Expected selectors:
     ["body.activity-stream"],
     // Unexpected selectors:
-    ["div.multistageContainer"]
+    ["div.onboardingContainer"]
   );
 
   ExperimentAPI._store._deleteForTests("mochitest-aboutwelcome");
@@ -336,7 +341,7 @@ add_task(async function test_Multistage_About_Welcome_branches() {
     "multistage step 1",
     // Expected selectors:
     [
-      "div.multistageContainer",
+      "div.onboardingContainer",
       "main.AW_STEP1",
       "h1.welcomeZap",
       "span.zap.short",
@@ -356,7 +361,7 @@ add_task(async function test_Multistage_About_Welcome_branches() {
     "multistage step 2",
     // Expected selectors:
     [
-      "div.multistageContainer",
+      "div.onboardingContainer",
       "main.AW_STEP2",
       "h1.welcomeZap",
       "span.zap.long",
@@ -372,7 +377,7 @@ add_task(async function test_Multistage_About_Welcome_branches() {
     "multistage step 3",
     // Expected selectors:
     [
-      "div.multistageContainer",
+      "div.onboardingContainer",
       "main.AW_STEP3",
       "div.brand-logo",
       "div.welcome-text",
@@ -387,7 +392,7 @@ add_task(async function test_Multistage_About_Welcome_branches() {
     // Expected selectors:
     ["body.activity-stream"],
     // Unexpected selectors:
-    ["div.multistageContainer"]
+    ["div.onboardingContainer"]
   );
 });
 
@@ -406,7 +411,7 @@ add_task(async function test_Multistage_About_Welcome_navigation() {
     "multistage step 1",
     // Expected selectors:
     [
-      "div.multistageContainer",
+      "div.onboardingContainer",
       "main.AW_STEP1",
       "div.secondary-cta.top",
       "button.secondary",
@@ -421,7 +426,7 @@ add_task(async function test_Multistage_About_Welcome_navigation() {
     browser,
     "multistage step 2",
     // Expected selectors:
-    ["div.multistageContainer", "main.AW_STEP2", "button.secondary"],
+    ["div.onboardingContainer", "main.AW_STEP2", "button.secondary"],
     // Unexpected selectors:
     ["main.AW_STEP1", "main.AW_STEP3", "div.secondary-cta.top"]
   );

@@ -1073,8 +1073,10 @@ nsresult nsSocketTransport::ResolveHost() {
                               dnsFlags, nullptr, this, mSocketTransportService,
                               mOriginAttributes, getter_AddRefs(mDNSRequest));
   mEsniQueried = false;
+  // NOTE: If we already have echConfig, we don't try ESNI.
   if (mSocketTransportService->IsEsniEnabled() && NS_SUCCEEDED(rv) &&
-      !(mConnectionFlags & (DONT_TRY_ESNI | BE_CONSERVATIVE))) {
+      !(mConnectionFlags & (DONT_TRY_ESNI_OR_ECH | BE_CONSERVATIVE)) &&
+      mEchConfig.IsEmpty()) {
     bool isSSL = false;
     for (unsigned int i = 0; i < mTypes.Length(); ++i) {
       if (mTypes[i].EqualsLiteral("ssl")) {
@@ -1558,9 +1560,16 @@ nsresult nsSocketTransport::InitiateSocket() {
   }
 #endif
 
-  if (!mDNSRecordTxt.IsEmpty() && !mUsingQuic && mSecInfo) {
-    nsCOMPtr<nsISSLSocketControl> secCtrl = do_QueryInterface(mSecInfo);
-    if (secCtrl) {
+  nsCOMPtr<nsISSLSocketControl> secCtrl = do_QueryInterface(mSecInfo);
+  if (secCtrl) {
+    if (!mEchConfig.IsEmpty() &&
+        !(mConnectionFlags & (DONT_TRY_ESNI_OR_ECH | BE_CONSERVATIVE))) {
+      SOCKET_LOG(("nsSocketTransport::InitiateSocket set echconfig."));
+      rv = secCtrl->SetEchConfig(mEchConfig);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
+    } else if (!mDNSRecordTxt.IsEmpty() && !mUsingQuic) {
       SOCKET_LOG(("nsSocketTransport::InitiateSocket set esni keys."));
       rv = secCtrl->SetEsniTxt(mDNSRecordTxt);
       if (NS_FAILED(rv)) {
@@ -1895,7 +1904,16 @@ bool nsSocketTransport::RecoverFromError() {
       } else if (!(mConnectionFlags & DISABLE_TRR)) {
         bool trrEnabled;
         mDNSRecord->IsTRR(&trrEnabled);
-        if (trrEnabled) {
+
+        // Bug 1648147 - If the server responded with `0.0.0.0` or `::` then we
+        // should intentionally not fallback to regular DNS.
+        if (!StaticPrefs::network_trr_fallback_on_zero_response() &&
+            ((mNetAddr.raw.family == AF_INET && mNetAddr.inet.ip == 0) ||
+             (mNetAddr.raw.family == AF_INET6 &&
+              mNetAddr.inet6.ip.u64[0] == 0 &&
+              mNetAddr.inet6.ip.u64[1] == 0))) {
+          SOCKET_LOG(("  TRR returned 0.0.0.0 and there are no other IPs"));
+        } else if (trrEnabled) {
           // Drop state to closed.  This will trigger a new round of
           // DNS resolving. Bypass the cache this time since the
           // cached data came from TRR and failed already!
@@ -3616,6 +3634,12 @@ nsSocketTransport::GetResetIPFamilyPreference(bool* aReset) {
 NS_IMETHODIMP
 nsSocketTransport::GetEsniUsed(bool* aEsniUsed) {
   *aEsniUsed = mEsniUsed;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransport::SetEchConfig(const nsACString& aEchConfig) {
+  mEchConfig = aEchConfig;
   return NS_OK;
 }
 

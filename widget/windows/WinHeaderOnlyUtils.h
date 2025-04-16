@@ -76,12 +76,12 @@ class WindowsError final {
   // overloading to properly differentiate between the two. Instead we'll use
   // static functions to convert the various error types to HRESULTs before
   // instantiating.
-  explicit WindowsError(HRESULT aHResult) : mHResult(aHResult) {}
+  explicit constexpr WindowsError(HRESULT aHResult) : mHResult(aHResult) {}
 
  public:
   using UniqueString = UniquePtr<WCHAR[], LocalFreeDeleter>;
 
-  static WindowsError FromNtStatus(NTSTATUS aNtStatus) {
+  static constexpr WindowsError FromNtStatus(NTSTATUS aNtStatus) {
     if (aNtStatus == STATUS_SUCCESS) {
       // Special case: we don't want to set FACILITY_NT_BIT
       // (HRESULT_FROM_NT does not handle this case, unlike HRESULT_FROM_WIN32)
@@ -91,11 +91,11 @@ class WindowsError final {
     return WindowsError(HRESULT_FROM_NT(aNtStatus));
   }
 
-  static WindowsError FromHResult(HRESULT aHResult) {
+  static constexpr WindowsError FromHResult(HRESULT aHResult) {
     return WindowsError(aHResult);
   }
 
-  static WindowsError FromWin32Error(DWORD aWin32Err) {
+  static constexpr WindowsError FromWin32Error(DWORD aWin32Err) {
     return WindowsError(HRESULT_FROM_WIN32(aWin32Err));
   }
 
@@ -177,11 +177,11 @@ class WindowsError final {
     return Nothing();
   }
 
-  bool operator==(const WindowsError& aOther) const {
+  constexpr bool operator==(const WindowsError& aOther) const {
     return mHResult == aOther.mHResult;
   }
 
-  bool operator!=(const WindowsError& aOther) const {
+  constexpr bool operator!=(const WindowsError& aOther) const {
     return mHResult != aOther.mHResult;
   }
 
@@ -204,12 +204,66 @@ class WindowsError final {
   HRESULT mHResult;
 };
 
+namespace detail {
+template <>
+struct UnusedZero<WindowsError> {
+  using StorageType = WindowsError;
+
+  static constexpr bool value = true;
+  static constexpr StorageType nullValue = WindowsError::FromHResult(S_OK);
+
+  static constexpr void AssertValid(StorageType aValue) {}
+  static constexpr const WindowsError& Inspect(const StorageType& aValue) {
+    return aValue;
+  }
+  static constexpr WindowsError Unwrap(StorageType aValue) { return aValue; }
+  static constexpr StorageType Store(WindowsError aValue) { return aValue; }
+};
+}  // namespace detail
+
+enum DetourResultCode : uint32_t {
+  RESULT_OK = 0,
+  INTERCEPTOR_MOD_NULL,
+  INTERCEPTOR_MOD_INACCESSIBLE,
+  INTERCEPTOR_PROC_NULL,
+  INTERCEPTOR_PROC_INACCESSIBLE,
+  DETOUR_PATCHER_RESERVE_FOR_MODULE_PE_ERROR,
+  DETOUR_PATCHER_RESERVE_FOR_MODULE_TEXT_ERROR,
+  DETOUR_PATCHER_RESERVE_FOR_MODULE_RESERVE_ERROR,
+  DETOUR_PATCHER_DO_RESERVE_ERROR,
+  DETOUR_PATCHER_NEXT_TRAMPOLINE_ERROR,
+  DETOUR_PATCHER_INVALID_TRAMPOLINE,
+  DETOUR_PATCHER_WRITE_POINTER_ERROR,
+  DETOUR_PATCHER_CREATE_TRAMPOLINE_ERROR,
+  FUNCHOOKCROSSPROCESS_COPYSTUB_ERROR,
+  MMPOLICY_RESERVE_INVALIDARG,
+  MMPOLICY_RESERVE_ZERO_RESERVATIONSIZE,
+  MMPOLICY_RESERVE_CREATEFILEMAPPING,
+  MMPOLICY_RESERVE_MAPVIEWOFFILE,
+  MMPOLICY_RESERVE_NOBOUND_RESERVE_ERROR,
+  MMPOLICY_RESERVE_FINDREGION_INVALIDLEN,
+  MMPOLICY_RESERVE_FINDREGION_INVALIDRANGE,
+  MMPOLICY_RESERVE_FINDREGION_VIRTUALQUERY_ERROR,
+  MMPOLICY_RESERVE_FINAL_RESERVE_ERROR,
+};
+
 #if defined(NIGHTLY_BUILD)
 struct DetourError {
   // We have a 16-bytes buffer, but only minimum bytes to detour per
   // architecture are copied.  See CreateTrampoline in PatcherDetour.h.
+  DetourResultCode mErrorCode;
   uint8_t mOrigBytes[16];
-  DetourError() : mOrigBytes{} {}
+  explicit DetourError(DetourResultCode aError)
+      : mErrorCode(aError), mOrigBytes{} {}
+  DetourError(DetourResultCode aError, DWORD aWin32Error)
+      : mErrorCode(aError), mOrigBytes{} {
+    static_assert(sizeof(mOrigBytes) >= sizeof(aWin32Error),
+                  "Can't fit a DWORD in mOrigBytes");
+    *reinterpret_cast<DWORD*>(mOrigBytes) = aWin32Error;
+  }
+  operator WindowsError() const {
+    return WindowsError::FromHResult(mErrorCode);
+  }
 };
 #endif  // defined(NIGHTLY_BUILD)
 
@@ -221,11 +275,12 @@ struct LauncherError {
       : mFile(aFile), mLine(aLine), mError(aWin32Error) {}
 
 #if defined(NIGHTLY_BUILD)
-  LauncherError(const char* aFile, int aLine, WindowsError aWin32Error,
+  LauncherError(const char* aFile, int aLine,
                 const Maybe<DetourError>& aDetourError)
       : mFile(aFile),
         mLine(aLine),
-        mError(aWin32Error),
+        mError(aDetourError.isSome() ? aDetourError.value()
+                                     : WindowsError::CreateGeneric()),
         mDetourError(aDetourError) {}
 #endif  // defined(NIGHTLY_BUILD)
 
@@ -282,13 +337,10 @@ using LauncherVoidResultWithLineInfo = LauncherResultWithLineInfo<Ok>;
         __FILE__, __LINE__, ::mozilla::WindowsError::CreateGeneric()))
 
 #  if defined(NIGHTLY_BUILD)
-#    define LAUNCHER_ERROR_GENERIC_WITH_DETOUR_ERROR(...)               \
-      ::mozilla::Err(::mozilla::LauncherError(                          \
-          __FILE__, __LINE__, ::mozilla::WindowsError::CreateGeneric(), \
-          __VA_ARGS__))
+#    define LAUNCHER_ERROR_FROM_DETOUR_ERROR(err) \
+      ::mozilla::Err(::mozilla::LauncherError(__FILE__, __LINE__, err))
 #  else
-#    define LAUNCHER_ERROR_GENERIC_WITH_DETOUR_ERROR(...) \
-      LAUNCHER_ERROR_GENERIC()
+#    define LAUNCHER_ERROR_FROM_DETOUR_ERROR(err) LAUNCHER_ERROR_GENERIC()
 #  endif  // defined(NIGHTLY_BUILD)
 
 #  define LAUNCHER_ERROR_FROM_WIN32(err)     \
@@ -316,7 +368,7 @@ using LauncherVoidResultWithLineInfo = LauncherResultWithLineInfo<Ok>;
 #  define LAUNCHER_ERROR_GENERIC() \
     ::mozilla::Err(::mozilla::WindowsError::CreateGeneric())
 
-#  define LAUNCHER_ERROR_GENERIC_WITH_DETOUR_ERROR(...) LAUNCHER_ERROR_GENERIC()
+#  define LAUNCHER_ERROR_FROM_DETOUR_ERROR(err) LAUNCHER_ERROR_GENERIC()
 
 #  define LAUNCHER_ERROR_FROM_WIN32(err) \
     ::mozilla::Err(::mozilla::WindowsError::FromWin32Error(err))

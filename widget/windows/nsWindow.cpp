@@ -60,7 +60,7 @@
 
 #include "mozilla/AppShutdown.h"
 #include "mozilla/AutoRestore.h"
-#include "mozilla/EarlyBlankWindow.h"
+#include "mozilla/PreXULSkeletonUI.h"
 #include "mozilla/Logging.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MiscEvents.h"
@@ -212,6 +212,7 @@
 #include "mozilla/layers/APZInputBridge.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layers/KnowsCompositor.h"
+#include "mozilla/layers/ScrollInputMethods.h"
 #include "InputData.h"
 
 #include "mozilla/Telemetry.h"
@@ -743,14 +744,14 @@ void nsWindow::SendAnAPZEvent(InputData& aEvent) {
 
   if (aEvent.mInputType == PANGESTURE_INPUT) {
     PanGestureInput& panInput = aEvent.AsPanGestureInput();
-    WidgetWheelEvent event = panInput.ToWidgetWheelEvent(this);
+    WidgetWheelEvent event = panInput.ToWidgetEvent(this);
     ProcessUntransformedAPZEvent(&event, result);
 
     return;
   }
 
   PinchGestureInput& pinchInput = aEvent.AsPinchGestureInput();
-  WidgetWheelEvent event = pinchInput.ToWidgetWheelEvent(this);
+  WidgetWheelEvent event = pinchInput.ToWidgetEvent(this);
   ProcessUntransformedAPZEvent(&event, result);
 }
 
@@ -893,7 +894,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
   }
 
   if (aInitData->mWindowType == eWindowType_toplevel && !aParent) {
-    mWnd = ConsumeEarlyBlankWindowHandle();
+    mWnd = ConsumePreXULSkeletonUIHandle();
     if (mWnd) {
       mWasPreXulSkeletonUI = true;
       ::SetWindowLongPtrW(mWnd, GWL_STYLE, style);
@@ -7193,6 +7194,9 @@ bool nsWindow::OnGesture(WPARAM wParam, LPARAM lParam) {
     bool endFeedback = true;
 
     if (mGesture.PanDeltaToPixelScroll(wheelEvent)) {
+      mozilla::Telemetry::Accumulate(
+          mozilla::Telemetry::SCROLL_INPUT_METHODS,
+          (uint32_t)ScrollInputMethod::MainThreadTouch);
       DispatchEvent(&wheelEvent, status);
     }
 
@@ -7549,6 +7553,7 @@ void nsWindow::OnDPIChanged(int32_t x, int32_t y, int32_t width,
 
     Resize(x, y, width, height, true);
   }
+  UpdateNonClientMargins();
   ChangedDPI();
   ResetLayout();
 }

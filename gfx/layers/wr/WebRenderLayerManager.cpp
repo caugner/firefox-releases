@@ -9,7 +9,6 @@
 #include "BasicLayers.h"
 
 #include "GeckoProfiler.h"
-#include "LayersLogging.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/dom/BrowserChild.h"
@@ -21,6 +20,7 @@
 #include "mozilla/layers/WebRenderBridgeChild.h"
 #include "mozilla/layers/UpdateImageHelper.h"
 #include "nsDisplayList.h"
+#include "nsLayoutUtils.h"
 #include "WebRenderCanvasRenderer.h"
 
 #ifdef XP_WIN
@@ -157,7 +157,7 @@ CompositorBridgeChild* WebRenderLayerManager::GetCompositorBridgeChild() {
 }
 
 void WebRenderLayerManager::GetBackendName(nsAString& name) {
-  if (gfx::gfxVars::UseSoftwareWebRender()) {
+  if (WrBridge()->GetTextureFactoryIdentifier().mUsingSoftwareWebRender) {
     name.AssignLiteral("WebRender (Software)");
   } else {
     name.AssignLiteral("WebRender");

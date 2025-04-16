@@ -89,6 +89,7 @@
 #include <errno.h>
 #include <fstream>
 #include <ostream>
+#include <set>
 #include <sstream>
 #include <type_traits>
 
@@ -183,6 +184,10 @@ using namespace mozilla;
 using mozilla::profiler::detail::RacyFeatures;
 
 LazyLogModule gProfilerLog("prof");
+
+// Statically initialized to 0, then set once from profiler_init(), which should
+// be called from the main thread before any other use of the profiler.
+int scProfilerMainThreadId;
 
 #if defined(GP_OS_android)
 class GeckoJavaSampler
@@ -467,8 +472,7 @@ using JsFrameBuffer = JS::ProfilingFrameIterator::Frame[MAX_JS_FRAMES];
 class CorePS {
  private:
   CorePS()
-      : mMainThreadId(profiler_current_thread_id()),
-        mProcessStartTime(TimeStamp::ProcessCreation()),
+      : mProcessStartTime(TimeStamp::ProcessCreation()),
         // This needs its own mutex, because it is used concurrently from
         // functions guarded by gPSMutex as well as others without safety (e.g.,
         // profiler_add_marker). It is *not* used inside the critical section of
@@ -530,9 +534,6 @@ class CorePS {
     }
 #endif
   }
-
-  // No PSLockRef is needed for this field because it's immutable.
-  PS_GET_LOCKLESS(int, MainThreadId)
 
   // No PSLockRef is needed for this field because it's immutable.
   PS_GET_LOCKLESS(TimeStamp, ProcessStartTime)
@@ -644,9 +645,6 @@ class CorePS {
  private:
   // The singleton instance
   static CorePS* sInstance;
-
-  // ID of the main thread (assuming CorePS was started on the main thread).
-  const int mMainThreadId;
 
   // The time that the process started.
   const TimeStamp mProcessStartTime;
@@ -2435,6 +2433,27 @@ static void StreamCategories(SpliceableJSONWriter& aWriter) {
 #undef CATEGORY_JSON_END_CATEGORY
 }
 
+static void StreamMarkerSchema(SpliceableJSONWriter& aWriter) {
+  // Get an array view with all registered marker-type-specific functions.
+  Span<const base_profiler_markers_detail::Streaming::MarkerTypeFunctions>
+      markerTypeFunctionsArray =
+          base_profiler_markers_detail::Streaming::MarkerTypeFunctionsArray();
+  // List of streamed marker names, this is used to spot duplicates.
+  std::set<std::string> names;
+  // Stream the display schema for each different one. (Duplications may come
+  // from the same code potentially living in different libraries.)
+  for (const auto& markerTypeFunctions : markerTypeFunctionsArray) {
+    auto name = markerTypeFunctions.mMarkerTypeNameFunction();
+    // std::set.insert(T&&) returns a pair, its `second` is true if the element
+    // was actually inserted (i.e., it was not there yet.)
+    const bool didInsert =
+        names.insert(std::string(name.data(), name.size())).second;
+    if (didInsert) {
+      markerTypeFunctions.mMarkerSchemaFunction().Stream(aWriter, name);
+    }
+  }
+}
+
 // Some meta information that is better recorded before streaming the profile.
 // This is *not* intended to be cached, as some values could change between
 // profiling sessions.
@@ -2517,7 +2536,7 @@ static void StreamMetaJSCustomObject(
     const PreRecordedMetaInformation& aPreRecordedMetaInformation) {
   MOZ_RELEASE_ASSERT(CorePS::Exists() && ActivePS::Exists(aLock));
 
-  aWriter.IntProperty("version", 20);
+  aWriter.IntProperty("version", 21);
 
   // The "startTime" field holds the number of milliseconds since midnight
   // January 1, 1970 GMT. This grotty code computes (Now - (Now -
@@ -2538,6 +2557,10 @@ static void StreamMetaJSCustomObject(
 
   aWriter.StartArrayProperty("categories");
   StreamCategories(aWriter);
+  aWriter.EndArray();
+
+  aWriter.StartArrayProperty("markerSchema");
+  StreamMarkerSchema(aWriter);
   aWriter.EndArray();
 
   ActivePS::WriteActiveConfiguration(aLock, aWriter,
@@ -3952,6 +3975,8 @@ void profiler_init_threadmanager() {
 void profiler_init(void* aStackTop) {
   LOG("profiler_init");
 
+  scProfilerMainThreadId = profiler_current_thread_id();
+
   VTUNE_INIT();
 
   MOZ_RELEASE_ASSERT(!CorePS::Exists());
@@ -3972,6 +3997,7 @@ void profiler_init(void* aStackTop) {
   Vector<const char*> filters;
   MOZ_RELEASE_ASSERT(filters.append("GeckoMain"));
   MOZ_RELEASE_ASSERT(filters.append("Compositor"));
+  MOZ_RELEASE_ASSERT(filters.append("Renderer"));
   MOZ_RELEASE_ASSERT(filters.append("DOM Worker"));
 
   PowerOfTwo32 capacity = PROFILER_DEFAULT_ENTRIES;
@@ -5083,7 +5109,7 @@ ProfilingStack* profiler_register_thread(const char* aName,
     text.AppendASCII(aName);
     text.AppendLiteral("\"");
     maybelocked_profiler_add_marker_for_thread(
-        CorePS::MainThreadId(), JS::ProfilingCategoryPair::OTHER_Profiling,
+        profiler_main_thread_id(), JS::ProfilingCategoryPair::OTHER_Profiling,
         "profiler_register_thread again",
         TextMarkerPayload(text, TimeStamp::NowUnfuzzed()), &lock);
 
@@ -5161,11 +5187,12 @@ void profiler_unregister_thread() {
     // unregistered. Send it to the main thread (unless this *is* already the
     // main thread, which has been unregistered); this may be useful to catch
     // mismatched register/unregister pairs in Firefox.
-    if (int tid = profiler_current_thread_id(); tid != CorePS::MainThreadId()) {
+    if (int tid = profiler_current_thread_id();
+        tid != profiler_main_thread_id()) {
       nsCString threadIdString;
       threadIdString.AppendInt(tid);
       maybelocked_profiler_add_marker_for_thread(
-          CorePS::MainThreadId(), JS::ProfilingCategoryPair::OTHER_Profiling,
+          profiler_main_thread_id(), JS::ProfilingCategoryPair::OTHER_Profiling,
           "profiler_unregister_thread again",
           TextMarkerPayload(threadIdString, TimeStamp::NowUnfuzzed()), &lock);
     }
@@ -5425,9 +5452,10 @@ void profiler_add_marker(const char* aMarkerName,
 
 // This is a simplified version of profiler_add_marker that can be easily passed
 // into the JS engine.
-void profiler_add_js_marker(const char* aMarkerName) {
-  PROFILER_MARKER_UNTYPED(
-      ProfilerString8View::WrapNullTerminatedString(aMarkerName), JS);
+void profiler_add_js_marker(const char* aMarkerName, const char* aMarkerText) {
+  PROFILER_MARKER_TEXT(
+      ProfilerString8View::WrapNullTerminatedString(aMarkerName), JS, {},
+      ProfilerString8View::WrapNullTerminatedString(aMarkerText));
 }
 
 void profiler_add_js_allocation_marker(JS::RecordAllocationInfo&& info) {
@@ -5542,7 +5570,7 @@ void profiler_add_marker_for_thread(int aThreadId,
 void profiler_add_marker_for_mainthread(JS::ProfilingCategoryPair aCategoryPair,
                                         const char* aMarkerName,
                                         const ProfilerMarkerPayload& aPayload) {
-  profiler_add_marker_for_thread(CorePS::MainThreadId(), aCategoryPair,
+  profiler_add_marker_for_thread(profiler_main_thread_id(), aCategoryPair,
                                  aMarkerName, aPayload);
 }
 

@@ -13,6 +13,12 @@
         data-l10n-attrs="title, style"
         persist="screenX screenY width height" screenX="24" screenY="24">
 
+  <dialog
+    buttons="accept,cancel"
+    buttondisabledaccept="true"
+    data-l10n-id="add-engine-dialog"
+    data-l10n-attrs="buttonlabelaccept, buttonaccesskeyaccept">
+
   <linkset>
     <html:link rel="localization" href="browser/preferences/addEngine.ftl"/>
   </linkset>
@@ -25,31 +31,21 @@
 
   <html:form id="addEngineForm">
     <html:span id="engineNameExists" hidden="hidden" data-l10n-id="engine-name-exists"/>
-    <html:label for="engineName" data-l10n-id="add-engine-name"/>
+    <html:label id="engineNameLabel" for="engineName" data-l10n-id="add-engine-name"/>
     <hbox>
       <html:input id="engineName" type="text" required="required" />
     </hbox>
 
-    <html:label for="engineUrl" data-l10n-id="add-engine-url" />
+    <html:label id="engineUrlLabel" for="engineUrl" data-l10n-id="add-engine-url" />
     <hbox>
       <html:input id="engineUrl" type="url" required="required" />
     </hbox>
 
     <html:span id="engineAliasExists" hidden="hidden" data-l10n-id="engine-alias-exists"/>
-    <html:label for="engineAlias" data-l10n-id="add-engine-alias" />
+    <html:label id="engineAliasLabel" for="engineAlias" data-l10n-id="add-engine-alias" />
     <hbox>
       <html:input id="engineAlias" type="text" />
     </hbox>
   </html:form>
-
-  <separator class="thin"/>
-
-  <hbox pack="end">
-    <button oncommand="window.close();"
-            data-l10n-id="add-engine-cancel" />
-    <button id="addButton"
-            disabled="true"
-            data-l10n-id="add-engine-ok" />
-  </hbox>
-
+  </dialog>
 </window>

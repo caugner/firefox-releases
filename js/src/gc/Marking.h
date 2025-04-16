@@ -32,10 +32,6 @@ namespace jit {
 class JitCode;
 }  // namespace jit
 
-#ifdef DEBUG
-bool IsTracerKind(JSTracer* trc, JS::CallbackTracer::TracerKind kind);
-#endif
-
 namespace gc {
 
 struct Cell;
@@ -83,13 +79,7 @@ inline bool IsAboutToBeFinalizedUnbarriered(T* thingp) {
 }
 
 template <typename T>
-inline bool IsAboutToBeFinalized(const WriteBarriered<T>* thingp) {
-  return IsAboutToBeFinalizedInternal(
-      ConvertToBase(thingp->unbarrieredAddress()));
-}
-
-template <typename T>
-inline bool IsAboutToBeFinalized(ReadBarriered<T>* thingp) {
+inline bool IsAboutToBeFinalized(const BarrieredBase<T>* thingp) {
   return IsAboutToBeFinalizedInternal(
       ConvertToBase(thingp->unbarrieredAddress()));
 }
@@ -136,7 +126,6 @@ namespace gc {
 
 template <typename T>
 inline bool IsForwarded(const T* t);
-inline bool IsForwarded(const JS::Value& value);
 
 template <typename T>
 inline T* Forwarded(const T* t);
@@ -172,8 +161,6 @@ inline void CheckGCThingAfterMovingGC(T* t);
 
 template <typename T>
 inline void CheckGCThingAfterMovingGC(const WeakHeapPtr<T*>& t);
-
-inline void CheckValueAfterMovingGC(const JS::Value& value);
 
 #endif  // JSGC_HASH_TABLE_CHECKS
 

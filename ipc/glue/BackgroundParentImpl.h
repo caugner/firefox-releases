@@ -141,6 +141,10 @@ class BackgroundParentImpl : public PBackgroundParent,
   virtual bool DeallocPBackgroundStorageParent(
       PBackgroundStorageParent* aActor) override;
 
+  virtual already_AddRefed<PBackgroundSessionStorageManagerParent>
+  AllocPBackgroundSessionStorageManagerParent(
+      const uint64_t& aTopContextId) override;
+
   virtual already_AddRefed<PIdleSchedulerParent> AllocPIdleSchedulerParent()
       override;
 
@@ -316,6 +320,12 @@ class BackgroundParentImpl : public PBackgroundParent,
 
   virtual mozilla::ipc::IPCResult RecvShutdownQuotaManager() override;
 
+  virtual mozilla::ipc::IPCResult RecvShutdownBackgroundSessionStorageManagers()
+      override;
+
+  virtual mozilla::ipc::IPCResult RecvRemoveBackgroundSessionStorageManager(
+      const uint64_t& aTopContextId) override;
+
   virtual already_AddRefed<PFileSystemRequestParent>
   AllocPFileSystemRequestParent(const FileSystemParams&) override;
 
@@ -323,19 +333,11 @@ class BackgroundParentImpl : public PBackgroundParent,
       PFileSystemRequestParent* actor, const FileSystemParams& params) override;
 
   // Gamepad API Background IPC
-  virtual PGamepadEventChannelParent* AllocPGamepadEventChannelParent()
-      override;
+  virtual already_AddRefed<PGamepadEventChannelParent>
+  AllocPGamepadEventChannelParent() override;
 
-  virtual bool DeallocPGamepadEventChannelParent(
-      PGamepadEventChannelParent* aActor) override;
-
-  virtual mozilla::ipc::IPCResult RecvPGamepadEventChannelConstructor(
-      PGamepadEventChannelParent* aActor) override;
-
-  virtual PGamepadTestChannelParent* AllocPGamepadTestChannelParent() override;
-
-  virtual bool DeallocPGamepadTestChannelParent(
-      PGamepadTestChannelParent* aActor) override;
+  virtual already_AddRefed<PGamepadTestChannelParent>
+  AllocPGamepadTestChannelParent() override;
 
   virtual PWebAuthnTransactionParent* AllocPWebAuthnTransactionParent()
       override;

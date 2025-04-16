@@ -118,7 +118,7 @@ mozilla::ipc::IPCResult BrowserBridgeChild::RecvRequestFocus(
 mozilla::ipc::IPCResult BrowserBridgeChild::RecvMoveFocus(
     const bool& aForward, const bool& aForDocumentNavigation) {
   // Adapted from BrowserParent
-  nsCOMPtr<nsIFocusManager> fm = nsFocusManager::GetFocusManager();
+  RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager();
   if (!fm) {
     return IPC_OK();
   }
@@ -240,6 +240,20 @@ void BrowserBridgeChild::UnblockOwnerDocsLoadEvent() {
       docShell->OOPChildLoadDone(this);
     }
   }
+}
+
+mozilla::ipc::IPCResult BrowserBridgeChild::RecvIntrinsicSizeOrRatioChanged(
+    const Maybe<IntrinsicSize>& aIntrinsicSize,
+    const Maybe<AspectRatio>& aIntrinsicRatio) {
+  if (RefPtr<Element> owner = mFrameLoader->GetOwnerContent()) {
+    if (nsIFrame* f = owner->GetPrimaryFrame()) {
+      if (nsSubDocumentFrame* sdf = do_QueryFrame(f)) {
+        sdf->SubdocumentIntrinsicSizeOrRatioChanged(aIntrinsicSize,
+                                                    aIntrinsicRatio);
+      }
+    }
+  }
+  return IPC_OK();
 }
 
 }  // namespace dom

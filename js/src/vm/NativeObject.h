@@ -646,7 +646,7 @@ class NativeObject : public JSObject {
 
   inline bool isInWholeCellBuffer() const;
 
-  static inline JS::Result<NativeObject*, JS::OOM&> create(
+  static inline JS::Result<NativeObject*, JS::OOM> create(
       JSContext* cx, js::gc::AllocKind kind, js::gc::InitialHeap heap,
       js::HandleShape shape, js::HandleObjectGroup group);
 
@@ -1328,7 +1328,7 @@ class NativeObject : public JSObject {
  private:
   // Run a post write barrier that encompasses multiple contiguous elements in a
   // single step.
-  inline void elementsRangeWriteBarrierPost(uint32_t start, uint32_t count);
+  inline void elementsRangePostWriteBarrier(uint32_t start, uint32_t count);
 
  public:
   void shrinkCapacityToInitializedLength(JSContext* cx);
@@ -1408,9 +1408,24 @@ class NativeObject : public JSObject {
 
   inline void copyDenseElements(uint32_t dstStart, const Value* src,
                                 uint32_t count);
+
   inline void initDenseElements(const Value* src, uint32_t count);
   inline void initDenseElements(JSContext* cx, NativeObject* src,
                                 uint32_t srcStart, uint32_t count);
+
+  // Store the Values in the range [begin, end) as elements of this array.
+  //
+  // Preconditions: This must be a boring ArrayObject with dense initialized
+  // length 0: no shifted elements, no frozen elements, no fixed "length", not
+  // indexed, not inextensible, not copy-on-write. Existing capacity is
+  // optional.
+  //
+  // This runs write barriers but does not update types. `end - begin` must
+  // return the size of the range, which must be >= 0 and fit in an int32_t.
+  template <typename Iter>
+  inline MOZ_MUST_USE bool initDenseElementsFromRange(JSContext* cx, Iter begin,
+                                                      Iter end);
+
   inline void moveDenseElements(uint32_t dstStart, uint32_t srcStart,
                                 uint32_t count);
   inline void reverseDenseElementsNoPreBarrier(uint32_t length);
@@ -1540,9 +1555,9 @@ class NativeObject : public JSObject {
    */
   inline uint8_t* fixedData(size_t nslots) const;
 
-  inline void privateWriteBarrierPre(void** oldval);
+  inline void privatePreWriteBarrier(void** oldval);
 
-  void privateWriteBarrierPost(void** pprivate) {
+  void privatePostWriteBarrier(void** pprivate) {
     gc::Cell** cellp = reinterpret_cast<gc::Cell**>(pprivate);
     MOZ_ASSERT(cellp);
     MOZ_ASSERT(*cellp);
@@ -1571,7 +1586,7 @@ class NativeObject : public JSObject {
   void* getPrivate() const { return privateRef(numFixedSlots()); }
   void setPrivate(void* data) {
     void** pprivate = &privateRef(numFixedSlots());
-    privateWriteBarrierPre(pprivate);
+    privatePreWriteBarrier(pprivate);
     *pprivate = data;
   }
 
@@ -1582,9 +1597,9 @@ class NativeObject : public JSObject {
     }
 #endif
     void** pprivate = &privateRef(numFixedSlots());
-    privateWriteBarrierPre(pprivate);
+    privatePreWriteBarrier(pprivate);
     *pprivate = reinterpret_cast<void*>(cell);
-    privateWriteBarrierPost(pprivate);
+    privatePostWriteBarrier(pprivate);
   }
 
   void setPrivateUnbarriered(void* data) {
@@ -1638,7 +1653,7 @@ class NativeObject : public JSObject {
   static size_t offsetOfSlots() { return offsetof(NativeObject, slots_); }
 };
 
-inline void NativeObject::privateWriteBarrierPre(void** oldval) {
+inline void NativeObject::privatePreWriteBarrier(void** oldval) {
   JS::shadow::Zone* shadowZone = this->shadowZoneFromAnyThread();
   if (shadowZone->needsIncrementalBarrier() && *oldval &&
       getClass()->hasTrace()) {

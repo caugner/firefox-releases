@@ -327,10 +327,8 @@ already_AddRefed<VideoData> VideoData::CreateAndCopyData(
     }
   }
 #elif XP_MACOSX
-  if (aAllocator &&
-      aAllocator->GetCompositorBackendType() ==
-          layers::LayersBackend::LAYERS_WR &&
-      !gfxVars::UseSoftwareWebRender()) {
+  if (aAllocator && aAllocator->GetCompositorBackendType() ==
+                        layers::LayersBackend::LAYERS_WR) {
     RefPtr<layers::MacIOSurfaceImage> ioImage =
         new layers::MacIOSurfaceImage(nullptr);
     PlanarYCbCrData data = ConstructPlanarYCbCrData(aInfo, aBuffer, aPicture);
@@ -451,6 +449,18 @@ MediaRawData::MediaRawData(const uint8_t* aData, size_t aSize,
       mCrypto(mCryptoInternal),
       mBuffer(aData, aSize),
       mAlphaBuffer(aAlphaData, aAlphaSize) {}
+
+MediaRawData::MediaRawData(AlignedByteBuffer&& aData)
+    : MediaData(Type::RAW_DATA),
+      mCrypto(mCryptoInternal),
+      mBuffer(std::move(aData)) {}
+
+MediaRawData::MediaRawData(AlignedByteBuffer&& aData,
+                           AlignedByteBuffer&& aAlphaData)
+    : MediaData(Type::RAW_DATA),
+      mCrypto(mCryptoInternal),
+      mBuffer(std::move(aData)),
+      mAlphaBuffer(std::move(aAlphaData)) {}
 
 already_AddRefed<MediaRawData> MediaRawData::Clone() const {
   RefPtr<MediaRawData> s = new MediaRawData;

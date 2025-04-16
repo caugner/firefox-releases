@@ -82,7 +82,7 @@ var ReaderMode = {
     let url = win.document.location.href;
     let readerURL = "about:reader?url=" + encodeURIComponent(url);
 
-    if (!this.sessionHistoryInParent) {
+    if (!Services.appinfo.sessionHistoryInParent) {
       let webNav = docShell.QueryInterface(Ci.nsIWebNavigation);
       let sh = webNav.sessionHistory;
       if (webNav.canGoForward) {
@@ -108,7 +108,7 @@ var ReaderMode = {
     let originalURL = ReaderMode.getOriginalUrl(url);
     let webNav = docShell.QueryInterface(Ci.nsIWebNavigation);
 
-    if (!this.sessionHistoryInParent) {
+    if (!Services.appinfo.sessionHistoryInParent) {
       let sh = webNav.sessionHistory;
       if (webNav.canGoBack) {
         let prevEntry = sh.legacySHistory.getEntryAtIndex(sh.index - 1);
@@ -193,10 +193,7 @@ var ReaderMode = {
     if (originalUrl) {
       let uriObj;
       try {
-        uriObj = Services.uriFixup.createFixupURI(
-          originalUrl,
-          Services.uriFixup.FIXUP_FLAG_NONE
-        );
+        uriObj = Services.uriFixup.getFixupURIInfo(originalUrl).preferredURI;
       } catch (ex) {
         return null;
       }
@@ -680,11 +677,4 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "maxElemsToParse",
   "reader.parse-node-limit",
   0
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  ReaderMode,
-  "sessionHistoryInParent",
-  "fission.sessionHistoryInParent",
-  false
 );

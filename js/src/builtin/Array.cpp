@@ -276,11 +276,6 @@ JS_FRIEND_API bool js::StringIsArrayIndex(const char16_t* str, uint32_t length,
   return StringIsArrayIndexHelper(str, length, indexp);
 }
 
-JS_FRIEND_API bool js::StringIsArrayIndex(const char* str, uint32_t length,
-                                          uint32_t* indexp) {
-  return StringIsArrayIndexHelper(str, length, indexp);
-}
-
 template <typename T>
 static bool ToId(JSContext* cx, T index, MutableHandleId id);
 
@@ -3756,7 +3751,7 @@ static const JSFunctionSpec array_methods[] = {
     /* ES7 additions */
     JS_SELF_HOSTED_FN("includes", "ArrayIncludes", 2, 0),
 
-    /* Future additions */
+    /* ES2020 */
     JS_SELF_HOSTED_FN("flatMap", "ArrayFlatMap", 1, 0),
     JS_SELF_HOSTED_FN("flat", "ArrayFlat", 0, 0),
 

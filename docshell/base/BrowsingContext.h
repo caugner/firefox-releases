@@ -20,6 +20,7 @@
 #include "mozilla/dom/LocationBase.h"
 #include "mozilla/dom/MaybeDiscarded.h"
 #include "mozilla/dom/UserActivation.h"
+#include "mozilla/dom/BrowsingContextBinding.h"
 #include "mozilla/dom/ScreenOrientationBinding.h"
 #include "mozilla/dom/SyncedContext.h"
 #include "nsCOMPtr.h"
@@ -168,7 +169,12 @@ class WindowProxyHolder;
   FIELD(UseErrorPages, bool)                                                 \
   FIELD(PlatformOverride, nsString)                                          \
   FIELD(HasLoadedNonInitialDocument, bool)                                   \
-  FIELD(CreatedDynamically, bool)
+  FIELD(CreatedDynamically, bool)                                            \
+  /* Default value for nsIContentViewer::authorStyleDisabled in any new      \
+   * browsing contexts created as a descendant of this one.  Valid only for  \
+   * top BCs. */                                                             \
+  FIELD(AuthorStyleDisabledDefault, bool)                                    \
+  FIELD(DisplayMode, mozilla::dom::DisplayMode)
 
 // BrowsingContext, in this context, is the cross process replicated
 // environment in which information about documents is stored. In
@@ -232,7 +238,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // DocShell, BrowserParent, or BrowserBridgeChild.
   static already_AddRefed<BrowsingContext> CreateDetached(
       nsGlobalWindowInner* aParent, BrowsingContext* aOpener,
-      BrowsingContextGroup* aSpecificGroup, const nsAString& aName, Type aType);
+      BrowsingContextGroup* aSpecificGroup, const nsAString& aName, Type aType,
+      bool aCreatedDynamically = false);
 
   void EnsureAttached();
 
@@ -451,6 +458,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   float FullZoom() const { return GetFullZoom(); }
   float TextZoom() const { return GetTextZoom(); }
 
+  bool AuthorStyleDisabledDefault() const {
+    return GetAuthorStyleDisabledDefault();
+  }
+
   bool UseGlobalHistory() const { return GetUseGlobalHistory(); }
 
   uint64_t BrowserId() const { return GetBrowserId(); }
@@ -609,6 +620,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     bool mWindowless = false;
     bool mUseRemoteTabs = false;
     bool mUseRemoteSubframes = false;
+    bool mCreatedDynamically = false;
     int32_t mSessionHistoryIndex = -1;
     int32_t mSessionHistoryCount = 0;
     OriginAttributes mOriginAttributes;
@@ -645,6 +657,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
         aPendingInitialization);
   }
 
+  bool CreatedDynamically() const { return mCreatedDynamically; }
+
   const OriginAttributes& OriginAttributesRef() { return mOriginAttributes; }
   nsresult SetOriginAttributes(const OriginAttributes& aAttrs);
 
@@ -663,22 +677,21 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // context or any of its ancestors.
   bool IsPopupAllowed();
 
-  // Set a new active entry on this browsing context. Should only be called if
-  // IsTop() returns true. This is used for implementing
-  // history.pushState/replaceState.
-  void SetActiveSessionHistoryEntryForTop(
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-      uint32_t aLoadType);
-
-  // Set a new active entry on this browsing context. Should only be called if
-  // IsTop() returns false. This is used for implementing
-  // history.pushState/replaceState.
-  void SetActiveSessionHistoryEntryForFrame(
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-      int32_t aChildOffset);
+  // Set a new active entry on this browsing context. This is used for
+  // implementing history.pushState/replaceState and same document navigations.
+  // The new active entry will be linked to the current active entry through
+  // its shared state.
+  // aPreviousScrollPos is the scroll position that needs to be saved on the
+  // previous active entry.
+  // aUpdatedCacheKey is the cache key to set on the new active entry. If
+  // aUpdatedCacheKey is 0 then it will be ignored.
+  void SetActiveSessionHistoryEntry(const Maybe<nsPoint>& aPreviousScrollPos,
+                                    SessionHistoryInfo* aInfo,
+                                    uint32_t aLoadType, int32_t aChildOffset,
+                                    uint32_t aUpdatedCacheKey);
 
   // Replace the active entry for this browsing context. This is used for
-  // implementing history.replaceState.
+  // implementing history.replaceState and same document navigations.
   void ReplaceActiveSessionHistoryEntry(SessionHistoryInfo* aInfo);
 
   // Removes dynamic child entries of the active entry.
@@ -696,9 +709,21 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   Tuple<nsCOMPtr<nsIPrincipal>, nsCOMPtr<nsIPrincipal>>
   GetTriggeringAndInheritPrincipalsForCurrentLoad();
 
-  void HistoryGo(int32_t aIndex, std::function<void(int32_t&&)>&& aResolver);
+  void HistoryGo(int32_t aOffset, std::function<void(int32_t&&)>&& aResolver);
 
   bool ShouldUpdateSessionHistory(uint32_t aLoadType);
+
+  // Checks if we reached the rate limit for calls to Location and History API.
+  // The rate limit is controlled by the
+  // "dom.navigation.locationChangeRateLimit" prefs.
+  // Rate limit applies per BrowsingContext.
+  // Returns NS_OK if we are below the rate limit and increments the counter.
+  // Returns NS_ERROR_DOM_SECURITY_ERR if limit is reached.
+  nsresult CheckLocationChangeRateLimit(CallerType aCallerType);
+
+  void ResetLocationChangeRateLimit();
+
+  mozilla::dom::DisplayMode DisplayMode() { return Top()->GetDisplayMode(); }
 
  protected:
   virtual ~BrowsingContext();
@@ -787,6 +812,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     }
     return true;
   }
+
+  bool CanSet(FieldIndex<IDX_DisplayMode>, const enum DisplayMode& aDisplayMode,
+              ContentParent* aSource);
+  void DidSet(FieldIndex<IDX_DisplayMode>, enum DisplayMode aOldValue);
 
   void DidSet(FieldIndex<IDX_IsActive>, bool aOldValue);
 
@@ -877,6 +906,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   void DidSet(FieldIndex<IDX_FullZoom>, float aOldValue);
   void DidSet(FieldIndex<IDX_TextZoom>, float aOldValue);
+  void DidSet(FieldIndex<IDX_AuthorStyleDisabledDefault>);
 
   // True if the process attemping to set field is the same as the owning
   // process.
@@ -962,6 +992,9 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // after this BrowsingContext is attached.
   bool mUseRemoteSubframes : 1;
 
+  // True if this BrowsingContext is for a frame that was added dynamically.
+  bool mCreatedDynamically : 1;
+
   // The start time of user gesture, this is only available if the browsing
   // context is in process.
   TimeStamp mUserGestureStart;
@@ -999,6 +1032,11 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   RefPtr<SessionStorageManager> mSessionStorageManager;
   RefPtr<ChildSHistory> mChildSessionHistory;
+
+  // Counter and time span for rate limiting Location and History API calls.
+  // Used by CheckLocationChangeRateLimit. Do not apply cross-process.
+  uint32_t mLocationChangeRateLimitCount;
+  mozilla::TimeStamp mLocationChangeRateLimitSpanStart;
 };
 
 /**

@@ -33,6 +33,7 @@
 #include "mozilla/AutoRestore.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/DisplayPortUtils.h"
 #include "mozilla/InputTaskManager.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/PresShell.h"
@@ -565,9 +566,9 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
         mPendingParentProcessVsync = true;
       }
 
-      if (NS_IsMainThread()) {
-        // This clears the input handling start time.
-        InputTaskManager::Get()->SetInputHandlingStartTime(TimeStamp());
+      if (XRE_IsContentProcess()) {
+        NotifyParentProcessVsync();
+        return true;
       }
 
       nsCOMPtr<nsIRunnable> vsyncEvent = new ParentProcessVsyncNotifier(this);
@@ -579,6 +580,9 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
       // IMPORTANT: All paths through this method MUST hold a strong ref on
       // |this| for the duration of the TickRefreshDriver callback.
       MOZ_ASSERT(NS_IsMainThread());
+
+      // This clears the input handling start time.
+      InputTaskManager::Get()->SetInputHandlingStartTime(TimeStamp());
 
       VsyncEvent aVsync;
       {
@@ -1251,16 +1255,45 @@ TimeStamp nsRefreshDriver::MostRecentRefresh() const {
 }
 
 void nsRefreshDriver::AddRefreshObserver(nsARefreshObserver* aObserver,
-                                         FlushType aFlushType) {
+                                         FlushType aFlushType,
+                                         const char* aObserverDescription) {
+  MOZ_RELEASE_ASSERT(mPresContext);
   ObserverArray& array = ArrayFor(aFlushType);
-  array.AppendElement(aObserver);
+  Maybe<uint64_t> innerWindowID;
+#ifdef MOZ_GECKO_PROFILER
+  innerWindowID =
+      profiler_get_inner_window_id_from_docshell(mPresContext->GetDocShell());
+#endif
+  array.AppendElement(ObserverData{aObserver, aObserverDescription,
+                                   TimeStamp::Now(), innerWindowID,
+                                   profiler_capture_backtrace(), aFlushType});
   EnsureTimerStarted();
 }
 
 bool nsRefreshDriver::RemoveRefreshObserver(nsARefreshObserver* aObserver,
                                             FlushType aFlushType) {
   ObserverArray& array = ArrayFor(aFlushType);
-  return array.RemoveElement(aObserver);
+  auto index = array.IndexOf(aObserver);
+  if (index == ObserverArray::array_type::NoIndex) {
+    return false;
+  }
+
+#ifdef MOZ_GECKO_PROFILER
+  if (profiler_can_accept_markers()) {
+    auto& data = array.ElementAt(index);
+    nsPrintfCString str("%s [%s]", data.mDescription,
+                        kFlushTypeNames[aFlushType]);
+    PROFILER_MARKER_TEXT(
+        "RefreshObserver", GRAPHICS,
+        MarkerOptions(MarkerStack::TakeBacktrace(std::move(data.mCause)),
+                      MarkerTiming::IntervalUntilNowFrom(data.mRegisterTime),
+                      MarkerInnerWindowId(data.mInnerWindowId)),
+        str);
+  }
+#endif
+
+  array.RemoveElementAt(index);
+  return true;
 }
 
 void nsRefreshDriver::AddTimerAdjustmentObserver(
@@ -1524,6 +1557,52 @@ bool nsRefreshDriver::HasObservers() const {
          !mEarlyRunners.IsEmpty();
 }
 
+void nsRefreshDriver::AppendObserverDescriptionsToString(
+    nsACString& aStr) const {
+  for (const ObserverArray& array : mObservers) {
+    for (const auto& observer : array.EndLimitedRange()) {
+      aStr.AppendPrintf("%s [%s], ", observer.mDescription,
+                        kFlushTypeNames[observer.mFlushType]);
+    }
+  }
+  if (mViewManagerFlushIsPending) {
+    aStr.AppendLiteral("View manager flush pending, ");
+  }
+  if (!mAnimationEventFlushObservers.IsEmpty()) {
+    aStr.AppendPrintf("%zux Animation event flush observer, ",
+                      mAnimationEventFlushObservers.Length());
+  }
+  if (!mResizeEventFlushObservers.IsEmpty()) {
+    aStr.AppendPrintf("%zux Resize event flush observer, ",
+                      mResizeEventFlushObservers.Length());
+  }
+  if (!mStyleFlushObservers.IsEmpty()) {
+    aStr.AppendPrintf("%zux Style flush observer, ",
+                      mStyleFlushObservers.Length());
+  }
+  if (!mLayoutFlushObservers.IsEmpty()) {
+    aStr.AppendPrintf("%zux Layout flush observer, ",
+                      mLayoutFlushObservers.Length());
+  }
+  if (!mPendingFullscreenEvents.IsEmpty()) {
+    aStr.AppendPrintf("%zux Pending fullscreen event, ",
+                      mPendingFullscreenEvents.Length());
+  }
+  if (!mFrameRequestCallbackDocs.IsEmpty()) {
+    aStr.AppendPrintf("%zux Frame request callback doc, ",
+                      mFrameRequestCallbackDocs.Length());
+  }
+  if (!mThrottledFrameRequestCallbackDocs.IsEmpty()) {
+    aStr.AppendPrintf("%zux Throttled frame request callback doc, ",
+                      mThrottledFrameRequestCallbackDocs.Length());
+  }
+  if (!mEarlyRunners.IsEmpty()) {
+    aStr.AppendPrintf("%zux Early runner, ", mEarlyRunners.Length());
+  }
+  // Remove last ", "
+  aStr.Truncate(aStr.Length() - 2);
+}
+
 bool nsRefreshDriver::HasImageRequests() const {
   for (auto iter = mStartTable.ConstIter(); !iter.Done(); iter.Next()) {
     if (!iter.UserData()->mEntries.IsEmpty()) {
@@ -1552,7 +1631,7 @@ auto nsRefreshDriver::GetReasonsToTick() const -> TickReasons {
     reasons |= TickReasons::eHasScrollEvents;
   }
   if (!mVisualViewportScrollEvents.IsEmpty()) {
-    reasons |= TickReasons::eHasVisualVieportScrollEvents;
+    reasons |= TickReasons::eHasVisualViewportScrollEvents;
   }
   return reasons;
 }
@@ -1565,7 +1644,9 @@ void nsRefreshDriver::AppendTickReasonsToString(TickReasons aReasons,
   }
 
   if (aReasons & TickReasons::eHasObservers) {
-    aStr.AppendLiteral(" HasObservers");
+    aStr.AppendLiteral(" HasObservers (");
+    AppendObserverDescriptionsToString(aStr);
+    aStr.AppendLiteral(")");
   }
   if (aReasons & TickReasons::eHasImageRequests) {
     aStr.AppendLiteral(" HasImageRequests");
@@ -1579,8 +1660,8 @@ void nsRefreshDriver::AppendTickReasonsToString(TickReasons aReasons,
   if (aReasons & TickReasons::eHasScrollEvents) {
     aStr.AppendLiteral(" HasScrollEvents");
   }
-  if (aReasons & TickReasons::eHasVisualVieportScrollEvents) {
-    aStr.AppendLiteral(" HasVisualVieportScrollEvents");
+  if (aReasons & TickReasons::eHasVisualViewportScrollEvents) {
+    aStr.AppendLiteral(" HasVisualViewportScrollEvents");
   }
 }
 
@@ -1816,6 +1897,8 @@ void nsRefreshDriver::RunFrameRequestCallbacks(TimeStamp aNowTime) {
                                           "requestAnimationFrame callbacks",
                                           GRAPHICS, GetDocShell(mPresContext));
     for (const DocumentFrameCallbacks& docCallbacks : frameRequestCallbacks) {
+      TimeStamp startTime = TimeStamp::Now();
+
       // XXXbz Bug 863140: GetInnerWindow can return the outer
       // window in some cases.
       nsPIDOMWindowInner* innerWindow =
@@ -1843,6 +1926,17 @@ void nsRefreshDriver::RunFrameRequestCallbacks(TimeStamp aNowTime) {
         // mutated by the call.
         LogFrameRequestCallback::Run run(callback.mCallback);
         MOZ_KnownLive(callback.mCallback)->Call(timeStamp);
+      }
+
+      if (docCallbacks.mDocument->GetReadyStateEnum() ==
+          Document::READYSTATE_COMPLETE) {
+        Telemetry::AccumulateTimeDelta(
+            Telemetry::PERF_REQUEST_ANIMATION_CALLBACK_NON_PAGELOAD_MS,
+            startTime, TimeStamp::Now());
+      } else {
+        Telemetry::AccumulateTimeDelta(
+            Telemetry::PERF_REQUEST_ANIMATION_CALLBACK_PAGELOAD_MS, startTime,
+            TimeStamp::Now());
       }
     }
   }
@@ -1989,8 +2083,8 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   }
 #endif
   AUTO_PROFILER_MARKER_TEXT(
-      "RefreshDriverTick",
-      GRAPHICS.WithOptions(
+      "RefreshDriverTick", GRAPHICS,
+      MarkerOptions(
           MarkerStack::TakeBacktrace(std::move(mRefreshTimerStartedCause)),
           MarkerInnerWindowIdFromDocShell(GetDocShell(mPresContext))),
       profilerStr);
@@ -2012,7 +2106,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   // in the queue. This will prevent us from spending precious time
   // painting a stale displayport.
   if (StaticPrefs::apz_peek_messages_enabled()) {
-    nsLayoutUtils::UpdateDisplayPortMarginsFromPendingMessages();
+    DisplayPortUtils::UpdateDisplayPortMarginsFromPendingMessages();
   }
 
   AutoTArray<nsCOMPtr<nsIRunnable>, 16> earlyRunners = std::move(mEarlyRunners);
@@ -2252,10 +2346,10 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
       transactionId.AppendInt((uint64_t)mNextTransactionId);
     }
 #endif
-    AUTO_PROFILER_MARKER_TEXT("ViewManagerFlush",
-                              GRAPHICS.WithOptions(MarkerStack::TakeBacktrace(
-                                  std::move(mViewManagerFlushCause))),
-                              transactionId);
+    AUTO_PROFILER_MARKER_TEXT(
+        "ViewManagerFlush", GRAPHICS,
+        MarkerStack::TakeBacktrace(std::move(mViewManagerFlushCause)),
+        transactionId);
 
     RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
 
@@ -2535,7 +2629,8 @@ bool nsRefreshDriver::IsWaitingForPaint(mozilla::TimeStamp aTime) {
           if (mRootRefresh) {
             mRootRefresh->RemoveRefreshObserver(this, FlushType::Style);
           }
-          rootRefresh->AddRefreshObserver(this, FlushType::Style);
+          rootRefresh->AddRefreshObserver(this, FlushType::Style,
+                                          "Waiting for paint");
           mRootRefresh = rootRefresh;
         }
         mSkippedPaints = true;

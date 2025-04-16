@@ -119,7 +119,7 @@ class MPRISServiceHandler final : public dom::MediaControlKeySource {
     }
     void Clear() {
       UpdateFromMetadataBase(MediaMetadataBase::EmptyData());
-      mArtUrl = EmptyCString();
+      mArtUrl.Truncate();
     }
 
     nsCString mArtUrl;
@@ -176,6 +176,8 @@ class MPRISServiceHandler final : public dom::MediaControlKeySource {
                                bool aSupported) const;
 
   bool EmitPropertiesChangedSignal(GVariant* aParameters) const;
+
+  void ClearMetadata();
 };
 
 }  // namespace widget

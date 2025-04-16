@@ -64,6 +64,7 @@
   --grey-20: #ededf0;
   --grey-30: #d7d7db;
   --grey-40: #b1b1b3;
+  --grey-50: #737373;
   --grey-60: #4a4a4f;
   --grey-90: #0c0c0d;
   --grey-90-a10: rgba(12, 12, 13, 0.1);
@@ -323,6 +324,7 @@ xul|menulist[disabled="true"] {
 
 html|button[autofocus],
 html|button[type="submit"],
+xul|button[default],
 button.primary {
   background-color: var(--in-content-primary-button-background);
   color: var(--in-content-selected-text) !important;
@@ -331,6 +333,7 @@ button.primary {
 html|button[autofocus]:enabled:hover,
 html|button[type="submit"]:enabled:hover,
 html|button.primary:enabled:hover,
+xul|button[default]:not([disabled="true"]):hover,
 xul|button.primary:not([disabled="true"]):hover {
   background-color: var(--in-content-primary-button-background-hover);
 }
@@ -338,6 +341,7 @@ xul|button.primary:not([disabled="true"]):hover {
 html|button[autofocus]:enabled:hover:active,
 html|button[type="submit"]:enabled:hover:active,
 html|button.primary:enabled:hover:active,
+xul|button[default]:not([disabled="true"]):hover:active,
 xul|button.primary:not([disabled="true"]):hover:active {
   background-color: var(--in-content-primary-button-background-active);
 }

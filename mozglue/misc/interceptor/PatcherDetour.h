@@ -128,10 +128,6 @@ class WindowsDllDetourPatcher final
   using PrimitiveT = WindowsDllDetourPatcherPrimitive<MMPolicyT>;
   Maybe<DetourFlags> mFlags;
 
-#if defined(NIGHTLY_BUILD)
-  Maybe<DetourError> mLastError;
-#endif  // defined(NIGHTLY_BUILD)
-
  public:
   template <typename... Args>
   explicit WindowsDllDetourPatcher(Args&&... aArgs)
@@ -143,10 +139,6 @@ class WindowsDllDetourPatcher final
   WindowsDllDetourPatcher(WindowsDllDetourPatcher&&) = delete;
   WindowsDllDetourPatcher& operator=(const WindowsDllDetourPatcher&) = delete;
   WindowsDllDetourPatcher& operator=(WindowsDllDetourPatcher&&) = delete;
-
-#if defined(NIGHTLY_BUILD)
-  const Maybe<DetourError>& GetLastError() const { return mLastError; }
-#endif  // defined(NIGHTLY_BUILD)
 
   void Clear() {
     if (!this->mVMPolicy.ShouldUnhookUponDestruction()) {
@@ -458,6 +450,8 @@ class WindowsDllDetourPatcher final
 
     Maybe<Trampoline<MMPolicyT>> maybeTramp(trampPool->GetNextTrampoline());
     if (!maybeTramp) {
+      this->SetLastDetourError(
+          DetourResultCode::DETOUR_PATCHER_NEXT_TRAMPOLINE_ERROR);
       return false;
     }
 
@@ -503,20 +497,29 @@ class WindowsDllDetourPatcher final
   Maybe<TrampPoolT> ReserveForModule(HMODULE aModule) {
     nt::PEHeaders moduleHeaders(aModule);
     if (!moduleHeaders) {
+      this->SetLastDetourError(
+          DetourResultCode::DETOUR_PATCHER_RESERVE_FOR_MODULE_PE_ERROR);
       return Nothing();
     }
 
     Maybe<Span<const uint8_t>> textSectionInfo =
         moduleHeaders.GetTextSectionInfo();
     if (!textSectionInfo) {
+      this->SetLastDetourError(
+          DetourResultCode::DETOUR_PATCHER_RESERVE_FOR_MODULE_TEXT_ERROR);
       return Nothing();
     }
 
     const uint8_t* median = textSectionInfo.value().data() +
                             (textSectionInfo.value().LengthBytes() / 2);
 
-    return this->mVMPolicy.Reserve(reinterpret_cast<uintptr_t>(median),
-                                   GetDefaultPivotDistance());
+    Maybe<TrampPoolT> maybeTrampPool = this->mVMPolicy.Reserve(
+        reinterpret_cast<uintptr_t>(median), GetDefaultPivotDistance());
+    if (!maybeTrampPool) {
+      this->SetLastDetourError(
+          DetourResultCode::DETOUR_PATCHER_RESERVE_FOR_MODULE_RESERVE_ERROR);
+    }
+    return maybeTrampPool;
   }
 
   Maybe<TrampPoolT> DoReserve(HMODULE aModule = nullptr) {
@@ -537,7 +540,14 @@ class WindowsDllDetourPatcher final
     }
 #endif  // defined(_M_X64)
 
-    return this->mVMPolicy.Reserve(pivot, distance);
+    Maybe<TrampPoolT> maybeTrampPool = this->mVMPolicy.Reserve(pivot, distance);
+#if defined(NIGHTLY_BUILD)
+    if (!maybeTrampPool && this->GetLastDetourError().isNothing()) {
+      this->SetLastDetourError(
+          DetourResultCode::DETOUR_PATCHER_DO_RESERVE_ERROR);
+    }
+#endif  // defined(NIGHTLY_BUILD)
+    return maybeTrampPool;
   }
 
  protected:
@@ -892,6 +902,8 @@ class WindowsDllDetourPatcher final
 
     Trampoline<MMPolicyT>& tramp = aTramp;
     if (!tramp) {
+      this->SetLastDetourError(
+          DetourResultCode::DETOUR_PATCHER_INVALID_TRAMPOLINE);
       return;
     }
 
@@ -903,6 +915,8 @@ class WindowsDllDetourPatcher final
     // just a pointer to that trampoline's target address.
     tramp.WriteEncodedPointer(this);
     if (!tramp) {
+      this->SetLastDetourError(
+          DetourResultCode::DETOUR_PATCHER_WRITE_POINTER_ERROR);
       return;
     }
 
@@ -921,19 +935,21 @@ class WindowsDllDetourPatcher final
 
 #if defined(NIGHTLY_BUILD)
       origBytes.Rewind();
-      mLastError = Some(DetourError());
+      this->SetLastDetourError(
+          DetourResultCode::DETOUR_PATCHER_CREATE_TRAMPOLINE_ERROR);
+      DetourError& lastError = *this->mVMPolicy.mLastError;
       size_t bytesToCapture = std::min(
-          ArrayLength(mLastError->mOrigBytes),
+          ArrayLength(lastError.mOrigBytes),
           static_cast<size_t>(PrimitiveT::GetWorstCaseRequiredBytesToPatch()));
 #  if defined(_M_ARM64)
       size_t numInstructionsToCapture = bytesToCapture / sizeof(uint32_t);
-      auto origBytesDst = reinterpret_cast<uint32_t*>(mLastError->mOrigBytes);
+      auto origBytesDst = reinterpret_cast<uint32_t*>(lastError.mOrigBytes);
       for (size_t i = 0; i < numInstructionsToCapture; ++i) {
         origBytesDst[i] = origBytes.ReadNextInstruction();
       }
 #  else
       for (size_t i = 0; i < bytesToCapture; ++i) {
-        mLastError->mOrigBytes[i] = origBytes[i];
+        lastError.mOrigBytes[i] = origBytes[i];
       }
 #  endif  // defined(_M_ARM64)
 #else
@@ -1255,6 +1271,9 @@ class WindowsDllDetourPatcher final
           } else {
             COPY_CODES(len + 1);
           }
+        } else if ((*origBytes & 0xf8) == 0xb8) {
+          // MOV r64, imm64
+          COPY_CODES(9);
         } else if (*origBytes == 0xc7) {
           // MOV r/m64, imm32
           if (origBytes[1] == 0x44) {
@@ -1464,36 +1483,46 @@ class WindowsDllDetourPatcher final
           return;
         }
       } else if (*origBytes == 0xff) {
-        if ((origBytes[1] & (kMaskMod | kMaskReg)) == 0xf0) {
-          // push r64
+        uint8_t mod = origBytes[1] & kMaskMod;
+        uint8_t reg = (origBytes[1] & kMaskReg) >> kRegFieldShift;
+        uint8_t rm = origBytes[1] & kMaskRm;
+        if (mod == kModReg && (reg == 0 || reg == 1 || reg == 2 || reg == 6)) {
+          // INC|DEC|CALL|PUSH r64
           COPY_CODES(2);
-        } else if (origBytes[1] == 0x25) {
-          // jmp absolute indirect m32
-          foundJmp = true;
-
+        } else if (mod == kModNoRegDisp && reg == 2 &&
+                   rm == kRmNoRegDispDisp32) {
+          // FF 15    CALL [disp32]
           origBytes += 2;
-
-          uintptr_t jmpDest = origBytes.ChasePointerFromDisp();
-
-          if (!GenerateJump(tramp, jmpDest, JumpType::Jmp)) {
+          if (!GenerateJump(tramp, origBytes.ChasePointerFromDisp(),
+                            JumpType::Call)) {
             return;
           }
-        } else if ((origBytes[1] & (kMaskMod | kMaskReg)) ==
-                   BuildModRmByte(kModReg, 2, 0)) {
-          // CALL reg (ff nn)
-          COPY_CODES(2);
-        } else if (((origBytes[1] & kMaskReg) >> kRegFieldShift) == 4) {
-          // JMP r/m
-          int len = CountModRmSib(origBytes + 1);
-          if (len < 0) {
-            // RIP-relative not yet supported
-            MOZ_ASSERT_UNREACHABLE("Unrecognized opcode sequence");
-            return;
+        } else if (reg == 4) {
+          // FF /4 (Opcode=ff, REG=4): JMP r/m
+          if (mod == kModNoRegDisp && rm == kRmNoRegDispDisp32) {
+            // FF 25    JMP [disp32]
+            foundJmp = true;
+
+            origBytes += 2;
+
+            uintptr_t jmpDest = origBytes.ChasePointerFromDisp();
+
+            if (!GenerateJump(tramp, jmpDest, JumpType::Jmp)) {
+              return;
+            }
+          } else {
+            // JMP r/m except JMP [disp32]
+            int len = CountModRmSib(origBytes + 1);
+            if (len < 0) {
+              // RIP-relative not yet supported
+              MOZ_ASSERT_UNREACHABLE("Unrecognized opcode sequence");
+              return;
+            }
+
+            COPY_CODES(len + 1);
+
+            foundJmp = true;
           }
-
-          COPY_CODES(len + 1);
-
-          foundJmp = true;
         } else {
           MOZ_ASSERT_UNREACHABLE("Unrecognized opcode sequence");
           return;

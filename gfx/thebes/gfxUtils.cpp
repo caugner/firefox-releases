@@ -1081,7 +1081,7 @@ nsresult gfxUtils::EncodeSourceSurface(SourceSurface* aSurface,
 
 static nsCString EncodeSourceSurfaceAsPNGURI(SourceSurface* aSurface) {
   nsCString string;
-  gfxUtils::EncodeSourceSurface(aSurface, ImageType::PNG, EmptyString(),
+  gfxUtils::EncodeSourceSurface(aSurface, ImageType::PNG, u""_ns,
                                 gfxUtils::eDataURIEncode, nullptr, &string);
   return string;
 }
@@ -1221,8 +1221,7 @@ void gfxUtils::WriteAsPNG(SourceSurface* aSurface, const char* aFile) {
     }
   }
 
-  EncodeSourceSurface(aSurface, ImageType::PNG, EmptyString(), eBinaryEncode,
-                      file);
+  EncodeSourceSurface(aSurface, ImageType::PNG, u""_ns, eBinaryEncode, file);
   fclose(file);
 }
 
@@ -1243,8 +1242,7 @@ void gfxUtils::WriteAsPNG(DrawTarget* aDT, const char* aFile) {
 
 /* static */
 void gfxUtils::DumpAsDataURI(SourceSurface* aSurface, FILE* aFile) {
-  EncodeSourceSurface(aSurface, ImageType::PNG, EmptyString(), eDataURIEncode,
-                      aFile);
+  EncodeSourceSurface(aSurface, ImageType::PNG, u""_ns, eDataURIEncode, aFile);
 }
 
 /* static */
@@ -1281,7 +1279,7 @@ nsCString gfxUtils::GetAsLZ4Base64Str(DataSourceSurface* aSourceSurface) {
       }
     }
   }
-  return EmptyCString();
+  return {};
 }
 
 /* static */
@@ -1297,7 +1295,7 @@ nsCString gfxUtils::GetAsDataURI(DrawTarget* aDT) {
 
 /* static */
 void gfxUtils::CopyAsDataURI(SourceSurface* aSurface) {
-  EncodeSourceSurface(aSurface, ImageType::PNG, EmptyString(), eDataURIEncode,
+  EncodeSourceSurface(aSurface, ImageType::PNG, u""_ns, eDataURIEncode,
                       nullptr);
 }
 
@@ -1399,49 +1397,6 @@ class GetFeatureStatusWorkerRunnable final
   nsACString& mFailureId;
   nsresult mNSResult;
 };
-
-/* static */
-nsresult gfxUtils::ThreadSafeGetFeatureStatus(
-    const nsCOMPtr<nsIGfxInfo>& gfxInfo, int32_t feature, nsACString& failureId,
-    int32_t* status) {
-  if (NS_IsMainThread()) {
-    return gfxInfo->GetFeatureStatus(feature, failureId, status);
-  }
-
-  // In a content process, we must call this on the main thread.
-  // In a composition process (parent or GPU), this needs to be called on the
-  // compositor thread.
-  bool isCompositionProcess = XRE_IsGPUProcess() || XRE_IsParentProcess();
-  MOZ_ASSERT(!isCompositionProcess || NS_IsInCompositorThread());
-
-  // Content-process non-main-thread case:
-  if (!isCompositionProcess) {
-    dom::WorkerPrivate* workerPrivate = dom::GetCurrentThreadWorkerPrivate();
-
-    RefPtr<GetFeatureStatusWorkerRunnable> runnable =
-        new GetFeatureStatusWorkerRunnable(workerPrivate, gfxInfo, feature,
-                                           failureId, status);
-
-    ErrorResult rv;
-    runnable->Dispatch(dom::WorkerStatus::Canceling, rv);
-    if (rv.Failed()) {
-      // XXXbz This is totally broken, since we're supposed to just abort
-      // everything up the callstack but the callers basically eat the
-      // exception.  Ah, well.
-      return rv.StealNSResult();
-    }
-    return runnable->GetNSResult();
-  }
-
-  nsresult rv;
-  SynchronousTask task("GetFeatureStatusSync");
-  NS_DispatchToMainThread(NS_NewRunnableFunction("GetFeatureStatusMain", [&]() {
-    AutoCompleteTask complete(&task);
-    rv = gfxInfo->GetFeatureStatus(feature, failureId, status);
-  }));
-  task.Wait();
-  return rv;
-}
 
 #define GFX_SHADER_CHECK_BUILD_VERSION_PREF "gfx-shader-check.build-version"
 #define GFX_SHADER_CHECK_DEVICE_ID_PREF "gfx-shader-check.device-id"

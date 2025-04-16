@@ -23,6 +23,7 @@
 #include "mozilla/ErrorResult.h"
 #include "mozilla/EventStates.h"
 #include "mozilla/HTMLEditor.h"
+#include "mozilla/layers/ScrollInputMethods.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/RangeBoundary.h"
 #include "mozilla/RangeUtils.h"
@@ -77,6 +78,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using mozilla::layers::ScrollInputMethod;
 
 //#define DEBUG_TABLE 1
 
@@ -629,6 +631,12 @@ static int32_t CompareToRangeStart(const nsINode& aCompareNode,
   nsINode* start = aRange.GetStartContainer();
   // If the nodes that we're comparing are not in the same document or in the
   // same subtree, assume that aCompareNode will fall at the end of the ranges.
+  // NOTE(emilio): This is broken (bug 1590379). When fixed, shadow-including
+  // tree order[1] seems the most reasonable order, but if we choose other order
+  // than that code in nsPrintJob.cpp to deal with selection printing might need
+  // to be fixed.
+  //
+  // [1]: https://dom.spec.whatwg.org/#concept-shadow-including-tree-order
   if (aCompareNode.GetComposedDoc() != start->GetComposedDoc() ||
       !start->GetComposedDoc() ||
       aCompareNode.SubtreeRoot() != start->SubtreeRoot()) {
@@ -2705,7 +2713,7 @@ bool Selection::ContainsNode(nsINode& aNode, bool aAllowPartial,
   return false;
 }
 
-class PointInRectChecker : public nsLayoutUtils::RectCallback {
+class PointInRectChecker : public mozilla::RectCallback {
  public:
   explicit PointInRectChecker(const nsPoint& aPoint)
       : mPoint(aPoint), mMatchFound(false) {}
@@ -2981,6 +2989,12 @@ nsresult Selection::ScrollIntoView(SelectionRegion aRegion,
     scrollFlags |= ScrollFlags::ScrollOverflowHidden;
   }
 
+  if (aFlags & Selection::SCROLL_FOR_CARET_MOVE) {
+    mozilla::Telemetry::Accumulate(
+        mozilla::Telemetry::SCROLL_INPUT_METHODS,
+        (uint32_t)ScrollInputMethod::MainThreadScrollCaretIntoView);
+  }
+
   presShell->ScrollFrameRectIntoView(frame, rect, aVertical, aHorizontal,
                                      scrollFlags);
   return NS_OK;
@@ -3200,7 +3214,8 @@ void Selection::DeleteFromDocument(ErrorResult& aRv) {
   // If we deleted one character, then we move back one element.
   // FIXME  We don't know how to do this past frame boundaries yet.
   if (AnchorOffset() > 0) {
-    CollapseInLimiter(GetAnchorNode(), AnchorOffset());
+    RefPtr<nsINode> anchor = GetAnchorNode();
+    CollapseInLimiter(anchor, AnchorOffset());
   }
 #ifdef DEBUG
   else {
@@ -3232,6 +3247,11 @@ void Selection::Modify(const nsAString& aAlter, const nsAString& aDirection,
       !aDirection.LowerCaseEqualsLiteral("right")) {
     aRv.Throw(NS_ERROR_DOM_SYNTAX_ERR);
     return;
+  }
+
+  // Make sure the layout is up to date as we access bidi information below.
+  if (RefPtr<Document> doc = GetDocument()) {
+    doc->FlushPendingNotifications(FlushType::Layout);
   }
 
   // Line moves are always visual.
@@ -3270,7 +3290,7 @@ void Selection::Modify(const nsAString& aAlter, const nsAString& aDirection,
   // To avoid this, we need to collapse the selection first.
   nsresult rv = NS_OK;
   if (!extend) {
-    nsINode* focusNode = GetFocusNode();
+    RefPtr<nsINode> focusNode = GetFocusNode();
     // We should have checked earlier that there was a focus node.
     if (!focusNode) {
       aRv.Throw(NS_ERROR_UNEXPECTED);
@@ -3282,8 +3302,7 @@ void Selection::Modify(const nsAString& aAlter, const nsAString& aDirection,
 
   // If the paragraph direction of the focused frame is right-to-left,
   // we may have to swap the direction of movement.
-  nsIFrame* frame = GetPrimaryFrameForFocusNode(visual);
-  if (frame) {
+  if (nsIFrame* frame = GetPrimaryFrameForFocusNode(visual)) {
     nsBidiDirection paraDir = nsBidiPresUtils::ParagraphDirection(frame);
 
     if (paraDir == NSBIDI_RTL && visual) {

@@ -294,6 +294,7 @@
     handleSearchCommand(aEvent, aEngine, aForceNewTab) {
       let where = "current";
       let params;
+      const newTabPref = Services.prefs.getBoolPref("browser.search.openintab");
 
       // Open ctrl/cmd clicks on one-off buttons in a new background tab.
       if (
@@ -304,13 +305,21 @@
           return;
         }
         where = whereToOpenLink(aEvent, false, true);
+        if (
+          newTabPref &&
+          !aEvent.altKey &&
+          !aEvent.getModifierState("AltGraph") &&
+          where == "current" &&
+          !gBrowser.selectedTab.isEmpty
+        ) {
+          where = "tab";
+        }
       } else if (aForceNewTab) {
         where = "tab";
         if (Services.prefs.getBoolPref("browser.tabs.loadInBackground")) {
           where += "-background";
         }
       } else {
-        let newTabPref = Services.prefs.getBoolPref("browser.search.openintab");
         if (
           (aEvent instanceof KeyboardEvent &&
             (aEvent.altKey || aEvent.getModifierState("AltGraph"))) ^
@@ -329,7 +338,6 @@
           };
         }
       }
-
       this.handleSearchCommandWhere(aEvent, aEngine, where, params);
     }
 
@@ -592,6 +600,12 @@
 
         BrowserSearch.searchBar._textbox.closePopup();
 
+        // Make sure the context menu isn't opened via keyboard shortcut. Check for text selection
+        // before updating the state of any menu items.
+        if (event.button) {
+          this._maybeSelectAll();
+        }
+
         // Update disabled state of menu items
         for (let item of this._menupopup.querySelectorAll("menuitem[cmd]")) {
           let command = item.getAttribute("cmd");
@@ -608,10 +622,6 @@
 
         this._menupopup.openPopupAtScreen(event.screenX, event.screenY, true);
 
-        // Make sure the context menu isn't opened via keyboard shortcut.
-        if (event.button) {
-          this._maybeSelectAll();
-        }
         event.preventDefault();
       });
     }

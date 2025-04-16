@@ -1077,23 +1077,6 @@ void MacroAssembler::storeUncanonicalizedFloat32(FloatRegister src,
 template void MacroAssembler::storeFloat32(FloatRegister src,
                                            const Operand& dest);
 
-void MacroAssembler::storeFloat32x3(FloatRegister src, const Address& dest) {
-  Address destZ(dest);
-  destZ.offset += 2 * sizeof(int32_t);
-  storeDouble(src, dest);
-  ScratchSimd128Scope scratch(*this);
-  vmovhlps(src, scratch, scratch);
-  storeFloat32(scratch, destZ);
-}
-void MacroAssembler::storeFloat32x3(FloatRegister src, const BaseIndex& dest) {
-  BaseIndex destZ(dest);
-  destZ.offset += 2 * sizeof(int32_t);
-  storeDouble(src, dest);
-  ScratchSimd128Scope scratch(*this);
-  vmovhlps(src, scratch, scratch);
-  storeFloat32(scratch, destZ);
-}
-
 void MacroAssembler::memoryBarrier(MemoryBarrierBits barrier) {
   if (barrier & MembarStoreLoad) {
     storeLoadFence();
@@ -1129,9 +1112,9 @@ void MacroAssembler::zeroSimd128(FloatRegister dest) {
   MacroAssemblerX86Shared::zeroSimd128Int(dest);
 }
 
-void MacroAssembler::loadConstantSimd128(const SimdConstant& c,
+void MacroAssembler::loadConstantSimd128(const SimdConstant& v,
                                          FloatRegister dest) {
-  loadConstantSimd128Int(c, dest);
+  loadConstantSimd128Int(v, dest);
 }
 
 // Splat
@@ -1618,11 +1601,13 @@ void MacroAssembler::unsignedMaxInt32x4(FloatRegister rhs,
 
 // Lane-wise integer rounding average
 
-void MacroAssembler::averageInt8x16(FloatRegister rhs, FloatRegister lhsDest) {
+void MacroAssembler::unsignedAverageInt8x16(FloatRegister rhs,
+                                            FloatRegister lhsDest) {
   vpavgb(Operand(rhs), lhsDest, lhsDest);
 }
 
-void MacroAssembler::averageInt16x8(FloatRegister rhs, FloatRegister lhsDest) {
+void MacroAssembler::unsignedAverageInt16x8(FloatRegister rhs,
+                                            FloatRegister lhsDest) {
   vpavgw(Operand(rhs), lhsDest, lhsDest);
 }
 
@@ -1875,11 +1860,11 @@ void MacroAssembler::compareInt32x4(Assembler::Condition cond,
 }
 
 void MacroAssembler::unsignedCompareInt32x4(Assembler::Condition cond,
-                                            FloatRegister src,
+                                            FloatRegister rhs,
                                             FloatRegister lhsDest,
                                             FloatRegister temp1,
                                             FloatRegister temp2) {
-  MacroAssemblerX86Shared::unsignedCompareInt32x4(lhsDest, Operand(src), cond,
+  MacroAssemblerX86Shared::unsignedCompareInt32x4(lhsDest, Operand(rhs), cond,
                                                   lhsDest, temp1, temp2);
 }
 
@@ -1916,6 +1901,11 @@ void MacroAssembler::compareFloat64x2(Assembler::Condition cond,
 }
 
 // Load.  See comments above regarding integer operation.
+
+void MacroAssembler::loadUnalignedSimd128(const Operand& src,
+                                          FloatRegister dest) {
+  loadUnalignedSimd128Int(src, dest);
+}
 
 void MacroAssembler::loadUnalignedSimd128(const Address& src,
                                           FloatRegister dest) {
@@ -1991,25 +1981,39 @@ void MacroAssembler::maxFloat64x2(FloatRegister rhs, FloatRegister lhsDest,
 
 void MacroAssembler::pseudoMinFloat32x4(FloatRegister rhs,
                                         FloatRegister lhsDest) {
-  vminps(Operand(rhs), lhsDest, lhsDest);
+  ScratchSimd128Scope scratch(*this);
+  vmovaps(rhs, scratch);
+  vminps(Operand(lhsDest), scratch, scratch);
+  vmovaps(scratch, lhsDest);
 }
 
 void MacroAssembler::pseudoMinFloat64x2(FloatRegister rhs,
                                         FloatRegister lhsDest) {
-  vminpd(Operand(rhs), lhsDest, lhsDest);
+  ScratchSimd128Scope scratch(*this);
+  vmovapd(rhs, scratch);
+  vminpd(Operand(lhsDest), scratch, scratch);
+  vmovapd(scratch, lhsDest);
 }
 
 // Compare-based maximum
 
 void MacroAssembler::pseudoMaxFloat32x4(FloatRegister rhs,
                                         FloatRegister lhsDest) {
-  vmaxps(Operand(rhs), lhsDest, lhsDest);
+  ScratchSimd128Scope scratch(*this);
+  vmovaps(rhs, scratch);
+  vmaxps(Operand(lhsDest), scratch, scratch);
+  vmovaps(scratch, lhsDest);
 }
 
 void MacroAssembler::pseudoMaxFloat64x2(FloatRegister rhs,
                                         FloatRegister lhsDest) {
-  vmaxpd(Operand(rhs), lhsDest, lhsDest);
+  ScratchSimd128Scope scratch(*this);
+  vmovapd(rhs, scratch);
+  vmaxpd(Operand(lhsDest), scratch, scratch);
+  vmovapd(scratch, lhsDest);
 }
+
+// Widening/pairwise integer dot product
 
 void MacroAssembler::widenDotInt16x8(FloatRegister rhs, FloatRegister lhsDest) {
   vpmaddwd(Operand(rhs), lhsDest, lhsDest);

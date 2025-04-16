@@ -129,7 +129,7 @@ indications what went wrong.
    ``js/src/jsutil.h``.
 
 [*] Note that due to the way addressing works on x86-64, if the crash
-address is 0x0 for a Linux/OS X crash report, or 0xffffffffffffffff for
+address is 0x0 for a Linux/macOS crash report, or 0xffffffffffffffff for
 a Windows crash report, it's highly likely that the value is incorrect.
 (There is a `bug
 report <https://bugzilla.mozilla.org/show_bug.cgi?id=1493342>`__ open
@@ -317,8 +317,7 @@ See also
 -  `A talk about understanding crash
    reports <https://air.mozilla.org/a-talk-about-understanding-crash-reports/>`__,
    by David Baron, from March 2016.
--  `A guide to searching crash
-   reports <https://developer.mozilla.org/en-US/docs/A_guide_to_searching_crash_reports>`__
+-  :ref:`A guide to searching crash reports`
 
 .. |Example fields in the "Details" tab of a crash report| image:: https://mdn.mozillademos.org/files/13579/Details1.png
 .. |Information relating to bug reports in the "Details" tab of a crash report| image:: https://mdn.mozillademos.org/files/13581/Details2.png

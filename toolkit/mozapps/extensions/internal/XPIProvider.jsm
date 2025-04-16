@@ -2735,10 +2735,8 @@ var XPIProvider = {
    * Adds a list of currently active add-ons to the next crash report.
    */
   addAddonsToCrashReporter() {
-    if (
-      !(Services.appinfo instanceof Ci.nsICrashReporter) ||
-      Services.appinfo.inSafeMode
-    ) {
+    void (Services.appinfo instanceof Ci.nsICrashReporter);
+    if (!Services.appinfo.annotateCrashReport || Services.appinfo.inSafeMode) {
       return;
     }
 
@@ -2888,15 +2886,29 @@ var XPIProvider = {
     return changed;
   },
 
-  maybeInstallBuiltinAddon(aID, aVersion, aBase) {
-    if (!(enabledScopes & BuiltInLocation.scope)) {
-      return;
+  /**
+   * Like `installBuiltinAddon`, but only installs the addon at `aBase`
+   * if an existing built-in addon with the ID `aID` and version doesn't
+   * already exist.
+   *
+   * @param {string} aID
+   *        The ID of the add-on being registered.
+   * @param {string} aVersion
+   *        The version of the add-on being registered.
+   * @param {string} aBase
+   *        A string containing the base URL.  Must be a resource: URL.
+   * @returns {Promise<Addon>} a Promise that resolves when the addon is installed.
+   */
+  async maybeInstallBuiltinAddon(aID, aVersion, aBase) {
+    let installed;
+    if (enabledScopes & BuiltInLocation.scope) {
+      let existing = BuiltInLocation.get(aID);
+      if (!existing || existing.version != aVersion) {
+        installed = this.installBuiltinAddon(aBase);
+        this.startupPromises.push(installed);
+      }
     }
-
-    let existing = BuiltInLocation.get(aID);
-    if (!existing || existing.version != aVersion) {
-      this.startupPromises.push(this.installBuiltinAddon(aBase));
-    }
+    return installed;
   },
 
   getDependentAddons(aAddon) {

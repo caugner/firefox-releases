@@ -279,9 +279,7 @@ class PlacesFeed {
     const params = {
       private: isPrivate,
       targetBrowser: action._target.browser,
-      triggeringPrincipal: Services.scriptSecurityManager.createNullPrincipal(
-        {}
-      ),
+      fromChrome: false, // This ensure we maintain user preference for how to open new tabs.
     };
 
     // Always include the referrer (even for http links) if we have one
@@ -303,13 +301,29 @@ class PlacesFeed {
     const urlToOpen =
       action.data.type === "pocket" ? action.data.open_url : action.data.url;
 
+    try {
+      let uri = Services.io.newURI(urlToOpen);
+      if (!["http", "https"].includes(uri.scheme)) {
+        throw new Error(
+          `Can't open link using ${uri.scheme} protocol from the new tab page.`
+        );
+      }
+    } catch (e) {
+      Cu.reportError(e);
+      return;
+    }
+
     // Mark the page as typed for frecency bonus before opening the link
     if (typedBonus) {
       PlacesUtils.history.markPageAsTyped(Services.io.newURI(urlToOpen));
     }
 
     const win = action._target.browser.ownerGlobal;
-    win.openLinkIn(urlToOpen, where || win.whereToOpenLink(event), params);
+    win.openTrustedLinkIn(
+      urlToOpen,
+      where || win.whereToOpenLink(event),
+      params
+    );
 
     // If there's an original URL e.g. using the unprocessed %YYYYMMDDHH% tag,
     // add a visit for that so it may become a frecent top site.
@@ -376,10 +390,9 @@ class PlacesFeed {
   }
 
   fillSearchTopSiteTerm({ _target, data }) {
-    _target.browser.ownerGlobal.gURLBar.searchWithAlias(
-      data.label,
-      "topsites_newtab"
-    );
+    _target.browser.ownerGlobal.gURLBar.search(data.label, {
+      searchModeEntry: "topsites_newtab",
+    });
   }
 
   _getSearchPrefix(isPrivateWindow) {
@@ -403,7 +416,9 @@ class PlacesFeed {
     if (!data || !data.text) {
       urlBar.setHiddenFocus();
     } else {
-      urlBar.searchWithAlias(searchAlias, "handoff", data.text);
+      urlBar.search(searchAlias + data.text, {
+        searchModeEntry: "handoff",
+      });
       isFirstChange = false;
     }
 
@@ -414,7 +429,7 @@ class PlacesFeed {
       if (isFirstChange) {
         isFirstChange = false;
         urlBar.removeHiddenFocus();
-        urlBar.searchWithAlias(searchAlias, "handoff");
+        urlBar.search(searchAlias, { searchModeEntry: "handoff" });
         this.store.dispatch(
           ac.OnlyToOneContent({ type: at.HIDE_SEARCH }, meta.fromTarget)
         );
@@ -464,6 +479,14 @@ class PlacesFeed {
       case at.UNINIT:
         this.removeObservers();
         break;
+      case at.ABOUT_SPONSORED_TOP_SITES: {
+        const url = `${Services.urlFormatter.formatURLPref(
+          "app.support.baseURL"
+        )}sponsor-privacy`;
+        const win = action._target.browser.ownerGlobal;
+        win.openTrustedLinkIn(url, "tab");
+        break;
+      }
       case at.BLOCK_URL: {
         if (action.data) {
           action.data.forEach(site => {

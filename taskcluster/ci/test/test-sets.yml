@@ -88,10 +88,9 @@ raptor-firefox:
     - raptor-webaudio-firefox
     - raptor-sunspider-firefox
     - raptor-wasm-godot-firefox
-    - raptor-youtube-playback-firefox
     - raptor-youtube-playback-av1-sfr-firefox
     - raptor-youtube-playback-h264-sfr-firefox
-    - raptor-youtube-playback-h264-firefox
+    - raptor-youtube-playback-hfr-firefox
     - raptor-youtube-playback-vp9-sfr-firefox
     - raptor-youtube-playback-widevine-hfr-firefox
     - raptor-youtube-playback-widevine-h264-sfr-firefox
@@ -109,10 +108,9 @@ raptor-chrome:
     - raptor-wasm-godot-chrome
     - raptor-ares6-chrome
     - raptor-jetstream2-chrome
-    - raptor-youtube-playback-chrome
     - raptor-youtube-playback-av1-sfr-chrome
     - raptor-youtube-playback-h264-sfr-chrome
-    - raptor-youtube-playback-h264-chrome
+    - raptor-youtube-playback-hfr-chrome
     - raptor-youtube-playback-vp9-sfr-chrome
     - raptor-youtube-playback-widevine-hfr-chrome
     - raptor-youtube-playback-widevine-h264-sfr-chrome
@@ -128,7 +126,6 @@ raptor-profiling:
     - raptor-wasm-godot-firefox-profiling
     - raptor-ares6-firefox-profiling
     - raptor-jetstream2-firefox-profiling
-    - raptor-youtube-playback-firefox-profiling
 
 raptor-chromium:
     - raptor-speedometer-chromium
@@ -467,10 +464,11 @@ android-x86_64-tests:
 
 android-x86_64-qr-tests:
     - crashtest
-    - reftest
+    - geckoview-junit
     - mochitest-media
     - mochitest-plain
     - mochitest-plain-gpu
+    - reftest
 
 android-hw-aarch64-opt-unittests:
     - jittest
@@ -510,54 +508,12 @@ android-hw-arm7-raptor:
     - raptor-speedometer-refbrow
     - raptor-speedometer-fenix
     - raptor-speedometer-fennec68
-    - raptor-youtube-playback-fenix
-    - raptor-youtube-playback-h264-sfr-fenix
-    - raptor-youtube-playback-h264-fenix
-    - raptor-youtube-playback-vp9-sfr-fenix
-    - raptor-youtube-playback-widevine-hfr-fenix
-    - raptor-youtube-playback-widevine-h264-sfr-fenix
-    - raptor-youtube-playback-widevine-vp9-sfr-fenix
-    - raptor-youtube-playback-geckoview
-    - raptor-youtube-playback-h264-sfr-geckoview
-    - raptor-youtube-playback-h264-geckoview
-    - raptor-youtube-playback-vp9-sfr-geckoview
-    - raptor-youtube-playback-widevine-hfr-geckoview
-    - raptor-youtube-playback-widevine-h264-sfr-geckoview
-    - raptor-youtube-playback-widevine-vp9-sfr-geckoview
-    - raptor-youtube-playback-fennec68
-    - raptor-youtube-playback-h264-sfr-fennec68
-    - raptor-youtube-playback-h264-fennec68
-    - raptor-youtube-playback-vp9-sfr-fennec68
-    - raptor-youtube-playback-widevine-hfr-fennec68
-    - raptor-youtube-playback-widevine-h264-sfr-fennec68
-    - raptor-youtube-playback-widevine-vp9-sfr-fennec68
 
 android-hw-aarch64-raptor:
     - raptor-speedometer-geckoview
     - raptor-speedometer-refbrow
     - raptor-speedometer-fenix
     - raptor-speedometer-fennec68
-    - raptor-youtube-playback-fenix
-    - raptor-youtube-playback-h264-sfr-fenix
-    - raptor-youtube-playback-h264-fenix
-    - raptor-youtube-playback-vp9-sfr-fenix
-    - raptor-youtube-playback-widevine-hfr-fenix
-    - raptor-youtube-playback-widevine-h264-sfr-fenix
-    - raptor-youtube-playback-widevine-vp9-sfr-fenix
-    - raptor-youtube-playback-geckoview
-    - raptor-youtube-playback-h264-sfr-geckoview
-    - raptor-youtube-playback-h264-geckoview
-    - raptor-youtube-playback-vp9-sfr-geckoview
-    - raptor-youtube-playback-widevine-hfr-geckoview
-    - raptor-youtube-playback-widevine-h264-sfr-geckoview
-    - raptor-youtube-playback-widevine-vp9-sfr-geckoview
-    - raptor-youtube-playback-fennec68
-    - raptor-youtube-playback-h264-sfr-fennec68
-    - raptor-youtube-playback-h264-fennec68
-    - raptor-youtube-playback-vp9-sfr-fennec68
-    - raptor-youtube-playback-widevine-hfr-fennec68
-    - raptor-youtube-playback-widevine-h264-sfr-fennec68
-    - raptor-youtube-playback-widevine-vp9-sfr-fennec68
 
 android-hw-arm7-raptor-cpu-memory:
     - raptor-speedometer-geckoview-cpu-memory

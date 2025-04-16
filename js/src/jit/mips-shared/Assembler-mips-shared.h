@@ -14,11 +14,11 @@
 
 #include "jit/CompactBuffer.h"
 #include "jit/JitCode.h"
-#include "jit/JitRealm.h"
 #include "jit/JitSpewer.h"
 #include "jit/mips-shared/Architecture-mips-shared.h"
 #include "jit/shared/Assembler-shared.h"
 #include "jit/shared/IonAssemblerBuffer.h"
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {

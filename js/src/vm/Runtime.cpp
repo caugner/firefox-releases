@@ -27,12 +27,9 @@
 
 #include "gc/FreeOp.h"
 #include "gc/PublicIterators.h"
-#include "jit/arm/Simulator-arm.h"
-#include "jit/arm64/vixl/Simulator-vixl.h"
 #include "jit/IonCompileTask.h"
-#include "jit/JitRealm.h"
-#include "jit/mips32/Simulator-mips32.h"
-#include "jit/mips64/Simulator-mips64.h"
+#include "jit/JitRuntime.h"
+#include "jit/Simulator.h"
 #include "js/AllocationLogging.h"  // JS_COUNT_CTOR, JS_COUNT_DTOR
 #include "js/Date.h"
 #include "js/MemoryMetrics.h"
@@ -116,10 +113,11 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       scriptEnvironmentPreparer(nullptr),
       ctypesActivityCallback(nullptr),
       windowProxyClass_(nullptr),
-      scriptDataLock(mutexid::RuntimeScriptData),
+      scriptDataLock(mutexid::SharedImmutableScriptData),
 #ifdef DEBUG
       activeThreadHasScriptDataAccess(false),
 #endif
+      numParseTasks(0),
       numActiveHelperThreadZones(0),
       numRealms(0),
       numDebuggeeRealms_(0),
@@ -390,7 +388,7 @@ void JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
     AutoLockScriptData lock(this);
     rtSizes->scriptData +=
         scriptDataTable(lock).shallowSizeOfExcludingThis(mallocSizeOf);
-    for (RuntimeScriptDataTable::Range r = scriptDataTable(lock).all();
+    for (SharedImmutableScriptDataTable::Range r = scriptDataTable(lock).all();
          !r.empty(); r.popFront()) {
       rtSizes->scriptData += r.front()->sizeOfIncludingThis(mallocSizeOf);
     }

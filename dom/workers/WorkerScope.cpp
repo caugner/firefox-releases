@@ -361,8 +361,8 @@ void WorkerGlobalScope::ImportScripts(JSContext* aCx,
         }
       }
     }
-    AUTO_PROFILER_MARKER_TEXT("ImportScripts",
-                              JS.WithOptions(MarkerStack::Capture()), urls);
+    AUTO_PROFILER_MARKER_TEXT("ImportScripts", JS, MarkerStack::Capture(),
+                              urls);
 #endif
     workerinternals::Load(mWorkerPrivate, std::move(stack), aScriptURLs,
                           WorkerScript, aRv);
@@ -802,8 +802,7 @@ class ReportFetchListenerWarningRunnable final : public Runnable {
 
     ServiceWorkerManager::LocalizeAndReportToAllClients(
         mScope, "ServiceWorkerNoFetchHandler", nsTArray<nsString>{},
-        nsIScriptError::warningFlag, mSourceSpec, EmptyString(), mLine,
-        mColumn);
+        nsIScriptError::warningFlag, mSourceSpec, u""_ns, mLine, mColumn);
 
     return NS_OK;
   }

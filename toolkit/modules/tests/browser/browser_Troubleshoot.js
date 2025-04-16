@@ -79,8 +79,8 @@ var tests = [
     let prefs = [
       "javascript.troubleshoot",
       "troubleshoot.foo",
-      "javascript.print_to_filename",
       "network.proxy.troubleshoot",
+      "print.print_to_filename",
     ];
     prefs.forEach(function(p) {
       Services.prefs.setBoolPref(p, true);
@@ -99,12 +99,12 @@ var tests = [
         "The pref should be absent because it's not in the whitelist."
       );
       ok(
-        !("javascript.print_to_filename" in p),
+        !("network.proxy.troubleshoot" in p),
         "The pref should be absent because it's blacklisted."
       );
       ok(
-        !("network.proxy.troubleshoot" in p),
-        "The pref should be absent because it's blacklisted."
+        !("print.print_to_filename" in p),
+        "The pref should be absent because it's not whitelisted."
       );
       prefs.forEach(p => Services.prefs.deleteBranch(p));
       done();
@@ -123,6 +123,24 @@ var tests = [
       let p = snapshot.modifiedPreferences;
       is(p[name], unicodeValue, "The pref should have correct Unicode value.");
       Services.prefs.deleteBranch(name);
+      done();
+    });
+  },
+
+  function printingPreferences(done) {
+    let prefs = ["javascript.print_to_filename", "print.print_to_filename"];
+    prefs.forEach(function(p) {
+      Services.prefs.setBoolPref(p, true);
+      is(Services.prefs.getBoolPref(p), true, "The pref should be set: " + p);
+    });
+    Troubleshoot.snapshot(function(snapshot) {
+      let p = snapshot.printingPreferences;
+      is(p["print.print_to_filename"], true, "The pref should be present");
+      ok(
+        !("javascript.print_to_filename" in p),
+        "The pref should be absent because it's not a print pref."
+      );
+      prefs.forEach(p => Services.prefs.deleteBranch(p));
       done();
     });
   },
@@ -178,10 +196,16 @@ const SNAPSHOT_SCHEMA = {
           type: "boolean",
           required: true,
         },
-        autoStartStatus: {
-          type: "number",
+        fissionAutoStart: {
+          type: "boolean",
+        },
+        fissionDecisionStatus: {
+          type: "string",
         },
         numTotalWindows: {
+          type: "number",
+        },
+        numFissionWindows: {
           type: "number",
         },
         numRemoteWindows: {
@@ -329,11 +353,19 @@ const SNAPSHOT_SCHEMA = {
       required: true,
       type: "object",
     },
+    printingPreferences: {
+      required: true,
+      type: "object",
+    },
     lockedPreferences: {
       required: true,
       type: "object",
       properties: {
         "fission.autostart": {
+          required: false,
+          type: "boolean",
+        },
+        "fission.autostart.session": {
           required: false,
           type: "boolean",
         },

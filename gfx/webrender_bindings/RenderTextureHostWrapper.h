@@ -7,7 +7,7 @@
 #ifndef MOZILLA_GFX_RENDERTEXTUREHOSTWRAPPER_H
 #define MOZILLA_GFX_RENDERTEXTUREHOSTWRAPPER_H
 
-#include "RenderTextureHost.h"
+#include "RenderTextureHostSWGL.h"
 
 namespace mozilla {
 
@@ -21,30 +21,34 @@ namespace wr {
  * longer than GPUVideoTextureHost and the wrapped TextureHost is used by
  * multiple GPUVideoTextureHosts. This class is used to reduce recreations of
  * the wrappded RenderTextureHost. Initializations of some
- * RenderTextureHosts(RenderDXGITextureHostOGL and
- * RenderDXGIYCbCrTextureHostOGL) have overhead.
+ * RenderTextureHosts(RenderDXGITextureHost and
+ * RenderDXGIYCbCrTextureHost) have overhead.
  */
-class RenderTextureHostWrapper final : public RenderTextureHost {
+class RenderTextureHostWrapper final : public RenderTextureHostSWGL {
  public:
   explicit RenderTextureHostWrapper(ExternalImageId aExternalImageId);
 
+  // RenderTextureHost
   wr::WrExternalImage Lock(uint8_t aChannelIndex, gl::GLContext* aGL,
                            wr::ImageRendering aRendering) override;
   void Unlock() override;
   void ClearCachedResources() override;
+  RenderMacIOSurfaceTextureHost* AsRenderMacIOSurfaceTextureHost() override;
+  RenderDXGITextureHost* AsRenderDXGITextureHost() override;
 
-  RenderMacIOSurfaceTextureHostOGL* AsRenderMacIOSurfaceTextureHostOGL()
-      override;
-
-  virtual RenderDXGITextureHostOGL* AsRenderDXGITextureHostOGL() override;
+  // RenderTextureHostSWGL
+  size_t GetPlaneCount() override;
+  bool MapPlane(uint8_t aChannelIndex, PlaneInfo& aPlaneInfo) override;
+  void UnmapPlanes() override;
+  gfx::YUVColorSpace GetYUVColorSpace() const override;
 
  private:
   ~RenderTextureHostWrapper() override;
 
-  void EnsureTextureHost();
+  void EnsureTextureHost() const;
 
   const ExternalImageId mExternalImageId;
-  RefPtr<RenderTextureHost> mTextureHost;
+  mutable RefPtr<RenderTextureHost> mTextureHost;
 };
 
 }  // namespace wr

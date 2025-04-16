@@ -40,6 +40,7 @@
 #include "mozilla/dom/RemoteWorkerControllerParent.h"
 #include "mozilla/dom/RemoteWorkerServiceParent.h"
 #include "mozilla/dom/ReportingHeader.h"
+#include "mozilla/dom/SessionStorageManager.h"
 #include "mozilla/dom/SharedWorkerParent.h"
 #include "mozilla/dom/StorageIPC.h"
 #include "mozilla/dom/MIDIManagerParent.h"
@@ -469,6 +470,15 @@ bool BackgroundParentImpl::DeallocPBackgroundStorageParent(
   MOZ_ASSERT(aActor);
 
   return mozilla::dom::DeallocPBackgroundStorageParent(aActor);
+}
+
+already_AddRefed<BackgroundParentImpl::PBackgroundSessionStorageManagerParent>
+BackgroundParentImpl::AllocPBackgroundSessionStorageManagerParent(
+    const uint64_t& aTopContextId) {
+  AssertIsInMainOrSocketProcess();
+  AssertIsOnBackgroundThread();
+
+  return dom::AllocPBackgroundSessionStorageManagerParent(aTopContextId);
 }
 
 already_AddRefed<PIdleSchedulerParent>
@@ -1072,6 +1082,37 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvShutdownQuotaManager() {
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult
+BackgroundParentImpl::RecvShutdownBackgroundSessionStorageManagers() {
+  AssertIsInMainOrSocketProcess();
+  AssertIsOnBackgroundThread();
+
+  if (BackgroundParent::IsOtherProcessActor(this)) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+
+  if (!mozilla::dom::RecvShutdownBackgroundSessionStorageManagers()) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+BackgroundParentImpl::RecvRemoveBackgroundSessionStorageManager(
+    const uint64_t& aTopContextId) {
+  AssertIsInMainOrSocketProcess();
+  AssertIsOnBackgroundThread();
+
+  if (BackgroundParent::IsOtherProcessActor(this)) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+
+  if (!mozilla::dom::RecvRemoveBackgroundSessionStorageManager(aTopContextId)) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  return IPC_OK();
+}
+
 already_AddRefed<dom::PFileSystemRequestParent>
 BackgroundParentImpl::AllocPFileSystemRequestParent(
     const FileSystemParams& aParams) {
@@ -1094,46 +1135,14 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvPFileSystemRequestConstructor(
 }
 
 // Gamepad API Background IPC
-dom::PGamepadEventChannelParent*
+already_AddRefed<dom::PGamepadEventChannelParent>
 BackgroundParentImpl::AllocPGamepadEventChannelParent() {
-  RefPtr<dom::GamepadEventChannelParent> parent =
-      new dom::GamepadEventChannelParent();
-
-  return parent.forget().take();
+  return dom::GamepadEventChannelParent::Create();
 }
 
-bool BackgroundParentImpl::DeallocPGamepadEventChannelParent(
-    dom::PGamepadEventChannelParent* aActor) {
-  MOZ_ASSERT(aActor);
-  RefPtr<dom::GamepadEventChannelParent> parent =
-      dont_AddRef(static_cast<dom::GamepadEventChannelParent*>(aActor));
-  return true;
-}
-
-mozilla::ipc::IPCResult
-BackgroundParentImpl::RecvPGamepadEventChannelConstructor(
-    PGamepadEventChannelParent* aActor) {
-  MOZ_ASSERT(aActor);
-  if (!static_cast<dom::GamepadEventChannelParent*>(aActor)->Init()) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-  return IPC_OK();
-}
-
-dom::PGamepadTestChannelParent*
+already_AddRefed<dom::PGamepadTestChannelParent>
 BackgroundParentImpl::AllocPGamepadTestChannelParent() {
-  RefPtr<dom::GamepadTestChannelParent> parent =
-      new dom::GamepadTestChannelParent();
-
-  return parent.forget().take();
-}
-
-bool BackgroundParentImpl::DeallocPGamepadTestChannelParent(
-    dom::PGamepadTestChannelParent* aActor) {
-  MOZ_ASSERT(aActor);
-  RefPtr<dom::GamepadTestChannelParent> parent =
-      dont_AddRef(static_cast<dom::GamepadTestChannelParent*>(aActor));
-  return true;
+  return dom::GamepadTestChannelParent::Create();
 }
 
 dom::PWebAuthnTransactionParent*

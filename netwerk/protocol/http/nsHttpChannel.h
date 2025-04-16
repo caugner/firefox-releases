@@ -152,6 +152,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   NS_IMETHOD GetEncodedBodySize(uint64_t* aEncodedBodySize) override;
   // nsIHttpChannelInternal
   NS_IMETHOD SetupFallbackChannel(const char* aFallbackKey) override;
+  NS_IMETHOD GetIsAuthChannel(bool* aIsAuthChannel) override;
   NS_IMETHOD SetChannelIsForDownload(bool aChannelIsForDownload) override;
   NS_IMETHOD GetNavigationStartTimeStamp(TimeStamp* aTimeStamp) override;
   NS_IMETHOD SetNavigationStartTimeStamp(TimeStamp aTimeStamp) override;
@@ -557,11 +558,6 @@ class nsHttpChannel final : public HttpBaseChannel,
   // writing a new entry. The content type is used in cache internally only.
   void SetCachedContentType();
 
-  // This function updates all the fields used by anti-tracking when a channel
-  // is opened. We have to do this in the parent to access cross-origin info
-  // that is not exposed to child processes.
-  void UpdateAntiTrackingInfo();
-
  private:
   // this section is for main-thread-only object
   // all the references need to be proxy released on main thread.
@@ -657,6 +653,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   uint32_t mCacheQueueSizeWhenOpen;
 
   Atomic<bool, Relaxed> mCachedContentIsValid;
+  Atomic<bool> mIsAuthChannel;
   Atomic<bool> mAuthRetryPending;
 
   // state flags

@@ -1503,7 +1503,6 @@ bool JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound,
   MOZ_ASSERT(!bound->hasGuessedAtom());
 
   // Try to avoid invoking the resolve hook.
-  JSAtom* name = nullptr;
   if (targetObj->is<JSFunction>() &&
       !targetObj->as<JSFunction>().hasResolvedName()) {
     JSFunction* targetFn = &targetObj->as<JSFunction>();
@@ -1512,21 +1511,18 @@ bool JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound,
     // lazily compute the full name in getBoundFunctionName(), therefore
     // we need to append the bound function name prefix here.
     if (targetFn->isBoundFunction() && targetFn->hasBoundFunctionNamePrefix()) {
-      name = AppendBoundFunctionPrefix(cx, targetFn->explicitName());
+      JSAtom* name = AppendBoundFunctionPrefix(cx, targetFn->explicitName());
       if (!name) {
         return false;
       }
       bound->setPrefixedBoundFunctionName(name);
     } else {
-      name = targetFn->infallibleGetUnresolvedName(cx);
+      JSAtom* name = targetFn->infallibleGetUnresolvedName(cx);
       MOZ_ASSERT(name);
 
       bound->setAtom(name);
     }
-  }
-
-  // 19.2.3.2 Function.prototype.bind, steps 9-11.
-  if (!name) {
+  } else {
     // 19.2.3.2 Function.prototype.bind, step 9.
     RootedValue targetName(cx);
     if (!GetProperty(cx, targetObj, targetObj, cx->names().name, &targetName)) {
@@ -1544,13 +1540,13 @@ bool JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound,
     // the complete prefixed name here.
     if (targetObj->is<JSFunction>() &&
         targetObj->as<JSFunction>().isBoundFunction()) {
-      name = AppendBoundFunctionPrefix(cx, targetName.toString());
+      JSAtom* name = AppendBoundFunctionPrefix(cx, targetName.toString());
       if (!name) {
         return false;
       }
       bound->setPrefixedBoundFunctionName(name);
     } else {
-      name = AtomizeString(cx, targetName.toString());
+      JSAtom* name = AtomizeString(cx, targetName.toString());
       if (!name) {
         return false;
       }
@@ -1568,9 +1564,10 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
   MOZ_ASSERT(!lazy->hasBytecode(), "Script is already compiled!");
   MOZ_ASSERT(lazy->function() == fun);
 
+  AutoIncrementalTimer timer(cx->realm()->timers.delazificationTime);
+
   size_t sourceStart = lazy->sourceStart();
   size_t sourceLength = lazy->sourceEnd() - lazy->sourceStart();
-  bool hadLazyScriptData = lazy->hasPrivateScriptData();
 
   {
     MOZ_ASSERT(ss->hasSourceText());
@@ -1602,7 +1599,13 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
       return false;
     }
 
-    // TODO: encode stencil here.
+    if (!js::UseOffThreadParseGlobal()) {
+      if (ss->hasEncoder()) {
+        if (!ss->xdrEncodeFunctionStencil(cx, compilationInfo.get().stencil)) {
+          return false;
+        }
+      }
+    }
 
     if (!frontend::InstantiateStencilsForDelazify(cx, compilationInfo.get())) {
       // The frontend shouldn't fail after linking the function and the
@@ -1613,19 +1616,14 @@ bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
     }
   }
 
-  RootedScript script(cx, fun->nonLazyScript());
-
-  // NOTE: Only allow relazification if there was no lazy PrivateScriptData.
-  // This excludes non-leaf functions and all script class constructors.
-  if (script->isRelazifiable() && !hadLazyScriptData) {
-    script->setAllowRelazify();
-  }
-
-  // XDR the newly delazified function.
-  if (ss->hasEncoder()) {
-    RootedScriptSourceObject sourceObject(cx, script->sourceObject());
-    if (!ss->xdrEncodeFunction(cx, fun, sourceObject)) {
-      return false;
+  if (js::UseOffThreadParseGlobal()) {
+    // XDR the newly delazified function.
+    if (ss->hasEncoder()) {
+      RootedScriptSourceObject sourceObject(
+          cx, fun->nonLazyScript()->sourceObject());
+      if (!ss->xdrEncodeFunction(cx, fun, sourceObject)) {
+        return false;
+      }
     }
   }
 
@@ -1743,13 +1741,11 @@ void JSFunction::maybeRelazify(JSRuntime* rt) {
   }
 
   if (isSelfHostedBuiltin()) {
-    BaseScript::writeBarrierPre(script);
+    gc::PreWriteBarrier(script);
     initSelfHostedLazyScript(&rt->selfHostedLazyScript.ref());
   } else {
     script->relazify(rt);
   }
-
-  realm->scheduleDelazificationForDebugger();
 }
 
 js::GeneratorKind JSFunction::clonedSelfHostedGeneratorKind() const {

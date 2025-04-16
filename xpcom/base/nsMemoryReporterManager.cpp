@@ -884,7 +884,7 @@ class WindowsAddressSpaceReporter final : public nsIMemoryReporter {
       // Append the segment count.
       path.AppendPrintf("(segments=%u)", entry->mCount);
 
-      aHandleReport->Callback(EmptyCString(), path, KIND_OTHER, UNITS_BYTES,
+      aHandleReport->Callback(""_ns, path, KIND_OTHER, UNITS_BYTES,
                               entry->mSize, "From MEMORY_BASIC_INFORMATION."_ns,
                               aData);
     }
@@ -1205,7 +1205,8 @@ class JemallocHeapReporter final : public nsIMemoryReporter {
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
                             nsISupports* aData, bool aAnonymize) override {
     jemalloc_stats_t stats;
-    jemalloc_stats(&stats);
+    jemalloc_bin_stats_t bin_stats[JEMALLOC_MAX_STATS_BINS];
+    jemalloc_stats(&stats, bin_stats);
 
     // clang-format off
     MOZ_COLLECT_REPORT(
@@ -1222,11 +1223,18 @@ class JemallocHeapReporter final : public nsIMemoryReporter {
     // We mark this and the other heap-overhead reporters as KIND_NONHEAP
     // because KIND_HEAP memory means "counted in heap-allocated", which
     // this is not.
-    MOZ_COLLECT_REPORT(
-      "explicit/heap-overhead/bin-unused", KIND_NONHEAP, UNITS_BYTES,
-      stats.bin_unused,
-"Unused bytes due to fragmentation in the bins used for 'small' (<= 2 KiB) "
-"allocations. These bytes will be used if additional allocations occur.");
+    for (auto& bin : bin_stats) {
+      if (!bin.size) {
+        continue;
+      }
+      nsPrintfCString path("explicit/heap-overhead/bin-unused/bin-%zu",
+          bin.size);
+      aHandleReport->Callback(EmptyCString(), path, KIND_NONHEAP, UNITS_BYTES,
+        bin.bytes_unused,
+        nsLiteralCString(
+          "Unused bytes in all runs of all bins for this size class"),
+        aData);
+    }
 
     if (stats.waste > 0) {
       MOZ_COLLECT_REPORT(
@@ -1263,7 +1271,6 @@ class JemallocHeapReporter final : public nsIMemoryReporter {
     MOZ_COLLECT_REPORT(
       "heap-chunksize", KIND_OTHER, UNITS_BYTES, stats.chunksize,
       "Size of chunks.");
-
     // clang-format on
 
     return NS_OK;
@@ -1412,7 +1419,7 @@ class ThreadsReporter final : public nsIMemoryReporter {
                            thread.mName.get(), thread.mThreadId);
 
       aHandleReport->Callback(
-          EmptyCString(), path, KIND_NONHEAP, UNITS_BYTES, thread.mPrivateSize,
+          ""_ns, path, KIND_NONHEAP, UNITS_BYTES, thread.mPrivateSize,
           nsLiteralCString("The sizes of thread stacks which have been "
                            "committed to memory."),
           aData);
@@ -1573,12 +1580,6 @@ nsMemoryReporterManager::Init() {
   }
   isInited = true;
 
-#if defined(HAVE_JEMALLOC_STATS) && defined(MOZ_GLUE_IN_PROGRAM)
-  if (!jemalloc_stats) {
-    return NS_ERROR_FAILURE;
-  }
-#endif
-
 #ifdef HAVE_JEMALLOC_STATS
   RegisterStrongReporter(new JemallocHeapReporter());
 #endif
@@ -1697,7 +1698,7 @@ nsMemoryReporterManager::GetReports(
   return GetReportsExtended(aHandleReport, aHandleReportData, aFinishReporting,
                             aFinishReportingData, aAnonymize,
                             /* minimize = */ false,
-                            /* DMDident = */ EmptyString());
+                            /* DMDident = */ u""_ns);
 }
 
 NS_IMETHODIMP

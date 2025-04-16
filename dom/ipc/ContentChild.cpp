@@ -211,7 +211,7 @@
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 
 #ifdef MOZ_WEBRTC
-#  include "signaling/src/peerconnection/WebrtcGlobalChild.h"
+#  include "jsapi/WebrtcGlobalChild.h"
 #endif
 
 #include "mozilla/Permission.h"
@@ -919,7 +919,7 @@ nsresult ContentChild::ProvideWindowCommon(
     }
 
     if (name.LowerCaseEqualsLiteral("_blank")) {
-      name = EmptyString();
+      name.Truncate();
     }
 
     MOZ_DIAGNOSTIC_ASSERT(!nsContentUtils::IsSpecialName(name));
@@ -1061,7 +1061,7 @@ nsresult ContentChild::ProvideWindowCommon(
     }
 
     ParentShowInfo showInfo(
-        EmptyString(), /* fakeShowInfo = */ true, /* isTransparent = */ false,
+        u""_ns, /* fakeShowInfo = */ true, /* isTransparent = */ false,
         aTabOpener->WebWidget()->GetDPI(),
         aTabOpener->WebWidget()->RoundsWidgetCoordinatesTo(),
         aTabOpener->WebWidget()->GetDefaultScale().scale);
@@ -1127,7 +1127,7 @@ nsresult ContentChild::ProvideWindowCommon(
 
   SendCreateWindow(aTabOpener, parent, newChild, aChromeFlags, aCalledFromJS,
                    aWidthSpecified, aOpenWindowInfo->GetIsForPrinting(),
-                   aOpenWindowInfo->GetIsForPrintPreview(), aURI, features,
+                   aOpenWindowInfo->GetIsForWindowDotPrint(), aURI, features,
                    fullZoom, Principal(triggeringPrincipal), csp, referrerInfo,
                    aOpenWindowInfo->GetOriginAttributes(), std::move(resolve),
                    std::move(reject));
@@ -3538,20 +3538,6 @@ mozilla::ipc::IPCResult ContentChild::RecvUpdateMediaControlAction(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult ContentChild::RecvSessionStorageData(
-    const uint64_t aTopContextId, const nsACString& aOriginAttrs,
-    const nsACString& aOriginKey, const nsTArray<KeyValuePair>& aDefaultData,
-    const nsTArray<KeyValuePair>& aSessionData) {
-  if (const RefPtr<BrowsingContext> topContext =
-          BrowsingContext::Get(aTopContextId)) {
-    topContext->GetSessionStorageManager()->LoadSessionStorageData(
-        nullptr, aOriginAttrs, aOriginKey, aDefaultData, aSessionData);
-  } else {
-    NS_WARNING("Got session storage data for a discarded session");
-  }
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult ContentChild::RecvOnAllowAccessFor(
     const MaybeDiscarded<BrowsingContext>& aContext,
     const nsCString& aTrackingOrigin, uint32_t aCookieBehavior,
@@ -4124,7 +4110,7 @@ mozilla::ipc::IPCResult ContentChild::RecvLoadURI(
     nsCOMPtr<nsIURI> annotationURI;
 
     nsresult rv = NS_MutateURI(aLoadState->URI())
-                      .SetUserPass(EmptyCString())
+                      .SetUserPass(""_ns)
                       .Finalize(annotationURI);
 
     if (NS_FAILED(rv)) {
@@ -4164,7 +4150,7 @@ mozilla::ipc::IPCResult ContentChild::RecvInternalLoad(
     nsCOMPtr<nsIURI> annotationURI;
 
     nsresult rv = NS_MutateURI(aLoadState->URI())
-                      .SetUserPass(EmptyCString())
+                      .SetUserPass(""_ns)
                       .Finalize(annotationURI);
 
     if (NS_FAILED(rv)) {
@@ -4215,6 +4201,44 @@ mozilla::ipc::IPCResult ContentChild::RecvDispatchLocationChangeEvent(
     aContext.get()->GetDocShell()->DispatchLocationChangeEvent();
   }
   return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvDispatchBeforeUnloadToSubtree(
+    const MaybeDiscarded<BrowsingContext>& aStartingAt,
+    DispatchBeforeUnloadToSubtreeResolver&& aResolver) {
+  if (aStartingAt.IsNullOrDiscarded()) {
+    aResolver(nsIContentViewer::eAllowNavigation);
+  } else {
+    DispatchBeforeUnloadToSubtree(aStartingAt.get(), std::move(aResolver));
+  }
+  return IPC_OK();
+}
+
+/* static */ void ContentChild::DispatchBeforeUnloadToSubtree(
+    BrowsingContext* aStartingAt,
+    const DispatchBeforeUnloadToSubtreeResolver& aResolver) {
+  bool resolved = false;
+
+  aStartingAt->PreOrderWalk([&](dom::BrowsingContext* aBC) {
+    if (aBC->GetDocShell()) {
+      nsCOMPtr<nsIContentViewer> contentViewer;
+      aBC->GetDocShell()->GetContentViewer(getter_AddRefs(contentViewer));
+      if (contentViewer &&
+          contentViewer->DispatchBeforeUnload() ==
+              nsIContentViewer::eRequestBlockNavigation &&
+          !resolved) {
+        // Send our response as soon as we find any blocker, so that we can show
+        // the permit unload prompt as soon as possible, without giving
+        // subsequent handlers a chance to delay it.
+        aResolver(nsIContentViewer::eRequestBlockNavigation);
+        resolved = true;
+      }
+    }
+  });
+
+  if (!resolved) {
+    aResolver(nsIContentViewer::eAllowNavigation);
+  }
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvGoBack(
@@ -4361,12 +4385,18 @@ already_AddRefed<JSActor> ContentChild::InitJSActor(
 }
 
 IPCResult ContentChild::RecvRawMessage(const JSActorMessageMeta& aMeta,
-                                       const ClonedMessageData& aData,
-                                       const ClonedMessageData& aStack) {
-  StructuredCloneData data;
-  data.BorrowFromClonedMessageDataForChild(aData);
-  StructuredCloneData stack;
-  stack.BorrowFromClonedMessageDataForChild(aStack);
+                                       const Maybe<ClonedMessageData>& aData,
+                                       const Maybe<ClonedMessageData>& aStack) {
+  Maybe<StructuredCloneData> data;
+  if (aData) {
+    data.emplace();
+    data->BorrowFromClonedMessageDataForChild(*aData);
+  }
+  Maybe<StructuredCloneData> stack;
+  if (aStack) {
+    stack.emplace();
+    stack->BorrowFromClonedMessageDataForChild(*aStack);
+  }
   ReceiveRawMessage(aMeta, std::move(data), std::move(stack));
   return IPC_OK();
 }

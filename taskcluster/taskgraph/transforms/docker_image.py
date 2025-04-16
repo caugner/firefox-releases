@@ -11,12 +11,14 @@ import json
 
 import six
 from six import text_type
+import mozpack.path as mozpath
 import taskgraph
 from taskgraph.transforms.base import TransformSequence
 from .. import GECKO
 from taskgraph.util.docker import (
-    generate_context_hash,
     create_context_tar,
+    generate_context_hash,
+    image_path,
 )
 from taskgraph.util.schema import (
     Schema,
@@ -90,7 +92,6 @@ def fill_template(config, tasks):
         image_name = task.pop('name')
         job_symbol = task.pop('symbol')
         args = task.pop('args', {})
-        definition = task.pop('definition', image_name)
         packages = task.pop('packages', [])
         parent = task.pop('parent', None)
 
@@ -100,7 +101,7 @@ def fill_template(config, tasks):
                     config.kind, image_name, p))
 
         if not taskgraph.fast:
-            context_path = os.path.join('taskcluster', 'docker', definition)
+            context_path = mozpath.relpath(image_path(image_name), GECKO)
             if config.write_artifacts:
                 context_file = os.path.join(CONTEXTS_DIR, '{}.tar.gz'.format(image_name))
                 logger.info("Writing {} for docker image {}".format(context_file, image_name))
@@ -137,7 +138,7 @@ def fill_template(config, tasks):
         # include some information that is useful in reconstructing this task
         # from JSON
         taskdesc = {
-            'label': 'build-docker-image-' + image_name,
+            'label': '{}-{}'.format(config.kind, image_name),
             'description': description,
             'attributes': {
                 'image_name': image_name,
@@ -190,7 +191,7 @@ def fill_template(config, tasks):
         else:
             worker['docker-image'] = {'in-tree': 'image_builder'}
             deps = taskdesc.setdefault('dependencies', {})
-            deps['docker-image'] = 'build-docker-image-image_builder'
+            deps['docker-image'] = '{}-image_builder'.format(config.kind)
 
         if packages:
             deps = taskdesc.setdefault('dependencies', {})
@@ -199,7 +200,7 @@ def fill_template(config, tasks):
 
         if parent:
             deps = taskdesc.setdefault('dependencies', {})
-            deps['parent'] = 'build-docker-image-{}'.format(parent)
+            deps['parent'] = '{}-{}'.format(config.kind, parent)
             worker['env']['PARENT_TASK_ID'] = {
                 'task-reference': '<parent>',
             }

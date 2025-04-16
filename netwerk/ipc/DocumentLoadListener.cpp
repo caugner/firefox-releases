@@ -40,6 +40,7 @@
 #include "nsIStreamConverterService.h"
 #include "nsIViewSourceChannel.h"
 #include "nsImportModule.h"
+#include "nsIXULRuntime.h"
 #include "nsMimeTypes.h"
 #include "nsQueryObject.h"
 #include "nsRedirectHistoryEntry.h"
@@ -96,10 +97,8 @@ static auto SecurityFlagsForLoadInfo(nsDocShellLoadState* aLoadState)
         true,  // aInheritForAboutBlank
         isSrcdoc);
 
-    bool isURIUniqueOrigin =
-        StaticPrefs::security_data_uri_unique_opaque_origin() &&
-        SchemeIsData(aLoadState->URI());
-    if (inheritAttrs && !isURIUniqueOrigin) {
+    bool isData = SchemeIsData(aLoadState->URI());
+    if (inheritAttrs && !isData) {
       securityFlags |= nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL;
     }
   }
@@ -476,6 +475,21 @@ auto DocumentLoadListener::Open(nsDocShellLoadState* aLoadState,
     return nullptr;
   }
 
+  auto* documentContext = GetDocumentBrowsingContext();
+  if (documentContext && mozilla::SessionHistoryInParent()) {
+    // It's hard to know at this point whether session history will be enabled
+    // in the browsing context, so we always create an entry for a load here.
+    mLoadingSessionHistoryInfo =
+        documentContext->CreateLoadingSessionHistoryEntryForLoad(aLoadState,
+                                                                 mChannel);
+    if (!mLoadingSessionHistoryInfo) {
+      *aRv = NS_BINDING_ABORTED;
+      mParentChannelListener = nullptr;
+      mChannel = nullptr;
+      return nullptr;
+    }
+  }
+
   nsCOMPtr<nsIURI> uriBeingLoaded;
   Unused << NS_WARN_IF(
       NS_FAILED(mChannel->GetURI(getter_AddRefs(uriBeingLoaded))));
@@ -538,7 +552,6 @@ auto DocumentLoadListener::Open(nsDocShellLoadState* aLoadState,
   // across any serviceworker related data between channels as needed.
   AddClientChannelHelperInParent(mChannel, std::move(aInfo));
 
-  auto* documentContext = GetDocumentBrowsingContext();
   if (documentContext && !documentContext->StartDocumentLoad(this)) {
     LOG(("DocumentLoadListener::Open failed StartDocumentLoad [this=%p]",
          this));
@@ -626,13 +639,6 @@ auto DocumentLoadListener::Open(nsDocShellLoadState* aLoadState,
   mSrcdocData = aLoadState->SrcdocData();
   mBaseURI = aLoadState->BaseURI();
   mOriginalUriString = aLoadState->GetOriginalURIString();
-  if (documentContext && StaticPrefs::fission_sessionHistoryInParent()) {
-    // It's hard to know at this point whether session history will be enabled
-    // in the browsing context, so we always create an entry for a load here.
-    mLoadingSessionHistoryInfo =
-        documentContext->CreateLoadingSessionHistoryEntryForLoad(aLoadState,
-                                                                 mChannel);
-  }
   if (documentContext) {
     mParentWindowContext = documentContext->GetParentWindowContext();
   } else {
@@ -1248,9 +1254,7 @@ void DocumentLoadListener::SerializeRedirectData(
   // clears the principal to inherit, which fails tests (probably because this
   // 'redirect' is usually just an implementation detail). It's also http
   // only, and mChannel can be anything that we redirected to.
-  nsCOMPtr<nsILoadInfo> channelLoadInfo;
-  mChannel->GetLoadInfo(getter_AddRefs(channelLoadInfo));
-
+  nsCOMPtr<nsILoadInfo> channelLoadInfo = mChannel->LoadInfo();
   nsCOMPtr<nsIPrincipal> principalToInherit;
   channelLoadInfo->GetPrincipalToInherit(getter_AddRefs(principalToInherit));
 
@@ -1284,7 +1288,7 @@ void DocumentLoadListener::SerializeRedirectData(
     sm->GetChannelURIPrincipal(mChannel, getter_AddRefs(uriPrincipal));
 
     nsCOMPtr<nsIRedirectHistoryEntry> entry =
-        new nsRedirectHistoryEntry(uriPrincipal, nullptr, EmptyCString());
+        new nsRedirectHistoryEntry(uriPrincipal, nullptr, ""_ns);
 
     redirectLoadInfo->AppendRedirectHistoryEntry(entry, true);
   }
@@ -2390,12 +2394,20 @@ DocumentLoadListener::AsyncOnChannelRedirect(
     return NS_OK;
   }
 
-  if (GetDocumentBrowsingContext() && !net::ChannelIsPost(aOldChannel)) {
-    AddURIVisit(aOldChannel, 0);
+  if (GetDocumentBrowsingContext()) {
+    if (mLoadingSessionHistoryInfo) {
+      mLoadingSessionHistoryInfo =
+          GetDocumentBrowsingContext()
+              ->ReplaceLoadingSessionHistoryEntryForLoad(
+                  mLoadingSessionHistoryInfo.get(), aNewChannel);
+    }
+    if (!net::ChannelIsPost(aOldChannel)) {
+      AddURIVisit(aOldChannel, 0);
 
-    nsCOMPtr<nsIURI> oldURI;
-    aOldChannel->GetURI(getter_AddRefs(oldURI));
-    nsDocShell::SaveLastVisit(aNewChannel, oldURI, aFlags);
+      nsCOMPtr<nsIURI> oldURI;
+      aOldChannel->GetURI(getter_AddRefs(oldURI));
+      nsDocShell::SaveLastVisit(aNewChannel, oldURI, aFlags);
+    }
   }
   mHaveVisibleRedirect |= true;
 

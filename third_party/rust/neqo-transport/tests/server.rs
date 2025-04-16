@@ -7,20 +7,20 @@
 #![cfg_attr(feature = "deny-warnings", deny(warnings))]
 #![warn(clippy::pedantic)]
 
-use neqo_common::{hex_with_len, qdebug, qtrace, Datagram, Decoder, Encoder};
+use neqo_common::{event::Provider, hex_with_len, qdebug, qtrace, Datagram, Decoder, Encoder};
 use neqo_crypto::{
     aead::Aead,
     constants::{TLS_AES_128_GCM_SHA256, TLS_VERSION_1_3},
     hkdf,
     hp::HpKey,
-    AllowZeroRtt, AuthenticationStatus,
+    AllowZeroRtt, AuthenticationStatus, ResumptionToken,
 };
 use neqo_transport::{
     server::{ActiveConnectionRef, Server, ValidateAddress},
-    Connection, ConnectionError, Error, FixedConnectionIdManager, Output, QuicVersion, State,
-    StreamType,
+    Connection, ConnectionError, ConnectionEvent, Error, FixedConnectionIdManager, Output,
+    QuicVersion, State, StreamType,
 };
-use test_fixture::{self, assertions, default_client, now};
+use test_fixture::{self, assertions, default_client, loopback, now};
 
 use std::cell::RefCell;
 use std::convert::TryFrom;
@@ -274,7 +274,7 @@ fn retry_expired() {
     assert!(dgram.is_none());
 }
 
-fn get_ticket(server: &mut Server) -> Vec<u8> {
+fn get_ticket(server: &mut Server) -> ResumptionToken {
     let mut client = default_client();
     let mut server_conn = connect(&mut client, server);
 
@@ -284,7 +284,16 @@ fn get_ticket(server: &mut Server) -> Vec<u8> {
 
     // Calling active_connections clears the set of active connections.
     assert_eq!(server.active_connections().len(), 1);
-    client.resumption_token().unwrap()
+    client
+        .events()
+        .find_map(|e| {
+            if let ConnectionEvent::ResumptionToken(token) = e {
+                Some(token)
+            } else {
+                None
+            }
+        })
+        .unwrap()
 }
 
 // Attempt a retry with 0-RTT, and have 0-RTT packets sent with the second ClientHello.
@@ -563,6 +572,36 @@ fn retry_after_pto() {
 
     let ci2 = client.process(retry, now).dgram();
     assert!(ci2.unwrap().len() >= 1200);
+}
+
+#[test]
+fn vn_after_retry() {
+    let mut server = default_server();
+    server.set_validation(ValidateAddress::Always);
+    let mut client = default_client();
+
+    let dgram = client.process(None, now()).dgram(); // Initial
+    assert!(dgram.is_some());
+    let dgram = server.process(dgram, now()).dgram(); // Retry
+    assert!(dgram.is_some());
+
+    assertions::assert_retry(&dgram.as_ref().unwrap());
+
+    let dgram = client.process(dgram, now()).dgram(); // Initial w/token
+    assert!(dgram.is_some());
+
+    let mut encoder = Encoder::default();
+    encoder.encode_byte(0x80);
+    encoder.encode(&[0; 4]); // Zero version == VN.
+    encoder.encode_vec(1, &client.odcid().unwrap()[..]);
+    encoder.encode_vec(1, &[]);
+    encoder.encode_uint(4, 0x5a5a_6a6a_u64);
+    let vn = Datagram::new(loopback(), loopback(), encoder);
+
+    assert_ne!(
+        client.process(Some(vn), now()).callback(),
+        Duration::from_secs(0)
+    );
 }
 
 // Generate an AEAD and header protection object for a client Initial.

@@ -337,18 +337,22 @@ class QuotaManager final : public BackgroundThreadObject {
 
   nsresult EnsureStorageIsInitialized();
 
-  nsresult EnsureStorageAndOriginIsInitialized(PersistenceType aPersistenceType,
-                                               const nsACString& aSuffix,
-                                               const nsACString& aGroup,
-                                               const nsACString& aOrigin,
-                                               Client::Type aClientType,
-                                               nsIFile** aDirectory);
-
-  nsresult EnsureStorageAndOriginIsInitializedInternal(
+  /**
+   * @returns a Result with the success value pointing to the storage directory
+   * for the origin.
+   */
+  Result<nsCOMPtr<nsIFile>, nsresult> EnsureStorageAndOriginIsInitialized(
       PersistenceType aPersistenceType, const nsACString& aSuffix,
       const nsACString& aGroup, const nsACString& aOrigin,
-      const Nullable<Client::Type>& aClientType, nsIFile** aDirectory,
-      bool* aCreated = nullptr);
+      Client::Type aClientType);
+
+  // Returns a pair of an nsIFile object referring to the directory, and a bool
+  // indicating whether the directory was newly created.
+  Result<std::pair<nsCOMPtr<nsIFile>, bool>, nsresult>
+  EnsureStorageAndOriginIsInitializedInternal(
+      PersistenceType aPersistenceType, const nsACString& aSuffix,
+      const nsACString& aGroup, const nsACString& aOrigin,
+      const Nullable<Client::Type>& aClientType);
 
   nsresult EnsurePersistentOriginIsInitialized(const nsACString& aSuffix,
                                                const nsACString& aGroup,
@@ -460,7 +464,8 @@ class QuotaManager final : public BackgroundThreadObject {
 
   static void ChromeOrigin(nsACString& aOrigin);
 
-  static bool AreOriginsEqualOnDisk(nsACString& aOrigin1, nsACString& aOrigin2);
+  static bool AreOriginsEqualOnDisk(const nsACString& aOrigin1,
+                                    const nsACString& aOrigin2);
 
   static bool ParseOrigin(const nsACString& aOrigin, nsCString& aSpec,
                           OriginAttributes* aAttrs);

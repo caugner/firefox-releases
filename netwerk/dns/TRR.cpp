@@ -450,14 +450,13 @@ nsresult TRR::SetupTRRServiceChannelInternal(nsIHttpChannel* aChannel,
   // Sanitize the request by removing the Accept-Language header so we minimize
   // the amount of fingerprintable information we send to the server.
   if (!StaticPrefs::network_trr_send_accept_language_headers()) {
-    rv = httpChannel->SetRequestHeader("Accept-Language"_ns, EmptyCString(),
-                                       false);
+    rv = httpChannel->SetRequestHeader("Accept-Language"_ns, ""_ns, false);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // Sanitize the request by removing the User-Agent
   if (!StaticPrefs::network_trr_send_user_agent_headers()) {
-    rv = httpChannel->SetRequestHeader("User-Agent"_ns, EmptyCString(), false);
+    rv = httpChannel->SetRequestHeader("User-Agent"_ns, ""_ns, false);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -608,8 +607,8 @@ nsresult TRR::ReceivePush(nsIHttpChannel* pushed, nsHostRecord* pushedRec) {
   RefPtr<nsHostRecord> hostRecord;
   nsresult rv;
   rv = mHostResolver->GetHostRecord(
-      mHost, EmptyCString(), type, pushedRec->flags, pushedRec->af,
-      pushedRec->pb, pushedRec->originSuffix, getter_AddRefs(hostRecord));
+      mHost, ""_ns, type, pushedRec->flags, pushedRec->af, pushedRec->pb,
+      pushedRec->originSuffix, getter_AddRefs(hostRecord));
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -824,9 +823,9 @@ nsresult TRR::DohDecode(nsCString& aHost) {
     return NS_ERROR_ILLEGAL_VALUE;
   }
   uint8_t rcode = mResponse[3] & 0x0F;
+  LOG(("TRR Decode %s RCODE %d\n", aHost.get(), rcode));
   if (rcode) {
-    LOG(("TRR Decode %s RCODE %d\n", aHost.get(), rcode));
-    return NS_ERROR_FAILURE;
+    RecordReason(nsHostRecord::TRR_RCODE_FAIL);
   }
 
   uint16_t questionRecords = get16bit(mResponse, 4);  // qdcount
@@ -1095,6 +1094,10 @@ nsresult TRR::DohDecode(nsCString& aHost) {
             if (value.mValue.is<SvcParamIpv4Hint>() ||
                 value.mValue.is<SvcParamIpv6Hint>()) {
               parsed.mHasIPHints = true;
+            }
+            if (value.mValue.is<SvcParamEchConfig>()) {
+              parsed.mHasEchConfig = true;
+              parsed.mEchConfig = value.mValue.as<SvcParamEchConfig>().mValue;
             }
             parsed.mSvcFieldValue.AppendElement(value);
           }
@@ -1616,7 +1619,7 @@ nsresult TRR::FollowCname(nsIChannel* aChannel) {
     LOG(("TRR::On200Response CNAME %s => %s (%u)\n", mHost.get(), mCname.get(),
          mCnameLoop));
     cname = mCname;
-    mCname = EmptyCString();
+    mCname.Truncate();
 
     LOG(("TRR: check for CNAME record for %s within previous response\n",
          cname.get()));

@@ -23,6 +23,7 @@ class nsISHistory;
 class nsSHistory;
 class nsBrowserStatusFilter;
 class nsSecureBrowserUI;
+class CallerWillNotifyHistoryIndexAndLengthChanges;
 
 namespace mozilla {
 namespace net {
@@ -107,6 +108,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   UniquePtr<LoadingSessionHistoryInfo> CreateLoadingSessionHistoryEntryForLoad(
       nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
+
+  UniquePtr<LoadingSessionHistoryInfo> ReplaceLoadingSessionHistoryEntryForLoad(
+      LoadingSessionHistoryInfo* aInfo, nsIChannel* aChannel);
+
   void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID,
                             uint32_t aLoadType);
 
@@ -116,17 +121,16 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // aReloadActiveEntry will be true if we have an active entry. If aCanReload
   // is true and aLoadState and aReloadActiveEntry are not set then we should
   // attempt to reload based on the current document in the docshell.
-  void NotifyOnHistoryReload(bool& aCanReload,
+  void NotifyOnHistoryReload(bool aForceReload, bool& aCanReload,
                              Maybe<RefPtr<nsDocShellLoadState>>& aLoadState,
                              Maybe<bool>& aReloadActiveEntry);
 
-  void SetActiveSessionHistoryEntryForTop(
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-      uint32_t aLoadType, const nsID& aChangeID);
-
-  void SetActiveSessionHistoryEntryForFrame(
-      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
-      int32_t aChildOffset, const nsID& aChangeID);
+  // See BrowsingContext::SetActiveSessionHistoryEntry.
+  void SetActiveSessionHistoryEntry(const Maybe<nsPoint>& aPreviousScrollPos,
+                                    SessionHistoryInfo* aInfo,
+                                    uint32_t aLoadType, int32_t aChildOffset,
+                                    uint32_t aUpdatedCacheKey,
+                                    const nsID& aChangeID);
 
   void ReplaceActiveSessionHistoryEntry(SessionHistoryInfo* aInfo);
 
@@ -192,6 +196,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // control all media belonging to this browsing context tree. Return nullptr
   // if the top-level browsing context has been discarded.
   MediaController* GetMediaController();
+  bool HasCreatedMediaController() const;
 
   // Attempts to start loading the given load state in this BrowsingContext,
   // without requiring any communication from a docshell. This will handle
@@ -213,8 +218,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // Called when the current URI changes (from an
   // nsIWebProgressListener::OnLocationChange event, so that we
   // can update our security UI for the new location, or when the
-  // mixed content state for our current window is changed.
-  void UpdateSecurityStateForLocationOrMixedContentChange();
+  // mixed content/https-only state for our current window is changed.
+  void UpdateSecurityState();
 
   void MaybeAddAsProgressListener(nsIWebProgress* aWebProgress);
 
@@ -235,6 +240,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void GetLoadingSessionHistoryInfoFromParent(
       Maybe<LoadingSessionHistoryInfo>& aLoadingInfo, int32_t* aRequestedIndex,
       int32_t* aLength);
+
+  void HistoryCommitIndexAndLength();
+
+  void ResetScalingZoom();
 
  protected:
   // Called when the browsing context is being discarded.
@@ -295,7 +304,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool SupportsLoadingInParent(nsDocShellLoadState* aLoadState,
                                uint64_t* aOuterWindowId);
 
-  void HistoryCommitIndexAndLength(const nsID& aChangeID);
+  void HistoryCommitIndexAndLength(
+      const nsID& aChangeID,
+      const CallerWillNotifyHistoryIndexAndLengthChanges& aProofOfCaller);
 
   // XXX(farre): Store a ContentParent pointer here rather than mProcessId?
   // Indicates which process owns the docshell.

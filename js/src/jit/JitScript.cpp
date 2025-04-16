@@ -7,6 +7,7 @@
 #include "jit/JitScript-inl.h"
 
 #include "mozilla/BinarySearch.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/ScopeExit.h"
 
@@ -15,6 +16,8 @@
 #include "jit/BaselineIC.h"
 #include "jit/BytecodeAnalysis.h"
 #include "jit/IonScript.h"
+#include "jit/JitFrames.h"
+#include "jit/ScriptFromCalleeToken.h"
 #include "util/Memory.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
@@ -34,6 +37,8 @@
 
 using namespace js;
 using namespace js::jit;
+
+using mozilla::CheckedInt;
 
 /* static */
 size_t JitScript::NumTypeSets(JSScript* script) {
@@ -272,16 +277,25 @@ void ICScript::trace(JSTracer* trc) {
 bool ICScript::addInlinedChild(JSContext* cx, UniquePtr<ICScript> child,
                                uint32_t pcOffset) {
   MOZ_ASSERT(!hasInlinedChild(pcOffset));
+
   if (!inlinedChildren_) {
     inlinedChildren_ = cx->make_unique<Vector<CallSite>>(cx);
     if (!inlinedChildren_) {
       return false;
     }
   }
-  if (!inlinedChildren_->emplaceBack(child.get(), pcOffset)) {
+
+  // First reserve space in inlinedChildren_ to ensure that if the ICScript is
+  // added to the inlining root, it can also be added to inlinedChildren_.
+  CallSite callsite(child.get(), pcOffset);
+  if (!inlinedChildren_->reserve(inlinedChildren_->length() + 1)) {
     return false;
   }
-  return inliningRoot()->addInlinedScript(std::move(child));
+  if (!inliningRoot()->addInlinedScript(std::move(child))) {
+    return false;
+  }
+  inlinedChildren_->infallibleAppend(callsite);
+  return true;
 }
 
 ICScript* ICScript::findInlinedChild(uint32_t pcOffset) {
@@ -295,14 +309,9 @@ ICScript* ICScript::findInlinedChild(uint32_t pcOffset) {
 
 void ICScript::removeInlinedChild(uint32_t pcOffset) {
   MOZ_ASSERT(inliningRoot());
-  ICScript* icScript = findInlinedChild(pcOffset);
-
   inlinedChildren_->eraseIf([pcOffset](const CallSite& callsite) -> bool {
     return callsite.pcOffset_ == pcOffset;
   });
-
-  // The ICScript is owned by the inlining root. Remove it.
-  inliningRoot()->removeInlinedScript(icScript);
 }
 
 bool ICScript::hasInlinedChild(uint32_t pcOffset) {
@@ -698,7 +707,7 @@ void JitScript::setBaselineScriptImpl(JSScript* script,
 void JitScript::setBaselineScriptImpl(JSFreeOp* fop, JSScript* script,
                                       BaselineScript* baselineScript) {
   if (hasBaselineScript()) {
-    BaselineScript::writeBarrierPre(script->zone(), baselineScript_);
+    BaselineScript::preWriteBarrier(script->zone(), baselineScript_);
     fop->removeCellMemory(script, baselineScript_->allocBytes(),
                           MemoryUse::BaselineScript);
     baselineScript_ = nullptr;
@@ -727,7 +736,7 @@ void JitScript::setIonScriptImpl(JSFreeOp* fop, JSScript* script,
                 !baselineScript()->hasPendingIonCompileTask());
 
   if (hasIonScript()) {
-    IonScript::writeBarrierPre(script->zone(), ionScript_);
+    IonScript::preWriteBarrier(script->zone(), ionScript_);
     fop->removeCellMemory(script, ionScript_->allocBytes(),
                           MemoryUse::IonScript);
     ionScript_ = nullptr;

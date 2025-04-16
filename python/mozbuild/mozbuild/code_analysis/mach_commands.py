@@ -312,14 +312,7 @@ class StaticAnalysis(MachCommandBase):
         if rc != 0:
             return rc
 
-        if self._is_version_eligible() is False:
-            self.log(
-                logging.ERROR,
-                "static-analysis",
-                {},
-                "ERROR: You're using an old version of clang-format binary."
-                " Please update to a more recent one by running: './mach bootstrap'",
-            )
+        if not self._is_version_eligible():
             return 1
 
         rc = self._build_compile_db(verbose=verbose)
@@ -365,7 +358,6 @@ class StaticAnalysis(MachCommandBase):
         source = [re.escape(f) for f in source]
 
         cwd = self.topobjdir
-        self._compilation_commands_path = self.topobjdir
 
         monitor = StaticAnalysisMonitor(
             self.topsrcdir,
@@ -619,12 +611,6 @@ class StaticAnalysis(MachCommandBase):
             )
             return 0
 
-        if len(self.cov_non_unified_paths):
-            self.cov_non_unified_paths = [
-                mozpath.join(self.topsrcdir, path)
-                for path in self.cov_non_unified_paths
-            ]
-
         # For each element in commands_list run `cov-translate`
         for element in commands_list:
 
@@ -634,12 +620,6 @@ class StaticAnalysis(MachCommandBase):
                 return [re.sub(r'\'-D(.*)="(.*)"\'', r'-D\1="\2"', arg) for arg in cmd]
 
             build_command = element["command"].split(" ")
-            # For modules that are compatible with the non unified build environment
-            # use the the implicit file for analysis in the detriment of the unified
-            if any(
-                element["file"].startswith(path) for path in self.cov_non_unified_paths
-            ):
-                build_command[-1] = element["file"]
 
             cmd = [self.cov_translate, "--dir", self.cov_idir_path] + transform_cmd(
                 build_command
@@ -849,7 +829,6 @@ class StaticAnalysis(MachCommandBase):
         self.cov_capture_search = cov_config.get("fs_capture_search", None)
         self.cov_full_stack = cov_config.get("full_stack", False)
         self.cov_stream = cov_config.get("stream", False)
-        self.cov_non_unified_paths = cov_config.get("non_unified", [])
 
         return 0
 
@@ -1217,38 +1196,62 @@ class StaticAnalysis(MachCommandBase):
             return None
         return config
 
-    def _is_version_eligible(self):
+    def _get_required_version(self):
         version = self.get_clang_tidy_config.version
-
         if version is None:
             self.log(
                 logging.ERROR,
                 "static-analysis",
                 {},
-                "ERROR: Unable to find 'package_version' in the config.yml",
+                "ERROR: Unable to find 'package_version' in config.yml",
             )
-            return False
+        return version
 
+    def _get_current_version(self):
         # Because the fact that we ship together clang-tidy and clang-format
         # we are sure that these two will always share the same version.
         # Thus in order to determine that the version is compatible we only
         # need to check one of them, going with clang-format
         cmd = [self._clang_format_path, "--version"]
+        version_info = None
         try:
-            output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode(
-                "utf-8"
+            version_info = (
+                subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+                .decode("utf-8")
+                .strip()
             )
-            version_string = "clang-format version " + version
-            if version_string in output:
-                return True
+
         except subprocess.CalledProcessError as e:
             self.log(
                 logging.ERROR,
                 "static-analysis",
                 {},
-                "ERROR: Error determining the version clang-tidy/format binary, "
-                "please see the attached exception: \n{}".format(e.output),
+                "Error determining the version clang-tidy/format binary, please see the "
+                "attached exception: \n{}".format(e.output),
             )
+        return version_info
+
+    def _is_version_eligible(self):
+        version = self._get_required_version()
+        if version is None:
+            return False
+
+        current_version = self._get_current_version()
+        if current_version is None:
+            return False
+        version = "clang-format version " + version
+        if version in current_version:
+            return True
+        self.log(
+            logging.ERROR,
+            "static-analysis",
+            {},
+            "ERROR: You're using an old or incorrect version ({}) of clang-format binary. "
+            "Please update to a more recent one (at least > {}) "
+            "by running: './mach bootstrap' ".format(
+                self._get_current_version(), self._get_required_version()
+            ),
+        )
         return False
 
     def _get_clang_tidy_command(self, checks, header_filter, sources, jobs, fix):
@@ -2272,14 +2275,7 @@ class StaticAnalysis(MachCommandBase):
             if rc != 0:
                 return rc
 
-        if self._is_version_eligible() is False:
-            self.log(
-                logging.ERROR,
-                "static-analysis",
-                {},
-                "ERROR: You're using an old version of clang-format binary."
-                " Please update to a more recent one by running: './mach bootstrap'",
-            )
+        if not self._is_version_eligible():
             return 1
 
         if path is None:
@@ -2456,7 +2452,13 @@ class StaticAnalysis(MachCommandBase):
         return (0, config, ran_configure)
 
     def _build_compile_db(self, verbose=False):
-        self._compile_db = mozpath.join(self.topobjdir, "compile_commands.json")
+        self._compilation_commands_path = mozpath.join(
+            self.topobjdir, "static-analysis"
+        )
+        self._compile_db = mozpath.join(
+            self._compilation_commands_path, "compile_commands.json"
+        )
+
         if os.path.exists(self._compile_db):
             return 0
 
@@ -2476,7 +2478,7 @@ class StaticAnalysis(MachCommandBase):
                 "created yet, creating it now..."
             )
             builder = Build(self._mach_context, None)
-            rc = builder.build_backend(["CompileDB"], verbose=verbose)
+            rc = builder.build_backend(["StaticAnalysis"], verbose=verbose)
             if rc != 0:
                 return rc
             assert os.path.exists(self._compile_db)

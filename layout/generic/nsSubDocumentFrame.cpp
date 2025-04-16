@@ -180,31 +180,33 @@ void nsSubDocumentFrame::ShowViewer() {
     return;
   }
 
-  if (!PresContext()->IsDynamic()) {
-    // We let the printing code take care of loading the document; just
-    // create the inner view for it to use.
+  RefPtr<nsFrameLoader> frameloader = FrameLoader();
+  if (!frameloader) {
+    return;
+  }
+
+  if (!frameloader->IsRemoteFrame() && !PresContext()->IsDynamic()) {
+    // We let the printing code take care of loading the document and
+    // initializing the shell; just create the inner view for it to use.
     (void)EnsureInnerView();
   } else {
-    RefPtr<nsFrameLoader> frameloader = FrameLoader();
-    if (frameloader) {
-      AutoWeakFrame weakThis(this);
-      mCallingShow = true;
-      bool didCreateDoc = frameloader->Show(this);
-      if (!weakThis.IsAlive()) {
-        return;
-      }
-      mCallingShow = false;
-      mDidCreateDoc = didCreateDoc;
-
-      if (!HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
-        frameloader->UpdatePositionAndSize(this);
-      }
-
-      if (!weakThis.IsAlive()) {
-        return;
-      }
-      InvalidateFrame();
+    AutoWeakFrame weakThis(this);
+    mCallingShow = true;
+    bool didCreateDoc = frameloader->Show(this);
+    if (!weakThis.IsAlive()) {
+      return;
     }
+    mCallingShow = false;
+    mDidCreateDoc = didCreateDoc;
+
+    if (!HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
+      frameloader->UpdatePositionAndSize(this);
+    }
+
+    if (!weakThis.IsAlive()) {
+      return;
+    }
+    InvalidateFrame();
   }
 }
 
@@ -324,7 +326,9 @@ static void WrapBackgroundColorInOwnLayer(nsDisplayListBuilder* aBuilder,
 
 void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                           const nsDisplayListSet& aLists) {
-  if (!IsVisibleForPainting()) return;
+  if (!IsVisibleForPainting()) {
+    return;
+  }
 
   nsFrameLoader* frameLoader = FrameLoader();
   bool isRemoteFrame = frameLoader && frameLoader->IsRemoteFrame();
@@ -581,8 +585,12 @@ nscoord nsSubDocumentFrame::GetMinISize(gfxContext* aRenderingContext) {
   nscoord result;
   DISPLAY_MIN_INLINE_SIZE(this, result);
 
-  if (nsIFrame* subDocRoot = ObtainIntrinsicSizeFrame()) {
-    result = subDocRoot->GetMinISize(aRenderingContext);
+  if (mSubdocumentIntrinsicSize) {
+    // The subdocument is an SVG document, so technically we should call
+    // SVGOuterSVGFrame::GetMinISize() on its root frame.  That method always
+    // returns 0, though, so we can just do that & don't need to bother with
+    // the cross-doc communication.
+    result = 0;
   } else {
     result = GetIntrinsicISize();
   }
@@ -595,12 +603,13 @@ nscoord nsSubDocumentFrame::GetPrefISize(gfxContext* aRenderingContext) {
   nscoord result;
   DISPLAY_PREF_INLINE_SIZE(this, result);
 
-  nsIFrame* subDocRoot = ObtainIntrinsicSizeFrame();
-  if (subDocRoot) {
-    result = subDocRoot->GetPrefISize(aRenderingContext);
-  } else {
-    result = GetIntrinsicISize();
-  }
+  // If the subdocument is an SVG document, then in theory we want to return
+  // the same thing that SVGOuterSVGFrame::GetPrefISize does.  That method
+  // has some special handling of percentage values to avoid unhelpful zero
+  // sizing in the presence of orthogonal writing modes.  We don't bother
+  // with that for SVG documents in <embed> and <object>, since that special
+  // handling doesn't look up across document boundaries anyway.
+  result = GetIntrinsicISize();
 
   return result;
 }
@@ -612,8 +621,9 @@ IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
     return IntrinsicSize(0, 0);
   }
 
-  if (nsIFrame* subDocRoot = ObtainIntrinsicSizeFrame()) {
-    return subDocRoot->GetIntrinsicSize();
+  if (mSubdocumentIntrinsicSize) {
+    // Use the intrinsic size from the child SVG document, if available.
+    return *mSubdocumentIntrinsicSize;
   }
 
   if (!IsInline()) {
@@ -632,23 +642,13 @@ IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
 }
 
 /* virtual */
-AspectRatio nsSubDocumentFrame::GetIntrinsicRatio() {
-  const auto& aspectRatio = StylePosition()->mAspectRatio;
-  if (!aspectRatio.auto_) {
-    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
-  }
-
+AspectRatio nsSubDocumentFrame::GetIntrinsicRatio() const {
   // FIXME(emilio): This should probably respect contain: size and return no
   // ratio in the case subDocRoot is non-null. Otherwise we do it by virtue of
   // using a zero-size below and reusing GetIntrinsicSize().
-  if (nsIFrame* subDocRoot = ObtainIntrinsicSizeFrame()) {
-    if (AspectRatio subDocRatio = subDocRoot->GetIntrinsicRatio()) {
-      return subDocRatio;
-    }
-  }
-
-  if (aspectRatio.HasRatio()) {
-    return aspectRatio.ratio.AsRatio().ToLayoutRatio();
+  if (mSubdocumentIntrinsicRatio && *mSubdocumentIntrinsicRatio) {
+    // Use the intrinsic aspect ratio from the child SVG document, if available.
+    return *mSubdocumentIntrinsicRatio;
   }
 
   // NOTE(emilio): Even though we have an intrinsic size, we may not have an
@@ -679,7 +679,7 @@ nsIFrame::SizeComputationResult nsSubDocumentFrame::ComputeSize(
     nscoord aAvailableISize, const LogicalSize& aMargin,
     const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
   return {ComputeSizeWithIntrinsicDimensions(
-              aRenderingContext, aWM, GetIntrinsicSize(), GetIntrinsicRatio(),
+              aRenderingContext, aWM, GetIntrinsicSize(), GetAspectRatio(),
               aCBSize, aMargin, aBorderPadding, aFlags),
           AspectRatioUsage::None};
 }
@@ -915,15 +915,14 @@ void nsSubDocumentFrame::DestroyFrom(nsIFrame* aDestructRoot,
 }
 
 nsFrameLoader* nsSubDocumentFrame::FrameLoader() const {
-  nsIContent* content = GetContent();
-  if (!content) return nullptr;
-
-  if (!mFrameLoader) {
-    RefPtr<nsFrameLoaderOwner> loaderOwner = do_QueryObject(content);
-    if (loaderOwner) {
-      mFrameLoader = loaderOwner->GetFrameLoader();
-    }
+  if (mFrameLoader) {
+    return mFrameLoader;
   }
+
+  if (RefPtr<nsFrameLoaderOwner> loaderOwner = do_QueryObject(GetContent())) {
+    mFrameLoader = loaderOwner->GetFrameLoader();
+  }
+
   return mFrameLoader;
 }
 
@@ -935,7 +934,7 @@ void nsSubDocumentFrame::ResetFrameLoader() {
 
 // XXX this should be called ObtainDocShell or something like that,
 // to indicate that it could have side effects
-nsIDocShell* nsSubDocumentFrame::GetDocShell() {
+nsIDocShell* nsSubDocumentFrame::GetDocShell() const {
   // How can FrameLoader() return null???
   if (NS_WARN_IF(!FrameLoader())) {
     return nullptr;
@@ -1160,40 +1159,30 @@ nsPoint nsSubDocumentFrame::GetExtraOffset() const {
   return mInnerView->GetPosition();
 }
 
-nsIFrame* nsSubDocumentFrame::ObtainIntrinsicSizeFrame() {
-  if (StyleDisplay()->IsContainSize()) {
-    // Intrinsic size of 'contain:size' replaced elements is 0,0. So, don't use
-    // internal frames to provide intrinsic size at all.
-    return nullptr;
+void nsSubDocumentFrame::SubdocumentIntrinsicSizeOrRatioChanged(
+    const Maybe<IntrinsicSize>& aIntrinsicSize,
+    const Maybe<AspectRatio>& aIntrinsicRatio) {
+  if (mSubdocumentIntrinsicSize == aIntrinsicSize &&
+      mSubdocumentIntrinsicRatio == aIntrinsicRatio) {
+    return;
+  }
+  mSubdocumentIntrinsicSize = aIntrinsicSize;
+  mSubdocumentIntrinsicRatio = aIntrinsicRatio;
+
+  if (MOZ_UNLIKELY(HasAllStateBits(NS_FRAME_IS_DIRTY))) {
+    // We will be reflowed soon anyway.
+    return;
   }
 
-  nsCOMPtr<nsIObjectLoadingContent> olc = do_QueryInterface(GetContent());
-  if (olc) {
-    // We are an HTML <object> or <embed> (a replaced element).
+  const nsStylePosition* pos = StylePosition();
+  bool dependsOnIntrinsics =
+      !pos->mWidth.ConvertsToLength() || !pos->mHeight.ConvertsToLength();
 
-    // Try to get an nsIFrame for our sub-document's document element
-    nsIFrame* subDocRoot = nullptr;
-
-    if (nsIDocShell* docShell = GetDocShell()) {
-      if (mozilla::PresShell* presShell = docShell->GetPresShell()) {
-        nsIScrollableFrame* scrollable =
-            presShell->GetRootScrollFrameAsScrollable();
-        if (scrollable) {
-          nsIFrame* scrolled = scrollable->GetScrolledFrame();
-          if (scrolled) {
-            subDocRoot = scrolled->PrincipalChildList().FirstChild();
-          }
-        }
-      }
-    }
-
-    if (subDocRoot && subDocRoot->GetContent() &&
-        subDocRoot->GetContent()->NodeInfo()->Equals(nsGkAtoms::svg,
-                                                     kNameSpaceID_SVG)) {
-      return subDocRoot;  // SVG documents have an intrinsic size
-    }
+  if (dependsOnIntrinsics || pos->mObjectFit != StyleObjectFit::Fill) {
+    auto dirtyHint = dependsOnIntrinsics ? IntrinsicDirty::StyleChange
+                                         : IntrinsicDirty::Resize;
+    PresShell()->FrameNeedsReflow(this, dirtyHint, NS_FRAME_IS_DIRTY);
   }
-  return nullptr;
 }
 
 /**

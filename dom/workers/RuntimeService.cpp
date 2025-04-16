@@ -277,7 +277,11 @@ void LoadContextOptions(const char* aPrefName, void* /* aClosure */) {
 #ifdef ENABLE_WASM_SIMD
       .setWasmSimd(GetWorkerPref<bool>("wasm_simd"_ns))
 #endif
-#ifdef ENABLE_WASM_REFTYPES
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+      .setWasmFunctionReferences(
+          GetWorkerPref<bool>("wasm_function_references"_ns))
+#endif
+#ifdef ENABLE_WASM_GC
       .setWasmGc(GetWorkerPref<bool>("wasm_gc"_ns))
 #endif
       .setWasmVerbose(GetWorkerPref<bool>("wasm_verbose"_ns))
@@ -1578,17 +1582,21 @@ class CrashIfHangingRunnable : public WorkerControlRunnable {
         mMonitor("CrashIfHangingRunnable::mMonitor") {}
 
   bool WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override {
-    aWorkerPrivate->DumpCrashInformation(mMsg);
-
     MonitorAutoLock lock(mMonitor);
+    if (!mHasMsg) {
+      aWorkerPrivate->DumpCrashInformation(mMsg);
+      mHasMsg.Flip();
+    }
     lock.Notify();
     return true;
   }
 
   nsresult Cancel() override {
-    mMsg.Assign("Canceled");
-
     MonitorAutoLock lock(mMonitor);
+    if (!mHasMsg) {
+      mMsg.Assign("Canceled");
+      mHasMsg.Flip();
+    }
     lock.Notify();
 
     return NS_OK;
@@ -1603,7 +1611,13 @@ class CrashIfHangingRunnable : public WorkerControlRunnable {
       return false;
     }
 
-    lock.Wait();
+    // To avoid any possibility of process hangs we never receive reports on
+    // we give the worker 1sec to react.
+    lock.Wait(TimeDuration::FromMilliseconds(1000));
+    if (!mHasMsg) {
+      mMsg.Append("NoResponse");
+      mHasMsg.Flip();
+    }
     return true;
   }
 
@@ -1617,6 +1631,7 @@ class CrashIfHangingRunnable : public WorkerControlRunnable {
 
   Monitor mMonitor;
   nsCString mMsg;
+  FlippedOnce<false> mHasMsg;
 };
 
 struct ActiveWorkerStats {
@@ -1631,6 +1646,8 @@ struct ActiveWorkerStats {
         // BC: Busy Count
         mMessage.AppendPrintf("-BC:%d", worker->BusyCount());
         mMessage.Append(runnable->MsgData());
+      } else {
+        mMessage.AppendPrintf("-BC:%d DispatchFailed", worker->BusyCount());
       }
     }
   }
@@ -2127,8 +2144,8 @@ bool LogViolationDetailsRunnable::MainThreadRun() {
       csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_EVAL,
                                nullptr,  // triggering element
                                mWorkerPrivate->CSPEventListener(), mFileName,
-                               mScriptSample, mLineNum, mColumnNum,
-                               EmptyString(), EmptyString());
+                               mScriptSample, mLineNum, mColumnNum, u""_ns,
+                               u""_ns);
     }
   }
 

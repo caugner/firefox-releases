@@ -13,10 +13,12 @@
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
 #include "jit/JitFrames.h"
+#include "jit/JitRuntime.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
 #include "util/Memory.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
+#include "vm/JSContext.h"
 
 #include "jit/MacroAssembler-inl.h"
 #include "vm/JSScript-inl.h"
@@ -134,17 +136,17 @@ void MacroAssemblerX86::finish() {
   }
 }
 
-void MacroAssemblerX86::handleFailureWithHandlerTail(void* handler,
-                                                     Label* profilerExitTail) {
+void MacroAssemblerX86::handleFailureWithHandlerTail(Label* profilerExitTail) {
   // Reserve space for exception information.
   subl(Imm32(sizeof(ResumeFromException)), esp);
   movl(esp, eax);
 
   // Call the handler.
+  using Fn = void (*)(ResumeFromException * rfe);
   asMasm().setupUnalignedABICall(ecx);
   asMasm().passABIArg(eax);
-  asMasm().callWithABI(handler, MoveOp::GENERAL,
-                       CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+  asMasm().callWithABI<Fn, HandleException>(
+      MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
   Label entryFrame;
   Label catch_;
@@ -758,11 +760,13 @@ void MacroAssembler::wasmStoreI64(const wasm::MemoryAccessDesc& access,
   MOZ_ASSERT(dstAddr.kind() == Operand::MEM_REG_DISP ||
              dstAddr.kind() == Operand::MEM_SCALE);
 
-  append(access, size());
-  movl(value.low, LowWord(dstAddr));
-
+  // Store the high word first so as to hit guard-page-based OOB checks without
+  // writing partial data.
   append(access, size());
   movl(value.high, HighWord(dstAddr));
+
+  append(access, size());
+  movl(value.low, LowWord(dstAddr));
 }
 
 template <typename T>

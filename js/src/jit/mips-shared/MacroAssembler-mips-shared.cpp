@@ -8,6 +8,8 @@
 
 #include "mozilla/EndianUtils.h"
 
+#include "jsmath.h"
+
 #include "jit/MacroAssembler.h"
 
 using namespace js;
@@ -3326,6 +3328,16 @@ void MacroAssembler::truncDoubleToInt32(FloatRegister src, Register dest,
   bind(&notZero);
 
   branch32(Assembler::NotEqual, ScratchRegister, Imm32(0), fail);
+}
+
+void MacroAssembler::nearbyIntDouble(RoundingMode mode, FloatRegister src,
+                                     FloatRegister dest) {
+  MOZ_CRASH("not supported on this platform");
+}
+
+void MacroAssembler::nearbyIntFloat32(RoundingMode mode, FloatRegister src,
+                                      FloatRegister dest) {
+  MOZ_CRASH("not supported on this platform");
 }
 
 //}}} check_macroassembler_style

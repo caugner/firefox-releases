@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmReftypesEnabled() || !wasmGcEnabled() || wasmCompileMode() != 'baseline'
+// |jit-test| skip-if: !wasmGcEnabled()
 
 // Basic private-to-module functionality.  At the moment all we have is null
 // pointers, not very exciting.
@@ -17,7 +17,7 @@
           ;; Restriction: cannot expose Refs outside the module, not even
           ;; as a return value.  See ref-restrict.js.
 
-          (func (export "get") (result externref)
+          (func (export "get") (result eqref)
            (global.get $g1))
 
           (func (export "copy")

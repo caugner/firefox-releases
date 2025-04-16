@@ -18,6 +18,7 @@
 #include "jit/MIRGraph.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "util/Memory.h"
+#include "wasm/WasmTypes.h"
 
 #include "jit/shared/Lowering-shared-inl.h"
 #include "vm/BytecodeUtil-inl.h"
@@ -41,16 +42,6 @@ LBoxAllocation LIRGenerator::useBoxFixedAtStart(MDefinition* mir,
 LBoxAllocation LIRGenerator::useBoxAtStart(MDefinition* mir,
                                            LUse::Policy policy) {
   return useBox(mir, policy, /* useAtStart = */ true);
-}
-
-void LIRGenerator::visitCloneLiteral(MCloneLiteral* ins) {
-  MOZ_ASSERT(ins->type() == MIRType::Object);
-  MOZ_ASSERT(ins->input()->type() == MIRType::Object);
-
-  LCloneLiteral* lir =
-      new (alloc()) LCloneLiteral(useRegisterAtStart(ins->input()));
-  defineReturn(lir, ins);
-  assignSafepoint(lir, ins);
 }
 
 void LIRGenerator::visitParameter(MParameter* param) {
@@ -353,6 +344,18 @@ void LIRGenerator::visitArgumentsObjectLength(MArgumentsObjectLength* ins) {
   auto* lir = new (alloc()) LArgumentsObjectLength(useRegister(argsObj));
   assignSnapshot(lir, BailoutKind::ArgumentsObjectAccess);
   define(lir, ins);
+}
+
+void LIRGenerator::visitGuardArgumentsObjectNotOverriddenIterator(
+    MGuardArgumentsObjectNotOverriddenIterator* ins) {
+  MDefinition* argsObj = ins->getArgsObject();
+  MOZ_ASSERT(argsObj->type() == MIRType::Object);
+
+  auto* lir = new (alloc())
+      LGuardArgumentsObjectNotOverriddenIterator(useRegister(argsObj), temp());
+  assignSnapshot(lir, BailoutKind::ArgumentsObjectAccess);
+  add(lir, ins);
+  redefine(ins, argsObj);
 }
 
 void LIRGenerator::visitReturnFromCtor(MReturnFromCtor* ins) {
@@ -879,7 +882,8 @@ void LIRGenerator::visitTest(MTest* test) {
     }
   }
 
-#ifdef ENABLE_WASM_SIMD
+#if defined(ENABLE_WASM_SIMD) && \
+    (defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64))
   // Check if the operand for this test is an any_true/all_true SIMD operation.
   // If it is, we want to emit an LWasmReduceAndBranchSimd128 node to avoid
   // generating an intermediate boolean result.
@@ -1867,6 +1871,32 @@ void LIRGenerator::visitDiv(MDiv* ins) {
   MOZ_CRASH("Unhandled number specialization");
 }
 
+void LIRGenerator::visitWasmBuiltinDivI64(MWasmBuiltinDivI64* div) {
+  lowerWasmBuiltinDivI64(div);
+}
+
+void LIRGenerator::visitWasmBuiltinModI64(MWasmBuiltinModI64* mod) {
+  lowerWasmBuiltinModI64(mod);
+}
+
+void LIRGenerator::visitBuiltinInt64ToFloatingPoint(
+    MBuiltinInt64ToFloatingPoint* ins) {
+  lowerBuiltinInt64ToFloatingPoint(ins);
+}
+
+void LIRGenerator::visitWasmBuiltinTruncateToInt64(
+    MWasmBuiltinTruncateToInt64* ins) {
+  lowerWasmBuiltinTruncateToInt64(ins);
+}
+
+void LIRGenerator::visitWasmBuiltinModD(MWasmBuiltinModD* ins) {
+  MOZ_ASSERT(gen->compilingWasm());
+  LWasmBuiltinModD* lir = new (alloc()) LWasmBuiltinModD(
+      useRegisterAtStart(ins->lhs()), useRegisterAtStart(ins->rhs()),
+      useFixedAtStart(ins->tls(), WasmTlsReg));
+  defineReturn(lir, ins);
+}
+
 void LIRGenerator::visitMod(MMod* ins) {
   MOZ_ASSERT(ins->lhs()->type() == ins->rhs()->type());
   MOZ_ASSERT(IsNumberType(ins->type()));
@@ -1890,13 +1920,13 @@ void LIRGenerator::visitMod(MMod* ins) {
     MOZ_ASSERT(ins->lhs()->type() == MIRType::Double);
     MOZ_ASSERT(ins->rhs()->type() == MIRType::Double);
 
-    // Ion does an unaligned ABI call and thus needs a temp register. Wasm
-    // doesn't.
-    LDefinition maybeTemp = gen->compilingWasm() ? LDefinition::BogusTemp()
-                                                 : tempFixed(CallTempReg0);
+    MOZ_ASSERT(!gen->compilingWasm());
 
-    LModD* lir = new (alloc()) LModD(useRegisterAtStart(ins->lhs()),
-                                     useRegisterAtStart(ins->rhs()), maybeTemp);
+    // Ion does an unaligned ABI call and thus needs a temp register.
+    // Note: useRegisterAtStart is safe here, the temp is not a FP register.
+    LModD* lir = new (alloc())
+        LModD(useRegisterAtStart(ins->lhs()), useRegisterAtStart(ins->rhs()),
+              tempFixed(CallTempReg0));
     defineReturn(lir, ins);
     return;
   }
@@ -1950,7 +1980,7 @@ void LIRGenerator::visitFromCodePoint(MFromCodePoint* ins) {
 
   LFromCodePoint* lir =
       new (alloc()) LFromCodePoint(useRegister(codePoint), temp(), temp());
-  assignSnapshot(lir, BailoutKind::BoundsCheck);
+  assignSnapshot(lir, BailoutKind::InvalidCodePoint);
   define(lir, ins);
   assignSafepoint(lir, ins);
 }
@@ -2351,6 +2381,16 @@ void LIRGenerator::visitWasmTruncateToInt32(MWasmTruncateToInt32* ins) {
     default:
       MOZ_CRASH("unexpected type in WasmTruncateToInt32");
   }
+}
+
+void LIRGenerator::visitWasmBuiltinTruncateToInt32(
+    MWasmBuiltinTruncateToInt32* truncate) {
+  mozilla::DebugOnly<MDefinition*> opd = truncate->input();
+  MOZ_ASSERT(opd->type() == MIRType::Double || opd->type() == MIRType::Float32);
+
+  // May call into JS::ToInt32() on the slow OOL path.
+  gen->setNeedsStaticStackAlignment();
+  lowerWasmBuiltinTruncateToInt32(truncate);
 }
 
 void LIRGenerator::visitWasmBoxValue(MWasmBoxValue* ins) {
@@ -3054,6 +3094,14 @@ void LIRGenerator::visitFunctionLength(MFunctionLength* ins) {
 
   auto* lir = new (alloc()) LFunctionLength(useRegister(ins->function()));
   assignSnapshot(lir, BailoutKind::FunctionLength);
+  define(lir, ins);
+}
+
+void LIRGenerator::visitFunctionName(MFunctionName* ins) {
+  MOZ_ASSERT(ins->function()->type() == MIRType::Object);
+
+  auto* lir = new (alloc()) LFunctionName(useRegister(ins->function()));
+  assignSnapshot(lir, BailoutKind::FunctionName);
   define(lir, ins);
 }
 
@@ -4358,6 +4406,16 @@ void LIRGenerator::visitGuardIsNotArrayBufferMaybeShared(
   redefine(ins, ins->object());
 }
 
+void LIRGenerator::visitGuardIsTypedArray(MGuardIsTypedArray* ins) {
+  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
+
+  auto* lir =
+      new (alloc()) LGuardIsTypedArray(useRegister(ins->object()), temp());
+  assignSnapshot(lir, BailoutKind::TypedArrayGuard);
+  add(lir, ins);
+  redefine(ins, ins->object());
+}
+
 void LIRGenerator::visitNurseryObject(MNurseryObject* ins) {
   MOZ_ASSERT(ins->type() == MIRType::Object);
 
@@ -4450,6 +4508,17 @@ void LIRGenerator::visitGuardFunctionFlags(MGuardFunctionFlags* ins) {
 
   auto* lir = new (alloc()) LGuardFunctionFlags(useRegister(ins->function()));
   assignSnapshot(lir, BailoutKind::FunctionFlagsGuard);
+  add(lir, ins);
+  redefine(ins, ins->function());
+}
+
+void LIRGenerator::visitGuardFunctionIsNonBuiltinCtor(
+    MGuardFunctionIsNonBuiltinCtor* ins) {
+  MOZ_ASSERT(ins->function()->type() == MIRType::Object);
+
+  auto* lir = new (alloc())
+      LGuardFunctionIsNonBuiltinCtor(useRegister(ins->function()), temp());
+  assignSnapshot(lir, BailoutKind::FunctionIsNonBuiltinCtorGuard);
   add(lir, ins);
   redefine(ins, ins->function());
 }
@@ -5075,9 +5144,11 @@ void LIRGenerator::visitWasmParameter(MWasmParameter* ins) {
 
 void LIRGenerator::visitWasmReturn(MWasmReturn* ins) {
   MDefinition* rval = ins->getOperand(0);
+  MDefinition* tlsParam = ins->getOperand(1);
 
   if (rval->type() == MIRType::Int64) {
-    add(new (alloc()) LWasmReturnI64(useInt64Fixed(rval, ReturnReg64)));
+    add(new (alloc()) LWasmReturnI64(useInt64Fixed(rval, ReturnReg64),
+                                     useFixed(tlsParam, WasmTlsReg)));
     return;
   }
 
@@ -5097,11 +5168,16 @@ void LIRGenerator::visitWasmReturn(MWasmReturn* ins) {
     MOZ_CRASH("Unexpected wasm return type");
   }
 
+  lir->setOperand(1, useFixed(tlsParam, WasmTlsReg));
+
   add(lir);
 }
 
 void LIRGenerator::visitWasmReturnVoid(MWasmReturnVoid* ins) {
-  add(new (alloc()) LWasmReturnVoid);
+  MDefinition* tlsParam = ins->getOperand(0);
+  LWasmReturnVoid* lir = new (alloc()) LWasmReturnVoid;
+  lir->setOperand(0, useFixed(tlsParam, WasmTlsReg));
+  add(lir);
 }
 
 void LIRGenerator::visitWasmStackArg(MWasmStackArg* ins) {
@@ -5298,6 +5374,40 @@ void LIRGenerator::visitGetDOMMember(MGetDOMMember* ins) {
         new (alloc()) LGetDOMMemberT(useRegisterForTypedLoad(obj, type));
     define(lir, ins);
   }
+}
+
+void LIRGenerator::visitLoadDOMExpandoValue(MLoadDOMExpandoValue* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  auto* lir =
+      new (alloc()) LLoadDOMExpandoValue(useRegisterAtStart(ins->proxy()));
+  defineBox(lir, ins);
+}
+
+void LIRGenerator::visitLoadDOMExpandoValueGuardGeneration(
+    MLoadDOMExpandoValueGuardGeneration* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  auto* lir = new (alloc())
+      LLoadDOMExpandoValueGuardGeneration(useRegisterAtStart(ins->proxy()));
+  assignSnapshot(lir, BailoutKind::DOMExpandoValueGenerationGuard);
+  defineBox(lir, ins);
+}
+
+void LIRGenerator::visitLoadDOMExpandoValueIgnoreGeneration(
+    MLoadDOMExpandoValueIgnoreGeneration* ins) {
+  MOZ_ASSERT(ins->proxy()->type() == MIRType::Object);
+  auto* lir = new (alloc())
+      LLoadDOMExpandoValueIgnoreGeneration(useRegisterAtStart(ins->proxy()));
+  defineBox(lir, ins);
+}
+
+void LIRGenerator::visitGuardDOMExpandoMissingOrGuardShape(
+    MGuardDOMExpandoMissingOrGuardShape* ins) {
+  MOZ_ASSERT(ins->expando()->type() == MIRType::Value);
+  auto* lir = new (alloc())
+      LGuardDOMExpandoMissingOrGuardShape(useBox(ins->expando()), temp());
+  assignSnapshot(lir, BailoutKind::DOMExpandoMissingOrShapeGuard);
+  add(lir, ins);
+  redefine(ins, ins->expando());
 }
 
 void LIRGenerator::visitRecompileCheck(MRecompileCheck* ins) {
@@ -5531,6 +5641,19 @@ void LIRGenerator::visitLoadWrapperTarget(MLoadWrapperTarget* ins) {
   define(new (alloc()) LLoadWrapperTarget(useRegisterAtStart(object)), ins);
 }
 
+void LIRGenerator::visitGuardHasGetterSetter(MGuardHasGetterSetter* ins) {
+  MDefinition* object = ins->object();
+  MOZ_ASSERT(object->type() == MIRType::Object);
+
+  auto* guard = new (alloc())
+      LGuardHasGetterSetter(useRegisterAtStart(object), tempFixed(CallTempReg0),
+                            tempFixed(CallTempReg1));
+  assignSnapshot(guard, BailoutKind::HasGetterSetterGuard);
+  add(guard, ins);
+  redefine(ins, object);
+  assignSafepoint(guard, ins);
+}
+
 void LIRGenerator::visitConstant(MConstant* ins) {
   if (!IsFloatingPointType(ins->type()) && ins->canEmitAtUses()) {
     emitAtUses(ins);
@@ -5584,7 +5707,8 @@ void LIRGenerator::visitWasmFloatConstant(MWasmFloatConstant* ins) {
     case MIRType::Float32:
       define(new (alloc()) LFloat32(ins->toFloat32()), ins);
       break;
-#ifdef ENABLE_WASM_SIMD
+#if defined(ENABLE_WASM_SIMD) && \
+    (defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64))
     case MIRType::Simd128:
       define(new (alloc()) LSimd128(ins->toSimd128()), ins);
       break;

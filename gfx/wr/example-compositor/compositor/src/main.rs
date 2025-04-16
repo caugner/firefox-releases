@@ -363,7 +363,6 @@ fn main() {
     let opts = webrender::RendererOptions {
         clear_color: Some(ColorF::new(1.0, 1.0, 1.0, 1.0)),
         debug_flags,
-        enable_picture_caching: true,
         compositor_config,
         ..webrender::RendererOptions::default()
     };
@@ -383,7 +382,6 @@ fn main() {
         notifier,
         opts,
         None,
-        device_size,
     ).unwrap();
     let api = sender.create_api();
     let document_id = api.add_document(device_size, 0);

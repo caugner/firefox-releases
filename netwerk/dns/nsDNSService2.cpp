@@ -184,13 +184,13 @@ nsDNSRecord::GetNextAddr(uint16_t port, NetAddr* addr) {
       } else {
         mIter++;
       }
-    } while (iter() && mHostRecord->Blacklisted(iter()));
+    } while (iter() && mHostRecord->Blocklisted(iter()));
 
     if (!iter() && startedFresh) {
-      // If everything was blacklisted we want to reset the blacklist (and
+      // If everything was blocklisted we want to reset the blocklist (and
       // likely relearn it) and return the first address. That is better
       // than nothing.
-      mHostRecord->ResetBlacklist();
+      mHostRecord->ResetBlocklist();
       mIter = mAddrInfo->Addresses().begin();
     }
 
@@ -240,7 +240,7 @@ nsDNSRecord::GetAddresses(nsTArray<NetAddr>& aAddressArray) {
   mHostRecord->addr_info_lock.Lock();
   if (mHostRecord->addr_info) {
     for (const auto& address : mHostRecord->addr_info->Addresses()) {
-      if (mHostRecord->Blacklisted(&address)) {
+      if (mHostRecord->Blocklisted(&address)) {
         continue;
       }
       NetAddr* addr = aAddressArray.AppendElement(address);
@@ -329,7 +329,7 @@ nsDNSRecord::Rewind() {
 
 NS_IMETHODIMP
 nsDNSRecord::ReportUnusable(uint16_t aPort) {
-  // right now we don't use the port in the blacklist
+  // right now we don't use the port in the blocklist
 
   MutexAutoLock lock(mHostRecord->addr_info_lock);
 
@@ -394,6 +394,14 @@ NS_IMETHODIMP
 nsDNSByTypeRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
                                         nsISVCBRecord** aRecord) {
   return mHostRecord->GetServiceModeRecord(aNoHttp2, aNoHttp3, aRecord);
+}
+
+NS_IMETHODIMP
+nsDNSByTypeRecord::GetAllRecordsWithEchConfig(
+    bool aNoHttp2, bool aNoHttp3, bool* aAllRecordsHaveEchConfig,
+    nsTArray<RefPtr<nsISVCBRecord>>& aResult) {
+  return mHostRecord->GetAllRecordsWithEchConfig(
+      aNoHttp2, aNoHttp3, aAllRecordsHaveEchConfig, aResult);
 }
 
 NS_IMETHODIMP
@@ -1205,7 +1213,7 @@ nsresult nsDNSService::ResolveInternal(
     flags |= RESOLVE_DISABLE_TRR;
   }
 
-  rv = res->ResolveHost(hostname, EmptyCString(), RESOLVE_TYPE_DEFAULT,
+  rv = res->ResolveHost(hostname, ""_ns, RESOLVE_TYPE_DEFAULT,
                         aOriginAttributes, flags, af, syncReq);
   if (NS_SUCCEEDED(rv)) {
     // wait for result
@@ -1439,5 +1447,12 @@ nsDNSService::IsSVCDomainNameFailed(const nsACString& aOwnerName,
   }
 
   *aResult = failedList->Contains(aSVCDomainName);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDNSService::ResetExcludedSVCDomainName(const nsACString& aOwnerName) {
+  MutexAutoLock lock(mLock);
+  mFailedSVCDomainNames.Remove(aOwnerName);
   return NS_OK;
 }

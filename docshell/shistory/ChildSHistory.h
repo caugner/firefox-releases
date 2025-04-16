@@ -67,9 +67,11 @@ class ChildSHistory : public nsISupports, public nsWrapperCache {
    */
   bool CanGo(int32_t aOffset);
   void Go(int32_t aOffset, bool aRequireUserInteraction, ErrorResult& aRv);
-  void AsyncGo(int32_t aOffset, bool aRequireUserInteraction);
+  void AsyncGo(int32_t aOffset, bool aRequireUserInteraction,
+               CallerType aCallerType, ErrorResult& aRv);
 
-  void GotoIndex(int32_t aIndex, ErrorResult& aRv);
+  // aIndex is the new index, and aOffset is the offset between new and current.
+  void GotoIndex(int32_t aIndex, int32_t aOffset, ErrorResult& aRv);
 
   void RemovePendingHistoryNavigations();
 

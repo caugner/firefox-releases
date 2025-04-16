@@ -86,6 +86,7 @@
       <li><a href="about:license#dagre-d3">Dagre-D3 License</a></li>
       <li><a href="about:license#diff">diff License</a></li>
       <li><a href="about:license#dtoa">dtoa License</a></li>
+      <li><a href="about:license#ECCKiila">ECCKiila License</a></li>
       <li><a href="about:license#Fiat-Crypto">Fiat-Crypto License</a></li>
       <li><a href="about:license#fuzz-aldrin">fuzz-aldrin License</a></li>
       <li><a href="about:license#hunspell-nl">Dutch Spellchecking Dictionary License</a></li>
@@ -3346,10 +3347,45 @@ OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
 
 <hr>
 
+<h1><a id="ECCKiila"></a>ECCKiila License</h1>
+
+<p>This license applies to the files
+  <code>security/nss/lib/freebl/ecl/ecp_secp384r1.c</code>
+  and <code>security/nss/lib/freebl/ecl/ecp_secp521r1.c</code>
+</p>
+<pre>
+The MIT License (MIT)
+
+Copyright (c) 2020 Luis Rivera-Zamarripa, Jesús-Javier Chi-Domínguez, Billy Bob Brumley
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</pre>
+
+
+<hr>
+
 <h1><a id="Fiat-Crypto"></a>Fiat-Crypto License</h1>
 
-<p>This license applies to the file
+<p>This license applies to the files
   <code>security/nss/lib/freebl/ecl/curve25519_32.c</code>
+  , <code>security/nss/lib/freebl/ecl/ecp_secp384r1.c</code>
+  , and <code>security/nss/lib/freebl/ecl/ecp_secp521r1.c</code>
 </p>
 <pre>
 The MIT License (MIT)
@@ -4609,8 +4645,8 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     <p>This license applies to the following files:</p>
     <ul>
-      <li><code>media/mtransport/sigslot.h</code></li>
-      <li><code>media/mtransport/test/gtest_utils.h</code></li>
+      <li><code>dom/media/webrtc/transport/sigslot.h</code></li>
+      <li><code>dom/media/webrtc/transport/test/gtest_utils.h</code></li>
     </ul>
 
 <pre>
@@ -4976,7 +5012,7 @@ THE SOFTWARE.
     <h1><a id="nicer"></a>nICEr License</h1>
 
     <p>This license applies to certain files in the directory
-    <code>media/mtransport/third_party/nICEr</code>.</p>
+    <code>dom/media/webrtc/transport/third_party/nICEr</code>.</p>
 
 <pre>
    Copyright (C) 2007, Adobe Systems Inc.
@@ -5249,7 +5285,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     <h1><a id="nrappkit"></a>nrappkit License</h1>
 
     <p>This license applies to certain files in the directory
-    <code>media/mtransport/third_party/nrappkit</code>.</p>
+    <code>dom/media/webrtc/transport/third_party/nrappkit</code>.</p>
 
 <pre>
 Copyright (C) 2001-2007, Network Resonance, Inc.
@@ -5283,7 +5319,7 @@ POSSIBILITY OF SUCH DAMAGE.
 </pre>
 
     <p>This license applies to certain files in the directory
-    <code>media/mtransport/third_party/nrappkit</code>.</p>
+    <code>dom/media/webrtc/transport/third_party/nrappkit</code>.</p>
 
 <pre>
 Copyright (C) 1999-2003 RTFM, Inc.
@@ -5328,7 +5364,7 @@ SUCH DAMAGE.
    files included in this distribution. it does not apply to any other
    part of ssldump not included in this distribution.</p>
 
-    <p>This license applies to the file <code>media/mtransport/third_party/nrappkit/src/port/generic/include/sys/queue.h</code>.</p>
+    <p>This license applies to the file <code>dom/media/webrtc/transport/third_party/nrappkit/src/port/generic/include/sys/queue.h</code>.</p>
 
 <pre>
 Copyright (c) 1991, 1993
@@ -5361,7 +5397,7 @@ SUCH DAMAGE.
 
 
   <p>This license applies to the file:
-  <code>media/mtransport/third_party/nrappkit/src/util/util.c</code>.</p>
+  <code>dom/media/webrtc/transport/third_party/nrappkit/src/util/util.c</code>.</p>
 
 <pre>
 Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
@@ -5453,7 +5489,7 @@ SOFTWARE.
 
     <p>This license applies to the files
     <code>nsprpub/pr/src/misc/praton.c</code> and
-    <code>media/mtransport/third_party/nrappkit/src/util/util.c</code>.</p>
+    <code>dom/media/webrtc/transport/third_party/nrappkit/src/util/util.c</code>.</p>
 
 <pre>
 Copyright (c) 2004 by Internet Systems Consortium, Inc. ("ISC")
@@ -6970,7 +7006,7 @@ Database section 7.
       <li><code>db/mork/src/morkQuickSort.cpp</code></li>
       <li><code>xpcom/ds/nsQuickSort.cpp</code></li>
       <li><code>nsprpub/pr/src/misc/praton.c</code></li>
-      <li><code>media/mtransport/third_party/nICEr/src/stun/addrs.c</code></li>
+      <li><code>dom/media/webrtc/transport/third_party/nICEr/src/stun/addrs.c</code></li>
     </ul>
 
 <pre>
@@ -7050,7 +7086,7 @@ THE SOFTWARE.
 <pre>
 Different parts of the SCOWL English dictionaries are subject to the
 following licenses as shown below. For additional details, sources,
-credits, and public domain references, see <a href="https://dxr.mozilla.org/mozilla-central/source/extensions/spellcheck/locales/en-US/hunspell/README_en_US.txt">README.txt</a>.
+credits, and public domain references, see <a href="https://searchfox.org/mozilla-central/source/extensions/spellcheck/locales/en-US/hunspell/README_en_US.txt">README.txt</a>.
 
 The collective work of the Spell Checking Oriented Word Lists (SCOWL) is under
 the  following copyright:

@@ -7,6 +7,7 @@ use std::sync::RwLock;
 use glean_core::metrics::MetricType;
 
 use super::{BooleanMetric, CommonMetricData, CounterMetric, ErrorType, StringMetric};
+use crate::dispatcher;
 use crate::ipc::need_ipc;
 
 /// Sealed traits protect against downstream implementations.
@@ -15,6 +16,7 @@ use crate::ipc::need_ipc;
 mod private {
     use super::{BooleanMetric, CommonMetricData, CounterMetric, StringMetric};
     use crate::ipc::need_ipc;
+    use std::sync::Arc;
 
     /// The sealed trait.
     ///
@@ -37,7 +39,11 @@ mod private {
         type Inner = glean_core::metrics::BooleanMetric;
 
         fn from_inner(metric: Self::Inner) -> Self {
-            BooleanMetric(metric)
+            assert!(
+                !need_ipc(),
+                "Labeled Boolean metrics are not supported in non-main processes"
+            );
+            BooleanMetric::Parent(Arc::new(crate::private::boolean::BooleanMetricImpl(metric)))
         }
 
         fn new_inner(meta: CommonMetricData) -> Self::Inner {
@@ -72,7 +78,7 @@ mod private {
 
         fn from_inner(metric: Self::Inner) -> Self {
             assert!(!need_ipc());
-            CounterMetric::Parent(crate::private::counter::CounterMetricImpl(metric))
+            CounterMetric::Parent(Arc::new(crate::private::counter::CounterMetricImpl(metric)))
         }
 
         fn new_inner(meta: CommonMetricData) -> Self::Inner {
@@ -188,6 +194,7 @@ where
         error_type: ErrorType,
         storage_name: Option<&str>,
     ) -> Result<i32, String> {
+        dispatcher::block_on_queue();
         crate::with_glean(move |glean| {
             let core = self
                 .core

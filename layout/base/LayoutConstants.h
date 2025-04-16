@@ -50,9 +50,18 @@ enum class ComputeSizeFlag : uint8_t {
   ShrinkWrap,
 
   /**
+   * Set if we'd like to compute our 'auto' isize, regardless of our actual
+   * corresponding computed value. (e.g. to get an intrinsic isize for flex
+   * items when resolving automatic minimum size in the main axis during flexbox
+   * layout.)
+   */
+  UseAutoISize,
+
+  /**
    * Set if we'd like to compute our 'auto' bsize, regardless of our actual
-   * corresponding computed value. (e.g. to get an intrinsic height for flex
-   * items with "min-height: auto" to use during flexbox layout.)
+   * corresponding computed value. (e.g. to get an intrinsic bsize for flex
+   * items when resolving automatic minimum size in the main axis during flexbox
+   * layout.)
    */
   UseAutoBSize,
 
@@ -74,6 +83,12 @@ enum class ComputeSizeFlag : uint8_t {
   IApplyAutoMinSize,  // only has an effect when eShrinkWrap is false
 };
 using ComputeSizeFlags = mozilla::EnumSet<ComputeSizeFlag>;
+
+/**
+ * This is used in some nsLayoutUtils functions.
+ * Declared here so that fewer files need to include nsLayoutUtils.h.
+ */
+enum class IntrinsicISizeType { MinISize, PrefISize };
 
 }  // namespace mozilla
 

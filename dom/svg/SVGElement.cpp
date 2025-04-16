@@ -8,6 +8,7 @@
 
 #include "mozilla/dom/MutationEventBinding.h"
 #include "mozilla/dom/MutationObservers.h"
+#include "mozilla/dom/CSSRuleBinding.h"
 #include "mozilla/dom/SVGElementBinding.h"
 #include "mozilla/dom/SVGGeometryElement.h"
 #include "mozilla/dom/SVGLengthBinding.h"
@@ -261,8 +262,7 @@ nsresult SVGElement::BindToTree(BindContext& aContext, nsINode& aParent) {
         [self = RefPtr<SVGElement>(this)]() {
           nsAutoString nonce;
           self->GetNonce(nonce);
-          self->SetAttr(kNameSpaceID_None, nsGkAtoms::nonce, EmptyString(),
-                        true);
+          self->SetAttr(kNameSpaceID_None, nsGkAtoms::nonce, u""_ns, true);
           self->SetNonce(nonce);
         }));
   }
@@ -1148,12 +1148,13 @@ void MappedAttrParser::ParseMappedAttrValue(nsAtom* aMappedAttrName,
     nsCOMPtr<nsIReferrerInfo> referrerInfo =
         ReferrerInfo::CreateForSVGResources(mElement->OwnerDoc());
 
-    RefPtr<URLExtraData> data =
-        new URLExtraData(mBaseURI, referrerInfo, mElement->NodePrincipal());
+    auto data = MakeRefPtr<URLExtraData>(mBaseURI, referrerInfo,
+                                         mElement->NodePrincipal());
     changed = Servo_DeclarationBlock_SetPropertyById(
         mDecl->Raw(), propertyID, &value, false, data,
         ParsingMode::AllowUnitlessLength,
-        mElement->OwnerDoc()->GetCompatibilityMode(), mLoader, {});
+        mElement->OwnerDoc()->GetCompatibilityMode(), mLoader,
+        CSSRule_Binding::STYLE_RULE, {});
 
     // TODO(emilio): If we want to record these from CSSOM more generally, we
     // can pass the document use counters down the FFI call. For now manually
@@ -1387,13 +1388,11 @@ void SVGElement::MaybeSerializeAttrBeforeRemoval(nsAtom* aName, bool aNotify) {
   mAttrs.SetAndSwapAttr(aName, oldAttrValue, &oldValueSet);
 }
 
-/* static */
 nsAtom* SVGElement::GetEventNameForAttr(nsAtom* aAttr) {
-  if (aAttr == nsGkAtoms::onload) return nsGkAtoms::onSVGLoad;
-  if (aAttr == nsGkAtoms::onunload) return nsGkAtoms::onSVGUnload;
-  if (aAttr == nsGkAtoms::onresize) return nsGkAtoms::onSVGResize;
-  if (aAttr == nsGkAtoms::onscroll) return nsGkAtoms::onSVGScroll;
-  if (aAttr == nsGkAtoms::onzoom) return nsGkAtoms::onSVGZoom;
+  if (IsSVGElement(nsGkAtoms::svg)) {
+    if (aAttr == nsGkAtoms::onload) return nsGkAtoms::onSVGLoad;
+    if (aAttr == nsGkAtoms::onscroll) return nsGkAtoms::onSVGScroll;
+  }
   if (aAttr == nsGkAtoms::onbegin) return nsGkAtoms::onbeginEvent;
   if (aAttr == nsGkAtoms::onrepeat) return nsGkAtoms::onrepeatEvent;
   if (aAttr == nsGkAtoms::onend) return nsGkAtoms::onendEvent;
@@ -1466,9 +1465,13 @@ void SVGElement::DidAnimateLength(uint8_t aAttrEnum) {
     nsCSSPropertyID propId =
         SVGGeometryProperty::AttrEnumToCSSPropId(this, aAttrEnum);
 
-    SMILOverrideStyle()->SetSMILValue(propId,
-                                      GetLengthInfo().mLengths[aAttrEnum]);
-    return;
+    // We don't map use element width/height currently. We can remove this
+    // test when we do.
+    if (propId != eCSSProperty_UNKNOWN) {
+      SMILOverrideStyle()->SetSMILValue(propId,
+                                        GetLengthInfo().mLengths[aAttrEnum]);
+      return;
+    }
   }
 
   nsIFrame* frame = GetPrimaryFrame();

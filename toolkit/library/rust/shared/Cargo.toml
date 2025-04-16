@@ -9,7 +9,7 @@ description = "Shared Rust code for libxul"
 geckoservo = { path = "../../../../servo/ports/geckolib" }
 kvstore = { path = "../../../components/kvstore" }
 lmdb-rkv-sys = { version = "0.11", features = ["mdb_idl_logn_9"] }
-mp4parse_capi = { git = "https://github.com/mozilla/mp4parse-rust", rev = "fe9028570e44f3a725dd78bbb58428909c4618bf" }
+mp4parse_capi = { git = "https://github.com/mozilla/mp4parse-rust", rev = "f7c35a30ff25521bebe64c19d3f306569ecb5385" }
 nserror = { path = "../../../../xpcom/rust/nserror" }
 nsstring = { path = "../../../../xpcom/rust/nsstring" }
 netwerk_helper = { path = "../../../../netwerk/base/rust-helper" }
@@ -19,16 +19,16 @@ static_prefs = { path = "../../../../modules/libpref/init/static_prefs" }
 profiler_helper = { path = "../../../../tools/profiler/rust-helper", optional = true }
 mozurl = { path = "../../../../netwerk/base/mozurl" }
 webrender_bindings = { path = "../../../../gfx/webrender_bindings", optional = true }
-cubeb-coreaudio = { git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs", rev = "91a7bb50198a9b7578d98d56e9fd32f257abb41f", optional = true }
+cubeb-coreaudio = { git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs", branch = "backport-83", optional = true }
 cubeb-pulse = { git = "https://github.com/djg/cubeb-pulse-rs", rev="3224e2dee65c0726c448484d4c3c43956b9330ec", optional = true, features=["pulse-dlopen"] }
 cubeb-sys = { version = "0.7", optional = true, features=["gecko-in-tree"] }
 encoding_glue = { path = "../../../../intl/encoding_glue" }
 audioipc-client = { path = "../../../../media/audioipc/client", optional = true }
 audioipc-server = { path = "../../../../media/audioipc/server", optional = true }
-authenticator = "0.3.0" 
+authenticator = "0.3.1"
 gkrust_utils = { path = "../../../../xpcom/rust/gkrust_utils" }
 gecko_logger = { path = "../../../../xpcom/rust/gecko_logger" }
-rsdparsa_capi = { path = "../../../../media/webrtc/signaling/src/sdp/rsdparsa_capi" }
+rsdparsa_capi = { path = "../../../../dom/media/webrtc/sdp/rsdparsa_capi" }
 xulstore = { path = "../../../components/xulstore", optional = true }
 # We have these to enforce common feature sets for said crates.
 log = {version = "0.4", features = ["release_max_level_info"]}
@@ -42,11 +42,11 @@ bookmark_sync = { path = "../../../components/places/bookmark_sync", optional = 
 shift_or_euc_c = "0.1.0"
 chardetng_c = "0.1.1"
 audio_thread_priority = "0.23.4"
-mdns_service = { path="../../../../media/mtransport/mdns_service", optional = true }
+mdns_service = { path="../../../../dom/media/webrtc/transport/mdns_service", optional = true }
 neqo_glue = { path = "../../../../netwerk/socket/neqo_glue" }
 rlbox_lucet_sandbox = { version = "0.1.0", optional = true }
 wgpu_bindings = { path = "../../../../gfx/wgpu_bindings", optional = true }
-mapped_hyph = { git = "https://github.com/jfkthame/mapped_hyph.git", tag = "v0.3.0" }
+mapped_hyph = { git = "https://github.com/jfkthame/mapped_hyph.git", tag = "v0.4.2" }
 remote = { path = "../../../../remote", optional = true }
 fog_control = { path = "../../../components/glean", optional = true }
 app_services_logger = { path = "../../../../services/common/app_services_logger" }
@@ -60,16 +60,17 @@ fluent-langneg-ffi = { path = "../../../../intl/locale/rust/fluent-langneg-ffi" 
 # version less than or equal to what we link to. This isn't a problem because we
 # tend to keep this up to date, but it needs to be taken into consideration when
 # changing this version.
-rusqlite = { version = "0.23.1", features = ["modern_sqlite", "in_gecko"] }
+rusqlite = { version = "0.24.1", features = ["modern_sqlite", "in_gecko"] }
 
-fluent = { version = "0.12" , features = ["fluent-pseudo"] }
+fluent = { version = "0.13.1", features = ["fluent-pseudo"] }
 fluent-ffi = { path = "../../../../intl/l10n/rust/fluent-ffi" }
 firefox-accounts-bridge = { path = "../../../../services/fxaccounts/rust-bridge/firefox-accounts-bridge", optional=true }
 
 processtools = { path = "../../../components/processtools" }
+qcms = { path = "../../../../gfx/qcms" }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-viaduct = { git = "https://github.com/mozilla/application-services", rev = "9ba519a5739b1976f1d333923d34b7f4916b9e26"}
+viaduct = { git = "https://github.com/mozilla/application-services", rev = "641353a8648602ce17d23c89b88e2a22d108fb03"}
 webext_storage_bridge = { path = "../../../components/extensions/storage/webext_storage_bridge" }
 
 [build-dependencies]
@@ -97,7 +98,7 @@ gecko_profiler = ["profiler_helper", "geckoservo/gecko_profiler"]
 gecko_profiler_parse_elf = ["profiler_helper/parse_elf"]
 new_xulstore = ["xulstore"]
 new_cert_storage = ["cert_storage"]
-fuzzing_interfaces = []
+libfuzzer = []
 webrtc = ["mdns_service"]
 wasm_library_sandboxing = ["rlbox_lucet_sandbox"]
 webgpu = ["wgpu_bindings"]

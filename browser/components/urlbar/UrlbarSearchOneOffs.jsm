@@ -110,8 +110,9 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
    */
   get hasView() {
     // Return true if the one-offs are enabled.  We set style.display = "none"
-    // when they're disabled, so use that to check.
-    return this.style.display != "none";
+    // when they're disabled, and we hide the container when there are no
+    // engines to show.
+    return this.style.display != "none" && !this.container.hidden;
   }
 
   /**
@@ -120,6 +121,41 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
    */
   get isViewOpen() {
     return this.view.isOpen;
+  }
+
+  /**
+   * The selected one-off, a xul:button, including the search-settings button.
+   *
+   * @param {DOMElement|null} button
+   *   The selected one-off button. Null if no one-off is selected.
+   */
+  set selectedButton(button) {
+    if (this.selectedButton == button) {
+      return;
+    }
+
+    super.selectedButton = button;
+
+    let expectedSearchMode;
+    if (
+      button &&
+      button != this.view.oneOffSearchButtons.settingsButtonCompact
+    ) {
+      expectedSearchMode = {
+        engineName: button.engine?.name,
+        source: button.source,
+        entry: "oneoff",
+      };
+      this.input.searchMode = expectedSearchMode;
+    } else if (this.input.searchMode) {
+      // Restore the previous state. We do this only if we're in search mode, as
+      // an optimization in the common case of cycling through normal results.
+      this.input.restoreSearchModeState();
+    }
+  }
+
+  get selectedButton() {
+    return super.selectedButton;
   }
 
   /**
@@ -209,23 +245,21 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
       return;
     }
 
-    this.selectedButton = null;
     // Handle opening search mode in either the current tab or in a new tab.
     switch (where) {
       case "current": {
-        this.input.setSearchMode(searchMode);
+        this.input.searchMode = searchMode;
         this.input.startQuery(startQueryParams);
         break;
       }
       case "tab": {
-        if (params?.inBackground) {
-          // We will enter search mode in a background tab. We should enter full
-          // search mode right away so it is not cleared on Urlbar blur.
-          searchMode.isPreview = false;
-        }
+        // We set this.selectedButton when switching tabs. If we entered search
+        // mode preview here, it could be cleared when this.selectedButton calls
+        // setSearchMode.
+        searchMode.isPreview = false;
 
         let newTab = this.input.window.gBrowser.addTrustedTab("about:newtab");
-        this.input.setSearchModeForBrowser(searchMode, newTab.linkedBrowser);
+        this.input.setSearchMode(searchMode, newTab.linkedBrowser);
         if (userTypedSearchString) {
           // Set the search string for the new tab.
           newTab.linkedBrowser.userTypedValue = this.input.value;
@@ -237,11 +271,14 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
         break;
       }
       default: {
-        this.input.setSearchMode(searchMode);
+        this.input.searchMode = searchMode;
         this.input.startQuery(startQueryParams);
         this.input.select();
+        break;
       }
     }
+
+    this.selectedButton = null;
   }
 
   /**
@@ -275,14 +312,14 @@ class UrlbarSearchOneOffs extends SearchOneOffs {
    *   that branch.
    */
   onPrefChanged(changedPref) {
-    // Null out this._engines when the local-one-offs-related prefs change so
-    // that they rebuild themselves the next time the view opens.
+    // Invalidate the engine cache when the local-one-offs-related prefs change
+    // so that the one-offs rebuild themselves the next time the view opens.
     if (
       ["update2", "update2.localOneOffs", "update2.oneOffsRefresh"].includes(
         changedPref
       )
     ) {
-      this._engines = null;
+      this.invalidateCache();
     }
     this._setupOneOffsHorizontalKeyNavigation();
   }

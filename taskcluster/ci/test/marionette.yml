@@ -20,6 +20,7 @@ job-defaults:
             - --setpref=toolkit.asyncshutdown.log=true
 
     run-on-projects: built-projects
+    test-manifest-loader: null  # don't load tests in the taskgraph
     tier: default
     fission-run-on-projects:
         by-test-platform:
@@ -30,6 +31,10 @@ job-defaults:
             default: []
     fission-tier: 2
     variants: ["fission"]
+    virtualization:
+        by-test-platform:
+            windows10-64.*: hardware
+            default: virtual
 
 marionette:
     description: "Marionette unittest run"
@@ -56,7 +61,3 @@ marionette-gpu:
     mozharness:
         extra-options:
             - --test-manifest gpu-unit-tests.ini
-    virtualization:
-        by-test-platform:
-            windows10-64.*: virtual-with-gpu
-            default: virtual

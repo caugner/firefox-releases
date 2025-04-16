@@ -22,6 +22,7 @@
 #include "js/HashTable.h"
 #include "js/RealmOptions.h"
 #include "js/SourceText.h"
+#include "js/Transcoding.h"
 #include "js/Vector.h"
 #include "js/WasmModule.h"
 #include "vm/GlobalObject.h"  // GlobalObject
@@ -90,16 +91,22 @@ struct ScopeContext {
   static Scope* determineEffectiveScope(Scope* scope, JSObject* environment);
 };
 
-// Input of the compilation, including source and enclosing context.
-struct CompilationInput {
-  const JS::ReadOnlyCompileOptions& options;
-
+struct CompilationAtomCache {
   // Atoms lowered into or converted from CompilationStencil.parserAtoms.
   //
   // This field is here instead of in CompilationGCOutput because atoms lowered
   // from JSAtom is part of input (enclosing scope bindings, lazy function name,
   // etc), and having 2 vectors in both input/output is error prone.
   JS::GCVector<JSAtom*, 0, js::SystemAllocPolicy> atoms;
+
+  void trace(JSTracer* trc);
+} JS_HAZ_GC_POINTER;
+
+// Input of the compilation, including source and enclosing context.
+struct CompilationInput {
+  const JS::ReadOnlyCompileOptions& options;
+
+  CompilationAtomCache atomCache;
 
   BaseScript* lazy = nullptr;
 
@@ -279,29 +286,29 @@ class ScriptStencilIterable {
  public:
   class ScriptAndFunction {
    public:
-    ScriptStencil& script;
+    const ScriptStencil& script;
     HandleFunction function;
     FunctionIndex functionIndex;
 
     ScriptAndFunction() = delete;
-    ScriptAndFunction(ScriptStencil& script, HandleFunction function,
+    ScriptAndFunction(const ScriptStencil& script, HandleFunction function,
                       FunctionIndex functionIndex)
         : script(script), function(function), functionIndex(functionIndex) {}
   };
 
   class Iterator {
     size_t index_ = 0;
-    CompilationStencil& stencil_;
+    const CompilationStencil& stencil_;
     CompilationGCOutput& gcOutput_;
 
-    Iterator(CompilationStencil& stencil, CompilationGCOutput& gcOutput,
+    Iterator(const CompilationStencil& stencil, CompilationGCOutput& gcOutput,
              size_t index)
         : index_(index), stencil_(stencil), gcOutput_(gcOutput) {
       skipNonFunctions();
     }
 
    public:
-    explicit Iterator(CompilationStencil& stencil,
+    explicit Iterator(const CompilationStencil& stencil,
                       CompilationGCOutput& gcOutput)
         : stencil_(stencil), gcOutput_(gcOutput) {
       skipNonFunctions();
@@ -334,23 +341,23 @@ class ScriptStencilIterable {
     }
 
     ScriptAndFunction operator*() {
-      ScriptStencil& script = stencil_.scriptData[index_];
+      const ScriptStencil& script = stencil_.scriptData[index_];
 
       FunctionIndex functionIndex = FunctionIndex(index_);
       return ScriptAndFunction(script, gcOutput_.functions[functionIndex],
                                functionIndex);
     }
 
-    static Iterator end(CompilationStencil& stencil,
+    static Iterator end(const CompilationStencil& stencil,
                         CompilationGCOutput& gcOutput) {
       return Iterator(stencil, gcOutput, stencil.scriptData.length());
     }
   };
 
-  CompilationStencil& stencil_;
+  const CompilationStencil& stencil_;
   CompilationGCOutput& gcOutput_;
 
-  explicit ScriptStencilIterable(CompilationStencil& stencil,
+  explicit ScriptStencilIterable(const CompilationStencil& stencil,
                                  CompilationGCOutput& gcOutput)
       : stencil_(stencil), gcOutput_(gcOutput) {}
 
@@ -383,10 +390,9 @@ struct CompilationInfo {
 
   MOZ_MUST_USE bool instantiateStencils(JSContext* cx,
                                         CompilationGCOutput& gcOutput);
+  MOZ_MUST_USE bool serializeStencils(JSContext* cx, JS::TranscodeBuffer& buf,
+                                      bool* succeededOut = nullptr);
 
-  JSAtom* liftParserAtomToJSAtom(JSContext* cx, const ParserAtom* parserAtom) {
-    return parserAtom->toJSAtom(cx, *this).unwrapOr(nullptr);
-  }
   const ParserAtom* lowerJSAtomToParserAtom(JSContext* cx, JSAtom* atom) {
     auto result = stencil.parserAtoms.internJSAtom(cx, *this, atom);
     return result.unwrapOr(nullptr);
@@ -403,6 +409,44 @@ struct CompilationInfo {
   ScriptStencilIterable functionScriptStencils(CompilationGCOutput& gcOutput) {
     return ScriptStencilIterable(stencil, gcOutput);
   }
+
+  void trace(JSTracer* trc);
+};
+
+// A set of CompilationInfo, for XDR purpose.
+// This contains the initial compilation, and a vector of delazification.
+struct CompilationInfoVector {
+ private:
+  using FunctionKey = uint64_t;
+  using FunctionMap = HashMap<FunctionKey, FunctionIndex>;
+
+  static FunctionKey toFunctionKey(const SourceExtent& extent) {
+    return (FunctionKey)extent.sourceStart << 32 | extent.sourceEnd;
+  }
+
+  MOZ_MUST_USE bool buildDelazificationStencilMap(FunctionMap& functionMap);
+
+ public:
+  frontend::CompilationInfo initial;
+  GCVector<frontend::CompilationInfo, 0, js::SystemAllocPolicy> delazifications;
+
+  CompilationInfoVector(JSContext* cx,
+                        const JS::ReadOnlyCompileOptions& options)
+      : initial(cx, options) {}
+
+  // Move constructor is necessary to use Rooted.
+  CompilationInfoVector(CompilationInfoVector&&) = default;
+
+  // To avoid any misuses, make sure this is neither copyable or assignable.
+  CompilationInfoVector(const CompilationInfoVector&) = delete;
+  CompilationInfoVector& operator=(const CompilationInfoVector&) = delete;
+  CompilationInfoVector& operator=(CompilationInfoVector&&) = delete;
+
+  MOZ_MUST_USE bool instantiateStencils(JSContext* cx,
+                                        CompilationGCOutput& gcOutput);
+  MOZ_MUST_USE bool deserializeStencils(JSContext* cx,
+                                        const JS::TranscodeRange& range,
+                                        bool* succeededOut);
 
   void trace(JSTracer* trc);
 };

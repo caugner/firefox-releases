@@ -124,9 +124,9 @@ class WindowGlobalChild final : public WindowGlobalActor,
   mozilla::ipc::IProtocol* AsNativeActor() override { return this; }
 
   // IPC messages
-  mozilla::ipc::IPCResult RecvRawMessage(const JSActorMessageMeta& aMeta,
-                                         const ClonedMessageData& aData,
-                                         const ClonedMessageData& aStack);
+  mozilla::ipc::IPCResult RecvRawMessage(
+      const JSActorMessageMeta& aMeta, const Maybe<ClonedMessageData>& aData,
+      const Maybe<ClonedMessageData>& aStack);
 
   mozilla::ipc::IPCResult RecvMakeFrameLocal(
       const MaybeDiscarded<dom::BrowsingContext>& aFrameContext,
@@ -153,6 +153,8 @@ class WindowGlobalChild final : public WindowGlobalActor,
 
   mozilla::ipc::IPCResult RecvAddBlockedFrameNodeByClassifier(
       const MaybeDiscardedBrowsingContext& aNode);
+
+  mozilla::ipc::IPCResult RecvResetScalingZoom();
 
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 

@@ -11,7 +11,6 @@
 #include "Units.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/layers/MatrixMessage.h"
-#include "mozilla/layers/RepaintRequest.h"
 #include "nsRefreshObservers.h"
 
 #include <functional>
@@ -29,6 +28,8 @@ namespace mozilla {
 class PresShell;
 
 namespace layers {
+
+struct RepaintRequest;
 
 typedef std::function<void(uint64_t, const nsTArray<TouchBehaviorFlags>&)>
     SetAllowedTouchBehaviorCallback;
@@ -171,12 +172,6 @@ class APZCCallbackHelper {
       const ScrollableLayerGuid::ViewID& aScrollId);
 
   static void CancelAutoscroll(const ScrollableLayerGuid::ViewID& aScrollId);
-
-  /* Adjust the display-port margins by the difference between the requested
-   * scroll offset and the resulting scroll offset after setting the requested
-   * value. */
-  static ScreenMargin AdjustDisplayPortForScrollDelta(ScreenMargin aMargins,
-                                                      ScreenPoint aScrollDelta);
 
   /*
    * Check if the scrollable frame is currently in the middle of a main thread

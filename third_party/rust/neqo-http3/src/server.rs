@@ -13,9 +13,9 @@ use crate::server_events::{ClientRequestStream, Http3ServerEvent, Http3ServerEve
 use crate::settings::HttpZeroRttChecker;
 use crate::Res;
 use neqo_common::{qtrace, Datagram};
-use neqo_crypto::AntiReplay;
+use neqo_crypto::{AntiReplay, Cipher};
 use neqo_qpack::QpackSettings;
-use neqo_transport::server::{ActiveConnectionRef, Server};
+use neqo_transport::server::{ActiveConnectionRef, Server, ValidateAddress};
 use neqo_transport::{ConnectionIdManager, Output};
 use std::cell::RefCell;
 use std::cell::RefMut;
@@ -70,6 +70,14 @@ impl Http3Server {
 
     pub fn set_qlog_dir(&mut self, dir: Option<PathBuf>) {
         self.server.set_qlog_dir(dir)
+    }
+
+    pub fn set_validation(&mut self, v: ValidateAddress) {
+        self.server.set_validation(v);
+    }
+
+    pub fn set_ciphers(&mut self, ciphers: impl AsRef<[Cipher]>) {
+        self.server.set_ciphers(ciphers);
     }
 
     pub fn process(&mut self, dgram: Option<Datagram>, now: Instant) -> Output {
@@ -218,6 +226,7 @@ fn prepare_data(
 mod tests {
     use super::{Http3Server, Http3ServerEvent, Http3State, Rc, RefCell};
     use crate::{Error, Header};
+    use neqo_common::event::Provider;
     use neqo_crypto::AuthenticationStatus;
     use neqo_qpack::encoder::QPackEncoder;
     use neqo_qpack::QpackSettings;
@@ -973,12 +982,18 @@ mod tests {
     /// The second should always resume, but it might not always accept early data.
     fn zero_rtt_with_settings(settings: QpackSettings, zero_rtt: &ZeroRttState) {
         let (_, mut client) = connect();
-        let token = client.resumption_token();
+        let token = client.events().find_map(|e| {
+            if let ConnectionEvent::ResumptionToken(token) = e {
+                Some(token)
+            } else {
+                None
+            }
+        });
         assert!(token.is_some());
 
         let mut server = create_server(settings);
         let mut client = default_client();
-        client.enable_resumption(now(), &token.unwrap()).unwrap();
+        client.enable_resumption(now(), token.unwrap()).unwrap();
 
         connect_transport(&mut server, &mut client, true);
         assert!(client.tls_info().unwrap().resumed());

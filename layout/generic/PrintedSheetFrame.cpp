@@ -29,6 +29,42 @@ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 NS_IMPL_FRAMEARENA_HELPERS(PrintedSheetFrame)
 
+// Helper for BuildDisplayList:
+gfx::Matrix4x4 ComputePagesPerSheetTransform(nsIFrame* aFrame,
+                                             float aAppUnitsPerPixel) {
+  MOZ_ASSERT(aFrame->IsPageFrame());
+  auto* pageFrame = static_cast<nsPageFrame*>(aFrame);
+
+  // Variables that we use in our transform (initialized with sane defaults):
+  float scale = 1.0f;
+  uint32_t rowIdx = 0;
+  uint32_t colIdx = 0;
+
+  nsSharedPageData* pd = pageFrame->GetSharedPageData();
+  if (pd) {
+    const auto* ppsInfo = pd->PagesPerSheetInfo();
+
+    // XXXdholbert For now, we just scale down evenly based on the number of
+    // columns (which is the same as the number of rows, for all the values we
+    // currently support). When we support possibly-rotated pages-per-sheet
+    // values (2 & 6), we'll need a more subtle scale factor here, based on the
+    // page's aspect ratio as well as the ppsInfo. (See bug 1669905.)
+    scale = 1.0f / static_cast<float>(ppsInfo->mNumCols);
+
+    std::tie(rowIdx, colIdx) =
+        ppsInfo->GetRowAndColFromIdx(pageFrame->IndexOnSheet());
+  }
+
+  // Scale down the page based on the above-computed scale:
+  auto transform = gfx::Matrix4x4::Scaling(scale, scale, 1);
+
+  // Draw the page at an offset, to get it in its pages-per-sheet "cell":
+  nsSize pageSize = pageFrame->PresContext()->GetPageSize();
+  return transform.PreTranslate(
+      NSAppUnitsToFloatPixels(colIdx * pageSize.width, aAppUnitsPerPixel),
+      NSAppUnitsToFloatPixels(rowIdx * pageSize.height, aAppUnitsPerPixel), 0);
+}
+
 void PrintedSheetFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                          const nsDisplayListSet& aLists) {
   if (PresContext()->IsScreen()) {
@@ -37,10 +73,20 @@ void PrintedSheetFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     DisplayBorderBackgroundOutline(aBuilder, aLists);
   }
 
-  // Let each of our children (pages) draw itself:
+  const nsRect visible = aBuilder->GetVisibleRect();
+
+  // Let each of our children (pages) draw itself, with a supplemental
+  // transform to shrink it & place it in its pages-per-sheet cell:
   for (auto* frame : mFrames) {
     if (!frame->HasAnyStateBits(NS_PAGE_SKIPPED_BY_CUSTOM_RANGE)) {
-      BuildDisplayListForChild(aBuilder, frame, aLists);
+      nsDisplayList content;
+
+      frame->BuildDisplayListForStackingContext(aBuilder, &content);
+      content.AppendNewToTop<nsDisplayTransform>(aBuilder, frame, &content,
+                                                 content.GetBuildingRect(),
+                                                 ComputePagesPerSheetTransform);
+
+      aLists.Content()->AppendToTop(&content);
     }
   }
 }
@@ -50,19 +96,45 @@ void PrintedSheetFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 // NS_PAGE_SKIPPED_BY_CUSTOM_RANGE state bit and returns true.
 static bool TagIfSkippedByCustomRange(nsPageFrame* aPageFrame, int32_t aPageNum,
                                       nsSharedPageData* aPD) {
-  // Only do page-skipping here if we're using the new tab-modal UI, and only
-  // do it for print-preview.  We have separate legacy code that skips pages
-  // for actual printing (for now).
-  if (!StaticPrefs::print_tab_modal_enabled() ||
-      !aPageFrame->PresContext()->IsScreen()) {
+  if (!aPD->mDoingPageRange) {
+    MOZ_ASSERT(!aPageFrame->HasAnyStateBits(NS_PAGE_SKIPPED_BY_CUSTOM_RANGE),
+               "page frames shouldn't be tagged as skipped if we're not "
+               "printing with a custom page range");
     return false;
   }
 
-  if (!aPD->mDoingPageRange ||
-      (aPD->mFromPageNum <= aPageNum && aPD->mToPageNum >= aPageNum)) {
+  bool isPageSkipped = false;
+
+  // As described in nsSharedPageData documentation: we can use mFromPageNum
+  // and mToPageNum as a quick way to reject entirely-out-of-range pages. For
+  // page numbers inside these bounds, we need to check mRanges to find out if
+  // they're included in our subranges (if there are any).
+  if (aPageNum < aPD->mFromPageNum || aPageNum > aPD->mToPageNum) {
+    // Page is out-of-bounds; it's skipped.
+    isPageSkipped = true;
+  } else {
+    // Check subranges (if there are any).
+    const auto& ranges = aPD->mPageRanges;
+    int32_t length = ranges.Length();
+
+    // Page ranges are pairs (start, end) of included pages.
+    if (length && (length % 2 == 0)) {
+      isPageSkipped = true;
+      for (int32_t i = 0; i < length; i += 2) {
+        if (ranges[i] <= aPageNum && aPageNum <= ranges[i + 1]) {
+          // The page is included in this piece of the custom range,
+          // so it's not skipped.
+          isPageSkipped = false;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!isPageSkipped) {
     MOZ_ASSERT(!aPageFrame->HasAnyStateBits(NS_PAGE_SKIPPED_BY_CUSTOM_RANGE),
-               "page frames in print range shouldn't be tagged with the"
-               "NS_PAGE_SKIPPED_BY_CUSTOM_RANGE state bit");
+               "page frames NS_PAGE_SKIPPED_BY_CUSTOM_RANGE state should "
+               "only be set if we actually want to skip the page");
     return false;
   }
 
@@ -91,15 +163,12 @@ void PrintedSheetFrame::Reflow(nsPresContext* aPresContext,
   // Count the number of pages that are displayed on this sheet (i.e. how many
   // child frames we end up laying out, excluding any pages that are skipped
   // due to not being in the user's page-range selection).
-  // (Until bug 1631452, this will always end up at 1, per assertion near
-  // the end of this function.)
   uint32_t numPagesOnThisSheet = 0;
 
-  // Target for numPagesOnThisSheet. (bug 1631452 will make this a
-  // configurable value instead of a constant.)
-  static const uint32_t kDesiredPagesPerSheet = 1;
+  // Target for numPagesOnThisSheet.
+  const uint32_t desiredPagesPerSheet = mPD->PagesPerSheetInfo()->mNumPages;
 
-  // NOTE: I'm intentionally *not* using a range-based 'for' looop here, since
+  // NOTE: I'm intentionally *not* using a range-based 'for' loop here, since
   // we potentially mutate the frame list (appending to the end) during the
   // list, which is not generally safe with range-based 'for' loops.
   for (auto* childFrame = mFrames.FirstChild(); childFrame;
@@ -114,13 +183,20 @@ void PrintedSheetFrame::Reflow(nsPresContext* aPresContext,
     pageFrame->DeterminePageNum();
 
     if (!TagIfSkippedByCustomRange(pageFrame, pageFrame->GetPageNum(), mPD)) {
-      numPagesOnThisSheet++;  // Page isn't skipped, so we increment count.
+      // The page is going to be displayed on this sheet. Tell it its index
+      // among the displayed pages, so we can use that to compute its "cell"
+      // when painting.
+      pageFrame->SetIndexOnSheet(numPagesOnThisSheet);
+      numPagesOnThisSheet++;
     }
 
     ReflowInput pageReflowInput(aPresContext, aReflowInput, pageFrame,
                                 pageSize);
-    // For now, we'll always position the pageFrame at our origin.  (This will
-    // change in bug 1631452 when we support more than 1 page per sheet.)
+
+    // For layout purposes, we position *all* our nsPageFrame children at our
+    // origin. Then, if we have multiple pages-per-sheet, we'll shrink & shift
+    // each one into the right position as a paint-time effect, in
+    // BuildDisplayList.
     LogicalPoint pagePos(wm);
 
     // Outparams for reflow:
@@ -165,7 +241,7 @@ void PrintedSheetFrame::Reflow(nsPresContext* aPresContext,
       // to our overflow list so that it'll go onto a subsequent sheet.
       // Otherwise we leave it on this sheet. This ensures we *only* generate
       // another sheet IFF there's a displayable page that will end up on it.
-      if (numPagesOnThisSheet == kDesiredPagesPerSheet &&
+      if (numPagesOnThisSheet >= desiredPagesPerSheet &&
           !isContinuingPageSkipped) {
         PushChildrenToOverflow(continuingPage, pageFrame);
         aStatus.SetIncomplete();
@@ -200,7 +276,7 @@ void PrintedSheetFrame::Reflow(nsPresContext* aPresContext,
                "Shouldn't create a sheet with no displayable pages on it");
   }
 
-  MOZ_ASSERT(numPagesOnThisSheet <= kDesiredPagesPerSheet,
+  MOZ_ASSERT(numPagesOnThisSheet <= desiredPagesPerSheet,
              "Shouldn't have more than desired number of displayable pages "
              "on this sheet");
 

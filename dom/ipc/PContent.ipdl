@@ -105,10 +105,10 @@ using mozilla::CrossProcessMutexHandle from "mozilla/ipc/CrossProcessMutex.h";
 using mozilla::dom::MaybeDiscardedBrowsingContext from "mozilla/dom/BrowsingContext.h";
 using mozilla::dom::BrowsingContextTransaction from "mozilla/dom/BrowsingContext.h";
 using mozilla::dom::BrowsingContextInitializer from "mozilla/dom/BrowsingContext.h";
+using mozilla::dom::PermitUnloadResult from "mozilla/dom/DocShellMessageUtils.h";
 using mozilla::dom::MaybeDiscardedWindowContext from "mozilla/dom/WindowContext.h";
 using mozilla::dom::WindowContextTransaction from "mozilla/dom/WindowContext.h";
 using base::SharedMemoryHandle from "base/shared_memory.h";
-using mozilla::ipc::SharedMemoryBasic::Handle from "mozilla/ipc/SharedMemoryBasic.h";
 using mozilla::fontlist::Pointer from "SharedFontList.h";
 using gfxSparseBitSet from "gfxFontUtils.h";
 using FontVisibility from "gfxFontEntry.h";
@@ -365,12 +365,6 @@ struct PostMessageData
     uint64_t innerWindowId;
 };
 
-struct KeyValuePair
-{
-    nsString key;
-    nsString value;
-};
-
 union SyncedContextInitializer
 {
     BrowsingContextInitializer;
@@ -452,6 +446,12 @@ parent:
                                 WindowGlobalInit windowInit,
                                 uint32_t chromeFlags);
 
+    // TODO: Do I need to make this return something to watch for completion?
+    // Guess we'll see how we end up triggering the actual print, for preview
+    // this should be enough...
+    async CloneDocumentTreeInto(MaybeDiscardedBrowsingContext aSourceBc,
+                                MaybeDiscardedBrowsingContext aTargetBc);
+
 child:
     async ConstructBrowser(ManagedEndpoint<PBrowserChild> browserEp,
                            ManagedEndpoint<PWindowGlobalChild> windowEp,
@@ -471,8 +471,8 @@ both:
     async PWebBrowserPersistDocument(nullable PBrowser aBrowser,
                                      MaybeDiscardedBrowsingContext aContext);
 
-    async RawMessage(JSActorMessageMeta aMetadata, ClonedMessageData aData,
-                     ClonedMessageData aStack);
+    async RawMessage(JSActorMessageMeta aMetadata, ClonedMessageData? aData,
+                     ClonedMessageData? aStack);
 
 child:
     async InitGMPService(Endpoint<PGMPServiceChild> service);
@@ -922,6 +922,12 @@ child:
 
    async DispatchLocationChangeEvent(MaybeDiscardedBrowsingContext aContext);
 
+  // Dispatches a "beforeunload" event to each in-process content window in the
+  // subtree beginning at `aStartingAt`, and returns the result as documented in
+  // the `PermitUnloadResult` enum.
+  async DispatchBeforeUnloadToSubtree(MaybeDiscardedBrowsingContext aStartingAt)
+      returns (PermitUnloadResult result);
+
 parent:
     /**
      * This is a temporary way to pass index and length through parent process.
@@ -1042,7 +1048,7 @@ parent:
 
     async OpenNotificationSettings(Principal principal);
 
-    async AddMixedContentSecurityState(MaybeDiscardedWindowContext aContext, uint32_t aStateFlags);
+    async AddSecurityState(MaybeDiscardedWindowContext aContext, uint32_t aStateFlags);
 
     // Request that the ServiceWorkerManager in the parent process create a
     // notification "click" or "close" event and dispatch it on the relevant
@@ -1324,7 +1330,7 @@ parent:
      *   In a typical case, there will be a handful of blocks altogether, so
      *   each content process only needs to make this request a few times.
      * @returns aHandle
-     *   Handle that can be used to construct a SharedMemoryBasic that maps the
+     *   Handle that can be used to construct a SharedMemory that maps the
      *   requested block of memory.
      *   If aGeneration does not match the parent's font list generation ID, or
      *   if requesting a block that does not exist (i.e. with aIndex greater
@@ -1434,7 +1440,7 @@ parent:
      * @param aLoaded
      *   Returns the size in bytes of the resource.
      */
-    sync GetHyphDict(nsIURI aURI) returns (Handle aHandle, uint32_t aSize);
+    sync GetHyphDict(nsIURI aURI) returns (SharedMemoryHandle aHandle, uint32_t aSize);
 
     async CreateWindow(PBrowser aThisTab,
                        MaybeDiscardedBrowsingContext aParent,
@@ -1443,7 +1449,7 @@ parent:
                        bool aCalledFromJS,
                        bool aWidthSpecified,
                        bool aForPrinting,
-                       bool aForPrintPreview,
+                       bool aForWindowDotPrint,
                        nsIURI aURIToLoad,
                        nsCString aFeatures,
                        float aFullZoom,
@@ -1666,7 +1672,8 @@ parent:
 
     async HistoryReload(MaybeDiscardedBrowsingContext aContext, uint32_t aReloadFlags);
 
-    async NotifyOnHistoryReload(MaybeDiscardedBrowsingContext aContext)
+    async NotifyOnHistoryReload(MaybeDiscardedBrowsingContext aContext,
+                                bool aForceReload)
             returns (bool canReload, nsDocShellLoadState? loadState,
                      bool? reloadActiveEntry);
 
@@ -1683,15 +1690,13 @@ parent:
                              nsID? aAgentClusterId)
       returns (BlobURLDataRequestResult aResult);
 
-    async SetActiveSessionHistoryEntryForTop(MaybeDiscardedBrowsingContext aContext,
+    async SetActiveSessionHistoryEntry(MaybeDiscardedBrowsingContext context,
                                        nsPoint? previousScrollPosition,
                                        SessionHistoryInfo info, uint32_t loadType,
-                                       nsID changeID);
-    async SetActiveSessionHistoryEntryForFrame(
-        MaybeDiscardedBrowsingContext aContext, nsPoint? previousScrollPosition,
-        SessionHistoryInfo info, int32_t childOffset, nsID changeID);
+                                       int32_t childOffset,
+                                       uint32_t updatedCacheKey, nsID changeID);
     async ReplaceActiveSessionHistoryEntry(
-        MaybeDiscardedBrowsingContext aContext, SessionHistoryInfo info);
+        MaybeDiscardedBrowsingContext context, SessionHistoryInfo info);
 
     async RemoveDynEntriesFromActiveSessionHistoryEntry(
         MaybeDiscardedBrowsingContext aContext);
@@ -1779,13 +1784,6 @@ both:
                             ClonedOrErrorMessageData aMessage,
                             PostMessageData aData);
 
-    /**
-     * Move sessionStorage data between parent and content processes. See
-     * SessionStorageManager documentation for more details.
-     */
-    async SessionStorageData(uint64_t aTopContextId, nsCString aOriginAttrs,
-                             nsCString aOriginKey, KeyValuePair[] aDefaultData,
-                             KeyValuePair[] aSessionData);
     async CommitWindowContextTransaction(MaybeDiscardedWindowContext aContext,
                                          WindowContextTransaction aTransaction,
                                          uint64_t aEpoch);

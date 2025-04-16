@@ -103,6 +103,8 @@ static const gfx::sRGBColor sScrollbarButtonHoverColor(gfx::sRGBColor(0.86f,
                                                                       0.86f));
 
 static const CSSIntCoord kMinimumWidgetSize = 14;
+static const CSSIntCoord kMinimumScrollbarSize = 14;
+static const CSSIntCoord kMinimumThinScrollbarSize = 6;
 static const CSSIntCoord kMinimumColorPickerHeight = 32;
 static const CSSIntCoord kMinimumRangeThumbSize = 20;
 static const CSSIntCoord kMinimumDropdownArrowButtonWidth = 18;
@@ -118,10 +120,12 @@ static const CSSCoord kMeterHeight = 12.0f;
 }  // namespace widget
 }  // namespace mozilla
 
-class nsNativeBasicTheme : private nsNativeTheme, public nsITheme {
+class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
+ protected:
   using sRGBColor = mozilla::gfx::sRGBColor;
   using CSSCoord = mozilla::CSSCoord;
   using CSSIntCoord = mozilla::CSSIntCoord;
+  using ComputedStyle = mozilla::ComputedStyle;
   using EventStates = mozilla::EventStates;
   using DrawTarget = mozilla::gfx::DrawTarget;
   using Path = mozilla::gfx::Path;
@@ -181,6 +185,7 @@ class nsNativeBasicTheme : private nsNativeTheme, public nsITheme {
   static bool IsDateTimeResetButton(nsIFrame* aFrame);
   static bool IsDateTimeTextField(nsIFrame* aFrame);
   static bool IsColorPickerButton(nsIFrame* aFrame);
+  static bool IsRootScrollbar(nsIFrame* aFrame);
   static std::pair<sRGBColor, sRGBColor> ComputeCheckColors(
       const EventStates& aState);
   static Rect FixAspectRatio(const Rect& aRect);
@@ -253,6 +258,12 @@ class nsNativeBasicTheme : private nsNativeTheme, public nsITheme {
       const EventStates& aState);
   static std::pair<sRGBColor, sRGBColor> ComputeRangeThumbColors(
       const EventStates& aState);
+  static sRGBColor ComputeScrollbarColor(const ComputedStyle& aStyle,
+                                         const EventStates& aDocumentState,
+                                         bool aIsRoot);
+  static sRGBColor ComputeScrollbarthumbColor(
+      const ComputedStyle& aStyle, const EventStates& aState,
+      const EventStates& aDocumentState);
   static void PaintListbox(DrawTarget* aDrawTarget, const Rect& aRect,
                            const EventStates& aState, uint32_t aDpiRatio);
   static void PaintMenulist(DrawTarget* aDrawTarget, const Rect& aRect,
@@ -295,20 +306,26 @@ class nsNativeBasicTheme : private nsNativeTheme, public nsITheme {
 
   virtual void PaintScrollbarthumbHorizontal(DrawTarget* aDrawTarget,
                                              const Rect& aRect,
-                                             const EventStates& aState);
+                                             const ComputedStyle& aStyle,
+                                             const EventStates& aElementState,
+                                             const EventStates& aDocumentState);
   virtual void PaintScrollbarthumbVertical(DrawTarget* aDrawTarget,
                                            const Rect& aRect,
-                                           const EventStates& aState);
+                                           const ComputedStyle& aStyle,
+                                           const EventStates& aElementState,
+                                           const EventStates& aDocumentState);
   virtual void PaintScrollbarHorizontal(DrawTarget* aDrawTarget,
-                                        const Rect& aRect);
-  virtual void PaintScrollbarVerticalAndCorner(DrawTarget* aDrawTarget,
-                                               const Rect& aRect,
-                                               uint32_t aDpiRatio);
-  virtual void PaintScrollbarbutton(DrawTarget* aDrawTarget,
-                                    StyleAppearance aAppearance,
-                                    const Rect& aRect,
-                                    const EventStates& aState,
-                                    uint32_t aDpiRatio);
+                                        const Rect& aRect,
+                                        const ComputedStyle& aStyle,
+                                        const EventStates& aDocumentState,
+                                        bool aIsRoot);
+  virtual void PaintScrollbarVerticalAndCorner(
+      DrawTarget* aDrawTarget, const Rect& aRect, const ComputedStyle& aStyle,
+      const EventStates& aDocumentState, uint32_t aDpiRatio, bool aIsRoot);
+  virtual void PaintScrollbarbutton(
+      DrawTarget* aDrawTarget, StyleAppearance aAppearance, const Rect& aRect,
+      const ComputedStyle& aStyle, const EventStates& aElementState,
+      const EventStates& aDocumentState, uint32_t aDpiRatio);
 };
 
 #endif

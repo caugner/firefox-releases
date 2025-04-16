@@ -1,5 +1,5 @@
-commit d3bfa94c16ef8b3c7e2cf8510852f610c369161e
-Author: Leo Balter <leonardo.balter@gmail.com>
-Date:   Wed Jul 15 13:46:48 2020 -0700
+commit 323905b70e644d90faa957235f8ac59eac4ba8ba
+Author: Alexey Shvayka <shvaikalesh@gmail.com>
+Date:   Wed Sep 9 22:59:23 2020 +0300
 
-    Fix bad renaming, main should upstream to master
+    Improve RegExp.prototype[@@replace] poisoned stdlib test

@@ -782,7 +782,7 @@ nsresult nsWindowWatcher::OpenWindowInternal(
     openWindowInfo->mForceNoOpener = aForceNoOpener;
     openWindowInfo->mParent = parentBC;
     openWindowInfo->mIsForPrinting = aPrintKind != PRINT_NONE;
-    openWindowInfo->mIsForPrintPreview = aPrintKind == PRINT_PREVIEW;
+    openWindowInfo->mIsForWindowDotPrint = aPrintKind == PRINT_WINDOW_DOT_PRINT;
 
     // We're going to want the window to be immediately available, meaning we
     // want it to match the current remoteness.
@@ -1056,7 +1056,7 @@ nsresult nsWindowWatcher::OpenWindowInternal(
     if (nameSpecified && !name.LowerCaseEqualsLiteral("_blank")) {
       MOZ_ALWAYS_SUCCEEDS(newBC->SetName(name));
     } else {
-      MOZ_ALWAYS_SUCCEEDS(newBC->SetName(EmptyString()));
+      MOZ_ALWAYS_SUCCEEDS(newBC->SetName(u""_ns));
     }
   }
 

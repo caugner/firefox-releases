@@ -374,10 +374,11 @@ static inline bool UnpackTypeCodeNullable(PackedTypeCode ptc) {
   return (uint32_t(ptc) >> PackedTypeNullableShift) == 1;
 }
 
-// Return the TypeCode, but return TypeCode::NullableRef for any reference type.
+// Return the TypeCode, but return AbstractReferenceTypeCode for any reference
+// type.
 //
 // This function is very, very hot, hence what would normally be a switch on the
-// value `c` to map the reference types to TypeCode::NullableRef has been
+// value `c` to map the reference types to AbstractReferenceTypeCode has been
 // distilled into a simple comparison; this is fastest.  Should type codes
 // become too complicated for this to work then a lookup table also has better
 // performance than a switch.
@@ -396,6 +397,15 @@ static inline bool IsReferenceType(PackedTypeCode ptc) {
   return UnpackTypeCodeTypeAbstracted(ptc) == AbstractReferenceTypeCode;
 }
 
+// Return a TypeCode with the nullable bit cleared, must only be used on
+// reference types.
+
+static inline PackedTypeCode RepackTypeCodeAsNonNullable(PackedTypeCode ptc) {
+  MOZ_ASSERT(IsReferenceType(ptc));
+  constexpr uint32_t NonNullableMask = ~(1 << PackedTypeNullableShift);
+  return PackedTypeCode(uint32_t(ptc) & NonNullableMask);
+}
+
 // An enum that describes the representation classes for tables; The table
 // element type is mapped into this by Table::repr().
 
@@ -407,8 +417,9 @@ enum class TableRepr { Ref, Func };
 class RefType {
  public:
   enum Kind {
-    Extern = uint8_t(TypeCode::ExternRef),
     Func = uint8_t(TypeCode::FuncRef),
+    Extern = uint8_t(TypeCode::ExternRef),
+    Eq = uint8_t(TypeCode::EqRef),
     TypeIndex = uint8_t(AbstractReferenceTypeIndexCode)
   };
 
@@ -420,6 +431,7 @@ class RefType {
     switch (UnpackTypeCodeType(ptc_)) {
       case TypeCode::FuncRef:
       case TypeCode::ExternRef:
+      case TypeCode::EqRef:
         MOZ_ASSERT(UnpackTypeCodeIndexUnchecked(ptc_) == NoRefTypeIndex);
         return true;
       case AbstractReferenceTypeIndexCode:
@@ -460,21 +472,24 @@ class RefType {
 
   PackedTypeCode packed() const { return ptc_; }
 
-  static RefType extern_() { return RefType(Extern, true); }
   static RefType func() { return RefType(Func, true); }
+  static RefType extern_() { return RefType(Extern, true); }
+  static RefType eq() { return RefType(Eq, true); }
 
-  bool isExtern() const { return kind() == RefType::Extern; }
   bool isFunc() const { return kind() == RefType::Func; }
+  bool isExtern() const { return kind() == RefType::Extern; }
+  bool isEq() const { return kind() == RefType::Eq; }
   bool isTypeIndex() const { return kind() == RefType::TypeIndex; }
 
   bool isNullable() const { return UnpackTypeCodeNullable(ptc_); }
 
   TableRepr tableRepr() const {
     switch (kind()) {
-      case RefType::Extern:
-        return TableRepr::Ref;
       case RefType::Func:
         return TableRepr::Func;
+      case RefType::Extern:
+      case RefType::Eq:
+        return TableRepr::Ref;
       case RefType::TypeIndex:
         MOZ_CRASH("NYI");
     }
@@ -500,8 +515,9 @@ class ValType {
       case TypeCode::F32:
       case TypeCode::F64:
       case TypeCode::V128:
-      case TypeCode::ExternRef:
       case TypeCode::FuncRef:
+      case TypeCode::ExternRef:
+      case TypeCode::EqRef:
       case AbstractReferenceTypeIndexCode:
         return true;
       default:
@@ -601,13 +617,15 @@ class ValType {
     return PackedTypeCodeToBits(tc_);
   }
 
+  bool isFuncRef() const {
+    return UnpackTypeCodeType(tc_) == TypeCode::FuncRef;
+  }
+
   bool isExternRef() const {
     return UnpackTypeCodeType(tc_) == TypeCode::ExternRef;
   }
 
-  bool isFuncRef() const {
-    return UnpackTypeCodeType(tc_) == TypeCode::FuncRef;
-  }
+  bool isEqRef() const { return UnpackTypeCodeType(tc_) == TypeCode::EqRef; }
 
   bool isNullable() const {
     MOZ_ASSERT(isReference());
@@ -622,6 +640,11 @@ class ValType {
   bool isReference() const {
     MOZ_ASSERT(isValid());
     return IsReferenceType(tc_);
+  }
+
+  bool isDefaultable() const {
+    MOZ_ASSERT(isValid());
+    return !isReference() || isNullable();
   }
 
   Kind kind() const {
@@ -645,8 +668,9 @@ class ValType {
   // that may (temporarily) simplify some code.
   bool isEncodedAsJSValueOnEscape() const {
     switch (typeCode()) {
-      case TypeCode::ExternRef:
       case TypeCode::FuncRef:
+      case TypeCode::ExternRef:
+      case TypeCode::EqRef:
         return true;
       default:
         return false;
@@ -1183,9 +1207,11 @@ class FuncType {
     return false;
   }
 #endif
-  // For JS->wasm jit entries, AnyRef parameters and returns are allowed, as are
-  // all reference types apart from TypeIndex.  V128 types are excluded per spec
-  // but are guarded against separately.
+  // For JS->wasm jit entries, temporarily disallow certain types until the
+  // stubs generator is improved.
+  //   * ref params may be nullable externrefs
+  //   * ref results may not be type indices
+  // V128 types are excluded per spec but are guarded against separately.
   bool temporarilyUnsupportedReftypeForEntry() const {
     for (ValType arg : args()) {
       if (arg.isReference() && (!arg.isExternRef() || !arg.isNullable())) {
@@ -1199,9 +1225,11 @@ class FuncType {
     }
     return false;
   }
-  // For inlined JS->wasm jit entries, AnyRef parameters and returns are
-  // allowed, as are all reference types apart from TypeIndex.  V128 types are
-  // excluded per spec but are guarded against separately.
+  // For inline JS->wasm jit entries, temporarily disallow certain types until
+  // the stubs generator is improved.
+  //   * ref params may be nullable externrefs
+  //   * ref results may not be type indices
+  // V128 types are excluded per spec but are guarded against separately.
   bool temporarilyUnsupportedReftypeForInlineEntry() const {
     for (ValType arg : args()) {
       if (arg.isReference() && (!arg.isExternRef() || !arg.isNullable())) {
@@ -1215,9 +1243,11 @@ class FuncType {
     }
     return false;
   }
-  // For wasm->JS jit exits, AnyRef parameters and returns are allowed, as are
-  // reference type parameters of all types except TypeIndex.  V128 types are
-  // excluded per spec but are guarded against separately.
+  // For wasm->JS jit exits, temporarily disallow certain types until
+  // the stubs generator is improved.
+  //   * ref params may not be type indices
+  //   * ref results may be nullable externrefs
+  // V128 types are excluded per spec but are guarded against separately.
   bool temporarilyUnsupportedReftypeForExit() const {
     for (ValType arg : args()) {
       if (arg.isTypeIndex()) {
@@ -2661,13 +2691,7 @@ enum class SymbolicAddress {
   HandleThrow,
   HandleTrap,
   ReportV128JSCall,
-  CallImport_Void,
-  CallImport_I32,
-  CallImport_I64,
-  CallImport_V128,
-  CallImport_F64,
-  CallImport_FuncRef,
-  CallImport_AnyRef,
+  CallImport_General,
   CoerceInPlace_ToInt32,
   CoerceInPlace_ToNumber,
   CoerceInPlace_JitEntry,
@@ -3310,8 +3334,9 @@ class DebugFrame {
           return;
         case ValType::Ref:
           switch (type.refTypeKind()) {
-            case RefType::Extern:
             case RefType::Func:
+            case RefType::Extern:
+            case RefType::Eq:
             case RefType::TypeIndex:
               return;
           }
@@ -3353,6 +3378,9 @@ class DebugFrame {
   // 4-byte aligned, so we add another word to get up to 8-byte
   // alignment.
   uint32_t padding_;
+#endif
+#if defined(ENABLE_WASM_SIMD) && defined(JS_CODEGEN_ARM64)
+  uint64_t padding_;
 #endif
 
  private:

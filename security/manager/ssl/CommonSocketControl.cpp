@@ -143,6 +143,8 @@ CommonSocketControl::IsAcceptableForHost(const nsACString& hostname,
     return NS_OK;
   }
 
+  MutexAutoLock lock(mMutex);
+
   // An empty mSucceededCertChain means the server certificate verification
   // failed before, so don't join in this case.
   if (mSucceededCertChain.IsEmpty()) {
@@ -286,6 +288,22 @@ CommonSocketControl::SetEsniTxt(const nsACString& aEsniTxt) {
 }
 
 NS_IMETHODIMP
+CommonSocketControl::GetEchConfig(nsACString& aEchConfig) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+CommonSocketControl::SetEchConfig(const nsACString& aEchConfig) {
+  // TODO: Implement this in bug 1654507.
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 CommonSocketControl::GetPeerId(nsACString& aResult) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+CommonSocketControl::GetRetryEchConfig(nsACString& aEchConfig) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

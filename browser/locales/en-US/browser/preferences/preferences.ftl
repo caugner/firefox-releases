@@ -33,6 +33,9 @@ search-input-box =
 
 managed-notice = Your browser is being managed by your organization.
 
+category-list =
+    .aria-label = Categories
+
 pane-general-title = General
 category-general =
     .tooltiptext = { pane-general-title }
@@ -541,6 +544,12 @@ browsing-picture-in-picture-toggle-enabled =
 
 browsing-picture-in-picture-learn-more = Learn more
 
+browsing-media-control =
+    .label = Control media via keyboard, headset, or virtual interface
+    .accesskey = v
+
+browsing-media-control-learn-more = Learn more
+
 browsing-cfr-recommendations =
     .label = Recommend extensions as you browse
     .accesskey = R
@@ -618,6 +627,8 @@ home-prefs-search-header =
 home-prefs-topsites-header =
     .label = Top Sites
 home-prefs-topsites-description = The sites you visit most
+home-prefs-topsites-by-option-sponsored =
+    .label = Sponsored Top Sites
 
 ## Variables:
 ##  $provider (String): Name of the corresponding content provider, e.g "Pocket".
@@ -698,7 +709,7 @@ suggestions-addressbar-settings-generic = Change preferences for other address b
 
 search-suggestions-cant-show = Search suggestions will not be shown in location bar results because you have configured { -brand-short-name } to never remember history.
 
-search-one-click-header = One-Click Search Engines
+search-one-click-header2 = Search Shortcuts
 
 search-one-click-desc = Choose the alternative search engines that appear below the address bar and search bar when you start to enter a keyword.
 

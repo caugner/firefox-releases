@@ -30,6 +30,17 @@ interface mixin LoadContextMixin {
   readonly attribute any originAttributes;
 };
 
+/**
+ * Allowed CSS display modes. This needs to be kept in
+ * sync with similar values in ServoStyleConsts.h
+ */
+enum DisplayMode {
+  "browser",
+  "minimal-ui",
+  "standalone",
+  "fullscreen",
+};
+
 [Exposed=Window, ChromeOnly]
 interface BrowsingContext {
   static BrowsingContext? get(unsigned long long aId);
@@ -68,6 +79,8 @@ interface BrowsingContext {
 
   readonly attribute WindowContext? topWindowContext;
 
+  readonly attribute boolean ancestorsAreCurrent;
+
   [SetterThrows] attribute [TreatNullAs=EmptyString] DOMString customPlatform;
 
   [SetterThrows] attribute [TreatNullAs=EmptyString] DOMString customUserAgent;
@@ -96,6 +109,12 @@ interface BrowsingContext {
 
   [SetterThrows] attribute float textZoom;
 
+  // Default value for nsIContentViewer::authorStyleDisabled in any new
+  // browsing contexts created as a descendant of this one.
+  //
+  // Valid only for top browsing contexts.
+  [SetterThrows] attribute boolean authorStyleDisabledDefault;
+
   /**
    * Whether this docshell should save entries in global history.
    */
@@ -123,7 +142,12 @@ interface BrowsingContext {
    */
   [SetterThrows] attribute unsigned long long browserId;
 
+  [SetterThrows] attribute DisplayMode displayMode;
+
   readonly attribute ChildSHistory? childSessionHistory;
+
+  // Resets the location change rate limit. Used for testing.
+  void resetLocationChangeRateLimit();
 };
 
 BrowsingContext includes LoadContextMixin;
@@ -189,6 +213,8 @@ interface CanonicalBrowsingContext : BrowsingContext {
   readonly attribute nsISHistory? sessionHistory;
 
   readonly attribute MediaController? mediaController;
+
+  void resetScalingZoom();
 };
 
 [Exposed=Window, ChromeOnly]

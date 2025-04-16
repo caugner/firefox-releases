@@ -87,6 +87,8 @@ class ZoomConstraintsClient;
 
 struct nsCallbackEventRequest;
 
+enum class ScrollableDirection;
+
 namespace mozilla {
 class AccessibleCaretEventHub;
 class EventStates;
@@ -428,15 +430,6 @@ class PresShell final : public nsStubDocumentObserver,
    */
   nsIScrollableFrame* GetScrollableFrameToScroll(
       ScrollableDirection aDirection);
-
-  /**
-   * Gets nearest ancestor scrollable frame from aFrame.  The frame is
-   * scrollable with overflow:scroll or overflow:auto in some direction when
-   * aDirection is eEither.  Otherwise, this returns a nearest frame that is
-   * scrollable in the specified direction.
-   */
-  nsIScrollableFrame* GetNearestScrollableFrame(nsIFrame* aFrame,
-                                                ScrollableDirection aDirection);
 
   /**
    * Returns the page sequence frame associated with the frame hierarchy.
@@ -1141,7 +1134,8 @@ class PresShell final : public nsStubDocumentObserver,
         dom::Document_Binding::KEYPRESS_EVENT_MODEL_SPLIT;
   }
 
-  bool AddRefreshObserver(nsARefreshObserver* aObserver, FlushType aFlushType);
+  bool AddRefreshObserver(nsARefreshObserver* aObserver, FlushType aFlushType,
+                          const char* aObserverDescription);
   bool RemoveRefreshObserver(nsARefreshObserver* aObserver,
                              FlushType aFlushType);
 
@@ -1246,7 +1240,7 @@ class PresShell final : public nsStubDocumentObserver,
    *
    * |aOrigin| specifies who originated the resolution change. For changes
    * sent by APZ, pass ResolutionChangeOrigin::Apz. For changes sent by
-   * the main thread, use pass ResolutionChangeOrigin::MainThread (similar
+   * the main thread, pass ResolutionChangeOrigin::MainThreadAdjustment (similar
    * to the |aOrigin| parameter of nsIScrollableFrame::ScrollToCSSPixels()).
    */
   nsresult SetResolutionAndScaleTo(float aResolution,
@@ -1679,6 +1673,8 @@ class PresShell final : public nsStubDocumentObserver,
 #ifdef DEBUG
   nsIFrame* GetDrawEventTargetFrame() { return mDrawEventTargetFrame; }
 #endif
+
+  bool GetZoomableByAPZ() const;
 
  private:
   ~PresShell();
@@ -2606,11 +2602,10 @@ class PresShell final : public nsStubDocumentObserver,
      * @param aEventStatus              [in/out] The status of aEvent.
      * @param aOverrideClickTarget      Override click event target.
      */
-    MOZ_CAN_RUN_SCRIPT
-    nsresult DispatchEvent(EventStateManager* aEventStateManager,
-                           WidgetEvent* aEvent, bool aTouchIsNew,
-                           nsEventStatus* aEventStatus,
-                           nsIContent* aOverrideClickTarget);
+    MOZ_CAN_RUN_SCRIPT nsresult
+    DispatchEvent(EventStateManager* aEventStateManager, WidgetEvent* aEvent,
+                  bool aTouchIsNew, nsEventStatus* aEventStatus,
+                  nsIContent* aOverrideClickTarget);
 
     /**
      * DispatchEventToDOM() actually dispatches aEvent into the DOM tree.
@@ -2620,9 +2615,9 @@ class PresShell final : public nsStubDocumentObserver,
      * @param aEventCB          The callback kicked when the event moves
      *                          from the default group to the system group.
      */
-    nsresult DispatchEventToDOM(WidgetEvent* aEvent,
-                                nsEventStatus* aEventStatus,
-                                nsPresShellEventCB* aEventCB);
+    MOZ_CAN_RUN_SCRIPT nsresult
+    DispatchEventToDOM(WidgetEvent* aEvent, nsEventStatus* aEventStatus,
+                       nsPresShellEventCB* aEventCB);
 
     /**
      * DispatchTouchEventToDOM() dispatches touch events into the DOM tree.
@@ -2636,10 +2631,9 @@ class PresShell final : public nsStubDocumentObserver,
      *                          and it's newly touched.  Then, the "touchmove"
      *                          event becomes cancelable.
      */
-    void DispatchTouchEventToDOM(WidgetEvent* aEvent,
-                                 nsEventStatus* aEventStatus,
-                                 nsPresShellEventCB* aEventCB,
-                                 bool aTouchIsNew);
+    MOZ_CAN_RUN_SCRIPT void DispatchTouchEventToDOM(
+        WidgetEvent* aEvent, nsEventStatus* aEventStatus,
+        nsPresShellEventCB* aEventCB, bool aTouchIsNew);
 
     /**
      * FinalizeHandlingEvent() should be called after calling DispatchEvent()

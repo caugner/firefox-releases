@@ -89,7 +89,12 @@ class GfxInfoBase : public nsIGfxInfo,
   virtual nsresult Init();
 
   NS_IMETHOD_(void) GetData() override;
-  NS_IMETHOD_(int32_t) GetMaxRefreshRate() override { return -1; }
+  NS_IMETHOD_(int32_t) GetMaxRefreshRate(bool* aMixed) override {
+    if (aMixed) {
+      *aMixed = false;
+    }
+    return -1;
+  }
 
   static void AddCollector(GfxInfoCollectorBase* collector);
   static void RemoveCollector(GfxInfoCollectorBase* collector);
@@ -100,10 +105,10 @@ class GfxInfoBase : public nsIGfxInfo,
   static bool sDriverInfoObserverInitialized;
   static bool sShutdownOccurred;
 
-  virtual nsString Model() { return EmptyString(); }
-  virtual nsString Hardware() { return EmptyString(); }
-  virtual nsString Product() { return EmptyString(); }
-  virtual nsString Manufacturer() { return EmptyString(); }
+  virtual nsString Model() { return u""_ns; }
+  virtual nsString Hardware() { return u""_ns; }
+  virtual nsString Product() { return u""_ns; }
+  virtual nsString Manufacturer() { return u""_ns; }
   virtual uint32_t OperatingSystemVersion() { return 0; }
   virtual uint32_t OperatingSystemBuild() { return 0; }
 

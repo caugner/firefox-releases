@@ -29,7 +29,6 @@
 #include "frontend/SourceNotes.h"  // SrcNote
 #include "gc/Barrier.h"
 #include "gc/Rooting.h"
-#include "jit/JitCode.h"
 #include "js/CompileOptions.h"
 #include "js/UbiNode.h"
 #include "js/UniquePtr.h"
@@ -46,7 +45,7 @@
 #include "vm/Scope.h"
 #include "vm/Shape.h"
 #include "vm/SharedImmutableStringsCache.h"
-#include "vm/SharedStencil.h"  // js::GCThingIndex, js::SourceExtent
+#include "vm/SharedStencil.h"  // js::GCThingIndex, js::SourceExtent, js::SharedImmutableScriptData
 #include "vm/Time.h"
 
 namespace JS {
@@ -64,6 +63,7 @@ class LCovSource;
 namespace jit {
 class AutoKeepJitScripts;
 class BaselineScript;
+class IonScript;
 struct IonScriptCounts;
 class JitScript;
 }  // namespace jit
@@ -77,6 +77,7 @@ class DebugScript;
 
 namespace frontend {
 struct CompilationInfo;
+struct CompilationStencil;
 struct CompilationGCOutput;
 class ScriptStencil;
 }  // namespace frontend
@@ -544,7 +545,7 @@ class ScriptSource {
   // function should be recorded before their first execution.
   // This value is logically owned by the canonical ScriptSourceObject, and
   // will be released in the canonical SSO's finalizer.
-  UniquePtr<XDRIncrementalEncoder> xdrEncoder_ = nullptr;
+  UniquePtr<XDRIncrementalEncoderBase> xdrEncoder_ = nullptr;
 
   // A string indicating how this source code was introduced into the system.
   // This is a constant, statically allocated C string, so does not need memory
@@ -1016,6 +1017,26 @@ class ScriptSource {
   // successfully.
   bool xdrEncodeTopLevel(JSContext* cx, HandleScript script);
 
+  // Create a new XDR encoder, and encode the stencil for the initial
+  // compilation. The created XDR encoder isn't stored into `xdrEncoder_`
+  // field. Caller is responsible for calling `setIncrementalEncoder` after
+  // instantiating stencil (so, corresponding canonical ScriptSourceObject
+  // gets created).
+  bool xdrEncodeInitialStencil(
+      JSContext* cx, frontend::CompilationInfo& compilationInfo,
+      UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+
+  // Create a new XDR encoder, and encode the stencils.
+  // The created XDR encoder isn't stored into `xdrEncoder_` field.
+  // Caller is responsible for calling `setIncrementalEncoder` after
+  // instantiating stencil (so, corresponding canonical ScriptSourceObject
+  // gets created).
+  bool xdrEncodeStencils(JSContext* cx,
+                         frontend::CompilationInfoVector& compilationInfos,
+                         UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+
+  void setIncrementalEncoder(XDRIncrementalEncoderBase* xdrEncoder);
+
   // Encode a delazified JSFunction.  In case of errors, the XDR encoder is
   // freed and the |buffer| provided as argument to |xdrEncodeTopLevel| is
   // considered undefined.
@@ -1025,10 +1046,23 @@ class ScriptSource {
   bool xdrEncodeFunction(JSContext* cx, HandleFunction fun,
                          HandleScriptSourceObject sourceObject);
 
+  // Encode a delazified function's stencil.  In case of errors, the XDR
+  // encoder is freed.
+  bool xdrEncodeFunctionStencil(JSContext* cx,
+                                frontend::CompilationStencil& stencil);
+
+ private:
+  // Encode a delazified function's stencil.  In case of errors, the passed
+  // XDR encoder is freed.
+  bool xdrEncodeFunctionStencilWith(
+      JSContext* cx, frontend::CompilationStencil& stencil,
+      UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+
+ public:
   // Linearize the encoded content in the |buffer| provided as argument to
   // |xdrEncodeTopLevel|, and free the XDR encoder.  In case of errors, the
   // |buffer| is considered undefined.
-  bool xdrFinalizeEncoder(JS::TranscodeBuffer& buffer);
+  bool xdrFinalizeEncoder(JSContext* cx, JS::TranscodeBuffer& buffer);
 
  private:
   template <typename Unit,
@@ -1327,6 +1361,10 @@ struct MemberInitializers {
 //
 // Accessing this array just requires calling the appropriate public
 // Span-computing function.
+//
+// This class doesn't use the GC barrier wrapper classes. BaseScript::swapData
+// performs a manual pre-write barrier when detaching PrivateScriptData from a
+// script.
 class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
  private:
   uint32_t ngcthings = 0;
@@ -1369,7 +1407,7 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
     return memberInitializers_;
   }
 
-  // Allocate a new PrivateScriptData. Headers and GCPtrs are initialized.
+  // Allocate a new PrivateScriptData. Headers and GCCellPtrs are initialized.
   static PrivateScriptData* new_(JSContext* cx, uint32_t ngcthings);
 
   template <XDRMode mode>
@@ -1396,82 +1434,6 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
   PrivateScriptData(const PrivateScriptData&) = delete;
   PrivateScriptData& operator=(const PrivateScriptData&) = delete;
 };
-
-// Wrapper type for ImmutableScriptData to allow sharing across a JSRuntime.
-//
-// Note: This is distinct from ImmutableScriptData because it contains a mutable
-//       ref-count while the ImmutableScriptData may live in read-only memory.
-//
-// Note: This is *not* directly inlined into the RuntimeScriptDataTable because
-//       scripts point directly to object and table resizing moves entries. This
-//       allows for fast finalization by decrementing the ref-count directly
-//       without doing a hash-table lookup.
-class RuntimeScriptData {
-  // This class is reference counted as follows: each pointer from a JSScript
-  // counts as one reference plus there may be one reference from the shared
-  // script data table.
-  mozilla::Atomic<uint32_t, mozilla::SequentiallyConsistent> refCount_ = {};
-
-  js::UniquePtr<ImmutableScriptData> isd_ = nullptr;
-
-  // End of fields.
-
-  friend class ::JSScript;
-
- public:
-  RuntimeScriptData() = default;
-
-  // Hash over the contents of RuntimeScriptData and its ImmutableScriptData.
-  struct Hasher;
-
-  uint32_t refCount() const { return refCount_; }
-  void AddRef() { refCount_++; }
-  void Release() {
-    MOZ_ASSERT(refCount_ != 0);
-    uint32_t remain = --refCount_;
-    if (remain == 0) {
-      isd_ = nullptr;
-      js_free(this);
-    }
-  }
-
-  static constexpr size_t offsetOfISD() {
-    return offsetof(RuntimeScriptData, isd_);
-  }
-
-  template <XDRMode mode>
-  static MOZ_MUST_USE XDRResult XDR(js::XDRState<mode>* xdr,
-                                    js::HandleScript script);
-
-  static bool InitFromStencil(JSContext* cx, js::HandleScript script,
-                              js::frontend::ScriptStencil& scriptStencil);
-
-  size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) {
-    return mallocSizeOf(this) + mallocSizeOf(isd_.get());
-  }
-
-  // RuntimeScriptData has trailing data so isn't copyable or movable.
-  RuntimeScriptData(const RuntimeScriptData&) = delete;
-  RuntimeScriptData& operator=(const RuntimeScriptData&) = delete;
-};
-
-// Matches RuntimeScriptData objects that have the same atoms as well as
-// contain the same bytes in their ImmutableScriptData.
-struct RuntimeScriptData::Hasher {
-  using Lookup = RefPtr<RuntimeScriptData>;
-
-  static HashNumber hash(const Lookup& l) {
-    mozilla::Span<const uint8_t> immutableData = l->isd_->immutableData();
-    return mozilla::HashBytes(immutableData.data(), immutableData.size());
-  }
-
-  static bool match(RuntimeScriptData* entry, const Lookup& lookup) {
-    return (entry->isd_->immutableData() == lookup->isd_->immutableData());
-  }
-};
-
-using RuntimeScriptDataTable =
-    HashSet<RuntimeScriptData*, RuntimeScriptData::Hasher, SystemAllocPolicy>;
 
 // [SMDOC] Script Representation (js::BaseScript)
 //
@@ -1525,7 +1487,7 @@ using RuntimeScriptDataTable =
 //              +-----------------------------------------------+
 //                                v
 //              +-------------------------------------+
-//              | RuntimeScriptData                   |
+//              | ImmutableScriptData                 |
 //              |   Provides:   Bytecode              |
 //              |   Engine:     Interpreter           |
 //              +-------------------------------------+
@@ -1602,7 +1564,7 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   // Shareable script data. This includes runtime-wide atom pointers, bytecode,
   // and various script note structures. If the script is currently lazy, this
   // will be nullptr.
-  RefPtr<js::RuntimeScriptData> sharedData_ = {};
+  RefPtr<js::SharedImmutableScriptData> sharedData_ = {};
 
   // End of fields.
 
@@ -1891,8 +1853,8 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
     return data_->getMemberInitializers();
   }
 
-  RuntimeScriptData* sharedData() const { return sharedData_; }
-  void initSharedData(RuntimeScriptData* data) {
+  SharedImmutableScriptData* sharedData() const { return sharedData_; }
+  void initSharedData(SharedImmutableScriptData* data) {
     MOZ_ASSERT(sharedData_ == nullptr);
     sharedData_ = data;
   }
@@ -1946,6 +1908,24 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   static constexpr size_t offsetOfWarmUpData() {
     return offsetof(BaseScript, warmUpData_);
   }
+
+ protected:
+  bool isRelazifiableImpl() const {
+    // A script may not be relazifiable if parts of it can be entrained in
+    // interesting ways:
+    //  - Scripts with inner-functions or direct-eval (which can add
+    //    inner-functions) should not be relazified as their Scopes may be part
+    //    of another scope-chain.
+    //  - Generators and async functions may be re-entered in complex ways so
+    //    don't discard bytecode. The JIT resume code assumes this.
+    //  - Functions with template literals must always return the same object
+    //    instance so must not discard it by relazifying.
+    return !hasInnerFunctions() && !hasDirectEval() && !isGenerator() &&
+           !isAsync() && !hasCallSiteObj();
+  }
+
+ public:
+  bool isRelazifiableAfterDelazify() const { return isRelazifiableImpl(); }
 };
 
 /*
@@ -1966,6 +1946,10 @@ XDRResult XDRLazyScript(XDRState<mode>* xdr, HandleScope enclosingScope,
 template <XDRMode mode>
 XDRResult XDRSourceExtent(XDRState<mode>* xdr, SourceExtent* extent);
 
+template <XDRMode mode>
+XDRResult XDRImmutableScriptData(XDRState<mode>* xdr,
+                                 UniquePtr<ImmutableScriptData>& isd);
+
 /*
  * Code any constant value.
  */
@@ -1976,16 +1960,6 @@ extern void SweepScriptData(JSRuntime* rt);
 
 } /* namespace js */
 
-namespace JS {
-
-// Define a GCManagedDeletePolicy to allow deleting type outside of normal
-// sweeping.
-template <>
-struct DeletePolicy<js::PrivateScriptData>
-    : public js::GCManagedDeletePolicy<js::PrivateScriptData> {};
-
-} /* namespace JS */
-
 class JSScript : public js::BaseScript {
  private:
   template <js::XDRMode mode>
@@ -1994,14 +1968,6 @@ class JSScript : public js::BaseScript {
                                      js::HandleScriptSourceObject sourceObject,
                                      js::HandleObject funOrMod,
                                      js::MutableHandleScript scriptp);
-
-  template <js::XDRMode mode>
-  friend js::XDRResult js::RuntimeScriptData::XDR(js::XDRState<mode>* xdr,
-                                                  js::HandleScript script);
-
-  friend bool js::RuntimeScriptData::InitFromStencil(
-      JSContext* cx, js::HandleScript script,
-      js::frontend::ScriptStencil& scriptStencil);
 
   template <js::XDRMode mode>
   friend js::XDRResult js::PrivateScriptData::XDR(
@@ -2044,14 +2010,15 @@ class JSScript : public js::BaseScript {
   static bool fullyInitFromStencil(
       JSContext* cx, js::frontend::CompilationInfo& compilationInfo,
       js::frontend::CompilationGCOutput& gcOutput, js::HandleScript script,
-      js::frontend::ScriptStencil& scriptStencil, js::HandleFunction function);
+      const js::frontend::ScriptStencil& scriptStencil,
+      js::HandleFunction function);
 
   // Allocate a JSScript and initialize it with bytecode. This consumes
   // allocations within the stencil.
   static JSScript* fromStencil(JSContext* cx,
                                js::frontend::CompilationInfo& compilationInfo,
                                js::frontend::CompilationGCOutput& gcOutput,
-                               js::frontend::ScriptStencil& scriptStencil,
+                               const js::frontend::ScriptStencil& scriptStencil,
                                js::HandleFunction function);
 
 #ifdef DEBUG
@@ -2243,19 +2210,7 @@ class JSScript : public js::BaseScript {
 
   void updateJitCodeRaw(JSRuntime* rt);
 
-  bool isRelazifiable() const {
-    // A script may not be relazifiable if parts of it can be entrained in
-    // interesting ways:
-    //  - Scripts with inner-functions or direct-eval (which can add
-    //    inner-functions) should not be relazified as their Scopes may be part
-    //    of another scope-chain.
-    //  - Generators and async functions may be re-entered in complex ways so
-    //    don't discard bytecode. The JIT resume code assumes this.
-    //  - Functions with template literals must always return the same object
-    //    instance so must not discard it by relazifying.
-    return !hasInnerFunctions() && !hasDirectEval() && !isGenerator() &&
-           !isAsync() && !hasCallSiteObj();
-  }
+  bool isRelazifiable() const { return isRelazifiableImpl(); }
 
   js::ModuleObject* module() const {
     if (bodyScope()->is<js::ModuleScope>()) {
@@ -2376,11 +2331,6 @@ class JSScript : public js::BaseScript {
  private:
   bool createJitScript(JSContext* cx);
 
-  bool createScriptData(JSContext* cx);
-  void initImmutableScriptData(js::UniquePtr<js::ImmutableScriptData>&& data) {
-    MOZ_ASSERT(!sharedData_->isd_);
-    sharedData_->isd_ = std::move(data);
-  }
   bool shareScriptData(JSContext* cx);
 
  public:
@@ -2671,6 +2621,16 @@ JSScript* CloneScriptIntoFunction(JSContext* cx, HandleScope enclosingScope,
 
 JSScript* CloneGlobalScript(JSContext* cx, ScopeKind scopeKind,
                             HandleScript src);
+
+bool CheckCompileOptionsMatch(const JS::ReadOnlyCompileOptions& options,
+                              js::ImmutableScriptFlags flags,
+                              bool isMultiDecode);
+
+void FillImmutableFlagsFromCompileOptionsForTopLevel(
+    const JS::ReadOnlyCompileOptions& options, js::ImmutableScriptFlags& flags);
+
+void FillImmutableFlagsFromCompileOptionsForFunction(
+    const JS::ReadOnlyCompileOptions& options, js::ImmutableScriptFlags& flags);
 
 } /* namespace js */
 

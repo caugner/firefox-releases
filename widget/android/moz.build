@@ -62,7 +62,6 @@ classes_with_WrapForJNI = [
     'HardwareCodecCapabilityUtils',
     'ImageDecoder',
     'MediaDrmProxy',
-    'MediaSession',
     'PanZoomController',
     'PrefsHelper',
     'RuntimeTelemetry',
@@ -101,8 +100,11 @@ sources_from_WrapForJNI = sorted(
 EXPORTS.mozilla.widget += [
     'AndroidCompositorWidget.h',
     'AndroidUiThread.h',
+    'AndroidView.h',
     'EventDispatcher.h',
+    'GeckoViewSupport.h',
     'nsWindow.h',
+    'WindowEvent.h',
 ]
 
 EXPORTS.mozilla.java += [

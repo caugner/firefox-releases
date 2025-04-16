@@ -346,14 +346,12 @@ class EngineURL {
    *   The URL to which search queries should be sent. For GET requests,
    *   must contain the string "{searchTerms}", to indicate where the user
    *   entered search terms should be inserted.
-   * @param {string} [resultDomain]
-   *   The root domain for this URL.  Defaults to the template's host.
    *
    * @see http://opensearch.a9.com/spec/1.1/querysyntax/#urltag
    *
    * @throws NS_ERROR_NOT_IMPLEMENTED if aType is unsupported.
    */
-  constructor(mimeType, requestMethod, template, resultDomain) {
+  constructor(mimeType, requestMethod, template) {
     if (!mimeType || !requestMethod || !template) {
       throw Components.Exception(
         "missing mimeType, method or template for EngineURL!",
@@ -398,9 +396,6 @@ class EngineURL {
     }
 
     this.templateHost = templateURI.host;
-    // If no resultDomain was specified in the engine definition file, use the
-    // host from the template.
-    this.resultDomain = resultDomain || this.templateHost;
   }
 
   addParam(name, value, purpose) {
@@ -530,10 +525,11 @@ class EngineURL {
 
     for (let i = 0; i < json.params.length; ++i) {
       let param = json.params[i];
-      if (param.mozparam) {
-        this._addMozParam(param);
-      } else {
-        this.addParam(param.name, param.value, param.purpose || undefined);
+      // mozparam and purpose are only supported for app-provided engines.
+      // Since we do not store the details for those engines, we don't want
+      // to handle it here.
+      if (!param.mozparam && !param.purpose) {
+        this.addParam(param.name, param.value);
       }
     }
   }
@@ -548,7 +544,6 @@ class EngineURL {
     var json = {
       params: this.params,
       rels: this.rels,
-      resultDomain: this.resultDomain,
       template: this.template,
     };
 
@@ -618,6 +613,9 @@ class SearchEngine {
   // The query parameter name of the search url, cached in memory to avoid
   // repeated look-ups.
   _searchUrlQueryParamName = null;
+  // The known public suffix of the search url, cached in memory to avoid
+  // repeated look-ups.
+  _searchUrlPublicSuffix = null;
 
   /**
    * Constructor.
@@ -848,8 +846,10 @@ class SearchEngine {
    *   an array of objects which have name/value pairs.
    * @param {string} params.template
    *   The url template.
+   * @returns {EngineURL}
+   *   The newly created EngineURL.
    */
-  _initEngineURLFromMetaData(type, params) {
+  _getEngineURLFromMetaData(type, params) {
     let url = new EngineURL(type, params.method || "GET", params.template);
 
     // Do the MozParams first, so that we are more likely to get the query
@@ -886,7 +886,7 @@ class SearchEngine {
       }
     }
 
-    this._urls.push(url);
+    return url;
   }
 
   /**
@@ -1003,7 +1003,7 @@ class SearchEngine {
       configuration.params?.searchUrlPostParams ||
       searchProvider.search_url_post_params ||
       "";
-    this._initEngineURLFromMetaData(SearchUtils.URL_TYPE.SEARCH, {
+    let url = this._getEngineURLFromMetaData(SearchUtils.URL_TYPE.SEARCH, {
       method: (postParams && "POST") || "GET",
       // AddonManager will sometimes encode the URL via `new URL()`. We want
       // to ensure we're always dealing with decoded urls.
@@ -1016,12 +1016,14 @@ class SearchEngine {
       mozParams: configuration.extraParams || searchProvider.params || [],
     });
 
+    this._urls.push(url);
+
     if (searchProvider.suggest_url) {
       let suggestPostParams =
         configuration.params?.suggestUrlPostParams ||
         searchProvider.suggest_url_post_params ||
         "";
-      this._initEngineURLFromMetaData(SearchUtils.URL_TYPE.SUGGEST_JSON, {
+      url = this._getEngineURLFromMetaData(SearchUtils.URL_TYPE.SUGGEST_JSON, {
         method: (suggestPostParams && "POST") || "GET",
         // suggest_url doesn't currently get encoded.
         template: searchProvider.suggest_url,
@@ -1031,10 +1033,33 @@ class SearchEngine {
           "",
         postParams: suggestPostParams,
       });
+
+      this._urls.push(url);
     }
 
     this._queryCharset = searchProvider.encoding || "UTF-8";
     this.__searchForm = searchProvider.search_form;
+  }
+
+  checkSearchUrlMatchesManifest(searchProvider) {
+    let existingUrl = this._getURLOfType(SearchUtils.URL_TYPE.SEARCH);
+
+    let newUrl = this._getEngineURLFromMetaData(SearchUtils.URL_TYPE.SEARCH, {
+      method: (searchProvider.search_url_post_params && "POST") || "GET",
+      // AddonManager will sometimes encode the URL via `new URL()`. We want
+      // to ensure we're always dealing with decoded urls.
+      template: decodeURI(searchProvider.search_url),
+      getParams: searchProvider.search_url_get_params || "",
+      postParams: searchProvider.search_url_post_params || "",
+    });
+
+    let existingSubmission = existingUrl.getSubmission("", this);
+    let newSubmission = newUrl.getSubmission("", this);
+
+    return (
+      existingSubmission.uri.equals(newSubmission.uri) &&
+      existingSubmission.postData == newSubmission.postData
+    );
   }
 
   /**
@@ -1144,8 +1169,7 @@ class SearchEngine {
       let engineURL = new EngineURL(
         url.type || SearchUtils.URL_TYPE.SEARCH,
         url.method || "GET",
-        url.template,
-        url.resultDomain || undefined
+        url.template
       );
       engineURL._initWithJSON(url);
       this._urls.push(engineURL);
@@ -1323,16 +1347,6 @@ class SearchEngine {
     return this._loadPath;
   }
 
-  get _isDistribution() {
-    return !!(
-      this._extensionID &&
-      Services.prefs.getCharPref(
-        `extensions.installedDistroAddon.${this._extensionID}`,
-        ""
-      )
-    );
-  }
-
   get isAppProvided() {
     return !!(this._extensionID && this._isAppProvided);
   }
@@ -1482,6 +1496,20 @@ class SearchEngine {
     return (this._searchUrlQueryParamName = searchUrlQueryParamName);
   }
 
+  get searchUrlPublicSuffix() {
+    if (this._searchUrlPublicSuffix != null) {
+      return this._searchUrlPublicSuffix;
+    }
+    let submission = this.getSubmission(
+      "{searchTerms}",
+      SearchUtils.URL_TYPE.SEARCH
+    );
+    let searchURLPublicSuffix = Services.eTLD.getKnownPublicSuffix(
+      submission.uri
+    );
+    return (this._searchUrlPublicSuffix = searchURLPublicSuffix);
+  }
+
   // from nsISearchEngine
   supportsResponseType(type) {
     return this._getURLOfType(type) != null;
@@ -1498,7 +1526,7 @@ class SearchEngine {
 
     let url = this._getURLOfType(responseType);
     if (url) {
-      return url.resultDomain;
+      return url.templateHost;
     }
     return "";
   }

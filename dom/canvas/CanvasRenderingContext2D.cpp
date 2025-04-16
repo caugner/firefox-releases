@@ -111,6 +111,7 @@
 #include "nsGlobalWindow.h"
 #include "nsDeviceContext.h"
 #include "nsFontMetrics.h"
+#include "nsLayoutUtils.h"
 #include "Units.h"
 #include "CanvasUtils.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
@@ -2129,9 +2130,8 @@ already_AddRefed<CanvasPattern> CanvasRenderingContext2D::CreatePattern(
 
   // The canvas spec says that createPattern should use the first frame
   // of animated images
-  nsLayoutUtils::SurfaceFromElementResult res =
-      nsLayoutUtils::SurfaceFromElement(
-          element, nsLayoutUtils::SFE_WANT_FIRST_FRAME_IF_IMAGE, mTarget);
+  SurfaceFromElementResult res = nsLayoutUtils::SurfaceFromElement(
+      element, nsLayoutUtils::SFE_WANT_FIRST_FRAME_IF_IMAGE, mTarget);
 
   // Per spec, we should throw here for the HTMLImageElement and SVGImageElement
   // cases if the image request state is "broken".  In terms of the infromation
@@ -2182,14 +2182,9 @@ void CanvasRenderingContext2D::SetShadowColor(const nsAString& aShadowColor) {
 static already_AddRefed<RawServoDeclarationBlock> CreateDeclarationForServo(
     nsCSSPropertyID aProperty, const nsAString& aPropertyValue,
     Document* aDocument) {
-  nsCOMPtr<nsIReferrerInfo> referrerInfo =
-      ReferrerInfo::CreateForInternalCSSResources(aDocument);
-
-  RefPtr<URLExtraData> data = new URLExtraData(
-      aDocument->GetDocBaseURI(), referrerInfo, aDocument->NodePrincipal());
-
-  ServoCSSParser::ParsingEnvironment env(
-      data, aDocument->GetCompatibilityMode(), aDocument->CSSLoader());
+  ServoCSSParser::ParsingEnvironment env{aDocument->DefaultStyleAttrURLData(),
+                                         aDocument->GetCompatibilityMode(),
+                                         aDocument->CSSLoader()};
   RefPtr<RawServoDeclarationBlock> servoDeclarations =
       ServoCSSParser::ParseProperty(aProperty, aPropertyValue, env);
 
@@ -2203,9 +2198,9 @@ static already_AddRefed<RawServoDeclarationBlock> CreateDeclarationForServo(
   if (aProperty == eCSSProperty_font) {
     const nsCString normalString = "normal"_ns;
     Servo_DeclarationBlock_SetPropertyById(
-        servoDeclarations, eCSSProperty_line_height, &normalString, false, data,
-        ParsingMode::Default, aDocument->GetCompatibilityMode(),
-        aDocument->CSSLoader(), {});
+        servoDeclarations, eCSSProperty_line_height, &normalString, false,
+        env.mUrlExtraData, ParsingMode::Default, env.mCompatMode, env.mLoader,
+        env.mRuleType, {});
   }
 
   return servoDeclarations.forget();
@@ -4308,9 +4303,9 @@ static void ClipImageDimension(double& aSourceCoord, double& aSourceSize,
 // Acts like nsLayoutUtils::SurfaceFromElement, but it'll attempt
 // to pull a SourceSurface from our cache. This allows us to avoid
 // reoptimizing surfaces if content and canvas backends are different.
-nsLayoutUtils::SurfaceFromElementResult
-CanvasRenderingContext2D::CachedSurfaceFromElement(Element* aElement) {
-  nsLayoutUtils::SurfaceFromElementResult res;
+SurfaceFromElementResult CanvasRenderingContext2D::CachedSurfaceFromElement(
+    Element* aElement) {
+  SurfaceFromElementResult res;
   nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(aElement);
   if (!imageLoader) {
     return res;
@@ -4449,7 +4444,7 @@ void CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
                                              &intrinsicImgSize);
   }
 
-  nsLayoutUtils::DirectDrawInfo drawInfo;
+  DirectDrawInfo drawInfo;
 
   if (!srcSurf) {
     // The canvas spec says that drawImage should draw the first frame
@@ -4457,7 +4452,7 @@ void CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
     uint32_t sfeFlags = nsLayoutUtils::SFE_WANT_FIRST_FRAME_IF_IMAGE |
                         nsLayoutUtils::SFE_NO_RASTERIZING_VECTORS;
 
-    nsLayoutUtils::SurfaceFromElementResult res =
+    SurfaceFromElementResult res =
         CanvasRenderingContext2D::CachedSurfaceFromElement(element);
 
     if (!res.mSourceSurface) {
@@ -4592,8 +4587,8 @@ void CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
 }
 
 void CanvasRenderingContext2D::DrawDirectlyToCanvas(
-    const nsLayoutUtils::DirectDrawInfo& aImage, gfx::Rect* aBounds,
-    gfx::Rect aDest, gfx::Rect aSrc, gfx::IntSize aImgSize) {
+    const DirectDrawInfo& aImage, gfx::Rect* aBounds, gfx::Rect aDest,
+    gfx::Rect aSrc, gfx::IntSize aImgSize) {
   MOZ_ASSERT(aSrc.width > 0 && aSrc.height > 0,
              "Need positive source width and height");
 

@@ -7,6 +7,7 @@
 #ifndef GFX_REPAINTREQUEST_H
 #define GFX_REPAINTREQUEST_H
 
+#include <iosfwd>
 #include <stdint.h>  // for uint8_t, uint32_t, uint64_t
 
 #include "FrameMetrics.h"             // for FrameMetrics
@@ -61,6 +62,7 @@ struct RepaintRequest {
         mIsScrollInfoLayer(false) {}
 
   RepaintRequest(const FrameMetrics& aOther,
+                 const ScreenMargin& aDisplayportMargins,
                  const ScrollOffsetUpdateType aScrollUpdateType,
                  bool aIsAnimationInProgress)
       : mScrollId(aOther.GetScrollId()),
@@ -71,7 +73,7 @@ struct RepaintRequest {
         mScrollOffset(aOther.GetVisualScrollOffset()),
         mZoom(aOther.GetZoom()),
         mScrollGeneration(aOther.GetScrollGeneration()),
-        mDisplayPortMargins(aOther.GetDisplayPortMargins()),
+        mDisplayPortMargins(aDisplayportMargins),
         mPresShellId(aOther.GetPresShellId()),
         mLayoutViewport(aOther.GetLayoutViewport()),
         mExtraResolution(aOther.GetExtraResolution()),
@@ -107,6 +109,9 @@ struct RepaintRequest {
   bool operator!=(const RepaintRequest& aOther) const {
     return !operator==(aOther);
   }
+
+  friend std::ostream& operator<<(std::ostream& aOut,
+                                  const RepaintRequest& aRequest);
 
   CSSToScreenScale2D DisplayportPixelsPerCSSPixel() const {
     // Note: use 'mZoom * ParentLayerToLayerScale(1.0f)' as the CSS-to-Layer

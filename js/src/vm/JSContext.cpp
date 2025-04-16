@@ -40,22 +40,11 @@
 #include "irregexp/RegExpAPI.h"
 #include "jit/Ion.h"
 #include "jit/PcScriptCache.h"
+#include "jit/Simulator.h"
 #include "js/CharacterEncoding.h"
 #include "js/ContextOptions.h"      // JS::ContextOptions
 #include "js/friend/StackLimits.h"  // js::ReportOverRecursed
 #include "js/Printf.h"
-#ifdef JS_SIMULATOR_ARM
-#  include "jit/arm/Simulator-arm.h"
-#endif
-#ifdef JS_SIMULATOR_ARM64
-#  include "jit/arm64/vixl/Simulator-vixl.h"
-#endif
-#ifdef JS_SIMULATOR_MIPS32
-#  include "jit/mips32/Simulator-mips32.h"
-#endif
-#ifdef JS_SIMULATOR_MIPS64
-#  include "jit/mips64/Simulator-mips64.h"
-#endif
 #include "util/DiagnosticAssertions.h"
 #include "util/DoubleToString.h"
 #include "util/NativeStack.h"
@@ -287,7 +276,7 @@ JS_FRIEND_API void js::ReportOutOfMemory(JSContext* cx) {
   cx->setPendingException(oomMessage, nullptr);
 }
 
-mozilla::GenericErrorResult<OOM&> js::ReportOutOfMemoryResult(JSContext* cx) {
+mozilla::GenericErrorResult<OOM> js::ReportOutOfMemoryResult(JSContext* cx) {
   ReportOutOfMemory(cx);
   return cx->alreadyReportedOOM();
 }
@@ -861,10 +850,7 @@ js::UniquePtr<JS::JobQueue::SavedJobQueue> InternalJobQueue::saveJobQueue(
   return saved;
 }
 
-JS::Error JSContext::reportedError;
-JS::OOM JSContext::reportedOOM;
-
-mozilla::GenericErrorResult<OOM&> JSContext::alreadyReportedOOM() {
+mozilla::GenericErrorResult<OOM> JSContext::alreadyReportedOOM() {
 #ifdef DEBUG
   if (isHelperThreadContext()) {
     // Keep in sync with addPendingOutOfMemory.
@@ -875,16 +861,16 @@ mozilla::GenericErrorResult<OOM&> JSContext::alreadyReportedOOM() {
     MOZ_ASSERT(isThrowingOutOfMemory());
   }
 #endif
-  return mozilla::Err(reportedOOM);
+  return mozilla::Err(JS::OOM());
 }
 
-mozilla::GenericErrorResult<JS::Error&> JSContext::alreadyReportedError() {
+mozilla::GenericErrorResult<JS::Error> JSContext::alreadyReportedError() {
 #ifdef DEBUG
   if (!isHelperThreadContext()) {
     MOZ_ASSERT(isExceptionPending());
   }
 #endif
-  return mozilla::Err(reportedError);
+  return mozilla::Err(JS::Error());
 }
 
 JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
@@ -926,7 +912,6 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
 #if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
       runningOOMTest(this, false),
 #endif
-      enableAccessValidation(this, false),
       inUnsafeRegion(this, 0),
       generationalDisabled(this, 0),
       compactingDisabledCount(this, 0),

@@ -91,6 +91,9 @@ dnl ========================================================
 
 if test "$COMPILE_ENVIRONMENT"; then
 
+# Run some logic to figure out exe extensions (mostly for mingw's sake)
+AC_EXEEXT
+
 if test "$target" != "$host"; then
     MOZ_CROSS_COMPILER
 else
@@ -541,7 +544,7 @@ case "$target" in
 
     if test -z "$CLANG_CC"; then
         MOZ_OPTIMIZE_FLAGS="-freorder-blocks -fno-reorder-functions -Os"
-    elif test -n "$RELEASE_OR_BETA"; then
+    else
         # From https://github.com/android-ndk/ndk/issues/133#issuecomment-308549264
         # -Oz is smaller than -Os on clang.
         MOZ_OPTIMIZE_FLAGS="-Oz"
@@ -560,8 +563,6 @@ case "$target" in
             AC_TRY_LINK(,,[MOZ_OPTIMIZE_LDFLAGS="$MOZ_OPTIMIZE_LDFLAGS $DISABLE_OUTLINER"])
             LDFLAGS="$_SAVE_LDFLAGS"
         fi
-    else
-        MOZ_OPTIMIZE_FLAGS="-O2"
     fi
     ;;
 
@@ -1490,7 +1491,6 @@ MOZ_UNIVERSALCHARDET=1
 MOZ_XUL=1
 MOZ_ZIPWRITER=1
 MOZ_NO_SMART_CARDS=
-MOZ_EXCLUDE_HYPHENATION_DICTIONARIES=
 MOZ_SANDBOX=1
 MOZ_BINARY_EXTENSIONS=
 MOZ_DEVTOOLS=server
@@ -1501,22 +1501,6 @@ case "$target_os" in
         AC_DEFINE(NS_ENABLE_TSF)
         ;;
 esac
-
-# Optional Firefox for Android partner distribution directory.
-MOZ_ARG_WITH_STRING(android-distribution-directory,
-[  --with-android-distribution-directory=dir
-                          Optional Firefox for Android partner distribution directory.],
-  MOZ_ANDROID_DISTRIBUTION_DIRECTORY=$withval)
-
-if test -n "$MOZ_ANDROID_DISTRIBUTION_DIRECTORY"; then
-  # A distribution directory must have an assets/distribution directory.
-  # See https://wiki.mozilla.org/Mobile/Distribution_Files.
-  if test ! -d "$MOZ_ANDROID_DISTRIBUTION_DIRECTORY/assets/distribution" ; then
-    AC_MSG_ERROR([--with-android-distribution-directory does not contain assets/distribution;
-                  (looked for ${MOZ_ANDROID_DISTRIBUTION_DIRECTORY}/assets/distribution).])
-  fi
-fi
-AC_SUBST(MOZ_ANDROID_DISTRIBUTION_DIRECTORY)
 
 dnl ========================================================
 dnl = Trademarked Branding
@@ -1718,13 +1702,6 @@ then
 fi
 AC_SUBST(MOZ_ENABLE_DBUS)
 
-dnl =========================================================
-dnl = Whether to exclude hyphenations files in the build
-dnl =========================================================
-if test -n "$MOZ_EXCLUDE_HYPHENATION_DICTIONARIES"; then
-    AC_DEFINE(MOZ_EXCLUDE_HYPHENATION_DICTIONARIES)
-fi
-
 AC_TRY_COMPILE([#include <linux/ethtool.h>],
                [ struct ethtool_cmd cmd; cmd.speed_hi = 0; ],
                MOZ_WEBRTC_HAVE_ETHTOOL_SPEED_HI=1)
@@ -1821,13 +1798,17 @@ case $target in
 i?86-*-mingw*|x86_64-*-mingw*|aarch64-*-mingw*)
   MOZ_CRASHREPORTER=1
   ;;
-i?86-apple-darwin*|x86_64-apple-darwin*)
+i?86-apple-darwin*|x86_64-apple-darwin*|aarch64-apple-darwin*)
   MOZ_CRASHREPORTER=1
   ;;
 *-android*|*-linuxandroid*)
   dnl Android/arm is arm-unknown-linux-androideabi, so android condition should
   dnl be before Linux condition
-  MOZ_CRASHREPORTER=1
+  dnl The crash reporter prevents crash stacktraces to be logged in the
+  dnl logs so we leave it out by default in developer builds.
+  if test -z "$DEVELOPER_OPTIONS"; then
+    MOZ_CRASHREPORTER=1
+  fi
   ;;
 i?86-*-linux*|x86_64-*-linux*|arm-*-linux*)
   if test "$MOZ_ENABLE_GTK"; then
@@ -1903,9 +1884,6 @@ if test -n "$MOZ_TREE_FREETYPE" -a "$OS_TARGET" != WINNT; then
    AC_SUBST_LIST(CAIRO_FT_CFLAGS)
 fi
 
-AC_CHECK_PROGS(WGET, wget, "")
-AC_SUBST(WGET)
-
 dnl ========================================================
 dnl Updater
 dnl ========================================================
@@ -1964,9 +1942,9 @@ WINNT|Darwin|OpenBSD)
 ;;
 Linux)
     case $CPU_ARCH in
-        x86_64|x86)
+        x86_64|x86|arm|aarch64)
         ;;
-        # Linux sandbox is only available on x86 and x86_64.
+        # Linux sandbox is only available on x86{,_64} and arm{,64}.
         *)
             MOZ_SANDBOX=
         ;;
@@ -2516,7 +2494,6 @@ AC_SUBST(MOZ_UPDATER)
 
 AC_SUBST(MOZ_ANDROID_APPLICATION_CLASS)
 AC_SUBST(MOZ_ANDROID_BROWSER_INTENT_CLASS)
-AC_SUBST(MOZ_EXCLUDE_HYPHENATION_DICTIONARIES)
 AC_SUBST(INCREMENTAL_LINKER)
 
 AC_SUBST_LIST(MOZ_FIX_LINK_PATHS)

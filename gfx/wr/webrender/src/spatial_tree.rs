@@ -171,16 +171,6 @@ impl<Src, Dst> CoordinateSpaceMapping<Src, Dst> {
         }
     }
 
-    pub fn visible_face(&self) -> VisibleFace {
-        match *self {
-            CoordinateSpaceMapping::Transform(ref transform) if transform.is_backface_visible() => VisibleFace::Back,
-            CoordinateSpaceMapping::Local |
-            CoordinateSpaceMapping::Transform(_) |
-            CoordinateSpaceMapping::ScaleOffset(_) => VisibleFace::Front,
-
-        }
-    }
-
     pub fn is_perspective(&self) -> bool {
         match *self {
             CoordinateSpaceMapping::Local |
@@ -270,6 +260,19 @@ impl SpatialTree {
         child_index: SpatialNodeIndex,
         parent_index: SpatialNodeIndex,
     ) -> CoordinateSpaceMapping<LayoutPixel, LayoutPixel> {
+        self.get_relative_transform_with_face(child_index, parent_index, None)
+    }
+
+    /// Calculate the relative transform from `child_index` to `parent_index`.
+    /// This method will panic if the nodes are not connected!
+    /// Also, switch the visible face to `Back` if at any stage where the
+    /// combined transform is flattened, we see the back face.
+    pub fn get_relative_transform_with_face(
+        &self,
+        child_index: SpatialNodeIndex,
+        parent_index: SpatialNodeIndex,
+        mut visible_face: Option<&mut VisibleFace>,
+    ) -> CoordinateSpaceMapping<LayoutPixel, LayoutPixel> {
         if child_index == parent_index {
             return CoordinateSpaceMapping::Local;
         }
@@ -301,6 +304,12 @@ impl SpatialTree {
                 .then(&child_transform)
                 .with_source::<LayoutPixel>()
                 .with_destination::<LayoutPixel>();
+
+            if let Some(face) = visible_face {
+                if result.is_backface_visible() {
+                    *face = VisibleFace::Back;
+                }
+            }
             return CoordinateSpaceMapping::Transform(result);
         }
 
@@ -315,6 +324,11 @@ impl SpatialTree {
             let coord_system = &self.coord_systems[coordinate_system_id.0 as usize];
 
             if coord_system.should_flatten {
+                if let Some(ref mut face) = visible_face {
+                    if transform.is_backface_visible() {
+                        **face = VisibleFace::Back;
+                    }
+                }
                 transform.flatten_z_output();
             }
 
@@ -327,8 +341,28 @@ impl SpatialTree {
                 .inverse()
                 .to_transform(),
         );
+        if let Some(face) = visible_face {
+            if transform.is_backface_visible() {
+                *face = VisibleFace::Back;
+            }
+        }
 
         CoordinateSpaceMapping::Transform(transform)
+    }
+
+    pub fn is_relative_transform_complex(
+        &self,
+        child_index: SpatialNodeIndex,
+        parent_index: SpatialNodeIndex,
+    ) -> bool {
+        if child_index == parent_index {
+            return false;
+        }
+
+        let child = &self.spatial_nodes[child_index.0 as usize];
+        let parent = &self.spatial_nodes[parent_index.0 as usize];
+
+        child.coordinate_system_id != parent.coordinate_system_id
     }
 
     fn get_world_transform_impl(
@@ -530,8 +564,6 @@ impl SpatialTree {
         frame_kind: ScrollFrameKind,
         external_scroll_offset: LayoutVector2D,
     ) -> SpatialNodeIndex {
-        let parent_is_identity = self.spatial_nodes[parent_index.0 as usize].is_identity();
-
         let node = SpatialNode::new_scroll_frame(
             pipeline_id,
             parent_index,
@@ -541,7 +573,6 @@ impl SpatialTree {
             scroll_sensitivity,
             frame_kind,
             external_scroll_offset,
-            parent_is_identity,
         );
         self.add_spatial_node(node)
     }
@@ -555,9 +586,6 @@ impl SpatialTree {
         origin_in_parent_reference_frame: LayoutVector2D,
         pipeline_id: PipelineId,
     ) -> SpatialNodeIndex {
-        let parent_is_identity = parent_index.map_or(true, |parent_index| {
-            self.spatial_nodes[parent_index.0 as usize].is_identity()
-        });
         let node = SpatialNode::new_reference_frame(
             parent_index,
             transform_style,
@@ -565,7 +593,6 @@ impl SpatialTree {
             kind,
             origin_in_parent_reference_frame,
             pipeline_id,
-            parent_is_identity,
         );
         self.add_spatial_node(node)
     }
@@ -660,9 +687,11 @@ impl SpatialTree {
                 SpatialNodeType::StickyFrame(..) => {}
                 SpatialNodeType::ScrollFrame(ref info) => {
                     match info.frame_kind {
-                        ScrollFrameKind::PipelineRoot => {
+                        ScrollFrameKind::PipelineRoot { is_root_pipeline } => {
                             // Once we encounter a pipeline root, there is no need to look further
-                            break;
+                            if is_root_pipeline {
+                                break;
+                            }
                         }
                         ScrollFrameKind::Explicit => {
                             // Store the closest scroll root we find to the root, for use
@@ -752,12 +781,11 @@ impl SpatialTree {
     /// Get the visible face of the transfrom from the specified node to its parent.
     pub fn get_local_visible_face(&self, node_index: SpatialNodeIndex) -> VisibleFace {
         let node = &self.spatial_nodes[node_index.0 as usize];
-        let parent_index = match node.parent {
-            Some(index) => index,
-            None => return VisibleFace::Front
-        };
-        self.get_relative_transform(node_index, parent_index)
-            .visible_face()
+        let mut face = VisibleFace::Front;
+        if let Some(parent_index) = node.parent {
+            self.get_relative_transform_with_face(node_index, parent_index, Some(&mut face));
+        }
+        face
     }
 
     #[allow(dead_code)]

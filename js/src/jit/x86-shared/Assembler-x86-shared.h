@@ -18,6 +18,8 @@
 #else
 #  error "Unknown architecture!"
 #endif
+#include "jit/CompactBuffer.h"
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {

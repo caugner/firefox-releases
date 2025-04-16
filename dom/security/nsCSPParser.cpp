@@ -182,8 +182,8 @@ void nsCSPParser::logWarningErrorToConsole(uint32_t aSeverityFlag,
   // send console messages off to the context and let the context
   // deal with it (potentially messages need to be queued up)
   mCSPContext->logToConsole(aProperty, aParams,
-                            EmptyString(),   // aSourceName
-                            EmptyString(),   // aSourceLine
+                            u""_ns,          // aSourceName
+                            u""_ns,          // aSourceLine
                             0,               // aLineNumber
                             0,               // aColumnNumber
                             aSeverityFlag);  // aFlags
@@ -419,10 +419,6 @@ nsCSPBaseSrc* nsCSPParser::keywordSource() {
   }
 
   if (CSP_IsKeyword(mCurToken, CSP_STRICT_DYNAMIC)) {
-    // make sure strict dynamic is enabled
-    if (!StaticPrefs::security_csp_enableStrictDynamic()) {
-      return nullptr;
-    }
     if (!CSP_IsDirective(mCurDir[0],
                          nsIContentSecurityPolicy::SCRIPT_SRC_DIRECTIVE)) {
       // Todo: Enforce 'strict-dynamic' within default-src; see Bug 1313937

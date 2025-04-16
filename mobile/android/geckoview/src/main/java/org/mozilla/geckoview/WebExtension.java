@@ -478,10 +478,10 @@ public class WebExtension {
         public final Boolean pinned;
         /**
          * The url that the tab will be navigated to. This url is provided just
-         * for informational purposes, there is no need to call
-         * <code>loadUri</code> on it. The corresponding {@link GeckoSession} will be
-         * navigated to the right URL after returning
-         * <code>GeckoResult.ALLOW</code> from {@link SessionTabDelegate#onUpdateTab}
+         * for informational purposes, there is no need to load the URL manually.
+         * The corresponding {@link GeckoSession} will be navigated to the
+         * right URL after returning <code>GeckoResult.ALLOW</code> from {@link
+         * SessionTabDelegate#onUpdateTab}
          */
         @Nullable
         public final String url;
@@ -553,10 +553,10 @@ public class WebExtension {
         public final Boolean pinned;
         /**
          * The url that the tab will be navigated to. This url is provided just
-         * for informational purposes, there is no need to call
-         * <code>loadUri</code> on it. The corresponding {@link GeckoSession} will be
-         * navigated to the right URL after returning
-         * <code>GeckoResult.ALLOW</code> from {@link TabDelegate#onNewTab}
+         * for informational purposes, there is no need to load the URL
+         * manually. The corresponding {@link GeckoSession} will be navigated
+         * to the right URL after returning <code>GeckoResult.ALLOW</code> from
+         * {@link TabDelegate#onNewTab}
          */
         @Nullable
         public final String url;
@@ -1658,6 +1658,12 @@ public class WebExtension {
          */
         public final boolean enabled;
 
+        /**
+         * Whether this extension is temporary or not. Temporary extensions are not retained
+         * and will be uninstalled when the browser exits.
+         */
+        public final boolean temporary;
+
         /** Override for testing. */
         protected MetaData() {
             icon = null;
@@ -1676,6 +1682,7 @@ public class WebExtension {
             signedState = SignedStateFlags.UNKNOWN;
             disabledFlags = 0;
             enabled = true;
+            temporary = false;
             baseUrl = null;
             allowedInPrivateBrowsing = false;
         }
@@ -1695,6 +1702,7 @@ public class WebExtension {
             isRecommended = bundle.getBoolean("isRecommended");
             blocklistState = bundle.getInt("blocklistState", BlocklistStateFlags.NOT_BLOCKED);
             enabled = bundle.getBoolean("enabled", false);
+            temporary = bundle.getBoolean("temporary", false);
             baseUrl = bundle.getString("baseURL");
             allowedInPrivateBrowsing = bundle.getBoolean("privateBrowsingAllowed", false);
 

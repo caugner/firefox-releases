@@ -588,8 +588,8 @@ impl Document {
                 let node = self.scene.spatial_tree.spatial_nodes.iter_mut()
                     .find(|node| node.is_transform_bound_to_property(animation_id));
                 if let Some(node) = node {
-                    if node.is_async_zooming() != is_zooming {
-                        node.set_async_zooming(is_zooming);
+                    if node.is_async_zooming != is_zooming {
+                        node.is_async_zooming = is_zooming;
                         self.frame_is_valid = false;
                     }
                 }
@@ -663,7 +663,7 @@ impl Document {
             &self.dynamic_properties,
         );
 
-        let hit_tester = Arc::new(self.scene.create_hit_tester(&self.data_stores.clip));
+        let hit_tester = Arc::new(self.scene.create_hit_tester());
         self.hit_tester = Some(Arc::clone(&hit_tester));
         self.shared_hit_tester.update(hit_tester);
         self.hit_tester_is_valid = true;

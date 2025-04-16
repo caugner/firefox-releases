@@ -22,6 +22,11 @@ typedef int32_t GLsizei;
 typedef size_t GLsizeiptr;
 typedef intptr_t GLintptr;
 
+#define GL_FALSE 0
+#define GL_TRUE 1
+
+#define GL_NONE 0
+
 #define GL_NO_ERROR 0
 
 #define GL_RGBA32F 0x8814
@@ -179,3 +184,7 @@ typedef intptr_t GLintptr;
 
 #define GL_UNSIGNED_INT_8_8_8_8_REV 0x8367
 
+#define GL_RGB_422_APPLE 0x8A1F
+#define GL_UNSIGNED_SHORT_8_8_APPLE 0x85BA
+#define GL_UNSIGNED_SHORT_8_8_REV_APPLE 0x85BB
+#define GL_RGB_RAW_422_APPLE 0x8A51

@@ -109,13 +109,20 @@ class MachCommands(MachCommandBase):
     def found_vscode_path(self):
 
         if "linux" in self.platform[0]:
-            cmd_and_path = [{"path": "/usr/bin/code", "cmd": ["/usr/bin/code"]}]
+            cmd_and_path = [
+                {"path": "/usr/bin/code", "cmd": ["/usr/bin/code"]},
+                {"path": "/usr/bin/code-insiders", "cmd": ["/usr/bin/code-insiders"]},
+            ]
         elif "macos" in self.platform[0]:
             cmd_and_path = [
                 {"path": "/usr/local/bin/code", "cmd": ["/usr/local/bin/code"]},
                 {
                     "path": "/Applications/Visual Studio Code.app",
                     "cmd": ["open", "/Applications/Visual Studio Code.app", "--args"],
+                },
+                {
+                    "path": "/Applications/Visual Studio Code - Insiders.app",
+                    "cmd": ["open", "/Applications/Visual Studio Code - Insiders.app", "--args"],
                 },
             ]
         elif "win64" in self.platform[0]:
@@ -124,8 +131,13 @@ class MachCommands(MachCommandBase):
             vscode_path = mozpath.join(
                 str(Path.home()), "AppData", "Local", "Programs", "Microsoft VS Code", "Code.exe",
             )
+            vscode_insiders_path = mozpath.join(
+                str(Path.home()), "AppData", "Local", "Programs", "Microsoft VS Code Insiders",
+                "Code - Insiders.exe",
+            )
             cmd_and_path = [
                 {"path": vscode_path, "cmd": [vscode_path]},
+                {"path": vscode_insiders_path, "cmd": [vscode_insiders_path]},
             ]
 
         # Did we guess the path?
@@ -189,7 +201,7 @@ class MachCommands(MachCommandBase):
                 "--background-index",
                 "--all-scopes-completion",
                 "--log",
-                "error",
+                "info",
                 "--pch-storage",
                 "memory",
                 "--clang-tidy",
@@ -198,7 +210,12 @@ class MachCommands(MachCommandBase):
             ]
         }
         """
-            % (clangd_path, clangd_cc_path, multiprocessing.cpu_count(), clang_tidy_cfg.checks,)
+            % (
+                clangd_path,
+                clangd_cc_path,
+                int(multiprocessing.cpu_count() / 2),
+                clang_tidy_cfg.checks,
+            )
         )
 
         # Create an empty settings dictionary

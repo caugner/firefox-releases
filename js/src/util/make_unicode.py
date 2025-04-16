@@ -137,15 +137,22 @@ def read_unicode_data(unicode_data):
 
 
 def read_case_folding(case_folding):
+    """
+        File format is:
+        <code>; <status>; <mapping>; # <name>
+    """
+
     for line in case_folding:
         if line == '\n' or line.startswith('#'):
             continue
         row = line.split('; ')
         if row[1] in ['F', 'T']:
             continue
-        row[0] = int(row[0], 16)
-        row[2] = int(row[2], 16)
-        yield row
+        assert row[1] in ['C', 'S'],\
+               "expect either (C)ommon or (S)imple case foldings"
+        code = int(row[0], 16)
+        mapping = int(row[2], 16)
+        yield (code, mapping)
 
 
 def read_derived_core_properties(derived_core_properties):
@@ -274,11 +281,6 @@ def process_unicode_data(unicode_data, derived_core_properties):
     table = [dummy]
     cache = {dummy: 0}
     index = [0] * (MAX_BMP + 1)
-    same_upper_map = {}
-    same_upper_dummy = (0, 0, 0)
-    same_upper_table = [same_upper_dummy]
-    same_upper_cache = {same_upper_dummy: 0}
-    same_upper_index = [0] * (MAX_BMP + 1)
 
     codepoint_table = codepoint_dict()
     test_space_table = []
@@ -327,12 +329,6 @@ def process_unicode_data(unicode_data, derived_core_properties):
 
         assert lower <= MAX_BMP and upper <= MAX_BMP
 
-        if code != upper:
-            if upper not in same_upper_map:
-                same_upper_map[upper] = [code]
-            else:
-                same_upper_map[upper].append(code)
-
         flags = 0
 
         # we combine whitespace and lineterminators because in pratice we don't need them separated
@@ -366,39 +362,8 @@ def process_unicode_data(unicode_data, derived_core_properties):
             table.append(item)
         index[code] = i
 
-    for code in range(0, MAX_BMP + 1):
-        entry = codepoint_table.get(code)
-
-        if not entry:
-            continue
-
-        (upper, _, _, _) = entry
-
-        if upper not in same_upper_map:
-            continue
-
-        same_upper_ds = [v - code for v in same_upper_map[upper]]
-
-        assert len(same_upper_ds) <= 3
-        assert all([v > -65535 and v < 65535 for v in same_upper_ds])
-
-        same_upper = [v & 0xffff for v in same_upper_ds]
-        same_upper_0 = same_upper[0] if len(same_upper) >= 1 else 0
-        same_upper_1 = same_upper[1] if len(same_upper) >= 2 else 0
-        same_upper_2 = same_upper[2] if len(same_upper) >= 3 else 0
-
-        item = (same_upper_0, same_upper_1, same_upper_2)
-
-        i = same_upper_cache.get(item)
-        if i is None:
-            assert item not in same_upper_table
-            same_upper_cache[item] = i = len(same_upper_table)
-            same_upper_table.append(item)
-        same_upper_index[code] = i
-
     return (
         table, index,
-        same_upper_table, same_upper_index,
         non_bmp_lower_map, non_bmp_upper_map,
         non_bmp_space_set,
         non_bmp_id_start_set, non_bmp_id_cont_set,
@@ -409,7 +374,7 @@ def process_unicode_data(unicode_data, derived_core_properties):
 def process_case_folding(case_folding):
     folding_map = {}
     rev_folding_map = {}
-    folding_dummy = (0, 0, 0, 0)
+    folding_dummy = (0,)
     folding_table = [folding_dummy]
     folding_cache = {folding_dummy: 0}
     folding_index = [0] * (MAX_BMP + 1)
@@ -417,9 +382,7 @@ def process_case_folding(case_folding):
     folding_tests = []
     folding_codes = set()
 
-    for row in read_case_folding(case_folding):
-        code = row[0]
-        mapping = row[2]
+    for (code, mapping) in read_case_folding(case_folding):
         folding_map[code] = mapping
 
         if mapping not in rev_folding_map:
@@ -443,8 +406,6 @@ def process_case_folding(case_folding):
         else:
             rev_folding = []
 
-        assert len(rev_folding) <= 3
-
         if folding != code or len(rev_folding):
             item = [code]
             if folding != code:
@@ -455,18 +416,12 @@ def process_case_folding(case_folding):
             continue
 
         folding_d = folding - code
-        rev_folding_ds = [v - code for v in rev_folding]
 
         assert folding_d > -65535 and folding_d < 65535
-        assert all([v > -65535 and v < 65535 for v in rev_folding])
 
         folding = folding_d & 0xffff
-        rev_folding = [v & 0xffff for v in rev_folding_ds]
-        rev_folding_0 = rev_folding[0] if len(rev_folding) >= 1 else 0
-        rev_folding_1 = rev_folding[1] if len(rev_folding) >= 2 else 0
-        rev_folding_2 = rev_folding[2] if len(rev_folding) >= 3 else 0
 
-        item = (folding, rev_folding_0, rev_folding_1, rev_folding_2)
+        item = (folding,)
 
         i = folding_cache.get(item)
         if i is None:
@@ -1093,7 +1048,6 @@ if (typeof reportCompare === "function")
 
 def make_unicode_file(version,
                       table, index,
-                      same_upper_table, same_upper_index,
                       folding_table, folding_index,
                       non_bmp_space_set,
                       non_bmp_id_start_set, non_bmp_id_cont_set,
@@ -1104,16 +1058,10 @@ def make_unicode_file(version,
     # Don't forget to update CharInfo in Unicode.h if you need to change this
     assert shift == 6
 
-    same_upper_index1, same_upper_index2, same_upper_shift = splitbins(same_upper_index)
-
-    # Don't forget to update CodepointsWithSameUpperCaseInfo in Unicode.h if you need
-    # to change this
-    assert same_upper_shift == 6
-
     folding_index1, folding_index2, folding_shift = splitbins(folding_index)
 
     # Don't forget to update CaseFoldInfo in Unicode.h if you need to change this
-    assert folding_shift == 6
+    assert folding_shift == 5
 
     # verify correctness
     for char in index:
@@ -1123,15 +1071,6 @@ def make_unicode_file(version,
         idx = index2[(idx << shift) + (char & ((1 << shift) - 1))]
 
         assert test == table[idx]
-
-    # verify correctness
-    for char in same_upper_index:
-        test = same_upper_table[same_upper_index[char]]
-
-        idx = same_upper_index1[char >> same_upper_shift]
-        idx = same_upper_index2[(idx << same_upper_shift) + (char & ((1 << same_upper_shift) - 1))]
-
-        assert test == same_upper_table[idx]
 
     # verify correctness
     for char in folding_index:
@@ -1255,12 +1194,6 @@ def make_unicode_file(version,
                     'js_charinfo', table,
                     'index1', index1,
                     'index2', index2,
-                    println)
-
-        write_table('CodepointsWithSameUpperCaseInfo',
-                    'js_codepoints_with_same_upper_info', same_upper_table,
-                    'codepoints_with_same_upper_index1', same_upper_index1,
-                    'codepoints_with_same_upper_index2', same_upper_index2,
                     println)
 
         write_table('FoldingInfo',
@@ -1407,7 +1340,6 @@ def update_unicode(args):
         print('Processing...')
         (
             table, index,
-            same_upper_table, same_upper_index,
             non_bmp_lower_map, non_bmp_upper_map,
             non_bmp_space_set,
             non_bmp_id_start_set, non_bmp_id_cont_set,
@@ -1424,7 +1356,6 @@ def update_unicode(args):
     print('Generating...')
     make_unicode_file(unicode_version,
                       table, index,
-                      same_upper_table, same_upper_index,
                       folding_table, folding_index,
                       non_bmp_space_set,
                       non_bmp_id_start_set, non_bmp_id_cont_set,

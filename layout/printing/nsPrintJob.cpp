@@ -110,7 +110,6 @@ static const char kPrintingPromptService[] =
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLFrameElement.h"
 #include "nsContentList.h"
-#include "PrintPreviewUserEventSuppressor.h"
 #include "xpcpublic.h"
 #include "nsVariant.h"
 #include "mozilla/ServoStyleSet.h"
@@ -145,8 +144,6 @@ static uint32_t gDumpLOFileNameCnt = 0;
 #define PRT_YESNO(_p) ((_p) ? "YES" : "NO")
 static const char* gFrameTypesStr[] = {"eDoc", "eFrame", "eIFrame",
                                        "eFrameSet"};
-static const char* gPrintRangeStr[] = {
-    "kRangeAllPages", "kRangeSpecifiedPageRange", "kRangeSelection"};
 
 // This processes the selection on aOrigDoc and creates an inverted selection on
 // aDoc, which it then deletes. If the start or end of the inverted selection
@@ -224,7 +221,7 @@ static bool IsParentAFrameSet(nsIDocShell* aParent) {
 }
 
 static std::tuple<nsPageSequenceFrame*, int32_t>
-GetSeqFrameAndCountPagesInternal(const UniquePtr<nsPrintObject>& aPO) {
+GetSeqFrameAndCountSheetsInternal(const UniquePtr<nsPrintObject>& aPO) {
   if (!aPO) {
     return {nullptr, 0};
   }
@@ -234,7 +231,7 @@ GetSeqFrameAndCountPagesInternal(const UniquePtr<nsPrintObject>& aPO) {
   // Nightly/Aurora in case the other patch fixes this.
   if (!aPO->mPresShell) {
     MOZ_DIAGNOSTIC_ASSERT(
-        false, "GetSeqFrameAndCountPages needs a non-null pres shell");
+        false, "GetSeqFrameAndCountSheets needs a non-null pres shell");
     return {nullptr, 0};
   }
 
@@ -243,7 +240,7 @@ GetSeqFrameAndCountPagesInternal(const UniquePtr<nsPrintObject>& aPO) {
     return {nullptr, 0};
   }
 
-  // count the total number of pages
+  // count the total number of sheets
   return {seqFrame, seqFrame->PrincipalChildList().GetLength()};
 }
 
@@ -278,7 +275,19 @@ static void BuildNestedPrintObjects(const UniquePtr<nsPrintObject>& aParentPO,
 
   for (auto& bc : aParentPO->mDocShell->GetBrowsingContext()->Children()) {
     nsCOMPtr<nsIDocShell> docShell = bc->GetDocShell();
+    if (!docShell) {
+      continue;
+    }
+
     RefPtr<Document> doc = docShell->GetDocument();
+    MOZ_DIAGNOSTIC_ASSERT(doc);
+    // We might find non-static documents here if the fission remoteness change
+    // hasn't happened / finished yet. In that case, just skip them, the same
+    // way we do for remote frames above.
+    MOZ_DIAGNOSTIC_ASSERT(doc->IsStaticDocument() || doc->IsInitialDocument());
+    if (!doc || !doc->IsStaticDocument()) {
+      continue;
+    }
 
     auto childPO = MakeUnique<nsPrintObject>();
     nsresult rv = childPO->InitAsNestedObject(docShell, doc, aParentPO.get());
@@ -424,33 +433,14 @@ nsresult nsPrintJob::Cancel() {
   return NS_ERROR_FAILURE;
 }
 
-//-------------------------------------------------------
-// Install our event listeners on the document to prevent
-// some events from being processed while in PrintPreview
-//
-// No return code - if this fails, there isn't much we can do
-void nsPrintJob::SuppressPrintPreviewUserEvents() {
-  if (!mPrt->mPPEventSuppressor) {
-    nsCOMPtr<nsIDocShell> docShell = do_QueryReferent(mDocShell);
-    if (!docShell) {
-      return;
-    }
-
-    if (nsPIDOMWindowOuter* win = docShell->GetWindow()) {
-      nsCOMPtr<EventTarget> target = win->GetFrameElementInternal();
-      mPrt->mPPEventSuppressor = new PrintPreviewUserEventSuppressor(target);
-    }
-  }
-}
-
 //-----------------------------------------------------------------
 std::tuple<nsPageSequenceFrame*, int32_t>
-nsPrintJob::GetSeqFrameAndCountPages() {
+nsPrintJob::GetSeqFrameAndCountSheets() {
   MOZ_ASSERT(mPrtPreview);
   // Guarantee that mPrintPreview->mPrintObject won't be deleted during a call
-  // of GetSeqFrameAndCountPagesInternal().
+  // of GetSeqFrameAndCountSheetsInternal().
   RefPtr<nsPrintData> printDataForPrintPreview = mPrtPreview;
-  return GetSeqFrameAndCountPagesInternal(
+  return GetSeqFrameAndCountSheetsInternal(
       printDataForPrintPreview->mPrintObject);
 }
 //---------------------------------------------------------------------------------
@@ -623,8 +613,7 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
   }
 
   // Now determine how to set up the Frame print UI
-  printData->mPrintSettings->SetPrintOptions(
-      nsIPrintSettings::kEnableSelectionRB,
+  printData->mPrintSettings->SetIsPrintSelectionRBEnabled(
       !mDisallowSelectionPrint && printData->mSelectionRoot);
 
   bool printingViaParent =
@@ -805,7 +794,6 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
     ShowPrintProgress(false, notifyOnInit, aDoc);
 
     if (!notifyOnInit) {
-      SuppressPrintPreviewUserEvents();
       rv = InitPrintDocConstruction(false);
     } else {
       rv = NS_OK;
@@ -891,23 +879,23 @@ int32_t nsPrintJob::GetRawNumPages() const {
   if (NS_WARN_IF(!printData)) {
     return 0;
   }
-  auto [seqFrame, numPages] =
-      GetSeqFrameAndCountPagesInternal(printData->mPrintObject);
+  auto [seqFrame, numSheets] =
+      GetSeqFrameAndCountSheetsInternal(printData->mPrintObject);
 
-  Unused << numPages;
+  Unused << numSheets;
   return seqFrame ? seqFrame->GetRawNumPages() : 0;
 }
 
 //----------------------------------------------------------------------------------
-int32_t nsPrintJob::GetPrintPreviewNumPages() {
+int32_t nsPrintJob::GetPrintPreviewNumSheets() {
   RefPtr<nsPrintData> printData = mPrtPreview ? mPrtPreview : mPrt;
   if (NS_WARN_IF(!printData)) {
     return 0;
   }
-  auto [seqFrame, numPages] =
-      GetSeqFrameAndCountPagesInternal(printData->mPrintObject);
+  auto [seqFrame, numSheets] =
+      GetSeqFrameAndCountSheetsInternal(printData->mPrintObject);
   Unused << seqFrame;
-  return numPages;
+  return numSheets;
 }
 
 //----------------------------------------------------------------------------------
@@ -1052,7 +1040,7 @@ nsresult nsPrintJob::DocumentReadyForPrinting() {
   if (NS_FAILED(rv)) {
     // The print job was canceled or there was a problem
     // So remove all other documents from the print list
-    DonePrintingPages(nullptr, rv);
+    DonePrintingSheets(nullptr, rv);
   }
   return rv;
 }
@@ -1432,7 +1420,7 @@ nsresult nsPrintJob::SetupToPrintContent() {
   }
 
   // This will print the docshell document
-  // when it completes asynchronously in the DonePrintingPages method
+  // when it completes asynchronously in the DonePrintingSheets method
   // it will check to see if there are more docshells to be printed and
   // then PrintDocContent will be called again.
 
@@ -1496,20 +1484,28 @@ nsresult nsPrintJob::InitPrintDocConstruction(bool aHandleError) {
   // Attach progressListener to catch network requests.
   mDidLoadDataForPrinting = false;
 
-  nsCOMPtr<nsIWebProgress> webProgress =
-      do_QueryInterface(printData->mPrintObject->mDocShell);
-  webProgress->AddProgressListener(static_cast<nsIWebProgressListener*>(this),
-                                   nsIWebProgress::NOTIFY_STATE_REQUEST);
+  {
+    AutoRestore<bool> restore{mDoingInitialReflow};
+    mDoingInitialReflow = true;
 
-  MOZ_TRY(ReflowDocList(printData->mPrintObject, DoSetPixelScale()));
+    nsCOMPtr<nsIWebProgress> webProgress =
+        do_QueryInterface(printData->mPrintObject->mDocShell);
+    webProgress->AddProgressListener(static_cast<nsIWebProgressListener*>(this),
+                                     nsIWebProgress::NOTIFY_STATE_REQUEST);
 
-  FirePrintPreviewUpdateEvent();
+    MOZ_TRY(ReflowDocList(printData->mPrintObject, DoSetPixelScale()));
+
+    FirePrintPreviewUpdateEvent();
+  }
 
   MaybeResumePrintAfterResourcesLoaded(aHandleError);
   return NS_OK;
 }
 
 bool nsPrintJob::ShouldResumePrint() const {
+  if (mDoingInitialReflow) {
+    return false;
+  }
   Document* doc = mPrt->mPrintObject->mDocument;
   MOZ_ASSERT(doc);
   NS_ENSURE_TRUE(doc, true);
@@ -1617,16 +1613,10 @@ void nsPrintJob::UpdateZoomRatio(nsPrintObject* aPO, bool aSetPixelScale) {
   // Here is where we set the shrinkage value into the DC
   // and this is what actually makes it shrink
   if (aSetPixelScale && aPO->mFrameType != eIFrame) {
-    int16_t printRangeType = nsIPrintSettings::kRangeAllPages;
-    mPrt->mPrintSettings->GetPrintRange(&printRangeType);
-
-    float ratio;
-    if (printRangeType != nsIPrintSettings::kRangeSelection) {
-      ratio = mPrt->mShrinkRatio - 0.005f;  // round down
-    } else {
-      ratio = aPO->mShrinkRatio - 0.005f;  // round down
-    }
-    aPO->mZoomRatio = ratio;
+    // Round down
+    aPO->mZoomRatio = mPrt->mPrintSettings->GetPrintSelectionOnly()
+                          ? aPO->mShrinkRatio - 0.005f
+                          : mPrt->mShrinkRatio - 0.005f;
   } else if (!mPrt->mShrinkToFit) {
     double scaling;
     mPrt->mPrintSettings->GetScaling(&scaling);
@@ -1819,9 +1809,7 @@ nsresult nsPrintJob::ReflowPrintObject(const UniquePtr<nsPrintObject>& aPO) {
 
   // If we're printing selection then remove the nonselected nodes from our
   // cloned document.
-  int16_t printRangeType = nsIPrintSettings::kRangeAllPages;
-  printData->mPrintSettings->GetPrintRange(&printRangeType);
-  if (printRangeType == nsIPrintSettings::kRangeSelection) {
+  if (printData->mPrintSettings->GetPrintSelectionOnly()) {
     // If we fail to remove the nodes then we should fail to print, because if
     // the user was trying to print a small selection from a large document,
     // sending the whole document to a real printer would be very frustrating.
@@ -1972,7 +1960,115 @@ bool nsPrintJob::PrintDocContent(const UniquePtr<nsPrintObject>& aPO,
   return false;
 }
 
-static constexpr auto kEllipsis = u"\x2026"_ns;
+// A helper struct to aid with DeleteNonSelectedNodes.
+struct MOZ_STACK_CLASS SelectionRangeState {
+  explicit SelectionRangeState(RefPtr<Selection> aSelection)
+      : mSelection(std::move(aSelection)) {
+    MOZ_ASSERT(mSelection);
+    MOZ_ASSERT(!mSelection->RangeCount());
+  }
+
+  // Selects all the nodes that are _not_ included in a given set of ranges.
+  MOZ_CAN_RUN_SCRIPT void SelectComplementOf(Span<const RefPtr<nsRange>>);
+  // Removes the selected ranges from the document.
+  MOZ_CAN_RUN_SCRIPT void RemoveSelectionFromDocument();
+
+ private:
+  struct Position {
+    nsINode* mNode;
+    uint32_t mOffset;
+  };
+
+  MOZ_CAN_RUN_SCRIPT void SelectRange(nsRange*);
+  MOZ_CAN_RUN_SCRIPT void SelectNodesExcept(const Position& aStart,
+                                            const Position& aEnd);
+  MOZ_CAN_RUN_SCRIPT void SelectNodesExceptInSubtree(const Position& aStart,
+                                                     const Position& aEnd);
+
+  // A map from subtree root (document or shadow root) to the start position of
+  // the non-selected content (so far).
+  nsDataHashtable<nsPtrHashKey<nsINode>, Position> mPositions;
+
+  // The selection we're adding the ranges to.
+  const RefPtr<Selection> mSelection;
+};
+
+void SelectionRangeState::SelectComplementOf(
+    Span<const RefPtr<nsRange>> aRanges) {
+  for (const auto& range : aRanges) {
+    auto start = Position{range->GetStartContainer(), range->StartOffset()};
+    auto end = Position{range->GetEndContainer(), range->EndOffset()};
+    SelectNodesExcept(start, end);
+  }
+}
+
+void SelectionRangeState::SelectRange(nsRange* aRange) {
+  if (aRange && !aRange->Collapsed()) {
+    mSelection->AddRangeAndSelectFramesAndNotifyListeners(*aRange,
+                                                          IgnoreErrors());
+  }
+}
+
+void SelectionRangeState::SelectNodesExcept(const Position& aStart,
+                                            const Position& aEnd) {
+  SelectNodesExceptInSubtree(aStart, aEnd);
+  if (auto* shadow = ShadowRoot::FromNode(aStart.mNode->SubtreeRoot())) {
+    auto* host = shadow->Host();
+    SelectNodesExcept(Position{host, 0}, Position{host, host->GetChildCount()});
+  } else {
+    MOZ_ASSERT(aStart.mNode->IsInUncomposedDoc());
+  }
+}
+
+void SelectionRangeState::SelectNodesExceptInSubtree(const Position& aStart,
+                                                     const Position& aEnd) {
+  static constexpr auto kEllipsis = u"\x2026"_ns;
+
+  nsINode* root = aStart.mNode->SubtreeRoot();
+  auto& start = mPositions.LookupForAdd(root).OrInsert([&] {
+    return Position{root, 0};
+  });
+
+  bool ellipsizedStart = false;
+  if (auto* text = Text::FromNode(aStart.mNode)) {
+    if (start.mNode != text && aStart.mOffset &&
+        aStart.mOffset < text->Length()) {
+      text->InsertData(aStart.mOffset, kEllipsis, IgnoreErrors());
+      ellipsizedStart = true;
+    }
+  }
+
+  RefPtr<nsRange> range = nsRange::Create(
+      start.mNode, start.mOffset, aStart.mNode, aStart.mOffset, IgnoreErrors());
+  SelectRange(range);
+
+  start = aEnd;
+
+  // If we added an ellipsis at the start and the end position was relative to
+  // the same node account for it here.
+  if (ellipsizedStart && aStart.mNode == aEnd.mNode) {
+    start.mOffset += kEllipsis.Length();
+  }
+
+  // If the end is mid text then add an ellipsis.
+  if (auto* text = Text::FromNode(start.mNode)) {
+    if (start.mOffset && start.mOffset < text->Length()) {
+      text->InsertData(start.mOffset, kEllipsis, IgnoreErrors());
+      start.mOffset += kEllipsis.Length();
+    }
+  }
+}
+
+void SelectionRangeState::RemoveSelectionFromDocument() {
+  for (auto& entry : mPositions) {
+    const Position& pos = entry.GetData();
+    nsINode* root = entry.GetKey();
+    RefPtr<nsRange> range = nsRange::Create(
+        pos.mNode, pos.mOffset, root, root->GetChildCount(), IgnoreErrors());
+    SelectRange(range);
+  }
+  mSelection->DeleteFromDocument(IgnoreErrors());
+}
 
 /**
  * Builds the complement set of ranges and adds those to the selection.
@@ -1996,60 +2092,9 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY static nsresult DeleteNonSelectedNodes(
       presShell->GetCurrentSelection(SelectionType::eNormal);
   NS_ENSURE_STATE(selection);
 
-  MOZ_ASSERT(!selection->RangeCount());
-  nsINode* bodyNode = aDoc.GetBodyElement();
-  if (!bodyNode) {
-    // We don't currently support printing selections that are not in a body.
-    return NS_ERROR_FAILURE;
-  }
-
-  nsINode* startNode = bodyNode;
-  uint32_t startOffset = 0;
-
-  for (nsRange* origRange : *printRanges) {
-    // New end is start of original range.
-    nsINode* endNode = origRange->GetStartContainer();
-    uint32_t endOffset = origRange->StartOffset();
-
-    // Create the range that we want to remove. Note that if startNode or
-    // endNode are null nsRange::Create() will fail and we won't remove
-    // that section.
-    RefPtr<nsRange> nonselectedRange = nsRange::Create(
-        startNode, startOffset, endNode, endOffset, IgnoreErrors());
-
-    if (nonselectedRange && !nonselectedRange->Collapsed()) {
-      selection->AddRangeAndSelectFramesAndNotifyListeners(*nonselectedRange,
-                                                           IgnoreErrors());
-      // Unless we've already added an ellipsis at the start, if we ended mid
-      // text node then add ellipsis.
-      Text* text = endNode->GetAsText();
-      if (startNode != endNode && text && endOffset &&
-          endOffset < text->Length()) {
-        text->InsertData(endOffset, kEllipsis, IgnoreErrors());
-      }
-    }
-
-    // Next new start is end of original range.
-    startNode = origRange->GetEndContainer();
-    startOffset = origRange->EndOffset();
-
-    // If the next node will start mid text node then add ellipsis.
-    Text* text = startNode ? startNode->GetAsText() : nullptr;
-    if (text && startOffset && startOffset < text->Length()) {
-      text->InsertData(startOffset, kEllipsis, IgnoreErrors());
-      startOffset += kEllipsis.Length();
-    }
-  }
-
-  // Add in the last range to the end of the body.
-  RefPtr<nsRange> lastRange =
-      nsRange::Create(startNode, startOffset, bodyNode,
-                      bodyNode->GetChildCount(), IgnoreErrors());
-  if (lastRange && !lastRange->Collapsed()) {
-    selection->AddRangeAndSelectFramesAndNotifyListeners(*lastRange,
-                                                         IgnoreErrors());
-  }
-  selection->DeleteFromDocument(IgnoreErrors());
+  SelectionRangeState state(std::move(selection));
+  state.SelectComplementOf(*printRanges);
+  state.RemoveSelectionFromDocument();
   return NS_OK;
 }
 
@@ -2197,14 +2242,14 @@ void nsPrintJob::EllipseLongString(nsAString& aStr, const uint32_t aLen,
 }
 
 //-------------------------------------------------------
-bool nsPrintJob::PrePrintPage() {
+bool nsPrintJob::PrePrintSheet() {
   NS_ASSERTION(mPageSeqFrame.IsAlive(), "mPageSeqFrame is not alive!");
   NS_ASSERTION(mPrt, "mPrt is null!");
 
   // Although these should NEVER be nullptr
   // This is added insurance, to make sure we don't crash in optimized builds
   if (!mPrt || !mPageSeqFrame.IsAlive()) {
-    return true;  // means we are done preparing the page.
+    return true;  // means we are done preparing the sheet.
   }
 
   // Guarantee that mPrt won't be deleted during a call of
@@ -2216,13 +2261,13 @@ bool nsPrintJob::PrePrintPage() {
   printData->mPrintSettings->GetIsCancelled(&isCancelled);
   if (isCancelled) return true;
 
-  // Ask mPageSeqFrame if the page is ready to be printed.
-  // If the page doesn't get printed at all, the |done| will be |true|.
+  // Ask mPageSeqFrame if the sheet is ready to be printed.
+  // If the sheet doesn't get printed at all, the |done| will be |true|.
   bool done = false;
   nsPageSequenceFrame* pageSeqFrame = do_QueryFrame(mPageSeqFrame.GetFrame());
-  nsresult rv = pageSeqFrame->PrePrintNextPage(mPagePrintTimer, &done);
+  nsresult rv = pageSeqFrame->PrePrintNextSheet(mPagePrintTimer, &done);
   if (NS_FAILED(rv)) {
-    // ??? ::PrintPage doesn't set |printData->mIsAborted = true| if
+    // ??? ::PrintSheet doesn't set |printData->mIsAborted = true| if
     // rv != NS_ERROR_ABORT, but I don't really understand why this should be
     // the right thing to do?  Shouldn't |printData->mIsAborted| set to true
     // all the time if something went wrong?
@@ -2235,10 +2280,17 @@ bool nsPrintJob::PrePrintPage() {
   return done;
 }
 
-bool nsPrintJob::PrintPage(nsPrintObject* aPO, bool& aInRange) {
+bool nsPrintJob::PrintSheet(nsPrintObject* aPO, bool& aInRange) {
   NS_ASSERTION(aPO, "aPO is null!");
   NS_ASSERTION(mPageSeqFrame.IsAlive(), "mPageSeqFrame is not alive!");
   NS_ASSERTION(mPrt, "mPrt is null!");
+
+  // XXXdholbert Nowadays, this function doesn't need to concern itself with
+  // page ranges -- page-range handling is now handled when we reflow our
+  // PrintedSheetFrames, and all PrintedSheetFrames are "in-range" and should
+  // be printed. So this outparam is unconditionally true. Bug 1669815 is filed
+  // on removing it entirely.
+  aInRange = true;
 
   // Although these should NEVER be nullptr
   // This is added insurance, to make sure we don't crash in optimized builds
@@ -2253,7 +2305,7 @@ bool nsPrintJob::PrintPage(nsPrintObject* aPO, bool& aInRange) {
   RefPtr<nsPrintData> printData = mPrt;
 
   PR_PL(("-----------------------------------\n"));
-  PR_PL(("------ In DV::PrintPage PO: %p (%s)\n", aPO,
+  PR_PL(("------ In DV::PrintSheet PO: %p (%s)\n", aPO,
          gFrameTypesStr[aPO->mFrameType]));
 
   // Check setting to see if someone request it be cancelled
@@ -2263,41 +2315,17 @@ bool nsPrintJob::PrintPage(nsPrintObject* aPO, bool& aInRange) {
     return true;
   }
 
-  int32_t pageNum, numPages, endPage;
   nsPageSequenceFrame* pageSeqFrame = do_QueryFrame(mPageSeqFrame.GetFrame());
-  pageNum = pageSeqFrame->GetCurrentPageNum();
-  numPages = pageSeqFrame->GetRawNumPages();
+  const uint32_t sheetIdx = pageSeqFrame->GetCurrentSheetIdx();
+  const uint32_t numSheets = pageSeqFrame->PrincipalChildList().GetLength();
 
-  bool donePrinting;
-  bool isDoingPrintRange = pageSeqFrame->IsDoingPrintRange();
-  if (isDoingPrintRange) {
-    int32_t fromPage;
-    int32_t toPage;
-    pageSeqFrame->GetPrintRange(&fromPage, &toPage);
+  PR_PL(("****** Printing sheet index %d of %d sheets(s)\n", sheetIdx,
+         numSheets));
 
-    if (fromPage > numPages) {
-      return true;
-    }
-    if (toPage > numPages) {
-      toPage = numPages;
-    }
-
-    PR_PL(("****** Printing Page %d printing from %d to page %d\n", pageNum,
-           fromPage, toPage));
-
-    donePrinting = pageNum >= toPage;
-    aInRange = pageNum >= fromPage && pageNum <= toPage;
-    endPage = (toPage - fromPage) + 1;
-  } else {
-    PR_PL(("****** Printing Page %d of %d page(s)\n", pageNum, numPages));
-
-    donePrinting = pageNum >= numPages;
-    endPage = numPages;
-    aInRange = true;
-  }
-
-  printData->DoOnProgressChange(++printData->mNumPagesPrinted, endPage, false,
-                                0);
+  MOZ_ASSERT(numSheets > 0, "print operations must have at least 1 sheet");
+  MOZ_ASSERT(sheetIdx < numSheets,
+             "sheetIdx shouldn't be allowed to go out of bounds");
+  printData->DoOnProgressChange(sheetIdx, numSheets, false, 0);
   if (NS_WARN_IF(mPrt != printData)) {
     // If current printing is canceled or new print is started, let's return
     // true to notify the caller of current printing is done.
@@ -2308,14 +2336,14 @@ bool nsPrintJob::PrintPage(nsPrintObject* aPO, bool& aInRange) {
     mPagePrintTimer->WaitForRemotePrint();
   }
 
-  // Print the Page
+  // Print the sheet
   // if a print job was cancelled externally, an EndPage or BeginPage may
   // fail and the failure is passed back here.
   // Returning true means we are done printing.
   //
   // When rv == NS_ERROR_ABORT, it means we want out of the
   // print job without displaying any error messages
-  nsresult rv = pageSeqFrame->PrintNextPage();
+  nsresult rv = pageSeqFrame->PrintNextSheet();
   if (NS_FAILED(rv)) {
     if (rv != NS_ERROR_ABORT) {
       FirePrintingErrorEvent(rv);
@@ -2326,7 +2354,9 @@ bool nsPrintJob::PrintPage(nsPrintObject* aPO, bool& aInRange) {
 
   pageSeqFrame->DoPageEnd();
 
-  return donePrinting;
+  // If we just printed the final sheet (the one with index "numSheets-1"),
+  // then we're done!
+  return (sheetIdx == numSheets - 1);
 }
 
 void nsPrintJob::PageDone(nsresult aResult) {
@@ -2367,7 +2397,7 @@ void nsPrintJob::SetIsPrintPreview(bool aIsPrintPreview) {
 }
 
 Document* nsPrintJob::FindFocusedDocument(Document* aDoc) const {
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   NS_ENSURE_TRUE(fm, nullptr);
 
   nsPIDOMWindowOuter* window = aDoc->GetOriginalDocument()->GetWindow();
@@ -2408,9 +2438,9 @@ bool nsPrintJob::IsWindowsInOurSubTree(nsPIDOMWindowOuter* window) const {
 }
 
 //-------------------------------------------------------
-bool nsPrintJob::DonePrintingPages(nsPrintObject* aPO, nsresult aResult) {
+bool nsPrintJob::DonePrintingSheets(nsPrintObject* aPO, nsresult aResult) {
   // NS_ASSERTION(aPO, "Pointer is null!");
-  PR_PL(("****** In DV::DonePrintingPages PO: %p (%s)\n", aPO,
+  PR_PL(("****** In DV::DonePrintingSheets PO: %p (%s)\n", aPO,
          aPO ? gFrameTypesStr[aPO->mFrameType] : ""));
 
   // If there is a pageSeqFrame, make sure there are no more printCanvas active
@@ -2431,7 +2461,7 @@ bool nsPrintJob::DonePrintingPages(nsPrintObject* aPO, nsresult aResult) {
     bool didPrint = PrintDocContent(printData->mPrintObject, rv);
     if (NS_SUCCEEDED(rv) && didPrint) {
       PR_PL(
-          ("****** In DV::DonePrintingPages PO: %p (%s) didPrint:%s (Not Done "
+          ("****** In DV::DonePrintingSheets PO: %p (%s) didPrint:%s (Not Done "
            "Printing)\n",
            aPO, gFrameTypesStr[aPO->mFrameType], PRT_YESNO(didPrint)));
       return false;
@@ -2471,23 +2501,16 @@ nsresult nsPrintJob::EnablePOsForPrinting() {
     return NS_ERROR_FAILURE;
   }
 
-  int16_t printRangeType = nsIPrintSettings::kRangeAllPages;
-  printData->mPrintSettings->GetPrintRange(&printRangeType);
-
   PR_PL(("\n"));
   PR_PL(("********* nsPrintJob::EnablePOsForPrinting *********\n"));
-  PR_PL(("PrintRange:         %s \n", gPrintRangeStr[printRangeType]));
-  PR_PL(("----\n"));
 
-  if (printRangeType == nsIPrintSettings::kRangeAllPages ||
-      printRangeType == nsIPrintSettings::kRangeSpecifiedPageRange) {
+  if (!printData->mPrintSettings->GetPrintSelectionOnly()) {
     printData->mPrintObject->EnablePrinting(true);
     return NS_OK;
   }
 
   // This means we are either printing a selected iframe or
   // we are printing the current selection.
-  MOZ_ASSERT(printRangeType == nsIPrintSettings::kRangeSelection);
   NS_ENSURE_STATE(!mDisallowSelectionPrint && printData->mSelectionRoot);
 
   // If mSelectionRoot is a selected iframe without a selection, then just
@@ -2586,7 +2609,7 @@ nsresult nsPrintJob::FinishPrintPreview() {
 
   if (mPrintPreviewCallback) {
     mPrintPreviewCallback(PrintPreviewResultInfo(
-        GetPrintPreviewNumPages(), GetRawNumPages(),
+        GetPrintPreviewNumSheets(), GetRawNumPages(),
         !mDisallowSelectionPrint && printData->mSelectionRoot));
     mPrintPreviewCallback = nullptr;
   }

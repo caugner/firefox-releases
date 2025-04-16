@@ -27,6 +27,20 @@ XPCOMUtils.defineLazyGetter(this, "ReferrerInfo", () =>
   )
 );
 
+// Filter out request headers as per discussion in Bug #1567549
+// CONNECTION: Used by Gecko to manage connections
+// HOST: Relates to how gecko will ultimately interpret the resulting resource as that
+//       determines the effective request URI
+const BAD_HEADERS = ["connection", "host"];
+
+// Headers use |\r\n| as separator so these characters cannot appear
+// in the header name or value
+const FORBIDDEN_HEADER_CHARACTERS = ["\n", "\r"];
+
+// Keep in sync with GeckoSession.java
+const HEADER_FILTER_CORS_SAFELISTED = 1;
+const HEADER_FILTER_UNRESTRICTED_UNSAFE = 2;
+
 // Create default ReferrerInfo instance for the given referrer URI string.
 const createReferrerInfo = aReferrer => {
   let referrerUri;
@@ -114,6 +128,32 @@ class GeckoViewNavigation extends GeckoViewModule {
     this._initialAboutBlank = true;
   }
 
+  validateHeader(key, value, filter) {
+    if (!key) {
+      // Key cannot be empty
+      return false;
+    }
+
+    for (const c of FORBIDDEN_HEADER_CHARACTERS) {
+      if (key.includes(c) || value?.includes(c)) {
+        return false;
+      }
+    }
+
+    if (BAD_HEADERS.includes(key.toLowerCase().trim())) {
+      return false;
+    }
+
+    if (
+      filter == HEADER_FILTER_CORS_SAFELISTED &&
+      !this.window.windowUtils.isCORSSafelistedRequestHeader(key, value)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
   // Bundle event handler.
   async onEvent(aEvent, aData, aCallback) {
     debug`onEvent: event=${aEvent}, data=${aData}`;
@@ -129,7 +169,14 @@ class GeckoViewNavigation extends GeckoViewModule {
         this.browser.gotoIndex(aData.index);
         break;
       case "GeckoView:LoadUri":
-        const { uri, referrerUri, referrerSessionId, flags, headers } = aData;
+        const {
+          uri,
+          referrerUri,
+          referrerSessionId,
+          flags,
+          headers,
+          headerFilter,
+        } = aData;
 
         let navFlags = convertFlags(flags);
         // For performance reasons we don't call the LoadUriDelegate.loadUri
@@ -184,22 +231,16 @@ class GeckoViewNavigation extends GeckoViewModule {
 
         let additionalHeaders = null;
         if (headers) {
-          // Filter out request headers as per discussion in Bug #1567549
-          // CONNECTION: Used by Gecko to manage connections
-          // HOST: Relates to how gecko will ultimately interpret the resulting resource as that
-          //       determines the effective request URI
-          const badHeaders = ["connection", "host"];
           additionalHeaders = "";
-          headers.forEach(entry => {
-            const key = entry
-              .split(/:/)[0]
-              .toLowerCase()
-              .trim();
-
-            if (!badHeaders.includes(key)) {
-              additionalHeaders += entry + "\r\n";
+          for (const [key, value] of Object.entries(headers)) {
+            if (!this.validateHeader(key, value, headerFilter)) {
+              Cu.reportError(`Ignoring invalid header '${key}'='${value}'.`);
+              continue;
             }
-          });
+
+            additionalHeaders += `${key}:${value ?? ""}\r\n`;
+          }
+
           if (additionalHeaders != "") {
             additionalHeaders = E10SUtils.makeInputStream(additionalHeaders);
           } else {
@@ -509,11 +550,6 @@ class GeckoViewNavigation extends GeckoViewModule {
       aParams.referrerInfo
     );
     return browser;
-  }
-
-  // nsIBrowserDOMWindow.
-  isTabContentWindow(aWindow) {
-    return this.browser.contentWindow === aWindow;
   }
 
   // nsIBrowserDOMWindow.

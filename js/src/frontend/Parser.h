@@ -271,7 +271,7 @@ class MOZ_STACK_CLASS ParserSharedBase : public JS::CustomAutoRooter {
   CompilationInfo& getCompilationInfo() { return compilationInfo_; }
 
   JSAtom* liftParserAtomToJSAtom(const ParserAtom* parserAtom) {
-    return compilationInfo_.liftParserAtomToJSAtom(cx_, parserAtom);
+    return parserAtom->toJSAtom(cx_, compilationInfo_.input.atomCache);
   }
   const ParserAtom* lowerJSAtomToParserAtom(JSAtom* atom) {
     return compilationInfo_.lowerJSAtomToParserAtom(cx_, atom);
@@ -365,9 +365,6 @@ class MOZ_STACK_CLASS ParserBase : public ParserSharedBase,
   using Base::warning;
   using Base::warningAt;
   using Base::warningNoOffset;
-  using Base::warningWithNotes;
-  using Base::warningWithNotesAt;
-  using Base::warningWithNotesNoOffset;
 
  public:
   bool isUnexpectedEOF() const { return isUnexpectedEOF_; }
@@ -607,9 +604,6 @@ class MOZ_STACK_CLASS PerHandlerParser : public ParserBase {
   using Base::warning;
   using Base::warningAt;
   using Base::warningNoOffset;
-  using Base::warningWithNotes;
-  using Base::warningWithNotesAt;
-  using Base::warningWithNotesNoOffset;
 };
 
 #define ABORTED_SYNTAX_PARSE_SENTINEL reinterpret_cast<void*>(0x1)
@@ -758,9 +752,6 @@ class MOZ_STACK_CLASS GeneralParser : public PerHandlerParser<ParseHandler> {
   using Base::warning;
   using Base::warningAt;
   using Base::warningNoOffset;
-  using Base::warningWithNotes;
-  using Base::warningWithNotesAt;
-  using Base::warningWithNotesNoOffset;
 
  public:
   using Base::anyChars;
@@ -1499,9 +1490,6 @@ class MOZ_STACK_CLASS Parser<SyntaxParseHandler, Unit> final
   using Base::warning;
   using Base::warningAt;
   using Base::warningNoOffset;
-  using Base::warningWithNotes;
-  using Base::warningWithNotesAt;
-  using Base::warningWithNotesNoOffset;
 
  private:
   using Base::alloc_;
@@ -1642,9 +1630,6 @@ class MOZ_STACK_CLASS Parser<FullParseHandler, Unit> final
   using Base::warning;
   using Base::warningAt;
   using Base::warningNoOffset;
-  using Base::warningWithNotes;
-  using Base::warningWithNotesAt;
-  using Base::warningWithNotesNoOffset;
 
  private:
   using Base::alloc_;

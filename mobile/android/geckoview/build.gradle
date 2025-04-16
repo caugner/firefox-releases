@@ -71,6 +71,7 @@ android {
         targetSdkVersion project.ext.targetSdkVersion
         minSdkVersion project.ext.minSdkVersion
         manifestPlaceholders = project.ext.manifestPlaceholders
+        multiDexEnabled true
 
         versionCode computeVersionCode()
         versionName "${mozconfig.substs.MOZ_APP_VERSION}-${mozconfig.substs.MOZ_UPDATE_CHANNEL}"
@@ -154,8 +155,8 @@ android {
 
                 if (mozconfig.substs.MOZ_WEBRTC) {
                     srcDir "${topsrcdir}/dom/media/systemservices/android_video_capture/java/src"
-                    srcDir "${topsrcdir}/media/webrtc/trunk/webrtc/sdk/android"
-                    srcDir "${topsrcdir}/media/webrtc/trunk/webrtc/rtc_base/java"
+                    srcDir "${topsrcdir}/third_party/libwebrtc/webrtc/sdk/android"
+                    srcDir "${topsrcdir}/third_party/libwebrtc/webrtc/rtc_base/java"
                 }
             }
 
@@ -221,6 +222,8 @@ dependencies {
     implementation "androidx.annotation:annotation:1.1.0"
     implementation "androidx.legacy:legacy-support-v4:1.0.0"
     implementation "androidx.palette:palette:1.0.0"
+
+    implementation "com.google.android.gms:play-services-fido:18.1.0"
     implementation "org.yaml:snakeyaml:1.24:android"
 
     implementation "androidx.lifecycle:lifecycle-extensions:2.0.0"
@@ -239,6 +242,8 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.1.0'
 
     androidTestImplementation 'com.koushikdutta.async:androidasync:2.+'
+
+    androidTestImplementation 'androidx.multidex:multidex:2.0.0'
 }
 
 apply from: "${topsrcdir}/mobile/android/gradle/with_gecko_binaries.gradle"
@@ -348,7 +353,7 @@ android.libraryVariants.all { variant ->
         classifier 'sources'
         description = "Generate Javadoc for build variant $name"
         destinationDir = new File(destinationDir, variant.baseName)
-        from files(variant.javaCompileProvider.get().source)
+        from files(variant.sourceSets.collect({ it.java.srcDirs }).flatten())
     }
 
     task("checkstyle${name.capitalize()}", type: Checkstyle) {
@@ -356,12 +361,14 @@ android.libraryVariants.all { variant ->
         // TODO: cleanup and include all sources
         source = ['src/main/java/']
         include '**/*.java'
+
     }
 }
 
 checkstyle {
     configDir = file(".")
     configFile = file("checkstyle.xml")
+    toolVersion = "8.36.2"
 }
 
 android.libraryVariants.all { variant ->

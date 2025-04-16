@@ -345,6 +345,21 @@ void HTMLEditor::HideGrabberInternal() {
   ManualNACPtr grabber = std::move(mGrabber);
   ManualNACPtr positioningShadow = std::move(mPositioningShadow);
 
+  // If we're still in dragging mode, it means that the dragging is canceled
+  // by the web app.
+  if (mGrabberClicked || mIsMoving) {
+    mGrabberClicked = false;
+    mIsMoving = false;
+    if (mEventListener) {
+      DebugOnly<nsresult> rvIgnored =
+          static_cast<HTMLEditorEventListener*>(mEventListener.get())
+              ->ListenToMouseMoveEventForGrabber(false);
+      NS_WARNING_ASSERTION(NS_SUCCEEDED(rvIgnored),
+                           "HTMLEditorEventListener::"
+                           "ListenToMouseMoveEventForGrabber(false) failed");
+    }
+  }
+
   DebugOnly<nsresult> rv = absolutePositioningObject->UnsetAttr(
       kNameSpaceID_None, nsGkAtoms::_moz_abspos, true);
   NS_WARNING_ASSERTION(
@@ -412,6 +427,8 @@ nsresult HTMLEditor::ShowGrabberInternal(Element& aElement) {
 }
 
 nsresult HTMLEditor::StartMoving() {
+  MOZ_ASSERT(mGrabber);
+
   RefPtr<Element> parentElement = mGrabber->GetParentElement();
   if (NS_WARN_IF(!parentElement) || NS_WARN_IF(!mAbsolutelyPositionedObject)) {
     return NS_ERROR_FAILURE;
@@ -700,7 +717,7 @@ nsresult HTMLEditor::SetPositionToStatic(Element& aElement) {
   // MOZ_KnownLive(*styledElement): aElement's lifetime must be guarantted
   // by the caller because of MOZ_CAN_RUN_SCRIPT method.
   rv = mCSSEditUtils->RemoveCSSPropertyWithTransaction(
-      MOZ_KnownLive(*styledElement), *nsGkAtoms::position, EmptyString());
+      MOZ_KnownLive(*styledElement), *nsGkAtoms::position, u""_ns);
   if (rv == NS_ERROR_EDITOR_DESTROYED) {
     NS_WARNING(
         "CSSEditUtils::RemoveCSSPropertyWithTransaction(nsGkAtoms::position) "
@@ -714,7 +731,7 @@ nsresult HTMLEditor::SetPositionToStatic(Element& aElement) {
   // MOZ_KnownLive(*styledElement): aElement's lifetime must be guarantted
   // by the caller because of MOZ_CAN_RUN_SCRIPT method.
   rv = mCSSEditUtils->RemoveCSSPropertyWithTransaction(
-      MOZ_KnownLive(*styledElement), *nsGkAtoms::top, EmptyString());
+      MOZ_KnownLive(*styledElement), *nsGkAtoms::top, u""_ns);
   if (rv == NS_ERROR_EDITOR_DESTROYED) {
     NS_WARNING(
         "CSSEditUtils::RemoveCSSPropertyWithTransaction(nsGkAtoms::top) "
@@ -728,7 +745,7 @@ nsresult HTMLEditor::SetPositionToStatic(Element& aElement) {
   // MOZ_KnownLive(*styledElement): aElement's lifetime must be guarantted
   // by the caller because of MOZ_CAN_RUN_SCRIPT method.
   rv = mCSSEditUtils->RemoveCSSPropertyWithTransaction(
-      MOZ_KnownLive(*styledElement), *nsGkAtoms::left, EmptyString());
+      MOZ_KnownLive(*styledElement), *nsGkAtoms::left, u""_ns);
   if (rv == NS_ERROR_EDITOR_DESTROYED) {
     NS_WARNING(
         "CSSEditUtils::RemoveCSSPropertyWithTransaction(nsGkAtoms::left) "
@@ -742,7 +759,7 @@ nsresult HTMLEditor::SetPositionToStatic(Element& aElement) {
   // MOZ_KnownLive(*styledElement): aElement's lifetime must be guarantted
   // by the caller because of MOZ_CAN_RUN_SCRIPT method.
   rv = mCSSEditUtils->RemoveCSSPropertyWithTransaction(
-      MOZ_KnownLive(*styledElement), *nsGkAtoms::z_index, EmptyString());
+      MOZ_KnownLive(*styledElement), *nsGkAtoms::z_index, u""_ns);
   if (rv == NS_ERROR_EDITOR_DESTROYED) {
     NS_WARNING(
         "CSSEditUtils::RemoveCSSPropertyWithTransaction(nsGkAtoms::z_index) "
@@ -758,7 +775,7 @@ nsresult HTMLEditor::SetPositionToStatic(Element& aElement) {
     // MOZ_KnownLive(*styledElement): aElement's lifetime must be guarantted
     // by the caller because of MOZ_CAN_RUN_SCRIPT method.
     rv = mCSSEditUtils->RemoveCSSPropertyWithTransaction(
-        MOZ_KnownLive(*styledElement), *nsGkAtoms::width, EmptyString());
+        MOZ_KnownLive(*styledElement), *nsGkAtoms::width, u""_ns);
     if (rv == NS_ERROR_EDITOR_DESTROYED) {
       NS_WARNING(
           "CSSEditUtils::RemoveCSSPropertyWithTransaction(nsGkAtoms::width) "
@@ -772,7 +789,7 @@ nsresult HTMLEditor::SetPositionToStatic(Element& aElement) {
     // MOZ_KnownLive(*styledElement): aElement's lifetime must be guarantted
     // by the caller because of MOZ_CAN_RUN_SCRIPT method.
     rv = mCSSEditUtils->RemoveCSSPropertyWithTransaction(
-        MOZ_KnownLive(*styledElement), *nsGkAtoms::height, EmptyString());
+        MOZ_KnownLive(*styledElement), *nsGkAtoms::height, u""_ns);
     if (rv == NS_ERROR_EDITOR_DESTROYED) {
       NS_WARNING(
           "CSSEditUtils::RemoveCSSPropertyWithTransaction(nsGkAtoms::height) "

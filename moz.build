@@ -10,9 +10,6 @@ with Files('AUTHORS'):
 with Files('LICENSE'):
     BUG_COMPONENT = ('mozilla.org', 'Licensing')
 
-with Files('LEGAL'):
-    BUG_COMPONENT = ('mozilla.org', 'Licensing')
-
 with Files('aclocal.m4'):
     BUG_COMPONENT = ('Firefox Build System', 'General')
 
@@ -199,5 +196,7 @@ SPHINX_TREES['writing-rust-code'] = 'docs/writing-rust-code'
 SPHINX_TREES['bug-mgmt'] = 'docs/bug-mgmt'
 
 SPHINX_TREES['setup'] = 'docs/setup'
+
+SPHINX_TREES['crash-reporting'] = 'docs/crash-reporting'
 
 include('build/templates.mozbuild')

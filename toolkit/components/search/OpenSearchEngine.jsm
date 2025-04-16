@@ -362,7 +362,6 @@ class OpenSearchEngine extends SearchEngine {
     // specified
     var method = element.getAttribute("method") || "GET";
     var template = element.getAttribute("template");
-    var resultDomain = element.getAttribute("resultdomain");
 
     let rels = [];
     if (element.hasAttribute("rel")) {
@@ -378,7 +377,7 @@ class OpenSearchEngine extends SearchEngine {
     }
 
     try {
-      var url = new EngineURL(type, method, template, resultDomain);
+      var url = new EngineURL(type, method, template);
     } catch (ex) {
       throw Components.Exception(
         "_parseURL: failed to add " + template + " as a URL",
@@ -399,49 +398,9 @@ class OpenSearchEngine extends SearchEngine {
           // Ignore failure
           logConsole.error("_parseURL: Url element has an invalid param");
         }
-      } else if (
-        param.localName == "MozParam" &&
-        // We only support MozParams for default search engines
-        this.isAppProvided
-      ) {
-        let condition = param.getAttribute("condition");
-
-        if (!condition) {
-          continue;
-        }
-
-        // We can't make these both use _addMozParam due to the fallback
-        // handling - WebExtension parameters get treated as MozParams even
-        // if they are not, and hence don't have the condition parameter, so
-        // we can't warn for them.
-        switch (condition) {
-          case "purpose":
-            url.addParam(
-              param.getAttribute("name"),
-              param.getAttribute("value"),
-              param.getAttribute("purpose")
-            );
-            break;
-          case "pref":
-            url._addMozParam({
-              pref: param.getAttribute("pref"),
-              name: param.getAttribute("name"),
-              condition: "pref",
-            });
-            break;
-          default:
-            // MozParams must have a condition to be valid
-            logConsole.error(
-              "Parsing engine:",
-              this._location,
-              "MozParam:",
-              param.getAttribute("name"),
-              "has an unknown condition:",
-              condition
-            );
-            break;
-        }
       }
+      // Note: MozParams are not supported for OpenSearch engines as they
+      // cannot be app-provided engines.
     }
 
     this._urls.push(url);

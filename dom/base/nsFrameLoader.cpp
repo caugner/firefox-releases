@@ -50,8 +50,8 @@
 #include "ReferrerInfo.h"
 #include "nsIOpenWindowInfo.h"
 #include "nsISHistory.h"
-
 #include "nsIURI.h"
+#include "nsIXULRuntime.h"
 #include "nsNetUtil.h"
 
 #include "nsGkAtoms.h"
@@ -273,7 +273,7 @@ static bool IsTopContent(BrowsingContext* aParent, Element* aOwner) {
 
 static already_AddRefed<BrowsingContext> CreateBrowsingContext(
     Element* aOwner, nsIOpenWindowInfo* aOpenWindowInfo,
-    BrowsingContextGroup* aSpecificGroup) {
+    BrowsingContextGroup* aSpecificGroup, bool aNetworkCreated = false) {
   MOZ_ASSERT(!aOpenWindowInfo || !aSpecificGroup,
              "Only one of SpecificGroup and OpenWindowInfo may be provided!");
 
@@ -326,7 +326,8 @@ static already_AddRefed<BrowsingContext> CreateBrowsingContext(
   MOZ_ASSERT(!aSpecificGroup,
              "Can't force BrowsingContextGroup for non-toplevel context");
   return BrowsingContext::CreateDetached(parentInner, nullptr, nullptr,
-                                         frameName, parentBC->GetType());
+                                         frameName, parentBC->GetType(),
+                                         !aNetworkCreated);
 }
 
 static bool InitialLoadIsRemote(Element* aOwner) {
@@ -412,7 +413,7 @@ already_AddRefed<nsFrameLoader> nsFrameLoader::Create(
 
   RefPtr<BrowsingContextGroup> group = InitialBrowsingContextGroup(aOwner);
   RefPtr<BrowsingContext> context =
-      CreateBrowsingContext(aOwner, aOpenWindowInfo, group);
+      CreateBrowsingContext(aOwner, aOpenWindowInfo, group, aNetworkCreated);
   NS_ENSURE_TRUE(context, nullptr);
 
   if (XRE_IsParentProcess() && aOpenWindowInfo) {
@@ -1491,14 +1492,6 @@ nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  bool ourPaymentRequestAllowed =
-      ourContent->HasAttr(kNameSpaceID_None, nsGkAtoms::allowpaymentrequest);
-  bool otherPaymentRequestAllowed =
-      otherContent->HasAttr(kNameSpaceID_None, nsGkAtoms::allowpaymentrequest);
-  if (ourPaymentRequestAllowed != otherPaymentRequestAllowed) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-
   nsILoadContext* ourLoadContext = ourContent->OwnerDoc()->GetLoadContext();
   nsILoadContext* otherLoadContext = otherContent->OwnerDoc()->GetLoadContext();
   MOZ_ASSERT(ourLoadContext && otherLoadContext,
@@ -1869,7 +1862,8 @@ void nsFrameLoader::StartDestroy(bool aForProcessSwitch) {
   bool dynamicSubframeRemoval = false;
   if (mOwnerContent) {
     doc = mOwnerContent->OwnerDoc();
-    dynamicSubframeRemoval = !mIsTopLevelContent && !doc->InUnlinkOrDeletion();
+    dynamicSubframeRemoval =
+        mPendingBrowsingContext->IsFrame() && !doc->InUnlinkOrDeletion();
     doc->SetSubDocumentFor(mOwnerContent, nullptr);
     MaybeUpdatePrimaryBrowserParent(eBrowserParentRemoved);
     SetOwnerContent(nullptr);
@@ -1882,7 +1876,7 @@ void nsFrameLoader::StartDestroy(bool aForProcessSwitch) {
       RefPtr<ChildSHistory> childSHistory =
           browsingContext->Top()->GetChildSessionHistory();
       if (childSHistory) {
-        if (StaticPrefs::fission_sessionHistoryInParent()) {
+        if (mozilla::SessionHistoryInParent()) {
           browsingContext->RemoveFromSessionHistory();
         } else {
           AutoTArray<nsID, 16> ids({browsingContext->GetHistoryID()});
@@ -2135,11 +2129,7 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
 
   InvokeBrowsingContextReadyCallback();
 
-  mIsTopLevelContent = mPendingBrowsingContext->IsContent() &&
-                       !mPendingBrowsingContext->GetParent();
-  if (!mNetworkCreated && !mIsTopLevelContent) {
-    docShell->SetCreatedDynamically(true);
-  }
+  mIsTopLevelContent = mPendingBrowsingContext->IsTopContent();
 
   if (mIsTopLevelContent) {
     // Manually add ourselves to our parent's docshell, as BrowsingContext won't
@@ -2764,6 +2754,24 @@ void nsFrameLoader::ActivateFrameEvent(const nsAString& aType, bool aCapture,
   }
 }
 
+nsresult nsFrameLoader::DoRemoteStaticClone(nsFrameLoader* aStaticCloneOf) {
+  MOZ_ASSERT(aStaticCloneOf->IsRemoteFrame());
+  auto* cc = ContentChild::GetSingleton();
+  if (!cc) {
+    MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess());
+    // TODO: Could possibly be implemented without too much effort.
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+  BrowsingContext* bcToClone = aStaticCloneOf->GetBrowsingContext();
+  if (NS_WARN_IF(!bcToClone)) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  BrowsingContext* bc = GetBrowsingContext();
+  MOZ_DIAGNOSTIC_ASSERT(bc);
+  cc->SendCloneDocumentTreeInto(bcToClone, bc);
+  return NS_OK;
+}
+
 nsresult nsFrameLoader::FinishStaticClone(
     nsFrameLoader* aStaticCloneOf, bool* aOutHasInProcessPrintCallbacks) {
   MOZ_DIAGNOSTIC_ASSERT(
@@ -2782,9 +2790,15 @@ nsresult nsFrameLoader::FinishStaticClone(
     return NS_ERROR_UNEXPECTED;
   }
 
-  if (NS_WARN_IF(aStaticCloneOf->IsRemoteFrame())) {
-    return NS_ERROR_NOT_IMPLEMENTED;
+  if (aStaticCloneOf->IsRemoteFrame()) {
+    return DoRemoteStaticClone(aStaticCloneOf);
   }
+
+  nsIDocShell* origDocShell = aStaticCloneOf->GetDocShell();
+  NS_ENSURE_STATE(origDocShell);
+
+  nsCOMPtr<Document> doc = origDocShell->GetDocument();
+  NS_ENSURE_STATE(doc);
 
   MaybeCreateDocShell();
   RefPtr<nsDocShell> docShell = GetDocShell();
@@ -2796,12 +2810,6 @@ nsresult nsFrameLoader::FinishStaticClone(
   nsCOMPtr<nsIContentViewer> viewer;
   docShell->GetContentViewer(getter_AddRefs(viewer));
   NS_ENSURE_STATE(viewer);
-
-  nsIDocShell* origDocShell = aStaticCloneOf->GetDocShell();
-  NS_ENSURE_STATE(origDocShell);
-
-  nsCOMPtr<Document> doc = origDocShell->GetDocument();
-  NS_ENSURE_STATE(doc);
 
   nsCOMPtr<Document> clonedDoc =
       doc->CreateStaticClone(docShell, viewer, aOutHasInProcessPrintCallbacks);
@@ -3147,12 +3155,9 @@ class WebProgressListenerToPromise final : public nsIWebProgressListener {
   NS_IMETHOD OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
                            uint32_t aStateFlags, nsresult aStatus) override {
     if (aStateFlags & nsIWebProgressListener::STATE_STOP &&
-        aStateFlags & nsIWebProgressListener::STATE_IS_DOCUMENT) {
-      MOZ_ASSERT(mPromise);
-      if (mPromise) {
-        mPromise->MaybeResolveWithUndefined();
-        mPromise = nullptr;
-      }
+        aStateFlags & nsIWebProgressListener::STATE_IS_DOCUMENT && mPromise) {
+      mPromise->MaybeResolveWithUndefined();
+      mPromise = nullptr;
     }
     return NS_OK;
   }
@@ -3294,7 +3299,7 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
       aPrintSettings,
       /* aListener = */ nullptr, docShellToCloneInto,
       nsGlobalWindowOuter::IsPreview::Yes,
-      nsGlobalWindowOuter::BlockUntilDone::No,
+      nsGlobalWindowOuter::IsForWindowDotPrint::No,
       [resolve](const PrintPreviewResultInfo& aInfo) { resolve(aInfo); }, rv);
   if (NS_WARN_IF(rv.Failed())) {
     promise->MaybeReject(std::move(rv));
@@ -3366,7 +3371,7 @@ already_AddRefed<Promise> nsFrameLoader::Print(uint64_t aOuterWindowID,
   outerWindow->Print(aPrintSettings, listener,
                      /* aDocShellToCloneInto = */ nullptr,
                      nsGlobalWindowOuter::IsPreview::No,
-                     nsGlobalWindowOuter::BlockUntilDone::No,
+                     nsGlobalWindowOuter::IsForWindowDotPrint::No,
                      /* aPrintPreviewCallback = */ nullptr, rv);
   if (rv.Failed()) {
     promise->MaybeReject(std::move(rv));

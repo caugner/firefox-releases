@@ -155,15 +155,22 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::GuardElementNotHole:
     case MDefinition::Opcode::GuardArrayIsPacked:
     case MDefinition::Opcode::GuardFunctionFlags:
+    case MDefinition::Opcode::GuardFunctionIsNonBuiltinCtor:
     case MDefinition::Opcode::GuardFunctionKind:
     case MDefinition::Opcode::ArgumentsObjectLength:
     case MDefinition::Opcode::FunctionLength:
+    case MDefinition::Opcode::FunctionName:
+    case MDefinition::Opcode::GuardArgumentsObjectNotOverriddenIterator:
       object = ins->getOperand(0);
       break;
     case MDefinition::Opcode::GetPropertyCache:
     case MDefinition::Opcode::CallGetProperty:
     case MDefinition::Opcode::GetDOMProperty:
     case MDefinition::Opcode::GetDOMMember:
+    case MDefinition::Opcode::LoadDOMExpandoValue:
+    case MDefinition::Opcode::LoadDOMExpandoValueGuardGeneration:
+    case MDefinition::Opcode::LoadDOMExpandoValueIgnoreGeneration:
+    case MDefinition::Opcode::GuardDOMExpandoMissingOrGuardShape:
     case MDefinition::Opcode::Call:
     case MDefinition::Opcode::Throw:
     case MDefinition::Opcode::ThrowRuntimeLexicalError:
@@ -183,6 +190,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::AtomicExchangeTypedArrayElement:
     case MDefinition::Opcode::AtomicTypedArrayElementBinop:
     case MDefinition::Opcode::LoadWrapperTarget:
+    case MDefinition::Opcode::GuardHasGetterSetter:
     case MDefinition::Opcode::AsmJSLoadHeap:
     case MDefinition::Opcode::AsmJSStoreHeap:
     case MDefinition::Opcode::WasmHeapBase:

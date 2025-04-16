@@ -22,6 +22,7 @@ add_task(async function setup() {
     [PREF_VIDEO_LOOPBACK, ""],
     [PREF_FAKE_STREAMS, true],
     [PREF_FOCUS_SOURCE, false],
+    ["privacy.webrtc.globalMuteToggles", true],
   ];
   await SpecialPowers.pushPrefEnv({ set: prefs });
 });
@@ -74,12 +75,7 @@ add_task(async function test_notifications() {
   await BrowserTestUtils.withNewTab(TEST_PAGE, async browser => {
     let indicatorPromise = promiseIndicatorWindow();
 
-    await shareDevices(
-      browser,
-      true /* camera */,
-      true /* microphone */,
-      false /* screen */
-    );
+    await shareDevices(browser, true /* camera */, true /* microphone */);
 
     let indicator = await indicatorPromise;
     let doc = indicator.document;
@@ -143,12 +139,7 @@ add_task(async function test_closing_indicator_resets_mute() {
   await BrowserTestUtils.withNewTab(TEST_PAGE, async browser => {
     let indicatorPromise = promiseIndicatorWindow();
 
-    await shareDevices(
-      browser,
-      true /* camera */,
-      true /* microphone */,
-      false /* screen */
-    );
+    await shareDevices(browser, true /* camera */, true /* microphone */);
 
     let indicator = await indicatorPromise;
     let doc = indicator.document;
@@ -214,12 +205,7 @@ add_task(async function test_new_processes() {
 
   let indicatorPromise = promiseIndicatorWindow();
 
-  await shareDevices(
-    browser1,
-    true /* camera */,
-    true /* microphone */,
-    false /* screen */
-  );
+  await shareDevices(browser1, true /* camera */, true /* microphone */);
 
   let indicator = await indicatorPromise;
   let doc = indicator.document;
@@ -271,12 +257,7 @@ add_task(async function test_new_processes() {
   let microphoneMuted2 = waitForMicrophoneMuteState(browser2, true);
   let cameraMuted2 = waitForCameraMuteState(browser2, true);
   info("Sharing the microphone and camera from a new process.");
-  await shareDevices(
-    browser2,
-    true /* camera */,
-    true /* microphone */,
-    false /* screen */
-  );
+  await shareDevices(browser2, true /* camera */, true /* microphone */);
   await Promise.all([microphoneMuted2, cameraMuted2]);
 
   info("Unmuting microphone...");

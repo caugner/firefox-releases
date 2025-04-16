@@ -150,14 +150,6 @@ If you would like to opt out of data collection, select (N) at the prompt.
 Would you like to enable build system telemetry?'''
 
 
-MOZ_PHAB_ADVERTISE = '''
-If you plan on submitting changes to Firefox use the following command to
-install the review submission tool "moz-phab":
-
-  mach install-moz-phab
-'''
-
-
 OLD_REVISION_WARNING = '''
 WARNING! You appear to be running `mach bootstrap` from an old revision.
 bootstrap is meant primarily for getting developer environments up-to-date to
@@ -325,6 +317,16 @@ class Bootstrapper(object):
                       'any time by editing the config file `{}`\n'.format(cfg_file))
         return choice
 
+    def check_code_submission(self, checkout_root):
+        if self.instance.no_interactive or which('moz-phab'):
+            return
+
+        if not self.instance.prompt_yesno('Will you be submitting commits to Mozilla?'):
+            return
+
+        mach_binary = os.path.join(checkout_root, 'mach')
+        subprocess.check_call((sys.executable, mach_binary, 'install-moz-phab'))
+
     def bootstrap(self):
         if sys.version_info[0] < 3:
             print('This script must be run with Python 3. \n'
@@ -362,6 +364,7 @@ class Bootstrapper(object):
             env=self.instance._hg_cleanenv(load_hgrc=True),
             hg=which('hg'))
         self.instance.validate_environment(checkout_root)
+        self._validate_python_environment()
         self.instance.ensure_mach_environment(checkout_root)
 
         if self.instance.no_system_changes:
@@ -407,14 +410,12 @@ class Bootstrapper(object):
 
         self.check_telemetry_opt_in(state_dir)
         self.maybe_install_private_packages_or_exit(state_dir, checkout_root)
+        self.check_code_submission(checkout_root)
 
         print(FINISHED % name)
         if not (which('rustc') and self.instance._parse_version('rustc')
                 >= MODERN_RUST_VERSION):
             print("To build %s, please restart the shell (Start a new terminal window)" % name)
-
-        if not which('moz-phab'):
-            print(MOZ_PHAB_ADVERTISE)
 
         self._output_mozconfig(application, mozconfig_builder)
 
@@ -438,6 +439,38 @@ class Bootstrapper(object):
                 suggestion = MOZCONFIG_SUGGESTION_TEMPLATE % (
                     mozconfig_path, raw_mozconfig)
                 print(suggestion)
+
+    def _validate_python_environment(self):
+        valid = True
+        try:
+            # distutils is singled out here because some distros (namely Ubuntu)
+            # include it in a separate package outside of the main Python
+            # installation.
+            import distutils.sysconfig
+            import distutils.spawn
+            assert (distutils.sysconfig is not None
+                    and distutils.spawn is not None)
+        except ImportError as e:
+            print('ERROR: Could not import package %s' % e.name,
+                  file=sys.stderr)
+            self.instance.suggest_install_distutils()
+            valid = False
+        except AssertionError:
+            print('ERROR: distutils is not behaving as expected.',
+                  file=sys.stderr)
+            self.instance.suggest_install_distutils()
+            valid = False
+        pip3 = which('pip3')
+        if not pip3:
+            print('ERROR: Could not find pip3.', file=sys.stderr)
+            self.instance.suggest_install_pip3()
+            valid = False
+        if not valid:
+            print('ERROR: Your Python installation will not be able to run '
+                  '`mach bootstrap`. `mach bootstrap` cannot maintain your '
+                  'Python environment for you; fix the errors shown here, and '
+                  'then re-run `mach bootstrap`.', file=sys.stderr)
+            sys.exit(1)
 
 
 def update_vct(hg, root_state_dir):

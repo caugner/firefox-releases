@@ -10,6 +10,8 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Unused.h"
 
+#include "jsmath.h"
+
 #include "builtin/DataViewObject.h"
 #include "builtin/MapObject.h"
 #include "builtin/ModuleObject.h"
@@ -19,18 +21,24 @@
 #include "jit/InlinableNatives.h"
 #include "jit/Ion.h"  // IsIonEnabled
 #include "jit/JitContext.h"
+#include "jit/JitRuntime.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "js/friend/DOMProxy.h"       // JS::ExpandoAndGeneration
 #include "js/friend/WindowProxy.h"  // js::IsWindow, js::IsWindowProxy, js::ToWindowIfWindowProxy
 #include "js/friend/XrayJitInfo.h"  // js::jit::GetXrayJitInfo, JS::XrayJitInfo
 #include "js/ScalarType.h"          // js::Scalar::Type
 #include "js/Wrapper.h"
+#include "proxy/DOMProxy.h"  // js::GetDOMProxyHandlerFamily
 #include "util/Unicode.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/BytecodeUtil.h"
+#include "vm/Iteration.h"
 #include "vm/PlainObject.h"  // js::PlainObject
+#include "vm/ProxyObject.h"
 #include "vm/SelfHosting.h"
 #include "vm/ThrowMsgKind.h"  // ThrowCondition
+#include "wasm/TypedObject.h"
+#include "wasm/WasmInstance.h"
 
 #include "jit/MacroAssembler-inl.h"
 #include "vm/EnvironmentObject-inl.h"
@@ -62,14 +70,14 @@ const char* const js::jit::CacheIROpNames[] = {
 #undef OPNAME
 };
 
-const uint32_t js::jit::CacheIROpArgLengths[] = {
-#define ARGLENGTH(op, len, ...) len,
-    CACHE_IR_OPS(ARGLENGTH)
-#undef ARGLENGTH
+const CacheIROpInfo js::jit::CacheIROpInfos[] = {
+#define OPINFO(op, len, transpile, ...) {len, transpile},
+    CACHE_IR_OPS(OPINFO)
+#undef OPINFO
 };
 
 const uint32_t js::jit::CacheIROpHealth[] = {
-#define OPHEALTH(op, len, health) health,
+#define OPHEALTH(op, len, transpile, health) health,
     CACHE_IR_OPS(OPHEALTH)
 #undef OPHEALTH
 };
@@ -187,13 +195,13 @@ JS::Symbol* CacheIRCloner::getSymbolField(uint32_t stubOffset) {
 BaseScript* CacheIRCloner::getBaseScriptField(uint32_t stubOffset) {
   return reinterpret_cast<BaseScript*>(readStubWord(stubOffset));
 }
-uintptr_t CacheIRCloner::getRawWordField(uint32_t stubOffset) {
-  return reinterpret_cast<uintptr_t>(readStubWord(stubOffset));
+uint32_t CacheIRCloner::getRawInt32Field(uint32_t stubOffset) {
+  return uint32_t(reinterpret_cast<uintptr_t>(readStubWord(stubOffset)));
 }
 const void* CacheIRCloner::getRawPointerField(uint32_t stubOffset) {
   return reinterpret_cast<const void*>(readStubWord(stubOffset));
 }
-uint64_t CacheIRCloner::getDOMExpandoGenerationField(uint32_t stubOffset) {
+uint64_t CacheIRCloner::getRawInt64Field(uint32_t stubOffset) {
   return static_cast<uint64_t>(readStubInt64(stubOffset));
 }
 
@@ -268,6 +276,17 @@ enum class ProxyStubType {
   DOMUnshadowed,
   Generic
 };
+
+static bool IsCacheableDOMProxy(JSObject* obj) {
+  const BaseProxyHandler* handler = obj->as<ProxyObject>().handler();
+  if (handler->family() != GetDOMProxyHandlerFamily()) {
+    return false;
+  }
+
+  // Some DOM proxies have dynamic prototypes.  We can't really cache those very
+  // well.
+  return obj->hasStaticPrototype();
+}
 
 static ProxyStubType GetProxyStubType(JSContext* cx, HandleObject obj,
                                       HandleId id) {
@@ -362,13 +381,13 @@ AttachDecision GetPropIRGenerator::tryAttachStub() {
       TRY_ATTACH(tryAttachObjectLength(obj, objId, id));
       TRY_ATTACH(tryAttachTypedArrayLength(obj, objId, id));
       TRY_ATTACH(tryAttachNative(obj, objId, id, receiverId));
-      TRY_ATTACH(tryAttachTypedObject(obj, objId, id));
       TRY_ATTACH(tryAttachModuleNamespace(obj, objId, id));
       TRY_ATTACH(tryAttachWindowProxy(obj, objId, id));
       TRY_ATTACH(tryAttachCrossCompartmentWrapper(obj, objId, id));
       TRY_ATTACH(
           tryAttachXrayCrossCompartmentWrapper(obj, objId, id, receiverId));
       TRY_ATTACH(tryAttachFunction(obj, objId, id));
+      TRY_ATTACH(tryAttachArgumentsObjectIterator(obj, objId, id));
       TRY_ATTACH(tryAttachProxy(obj, objId, id, receiverId));
 
       trackAttached(IRGenerator::NotAttached);
@@ -383,7 +402,7 @@ AttachDecision GetPropIRGenerator::tryAttachStub() {
     uint32_t index;
     Int32OperandId indexId;
     if (maybeGuardInt32Index(idVal_, getElemKeyValueId(), &index, &indexId)) {
-      TRY_ATTACH(tryAttachTypedElement(obj, objId, index, indexId));
+      TRY_ATTACH(tryAttachTypedArrayElement(obj, objId, index, indexId));
       TRY_ATTACH(tryAttachDenseElement(obj, objId, index, indexId));
       TRY_ATTACH(tryAttachDenseElementHole(obj, objId, index, indexId));
       TRY_ATTACH(tryAttachSparseElement(obj, objId, index, indexId));
@@ -534,10 +553,6 @@ static bool CheckHasNoSuchOwnProperty(JSContext* cx, JSObject* obj, jsid id) {
       return false;
     }
     if (obj->as<NativeObject>().contains(cx, id)) {
-      return false;
-    }
-  } else if (obj->is<TypedObject>()) {
-    if (obj->as<TypedObject>().typeDescr().hasProperty(cx->names(), id)) {
       return false;
     }
   } else {
@@ -1065,10 +1080,12 @@ static void EmitCallGetterResult(JSContext* cx, CacheIRWriter& writer,
   EmitCallGetterResultNoGuards(cx, writer, obj, holder, shape, receiverId);
 }
 
-static bool CanAttachDOMGetterSetter(JSContext* cx, JSJitInfo::OpType type,
-                                     HandleObject obj, HandleShape shape,
-                                     ICState::Mode mode) {
-  MOZ_ASSERT(type == JSJitInfo::Getter || type == JSJitInfo::Setter);
+static bool CanAttachDOMCall(JSContext* cx, JSJitInfo::OpType type,
+                             JSObject* obj, JSFunction* fun,
+                             ICState::Mode mode) {
+  MOZ_ASSERT(type == JSJitInfo::Getter || type == JSJitInfo::Setter ||
+             type == JSJitInfo::Method);
+
   if (!JitOptions.warpBuilder) {
     return false;
   }
@@ -1077,9 +1094,6 @@ static bool CanAttachDOMGetterSetter(JSContext* cx, JSJitInfo::OpType type,
     return false;
   }
 
-  Value v =
-      type == JSJitInfo::Getter ? shape->getterValue() : shape->setterValue();
-  JSFunction* fun = &v.toObject().as<JSFunction>();
   if (!fun->hasJitInfo()) {
     return false;
   }
@@ -1089,18 +1103,42 @@ static bool CanAttachDOMGetterSetter(JSContext* cx, JSJitInfo::OpType type,
   }
 
   const JSJitInfo* jitInfo = fun->jitInfo();
+  MOZ_ASSERT_IF(IsWindow(obj), !jitInfo->needsOuterizedThisObject());
   if (jitInfo->type() != type) {
     return false;
   }
 
   const JSClass* clasp = obj->getClass();
-  if (!clasp->isDOMClass() || clasp->isProxy()) {
+  if (!clasp->isDOMClass()) {
+    return false;
+  }
+
+  if (type != JSJitInfo::Method && clasp->isProxy()) {
     return false;
   }
 
   DOMInstanceClassHasProtoAtDepth instanceChecker =
       cx->runtime()->DOMcallbacks->instanceClassMatchesProto;
   return instanceChecker(clasp, jitInfo->protoID, jitInfo->depth);
+}
+
+static bool CanAttachDOMGetterSetter(JSContext* cx, JSJitInfo::OpType type,
+                                     JSObject* obj, HandleShape shape,
+                                     ICState::Mode mode) {
+  MOZ_ASSERT(type == JSJitInfo::Getter || type == JSJitInfo::Setter);
+
+  Value v =
+      type == JSJitInfo::Getter ? shape->getterValue() : shape->setterValue();
+  JSFunction* fun = &v.toObject().as<JSFunction>();
+
+  return CanAttachDOMCall(cx, type, obj, fun, mode);
+}
+
+static void EmitCallDOMGetterResultNoGuards(CacheIRWriter& writer, Shape* shape,
+                                            ObjOperandId objId) {
+  JSFunction* getter = &shape->getterValue().toObject().as<JSFunction>();
+  writer.callDOMGetterResult(objId, getter->jitInfo());
+  writer.typeMonitorResult();
 }
 
 static void EmitCallDOMGetterResult(JSContext* cx, CacheIRWriter& writer,
@@ -1111,10 +1149,7 @@ static void EmitCallDOMGetterResult(JSContext* cx, CacheIRWriter& writer,
   // The shape guard ensures the receiver's Class is valid for this DOM getter.
   EmitCallGetterResultGuards(writer, obj, holder, shape, objId,
                              ICState::Mode::Specialized);
-
-  JSFunction* getter = &shape->getterValue().toObject().as<JSFunction>();
-  writer.callDOMGetterResult(objId, getter->jitInfo());
-  writer.typeMonitorResult();
+  EmitCallDOMGetterResultNoGuards(writer, shape, objId);
 }
 
 void GetPropIRGenerator::attachMegamorphicNativeSlot(ObjOperandId objId,
@@ -1782,71 +1817,6 @@ AttachDecision GetPropIRGenerator::tryAttachProxy(HandleObject obj,
   MOZ_CRASH("Unexpected ProxyStubType");
 }
 
-static TypedThingLayout GetTypedThingLayout(const JSClass* clasp) {
-  if (IsTypedArrayClass(clasp)) {
-    return TypedThingLayout::TypedArray;
-  }
-  if (IsOutlineTypedObjectClass(clasp)) {
-    return TypedThingLayout::OutlineTypedObject;
-  }
-  if (IsInlineTypedObjectClass(clasp)) {
-    return TypedThingLayout::InlineTypedObject;
-  }
-  MOZ_CRASH("Bad object class");
-}
-
-AttachDecision GetPropIRGenerator::tryAttachTypedObject(HandleObject obj,
-                                                        ObjOperandId objId,
-                                                        HandleId id) {
-  if (!obj->is<TypedObject>()) {
-    return AttachDecision::NoAction;
-  }
-
-  TypedObject* typedObj = &obj->as<TypedObject>();
-  if (!typedObj->typeDescr().is<StructTypeDescr>()) {
-    return AttachDecision::NoAction;
-  }
-
-  StructTypeDescr* structDescr = &typedObj->typeDescr().as<StructTypeDescr>();
-  size_t fieldIndex;
-  if (!structDescr->fieldIndex(id, &fieldIndex)) {
-    return AttachDecision::NoAction;
-  }
-
-  TypeDescr* fieldDescr = &structDescr->fieldDescr(fieldIndex);
-  if (!fieldDescr->is<SimpleTypeDescr>()) {
-    return AttachDecision::NoAction;
-  }
-
-  TypedThingLayout layout = GetTypedThingLayout(obj->getClass());
-
-  uint32_t fieldOffset = structDescr->fieldOffset(fieldIndex);
-  uint32_t typeDescr = SimpleTypeDescrKey(&fieldDescr->as<SimpleTypeDescr>());
-
-  maybeEmitIdGuard(id);
-  writer.guardGroupForLayout(objId, obj->group());
-  writer.loadTypedObjectResult(objId, layout, typeDescr, fieldOffset);
-
-  // Only monitor the result if the type produced by this stub might vary.
-  bool monitorLoad = false;
-  if (SimpleTypeDescrKeyIsScalar(typeDescr)) {
-    Scalar::Type type = ScalarTypeFromSimpleTypeDescrKey(typeDescr);
-    monitorLoad = type == Scalar::Uint32;
-  } else {
-    ReferenceType type = ReferenceTypeFromSimpleTypeDescrKey(typeDescr);
-    monitorLoad = type != ReferenceType::TYPE_STRING;
-  }
-
-  if (monitorLoad) {
-    writer.typeMonitorResult();
-  } else {
-    writer.returnFromIC();
-  }
-
-  trackAttached("TypedObject");
-  return AttachDecision::Attach;
-}
-
 AttachDecision GetPropIRGenerator::tryAttachObjectLength(HandleObject obj,
                                                          ObjOperandId objId,
                                                          HandleId id) {
@@ -1949,7 +1919,8 @@ AttachDecision GetPropIRGenerator::tryAttachFunction(HandleObject obj,
     return AttachDecision::NoAction;
   }
 
-  if (!JSID_IS_ATOM(id, cx_->names().length)) {
+  bool isLength = JSID_IS_ATOM(id, cx_->names().length);
+  if (!isLength && !JSID_IS_ATOM(id, cx_->names().name)) {
     return AttachDecision::NoAction;
   }
 
@@ -1962,30 +1933,94 @@ AttachDecision GetPropIRGenerator::tryAttachFunction(HandleObject obj,
 
   JSFunction* fun = &obj->as<JSFunction>();
 
-  // length was probably deleted from the function.
-  if (fun->hasResolvedLength()) {
-    return AttachDecision::NoAction;
-  }
+  if (isLength) {
+    // length was probably deleted from the function.
+    if (fun->hasResolvedLength()) {
+      return AttachDecision::NoAction;
+    }
 
-  // Lazy functions don't store the length.
-  if (!fun->hasBytecode()) {
-    return AttachDecision::NoAction;
-  }
+    // Lazy functions don't store the length.
+    if (!fun->hasBytecode()) {
+      return AttachDecision::NoAction;
+    }
 
-  // Length can be non-int32 for bound functions.
-  if (fun->isBoundFunction()) {
-    constexpr auto lengthSlot = FunctionExtended::BOUND_FUNCTION_LENGTH_SLOT;
-    if (!fun->getExtendedSlot(lengthSlot).isInt32()) {
+    // Length can be non-int32 for bound functions.
+    if (fun->isBoundFunction()) {
+      constexpr auto lengthSlot = FunctionExtended::BOUND_FUNCTION_LENGTH_SLOT;
+      if (!fun->getExtendedSlot(lengthSlot).isInt32()) {
+        return AttachDecision::NoAction;
+      }
+    }
+  } else {
+    // name was probably deleted from the function.
+    if (fun->hasResolvedName()) {
+      return AttachDecision::NoAction;
+    }
+
+    // Unless the bound function name prefix is present, we need to call into
+    // the VM to compute the full name.
+    if (fun->isBoundFunction() && !fun->hasBoundFunctionNamePrefix()) {
       return AttachDecision::NoAction;
     }
   }
 
   maybeEmitIdGuard(id);
   writer.guardClass(objId, GuardClassKind::JSFunction);
-  writer.loadFunctionLengthResult(objId);
-  writer.returnFromIC();
+  if (isLength) {
+    writer.loadFunctionLengthResult(objId);
 
-  trackAttached("FunctionLength");
+    // Doesn't need to be monitored, because it always returns an int32.
+    writer.returnFromIC();
+
+    trackAttached("FunctionLength");
+  } else {
+    writer.loadFunctionNameResult(objId);
+
+    // Doesn't need to be monitored, because it always returns a string.
+    writer.returnFromIC();
+
+    trackAttached("FunctionName");
+  }
+  return AttachDecision::Attach;
+}
+
+AttachDecision GetPropIRGenerator::tryAttachArgumentsObjectIterator(
+    HandleObject obj, ObjOperandId objId, HandleId id) {
+  if (!obj->is<ArgumentsObject>()) {
+    return AttachDecision::NoAction;
+  }
+
+  if (!JSID_IS_SYMBOL(id) ||
+      JSID_TO_SYMBOL(id) != cx_->wellKnownSymbols().iterator) {
+    return AttachDecision::NoAction;
+  }
+
+  Handle<ArgumentsObject*> args = obj.as<ArgumentsObject>();
+  if (args->hasOverriddenIterator()) {
+    return AttachDecision::NoAction;
+  }
+
+  RootedValue iterator(cx_);
+  if (!ArgumentsObject::getArgumentsIterator(cx_, &iterator)) {
+    cx_->recoverFromOutOfMemory();
+    return AttachDecision::NoAction;
+  }
+  MOZ_ASSERT(iterator.isObject());
+
+  maybeEmitIdGuard(id);
+  if (args->is<MappedArgumentsObject>()) {
+    writer.guardClass(objId, GuardClassKind::MappedArguments);
+  } else {
+    MOZ_ASSERT(args->is<UnmappedArgumentsObject>());
+    writer.guardClass(objId, GuardClassKind::UnmappedArguments);
+  }
+  writer.guardArgumentsObjectNotOverriddenIterator(objId);
+
+  ObjOperandId iterId = writer.loadObject(&iterator.toObject());
+  writer.loadObjectResult(iterId);
+  writer.typeMonitorResult();
+
+  trackAttached("ArgumentsObjectIterator");
   return AttachDecision::Attach;
 }
 
@@ -2427,30 +2462,10 @@ AttachDecision GetPropIRGenerator::tryAttachSparseElement(
   return AttachDecision::Attach;
 }
 
-static bool IsPrimitiveArrayTypedObject(JSObject* obj) {
-  if (!obj->is<TypedObject>()) {
-    return false;
-  }
-  TypeDescr& descr = obj->as<TypedObject>().typeDescr();
-  return descr.is<ArrayTypeDescr>() &&
-         descr.as<ArrayTypeDescr>().elementType().is<ScalarTypeDescr>();
-}
-
-static Scalar::Type PrimitiveArrayTypedObjectType(JSObject* obj) {
-  MOZ_ASSERT(IsPrimitiveArrayTypedObject(obj));
-  TypeDescr& descr = obj->as<TypedObject>().typeDescr();
-  return descr.as<ArrayTypeDescr>().elementType().as<ScalarTypeDescr>().type();
-}
-
-static Scalar::Type TypedThingElementType(JSObject* obj) {
-  return obj->is<TypedArrayObject>() ? obj->as<TypedArrayObject>().type()
-                                     : PrimitiveArrayTypedObjectType(obj);
-}
-
 // For Uint32Array we let the stub return a double only if the current result is
 // a double, to allow better codegen in Warp.
 static bool AllowDoubleForUint32Array(TypedArrayObject* tarr, uint32_t index) {
-  if (TypedThingElementType(tarr) != Scalar::Type::Uint32) {
+  if (tarr->type() != Scalar::Type::Uint32) {
     // Return value is only relevant for Uint32Array.
     return false;
   }
@@ -2465,43 +2480,31 @@ static bool AllowDoubleForUint32Array(TypedArrayObject* tarr, uint32_t index) {
   return res.isDouble();
 }
 
-AttachDecision GetPropIRGenerator::tryAttachTypedElement(
+AttachDecision GetPropIRGenerator::tryAttachTypedArrayElement(
     HandleObject obj, ObjOperandId objId, uint32_t index,
     Int32OperandId indexId) {
-  if (!obj->is<TypedArrayObject>() && !IsPrimitiveArrayTypedObject(obj)) {
+  if (!obj->is<TypedArrayObject>()) {
     return AttachDecision::NoAction;
   }
+  TypedArrayObject* tarr = &obj->as<TypedArrayObject>();
 
   // Ensure the index is in-bounds so the element type gets monitored.
-  if (obj->is<TypedArrayObject>() &&
-      index >= obj->as<TypedArrayObject>().length()) {
+  if (index >= tarr->length()) {
     return AttachDecision::NoAction;
   }
 
-  TypedThingLayout layout = GetTypedThingLayout(obj->getClass());
-
-  if (IsPrimitiveArrayTypedObject(obj)) {
-    writer.guardGroupForLayout(objId, obj->group());
-  } else {
-    writer.guardShapeForClass(objId, obj->as<TypedArrayObject>().shape());
-  }
+  writer.guardShapeForClass(objId, tarr->shape());
 
   // Don't handle out-of-bounds accesses here because we have to ensure the
   // |undefined| type is monitored. See also tryAttachTypedArrayNonInt32Index.
-  if (layout == TypedThingLayout::TypedArray) {
-    TypedArrayObject* tarr = &obj->as<TypedArrayObject>();
-    bool allowDoubleForUint32 = AllowDoubleForUint32Array(tarr, index);
-    writer.loadTypedArrayElementResult(
-        objId, indexId, TypedThingElementType(obj),
-        /* handleOOB = */ false, allowDoubleForUint32);
-  } else {
-    writer.loadTypedObjectElementResult(objId, indexId, layout,
-                                        TypedThingElementType(obj));
-  }
+  bool allowDoubleForUint32 = AllowDoubleForUint32Array(tarr, index);
+  writer.loadTypedArrayElementResult(objId, indexId, tarr->type(),
+                                     /* handleOOB = */ false,
+                                     allowDoubleForUint32);
 
   // Reading from Uint32Array may produce an int32 now but a double value
   // later, so ensure we monitor the result.
-  if (TypedThingElementType(obj) == Scalar::Type::Uint32) {
+  if (tarr->type() == Scalar::Type::Uint32) {
     writer.typeMonitorResult();
   } else {
     writer.returnFromIC();
@@ -2539,7 +2542,7 @@ AttachDecision GetPropIRGenerator::tryAttachTypedArrayNonInt32Index(
 
   writer.guardShapeForClass(objId, tarr->shape());
 
-  writer.loadTypedArrayElementResult(objId, indexId, TypedThingElementType(obj),
+  writer.loadTypedArrayElementResult(objId, indexId, tarr->type(),
                                      /* handleOOB = */ true,
                                      allowDoubleForUint32);
 
@@ -2816,11 +2819,18 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameGetter(ObjOperandId objId,
     writer.guardShape(holderId, holder->lastProperty());
   }
 
-  ValOperandId receiverId = writer.boxObject(globalId);
-  EmitCallGetterResultNoGuards(cx_, writer, &globalLexical->global(), holder,
-                               shape, receiverId);
+  if (CanAttachDOMGetterSetter(cx_, JSJitInfo::Getter, &globalLexical->global(),
+                               shape, mode_)) {
+    // The global shape guard above ensures the instance JSClass is correct.
+    EmitCallDOMGetterResultNoGuards(writer, shape, globalId);
+    trackAttached("GlobalNameDOMGetter");
+  } else {
+    ValOperandId receiverId = writer.boxObject(globalId);
+    EmitCallGetterResultNoGuards(cx_, writer, &globalLexical->global(), holder,
+                                 shape, receiverId);
+    trackAttached("GlobalNameGetter");
+  }
 
-  trackAttached("GlobalNameGetter");
   return AttachDecision::Attach;
 }
 
@@ -3189,7 +3199,6 @@ AttachDecision HasPropIRGenerator::tryAttachNamedProp(HandleObject obj,
 
   TRY_ATTACH(tryAttachMegamorphic(objId, keyId));
   TRY_ATTACH(tryAttachNative(obj, objId, key, keyId, prop, holder));
-  TRY_ATTACH(tryAttachTypedObject(obj, objId, key, keyId));
 
   return AttachDecision::NoAction;
 }
@@ -3234,20 +3243,12 @@ AttachDecision HasPropIRGenerator::tryAttachNative(JSObject* obj,
 AttachDecision HasPropIRGenerator::tryAttachTypedArray(HandleObject obj,
                                                        ObjOperandId objId,
                                                        Int32OperandId indexId) {
-  if (!obj->is<TypedArrayObject>() && !IsPrimitiveArrayTypedObject(obj)) {
+  if (!obj->is<TypedArrayObject>()) {
     return AttachDecision::NoAction;
   }
 
-  TypedThingLayout layout = GetTypedThingLayout(obj->getClass());
-
-  if (IsPrimitiveArrayTypedObject(obj)) {
-    writer.guardGroupForLayout(objId, obj->group());
-  } else {
-    writer.guardShapeForClass(objId, obj->as<TypedArrayObject>().shape());
-  }
-
-  writer.loadTypedElementExistsResult(objId, indexId, layout);
-
+  writer.guardIsTypedArray(objId);
+  writer.loadTypedArrayElementExistsResult(objId, indexId);
   writer.returnFromIC();
 
   trackAttached("TypedArrayObject");
@@ -3266,36 +3267,11 @@ AttachDecision HasPropIRGenerator::tryAttachTypedArrayNonInt32Index(
 
   Int32OperandId indexId = writer.guardToTypedArrayIndex(keyId);
 
-  TypedThingLayout layout = GetTypedThingLayout(obj->getClass());
-
-  writer.guardShapeForClass(objId, obj->as<TypedArrayObject>().shape());
-
-  writer.loadTypedElementExistsResult(objId, indexId, layout);
-
+  writer.guardIsTypedArray(objId);
+  writer.loadTypedArrayElementExistsResult(objId, indexId);
   writer.returnFromIC();
 
   trackAttached("TypedArrayObjectNonInt32Index");
-  return AttachDecision::Attach;
-}
-
-AttachDecision HasPropIRGenerator::tryAttachTypedObject(JSObject* obj,
-                                                        ObjOperandId objId,
-                                                        jsid key,
-                                                        ValOperandId keyId) {
-  if (!obj->is<TypedObject>()) {
-    return AttachDecision::NoAction;
-  }
-
-  if (!obj->as<TypedObject>().typeDescr().hasProperty(cx_->names(), key)) {
-    return AttachDecision::NoAction;
-  }
-
-  emitIdGuard(keyId, key);
-  writer.guardGroupForLayout(objId, obj->group());
-  writer.loadBooleanResult(true);
-  writer.returnFromIC();
-
-  trackAttached("TypedObjectHasProp");
   return AttachDecision::Attach;
 }
 
@@ -3572,7 +3548,6 @@ AttachDecision SetPropIRGenerator::tryAttachStub() {
     }
     if (nameOrSymbol) {
       TRY_ATTACH(tryAttachNativeSetSlot(obj, objId, id, rhsValId));
-      TRY_ATTACH(tryAttachTypedObjectProperty(obj, objId, id, rhsValId));
       if (IsPropertySetOp(JSOp(*pc_))) {
         TRY_ATTACH(tryAttachSetArrayLength(obj, objId, id, rhsValId));
         TRY_ATTACH(tryAttachSetter(obj, objId, id, rhsValId));
@@ -3600,7 +3575,7 @@ AttachDecision SetPropIRGenerator::tryAttachStub() {
       TRY_ATTACH(
           tryAttachSetDenseElementHole(obj, objId, index, indexId, rhsValId));
       TRY_ATTACH(
-          tryAttachSetTypedElement(obj, objId, index, indexId, rhsValId));
+          tryAttachSetTypedArrayElement(obj, objId, index, indexId, rhsValId));
       TRY_ATTACH(tryAttachAddOrUpdateSparseElement(obj, objId, index, indexId,
                                                    rhsValId));
       return AttachDecision::NoAction;
@@ -3674,6 +3649,27 @@ static bool CanAttachNativeSetSlot(JSContext* cx, JSOp op, HandleObject obj,
   return true;
 }
 
+// There is no need to guard on the shape. Global lexical bindings are
+// non-configurable and can not be shadowed.
+static bool IsGlobalLexicalSetGName(JSOp op, NativeObject* obj,
+                                    HandleShape shape) {
+  // Ensure that the env can't change.
+  if (op != JSOp::SetGName && op != JSOp::StrictSetGName) {
+    return false;
+  }
+
+  if (!obj->is<LexicalEnvironmentObject>() ||
+      !obj->as<LexicalEnvironmentObject>().isGlobal()) {
+    return false;
+  }
+
+  // Uninitialized let bindings use a RuntimeLexicalErrorObject.
+  MOZ_ASSERT(!obj->getSlot(shape->slot()).isMagic());
+  MOZ_ASSERT(shape->writable());
+  MOZ_ASSERT(!shape->configurable());
+  return true;
+}
+
 AttachDecision SetPropIRGenerator::tryAttachNativeSetSlot(HandleObject obj,
                                                           ObjOperandId objId,
                                                           HandleId id,
@@ -3705,7 +3701,9 @@ AttachDecision SetPropIRGenerator::tryAttachNativeSetSlot(HandleObject obj,
   if (typeCheckInfo_.needsTypeBarrier()) {
     writer.guardGroupForTypeBarrier(objId, nobj->group());
   }
-  TestMatchingNativeReceiver(writer, nobj, objId);
+  if (!IsGlobalLexicalSetGName(JSOp(*pc_), nobj, propShape)) {
+    TestMatchingNativeReceiver(writer, nobj, objId);
+  }
 
   if (IsPreliminaryObject(obj)) {
     preliminaryObjectAction_ = PreliminaryObjectAction::NotePreliminary;
@@ -3754,89 +3752,6 @@ static bool ValueIsNumeric(Scalar::Type type, const Value& val) {
     return val.isBigInt();
   }
   return val.isNumber();
-}
-
-AttachDecision SetPropIRGenerator::tryAttachTypedObjectProperty(
-    HandleObject obj, ObjOperandId objId, HandleId id, ValOperandId rhsId) {
-  if (!obj->is<TypedObject>()) {
-    return AttachDecision::NoAction;
-  }
-
-  if (!obj->as<TypedObject>().typeDescr().is<StructTypeDescr>()) {
-    return AttachDecision::NoAction;
-  }
-
-  StructTypeDescr* structDescr =
-      &obj->as<TypedObject>().typeDescr().as<StructTypeDescr>();
-  size_t fieldIndex;
-  if (!structDescr->fieldIndex(id, &fieldIndex)) {
-    return AttachDecision::NoAction;
-  }
-
-  TypeDescr* fieldDescr = &structDescr->fieldDescr(fieldIndex);
-  if (!fieldDescr->is<SimpleTypeDescr>()) {
-    return AttachDecision::NoAction;
-  }
-
-  if (fieldDescr->is<ReferenceTypeDescr>() &&
-      fieldDescr->as<ReferenceTypeDescr>().type() ==
-          ReferenceType::TYPE_WASM_ANYREF) {
-    // TODO/AnyRef-boxing: we can probably do better, in particular, code
-    // that stores object pointers and null in an anyref slot should be able
-    // to get a fast path.
-    return AttachDecision::NoAction;
-  }
-
-  if (fieldDescr->is<ScalarTypeDescr>()) {
-    Scalar::Type type = fieldDescr->as<ScalarTypeDescr>().type();
-    if (!ValueIsNumeric(type, rhsVal_)) {
-      return AttachDecision::NoAction;
-    }
-  }
-
-  uint32_t fieldOffset = structDescr->fieldOffset(fieldIndex);
-  TypedThingLayout layout = GetTypedThingLayout(obj->getClass());
-
-  maybeEmitIdGuard(id);
-  writer.guardGroupForLayout(objId, obj->group());
-
-  typeCheckInfo_.set(obj->group(), id);
-
-  // Scalar types can always be stored without a type update stub.
-  if (fieldDescr->is<ScalarTypeDescr>()) {
-    Scalar::Type type = fieldDescr->as<ScalarTypeDescr>().type();
-    OperandId rhsValId = emitNumericGuard(rhsId, type);
-
-    writer.storeTypedObjectScalarProperty(objId, fieldOffset, layout, type,
-                                          rhsValId);
-    writer.returnFromIC();
-
-    trackAttached("TypedObject");
-    return AttachDecision::Attach;
-  }
-
-  // For reference types, guard on the RHS type first, so that
-  // StoreTypedObjectReferenceProperty is infallible.
-  ReferenceType type = fieldDescr->as<ReferenceTypeDescr>().type();
-  switch (type) {
-    case ReferenceType::TYPE_ANY:
-      break;
-    case ReferenceType::TYPE_OBJECT:
-      writer.guardIsObjectOrNull(rhsId);
-      break;
-    case ReferenceType::TYPE_STRING:
-      writer.guardNonDoubleType(rhsId, ValueType::String);
-      break;
-    case ReferenceType::TYPE_WASM_ANYREF:
-      MOZ_CRASH();
-  }
-
-  writer.storeTypedObjectReferenceProperty(objId, fieldOffset, layout, type,
-                                           rhsId);
-  writer.returnFromIC();
-
-  trackAttached("TypedObject");
-  return AttachDecision::Attach;
 }
 
 void SetPropIRGenerator::trackAttached(const char* name) {
@@ -4270,48 +4185,28 @@ AttachDecision SetPropIRGenerator::tryAttachAddOrUpdateSparseElement(
   return AttachDecision::Attach;
 }
 
-AttachDecision SetPropIRGenerator::tryAttachSetTypedElement(
+AttachDecision SetPropIRGenerator::tryAttachSetTypedArrayElement(
     HandleObject obj, ObjOperandId objId, uint32_t index,
     Int32OperandId indexId, ValOperandId rhsId) {
-  if (!obj->is<TypedArrayObject>() && !IsPrimitiveArrayTypedObject(obj)) {
+  if (!obj->is<TypedArrayObject>()) {
     return AttachDecision::NoAction;
   }
+  TypedArrayObject* tarr = &obj->as<TypedArrayObject>();
 
-  bool handleOutOfBounds = false;
-  if (obj->is<TypedArrayObject>()) {
-    handleOutOfBounds = (index >= obj->as<TypedArrayObject>().length());
-  } else {
-    // Typed objects throw on out of bounds accesses. Don't attach
-    // a stub in this case.
-    if (index >= obj->as<TypedObject>().length()) {
-      return AttachDecision::NoAction;
-    }
-  }
-
-  Scalar::Type elementType = TypedThingElementType(obj);
-  TypedThingLayout layout = GetTypedThingLayout(obj->getClass());
+  bool handleOutOfBounds = (index >= tarr->length());
+  Scalar::Type elementType = tarr->type();
 
   // Don't attach if the input type doesn't match the guard added below.
   if (!ValueIsNumeric(elementType, rhsVal_)) {
     return AttachDecision::NoAction;
   }
 
-  if (IsPrimitiveArrayTypedObject(obj)) {
-    writer.guardGroupForLayout(objId, obj->group());
-  } else {
-    writer.guardShapeForClass(objId, obj->as<TypedArrayObject>().shape());
-  }
+  writer.guardShapeForClass(objId, tarr->shape());
 
   OperandId rhsValId = emitNumericGuard(rhsId, elementType);
 
-  if (layout == TypedThingLayout::TypedArray) {
-    writer.storeTypedArrayElement(objId, elementType, indexId, rhsValId,
-                                  handleOutOfBounds);
-  } else {
-    MOZ_ASSERT(!handleOutOfBounds);
-    writer.storeTypedObjectElement(objId, layout, elementType, indexId,
-                                   rhsValId);
-  }
+  writer.storeTypedArrayElement(objId, elementType, indexId, rhsValId,
+                                handleOutOfBounds);
   writer.returnFromIC();
 
   if (handleOutOfBounds) {
@@ -4327,12 +4222,13 @@ AttachDecision SetPropIRGenerator::tryAttachSetTypedArrayElementNonInt32Index(
   if (!obj->is<TypedArrayObject>()) {
     return AttachDecision::NoAction;
   }
+  TypedArrayObject* tarr = &obj->as<TypedArrayObject>();
 
   if (!idVal_.isNumber()) {
     return AttachDecision::NoAction;
   }
 
-  Scalar::Type elementType = TypedThingElementType(obj);
+  Scalar::Type elementType = tarr->type();
 
   // Don't attach if the input type doesn't match the guard added below.
   if (!ValueIsNumeric(elementType, rhsVal_)) {
@@ -4342,7 +4238,7 @@ AttachDecision SetPropIRGenerator::tryAttachSetTypedArrayElementNonInt32Index(
   ValOperandId keyId = setElemKeyValueId();
   Int32OperandId indexId = writer.guardToTypedArrayIndex(keyId);
 
-  writer.guardShapeForClass(objId, obj->as<TypedArrayObject>().shape());
+  writer.guardShapeForClass(objId, tarr->shape());
 
   OperandId rhsValId = emitNumericGuard(rhsId, elementType);
 
@@ -6907,7 +6803,7 @@ AttachDecision CallIRGenerator::tryAttachMathFloor(HandleFunction callee) {
   if (resultIsInt32) {
     writer.mathFloorToInt32Result(numberId);
   } else {
-    writer.mathFunctionNumberResult(numberId, UnaryMathFunction::Floor);
+    writer.mathFloorNumberResult(numberId);
   }
 
   writer.typeMonitorResult();
@@ -6941,7 +6837,7 @@ AttachDecision CallIRGenerator::tryAttachMathCeil(HandleFunction callee) {
   if (resultIsInt32) {
     writer.mathCeilToInt32Result(numberId);
   } else {
-    writer.mathFunctionNumberResult(numberId, UnaryMathFunction::Ceil);
+    writer.mathCeilNumberResult(numberId);
   }
 
   writer.typeMonitorResult();
@@ -6975,7 +6871,7 @@ AttachDecision CallIRGenerator::tryAttachMathTrunc(HandleFunction callee) {
   if (resultIsInt32) {
     writer.mathTruncToInt32Result(numberId);
   } else {
-    writer.mathFunctionNumberResult(numberId, UnaryMathFunction::Trunc);
+    writer.mathTruncNumberResult(numberId);
   }
 
   writer.typeMonitorResult();
@@ -8826,6 +8722,129 @@ AttachDecision CallIRGenerator::tryAttachFunApply(HandleFunction calleeFunc) {
   return AttachDecision::Attach;
 }
 
+AttachDecision CallIRGenerator::tryAttachWasmCall(HandleFunction calleeFunc) {
+  // Try to optimize calls into Wasm code by emitting the CallWasmFunction
+  // CacheIR op. Baseline ICs currently treat this as a CallScriptedFunction op
+  // (calling Wasm's JitEntry stub) but Warp transpiles it to a more direct call
+  // into Wasm code.
+  //
+  // Note: some code refers to these optimized Wasm calls as "inlined" calls.
+
+  MOZ_ASSERT(calleeFunc->isWasmWithJitEntry());
+
+  if (!JitOptions.warpBuilder || !JitOptions.enableWasmIonFastCalls) {
+    return AttachDecision::NoAction;
+  }
+  if (!isFirstStub_) {
+    return AttachDecision::NoAction;
+  }
+  if (JSOp(*pc_) != JSOp::Call && JSOp(*pc_) != JSOp::CallIgnoresRv) {
+    return AttachDecision::NoAction;
+  }
+  if (cx_->realm() != calleeFunc->realm()) {
+    return AttachDecision::NoAction;
+  }
+
+  wasm::Instance& inst = wasm::ExportedFunctionToInstance(calleeFunc);
+  uint32_t funcIndex = inst.code().getFuncIndex(calleeFunc);
+
+  auto bestTier = inst.code().bestTier();
+  const wasm::FuncExport& funcExport =
+      inst.metadata(bestTier).lookupFuncExport(funcIndex);
+  const wasm::FuncType& sig = funcExport.funcType();
+
+  MOZ_ASSERT(!IsInsideNursery(inst.object()));
+
+  MOZ_ASSERT(!sig.temporarilyUnsupportedReftypeForInlineEntry(),
+             "Function should not have a Wasm JitEntry");
+
+  // If there are too many arguments, don't optimize (we won't be able to store
+  // the arguments in the LIR node).
+  if (sig.args().length() > wasm::MaxArgsForJitInlineCall) {
+    return AttachDecision::NoAction;
+  }
+
+  // If there are too many results, don't optimize as Warp currently doesn't
+  // have code to handle this.
+  if (sig.results().length() > wasm::MaxResultsForJitInlineCall) {
+    return AttachDecision::NoAction;
+  }
+
+  // Bug 1631656 - Don't try to optimize with I64 args on 32-bit platforms
+  // because it is more difficult (because it requires multiple LIR arguments
+  // per I64).
+  //
+  // Bug 1631650 - On 64-bit platforms, we also give up optimizing for I64 args
+  // spilled to the stack because it causes problems with register allocation.
+#ifdef JS_64BIT
+  constexpr bool optimizeWithI64 = true;
+#else
+  constexpr bool optimizeWithI64 = false;
+#endif
+  ABIArgGenerator abi;
+  for (const auto& valType : sig.args()) {
+    MIRType mirType = ToMIRType(valType);
+    ABIArg abiArg = abi.next(mirType);
+    if (mirType != MIRType::Int64) {
+      continue;
+    }
+    if (!optimizeWithI64 || abiArg.kind() == ABIArg::Stack) {
+      return AttachDecision::NoAction;
+    }
+  }
+
+  // Check that all arguments can be converted to the Wasm type in Warp code
+  // without bailing out.
+  // TODO(post-Warp): we should emit CacheIR instructions to check this to
+  // prevent bailout loops.
+  for (size_t i = 0; i < sig.args().length(); i++) {
+    Value argVal = i < argc_ ? args_[i] : UndefinedValue();
+    switch (sig.args()[i].kind()) {
+      case wasm::ValType::I32:
+      case wasm::ValType::F32:
+      case wasm::ValType::F64:
+        if (!argVal.isNumber() && !argVal.isBoolean() &&
+            !argVal.isUndefined()) {
+          return AttachDecision::NoAction;
+        }
+        break;
+      case wasm::ValType::I64:
+        if (!argVal.isBigInt() && !argVal.isString()) {
+          return AttachDecision::NoAction;
+        }
+        break;
+      case wasm::ValType::V128:
+        MOZ_CRASH("Function should not have a Wasm JitEntry");
+      case wasm::ValType::Ref:
+        // All values can be boxed as AnyRef.
+        break;
+    }
+  }
+
+  CallFlags flags(/* isConstructing = */ false, /* isSpread = */ false,
+                  /* isSameRealm = */ true);
+
+  // Load argc.
+  Int32OperandId argcId(writer.setInputOperandId(0));
+
+  // Load the callee and ensure it is an object
+  ValOperandId calleeValId =
+      writer.loadArgumentDynamicSlot(ArgumentKind::Callee, argcId, flags);
+  ObjOperandId calleeObjId = writer.guardToObject(calleeValId);
+
+  // Ensure the callee is this Wasm function.
+  emitCalleeGuard(calleeObjId, calleeFunc);
+
+  writer.callWasmFunction(calleeObjId, argcId, flags, &funcExport,
+                          inst.object());
+  writer.typeMonitorResult();
+
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Monitored;
+  trackAttached("WasmCall");
+
+  return AttachDecision::Attach;
+}
+
 AttachDecision CallIRGenerator::tryAttachInlinableNative(
     HandleFunction callee) {
   MOZ_ASSERT(mode_ == ICState::Mode::Specialized);
@@ -9280,6 +9299,10 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
     return AttachDecision::NoAction;
   }
 
+  if (calleeFunc->isWasmWithJitEntry()) {
+    TRY_ATTACH(tryAttachWasmCall(calleeFunc));
+  }
+
   bool isSpecialized = mode_ == ICState::Mode::Specialized;
 
   bool isConstructing = IsConstructPC(pc_);
@@ -9521,10 +9544,32 @@ AttachDecision CallIRGenerator::tryAttachCallNative(HandleFunction calleeFunc) {
       writer.loadArgumentDynamicSlot(ArgumentKind::Callee, argcId, flags);
   ObjOperandId calleeObjId = writer.guardToObject(calleeValId);
 
-  if (isSpecialized) {
+  // DOM calls need an additional guard so only try optimizing the first stub.
+  // Can only optimize normal (non-spread) calls.
+  if (isFirstStub_ && !isSpread && thisval_.isObject() &&
+      CanAttachDOMCall(cx_, JSJitInfo::Method, &thisval_.toObject(), calleeFunc,
+                       mode_)) {
+    MOZ_ASSERT(!isConstructing, "DOM functions are not constructors");
+
+    // Guard that |this| is an object.
+    ValOperandId thisValId =
+        writer.loadArgumentDynamicSlot(ArgumentKind::This, argcId, flags);
+    ObjOperandId thisObjId = writer.guardToObject(thisValId);
+
+    // Guard on the |this| class to make sure it's the right instance.
+    writer.guardAnyClass(thisObjId, thisval_.toObject().getClass());
+
+    // Ensure callee matches this stub's callee
+    writer.guardSpecificFunction(calleeObjId, calleeFunc);
+    writer.callDOMFunction(calleeObjId, argcId, thisObjId, calleeFunc, flags);
+
+    trackAttached("CallDOM");
+  } else if (isSpecialized) {
     // Ensure callee matches this stub's callee
     writer.guardSpecificFunction(calleeObjId, calleeFunc);
     writer.callNativeFunction(calleeObjId, argcId, op_, calleeFunc, flags);
+
+    trackAttached("CallNative");
   } else {
     // Guard that object is a native function
     writer.guardClass(calleeObjId, GuardClassKind::JSFunction);
@@ -9538,20 +9583,16 @@ AttachDecision CallIRGenerator::tryAttachCallNative(HandleFunction calleeFunc) {
       writer.guardNotClassConstructor(calleeObjId);
     }
     writer.callAnyNativeFunction(calleeObjId, argcId, flags);
+
+    trackAttached("CallAnyNative");
   }
 
   writer.typeMonitorResult();
+  cacheIRStubKind_ = BaselineCacheIRStubKind::Monitored;
 
   if (templateObj) {
     MOZ_ASSERT(isSpecialized);
     writer.metaNativeTemplateObject(calleeFunc, templateObj);
-  }
-
-  cacheIRStubKind_ = BaselineCacheIRStubKind::Monitored;
-  if (isSpecialized) {
-    trackAttached("Call native func");
-  } else {
-    trackAttached("Call any native func");
   }
 
   return AttachDecision::Attach;
@@ -9868,35 +9909,15 @@ AttachDecision CompareIRGenerator::tryAttachBigInt(ValOperandId lhsId,
   return AttachDecision::Attach;
 }
 
-AttachDecision CompareIRGenerator::tryAttachObjectUndefined(
-    ValOperandId lhsId, ValOperandId rhsId) {
-  if (!(lhsVal_.isNullOrUndefined() && rhsVal_.isObject()) &&
-      !(rhsVal_.isNullOrUndefined() && lhsVal_.isObject()))
-    return AttachDecision::NoAction;
-
-  if (op_ != JSOp::Eq && op_ != JSOp::Ne) {
-    return AttachDecision::NoAction;
-  }
-
-  ValOperandId obj = rhsVal_.isObject() ? rhsId : lhsId;
-  ValOperandId undefOrNull = rhsVal_.isObject() ? lhsId : rhsId;
-
-  writer.guardIsNullOrUndefined(undefOrNull);
-  ObjOperandId objOperand = writer.guardToObject(obj);
-  writer.compareObjectUndefinedNullResult(op_, objOperand);
-  writer.returnFromIC();
-
-  trackAttached("ObjectUndefined");
-  return AttachDecision::Attach;
-}
-
-// Handle NumberUndefined comparisons
 AttachDecision CompareIRGenerator::tryAttachNumberUndefined(
     ValOperandId lhsId, ValOperandId rhsId) {
   if (!(lhsVal_.isUndefined() && rhsVal_.isNumber()) &&
       !(rhsVal_.isUndefined() && lhsVal_.isNumber())) {
     return AttachDecision::NoAction;
   }
+
+  // Should have been handled by tryAttachAnyNullUndefined.
+  MOZ_ASSERT(!IsEqualityOp(op_));
 
   if (lhsVal_.isNumber()) {
     writer.guardIsNumber(lhsId);
@@ -9910,67 +9931,56 @@ AttachDecision CompareIRGenerator::tryAttachNumberUndefined(
     writer.guardIsUndefined(rhsId);
   }
 
-  // Comparing a number with undefined will always be true for Ne/StrictNe,
-  // and always be false for other compare ops.
-  writer.loadBooleanResult(op_ == JSOp::Ne || op_ == JSOp::StrictNe);
+  // Relational comparing a number with undefined will always be false.
+  writer.loadBooleanResult(false);
   writer.returnFromIC();
 
   trackAttached("NumberUndefined");
   return AttachDecision::Attach;
 }
 
-// Handle Primitive x {undefined,null} equality comparisons
-AttachDecision CompareIRGenerator::tryAttachPrimitiveUndefined(
+AttachDecision CompareIRGenerator::tryAttachAnyNullUndefined(
     ValOperandId lhsId, ValOperandId rhsId) {
   MOZ_ASSERT(IsEqualityOp(op_));
 
-  // The set of primitive cases we want to handle here (excluding null,
-  // undefined)
-  auto isPrimitive = [](HandleValue x) {
-    return x.isString() || x.isSymbol() || x.isBoolean() || x.isNumber() ||
-           x.isBigInt();
-  };
-
-  if (!(lhsVal_.isNullOrUndefined() && isPrimitive(rhsVal_)) &&
-      !(rhsVal_.isNullOrUndefined() && isPrimitive(lhsVal_))) {
+  // Either RHS or LHS needs to be null/undefined.
+  if (!lhsVal_.isNullOrUndefined() && !rhsVal_.isNullOrUndefined()) {
     return AttachDecision::NoAction;
   }
 
-  auto guardPrimitive = [&](HandleValue v, ValOperandId id) {
-    if (v.isNumber()) {
-      writer.guardIsNumber(id);
-      return;
-    }
-    switch (v.extractNonDoubleType()) {
-      case JSVAL_TYPE_BOOLEAN:
-        writer.guardToBoolean(id);
-        return;
-      case JSVAL_TYPE_SYMBOL:
-        writer.guardToSymbol(id);
-        return;
-      case JSVAL_TYPE_BIGINT:
-        writer.guardToBigInt(id);
-        return;
-      case JSVAL_TYPE_STRING:
-        writer.guardToString(id);
-        return;
-      default:
-        MOZ_CRASH("unexpected type");
-        return;
-    }
-  };
+  // We assume that the side with null/undefined is usually constant, in
+  // code like `if (x === undefined) { x = {}; }`.
+  // That is why we don't attach when both sides are undefined/null,
+  // because we would basically need to decide by chance which side is
+  // the likely constant.
+  // The actual generated code however handles null/undefined of course.
+  if (lhsVal_.isNullOrUndefined() && rhsVal_.isNullOrUndefined()) {
+    return AttachDecision::NoAction;
+  }
 
-  isPrimitive(lhsVal_) ? guardPrimitive(lhsVal_, lhsId)
-                       : writer.guardIsNullOrUndefined(lhsId);
-  isPrimitive(rhsVal_) ? guardPrimitive(rhsVal_, rhsId)
-                       : writer.guardIsNullOrUndefined(rhsId);
+  if (rhsVal_.isNullOrUndefined()) {
+    if (rhsVal_.isNull()) {
+      writer.guardIsNull(rhsId);
+      writer.compareNullUndefinedResult(op_, /* isUndefined */ false, lhsId);
+      trackAttached("AnyNull");
+    } else {
+      writer.guardIsUndefined(rhsId);
+      writer.compareNullUndefinedResult(op_, /* isUndefined */ true, lhsId);
+      trackAttached("AnyUndefined");
+    }
+  } else {
+    if (lhsVal_.isNull()) {
+      writer.guardIsNull(lhsId);
+      writer.compareNullUndefinedResult(op_, /* isUndefined */ false, rhsId);
+      trackAttached("NullAny");
+    } else {
+      writer.guardIsUndefined(lhsId);
+      writer.compareNullUndefinedResult(op_, /* isUndefined */ true, rhsId);
+      trackAttached("UndefinedAny");
+    }
+  }
 
-  // Comparing a primitive with undefined/null will always be true for
-  // Ne/StrictNe, and always be false for other compare ops.
-  writer.loadBooleanResult(op_ == JSOp::Ne || op_ == JSOp::StrictNe);
   writer.returnFromIC();
-
-  trackAttached("PrimitiveUndefined");
   return AttachDecision::Attach;
 }
 
@@ -9990,7 +10000,7 @@ AttachDecision CompareIRGenerator::tryAttachNullUndefined(ValOperandId lhsId,
   } else {
     // Strict equality only hits this branch, and only in the
     // undef {!,=}==  undef and null {!,=}== null cases.
-    // The other cases should have hit compareStrictlyDifferentTypes.
+    // The other cases should have hit tryAttachStrictDifferentTypes.
     MOZ_ASSERT(lhsVal_.isNull() == rhsVal_.isNull());
     lhsVal_.isNull() ? writer.guardIsNull(lhsId)
                      : writer.guardIsUndefined(lhsId);
@@ -10012,7 +10022,7 @@ AttachDecision CompareIRGenerator::tryAttachStringNumber(ValOperandId lhsId,
     return AttachDecision::NoAction;
   }
 
-  // Case should have been handled by tryAttachStrictlDifferentTypes
+  // Case should have been handled by tryAttachStrictDifferentTypes
   MOZ_ASSERT(op_ != JSOp::StrictEq && op_ != JSOp::StrictNe);
 
   auto createGuards = [&](HandleValue v, ValOperandId vId) {
@@ -10097,7 +10107,7 @@ AttachDecision CompareIRGenerator::tryAttachBoolStringOrNumber(
     return AttachDecision::NoAction;
   }
 
-  // Case should have been handled by tryAttachStrictlDifferentTypes
+  // Case should have been handled by tryAttachStrictDifferentTypes
   MOZ_ASSERT(op_ != JSOp::StrictEq && op_ != JSOp::StrictNe);
 
   // Case should have been handled by tryAttachInt32
@@ -10133,7 +10143,7 @@ AttachDecision CompareIRGenerator::tryAttachBigIntInt32(ValOperandId lhsId,
     return AttachDecision::NoAction;
   }
 
-  // Case should have been handled by tryAttachStrictlDifferentTypes
+  // Case should have been handled by tryAttachStrictDifferentTypes
   MOZ_ASSERT(op_ != JSOp::StrictEq && op_ != JSOp::StrictNe);
 
   auto createGuards = [&](HandleValue v, ValOperandId vId) {
@@ -10169,7 +10179,7 @@ AttachDecision CompareIRGenerator::tryAttachBigIntNumber(ValOperandId lhsId,
     return AttachDecision::NoAction;
   }
 
-  // Case should have been handled by tryAttachStrictlDifferentTypes
+  // Case should have been handled by tryAttachStrictDifferentTypes
   MOZ_ASSERT(op_ != JSOp::StrictEq && op_ != JSOp::StrictNe);
 
   if (lhsVal_.isBigInt()) {
@@ -10197,7 +10207,7 @@ AttachDecision CompareIRGenerator::tryAttachBigIntString(ValOperandId lhsId,
     return AttachDecision::NoAction;
   }
 
-  // Case should have been handled by tryAttachStrictlDifferentTypes
+  // Case should have been handled by tryAttachStrictDifferentTypes
   MOZ_ASSERT(op_ != JSOp::StrictEq && op_ != JSOp::StrictNe);
 
   if (lhsVal_.isBigInt()) {
@@ -10242,18 +10252,13 @@ AttachDecision CompareIRGenerator::tryAttachStub() {
     TRY_ATTACH(tryAttachObject(lhsId, rhsId));
     TRY_ATTACH(tryAttachSymbol(lhsId, rhsId));
 
-    // Handle the special case of Object compared to null/undefined.
-    // This is special due to the IsHTMLDDA internal slot semantics.
-    TRY_ATTACH(tryAttachObjectUndefined(lhsId, rhsId));
+    // Handles any (non null or undefined) comparison with null/undefined.
+    TRY_ATTACH(tryAttachAnyNullUndefined(lhsId, rhsId));
 
     // This covers -strict- equality/inequality using a type tag check, so
     // catches all different type pairs outside of Numbers, which cannot be
     // checked on tags alone.
     TRY_ATTACH(tryAttachStrictDifferentTypes(lhsId, rhsId));
-
-    // These checks should come after tryAttachStrictDifferentTypes since it
-    // handles strict inequality with a more generic IC.
-    TRY_ATTACH(tryAttachPrimitiveUndefined(lhsId, rhsId));
 
     TRY_ATTACH(tryAttachNullUndefined(lhsId, rhsId));
 
@@ -10457,6 +10462,7 @@ AttachDecision UnaryArithIRGenerator::tryAttachStub() {
   AutoAssertNoPendingException aanpe(cx_);
   TRY_ATTACH(tryAttachInt32());
   TRY_ATTACH(tryAttachNumber());
+  TRY_ATTACH(tryAttachBitwise());
   TRY_ATTACH(tryAttachBigInt());
   TRY_ATTACH(tryAttachStringInt32());
   TRY_ATTACH(tryAttachStringNumber());
@@ -10466,6 +10472,9 @@ AttachDecision UnaryArithIRGenerator::tryAttachStub() {
 }
 
 AttachDecision UnaryArithIRGenerator::tryAttachInt32() {
+  if (op_ == JSOp::BitNot) {
+    return AttachDecision::NoAction;
+  }
   if (!val_.isInt32() || !res_.isInt32()) {
     return AttachDecision::NoAction;
   }
@@ -10474,10 +10483,6 @@ AttachDecision UnaryArithIRGenerator::tryAttachInt32() {
 
   Int32OperandId intId = writer.guardToInt32(valId);
   switch (op_) {
-    case JSOp::BitNot:
-      writer.int32NotResult(intId);
-      trackAttached("UnaryArith.Int32Not");
-      break;
     case JSOp::Pos:
       writer.loadInt32Result(intId);
       trackAttached("UnaryArith.Int32Pos");
@@ -10507,6 +10512,9 @@ AttachDecision UnaryArithIRGenerator::tryAttachInt32() {
 }
 
 AttachDecision UnaryArithIRGenerator::tryAttachNumber() {
+  if (op_ == JSOp::BitNot) {
+    return AttachDecision::NoAction;
+  }
   if (!val_.isNumber()) {
     return AttachDecision::NoAction;
   }
@@ -10516,11 +10524,6 @@ AttachDecision UnaryArithIRGenerator::tryAttachNumber() {
   NumberOperandId numId = writer.guardIsNumber(valId);
   Int32OperandId truncatedId;
   switch (op_) {
-    case JSOp::BitNot:
-      truncatedId = writer.truncateDoubleToUInt32(numId);
-      writer.int32NotResult(truncatedId);
-      trackAttached("UnaryArith.DoubleNot");
-      break;
     case JSOp::Pos:
       writer.loadDoubleResult(numId);
       trackAttached("UnaryArith.DoublePos");
@@ -10544,6 +10547,60 @@ AttachDecision UnaryArithIRGenerator::tryAttachNumber() {
     default:
       MOZ_CRASH("Unexpected OP");
   }
+
+  writer.returnFromIC();
+  return AttachDecision::Attach;
+}
+
+static bool CanTruncateToInt32(const Value& val) {
+  return val.isNumber() || val.isBoolean() || val.isNullOrUndefined() ||
+         val.isString();
+}
+
+// Convert type into int32 for the bitwise/shift operands.
+static Int32OperandId EmitTruncateToInt32Guard(CacheIRWriter& writer,
+                                               ValOperandId id,
+                                               HandleValue val) {
+  MOZ_ASSERT(CanTruncateToInt32(val));
+  if (val.isInt32()) {
+    return writer.guardToInt32(id);
+  }
+  if (val.isBoolean()) {
+    return writer.guardBooleanToInt32(id);
+  }
+  if (val.isNullOrUndefined()) {
+    writer.guardIsNullOrUndefined(id);
+    return writer.loadInt32Constant(0);
+  }
+  NumberOperandId numId;
+  if (val.isString()) {
+    StringOperandId strId = writer.guardToString(id);
+    numId = writer.guardStringToNumber(strId);
+  } else {
+    MOZ_ASSERT(val.isDouble());
+    numId = writer.guardIsNumber(id);
+  }
+  return writer.truncateDoubleToUInt32(numId);
+}
+
+AttachDecision UnaryArithIRGenerator::tryAttachBitwise() {
+  // Only bitwise operators.
+  if (op_ != JSOp::BitNot) {
+    return AttachDecision::NoAction;
+  }
+
+  // Check guard conditions
+  if (!CanTruncateToInt32(val_)) {
+    return AttachDecision::NoAction;
+  }
+
+  // Bitwise operators always produce Int32 values.
+  MOZ_ASSERT(res_.isInt32());
+
+  ValOperandId valId(writer.setInputOperandId(0));
+  Int32OperandId intId = EmitTruncateToInt32Guard(writer, valId, val_);
+  writer.int32NotResult(intId);
+  trackAttached("BinaryArith.Bitwise.BitNot");
 
   writer.returnFromIC();
   return AttachDecision::Attach;
@@ -10595,6 +10652,9 @@ AttachDecision UnaryArithIRGenerator::tryAttachStringInt32() {
   }
   MOZ_ASSERT(res_.isNumber());
 
+  // Case should have been handled by tryAttachBitwise.
+  MOZ_ASSERT(op_ != JSOp::BitNot);
+
   if (!res_.isInt32()) {
     return AttachDecision::NoAction;
   }
@@ -10604,10 +10664,6 @@ AttachDecision UnaryArithIRGenerator::tryAttachStringInt32() {
   Int32OperandId intId = writer.guardStringToInt32(stringId);
 
   switch (op_) {
-    case JSOp::BitNot:
-      writer.int32NotResult(intId);
-      trackAttached("UnaryArith.StringInt32Not");
-      break;
     case JSOp::Pos:
       writer.loadInt32Result(intId);
       trackAttached("UnaryArith.StringInt32Pos");
@@ -10642,17 +10698,15 @@ AttachDecision UnaryArithIRGenerator::tryAttachStringNumber() {
   }
   MOZ_ASSERT(res_.isNumber());
 
+  // Case should have been handled by tryAttachBitwise.
+  MOZ_ASSERT(op_ != JSOp::BitNot);
+
   ValOperandId valId(writer.setInputOperandId(0));
   StringOperandId stringId = writer.guardToString(valId);
   NumberOperandId numId = writer.guardStringToNumber(stringId);
 
   Int32OperandId truncatedId;
   switch (op_) {
-    case JSOp::BitNot:
-      truncatedId = writer.truncateDoubleToUInt32(numId);
-      writer.int32NotResult(truncatedId);
-      trackAttached("UnaryArith.StringNumberNot");
-      break;
     case JSOp::Pos:
       writer.loadDoubleResult(numId);
       trackAttached("UnaryArith.StringNumberPos");
@@ -10797,7 +10851,8 @@ AttachDecision BinaryArithIRGenerator::tryAttachStub() {
   // Arithmetic operations with Int32 operands
   TRY_ATTACH(tryAttachInt32());
 
-  // Bitwise operations with Int32/Double/Boolean operands.
+  // Bitwise operations with Int32/Double/Boolean/Null/Undefined/String
+  // operands.
   TRY_ATTACH(tryAttachBitwise());
 
   // Arithmetic operations with Double operands. This needs to come after
@@ -10834,8 +10889,7 @@ AttachDecision BinaryArithIRGenerator::tryAttachBitwise() {
   }
 
   // Check guard conditions
-  if (!(lhs_.isNumber() || lhs_.isBoolean()) ||
-      !(rhs_.isNumber() || rhs_.isBoolean())) {
+  if (!CanTruncateToInt32(lhs_) || !CanTruncateToInt32(rhs_)) {
     return AttachDecision::NoAction;
   }
 
@@ -10845,21 +10899,8 @@ AttachDecision BinaryArithIRGenerator::tryAttachBitwise() {
   ValOperandId lhsId(writer.setInputOperandId(0));
   ValOperandId rhsId(writer.setInputOperandId(1));
 
-  // Convert type into int32 for the bitwise/shift operands.
-  auto guardToInt32 = [&](ValOperandId id, HandleValue val) {
-    if (val.isInt32()) {
-      return writer.guardToInt32(id);
-    }
-    if (val.isBoolean()) {
-      return writer.guardBooleanToInt32(id);
-    }
-    MOZ_ASSERT(val.isDouble());
-    NumberOperandId numId = writer.guardIsNumber(id);
-    return writer.truncateDoubleToUInt32(numId);
-  };
-
-  Int32OperandId lhsIntId = guardToInt32(lhsId, lhs_);
-  Int32OperandId rhsIntId = guardToInt32(rhsId, rhs_);
+  Int32OperandId lhsIntId = EmitTruncateToInt32Guard(writer, lhsId, lhs_);
+  Int32OperandId rhsIntId = EmitTruncateToInt32Guard(writer, rhsId, rhs_);
 
   switch (op_) {
     case JSOp::BitOr:

@@ -86,21 +86,6 @@ static bool JSValIsInterfaceOfType(JSContext* cx, HandleValue v, REFNSIID iid) {
          iface;
 }
 
-char* xpc::CloneAllAccess() { return moz_xstrdup("AllAccess"); }
-
-char* xpc::CheckAccessList(const char16_t* wideName, const char* const list[]) {
-  nsAutoCString asciiName;
-  CopyUTF16toUTF8(nsDependentString(wideName), asciiName);
-
-  for (const char* const* p = list; *p; p++) {
-    if (!strcmp(*p, asciiName.get())) {
-      return CloneAllAccess();
-    }
-  }
-
-  return nullptr;
-}
-
 /***************************************************************************/
 /***************************************************************************/
 /***************************************************************************/
@@ -948,9 +933,8 @@ nsresult nsXPCComponents_Exception::CallOrConstruct(
     return ThrowAndFail(NS_ERROR_XPC_BAD_CONVERT_JS, cx, _retval);
   }
 
-  RefPtr<Exception> e =
-      new Exception(nsCString(parser.eMsg), parser.eResult, EmptyCString(),
-                    parser.eStack, parser.eData);
+  RefPtr<Exception> e = new Exception(nsCString(parser.eMsg), parser.eResult,
+                                      ""_ns, parser.eStack, parser.eData);
 
   RootedObject newObj(cx);
   if (NS_FAILED(xpc->WrapNative(cx, obj, e, NS_GET_IID(nsIException),
@@ -1461,7 +1445,7 @@ nsXPCComponents_Utils::ReportError(HandleValue error, HandleValue stack,
   }
 
   nsresult rv = scripterr->InitWithWindowID(
-      msg, fileName, EmptyString(), lineNo, 0, 0, "XPConnect JavaScript",
+      msg, fileName, u""_ns, lineNo, 0, 0, "XPConnect JavaScript",
       innerWindowID, innerWindowID == 0 ? true : false);
   NS_ENSURE_SUCCESS(rv, NS_OK);
 

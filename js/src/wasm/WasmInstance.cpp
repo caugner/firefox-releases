@@ -18,15 +18,18 @@
 
 #include "wasm/WasmInstance.h"
 
+#include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 
 #include <algorithm>
+
+#include "jsmath.h"
 
 #include "jit/AtomicOperations.h"
 #include "jit/Disassemble.h"
 #include "jit/InlinableNatives.h"
 #include "jit/JitCommon.h"
-#include "jit/JitRealm.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitScript.h"
 #include "js/ForOfIterator.h"
 #include "util/StringBuffer.h"
@@ -44,7 +47,9 @@
 using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
+
 using mozilla::BitwiseCast;
+using mozilla::CheckedInt;
 using mozilla::DebugOnly;
 
 using CheckedU32 = CheckedInt<uint32_t>;
@@ -156,10 +161,21 @@ static bool ToWebAssemblyValue_f64(JSContext* cx, HandleValue val,
   return ok;
 }
 template <typename Debug = NoDebug>
-static bool ToWebAssemblyValue_anyref(JSContext* cx, HandleValue val,
-                                      void** loc) {
+static bool ToWebAssemblyValue_externref(JSContext* cx, HandleValue val,
+                                         void** loc) {
   RootedAnyRef result(cx, AnyRef::null());
   if (!BoxAnyRef(cx, val, &result)) {
+    return false;
+  }
+  *loc = result.get().forCompiledCode();
+  Debug::print(*loc);
+  return true;
+}
+template <typename Debug = NoDebug>
+static bool ToWebAssemblyValue_eqref(JSContext* cx, HandleValue val,
+                                     void** loc) {
+  RootedAnyRef result(cx, AnyRef::null());
+  if (!CheckEqRefValue(cx, val, &result)) {
     return false;
   }
   *loc = result.get().forCompiledCode();
@@ -200,7 +216,7 @@ static bool ToWebAssemblyValue(JSContext* cx, HandleValue val, ValType type,
     case ValType::V128:
       MOZ_CRASH("unexpected v128 in ToWebAssemblyValue");
     case ValType::Ref:
-#ifdef ENABLE_WASM_GC
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
       if (!type.isNullable() && val.isNull()) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                  JSMSG_WASM_BAD_REF_NONNULLABLE_VALUE);
@@ -213,7 +229,9 @@ static bool ToWebAssemblyValue(JSContext* cx, HandleValue val, ValType type,
         case RefType::Func:
           return ToWebAssemblyValue_funcref<Debug>(cx, val, (void**)loc);
         case RefType::Extern:
-          return ToWebAssemblyValue_anyref<Debug>(cx, val, (void**)loc);
+          return ToWebAssemblyValue_externref<Debug>(cx, val, (void**)loc);
+        case RefType::Eq:
+          return ToWebAssemblyValue_eqref<Debug>(cx, val, (void**)loc);
         case RefType::TypeIndex:
           return ToWebAssemblyValue_typeref<Debug>(cx, val, (void**)loc);
       }
@@ -322,6 +340,9 @@ static bool ToJSValue(JSContext* cx, const void* src, ValType type,
         case RefType::Extern:
           return ToJSValue_anyref<Debug>(
               cx, *reinterpret_cast<void* const*>(src), dst);
+        case RefType::Eq:
+          return ToJSValue_anyref<Debug>(
+              cx, *reinterpret_cast<void* const*>(src), dst);
         case RefType::TypeIndex:
           return ToJSValue_typeref<Debug>(
               cx, *reinterpret_cast<void* const*>(src), dst);
@@ -361,12 +382,15 @@ static bool IterableToArray(JSContext* cx, HandleValue iterable,
 }
 
 static bool UnpackResults(JSContext* cx, const ValTypeVector& resultTypes,
-                          const Maybe<char*> stackResultsArea,
+                          const Maybe<char*> stackResultsArea, uint64_t* argv,
                           MutableHandleValue rval) {
   if (!stackResultsArea) {
     MOZ_ASSERT(resultTypes.length() <= 1);
     // Result is either one scalar value to unpack to a wasm value, or
     // an ignored value for a zero-valued function.
+    if (resultTypes.length() == 1) {
+      return ToWebAssemblyValue(cx, rval, resultTypes[0], argv);
+    }
     return true;
   }
 
@@ -403,9 +427,12 @@ static bool UnpackResults(JSContext* cx, const ValTypeVector& resultTypes,
       // one register result.  If there is only one result, it is
       // returned as a scalar and not an iterable, so we don't get here.
       // If there are multiple results, we extract the register result
-      // and leave `rval` set to the extracted result, to be converted
-      // by the caller.  The register result follows any stack results,
-      // so this preserves conversion order.
+      // and set `argv[0]` set to the extracted result, to be returned by
+      // register in the stub.  The register result follows any stack
+      // results, so this preserves conversion order.
+      if (!ToWebAssemblyValue(cx, rval, result.type(), argv)) {
+        return false;
+      }
       seenRegisterResult = true;
       continue;
     }
@@ -419,8 +446,7 @@ static bool UnpackResults(JSContext* cx, const ValTypeVector& resultTypes,
 }
 
 bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
-                          unsigned argc, const uint64_t* argv,
-                          MutableHandleValue rval) {
+                          unsigned argc, uint64_t* argv) {
   AssertRealmUnchanged aru(cx);
 
   Tier tier = code().bestTier();
@@ -463,11 +489,13 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
 
   RootedValue fval(cx, ObjectValue(*importFun));
   RootedValue thisv(cx, UndefinedValue());
-  if (!Call(cx, fval, thisv, args, rval)) {
+  RootedValue rval(cx);
+  if (!Call(cx, fval, thisv, args, &rval)) {
     return false;
   }
 
-  if (!UnpackResults(cx, fi.funcType().results(), stackResultPointer, rval)) {
+  if (!UnpackResults(cx, fi.funcType().results(), stackResultPointer, argv,
+                     &rval)) {
     return false;
   }
 
@@ -569,6 +597,7 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
               // dynamically in the callee.  Code in the stubs layer must box up
               // the FuncRef as a Value.
               break;
+            case RefType::Eq:
             case RefType::TypeIndex:
               // Guarded by temporarilyUnsupportedReftypeForExit()
               MOZ_CRASH("case guarded above");
@@ -599,76 +628,10 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
 }
 
 /* static */ int32_t /* 0 to signal trap; 1 to signal OK */
-Instance::callImport_void(Instance* instance, int32_t funcImportIndex,
-                          int32_t argc, uint64_t* argv) {
-  JSContext* cx = TlsContext.get();
-  RootedValue rval(cx);
-  return instance->callImport(cx, funcImportIndex, argc, argv, &rval);
-}
-
-/* static */ int32_t /* 0 to signal trap; 1 to signal OK */
-Instance::callImport_i32(Instance* instance, int32_t funcImportIndex,
-                         int32_t argc, uint64_t* argv) {
-  JSContext* cx = TlsContext.get();
-  RootedValue rval(cx);
-  if (!instance->callImport(cx, funcImportIndex, argc, argv, &rval)) {
-    return false;
-  }
-  return ToWebAssemblyValue_i32(cx, rval, (int32_t*)argv);
-}
-
-/* static */ int32_t /* 0 to signal trap; 1 to signal OK */
-Instance::callImport_i64(Instance* instance, int32_t funcImportIndex,
-                         int32_t argc, uint64_t* argv) {
-  JSContext* cx = TlsContext.get();
-  RootedValue rval(cx);
-  if (!instance->callImport(cx, funcImportIndex, argc, argv, &rval)) {
-    return false;
-  }
-  return ToWebAssemblyValue_i64(cx, rval, (int64_t*)argv);
-}
-
-/* static */ int32_t /* 0 to signal trap; 1 to signal OK */
-Instance::callImport_v128(Instance* instance, int32_t funcImportIndex,
-                          int32_t argc, uint64_t* argv) {
-  JSContext* cx = TlsContext.get();
-  JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                           JSMSG_WASM_BAD_VAL_TYPE);
-  return false;
-}
-
-/* static */ int32_t /* 0 to signal trap; 1 to signal OK */
-Instance::callImport_f64(Instance* instance, int32_t funcImportIndex,
-                         int32_t argc, uint64_t* argv) {
-  JSContext* cx = TlsContext.get();
-  RootedValue rval(cx);
-  if (!instance->callImport(cx, funcImportIndex, argc, argv, &rval)) {
-    return false;
-  }
-  return ToWebAssemblyValue_f64(cx, rval, (double*)argv);
-}
-
-/* static */ int32_t /* 0 to signal trap; 1 to signal OK */
-Instance::callImport_anyref(Instance* instance, int32_t funcImportIndex,
-                            int32_t argc, uint64_t* argv) {
-  JSContext* cx = TlsContext.get();
-  RootedValue rval(cx);
-  if (!instance->callImport(cx, funcImportIndex, argc, argv, &rval)) {
-    return false;
-  }
-  static_assert(sizeof(argv[0]) >= sizeof(void*), "fits");
-  return ToWebAssemblyValue_anyref(cx, rval, (void**)argv);
-}
-
-/* static */ int32_t /* 0 to signal trap; 1 to signal OK */
-Instance::callImport_funcref(Instance* instance, int32_t funcImportIndex,
+Instance::callImport_general(Instance* instance, int32_t funcImportIndex,
                              int32_t argc, uint64_t* argv) {
   JSContext* cx = TlsContext.get();
-  RootedValue rval(cx);
-  if (!instance->callImport(cx, funcImportIndex, argc, argv, &rval)) {
-    return false;
-  }
-  return ToWebAssemblyValue_funcref(cx, rval, (void**)argv);
+  return instance->callImport(cx, funcImportIndex, argc, argv);
 }
 
 /* static */ uint32_t Instance::memoryGrow_i32(Instance* instance,
@@ -1289,7 +1252,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
                                                 gc::Cell** location) {
   MOZ_ASSERT(SASigPreBarrierFiltering.failureMode == FailureMode::Infallible);
   MOZ_ASSERT(location);
-  JSObject::writeBarrierPre(*reinterpret_cast<JSObject**>(location));
+  gc::PreWriteBarrier(*reinterpret_cast<JSObject**>(location));
 }
 
 /* static */ void Instance::postBarrier(Instance* instance,
@@ -1325,7 +1288,6 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
 }
 
 /* static */ void* Instance::structNarrow(Instance* instance,
-                                          uint32_t mustUnboxAnyref,
                                           uint32_t outputTypeIndex,
                                           void* maybeNullPtr) {
   MOZ_ASSERT(SASigStructNarrow.failureMode == FailureMode::Infallible);
@@ -1340,25 +1302,8 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
   }
 
   void* nonnullPtr = maybeNullPtr;
-  if (mustUnboxAnyref) {
-    // TODO/AnyRef-boxing: With boxed immediates and strings, unboxing
-    // AnyRef is not a no-op.
-    ASSERT_ANYREF_IS_JSOBJECT;
-
-    Rooted<NativeObject*> no(cx, static_cast<NativeObject*>(nonnullPtr));
-    if (!no->is<TypedObject>()) {
-      return nullptr;
-    }
-    obj = &no->as<TypedObject>();
-    Rooted<TypeDescr*> td(cx, &obj->typeDescr());
-    if (td->kind() != type::Struct) {
-      return nullptr;
-    }
-    typeDescr = &td->as<StructTypeDescr>();
-  } else {
-    obj = static_cast<TypedObject*>(nonnullPtr);
-    typeDescr = &obj->typeDescr().as<StructTypeDescr>();
-  }
+  obj = static_cast<TypedObject*>(nonnullPtr);
+  typeDescr = &obj->typeDescr().as<StructTypeDescr>();
 
   // Optimization opportunity: instead of this loop we could perhaps load an
   // index from `typeDescr` and use that to index into the structTypes table
@@ -1446,7 +1391,7 @@ void CopyValPostBarriered(uint8_t* dst, const Val& src) {
       AnyRef x = src.ref();
       memcpy(dst, x.asJSObjectAddress(), sizeof(*x.asJSObjectAddress()));
       if (!x.isNull()) {
-        JSObject::writeBarrierPost((JSObject**)dst, nullptr, x.asJSObject());
+        JSObject::postWriteBarrier((JSObject**)dst, nullptr, x.asJSObject());
       }
       break;
     }
@@ -2183,7 +2128,8 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args) {
           }
           break;
         }
-        case RefType::Extern: {
+        case RefType::Extern:
+        case RefType::Eq: {
           RootedAnyRef ref(cx, AnyRef::fromCompiledCode(ptr));
           ASSERT_ANYREF_IS_JSOBJECT;
           if (!refs.emplaceBack(ref.get().asJSObject())) {

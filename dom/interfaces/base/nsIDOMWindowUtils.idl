@@ -267,6 +267,12 @@ interface nsIDOMWindowUtils : nsISupports {
   uint32_t getPresShellId();
 
   /**
+   * Returns whether a given header and value is a CORS-safelisted request
+   * header per https://fetch.spec.whatwg.org/#cors-safelisted-request-header
+   */
+  boolean isCORSSafelistedRequestHeader(in ACString name, in ACString value);
+
+  /**
    * Following modifiers are for sent*Event() except sendNative*Event().
    * NOTE: MODIFIER_ALT, MODIFIER_CONTROL, MODIFIER_SHIFT and MODIFIER_META
    *       are must be same values as Event_Binding::*_MASK for backward
@@ -1323,9 +1329,9 @@ interface nsIDOMWindowUtils : nsISupports {
   boolean isInModalState();
 
   /**
-   * Request set internal desktopMode flag change.
+   * Internal desktopMode flag.
    */
-  void setDesktopModeViewport(in boolean aDesktopModeViewport);
+  attribute boolean desktopModeViewport;
 
   /**
    * Suspend/resume timeouts on this window and its descendant windows.
@@ -1534,6 +1540,11 @@ interface nsIDOMWindowUtils : nsISupports {
    * Get the inputmode of the currently focused editing host, if any.
    */
   readonly attribute AString focusedInputMode;
+
+  /**
+   * Get the autocapitalize of the currently focused editing host, if any.
+   */
+  readonly attribute AString focusedAutocapitalize;
 
   /**
    * Find the view ID for a given element. This is the reverse of
@@ -2006,6 +2017,13 @@ interface nsIDOMWindowUtils : nsISupports {
    * Throws if there's no document or the property is invalid.
    */
   bool isCssPropertyRecordedInUseCounter(in ACString aProperty);
+
+  /**
+   * Calls SetInitialViewport on the MobileViewportManager, which effectively
+   * causes it to refresh all of its internal state and update things that
+   * need updating.
+   */
+  void resetMobileViewportManager();
 
   /**
    * NOTE: Currently works only on GTK+.

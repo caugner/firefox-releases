@@ -31,8 +31,8 @@
 #include "UnitTransforms.h"
 #include "gfxEnv.h"
 #include "nsDisplayListInvalidation.h"
+#include "nsLayoutUtils.h"
 #include "WebRenderCanvasRenderer.h"
-#include "LayersLogging.h"
 #include "LayerTreeInvalidation.h"
 
 namespace mozilla {
@@ -1927,6 +1927,8 @@ bool BuildLayer(nsDisplayItem* aItem, BlobItemData* aData,
   RefPtr<Layer> root = aItem->AsPaintedDisplayItem()->BuildLayer(
       aDisplayListBuilder, blm, param);
 
+  aDisplayListBuilder->NotifyAndClearScrollFrames();
+
   if (root) {
     blm->SetRoot(root);
     layerBuilder->WillEndTransaction();
@@ -1969,6 +1971,8 @@ static bool PaintByLayer(nsDisplayItem* aItem,
   RefPtr<Layer> root = aItem->AsPaintedDisplayItem()->BuildLayer(
       aDisplayListBuilder, aManager, param);
 
+  aDisplayListBuilder->NotifyAndClearScrollFrames();
+
   if (root) {
     aManager->SetRoot(root);
     layerBuilder->WillEndTransaction();
@@ -1995,9 +1999,8 @@ static bool PaintByLayer(nsDisplayItem* aItem,
         aItem->Name(), aItem->Frame());
     std::stringstream stream;
     aManager->Dump(stream, "", gfxEnv::DumpPaintToFile());
-    fprint_stderr(
-        gfxUtils::sDumpPaintFile,
-        stream);  // not a typo, fprint_stderr declared in LayersLogging.h
+    fprint_stderr(gfxUtils::sDumpPaintFile,
+                  stream);  // not a typo, fprint_stderr declared in nsDebug.h
   }
 #endif
 
