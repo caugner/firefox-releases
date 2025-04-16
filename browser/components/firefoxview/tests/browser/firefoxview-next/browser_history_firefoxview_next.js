@@ -27,9 +27,16 @@ const twoDaysAgo = new Date(Date.now() - DAY_MS * 2);
 const threeDaysAgo = new Date(Date.now() - DAY_MS * 3);
 const fourDaysAgo = new Date(Date.now() - DAY_MS * 4);
 const oneMonthAgo = new Date(today);
-oneMonthAgo.setMonth(
-  oneMonthAgo.getMonth() === 0 ? 11 : oneMonthAgo.getMonth() - 1
-);
+
+// Set the date for the first day of the last month
+oneMonthAgo.setDate(1);
+if (oneMonthAgo.getMonth() === 0) {
+  // If today's date is in January, use first day in December from the previous year
+  oneMonthAgo.setMonth(11);
+  oneMonthAgo.setFullYear(oneMonthAgo.getFullYear() - 1);
+} else {
+  oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+}
 
 function isElInViewport(element) {
   const boundingRect = element.getBoundingClientRect();
@@ -462,6 +469,34 @@ add_task(async function test_search_history() {
 
     info("Clear the search query.");
     EventUtils.synthesizeMouseAtCenter(searchTextbox.clearButton, {}, content);
+    await BrowserTestUtils.waitForMutationCondition(
+      historyComponent.shadowRoot,
+      { childList: true, subtree: true },
+      () =>
+        historyComponent.cards.length ===
+        historyComponent.historyMapByDate.length
+    );
+
+    info("Input a bogus search query.");
+    EventUtils.synthesizeMouseAtCenter(searchTextbox, {}, content);
+    EventUtils.sendString("Bogus Query", content);
+    await TestUtils.waitForCondition(() => {
+      const tabList = historyComponent.lists[0];
+      return tabList?.shadowRoot.querySelector("fxview-empty-state");
+    }, "There are no matching search results.");
+
+    info("Clear the search query with keyboard.");
+    is(
+      historyComponent.shadowRoot.activeElement,
+      searchTextbox,
+      "Search input is focused"
+    );
+    EventUtils.synthesizeKey("KEY_Tab", {}, content);
+    ok(
+      searchTextbox.clearButton.matches(":focus-visible"),
+      "Clear Search button is focused"
+    );
+    EventUtils.synthesizeKey("KEY_Enter", {}, content);
     await BrowserTestUtils.waitForMutationCondition(
       historyComponent.shadowRoot,
       { childList: true, subtree: true },
