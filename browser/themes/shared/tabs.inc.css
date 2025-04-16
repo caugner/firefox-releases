@@ -20,7 +20,7 @@
   --tabpanel-background-color: #F9F9FB;
 }
 
-@media (prefers-color-scheme: dark) {
+@media (-moz-content-prefers-color-scheme: dark) {
   :root {
     /* --tabpanel-background-color matches $in-content-page-background in newtab
        (browser/components/newtab/content-src/styles/_variables.scss) */
@@ -466,6 +466,10 @@
 
 #tabbrowser-tabs[secondarytext-unsupported] .tab-secondary-label {
   display: none;
+}
+
+#tabbrowser-tabs:not([secondarytext-unsupported]) .tab-label-container {
+  height: 2.7em;
 }
 
 .tab-secondary-label {

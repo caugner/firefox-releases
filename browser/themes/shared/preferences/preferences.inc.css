@@ -28,6 +28,8 @@
   vertical-align: top; /* See bug 1606130 */
   display: -moz-box;
   -moz-box-orient: vertical;
+
+  --main-pane-width: 664px;
 }
 
 * {
@@ -51,7 +53,7 @@
 .pane-container {
   /* A workaround to keep the container always float on the `top: 0` (Bug 1377009) */
   display: block;
-  width: 664px;
+  width: var(--main-pane-width);
 }
 
 #mainPrefPane {
@@ -910,6 +912,11 @@ image.update-throbber {
   margin-inline-end: 8px;
 }
 
+.main-content {
+  /* the 32px min-height, plus 20+30px margin below, plus some leeway: */
+  scroll-padding-top: 90px;
+}
+
 #policies-container,
 #searchInput {
   min-height: 32px;
@@ -963,6 +970,11 @@ image.update-throbber {
   width: calc(100% + 8px);
   margin-inline: -4px;
   padding-inline: 4px;
+}
+
+.sticky-inner-container {
+  -moz-box-flex: 1;
+  max-width: var(--main-pane-width);
 }
 
 .search-tooltip {
@@ -1176,13 +1188,13 @@ richlistitem .text-link:hover {
   margin-inline-start: 6px;
 }
 
-#moreFromMozillaCategory .subtitle {
+#moreFromMozillaCategory-header .subtitle {
   color: var(--in-content-deemphasized-text);
   margin: 4px 0 10px;
   line-height: 1.4em;
 }
 
-#moreFromMozillaCategory .list-item {
+#moreFromMozillaCategory .mozilla-product-item {
   margin-top: 30px;
 }
 
@@ -1205,7 +1217,7 @@ richlistitem .text-link:hover {
  * .product-info section to one of them.
  */
 #firefox-mobile-vbox.advanced .product-info {
-  max-width: 200px;
+  min-width: 200px;
 }
 
 #moreFromMozillaCategory .product-img {
@@ -1246,10 +1258,6 @@ richlistitem .text-link:hover {
   margin-block: 20px 10px;
   margin-inline: 2px 0;
   padding: 16px;
-
-  min-width: 725px;
-  max-width: 725px;
-  height: 219px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1259,7 +1267,7 @@ richlistitem .text-link:hover {
 }
 
 #moreFromMozillaCategory .advanced .product-info {
-  min-height: 200px;
+  width: 500px;
 }
 
 #moreFromMozillaCategory .text-link {
@@ -1316,12 +1324,11 @@ richlistitem .text-link:hover {
   flex-direction: column;
   align-items: center;
   justify-content: space-around;
+  border-radius: 4px;
 }
 
 .advanced .qr-code-box {
   align-items: flex-start;
-  max-width: 307px;
-  min-height: 187px;
   margin-inline-start: 12px;
 }
 
@@ -1331,6 +1338,7 @@ richlistitem .text-link:hover {
 
 .advanced .qr-code-top-box {
   align-items: center;
+  width: 310px;
 }
 
 .qr-code-box-image {
@@ -1366,6 +1374,18 @@ richlistitem .text-link:hover {
 
   margin-block: 20px 0;
   margin-inline: 40px;
+}
+
+.simple .qr-code-box-title {
+  width: 302px;
+}
+
+.simple .qr-code-box {
+  padding: 4px 20px 24px;
+}
+
+.simple .qr-code-box-image {
+  padding: 10px;
 }
 
 .advanced .qr-code-box-title {
