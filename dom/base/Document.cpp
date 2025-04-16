@@ -1542,19 +1542,12 @@ already_AddRefed<mozilla::dom::Promise> Document::AddCertException(
     return nullptr;
   }
 
-  nsCOMPtr<nsISupports> info;
-  nsCOMPtr<nsITransportSecurityInfo> tsi;
   nsresult rv = NS_OK;
   if (NS_WARN_IF(!mFailedChannel)) {
     promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
     return promise.forget();
   }
 
-  rv = mFailedChannel->GetSecurityInfo(getter_AddRefs(info));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    promise->MaybeReject(rv);
-    return promise.forget();
-  }
   nsCOMPtr<nsIURI> failedChannelURI;
   NS_GetFinalChannelURI(mFailedChannel, getter_AddRefs(failedChannelURI));
   if (!failedChannelURI) {
@@ -1573,7 +1566,12 @@ already_AddRefed<mozilla::dom::Promise> Document::AddCertException(
   int32_t port;
   innerURI->GetPort(&port);
 
-  tsi = do_QueryInterface(info);
+  nsCOMPtr<nsITransportSecurityInfo> tsi;
+  rv = mFailedChannel->GetSecurityInfo(getter_AddRefs(tsi));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    promise->MaybeReject(rv);
+    return promise.forget();
+  }
   if (NS_WARN_IF(!tsi)) {
     promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
     return promise.forget();
@@ -1639,20 +1637,18 @@ void Document::ReloadWithHttpsOnlyException() {
 }
 
 void Document::GetNetErrorInfo(NetErrorInfo& aInfo, ErrorResult& aRv) {
-  nsCOMPtr<nsISupports> info;
-  nsCOMPtr<nsITransportSecurityInfo> tsi;
   nsresult rv = NS_OK;
   if (NS_WARN_IF(!mFailedChannel)) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
 
-  rv = mFailedChannel->GetSecurityInfo(getter_AddRefs(info));
+  nsCOMPtr<nsITransportSecurityInfo> tsi;
+  rv = mFailedChannel->GetSecurityInfo(getter_AddRefs(tsi));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     aRv.Throw(rv);
     return;
   }
-  tsi = do_QueryInterface(info);
   if (NS_WARN_IF(!tsi)) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
@@ -1711,20 +1707,18 @@ bool Document::IsErrorPage() const {
 
 void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
                                          ErrorResult& aRv) {
-  nsCOMPtr<nsISupports> info;
-  nsCOMPtr<nsITransportSecurityInfo> tsi;
   nsresult rv = NS_OK;
   if (NS_WARN_IF(!mFailedChannel)) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
 
-  rv = mFailedChannel->GetSecurityInfo(getter_AddRefs(info));
+  nsCOMPtr<nsITransportSecurityInfo> tsi;
+  rv = mFailedChannel->GetSecurityInfo(getter_AddRefs(tsi));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     aRv.Throw(rv);
     return;
   }
-  tsi = do_QueryInterface(info);
   if (NS_WARN_IF(!tsi)) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
@@ -7190,6 +7184,7 @@ void Document::ApplicableStylesChanged() {
 
   pc->MarkCounterStylesDirty();
   pc->MarkFontFeatureValuesDirty();
+  pc->MarkFontPaletteValuesDirty();
   pc->RestyleManager()->NextRestyleIsForCSSRuleChanges();
 }
 
@@ -16722,7 +16717,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
                                     this, nsContentUtils::eDOM_PROPERTIES,
                                     "RequestStorageAccessUserGesture");
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
 
@@ -16730,7 +16726,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
   RefPtr<nsPIDOMWindowInner> inner = GetInnerWindow();
   if (!inner) {
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
 
@@ -16747,7 +16744,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
       return promise.forget();
     } else {
       ConsumeTransientUserGestureActivation();
-      promise->MaybeRejectWithUndefined();
+      promise->MaybeRejectWithNotAllowedError(
+          "requestStorageAccess not allowed"_ns);
       return promise.forget();
     }
   }
@@ -16776,7 +16774,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
       return promise.forget();
     } else {
       ConsumeTransientUserGestureActivation();
-      promise->MaybeRejectWithUndefined();
+      promise->MaybeRejectWithNotAllowedError(
+          "requestStorageAccess not allowed"_ns);
       return promise.forget();
     }
   }
@@ -16792,7 +16791,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
       return promise.forget();
     } else {
       ConsumeTransientUserGestureActivation();
-      promise->MaybeRejectWithUndefined();
+      promise->MaybeRejectWithNotAllowedError(
+          "requestStorageAccess not allowed"_ns);
       return promise.forget();
     }
   }
@@ -16808,7 +16808,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
       return promise.forget();
     } else {
       ConsumeTransientUserGestureActivation();
-      promise->MaybeRejectWithUndefined();
+      promise->MaybeRejectWithNotAllowedError(
+          "requestStorageAccess not allowed"_ns);
       return promise.forget();
     }
   }
@@ -16819,7 +16820,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
       nsGlobalWindowOuter::Cast(inner->GetOuterWindow());
   if (!outer) {
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
   RefPtr<Document> self(this);
@@ -16842,7 +16844,10 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
             self->NotifyUserGestureActivation();
             promise->MaybeResolveWithUndefined();
           },
-          [promise] { promise->MaybeRejectWithUndefined(); });
+          [promise] {
+            promise->MaybeRejectWithNotAllowedError(
+                "requestStorageAccess not allowed"_ns);
+          });
 
   return promise.forget();
 }
@@ -16869,7 +16874,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccessForOrigin(
                                     this, nsContentUtils::eDOM_PROPERTIES,
                                     "RequestStorageAccessUserGesture");
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
 
@@ -16898,7 +16904,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccessForOrigin(
       return promise.forget();
     }
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
 
@@ -16913,7 +16920,8 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccessForOrigin(
       return promise.forget();
     }
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
 
@@ -16923,21 +16931,24 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccessForOrigin(
   nsCOMPtr<nsPIDOMWindowInner> inner = GetInnerWindow();
   if (!inner) {
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
   RefPtr<nsGlobalWindowOuter> outer =
       nsGlobalWindowOuter::Cast(inner->GetOuterWindow());
   if (!outer) {
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
   nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
       thirdPartyURI, NodePrincipal()->OriginAttributesRef());
   if (!principal) {
     ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
+    promise->MaybeRejectWithNotAllowedError(
+        "requestStorageAccess not allowed"_ns);
     return promise.forget();
   }
 
@@ -17009,7 +17020,10 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccessForOrigin(
           },
           // If the previous handler rejected, we should reject the promise
           // returned by this function.
-          [promise] { promise->MaybeRejectWithUndefined(); });
+          [promise] {
+            promise->MaybeRejectWithNotAllowedError(
+                "requestStorageAccess not allowed"_ns);
+          });
 
   // Step 5: While the async stuff is happening, we should return the promise so
   // our caller can continue executing.

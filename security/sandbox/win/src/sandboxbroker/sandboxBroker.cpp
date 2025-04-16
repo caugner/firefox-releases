@@ -1371,15 +1371,13 @@ bool SandboxBroker::SetSecurityLevelForUtilityProcess(
       && aSandbox != mozilla::ipc::SandboxingKind::MF_MEDIA_ENGINE_CDM
 #endif
   ) {
-#if !defined(__MINGW32__) && !defined(__MINGW64__)
     mitigations |= sandbox::MITIGATION_DYNAMIC_CODE_DISABLE;
-#endif  // !defined(__MINGW32__) && !defined(__MINGW64__)
   } else {
     if (IsWin10CreatorsUpdateOrLater() &&
         aSandbox == mozilla::ipc::SandboxingKind::UTILITY_AUDIO_DECODING_WMF) {
-#if defined(_M_X64) && !defined(__MINGW64__)
+#if defined(_M_X64)
       mitigations |= sandbox::MITIGATION_DYNAMIC_CODE_DISABLE;
-#endif  // defined(_M_X64) && !defined(__MINGW64__)
+#endif  // defined(_M_X64)
     }
   }
 
@@ -1390,6 +1388,13 @@ bool SandboxBroker::SetSecurityLevelForUtilityProcess(
   result = mPolicy->SetDelayedProcessMitigations(mitigations);
   SANDBOX_ENSURE_SUCCESS(result,
                          "Invalid flags for SetDelayedProcessMitigations.");
+
+  // Running audio decoder somehow fails on MSIX packages unless we do that
+  if (mozilla::HasPackageIdentity() && exceptionModules.isNothing()) {
+    const Vector<const wchar_t*> emptyVector;
+    result = InitSignedPolicyRulesToBypassCig(mPolicy, emptyVector);
+    SANDBOX_ENSURE_SUCCESS(result, "Failed to initialize signed policy rules.");
+  }
 
   // Add the policy for the client side of a pipe. It is just a file
   // in the \pipe\ namespace. We restrict it to pipes that start with
@@ -1411,7 +1416,6 @@ bool SandboxBroker::SetSecurityLevelForUtilityProcess(
 
   switch (aSandbox) {
     case mozilla::ipc::SandboxingKind::GENERIC_UTILITY:
-    case mozilla::ipc::SandboxingKind::UTILITY_AUDIO_DECODING_GENERIC:
     case mozilla::ipc::SandboxingKind::UTILITY_AUDIO_DECODING_WMF:
 #if MOZ_WMF_MEDIA_ENGINE
     case mozilla::ipc::SandboxingKind::MF_MEDIA_ENGINE_CDM:

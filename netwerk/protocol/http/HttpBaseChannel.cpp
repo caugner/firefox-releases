@@ -2075,7 +2075,8 @@ HttpBaseChannel::SetRedirectionLimit(uint32_t value) {
   return NS_OK;
 }
 
-nsresult HttpBaseChannel::OverrideSecurityInfo(nsISupports* aSecurityInfo) {
+nsresult HttpBaseChannel::OverrideSecurityInfo(
+    nsITransportSecurityInfo* aSecurityInfo) {
   MOZ_ASSERT(!mSecurityInfo,
              "This can only be called when we don't have a security info "
              "object already");
@@ -2220,12 +2221,10 @@ HttpBaseChannel::SetIsMainDocumentChannel(bool aValue) {
 
 NS_IMETHODIMP
 HttpBaseChannel::GetProtocolVersion(nsACString& aProtocolVersion) {
-  nsresult rv;
-  nsCOMPtr<nsITransportSecurityInfo> info =
-      do_QueryInterface(mSecurityInfo, &rv);
   nsAutoCString protocol;
-  if (NS_SUCCEEDED(rv) && info &&
-      NS_SUCCEEDED(info->GetNegotiatedNPN(protocol)) && !protocol.IsEmpty()) {
+  if (mSecurityInfo &&
+      NS_SUCCEEDED(mSecurityInfo->GetNegotiatedNPN(protocol)) &&
+      !protocol.IsEmpty()) {
     // The negotiated protocol was not empty so we can use it.
     aProtocolVersion = protocol;
     return NS_OK;
@@ -5221,6 +5220,12 @@ HttpBaseChannel::GetCacheReadEnd(TimeStamp* _retval) {
 }
 
 NS_IMETHODIMP
+HttpBaseChannel::GetTransactionPending(TimeStamp* _retval) {
+  *_retval = mTransactionPendingTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 HttpBaseChannel::GetInitiatorType(nsAString& aInitiatorType) {
   aInitiatorType = mInitiatorType;
   return NS_OK;
@@ -5268,6 +5273,7 @@ IMPL_TIMING_ATTR(CacheReadStart)
 IMPL_TIMING_ATTR(CacheReadEnd)
 IMPL_TIMING_ATTR(RedirectStart)
 IMPL_TIMING_ATTR(RedirectEnd)
+IMPL_TIMING_ATTR(TransactionPending)
 
 #undef IMPL_TIMING_ATTR
 
