@@ -65,6 +65,9 @@ signing_description_schema = schema.extend({
 
     # Max number of partner repacks per chunk
     Optional('repacks-per-chunk'): int,
+
+    # Override the default priority for the project
+    Optional('priority'): task_description_schema['priority'],
 })
 
 
@@ -86,12 +89,12 @@ def add_entitlements_link(config, jobs):
             "mac entitlements",
             {
                 'platform': job['primary-dependency'].attributes.get('build_platform'),
-                'project': config.params['project'],
+                'release-level': config.params.release_level(),
             },
         )
         if entitlements_path:
             job['entitlements-url'] = config.params.file_url(
-                entitlements_path, endpoint="raw-file"
+                entitlements_path,
             )
         yield job
 
@@ -196,6 +199,9 @@ def make_task_description(config, jobs):
             task['treeherder'] = treeherder
         if job.get('extra'):
             task['extra'] = job['extra']
+        # we may have reduced the priority for partner jobs, otherwise task.py will set it
+        if job.get('priority'):
+            task['priority'] = job['priority']
 
         yield task
 
