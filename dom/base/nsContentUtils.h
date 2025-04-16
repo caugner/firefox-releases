@@ -460,7 +460,7 @@ class nsContentUtils {
   /**
    * @see https://wicg.github.io/element-timing/#get-an-element
    */
-  static nsINode* GetAnElementForTiming(Element* aTarget,
+  static Element* GetAnElementForTiming(Element* aTarget,
                                         const Document* aDocument,
                                         nsIGlobalObject* aGlobal);
 
@@ -1118,11 +1118,8 @@ class nsContentUtils {
   static bool IsInPrivateBrowsing(nsILoadGroup* aLoadGroup);
 
   /**
-   * If aNode is not an element, return true exactly when aContent's binding
-   * parent is null.
-   *
-   * If aNode is an element, return true exactly when aContent's binding parent
-   * is the same as aNode's.
+   * Returns whether a node is in the same tree as another one, accounting for
+   * anonymous roots.
    *
    * This method is particularly useful for callers who are trying to ensure
    * that they are working with a non-anonymous descendant of a given node.  If
@@ -1132,7 +1129,7 @@ class nsContentUtils {
    * Both arguments to this method must be non-null.
    */
   static bool IsInSameAnonymousTree(const nsINode* aNode,
-                                    const nsIContent* aContent);
+                                    const nsINode* aOtherNode);
 
   /*
    * Traverse the parent chain from aElement up to aStop, and return true if
@@ -3373,6 +3370,28 @@ class nsContentUtils {
    */
   static void RequestGeckoTaskBurst();
 
+  static void SetMayHaveFormCheckboxStateChangeListeners() {
+    sMayHaveFormCheckboxStateChangeListeners = true;
+  }
+
+  static bool MayHaveFormCheckboxStateChangeListeners() {
+    return sMayHaveFormCheckboxStateChangeListeners;
+  }
+
+  static void SetMayHaveFormRadioStateChangeListeners() {
+    sMayHaveFormRadioStateChangeListeners = true;
+  }
+
+  static bool MayHaveFormRadioStateChangeListeners() {
+    return sMayHaveFormRadioStateChangeListeners;
+  }
+
+  /**
+   * Returns the closest link element in the flat tree of aContent if there's
+   * one, otherwise returns nullptr.
+   */
+  static nsIContent* GetClosestLinkInFlatTree(nsIContent* aContent);
+
  private:
   static bool InitializeEventTable();
 
@@ -3493,6 +3512,9 @@ class nsContentUtils {
 
   static int32_t sInnerOrOuterWindowCount;
   static uint32_t sInnerOrOuterWindowSerialCounter;
+
+  static bool sMayHaveFormCheckboxStateChangeListeners;
+  static bool sMayHaveFormRadioStateChangeListeners;
 };
 
 /* static */ inline ExtContentPolicyType

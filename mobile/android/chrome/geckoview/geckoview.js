@@ -403,6 +403,9 @@ class ModuleInfo {
    * Called before the browser is removed
    */
   onDestroyBrowser() {
+    if (this._impl) {
+      this._impl.onDestroyBrowser();
+    }
     this._contentModuleLoaded = false;
   }
 
@@ -541,6 +544,10 @@ function createBrowser() {
   browser.setAttribute("remote", "true");
   browser.setAttribute("remoteType", E10SUtils.DEFAULT_REMOTE_TYPE);
   browser.setAttribute("messagemanagergroup", "browsers");
+
+  // The browser starts up as inactive for a tab by default.
+  // See: https://bugzilla.mozilla.org/show_bug.cgi?id=1815015
+  browser.setAttribute("initiallyactive", "false");
 
   // This is only needed for mochitests, so that they honor the
   // prefers-color-scheme.content-override pref. GeckoView doesn't set this
@@ -788,10 +795,10 @@ function startup() {
         actors: {
           FormAutofill: {
             parent: {
-              moduleURI: "resource://autofill/FormAutofillParent.jsm",
+              esModuleURI: "resource://autofill/FormAutofillParent.sys.mjs",
             },
             child: {
-              moduleURI: "resource://autofill/FormAutofillChild.jsm",
+              esModuleURI: "resource://autofill/FormAutofillChild.sys.mjs",
               events: {
                 focusin: {},
                 DOMFormBeforeSubmit: {},
