@@ -3,6 +3,7 @@
 
 /**
  * This file tests urlbar telemetry for Quick Suggest results.
+ * See also browser_quicksuggest_onboardingDialog.js for onboarding telemetry.
  */
 
 "use strict";
@@ -412,7 +413,7 @@ add_task(async function nimbusExposure() {
   await new Promise(resolve => Services.tm.idleDispatchToMainThread(resolve));
 
   Services.telemetry.clearEvents();
-  NimbusFeatures.urlbar._sendExposureEventOnce = true;
+  NimbusFeatures.urlbar._didSendExposureEvent = false;
   UrlbarProviderQuickSuggest._recordedExposureEvent = false;
   let doExperimentCleanup = await UrlbarTestUtils.enrollExperiment({
     valueOverrides: {

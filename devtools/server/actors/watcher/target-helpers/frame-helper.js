@@ -19,6 +19,11 @@ const {
 
 const browsingContextAttachedObserverByWatcher = new Map();
 
+const isEveryFrameTargetEnabled = Services.prefs.getBoolPref(
+  "devtools.every-frame-target.enabled",
+  false
+);
+
 /**
  * Force creating targets for all existing BrowsingContext, that, for a given Watcher Actor.
  *
@@ -28,7 +33,7 @@ const browsingContextAttachedObserverByWatcher = new Map();
 async function createTargets(watcher) {
   // Go over all existing BrowsingContext in order to:
   // - Force the instantiation of a DevToolsFrameChild
-  // - Have the DevToolsFrameChild to spawn the BrowsingContextTargetActor
+  // - Have the DevToolsFrameChild to spawn the WindowGlobalTargetActor
 
   // If we have a browserElement, set the watchedByDevTools flag on its related browsing context
   // TODO: We should also set the flag for the "parent process" browsing context when we're
@@ -307,10 +312,11 @@ function getWatchingBrowsingContexts(watcher) {
  *        Browser Element and any of its (nested) children iframes.
  */
 function getFilteredRemoteBrowsingContext(browserElement) {
-  return getAllRemoteBrowsingContexts(
-    browserElement?.browsingContext
-  ).filter(browsingContext =>
-    shouldNotifyWindowGlobal(browsingContext, browserElement?.browserId)
+  return getAllRemoteBrowsingContexts(browserElement?.browsingContext).filter(
+    browsingContext =>
+      shouldNotifyWindowGlobal(browsingContext, browserElement?.browserId, {
+        acceptNonRemoteFrame: isEveryFrameTargetEnabled,
+      })
   );
 }
 

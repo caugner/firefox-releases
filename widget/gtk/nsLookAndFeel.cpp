@@ -537,6 +537,7 @@ nsresult nsLookAndFeel::PerThemeData::GetColor(ColorID aID,
 
     case ColorID::Threedface:
     case ColorID::Buttonface:
+    case ColorID::MozButtondisabledface:
       // 3-D face color
       aColor = mMozWindowBackground;
       break;
@@ -561,6 +562,7 @@ nsresult nsLookAndFeel::PerThemeData::GetColor(ColorID aID,
       break;
 
     case ColorID::Threedlightshadow:
+    case ColorID::MozDisabledfield:
       aColor = NS_RGB(0xE0, 0xE0, 0xE0);
       break;
     case ColorID::Threeddarkshadow:
@@ -579,12 +581,13 @@ nsresult nsLookAndFeel::PerThemeData::GetColor(ColorID aID,
       aColor = mButtonDefault;
       break;
     case ColorID::MozButtonhoverface:
+    case ColorID::MozButtonactiveface:
       aColor = mButtonHoverFace;
       break;
     case ColorID::MozButtonhovertext:
       aColor = mButtonHoverText;
       break;
-    case ColorID::MozGtkButtonactivetext:
+    case ColorID::MozButtonactivetext:
       aColor = mButtonActiveText;
       break;
     case ColorID::MozMenuhover:
@@ -763,10 +766,6 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
     case IntID::WindowsDefaultTheme:
     case IntID::WindowsThemeIdentifier:
     case IntID::OperatingSystemVersionIdentifier:
-      aResult = 0;
-      res = NS_ERROR_NOT_IMPLEMENTED;
-      break;
-    case IntID::MacGraphiteTheme:
       aResult = 0;
       res = NS_ERROR_NOT_IMPLEMENTED;
       break;

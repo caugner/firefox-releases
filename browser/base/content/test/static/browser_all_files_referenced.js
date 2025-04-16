@@ -18,7 +18,6 @@ var gExceptionPaths = [
   "resource://app/defaults/settings/blocklists/",
   "resource://app/defaults/settings/security-state/",
   "resource://app/defaults/settings/main/",
-  "resource://app/defaults/settings/pinning/",
   "resource://app/defaults/preferences/",
   "resource://gre/modules/commonjs/",
   "resource://gre/defaults/pref/",
@@ -54,6 +53,10 @@ var gExceptionPaths = [
   // Paths from this folder are constructed in NetErrorParent.jsm based on
   // the type of cert or net error the user is encountering.
   "chrome://browser/content/certerror/supportpages/",
+
+  // Points to theme preview images, which are defined in browser/ but only used
+  // in toolkit/mozapps/extensions/content/aboutaddons.js.
+  "resource://usercontext-content/builtin-themes/",
 ];
 
 // These are not part of the omni.ja file, so we find them only when running
@@ -86,9 +89,6 @@ if (AppConstants.NIGHTLY_BUILD) {
 // referencing the whitelisted file in a way that the test can't detect, or a
 // bug number to remove or use the file if it is indeed currently unreferenced.
 var whitelist = [
-  // pocket/content/panels/tmpl/loggedoutvariants/variant_a.handlebars
-  { file: "chrome://pocket/content/panels/img/glyph.svg" },
-
   // toolkit/components/pdfjs/content/PdfStreamConverter.jsm
   { file: "chrome://pdf.js/locale/chrome.properties" },
   { file: "chrome://pdf.js/locale/viewer.properties" },

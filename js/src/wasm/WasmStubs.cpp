@@ -714,6 +714,8 @@ static void BoxValueIntoAnyref(MacroAssembler& masm, ValueOperand src,
 static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
                                 const Maybe<ImmPtr>& funcPtr,
                                 Offsets* offsets) {
+  AutoCreatedBy acb(masm, "GenerateInterpEntry");
+
   AssertExpectedSP(masm);
   masm.haltingAlign(CodeAlignment);
 
@@ -721,8 +723,7 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
 
   // Save the return address if it wasn't already saved by the call insn.
 #ifdef JS_USE_LINK_REGISTER
-#  if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || \
-      defined(JS_CODEGEN_MIPS64)
+#  if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS64)
   masm.pushReturnAddress();
 #  elif defined(JS_CODEGEN_ARM64)
   // WasmPush updates framePushed() unlike pushReturnAddress(), but that's
@@ -985,6 +986,8 @@ static void GenerateBigIntInitialization(MacroAssembler& masm,
 static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
                              const FuncExport& fe, const Maybe<ImmPtr>& funcPtr,
                              Offsets* offsets) {
+  AutoCreatedBy acb(masm, "GenerateJitEntry");
+
   AssertExpectedSP(masm);
 
   RegisterOrSP sp = masm.getStackPointer();
@@ -1936,6 +1939,8 @@ static void FillArgumentArrayForExit(
 static bool GenerateImportFunction(jit::MacroAssembler& masm,
                                    const FuncImport& fi, TypeIdDesc funcTypeId,
                                    FuncOffsets* offsets) {
+  AutoCreatedBy acb(masm, "wasm::GenerateImportFunction");
+
   AssertExpectedSP(masm);
 
   GenerateFunctionPrologue(masm, funcTypeId, Nothing(), offsets);
@@ -2190,9 +2195,8 @@ static bool GenerateImportInterpExit(MacroAssembler& masm, const FuncImport& fi,
   // The native ABI preserves the TLS, heap and global registers since they
   // are non-volatile.
   MOZ_ASSERT(NonVolatileRegs.has(WasmTlsReg));
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM) ||      \
-    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS32) || \
-    defined(JS_CODEGEN_MIPS64)
+#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM) || \
+    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS64)
   MOZ_ASSERT(NonVolatileRegs.has(HeapReg));
 #endif
 
@@ -2643,7 +2647,7 @@ static const LiveRegisterSet RegsToPreserve(
 #  ifdef ENABLE_WASM_SIMD
 #    error "high lanes of SIMD registers need to be saved too."
 #  endif
-#elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
+#elif defined(JS_CODEGEN_MIPS64)
 static const LiveRegisterSet RegsToPreserve(
     GeneralRegisterSet(Registers::AllMask &
                        ~((Registers::SetType(1) << Registers::k0) |
@@ -2764,7 +2768,6 @@ static bool GenerateTrapExit(MacroAssembler& masm, Label* throwLabel,
 static bool GenerateThrowStub(MacroAssembler& masm, Label* throwLabel,
                               Offsets* offsets) {
   Register scratch = ABINonArgReturnReg0;
-  Register scratch2 = ABINonArgReturnReg1;
 
   AssertExpectedSP(masm);
   masm.haltingAlign(CodeAlignment);
@@ -2827,29 +2830,12 @@ static bool GenerateThrowStub(MacroAssembler& masm, Label* throwLabel,
 
   // The case where a Wasm catch handler was found while unwinding the stack.
   masm.bind(&resumeCatch);
-  masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, framePointer)),
-               FramePointer);
-  // Defer reloading stackPointer until just before the jump, so as to
-  // protect other live data on the stack.
-
-  // When there is a catch handler, HandleThrow passes it the Value needed for
-  // the handler's argument as well.
-#ifdef JS_64BIT
-  ValueOperand val(scratch);
-#else
-  ValueOperand val(scratch, scratch2);
-#endif
-  masm.loadValue(Address(ReturnReg, offsetof(ResumeFromException, exception)),
-                 val);
-  Register obj = masm.extractObject(val, scratch2);
   masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, target)),
                scratch);
-  // Now it's safe to reload stackPointer.
+  masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, framePointer)),
+               FramePointer);
   masm.loadStackPtr(
       Address(ReturnReg, offsetof(ResumeFromException, stackPointer)));
-  // This move must come after the SP is reloaded because WasmExceptionReg may
-  // alias ReturnReg.
-  masm.movePtr(obj, WasmExceptionReg);
   masm.jump(scratch);
 
   // No catch handler was found, so we will just return out.
@@ -3000,6 +2986,7 @@ bool wasm::GenerateStubs(const ModuleEnvironment& env,
   LifoAlloc lifo(STUBS_LIFO_DEFAULT_CHUNK_SIZE);
   TempAllocator alloc(&lifo);
   WasmMacroAssembler masm(alloc, env);
+  AutoCreatedBy acb(masm, "wasm::GenerateStubs");
 
   // Swap in already-allocated empty vectors to avoid malloc/free.
   if (!code->swap(masm)) {

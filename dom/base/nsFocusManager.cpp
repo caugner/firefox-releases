@@ -1153,6 +1153,13 @@ void nsFocusManager::WindowHidden(mozIDOMWindowProxy* aWindow,
     return;
   }
 
+  if (!XRE_IsParentProcess() &&
+      mActiveBrowsingContextInContent ==
+          docShellBeingHidden->GetBrowsingContext() &&
+      mActiveBrowsingContextInContent->GetIsInBFCache()) {
+    SetActiveBrowsingContextInContent(nullptr, aActionId);
+  }
+
   // if the window being hidden is an ancestor of the focused window, adjust
   // the focused window so that it points to the one being hidden. This
   // ensures that the focused window isn't in a chain of frames that doesn't
@@ -1311,10 +1318,20 @@ void nsFocusManager::NotifyFocusStateChange(Element* aElement,
       eventStateToAdd |= NS_EVENT_STATE_FOCUSRING;
     }
     aElement->AddStates(eventStateToAdd);
+
+    for (nsIContent* host = aElement->GetContainingShadowHost(); host;
+         host = host->GetContainingShadowHost()) {
+      host->AsElement()->AddStates(NS_EVENT_STATE_FOCUS);
+    }
   } else {
     EventStates eventStateToRemove =
         NS_EVENT_STATE_FOCUS | NS_EVENT_STATE_FOCUSRING;
     aElement->RemoveStates(eventStateToRemove);
+
+    for (nsIContent* host = aElement->GetContainingShadowHost(); host;
+         host = host->GetContainingShadowHost()) {
+      host->AsElement()->RemoveStates(NS_EVENT_STATE_FOCUS);
+    }
   }
 
   for (nsIContent* content = aElement; content && content != commonAncestor;
@@ -1353,8 +1370,7 @@ void nsFocusManager::EnsureCurrentWidgetFocused(CallerType aCallerType) {
   if (!vm) {
     return;
   }
-  nsCOMPtr<nsIWidget> widget;
-  vm->GetRootWidget(getter_AddRefs(widget));
+  nsCOMPtr<nsIWidget> widget = vm->GetRootWidget();
   if (!widget) {
     return;
   }
@@ -2106,7 +2122,36 @@ Element* nsFocusManager::FlushAndCheckIfFocusable(Element* aElement,
     }
   }
 
-  return frame->IsFocusable(aFlags & FLAG_BYMOUSE) ? aElement : nullptr;
+  if (frame->IsFocusable(aFlags & FLAG_BYMOUSE)) {
+    return aElement;
+  }
+
+  if (ShadowRoot* root = aElement->GetShadowRoot()) {
+    if (root->DelegatesFocus()) {
+      // If focus target is a shadow-including inclusive ancestor of the
+      // currently focused area of a top-level browsing context's DOM anchor,
+      // then return null.
+      if (nsPIDOMWindowInner* innerWindow =
+              aElement->OwnerDoc()->GetInnerWindow()) {
+        BrowsingContext* bc = innerWindow->GetBrowsingContext();
+        if (bc && bc->IsTop()) {
+          if (Element* focusedElement = innerWindow->GetFocusedElement()) {
+            if (focusedElement->IsShadowIncludingInclusiveDescendantOf(
+                    aElement)) {
+              return nullptr;
+            }
+          }
+        }
+      }
+
+      if (Element* firstFocusable =
+              root->GetFirstFocusable(aFlags & FLAG_BYMOUSE)) {
+        return firstFocusable;
+      }
+    }
+  }
+
+  return nullptr;
 }
 
 bool nsFocusManager::Blur(BrowsingContext* aBrowsingContextToClear,
@@ -2535,8 +2580,7 @@ void nsFocusManager::Focus(
 
   if (aAdjustWidget && !sTestMode) {
     if (nsViewManager* vm = presShell->GetViewManager()) {
-      nsCOMPtr<nsIWidget> widget;
-      vm->GetRootWidget(getter_AddRefs(widget));
+      nsCOMPtr<nsIWidget> widget = vm->GetRootWidget();
       if (widget)
         widget->SetFocus(nsIWidget::Raise::No, aFlags & FLAG_NONSYSTEMCALLER
                                                    ? CallerType::NonSystem
@@ -2879,8 +2923,8 @@ void nsFocusManager::RaiseWindow(nsPIDOMWindowOuter* aWindow,
     nsCOMPtr<nsPIDOMWindowOuter> window(aWindow);
     RefPtr<nsFocusManager> self(this);
     NS_DispatchToCurrentThread(NS_NewRunnableFunction(
-        "nsFocusManager::RaiseWindow", [self, window, aActionId]() -> void {
-          self->WindowRaised(window, aActionId);
+        "nsFocusManager::RaiseWindow", [self, window]() -> void {
+          self->WindowRaised(window, GenerateFocusActionId());
         }));
     return;
   }
@@ -2920,8 +2964,7 @@ void nsFocusManager::RaiseWindow(nsPIDOMWindowOuter* aWindow,
   }
 
   if (nsViewManager* vm = presShell->GetViewManager()) {
-    nsCOMPtr<nsIWidget> widget;
-    vm->GetRootWidget(getter_AddRefs(widget));
+    nsCOMPtr<nsIWidget> widget = vm->GetRootWidget();
     if (widget) {
       widget->SetFocus(nsIWidget::Raise::Yes, aCallerType);
     }

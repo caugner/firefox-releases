@@ -270,9 +270,9 @@ already_AddRefed<AccAttributes> DocAccessible::Attributes() {
   // Override ARIA object attributes from outerdoc.
   aria::AttrIterator attribIter(mParent->GetContent());
   while (attribIter.Next()) {
-    nsAutoString value;
+    nsString value;
     attribIter.AttrValue(value);
-    attributes->SetAttribute(attribIter.AttrName(), value);
+    attributes->SetAttribute(attribIter.AttrName(), std::move(value));
   }
 
   return attributes.forget();
@@ -366,12 +366,27 @@ void DocAccessible::Init() {
   // Initialize notification controller.
   mNotificationController = new NotificationController(this, mPresShell);
 
-  // Mark the document accessible as loaded if its DOM document was loaded at
-  // this point (this can happen because a11y is started late or DOM document
-  // having no container was loaded.
+  // Mark the DocAccessible as loaded if its DOM document is already loaded at
+  // this point. This can happen for one of three reasons:
+  // 1. A11y was started late.
+  // 2. DOM loading for a document (probably an in-process iframe) completed
+  // before its Accessible container was created.
+  // 3. The PresShell for the document was created after DOM loading completed.
+  // In that case, we tried to create the DocAccessible when DOM loading
+  // completed, but we can't create a DocAccessible without a PresShell, so
+  // this failed. The DocAccessible was subsequently created due to a layout
+  // notification.
   if (mDocumentNode->GetReadyStateEnum() ==
       dom::Document::READYSTATE_COMPLETE) {
     mLoadState |= eDOMLoaded;
+    // If this happened due to reasons 1 or 2, it isn't *necessary* to fire a
+    // doc load complete event. If it happened due to reason 3, we need to fire
+    // doc load complete because clients (especially tests) might be waiting
+    // for the document to load using this event. We can't distinguish why this
+    // happened at this point, so just fire it regardless. It won't do any
+    // harm even if it isn't necessary. We set mLoadEventType here and it will
+    // be fired in ProcessLoad as usual.
+    mLoadEventType = nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE;
   }
 
   AddEventListeners();
@@ -917,8 +932,7 @@ void* DocAccessible::GetNativeWindow() const {
   nsViewManager* vm = mPresShell->GetViewManager();
   if (!vm) return nullptr;
 
-  nsCOMPtr<nsIWidget> widget;
-  vm->GetRootWidget(getter_AddRefs(widget));
+  nsCOMPtr<nsIWidget> widget = vm->GetRootWidget();
   if (widget) return widget->GetNativeData(NS_NATIVE_WINDOW);
 
   return nullptr;
@@ -1446,6 +1460,13 @@ void DocAccessible::DoInitialUpdate() {
     DocAccessibleChild* ipcDoc = IPCDoc();
     MOZ_ASSERT(ipcDoc);
     if (ipcDoc) {
+      if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+        // If we're caching, we should send an initial update for this document
+        // and its attributes. Each acc contained in this doc will have its
+        // initial update sent in `InsertIntoIpcTree`.
+        SendCache(CacheDomain::All, CacheUpdateType::Initial);
+      }
+
       for (auto idx = 0U; idx < mChildren.Length(); idx++) {
         ipcDoc->InsertIntoIpcTree(this, mChildren.ElementAt(idx), idx, true);
       }
@@ -2335,7 +2356,9 @@ void DocAccessible::ShutdownChildrenInSubtree(LocalAccessible* aAccessible) {
 
 bool DocAccessible::IsLoadEventTarget() const {
   nsCOMPtr<nsIDocShellTreeItem> treeItem = mDocumentNode->GetDocShell();
-  NS_ASSERTION(treeItem, "No document shell for document!");
+  if (!treeItem) {
+    return false;
+  }
 
   nsCOMPtr<nsIDocShellTreeItem> parentTreeItem;
   treeItem->GetInProcessParent(getter_AddRefs(parentTreeItem));
@@ -2454,8 +2477,7 @@ void DocAccessible::SetRoleMapEntryForDoc(dom::Element* aElement) {
       entry->role == roles::DIALOG ||
       // Role alert isn't valid on the body element according to the ARIA spec,
       // but it's useful for our UI; e.g. the WebRTC sharing indicator.
-      (entry->role == roles::ALERT &&
-       !nsCoreUtils::IsContentDocument(mDocumentNode))) {
+      (entry->role == roles::ALERT && !mDocumentNode->IsContentDocument())) {
     SetRoleMapEntry(entry);
     return;
   }

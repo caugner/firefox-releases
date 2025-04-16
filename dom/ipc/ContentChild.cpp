@@ -1285,10 +1285,6 @@ void ContentChild::InitSharedUASheets(const Maybe<SharedMemoryHandle>& aHandle,
 void ContentChild::InitXPCOM(
     XPCOMInitData&& aXPCOMInit,
     const mozilla::dom::ipc::StructuredCloneData& aInitialData) {
-  // Do this as early as possible to get the parent process to initialize the
-  // background thread since we'll likely need database information very soon.
-  BackgroundChild::Startup();
-
 #ifdef MOZ_WIDGET_GTK
   // LookAndFeel::NativeInit takes a long time to run on Linux, here we schedule
   // it as soon as possible after BackgroundChild::Startup to give
@@ -1744,7 +1740,30 @@ mozilla::ipc::IPCResult ContentChild::RecvConstructBrowser(
     nsPrintfCString reason("%s initial %s BrowsingContext",
                            browsingContext ? "discarded" : "missing",
                            aIsTopLevel ? "top" : "frame");
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Warning, ("%s", reason.get()));
+    if (!aIsTopLevel) {
+      // Recover if the BrowsingContext is missing for a new subframe. The
+      // `ManagedEndpoint` instances will be automatically destroyed.
+      NS_WARNING(reason.get());
+      return IPC_OK();
+    }
     return IPC_FAIL(this, reason.get());
+  }
+
+  if (xpc::IsInAutomation() &&
+      StaticPrefs::
+          browser_tabs_remote_testOnly_failPBrowserCreation_enabled()) {
+    nsAutoCString idString;
+    if (NS_SUCCEEDED(Preferences::GetCString(
+            "browser.tabs.remote.testOnly.failPBrowserCreation.browsingContext",
+            idString))) {
+      nsresult rv = NS_OK;
+      uint64_t bcid = idString.ToInteger64(&rv);
+      if (NS_SUCCEEDED(rv) && bcid == browsingContext->Id()) {
+        NS_WARNING("Injecting artificial PBrowser creation failure");
+        return IPC_OK();
+      }
+    }
   }
 
   if (!aWindowInit.isInitialDocument() ||
@@ -3145,10 +3164,23 @@ mozilla::ipc::IPCResult ContentChild::RecvInvokeDragSession(
             const nsString& data = item.data().get_nsString();
             variant->SetAsAString(data);
           } else if (item.data().type() == IPCDataTransferData::TShmem) {
-            Shmem data = item.data().get_Shmem();
-            variant->SetAsACString(
-                nsDependentCSubstring(data.get<char>(), data.Size<char>()));
-            Unused << DeallocShmem(data);
+            if (nsContentUtils::IsFlavorImage(item.flavor())) {
+              // An image! Get the imgIContainer for it and set it in the
+              // variant.
+              nsCOMPtr<imgIContainer> imageContainer;
+              nsresult rv = nsContentUtils::DataTransferItemToImage(
+                  item, getter_AddRefs(imageContainer));
+              if (NS_FAILED(rv)) {
+                continue;
+              }
+              variant->SetAsISupports(imageContainer);
+            } else {
+              Shmem data = item.data().get_Shmem();
+              variant->SetAsACString(
+                  nsDependentCSubstring(data.get<char>(), data.Size<char>()));
+            }
+
+            Unused << DeallocShmem(item.data().get_Shmem());
           } else if (item.data().type() == IPCDataTransferData::TIPCBlob) {
             RefPtr<BlobImpl> blobImpl =
                 IPCBlobUtils::Deserialize(item.data().get_IPCBlob());
@@ -3703,10 +3735,14 @@ mozilla::ipc::IPCResult ContentChild::RecvCreateBrowsingContext(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvDiscardBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext,
+    const MaybeDiscarded<BrowsingContext>& aContext, bool aDoDiscard,
     DiscardBrowsingContextResolver&& aResolve) {
-  if (!aContext.IsNullOrDiscarded()) {
-    aContext.get()->Detach(/* aFromIPC */ true);
+  if (BrowsingContext* context = aContext.GetMaybeDiscarded()) {
+    if (aDoDiscard && !context->IsDiscarded()) {
+      context->Detach(/* aFromIPC */ true);
+    }
+    context->AddDiscardListener(aResolve);
+    return IPC_OK();
   }
 
   // Immediately resolve the promise, as we've received the message. This will
@@ -3784,6 +3820,16 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowClose(
     return IPC_OK();
   }
 
+  // Call `GetDocument()` to force the document and its inner window to be
+  // created, as it would be forced to be created if this call was being
+  // performed in-process.
+  if (NS_WARN_IF(!aContext.get()->GetDocument())) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ChildIPC: Trying to send a message to a context but document "
+             "creation failed"));
+    return IPC_OK();
+  }
+
   nsGlobalWindowOuter::Cast(window)->CloseOuter(aTrustedCaller);
   return IPC_OK();
 }
@@ -3804,6 +3850,17 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowFocus(
         ("ChildIPC: Trying to send a message to a context without a window"));
     return IPC_OK();
   }
+
+  // Call `GetDocument()` to force the document and its inner window to be
+  // created, as it would be forced to be created if this call was being
+  // performed in-process.
+  if (NS_WARN_IF(!aContext.get()->GetDocument())) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ChildIPC: Trying to send a message to a context but document "
+             "creation failed"));
+    return IPC_OK();
+  }
+
   nsGlobalWindowOuter::Cast(window)->FocusOuter(
       aCallerType, /* aFromOtherProcess */ true, aActionId);
   return IPC_OK();
@@ -3824,6 +3881,17 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowBlur(
         ("ChildIPC: Trying to send a message to a context without a window"));
     return IPC_OK();
   }
+
+  // Call `GetDocument()` to force the document and its inner window to be
+  // created, as it would be forced to be created if this call was being
+  // performed in-process.
+  if (NS_WARN_IF(!aContext.get()->GetDocument())) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ChildIPC: Trying to send a message to a context but document "
+             "creation failed"));
+    return IPC_OK();
+  }
+
   nsGlobalWindowOuter::Cast(window)->BlurOuter(aCallerType);
   return IPC_OK();
 }
@@ -4098,6 +4166,16 @@ mozilla::ipc::IPCResult ContentChild::RecvWindowPostMessage(
           aData.targetOrigin(), aData.targetOriginURI(),
           aData.callerPrincipal(), *aData.subjectPrincipal(),
           getter_AddRefs(providedPrincipal))) {
+    return IPC_OK();
+  }
+
+  // Call `GetDocument()` to force the document and its inner window to be
+  // created, as it would be forced to be created if this call was being
+  // performed in-process.
+  if (NS_WARN_IF(!aContext.get()->GetDocument())) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ChildIPC: Trying to send a message to a context but document "
+             "creation failed"));
     return IPC_OK();
   }
 

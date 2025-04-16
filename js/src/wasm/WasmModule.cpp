@@ -23,6 +23,7 @@
 #include "js/BuildId.h"                 // JS::BuildIdCharVector
 #include "js/experimental/TypedData.h"  // JS_NewUint8Array
 #include "js/friend/ErrorMessages.h"    // js::GetErrorMessage, JSMSG_*
+#include "js/Printf.h"                  // JS_smprintf
 #include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_DefinePropertyById
 #include "js/StreamConsumer.h"
 #include "threading/LockGuard.h"
@@ -43,6 +44,40 @@
 using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
+
+static UniqueChars Tier2ResultsContext(const ScriptedCaller& scriptedCaller) {
+  return scriptedCaller.filename
+             ? JS_smprintf("%s:%d", scriptedCaller.filename.get(),
+                           scriptedCaller.line)
+             : UniqueChars();
+}
+
+static void ReportTier2ResultsOffThread(bool success,
+                                        const ScriptedCaller& scriptedCaller,
+                                        const UniqueChars& error,
+                                        const UniqueCharsVector& warnings) {
+  // Get context to describe this tier-2 task.
+  UniqueChars context = Tier2ResultsContext(scriptedCaller);
+  const char* contextString = context ? context.get() : "unknown";
+
+  // Display the main error, if any.
+  if (!success) {
+    const char* errorString = error ? error.get() : "out of memory";
+    LogOffThread("'%s': wasm tier-2 failed with '%s'.\n", contextString,
+                 errorString);
+  }
+
+  // Display warnings as a follow-up, avoiding spamming the console.
+  size_t numWarnings = std::min<size_t>(warnings.length(), 3);
+
+  for (size_t i = 0; i < numWarnings; i++) {
+    LogOffThread("'%s': wasm tier-2 warning: '%s'.\n'.", contextString,
+                 warnings[i].get());
+  }
+  if (warnings.length() > numWarnings) {
+    LogOffThread("'%s': other warnings suppressed.\n", contextString);
+  }
+}
 
 class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
   SharedCompileArgs compileArgs_;
@@ -68,7 +103,23 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
   void runHelperThreadTask(AutoLockHelperThreadState& locked) override {
     {
       AutoUnlockHelperThreadState unlock(locked);
-      CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_);
+
+      // Compile tier-2 and report any warning/errors as long as it's not a
+      // cancellation. Encountering a warning/error during compilation and
+      // being cancelled may race with each other, but the only observable race
+      // should be being cancelled after a warning/error is set, and that's
+      // okay.
+      UniqueChars error;
+      UniqueCharsVector warnings;
+      bool success = CompileTier2(*compileArgs_, bytecode_->bytes, *module_,
+                                  &error, &warnings, &cancelled_);
+      if (!cancelled_) {
+        // We could try to dispatch a runnable to the thread that started this
+        // compilation, so as to report the warning/error using a JSContext*.
+        // For now we just report to stderr.
+        ReportTier2ResultsOffThread(success, compileArgs_->scriptedCaller,
+                                    error, warnings);
+      }
     }
 
     // During shutdown the main thread will wait for any ongoing (cancelled)
@@ -884,7 +935,6 @@ bool Module::instantiateLocalTable(JSContext* cx, const TableDesc& td,
   } else {
     table = Table::create(cx, td, /* HandleWasmTableObject = */ nullptr);
     if (!table) {
-      ReportOutOfMemory(cx);
       return false;
     }
   }
@@ -1138,7 +1188,6 @@ static bool CreateExportObject(
     propertyAttr |= JSPROP_READONLY | JSPROP_PERMANENT;
   }
   if (!exportObj) {
-    ReportOutOfMemory(cx);
     return false;
   }
 
@@ -1242,12 +1291,6 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
     return false;
   }
 
-  UniqueTlsData tlsData = CreateTlsData(metadata().globalDataLength);
-  if (!tlsData) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
   SharedCode code;
   UniqueDebugState maybeDebug;
   if (metadata().debugEnabled) {
@@ -1267,10 +1310,10 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
   }
 
   instance.set(WasmInstanceObject::create(
-      cx, code, dataSegments_, elemSegments_, std::move(tlsData), memory,
-      std::move(tags), std::move(tables), imports.funcs, metadata().globals,
-      imports.globalValues, imports.globalObjs, instanceProto,
-      std::move(maybeDebug)));
+      cx, code, dataSegments_, elemSegments_, metadata().globalDataLength,
+      memory, std::move(tags), std::move(tables), imports.funcs,
+      metadata().globals, imports.globalValues, imports.globalObjs,
+      instanceProto, std::move(maybeDebug)));
   if (!instance) {
     return false;
   }

@@ -5,7 +5,6 @@
 job-defaults:
     max-run-time:
         by-test-platform:
-            .*-ref-hw-2017-qr/.*: 3600
             .*-qr/.*: 2400
             default: 1800
     suite: raptor
@@ -122,6 +121,53 @@ browsertime-tp6:
                 by-app:
                     firefox: 2
                     default: 3
+
+browsertime-responsiveness:
+    <<: *tp6-defaults
+    raptor-subtests:
+        - cnn-nav
+    mozharness:
+        extra-options:
+            by-test-platform:
+                windows10-.*:
+                    - --cold
+                    - --browsertime
+                    - --browsertime-no-ffwindowrecorder
+                    - --conditioned-profile=settled
+                default:
+                    - --cold
+                    - --browsertime
+                    - --conditioned-profile=settled
+    run-on-projects:
+        by-variant:
+            fission:
+                by-test-platform:
+                    windows.*-32.*: []
+                    .*clang.*: []
+                    default: [mozilla-central]
+            default:
+                by-app:
+                    firefox:
+                        by-test-platform:
+                            .*clang.*: []
+                            linux.*shippable.*: [mozilla-central]
+                            macosx1015.*shippable.*: [mozilla-central]
+                            windows10-64.*shippable.*: [mozilla-central]
+                            default: []
+                    default: []
+    variants:
+        by-app:
+            firefox:
+                by-test-platform:
+                    .*clang.*: []
+                    windows10-64.*shippable-qr/.*: [fission]
+                    (?!windows10-64).*shippable-qr/.*: [fission]
+                    default: []
+            default: []
+    tier:
+        by-app:
+            firefox: 2
+            default: 3
 
 browsertime-tp6-essential:
     <<: *tp6-defaults
@@ -354,19 +400,19 @@ browsertime-youtube-playback:
                     default: [mozilla-central]
             default:
                 by-test-platform:
-                    (linux|windows.*64|macos)(.*shippable).*: [mozilla-central]
                     windows.*-32.*/opt: []
+                    (linux|windows.*64|macos)(.*shippable).*: [mozilla-central]
                     default: []
     tier: 2
     limit-platforms:
         by-subtest:
             youtube-playback-av1-sfr:
-                - windows10-64-ref-hw-2017-qr/opt
                 - macosx1015-64-shippable-qr/opt
             default: []
     max-run-time:
         by-subtest:
             youtube-playback-hfr: 3600
+            youtube-playback-widevine.*: 3600
             default:
                 by-test-platform:
                     windows10-aarch64/opt: 3600

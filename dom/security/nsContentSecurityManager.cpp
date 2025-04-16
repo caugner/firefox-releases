@@ -619,6 +619,11 @@ static nsresult DoContentSecurityChecks(nsIChannel* aChannel,
       break;
     }
 
+    case ExtContentPolicy::TYPE_PROXIED_WEBRTC_MEDIA: {
+      mimeTypeGuess.Truncate();
+      break;
+    }
+
     case ExtContentPolicy::TYPE_INVALID:
       MOZ_ASSERT(false,
                  "can not perform security check without a valid contentType");
@@ -876,10 +881,11 @@ void nsContentSecurityManager::MeasureUnexpectedPrivilegedLoads(
 
   ExtContentPolicyType contentPolicyType =
       aLoadInfo->GetExternalContentPolicyType();
-  // restricting reported types to script and styles
+  // restricting reported types to script, styles and documents
   // to be continued in follow-ups of bug 1697163.
   if (contentPolicyType != ExtContentPolicyType::TYPE_SCRIPT &&
-      contentPolicyType != ExtContentPolicyType::TYPE_STYLESHEET) {
+      contentPolicyType != ExtContentPolicyType::TYPE_STYLESHEET &&
+      contentPolicyType != ExtContentPolicyType::TYPE_DOCUMENT) {
     return;
   }
 

@@ -1239,6 +1239,8 @@
         this._tabAttrModified(oldTab, ["selected"]);
         this._tabAttrModified(newTab, ["selected"]);
 
+        this.readNotificationBox(newBrowser)?.shown();
+
         this._startMultiSelectChange();
         this._multiSelectChangeSelected = true;
         this.clearMultiSelectedTabs();
@@ -2583,7 +2585,6 @@
       document
         .getElementById("History:UndoCloseTab")
         .setAttribute("data-l10n-args", JSON.stringify({ tabCount: 1 }));
-      SessionStore.setLastClosedTabCount(window, 1);
 
       // if we're adding tabs, we're past interrupt mode, ditch the owner
       if (this.selectedTab.owner) {
@@ -3132,10 +3133,10 @@
       // solve the problem of windows "obscuring" the prompt.
       // see bug #350299 for more details
       window.focus();
-      let warningMessage = gTabBrowserBundle.GetStringFromName(
-        "tabs.closeWarningMultipleTabs"
+      let warningTitle = gTabBrowserBundle.GetStringFromName(
+        "tabs.closeTabsTitle"
       );
-      warningMessage = PluralForm.get(tabsToClose, warningMessage).replace(
+      warningTitle = PluralForm.get(tabsToClose, warningTitle).replace(
         "#1",
         tabsToClose
       );
@@ -3144,12 +3145,12 @@
         ps.BUTTON_TITLE_CANCEL * ps.BUTTON_POS_1;
       let checkboxLabel =
         aCloseTabs == this.closingTabsEnum.ALL
-          ? gTabBrowserBundle.GetStringFromName("tabs.closeWarningPrompt")
+          ? gTabBrowserBundle.GetStringFromName("tabs.closeTabsConfirmCheckbox")
           : null;
       var buttonPressed = ps.confirmEx(
         window,
-        gTabBrowserBundle.GetStringFromName("tabs.closeTitleTabs"),
-        warningMessage,
+        warningTitle,
+        null,
         flags,
         gTabBrowserBundle.GetStringFromName("tabs.closeButtonMultiple"),
         null,
@@ -3425,7 +3426,7 @@
         return;
       }
 
-      let initialTabCount = tabs.length;
+      SessionStore.resetLastClosedTabCount(window);
       this._clearMultiSelectionLocked = true;
 
       // Guarantee that _clearMultiSelectionLocked lock gets released.
@@ -3437,6 +3438,7 @@
         let aParams = { animate, prewarmed: true };
 
         for (let tab of tabs) {
+          tab._closedInGroup = true;
           if (tab.selected) {
             lastToClose = tab;
             let toBlurTo = this._findTabToBlurTo(lastToClose, tabs);
@@ -3516,6 +3518,10 @@
         // Now run again sequentially the beforeunload listeners that will result in a prompt.
         for (let tab of tabsWithBeforeUnloadPrompt) {
           this.removeTab(tab, aParams);
+          if (!tab.closing) {
+            // If we abort the closing of the tab.
+            tab._closedInGroup = false;
+          }
         }
 
         // Avoid changing the selected browser several times by removing it,
@@ -3529,17 +3535,14 @@
 
       this._clearMultiSelectionLocked = false;
       this.avoidSingleSelectedTab();
-      let closedTabsCount =
-        initialTabCount - tabs.filter(t => t.isConnected && !t.closing).length;
       // Don't use document.l10n.setAttributes because the FTL file is loaded
       // lazily and we won't be able to resolve the string.
-      document
-        .getElementById("History:UndoCloseTab")
-        .setAttribute(
-          "data-l10n-args",
-          JSON.stringify({ tabCount: closedTabsCount })
-        );
-      SessionStore.setLastClosedTabCount(window, closedTabsCount);
+      document.getElementById("History:UndoCloseTab").setAttribute(
+        "data-l10n-args",
+        JSON.stringify({
+          tabCount: SessionStore.getLastClosedTabCount(window),
+        })
+      );
     },
 
     removeCurrentTab(aParams) {
@@ -5527,10 +5530,12 @@
         ];
 
         notificationBox.appendNotification(
-          message,
           "refresh-blocked",
-          "chrome://browser/skin/notification-icons/popup.svg",
-          notificationBox.PRIORITY_INFO_MEDIUM,
+          {
+            label: message,
+            image: "chrome://browser/skin/notification-icons/popup.svg",
+            priority: notificationBox.PRIORITY_INFO_MEDIUM,
+          },
           buttons
         );
       }

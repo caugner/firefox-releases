@@ -649,7 +649,6 @@ StaticRefPtr<Element> PresShell::EventHandler::sLastKeyDownEventTargetElement;
 bool PresShell::sProcessInteractable = false;
 
 static bool gVerifyReflowEnabled;
-extern mozilla::LazyLogModule sApzMvmLog;
 
 bool PresShell::GetVerifyReflowEnable() {
 #ifdef DEBUG
@@ -836,7 +835,6 @@ PresShell::PresShell(Document* aDocument)
       mNoDelayedMouseEvents(false),
       mNoDelayedKeyEvents(false),
       mApproximateFrameVisibilityVisited(false),
-      mNextPaintCompressed(false),
       mHasCSSBackgroundColor(true),
       mIsLastChromeOnlyEscapeKeyConsumed(false),
       mHasReceivedPaintMessage(false),
@@ -847,7 +845,8 @@ PresShell::PresShell(Document* aDocument)
       mInitializedWithKeyPressEventDispatchingBlacklist(false),
       mForceUseLegacyNonPrimaryDispatch(false),
       mInitializedWithClickEventDispatchingBlacklist(false),
-      mMouseLocationWasSetBySynthesizedMouseEventForTests(false) {
+      mMouseLocationWasSetBySynthesizedMouseEventForTests(false),
+      mHasTriedFastUnsuppress(false) {
   MOZ_LOG(gLog, LogLevel::Debug, ("PresShell::PresShell this=%p", this));
   MOZ_ASSERT(aDocument);
 
@@ -1911,6 +1910,13 @@ nsresult PresShell::Initialize() {
       mPaintSuppressionTimer->SetTarget(
           mDocument->EventTargetFor(TaskCategory::Other));
       InitPaintSuppressionTimer();
+      if (mHasTriedFastUnsuppress) {
+        // Someone tried to unsuppress painting before Initialize was called so
+        // unsuppress painting rather soon.
+        mHasTriedFastUnsuppress = false;
+        TryUnsuppressPaintingSoon();
+        MOZ_ASSERT(mHasTriedFastUnsuppress);
+      }
     }
   }
 
@@ -1921,6 +1927,35 @@ nsresult PresShell::Initialize() {
   }
 
   return NS_OK;  // XXX this needs to be real. MMP
+}
+
+void PresShell::TryUnsuppressPaintingSoon() {
+  if (mHasTriedFastUnsuppress) {
+    return;
+  }
+  mHasTriedFastUnsuppress = true;
+
+  if (!mDidInitialize || !IsPaintingSuppressed() || !XRE_IsContentProcess()) {
+    return;
+  }
+
+  if (!mDocument->IsInitialDocument() &&
+      mDocument->DidHitCompleteSheetCache() &&
+      mPresContext->IsRootContentDocumentCrossProcess()) {
+    // Try to unsuppress faster on a top level page if it uses stylesheet
+    // cache, since that hints that many resources can be painted sooner than
+    // in a cold page load case.
+    NS_DispatchToCurrentThreadQueue(
+        NS_NewRunnableFunction("PresShell::TryUnsuppressPaintingSoon",
+                               [self = RefPtr{this}]() -> void {
+                                 if (self->IsPaintingSuppressed()) {
+                                   PROFILER_MARKER_UNTYPED(
+                                       "Fast paint unsuppression", GRAPHICS);
+                                   self->UnsuppressPainting();
+                                 }
+                               }),
+        EventQueuePriority::Control);
+  }
 }
 
 nsresult PresShell::ResizeReflow(nscoord aWidth, nscoord aHeight,
@@ -2706,21 +2741,28 @@ void PresShell::FrameNeedsReflow(nsIFrame* aFrame,
         break;
     }
 
-#define FRAME_IS_REFLOW_ROOT(_f)                          \
-  ((_f)->HasAnyStateBits(NS_FRAME_REFLOW_ROOT |           \
-                         NS_FRAME_DYNAMIC_REFLOW_ROOT) && \
-   ((_f) != subtreeRoot || !targetNeedsReflowFromParent))
+    auto FrameIsReflowRoot = [](const nsIFrame* aFrame) {
+      return aFrame->HasAnyStateBits(NS_FRAME_REFLOW_ROOT |
+                                     NS_FRAME_DYNAMIC_REFLOW_ROOT);
+    };
+
+    auto CanStopClearingAncestorIntrinsics = [&](const nsIFrame* aFrame) {
+      return FrameIsReflowRoot(aFrame) && aFrame != subtreeRoot;
+    };
+
+    auto IsReflowBoundary = [&](const nsIFrame* aFrame) {
+      return FrameIsReflowRoot(aFrame) &&
+             (aFrame != subtreeRoot || !targetNeedsReflowFromParent);
+    };
 
     // Mark the intrinsic widths as dirty on the frame, all of its ancestors,
     // and all of its descendants, if needed:
 
     if (aIntrinsicDirty != IntrinsicDirty::Resize) {
-      // Mark argument and all ancestors dirty. (Unless we hit a reflow
-      // root that should contain the reflow.  That root could be
-      // subtreeRoot itself if it's not dirty, or it could be some
-      // ancestor of subtreeRoot.)
-      for (nsIFrame* a = subtreeRoot; a && !FRAME_IS_REFLOW_ROOT(a);
-           a = a->GetParent()) {
+      // Mark argument and all ancestors dirty. (Unless we hit a reflow root
+      // that should contain the reflow.
+      for (nsIFrame* a = subtreeRoot;
+           a && !CanStopClearingAncestorIntrinsics(a); a = a->GetParent()) {
         a->MarkIntrinsicISizesDirty();
         if (a->IsAbsolutelyPositioned()) {
           // If we get here, 'a' is abspos, so its subtree's intrinsic sizing
@@ -2780,7 +2822,7 @@ void PresShell::FrameNeedsReflow(nsIFrame* aFrame,
     // a reflow root.
     nsIFrame* f = subtreeRoot;
     for (;;) {
-      if (FRAME_IS_REFLOW_ROOT(f) || !f->GetParent()) {
+      if (IsReflowBoundary(f) || !f->GetParent()) {
         // we've hit a reflow root or the root frame
         if (!wasDirty) {
           mDirtyRoots.Add(f);
@@ -3505,6 +3547,25 @@ nsresult PresShell::ScrollContentIntoView(nsIContent* aContent,
   return NS_OK;
 }
 
+static nsMargin GetScrollMargin(const nsIContent* aContentToScrollTo,
+                                const nsIFrame* aFrame) {
+  MOZ_ASSERT(aContentToScrollTo->GetPrimaryFrame() == aFrame);
+  // If we're focusing something that can't be targeted by content, allow
+  // content to customize the margin.
+  //
+  // TODO: This is also a bit of an issue for delegated focus, see
+  // https://github.com/whatwg/html/issues/7033.
+  if (aContentToScrollTo->ChromeOnlyAccess()) {
+    if (const nsIContent* userContent =
+            aContentToScrollTo->GetChromeOnlyAccessSubtreeRootParent()) {
+      if (const nsIFrame* frame = userContent->GetPrimaryFrame()) {
+        return frame->StyleMargin()->GetScrollMargin();
+      }
+    }
+  }
+  return aFrame->StyleMargin()->GetScrollMargin();
+}
+
 void PresShell::DoScrollContentIntoView() {
   NS_ASSERTION(mDidInitialize, "should have done initial reflow by now");
 
@@ -3540,7 +3601,7 @@ void PresShell::DoScrollContentIntoView() {
 
   // Get the scroll-margin here since |frame| is going to be changed to iterate
   // over all continuation frames below.
-  const nsMargin scrollMargin = frame->StyleMargin()->GetScrollMargin();
+  const nsMargin scrollMargin = GetScrollMargin(mContentToScrollTo, frame);
 
   // This is a two-step process.
   // Step 1: Find the bounds of the rect we want to scroll into view.  For
@@ -3671,30 +3732,8 @@ bool PresShell::ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
   return didScroll;
 }
 
-void PresShell::ScheduleViewManagerFlush(PaintType aType) {
+void PresShell::ScheduleViewManagerFlush() {
   if (MOZ_UNLIKELY(mIsDestroying)) {
-    return;
-  }
-
-  if (aType == PaintType::DelayedCompress) {
-    // Delay paint for 1 second.
-    static const uint32_t kPaintDelayPeriod = 1000;
-    if (!mDelayedPaintTimer) {
-      nsTimerCallbackFunc PaintTimerCallBack = [](nsITimer* aTimer,
-                                                  void* aClosure) {
-        // The passed-in PresShell is always alive here. Because if PresShell
-        // died, mDelayedPaintTimer->Cancel() would be called during the
-        // destruction and this callback would never be invoked.
-        auto self = static_cast<PresShell*>(aClosure);
-        self->SetNextPaintCompressed();
-        self->ScheduleViewManagerFlush();
-      };
-
-      NS_NewTimerWithFuncCallback(
-          getter_AddRefs(mDelayedPaintTimer), PaintTimerCallBack, this,
-          kPaintDelayPeriod, nsITimer::TYPE_ONE_SHOT, "PaintTimerCallBack",
-          mDocument->EventTargetFor(TaskCategory::Other));
-    }
     return;
   }
 
@@ -3844,6 +3883,8 @@ void PresShell::UnsuppressAndInvalidate() {
 
   ScheduleBeforeFirstPaint();
 
+  PROFILER_MARKER_UNTYPED("UnsuppressAndInvalidate", GRAPHICS);
+
   mPaintingSuppressed = false;
   if (nsIFrame* rootFrame = mFrameConstructor->GetRootFrame()) {
     // let's assume that outline on a root frame is not supported
@@ -3852,7 +3893,11 @@ void PresShell::UnsuppressAndInvalidate() {
 
   if (mPresContext->IsRootContentDocumentCrossProcess()) {
     if (auto* bc = BrowserChild::GetFrom(mDocument->GetDocShell())) {
-      bc->SendDidUnsuppressPainting();
+      if (mDocument->IsInitialDocument()) {
+        bc->SendDidUnsuppressPaintingNormalPriority();
+      } else {
+        bc->SendDidUnsuppressPainting();
+      }
     }
   }
 
@@ -5983,6 +6028,22 @@ void PresShell::RebuildApproximateFrameVisibility(
     vis = *aRect;
   }
 
+  // If we are in-process root but not the top level content, we need to take
+  // the intersection with the iframe visible rect.
+  if (mPresContext->IsRootContentDocumentInProcess() &&
+      !mPresContext->IsRootContentDocumentCrossProcess()) {
+    // There are two possibilities that we can't get the iframe's visible
+    // rect other than the iframe is out side of ancestors' display ports.
+    // a) the BrowserChild is being torn down
+    // b) the visible rect hasn't been delivered the BrowserChild
+    // In both cases we consider the visible rect is empty.
+    Maybe<nsRect> visibleRect;
+    if (BrowserChild* browserChild = BrowserChild::GetFrom(this)) {
+      visibleRect = browserChild->GetVisibleRect();
+    }
+    vis = vis.Intersect(visibleRect.valueOr(nsRect()));
+  }
+
   MarkFramesInSubtreeApproximatelyVisible(rootFrame, vis, aRemoveOnly);
 
   DecApproximateVisibleCount(oldApproximatelyVisibleFrames);
@@ -6184,53 +6245,47 @@ void PresShell::RemoveFrameFromApproximatelyVisibleList(nsIFrame* aFrame) {
   }
 }
 
-class nsAutoNotifyDidPaint {
- public:
-  nsAutoNotifyDidPaint(PresShell* aShell, PaintFlags aFlags)
-      : mShell(aShell), mFlags(aFlags) {}
-  ~nsAutoNotifyDidPaint() {
-    if (!!(mFlags & PaintFlags::PaintComposite)) {
-      mShell->GetPresContext()->NotifyDidPaintForSubtree();
-    }
+void PresShell::PaintAndRequestComposite(nsView* aView, PaintFlags aFlags) {
+  if (!mIsActive) {
+    return;
   }
 
- private:
-  PresShell* mShell;
-  PaintFlags mFlags;
-};
-
-bool PresShell::Composite(nsView* aViewToPaint) {
-  nsCString url;
-  nsIURI* uri = mDocument->GetDocumentURI();
-  Document* contentRoot = GetPrimaryContentDocument();
-  if (contentRoot) {
-    uri = contentRoot->GetDocumentURI();
-  }
-  url = uri ? uri->GetSpecOrDefault() : "N/A"_ns;
-  AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("PresShell::Composite", GRAPHICS, url);
-
-  nsIFrame* frame = aViewToPaint->GetFrame();
-  WindowRenderer* renderer = aViewToPaint->GetWidget()->GetWindowRenderer();
+  WindowRenderer* renderer = aView->GetWidget()->GetWindowRenderer();
   NS_ASSERTION(renderer, "Must be in paint event");
-
-  if (!renderer->BeginTransaction(url)) {
-    // If we can't begin a transaction and paint, then there's not
-    // much the caller can do.
-    return true;
+  if (renderer->AsFallback()) {
+    // The fallback renderer doesn't do any retaining, so we
+    // just need to notify the view and widget that we're invalid, and
+    // we'll do a paint+composite from the PaintWindow callback.
+    GetViewManager()->InvalidateView(aView);
+    return;
   }
 
-  if (frame) {
-    if (renderer->EndEmptyTransaction()) {
-      GetPresContext()->NotifyDidPaintForSubtree();
-      return true;
-    }
-    NS_WARNING("Must complete empty transaction when compositing!");
+  // Otherwise we're a retained WebRenderLayerManager, so we want to call
+  // Paint to update with any changes and push those to WR.
+  PaintInternalFlags flags = PaintInternalFlags::None;
+  if (aFlags & PaintFlags::PaintSyncDecodeImages) {
+    flags |= PaintInternalFlags::PaintSyncDecodeImages;
   }
-  return false;
+  PaintInternal(aView, flags);
 }
 
-void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
-                      PaintFlags aFlags) {
+void PresShell::SyncPaintFallback(nsView* aView) {
+  if (!mIsActive) {
+    return;
+  }
+
+  WindowRenderer* renderer = aView->GetWidget()->GetWindowRenderer();
+  NS_ASSERTION(renderer->AsFallback(),
+               "Can't do Sync paint for remote renderers");
+  if (!renderer->AsFallback()) {
+    return;
+  }
+
+  PaintInternal(aView, PaintInternalFlags::PaintComposite);
+  GetPresContext()->NotifyDidPaintForSubtree();
+}
+
+void PresShell::PaintInternal(nsView* aViewToPaint, PaintInternalFlags aFlags) {
   nsCString url;
   nsIURI* uri = mDocument->GetDocumentURI();
   Document* contentRoot = GetPrimaryContentDocument();
@@ -6246,7 +6301,7 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   // assert there. However, we don't rely on this assertion on Android because
   // we don't paint while JS is running.
 #if !defined(MOZ_WIDGET_ANDROID)
-  if (!(aFlags & PaintFlags::PaintComposite)) {
+  if (!(aFlags & PaintInternalFlags::PaintComposite)) {
     // We need to allow content JS when the flag is set since we may trigger
     // MozAfterPaint events in content in those cases.
     nojs.emplace(dom::danger::GetJSContext());
@@ -6278,9 +6333,6 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   WindowRenderer* renderer = aViewToPaint->GetWidget()->GetWindowRenderer();
   NS_ASSERTION(renderer, "Must be in paint event");
   WebRenderLayerManager* layerManager = renderer->AsWebRender();
-  bool shouldInvalidate = renderer->NeedsWidgetInvalidation();
-
-  nsAutoNotifyDidPaint notifyDidPaint(this, aFlags);
 
   // Whether or not we should set first paint when painting is suppressed
   // is debatable. For now we'll do it because B2G relied on first paint
@@ -6297,13 +6349,6 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   }
 
   if (!renderer->BeginTransaction(url)) {
-    if (renderer->AsFallback() && !(aFlags & PaintFlags::PaintComposite)) {
-      // The fallback renderer doesn't do any retaining, and so always
-      // fails when called without PaintComposite (from the refresh driver).
-      // We just need to notify the view and widget that we're invalid, and
-      // we'll do a paint+composite from the PaintWindow callback.
-      aViewToPaint->GetViewManager()->InvalidateView(aViewToPaint);
-    }
     return;
   }
 
@@ -6314,20 +6359,16 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   }
 
   if (frame) {
-    if (!(aFlags & PaintFlags::PaintSyncDecodeImages) &&
-        !frame->HasAnyStateBits(NS_FRAME_UPDATE_LAYER_TREE) &&
-        !mNextPaintCompressed) {
+    if (!(aFlags & PaintInternalFlags::PaintSyncDecodeImages) &&
+        !frame->HasAnyStateBits(NS_FRAME_UPDATE_LAYER_TREE)) {
       if (layerManager) {
         layerManager->SetTransactionIdAllocator(presContext->RefreshDriver());
       }
 
-      if (renderer->EndEmptyTransaction((aFlags & PaintFlags::PaintComposite)
-                                            ? LayerManager::END_DEFAULT
-                                            : LayerManager::END_NO_COMPOSITE)) {
-        if (shouldInvalidate) {
-          aViewToPaint->GetViewManager()->InvalidateView(aViewToPaint);
-        }
-
+      if (renderer->EndEmptyTransaction(
+              (aFlags & PaintInternalFlags::PaintComposite)
+                  ? LayerManager::END_DEFAULT
+                  : LayerManager::END_NO_COMPOSITE)) {
         frame->UpdatePaintCountForPaintedPresShells();
         return;
       }
@@ -6341,18 +6382,12 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   nscolor bgcolor = ComputeBackstopColor(aViewToPaint);
   PaintFrameFlags flags =
       PaintFrameFlags::WidgetLayers | PaintFrameFlags::ExistingTransaction;
-  if (!(aFlags & PaintFlags::PaintComposite)) {
-    flags |= PaintFrameFlags::NoComposite;
-  }
+
   // We force sync-decode for printing / print-preview (printing already does
   // this from nsPageSequenceFrame::PrintNextSheet).
-  if (aFlags & PaintFlags::PaintSyncDecodeImages ||
+  if (aFlags & PaintInternalFlags::PaintSyncDecodeImages ||
       mDocument->IsStaticDocument()) {
     flags |= PaintFrameFlags::SyncDecodeImages;
-  }
-  if (mNextPaintCompressed) {
-    flags |= PaintFrameFlags::Compressed;
-    mNextPaintCompressed = false;
   }
   if (renderer->GetBackendType() == layers::LayersBackend::LAYERS_WR) {
     flags |= PaintFrameFlags::ForWebRender;
@@ -6360,7 +6395,7 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
 
   if (frame) {
     // We can paint directly into the widget using its layer manager.
-    nsLayoutUtils::PaintFrame(nullptr, frame, aDirtyRegion, bgcolor,
+    nsLayoutUtils::PaintFrame(nullptr, frame, nsRegion(), bgcolor,
                               nsDisplayListBuilderMode::Painting, flags);
     return;
   }
@@ -6383,7 +6418,7 @@ void PresShell::Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
   FallbackRenderer* fallback = renderer->AsFallback();
   MOZ_ASSERT(fallback);
 
-  if (aFlags & PaintFlags::PaintComposite) {
+  if (aFlags & PaintInternalFlags::PaintComposite) {
     nsIntRect bounds = presContext->GetVisibleArea().ToOutsidePixels(
         presContext->AppUnitsPerDevPixel());
     fallback->EndTransactionWithColor(bounds, ToDeviceColor(bgcolor));
@@ -8802,9 +8837,8 @@ bool PresShell::EventHandler::AdjustContextMenuKeyEvent(
   nsRootPresContext* rootPC = GetPresContext()->GetRootPresContext();
   aMouseEvent->mRefPoint = LayoutDeviceIntPoint(0, 0);
   if (rootPC) {
-    rootPC->PresShell()->GetViewManager()->GetRootWidget(
-        getter_AddRefs(aMouseEvent->mWidget));
-
+    aMouseEvent->mWidget =
+        rootPC->PresShell()->GetViewManager()->GetRootWidget();
     if (aMouseEvent->mWidget) {
       // default the refpoint to the topleft of our document
       nsPoint offset(0, 0);
@@ -10970,9 +11004,10 @@ void PresShell::MaybeRecreateMobileViewportManager(bool aAfterInitialization) {
 
       mMVMContext = new GeckoMVMContext(mDocument, this);
       mMobileViewportManager = new MobileViewportManager(mMVMContext, *mvmType);
-      if (MOZ_UNLIKELY(MOZ_LOG_TEST(sApzMvmLog, LogLevel::Debug))) {
+      if (MOZ_UNLIKELY(
+              MOZ_LOG_TEST(MobileViewportManager::gLog, LogLevel::Debug))) {
         nsIURI* uri = mDocument->GetDocumentURI();
-        MOZ_LOG(sApzMvmLog, LogLevel::Debug,
+        MOZ_LOG(MobileViewportManager::gLog, LogLevel::Debug,
                 ("Created MVM %p (type %d) for URI %s",
                  mMobileViewportManager.get(), (int)*mvmType,
                  uri ? uri->GetSpecOrDefault().get() : "(null)"));

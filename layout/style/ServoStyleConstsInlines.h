@@ -41,6 +41,7 @@ template struct StyleStrong<RawServoAnimationValue>;
 template struct StyleStrong<RawServoDeclarationBlock>;
 template struct StyleStrong<RawServoStyleSheetContents>;
 template struct StyleStrong<RawServoKeyframe>;
+template struct StyleStrong<RawServoLayerRule>;
 template struct StyleStrong<RawServoMediaList>;
 template struct StyleStrong<RawServoStyleRule>;
 template struct StyleStrong<RawServoImportRule>;
@@ -53,6 +54,7 @@ template struct StyleStrong<RawServoSupportsRule>;
 template struct StyleStrong<RawServoFontFeatureValuesRule>;
 template struct StyleStrong<RawServoFontFaceRule>;
 template struct StyleStrong<RawServoCounterStyleRule>;
+template struct StyleStrong<RawServoScrollTimelineRule>;
 
 template <typename T>
 inline void StyleOwnedSlice<T>::Clear() {

@@ -51,6 +51,7 @@
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_xul.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/Element.h"
@@ -274,6 +275,14 @@ void nsMenuPopupFrame::EnsureWidget(bool aRecreate) {
   }
 }
 
+static Maybe<ColorScheme> GetWidgetColorScheme(const nsMenuPopupFrame* aFrame) {
+  const auto& scheme = aFrame->StyleUI()->mColorScheme.bits;
+  if (!scheme) {
+    return Nothing();
+  }
+  return Some(LookAndFeel::ColorSchemeForFrame(aFrame));
+}
+
 nsresult nsMenuPopupFrame::CreateWidgetForView(nsView* aView) {
   // Create a widget for ourselves.
   nsWidgetInitData widgetData;
@@ -357,6 +366,7 @@ nsresult nsMenuPopupFrame::CreateWidgetForView(nsView* aView) {
   widget->SetWindowShadowStyle(GetShadowStyle());
   widget->SetWindowOpacity(StyleUIReset()->mWindowOpacity);
   widget->SetWindowTransform(ComputeWidgetTransform());
+  widget->SetColorScheme(GetWidgetColorScheme(this));
 
   // most popups don't have a title so avoid setting the title if there isn't
   // one
@@ -399,6 +409,13 @@ NS_IMETHODIMP nsXULPopupShownEvent::Run() {
     popup->SetPopupState(ePopupShown);
   }
 
+  if (!mPopup->IsXULElement(nsGkAtoms::tooltip)) {
+    nsCOMPtr<nsIObserverService> obsService =
+        mozilla::services::GetObserverService();
+    if (obsService) {
+      obsService->NotifyObservers(mPopup, "popup-shown", nullptr);
+    }
+  }
   WidgetMouseEvent event(true, eXULPopupShown, nullptr,
                          WidgetMouseEvent::eReal);
   return EventDispatcher::Dispatch(mPopup, mPresContext, &event);
@@ -494,6 +511,12 @@ void nsMenuPopupFrame::DidSetComputedStyle(ComputedStyle* aOldStyle) {
   if (newUI.mMozWindowTransform != oldUI.mMozWindowTransform) {
     if (nsIWidget* widget = GetWidget()) {
       widget->SetWindowTransform(ComputeWidgetTransform());
+    }
+  }
+
+  if (StyleUI()->mColorScheme != aOldStyle->StyleUI()->mColorScheme) {
+    if (nsIWidget* widget = GetWidget()) {
+      widget->SetColorScheme(GetWidgetColorScheme(this));
     }
   }
 

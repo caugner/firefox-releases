@@ -36,13 +36,8 @@ struct PreferenceSheet {
 
     bool mUseDocumentColors = true;
 
-    // Whether the non-native theme should use system colors for widgets.
-    // We only do that if we have a high-contrast theme _and_ we are overriding
-    // the document colors. Otherwise it causes issues when pages only override
-    // some of the system colors, specially in dark themes mode.
-    bool NonNativeThemeShouldUseSystemColors() const {
-      return mUseAccessibilityTheme && !mUseDocumentColors;
-    }
+    // Whether the non-native theme should use real system colors for widgets.
+    bool NonNativeThemeShouldBeHighContrast() const;
 
     void Load(bool aIsChrome);
   };

@@ -36,7 +36,7 @@ std::ostream& operator<<(std::ostream& aStream, const FrameMetrics& aMetrics) {
                  .get()
           << " cr=" << aMetrics.GetCumulativeResolution()
           << " z=" << aMetrics.GetZoom()
-          << " er=" << aMetrics.GetExtraResolution() << " )] [u=("
+          << " t=" << aMetrics.GetTransformToAncestorScale() << " )] [u=("
           << (int)aMetrics.GetVisualScrollUpdateType() << " "
           << aMetrics.GetScrollGeneration()
           << ")] scrollId=" << aMetrics.GetScrollId();
@@ -315,12 +315,6 @@ std::ostream& operator<<(std::ostream& aStream,
           << "] [color=" << aMetadata.GetBackgroundColor();
   if (aMetadata.GetScrollParentId() != ScrollableLayerGuid::NULL_SCROLL_ID) {
     aStream << "] [scrollParent=" << aMetadata.GetScrollParentId();
-  }
-  if (aMetadata.HasScrollClip()) {
-    aStream << "] [clip=" << aMetadata.ScrollClip().GetClipRect();
-  }
-  if (aMetadata.HasMaskLayer()) {
-    aStream << "] [mask=" << aMetadata.ScrollClip().GetMaskLayerIndex().value();
   }
   aStream << "] [overscroll=" << aMetadata.GetOverscrollBehavior() << "] ["
           << aMetadata.GetScrollUpdates().Length() << " scrollupdates"

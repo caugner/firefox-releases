@@ -94,6 +94,34 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
     return NS_ERROR_FAILURE;
   }
 
+  // Highlight/Highlighttext have native equivalents that we can map to (on
+  // Android) which should work fine, regardless of the color-scheme.
+  switch (aID) {
+    case ColorID::Highlight: {
+      // Matched to action_accent in java codebase. This works fine with both
+      // light and dark color scheme.
+      nscolor accent =
+          Color(ColorID::MozAccentColor, aColorScheme, UseStandins::No);
+      aColor =
+          NS_RGBA(NS_GET_R(accent), NS_GET_G(accent), NS_GET_B(accent), 153);
+      return NS_OK;
+    }
+    case ColorID::Highlighttext:
+      // Selection background is transparent enough that any foreground color
+      // will do.
+      aColor = NS_SAME_AS_FOREGROUND_COLOR;
+      return NS_OK;
+    default:
+      break;
+  }
+
+  if (aColorScheme == ColorScheme::Dark) {
+    if (auto darkColor = GenericDarkColor(aID)) {
+      aColor = *darkColor;
+      return NS_OK;
+    }
+  }
+
   // XXX we'll want to use context.obtainStyledAttributes on the java side to
   // get all of these; see TextView.java for a good example.
   auto UseNativeAccent = [this] {
@@ -121,20 +149,14 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
       // not used?
       aColor = mSystemColors.textColorPrimary;
       break;
-    case ColorID::Highlight: {
-      // Matched to action_accent in java codebase. This works fine with both
-      // light and dark color scheme.
-      nscolor accent =
-          Color(ColorID::MozAccentColor, aColorScheme, UseStandins::No);
-      aColor =
-          NS_RGBA(NS_GET_R(accent), NS_GET_G(accent), NS_GET_B(accent), 153);
+
+    case ColorID::ThemedScrollbarThumbInactive:
+    case ColorID::ThemedScrollbarThumb:
+      // We don't need to care about the Active and Hover colors because Android
+      // scrollbars can't be hovered (they always have pointer-events: none).
+      aColor = NS_RGBA(119, 119, 119, 102);
       break;
-    }
-    case ColorID::Highlighttext:
-      // Selection background is transparent enough that any foreground color
-      // does.
-      aColor = NS_SAME_AS_FOREGROUND_COLOR;
-      break;
+
     case ColorID::IMESelectedRawTextBackground:
     case ColorID::IMESelectedConvertedTextBackground:
     case ColorID::WidgetSelectBackground:
@@ -211,9 +233,11 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
       aColor = NS_RGB(0xf7, 0xf5, 0xf3);
       break;
 
-    case ColorID::Threedface:
     case ColorID::Buttonface:
+    case ColorID::MozButtondisabledface:
+    case ColorID::Threedface:
     case ColorID::Threedlightshadow:
+    case ColorID::MozDisabledfield:
       aColor = NS_RGB(0xec, 0xe7, 0xe2);
       break;
 
@@ -251,6 +275,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
       aColor = mSystemColors.textColorHighlight;
       break;
     case ColorID::MozButtonhoverface:
+    case ColorID::MozButtonactiveface:
       aColor = NS_RGB(0xf3, 0xf0, 0xed);
       break;
     case ColorID::MozMenuhover:
@@ -329,6 +354,10 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
 
     case IntID::ScrollSliderStyle:
       aResult = eScrollThumbStyle_Proportional;
+      break;
+
+    case IntID::UseOverlayScrollbars:
+      aResult = 1;
       break;
 
     case IntID::WindowsDefaultTheme:

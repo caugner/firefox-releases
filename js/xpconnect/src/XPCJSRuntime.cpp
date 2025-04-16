@@ -695,7 +695,7 @@ void XPCJSRuntime::TraceNativeBlackRoots(JSTracer* trc) {
     }
   }
 
-  dom::TraceBlackJS(trc, nsIXPConnect::XPConnect()->GetIsShuttingDown());
+  dom::TraceBlackJS(trc);
 }
 
 void XPCJSRuntime::TraceAdditionalNativeGrayRoots(JSTracer* trc) {
@@ -1732,21 +1732,20 @@ static void ReportClassStats(const ClassInfo& classInfo, const nsACString& path,
                  "wasm/asm.js array buffer elements allocated outside both the "
                  "malloc heap and the GC heap.");
   }
+  if (classInfo.objectsNonHeapElementsWasmShared > 0) {
+    REPORT_BYTES(
+        path + "objects/non-heap/elements/wasm-shared"_ns, KIND_NONHEAP,
+        classInfo.objectsNonHeapElementsWasmShared,
+        "wasm/asm.js array buffer elements allocated outside both the "
+        "malloc heap and the GC heap. These elements are shared between "
+        "one or more runtimes; the reported size is divided by the "
+        "buffer's refcount.");
+  }
 
   if (classInfo.objectsNonHeapCodeWasm > 0) {
     REPORT_BYTES(path + "objects/non-heap/code/wasm"_ns, KIND_NONHEAP,
                  classInfo.objectsNonHeapCodeWasm,
                  "AOT-compiled wasm/asm.js code.");
-  }
-
-  // Although wasm guard pages aren't committed in memory they can be very
-  // large and contribute greatly to vsize and so are worth reporting.
-  if (classInfo.wasmGuardPages > 0) {
-    REPORT_BYTES(
-        "wasm-guard-pages"_ns, KIND_OTHER, classInfo.wasmGuardPages,
-        "Guard pages mapped after the end of wasm memories, reserved for "
-        "optimization tricks, but not committed and thus never contributing"
-        " to RSS, only vsize.");
   }
 }
 
@@ -2330,6 +2329,16 @@ void JSReporter::CollectReports(WindowPaths* windowPaths,
   REPORT_BYTES("wasm-runtime"_ns, KIND_OTHER, rtStats.runtime.wasmRuntime,
                "The memory used for wasm runtime bookkeeping.");
 
+  // Although wasm guard pages aren't committed in memory they can be very
+  // large and contribute greatly to vsize and so are worth reporting.
+  if (rtStats.runtime.wasmGuardPages > 0) {
+    REPORT_BYTES(
+        "wasm-guard-pages"_ns, KIND_OTHER, rtStats.runtime.wasmGuardPages,
+        "Guard pages mapped after the end of wasm memories, reserved for "
+        "optimization tricks, but not committed and thus never contributing"
+        " to RSS, only vsize.");
+  }
+
   // Report the numbers for memory outside of realms.
 
   REPORT_BYTES("js-main-runtime/gc-heap/unused-chunks"_ns, KIND_OTHER,
@@ -2492,6 +2501,7 @@ void JSReporter::CollectReports(WindowPaths* windowPaths,
       "Used regexpshared cells.");
 
   MOZ_ASSERT(gcThingTotal == rtStats.gcHeapGCThings);
+  (void)gcThingTotal;
 
   // Report xpconnect.
 
@@ -2577,6 +2587,12 @@ static void AccumulateTelemetryCallback(int id, uint32_t sample,
       break;
     case JS_TELEMETRY_GC_BUDGET_MS_2:
       Telemetry::Accumulate(Telemetry::GC_BUDGET_MS_2, sample);
+      break;
+    case JS_TELEMETRY_GC_BUDGET_WAS_INCREASED:
+      Telemetry::Accumulate(Telemetry::GC_BUDGET_WAS_INCREASED, sample);
+      break;
+    case JS_TELEMETRY_GC_SLICE_WAS_LONG:
+      Telemetry::Accumulate(Telemetry::GC_SLICE_WAS_LONG, sample);
       break;
     case JS_TELEMETRY_GC_BUDGET_OVERRUN:
       Telemetry::Accumulate(Telemetry::GC_BUDGET_OVERRUN, sample);

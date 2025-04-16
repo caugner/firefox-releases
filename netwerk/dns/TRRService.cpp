@@ -64,7 +64,8 @@ NS_IMPL_ISUPPORTS(TRRService, nsIObserver, nsISupportsWeakReference)
 NS_IMPL_ADDREF_USING_AGGREGATOR(TRRService::ConfirmationContext, OwningObject())
 NS_IMPL_RELEASE_USING_AGGREGATOR(TRRService::ConfirmationContext,
                                  OwningObject())
-NS_IMPL_QUERY_INTERFACE(TRRService::ConfirmationContext, nsITimerCallback)
+NS_IMPL_QUERY_INTERFACE(TRRService::ConfirmationContext, nsITimerCallback,
+                        nsINamed)
 
 TRRService::TRRService() { MOZ_ASSERT(NS_IsMainThread(), "wrong thread"); }
 
@@ -230,9 +231,9 @@ bool TRRService::GetParentalControlEnabledInternal() {
 void TRRService::SetDetectedTrrURI(const nsACString& aURI) {
   LOG(("SetDetectedTrrURI(%s", nsPromiseFlatCString(aURI).get()));
   // If the user has set a custom URI then we don't want to override that.
-  // If the URI is set via doh-rollout.uri, mURIPrefHasUserValue will be false
+  // If the URI is set via doh-rollout.uri, mURIPref will be empty
   // (see TRRServiceBase::OnTRRURIChange)
-  if (mURIPrefHasUserValue) {
+  if (!mURIPref.IsEmpty()) {
     LOG(("Already has user value. Not setting URI"));
     return;
   }
@@ -1041,6 +1042,12 @@ TRRService::ConfirmationContext::Notify(nsITimer* aTimer) {
   }
 
   MOZ_CRASH("Unknown timer");
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TRRService::ConfirmationContext::GetName(nsACString& aName) {
+  aName.AssignLiteral("TRRService::ConfirmationContext");
   return NS_OK;
 }
 

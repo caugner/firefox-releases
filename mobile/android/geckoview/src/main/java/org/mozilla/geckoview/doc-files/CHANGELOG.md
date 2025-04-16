@@ -13,12 +13,17 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v94
+- Extended [`Autocomplete`][78.7] API to support credit card saving.
+
 ## v93
 - Removed deprecated ['Autocomplete.LoginStorageDelegate'][78.8].
 - Removed deprecated [`GeckoRuntime.getProfileDir`][90.5].
 - Added [`PromptInstanceDelegate`][93.1] to allow GeckoView to dismiss stale prompts.
+- Added [`WebRequestError.ERROR_HTTPS_ONLY`][93.2] error code to allow GeckoView display custom HTTPS-only error pages and bypass them.
 
 [93.1]: {{javadoc_uri}}/GeckoSession.PromptDelegate.PromptInstanceDelegate.html
+[93.2]: {{javadoc_uri}}/WebRequestError.html#ERROR_HTTPS_ONLY
 
 ## v92
 - Added [`GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS`][92.1] to
@@ -1041,4 +1046,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport-android.content.Context-android.os.Bundle-java.lang.String-
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: 021709d1ae8a08d4c43997623cf50c004573d3ed
+[api-version]: 1dd93adc7e95d81464cc99db2247be219e43ddcc

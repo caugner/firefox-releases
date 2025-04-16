@@ -390,7 +390,6 @@ class nsWindow final : public nsBaseWidget {
   void WaylandDragWorkaround(GdkEventButton* aEvent);
 
   wl_display* GetWaylandDisplay();
-  bool WaylandSurfaceNeedsClear();
   virtual void CreateCompositorVsyncDispatcher() override;
   LayoutDeviceIntPoint GetNativePointerLockCenter() {
     return mNativePointerLockCenter;
@@ -669,10 +668,12 @@ class nsWindow final : public nsBaseWidget {
                                  bool aMustMatchParent);
   void WaylandPopupMarkAsClosed();
   void WaylandPopupRemoveClosedPopups();
+  void WaylandPopupSetDirectPosition(GdkPoint* aPosition, GdkRectangle* aSize);
   nsWindow* WaylandPopupFindLast(nsWindow* aPopup);
   GtkWindow* GetCurrentTopmostWindow();
   nsCString GetWindowNodeName();
   nsCString GetPopupTypeName();
+  bool IsPopupDirectionRTL();
 
 #ifdef MOZ_LOGGING
   void LogPopupHierarchy();

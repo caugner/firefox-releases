@@ -18,7 +18,6 @@ EXPORTS += [
     "GLImages.h",
     "GPUVideoImage.h",
     "ImageContainer.h",
-    "ImageLayers.h",
     "ImageTypes.h",
     "IMFYCbCrImage.h",
     "Layers.h",
@@ -37,10 +36,6 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
     UNIFIED_SOURCES += [
         "D3D9SurfaceImage.cpp",
         "IMFYCbCrImage.cpp",
-        "TextureDIB.cpp",
-    ]
-    EXPORTS.mozilla.layers += [
-        "TextureDIB.h",
     ]
     if CONFIG["MOZ_ENABLE_D3D10_LAYER"]:
         EXPORTS.mozilla.layers += [
@@ -127,7 +122,6 @@ EXPORTS.mozilla.layers += [
     "client/TextureClientSharedSurface.h",
     "client/TextureRecorded.h",
     "composite/Diagnostics.h",
-    "composite/FPSCounter.h",
     "composite/FrameUniformityData.h",
     "composite/GPUVideoTextureHost.h",
     "composite/ImageComposite.h",
@@ -184,7 +178,6 @@ EXPORTS.mozilla.layers += [
     "ipc/VideoBridgeUtils.h",
     "LayerAttributes.h",
     "LayerManager.h",
-    "LayerMetricsWrapper.h",
     "LayersHelpers.h",
     "LayersTypes.h",
     "MemoryPressureObserver.h",
@@ -204,7 +197,6 @@ EXPORTS.mozilla.layers += [
     "ScrollableLayerGuid.h",
     "ShareableCanvasRenderer.h",
     "SourceSurfaceSharedData.h",
-    "SourceSurfaceVolatileData.h",
     "SurfacePool.h",
     "SyncObject.h",
     "TextureSourceProvider.h",
@@ -311,6 +303,7 @@ UNIFIED_SOURCES += [
     "apz/src/GenericScrollAnimation.cpp",
     "apz/src/GestureEventListener.cpp",
     "apz/src/HitTestingTreeNode.cpp",
+    "apz/src/IAPZHitTester.cpp",
     "apz/src/InputBlockState.cpp",
     "apz/src/InputQueue.cpp",
     "apz/src/KeyboardMap.cpp",
@@ -324,6 +317,7 @@ UNIFIED_SOURCES += [
     "apz/src/SmoothMsdScrollAnimation.cpp",
     "apz/src/SmoothScrollAnimation.cpp",
     "apz/src/WheelScrollAnimation.cpp",
+    "apz/src/WRHitTester.cpp",
     "apz/testutil/APZTestData.cpp",
     "apz/util/ActiveElementManager.cpp",
     "apz/util/APZCCallbackHelper.cpp",
@@ -353,8 +347,6 @@ UNIFIED_SOURCES += [
     "client/TextureClientSharedSurface.cpp",
     "client/TextureRecorded.cpp",
     "composite/CompositableHost.cpp",
-    "composite/Diagnostics.cpp",
-    "composite/FPSCounter.cpp",
     "composite/FrameUniformityData.cpp",
     "composite/GPUVideoTextureHost.cpp",
     "composite/ImageComposite.cpp",
@@ -366,7 +358,6 @@ UNIFIED_SOURCES += [
     "FrameMetrics.cpp",
     "GLImages.cpp",
     "ImageDataSerializer.cpp",
-    "ImageLayers.cpp",
     "ipc/APZChild.cpp",
     "ipc/APZCTreeManagerChild.cpp",
     "ipc/APZCTreeManagerParent.cpp",
@@ -420,7 +411,6 @@ UNIFIED_SOURCES += [
     "ScrollableLayerGuid.cpp",
     "ShareableCanvasRenderer.cpp",
     "SourceSurfaceSharedData.cpp",
-    "SourceSurfaceVolatileData.cpp",
     "SyncObject.cpp",
     "TextureSourceProvider.cpp",
     "TextureWrapperImage.cpp",
@@ -527,9 +517,7 @@ if CONFIG["CC_TYPE"] in ("clang", "gcc"):
     # Suppress warnings in third-party code.
     CXXFLAGS += ["-Wno-maybe-uninitialized"]
 
-UNIFIED_SOURCES += [
-    "composite/PaintCounter.cpp",
-]
+UNIFIED_SOURCES += []
 
 if CONFIG["FUZZING"] and CONFIG["FUZZING_INTERFACES"]:
     TEST_DIRS += ["ipc/fuzztest"]

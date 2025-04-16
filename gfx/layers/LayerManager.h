@@ -58,16 +58,11 @@ namespace layers {
 class AsyncPanZoomController;
 class ClientLayerManager;
 class Layer;
-class LayerMetricsWrapper;
 class PaintedLayer;
 class ContainerLayer;
-class ImageLayer;
 class ColorLayer;
 class CompositorBridgeChild;
-class CanvasLayer;
-class ReadbackLayer;
 class ReadbackProcessor;
-class RefLayer;
 class HostLayer;
 class FocusTarget;
 class KnowsCompositor;
@@ -243,19 +238,6 @@ class LayerManager : public WindowRenderer {
   bool IsSnappingEffectiveTransforms() { return mSnapEffectiveTransforms; }
 
   /**
-   * Returns true if the underlying platform can properly support layers with
-   * SurfaceMode::SURFACE_COMPONENT_ALPHA.
-   */
-  static bool LayersComponentAlphaEnabled();
-
-  /**
-   * Returns true if this LayerManager can properly support layers with
-   * SurfaceMode::SURFACE_COMPONENT_ALPHA. LayerManagers that can't will use
-   * transparent surfaces (and lose subpixel-AA for text).
-   */
-  virtual bool AreComponentAlphaLayersEnabled();
-
-  /**
    * Returns true if this LayerManager always requires an intermediate surface
    * to render blend operations.
    */
@@ -271,20 +253,6 @@ class LayerManager : public WindowRenderer {
    * Can be called anytime
    */
   Layer* GetRoot() { return mRoot; }
-
-  /**
-   * Does a breadth-first search from the root layer to find the first
-   * scrollable layer, and returns its ViewID. Note that there may be
-   * other layers in the tree which share the same ViewID.
-   * Can be called any time.
-   */
-  ScrollableLayerGuid::ViewID GetRootScrollableLayerId();
-
-  /**
-   * Returns a LayerMetricsWrapper containing the Root
-   * Content Documents layer.
-   */
-  LayerMetricsWrapper GetRootContentLayer();
 
   /**
    * CONSTRUCTION PHASE ONLY
@@ -324,33 +292,6 @@ class LayerManager : public WindowRenderer {
    */
   virtual already_AddRefed<ContainerLayer> CreateContainerLayer() = 0;
   /**
-   * CONSTRUCTION PHASE ONLY
-   * Create an ImageLayer for this manager's layer tree.
-   */
-  virtual already_AddRefed<ImageLayer> CreateImageLayer() = 0;
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Create a ColorLayer for this manager's layer tree.
-   */
-  virtual already_AddRefed<ColorLayer> CreateColorLayer() = 0;
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Create a CanvasLayer for this manager's layer tree.
-   */
-  virtual already_AddRefed<CanvasLayer> CreateCanvasLayer() = 0;
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Create a ReadbackLayer for this manager's layer tree.
-   */
-  virtual already_AddRefed<ReadbackLayer> CreateReadbackLayer() {
-    return nullptr;
-  }
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Create a RefLayer for this manager's layer tree.
-   */
-  virtual already_AddRefed<RefLayer> CreateRefLayer() { return nullptr; }
-  /**
    * Can be called anytime, from any thread.
    *
    * Creates an Image container which forwards its images to the compositor
@@ -384,10 +325,6 @@ class LayerManager : public WindowRenderer {
    */
   virtual already_AddRefed<mozilla::gfx::DrawTarget> CreateDrawTarget(
       const mozilla::gfx::IntSize& aSize, mozilla::gfx::SurfaceFormat aFormat);
-
-  virtual bool CanUseCanvasLayerForSize(const gfx::IntSize& aSize) {
-    return true;
-  }
 
   /**
    * This setter can be used anytime. The user data for all keys is

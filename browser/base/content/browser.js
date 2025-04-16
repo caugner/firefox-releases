@@ -69,6 +69,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SafeBrowsing: "resource://gre/modules/SafeBrowsing.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
   SaveToPocket: "chrome://pocket/content/SaveToPocket.jsm",
+  ScreenshotsUtils: "resource:///modules/ScreenshotsUtils.jsm",
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.jsm",
@@ -972,10 +973,11 @@ const gStoragePressureObserver = {
     messageFragment.appendChild(message);
 
     gNotificationBox.appendNotification(
-      messageFragment,
       NOTIFICATION_VALUE,
-      null,
-      gNotificationBox.PRIORITY_WARNING_HIGH,
+      {
+        label: messageFragment,
+        priority: gNotificationBox.PRIORITY_WARNING_HIGH,
+      },
       buttons
     );
 
@@ -1056,10 +1058,12 @@ var gPopupBlockerObserver = {
 
           const priority = notificationBox.PRIORITY_INFO_MEDIUM;
           notificationBox.appendNotification(
-            message,
             "popup-blocked",
-            "chrome://browser/skin/notification-icons/popup.svg",
-            priority,
+            {
+              label: message,
+              image: "chrome://browser/skin/notification-icons/popup.svg",
+              priority,
+            },
             buttons
           );
         }
@@ -1370,10 +1374,11 @@ var gKeywordURIFixup = {
           },
         ];
         let notification = notificationBox.appendNotification(
-          message,
           "keyword-uri-fixup",
-          null,
-          notificationBox.PRIORITY_INFO_HIGH,
+          {
+            label: message,
+            priority: notificationBox.PRIORITY_INFO_HIGH,
+          },
           buttons
         );
         notification.persistence = 1;
@@ -6894,7 +6899,6 @@ const nodeToTooltipMap = {
   "appMenu-zoomReduce-button2": "zoomReduce-button.tooltip",
   "reader-mode-button": "reader-mode-button.tooltip",
   "reader-mode-button-icon": "reader-mode-button.tooltip",
-  "print-button": "printButton.tooltip",
 };
 const nodeToShortcutMap = {
   "bookmarks-menu-button": "manBookmarkKb",
@@ -6914,7 +6918,6 @@ const nodeToShortcutMap = {
   "appMenu-zoomReduce-button2": "key_fullZoomReduce",
   "reader-mode-button": "key_toggleReaderMode",
   "reader-mode-button-icon": "key_toggleReaderMode",
-  "print-button": "printKb",
 };
 
 const gDynamicTooltipCache = new Map();
@@ -6940,19 +6943,7 @@ function GetDynamicShortcutTooltipText(nodeId) {
 function UpdateDynamicShortcutTooltipText(aTooltip) {
   let nodeId =
     aTooltip.triggerNode.id || aTooltip.triggerNode.getAttribute("anonid");
-  if (
-    nodeId == "print-button" &&
-    !Services.prefs.getBoolPref("print.tab_modal.enabled") &&
-    AppConstants.platform !== "macosx"
-  ) {
-    // If the new print UI pref is turned off, we should display the old title that did not have the shortcut
-    aTooltip.setAttribute(
-      "label",
-      document.getElementById(nodeId).getAttribute("print-button-title")
-    );
-  } else {
-    aTooltip.setAttribute("label", GetDynamicShortcutTooltipText(nodeId));
-  }
+  aTooltip.setAttribute("label", GetDynamicShortcutTooltipText(nodeId));
 }
 
 /*
@@ -8273,7 +8264,6 @@ function undoCloseTab(aIndex) {
       }
     }
   }
-  SessionStore.setLastClosedTabCount(window, 1);
 
   return tab;
 }
@@ -9089,10 +9079,12 @@ const SafeBrowsingNotificationBox = {
     }
 
     let notification = notificationBox.appendNotification(
-      title,
       value,
-      "chrome://global/skin/icons/blocked.svg",
-      notificationBox.PRIORITY_CRITICAL_HIGH,
+      {
+        label: title,
+        image: "chrome://global/skin/icons/blocked.svg",
+        priority: notificationBox.PRIORITY_CRITICAL_HIGH,
+      },
       buttons
     );
     // Persist the notification until the user removes so it
@@ -9197,16 +9189,17 @@ class TabDialogBox {
       modalType === Ci.nsIPrompt.MODAL_TYPE_CONTENT
         ? this.getContentDialogManager()
         : this._tabDialogManager;
-    let hasDialogs =
+
+    let hasDialogs = () =>
       this._tabDialogManager.hasDialogs ||
       this._contentDialogManager?.hasDialogs;
 
-    if (!hasDialogs) {
+    if (!hasDialogs()) {
       this._onFirstDialogOpen();
     }
 
     let closingCallback = event => {
-      if (!hasDialogs) {
+      if (!hasDialogs()) {
         this._onLastDialogClose();
       }
 
@@ -9626,6 +9619,10 @@ var gDialogBox = {
   // Used to avoid waiting for the above callback in case
   // of an error opening the dialog.
   _didOpenHTMLDialog: false,
+
+  get dialog() {
+    return this._dialog;
+  },
 
   get isOpen() {
     return !!this._dialog;

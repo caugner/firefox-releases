@@ -14,8 +14,6 @@
 #include "CacheEntry.h"
 #include "CacheFileUtils.h"
 
-#include "nsDeleteDir.h"
-
 #include "nsICacheStorageVisitor.h"
 #include "nsIObserverService.h"
 #include "nsIFile.h"
@@ -33,6 +31,7 @@
 #include "mozilla/StoragePrincipalHelper.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/StaticPrefs_network.h"
 
 namespace mozilla::net {
 
@@ -72,8 +71,7 @@ void CacheMemoryConsumer::DoMemoryReport(uint32_t aCurrentSize) {
   }
 }
 
-CacheStorageService::MemoryPool::MemoryPool(EType aType)
-    : mType(aType), mMemorySize(0) {}
+CacheStorageService::MemoryPool::MemoryPool(EType aType) : mType(aType) {}
 
 CacheStorageService::MemoryPool::~MemoryPool() {
   if (mMemorySize != 0) {
@@ -113,17 +111,7 @@ NS_IMPL_ISUPPORTS(CacheStorageService, nsICacheStorageService,
 
 CacheStorageService* CacheStorageService::sSelf = nullptr;
 
-CacheStorageService::CacheStorageService()
-    : mLock("CacheStorageService.mLock"),
-      mForcedValidEntriesLock("CacheStorageService.mForcedValidEntriesLock"),
-      mShutdown(false),
-      mDiskPool(MemoryPool::DISK),
-      mMemoryPool(MemoryPool::MEMORY)
-#ifdef MOZ_TSAN
-      ,
-      mPurgeTimerActive(false)
-#endif
-{
+CacheStorageService::CacheStorageService() {
   CacheFileIOManager::Init();
 
   MOZ_ASSERT(XRE_IsParentProcess());
@@ -200,9 +188,7 @@ class WalkCacheRunnable : public Runnable,
   WalkCacheRunnable(nsICacheStorageVisitor* aVisitor, bool aVisitEntries)
       : Runnable("net::WalkCacheRunnable"),
         mService(CacheStorageService::Self()),
-        mCallback(aVisitor),
-        mSize(0),
-        mCancel(false) {
+        mCallback(aVisitor) {
     MOZ_ASSERT(NS_IsMainThread());
     StoreNotifyStorage(true);
     StoreVisitEntries(aVisitEntries);
@@ -217,7 +203,7 @@ class WalkCacheRunnable : public Runnable,
   RefPtr<CacheStorageService> mService;
   nsCOMPtr<nsICacheStorageVisitor> mCallback;
 
-  uint64_t mSize;
+  uint64_t mSize{0};
 
   // clang-format off
   MOZ_ATOMIC_BITFIELDS(mAtomicBitfields, 8, (
@@ -226,7 +212,7 @@ class WalkCacheRunnable : public Runnable,
   ))
   // clang-format on
 
-  Atomic<bool> mCancel;
+  Atomic<bool> mCancel{false};
 };
 
 // WalkMemoryCacheRunnable
@@ -381,12 +367,7 @@ class WalkDiskCacheRunnable : public WalkCacheRunnable {
    public:
     explicit OnCacheEntryInfoRunnable(WalkDiskCacheRunnable* aWalker)
         : Runnable("net::WalkDiskCacheRunnable::OnCacheEntryInfoRunnable"),
-          mWalker(aWalker),
-          mDataSize(0),
-          mFetchCount(0),
-          mLastModifiedTime(0),
-          mExpirationTime(0),
-          mPinned(false) {}
+          mWalker(aWalker) {}
 
     NS_IMETHOD Run() override {
       MOZ_ASSERT(NS_IsMainThread());
@@ -413,11 +394,11 @@ class WalkDiskCacheRunnable : public WalkCacheRunnable {
 
     nsCString mURISpec;
     nsCString mIdEnhance;
-    int64_t mDataSize;
-    int32_t mFetchCount;
-    uint32_t mLastModifiedTime;
-    uint32_t mExpirationTime;
-    bool mPinned;
+    int64_t mDataSize{0};
+    int32_t mFetchCount{0};
+    uint32_t mLastModifiedTime{0};
+    uint32_t mExpirationTime{0};
+    bool mPinned{false};
     nsCOMPtr<nsILoadContextInfo> mInfo;
   };
 
@@ -552,72 +533,6 @@ void CacheStorageService::DropPrivateBrowsingEntries() {
   }
 }
 
-namespace {
-
-class CleaupCacheDirectoriesRunnable : public Runnable {
- public:
-  NS_DECL_NSIRUNNABLE
-  static bool Post();
-
- private:
-  CleaupCacheDirectoriesRunnable()
-      : Runnable("net::CleaupCacheDirectoriesRunnable") {
-    CacheFileIOManager::GetCacheDirectory(getter_AddRefs(mCache2Dir));
-#if defined(MOZ_WIDGET_ANDROID)
-    CacheFileIOManager::GetProfilelessCacheDirectory(
-        getter_AddRefs(mCache2Profileless));
-#endif
-  }
-
-  virtual ~CleaupCacheDirectoriesRunnable() = default;
-  nsCOMPtr<nsIFile> mCache1Dir, mCache2Dir;
-#if defined(MOZ_WIDGET_ANDROID)
-  nsCOMPtr<nsIFile> mCache2Profileless;
-#endif
-};
-
-// static
-bool CleaupCacheDirectoriesRunnable::Post() {
-  // TODO: initialize nsDeleteDir
-  return true;
-}
-
-NS_IMETHODIMP CleaupCacheDirectoriesRunnable::Run() {
-  MOZ_ASSERT(!NS_IsMainThread());
-
-  if (mCache1Dir) {
-    nsDeleteDir::RemoveOldTrashes(mCache1Dir);
-  }
-  if (mCache2Dir) {
-    nsDeleteDir::RemoveOldTrashes(mCache2Dir);
-  }
-#if defined(MOZ_WIDGET_ANDROID)
-  if (mCache2Profileless) {
-    nsDeleteDir::RemoveOldTrashes(mCache2Profileless);
-    // Always delete the profileless cache on Android
-    nsDeleteDir::DeleteDir(mCache2Profileless, true, 30000);
-  }
-#endif
-
-  if (mCache1Dir) {
-    nsDeleteDir::DeleteDir(mCache1Dir, true, 30000);
-  }
-
-  return NS_OK;
-}
-
-}  // namespace
-
-// static
-void CacheStorageService::CleaupCacheDirectories() {
-  // Make sure we schedule just once in case CleaupCacheDirectories gets called
-  // multiple times from some reason.
-  static bool runOnce = CleaupCacheDirectoriesRunnable::Post();
-  if (!runOnce) {
-    NS_WARNING("Could not start cache trashes cleanup");
-  }
-}
-
 // Helper methods
 
 // static
@@ -731,19 +646,6 @@ NS_IMETHODIMP CacheStorageService::PinningCacheStorage(
   nsCOMPtr<nsICacheStorage> storage =
       new CacheStorage(aLoadContextInfo, true /* use disk */,
                        true /* ignore size checks */, true /* pin */);
-  storage.forget(_retval);
-  return NS_OK;
-}
-
-NS_IMETHODIMP CacheStorageService::SynthesizedCacheStorage(
-    nsILoadContextInfo* aLoadContextInfo, nsICacheStorage** _retval) {
-  NS_ENSURE_ARG(aLoadContextInfo);
-  NS_ENSURE_ARG(_retval);
-
-  nsCOMPtr<nsICacheStorage> storage =
-      new CacheStorage(aLoadContextInfo, false,
-                       true /* skip size checks for synthesized cache */,
-                       false /* no pinning */);
   storage.forget(_retval);
   return NS_OK;
 }
@@ -1566,7 +1468,7 @@ void CacheStorageService::MemoryPool::PurgeAll(uint32_t aWhat) {
 nsresult CacheStorageService::AddStorageEntry(CacheStorage const* aStorage,
                                               const nsACString& aURI,
                                               const nsACString& aIdExtension,
-                                              bool aReplace,
+                                              uint32_t aFlags,
                                               CacheEntryHandle** aResult) {
   NS_ENSURE_FALSE(mShutdown, NS_ERROR_NOT_INITIALIZED);
 
@@ -1577,13 +1479,13 @@ nsresult CacheStorageService::AddStorageEntry(CacheStorage const* aStorage,
 
   return AddStorageEntry(contextKey, aURI, aIdExtension,
                          aStorage->WriteToDisk(), aStorage->SkipSizeCheck(),
-                         aStorage->Pinning(), aReplace, aResult);
+                         aStorage->Pinning(), aFlags, aResult);
 }
 
 nsresult CacheStorageService::AddStorageEntry(
     const nsACString& aContextKey, const nsACString& aURI,
     const nsACString& aIdExtension, bool aWriteToDisk, bool aSkipSizeCheck,
-    bool aPin, bool aReplace, CacheEntryHandle** aResult) {
+    bool aPin, uint32_t aFlags, CacheEntryHandle** aResult) {
   nsresult rv;
 
   nsAutoCString entryKey;
@@ -1615,17 +1517,24 @@ nsresult CacheStorageService::AddStorageEntry(
             .get();
 
     bool entryExists = entries->Get(entryKey, getter_AddRefs(entry));
+    if (!entryExists && (aFlags & nsICacheStorage::OPEN_READONLY) &&
+        (aFlags & nsICacheStorage::OPEN_SECRETLY) &&
+        StaticPrefs::network_cache_bug1708673()) {
+      return NS_ERROR_CACHE_KEY_NOT_FOUND;
+    }
 
-    if (entryExists && !aReplace) {
+    bool replace = aFlags & nsICacheStorage::OPEN_TRUNCATE;
+
+    if (entryExists && !replace) {
       // check whether we want to turn this entry to a memory-only.
       if (MOZ_UNLIKELY(!aWriteToDisk) && MOZ_LIKELY(entry->IsUsingDisk())) {
         LOG(("  entry is persistent but we want mem-only, replacing it"));
-        aReplace = true;
+        replace = true;
       }
     }
 
     // If truncate is demanded, delete and doom the current entry
-    if (entryExists && aReplace) {
+    if (entryExists && replace) {
       entries->Remove(entryKey);
 
       LOG(("  dooming entry %p for %s because of OPEN_TRUNCATE", entry.get(),
@@ -1640,14 +1549,14 @@ nsresult CacheStorageService::AddStorageEntry(
 
       // Would only lead to deleting force-valid timestamp again.  We don't need
       // the replace information anymore after this point anyway.
-      aReplace = false;
+      replace = false;
     }
 
     // Ensure entry for the particular URL
     if (!entryExists) {
       // When replacing with a new entry, always remove the current force-valid
       // timestamp, this is the only place to do it.
-      if (aReplace) {
+      if (replace) {
         RemoveEntryForceValid(aContextKey, entryKey);
       }
 

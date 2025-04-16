@@ -17,6 +17,7 @@
 #include "Layers.h"
 #include "nsExceptionHandler.h"
 #include "mozilla/Range.h"
+#include "mozilla/EnumeratedRange.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/gfx/gfxVars.h"
@@ -208,8 +209,9 @@ namespace layers {
 
 using namespace mozilla::gfx;
 
-LazyLogModule gRenderThreadLog("WebRenderBridgeParent");
-#define LOG(...) MOZ_LOG(gRenderThreadLog, LogLevel::Debug, (__VA_ARGS__))
+LazyLogModule gWebRenderBridgeParentLog("WebRenderBridgeParent");
+#define LOG(...) \
+  MOZ_LOG(gWebRenderBridgeParentLog, LogLevel::Debug, (__VA_ARGS__))
 
 class ScheduleObserveLayersUpdate : public wr::NotificationHandler {
  public:
@@ -335,6 +337,7 @@ WebRenderBridgeParent::WebRenderBridgeParent(
 #if defined(MOZ_WIDGET_ANDROID)
       mScreenPixelsTarget(nullptr),
 #endif
+      mBlobTileSize(256),
       mDestroyed(false),
       mReceivedDisplayList(false),
       mIsFirstPaint(true),
@@ -355,6 +358,11 @@ WebRenderBridgeParent::WebRenderBridgeParent(
   UpdateDebugFlags();
   UpdateQualitySettings();
   UpdateProfilerUI();
+  UpdateParameters();
+  // Start with the cached bool parameter bits inverted so that we update
+  // them all.
+  mBoolParameterBits = ~gfxVars::WebRenderBoolParameters();
+  UpdateBoolParameters();
 }
 
 WebRenderBridgeParent::WebRenderBridgeParent(const wr::PipelineId& aPipelineId,
@@ -554,7 +562,8 @@ bool WebRenderBridgeParent::UpdateResources(
           gfxCriticalNote << "TOpAddBlobImage failed";
           return false;
         }
-        aUpdates.AddBlobImage(op.key(), op.descriptor(), bytes,
+
+        aUpdates.AddBlobImage(op.key(), op.descriptor(), mBlobTileSize, bytes,
                               wr::ToDeviceIntRect(op.visibleRect()));
         break;
       }
@@ -1648,13 +1657,25 @@ void WebRenderBridgeParent::UpdateProfilerUI() {
   mApi->SetProfilerUI(uiString);
 }
 
-void WebRenderBridgeParent::UpdateMultithreading() {
-  mApi->EnableMultithreading(gfxVars::UseWebRenderMultithreading());
-}
-
-void WebRenderBridgeParent::UpdateBatchingParameters() {
+void WebRenderBridgeParent::UpdateParameters() {
   uint32_t count = gfxVars::WebRenderBatchingLookback();
   mApi->SetBatchingLookback(count);
+
+  mBlobTileSize = gfxVars::WebRenderBlobTileSize();
+}
+
+void WebRenderBridgeParent::UpdateBoolParameters() {
+  uint32_t bits = gfxVars::WebRenderBoolParameters();
+  uint32_t changedBits = mBoolParameterBits ^ bits;
+
+  for (auto paramName : MakeEnumeratedRange(wr::BoolParameter::Sentinel)) {
+    uint32_t i = (uint32_t)paramName;
+    if (changedBits & (1 << i)) {
+      bool value = (bits & (1 << i)) != 0;
+      mApi->SetBool(paramName, value);
+    }
+  }
+  mBoolParameterBits = bits;
 }
 
 #if defined(MOZ_WIDGET_ANDROID)

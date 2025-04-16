@@ -12,6 +12,7 @@ r"""Repackage ZIP archives (or directories) into MSIX App Packages.
 
 from __future__ import absolute_import, print_function
 
+from collections import defaultdict
 import logging
 import os
 import sys
@@ -112,48 +113,96 @@ def find_sdk_tool(binary, log=None):
 
 
 def get_embedded_version(version, buildid):
-    r"""Turn a display version into "dotted quad" notation."""
+    r"""Turn a display version into "dotted quad" notation.
+
+    N.b.: some parts of the MSIX packaging ecosystem require the final part of
+    the dotted quad to be identically 0, so we enforce that here.
+    """
 
     # It's irritating to roll our own version parsing, but the tree doesn't seem
     # to contain exactly what we need at this time.
     version = version.rsplit("esr", 1)[0]
     alpha = "a" in version
 
+    tail = None
     if "a" in version:
         head, tail = version.rsplit("a", 1)
+        if tail != "1":
+            # Disallow anything beyond `X.Ya1`.
+            raise ValueError(
+                f"Alpha version not of the form X.0a1 is not supported: {version}"
+            )
         tail = buildid
     elif "b" in version:
         head, tail = version.rsplit("b", 1)
+        if len(head.split(".")) > 2:
+            raise ValueError(
+                f"Beta version not of the form X.YbZ is not supported: {version}"
+            )
     elif "rc" in version:
         head, tail = version.rsplit("rc", 1)
+        if len(head.split(".")) > 2:
+            raise ValueError(
+                f"Release candidate version not of the form X.YrcZ is not supported: {version}"
+            )
     else:
         head = version
-        tail = "0"
 
-    components = (head.split(".") + ["0", "0", "0"])[:4]
-    components[3] = tail
+    components = (head.split(".") + ["0", "0", "0"])[:3]
+    if tail:
+        components[2] = tail
 
     if alpha:
-        # Nightly builds are all `X.Ya1`, which isn't helpful.  Include build ID
+        # Nightly builds are all `X.0a1`, which isn't helpful.  Include build ID
         # to disambiguate.  But each part of the dotted quad is 16 bits, so we
         # have to squash.
-        year = buildid[0:4]
+        if components[1] != "0":
+            # Disallow anything beyond `X.0a1`.
+            raise ValueError(
+                f"Alpha version not of the form X.0a1 is not supported: {version}"
+            )
+
+        # Last two digits only to save space.  Nightly builds in 2066 and 2099
+        # will be impacted, but future us can deal with that.
+        year = buildid[2:4]
+        if year[0] == "0":
+            # Avoid leading zero, like `.0YMm`.
+            year = year[1:]
         month = buildid[4:6]
-        if month[0] == "0":
-            month = month[1]
         day = buildid[6:8]
+        if day[0] == "0":
+            # Avoid leading zero, like `.0DHh`.
+            day = day[1:]
         hour = buildid[8:10]
-        if hour[0] == "0":
-            hour = hour[1]
-        minute = buildid[10:12]
 
-        components[1] = year
-        components[2] = "".join((month, day))
-        components[3] = "".join((hour, minute))
+        components[1] = "".join((year, month))
+        components[2] = "".join((day, hour))
 
-    version = "{}.{}.{}.{}".format(*components)
+    version = "{}.{}.{}.0".format(*components)
 
     return version
+
+
+def get_appconstants_jsm_values(finder, *args):
+    r"""Extract values, such as the display version like `MOZ_APP_VERSION_DISPLAY:
+    "...";`, from the omnijar.  This allows to determine the beta number, like
+    `X.YbW`, where the regular beta version is only `X.Y`.  Takes a list of
+    names and returns an iterator of the unique such value found for each name.
+    Raises an exception if a name is not found or if multiple values are found.
+    """
+
+    lines = defaultdict(list)
+    for _, f in finder.find("**/modules/AppConstants.jsm"):
+        for line in f.open().read().decode("utf-8").splitlines():
+            for arg in args:
+                if arg in line:
+                    lines[arg].append(line)
+
+    for arg in args:
+        (value,) = lines[arg]  # We expect exactly one definition.
+        _, _, value = value.partition(":")
+        value = value.strip().strip('",;')
+        yield value
 
 
 def repackage_msix(
@@ -162,13 +211,15 @@ def repackage_msix(
     branding=None,
     template=None,
     distribution_dirs=[],
+    locale_allowlist=set(),
     version=None,
-    vendor="Mozilla",
+    vendor=None,
     displayname=None,
     app_name="firefox",
     identity=None,
-    arch=None,
     publisher=None,
+    publisher_display_name="Mozilla Corporation",
+    arch=None,
     output=None,
     force=False,
     log=None,
@@ -185,7 +236,6 @@ def repackage_msix(
     if not os.path.isdir(branding):
         raise Exception("branding dir {} does not exist".format(branding))
 
-        version = "1.2.3"  # XXX
     # TODO: maybe we can fish this from the package directly?  Maybe from a DLL,
     # maybe from application.ini?
     if arch is None or arch not in _MSIX_ARCH.keys():
@@ -204,15 +254,58 @@ def repackage_msix(
     values = get_application_ini_values(
         finder,
         dict(section="App", value="CodeName", fallback="Name"),
-        dict(section="App", value="Version"),
-        dict(section="App", value="BuildID"),
+        dict(section="App", value="Vendor"),
     )
+
     first = next(values)
-    displayname = displayname or first
+    if not displayname:
+        displayname = "Mozilla {}".format(first)
+
+        if channel == "beta":
+            # Release (official) and Beta share branding.  Differentiate Beta a little bit.
+            displayname += " Beta"
+
+    second = next(values)
+    vendor = vendor or second
+
+    # For `AppConstants.jsm` and `brand.properties`, which are in the omnijar in
+    # packaged builds.
+    unpack_finder = UnpackFinder(finder)
+
     if not version:
-        version = next(values)
+        values = get_appconstants_jsm_values(
+            unpack_finder, "MOZ_APP_VERSION_DISPLAY", "MOZ_BUILDID"
+        )
+        display_version = next(values)
         buildid = next(values)
-        version = get_embedded_version(version, buildid)
+        version = get_embedded_version(display_version, buildid)
+        log(
+            logging.INFO,
+            "msix",
+            {
+                "version": version,
+                "display_version": display_version,
+                "buildid": buildid,
+            },
+            "AppConstants.jsm display version is '{display_version}' and build ID is '{buildid}':"
+            + " embedded version will be '{version}'",
+        )
+
+    # TODO: Bug 1721922: localize this description via Fluent.
+    lines = []
+    for _, f in unpack_finder.find("**/chrome/en-US/locale/branding/brand.properties"):
+        lines.extend(
+            line
+            for line in f.open().read().decode("utf-8").splitlines()
+            if "brandFullName" in line
+        )
+    (brandFullName,) = lines  # We expect exactly one definition.
+    _, _, brandFullName = brandFullName.partition("=")
+    brandFullName = brandFullName.strip()
+
+    if channel == "beta":
+        # Release (official) and Beta share branding.  Differentiate Beta a little bit.
+        brandFullName += " Beta"
 
     # We don't have a build at repackage-time to gives us this value, and the
     # source of truth is a branding-specific `configure.sh` shell script that we
@@ -229,20 +322,6 @@ def repackage_msix(
     if MOZ_IGECKOBACKCHANNEL_IID.startswith(('"', "'")):
         MOZ_IGECKOBACKCHANNEL_IID = MOZ_IGECKOBACKCHANNEL_IID[1:-1]
 
-    # TODO: Bug 1721922: localize this description via Fluent.
-    # For `brand.properties`, which is in the omnijar in packaged builds.
-    unpack_finder = UnpackFinder(finder)
-    lines = []
-    for _, f in unpack_finder.find("**/chrome/en-US/locale/branding/brand.properties"):
-        lines.extend(
-            line
-            for line in f.open().read().decode("utf-8").splitlines()
-            if "brandFullName" in line
-        )
-    (brandFullName,) = lines  # We expect exactly one definition.
-    _, _, brandFullName = brandFullName.partition("=")
-    brandFullName = brandFullName.strip()
-
     # The convention is $MOZBUILD_STATE_PATH/cache/$FEATURE.
     output_dir = mozpath.normsep(
         mozpath.join(
@@ -250,44 +329,18 @@ def repackage_msix(
         )
     )
 
-    if channel == "beta":
-        # Release (official) and Beta share branding.  Differentiate Beta a little bit.
-        displayname += " Beta"
-        brandFullName += " Beta"
-
     # Like 'Firefox Package Root', 'Firefox Nightly Package Root', 'Firefox Beta
     # Package Root'.  This is `BrandFullName` in the installer, and we want to
     # be close but to not match.  By not matching, we hope to prevent confusion
     # and/or errors between regularly installed builds and App Package builds.
     instdir = "{} Package Root".format(displayname)
 
-    # Microsoft names its packages like "Microsoft.VCLibs.140.00.UWPDesktop".
-    # Hyphenated (kebab) names seem to install correctly, but `Remove-AppPackage
-    # kebab-name` seems to fail in some cases.
-    identity = identity or "{}.{}".format(vendor, displayname.replace(" ", "."))
-
-    defines = {
-        "APPX_ARCH": _MSIX_ARCH[arch],
-        "APPX_DISPLAYNAME": brandFullName,
-        "APPX_DESCRIPTION": brandFullName,
-        # Like 'Mozilla.Firefox', 'Mozilla.Firefox.Beta', 'Mozilla.Firefox.Nightly'.
-        "APPX_IDENTITY": identity,
-        # Like 'Firefox Package Root', 'Firefox Nightly Package Root', 'Firefox
-        # Beta Package Root'.  See above.
-        "APPX_INSTDIR": instdir,
-        # Like 'Firefox%20Package%20Root'.
-        "APPX_INSTDIR_QUOTED": urllib.parse.quote(instdir),
-        "APPX_PUBLISHER": publisher,
-        "APPX_VERSION": version,
-        "MOZ_APP_DISPLAYNAME": displayname,
-        "MOZ_APP_NAME": app_name,
-        "MOZ_APP_VENDOR": vendor,
-        "MOZ_IGECKOBACKCHANNEL_IID": MOZ_IGECKOBACKCHANNEL_IID,
-    }
+    # The standard package name is like "CompanyNoSpaces.ProductNoSpaces".
+    identity = identity or "{}.{}".format(vendor, displayname).replace(" ", "")
 
     # We might want to include the publisher ID hash here.  I.e.,
     # "__{publisherID}".  My locally produced MSIX was named like
-    # `Mozilla.Firefox.Nightly_89.0.0.0_x64__4gf61r4q480j0`, suggesting also a
+    # `Mozilla.MozillaFirefoxNightly_89.0.0.0_x64__4gf61r4q480j0`, suggesting also a
     # missing field, but it's necessary, since this is just an output file name.
     package_output_name = "{identity}_{version}_{arch}".format(
         identity=identity, version=version, arch=_MSIX_ARCH[arch]
@@ -302,26 +355,21 @@ def repackage_msix(
     log(logging.INFO, "msix", {"output": output}, "Repackaging to: {output}")
 
     m = InstallManifest()
-    m.add_preprocess(
-        mozpath.join(template, "AppxManifest.xml.in"),
-        "AppxManifest.xml",
-        [],
-        defines=defines,
-        marker="<!-- #",  # So that we can have well-formed XML.
-    )
     m.add_copy(mozpath.join(template, "Resources.pri"), "Resources.pri")
 
     m.add_pattern_copy(mozpath.join(branding, "msix", "Assets"), "**", "Assets")
     m.add_pattern_copy(mozpath.join(template, "VFS"), "**", "VFS")
 
     copier = FileCopier()
-    m.populate_registry(copier)
 
     # TODO: Bug 1710147: filter out MSVCRT files and use a dependency instead.
     for p, f in finder:
         # `p` is like "firefox/firefox.exe"; we want just "firefox.exe".
         pp = os.path.relpath(p, "firefox")
         copier.add(mozpath.normsep(mozpath.join("VFS", "ProgramFiles", instdir, pp)), f)
+
+    # Locales to declare as supported in `AppxManifest.xml`.
+    locales = set(["en-US"])
 
     for distribution_dir in [
         mozpath.join(template, "distribution")
@@ -340,6 +388,7 @@ def repackage_msix(
         finder = FileFinder(distribution_dir)
 
         for p, f in finder:
+            locale = None
             if os.path.basename(p) == "target.langpack.xpi":
                 # Turn "/path/to/LOCALE/target.langpack.xpi" into "LOCALE".
                 base, locale = os.path.split(os.path.dirname(p))
@@ -364,12 +413,84 @@ def repackage_msix(
             else:
                 dest = p
 
+            if locale:
+                locale = locale.strip().lower()
+                locales.add(locale)
+                log(
+                    logging.DEBUG,
+                    "msix",
+                    {"locale": locale, "dest": dest},
+                    "Distributing locale '{locale}' from {dest}",
+                )
+
             copier.add(
                 mozpath.normsep(
                     mozpath.join("VFS", "ProgramFiles", instdir, "distribution", dest)
                 ),
                 f,
             )
+
+    locales.remove("en-US")
+
+    # Windows MSIX packages support a finite set of locales: see
+    # https://docs.microsoft.com/en-us/windows/uwp/publish/supported-languages, which is encoded in
+    # https://searchfox.org/mozilla-central/source/browser/installer/windows/msix/msix-all-locales.
+    # We distribute all of the langpacks supported by the release channel in our MSIX, which is
+    # encoded in https://searchfox.org/mozilla-central/source/browser/locales/all-locales.  But we
+    # only advertise support in the App manifest for the intersection of that set and the set of
+    # supported locales.
+    #
+    # We distribute all langpacks to avoid the following issue.  Suppose a user manually installs a
+    # langpack that is not supported by Windows, and then updates the installed MSIX package.  MSIX
+    # package upgrades are essentially paveover installs, so there is no opportunity for Firefox to
+    # update the langpack before the update.  But, since all langpacks are bundled with the MSIX,
+    # that langpack will be up-to-date, preventing one class of YSOD.
+    unadvertised = set()
+    if locale_allowlist:
+        unadvertised = locales - locale_allowlist
+        locales = locales & locale_allowlist
+    for locale in sorted(unadvertised):
+        log(
+            logging.INFO,
+            "msix",
+            {"locale": locale},
+            "Not advertising distributed locale '{locale}' that is not recognized by Windows",
+        )
+
+    locales = ["en-US"] + list(sorted(locales))
+    resource_language_list = "\n".join(
+        f'    <Resource Language="{locale}" />' for locale in sorted(locales)
+    )
+
+    defines = {
+        "APPX_ARCH": _MSIX_ARCH[arch],
+        "APPX_DISPLAYNAME": brandFullName,
+        "APPX_DESCRIPTION": brandFullName,
+        # Like 'Mozilla.MozillaFirefox', 'Mozilla.MozillaFirefoxBeta', or
+        # 'Mozilla.MozillaFirefoxNightly'.
+        "APPX_IDENTITY": identity,
+        # Like 'Firefox Package Root', 'Firefox Nightly Package Root', 'Firefox
+        # Beta Package Root'.  See above.
+        "APPX_INSTDIR": instdir,
+        # Like 'Firefox%20Package%20Root'.
+        "APPX_INSTDIR_QUOTED": urllib.parse.quote(instdir),
+        "APPX_PUBLISHER": publisher,
+        "APPX_PUBLISHER_DISPLAY_NAME": publisher_display_name,
+        "APPX_RESOURCE_LANGUAGE_LIST": resource_language_list,
+        "APPX_VERSION": version,
+        "MOZ_APP_DISPLAYNAME": displayname,
+        "MOZ_APP_NAME": app_name,
+        "MOZ_IGECKOBACKCHANNEL_IID": MOZ_IGECKOBACKCHANNEL_IID,
+    }
+
+    m.add_preprocess(
+        mozpath.join(template, "AppxManifest.xml.in"),
+        "AppxManifest.xml",
+        [],
+        defines=defines,
+        marker="<!-- #",  # So that we can have well-formed XML.
+    )
+    m.populate_registry(copier)
 
     output_dir = mozpath.abspath(output_dir)
     ensureParentDir(output_dir)
@@ -380,6 +501,14 @@ def repackage_msix(
     )
     if log:
         log_copy_result(log, time.time() - start, output_dir, result)
+
+    if verbose:
+        # Dump AppxManifest.xml contents for ease of debugging.
+        log(logging.DEBUG, "msix", {}, "AppxManifest.xml")
+        log(logging.DEBUG, "msix", {}, ">>>")
+        for line in open(mozpath.join(output_dir, "AppxManifest.xml")).readlines():
+            log(logging.DEBUG, "msix", {}, line[:-1])  # Drop trailing line terminator.
+        log(logging.DEBUG, "msix", {}, "<<<")
 
     if not makeappx:
         makeappx = find_sdk_tool("makeappx.exe", log=log)
@@ -637,7 +766,7 @@ powershell -c 'Get-AuthenticodeSignature -FilePath "{output}" | Format-List *'
 To install this MSIX:
 powershell -c 'Add-AppPackage -path "{output}"'
 To see details after installing:
-powershell -c 'Get-AppPackage -name Mozilla.Firefox(.Beta,...)'
+powershell -c 'Get-AppPackage -name Mozilla.MozillaFirefox(Beta,...)'
                 """.strip(),
             )
 

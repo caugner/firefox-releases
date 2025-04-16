@@ -15,7 +15,6 @@
 #include <type_traits>         // for remove_reference<>::type
 #include "CompositableHost.h"  // for CompositableHost
 #include "GeckoProfiler.h"  // for profiler_can_accept_markers, PROFILER_MARKER_TEXT
-#include "ImageLayers.h"    // for ImageLayer
 #include "LayerUserData.h"  // for LayerUserData
 #include "ReadbackLayer.h"  // for ReadbackLayer
 #include "TreeTraversal.h"  // for ForwardIterator, ForEachNode, DepthFirstSearch, TraversalFlag, TraversalFl...
@@ -215,26 +214,6 @@ Matrix4x4 Layer::SnapTransform(const Matrix4x4& aTransform,
   return gfxUtils::SnapTransform(aTransform, aSnapRect, aResidualTransform);
 }
 
-static bool AncestorLayerMayChangeTransform(Layer* aLayer) {
-  for (Layer* l = aLayer; l; l = l->GetParent()) {
-    if (l->GetContentFlags() & Layer::CONTENT_MAY_CHANGE_TRANSFORM) {
-      return true;
-    }
-
-    if (l->GetParent() && l->GetParent()->AsRefLayer()) {
-      return false;
-    }
-  }
-  return false;
-}
-
-bool Layer::MayResample() {
-  Matrix transform2d;
-  return !GetEffectiveTransform().Is2D(&transform2d) ||
-         ThebesMatrix(transform2d).HasNonIntegerTranslation() ||
-         AncestorLayerMayChangeTransform(this);
-}
-
 RenderTargetIntRect Layer::CalculateScissorRect(
     const RenderTargetIntRect& aCurrentScissorRect) {
   ContainerLayer* container = GetParent();
@@ -317,11 +296,6 @@ RenderTargetIntRect Layer::CalculateScissorRect(
     scissor.MoveBy(-container->GetIntermediateSurfaceRect().TopLeft());
   }
   return currentClip.Intersect(scissor);
-}
-
-Maybe<ParentLayerIntRect> Layer::GetScrolledClipRect() const {
-  const Maybe<LayerClip> clip = mSimpleAttrs.GetScrolledClip();
-  return clip ? Some(clip->GetClipRect()) : Nothing();
 }
 
 const ScrollMetadata& Layer::GetScrollMetadata(uint32_t aIndex) const {
@@ -445,10 +419,6 @@ void Layer::ComputeEffectiveTransformForMaskLayers(
   if (GetMaskLayer()) {
     ComputeEffectiveTransformForMaskLayer(GetMaskLayer(), aTransformToSurface);
   }
-  for (size_t i = 0; i < GetAncestorMaskLayerCount(); i++) {
-    Layer* maskLayer = GetAncestorMaskLayerAt(i);
-    ComputeEffectiveTransformForMaskLayer(maskLayer, aTransformToSurface);
-  }
 }
 
 /* static */
@@ -540,18 +510,6 @@ bool Layer::GetVisibleRegionRelativeToRootLayer(nsIntRegion& aResult,
   return true;
 }
 
-Maybe<ParentLayerIntRect> Layer::GetCombinedClipRect() const {
-  Maybe<ParentLayerIntRect> clip = GetClipRect();
-
-  clip = IntersectMaybeRects(clip, GetScrolledClipRect());
-
-  for (size_t i = 0; i < mScrollMetadata.Length(); i++) {
-    clip = IntersectMaybeRects(clip, mScrollMetadata[i].GetClipRect());
-  }
-
-  return clip;
-}
-
 ContainerLayer::ContainerLayer(LayerManager* aManager, void* aImplData)
     : Layer(aManager, aImplData),
       mFirstChild(nullptr),
@@ -562,7 +520,6 @@ ContainerLayer::ContainerLayer(LayerManager* aManager, void* aImplData)
       mInheritedYScale(1.0f),
       mPresShellResolution(1.0f),
       mUseIntermediateSurface(false),
-      mSupportsComponentAlphaChildren(false),
       mMayHaveReadbackChild(false),
       mChildrenChanged(false) {}
 
@@ -623,9 +580,6 @@ void ContainerLayer::RemoveAllChildren() {
   // NotifyRemoved prior to removing any layers.
   while (current) {
     Layer* next = current->GetNextSibling();
-    if (current->GetType() == TYPE_READBACK) {
-      static_cast<ReadbackLayer*>(current)->NotifyRemoved();
-    }
     current = next;
   }
 
@@ -913,7 +867,7 @@ void ContainerLayer::DefaultComputeEffectiveTransforms(
   }
 
   bool useIntermediateSurface;
-  if (HasMaskLayers() || GetForceIsolatedGroup()) {
+  if (GetMaskLayer() || GetForceIsolatedGroup()) {
     useIntermediateSurface = true;
 #ifdef MOZ_DUMP_PAINTING
   } else if (gfxEnv::DumpPaintIntermediate() && !Extend3DContext()) {
@@ -980,7 +934,7 @@ void ContainerLayer::DefaultComputeEffectiveTransforms(
             useIntermediateSurface = true;
             break;
           }
-          if (checkMaskLayers && child->HasMaskLayers()) {
+          if (checkMaskLayers && child->GetMaskLayer()) {
             useIntermediateSurface = true;
             break;
           }
@@ -1015,45 +969,6 @@ void ContainerLayer::DefaultComputeEffectiveTransforms(
   ComputeEffectiveTransformForMaskLayers(aTransformToSurface);
 }
 
-void ContainerLayer::DefaultComputeSupportsComponentAlphaChildren(
-    bool* aNeedsSurfaceCopy) {
-  if (!(GetContentFlags() & Layer::CONTENT_COMPONENT_ALPHA_DESCENDANT) ||
-      !Manager()->AreComponentAlphaLayersEnabled()) {
-    mSupportsComponentAlphaChildren = false;
-    if (aNeedsSurfaceCopy) {
-      *aNeedsSurfaceCopy = false;
-    }
-    return;
-  }
-
-  mSupportsComponentAlphaChildren = false;
-  bool needsSurfaceCopy = false;
-  CompositionOp blendMode = GetEffectiveMixBlendMode();
-  if (UseIntermediateSurface()) {
-    if (GetLocalVisibleRegion().GetNumRects() == 1 &&
-        (GetContentFlags() & Layer::CONTENT_OPAQUE)) {
-      mSupportsComponentAlphaChildren = true;
-    } else {
-      gfx::Matrix transform;
-      if (HasOpaqueAncestorLayer(this) &&
-          GetEffectiveTransform().Is2D(&transform) &&
-          !gfx::ThebesMatrix(transform).HasNonIntegerTranslation() &&
-          blendMode == gfx::CompositionOp::OP_OVER) {
-        mSupportsComponentAlphaChildren = true;
-        needsSurfaceCopy = true;
-      }
-    }
-  } else if (blendMode == gfx::CompositionOp::OP_OVER) {
-    mSupportsComponentAlphaChildren =
-        (GetContentFlags() & Layer::CONTENT_OPAQUE) ||
-        (GetParent() && GetParent()->SupportsComponentAlphaChildren());
-  }
-
-  if (aNeedsSurfaceCopy) {
-    *aNeedsSurfaceCopy = mSupportsComponentAlphaChildren && needsSurfaceCopy;
-  }
-}
-
 void ContainerLayer::ComputeEffectiveTransformsForChildren(
     const Matrix4x4& aTransformToSurface) {
   for (Layer* l = mFirstChild; l; l = l->GetNextSibling()) {
@@ -1061,36 +976,14 @@ void ContainerLayer::ComputeEffectiveTransformsForChildren(
   }
 }
 
-/* static */
-bool ContainerLayer::HasOpaqueAncestorLayer(Layer* aLayer) {
-  for (Layer* l = aLayer->GetParent(); l; l = l->GetParent()) {
-    if (l->GetContentFlags() & Layer::CONTENT_OPAQUE) return true;
-  }
-  return false;
-}
-
 // Note that ContainerLayer::RemoveAllChildren contains an optimized
 // version of this code; if you make changes to ContainerLayer::DidRemoveChild
 // consider whether the matching changes need to be made to
 // ContainerLayer::RemoveAllChildren
 void ContainerLayer::DidRemoveChild(Layer* aLayer) {
-  PaintedLayer* tl = aLayer->AsPaintedLayer();
-  if (tl && tl->UsedForReadback()) {
-    for (Layer* l = mFirstChild; l; l = l->GetNextSibling()) {
-      if (l->GetType() == TYPE_READBACK) {
-        static_cast<ReadbackLayer*>(l)->NotifyPaintedLayerRemoved(tl);
-      }
-    }
-  }
-  if (aLayer->GetType() == TYPE_READBACK) {
-    static_cast<ReadbackLayer*>(aLayer)->NotifyRemoved();
-  }
 }
 
 void ContainerLayer::DidInsertChild(Layer* aLayer) {
-  if (aLayer->GetType() == TYPE_READBACK) {
-    mMayHaveReadbackChild = true;
-  }
 }
 
 #ifdef MOZ_DUMP_PAINTING
@@ -1184,14 +1077,6 @@ void Layer::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
 
   if (mClipRect) {
     aStream << " [clip=" << *mClipRect << "]";
-  }
-  if (mSimpleAttrs.GetScrolledClip()) {
-    aStream << " [scrolled-clip="
-            << mSimpleAttrs.GetScrolledClip()->GetClipRect() << "]";
-    if (const Maybe<size_t>& ix =
-            mSimpleAttrs.GetScrolledClip()->GetMaskLayerIndex()) {
-      aStream << " [scrolled-mask=" << ix.value() << "]";
-    }
   }
   if (1.0 != mSimpleAttrs.GetPostXScale() ||
       1.0 != mSimpleAttrs.GetPostYScale()) {
@@ -1328,14 +1213,6 @@ UniquePtr<LayerUserData> Layer::RemoveUserData(void* aKey) {
   return d;
 }
 
-void PaintedLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
-  Layer::PrintInfo(aStream, aPrefix);
-  nsIntRegion validRegion = GetValidRegion();
-  if (!validRegion.IsEmpty()) {
-    aStream << " [valid=" << validRegion << "]";
-  }
-}
-
 void ContainerLayer::PrintInfo(std::stringstream& aStream,
                                const char* aPrefix) {
   Layer::PrintInfo(aStream, aPrefix);
@@ -1348,65 +1225,6 @@ void ContainerLayer::PrintInfo(std::stringstream& aStream,
   }
   aStream << nsPrintfCString(" [presShellResolution=%g]", mPresShellResolution)
                  .get();
-}
-
-void ColorLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
-  Layer::PrintInfo(aStream, aPrefix);
-  aStream << " [color=" << mColor << "] [bounds=" << mBounds << "]";
-}
-
-CanvasLayer::CanvasLayer(LayerManager* aManager, void* aImplData)
-    : Layer(aManager, aImplData), mSamplingFilter(SamplingFilter::GOOD) {}
-
-CanvasLayer::~CanvasLayer() = default;
-
-void CanvasLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
-  Layer::PrintInfo(aStream, aPrefix);
-  if (mSamplingFilter != SamplingFilter::GOOD) {
-    aStream << " [filter=" << mSamplingFilter << "]";
-  }
-}
-
-RefPtr<CanvasRenderer> CanvasLayer::CreateOrGetCanvasRenderer() {
-  if (!mCanvasRenderer) {
-    mCanvasRenderer = CreateCanvasRendererInternal();
-  }
-
-  return mCanvasRenderer;
-}
-
-void ImageLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
-  Layer::PrintInfo(aStream, aPrefix);
-  if (mSamplingFilter != SamplingFilter::GOOD) {
-    aStream << " [filter=" << mSamplingFilter << "]";
-  }
-}
-
-void RefLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
-  ContainerLayer::PrintInfo(aStream, aPrefix);
-  if (mId.IsValid()) {
-    aStream << " [id=" << mId << "]";
-  }
-  if (mEventRegionsOverride & EventRegionsOverride::ForceDispatchToContent) {
-    aStream << " [force-dtc]";
-  }
-  if (mEventRegionsOverride & EventRegionsOverride::ForceEmptyHitRegion) {
-    aStream << " [force-ehr]";
-  }
-}
-
-void ReadbackLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix) {
-  Layer::PrintInfo(aStream, aPrefix);
-  aStream << " [size=" << mSize << "]";
-  if (mBackgroundLayer) {
-    aStream << " [backgroundLayer="
-            << nsPrintfCString("%p", mBackgroundLayer).get() << "]";
-    aStream << " [backgroundOffset=" << mBackgroundLayerOffset << "]";
-  } else if (mBackgroundColor.a == 1.f) {
-    aStream << " [backgroundColor=" << mBackgroundColor << "]";
-  } else {
-    aStream << " [nobackground]";
-  }
 }
 
 //--------------------------------------------------

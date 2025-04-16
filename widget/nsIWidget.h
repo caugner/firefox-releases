@@ -63,6 +63,7 @@ class WidgetKeyboardEvent;
 struct FontRange;
 
 enum class StyleWindowShadow : uint8_t;
+enum class ColorScheme : uint8_t;
 
 #if defined(MOZ_WIDGET_ANDROID)
 namespace ipc {
@@ -408,6 +409,13 @@ class nsIWidget : public nsISupports {
   typedef mozilla::DesktopSize DesktopSize;
   typedef mozilla::CSSPoint CSSPoint;
   typedef mozilla::CSSRect CSSRect;
+
+  enum class WindowButtonType {
+    Minimize,
+    Maximize,
+    Close,
+    Count,
+  };
 
   // Used in UpdateThemeGeometries.
   struct ThemeGeometry {
@@ -1163,6 +1171,12 @@ class nsIWidget : public nsISupports {
   virtual void SetWindowTransform(const mozilla::gfx::Matrix& aTransform) {}
 
   /**
+   * Set the preferred color-scheme for the widget.
+   * Ignored on non-Mac platforms.
+   */
+  virtual void SetColorScheme(const mozilla::Maybe<mozilla::ColorScheme>&) {}
+
+  /**
    * Set whether the window should ignore mouse events or not.
    *
    * This is only used on popup windows.
@@ -1718,10 +1732,13 @@ class nsIWidget : public nsISupports {
                                             bool aLongTap,
                                             nsIObserver* aObserver);
 
-  virtual nsresult SynthesizeNativePenInput(
-      uint32_t aPointerId, TouchPointerState aPointerState,
-      LayoutDeviceIntPoint aPoint, double aPressure, uint32_t aRotation,
-      int32_t aTiltX, int32_t aTiltY, nsIObserver* aObserver) = 0;
+  virtual nsresult SynthesizeNativePenInput(uint32_t aPointerId,
+                                            TouchPointerState aPointerState,
+                                            LayoutDeviceIntPoint aPoint,
+                                            double aPressure,
+                                            uint32_t aRotation, int32_t aTiltX,
+                                            int32_t aTiltY, int32_t aButton,
+                                            nsIObserver* aObserver) = 0;
 
   /*
    * Cancels all active simulated touch input points and pending long taps.
@@ -2169,6 +2186,15 @@ class nsIWidget : public nsISupports {
    * and ignoring Gecko preferences.
    */
   virtual double GetDefaultScaleInternal() { return 1.0; }
+
+  /**
+   * Layout uses this to alert the widget to the client rect representing
+   * the window maximize button.  An empty rect indicates there is no
+   * maximize button (for example, in fullscreen).  This is only implemented
+   * on Windows.
+   */
+  virtual void SetWindowButtonRect(WindowButtonType aButtonType,
+                                   const LayoutDeviceIntRect& aClientRect) {}
 
  protected:
   // keep the list of children.  We also keep track of our siblings.

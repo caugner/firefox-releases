@@ -5,19 +5,25 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "AvailableMemoryWatcher.h"
+#include "mozilla/Atomics.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/Unused.h"
 #include "nsAppRunner.h"
 #include "nsExceptionHandler.h"
 #include "nsICrashReporter.h"
+#include "nsIObserver.h"
 #include "nsIObserverService.h"
 #include "nsISupports.h"
 #include "nsITimer.h"
 #include "nsMemoryPressure.h"
+#include "nsServiceManagerUtils.h"
 #include "nsWindowsHelpers.h"
 
 #include <memoryapi.h>
+
+extern mozilla::Atomic<uint32_t, mozilla::MemoryOrdering::Relaxed>
+    sNumLowPhysicalMemEvents;
 
 namespace mozilla {
 
@@ -30,11 +36,13 @@ namespace mozilla {
 // user-interaction events from the observer service.
 class nsAvailableMemoryWatcher final : public nsIObserver,
                                        public nsITimerCallback,
+                                       public nsINamed,
                                        public nsAvailableMemoryWatcherBase {
  public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIOBSERVER
   NS_DECL_NSITIMERCALLBACK
+  NS_DECL_NSINAMED
 
   nsAvailableMemoryWatcher();
   nsresult Init(uint32_t aPollingInterval);
@@ -99,7 +107,7 @@ const char* const nsAvailableMemoryWatcher::kObserverTopics[] = {
 
 NS_IMPL_ISUPPORTS_INHERITED(nsAvailableMemoryWatcher,
                             nsAvailableMemoryWatcherBase, nsIObserver,
-                            nsITimerCallback)
+                            nsITimerCallback, nsINamed)
 
 nsAvailableMemoryWatcher::nsAvailableMemoryWatcher()
     : mMutex("low memory callback mutex"),
@@ -385,6 +393,12 @@ nsAvailableMemoryWatcher::Notify(nsITimer* aTimer) {
     OnHighMemory(lock);
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAvailableMemoryWatcher::GetName(nsACString& aName) {
+  aName.AssignLiteral("nsAvailableMemoryWatcher");
   return NS_OK;
 }
 

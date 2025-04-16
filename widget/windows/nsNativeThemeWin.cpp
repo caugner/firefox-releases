@@ -1462,7 +1462,7 @@ static bool AssumeThemePartAndStateAreTransparent(int32_t aPart,
 static inline double GetThemeDpiScaleFactor(nsPresContext* aPresContext) {
   if (WinUtils::IsPerMonitorDPIAware() ||
       StaticPrefs::layout_css_devPixelsPerPx() > 0.0) {
-    nsIWidget* rootWidget = aPresContext->GetRootWidget();
+    nsCOMPtr<nsIWidget> rootWidget = aPresContext->GetRootWidget();
     if (rootWidget) {
       double systemScale = WinUtils::SystemScaleFactor();
       return rootWidget->GetDefaultScale().scale / systemScale;
@@ -2007,7 +2007,7 @@ bool nsNativeThemeWin::GetWidgetPadding(nsDeviceContext* aContext,
     // the border padding. This should be addressed in nsWindow,
     // but currently can't be, see UpdateNonClientMargins.
     if (aAppearance == StyleAppearance::MozWindowTitlebarMaximized) {
-      nsIWidget* rootWidget = nullptr;
+      nsCOMPtr<nsIWidget> rootWidget;
       if (WinUtils::HasSystemMetricsForDpi()) {
         rootWidget = aFrame->PresContext()->GetRootWidget();
       }
@@ -2038,18 +2038,6 @@ bool nsNativeThemeWin::GetWidgetPadding(nsDeviceContext* aContext,
     aResult->left = aResult->right = popupSize.cx;
     ScaleForFrameDPI(aResult, aFrame);
     return ok;
-  }
-
-  if (aAppearance == StyleAppearance::NumberInput ||
-      aAppearance == StyleAppearance::Textfield ||
-      aAppearance == StyleAppearance::Textarea ||
-      aAppearance == StyleAppearance::MenulistButton ||
-      aAppearance == StyleAppearance::Menulist) {
-    // If we have author-specified padding for these elements, don't do the
-    // fixups below.
-    if (aFrame->PresContext()->HasAuthorSpecifiedRules(
-            aFrame, NS_AUTHOR_SPECIFIED_PADDING))
-      return false;
   }
 
   /* textfields need extra pixels on all sides, otherwise they wrap their

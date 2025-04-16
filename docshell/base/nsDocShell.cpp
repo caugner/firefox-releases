@@ -919,15 +919,15 @@ bool nsDocShell::MaybeHandleSubframeHistory(
 
             auto resolve =
                 [currentLoadIdentifier, browsingContext, parentDoc, loadState,
-                 isNavigating](Tuple<mozilla::Maybe<LoadingSessionHistoryInfo>,
-                                     int32_t, int32_t>&& aResult) {
+                 isNavigating](
+                    mozilla::Maybe<LoadingSessionHistoryInfo>&& aResult) {
                   if (currentLoadIdentifier ==
                           browsingContext->GetCurrentLoadIdentifier() &&
-                      Get<0>(aResult).isSome()) {
-                    loadState->SetLoadingSessionHistoryInfo(
-                        Get<0>(aResult).value());
-                    loadState->SetLoadIsFromSessionHistory(
-                        Get<1>(aResult), Get<2>(aResult), false);
+                      aResult.isSome()) {
+                    loadState->SetLoadingSessionHistoryInfo(aResult.value());
+                    // This is an initial subframe load from the session
+                    // history, index doesn't need to be updated.
+                    loadState->SetLoadIsFromSessionHistory(0, false);
                   }
                   RefPtr<nsDocShell> docShell =
                       static_cast<nsDocShell*>(browsingContext->GetDocShell());
@@ -947,14 +947,13 @@ bool nsDocShell::MaybeHandleSubframeHistory(
           }
         } else {
           Maybe<LoadingSessionHistoryInfo> info;
-          int32_t requestedIndex = -1;
-          int32_t sessionHistoryLength = 0;
           mBrowsingContext->Canonical()->GetLoadingSessionHistoryInfoFromParent(
-              info, &requestedIndex, &sessionHistoryLength);
+              info);
           if (info.isSome()) {
             aLoadState->SetLoadingSessionHistoryInfo(info.value());
-            aLoadState->SetLoadIsFromSessionHistory(
-                requestedIndex, sessionHistoryLength, false);
+            // This is an initial subframe load from the session
+            // history, index doesn't need to be updated.
+            aLoadState->SetLoadIsFromSessionHistory(0, false);
           }
         }
       }
@@ -1161,6 +1160,7 @@ void nsDocShell::FirePageHideShowNonRecursive(bool aShow) {
     mFiredUnloadEvent = false;
     RefPtr<Document> doc = contentViewer->GetDocument();
     if (doc) {
+      doc->NotifyActivityChanged();
       RefPtr<nsGlobalWindowInner> inner =
           mScriptGlobal ? mScriptGlobal->GetCurrentInnerWindowInternal()
                         : nullptr;
@@ -3660,6 +3660,8 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
         addHostPort = true;
         break;
       case NS_ERROR_BLOCKED_BY_POLICY:
+      case NS_ERROR_DOM_COOP_FAILED:
+      case NS_ERROR_DOM_COEP_FAILED:
         // Page blocked by policy
         error = "blockedByPolicy";
         break;
@@ -3676,15 +3678,17 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
 
   // If the HTTPS-Only Mode upgraded this request and the upgrade might have
   // caused this error, we replace the error-page with about:httpsonlyerror
-  if (nsHTTPSOnlyUtils::CouldBeHttpsOnlyError(aFailedChannel, aError)) {
+  bool isHttpsOnlyError =
+      nsHTTPSOnlyUtils::CouldBeHttpsOnlyError(aFailedChannel, aError);
+  if (isHttpsOnlyError) {
     errorPage.AssignLiteral("httpsonlyerror");
   }
 
   if (nsCOMPtr<nsILoadURIDelegate> loadURIDelegate = GetLoadURIDelegate()) {
     nsCOMPtr<nsIURI> errorPageURI;
-    rv = loadURIDelegate->HandleLoadError(aURI, aError,
-                                          NS_ERROR_GET_MODULE(aError),
-                                          getter_AddRefs(errorPageURI));
+    rv = loadURIDelegate->HandleLoadError(
+        aURI, (isHttpsOnlyError ? NS_ERROR_HTTPS_ONLY : aError),
+        NS_ERROR_GET_MODULE(aError), getter_AddRefs(errorPageURI));
     // If the docshell is going away there's no point in showing an error page.
     if (NS_FAILED(rv) || mIsBeingDestroyed) {
       *aDisplayedErrorPage = false;
@@ -5541,7 +5545,8 @@ nsresult nsDocShell::RefreshURIFromQueue() {
 
 nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
                            WindowGlobalChild* aWindowActor,
-                           bool aIsTransientAboutBlank, bool aPersist) {
+                           bool aIsTransientAboutBlank, bool aPersist,
+                           nsIRequest* aRequest) {
   // Save the LayoutHistoryState of the previous document, before
   // setting up new document
   PersistLayoutHistoryState();
@@ -5566,8 +5571,20 @@ nsresult nsDocShell::Embed(nsIContentViewer* aContentViewer,
   }
 
   if (!aIsTransientAboutBlank && mozilla::SessionHistoryInParent()) {
+    bool expired = false;
+    nsCOMPtr<nsICacheInfoChannel> cacheChannel = do_QueryInterface(aRequest);
+    if (cacheChannel) {
+      // Check if the page has expired from cache
+      uint32_t expTime = 0;
+      cacheChannel->GetCacheTokenExpirationTime(&expTime);
+      uint32_t now = PRTimeToSeconds(PR_Now());
+      if (expTime <= now) {
+        expired = true;
+      }
+    }
+
     MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p Embed", this));
-    MoveLoadingToActiveEntry(aPersist);
+    MoveLoadingToActiveEntry(aPersist, expired);
   }
 
   bool updateHistory = true;
@@ -6148,7 +6165,9 @@ nsresult nsDocShell::FilterStatusForErrorPage(
        aStatus == NS_ERROR_PROXY_AUTHENTICATION_FAILED ||
        aStatus == NS_ERROR_PROXY_TOO_MANY_REQUESTS ||
        aStatus == NS_ERROR_MALFORMED_URI ||
-       aStatus == NS_ERROR_BLOCKED_BY_POLICY) &&
+       aStatus == NS_ERROR_BLOCKED_BY_POLICY ||
+       aStatus == NS_ERROR_DOM_COOP_FAILED ||
+       aStatus == NS_ERROR_DOM_COEP_FAILED) &&
       (aIsTopFrame || aUseErrorPages)) {
     return aStatus;
   }
@@ -6612,7 +6631,7 @@ nsresult nsDocShell::CreateAboutBlankContentViewer(
       // hook 'em up
       if (viewer) {
         viewer->SetContainer(this);
-        rv = Embed(viewer, aActor, true, false);
+        rv = Embed(viewer, aActor, true, false, nullptr);
         NS_ENSURE_SUCCESS(rv, rv);
 
         SetCurrentURI(blankDoc->GetDocumentURI(), nullptr,
@@ -7858,7 +7877,8 @@ nsresult nsDocShell::CreateContentViewer(const nsACString& aContentType,
   }
 
   NS_ENSURE_SUCCESS(Embed(viewer, nullptr, false,
-                          ShouldAddToSessionHistory(finalURI, aOpenedChannel)),
+                          ShouldAddToSessionHistory(finalURI, aOpenedChannel),
+                          aOpenedChannel),
                     NS_ERROR_FAILURE);
 
   if (!mBrowsingContext->GetHasLoadedNonInitialDocument()) {
@@ -8629,7 +8649,7 @@ bool nsDocShell::IsSameDocumentNavigation(nsDocShellLoadState* aLoadState,
   }
 
   if (aState.mHistoryNavBetweenSameDoc &&
-      !aLoadState->GetLoadingSessionHistoryInfo()->mLoadingCurrentActiveEntry) {
+      !aLoadState->GetLoadingSessionHistoryInfo()->mLoadingCurrentEntry) {
     return true;
   }
 
@@ -8862,8 +8882,10 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
            this, mLoadingEntry->mInfo.GetURI()->GetSpecOrDefault().get()));
       bool hadActiveEntry = !!mActiveEntry;
       mActiveEntry = MakeUnique<SessionHistoryInfo>(mLoadingEntry->mInfo);
-      mBrowsingContext->SessionHistoryCommit(*mLoadingEntry, mLoadType,
-                                             hadActiveEntry, true, true);
+      mBrowsingContext->SessionHistoryCommit(
+          *mLoadingEntry, mLoadType, hadActiveEntry, true, true,
+          /* No expiration update on the same document loads*/
+          false);
       // FIXME Need to set postdata.
       SetCacheKeyOnHistoryEntry(nullptr, cacheKey);
 
@@ -9317,6 +9339,23 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
   // value for our purposes here.
   bool savePresentation =
       CanSavePresentation(aLoadState->LoadType(), nullptr, nullptr);
+
+  // nsDocShell::CanSavePresentation is for non-SHIP version only. Do a
+  // separate check for SHIP so that we know if there are ongoing requests
+  // before calling Stop() below.
+  if (mozilla::SessionHistoryInParent()) {
+    Document* document = GetDocument();
+    uint16_t flags = 0;
+    if (document && !document->CanSavePresentation(nullptr, flags, true)) {
+      // This forces some flags into the WindowGlobalParent's mBFCacheStatus,
+      // which we'll then use in CanonicalBrowsingContext::AllowedInBFCache,
+      // and in particular we'll store BFCacheStatus::REQUEST if needed.
+      // Also, we want to report all the flags to the parent process here (and
+      // not just BFCacheStatus::NOT_ALLOWED), so that it can update the
+      // telemetry data correctly.
+      document->DisallowBFCaching(flags);
+    }
+  }
 
   // Don't stop current network activity for javascript: URL's since
   // they might not result in any data, and thus nothing should be
@@ -11727,13 +11766,12 @@ nsresult nsDocShell::LoadHistoryEntry(const LoadingSessionHistoryInfo& aEntry,
   loadState->SetHasValidUserGestureActivation(
       loadState->HasValidUserGestureActivation() || aUserActivation);
 
-  return LoadHistoryEntry(loadState, aLoadType,
-                          aEntry.mLoadingCurrentActiveEntry);
+  return LoadHistoryEntry(loadState, aLoadType, aEntry.mLoadingCurrentEntry);
 }
 
 nsresult nsDocShell::LoadHistoryEntry(nsDocShellLoadState* aLoadState,
                                       uint32_t aLoadType,
-                                      bool aReloadingActiveEntry) {
+                                      bool aLoadingCurrentEntry) {
   if (!IsNavigationAllowed()) {
     return NS_OK;
   }
@@ -11754,7 +11792,7 @@ nsresult nsDocShell::LoadHistoryEntry(nsDocShellLoadState* aLoadState,
     rv = CreateAboutBlankContentViewer(
         aLoadState->PrincipalToInherit(),
         aLoadState->PartitionedPrincipalToInherit(), nullptr, nullptr,
-        /* aIsInitialDocument */ false, Nothing(), !aReloadingActiveEntry);
+        /* aIsInitialDocument */ false, Nothing(), !aLoadingCurrentEntry);
 
     if (NS_FAILED(rv)) {
       // The creation of the intermittent about:blank content
@@ -13337,7 +13375,7 @@ void nsDocShell::SetLoadingSessionHistoryInfo(
   mLoadingEntry = MakeUnique<LoadingSessionHistoryInfo>(aLoadingInfo);
 }
 
-void nsDocShell::MoveLoadingToActiveEntry(bool aPersist) {
+void nsDocShell::MoveLoadingToActiveEntry(bool aPersist, bool aExpired) {
   MOZ_ASSERT(mozilla::SessionHistoryInParent());
 
   MOZ_LOG(gSHLog, LogLevel::Debug,
@@ -13364,41 +13402,66 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aPersist) {
     MOZ_ASSERT(loadingEntry);
     uint32_t loadType =
         mLoadType == LOAD_ERROR_PAGE ? mFailedLoadType : mLoadType;
-    mBrowsingContext->SessionHistoryCommit(*loadingEntry, loadType,
-                                           hadActiveEntry, aPersist, false);
+    mBrowsingContext->SessionHistoryCommit(
+        *loadingEntry, loadType, hadActiveEntry, aPersist, false, aExpired);
   }
 }
 
-void nsDocShell::RecordSingleChannelId() {
-  if (mLoadGroup && mBrowsingContext->GetCurrentWindowContext()) {
+static bool IsFaviconLoad(nsIRequest* aRequest) {
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
+  if (!channel) {
+    return false;
+  }
+
+  nsCOMPtr<nsILoadInfo> li = channel->LoadInfo();
+  return li && li->InternalContentPolicyType() ==
+                   nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON;
+}
+
+void nsDocShell::RecordSingleChannelId(bool aStartRequest,
+                                       nsIRequest* aRequest) {
+  // Ignore favicon loads, they don't need to block caching.
+  if (IsFaviconLoad(aRequest)) {
+    return;
+  }
+
+  MOZ_ASSERT_IF(!aStartRequest, mRequestForBlockingFromBFCacheCount > 0);
+
+  mRequestForBlockingFromBFCacheCount += aStartRequest ? 1 : -1;
+
+  if (mBrowsingContext->GetCurrentWindowContext()) {
+    // We have three states: no request, one request with an id and
+    // eiher one request without an id or multiple requests. Nothing() is no
+    // request, Some(non-zero) is one request with an id and Some(0) is one
+    // request without an id or multiple requests.
     Maybe<uint64_t> singleChannelId;
-    nsCOMPtr<nsISimpleEnumerator> requests;
-    mLoadGroup->GetRequests(getter_AddRefs(requests));
-    for (const auto& request : SimpleEnumerator<nsIRequest>(requests)) {
-      nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
-
-      // Ignore favicon loads, they don't need to block caching.
-      nsCOMPtr<nsILoadInfo> li;
-      if (channel && (li = channel->LoadInfo()) &&
-          li->InternalContentPolicyType() ==
-              nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON) {
-        continue;
-      }
-
-      // If we already found a channel ID or this is not an nsIIdentChannel then
-      // we have more than one request in the loadgroup.
+    if (mRequestForBlockingFromBFCacheCount > 1) {
+      singleChannelId = Some(0);
+    } else if (mRequestForBlockingFromBFCacheCount == 1) {
       nsCOMPtr<nsIIdentChannel> identChannel;
-      if (singleChannelId.isSome() ||
-          !(identChannel = do_QueryInterface(channel))) {
-        // We really have three states: no request, one request with an id and
-        // eiher one request without an id or multiple requests. Nothing() is no
-        // request, Some(non-zero) is one request and Some(0) is one request
-        // without an id or multiple requests.
-        singleChannelId = Some(0);
-        break;
+      if (aStartRequest) {
+        identChannel = do_QueryInterface(aRequest);
+      } else {
+        // aChannel is the channel that's being removed, but we need to check if
+        // the remaining channel in the loadgroup has an id.
+        nsCOMPtr<nsISimpleEnumerator> requests;
+        mLoadGroup->GetRequests(getter_AddRefs(requests));
+        for (const auto& request : SimpleEnumerator<nsIRequest>(requests)) {
+          if (!IsFaviconLoad(request) &&
+              !!(identChannel = do_QueryInterface(request))) {
+            break;
+          }
+        }
       }
 
-      singleChannelId = Some(identChannel->ChannelId());
+      if (identChannel) {
+        singleChannelId = Some(identChannel->ChannelId());
+      } else {
+        singleChannelId = Some(0);
+      }
+    } else {
+      MOZ_ASSERT(mRequestForBlockingFromBFCacheCount == 0);
+      singleChannelId = Nothing();
     }
 
     if (MOZ_UNLIKELY(MOZ_LOG_TEST(gSHIPBFCacheLog, LogLevel::Verbose))) {
@@ -13447,7 +13510,7 @@ nsDocShell::OnStartRequest(nsIRequest* aRequest) {
     MOZ_LOG(gSHIPBFCacheLog, LogLevel::Verbose,
             ("Adding request %s to loadgroup for %s", name.get(), uri.get()));
   }
-  RecordSingleChannelId();
+  RecordSingleChannelId(true, aRequest);
   return nsDocLoader::OnStartRequest(aRequest);
 }
 
@@ -13464,7 +13527,7 @@ nsDocShell::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
         gSHIPBFCacheLog, LogLevel::Verbose,
         ("Removing request %s from loadgroup for %s", name.get(), uri.get()));
   }
-  RecordSingleChannelId();
+  RecordSingleChannelId(false, aRequest);
   return nsDocLoader::OnStopRequest(aRequest, aStatusCode);
 }
 

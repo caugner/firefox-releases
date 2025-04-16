@@ -2611,7 +2611,6 @@ static ReturnAbortOnError ShowProfileManager(
 
 static bool gDoMigration = false;
 static bool gDoProfileReset = false;
-static bool gResetDeleteOldProfile = true;
 static nsCOMPtr<nsIToolkitProfile> gResetOldProfile;
 
 static nsresult LockProfile(nsINativeAppSupport* aNative, nsIFile* aRootDir,
@@ -2713,19 +2712,6 @@ static nsresult SelectProfile(nsToolkitProfileService* aProfileSvc,
   }
 
   NS_ENSURE_SUCCESS(rv, rv);
-
-  if (rv == NS_MIGRATE_INTO_PACKAGE) {
-    if (!*aProfile) {
-      NS_WARNING(
-          "Attempted package profile migration without existing profile.");
-      return NS_ERROR_ABORT;
-    }
-
-    gDoProfileReset = true;
-    gResetDeleteOldProfile = false;
-    gDoMigration = true;
-    return NS_OK;
-  }
 
   if (didCreate) {
     // For a fresh install, we would like to let users decide
@@ -4983,8 +4969,9 @@ nsresult XREMain::XRE_mainRun() {
           initializedJSContext = true;
         }
 
-        if (NS_FAILED(ProfileResetCleanup(mProfileSvc, gResetOldProfile,
-                                          gResetDeleteOldProfile))) {
+        nsresult backupCreated =
+            ProfileResetCleanup(mProfileSvc, gResetOldProfile);
+        if (NS_FAILED(backupCreated)) {
           NS_WARNING("Could not cleanup the profile that was reset");
         }
       }
@@ -5167,13 +5154,14 @@ nsresult XREMain::XRE_mainRun() {
       free(tempArgv);
       NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
+#  ifdef MOZILLA_OFFICIAL
       // Check if we're running from a DMG and allow the user to install to the
       // Applications directory.
-      if (mProfileSvc->GetIsFirstRun() &&
-          MacRunFromDmgUtils::MaybeInstallFromDmgAndRelaunch()) {
+      if (MacRunFromDmgUtils::MaybeInstallFromDmgAndRelaunch()) {
         bool userAllowedQuit = true;
         appStartup->Quit(nsIAppStartup::eForceQuit, 0, &userAllowedQuit);
       }
+#  endif
 #endif
 
       nsCOMPtr<nsIObserverService> obsService =

@@ -121,7 +121,7 @@ public class GeckoSession {
     private SessionAccessibility mAccessibility;
     private SessionFinder mFinder;
 
-    private String mId = UUID.randomUUID().toString().replace("-", "");
+    private String mId;
     /* package */ String getId() {
         return mId;
     }
@@ -541,14 +541,15 @@ public class GeckoSession {
                     final String uri = message.getString("uri");
                     final GeckoResult<GeckoSession> result = delegate.onNewSession(GeckoSession.this, uri);
                     if (result == null) {
-                        callback.sendSuccess(null);
+                        callback.sendSuccess(false);
                         return;
                     }
 
+                    final String newSessionId = message.getString("newSessionId");
                     callback.resolveTo(result.map(session -> {
                         ThreadUtils.assertOnUiThread();
                         if (session == null) {
-                            return null;
+                            return false;
                         }
 
                         if (session.isOpen()) {
@@ -559,8 +560,8 @@ public class GeckoSession {
                             throw new IllegalArgumentException("Session is not attached to a window");
                         }
 
-                        session.open(GeckoSession.this.mWindow.runtime);
-                        return session.getId();
+                        session.open(GeckoSession.this.mWindow.runtime, newSessionId);
+                        return true;
                     }));
                 }
             }
@@ -1182,14 +1183,6 @@ public class GeckoSession {
         onWindowChanged(WINDOW_TRANSFER_OUT, /* inProgress */ false);
     }
 
-    /* package */ boolean equalsId(final GeckoSession other) {
-        if (other == null) {
-            return false;
-        }
-
-        return mId.equals(other.mId);
-    }
-
     /**
      * Return whether this session is open.
      *
@@ -1234,6 +1227,10 @@ public class GeckoSession {
      */
     @UiThread
     public void open(final @NonNull GeckoRuntime runtime) {
+        open(runtime, UUID.randomUUID().toString().replace("-", ""));
+    }
+
+    /* package */ void open(final @NonNull GeckoRuntime runtime, final String id) {
         ThreadUtils.assertOnUiThread();
 
         if (isOpen()) {
@@ -1245,6 +1242,7 @@ public class GeckoSession {
         final int screenId = mSettings.getScreenId();
         final boolean isPrivate = mSettings.getUsePrivateMode();
 
+        mId = id;
         mWindow = new Window(runtime, this, mNativeQueue);
         mWebExtensionController.setRuntime(runtime);
 
@@ -3596,6 +3594,7 @@ public class GeckoSession {
          *         - document.getFailedCertSecurityInfo(), returns FailedCertSecurityInfo
          *         - document.getNetErrorInfo(), returns NetErrorInfo
          *         - document.allowDeprecatedTls, a property indicating whether or not TLS 1.0/1.1 is allowed
+         *         - document.reloadWithHttpsOnlyException()
          * @see <a href="https://searchfox.org/mozilla-central/source/dom/webidl/FailedCertSecurityInfo.webidl">FailedCertSecurityInfo IDL</a>
          * @see <a href="https://searchfox.org/mozilla-central/source/dom/webidl/NetErrorInfo.webidl">NetErrorInfo IDL</a>
          */
@@ -4992,6 +4991,35 @@ public class GeckoSession {
                 @NonNull final GeckoSession session,
                 @NonNull final AutocompleteRequest<Autocomplete.AddressSaveOption>
                         request) {
+            return null;
+        }
+
+        /**
+         * Handle a credit card save prompt request.
+         * This is triggered by the user entering new or modified credit card
+         * credentials into a form.
+         *
+         * @param session The {@link GeckoSession} that triggered the request.
+         * @param request The {@link AutocompleteRequest} containing the request
+         *                details.
+         *
+         * @return A {@link GeckoResult} resolving to a {@link PromptResponse}.
+         *
+         *         Confirm the request with an {@link Autocomplete.Option}
+         *         to trigger a
+         *         {@link Autocomplete.StorageDelegate#onCreditCardSave} request
+         *         to save the given selection.
+         *         The confirmed selection may be an entry out of the request's
+         *         options, a modified option, or a freshly created credit
+         *         card entry.
+         *
+         *         Dismiss the request to deny the saving request.
+         */
+        @UiThread
+        default @Nullable GeckoResult<PromptResponse> onCreditCardSave(
+                @NonNull final GeckoSession session,
+                @NonNull final AutocompleteRequest<Autocomplete.CreditCardSaveOption>
+                    request) {
             return null;
         }
 

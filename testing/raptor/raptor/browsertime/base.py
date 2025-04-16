@@ -15,6 +15,7 @@ import six
 import sys
 
 import mozprocess
+from manifestparser.util import evaluate_list_from_string
 from benchmark import Benchmark
 from logger.logger import RaptorLogger
 from perftest import Perftest
@@ -41,6 +42,7 @@ class Browsertime(Perftest):
     def __init__(self, app, binary, process_handler=None, **kwargs):
         self.browsertime = True
         self.browsertime_failure = ""
+
         self.process_handler = process_handler or mozprocess.ProcessHandler
         for key in list(kwargs):
             if key.startswith("browsertime_"):
@@ -200,15 +202,26 @@ class Browsertime(Perftest):
             ]
         else:
             # Custom scripts are treated as pageload tests for now
-            browsertime_script = [
-                os.path.join(
-                    os.path.dirname(__file__),
-                    "..",
-                    "..",
-                    "browsertime",
-                    test.get("test_script", "browsertime_pageload.js"),
-                )
-            ]
+            if test.get("interactive", False):
+                browsertime_script = [
+                    os.path.join(
+                        os.path.dirname(__file__),
+                        "..",
+                        "..",
+                        "browsertime",
+                        "browsertime_interactive.js",
+                    )
+                ]
+            else:
+                browsertime_script = [
+                    os.path.join(
+                        os.path.dirname(__file__),
+                        "..",
+                        "..",
+                        "browsertime",
+                        test.get("test_script", "browsertime_pageload.js"),
+                    )
+                ]
 
         btime_args = self.browsertime_args
         if self.config["app"] in ("chrome", "chromium", "chrome-m"):
@@ -233,6 +246,11 @@ class Browsertime(Perftest):
         # Raptor's `post startup delay` is settle time after the browser has started
         browsertime_script.extend(
             ["--browsertime.post_startup_delay", str(self.post_startup_delay)]
+        )
+
+        # a delay was added by default to browsertime from 5s -> 8s for iphones, not needed
+        browsertime_script.extend(
+            ["--pageCompleteWaitTime", str(test.get("page_complete_wait_time", "5000"))]
         )
 
         self.results_handler.remove_result_dir_for_test(test)
@@ -263,6 +281,11 @@ class Browsertime(Perftest):
 
         for var, val in self.config.get("environment", {}).items():
             browsertime_options.extend(["--firefox.env", "{}={}".format(var, val)])
+
+        # Parse the test commands (if any) from the test manifest
+        cmds = evaluate_list_from_string(test.get("test_cmds", "[]"))
+        parsed_cmds = [":::".join([str(i) for i in item]) for item in cmds if item]
+        browsertime_options.extend(["--browsertime.commands", ";;;".join(parsed_cmds)])
 
         if self.verbose:
             browsertime_options.append("-vvv")
@@ -350,6 +373,7 @@ class Browsertime(Perftest):
 
         # Add custom test-specific options and allow them to
         # overwrite our presets.
+        browsertime_all_options = browsertime_script + browsertime_options
         if test.get("browsertime_args", None):
             split_args = test.get("browsertime_args").strip().split()
             for split_arg in split_args:
@@ -360,21 +384,19 @@ class Browsertime(Perftest):
                         f"Expecting a --flag, or a --option=value pairing. Found: {split_arg}"
                     )
 
-                if pairing[0] in browsertime_options:
+                if pairing[0] in browsertime_all_options:
                     # If it's a flag, don't re-add it
                     if len(pairing) > 1:
-                        ind = browsertime_options.index(pairing[0])
-                        browsertime_options[ind + 1] = pairing[1]
+                        ind = browsertime_all_options.index(pairing[0])
+                        browsertime_all_options[ind + 1] = pairing[1]
                 else:
-                    browsertime_options.extend(pairing)
+                    browsertime_all_options.extend(pairing)
 
         return (
             [self.browsertime_node, self.browsertime_browsertimejs]
             + self.driver_paths
-            + browsertime_script
-            +
+            + browsertime_all_options
             # -n option for the browsertime to restart the browser
-            browsertime_options
             + ["-n", str(test.get("browser_cycles", 1))]
         )
 
@@ -470,6 +492,9 @@ class Browsertime(Perftest):
                     proc.kill()
                 elif "warning" in level:
                     LOG.warning(msg)
+                elif "metrics" in level:
+                    vals = msg.split(":")[-1].strip()
+                    self.page_count = vals.split(",")
                 else:
                     LOG.info(msg)
 

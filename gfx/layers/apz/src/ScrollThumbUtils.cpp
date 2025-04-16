@@ -7,6 +7,7 @@
 #include "ScrollThumbUtils.h"
 #include "AsyncPanZoomController.h"
 #include "FrameMetrics.h"
+#include "gfxPlatform.h"
 #include "mozilla/gfx/Matrix.h"
 
 namespace mozilla {
@@ -21,7 +22,6 @@ struct AsyncScrollThumbTransformer {
   const FrameMetrics& mMetrics;
   const ScrollbarData& mScrollbarData;
   bool mScrollbarIsDescendant;
-  AsyncTransformComponentMatrix* mOutClipTransform;
 
   // Intermediate results
   AsyncTransformComponentMatrix mAsyncTransform;
@@ -195,12 +195,6 @@ LayerToParentLayerMatrix4x4 AsyncScrollThumbTransformer::ComputeTransform() {
 
     compensation *= ViewAs<AsyncTransformComponentMatrix>(
         contentTransform * asyncUntransform * contentUntransform);
-
-    // Pass the total compensation out to the caller so that it can use it
-    // to transform clip transforms as needed.
-    if (mOutClipTransform) {
-      *mOutClipTransform = compensation;
-    }
   }
   transform = transform * compensation;
 
@@ -211,15 +205,10 @@ LayerToParentLayerMatrix4x4 ComputeTransformForScrollThumb(
     const LayerToParentLayerMatrix4x4& aCurrentTransform,
     const gfx::Matrix4x4& aScrollableContentTransform,
     AsyncPanZoomController* aApzc, const FrameMetrics& aMetrics,
-    const ScrollbarData& aScrollbarData, bool aScrollbarIsDescendant,
-    AsyncTransformComponentMatrix* aOutClipTransform) {
-  return AsyncScrollThumbTransformer{aCurrentTransform,
-                                     aScrollableContentTransform,
-                                     aApzc,
-                                     aMetrics,
-                                     aScrollbarData,
-                                     aScrollbarIsDescendant,
-                                     aOutClipTransform}
+    const ScrollbarData& aScrollbarData, bool aScrollbarIsDescendant) {
+  return AsyncScrollThumbTransformer{
+      aCurrentTransform, aScrollableContentTransform, aApzc, aMetrics,
+      aScrollbarData,    aScrollbarIsDescendant}
       .ComputeTransform();
 }
 

@@ -15,6 +15,10 @@
 #  include "mozilla/Sandbox.h"
 #endif
 
+#if defined(XP_WIN) && defined(MOZ_SANDBOX)
+#  include "mozilla/WindowsProcessMitigations.h"
+#endif
+
 #if (defined(XP_WIN) || defined(XP_MACOSX)) && defined(MOZ_SANDBOX)
 #  include "mozilla/SandboxSettings.h"
 #  include "nsAppDirectoryServiceDefs.h"
@@ -23,6 +27,7 @@
 #endif
 
 #include "nsAppRunner.h"
+#include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/ProcessUtils.h"
 
 using mozilla::ipc::IOThreadChild;
@@ -53,8 +58,9 @@ static void SetUpSandboxEnvironment() {
       "SetUpSandboxEnvironment relies on nsDirectoryService being initialized");
 
   // On Windows, a sandbox-writable temp directory is used whenever the sandbox
-  // is enabled.
-  if (!IsContentSandboxEnabled()) {
+  // is enabled, except when win32k is locked down when we no longer require a
+  // temp directory.
+  if (!IsContentSandboxEnabled() || IsWin32kLockedDown()) {
     return;
   }
 
@@ -212,6 +218,10 @@ bool ContentProcess::Init(int aArgc, char* aArgv[]) {
 #if defined(XP_WIN) && defined(MOZ_SANDBOX)
   SetUpSandboxEnvironment();
 #endif
+
+  // Do this as early as possible to get the parent process to initialize the
+  // background thread since we'll likely need database information very soon.
+  mozilla::ipc::BackgroundChild::Startup();
 
   return true;
 }

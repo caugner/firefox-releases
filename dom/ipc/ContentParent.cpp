@@ -806,15 +806,10 @@ void ContentParent::ReleaseCachedProcesses() {
   }
 
 #ifdef DEBUG
-  int num = 0;
-  for (const auto& contentParents : sBrowserContentParents->Values()) {
-    num += contentParents->Length();
-    for (auto* cp : *contentParents) {
-      MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
-              ("%s: %zu processes", cp->mRemoteType.get(),
-               contentParents->Length()));
-      break;
-    }
+  for (const auto& cps : *sBrowserContentParents) {
+    MOZ_LOG(ContentParent::GetLog(), LogLevel::Debug,
+            ("%s: %zu processes", PromiseFlatCString(cps.GetKey()).get(),
+             cps.GetData()->Length()));
   }
 #endif
   // We process the toRelease array outside of the iteration to avoid modifying
@@ -6663,15 +6658,19 @@ bool ContentParent::CheckBrowsingContextEmbedder(CanonicalBrowsingContext* aBC,
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvDiscardBrowsingContext(
-    const MaybeDiscarded<BrowsingContext>& aContext,
+    const MaybeDiscarded<BrowsingContext>& aContext, bool aDoDiscard,
     DiscardBrowsingContextResolver&& aResolve) {
-  if (!aContext.IsNullOrDiscarded()) {
-    RefPtr<CanonicalBrowsingContext> context = aContext.get_canonical();
-    if (!CheckBrowsingContextEmbedder(context, "discard")) {
-      return IPC_FAIL(this, "Illegal Discard attempt");
-    }
+  if (CanonicalBrowsingContext* context =
+          CanonicalBrowsingContext::Cast(aContext.GetMaybeDiscarded())) {
+    if (aDoDiscard && !context->IsDiscarded()) {
+      if (!CheckBrowsingContextEmbedder(context, "discard")) {
+        return IPC_FAIL(this, "Illegal Discard attempt");
+      }
 
-    context->Detach(/* aFromIPC */ true);
+      context->Detach(/* aFromIPC */ true);
+    }
+    context->AddFinalDiscardListener(aResolve);
+    return IPC_OK();
   }
 
   // Resolve the promise, as we've received and handled the message. This will
@@ -7222,10 +7221,11 @@ mozilla::ipc::IPCResult ContentParent::RecvNotifyOnHistoryReload(
 mozilla::ipc::IPCResult ContentParent::RecvHistoryCommit(
     const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
     const nsID& aChangeID, const uint32_t& aLoadType, const bool& aPersist,
-    const bool& aCloneEntryChildren) {
+    const bool& aCloneEntryChildren, const bool& aChannelExpired) {
   if (!aContext.IsDiscarded()) {
     aContext.get_canonical()->SessionHistoryCommit(
-        aLoadID, aChangeID, aLoadType, aPersist, aCloneEntryChildren);
+        aLoadID, aChangeID, aLoadType, aPersist, aCloneEntryChildren,
+        aChannelExpired);
   }
 
   return IPC_OK();
@@ -7349,13 +7349,8 @@ ContentParent::RecvGetLoadingSessionHistoryInfoFromParent(
   }
 
   Maybe<LoadingSessionHistoryInfo> info;
-  int32_t requestedIndex = -1;
-  int32_t sessionHistoryLength = 0;
-  aContext.get_canonical()->GetLoadingSessionHistoryInfoFromParent(
-      info, &requestedIndex, &sessionHistoryLength);
-  aResolver(
-      Tuple<const mozilla::Maybe<LoadingSessionHistoryInfo>&, const int32_t&,
-            const int32_t&>(info, requestedIndex, sessionHistoryLength));
+  aContext.get_canonical()->GetLoadingSessionHistoryInfoFromParent(info);
+  aResolver(info);
 
   return IPC_OK();
 }

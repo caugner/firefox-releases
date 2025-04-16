@@ -665,11 +665,11 @@ enum class SimdOp {
   I16x8ExtMulHighUI8x16 = 0x9f,
   I32x4Abs = 0xa0,
   I32x4Neg = 0xa1,
-  // Narrow = 0xa2
+  V8x16RelaxedSwizzle = 0xa2,
   I32x4AllTrue = 0xa3,
   I32x4Bitmask = 0xa4,
-  // Narrow = 0xa5
-  // Narrow = 0xa6
+  I32x4RelaxedTruncSSatF32x4 = 0xa5,
+  I32x4RelaxedTruncUSatF32x4 = 0xa6,
   I32x4WidenLowSI16x8 = 0xa7,
   I32x4WidenHighSI16x8 = 0xa8,
   I32x4WidenLowUI16x8 = 0xa9,
@@ -683,7 +683,7 @@ enum class SimdOp {
   I32x4Sub = 0xb1,
   // SubSatS = 0xb2
   // SubSatU = 0xb3
-  // Dot = 0xb4
+  F32x4RelaxedMin = 0xb4,
   I32x4Mul = 0xb5,
   I32x4MinS = 0xb6,
   I32x4MinU = 0xb7,
@@ -700,8 +700,8 @@ enum class SimdOp {
   // AnyTrue = 0xc2
   I64x2AllTrue = 0xc3,
   I64x2Bitmask = 0xc4,
-  // Narrow = 0xc5
-  // Narrow = 0xc6
+  I32x4RelaxedTruncSatF64x2SZero = 0xc5,
+  I32x4RelaxedTruncSatF64x2UZero = 0xc6,
   I64x2WidenLowSI32x4 = 0xc7,
   I64x2WidenHighSI32x4 = 0xc8,
   I64x2WidenLowUI32x4 = 0xc9,
@@ -715,7 +715,7 @@ enum class SimdOp {
   I64x2Sub = 0xd1,
   // Unused = 0xd2
   // Unused = 0xd3
-  // Dot = 0xd4
+  F64x2RelaxedMin = 0xd4,
   I64x2Mul = 0xd5,
   I64x2Eq = 0xd6,
   I64x2Ne = 0xd7,
@@ -729,7 +729,7 @@ enum class SimdOp {
   I64x2ExtMulHighUI32x4 = 0xdf,
   F32x4Abs = 0xe0,
   F32x4Neg = 0xe1,
-  // Round = 0xe2
+  F32x4RelaxedMax = 0xe2,
   F32x4Sqrt = 0xe3,
   F32x4Add = 0xe4,
   F32x4Sub = 0xe5,
@@ -741,7 +741,7 @@ enum class SimdOp {
   F32x4PMax = 0xeb,
   F64x2Abs = 0xec,
   F64x2Neg = 0xed,
-  // Round = 0xee
+  F64x2RelaxedMax = 0xee,
   F64x2Sqrt = 0xef,
   F64x2Add = 0xf0,
   F64x2Sub = 0xf1,
@@ -1072,6 +1072,17 @@ static const unsigned MaxTags = 1000000;
 
 static const unsigned MaxBrTableElems = 1000000;
 static const unsigned MaxCodeSectionBytes = MaxModuleBytes;
+
+// 512KiB should be enough, considering how Rabaldr uses the stack and
+// what the standard limits are:
+//
+// - 1,000 parameters
+// - 50,000 locals
+// - 10,000 values on the eval stack (not an official limit)
+//
+// At sizeof(int64) bytes per slot this works out to about 480KiB.
+
+static const unsigned MaxFrameSize = 512 * 1024;
 
 // A magic value of rtt depth to signify that it was not specified.
 

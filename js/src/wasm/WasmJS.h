@@ -328,7 +328,7 @@ class WasmInstanceObject : public NativeObject {
   static WasmInstanceObject* create(
       JSContext* cx, RefPtr<const wasm::Code> code,
       const wasm::DataSegmentVector& dataSegments,
-      const wasm::ElemSegmentVector& elemSegments, wasm::UniqueTlsData tlsData,
+      const wasm::ElemSegmentVector& elemSegments, uint32_t globalDataLength,
       HandleWasmMemoryObject memory,
       Vector<RefPtr<wasm::ExceptionTag>, 0, SystemAllocPolicy>&& exceptionTags,
       Vector<RefPtr<wasm::Table>, 0, SystemAllocPolicy>&& tables,
@@ -342,10 +342,9 @@ class WasmInstanceObject : public NativeObject {
   wasm::Instance& instance() const;
   JSObject& exportsObj() const;
 
-  static bool getExportedFunction(JSContext* cx,
-                                  HandleWasmInstanceObject instanceObj,
-                                  uint32_t funcIndex,
-                                  MutableHandleFunction fun);
+  [[nodiscard]] static bool getExportedFunction(
+      JSContext* cx, HandleWasmInstanceObject instanceObj, uint32_t funcIndex,
+      MutableHandleFunction fun);
 
   const wasm::CodeRange& getExportedFunctionCodeRange(JSFunction* fun,
                                                       wasm::Tier tier);
@@ -507,10 +506,11 @@ class WasmTagObject : public NativeObject {
   static const JSFunctionSpec static_methods[];
   static bool construct(JSContext*, unsigned, Value*);
 
-  static WasmTagObject* create(JSContext* cx, const wasm::ValTypeVector& type,
+  static WasmTagObject* create(JSContext* cx, const wasm::TagType& tagType,
                                HandleObject proto);
   bool isNewborn() const;
 
+  wasm::TagType& tagType() const;
   wasm::ValTypeVector& valueTypes() const;
   wasm::ResultType resultType() const;
   wasm::ExceptionTag& tag() const;

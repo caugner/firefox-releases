@@ -27,6 +27,7 @@
 #include "jit/CompileInfo.h"
 #include "jit/Ion.h"
 #include "jit/IonOptimizationLevels.h"
+#include "jit/ShuffleAnalysis.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmBuiltins.h"
@@ -686,8 +687,7 @@ class FunctionCompiler {
   //
   // The expectation is that Ion will only ever support SIMD on x86 and x64,
   // since Cranelift will be the optimizing compiler for Arm64, ARMv7 will cease
-  // to be a tier-1 platform soon, and MIPS32 and MIPS64 will never implement
-  // SIMD.
+  // to be a tier-1 platform soon, and MIPS64 will never implement SIMD.
   //
   // The division of the operations into MIR nodes reflects that expectation,
   // and is a good fit for x86/x64.  Should the expectation change we'll
@@ -806,111 +806,23 @@ class FunctionCompiler {
 
     MOZ_ASSERT(v1->type() == MIRType::Simd128);
     MOZ_ASSERT(v2->type() == MIRType::Simd128);
-    auto* ins = MWasmShuffleSimd128::New(
-        alloc(), v1, v2,
-        SimdConstant::CreateX16(reinterpret_cast<int8_t*>(control.bytes)));
+    auto* ins = BuildWasmShuffleSimd128(
+        alloc(), reinterpret_cast<int8_t*>(control.bytes), v1, v2);
     curBlock_->add(ins);
     return ins;
   }
 
-  MDefinition* loadSplatSimd128(Scalar::Type viewType,
-                                const LinearMemoryAddress<MDefinition*>& addr,
-                                wasm::SimdOp splatOp) {
-    if (inDeadCode()) {
-      return nullptr;
-    }
+  // Also see below for SIMD memory references
 
-    MemoryAccessDesc access(viewType, addr.align, addr.offset,
-                            bytecodeIfNotAsmJS());
-
-    // Generate better code (on x86)
-    if (viewType == Scalar::Float64) {
-      access.setSplatSimd128Load();
-      return load(addr.base, &access, ValType::V128);
-    }
-
-    ValType resultType = ValType::I32;
-    if (viewType == Scalar::Float32) {
-      resultType = ValType::F32;
-      splatOp = wasm::SimdOp::F32x4Splat;
-    }
-    auto* scalar = load(addr.base, &access, resultType);
-    if (!inDeadCode() && !scalar) {
-      return nullptr;
-    }
-    return scalarToSimd128(scalar, splatOp);
-  }
-
-  MDefinition* loadExtendSimd128(const LinearMemoryAddress<MDefinition*>& addr,
-                                 wasm::SimdOp op) {
-    if (inDeadCode()) {
-      return nullptr;
-    }
-
-    // Generate better code (on x86) by loading as a double with an
-    // operation that sign extends directly.
-    MemoryAccessDesc access(Scalar::Float64, addr.align, addr.offset,
-                            bytecodeIfNotAsmJS());
-    access.setWidenSimd128Load(op);
-    return load(addr.base, &access, ValType::V128);
-  }
-
-  MDefinition* loadZeroSimd128(Scalar::Type viewType, size_t numBytes,
-                               const LinearMemoryAddress<MDefinition*>& addr) {
-    if (inDeadCode()) {
-      return nullptr;
-    }
-
-    MemoryAccessDesc access(viewType, addr.align, addr.offset,
-                            bytecodeIfNotAsmJS());
-    access.setZeroExtendSimd128Load();
-    return load(addr.base, &access, ValType::V128);
-  }
-
-  MDefinition* loadLaneSimd128(uint32_t laneSize,
-                               const LinearMemoryAddress<MDefinition*>& addr,
-                               uint32_t laneIndex, MDefinition* src) {
-    if (inDeadCode()) {
-      return nullptr;
-    }
-
-    MemoryAccessDesc access(Scalar::Simd128, addr.align, addr.offset,
-                            bytecodeIfNotAsmJS());
-    MWasmLoadTls* memoryBase = maybeLoadMemoryBase();
-    MDefinition* base = addr.base;
-    MOZ_ASSERT(!moduleEnv_.isAsmJS());
-    checkOffsetAndAlignmentAndBounds(&access, &base);
-    MInstruction* load = MWasmLoadLaneSimd128::New(
-        alloc(), memoryBase, base, access, laneSize, laneIndex, src);
-    if (!load) {
-      return nullptr;
-    }
-    curBlock_->add(load);
-    return load;
-  }
-
-  void storeLaneSimd128(uint32_t laneSize,
-                        const LinearMemoryAddress<MDefinition*>& addr,
-                        uint32_t laneIndex, MDefinition* src) {
-    if (inDeadCode()) {
-      return;
-    }
-    MemoryAccessDesc access(Scalar::Simd128, addr.align, addr.offset,
-                            bytecodeIfNotAsmJS());
-    MWasmLoadTls* memoryBase = maybeLoadMemoryBase();
-    MDefinition* base = addr.base;
-    MOZ_ASSERT(!moduleEnv_.isAsmJS());
-    checkOffsetAndAlignmentAndBounds(&access, &base);
-    MInstruction* store = MWasmStoreLaneSimd128::New(
-        alloc(), memoryBase, base, access, laneSize, laneIndex, src);
-    if (!store) {
-      return;
-    }
-    curBlock_->add(store);
-  }
 #endif  // ENABLE_WASM_SIMD
 
+  /************************************************ Linear memory accesses */
+
+  // For detailed information about memory accesses, see "Linear memory
+  // addresses and bounds checking" in WasmMemory.cpp.
+
  private:
+  // If the platform does not have a HeapReg, load the memory base from Tls.
   MWasmLoadTls* maybeLoadMemoryBase() {
     MWasmLoadTls* load = nullptr;
 #ifdef JS_CODEGEN_X86
@@ -925,6 +837,22 @@ class FunctionCompiler {
     return load;
   }
 
+ public:
+  // A value holding the memory base, whether that's HeapReg or some other
+  // register.
+  MWasmHeapBase* memoryBase() {
+    MWasmHeapBase* base = nullptr;
+    AliasSet aliases = !moduleEnv_.memory->canMovingGrow()
+                           ? AliasSet::None()
+                           : AliasSet::Load(AliasSet::WasmHeapMeta);
+    base = MWasmHeapBase::New(alloc(), tlsPointer_, aliases);
+    curBlock_->add(base);
+    return base;
+  }
+
+ private:
+  // If the bounds checking strategy requires it, load the bounds check limit
+  // from the Tls.
   MWasmLoadTls* maybeLoadBoundsCheckLimit(MIRType type) {
 #ifdef JS_64BIT
     MOZ_ASSERT(type == MIRType::Int32 || type == MIRType::Int64);
@@ -944,19 +872,9 @@ class FunctionCompiler {
     return load;
   }
 
- public:
-  MWasmHeapBase* memoryBase() {
-    MWasmHeapBase* base = nullptr;
-    AliasSet aliases = !moduleEnv_.memory->canMovingGrow()
-                           ? AliasSet::None()
-                           : AliasSet::Load(AliasSet::WasmHeapMeta);
-    base = MWasmHeapBase::New(alloc(), tlsPointer_, aliases);
-    curBlock_->add(base);
-    return base;
-  }
-
- private:
-  // Only sets *mustAdd if it also returns true.
+  // Return true if the access requires an alignment check.  If so, sets
+  // *mustAdd to true if the offset must be added to the pointer before
+  // checking.
   bool needAlignmentCheck(MemoryAccessDesc* access, MDefinition* base,
                           bool* mustAdd) {
     MOZ_ASSERT(!*mustAdd);
@@ -966,6 +884,7 @@ class FunctionCompiler {
       return false;
     }
 
+    // If the EA is known and aligned it will need no checks.
     if (base->isConstant()) {
       int32_t ptr = base->toConstant()->toInt32();
       // OK to wrap around the address computation here.
@@ -974,22 +893,20 @@ class FunctionCompiler {
       }
     }
 
+    // If the offset is aligned then the EA is just the pointer, for
+    // the purposes of this check.
     *mustAdd = (access->offset() & (access->byteSize() - 1)) != 0;
     return true;
   }
 
-  void checkOffsetAndAlignmentAndBounds(MemoryAccessDesc* access,
-                                        MDefinition** base) {
-    MOZ_ASSERT(!inDeadCode());
-    MOZ_ASSERT(!moduleEnv_.isAsmJS());
-
+  // Fold a constant base into the offset and make the base 0, provided the
+  // offset stays below the guard limit.  The reason for folding the base into
+  // the offset rather than vice versa is that a small offset can be ignored
+  // by both explicit bounds checking and bounds check elimination.
+  void foldConstantPointer(MemoryAccessDesc* access, MDefinition** base) {
     uint32_t offsetGuardLimit =
         GetMaxOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
-    // Fold a constant base into the offset and make the base 0, provided the
-    // offset stays below the guard limit.  The reason for folding the base into
-    // the offset rather than vice versa is that a small offset can be ignored
-    // by both explicit bounds checking and bounds check elimination.
     if ((*base)->isConstant()) {
       uint32_t basePtr = (*base)->toConstant()->toInt32();
       uint32_t offset = access->offset();
@@ -1001,72 +918,117 @@ class FunctionCompiler {
         access->setOffset(access->offset() + basePtr);
       }
     }
+  }
 
-    bool mustAdd = false;
-    bool alignmentCheck = needAlignmentCheck(access, *base, &mustAdd);
+  // If the offset must be added because it is large or because the true EA must
+  // be checked, compute the effective address, trapping on overflow.
+  void maybeComputeEffectiveAddress(MemoryAccessDesc* access,
+                                    MDefinition** base, bool mustAddOffset) {
+    uint32_t offsetGuardLimit =
+        GetMaxOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
-    // If the offset is bigger than the guard region, a separate instruction is
-    // necessary to add the offset to the base and check for overflow.
-    //
-    // Also add the offset if we have a Wasm atomic access that needs alignment
-    // checking and the offset affects alignment.
-    if (access->offset() >= offsetGuardLimit || mustAdd ||
+    if (access->offset() >= offsetGuardLimit || mustAddOffset ||
         !JitOptions.wasmFoldOffsets) {
       *base = computeEffectiveAddress(*base, access);
     }
+  }
 
+  MWasmLoadTls* needBoundsCheck(bool* limitIs64Bits_) {
+#ifdef JS_64BIT
+    // For 32-bit base pointers:
+    //
+    // If the bounds check uses the full 64 bits of the bounds check limit, then
+    // the base pointer must be zero-extended to 64 bits before checking and
+    // wrapped back to 32-bits after Spectre masking.  (And it's important that
+    // the value we end up with has flowed through the Spectre mask.)
+    //
+    // If the memory's max size is known to be smaller than 64K pages exactly,
+    // we can use a 32-bit check and avoid extension and wrapping.
+    bool limitIs64Bits =
+        !moduleEnv_.memory->boundsCheckLimitIs32Bits() &&
+        ArrayBufferObject::maxBufferByteLength() >= 0x100000000;
+#else
+    // On 32-bit platforms we have no more than 2GB memory and the limit for a
+    // 32-bit base pointer is never a 64-bit value.
+    bool limitIs64Bits = false;
+#endif
+    MWasmLoadTls* boundsCheckLimit = maybeLoadBoundsCheckLimit(
+        limitIs64Bits ? MIRType::Int64 : MIRType::Int32);
+    if (boundsCheckLimit) {
+      *limitIs64Bits_ = limitIs64Bits;
+    }
+    return boundsCheckLimit;
+  }
+
+  void performBoundsCheck(MDefinition** base, MWasmLoadTls* boundsCheckLimit,
+                          bool limitIs64Bits) {
+    // At the outset, actualBase could be the result of pretty much any i32
+    // operation, or it could be the load of an i32 constant.  We may assume
+    // the value has a canonical representation for the platform, see doc
+    // block in MacroAssembler.h.
+    MDefinition* actualBase = *base;
+
+    // Extend the index value to perform a 64-bit bounds check if the memory
+    // can be 4GB.
+
+    if (limitIs64Bits) {
+      auto* extended = MWasmExtendU32Index::New(alloc(), actualBase);
+      curBlock_->add(extended);
+      actualBase = extended;
+    }
+    auto* ins = MWasmBoundsCheck::New(alloc(), actualBase, boundsCheckLimit,
+                                      bytecodeOffset());
+    curBlock_->add(ins);
+    actualBase = ins;
+
+    // If we're masking, then we update *base to create a dependency chain
+    // through the masked index.  But we will first need to wrap the index
+    // value if it was extended above.
+
+    if (JitOptions.spectreIndexMasking) {
+      if (limitIs64Bits) {
+        auto* wrapped = MWasmWrapU32Index::New(alloc(), actualBase);
+        curBlock_->add(wrapped);
+        actualBase = wrapped;
+      }
+      *base = actualBase;
+    }
+  }
+
+  // Perform all necessary checking before a wasm heap access, based on the
+  // attributes of the access and base pointer.
+  void checkOffsetAndAlignmentAndBounds(MemoryAccessDesc* access,
+                                        MDefinition** base) {
+    MOZ_ASSERT(!inDeadCode());
+    MOZ_ASSERT(!moduleEnv_.isAsmJS());
+
+    // Attempt to fold an offset into a constant base pointer so as to simplify
+    // the addressing expression.  This may update *base.
+    foldConstantPointer(access, base);
+
+    // Determine whether an alignment check is needed and whether the offset
+    // must be checked too.
+    bool mustAddOffsetForAlignmentCheck = false;
+    bool alignmentCheck =
+        needAlignmentCheck(access, *base, &mustAddOffsetForAlignmentCheck);
+
+    // If bounds checking or alignment checking requires it, compute the
+    // effective address: add the offset into the pointer and trap on overflow.
+    // This may update *base.
+    maybeComputeEffectiveAddress(access, base, mustAddOffsetForAlignmentCheck);
+
+    // Emit the alignment check if necessary; it traps if it fails.
     if (alignmentCheck) {
       curBlock_->add(MWasmAlignmentCheck::New(
           alloc(), *base, access->byteSize(), bytecodeOffset()));
     }
 
-#ifdef JS_64BIT
-    // If the bounds check uses the full 64 bits of the bounds check limit, then
-    // *base must be zero-extended to 64 bits before checking and wrapped back
-    // to 32-bits after Spectre masking.  (And it's important that the value we
-    // end up with has flowed through the Spectre mask.)
-    //
-    // If the memory's max size is known to be smaller than 64K pages exactly,
-    // we can use a 32-bit check and avoid extension and wrapping.
-    bool check64 = !moduleEnv_.memory->boundsCheckLimitIs32Bits() &&
-                   ArrayBufferObject::maxBufferByteLength() >= 0x100000000;
-#else
-    bool check64 = false;
-#endif
-    MWasmLoadTls* boundsCheckLimit =
-        maybeLoadBoundsCheckLimit(check64 ? MIRType::Int64 : MIRType::Int32);
+    // Emit the bounds check if necessary; it traps if it fails.  This may
+    // update *base.
+    bool limitIs64Bits = false;
+    MWasmLoadTls* boundsCheckLimit = needBoundsCheck(&limitIs64Bits);
     if (boundsCheckLimit) {
-      // At the outset, actualBase could be the result of pretty much any i32
-      // operation, or it could be the load of an i32 constant.  We may assume
-      // the value has a canonical representation for the platform, see doc
-      // block in MacroAssembler.h.
-      MDefinition* actualBase = *base;
-
-      // Extend the index value to perform a 64-bit bounds check if the memory
-      // can be 4GB.
-
-      if (check64) {
-        auto* extended = MWasmExtendU32Index::New(alloc(), actualBase);
-        curBlock_->add(extended);
-        actualBase = extended;
-      }
-      auto* ins = MWasmBoundsCheck::New(alloc(), actualBase, boundsCheckLimit,
-                                        bytecodeOffset());
-      curBlock_->add(ins);
-      actualBase = ins;
-
-      // If we're masking, then we update *base to create a dependency chain
-      // through the masked index.  But we will first need to wrap the index
-      // value if it was extended above.
-
-      if (JitOptions.spectreIndexMasking) {
-        if (check64) {
-          auto* wrapped = MWasmWrapU32Index::New(alloc(), actualBase);
-          curBlock_->add(wrapped);
-          actualBase = wrapped;
-        }
-        *base = actualBase;
-      }
+      performBoundsCheck(base, boundsCheckLimit, limitIs64Bits);
     }
   }
 
@@ -1080,6 +1042,7 @@ class FunctionCompiler {
   }
 
  public:
+  // Add the offset into the pointer to yield the EA; trap on overflow.
   MDefinition* computeEffectiveAddress(MDefinition* base,
                                        MemoryAccessDesc* access) {
     if (inDeadCode()) {
@@ -1247,6 +1210,106 @@ class FunctionCompiler {
 
     return binop;
   }
+
+#ifdef ENABLE_WASM_SIMD
+  MDefinition* loadSplatSimd128(Scalar::Type viewType,
+                                const LinearMemoryAddress<MDefinition*>& addr,
+                                wasm::SimdOp splatOp) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MemoryAccessDesc access(viewType, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+
+    // Generate better code (on x86)
+    if (viewType == Scalar::Float64) {
+      access.setSplatSimd128Load();
+      return load(addr.base, &access, ValType::V128);
+    }
+
+    ValType resultType = ValType::I32;
+    if (viewType == Scalar::Float32) {
+      resultType = ValType::F32;
+      splatOp = wasm::SimdOp::F32x4Splat;
+    }
+    auto* scalar = load(addr.base, &access, resultType);
+    if (!inDeadCode() && !scalar) {
+      return nullptr;
+    }
+    return scalarToSimd128(scalar, splatOp);
+  }
+
+  MDefinition* loadExtendSimd128(const LinearMemoryAddress<MDefinition*>& addr,
+                                 wasm::SimdOp op) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    // Generate better code (on x86) by loading as a double with an
+    // operation that sign extends directly.
+    MemoryAccessDesc access(Scalar::Float64, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+    access.setWidenSimd128Load(op);
+    return load(addr.base, &access, ValType::V128);
+  }
+
+  MDefinition* loadZeroSimd128(Scalar::Type viewType, size_t numBytes,
+                               const LinearMemoryAddress<MDefinition*>& addr) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MemoryAccessDesc access(viewType, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+    access.setZeroExtendSimd128Load();
+    return load(addr.base, &access, ValType::V128);
+  }
+
+  MDefinition* loadLaneSimd128(uint32_t laneSize,
+                               const LinearMemoryAddress<MDefinition*>& addr,
+                               uint32_t laneIndex, MDefinition* src) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MemoryAccessDesc access(Scalar::Simd128, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+    MWasmLoadTls* memoryBase = maybeLoadMemoryBase();
+    MDefinition* base = addr.base;
+    MOZ_ASSERT(!moduleEnv_.isAsmJS());
+    checkOffsetAndAlignmentAndBounds(&access, &base);
+    MInstruction* load = MWasmLoadLaneSimd128::New(
+        alloc(), memoryBase, base, access, laneSize, laneIndex, src);
+    if (!load) {
+      return nullptr;
+    }
+    curBlock_->add(load);
+    return load;
+  }
+
+  void storeLaneSimd128(uint32_t laneSize,
+                        const LinearMemoryAddress<MDefinition*>& addr,
+                        uint32_t laneIndex, MDefinition* src) {
+    if (inDeadCode()) {
+      return;
+    }
+    MemoryAccessDesc access(Scalar::Simd128, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+    MWasmLoadTls* memoryBase = maybeLoadMemoryBase();
+    MDefinition* base = addr.base;
+    MOZ_ASSERT(!moduleEnv_.isAsmJS());
+    checkOffsetAndAlignmentAndBounds(&access, &base);
+    MInstruction* store = MWasmStoreLaneSimd128::New(
+        alloc(), memoryBase, base, access, laneSize, laneIndex, src);
+    if (!store) {
+      return;
+    }
+    curBlock_->add(store);
+  }
+#endif  // ENABLE_WASM_SIMD
+
+  /************************************************ Global variable accesses */
 
   MDefinition* loadGlobalVar(unsigned globalDataOffset, bool isConst,
                              bool isIndirect, MIRType type) {
@@ -1606,7 +1669,7 @@ class FunctionCompiler {
       return true;
     }
 
-    const FuncType& funcType = moduleEnv_.types[funcTypeIndex].funcType();
+    const FuncType& funcType = (*moduleEnv_.types)[funcTypeIndex].funcType();
     const TypeIdDesc& funcTypeId = moduleEnv_.typeIds[funcTypeIndex];
 
     CalleeDesc callee;
@@ -2741,7 +2804,7 @@ static bool EmitCallIndirect(FunctionCompiler& f, bool oldStyle) {
     return true;
   }
 
-  const FuncType& funcType = f.moduleEnv().types[funcTypeIndex].funcType();
+  const FuncType& funcType = (*f.moduleEnv().types)[funcTypeIndex].funcType();
 
   CallCompileState call;
   if (!EmitCallArgs(f, funcType, args, &call)) {
@@ -5400,6 +5463,31 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
             }
             CHECK(EmitTernarySimd128(f, SimdOp(op.b1)));
           }
+          case uint32_t(SimdOp::F32x4RelaxedMin):
+          case uint32_t(SimdOp::F32x4RelaxedMax):
+          case uint32_t(SimdOp::F64x2RelaxedMin):
+          case uint32_t(SimdOp::F64x2RelaxedMax): {
+            if (!f.moduleEnv().v128RelaxedEnabled()) {
+              return f.iter().unrecognizedOpcode(&op);
+            }
+            CHECK(EmitBinarySimd128(f, /* commutative= */ true, SimdOp(op.b1)));
+          }
+          case uint32_t(SimdOp::I32x4RelaxedTruncSSatF32x4):
+          case uint32_t(SimdOp::I32x4RelaxedTruncUSatF32x4):
+          case uint32_t(SimdOp::I32x4RelaxedTruncSatF64x2SZero):
+          case uint32_t(SimdOp::I32x4RelaxedTruncSatF64x2UZero): {
+            if (!f.moduleEnv().v128RelaxedEnabled()) {
+              return f.iter().unrecognizedOpcode(&op);
+            }
+            CHECK(EmitUnarySimd128(f, SimdOp(op.b1)));
+          }
+          case uint32_t(SimdOp::V8x16RelaxedSwizzle): {
+            if (!f.moduleEnv().v128RelaxedEnabled()) {
+              return f.iter().unrecognizedOpcode(&op);
+            }
+            CHECK(
+                EmitBinarySimd128(f, /* commutative= */ false, SimdOp(op.b1)));
+          }
 #  endif
 
           default:
@@ -5781,7 +5869,7 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
     if (!locals.appendAll(funcType.args())) {
       return false;
     }
-    if (!DecodeLocalEntries(d, moduleEnv.types, moduleEnv.features, &locals)) {
+    if (!DecodeLocalEntries(d, *moduleEnv.types, moduleEnv.features, &locals)) {
       return false;
     }
 
@@ -5835,7 +5923,7 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
       ArgTypeVector args(funcType);
       if (!codegen.generateWasm(funcTypeId, prologueTrapOffset, args,
                                 trapExitLayout, trapExitLayoutNumWords,
-                                &offsets, &code->stackMaps)) {
+                                &offsets, &code->stackMaps, &d)) {
         return false;
       }
 
@@ -5865,8 +5953,8 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
 
 bool js::wasm::IonPlatformSupport() {
 #if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86) ||    \
-    defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || \
-    defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_ARM64)
+    defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS64) || \
+    defined(JS_CODEGEN_ARM64)
   return true;
 #else
   return false;

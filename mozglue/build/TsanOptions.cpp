@@ -223,12 +223,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1606803
          "race:ipv6_is_present\n"
 
-         // Bug 1606864
-         "race:nsSocketTransport::Close\n"
-         "race:nsSocketTransport::OnSocketDetached\n"
-         "race:nsSocketTransport::OnMsgInputClosed\n"
-         "race:nsSocketTransport::OpenOutputStream\n"
-
          // Bug 1615017
          "race:CacheFileMetadata::SetHash\n"
          "race:CacheFileMetadata::OnDataWritten\n"
@@ -279,10 +273,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1607588
          "race:nssToken_Destroy\n"
          "race:nssSlot_GetToken\n"
-
-         // Bug 1683417
-         "race:DataChannelConnection::SetSignals\n"
-         "race:DataChannelConnection::SetReady\n"
 
          // Bug 1682951
          "race:storage::Connection::Release\n"

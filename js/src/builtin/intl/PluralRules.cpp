@@ -15,15 +15,9 @@
 
 #include "builtin/Array.h"
 #include "builtin/intl/CommonFunctions.h"
-#include "builtin/intl/ScopedICUObject.h"
 #include "gc/FreeOp.h"
 #include "js/CharacterEncoding.h"
 #include "js/PropertySpec.h"
-#include "unicode/uenum.h"
-#include "unicode/uloc.h"
-#include "unicode/unumberformatter.h"
-#include "unicode/upluralrules.h"
-#include "unicode/utypes.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/PlainObject.h"  // js::PlainObject
@@ -36,9 +30,6 @@
 using namespace js;
 
 using mozilla::AssertedCast;
-
-using js::intl::CallICU;
-using js::intl::IcuLocale;
 
 const JSClassOps PluralRulesObject::classOps_ = {
     nullptr,                      // addProperty
@@ -291,8 +282,7 @@ static mozilla::intl::PluralRules* NewPluralRules(
   options.mMinIntegerDigits =
       mozilla::Some(AssertedCast<uint32_t>(value.toInt32()));
 
-  mozilla::Result<mozilla::UniquePtr<PluralRules>, PluralRules::Error> result =
-      PluralRules::TryCreate(locale.get(), options);
+  auto result = PluralRules::TryCreate(locale.get(), options);
   if (result.isErr()) {
     intl::ReportInternalError(cx);
     return nullptr;
@@ -324,8 +314,7 @@ bool js::intl_SelectPluralRule(JSContext* cx, unsigned argc, Value* vp) {
                            PluralRulesObject::UPluralRulesEstimatedMemoryUse);
   }
 
-  Result<PluralRules::Keyword, PluralRules::Error> keywordResult =
-      pr->Select(x);
+  auto keywordResult = pr->Select(x);
   if (keywordResult.isErr()) {
     intl::ReportInternalError(cx);
     return false;
@@ -370,8 +359,7 @@ bool js::intl_SelectPluralRuleRange(JSContext* cx, unsigned argc, Value* vp) {
                            PluralRulesObject::UPluralRulesEstimatedMemoryUse);
   }
 
-  Result<PluralRules::Keyword, PluralRules::Error> keywordResult =
-      pr->SelectRange(x, y);
+  auto keywordResult = pr->SelectRange(x, y);
   if (keywordResult.isErr()) {
     intl::ReportInternalError(cx);
     return false;

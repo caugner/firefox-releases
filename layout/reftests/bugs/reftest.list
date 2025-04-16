@@ -925,7 +925,6 @@ fuzzy-if(winWidget,0-123,0-1900) fuzzy-if(webrender&&swgl,0-1,0-39) == 409659-1d
 == 410621-1.html 410621-1-ref.html
 random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == 411059-1.html 411059-1-ref.html # Bug 1392106
 fuzzy-if(webrender&&winWidget,46-129,652-770) == 411334-1.xml 411334-1-ref.xml
-== 411367-2.html 411367-2-ref.html
 == 411367-3.html 411367-3-ref.html
 == 411585-1.html 411585-1-ref.html
 == 411585-2.html 411585-2-ref.html
@@ -1691,7 +1690,7 @@ fuzzy-if(skiaContent,0-1,0-1) == 751012-1a.html 751012-1-ref.html
 fuzzy-if(skiaContent,0-1,0-1) == 751012-1b.html 751012-1-ref.html
 == 753329-1.html about:blank
 == 758561-1.html 758561-1-ref.html
-fuzzy-if(true,0-1,0-90) fuzzy-if(skiaContent,0-1,0-320) == 759036-1.html 759036-1-ref.html
+fuzzy-if(true,0-1,0-90) fuzzy-if(skiaContent,0-1,0-320) fuzzy-if(useDrawSnapshot,1-1,77595-77595) == 759036-1.html 759036-1-ref.html
 fuzzy-if(true,0-17,0-5886) fuzzy-if(skiaContent,0-9,0-5894) fuzzy-if(geckoview&&webrender&&device&&!swgl,3-3,5831-5855) == 759036-2.html 759036-2-ref.html
 == 776265-1a.html 776265-1-ref.html
 == 776265-1b.html 776265-1-ref.html
@@ -1854,23 +1853,23 @@ pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-4.html 1133905-ref.htm
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-5.html 1133905-ref.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-6.html 1133905-ref.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-1-v.html 1133905-ref-v.html
-pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-2-v.html 1133905-ref-v.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-45,0-4) == 1133905-3-v.html 1133905-ref-v.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-2-v.html 1133905-ref-v.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-3-v.html 1133905-ref-v.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-4-v.html 1133905-ref-v.html
-pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-5-v.html 1133905-ref-v.html
-pref(apz.allow_zooming,true) skip-if(!Android) fails-if(Android) == 1133905-6-v.html 1133905-ref-v.html # bug 1308702
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-5-v.html 1133905-ref-v.html
+pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-6-v.html 1133905-ref-v.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-1-h.html 1133905-ref-h.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-2-h.html 1133905-ref-h.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-3-h.html 1133905-ref-h.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-4-h.html 1133905-ref-h.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-5-h.html 1133905-ref-h.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-6-h.html 1133905-ref-h.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-6) == 1133905-1-vh.html 1133905-ref-vh.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-45,0-4) == 1133905-2-vh.html 1133905-ref-vh.html
-pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-3-vh.html 1133905-ref-vh.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-45,0-4) == 1133905-4-vh.html 1133905-ref-vh.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-6) == 1133905-5-vh.html 1133905-ref-vh.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-8) == 1133905-6-vh.html 1133905-ref-vh.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-17) == 1133905-1-vh.html 1133905-ref-vh.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-2-vh.html 1133905-ref-vh.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-3-vh.html 1133905-ref-vh.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-4-vh.html 1133905-ref-vh.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-5-vh.html 1133905-ref-vh.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-17) == 1133905-6-vh.html 1133905-ref-vh.html
 pref(apz.allow_zooming,true) skip-if(!Android) != 1133905-ref-vh.html about:blank # make sure it doesn't render blank
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-1-rtl.html 1133905-ref-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-2-rtl.html 1133905-ref-rtl.html
@@ -1879,23 +1878,23 @@ pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-4-rtl.html 1133905-ref
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-5-rtl.html 1133905-ref-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-6-rtl.html 1133905-ref-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-1-v-rtl.html 1133905-ref-v-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-2-v-rtl.html 1133905-ref-v-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-45,0-4) == 1133905-3-v-rtl.html 1133905-ref-v-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-2-v-rtl.html 1133905-ref-v-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-3-v-rtl.html 1133905-ref-v-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-4-v-rtl.html 1133905-ref-v-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-5-v-rtl.html 1133905-ref-v-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) fails-if(Android) == 1133905-6-v-rtl.html 1133905-ref-v-rtl.html # bug 1308702
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-10) == 1133905-5-v-rtl.html 1133905-ref-v-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-6-v-rtl.html 1133905-ref-v-rtl.html # bug 1308702
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-1-h-rtl.html 1133905-ref-h-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-2-h-rtl.html 1133905-ref-h-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-3-h-rtl.html 1133905-ref-h-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-4-h-rtl.html 1133905-ref-h-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-5-h-rtl.html 1133905-ref-h-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-6-h-rtl.html 1133905-ref-h-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-6) == 1133905-1-vh-rtl.html 1133905-ref-vh-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-45,0-4) == 1133905-2-vh-rtl.html 1133905-ref-vh-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) == 1133905-3-vh-rtl.html 1133905-ref-vh-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-45,0-4) == 1133905-4-vh-rtl.html 1133905-ref-vh-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-6) == 1133905-5-vh-rtl.html 1133905-ref-vh-rtl.html
-pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-8) == 1133905-6-vh-rtl.html 1133905-ref-vh-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-17) == 1133905-1-vh-rtl.html 1133905-ref-vh-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-9) == 1133905-2-vh-rtl.html 1133905-ref-vh-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-9) == 1133905-3-vh-rtl.html 1133905-ref-vh-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-9) == 1133905-4-vh-rtl.html 1133905-ref-vh-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-43,0-9) == 1133905-5-vh-rtl.html 1133905-ref-vh-rtl.html
+pref(apz.allow_zooming,true) skip-if(!Android) fuzzy-if(Android,0-54,0-17) == 1133905-6-vh-rtl.html 1133905-ref-vh-rtl.html
 pref(apz.allow_zooming,true) skip-if(!Android) != 1133905-ref-vh-rtl.html about:blank # make sure it doesn't render blank
 == 1149304-1-transform-change.html 1149304-1-transform-change-ref.html
 == chrome://reftest/content/bugs/1150021-1.xhtml chrome://reftest/content/bugs/1150021-1-ref.xhtml
@@ -2033,7 +2032,7 @@ fuzzy(0-255,0-4054) == 1415987-1.html 1415987-1-ref.html # this is a large fuzz,
 == 1424680.html 1424680-ref.html
 == 1424798-1.html 1424798-ref.html
 fuzzy-if(!webrender,0-74,0-2234) == 1425243-1.html 1425243-1-ref.html
-fuzzy-if(Android,0-66,0-574) fuzzy-if(d2d,0-89,0-777) fuzzy-if(!Android&&!d2d,0-1,0-31412) fuzzy-if(webrender&&winWidget,1-1,31240-31412) fails-if(useDrawSnapshot) == 1425243-2.html 1425243-2-ref.html
+fuzzy-if(Android,0-66,0-574) fuzzy-if(d2d,0-89,0-777) fuzzy-if(!Android&&!d2d,0-1,0-31412) fuzzy-if(webrender&&winWidget,1-1,31240-31412) == 1425243-2.html 1425243-2-ref.html
 == 1430869.html 1430869-ref.html
 == 1432541.html 1432541-ref.html
 == 1446470.html 1035091-ref.html
@@ -2059,7 +2058,7 @@ fuzzy-if(winWidget&&!webrender,0-104,0-1423) == 1513423-1.html 1513423-1-ref.htm
 fuzzy-if(winWidget&&!webrender,0-89,0-1420) == 1513423-2.html 1513423-2-ref.html
 == 1513423-3.html 1513423-3-ref.html
 pref(layout.accessiblecaret.enabled,true) == 1517385.html 1517385-ref.html
-fuzzy-if(!webrender,1-5,66-547) fuzzy-if(geckoview&&!webrender,1-2,64-141) fuzzy-if(winWidget&&swgl,1-1,12-16) fuzzy-if(cocoaWidget&&swgl,1-1,32-32) fuzzy-if(useDrawSnapshot&&webrender,3-3,459-459) == 1529992-1.html 1529992-1-ref.html
+fuzzy-if(!webrender,1-5,66-547) fuzzy-if(geckoview&&!webrender,1-2,64-141) fuzzy-if(winWidget&&swgl,1-1,12-16) fuzzy-if(cocoaWidget&&swgl,1-1,32-32) fuzzy-if(useDrawSnapshot&&webrender,2-2,209-209) == 1529992-1.html 1529992-1-ref.html
 fuzzy-if(!webrender,0-6,0-34) fuzzy-if(Android,9-14,44-60) fails-if(!useDrawSnapshot&&webrender) == 1529992-2.html 1529992-2-ref.html
 == 1535040-1.html 1535040-1-ref.html
 == 1545360-1.xhtml 1545360-1-ref.xhtml
@@ -2083,7 +2082,8 @@ fuzzy(0-1,0-10000) == 1577566-1.html 1577566-1-ref.html
 == 1579953-2.html 1579953-2-ref.html
 asserts(1-2) == 1588954.html 1588954-ref.html # Bug 1588954
 == 1595199-1.html 1595199-1-ref.html
-fuzzy-if(gtkWidget,0-255,0-42) == 1599841-1.html 1599841-1-ref.html
+== 1599841-1.html 1599841-1-ref.html
+!= 1599841-2.html 1599841-2-notref.html
 pref(layout.css.xul-box-display-values.content.enabled,true) == 1606130.html 1606130-ref.html
 == 1608124-1.html 1608124-1-ref.html
 skip-if(!OSX) != 1608124-2.html 1608124-2-notref.html
@@ -2104,3 +2104,4 @@ fuzzy(0-2,0-96600) == 1648282-1b.html 1648282-1-ref.html
 skip-if(!appleSilicon) != 1721223-1.html 1721223-1-notref.html # Big Sur required for updated system font; OSX value is clamped to 10.15
 skip-if(Android) == 1727172-1.xhtml 1727172-1-ref.html
 == 1726663-1.html 1726663-1-ref.html
+!= 1730314-1.html 1730314-1-ref.html

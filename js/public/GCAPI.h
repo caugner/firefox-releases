@@ -15,6 +15,7 @@
 #include "mozilla/Vector.h"
 
 #include "js/GCAnnotations.h"
+#include "js/shadow/Zone.h"
 #include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
 #include "js/Utility.h"
@@ -1197,7 +1198,11 @@ extern JS_PUBLIC_API void SetHostCleanupFinalizationRegistryCallback(
  */
 extern JS_PUBLIC_API void ClearKeptObjects(JSContext* cx);
 
-extern JS_PUBLIC_API bool ZoneIsCollecting(Zone* zone);
+inline JS_PUBLIC_API bool NeedGrayRootsForZone(Zone* zoneArg) {
+  shadow::Zone* zone = shadow::Zone::from(zoneArg);
+  return zone->isGCMarkingBlackAndGray() || zone->isGCCompacting();
+}
+
 extern JS_PUBLIC_API bool AtomsZoneIsCollecting(JSRuntime* runtime);
 extern JS_PUBLIC_API bool IsAtomsZone(Zone* zone);
 

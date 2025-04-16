@@ -10,6 +10,7 @@
 
 #include "builtin/ModuleObject.h"
 #include "gc/Policy.h"
+#include "js/Exception.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/friend/WindowProxy.h"    // js::IsWindow, js::IsWindowProxy
@@ -2664,6 +2665,10 @@ void DebugEnvironments::takeFrameSnapshot(
    * nullptr.
    */
 
+  // Because this can be called during exception unwinding, save the exception
+  // state and restore it when we're done.
+  JS::AutoSaveExceptionState ases(cx);
+
   JSScript* script = frame.script();
 
   // Act like no snapshot was taken if we run OOM while taking the snapshot.
@@ -4003,16 +4008,6 @@ static bool RemoveReferencedNames(JSContext* cx, HandleScript script,
       case JSOp::SetName:
       case JSOp::StrictSetName:
         name = script->getName(loc.toRawBytecode());
-        break;
-
-      case JSOp::GetGName:
-      case JSOp::SetGName:
-      case JSOp::StrictSetGName:
-        if (script->hasNonSyntacticScope()) {
-          name = script->getName(loc.toRawBytecode());
-        } else {
-          name = nullptr;
-        }
         break;
 
       case JSOp::GetAliasedVar:

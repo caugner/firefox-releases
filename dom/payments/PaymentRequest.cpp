@@ -610,10 +610,17 @@ already_AddRefed<PaymentRequest> PaymentRequest::Constructor(
     return nullptr;
   }
 
-  // Get the top level principal
-  RefPtr<Document> topLevelDoc = doc->GetTopLevelContentDocumentIfSameProcess();
-  MOZ_ASSERT(topLevelDoc);
-  nsCOMPtr<nsIPrincipal> topLevelPrincipal = topLevelDoc->NodePrincipal();
+  // Get the top same process document
+  nsCOMPtr<Document> topSameProcessDoc = doc;
+  topSameProcessDoc = doc;
+  while (topSameProcessDoc) {
+    nsCOMPtr<Document> parent = topSameProcessDoc->GetInProcessParentDocument();
+    if (!parent || !parent->IsContentDocument()) {
+      break;
+    }
+    topSameProcessDoc = parent;
+  }
+  nsCOMPtr<nsIPrincipal> topLevelPrincipal = topSameProcessDoc->NodePrincipal();
 
   // Check payment methods and details
   IsValidMethodData(aGlobal.Context(), aMethodData, aRv);
@@ -868,18 +875,21 @@ void PaymentRequest::RespondAbortPayment(bool aSuccess) {
     return;
   }
 
-  MOZ_ASSERT(mAbortPromise);
-  MOZ_ASSERT(mState == eInteractive);
+  if (mState != eInteractive) {
+    return;
+  }
 
-  if (aSuccess) {
-    mAbortPromise->MaybeResolve(JS::UndefinedHandleValue);
-    mAbortPromise = nullptr;
-    ErrorResult abortResult;
-    abortResult.ThrowAbortError("The PaymentRequest is aborted");
-    RejectShowPayment(std::move(abortResult));
-  } else {
-    mAbortPromise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
-    mAbortPromise = nullptr;
+  if (mAbortPromise) {
+    if (aSuccess) {
+      mAbortPromise->MaybeResolve(JS::UndefinedHandleValue);
+      mAbortPromise = nullptr;
+      ErrorResult abortResult;
+      abortResult.ThrowAbortError("The PaymentRequest is aborted");
+      RejectShowPayment(std::move(abortResult));
+    } else {
+      mAbortPromise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
+      mAbortPromise = nullptr;
+    }
   }
 }
 

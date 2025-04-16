@@ -219,13 +219,17 @@ class DispatchChangeEventCallback final : public GetFilesCallback {
   virtual void Callback(
       nsresult aStatus,
       const FallibleTArray<RefPtr<BlobImpl>>& aBlobImpls) override {
+    if (!mInputElement->GetOwnerGlobal()) {
+      return;
+    }
+
     nsTArray<OwningFileOrDirectory> array;
     for (uint32_t i = 0; i < aBlobImpls.Length(); ++i) {
       OwningFileOrDirectory* element = array.AppendElement();
       RefPtr<File> file =
           File::Create(mInputElement->GetOwnerGlobal(), aBlobImpls[i]);
       if (NS_WARN_IF(!file)) {
-        break;
+        return;
       }
 
       element->SetAsFile() = file;
@@ -545,6 +549,11 @@ HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult) {
   // So, we can safely send one by ourself.
   mInput->SetFilesOrDirectories(newFilesOrDirectories, true);
 
+  // mInput(HTMLInputElement) has no scriptGlobalObject, don't create
+  // DispatchChangeEventCallback
+  if (!mInput->GetOwnerGlobal()) {
+    return NS_OK;
+  }
   RefPtr<DispatchChangeEventCallback> dispatchChangeEventCallback =
       new DispatchChangeEventCallback(mInput);
 
@@ -957,7 +966,7 @@ HTMLInputElement::HTMLInputElement(
       mHandlingSelectEvent(false),
       mShouldInitChecked(false),
       mDoneCreating(aFromParser == NOT_FROM_PARSER &&
-                    aFromClone == FromClone::no),
+                    aFromClone == FromClone::No),
       mInInternalActivate(false),
       mCheckedIsToggled(false),
       mIndeterminate(false),
@@ -1076,7 +1085,7 @@ nsresult HTMLInputElement::Clone(dom::NodeInfo* aNodeInfo,
   *aResult = nullptr;
 
   RefPtr<HTMLInputElement> it = new (aNodeInfo->NodeInfoManager())
-      HTMLInputElement(do_AddRef(aNodeInfo), NOT_FROM_PARSER, FromClone::yes);
+      HTMLInputElement(do_AddRef(aNodeInfo), NOT_FROM_PARSER, FromClone::Yes);
 
   nsresult rv = const_cast<HTMLInputElement*>(this)->CopyInnerTo(it);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1417,7 +1426,7 @@ void HTMLInputElement::GetFormMethod(nsAString& aValue) {
   GetEnumAttr(nsGkAtoms::formmethod, "", kFormDefaultMethod->tag, aValue);
 }
 
-void HTMLInputElement::GetType(nsAString& aValue) {
+void HTMLInputElement::GetType(nsAString& aValue) const {
   GetEnumAttr(nsGkAtoms::type, kInputDefaultType->tag, aValue);
 }
 
@@ -2261,7 +2270,7 @@ void HTMLInputElement::SetUserInput(const nsAString& aValue,
   // If this element is not currently focused, it won't receive a change event
   // for this update through the normal channels. So fire a change event
   // immediately, instead.
-  if (!ShouldBlur(this)) {
+  if (CreatesDateTimeWidget() || !ShouldBlur(this)) {
     FireChangeEventIfNeeded();
   }
 }
@@ -2963,35 +2972,6 @@ void HTMLInputElement::SetCheckedInternal(bool aChecked, bool aNotify) {
   }
 }
 
-void HTMLInputElement::Blur(ErrorResult& aError) {
-  if (CreatesDateTimeWidget()) {
-    if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
-      AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-          dateTimeBoxElement, u"MozBlurInnerTextBox"_ns, CanBubble::eNo,
-          ChromeOnlyDispatch::eNo);
-      dispatcher->RunDOMEventWhenSafe();
-      return;
-    }
-  }
-
-  nsGenericHTMLElement::Blur(aError);
-}
-
-void HTMLInputElement::Focus(const FocusOptions& aOptions,
-                             CallerType aCallerType, ErrorResult& aError) {
-  if (CreatesDateTimeWidget()) {
-    if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
-      AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-          dateTimeBoxElement, u"MozFocusInnerTextBox"_ns, CanBubble::eNo,
-          ChromeOnlyDispatch::eNo);
-      dispatcher->RunDOMEventWhenSafe();
-      return;
-    }
-  }
-
-  nsGenericHTMLElement::Focus(aOptions, aCallerType, aError);
-}
-
 #if !defined(ANDROID) && !defined(XP_MACOSX)
 bool HTMLInputElement::IsNodeApzAwareInternal() const {
   // Tell APZC we may handle mouse wheel event and do preventDefault when input
@@ -3019,7 +2999,7 @@ void HTMLInputElement::Select() {
   TextControlState* state = GetEditorState();
   MOZ_ASSERT(state, "Single line text controls are expected to have a state");
 
-  if (FocusState() != eUnfocusable) {
+  if (FocusState() != FocusTristate::eUnfocusable) {
     RefPtr<nsFrameSelection> fs = state->GetConstFrameSelection();
     if (fs && fs->MouseDownRecorded()) {
       // This means that we're being called while the frame selection has a
@@ -3225,18 +3205,6 @@ void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
     nsIFrame* frame = GetPrimaryFrame();
     if (frame) {
       frame->InvalidateFrameSubtree();
-    }
-  }
-
-  if (CreatesDateTimeWidget() && aVisitor.mEvent->mMessage == eFocus &&
-      aVisitor.mEvent->mOriginalTarget == this) {
-    // If original target is this and not the inner text control, we should
-    // pass the focus to the inner text control.
-    if (Element* dateTimeBoxElement = GetDateTimeBoxElement()) {
-      AsyncEventDispatcher* dispatcher = new AsyncEventDispatcher(
-          dateTimeBoxElement, u"MozFocusInnerTextBox"_ns, CanBubble::eNo,
-          ChromeOnlyDispatch::eNo);
-      dispatcher->RunDOMEventWhenSafe();
     }
   }
 
@@ -4260,7 +4228,7 @@ nsresult HTMLInputElement::BindToTree(BindContext& aContext, nsINode& aParent) {
 
   if (CreatesDateTimeWidget() && IsInComposedDoc()) {
     // Construct Shadow Root so web content can be hidden in the DOM.
-    AttachAndSetUAShadowRoot();
+    AttachAndSetUAShadowRoot(NotifyUAWidgetSetup::Yes, DelegatesFocus::Yes);
   }
 
   if (mType == FormControlType::InputPassword) {
@@ -4532,7 +4500,7 @@ void HTMLInputElement::HandleTypeChange(FormControlType aNewType,
       }
     } else if (CreatesDateTimeWidget()) {
       // Switch to date/time type.
-      AttachAndSetUAShadowRoot();
+      AttachAndSetUAShadowRoot(NotifyUAWidgetSetup::Yes, DelegatesFocus::Yes);
     }
   }
 }
@@ -6769,9 +6737,6 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
   nsTArray<nsFilePickerFilter> filters;
   nsString allExtensionsList;
 
-  bool allMimeTypeFiltersAreValid = true;
-  bool atLeastOneFileExtensionFilter = false;
-
   // Retrieve all filters
   while (tokenizer.hasMoreTokens()) {
     const nsDependentSubstring& token = tokenizer.nextToken();
@@ -6801,7 +6766,6 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
       }
       extensionListStr = u"*"_ns + token;
       filterName = extensionListStr;
-      atLeastOneFileExtensionFilter = true;
     } else {
       //... if no image/audio/video filter is found, check mime types filters
       nsCOMPtr<nsIMIMEInfo> mimeInfo;
@@ -6810,7 +6774,6 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
                                                    ""_ns,  // No extension
                                                    getter_AddRefs(mimeInfo))) ||
           !mimeInfo) {
-        allMimeTypeFiltersAreValid = false;
         continue;
       }
 
@@ -6842,7 +6805,6 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
 
     if (!filterMask && (extensionListStr.IsEmpty() || filterName.IsEmpty())) {
       // No valid filter found
-      allMimeTypeFiltersAreValid = false;
       continue;
     }
 
@@ -6914,10 +6876,9 @@ void HTMLInputElement::SetFilePickerFiltersFromAccept(
     }
   }
 
-  if (filters.Length() >= 1 &&
-      (allMimeTypeFiltersAreValid || atLeastOneFileExtensionFilter)) {
+  if (filters.Length() >= 1) {
     // |filterAll| will always use index=0 so we need to set index=1 as the
-    // current filter.
+    // current filter. This will be "All Supported Types" for multiple filters.
     filePicker->SetFilterIndex(1);
   }
 }

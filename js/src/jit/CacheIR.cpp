@@ -2701,9 +2701,10 @@ static bool CanAttachGlobalName(JSContext* cx,
 
 AttachDecision GetNameIRGenerator::tryAttachGlobalNameValue(ObjOperandId objId,
                                                             HandleId id) {
-  if (!IsGlobalOp(JSOp(*pc_)) || script_->hasNonSyntacticScope()) {
+  if (!IsGlobalOp(JSOp(*pc_))) {
     return AttachDecision::NoAction;
   }
+  MOZ_ASSERT(!script_->hasNonSyntacticScope());
 
   auto* globalLexical = &env_->as<GlobalLexicalEnvironmentObject>();
 
@@ -2763,9 +2764,10 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameValue(ObjOperandId objId,
 
 AttachDecision GetNameIRGenerator::tryAttachGlobalNameGetter(ObjOperandId objId,
                                                              HandleId id) {
-  if (!IsGlobalOp(JSOp(*pc_)) || script_->hasNonSyntacticScope()) {
+  if (!IsGlobalOp(JSOp(*pc_))) {
     return AttachDecision::NoAction;
   }
+  MOZ_ASSERT(!script_->hasNonSyntacticScope());
 
   Handle<GlobalLexicalEnvironmentObject*> globalLexical =
       env_.as<GlobalLexicalEnvironmentObject>();
@@ -2945,9 +2947,10 @@ AttachDecision BindNameIRGenerator::tryAttachStub() {
 
 AttachDecision BindNameIRGenerator::tryAttachGlobalName(ObjOperandId objId,
                                                         HandleId id) {
-  if (!IsGlobalOp(JSOp(*pc_)) || script_->hasNonSyntacticScope()) {
+  if (!IsGlobalOp(JSOp(*pc_))) {
     return AttachDecision::NoAction;
   }
+  MOZ_ASSERT(!script_->hasNonSyntacticScope());
 
   Handle<GlobalLexicalEnvironmentObject*> globalLexical =
       env_.as<GlobalLexicalEnvironmentObject>();
@@ -4769,27 +4772,30 @@ AttachDecision GetIteratorIRGenerator::tryAttachStub() {
 
   AutoAssertNoPendingException aanpe(cx_);
 
-  if (mode_ == ICState::Mode::Megamorphic) {
-    return AttachDecision::NoAction;
-  }
-
   ValOperandId valId(writer.setInputOperandId(0));
-  if (!val_.isObject()) {
+
+  if (mode_ == ICState::Mode::Megamorphic) {
+    TRY_ATTACH(tryAttachMegamorphic(valId));
     return AttachDecision::NoAction;
   }
 
-  RootedObject obj(cx_, &val_.toObject());
-
-  ObjOperandId objId = writer.guardToObject(valId);
-  TRY_ATTACH(tryAttachNativeIterator(objId, obj));
+  TRY_ATTACH(tryAttachNativeIterator(valId));
+  TRY_ATTACH(tryAttachNullOrUndefined(valId));
 
   trackAttached(IRGenerator::NotAttached);
   return AttachDecision::NoAction;
 }
 
 AttachDecision GetIteratorIRGenerator::tryAttachNativeIterator(
-    ObjOperandId objId, HandleObject obj) {
+    ValOperandId valId) {
   MOZ_ASSERT(JSOp(*pc_) == JSOp::Iter);
+
+  if (!val_.isObject()) {
+    return AttachDecision::NoAction;
+  }
+
+  RootedObject obj(cx_, &val_.toObject());
+  ObjOperandId objId = writer.guardToObject(valId);
 
   PropertyIteratorObject* iterobj = LookupInIteratorCache(cx_, obj);
   if (!iterobj) {
@@ -4812,7 +4818,44 @@ AttachDecision GetIteratorIRGenerator::tryAttachNativeIterator(
   writer.loadObjectResult(iterId);
   writer.returnFromIC();
 
-  trackAttached("GetIterator");
+  trackAttached("NativeIterator");
+  return AttachDecision::Attach;
+}
+
+AttachDecision GetIteratorIRGenerator::tryAttachMegamorphic(
+    ValOperandId valId) {
+  MOZ_ASSERT(JSOp(*pc_) == JSOp::Iter);
+
+  writer.valueToIteratorResult(valId);
+  writer.returnFromIC();
+
+  trackAttached("Megamorphic");
+  return AttachDecision::Attach;
+}
+
+AttachDecision GetIteratorIRGenerator::tryAttachNullOrUndefined(
+    ValOperandId valId) {
+  MOZ_ASSERT(JSOp(*pc_) == JSOp::Iter);
+
+  // For null/undefined we can simply return the empty iterator singleton. This
+  // works because this iterator is unlinked and immutable.
+
+  if (!val_.isNullOrUndefined()) {
+    return AttachDecision::NoAction;
+  }
+
+  PropertyIteratorObject* emptyIter = cx_->global()->maybeEmptyIterator();
+  if (!emptyIter) {
+    return AttachDecision::NoAction;
+  }
+
+  writer.guardIsNullOrUndefined(valId);
+
+  ObjOperandId iterId = writer.loadObject(emptyIter);
+  writer.loadObjectResult(iterId);
+  writer.returnFromIC();
+
+  trackAttached("NullOrUndefined");
   return AttachDecision::Attach;
 }
 

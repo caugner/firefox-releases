@@ -125,16 +125,17 @@ class MutableWrappedPtrOperations
     : public WrappedPtrOperations<Element, Wrapper> {};
 
 template <typename T, typename Wrapper>
-class RootedBase : public MutableWrappedPtrOperations<T, Wrapper> {};
+class RootedOperations : public MutableWrappedPtrOperations<T, Wrapper> {};
 
 template <typename T, typename Wrapper>
-class HandleBase : public WrappedPtrOperations<T, Wrapper> {};
+class HandleOperations : public WrappedPtrOperations<T, Wrapper> {};
 
 template <typename T, typename Wrapper>
-class MutableHandleBase : public MutableWrappedPtrOperations<T, Wrapper> {};
+class MutableHandleOperations : public MutableWrappedPtrOperations<T, Wrapper> {
+};
 
 template <typename T, typename Wrapper>
-class HeapBase : public MutableWrappedPtrOperations<T, Wrapper> {};
+class HeapOperations : public MutableWrappedPtrOperations<T, Wrapper> {};
 
 // Cannot use FOR_EACH_HEAP_ABLE_GC_POINTER_TYPE, as this would import too many
 // macros into scope
@@ -289,7 +290,7 @@ inline void AssertGCThingIsNotNurseryAllocable(js::gc::Cell* cell) {}
  * Type T must be a public GC pointer type.
  */
 template <typename T>
-class MOZ_NON_MEMMOVABLE Heap : public js::HeapBase<T, Heap<T>> {
+class MOZ_NON_MEMMOVABLE Heap : public js::HeapOperations<T, Heap<T>> {
   // Please note: this can actually also be used by nsXBLMaybeCompiled<T>, for
   // legacy reasons.
   static_assert(js::IsHeapConstructibleType<T>::value,
@@ -449,7 +450,7 @@ inline void AssertObjectIsNotGray(const JS::Heap<JSObject*>& obj) {}
  *  - It is not possible to store flag bits in a Heap<T>.
  */
 template <typename T>
-class TenuredHeap : public js::HeapBase<T, TenuredHeap<T>> {
+class TenuredHeap : public js::HeapOperations<T, TenuredHeap<T>> {
  public:
   using ElementType = T;
 
@@ -569,10 +570,10 @@ class PersistentRooted;
  * rooted. See "Move GC Stack Rooting" above.
  *
  * If you want to add additional methods to Handle for a specific
- * specialization, define a HandleBase<T> specialization containing them.
+ * specialization, define a HandleOperations<T> specialization containing them.
  */
 template <typename T>
-class MOZ_NONHEAP_CLASS Handle : public js::HandleBase<T, Handle<T>> {
+class MOZ_NONHEAP_CLASS Handle : public js::HandleOperations<T, Handle<T>> {
   friend class MutableHandle<T>;
 
  public:
@@ -667,12 +668,12 @@ struct DefineComparisonOps<Handle<T>> : std::true_type {
  * useful for outparams.
  *
  * If you want to add additional methods to MutableHandle for a specific
- * specialization, define a MutableHandleBase<T> specialization containing
+ * specialization, define a MutableHandleOperations<T> specialization containing
  * them.
  */
 template <typename T>
 class MOZ_STACK_CLASS MutableHandle
-    : public js::MutableHandleBase<T, MutableHandle<T>> {
+    : public js::MutableHandleOperations<T, MutableHandle<T>> {
  public:
   using ElementType = T;
 
@@ -877,36 +878,64 @@ struct VirtualTraceable {
   virtual void trace(JSTracer* trc, const char* name) = 0;
 };
 
-template <typename T>
-struct RootedTraceable final : public VirtualTraceable {
-  static_assert(JS::MapTypeToRootKind<T>::kind == JS::RootKind::Traceable,
-                "RootedTraceable is intended only for usage with a Traceable");
+class StackRootedBase {
+ public:
+  StackRootedBase* previous() { return prev; }
 
-  T ptr;
+ protected:
+  StackRootedBase** stack;
+  StackRootedBase* prev;
 
-  template <typename U>
-  MOZ_IMPLICIT RootedTraceable(U&& initial) : ptr(std::forward<U>(initial)) {}
+  template <typename T>
+  auto* derived() {
+    return static_cast<JS::Rooted<T>*>(this);
+  }
+};
 
-  operator T&() { return ptr; }
-  operator const T&() const { return ptr; }
+class PersistentRootedBase
+    : protected mozilla::LinkedListElement<PersistentRootedBase> {
+ protected:
+  friend class mozilla::LinkedList<PersistentRootedBase>;
+  friend class mozilla::LinkedListElement<PersistentRootedBase>;
 
+  template <typename T>
+  auto* derived() {
+    return static_cast<JS::PersistentRooted<T>*>(this);
+  }
+};
+
+struct StackRootedTraceableBase : public StackRootedBase,
+                                  public VirtualTraceable {};
+
+class PersistentRootedTraceableBase : public PersistentRootedBase,
+                                      public VirtualTraceable {};
+
+template <typename Base, typename T>
+class TypedRootedGCThingBase : public Base {
+ public:
+  void trace(JSTracer* trc, const char* name);
+};
+
+template <typename Base, typename T>
+class TypedRootedTraceableBase : public Base {
+ public:
   void trace(JSTracer* trc, const char* name) override {
-    JS::GCPolicy<T>::trace(trc, &ptr, name);
+    auto* self = this->template derived<T>();
+    JS::GCPolicy<T>::trace(trc, self->address(), name);
   }
 };
 
 template <typename T>
 struct RootedTraceableTraits {
-  static T* address(RootedTraceable<T>& self) { return &self.ptr; }
-  static const T* address(const RootedTraceable<T>& self) { return &self.ptr; }
-  static void trace(JSTracer* trc, VirtualTraceable* thingp, const char* name);
+  using StackBase = TypedRootedTraceableBase<StackRootedTraceableBase, T>;
+  using PersistentBase =
+      TypedRootedTraceableBase<PersistentRootedTraceableBase, T>;
 };
 
 template <typename T>
 struct RootedGCThingTraits {
-  static T* address(T& self) { return &self; }
-  static const T* address(const T& self) { return &self; }
-  static void trace(JSTracer* trc, T* thingp, const char* name);
+  using StackBase = TypedRootedGCThingBase<StackRootedBase, T>;
+  using PersistentBase = TypedRootedGCThingBase<PersistentRootedBase, T>;
 };
 
 } /* namespace js */
@@ -923,29 +952,8 @@ enum class AutoGCRooterKind : uint8_t {
   Limit
 };
 
-namespace detail {
-// Dummy type to store root list entry pointers as. This code does not just use
-// the actual type, because then eg JSObject* and JSFunction* would be assumed
-// to never alias but they do (they are stored in the same list). Also, do not
-// use `void*` so that `Rooted<void*>` is a compile error.
-struct RootListEntry;
-}  // namespace detail
-
-template <>
-struct MapTypeToRootKind<detail::RootListEntry*> {
-  static const RootKind kind = RootKind::Traceable;
-};
-
-// Workaround MSVC issue where GCPolicy is needed even though this dummy type is
-// never instantiated. Ideally, RootListEntry is removed in the future and an
-// appropriate class hierarchy for the Rooted<T> types.
-template <>
-struct GCPolicy<detail::RootListEntry*>
-    : public IgnoreGCPolicy<detail::RootListEntry*> {};
-
 using RootedListHeads =
-    mozilla::EnumeratedArray<RootKind, RootKind::Limit,
-                             Rooted<detail::RootListEntry*>*>;
+    mozilla::EnumeratedArray<RootKind, RootKind::Limit, js::StackRootedBase*>;
 
 using AutoRooterListHeads =
     mozilla::EnumeratedArray<AutoGCRooterKind, AutoGCRooterKind::Limit,
@@ -1079,21 +1087,13 @@ class MOZ_RAII JS_PUBLIC_API CustomAutoRooter : private AutoGCRooter {
 namespace detail {
 
 template <typename T>
-using RootedPtr =
-    std::conditional_t<MapTypeToRootKind<T>::kind == JS::RootKind::Traceable,
-                       js::RootedTraceable<T>, T>;
+constexpr bool IsTraceable_v =
+    MapTypeToRootKind<T>::kind == JS::RootKind::Traceable;
 
 template <typename T>
-using RootedPtrTraits =
-    std::conditional_t<MapTypeToRootKind<T>::kind == JS::RootKind::Traceable,
-                       js::RootedTraceableTraits<T>,
+using RootedTraits =
+    std::conditional_t<IsTraceable_v<T>, js::RootedTraceableTraits<T>,
                        js::RootedGCThingTraits<T>>;
-
-// Dummy types to make it easier to understand template overload preference
-// ordering.
-struct FallbackOverload {};
-struct PreferredOverload : FallbackOverload {};
-using OverloadSelector = PreferredOverload;
 
 } /* namespace detail */
 
@@ -1103,17 +1103,15 @@ using OverloadSelector = PreferredOverload;
  * function that requires a handle, e.g. Foo(Root<T>(cx, x)).
  *
  * If you want to add additional methods to Rooted for a specific
- * specialization, define a RootedBase<T> specialization containing them.
+ * specialization, define a RootedOperations<T> specialization containing them.
  */
 template <typename T>
-class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
-  using Ptr = detail::RootedPtr<T>;
-  using PtrTraits = detail::RootedPtrTraits<T>;
-
+class MOZ_RAII Rooted : public detail::RootedTraits<T>::StackBase,
+                        public js::RootedOperations<T, Rooted<T>> {
   inline void registerWithRootLists(RootedListHeads& roots) {
     this->stack = &roots[JS::MapTypeToRootKind<T>::kind];
-    this->prev = *stack;
-    *stack = reinterpret_cast<Rooted<detail::RootListEntry*>*>(this);
+    this->prev = *this->stack;
+    *this->stack = this;
   }
 
   inline RootedListHeads& rootLists(RootingContext* cx) {
@@ -1123,38 +1121,24 @@ class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
     return rootLists(RootingContext::get(cx));
   }
 
-  // Define either one or two Rooted(cx) constructors: the fallback one, which
-  // constructs a Rooted holding a SafelyInitialized<T>, and a convenience one
-  // for types that can be constructed with a cx, which will give a Rooted
-  // holding a T(cx).
-
-  // Dummy type to distinguish these constructors from Rooted(cx, initial)
-  struct CtorDispatcher {};
-
-  // Normal case: construct an empty Rooted holding a safely initialized but
-  // empty T.
-  template <typename RootingContext>
-  Rooted(const RootingContext& cx, CtorDispatcher, detail::FallbackOverload)
-      : Rooted(cx, SafelyInitialized<T>()) {}
-
-  // If T can be constructed with a cx, then define another constructor for it
-  // that will be preferred.
-  template <
-      typename RootingContext,
-      typename = std::enable_if_t<std::is_constructible_v<T, RootingContext>>>
-  Rooted(const RootingContext& cx, CtorDispatcher, detail::PreferredOverload)
-      : Rooted(cx, T(cx)) {}
-
  public:
   using ElementType = T;
 
-  // Construct an empty Rooted. Delegates to an internal constructor that
-  // chooses a specific meaning of "empty" depending on whether T can be
-  // constructed with a cx.
-  template <typename RootingContext>
-  explicit Rooted(const RootingContext& cx)
-      : Rooted(cx, CtorDispatcher(), detail::OverloadSelector()) {}
+  // Construct an empty Rooted holding a safely initialized but empty T.
+  // Requires T to have a copy constructor in order to copy the safely
+  // initialized value.
+  //
+  // Note that for SFINAE to reject this method, the 2nd template parameter must
+  // depend on RootingContext somehow even though we really only care about T.
+  template <typename RootingContext,
+            typename = std::enable_if_t<std::is_copy_constructible_v<T>,
+                                        RootingContext>>
+  explicit Rooted(const RootingContext& cx) : ptr(SafelyInitialized<T>()) {
+    registerWithRootLists(rootLists(cx));
+  }
 
+  // Provide an initial value. Requires T to be constructible from the given
+  // argument.
   template <typename RootingContext, typename S>
   Rooted(const RootingContext& cx, S&& initial)
       : ptr(std::forward<S>(initial)) {
@@ -1162,13 +1146,27 @@ class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
     registerWithRootLists(rootLists(cx));
   }
 
-  ~Rooted() {
-    MOZ_ASSERT(*stack ==
-               reinterpret_cast<Rooted<detail::RootListEntry*>*>(this));
-    *stack = prev;
+  // (Traceables only) Construct the contained value from the given arguments.
+  // Constructs in-place, so T does not need to be copyable or movable.
+  //
+  // Note that a copyable Traceable passed only a RootingContext will
+  // choose the above SafelyInitialized<T> constructor, because otherwise
+  // identical functions with parameter packs are considered less specialized.
+  //
+  // The SFINAE type must again depend on an inferred template parameter.
+  template <
+      typename RootingContext, typename... CtorArgs,
+      typename = std::enable_if_t<detail::IsTraceable_v<T>, RootingContext>>
+  explicit Rooted(const RootingContext& cx, CtorArgs... args)
+      : ptr(std::forward<CtorArgs>(args)...) {
+    MOZ_ASSERT(GCPolicy<T>::isValid(ptr));
+    registerWithRootLists(rootLists(cx));
   }
 
-  Rooted<T>* previous() { return reinterpret_cast<Rooted<T>*>(prev); }
+  ~Rooted() {
+    MOZ_ASSERT(*this->stack == this);
+    *this->stack = this->prev;
+  }
 
   /*
    * This method is public for Rooted so that Codegen.py can use a Rooted
@@ -1189,21 +1187,11 @@ class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
   T& get() { return ptr; }
   const T& get() const { return ptr; }
 
-  T* address() { return PtrTraits::address(ptr); }
-  const T* address() const { return PtrTraits::address(ptr); }
-
-  void trace(JSTracer* trc, const char* name);
+  T* address() { return &ptr; }
+  const T* address() const { return &ptr; }
 
  private:
-  /*
-   * These need to be templated on RootListEntry* to avoid aliasing issues
-   * between, for example, Rooted<JSObject*> and Rooted<JSFunction*>, which use
-   * the same stack head pointer for different classes.
-   */
-  Rooted<detail::RootListEntry*>** stack;
-  Rooted<detail::RootListEntry*>* prev;
-
-  Ptr ptr;
+  T ptr;
 
   Rooted(const Rooted&) = delete;
 } JS_HAZ_ROOTED;
@@ -1263,7 +1251,7 @@ inline ProfilingStack* GetContextProfilingStackIfEnabled(JSContext* cx) {
  *   Handle<StringObject*> h = rooted;
  */
 template <typename Container>
-class RootedBase<JSObject*, Container>
+class RootedOperations<JSObject*, Container>
     : public MutableWrappedPtrOperations<JSObject*, Container> {
  public:
   template <class U>
@@ -1281,7 +1269,7 @@ class RootedBase<JSObject*, Container>
  *   Handle<StringObject*> h = rooted;
  */
 template <typename Container>
-class HandleBase<JSObject*, Container>
+class HandleOperations<JSObject*, Container>
     : public WrappedPtrOperations<JSObject*, Container> {
  public:
   template <class U>
@@ -1330,13 +1318,11 @@ inline MutableHandle<T>::MutableHandle(PersistentRooted<T>* root) {
   ptr = root->address();
 }
 
-JS_PUBLIC_API void AddPersistentRoot(
-    RootingContext* cx, RootKind kind,
-    PersistentRooted<detail::RootListEntry*>* root);
+JS_PUBLIC_API void AddPersistentRoot(RootingContext* cx, RootKind kind,
+                                     js::PersistentRootedBase* root);
 
-JS_PUBLIC_API void AddPersistentRoot(
-    JSRuntime* rt, RootKind kind,
-    PersistentRooted<detail::RootListEntry*>* root);
+JS_PUBLIC_API void AddPersistentRoot(JSRuntime* rt, RootKind kind,
+                                     js::PersistentRootedBase* root);
 
 /**
  * A copyable, assignable global GC root type with arbitrary lifetime, an
@@ -1372,30 +1358,24 @@ JS_PUBLIC_API void AddPersistentRoot(
  * marked when the object itself is marked.
  */
 template <typename T>
-class PersistentRooted
-    : public js::RootedBase<T, PersistentRooted<T>>,
-      private mozilla::LinkedListElement<PersistentRooted<T>> {
-  using ListBase = mozilla::LinkedListElement<PersistentRooted<T>>;
-  using Ptr = detail::RootedPtr<T>;
-  using PtrTraits = detail::RootedPtrTraits<T>;
-
-  friend class mozilla::LinkedList<PersistentRooted>;
-  friend class mozilla::LinkedListElement<PersistentRooted>;
-
+class PersistentRooted : public detail::RootedTraits<T>::PersistentBase,
+                         public js::RootedOperations<T, PersistentRooted<T>> {
   void registerWithRootLists(RootingContext* cx) {
     MOZ_ASSERT(!initialized());
     JS::RootKind kind = JS::MapTypeToRootKind<T>::kind;
-    AddPersistentRoot(
-        cx, kind,
-        reinterpret_cast<JS::PersistentRooted<detail::RootListEntry*>*>(this));
+    AddPersistentRoot(cx, kind, this);
   }
 
   void registerWithRootLists(JSRuntime* rt) {
     MOZ_ASSERT(!initialized());
     JS::RootKind kind = JS::MapTypeToRootKind<T>::kind;
-    AddPersistentRoot(
-        rt, kind,
-        reinterpret_cast<JS::PersistentRooted<detail::RootListEntry*>*>(this));
+    AddPersistentRoot(rt, kind, this);
+  }
+
+  // Used when JSContext type is incomplete and so it is not known to inherit
+  // from RootingContext.
+  void registerWithRootLists(JSContext* cx) {
+    registerWithRootLists(RootingContext::get(cx));
   }
 
  public:
@@ -1403,36 +1383,30 @@ class PersistentRooted
 
   PersistentRooted() : ptr(SafelyInitialized<T>()) {}
 
-  explicit PersistentRooted(RootingContext* cx) : ptr(SafelyInitialized<T>()) {
+  template <
+      typename RootHolder,
+      typename = std::enable_if_t<std::is_copy_constructible_v<T>, RootHolder>>
+  explicit PersistentRooted(const RootHolder& cx)
+      : ptr(SafelyInitialized<T>()) {
     registerWithRootLists(cx);
   }
 
-  explicit PersistentRooted(JSContext* cx) : ptr(SafelyInitialized<T>()) {
-    registerWithRootLists(RootingContext::get(cx));
-  }
-
-  template <typename U>
-  PersistentRooted(RootingContext* cx, U&& initial)
+  template <
+      typename RootHolder, typename U,
+      typename = std::enable_if_t<std::is_constructible_v<T, U>, RootHolder>>
+  PersistentRooted(const RootHolder& cx, U&& initial)
       : ptr(std::forward<U>(initial)) {
     registerWithRootLists(cx);
   }
 
-  template <typename U>
-  PersistentRooted(JSContext* cx, U&& initial) : ptr(std::forward<U>(initial)) {
-    registerWithRootLists(RootingContext::get(cx));
+  template <typename RootHolder, typename... CtorArgs,
+            typename = std::enable_if_t<detail::IsTraceable_v<T>, RootHolder>>
+  explicit PersistentRooted(const RootHolder& cx, CtorArgs... args)
+      : ptr(std::forward<CtorArgs>(args)...) {
+    registerWithRootLists(cx);
   }
 
-  explicit PersistentRooted(JSRuntime* rt) : ptr(SafelyInitialized<T>()) {
-    registerWithRootLists(rt);
-  }
-
-  template <typename U>
-  PersistentRooted(JSRuntime* rt, U&& initial) : ptr(std::forward<U>(initial)) {
-    registerWithRootLists(rt);
-  }
-
-  PersistentRooted(const PersistentRooted& rhs)
-      : mozilla::LinkedListElement<PersistentRooted<T>>(), ptr(rhs.ptr) {
+  PersistentRooted(const PersistentRooted& rhs) : ptr(rhs.ptr) {
     /*
      * Copy construction takes advantage of the fact that the original
      * is already inserted, and simply adds itself to whatever list the
@@ -1444,7 +1418,7 @@ class PersistentRooted
     const_cast<PersistentRooted&>(rhs).setNext(this);
   }
 
-  bool initialized() const { return ListBase::isInList(); }
+  bool initialized() const { return this->isInList(); }
 
   void init(RootingContext* cx) { init(cx, SafelyInitialized<T>()); }
   void init(JSContext* cx) { init(RootingContext::get(cx)); }
@@ -1463,7 +1437,7 @@ class PersistentRooted
   void reset() {
     if (initialized()) {
       set(SafelyInitialized<T>());
-      ListBase::remove();
+      this->remove();
     }
   }
 
@@ -1475,9 +1449,9 @@ class PersistentRooted
 
   T* address() {
     MOZ_ASSERT(initialized());
-    return PtrTraits::address(ptr);
+    return &ptr;
   }
-  const T* address() const { return PtrTraits::address(ptr); }
+  const T* address() const { return &ptr; }
 
   template <typename U>
   void set(U&& value) {
@@ -1485,10 +1459,8 @@ class PersistentRooted
     ptr = std::forward<U>(value);
   }
 
-  void trace(JSTracer* trc, const char* name);
-
  private:
-  Ptr ptr;
+  T ptr;
 } JS_HAZ_ROOTED;
 
 namespace detail {

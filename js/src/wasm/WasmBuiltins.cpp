@@ -231,12 +231,12 @@ const SymbolicAddressSignature SASigThrowException = {
     _FailOnNullPtr,
     2,
     {_PTR, _RoN, _END}};
-const SymbolicAddressSignature SASigGetLocalExceptionIndex = {
-    SymbolicAddress::GetLocalExceptionIndex,
+const SymbolicAddressSignature SASigConsumePendingException = {
+    SymbolicAddress::ConsumePendingException,
     _I32,
     _Infallible,
-    2,
-    {_PTR, _RoN, _END}};
+    1,
+    {_PTR, _END}};
 const SymbolicAddressSignature SASigPushRefIntoExn = {
     SymbolicAddress::PushRefIntoExn,
     _I32,
@@ -507,17 +507,13 @@ bool wasm::HandleThrow(JSContext* cx, WasmFrameIter& iter,
 
       if (tryNote) {
         cx->clearPendingException();
-        if (!exn.isObject() || !exn.toObject().is<WasmExceptionObject>()) {
-          RootedObject obj(cx, WasmJSExceptionObject::create(cx, &exn));
-          if (!obj) {
-            MOZ_ASSERT(cx->isThrowingOutOfMemory());
-            continue;
-          }
-          exn.set(ObjectValue(*obj));
+        RootedAnyRef ref(cx, AnyRef::null());
+        if (!BoxAnyRef(cx, exn, &ref)) {
+          MOZ_ASSERT(cx->isThrowingOutOfMemory());
+          continue;
         }
-        // GenerateThrowStub in WasmStubs.cpp expects this argument to be
-        // the exception object Value.
-        rfe->exception = exn;
+
+        iter.tls()->pendingException = ref.get().asJSObject();
 
         rfe->kind = ResumeFromException::RESUME_WASM_CATCH;
         rfe->framePointer = (uint8_t*)iter.frame();
@@ -958,9 +954,7 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
       *abiType = Args_General0;
       return FuncCast(WasmReportV128JSCall, *abiType);
     case SymbolicAddress::CallImport_General:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General});
+      *abiType = Args_Int32_GeneralInt32Int32General;
       return FuncCast(Instance::callImport_general, *abiType);
     case SymbolicAddress::CoerceInPlace_ToInt32:
       *abiType = Args_General1;
@@ -1086,181 +1080,137 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
       return FuncCast(ecmaAtan2, *abiType);
 
     case SymbolicAddress::MemoryGrow:
-      *abiType =
-          MakeABIFunctionType(ArgType_Int32, {ArgType_General, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32;
       MOZ_ASSERT(*abiType == ToABIType(SASigMemoryGrow));
       return FuncCast(Instance::memoryGrow_i32, *abiType);
     case SymbolicAddress::MemorySize:
-      *abiType = MakeABIFunctionType(ArgType_Int32, {ArgType_General});
+      *abiType = Args_Int32_General;
       MOZ_ASSERT(*abiType == ToABIType(SASigMemorySize));
       return FuncCast(Instance::memorySize_i32, *abiType);
     case SymbolicAddress::WaitI32:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_Int64});
+      *abiType = Args_Int32_GeneralInt32Int32Int64;
       MOZ_ASSERT(*abiType == ToABIType(SASigWaitI32));
       return FuncCast(Instance::wait_i32, *abiType);
     case SymbolicAddress::WaitI64:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_Int64, ArgType_Int64});
+      *abiType = Args_Int32_GeneralInt32Int64Int64;
       MOZ_ASSERT(*abiType == ToABIType(SASigWaitI64));
       return FuncCast(Instance::wait_i64, *abiType);
     case SymbolicAddress::Wake:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32Int32;
       MOZ_ASSERT(*abiType == ToABIType(SASigWake));
       return FuncCast(Instance::wake, *abiType);
     case SymbolicAddress::MemCopy32:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
-                          ArgType_Int32, ArgType_General});
+      *abiType = Args_Int32_GeneralInt32Int32Int32General;
       MOZ_ASSERT(*abiType == ToABIType(SASigMemCopy32));
       return FuncCast(Instance::memCopy32, *abiType);
     case SymbolicAddress::MemCopyShared32:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
-                          ArgType_Int32, ArgType_General});
+      *abiType = Args_Int32_GeneralInt32Int32Int32General;
       MOZ_ASSERT(*abiType == ToABIType(SASigMemCopyShared32));
       return FuncCast(Instance::memCopyShared32, *abiType);
     case SymbolicAddress::DataDrop:
-      *abiType =
-          MakeABIFunctionType(ArgType_Int32, {ArgType_General, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32;
       MOZ_ASSERT(*abiType == ToABIType(SASigDataDrop));
       return FuncCast(Instance::dataDrop, *abiType);
     case SymbolicAddress::MemFill32:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
-                          ArgType_Int32, ArgType_General});
+      *abiType = Args_Int32_GeneralInt32Int32Int32General;
       MOZ_ASSERT(*abiType == ToABIType(SASigMemFill32));
       return FuncCast(Instance::memFill32, *abiType);
     case SymbolicAddress::MemFillShared32:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
-                          ArgType_Int32, ArgType_General});
+      *abiType = Args_Int32_GeneralInt32Int32Int32General;
       MOZ_ASSERT(*abiType == ToABIType(SASigMemFillShared32));
       return FuncCast(Instance::memFillShared32, *abiType);
     case SymbolicAddress::MemInit32:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
-                          ArgType_Int32, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32Int32Int32Int32;
       MOZ_ASSERT(*abiType == ToABIType(SASigMemInit32));
       return FuncCast(Instance::memInit32, *abiType);
     case SymbolicAddress::TableCopy:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
-                          ArgType_Int32, ArgType_Int32, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32Int32Int32Int32Int32;
       MOZ_ASSERT(*abiType == ToABIType(SASigTableCopy));
       return FuncCast(Instance::tableCopy, *abiType);
     case SymbolicAddress::ElemDrop:
-      *abiType =
-          MakeABIFunctionType(ArgType_Int32, {ArgType_General, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32;
       MOZ_ASSERT(*abiType == ToABIType(SASigElemDrop));
       return FuncCast(Instance::elemDrop, *abiType);
     case SymbolicAddress::TableFill:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_General,
-                          ArgType_Int32, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32GeneralInt32Int32;
       MOZ_ASSERT(*abiType == ToABIType(SASigTableFill));
       return FuncCast(Instance::tableFill, *abiType);
     case SymbolicAddress::TableInit:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
-                          ArgType_Int32, ArgType_Int32, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32Int32Int32Int32Int32;
       MOZ_ASSERT(*abiType == ToABIType(SASigTableInit));
       return FuncCast(Instance::tableInit, *abiType);
     case SymbolicAddress::TableGet:
-      *abiType = MakeABIFunctionType(
-          ArgType_General, {ArgType_General, ArgType_Int32, ArgType_Int32});
+      *abiType = Args_General_GeneralInt32Int32;
       MOZ_ASSERT(*abiType == ToABIType(SASigTableGet));
       return FuncCast(Instance::tableGet, *abiType);
     case SymbolicAddress::TableGrow:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_General, ArgType_Int32, ArgType_Int32});
+      *abiType = Args_Int32_GeneralGeneralInt32Int32;
       MOZ_ASSERT(*abiType == ToABIType(SASigTableGrow));
       return FuncCast(Instance::tableGrow, *abiType);
     case SymbolicAddress::TableSet:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_General, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32GeneralInt32;
       MOZ_ASSERT(*abiType == ToABIType(SASigTableSet));
       return FuncCast(Instance::tableSet, *abiType);
     case SymbolicAddress::TableSize:
-      *abiType =
-          MakeABIFunctionType(ArgType_Int32, {ArgType_General, ArgType_Int32});
+      *abiType = Args_Int32_GeneralInt32;
       MOZ_ASSERT(*abiType == ToABIType(SASigTableSize));
       return FuncCast(Instance::tableSize, *abiType);
     case SymbolicAddress::RefFunc:
-      *abiType = MakeABIFunctionType(ArgType_General,
-                                     {ArgType_General, ArgType_Int32});
+      *abiType = Args_General_GeneralInt32;
       MOZ_ASSERT(*abiType == ToABIType(SASigRefFunc));
       return FuncCast(Instance::refFunc, *abiType);
     case SymbolicAddress::PostBarrier:
-      *abiType = MakeABIFunctionType(ArgType_Int32,
-                                     {ArgType_General, ArgType_General});
+      *abiType = Args_Int32_GeneralGeneral;
       MOZ_ASSERT(*abiType == ToABIType(SASigPostBarrier));
       return FuncCast(Instance::postBarrier, *abiType);
     case SymbolicAddress::PreBarrierFiltering:
-      *abiType = MakeABIFunctionType(ArgType_Int32,
-                                     {ArgType_General, ArgType_General});
+      *abiType = Args_Int32_GeneralGeneral;
       MOZ_ASSERT(*abiType == ToABIType(SASigPreBarrierFiltering));
       return FuncCast(Instance::preBarrierFiltering, *abiType);
     case SymbolicAddress::PostBarrierFiltering:
-      *abiType = MakeABIFunctionType(ArgType_Int32,
-                                     {ArgType_General, ArgType_General});
+      *abiType = Args_Int32_GeneralGeneral;
       MOZ_ASSERT(*abiType == ToABIType(SASigPostBarrierFiltering));
       return FuncCast(Instance::postBarrierFiltering, *abiType);
     case SymbolicAddress::StructNew:
-      *abiType = MakeABIFunctionType(ArgType_General,
-                                     {ArgType_General, ArgType_General});
+      *abiType = Args_General2;
       MOZ_ASSERT(*abiType == ToABIType(SASigStructNew));
       return FuncCast(Instance::structNew, *abiType);
     case SymbolicAddress::ArrayNew:
-      *abiType = MakeABIFunctionType(
-          ArgType_General, {ArgType_General, ArgType_Int32, ArgType_General});
+      *abiType = Args_General_GeneralInt32General;
       MOZ_ASSERT(*abiType == ToABIType(SASigArrayNew));
       return FuncCast(Instance::arrayNew, *abiType);
     case SymbolicAddress::RefTest:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_General, ArgType_General});
+      *abiType = Args_Int32_GeneralGeneralGeneral;
       MOZ_ASSERT(*abiType == ToABIType(SASigRefTest));
       return FuncCast(Instance::refTest, *abiType);
     case SymbolicAddress::RttSub:
-      *abiType = MakeABIFunctionType(
-          ArgType_General, {ArgType_General, ArgType_General, ArgType_General});
+      *abiType = Args_General3;
       MOZ_ASSERT(*abiType == ToABIType(SASigRttSub));
       return FuncCast(Instance::rttSub, *abiType);
     case SymbolicAddress::InlineTypedObjectClass:
+      // The ABI type is not used here, but assigning one to avoid garbage.
+      *abiType = Args_General1;
       return (void*)&js::InlineTypedObject::class_;
 
 #if defined(ENABLE_WASM_EXCEPTIONS)
     case SymbolicAddress::ExceptionNew:
-      *abiType = MakeABIFunctionType(
-          ArgType_General, {ArgType_General, ArgType_Int32, ArgType_Int32});
+      *abiType = Args_General_GeneralInt32Int32;
       MOZ_ASSERT(*abiType == ToABIType(SASigExceptionNew));
       return FuncCast(Instance::exceptionNew, *abiType);
     case SymbolicAddress::ThrowException:
-      *abiType = MakeABIFunctionType(ArgType_General,
-                                     {ArgType_General, ArgType_General});
+      *abiType = Args_General2;
       MOZ_ASSERT(*abiType == ToABIType(SASigThrowException));
       return FuncCast(Instance::throwException, *abiType);
-    case SymbolicAddress::GetLocalExceptionIndex:
-      *abiType = MakeABIFunctionType(ArgType_Int32,
-                                     {ArgType_General, ArgType_General});
-      MOZ_ASSERT(*abiType == ToABIType(SASigGetLocalExceptionIndex));
-      return FuncCast(Instance::getLocalExceptionIndex, *abiType);
+    case SymbolicAddress::ConsumePendingException:
+      *abiType = Args_Int32_General;
+      MOZ_ASSERT(*abiType == ToABIType(SASigConsumePendingException));
+      return FuncCast(Instance::consumePendingException, *abiType);
     case SymbolicAddress::PushRefIntoExn:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32, {ArgType_General, ArgType_General, ArgType_General});
+      *abiType = Args_Int32_GeneralGeneralGeneral;
       MOZ_ASSERT(*abiType == ToABIType(SASigPushRefIntoExn));
       return FuncCast(Instance::pushRefIntoExn, *abiType);
 #endif
 
-#if defined(JS_CODEGEN_MIPS32)
-    case SymbolicAddress::js_jit_gAtomic64Lock:
-      return &js::jit::gAtomic64Lock;
-#endif
 #ifdef WASM_CODEGEN_DEBUG
     case SymbolicAddress::PrintI32:
       *abiType = Args_General1;
@@ -1327,9 +1277,6 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
     case SymbolicAddress::CoerceInPlace_ToBigInt:
     case SymbolicAddress::BoxValue_Anyref:
     case SymbolicAddress::InlineTypedObjectClass:
-#if defined(JS_CODEGEN_MIPS32)
-    case SymbolicAddress::js_jit_gAtomic64Lock:
-#endif
 #ifdef WASM_CODEGEN_DEBUG
     case SymbolicAddress::PrintI32:
     case SymbolicAddress::PrintPtr:
@@ -1404,7 +1351,7 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
 #ifdef ENABLE_WASM_EXCEPTIONS
     case SymbolicAddress::ExceptionNew:
     case SymbolicAddress::ThrowException:
-    case SymbolicAddress::GetLocalExceptionIndex:
+    case SymbolicAddress::ConsumePendingException:
     case SymbolicAddress::PushRefIntoExn:
 #endif
     case SymbolicAddress::ArrayNew:
@@ -1605,6 +1552,7 @@ bool wasm::EnsureBuiltinThunksInitialized() {
   LifoAlloc lifo(BUILTIN_THUNK_LIFO_SIZE);
   TempAllocator tempAlloc(&lifo);
   WasmMacroAssembler masm(tempAlloc);
+  AutoCreatedBy acb(masm, "wasm::EnsureBuiltinThunksInitialized");
 
   for (auto sym : MakeEnumeratedRange(SymbolicAddress::Limit)) {
     if (!NeedsBuiltinThunk(sym)) {

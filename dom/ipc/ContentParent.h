@@ -654,7 +654,7 @@ class ContentParent final
       uint64_t aGroupId, BrowsingContext::IPCInitializer&& aInit);
 
   mozilla::ipc::IPCResult RecvDiscardBrowsingContext(
-      const MaybeDiscarded<BrowsingContext>& aContext,
+      const MaybeDiscarded<BrowsingContext>& aContext, bool aDoDiscard,
       DiscardBrowsingContextResolver&& aResolve);
 
   mozilla::ipc::IPCResult RecvWindowClose(
@@ -1347,7 +1347,7 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvHistoryCommit(
       const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
       const nsID& aChangeID, const uint32_t& aLoadType, const bool& aPersist,
-      const bool& aCloneEntryChildren);
+      const bool& aCloneEntryChildren, const bool& aChannelExpired);
 
   mozilla::ipc::IPCResult RecvHistoryGo(
       const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,

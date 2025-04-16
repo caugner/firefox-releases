@@ -35,6 +35,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
   BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
+  BuiltInThemes: "resource:///modules/BuiltInThemes.jsm",
   ContextualIdentityService:
     "resource://gre/modules/ContextualIdentityService.jsm",
   Corroborate: "resource://gre/modules/Corroborate.jsm",
@@ -82,6 +83,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SearchSERPTelemetry: "resource:///modules/SearchSERPTelemetry.jsm",
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
+  ShortcutUtils: "resource://gre/modules/ShortcutUtils.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
   TabUnloader: "resource:///modules/TabUnloader.jsm",
   TelemetryUtils: "resource://gre/modules/TelemetryUtils.jsm",
@@ -122,6 +124,8 @@ XPCOMUtils.defineLazyServiceGetters(this, {
 });
 
 const PREF_PDFJS_ISDEFAULT_CACHE_STATE = "pdfjs.enabledCache.state";
+const PREF_DFPI_ENABLED_BY_DEFAULT =
+  "privacy.restrict3rdpartystorage.rollout.enabledByDefault";
 
 /**
  * Fission-compatible JSProcess implementations.
@@ -307,7 +311,9 @@ let JSWINDOWACTORS = {
       events: {
         DOMContentLoaded: {},
         pageshow: { mozSystemGroup: true },
-        pagehide: { mozSystemGroup: true },
+        // Don't try to create the actor if only the pagehide event fires.
+        // This can happen with the initial about:blank documents.
+        pagehide: { mozSystemGroup: true, createActor: false },
       },
     },
     messageManagerGroups: ["browsers"],
@@ -753,6 +759,7 @@ let JSWINDOWACTORS = {
   let startTime = Cu.now();
   if (
     AppConstants.platform == "macosx" ||
+    Services.startup.wasSilentlyStarted ||
     !Services.prefs.getBoolPref("browser.startup.blankWindow", false)
   ) {
     return;
@@ -1318,6 +1325,10 @@ BrowserGlue.prototype = {
       this._matchCBCategory
     );
     Services.prefs.removeObserver(
+      "privacy.partition.network_state.ocsp_cache",
+      this._matchCBCategory
+    );
+    Services.prefs.removeObserver(
       ContentBlockingCategoriesPrefs.PREF_CB_CATEGORY,
       this._updateCBCategory
     );
@@ -1328,6 +1339,10 @@ BrowserGlue.prototype = {
     Services.prefs.removeObserver(
       "browser.contentblocking.features.strict",
       this._setPrefExpectationsAndUpdate
+    );
+    Services.prefs.removeObserver(
+      PREF_DFPI_ENABLED_BY_DEFAULT,
+      this._setDefaultCookieBehavior
     );
   },
 
@@ -1361,53 +1376,7 @@ BrowserGlue.prototype = {
 
     SessionStore.init();
 
-    AddonManager.maybeInstallBuiltinAddon(
-      "firefox-compact-light@mozilla.org",
-      "1.2",
-      "resource://builtin-themes/light/"
-    );
-    AddonManager.maybeInstallBuiltinAddon(
-      "firefox-compact-dark@mozilla.org",
-      "1.2",
-      "resource://builtin-themes/dark/"
-    );
-
-    AddonManager.maybeInstallBuiltinAddon(
-      "firefox-alpenglow@mozilla.org",
-      "1.4",
-      "resource://builtin-themes/alpenglow/"
-    );
-
-    if (
-      AppConstants.NIGHTLY_BUILD &&
-      Services.prefs.getBoolPref(
-        "browser.theme.temporary.monochromatic.enabled",
-        false
-      )
-    ) {
-      // Temporarily install a prototype monochromatic theme for UX iteration.
-      // We uninstall it during shutdown so it does not persist if the pref is
-      // disabled.
-      const kMonochromaticThemeID = "firefox-monochromatic-purple@mozilla.org";
-      AddonManager.maybeInstallBuiltinAddon(
-        kMonochromaticThemeID,
-        "1.0",
-        "resource://builtin-themes/monochromatic-purple/"
-      );
-      AsyncShutdown.profileChangeTeardown.addBlocker(
-        "Uninstall Prototype Monochromatic Theme",
-        async () => {
-          try {
-            let addon = await AddonManager.getAddonByID(kMonochromaticThemeID);
-            await addon.uninstall();
-          } catch (e) {
-            Cu.reportError(
-              "Failed to uninstall firefox-monochromatic-purple on shutdown"
-            );
-          }
-        }
-      );
-    }
+    BuiltInThemes.maybeInstallActiveBuiltInTheme();
 
     if (AppConstants.MOZ_NORMANDY) {
       Normandy.init();
@@ -1557,10 +1526,12 @@ BrowserGlue.prototype = {
     ];
 
     win.gNotificationBox.appendNotification(
-      message,
       "reset-profile-notification",
-      "chrome://global/skin/icons/help.svg",
-      win.gNotificationBox.PRIORITY_INFO_LOW,
+      {
+        label: message,
+        image: "chrome://global/skin/icons/question-64.png",
+        priority: win.gNotificationBox.PRIORITY_INFO_LOW,
+      },
       buttons
     );
   },
@@ -1589,10 +1560,11 @@ BrowserGlue.prototype = {
     ];
 
     win.gNotificationBox.appendNotification(
-      message,
       "unsigned-addons-disabled",
-      "",
-      win.gNotificationBox.PRIORITY_WARNING_MEDIUM,
+      {
+        label: message,
+        priority: win.gNotificationBox.PRIORITY_WARNING_MEDIUM,
+      },
       buttons
     );
   },
@@ -1742,6 +1714,9 @@ BrowserGlue.prototype = {
     PlacesUtils.favicons.setDefaultIconURIPreferredSize(
       16 * aWindow.devicePixelRatio
     );
+    // _setDefaultCookieBehavior needs to run before other functions that modify
+    // privacy preferences such as _setPrefExpectationsAndUpdate and _matchCBCategory
+    this._setDefaultCookieBehavior();
     this._setPrefExpectationsAndUpdate();
     this._matchCBCategory();
 
@@ -1763,6 +1738,10 @@ BrowserGlue.prototype = {
       this._matchCBCategory
     );
     Services.prefs.addObserver(
+      "privacy.partition.network_state.ocsp_cache",
+      this._matchCBCategory
+    );
+    Services.prefs.addObserver(
       ContentBlockingCategoriesPrefs.PREF_CB_CATEGORY,
       this._updateCBCategory
     );
@@ -1778,6 +1757,10 @@ BrowserGlue.prototype = {
       "browser.contentblocking.features.strict",
       this._setPrefExpectationsAndUpdate
     );
+    Services.prefs.addObserver(
+      PREF_DFPI_ENABLED_BY_DEFAULT,
+      this._setDefaultCookieBehavior
+    );
   },
 
   _updateAutoplayPref() {
@@ -1789,6 +1772,20 @@ BrowserGlue.prototype = {
     if (blocked in labels) {
       telemetry.add(labels[blocked]);
     }
+  },
+
+  // For the initial rollout of dFPI, set the default cookieBehavior based on the pref
+  // set during onboarding when the user chooses to enable protections or not.
+  _setDefaultCookieBehavior() {
+    if (!Services.prefs.getBoolPref(PREF_DFPI_ENABLED_BY_DEFAULT, false)) {
+      return;
+    }
+
+    let defaultPrefs = Services.prefs.getDefaultBranch("");
+    defaultPrefs.setIntPref(
+      "network.cookie.cookieBehavior",
+      Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN
+    );
   },
 
   _setPrefExpectations() {
@@ -1944,44 +1941,57 @@ BrowserGlue.prototype = {
    * Application shutdown handler.
    */
   _onQuitApplicationGranted() {
-    // This pref must be set here because SessionStore will use its value
-    // on quit-application.
-    this._setPrefToSaveSession();
+    let tasks = [
+      // This pref must be set here because SessionStore will use its value
+      // on quit-application.
+      () => this._setPrefToSaveSession(),
 
-    // Call trackStartupCrashEnd here in case the delayed call on startup hasn't
-    // yet occurred (see trackStartupCrashEnd caller in browser.js).
-    try {
-      Services.startup.trackStartupCrashEnd();
-    } catch (e) {
-      Cu.reportError(
-        "Could not end startup crash tracking in quit-application-granted: " + e
-      );
-    }
+      // Call trackStartupCrashEnd here in case the delayed call on startup hasn't
+      // yet occurred (see trackStartupCrashEnd caller in browser.js).
+      () => Services.startup.trackStartupCrashEnd(),
 
-    if (this._bookmarksBackupIdleTime) {
-      this._userIdleService.removeIdleObserver(
-        this,
-        this._bookmarksBackupIdleTime
-      );
-      delete this._bookmarksBackupIdleTime;
-    }
+      () => {
+        if (this._bookmarksBackupIdleTime) {
+          this._userIdleService.removeIdleObserver(
+            this,
+            this._bookmarksBackupIdleTime
+          );
+          delete this._bookmarksBackupIdleTime;
+        }
+      },
 
-    for (let mod of Object.values(initializedModules)) {
-      if (mod.uninit) {
-        mod.uninit();
+      () => BrowserUsageTelemetry.uninit(),
+      () => SearchSERPTelemetry.uninit(),
+      () => Interactions.uninit(),
+      () => PageDataService.uninit(),
+      () => PageThumbs.uninit(),
+      () => NewTabUtils.uninit(),
+      () => Normandy.uninit(),
+      () => RFPHelper.uninit(),
+      () => ASRouterNewTabHook.destroy(),
+    ];
+
+    tasks.push(
+      ...Object.values(initializedModules)
+        .filter(m => m.uninit)
+        .map(m => () => m.uninit())
+    );
+
+    for (let task of tasks) {
+      try {
+        task();
+      } catch (ex) {
+        console.error(`Error during quit-application-granted: ${ex}`);
+        if (Cu.isInAutomation) {
+          // This usually happens after the test harness is done collecting
+          // test errors, thus we can't easily add a failure to it. The only
+          // noticeable solution we have is crashing.
+          Cc["@mozilla.org/xpcom/debug;1"]
+            .getService(Ci.nsIDebug2)
+            .abort(ex.filename, ex.lineNumber);
+        }
       }
     }
-
-    BrowserUsageTelemetry.uninit();
-    SearchSERPTelemetry.uninit();
-    Interactions.uninit();
-    PageDataService.uninit();
-    PageThumbs.uninit();
-    NewTabUtils.uninit();
-
-    Normandy.uninit();
-    RFPHelper.uninit();
-    ASRouterNewTabHook.destroy();
   },
 
   // Set up a listener to enable/disable the screenshots extension
@@ -2232,6 +2242,7 @@ BrowserGlue.prototype = {
     }
 
     Sanitizer.onStartup();
+    this._maybeShowRestoreSessionInfoBar();
     this._scheduleStartupIdleTasks();
     this._lateTasksIdleObserver = (idleService, topic, data) => {
       if (topic == "idle") {
@@ -2405,6 +2416,14 @@ BrowserGlue.prototype = {
             "os.environment.launch_method",
             classification
           );
+        },
+      },
+
+      // Install built-in themes. We already installed the active built-in
+      // theme, if any, before UI startup.
+      {
+        task: async () => {
+          await BuiltInThemes.ensureBuiltInThemes();
         },
       },
 
@@ -2812,6 +2831,11 @@ BrowserGlue.prototype = {
       return;
     }
 
+    // browser.warnOnQuit is a hidden global boolean to override all quit prompts.
+    if (!Services.prefs.getBoolPref("browser.warnOnQuit")) {
+      return;
+    }
+
     var windowcount = 0;
     var pagecount = 0;
     let pinnedcount = 0;
@@ -2830,7 +2854,21 @@ BrowserGlue.prototype = {
       }
     }
 
-    if (pagecount < 2) {
+    // No windows open so no need for a warning.
+    if (!windowcount) {
+      return;
+    }
+
+    // browser.warnOnQuitShortcut is checked when quitting using the shortcut key.
+    // The warning will appear even when only one window/tab is open. For other
+    // methods of quitting, the warning only appears when there is more than one
+    // window or tab open.
+    let shouldWarnForShortcut =
+      this._quitSource == "shortcut" &&
+      Services.prefs.getBoolPref("browser.warnOnQuitShortcut");
+    let shouldWarnForTabs =
+      pagecount >= 2 && Services.prefs.getBoolPref("browser.tabs.warnOnClose");
+    if (!shouldWarnForTabs && !shouldWarnForShortcut) {
       return;
     }
 
@@ -2838,83 +2876,68 @@ BrowserGlue.prototype = {
       aQuitType = "quit";
     }
 
-    // browser.warnOnQuit is a hidden global boolean to override all quit prompts
-    if (!Services.prefs.getBoolPref("browser.warnOnQuit")) {
-      return;
-    }
-
-    // If we're going to automatically restore the session, only warn if the user asked for that.
-    let sessionWillBeRestored =
-      Services.prefs.getIntPref("browser.startup.page") == 3 ||
-      Services.prefs.getBoolPref("browser.sessionstore.resume_session_once");
-    // In the sessionWillBeRestored case, we only check the sessionstore-specific pref:
-    if (sessionWillBeRestored) {
-      if (
-        !Services.prefs.getBoolPref("browser.sessionstore.warnOnQuit", false)
-      ) {
-        return;
-      }
-      // Otherwise, we check browser.tabs.warnOnClose
-    } else if (!Services.prefs.getBoolPref("browser.tabs.warnOnClose")) {
-      return;
-    }
-
     let win = BrowserWindowTracker.getTopWindow();
 
     // Our prompt for quitting is most important, so replace others.
     win.gDialogBox.replaceDialogIfOpen();
 
-    let warningMessage;
+    let title, buttonLabel;
     // More than 1 window. Compose our own message.
     if (windowcount > 1) {
-      let tabSubstring = gTabbrowserBundle.GetStringFromName(
-        "tabs.closeWarningMultipleWindowsTabSnippet"
-      );
-      tabSubstring = PluralForm.get(pagecount, tabSubstring).replace(
-        /#1/,
-        pagecount
-      );
+      title = gTabbrowserBundle.GetStringFromName("tabs.closeWindowsTitle");
+      title = PluralForm.get(windowcount, title).replace(/#1/, windowcount);
 
-      let stringID = sessionWillBeRestored
-        ? "tabs.closeWarningMultipleWindowsSessionRestore3"
-        : "tabs.closeWarningMultipleWindows2";
-      let windowString = gTabbrowserBundle.GetStringFromName(stringID);
-      windowString = PluralForm.get(windowcount, windowString).replace(
-        /#1/,
-        windowcount
+      buttonLabel =
+        AppConstants.platform == "win"
+          ? "tabs.closeWindowsButtonWin"
+          : "tabs.closeWindowsButton";
+      buttonLabel = gTabbrowserBundle.GetStringFromName(buttonLabel);
+    } else if (shouldWarnForShortcut) {
+      let productName = gBrandBundle.GetStringFromName("brandShorterName");
+      title = gTabbrowserBundle.formatStringFromName(
+        "tabs.closeTabsWithKeyTitle",
+        [productName]
       );
-      warningMessage = windowString.replace(/%(?:1\$)?S/i, tabSubstring);
+      buttonLabel = gTabbrowserBundle.formatStringFromName(
+        "tabs.closeTabsWithKeyButton",
+        [productName]
+      );
     } else {
-      let stringID = sessionWillBeRestored
-        ? "tabs.closeWarningMultipleTabsSessionRestore"
-        : "tabs.closeWarningMultipleTabs";
-      warningMessage = gTabbrowserBundle.GetStringFromName(stringID);
-      warningMessage = PluralForm.get(pagecount, warningMessage).replace(
-        "#1",
-        pagecount
+      title = gTabbrowserBundle.GetStringFromName("tabs.closeTabsTitle");
+      title = PluralForm.get(pagecount, title).replace("#1", pagecount);
+      buttonLabel = gTabbrowserBundle.GetStringFromName(
+        "tabs.closeButtonMultiple"
+      );
+    }
+
+    // The checkbox label is different depending on whether the shortcut
+    // was used to quit or not.
+    let checkboxLabel;
+    if (shouldWarnForShortcut) {
+      let quitKeyElement = win.document.getElementById("key_quitApplication");
+      let quitKey = ShortcutUtils.prettifyShortcut(quitKeyElement);
+
+      checkboxLabel = gTabbrowserBundle.formatStringFromName(
+        "tabs.closeTabsWithKeyConfirmCheckbox",
+        [quitKey]
+      );
+    } else {
+      checkboxLabel = gTabbrowserBundle.GetStringFromName(
+        "tabs.closeTabsConfirmCheckbox"
       );
     }
 
     let warnOnClose = { value: true };
-    let titleId =
-      AppConstants.platform == "win"
-        ? "tabs.closeTabsAndQuitTitleWin"
-        : "tabs.closeTabsAndQuitTitle";
     let flags =
       Services.prompt.BUTTON_TITLE_IS_STRING * Services.prompt.BUTTON_POS_0 +
       Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1;
-    // Only display the checkbox in the non-sessionrestore case.
-    let checkboxLabel = !sessionWillBeRestored
-      ? gTabbrowserBundle.GetStringFromName("tabs.closeWarningPrompt")
-      : null;
-
     // buttonPressed will be 0 for closing, 1 for cancel (don't close/quit)
     let buttonPressed = Services.prompt.confirmEx(
       win,
-      gTabbrowserBundle.GetStringFromName(titleId),
-      warningMessage,
+      title,
+      null,
       flags,
-      gTabbrowserBundle.GetStringFromName("tabs.closeButtonMultiple"),
+      buttonLabel,
       null,
       null,
       checkboxLabel,
@@ -2922,9 +2945,10 @@ BrowserGlue.prototype = {
     );
     Services.telemetry.setEventRecordingEnabled("close_tab_warning", true);
     let warnCheckbox = warnOnClose.value ? "checked" : "unchecked";
-    if (!checkboxLabel) {
-      warnCheckbox = "not-present";
-    }
+
+    let sessionWillBeRestored =
+      Services.prefs.getIntPref("browser.startup.page") == 3 ||
+      Services.prefs.getBoolPref("browser.sessionstore.resume_session_once");
     Services.telemetry.recordEvent(
       "close_tab_warning",
       "shown",
@@ -2940,13 +2964,18 @@ BrowserGlue.prototype = {
       }
     );
 
-    this._quitSource = "unknown";
-
     // If the user has unticked the box, and has confirmed closing, stop showing
     // the warning.
-    if (!sessionWillBeRestored && buttonPressed == 0 && !warnOnClose.value) {
-      Services.prefs.setBoolPref("browser.tabs.warnOnClose", false);
+    if (buttonPressed == 0 && !warnOnClose.value) {
+      if (shouldWarnForShortcut) {
+        Services.prefs.setBoolPref("browser.warnOnQuitShortcut", false);
+      } else {
+        Services.prefs.setBoolPref("browser.tabs.warnOnClose", false);
+      }
     }
+
+    this._quitSource = "unknown";
+
     aCancelQuit.data = buttonPressed != 0;
   },
 
@@ -3213,7 +3242,6 @@ BrowserGlue.prototype = {
     var placesBundle = Services.strings.createBundle(
       "chrome://browser/locale/places/places.properties"
     );
-    var title = placesBundle.GetStringFromName("lockPrompt.title");
     var text = placesBundle.formatStringFromName("lockPrompt.text", [
       applicationName,
     ]);
@@ -3223,10 +3251,11 @@ BrowserGlue.prototype = {
 
     var notifyBox = win.gBrowser.getNotificationBox();
     var notification = notifyBox.appendNotification(
-      text,
-      title,
-      null,
-      notifyBox.PRIORITY_CRITICAL_MEDIUM,
+      "places-locked",
+      {
+        label: text,
+        priority: win.gNotificationBox.PRIORITY_CRITICAL_MEDIUM,
+      },
       buttons
     );
     notification.persistence = -1; // Until user closes it
@@ -3270,7 +3299,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 117;
+    const UI_VERSION = 119;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3898,6 +3927,50 @@ BrowserGlue.prototype = {
       UrlbarPrefs.migrateResultBuckets();
     }
 
+    if (currentUIVersion < 119 && AppConstants.NIGHTLY_BUILD) {
+      // Uninstall outdated monochromatic themes for the following UI versions:
+      // 118: Uninstall prototype monochromatic purple theme.
+      // 119 (bug 1732957): Uninstall themes with old IDs.
+      const themeIdsToMigrate = [
+        "firefox-monochromatic-purple@mozilla.org",
+        "firefox-lush-soft@mozilla.org",
+        "firefox-lush-balanced@mozilla.org",
+        "firefox-lush-bold@mozilla.org",
+        "firefox-abstract-soft@mozilla.org",
+        "firefox-abstract-balanced@mozilla.org",
+        "firefox-abstract-bold@mozilla.org",
+        "firefox-elemental-soft@mozilla.org",
+        "firefox-elemental-balanced@mozilla.org",
+        "firefox-elemental-bold@mozilla.org",
+        "firefox-cheers-soft@mozilla.org",
+        "firefox-cheers-balanced@mozilla.org",
+        "firefox-cheers-bold@mozilla.org",
+        "firefox-graffiti-soft@mozilla.org",
+        "firefox-graffiti-balanced@mozilla.org",
+        "firefox-graffiti-bold@mozilla.org",
+        "firefox-foto-soft@mozilla.org",
+        "firefox-foto-balanced@mozilla.org",
+        "firefox-foto-bold@mozilla.org",
+      ];
+      try {
+        for (let id of themeIdsToMigrate) {
+          AddonManager.getAddonByID(id).then(addon => {
+            if (!addon) {
+              // Either the addon wasn't installed, or the call to getAddonByID failed.
+              return;
+            }
+            addon.uninstall().catch(Cu.reportError);
+          }, Cu.reportError);
+        }
+      } catch (error) {
+        Cu.reportError(
+          "Could not access the AddonManager to upgrade the profile. This is most " +
+            "likely because the upgrader is being run from an xpcshell test where " +
+            "the AddonManager is not initialized."
+        );
+      }
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -3911,12 +3984,9 @@ BrowserGlue.prototype = {
   async _maybeShowDefaultBrowserPrompt() {
     // Highest priority is the upgrade dialog, which can include a "primary
     // browser" request and is limited in various ways, e.g., major upgrades.
-    const dialogVersion = 89;
+    const dialogVersion = 94;
     const dialogVersionPref = "browser.startup.upgradeDialog.version";
     const dialogReason = await (async () => {
-      if (!Services.prefs.getBoolPref("browser.proton.enabled", true)) {
-        return "no-proton";
-      }
       if (!BrowserHandler.majorUpgrade) {
         return "not-major";
       }
@@ -3960,6 +4030,10 @@ BrowserGlue.prototype = {
     // Show the upgrade dialog if allowed and remember the version.
     if (!dialogReason) {
       Services.prefs.setIntPref(dialogVersionPref, dialogVersion);
+
+      // Show Firefox Home behind the upgrade dialog to see theme changes.
+      const { gBrowser } = BrowserWindowTracker.getTopWindow();
+      gBrowser.selectedTab = gBrowser.addTrustedTab("about:home");
       this._showUpgradeDialog();
       return;
     }
@@ -3978,6 +4052,77 @@ BrowserGlue.prototype = {
       id: "defaultBrowserCheck",
       context: { willShowDefaultPrompt: willPrompt, source: "startup" },
     });
+  },
+
+  /**
+   * Only show the infobar when canRestoreLastSession and the pref value == 1
+   */
+  async _maybeShowRestoreSessionInfoBar() {
+    let count = Services.prefs.getIntPref(
+      "browser.startup.couldRestoreSession.count",
+      0
+    );
+    if (count < 0 || count >= 2) {
+      return;
+    }
+    if (count == 0) {
+      // We don't show the infobar right after the update which establishes this pref
+      // Increment the counter so we can consider it next time
+      Services.prefs.setIntPref(
+        "browser.startup.couldRestoreSession.count",
+        ++count
+      );
+      return;
+    }
+
+    // We've restarted at least once; we will show the notification if possible:
+    if (!SessionStore.canRestoreLastSession) {
+      return;
+    }
+
+    Services.prefs.setIntPref(
+      "browser.startup.couldRestoreSession.count",
+      ++count
+    );
+
+    const win = BrowserWindowTracker.getTopWindow();
+    const messageFragment = win.document.createDocumentFragment();
+    const message = win.document.createElement("span");
+    const icon = win.document.createElement("img");
+    icon.src = "chrome://browser/skin/menu.svg";
+    icon.setAttribute("data-l10n-name", "icon");
+    icon.className = "inline-icon";
+    message.appendChild(icon);
+    messageFragment.appendChild(message);
+    win.document.l10n.setAttributes(
+      message,
+      "restore-session-startup-suggestion-message"
+    );
+
+    const buttons = [
+      {
+        "l10n-id": "restore-session-startup-suggestion-button",
+        primary: true,
+        callback: () => {
+          win.PanelUI.selectAndMarkItem([
+            "appMenu-history-button",
+            "appMenu-restoreSession",
+          ]);
+        },
+      },
+    ];
+
+    const notifyBox = win.gBrowser.getNotificationBox();
+    const notification = notifyBox.appendNotification(
+      "startup-restore-session-suggestion",
+      {
+        label: messageFragment,
+        priority: notifyBox.PRIORITY_INFO_MEDIUM,
+      },
+      buttons
+    );
+    // Don't allow it to be immediately hidden:
+    notification.timeout = Date.now() + 3000;
   },
 
   /**
@@ -4273,10 +4418,11 @@ BrowserGlue.prototype = {
 
     // XXXndeakin is this notification still relevant?
     win.gNotificationBox.appendNotification(
-      message,
       "flash-hang",
-      null,
-      win.gNotificationBox.PRIORITY_INFO_MEDIUM,
+      {
+        label: message,
+        priority: win.gNotificationBox.PRIORITY_INFO_MEDIUM,
+      },
       buttons
     );
   },
@@ -4336,6 +4482,7 @@ var ContentBlockingCategoriesPrefs = {
         "privacy.trackingprotection.cryptomining.enabled": null,
         "privacy.annotate_channels.strict_list.enabled": null,
         "network.http.referer.disallowCrossSiteRelaxingDefault": null,
+        "privacy.partition.network_state.ocsp_cache": null,
       },
       standard: {
         "network.cookie.cookieBehavior": null,
@@ -4347,6 +4494,7 @@ var ContentBlockingCategoriesPrefs = {
         "privacy.trackingprotection.cryptomining.enabled": null,
         "privacy.annotate_channels.strict_list.enabled": null,
         "network.http.referer.disallowCrossSiteRelaxingDefault": null,
+        "privacy.partition.network_state.ocsp_cache": null,
       },
     };
     let type = "strict";
@@ -4423,6 +4571,16 @@ var ContentBlockingCategoriesPrefs = {
         case "-rp":
           this.CATEGORY_PREFS[type][
             "network.http.referer.disallowCrossSiteRelaxingDefault"
+          ] = false;
+          break;
+        case "ocsp":
+          this.CATEGORY_PREFS[type][
+            "privacy.partition.network_state.ocsp_cache"
+          ] = true;
+          break;
+        case "-ocsp":
+          this.CATEGORY_PREFS[type][
+            "privacy.partition.network_state.ocsp_cache"
           ] = false;
           break;
         case "cookieBehavior0":

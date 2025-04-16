@@ -496,6 +496,11 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I64x2ExtMulLowUI32x4:
         case SimdOp::I64x2ExtMulHighUI32x4:
         case SimdOp::I16x8Q15MulrSatS:
+        case SimdOp::F32x4RelaxedMin:
+        case SimdOp::F32x4RelaxedMax:
+        case SimdOp::F64x2RelaxedMin:
+        case SimdOp::F64x2RelaxedMax:
+        case SimdOp::V8x16RelaxedSwizzle:
           WASM_SIMD_OP(OpKind::Binary);
         case SimdOp::I8x16Neg:
         case SimdOp::I16x8Neg:
@@ -547,6 +552,10 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I16x8ExtAddPairwiseI8x16U:
         case SimdOp::I32x4ExtAddPairwiseI16x8S:
         case SimdOp::I32x4ExtAddPairwiseI16x8U:
+        case SimdOp::I32x4RelaxedTruncSSatF32x4:
+        case SimdOp::I32x4RelaxedTruncUSatF32x4:
+        case SimdOp::I32x4RelaxedTruncSatF64x2SZero:
+        case SimdOp::I32x4RelaxedTruncSatF64x2UZero:
           WASM_SIMD_OP(OpKind::Unary);
         case SimdOp::I8x16Shl:
         case SimdOp::I8x16ShrS:

@@ -360,8 +360,8 @@ nsDOMWindowUtils::UpdateLayerTree() {
     RefPtr<nsViewManager> vm = presShell->GetViewManager();
     if (nsView* view = vm->GetRootView()) {
       nsAutoScriptBlocker scriptBlocker;
-      presShell->Paint(view, view->GetBounds(),
-                       PaintFlags::PaintSyncDecodeImages);
+      presShell->PaintAndRequestComposite(view,
+                                          PaintFlags::PaintSyncDecodeImages);
       presShell->GetWindowRenderer()->WaitOnTransactionProcessed();
     }
   }
@@ -1123,7 +1123,8 @@ nsDOMWindowUtils::SendNativePenInput(uint32_t aPointerId,
                                      uint32_t aPointerState, int32_t aScreenX,
                                      int32_t aScreenY, double aPressure,
                                      uint32_t aRotation, int32_t aTiltX,
-                                     int32_t aTiltY, nsIObserver* aObserver) {
+                                     int32_t aTiltY, int32_t aButton,
+                                     nsIObserver* aObserver) {
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
     return NS_ERROR_FAILURE;
@@ -1137,12 +1138,12 @@ nsDOMWindowUtils::SendNativePenInput(uint32_t aPointerId,
   NS_DispatchToMainThread(NativeInputRunnable::Create(
       NewRunnableMethod<uint32_t, nsIWidget::TouchPointerState,
                         LayoutDeviceIntPoint, double, uint32_t, int32_t,
-                        int32_t, nsIObserver*>(
+                        int32_t, int32_t, nsIObserver*>(
           "nsIWidget::SynthesizeNativePenInput", widget,
           &nsIWidget::SynthesizeNativePenInput, aPointerId,
           (nsIWidget::TouchPointerState)aPointerState,
           LayoutDeviceIntPoint(aScreenX, aScreenY), aPressure, aRotation,
-          aTiltX, aTiltY, aObserver)));
+          aTiltX, aTiltY, aButton, aObserver)));
   return NS_OK;
 }
 
@@ -1634,13 +1635,13 @@ nsDOMWindowUtils::DisableNonTestMouseEvents(bool aDisable) {
 
 NS_IMETHODIMP
 nsDOMWindowUtils::SuppressEventHandling(bool aSuppress) {
-  nsCOMPtr<Document> doc = GetDocument();
-  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
 
   if (aSuppress) {
-    doc->SuppressEventHandling();
+    window->SuppressEventHandling();
   } else {
-    doc->UnsuppressEventHandlingAndFireEvents(true);
+    window->UnsuppressEventHandling();
   }
 
   return NS_OK;
@@ -3955,39 +3956,6 @@ nsDOMWindowUtils::GetOMTAStyle(Element* aElement, const nsAString& aProperty,
     return rv.StealNSResult();
   }
   aResult.Truncate();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMWindowUtils::GetOMTCTransform(Element* aElement,
-                                   const nsAString& aPseudoElement,
-                                   nsAString& aResult) {
-  if (!aElement) {
-    return NS_ERROR_INVALID_ARG;
-  }
-
-  if (GetWebRenderBridge()) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-
-  auto frameOrError = GetTargetFrame(aElement, aPseudoElement);
-  if (frameOrError.isErr()) {
-    return frameOrError.unwrapErr();
-  }
-
-  nsIFrame* frame = frameOrError.unwrap();
-  aResult.Truncate();
-  if (!frame) {
-    return NS_OK;
-  }
-
-  DisplayItemType itemType = DisplayItemType::TYPE_TRANSFORM;
-  if (nsLayoutUtils::HasEffectiveAnimation(
-          frame, nsCSSPropertyIDSet::OpacityProperties()) &&
-      !frame->IsTransformed()) {
-    itemType = DisplayItemType::TYPE_OPACITY;
-  }
-
   return NS_OK;
 }
 

@@ -1101,18 +1101,24 @@ class MacroAssembler : public MacroAssemblerSpecific {
   // Perform an integer division, returning the integer part rounded toward
   // zero. rhs must not be zero, and the division must not overflow.
   //
-  // On x86_shared, srcDest must be eax and edx will be clobbered.
   // On ARM, the chip must have hardware division instructions.
-  inline void quotient32(Register rhs, Register srcDest,
-                         bool isUnsigned) PER_SHARED_ARCH;
+  inline void quotient32(Register rhs, Register srcDest, bool isUnsigned)
+      DEFINED_ON(mips_shared, arm, arm64);
+
+  // As above, but srcDest must be eax and tempEdx must be edx.
+  inline void quotient32(Register rhs, Register srcDest, Register tempEdx,
+                         bool isUnsigned) DEFINED_ON(x86_shared);
 
   // Perform an integer division, returning the remainder part.
   // rhs must not be zero, and the division must not overflow.
   //
-  // On x86_shared, srcDest must be eax and edx will be clobbered.
   // On ARM, the chip must have hardware division instructions.
-  inline void remainder32(Register rhs, Register srcDest,
-                          bool isUnsigned) PER_SHARED_ARCH;
+  inline void remainder32(Register rhs, Register srcDest, bool isUnsigned)
+      DEFINED_ON(mips_shared, arm, arm64);
+
+  // As above, but srcDest must be eax and tempEdx must be edx.
+  inline void remainder32(Register rhs, Register srcDest, Register tempEdx,
+                          bool isUnsigned) DEFINED_ON(x86_shared);
 
   // Perform an integer division, returning the integer part rounded toward
   // zero. rhs must not be zero, and the division must not overflow.
@@ -2328,6 +2334,12 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void swizzleInt8x16(FloatRegister lhs, FloatRegister rhs,
                              FloatRegister dest) DEFINED_ON(arm64);
 
+  inline void swizzleInt8x16Relaxed(FloatRegister rhs, FloatRegister lhsDest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void swizzleInt8x16Relaxed(FloatRegister lhs, FloatRegister rhs,
+                                    FloatRegister dest) DEFINED_ON(arm64);
+
   // Integer Add
 
   inline void addInt8x16(FloatRegister rhs, FloatRegister lhsDest)
@@ -3304,6 +3316,22 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                                  FloatRegister temp)
       DEFINED_ON(x86_shared, arm64);
 
+  inline void truncSatFloat32x4ToInt32x4Relaxed(FloatRegister src,
+                                                FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void unsignedTruncSatFloat32x4ToInt32x4Relaxed(FloatRegister src,
+                                                        FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void truncSatFloat64x2ToInt32x4Relaxed(FloatRegister src,
+                                                FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void unsignedTruncSatFloat64x2ToInt32x4Relaxed(FloatRegister src,
+                                                        FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
+
   // Floating point narrowing
 
   inline void convertFloat64x2ToFloat32x4(FloatRegister src, FloatRegister dest)
@@ -3478,6 +3506,30 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   inline void fmsFloat64x2(FloatRegister src1, FloatRegister src2,
                            FloatRegister srcDest) DEFINED_ON(x86_shared, arm64);
+
+  inline void minFloat32x4Relaxed(FloatRegister src, FloatRegister srcDest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void minFloat32x4Relaxed(FloatRegister lhs, FloatRegister rhs,
+                                  FloatRegister dest) DEFINED_ON(arm64);
+
+  inline void maxFloat32x4Relaxed(FloatRegister src, FloatRegister srcDest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void maxFloat32x4Relaxed(FloatRegister lhs, FloatRegister rhs,
+                                  FloatRegister dest) DEFINED_ON(arm64);
+
+  inline void minFloat64x2Relaxed(FloatRegister src, FloatRegister srcDest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void minFloat64x2Relaxed(FloatRegister lhs, FloatRegister rhs,
+                                  FloatRegister dest) DEFINED_ON(arm64);
+
+  inline void maxFloat64x2Relaxed(FloatRegister src, FloatRegister srcDest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void maxFloat64x2Relaxed(FloatRegister lhs, FloatRegister rhs,
+                                  FloatRegister dest) DEFINED_ON(arm64);
 
  public:
   // ========================================================================
@@ -4647,6 +4699,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void debugAssertIsObject(const ValueOperand& val);
   void debugAssertObjHasFixedSlots(Register obj, Register scratch);
 
+  void debugAssertObjectHasClass(Register obj, Register scratch,
+                                 const JSClass* clasp);
+
   void branchArrayIsNotPacked(Register array, Register temp1, Register temp2,
                               Label* label);
 
@@ -5330,7 +5385,7 @@ inline DynFn JitPreWriteBarrier(MIRType type);
 
 namespace wasm {
 const TlsData* ExtractCalleeTlsFromFrameWithTls(const Frame* fp);
-const TlsData* ExtractCallerTlsFromFrameWithTls(const Frame* fp);
+TlsData* ExtractCallerTlsFromFrameWithTls(Frame* fp);
 }  // namespace wasm
 
 }  // namespace js

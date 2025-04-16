@@ -255,6 +255,10 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["browser.search.widget.inNavBar", { what: RECORD_DEFAULTPREF_VALUE }],
   ["browser.startup.homepage", { what: RECORD_PREF_STATE }],
   ["browser.startup.page", { what: RECORD_PREF_VALUE }],
+  [
+    "browser.urlbar.quicksuggest.onboardingDialogChoice",
+    { what: RECORD_DEFAULTPREF_VALUE },
+  ],
   ["browser.urlbar.showSearchSuggestionsFirst", { what: RECORD_PREF_VALUE }],
   ["browser.urlbar.suggest.quicksuggest", { what: RECORD_DEFAULTPREF_VALUE }],
   [
@@ -300,7 +304,6 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["layers.async-pan-zoom.enabled", { what: RECORD_PREF_VALUE }],
   ["layers.async-video-oop.enabled", { what: RECORD_PREF_VALUE }],
   ["layers.async-video.enabled", { what: RECORD_PREF_VALUE }],
-  ["layers.componentalpha.enabled", { what: RECORD_PREF_VALUE }],
   ["layers.d3d11.disable-warp", { what: RECORD_PREF_VALUE }],
   ["layers.d3d11.force-warp", { what: RECORD_PREF_VALUE }],
   [

@@ -60,7 +60,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   ExtensionTelemetry: "resource://gre/modules/ExtensionTelemetry.jsm",
   LightweightThemeManager: "resource://gre/modules/LightweightThemeManager.jsm",
   Log: "resource://gre/modules/Log.jsm",
-  MessageChannel: "resource://gre/modules/MessageChannel.jsm",
   NetUtil: "resource://gre/modules/NetUtil.jsm",
   OS: "resource://gre/modules/osfile.jsm",
   PluralForm: "resource://gre/modules/PluralForm.jsm",
@@ -99,7 +98,6 @@ XPCOMUtils.defineLazyServiceGetters(this, {
     "amIAddonManagerStartup",
   ],
   spellCheck: ["@mozilla.org/spellchecker/engine;1", "mozISpellCheckingEngine"],
-  uuidGen: ["@mozilla.org/uuid-generator;1", "nsIUUIDGenerator"],
 });
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -311,7 +309,7 @@ var UUIDMap = {
 
     let uuid = null;
     if (create) {
-      uuid = uuidGen.generateUUID().number;
+      uuid = Services.uuid.generateUUID().number;
       uuid = uuid.slice(1, -1); // Strip { and } off the UUID.
 
       map[id] = uuid;
@@ -2887,8 +2885,6 @@ class Extension extends ExtensionData {
       );
     }
 
-    MessageChannel.abortResponses({ extensionId: this.id });
-
     this.policy.active = false;
 
     this.state = `Shutdown: Complete (${this.cleanupFile})`;
@@ -3003,6 +2999,7 @@ class Langpack extends ExtensionData {
       const [sourceName, basePath] = entry;
       return new L10nFileSource(
         `${sourceName}-${langpackId}`,
+        langpackId,
         this.startupData.languages,
         `resource://${langpackId}/${basePath}localization/{locale}/`
       );

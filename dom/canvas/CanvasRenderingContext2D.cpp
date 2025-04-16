@@ -3647,6 +3647,8 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor
     }
     gfxTextRun::DrawParams params(thebes);
 
+    params.allowGDI = false;
+
     const ContextState* state = &mCtx->CurrentState();
     if (state->StyleIsColor(style)) {  // Color
       nscolor fontColor = state->colorStyles[style];
@@ -3700,6 +3702,8 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor
 
   // current text run
   RefPtr<gfxTextRun> mTextRun;
+
+  RefPtr<nsPresContext> mPresContext;
 
   // pointer to a screen reference context used to measure text and such
   RefPtr<DrawTarget> mDrawTarget;
@@ -3833,6 +3837,8 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
   }
 
   CanvasBidiProcessor processor;
+
+  processor.mPresContext = presContext;
 
   // If we don't have a ComputedStyle, we can't set up vertical-text flags
   // (for now, at least; perhaps we need new Canvas API to control this).
@@ -4032,9 +4038,9 @@ gfxFontGroup* CanvasRenderingContext2D::GetCurrentFontStyle() {
   // Use lazy (re)initialization for the fontGroup since it's rather expensive.
 
   RefPtr<PresShell> presShell = GetPresShell();
+  nsPresContext* pc = presShell ? presShell->GetPresContext() : nullptr;
   gfxTextPerfMetrics* tp = nullptr;
-  if (presShell && !presShell->IsDestroying()) {
-    nsPresContext* pc = presShell->GetPresContext();
+  if (pc) {
     tp = pc->GetTextPerfMetrics();
   }
 
@@ -4070,7 +4076,7 @@ gfxFontGroup* CanvasRenderingContext2D::GetCurrentFontStyle() {
       const auto* sans =
           Servo_FontFamily_Generic(StyleGenericFontFamily::SansSerif);
       fontGroup = gfxPlatform::GetPlatform()->CreateFontGroup(
-          sans->families, &style, language, explicitLanguage, tp, nullptr,
+          pc, sans->families, &style, language, explicitLanguage, tp, nullptr,
           devToCssSize);
       if (fontGroup) {
         CurrentState().font = kDefaultFontStyle;
@@ -5364,49 +5370,6 @@ void CanvasRenderingContext2D::OnBeforePaintTransaction() {
 
 void CanvasRenderingContext2D::OnDidPaintTransaction() { MarkContextClean(); }
 
-already_AddRefed<Layer> CanvasRenderingContext2D::GetCanvasLayer(
-    nsDisplayListBuilder* aBuilder, Layer* aOldLayer, LayerManager* aManager) {
-  if (mOpaque) {
-    // If we're opaque then make sure we have a surface so we paint black
-    // instead of transparent.
-    EnsureTarget();
-  }
-
-  // Don't call EnsureTarget() ... if there isn't already a surface, then
-  // we have nothing to paint and there is no need to create a surface just
-  // to paint nothing. Also, EnsureTarget() can cause creation of a persistent
-  // layer manager which must NOT happen during a paint.
-  if (!mBufferProvider && !IsTargetValid()) {
-    // No DidTransactionCallback will be received, so mark the context clean
-    // now so future invalidations will be dispatched.
-    MarkContextClean();
-    return nullptr;
-  }
-
-  if (!mResetLayer && aOldLayer) {
-    RefPtr<Layer> ret = aOldLayer;
-    return ret.forget();
-  }
-
-  RefPtr<CanvasLayer> canvasLayer = aManager->CreateCanvasLayer();
-  if (!canvasLayer) {
-    NS_WARNING("CreateCanvasLayer returned null!");
-    // No DidTransactionCallback will be received, so mark the context clean
-    // now so future invalidations will be dispatched.
-    MarkContextClean();
-    return nullptr;
-  }
-
-  const auto canvasRenderer = canvasLayer->CreateOrGetCanvasRenderer();
-  InitializeCanvasRenderer(aBuilder, canvasRenderer);
-  uint32_t flags = mOpaque ? Layer::CONTENT_OPAQUE : 0;
-  canvasLayer->SetContentFlags(flags);
-
-  mResetLayer = false;
-
-  return canvasLayer.forget();
-}
-
 bool CanvasRenderingContext2D::UpdateWebRenderCanvasData(
     nsDisplayListBuilder* aBuilder, WebRenderCanvasData* aCanvasData) {
   if (mOpaque) {
@@ -5489,11 +5452,6 @@ void CanvasRenderingContext2D::MarkContextCleanForFrameCapture() {
 
 bool CanvasRenderingContext2D::IsContextCleanForFrameCapture() {
   return !mIsCapturedFrameInvalid;
-}
-
-bool CanvasRenderingContext2D::ShouldForceInactiveLayer(
-    LayerManager* aManager) {
-  return !aManager->CanUseCanvasLayerForSize(GetSize());
 }
 
 void CanvasRenderingContext2D::GetAppUnitsValues(int32_t* aPerDevPixel,

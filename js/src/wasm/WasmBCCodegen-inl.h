@@ -51,6 +51,12 @@ void BaseCompiler::moveRef(RegRef src, RegRef dest) {
   }
 }
 
+void BaseCompiler::movePtr(RegPtr src, RegPtr dest) {
+  if (src != dest) {
+    masm.movePtr(src, dest);
+  }
+}
+
 void BaseCompiler::moveF64(RegF64 src, RegF64 dest) {
   if (src != dest) {
     masm.moveDouble(src, dest);
@@ -68,6 +74,43 @@ void BaseCompiler::moveV128(RegV128 src, RegV128 dest) {
   if (src != dest) {
     masm.moveSimd128(src, dest);
   }
+}
+#endif
+
+template <>
+inline void BaseCompiler::move<RegI32>(RegI32 src, RegI32 dest) {
+  moveI32(src, dest);
+}
+
+template <>
+inline void BaseCompiler::move<RegI64>(RegI64 src, RegI64 dest) {
+  moveI64(src, dest);
+}
+
+template <>
+inline void BaseCompiler::move<RegF32>(RegF32 src, RegF32 dest) {
+  moveF32(src, dest);
+}
+
+template <>
+inline void BaseCompiler::move<RegF64>(RegF64 src, RegF64 dest) {
+  moveF64(src, dest);
+}
+
+template <>
+inline void BaseCompiler::move<RegRef>(RegRef src, RegRef dest) {
+  moveRef(src, dest);
+}
+
+template <>
+inline void BaseCompiler::move<RegPtr>(RegPtr src, RegPtr dest) {
+  movePtr(src, dest);
+}
+
+#ifdef ENABLE_WASM_SIMD
+template <>
+inline void BaseCompiler::move<RegV128>(RegV128 src, RegV128 dest) {
+  moveV128(src, dest);
 }
 #endif
 
@@ -160,8 +203,6 @@ void BaseCompiler::cmp64Set(Assembler::Condition cond, RegI64 lhs, RegI64 rhs,
                             RegI32 dest) {
 #if defined(JS_PUNBOX64)
   masm.cmpPtrSet(cond, lhs.reg, rhs.reg, dest);
-#elif defined(JS_CODEGEN_MIPS32)
-  masm.cmp64Set(cond, lhs, rhs, dest);
 #else
   // TODO / OPTIMIZE (Bug 1316822): This is pretty branchy, we should be
   // able to do better.

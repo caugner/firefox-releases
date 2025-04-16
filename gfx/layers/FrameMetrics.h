@@ -11,6 +11,7 @@
 #include <iosfwd>
 
 #include "Units.h"                  // for CSSRect, CSSPixel, etc
+#include "UnitTransforms.h"         // for ViewAs
 #include "mozilla/DefineEnum.h"     // for MOZ_DEFINE_ENUM
 #include "mozilla/HashFunctions.h"  // for HashGeneric
 #include "mozilla/Maybe.h"
@@ -95,7 +96,7 @@ struct FrameMetrics {
         mBoundingCompositionSize(0, 0),
         mPresShellId(-1),
         mLayoutViewport(0, 0, 0, 0),
-        mExtraResolution(),
+        mTransformToAncestorScale(),
         mPaintRequestTime(),
         mVisualDestination(0, 0),
         mVisualScrollUpdateType(eNone),
@@ -125,7 +126,7 @@ struct FrameMetrics {
            mBoundingCompositionSize == aOther.mBoundingCompositionSize &&
            mPresShellId == aOther.mPresShellId &&
            mLayoutViewport.IsEqualEdges(aOther.mLayoutViewport) &&
-           mExtraResolution == aOther.mExtraResolution &&
+           mTransformToAncestorScale == aOther.mTransformToAncestorScale &&
            mPaintRequestTime == aOther.mPaintRequestTime &&
            mVisualDestination == aOther.mVisualDestination &&
            mVisualScrollUpdateType == aOther.mVisualScrollUpdateType &&
@@ -148,14 +149,19 @@ struct FrameMetrics {
   }
 
   CSSToScreenScale2D DisplayportPixelsPerCSSPixel() const {
-    // Note: use 'mZoom * ParentLayerToLayerScale(1.0f)' as the CSS-to-Layer
-    // scale instead of LayersPixelsPerCSSPixel(), because displayport
-    // calculations are done in the context of a repaint request, where we ask
-    // Layout to repaint at a new resolution that includes any async zoom. Until
-    // this repaint request is processed, LayersPixelsPerCSSPixel() does not yet
-    // include the async zoom, but it will when the displayport is interpreted
-    // for the repaint.
-    return mZoom * ParentLayerToLayerScale(1.0f) / mExtraResolution;
+    // Note: mZoom includes the async zoom. We want to include the async zoom
+    // even though the size of the pixels of our *current* displayport does not
+    // yet reflect it, because this function is used in the context of a repaint
+    // request where we'll be asking for a *new* displayport which does reflect
+    // the async zoom. Note 2: we include the transform to ancestor scale
+    // because this function (as the name implies) is used only in various
+    // displayport calculation related places, and those calculations want the
+    // transform to ancestor scale to be included becaese they want to reason
+    // about pixels which are the same size as screen pixels (so displayport
+    // sizes are e.g. limited to a multiple of the screen size). Whereas mZoom
+    // and mCumulativeResolution do not include it because of expectations of
+    // the code where they are used.
+    return mZoom * mTransformToAncestorScale;
   }
 
   CSSToLayerScale2D LayersPixelsPerCSSPixel() const {
@@ -389,12 +395,13 @@ struct FrameMetrics {
                    CalculateCompositedSizeInCssPixels());
   }
 
-  void SetExtraResolution(const ScreenToLayerScale2D& aExtraResolution) {
-    mExtraResolution = aExtraResolution;
+  void SetTransformToAncestorScale(
+      const ParentLayerToScreenScale2D& aTransformToAncestorScale) {
+    mTransformToAncestorScale = aTransformToAncestorScale;
   }
 
-  const ScreenToLayerScale2D& GetExtraResolution() const {
-    return mExtraResolution;
+  const ParentLayerToScreenScale2D& GetTransformToAncestorScale() const {
+    return mTransformToAncestorScale;
   }
 
   const CSSRect& GetScrollableRect() const { return mScrollableRect; }
@@ -625,9 +632,8 @@ struct FrameMetrics {
   // invalid.
   CSSRect mLayoutViewport;
 
-  // The extra resolution at which content in this scroll frame is drawn beyond
-  // that necessary to draw one Layer pixel per Screen pixel.
-  ScreenToLayerScale2D mExtraResolution;
+  // The scale on this scroll frame induced by enclosing CSS transforms.
+  ParentLayerToScreenScale2D mTransformToAncestorScale;
 
   // The time at which the APZC last requested a repaint for this scroll frame.
   TimeStamp mPaintRequestTime;
@@ -772,44 +778,6 @@ struct OverscrollBehaviorInfo {
 };
 
 /**
- * A clip that applies to a layer, that may be scrolled by some of the
- * scroll frames associated with the layer.
- */
-struct LayerClip {
-  friend struct IPC::ParamTraits<mozilla::layers::LayerClip>;
-
- public:
-  LayerClip() : mClipRect(), mMaskLayerIndex() {}
-
-  explicit LayerClip(const ParentLayerIntRect& aClipRect)
-      : mClipRect(aClipRect), mMaskLayerIndex() {}
-
-  bool operator==(const LayerClip& aOther) const {
-    return mClipRect == aOther.mClipRect &&
-           mMaskLayerIndex == aOther.mMaskLayerIndex;
-  }
-
-  void SetClipRect(const ParentLayerIntRect& aClipRect) {
-    mClipRect = aClipRect;
-  }
-  const ParentLayerIntRect& GetClipRect() const { return mClipRect; }
-
-  void SetMaskLayerIndex(const Maybe<size_t>& aIndex) {
-    mMaskLayerIndex = aIndex;
-  }
-  const Maybe<size_t>& GetMaskLayerIndex() const { return mMaskLayerIndex; }
-
- private:
-  ParentLayerIntRect mClipRect;
-
-  // Optionally, specifies a mask layer that's part of the clip.
-  // This is an index into the MetricsMaskLayers array on the Layer.
-  Maybe<size_t> mMaskLayerIndex;
-};
-
-typedef Maybe<LayerClip> MaybeLayerClip;  // for passing over IPDL
-
-/**
  * Metadata about a scroll frame that's sent to the compositor during a layers
  * or WebRender transaction, and also stored by APZ between transactions.
  * This includes the scroll frame's FrameMetrics, as well as other metadata.
@@ -836,7 +804,6 @@ struct ScrollMetadata {
         mContentDescription(),
         mLineScrollAmount(0, 0),
         mPageScrollAmount(0, 0),
-        mScrollClip(),
         mHasScrollgrab(false),
         mIsLayersIdRoot(false),
         mIsAutoDirRootContentRTL(false),
@@ -854,7 +821,6 @@ struct ScrollMetadata {
            // don't compare mContentDescription
            mLineScrollAmount == aOther.mLineScrollAmount &&
            mPageScrollAmount == aOther.mPageScrollAmount &&
-           mScrollClip == aOther.mScrollClip &&
            mHasScrollgrab == aOther.mHasScrollgrab &&
            mIsLayersIdRoot == aOther.mIsLayersIdRoot &&
            mIsAutoDirRootContentRTL == aOther.mIsAutoDirRootContentRTL &&
@@ -910,22 +876,6 @@ struct ScrollMetadata {
   void SetPageScrollAmount(const LayoutDeviceIntSize& size) {
     mPageScrollAmount = size;
   }
-
-  void SetScrollClip(const Maybe<LayerClip>& aScrollClip) {
-    mScrollClip = aScrollClip;
-  }
-  const Maybe<LayerClip>& GetScrollClip() const { return mScrollClip; }
-  bool HasScrollClip() const { return mScrollClip.isSome(); }
-  const LayerClip& ScrollClip() const { return mScrollClip.ref(); }
-  LayerClip& ScrollClip() { return mScrollClip.ref(); }
-
-  bool HasMaskLayer() const {
-    return HasScrollClip() && ScrollClip().GetMaskLayerIndex();
-  }
-  Maybe<ParentLayerIntRect> GetClipRect() const {
-    return mScrollClip.isSome() ? Some(mScrollClip->GetClipRect()) : Nothing();
-  }
-
   void SetHasScrollgrab(bool aHasScrollgrab) {
     mHasScrollgrab = aHasScrollgrab;
   }
@@ -1017,14 +967,6 @@ struct ScrollMetadata {
 
   // The value of GetPageScrollAmount(), for scroll frames.
   LayoutDeviceIntSize mPageScrollAmount;
-
-  // A clip to apply when compositing the layer bearing this ScrollMetadata,
-  // after applying any transform arising from scrolling this scroll frame.
-  // Note that, unlike most other fields of ScrollMetadata, this is allowed
-  // to differ between different layers scrolled by the same scroll frame.
-  // TODO: Group the fields of ScrollMetadata into sub-structures to separate
-  // fields with this property better.
-  Maybe<LayerClip> mScrollClip;
 
   // Whether or not this frame is for an element marked 'scrollgrab'.
   bool mHasScrollgrab : 1;

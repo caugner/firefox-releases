@@ -963,7 +963,8 @@ MConstant::MConstant(TempAllocator& alloc, const js::Value& vp)
       payload_.d = vp.toDouble();
       break;
     case MIRType::String:
-      MOZ_ASSERT(vp.toString()->isAtom());
+      MOZ_ASSERT(!IsInsideNursery(vp.toString()));
+      MOZ_ASSERT(vp.toString()->isLinear());
       payload_.str = vp.toString();
       break;
     case MIRType::Symbol:
@@ -1588,8 +1589,8 @@ const JSJitInfo* MCallDOMNative::getJitInfo() const {
 
 MDefinition* MStringLength::foldsTo(TempAllocator& alloc) {
   if (string()->isConstant()) {
-    JSAtom* atom = &string()->toConstant()->toString()->asAtom();
-    return MConstant::New(alloc, Int32Value(atom->length()));
+    JSString* str = string()->toConstant()->toString();
+    return MConstant::New(alloc, Int32Value(str->length()));
   }
 
   return this;
@@ -1621,13 +1622,13 @@ MDefinition* MCharCodeAt::foldsTo(TempAllocator& alloc) {
     return this;
   }
 
-  JSAtom* atom = &string->toConstant()->toString()->asAtom();
+  JSLinearString* str = &string->toConstant()->toString()->asLinear();
   int32_t idx = index->toConstant()->toInt32();
-  if (idx < 0 || uint32_t(idx) >= atom->length()) {
+  if (idx < 0 || uint32_t(idx) >= str->length()) {
     return this;
   }
 
-  char16_t ch = atom->latin1OrTwoByteChar(idx);
+  char16_t ch = str->latin1OrTwoByteChar(idx);
   return MConstant::New(alloc, Int32Value(ch));
 }
 
@@ -2207,7 +2208,7 @@ static inline bool CanProduceNegativeZero(MDefinition* def) {
 }
 
 static inline bool NeedNegativeZeroCheck(MDefinition* def) {
-  if (def->isGuardRangeBailouts()) {
+  if (def->isGuard() || def->isGuardRangeBailouts()) {
     return true;
   }
 
@@ -3980,8 +3981,8 @@ bool MCompare::evaluateConstantOperands(TempAllocator& alloc, bool* result) {
   if (lhs->type() == MIRType::String && rhs->type() == MIRType::String) {
     int32_t comp = 0;  // Default to equal.
     if (left != right) {
-      comp =
-          CompareAtoms(&lhs->toString()->asAtom(), &rhs->toString()->asAtom());
+      comp = CompareStrings(&lhs->toString()->asLinear(),
+                            &rhs->toString()->asLinear());
     }
     *result = FoldComparison(jsop_, comp, 0);
     return true;
@@ -4048,7 +4049,7 @@ MDefinition* MCompare::tryFoldCharCompare(TempAllocator& alloc) {
       return this;
     }
 
-    char16_t charCode = constant->toString()->asAtom().latin1OrTwoByteChar(0);
+    char16_t charCode = constant->toString()->asLinear().latin1OrTwoByteChar(0);
     MConstant* charCodeConst = MConstant::New(alloc, Int32Value(charCode));
     block()->insertBefore(this, charCodeConst);
 
@@ -4554,8 +4555,7 @@ MDefinition* MWasmTernarySimd128::foldsTo(TempAllocator& alloc) {
       v2()->op() == MDefinition::Opcode::WasmFloatConstant) {
     int8_t shuffle[16];
     if (specializeBitselectConstantMaskAsShuffle(shuffle)) {
-      return MWasmShuffleSimd128::New(alloc, v0(), v1(),
-                                      SimdConstant::CreateX16(shuffle));
+      return BuildWasmShuffleSimd128(alloc, shuffle, v0(), v1());
     }
   }
   return this;
@@ -4581,8 +4581,7 @@ MDefinition* MWasmBinarySimd128::foldsTo(TempAllocator& alloc) {
       return nullptr;
     }
     block()->insertBefore(this, zero);
-    return MWasmShuffleSimd128::New(alloc, lhs(), zero,
-                                    SimdConstant::CreateX16(shuffleMask));
+    return BuildWasmShuffleSimd128(alloc, shuffleMask, lhs(), zero);
   }
 
   // Specialize var OP const / const OP var when possible.
@@ -5176,8 +5175,8 @@ MDefinition* MGetFirstDollarIndex::foldsTo(TempAllocator& alloc) {
     return this;
   }
 
-  JSAtom* atom = &strArg->toConstant()->toString()->asAtom();
-  int32_t index = GetFirstDollarIndexRawFlat(atom);
+  JSLinearString* str = &strArg->toConstant()->toString()->asLinear();
+  int32_t index = GetFirstDollarIndexRawFlat(str);
   return MConstant::New(alloc, Int32Value(index));
 }
 
@@ -5469,9 +5468,12 @@ MDefinition* MGuardSpecificFunction::foldsTo(TempAllocator& alloc) {
 
 MDefinition* MGuardSpecificAtom::foldsTo(TempAllocator& alloc) {
   if (str()->isConstant()) {
-    JSAtom* cstAtom = &str()->toConstant()->toString()->asAtom();
-    if (cstAtom == atom()) {
-      return str();
+    JSString* s = str()->toConstant()->toString();
+    if (s->isAtom()) {
+      JSAtom* cstAtom = &s->asAtom();
+      if (cstAtom == atom()) {
+        return str();
+      }
     }
   }
 
@@ -5631,9 +5633,9 @@ MDefinition* MGuardStringToIndex::foldsTo(TempAllocator& alloc) {
     return this;
   }
 
-  JSAtom* atom = &string()->toConstant()->toString()->asAtom();
+  JSString* str = string()->toConstant()->toString();
 
-  int32_t index = GetIndexFromString(atom);
+  int32_t index = GetIndexFromString(str);
   if (index < 0) {
     return this;
   }
@@ -5646,9 +5648,9 @@ MDefinition* MGuardStringToInt32::foldsTo(TempAllocator& alloc) {
     return this;
   }
 
-  JSAtom* atom = &string()->toConstant()->toString()->asAtom();
+  JSLinearString* str = &string()->toConstant()->toString()->asLinear();
   double number;
-  if (!js::MaybeStringToNumber(atom, &number)) {
+  if (!js::MaybeStringToNumber(str, &number)) {
     return this;
   }
 
@@ -5665,9 +5667,9 @@ MDefinition* MGuardStringToDouble::foldsTo(TempAllocator& alloc) {
     return this;
   }
 
-  JSAtom* atom = &string()->toConstant()->toString()->asAtom();
+  JSLinearString* str = &string()->toConstant()->toString()->asLinear();
   double number;
-  if (!js::MaybeStringToNumber(atom, &number)) {
+  if (!js::MaybeStringToNumber(str, &number)) {
     return this;
   }
 
@@ -6081,7 +6083,8 @@ bool MWasmShiftSimd128::congruentTo(const MDefinition* ins) const {
 }
 
 bool MWasmShuffleSimd128::congruentTo(const MDefinition* ins) const {
-  return ins->toWasmShuffleSimd128()->control().bitwiseEqual(control_) &&
+  return ins->toWasmShuffleSimd128()->shuffle().control.bitwiseEqual(
+             shuffle_.control) &&
          congruentIfOperandsEqual(ins);
 }
 
@@ -6089,3 +6092,28 @@ bool MWasmUnarySimd128::congruentTo(const MDefinition* ins) const {
   return ins->toWasmUnarySimd128()->simdOp() == simdOp_ &&
          congruentIfOperandsEqual(ins);
 }
+
+#ifdef ENABLE_WASM_SIMD
+MWasmShuffleSimd128* jit::BuildWasmShuffleSimd128(TempAllocator& alloc,
+                                                  const int8_t* control,
+                                                  MDefinition* lhs,
+                                                  MDefinition* rhs) {
+  SimdShuffle s =
+      AnalyzeSimdShuffle(SimdConstant::CreateX16(control), lhs, rhs);
+  switch (s.opd) {
+    case SimdShuffle::Operand::LEFT:
+      // When SimdShuffle::Operand is LEFT the right operand is not used,
+      // lose reference to rhs.
+      rhs = lhs;
+      break;
+    case SimdShuffle::Operand::RIGHT:
+      // When SimdShuffle::Operand is RIGHT the left operand is not used,
+      // lose reference to lhs.
+      lhs = rhs;
+      break;
+    default:
+      break;
+  }
+  return MWasmShuffleSimd128::New(alloc, lhs, rhs, s);
+}
+#endif  // ENABLE_WASM_SIMD

@@ -103,17 +103,25 @@ bool TrialInliner::replaceICStub(ICEntry& entry, ICFallbackStub* fallback,
   fallback->discardStubs(cx(), &entry);
 
   // Note: AttachBaselineCacheIRStub never throws an exception.
-  bool attached = false;
-  auto* newStub = AttachBaselineCacheIRStub(cx(), writer, kind, script_,
-                                            icScript_, fallback, &attached);
-  if (!newStub) {
-    MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Candidate);
+  ICAttachResult result = AttachBaselineCacheIRStub(cx(), writer, kind, script_,
+                                                    icScript_, fallback);
+  if (result == ICAttachResult::Attached) {
+    MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Inlined);
+    return true;
+  }
+
+  MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Candidate);
+  icScript_->removeInlinedChild(fallback->pcOffset());
+
+  if (result == ICAttachResult::OOM) {
     ReportOutOfMemory(cx());
     return false;
   }
 
-  MOZ_ASSERT(attached);
-  MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Inlined);
+  // We failed to attach a new IC stub due to CacheIR size limits. Disable trial
+  // inlining for this location and return true.
+  MOZ_ASSERT(result == ICAttachResult::TooLarge);
+  fallback->setTrialInliningState(TrialInliningState::Failure);
   return true;
 }
 
@@ -488,8 +496,8 @@ bool TrialInliner::shouldInline(JSFunction* target, ICCacheIRStub* stub,
   BaseScript* baseScript =
       target->hasBaseScript() ? target->baseScript() : nullptr;
   JitSpew(JitSpew_WarpTrialInlining,
-          "Inlining candidate JSOp::%s: callee script %s:%u:%u",
-          CodeName(loc.getOp()),
+          "Inlining candidate JSOp::%s (offset=%u): callee script %s:%u:%u",
+          CodeName(loc.getOp()), loc.bytecodeToOffset(script_),
           baseScript ? baseScript->filename() : "<not-scripted>",
           baseScript ? baseScript->lineno() : 0,
           baseScript ? baseScript->column() : 0);
@@ -584,9 +592,9 @@ ICScript* TrialInliner::createInlinedICScript(JSFunction* target,
 
   root_->addToTotalBytecodeSize(targetScript->length());
 
+  JitSpewIndent spewIndent(JitSpew_WarpTrialInlining);
   JitSpew(JitSpew_WarpTrialInlining,
-          "SUCCESS: Outer ICScript: %p Inner ICScript: %p pcOffset: %u",
-          icScript_, result, pcOffset);
+          "SUCCESS: Outer ICScript: %p Inner ICScript: %p", icScript_, result);
 
   return result;
 }
@@ -595,6 +603,16 @@ bool TrialInliner::maybeInlineCall(ICEntry& entry, ICFallbackStub* fallback,
                                    BytecodeLocation loc) {
   ICCacheIRStub* stub = maybeSingleStub(entry);
   if (!stub) {
+#ifdef JS_JITSPEW
+    if (fallback->numOptimizedStubs() > 1) {
+      JitSpew(JitSpew_WarpTrialInlining,
+              "Inlining candidate JSOp::%s (offset=%u):", CodeName(loc.getOp()),
+              fallback->pcOffset());
+      JitSpewIndent spewIndent(JitSpew_WarpTrialInlining);
+      JitSpew(JitSpew_WarpTrialInlining, "SKIP: Polymorphic (%u stubs)",
+              (unsigned)fallback->numOptimizedStubs());
+    }
+#endif
     return true;
   }
 
@@ -630,12 +648,7 @@ bool TrialInliner::maybeInlineCall(ICEntry& entry, ICFallbackStub* fallback,
                              data->callFlags);
   writer.returnFromIC();
 
-  if (!replaceICStub(entry, fallback, writer, CacheKind::Call)) {
-    icScript_->removeInlinedChild(fallback->pcOffset());
-    return false;
-  }
-
-  return true;
+  return replaceICStub(entry, fallback, writer, CacheKind::Call);
 }
 
 bool TrialInliner::maybeInlineGetter(ICEntry& entry, ICFallbackStub* fallback,
@@ -672,12 +685,7 @@ bool TrialInliner::maybeInlineGetter(ICEntry& entry, ICFallbackStub* fallback,
                                  newICScript, data->sameRealm);
   writer.returnFromIC();
 
-  if (!replaceICStub(entry, fallback, writer, CacheKind::GetProp)) {
-    icScript_->removeInlinedChild(fallback->pcOffset());
-    return false;
-  }
-
-  return true;
+  return replaceICStub(entry, fallback, writer, CacheKind::GetProp);
 }
 
 bool TrialInliner::maybeInlineSetter(ICEntry& entry, ICFallbackStub* fallback,
@@ -715,12 +723,7 @@ bool TrialInliner::maybeInlineSetter(ICEntry& entry, ICFallbackStub* fallback,
                            data->rhsOperand, newICScript, data->sameRealm);
   writer.returnFromIC();
 
-  if (!replaceICStub(entry, fallback, writer, CacheKind::SetProp)) {
-    icScript_->removeInlinedChild(fallback->pcOffset());
-    return false;
-  }
-
-  return true;
+  return replaceICStub(entry, fallback, writer, CacheKind::SetProp);
 }
 
 bool TrialInliner::tryInlining() {

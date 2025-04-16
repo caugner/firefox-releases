@@ -201,7 +201,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme, nscolor
       // Thanks to mpt26@student.canterbury.ac.nz for the hardcoded values that form the defaults
       //  if querying the Appearance Manager fails ;)
       //
-    case ColorID::MozMacButtonactivetext:
+    case ColorID::MozButtonactivetext:
     case ColorID::MozMacDefaultbuttontext:
       color = NS_RGB(0xFF, 0xFF, 0xFF);
       break;
@@ -232,10 +232,12 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme, nscolor
       break;
     case ColorID::Buttonface:
     case ColorID::MozButtonhoverface:
+    case ColorID::MozButtonactiveface:
+    case ColorID::MozButtondisabledface:
       color = GetColorFromNSColor(NSColor.controlColor);
       break;
     case ColorID::Buttonhighlight:
-      color = NS_RGB(0xFF, 0xFF, 0xFF);
+      color = GetColorFromNSColor(NSColor.selectedControlColor);
       break;
     case ColorID::Buttonshadow:
       color = NS_RGB(0xDC, 0xDC, 0xDC);
@@ -266,6 +268,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme, nscolor
       color = GetColorFromNSColor(NSColor.highlightColor);
       break;
     case ColorID::Threedlightshadow:
+    case ColorID::MozDisabledfield:
       color = NS_RGB(0xDA, 0xDA, 0xDA);
       break;
     case ColorID::Menu:
@@ -488,6 +491,9 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
     case IntID::MacBigSurTheme:
       aResult = nsCocoaFeatures::OnBigSurOrLater();
       break;
+    case IntID::MacRTL:
+      aResult = IsSystemOrientationRTL();
+      break;
     case IntID::AlertNotificationOrigin:
       aResult = NS_ALERT_TOP;
       break;
@@ -568,6 +574,17 @@ bool nsLookAndFeel::SystemWantsDarkTheme() {
     return [aquaOrDarkAqua isEqualToString:NSAppearanceNameDarkAqua];
   }
   return false;
+}
+
+/*static*/
+bool nsLookAndFeel::IsSystemOrientationRTL() {
+  NSWindow* window = [[NSWindow alloc] initWithContentRect:NSZeroRect
+                                                 styleMask:NSWindowStyleMaskBorderless
+                                                   backing:NSBackingStoreBuffered
+                                                     defer:NO];
+  auto direction = window.windowTitlebarLayoutDirection;
+  [window release];
+  return direction == NSUserInterfaceLayoutDirectionRightToLeft;
 }
 
 bool nsLookAndFeel::NativeGetFont(FontID aID, nsString& aFontName, gfxFontStyle& aFontStyle) {

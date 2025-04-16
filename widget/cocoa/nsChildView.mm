@@ -779,6 +779,10 @@ void nsChildView::Resize(double aX, double aY, double aWidth, double aHeight, bo
     SuspendAsyncCATransactions();
     mBounds.width = width;
     mBounds.height = height;
+
+    CALayer* layer = [mView rootCALayer];
+    double scale = BackingScaleFactor();
+    layer.bounds = CGRectMake(0, 0, width / scale, height / scale);
   }
 
   ManipulateViewWithoutNeedingDisplay(mView, ^{
@@ -852,6 +856,18 @@ void nsChildView::UnsuspendAsyncCATransactions() {
     // display, because this will schedule a main thread CATransaction, during
     // which HandleMainThreadCATransaction will call CommitToScreen().
     [mView markLayerForDisplay];
+  }
+}
+
+void nsChildView::UpdateFullscreen(bool aFullscreen) {
+  if (mNativeLayerRoot) {
+    mNativeLayerRoot->SetWindowIsFullscreen(aFullscreen);
+  }
+}
+
+void nsChildView::NoteMouseMoveAtTime(const mozilla::TimeStamp& aTime) {
+  if (mNativeLayerRoot) {
+    mNativeLayerRoot->NoteMouseMoveAtTime(aTime);
   }
 }
 
@@ -3076,6 +3092,7 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   WidgetMouseEvent geckoEvent(true, eMouseMove, mGeckoChild, WidgetMouseEvent::eReal);
   [self convertCocoaMouseEvent:theEvent toGeckoEvent:&geckoEvent];
 
+  mGeckoChild->NoteMouseMoveAtTime(geckoEvent.mTimeStamp);
   mGeckoChild->DispatchInputEvent(&geckoEvent);
 
   NS_OBJC_END_TRY_IGNORE_BLOCK;

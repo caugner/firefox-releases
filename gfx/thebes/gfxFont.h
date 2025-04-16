@@ -1803,7 +1803,8 @@ class gfxFont {
   }
 
   template <typename T>
-  bool InitFakeSmallCapsRun(DrawTarget* aDrawTarget, gfxTextRun* aTextRun,
+  bool InitFakeSmallCapsRun(nsPresContext* aPresContext,
+                            DrawTarget* aDrawTarget, gfxTextRun* aTextRun,
                             const T* aText, uint32_t aOffset, uint32_t aLength,
                             FontMatchType aMatchType,
                             mozilla::gfx::ShapedTextFlags aOrientation,
@@ -1876,6 +1877,10 @@ class gfxFont {
 
   virtual already_AddRefed<mozilla::gfx::ScaledFont> GetScaledFont(
       DrawTarget* aTarget) = 0;
+  virtual already_AddRefed<mozilla::gfx::ScaledFont> GetScaledFontNoGDI(
+      DrawTarget* aTarget) {
+    return GetScaledFont(aTarget);
+  }
 
   void InitializeScaledFont();
 
@@ -2282,6 +2287,7 @@ struct MOZ_STACK_CLASS TextRunDrawParams {
   bool isVerticalRun;
   bool isRTL;
   bool paintSVGGlyphs;
+  bool allowGDI;
 };
 
 struct MOZ_STACK_CLASS FontDrawParams {

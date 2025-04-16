@@ -980,7 +980,7 @@ class InactiveRefreshDriverTimer final
 }  // namespace mozilla
 
 static StaticRefPtr<RefreshDriverTimer> sRegularRateTimer;
-static nsTArray<RefreshDriverTimer*>* sRegularRateTimerList;
+static StaticAutoPtr<nsTArray<RefreshDriverTimer*>> sRegularRateTimerList;
 static StaticRefPtr<InactiveRefreshDriverTimer> sThrottledRateTimer;
 
 void nsRefreshDriver::CreateVsyncRefreshTimer() {
@@ -993,7 +993,7 @@ void nsRefreshDriver::CreateVsyncRefreshTimer() {
   if (!mOwnTimer) {
     // If available, we fetch the widget-specific vsync source.
     nsPresContext* pc = GetPresContext();
-    nsIWidget* widget = pc->GetRootWidget();
+    nsCOMPtr<nsIWidget> widget = pc->GetRootWidget();
     if (widget) {
       if (RefPtr<gfx::VsyncSource> localVsyncSource =
               widget->GetVsyncSource()) {
@@ -1057,7 +1057,6 @@ void nsRefreshDriver::Shutdown() {
   MOZ_ASSERT(NS_IsMainThread());
   // clean up our timers
   sRegularRateTimer = nullptr;
-  delete sRegularRateTimerList;
   sRegularRateTimerList = nullptr;
   sThrottledRateTimer = nullptr;
 }
@@ -1462,8 +1461,15 @@ bool nsRefreshDriver::CanDoCatchUpTick() {
 
   if (mTickVsyncTime.IsNull()) {
     // Don't try to run a catch-up tick before there has been at least one
-    // normal tick. The catch-up tick could affect negatively to the page load
+    // normal tick. The catch-up tick could negatively affect page load
     // performance.
+    return false;
+  }
+
+  if (mPresContext && mPresContext->Document()->GetReadyStateEnum() <
+                          Document::READYSTATE_COMPLETE) {
+    // Don't try to run a catch-up tick before the page has finished loading.
+    // The catch-up tick could negatively affect page load performance.
     return false;
   }
 
@@ -2100,7 +2106,7 @@ void nsRefreshDriver::RunFrameRequestCallbacks(TimeStamp aNowTime) {
   }
 }
 
-static AutoTArray<RefPtr<Task>, 8>* sPendingIdleTasks = nullptr;
+static StaticAutoPtr<AutoTArray<RefPtr<Task>, 8>> sPendingIdleTasks;
 
 void nsRefreshDriver::DispatchIdleTaskAfterTickUnlessExists(Task* aTask) {
   if (!sPendingIdleTasks) {
@@ -2122,7 +2128,6 @@ void nsRefreshDriver::CancelIdleTask(Task* aTask) {
   sPendingIdleTasks->RemoveElement(aTask);
 
   if (sPendingIdleTasks->IsEmpty()) {
-    delete sPendingIdleTasks;
     sPendingIdleTasks = nullptr;
   }
 }
@@ -2507,7 +2512,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime,
 
     // Forward our composition payloads to the layer manager.
     if (!mCompositionPayloads.IsEmpty()) {
-      nsIWidget* widget = mPresContext->GetRootWidget();
+      nsCOMPtr<nsIWidget> widget = mPresContext->GetRootWidget();
       WindowRenderer* renderer = widget ? widget->GetWindowRenderer() : nullptr;
       if (renderer && renderer->AsWebRender()) {
         renderer->AsWebRender()->RegisterPayloads(mCompositionPayloads);
@@ -2615,12 +2620,10 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime,
   }
 
   if (dispatchTasksAfterTick && sPendingIdleTasks) {
-    AutoTArray<RefPtr<Task>, 8>* tasks = sPendingIdleTasks;
-    sPendingIdleTasks = nullptr;
+    UniquePtr<AutoTArray<RefPtr<Task>, 8>> tasks(sPendingIdleTasks.forget());
     for (RefPtr<Task>& taskWithDelay : *tasks) {
       TaskController::Get()->AddTask(taskWithDelay.forget());
     }
-    delete tasks;
   }
 }
 

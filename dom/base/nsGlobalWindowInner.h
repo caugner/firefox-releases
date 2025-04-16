@@ -352,6 +352,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
       const mozilla::dom::ServiceWorkerRegistrationDescriptor& aDescriptor)
       override;
 
+  mozilla::StorageAccess GetStorageAccess() final;
+
   void NoteCalledRegisterForServiceWorkerScope(const nsACString& aScope);
 
   void NoteDOMContentLoaded();
@@ -894,6 +896,11 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
       int32_t aSw, int32_t aSh,
       const mozilla::dom::ImageBitmapOptions& aOptions,
       mozilla::ErrorResult& aRv);
+
+  void StructuredClone(JSContext* aCx, JS::Handle<JS::Value> aValue,
+                       const mozilla::dom::StructuredSerializeOptions& aOptions,
+                       JS::MutableHandle<JS::Value> aRetval,
+                       mozilla::ErrorResult& aError);
 
   // ChromeWindow bits.  Do NOT call these unless your window is in
   // fact chrome.

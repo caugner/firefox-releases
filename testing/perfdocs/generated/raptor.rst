@@ -76,8 +76,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-ares6-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-firefox-ares6-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-firefox-ares6-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-ares6-e10s: None
             * browsertime-benchmark-chromium-ares6-e10s: None
@@ -129,8 +127,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-assorted-dom-e10s: None
             * browsertime-benchmark-firefox-assorted-dom-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-firefox-assorted-dom-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-firefox-assorted-dom-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-assorted-dom-e10s: None
@@ -185,8 +181,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-jetstream2-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-firefox-jetstream2-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-firefox-jetstream2-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-jetstream2-e10s: None
             * browsertime-benchmark-chromium-jetstream2-e10s: None
@@ -237,8 +231,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-motionmark-animometer-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-firefox-motionmark-animometer-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-firefox-motionmark-animometer-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-motionmark-animometer-e10s: None
             * browsertime-benchmark-chromium-motionmark-animometer-e10s: None
@@ -288,8 +280,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-motionmark-htmlsuite-e10s: None
             * browsertime-benchmark-firefox-motionmark-htmlsuite-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-firefox-motionmark-htmlsuite-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-firefox-motionmark-htmlsuite-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-motionmark-htmlsuite-e10s: None
@@ -456,258 +446,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
    * **use live sites**: true
 
 
-.. dropdown:: raptor-youtube-playback-widevine-h264-sfr-chrome (CH)
-   :container: + anchor-id-raptor-youtube-playback-widevine-h264-sfr-chrome-b
-
-   * **alert threshold**: 2.0
-   * **apps**: chrome
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 1800000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-sfr-h264-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-h264-sfr-fenix (FE)
-   :container: + anchor-id-raptor-youtube-playback-widevine-h264-sfr-fenix-b
-
-   * **alert threshold**: 2.0
-   * **apps**: fenix
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 1800000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-sfr-h264-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-h264-sfr-firefox (FF)
-   :container: + anchor-id-raptor-youtube-playback-widevine-h264-sfr-firefox-b
-
-   * **alert threshold**: 2.0
-   * **apps**: firefox
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 1800000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-sfr-h264-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-h264-sfr-geckoview (GV)
-   :container: + anchor-id-raptor-youtube-playback-widevine-h264-sfr-geckoview-b
-
-   * **alert threshold**: 2.0
-   * **apps**: geckoview
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 1800000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-sfr-h264-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-hfr-chrome (CH)
-   :container: + anchor-id-raptor-youtube-playback-widevine-hfr-chrome-b
-
-   * **alert threshold**: 2.0
-   * **apps**: chrome
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 1800000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-hfr-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-hfr-fenix (FE)
-   :container: + anchor-id-raptor-youtube-playback-widevine-hfr-fenix-b
-
-   * **alert threshold**: 2.0
-   * **apps**: fenix
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 1800000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-hfr-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-hfr-firefox (FF)
-   :container: + anchor-id-raptor-youtube-playback-widevine-hfr-firefox-b
-
-   * **alert threshold**: 2.0
-   * **apps**: firefox
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 1800000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-hfr-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-hfr-geckoview (GV)
-   :container: + anchor-id-raptor-youtube-playback-widevine-hfr-geckoview-b
-
-   * **alert threshold**: 2.0
-   * **apps**: geckoview
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 1800000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-hfr-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-vp9-sfr-chrome (CH)
-   :container: + anchor-id-raptor-youtube-playback-widevine-vp9-sfr-chrome-b
-
-   * **alert threshold**: 2.0
-   * **apps**: chrome
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 2700000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-sfr-vp9-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-vp9-sfr-fenix (FE)
-   :container: + anchor-id-raptor-youtube-playback-widevine-vp9-sfr-fenix-b
-
-   * **alert threshold**: 2.0
-   * **apps**: fenix
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 2700000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-sfr-vp9-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-vp9-sfr-firefox (FF)
-   :container: + anchor-id-raptor-youtube-playback-widevine-vp9-sfr-firefox-b
-
-   * **alert threshold**: 2.0
-   * **apps**: firefox
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 2700000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-sfr-vp9-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
-.. dropdown:: raptor-youtube-playback-widevine-vp9-sfr-geckoview (GV)
-   :container: + anchor-id-raptor-youtube-playback-widevine-vp9-sfr-geckoview-b
-
-   * **alert threshold**: 2.0
-   * **apps**: geckoview
-   * **expected**: pass
-   * **gecko profile entries**: 50000000
-   * **gecko profile interval**: 1000
-   * **gecko profile threads**: MediaPlayback
-   * **lower is better**: true
-   * **page cycles**: 1
-   * **page timeout**: 2700000
-   * **preferences**: {"media.eme.enabled": true, "media.gmp-manager.updateEnabled": true, "media.eme.require-app-approval": false}
-   * **subtest lower is better**: true
-   * **subtest unit**: score
-   * **test url**: `<https://yttest.prod.mozaws.net/2020/main.html?test_type=playbackperf-widevine-sfr-vp9-test&raptor=true&exclude=1,2&muted=true&command=run>`__
-   * **type**: benchmark
-   * **unit**: score
-   * **use live sites**: true
-
-
 .. dropdown:: speedometer (FF, CH, CU, FE, GV, RB, CH-M)
    :container: + anchor-id-speedometer-b
 
@@ -752,8 +490,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-speedometer-e10s: None
             * browsertime-benchmark-firefox-speedometer-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-firefox-speedometer-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-firefox-speedometer-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-speedometer-e10s: None
@@ -802,8 +538,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-speedometer-e10s: None
             * browsertime-benchmark-firefox-speedometer-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-firefox-speedometer-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-firefox-speedometer-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-speedometer-e10s: None
@@ -857,8 +591,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-stylebench-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-firefox-stylebench-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-firefox-stylebench-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-stylebench-e10s: None
             * browsertime-benchmark-chromium-stylebench-e10s: None
@@ -908,8 +640,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-sunspider-e10s: None
             * browsertime-benchmark-firefox-sunspider-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-firefox-sunspider-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-firefox-sunspider-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-sunspider-e10s: None
@@ -962,8 +692,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-unity-webgl-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-firefox-unity-webgl-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-firefox-unity-webgl-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-unity-webgl-e10s: None
             * browsertime-benchmark-chromium-unity-webgl-e10s: None
@@ -1010,8 +738,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-unity-webgl-e10s: None
             * browsertime-benchmark-firefox-unity-webgl-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-firefox-unity-webgl-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-firefox-unity-webgl-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-unity-webgl-e10s: None
@@ -1064,8 +790,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-wasm-firefox-wasm-godot-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-godot-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-wasm-firefox-wasm-godot-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-wasm-chrome-wasm-godot-e10s: None
             * browsertime-benchmark-wasm-chromium-wasm-godot-e10s: None
@@ -1110,8 +834,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-wasm-firefox-wasm-godot-baseline-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-godot-baseline-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-wasm-firefox-wasm-godot-baseline-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-godot-baseline-e10s: mozilla-beta, trunk
             * browsertime-benchmark-wasm-firefox-wasm-godot-baseline-fis-e10s: mozilla-central
@@ -1153,8 +875,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-wasm-firefox-wasm-godot-optimizing-e10s: None
             * browsertime-benchmark-wasm-firefox-wasm-godot-optimizing-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-wasm-firefox-wasm-godot-optimizing-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-godot-optimizing-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-godot-optimizing-e10s: mozilla-beta, trunk
@@ -1205,8 +925,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-wasm-firefox-wasm-misc-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-misc-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-wasm-firefox-wasm-misc-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-wasm-chrome-wasm-misc-e10s: None
             * browsertime-benchmark-wasm-chromium-wasm-misc-e10s: None
@@ -1251,8 +969,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-wasm-firefox-wasm-misc-baseline-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-misc-baseline-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-benchmark-wasm-firefox-wasm-misc-baseline-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-misc-baseline-e10s: mozilla-beta, trunk
             * browsertime-benchmark-wasm-firefox-wasm-misc-baseline-fis-e10s: mozilla-central
@@ -1294,8 +1010,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-wasm-firefox-wasm-misc-optimizing-e10s: None
             * browsertime-benchmark-wasm-firefox-wasm-misc-optimizing-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-wasm-firefox-wasm-misc-optimizing-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-misc-optimizing-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-wasm-firefox-wasm-misc-optimizing-e10s: mozilla-beta, trunk
@@ -1344,8 +1058,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-benchmark-firefox-webaudio-e10s: None
             * browsertime-benchmark-firefox-webaudio-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-benchmark-firefox-webaudio-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-benchmark-firefox-webaudio-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-benchmark-chrome-webaudio-e10s: None
@@ -1397,8 +1109,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
       * test-macosx1015-64-shippable-qr/opt
             * browsertime-firefox-youtube-playback-av1-sfr-e10s: mozilla-central
             * browsertime-firefox-youtube-playback-av1-sfr-fis-e10s: mozilla-central
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-firefox-youtube-playback-av1-sfr-e10s: None
 
 
 .. dropdown:: youtube-playback-h264-1080p30 (FF)
@@ -1522,8 +1232,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-firefox-youtube-playback-h264-sfr-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-firefox-youtube-playback-h264-sfr-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-firefox-youtube-playback-h264-sfr-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-firefox-youtube-playback-h264-sfr-e10s: mozilla-central
             * browsertime-firefox-youtube-playback-h264-sfr-fis-e10s: mozilla-central
@@ -1568,8 +1276,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-firefox-youtube-playback-hfr-e10s: None
             * browsertime-firefox-youtube-playback-hfr-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-firefox-youtube-playback-hfr-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-firefox-youtube-playback-hfr-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-firefox-youtube-playback-hfr-e10s: mozilla-central
@@ -1697,8 +1403,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-firefox-youtube-playback-vp9-sfr-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-firefox-youtube-playback-vp9-sfr-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-firefox-youtube-playback-vp9-sfr-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-firefox-youtube-playback-vp9-sfr-e10s: mozilla-central
             * browsertime-firefox-youtube-playback-vp9-sfr-fis-e10s: mozilla-central
@@ -1743,8 +1447,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-firefox-youtube-playback-widevine-h264-sfr-e10s: None
             * browsertime-firefox-youtube-playback-widevine-h264-sfr-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-firefox-youtube-playback-widevine-h264-sfr-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-firefox-youtube-playback-widevine-h264-sfr-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-firefox-youtube-playback-widevine-h264-sfr-e10s: mozilla-central
@@ -1791,8 +1493,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-firefox-youtube-playback-widevine-hfr-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-firefox-youtube-playback-widevine-hfr-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-firefox-youtube-playback-widevine-hfr-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-firefox-youtube-playback-widevine-hfr-e10s: mozilla-central
             * browsertime-firefox-youtube-playback-widevine-hfr-fis-e10s: mozilla-central
@@ -1837,8 +1537,6 @@ Standard benchmarks are third-party tests (i.e. Speedometer) that we have integr
             * browsertime-firefox-youtube-playback-widevine-vp9-sfr-e10s: None
             * browsertime-firefox-youtube-playback-widevine-vp9-sfr-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-firefox-youtube-playback-widevine-vp9-sfr-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-firefox-youtube-playback-widevine-vp9-sfr-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-firefox-youtube-playback-widevine-vp9-sfr-e10s: mozilla-central
@@ -1895,8 +1593,6 @@ Browsertime tests that use a custom pageload test script. These use the pageload
             * browsertime-custom-firefox-process-switch-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-custom-firefox-process-switch-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-custom-firefox-process-switch-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-custom-firefox-process-switch-e10s: mozilla-central
             * browsertime-custom-firefox-process-switch-fis-e10s: mozilla-central
@@ -1944,8 +1640,6 @@ Browsertime tests that use a custom pageload test script. These use the pageload
             * browsertime-first-install-firefox-welcome-e10s: None
             * browsertime-first-install-firefox-welcome-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-first-install-firefox-welcome-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-first-install-firefox-welcome-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-first-install-firefox-welcome-e10s: autoland, mozilla-central
@@ -2031,9 +1725,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-essential-firefox-amazon-e10s: None
             * browsertime-tp6-live-firefox-amazon-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-essential-firefox-amazon-e10s: None
-            * browsertime-tp6-live-firefox-amazon-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-essential-chrome-amazon-e10s: None
             * browsertime-tp6-essential-chromium-amazon-e10s: None
@@ -2095,8 +1786,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-firefox-amazon-sec-e10s: None
             * browsertime-tp6-firefox-amazon-sec-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-amazon-sec-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-amazon-sec-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-amazon-sec-e10s: None
@@ -2175,9 +1864,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-essential-firefox-bing-search-e10s: None
             * browsertime-tp6-live-firefox-bing-search-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-essential-firefox-bing-search-e10s: None
-            * browsertime-tp6-live-firefox-bing-search-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-essential-chrome-bing-search-e10s: None
             * browsertime-tp6-essential-chromium-bing-search-e10s: None
@@ -2204,8 +1890,9 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **page cycles**: 25
    * **page timeout**: 60000
    * **playback**: mitmproxy
-   * **playback pageset manifest**: mitm5-linux-firefox-buzzfeed.manifest
-   * **playback version**: 5.1.1
+   * **playback pageset manifest**: mitm6-linux-firefox-buzzfeed.manifest
+   * **playback version**: 6.0.2
+   * **secondary url**: `<https://www.buzzfeed.com/quizzes>`__
    * **test url**: `<https://www.buzzfeed.com/>`__
    * **type**: pageload
    * **unit**: ms
@@ -2238,8 +1925,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-firefox-buzzfeed-e10s: None
             * browsertime-tp6-firefox-buzzfeed-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-buzzfeed-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-buzzfeed-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-buzzfeed-e10s: None
@@ -2310,9 +1995,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-essential-firefox-cnn-e10s: None
             * browsertime-tp6-live-sheriffed-firefox-cnn-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-essential-firefox-cnn-e10s: None
-            * browsertime-tp6-live-sheriffed-firefox-cnn-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-essential-chrome-cnn-e10s: None
             * browsertime-tp6-essential-chromium-cnn-e10s: None
@@ -2339,6 +2021,7 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **playback**: mitmproxy
    * **playback pageset manifest**: mitm6-darwin-firefox-ebay.manifest
    * **playback version**: 6.0.2
+   * **secondary url**: `<https://www.ebay.com/deals>`__
    * **test url**: `<https://www.ebay.com/>`__
    * **type**: pageload
    * **unit**: ms
@@ -2390,9 +2073,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-ebay-e10s: None
             * browsertime-tp6-live-firefox-ebay-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-ebay-e10s: None
-            * browsertime-tp6-live-firefox-ebay-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-ebay-e10s: None
             * browsertime-tp6-live-firefox-ebay-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -2456,8 +2136,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-firefox-espn-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-espn-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-espn-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-espn-e10s: None
             * browsertime-tp6-chromium-espn-e10s: None
@@ -2480,8 +2158,9 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **page cycles**: 25
    * **page timeout**: 60000
    * **playback**: mitmproxy
-   * **playback pageset manifest**: mitm5-linux-firefox-expedia.manifest
-   * **playback version**: 5.1.1
+   * **playback pageset manifest**: mitm6-linux-firefox-expedia.manifest
+   * **playback version**: 6.0.2
+   * **secondary url**: `<https://www.expedia.com/Activities>`__
    * **test url**: `<https://expedia.com/Hotel-Search?destination=New+York%2C+New+York&latLong=40.756680%2C-73.986470&regionId=178293&startDate=&endDate=&rooms=1&_xpid=11905%7C1&adults=2>`__
    * **type**: pageload
    * **unit**: ms
@@ -2515,8 +2194,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-firefox-expedia-fis-e10s: None
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-expedia-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-expedia-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-expedia-e10s: None
             * browsertime-tp6-chromium-expedia-e10s: None
@@ -2539,8 +2216,9 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **page cycles**: 25
    * **page timeout**: 60000
    * **playback**: mitmproxy
-   * **playback pageset manifest**: mitm5-linux-firefox-facebook.manifest
-   * **playback version**: 5.1.1
+   * **playback pageset manifest**: mitm6-linux-firefox-facebook.manifest
+   * **playback version**: 6.0.2
+   * **secondary url**: `<https://www.facebook.com/marketplace/?ref=bookmark>`__
    * **test url**: `<https://www.facebook.com>`__
    * **type**: pageload
    * **unit**: ms
@@ -2592,9 +2270,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-facebook-e10s: None
             * browsertime-tp6-live-firefox-facebook-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-facebook-e10s: None
-            * browsertime-tp6-live-firefox-facebook-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-facebook-e10s: None
             * browsertime-tp6-live-firefox-facebook-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -2678,9 +2353,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-essential-firefox-fandom-e10s: None
             * browsertime-tp6-live-firefox-fandom-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-essential-firefox-fandom-e10s: None
-            * browsertime-tp6-live-firefox-fandom-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-essential-chrome-fandom-e10s: None
             * browsertime-tp6-essential-chromium-fandom-e10s: None
@@ -2704,6 +2376,7 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **gecko profile interval**: 1
    * **lower is better**: true
    * **measure**: fnbpaint, fcp, dcf, loadtime
+   * **page complete wait time**: 8000
    * **page cycles**: 25
    * **page timeout**: 60000
    * **playback**: mitmproxy
@@ -2760,9 +2433,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-google-docs-e10s: None
             * browsertime-tp6-live-firefox-google-docs-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-google-docs-e10s: None
-            * browsertime-tp6-live-firefox-google-docs-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-google-docs-e10s: None
             * browsertime-tp6-live-firefox-google-docs-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -2825,8 +2495,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-firefox-google-docs-canvas-e10s: None
             * browsertime-tp6-firefox-google-docs-canvas-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-google-docs-canvas-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-google-docs-canvas-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-google-docs-canvas-e10s: None
@@ -2903,9 +2571,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-google-mail-e10s: None
             * browsertime-tp6-live-firefox-google-mail-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-google-mail-e10s: None
-            * browsertime-tp6-live-firefox-google-mail-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-google-mail-e10s: None
             * browsertime-tp6-live-firefox-google-mail-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -2989,9 +2654,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-google-search-e10s: None
             * browsertime-tp6-live-firefox-google-search-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-google-search-e10s: None
-            * browsertime-tp6-live-firefox-google-search-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-google-search-e10s: None
             * browsertime-tp6-chromium-google-search-e10s: None
@@ -3071,9 +2733,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-google-slides-e10s: None
             * browsertime-tp6-live-firefox-google-slides-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-essential-firefox-google-slides-e10s: None
-            * browsertime-tp6-live-firefox-google-slides-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-essential-firefox-google-slides-e10s: None
             * browsertime-tp6-live-firefox-google-slides-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -3157,9 +2816,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-imdb-e10s: None
             * browsertime-tp6-live-firefox-imdb-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-imdb-e10s: None
-            * browsertime-tp6-live-firefox-imdb-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-imdb-e10s: None
             * browsertime-tp6-chromium-imdb-e10s: None
@@ -3239,9 +2895,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-imgur-e10s: None
             * browsertime-tp6-live-firefox-imgur-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-imgur-e10s: None
-            * browsertime-tp6-live-firefox-imgur-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-imgur-e10s: None
             * browsertime-tp6-live-firefox-imgur-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -3325,9 +2978,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-essential-firefox-instagram-e10s: None
             * browsertime-tp6-live-firefox-instagram-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-essential-firefox-instagram-e10s: None
-            * browsertime-tp6-live-firefox-instagram-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-essential-chrome-instagram-e10s: None
             * browsertime-tp6-essential-chromium-instagram-e10s: None
@@ -3409,9 +3059,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-linkedin-e10s: None
             * browsertime-tp6-live-firefox-linkedin-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-linkedin-e10s: None
-            * browsertime-tp6-live-firefox-linkedin-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-linkedin-e10s: None
             * browsertime-tp6-chromium-linkedin-e10s: None
@@ -3438,8 +3085,9 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **page cycles**: 25
    * **page timeout**: 60000
    * **playback**: mitmproxy
-   * **playback pageset manifest**: mitm5-linux-firefox-microsoft.manifest
-   * **playback version**: 5.1.1
+   * **playback pageset manifest**: mitm6-linux-firefox-microsoft.manifest
+   * **playback version**: 6.0.2
+   * **secondary url**: `<https://support.microsoft.com/en-us>`__
    * **test url**: `<https://www.microsoft.com/en-us/>`__
    * **type**: pageload
    * **unit**: ms
@@ -3491,9 +3139,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-microsoft-e10s: None
             * browsertime-tp6-live-firefox-microsoft-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-microsoft-e10s: None
-            * browsertime-tp6-live-firefox-microsoft-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-microsoft-e10s: None
             * browsertime-tp6-live-firefox-microsoft-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -3577,9 +3222,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-netflix-e10s: None
             * browsertime-tp6-live-firefox-netflix-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-netflix-e10s: None
-            * browsertime-tp6-live-firefox-netflix-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-netflix-e10s: None
             * browsertime-tp6-chromium-netflix-e10s: None
@@ -3606,8 +3248,9 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **page cycles**: 25
    * **page timeout**: 60000
    * **playback**: mitmproxy
-   * **playback pageset manifest**: mitm5-linux-firefox-nytimes.manifest
-   * **playback version**: 5.1.1
+   * **playback pageset manifest**: mitm6-linux-firefox-nytimes.manifest
+   * **playback version**: 6.0.2
+   * **secondary url**: `<https://www.nytimes.com/section/opinion/columnists>`__
    * **test url**: `<https://www.nytimes.com/2020/02/19/opinion/surprise-medical-bill.html>`__
    * **type**: pageload
    * **unit**: ms
@@ -3640,8 +3283,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-firefox-nytimes-e10s: None
             * browsertime-tp6-firefox-nytimes-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-nytimes-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-nytimes-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-nytimes-e10s: None
@@ -3699,8 +3340,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-firefox-office-e10s: None
             * browsertime-tp6-firefox-office-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-office-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-office-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-office-e10s: None
@@ -3777,9 +3416,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-outlook-e10s: None
             * browsertime-tp6-live-firefox-outlook-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-outlook-e10s: None
-            * browsertime-tp6-live-firefox-outlook-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-outlook-e10s: None
             * browsertime-tp6-live-firefox-outlook-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -3863,9 +3499,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-paypal-e10s: None
             * browsertime-tp6-live-firefox-paypal-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-paypal-e10s: None
-            * browsertime-tp6-live-firefox-paypal-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-paypal-e10s: None
             * browsertime-tp6-chromium-paypal-e10s: None
@@ -3947,9 +3580,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-pinterest-e10s: None
             * browsertime-tp6-live-firefox-pinterest-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-pinterest-e10s: None
-            * browsertime-tp6-live-firefox-pinterest-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-pinterest-e10s: None
             * browsertime-tp6-chromium-pinterest-e10s: None
@@ -3976,8 +3606,9 @@ Tests for page-load performance. The links direct to the actual websites that ar
    * **page cycles**: 25
    * **page timeout**: 60000
    * **playback**: mitmproxy
-   * **playback pageset manifest**: mitm5-linux-firefox-reddit.manifest
-   * **playback version**: 5.1.1
+   * **playback pageset manifest**: mitm6-linux-firefox-reddit.manifest
+   * **playback version**: 6.0.2
+   * **secondary url**: `<https://www.reddit.com/r/technology/>`__
    * **test url**: `<https://www.reddit.com/r/technology/comments/9sqwyh/we_posed_as_100_senators_to_run_ads_on_facebook/>`__
    * **type**: pageload
    * **unit**: ms
@@ -4029,9 +3660,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-reddit-e10s: None
             * browsertime-tp6-live-firefox-reddit-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-reddit-e10s: None
-            * browsertime-tp6-live-firefox-reddit-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-reddit-e10s: None
             * browsertime-tp6-live-firefox-reddit-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -4115,9 +3743,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-tumblr-e10s: None
             * browsertime-tp6-live-firefox-tumblr-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-tumblr-e10s: None
-            * browsertime-tp6-live-firefox-tumblr-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-tumblr-e10s: None
             * browsertime-tp6-chromium-tumblr-e10s: None
@@ -4197,9 +3822,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-twitch-e10s: None
             * browsertime-tp6-live-firefox-twitch-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-twitch-e10s: None
-            * browsertime-tp6-live-firefox-twitch-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-twitch-e10s: None
             * browsertime-tp6-live-firefox-twitch-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -4283,9 +3905,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-essential-firefox-twitter-e10s: None
             * browsertime-tp6-live-firefox-twitter-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-essential-firefox-twitter-e10s: None
-            * browsertime-tp6-live-firefox-twitter-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-essential-chrome-twitter-e10s: None
             * browsertime-tp6-essential-chromium-twitter-e10s: None
@@ -4346,8 +3965,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-firefox-wikia-e10s: None
             * browsertime-tp6-firefox-wikia-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-wikia-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-wikia-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-wikia-e10s: None
@@ -4424,9 +4041,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-firefox-wikipedia-e10s: None
             * browsertime-tp6-live-firefox-wikipedia-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-essential-firefox-wikipedia-e10s: None
-            * browsertime-tp6-live-firefox-wikipedia-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-essential-firefox-wikipedia-e10s: None
             * browsertime-tp6-live-firefox-wikipedia-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -4510,9 +4124,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-essential-firefox-yahoo-mail-e10s: None
             * browsertime-tp6-live-firefox-yahoo-mail-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-essential-firefox-yahoo-mail-e10s: None
-            * browsertime-tp6-live-firefox-yahoo-mail-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-essential-chrome-yahoo-mail-e10s: None
             * browsertime-tp6-essential-chromium-yahoo-mail-e10s: None
@@ -4594,9 +4205,6 @@ Tests for page-load performance. The links direct to the actual websites that ar
       * test-windows10-64-qr/opt
             * browsertime-tp6-firefox-youtube-e10s: None
             * browsertime-tp6-live-firefox-youtube-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
-            * browsertime-tp6-firefox-youtube-e10s: None
-            * browsertime-tp6-live-firefox-youtube-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-youtube-e10s: None
             * browsertime-tp6-chromium-youtube-e10s: None
@@ -4606,6 +4214,149 @@ Tests for page-load performance. The links direct to the actual websites that ar
             * browsertime-tp6-live-chromium-youtube-e10s: None
             * browsertime-tp6-live-firefox-youtube-e10s: None
             * browsertime-tp6-live-firefox-youtube-fis-e10s: None
+
+
+
+Interactive
+-----------
+Browsertime tests that interact with the webpage. Includes responsiveness tests as they make use of this support for navigation. These form of tests allow the specification of browsertime commands through the test manifest.
+
+.. dropdown:: cnn-nav (Navigates to cnn main page, then to the world sub-page.)
+   :container: + anchor-id-cnn-nav-i
+
+   * **accept zero vismet**: true
+   * **alert on**: fcp, loadtime
+   * **alert threshold**: 2.0
+   * **apps**: firefox, chrome, chromium
+   * **browser cycles**: 10
+   * **expected**: pass
+   * **gecko profile entries**: 14000000
+   * **gecko profile interval**: 1
+   * **interactive**: true
+   * **lower is better**: true
+   * **measure**: fnbpaint, fcp, dcf, loadtime
+   * **page cycles**: 25
+   * **page timeout**: 60000
+   * **playback**: mitmproxy
+   * **playback pageset manifest**: mitm6-windows-firefox-cnn-nav.manifest
+   * **playback version**: 6.0.2
+   * **test cmds**:  ["measure.start", "landing"], ["navigate", "https://www.cnn.com"], ["wait.byTime", 4000], ["measure.stop", ""], ["measure.start", "world"], ["click.byXpathAndWait", "/html/body/div[5]/div/div/header/div/div[1]/div/div[2]/nav/ul/li[2]/a"], ["wait.byTime", 1000], ["measure.stop", ""],
+   * **test url**: `<https://www.cnn.com/>`__
+   * **type**: pageload
+   * **unit**: ms
+   * **use live sites**: false
+   * **Test Task**:
+      * test-linux1804-64-clang-trunk-qr/opt
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: None
+      * test-linux1804-64-qr/opt
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: None
+      * test-linux1804-64-shippable-qr/opt
+            * browsertime-responsiveness-chrome-cnn-nav-e10s: None
+            * browsertime-responsiveness-chromium-cnn-nav-e10s: None
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: mozilla-central
+            * browsertime-responsiveness-firefox-cnn-nav-fis-e10s: mozilla-central
+      * test-macosx1014-64-shippable-qr/opt
+            * browsertime-responsiveness-chrome-cnn-nav-e10s: None
+            * browsertime-responsiveness-chromium-cnn-nav-e10s: None
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: None
+            * browsertime-responsiveness-firefox-cnn-nav-fis-e10s: mozilla-central
+      * test-macosx1015-64-shippable-qr/opt
+            * browsertime-responsiveness-chrome-cnn-nav-e10s: None
+            * browsertime-responsiveness-chromium-cnn-nav-e10s: None
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: mozilla-central
+            * browsertime-responsiveness-firefox-cnn-nav-fis-e10s: mozilla-central
+      * test-windows10-32-qr/opt
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: None
+      * test-windows10-32-shippable-qr/opt
+            * browsertime-responsiveness-chrome-cnn-nav-e10s: None
+            * browsertime-responsiveness-chromium-cnn-nav-e10s: None
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: None
+            * browsertime-responsiveness-firefox-cnn-nav-fis-e10s: None
+      * test-windows10-64-qr/opt
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: None
+      * test-windows10-64-shippable-qr/opt
+            * browsertime-responsiveness-chrome-cnn-nav-e10s: None
+            * browsertime-responsiveness-chromium-cnn-nav-e10s: None
+            * browsertime-responsiveness-firefox-cnn-nav-e10s: mozilla-central
+            * browsertime-responsiveness-firefox-cnn-nav-fis-e10s: mozilla-central
+
+
+.. dropdown:: facebook-nav (Navigates to facebook, then the sub-pages friends, marketplace, groups.)
+   :container: + anchor-id-facebook-nav-i
+
+   * **accept zero vismet**: true
+   * **alert on**: fcp, loadtime
+   * **alert threshold**: 2.0
+   * **apps**: firefox, chrome, chromium
+   * **browser cycles**: 25
+   * **expected**: pass
+   * **gecko profile entries**: 14000000
+   * **gecko profile interval**: 1
+   * **interactive**: true
+   * **lower is better**: true
+   * **measure**: fnbpaint, fcp, dcf, loadtime
+   * **page cycles**: 25
+   * **page timeout**: 90000
+   * **playback**: mitmproxy
+   * **playback pageset manifest**: mitm6-windows-firefox-facebook-nav.manifest
+   * **playback version**: 6.0.2
+   * **test cmds**:  ["measure.start", "landing"], ["navigate", "https://www.facebook.com/"], ["wait.byTime", 5000], ["measure.stop", ""], ["measure.start", "friends"], ["navigate", "https://www.facebook.com/friends/"], ["wait.byTime", 5000], ["measure.stop", ""], ["measure.start", "marketplace"], ["navigate", "https://www.facebook.com/marketplace"], ["wait.byTime", 5000], ["measure.stop", ""], ["measure.start", "groups"], ["navigate", "https://www.facebook.com/groups/discover/"], ["wait.byTime", 5000], ["measure.stop", ""],
+   * **test url**: `<https://www.facebook.com>`__
+   * **type**: pageload
+   * **unit**: ms
+   * **use live sites**: false
+
+
+.. dropdown:: reddit-billgates-ama (Navigates from the Bill Gates AMA to the Reddit members section.)
+   :container: + anchor-id-reddit-billgates-ama-i
+
+   * **accept zero vismet**: true
+   * **alert on**: fcp, loadtime
+   * **alert threshold**: 2.0
+   * **apps**: firefox, chrome, chromium
+   * **browser cycles**: 25
+   * **expected**: pass
+   * **gecko profile entries**: 14000000
+   * **gecko profile interval**: 1
+   * **interactive**: true
+   * **lower is better**: true
+   * **measure**: fnbpaint, fcp, dcf, loadtime
+   * **page cycles**: 25
+   * **page timeout**: 60000
+   * **playback**: mitmproxy
+   * **playback pageset manifest**: mitm6-windows-firefox-reddit-billgates-ama.manifest
+   * **playback version**: 6.0.2
+   * **test cmds**:  ["measure.start", "billg-ama"], ["navigate", "https://www.reddit.com/r/IAmA/comments/m8n4vt/im_bill_gates_cochair_of_the_bill_and_melinda/"], ["wait.byTime", 5000], ["measure.stop", ""], ["measure.start", "members"], ["click.byXpathAndWait", "/html/body/div[1]/div/div[2]/div[2]/div/div[3]/div[2]/div/div[1]/div/div[4]/div[1]/div"], ["wait.byTime", 1000], ["measure.stop", ""],
+   * **test url**: `<https://www.reddit.com/>`__
+   * **type**: pageload
+   * **unit**: ms
+   * **use live sites**: false
+
+
+.. dropdown:: reddit-billgates-post (Navigates the `thisisbillgates` user starting at the main user page, then to the posts, comments, hot, and top sections.)
+   :container: + anchor-id-reddit-billgates-post-i
+
+   * **accept zero vismet**: true
+   * **alert on**: fcp, loadtime
+   * **alert threshold**: 2.0
+   * **apps**: firefox, chrome, chromium
+   * **browser cycles**: 25
+   * **expected**: pass
+   * **gecko profile entries**: 14000000
+   * **gecko profile interval**: 1
+   * **interactive**: true
+   * **lower is better**: true
+   * **measure**: fnbpaint, fcp, dcf, loadtime
+   * **page cycles**: 25
+   * **page timeout**: 90000
+   * **playback**: mitmproxy
+   * **playback pageset manifest**: mitm6-windows-firefox-reddit-billgates-post.manifest
+   * **playback version**: 6.0.2
+   * **test cmds**:  ["measure.start", "billg"], ["navigate", "https://www.reddit.com/user/thisisbillgates/"], ["wait.byTime", 5000], ["measure.stop", ""], ["measure.start", "posts"], ["click.byXpathAndWait", "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[2]/div/div/div/a[2]"], ["wait.byTime", 15000], ["measure.stop", ""], ["measure.start", "comments"], ["click.byXpathAndWait", "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[2]/div/div/div/a[3]"], ["wait.byTime", 15000], ["measure.stop", ""], ["measure.start", "hot"], ["click.byXpathAndWait", "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[4]/div[1]/div[1]/div[2]/a[2]"], ["wait.byTime", 15000], ["measure.stop", ""], ["measure.start", "top"], ["click.byXpathAndWait", "/html/body/div[1]/div/div[2]/div[2]/div/div/div/div[2]/div[4]/div[1]/div[1]/div[2]/a[3]"], ["wait.byTime", 15000], ["measure.stop", ""],
+   * **test url**: `<https://www.reddit.com/user/thisisbillgates/>`__
+   * **type**: pageload
+   * **unit**: ms
+   * **use live sites**: false
 
 
 
@@ -4685,9 +4436,6 @@ A set of test pages that are run as live sites instead of recorded versions. The
             * browsertime-tp6-live-sheriffed-firefox-cnn-e10s: None
             * browsertime-tp6-live-sheriffed-firefox-cnn-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-essential-firefox-cnn-e10s: None
-            * browsertime-tp6-live-sheriffed-firefox-cnn-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-essential-firefox-cnn-e10s: None
             * browsertime-tp6-live-sheriffed-firefox-cnn-e10s: None
       * test-windows10-64-shippable-qr/opt
@@ -4778,8 +4526,6 @@ A set of test pages that are run as live sites instead of recorded versions. The
             * browsertime-tp6-firefox-expedia-e10s: None
             * browsertime-tp6-firefox-expedia-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-expedia-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-expedia-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-expedia-e10s: None
@@ -4903,8 +4649,6 @@ A set of test pages that are run as live sites instead of recorded versions. The
             * browsertime-tp6-firefox-nytimes-e10s: None
             * browsertime-tp6-firefox-nytimes-fis-e10s: None
       * test-windows10-64-qr/opt
-            * browsertime-tp6-firefox-nytimes-e10s: None
-      * test-windows10-64-ref-hw-2017-qr/opt
             * browsertime-tp6-firefox-nytimes-e10s: None
       * test-windows10-64-shippable-qr/opt
             * browsertime-tp6-chrome-nytimes-e10s: None
@@ -8327,11 +8071,11 @@ Tests are now defined in a similar fashion compared to what exists in mozilla-ce
 * https://github.com/mozilla-mobile/fenix/blob/1c9c5317eb33d92dde3293dfe6a857c279a7ab12/taskcluster/ci/raptor/kind.yml
 * https://github.com/mozilla-mobile/reference-browser/blob/4560a83cb559d3d4d06383205a8bb76a44336704/taskcluster/ci/raptor/kind.yml
 
-If you want to test your changes on a PR, before they land, you need to apply a patch like this one: https://github.com/mozilla-mobile/fenix/pull/5565/files. Don't forget to revert it before merging the patch.
+If you want to test your changes on a PR, before they land, you need to apply a patch like this one: https://github.com/mozilla-mobile/fenix/pull/5565/files. Don't forget to revert it before merging the patch. Note that the checks will run but the results aren't currently available on treeherder (`bug 1593252 <https://bugzilla.mozilla.org/show_bug.cgi?id=1593252>`_ is expected to address this).
 
 On Fenix and Reference-Browser, the raptor revision is tied to the latest nightly of mozilla-central
 
-For more information, please reach out to :jlorenzo or :mhentges in #cia
+For more information, please reach out to :mhentges in #cia
 
 Code formatting on Raptor
 *************************

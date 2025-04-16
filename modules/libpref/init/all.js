@@ -662,15 +662,15 @@ pref("gfx.webrender.debug.glyph-flashing", false);
 pref("gfx.webrender.debug.capture-profiler", false);
 pref("gfx.webrender.debug.profiler-ui", "Default");
 
-// Temporarily use the debug pref to configure the upload startegy on windows.
-// If this doesn't cause breakage it will be selected directly in WebRender's
-// initialization code.
+pref("gfx.webrender.multithreading", true);
 #ifdef XP_WIN
-pref("gfx.webrender.debug.batched-texture-uploads", true);
-pref("gfx.webrender.debug.draw-calls-for-texture-copy", true);
+pref("gfx.webrender.pbo-uploads", false);
+pref("gfx.webrender.batched-texture-uploads", true);
+pref("gfx.webrender.draw-calls-for-texture-copy", true);
 #else
-pref("gfx.webrender.debug.batched-texture-uploads", false);
-pref("gfx.webrender.debug.draw-calls-for-texture-copy", false);
+pref("gfx.webrender.pbo-uploads", true);
+pref("gfx.webrender.batched-texture-uploads", false);
+pref("gfx.webrender.draw-calls-for-texture-copy", false);
 #endif
 
 
@@ -789,6 +789,9 @@ pref("toolkit.osfile.log", false);
 pref("toolkit.scrollbox.smoothScroll", true);
 pref("toolkit.scrollbox.scrollIncrement", 20);
 pref("toolkit.scrollbox.clickToScroll.scrollDelay", 150);
+
+// Controls logging for Sqlite.jsm.
+pref("toolkit.sqlitejsm.loglevel", "Error");
 
 pref("toolkit.tabbox.switchByScrolling", false);
 
@@ -1445,7 +1448,7 @@ pref("network.http.http3.alt-svc-mapping-for-testing", "");
 // alt-svc allows separation of transport routing from
 // the origin host without using a proxy.
 pref("network.http.altsvc.enabled", true);
-pref("network.http.altsvc.oe", true);
+pref("network.http.altsvc.oe", false);
 
 // Turn on 0RTT data for TLS 1.3
 pref("security.tls.enable_0rtt_data", true);
@@ -2477,7 +2480,11 @@ pref("dom.ipc.processCount.privilegedabout", 1);
 pref("dom.ipc.processCount.privilegedmozilla", 1);
 
 // Maximum number of isolated content processes per-origin.
+#ifdef ANDROID
 pref("dom.ipc.processCount.webIsolated", 1);
+#else
+pref("dom.ipc.processCount.webIsolated", 4);
+#endif
 
 // Keep a single privileged about process alive for performance reasons.
 // e.g. we do not want to throw content processes out every time we navigate
@@ -4292,6 +4299,15 @@ pref("toolkit.aboutProcesses.showAllSubframes", false);
 #else
   pref("toolkit.aboutProcesses.showThreads", false);
 #endif
+// If `true`, about:processes will offer to profile processes.
+#ifdef NIGHTLY_BUILD
+  pref("toolkit.aboutProcesses.showProfilerIcons", true);
+#else
+  pref("toolkit.aboutProcesses.showProfilerIcons", false);
+#endif
+// Time in seconds between when the profiler is started and when the
+// profile is captured.
+pref("toolkit.aboutProcesses.profileDuration", 5);
 
 // When a crash happens, whether to include heap regions of the crash context
 // in the minidump. Enabled by default on nightly and aurora.

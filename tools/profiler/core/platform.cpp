@@ -38,6 +38,7 @@
 #include "ProfilerCodeAddressService.h"
 #include "ProfilerIOInterposeObserver.h"
 #include "ProfilerParent.h"
+#include "ProfilerRustBindings.h"
 #include "shared-libraries.h"
 #include "VTuneProfiler.h"
 
@@ -2474,6 +2475,9 @@ static void StreamMarkerSchema(SpliceableJSONWriter& aWriter) {
       markerTypeFunctions.mMarkerSchemaFunction().Stream(aWriter, name);
     }
   }
+
+  // Now stream the Rust marker schemas.
+  profiler::ffi::gecko_profiler_stream_marker_schemas(&aWriter);
 }
 
 // Some meta information that is better recorded before streaming the profile.
@@ -2801,6 +2805,8 @@ struct JavaMarkerWithDetails {
   }
   static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
                                    const ProfilerString8View& aText) {
+    // This (currently) needs to be called "name" to be searchable on the
+    // front-end.
     aWriter.StringProperty("name", aText);
   }
   static MarkerSchema MarkerTypeDisplay() {
@@ -2808,9 +2814,9 @@ struct JavaMarkerWithDetails {
     MS schema{MS::Location::TimelineOverview, MS::Location::MarkerChart,
               MS::Location::MarkerTable};
     schema.SetTooltipLabel("{marker.name}");
-    schema.SetChartLabel("{marker.data.details}");
-    schema.SetTableLabel("{marker.name} - {marker.data.details}");
-    schema.AddKeyLabelFormat("details", "Details", MS::Format::String);
+    schema.SetChartLabel("{marker.data.name}");
+    schema.SetTableLabel("{marker.name} - {marker.data.name}");
+    schema.AddKeyLabelFormat("name", "Details", MS::Format::String);
     return schema;
   }
 };
@@ -4888,7 +4894,7 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
       }
 #endif
       lockedThreadData->ReinitializeOnResume();
-      if (lockedThreadData->GetJSContext()) {
+      if (ActivePS::FeatureJS(aLock) && lockedThreadData->GetJSContext()) {
         profiledThreadData->NotifyReceivedJSContext(0);
       }
     }
@@ -5614,6 +5620,8 @@ bool profiler_is_locked_on_current_thread() {
   // - The ProfilerParent or ProfilerChild mutex, used to store and process
   //   buffer chunk updates.
   return PSAutoLock::IsLockedOnCurrentThread() ||
+         ThreadRegistry::IsRegistryMutexLockedOnCurrentThread() ||
+         ThreadRegistration::IsDataMutexLockedOnCurrentThread() ||
          CorePS::CoreBuffer().IsThreadSafeAndLockedOnCurrentThread() ||
          ProfilerParent::IsLockedOnCurrentThread() ||
          ProfilerChild::IsLockedOnCurrentThread();
@@ -5628,6 +5636,10 @@ void profiler_set_js_context(JSContext* aCx) {
         aOnThreadRef.WithLockedRWOnThread(
             [&](ThreadRegistration::LockedRWOnThread& aThreadData) {
               aThreadData.SetJSContext(aCx);
+
+              if (!ActivePS::Exists(lock) || !ActivePS::FeatureJS(lock)) {
+                return;
+              }
 
               // This call is on-thread, so we can call PollJSSampling() to
               // start JS sampling immediately.

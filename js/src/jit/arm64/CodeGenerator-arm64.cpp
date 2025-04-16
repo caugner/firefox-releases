@@ -40,6 +40,8 @@ CodeGeneratorARM64::CodeGeneratorARM64(MIRGenerator* gen, LIRGraph* graph,
     : CodeGeneratorShared(gen, graph, masm) {}
 
 bool CodeGeneratorARM64::generateOutOfLineCode() {
+  AutoCreatedBy acb(masm, "CodeGeneratorARM64::generateOutOfLineCode");
+
   if (!CodeGeneratorShared::generateOutOfLineCode()) {
     return false;
   }
@@ -3160,6 +3162,9 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
     case wasm::SimdOp::V8x16Swizzle:
       masm.swizzleInt8x16(lhs, rhs, dest);
       break;
+    case wasm::SimdOp::V8x16RelaxedSwizzle:
+      masm.swizzleInt8x16Relaxed(lhs, rhs, dest);
+      break;
     case wasm::SimdOp::I8x16NarrowSI16x8:
       masm.narrowInt16x8(lhs, rhs, dest);
       break;
@@ -3370,6 +3375,18 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
     case wasm::SimdOp::I16x8Q15MulrSatS:
       masm.q15MulrSatInt16x8(lhs, rhs, dest);
       break;
+    case wasm::SimdOp::F32x4RelaxedMin:
+      masm.minFloat32x4Relaxed(lhs, rhs, dest);
+      break;
+    case wasm::SimdOp::F32x4RelaxedMax:
+      masm.maxFloat32x4Relaxed(lhs, rhs, dest);
+      break;
+    case wasm::SimdOp::F64x2RelaxedMin:
+      masm.minFloat64x2Relaxed(lhs, rhs, dest);
+      break;
+    case wasm::SimdOp::F64x2RelaxedMax:
+      masm.maxFloat64x2Relaxed(lhs, rhs, dest);
+      break;
     default:
       MOZ_CRASH("Binary SimdOp not implemented");
   }
@@ -3507,55 +3524,55 @@ void CodeGenerator::visitWasmShuffleSimd128(LWasmShuffleSimd128* ins) {
   MOZ_ASSERT(ins->temp()->isBogusTemp());
   SimdConstant control = ins->control();
   switch (ins->op()) {
-    case LWasmShuffleSimd128::BLEND_8x16: {
+    case SimdShuffleOp::BLEND_8x16: {
       masm.blendInt8x16(reinterpret_cast<const uint8_t*>(control.asInt8x16()),
                         lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::BLEND_16x8: {
+    case SimdShuffleOp::BLEND_16x8: {
       masm.blendInt16x8(reinterpret_cast<const uint16_t*>(control.asInt16x8()),
                         lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::CONCAT_RIGHT_SHIFT_8x16: {
+    case SimdShuffleOp::CONCAT_RIGHT_SHIFT_8x16: {
       int8_t count = 16 - control.asInt8x16()[0];
       MOZ_ASSERT(count > 0, "Should have been a MOVE operation");
       masm.concatAndRightShiftSimd128(lhs, rhs, dest, count);
       break;
     }
-    case LWasmShuffleSimd128::INTERLEAVE_HIGH_8x16: {
+    case SimdShuffleOp::INTERLEAVE_HIGH_8x16: {
       masm.interleaveHighInt8x16(lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::INTERLEAVE_HIGH_16x8: {
+    case SimdShuffleOp::INTERLEAVE_HIGH_16x8: {
       masm.interleaveHighInt16x8(lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::INTERLEAVE_HIGH_32x4: {
+    case SimdShuffleOp::INTERLEAVE_HIGH_32x4: {
       masm.interleaveHighInt32x4(lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::INTERLEAVE_HIGH_64x2: {
+    case SimdShuffleOp::INTERLEAVE_HIGH_64x2: {
       masm.interleaveHighInt64x2(lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::INTERLEAVE_LOW_8x16: {
+    case SimdShuffleOp::INTERLEAVE_LOW_8x16: {
       masm.interleaveLowInt8x16(lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::INTERLEAVE_LOW_16x8: {
+    case SimdShuffleOp::INTERLEAVE_LOW_16x8: {
       masm.interleaveLowInt16x8(lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::INTERLEAVE_LOW_32x4: {
+    case SimdShuffleOp::INTERLEAVE_LOW_32x4: {
       masm.interleaveLowInt32x4(lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::INTERLEAVE_LOW_64x2: {
+    case SimdShuffleOp::INTERLEAVE_LOW_64x2: {
       masm.interleaveLowInt64x2(lhs, rhs, dest);
       break;
     }
-    case LWasmShuffleSimd128::SHUFFLE_BLEND_8x16: {
+    case SimdShuffleOp::SHUFFLE_BLEND_8x16: {
       masm.shuffleInt8x16(reinterpret_cast<const uint8_t*>(control.asInt8x16()),
                           lhs, rhs, dest);
       break;
@@ -3575,23 +3592,23 @@ void CodeGenerator::visitWasmPermuteSimd128(LWasmPermuteSimd128* ins) {
   FloatRegister dest = ToFloatRegister(ins->output());
   SimdConstant control = ins->control();
   switch (ins->op()) {
-    case LWasmPermuteSimd128::BROADCAST_8x16: {
+    case SimdPermuteOp::BROADCAST_8x16: {
       const SimdConstant::I8x16& mask = control.asInt8x16();
       int8_t source = mask[0];
       masm.splatX16(source, src, dest);
       break;
     }
-    case LWasmPermuteSimd128::BROADCAST_16x8: {
+    case SimdPermuteOp::BROADCAST_16x8: {
       const SimdConstant::I16x8& mask = control.asInt16x8();
       int16_t source = mask[0];
       masm.splatX8(source, src, dest);
       break;
     }
-    case LWasmPermuteSimd128::MOVE: {
+    case SimdPermuteOp::MOVE: {
       masm.moveSimd128(src, dest);
       break;
     }
-    case LWasmPermuteSimd128::PERMUTE_8x16: {
+    case SimdPermuteOp::PERMUTE_8x16: {
       const SimdConstant::I8x16& mask = control.asInt8x16();
 #  ifdef DEBUG
       mozilla::DebugOnly<int> i;
@@ -3602,7 +3619,7 @@ void CodeGenerator::visitWasmPermuteSimd128(LWasmPermuteSimd128* ins) {
       masm.permuteInt8x16(reinterpret_cast<const uint8_t*>(mask), src, dest);
       break;
     }
-    case LWasmPermuteSimd128::PERMUTE_16x8: {
+    case SimdPermuteOp::PERMUTE_16x8: {
       const SimdConstant::I16x8& mask = control.asInt16x8();
 #  ifdef DEBUG
       mozilla::DebugOnly<int> i;
@@ -3613,7 +3630,7 @@ void CodeGenerator::visitWasmPermuteSimd128(LWasmPermuteSimd128* ins) {
       masm.permuteInt16x8(reinterpret_cast<const uint16_t*>(mask), src, dest);
       break;
     }
-    case LWasmPermuteSimd128::PERMUTE_32x4: {
+    case SimdPermuteOp::PERMUTE_32x4: {
       const SimdConstant::I32x4& mask = control.asInt32x4();
 #  ifdef DEBUG
       mozilla::DebugOnly<int> i;
@@ -3624,19 +3641,19 @@ void CodeGenerator::visitWasmPermuteSimd128(LWasmPermuteSimd128* ins) {
       masm.permuteInt32x4(reinterpret_cast<const uint32_t*>(mask), src, dest);
       break;
     }
-    case LWasmPermuteSimd128::ROTATE_RIGHT_8x16: {
+    case SimdPermuteOp::ROTATE_RIGHT_8x16: {
       int8_t count = control.asInt8x16()[0];
       MOZ_ASSERT(count > 0, "Should have been a MOVE operation");
       masm.rotateRightSimd128(src, dest, count);
       break;
     }
-    case LWasmPermuteSimd128::SHIFT_LEFT_8x16: {
+    case SimdPermuteOp::SHIFT_LEFT_8x16: {
       int8_t count = control.asInt8x16()[0];
       MOZ_ASSERT(count > 0, "Should have been a MOVE operation");
       masm.leftShiftSimd128(Imm32(count), src, dest);
       break;
     }
-    case LWasmPermuteSimd128::SHIFT_RIGHT_8x16: {
+    case SimdPermuteOp::SHIFT_RIGHT_8x16: {
       int8_t count = control.asInt8x16()[0];
       MOZ_ASSERT(count > 0, "Should have been a MOVE operation");
       masm.rightShiftSimd128(Imm32(count), src, dest);
@@ -3919,6 +3936,18 @@ void CodeGenerator::visitWasmUnarySimd128(LWasmUnarySimd128* ins) {
       break;
     case wasm::SimdOp::I8x16Popcnt:
       masm.popcntInt8x16(src, dest);
+      break;
+    case wasm::SimdOp::I32x4RelaxedTruncSSatF32x4:
+      masm.truncSatFloat32x4ToInt32x4Relaxed(src, dest);
+      break;
+    case wasm::SimdOp::I32x4RelaxedTruncUSatF32x4:
+      masm.unsignedTruncSatFloat32x4ToInt32x4Relaxed(src, dest);
+      break;
+    case wasm::SimdOp::I32x4RelaxedTruncSatF64x2SZero:
+      masm.truncSatFloat64x2ToInt32x4Relaxed(src, dest);
+      break;
+    case wasm::SimdOp::I32x4RelaxedTruncSatF64x2UZero:
+      masm.unsignedTruncSatFloat64x2ToInt32x4Relaxed(src, dest);
       break;
     default:
       MOZ_CRASH("Unary SimdOp not implemented");

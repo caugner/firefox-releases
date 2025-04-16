@@ -1676,6 +1676,11 @@
 - name: GetDOMMember
   gen_boilerplate: false
 
+- name: ValueToIterator
+  operands:
+    value: Value
+  result_type: Object
+
 # Load the private value expando from a DOM proxy. The target is stored in the
 # proxy object's private slot.
 # This is either an UndefinedValue (no expando), ObjectValue (the expando
@@ -2588,7 +2593,7 @@
     lhs: Simd128
     rhs: Simd128
   arguments:
-    control: SimdConstant
+    shuffle: SimdShuffle
   type_policy: none
   result_type: Simd128
   movable: true

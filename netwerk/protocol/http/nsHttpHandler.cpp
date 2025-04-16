@@ -393,6 +393,9 @@ nsresult nsHttpHandler::Init() {
   // monitor Firefox Version Experiment enrollment
   NimbusFeatures::OnUpdate(UA_EXPERIMENT_NAME, UA_EXPERIMENT_VAR,
                            ExperimentUserAgentUpdated, &mExperimentUserAgent);
+
+  // Load the experiment state once for startup
+  ExperimentUserAgentUpdated("", &mExperimentUserAgent);
 #endif  // MOZ_BUILD_APP_IS_BROWSER && !ANDROID
 
   Telemetry::ScalarSet(Telemetry::ScalarID::NETWORKING_HTTP3_ENABLED,
@@ -1007,9 +1010,9 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     gIOService->NotifySocketProcessPrefsChanged(pref);
   }
 
-#define PREF_CHANGED(p) ((pref == nullptr) || !PL_strcmp(pref, p))
+#define PREF_CHANGED(p) ((pref == nullptr) || !strcmp(pref, p))
 #define MULTI_PREF_CHANGED(p) \
-  ((pref == nullptr) || !PL_strncmp(pref, p, sizeof(p) - 1))
+  ((pref == nullptr) || !strncmp(pref, p, sizeof(p) - 1))
 
   // If a security pref changed, lets clear our connection pool reuse
   if (MULTI_PREF_CHANGED(SECURITY_PREFIX)) {
@@ -2892,8 +2895,13 @@ bool nsHttpHandler::UseHTTPSRRAsAltSvcEnabled() const {
   return StaticPrefs::network_dns_use_https_rr_as_altsvc();
 }
 
-bool nsHttpHandler::EchConfigEnabled() const {
-  return StaticPrefs::network_dns_echconfig_enabled();
+bool nsHttpHandler::EchConfigEnabled(bool aIsHttp3) const {
+  if (!aIsHttp3) {
+    return StaticPrefs::network_dns_echconfig_enabled();
+  }
+
+  return StaticPrefs::network_dns_echconfig_enabled() &&
+         StaticPrefs::network_dns_http3_echconfig_enabled();
 }
 
 bool nsHttpHandler::FallbackToOriginIfConfigsAreECHAndAllFailed() const {
@@ -2915,6 +2923,32 @@ bool nsHttpHandler::IsHostExcludedForHTTPSRR(const nsACString& aHost) {
   MOZ_ASSERT(NS_IsMainThread());
 
   return mExcludedHostsForHTTPSRRUpgrade.Contains(aHost);
+}
+
+void nsHttpHandler::Exclude0RttTcp(const nsHttpConnectionInfo* ci) {
+  MOZ_ASSERT(OnSocketThread());
+
+  if (!StaticPrefs::network_http_early_data_disable_on_error() ||
+      (mExcluded0RttTcpOrigins.Count() >=
+       StaticPrefs::network_http_early_data_max_error())) {
+    return;
+  }
+
+  mExcluded0RttTcpOrigins.Insert(ci->GetOrigin());
+}
+
+bool nsHttpHandler::Is0RttTcpExcluded(const nsHttpConnectionInfo* ci) {
+  MOZ_ASSERT(OnSocketThread());
+  if (!StaticPrefs::network_http_early_data_disable_on_error()) {
+    return false;
+  }
+
+  if (mExcluded0RttTcpOrigins.Count() >=
+      StaticPrefs::network_http_early_data_max_error()) {
+    return true;
+  }
+
+  return mExcluded0RttTcpOrigins.Contains(ci->GetOrigin());
 }
 
 }  // namespace mozilla::net

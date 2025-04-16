@@ -767,8 +767,12 @@ void IMEStateManager::OnClickInEditor(nsPresContext* aPresContext,
 
   nsCOMPtr<nsIWidget> widget(sWidget);
 
-  MOZ_ASSERT(!sPresContext->GetTextInputHandlingWidget() ||
-             sPresContext->GetTextInputHandlingWidget() == widget);
+#ifdef DEBUG
+  {
+    nsCOMPtr<nsIWidget> tihWidget = sPresContext->GetTextInputHandlingWidget();
+    MOZ_ASSERT(!tihWidget || tihWidget == widget);
+  }
+#endif  // DEBUG
 
   if (!aMouseEvent->IsTrusted()) {
     MOZ_LOG(sISMLog, LogLevel::Debug,
@@ -1001,8 +1005,12 @@ void IMEStateManager::UpdateIMEState(const IMEState& aNewIMEState,
 
   OwningNonNull<nsIWidget> widget(*sWidget);
 
-  MOZ_ASSERT(!sPresContext->GetTextInputHandlingWidget() ||
-             sPresContext->GetTextInputHandlingWidget() == widget);
+#ifdef DEBUG
+  {
+    nsCOMPtr<nsIWidget> tihWidget = sPresContext->GetTextInputHandlingWidget();
+    MOZ_ASSERT(!tihWidget || tihWidget == widget);
+  }
+#endif  // DEBUG
 
   // TODO: Investigate if we could put off to initialize IMEContentObserver
   //       later because a lot of callers need to be marked as
@@ -1215,8 +1223,12 @@ void IMEStateManager::SetInputContextForChildProcess(
 
   nsCOMPtr<nsIWidget> widget(sWidget);
 
-  MOZ_ASSERT(!sPresContext->GetTextInputHandlingWidget() ||
-             sPresContext->GetTextInputHandlingWidget() == widget);
+#ifdef DEBUG
+  {
+    nsCOMPtr<nsIWidget> tihWidget = sPresContext->GetTextInputHandlingWidget();
+    MOZ_ASSERT(!tihWidget || tihWidget == widget);
+  }
+#endif  // DEBUG
   MOZ_ASSERT(aInputContext.mOrigin == InputContext::ORIGIN_CONTENT);
 
   sActiveChildInputContext = aInputContext;
@@ -1236,16 +1248,16 @@ void IMEStateManager::SetInputContextForChildProcess(
   SetInputContext(widget, aInputContext, aAction);
 }
 
-static bool IsNextFocusableElementTextControl(Element* aInputContent) {
+static bool IsNextFocusableElementTextControl(const Element* aInputContent) {
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
     return false;
   }
   nsCOMPtr<nsIContent> nextContent;
   nsresult rv = fm->DetermineElementToMoveFocus(
-      aInputContent->OwnerDoc()->GetWindow(), aInputContent,
-      nsIFocusManager::MOVEFOCUS_FORWARD, true, false,
-      getter_AddRefs(nextContent));
+      aInputContent->OwnerDoc()->GetWindow(),
+      const_cast<Element*>(aInputContent), nsIFocusManager::MOVEFOCUS_FORWARD,
+      true, false, getter_AddRefs(nextContent));
   if (NS_WARN_IF(NS_FAILED(rv)) || !nextContent) {
     return false;
   }
@@ -1282,12 +1294,27 @@ static bool IsNextFocusableElementTextControl(Element* aInputContent) {
   return !inputElement->ReadOnly();
 }
 
+static void GetInputType(const IMEState& aState, const nsIContent& aContent,
+                         nsAString& aInputType) {
+  if (aContent.IsHTMLElement(nsGkAtoms::input)) {
+    const HTMLInputElement* inputElement =
+        HTMLInputElement::FromNode(&aContent);
+    if (inputElement->HasBeenTypePassword() && aState.IsEditable()) {
+      aInputType.AssignLiteral("password");
+    } else {
+      inputElement->GetType(aInputType);
+    }
+  } else if (aContent.IsHTMLElement(nsGkAtoms::textarea)) {
+    aInputType.Assign(nsGkAtoms::textarea->GetUTF16String());
+  }
+}
+
 static void GetActionHint(const IMEState& aState, const nsIContent& aContent,
                           nsAString& aActionHint) {
   MOZ_ASSERT(aContent.IsHTMLElement());
 
   if (aState.IsEditable() && StaticPrefs::dom_forms_enterkeyhint()) {
-    nsGenericHTMLElement::FromNode(aContent)->GetEnterKeyHint(aActionHint);
+    nsGenericHTMLElement::FromNode(&aContent)->GetEnterKeyHint(aActionHint);
 
     // If enterkeyhint is set, we don't infer action hint.
     if (!aActionHint.IsEmpty()) {
@@ -1310,8 +1337,8 @@ static void GetActionHint(const IMEState& aState, const nsIContent& aContent,
 
   // Get the input content corresponding to the focused node,
   // which may be an anonymous child of the input content.
-  HTMLInputElement* inputElement = HTMLInputElement::FromNode(
-      aContent.FindFirstNonChromeOnlyAccessContent());
+  MOZ_ASSERT(&aContent == aContent.FindFirstNonChromeOnlyAccessContent());
+  const HTMLInputElement* inputElement = HTMLInputElement::FromNode(aContent);
   if (!inputElement) {
     return;
   }
@@ -1363,6 +1390,37 @@ static void GetActionHint(const IMEState& aState, const nsIContent& aContent,
   aActionHint.AssignLiteral("go");
 }
 
+static void GetInputmode(const IMEState& aState, const nsIContent& aContent,
+                         nsAString& aInputmode) {
+  if (aState.IsEditable() &&
+      (StaticPrefs::dom_forms_inputmode() ||
+       nsContentUtils::IsChromeDoc(aContent.OwnerDoc()))) {
+    aContent.AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::inputmode,
+                                  aInputmode);
+    if (aContent.IsHTMLElement(nsGkAtoms::input) &&
+        aInputmode.EqualsLiteral("mozAwesomebar")) {
+      if (!nsContentUtils::IsChromeDoc(aContent.OwnerDoc())) {
+        // mozAwesomebar should be allowed only in chrome
+        aInputmode.Truncate();
+      }
+    } else {
+      ToLowerCase(aInputmode);
+    }
+  }
+}
+
+static void GetAutocapitalize(const IMEState& aState,
+                              const nsIContent& aContent,
+                              const InputContext& aInputContext,
+                              nsAString& aAutocapitalize) {
+  if (aContent.IsHTMLElement() && aState.IsEditable() &&
+      StaticPrefs::dom_forms_autocapitalize() &&
+      aInputContext.IsAutocapitalizeSupported()) {
+    nsGenericHTMLElement::FromNode(&aContent)->GetAutocapitalize(
+        aAutocapitalize);
+  }
+}
+
 // static
 void IMEStateManager::SetIMEState(const IMEState& aState,
                                   nsPresContext* aPresContext,
@@ -1394,44 +1452,15 @@ void IMEStateManager::SetIMEState(const IMEState& aState,
       aPresContext &&
       nsContentUtils::IsInPrivateBrowsing(aPresContext->Document());
 
-  if (aContent && aContent->IsHTMLElement()) {
-    if (aContent->IsHTMLElement(nsGkAtoms::input)) {
-      HTMLInputElement* inputElement = HTMLInputElement::FromNode(aContent);
-      if (inputElement->HasBeenTypePassword() && aState.IsEditable()) {
-        context.mHTMLInputType.AssignLiteral("password");
-      } else {
-        inputElement->GetType(context.mHTMLInputType);
-      }
+  nsIContent* focusedContent =
+      aContent ? aContent->FindFirstNonChromeOnlyAccessContent() : nullptr;
 
-    } else if (aContent->IsHTMLElement(nsGkAtoms::textarea)) {
-      context.mHTMLInputType.Assign(nsGkAtoms::textarea->GetUTF16String());
-    }
-
-    GetActionHint(aState, *aContent, context.mActionHint);
-
-    if (aState.IsEditable() &&
-        (StaticPrefs::dom_forms_inputmode() ||
-         nsContentUtils::IsChromeDoc(aContent->OwnerDoc()))) {
-      aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::inputmode,
-                                     context.mHTMLInputInputmode);
-      if (aContent->IsHTMLElement(nsGkAtoms::input) &&
-          context.mHTMLInputInputmode.EqualsLiteral("mozAwesomebar")) {
-        if (!nsContentUtils::IsChromeDoc(aContent->OwnerDoc())) {
-          // mozAwesomebar should be allowed only in chrome
-          context.mHTMLInputInputmode.Truncate();
-        }
-      } else {
-        // Except to mozAwesomebar, inputmode should be lower case.
-        ToLowerCase(context.mHTMLInputInputmode);
-      }
-    }
-
-    if (aContent->IsHTMLElement() && aState.IsEditable() &&
-        StaticPrefs::dom_forms_autocapitalize() &&
-        context.IsAutocapitalizeSupported()) {
-      nsGenericHTMLElement::FromNode(aContent)->GetAutocapitalize(
-          context.mAutocapitalize);
-    }
+  if (focusedContent && focusedContent->IsHTMLElement()) {
+    GetInputType(aState, *focusedContent, context.mHTMLInputType);
+    GetActionHint(aState, *focusedContent, context.mActionHint);
+    GetInputmode(aState, *focusedContent, context.mHTMLInputInputmode);
+    GetAutocapitalize(aState, *focusedContent, context,
+                      context.mAutocapitalize);
   }
 
   if (aAction.mCause == InputContextAction::CAUSE_UNKNOWN &&
@@ -1866,7 +1895,7 @@ nsresult IMEStateManager::NotifyIME(IMEMessage aMessage,
     return NS_ERROR_INVALID_ARG;
   }
 
-  nsIWidget* widget = aPresContext->GetTextInputHandlingWidget();
+  nsCOMPtr<nsIWidget> widget = aPresContext->GetTextInputHandlingWidget();
   if (NS_WARN_IF(!widget)) {
     MOZ_LOG(sISMLog, LogLevel::Error,
             ("  NotifyIME(), FAILED due to no widget for the "
@@ -1998,7 +2027,12 @@ void IMEStateManager::CreateIMEContentObserver(EditorBase& aEditorBase) {
     return;
   }
 
-  MOZ_ASSERT(sPresContext->GetTextInputHandlingWidget() == widget);
+#ifdef DEBUG
+  {
+    nsCOMPtr<nsIWidget> tihWidget = sPresContext->GetTextInputHandlingWidget();
+    MOZ_ASSERT(tihWidget == widget);
+  }
+#endif  // DEBUG
 
   MOZ_LOG(sISMLog, LogLevel::Debug,
           ("  CreateIMEContentObserver() is creating an "

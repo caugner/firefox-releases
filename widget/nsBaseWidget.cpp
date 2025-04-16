@@ -891,15 +891,17 @@ bool nsBaseWidget::IsSmallPopup() const {
 
 bool nsBaseWidget::ComputeShouldAccelerate() {
   return gfx::gfxConfig::IsEnabled(gfx::Feature::HW_COMPOSITING) &&
-         WidgetTypeSupportsAcceleration();
+         (WidgetTypeSupportsAcceleration() ||
+          StaticPrefs::gfx_webrender_unaccelerated_widget_force());
 }
 
 bool nsBaseWidget::UseAPZ() {
   return (gfxPlatform::AsyncPanZoomEnabled() &&
           (WindowType() == eWindowType_toplevel ||
            WindowType() == eWindowType_child ||
-           (WindowType() == eWindowType_popup && HasRemoteContent() &&
-            StaticPrefs::apz_popups_enabled())));
+           ((WindowType() == eWindowType_popup ||
+             WindowType() == eWindowType_dialog) &&
+            HasRemoteContent() && StaticPrefs::apz_popups_enabled())));
 }
 
 void nsBaseWidget::CreateCompositor() {

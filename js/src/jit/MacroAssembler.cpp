@@ -1845,7 +1845,8 @@ void MacroAssembler::setIsDefinitelyTypedArrayConstructor(Register obj,
     branchPtr(Assembler::Equal, output, ImmPtr(constructor), &isTrue);
   };
 
-#define TYPED_ARRAY_CONSTRUCTOR_NATIVE(T, N) branchIsTypedArrayCtor(Scalar::N);
+#define TYPED_ARRAY_CONSTRUCTOR_NATIVE(_, T, N) \
+  branchIsTypedArrayCtor(Scalar::N);
   JS_FOR_EACH_TYPED_ARRAY(TYPED_ARRAY_CONSTRUCTOR_NATIVE)
 #undef TYPED_ARRAY_CONSTRUCTOR_NATIVE
 
@@ -4193,6 +4194,17 @@ void MacroAssembler::debugAssertObjHasFixedSlots(Register obj,
 #endif
 }
 
+void MacroAssembler::debugAssertObjectHasClass(Register obj, Register scratch,
+                                               const JSClass* clasp) {
+#ifdef DEBUG
+  Label done;
+  branchTestObjClassNoSpectreMitigations(Assembler::Equal, obj, clasp, scratch,
+                                         &done);
+  assumeUnreachable("Class check failed");
+  bind(&done);
+#endif
+}
+
 void MacroAssembler::branchArrayIsNotPacked(Register array, Register temp1,
                                             Register temp2, Label* label) {
   loadPtr(Address(array, NativeObject::offsetOfElements()), temp1);
@@ -4579,6 +4591,13 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
                                    Register temp3) {
   LoadNativeIterator(*this, obj, temp1);
 
+  // The shared iterator used for for-in with null/undefined is immutable and
+  // unlinked. See NativeIterator::isEmptyIteratorSingleton.
+  Label done;
+  branchPtr(Assembler::Equal,
+            Address(temp1, NativeIterator::offsetOfObjectBeingIterated()),
+            ImmPtr(nullptr), &done);
+
   // Clear active bit.
   and32(Imm32(~NativeIterator::Flags::Active),
         Address(temp1, NativeIterator::offsetOfFlagsAndCount()));
@@ -4598,6 +4617,8 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
   storePtr(ImmPtr(nullptr), Address(temp1, NativeIterator::offsetOfNext()));
   storePtr(ImmPtr(nullptr), Address(temp1, NativeIterator::offsetOfPrev()));
 #endif
+
+  bind(&done);
 }
 
 void MacroAssembler::toHashableNonGCThing(ValueOperand value,
@@ -5292,10 +5313,10 @@ template void AutoGenericRegisterScope<FloatRegister>::reacquire();
 }  // namespace jit
 
 namespace wasm {
-const TlsData* ExtractCallerTlsFromFrameWithTls(const Frame* fp) {
-  return *reinterpret_cast<TlsData* const*>(
-      reinterpret_cast<const uint8_t*>(fp) + sizeof(Frame) + ShadowStackSpace +
-      FrameWithTls::callerTLSOffset());
+TlsData* ExtractCallerTlsFromFrameWithTls(Frame* fp) {
+  return *reinterpret_cast<TlsData**>(reinterpret_cast<uint8_t*>(fp) +
+                                      sizeof(Frame) + ShadowStackSpace +
+                                      FrameWithTls::callerTLSOffset());
 }
 
 const TlsData* ExtractCalleeTlsFromFrameWithTls(const Frame* fp) {

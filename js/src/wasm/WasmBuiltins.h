@@ -116,14 +116,11 @@ enum class SymbolicAddress {
 #if defined(ENABLE_WASM_EXCEPTIONS)
   ExceptionNew,
   ThrowException,
-  GetLocalExceptionIndex,
+  ConsumePendingException,
   PushRefIntoExn,
 #endif
   ArrayNew,
   InlineTypedObjectClass,
-#if defined(JS_CODEGEN_MIPS32)
-  js_jit_gAtomic64Lock,
-#endif
 #define DECL_INTRINSIC_SA(op, export, sa_name, abitype, entry, idx) sa_name,
   FOR_EACH_INTRINSIC(DECL_INTRINSIC_SA)
 #undef DECL_INTRINSIC_SA
@@ -233,7 +230,7 @@ extern const SymbolicAddressSignature SASigStructNew;
 #ifdef ENABLE_WASM_EXCEPTIONS
 extern const SymbolicAddressSignature SASigExceptionNew;
 extern const SymbolicAddressSignature SASigThrowException;
-extern const SymbolicAddressSignature SASigGetLocalExceptionIndex;
+extern const SymbolicAddressSignature SASigConsumePendingException;
 extern const SymbolicAddressSignature SASigPushRefIntoExn;
 #endif
 extern const SymbolicAddressSignature SASigArrayNew;

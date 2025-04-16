@@ -37,6 +37,7 @@ class gfxTextRun;
 class nsIURI;
 class nsAtom;
 class nsIObserver;
+class nsPresContext;
 class SRGBOverrideObserver;
 class gfxTextPerfMetrics;
 typedef struct FT_LibraryRec_* FT_Library;
@@ -395,6 +396,7 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
    * Create a gfxFontGroup based on the given family list and style.
    */
   gfxFontGroup* CreateFontGroup(
+      nsPresContext* aPresContext,
       const mozilla::StyleFontFamilyList& aFontFamilyList,
       const gfxFontStyle* aStyle, nsAtom* aLanguage, bool aExplicitLanguage,
       gfxTextPerfMetrics* aTextPerf, gfxUserFontSet* aUserFontSet,
@@ -406,7 +408,8 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
    * Ownership of the returned gfxFontEntry is passed to the caller,
    * who must either AddRef() or delete.
    */
-  gfxFontEntry* LookupLocalFont(const nsACString& aFontName,
+  gfxFontEntry* LookupLocalFont(nsPresContext* aPresContext,
+                                const nsACString& aFontName,
                                 WeightRange aWeightForEntry,
                                 StretchRange aStretchForEntry,
                                 SlantStyleRange aStyleForEntry);
@@ -510,19 +513,6 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
 
   void UpdateCanUseHardwareVideoDecoding();
 
-  // Returns a prioritized list of all available compositor backends.
-  void GetCompositorBackends(
-      bool useAcceleration,
-      nsTArray<mozilla::layers::LayersBackend>& aBackends);
-
-  /**
-   * Is it possible to use buffer rotation.  Note that these
-   * check the preference, but also allow for the override to
-   * disable it using DisableBufferRotation.
-   */
-  static bool BufferRotationEnabled();
-  static void DisableBufferRotation();
-
   /**
    * Are we going to try color management?
    */
@@ -617,13 +607,19 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   int32_t GetBidiNumeralOption();
 
   /**
-   * This is a bit ugly, but useful... force all presContexts to reflow,
-   * by toggling a preference that they observe. This is used when
-   * something about platform settings changes that might have an effect
-   * on layout, such as font rendering settings that influence metrics.
+   * Force all presContexts to reflow (and reframe if needed).
+   *
+   * This is used when something about platform settings changes that might have
+   * an effect on layout, such as font rendering settings that influence
+   * metrics, or installed fonts.
+   *
+   * By default it also broadcast it to child processes, but some callers might
+   * not need it if they implement their own notification.
    */
   enum class NeedsReframe : bool { No, Yes };
-  static void ForceGlobalReflow(NeedsReframe);
+  enum class BroadcastToChildren : bool { No, Yes };
+  static void ForceGlobalReflow(NeedsReframe,
+                                BroadcastToChildren = BroadcastToChildren::Yes);
 
   static void FlushFontAndWordCaches();
 
@@ -655,11 +651,6 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
 
   int GetScreenDepth() const { return mScreenDepth; }
   mozilla::gfx::IntSize GetScreenSize() const { return mScreenSize; }
-
-  /**
-   * Return the layer debugging options to use browser-wide.
-   */
-  mozilla::layers::DiagnosticTypes GetLayerDiagnosticTypes();
 
   static void PurgeSkiaFontCache();
 
@@ -806,7 +797,6 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   virtual void EnsureDevicesInitialized(){};
   virtual bool DevicesInitialized() { return true; };
 
-  virtual bool UseDMABufWebGL() { return false; }
   virtual bool IsWaylandDisplay() { return false; }
 
   static uint32_t TargetFrameRate();
@@ -838,11 +828,6 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   // Returns whether or not layers should be accelerated by default on this
   // platform.
   virtual bool AccelerateLayersByDefault();
-
-  // Returns a prioritized list of available compositor backends for
-  // acceleration.
-  virtual void GetAcceleratedCompositorBackends(
-      nsTArray<mozilla::layers::LayersBackend>& aBackends);
 
   // Returns preferences of canvas and content backends.
   virtual BackendPrefsData GetBackendPrefs() const;

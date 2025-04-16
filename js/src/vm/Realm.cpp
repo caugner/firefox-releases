@@ -349,11 +349,6 @@ void Realm::traceWeakObjects(JSTracer* trc) {
   TraceWeakEdge(trc, &global_, "Realm::global_");
 }
 
-void Realm::traceWeakSelfHostingScriptSource(JSTracer* trc) {
-  TraceWeakEdge(trc, &selfHostingScriptSource,
-                "Realm::selfHostingScriptSource");
-}
-
 void Realm::traceWeakEdgesInJitRealm(JSTracer* trc) {
   if (jitRealm_) {
     jitRealm_->traceWeak(trc, this);
@@ -385,24 +380,13 @@ void ObjectRealm::traceWeakNativeIterators(JSTracer* trc) {
                                         "ObjectRealm::enumerators")) {
       ni->unlink();
     }
-    MOZ_ASSERT_IF(ni->objectBeingIterated(),
-                  &ObjectRealm::get(ni->objectBeingIterated()) == this);
+    MOZ_ASSERT(&ObjectRealm::get(ni->objectBeingIterated()) == this);
     ni = next;
   }
 }
 
 void Realm::traceWeakObjectRealm(JSTracer* trc) {
   objects_.traceWeakNativeIterators(trc);
-}
-
-void Realm::traceWeakTemplateObjects(JSTracer* trc) {
-  TraceWeakEdge(trc, &mappedArgumentsTemplate_,
-                "Realm::mappedArgumentsTemplate_");
-  TraceWeakEdge(trc, &unmappedArgumentsTemplate_,
-                "Realm::unmappedArgumentsTemplate_");
-  TraceWeakEdge(trc, &iterResultTemplate_, "Realm::iterResultTemplate_");
-  TraceWeakEdge(trc, &iterResultWithoutPrototypeTemplate_,
-                "Realm::iterResultWithoutPrototypeTemplate_");
 }
 
 void Realm::fixupAfterMovingGC(JSTracer* trc) {

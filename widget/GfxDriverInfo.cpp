@@ -740,6 +740,8 @@ const GfxDeviceFamily* GfxDriverInfo::GetDeviceFamily(DeviceFamily id) {
       APPEND_DEVICE(0x15d8);
       // Renoir
       APPEND_DEVICE(0x1636);
+      // Cezanne
+      APPEND_DEVICE(0x1638);
 
       // Evergreen
       APPEND_RANGE(0x6840, 0x684b);
@@ -995,6 +997,7 @@ const nsAString& GfxDriverInfo::GetDriverVendor(DriverVendor id) {
     DECLARE_DRIVER_VENDOR_ID(MesaLLVMPipe, "mesa/llvmpipe");
     DECLARE_DRIVER_VENDOR_ID(MesaSoftPipe, "mesa/softpipe");
     DECLARE_DRIVER_VENDOR_ID(MesaSWRast, "mesa/swrast");
+    DECLARE_DRIVER_VENDOR_ID(MesaSWUnknown, "mesa/software-unknown");
     DECLARE_DRIVER_VENDOR_ID(MesaUnknown, "mesa/unknown");
     DECLARE_DRIVER_VENDOR_ID(MesaR600, "mesa/r600");
     DECLARE_DRIVER_VENDOR_ID(MesaNouveau, "mesa/nouveau");

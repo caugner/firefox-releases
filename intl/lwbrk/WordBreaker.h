@@ -13,20 +13,9 @@
 namespace mozilla {
 namespace intl {
 
-typedef struct {
+struct WordRange {
   uint32_t mBegin;
   uint32_t mEnd;
-} WordRange;
-
-enum WordBreakClass : uint8_t {
-  kWbClassSpace = 0,
-  kWbClassAlphaLetter,
-  kWbClassPunct,
-  kWbClassHanLetter,
-  kWbClassKatakanaLetter,
-  kWbClassHiraganaLetter,
-  kWbClassHWKatakanaLetter,
-  kWbClassScriptioContinua
 };
 
 class WordBreaker {
@@ -35,16 +24,38 @@ class WordBreaker {
 
   static already_AddRefed<WordBreaker> Create();
 
-  bool BreakInBetween(const char16_t* aText1, uint32_t aTextLen1,
-                      const char16_t* aText2, uint32_t aTextLen2);
-  WordRange FindWord(const char16_t* aText1, uint32_t aTextLen1,
-                     uint32_t aOffset);
-  int32_t NextWord(const char16_t* aText, uint32_t aLen, uint32_t aPos);
+  // Find the word boundary by scanning forward and backward from aPos.
+  //
+  // @return WordRange where mBegin equals to the offset to first character in
+  // the word and mEnd equals to the offset to the last character plus 1. mEnd
+  // can be aLen if the desired word is at the end of aText.
+  //
+  // If aPos is already at the end of aText or beyond, both mBegin and mEnd
+  // equals to aLen.
+  WordRange FindWord(const char16_t* aText, uint32_t aLen, uint32_t aPos);
 
-  static WordBreakClass GetClass(char16_t aChar);
+  // Find the next word break opportunity starting from aPos + 1. It can return
+  // aLen if there's no break opportunity between [aPos + 1, aLen - 1].
+  //
+  // If aPos is already at the end of aText or beyond, i.e. aPos >= aLen, return
+  // NS_WORDBREAKER_NEED_MORE_TEXT.
+  int32_t Next(const char16_t* aText, uint32_t aLen, uint32_t aPos);
 
  private:
   ~WordBreaker() = default;
+
+  enum WordBreakClass : uint8_t {
+    kWbClassSpace = 0,
+    kWbClassAlphaLetter,
+    kWbClassPunct,
+    kWbClassHanLetter,
+    kWbClassKatakanaLetter,
+    kWbClassHiraganaLetter,
+    kWbClassHWKatakanaLetter,
+    kWbClassScriptioContinua
+  };
+
+  static WordBreakClass GetClass(char16_t aChar);
 };
 
 }  // namespace intl

@@ -30,6 +30,7 @@
 #include "nsHashKeys.h"
 #include "nsRect.h"
 #include "nsStringFwd.h"
+#include "nsTHashSet.h"
 #include "nsTHashtable.h"
 #include "nsAtom.h"
 #include "nsIWidgetListener.h"  // for nsSizeMode
@@ -53,6 +54,7 @@ class nsIFrame;
 class nsFrameManager;
 class nsAtom;
 class nsIRunnable;
+class gfxFontFamily;
 class gfxFontFeatureValueSet;
 class gfxUserFontEntry;
 class gfxUserFontSet;
@@ -117,10 +119,6 @@ enum class nsLayoutPhase : uint8_t {
 };
 #endif
 
-/* Used by nsPresContext::HasAuthorSpecifiedRules */
-#define NS_AUTHOR_SPECIFIED_BORDER_OR_BACKGROUND (1 << 0)
-#define NS_AUTHOR_SPECIFIED_PADDING (1 << 1)
-
 class nsRootPresContext;
 
 // An interface for presentation contexts. Presentation contexts are
@@ -162,6 +160,10 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   void InitFontCache();
 
   void UpdateFontCacheUserFonts(gfxUserFontSet* aUserFontSet);
+
+  FontVisibility GetFontVisibility() const { return mFontVisibility; }
+  void ReportBlockedFontFamily(const mozilla::fontlist::Family& aFamily);
+  void ReportBlockedFontFamily(const gfxFontFamily& aFamily);
 
   /**
    * Get the nsFontMetrics that describe the properties of
@@ -230,13 +232,13 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   /**
    * Returns the root widget for this.
    */
-  nsIWidget* GetRootWidget() const;
+  already_AddRefed<nsIWidget> GetRootWidget() const;
 
   /**
    * Returns the widget which may have native focus and handles text input
    * like keyboard input, IME, etc.
    */
-  nsIWidget* GetTextInputHandlingWidget() const {
+  already_AddRefed<nsIWidget> GetTextInputHandlingWidget() const {
     // Currently, root widget for each PresContext handles text input.
     return GetRootWidget();
   }
@@ -884,10 +886,6 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   // Is this presentation in a chrome docshell?
   bool IsChrome() const;
 
-  // Public API for native theme code to get style internals.
-  bool HasAuthorSpecifiedRules(const nsIFrame* aFrame,
-                               uint32_t ruleTypeMask) const;
-
   // Explicitly enable and disable paint flashing.
   void SetPaintFlashing(bool aPaintFlashing) {
     mPaintFlashing = aPaintFlashing;
@@ -1101,10 +1099,13 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
 
   void UpdateCharSet(NotNull<const Encoding*> aCharSet);
 
+  void DoForceReflowForFontInfoUpdateFromStyle();
+
  public:
   // Used by the PresShell to force a reflow when some aspect of font info
   // has been updated, potentially affecting font selection and layout.
   void ForceReflowForFontInfoUpdate(bool aNeedsReframe);
+  void ForceReflowForFontInfoUpdateFromStyle();
 
   /**
    * Checks for MozAfterPaint listeners on the document
@@ -1148,6 +1149,13 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   // This should be called only when we update mVisibleArea or
   // mDynamicToolbarMaxHeight or `app units per device pixels` changes.
   void AdjustSizeForViewportUnits();
+
+  // Call in response to prefs changes that might affect what fonts should be
+  // visibile to CSS. Returns whether the current visibility value actually
+  // changed (in which case content should be reflowed).
+  bool UpdateFontVisibility();
+  void ReportBlockedFontFamilyName(const nsCString& aFamily,
+                                   FontVisibility aVisibility);
 
   // IMPORTANT: The ownership implicit in the following member variables
   // has been explicitly checked.  If you add any members to this class,
@@ -1264,6 +1272,12 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   nsTArray<RefPtr<mozilla::ManagedPostRefreshObserver>>
       mManagedPostRefreshObservers;
 
+  // If we block the use of a font-family that is explicitly requested,
+  // due to font visibility settings, we log a message to the web console;
+  // this hash-set keeps track of names we've logged for this context, so
+  // that we can avoid repeatedly reporting the same font.
+  nsTHashSet<nsCString> mBlockedFonts;
+
   ScrollStyles mViewportScrollStyles;
 
   uint16_t mImageAnimationMode;
@@ -1304,6 +1318,7 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   // widget::ThemeChangeKind
   unsigned mPendingThemeChangeKind : kThemeChangeKindBits;
   unsigned mPendingUIResolutionChanged : 1;
+  unsigned mPendingFontInfoUpdateReflowFromStyle : 1;
 
   // Are we currently drawing an SVG glyph?
   unsigned mIsGlyph : 1;
@@ -1353,6 +1368,8 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
 #ifdef DEBUG
   unsigned mInitialized : 1;
 #endif
+
+  FontVisibility mFontVisibility = FontVisibility::Unknown;
 
  protected:
   virtual ~nsPresContext();

@@ -69,12 +69,12 @@
 #include "mozilla/layers/APZUtils.h"        // for AsyncTransform
 #include "mozilla/layers/CompositorController.h"  // for CompositorController
 #include "mozilla/layers/DirectionUtils.h"  // for GetAxis{Start,End,Length,Scale}
-#include "mozilla/mozalloc.h"                         // for operator new, etc
-#include "mozilla/Unused.h"                           // for unused
-#include "mozilla/FloatingPoint.h"                    // for FuzzyEquals*
-#include "nsAlgorithm.h"                              // for clamped
-#include "nsCOMPtr.h"                                 // for already_AddRefed
-#include "nsDebug.h"                                  // for NS_WARNING
+#include "mozilla/mozalloc.h"               // for operator new, etc
+#include "mozilla/Unused.h"                 // for unused
+#include "mozilla/FloatingPoint.h"          // for FuzzyEquals*
+#include "nsAlgorithm.h"                    // for clamped
+#include "nsCOMPtr.h"                       // for already_AddRefed
+#include "nsDebug.h"                        // for NS_WARNING
 #include "nsLayoutUtils.h"
 #include "nsMathUtils.h"  // for NS_hypot
 #include "nsPoint.h"      // for nsIntPoint
@@ -207,7 +207,7 @@ typedef PlatformSpecificStateBase
  * a state where we can't keep up with scrolling. The danger zone prefs specify
  * how wide this margin is; in the above example a y-axis danger zone of 10
  * pixels would make us drop to low-res at y=490...990.\n
- * This value is in layer pixels.
+ * This value is in screen pixels.
  *
  * \li\b apz.disable_for_scroll_linked_effects
  * Setting this pref to true will disable APZ scrolling on documents where
@@ -729,7 +729,6 @@ AsyncPanZoomController::AsyncPanZoomController(
       mInputQueue(aInputQueue),
       mPinchPaintTimerSet(false),
       mTestAttributeAppliers(0),
-      mAsyncTransformAppliedToContent(false),
       mTestHasAsyncKeyScrolled(false),
       mCheckerboardEventLock("APZCBELock") {
   if (aGestures == USE_GESTURE_DETECTOR) {
@@ -4067,11 +4066,11 @@ static CSSSize CalculateDisplayPortSize(
 static CSSSize ExpandDisplayPortToDangerZone(
     const CSSSize& aDisplayPortSize, const FrameMetrics& aFrameMetrics) {
   CSSSize dangerZone(0.0f, 0.0f);
-  if (aFrameMetrics.LayersPixelsPerCSSPixel().xScale != 0 &&
-      aFrameMetrics.LayersPixelsPerCSSPixel().yScale != 0) {
-    dangerZone = LayerSize(StaticPrefs::apz_danger_zone_x(),
-                           StaticPrefs::apz_danger_zone_y()) /
-                 aFrameMetrics.LayersPixelsPerCSSPixel();
+  if (aFrameMetrics.DisplayportPixelsPerCSSPixel().xScale != 0 &&
+      aFrameMetrics.DisplayportPixelsPerCSSPixel().yScale != 0) {
+    dangerZone = ScreenSize(StaticPrefs::apz_danger_zone_x(),
+                            StaticPrefs::apz_danger_zone_y()) /
+                 aFrameMetrics.DisplayportPixelsPerCSSPixel();
   }
   const CSSSize compositionSize =
       aFrameMetrics.CalculateBoundedCompositedSizeInCssPixels();
@@ -4447,7 +4446,6 @@ bool AsyncPanZoomController::AdvanceAnimations(const SampleTime& aSampleTime) {
   // fling is happening, it has to keep compositing so that the animation is
   // smooth. If an animation frame is requested, it is the compositor's
   // responsibility to schedule a composite.
-  mAsyncTransformAppliedToContent = false;
   bool requestAnimationFrame = false;
   nsTArray<RefPtr<Runnable>> deferredTasks;
 
@@ -4478,15 +4476,6 @@ bool AsyncPanZoomController::AdvanceAnimations(const SampleTime& aSampleTime) {
   // If any of the deferred tasks starts a new animation, it will request a
   // new composite directly, so we can just return requestAnimationFrame here.
   return requestAnimationFrame;
-}
-
-CSSRect AsyncPanZoomController::GetCurrentAsyncLayoutViewport(
-    AsyncTransformConsumer aMode) const {
-  RecursiveMutexAutoLock lock(mRecursiveMutex);
-  AutoApplyAsyncTestAttributes testAttributeApplier(this, lock);
-  MOZ_ASSERT(Metrics().IsRootContent(),
-             "Only the root content APZC has a layout viewport");
-  return GetEffectiveLayoutViewport(aMode, lock);
 }
 
 ParentLayerPoint AsyncPanZoomController::GetCurrentAsyncScrollOffset(
@@ -5060,14 +5049,12 @@ void AsyncPanZoomController::NotifyLayersUpdated(
         aLayerMetrics.GetBoundingCompositionSize());
     Metrics().SetPresShellResolution(aLayerMetrics.GetPresShellResolution());
     Metrics().SetCumulativeResolution(aLayerMetrics.GetCumulativeResolution());
+    Metrics().SetTransformToAncestorScale(
+        aLayerMetrics.GetTransformToAncestorScale());
     mScrollMetadata.SetHasScrollgrab(aScrollMetadata.GetHasScrollgrab());
     mScrollMetadata.SetLineScrollAmount(aScrollMetadata.GetLineScrollAmount());
     mScrollMetadata.SetPageScrollAmount(aScrollMetadata.GetPageScrollAmount());
     mScrollMetadata.SetSnapInfo(ScrollSnapInfo(aScrollMetadata.GetSnapInfo()));
-    // The scroll clip can differ between layers associated a given scroll
-    // frame, so APZC (which keeps a single copy of ScrollMetadata per scroll
-    // frame) has no business using it.
-    mScrollMetadata.SetScrollClip(Nothing());
     mScrollMetadata.SetIsLayersIdRoot(aScrollMetadata.IsLayersIdRoot());
     mScrollMetadata.SetIsAutoDirRootContentRTL(
         aScrollMetadata.IsAutoDirRootContentRTL());

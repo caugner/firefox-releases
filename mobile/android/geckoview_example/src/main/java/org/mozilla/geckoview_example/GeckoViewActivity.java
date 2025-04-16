@@ -8,6 +8,7 @@ package org.mozilla.geckoview_example;
 import org.json.JSONObject;
 
 import org.mozilla.geckoview.AllowOrDeny;
+import org.mozilla.geckoview.Autocomplete;
 import org.mozilla.geckoview.BasicSelectionActionDelegate;
 import org.mozilla.geckoview.ContentBlocking;
 import org.mozilla.geckoview.GeckoResult;
@@ -421,7 +422,7 @@ public class GeckoViewActivity
     private LocationView.CommitListener mCommitListener = new LocationView.CommitListener() {
         @Override
         public void onCommit(String text) {
-            if ((text.contains(".") || text.contains(":")) && !text.contains(" ")) {
+            if (text.startsWith("data:") || ((text.contains(".") || text.contains(":")) && !text.contains(" "))) {
                 mTabSessionManager.getCurrentSession().loadUri(text);
             } else {
                 mTabSessionManager.getCurrentSession().loadUri(SEARCH_URI_BASE + text);
@@ -747,6 +748,7 @@ public class GeckoViewActivity
             mTabSessionManager.setTabObserver(sExtensionManager);
 
             sGeckoRuntime.getWebExtensionController().setDebuggerDelegate(sExtensionManager);
+            sGeckoRuntime.setAutocompleteStorageDelegate(new ExampleAutocompleteStorageDelegate());
 
             // `getSystemService` call requires API level 23
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
@@ -1529,6 +1531,8 @@ public class GeckoViewActivity
         }
     }
 
+    private class ExampleAutocompleteStorageDelegate implements Autocomplete.StorageDelegate {}
+
     private class ExampleContentDelegate implements GeckoSession.ContentDelegate {
         @Override
         public void onTitleChange(GeckoSession session, String title) {
@@ -2019,6 +2023,8 @@ public class GeckoViewActivity
                     return "ERROR_UNSAFE_CONTENT_TYPE";
                 case WebRequestError.ERROR_CORRUPTED_CONTENT:
                     return "ERROR_CORRUPTED_CONTENT";
+                case WebRequestError.ERROR_HTTPS_ONLY:
+                    return "ERROR_HTTPS_ONLY";
                 default:
                     return "UNKNOWN";
             }

@@ -28,9 +28,8 @@
 #include "mozilla/dom/AnimationEffect.h"  // for AnimationEffect
 #include "mozilla/gfx/Point.h"            // for IntSize
 #include "mozilla/gfx/Types.h"            // for SurfaceFormat, gfx
-#include "mozilla/gfx/UserData.h"  // for UserData, UserDataKey (ptr only)
-#include "mozilla/layers/LayerMetricsWrapper.h"  // for LayerMetricsWrapper
-#include "mozilla/layers/LayersTypes.h"          // for CompositionPayload
+#include "mozilla/gfx/UserData.h"        // for UserData, UserDataKey (ptr only)
+#include "mozilla/layers/LayersTypes.h"  // for CompositionPayload
 #include "mozilla/layers/PersistentBufferProvider.h"  // for PersistentBufferProviderBasic, PersistentBufferProvider (ptr only)
 #include "mozilla/layers/ScrollableLayerGuid.h"  // for ScrollableLayerGuid, ScrollableLayerGuid::NULL_SCROLL_ID, ScrollableLayerGu...
 #include "nsHashKeys.h"                          // for nsUint64HashKey
@@ -74,37 +73,6 @@ void LayerManager::Destroy() {
   return sLog;
 }
 
-ScrollableLayerGuid::ViewID LayerManager::GetRootScrollableLayerId() {
-  if (!mRoot) {
-    return ScrollableLayerGuid::NULL_SCROLL_ID;
-  }
-
-  LayerMetricsWrapper layerMetricsRoot = LayerMetricsWrapper(mRoot);
-
-  LayerMetricsWrapper rootScrollableLayerMetrics =
-      BreadthFirstSearch<ForwardIterator>(
-          layerMetricsRoot, [](LayerMetricsWrapper aLayerMetrics) {
-            return aLayerMetrics.Metrics().IsScrollable();
-          });
-
-  return rootScrollableLayerMetrics.IsValid()
-             ? rootScrollableLayerMetrics.Metrics().GetScrollId()
-             : ScrollableLayerGuid::NULL_SCROLL_ID;
-}
-
-LayerMetricsWrapper LayerManager::GetRootContentLayer() {
-  if (!mRoot) {
-    return LayerMetricsWrapper();
-  }
-
-  LayerMetricsWrapper root(mRoot);
-
-  return BreadthFirstSearch<ForwardIterator>(
-      root, [](LayerMetricsWrapper aLayerMetrics) {
-        return aLayerMetrics.Metrics().IsRootContent();
-      });
-}
-
 already_AddRefed<DrawTarget> LayerManager::CreateOptimalDrawTarget(
     const gfx::IntSize& aSize, SurfaceFormat aFormat) {
   return gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(aSize,
@@ -126,21 +94,6 @@ already_AddRefed<ImageContainer> LayerManager::CreateImageContainer(
     ImageContainer::Mode flag) {
   RefPtr<ImageContainer> container = new ImageContainer(flag);
   return container.forget();
-}
-
-bool LayerManager::LayersComponentAlphaEnabled() {
-  // If MOZ_GFX_OPTIMIZE_MOBILE is defined, we force component alpha off
-  // and ignore the preference.
-#ifdef MOZ_GFX_OPTIMIZE_MOBILE
-  return false;
-#else
-  return StaticPrefs::
-      layers_componentalpha_enabled_AtStartup_DoNotUseDirectly();
-#endif
-}
-
-bool LayerManager::AreComponentAlphaLayersEnabled() {
-  return LayerManager::LayersComponentAlphaEnabled();
 }
 
 /*static*/

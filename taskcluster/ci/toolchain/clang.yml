@@ -26,8 +26,6 @@ linux64-clang-5.0:
         fetch:
             - clang-5.0
         toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
             - linux64-toolchain-sysroot
 
 linux64-clang-7:
@@ -46,21 +44,17 @@ linux64-clang-7:
         fetch:
             - clang-7
         toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
             - linux64-toolchain-sysroot
 
 linux64-clang-12-mingw-x86:
     description: "MinGW-Clang 12 x86 toolchain build"
     treeherder:
         symbol: TMW(clang-x86)
+    worker-type: b-linux
     run:
         script: build-clang-mingw.sh
         arguments:
             - 'x86'
-            - 'build/build-clang/clang-12-mingw.json'
-        resources:
-            - 'build/build-clang/clang-12-mingw.json'
         toolchain-alias: linux64-clang-mingw-x86
         toolchain-artifact: public/build/clangmingw.tar.zst
     fetches:
@@ -71,23 +65,18 @@ linux64-clang-12-mingw-x86:
             - llvm-mingw
             - gcc-9.3.0
         toolchain:
-            - linux64-gcc-7
-            - linux64-binutils
-            - linux64-toolchain-sysroot
-            - wasm32-wasi-compiler-rt
+            - linux64-clang-12
 
 linux64-clang-12-mingw-x64:
     description: "MinGW-Clang 12 x64 toolchain build"
     treeherder:
         symbol: TMW(clang-x64)
         tier: 1
+    worker-type: b-linux
     run:
         script: build-clang-mingw.sh
         arguments:
             - 'x64'
-            - 'build/build-clang/clang-12-mingw.json'
-        resources:
-            - 'build/build-clang/clang-12-mingw.json'
         toolchain-alias: linux64-clang-mingw-x64
         toolchain-artifact: public/build/clangmingw.tar.zst
     fetches:
@@ -98,10 +87,7 @@ linux64-clang-12-mingw-x64:
             - llvm-mingw
             - gcc-9.3.0
         toolchain:
-            - linux64-gcc-7
-            - linux64-binutils
-            - linux64-toolchain-sysroot
-            - wasm32-wasi-compiler-rt
+            - linux64-clang-12
 
 linux64-clang-10:
     description: "Clang 10 toolchain build"
@@ -119,8 +105,6 @@ linux64-clang-10:
         fetch:
             - clang-10
         toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
             - linux64-toolchain-sysroot
             - wasm32-wasi-compiler-rt-10
 
@@ -143,8 +127,6 @@ linux64-clang-11:
         fetch:
             - clang-11
         toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
             - linux64-toolchain-sysroot
 
 linux64-clang-trunk:
@@ -166,8 +148,6 @@ linux64-clang-trunk:
         fetch:
             - clang-trunk
         toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
             - linux64-toolchain-sysroot
             - wasm32-wasi-compiler-rt
 
@@ -187,8 +167,6 @@ linux64-clang-11-android-cross:
         fetch:
             - clang-11
         toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
             - linux64-android-ndk-linux-repack
             - linux64-toolchain-sysroot
 
@@ -277,10 +255,8 @@ macosx64-clang-11:
         fetch:
             - clang-11
         toolchain:
-            - linux64-binutils
             - linux64-cctools-port-clang-11
             - linux64-clang-11-macosx-cross
-            - linux64-gcc-7
             - macosx64-sdk-10.12
 
 macosx64-aarch64-clang-11:
@@ -307,10 +283,8 @@ macosx64-aarch64-clang-11:
         fetch:
             - clang-11
         toolchain:
-            - linux64-binutils
             - linux64-cctools-port-clang-11
             - linux64-clang-11-macosx-cross
-            - linux64-gcc-7
             - macosx64-sdk-11.0
 
 win64-clang-11:
@@ -384,8 +358,6 @@ linux64-clang-12:
         fetch:
             - clang-12
         toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
             - linux64-toolchain-sysroot
             - wasm32-wasi-compiler-rt-12
 
@@ -406,8 +378,6 @@ linux64-clang-12-android-cross:
         fetch:
             - clang-12
         toolchain:
-            - linux64-binutils
-            - linux64-gcc-7
             - linux64-android-ndk-linux-repack
             - linux64-toolchain-sysroot
             - wasm32-wasi-compiler-rt-12
@@ -501,11 +471,9 @@ macosx64-clang-12:
         fetch:
             - clang-12
         toolchain:
-            - linux64-binutils
             - linux64-cctools-port-clang-12
             - linux64-clang-12-macosx-cross
-            - linux64-gcc-7
-            - macosx64-sdk-10.12
+            - macosx64-sdk-11.0
             - wasm32-wasi-compiler-rt-12
 
 macosx64-aarch64-clang-12:
@@ -533,10 +501,8 @@ macosx64-aarch64-clang-12:
         fetch:
             - clang-12
         toolchain:
-            - linux64-binutils
             - linux64-cctools-port-clang-12
             - linux64-clang-12-macosx-cross
-            - linux64-gcc-7
             - macosx64-sdk-11.0
             - wasm32-wasi-compiler-rt-12
 

@@ -12,8 +12,8 @@ job-defaults:
             default: null
     variants:
         by-test-platform:
-            linux.*64/debug: ['fission', 'wayland']
-            linux.*64-qr/debug: ['webrender-sw', 'fission', 'wayland']
+            linux.*64/debug: ['fission', 'wayland', 'socketprocess_networking']
+            linux.*64-qr/debug: ['webrender-sw', 'fission', 'wayland', 'socketprocess_networking']
             android-em-7.0-x86_64-qr/debug: ['webrender-sw', 'fission']
             default: ['fission']
     tier:
@@ -58,7 +58,7 @@ mochitest-plain:
 
     variants:
         by-test-platform:
-            linux1804-64-qr/debug: ['webrender-sw', 'fission', 'fission-xorigin', 'wayland']
+            linux1804-64-qr/debug: ['webrender-sw', 'fission', 'fission-xorigin', 'wayland', 'socketprocess_networking']
             android-em-7.0-x86_64-qr/debug: ['webrender-sw', 'fission', 'fission-xorigin']
             default: ['fission', 'fission-xorigin']
     run-on-projects:
@@ -69,15 +69,18 @@ mochitest-plain:
                     (linux.*64|macosx.*64|windows10-64-2004)-qr/opt: ['autoland']
                     (linux.*64|macosx.*64|windows10-64-2004)-shippable-qr/opt: ['autoland', 'mozilla-central']
                     linux.*64(-asan|-tsan)-qr/opt: ['autoland', 'mozilla-central']
+                    linux.*64-ccov-qr/opt: ['mozilla-central']
                     default: []
             fission-xorigin:
                 by-test-platform:
                     (linux.*64|macosx.*64|windows10-64-2004)(-shippable)?-qr/(opt|debug): ['trunk']
+                    linux.*64-ccov-qr/opt: ['mozilla-central']
                     default: []
             default:
                 by-test-platform:
                     .*-tsan-qr/opt: ['trunk']
                     android-em-7.0-x86_64-qr/debug-isolated-process: []
+                    linux.*64-ccov-qr/opt: []
                     default: built-projects
     chunks:
         by-test-platform:
@@ -86,7 +89,7 @@ mochitest-plain:
             linux.*64-asan/opt: 10
             linux.*64-tsan-qr/opt: 20
             linux.*64-.*cov/opt: 10
-            windows10-64-ccov.*/.*: 10
+            windows10-64-2004-ccov.*/.*: 10
             macosx.*64-ccov.*/.*: 10
             default: 5
     instance-size:
@@ -133,7 +136,7 @@ mochitest-browser-chrome:
         by-test-platform:
             linux.*64(-shippable)?-qr/opt: ['webrender-sw', 'webrender-sw-fission', 'webrender-sw-a11y-checks', 'webrender-sw-wayland']
             linux.*64(-asan|-ccov|-devedition|-tsan)-qr/opt: ['webrender-sw', 'webrender-sw-fission']
-            linux.*64-qr/debug: ['webrender-sw', 'webrender-sw-fission', 'webrender-sw-wayland']
+            linux.*64-qr/debug: ['webrender-sw', 'webrender-sw-fission', 'webrender-sw-wayland', 'socketprocess_networking']
             windows10-64-2004-qr/debug: ['webrender-sw', 'fission']
             default: ['fission']
     run-on-projects:
@@ -146,15 +149,18 @@ mochitest-browser-chrome:
                 by-test-platform:
                     linux.*64(-asan)?-qr/(opt|debug): ['all']
                     linux.*64-tsan-qr/opt: ['trunk']
-                    linux.*64(-shippable|-ccov)-qr/opt: ['release']
+                    linux.*64-shippable-qr/opt: ['release']
+                    linux.*64-ccov-qr/opt: []
                     default: built-projects
             webrender-sw-fission:
                 by-test-platform:
                     linux.*64(-asan|-shippable)?-qr/(opt|debug): ['trunk']
+                    linux.*64-ccov-qr/opt: ['mozilla-central']
                     default: []
             default:
                 by-test-platform:
                     linux.*-qr/.*: []
+                    linux.*64-ccov-qr/opt: []
                     default: built-projects
     tier:
         by-variant:
@@ -170,24 +176,21 @@ mochitest-browser-chrome:
                 by-test-platform:
                     linux.*64-qr/debug: 1
                     default: 2
-            default:
-                by-test-platform:
-                    macosx1100.*: 2
-                    default: default
+            default: default
     chunks:
         by-test-platform:
             linux.*-qr/debug: 16
             linux.*64-asan-qr/opt: 16
             linux.*64-tsan-qr/opt: 32
             macosx.*64/debug: 16
-            windows10-64-ccov.*/.*: 14
+            windows10-64-2004-ccov.*/.*: 14
             windows10.*-asan-qr/opt: 9
             windows10-32-qr/debug: 12
             default: 7
     max-run-time:
         by-test-platform:
             linux.*64-ccov.*/.*: 9000
-            windows10-64-ccov.*/.*: 10800
+            windows10-64-2004-ccov.*/.*: 10800
             macosx.*64-ccov.*/.*: 10800
             linux.*64-tsan-qr/opt: 10800
             linux.*-qr/opt: 5400
@@ -269,7 +272,7 @@ mochitest-chrome:
     chunks:
         by-test-platform:
             .*(-ccov|-qr).*/.*: 3
-            windows10-64-ccov-qr/opt: 3
+            windows10-64-2004-ccov-qr/opt: 3
             .*-asan(-qr)?/opt: 3
             .*-tsan-qr/opt: 6
             (linux.*64|windows.*|macosx1015-64)/debug: 3
@@ -294,7 +297,7 @@ mochitest-devtools-chrome:
     variants:
         by-test-platform:
             linux.*64(-shippable)?-qr/opt: ['fission', 'a11y-checks', 'wayland']
-            linux.*64-qr/debug: ['webrender-sw', 'fission', 'wayland']
+            linux.*64-qr/debug: ['webrender-sw', 'fission', 'wayland', 'socketprocess_networking']
             default: ['fission']
     run-on-projects:
         by-variant:
@@ -302,10 +305,12 @@ mochitest-devtools-chrome:
                 by-test-platform:
                     linux.*64(-shippable)?-qr/(opt|debug): ['trunk']
                     windows10-64-2004(-shippable)?-qr/(opt|debug): ['trunk']
+                    linux.*64-ccov-qr/opt: ["mozilla-central"]
                     default: []
             default:
                 by-test-platform:
                     .*-tsan-qr/opt: ['trunk']
+                    linux.*64-ccov-qr/opt: []
                     default: built-projects
     tier:
         by-variant:
@@ -317,14 +322,14 @@ mochitest-devtools-chrome:
             default: default
     max-run-time:
         by-test-platform:
-            windows10-64-ccov.*/.*: 10800
+            windows10-64-2004-ccov.*/.*: 10800
             macosx.*64-ccov.*/.*: 9000
             linux.*64-ccov.*/.*: 7200
             linux.*64-tsan-qr/opt: 7200
             default: 5400
     chunks:
         by-test-platform:
-            .*-ccov.*/.*: 16
+            .*-ccov.*/.*: 12
             linux.*64-qr/debug: 12
             macosx.*64-qr/debug: 8
             .*-asan(-qr)?/opt: 8
@@ -418,7 +423,7 @@ mochitest-media:
     schedules-component: mochitest-plain
     max-run-time:
         by-test-platform:
-            windows10-64-ccov.*/.*: 7200
+            windows10-64-2004-ccov.*/.*: 7200
             macosx.*64-ccov.*/.*: 7200
             linux.*64-tsan-qr/opt: 7200
             default: 5400
@@ -517,7 +522,6 @@ mochitest-media:
                     android-em-7.0-x86_64-qr/debug-isolated-process: 3
                     windows10-aarch64-qr.*: 2
                     android-hw.*: 1
-                    macosx1100.*: 2
                     default: default
 
 mochitest-media-failures:
@@ -630,10 +634,6 @@ mochitest-webgl1-core:
             android-hw-.*(?<!-shippable)(-qr)?/opt: ['mozilla-central', 'mozilla-beta', 'mozilla-release']
             android-hw.*aarch.*-shippable-qr/opt: ['mozilla-central']
             default: built-projects
-    tier:
-        by-test-platform:
-            macosx1100.*: 2
-            default: default
     # Bug 1296733: llvmpipe with mesa 9.2.1 lacks thread safety
     allow-software-gl-layers: false
     mozharness:
@@ -670,10 +670,6 @@ mochitest-webgl1-ext:
             android-hw-.*(?<!-shippable)(-qr)?/opt: ['mozilla-central', 'mozilla-beta', 'mozilla-release']
             android-hw.*aarch.*-shippable-qr/opt: ['mozilla-central']
             default: built-projects
-    tier:
-        by-test-platform:
-            macosx1100.*: 2
-            default: default
     # Bug 1296733: llvmpipe with mesa 9.2.1 lacks thread safety
     allow-software-gl-layers: false
     mozharness:
@@ -709,10 +705,6 @@ mochitest-webgl2-core:
             android-hw-.*(?<!-shippable)(-qr)?/opt: ['mozilla-central', 'mozilla-beta', 'mozilla-release']
             android-hw.*aarch.*-shippable-qr/opt: ['mozilla-central']
             default: built-projects
-    tier:
-        by-test-platform:
-            macosx1100.*: 2
-            default: default
     # Bug 1296733: llvmpipe with mesa 9.2.1 lacks thread safety
     allow-software-gl-layers: false
     mozharness:
@@ -737,10 +729,6 @@ mochitest-webgl2-ext:
     test-manifest-loader: null  # don't load tests in the taskgraph
     loopback-video: true
     max-run-time: 2700
-    tier:
-        by-test-platform:
-            macosx1100.*: 2
-            default: default
     # Bug 1296733: llvmpipe with mesa 9.2.1 lacks thread safety
     allow-software-gl-layers: false
     mozharness:
@@ -765,10 +753,6 @@ mochitest-webgl2-deqp:
     e10s: true
     loopback-video: true
     max-run-time: 1800
-    tier:
-        by-test-platform:
-            macosx1100.*: 2
-            default: default
     # Bug 1296733: llvmpipe with mesa 9.2.1 lacks thread safety
     allow-software-gl-layers: false
     mozharness:

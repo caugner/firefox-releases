@@ -26,7 +26,11 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Context: "chrome://remote/content/marionette/browser.js",
   cookie: "chrome://remote/content/marionette/cookie.js",
   DebounceCallback: "chrome://remote/content/marionette/sync.js",
+  disableEventsActor:
+    "chrome://remote/content/marionette/actors/MarionetteEventsParent.jsm",
   element: "chrome://remote/content/marionette/element.js",
+  enableEventsActor:
+    "chrome://remote/content/marionette/actors/MarionetteEventsParent.jsm",
   error: "chrome://remote/content/shared/webdriver/Errors.jsm",
   getMarionetteCommandsActorProxy:
     "chrome://remote/content/marionette/actors/MarionetteCommandsParent.jsm",
@@ -43,8 +47,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   reftest: "chrome://remote/content/marionette/reftest.js",
   registerCommandsActor:
     "chrome://remote/content/marionette/actors/MarionetteCommandsParent.jsm",
-  registerEventsActor:
-    "chrome://remote/content/marionette/actors/MarionetteEventsParent.jsm",
   RemoteAgent: "chrome://remote/content/components/RemoteAgent.jsm",
   TimedPromise: "chrome://remote/content/marionette/sync.js",
   Timeouts: "chrome://remote/content/shared/webdriver/Capabilities.jsm",
@@ -52,8 +54,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
     "chrome://remote/content/shared/webdriver/Capabilities.jsm",
   unregisterCommandsActor:
     "chrome://remote/content/marionette/actors/MarionetteCommandsParent.jsm",
-  unregisterEventsActor:
-    "chrome://remote/content/marionette/actors/MarionetteEventsParent.jsm",
   waitForLoadEvent: "chrome://remote/content/marionette/sync.js",
   waitForObserverTopic: "chrome://remote/content/marionette/sync.js",
   WebDriverSession: "chrome://remote/content/shared/webdriver/Session.jsm",
@@ -434,7 +434,7 @@ GeckoDriver.prototype.newSession = async function(cmd) {
     }
 
     registerCommandsActor();
-    registerEventsActor();
+    enableEventsActor();
 
     for (let win of windowManager.windows) {
       const tabBrowser = browser.getTabBrowser(win);
@@ -960,6 +960,9 @@ GeckoDriver.prototype.refresh = async function() {
  * Get the current window's handle. On desktop this typically corresponds
  * to the currently selected tab.
  *
+ * For chrome scope it returns the window identifier for the current chrome
+ * window for tests interested in managing the chrome window and tab separately.
+ *
  * Return an opaque server-assigned identifier to this window that
  * uniquely identifies it within this Marionette instance.  This can
  * be used to switch to this window at a later point.
@@ -971,13 +974,11 @@ GeckoDriver.prototype.refresh = async function() {
  *     Top-level browsing context has been discarded.
  */
 GeckoDriver.prototype.getWindowHandle = function() {
-  assert.open(
-    this.getBrowsingContext({
-      context: Context.Content,
-      top: true,
-    })
-  );
+  assert.open(this.getBrowsingContext({ top: true }));
 
+  if (this.context == Context.Chrome) {
+    return windowManager.getIdForWindow(this.curBrowser.window);
+  }
   return windowManager.getIdForBrowser(this.curBrowser.contentBrowser);
 };
 
@@ -986,6 +987,9 @@ GeckoDriver.prototype.getWindowHandle = function() {
  * corresponds to the set of open tabs for browser windows, or the window
  * itself for non-browser chrome windows.
  *
+ * For chrome scope it returns identifiers for each open chrome window for
+ * tests interested in managing a set of chrome windows and tabs separately.
+ *
  * Each window handle is assigned by the server and is guaranteed unique,
  * however the return array does not have a specified ordering.
  *
@@ -993,45 +997,10 @@ GeckoDriver.prototype.getWindowHandle = function() {
  *     Unique window handles.
  */
 GeckoDriver.prototype.getWindowHandles = function() {
+  if (this.context == Context.Chrome) {
+    return windowManager.chromeWindowHandles.map(String);
+  }
   return windowManager.windowHandles.map(String);
-};
-
-/**
- * Get the current window's handle.  This corresponds to a window that
- * may itself contain tabs.
- *
- * Return an opaque server-assigned identifier to this window that
- * uniquely identifies it within this Marionette instance.  This can
- * be used to switch to this window at a later point.
- *
- * @return {string}
- *     Unique window handle.
- *
- * @throws {NoSuchWindowError}
- *     Top-level browsing context has been discarded.
- * @throws {UnknownError}
- *     Internal browsing context reference not found
- */
-GeckoDriver.prototype.getChromeWindowHandle = function() {
-  assert.open(
-    this.getBrowsingContext({
-      context: Context.Chrome,
-      top: true,
-    })
-  );
-
-  return windowManager.getIdForWindow(this.curBrowser.window);
-};
-
-/**
- * Returns identifiers for each open chrome window for tests interested in
- * managing a set of chrome windows and tabs separately.
- *
- * @return {Array.<string>}
- *     Unique window handles.
- */
-GeckoDriver.prototype.getChromeWindowHandles = function() {
-  return windowManager.chromeWindowHandles.map(String);
 };
 
 /**
@@ -2139,7 +2108,10 @@ GeckoDriver.prototype.deleteSession = function() {
   // Always unregister actors after all other observers
   // and listeners have been removed.
   unregisterCommandsActor();
-  unregisterEventsActor();
+  // MarionetteEvents actors are only disabled to avoid IPC errors if there are
+  // in flight events being forwarded from the content process to the parent
+  // process.
+  disableEventsActor();
 
   if (RemoteAgent.webDriverBiDi) {
     RemoteAgent.webDriverBiDi.deleteSession();
@@ -2989,13 +2961,7 @@ GeckoDriver.prototype.commands = {
   "WebDriver:GetActiveElement": GeckoDriver.prototype.getActiveElement,
   "WebDriver:GetAlertText": GeckoDriver.prototype.getTextFromDialog,
   "WebDriver:GetCapabilities": GeckoDriver.prototype.getSessionCapabilities,
-  "WebDriver:GetChromeWindowHandle":
-    GeckoDriver.prototype.getChromeWindowHandle,
-  "WebDriver:GetChromeWindowHandles":
-    GeckoDriver.prototype.getChromeWindowHandles,
   "WebDriver:GetCookies": GeckoDriver.prototype.getCookies,
-  "WebDriver:GetCurrentChromeWindowHandle":
-    GeckoDriver.prototype.getChromeWindowHandle,
   "WebDriver:GetCurrentURL": GeckoDriver.prototype.getCurrentUrl,
   "WebDriver:GetElementAttribute": GeckoDriver.prototype.getElementAttribute,
   "WebDriver:GetElementCSSValue":

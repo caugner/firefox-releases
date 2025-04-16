@@ -476,8 +476,8 @@ class nsIScrollableFrame : public nsIScrollbarMediator {
    */
   virtual mozilla::Maybe<mozilla::layers::ScrollMetadata> ComputeScrollMetadata(
       mozilla::layers::WebRenderLayerManager* aLayerManager,
-      const nsIFrame* aContainerReferenceFrame,
-      const mozilla::DisplayItemClip* aClip) const = 0;
+      const nsIFrame* aItemFrame,
+      const nsPoint& aOffsetToReferenceFrame) const = 0;
 
   /**
    * Mark the scrollbar frames for reflow.

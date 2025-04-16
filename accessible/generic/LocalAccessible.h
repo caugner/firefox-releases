@@ -877,12 +877,6 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   void Announce(const nsAString& aAnnouncement, uint16_t aPriority);
 
-  /**
-   * Fire a focusable state change event if the previous state
-   * was different.
-   */
-  void MaybeFireFocusableStateChange(bool aPreviouslyFocusable);
-
   virtual bool IsRemote() const override { return false; }
 
   already_AddRefed<AccAttributes> BundleFieldsForCache(
@@ -1073,8 +1067,10 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   /**
    * Push fields to cache.
+   * aCacheDomain - describes which fields to bundle and ultimately send
+   * aUpdate - describes whether this is an initial or subsequent update
    */
-  void SendCacheUpdate(uint64_t aCacheDomain);
+  void SendCache(uint64_t aCacheDomain, CacheUpdateType aUpdate);
 
   // Data Members
   nsCOMPtr<nsIContent> mContent;

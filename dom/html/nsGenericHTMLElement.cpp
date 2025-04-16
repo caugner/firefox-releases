@@ -2046,19 +2046,6 @@ EventStates nsGenericHTMLFormElement::IntrinsicState() const {
   return state;
 }
 
-nsGenericHTMLFormElement::FocusTristate nsGenericHTMLFormElement::FocusState() {
-  // We can't be focused if we aren't in a (composed) document
-  Document* doc = GetComposedDoc();
-  if (!doc) return eUnfocusable;
-
-  // first see if we are disabled or not. If disabled then do nothing.
-  if (IsDisabled()) {
-    return eUnfocusable;
-  }
-
-  return IsInActiveTab(doc) ? eActiveWindow : eInactiveWindow;
-}
-
 Element* nsGenericHTMLFormElement::AddFormIdObserver() {
   nsAutoString formId;
   DocumentOrShadowRoot* docOrShadow = GetUncomposedDocOrConnectedShadowRoot();
@@ -2327,30 +2314,6 @@ bool nsGenericHTMLFormElement::IsLabelable() const {
          type == FormControlType::Select || type == FormControlType::Textarea;
 }
 
-void nsGenericHTMLFormElement::GetFormAction(nsString& aValue) {
-  auto type = ControlType();
-  if (!IsInputElement(type) && !IsButtonElement(type)) {
-    return;
-  }
-
-  if (!GetAttr(kNameSpaceID_None, nsGkAtoms::formaction, aValue) ||
-      aValue.IsEmpty()) {
-    Document* document = OwnerDoc();
-    nsIURI* docURI = document->GetDocumentURI();
-    if (docURI) {
-      nsAutoCString spec;
-      nsresult rv = docURI->GetSpec(spec);
-      if (NS_FAILED(rv)) {
-        return;
-      }
-
-      CopyUTF8toUTF16(spec, aValue);
-    }
-  } else {
-    GetURIAttr(nsGkAtoms::formaction, nullptr, aValue);
-  }
-}
-
 //----------------------------------------------------------------------
 
 void nsGenericHTMLElement::Click(CallerType aCallerType) {
@@ -2381,6 +2344,13 @@ void nsGenericHTMLElement::Click(CallerType aCallerType) {
 
 bool nsGenericHTMLElement::IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
                                            int32_t* aTabIndex) {
+  if (ShadowRoot* root = GetShadowRoot()) {
+    if (root->DelegatesFocus()) {
+      *aIsFocusable = false;
+      return true;
+    }
+  }
+
   Document* doc = GetComposedDoc();
   if (!doc || doc->HasFlag(NODE_IS_EDITABLE)) {
     // In designMode documents we only allow focusing the document.
@@ -2761,6 +2731,30 @@ void nsGenericHTMLFormElementWithState::NodeInfoChanged(Document* aOldDoc) {
   mStateKey.SetIsVoid(true);
 }
 
+void nsGenericHTMLFormElementWithState::GetFormAction(nsString& aValue) {
+  auto type = ControlType();
+  if (!IsInputElement(type) && !IsButtonElement(type)) {
+    return;
+  }
+
+  if (!GetAttr(kNameSpaceID_None, nsGkAtoms::formaction, aValue) ||
+      aValue.IsEmpty()) {
+    Document* document = OwnerDoc();
+    nsIURI* docURI = document->GetDocumentURI();
+    if (docURI) {
+      nsAutoCString spec;
+      nsresult rv = docURI->GetSpec(spec);
+      if (NS_FAILED(rv)) {
+        return;
+      }
+
+      CopyUTF8toUTF16(spec, aValue);
+    }
+  } else {
+    GetURIAttr(nsGkAtoms::formaction, nullptr, aValue);
+  }
+}
+
 bool nsGenericHTMLElement::IsEventAttributeNameInternal(nsAtom* aName) {
   return nsContentUtils::IsEventAttributeName(aName, EventNameType_HTML);
 }
@@ -2986,7 +2980,7 @@ already_AddRefed<ElementInternals> nsGenericHTMLElement::AttachInternals(
   return MakeAndAddRef<ElementInternals>(this);
 }
 
-void nsGenericHTMLElement::GetAutocapitalize(nsAString& aValue) {
+void nsGenericHTMLElement::GetAutocapitalize(nsAString& aValue) const {
   GetEnumAttr(nsGkAtoms::autocapitalize, nullptr, kDefaultAutocapitalize->tag,
               aValue);
 }
@@ -2998,7 +2992,7 @@ bool nsGenericHTMLFormElement::IsAutocapitalizeInheriting() const {
          type == FormControlType::Select || type == FormControlType::Textarea;
 }
 
-void nsGenericHTMLFormElement::GetAutocapitalize(nsAString& aValue) {
+void nsGenericHTMLFormElement::GetAutocapitalize(nsAString& aValue) const {
   if (nsContentUtils::HasNonEmptyAttr(this, kNameSpaceID_None,
                                       nsGkAtoms::autocapitalize)) {
     nsGenericHTMLElement::GetAutocapitalize(aValue);

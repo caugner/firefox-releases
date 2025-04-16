@@ -195,7 +195,7 @@ nsresult Http3Session::Init(const nsHttpConnectionInfo* aConnInfo,
     ZeroRttTelemetry(ZeroRttOutcome::NOT_USED);
   }
 
-  if (gHttpHandler->EchConfigEnabled()) {
+  if (gHttpHandler->EchConfigEnabled(true)) {
     mSocketControl->SetEchConfig(mConnInfo->GetEchConfig());
   }
 
@@ -877,7 +877,7 @@ nsresult Http3Session::TryActivating(
   }
 
   nsresult rv = mHttp3Connection->Fetch(aMethod, aScheme, aAuthorityHeader,
-                                        aPath, aHeaders, aStreamId);
+                                        aPath, aHeaders, aStreamId, 3, false);
   if (NS_FAILED(rv)) {
     LOG(("Http3Session::TryActivating returns error=0x%" PRIx32 "[stream=%p, "
          "this=%p]",

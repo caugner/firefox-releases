@@ -179,7 +179,7 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   void SetInputMode(const nsAString& aValue, ErrorResult& aRv) {
     SetHTMLAttr(nsGkAtoms::inputmode, aValue, aRv);
   }
-  virtual void GetAutocapitalize(nsAString& aValue);
+  virtual void GetAutocapitalize(nsAString& aValue) const;
   void SetAutocapitalize(const nsAString& aValue, ErrorResult& aRv) {
     SetHTMLAttr(nsGkAtoms::autocapitalize, aValue, aRv);
   }
@@ -1000,17 +1000,6 @@ class nsGenericHTMLFormElement : public nsGenericHTMLElement,
   virtual void SaveState() {}
 
   /**
-   * Restore from presentation state.  You pass in the presentation state for
-   * this form control (generated with GenerateStateKey() + "-C") and the form
-   * control will grab its state from there.
-   *
-   * @param aState the pres state to use to restore the control
-   * @return true if the form control was a checkbox and its
-   *         checked state was restored, false otherwise.
-   */
-  virtual bool RestoreState(mozilla::PresState* aState) { return false; }
-
-  /**
    * This callback is called by a fieldest on all its elements whenever its
    * disabled attribute is changed so the element knows its disabled state
    * might have changed.
@@ -1058,10 +1047,8 @@ class nsGenericHTMLFormElement : public nsGenericHTMLElement,
 
   virtual bool IsLabelable() const override;
 
-  void GetFormAction(nsString& aValue);
-
   // autocapitalize attribute support
-  virtual void GetAutocapitalize(nsAString& aValue) override;
+  virtual void GetAutocapitalize(nsAString& aValue) const override;
   bool IsAutocapitalizeInheriting() const;
 
  protected:
@@ -1126,15 +1113,6 @@ class nsGenericHTMLFormElement : public nsGenericHTMLElement,
   bool IsElementDisabledForEvents(mozilla::WidgetEvent* aEvent,
                                   nsIFrame* aFrame);
 
-  // The focusability state of this form control.  eUnfocusable means that it
-  // shouldn't be focused at all, eInactiveWindow means it's in an inactive
-  // window, eActiveWindow means it's in an active window.
-  enum FocusTristate { eUnfocusable, eInactiveWindow, eActiveWindow };
-
-  // Get our focus state.  If this returns eInactiveWindow, it will set this
-  // element as the focused element for that window.
-  FocusTristate FocusState();
-
   /** The form that contains this control */
   mozilla::dom::HTMLFormElement* mForm;
 
@@ -1169,11 +1147,23 @@ class nsGenericHTMLFormElementWithState : public nsGenericHTMLFormElement {
    */
   virtual void NodeInfoChanged(Document* aOldDoc) override;
 
+  void GetFormAction(nsString& aValue);
+
  protected:
   /**
+   * Restore from presentation state.  You pass in the presentation state for
+   * this form control (generated with GenerateStateKey() + "-C") and the form
+   * control will grab its state from there.
+   *
+   * @param aState the pres state to use to restore the control
+   * @return true if the form control was a checkbox and its
+   *         checked state was restored, false otherwise.
+   */
+  virtual bool RestoreState(mozilla::PresState* aState) { return false; }
+
+  /**
    * Restore the state for a form control in response to the element being
-   * inserted into the document by the parser.  Ends up calling
-   * nsIFormControl::RestoreState().
+   * inserted into the document by the parser.  Ends up calling RestoreState().
    *
    * GenerateStateKey() must already have been called.
    *

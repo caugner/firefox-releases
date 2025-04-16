@@ -2,17 +2,30 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/**
- * FEATURE MANIFEST
- * =================
- * Features must be added here to be accessible through the NimbusFeature API.
- */
-
 const EXPORTED_SYMBOLS = ["FeatureManifest"];
 
+/**
+ * Features must be added here to be accessible through the NimbusFeature API.
+ * !! Don't forget to validate changes with ./mach test toolkit/components/nimbus/test/unit/test_FeatureManifest.js
+ */
 const FeatureManifest = {
+  search: {
+    description: "The Search Services",
+    hasExposure: false,
+    variables: {
+      experiment: {
+        type: "string",
+        fallbackPref: "browser.search.experiment",
+        description:
+          "Used to activate only matching configurations that contain the value in `experiment`",
+      },
+    },
+  },
   urlbar: {
     description: "The Address Bar",
+    hasExposure: true,
+    exposureDescription:
+      "Exposure is sent once per browsing session after the first urlbar query is made.",
     variables: {
       merinoEnabled: {
         type: "boolean",
@@ -66,6 +79,9 @@ const FeatureManifest = {
   },
   aboutwelcome: {
     description: "The about:welcome page",
+    hasExposure: true,
+    exposureDescription:
+      "Exposure is sent once per browsing session when the about:welcome URL is first accessed.",
     isEarlyStartup: true,
     variables: {
       enabled: {
@@ -93,6 +109,7 @@ const FeatureManifest = {
   },
   abouthomecache: {
     description: "The startup about:home cache.",
+    hasExposure: false,
     isEarlyStartup: true,
     variables: {
       enabled: {
@@ -104,6 +121,7 @@ const FeatureManifest = {
   },
   firefox100: {
     description: "Firefox User-Agent version",
+    hasExposure: false,
     isEarlyStartup: true,
     variables: {
       firefoxVersion: {
@@ -114,13 +132,14 @@ const FeatureManifest = {
   },
   newtab: {
     description: "The about:newtab page",
+    hasExposure: true,
+    exposureDescription:
+      "Exposure is sent once per browsing session when the first newtab page loads (either about:newtab or about:home).",
     isEarlyStartup: true,
     variables: {
-      newNewtabExperienceEnabled: {
+      newTheme: {
         type: "boolean",
-        fallbackPref:
-          "browser.newtabpage.activity-stream.newNewtabExperience.enabled",
-        description: "Is the new UI enabled?",
+        description: "Enable the new theme",
       },
       customizationMenuEnabled: {
         type: "boolean",
@@ -136,6 +155,7 @@ const FeatureManifest = {
   },
   pocketNewtab: {
     description: "The Pocket section in newtab",
+    hasExposure: false,
     isEarlyStartup: true,
     variables: {
       spocPositions: {
@@ -144,10 +164,44 @@ const FeatureManifest = {
           "browser.newtabpage.activity-stream.discoverystream.spoc-positions",
         description: "CSV string of spoc position indexes on newtab grid",
       },
+      compactLayout: {
+        type: "boolean",
+        fallbackPref:
+          "browser.newtabpage.activity-stream.discoverystream.compactLayout.enabled",
+        description: "Enable compact cards on newtab grid",
+      },
+      loadMore: {
+        type: "boolean",
+        fallbackPref:
+          "browser.newtabpage.activity-stream.discoverystream.loadMore.enabled",
+        description:
+          "A button to load more stories at the bottom of the Pocket section.",
+      },
+      lastCardMessageEnabled: {
+        type: "boolean",
+        fallbackPref:
+          "browser.newtabpage.activity-stream.discoverystream.lastCardMessage.enabled",
+        description:
+          "The last card in the Pocket section is a message that they are currently at the end of the list of stories.",
+      },
+      newFooterSection: {
+        type: "boolean",
+        fallbackPref:
+          "browser.newtabpage.activity-stream.discoverystream.newFooterSection.enabled",
+        description: "Enable an updated Pocket section topics footer",
+      },
+      saveToPocketCard: {
+        type: "boolean",
+        fallbackPref:
+          "browser.newtabpage.activity-stream.discoverystream.saveToPocketCard.enabled",
+        description:
+          "A save to Pocket button inside the card, shown on the card thumbnail, on hover.",
+      },
     },
   },
   "password-autocomplete": {
     description: "A special autocomplete UI for password fields.",
+    hasExposure: false,
     variables: {
       directMigrateSingleProfile: {
         type: "boolean",
@@ -157,6 +211,7 @@ const FeatureManifest = {
   },
   shellService: {
     description: "Interface with OS, e.g., pinning and set default",
+    hasExposure: false,
     isEarlyStartup: true,
     variables: {
       disablePin: {
@@ -172,6 +227,7 @@ const FeatureManifest = {
   },
   upgradeDialog: {
     description: "The dialog shown for major upgrades",
+    hasExposure: false,
     isEarlyStartup: true,
     variables: {
       enabled: {
@@ -183,46 +239,41 @@ const FeatureManifest = {
   },
   privatebrowsing: {
     description: "about:privatebrowsing",
+    hasExposure: true,
+    exposureDescription:
+      "Exposure is sent once per browsing session the first time the PB page loads",
     variables: {
       infoEnabled: {
         type: "boolean",
-        fallbackPref: "browser.privatebrowsing.infoEnabled",
         description: "Should we show the info section.",
       },
       infoIcon: {
         type: "string",
-        fallbackPref: "browser.privatebrowsing.infoIcon",
         description:
           "Icon shown in the left side of the info section. Default is the private browsing icon.",
       },
       infoTitle: {
         type: "string",
-        fallbackPref: "browser.privatebrowsing.infoTitle",
         description: "Is the title in the info section enabled.",
       },
       infoTitleEnabled: {
         type: "boolean",
-        fallbackPref: "browser.privatebrowsing.infoTitleEnabled",
         description: "Is the title in the info section enabled.",
       },
       infoBody: {
         type: "string",
-        fallbackPref: "browser.privatebrowsing.infoBody",
         description: "Text content in the info section.",
       },
       infoLinkText: {
         type: "string",
-        fallbackPref: "browser.privatebrowsing.infoLinkText",
         description: "Text for the link in the info section.",
       },
       infoLinkUrl: {
         type: "string",
-        fallbackPref: "browser.privatebrowsing.infoLinkUrl",
         description: "URL for the info section link.",
       },
       promoEnabled: {
         type: "boolean",
-        fallbackPref: "browser.privatebrowsing.promoEnabled",
         description: "Should we show the promo section.",
       },
       promoSectionStyle: {
@@ -233,17 +284,14 @@ const FeatureManifest = {
       },
       promoTitle: {
         type: "string",
-        fallbackPref: "browser.privatebrowsing.promoTitle",
         description: "The text content of the promo section.",
       },
       promoTitleEnabled: {
         type: "boolean",
-        fallbackPref: "browser.privatebrowsing.promoTitleEnabled",
         description: "Should we show text content in the promo section.",
       },
       promoLinkText: {
         type: "string",
-        fallbackPref: "browser.privatebrowsing.promoLinkText",
         description: "The text of the link in the promo box.",
       },
       promoHeader: {
@@ -252,7 +300,6 @@ const FeatureManifest = {
       },
       promoLinkUrl: {
         type: "string",
-        fallbackPref: "browser.privatebrowsing.promoLinkUrl",
         description: "URL for link in the promo box.",
       },
       promoLinkType: {
@@ -275,6 +322,7 @@ const FeatureManifest = {
   },
   readerMode: {
     description: "Firefox Reader Mode",
+    hasExposure: false,
     isEarlyStartup: true,
     variables: {
       pocketCTAVersion: {

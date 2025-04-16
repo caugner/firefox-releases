@@ -343,7 +343,7 @@ var gEditItemOverlay = {
       PlacesUtils.bookmarks.addObserver(this);
       this.handlePlacesEvents = this.handlePlacesEvents.bind(this);
       PlacesUtils.observers.addListener(
-        ["bookmark-moved"],
+        ["bookmark-moved", "bookmark-title-changed"],
         this.handlePlacesEvents
       );
       window.addEventListener("unload", this);
@@ -561,7 +561,7 @@ var gEditItemOverlay = {
     if (this._observersAdded) {
       PlacesUtils.bookmarks.removeObserver(this);
       PlacesUtils.observers.removeListener(
-        ["bookmark-moved"],
+        ["bookmark-moved", "bookmark-title-changed"],
         this.handlePlacesEvents
       );
       window.removeEventListener("unload", this);
@@ -933,8 +933,13 @@ var gEditItemOverlay = {
   },
 
   _autoshowBookmarksToolbar() {
+    let neverShowToolbar =
+      Services.prefs.getCharPref(
+        "browser.toolbars.bookmarks.visibility",
+        "newtab"
+      ) == "never";
     let toolbar = document.getElementById("PersonalToolbar");
-    if (!toolbar.collapsed) {
+    if (!toolbar.collapsed || neverShowToolbar) {
       return;
     }
 
@@ -1149,6 +1154,12 @@ var gEditItemOverlay = {
             bm.title
           );
           break;
+        case "bookmark-title-changed":
+          if (this._paneInfo.isItem || this._paneInfo.isTag) {
+            // This also updates titles of folders in the folder menu list.
+            this._onItemTitleChange(event.id, event.title, event.guid);
+          }
+          break;
       }
     }
   },
@@ -1264,14 +1275,6 @@ var gEditItemOverlay = {
   ) {
     if (aProperty == "tags" && this._paneInfo.visibleRows.has("tagsRow")) {
       this._onTagsChange(aGuid).catch(Cu.reportError);
-      return;
-    }
-    if (
-      aProperty == "title" &&
-      (this._paneInfo.isItem || this._paneInfo.isTag)
-    ) {
-      // This also updates titles of folders in the folder menu list.
-      this._onItemTitleChange(aItemId, aValue, aGuid);
       return;
     }
 

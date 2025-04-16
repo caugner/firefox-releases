@@ -48,8 +48,7 @@
 // cpp file
 #include "gfx2DGlue.h"           // for ThebesPoint
 #include "mozilla/Assertions.h"  // for AssertionConditionType, MOZ_ASSERT, MOZ_A...
-#include "mozilla/DebugOnly.h"              // for DebugOnly
-#include "mozilla/layers/CanvasRenderer.h"  // for CanvasRenderer
+#include "mozilla/DebugOnly.h"  // for DebugOnly
 #include "mozilla/layers/LayersTypes.h"  // for MOZ_LAYERS_LOG_IF_SHADOWABLE, LayersId, EventRegionsO...
 #include "nsDebug.h"  // for NS_ASSERTION, NS_WARNING
 
@@ -67,11 +66,7 @@ class Animation;
 class AsyncPanZoomController;
 class PaintedLayer;
 class ContainerLayer;
-class ImageLayer;
-class ColorLayer;
 class CompositorAnimations;
-class CanvasLayer;
-class RefLayer;
 class SpecificLayerAttributes;
 class Compositor;
 class TransformData;
@@ -125,8 +120,6 @@ class Layer {
     TYPE_CONTAINER,
     TYPE_DISPLAYITEM,
     TYPE_IMAGE,
-    TYPE_READBACK,
-    TYPE_REF,
     TYPE_SHADOW,
     TYPE_PAINTED
   };
@@ -155,22 +148,10 @@ class Layer {
     CONTENT_COMPONENT_ALPHA = 0x02,
 
     /**
-     * If this is set then one of the descendant layers of this one has
-     * CONTENT_COMPONENT_ALPHA set.
-     */
-    CONTENT_COMPONENT_ALPHA_DESCENDANT = 0x04,
-
-    /**
      * If this is set then this layer is part of a preserve-3d group, and should
      * be sorted with sibling layers that are also part of the same group.
      */
     CONTENT_EXTEND_3D_CONTEXT = 0x08,
-    /**
-     * This indicates that the transform may be changed on during an empty
-     * transaction where there is no possibility of redrawing the content, so
-     * the implementation should be ready for that.
-     */
-    CONTENT_MAY_CHANGE_TRANSFORM = 0x10,
 
     /**
      * Disable subpixel AA for this layer. This is used if the display isn't
@@ -394,25 +375,6 @@ class Layer {
 
   /**
    * CONSTRUCTION PHASE ONLY
-   * Set an optional scrolled clip on the layer.
-   * The scrolled clip, if present, consists of a clip rect and an optional
-   * mask. This scrolled clip is always scrolled by all scroll frames associated
-   * with this layer. (By contrast, the scroll clips stored in ScrollMetadata
-   * are only scrolled by scroll frames above that ScrollMetadata, and the
-   * layer's mClipRect is always fixed to the layer contents (which may or may
-   * not be scrolled by some of the scroll frames associated with the layer,
-   * depending on whether the layer is fixed).)
-   */
-  void SetScrolledClip(const Maybe<LayerClip>& aScrolledClip) {
-    if (mSimpleAttrs.SetScrolledClip(aScrolledClip)) {
-      MOZ_LAYERS_LOG_IF_SHADOWABLE(this,
-                                   ("Layer::Mutated(%p) ScrolledClip", this));
-      MutatedSimple();
-    }
-  }
-
-  /**
-   * CONSTRUCTION PHASE ONLY
    * Set a layer to mask this layer.
    *
    * The mask layer should be applied using its effective transform (after it
@@ -440,28 +402,6 @@ class Layer {
       mMaskLayer = aMaskLayer;
       Mutated();
     }
-  }
-
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Add mask layers associated with LayerClips.
-   */
-  void SetAncestorMaskLayers(const nsTArray<RefPtr<Layer>>& aLayers) {
-    if (aLayers != mAncestorMaskLayers) {
-      MOZ_LAYERS_LOG_IF_SHADOWABLE(
-          this, ("Layer::Mutated(%p) AncestorMaskLayers", this));
-      mAncestorMaskLayers = aLayers.Clone();
-      Mutated();
-    }
-  }
-
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Add a mask layer associated with a LayerClip.
-   */
-  void AddAncestorMaskLayer(const RefPtr<Layer>& aLayer) {
-    mAncestorMaskLayers.AppendElement(aLayer);
-    Mutated();
   }
 
   /**
@@ -624,10 +564,6 @@ class Layer {
     return mSimpleAttrs.GetMixBlendMode();
   }
   const Maybe<ParentLayerIntRect>& GetClipRect() const { return mClipRect; }
-  const Maybe<LayerClip>& GetScrolledClip() const {
-    return mSimpleAttrs.GetScrolledClip();
-  }
-  Maybe<ParentLayerIntRect> GetScrolledClipRect() const;
   uint32_t GetContentFlags() { return mSimpleAttrs.GetContentFlags(); }
   const LayerIntRegion& GetVisibleRegion() const { return mVisibleRegion; }
   const ScrollMetadata& GetScrollMetadata(uint32_t aIndex) const;
@@ -700,29 +636,6 @@ class Layer {
   bool HasPendingTransform() const { return !!mPendingTransform; }
 
   void CheckCanary() const { mCanary.Check(); }
-
-  // Ancestor mask layers are associated with FrameMetrics, but for simplicity
-  // in maintaining the layer tree structure we attach them to the layer.
-  size_t GetAncestorMaskLayerCount() const {
-    return mAncestorMaskLayers.Length();
-  }
-  Layer* GetAncestorMaskLayerAt(size_t aIndex) const {
-    return mAncestorMaskLayers.ElementAt(aIndex);
-  }
-  const nsTArray<RefPtr<Layer>>& GetAllAncestorMaskLayers() const {
-    return mAncestorMaskLayers;
-  }
-
-  bool HasMaskLayers() const {
-    return GetMaskLayer() || mAncestorMaskLayers.Length() > 0;
-  }
-
-  /*
-   * Get the combined clip rect of the Layer clip and all clips on FrameMetrics.
-   * This is intended for use in Layout. The compositor needs to apply async
-   * transforms to find the combined clip.
-   */
-  Maybe<ParentLayerIntRect> GetCombinedClipRect() const;
 
   /**
    * Retrieve the root level visible region for |this| taking into account
@@ -856,41 +769,11 @@ class Layer {
   virtual void Disconnect() {}
 
   /**
-   * Dynamic downcast to a PaintedLayer. Returns null if this is not
-   * a PaintedLayer.
-   */
-  virtual PaintedLayer* AsPaintedLayer() { return nullptr; }
-
-  /**
    * Dynamic cast to a ContainerLayer. Returns null if this is not
    * a ContainerLayer.
    */
   virtual ContainerLayer* AsContainerLayer() { return nullptr; }
   virtual const ContainerLayer* AsContainerLayer() const { return nullptr; }
-
-  /**
-   * Dynamic cast to a RefLayer. Returns null if this is not a
-   * RefLayer.
-   */
-  virtual RefLayer* AsRefLayer() { return nullptr; }
-
-  /**
-   * Dynamic cast to a Color. Returns null if this is not a
-   * ColorLayer.
-   */
-  virtual ColorLayer* AsColorLayer() { return nullptr; }
-
-  /**
-   * Dynamic cast to a Canvas. Returns null if this is not a
-   * ColorLayer.
-   */
-  virtual CanvasLayer* AsCanvasLayer() { return nullptr; }
-
-  /**
-   * Dynamic cast to an Image. Returns null if this is not a
-   * ColorLayer.
-   */
-  virtual ImageLayer* AsImageLayer() { return nullptr; }
 
   // These getters can be used anytime.  They return the effective
   // values that should be used when drawing this layer to screen,
@@ -1124,17 +1007,6 @@ class Layer {
 
   virtual int32_t GetMaxLayerSize() { return Manager()->GetMaxTextureSize(); }
 
-  /**
-   * Returns true if this layer's effective transform is not just
-   * a translation by integers, or if this layer or some ancestor layer
-   * is marked as having a transform that may change without a full layer
-   * transaction.
-   *
-   * Note: This function ignores ancestor layers across layer tree boundaries
-   * so that it returns a consistent value when compositing and when painting.
-   */
-  bool MayResample();
-
   RenderTargetRect TransformRectToRenderTarget(const LayerIntRect& aRect);
 
   /**
@@ -1240,212 +1112,6 @@ class Layer {
 #endif
   // Store display list log.
   nsCString mDisplayListLog;
-};
-
-/**
- * A Layer which we can paint into. It is a conceptually
- * infinite surface, but each PaintedLayer has an associated "valid region"
- * of contents that it is currently storing, which is finite. PaintedLayer
- * implementations can store content between paints.
- *
- * PaintedLayers are rendered into during the drawing phase of a transaction.
- *
- * Currently the contents of a PaintedLayer are in the device output color
- * space.
- */
-class PaintedLayer : public Layer {
- public:
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Tell this layer that the content in some region has changed and
-   * will need to be repainted. This area is removed from the valid
-   * region.
-   */
-  virtual void InvalidateRegion(const nsIntRegion& aRegion) = 0;
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Set whether ComputeEffectiveTransforms should compute the
-   * "residual translation" --- the translation that should be applied *before*
-   * mEffectiveTransform to get the ideal transform for this PaintedLayer.
-   * When this is true, ComputeEffectiveTransforms will compute the residual
-   * and ensure that the layer is invalidated whenever the residual changes.
-   * When it's false, a change in the residual will not trigger invalidation
-   * and GetResidualTranslation will return 0,0.
-   * So when the residual is to be ignored, set this to false for better
-   * performance.
-   */
-  void SetAllowResidualTranslation(bool aAllow) {
-    mAllowResidualTranslation = aAllow;
-  }
-
-  void SetValidRegion(const nsIntRegion& aRegion) {
-    MOZ_LAYERS_LOG_IF_SHADOWABLE(this,
-                                 ("Layer::Mutated(%p) ValidRegion", this));
-    mValidRegion = aRegion;
-    mValidRegionIsCurrent = true;
-    Mutated();
-  }
-
-  /**
-   * Can be used anytime
-   */
-  const nsIntRegion& GetValidRegion() const {
-    EnsureValidRegionIsCurrent();
-    return mValidRegion;
-  }
-
-  void InvalidateWholeLayer() {
-    mInvalidRegion.Add(GetValidRegion().GetBounds());
-    ClearValidRegion();
-  }
-
-  void ClearValidRegion() {
-    mValidRegion.SetEmpty();
-    mValidRegionIsCurrent = true;
-  }
-  void AddToValidRegion(const nsIntRegion& aRegion) {
-    EnsureValidRegionIsCurrent();
-    mValidRegion.OrWith(aRegion);
-  }
-  void SubtractFromValidRegion(const nsIntRegion& aRegion) {
-    EnsureValidRegionIsCurrent();
-    mValidRegion.SubOut(aRegion);
-  }
-  void UpdateValidRegionAfterInvalidRegionChanged() {
-    // Changes to mInvalidRegion will be applied to mValidRegion on the next
-    // call to EnsureValidRegionIsCurrent().
-    mValidRegionIsCurrent = false;
-  }
-
-  void ClearInvalidRegion() override {
-    // mInvalidRegion is about to be reset. This is the last chance to apply
-    // any pending changes from it to mValidRegion. Do that by calling
-    // EnsureValidRegionIsCurrent().
-    EnsureValidRegionIsCurrent();
-    mInvalidRegion.SetEmpty();
-  }
-
-  PaintedLayer* AsPaintedLayer() override { return this; }
-
-  MOZ_LAYER_DECL_NAME("PaintedLayer", TYPE_PAINTED)
-
-  void ComputeEffectiveTransforms(
-      const gfx::Matrix4x4& aTransformToSurface) override {
-    gfx::Matrix4x4 idealTransform = GetLocalTransform() * aTransformToSurface;
-    gfx::Matrix residual;
-    mEffectiveTransform = SnapTransformTranslation(
-        idealTransform, mAllowResidualTranslation ? &residual : nullptr);
-    // The residual can only be a translation because SnapTransformTranslation
-    // only changes the transform if it's a translation
-    NS_ASSERTION(residual.IsTranslation(),
-                 "Residual transform can only be a translation");
-    if (!gfx::ThebesPoint(residual.GetTranslation())
-             .WithinEpsilonOf(mResidualTranslation, 1e-3f)) {
-      mResidualTranslation = gfx::ThebesPoint(residual.GetTranslation());
-      DebugOnly<mozilla::gfx::Point> transformedOrig =
-          idealTransform.TransformPoint(mozilla::gfx::Point());
-#ifdef DEBUG
-      DebugOnly<mozilla::gfx::Point> transformed =
-          idealTransform.TransformPoint(mozilla::gfx::Point(
-              mResidualTranslation.x, mResidualTranslation.y)) -
-          *&transformedOrig;
-#endif
-      NS_ASSERTION(-0.5 <= (&transformed)->x && (&transformed)->x < 0.5 &&
-                       -0.5 <= (&transformed)->y && (&transformed)->y < 0.5,
-                   "Residual translation out of range");
-      ClearValidRegion();
-    }
-    ComputeEffectiveTransformForMaskLayers(aTransformToSurface);
-  }
-
-  LayerManager::PaintedLayerCreationHint GetCreationHint() const {
-    return mCreationHint;
-  }
-
-  bool UsedForReadback() { return mUsedForReadback; }
-  void SetUsedForReadback(bool aUsed) { mUsedForReadback = aUsed; }
-
-  /**
-   * Returns true if aLayer is optimized for the given PaintedLayerCreationHint.
-   */
-  virtual bool IsOptimizedFor(
-      LayerManager::PaintedLayerCreationHint aCreationHint) {
-    return true;
-  }
-
-  /**
-   * Returns the residual translation. Apply this translation when drawing
-   * into the PaintedLayer so that when mEffectiveTransform is applied
-   * afterwards by layer compositing, the results exactly match the "ideal
-   * transform" (the product of the transform of this layer and its ancestors).
-   * Returns 0,0 unless SetAllowResidualTranslation(true) has been called.
-   * The residual translation components are always in the range [-0.5, 0.5).
-   */
-  gfxPoint GetResidualTranslation() const { return mResidualTranslation; }
-
- protected:
-  PaintedLayer(
-      LayerManager* aManager, void* aImplData,
-      LayerManager::PaintedLayerCreationHint aCreationHint = LayerManager::NONE)
-      : Layer(aManager, aImplData),
-        mValidRegion(),
-        mValidRegionIsCurrent(true),
-        mCreationHint(aCreationHint),
-        mUsedForReadback(false),
-        mAllowResidualTranslation(false) {}
-
-  void PrintInfo(std::stringstream& aStream, const char* aPrefix) override;
-
-  /**
-   * ComputeEffectiveTransforms snaps the ideal transform to get
-   * mEffectiveTransform. mResidualTranslation is the translation that should be
-   * applied *before* mEffectiveTransform to get the ideal transform.
-   */
-  gfxPoint mResidualTranslation;
-
- private:
-  /**
-   * Needs to be called prior to accessing mValidRegion, unless mValidRegion is
-   * being completely overwritten.
-   */
-  void EnsureValidRegionIsCurrent() const {
-    if (!mValidRegionIsCurrent) {
-      // Apply any pending mInvalidRegion changes to mValidRegion.
-      if (!mValidRegion.IsEmpty()) {
-        // Calling mInvalidRegion.GetRegion() is expensive.
-        // That's why we delay the adjustment of mValidRegion for as long as
-        // possible, so that multiple modifications to mInvalidRegion can be
-        // applied to mValidRegion in one go.
-        mValidRegion.SubOut(mInvalidRegion.GetRegion());
-      }
-      mValidRegionIsCurrent = true;
-    }
-  }
-
-  /**
-   * The layer's valid region. If mValidRegionIsCurrent is false, then
-   * mValidRegion has not yet been updated for recent changes to
-   * mInvalidRegion. Those pending changes can be applied by calling
-   * EnsureValidRegionIsCurrent().
-   */
-  mutable nsIntRegion mValidRegion;
-
-  mutable bool mValidRegionIsCurrent;
-
- protected:
-  /**
-   * The creation hint that was used when constructing this layer.
-   */
-  const LayerManager::PaintedLayerCreationHint mCreationHint;
-  /**
-   * Set when this PaintedLayer is participating in readback, i.e. some
-   * ReadbackLayer (may) be getting its background from this layer.
-   */
-  bool mUsedForReadback;
-  /**
-   * True when
-   */
-  bool mAllowResidualTranslation;
 };
 
 /**
@@ -1565,20 +1231,6 @@ class ContainerLayer : public Layer {
    */
   bool HasMultipleChildren();
 
-  /**
-   * Returns true if this container supports children with component alpha.
-   * Should only be called while painting a child of this layer.
-   */
-  bool SupportsComponentAlphaChildren() {
-    return mSupportsComponentAlphaChildren;
-  }
-
-  /**
-   * Returns true if aLayer or any layer in its parent chain has the opaque
-   * content flag set.
-   */
-  static bool HasOpaqueAncestorLayer(Layer* aLayer);
-
   void SetChildrenChanged(bool aVal) { mChildrenChanged = aVal; }
 
   // If |aRect| is null, the entire layer should be considered invalid for
@@ -1631,17 +1283,6 @@ class ContainerLayer : public Layer {
       const gfx::Matrix4x4& aTransformToSurface);
 
   /**
-   * A default implementation to compute and set the value for
-   * SupportsComponentAlphaChildren().
-   *
-   * If aNeedsSurfaceCopy is provided, then it is set to true if the caller
-   * needs to copy the background up into the intermediate surface created,
-   * false otherwise.
-   */
-  void DefaultComputeSupportsComponentAlphaChildren(
-      bool* aNeedsSurfaceCopy = nullptr);
-
-  /**
    * Loops over the children calling ComputeEffectiveTransforms on them.
    */
   void ComputeEffectiveTransformsForChildren(
@@ -1668,298 +1309,10 @@ class ContainerLayer : public Layer {
   // associated pres shell; for other layers, 1.0.
   float mPresShellResolution;
   bool mUseIntermediateSurface;
-  bool mSupportsComponentAlphaChildren;
   bool mMayHaveReadbackChild;
   // This is updated by ComputeDifferences. This will be true if we need to
   // invalidate the intermediate surface.
   bool mChildrenChanged;
-};
-
-/**
- * A Layer which just renders a solid color in its visible region. It actually
- * can fill any area that contains the visible region, so if you need to
- * restrict the area filled, set a clip region on this layer.
- */
-class ColorLayer : public Layer {
- public:
-  ColorLayer* AsColorLayer() override { return this; }
-
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Set the color of the layer.
-   */
-  virtual void SetColor(const gfx::DeviceColor& aColor) {
-    if (mColor != aColor) {
-      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) Color", this));
-      mColor = aColor;
-      Mutated();
-    }
-  }
-
-  void SetBounds(const gfx::IntRect& aBounds) {
-    if (!mBounds.IsEqualEdges(aBounds)) {
-      mBounds = aBounds;
-      Mutated();
-    }
-  }
-
-  const gfx::IntRect& GetBounds() { return mBounds; }
-
-  // This getter can be used anytime.
-  virtual const gfx::DeviceColor& GetColor() { return mColor; }
-
-  MOZ_LAYER_DECL_NAME("ColorLayer", TYPE_COLOR)
-
-  void ComputeEffectiveTransforms(
-      const gfx::Matrix4x4& aTransformToSurface) override {
-    gfx::Matrix4x4 idealTransform = GetLocalTransform() * aTransformToSurface;
-    mEffectiveTransform = SnapTransformTranslation(idealTransform, nullptr);
-    ComputeEffectiveTransformForMaskLayers(aTransformToSurface);
-  }
-
- protected:
-  ColorLayer(LayerManager* aManager, void* aImplData)
-      : Layer(aManager, aImplData), mColor() {}
-
-  void PrintInfo(std::stringstream& aStream, const char* aPrefix) override;
-
-  gfx::IntRect mBounds;
-  gfx::DeviceColor mColor;
-};
-
-/**
- * A Layer for HTML Canvas elements.  It's backed by either a
- * gfxASurface or a GLContext (for WebGL layers), and has some control
- * for intelligent updating from the source if necessary (for example,
- * if hardware compositing is not available, for reading from the GL
- * buffer into an image surface that we can layer composite.)
- *
- * After Initialize is called, the underlying canvas Surface/GLContext
- * must not be modified during a layer transaction.
- */
-class CanvasLayer : public Layer {
- public:
-  void SetBounds(gfx::IntRect aBounds) { mBounds = aBounds; }
-
-  CanvasLayer* AsCanvasLayer() override { return this; }
-
-  /**
-   * Notify this CanvasLayer that the canvas surface contents have
-   * changed (or will change) before the next transaction.
-   */
-  void Updated() {
-    mCanvasRenderer->SetDirty();
-    SetInvalidRectToVisibleRegion();
-  }
-
-  /**
-   * Notify this CanvasLayer that the canvas surface contents have
-   * been painted since the last change.
-   */
-  void Painted() { mCanvasRenderer->ResetDirty(); }
-
-  /**
-   * Returns true if the canvas surface contents have changed since the
-   * last paint.
-   */
-  bool IsDirty() {
-    // We can only tell if we are dirty if we're part of the
-    // widget's retained layer tree.
-    if (!mManager || !mManager->IsWidgetLayerManager()) {
-      return true;
-    }
-    return mCanvasRenderer->IsDirty();
-  }
-
-  const nsIntRect& GetBounds() const { return mBounds; }
-
-  RefPtr<CanvasRenderer> CreateOrGetCanvasRenderer();
-
- public:
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Set the filter used to resample this image (if necessary).
-   */
-  void SetSamplingFilter(gfx::SamplingFilter aSamplingFilter) {
-    if (mSamplingFilter != aSamplingFilter) {
-      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) Filter", this));
-      mSamplingFilter = aSamplingFilter;
-      Mutated();
-    }
-  }
-  gfx::SamplingFilter GetSamplingFilter() const { return mSamplingFilter; }
-
-  MOZ_LAYER_DECL_NAME("CanvasLayer", TYPE_CANVAS)
-
-  void ComputeEffectiveTransforms(
-      const gfx::Matrix4x4& aTransformToSurface) override {
-    // Snap our local transform first, and snap the inherited transform as well.
-    // This makes our snapping equivalent to what would happen if our content
-    // was drawn into a PaintedLayer (gfxContext would snap using the local
-    // transform, then we'd snap again when compositing the PaintedLayer).
-    mEffectiveTransform =
-        SnapTransform(GetLocalTransform(),
-                      gfxRect(0, 0, mBounds.Width(), mBounds.Height()),
-                      nullptr) *
-        SnapTransformTranslation(aTransformToSurface, nullptr);
-    ComputeEffectiveTransformForMaskLayers(aTransformToSurface);
-  }
-
- protected:
-  CanvasLayer(LayerManager* aManager, void* aImplData);
-  virtual ~CanvasLayer();
-
-  void PrintInfo(std::stringstream& aStream, const char* aPrefix) override;
-
-  virtual RefPtr<CanvasRenderer> CreateCanvasRendererInternal() = 0;
-
-  RefPtr<CanvasRenderer> mCanvasRenderer;
-  gfx::SamplingFilter mSamplingFilter;
-
-  /**
-   * 0, 0, canvaswidth, canvasheight
-   */
-  gfx::IntRect mBounds;
-};
-
-/**
- * ContainerLayer that refers to a "foreign" layer tree, through an
- * ID.  Usage of RefLayer looks like
- *
- * Construction phase:
- *   allocate ID for layer subtree
- *   create RefLayer, SetReferentId(ID)
- *
- * Composition:
- *   look up subtree for GetReferentId()
- *   ConnectReferentLayer(subtree)
- *   compose
- *   ClearReferentLayer()
- *
- * Clients will usually want to Connect/Clear() on each transaction to
- * avoid difficulties managing memory across multiple layer subtrees.
- */
-class RefLayer : public ContainerLayer {
-  friend class LayerManager;
-
- private:
-  bool InsertAfter(Layer* aChild, Layer* aAfter) override {
-    MOZ_CRASH("GFX: RefLayer");
-    return false;
-  }
-
-  bool RemoveChild(Layer* aChild) override {
-    MOZ_CRASH("GFX: RefLayer");
-    return false;
-  }
-
-  bool RepositionChild(Layer* aChild, Layer* aAfter) override {
-    MOZ_CRASH("GFX: RefLayer");
-    return false;
-  }
-
- public:
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Set the ID of the layer's referent.
-   */
-  void SetReferentId(LayersId aId) {
-    MOZ_ASSERT(aId.IsValid());
-    if (mId != aId) {
-      MOZ_LAYERS_LOG_IF_SHADOWABLE(this,
-                                   ("Layer::Mutated(%p) ReferentId", this));
-      mId = aId;
-      Mutated();
-    }
-  }
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Connect this ref layer to its referent, temporarily.
-   * ClearReferentLayer() must be called after composition.
-   */
-  void ConnectReferentLayer(Layer* aLayer) {
-    MOZ_ASSERT(!mFirstChild && !mLastChild);
-    MOZ_ASSERT(!aLayer->GetParent());
-    if (aLayer->Manager() != Manager()) {
-      // This can happen when e.g. rendering while dragging tabs
-      // between windows - aLayer's manager may be the manager for the
-      // old window's tab.  In that case, it will be changed before the
-      // next render (see SetLayerManager).  It is simply easier to
-      // ignore the rendering here than it is to pause it.
-      NS_WARNING("ConnectReferentLayer failed - Incorrect LayerManager");
-      return;
-    }
-
-    mFirstChild = mLastChild = aLayer;
-    aLayer->SetParent(this);
-  }
-
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Set flags that indicate how event regions in the child layer tree need
-   * to be overridden because of properties of the parent layer tree.
-   */
-  void SetEventRegionsOverride(EventRegionsOverride aVal) {
-    if (mEventRegionsOverride == aVal) {
-      return;
-    }
-
-    MOZ_LAYERS_LOG_IF_SHADOWABLE(
-        this, ("Layer::Mutated(%p) EventRegionsOverride", this));
-    mEventRegionsOverride = aVal;
-    Mutated();
-  }
-
-  EventRegionsOverride GetEventRegionsOverride() const {
-    return mEventRegionsOverride;
-  }
-
-  /**
-   * CONSTRUCTION PHASE ONLY
-   * Set remote subdocument iframe size.
-   */
-  void SetRemoteDocumentSize(const LayerIntSize& aRemoteDocumentSize) {
-    if (mRemoteDocumentSize == aRemoteDocumentSize) {
-      return;
-    }
-    mRemoteDocumentSize = aRemoteDocumentSize;
-    Mutated();
-  }
-
-  const LayerIntSize& GetRemoteDocumentSize() const {
-    return mRemoteDocumentSize;
-  }
-
-  /**
-   * DRAWING PHASE ONLY
-   * |aLayer| is the same as the argument to ConnectReferentLayer().
-   */
-  void DetachReferentLayer(Layer* aLayer) {
-    mFirstChild = mLastChild = nullptr;
-    aLayer->SetParent(nullptr);
-  }
-
-  // These getters can be used anytime.
-  RefLayer* AsRefLayer() override { return this; }
-
-  virtual LayersId GetReferentId() { return mId; }
-
-  MOZ_LAYER_DECL_NAME("RefLayer", TYPE_REF)
-
- protected:
-  RefLayer(LayerManager* aManager, void* aImplData)
-      : ContainerLayer(aManager, aImplData),
-        mId{0},
-        mEventRegionsOverride(EventRegionsOverride::NoOverride) {}
-
-  void PrintInfo(std::stringstream& aStream, const char* aPrefix) override;
-
-  // 0 is a special value that means "no ID".
-  LayersId mId;
-  EventRegionsOverride mEventRegionsOverride;
-  // The remote documents only need their size because their origin is always
-  // (0, 0).
-  LayerIntSize mRemoteDocumentSize;
 };
 
 void SetAntialiasingFlags(Layer* aLayer, gfx::DrawTarget* aTarget);

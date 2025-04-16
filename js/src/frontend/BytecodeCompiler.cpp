@@ -1010,9 +1010,8 @@ static bool CompileLazyFunction(JSContext* cx, CompilationInput& input,
 
   AutoAssertReportedException assertException(cx);
 
-  Rooted<JSFunction*> fun(cx, input.function());
-
-  InheritThis inheritThis = fun->isArrow() ? InheritThis::Yes : InheritThis::No;
+  InheritThis inheritThis =
+      input.functionFlags().isArrow() ? InheritThis::Yes : InheritThis::No;
 
   LifoAllocScope parserAllocScope(&cx->tempLifoAlloc());
   CompilationState compilationState(cx, parserAllocScope, input);
@@ -1031,8 +1030,8 @@ static bool CompileLazyFunction(JSContext* cx, CompilationInput& input,
   }
 
   FunctionNode* pn = parser.standaloneLazyFunction(
-      fun, input.extent().toStringStart, input.strict(), input.generatorKind(),
-      input.asyncKind());
+      input, input.extent().toStringStart, input.strict(),
+      input.generatorKind(), input.asyncKind());
   if (!pn) {
     return false;
   }
@@ -1062,16 +1061,6 @@ static bool CompileLazyFunction(JSContext* cx, CompilationInput& input,
   Rooted<CompilationGCOutput> gcOutput(cx);
   {
     BorrowingCompilationStencil borrowingStencil(compilationState);
-    if (!CompilationStencil::instantiateStencils(cx, input, borrowingStencil,
-                                                 gcOutput.get())) {
-      return false;
-    }
-
-    MOZ_ASSERT(lazyFlags == gcOutput.get().script->immutableFlags());
-    MOZ_ASSERT(gcOutput.get().script->outermostScope()->hasOnChain(
-                   ScopeKind::NonSyntactic) ==
-               gcOutput.get().script->immutableFlags().hasFlag(
-                   JSScript::ImmutableFlags::HasNonSyntacticScope));
 
     if (input.source->hasEncoder()) {
       MOZ_ASSERT(!js::UseOffThreadParseGlobal());
@@ -1080,6 +1069,22 @@ static bool CompileLazyFunction(JSContext* cx, CompilationInput& input,
         return false;
       }
     }
+
+    if (!CompilationStencil::instantiateStencils(cx, input, borrowingStencil,
+                                                 gcOutput.get())) {
+      return false;
+    }
+
+    // NOTE: After instantiation succeeds and bytecode is attached, the rest of
+    //       this operation should be infallible. Any failure during
+    //       delazification should restore the function back to a consistent
+    //       lazy state.
+
+    MOZ_ASSERT(lazyFlags == gcOutput.get().script->immutableFlags());
+    MOZ_ASSERT(gcOutput.get().script->outermostScope()->hasOnChain(
+                   ScopeKind::NonSyntactic) ==
+               gcOutput.get().script->immutableFlags().hasFlag(
+                   JSScript::ImmutableFlags::HasNonSyntacticScope));
   }
 
   assertException.reset();
