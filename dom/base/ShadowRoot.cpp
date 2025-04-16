@@ -753,40 +753,42 @@ void ShadowRoot::MaybeUnslotHostChild(nsIContent& aChild) {
   slot->EnqueueSlotChangeEvent();
 }
 
-// Use aParent as the root element and loop through this tree (including slot
-// assigned elements, nested shadow trees) to find the first focusable
-// element.
-static Element* GetFirstFocusableForParent(nsIContent* aParent,
-                                           bool aWithMouse) {
-  FlattenedChildIterator iter(aParent);
+Element* ShadowRoot::GetFirstFocusable(bool aWithMouse) const {
+  MOZ_ASSERT(DelegatesFocus(), "Why are we here?");
 
-  for (nsIContent* child = iter.GetNextChild(); child;
-       child = iter.GetNextChild()) {
-    if (child->IsElement()) {
-      if (nsIFrame* frame = child->GetPrimaryFrame()) {
-        if (frame->IsFocusable(aWithMouse)) {
-          return child->AsElement();
+  Element* potentialFocus = nullptr;
+
+  for (nsINode* node = GetFirstChild(); node; node = node->GetNextNode(this)) {
+    auto* el = Element::FromNode(*node);
+    if (!el) {
+      continue;
+    }
+    nsIFrame* frame = el->GetPrimaryFrame();
+    if (frame && frame->IsFocusable(aWithMouse)) {
+      if (el->GetBoolAttr(nsGkAtoms::autofocus)) {
+        return el;
+      }
+      if (!potentialFocus) {
+        potentialFocus = el;
+      }
+    }
+    if (!potentialFocus) {
+      ShadowRoot* shadow = el->GetShadowRoot();
+      if (shadow && shadow->DelegatesFocus()) {
+        if (Element* nested = shadow->GetFirstFocusable(aWithMouse)) {
+          potentialFocus = nested;
         }
       }
     }
-
-    if (Element* firstFocusable =
-            GetFirstFocusableForParent(child, aWithMouse)) {
-      return firstFocusable;
-    }
   }
-
-  return nullptr;
-}
-
-Element* ShadowRoot::GetFirstFocusable(bool aWithMouse) const {
-  return GetFirstFocusableForParent(Host(), aWithMouse);
+  return potentialFocus;
 }
 
 void ShadowRoot::MaybeSlotHostChild(nsIContent& aChild) {
   MOZ_ASSERT(aChild.GetParent() == GetHost());
   // Check to ensure that the child not an anonymous subtree root because even
-  // though its parent could be the host it may not be in the host's child list.
+  // though its parent could be the host it may not be in the host's child
+  // list.
   if (aChild.IsRootOfNativeAnonymousSubtree()) {
     return;
   }

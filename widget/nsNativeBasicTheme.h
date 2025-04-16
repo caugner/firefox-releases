@@ -20,14 +20,10 @@ enum class StyleSystemColor : uint8_t;
 
 namespace widget {
 
-static constexpr gfx::sRGBColor sColorWhite(gfx::sRGBColor::OpaqueWhite());
-static constexpr gfx::sRGBColor sColorWhiteAlpha50(gfx::sRGBColor::White(0.5f));
-static constexpr gfx::sRGBColor sColorWhiteAlpha80(gfx::sRGBColor::White(0.8f));
-static constexpr gfx::sRGBColor sColorBlack(gfx::sRGBColor::OpaqueBlack());
-
 static constexpr gfx::sRGBColor sDefaultAccent(
     gfx::sRGBColor::UnusualFromARGB(0xff0060df));  // Luminance: 13.69346%
-static constexpr gfx::sRGBColor sDefaultAccentForeground(sColorWhite);
+static constexpr gfx::sRGBColor sDefaultAccentForeground(
+    gfx::sRGBColor::OpaqueWhite());
 
 static constexpr gfx::sRGBColor sColorGrey10(
     gfx::sRGBColor::UnusualFromARGB(0xffe9e9ed));
@@ -181,8 +177,6 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
   static DPIRatio GetDPIRatioForScrollbarPart(nsPresContext*);
   static DPIRatio GetDPIRatio(nsPresContext*, StyleAppearance);
   static DPIRatio GetDPIRatio(nsIFrame*, StyleAppearance);
-  static bool IsDateTimeResetButton(nsIFrame*);
-  static bool IsColorPickerButton(nsIFrame*);
 
   // Whether we should use system colors (for high contrast mode).
   static bool ShouldBeHighContrast(const nsPresContext&);
@@ -400,7 +394,6 @@ class nsNativeBasicTheme : protected nsNativeTheme, public nsITheme {
 
   static CSSIntCoord sHorizontalScrollbarHeight;
   static CSSIntCoord sVerticalScrollbarWidth;
-  static bool sOverlayScrollbars;
 
   static void PrefChangedCallback(const char*, void*) { LookAndFeelChanged(); }
   static void RecomputeAccentColors();

@@ -164,6 +164,21 @@ readermode:
       label: The type of button clicked.
     products:
       - "firefox"
+  pocket_cta:
+    objects: ["close_cta", "sign_up_click", "rec_click", "minimize_recs_click", "cta_seen", "rec_saved"]
+    release_channel_collection: opt-out
+    record_in_processes: ["content"]
+    description: >
+      Reader Mode Pocket CTA events
+    bug_numbers: [1726395]
+    notification_emails:
+      - "kirill@getpocket.com"
+      - "sdowne@getpocket.com"
+    expiry_version: never
+    extra_keys:
+      logged_in: Pocket user login status.
+    products:
+      - "firefox"
 
 addonsManager:
   install:
@@ -648,6 +663,27 @@ upgrade_dialog:
     products: ["firefox"]
     record_in_processes: ["main"]
     release_channel_collection: opt-out
+
+aboutpreferences:
+  show:
+    objects: ["initial", "click", "hash"]
+    release_channel_collection: opt-out
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    description: >
+      This is recorded whenever a pane is shown inside about:preferences.
+      The object field records the type of action that resulted in showing a pane. Possible values are as follows,
+        "initial" is used when a pane is shown direclty. This happens with or without a hash in the URL. The "general" pane
+        loads without such a hash, when the pane is loaded via the "main" entrypoints in the menu system or with shortcuts.
+        "click" is used when a pane is shown when user clicks category name inside about:preferences.
+        "hash" is used when a pane is shown via a hash change in url.
+      The value field records identifier of pane shown
+    bug_numbers: [1738187]
+    notification_emails:
+      - "pdahiya@mozilla.com"
+      - "gijs@mozilla.com"
+    expiry_version: never
 
 urlbar:
   engagement:
@@ -1173,10 +1209,9 @@ messaging_experiments:
   reach:
     objects: [
       "cfr",
-      "whats_new_panel",
       "moments_page",
-      "snippets",
-      "cfr_fxa"
+      "infobar",
+      "spotlight"
     ]
     methods: ["reach"]
     release_channel_collection: opt-out
@@ -1200,6 +1235,8 @@ messaging_experiments:
       - attribute_timeout
     methods:
       - targeting
+    extra_keys:
+      source: "Source of targeting expression: experiment slug or message id"
     release_channel_collection: opt-out
     products:
       - firefox
@@ -2902,11 +2939,25 @@ installation:
     bug_numbers: [1660198, 1725295]
     notification_emails:
       - application-update-telemetry-alerts@mozilla.com
-      - agashlin@mozilla.com
       - rtestard@mozilla.com
     expiry_version: "100"
 
 contextservices.quicksuggest:
+  data_collect_toggled:
+    objects: ["enabled", "disabled"]
+    release_channel_collection: opt-out
+    products:
+      - "firefox"
+    record_in_processes: ["main"]
+    description: >
+      This is recorded when the
+      `browser.urlbar.quicksuggest.dataCollection.enabled` boolean pref is
+      toggled.
+    bug_numbers: [1735976]
+    notification_emails:
+      - fx-search@mozilla.com
+      - adw@mozilla.com
+    expiry_version: never
   enable_toggled:
     objects: ["enabled", "disabled"]
     release_channel_collection: opt-out
@@ -2914,8 +2965,9 @@ contextservices.quicksuggest:
       - "firefox"
     record_in_processes: ["main"]
     description: >
-      This is recorded when the `browser.urlbar.suggest.quicksuggest` boolean
-      pref is toggled.
+      This is recorded when the
+      `browser.urlbar.suggest.quicksuggest.nonsponsored` boolean pref is
+      toggled.
     bug_numbers: [1693126]
     notification_emails:
       - fx-search@mozilla.com

@@ -19,6 +19,11 @@ const FeatureManifest = {
         description:
           "Used to activate only matching configurations that contain the value in `experiment`",
       },
+      extraParams: {
+        type: "json",
+        description:
+          "Query parameters values for search engine configurations.",
+      },
     },
   },
   urlbar: {
@@ -32,10 +37,25 @@ const FeatureManifest = {
         fallbackPref: "browser.urlbar.merino.enabled",
         description: "Whether Merino is enabled as a quick suggest source",
       },
+      merinoTimeoutMs: {
+        type: "int",
+        fallbackPref: "browser.urlbar.merino.timeoutMs",
+        description: "Timeout for Merino fetches (ms)",
+      },
+      quickSuggestDataCollectionEnabled: {
+        type: "boolean",
+        description:
+          "Whether data collection should be enabled by default. If this variable is specified, it will override the value implied by the scenario. It will never override the user's local preference to disable (or enable) data collection, if the user has already toggled that preference.",
+      },
       quickSuggestEnabled: {
         type: "boolean",
         fallbackPref: "browser.urlbar.quicksuggest.enabled",
         description: "Global toggle for the QuickSuggest feature",
+      },
+      quickSuggestNonSponsoredEnabled: {
+        type: "boolean",
+        description:
+          "Whether non-sponsored suggestions should be enabled by default. If this variable is specified, it will override the value implied by the scenario. It will never override the user's local preference to disable (or enable) non-sponsored suggestions, if the user has already toggled that preference.",
       },
       quickSuggestNonSponsoredIndex: {
         type: "int",
@@ -68,6 +88,11 @@ const FeatureManifest = {
           "browser.urlbar.quicksuggest.showOnboardingDialogAfterNRestarts",
         description:
           "Show QuickSuggest onboarding dialog after N browser restarts",
+      },
+      quickSuggestSponsoredEnabled: {
+        type: "boolean",
+        description:
+          "Whether sponsored suggestions should be enabled by default. If this variable is specified, it will override the value implied by the scenario. It will never override the user's local preference to disable (or enable) sponsored suggestions, if the user has already toggled that preference.",
       },
       quickSuggestSponsoredIndex: {
         type: "int",
@@ -104,6 +129,20 @@ const FeatureManifest = {
       transitions: {
         type: "boolean",
         description: "Enable transition effect between screens",
+      },
+    },
+  },
+  moreFromMozilla: {
+    description:
+      "New page on about:preferences to suggest more Mozilla products",
+    hasExposure: true,
+    exposureDescription:
+      "Exposure is sent once per browsing session when the about:preferences URL is first accessed.",
+    variables: {
+      enabled: {
+        type: "boolean",
+        fallbackPref: "browser.preferences.moreFromMozilla",
+        description: "Should users see the new more from Mozilla section.",
       },
     },
   },
@@ -330,6 +369,20 @@ const FeatureManifest = {
         fallbackPref: "reader.pocket.ctaVersion",
         description:
           "What version of Pocket CTA to show in Reader Mode (Empty string is no CTA)",
+      },
+    },
+  },
+  tcpPreferences: {
+    description:
+      "Toggles the Total Cookie Protection section in about:preferences",
+    hasExposure: false,
+    isEarlyStartup: false,
+    variables: {
+      enabled: {
+        type: "boolean",
+        fallbackPref:
+          "privacy.restrict3rdpartystorage.rollout.preferences.TCPToggleInStandard",
+        description: "Turn on the section in about:preferences",
       },
     },
   },

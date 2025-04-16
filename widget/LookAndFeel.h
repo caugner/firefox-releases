@@ -16,6 +16,7 @@
 #include "nsTArray.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/widget/ThemeChangeKind.h"
+#include "mozilla/ColorScheme.h"
 
 struct gfxFontStyle;
 
@@ -24,9 +25,6 @@ class nsIFrame;
 namespace mozilla {
 
 struct StyleColorSchemeFlags;
-
-// Whether we should use a light or dark appearance.
-enum class ColorScheme : uint8_t { Light, Dark };
 
 namespace dom {
 class Document;
@@ -203,10 +201,6 @@ class LookAndFeel {
      */
     MenuBarDrag,
     /**
-     * Return the appropriate WindowsThemeIdentifier for the current theme.
-     */
-    WindowsThemeIdentifier,
-    /**
      * Return an appropriate os version identifier.
      */
     OperatingSystemVersionIdentifier,
@@ -249,18 +243,6 @@ class LookAndFeel {
      * supported by the user's GTK version.
      */
     GTKCSDAvailable,
-
-    /*
-     * A boolean value indicating whether GTK+ system titlebar should be
-     * disabled by default.
-     */
-    GTKCSDHideTitlebarByDefault,
-
-    /*
-     * A boolean value indicating whether client-side decorations should
-     * have transparent background.
-     */
-    GTKCSDTransparentBackground,
 
     /*
      * A boolean value indicating whether client-side decorations should
@@ -347,6 +329,12 @@ class LookAndFeel {
     /** A boolean value to determine whether a touch device is present */
     TouchDeviceSupportPresent,
 
+    /** GTK titlebar radius */
+    TitlebarRadius,
+
+    /** GTK menu radius */
+    GtkMenuRadius,
+
     /*
      * Not an ID; used to define the range of valid IDs.  Must be last.
      */
@@ -357,21 +345,6 @@ class LookAndFeel {
   static bool UseOverlayScrollbars() {
     return GetInt(IntID::UseOverlayScrollbars);
   }
-
-  /**
-   * Windows themes we currently detect.
-   */
-  enum WindowsTheme {
-    eWindowsTheme_Generic = 0,  // unrecognized theme
-    eWindowsTheme_Classic,
-    eWindowsTheme_Aero,
-    eWindowsTheme_LunaBlue,
-    eWindowsTheme_LunaOlive,
-    eWindowsTheme_LunaSilver,
-    eWindowsTheme_Royale,
-    eWindowsTheme_Zune,
-    eWindowsTheme_AeroLite
-  };
 
   /**
    * Operating system versions.
@@ -422,6 +395,9 @@ class LookAndFeel {
     // GTK text scale factor.
     TextScaleFactor,
 
+    // Mouse pointer scaling factor.
+    CursorScale,
+
     // Not an ID; used to define the range of valid IDs.  Must be last.
     End,
   };
@@ -433,7 +409,14 @@ class LookAndFeel {
                                               : ColorScheme::Light;
   }
 
-  static ColorScheme ColorSchemeForChrome();
+  enum class ChromeColorSchemeSetting { Light, Dark, System };
+  static ChromeColorSchemeSetting ColorSchemeSettingForChrome();
+
+  static ColorScheme ColorSchemeForChrome() { return sChromeColorScheme; }
+  static ColorScheme PreferredColorSchemeForContent() {
+    return sContentColorScheme;
+  }
+
   static ColorScheme ColorSchemeForStyle(const dom::Document&,
                                          const StyleColorSchemeFlags&);
   static ColorScheme ColorSchemeForFrame(const nsIFrame*);
@@ -525,6 +508,11 @@ class LookAndFeel {
   static bool GetEchoPassword();
 
   /**
+   * Whether we should be drawing in the titlebar by default.
+   */
+  static bool DrawInTitlebar();
+
+  /**
    * The millisecond to mask password value.
    * This value is only valid when GetEchoPassword() returns true.
    */
@@ -551,6 +539,10 @@ class LookAndFeel {
 
   static void SetData(widget::FullLookAndFeel&& aTables);
   static void NotifyChangedAllWindows(widget::ThemeChangeKind);
+
+  static void RecomputeColorSchemes();
+  static ColorScheme sChromeColorScheme;
+  static ColorScheme sContentColorScheme;
 };
 
 }  // namespace mozilla

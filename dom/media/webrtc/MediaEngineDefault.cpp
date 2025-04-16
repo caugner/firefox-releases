@@ -246,7 +246,7 @@ nsresult MediaEngineDefaultVideoSource::Start() {
   }
 
   if (!mImageContainer) {
-    mImageContainer = layers::LayerManager::CreateImageContainer(
+    mImageContainer = MakeAndAddRef<layers::ImageContainer>(
         layers::ImageContainer::ASYNCHRONOUS);
   }
 
@@ -519,7 +519,7 @@ void AudioSourcePullListener::NotifyPull(MediaTrackGraph* aGraph,
 }
 
 void MediaEngineDefault::EnumerateDevices(
-    uint64_t aWindowId, MediaSourceEnum aMediaSource, MediaSinkEnum aMediaSink,
+    MediaSourceEnum aMediaSource, MediaSinkEnum aMediaSink,
     nsTArray<RefPtr<MediaDevice>>* aDevices) {
   AssertIsOnOwningThread();
 

@@ -86,7 +86,7 @@ async function pressure() {
     "TabBrowserDiscarded",
     true
   );
-  TabUnloader.unloadTabAsync();
+  TabUnloader.unloadTabAsync(null);
   return tabDiscarded;
 }
 
@@ -106,12 +106,12 @@ function pressureAndObserve(aExpectedTopic) {
     };
     Services.obs.addObserver(observer, aExpectedTopic);
   });
-  TabUnloader.unloadTabAsync();
+  TabUnloader.unloadTabAsync(null);
   return promise;
 }
 
 async function compareTabOrder(expectedOrder) {
-  let tabInfo = await TabUnloader.getSortedTabs();
+  let tabInfo = await TabUnloader.getSortedTabs(null);
 
   is(
     tabInfo.length,
@@ -128,12 +128,25 @@ const PREF_AUDIO_LOOPBACK = "media.audio_loopback_dev";
 const PREF_VIDEO_LOOPBACK = "media.video_loopback_dev";
 const PREF_FAKE_STREAMS = "media.navigator.streams.fake";
 const PREF_ENABLE_UNLOADER = "browser.tabs.unloadOnLowMemory";
+const PREF_MAC_LOW_MEM_RESPONSE = "browser.lowMemoryResponseMask";
 
 add_task(async function test() {
   registerCleanupFunction(() => {
     Services.prefs.clearUserPref(PREF_ENABLE_UNLOADER);
+    if (AppConstants.platform == "macosx") {
+      Services.prefs.clearUserPref(PREF_MAC_LOW_MEM_RESPONSE);
+    }
   });
   Services.prefs.setBoolPref(PREF_ENABLE_UNLOADER, true);
+
+  // On Mac, tab unloading and memory pressure notifications are limited
+  // to Nightly so force them on for this test for non-Nightly builds. i.e.,
+  // tests on Release and Beta builds. Mac tab unloading and memory pressure
+  // notifications require this pref to be set.
+  if (AppConstants.platform == "macosx") {
+    Services.prefs.setIntPref(PREF_MAC_LOW_MEM_RESPONSE, 3);
+  }
+
   TabUnloader.init();
 
   // Set some WebRTC simulation preferences.
@@ -214,7 +227,7 @@ add_task(async function test() {
   ok(pinnedSoundTab.soundPlaying, "tab is still playing sound");
 
   // There are no unloadable tabs.
-  TabUnloader.unloadTabAsync();
+  TabUnloader.unloadTabAsync(null);
   ok(soundTab.linkedPanel, "a tab playing sound is never unloaded");
 
   const histogram = TelemetryTestUtils.getAndClearHistogram(

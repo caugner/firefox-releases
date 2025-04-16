@@ -990,6 +990,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return IsTop();
   }
 
+  void DidSet(FieldIndex<IDX_InRDMPane>, bool aOldValue);
+
   void DidSet(FieldIndex<IDX_PrefersColorSchemeOverride>,
               dom::PrefersColorSchemeOverride aOldValue);
 

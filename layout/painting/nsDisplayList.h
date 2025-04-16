@@ -86,7 +86,6 @@ namespace layers {
 struct FrameMetrics;
 class RenderRootStateManager;
 class Layer;
-class ImageLayer;
 class ImageContainer;
 class StackingContextHelper;
 class WebRenderScrollData;
@@ -5012,8 +5011,8 @@ class nsDisplayOpacity : public nsDisplayWrapList {
     return mChildOpacityState == ChildOpacityState::Applied;
   }
 
-  static bool NeedsActiveLayer(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
-                               bool aEnforceMinimumSize = true);
+  static bool NeedsActiveLayer(nsDisplayListBuilder* aBuilder,
+                               nsIFrame* aFrame);
   void WriteDebugInfo(std::stringstream& aStream) override;
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) override;
   bool CreateWebRenderCommands(
@@ -6257,8 +6256,7 @@ class nsDisplayTransform : public nsPaintedDisplayItem {
 
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) override;
 
-  bool MayBeAnimated(nsDisplayListBuilder* aBuilder,
-                     bool aEnforceMinimumSize = true) const;
+  bool MayBeAnimated(nsDisplayListBuilder* aBuilder) const;
 
   void WriteDebugInfo(std::stringstream& aStream) override;
 

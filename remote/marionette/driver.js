@@ -409,6 +409,17 @@ GeckoDriver.prototype.newSession = async function(cmd) {
   const { parameters: capabilities } = cmd;
 
   try {
+    // If the WebDriver BiDi protocol is active always use the Remote Agent
+    // to handle the WebDriver session. If it's not the case then Marionette
+    // itself needs to handle it, and has to nullify the "webSocketUrl"
+    // capability.
+    if (RemoteAgent.webDriverBiDi) {
+      RemoteAgent.webDriverBiDi.createSession(capabilities);
+    } else {
+      this._currentSession = new WebDriverSession(capabilities);
+      this._currentSession.capabilities.delete("webSocketUrl");
+    }
+
     const win = await windowManager.waitForInitialApplicationWindow();
 
     if (MarionettePrefs.clickToStart) {
@@ -422,19 +433,12 @@ GeckoDriver.prototype.newSession = async function(cmd) {
     this.addBrowser(win);
     this.mainFrame = win;
 
-    // If the WebDriver BiDi protocol is active always use the Remote Agent
-    // to handle the WebDriver session. If it's not the case then Marionette
-    // itself needs to handle it, and has to nullify the "webSocketUrl"
-    // capability.
-    if (RemoteAgent.webDriverBiDi) {
-      RemoteAgent.webDriverBiDi.createSession(capabilities);
-    } else {
-      this._currentSession = new WebDriverSession(capabilities);
-      this._currentSession.capabilities.delete("webSocketUrl");
-    }
-
     registerCommandsActor();
     enableEventsActor();
+
+    // Setup observer for modal dialogs
+    this.dialogObserver = new modal.DialogObserver(() => this.curBrowser);
+    this.dialogObserver.add(this.handleModalDialog.bind(this));
 
     for (let win of windowManager.windows) {
       const tabBrowser = browser.getTabBrowser(win);
@@ -455,13 +459,52 @@ GeckoDriver.prototype.newSession = async function(cmd) {
     }
 
     if (this.curBrowser.tab) {
-      this.currentSession.contentBrowsingContext = this.curBrowser.contentBrowser.browsingContext;
+      const browsingContext = this.curBrowser.contentBrowser.browsingContext;
+      this.currentSession.contentBrowsingContext = browsingContext;
+
+      let resolveNavigation;
+
+      // Prepare a promise that will resolve upon a navigation.
+      const onProgressListenerNavigation = new Promise(
+        resolve => (resolveNavigation = resolve)
+      );
+
+      // Create a basic webprogress listener which will check if the browsing
+      // context is ready for the new session on every state change.
+      const navigationListener = {
+        onStateChange: (progress, request, flag, status) => {
+          const isStop = flag & Ci.nsIWebProgressListener.STATE_STOP;
+          if (isStop) {
+            resolveNavigation();
+          }
+        },
+
+        QueryInterface: ChromeUtils.generateQI([
+          "nsIWebProgressListener",
+          "nsISupportsWeakReference",
+        ]),
+      };
+
+      // Monitor the webprogress listener before checking isLoadingDocument to
+      // avoid race conditions.
+      browsingContext.webProgress.addProgressListener(
+        navigationListener,
+        Ci.nsIWebProgress.NOTIFY_STATE_WINDOW |
+          Ci.nsIWebProgress.NOTIFY_STATE_DOCUMENT
+      );
+
+      if (browsingContext.webProgress.isLoadingDocument) {
+        await onProgressListenerNavigation;
+      }
+
+      browsingContext.webProgress.removeProgressListener(
+        navigationListener,
+        Ci.nsIWebProgress.NOTIFY_STATE_WINDOW |
+          Ci.nsIWebProgress.NOTIFY_STATE_DOCUMENT
+      );
+
       this.curBrowser.contentBrowser.focus();
     }
-
-    // Setup observer for modal dialogs
-    this.dialogObserver = new modal.DialogObserver(() => this.curBrowser);
-    this.dialogObserver.add(this.handleModalDialog.bind(this));
 
     // Check if there is already an open dialog for the selected browser window.
     this.dialog = modal.findModalDialogs(this.curBrowser);

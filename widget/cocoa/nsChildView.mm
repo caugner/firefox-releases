@@ -1256,10 +1256,6 @@ bool nsChildView::ShouldUseOffMainThreadCompositing() {
 
 #pragma mark -
 
-nsresult nsChildView::ConfigureChildren(const nsTArray<Configuration>& aConfigurations) {
-  return NS_OK;
-}
-
 // Invokes callback and ProcessEvent methods on Event Listener object
 nsresult nsChildView::DispatchEvent(WidgetGUIEvent* event, nsEventStatus& aStatus) {
   RefPtr<nsChildView> kungFuDeathGrip(this);

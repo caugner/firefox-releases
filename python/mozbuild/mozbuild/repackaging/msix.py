@@ -13,8 +13,10 @@ r"""Repackage ZIP archives (or directories) into MSIX App Packages.
 from __future__ import absolute_import, print_function
 
 from collections import defaultdict
+import itertools
 import logging
 import os
+import shutil
 import sys
 import subprocess
 import time
@@ -205,6 +207,72 @@ def get_appconstants_jsm_values(finder, *args):
         yield value
 
 
+def unpack_msix(input_msix, output, log=None, verbose=False):
+    r"""Unpack the given MSIX to the given output directory.
+
+    MSIX packages are ZIP files, but they are Zip64/version 4.5 ZIP files, so
+    `mozjar.py` doesn't yet handle.  Unpack using `unzip{.exe}` for simplicity.
+
+    In addition, file names inside the MSIX package are URL quoted.  URL unquote
+    here.
+    """
+
+    log(
+        logging.INFO,
+        "msix",
+        {
+            "input_msix": input_msix,
+            "output": output,
+        },
+        "Unpacking input MSIX '{input_msix}' to directory '{output}'",
+    )
+
+    unzip = find_sdk_tool("unzip.exe", log=log)
+    if not unzip:
+        raise ValueError("unzip is required; set UNZIP or PATH")
+
+    subprocess.check_call(
+        [unzip, input_msix, "-d", output] + (["-q"] if not verbose else []),
+        universal_newlines=True,
+    )
+
+    # Sanity check: is this an MSIX?
+    temp_finder = FileFinder(output)
+    if not temp_finder.contains("AppxManifest.xml"):
+        raise ValueError("MSIX file does not contain 'AppxManifest.xml'?")
+
+    # Files in the MSIX are URL encoded/quoted; unquote here.
+    for dirpath, dirs, files in os.walk(output):
+        # This is a one way to update (in place, for os.walk) the variable `dirs` while iterating
+        # over it and `files`.
+        for i, (p, var) in itertools.chain(
+            enumerate((f, files) for f in files), enumerate((g, dirs) for g in dirs)
+        ):
+            q = urllib.parse.unquote(p)
+            if p != q:
+                log(
+                    logging.DEBUG,
+                    "msix",
+                    {
+                        "dirpath": dirpath,
+                        "p": p,
+                        "q": q,
+                    },
+                    "URL unquoting '{p}' -> '{q}' in {dirpath}",
+                )
+
+                var[i] = q
+                os.rename(os.path.join(dirpath, p), os.path.join(dirpath, q))
+
+    # The "package root" of our MSIX packages is like "Mozilla Firefox Beta Package Root", i.e., it
+    # varies by channel.  This is an easy way to determine it.
+    for p, _ in temp_finder.find("**/application.ini"):
+        relpath = os.path.split(p)[0]
+
+    # The application executable, like `firefox.exe`, is in this directory.
+    return mozpath.normpath(mozpath.join(output, relpath))
+
+
 def repackage_msix(
     dir_or_package,
     channel=None,
@@ -246,6 +314,35 @@ def repackage_msix(
     if not os.path.exists(dir_or_package):
         raise Exception("{} does not exist".format(dir_or_package))
 
+    if (
+        os.path.isfile(dir_or_package)
+        and os.path.splitext(dir_or_package)[1] == ".msix"
+    ):
+        # The convention is $MOZBUILD_STATE_PATH/cache/$FEATURE.
+        msix_dir = mozpath.normsep(
+            mozpath.join(
+                get_state_dir(),
+                "cache",
+                "mach-msix",
+                "msix-unpack",
+            )
+        )
+
+        if os.path.exists(msix_dir):
+            shutil.rmtree(msix_dir)
+        ensureParentDir(msix_dir)
+
+        dir_or_package = unpack_msix(dir_or_package, msix_dir, log=log, verbose=verbose)
+
+    log(
+        logging.INFO,
+        "msix",
+        {
+            "input": dir_or_package,
+        },
+        "Adding files from '{input}'",
+    )
+
     if os.path.isdir(dir_or_package):
         finder = FileFinder(dir_or_package)
     else:
@@ -268,9 +365,9 @@ def repackage_msix(
     second = next(values)
     vendor = vendor or second
 
-    # For `AppConstants.jsm` and `brand.properties`, which are in the omnijar in
-    # packaged builds.
-    unpack_finder = UnpackFinder(finder)
+    # For `AppConstants.jsm` and `brand.properties`, which are in the omnijar in packaged builds.
+    # The nested langpack XPI files can't be read by `mozjar.py`.
+    unpack_finder = UnpackFinder(finder, unpack_xpi=False)
 
     if not version:
         values = get_appconstants_jsm_values(
@@ -307,20 +404,33 @@ def repackage_msix(
         # Release (official) and Beta share branding.  Differentiate Beta a little bit.
         brandFullName += " Beta"
 
-    # We don't have a build at repackage-time to gives us this value, and the
+    # We don't have a build at repackage-time to give us these values, and the
     # source of truth is a branding-specific `configure.sh` shell script that we
-    # can't easily evaluate completely here.  Instead, we take the last value
-    # from `configure.sh`.
-    lines = [
-        line
-        for line in open(mozpath.join(branding, "configure.sh")).readlines()
-        if "MOZ_IGECKOBACKCHANNEL_IID" in line
-    ]
-    MOZ_IGECKOBACKCHANNEL_IID = lines[-1]
-    _, _, MOZ_IGECKOBACKCHANNEL_IID = MOZ_IGECKOBACKCHANNEL_IID.partition("=")
-    MOZ_IGECKOBACKCHANNEL_IID = MOZ_IGECKOBACKCHANNEL_IID.strip()
-    if MOZ_IGECKOBACKCHANNEL_IID.startswith(('"', "'")):
-        MOZ_IGECKOBACKCHANNEL_IID = MOZ_IGECKOBACKCHANNEL_IID[1:-1]
+    # can't easily evaluate completely here.  Instead, we choose a value from
+    # `configure.sh` depending on the channel.
+    brandingUuids = {}
+    lines = open(mozpath.join(branding, "configure.sh")).readlines()
+    # For official (release) and unofficial channels, we want the second UUID in
+    # configure.sh. For official, this is because the first set of UUIDs are for
+    # beta, but we want release. For unofficial, the first set of UUIDs are for
+    # debug builds; we assume non-debug here.
+    if channel in ("official", "unofficial"):
+        # To get the last UUID, we reverse the lines.
+        lines.reverse()
+    for key in (
+        "MOZ_IGECKOBACKCHANNEL_IID",
+        "MOZ_IHANDLERCONTROL_IID",
+        "MOZ_ASYNCIHANDLERCONTROL_IID",
+    ):
+        for line in lines:
+            if key not in line:
+                continue
+            _, _, uuid = line.partition("=")
+            uuid = uuid.strip()
+            if uuid.startswith(('"', "'")):
+                uuid = uuid[1:-1]
+            brandingUuids[key] = uuid
+            break
 
     # The convention is $MOZBUILD_STATE_PATH/cache/$FEATURE.
     output_dir = mozpath.normsep(
@@ -341,7 +451,7 @@ def repackage_msix(
     # We might want to include the publisher ID hash here.  I.e.,
     # "__{publisherID}".  My locally produced MSIX was named like
     # `Mozilla.MozillaFirefoxNightly_89.0.0.0_x64__4gf61r4q480j0`, suggesting also a
-    # missing field, but it's necessary, since this is just an output file name.
+    # missing field, but it's not necessary, since this is just an output file name.
     package_output_name = "{identity}_{version}_{arch}".format(
         identity=identity, version=version, arch=_MSIX_ARCH[arch]
     )
@@ -364,8 +474,23 @@ def repackage_msix(
 
     # TODO: Bug 1710147: filter out MSVCRT files and use a dependency instead.
     for p, f in finder:
-        # `p` is like "firefox/firefox.exe"; we want just "firefox.exe".
-        pp = os.path.relpath(p, "firefox")
+        if not os.path.isdir(dir_or_package):
+            # In archived builds, `p` is like "firefox/firefox.exe"; we want just "firefox.exe".
+            pp = os.path.relpath(p, "firefox")
+        else:
+            # In local builds and unpacked MSIX directories, `p` is like "firefox.exe" already.
+            pp = p
+
+        if pp.startswith("distribution"):
+            # Treat any existing distribution as a distribution directory,
+            # potentially with language packs. This makes it easy to repack
+            # unpacked MSIXes.
+            distribution_dir = mozpath.join(dir_or_package, "distribution")
+            if distribution_dir not in distribution_dirs:
+                distribution_dirs.append(distribution_dir)
+
+            continue
+
         copier.add(mozpath.normsep(mozpath.join("VFS", "ProgramFiles", instdir, pp)), f)
 
     # Locales to declare as supported in `AppxManifest.xml`.
@@ -390,7 +515,8 @@ def repackage_msix(
         for p, f in finder:
             locale = None
             if os.path.basename(p) == "target.langpack.xpi":
-                # Turn "/path/to/LOCALE/target.langpack.xpi" into "LOCALE".
+                # Turn "/path/to/LOCALE/target.langpack.xpi" into "LOCALE".  This is how langpacks
+                # are presented in CI.
                 base, locale = os.path.split(os.path.dirname(p))
 
                 # Like "locale-LOCALE/langpack-LOCALE@firefox.mozilla.org.xpi".  This is what AMO
@@ -410,6 +536,14 @@ def repackage_msix(
                     {"path": p, "dest": dest},
                     "Renaming langpack {path} to {dest}",
                 )
+
+            elif os.path.basename(p).startswith("langpack-"):
+                # Turn "/path/to/langpack-LOCALE@firefox.mozilla.org.xpi" into "LOCALE".  This is
+                # how langpacks are presented from an unpacked MSIX.
+                _, _, locale = os.path.basename(p).partition("langpack-")
+                locale, _, _ = locale.partition("@")
+                dest = p
+
             else:
                 dest = p
 
@@ -423,10 +557,27 @@ def repackage_msix(
                     "Distributing locale '{locale}' from {dest}",
                 )
 
+            dest = mozpath.normsep(
+                mozpath.join("VFS", "ProgramFiles", instdir, "distribution", dest)
+            )
+            if copier.contains(dest):
+                log(
+                    logging.INFO,
+                    "msix",
+                    {"dest": dest, "path": mozpath.join(finder.base, p)},
+                    "Skipping duplicate: {dest} from {path}",
+                )
+                continue
+
+            log(
+                logging.DEBUG,
+                "msix",
+                {"dest": dest, "path": mozpath.join(finder.base, p)},
+                "Adding distribution path: {dest} from {path}",
+            )
+
             copier.add(
-                mozpath.normsep(
-                    mozpath.join("VFS", "ProgramFiles", instdir, "distribution", dest)
-                ),
+                dest,
                 f,
             )
 
@@ -480,8 +631,8 @@ def repackage_msix(
         "APPX_VERSION": version,
         "MOZ_APP_DISPLAYNAME": displayname,
         "MOZ_APP_NAME": app_name,
-        "MOZ_IGECKOBACKCHANNEL_IID": MOZ_IGECKOBACKCHANNEL_IID,
     }
+    defines.update(brandingUuids)
 
     m.add_preprocess(
         mozpath.join(template, "AppxManifest.xml.in"),
@@ -514,7 +665,7 @@ def repackage_msix(
         makeappx = find_sdk_tool("makeappx.exe", log=log)
     if not makeappx:
         raise ValueError(
-            "makeappx is required; " "set SIGNTOOL or WINDOWSSDKDIR or PATH"
+            "makeappx is required; " "set MAKEAPPX or WINDOWSSDKDIR or PATH"
         )
 
     # `makeappx.exe` supports both slash and hyphen style arguments; `makemsix`

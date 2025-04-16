@@ -128,10 +128,6 @@ struct APZCTreeManager::TreeBuildingState {
                      ScrollableLayerGuid::EqualIgnoringPresShellFn>
       mScrollTargets;
 
-  // As the tree is traversed, the top element of this stack tracks whether
-  // the parent scroll node has a perspective transform.
-  std::stack<bool> mParentHasPerspective;
-
   // During the tree building process, the perspective transform component
   // of the ancestor transforms of some APZCs can be "deferred" to their
   // children, meaning they are added to the children's ancestor transforms
@@ -430,7 +426,6 @@ void APZCTreeManager::UpdateHitTestingTree(
     LayersId layersId = mRootLayersId;
     seenLayersIds.insert(mRootLayersId);
     ancestorTransforms.push(AncestorTransform());
-    state.mParentHasPerspective.push(false);
     state.mOverrideFlags.push(EventRegionsOverride::NoOverride);
     nsTArray<Maybe<ZoomConstraints>> zoomConstraintsStack;
 
@@ -565,8 +560,6 @@ void APZCTreeManager::UpdateHitTestingTree(
           }
 
           indents.push(gfx::TreeAutoIndent<LOG_DEFAULT>(mApzcTreeLog));
-          state.mParentHasPerspective.push(
-              aLayerMetrics.TransformIsPerspective());
         },
         [&](ScrollNode aLayerMetrics) {
           if (aLayerMetrics.GetAsyncZoomContainerId()) {
@@ -582,7 +575,6 @@ void APZCTreeManager::UpdateHitTestingTree(
           layersId = next->GetLayersId();
           ancestorTransforms.pop();
           indents.pop();
-          state.mParentHasPerspective.pop();
         });
 
     mApzcTreeLog << "[end]\n";
@@ -723,7 +715,8 @@ void APZCTreeManager::SampleForWebRender(const Maybe<VsyncId>& aVsyncId,
 
   bool activeAnimations = AdvanceAnimationsInternal(lock, aSampleTime);
   if (activeAnimations && controller) {
-    controller->ScheduleRenderOnCompositorThread();
+    controller->ScheduleRenderOnCompositorThread(
+        wr::RenderReasons::ANIMATED_PROPERTY);
   }
 
   nsTArray<wr::WrTransformProperty> transforms;
@@ -745,6 +738,21 @@ void APZCTreeManager::SampleForWebRender(const Maybe<VsyncId>& aVsyncId,
     if (Maybe<CompositionPayload> payload = apzc->NotifyScrollSampling()) {
       if (wrBridgeParent && aVsyncId) {
         wrBridgeParent->AddPendingScrollPayload(*payload, *aVsyncId);
+      }
+    }
+
+    if (StaticPrefs::apz_test_logging_enabled()) {
+      MutexAutoLock lock(mTestDataLock);
+
+      ScrollableLayerGuid guid = apzc->GetGuid();
+      auto it = mTestData.find(guid.mLayersId);
+      if (it != mTestData.end()) {
+        it->second->RecordSampledResult(
+            apzc->GetCurrentAsyncScrollOffsetInCssPixels(
+                AsyncPanZoomController::eForCompositing),
+            (aSampleTime.Time() - TimeStamp::ProcessCreation(nullptr))
+                .ToMicroseconds(),
+            guid.mLayersId, guid.mScrollId);
       }
     }
 
@@ -778,8 +786,7 @@ void APZCTreeManager::SampleForWebRender(const Maybe<VsyncId>& aVsyncId,
     // async zoom. However, we only use LayoutAndVisual for non-zoomable APZCs,
     // so it makes no difference.
     LayoutDeviceToParentLayerScale resolution =
-        apzc->GetCumulativeResolution().ToScaleFactor() *
-        LayerToParentLayerScale(1.0f);
+        apzc->GetCumulativeResolution() * LayerToParentLayerScale(1.0f);
     // The positive translation means the painted content is supposed to
     // move down (or to the right), and that corresponds to a reduction in
     // the scroll offset. Since we are effectively giving WR the async
@@ -884,11 +891,6 @@ void APZCTreeManager::SampleForWebRender(const Maybe<VsyncId>& aVsyncId,
   aTxn.AppendTransformProperties(transforms);
 }
 
-bool APZCTreeManager::AdvanceAnimations(const SampleTime& aSampleTime) {
-  MutexAutoLock lock(mMapLock);
-  return AdvanceAnimationsInternal(lock, aSampleTime);
-}
-
 ParentLayerRect APZCTreeManager::ComputeClippedCompositionBounds(
     const MutexAutoLock& aProofOfMapLock, ClippedCompositionBoundsMap& aDestMap,
     ScrollableLayerGuid aGuid) {
@@ -964,32 +966,6 @@ bool APZCTreeManager::AdvanceAnimationsInternal(
   return activeAnimations;
 }
 
-// Compute the clip region to be used for a layer with an APZC. This function
-// is only called for layers which actually have scrollable metrics and an APZC.
-Maybe<ParentLayerIntRegion> APZCTreeManager::ComputeClipRegion(
-    const LayersId& aLayersId, const ScrollNode& aLayer) {
-  Maybe<ParentLayerIntRegion> clipRegion;
-  if (aLayer.GetClipRect()) {
-    clipRegion.emplace(*aLayer.GetClipRect());
-  } else if (aLayer.Metrics().IsRootContent() &&
-             mAsyncZoomContainerSubtree == Some(aLayersId)) {
-    // If we are using containerless scrolling, part of the root content
-    // layers' async transform has been lifted to the async zoom container
-    // layer. The composition bounds clip, which applies after the async
-    // transform, needs to be lifted too. Layout code already takes care of
-    // this for us, we just need to not mess it up by introducing a
-    // composition bounds clip here, so we leave the clip empty.
-  } else {
-    // if there is no clip on this layer (which should only happen for the
-    // root scrollable layer in a process, or for some of the LayerMetrics
-    // expansions of a multi-metrics layer), fall back to using the comp
-    // bounds which should be equivalent.
-    clipRegion.emplace(RoundedToInt(aLayer.Metrics().GetCompositionBounds()));
-  }
-
-  return clipRegion;
-}
-
 void APZCTreeManager::PrintAPZCInfo(const ScrollNode& aLayer,
                                     const AsyncPanZoomController* apzc) {
   const FrameMetrics& metrics = aLayer.Metrics();
@@ -1015,18 +991,6 @@ void APZCTreeManager::AttachNodeToTree(HitTestingTreeNode* aNode,
     mRootNode = aNode;
     aNode->MakeRoot();
   }
-}
-
-static EventRegions GetEventRegions(const WebRenderScrollDataWrapper& aLayer) {
-  if (aLayer.Metrics().IsScrollInfoLayer()) {
-    ParentLayerIntRect compositionBounds(
-        RoundedToInt(aLayer.Metrics().GetCompositionBounds()));
-    nsIntRegion hitRegion(compositionBounds.ToUnknownRect());
-    EventRegions eventRegions(hitRegion);
-    eventRegions.mDispatchToContentHitRegion = eventRegions.mHitRegion;
-    return eventRegions;
-  }
-  return aLayer.GetEventRegions();
 }
 
 already_AddRefed<HitTestingTreeNode> APZCTreeManager::RecycleOrCreateNode(
@@ -1120,12 +1084,10 @@ void APZCTreeManager::NotifyAutoscrollRejected(
 
 void SetHitTestData(HitTestingTreeNode* aNode,
                     const WebRenderScrollDataWrapper& aLayer,
-                    const Maybe<ParentLayerIntRegion>& aClipRegion,
                     const EventRegionsOverride& aOverrideFlags) {
-  aNode->SetHitTestData(GetEventRegions(aLayer), aLayer.GetVisibleRegion(),
+  aNode->SetHitTestData(aLayer.GetVisibleRegion(),
                         aLayer.GetRemoteDocumentSize(),
-                        aLayer.GetTransformTyped(), aClipRegion, aOverrideFlags,
-                        aLayer.IsBackfaceHidden(),
+                        aLayer.GetTransformTyped(), aOverrideFlags,
                         aLayer.GetAsyncZoomContainerId());
 }
 
@@ -1153,8 +1115,6 @@ HitTestingTreeNode* APZCTreeManager::PrepareNodeForLayer(
     needsApzc = false;
   }
 
-  bool parentHasPerspective = aState.mParentHasPerspective.top();
-
   if (Maybe<uint64_t> zoomAnimationId = aLayer.GetZoomAnimationId()) {
     aState.mZoomAnimationId = zoomAnimationId;
   }
@@ -1166,11 +1126,7 @@ HitTestingTreeNode* APZCTreeManager::PrepareNodeForLayer(
     // when those properties change.
     node = RecycleOrCreateNode(aProofOfTreeLock, aState, nullptr, aLayersId);
     AttachNodeToTree(node, aParent, aNextSibling);
-    SetHitTestData(node, aLayer,
-                   (!parentHasPerspective && aLayer.GetClipRect())
-                       ? Some(ParentLayerIntRegion(*aLayer.GetClipRect()))
-                       : Nothing(),
-                   aState.mOverrideFlags.top());
+    SetHitTestData(node, aLayer, aState.mOverrideFlags.top());
     node->SetScrollbarData(aLayer.GetScrollbarAnimationId(),
                            aLayer.GetScrollbarData());
     node->SetFixedPosData(aLayer.GetFixedPositionScrollContainerId(),
@@ -1287,9 +1243,7 @@ HitTestingTreeNode* APZCTreeManager::PrepareNodeForLayer(
     MOZ_ASSERT(node->IsPrimaryHolder() && node->GetApzc() &&
                node->GetApzc()->Matches(guid));
 
-    Maybe<ParentLayerIntRegion> clipRegion =
-        parentHasPerspective ? Nothing() : ComputeClipRegion(aLayersId, aLayer);
-    SetHitTestData(node, aLayer, clipRegion, aState.mOverrideFlags.top());
+    SetHitTestData(node, aLayer, aState.mOverrideFlags.top());
     apzc->SetAncestorTransform(aAncestorTransform);
 
     PrintAPZCInfo(aLayer, apzc);
@@ -1399,9 +1353,7 @@ HitTestingTreeNode* APZCTreeManager::PrepareNodeForLayer(
       }
     }
 
-    Maybe<ParentLayerIntRegion> clipRegion =
-        parentHasPerspective ? Nothing() : ComputeClipRegion(aLayersId, aLayer);
-    SetHitTestData(node, aLayer, clipRegion, aState.mOverrideFlags.top());
+    SetHitTestData(node, aLayer, aState.mOverrideFlags.top());
   }
 
   // Note: if layer properties must be propagated to nodes, RecvUpdate in
@@ -3338,8 +3290,7 @@ SideBits APZCTreeManager::SidesStuckToRootContent(
 }
 
 LayerToParentLayerMatrix4x4 APZCTreeManager::ComputeTransformForNode(
-    const HitTestingTreeNode* aNode,
-    const AsyncPanZoomController** aOutSourceOfOverscrollTransform) const {
+    const HitTestingTreeNode* aNode) const {
   mTreeLock.AssertCurrentThreadIn();
   // The async transforms applied here for hit-testing purposes, are intended
   // to match the ones AsyncCompositionManager (or equivalent WebRender code)
@@ -3376,19 +3327,12 @@ LayerToParentLayerMatrix4x4 APZCTreeManager::ComputeTransformForNode(
         visualTransformIsInheritedFromAncestor
             ? AsyncTransformComponents{AsyncTransformComponent::eLayout}
             : LayoutAndVisual;
-    if (aOutSourceOfOverscrollTransform &&
-        components.contains(AsyncTransformComponent::eVisual)) {
-      *aOutSourceOfOverscrollTransform = apzc;
-    }
     return aNode->GetTransform() *
            CompleteAsyncTransform(apzc->GetCurrentAsyncTransformWithOverscroll(
                AsyncPanZoomController::eForHitTesting, components));
   } else if (aNode->GetAsyncZoomContainerId()) {
     if (AsyncPanZoomController* rootContent =
             FindRootContentApzcForLayersId(aNode->GetLayersId())) {
-      if (aOutSourceOfOverscrollTransform) {
-        *aOutSourceOfOverscrollTransform = rootContent;
-      }
       return aNode->GetTransform() *
              CompleteAsyncTransform(
                  rootContent->GetCurrentAsyncTransformWithOverscroll(

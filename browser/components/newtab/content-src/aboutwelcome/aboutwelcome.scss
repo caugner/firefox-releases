@@ -5,6 +5,7 @@
 @use 'sass:math';
 @import '../styles/normalize';
 
+$break-point-small: 570px;
 $break-point-medium: 610px;
 $break-point-large: 866px;
 $logo-size: 80px;
@@ -37,6 +38,10 @@ body {
   height: 100vh;
   background: radial-gradient(79.33% 221.6% at 7.58% 89.55%, #15141A 0%, rgba(21, 20, 26, 0) 54.36%, rgba(21, 20, 26, 0.63) 100%) center / cover no-repeat fixed;
   background-color: #212121;
+
+  @media (prefers-contrast: more) {
+    background-color: var(--in-content-page-background);
+  }
 
   --main-content-min-height: 271px;
 
@@ -85,6 +90,10 @@ body {
     padding: 0;
     transition: var(--transition);
     z-index: 1;
+
+    &.no-steps {
+      padding-bottom: 48px;
+    }
 
     .main-content-inner {
       display: flex;
@@ -377,6 +386,22 @@ body {
         border-radius: 2px;
         color: #FFF;
       }
+
+      @media (prefers-contrast: more) {
+        outline: 2px solid var(--in-content-button-border-color);
+        border-radius: 2px;
+
+        &.selected,
+        &:active {
+          background: var(--in-content-box-background);
+          color: var(--in-content-text-color);
+        }
+
+        &:hover {
+          background: var(--in-content-primary-button-background);
+          color: var(--in-content-primary-button-text-color);
+        }
+      }
     }
 
     .colorway-text,
@@ -582,6 +607,16 @@ body {
           background-color: #5B5B66;
           color: #E0E0E6;
         }
+
+        @media (max-height: $break-point-small) {
+          color: var(--in-content-link-color);
+
+          &:hover {
+            background-color: #5B5B66;
+            color: var(--in-content-link-color-hover);
+            text-decoration: underline;
+          }
+        }
       }
     }
 
@@ -649,7 +684,7 @@ body {
       background: var(--grey-subtitle-1);
       border-radius: 5px;
       // using border will show up in Windows High Contrast Mode to improve accessibility.
-      border: 3px solid var(--grey-subtitle-1);
+      border: 3px solid var(--in-content-button-text-color);
       opacity: 0.25;
 
       &.current {

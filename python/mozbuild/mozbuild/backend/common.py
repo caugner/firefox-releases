@@ -174,11 +174,7 @@ class CommonBackend(BuildBackend):
 
         elif isinstance(obj, SandboxedWasmLibrary):
             self._handle_generated_sources(
-                [
-                    mozpath.join(
-                        obj.relobjdir, f"{obj.lib_name}.{obj._obj_suffix()}.c"
-                    ),
-                ]
+                [mozpath.join(obj.relobjdir, f"{obj.basename}.h")]
             )
             return False
 
@@ -393,6 +389,7 @@ class CommonBackend(BuildBackend):
             self.environment.topsrcdir,
             self.environment.topobjdir,
             mozpath.join(self.environment.topobjdir, "dist"),
+            use_builtin_readable_stream=False,  # Shouldn't matter if true or false here.
         )
         self._handle_generated_sources(manager.expected_build_output_files())
         self._write_unified_files(

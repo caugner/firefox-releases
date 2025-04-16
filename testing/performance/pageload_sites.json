@@ -33,7 +33,8 @@
     {
       "login": false,
       "name": "cnn",
-      "test_url": "https://cnn.com"
+      "test_url": "https://cnn.com",
+      "secondary_url": "https://www.cnn.com/weather"
     },
     {
       "login": false,
@@ -144,12 +145,6 @@
     },
     {
       "login": false,
-      "name": "amazon-sec",
-      "test_url": "https://www.amazon.com/s?k=laptop&ref=nb_sb_noss_1",
-      "secondary_url": "https://www.amazon.com/Acer-A515-46-R14K-Quad-Core-Processor-Backlit/dp/B08VKNVDDR/ref=sr_1_3?dchild=1&keywords=laptop&qid=1627047187&sr=8-3"
-    },
-    {
-      "login": false,
       "name": "bing-search",
       "test_url": "https://www.bing.com/search?q=barack+obama"
     },
@@ -162,7 +157,8 @@
     {
       "login": false,
       "name": "cnn",
-      "test_url": "https://www.cnn.com/2021/03/22/weather/climate-change-warm-waters-lake-michigan/index.html"
+      "test_url": "https://www.cnn.com/2021/03/22/weather/climate-change-warm-waters-lake-michigan/index.html",
+      "secondary_url": "https://www.cnn.com/weather"
     },
     {
       "login": false,
@@ -200,7 +196,8 @@
     {
       "login": false,
       "name": "google-docs",
-      "test_url": "https://docs.google.com/document/d/1US-07msg12slQtI_xchzYxcKlTs6Fp7WqIc6W5GK5M8/edit?usp=sharing"
+      "test_url": "https://docs.google.com/document/d/1US-07msg12slQtI_xchzYxcKlTs6Fp7WqIc6W5GK5M8/edit?usp=sharing",
+      "secondary_url": "https://docs.google.com/document/d/1vUnn0ePU-ynArE1OdxyEHXR2G0sl74ja_st_4OOzlgE/preview"
     },
     {
       "login": false,
@@ -215,12 +212,14 @@
     {
       "login": false,
       "name": "google-slides",
-      "test_url": "https://docs.google.com/presentation/d/1Ici0ceWwpFvmIb3EmKeWSq_vAQdmmdFcWqaiLqUkJng/edit?usp=sharing"
+      "test_url": "https://docs.google.com/presentation/d/1Ici0ceWwpFvmIb3EmKeWSq_vAQdmmdFcWqaiLqUkJng/edit?usp=sharing",
+      "secondary_url": "https://docs.google.com/document/d/1vUnn0ePU-ynArE1OdxyEHXR2G0sl74ja_st_4OOzlgE/preview"
     },
     {
       "login": false,
       "name": "imdb",
-      "test_url": "https://www.imdb.com/title/tt0084967/?ref_=nv_sr_2"
+      "test_url": "https://www.imdb.com/title/tt0084967/?ref_=nv_sr_2",
+      "secondary_url": "https://www.imdb.com/title/tt0084967/episodes/?ref_=tt_ov_epl"
     },
     {
       "login": false,
@@ -235,7 +234,8 @@
     {
       "login": true,
       "name": "linkedin",
-      "test_url": "https://www.linkedin.com/in/thommy-harris-hk-385723106/"
+      "test_url": "https://www.linkedin.com/in/thommy-harris-hk-385723106/",
+      "secondary_url": "https://www.linkedin.com/company/github?trk=affiliated-pages"
     },
     {
       "login": false,
@@ -246,7 +246,8 @@
     {
       "login": true,
       "name": "netflix",
-      "test_url": "https://www.netflix.com/title/80117263"
+      "test_url": "https://www.netflix.com/title/80117263",
+      "secondary_url": "https://www.netflix.com/title/699257"
     },
     {
       "login": false,
@@ -257,7 +258,8 @@
     {
       "login": true,
       "name": "office",
-      "test_url": "https://office.live.com/start/Word.aspx?omkt=en-US"
+      "test_url": "https://www.office.com/launch/word",
+      "secondary_url": "https://www.office.com/"
     },
     {
       "login": true,
@@ -272,7 +274,8 @@
     {
       "login": true,
       "name": "pinterest",
-      "test_url": "https://pinterest.com/"
+      "test_url": "https://pinterest.com/",
+      "secondary_url": "https://www.pinterest.com/today/best/halloween-costumes-for-your-furry-friends/75787/"
     },
     {
       "login": false,
@@ -283,7 +286,8 @@
     {
       "login": true,
       "name": "tumblr",
-      "test_url": "https://www.tumblr.com/dashboard"
+      "test_url": "https://www.tumblr.com/dashboard",
+      "secondary_url": "https://www.tumblr.com/tagged/funny+cats?sort=top"
     },
     {
       "login": false,
@@ -303,7 +307,8 @@
     {
       "login": false,
       "name": "wikipedia",
-      "test_url": "https://en.wikipedia.org/wiki/Barack_Obama"
+      "test_url": "https://en.wikipedia.org/wiki/Barack_Obama",
+      "secondary_url": "https://en.wikipedia.org/wiki/Joe_Biden"
     },
     {
       "login": true,
@@ -313,7 +318,8 @@
     {
       "login": false,
       "name": "youtube",
-      "test_url": "https://www.youtube.com"
+      "test_url": "https://www.youtube.com",
+      "secondary_url": "https://www.youtube.com/watch?v=JrdEMERq8MA"
     },
     {
       "login": false,

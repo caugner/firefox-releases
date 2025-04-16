@@ -227,7 +227,6 @@ nsresult HeadlessLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
     case IntID::MenuBarDrag:
       aResult = 0;
       break;
-    case IntID::WindowsThemeIdentifier:
     case IntID::OperatingSystemVersionIdentifier:
       aResult = 0;
       res = NS_ERROR_NOT_IMPLEMENTED;
@@ -257,8 +256,6 @@ nsresult HeadlessLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       aResult = 1;
       break;
     case IntID::GTKCSDAvailable:
-    case IntID::GTKCSDHideTitlebarByDefault:
-    case IntID::GTKCSDTransparentBackground:
       aResult = 0;
       break;
     case IntID::GTKCSDMinimizeButton:

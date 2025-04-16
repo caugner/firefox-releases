@@ -94,11 +94,11 @@ nsresult ScriptPreloader::CollectReports(nsIHandleReportCallback* aHandleReport,
   if (XRE_IsParentProcess()) {
     MOZ_COLLECT_REPORT("explicit/script-preloader/non-heap/memmapped-cache",
                        KIND_NONHEAP, UNITS_BYTES,
-                       mCacheData.nonHeapSizeOfExcludingThis(),
+                       mCacheData->nonHeapSizeOfExcludingThis(),
                        "The memory-mapped startup script cache file.");
   } else {
     MOZ_COLLECT_REPORT("script-preloader-memmapped-cache", KIND_NONHEAP,
-                       UNITS_BYTES, mCacheData.nonHeapSizeOfExcludingThis(),
+                       UNITS_BYTES, mCacheData->nonHeapSizeOfExcludingThis(),
                        "The memory-mapped startup script cache file.");
   }
 
@@ -106,13 +106,16 @@ nsresult ScriptPreloader::CollectReports(nsIHandleReportCallback* aHandleReport,
 }
 
 ScriptPreloader& ScriptPreloader::GetSingleton() {
+  static UniquePtr<AutoMemMap> cacheDataSingleton;
   static RefPtr<ScriptPreloader> singleton;
 
   if (!singleton) {
     if (XRE_IsParentProcess()) {
-      singleton = new ScriptPreloader();
+      cacheDataSingleton = MakeUnique<AutoMemMap>();
+      singleton = new ScriptPreloader(cacheDataSingleton.get());
       singleton->mChildCache = &GetChildSingleton();
       Unused << singleton->InitCache();
+      ClearOnShutdown(&cacheDataSingleton, ShutdownPhase::JSPostShutDown);
     } else {
       singleton = &GetChildSingleton();
     }
@@ -147,14 +150,18 @@ ScriptPreloader& ScriptPreloader::GetSingleton() {
 //  probably use the cache data written during this session if there was no
 //  previous cache file, but I'd rather do that as a follow-up.
 ScriptPreloader& ScriptPreloader::GetChildSingleton() {
+  static UniquePtr<AutoMemMap> cacheDataSingleton;
   static RefPtr<ScriptPreloader> singleton;
 
   if (!singleton) {
-    singleton = new ScriptPreloader();
+    cacheDataSingleton = MakeUnique<AutoMemMap>();
+    singleton = new ScriptPreloader(cacheDataSingleton.get());
     if (XRE_IsParentProcess()) {
       Unused << singleton->InitCache(u"scriptCache-child"_ns);
     }
+
     ClearOnShutdown(&singleton);
+    ClearOnShutdown(&cacheDataSingleton, ShutdownPhase::JSPostShutDown);
   }
 
   return *singleton;
@@ -181,7 +188,7 @@ void ScriptPreloader::InitContentChild(ContentParent& parent) {
   bool wantScriptData = !cache.mInitializedProcesses.contains(processType);
   cache.mInitializedProcesses += processType;
 
-  auto fd = cache.mCacheData.cloneFileDescriptor();
+  auto fd = cache.mCacheData->cloneFileDescriptor();
   // Don't send original cache data to new processes if the cache has been
   // invalidated.
   if (fd.IsValid() && !cache.mCacheInvalidated) {
@@ -202,8 +209,9 @@ ProcessType ScriptPreloader::GetChildProcessType(const nsACString& remoteType) {
   return ProcessType::Web;
 }
 
-ScriptPreloader::ScriptPreloader()
-    : mMonitor("[ScriptPreloader.mMonitor]"),
+ScriptPreloader::ScriptPreloader(AutoMemMap* cacheData)
+    : mCacheData(cacheData),
+      mMonitor("[ScriptPreloader.mMonitor]"),
       mSaveMonitor("[ScriptPreloader.mSaveMonitor]") {
   // We do not set the process type for child processes here because the
   // remoteType in ContentChild is not ready yet.
@@ -409,7 +417,7 @@ Result<Ok, nsresult> ScriptPreloader::OpenCache() {
     }
   }
 
-  MOZ_TRY(mCacheData.init(cacheFile));
+  MOZ_TRY(mCacheData->init(cacheFile));
 
   return Ok();
 }
@@ -486,21 +494,21 @@ Result<Ok, nsresult> ScriptPreloader::InitCache(
     return Ok();
   }
 
-  MOZ_TRY(mCacheData.init(cacheFile.ref()));
+  MOZ_TRY(mCacheData->init(cacheFile.ref()));
 
   return InitCacheInternal();
 }
 
 Result<Ok, nsresult> ScriptPreloader::InitCacheInternal(
     JS::HandleObject scope) {
-  auto size = mCacheData.size();
+  auto size = mCacheData->size();
 
   uint32_t headerSize;
   if (size < sizeof(MAGIC) + sizeof(headerSize)) {
     return Err(NS_ERROR_UNEXPECTED);
   }
 
-  auto data = mCacheData.get<uint8_t>();
+  auto data = mCacheData->get<uint8_t>();
   MOZ_RELEASE_ASSERT(JS::IsTranscodingBytecodeAligned(data.get()));
 
   auto end = data + size;
@@ -526,7 +534,7 @@ Result<Ok, nsresult> ScriptPreloader::InitCacheInternal(
     data += headerSize;
 
     // Reconstruct alignment padding if required.
-    size_t currentOffset = data - mCacheData.get<uint8_t>();
+    size_t currentOffset = data - mCacheData->get<uint8_t>();
     data += JS::AlignTranscodingBytecodeOffset(currentOffset) - currentOffset;
 
     InputBuffer buf(header);
@@ -883,22 +891,21 @@ void ScriptPreloader::FillCompileOptionsForCachedStencil(
   // called on functions in these scripts, the source-hook will fetch it over,
   // so using `toString` of functions should be avoided in chrome js.
   options.setSourceIsLazy(true);
+}
 
-  // ScriptPreloader's XDR buffer is alive during the entire browser lifetime.
+/* static */
+void ScriptPreloader::FillDecodeOptionsForCachedStencil(
+    JS::DecodeOptions& options) {
+  // ScriptPreloader's XDR buffer is alive during the Stencil is alive.
   // The decoded stencil can borrow from it.
+  //
+  // NOTE: The XDR buffer is alive during the entire browser lifetime only
+  //       when it's mmapped.
   options.borrowBuffer = true;
 }
 
 already_AddRefed<JS::Stencil> ScriptPreloader::GetCachedStencil(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-    const nsCString& path) {
-  // Users of ScriptPreloader must agree on a standard set of compile options so
-  // that bytecode data can safely saved from one context and loaded in another.
-  MOZ_ASSERT(options.noScriptRval);
-  MOZ_ASSERT(!options.selfHostingMode);
-  MOZ_ASSERT(!options.isRunOnce);
-  MOZ_ASSERT(options.sourceIsLazy);
-
+    JSContext* cx, const JS::DecodeOptions& options, const nsCString& path) {
   // If a script is used by both the parent and the child, it's stored only
   // in the child cache.
   if (mChildCache) {
@@ -919,8 +926,7 @@ already_AddRefed<JS::Stencil> ScriptPreloader::GetCachedStencil(
 }
 
 already_AddRefed<JS::Stencil> ScriptPreloader::GetCachedStencilInternal(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-    const nsCString& path) {
+    JSContext* cx, const JS::DecodeOptions& options, const nsCString& path) {
   auto* cachedScript = mScripts.Get(path);
   if (cachedScript) {
     return WaitForCachedStencil(cx, options, cachedScript);
@@ -929,8 +935,7 @@ already_AddRefed<JS::Stencil> ScriptPreloader::GetCachedStencilInternal(
 }
 
 already_AddRefed<JS::Stencil> ScriptPreloader::WaitForCachedStencil(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-    CachedStencil* script) {
+    JSContext* cx, const JS::DecodeOptions& options, CachedStencil* script) {
   // Always check for finished operations so that we can move on to decoding the
   // next batch as soon as possible after the pending batch is ready. If we wait
   // until we hit an unfinished script, we wind up having at most one batch of
@@ -1085,6 +1090,8 @@ void ScriptPreloader::DecodeNextBatch(size_t chunkSize,
     auto* script = next;
     next = script->getNext();
 
+    MOZ_ASSERT(script->IsMemMapped());
+
     // Skip any scripts that we decoded on the main thread rather than
     // waiting for an off-thread operation to complete.
     if (script->mReadyToExecute) {
@@ -1119,6 +1126,10 @@ void ScriptPreloader::DecodeNextBatch(size_t chunkSize,
 
   JS::CompileOptions options(cx);
   FillCompileOptionsForCachedStencil(options);
+
+  // All XDR buffers are mmapped and live longer than JS runtime.
+  // The bytecode can be borrowed from the buffer.
+  options.usePinnedBytecode = true;
 
   if (!JS::CanCompileOffThread(cx, options, size) ||
       !JS::DecodeMultiOffThreadStencils(cx, options, mParsingSources,
@@ -1163,11 +1174,7 @@ bool ScriptPreloader::CachedStencil::XDREncode(JSContext* cx) {
 
   mXDRData.construct<JS::TranscodeBuffer>();
 
-  JS::CompileOptions compileOptions(cx);
-  FillCompileOptionsForCachedStencil(compileOptions);
-
-  JS::TranscodeResult code =
-      JS::EncodeStencil(cx, compileOptions, mStencil, Buffer());
+  JS::TranscodeResult code = JS::EncodeStencil(cx, mStencil, Buffer());
   if (code == JS::TranscodeResult::Ok) {
     mXDRRange.emplace(Buffer().begin(), Buffer().length());
     mSize = Range().length();
@@ -1179,7 +1186,7 @@ bool ScriptPreloader::CachedStencil::XDREncode(JSContext* cx) {
 }
 
 already_AddRefed<JS::Stencil> ScriptPreloader::CachedStencil::GetStencil(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options) {
+    JSContext* cx, const JS::DecodeOptions& options) {
   MOZ_ASSERT(mReadyToExecute);
   if (mStencil) {
     return do_AddRef(mStencil);

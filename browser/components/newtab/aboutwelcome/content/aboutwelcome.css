@@ -58,6 +58,11 @@ body[lwt-newtab-brighttext] {
   --main-content-min-height: 271px;
   --transition: 0.6s opacity, 0.6s scale, 0.6s rotate, 0.6s translate;
 }
+@media (prefers-contrast: more) {
+  .onboardingContainer {
+    background-color: var(--in-content-page-background);
+  }
+}
 @media (prefers-reduced-motion: no-preference) {
   .onboardingContainer {
     --translate: 30px;
@@ -95,6 +100,9 @@ body[lwt-newtab-brighttext] {
   padding: 0;
   transition: var(--transition);
   z-index: 1;
+}
+.onboardingContainer .main-content.no-steps {
+  padding-bottom: 48px;
 }
 .onboardingContainer .main-content .main-content-inner {
   display: flex;
@@ -331,6 +339,20 @@ body[lwt-newtab-brighttext] {
   border-radius: 2px;
   color: #FFF;
 }
+@media (prefers-contrast: more) {
+  .onboardingContainer .colorway-variations .variation-button {
+    outline: 2px solid var(--in-content-button-border-color);
+    border-radius: 2px;
+  }
+  .onboardingContainer .colorway-variations .variation-button.selected, .onboardingContainer .colorway-variations .variation-button:active {
+    background: var(--in-content-box-background);
+    color: var(--in-content-text-color);
+  }
+  .onboardingContainer .colorway-variations .variation-button:hover {
+    background: var(--in-content-primary-button-background);
+    color: var(--in-content-primary-button-text-color);
+  }
+}
 .onboardingContainer .colorway-variations .colorway-text,
 .onboardingContainer .colorway-variations .variation-button {
   transition: 0.4s opacity, 0.4s translate;
@@ -496,6 +518,16 @@ body[lwt-newtab-brighttext] {
   background-color: #5B5B66;
   color: #E0E0E6;
 }
+@media (max-height: 570px) {
+  .onboardingContainer .secondary-cta.top button {
+    color: var(--in-content-link-color);
+  }
+  .onboardingContainer .secondary-cta.top button:hover {
+    background-color: #5B5B66;
+    color: var(--in-content-link-color-hover);
+    text-decoration: underline;
+  }
+}
 .onboardingContainer .secondary-cta span {
   color: var(--grey-subtitle-1);
   margin: 0 4px;
@@ -549,7 +581,7 @@ body[lwt-newtab-brighttext] {
   margin-inline-start: 4px;
   background: var(--grey-subtitle-1);
   border-radius: 5px;
-  border: 3px solid var(--grey-subtitle-1);
+  border: 3px solid var(--in-content-button-text-color);
   opacity: 0.25;
 }
 .onboardingContainer .steps .indicator.current {

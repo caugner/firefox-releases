@@ -143,7 +143,7 @@ host_fetches = {
         },
         "ImageMagick": {
             "type": "static-url",
-            "url": "https://download.imagemagick.org/ImageMagick/download/binaries/ImageMagick-7.1.0-4-portable-Q16-x64.zip",  # noqa
+            "url": "https://download.imagemagick.org/ImageMagick/download/binaries/ImageMagick-7.1.0-portable-Q16-x64.zip",  # noqa
             # An extension to `fetch` syntax.
             "path": "ImageMagick-7.1.0",
         },
@@ -622,7 +622,7 @@ def _verify_node_install(command_context):
     action="store_true",
     help="Skip all local caches to force re-fetching remote artifacts.",
 )
-@CommandArgument("--check", default=False, action="store_true")
+@CommandArgument("--check-browsertime", default=False, action="store_true")
 @CommandArgument(
     "--install-vismet-reqs",
     default=False,
@@ -644,7 +644,7 @@ def browsertime(
     setup=False,
     clobber=False,
     skip_cache=False,
-    check=False,
+    check_browsertime=False,
     browsertime_help=False,
     install_vismet_reqs=False,
 ):
@@ -686,7 +686,7 @@ def browsertime(
         if not _verify_node_install(command_context):
             return 1
 
-    if check:
+    if check_browsertime:
         return check(command_context)
 
     if browsertime_help:

@@ -27,6 +27,7 @@
 #include "RootAccessible.h"
 #include "States.h"
 #include "StyleInfo.h"
+#include "TextLeafRange.h"
 #include "TextRange.h"
 #include "TableAccessible.h"
 #include "TableCellAccessible.h"
@@ -115,6 +116,7 @@ LocalAccessible::LocalAccessible(nsIContent* aContent, DocAccessible* aDoc)
       mDoc(aDoc),
       mParent(nullptr),
       mIndexInParent(-1),
+      mBounds(),
       mStateFlags(0),
       mContextFlags(0),
       mReorderEventTarget(false),
@@ -616,6 +618,90 @@ LocalAccessible* LocalAccessible::LocalChildAtPoint(
   }
 
   return accessible;
+}
+
+nsRect LocalAccessible::ParentRelativeBounds() {
+  nsIFrame* boundingFrame = nullptr;
+  nsIFrame* frame = GetFrame();
+  if (frame && mContent) {
+    if (mContent->GetProperty(nsGkAtoms::hitregion) && mContent->IsElement()) {
+      // This is for canvas fallback content
+      // Find a canvas frame the found hit region is relative to.
+      nsIFrame* canvasFrame = frame->GetParent();
+      if (canvasFrame) {
+        canvasFrame = nsLayoutUtils::GetClosestFrameOfType(
+            canvasFrame, LayoutFrameType::HTMLCanvas);
+      }
+
+      if (canvasFrame) {
+        if (auto* canvas =
+                dom::HTMLCanvasElement::FromNode(canvasFrame->GetContent())) {
+          if (auto* context = canvas->GetCurrentContext()) {
+            nsRect bounds;
+            if (context->GetHitRegionRect(mContent->AsElement(), bounds)) {
+              return bounds;
+            }
+          }
+        }
+      }
+    }
+
+    // We need to find a frame to make our bounds relative to. We'll store this
+    // in `boundingFrame`. Ultimately, we'll create screen-relative coordinates
+    // by summing the x, y offsets of our ancestors' bounds in
+    // RemoteAccessibleBase::Bounds(), so it is important that our bounding
+    // frame have a corresponding accessible.
+    if (IsDoc() &&
+        nsCoreUtils::IsTopLevelContentDocInProcess(AsDoc()->DocumentNode())) {
+      // Tab documents and OOP iframe docs won't have ancestor accessibles with
+      // frames. We'll use their presshell root frame instead.
+      // XXX bug 1736635: Should DocAccessibles return their presShell frame on
+      // GetFrame()?
+      boundingFrame = nsLayoutUtils::GetContainingBlockForClientRect(frame);
+    }
+
+    // Iterate through ancestors to find one with a frame.
+    LocalAccessible* parent = mParent;
+    while (parent && !boundingFrame) {
+      if (parent->IsDoc()) {
+        // If we find a doc accessible, use its presshell's root frame
+        // (since doc accessibles themselves don't have frames).
+        boundingFrame = nsLayoutUtils::GetContainingBlockForClientRect(frame);
+        break;
+      }
+
+      if ((boundingFrame = parent->GetFrame())) {
+        // Otherwise, if the parent has a frame, use that
+        break;
+      }
+
+      parent = parent->LocalParent();
+    }
+
+    if (!boundingFrame) {
+      MOZ_ASSERT_UNREACHABLE("No ancestor with frame?");
+      boundingFrame = nsLayoutUtils::GetContainingBlockForClientRect(frame);
+    }
+
+    nsRect unionRect = nsLayoutUtils::GetAllInFlowRectsUnion(
+        frame, boundingFrame, nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
+
+    if (unionRect.IsEmpty()) {
+      // If we end up with a 0x0 rect from above (or one with negative
+      // height/width) we should try using the ink overflow rect instead. If we
+      // use this rect, our relative bounds will match the bounds of what
+      // appears visually. We do this because some web authors (icloud.com for
+      // example) employ things like 0x0 buttons with visual overflow. Without
+      // this, such frames aren't navigable by screen readers.
+      nsRect overflow = frame->InkOverflowRectRelativeToSelf();
+      nsLayoutUtils::TransformRect(frame, boundingFrame, overflow);
+      return overflow;
+    }
+
+    return unionRect;
+  }
+
+  return nsRect();
 }
 
 nsRect LocalAccessible::RelativeBounds(nsIFrame** aBoundingFrame) const {
@@ -1161,6 +1247,7 @@ bool LocalAccessible::AttributeChangesState(nsAtom* aAttribute) {
          aAttribute == nsGkAtoms::aria_haspopup ||
          aAttribute == nsGkAtoms::aria_busy ||
          aAttribute == nsGkAtoms::aria_multiline ||
+         aAttribute == nsGkAtoms::aria_multiselectable ||
          aAttribute == nsGkAtoms::contenteditable ||
          (aAttribute == nsGkAtoms::href && IsHTMLLink());
 }
@@ -2624,7 +2711,7 @@ uint32_t LocalAccessible::EmbeddedChildCount() {
   return ChildCount();
 }
 
-LocalAccessible* LocalAccessible::GetEmbeddedChildAt(uint32_t aIndex) {
+LocalAccessible* LocalAccessible::EmbeddedChildAt(uint32_t aIndex) {
   if (mStateFlags & eHasTextKids) {
     if (!mEmbeddedObjCollector) {
       mEmbeddedObjCollector.reset(new EmbeddedObjCollector(this));
@@ -3008,7 +3095,13 @@ void LocalAccessible::SendCache(uint64_t aCacheDomain,
   }
 
   DocAccessibleChild* ipcDoc = mDoc->IPCDoc();
-  MOZ_ASSERT(ipcDoc);
+  if (!ipcDoc) {
+    // This means DocAccessible::DoInitialUpdate hasn't been called yet, which
+    // means the a11y tree hasn't been built yet. Therefore, this should only
+    // be possible if this is a DocAccessible.
+    MOZ_ASSERT(IsDoc(), "Called on a non-DocAccessible but IPCDoc is null");
+    return;
+  }
 
   RefPtr<AccAttributes> fields =
       BundleFieldsForCache(aCacheDomain, aUpdateType);
@@ -3022,7 +3115,9 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
     uint64_t aCacheDomain, CacheUpdateType aUpdateType) {
   RefPtr<AccAttributes> fields = new AccAttributes();
 
-  if (aCacheDomain & CacheDomain::NameAndDescription) {
+  // Caching name for text leaf Accessibles is redundant, since their name is
+  // always their text. Text gets handled below.
+  if (aCacheDomain & CacheDomain::NameAndDescription && !IsText()) {
     nsString name;
     int32_t nameFlag = Name(name);
     if (nameFlag != eNameOK) {
@@ -3051,6 +3146,56 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
     fields->SetAttribute(nsGkAtoms::max, MaxValue());
     fields->SetAttribute(nsGkAtoms::min, MinValue());
     fields->SetAttribute(nsGkAtoms::step, Step());
+  }
+
+  if (aCacheDomain & CacheDomain::Bounds) {
+    nsRect newBoundsRect = ParentRelativeBounds();
+
+    if (mBounds.isNothing() || !newBoundsRect.IsEqualEdges(mBounds.value())) {
+      mBounds = Some(newBoundsRect);
+
+      nsTArray<int32_t> boundsArray(4);
+
+      boundsArray.AppendElement(newBoundsRect.x);
+      boundsArray.AppendElement(newBoundsRect.y);
+      boundsArray.AppendElement(newBoundsRect.width);
+      boundsArray.AppendElement(newBoundsRect.height);
+
+      fields->SetAttribute(nsGkAtoms::relativeBounds, std::move(boundsArray));
+    }
+  }
+
+  // We only cache text on leaf Accessibles.
+  if ((aCacheDomain & CacheDomain::Text) && !HasChildren()) {
+    // Only text Accessibles can have actual text.
+    if (IsText()) {
+      nsString text;
+      AppendTextTo(text);
+      fields->SetAttribute(nsGkAtoms::text, std::move(text));
+    }
+    // We cache line start offsets for both text and non-text leaf Accessibles
+    // because non-text leaf Accessibles can still start a line.
+    nsTArray<int32_t> lineStarts;
+    for (TextLeafPoint lineStart =
+             TextLeafPoint(this, 0).FindNextLineStartSameLocalAcc(
+                 /* aIncludeOrigin */ true);
+         lineStart;
+         lineStart = lineStart.FindNextLineStartSameLocalAcc(false)) {
+      lineStarts.AppendElement(lineStart.mOffset);
+    }
+    if (!lineStarts.IsEmpty()) {
+      fields->SetAttribute(nsGkAtoms::line, std::move(lineStarts));
+    }
+  }
+
+  if (aCacheDomain & CacheDomain::DOMNodeID) {
+    MOZ_ASSERT(mContent);
+    nsAtom* id = mContent->GetID();
+    if (id) {
+      fields->SetAttribute(nsGkAtoms::id, id);
+    } else if (aUpdateType == CacheUpdateType::Update) {
+      fields->SetAttribute(nsGkAtoms::id, DeleteEntry());
+    }
   }
 
   return fields.forget();

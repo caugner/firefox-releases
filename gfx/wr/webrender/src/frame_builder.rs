@@ -18,7 +18,7 @@ use crate::picture::{SurfaceInfo, SurfaceIndex, ROOT_SURFACE_INDEX, SurfaceRende
 use crate::picture::{BackdropKind, SubpixelMode, TileCacheLogger, RasterConfig, PictureCompositeMode};
 use crate::prepare::prepare_primitives;
 use crate::prim_store::{PictureIndex, PrimitiveDebugId};
-use crate::prim_store::{DeferredResolve};
+use crate::prim_store::{DeferredResolve, PrimitiveInstance};
 use crate::profiler::{self, TransactionProfile};
 use crate::render_backend::{DataStores, ScratchBuffer};
 use crate::render_target::{RenderTarget, PictureCacheTarget, TextureCacheRenderTarget};
@@ -331,11 +331,12 @@ impl FrameBuilder {
         composite_state: &mut CompositeState,
         tile_cache_logger: &mut TileCacheLogger,
         tile_caches: &mut FastHashMap<SliceId, Box<TileCacheInstance>>,
+        spatial_tree: &SpatialTree,
         profile: &mut TransactionProfile,
     ) {
         profile_scope!("build_layer_screen_rects_and_cull_layers");
 
-        let root_spatial_node_index = scene.spatial_tree.root_reference_frame_index();
+        let root_spatial_node_index = spatial_tree.root_reference_frame_index();
 
         const MAX_CLIP_COORD: f32 = 1.0e9;
 
@@ -349,14 +350,14 @@ impl FrameBuilder {
             global_device_pixel_scale,
             scene_properties,
             global_screen_world_rect,
-            spatial_tree: &scene.spatial_tree,
+            spatial_tree,
             max_local_clip: LayoutRect {
                 min: LayoutPoint::new(-MAX_CLIP_COORD, -MAX_CLIP_COORD),
                 max: LayoutPoint::new(MAX_CLIP_COORD, MAX_CLIP_COORD),
             },
             debug_flags,
             fb_config: &scene.config,
-            root_spatial_node_index: scene.spatial_tree.root_reference_frame_index(),
+            root_spatial_node_index,
         };
 
         // Construct a dummy root surface, that represents the
@@ -366,7 +367,7 @@ impl FrameBuilder {
             root_spatial_node_index,
             0.0,
             global_screen_world_rect,
-            &scene.spatial_tree,
+            spatial_tree,
             global_device_pixel_scale,
             (1.0, 1.0),
         );
@@ -390,6 +391,7 @@ impl FrameBuilder {
             &mut surfaces,
             &frame_context,
             data_stores,
+            &mut scene.prim_instances,
         );
 
         {
@@ -399,7 +401,7 @@ impl FrameBuilder {
 
             let visibility_context = FrameVisibilityContext {
                 global_device_pixel_scale,
-                spatial_tree: &scene.spatial_tree,
+                spatial_tree,
                 global_screen_world_rect,
                 surfaces: &mut surfaces,
                 debug_flags,
@@ -430,6 +432,7 @@ impl FrameBuilder {
                     &mut visibility_state,
                     tile_caches,
                     true,
+                    &mut scene.prim_instances,
                 );
             }
 
@@ -498,6 +501,7 @@ impl FrameBuilder {
                     &mut scratch.primitive,
                     tile_cache_logger,
                     tile_caches,
+                    &mut scene.prim_instances,
                 );
 
                 let pic = &mut scene.prim_store.pictures[pic_index.0];
@@ -541,22 +545,23 @@ impl FrameBuilder {
         debug_flags: DebugFlags,
         tile_cache_logger: &mut TileCacheLogger,
         tile_caches: &mut FastHashMap<SliceId, Box<TileCacheInstance>>,
+        spatial_tree: &mut SpatialTree,
         dirty_rects_are_valid: bool,
         profile: &mut TransactionProfile,
     ) -> Frame {
         profile_scope!("build");
         profile_marker!("BuildFrame");
 
-        profile.set(profiler::PRIMITIVES, scene.prim_store.prim_count());
+        profile.set(profiler::PRIMITIVES, scene.prim_instances.len());
         profile.set(profiler::PICTURE_CACHE_SLICES, scene.tile_cache_config.picture_cache_slice_count);
         scratch.begin_frame();
-        resource_cache.begin_frame(stamp, profile);
         gpu_cache.begin_frame(stamp);
+        resource_cache.begin_frame(stamp, gpu_cache, profile);
 
         self.globals.update(gpu_cache);
 
-        scene.spatial_tree.update_tree(scene_properties);
-        let mut transform_palette = scene.spatial_tree.build_transform_palette();
+        spatial_tree.update_tree(scene_properties);
+        let mut transform_palette = spatial_tree.build_transform_palette();
         scene.clip_store.begin_frame(&mut scratch.clip_store);
 
         rg_builder.begin_frame(stamp.frame_id());
@@ -591,6 +596,7 @@ impl FrameBuilder {
             &mut composite_state,
             tile_cache_logger,
             tile_caches,
+            spatial_tree,
             profile,
         );
 
@@ -628,14 +634,14 @@ impl FrameBuilder {
                     use_advanced_blending: scene.config.gpu_supports_advanced_blend,
                     break_advanced_blend_batches: !scene.config.advanced_blend_is_coherent,
                     batch_lookback_count: scene.config.batch_lookback_count,
-                    spatial_tree: &scene.spatial_tree,
+                    spatial_tree,
                     data_stores,
                     surfaces: &scratch.frame.surfaces,
                     scratch: &mut scratch.primitive,
                     screen_world_rect,
                     globals: &self.globals,
                     tile_caches,
-                    root_spatial_node_index: scene.spatial_tree.root_reference_frame_index(),
+                    root_spatial_node_index: spatial_tree.root_reference_frame_index(),
                 };
 
                 let pass = build_render_pass(
@@ -651,6 +657,7 @@ impl FrameBuilder {
                     &mut z_generator,
                     &mut composite_state,
                     scene.config.gpu_supports_fast_clears,
+                    &scene.prim_instances,
                 );
 
                 has_texture_cache_tasks |= !pass.texture_cache.is_empty();
@@ -667,14 +674,14 @@ impl FrameBuilder {
                 use_advanced_blending: scene.config.gpu_supports_advanced_blend,
                 break_advanced_blend_batches: !scene.config.advanced_blend_is_coherent,
                 batch_lookback_count: scene.config.batch_lookback_count,
-                spatial_tree: &scene.spatial_tree,
+                spatial_tree,
                 data_stores,
                 surfaces: &scratch.frame.surfaces,
                 scratch: &mut scratch.primitive,
                 screen_world_rect,
                 globals: &self.globals,
                 tile_caches,
-                root_spatial_node_index: scene.spatial_tree.root_reference_frame_index(),
+                root_spatial_node_index: spatial_tree.root_reference_frame_index(),
             };
 
             self.build_composite_pass(
@@ -779,6 +786,7 @@ pub fn build_render_pass(
     z_generator: &mut ZBufferIdGenerator,
     composite_state: &mut CompositeState,
     gpu_supports_fast_clears: bool,
+    prim_instances: &[PrimitiveInstance],
 ) -> RenderPass {
     profile_scope!("build_render_pass");
 
@@ -936,6 +944,7 @@ pub fn build_render_pass(
             surface_spatial_node_index,
             z_generator,
             composite_state,
+            prim_instances,
         );
         }
 
@@ -1017,6 +1026,7 @@ pub fn build_render_pass(
         transforms,
         z_generator,
         composite_state,
+        prim_instances,
     );
     pass.alpha.build(
         ctx,
@@ -1027,6 +1037,7 @@ pub fn build_render_pass(
         transforms,
         z_generator,
         composite_state,
+        prim_instances,
     );
 
     pass

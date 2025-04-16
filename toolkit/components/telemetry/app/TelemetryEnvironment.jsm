@@ -259,8 +259,15 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
     "browser.urlbar.quicksuggest.onboardingDialogChoice",
     { what: RECORD_DEFAULTPREF_VALUE },
   ],
+  [
+    "browser.urlbar.quicksuggest.dataCollection.enabled",
+    { what: RECORD_DEFAULTPREF_VALUE },
+  ],
   ["browser.urlbar.showSearchSuggestionsFirst", { what: RECORD_PREF_VALUE }],
-  ["browser.urlbar.suggest.quicksuggest", { what: RECORD_DEFAULTPREF_VALUE }],
+  [
+    "browser.urlbar.suggest.quicksuggest.nonsponsored",
+    { what: RECORD_DEFAULTPREF_VALUE },
+  ],
   [
     "browser.urlbar.suggest.quicksuggest.sponsored",
     { what: RECORD_DEFAULTPREF_VALUE },
@@ -1784,7 +1791,7 @@ EnvironmentCache.prototype = {
    */
   _updateFirefoxSuggest() {
     let prefs = [
-      "browser.urlbar.suggest.quicksuggest",
+      "browser.urlbar.suggest.quicksuggest.nonsponsored",
       "browser.urlbar.suggest.quicksuggest.sponsored",
     ];
     for (let p of prefs) {
@@ -2067,6 +2074,14 @@ EnvironmentCache.prototype = {
     };
 
     if (AppConstants.platform === "win") {
+      // This is only sent for Mozilla produced MSIX packages
+      let winPackageFamilyName = getSysinfoProperty("winPackageFamilyName", "");
+      if (
+        winPackageFamilyName.startsWith("Mozilla.") ||
+        winPackageFamilyName.startsWith("MozillaCorporation.")
+      ) {
+        data = { winPackageFamilyName };
+      }
       data = { ...this._getProcessData(), ...data };
     } else if (AppConstants.platform == "android") {
       data.device = this._getDeviceData();

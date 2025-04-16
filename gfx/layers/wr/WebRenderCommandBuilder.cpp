@@ -97,8 +97,6 @@ struct BlobItemData {
   // during invalidations.
   std::vector<RefPtr<SourceSurface>> mExternalSurfaces;
 
-  IntRect mImageRect;
-
   BlobItemData(DIGroup* aGroup, nsDisplayItem* aItem)
       : mUsed(false), mGroup(aGroup) {
     mInvalid = false;
@@ -311,7 +309,6 @@ struct DIGroup {
                                 // containers applied
   Maybe<wr::BlobImageKey> mKey;
   std::vector<RefPtr<ScaledFont>> mFonts;
-  bool mSuppressInvalidations = false;
 
   DIGroup()
       : mAppUnitsPerDevPixel(0),
@@ -319,9 +316,6 @@ struct DIGroup {
         mHitInfo(CompositorHitTestInvisibleToHit) {}
 
   void InvalidateRect(const IntRect& aRect) {
-    if (mSuppressInvalidations) {
-      return;
-    }
     auto r = aRect.Intersect(mPreservedRect);
     // Empty rects get dropped
     if (!r.IsEmpty()) {
@@ -410,9 +404,7 @@ struct DIGroup {
       InvalidateRect(aData->mRect);
       aData->mInvalid = true;
       invalidated = true;
-    } else if (aData->mInvalid ||
-               /* XXX: handle image load invalidation */ (
-                   aItem->IsInvalid(invalid) && invalid.IsEmpty())) {
+    } else if (aItem->IsInvalid(invalid) && invalid.IsEmpty()) {
       UniquePtr<nsDisplayItemGeometry> geometry(
           aItem->AllocateGeometry(aBuilder));
       nsRect clippedBounds = clip.ApplyNonRoundedIntersection(
@@ -547,7 +539,6 @@ struct DIGroup {
     }
     mActualBounds.OrWith(aData->mRect);
     aData->mClip = clip;
-    aData->mImageRect = mClippedImageBounds;
     GP("post mInvalidRect: %d %d %d %d\n", mInvalidRect.x, mInvalidRect.y,
        mInvalidRect.width, mInvalidRect.height);
     return invalidated;
@@ -606,7 +597,6 @@ struct DIGroup {
       return;
     }
 
-    gfx::SurfaceFormat format = gfx::SurfaceFormat::B8G8R8A8;
     std::vector<RefPtr<ScaledFont>> fonts;
     bool validFonts = true;
     RefPtr<WebRenderDrawEventRecorder> recorder =
@@ -629,8 +619,8 @@ struct DIGroup {
               fonts = std::move(aScaledFonts);
             });
 
-    RefPtr<gfx::DrawTarget> dummyDt = gfx::Factory::CreateDrawTarget(
-        gfx::BackendType::SKIA, gfx::IntSize(1, 1), format);
+    RefPtr<gfx::DrawTarget> dummyDt =
+        gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget();
 
     RefPtr<gfx::DrawTarget> dt = gfx::Factory::CreateRecordingDrawTarget(
         recorder, dummyDt, mLayerBounds.ToUnknownRect());
@@ -1101,15 +1091,14 @@ static bool IsItemProbablyActive(
       Matrix t2d;
       bool is2D = t.Is2D(&t2d);
       GP("active: %d\n", transformItem->MayBeAnimated(aDisplayListBuilder));
-      return transformItem->MayBeAnimated(aDisplayListBuilder, false) ||
-             !is2D ||
+      return transformItem->MayBeAnimated(aDisplayListBuilder) || !is2D ||
              HasActiveChildren(*transformItem->GetChildren(), aBuilder,
                                aResources, aSc, aManager, aDisplayListBuilder);
     }
     case DisplayItemType::TYPE_OPACITY: {
       nsDisplayOpacity* opacityItem = static_cast<nsDisplayOpacity*>(aItem);
       bool active = opacityItem->NeedsActiveLayer(aDisplayListBuilder,
-                                                  opacityItem->Frame(), false);
+                                                  opacityItem->Frame());
       GP("active: %d\n", active);
       return active ||
              HasActiveChildren(*opacityItem->GetChildren(), aBuilder,
@@ -1308,18 +1297,14 @@ bool Grouper::ConstructItemInsideInactive(
     // entire item to be within the invalid region.
     Matrix m = mTransform;
     mTransform = Matrix();
-    bool old = aGroup->mSuppressInvalidations;
-    aGroup->mSuppressInvalidations = true;
     sIndent++;
     if (ConstructGroupInsideInactive(aCommandBuilder, aBuilder, aResources,
                                      aGroup, children, aSc)) {
       data->mInvalid = true;
-      aGroup->mSuppressInvalidations = old;
       aGroup->InvalidateRect(data->mRect);
       invalidated = true;
     }
     sIndent--;
-    aGroup->mSuppressInvalidations = old;
     mTransform = m;
   } else if (aItem->GetType() == DisplayItemType::TYPE_TRANSFORM) {
     Matrix m = mTransform;
@@ -1331,8 +1316,6 @@ bool Grouper::ConstructItemInsideInactive(
       // If ConstructGroupInsideInactive finds any change, we invalidate the
       // entire container item. This is needed because blob merging requires the
       // entire item to be within the invalid region.
-      bool old = aGroup->mSuppressInvalidations;
-      aGroup->mSuppressInvalidations = true;
       mTransform = Matrix();
       sIndent++;
       if (ConstructGroupInsideInactive(aCommandBuilder, aBuilder, aResources,
@@ -1342,7 +1325,6 @@ bool Grouper::ConstructItemInsideInactive(
         invalidated = true;
       }
       sIndent--;
-      aGroup->mSuppressInvalidations = old;
     } else {
       GP("t2d: %f %f\n", t2d._31, t2d._32);
       mTransform.PreMultiply(t2d);
@@ -2291,6 +2273,7 @@ WebRenderCommandBuilder::GenerateFallbackData(
 
   bool needPaint = true;
 
+  MOZ_RELEASE_ASSERT(aItem->GetType() != DisplayItemType::TYPE_SVG_WRAPPER);
   if (geometry && !fallbackData->IsInvalid() &&
       aItem->GetType() != DisplayItemType::TYPE_SVG_WRAPPER && differentScale) {
     nsRect invalid;
@@ -2399,8 +2382,7 @@ WebRenderCommandBuilder::GenerateFallbackData(
 
       imageData->CreateImageClientIfNeeded();
       RefPtr<ImageClient> imageClient = imageData->GetImageClient();
-      RefPtr<ImageContainer> imageContainer =
-          LayerManager::CreateImageContainer();
+      RefPtr<ImageContainer> imageContainer = MakeAndAddRef<ImageContainer>();
 
       {
         UpdateImageHelper helper(imageContainer, imageClient,

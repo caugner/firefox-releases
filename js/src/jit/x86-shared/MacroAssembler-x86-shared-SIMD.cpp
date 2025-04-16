@@ -179,6 +179,16 @@ void MacroAssemblerX86Shared::blendInt16x8(FloatRegister lhs, FloatRegister rhs,
   vpblendw(mask, rhs, lhs, lhs);
 }
 
+void MacroAssemblerX86Shared::laneSelectSimd128(FloatRegister lhs,
+                                                FloatRegister rhs,
+                                                FloatRegister mask,
+                                                FloatRegister output) {
+  MOZ_ASSERT(rhs == output);
+  MOZ_ASSERT(mask.encoding() == X86Encoding::xmm0, "pblendvb needs xmm0");
+
+  vpblendvb(mask, lhs, rhs, output);
+}
+
 void MacroAssemblerX86Shared::shuffleInt8x16(FloatRegister lhs,
                                              FloatRegister rhs,
                                              FloatRegister output,
@@ -1203,8 +1213,9 @@ void MacroAssemblerX86Shared::unsignedTruncSatFloat32x4ToInt32x4Relaxed(
   // Convert lanes below 80000000h into unsigned int without issues.
   vcvttps2dq(dest, dest);
   // Knowing IEEE-754 number representation, to convert lanes above
-  // 7FFFFFFFh, just shift left by 7 bits.
-  vpslld(Imm32(7), scratch, scratch);
+  // 7FFFFFFFh, mutiply by 2 (to add 1 in exponent) and shift left by 8 bits.
+  vaddps(Operand(scratch), scratch, scratch);
+  vpslld(Imm32(8), scratch, scratch);
 
   // Combine the results.
   vpaddd(Operand(scratch), dest, dest);

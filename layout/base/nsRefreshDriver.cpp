@@ -1130,6 +1130,9 @@ RefreshDriverTimer* nsRefreshDriver::ChooseTimer() {
 }
 
 static nsDocShell* GetDocShell(nsPresContext* aPresContext) {
+  if (!aPresContext) {
+    return nullptr;
+  }
   return static_cast<nsDocShell*>(aPresContext->GetDocShell());
 }
 
@@ -1236,12 +1239,10 @@ void nsRefreshDriver::AddRefreshObserver(nsARefreshObserver* aObserver,
                                          FlushType aFlushType,
                                          const char* aObserverDescription) {
   ObserverArray& array = ArrayFor(aFlushType);
-  array.AppendElement(ObserverData{
-      aObserver, aObserverDescription, TimeStamp::Now(),
-      mPresContext
-          ? MarkerInnerWindowIdFromDocShell(mPresContext->GetDocShell())
-          : MarkerInnerWindowId::NoId(),
-      profiler_capture_backtrace(), aFlushType});
+  array.AppendElement(
+      ObserverData{aObserver, aObserverDescription, TimeStamp::Now(),
+                   MarkerInnerWindowIdFromDocShell(GetDocShell(mPresContext)),
+                   profiler_capture_backtrace(), aFlushType});
   EnsureTimerStarted();
 }
 
@@ -1253,7 +1254,7 @@ bool nsRefreshDriver::RemoveRefreshObserver(nsARefreshObserver* aObserver,
     return false;
   }
 
-  if (profiler_can_accept_markers()) {
+  if (profiler_thread_is_being_profiled()) {
     auto& data = array.ElementAt(index);
     nsPrintfCString str("%s [%s]", data.mDescription,
                         kFlushTypeNames[aFlushType]);
@@ -1350,7 +1351,7 @@ void nsRefreshDriver::RemovePostRefreshObserver(
   Unused << removed;
 }
 
-bool nsRefreshDriver::AddImageRequest(imgIRequest* aRequest) {
+void nsRefreshDriver::AddImageRequest(imgIRequest* aRequest) {
   uint32_t delay = GetFirstFrameDelay(aRequest);
   if (delay == 0) {
     mRequests.Insert(aRequest);
@@ -1361,7 +1362,7 @@ bool nsRefreshDriver::AddImageRequest(imgIRequest* aRequest) {
 
   EnsureTimerStarted();
 
-  if (profiler_can_accept_markers()) {
+  if (profiler_thread_is_being_profiled()) {
     nsCOMPtr<nsIURI> uri;
     aRequest->GetURI(getter_AddRefs(uri));
     nsAutoCString uristr;
@@ -1373,8 +1374,6 @@ bool nsRefreshDriver::AddImageRequest(imgIRequest* aRequest) {
                                            GetDocShell(mPresContext))),
                          uristr);
   }
-
-  return true;
 }
 
 void nsRefreshDriver::RemoveImageRequest(imgIRequest* aRequest) {
@@ -1388,7 +1387,7 @@ void nsRefreshDriver::RemoveImageRequest(imgIRequest* aRequest) {
     }
   }
 
-  if (removed && profiler_can_accept_markers()) {
+  if (removed && profiler_thread_is_being_profiled()) {
     nsCOMPtr<nsIURI> uri;
     aRequest->GetURI(getter_AddRefs(uri));
     nsAutoCString uristr;
@@ -1575,7 +1574,7 @@ void nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags) {
 
     if (!mHasStartedTimerAtLeastOnce) {
       mHasStartedTimerAtLeastOnce = true;
-      if (profiler_can_accept_markers()) {
+      if (profiler_thread_is_being_profiled()) {
         nsCString text = "initial timer start "_ns;
         if (mPresContext->Document()->GetDocumentURI()) {
           text.Append(
@@ -1970,8 +1969,7 @@ void nsRefreshDriver::UpdateIntersectionObservations(TimeStamp aNowTime) {
         return document->HasIntersectionObservers();
       });
 
-  for (uint32_t i = 0; i < documents.Length(); ++i) {
-    Document* doc = documents[i];
+  for (const auto& doc : documents) {
     doc->UpdateIntersectionObservations(aNowTime);
     doc->ScheduleIntersectionObserverNotification();
   }
@@ -2236,7 +2234,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime,
   AUTO_PROFILER_LABEL("nsRefreshDriver::Tick", LAYOUT);
 
   nsAutoCString profilerStr;
-  if (profiler_can_accept_markers()) {
+  if (profiler_thread_is_being_profiled()) {
     profilerStr.AppendLiteral("Tick reasons:");
     AppendTickReasonsToString(tickReasons, profilerStr);
   }
@@ -2260,18 +2258,16 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime,
 
   gfxPlatform::GetPlatform()->SchedulePaintIfDeviceReset();
 
-  // We want to process any pending APZ metrics ahead of their positions
-  // in the queue. This will prevent us from spending precious time
-  // painting a stale displayport.
-  if (StaticPrefs::apz_peek_messages_enabled()) {
-    DisplayPortUtils::UpdateDisplayPortMarginsFromPendingMessages();
-  }
-
   FlushForceNotifyContentfulPaintPresContext();
 
   AutoTArray<nsCOMPtr<nsIRunnable>, 16> earlyRunners = std::move(mEarlyRunners);
   for (auto& runner : earlyRunners) {
     runner->Run();
+    // Early runners might destroy this pres context.
+    if (!mPresContext || !mPresContext->GetPresShell()) {
+      StopTimer();
+      return;
+    }
   }
 
   // Resize events should be fired before layout flushes or
@@ -2473,24 +2469,22 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime,
     }
   }
 
-  if (mRequests.Count()) {
+  if (!mRequests.IsEmpty()) {
     // RequestRefresh may run scripts, so it's not safe to directly call it
     // while using a hashtable enumerator to enumerate mRequests in case
     // script modifies the hashtable. Instead, we build a (local) array of
     // images to refresh, and then we refresh each image in that array.
-    nsCOMArray<imgIContainer> imagesToRefresh(mRequests.Count());
+    nsTArray<nsCOMPtr<imgIContainer>> imagesToRefresh(mRequests.Count());
 
-    for (nsISupports* entry : mRequests) {
-      auto* req = static_cast<imgIRequest*>(entry);
-      MOZ_ASSERT(req, "Unable to retrieve the image request");
+    for (const auto& req : mRequests) {
       nsCOMPtr<imgIContainer> image;
       if (NS_SUCCEEDED(req->GetImage(getter_AddRefs(image)))) {
         imagesToRefresh.AppendElement(image.forget());
       }
     }
 
-    for (uint32_t i = 0; i < imagesToRefresh.Length(); i++) {
-      imagesToRefresh[i]->RequestRefresh(aNowTime);
+    for (const auto& image : imagesToRefresh) {
+      image->RequestRefresh(aNowTime);
     }
   }
 
@@ -2499,7 +2493,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime,
   if (mViewManagerFlushIsPending) {
     AutoRecordPhase paintRecord(&phasePaint);
     nsCString transactionId;
-    if (profiler_can_accept_markers()) {
+    if (profiler_thread_is_being_profiled()) {
       transactionId.AppendLiteral("Transaction ID: ");
       transactionId.AppendInt((uint64_t)mNextTransactionId);
     }
@@ -2629,10 +2623,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime,
 
 void nsRefreshDriver::BeginRefreshingImages(RequestTable& aEntries,
                                             mozilla::TimeStamp aDesired) {
-  for (const auto& key : aEntries) {
-    auto* req = static_cast<imgIRequest*>(key);
-    MOZ_ASSERT(req, "Unable to retrieve the image request");
-
+  for (const auto& req : aEntries) {
     mRequests.Insert(req);
 
     nsCOMPtr<imgIContainer> image;

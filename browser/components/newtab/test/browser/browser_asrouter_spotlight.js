@@ -160,3 +160,77 @@ add_task(async function test_secondaryButton() {
 
   specialActionStub.restore();
 });
+
+add_task(async function test_remoteL10n_content() {
+  let message = (await PanelTestProvider.getMessages()).find(
+    m => m.id === "SPOTLIGHT_MESSAGE_93"
+  );
+
+  // Modify the message to mix translated and un-translated content
+  message = {
+    content: {
+      secondary: {
+        label: "Now Now",
+        ...message.content.secondary,
+      },
+      ...content,
+    },
+    ...message,
+  };
+
+  let dispatchStub = sinon.stub();
+  let browser = BrowserWindowTracker.getTopWindow().gBrowser.selectedBrowser;
+
+  await showAndWaitForDialog({ message, browser, dispatchStub }, async win => {
+    await win.document.mozSubdialogReady;
+    let primaryBtn = win.document.getElementById("primary");
+    let secondaryBtn = win.document.getElementById("secondary");
+    Assert.ok(
+      primaryBtn.getElementsByTagName("remote-text").length,
+      "Should have a remote l10n element"
+    );
+    Assert.ok(
+      secondaryBtn.getElementsByTagName("remote-text").length,
+      "Should have a remote l10n element"
+    );
+    Assert.equal(
+      primaryBtn.getElementsByTagName("remote-text")[0].shadowRoot.textContent,
+      "Stay private with Mozilla VPN",
+      "Should have expected strings for primary btn"
+    );
+    Assert.equal(
+      secondaryBtn.getElementsByTagName("remote-text")[0].shadowRoot
+        .textContent,
+      "Not Now",
+      "Should have expected strings for primary btn"
+    );
+
+    // Dismiss
+    win.document.getElementById("secondary").click();
+  });
+});
+
+add_task(async function test_contentExpanded() {
+  let message = (await PanelTestProvider.getMessages()).find(
+    m => m.id === "TCP_SPOTLIGHT_MESSAGE_95"
+  );
+
+  let dispatchStub = sinon.stub();
+  let browser = BrowserWindowTracker.getTopWindow().gBrowser.selectedBrowser;
+
+  await showAndWaitForDialog({ message, browser, dispatchStub }, async win => {
+    const toggle = win.document.getElementById("learn-more-toggle");
+    Assert.equal(
+      toggle.getAttribute("aria-expanded"),
+      "false",
+      "Toggle initially collapsed"
+    );
+    toggle.click();
+    Assert.equal(
+      toggle.getAttribute("aria-expanded"),
+      "true",
+      "Toggle switched to expanded"
+    );
+    win.close();
+  });
+});

@@ -220,7 +220,6 @@
 #include "mozilla/dom/TimeoutManager.h"
 #include "mozilla/dom/Touch.h"
 #include "mozilla/dom/TouchEvent.h"
-#include "mozilla/dom/TreeOrderedArray.h"
 #include "mozilla/dom/TreeOrderedArrayInlines.h"
 #include "mozilla/dom/TreeWalker.h"
 #include "mozilla/dom/URL.h"
@@ -256,6 +255,7 @@
 #include "nsCSSPropertyID.h"
 #include "nsCSSProps.h"
 #include "nsCSSPseudoElements.h"
+#include "nsCSSRendering.h"
 #include "nsCanvasFrame.h"
 #include "nsCaseTreatment.h"
 #include "nsCharsetSource.h"
@@ -301,6 +301,7 @@
 #include "nsICategoryManager.h"
 #include "nsICertOverrideService.h"
 #include "nsIContent.h"
+#include "nsIContentInlines.h"
 #include "nsIContentPolicy.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsIContentSink.h"
@@ -395,6 +396,7 @@
 #include "nsSerializationHelper.h"
 #include "nsServiceManagerUtils.h"
 #include "nsStringFlags.h"
+#include "nsStyleUtil.h"
 #include "nsStringIterator.h"
 #include "nsStyleSheetService.h"
 #include "nsStyleStruct.h"
@@ -1261,15 +1263,6 @@ Document::FrameRequest::~FrameRequest() = default;
 
 Document::PendingFrameStaticClone::~PendingFrameStaticClone() = default;
 
-struct Document::MetaViewportElementAndData {
-  RefPtr<HTMLMetaElement> mElement;
-  ViewportMetaData mData;
-
-  bool operator==(const MetaViewportElementAndData& aOther) const {
-    return mElement == aOther.mElement && mData == aOther.mData;
-  }
-};
-
 // ==================================================================
 // =
 // ==================================================================
@@ -1709,6 +1702,31 @@ bool Document::CallerIsTrustedAboutCertError(JSContext* aCx,
 #else
   return win && IsAboutErrorPage(win, "certerror");
 #endif
+}
+
+bool Document::CallerCanAccessPrivilegeSSA(JSContext* aCx, JSObject* aObject) {
+  RefPtr<BasePrincipal> principal =
+      BasePrincipal::Cast(nsContentUtils::SubjectPrincipal(aCx));
+
+  if (!principal) {
+    return false;
+  }
+
+  // We allow the privilege SSA to be called from system principal.
+  if (principal->IsSystemPrincipal()) {
+    return true;
+  }
+
+  // We only allow calling the privilege SSA from the content script of the
+  // webcompat extension.
+  if (auto* policy = principal->ContentScriptAddonPolicy()) {
+    nsAutoString addonID;
+    policy->GetId(addonID);
+
+    return addonID.EqualsLiteral("webcompat@mozilla.org");
+  }
+
+  return false;
 }
 
 bool Document::IsErrorPage() const {
@@ -2447,10 +2465,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
     }
   }
 
-  for (size_t i = 0; i < tmp->mMetaViewports.Length(); i++) {
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMetaViewports[i].mElement);
-  }
-
   // XXX: This should be not needed once bug 1569185 lands.
   for (const auto& entry : tmp->mL10nProtoElements) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mL10nProtoElements key");
@@ -2602,8 +2616,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
   tmp->mPendingFrameStaticClones.Clear();
 
   tmp->mInUnlinkOrDeletion = false;
-
-  tmp->mMetaViewports.Clear();
 
   tmp->UnregisterFromMemoryReportingForDataDocument();
 
@@ -4366,7 +4378,7 @@ bool Document::HasFocus(ErrorResult& rv) const {
 }
 
 void Document::GetDesignMode(nsAString& aDesignMode) {
-  if (HasFlag(NODE_IS_EDITABLE)) {
+  if (IsInDesignMode()) {
     aDesignMode.AssignLiteral("on");
   } else {
     aDesignMode.AssignLiteral("off");
@@ -4399,7 +4411,7 @@ void Document::SetDesignMode(const nsAString& aDesignMode,
     rv.Throw(NS_ERROR_DOM_PROP_ACCESS_DENIED);
     return;
   }
-  bool editableMode = HasFlag(NODE_IS_EDITABLE);
+  const bool editableMode = IsInDesignMode();
   if (aDesignMode.LowerCaseEqualsASCII(editableMode ? "off" : "on")) {
     SetEditableFlag(!editableMode);
     // Changing the NODE_IS_EDITABLE flags on document changes the intrinsic
@@ -5901,7 +5913,7 @@ nsresult Document::EditingStateChanged() {
     return NS_OK;
   }
 
-  bool designMode = HasFlag(NODE_IS_EDITABLE);
+  const bool designMode = IsInDesignMode();
   EditingState newState =
       designMode ? EditingState::eDesignMode
                  : (mContentEditableCount > 0 ? EditingState::eContentEditable
@@ -6702,8 +6714,7 @@ void Document::SetHeaderData(nsAtom* aHeaderField, const nsAString& aData) {
     mAllowDNSPrefetch = aData.IsEmpty() || aData.LowerCaseEqualsLiteral("on");
   }
 
-  if (aHeaderField == nsGkAtoms::viewport ||
-      aHeaderField == nsGkAtoms::handheldFriendly) {
+  if (aHeaderField == nsGkAtoms::handheldFriendly) {
     mViewportType = Unknown;
   }
 }
@@ -6918,7 +6929,7 @@ void Document::DeletePresShell() {
   mDesignModeSheetAdded = false;
 }
 
-void Document::DisallowBFCaching(uint16_t aStatus) {
+void Document::DisallowBFCaching(uint32_t aStatus) {
   NS_ASSERTION(!mBFCacheEntry, "We're already in the bfcache!");
   if (!mBFCacheDisallowed) {
     WindowGlobalChild* wgc = GetWindowGlobalChild();
@@ -7931,7 +7942,7 @@ void Document::DispatchContentLoadedEvents() {
 
 void Document::EndLoad() {
   bool turnOnEditing =
-      mParser && (HasFlag(NODE_IS_EDITABLE) || mContentEditableCount > 0);
+      mParser && (IsInDesignMode() || mContentEditableCount > 0);
 
 #if defined(DEBUG)
   // only assert if nothing stopped the load on purpose
@@ -10248,17 +10259,14 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
                             nsViewportInfo::ZoomFlag::AllowZoom,
                             nsViewportInfo::ZoomBehaviour::Mobile);
     case Unknown: {
-      nsAutoString viewport;
-      GetHeaderData(nsGkAtoms::viewport, viewport);
       // We might early exit if the viewport is empty. Even if we don't,
       // at the end of this case we'll note that it was empty. Later, when
       // we're using the cached values, this will trigger alternate code paths.
-      if (viewport.IsEmpty()) {
+      if (!mLastModifiedViewportMetaData) {
         // If the docType specifies that we are on a site optimized for mobile,
         // then we want to return specially crafted defaults for the viewport
         // info.
-        RefPtr<DocumentType> docType = GetDoctype();
-        if (docType) {
+        if (RefPtr<DocumentType> docType = GetDoctype()) {
           nsAutoString docId;
           docType->GetPublicId(docId);
           if ((docId.Find("WAP") != -1) || (docId.Find("Mobile") != -1) ||
@@ -10546,29 +10554,12 @@ nsViewportInfo Document::GetViewportInfo(const ScreenIntSize& aDisplaySize) {
 }
 
 ViewportMetaData Document::GetViewportMetaData() const {
-  // The order of mMetaViewport is first-modified is first. We want the last
-  // modified since Chrome uses the last one.
-  // See https://webcompat.com/issues/20701#issuecomment-436054739
-  return !mMetaViewports.IsEmpty() ? mMetaViewports.LastElement().mData
-                                   : ViewportMetaData();
+  return mLastModifiedViewportMetaData ? *mLastModifiedViewportMetaData
+                                       : ViewportMetaData();
 }
 
-void Document::AddMetaViewportElement(HTMLMetaElement* aElement,
-                                      ViewportMetaData&& aData) {
-  for (size_t i = 0; i < mMetaViewports.Length(); i++) {
-    MetaViewportElementAndData& viewport = mMetaViewports[i];
-    if (viewport.mElement == aElement) {
-      if (viewport.mData == aData) {
-        return;
-      }
-      // Move the existing one to the tail since Chrome uses the last modified
-      // viewport meta tag.
-      mMetaViewports.RemoveElementAt(i);
-      break;
-    }
-  }
-
-  mMetaViewports.AppendElement(MetaViewportElementAndData{aElement, aData});
+void Document::SetMetaViewportData(UniquePtr<ViewportMetaData> aData) {
+  mLastModifiedViewportMetaData = std::move(aData);
   // Trigger recomputation of the nsViewportInfo the next time it's queried.
   mViewportType = Unknown;
 
@@ -10576,22 +10567,6 @@ void Document::AddMetaViewportElement(HTMLMetaElement* aElement,
       new AsyncEventDispatcher(this, u"DOMMetaViewportFitChanged"_ns,
                                CanBubble::eYes, ChromeOnlyDispatch::eYes);
   asyncDispatcher->RunDOMEventWhenSafe();
-}
-
-void Document::RemoveMetaViewportElement(HTMLMetaElement* aElement) {
-  for (MetaViewportElementAndData& viewport : mMetaViewports) {
-    if (viewport.mElement == aElement) {
-      mMetaViewports.RemoveElement(viewport);
-      // Trigger recomputation of the nsViewportInfo the next time it's queried.
-      mViewportType = Unknown;
-
-      RefPtr<AsyncEventDispatcher> asyncDispatcher =
-          new AsyncEventDispatcher(this, u"DOMMetaViewportFitChanged"_ns,
-                                   CanBubble::eYes, ChromeOnlyDispatch::eYes);
-      asyncDispatcher->RunDOMEventWhenSafe();
-      return;
-    }
-  }
 }
 
 EventListenerManager* Document::GetOrCreateListenerManager() {
@@ -10789,6 +10764,45 @@ void Document::GetXMLDeclaration(nsAString& aVersion, nsAString& aEncoding,
     } else {
       aStandalone.AssignLiteral("no");
     }
+  }
+}
+
+void Document::AddColorSchemeMeta(HTMLMetaElement& aMeta) {
+  mColorSchemeMetaTags.Insert(aMeta);
+  RecomputeColorScheme();
+}
+
+void Document::RemoveColorSchemeMeta(HTMLMetaElement& aMeta) {
+  mColorSchemeMetaTags.RemoveElement(aMeta);
+  RecomputeColorScheme();
+}
+
+void Document::RecomputeColorScheme() {
+  if (!StaticPrefs::layout_css_color_scheme_enabled()) {
+    return;
+  }
+  auto oldColorScheme = mColorSchemeBits;
+  mColorSchemeBits = 0;
+  const nsTArray<HTMLMetaElement*>& elements = mColorSchemeMetaTags;
+  for (const HTMLMetaElement* el : elements) {
+    nsAutoString content;
+    if (!el->GetAttr(nsGkAtoms::content, content)) {
+      continue;
+    }
+
+    NS_ConvertUTF16toUTF8 contentU8(content);
+    if (Servo_ColorScheme_Parse(&contentU8, &mColorSchemeBits)) {
+      break;
+    }
+  }
+
+  if (mColorSchemeBits == oldColorScheme) {
+    return;
+  }
+
+  if (nsPresContext* pc = GetPresContext()) {
+    // This affects system colors, which are inherited, so we need to recascade.
+    pc->RebuildAllStyleData(nsChangeHint(0), RestyleHint::RecascadeSubtree());
   }
 }
 
@@ -11033,7 +11047,7 @@ void Document::CollectDescendantDocuments(
 }
 
 bool Document::CanSavePresentation(nsIRequest* aNewRequest,
-                                   uint16_t& aBFCacheCombo,
+                                   uint32_t& aBFCacheCombo,
                                    bool aIncludeSubdocuments,
                                    bool aAllowUnloadListeners) {
   bool ret = true;
@@ -11086,11 +11100,19 @@ bool Document::CanSavePresentation(nsIRequest* aNewRequest,
   nsCOMPtr<EventTarget> piTarget = do_QueryInterface(mScriptGlobalObject);
   if (!allowUnloadListeners && piTarget) {
     EventListenerManager* manager = piTarget->GetExistingListenerManager();
-    if (manager && manager->HasUnloadListeners()) {
-      MOZ_LOG(gPageCacheLog, mozilla::LogLevel::Verbose,
-              ("Save of %s blocked due to unload handlers", uri.get()));
-      aBFCacheCombo |= BFCacheStatus::UNLOAD_LISTENER;
-      ret = false;
+    if (manager) {
+      if (manager->HasUnloadListeners()) {
+        MOZ_LOG(gPageCacheLog, mozilla::LogLevel::Verbose,
+                ("Save of %s blocked due to unload handlers", uri.get()));
+        aBFCacheCombo |= BFCacheStatus::UNLOAD_LISTENER;
+        ret = false;
+      }
+      if (manager->HasBeforeUnloadListeners()) {
+        MOZ_LOG(gPageCacheLog, mozilla::LogLevel::Verbose,
+                ("Save of %s blocked due to beforeUnload handlers", uri.get()));
+        aBFCacheCombo |= BFCacheStatus::BEFOREUNLOAD_LISTENER;
+        ret = false;
+      }
     }
   }
 
@@ -11180,7 +11202,7 @@ bool Document::CanSavePresentation(nsIRequest* aNewRequest,
       auto entry = static_cast<SubDocMapEntry*>(iter.Get());
       Document* subdoc = entry->mSubDocument;
 
-      uint16_t subDocBFCacheCombo = 0;
+      uint32_t subDocBFCacheCombo = 0;
       // The aIgnoreRequest we were passed is only for us, so don't pass it on.
       bool canCache =
           subdoc ? subdoc->CanSavePresentation(nullptr, subDocBFCacheCombo,
@@ -11224,6 +11246,14 @@ bool Document::CanSavePresentation(nsIRequest* aNewRequest,
       aBFCacheCombo |= BFCacheStatus::HAS_USED_VR;
       ret = false;
     }
+  }
+
+  if (mLockCount) {
+    MOZ_LOG(
+        gPageCacheLog, mozilla::LogLevel::Verbose,
+        ("Save of %s blocked due to having active lock requests", uri.get()));
+    aBFCacheCombo |= BFCacheStatus::ACTIVE_LOCK;
+    ret = false;
   }
 
   return ret;
@@ -14470,6 +14500,88 @@ Element* Document::TopLayerPop(FunctionRef<bool(Element*)> aPredicateFunc) {
   return removedElement;
 }
 
+void Document::GetWireframe(bool aIncludeNodes,
+                            Nullable<Wireframe>& aWireframe) {
+  using FrameForPointOptions = nsLayoutUtils::FrameForPointOptions;
+  using FrameForPointOption = nsLayoutUtils::FrameForPointOption;
+  FlushPendingNotifications(FlushType::Layout);
+
+  PresShell* shell = GetPresShell();
+  if (!shell) {
+    return;
+  }
+
+  nsPresContext* pc = shell->GetPresContext();
+  if (!pc) {
+    return;
+  }
+
+  auto& wireframe = aWireframe.SetValue();
+  nsStyleUtil::GetSerializedColorValue(shell->GetCanvasBackground(),
+                                       wireframe.mCanvasBackground.Construct());
+
+  FrameForPointOptions options;
+  options.mBits += FrameForPointOption::IgnoreCrossDoc;
+  options.mBits += FrameForPointOption::IgnorePaintSuppression;
+  options.mBits += FrameForPointOption::OnlyVisible;
+
+  AutoTArray<nsIFrame*, 32> frames;
+  const RelativeTo relativeTo{shell->GetRootFrame(),
+                              mozilla::ViewportType::Layout};
+  nsLayoutUtils::GetFramesForArea(relativeTo, pc->GetVisibleArea(), frames,
+                                  options);
+
+  // TODO(emilio): We could rewrite hit testing to return nsDisplayItem*s or
+  // something perhaps, but seems hard / like it'd involve at least some extra
+  // copying around, since they don't outlive GetFramesForArea.
+  auto& rects = wireframe.mRects.Construct();
+  if (!rects.SetCapacity(frames.Length(), fallible)) {
+    return;
+  }
+  for (nsIFrame* frame : frames) {
+    // Can't really fail because SetCapacity succeeded.
+    auto& taggedRect = *rects.AppendElement(fallible);
+    const auto r =
+        CSSRect::FromAppUnits(nsLayoutUtils::TransformFrameRectToAncestor(
+            frame, frame->GetRectRelativeToSelf(), relativeTo));
+    if (aIncludeNodes) {
+      if (nsIContent* c = frame->GetContent()) {
+        taggedRect.mNode.Construct(c);
+      }
+    }
+    taggedRect.mRect.Construct(MakeRefPtr<DOMRectReadOnly>(
+        ToSupports(this), r.x, r.y, r.width, r.height));
+    taggedRect.mType.Construct() = [&] {
+      if (frame->IsTextFrame()) {
+        nsStyleUtil::GetSerializedColorValue(
+            frame->StyleText()->mWebkitTextFillColor.CalcColor(frame),
+            taggedRect.mColor.Construct());
+        return WireframeRectType::Text;
+      }
+      if (frame->IsImageFrame() || frame->IsSVGOuterSVGFrame()) {
+        return WireframeRectType::Image;
+      }
+      if (frame->IsThemed()) {
+        return WireframeRectType::Background;
+      }
+      bool drawImage = false;
+      bool drawColor = false;
+      const nscolor color = nsCSSRendering::DetermineBackgroundColor(
+          pc, frame->Style(), frame, drawImage, drawColor);
+      if (drawImage &&
+          !frame->StyleBackground()->mImage.BottomLayer().mImage.IsNone()) {
+        return WireframeRectType::Image;
+      }
+      if (drawColor) {
+        nsStyleUtil::GetSerializedColorValue(color,
+                                             taggedRect.mColor.Construct());
+        return WireframeRectType::Background;
+      }
+      return WireframeRectType::Unknown;
+    }();
+  }
+}
+
 Element* Document::GetTopLayerTop() {
   if (mTopLayer.IsEmpty()) {
     return nullptr;
@@ -16480,6 +16592,11 @@ already_AddRefed<mozilla::dom::Promise> Document::HasStorageAccess(
     return promise.forget();
   }
 
+  if (CookieJarSettings()->GetBlockingAllContexts()) {
+    promise->MaybeResolve(false);
+    return promise.forget();
+  }
+
   if (IsTopLevelContentDocument()) {
     promise->MaybeResolve(true);
     return promise.forget();
@@ -16554,15 +16671,31 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
     return nullptr;
   }
 
-  // Propagate user input event handling to the resolve handler
-  RefPtr<Promise> promise =
-      Promise::Create(global, aRv, Promise::ePropagateUserInteraction);
+  RefPtr<Promise> promise = Promise::Create(global, aRv);
   if (aRv.Failed()) {
     return nullptr;
   }
 
+  // Window doesn't have user activation, reject.
+  if (!this->HasValidTransientUserGestureActivation()) {
+    nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,
+                                    nsLiteralCString("requestStorageAccess"),
+                                    this, nsContentUtils::eDOM_PROPERTIES,
+                                    "RequestStorageAccessUserGesture");
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
   nsCOMPtr<nsPIDOMWindowInner> inner = GetInnerWindow();
   if (!inner) {
+    this->ConsumeTransientUserGestureActivation();
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
+  // Step 0. If the browser forbids any storage access, reject.
+  if (CookieJarSettings()->GetBlockingAllContexts()) {
+    this->ConsumeTransientUserGestureActivation();
     promise->MaybeRejectWithUndefined();
     return promise.forget();
   }
@@ -16571,6 +16704,7 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
   RefPtr<nsGlobalWindowOuter> outer =
       nsGlobalWindowOuter::Cast(inner->GetOuterWindow());
   if (!outer) {
+    this->ConsumeTransientUserGestureActivation();
     promise->MaybeRejectWithUndefined();
     return promise.forget();
   }
@@ -16586,12 +16720,14 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
                                     nsLiteralCString("requestStorageAccess"),
                                     this, nsContentUtils::eDOM_PROPERTIES,
                                     "RequestStorageAccessNullPrincipal");
+    this->ConsumeTransientUserGestureActivation();
     promise->MaybeRejectWithUndefined();
     return promise.forget();
   }
 
   RefPtr<BrowsingContext> bc = GetBrowsingContext();
   if (!bc) {
+    this->ConsumeTransientUserGestureActivation();
     promise->MaybeRejectWithUndefined();
     return promise.forget();
   }
@@ -16614,12 +16750,14 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
     if (bc->Top()->IsInProcess()) {
       nsCOMPtr<nsPIDOMWindowOuter> topOuter = bc->Top()->GetDOMWindow();
       if (!topOuter) {
+        this->ConsumeTransientUserGestureActivation();
         promise->MaybeRejectWithUndefined();
         return promise.forget();
       }
 
       nsCOMPtr<Document> topLevelDoc = topOuter->GetExtantDoc();
       if (!topLevelDoc) {
+        this->ConsumeTransientUserGestureActivation();
         promise->MaybeRejectWithUndefined();
         return promise.forget();
       }
@@ -16638,6 +16776,7 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
     nsContentUtils::ReportToConsole(
         nsIScriptError::errorFlag, nsLiteralCString("requestStorageAccess"),
         this, nsContentUtils::eDOM_PROPERTIES, "RequestStorageAccessSandboxed");
+    this->ConsumeTransientUserGestureActivation();
     promise->MaybeRejectWithUndefined();
     return promise.forget();
   }
@@ -16648,16 +16787,7 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
     nsContentUtils::ReportToConsole(
         nsIScriptError::errorFlag, nsLiteralCString("requestStorageAccess"),
         this, nsContentUtils::eDOM_PROPERTIES, "RequestStorageAccessNested");
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Step 8. If the browser is not processing a user gesture, reject.
-  if (!UserActivation::IsHandlingUserInput()) {
-    nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,
-                                    nsLiteralCString("requestStorageAccess"),
-                                    this, nsContentUtils::eDOM_PROPERTIES,
-                                    "RequestStorageAccessUserGesture");
+    this->ConsumeTransientUserGestureActivation();
     promise->MaybeRejectWithUndefined();
     return promise.forget();
   }
@@ -16666,6 +16796,13 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
   //         Examples: skip-lists, on-device classification,
   //         user settings, anti-clickjacking heuristics, or prompting the
   //         user for explicit permission. Reject if some rule is not fulfilled.
+
+  if (CookieJarSettings()->GetBlockingAllThirdPartyContexts()) {
+    this->ConsumeTransientUserGestureActivation();
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
   if (CookieJarSettings()->GetRejectThirdPartyContexts()) {
     // Only do something special for third-party tracking content.
     uint32_t antiTrackingRejectedReason = 0;
@@ -16675,6 +16812,7 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
       // site, reject.
       if (antiTrackingRejectedReason ==
           nsIWebProgressListener::STATE_COOKIES_BLOCKED_BY_PERMISSION) {
+        this->ConsumeTransientUserGestureActivation();
         promise->MaybeRejectWithUndefined();
         return promise.forget();
       }
@@ -16767,19 +16905,25 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
                   ContentPermissionRequestBase::DelayedTaskType::Request);
             });
 
-        return std::move(p);
+        return p;
       };
+
+      // Consume user activation before entering the async part of this method.
+      // This prevents usage of other transient activation-gated APIs.
+      this->ConsumeTransientUserGestureActivation();
+
       ContentBlocking::AllowAccessFor(
           NodePrincipal(), bc, ContentBlockingNotifier::eStorageAccessAPI,
           performFinalChecks)
           ->Then(
               GetCurrentSerialEventTarget(), __func__,
-              [outer, promise] {
+              [self, outer, promise] {
                 // Step 10. Grant the document access to cookies and store
                 // that fact for
                 //          the purposes of future calls to
                 //          hasStorageAccess() and requestStorageAccess().
                 outer->SetStorageAccessPermissionGranted(true);
+                self->NotifyUserGestureActivation();
                 promise->MaybeResolveWithUndefined();
               },
               [outer, promise] {
@@ -16792,6 +16936,245 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccess(
   }
 
   outer->SetStorageAccessPermissionGranted(true);
+  promise->MaybeResolveWithUndefined();
+  return promise.forget();
+}
+
+already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccessForOrigin(
+    const nsAString& aThirdPartyOrigin, mozilla::ErrorResult& aRv) {
+  nsIGlobalObject* global = GetScopeObject();
+  if (!global) {
+    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
+    return nullptr;
+  }
+
+  RefPtr<Promise> promise = Promise::Create(global, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
+  // Window doesn't have user activation, reject.
+  if (!this->HasValidTransientUserGestureActivation()) {
+    nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,
+                                    nsLiteralCString("requestStorageAccess"),
+                                    this, nsContentUtils::eDOM_PROPERTIES,
+                                    "RequestStorageAccessUserGesture");
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
+  nsCOMPtr<nsPIDOMWindowInner> inner = GetInnerWindow();
+  if (!inner) {
+    this->ConsumeTransientUserGestureActivation();
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
+  // We only allow request storage access for third-party origin from the
+  // first-party context.
+  if (AntiTrackingUtils::IsThirdPartyWindow(inner, nullptr)) {
+    this->ConsumeTransientUserGestureActivation();
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
+  // If the document has a null origin, reject.
+  if (NodePrincipal()->GetIsNullPrincipal()) {
+    nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,
+                                    nsLiteralCString("requestStorageAccess"),
+                                    this, nsContentUtils::eDOM_PROPERTIES,
+                                    "RequestStorageAccessNullPrincipal");
+    this->ConsumeTransientUserGestureActivation();
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
+  nsCOMPtr<nsIURI> thirdPartyURI;
+  nsresult rv = NS_NewURI(getter_AddRefs(thirdPartyURI), aThirdPartyOrigin);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    aRv.Throw(rv);
+    return nullptr;
+  }
+
+  // If the browser forbids any storage access, reject.
+  if (CookieJarSettings()->GetBlockingAllContexts()) {
+    this->ConsumeTransientUserGestureActivation();
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
+  // Only enforce third-party checks when there is a reason to enforce them.
+  if (!CookieJarSettings()->GetRejectThirdPartyContexts()) {
+    // If the the thrid party origin is equal to the window's, resolve.
+    bool isSameOrigin = false;
+    NodePrincipal()->IsSameOrigin(thirdPartyURI,
+                                  nsContentUtils::IsInPrivateBrowsing(this),
+                                  &isSameOrigin);
+    if (isSameOrigin) {
+      promise->MaybeResolveWithUndefined();
+      return promise.forget();
+    }
+  }
+
+  // Check any additional rules that the browser has.
+
+  if (CookieJarSettings()->GetBlockingAllThirdPartyContexts()) {
+    this->ConsumeTransientUserGestureActivation();
+    promise->MaybeRejectWithUndefined();
+    return promise.forget();
+  }
+
+  if (CookieJarSettings()->GetRejectThirdPartyContexts()) {
+    RefPtr<BrowsingContext> bc = GetBrowsingContext();
+    if (!bc) {
+      this->ConsumeTransientUserGestureActivation();
+      promise->MaybeRejectWithUndefined();
+      return promise.forget();
+    }
+
+    nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
+        thirdPartyURI, NodePrincipal()->OriginAttributesRef());
+
+    if (!principal) {
+      this->ConsumeTransientUserGestureActivation();
+      promise->MaybeRejectWithUndefined();
+      return promise.forget();
+    }
+
+    RefPtr<Document> self(this);
+
+    // Consume user activation before entering the async part of this method.
+    // This prevents usage of other transient activation-gated APIs.
+    this->ConsumeTransientUserGestureActivation();
+
+    auto performFinalChecks = [inner, self, principal]() {
+      RefPtr<ContentBlocking::StorageAccessFinalCheckPromise::Private> p =
+          new ContentBlocking::StorageAccessFinalCheckPromise::Private(
+              __func__);
+      RefPtr<StorageAccessPermissionRequest> sapr =
+          StorageAccessPermissionRequest::Create(
+              inner, principal,
+              // Allow
+              [p] {
+                Telemetry::AccumulateCategorical(
+                    Telemetry::LABELS_STORAGE_ACCESS_API_UI::Allow);
+                p->Resolve(ContentBlocking::eAllow, __func__);
+              },
+              // Block
+              [p] {
+                Telemetry::AccumulateCategorical(
+                    Telemetry::LABELS_STORAGE_ACCESS_API_UI::Deny);
+                p->Reject(false, __func__);
+              });
+
+      using PromptResult = ContentPermissionRequestBase::PromptResult;
+      PromptResult pr = sapr->CheckPromptPrefs();
+
+      if (pr == PromptResult::Pending) {
+        // We're about to show a prompt, record the request attempt
+        Telemetry::AccumulateCategorical(
+            Telemetry::LABELS_STORAGE_ACCESS_API_UI::Request);
+      }
+
+      self->AutomaticStorageAccessPermissionCanBeGranted()->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [p, pr, sapr,
+           inner](const AutomaticStorageAccessPermissionGrantPromise::
+                      ResolveOrRejectValue& aValue) -> void {
+            // Make a copy because we can't modified copy-captured lambda
+            // variables.
+            PromptResult pr2 = pr;
+
+            bool storageAccessCanBeGrantedAutomatically =
+                aValue.IsResolve() && aValue.ResolveValue();
+
+            bool autoGrant = false;
+            if (pr2 == PromptResult::Pending &&
+                storageAccessCanBeGrantedAutomatically) {
+              pr2 = PromptResult::Granted;
+              autoGrant = true;
+
+              Telemetry::AccumulateCategorical(
+                  Telemetry::LABELS_STORAGE_ACCESS_API_UI::AllowAutomatically);
+            }
+
+            if (pr2 != PromptResult::Pending) {
+              MOZ_ASSERT_IF(pr2 != PromptResult::Granted,
+                            pr2 == PromptResult::Denied);
+              if (pr2 == PromptResult::Granted) {
+                ContentBlocking::StorageAccessPromptChoices choice =
+                    ContentBlocking::eAllow;
+                if (autoGrant) {
+                  choice = ContentBlocking::eAllowAutoGrant;
+                }
+                if (!autoGrant) {
+                  p->Resolve(choice, __func__);
+                } else {
+                  sapr->MaybeDelayAutomaticGrants()->Then(
+                      GetCurrentSerialEventTarget(), __func__,
+                      [p, choice] { p->Resolve(choice, __func__); },
+                      [p] { p->Reject(false, __func__); });
+                }
+                return;
+              }
+              p->Reject(false, __func__);
+              return;
+            }
+
+            sapr->RequestDelayedTask(
+                inner->EventTargetFor(TaskCategory::Other),
+                ContentPermissionRequestBase::DelayedTaskType::Request);
+          });
+
+      return p;
+    };
+
+    // Only do something special for the third party that storage has been
+    // disabled by anti-tracking feature.
+    AsyncStorageDisabledByAntiTracking(bc, principal)
+        ->Then(
+            GetCurrentSerialEventTarget(), __func__,
+            [performFinalChecks, promise, bc, principal,
+             self](AsyncStorageDisabledByAntiTrackingPromise::
+                       ResolveOrRejectValue&& aValue) {
+              if (aValue.IsReject()) {
+                // Storage was enabled by anti-tracking feature.
+                return ContentBlocking::StorageAccessPermissionGrantPromise::
+                    CreateAndResolve(0, __func__);
+              }
+
+              MOZ_ASSERT(aValue.IsResolve());
+              // Storage was disabled by anti-tracking feature.
+
+              // If the storage was disabled by the cookie permission, we don't
+              // bother to show the prompt.
+              uint32_t rejectReason = aValue.ResolveValue();
+              if (rejectReason ==
+                  nsIWebProgressListener::STATE_COOKIES_BLOCKED_BY_PERMISSION) {
+                return ContentBlocking::StorageAccessPermissionGrantPromise::
+                    CreateAndReject(true, __func__);
+                ;
+              }
+
+              MOZ_ASSERT(!self->CookieJarSettings()
+                              ->GetIsOnContentBlockingAllowList());
+
+              return ContentBlocking::AllowAccessFor(
+                  principal, bc,
+                  ContentBlockingNotifier::ePrivilegeStorageAccessForOriginAPI,
+                  performFinalChecks);
+            })
+        ->Then(
+            GetCurrentSerialEventTarget(), __func__,
+            [self, promise] {
+              self->NotifyUserGestureActivation();
+              promise->MaybeResolveWithUndefined();
+            },
+            [promise] { promise->MaybeRejectWithUndefined(); });
+
+    return promise.forget();
+  }
+
   promise->MaybeResolveWithUndefined();
   return promise.forget();
 }
@@ -17238,52 +17621,29 @@ void Document::RemoveToplevelLoadingDocument(Document* aDoc) {
   }
 }
 
-StylePrefersColorScheme Document::PrefersColorScheme(
-    IgnoreRFP aIgnoreRFP) const {
+ColorScheme Document::DefaultColorScheme() const {
+  return LookAndFeel::ColorSchemeForStyle(*this, {GetColorSchemeBits()});
+}
+
+ColorScheme Document::PreferredColorScheme(IgnoreRFP aIgnoreRFP) const {
   if (aIgnoreRFP == IgnoreRFP::No &&
       nsContentUtils::ShouldResistFingerprinting(this)) {
-    return StylePrefersColorScheme::Light;
-  }
-
-  if (auto* bc = GetBrowsingContext()) {
-    switch (bc->Top()->PrefersColorSchemeOverride()) {
-      case dom::PrefersColorSchemeOverride::Dark:
-        return StylePrefersColorScheme::Dark;
-      case dom::PrefersColorSchemeOverride::Light:
-        return StylePrefersColorScheme::Light;
-      case dom::PrefersColorSchemeOverride::None:
-      case dom::PrefersColorSchemeOverride::EndGuard_:
-        break;
-    }
+    return ColorScheme::Light;
   }
 
   if (nsPresContext* pc = GetPresContext()) {
-    if (pc->IsPrintingOrPrintPreview()) {
-      return StylePrefersColorScheme::Light;
+    if (auto scheme = pc->GetOverriddenColorScheme()) {
+      return *scheme;
     }
   }
 
-  if (!nsContentUtils::IsChromeDoc(this)) {
-    switch (StaticPrefs::layout_css_prefers_color_scheme_content_override()) {
-      case 0:
-        return StylePrefersColorScheme::Dark;
-      case 1:
-        return StylePrefersColorScheme::Light;
-      default:
-        break;
-    }
+  // NOTE(emilio): We use IsInChromeDocShell rather than IsChromeDoc
+  // intentionally, to make chrome documents in content docshells (like about
+  // pages) use the content color scheme.
+  if (IsInChromeDocShell()) {
+    return LookAndFeel::ColorSchemeForChrome();
   }
-
-  const bool dark =
-      !!LookAndFeel::GetInt(LookAndFeel::IntID::SystemUsesDarkTheme, 0);
-  return dark ? StylePrefersColorScheme::Dark : StylePrefersColorScheme::Light;
-}
-
-// static
-bool Document::UseOverlayScrollbars(const Document* aDocument) {
-  BrowsingContext* bc = aDocument ? aDocument->GetBrowsingContext() : nullptr;
-  return LookAndFeel::GetInt(LookAndFeel::IntID::UseOverlayScrollbars) ||
-         (bc && bc->InRDMPane());
+  return LookAndFeel::PreferredColorSchemeForContent();
 }
 
 bool Document::HasRecentlyStartedForegroundLoads() {

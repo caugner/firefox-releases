@@ -164,15 +164,13 @@ struct FrameMetrics {
     return mZoom * mTransformToAncestorScale;
   }
 
-  CSSToLayerScale2D LayersPixelsPerCSSPixel() const {
+  CSSToLayerScale LayersPixelsPerCSSPixel() const {
     return mDevPixelsPerCSSPixel * mCumulativeResolution;
   }
 
   // Get the amount by which this frame has been zoomed since the last repaint.
   LayerToParentLayerScale GetAsyncZoom() const {
-    // The async portion of the zoom should be the same along the x and y
-    // axes.
-    return (mZoom / LayersPixelsPerCSSPixel()).ToScaleFactor();
+    return mZoom / LayersPixelsPerCSSPixel();
   }
 
   // Ensure the scrollableRect is at least as big as the compositionBounds
@@ -216,7 +214,7 @@ struct FrameMetrics {
    * for that.)
    */
   CSSRect CalculateCompositionBoundsInCssPixelsOfSurroundingContent() const {
-    if (GetZoom() == CSSToParentLayerScale2D(0, 0)) {
+    if (GetZoom() == CSSToParentLayerScale(0)) {
       return CSSRect();  // avoid division by zero
     }
     // The CSS pixels of the scrolled content and the CSS pixels of the
@@ -240,12 +238,7 @@ struct FrameMetrics {
     SetVisualScrollOffset(GetVisualScrollOffset() + aPoint);
   }
 
-  void ZoomBy(float aScale) { ZoomBy(gfxSize(aScale, aScale)); }
-
-  void ZoomBy(const gfxSize& aScale) {
-    mZoom.xScale *= aScale.width;
-    mZoom.yScale *= aScale.height;
-  }
+  void ZoomBy(float aScale) { mZoom.scale *= aScale; }
 
   /*
    * Compares an APZ frame metrics with an incoming content frame metrics
@@ -314,11 +307,11 @@ struct FrameMetrics {
   const CSSRect& GetCriticalDisplayPort() const { return mCriticalDisplayPort; }
 
   void SetCumulativeResolution(
-      const LayoutDeviceToLayerScale2D& aCumulativeResolution) {
+      const LayoutDeviceToLayerScale& aCumulativeResolution) {
     mCumulativeResolution = aCumulativeResolution;
   }
 
-  const LayoutDeviceToLayerScale2D& GetCumulativeResolution() const {
+  const LayoutDeviceToLayerScale& GetCumulativeResolution() const {
     return mCumulativeResolution;
   }
 
@@ -358,9 +351,9 @@ struct FrameMetrics {
     mScrollOffset = aVisualScrollOffset;
   }
 
-  void SetZoom(const CSSToParentLayerScale2D& aZoom) { mZoom = aZoom; }
+  void SetZoom(const CSSToParentLayerScale& aZoom) { mZoom = aZoom; }
 
-  const CSSToParentLayerScale2D& GetZoom() const { return mZoom; }
+  const CSSToParentLayerScale& GetZoom() const { return mZoom; }
 
   void SetScrollGeneration(const ScrollGeneration& aScrollGeneration) {
     mScrollGeneration = aScrollGeneration;
@@ -493,10 +486,10 @@ struct FrameMetrics {
   // frame metrics object.
   static CSSRect CalculateScrollRange(const CSSRect& aScrollableRect,
                                       const ParentLayerRect& aCompositionBounds,
-                                      const CSSToParentLayerScale2D& aZoom);
+                                      const CSSToParentLayerScale& aZoom);
   static CSSSize CalculateCompositedSizeInCssPixels(
       const ParentLayerRect& aCompositionBounds,
-      const CSSToParentLayerScale2D& aZoom);
+      const CSSToParentLayerScale& aZoom);
 
  private:
   // A ID assigned to each scrollable frame, unique within each LayersId..
@@ -572,14 +565,24 @@ struct FrameMetrics {
   // system is understood by window.scrollTo().
   CSSRect mScrollableRect;
 
-  // The cumulative resolution that the current frame has been painted at.
-  // This is the product of the pres-shell resolutions of the document
-  // containing this scroll frame and its ancestors, and any css-driven
-  // resolution. This information is provided by Gecko at layout/paint time.
-  // Note that this is allowed to have different x- and y-scales, but only
-  // for subframes (mIsRootContent = false). (The same applies to other scales
-  // that "inherit" the 2D-ness of this one, such as mZoom.)
-  LayoutDeviceToLayerScale2D mCumulativeResolution;
+  // The cumulative resolution of the current frame. This is the product of the
+  // pres-shell resolutions of the document containing this scroll frame and its
+  // in-process ancestors. This information is provided by Gecko at layout/paint
+  // time. Notably, for out of process iframes cumulative resolution will be 1.
+  // The reason for this is that AsyncPanZoomController::GetTransformToThis does
+  // not contain the resolution in the process of the root content document, but
+  // in oop iframes AsyncPanZoomController::GetTransformToThis does contain the
+  // resolution. This makes coordinate math work out in APZ code because in the
+  // old layers backend GetTransformToThis was a transform of rendered pixels,
+  // and the pixels were rendered with the scale applied already. The reason
+  // that AsyncPanZoomController::GetTransformToThis contains the scale in oop
+  // iframes is because we include the resolution in the transform that includes
+  // the iframe via this call
+  // https://searchfox.org/mozilla-central/rev/2eebd6e256fa0355e08421265e57ee1307836d92/layout/generic/nsSubDocumentFrame.cpp#1404
+  // So when coordinates are passed to the process of the oop iframe they have
+  // the resolution removed by unapplying that transform which includes the
+  // resolution.
+  LayoutDeviceToLayerScale mCumulativeResolution;
 
   // The conversion factor between CSS pixels and device pixels for this frame.
   // This can vary based on a variety of things, such as reflowing-zoom.
@@ -604,7 +607,7 @@ struct FrameMetrics {
   // steady state, the two will be the same, but during an async zoom action the
   // two may diverge. This information is initialized in Gecko but updated in
   // the APZC.
-  CSSToParentLayerScale2D mZoom;
+  CSSToParentLayerScale mZoom;
 
   // The scroll generation counter used to acknowledge the scroll offset update.
   ScrollGeneration mScrollGeneration;
@@ -632,7 +635,14 @@ struct FrameMetrics {
   // invalid.
   CSSRect mLayoutViewport;
 
-  // The scale on this scroll frame induced by enclosing CSS transforms.
+  // The scale induced by css transforms and presshell resolution in this
+  // process and any ancestor processes that encloses this scroll frame that is
+  // _not_ included in mCumulativeResolution. This means that in the process of
+  // the root content document this only includes css transform scale (which
+  // happens in that process, but we assume there can be no css transform scale
+  // above the root content document). In other processes it includes css
+  // transform scale and any resolution scale in the current process and all
+  // ancestor processes.
   ParentLayerToScreenScale2D mTransformToAncestorScale;
 
   // The time at which the APZC last requested a repaint for this scroll frame.

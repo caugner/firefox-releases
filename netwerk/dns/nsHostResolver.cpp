@@ -49,6 +49,9 @@
 // Put DNSLogging.h at the end to avoid LOG being overwritten by other headers.
 #include "DNSLogging.h"
 
+#define IS_ADDR_TYPE(_type) ((_type) == nsIDNSService::RESOLVE_TYPE_DEFAULT)
+#define IS_OTHER_TYPE(_type) ((_type) != nsIDNSService::RESOLVE_TYPE_DEFAULT)
+
 using namespace mozilla;
 using namespace mozilla::net;
 
@@ -1366,7 +1369,8 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookupLocked(
     bool shouldAttemptNative =
         !StaticPrefs::network_trr_strict_native_fallback() ||
         aReason == TRRSkippedReason::TRR_NXDOMAIN ||
-        aReason == TRRSkippedReason::TRR_DISABLED_FLAG;
+        aReason == TRRSkippedReason::TRR_DISABLED_FLAG ||
+        aReason == TRRSkippedReason::TRR_NOT_CONFIRMED;
 
     if (NS_FAILED(status) &&
         addrRec->mEffectiveTRRMode == nsIRequest::TRR_FIRST_MODE &&
@@ -1769,6 +1773,8 @@ void nsHostResolver::GetDNSCacheEntries(nsTArray<DNSCacheEntries>* args) {
     }
 
     info.originAttributesSuffix = recordEntry.GetKey().originSuffix;
+    info.flags = nsPrintfCString("%u|0x%x|%u|%d|%s", rec->type, rec->flags,
+                                 rec->af, rec->pb, rec->mTrrServer.get());
 
     args->AppendElement(std::move(info));
   }

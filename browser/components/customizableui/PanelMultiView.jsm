@@ -838,6 +838,13 @@ var PanelMultiView = class extends AssociatedToNode {
     panelView.node.panelMultiView = this.node;
     this.openViews.push(panelView);
 
+    // Panels could contain out-pf-process <browser> elements, that need to be
+    // supported with a remote attribute on the panel in order to display properly.
+    // See bug https://bugzilla.mozilla.org/show_bug.cgi?id=1365660
+    if (panelView.node.getAttribute("remote") == "true") {
+      this._panel.setAttribute("remote", "true");
+    }
+
     let canceled = await panelView.dispatchAsyncEvent("ViewShowing");
 
     // The panel can be hidden while we are processing the ViewShowing event.
@@ -1471,6 +1478,8 @@ var PanelView = class extends AssociatedToNode {
       return;
     }
 
+    const profilerMarkerStartTime = Cu.now();
+
     // We batch DOM changes together in order to reduce synchronous layouts.
     // First we reset any change we may have made previously. The first time
     // this is called, and in the best case scenario, this has no effect.
@@ -1560,6 +1569,12 @@ var PanelView = class extends AssociatedToNode {
       });
       element.style.height = bounds.height + "px";
     }
+
+    ChromeUtils.addProfilerMarker(
+      "PMV.descriptionHeightWorkaround()",
+      profilerMarkerStartTime,
+      `<${this.node.tagName} id="${this.node.id}">`
+    );
   }
 
   /**

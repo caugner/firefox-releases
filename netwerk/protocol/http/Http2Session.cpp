@@ -214,8 +214,7 @@ void Http2Session::Shutdown(nsresult aReason) {
     } else if (!mCleanShutdown && (mGoAwayReason != NO_HTTP_ERROR)) {
       CloseStream(stream, NS_ERROR_NET_HTTP2_SENT_GOAWAY);
     } else if (!mCleanShutdown &&
-               (aReason ==
-                psm::GetXPCOMFromNSSError(SSL_ERROR_PROTOCOL_VERSION_ALERT))) {
+               SecurityErrorToBeHandledByTransaction(aReason)) {
       CloseStream(stream, aReason);
     } else {
       CloseStream(stream, NS_ERROR_ABORT);
@@ -3289,6 +3288,9 @@ nsresult Http2Session::WriteSegmentsAgain(nsAHttpSegmentWriter* writer,
     MOZ_ASSERT(!mNeedsCleanup, "cleanup stream set unexpectedly");
     mNeedsCleanup = nullptr; /* just in case */
 
+    if (!mInputFrameDataStream) {
+      return NS_ERROR_UNEXPECTED;
+    }
     uint32_t streamID = mInputFrameDataStream->StreamID();
     mSegmentWriter = writer;
     rv = mInputFrameDataStream->WriteSegments(this, count, countWritten);
@@ -4430,7 +4432,13 @@ nsresult Http2Session::OnHeadersAvailable(nsAHttpTransaction* transaction,
                                          reset);
 }
 
-bool Http2Session::IsReused() { return mConnection->IsReused(); }
+bool Http2Session::IsReused() {
+  if (!mConnection) {
+    return false;
+  }
+
+  return mConnection->IsReused();
+}
 
 nsresult Http2Session::PushBack(const char* buf, uint32_t len) {
   return mConnection->PushBack(buf, len);

@@ -120,7 +120,6 @@ class NativeLayerRootCA : public NativeLayerRoot {
       bool aIsOpaque) override;
 
   void SetWindowIsFullscreen(bool aFullscreen);
-  void NoteMouseMove();
   void NoteMouseMoveAtTime(const TimeStamp& aTime);
 
  protected:
@@ -145,7 +144,7 @@ class NativeLayerRootCA : public NativeLayerRoot {
   template <typename F>
   void ForAllRepresentations(F aFn);
 
-  void UpdateMouseMovedRecently();
+  void UpdateMouseMovedRecently(const MutexAutoLock& aProofOfLock);
 
   Mutex mMutex;  // protects all other fields
   Representation mOnscreenRepresentation;
@@ -252,8 +251,6 @@ class NativeLayerCA : public NativeLayer {
 
   void AttachExternalImage(wr::RenderTextureHost* aExternalImage) override;
 
-  bool IsVideo();
-  bool ShouldSpecializeVideo();
   void SetRootWindowIsFullscreen(bool aFullscreen);
 
  protected:
@@ -309,6 +306,10 @@ class NativeLayerCA : public NativeLayer {
 
   Maybe<SurfaceWithInvalidRegion> GetUnusedSurfaceAndCleanUp(
       const MutexAutoLock& aProofOfLock);
+
+  bool IsVideo();
+  bool IsVideoAndLocked(const MutexAutoLock& aProofOfLock);
+  bool ShouldSpecializeVideo(const MutexAutoLock& aProofOfLock);
 
   // Wraps one CALayer representation of this NativeLayer.
   struct Representation {

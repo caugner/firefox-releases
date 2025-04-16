@@ -100,7 +100,6 @@
 
 #include "nsBidiUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "nsBidi.h"
 
 #include "mozilla/dom/URL.h"
 #include "mozilla/ServoCSSParser.h"
@@ -285,12 +284,11 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
       mHadNonBlankPaint(false),
       mHadContentfulPaint(false),
       mHadNonTickContentfulPaint(false),
-      mHadContentfulPaintComposite(false)
+      mHadContentfulPaintComposite(false),
 #ifdef DEBUG
-      ,
-      mInitialized(false)
+      mInitialized(false),
 #endif
-{
+      mColorSchemeOverride(dom::PrefersColorSchemeOverride::None) {
 #ifdef DEBUG
   PodZero(&mLayoutPhaseCount);
 #endif
@@ -465,6 +463,13 @@ static void HandleGlobalThemeChange() {
   if (XRE_IsParentProcess()) {
     ContentParent::BroadcastThemeUpdate(kind);
   }
+
+  nsContentUtils::AddScriptRunner(
+      NS_NewRunnableFunction("HandleGlobalThemeChange", [] {
+        if (nsCOMPtr<nsIObserverService> obs = services::GetObserverService()) {
+          obs->NotifyObservers(nullptr, "look-and-feel-changed", nullptr);
+        }
+      }));
 }
 
 void nsPresContext::GetUserPreferences() {
@@ -928,6 +933,24 @@ void nsPresContext::AttachPresShell(mozilla::PresShell* aPresShell) {
   UpdateCharSet(doc->GetDocumentCharacterSet());
 }
 
+Maybe<ColorScheme> nsPresContext::GetOverriddenColorScheme() const {
+  if (IsPrintingOrPrintPreview()) {
+    return Some(ColorScheme::Light);
+  }
+
+  switch (mColorSchemeOverride) {
+    case dom::PrefersColorSchemeOverride::Dark:
+      return Some(ColorScheme::Dark);
+    case dom::PrefersColorSchemeOverride::Light:
+      return Some(ColorScheme::Light);
+    case dom::PrefersColorSchemeOverride::None:
+    case dom::PrefersColorSchemeOverride::EndGuard_:
+      break;
+  }
+
+  return Nothing();
+}
+
 void nsPresContext::RecomputeBrowsingContextDependentData() {
   MOZ_ASSERT(mDocument);
   dom::Document* doc = mDocument;
@@ -945,6 +968,16 @@ void nsPresContext::RecomputeBrowsingContextDependentData() {
   SetFullZoom(browsingContext->FullZoom());
   SetTextZoom(browsingContext->TextZoom());
   SetOverrideDPPX(browsingContext->OverrideDPPX());
+
+  auto oldOverride = mColorSchemeOverride;
+  mColorSchemeOverride = browsingContext->Top()->PrefersColorSchemeOverride();
+  if (oldOverride != mColorSchemeOverride) {
+    // This is a bit of a lie, but it's the code-path that gets taken for
+    // regular system metrics changes via ThemeChanged().
+    MediaFeatureValuesChanged({MediaFeatureChangeReason::SystemMetricsChange},
+                              MediaFeatureChangePropagation::JustThisDocument);
+  }
+
   if (doc == mDocument) {
     // Medium doesn't apply to resource documents, etc.
     auto* top = browsingContext->Top();
@@ -1402,6 +1435,12 @@ nsISupports* nsPresContext::GetContainerWeak() const {
   return mDocument->GetDocShell();
 }
 
+nscolor nsPresContext::DefaultBackgroundColor() const {
+  return PrefSheetPrefs()
+      .ColorsFor(mDocument->DefaultColorScheme())
+      .mDefaultBackground;
+}
+
 nsDocShell* nsPresContext::GetDocShell() const {
   return nsDocShell::Cast(mDocument->GetDocShell());
 }
@@ -1512,12 +1551,39 @@ void nsPresContext::RecordInteractionTime(InteractionType aType,
 nsITheme* nsPresContext::EnsureTheme() {
   MOZ_ASSERT(!mTheme);
   if (Document()->ShouldAvoidNativeTheme()) {
-    mTheme = do_GetBasicNativeThemeDoNotUseDirectly();
+    BrowsingContext* bc = Document()->GetBrowsingContext();
+    if (bc && bc->Top()->InRDMPane()) {
+      mTheme = do_GetAndroidNonNativeThemeDoNotUseDirectly();
+    } else {
+      mTheme = do_GetBasicNativeThemeDoNotUseDirectly();
+    }
   } else {
     mTheme = do_GetNativeThemeDoNotUseDirectly();
   }
   MOZ_RELEASE_ASSERT(mTheme);
   return mTheme;
+}
+
+void nsPresContext::RecomputeTheme() {
+  if (!mTheme) {
+    return;
+  }
+  nsCOMPtr<nsITheme> oldTheme = std::move(mTheme);
+  EnsureTheme();
+  if (oldTheme == mTheme) {
+    return;
+  }
+  // Theme only affects layout information, not style, so we just need to
+  // reframe (as it affects whether we create scrollbar buttons for example).
+  RebuildAllStyleData(nsChangeHint_ReconstructFrame, RestyleHint{0});
+}
+
+bool nsPresContext::UseOverlayScrollbars() const {
+  if (LookAndFeel::GetInt(LookAndFeel::IntID::UseOverlayScrollbars)) {
+    return true;
+  }
+  BrowsingContext* bc = Document()->GetBrowsingContext();
+  return bc && bc->Top()->InRDMPane();
 }
 
 void nsPresContext::ThemeChanged(widget::ThemeChangeKind aKind) {
@@ -2621,11 +2687,11 @@ uint64_t nsPresContext::GetUndisplayedRestyleGeneration() const {
   return mRestyleManager->GetUndisplayedRestyleGeneration();
 }
 
-nsBidi& nsPresContext::GetBidiEngine() {
+mozilla::intl::Bidi& nsPresContext::GetBidiEngine() {
   MOZ_ASSERT(NS_IsMainThread());
 
   if (!mBidiEngine) {
-    mBidiEngine.reset(new nsBidi());
+    mBidiEngine.reset(new mozilla::intl::Bidi());
   }
   return *mBidiEngine;
 }

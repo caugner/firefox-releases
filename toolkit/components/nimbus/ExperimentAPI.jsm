@@ -70,6 +70,23 @@ function featuresCompat(branch) {
   return features;
 }
 
+const experimentBranchAccessor = {
+  get: (target, prop) => {
+    // Offer an API where we can access `branch.feature.*`.
+    // This is a useful shorthand that hides the fact that
+    // even single-feature recipes are still represented
+    // as an array with 1 item
+    if (!(prop in target) && target.features) {
+      return target.features.find(f => f.featureId === prop);
+    } else if (target.feature?.featureId === prop) {
+      // Backwards compatibility for version 1.6.2 and older
+      return target.feature;
+    }
+
+    return target[prop];
+  },
+};
+
 const ExperimentAPI = {
   /**
    * @returns {Promise} Resolves when the API has synchronized to the main store
@@ -106,7 +123,7 @@ const ExperimentAPI = {
       return {
         slug: experimentData.slug,
         active: experimentData.active,
-        branch: this.activateBranch({ slug, featureId }),
+        branch: new Proxy(experimentData.branch, experimentBranchAccessor),
       };
     }
 
@@ -263,7 +280,9 @@ const ExperimentAPI = {
     }
 
     const recipe = await this.getRecipe(slug);
-    return recipe?.branches;
+    return recipe?.branches.map(
+      branch => new Proxy(branch, experimentBranchAccessor)
+    );
   },
 
   recordExposureEvent({ featureId, experimentSlug, branchSlug }) {
@@ -291,11 +310,9 @@ const ExperimentAPI = {
  */
 const NimbusFeatures = {};
 for (let feature in FeatureManifest) {
-  XPCOMUtils.defineLazyGetter(
-    NimbusFeatures,
-    feature,
-    () => new _ExperimentFeature(feature)
-  );
+  XPCOMUtils.defineLazyGetter(NimbusFeatures, feature, () => {
+    return new _ExperimentFeature(feature);
+  });
 }
 
 class _ExperimentFeature {

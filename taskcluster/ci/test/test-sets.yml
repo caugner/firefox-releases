@@ -258,8 +258,8 @@ windows10-64-2004-ccov-tests:
     - web-platform-tests-reftest
     - web-platform-tests-print-reftest
     - web-platform-tests-wdspec
-    # - jittest  # Bug 1733505
-    # - xpcshell  # Bug 1733505
+    - jittest
+    - xpcshell
 
 windows10-64-2004-failure-tests:
     - mochitest-browser-chrome-failures
@@ -322,19 +322,15 @@ windows-talos:
     - talos-perf-reftest-singletons
     - talos-svgr
     - talos-tp5o
-    - talos-xperf
     - talos-tabswitch
     - talos-realworld-webextensions
     - talos-webgl
     # - talos-h1 Bug 1487031 - Disabled for not finding actionable regressions
 
+talos-xperf:
+    - talos-xperf
+
 # macOS
-
-macosx1100-64-qr-failure-tests:
-    - xpcshell-failures
-    - mochitest-media-failures
-    - mochitest-browser-chrome-failures
-
 macosx1100-64-jittests:
     - jittest
 
@@ -351,10 +347,6 @@ macosx1100-64-qr-tests:
     - mochitest-webgl2-ext
     - reftest
     - xpcshell
-
-macosx1015-64-qr-failure-tests:
-    - mochitest-media-failures
-    - mochitest-browser-chrome-failures
 
 macosx1015-64-qr-tests:
     - cppunit

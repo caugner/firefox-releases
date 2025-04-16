@@ -193,7 +193,7 @@ var PermissionPromptPrototype = {
 
   /**
    * If true, the prompt will be cancelled automatically unless
-   * request.isHandlingUserInput is true.
+   * request.hasValidTransientUserGestureActivation is true.
    */
   get requiresUserInput() {
     return false;
@@ -415,7 +415,10 @@ var PermissionPromptPrototype = {
       }
     }
 
-    if (this.requiresUserInput && !this.request.isHandlingUserInput) {
+    if (
+      this.requiresUserInput &&
+      !this.request.hasValidTransientUserGestureActivation
+    ) {
       if (this.postPromptEnabled) {
         this.postPrompt();
       }
@@ -1237,7 +1240,7 @@ StorageAccessPermissionPrompt.prototype = {
 
   get permissionKey() {
     // Make sure this name is unique per each third-party tracker
-    return "storage-access-" + this.principal.origin;
+    return `3rdPartyStorage${SitePermissions.PERM_KEY_DELIMITER}${this.principal.origin}`;
   },
 
   prettifyHostPort(hostport) {

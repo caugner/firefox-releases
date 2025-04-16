@@ -21,10 +21,6 @@
 
 #include "nsDeviceContext.h"
 
-#include "nsColorControlFrame.h"
-#include "nsDateTimeControlFrame.h"
-#include "nsMeterFrame.h"
-#include "nsProgressFrame.h"
 #include "nsRangeFrame.h"
 #include "mozilla/dom/HTMLMeterElement.h"
 #include "mozilla/dom/HTMLProgressElement.h"
@@ -292,7 +288,6 @@ class nsNativeBasicTheme::Colors {
 
 CSSIntCoord nsNativeBasicTheme::sHorizontalScrollbarHeight = CSSIntCoord(0);
 CSSIntCoord nsNativeBasicTheme::sVerticalScrollbarWidth = CSSIntCoord(0);
-bool nsNativeBasicTheme::sOverlayScrollbars = false;
 
 static constexpr nsLiteralCString kPrefs[] = {
     "widget.non-native-theme.use-theme-accent"_ns,
@@ -331,9 +326,6 @@ void nsNativeBasicTheme::RecomputeAccentColors() {
 }
 
 void nsNativeBasicTheme::RecomputeScrollbarParams() {
-  sOverlayScrollbars =
-      LookAndFeel::GetInt(LookAndFeel::IntID::UseOverlayScrollbars);
-
   uint32_t defaultSize = StaticPrefs::widget_non_native_theme_scrollbar_size();
   if (StaticPrefs::widget_non_native_theme_win_scrollbar_use_system_size()) {
     sHorizontalScrollbarHeight = LookAndFeel::GetInt(
@@ -388,29 +380,6 @@ auto nsNativeBasicTheme::GetDPIRatio(nsIFrame* aFrame,
   return GetDPIRatio(aFrame->PresContext(), aAppearance);
 }
 
-/* static */
-bool nsNativeBasicTheme::IsDateTimeResetButton(nsIFrame* aFrame) {
-  if (!aFrame) {
-    return false;
-  }
-
-  nsIFrame* parent = aFrame->GetParent();
-  if (parent && (parent = parent->GetParent()) &&
-      (parent = parent->GetParent())) {
-    nsDateTimeControlFrame* dateTimeFrame = do_QueryFrame(parent);
-    if (dateTimeFrame) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/* static */
-bool nsNativeBasicTheme::IsColorPickerButton(nsIFrame* aFrame) {
-  nsColorControlFrame* colorPickerButton = do_QueryFrame(aFrame);
-  return colorPickerButton;
-}
-
 // Checkbox and radio need to preserve aspect-ratio for compat. We also snap the
 // size to exact device pixels to avoid snapping disorting the circles.
 static LayoutDeviceRect CheckBoxRadioRect(const LayoutDeviceRect& aRect) {
@@ -455,7 +424,7 @@ sRGBColor nsNativeBasicTheme::ComputeCheckmarkColor(const EventStates& aState,
     return aColors.System(StyleSystemColor::Selecteditemtext);
   }
   if (aState.HasState(NS_EVENT_STATE_DISABLED)) {
-    return sColorWhiteAlpha80;
+    return sRGBColor::White(.8f);
   }
   return aColors.Accent().GetForeground();
 }
@@ -504,9 +473,6 @@ std::pair<sRGBColor, sRGBColor> nsNativeBasicTheme::ComputeButtonColors(
   const sRGBColor backgroundColor = [&] {
     if (isDisabled) {
       return aColors.System(StyleSystemColor::MozButtondisabledface);
-    }
-    if (IsDateTimeResetButton(aFrame)) {
-      return sColorWhite;
     }
     if (isActive) {
       return aColors.System(StyleSystemColor::MozButtonactiveface);
@@ -613,8 +579,7 @@ std::pair<sRGBColor, sRGBColor> nsNativeBasicTheme::ComputeRangeThumbColors(
     return sColorGrey50;
   }();
 
-  const sRGBColor borderColor = sColorWhite;
-
+  const sRGBColor borderColor = sRGBColor::OpaqueWhite();
   return std::make_pair(backgroundColor, borderColor);
 }
 
@@ -662,9 +627,10 @@ std::array<sRGBColor, 3> nsNativeBasicTheme::ComputeFocusRectColors(
             aColors.System(StyleSystemColor::Buttontext),
             aColors.System(StyleSystemColor::TextBackground)};
   }
-
-  return {aColors.Accent().Get(), sColorWhiteAlpha80,
-          aColors.Accent().GetLight()};
+  const auto& accent = aColors.Accent();
+  const sRGBColor middle =
+      aColors.IsDark() ? sRGBColor::Black(.3f) : sRGBColor::White(.3f);
+  return {accent.Get(), middle, accent.GetLight()};
 }
 
 bool nsNativeBasicTheme::IsScrollbarTrackOpaque(nsIFrame* aFrame) {
@@ -1650,8 +1616,9 @@ bool nsNativeBasicTheme::DoPaintDefaultScrollbar(
     bool aHorizontal, nsIFrame* aFrame, const ComputedStyle& aStyle,
     const EventStates& aElementState, const EventStates& aDocumentState,
     const Colors& aColors, DPIRatio aDpiRatio) {
-  if (sOverlayScrollbars && !aElementState.HasAtLeastOneOfStates(
-                                NS_EVENT_STATE_HOVER | NS_EVENT_STATE_ACTIVE)) {
+  if (aFrame->PresContext()->UseOverlayScrollbars() &&
+      !aElementState.HasAtLeastOneOfStates(NS_EVENT_STATE_HOVER |
+                                           NS_EVENT_STATE_ACTIVE)) {
     return true;
   }
   auto scrollbarColor =
@@ -2174,7 +2141,7 @@ nsNativeBasicTheme::GetMinimumWidgetSize(nsPresContext* aPresContext,
 
   switch (aAppearance) {
     case StyleAppearance::Button:
-      if (IsColorPickerButton(aFrame)) {
+      if (aFrame->IsColorControlFrame()) {
         aResult->height = (kMinimumColorPickerHeight * dpiRatio).Rounded();
       }
       break;

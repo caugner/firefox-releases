@@ -454,6 +454,7 @@ class PuppeteerRunner(MozbuildObject):
 
         prefs = {}
         for k, v in params.get("extra_prefs", {}).items():
+            print("Using extra preference: {}={}".format(k, v))
             prefs[k] = mozprofile.Preferences.cast(v)
 
         if prefs:
@@ -637,6 +638,8 @@ def puppeteer_test(
 
     if enable_fission:
         prefs.update({"fission.autostart": True})
+    else:
+        prefs.update({"fission.autostart": False})
 
     if verbosity == 1:
         prefs["remote.log.level"] = "Debug"

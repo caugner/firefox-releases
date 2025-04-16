@@ -1121,6 +1121,25 @@ browser.ui.interaction:
     record_in_processes:
       - 'main'
 
+  preferences_paneMoreFromMozilla:
+    bug_numbers:
+      - 1738187
+    description: >
+      Records the items interacted with in the More From Mozilla section of
+      preferences.
+      See https://firefox-source-docs.mozilla.org/browser/BrowserUsageTelemetry.html
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - shong@mozilla.com
+      - pdahiya@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
   preferences_paneUnknown:
     bug_numbers:
       - 1620358
@@ -1251,6 +1270,21 @@ security:
       - 'firefox'
     record_in_processes:
       - 'main'
+  global_privacy_control_enabled:
+    bug_numbers:
+      - 1734185
+    description: >
+      Measures user retention of the Global Privacy Control.
+      0 = never enabled, 1 = enabled, 2 = disabled (but was enabled)
+    expires: never
+    kind: uint
+    notification_emails:
+      - seceng-telemetry@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
 
 pwmgr:
   potentially_breached_passwords:
@@ -1332,6 +1366,24 @@ contentblocking:
     notification_emails:
       - ewright@mozilla.com
       - seceng-telemetry@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
+privacy:
+  dfpi_rollout_enabledByDefault:
+    bug_numbers:
+      - 1740232
+    description: >
+      Records if a client is opted into dFPI in standard ETP mode as part of the
+      rollout experiment. 0: opted out, 1: opted in, 2: not part of the
+      experiment
+    expires: "101"
+    kind: uint
+    notification_emails:
+      - pbz@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -1805,7 +1857,6 @@ os.environment:
     kind: string
     notification_emails:
       - application-update-telemetry-alerts@mozilla.com
-      - agashlin@mozilla.com
       - shong@mozilla.com
     release_channel_collection: opt-out
     products:
@@ -1841,7 +1892,6 @@ os.environment:
     kind: boolean
     notification_emails:
       - application-update-telemetry-alerts@mozilla.com
-      - agashlin@mozilla.com
       - shong@mozilla.com
     release_channel_collection: opt-out
     products:
@@ -2188,6 +2238,24 @@ media:
       Record whether the WMF decoder module is used in content or chrome process.
     expires: "99"
     kind: boolean
+    notification_emails:
+      - alwu@mozilla.com
+      - bvandyk@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+      - 'content'
+
+  video_hardware_decoding_support:
+    bug_numbers:
+      - 1733722
+    description: >
+      Record whether hardware decoding is supported for the specific video codec. The key is the type of video codec, eg. video/vp9.
+    expires: "100"
+    kind: boolean
+    keyed: true
     notification_emails:
       - alwu@mozilla.com
       - bvandyk@mozilla.com
@@ -4878,6 +4946,7 @@ browser.search:
       - 1619954
       - 1656135
       - 1694852
+      - 1736658
     description: >
       Records bytes that have been transferred for search requests, including
       top-level documents, sub-resources, iframes and search suggestions.
@@ -4886,7 +4955,7 @@ browser.search:
         <search-provider-name>-pb
         sggt-<search-engine-id>
         sggt-<search-engine-id>-pb
-    expires: "96"
+    expires: never
     keyed: true
     kind: uint
     notification_emails:
@@ -6238,6 +6307,23 @@ deletion.request:
     record_into_store:
       - 'deletion-request'
 
+  context_id:
+    bug_numbers:
+      - 1729474
+    description: >
+      An identifier to identify users for Contextual Services user interaction pings.
+    expires: never
+    kind: string
+    notification_emails:
+      - najiang@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+    record_into_store:
+      - 'deletion-request'
+
 policies:
   count:
     bug_numbers:
@@ -7055,7 +7141,7 @@ migration:
     expires: never
     kind: boolean
     notification_emails:
-      - agashlin@mozilla.com
+      - application-update-telemetry-alerts@mozilla.com
     release_channel_collection: opt-out
     products:
       - 'firefox'

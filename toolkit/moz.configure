@@ -1194,10 +1194,11 @@ def x11_libs(webrtc):
             "xfixes",
             "xi",
         ]
-    return " ".join(libs)
+    return libs
 
 
 pkg_check_modules("MOZ_X11", x11_libs, when=toolkit_gtk)
+pkg_check_modules("MOZ_X11_SM", ["ice", "sm"], cflags_only=True, when=toolkit_gtk)
 
 
 # ASan Reporter Addon
@@ -2112,14 +2113,11 @@ def wasm_sandboxing_libraries():
     )
 
 
-@depends(dependable(wasm_sandboxing_libraries), target, "MOZ_AUTOMATION")
-def default_wasm_sandboxing_libraries(libraries, target, automation):
-    if automation and (
-        (target.kernel == "Linux" and target.os == "GNU" and target.cpu == "x86_64")
-        or (target.os == "Android" and target.bitness == 64)
-        or (target.kernel == "Darwin" and target.bitness == 64)
-    ):
-        return libraries
+@depends(dependable(wasm_sandboxing_libraries))
+def default_wasm_sandboxing_libraries(libraries):
+    non_default_libs = set()
+
+    return tuple(l for l in libraries if l not in non_default_libs)
 
 
 option(
@@ -2156,14 +2154,20 @@ with only_when(requires_wasm_sandboxing & compile_environment):
     @depends(
         "--with-wasi-sysroot",
         bootstrap_path("sysroot-wasm32-wasi", when=bootstrap_wasi_sysroot),
+        "--with-wasm-sandboxed-libraries",
     )
     @imports("os")
-    def wasi_sysroot(wasi_sysroot, bootstrapped_sysroot):
+    def wasi_sysroot(wasi_sysroot, bootstrapped_sysroot, sandboxed_libs):
         if not wasi_sysroot:
             if not bootstrapped_sysroot:
+                suggest_disable = ""
+                if sandboxed_libs.origin == "default":
+                    suggest_disable = (
+                        " Or build with --without-wasm-sandboxed-libraries."
+                    )
                 die(
                     "Cannot find a wasi sysroot. Please give its location with "
-                    "--with-wasi-sysroot."
+                    "--with-wasi-sysroot." + suggest_disable
                 )
             return bootstrapped_sysroot
 
@@ -2236,13 +2240,10 @@ with only_when(requires_wasm_sandboxing & compile_environment):
     set_config("WASM_CXXFLAGS", wasm_cxxflags)
 
 
-@depends("--with-wasm-sandboxed-libraries", target)
-def wasm_sandboxing(libraries, target):
+@depends("--with-wasm-sandboxed-libraries")
+def wasm_sandboxing(libraries):
     if not libraries:
         return
-
-    if target.bitness != 64:
-        die("wasm sandboxing is only supported on 64-bits platforms")
 
     return namespace(**{name: True for name in libraries})
 
@@ -2535,3 +2536,13 @@ wine = check_prog(
     when=want_wine,
     bootstrap="wine/bin",
 )
+
+# DOM Streams
+# ==============================================================
+option(
+    "--enable-dom-streams",
+    help="Enable the DOM Streams prototype",
+)
+
+set_config("MOZ_DOM_STREAMS", True, when="--enable-dom-streams")
+set_define("MOZ_DOM_STREAMS", True, when="--enable-dom-streams")

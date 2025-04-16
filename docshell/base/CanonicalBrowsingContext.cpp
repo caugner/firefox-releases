@@ -2477,8 +2477,7 @@ static void LogBFCacheBlockingForDoc(BrowsingContext* aBrowsingContext,
     MOZ_LOG(gSHIPBFCacheLog, LogLevel::Debug, (" * suspended Window"));
   }
   if (aBFCacheCombo & BFCacheStatus::UNLOAD_LISTENER) {
-    MOZ_LOG(gSHIPBFCacheLog, LogLevel::Debug,
-            (" * beforeunload or unload listener"));
+    MOZ_LOG(gSHIPBFCacheLog, LogLevel::Debug, (" * unload listener"));
   }
   if (aBFCacheCombo & BFCacheStatus::REQUEST) {
     MOZ_LOG(gSHIPBFCacheLog, LogLevel::Debug, (" * requests in the loadgroup"));
@@ -2501,6 +2500,9 @@ static void LogBFCacheBlockingForDoc(BrowsingContext* aBrowsingContext,
   if (aBFCacheCombo & BFCacheStatus::HAS_USED_VR) {
     MOZ_LOG(gSHIPBFCacheLog, LogLevel::Debug, (" * used VR"));
   }
+  if (aBFCacheCombo & BFCacheStatus::BEFOREUNLOAD_LISTENER) {
+    MOZ_LOG(gSHIPBFCacheLog, LogLevel::Debug, (" * beforeunload listener"));
+  }
 }
 
 bool CanonicalBrowsingContext::AllowedInBFCache(
@@ -2518,7 +2520,7 @@ bool CanonicalBrowsingContext::AllowedInBFCache(
     return false;
   }
 
-  uint16_t bfcacheCombo = 0;
+  uint32_t bfcacheCombo = 0;
   if (mRestoreState) {
     bfcacheCombo |= BFCacheStatus::RESTORING;
     MOZ_LOG(gSHIPBFCacheLog, LogLevel::Debug, (" * during session restore"));
@@ -2550,7 +2552,7 @@ bool CanonicalBrowsingContext::AllowedInBFCache(
   PreOrderWalk([&](BrowsingContext* aBrowsingContext) {
     WindowGlobalParent* wgp =
         aBrowsingContext->Canonical()->GetCurrentWindowGlobal();
-    uint16_t subDocBFCacheCombo = wgp ? wgp->GetBFCacheStatus() : 0;
+    uint32_t subDocBFCacheCombo = wgp ? wgp->GetBFCacheStatus() : 0;
     if (wgp) {
       const Maybe<uint64_t>& singleChannelId = wgp->GetSingleChannelId();
       if (singleChannelId.isSome()) {

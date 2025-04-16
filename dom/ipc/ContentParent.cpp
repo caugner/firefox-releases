@@ -15,6 +15,7 @@
 
 #include "ContentParent.h"
 #include "mozilla/ipc/ProcessUtils.h"
+#include "mozilla/CmdLineAndEnvUtils.h"
 #include "BrowserParent.h"
 
 #include "chrome/common/process_watcher.h"
@@ -58,6 +59,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/FOGIPC.h"
 #include "mozilla/GlobalStyleSheetCache.h"
+#include "mozilla/GeckoArgs.h"
 #include "mozilla/HangDetails.h"
 #include "mozilla/LoginReputationIPC.h"
 #include "mozilla/LookAndFeel.h"
@@ -879,7 +881,9 @@ already_AddRefed<ContentParent> ContentParent::MinTabSelect(
   return candidate.forget();
 }
 
-static already_AddRefed<nsIPrincipal> CreateRemoteTypeIsolationPrincipal(
+/* static */
+already_AddRefed<nsIPrincipal>
+ContentParent::CreateRemoteTypeIsolationPrincipal(
     const nsACString& aRemoteType) {
   if ((RemoteTypePrefix(aRemoteType) != FISSION_WEB_REMOTE_TYPE) &&
       !StringBeginsWith(aRemoteType, WITH_COOP_COEP_REMOTE_TYPE_PREFIX)) {
@@ -2407,9 +2411,12 @@ static void CacheSandboxParams(std::vector<std::string>& aCachedParams) {
     info.hasAudio = true;
   }
 
-  // Windowserver access
+  // Window server access. If the disconnect-windowserver pref is not
+  // "true" or out-of-process WebGL is not enabled, allow window server
+  // access in the sandbox policy.
   if (!Preferences::GetBool(
-          "security.sandbox.content.mac.disconnect-windowserver")) {
+          "security.sandbox.content.mac.disconnect-windowserver") ||
+      !Preferences::GetBool("webgl.out-of-process")) {
     info.hasWindowServer = true;
   }
 
@@ -2504,11 +2511,9 @@ bool ContentParent::BeginSubprocessLaunch(ProcessPriority aPriority) {
   }
 
   std::vector<std::string> extraArgs;
-  extraArgs.push_back("-childID");
-  char idStr[21];
-  SprintfLiteral(idStr, "%" PRId64, static_cast<uint64_t>(mChildID));
-  extraArgs.push_back(idStr);
-  extraArgs.push_back(IsForBrowser() ? "-isForBrowser" : "-notForBrowser");
+  geckoargs::sChildID.Put(mChildID, extraArgs);
+  geckoargs::sIsForBrowser.Put(IsForBrowser(), extraArgs);
+  geckoargs::sNotForBrowser.Put(!IsForBrowser(), extraArgs);
 
   // Prefs information is passed via anonymous shared memory to avoid bloating
   // the command line.
@@ -2535,7 +2540,7 @@ bool ContentParent::BeginSubprocessLaunch(ProcessPriority aPriority) {
   Preferences::AddStrongObserver(this, "");
 
   if (gSafeMode) {
-    extraArgs.push_back("-safeMode");
+    geckoargs::sSafeMode.Put(extraArgs);
   }
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
@@ -2546,8 +2551,7 @@ bool ContentParent::BeginSubprocessLaunch(ProcessPriority aPriority) {
 #endif
 
   nsCString parentBuildID(mozilla::PlatformBuildID());
-  extraArgs.push_back("-parentBuildID");
-  extraArgs.push_back(parentBuildID.get());
+  geckoargs::sParentBuildID.Put(parentBuildID.get(), extraArgs);
 
 #ifdef MOZ_WIDGET_GTK
   // This is X11-only pending a solution for WebGL in Wayland mode.
@@ -6411,6 +6415,28 @@ mozilla::ipc::IPCResult ContentParent::RecvStoreUserInteractionAsPermission(
     LogAndAssertFailedPrincipalValidationInfo(aPrincipal, __func__);
   }
   ContentBlockingUserInteraction::Observe(aPrincipal);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvAsyncShouldAllowAccessFor(
+    const MaybeDiscarded<BrowsingContext>& aTopContext,
+    const Principal& aPrincipal,
+    const AsyncShouldAllowAccessForResolver&& aResolver) {
+  if (aTopContext.IsNullOrDiscarded()) {
+    return IPC_OK();
+  }
+
+  ContentBlocking::AsyncShouldAllowAccessFor(aTopContext.get_canonical(),
+                                             aPrincipal)
+      ->Then(GetCurrentSerialEventTarget(), __func__,
+             [aResolver](ContentBlocking::AsyncShouldAllowAccessForPromise::
+                             ResolveOrRejectValue&& aValue) {
+               bool allowed = aValue.IsResolve();
+
+               aResolver(Tuple<const bool&, const uint32_t&>(
+                   allowed, allowed ? 0 : aValue.RejectValue()));
+             });
+
   return IPC_OK();
 }
 

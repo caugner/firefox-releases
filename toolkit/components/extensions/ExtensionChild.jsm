@@ -55,6 +55,7 @@ const { ExtensionUtils } = ChromeUtils.import(
 const { DefaultMap, ExtensionError, LimitedSet, getUniqueId } = ExtensionUtils;
 
 const {
+  defineLazyGetter,
   EventEmitter,
   EventManager,
   LocalAPIImplementation,
@@ -250,8 +251,9 @@ class Port {
    */
   constructor(context, portId, name, native, sender) {
     this.context = context;
+    this.name = name;
+    this.sender = sender;
     this.holdMessage = native ? data => holdMessage(data, this) : holdMessage;
-
     this.conduit = context.openConduit(this, {
       portId,
       native,
@@ -259,21 +261,26 @@ class Port {
       recv: ["PortMessage", "PortDisconnect"],
       send: ["PortMessage"],
     });
+    this.initEventManagers();
+  }
 
+  initEventManagers() {
+    const { context } = this;
     this.onMessage = new SimpleEventAPI(context, "Port.onMessage");
     this.onDisconnect = new SimpleEventAPI(context, "Port.onDisconnect");
+  }
 
+  getAPI() {
     // Public Port object handed to extensions from `connect()` and `onConnect`.
-    let api = {
-      name,
-      sender,
+    return {
+      name: this.name,
+      sender: this.sender,
       error: null,
       onMessage: this.onMessage.api(),
       onDisconnect: this.onDisconnect.api(),
       postMessage: this.sendPortMessage.bind(this),
       disconnect: () => this.conduit.close(),
     };
-    this.api = Cu.cloneInto(api, context.cloneScope, { cloneFunctions: true });
   }
 
   recvPortMessage({ holder }) {
@@ -296,6 +303,11 @@ class Port {
   }
 }
 
+defineLazyGetter(Port.prototype, "api", function() {
+  let api = this.getAPI();
+  return Cu.cloneInto(api, this.context.cloneScope, { cloneFunctions: true });
+});
+
 /**
  * Each extension context gets its own Messenger object. It handles the
  * basics of sendMessage, onMessage, connect and onConnect.
@@ -308,7 +320,11 @@ class Messenger {
       query: ["NativeMessage", "RuntimeMessage", "PortConnect"],
       recv: ["RuntimeMessage", "PortConnect"],
     });
+    this.initEventManagers();
+  }
 
+  initEventManagers() {
+    const { context } = this;
     this.onConnect = new SimpleEventAPI(context, "runtime.onConnect");
     this.onConnectEx = new SimpleEventAPI(context, "runtime.onConnectExternal");
     this.onMessage = new MessageEvent(context, "runtime.onMessage");
@@ -720,9 +736,10 @@ class ChildLocalAPIImplementation extends LocalAPIImplementation {
 }
 
 // We create one instance of this class for every extension context that
-// needs to use remote APIs. It uses the message manager to communicate
-// with the ParentAPIManager singleton in ExtensionParent.jsm. It
-// handles asynchronous function calls as well as event listeners.
+// needs to use remote APIs. It uses the the JSWindowActor and
+// JSProcessActor Conduits actors (see ConduitsChild.jsm) to communicate
+// with the ParentAPIManager singleton in ExtensionParent.jsm.
+// It handles asynchronous function calls as well as event listeners.
 class ChildAPIManager {
   constructor(context, messageManager, localAPICan, contextData) {
     this.context = context;
@@ -974,5 +991,10 @@ class ChildAPIManager {
 var ExtensionChild = {
   BrowserExtensionContent,
   ChildAPIManager,
+  ChildLocalAPIImplementation,
+  MessageEvent,
   Messenger,
+  Port,
+  ProxyAPIImplementation,
+  SimpleEventAPI,
 };

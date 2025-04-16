@@ -1,14 +1,6 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-let unfiledFolderId;
-
-add_task(async function setup() {
-  unfiledFolderId = await PlacesUtils.promiseItemId(
-    PlacesUtils.bookmarks.unfiledGuid
-  );
-});
-
 add_task(async function test_value_combo() {
   let buf = await openMirror("value_combo");
   let now = Date.now();
@@ -1432,18 +1424,15 @@ add_task(async function test_keywords_complex() {
       },
     },
     {
-      name: "onItemChanged",
+      name: "bookmark-url-changed",
       params: {
         itemId: localItemIds.get("bookmarkCCCC"),
-        property: "uri",
-        isAnnoProperty: false,
-        newValue: "http://example.com/c-remote",
         type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
-        parentId: PlacesUtils.bookmarksMenuFolderId,
+        urlHref: "http://example.com/c-remote",
         guid: "bookmarkCCCC",
         parentGuid: PlacesUtils.bookmarks.menuGuid,
-        oldValue: "http://example.com/c",
         source: PlacesUtils.bookmarks.SOURCES.SYNC,
+        isTagging: false,
       },
     },
   ];

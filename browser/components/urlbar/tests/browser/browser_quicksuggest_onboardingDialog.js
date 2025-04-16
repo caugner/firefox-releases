@@ -17,11 +17,10 @@ const ONBOARDING_URI =
 
 const OTHER_DIALOG_URI = getRootDirectory(gTestPath) + "subdialog.xhtml";
 
-const LEARN_MORE_URL =
-  Services.urlFormatter.formatURLPref("app.support.baseURL") +
-  "firefox-suggest";
-
-const TELEMETRY_EVENT_CATEGORY = "contextservices.quicksuggest";
+// Allow more time for Mac machines so they don't time out in verify mode.
+if (AppConstants.platform == "macosx") {
+  requestLongerTimeout(3);
+}
 
 // When the accept button is clicked, the user should be opted in.
 add_task(async function accept() {
@@ -47,17 +46,22 @@ add_task(async function accept() {
     onboardingDialogChoice: "accept",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "enable_toggled",
         object: "enabled",
       },
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "sponsored_toggled",
         object: "enabled",
       },
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
+        method: "data_collect_toggled",
+        object: "enabled",
+      },
+      {
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "accept",
       },
@@ -89,7 +93,7 @@ add_task(async function notNow() {
     onboardingDialogChoice: "not_now_link",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "not_now_link",
       },
@@ -129,7 +133,7 @@ add_task(async function settings() {
     onboardingDialogChoice: "settings",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "settings",
       },
@@ -146,7 +150,7 @@ add_task(async function learnMore() {
       let dialogPromise = openDialog("onboardingLearnMore");
       let loadPromise = BrowserTestUtils.waitForNewTab(
         gBrowser,
-        LEARN_MORE_URL
+        QuickSuggestTestUtils.LEARN_MORE_URL
       ).then(tab => {
         info("Saw new tab");
         return tab;
@@ -164,7 +168,7 @@ add_task(async function learnMore() {
       Assert.equal(gBrowser.selectedTab, tab, "Current tab is the new tab");
       Assert.equal(
         gBrowser.currentURI.spec,
-        LEARN_MORE_URL,
+        QuickSuggestTestUtils.LEARN_MORE_URL,
         "Current tab is the support page"
       );
       BrowserTestUtils.removeTab(tab);
@@ -172,7 +176,7 @@ add_task(async function learnMore() {
     onboardingDialogChoice: "learn_more",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "learn_more",
       },
@@ -204,7 +208,7 @@ add_task(async function escKey_focusInsideDialog() {
     onboardingDialogChoice: "dismissed_escape_key",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "dismissed_escape_key",
       },
@@ -230,7 +234,7 @@ add_task(async function escKey_focusOutsideDialog() {
     onboardingDialogChoice: "dismissed_escape_key",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "dismissed_escape_key",
       },
@@ -290,7 +294,7 @@ async function doQueuedEscKeyTest(otherDialogKey) {
     onboardingDialogChoice: "dismissed_escape_key",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "dismissed_escape_key",
       },
@@ -322,7 +326,7 @@ add_task(async function dismissed_other() {
     onboardingDialogChoice: "dismissed_other",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "dismissed_other",
       },
@@ -344,17 +348,22 @@ add_task(async function focus_accept() {
     onboardingDialogChoice: "accept",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "enable_toggled",
         object: "enabled",
       },
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "sponsored_toggled",
         object: "enabled",
       },
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
+        method: "data_collect_toggled",
+        object: "enabled",
+      },
+      {
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "accept",
       },
@@ -390,7 +399,7 @@ add_task(async function focus_settings() {
     onboardingDialogChoice: "settings",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "settings",
       },
@@ -409,7 +418,7 @@ add_task(async function focus_learnMore() {
     callback: async () => {
       let loadPromise = BrowserTestUtils.waitForNewTab(
         gBrowser,
-        LEARN_MORE_URL
+        QuickSuggestTestUtils.LEARN_MORE_URL
       ).then(tab => {
         info("Saw new tab");
         return tab;
@@ -423,7 +432,7 @@ add_task(async function focus_learnMore() {
       Assert.equal(gBrowser.selectedTab, tab, "Current tab is the new tab");
       Assert.equal(
         gBrowser.currentURI.spec,
-        LEARN_MORE_URL,
+        QuickSuggestTestUtils.LEARN_MORE_URL,
         "Current tab is the support page"
       );
       BrowserTestUtils.removeTab(tab);
@@ -431,7 +440,7 @@ add_task(async function focus_learnMore() {
     onboardingDialogChoice: "learn_more",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "learn_more",
       },
@@ -460,7 +469,7 @@ add_task(async function focus_notNow() {
     onboardingDialogChoice: "not_now_link",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "not_now_link",
       },
@@ -482,17 +491,22 @@ add_task(async function focus_accept_wraparound() {
     onboardingDialogChoice: "accept",
     telemetryEvents: [
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "enable_toggled",
         object: "enabled",
       },
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "sponsored_toggled",
         object: "enabled",
       },
       {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
+        method: "data_collect_toggled",
+        object: "enabled",
+      },
+      {
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
         method: "opt_in_dialog",
         object: "accept",
       },
@@ -510,8 +524,9 @@ async function doDialogTest({
     // Set all the required prefs for showing the onboarding dialog.
     await SpecialPowers.pushPrefEnv({
       set: [
-        ["browser.urlbar.suggest.quicksuggest", false],
+        ["browser.urlbar.suggest.quicksuggest.nonsponsored", false],
         ["browser.urlbar.suggest.quicksuggest.sponsored", false],
+        ["browser.urlbar.quicksuggest.dataCollection.enabled", false],
         ["browser.urlbar.quicksuggest.enabled", true],
         ["browser.urlbar.quicksuggest.shouldShowOnboardingDialog", true],
         ["browser.urlbar.quicksuggest.showedOnboardingDialog", false],
@@ -526,7 +541,7 @@ async function doDialogTest({
     await callback();
 
     Assert.equal(
-      UrlbarPrefs.get("suggest.quicksuggest"),
+      UrlbarPrefs.get("suggest.quicksuggest.nonsponsored"),
       expectOptIn,
       "Main pref enabled status"
     );
@@ -534,6 +549,11 @@ async function doDialogTest({
       UrlbarPrefs.get("suggest.quicksuggest.sponsored"),
       expectOptIn,
       "Sponsored pref enabled status"
+    );
+    Assert.equal(
+      UrlbarPrefs.get("quicksuggest.dataCollection.enabled"),
+      expectOptIn,
+      "Data collection pref enabled status"
     );
 
     if (onboardingDialogChoice) {
@@ -556,7 +576,7 @@ async function doDialogTest({
       // settings can occur in TV tests during the callback, so pass a filter
       // arg to make sure we get only the events we're interested in.
       TelemetryTestUtils.assertEvents(telemetryEvents, {
-        category: TELEMETRY_EVENT_CATEGORY,
+        category: QuickSuggestTestUtils.TELEMETRY_EVENT_CATEGORY,
       });
     }
 

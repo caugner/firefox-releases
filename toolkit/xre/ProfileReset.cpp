@@ -133,7 +133,8 @@ nsresult ProfileResetCleanup(nsToolkitProfileService* aService,
     // The result callback will shut down the worker thread.
 
     // Wait for the cleanup thread to complete.
-    SpinEventLoopUntil([&]() { return gProfileResetCleanupCompleted; });
+    SpinEventLoopUntil("xre:ProfileResetCreateBackup"_ns,
+                       [&]() { return gProfileResetCleanupCompleted; });
   } else {
     gProfileResetCleanupCompleted = true;
     NS_WARNING("Cleanup thread creation failed");
