@@ -2125,6 +2125,25 @@ class nsIFrame : public nsQueryFrame {
       nsPresContext* aPresContext, mozilla::WidgetMouseEvent* aMouseEvent,
       nsEventStatus* aEventStatus);
 
+  /**
+   * Check whether aSecondaryButtonMouseEvent should or should not cause moving
+   * caret at event point.  This is designed only for the secondary mouse button
+   * event (i.e., right button event in general).
+   *
+   * @param aFrameSelection         The nsFrameSelection which should handle the
+   *                                caret move with.
+   * @param aSecondaryButtonEvent   Must be the button value is
+   *                                MouseButton::eSecondary.
+   * @param aContentAtEventPoint    The content node at the event point.
+   * @param aOffsetAtEventPoint     The offset in aContentAtEventPoint where
+   *                                aSecondaryButtonEvent clicked.
+   */
+  [[nodiscard]] bool MovingCaretToEventPointAllowedIfSecondaryButtonEvent(
+      const nsFrameSelection& aFrameSelection,
+      mozilla::WidgetMouseEvent& aSecondaryButtonEvent,
+      const nsIContent& aContentAtEventPoint,
+      int32_t aOffsetAtEventPoint) const;
+
   MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD HandleMultiplePress(
       nsPresContext* aPresContext, mozilla::WidgetGUIEvent* aEvent,
       nsEventStatus* aEventStatus, bool aControlHeld);
@@ -3203,6 +3222,14 @@ class nsIFrame : public nsQueryFrame {
    * or size queries from script.
    */
   bool HidesContentForLayout() const;
+
+  /**
+   * returns the closest ancestor with `content-visibility` property.
+   * @param aInclude specifies what kind of `content-visibility` to include.
+   */
+  nsIFrame* GetClosestContentVisibilityAncestor(
+      const mozilla::EnumSet<IncludeContentVisibility>& =
+          IncludeAllContentVisibility()) const;
 
   /**
    * Returns true if this frame is entirely hidden due the `content-visibility`
@@ -5565,6 +5592,8 @@ class MOZ_HEAP_CLASS WeakFrame {
 
   nsIFrame* operator->() { return mFrame; }
   operator nsIFrame*() { return mFrame; }
+
+  bool operator==(nsIFrame* const aOther) const { return mFrame == aOther; }
 
   void Clear(mozilla::PresShell* aPresShell);
 
