@@ -25,6 +25,7 @@ static GtkStyleContext* GetCssNodeStyleInternal(WidgetNodeType aNodeType);
 
 static GtkWidget* CreateWindowWidget() {
   GtkWidget* widget = gtk_window_new(GTK_WINDOW_POPUP);
+  MOZ_RELEASE_ASSERT(widget, "We're missing GtkWindow widget!");
   gtk_widget_set_name(widget, "MozillaGtkWidget");
   return widget;
 }
@@ -758,7 +759,10 @@ GtkWidget* GetWidget(WidgetNodeType aAppearance) {
     widget = CreateWidget(aAppearance);
     // Some widgets (MOZ_GTK_COMBOBOX_SEPARATOR for instance) may not be
     // available or implemented.
-    if (!widget) return nullptr;
+    if (!widget) {
+      NS_WARNING(nsPrintfCString("Missing GtkWidget %d\n", aAppearance).get());
+      return nullptr;
+    }
     // In GTK versions prior to 3.18, automatic invalidation of style contexts
     // for widgets was delayed until the next resize event.  Gecko however,
     // typically uses the style context before the resize event runs and so an
@@ -1433,5 +1437,7 @@ void StyleContextSetScale(GtkStyleContext* style, gint aScaleFactor) {
   static auto sGtkStyleContextSetScalePtr =
       (void (*)(GtkStyleContext*, gint))dlsym(RTLD_DEFAULT,
                                               "gtk_style_context_set_scale");
-  sGtkStyleContextSetScalePtr(style, aScaleFactor);
+  if (sGtkStyleContextSetScalePtr && style) {
+    sGtkStyleContextSetScalePtr(style, aScaleFactor);
+  }
 }
