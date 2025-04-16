@@ -34,6 +34,8 @@
 #include "nsINode.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsError.h"
+#include "nsStringFlags.h"
+#include "nsStyleUtil.h"
 #include "nsIFrame.h"
 #include <algorithm>
 #include "nsTextNode.h"
@@ -211,18 +213,6 @@ nsresult txMozillaXMLOutput::endDocument(nsresult aResult) {
     mDocument->SetReadyStateInternal(Document::READYSTATE_INTERACTIVE);
     if (ScriptLoader* loader = mDocument->ScriptLoader()) {
       loader->ParsingComplete(false);
-    }
-  }
-
-  if (!mRefreshString.IsEmpty()) {
-    nsPIDOMWindowOuter* win = mDocument->GetWindow();
-    if (win) {
-      nsCOMPtr<nsIRefreshURI> refURI = do_QueryInterface(win->GetDocShell());
-      if (refURI) {
-        refURI->SetupRefreshURIFromHeader(
-            mDocument->GetDocBaseURI(), mDocument->NodePrincipal(),
-            mDocument->InnerWindowID(), mRefreshString);
-      }
     }
   }
 
@@ -664,7 +654,7 @@ nsresult txMozillaXMLOutput::startHTMLElement(nsIContent* aElement,
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoString metacontent;
-    metacontent.Append(mOutputFormat.mMediaType);
+    CopyUTF8toUTF16(mOutputFormat.mMediaType, metacontent);
     metacontent.AppendLiteral("; charset=");
     metacontent.Append(mOutputFormat.mEncoding);
     rv = meta->SetAttr(kNameSpaceID_None, nsGkAtoms::content, metacontent,
@@ -695,34 +685,7 @@ void txMozillaXMLOutput::endHTMLElement(nsIContent* aElement) {
     }
     mTableState =
         static_cast<TableState>(NS_PTR_TO_INT32(mTableStateStack.pop()));
-
-    return;
   }
-
-  if (mCreatingNewDocument && aElement->IsHTMLElement(nsGkAtoms::meta)) {
-    // handle HTTP-EQUIV data
-    nsAutoString httpEquiv;
-    aElement->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::httpEquiv,
-                                   httpEquiv);
-    if (!httpEquiv.IsEmpty()) {
-      nsAutoString value;
-      aElement->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::content,
-                                     value);
-      if (!value.IsEmpty()) {
-        nsContentUtils::ASCIIToLower(httpEquiv);
-        RefPtr<nsAtom> header = NS_Atomize(httpEquiv);
-        processHTTPEquiv(header, value);
-      }
-    }
-  }
-}
-
-void txMozillaXMLOutput::processHTTPEquiv(nsAtom* aHeader,
-                                          const nsString& aValue) {
-  // For now we only handle "refresh". There's a longer list in
-  // HTMLContentSink::ProcessHeaderData
-  if (aHeader == nsGkAtoms::refresh)
-    LossyCopyUTF16toASCII(aValue, mRefreshString);
 }
 
 nsresult txMozillaXMLOutput::createResultDocument(const nsAString& aName,
@@ -777,9 +740,9 @@ nsresult txMozillaXMLOutput::createResultDocument(const nsAString& aName,
   if (!mOutputFormat.mMediaType.IsEmpty()) {
     mDocument->SetContentType(mOutputFormat.mMediaType);
   } else if (mOutputFormat.mMethod == eHTMLOutput) {
-    mDocument->SetContentType(u"text/html"_ns);
+    mDocument->SetContentType("text/html"_ns);
   } else {
-    mDocument->SetContentType(u"application/xml"_ns);
+    mDocument->SetContentType("application/xml"_ns);
   }
 
   if (mOutputFormat.mMethod == eXMLOutput &&

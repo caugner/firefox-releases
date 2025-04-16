@@ -503,7 +503,6 @@ pref("media.videocontrols.keyboard-tab-to-all-controls", true);
   pref("media.peerconnection.ice.proxy_only_if_behind_proxy", false);
   pref("media.peerconnection.ice.proxy_only", false);
   pref("media.peerconnection.turn.disable", false);
-  pref("media.peerconnection.mute_on_bye_or_timeout", false);
 
   // 770 = DTLS 1.0, 771 = DTLS 1.2, 772 = DTLS 1.3
 pref("media.peerconnection.dtls.version.min", 771);
@@ -514,17 +513,18 @@ pref("media.peerconnection.dtls.version.min", 771);
 #endif
 
   // These values (aec, agc, and noise) are from:
-  // media/webrtc/trunk/webrtc/modules/audio_processing/include/audio_processing.h
+  // third_party/libwebrtc/modules/audio_processing/include/audio_processing.h
   pref("media.getusermedia.aec_enabled", true);
-  pref("media.getusermedia.noise_enabled", true);
-  pref("media.getusermedia.use_aec_mobile", false);
   pref("media.getusermedia.aec", 1); // kModerateSuppression
-  pref("media.getusermedia.aec_extended_filter", true);
-  pref("media.getusermedia.noise", 1); // kModerate
+  pref("media.getusermedia.use_aec_mobile", false);
+  pref("media.getusermedia.residual_echo_enabled", false);
+  pref("media.getusermedia.noise_enabled", true);
+  pref("media.getusermedia.noise", 2); // kHigh
   pref("media.getusermedia.agc_enabled", true);
   pref("media.getusermedia.agc", 1); // kAdaptiveDigital
+  pref("media.getusermedia.agc2_forced", true);
   pref("media.getusermedia.hpf_enabled", true);
-  pref("media.getusermedia.aecm_output_routing", 3); // kSpeakerphone
+  pref("media.getusermedia.transient_enabled", true);
 #endif // MOZ_WEBRTC
 
 #if !defined(ANDROID)
@@ -654,13 +654,13 @@ pref("gfx.webrender.debug.show-overdraw", false);
 pref("gfx.webrender.debug.slow-frame-indicator", false);
 pref("gfx.webrender.debug.picture-caching", false);
 pref("gfx.webrender.debug.force-picture-invalidation", false);
-pref("gfx.webrender.debug.tile-cache-logging", false);
 pref("gfx.webrender.debug.primitives", false);
 pref("gfx.webrender.debug.small-screen", false);
 pref("gfx.webrender.debug.obscure-images", false);
 pref("gfx.webrender.debug.glyph-flashing", false);
 pref("gfx.webrender.debug.capture-profiler", false);
 pref("gfx.webrender.debug.profiler-ui", "Default");
+pref("gfx.webrender.debug.window-visibility", false);
 
 pref("gfx.webrender.multithreading", true);
 #ifdef XP_WIN
@@ -702,17 +702,33 @@ pref("accessibility.browsewithcaret_shortcut.enabled", true);
 // These are some selection-related colors which have no per platform
 // implementation.
 #if !defined(XP_MACOSX)
-pref("ui.textSelectBackgroundDisabled", "#b0b0b0");
+pref("ui.textSelectDisabledBackground", "#b0b0b0");
 #endif
+
 // This makes the selection stand out when typeaheadfind is on.
 // Used with nsISelectionController::SELECTION_ATTENTION
-pref("ui.textSelectBackgroundAttention", "#38d878");
+pref("ui.textSelectAttentionBackground", "#38d878");
+pref("ui.textSelectAttentionForeground", "#ffffff");
+
 // This makes the matched text stand out when findbar highlighting is on.
 // Used with nsISelectionController::SELECTION_FIND
 pref("ui.textHighlightBackground", "#ef0fff");
 // The foreground color for the matched text in findbar highlighting
 // Used with nsISelectionController::SELECTION_FIND
 pref("ui.textHighlightForeground", "#ffffff");
+// The background color for :autofill-ed inputs.
+//
+// In the past, we used the following `filter` to paint autofill backgrounds:
+//
+//   grayscale(21%) brightness(88%) contrast(161%) invert(10%) sepia(40%) saturate(206%);
+//
+// but there are some pages where using `filter` caused issues because it
+// changes the z-order (see bug 1687682, bug 1727950).
+//
+// The color is chosen so that you get the same final color on a white
+// background as the filter above (#fffcc8), but with some alpha so as to
+// prevent fully illegible text.
+pref("ui.-moz-autofill-background", "rgba(255, 249, 145, .5)");
 
 // We want the ability to forcibly disable platform a11y, because
 // some non-a11y-related components attempt to bring it up.  See bug
@@ -913,11 +929,6 @@ pref("view_source.editor.args", "");
 // whether or not to draw images while dragging
 pref("nglayout.enable_drag_images", true);
 
-// enable/disable paint flashing --- useful for debugging
-// the first one applies to everything, the second one only to chrome
-pref("nglayout.debug.paint_flashing", false);
-pref("nglayout.debug.paint_flashing_chrome", false);
-
 // URI fixup prefs
 pref("browser.fixup.alternate.enabled", true);
 pref("browser.fixup.alternate.prefix", "www.");
@@ -972,20 +983,8 @@ pref("print.save_print_settings", true);
 // configuration.
 pref("print.more-settings.open", false);
 
-// Enables you to specify the amount of the paper that is to be treated
-// as unwriteable.  The print_edge_XXX and print_margin_XXX preferences
-// are treated as offsets that are added to this pref.
-// Default is "-1", which means "use the system default".  (If there is
-// no system default, then the -1 is treated as if it were 0.)
-// This is used by both Printing and Print Preview.
-// Units are in 1/100ths of an inch.
-pref("print.print_unwriteable_margin_top",    -1);
-pref("print.print_unwriteable_margin_left",   -1);
-pref("print.print_unwriteable_margin_right",  -1);
-pref("print.print_unwriteable_margin_bottom", -1);
-
-// Enables you to specify the gap from the edge of the paper's
-// unwriteable area to the margin.
+// Enables you to specify a user unwriteable margin, if a printer's actual
+// unwriteable margin is greater than this the printer one will be used.
 // This is used by both Printing and Print Preview
 // Units are in 1/100ths of an inch.
 pref("print.print_edge_top", 0);
@@ -999,11 +998,6 @@ pref("print.print_edge_bottom", 0);
   // This is the default. Probably just remove this.
   pref("print.print_in_color", true);
 #endif
-
-// Pref used by the spellchecker extension to control the
-// maximum number of misspelled words that will be underlined
-// in a document.
-pref("extensions.spellcheck.inline.max-misspellings", 500);
 
 // Whether inserting <div> when typing Enter in a block element which can
 // contain <div>.  If false, inserts <br> instead.
@@ -1148,6 +1142,9 @@ pref("javascript.options.mem.max", -1);
 // JSGC_MODE
 pref("javascript.options.mem.gc_per_zone", true);
 pref("javascript.options.mem.gc_incremental", true);
+
+// JSGC_INCREMENTAL_WEAKMAP_ENABLED
+pref("javascript.options.mem.incremental_weakmap", true);
 
 // JSGC_SLICE_TIME_BUDGET_MS
 // Override the shell's default of unlimited slice time.
@@ -3758,9 +3755,6 @@ pref("browser.region.update.enabled", true);
 
 // Enable/Disable the device storage API for content
 pref("device.storage.enabled", false);
-
-// Push/Pop/Replace State prefs
-pref("browser.history.maxStateObjectSize", 2097152);
 
 pref("browser.meta_refresh_when_inactive.disabled", false);
 
