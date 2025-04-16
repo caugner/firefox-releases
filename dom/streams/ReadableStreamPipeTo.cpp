@@ -18,11 +18,16 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsISupportsImpl.h"
 
+#include "js/Exception.h"
+
 namespace mozilla::dom {
 
 struct PipeToReadRequest;
 class WriteFinishedPromiseHandler;
 class ShutdownActionFinishedPromiseHandler;
+
+// TODO: Bug 1756794
+using ::ImplCycleCollectionUnlink;
 
 // https://streams.spec.whatwg.org/#readable-stream-pipe-to (Steps 14-15.)
 //
@@ -379,15 +384,13 @@ class WriteFinishedPromiseHandler final : public PromiseNativeHandler {
   }
 };
 
-NS_IMPL_CYCLE_COLLECTION(WriteFinishedPromiseHandler, mPipeToPump)
+NS_IMPL_CYCLE_COLLECTION_WITH_JS_MEMBERS(WriteFinishedPromiseHandler,
+                                         (mPipeToPump), (mError))
 NS_IMPL_CYCLE_COLLECTING_ADDREF(WriteFinishedPromiseHandler)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(WriteFinishedPromiseHandler)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WriteFinishedPromiseHandler)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(WriteFinishedPromiseHandler)
-  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mError)
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 // https://streams.spec.whatwg.org/#rs-pipeTo-shutdown-with-action
 // Shutdown with an action: if any of the above requirements ask to shutdown
@@ -474,15 +477,13 @@ class ShutdownActionFinishedPromiseHandler final : public PromiseNativeHandler {
   }
 };
 
-NS_IMPL_CYCLE_COLLECTION(ShutdownActionFinishedPromiseHandler, mPipeToPump)
+NS_IMPL_CYCLE_COLLECTION_WITH_JS_MEMBERS(ShutdownActionFinishedPromiseHandler,
+                                         (mPipeToPump), (mError))
 NS_IMPL_CYCLE_COLLECTING_ADDREF(ShutdownActionFinishedPromiseHandler)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(ShutdownActionFinishedPromiseHandler)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ShutdownActionFinishedPromiseHandler)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(ShutdownActionFinishedPromiseHandler)
-  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mError)
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 // https://streams.spec.whatwg.org/#rs-pipeTo-shutdown-with-action
 // Continuation after Step 3. triggered a promise resolution.
@@ -501,12 +502,16 @@ void PipeToPump::ShutdownWithActionAfterFinishedWrite(
   RefPtr<Promise> p = aAction(aCx, thisRefPtr, aError, rv);
 
   // Error while calling actions above, continue immediately with finalization.
-  rv.WouldReportJSException();
-  if (rv.Failed()) {
+  if (rv.MaybeSetPendingException(aCx)) {
+    JS::Rooted<Maybe<JS::Value>> someError(aCx);
+
     JS::Rooted<JS::Value> error(aCx);
-    bool ok = ToJSValue(aCx, std::move(rv), &error);
-    MOZ_RELEASE_ASSERT(ok, "must be ok");
-    JS::Rooted<mozilla::Maybe<JS::Value>> someError(aCx, Some(error.get()));
+    if (JS_GetPendingException(aCx, &error)) {
+      someError = Some(error.get());
+    }
+
+    JS_ClearPendingException(aCx);
+
     Finalize(aCx, someError);
     return;
   }
@@ -696,8 +701,7 @@ void PipeToPump::Read(JSContext* aCx) {
   RefPtr<ReadRequest> request = new PipeToReadRequest(this);
   ErrorResult rv;
   ReadableStreamDefaultReaderRead(aCx, MOZ_KnownLive(mReader), request, rv);
-  rv.WouldReportJSException();
-  if (rv.Failed()) {
+  if (rv.MaybeSetPendingException(aCx)) {
     // XXX It's actually not quite obvious what we should do here.
     // We've got an error during reading, so on the surface it seems logical
     // to invoke `OnSourceErrored`. However in certain cases the required
@@ -706,9 +710,15 @@ void PipeToPump::Read(JSContext* aCx) {
     // `OnReadFulfilled` (via PipeToReadRequest::ChunkSteps) fails in
     // a synchronous fashion.
     JS::Rooted<JS::Value> error(aCx);
-    bool ok = ToJSValue(aCx, std::move(rv), &error);
-    MOZ_RELEASE_ASSERT(ok, "must be ok");
-    JS::Rooted<Maybe<JS::Value>> someError(aCx, Some(error.get()));
+    JS::Rooted<Maybe<JS::Value>> someError(aCx);
+
+    // The error was moved to the JSContext by MaybeSetPendingException.
+    if (JS_GetPendingException(aCx, &error)) {
+      someError = Some(error.get());
+    }
+
+    JS_ClearPendingException(aCx);
+
     Shutdown(aCx, someError);
   }
 }

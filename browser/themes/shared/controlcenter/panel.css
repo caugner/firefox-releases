@@ -333,12 +333,6 @@
 
 #identity-popup[connection^=secure] .identity-popup-security-connection {
   background-image: url(chrome://global/skin/icons/security.svg);
-  -moz-context-properties: fill;
-}
-
-#identity-popup[connection^=secure][lock-icon-gray] .identity-popup-security-connection {
-  -moz-context-properties: fill, fill-opacity;
-  fill: currentColor;
 }
 
 /* Use [isbroken] to make sure we don't show a warning lock on an http page. See Bug 1192162. */
@@ -463,14 +457,6 @@ description#identity-popup-content-verifier,
 }
 
 /* CONTENT BLOCKING / TRACKING PROTECTION */
-
-#protections-popup-sendReportView-footer {
-  display: flex;
-}
-
-#protections-popup-sendReportView-footer > button {
-  flex: 1;
-}
 
 #protections-popup-sendReportView-heading,
 #protections-popup-sendReportView-body {
@@ -1092,10 +1078,6 @@ description#identity-popup-content-verifier,
 #geo-access-indicator-item {
   font-size: 0.8em;
   color: var(--panel-description-color);
-}
-
-#protections-popup-sendReportView-footer > button {
-  flex: none;
 }
 
 .protections-popup-description > description {

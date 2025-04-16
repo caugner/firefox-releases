@@ -16,11 +16,6 @@
              class="browser-toolbar chromeclass-menubar titlebar-color"
              customizable="true"
              mode="icons"
-#ifdef MENUBAR_CAN_AUTOHIDE
-             data-l10n-id="toolbar-context-menu-menu-bar-cmd"
-             data-l10n-attrs="toolbarname"
-             autohide="true"
-#endif
              context="toolbar-context-menu">
       <toolbaritem id="menubar-items" align="center">
 # The entire main menubar is placed into browser-menubar.inc, so that it can be
@@ -572,7 +567,8 @@
                   class="subviewbutton"
                   data-l10n-id="bookmarks-tools-sidebar-visibility"
                   data-l10n-args='{ "isVisible": false }'
-                  oncommand="SidebarUI.toggle('viewBookmarksSidebar');"/>
+                  oncommand="SidebarUI.toggle('viewBookmarksSidebar');"
+                  key="viewBookmarksSidebarKb"/>
         <!-- NB: temporary solution for bug 985024, this should go away soon. -->
         <menuitem id="BMB_bookmarksShowAllTop"
                   class="subviewbutton"

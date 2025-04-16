@@ -264,10 +264,11 @@ class BookmarkState {
   constructor(info, tags = "", keyword = "") {
     this._guid = info.itemGuid;
     this._postData = info.postData;
+    this._isTagContainer = info.isTag;
 
     // Original Bookmark
     this._originalState = {
-      title: info.title,
+      title: this._isTagContainer ? info.tag : info.title,
       uri: info.uri?.spec,
       tags: tags
         .trim()
@@ -275,7 +276,6 @@ class BookmarkState {
         .filter(tag => !!tag.length),
       keyword,
       parentGuid: info.parentGuid,
-      tag: info.tag,
     };
 
     // Edited bookmark
@@ -324,20 +324,22 @@ class BookmarkState {
   }
 
   /**
-   * Save edited tag for the tagContainer
-   * @param {string} tag
-   */
-  _tagChanged(tag) {
-    this._newState.tag = tag;
-  }
-
-  /**
    * Save() API function for bookmark.
    *
    * @returns {string} bookmark.guid
    */
   async save() {
     if (!Object.keys(this._newState).length) {
+      return this._guid;
+    }
+
+    if (this._isTagContainer && this._newState.title) {
+      await PlacesTransactions.RenameTag({
+        oldTag: this._originalState.title,
+        tag: this._newState.title,
+      })
+        .transact()
+        .catch(Cu.reportError);
       return this._guid;
     }
 
@@ -408,14 +410,6 @@ class BookmarkState {
             PlacesTransactions.Move({
               guid: this._guid,
               newParentGuid: this._newState.parentGuid,
-            })
-          );
-          break;
-        case "tag":
-          transactions.push(
-            PlacesTransactions.RenameTag({
-              oldTag: this._originalState.tag,
-              tag: this._newState.tag,
             })
           );
           break;
@@ -1083,14 +1077,14 @@ var PlacesUIUtils = {
    */
   openNodeIn: function PUIU_openNodeIn(aNode, aWhere, aView, aPrivate) {
     let window = aView.ownerWindow;
-    this._openNodeIn(aNode, aWhere, window, aPrivate);
+    this._openNodeIn(aNode, aWhere, window, { aPrivate });
   },
 
   _openNodeIn: function PUIU__openNodeIn(
     aNode,
     aWhere,
     aWindow,
-    aPrivate = false
+    { aPrivate = false, userContextId = 0 } = {}
   ) {
     if (
       aNode &&
@@ -1113,6 +1107,7 @@ var PlacesUIUtils = {
         inBackground: this.loadBookmarksInBackground,
         allowInheritPrincipal: isJavaScriptURL,
         private: aPrivate,
+        userContextId,
       });
     }
   },
@@ -1542,6 +1537,12 @@ var PlacesUIUtils = {
       document.getElementById("placesContext_open:newprivatewindow").hidden =
         PrivateBrowsingUtils.isWindowPrivate(window) ||
         !PrivateBrowsingUtils.enabled;
+      document.getElementById(
+        "placesContext_open:newcontainertab"
+      ).hidden = !Services.prefs.getBoolPref(
+        "privacy.userContext.enabled",
+        false
+      );
     }
 
     event.target.ownerGlobal.updateCommands("places");
@@ -1585,6 +1586,28 @@ var PlacesUIUtils = {
     if (menupopup.id == "placesContext") {
       PlacesUIUtils.lastContextMenuTriggerNode = null;
     }
+  },
+
+  createContainerTabMenu(event) {
+    let window = event.target.ownerGlobal;
+    return window.createUserContextMenu(event, { isContextMenu: true });
+  },
+
+  openInContainerTab(event) {
+    let userContextId = parseInt(
+      event.target.getAttribute("data-usercontextid")
+    );
+    let triggerNode = this.lastContextMenuTriggerNode;
+    let isManaged = !!triggerNode.closest("#managed-bookmarks");
+    if (isManaged) {
+      let window = triggerNode.ownerGlobal;
+      window.openTrustedLinkIn(triggerNode.link, "tab", { userContextId });
+      return;
+    }
+    let view = this.getViewForNode(triggerNode);
+    this._openNodeIn(view.selectedNode, "tab", view.ownerWindow, {
+      userContextId,
+    });
   },
 
   openSelectionInTabs(event) {

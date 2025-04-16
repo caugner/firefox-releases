@@ -1253,6 +1253,18 @@ nsresult Database::InitSchema(bool* aDatabaseMigrated) {
 
       // Firefox 99 uses schema version 64
 
+      if (currentSchemaVersion < 65) {
+        rv = MigrateV65Up();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
+      if (currentSchemaVersion < 66) {
+        rv = MigrateV66Up();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
+      // Firefox 100 uses schema version 66
+
       // Schema Upgrades must add migration code here.
       // >>> IMPORTANT! <<<
       // NEVER MIX UP SYNC AND ASYNC EXECUTION IN MIGRATORS, YOU MAY LOCK THE
@@ -2459,6 +2471,53 @@ nsresult Database::MigrateV64Up() {
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  return NS_OK;
+}
+
+nsresult Database::MigrateV65Up() {
+  // Add hidden column to snapshot groups to snapshots table if necessary.
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = mMainConn->CreateStatement(
+      "SELECT hidden FROM moz_places_metadata_groups_to_snapshots"_ns,
+      getter_AddRefs(stmt));
+  if (NS_FAILED(rv)) {
+    rv = mMainConn->ExecuteSimpleSQL(
+        "ALTER TABLE moz_places_metadata_groups_to_snapshots "
+        "ADD COLUMN hidden INTEGER DEFAULT 0 NOT NULL "_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return NS_OK;
+}
+
+nsresult Database::MigrateV66Up() {
+  // Let the title column in snapshots groups be NULL.
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = mMainConn->CreateStatement(
+      "SELECT 1 "
+      "FROM sqlite_master "
+      "WHERE name = 'moz_places_metadata_snapshots_groups' AND "
+      "INSTR(sql, 'title TEXT NOT NULL') > 0"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+  bool hasMore = false;
+  if (NS_SUCCEEDED(stmt->ExecuteStep(&hasMore)) && hasMore) {
+    // Migrate non-empty titles to the builder_data object, drop the column
+    // and recreate a nullable one.
+    rv = mMainConn->ExecuteSimpleSQL(
+        "UPDATE moz_places_metadata_snapshots_groups "
+        "SET builder_data = json_set(IFNULL(builder_data, json_object()), "
+        "'$.title', title) "
+        "WHERE title <> '' AND builder_data->>'title' IS NULL"_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = mMainConn->ExecuteSimpleSQL(
+        "ALTER TABLE moz_places_metadata_snapshots_groups DROP COLUMN title"_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = mMainConn->ExecuteSimpleSQL(
+        "ALTER TABLE moz_places_metadata_snapshots_groups "
+        "ADD COLUMN title TEXT"_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
   return NS_OK;
 }
 

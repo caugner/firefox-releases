@@ -52,7 +52,9 @@ class VendorManifest(MozbuildObject):
         # moz.yaml files but missing updatebot information
         if "vendoring" in self.manifest:
             ref_type = self.manifest["vendoring"]["tracking"]
-            if ref_type == "tag":
+            if revision == "tip":
+                ref, timestamp = self.source_host.upstream_commit("HEAD")
+            elif ref_type == "tag":
                 ref, timestamp = self.source_host.upstream_tag(revision)
             else:
                 ref, timestamp = self.source_host.upstream_commit(revision)
@@ -246,7 +248,7 @@ class VendorManifest(MozbuildObject):
                     "Cleaning {vendor_dir} to import changes.",
                 )
                 # We use double asterisk wildcard here to get complete list of recursive contents
-                for file in self.convert_patterns_to_paths(vendor_dir, "**"):
+                for file in self.convert_patterns_to_paths(vendor_dir, ["**"]):
                     file = mozpath.normsep(file)
                     if file not in to_keep:
                         mozfile.remove(file)
@@ -454,6 +456,8 @@ class VendorManifest(MozbuildObject):
                 for a in update.get("args", []):
                     if a == "{revision}":
                         args.append(revision)
+                    elif any(s in a for s in ["{cwd}", "{vendor_dir}", "{yaml_dir}"]):
+                        args.append(get_full_path(a, support_cwd=True))
                     else:
                         args.append(a)
 
@@ -495,7 +499,7 @@ class VendorManifest(MozbuildObject):
             files_added += header_files_to_add
         elif header_files_to_add:
             self.log(
-                logging.WARNIGN,
+                logging.WARNING,
                 "header_files_warning",
                 {},
                 (
@@ -506,7 +510,7 @@ class VendorManifest(MozbuildObject):
             )
 
         self.log(
-            logging.DEBUG,
+            logging.INFO,
             "vendor",
             {"added": len(files_added), "removed": len(files_removed)},
             "Found {added} files added and {removed} files removed.",

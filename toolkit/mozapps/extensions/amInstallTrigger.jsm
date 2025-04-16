@@ -9,6 +9,13 @@ const { Preferences } = ChromeUtils.import(
   "resource://gre/modules/Preferences.jsm"
 );
 const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+
+XPCOMUtils.defineLazyServiceGetters(this, {
+  ThirdPartyUtil: ["@mozilla.org/thirdpartyutil;1", "mozIThirdPartyUtil"],
+});
 
 const XPINSTALL_MIMETYPE = "application/x-xpinstall";
 
@@ -121,6 +128,14 @@ InstallTrigger.prototype = {
   },
 
   install(installs, callback) {
+    if (Services.prefs.getBoolPref("xpinstall.userActivation.required", true)) {
+      if (!this._window.windowUtils.isHandlingUserInput) {
+        throw new this._window.Error(
+          "InstallTrigger.install can only be called from a user input handler"
+        );
+      }
+    }
+
     let keys = Object.keys(installs);
     if (keys.length > 1) {
       throw new this._window.Error("Only one XPI may be installed at a time");
@@ -213,6 +228,7 @@ InstallTrigger.prototype = {
       method: "installTrigger",
       sourceHost,
       sourceURL,
+      hasCrossOriginAncestor: ThirdPartyUtil.isThirdPartyWindow(this._window),
     };
 
     return this._mediator.install(

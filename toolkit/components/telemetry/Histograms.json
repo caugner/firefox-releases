@@ -3208,8 +3208,8 @@
     "record_in_processes": ["main", "socket"],
     "products": ["firefox", "fennec"],
     "alert_emails": ["seceng-telemetry@mozilla.com", "dkeeler@mozilla.com"],
-    "bug_numbers": [1675655],
-    "expires_in_version": "101",
+    "bug_numbers": [1675655, 1758827],
+    "expires_in_version": "113",
     "kind": "categorical",
     "releaseChannelCollection": "opt-out",
     "description": "Does CRLite and OCSP fetching agree when a certificate is revoked?",
@@ -7808,18 +7808,6 @@
     "bug_numbers": [1656994],
     "description": "Update: How much longer langpacks took to download than the app update in seconds."
   },
-  "UPTAKE_REMOTE_CONTENT_RESULT_1": {
-    "record_in_processes": ["all"],
-    "products": ["firefox", "fennec", "thunderbird"],
-    "expires_in_version": "never",
-    "kind": "categorical",
-    "keyed": true,
-    "labels": ["up_to_date", "success", "backoff", "pref_disabled", "parse_error", "content_error", "sign_error", "sign_retry_error", "conflict_error", "sync_error", "apply_error", "server_error", "certificate_error", "download_error", "timeout_error", "network_error", "offline_error", "cleanup_error", "unknown_error", "custom_1_error", "custom_2_error", "custom_3_error", "custom_4_error", "custom_5_error"],
-    "releaseChannelCollection": "opt-out",
-    "alert_emails": ["storage-team@mozilla.com"],
-    "bug_numbers": [1254099],
-    "description": "Generic histogram to track uptake of remote content like blocklists, settings or updates."
-  },
   "THUNDERBIRD_GLODA_SIZE_MB": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -8829,37 +8817,48 @@
     "releaseChannelCollection": "opt-out",
     "description": "Number of HTML editors a node in the window has been observed by mutation observers, but has not had beforeinput event listeners"
   },
-  "ENCODING_OVERRIDE_SITUATION_2": {
-    "record_in_processes": ["main", "content"],
+  "ENCODING_OVERRIDE_SITUATION_TEXT": {
+    "record_in_processes": ["content"],
     "products": ["firefox"],
     "alert_emails": ["hsivonen@mozilla.com"],
-    "bug_numbers": [840476, 977573, 1513473, 1554592, 1603047, 1648464, 1686463, 1706838],
-    "expires_in_version": "96",
+    "bug_numbers": [840476, 977573, 1513473, 1554592, 1603047, 1648464, 1686463, 1706838, 1712928],
+    "expires_in_version": "106",
     "releaseChannelCollection": "opt-out",
     "kind": "categorical",
-    "labels": ["AutoOverridden", "ManuallyOverridden", "LocalLabeled", "LocalUnlabeled", "UnlabeledInLk", "UnlabeledJp", "UnlabeledNonUtf8", "UnlabeledUtf8", "ChannelNonUtf8", "ChannelUtf8", "MetaNonUtf8", "MetaUtf8", "Bug", "UnlabeledAscii", "UnlabeledNonUtf8TLD"],
-    "description": "Labeling status of top-level page when overriding encoding"
+    "labels": ["UnlabeledAscii", "UnlabeledNonUtf8TLD", "UnlabeledNonUtf8", "UnlabeledUtf8", "ChannelNonUtf8", "ChannelUtf8", "Bug"],
+    "description": "Labeling status of top-level page when overriding encoding for plain text"
+  },
+  "ENCODING_OVERRIDE_SITUATION_HTML": {
+    "record_in_processes": ["content"],
+    "products": ["firefox"],
+    "alert_emails": ["hsivonen@mozilla.com"],
+    "bug_numbers": [840476, 977573, 1513473, 1554592, 1603047, 1648464, 1686463, 1706838, 1712928],
+    "expires_in_version": "106",
+    "releaseChannelCollection": "opt-out",
+    "kind": "categorical",
+    "labels": ["UnlabeledAscii", "UnlabeledNonUtf8TLD", "UnlabeledNonUtf8", "UnlabeledUtf8", "ChannelNonUtf8", "ChannelUtf8", "InternalNonUtf8", "InternalUtf8", "LocalLabeled", "Bug"],
+    "description": "Labeling status of top-level page when overriding encoding for HTML"
   },
   "ENCODING_DETECTION_OUTCOME_TEXT": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["content"],
     "products": ["firefox"],
     "alert_emails": ["hsivonen@mozilla.com"],
-    "bug_numbers": [1686463, 1702248, 1706838],
-    "expires_in_version": "96",
+    "bug_numbers": [1686463, 1702248, 1706838, 1712928],
+    "expires_in_version": "106",
     "releaseChannelCollection": "opt-out",
     "kind": "categorical",
-    "labels": ["UtfInitial", "UtfFinal", "TldInitial", "TldFinal", "ContentInitial", "ContentFinal", "GenericInitial", "GenericFinal"],
+    "labels": ["UtfInitial", "UtfFinal", "TldInitial", "TldFinal", "ContentInitial", "ContentFinal", "GenericInitial", "GenericFinal", "TldFinalA", "ContentFinalA", "GenericFinalA"],
     "description": "Type of automatic encoding detection outcome for text/plain excluding ASCII-only"
   },
   "ENCODING_DETECTION_OUTCOME_HTML": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["content"],
     "products": ["firefox"],
     "alert_emails": ["hsivonen@mozilla.com"],
-    "bug_numbers": [1686463, 1702248, 1706838],
-    "expires_in_version": "96",
+    "bug_numbers": [1686463, 1702248, 1706838, 1712928],
+    "expires_in_version": "106",
     "releaseChannelCollection": "opt-out",
     "kind": "categorical",
-    "labels": ["UtfInitial", "UtfFinal", "TldInitial", "TldFinal", "ContentInitial", "ContentFinal", "GenericInitial", "GenericFinal"],
+    "labels": ["UtfInitial", "UtfFinal", "TldInitial", "TldFinal", "ContentInitial", "ContentFinal", "GenericInitial", "GenericFinal", "TldFinalA", "ContentFinalA", "GenericFinalA"],
     "description": "Type of automatic encoding detection outcome for text/html excluding ASCII-only"
   },
   "LONG_REFLOW_INTERRUPTIBLE": {
@@ -14460,7 +14459,7 @@
     "high": 100,
     "n_buckets": 50,
     "bug_numbers": [1238433, 1570634],
-    "description": "Percentage of frames decoded frames dropped in an HTMLVideoElement"
+    "description": "Percentage of frames decoded frames dropped between starting and stopping a video"
   },
   "VIDEO_DROPPED_FRAMES_PROPORTION_EXPONENTIAL" : {
     "record_in_processes": ["content"],
@@ -14472,7 +14471,43 @@
     "high": 10000,
     "n_buckets": 100,
     "bug_numbers": [1238433, 1570634, 1752207, 1755363],
-    "description": "Frames of of 10,000 decoded frames dropped in an HTMLVideoElement"
+    "description": "Ratio of dropped frames per total decoded frames scaled by 10,000 between starting and stopping a video"
+  },
+  "VIDEO_DROPPED_DECODED_FRAMES_PROPORTION_EXPONENTIAL" : {
+    "record_in_processes": ["content"],
+    "products": ["firefox"],
+    "alert_emails": ["bryce@mozilla.com", "padenot@mozila.com", "alwu@mozilla.com"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "kind": "exponential",
+    "high": 10000,
+    "n_buckets": 100,
+    "bug_numbers": [1761994],
+    "description": "Ratio of decoder dropped frames per total decoded frames scaled by 10,000 between starting and stopping a video"
+  },
+  "VIDEO_DROPPED_SINK_FRAMES_PROPORTION_EXPONENTIAL" : {
+    "record_in_processes": ["content"],
+    "products": ["firefox"],
+    "alert_emails": ["bryce@mozilla.com", "padenot@mozila.com", "alwu@mozilla.com"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "kind": "exponential",
+    "high": 10000,
+    "n_buckets": 100,
+    "bug_numbers": [1761994],
+    "description": "Ratio of sink dropped frames per total decoded frames scaled by 10,000 between starting and stopping a video"
+  },
+  "VIDEO_DROPPED_COMPOSITOR_FRAMES_PROPORTION_EXPONENTIAL" : {
+    "record_in_processes": ["content"],
+    "products": ["firefox"],
+    "alert_emails": ["bryce@mozilla.com", "padenot@mozila.com", "alwu@mozilla.com"],
+    "expires_in_version": "never",
+    "releaseChannelCollection": "opt-out",
+    "kind": "exponential",
+    "high": 10000,
+    "n_buckets": 100,
+    "bug_numbers": [1761994],
+    "description": "Ratio of compositor dropped frames per total decoded frames scaled by 10,000 between starting and stopping a video"
   },
   "MEDIA_DECODER_BACKEND_USED": {
     "record_in_processes": ["main", "content", "gpu"],
@@ -15944,7 +15979,7 @@
     "description": "HTML document compat mode (quirks mode)"
   },
   "BFCACHE_COMBO": {
-    "record_in_processes": ["content"],
+    "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
     "alert_emails": ["sefeng@mozilla.com"],
     "bug_numbers": [1531917],
@@ -16889,5 +16924,17 @@
     "high": 3000,
     "n_buckets": 100,
     "description": "Collect the time elapsed between receiving a 103 response and the final response for a page load."
+  },
+  "FX_PICTURE_IN_PICTURE_WINDOW_OPEN_DURATION": {
+    "record_in_processes": ["main"],
+    "products": ["firefox"],
+    "alert_emails": ["mconley@mozilla.com"],
+    "bug_numbers": [1560590, 1683100, 1756703],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 10000,
+    "n_buckets": 100,
+    "description": "The length of time (in seconds) that a Picture-in-Picture window was open.",
+    "releaseChannelCollection": "opt-out"
   }
 }

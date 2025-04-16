@@ -30,7 +30,7 @@ class LogMessageHandler:
         self.send_message("log", data)
 
 
-class TestRunner(object):
+class TestRunner:
     """Class implementing the main loop for running tests.
 
     This class delegates the job of actually running a test to the executor
@@ -43,13 +43,14 @@ class TestRunner(object):
                          parent TestRunnerManager process
     :param executor: TestExecutor object that will actually run a test.
     """
-    def __init__(self, logger, command_queue, result_queue, executor):
+    def __init__(self, logger, command_queue, result_queue, executor, recording):
         self.command_queue = command_queue
         self.result_queue = result_queue
 
         self.executor = executor
         self.name = mpcontext.get_context().current_process().name
         self.logger = logger
+        self.recording = recording
 
     def __enter__(self):
         return self
@@ -124,7 +125,7 @@ class TestRunner(object):
 def start_runner(runner_command_queue, runner_result_queue,
                  executor_cls, executor_kwargs,
                  executor_browser_cls, executor_browser_kwargs,
-                 capture_stdio, stop_flag):
+                 capture_stdio, stop_flag, recording):
     """Launch a TestRunner in a new process"""
 
     def send_message(command, *args):
@@ -146,7 +147,7 @@ def start_runner(runner_command_queue, runner_result_queue,
         try:
             browser = executor_browser_cls(**executor_browser_kwargs)
             executor = executor_cls(logger, browser, **executor_kwargs)
-            with TestRunner(logger, runner_command_queue, runner_result_queue, executor) as runner:
+            with TestRunner(logger, runner_command_queue, runner_result_queue, executor, recording) as runner:
                 try:
                     runner.run()
                 except KeyboardInterrupt:
@@ -157,7 +158,7 @@ def start_runner(runner_command_queue, runner_result_queue,
             handle_error(e)
 
 
-class BrowserManager(object):
+class BrowserManager:
     def __init__(self, logger, browser, command_queue, no_timeout=False):
         self.logger = logger
         self.browser = browser
@@ -241,7 +242,7 @@ class BrowserManager(object):
         return self.browser.is_alive()
 
 
-class _RunnerManagerState(object):
+class _RunnerManagerState:
     before_init = namedtuple("before_init", [])
     initializing = namedtuple("initializing",
                               ["test", "test_group", "group_metadata", "failure_count"])
@@ -415,7 +416,7 @@ class TestRunnerManager(threading.Thread):
         try:
             command, data = self.command_queue.get(True, 1)
             self.logger.debug("Got command: %r" % command)
-        except IOError:
+        except OSError:
             self.logger.error("Got IOError from poll")
             return RunnerManagerState.restarting(self.state.test,
                                                  self.state.test_group,
@@ -507,7 +508,8 @@ class TestRunnerManager(threading.Thread):
                 executor_browser_cls,
                 executor_browser_kwargs,
                 self.capture_stdio,
-                self.child_stop_flag)
+                self.child_stop_flag,
+                self.recording)
 
         mp = mpcontext.get_context()
         self.test_runner_proc = mp.Process(target=start_runner,
@@ -848,7 +850,7 @@ def make_test_queue(tests, test_source_cls, **test_source_kwargs):
     return queue
 
 
-class ManagerGroup(object):
+class ManagerGroup:
     """Main thread object that owns all the TestRunnerManager threads."""
     def __init__(self, suite_name, size, test_source_cls, test_source_kwargs,
                  browser_cls, browser_kwargs,

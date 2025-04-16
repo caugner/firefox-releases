@@ -61,13 +61,9 @@
       );
       this._hiddenSoundPlayingTabs = new Set();
 
-      // Normal tab title is used also in the permanent private browsing mode.
-      let strId =
-        PrivateBrowsingUtils.isWindowPrivate(window) &&
-        !Services.prefs.getBoolPref("browser.privatebrowsing.autostart")
-          ? "emptyPrivateTabTitle"
-          : "emptyTabTitle";
-      this.emptyTabTitle = gTabBrowserBundle.GetStringFromName("tabs." + strId);
+      this.emptyTabTitle = gTabBrowserBundle.GetStringFromName(
+        this.getTabTitleMessageId()
+      );
 
       var tab = this.allTabs[0];
       tab.label = this.emptyTabTitle;
@@ -100,6 +96,7 @@
 
       this.boundObserve = (...args) => this.observe(...args);
       Services.prefs.addObserver("privacy.userContext", this.boundObserve);
+      Services.obs.addObserver(this.boundObserve, "intl:app-locales-changed");
       this.observe(null, "nsPref:changed", "privacy.userContext.enabled");
 
       XPCOMUtils.defineLazyPreferenceGetter(
@@ -750,17 +747,39 @@
           }
         }
       } else if (draggedTab) {
-        let newIndex = this._getDropIndex(event, false);
-        let newTabs = [];
-        for (let tab of movingTabs) {
-          let newTab = gBrowser.adoptTab(tab, newIndex++, tab == draggedTab);
-          newTabs.push(newTab);
+        // Move the tabs. To avoid multiple tab-switches in the original window,
+        // the selected tab should be adopted last.
+        const dropIndex = this._getDropIndex(event, false);
+        let newIndex = dropIndex;
+        let selectedTab;
+        let indexForSelectedTab;
+        for (let i = 0; i < movingTabs.length; ++i) {
+          const tab = movingTabs[i];
+          if (tab.selected) {
+            selectedTab = tab;
+            indexForSelectedTab = newIndex;
+          } else {
+            const newTab = gBrowser.adoptTab(tab, newIndex, tab == draggedTab);
+            if (newTab) {
+              ++newIndex;
+            }
+          }
+        }
+        if (selectedTab) {
+          const newTab = gBrowser.adoptTab(
+            selectedTab,
+            indexForSelectedTab,
+            selectedTab == draggedTab
+          );
+          if (newTab) {
+            ++newIndex;
+          }
         }
 
         // Restore tab selection
         gBrowser.addRangeToMultiSelectedTabs(
-          newTabs[0],
-          newTabs[newTabs.length - 1]
+          gBrowser.tabs[dropIndex],
+          gBrowser.tabs[newIndex - 1]
         );
       } else {
         // Pass true to disallow dropping javascript: or data: urls
@@ -977,6 +996,14 @@
       event.stopPropagation();
     }
 
+    getTabTitleMessageId() {
+      // Normal tab title is used also in the permanent private browsing mode.
+      return PrivateBrowsingUtils.isWindowPrivate(window) &&
+        !Services.prefs.getBoolPref("browser.privatebrowsing.autostart")
+        ? "tabs.emptyPrivateTabTitle"
+        : "tabs.emptyTabTitle";
+    }
+
     get tabbox() {
       return document.getElementById("tabbrowser-tabbox");
     }
@@ -1148,6 +1175,19 @@
             }
           }
 
+          break;
+
+        case "intl:app-locales-changed":
+          document.l10n.ready.then(() => {
+            // The cached emptyTabTitle needs updating, create a new string bundle
+            // here to ensure the latest locale string is used.
+            const bundle = Services.strings.createBundle(
+              "chrome://browser/locale/tabbrowser.properties"
+            );
+            this.emptyTabTitle = bundle.GetStringFromName(
+              this.getTabTitleMessageId()
+            );
+          });
           break;
       }
     }
@@ -2122,6 +2162,10 @@
     destroy() {
       if (this.boundObserve) {
         Services.prefs.removeObserver("privacy.userContext", this.boundObserve);
+        Services.obs.removeObserver(
+          this.boundObserve,
+          "intl:app-locales-changed"
+        );
       }
 
       CustomizableUI.removeListener(this);

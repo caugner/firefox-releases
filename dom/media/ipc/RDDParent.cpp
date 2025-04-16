@@ -108,7 +108,10 @@ bool RDDParent::Init(base::ProcessId aParentPid, const char* aParentBuildID,
   gfxVars::Initialize();
 #ifdef XP_WIN
   DeviceManagerDx::Init();
-  wmf::MFStartup();
+  auto rv = wmf::MediaFoundationInitializer::HasInitialized();
+  if (!rv) {
+    NS_WARNING("Failed to init Media Foundation in the RDD process");
+  }
 #endif
 
   mozilla::ipc::SetThisProcessName("RDD Process");
@@ -203,7 +206,6 @@ mozilla::ipc::IPCResult RDDParent::RecvInitVideoBridge(
           Feature::D3D11_COMPOSITING,
           Feature::OPENGL_COMPOSITING,
           Feature::DIRECT2D,
-          Feature::WEBGPU,
       },
       aContentDeviceData.prefs());
 #ifdef XP_WIN
@@ -299,9 +301,6 @@ void RDDParent::ActorDestroy(ActorDestroyReason aWhy) {
       [](ByteBuf&& aBuf) { glean::SendFOGData(std::move(aBuf)); });
 
 #ifndef NS_FREE_PERMANENT_DATA
-#  ifdef XP_WIN
-  wmf::MFShutdown();
-#  endif
   // No point in going through XPCOM shutdown because we don't keep persistent
   // state.
   ProcessChild::QuickExit();
@@ -310,10 +309,6 @@ void RDDParent::ActorDestroy(ActorDestroyReason aWhy) {
   // Wait until all RemoteDecoderManagerParent have closed.
   mShutdownBlockers.WaitUntilClear(10 * 1000 /* 10s timeout*/)
       ->Then(GetCurrentSerialEventTarget(), __func__, [&]() {
-
-#ifdef XP_WIN
-        wmf::MFShutdown();
-#endif
 
 #if defined(XP_WIN)
         RefPtr<DllServices> dllSvc(DllServices::Get());

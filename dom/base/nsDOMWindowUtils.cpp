@@ -2189,19 +2189,6 @@ nsDOMWindowUtils::GetViewId(Element* aElement, nsViewID* aResult) {
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::GetScreenPixelsPerCSSPixelNoOverride(float* aScreenPixels) {
-  nsPresContext* presContext = GetPresContext();
-  if (!presContext) {
-    *aScreenPixels = 1.0;
-    return NS_OK;
-  }
-
-  *aScreenPixels =
-      float(AppUnitsPerCSSPixel()) / float(presContext->AppUnitsPerDevPixel());
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDOMWindowUtils::GetFullZoom(float* aFullZoom) {
   *aFullZoom = 1.0f;
 
@@ -2521,7 +2508,7 @@ nsDOMWindowUtils::GetVisitedDependentComputedStyle(
   nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
   NS_ENSURE_STATE(window && aElement);
   nsCOMPtr<nsPIDOMWindowInner> innerWindow = window->GetCurrentInnerWindow();
-  NS_ENSURE_STATE(window);
+  NS_ENSURE_STATE(innerWindow);
 
   nsCOMPtr<nsICSSDeclaration> decl;
   {
@@ -4747,5 +4734,15 @@ nsDOMWindowUtils::GetSuspendedByBrowsingContextGroup(bool* aResult) {
   NS_ENSURE_TRUE(inner, NS_ERROR_FAILURE);
 
   *aResult = inner->GetWasSuspendedByGroup();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::GetHasScrollLinkedEffect(bool* aResult) {
+  Document* doc = GetDocument();
+  if (!doc) {
+    return NS_ERROR_FAILURE;
+  }
+  *aResult = doc->HasScrollLinkedEffect();
   return NS_OK;
 }

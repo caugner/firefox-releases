@@ -1379,11 +1379,12 @@ privacy:
   dfpi_rollout_enabledByDefault:
     bug_numbers:
       - 1740232
+      - 1758828
     description: >
       Records if a client is opted into dFPI in standard ETP mode as part of the
       rollout experiment. 0: opted out, 1: opted in, 2: not part of the
       experiment
-    expires: "101"
+    expires: "106"
     kind: uint
     notification_emails:
       - pbz@mozilla.com
@@ -1853,14 +1854,17 @@ os.environment:
     bug_numbers:
       - 1685213
       - 1725298
+      - 1754656
     description: >
       Records how Firefox was started on Windows.
-      Currently will be one of "Desktop", "StartMenu" (including pins),
-      "Taskbar", "OtherShortcut", or "Other"
-    expires: "100"
+      Currently will be one of "Desktop", "DesktopPrivate",
+      "StartMenu" (including pins), "StartMenuPrivate",
+      "Taskbar", "TaskbarPrivate", "OtherShortcut", or "Other"
+    expires: never
     kind: string
     notification_emails:
       - application-update-telemetry-alerts@mozilla.com
+      - rtestard@mozilla.com
       - shong@mozilla.com
     release_channel_collection: opt-out
     products:
@@ -1969,7 +1973,24 @@ os.environment:
     bug_numbers:
       - 1685213
       - 1725298
-    description: Whether this app was pinned to taskbar on startup
+    description: Whether the non-Private Browsing version of this app was pinned to taskbar on startup
+    expires: never
+    kind: boolean
+    notification_emails:
+      - application-update-telemetry-alerts@mozilla.com
+      - shong@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - firefox
+    record_in_processes:
+      - main
+    operating_systems:
+      - windows
+
+  is_taskbar_pinned_private:
+    bug_numbers:
+      - 1751038
+    description: Whether the Private Browsing version of this app was pinned to taskbar on startup
     expires: never
     kind: boolean
     notification_emails:
@@ -2001,24 +2022,6 @@ pictureinpicture:
       - 'firefox'
     record_in_processes:
       - content
-  closed_method:
-    bug_numbers:
-      - 1560590
-      - 1616045
-    description: >
-      The number of times a Picture-in-Picture window was closed, per trigger
-      mechanism (e.g.: the close button, the unpip button, originating tab going away,
-      process shutdown, etc).
-    expires: "92"
-    kind: uint
-    keyed: true
-    notification_emails:
-      - mconley@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - main
   saw_toggle:
     bug_numbers:
       - 1657155
@@ -2094,21 +2097,6 @@ preferences:
     release_channel_collection: opt-out
     products:
       - 'firefox'
-    record_in_processes:
-      - main
-  read_user_js:
-    bug_numbers:
-      - 1367813
-    description: >-
-      Set to true if user.js exists and was read.
-    expires: "62"
-    kind: boolean
-    notification_emails:
-      - bsmedberg@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-      - 'fennec'
     record_in_processes:
       - main
   search_query:
@@ -5758,45 +5746,6 @@ browser.searchinit:
       - 'main'
     release_channel_collection: opt-out
 
-encoding:
-  override_used_manual:
-    bug_numbers:
-      - 840476
-      - 1513473
-      - 1554592
-      - 1603047
-      - 1648464
-      - 1706838
-    description: >-
-      Whether an item other than Automatic in the Text Encoding menu was used to override an encoding in this subsession.
-    expires: "96"
-    kind: boolean
-    notification_emails:
-      - hsivonen@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - main
-      - content
-
-  override_used_automatic:
-    bug_numbers:
-      - 1648464
-      - 1706838
-    description: >-
-      Whether the item Automatic in the Text Encoding menu was used to override an encoding in this subsession.
-    expires: "96"
-    kind: boolean
-    notification_emails:
-      - hsivonen@mozilla.com
-    release_channel_collection: opt-out
-    products:
-      - 'firefox'
-    record_in_processes:
-      - main
-      - content
-
 startup:
   profile_selection_reason:
     bug_numbers:
@@ -7613,6 +7562,23 @@ power:
     keyed: true
     keys: *per_process_type_keys
 
+  wakeups_per_process_type:
+    bug_numbers:
+      - 1759535
+    description: >
+      How many times threads woke up and could have woken up a CPU core. Broken down by process type.
+    expires: never
+    kind: uint
+    notification_emails:
+      - florian@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'all'
+    keyed: true
+    keys: *per_process_type_keys
+
   total_cpu_time_ms:
     bug_numbers:
       - 1736040
@@ -7627,10 +7593,7 @@ power:
     products:
       - 'firefox'
     record_in_processes:
-      - 'main'
-      - 'content'
-      - 'gpu'
-      - 'socket'
+      - 'all'
 
   total_gpu_time_ms:
     bug_numbers:
@@ -7648,6 +7611,21 @@ power:
     record_in_processes:
       - 'main'
       - 'gpu'
+
+  total_thread_wakeups:
+    bug_numbers:
+      - 1759535
+    description: >
+      How many times threads woke up and could have woken up a CPU core.
+    expires: never
+    kind: uint
+    notification_emails:
+      - florian@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'all'
 
 gifft.validation:
   main_ping_assembling:

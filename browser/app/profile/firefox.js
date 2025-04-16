@@ -275,6 +275,11 @@ pref("browser.shell.setDefaultBrowserUserChoice", true);
 // When setting the default browser on Windows 10 using the UserChoice
 // registry keys, also try to set Firefox as the default PDF handler.
 pref("browser.shell.setDefaultPDFHandler", false);
+// When setting Firefox as the default PDF handler (subject to conditions
+// above), only set Firefox as the default PDF handler when the existing handler
+// is a known browser, and not when existing handler is another PDF handler such
+// as Acrobat Reader or Nitro PDF.
+pref("browser.shell.setDefaultPDFHandler.onlyReplaceBrowsers", true);
 #endif
 
 
@@ -311,7 +316,7 @@ pref("browser.startup.preXulSkeletonUI", true);
 #endif
 
 // Show an upgrade dialog on major upgrades.
-pref("browser.startup.upgradeDialog.enabled", false);
+pref("browser.startup.upgradeDialog.enabled", true);
 
 // Don't create the hidden window during startup on
 // platforms that don't always need it (Win/Linux).
@@ -1078,8 +1083,6 @@ pref("browser.sessionstore.upgradeBackup.maxUpgradeBackups", 3);
 pref("browser.sessionstore.debug", false);
 // Forget closed windows/tabs after two weeks
 pref("browser.sessionstore.cleanup.forget_closed_after", 1209600000);
-// Amount of failed SessionFile writes until we restart the worker.
-pref("browser.sessionstore.max_write_failures", 5);
 
 // Don't quit the browser when Ctrl + Q is pressed.
 pref("browser.quitShortcut.disabled", false);
@@ -1635,9 +1638,6 @@ pref("security.insecure_connection_icon.enabled", true);
 // Show degraded UI for http pages in private mode.
 pref("security.insecure_connection_icon.pbmode.enabled", true);
 
-// For secure connections, show gray instead of green lock icon
-pref("security.secure_connection_icon_color_gray", true);
-
 // Show "Not Secure" text for http pages; disabled for now
 pref("security.insecure_connection_text.enabled", false);
 pref("security.insecure_connection_text.pbmode.enabled", false);
@@ -1820,8 +1820,6 @@ pref("browser.contentblocking.cryptomining.preferences.ui.enabled", true);
 pref("browser.contentblocking.fingerprinting.preferences.ui.enabled", true);
 // Enable cookieBehavior = BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN as an option in the custom category ui
 pref("browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled", true);
-// State Partitioning MVP UI.
-pref("browser.contentblocking.state-partitioning.mvp.ui.enabled", true);
 
 // Possible values for browser.contentblocking.features.strict pref:
 //   Tracking Protection:
@@ -1845,6 +1843,9 @@ pref("browser.contentblocking.state-partitioning.mvp.ui.enabled", true);
 //   Restrict relaxing default referrer policy:
 //     "rp": Restrict relaxing default referrer policy enabled
 //     "-rp": Restrict relaxing default referrer policy disabled
+//   Restrict relaxing default referrer policy for top navigation:
+//     "rpTop": Restrict relaxing default referrer policy enabled
+//     "-rpTop": Restrict relaxing default referrer policy disabled
 //   OCSP cache partitioning:
 //     "ocsp": OCSP cache partitioning enabled
 //     "-ocsp": OCSP cache partitioning disabled
@@ -1863,7 +1864,7 @@ pref("browser.contentblocking.state-partitioning.mvp.ui.enabled", true);
 //     "cookieBehaviorPBM4": cookie behaviour BEHAVIOR_REJECT_TRACKER
 //     "cookieBehaviorPBM5": cookie behaviour BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN
 // One value from each section must be included in the browser.contentblocking.features.strict pref.
-pref("browser.contentblocking.features.strict", "tp,tpPrivate,cookieBehavior5,cookieBehaviorPBM5,cm,fp,stp,lvl2,rp,ocsp");
+pref("browser.contentblocking.features.strict", "tp,tpPrivate,cookieBehavior5,cookieBehaviorPBM5,cm,fp,stp,lvl2,rp,rpTop,ocsp");
 
 // Hide the "Change Block List" link for trackers/tracking content in the custom
 // Content Blocking/ETP panel. By default, it will not be visible. There is also
@@ -1897,8 +1898,16 @@ pref("browser.vpn_promo.disallowed_regions", "ae,by,cn,cu,iq,ir,kp,om,ru,sd,sy,t
 pref("browser.vpn_promo.enabled", true);
 // Only show vpn card to certain regions. Comma separated string of two letter ISO 3166-1 country codes.
 // The most recent list of supported countries can be found at https://support.mozilla.org/en-US/kb/mozilla-vpn-countries-available-subscribe
-pref("browser.contentblocking.report.vpn_regions", "at,be,ca,ch,de,fr,ie,it,my,nl,nz,sg,es,gb,us"
+// The full list of supported country codes can also be found at https://github.com/mozilla/bedrock/search?q=VPN_COUNTRY_CODES
+pref("browser.contentblocking.report.vpn_regions", "as,at,be,ca,ch,de,es,fi,fr,gb,gg,ie,im,io,it,je,mp,my,nl,nz,pr,se,sg,uk,um,us,vg,vi"
 );
+
+// Avoid advertising Focus in certain regions.  Comma separated string of two letter
+// ISO 3166-1 country codes.
+pref("browser.promo.focus.disallowed_regions", "cn");
+
+// Default to enabling focus promos to be shown where allowed.
+pref("browser.promo.focus.enabled", true);
 
 // Comma separated string of mozilla vpn supported platforms.
 pref("browser.contentblocking.report.vpn_platforms", "win,mac,linux");
@@ -1987,11 +1996,7 @@ pref("browser.tabs.remote.autostart", true);
 pref("browser.tabs.remote.desktopbehavior", true);
 
 // Run media transport in a separate process?
-#ifdef EARLY_BETA_OR_EARLIER
-  pref("media.peerconnection.mtransport_process", true);
-#else
-  pref("media.peerconnection.mtransport_process", false);
-#endif
+pref("media.peerconnection.mtransport_process", true);
 
 // For speculatively warming up tabs to improve perceived
 // performance while using the async tab switcher.
@@ -2160,23 +2165,31 @@ pref("app.normandy.onsync_skew_sec", 600);
   pref("app.shield.optoutstudies.enabled", false);
 #endif
 
-// Multi-lingual preferences
+// Multi-lingual preferences:
+//  *.enabled - Are langpacks available for the build of Firefox?
+//  *.downloadEnabled - Langpacks are allowed to be downloaded from AMO. AMO only serves
+//      langpacks for release and beta. Unsupported releases (like Nightly) can be
+//      manually tested with the following preference:
+//      extensions.getAddons.langpacks.url: https://mock-amo-language-tools.glitch.me/?app=firefox&type=language&appversion=%VERSION%
+//  *.liveReload - Switching a langpack will change the language without a restart.
+//  *.liveReloadBidirectional - Allows switching when moving between LTR and RTL
+//      languages without a full restart.
+//  *.aboutWelcome.languageMismatchEnabled - Enables an onboarding menu in about:welcome
+//      to allow a user to change their language when there is a language mismatch between
+//      the app and browser.
 #if defined(RELEASE_OR_BETA) && !defined(MOZ_DEV_EDITION)
   pref("intl.multilingual.enabled", true);
   pref("intl.multilingual.downloadEnabled", true);
+  pref("intl.multilingual.liveReload", true);
+  pref("intl.multilingual.liveReloadBidirectional", false);
+  pref("intl.multilingual.aboutWelcome.languageMismatchEnabled", true);
 #else
   pref("intl.multilingual.enabled", false);
-  // AMO only serves language packs for release and beta versions.
   pref("intl.multilingual.downloadEnabled", false);
+  pref("intl.multilingual.liveReload", false);
+  pref("intl.multilingual.liveReloadBidirectional", false);
+  pref("intl.multilingual.aboutWelcome.languageMismatchEnabled", false);
 #endif
-// With the preference enabled below, switching the browser language will do a live
-// reload rather than requiring a restart. Enable bidirectional below as well to allow
-// live reloading when switching between LTR and RTL languages.
-pref("intl.multilingual.liveReload", false);
-pref("intl.multilingual.liveReloadBidirectional", false);
-// Suggest to change the language on about:welcome when there is a mismatch with the OS.
-pref("intl.multilingual.aboutWelcome.languageMismatchEnabled", false);
-
 
 // Simulate conditions that will happen when the browser
 // is running with Fission enabled. This is meant to assist

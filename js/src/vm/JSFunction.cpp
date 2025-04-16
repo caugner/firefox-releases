@@ -654,11 +654,11 @@ inline void JSFunction::trace(JSTracer* trc) {
   if (isInterpreted() && hasBaseScript()) {
     if (BaseScript* script = baseScript()) {
       TraceManuallyBarrieredEdge(trc, &script, "script");
-      // Self-hosted scripts are shared with workers but are never
-      // relocated. Skip unnecessary writes to prevent the possible data race.
+      // Self-hosted scripts are shared with workers but are never relocated.
+      // Skip unnecessary writes to prevent the possible data race.
       if (baseScript() != script) {
-        setFixedSlot(NativeJitInfoOrInterpretedScriptSlot,
-                     JS::PrivateValue(script));
+        HeapSlot& slot = getFixedSlotRef(NativeJitInfoOrInterpretedScriptSlot);
+        slot.unbarrieredSet(JS::PrivateValue(script));
       }
     }
   }
@@ -810,6 +810,7 @@ JSString* js::FunctionToString(JSContext* cx, HandleFunction fun,
     // can be matched as the 'PropertyName' grammar production.
     if (fun->explicitName() && !fun->isBoundFunction() &&
         (fun->kind() == FunctionFlags::NormalFunction ||
+         fun->kind() == FunctionFlags::Wasm ||
          fun->kind() == FunctionFlags::ClassConstructor)) {
       if (!out.append(' ')) {
         return nullptr;
@@ -1041,7 +1042,6 @@ static const JSClassOps JSFunctionClassOps = {
     fun_mayResolve,  // mayResolve
     nullptr,         // finalize
     nullptr,         // call
-    nullptr,         // hasInstance
     nullptr,         // construct
     fun_trace,       // trace
 };
@@ -1960,6 +1960,7 @@ bool js::CanReuseScriptForClone(JS::Realm* realm, HandleFunction fun,
 
 static inline JSFunction* NewFunctionClone(JSContext* cx, HandleFunction fun,
                                            HandleObject proto) {
+  MOZ_ASSERT(cx->realm() == fun->realm());
   MOZ_ASSERT(proto);
 
   const JSClass* clasp = fun->getClass();
@@ -1995,11 +1996,8 @@ static inline JSFunction* NewFunctionClone(JSContext* cx, HandleFunction fun,
   clone->setArgCount(fun->nargs());
   clone->setFlags(flags);
 
-  JSAtom* atom = fun->displayAtom();
-  if (atom) {
-    cx->markAtom(atom);
-  }
-  clone->initAtom(atom);
+  // Note: |clone| and |fun| are same-zone so we don't need to call markAtom.
+  clone->initAtom(fun->displayAtom());
 
   return clone;
 }

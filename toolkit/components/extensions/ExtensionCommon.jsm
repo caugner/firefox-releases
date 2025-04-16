@@ -399,17 +399,17 @@ class ExtensionAPIPersistent extends ExtensionAPI {
   /**
    * Used when instantiating an EventManager instance to register the listener.
    *
-   * @param {Object} options used for event registration
-   * @param {BaseContext} options.context Passed when creating an EventManager instance.
-   * @param {string} options.event The function passed to the listener to fire the event.
-   * @param {Function} options.fire The function passed to the listener to fire the event.
-   * @returns {Function} the unregister function used in the EventManager.
+   * @param {Object}      options         Options used for event registration
+   * @param {BaseContext} options.context Extension Context passed when creating an EventManager instance.
+   * @param {string}      options.event   The eAPI vent name.
+   * @param {Function}    options.fire    The function passed to the listener to fire the event.
+   * @param {Array<any>}  params          An optional array of parameters received along with the
+   *                                      addListener request.
+   * @returns {Function}                  The unregister function used in the EventManager.
    */
-  registerEventListener(options) {
-    let register = this.getEventRegistrar(options.event);
-    if (register) {
-      return register(options).unregister;
-    }
+  registerEventListener(options, params) {
+    const apiRegistar = this.getEventRegistrar(options.event);
+    return apiRegistar?.(options, params).unregister;
   }
 
   /**
@@ -422,10 +422,8 @@ class ExtensionAPIPersistent extends ExtensionAPI {
    * @returns {Object} the unregister and convert functions used in the EventManager.
    */
   primeListener(event, fire, params, isInStartup) {
-    let register = this.getEventRegistrar(event);
-    if (register) {
-      return register({ fire, isInStartup }, ...params);
-    }
+    const apiRegistar = this.getEventRegistrar(event);
+    return apiRegistar?.({ fire, isInStartup }, params);
   }
 }
 
@@ -2232,6 +2230,7 @@ class EventManager {
       register,
       extensionApi,
       inputHandling = false,
+      resetIdleOnEvent = true,
     } = params;
     this.context = context;
     this.module = module;
@@ -2239,13 +2238,17 @@ class EventManager {
     this.name = name;
     this.register = register;
     this.inputHandling = inputHandling;
+    this.resetIdleOnEvent = resetIdleOnEvent;
     if (!name) {
       this.name = `${module}.${event}`;
     }
 
     if (!this.register && extensionApi instanceof ExtensionAPIPersistent) {
-      this.register = fire => {
-        return extensionApi.registerEventListener({ context, event, fire });
+      this.register = (fire, ...params) => {
+        return extensionApi.registerEventListener(
+          { context, event, fire },
+          params
+        );
       };
     }
     if (!this.register) {
@@ -2394,7 +2397,11 @@ class EventManager {
           let fireEvent = (...args) =>
             new Promise((resolve, reject) => {
               if (!listener.primed) {
-                reject(new Error("primed listener not re-registered"));
+                reject(
+                  new Error(
+                    `primed listener ${module}.${event} not re-registered`
+                  )
+                );
                 return;
               }
               primed.pendingEvents.push({ args, resolve, reject });
@@ -2405,6 +2412,8 @@ class EventManager {
             wakeup: () => extension.wakeupBackground(),
             sync: fireEvent,
             async: fireEvent,
+            // fire.async for ProxyContextParent is already not cloning.
+            raw: fireEvent,
           };
 
           try {
@@ -2459,24 +2468,26 @@ class EventManager {
     for (let [module, moduleEntry] of extension.persistentListeners) {
       for (let [event, listeners] of moduleEntry) {
         for (let [key, listener] of listeners) {
-          let { primed } = listener;
-          // When a primed listener is renewed, primed is set to null
-          // When a new listener has beed added, primed is undefined.
-          // In both cases, we do not want to clear the persisted listener data.
-          if (!primed) {
+          let { primed, added } = listener;
+          // When a primed listener is added or renewed during initial
+          // background execution we set an added flag.  If it was primed
+          // when added, primed is set to null.
+          if (added) {
             continue;
           }
 
-          // When a primed listener was not renewed, primed will still be truthy.
-          // These need to be cleared on shutdown (important for event pages), but
-          // we only clear the persisted listener data after the startup of a background.
-          // Release any pending events and unregister the primed handler.
-          listener.primed = null;
+          if (primed) {
+            // When a primed listener was not renewed, primed will still be truthy.
+            // These need to be cleared on shutdown (important for event pages), but
+            // we only clear the persisted listener data after the startup of a background.
+            // Release any pending events and unregister the primed handler.
+            listener.primed = null;
 
-          for (let evt of primed.pendingEvents) {
-            evt.reject(new Error("listener not re-registered"));
+            for (let evt of primed.pendingEvents) {
+              evt.reject(new Error("listener not re-registered"));
+            }
+            primed.unregister();
           }
-          primed.unregister();
 
           // Clear any persisted events that were not renewed, should typically
           // only be done at the end of the background page load.
@@ -2497,7 +2508,8 @@ class EventManager {
     extension.persistentListeners
       .get(module)
       .get(event)
-      .set(key, { params: args });
+      // when writing, only args are written, other properties are dropped
+      .set(key, { params: args, added: true });
     EventManager._writePersistentListeners(extension);
   }
 
@@ -2536,9 +2548,18 @@ class EventManager {
       return false;
     };
 
+    let { extension } = this.context;
+    const resetIdle = () => {
+      if (this.resetIdleOnEvent) {
+        extension?.emit("background-script-reset-idle");
+      }
+    };
+
     let fire = {
+      // Bug 1754866 fire.sync doesn't match documentation.
       sync: (...args) => {
         if (shouldFire()) {
+          resetIdle();
           let result = this.context.applySafe(callback, args);
           this.context.logActivity("api_event", this.name, { args, result });
           return result;
@@ -2547,6 +2568,7 @@ class EventManager {
       async: (...args) => {
         return Promise.resolve().then(() => {
           if (shouldFire()) {
+            resetIdle();
             let result = this.context.applySafe(callback, args);
             this.context.logActivity("api_event", this.name, { args, result });
             return result;
@@ -2557,6 +2579,7 @@ class EventManager {
         if (!shouldFire()) {
           throw new Error("Called raw() on unloaded/inactive context");
         }
+        resetIdle();
         let result = Reflect.apply(callback, null, args);
         this.context.logActivity("api_event", this.name, { args, result });
         return result;
@@ -2564,6 +2587,7 @@ class EventManager {
       asyncWithoutClone: (...args) => {
         return Promise.resolve().then(() => {
           if (shouldFire()) {
+            resetIdle();
             let result = this.context.applySafeWithoutClone(callback, args);
             this.context.logActivity("api_event", this.name, { args, result });
             return result;
@@ -2572,7 +2596,6 @@ class EventManager {
       },
     };
 
-    let { extension } = this.context;
     let { module, event } = this;
 
     let unregister = null;
@@ -2607,6 +2630,7 @@ class EventManager {
             evt.resolve(fire.async(...evt.args));
           }
         }
+        listener.added = true;
 
         recordStartupData = false;
         this.remove.set(callback, () => {

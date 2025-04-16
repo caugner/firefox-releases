@@ -3011,7 +3011,7 @@ class PreferencesWriter final {
   static Atomic<int> sPendingWriteCount;
 
   // See PWRunnable::Run for details on why we need this lock.
-  static StaticMutex sWritingToFile;
+  static StaticMutex sWritingToFile MOZ_UNANNOTATED;
 };
 
 Atomic<PrefSaveData*> PreferencesWriter::sPendingWriteData(nullptr);
@@ -4069,11 +4069,6 @@ void Preferences::ReadUserOverridePrefs() {
 
   aFile->AppendNative("user.js"_ns);
   rv = openPrefFile(aFile, PrefValueKind::User);
-  if (rv != NS_ERROR_FILE_NOT_FOUND) {
-    // If the file exists and was at least partially read, record that in
-    // telemetry as it may be a sign of pref injection.
-    Telemetry::ScalarSet(Telemetry::ScalarID::PREFERENCES_READ_USER_JS, true);
-  }
 }
 
 nsresult Preferences::MakeBackupPrefFile(nsIFile* aFile) {
@@ -5365,7 +5360,7 @@ static void InitAlwaysPref(const nsCString& aName, T* aCache,
 }
 
 static Atomic<bool> sOncePrefRead(false);
-static StaticMutex sOncePrefMutex;
+static StaticMutex sOncePrefMutex MOZ_UNANNOTATED;
 
 namespace StaticPrefs {
 

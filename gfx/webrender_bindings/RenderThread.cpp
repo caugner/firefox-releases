@@ -500,9 +500,6 @@ void RenderThread::UpdateAndRender(
     const Maybe<gfx::IntSize>& aReadbackSize,
     const Maybe<wr::ImageFormat>& aReadbackFormat,
     const Maybe<Range<uint8_t>>& aReadbackBuffer, bool* aNeedsYFlip) {
-  std::string markerName = "Composite #" + std::to_string(AsUint64(aWindowId));
-
-  AUTO_PROFILER_TRACING_MARKER("Paint", markerName.c_str(), GRAPHICS);
   AUTO_PROFILER_LABEL("RenderThread::UpdateAndRender", GRAPHICS);
   MOZ_ASSERT(IsInRenderThread());
   MOZ_ASSERT(aRender || aReadbackBuffer.isNothing());
@@ -516,6 +513,11 @@ void RenderThread::UpdateAndRender(
   TimeStamp start = TimeStamp::Now();
 
   auto& renderer = it->second;
+
+  std::string markerName = "Composite #" + std::to_string(AsUint64(aWindowId));
+  AutoProfilerTracing tracingCompositeMarker(
+      "Paint", markerName.c_str(), geckoprofiler::category::GRAPHICS,
+      Some(renderer->GetCompositorBridge()->GetInnerWindowId()));
 
   if (renderer->IsPaused()) {
     aRender = false;
@@ -875,8 +877,6 @@ void RenderThread::HandleDeviceReset(const char* aWhere, GLenum aReason) {
 
   // This happens only on simulate device reset.
   if (aReason == LOCAL_GL_NO_ERROR) {
-    MOZ_ASSERT(XRE_IsGPUProcess());
-
     if (!mHandlingDeviceReset) {
       mHandlingDeviceReset = true;
 
@@ -885,9 +885,19 @@ void RenderThread::HandleDeviceReset(const char* aWhere, GLenum aReason) {
       for (const auto& entry : mRenderTextures) {
         entry.second->ClearCachedResources();
       }
-      // Simulate DeviceReset does not need to notify the device reset to
-      // GPUProcessManager. It is already done by
-      // GPUProcessManager::SimulateDeviceReset().
+
+      // All RenderCompositors will be destroyed by the GPUProcessManager in
+      // either OnRemoteProcessDeviceReset via the GPUChild, or
+      // OnInProcessDeviceReset here directly.
+      if (XRE_IsGPUProcess()) {
+        gfx::GPUParent::GetSingleton()->NotifyDeviceReset();
+      } else {
+        NS_DispatchToMainThread(NS_NewRunnableFunction(
+            "gfx::GPUProcessManager::OnInProcessDeviceReset", []() -> void {
+              gfx::GPUProcessManager::Get()->OnInProcessDeviceReset(
+                  /* aTrackThreshold */ false);
+            }));
+      }
     }
     return;
   }
@@ -1163,7 +1173,7 @@ static already_AddRefed<gl::GLContext> CreateGLContextANGLE(
   }
 
   nsCString failureId;
-  const auto lib = gl::DefaultEglLibrary(&failureId);
+  const auto lib = gl::GLLibraryEGL::Get(&failureId);
   if (!lib) {
     aError.Assign(
         nsPrintfCString("RcANGLE(load EGL lib failed: %s)", failureId.get()));

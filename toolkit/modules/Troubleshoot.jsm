@@ -65,6 +65,8 @@ const PREFS_FOR_DISPLAY = [
   "extensions.checkCompatibility",
   "extensions.formautofill.",
   "extensions.lastAppVersion",
+  "extensions.InstallTrigger.enabled",
+  "extensions.InstallTriggerImpl.enabled",
   "fission.autostart",
   "font.",
   "general.autoScroll",
@@ -219,6 +221,9 @@ var dataProviders = {
         Ci.nsIHttpProtocolHandler
       ).userAgent,
       safeMode: Services.appinfo.inSafeMode,
+      memorySizeBytes: Services.sysinfo.getProperty("memsize"),
+      diskAvailableBytes: Services.dirsvc.get("ProfD", Ci.nsIFile)
+        .diskSpaceAvailable,
     };
 
     if (Services.sysinfo.getProperty("name") == "Windows_NT") {
@@ -229,8 +234,7 @@ var dataProviders = {
 
     if (AppConstants.MOZ_UPDATER) {
       data.updateChannel = ChromeUtils.import(
-        "resource://gre/modules/UpdateUtils.jsm",
-        {}
+        "resource://gre/modules/UpdateUtils.jsm"
       ).UpdateUtils.UpdateChannel;
     }
 

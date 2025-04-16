@@ -1149,7 +1149,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   CacheInvalidator mGenericVertexAttribTypeInvalidator;
 
   GLuint mFakeVertexAttrib0BufferObject = 0;
-  size_t mFakeVertexAttrib0BufferObjectSize = 0;
+  intptr_t mFakeVertexAttrib0BufferObjectSize = 0;
   bool mFakeVertexAttrib0DataDefined = false;
   alignas(alignof(float)) uint8_t
       mGenericVertexAttrib0Data[sizeof(float) * 4] = {};
@@ -1235,7 +1235,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
       const webgl::FormatUsageInfo** out_format, uint32_t* out_width,
       uint32_t* out_height,
       GLenum incompleteFbError = LOCAL_GL_INVALID_FRAMEBUFFER_OPERATION);
-  void DoColorMask(uint8_t bitmask) const;
+  void DoColorMask(Maybe<GLuint> i, uint8_t bitmask) const;
   void BlitBackbufferToCurDriverFB(
       WebGLFramebuffer* const srcAsWebglFb = nullptr,
       const gl::MozFramebuffer* const srcAsMozFb = nullptr,

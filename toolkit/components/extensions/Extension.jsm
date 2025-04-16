@@ -64,7 +64,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PluralForm: "resource://gre/modules/PluralForm.jsm",
   Schemas: "resource://gre/modules/Schemas.jsm",
   ServiceWorkerCleanUp: "resource://gre/modules/ServiceWorkerCleanUp.jsm",
-  XPIProvider: "resource://gre/modules/addons/XPIProvider.jsm",
 
   // These are used for manipulating jar entry paths, which always use Unix
   // separators.
@@ -514,7 +513,7 @@ ExtensionAddonObserver.init();
 const manifestTypes = new Map([
   ["theme", "manifest.ThemeManifest"],
   ["sitepermission", "manifest.WebExtensionSitePermissionsManifest"],
-  ["langpack", "manifest.WebExtensionLangpackManifest"],
+  ["locale", "manifest.WebExtensionLangpackManifest"],
   ["dictionary", "manifest.WebExtensionDictionaryManifest"],
   ["extension", "manifest.WebExtensionManifest"],
 ]);
@@ -570,9 +569,6 @@ class ExtensionData {
     // checkPrivileged depends on the extension type and id.
     await extension.initializeAddonTypeAndID();
     let { type, id } = extension;
-    // Map the extension type to the type name used by the add-on manager.
-    // TODO bug 1757084: Remove this.
-    type = type == "langpack" ? "locale" : type;
     extension.isPrivileged = await checkPrivileged(type, id);
     return extension;
   }
@@ -802,10 +798,7 @@ class ExtensionData {
       return null;
     }
 
-    let { permissions, origins } = this.permissionsObject(
-      this.manifest.permissions,
-      this.manifest.host_permissions
-    );
+    let { permissions } = this.permissionsObject(this.manifest.permissions);
 
     if (
       this.manifest.devtools_page &&
@@ -814,18 +807,39 @@ class ExtensionData {
       permissions.add("devtools");
     }
 
+    return {
+      permissions: Array.from(permissions),
+      origins: this.originControls ? [] : this.getManifestOrigins(),
+    };
+  }
+
+  /**
+   * @returns {string[]} all origins that are referenced in manifest via
+   * permissions, host_permissions, or content_scripts keys.
+   */
+  getManifestOrigins() {
+    if (this.type !== "extension") {
+      return null;
+    }
+
+    let { origins } = this.permissionsObject(
+      this.manifest.permissions,
+      this.manifest.host_permissions
+    );
+
     for (let entry of this.manifest.content_scripts || []) {
       for (let origin of entry.matches) {
         origins.add(origin);
       }
     }
 
-    return {
-      permissions: Array.from(permissions),
-      origins: Array.from(origins),
-    };
+    return Array.from(origins);
   }
 
+  /**
+   * Returns optional permissions from the manifest, including host permissions
+   * if originControls is true.
+   */
   get manifestOptionalPermissions() {
     if (this.type !== "extension") {
       return null;
@@ -834,6 +848,12 @@ class ExtensionData {
     let { permissions, origins } = this.permissionsObject(
       this.manifest.optional_permissions
     );
+    if (this.originControls) {
+      for (let origin of this.getManifestOrigins()) {
+        origins.add(origin);
+      }
+    }
+
     return {
       permissions: Array.from(permissions),
       origins: Array.from(origins),
@@ -980,6 +1000,21 @@ class ExtensionData {
     return !this.eventPagesEnabled || manifest.background.persistent;
   }
 
+  /**
+   * backgroundState can be starting, running, suspending or stopped.
+   * It is undefined if the extension has no background page.
+   * See ext-backgroundPage.js for more details.
+   *
+   * @param {string} state starting, running, suspending or stopped
+   */
+  set backgroundState(state) {
+    this._backgroundState = state;
+  }
+
+  get backgroundState() {
+    return this._backgroundState;
+  }
+
   async getExtensionVersionWithoutValidation() {
     return (await this.readJSON("manifest.json")).version;
   }
@@ -1054,8 +1089,7 @@ class ExtensionData {
     if (manifest.theme) {
       this.type = "theme";
     } else if (manifest.langpack_id) {
-      // TODO bug 1757084: This should be "locale".
-      this.type = "langpack";
+      this.type = "locale";
     } else if (manifest.dictionaries) {
       this.type = "dictionary";
     } else if (manifest.site_permissions) {
@@ -1150,6 +1184,9 @@ class ExtensionData {
       id: this.id,
       manifest,
       modules: null,
+      // Whether to treat all origin permissions (including content scripts)
+      // from the manifestas as optional, and enable users to control them.
+      originControls: this.manifestVersion >= 3,
       originPermissions,
       permissions,
       schemaURLs: null,
@@ -1162,6 +1199,14 @@ class ExtensionData {
       let restrictSchemes = !(
         isPrivileged && manifest.permissions.includes("mozillaAddons")
       );
+
+      // Privileged and temporary extensions can opt out of originControls.
+      if (
+        (isPrivileged || this.temporarilyInstalled) &&
+        manifest.granted_host_permissions
+      ) {
+        result.originControls = false;
+      }
 
       let host_permissions = manifest.host_permissions ?? [];
 
@@ -1182,7 +1227,9 @@ class ExtensionData {
         let type = classifyPermission(perm, restrictSchemes, isPrivileged);
         if (type.origin) {
           perm = type.origin;
-          originPermissions.add(perm);
+          if (!result.originControls) {
+            originPermissions.add(perm);
+          }
         } else if (type.api) {
           apiNames.add(type.api);
         } else if (type.invalid) {
@@ -1292,7 +1339,7 @@ class ExtensionData {
           })
         );
       }
-    } else if (this.type == "langpack") {
+    } else if (this.type == "locale") {
       // Langpack startup is performance critical, so we want to compute as much
       // as possible here to make startup not trigger async DB reads.
       // We'll store the four items below in the startupData.
@@ -1423,6 +1470,7 @@ class ExtensionData {
 
     this.webAccessibleResources = manifestData.webAccessibleResources;
 
+    this.originControls = manifestData.originControls;
     this.allowedOrigins = new MatchPatternSet(manifestData.originPermissions, {
       restrictSchemes: this.restrictSchemes,
     });
@@ -2007,6 +2055,12 @@ class BootstrapScope {
   }
 
   async update(data, reason) {
+    // For updates that happen during startup, such as sideloads
+    // and staged updates, the extension startupReason will be
+    // APP_STARTED.  In some situations, such as background and
+    // persisted listeners, we also need to know that the addon
+    // was updated.
+    this.updateReason = this.BOOTSTRAP_REASON_TO_STRING_MAP[reason];
     // Retain any previously granted permissions that may have migrated
     // into the optional list.
     if (data.oldPermissions) {
@@ -2033,7 +2087,8 @@ class BootstrapScope {
     // eslint-disable-next-line no-use-before-define
     this.extension = new Extension(
       data,
-      this.BOOTSTRAP_REASON_TO_STRING_MAP[reason]
+      this.BOOTSTRAP_REASON_TO_STRING_MAP[reason],
+      this.updateReason
     );
     return this.extension.startup();
   }
@@ -2127,7 +2182,7 @@ let pendingExtensions = new Map();
  * @extends ExtensionData
  */
 class Extension extends ExtensionData {
-  constructor(addonData, startupReason) {
+  constructor(addonData, startupReason, updateReason) {
     super(addonData.resourceURI, addonData.isPrivileged);
 
     this.startupStates = new Set();
@@ -2158,8 +2213,12 @@ class Extension extends ExtensionData {
     this.addonData = addonData;
     this.startupData = addonData.startupData || {};
     this.startupReason = startupReason;
+    this.updateReason = updateReason;
 
-    if (["ADDON_UPGRADE", "ADDON_DOWNGRADE"].includes(startupReason)) {
+    if (
+      updateReason ||
+      ["ADDON_UPGRADE", "ADDON_DOWNGRADE"].includes(startupReason)
+    ) {
       StartupCache.clearAddonData(addonData.id);
     }
 
@@ -2224,6 +2283,11 @@ class Extension extends ExtensionData {
       this.policy.permissions = Array.from(this.permissions);
       this.policy.allowedOrigins = this.allowedOrigins;
 
+      if (this.policy.active) {
+        this.setSharedData("", this.serialize());
+        Services.ppmm.sharedData.flush();
+      }
+
       this.cachePermissions();
       this.updatePermissions();
     });
@@ -2245,6 +2309,11 @@ class Extension extends ExtensionData {
 
       this.policy.permissions = Array.from(this.permissions);
       this.policy.allowedOrigins = this.allowedOrigins;
+
+      if (this.policy.active) {
+        this.setSharedData("", this.serialize());
+        Services.ppmm.sharedData.flush();
+      }
 
       this.cachePermissions();
       this.updatePermissions();
@@ -2384,7 +2453,7 @@ class Extension extends ExtensionData {
     if (this.dontSaveStartupData) {
       return;
     }
-    XPIProvider.setStartupData(this.id, this.startupData);
+    AddonManagerPrivate.setAddonStartupData(this.id, this.startupData);
   }
 
   parseManifest() {
@@ -3061,12 +3130,9 @@ class Extension extends ExtensionData {
 
   get optionalOrigins() {
     if (this._optionalOrigins == null) {
-      let { restrictSchemes, isPrivileged } = this;
-      let origins = this.manifest.optional_permissions.filter(
-        perm => classifyPermission(perm, restrictSchemes, isPrivileged).origin
-      );
+      let { origins } = this.manifestOptionalPermissions;
       this._optionalOrigins = new MatchPatternSet(origins, {
-        restrictSchemes,
+        restrictSchemes: this.restrictSchemes,
         ignorePath: true,
       });
     }
@@ -3103,7 +3169,7 @@ class Dictionary extends ExtensionData {
 
   async shutdown(reason) {
     if (reason !== "APP_SHUTDOWN") {
-      XPIProvider.unregisterDictionaries(this.dictionaries);
+      AddonManagerPrivate.unregisterDictionaries(this.dictionaries);
     }
   }
 }

@@ -7,7 +7,10 @@ use std::ffi::c_void;
 
 #[repr(u8)]
 pub enum OriginTrial {
-    TestTrial,
+    // NOTE(emilio): 0 is reserved for WebIDL usage.
+    TestTrial = 1,
+
+    MAX,
 }
 
 impl OriginTrial {

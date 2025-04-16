@@ -11,7 +11,7 @@
 
 #include <algorithm>
 
-#include "gc/FreeOp.h"
+#include "gc/GCContext.h"
 #include "jit/CalleeToken.h"
 #include "jit/JitFrames.h"
 #include "util/BitArray.h"
@@ -1015,14 +1015,14 @@ bool UnmappedArgumentsObject::obj_enumerate(JSContext* cx, HandleObject obj) {
   return true;
 }
 
-void ArgumentsObject::finalize(JSFreeOp* fop, JSObject* obj) {
+void ArgumentsObject::finalize(JS::GCContext* gcx, JSObject* obj) {
   MOZ_ASSERT(!IsInsideNursery(obj));
   ArgumentsObject& argsobj = obj->as<ArgumentsObject>();
   if (argsobj.data()) {
-    fop->free_(&argsobj, argsobj.maybeRareData(),
+    gcx->free_(&argsobj, argsobj.maybeRareData(),
                RareArgumentsData::bytesRequired(argsobj.initialLength()),
                MemoryUse::RareArgumentsData);
-    fop->free_(&argsobj, argsobj.data(),
+    gcx->free_(&argsobj, argsobj.data(),
                ArgumentsData::bytesRequired(argsobj.data()->numArgs),
                MemoryUse::ArgumentsData);
   }
@@ -1107,7 +1107,6 @@ const JSClassOps MappedArgumentsObject::classOps_ = {
     ArgumentsObject::obj_mayResolve,       // mayResolve
     ArgumentsObject::finalize,             // finalize
     nullptr,                               // call
-    nullptr,                               // hasInstance
     nullptr,                               // construct
     ArgumentsObject::trace,                // trace
 };
@@ -1152,7 +1151,6 @@ const JSClassOps UnmappedArgumentsObject::classOps_ = {
     ArgumentsObject::obj_mayResolve,         // mayResolve
     ArgumentsObject::finalize,               // finalize
     nullptr,                                 // call
-    nullptr,                                 // hasInstance
     nullptr,                                 // construct
     ArgumentsObject::trace,                  // trace
 };

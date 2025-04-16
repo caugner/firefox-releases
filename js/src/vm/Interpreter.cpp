@@ -32,8 +32,6 @@
 #include "jit/BaselineJIT.h"
 #include "jit/Jit.h"
 #include "jit/JitRuntime.h"
-#include "js/CallAndConstruct.h"  // JS::Construct, JS::IsCallable, JS::IsConstructor
-#include "js/CharacterEncoding.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
@@ -45,7 +43,6 @@
 #include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"        // JSDVG_SEARCH_STACK
 #include "vm/EqualityOperations.h"  // js::StrictlyEqual
-#include "vm/FunctionFlags.h"       // js::FunctionFlags
 #include "vm/GeneratorObject.h"
 #include "vm/Iteration.h"
 #include "vm/JSAtom.h"
@@ -73,8 +70,6 @@
 #include "vm/ArgumentsObject-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/GeckoProfiler-inl.h"
-#include "vm/JSAtom-inl.h"
-#include "vm/JSFunction-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/ObjectOperations-inl.h"
@@ -839,12 +834,11 @@ extern bool JS::InstanceofOperator(JSContext* cx, HandleObject obj,
 }
 
 bool js::HasInstance(JSContext* cx, HandleObject obj, HandleValue v, bool* bp) {
-  const JSClass* clasp = obj->getClass();
-  RootedValue local(cx, v);
-  if (JSHasInstanceOp hasInstance = clasp->getHasInstance()) {
-    return hasInstance(cx, obj, &local, bp);
+  if (MOZ_UNLIKELY(obj->is<ProxyObject>())) {
+    RootedValue local(cx, v);
+    return Proxy::hasInstance(cx, obj, &local, bp);
   }
-  return JS::InstanceofOperator(cx, obj, local, bp);
+  return JS::InstanceofOperator(cx, obj, v, bp);
 }
 
 JSType js::TypeOfObject(JSObject* obj) {
@@ -2462,6 +2456,12 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(NewPrivateName)
 
+    CASE(IsNullOrUndefined) {
+      bool b = REGS.sp[-1].isNullOrUndefined();
+      PUSH_BOOLEAN(b);
+    }
+    END_CASE(IsNullOrUndefined)
+
     CASE(Iter) {
       MOZ_ASSERT(REGS.stackDepth() >= 1);
       HandleValue val = REGS.stackHandleAt(-1);
@@ -3256,9 +3256,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     CASE(Call)
     CASE(CallIgnoresRv)
     CASE(CallIter)
-    CASE(SuperCall)
-    CASE(FunCall)
-    CASE(FunApply) {
+    CASE(SuperCall) {
       static_assert(JSOpLength_Call == JSOpLength_New,
                     "call and new must be the same size");
       static_assert(JSOpLength_Call == JSOpLength_CallIgnoresRv,
@@ -3267,10 +3265,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
                     "call and calliter must be the same size");
       static_assert(JSOpLength_Call == JSOpLength_SuperCall,
                     "call and supercall must be the same size");
-      static_assert(JSOpLength_Call == JSOpLength_FunCall,
-                    "call and funcall must be the same size");
-      static_assert(JSOpLength_Call == JSOpLength_FunApply,
-                    "call and funapply must be the same size");
 
       if (REGS.fp()->hasPushedGeckoProfilerFrame()) {
         cx->geckoProfiler().updatePC(cx, script, REGS.pc);
@@ -4104,32 +4098,12 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(FinishTuple)
 #endif
 
-    CASE(Gosub) {
-      int32_t len = GET_JUMP_OFFSET(REGS.pc);
-      ADVANCE_AND_DISPATCH(len);
-    }
-
     CASE(Retsub) {
-      /* Pop [exception or hole, retsub pc-index]. */
-      Value rval, lval;
-      POP_COPY_TO(rval);
-      POP_COPY_TO(lval);
-      MOZ_ASSERT(lval.isBoolean());
-      if (lval.toBoolean()) {
-        /*
-         * Exception was pending during finally, throw it *before* we adjust
-         * pc, because pc indexes into script->trynotes.  This turns out not
-         * to be necessary, but it seems clearer.  And it points out a FIXME:
-         * 350509, due to Igor Bukanov.
-         */
-        ReservedRooted<Value> v(&rootValue0, rval);
-        cx->setPendingException(v, ShouldCaptureStack::Maybe);
-        goto error;
-      }
+      Value resumeIndex;
+      POP_COPY_TO(resumeIndex);
+      MOZ_ASSERT(resumeIndex.toInt32() >= 0);
 
-      MOZ_ASSERT(rval.toInt32() >= 0);
-
-      uint32_t offset = script->resumeOffsets()[rval.toInt32()];
+      uint32_t offset = script->resumeOffsets()[resumeIndex.toInt32()];
       REGS.pc = script->offsetToPC(offset);
       ADVANCE_AND_DISPATCH(0);
     }
@@ -4591,7 +4565,7 @@ error:
 
     case FinallyContinuation: {
       /*
-       * Push (true, exception) pair for finally to indicate that [retsub]
+       * Push (exception, true) pair for finally to indicate that [retsub]
        * should rethrow the exception.
        */
       ReservedRooted<Value> exception(&rootValue0);
@@ -4599,8 +4573,8 @@ error:
         interpReturnOK = false;
         goto return_continuation;
       }
-      PUSH_BOOLEAN(true);
       PUSH_COPY(exception);
+      PUSH_BOOLEAN(true);
       cx->clearPendingException();
     }
       ADVANCE_AND_DISPATCH(0);

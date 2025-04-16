@@ -23,30 +23,16 @@
 namespace mozilla::dom {
 
 class TransformStream;
+class TransformerAlgorithms;
 
 class TransformStreamDefaultController final : public nsISupports,
                                                public nsWrapperCache {
  public:
-  using TransformAlgorithm = already_AddRefed<Promise> (*)(
-      JSContext* aCx, TransformStreamDefaultController& aController,
-      JS::HandleValue aChunk, ErrorResult& aRv);
-
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(TransformStreamDefaultController)
 
-  void SetTransformAlgorithm(TransformAlgorithm aTransformAlgorithm) {
-    mTransformAlgorithm = aTransformAlgorithm;
-  }
-
-  void SetTransformerMembers(TransformerTransformCallback* aTransformCallback,
-                             JS::HandleObject aTransformer) {
-    mTransformCallback = aTransformCallback;
-    mTransformer = aTransformer;
-  }
-  TransformerTransformCallback* GetTransformCallback() const {
-    return mTransformCallback;
-  }
-  JS::Heap<JSObject*>& GetTransformer() { return mTransformer; }
+  void SetStream(TransformStream& aStream);
+  void SetAlgorithms(TransformerAlgorithms* aTransformerAlgorithms);
 
   explicit TransformStreamDefaultController(nsIGlobalObject* aGlobal);
 
@@ -60,19 +46,18 @@ class TransformStreamDefaultController final : public nsISupports,
 
   Nullable<double> GetDesiredSize() const;
 
-  void Enqueue(JSContext* aCx, JS::Handle<JS::Value> aChunk, ErrorResult& aRv);
-  void Error(JSContext* aCx, JS::Handle<JS::Value> aError, ErrorResult& aRv);
-  void Terminate(ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void Enqueue(JSContext* aCx, JS::Handle<JS::Value> aChunk,
+                                  ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void Error(JSContext* aCx, JS::Handle<JS::Value> aError,
+                                ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void Terminate(JSContext* aCx, ErrorResult& aRv);
 
  private:
   nsCOMPtr<nsIGlobalObject> mGlobal;
 
   // Internal slots
-  TransformAlgorithm mTransformAlgorithm;
-
-  // Members for [[transformAlgorithm]]
-  RefPtr<TransformerTransformCallback> mTransformCallback;
-  JS::Heap<JSObject*> mTransformer;
+  MOZ_KNOWN_LIVE RefPtr<TransformStream> mStream;
+  RefPtr<TransformerAlgorithms> mTransformerAlgorithms;
 };
 
 void SetUpTransformStreamDefaultControllerFromTransformer(

@@ -9,21 +9,27 @@ import PopularTopics from "../PopularTopics/PopularTopics";
 import Button from "../Button/Button";
 import panelMessaging from "../../messages";
 
-function encodeThumbnail(rawSource) {
-  return rawSource
-    ? `https://img-getpocket.cdn.mozilla.net/80x80/filters:format(jpeg):quality(60):no_upscale():strip_exif()/${encodeURIComponent(
-        rawSource
-      )}`
-    : null;
-}
-
 function Home(props) {
-  const { locale, topics, pockethost, hideRecentSaves } = props;
+  const {
+    locale,
+    topics,
+    pockethost,
+    hideRecentSaves,
+    utmSource,
+    utmCampaign,
+    utmContent,
+  } = props;
   const [{ articles, status }, setArticlesState] = useState({
     articles: [],
     // Can be success, loading, or error.
     status: "",
   });
+
+  const utmParams = `utm_source=${utmSource}${
+    utmCampaign && utmContent
+      ? `&utm_campaign=${utmCampaign}&utm_content=${utmContent}`
+      : ``
+  }`;
 
   useEffect(() => {
     if (!hideRecentSaves) {
@@ -52,16 +58,7 @@ function Home(props) {
         }
 
         setArticlesState({
-          articles: data.map(item => ({
-            url: item.resolved_url,
-            // Using array notation because there is a key titled `1` (`images` is an object)
-            thumbnail: encodeThumbnail(
-              item?.top_image_url || item?.images?.["1"]?.src
-            ),
-            alt: "thumbnail image",
-            title: item.resolved_title,
-            publisher: item.domain_metadata?.name,
-          })),
+          articles: data,
           status: "success",
         });
       });
@@ -94,15 +91,27 @@ function Home(props) {
           />
           {articles.length > 3 ? (
             <>
-              <ArticleList articles={articles.slice(0, 3)} />
+              <ArticleList
+                articles={articles.slice(0, 3)}
+                source="home_recent_save"
+                utmParams={utmParams}
+              />
               <span className="stp_button_wide">
-                <Button style="secondary">
+                <Button
+                  style="secondary"
+                  url={`https://${pockethost}/a?${utmParams}`}
+                  source="home_view_list"
+                >
                   <span data-l10n-id="pocket-panel-button-show-all" />
                 </Button>
               </span>
             </>
           ) : (
-            <ArticleList articles={articles} />
+            <ArticleList
+              articles={articles}
+              source="home_recent_save"
+              utmParams={utmParams}
+            />
           )}
         </>
       );
@@ -126,7 +135,11 @@ function Home(props) {
     <div className="stp_panel_container">
       <div className="stp_panel stp_panel_home">
         <Header>
-          <Button style="primary">
+          <Button
+            style="primary"
+            url={`https://${pockethost}/a?${utmParams}`}
+            source="home_view_list"
+          >
             <span data-l10n-id="pocket-panel-header-my-list" />
           </Button>
         </Header>
@@ -136,7 +149,12 @@ function Home(props) {
         {pockethost && locale?.startsWith("en") && topics?.length && (
           <>
             <h3 className="header_medium">Explore popular topics:</h3>
-            <PopularTopics topics={topics} pockethost={pockethost} />
+            <PopularTopics
+              topics={topics}
+              pockethost={pockethost}
+              utmParams={utmParams}
+              source="home_popular_topic"
+            />
           </>
         )}
       </div>

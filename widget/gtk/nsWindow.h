@@ -82,7 +82,20 @@ class nsIFrame;
 #if !GTK_CHECK_VERSION(3, 18, 0)
 struct _GdkEventTouchpadPinch;
 typedef struct _GdkEventTouchpadPinch GdkEventTouchpadPinch;
+#endif
 
+#if !GTK_CHECK_VERSION(3, 22, 0)
+typedef enum {
+  GDK_ANCHOR_FLIP_X = 1 << 0,
+  GDK_ANCHOR_FLIP_Y = 1 << 1,
+  GDK_ANCHOR_SLIDE_X = 1 << 2,
+  GDK_ANCHOR_SLIDE_Y = 1 << 3,
+  GDK_ANCHOR_RESIZE_X = 1 << 4,
+  GDK_ANCHOR_RESIZE_Y = 1 << 5,
+  GDK_ANCHOR_FLIP = GDK_ANCHOR_FLIP_X | GDK_ANCHOR_FLIP_Y,
+  GDK_ANCHOR_SLIDE = GDK_ANCHOR_SLIDE_X | GDK_ANCHOR_SLIDE_Y,
+  GDK_ANCHOR_RESIZE = GDK_ANCHOR_RESIZE_X | GDK_ANCHOR_RESIZE_Y
+} GdkAnchorHints;
 #endif
 
 namespace mozilla {
@@ -393,12 +406,8 @@ class nsWindow final : public nsBaseWidget {
       const LayoutDeviceIntPoint& aLockCenter) override;
   void LockNativePointer() override;
   void UnlockNativePointer() override;
-  LayoutDeviceIntRect GetPreferredPopupRect() const override {
-    return mPreferredPopupRect;
-  };
-  void FlushPreferredPopupRect() override {
-    mPreferredPopupRect = LayoutDeviceIntRect();
-    mPreferredPopupRectFlushed = true;
+  LayoutDeviceIntSize GetMoveToRectPopupSize() const override {
+    return mMoveToRectPopupSize;
   };
 #endif
 
@@ -484,8 +493,7 @@ class nsWindow final : public nsBaseWidget {
   nsWindow* GetTransientForWindowIfPopup();
   bool IsHandlingTouchSequence(GdkEventSequence* aSequence);
 
-  void ResizeInt(int aX, int aY, int aWidth, int aHeight, bool aMove,
-                 bool aRepaint);
+  void ResizeInt(int aX, int aY, int aWidth, int aHeight, bool aMove);
   void NativeMoveResizeWaylandPopup(bool aMove, bool aResize);
 
   // Returns true if the given point (in device pixels) is within a resizer
@@ -673,7 +681,6 @@ class nsWindow final : public nsBaseWidget {
   // Popup is positioned by gdk_window_move_to_rect()
   bool mPopupUseMoveToRect : 1;
 
-  bool mPreferredPopupRectFlushed : 1;
   /* mWaitingForMoveToRectCallback is set when move-to-rect is called
    * and we're waiting for move-to-rect callback.
    *
@@ -682,9 +689,19 @@ class nsWindow final : public nsBaseWidget {
    */
   bool mWaitingForMoveToRectCallback : 1;
 
-  // Set when move/resize action is initiated by move-to-rect operation.
-  // Don't use move-to-rect again in such case.
-  bool mUpdatedByMoveToRectCallback : 1;
+  // Params used for popup placemend by GdkWindowMoveToRect.
+  // When popup is only resized and not positioned,
+  // we need to reuse last GdkWindowMoveToRect params to avoid
+  // popup movement.
+  struct WaylandPopupMoveToRectParams {
+    LayoutDeviceIntRect mAnchorRect;
+    GdkGravity mAnchorRectType;
+    GdkGravity mPopupAnchorType;
+    GdkAnchorHints mHints;
+    GdkPoint mOffset;
+  };
+
+  WaylandPopupMoveToRectParams mPopupMoveToRectParams;
 
   // Whether we've configured default clear color already.
   bool mConfiguredClearColor : 1;
@@ -740,7 +757,7 @@ class nsWindow final : public nsBaseWidget {
 
   // Wayland Popup section
   GdkPoint WaylandGetParentPosition();
-  bool WaylandPopupNeedsTrackInHierarchy();
+  bool WaylandPopupConfigure();
   bool WaylandPopupIsAnchored();
   bool WaylandPopupIsMenu();
   bool WaylandPopupIsContextMenu();
@@ -773,7 +790,9 @@ class nsWindow final : public nsBaseWidget {
   void WaylandPopupMarkAsClosed();
   void WaylandPopupRemoveClosedPopups();
   void WaylandPopupSetDirectPosition();
-  bool WaylandPopupFitsParentWindow(const GdkRectangle& aSize);
+  bool WaylandPopupFitsToplevelWindow();
+  const WaylandPopupMoveToRectParams WaylandPopupGetPositionFromLayout();
+  void WaylandPopupPropagateChangesToLayout(bool aMove, bool aResize);
   nsWindow* WaylandPopupFindLast(nsWindow* aPopup);
   GtkWindow* GetCurrentTopmostWindow();
   nsAutoCString GetFrameTag() const;
@@ -784,11 +803,13 @@ class nsWindow final : public nsBaseWidget {
   void LogPopupHierarchy();
 #endif
 
-  // mPopupPosition is the original popup position from layout, set by
+  // mPopupPosition is the original popup position/size from layout, set by
   // nsWindow::Move() or nsWindow::Resize().
+  // Popup position is relative to main (toplevel) window.
   GdkPoint mPopupPosition{};
 
-  // mRelativePopupPosition is popup position calculated against parent window.
+  // mRelativePopupPosition is popup position calculated against
+  // recent popup parent window.
   GdkPoint mRelativePopupPosition{};
 
   // Toplevel window (first element) of linked list of Wayland popups. It's null
@@ -799,8 +820,10 @@ class nsWindow final : public nsBaseWidget {
   RefPtr<nsWindow> mWaylandPopupNext;
   RefPtr<nsWindow> mWaylandPopupPrev;
 
-  // Used by WaylandPopupMove() to track popup movement.
-  LayoutDeviceIntRect mPreferredPopupRect;
+  // When popup is resized by Gtk by move-to-rect callback,
+  // we store final popup size here. Then we use mMoveToRectPopupSize size
+  // in following popup operations unless mLayoutPopupSizeCleared is set.
+  LayoutDeviceIntSize mMoveToRectPopupSize;
 
   LayoutDeviceIntRect mNewBoundsAfterMoveToRect;
 
@@ -878,7 +901,7 @@ class nsWindow final : public nsBaseWidget {
   bool ConfigureX11GLVisual();
 #endif
 #ifdef MOZ_WAYLAND
-  RefPtr<mozilla::gfx::VsyncSource> mWaylandVsyncSource;
+  RefPtr<mozilla::WaylandVsyncSource> mWaylandVsyncSource;
   LayoutDeviceIntPoint mNativePointerLockCenter;
   zwp_locked_pointer_v1* mLockedPointer = nullptr;
   zwp_relative_pointer_v1* mRelativePointer = nullptr;

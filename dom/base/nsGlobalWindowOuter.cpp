@@ -39,6 +39,7 @@
 #include "mozilla/dom/Storage.h"
 #include "mozilla/dom/MaybeCrossOriginObject.h"
 #include "mozilla/dom/Performance.h"
+#include "mozilla/dom/ProxyHandlerUtils.h"
 #include "mozilla/dom/StorageEvent.h"
 #include "mozilla/dom/StorageEventBinding.h"
 #include "mozilla/dom/StorageNotifierService.h"
@@ -488,7 +489,7 @@ class nsOuterWindowProxy : public MaybeCrossOriginObject<js::Wrapper> {
   const char* className(JSContext* cx,
                         JS::Handle<JSObject*> wrapper) const override;
 
-  void finalize(JSFreeOp* fop, JSObject* proxy) const override;
+  void finalize(JS::GCContext* gcx, JSObject* proxy) const override;
   size_t objectMoved(JSObject* proxy, JSObject* old) const override;
 
   bool isCallable(JSObject* obj) const override { return false; }
@@ -556,7 +557,7 @@ const char* nsOuterWindowProxy::className(JSContext* cx,
   return "Window";
 }
 
-void nsOuterWindowProxy::finalize(JSFreeOp* fop, JSObject* proxy) const {
+void nsOuterWindowProxy::finalize(JS::GCContext* gcx, JSObject* proxy) const {
   nsGlobalWindowOuter* outerWindow = GetOuterWindow(proxy);
   if (outerWindow) {
     outerWindow->ClearWrapper(proxy);
@@ -572,28 +573,6 @@ void nsOuterWindowProxy::finalize(JSFreeOp* fop, JSObject* proxy) const {
     outerWindow->PoisonOuterWindowProxy(proxy);
   }
 }
-
-/**
- * IsNonConfigurableReadonlyPrimitiveGlobalProp returns true for
- * property names that fit the following criteria:
- *
- * 1) The ES spec defines a property with that name on globals.
- * 2) The property is non-configurable.
- * 3) The property is non-writable (readonly).
- * 4) The value of the property is a primitive (so doesn't change
- *    observably on when navigation happens).
- *
- * Such properties can act as actual non-configurable properties on a
- * WindowProxy, because they are not affected by navigation.
- */
-#ifndef RELEASE_OR_BETA
-static bool IsNonConfigurableReadonlyPrimitiveGlobalProp(JSContext* cx,
-                                                         JS::Handle<jsid> id) {
-  return id == GetJSIDByIndex(cx, XPCJSContext::IDX_NAN) ||
-         id == GetJSIDByIndex(cx, XPCJSContext::IDX_UNDEFINED) ||
-         id == GetJSIDByIndex(cx, XPCJSContext::IDX_INFINITY);
-}
-#endif
 
 bool nsOuterWindowProxy::getOwnPropertyDescriptor(
     JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
@@ -650,7 +629,8 @@ bool nsOuterWindowProxy::getOwnPropertyDescriptor(
         return false;
       }
 
-#ifndef RELEASE_OR_BETA  // To be turned on in bug 1496510.
+#if 0
+      // See https://github.com/tc39/ecma262/issues/672 for more information.
       if (desc.isSome() &&
           !IsNonConfigurableReadonlyPrimitiveGlobalProp(cx, id)) {
         (*desc).setConfigurable(true);
@@ -767,7 +747,8 @@ bool nsOuterWindowProxy::definePropertySameOrigin(
     }
   }
 
-#ifndef RELEASE_OR_BETA  // To be turned on in bug 1496510.
+#if 0
+  // See https://github.com/tc39/ecma262/issues/672 for more information.
   if (desc.hasConfigurable() && !desc.configurable() &&
       !IsNonConfigurableReadonlyPrimitiveGlobalProp(cx, id)) {
     // Give callers a way to detect that they failed to "really" define a
@@ -1695,6 +1676,11 @@ uint32_t nsGlobalWindowOuter::GetPrincipalHashValue() const {
     return mDoc->NodePrincipal()->GetHashValue();
   }
   return 0;
+}
+
+OriginTrials nsGlobalWindowOuter::Trials() const {
+  return mInnerWindow ? nsGlobalWindowInner::Cast(mInnerWindow)->Trials()
+                      : OriginTrials();
 }
 
 nsresult nsGlobalWindowOuter::EnsureScriptEnvironment() {

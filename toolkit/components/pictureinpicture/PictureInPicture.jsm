@@ -41,14 +41,6 @@ const TOGGLE_POSITION_LEFT = "left";
 const RESIZE_MARGIN_PX = 16;
 
 /**
- * If closing the Picture-in-Picture player window occurred for a reason that
- * we can easily detect (user clicked on the close button, originating tab unloaded,
- * user clicked on the unpip button), that will be stashed in gCloseReasons so that
- * we can note it in Telemetry when the window finally unloads.
- */
-let gCloseReasons = new WeakMap();
-
-/**
  * Tracks the number of currently open player windows for Telemetry tracking
  */
 let gCurrentPlayerCount = 0;
@@ -148,6 +140,9 @@ var PictureInPicture = {
   // Maps PiP player windows to their originating content's browser
   weakWinToBrowser: new WeakMap(),
 
+  // Maps a browser to the number of PiP windows it has
+  browserWeakMap: new WeakMap(),
+
   /**
    * Returns the player window if one exists and if it hasn't yet been closed.
    *
@@ -173,12 +168,39 @@ var PictureInPicture = {
     }
   },
 
+  /**
+   * Increase the count of PiP windows for a given browser
+   * @param browser The browser to increase PiP count in browserWeakMap
+   */
+  addPiPBrowserToWeakMap(browser) {
+    let count = this.browserWeakMap.has(browser)
+      ? this.browserWeakMap.get(browser)
+      : 0;
+    this.browserWeakMap.set(browser, count + 1);
+  },
+
+  /**
+   * Decrease the count of PiP windows for a given browser.
+   * If the count becomes 0, we will remove the browser from the WeakMap
+   * @param browser The browser to decrease PiP count in browserWeakMap
+   */
+  removePiPBrowserFromWeakMap(browser) {
+    let count = this.browserWeakMap.get(browser);
+    if (count <= 1) {
+      this.browserWeakMap.delete(browser);
+    } else {
+      this.browserWeakMap.set(browser, count - 1);
+    }
+  },
+
   onPipSwappedBrowsers(event) {
     let otherTab = event.detail;
     if (otherTab) {
       for (let win of Services.wm.getEnumerator(WINDOW_TYPE)) {
         if (this.weakWinToBrowser.get(win) === event.target.linkedBrowser) {
           this.weakWinToBrowser.set(win, otherTab.linkedBrowser);
+          this.removePiPBrowserFromWeakMap(event.target.linkedBrowser);
+          this.addPiPBrowserToWeakMap(otherTab.linkedBrowser);
         }
       }
       otherTab.addEventListener("TabSwapPictureInPicture", this);
@@ -197,11 +219,11 @@ var PictureInPicture = {
     }
 
     let win = event.target.ownerGlobal;
-    let browser = win.gBrowser.selectedBrowser;
-    let actor = browser.browsingContext.currentWindowGlobal.getActor(
-      "PictureInPictureLauncher"
-    );
-    actor.sendAsyncMessage("PictureInPicture:KeyToggle");
+    let bc = Services.focus.focusedContentBrowsingContext;
+    if (bc.top == win.gBrowser.selectedBrowser.browsingContext) {
+      let actor = bc.currentWindowGlobal.getActor("PictureInPictureLauncher");
+      actor.sendAsyncMessage("PictureInPicture:KeyToggle");
+    }
   },
 
   async focusTabAndClosePip(window, pipActor) {
@@ -285,8 +307,17 @@ var PictureInPicture = {
     if (!win) {
       return;
     }
+    this.removePiPBrowserFromWeakMap(this.weakWinToBrowser.get(win));
+
+    let args = { reason };
+    Services.telemetry.recordEvent(
+      "pictureinpicture",
+      "closed_method",
+      "method",
+      null,
+      args
+    );
     await this.closePipWindow(win);
-    gCloseReasons.set(win, reason);
   },
 
   /**
@@ -331,14 +362,33 @@ var PictureInPicture = {
 
     tab.addEventListener("TabSwapPictureInPicture", this);
 
-    win.setupPlayer(gNextWindowID.toString(), wgp, videoData.videoRef);
+    let pipId = gNextWindowID.toString();
+    win.setupPlayer(pipId, wgp, videoData.videoRef);
     gNextWindowID++;
 
     this.weakWinToBrowser.set(win, browser);
+    this.addPiPBrowserToWeakMap(browser);
 
     Services.prefs.setBoolPref(
       "media.videocontrols.picture-in-picture.video-toggle.has-used",
       true
+    );
+
+    let args = {
+      width: win.innerWidth.toString(),
+      height: win.innerHeight.toString(),
+      screenX: win.screenX.toString(),
+      screenY: win.screenY.toString(),
+      ccEnabled: videoData.ccEnabled.toString(),
+      webVTTSubtitles: videoData.webVTTSubtitles.toString(),
+    };
+
+    Services.telemetry.recordEvent(
+      "pictureinpicture",
+      "create",
+      "player",
+      pipId,
+      args
     );
   },
 
@@ -349,12 +399,11 @@ var PictureInPicture = {
    * @param {Window} window
    */
   unload(window) {
-    let reason = gCloseReasons.get(window) || "other";
-    Services.telemetry.keyedScalarAdd(
-      "pictureinpicture.closed_method",
-      reason,
-      1
+    TelemetryStopwatch.finish(
+      "FX_PICTURE_IN_PICTURE_WINDOW_OPEN_DURATION",
+      window
     );
+
     gCurrentPlayerCount -= 1;
     // Saves the location of the Picture in Picture window
     this.savePosition(window);
@@ -397,6 +446,14 @@ var PictureInPicture = {
       null,
       features,
       null
+    );
+
+    TelemetryStopwatch.start(
+      "FX_PICTURE_IN_PICTURE_WINDOW_OPEN_DURATION",
+      pipWindow,
+      {
+        inSeconds: true,
+      }
     );
 
     pipWindow.windowUtils.setResizeMargin(RESIZE_MARGIN_PX);
@@ -717,6 +774,18 @@ var PictureInPicture = {
 
   hideToggle() {
     Services.prefs.setBoolPref(TOGGLE_ENABLED_PREF, false);
+  },
+
+  /**
+   * This is used in AsyncTabSwitcher.jsm and tabbrowser.js to check if the browser
+   * currently has a PiP window.
+   * If the browser has a PiP window we want to keep the browser in an active state because
+   * the browser is still partially visible.
+   * @param browser The browser to check if it has a PiP window
+   * @returns true if browser has PiP window else false
+   */
+  isOriginatingBrowser(browser) {
+    return this.browserWeakMap.has(browser);
   },
 
   moveToggle() {

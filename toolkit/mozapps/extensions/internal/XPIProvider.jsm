@@ -2422,7 +2422,8 @@ var XPIProvider = {
    *        unregistered.
    */
   unregisterDictionaries(aDicts) {
-    let origDict = spellCheck.dictionary;
+    let origDicts = spellCheck.dictionaries.slice();
+    let toRemove = [];
 
     for (let [lang, uri] of Object.entries(aDicts)) {
       if (
@@ -2430,12 +2431,14 @@ var XPIProvider = {
         this.dictionaries.hasOwnProperty(lang)
       ) {
         spellCheck.addDictionary(lang, this.dictionaries[lang]);
-
-        if (lang == origDict) {
-          spellCheck.dictionary = origDict;
-        }
+      } else {
+        toRemove.push(lang);
       }
     }
+
+    spellCheck.dictionaries = origDicts.filter(
+      lang => !toRemove.includes(lang)
+    );
   },
 
   /**
@@ -3309,6 +3312,11 @@ var XPIInternal = {
   maybeResolveURI,
   migrateAddonLoader,
   resolveDBReady,
+
+  // Used by tests to shut down AddonManager.
+  overrideAsyncShutdown(mockAsyncShutdown) {
+    AsyncShutdown = mockAsyncShutdown;
+  },
 };
 
 AddonManagerPrivate.registerProvider(XPIProvider, Array.from(ALL_XPI_TYPES));

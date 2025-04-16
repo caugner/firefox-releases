@@ -31,6 +31,7 @@
 #include "vm/PlainObject.h"        // js::PlainObject
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmCompile.h"
+#include "wasm/WasmDebug.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmIonCompile.h"
 #include "wasm/WasmJS.h"
@@ -40,6 +41,7 @@
 #include "debugger/DebugAPI-inl.h"
 #include "vm/ArrayBufferObject-inl.h"
 #include "vm/JSAtom-inl.h"
+#include "wasm/WasmInstance-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -298,14 +300,10 @@ void Module::serialize(const LinkData& linkData, uint8_t* begin,
 }
 
 /* static */
-MutableModule Module::deserialize(const uint8_t* begin, size_t size,
-                                  Metadata* maybeMetadata) {
-  MutableMetadata metadata(maybeMetadata);
+MutableModule Module::deserialize(const uint8_t* begin, size_t size) {
+  MutableMetadata metadata = js_new<Metadata>();
   if (!metadata) {
-    metadata = js_new<Metadata>();
-    if (!metadata) {
-      return nullptr;
-    }
+    return nullptr;
   }
 
   const uint8_t* cursor = begin;
@@ -366,7 +364,7 @@ MutableModule Module::deserialize(const uint8_t* begin, size_t size,
   }
 
   MOZ_RELEASE_ASSERT(cursor == begin + size);
-  MOZ_RELEASE_ASSERT(!!maybeMetadata == code->metadata().isAsmJS());
+  MOZ_RELEASE_ASSERT(!code->metadata().isAsmJS());
 
   if (metadata->nameCustomSectionIndex) {
     metadata->namePayload =
@@ -378,7 +376,7 @@ MutableModule Module::deserialize(const uint8_t* begin, size_t size,
 
   return js_new<Module>(*code, std::move(imports), std::move(exports),
                         std::move(dataSegments), std::move(elemSegments),
-                        std::move(customSections), nullptr, nullptr, nullptr,
+                        std::move(customSections), nullptr,
                         /* loggingDeserialized = */ true);
 }
 
@@ -456,10 +454,6 @@ void Module::addSizeOfMisc(MallocSizeOf mallocSizeOf,
            SizeOfVectorExcludingThis(dataSegments_, mallocSizeOf) +
            SizeOfVectorExcludingThis(elemSegments_, mallocSizeOf) +
            SizeOfVectorExcludingThis(customSections_, mallocSizeOf);
-
-  if (debugUnlinkedCode_) {
-    *data += debugUnlinkedCode_->sizeOfExcludingThis(mallocSizeOf);
-  }
 }
 
 void Module::initGCMallocBytesExcludingCode() {
@@ -1014,52 +1008,6 @@ bool Module::instantiateGlobals(JSContext* cx,
   return true;
 }
 
-SharedCode Module::getDebugEnabledCode() const {
-  MOZ_ASSERT(metadata().debugEnabled);
-  MOZ_ASSERT(debugUnlinkedCode_);
-  MOZ_ASSERT(debugLinkData_);
-
-  // The first time through, use the pre-linked code in the module but
-  // mark it as having been claimed. Subsequently, instantiate the copy of the
-  // code bytes that we keep around for debugging instead, because the
-  // debugger may patch the pre-linked code at any time.
-  if (debugCodeClaimed_.compareExchange(false, true)) {
-    return code_;
-  }
-
-  Tier tier = Tier::Baseline;
-  auto segment =
-      ModuleSegment::create(tier, *debugUnlinkedCode_, *debugLinkData_);
-  if (!segment) {
-    return nullptr;
-  }
-
-  UniqueMetadataTier metadataTier = js::MakeUnique<MetadataTier>(tier);
-  if (!metadataTier || !metadataTier->clone(metadata(tier))) {
-    return nullptr;
-  }
-
-  auto codeTier =
-      js::MakeUnique<CodeTier>(std::move(metadataTier), std::move(segment));
-  if (!codeTier) {
-    return nullptr;
-  }
-
-  JumpTables jumpTables;
-  if (!jumpTables.init(CompileMode::Once, codeTier->segment(),
-                       metadata(tier).codeRanges)) {
-    return nullptr;
-  }
-
-  MutableCode debugCode =
-      js_new<Code>(std::move(codeTier), metadata(), std::move(jumpTables));
-  if (!debugCode || !debugCode->initialize(*debugLinkData_)) {
-    return nullptr;
-  }
-
-  return debugCode;
-}
-
 static bool GetFunctionExport(JSContext* cx,
                               HandleWasmInstanceObject instanceObj,
                               const JSFunctionVector& funcImports,
@@ -1243,26 +1191,17 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
     return false;
   }
 
-  SharedCode code;
   UniqueDebugState maybeDebug;
   if (metadata().debugEnabled) {
-    code = getDebugEnabledCode();
-    if (!code) {
-      ReportOutOfMemory(cx);
-      return false;
-    }
-
-    maybeDebug = cx->make_unique<DebugState>(*code, *this);
+    maybeDebug = cx->make_unique<DebugState>(*code_, *this);
     if (!maybeDebug) {
       ReportOutOfMemory(cx);
       return false;
     }
-  } else {
-    code = code_;
   }
 
   instance.set(WasmInstanceObject::create(
-      cx, code, dataSegments_, elemSegments_, metadata().globalDataLength,
+      cx, code_, dataSegments_, elemSegments_, metadata().globalDataLength,
       memory, std::move(tables), imports.funcs, metadata().globals,
       imports.globalValues, imports.globalObjs, imports.tagObjs, instanceProto,
       std::move(maybeDebug)));

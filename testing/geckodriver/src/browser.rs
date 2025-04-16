@@ -13,7 +13,6 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time;
-use url::{Host, Url};
 use webdriver::error::{ErrorStatus, WebDriverError, WebDriverResult};
 
 /// A running Gecko instance.
@@ -42,6 +41,20 @@ impl Browser {
             Browser::Existing(x) => Ok(Some(*x)),
         }
     }
+
+    pub(crate) fn update_marionette_port(&mut self, port: u16) {
+        match self {
+            Browser::Local(x) => x.update_marionette_port(port),
+            Browser::Remote(x) => x.update_marionette_port(port),
+            Browser::Existing(x) => {
+                if port != *x {
+                    error!(
+                        "Cannot re-assign Marionette port when connected to an existing browser"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -57,8 +70,6 @@ impl LocalBrowser {
     pub(crate) fn new(
         options: FirefoxOptions,
         marionette_port: u16,
-        allow_hosts: Vec<Host>,
-        allow_origins: Vec<Url>,
         jsdebugger: bool,
     ) -> WebDriverResult<LocalBrowser> {
         let binary = options.binary.ok_or_else(|| {
@@ -86,8 +97,6 @@ impl LocalBrowser {
                 profile,
                 is_custom_profile,
                 options.prefs,
-                allow_hosts,
-                allow_origins,
                 jsdebugger,
             )
             .map_err(|e| {
@@ -161,18 +170,20 @@ impl LocalBrowser {
         if self.marionette_port != 0 {
             return Ok(Some(self.marionette_port));
         }
+
         if let Some(profile_path) = self.profile_path.as_ref() {
-            let port = read_marionette_port(profile_path);
-            if let Some(port) = port {
-                self.marionette_port = port;
-            }
-            return Ok(port);
+            return Ok(read_marionette_port(profile_path));
         }
+
         // This should be impossible, but it isn't enforced
         Err(WebDriverError::new(
             ErrorStatus::SessionNotCreated,
             "Port not known when using named profile",
         ))
+    }
+
+    fn update_marionette_port(&mut self, port: u16) {
+        self.marionette_port = port;
     }
 
     pub(crate) fn check_status(&mut self) -> Option<String> {
@@ -223,8 +234,6 @@ impl RemoteBrowser {
         options: FirefoxOptions,
         marionette_port: u16,
         websocket_port: Option<u16>,
-        allow_hosts: Vec<Host>,
-        allow_origins: Vec<Url>,
     ) -> WebDriverResult<RemoteBrowser> {
         let android_options = options.android.unwrap();
 
@@ -247,8 +256,6 @@ impl RemoteBrowser {
             &mut profile,
             is_custom_profile,
             options.prefs,
-            allow_hosts,
-            allow_origins,
             false,
         )
         .map_err(|e| {
@@ -276,6 +283,10 @@ impl RemoteBrowser {
     fn marionette_port(&mut self) -> WebDriverResult<Option<u16>> {
         Ok(Some(self.marionette_port))
     }
+
+    fn update_marionette_port(&mut self, port: u16) {
+        self.marionette_port = port;
+    }
 }
 
 fn set_prefs(
@@ -283,8 +294,6 @@ fn set_prefs(
     profile: &mut Profile,
     custom_profile: bool,
     extra_prefs: Vec<(String, Pref)>,
-    allow_hosts: Vec<Host>,
-    allow_origins: Vec<Url>,
     js_debugger: bool,
 ) -> WebDriverResult<Option<PrefsBackup>> {
     let prefs = profile.user_prefs().map_err(|_| {
@@ -317,28 +326,6 @@ fn set_prefs(
 
     prefs.insert("marionette.port", Pref::new(port));
     prefs.insert("remote.log.level", logging::max_level().into());
-
-    // Origins and host names to allow for WebDriver BiDi
-    prefs.insert(
-        "remote.hosts.allowed",
-        Pref::new(
-            allow_hosts
-                .iter()
-                .map(|host| host.to_string())
-                .collect::<Vec<String>>()
-                .join(","),
-        ),
-    );
-    prefs.insert(
-        "remote.origins.allowed",
-        Pref::new(
-            allow_origins
-                .iter()
-                .map(|origin| origin.to_string())
-                .collect::<Vec<String>>()
-                .join(","),
-        ),
-    );
 
     prefs.write().map_err(|e| {
         WebDriverError::new(
@@ -412,7 +399,7 @@ mod tests {
     #[test]
     fn test_remote_log_level() {
         let mut profile = Profile::new().unwrap();
-        set_prefs(2828, &mut profile, false, vec![], vec![], vec![], false).ok();
+        set_prefs(2828, &mut profile, false, vec![], false).ok();
         let user_prefs = profile.user_prefs().unwrap();
 
         let pref = user_prefs.get("remote.log.level").unwrap();
@@ -455,8 +442,7 @@ mod tests {
             _ => panic!("Expected ProfileType::Path"),
         };
 
-        set_prefs(2828, &mut profile, true, opts.prefs, vec![], vec![], false)
-            .expect("set preferences");
+        set_prefs(2828, &mut profile, true, opts.prefs, false).expect("set preferences");
 
         let prefs_set = profile.user_prefs().expect("valid user preferences");
         println!("{:#?}", prefs_set.prefs);
@@ -496,7 +482,7 @@ mod tests {
             .read_to_string(&mut initial_prefs_data)
             .unwrap();
 
-        let backup = set_prefs(2828, &mut profile, true, vec![], vec![], vec![], false)
+        let backup = set_prefs(2828, &mut profile, true, vec![], false)
             .unwrap()
             .unwrap();
         let user_prefs = profile.user_prefs().unwrap();
@@ -534,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn test_local_marionette_port() {
+    fn test_local_read_marionette_port() {
         fn create_port_file(profile_path: &Path, data: &[u8]) {
             let port_path = profile_path.join("MarionetteActivePort");
             let mut file = File::create(&port_path).unwrap();

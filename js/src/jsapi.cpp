@@ -34,7 +34,7 @@
 #include "builtin/Promise.h"
 #include "builtin/Symbol.h"
 #include "frontend/BytecodeCompiler.h"
-#include "gc/FreeOp.h"
+#include "gc/GCContext.h"
 #include "gc/Marking.h"
 #include "gc/PublicIterators.h"
 #include "jit/JitSpewer.h"
@@ -263,6 +263,18 @@ JS_PUBLIC_API bool JS::ObjectOpResult::failNoIndexedSetter() {
 
 JS_PUBLIC_API bool JS::ObjectOpResult::failNotDataDescriptor() {
   return fail(JSMSG_NOT_DATA_DESCRIPTOR);
+}
+
+JS_PUBLIC_API bool JS::ObjectOpResult::failInvalidDescriptor() {
+  return fail(JSMSG_INVALID_DESCRIPTOR);
+}
+
+JS_PUBLIC_API bool JS::ObjectOpResult::failBadArrayLength() {
+  return fail(JSMSG_BAD_ARRAY_LENGTH);
+}
+
+JS_PUBLIC_API bool JS::ObjectOpResult::failBadIndex() {
+  return fail(JSMSG_BAD_INDEX);
 }
 
 JS_PUBLIC_API int64_t JS_Now() { return PRMJ_Now(); }
@@ -1238,10 +1250,6 @@ JS_PUBLIC_API void* JS_string_realloc(JSContext* cx, void* p, size_t oldBytes,
 
 JS_PUBLIC_API void JS_string_free(JSContext* cx, void* p) { return js_free(p); }
 
-JS_PUBLIC_API void JS_freeop(JSFreeOp* fop, void* p) {
-  return fop->freeUntracked(p);
-}
-
 JS_PUBLIC_API void JS::AddAssociatedMemory(JSObject* obj, size_t nbytes,
                                            JS::MemoryUse use) {
   MOZ_ASSERT(obj);
@@ -1263,7 +1271,7 @@ JS_PUBLIC_API void JS::RemoveAssociatedMemory(JSObject* obj, size_t nbytes,
   }
 
   JSRuntime* rt = obj->runtimeFromAnyThread();
-  rt->defaultFreeOp()->removeCellMemory(obj, nbytes, js::MemoryUse(use));
+  rt->gcContext()->removeCellMemory(obj, nbytes, js::MemoryUse(use));
 }
 
 #undef JS_AddRoot
@@ -1781,7 +1789,6 @@ const JSClassOps JS::DefaultGlobalClassOps = {
     JS_MayResolveStandardClass,      // mayResolve
     nullptr,                         // finalize
     nullptr,                         // call
-    nullptr,                         // hasInstance
     nullptr,                         // construct
     JS_GlobalObjectTraceHook,        // trace
 };
@@ -4054,18 +4061,18 @@ JS_PUBLIC_API void JS_SetGlobalJitCompilerOption(JSContext* cx,
       if (value == 1) {
         jit::JitOptions.baselineInterpreter = true;
       } else if (value == 0) {
-        ReleaseAllJITCode(rt->defaultFreeOp());
+        ReleaseAllJITCode(rt->gcContext());
         jit::JitOptions.baselineInterpreter = false;
       }
       break;
     case JSJITCOMPILER_BASELINE_ENABLE:
       if (value == 1) {
         jit::JitOptions.baselineJit = true;
-        ReleaseAllJITCode(rt->defaultFreeOp());
+        ReleaseAllJITCode(rt->gcContext());
         JitSpew(js::jit::JitSpew_BaselineScripts, "Enable baseline");
       } else if (value == 0) {
         jit::JitOptions.baselineJit = false;
-        ReleaseAllJITCode(rt->defaultFreeOp());
+        ReleaseAllJITCode(rt->gcContext());
         JitSpew(js::jit::JitSpew_BaselineScripts, "Disable baseline");
       }
       break;
@@ -4497,6 +4504,18 @@ JS_PUBLIC_API bool JS::FinishIncrementalEncoding(JSContext* cx,
     return false;
   }
   if (!script->scriptSource()->xdrFinalizeEncoder(cx, buffer)) {
+    return false;
+  }
+  return true;
+}
+
+JS_PUBLIC_API bool JS::FinishIncrementalEncoding(JSContext* cx,
+                                                 JS::Handle<JSObject*> module,
+                                                 TranscodeBuffer& buffer) {
+  if (!module->as<ModuleObject>()
+           .scriptSourceObject()
+           ->source()
+           ->xdrFinalizeEncoder(cx, buffer)) {
     return false;
   }
   return true;

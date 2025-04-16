@@ -164,12 +164,9 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
 
   // Avoid starting the GPU process for the initial navigator:blank window.
   if (mIsEarlyBlankWindow) {
-    // We need to validate the update rect or Windows will keep sending us
-    // WM_PAINT messages.
-    RECT rect;
-    if (::GetUpdateRect(mWnd, &rect, FALSE)) {
-      ::ValidateRect(mWnd, &rect);
-    }
+    // Call BeginPaint/EndPaint or Windows will keep sending us messages.
+    ::BeginPaint(mWnd, &ps);
+    ::EndPaint(mWnd, &ps);
     return true;
   }
 
@@ -205,12 +202,11 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
     // WM_PAINT messages are normally generated. To support asynchronous
     // painting we force generation of WM_PAINT messages by invalidating window
     // areas with RedrawWindow, InvalidateRect or InvalidateRgn function calls.
-    // We need to validate the update rect or Windows will keep sending us
-    // WM_PAINT messages.
-    RECT rect;
-    if (::GetUpdateRect(mWnd, &rect, FALSE)) {
-      ::ValidateRect(mWnd, &rect);
-    }
+    // BeginPaint/EndPaint must be called to make Windows think that invalid
+    // area is painted. Otherwise it will continue sending the same message
+    // endlessly.
+    ::BeginPaint(mWnd, &ps);
+    ::EndPaint(mWnd, &ps);
 
     // We're guaranteed to have a widget proxy since we called
     // GetLayerManager().
@@ -377,7 +373,7 @@ void nsWindow::NotifyOcclusionState(mozilla::widget::OcclusionState aState) {
 
   bool isFullyOccluded = aState == mozilla::widget::OcclusionState::OCCLUDED;
   // When window is minimized, it is not set as fully occluded.
-  if (mSizeMode == nsSizeMode_Minimized) {
+  if (mFrameState->GetSizeMode() == nsSizeMode_Minimized) {
     isFullyOccluded = false;
   }
 
@@ -390,15 +386,16 @@ void nsWindow::NotifyOcclusionState(mozilla::widget::OcclusionState aState) {
   mIsFullyOccluded = isFullyOccluded;
 
   MOZ_LOG(gWindowsLog, LogLevel::Info,
-          ("nsWindow::NotifyOcclusionState() mIsFullyOccluded %d mSizeMode %d",
-           mIsFullyOccluded, mSizeMode));
+          ("nsWindow::NotifyOcclusionState() mIsFullyOccluded %d "
+           "mFrameState->GetSizeMode() %d",
+           mIsFullyOccluded, mFrameState->GetSizeMode()));
 
   wr::DebugFlags flags{0};
   flags.bits = gfx::gfxVars::WebRenderDebugFlags();
   bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
   if (debugEnabled && mCompositorWidgetDelegate) {
-    mCompositorWidgetDelegate->NotifyVisibilityUpdated(mSizeMode,
-                                                       mIsFullyOccluded);
+    mCompositorWidgetDelegate->NotifyVisibilityUpdated(
+        mFrameState->GetSizeMode(), mIsFullyOccluded);
   }
 
   if (mWidgetListener) {
@@ -418,8 +415,8 @@ void nsWindow::MaybeEnableWindowOcclusion(bool aEnable) {
       flags.bits = gfx::gfxVars::WebRenderDebugFlags();
       bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
       if (debugEnabled && mCompositorWidgetDelegate) {
-        mCompositorWidgetDelegate->NotifyVisibilityUpdated(mSizeMode,
-                                                           mIsFullyOccluded);
+        mCompositorWidgetDelegate->NotifyVisibilityUpdated(
+            mFrameState->GetSizeMode(), mIsFullyOccluded);
       }
     }
     return;
@@ -439,8 +436,8 @@ void nsWindow::MaybeEnableWindowOcclusion(bool aEnable) {
   flags.bits = gfx::gfxVars::WebRenderDebugFlags();
   bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
   if (debugEnabled && mCompositorWidgetDelegate) {
-    mCompositorWidgetDelegate->NotifyVisibilityUpdated(mSizeMode,
-                                                       mIsFullyOccluded);
+    mCompositorWidgetDelegate->NotifyVisibilityUpdated(
+        mFrameState->GetSizeMode(), mIsFullyOccluded);
   }
 }
 

@@ -37,6 +37,7 @@
 #include "mozilla/layers/InProcessCompositorSession.h"
 #include "mozilla/layers/LayerTreeOwnerTracker.h"
 #include "mozilla/layers/RemoteCompositorSession.h"
+#include "mozilla/webrender/RenderThread.h"
 #include "mozilla/widget/PlatformWidgetTypes.h"
 #include "nsAppRunner.h"
 #include "mozilla/widget/CompositorWidget.h"
@@ -505,13 +506,11 @@ void GPUProcessManager::SimulateDeviceReset() {
   gfxPlatform::GetPlatform()->CompositorUpdated();
 
   if (mProcess) {
-    GPUDeviceData data;
-    if (mGPUChild && mGPUChild->SendSimulateDeviceReset(&data)) {
-      gfxPlatform::GetPlatform()->ImportGPUDeviceData(data);
+    if (mGPUChild) {
+      mGPUChild->SendSimulateDeviceReset();
     }
-    OnRemoteProcessDeviceReset(mProcess);
   } else {
-    OnInProcessDeviceReset(/* aTrackThreshold */ false);
+    wr::RenderThread::Get()->SimulateDeviceReset();
   }
 }
 
@@ -895,7 +894,7 @@ already_AddRefed<CompositorSession> GPUProcessManager::CreateTopLevelCompositor(
     nsBaseWidget* aWidget, WebRenderLayerManager* aLayerManager,
     CSSToLayoutDeviceScale aScale, const CompositorOptions& aOptions,
     bool aUseExternalSurfaceSize, const gfx::IntSize& aSurfaceSize,
-    bool* aRetryOut) {
+    uint64_t aInnerWindowId, bool* aRetryOut) {
   MOZ_ASSERT(aRetryOut);
 
   LayersId layerTreeId = AllocateLayerTreeId();
@@ -905,9 +904,9 @@ already_AddRefed<CompositorSession> GPUProcessManager::CreateTopLevelCompositor(
   RefPtr<CompositorSession> session;
 
   if (EnsureGPUReady()) {
-    session =
-        CreateRemoteSession(aWidget, aLayerManager, layerTreeId, aScale,
-                            aOptions, aUseExternalSurfaceSize, aSurfaceSize);
+    session = CreateRemoteSession(aWidget, aLayerManager, layerTreeId, aScale,
+                                  aOptions, aUseExternalSurfaceSize,
+                                  aSurfaceSize, aInnerWindowId);
     if (!session) {
       // We couldn't create a remote compositor, so abort the process.
       DisableGPUProcess("Failed to create remote compositor");
@@ -917,7 +916,8 @@ already_AddRefed<CompositorSession> GPUProcessManager::CreateTopLevelCompositor(
   } else {
     session = InProcessCompositorSession::Create(
         aWidget, aLayerManager, layerTreeId, aScale, aOptions,
-        aUseExternalSurfaceSize, aSurfaceSize, AllocateNamespace());
+        aUseExternalSurfaceSize, aSurfaceSize, AllocateNamespace(),
+        aInnerWindowId);
   }
 
 #if defined(MOZ_WIDGET_ANDROID)
@@ -937,7 +937,7 @@ RefPtr<CompositorSession> GPUProcessManager::CreateRemoteSession(
     nsBaseWidget* aWidget, WebRenderLayerManager* aLayerManager,
     const LayersId& aRootLayerTreeId, CSSToLayoutDeviceScale aScale,
     const CompositorOptions& aOptions, bool aUseExternalSurfaceSize,
-    const gfx::IntSize& aSurfaceSize) {
+    const gfx::IntSize& aSurfaceSize, uint64_t aInnerWindowId) {
 #ifdef MOZ_WIDGET_SUPPORTS_OOP_COMPOSITING
   widget::CompositorWidgetInitData initData;
   aWidget->GetCompositorWidgetInitData(&initData);
@@ -945,7 +945,7 @@ RefPtr<CompositorSession> GPUProcessManager::CreateRemoteSession(
   RefPtr<CompositorBridgeChild> child =
       CompositorManagerChild::CreateWidgetCompositorBridge(
           mProcessToken, aLayerManager, AllocateNamespace(), aScale, aOptions,
-          aUseExternalSurfaceSize, aSurfaceSize);
+          aUseExternalSurfaceSize, aSurfaceSize, aInnerWindowId);
   if (!child) {
     gfxCriticalNote << "Failed to create CompositorBridgeChild";
     return nullptr;

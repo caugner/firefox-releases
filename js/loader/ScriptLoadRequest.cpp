@@ -64,7 +64,7 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(ScriptLoadRequest)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(ScriptLoadRequest)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFetchOptions, mCacheInfo, mLoadContext)
-  tmp->mScript = nullptr;
+  tmp->mScriptForBytecodeEncoding = nullptr;
   tmp->DropBytecodeCacheReferences();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -73,7 +73,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(ScriptLoadRequest)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(ScriptLoadRequest)
-  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mScript)
+  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mScriptForBytecodeEncoding)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 ScriptLoadRequest::ScriptLoadRequest(ScriptKind aKind, nsIURI* aURI,
@@ -82,8 +82,8 @@ ScriptLoadRequest::ScriptLoadRequest(ScriptKind aKind, nsIURI* aURI,
                                      nsIURI* aReferrer,
                                      mozilla::dom::ScriptLoadContext* aContext)
     : mKind(aKind),
-      mIsCanceled(false),
-      mProgress(Progress::eLoading),
+      mState(State::Fetching),
+      mFetchSourceOnly(false),
       mDataType(DataType::eUnknown),
       mFetchOptions(aFetchOptions),
       mIntegrity(aIntegrity),
@@ -100,7 +100,7 @@ ScriptLoadRequest::ScriptLoadRequest(ScriptKind aKind, nsIURI* aURI,
 }
 
 ScriptLoadRequest::~ScriptLoadRequest() {
-  if (mScript) {
+  if (IsMarkedForBytecodeEncoding()) {
     DropBytecodeCacheReferences();
   }
   mLoadContext = nullptr;
@@ -108,12 +108,12 @@ ScriptLoadRequest::~ScriptLoadRequest() {
 }
 
 void ScriptLoadRequest::SetReady() {
-  MOZ_ASSERT(mProgress != Progress::eReady);
-  mProgress = Progress::eReady;
+  MOZ_ASSERT(!IsReadyToRun());
+  mState = State::Ready;
 }
 
 void ScriptLoadRequest::Cancel() {
-  mIsCanceled = true;
+  mState = State::Canceled;
   if (HasLoadContext()) {
     GetLoadContext()->MaybeCancelOffThreadScript();
   }
@@ -129,6 +129,11 @@ ModuleLoadRequest* ScriptLoadRequest::AsModuleRequest() {
   return static_cast<ModuleLoadRequest*>(this);
 }
 
+const ModuleLoadRequest* ScriptLoadRequest::AsModuleRequest() const {
+  MOZ_ASSERT(IsModuleRequest());
+  return static_cast<const ModuleLoadRequest*>(this);
+}
+
 void ScriptLoadRequest::SetBytecode() {
   MOZ_ASSERT(IsUnknownDataType());
   mDataType = DataType::eBytecode;
@@ -140,10 +145,19 @@ void ScriptLoadRequest::ClearScriptSource() {
   }
 }
 
-void ScriptLoadRequest::SetScript(JSScript* aScript) {
-  MOZ_ASSERT(!mScript);
-  mScript = aScript;
+void ScriptLoadRequest::MarkForBytecodeEncoding(JSScript* aScript) {
+  MOZ_ASSERT(!IsModuleRequest());
+  MOZ_ASSERT(!IsMarkedForBytecodeEncoding());
+  mScriptForBytecodeEncoding = aScript;
   HoldJSObjects(this);
+}
+
+bool ScriptLoadRequest::IsMarkedForBytecodeEncoding() const {
+  if (IsModuleRequest()) {
+    return AsModuleRequest()->IsModuleMarkedForBytecodeEncoding();
+  }
+
+  return !!mScriptForBytecodeEncoding;
 }
 
 nsresult ScriptLoadRequest::GetScriptSource(JSContext* aCx,

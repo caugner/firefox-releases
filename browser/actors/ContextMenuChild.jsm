@@ -28,9 +28,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 });
 
 XPCOMUtils.defineLazyGetter(this, "PageMenuChild", () => {
-  let tmp = {};
-  ChromeUtils.import("resource://gre/modules/PageMenu.jsm", tmp);
-  return new tmp.PageMenuChild();
+  let pageMenu = ChromeUtils.import("resource://gre/modules/PageMenu.jsm");
+  return new pageMenu.PageMenuChild();
 });
 
 let contextMenus = new WeakMap();
@@ -378,6 +377,7 @@ class ContextMenuChild extends JSWindowActorChild {
       this.context.linkProtocol &&
       !(
         this.context.linkProtocol == "mailto" ||
+        this.context.linkProtocol == "tel" ||
         this.context.linkProtocol == "javascript" ||
         this.context.linkProtocol == "news" ||
         this.context.linkProtocol == "snews"
@@ -873,6 +873,7 @@ class ContextMenuChild extends JSWindowActorChild {
     context.onLink = false;
     context.onLoadedImage = false;
     context.onMailtoLink = false;
+    context.onTelLink = false;
     context.onMozExtLink = false;
     context.onNumeric = false;
     context.onPassword = false;
@@ -1158,6 +1159,7 @@ class ContextMenuChild extends JSWindowActorChild {
           context.linkTextStr = this._getLinkText();
           context.linkProtocol = this._getLinkProtocol();
           context.onMailtoLink = context.linkProtocol == "mailto";
+          context.onTelLink = context.linkProtocol == "tel";
           context.onMozExtLink = context.linkProtocol == "moz-extension";
           context.onSaveableLink = this._isLinkSaveable(context.link);
 

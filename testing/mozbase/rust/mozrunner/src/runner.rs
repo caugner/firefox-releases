@@ -290,7 +290,12 @@ impl Runner for FirefoxRunner {
                 Arg::Foreground => seen_foreground = true,
                 Arg::NoRemote => seen_no_remote = true,
                 Arg::Profile | Arg::NamedProfile | Arg::ProfileManager => seen_profile = true,
-                Arg::Other(_) | Arg::None => {}
+                Arg::Marionette
+                | Arg::None
+                | Arg::Other(_)
+                | Arg::RemoteAllowHosts
+                | Arg::RemoteAllowOrigins
+                | Arg::RemoteDebuggingPort => {}
             }
         }
         // -foreground is only supported on Mac, and shouldn't be passed
@@ -352,12 +357,10 @@ pub mod platform {
             info_plist.push("Info.plist");
             if let Ok(plist) = Value::from_file(&info_plist) {
                 if let Some(dict) = plist.as_dictionary() {
-                    if let Some(binary_file) = dict.get("CFBundleExecutable") {
-                        if let Value::String(s) = binary_file {
-                            path.push("Contents");
-                            path.push("MacOS");
-                            path.push(s);
-                        }
+                    if let Some(Value::String(s)) = dict.get("CFBundleExecutable") {
+                        path.push("Contents");
+                        path.push("MacOS");
+                        path.push(s);
                     }
                 }
             }
@@ -393,7 +396,7 @@ pub mod platform {
         .iter()
         {
             let path = match (home.as_ref(), prefix_home) {
-                (Some(ref home_dir), true) => home_dir.join(trial_path),
+                (Some(home_dir), true) => home_dir.join(trial_path),
                 (None, true) => continue,
                 (_, false) => PathBuf::from(trial_path),
             };

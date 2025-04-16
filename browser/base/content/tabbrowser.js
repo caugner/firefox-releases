@@ -63,6 +63,7 @@
 
       XPCOMUtils.defineLazyModuleGetters(this, {
         E10SUtils: "resource://gre/modules/E10SUtils.jsm",
+        PictureInPicture: "resource://gre/modules/PictureInPicture.jsm",
       });
       XPCOMUtils.defineLazyServiceGetters(this, {
         MacSharingService: [
@@ -2986,9 +2987,7 @@
             restoreTabsLazily && !select && !tabData.pinned;
 
           let url = "about:blank";
-          if (createLazyBrowser && tabData.entries && tabData.entries.length) {
-            // Let tabbrowser know the future URI because progress listeners won't
-            // get onLocationChange notification before the browser is inserted.
+          if (tabData.entries?.length) {
             let activeIndex = (tabData.index || tabData.entries.length) - 1;
             // Ensure the index is in bounds.
             activeIndex = Math.min(activeIndex, tabData.entries.length - 1);
@@ -2996,10 +2995,23 @@
             url = tabData.entries[activeIndex].url;
           }
 
+          let preferredRemoteType = E10SUtils.getRemoteTypeForURI(
+            url,
+            gMultiProcessBrowser,
+            gFissionBrowser,
+            E10SUtils.DEFAULT_REMOTE_TYPE,
+            null,
+            E10SUtils.predictOriginAttributes({ window, userContextId })
+          );
+
+          // If we're creating a lazy browser, let tabbrowser know the future
+          // URI because progress listeners won't get onLocationChange
+          // notification before the browser is inserted.
+          //
           // Setting noInitialLabel is a perf optimization. Rendering tab labels
           // would make resizing the tabs more expensive as we're adding them.
           // Each tab will get its initial label set in restoreTab.
-          tab = this.addTrustedTab(url, {
+          tab = this.addTrustedTab(createLazyBrowser ? url : "about:blank", {
             createLazyBrowser,
             skipAnimation: true,
             allowInheritPrincipal: true,
@@ -3008,6 +3020,8 @@
             skipBackgroundNotify: true,
             bulkOrderedOpen: true,
             batchInsertingTabs: true,
+            skipLoad: !createLazyBrowser,
+            preferredRemoteType,
           });
 
           if (select) {
@@ -4777,16 +4791,25 @@
       // This avoids tab-switches in the new window, preserving tab laziness.
       // However, to avoid multiple tab-switches in the original window, the other tabs
       // should be adopted before the selected one.
-      let selectedTabIndex = Math.max(0, tabs.indexOf(gBrowser.selectedTab));
-      let selectedTab = tabs[selectedTabIndex];
+      let { selectedTab } = gBrowser;
+      if (!tabs.includes(selectedTab)) {
+        selectedTab = tabs[0];
+      }
       let win = this.replaceTabWithWindow(selectedTab, aOptions);
       win.addEventListener(
         "before-initial-tab-adopted",
         () => {
-          for (let i = 0; i < tabs.length; ++i) {
-            if (i != selectedTabIndex) {
-              win.gBrowser.adoptTab(tabs[i], i);
+          let index = 0;
+          for (let tab of tabs) {
+            if (tab !== selectedTab) {
+              const newTab = win.gBrowser.adoptTab(tab, index);
+              if (!newTab) {
+                // The adoption failed. Restore "fadein" and don't increase the index.
+                tab.setAttribute("fadein", "true");
+                continue;
+              }
             }
+            ++index;
           }
           // Restore tab selection
           let winVisibleTabs = win.gBrowser.visibleTabs;
@@ -5290,7 +5313,8 @@
         (aBrowser == this.selectedBrowser &&
           window.windowState != window.STATE_MINIMIZED &&
           !window.isFullyOccluded) ||
-        this._printPreviewBrowsers.has(aBrowser)
+        this._printPreviewBrowsers.has(aBrowser) ||
+        this.PictureInPicture.isOriginatingBrowser(aBrowser)
       );
     },
 

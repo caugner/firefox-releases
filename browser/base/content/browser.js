@@ -632,6 +632,7 @@ async function gLazyFindCommand(cmd, ...args) {
 
 var gPageIcons = {
   "about:home": "chrome://branding/content/icon32.png",
+  "about:myfirefox": "chrome://branding/content/icon32.png",
   "about:newtab": "chrome://branding/content/icon32.png",
   "about:welcome": "chrome://branding/content/icon32.png",
   "about:privatebrowsing": "chrome://browser/skin/privatebrowsing/favicon.svg",
@@ -639,12 +640,13 @@ var gPageIcons = {
 
 var gInitialPages = [
   "about:blank",
-  "about:newtab",
   "about:home",
+  ...(AppConstants.NIGHTLY_BUILD ? ["about:myfirefox"] : []),
+  "about:newtab",
   "about:privatebrowsing",
-  "about:welcomeback",
   "about:sessionrestore",
   "about:welcome",
+  "about:welcomeback",
 ];
 
 function isInitialPage(url) {
@@ -1628,6 +1630,18 @@ var gBrowserInit = {
         document.documentElement.setAttribute("sizemode", "maximized");
       }
     }
+    if (AppConstants.MENUBAR_CAN_AUTOHIDE) {
+      const toolbarMenubar = document.getElementById("toolbar-menubar");
+      // set a default value
+      if (!toolbarMenubar.hasAttribute("autohide")) {
+        toolbarMenubar.setAttribute("autohide", true);
+      }
+      toolbarMenubar.setAttribute(
+        "data-l10n-id",
+        "toolbar-context-menu-menu-bar-cmd"
+      );
+      toolbarMenubar.setAttribute("data-l10n-attrs", "toolbarname");
+    }
 
     // Run menubar initialization first, to avoid TabsInTitlebar code picking
     // up mutations from it and causing a reflow.
@@ -1645,8 +1659,7 @@ var gBrowserInit = {
       ) {
         let windowFrameColor = new Color(
           ...ChromeUtils.import(
-            "resource:///modules/Windows8WindowFrameColor.jsm",
-            {}
+            "resource:///modules/Windows8WindowFrameColor.jsm"
           ).Windows8WindowFrameColor.get()
         );
         // Default to black for foreground text.
@@ -2339,8 +2352,7 @@ var gBrowserInit = {
         try {
           DownloadsCommon.initializeAllDataLinks();
           ChromeUtils.import(
-            "resource:///modules/DownloadsTaskbar.jsm",
-            {}
+            "resource:///modules/DownloadsTaskbar.jsm"
           ).DownloadsTaskbar.registerIndicator(window);
           if (AppConstants.platform == "macosx") {
             ChromeUtils.import(
@@ -4309,7 +4321,7 @@ const BrowserSearch = {
       "browser.search.searchEngineRemoval"
     );
     link.setAttribute("data-l10n-name", "remove-search-engine-article");
-    document.l10n.setAttributes(message, "remove-search-engine-message", {
+    document.l10n.setAttributes(message, "removed-search-engine-message", {
       oldEngine,
       newEngine,
     });

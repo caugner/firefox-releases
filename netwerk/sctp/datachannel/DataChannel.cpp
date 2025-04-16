@@ -242,7 +242,7 @@ class DataChannelRegistry {
   uintptr_t mNextId = 1;
   std::map<uintptr_t, RefPtr<DataChannelConnection>> mConnections;
   UniquePtr<media::ShutdownBlockingTicket> mShutdownBlocker;
-  static StaticMutex sInstanceMutex;
+  static StaticMutex sInstanceMutex MOZ_UNANNOTATED;
 };
 
 StaticMutex DataChannelRegistry::sInstanceMutex;
@@ -442,9 +442,9 @@ DataChannelConnection::DataChannelConnection(
 #endif
 }
 
-bool DataChannelConnection::Init(const uint16_t aLocalPort,
-                                 const uint16_t aNumStreams,
-                                 const Maybe<uint64_t>& aMaxMessageSize) {
+bool DataChannelConnection::Init(
+    const uint16_t aLocalPort, const uint16_t aNumStreams,
+    const Maybe<uint64_t>& aMaxMessageSize) {
   ASSERT_WEBRTC(NS_IsMainThread());
 
   struct sctp_initmsg initmsg;
@@ -609,9 +609,11 @@ error_cleanup:
   return false;
 }
 
+// Only called on MainThread, mMaxMessageSize is read on other threads
 void DataChannelConnection::SetMaxMessageSize(bool aMaxMessageSizeSet,
                                               uint64_t aMaxMessageSize) {
-  MutexAutoLock lock(mLock);  // TODO: Needed?
+  ASSERT_WEBRTC(NS_IsMainThread());
+  MutexAutoLock lock(mLock);
 
   if (mMaxMessageSizeSet && !aMaxMessageSizeSet) {
     // Don't overwrite already set MMS with default values
@@ -1556,6 +1558,7 @@ void DataChannelConnection::DeliverQueuedData(uint16_t stream) {
   mLock.AssertCurrentThreadOwns();
 
   mQueuedData.RemoveElementsBy([stream, this](const auto& dataItem) {
+    mLock.AssertCurrentThreadOwns();
     const bool match = dataItem->mStream == stream;
     if (match) {
       DC_DEBUG(("Delivering queued data for stream %u, length %u", stream,
@@ -2365,9 +2368,9 @@ void DataChannelConnection::HandleNotification(
   }
 }
 
-int DataChannelConnection::ReceiveCallback(struct socket* sock, void* data,
-                                           size_t datalen,
-                                           struct sctp_rcvinfo rcv, int flags) {
+int DataChannelConnection::ReceiveCallback(
+    struct socket* sock, void* data, size_t datalen, struct sctp_rcvinfo rcv,
+    int flags) NO_THREAD_SAFETY_ANALYSIS {
   ASSERT_WEBRTC(!NS_IsMainThread());
   DC_DEBUG(("In ReceiveCallback"));
 

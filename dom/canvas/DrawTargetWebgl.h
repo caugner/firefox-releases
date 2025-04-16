@@ -10,6 +10,7 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/WeakPtr.h"
+#include "mozilla/ThreadLocal.h"
 #include <vector>
 
 namespace mozilla {
@@ -98,7 +99,6 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
     SharedContext();
     ~SharedContext();
 
-    int32_t mNumTargets = 0;
     WeakPtr<DrawTargetWebgl> mCurrentTarget;
     IntSize mViewportSize;
     IntRect mClipRect;
@@ -202,12 +202,9 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
 
     bool DrawPathAccel(const Path* aPath, const Pattern& aPattern,
                        const DrawOptions& aOptions,
-                       const StrokeOptions* aStrokeOptions = nullptr);
-
-    bool DrawSurfaceWithShadowAccel(SourceSurface* aSurface, const Point& aDest,
-                                    const DeviceColor& aColor,
-                                    const Point& aOffset, Float aSigma,
-                                    CompositionOp aOperator);
+                       const StrokeOptions* aStrokeOptions = nullptr,
+                       const ShadowOptions* aShadow = nullptr,
+                       bool aCacheable = true);
 
     bool FillGlyphsAccel(ScaledFont* aFont, const GlyphBuffer& aBuffer,
                          const Pattern& aPattern, const DrawOptions& aOptions,
@@ -226,7 +223,7 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
 
   RefPtr<SharedContext> mSharedContext;
 
-  static RefPtr<SharedContext> sSharedContext;
+  static MOZ_THREAD_LOCAL(SharedContext*) sSharedContext;
 
  public:
   DrawTargetWebgl();
@@ -265,8 +262,12 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
                   const Point& aDestPoint,
                   const DrawOptions& aOptions = DrawOptions()) override;
   void DrawSurfaceWithShadow(SourceSurface* aSurface, const Point& aDest,
-                             const DeviceColor& aColor, const Point& aOffset,
-                             Float aSigma, CompositionOp aOperator) override;
+                             const ShadowOptions& aShadow,
+                             CompositionOp aOperator) override;
+  void DrawShadow(const Path* aPath, const Pattern& aPattern,
+                  const ShadowOptions& aShadow, const DrawOptions& aOptions,
+                  const StrokeOptions* aStrokeOptions = nullptr) override;
+
   void ClearRect(const Rect& aRect) override;
   void CopySurface(SourceSurface* aSurface, const IntRect& aSourceRect,
                    const IntPoint& aDestination) override;

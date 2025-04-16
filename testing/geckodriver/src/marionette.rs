@@ -188,15 +188,11 @@ impl MarionetteHandler {
                 options,
                 marionette_port,
                 websocket_port,
-                self.settings.allow_hosts.to_owned(),
-                self.settings.allow_origins.to_owned(),
             )?)
         } else if !self.settings.connect_existing {
             Browser::Local(LocalBrowser::new(
                 options,
                 marionette_port,
-                self.settings.allow_hosts.to_owned(),
-                self.settings.allow_origins.to_owned(),
                 self.settings.jsdebugger,
             )?)
         } else {
@@ -1177,6 +1173,7 @@ impl MarionetteConnection {
                 match MarionetteConnection::try_connect(host, port) {
                     Ok(stream) => {
                         debug!("Connection to Marionette established on {}:{}.", host, port);
+                        browser.update_marionette_port(port);
                         return Ok(stream);
                     }
                     Err(e) => {

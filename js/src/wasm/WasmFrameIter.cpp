@@ -28,6 +28,7 @@
 #include "wasm/WasmTlsData.h"
 
 #include "jit/MacroAssembler-inl.h"
+#include "wasm/WasmInstance-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -36,14 +37,17 @@ using namespace js::wasm;
 using mozilla::DebugOnly;
 using mozilla::Maybe;
 
-static TlsData* ExtractCallerTlsFromFrameWithTls(Frame* fp) {
-  return *reinterpret_cast<TlsData**>(reinterpret_cast<uint8_t*>(fp) +
-                                      FrameWithTls::callerTlsOffset());
+static Instance* ExtractCallerInstanceFromFrameWithInstances(Frame* fp) {
+  return *reinterpret_cast<Instance**>(
+      reinterpret_cast<uint8_t*>(fp) +
+      FrameWithInstances::callerInstanceOffset());
 }
 
-static const TlsData* ExtractCalleeTlsFromFrameWithTls(const Frame* fp) {
-  return *reinterpret_cast<TlsData* const*>(
-      reinterpret_cast<const uint8_t*>(fp) + FrameWithTls::calleeTlsOffset());
+static const Instance* ExtractCalleeInstanceFromFrameWithInstances(
+    const Frame* fp) {
+  return *reinterpret_cast<Instance* const*>(
+      reinterpret_cast<const uint8_t*>(fp) +
+      FrameWithInstances::calleeInstanceOffset());
 }
 
 /*****************************************************************************/
@@ -55,14 +59,14 @@ WasmFrameIter::WasmFrameIter(JitActivation* activation, wasm::Frame* fp)
       codeRange_(nullptr),
       lineOrBytecode_(0),
       fp_(fp ? fp : activation->wasmExitFP()),
-      tls_(nullptr),
+      instance_(nullptr),
       unwoundIonCallerFP_(nullptr),
       unwoundIonFrameType_(jit::FrameType(-1)),
       unwind_(Unwind::False),
       unwoundAddressOfReturnAddress_(nullptr),
       resumePCinCurrentFrame_(nullptr) {
   MOZ_ASSERT(fp_);
-  tls_ = GetNearestEffectiveTls(fp_);
+  instance_ = GetNearestEffectiveInstance(fp_);
 
   // When the stack is captured during a trap (viz., to create the .stack
   // for an Error object), use the pc/bytecode information captured by the
@@ -74,7 +78,7 @@ WasmFrameIter::WasmFrameIter(JitActivation* activation, wasm::Frame* fp)
     const TrapData& trapData = activation->wasmTrapData();
     void* unwoundPC = trapData.unwoundPC;
 
-    code_ = &tls_->instance->code();
+    code_ = &instance_->code();
     MOZ_ASSERT(code_ == LookupCode(unwoundPC));
 
     codeRange_ = code_->lookupFuncRange(unwoundPC);
@@ -217,10 +221,10 @@ void WasmFrameIter::popFrame() {
   MOZ_ASSERT(callsite);
 
   if (callsite->mightBeCrossInstance()) {
-    tls_ = ExtractCallerTlsFromFrameWithTls(prevFP);
+    instance_ = ExtractCallerInstanceFromFrameWithInstances(prevFP);
   }
 
-  MOZ_ASSERT(code_ == &tls()->instance->code());
+  MOZ_ASSERT(code_ == &instance()->code());
   lineOrBytecode_ = callsite->lineOrBytecode();
 
   MOZ_ASSERT(!done());
@@ -289,11 +293,6 @@ unsigned WasmFrameIter::computeLine(uint32_t* column) const {
     *column = codeRange_->funcIndex() | ColumnBit;
   }
   return lineOrBytecode_;
-}
-
-Instance* WasmFrameIter::instance() const {
-  MOZ_ASSERT(!done());
-  return tls_->instance;
 }
 
 void** WasmFrameIter::unwoundAddressOfReturnAddress() const {
@@ -393,7 +392,7 @@ static constexpr unsigned SetJitEntryFP = PushedRetAddr + SetFP - PushedFP;
 
 static void LoadActivation(MacroAssembler& masm, const Register& dest) {
   // WasmCall pushes a JitActivation.
-  masm.loadPtr(Address(WasmTlsReg, offsetof(wasm::TlsData, cx)), dest);
+  masm.loadPtr(Address(InstanceReg, wasm::Instance::offsetOfCx()), dest);
   masm.loadPtr(Address(dest, JSContext::offsetOfActivation()), dest);
 }
 
@@ -722,7 +721,7 @@ void wasm::GenerateFunctionPrologue(MacroAssembler& masm,
   // See comment block in WasmCompile.cpp for an explanation tiering.
   if (tier1FuncIndex) {
     Register scratch = ABINonArgReg0;
-    masm.loadPtr(Address(WasmTlsReg, offsetof(TlsData, jumpTable)), scratch);
+    masm.loadPtr(Address(InstanceReg, Instance::offsetOfJumpTable()), scratch);
     masm.jump(Address(scratch, *tier1FuncIndex * sizeof(uintptr_t)));
   }
 
@@ -990,12 +989,12 @@ static bool isSignatureCheckFail(uint32_t offsetInCode,
          (offsetInCode - codeRange->funcCheckedCallEntry()) > SetFP;
 }
 
-const TlsData* js::wasm::GetNearestEffectiveTls(const Frame* fp) {
+const Instance* js::wasm::GetNearestEffectiveInstance(const Frame* fp) {
   while (true) {
     if (fp->callerIsExitOrJitEntryFP()) {
       // It is a direct call from JIT.
       MOZ_ASSERT(!LookupCode(fp->returnAddress()));
-      return ExtractCalleeTlsFromFrameWithTls(fp);
+      return ExtractCalleeInstanceFromFrameWithInstances(fp);
     }
 
     uint8_t* returnAddress = fp->returnAddress();
@@ -1004,23 +1003,23 @@ const TlsData* js::wasm::GetNearestEffectiveTls(const Frame* fp) {
     MOZ_ASSERT(codeRange);
 
     if (codeRange->isEntry()) {
-      return ExtractCalleeTlsFromFrameWithTls(fp);
+      return ExtractCalleeInstanceFromFrameWithInstances(fp);
     }
 
     MOZ_ASSERT(codeRange->kind() == CodeRange::Function);
     MOZ_ASSERT(code);
     const CallSite* callsite = code->lookupCallSite(returnAddress);
     if (callsite->mightBeCrossInstance()) {
-      return ExtractCalleeTlsFromFrameWithTls(fp);
+      return ExtractCalleeInstanceFromFrameWithInstances(fp);
     }
 
     fp = fp->wasmCaller();
   }
 }
 
-TlsData* js::wasm::GetNearestEffectiveTls(Frame* fp) {
-  return const_cast<TlsData*>(
-      GetNearestEffectiveTls(const_cast<const Frame*>(fp)));
+Instance* js::wasm::GetNearestEffectiveInstance(Frame* fp) {
+  return const_cast<Instance*>(
+      GetNearestEffectiveInstance(const_cast<const Frame*>(fp)));
 }
 
 bool js::wasm::StartUnwinding(const RegisterState& registers,
@@ -1415,9 +1414,9 @@ void ProfilingFrameIterator::operator++() {
     return;
   }
 
-  MOZ_ASSERT(code_ ==
-             &GetNearestEffectiveTls(Frame::fromUntaggedWasmExitFP(callerFP_))
-                  ->instance->code());
+  MOZ_ASSERT(code_ == &GetNearestEffectiveInstance(
+                           Frame::fromUntaggedWasmExitFP(callerFP_))
+                           ->code());
 
   switch (codeRange_->kind()) {
     case CodeRange::Function:
@@ -1579,24 +1578,22 @@ static const char* ThunkedNativeToDescription(SymbolicAddress func) {
       return "call to native table.fill function";
     case SymbolicAddress::ElemDrop:
       return "call to native elem.drop function";
-    case SymbolicAddress::TableGet:
+    case SymbolicAddress::TableGetFunc:
       return "call to native table.get function";
     case SymbolicAddress::TableGrow:
       return "call to native table.grow function";
     case SymbolicAddress::TableInit:
       return "call to native table.init function";
-    case SymbolicAddress::TableSet:
+    case SymbolicAddress::TableSetFunc:
       return "call to native table.set function";
-    case SymbolicAddress::TableSize:
-      return "call to native table.size function";
     case SymbolicAddress::RefFunc:
       return "call to native ref.func function";
     case SymbolicAddress::PreBarrierFiltering:
       return "call to native filtering GC prebarrier (in wasm)";
     case SymbolicAddress::PostBarrier:
-      return "call to native GC postbarrier (in wasm)";
+    case SymbolicAddress::PostBarrierPrecise:
     case SymbolicAddress::PostBarrierFiltering:
-      return "call to native filtering GC postbarrier (in wasm)";
+      return "call to native GC postbarrier (in wasm)";
     case SymbolicAddress::StructNew:
       return "call to native struct.new (in wasm)";
 #if defined(ENABLE_WASM_EXCEPTIONS)

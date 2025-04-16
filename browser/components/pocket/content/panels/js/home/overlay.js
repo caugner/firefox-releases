@@ -37,12 +37,14 @@ var HomeOverlay = function(options) {
 };
 
 HomeOverlay.prototype = {
-  create() {
+  create({ pockethost }) {
     const { searchParams } = new URL(window.location.href);
-    const pockethost = searchParams.get(`pockethost`) || `getpocket.com`;
     const locale = searchParams.get(`locale`) || ``;
     const layoutRefresh = searchParams.get(`layoutRefresh`) === `true`;
     const hideRecentSaves = searchParams.get(`hiderecentsaves`) === `true`;
+    const utmSource = searchParams.get(`utmSource`);
+    const utmCampaign = searchParams.get(`utmCampaign`);
+    const utmContent = searchParams.get(`utmContent`);
 
     if (this.active) {
       return;
@@ -56,6 +58,9 @@ HomeOverlay.prototype = {
           locale={locale}
           hideRecentSaves={hideRecentSaves}
           pockethost={pockethost}
+          utmSource={utmSource}
+          utmCampaign={utmCampaign}
+          utmContent={utmContent}
           topics={[
             { title: "Technology", topic: "technology" },
             { title: "Self Improvement", topic: "self-improvement" },

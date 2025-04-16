@@ -2102,7 +2102,7 @@ void LIRGenerator::visitWasmBuiltinModD(MWasmBuiltinModD* ins) {
   MOZ_ASSERT(gen->compilingWasm());
   LWasmBuiltinModD* lir = new (alloc()) LWasmBuiltinModD(
       useRegisterAtStart(ins->lhs()), useRegisterAtStart(ins->rhs()),
-      useFixedAtStart(ins->tls(), WasmTlsReg));
+      useFixedAtStart(ins->tls(), InstanceReg));
   defineReturn(lir, ins);
 }
 
@@ -5084,7 +5084,7 @@ void LIRGenerator::visitWasmAlignmentCheck(MWasmAlignmentCheck* ins) {
 }
 
 void LIRGenerator::visitWasmLoadGlobalVar(MWasmLoadGlobalVar* ins) {
-  size_t offs = offsetof(wasm::TlsData, globalArea) + ins->globalDataOffset();
+  size_t offs = wasm::Instance::offsetOfGlobalArea() + ins->globalDataOffset();
   if (ins->type() == MIRType::Int64) {
 #ifdef JS_PUNBOX64
     LAllocation tlsPtr = useRegisterAtStart(ins->tlsPtr());
@@ -5116,9 +5116,15 @@ void LIRGenerator::visitWasmLoadGlobalCell(MWasmLoadGlobalCell* ins) {
   }
 }
 
+void LIRGenerator::visitWasmLoadTableElement(MWasmLoadTableElement* ins) {
+  LAllocation elements = useRegisterAtStart(ins->elements());
+  LAllocation index = useRegisterAtStart(ins->index());
+  define(new (alloc()) LWasmLoadTableElement(elements, index), ins);
+}
+
 void LIRGenerator::visitWasmStoreGlobalVar(MWasmStoreGlobalVar* ins) {
   MDefinition* value = ins->value();
-  size_t offs = offsetof(wasm::TlsData, globalArea) + ins->globalDataOffset();
+  size_t offs = wasm::Instance::offsetOfGlobalArea() + ins->globalDataOffset();
   if (value->type() == MIRType::Int64) {
 #ifdef JS_PUNBOX64
     LAllocation tlsPtr = useRegisterAtStart(ins->tlsPtr());
@@ -5176,6 +5182,12 @@ void LIRGenerator::visitWasmStoreStackResult(MWasmStoreStackResult* ins) {
 void LIRGenerator::visitWasmDerivedPointer(MWasmDerivedPointer* ins) {
   LAllocation base = useRegisterAtStart(ins->base());
   define(new (alloc()) LWasmDerivedPointer(base), ins);
+}
+
+void LIRGenerator::visitWasmDerivedIndexPointer(MWasmDerivedIndexPointer* ins) {
+  LAllocation base = useRegisterAtStart(ins->base());
+  LAllocation index = useRegisterAtStart(ins->index());
+  define(new (alloc()) LWasmDerivedIndexPointer(base, index), ins);
 }
 
 void LIRGenerator::visitWasmStoreRef(MWasmStoreRef* ins) {
@@ -5240,7 +5252,7 @@ void LIRGenerator::visitWasmReturn(MWasmReturn* ins) {
 
   if (rval->type() == MIRType::Int64) {
     add(new (alloc()) LWasmReturnI64(useInt64Fixed(rval, ReturnReg64),
-                                     useFixed(tlsParam, WasmTlsReg)));
+                                     useFixed(tlsParam, InstanceReg)));
     return;
   }
 
@@ -5261,14 +5273,14 @@ void LIRGenerator::visitWasmReturn(MWasmReturn* ins) {
   }
 
   LWasmReturn* lir =
-      new (alloc()) LWasmReturn(useFixed(tlsParam, WasmTlsReg), returnReg);
+      new (alloc()) LWasmReturn(useFixed(tlsParam, InstanceReg), returnReg);
   add(lir);
 }
 
 void LIRGenerator::visitWasmReturnVoid(MWasmReturnVoid* ins) {
   MDefinition* tlsParam = ins->getOperand(0);
   LWasmReturnVoid* lir =
-      new (alloc()) LWasmReturnVoid(useFixed(tlsParam, WasmTlsReg));
+      new (alloc()) LWasmReturnVoid(useFixed(tlsParam, InstanceReg));
   add(lir);
 }
 

@@ -116,6 +116,12 @@ let Player = {
   oldMouseUpWindowY: window.screenY,
 
   /**
+   * Used to determine if hovering the mouse cursor over the pip window or not.
+   * Gets updated whenever a new hover state is detected.
+   */
+  isCurrentHover: false,
+
+  /**
    * Initializes the player browser, and sets up the initial state.
    *
    * @param {Number} id
@@ -159,6 +165,13 @@ let Player = {
       addEventListener(eventType, this);
     }
 
+    this.controls.addEventListener("mouseleave", () => {
+      this.onMouseLeave();
+    });
+    this.controls.addEventListener("mouseenter", () => {
+      this.onMouseEnter();
+    });
+
     // If the content process hosting the video crashes, let's
     // just close the window for now.
     browser.addEventListener("oop-browser-crashed", this);
@@ -180,13 +193,6 @@ let Player = {
 
     this.lastScreenX = window.screenX;
     this.lastScreenY = window.screenY;
-
-    this.recordEvent("create", {
-      width: window.outerWidth.toString(),
-      height: window.outerHeight.toString(),
-      screenX: window.screenX.toString(),
-      screenY: window.screenY.toString(),
-    });
 
     this.computeAndSetMinimumSize(window.outerWidth, window.outerHeight);
 
@@ -227,6 +233,11 @@ let Player = {
       case "keydown": {
         if (event.keyCode == KeyEvent.DOM_VK_TAB) {
           this.controls.setAttribute("keying", true);
+          this.actor.sendAsyncMessage("PictureInPicture:ShowVideoControls", {
+            isFullscreen: this.isFullscreen,
+            isVideoControlsShowing: true,
+            playerBottomControlsDOMRect: this.controlsBottom.getBoundingClientRect(),
+          });
         } else if (event.keyCode == KeyEvent.DOM_VK_ESCAPE) {
           event.preventDefault();
           if (this.isFullscreen) {
@@ -278,6 +289,21 @@ let Player = {
             Services.obs.notifyObservers(window, "fullscreen-painted");
           }
         });
+        if (this.isFullscreen) {
+          this.actor.sendAsyncMessage("PictureInPicture:EnterFullscreen", {
+            isFullscreen: true,
+            isVideoControlsShowing: null,
+            playerBottomControlsDOMRect: null,
+          });
+        } else {
+          this.actor.sendAsyncMessage("PictureInPicture:ExitFullscreen", {
+            isFullscreen: this.isFullscreen,
+            isVideoControlsShowing:
+              !!this.controls.getAttribute("showing") ||
+              !!this.controls.getAttribute("keying"),
+            playerBottomControlsDOMRect: this.controlsBottom.getBoundingClientRect(),
+          });
+        }
         break;
       }
 
@@ -556,8 +582,35 @@ let Player = {
    * Event handler for mousemove the PiP Window
    */
   onMouseMove() {
-    if (document.fullscreenElement) {
+    if (this.isFullscreen) {
       this.revealControls(false);
+    }
+  },
+
+  onMouseEnter() {
+    if (!this.isFullscreen) {
+      this.isCurrentHover = true;
+      this.actor.sendAsyncMessage("PictureInPicture:ShowVideoControls", {
+        isFullscreen: this.isFullscreen,
+        isVideoControlsShowing: true,
+        playerBottomControlsDOMRect: this.controlsBottom.getBoundingClientRect(),
+      });
+    }
+  },
+
+  onMouseLeave() {
+    if (!this.isFullscreen) {
+      this.isCurrentHover = false;
+      if (
+        !this.controls.getAttribute("showing") &&
+        !this.controls.getAttribute("keying")
+      ) {
+        this.actor.sendAsyncMessage("PictureInPicture:HideVideoControls", {
+          isFullscreen: this.isFullscreen,
+          isVideoControlsShowing: false,
+          playerBottomControlsDOMRect: null,
+        });
+      }
     }
   },
 
@@ -585,6 +638,11 @@ let Player = {
   get controls() {
     delete this.controls;
     return (this.controls = document.getElementById("controls"));
+  },
+
+  get controlsBottom() {
+    delete this.controlsBottom;
+    return (this.controlsBottom = document.getElementById("controls-bottom"));
   },
 
   _isPlaying: false,
@@ -670,9 +728,32 @@ let Player = {
     this.showingTimeout = null;
 
     this.controls.setAttribute("showing", true);
+
+    if (!this.isFullscreen) {
+      // revealControls() is called everytime we hover over fullscreen pip window.
+      // Only communicate with pipchild when not in fullscreen mode for performance reasons.
+      this.actor.sendAsyncMessage("PictureInPicture:ShowVideoControls", {
+        isFullscreen: false,
+        isVideoControlsShowing: true,
+        playerBottomControlsDOMRect: this.controlsBottom.getBoundingClientRect(),
+      });
+    }
+
     if (!revealIndefinitely) {
       this.showingTimeout = setTimeout(() => {
         this.controls.removeAttribute("showing");
+
+        if (
+          !this.isFullscreen &&
+          !this.isCurrentHover &&
+          !this.controls.getAttribute("keying")
+        ) {
+          this.actor.sendAsyncMessage("PictureInPicture:HideVideoControls", {
+            isFullscreen: false,
+            isVideoControlsShowing: false,
+            playerBottomControlsDOMRect: null,
+          });
+        }
       }, CONTROLS_FADE_TIMEOUT_MS);
     }
   },

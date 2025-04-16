@@ -9,6 +9,7 @@ $break-point-small: 570px;
 $break-point-medium: 610px;
 $break-point-large: 866px;
 $logo-size: 80px;
+$main-section-width: 504px;
 
 html {
   height: 100%;
@@ -34,7 +35,8 @@ body {
 :root {
   &[dialogroot] {
     background-color: transparent;
-    min-width: 504px;
+    min-width: $main-section-width;
+    overflow: hidden;
 
     body {
       padding: 0;
@@ -43,8 +45,24 @@ body {
     .onboardingContainer {
       overflow: visible;
 
+      &:dir(rtl) {
+        transform: unset;
+      }
+
       .screen {
         background-color: transparent;
+
+        &:dir(rtl) {
+          transform: unset;
+        }
+
+        &.with-noodles {
+          // Adjust for noodles partially extending out from the square modal
+          $noodle-buffer: 106px;
+          min-width: $main-section-width + $noodle-buffer;
+          min-height: $main-section-width + $noodle-buffer;
+        }
+
       }
     }
   }
@@ -93,7 +111,7 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    width: 504px;
+    width: $main-section-width;
     flex-shrink: 0;
   }
 
@@ -128,6 +146,21 @@ body {
     height: 100%;
     min-height: 500px;
     overflow: hidden;
+
+    &:is(.UPGRADE_PIN_FIREFOX, .UPGRADE_ONLY_DEFAULT, .UPGRADE_GET_STARTED) {
+      .brand-logo {
+        margin-top: 120px;
+
+        @media (prefers-reduced-motion: reduce) {
+          // sass-lint:disable-block no-important
+          background-image: url('chrome://activity-stream/content/data/content/assets/heart.svg') !important;
+        }
+      }
+
+      .no-steps {
+        padding-bottom: 12px;
+      }
+    }
 
     &.light-text {
       --in-content-page-color: rgb(251, 251, 254);
@@ -207,7 +240,7 @@ body {
 
     h1 {
       font-size: 24px;
-      line-height: 36px;
+      line-height: 1.5;
       font-weight: 600;
       margin: 0 6px;
       letter-spacing: -0.02em;
@@ -239,9 +272,7 @@ body {
       h1 {
         background-image: linear-gradient(90deg, #9059FF, #FF4AA2, #FF8C00, #FF4AA2, #9059FF);
         background-size: 400% auto;
-        color: #000;
         background-clip: text;
-        -webkit-background-clip: text;
         animation: shine 50s linear infinite;
         @media (prefers-contrast: no-preference) {
           -webkit-text-fill-color: transparent;
@@ -287,6 +318,7 @@ body {
         height: 0.3em;
         left: 0;
         z-index: -1;
+        transform: scaleY(3);
       }
 
       &.short::after {
@@ -694,6 +726,144 @@ body {
     animation: fadein 0.4s;
   }
 
+  .mobile-downloads {
+
+    .qr-code-image {
+      margin: 24px 0 10px;
+      width: 113px;
+      height: 113px;
+    }
+
+    .email-link {
+      font-size: 16px;
+      font-weight: 400;
+      text-decoration: underline;
+      color: var(--in-content-link-color);
+
+      &:hover {
+        background: none;
+      }
+    }
+
+    .ios button {
+      background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/en/ios.svg');
+    }
+
+    .android button {
+      background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/en/android.png');
+    }
+
+    @at-root:root {
+
+      &[lang|='de'] {
+
+        .ios button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/de/ios.svg');
+        }
+
+        .android button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/de/android.png');
+        }
+      }
+
+      &[lang|='es'] {
+
+        .ios button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/es/ios.svg');
+        }
+
+        .android button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/es/android.png');
+        }
+      }
+
+      &[lang|='fr'] {
+
+        .ios button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/fr/ios.svg');
+        }
+
+        .android button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/fr/android.png');
+        }
+      }
+
+      &[lang|='pt'] {
+
+        .ios button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/pt/ios.svg');
+        }
+
+        .android button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/pt/android.png');
+        }
+      }
+
+      &[lang|='ru'] {
+
+        .ios button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/ru/ios.svg');
+        }
+
+        .android button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/ru/android.png');
+        }
+      }
+
+      &[lang|='zh'] {
+
+        .ios button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/zh/ios.svg');
+        }
+
+        .android button {
+          background-image: url('chrome://activity-stream/content/data/content/assets/app-marketplace-icons/zh/android.png');
+        }
+      }
+    }
+  }
+
+  .mobile-download-buttons {
+    list-style: none;
+    padding: 10px 0;
+    margin: 0;
+
+    li {
+      display: inline-block;
+
+      button {
+        display: inline-block;
+        height: 45px;
+        width: 152px;
+        background-repeat: no-repeat;
+        background-size: contain;
+        background-position: center;
+        box-shadow: none;
+      }
+
+      &:not(:first-child) {
+        margin-inline: 5px 0;
+      }
+    }
+  }
+
+  .dismiss-button {
+    padding: 0;
+    margin-block: 30px -45px;
+    margin-inline: 0 30px;
+    display: block;
+    float: inline-end;
+    background: url('chrome://global/skin/icons/close.svg') no-repeat center / cover;
+    height: 15px;
+    width: 15px;
+    align-self: end;
+    // override default min-height and min-width for buttons
+    min-height: 15px;
+    min-width: 15px;
+    -moz-context-properties: fill;
+    fill: currentColor;
+  }
+
   @keyframes fadein {
     from { opacity: 0; }
   }
@@ -822,7 +992,8 @@ body {
     }
   }
 
-  .primary {
+  .primary,
+  .secondary {
     font-size: 13px;
     line-height: 16px;
     padding: 11px 15px;
@@ -831,6 +1002,11 @@ body {
     &.rtamo {
       margin-top: 24px;
     }
+  }
+
+  .secondary {
+    background-color: var(--in-content-button-background);
+    color: var(--in-content-button-text-color);
   }
 
   // Styles specific to background noodles, with screen-by-screen positions
@@ -885,7 +1061,7 @@ body {
         justify-content: center;
 
         .spacer-top {
-          flex: 2;
+          flex: 1;
         }
 
         .spacer-bottom {
@@ -901,6 +1077,7 @@ body {
           max-width: 5em;
           text-align: initial;
           white-space: pre-wrap;
+          text-shadow: 0 4px 8px rgba(0, 0, 0, 0.35);
         }
       }
 
@@ -922,12 +1099,12 @@ body {
       .main-content {
         background: transparent;
         box-shadow: none;
-        display: block;
+        display: flex;
         position: absolute;
-        height: 350px;
-        width: 295px;
-        bottom: -60px;
-        inset-inline-end: 80px;
+        height: auto;
+        width: 350px;
+        bottom: 0;
+        inset-inline-end: 30px;
         transition: var(--transition);
       }
 
@@ -947,6 +1124,10 @@ body {
 
       .welcome-text {
         transition-delay: 1.2s;
+
+        h2 {
+          margin: 10px 6px;
+        }
       }
     }
 
@@ -1033,6 +1214,7 @@ body {
     }
 
     .primary,
+    .secondary,
     .secondary-cta,
     .steps {
       transition-delay: 1s;
@@ -1047,6 +1229,7 @@ body {
     }
 
     .primary,
+    .secondary,
     .secondary-cta {
       transition-delay: 0.4s;
     }
@@ -1102,6 +1285,7 @@ body {
       .brand-logo,
       .welcome-text,
       .primary,
+      .secondary,
       .secondary-cta:not(.top),
       .message-text {
         opacity: 0;
@@ -1137,6 +1321,7 @@ body {
       .colorway-variations,
       .tiles-theme-section,
       .primary,
+      .secondary,
       .secondary-cta:not(.top) {
         opacity: 0;
         translate: 0 calc(-1 * var(--translate));
@@ -1195,6 +1380,7 @@ body {
       }
 
       .primary,
+      .secondary,
       .secondary-cta:not(.top) {
         opacity: 0;
         translate: 0 var(--translate);
@@ -1221,6 +1407,6 @@ body {
   }
 
   .screen.with-noodles:not(.corner) .section-main {
-    height: 503px;
+    height: $main-section-width;
   }
 }

@@ -1061,7 +1061,7 @@ bool WebGLContext::DoFakeVertexAttrib0(const uint64_t totalVertCount) {
   ////
 
   const auto bytesPerVert = sizeof(mFakeVertexAttrib0Data);
-  const auto checked_dataSize = CheckedUint32(totalVertCount) * bytesPerVert;
+  const auto checked_dataSize = CheckedInt<intptr_t>(totalVertCount) * bytesPerVert;
   if (!checked_dataSize.isValid()) {
     ErrorOutOfMemory(
         "Integer overflow trying to construct a fake vertex attrib 0"
@@ -1074,8 +1074,17 @@ bool WebGLContext::DoFakeVertexAttrib0(const uint64_t totalVertCount) {
   const auto dataSize = checked_dataSize.value();
 
   if (mFakeVertexAttrib0BufferObjectSize < dataSize) {
+    gl::GLContext::LocalErrorScope errorScope(*gl);
+
     gl->fBufferData(LOCAL_GL_ARRAY_BUFFER, dataSize, nullptr,
                     LOCAL_GL_DYNAMIC_DRAW);
+
+    const auto err = errorScope.GetError();
+    if (err) {
+      ErrorOutOfMemory("Failed to allocate fake vertex attrib 0 data: %zi bytes", dataSize);
+      return false;
+    }
+
     mFakeVertexAttrib0BufferObjectSize = dataSize;
     mFakeVertexAttrib0DataDefined = false;
   }

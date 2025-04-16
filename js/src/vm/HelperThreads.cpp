@@ -1385,7 +1385,7 @@ JS::OffThreadToken* js::StartOffThreadDecodeMultiStencils(
 bool js::CurrentThreadIsParseThread() {
   JSContext* cx = TlsContext.get();
   // Check whether this is a ParseTask or a DelazifyTask.
-  return cx->isHelperThreadContext() && cx->offThreadFrontendErrors();
+  return cx && cx->isHelperThreadContext() && cx->offThreadFrontendErrors();
 }
 
 bool GlobalHelperThreadState::ensureInitialized() {
@@ -1423,10 +1423,6 @@ bool GlobalHelperThreadState::ensureInitialized() {
 
 bool GlobalHelperThreadState::ensureThreadCount(
     size_t count, AutoLockHelperThreadState& lock) {
-  if (!ensureContextList(count, lock)) {
-    return false;
-  }
-
   if (!helperTasks_.reserve(count)) {
     return false;
   }
@@ -1490,19 +1486,6 @@ void GlobalHelperThreadState::finishThreads(AutoLockHelperThreadState& lock) {
   }
 }
 
-bool GlobalHelperThreadState::ensureContextList(
-    size_t count, const AutoLockHelperThreadState& lock) {
-  while (helperContexts_.length() < count) {
-    auto cx = js::MakeUnique<JSContext>(nullptr, JS::ContextOptions());
-    if (!cx || !cx->init(ContextKind::HelperThread) ||
-        !helperContexts_.append(cx.release())) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 JSContext* GlobalHelperThreadState::getFirstUnusedContext(
     AutoLockHelperThreadState& locked) {
   for (auto& cx : helperContexts_) {
@@ -1510,7 +1493,17 @@ JSContext* GlobalHelperThreadState::getFirstUnusedContext(
       return cx;
     }
   }
-  MOZ_CRASH("Expected available JSContext");
+
+  MOZ_ASSERT(helperContexts_.length() < threadCount);
+
+  AutoEnterOOMUnsafeRegion oomUnsafe;
+  auto cx = js::MakeUnique<JSContext>(nullptr, JS::ContextOptions());
+  if (!cx || !cx->init(ContextKind::HelperThread) ||
+      !helperContexts_.append(cx.get())) {
+    oomUnsafe.crash("GlobalHelperThreadState::getFirstUnusedContext");
+  }
+
+  return cx.release();
 }
 
 void GlobalHelperThreadState::destroyHelperContexts(
@@ -2364,13 +2357,13 @@ void JSContext::addPendingOutOfMemory() {
 
 bool js::EnqueueOffThreadCompression(JSContext* cx,
                                      UniquePtr<SourceCompressionTask> task) {
+  MOZ_ASSERT(cx->isMainThreadContext());
+
   AutoLockHelperThreadState lock;
 
   auto& pending = HelperThreadState().compressionPendingList(lock);
   if (!pending.append(std::move(task))) {
-    if (!cx->isHelperThreadContext()) {
-      ReportOutOfMemory(cx);
-    }
+    ReportOutOfMemory(cx);
     return false;
   }
 

@@ -6,6 +6,9 @@
 
 #include "mozilla/dom/TransformStream.h"
 
+#include "UnderlyingSourceCallbackHelpers.h"
+#include "js/TypeDecls.h"
+#include "mozilla/dom/Promise.h"
 #include "mozilla/dom/WritableStream.h"
 #include "mozilla/dom/ReadableStream.h"
 #include "mozilla/dom/RootedDictionary.h"
@@ -16,7 +19,9 @@
 
 namespace mozilla::dom {
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(TransformStream, mGlobal, mController)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(TransformStream, mGlobal,
+                                      mBackpressureChangePromise, mController,
+                                      mReadable, mWritable)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(TransformStream)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(TransformStream)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(TransformStream)
@@ -33,6 +38,262 @@ TransformStream::~TransformStream() { mozilla::DropJSObjects(this); }
 JSObject* TransformStream::WrapObject(JSContext* aCx,
                                       JS::Handle<JSObject*> aGivenProto) {
   return TransformStream_Binding::Wrap(aCx, this, aGivenProto);
+}
+
+// https://streams.spec.whatwg.org/#transform-stream-error-writable-and-unblock-write
+void TransformStreamErrorWritableAndUnblockWrite(JSContext* aCx,
+                                                 TransformStream* aStream,
+                                                 JS::HandleValue aError,
+                                                 ErrorResult& aRv) {
+  // Step 1: Perform !
+  // TransformStreamDefaultControllerClearAlgorithms(stream.[[controller]]).
+  aStream->Controller()->SetAlgorithms(nullptr);
+
+  // Step 2: Perform !
+  // WritableStreamDefaultControllerErrorIfNeeded(stream.[[writable]].[[controller]],
+  // e).
+  // TODO: Remove MOZ_KnownLive (bug 1761577)
+  WritableStreamDefaultControllerErrorIfNeeded(
+      aCx, MOZ_KnownLive(aStream->Writable()->Controller()), aError, aRv);
+  if (aRv.Failed()) {
+    return;
+  }
+
+  // Step 3: If stream.[[backpressure]] is true, perform !
+  // TransformStreamSetBackpressure(stream, false).
+  if (aStream->Backpressure()) {
+    TransformStreamSetBackpressure(aStream, false, aRv);
+  }
+}
+
+// https://streams.spec.whatwg.org/#transform-stream-error
+void TransformStreamError(JSContext* aCx, TransformStream* aStream,
+                          JS::HandleValue aError, ErrorResult& aRv) {
+  // Step 1: Perform !
+  // ReadableStreamDefaultControllerError(stream.[[readable]].[[controller]],
+  // e).
+  ReadableStreamDefaultControllerError(
+      aCx, aStream->Readable()->Controller()->AsDefault(), aError, aRv);
+  if (aRv.Failed()) {
+    return;
+  }
+
+  // Step 2: Perform ! TransformStreamErrorWritableAndUnblockWrite(stream, e).
+  TransformStreamErrorWritableAndUnblockWrite(aCx, aStream, aError, aRv);
+}
+
+// https://streams.spec.whatwg.org/#initialize-transform-stream
+class TransformStreamUnderlyingSinkAlgorithms final
+    : public UnderlyingSinkAlgorithmsBase {
+ public:
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(
+      TransformStreamUnderlyingSinkAlgorithms, UnderlyingSinkAlgorithmsBase)
+
+  TransformStreamUnderlyingSinkAlgorithms(Promise* aStartPromise,
+                                          TransformStream* aStream)
+      : mStartPromise(aStartPromise), mStream(aStream) {}
+
+  void StartCallback(JSContext* aCx,
+                     WritableStreamDefaultController& aController,
+                     JS::MutableHandle<JS::Value> aRetVal,
+                     ErrorResult& aRv) override {
+    // Step 1. Let startAlgorithm be an algorithm that returns startPromise.
+    // (Same as TransformStreamUnderlyingSourceAlgorithms::StartCallback)
+    aRetVal.setObject(*mStartPromise->PromiseObj());
+  }
+
+  already_AddRefed<Promise> WriteCallback(
+      JSContext* aCx, JS::Handle<JS::Value> aChunk,
+      WritableStreamDefaultController& aController, ErrorResult& aRv) override {
+    // Step 2. Let writeAlgorithm be the following steps, taking a chunk
+    // argument:
+    //  Step 1. Return ! TransformStreamDefaultSinkWriteAlgorithm(stream,
+    //  chunk).
+    // TODO
+    return Promise::CreateResolvedWithUndefined(mStream->GetParentObject(),
+                                                aRv);
+  }
+
+  already_AddRefed<Promise> AbortCallback(
+      JSContext* aCx, const Optional<JS::Handle<JS::Value>>& aReason,
+      ErrorResult& aRv) override {
+    // Step 3. Let abortAlgorithm be the following steps, taking a reason
+    // argument:
+    //  Step 1. Return ! TransformStreamDefaultSinkAbortAlgorithm(stream,
+    //  reason).
+    // TODO
+    return Promise::CreateResolvedWithUndefined(mStream->GetParentObject(),
+                                                aRv);
+  }
+
+  already_AddRefed<Promise> CloseCallback(JSContext* aCx,
+                                          ErrorResult& aRv) override {
+    // Step 4. Let closeAlgorithm be the following steps:
+
+    //   Step 1. Return ! TransformStreamDefaultSinkCloseAlgorithm(stream).
+    // TODO
+    return Promise::CreateResolvedWithUndefined(mStream->GetParentObject(),
+                                                aRv);
+  }
+
+ protected:
+  ~TransformStreamUnderlyingSinkAlgorithms() override = default;
+
+ private:
+  RefPtr<Promise> mStartPromise;
+  RefPtr<TransformStream> mStream;
+};
+
+NS_IMPL_CYCLE_COLLECTION_INHERITED(TransformStreamUnderlyingSinkAlgorithms,
+                                   UnderlyingSinkAlgorithmsBase, mStartPromise,
+                                   mStream)
+NS_IMPL_ADDREF_INHERITED(TransformStreamUnderlyingSinkAlgorithms,
+                         UnderlyingSinkAlgorithmsBase)
+NS_IMPL_RELEASE_INHERITED(TransformStreamUnderlyingSinkAlgorithms,
+                          UnderlyingSinkAlgorithmsBase)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(TransformStreamUnderlyingSinkAlgorithms)
+NS_INTERFACE_MAP_END_INHERITING(TransformStreamUnderlyingSinkAlgorithms)
+
+// https://streams.spec.whatwg.org/#initialize-transform-stream
+class TransformStreamUnderlyingSourceAlgorithms final
+    : public UnderlyingSourceAlgorithmsBase {
+ public:
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(
+      TransformStreamUnderlyingSourceAlgorithms, UnderlyingSourceAlgorithmsBase)
+
+  TransformStreamUnderlyingSourceAlgorithms(Promise* aStartPromise,
+                                            TransformStream* aStream)
+      : mStartPromise(aStartPromise), mStream(aStream) {}
+
+  void StartCallback(JSContext* aCx, ReadableStreamController& aController,
+                     JS::MutableHandle<JS::Value> aRetVal,
+                     ErrorResult& aRv) override {
+    // Step 1. Let startAlgorithm be an algorithm that returns startPromise.
+    // (Same as TransformStreamUnderlyingSinkAlgorithms::StartCallback)
+    aRetVal.setObject(*mStartPromise->PromiseObj());
+  }
+
+  already_AddRefed<Promise> PullCallback(JSContext* aCx,
+                                         ReadableStreamController& aController,
+                                         ErrorResult& aRv) override {
+    // Step 6. Let pullAlgorithm be the following steps:
+    //   Step 1. Return ! TransformStreamDefaultSourcePullAlgorithm(stream).
+    // TODO
+    return Promise::CreateResolvedWithUndefined(mStream->GetParentObject(),
+                                                aRv);
+  }
+
+  already_AddRefed<Promise> CancelCallback(
+      JSContext* aCx, const Optional<JS::Handle<JS::Value>>& aReason,
+      ErrorResult& aRv) override {
+    // Step 7. Let cancelAlgorithm be the following steps, taking a reason
+    // argument:
+    //  Step 1. Perform ! TransformStreamErrorWritableAndUnblockWrite(stream,
+    //  reason).
+    //  Step 2. Return a promise resolved with undefined.
+    // TODO
+    return Promise::CreateResolvedWithUndefined(mStream->GetParentObject(),
+                                                aRv);
+  }
+
+  void ErrorCallback() override {}
+
+ protected:
+  ~TransformStreamUnderlyingSourceAlgorithms() override = default;
+
+ private:
+  RefPtr<Promise> mStartPromise;
+  RefPtr<TransformStream> mStream;
+};
+
+NS_IMPL_CYCLE_COLLECTION_INHERITED(TransformStreamUnderlyingSourceAlgorithms,
+                                   UnderlyingSourceAlgorithmsBase,
+                                   mStartPromise, mStream)
+NS_IMPL_ADDREF_INHERITED(TransformStreamUnderlyingSourceAlgorithms,
+                         UnderlyingSourceAlgorithmsBase)
+NS_IMPL_RELEASE_INHERITED(TransformStreamUnderlyingSourceAlgorithms,
+                          UnderlyingSourceAlgorithmsBase)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(
+    TransformStreamUnderlyingSourceAlgorithms)
+NS_INTERFACE_MAP_END_INHERITING(TransformStreamUnderlyingSourceAlgorithms)
+
+// https://streams.spec.whatwg.org/#transform-stream-set-backpressure
+void TransformStreamSetBackpressure(TransformStream* aStream,
+                                    bool aBackpressure, ErrorResult& aRv) {
+  // Step 1. Assert: stream.[[backpressure]] is not backpressure.
+  MOZ_ASSERT(aStream->Backpressure() != aBackpressure);
+
+  // Step 2. If stream.[[backpressureChangePromise]] is not undefined, resolve
+  // stream.[[backpressureChangePromise]] with undefined.
+  if (Promise* promise = aStream->BackpressureChangePromise()) {
+    promise->MaybeResolveWithUndefined();
+  }
+
+  // Step 3. Set stream.[[backpressureChangePromise]] to a new promise.
+  RefPtr<Promise> promise = Promise::Create(aStream->GetParentObject(), aRv);
+  if (aRv.Failed()) {
+    return;
+  }
+  aStream->SetBackpressureChangePromise(promise);
+
+  // Step 4. Set stream.[[backpressure]] to backpressure.
+  aStream->SetBackpressure(aBackpressure);
+}
+
+// https://streams.spec.whatwg.org/#initialize-transform-stream
+void TransformStream::Initialize(JSContext* aCx, Promise* aStartPromise,
+                                 double aWritableHighWaterMark,
+                                 QueuingStrategySize* aWritableSizeAlgorithm,
+                                 double aReadableHighWaterMark,
+                                 QueuingStrategySize* aReadableSizeAlgorithm,
+                                 ErrorResult& aRv) {
+  // Step 1 - 4
+  auto sinkAlgorithms =
+      MakeRefPtr<TransformStreamUnderlyingSinkAlgorithms>(aStartPromise, this);
+
+  // Step 5. Set stream.[[writable]] to ! CreateWritableStream(startAlgorithm,
+  // writeAlgorithm, closeAlgorithm, abortAlgorithm, writableHighWaterMark,
+  // writableSizeAlgorithm).
+  mWritable =
+      CreateWritableStream(aCx, MOZ_KnownLive(mGlobal), sinkAlgorithms,
+                           aWritableHighWaterMark, aWritableSizeAlgorithm, aRv);
+  if (aRv.Failed()) {
+    return;
+  }
+
+  // Step 6 - 7
+  auto sourceAlgorithms = MakeRefPtr<TransformStreamUnderlyingSourceAlgorithms>(
+      aStartPromise, this);
+
+  // Step 8. Set stream.[[readable]] to ! CreateReadableStream(startAlgorithm,
+  // pullAlgorithm, cancelAlgorithm, readableHighWaterMark,
+  // readableSizeAlgorithm).
+  mReadable = CreateReadableStream(
+      aCx, MOZ_KnownLive(mGlobal), sourceAlgorithms,
+      Some(aReadableHighWaterMark), aReadableSizeAlgorithm, aRv);
+  if (aRv.Failed()) {
+    return;
+  }
+
+  // Step 9. Set stream.[[backpressure]] and
+  // stream.[[backpressureChangePromise]] to undefined.
+  // Note(krosylight): The spec allows setting [[backpressure]] as undefined,
+  // but I don't see why it should be. Since the spec also allows strict boolean
+  // type, and this is only to not trigger assertion inside the setter, we just
+  // set it as false.
+  mBackpressure = false;
+  mBackpressureChangePromise = nullptr;
+
+  // Step 10. Perform ! TransformStreamSetBackpressure(stream, true).
+  TransformStreamSetBackpressure(this, true, aRv);
+  if (aRv.Failed()) {
+    return;
+  }
+
+  // Step 11. Set stream.[[controller]] to undefined.
+  mController = nullptr;
 }
 
 // https://streams.spec.whatwg.org/#ts-constructor
@@ -79,19 +340,35 @@ already_AddRefed<TransformStream> TransformStream::Constructor(
 
   // Step 5. Let readableHighWaterMark be ?
   // ExtractHighWaterMark(readableStrategy, 0).
-  // TODO
+  double readableHighWaterMark =
+      ExtractHighWaterMark(aReadableStrategy, 0, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
 
   // Step 6. Let readableSizeAlgorithm be !
   // ExtractSizeAlgorithm(readableStrategy).
-  // TODO
+  // Note: Callers should recognize nullptr as a callback that returns 1. See
+  // also ReadableStream::Constructor for this design decision.
+  RefPtr<QueuingStrategySize> readableSizeAlgorithm =
+      aReadableStrategy.mSize.WasPassed() ? &aReadableStrategy.mSize.Value()
+                                          : nullptr;
 
   // Step 7. Let writableHighWaterMark be ?
   // ExtractHighWaterMark(writableStrategy, 1).
-  // TODO
+  double writableHighWaterMark =
+      ExtractHighWaterMark(aWritableStrategy, 1, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
 
   // Step 8. Let writableSizeAlgorithm be !
   // ExtractSizeAlgorithm(writableStrategy).
-  // TODO
+  // Note: Callers should recognize nullptr as a callback that returns 1. See
+  // also WritableStream::Constructor for this design decision.
+  RefPtr<QueuingStrategySize> writableSizeAlgorithm =
+      aWritableStrategy.mSize.WasPassed() ? &aWritableStrategy.mSize.Value()
+                                          : nullptr;
 
   // Step 9. Let startPromise be a new promise.
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
@@ -104,7 +381,9 @@ already_AddRefed<TransformStream> TransformStream::Constructor(
   // writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark,
   // readableSizeAlgorithm).
   RefPtr<TransformStream> transformStream = new TransformStream(global);
-  // TODO: Init()
+  transformStream->Initialize(
+      aGlobal.Context(), startPromise, writableHighWaterMark,
+      writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm, aRv);
   if (aRv.Failed()) {
     return nullptr;
   }
@@ -118,7 +397,22 @@ already_AddRefed<TransformStream> TransformStream::Constructor(
   // Step 12. If transformerDict["start"] exists, then resolve startPromise with
   // the result of invoking transformerDict["start"] with argument list «
   // this.[[controller]] » and callback this value transformer.
-  // TODO
+  if (transformerDict.mStart.WasPassed()) {
+    RefPtr<TransformerStartCallback> callback = transformerDict.mStart.Value();
+    RefPtr<TransformStreamDefaultController> controller =
+        transformStream->Controller();
+    JS::Rooted<JS::Value> retVal(aGlobal.Context());
+    callback->Call(transformerObj, *controller, &retVal, aRv,
+                   "Transformer.start", CallbackFunction::eRethrowExceptions);
+    if (aRv.Failed()) {
+      return nullptr;
+    }
+
+    startPromise->MaybeResolve(retVal);
+  } else {
+    // Step 13. Otherwise, resolve startPromise with undefined.
+    startPromise->MaybeResolveWithUndefined();
+  }
 
   return transformStream.forget();
 }

@@ -63,8 +63,6 @@ nsDeviceContext::nsDeviceContext()
 
 nsDeviceContext::~nsDeviceContext() = default;
 
-bool nsDeviceContext::IsPrinterContext() { return mPrintTarget != nullptr; }
-
 void nsDeviceContext::SetDPI(double* aScale) {
   float dpi;
 
@@ -198,20 +196,12 @@ already_AddRefed<gfxContext> nsDeviceContext::CreateRenderingContextCommon(
 
   gfxMatrix transform;
   transform.PreTranslate(mPrintingTranslate);
-  if (mPrintTarget->RotateNeededForLandscape()) {
-    // Rotate page 90 degrees to draw landscape page on portrait paper
-    IntSize size = mPrintTarget->GetSize();
-    transform.PreTranslate(gfxPoint(0, size.width));
-    gfxMatrix rotate(0, -1, 1, 0, 0, 0);
-    transform = rotate * transform;
-  }
   transform.PreScale(mPrintingScale, mPrintingScale);
-
   pContext->SetMatrixDouble(transform);
   return pContext.forget();
 }
 
-nsresult nsDeviceContext::GetDepth(uint32_t& aDepth) {
+uint32_t nsDeviceContext::GetDepth() {
   nsCOMPtr<nsIScreen> screen;
   FindScreen(getter_AddRefs(screen));
   if (!screen) {
@@ -219,9 +209,9 @@ nsresult nsDeviceContext::GetDepth(uint32_t& aDepth) {
     screenManager.GetPrimaryScreen(getter_AddRefs(screen));
     MOZ_ASSERT(screen);
   }
-  screen->GetColorDepth(reinterpret_cast<int32_t*>(&aDepth));
-
-  return NS_OK;
+  int32_t depth = 0;
+  screen->GetColorDepth(&depth);
+  return uint32_t(depth);
 }
 
 nsresult nsDeviceContext::GetDeviceSurfaceDimensions(nscoord& aWidth,

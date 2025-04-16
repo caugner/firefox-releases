@@ -53,7 +53,9 @@ class RemoteAccessible;
 class Relation;
 class RootAccessible;
 class TableAccessible;
+class TableAccessibleBase;
 class TableCellAccessible;
+class TableCellAccessibleBase;
 class TextLeafAccessible;
 class XULLabelAccessible;
 class XULTreeAccessible;
@@ -124,8 +126,14 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   /**
    * Return the unique identifier of the accessible.
+   * ID() should be preferred, but this method still exists because many
+   * LocalAccessible callers expect a void*.
    */
   void* UniqueID() { return static_cast<void*>(this); }
+
+  virtual uint64_t ID() const override {
+    return reinterpret_cast<uintptr_t>(this);
+  }
 
   /**
    * Return language associated with the accessible.
@@ -494,6 +502,9 @@ class LocalAccessible : public nsISupports, public Accessible {
     return const_cast<LocalAccessible*>(this)->AsTableCell();
   }
 
+  virtual TableAccessibleBase* AsTableBase() override;
+  virtual TableCellAccessibleBase* AsTableCellBase() override;
+
   TextLeafAccessible* AsTextLeaf();
 
   XULLabelAccessible* AsXULLabel();
@@ -783,6 +794,8 @@ class LocalAccessible : public nsISupports, public Accessible {
   virtual nsAtom* TagName() const override;
 
   virtual already_AddRefed<nsAtom> DisplayStyle() const override;
+
+  virtual Maybe<float> Opacity() const override;
 
  protected:
   virtual ~LocalAccessible();

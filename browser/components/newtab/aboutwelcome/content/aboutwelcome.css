@@ -50,6 +50,7 @@ body[lwt-newtab-brighttext] {
 :root[dialogroot] {
   background-color: transparent;
   min-width: 504px;
+  overflow: hidden;
 }
 :root[dialogroot] body {
   padding: 0;
@@ -57,8 +58,18 @@ body[lwt-newtab-brighttext] {
 :root[dialogroot] .onboardingContainer {
   overflow: visible;
 }
+:root[dialogroot] .onboardingContainer:dir(rtl) {
+  transform: unset;
+}
 :root[dialogroot] .onboardingContainer .screen {
   background-color: transparent;
+}
+:root[dialogroot] .onboardingContainer .screen:dir(rtl) {
+  transform: unset;
+}
+:root[dialogroot] .onboardingContainer .screen.with-noodles {
+  min-width: 610px;
+  min-height: 610px;
 }
 
 .onboardingContainer {
@@ -131,6 +142,17 @@ body[lwt-newtab-brighttext] {
   min-height: 500px;
   overflow: hidden;
 }
+.onboardingContainer .screen:is(.UPGRADE_PIN_FIREFOX, .UPGRADE_ONLY_DEFAULT, .UPGRADE_GET_STARTED) .brand-logo {
+  margin-top: 120px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .onboardingContainer .screen:is(.UPGRADE_PIN_FIREFOX, .UPGRADE_ONLY_DEFAULT, .UPGRADE_GET_STARTED) .brand-logo {
+    background-image: url("chrome://activity-stream/content/data/content/assets/heart.svg") !important;
+  }
+}
+.onboardingContainer .screen:is(.UPGRADE_PIN_FIREFOX, .UPGRADE_ONLY_DEFAULT, .UPGRADE_GET_STARTED) .no-steps {
+  padding-bottom: 12px;
+}
 .onboardingContainer .screen.light-text {
   --in-content-page-color: rgb(251, 251, 254);
   --in-content-primary-button-text-color: rgb(43, 42, 51);
@@ -199,7 +221,7 @@ body[lwt-newtab-brighttext] {
 }
 .onboardingContainer .welcome-text h1 {
   font-size: 24px;
-  line-height: 36px;
+  line-height: 1.5;
   font-weight: 600;
   margin: 0 6px;
   letter-spacing: -0.02em;
@@ -222,9 +244,7 @@ body[lwt-newtab-brighttext] {
 .onboardingContainer .welcome-text.fancy h1 {
   background-image: linear-gradient(90deg, #9059FF, #FF4AA2, #FF8C00, #FF4AA2, #9059FF);
   background-size: 400% auto;
-  color: #000;
   background-clip: text;
-  -webkit-background-clip: text;
   animation: shine 50s linear infinite;
 }
 @media (prefers-contrast: no-preference) {
@@ -264,6 +284,7 @@ body[lwt-newtab-brighttext] {
   height: 0.3em;
   left: 0;
   z-index: -1;
+  transform: scaleY(3);
 }
 .onboardingContainer .welcomeZap .zap.short::after {
   background-image: url("chrome://activity-stream/content/data/content/assets/short-zap.svg");
@@ -584,6 +605,98 @@ body[lwt-newtab-brighttext] {
 .onboardingContainer .tiles-delayed {
   animation: fadein 0.4s;
 }
+.onboardingContainer .mobile-downloads .qr-code-image {
+  margin: 24px 0 10px;
+  width: 113px;
+  height: 113px;
+}
+.onboardingContainer .mobile-downloads .email-link {
+  font-size: 16px;
+  font-weight: 400;
+  text-decoration: underline;
+  color: var(--in-content-link-color);
+}
+.onboardingContainer .mobile-downloads .email-link:hover {
+  background: none;
+}
+.onboardingContainer .mobile-downloads .ios button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/en/ios.svg");
+}
+.onboardingContainer .mobile-downloads .android button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/en/android.png");
+}
+:root[lang|=de] .ios button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/de/ios.svg");
+}
+:root[lang|=de] .android button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/de/android.png");
+}
+:root[lang|=es] .ios button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/es/ios.svg");
+}
+:root[lang|=es] .android button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/es/android.png");
+}
+:root[lang|=fr] .ios button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/fr/ios.svg");
+}
+:root[lang|=fr] .android button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/fr/android.png");
+}
+:root[lang|=pt] .ios button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/pt/ios.svg");
+}
+:root[lang|=pt] .android button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/pt/android.png");
+}
+:root[lang|=ru] .ios button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/ru/ios.svg");
+}
+:root[lang|=ru] .android button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/ru/android.png");
+}
+:root[lang|=zh] .ios button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/zh/ios.svg");
+}
+:root[lang|=zh] .android button {
+  background-image: url("chrome://activity-stream/content/data/content/assets/app-marketplace-icons/zh/android.png");
+}
+
+.onboardingContainer .mobile-download-buttons {
+  list-style: none;
+  padding: 10px 0;
+  margin: 0;
+}
+.onboardingContainer .mobile-download-buttons li {
+  display: inline-block;
+}
+.onboardingContainer .mobile-download-buttons li button {
+  display: inline-block;
+  height: 45px;
+  width: 152px;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  box-shadow: none;
+}
+.onboardingContainer .mobile-download-buttons li:not(:first-child) {
+  margin-inline: 5px 0;
+}
+.onboardingContainer .dismiss-button {
+  padding: 0;
+  margin-block: 30px -45px;
+  margin-inline: 0 30px;
+  display: block;
+  float: inline-end;
+  background: url("chrome://global/skin/icons/close.svg") no-repeat center/cover;
+  height: 15px;
+  width: 15px;
+  align-self: end;
+  min-height: 15px;
+  min-width: 15px;
+  -moz-context-properties: fill;
+  fill: currentColor;
+}
 @keyframes fadein {
   from {
     opacity: 0;
@@ -693,14 +806,20 @@ body[lwt-newtab-brighttext] {
 .onboardingContainer .steps .indicator.current:last-of-type:first-of-type {
   opacity: 0;
 }
-.onboardingContainer .primary {
+.onboardingContainer .primary,
+.onboardingContainer .secondary {
   font-size: 13px;
   line-height: 16px;
   padding: 11px 15px;
   transition: var(--transition);
 }
-.onboardingContainer .primary.rtamo {
+.onboardingContainer .primary.rtamo,
+.onboardingContainer .secondary.rtamo {
   margin-top: 24px;
+}
+.onboardingContainer .secondary {
+  background-color: var(--in-content-button-background);
+  color: var(--in-content-button-text-color);
 }
 .onboardingContainer .noodle {
   display: block;
@@ -746,7 +865,7 @@ body[lwt-newtab-brighttext] {
   justify-content: center;
 }
 .onboardingContainer [pos=corner] .section-left .message-text .spacer-top {
-  flex: 2;
+  flex: 1;
 }
 .onboardingContainer [pos=corner] .section-left .message-text .spacer-bottom {
   flex: 1;
@@ -760,6 +879,7 @@ body[lwt-newtab-brighttext] {
   max-width: 5em;
   text-align: initial;
   white-space: pre-wrap;
+  text-shadow: 0 4px 8px rgba(0, 0, 0, 0.35);
 }
 .onboardingContainer [pos=corner] .section-left .attrib-text {
   height: 18px;
@@ -777,12 +897,12 @@ body[lwt-newtab-brighttext] {
 .onboardingContainer [pos=corner] .section-main .main-content {
   background: transparent;
   box-shadow: none;
-  display: block;
+  display: flex;
   position: absolute;
-  height: 350px;
-  width: 295px;
-  bottom: -60px;
-  inset-inline-end: 80px;
+  height: auto;
+  width: 350px;
+  bottom: 0;
+  inset-inline-end: 30px;
   transition: var(--transition);
 }
 .onboardingContainer [pos=corner] .section-main .brand-logo {
@@ -798,6 +918,9 @@ body[lwt-newtab-brighttext] {
 }
 .onboardingContainer [pos=corner] .section-main .welcome-text {
   transition-delay: 1.2s;
+}
+.onboardingContainer [pos=corner] .section-main .welcome-text h2 {
+  margin: 10px 6px;
 }
 .onboardingContainer [pos=corner] .solid-L {
   width: 1300px;
@@ -863,6 +986,7 @@ body[lwt-newtab-brighttext] {
   transition-delay: 0.9s;
 }
 .onboardingContainer .dialog-initial .primary,
+.onboardingContainer .dialog-initial .secondary,
 .onboardingContainer .dialog-initial .secondary-cta,
 .onboardingContainer .dialog-initial .steps {
   transition-delay: 1s;
@@ -872,6 +996,7 @@ body[lwt-newtab-brighttext] {
   transition-delay: 0.2s;
 }
 .onboardingContainer .screen:not(.dialog-initial):not([pos=corner]) .primary,
+.onboardingContainer .screen:not(.dialog-initial):not([pos=corner]) .secondary,
 .onboardingContainer .screen:not(.dialog-initial):not([pos=corner]) .secondary-cta {
   transition-delay: 0.4s;
 }
@@ -914,6 +1039,7 @@ body[lwt-newtab-brighttext] {
 .onboardingContainer.transition-in [pos=corner] .brand-logo,
 .onboardingContainer.transition-in [pos=corner] .welcome-text,
 .onboardingContainer.transition-in [pos=corner] .primary,
+.onboardingContainer.transition-in [pos=corner] .secondary,
 .onboardingContainer.transition-in [pos=corner] .secondary-cta:not(.top),
 .onboardingContainer.transition-in [pos=corner] .message-text {
   opacity: 0;
@@ -938,6 +1064,7 @@ body[lwt-newtab-brighttext] {
 .onboardingContainer.transition-in .screen:not([pos=corner]) .colorway-variations,
 .onboardingContainer.transition-in .screen:not([pos=corner]) .tiles-theme-section,
 .onboardingContainer.transition-in .screen:not([pos=corner]) .primary,
+.onboardingContainer.transition-in .screen:not([pos=corner]) .secondary,
 .onboardingContainer.transition-in .screen:not([pos=corner]) .secondary-cta:not(.top) {
   opacity: 0;
   translate: 0 calc(-1 * var(--translate));
@@ -980,6 +1107,7 @@ body[lwt-newtab-brighttext] {
   transition-delay: 0.2s;
 }
 .onboardingContainer.transition-out .screen:not(.dialog-last):not([pos=corner]) .primary,
+.onboardingContainer.transition-out .screen:not(.dialog-last):not([pos=corner]) .secondary,
 .onboardingContainer.transition-out .screen:not(.dialog-last):not([pos=corner]) .secondary-cta:not(.top) {
   opacity: 0;
   translate: 0 var(--translate);
@@ -998,5 +1126,5 @@ body[lwt-newtab-brighttext] {
   transition-delay: 0.4s;
 }
 .onboardingContainer .screen.with-noodles:not(.corner) .section-main {
-  height: 503px;
+  height: 504px;
 }

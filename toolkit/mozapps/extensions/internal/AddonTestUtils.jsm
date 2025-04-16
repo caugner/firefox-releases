@@ -13,6 +13,9 @@ const CERTDB_CONTRACTID = "@mozilla.org/security/x509certdb;1";
 
 Cu.importGlobalProperties(["fetch"]);
 
+const { AddonManager, AddonManagerPrivate } = ChromeUtils.import(
+  "resource://gre/modules/AddonManager.jsm"
+);
 const { AsyncShutdown } = ChromeUtils.import(
   "resource://gre/modules/AsyncShutdown.jsm"
 );
@@ -32,10 +35,12 @@ const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 XPCOMUtils.defineLazyModuleGetters(this, {
   AMTelemetry: "resource://gre/modules/AddonManager.jsm",
   ExtensionTestCommon: "resource://testing-common/ExtensionTestCommon.jsm",
+  getAppInfo: "resource://testing-common/AppInfo.jsm",
   Management: "resource://gre/modules/Extension.jsm",
   ExtensionAddonObserver: "resource://gre/modules/Extension.jsm",
   FileTestUtils: "resource://testing-common/FileTestUtils.jsm",
   MockRegistrar: "resource://testing-common/MockRegistrar.jsm",
+  updateAppInfo: "resource://testing-common/AppInfo.jsm",
   XPCShellContentUtils: "resource://testing-common/XPCShellContentUtils.jsm",
 });
 
@@ -44,12 +49,6 @@ XPCOMUtils.defineLazyServiceGetters(this, {
     "@mozilla.org/addons/addon-manager-startup;1",
     "amIAddonManagerStartup",
   ],
-});
-
-XPCOMUtils.defineLazyGetter(this, "AppInfo", () => {
-  let AppInfo = {};
-  ChromeUtils.import("resource://testing-common/AppInfo.jsm", AppInfo);
-  return AppInfo;
 });
 
 const PREF_DISABLE_SECURITY =
@@ -83,13 +82,6 @@ const ZipWriter = Components.Constructor(
 function isRegExp(val) {
   return val && typeof val === "object" && typeof val.test === "function";
 }
-
-// We need some internal bits of AddonManager
-var AMscope = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm",
-  null
-);
-var { AddonManager, AddonManagerPrivate } = AMscope;
 
 class MockBarrier {
   constructor(name) {
@@ -133,7 +125,7 @@ var MockAsyncShutdown = {
   Barrier: AsyncShutdown.Barrier,
 };
 
-AMscope.AsyncShutdown = MockAsyncShutdown;
+AddonManagerPrivate.overrideAsyncShutdown(MockAsyncShutdown);
 
 class AddonsList {
   constructor(file) {
@@ -314,6 +306,12 @@ var AddonTestUtils = {
     }
 
     testScope.registerCleanupFunction(() => {
+      // Force a GC to ensure that anything holding a ref to temp file releases it.
+      // XXX This shouldn't be needed here, since cleanupTempXPIs() does a GC if
+      // something fails; see bug 1761255
+      this.info(`Force a GC`);
+      Cu.forceGC();
+
       this.cleanupTempXPIs();
 
       let ignoreEntries = new Set();
@@ -490,14 +488,14 @@ var AddonTestUtils = {
   },
 
   createAppInfo(ID, name, version, platformVersion = "1.0") {
-    AppInfo.updateAppInfo({
+    updateAppInfo({
       ID,
       name,
       version,
       platformVersion,
       crashReporter: true,
     });
-    this.appInfo = AppInfo.getAppInfo();
+    this.appInfo = getAppInfo();
   },
 
   getManifestURI(file) {
@@ -777,13 +775,12 @@ var AddonTestUtils = {
     // promiseShutdown to allow re-initialization.
     ExtensionAddonObserver.init();
 
-    let XPIScope = ChromeUtils.import(
-      "resource://gre/modules/addons/XPIProvider.jsm",
-      null
+    const { XPIInternal, XPIProvider } = ChromeUtils.import(
+      "resource://gre/modules/addons/XPIProvider.jsm"
     );
-    XPIScope.AsyncShutdown = MockAsyncShutdown;
+    XPIInternal.overrideAsyncShutdown(MockAsyncShutdown);
 
-    XPIScope.XPIInternal.BootstrapScope.prototype._beforeCallBootstrapMethod = (
+    XPIInternal.BootstrapScope.prototype._beforeCallBootstrapMethod = (
       method,
       params,
       reason
@@ -807,15 +804,12 @@ var AddonTestUtils = {
 
     this.emit("addon-manager-started");
 
-    await Promise.all(XPIScope.XPIProvider.startupPromises);
+    await Promise.all(XPIProvider.startupPromises);
 
     // Load the add-ons list as it was after extension registration
     await this.loadAddonsList(true);
 
     // Wait for all add-ons to finish starting up before resolving.
-    const { XPIProvider } = ChromeUtils.import(
-      "resource://gre/modules/addons/XPIProvider.jsm"
-    );
     await Promise.all(
       Array.from(
         XPIProvider.activeAddons.values(),
@@ -843,9 +837,11 @@ var AddonTestUtils = {
       this.overrideEntry = null;
     }
 
-    const XPIscope = ChromeUtils.import(
-      "resource://gre/modules/addons/XPIProvider.jsm",
-      null
+    const { XPIProvider } = ChromeUtils.import(
+      "resource://gre/modules/addons/XPIProvider.jsm"
+    );
+    const { XPIDatabase } = ChromeUtils.import(
+      "resource://gre/modules/addons/XPIDatabase.jsm"
     );
 
     // Ensure some startup observers in XPIProvider are released.
@@ -858,7 +854,7 @@ var AddonTestUtils = {
     // a promise, potentially still pending. Wait for it to settle before
     // triggering profileBeforeChange, because the latter can trigger errors in
     // the pending asyncLoadDB() by an indirect call to XPIDatabase.shutdown().
-    await XPIscope.XPIDatabase._dbPromise;
+    await XPIDatabase._dbPromise;
 
     await MockAsyncShutdown.profileBeforeChange.trigger();
     await MockAsyncShutdown.profileChangeTeardown.trigger();
@@ -889,23 +885,14 @@ var AddonTestUtils = {
 
     // This would be cleaner if I could get it as the rejection reason from
     // the AddonManagerInternal.shutdown() promise
-    let shutdownError = XPIscope.XPIDatabase._saveError;
+    let shutdownError = XPIDatabase._saveError;
 
-    AddonManagerPrivate.unregisterProvider(XPIscope.XPIProvider);
+    AddonManagerPrivate.unregisterProvider(XPIProvider);
     Cu.unload("resource://gre/modules/addons/XPIProvider.jsm");
     Cu.unload("resource://gre/modules/addons/XPIDatabase.jsm");
     Cu.unload("resource://gre/modules/addons/XPIInstall.jsm");
 
-    let ExtensionScope = ChromeUtils.import(
-      "resource://gre/modules/Extension.jsm",
-      null
-    );
     ExtensionAddonObserver.uninit();
-    ChromeUtils.defineModuleGetter(
-      ExtensionScope,
-      "XPIProvider",
-      "resource://gre/modules/addons/XPIProvider.jsm"
-    );
 
     ExtensionTestCommon.resetStartupPromises();
 
@@ -953,12 +940,11 @@ var AddonTestUtils = {
 
   async loadAddonsList(flush = false) {
     if (flush) {
-      let XPIScope = ChromeUtils.import(
-        "resource://gre/modules/addons/XPIProvider.jsm",
-        null
+      const { XPIInternal } = ChromeUtils.import(
+        "resource://gre/modules/addons/XPIProvider.jsm"
       );
-      XPIScope.XPIStates.save();
-      await XPIScope.XPIStates._jsonFile._save();
+      XPIInternal.XPIStates.save();
+      await XPIInternal.XPIStates._jsonFile._save();
     }
 
     this.addonsList = new AddonsList(this.addonStartup);

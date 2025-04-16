@@ -126,7 +126,12 @@ function renderMultistage(ready) {
   window.AWGetImportableSites = () => "[]";
   window.AWGetRegion = receive("GET_REGION");
   window.AWGetSelectedTheme = receive("GET_SELECTED_THEME");
-  window.AWSendEventTelemetry = receive("TELEMETRY_EVENT");
+  // Do not send telemetry if message (e.g. spotlight in PBM) config sets metrics as 'block'.
+  window.AWSendEventTelemetry =
+    CONFIG?.metrics === "block" ? () => {} : receive("TELEMETRY_EVENT");
+  window.AWSendToDeviceEmailsSupported = receive(
+    "SEND_TO_DEVICE_EMAILS_SUPPORTED"
+  );
   window.AWSendToParent = (name, data) => receive(name)(data);
   window.AWFinish = () => {
     window.close();

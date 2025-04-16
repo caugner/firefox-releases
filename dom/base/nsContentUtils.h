@@ -161,6 +161,7 @@ template <class T>
 class StaticRefPtr;
 
 namespace dom {
+class ShmemImage;
 struct AutocompleteInfo;
 class BrowserChild;
 class BrowserParent;
@@ -349,24 +350,24 @@ class nsContentUtils {
   static bool ShouldResistFingerprinting(nsIGlobalObject* aGlobalObject);
   static bool ShouldResistFingerprinting(nsIDocShell* aDocShell);
   static bool ShouldResistFingerprinting(nsIPrincipal* aPrincipal);
+  // These functions are the new, nuanced functions
   static bool ShouldResistFingerprinting(const Document* aDoc);
   static bool ShouldResistFingerprinting(nsIChannel* aChannel);
+  static bool ShouldResistFingerprinting(
+      nsIPrincipal* aPrincipal,
+      const mozilla::OriginAttributes& aOriginAttributes);
 
   /**
-   *Implement a legacy RFP function to provide an explination as to
-   * why they are using the original RFP call. Given that there is a gradual
-   *carry over of ShouldResistFingerprinting calls to a nuanced API, some
-   *features still require a legacy function. In this case, the context of the
-   *call is not reviewed. The intent of this is to have an explanation as to why
-   *the developer is using the legacy function call over of the nuanced one. The
-   *implementation of this function will include accepting a char* to provide
-   *the explanation o why the developer is using the legacy function as opposed
-   *to nuanced preference.
+   * Implement a RFP function that only checks the pref, and does not take
+   * into account any additional context such as PBM mode or Web Extensions.
+   *
+   * It requires an explanation for why the coarse check is being used instead
+   * of the nuanced check. While there is a gradual cut over of
+   * ShouldResistFingerprinting calls to a nuanced API, some features still
+   * require a legacy function. (Additionally, we sometimes use the coarse
+   * check first, to avoid running additional code to support a nuanced check.)
    */
-  static bool ShouldResistFingerprinting(const char* aChar);
-
-  // Prevent system colors from being exposed to CSS or canvas.
-  static bool UseStandinsForNativeColors();
+  static bool ShouldResistFingerprinting(const char* aJustification);
 
   // A helper function to calculate the rounded window size for fingerprinting
   // resistance. The rounded size is based on the chrome UI size and available
@@ -2890,16 +2891,20 @@ class nsContentUtils {
    * The length and stride will be assigned from the surface.
    */
   static mozilla::UniquePtr<char[]> GetSurfaceData(
-      mozilla::NotNull<mozilla::gfx::DataSourceSurface*> aSurface,
-      size_t* aLength, int32_t* aStride);
+      mozilla::gfx::DataSourceSurface&, size_t* aLength, int32_t* aStride);
 
   /*
    * Get the pixel data from the given source surface and fill it in Shmem.
    * The length and stride will be assigned from the surface.
    */
   static mozilla::Maybe<mozilla::ipc::Shmem> GetSurfaceData(
-      mozilla::gfx::DataSourceSurface* aSurface, size_t* aLength,
+      mozilla::gfx::DataSourceSurface& aSurface, size_t* aLength,
       int32_t* aStride, mozilla::ipc::IShmemAllocator* aAlloc);
+
+  static mozilla::Maybe<mozilla::dom::ShmemImage> SurfaceToIPCImage(
+      mozilla::gfx::DataSourceSurface&, mozilla::ipc::IShmemAllocator*);
+  static already_AddRefed<mozilla::gfx::DataSourceSurface> IPCImageToSurface(
+      mozilla::dom::ShmemImage&&, mozilla::ipc::IShmemAllocator*);
 
   // Helpers shared by the implementations of nsContentUtils methods and
   // nsIDOMWindowUtils methods.
@@ -3199,9 +3204,13 @@ class nsContentUtils {
   // Alternate data MIME type used by the ScriptLoader to register and read
   // bytecode out of the nsCacheInfoChannel.
   [[nodiscard]] static bool InitJSBytecodeMimeType();
-  static nsCString& JSBytecodeMimeType() {
-    MOZ_ASSERT(sJSBytecodeMimeType);
-    return *sJSBytecodeMimeType;
+  static nsCString& JSScriptBytecodeMimeType() {
+    MOZ_ASSERT(sJSScriptBytecodeMimeType);
+    return *sJSScriptBytecodeMimeType;
+  }
+  static nsCString& JSModuleBytecodeMimeType() {
+    MOZ_ASSERT(sJSModuleBytecodeMimeType);
+    return *sJSModuleBytecodeMimeType;
   }
 
   /**
@@ -3308,6 +3317,18 @@ class nsContentUtils {
    * Returns an empty string if aURL is null.
    */
   static nsCString TruncatedURLForDisplay(nsIURI* aURL, size_t aMaxLen = 128);
+
+  /**
+   * Anonymize the given id by hashing it with the provided origin. The
+   * resulting id will have the same length as the one that was passed in.
+   */
+  enum class OriginFormat {
+    Base64,
+    Plain,
+  };
+
+  static nsresult AnonymizeId(nsAString& aId, const nsACString& aOriginKey,
+                              OriginFormat aFormat = OriginFormat::Base64);
 
  private:
   static bool InitializeEventTable();
@@ -3420,9 +3441,10 @@ class nsContentUtils {
   static nsString* sAltText;
   static nsString* sModifierSeparator;
 
-  // Alternate data mime type, used by the ScriptLoader to register and read the
-  // bytecode out of the nsCacheInfoChannel.
-  static nsCString* sJSBytecodeMimeType;
+  // Alternate data mime types, used by the ScriptLoader to register and read
+  // the bytecode out of the nsCacheInfoChannel.
+  static nsCString* sJSScriptBytecodeMimeType;
+  static nsCString* sJSModuleBytecodeMimeType;
 
   static mozilla::LazyLogModule gResistFingerprintingLog;
   static mozilla::LazyLogModule sDOMDumpLog;

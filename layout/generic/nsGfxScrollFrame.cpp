@@ -2446,9 +2446,15 @@ void ScrollFrameHelper::ScrollToCSSPixels(const CSSIntPoint& aScrollPosition,
   // Transmogrify this scroll to a relative one if there's any on-going
   // animation in APZ triggered by __user__.
   // Bug 1740164: We will apply it for cases there's no animation in APZ.
+
+  auto scrollAnimationState = ScrollAnimationState();
+  bool isScrollAnimating =
+      scrollAnimationState.contains(AnimationState::MainThread) ||
+      scrollAnimationState.contains(AnimationState::APZPending) ||
+      scrollAnimationState.contains(AnimationState::APZRequested);
   if (mCurrentAPZScrollAnimationType ==
           APZScrollAnimationType::TriggeredByUserInput &&
-      !IsScrollAnimating(IncludeApzAnimation::No)) {
+      !isScrollAnimating) {
     CSSIntPoint delta = aScrollPosition - currentCSSPixels;
     ScrollByCSSPixels(delta, aMode);
     return;
@@ -3232,7 +3238,7 @@ void ScrollFrameHelper::ScrollToImpl(
   // viewport offset, but instead of waiting for  that, just set the value
   // we expect APZ will set ourselves, to minimize the chances of
   // inconsistencies from querying a stale value.
-  if (mIsRoot && nsLayoutUtils::CanScrollOriginClobberApz(mLastScrollOrigin)) {
+  if (mIsRoot && nsLayoutUtils::CanScrollOriginClobberApz(aOrigin)) {
     AutoWeakFrame weakFrame(mOuter);
     AutoScrollbarRepaintSuppression repaintSuppression(this, weakFrame,
                                                        !schedulePaint);
@@ -5864,7 +5870,8 @@ void ScrollFrameHelper::FireScrollEvent() {
   // Fire viewport scroll events at the document (where they
   // will bubble to the window)
   mozilla::layers::ScrollLinkedEffectDetector detector(
-      content->GetComposedDoc());
+      content->GetComposedDoc(),
+      presContext->RefreshDriver()->MostRecentRefresh());
   if (mIsRoot) {
     if (RefPtr<Document> doc = content->GetUncomposedDoc()) {
       // TODO: Bug 1506441
@@ -6581,7 +6588,7 @@ bool ScrollFrameHelper::ReflowFinished() {
     nsPoint currentScrollPos = GetScrollPosition();
     ScrollToImpl(currentScrollPos, nsRect(currentScrollPos, nsSize(0, 0)),
                  ScrollOrigin::Clamp);
-    if (!IsScrollAnimating()) {
+    if (ScrollAnimationState().isEmpty()) {
       // We need to have mDestination track the current scroll position,
       // in case it falls outside the new reflow area. mDestination is used
       // by ScrollBy as its starting position.
@@ -7325,15 +7332,22 @@ bool ScrollFrameHelper::IsLastScrollUpdateAnimating() const {
   return false;
 }
 
-bool ScrollFrameHelper::IsScrollAnimating(
-    IncludeApzAnimation aIncludeApz) const {
-  if (aIncludeApz == IncludeApzAnimation::Yes && IsApzAnimationInProgress()) {
-    return true;
+using AnimationState = nsIScrollableFrame::AnimationState;
+EnumSet<AnimationState> ScrollFrameHelper::ScrollAnimationState() const {
+  EnumSet<AnimationState> retval;
+  if (IsApzAnimationInProgress()) {
+    retval += AnimationState::APZInProgress;
+  }
+  if (mApzAnimationRequested) {
+    retval += AnimationState::APZRequested;
   }
   if (IsLastScrollUpdateAnimating()) {
-    return true;
+    retval += AnimationState::APZPending;
   }
-  return mApzAnimationRequested || mAsyncScroll || mAsyncSmoothMSDScroll;
+  if (mAsyncScroll || mAsyncSmoothMSDScroll) {
+    retval += AnimationState::MainThread;
+  }
+  return retval;
 }
 
 void ScrollFrameHelper::ResetScrollInfoIfNeeded(
@@ -7360,7 +7374,11 @@ UniquePtr<PresState> ScrollFrameHelper::SaveState() const {
 
   // Don't store a scroll state if we never have been scrolled or restored
   // a previous scroll state, and we're not in the middle of a smooth scroll.
-  bool isScrollAnimating = IsScrollAnimating(IncludeApzAnimation::No);
+  auto scrollAnimationState = ScrollAnimationState();
+  bool isScrollAnimating =
+      scrollAnimationState.contains(AnimationState::MainThread) ||
+      scrollAnimationState.contains(AnimationState::APZPending) ||
+      scrollAnimationState.contains(AnimationState::APZRequested);
   if (!mHasBeenScrolled && !mDidHistoryRestore && !isScrollAnimating) {
     return nullptr;
   }

@@ -82,14 +82,14 @@ SessionHistoryInfo::SessionHistoryInfo(
 }
 
 SessionHistoryInfo::SessionHistoryInfo(
-    nsIChannel* aOldChannel, nsIChannel* aNewChannel, uint32_t aLoadType,
+    nsIChannel* aChannel, uint32_t aLoadType,
     nsIPrincipal* aPartitionedPrincipalToInherit,
     nsIContentSecurityPolicy* aCsp) {
-  aNewChannel->GetURI(getter_AddRefs(mURI));
+  aChannel->GetURI(getter_AddRefs(mURI));
   mLoadType = aLoadType;
 
   nsCOMPtr<nsILoadInfo> loadInfo;
-  aNewChannel->GetLoadInfo(getter_AddRefs(loadInfo));
+  aChannel->GetLoadInfo(getter_AddRefs(loadInfo));
 
   loadInfo->GetResultPrincipalURI(getter_AddRefs(mResultPrincipalURI));
   loadInfo->GetTriggeringPrincipal(
@@ -100,16 +100,16 @@ SessionHistoryInfo::SessionHistoryInfo(
   mSharedState.Get()->mPartitionedPrincipalToInherit =
       aPartitionedPrincipalToInherit;
   mSharedState.Get()->mCsp = aCsp;
-  aNewChannel->GetContentType(mSharedState.Get()->mContentType);
-  aOldChannel->GetOriginalURI(getter_AddRefs(mOriginalURI));
+  aChannel->GetContentType(mSharedState.Get()->mContentType);
+  aChannel->GetOriginalURI(getter_AddRefs(mOriginalURI));
 
   uint32_t loadFlags;
-  aNewChannel->GetLoadFlags(&loadFlags);
+  aChannel->GetLoadFlags(&loadFlags);
   mLoadReplace = !!(loadFlags & nsIChannel::LOAD_REPLACE);
 
   MaybeUpdateTitleFromURI();
 
-  if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aNewChannel)) {
+  if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel)) {
     mReferrerInfo = httpChannel->GetReferrerInfo();
   }
 }
@@ -173,6 +173,10 @@ nsILayoutHistoryState* SessionHistoryInfo::GetLayoutHistoryState() {
 
 void SessionHistoryInfo::SetLayoutHistoryState(nsILayoutHistoryState* aState) {
   mSharedState.Get()->mLayoutHistoryState = aState;
+  if (mSharedState.Get()->mLayoutHistoryState) {
+    mSharedState.Get()->mLayoutHistoryState->SetScrollPositionOnly(
+        !mSharedState.Get()->mSaveLayoutState);
+  }
 }
 
 nsIPrincipal* SessionHistoryInfo::GetTriggeringPrincipal() const {
@@ -1367,6 +1371,22 @@ SessionHistoryEntry::GetWireframe(JSContext* aCx, JS::MutableHandleValue aOut) {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+SessionHistoryEntry::SetWireframe(JSContext* aCx, JS::HandleValue aArg) {
+  if (aArg.isNullOrUndefined()) {
+    mWireframe = Nothing();
+    return NS_OK;
+  }
+
+  Wireframe wireframe;
+  if (aArg.isObject() && wireframe.Init(aCx, aArg)) {
+    mWireframe = Some(std::move(wireframe));
+    return NS_OK;
+  }
+
+  return NS_ERROR_INVALID_ARG;
+}
+
 NS_IMETHODIMP_(void)
 SessionHistoryEntry::SyncTreesForSubframeNavigation(
     nsISHEntry* aEntry, mozilla::dom::BrowsingContext* aTopBC,
@@ -1504,6 +1524,7 @@ void IPDLParamTraits<dom::SessionHistoryInfo>::Write(
   WriteIPDLParam(aWriter, aActor, aParam.mSharedState.Get()->mCacheKey);
   WriteIPDLParam(aWriter, aActor,
                  aParam.mSharedState.Get()->mIsFrameNavigation);
+  WriteIPDLParam(aWriter, aActor, aParam.mSharedState.Get()->mSaveLayoutState);
 }
 
 bool IPDLParamTraits<dom::SessionHistoryInfo>::Read(
@@ -1596,7 +1617,9 @@ bool IPDLParamTraits<dom::SessionHistoryInfo>::Read(
       !ReadIPDLParam(aReader, aActor,
                      &aResult->mSharedState.Get()->mCacheKey) ||
       !ReadIPDLParam(aReader, aActor,
-                     &aResult->mSharedState.Get()->mIsFrameNavigation)) {
+                     &aResult->mSharedState.Get()->mIsFrameNavigation) ||
+      !ReadIPDLParam(aReader, aActor,
+                     &aResult->mSharedState.Get()->mSaveLayoutState)) {
     aActor->FatalError("Error reading fields for SessionHistoryInfo");
     return false;
   }

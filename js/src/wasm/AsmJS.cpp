@@ -68,6 +68,7 @@
 #include "frontend/SharedContext-inl.h"
 #include "vm/ArrayBufferObject-inl.h"
 #include "vm/JSObject-inl.h"
+#include "wasm/WasmInstance-inl.h"
 
 using namespace js;
 using namespace js::frontend;
@@ -2657,6 +2658,7 @@ class MOZ_STACK_CLASS FunctionValidator : public FunctionValidatorShared {
   }
 
   [[nodiscard]] bool writeCall(ParseNode* pn, Op op) {
+    MOZ_ASSERT(op == Op::Call);
     if (!encoder().writeOp(op)) {
       return false;
     }
@@ -2664,6 +2666,7 @@ class MOZ_STACK_CLASS FunctionValidator : public FunctionValidatorShared {
     return appendCallSiteLineNumber(pn);
   }
   [[nodiscard]] bool writeCall(ParseNode* pn, MozOp op) {
+    MOZ_ASSERT(op == MozOp::OldCallDirect || op == MozOp::OldCallIndirect);
     if (!encoder().writeOp(op)) {
       return false;
     }

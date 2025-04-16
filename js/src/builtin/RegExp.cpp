@@ -14,7 +14,6 @@
 
 #include "frontend/TokenStream.h"
 #include "irregexp/RegExpAPI.h"
-#include "jit/InlinableNatives.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_NEWREGEXP_FLAGGED
 #include "js/PropertySpec.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlag, JS::RegExpFlags
@@ -27,7 +26,6 @@
 
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/NativeObject-inl.h"
 #include "vm/ObjectOperations-inl.h"
 #include "vm/PlainObject-inl.h"
 
@@ -854,8 +852,10 @@ static bool regexp_source(JSContext* cx, unsigned argc, JS::Value* vp) {
       [cx, args](RegExpObject* unwrapped) {
         RootedAtom src(cx, unwrapped->getSource());
         MOZ_ASSERT(src);
-        // Mark potentially cross-compartment JSAtom.
-        cx->markAtom(src);
+        // Mark potentially cross-zone JSAtom.
+        if (cx->zone() != unwrapped->zone()) {
+          cx->markAtom(src);
+        }
 
         // Step 7.
         JSString* escaped = EscapeRegExpPattern(cx, src);

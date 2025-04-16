@@ -69,7 +69,6 @@ ModuleLoadRequest::ModuleLoadRequest(
 void ModuleLoadRequest::Cancel() {
   ScriptLoadRequest::Cancel();
   mModuleScript = nullptr;
-  mProgress = ScriptLoadRequest::Progress::eReady;
   CancelImports();
   mReady.RejectIfExists(NS_ERROR_DOM_ABORT_ERR, __func__);
 }
@@ -180,7 +179,12 @@ void ModuleLoadRequest::LoadFailed() {
 }
 
 void ModuleLoadRequest::LoadFinished() {
-  mLoader->ProcessLoadedModuleTree(this);
+  RefPtr<ModuleLoadRequest> request(this);
+  if (IsTopLevel() && IsDynamicImport()) {
+    mLoader->RemoveDynamicImport(request);
+  }
+
+  mLoader->ProcessLoadedModuleTree(request);
 
   mLoader = nullptr;
 }

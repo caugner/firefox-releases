@@ -1349,7 +1349,6 @@ Document::Document(const char* aContentType)
       mHasDisplayDocument(false),
       mFontFaceSetDirty(true),
       mDidFireDOMContentLoaded(true),
-      mHasScrollLinkedEffect(false),
       mFrameRequestCallbacksScheduled(false),
       mIsTopLevelContentDocument(false),
       mIsContentDocument(false),
@@ -2436,7 +2435,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOrientationPendingPromise)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOriginalDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCachedEncoder)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStateObjectCached)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentTimeline)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPendingAnimationTracker)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTemplateContentsOwner)
@@ -2508,10 +2506,17 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(Document)
 
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(Document)
+NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(Document)
+  NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER
+  if (tmp->mStateObjectCached.isSome()) {
+    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mStateObjectCached.ref())
+  }
+NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
   tmp->mInUnlinkOrDeletion = true;
+
+  tmp->SetStateObject(nullptr);
 
   // Clear out our external resources
   tmp->mExternalResourceMap.Shutdown();
@@ -2554,7 +2559,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mOrientationPendingPromise)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mOriginalDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCachedEncoder)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mStateObjectCached)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocumentTimeline)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPendingAnimationTracker)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mTemplateContentsOwner)
@@ -2694,8 +2698,6 @@ nsresult Document::Init() {
   mFeaturePolicy->SetDefaultOrigin(NodePrincipal());
 
   mStyleSet = MakeUnique<ServoStyleSet>(*this);
-
-  mozilla::HoldJSObjects(this);
 
   return NS_OK;
 }
@@ -3748,6 +3750,20 @@ nsresult Document::InitCSP(nsIChannel* aChannel) {
   return NS_OK;
 }
 
+static Document* GetInProcessParentDocumentFrom(BrowsingContext* aContext) {
+  BrowsingContext* parentContext = aContext->GetParent();
+  if (!parentContext) {
+    return nullptr;
+  }
+
+  WindowContext* windowContext = parentContext->GetCurrentWindowContext();
+  if (!windowContext) {
+    return nullptr;
+  }
+
+  return windowContext->GetDocument();
+}
+
 already_AddRefed<dom::FeaturePolicy> Document::GetParentFeaturePolicy() {
   BrowsingContext* browsingContext = GetBrowsingContext();
   if (!browsingContext) {
@@ -3765,6 +3781,11 @@ already_AddRefed<dom::FeaturePolicy> Document::GetParentFeaturePolicy() {
 
   if (XRE_IsParentProcess()) {
     return do_AddRef(browsingContext->Canonical()->GetContainerFeaturePolicy());
+  }
+
+  if (Document* parentDocument =
+          GetInProcessParentDocumentFrom(browsingContext)) {
+    return do_AddRef(parentDocument->FeaturePolicy());
   }
 
   WindowContext* windowContext = browsingContext->GetCurrentWindowContext();
@@ -12381,23 +12402,11 @@ void Document::UpdateDocumentStates(EventStates aMaybeChangedStates,
     }
   }
 
-  if (aMaybeChangedStates.HasAtLeastOneOfStates(
-          NS_DOCUMENT_STATE_ALL_LWTHEME_BITS)) {
-    mDocumentState &= ~NS_DOCUMENT_STATE_ALL_LWTHEME_BITS;
-    switch (GetDocumentLWTheme()) {
-      case DocumentTheme::None:
-        break;
-      case DocumentTheme::Bright:
-        mDocumentState |=
-            NS_DOCUMENT_STATE_LWTHEME | NS_DOCUMENT_STATE_LWTHEME_BRIGHTTEXT;
-        break;
-      case DocumentTheme::Dark:
-        mDocumentState |=
-            NS_DOCUMENT_STATE_LWTHEME | NS_DOCUMENT_STATE_LWTHEME_DARKTEXT;
-        break;
-      case DocumentTheme::Neutral:
-        mDocumentState |= NS_DOCUMENT_STATE_LWTHEME;
-        break;
+  if (aMaybeChangedStates.HasAtLeastOneOfStates(NS_DOCUMENT_STATE_LWTHEME)) {
+    if (ComputeDocumentLWTheme()) {
+      mDocumentState |= NS_DOCUMENT_STATE_LWTHEME;
+    } else {
+      mDocumentState &= ~NS_DOCUMENT_STATE_LWTHEME;
     }
   }
 
@@ -13208,24 +13217,36 @@ bool Document::IsCanceledFrameRequestCallback(int32_t aHandle) const {
   return mFrameRequestManager.IsCanceled(aHandle);
 }
 
-nsresult Document::GetStateObject(nsIVariant** aState) {
+nsresult Document::GetStateObject(JS::MutableHandle<JS::Value> aState) {
   // Get the document's current state object. This is the object backing both
   // history.state and popStateEvent.state.
   //
   // mStateObjectContainer may be null; this just means that there's no
   // current state object.
 
-  if (!mStateObjectCached && mStateObjectContainer) {
-    AutoJSAPI jsapi;
-    // Init with null is "OK" in the sense that it will just fail.
-    if (!jsapi.Init(GetScopeObject())) {
-      return NS_ERROR_UNEXPECTED;
+  if (mStateObjectCached.isNothing()) {
+    if (mStateObjectContainer) {
+      AutoJSAPI jsapi;
+      // Init with null is "OK" in the sense that it will just fail.
+      if (!jsapi.Init(GetScopeObject())) {
+        return NS_ERROR_UNEXPECTED;
+      }
+      JS::Rooted<JS::Value> value(jsapi.cx());
+      nsresult rv =
+          mStateObjectContainer->DeserializeToJsval(jsapi.cx(), &value);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      mStateObjectCached.emplace(value);
+      if (!value.isNullOrUndefined()) {
+        mozilla::HoldJSObjects(this);
+      }
+    } else {
+      mStateObjectCached.emplace(JS::NullValue());
     }
-    mStateObjectContainer->DeserializeToVariant(
-        jsapi.cx(), getter_AddRefs(mStateObjectCached));
   }
 
-  NS_IF_ADDREF(*aState = mStateObjectCached);
+  aState.set(mStateObjectCached.ref());
+
   return NS_OK;
 }
 
@@ -13233,6 +13254,13 @@ void Document::SetNavigationTiming(nsDOMNavigationTiming* aTiming) {
   mTiming = aTiming;
   if (!mLoadingTimeStamp.IsNull() && mTiming) {
     mTiming->SetDOMLoadingTimeStamp(GetDocumentURI(), mLoadingTimeStamp);
+  }
+
+  // If there's already the DocumentTimeline instance, tell it since the
+  // DocumentTimeline is based on both the navigation start time stamp and the
+  // refresh driver timestamp.
+  if (mDocumentTimeline) {
+    mDocumentTimeline->UpdateLastRefreshDriverTime();
   }
 }
 
@@ -14585,8 +14613,7 @@ void Document::GetWireframeWithoutFlushing(bool aIncludeNodes,
   }
 
   auto& wireframe = aWireframe.SetValue();
-  nsStyleUtil::GetSerializedColorValue(shell->GetCanvasBackground(),
-                                       wireframe.mCanvasBackground.Construct());
+  wireframe.mCanvasBackground = shell->ComputeCanvasBackground().mColor;
 
   FrameForPointOptions options;
   options.mBits += FrameForPointOption::IgnoreCrossDoc;
@@ -14606,11 +14633,51 @@ void Document::GetWireframeWithoutFlushing(bool aIncludeNodes,
     return;
   }
   for (nsIFrame* frame : Reversed(frames)) {
-    // Can't really fail because SetCapacity succeeded.
-    auto& taggedRect = *rects.AppendElement(fallible);
+    auto [rectColor,
+          rectType] = [&]() -> std::tuple<nscolor, WireframeRectType> {
+      if (frame->IsTextFrame()) {
+        return {frame->StyleText()->mWebkitTextFillColor.CalcColor(frame),
+                WireframeRectType::Text};
+      }
+      if (frame->IsImageFrame() || frame->IsSVGOuterSVGFrame()) {
+        return {0, WireframeRectType::Image};
+      }
+      if (frame->IsThemed()) {
+        return {0, WireframeRectType::Background};
+      }
+      bool drawImage = false;
+      bool drawColor = false;
+      ComputedStyle* bgStyle = nullptr;
+      if (nsCSSRendering::FindBackground(frame, &bgStyle)) {
+        const nscolor color = nsCSSRendering::DetermineBackgroundColor(
+            pc, bgStyle, frame, drawImage, drawColor);
+        if (drawImage &&
+            !bgStyle->StyleBackground()->mImage.BottomLayer().mImage.IsNone()) {
+          return {color, WireframeRectType::Image};
+        }
+        if (drawColor && !frame->IsCanvasFrame()) {
+          // Canvas frame background already accounted for in mCanvasBackground.
+          return {color, WireframeRectType::Background};
+        }
+      }
+      return {0, WireframeRectType::Unknown};
+    }();
+
+    if (rectType == WireframeRectType::Unknown) {
+      continue;
+    }
+
     const auto r =
         CSSRect::FromAppUnits(nsLayoutUtils::TransformFrameRectToAncestor(
             frame, frame->GetRectRelativeToSelf(), relativeTo));
+    if ((uint32_t)r.Area() <
+        StaticPrefs::browser_history_wireframeAreaThreshold()) {
+      continue;
+    }
+
+    // Can't really fail because SetCapacity succeeded.
+    auto& taggedRect = *rects.AppendElement(fallible);
+
     if (aIncludeNodes) {
       if (nsIContent* c = frame->GetContent()) {
         taggedRect.mNode.Construct(c);
@@ -14620,34 +14687,8 @@ void Document::GetWireframeWithoutFlushing(bool aIncludeNodes,
     taggedRect.mY = r.y;
     taggedRect.mWidth = r.width;
     taggedRect.mHeight = r.height;
-    taggedRect.mType.Construct() = [&] {
-      if (frame->IsTextFrame()) {
-        nsStyleUtil::GetSerializedColorValue(
-            frame->StyleText()->mWebkitTextFillColor.CalcColor(frame),
-            taggedRect.mColor.Construct());
-        return WireframeRectType::Text;
-      }
-      if (frame->IsImageFrame() || frame->IsSVGOuterSVGFrame()) {
-        return WireframeRectType::Image;
-      }
-      if (frame->IsThemed()) {
-        return WireframeRectType::Background;
-      }
-      bool drawImage = false;
-      bool drawColor = false;
-      const nscolor color = nsCSSRendering::DetermineBackgroundColor(
-          pc, frame->Style(), frame, drawImage, drawColor);
-      if (drawImage &&
-          !frame->StyleBackground()->mImage.BottomLayer().mImage.IsNone()) {
-        return WireframeRectType::Image;
-      }
-      if (drawColor) {
-        nsStyleUtil::GetSerializedColorValue(color,
-                                             taggedRect.mColor.Construct());
-        return WireframeRectType::Background;
-      }
-      return WireframeRectType::Unknown;
-    }();
+    taggedRect.mColor = rectColor;
+    taggedRect.mType.Construct(rectType);
   }
 }
 
@@ -15816,29 +15857,17 @@ nsIDocShell* Document::GetDocShell() const { return mDocumentContainer; }
 
 void Document::SetStateObject(nsIStructuredCloneContainer* scContainer) {
   mStateObjectContainer = scContainer;
-  mStateObjectCached = nullptr;
+  mStateObjectCached.reset();
 }
 
-Document::DocumentTheme Document::GetDocumentLWTheme() const {
+bool Document::ComputeDocumentLWTheme() const {
   if (!NodePrincipal()->IsSystemPrincipal()) {
-    return DocumentTheme::None;
+    return false;
   }
 
-  auto theme = DocumentTheme::None;  // No lightweight theme by default
   Element* element = GetRootElement();
-  if (element && element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::lwtheme,
-                                      nsGkAtoms::_true, eCaseMatters)) {
-    theme = DocumentTheme::Neutral;
-    nsAutoString lwTheme;
-    element->GetAttr(kNameSpaceID_None, nsGkAtoms::lwthemetextcolor, lwTheme);
-    if (lwTheme.EqualsLiteral("dark")) {
-      theme = DocumentTheme::Dark;
-    } else if (lwTheme.EqualsLiteral("bright")) {
-      theme = DocumentTheme::Bright;
-    }
-  }
-
-  return theme;
+  return element && element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::lwtheme,
+                                         nsGkAtoms::_true, eCaseMatters);
 }
 
 already_AddRefed<Element> Document::CreateHTMLElement(nsAtom* aTag) {
@@ -16003,15 +16032,31 @@ FontFaceSet* Document::Fonts() {
   return mFontFaceSet;
 }
 
-void Document::ReportHasScrollLinkedEffect() {
-  if (mHasScrollLinkedEffect) {
-    // We already did this once for this document, don't do it again.
+void Document::ReportHasScrollLinkedEffect(const TimeStamp& aTimeStamp) {
+  MOZ_ASSERT(!aTimeStamp.IsNull());
+
+  if (!mLastScrollLinkedEffectDetectionTime.IsNull() &&
+      mLastScrollLinkedEffectDetectionTime >= aTimeStamp) {
     return;
   }
-  mHasScrollLinkedEffect = true;
-  nsContentUtils::ReportToConsole(
-      nsIScriptError::warningFlag, "Async Pan/Zoom"_ns, this,
-      nsContentUtils::eLAYOUT_PROPERTIES, "ScrollLinkedEffectFound3");
+
+  if (mLastScrollLinkedEffectDetectionTime.IsNull()) {
+    // Report to console just once.
+    nsContentUtils::ReportToConsole(
+        nsIScriptError::warningFlag, "Async Pan/Zoom"_ns, this,
+        nsContentUtils::eLAYOUT_PROPERTIES, "ScrollLinkedEffectFound3");
+  }
+
+  mLastScrollLinkedEffectDetectionTime = aTimeStamp;
+}
+
+bool Document::HasScrollLinkedEffect() const {
+  if (nsPresContext* pc = GetPresContext()) {
+    return mLastScrollLinkedEffectDetectionTime ==
+           pc->RefreshDriver()->MostRecentRefresh();
+  }
+
+  return false;
 }
 
 void Document::SetSHEntryHasUserInteraction(bool aHasInteraction) {

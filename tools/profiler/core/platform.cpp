@@ -40,6 +40,7 @@
 #include "ProfilerIOInterposeObserver.h"
 #include "ProfilerParent.h"
 #include "ProfilerRustBindings.h"
+#include "mozilla/MozPromise.h"
 #include "shared-libraries.h"
 #include "VTuneProfiler.h"
 
@@ -51,6 +52,7 @@
 #include "mozilla/BaseAndGeckoProfilerDetail.h"
 #include "mozilla/ExtensionPolicyService.h"
 #include "mozilla/extensions/WebExtensionPolicy.h"
+#include "mozilla/glean/GleanMetrics.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Printf.h"
@@ -100,7 +102,9 @@
 #include <type_traits>
 
 #if defined(GP_OS_android)
+#  include "JavaExceptions.h"
 #  include "mozilla/java/GeckoJavaSamplerNatives.h"
+#  include "mozilla/jni/Refs.h"
 #endif
 
 #if defined(GP_OS_darwin)
@@ -236,6 +240,59 @@ class GeckoJavaSampler
     }
     return profiler_time();
   };
+
+  static void JavaStringArrayToCharArray(jni::ObjectArray::Param& aJavaArray,
+                                         Vector<const char*>& aCharArray,
+                                         JNIEnv* aJni) {
+    int arraySize = aJavaArray->Length();
+    for (int i = 0; i < arraySize; i++) {
+      jstring javaString =
+          (jstring)(aJni->GetObjectArrayElement(aJavaArray.Get(), i));
+      const char* filterString = aJni->GetStringUTFChars(javaString, 0);
+      // These strings are leaked. FIXME
+      MOZ_RELEASE_ASSERT(aCharArray.append(&filterString, 0));
+    }
+  }
+
+  static void StartProfiler(jni::ObjectArray::Param aFiltersArray,
+                            jni::ObjectArray::Param aFeaturesArray) {
+    JNIEnv* jni = jni::GetEnvForThread();
+    Vector<const char*> filtersTemp;
+    Vector<const char*> featureStringArray;
+
+    JavaStringArrayToCharArray(aFiltersArray, filtersTemp, jni);
+    JavaStringArrayToCharArray(aFeaturesArray, featureStringArray, jni);
+
+    uint32_t features = 0;
+    features = ParseFeaturesFromStringArray(featureStringArray.begin(),
+                                            featureStringArray.length());
+
+    // 128 * 1024 * 1024 is the entries preset that is given in
+    // devtools/client/performance-new/popup/background.jsm.js
+    profiler_start(PowerOfTwo32(128 * 1024 * 1024), 5.0, features,
+                   filtersTemp.begin(), filtersTemp.length(), 0, Nothing());
+  }
+
+  static void StopProfiler(jni::Object::Param aGeckoResult) {
+    auto result = java::GeckoResult::LocalRef(aGeckoResult);
+    profiler_pause();
+    nsCOMPtr<nsIProfiler> nsProfiler(
+        do_GetService("@mozilla.org/tools/profiler;1"));
+    nsProfiler->GetProfileDataAsGzippedArrayBufferAndroid(0)->Then(
+        GetMainThreadSerialEventTarget(), __func__,
+        [result](FallibleTArray<uint8_t> compressedProfile) {
+          result->Complete(jni::ByteArray::New(
+              reinterpret_cast<const int8_t*>(compressedProfile.Elements()),
+              compressedProfile.Length()));
+        },
+        [result](nsresult aRv) {
+          char errorString[9];
+          sprintf(errorString, "%08x", aRv);
+          result->CompleteExceptionally(
+              mozilla::java::sdk::IllegalStateException::New(errorString)
+                  .Cast<jni::Throwable>());
+        });
+  }
 };
 #endif
 
@@ -2882,23 +2939,29 @@ struct JavaMarkerWithDetails {
   }
 };
 
-static void CollectJavaThreadProfileData(ProfileBuffer& aProfileBuffer) {
+static void CollectJavaThreadProfileData(
+    nsTArray<java::GeckoJavaSampler::ThreadInfo::LocalRef>& javaThreads,
+    ProfileBuffer& aProfileBuffer) {
+  // Retrieve metadata about the threads.
+  const auto threadCount = java::GeckoJavaSampler::GetRegisteredThreadCount();
+  for (int i = 0; i < threadCount; i++) {
+    javaThreads.AppendElement(
+        java::GeckoJavaSampler::GetRegisteredThreadInfo(i));
+  }
+
   // locked_profiler_start uses sample count is 1000 for Java thread.
   // This entry size is enough now, but we might have to estimate it
   // if we can customize it
-
   // Pass the samples
-  // FIXME(bug 1618560): We are currently only profiling the Android UI thread.
-  constexpr ProfilerThreadId threadId = ProfilerThreadId::FromNumber(1);
   int sampleId = 0;
   while (true) {
-    // Gets the data from the Android UI thread only.
+    const auto threadId = java::GeckoJavaSampler::GetThreadId(sampleId);
     double sampleTime = java::GeckoJavaSampler::GetSampleTime(sampleId);
-    if (sampleTime == 0.0) {
+    if (threadId == 0 || sampleTime == 0.0) {
       break;
     }
 
-    aProfileBuffer.AddThreadIdEntry(threadId);
+    aProfileBuffer.AddThreadIdEntry(ProfilerThreadId::FromNumber(threadId));
     aProfileBuffer.AddEntry(ProfileBufferEntry::Time(sampleTime));
     int frameId = 0;
     while (true) {
@@ -2928,6 +2991,7 @@ static void CollectJavaThreadProfileData(ProfileBuffer& aProfileBuffer) {
     }
 
     // Get all the marker information from the Java thread using JNI.
+    const auto threadId = ProfilerThreadId::FromNumber(marker->GetThreadId());
     nsCString markerName = marker->GetMarkerName()->ToCString();
     jni::String::LocalRef text = marker->GetMarkerText();
     TimeStamp startTime =
@@ -3046,8 +3110,11 @@ static void locked_profiler_stream_json_for_this_process(
   ProfileChunkedBuffer javaBufferManager(
       ProfileChunkedBuffer::ThreadSafety::WithoutMutex, javaChunkManager);
   ProfileBuffer javaBuffer(javaBufferManager);
+
+  nsTArray<java::GeckoJavaSampler::ThreadInfo::LocalRef> javaThreads;
+
   if (ActivePS::FeatureJava(aLock)) {
-    CollectJavaThreadProfileData(javaBuffer);
+    CollectJavaThreadProfileData(javaThreads, javaBuffer);
     aProgressLogger.SetLocalProgress(3_pc, "Collected Java thread");
   }
 #endif
@@ -3143,23 +3210,20 @@ static void locked_profiler_stream_json_for_this_process(
 
 #if defined(GP_OS_android)
     if (ActivePS::FeatureJava(aLock)) {
-      // Set the thread id of the Android UI thread to be 0.
-      // We are profiling the Android UI thread twice: Both from the C++ side
-      // (as a regular C++ profiled thread with the name "AndroidUI"), and from
-      // the Java side. The thread's actual ID is mozilla::jni::GetUIThreadId(),
-      // but since we're using that ID for the C++ side, we need to pick another
-      // tid that doesn't conflict with it for the Java side. So we just use 0.
-      // Once we add support for profiling of other java threads, we'll have to
-      // get their thread id and name via JNI.
-      ProfiledThreadData profiledThreadData(ThreadRegistrationInfo{
-          "AndroidUI (JVM)", ProfilerThreadId::FromNumber(1), false,
-          CorePS::ProcessStartTime()});
-      profiledThreadData.StreamJSON(
-          javaBuffer, nullptr, aWriter, CorePS::ProcessName(aLock),
-          CorePS::ETLDplus1(aLock), CorePS::ProcessStartTime(), aSinceTime,
-          ActivePS::FeatureJSTracer(aLock), nullptr,
-          aProgressLogger.CreateSubLoggerTo("Streaming Java thread...", 96_pc,
-                                            "Streamed Java thread"));
+      for (java::GeckoJavaSampler::ThreadInfo::LocalRef& threadInfo :
+           javaThreads) {
+        ProfiledThreadData threadData(ThreadRegistrationInfo{
+            threadInfo->GetName()->ToCString().BeginReading(),
+            ProfilerThreadId::FromNumber(threadInfo->GetId()), false,
+            CorePS::ProcessStartTime()});
+
+        threadData.StreamJSON(
+            javaBuffer, nullptr, aWriter, CorePS::ProcessName(aLock),
+            CorePS::ETLDplus1(aLock), CorePS::ProcessStartTime(), aSinceTime,
+            ActivePS::FeatureJSTracer(aLock), nullptr,
+            aProgressLogger.CreateSubLoggerTo("Streaming Java thread...", 96_pc,
+                                              "Streamed Java thread"));
+      }
     } else {
       aProgressLogger.SetLocalProgress(96_pc, "No Java thread");
     }
@@ -3676,7 +3740,8 @@ class SamplerThread {
   // spy. This will ensure that the work doesn't take more than 50% of a CPU
   // core.
   int mDelaySpyStart = 0;
-  Monitor mSpyingStateMonitor{"SamplerThread::mSpyingStateMonitor"};
+  Monitor mSpyingStateMonitor MOZ_UNANNOTATED{
+      "SamplerThread::mSpyingStateMonitor"};
 #elif defined(GP_OS_darwin) || defined(GP_OS_linux) || \
     defined(GP_OS_android) || defined(GP_OS_freebsd)
   pthread_t mThread;
@@ -5593,11 +5658,21 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
     if (javaInterval < 1) {
       javaInterval = 1;
     }
+
+    JNIEnv* env = jni::GetEnvForThread();
+    const auto& filters = ActivePS::Filters(aLock);
+    jni::ObjectArray::LocalRef javaFilters =
+        jni::ObjectArray::New<jni::String>(filters.length());
+    for (size_t i = 0; i < filters.length(); i++) {
+      javaFilters->SetElement(i, jni::StringParam(filters[i].data(), env));
+    }
+
     // Send the interval-relative entry count, but we have 100000 hard cap in
     // the java code, it can't be more than that.
     java::GeckoJavaSampler::Start(
-        javaInterval, std::round((double)(capacity.Value()) * interval /
-                                 (double)(javaInterval)));
+        javaFilters, javaInterval,
+        std::round((double)(capacity.Value()) * interval /
+                   (double)(javaInterval)));
   }
 #endif
 
@@ -6350,7 +6425,52 @@ struct THREAD_BASIC_INFORMATION {
 };
 #endif
 
+static mozilla::Atomic<uint64_t, mozilla::MemoryOrdering::Relaxed> gWakeCount(
+    0);
+
+namespace geckoprofiler::markers {
+struct WakeUpCountMarker {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("WakeUpCount");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   int32_t aCount,
+                                   const ProfilerString8View& aType) {
+    aWriter.IntProperty("Count", aCount);
+    aWriter.StringProperty("label", aType);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    schema.AddKeyFormat("Count", MS::Format::Integer);
+    schema.SetTooltipLabel("{marker.name} - {marker.data.label}");
+    schema.SetTableLabel(
+        "{marker.name} - {marker.data.label}: {marker.data.count}");
+    return schema;
+  }
+};
+}  // namespace geckoprofiler::markers
+
+void profiler_record_wakeup_count(const nsACString& aProcessType) {
+  static uint64_t previousThreadWakeCount = 0;
+
+  uint64_t newWakeups = gWakeCount - previousThreadWakeCount;
+  if (newWakeups > 0) {
+    if (newWakeups < std::numeric_limits<int32_t>::max()) {
+      int32_t newWakeups32 = int32_t(newWakeups);
+      mozilla::glean::power::total_thread_wakeups.Add(newWakeups32);
+      mozilla::glean::power::wakeups_per_process_type.Get(aProcessType)
+          .Add(newWakeups32);
+      PROFILER_MARKER("Thread Wake-ups", OTHER, {}, WakeUpCountMarker,
+                      newWakeups32, aProcessType);
+    }
+
+    previousThreadWakeCount += newWakeups;
+  }
+}
+
 void profiler_mark_thread_awake() {
+  ++gWakeCount;
   if (!profiler_thread_is_being_profiled_for_markers()) {
     return;
   }

@@ -368,9 +368,12 @@ static bool ShouldSuppressColumnSpanDescendants(nsIFrame* aFrame) {
   }
 
   if (!aFrame->IsBlockFrameOrSubclass() ||
-      aFrame->HasAnyStateBits(NS_BLOCK_FLOAT_MGR | NS_FRAME_OUT_OF_FLOW)) {
-    // Need to suppress column-span under a different block formatting
-    // context or an out-of-flow frame.
+      aFrame->HasAnyStateBits(NS_BLOCK_FLOAT_MGR | NS_FRAME_OUT_OF_FLOW) ||
+      aFrame->IsFixedPosContainingBlock()) {
+    // Need to suppress column-span if we:
+    // - Are a different block formatting context,
+    // - Are an out-of-flow frame, OR
+    // - Establish a containing block for fixed-position descendants
     //
     // For example, the children of a column-span never need to be further
     // processed even if there is a nested column-span child. Because a
@@ -1681,6 +1684,14 @@ void nsCSSFrameConstructor::CreateGeneratedContentFromListStyleType(
   aAddChild(child);
 }
 
+// Frames for these may not be leaves in the proper sense, but we still don't
+// want to expose generated content on them. For the purposes of the page they
+// should be leaves.
+static bool HasUAWidget(const Element& aOriginatingElement) {
+  const ShadowRoot* sr = aOriginatingElement.GetShadowRoot();
+  return sr && sr->IsUAWidget();
+}
+
 /*
  * aParentFrame - the frame that should be the parent of the generated
  *   content.  This is the frame for the corresponding content node,
@@ -1705,10 +1716,7 @@ void nsCSSFrameConstructor::CreateGeneratedContentItem(
                  aPseudoElement == PseudoStyleType::marker,
              "unexpected aPseudoElement");
 
-  if (aParentFrame && (aParentFrame->IsHTMLVideoFrame() ||
-                       aParentFrame->IsDateTimeControlFrame())) {
-    // Video frames and date time control frames may not be leafs when backed by
-    // an UA widget, but we still don't want to expose generated content.
+  if (HasUAWidget(aOriginatingElement)) {
     return;
   }
 

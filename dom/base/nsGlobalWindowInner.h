@@ -251,6 +251,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   // nsIGlobalObject
   bool ShouldResistFingerprinting() const final;
   uint32_t GetPrincipalHashValue() const final;
+  mozilla::OriginTrials Trials() const final;
 
   JSObject* GetGlobalJSObject() final { return GetWrapper(); }
   JSObject* GetGlobalJSObjectPreserveColor() const final {
@@ -1338,6 +1339,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
     mStorageAllowedCache = mozilla::Nothing();
     mStorageAllowedReasonCache = 0;
   }
+
+  virtual JS::loader::ModuleLoaderBase* GetModuleLoader(
+      JSContext* aCx) override;
 
  private:
   RefPtr<mozilla::dom::ContentMediaController> mContentMediaController;

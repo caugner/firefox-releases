@@ -22,7 +22,6 @@
 #include "gc/GCProbes.h"
 #include "gc/Policy.h"
 #include "jit/JitCode.h"
-#include "js/friend/DumpFunctions.h"  // js::DumpObject
 #include "js/GCTypeMacros.h"  // JS_FOR_EACH_PUBLIC_{,TAGGED_}GC_POINTER_TYPE
 #include "js/SliceBudget.h"
 #include "util/DiagnosticAssertions.h"
@@ -208,7 +207,7 @@ void js::CheckTracedThing(JSTracer* trc, T* thing) {
   bool isUnmarkGrayTracer = IsTracerKind(trc, JS::TracerKind::UnmarkGray);
   bool isClearEdgesTracer = IsTracerKind(trc, JS::TracerKind::ClearEdges);
 
-  if (TlsContext.get()->isMainThreadContext()) {
+  if (TlsContext.get()) {
     // If we're on the main thread we must have access to the runtime and zone.
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
     MOZ_ASSERT(CurrentThreadCanAccessZone(zone));
@@ -259,8 +258,9 @@ void js::CheckTracedThing(JSTracer* trc, T* thing) {
    * thread during compacting GC and reading the contents of the thing by
    * IsThingPoisoned would be racy in this case.
    */
-  MOZ_ASSERT_IF(JS::RuntimeHeapIsBusy() && !zone->isGCSweeping() &&
-                    !zone->isGCFinished() && !zone->isGCCompacting(),
+  MOZ_ASSERT_IF(rt->heapState() != JS::HeapState::Idle &&
+                    !zone->isGCSweeping() && !zone->isGCFinished() &&
+                    !zone->isGCCompacting(),
                 !IsThingPoisoned(thing) ||
                     !InFreeList(thing->asTenured().arena(), thing));
 }
@@ -288,6 +288,19 @@ static inline bool ShouldMarkCrossCompartment(GCMarker* marker, JSObject* src,
   MarkColor color = marker->markColor();
 
   if (!dstCell->isTenured()) {
+#ifdef DEBUG
+    // Bug 1743098: This shouldn't be possible but it does seem to happen. Log
+    // some useful information in debug builds.
+    if (color != MarkColor::Black) {
+      fprintf(stderr,
+              "ShouldMarkCrossCompartment: cross compartment edge from gray "
+              "object to nursery thing\n");
+      fprintf(stderr, "src: ");
+      src->dump();
+      fprintf(stderr, "dst: ");
+      dstCell->dump();
+    }
+#endif
     MOZ_ASSERT(color == MarkColor::Black);
     return false;
   }
@@ -554,11 +567,15 @@ void js::TraceSameZoneCrossCompartmentEdge(JSTracer* trc,
     MOZ_ASSERT_IF(gcMarker->tracingZone,
                   (*dst)->zone() == gcMarker->tracingZone);
   }
+
+  // Skip compartment checks for this edge.
+  if (trc->kind() == JS::TracerKind::CompartmentCheck) {
+    return;
+  }
 #endif
 
   // Clear expected compartment for cross-compartment edge.
   AutoClearTracingSource acts(trc);
-  AutoDisableCompartmentCheckTracer adcct;
   TraceEdgeInternal(trc, ConvertToBase(dst->unbarrieredAddress()), name);
 }
 template void js::TraceSameZoneCrossCompartmentEdge(
@@ -1154,10 +1171,10 @@ inline void GCMarker::checkTraversedEdge(S source, T* target) {
   // respectively.
   MOZ_ASSERT(!source->isPermanentAndMayBeShared());
 
+  // Shared things are already black so we will not mark them.
   if (target->isPermanentAndMayBeShared()) {
+    MOZ_ASSERT(target->isMarkedBlack());
     MOZ_ASSERT(!target->maybeCompartment());
-
-    // No further checks for parmanent/shared things.
     return;
   }
 
@@ -1955,7 +1972,7 @@ scan_value_range:
                 "processMarkStackTop found ObjectValue(nullptr) "
                 "at %zu Values from end of range in object:\n",
                 size_t(end - (index - 1)));
-        DumpObject(obj);
+        obj->dump();
       }
 #endif
       CheckForCompartmentMismatch(obj, obj2);
@@ -2740,13 +2757,12 @@ static inline void CheckIsMarkedThing(T* thing) {
 
   // Allow the current thread access if it is sweeping or in sweep-marking, but
   // try to check the zone. Some threads have access to all zones when sweeping.
-  JSContext* cx = TlsContext.get();
-  MOZ_ASSERT(cx->gcUse != JSContext::GCUse::Finalizing);
-  if (cx->gcUse == JSContext::GCUse::Sweeping ||
-      cx->gcUse == JSContext::GCUse::Marking) {
+  JS::GCContext* gcx = TlsGCContext.get();
+  MOZ_ASSERT(gcx->gcUse() != GCUse::Finalizing);
+  if (gcx->gcUse() == GCUse::Sweeping || gcx->gcUse() == GCUse::Marking) {
     Zone* zone = thing->zoneFromAnyThread();
-    MOZ_ASSERT_IF(cx->gcSweepZone,
-                  cx->gcSweepZone == zone || zone->isAtomsZone());
+    MOZ_ASSERT_IF(gcx->gcSweepZone(),
+                  gcx->gcSweepZone() == zone || zone->isAtomsZone());
     return;
   }
 
@@ -2793,7 +2809,7 @@ bool js::gc::IsAboutToBeFinalizedInternal(T* thing) {
   // Permanent things are never finalized by non-owning runtimes. Zone state is
   // unknown in this case.
 #ifdef DEBUG
-  JSRuntime* rt = TlsContext.get()->runtime();
+  JSRuntime* rt = TlsGCContext.get()->runtimeFromAnyThread();
   MOZ_ASSERT_IF(IsOwnedByOtherRuntime(rt, thing), thing->isMarkedBlack());
 #endif
 
@@ -3037,9 +3053,11 @@ bool js::gc::UnmarkGrayGCThingUnchecked(JSRuntime* rt, JS::GCCellPtr thing) {
   MOZ_ASSERT(thing);
   MOZ_ASSERT(thing.asCell()->isMarkedGray());
 
-  AutoGeckoProfilerEntry profilingStackFrame(
-      TlsContext.get(), "UnmarkGrayGCThing",
-      JS::ProfilingCategoryPair::GCCC_UnmarkGray);
+  mozilla::Maybe<AutoGeckoProfilerEntry> profilingStackFrame;
+  if (JSContext* cx = TlsContext.get()) {
+    profilingStackFrame.emplace(cx, "UnmarkGrayGCThing",
+                                JS::ProfilingCategoryPair::GCCC_UnmarkGray);
+  }
 
   UnmarkGrayTracer unmarker(rt);
   unmarker.unmark(thing);
@@ -3162,9 +3180,11 @@ bool GCMarker::traceBarrieredCells(SliceBudget& budget) {
              CurrentThreadIsGCMarking());
   MOZ_ASSERT(markColor() == MarkColor::Black);
 
-  AutoGeckoProfilerEntry profilingStackFrame(
-      TlsContext.get(), "GCMarker::traceBarrieredCells",
-      JS::ProfilingCategoryPair::GCCC_Barrier);
+  mozilla::Maybe<AutoGeckoProfilerEntry> profilingStackFrame;
+  if (JSContext* cx = TlsContext.get()) {
+    profilingStackFrame.emplace(cx, "GCMarker::traceBarrieredCells",
+                                JS::ProfilingCategoryPair::GCCC_Barrier);
+  }
 
   BarrierBuffer& buffer = barrierBuffer();
   while (!buffer.empty()) {

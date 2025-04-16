@@ -106,12 +106,6 @@ already_AddRefed<DOMIntersectionObserver> DOMIntersectionObserver::Constructor(
       observer->mRoot = aOptions.mRoot.Value().GetAsElement();
     } else {
       MOZ_ASSERT(aOptions.mRoot.Value().IsDocument());
-      if (!StaticPrefs::
-              dom_IntersectionObserverExplicitDocumentRoot_enabled()) {
-        aRv.ThrowTypeError<dom::MSG_DOES_NOT_IMPLEMENT_INTERFACE>(
-            "'root' member of IntersectionObserverInit", "Element");
-        return nullptr;
-      }
       observer->mRoot = aOptions.mRoot.Value().GetAsDocument();
     }
   }
@@ -585,8 +579,8 @@ void DOMIntersectionObserver::Update(Document* aDocument,
   for (const auto side : mozilla::AllPhysicalSides()) {
     nscoord basis = side == eSideTop || side == eSideBottom ? rootRect.Height()
                                                             : rootRect.Width();
-    rootMargin.Side(side) =
-        mRootMargin.Get(side).Resolve(basis, NSToCoordRoundWithClamp);
+    rootMargin.Side(side) = mRootMargin.Get(side).Resolve(
+        basis, static_cast<nscoord (*)(float)>(NSToCoordRoundWithClamp));
   }
 
   // 2. For each target in observer’s internal [[ObservationTargets]] slot,

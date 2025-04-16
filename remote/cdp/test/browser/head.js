@@ -18,6 +18,7 @@ const { TabManager } = ChromeUtils.import(
 const { allowNullOrigin } = ChromeUtils.import(
   "chrome://remote/content/server/WebSocketHandshake.jsm"
 );
+
 // The handshake request created by the browser mochitests contains an origin
 // header, which is currently not supported. This origin is a string "null".
 // Explicitly allow such an origin for the duration of the test.

@@ -13,9 +13,9 @@ export const AboutWelcomeUtils = {
       message_id: messageId,
     });
   },
-  sendActionTelemetry(messageId, elementId) {
+  sendActionTelemetry(messageId, elementId, eventName = "CLICK_BUTTON") {
     const ping = {
-      event: "CLICK_BUTTON",
+      event: eventName,
       event_context: {
         source: elementId,
         page: "about:welcome",
@@ -64,9 +64,7 @@ export const DEFAULT_RTAMO_CONTENT = {
       string_id: "return-to-amo-addon-title",
     },
     help_text: {
-      text: {
-        string_id: "mr1-onboarding-welcome-image-caption",
-      },
+      string_id: "mr1-onboarding-welcome-image-caption",
     },
     backdrop:
       "#212121 url(chrome://activity-stream/content/data/content/assets/proton-bkg.avif) center/cover no-repeat fixed",

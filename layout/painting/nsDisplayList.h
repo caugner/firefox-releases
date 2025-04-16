@@ -2680,11 +2680,6 @@ class nsDisplayItem {
   const nsRect& GetBuildingRect() const { return mBuildingRect; }
 
   void SetBuildingRect(const nsRect& aBuildingRect) {
-    if (aBuildingRect == mBuildingRect) {
-      // Avoid unnecessary paint rect recompution when the
-      // building rect is staying the same.
-      return;
-    }
     mBuildingRect = aBuildingRect;
   }
 
@@ -2998,6 +2993,8 @@ struct LinkedListIterator {
   using Node = LinkedListNode<T>;
 
   explicit LinkedListIterator(Node* aNode = nullptr) : mNode(aNode) {}
+
+  bool HasNext() const { return mNode != nullptr; }
 
   LinkedListIterator<T>& operator++() {
     MOZ_ASSERT(mNode);

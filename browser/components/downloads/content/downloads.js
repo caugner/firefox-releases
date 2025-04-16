@@ -1043,7 +1043,7 @@ var DownloadsView = {
   },
 
   onDownloadDragStart(aEvent) {
-    let element = this.richListBox.selectedItem;
+    let element = aEvent.target.closest("richlistitem");
     if (!element) {
       return;
     }
@@ -1134,10 +1134,6 @@ class DownloadsViewItem extends DownloadsViewUI.DownloadElementShell {
 
         let partFile = new FileUtils.File(this.download.target.partFilePath);
         return partFile.exists();
-      }
-      case "downloadsCmd_deleteFile": {
-        let { target } = this.download;
-        return target.exists || target.partFileExists;
       }
       case "downloadsCmd_copyLocation":
         return !!this.download.source?.url;

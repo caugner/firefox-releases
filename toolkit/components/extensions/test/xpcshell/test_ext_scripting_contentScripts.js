@@ -16,8 +16,11 @@ const makeExtension = ({ manifest: manifestProps, ...otherProps }) => {
     manifest: {
       manifest_version: 3,
       permissions: ["scripting"],
+      host_permissions: ["http://localhost/*"],
+      granted_host_permissions: true,
       ...manifestProps,
     },
+    temporarilyInstalled: true,
     ...otherProps,
   });
 };
@@ -34,6 +37,7 @@ add_task(async function test_registerContentScripts_runAt() {
               js: ["script-idle.js"],
               matches: ["http://*/*/file_sample.html"],
               runAt: "document_idle",
+              persistAcrossSessions: false,
             },
           ],
         },
@@ -45,6 +49,7 @@ add_task(async function test_registerContentScripts_runAt() {
               js: ["script-idle-default.js"],
               matches: ["http://*/*/file_sample.html"],
               // `runAt` defaults to `document_idle`.
+              persistAcrossSessions: false,
             },
           ],
         },
@@ -56,6 +61,7 @@ add_task(async function test_registerContentScripts_runAt() {
               js: ["script-end.js"],
               matches: ["http://*/*/file_sample.html"],
               runAt: "document_end",
+              persistAcrossSessions: false,
             },
           ],
         },
@@ -67,6 +73,7 @@ add_task(async function test_registerContentScripts_runAt() {
               js: ["script-start.js"],
               matches: ["http://*/*/file_sample.html"],
               runAt: "document_start",
+              persistAcrossSessions: false,
             },
           ],
         },
@@ -91,30 +98,34 @@ add_task(async function test_registerContentScripts_runAt() {
           {
             id: "script-idle",
             allFrames: false,
-            js: ["script-idle.js"],
             matches: ["http://*/*/file_sample.html"],
             runAt: "document_idle",
+            persistAcrossSessions: false,
+            js: ["script-idle.js"],
           },
           {
             id: "script-idle-default",
             allFrames: false,
-            js: ["script-idle-default.js"],
             matches: ["http://*/*/file_sample.html"],
             runAt: "document_idle",
+            persistAcrossSessions: false,
+            js: ["script-idle-default.js"],
           },
           {
             id: "script-end",
             allFrames: false,
-            js: ["script-end.js"],
             matches: ["http://*/*/file_sample.html"],
             runAt: "document_end",
+            persistAcrossSessions: false,
+            js: ["script-end.js"],
           },
           {
             id: "script-start",
             allFrames: false,
-            js: ["script-start.js"],
             matches: ["http://*/*/file_sample.html"],
             runAt: "document_start",
+            persistAcrossSessions: false,
+            js: ["script-start.js"],
           },
         ]),
         JSON.stringify(scripts),
@@ -201,6 +212,7 @@ add_task(async function test_register_and_unregister() {
         id: "a-script",
         js: ["script.js"],
         matches: ["http://*/*/file_sample.html"],
+        persistAcrossSessions: false,
       };
 
       let results = await Promise.allSettled([
@@ -246,6 +258,7 @@ add_task(async function test_register_and_unregister_multiple_times() {
             id: "a-script",
             js: ["script-1.js"],
             matches: ["http://*/*/file_sample.html"],
+            persistAcrossSessions: false,
           },
         ]),
         browser.scripting.unregisterContentScripts(),
@@ -254,6 +267,7 @@ add_task(async function test_register_and_unregister_multiple_times() {
             id: "a-script",
             js: ["script-2.js"],
             matches: ["http://*/*/file_sample.html"],
+            persistAcrossSessions: false,
           },
         ]),
         browser.scripting.unregisterContentScripts(),
@@ -262,6 +276,7 @@ add_task(async function test_register_and_unregister_multiple_times() {
             id: "a-script",
             js: ["script-3.js"],
             matches: ["http://*/*/file_sample.html"],
+            persistAcrossSessions: false,
           },
         ]),
       ]);
@@ -296,6 +311,102 @@ add_task(async function test_register_and_unregister_multiple_times() {
     contentScripts[0].jsPaths[0].endsWith("script-3.js"),
     "got expected js file"
   );
+
+  await extension.unload();
+});
+
+add_task(async function test_register_update_and_unregister() {
+  let extension = makeExtension({
+    async background() {
+      const script = {
+        id: "a-script",
+        js: ["script-1.js"],
+        matches: ["http://*/*/file_sample.html"],
+        persistAcrossSessions: false,
+      };
+      const updatedScript1 = { ...script, js: ["script-2.js"] };
+      const updatedScript2 = { ...script, js: ["script-3.js"] };
+
+      let results = await Promise.allSettled([
+        browser.scripting.registerContentScripts([script]),
+        browser.scripting.updateContentScripts([updatedScript1]),
+        browser.scripting.updateContentScripts([updatedScript2]),
+        browser.scripting.getRegisteredContentScripts(),
+        browser.scripting.unregisterContentScripts(),
+        browser.scripting.updateContentScripts([script]),
+      ]);
+
+      browser.test.assertEq(6, results.length, "expected 6 results");
+      browser.test.assertEq(
+        "fulfilled",
+        results[0].status,
+        "expected fulfilled promise (registeredContentScripts)"
+      );
+      browser.test.assertEq(
+        "fulfilled",
+        results[1].status,
+        "expected fulfilled promise (updateContentScripts)"
+      );
+      browser.test.assertEq(
+        "fulfilled",
+        results[2].status,
+        "expected fulfilled promise (updateContentScripts)"
+      );
+      browser.test.assertEq(
+        "fulfilled",
+        results[3].status,
+        "expected fulfilled promise (getRegisteredContentScripts)"
+      );
+      browser.test.assertEq(
+        JSON.stringify([
+          {
+            id: "a-script",
+            allFrames: false,
+            matches: ["http://*/*/file_sample.html"],
+            runAt: "document_idle",
+            persistAcrossSessions: false,
+            js: ["script-3.js"],
+          },
+        ]),
+        JSON.stringify(results[3].value),
+        "expected updated content script"
+      );
+      browser.test.assertEq(
+        "fulfilled",
+        results[4].status,
+        "expected fulfilled promise (unregisterContentScripts)"
+      );
+      browser.test.assertEq(
+        "rejected",
+        results[5].status,
+        "expected rejected promise because script should have been unregistered"
+      );
+      browser.test.assertEq(
+        `Content script with id "${script.id}" does not exist.`,
+        results[5].reason.message,
+        "expected error message about script not found"
+      );
+
+      let scripts = await browser.scripting.getRegisteredContentScripts();
+      browser.test.assertEq(0, scripts.length, "expected no registered script");
+
+      browser.test.sendMessage("background-done");
+    },
+    files: {
+      "script-1.js": "",
+      "script-2.js": "",
+      "script-3.js": "",
+    },
+  });
+
+  await extension.startup();
+  await extension.awaitMessage("background-done");
+
+  // Verify that the registered content scripts on the extension are correct.
+  let contentScripts = Array.from(
+    extension.extension.registeredContentScripts.values()
+  );
+  Assert.equal(0, contentScripts.length, "expected no registered scripts");
 
   await extension.unload();
 });

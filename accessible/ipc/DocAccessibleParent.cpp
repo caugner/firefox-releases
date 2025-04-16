@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "CachedTableAccessible.h"
 #include "DocAccessibleParent.h"
 #include "mozilla/a11y/Platform.h"
 #include "mozilla/dom/BrowserBridgeParent.h"
@@ -162,6 +163,10 @@ uint32_t DocAccessibleParent::AddSubtree(
     });
   }
 
+  if (newProxy->IsTableCell()) {
+    CachedTableAccessible::Invalidate(newProxy);
+  }
+
   DebugOnly<bool> isOuterDoc = newProxy->ChildCount() == 1;
 
   uint32_t accessibles = 1;
@@ -188,6 +193,9 @@ void DocAccessibleParent::ShutdownOrPrepareForMove(RemoteAccessible* aAcc) {
   // This is a move. Moves are sent as a hide and then a show, but for a move,
   // we want to keep the Accessible alive for reuse later.
   aAcc->SetParent(nullptr);
+  if (aAcc->IsTable() || aAcc->IsTableCell()) {
+    CachedTableAccessible::Invalidate(aAcc);
+  }
   mMovingIDs.EnsureRemoved(id);
   if (aAcc->IsOuterDoc()) {
     // Leave child documents alone. They are added and removed differently to
@@ -341,7 +349,7 @@ mozilla::ipc::IPCResult DocAccessibleParent::RecvCaretMoveEvent(
     const LayoutDeviceIntRect& aCaretRect,
 #endif  // defined (XP_WIN)
     const int32_t& aOffset, const bool& aIsSelectionCollapsed,
-    const bool& aIsAtEndOfLine) {
+    const bool& aIsAtEndOfLine, const int32_t& aGranularity) {
   if (mShutdown) {
     return IPC_OK();
   }
@@ -364,9 +372,9 @@ mozilla::ipc::IPCResult DocAccessibleParent::RecvCaretMoveEvent(
   }
 
 #if defined(XP_WIN)
-  ProxyCaretMoveEvent(proxy, aCaretRect);
+  ProxyCaretMoveEvent(proxy, aCaretRect, aGranularity);
 #else
-  ProxyCaretMoveEvent(proxy, aOffset, aIsSelectionCollapsed);
+  ProxyCaretMoveEvent(proxy, aOffset, aIsSelectionCollapsed, aGranularity);
 #endif
 
   if (!nsCoreUtils::AccEventObserversExist()) {
@@ -378,9 +386,9 @@ mozilla::ipc::IPCResult DocAccessibleParent::RecvCaretMoveEvent(
   nsINode* node = nullptr;
   bool fromUser = true;  // XXX fix me
   uint32_t type = nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED;
-  RefPtr<xpcAccCaretMoveEvent> event =
-      new xpcAccCaretMoveEvent(type, xpcAcc, doc, node, fromUser, aOffset,
-                               aIsSelectionCollapsed, aIsAtEndOfLine);
+  RefPtr<xpcAccCaretMoveEvent> event = new xpcAccCaretMoveEvent(
+      type, xpcAcc, doc, node, fromUser, aOffset, aIsSelectionCollapsed,
+      aIsAtEndOfLine, aGranularity);
   nsCoreUtils::DispatchAccEvent(std::move(event));
 
   return IPC_OK();

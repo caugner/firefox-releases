@@ -19,7 +19,9 @@
 #include "mozilla/dom/WorkerRunnable.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/Services.h"
 #include "mozilla/Unused.h"
+#include "nsIObserverService.h"
 #include "nsProxyRelease.h"
 #include "nsStreamUtils.h"
 
@@ -179,7 +181,7 @@ already_AddRefed<Promise> BodyStream::PullCallback(
 
   AssertIsOnOwningThread();
 
-  MutexAutoLock lock(mMutex);
+  MutexSingleWriterAutoLock lock(mMutex);
 
   MOZ_DIAGNOSTIC_ASSERT(mState == eInitializing || mState == eWaiting ||
                         mState == eChecking || mState == eReading);
@@ -254,7 +256,7 @@ void BodyStream::requestData(JSContext* aCx, JS::HandleObject aStream,
 
   AssertIsOnOwningThread();
 
-  MutexAutoLock lock(mMutex);
+  MutexSingleWriterAutoLock lock(mMutex);
 
   MOZ_DIAGNOSTIC_ASSERT(mState == eInitializing || mState == eWaiting ||
                         mState == eChecking || mState == eReading);
@@ -329,7 +331,7 @@ void BodyStream::writeIntoReadRequestBuffer(JSContext* aCx,
 
   AssertIsOnOwningThread();
 
-  MutexAutoLock lock(mMutex);
+  MutexSingleWriterAutoLock lock(mMutex);
 
   MOZ_DIAGNOSTIC_ASSERT(mInputStream);
   MOZ_DIAGNOSTIC_ASSERT(mState == eWriting);
@@ -380,7 +382,7 @@ void BodyStream::writeIntoReadRequestBuffer(JSContext* aCx,
 already_AddRefed<Promise> BodyStream::CancelCallback(
     JSContext* aCx, const Optional<JS::Handle<JS::Value>>& aReason,
     ErrorResult& aRv) {
-  AssertIsOnOwningThread();
+  mMutex.AssertOnWritingThread();
 
   if (mState == eInitializing) {
     // The stream has been used for the first time.
@@ -439,7 +441,7 @@ void BodyStream::onClosed(JSContext* aCx, JS::HandleObject aStream) {}
 #ifdef MOZ_DOM_STREAMS
 // Non-standard UnderlyingSource.error callback.
 void BodyStream::ErrorCallback() {
-  AssertIsOnOwningThread();
+  mMutex.AssertOnWritingThread();
 
   if (mState == eInitializing) {
     // The stream has been used for the first time.
@@ -485,7 +487,7 @@ void BodyStream::finalize() {
 BodyStream::BodyStream(nsIGlobalObject* aGlobal,
                        BodyStreamHolder* aStreamHolder,
                        nsIInputStream* aInputStream)
-    : mMutex("BodyStream::mMutex"),
+    : mMutex("BodyStream::mMutex", this),
       mState(eInitializing),
       mGlobal(aGlobal),
       mStreamHolder(aStreamHolder),
@@ -497,14 +499,15 @@ BodyStream::BodyStream(nsIGlobalObject* aGlobal,
 
 #ifdef MOZ_DOM_STREAMS
 void BodyStream::ErrorPropagation(JSContext* aCx,
-                                  const MutexAutoLock& aProofOfLock,
+                                  const MutexSingleWriterAutoLock& aProofOfLock,
                                   ReadableStream* aStream, nsresult aError) {
 #else
 void BodyStream::ErrorPropagation(JSContext* aCx,
-                                  const MutexAutoLock& aProofOfLock,
+                                  const MutexSingleWriterAutoLock& aProofOfLock,
                                   JS::HandleObject aStream, nsresult aError) {
 #endif
-  AssertIsOnOwningThread();
+  mMutex.AssertOnWritingThread();
+  mMutex.AssertCurrentThreadOwns();
 
   // Nothing to do.
   if (mState == eClosed) {
@@ -528,7 +531,7 @@ void BodyStream::ErrorPropagation(JSContext* aCx,
   MOZ_RELEASE_ASSERT(ok, "ToJSValue never fails for ErrorResult");
 
   {
-    MutexAutoUnlock unlock(mMutex);
+    MutexSingleWriterAutoUnlock unlock(mMutex);
 #ifdef MOZ_DOM_STREAMS
     // Don't re-error an already errored stream.
     if (aStream->State() == ReadableStream::ReaderState::Readable) {
@@ -580,13 +583,15 @@ void BodyStream::EnqueueChunkWithSizeIntoStream(JSContext* aCx,
 }
 #endif
 
+// thread-safety doesn't handle emplace well
 NS_IMETHODIMP
-BodyStream::OnInputStreamReady(nsIAsyncInputStream* aStream) {
+BodyStream::OnInputStreamReady(nsIAsyncInputStream* aStream)
+    NO_THREAD_SAFETY_ANALYSIS {
   AssertIsOnOwningThread();
   MOZ_DIAGNOSTIC_ASSERT(aStream);
 
   // Acquire |mMutex| in order to safely inspect |mState| and use |mGlobal|.
-  Maybe<MutexAutoLock> lock;
+  Maybe<MutexSingleWriterAutoLock> lock;
   lock.emplace(mMutex);
 
   // Already closed. We have nothing else to do here.
@@ -645,7 +650,6 @@ BodyStream::OnInputStreamReady(nsIAsyncInputStream* aStream) {
   // Release the mutex before the call below (which could execute JS), as well
   // as before the microtask checkpoint queued up above occurs.
   lock.reset();
-
 #ifdef MOZ_DOM_STREAMS
   ErrorResult errorResult;
   EnqueueChunkWithSizeIntoStream(cx, stream, size, errorResult);
@@ -716,7 +720,7 @@ nsresult BodyStream::RetrieveInputStream(
 void BodyStream::Close() {
   AssertIsOnOwningThread();
 
-  MutexAutoLock lock(mMutex);
+  MutexSingleWriterAutoLock lock(mMutex);
 
   if (mState == eClosed) {
     return;
@@ -748,15 +752,16 @@ void BodyStream::Close() {
 }
 
 #ifdef MOZ_DOM_STREAMS
-void BodyStream::CloseAndReleaseObjects(JSContext* aCx,
-                                        const MutexAutoLock& aProofOfLock,
-                                        ReadableStream* aStream) {
+void BodyStream::CloseAndReleaseObjects(
+    JSContext* aCx, const MutexSingleWriterAutoLock& aProofOfLock,
+    ReadableStream* aStream) {
   AssertIsOnOwningThread();
+  mMutex.AssertCurrentThreadOwns();
   MOZ_DIAGNOSTIC_ASSERT(mState != eClosed);
 
   ReleaseObjects(aProofOfLock);
 
-  MutexAutoUnlock unlock(mMutex);
+  MutexSingleWriterAutoUnlock unlock(mMutex);
 
   if (aStream->State() == ReadableStream::ReaderState::Readable) {
     IgnoredErrorResult rv;
@@ -765,15 +770,16 @@ void BodyStream::CloseAndReleaseObjects(JSContext* aCx,
   }
 }
 #else
-void BodyStream::CloseAndReleaseObjects(JSContext* aCx,
-                                        const MutexAutoLock& aProofOfLock,
-                                        JS::HandleObject aStream) {
+void BodyStream::CloseAndReleaseObjects(
+    JSContext* aCx, const MutexSingleWriterAutoLock& aProofOfLock,
+    JS::HandleObject aStream) {
   AssertIsOnOwningThread();
+  mMutex.AssertCurrentThreadOwns();
   MOZ_DIAGNOSTIC_ASSERT(mState != eClosed);
 
   ReleaseObjects(aProofOfLock);
 
-  MutexAutoUnlock unlock(mMutex);
+  MutexSingleWriterAutoUnlock unlock(mMutex);
   bool readable;
   if (!JS::ReadableStreamIsReadable(aCx, aStream, &readable)) {
     return;
@@ -785,11 +791,11 @@ void BodyStream::CloseAndReleaseObjects(JSContext* aCx,
 #endif
 
 void BodyStream::ReleaseObjects() {
-  MutexAutoLock lock(mMutex);
+  MutexSingleWriterAutoLock lock(mMutex);
   ReleaseObjects(lock);
 }
 
-void BodyStream::ReleaseObjects(const MutexAutoLock& aProofOfLock) {
+void BodyStream::ReleaseObjects(const MutexSingleWriterAutoLock& aProofOfLock) {
   // This method can be called on 2 possible threads: the owning one and a JS
   // thread used to release resources. If we are on the JS thread, we need to
   // dispatch a runnable to go back to the owning thread in order to release
@@ -866,7 +872,7 @@ void BodyStream::ReleaseObjects(const MutexAutoLock& aProofOfLock) {
 }
 
 #ifdef DEBUG
-void BodyStream::AssertIsOnOwningThread() {
+void BodyStream::AssertIsOnOwningThread() const {
   NS_ASSERT_OWNINGTHREAD(BodyStream);
 }
 #endif

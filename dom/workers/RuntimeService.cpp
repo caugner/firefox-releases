@@ -833,14 +833,11 @@ class WorkerJSContext final : public mozilla::CycleCollectedJSContext {
       return;  // Initialize() must have failed
     }
 
-    // The worker global should be unrooted and the shutdown cycle collection
-    // should break all remaining cycles. The superclass destructor will run
-    // the GC one final time and finalize any JSObjects that were participating
-    // in cycles that were broken during CC shutdown.
-    nsCycleCollector_shutdown();
-
-    // The CC is shut down, and the superclass destructor will GC, so make sure
-    // we don't try to CC again.
+    // We expect to come here with the cycle collector already shut down.
+    // The superclass destructor will run the GC one final time and finalize any
+    // JSObjects that were participating in cycles that were broken during CC
+    // shutdown.
+    // Make sure we don't try to CC again.
     mWorkerPrivate = nullptr;
   }
 
@@ -1586,7 +1583,7 @@ class CrashIfHangingRunnable : public WorkerControlRunnable {
   void PostDispatch(WorkerPrivate* aWorkerPrivate,
                     bool aDispatchResult) override {}
 
-  Monitor mMonitor;
+  Monitor mMonitor MOZ_UNANNOTATED;
   nsCString mMsg;
   FlippedOnce<false> mHasMsg;
 };
@@ -2178,7 +2175,28 @@ WorkerThreadPrimaryRunnable::Run() {
       // visible to the cycle collector, so we need to make sure to clear the
       // debugger event queue before we try to destroy the context. If we don't,
       // the garbage collector will crash.
+      // Note that this just releases the runnables and does not execute them.
       mWorkerPrivate->ClearDebuggerEventQueue();
+
+      // Before shutting down the cycle collector we need to do one more pass
+      // through the event loop to clean up any C++ objects that need deferred
+      // cleanup.
+      NS_ProcessPendingEvents(nullptr);
+
+      // At this point we expect the scopes to be alive if they were ever
+      // created successfully, keep weak references.
+      nsWeakPtr globalScopeSentinel =
+          do_GetWeakReference(mWorkerPrivate->GlobalScope());
+      nsWeakPtr debuggerScopeSentinel =
+          do_GetWeakReference(mWorkerPrivate->DebuggerGlobalScope());
+      MOZ_ASSERT(!mWorkerPrivate->GlobalScope() || globalScopeSentinel);
+      MOZ_ASSERT(!mWorkerPrivate->DebuggerGlobalScope() ||
+                 debuggerScopeSentinel);
+
+      // To our best knowledge nobody should need a reference to our globals
+      // now (NS_ProcessPendingEvents is the last expected potential usage)
+      // and we can unroot them.
+      mWorkerPrivate->UnrootGlobalScopes();
 
       // Perform a full GC. This will collect the main worker global and CC,
       // which should break all cycles that touch JS.
@@ -2186,14 +2204,32 @@ WorkerThreadPrimaryRunnable::Run() {
       JS::NonIncrementalGC(cx, JS::GCOptions::Shutdown,
                            JS::GCReason::WORKER_SHUTDOWN);
 
-      // Before shutting down the cycle collector we need to do one more pass
-      // through the event loop to clean up any C++ objects that need deferred
-      // cleanup.
-      mWorkerPrivate->ClearMainEventQueue(WorkerPrivate::WorkerRan);
+      // The worker global should be unrooted and the shutdown of cycle
+      // collection should break all the remaining cycles.
+      nsCycleCollector_shutdown();
 
-      // Now WorkerJSContext goes out of scope and its destructor will shut
-      // down the cycle collector. This breaks any remaining cycles and collects
-      // any remaining C++ objects.
+      // Check sentinels if we actually removed all global scope references.
+      nsCOMPtr<DOMEventTargetHelper> globalScopeAlive =
+          do_QueryReferent(globalScopeSentinel);
+      MOZ_ASSERT(!globalScopeAlive);
+      nsCOMPtr<DOMEventTargetHelper> debuggerScopeAlive =
+          do_QueryReferent(debuggerScopeSentinel);
+      MOZ_ASSERT(!debuggerScopeAlive);
+
+      // Guard us against further usage of scopes' mWorkerPrivate in non-debug.
+      if (globalScopeAlive) {
+        static_cast<WorkerGlobalScopeBase*>(globalScopeAlive.get())
+            ->NoteWorkerTerminated();
+        globalScopeAlive = nullptr;
+      }
+      if (debuggerScopeAlive) {
+        static_cast<WorkerGlobalScopeBase*>(debuggerScopeAlive.get())
+            ->NoteWorkerTerminated();
+        debuggerScopeAlive = nullptr;
+      }
+
+      // Now WorkerJSContext goes out of scope. Do not use any cycle
+      // collectable objects nor JS after this point!
     }
   }
 

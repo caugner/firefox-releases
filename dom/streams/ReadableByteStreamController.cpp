@@ -18,6 +18,7 @@
 #include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/dom/ByteStreamHelpers.h"
 #include "mozilla/dom/Promise.h"
+#include "mozilla/dom/Promise-inl.h"
 #include "mozilla/dom/PromiseNativeHandler.h"
 #include "mozilla/dom/ReadableByteStreamController.h"
 #include "mozilla/dom/ReadableByteStreamControllerBinding.h"
@@ -43,8 +44,7 @@ namespace mozilla::dom {
 NS_IMPL_CYCLE_COLLECTION_CLASS(ReadableByteStreamController)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(ReadableByteStreamController,
                                                 ReadableStreamController)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mByobRequest, mCancelAlgorithm,
-                                  mPullAlgorithm, mStream)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mByobRequest, mAlgorithms, mStream)
   tmp->ClearPendingPullIntos();
   tmp->ClearQueue();
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
@@ -52,8 +52,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(ReadableByteStreamController,
                                                   ReadableStreamController)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mByobRequest, mCancelAlgorithm,
-                                    mPullAlgorithm, mStream)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mByobRequest, mAlgorithms, mStream)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(ReadableByteStreamController,
@@ -229,10 +228,8 @@ void ResetQueue(ReadableByteStreamController* aContainer) {
 void ReadableByteStreamControllerClearAlgorithms(
     ReadableByteStreamController* aController) {
   // Step 1. Set controller.[[pullAlgorithm]] to undefined.
-  aController->SetPullAlgorithm(nullptr);
-
   // Step 2. Set controller.[[cancelAlgorithm]] to undefined.
-  aController->SetCancelAlgorithm(nullptr);
+  aController->SetAlgorithms(nullptr);
 }
 
 // https://streams.spec.whatwg.org/#readable-byte-stream-controller-error
@@ -481,55 +478,6 @@ bool ReadableByteStreamControllerShouldCallPull(
   return desiredSize.Value() > 0;
 }
 
-// MG:XXX: There's a template hiding here for handling the difference between
-// default and byte stream, eventually?
-class ByteStreamPullIfNeededPromiseHandler final : public PromiseNativeHandler {
-  ~ByteStreamPullIfNeededPromiseHandler() override = default;
-
-  // Virtually const, but cycle collected
-  RefPtr<ReadableByteStreamController> mController;
-
- public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS(ByteStreamPullIfNeededPromiseHandler)
-
-  explicit ByteStreamPullIfNeededPromiseHandler(
-      ReadableByteStreamController* aController)
-      : PromiseNativeHandler(), mController(aController) {}
-
-  MOZ_CAN_RUN_SCRIPT
-  void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue,
-                        ErrorResult& aRv) override {
-    // https://streams.spec.whatwg.org/#readable-byte-stream-controller-call-pull-if-needed
-    // Step 7.1
-    mController->SetPulling(false);
-    // Step 7.2
-    if (mController->PullAgain()) {
-      // Step 7.2.1
-      mController->SetPullAgain(false);
-
-      // Step 7.2.2
-      ReadableByteStreamControllerCallPullIfNeeded(
-          aCx, MOZ_KnownLive(mController), aRv);
-    }
-  }
-
-  void RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue,
-                        ErrorResult& aRv) override {
-    // https://streams.spec.whatwg.org/#readable-byte-stream-controller-call-pull-if-needed
-    // Step 8.1
-    ReadableByteStreamControllerError(mController, aValue, aRv);
-  }
-};
-
-// Cycle collection methods for promise handler.
-NS_IMPL_CYCLE_COLLECTION(ByteStreamPullIfNeededPromiseHandler, mController)
-NS_IMPL_CYCLE_COLLECTING_ADDREF(ByteStreamPullIfNeededPromiseHandler)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(ByteStreamPullIfNeededPromiseHandler)
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ByteStreamPullIfNeededPromiseHandler)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
-
 // https://streams.spec.whatwg.org/#readable-byte-stream-controller-call-pull-if-needed
 void ReadableByteStreamControllerCallPullIfNeeded(
     JSContext* aCx, ReadableByteStreamController* aController,
@@ -556,20 +504,36 @@ void ReadableByteStreamControllerCallPullIfNeeded(
 
   // Step 6.
   RefPtr<ReadableStreamController> controller(aController);
-  RefPtr<UnderlyingSourcePullCallbackHelper> pullAlgorithm(
-      aController->GetPullAlgorithm());
-  RefPtr<Promise> pullPromise =
-      pullAlgorithm ? pullAlgorithm->PullCallback(aCx, *controller, aRv)
-                    : Promise::CreateResolvedWithUndefined(
-                          controller->GetParentObject(), aRv);
+  RefPtr<UnderlyingSourceAlgorithmsBase> algorithms =
+      aController->GetAlgorithms();
+  RefPtr<Promise> pullPromise = algorithms->PullCallback(aCx, *controller, aRv);
   if (aRv.Failed()) {
     return;
   }
 
   // Steps 7+8
-  RefPtr<ByteStreamPullIfNeededPromiseHandler> promiseHandler =
-      new ByteStreamPullIfNeededPromiseHandler(aController);
-  pullPromise->AppendNativeHandler(promiseHandler);
+  pullPromise->AddCallbacksWithCycleCollectedArgs(
+      [](JSContext* aCx, JS::Handle<JS::Value> aValue, ErrorResult& aRv,
+         ReadableByteStreamController* aController)
+          MOZ_CAN_RUN_SCRIPT_BOUNDARY {
+            // Step 7.1
+            aController->SetPulling(false);
+            // Step 7.2
+            if (aController->PullAgain()) {
+              // Step 7.2.1
+              aController->SetPullAgain(false);
+
+              // Step 7.2.2
+              ReadableByteStreamControllerCallPullIfNeeded(
+                  aCx, MOZ_KnownLive(aController), aRv);
+            }
+          },
+      [](JSContext* aCx, JS::Handle<JS::Value> aValue, ErrorResult& aRv,
+         ReadableByteStreamController* aController) {
+        // Step 8.1
+        ReadableByteStreamControllerError(aController, aValue, aRv);
+      },
+      RefPtr(aController));
 }
 
 bool ReadableByteStreamControllerFillPullIntoDescriptorFromQueue(
@@ -1019,12 +983,8 @@ already_AddRefed<Promise> ReadableByteStreamController::CancelSteps(
 
   // Step 3.
   Optional<JS::Handle<JS::Value>> reason(aCx, aReason);
-  RefPtr<UnderlyingSourceCancelCallbackHelper> cancelAlgorithm(
-      GetCancelAlgorithm());
-  RefPtr<Promise> result =
-      cancelAlgorithm
-          ? cancelAlgorithm->CancelCallback(aCx, reason, aRv)
-          : Promise::CreateResolvedWithUndefined(GetParentObject(), aRv);
+  RefPtr<UnderlyingSourceAlgorithmsBase> algorithms = mAlgorithms;
+  RefPtr<Promise> result = algorithms->CancelCallback(aCx, reason, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
@@ -1872,65 +1832,11 @@ void ReadableByteStreamControllerPullInto(
   ReadableByteStreamControllerCallPullIfNeeded(aCx, aController, aRv);
 }
 
-class ByteStreamStartPromiseNativeHandler final : public PromiseNativeHandler {
-  ~ByteStreamStartPromiseNativeHandler() override = default;
-
-  RefPtr<ReadableByteStreamController> mController;
-
- public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS(ByteStreamStartPromiseNativeHandler)
-
-  explicit ByteStreamStartPromiseNativeHandler(
-      ReadableByteStreamController* aController)
-      : PromiseNativeHandler(), mController(aController) {}
-
-  MOZ_CAN_RUN_SCRIPT
-  void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue,
-                        ErrorResult& aRv) override {
-    MOZ_ASSERT(mController);
-
-    // https://streams.spec.whatwg.org/#set-up-readable-byte-stream-controller
-    //
-    // Step 16.1
-    mController->SetStarted(true);
-
-    // Step 16.2
-    mController->SetPulling(false);
-
-    // Step 16.3
-    mController->SetPullAgain(false);
-
-    // Step 16.4:
-
-    RefPtr<ReadableByteStreamController> stackController = mController;
-    ReadableByteStreamControllerCallPullIfNeeded(aCx, stackController, aRv);
-  }
-
-  void RejectedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue,
-                        ErrorResult& aRv) override {
-    // https://streams.spec.whatwg.org/#set-up-readable-byte-stream-controller
-    // Step 17.1
-    ReadableByteStreamControllerError(mController, aValue, aRv);
-  }
-};
-
-// Cycle collection methods for promise handler
-NS_IMPL_CYCLE_COLLECTION(ByteStreamStartPromiseNativeHandler, mController)
-NS_IMPL_CYCLE_COLLECTING_ADDREF(ByteStreamStartPromiseNativeHandler)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(ByteStreamStartPromiseNativeHandler)
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ByteStreamStartPromiseNativeHandler)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
-
 // https://streams.spec.whatwg.org/#set-up-readable-byte-stream-controller
 void SetUpReadableByteStreamController(
     JSContext* aCx, ReadableStream* aStream,
     ReadableByteStreamController* aController,
-    UnderlyingSourceStartCallbackHelper* aStartAlgorithm,
-    UnderlyingSourcePullCallbackHelper* aPullAlgorithm,
-    UnderlyingSourceCancelCallbackHelper* aCancelAlgorithm,
-    UnderlyingSourceErrorCallbackHelper* aErrorAlgorithm, double aHighWaterMark,
+    UnderlyingSourceAlgorithmsBase* aAlgorithms, double aHighWaterMark,
     Maybe<uint64_t> aAutoAllocateChunkSize, ErrorResult& aRv) {
   // Step 1. Assert: stream.[[controller]] is undefined.
   MOZ_ASSERT(!aStream->Controller());
@@ -1962,13 +1868,8 @@ void SetUpReadableByteStreamController(
   aController->SetStrategyHWM(aHighWaterMark);
 
   // Step 9. Set controller.[[pullAlgorithm]] to pullAlgorithm.
-  aController->SetPullAlgorithm(aPullAlgorithm);
-
   // Step 10. Set controller.[[cancelAlgorithm]] to cancelAlgorithm.
-  aController->SetCancelAlgorithm(aCancelAlgorithm);
-
-  // Not Specified.
-  aStream->SetErrorAlgorithm(aErrorAlgorithm);
+  aController->SetAlgorithms(aAlgorithms);
 
   // Step 11. Set controller.[[autoAllocateChunkSize]] to autoAllocateChunkSize.
   aController->SetAutoAllocateChunkSize(aAutoAllocateChunkSize);
@@ -1980,17 +1881,11 @@ void SetUpReadableByteStreamController(
   aStream->SetController(aController);
 
   // Step 14. Let startResult be the result of performing startAlgorithm.
-  // Default algorithm returns undefined.
   JS::RootedValue startResult(aCx, JS::UndefinedValue());
-  if (aStartAlgorithm) {
-    // Strong Refs:
-    RefPtr<UnderlyingSourceStartCallbackHelper> startAlgorithm(aStartAlgorithm);
-    RefPtr<ReadableStreamController> controller(aController);
-
-    startAlgorithm->StartCallback(aCx, *controller, &startResult, aRv);
-    if (aRv.Failed()) {
-      return;
-    }
+  RefPtr<ReadableStreamController> controller = aController;
+  aAlgorithms->StartCallback(aCx, *controller, &startResult, aRv);
+  if (aRv.Failed()) {
+    return;
   }
 
   // Let startPromise be a promise resolved with startResult.
@@ -2001,8 +1896,31 @@ void SetUpReadableByteStreamController(
   startPromise->MaybeResolve(startResult);
 
   // Step 16+17
-  startPromise->AppendNativeHandler(
-      new ByteStreamStartPromiseNativeHandler(aController));
+  startPromise->AddCallbacksWithCycleCollectedArgs(
+      [](JSContext* aCx, JS::Handle<JS::Value> aValue, ErrorResult& aRv,
+         ReadableByteStreamController* aController)
+          MOZ_CAN_RUN_SCRIPT_BOUNDARY {
+            MOZ_ASSERT(aController);
+
+            // Step 16.1
+            aController->SetStarted(true);
+
+            // Step 16.2
+            aController->SetPulling(false);
+
+            // Step 16.3
+            aController->SetPullAgain(false);
+
+            // Step 16.4:
+            ReadableByteStreamControllerCallPullIfNeeded(
+                aCx, MOZ_KnownLive(aController), aRv);
+          },
+      [](JSContext* aCx, JS::Handle<JS::Value> aValue, ErrorResult& aRv,
+         ReadableByteStreamController* aController) {
+        // Step 17.1
+        ReadableByteStreamControllerError(aController, aValue, aRv);
+      },
+      RefPtr(aController));
 }
 
 // https://streams.spec.whatwg.org/#set-up-readable-byte-stream-controller-from-underlying-source
@@ -2011,49 +1929,12 @@ void SetUpReadableByteStreamControllerFromUnderlyingSource(
     UnderlyingSource& aUnderlyingSourceDict, double aHighWaterMark,
     ErrorResult& aRv) {
   // Step 1. Let controller be a new ReadableByteStreamController.
-  RefPtr<ReadableByteStreamController> controller =
-      new ReadableByteStreamController(aStream->GetParentObject());
+  auto controller =
+      MakeRefPtr<ReadableByteStreamController>(aStream->GetParentObject());
 
-  // Step 2. Let startAlgorithm be an algorithm that returns undefined.
-  RefPtr<UnderlyingSourceStartCallbackHelper> startAlgorithm;
-
-  // Step 3. Let pullAlgorithm be an algorithm that returns a promise resolved
-  // with undefined.
-  RefPtr<UnderlyingSourcePullCallbackHelper> pullAlgorithm;
-
-  // Step 4. Let cancelAlgorithm be an algorithm that returns a promise resolved
-  // with undefined.
-  RefPtr<UnderlyingSourceCancelCallbackHelper> cancelAlgorithm;
-
-  // Step 5. If underlyingSourceDict["start"] exists, then set startAlgorithm to
-  // an algorithm which returns the result of invoking
-  // underlyingSourceDict["start"] with argument list « controller » and
-  // callback this value underlyingSource.
-  startAlgorithm =
-      aUnderlyingSourceDict.mStart.WasPassed()
-          ? new UnderlyingSourceStartCallbackHelper(
-                aUnderlyingSourceDict.mStart.Value(), aUnderlyingSource)
-          : nullptr;
-
-  // Step 6. If underlyingSourceDict["pull"] exists, then set pullAlgorithm to
-  // an algorithm which returns the result of invoking
-  // underlyingSourceDict["pull"] with argument list « controller » and callback
-  // this value underlyingSource.
-  pullAlgorithm =
-      aUnderlyingSourceDict.mPull.WasPassed()
-          ? new IDLUnderlyingSourcePullCallbackHelper(
-                aUnderlyingSourceDict.mPull.Value(), aUnderlyingSource)
-          : nullptr;
-
-  // Step 7. If underlyingSourceDict["cancel"] exists, then set cancelAlgorithm
-  // to an algorithm which takes an argument reason and returns the result of
-  // invoking underlyingSourceDict["cancel"] with argument list « reason » and
-  // callback this value underlyingSource.
-  cancelAlgorithm =
-      aUnderlyingSourceDict.mCancel.WasPassed()
-          ? new IDLUnderlyingSourceCancelCallbackHelper(
-                aUnderlyingSourceDict.mCancel.Value(), aUnderlyingSource)
-          : nullptr;
+  // Step 2 - 7
+  auto algorithms = MakeRefPtr<UnderlyingSourceAlgorithms>(
+      aStream->GetParentObject(), aUnderlyingSource, aUnderlyingSourceDict);
 
   // Step 8. Let autoAllocateChunkSize be
   // underlyingSourceDict["autoAllocateChunkSize"], if it exists, or undefined
@@ -2073,61 +1954,8 @@ void SetUpReadableByteStreamControllerFromUnderlyingSource(
   // Step 10. Perform ? SetUpReadableByteStreamController(stream, controller,
   // startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark,
   // autoAllocateChunkSize).
-  SetUpReadableByteStreamController(aCx, aStream, controller, startAlgorithm,
-                                    pullAlgorithm, cancelAlgorithm,
-                                    nullptr /* aErrorAlgorithm */,
+  SetUpReadableByteStreamController(aCx, aStream, controller, algorithms,
                                     aHighWaterMark, autoAllocateChunkSize, aRv);
-}
-
-// This is gently modelled on the pre-existing
-// SetUpExternalReadableByteStreamController, but specialized to the
-// BodyStreamUnderlyingSource model vs. the External streams of the JS
-// implementation.
-//
-// https://streams.spec.whatwg.org/#set-up-readable-byte-stream-controller-from-underlying-source
-void SetUpReadableByteStreamControllerFromBodyStreamUnderlyingSource(
-    JSContext* aCx, ReadableStream* aStream,
-    BodyStreamHolder* aUnderlyingSource, ErrorResult& aRv) {
-  // Step 1.
-  RefPtr<ReadableByteStreamController> controller =
-      new ReadableByteStreamController(aStream->GetParentObject());
-
-  // Step 2.
-  RefPtr<UnderlyingSourceStartCallbackHelper> startAlgorithm;
-
-  // Step 3.
-  RefPtr<UnderlyingSourcePullCallbackHelper> pullAlgorithm;
-
-  // Step 4
-  RefPtr<UnderlyingSourceCancelCallbackHelper> cancelAlgorithm;
-
-  // Not Specified
-  RefPtr<UnderlyingSourceErrorCallbackHelper> errorAlgorithm;
-
-  // Step 5. Intentionally skipped: No startAlgorithm for
-  // BodyStreamUnderlyingSources. Step 6.
-  pullAlgorithm =
-      new BodyStreamUnderlyingSourcePullCallbackHelper(aUnderlyingSource);
-
-  // Step 7.
-  cancelAlgorithm =
-      new BodyStreamUnderlyingSourceCancelCallbackHelper(aUnderlyingSource);
-
-  // Not Specified
-  errorAlgorithm =
-      new BodyStreamUnderlyingSourceErrorCallbackHelper(aUnderlyingSource);
-
-  // Step 8
-  Maybe<uint64_t> autoAllocateChunkSize = mozilla::Nothing();
-  // Step 9 (Skipped)
-
-  // Not Specified: Native underlying sources always use 0.0 high water mark.
-  double highWaterMark = 0.0;
-
-  // Step 10.
-  SetUpReadableByteStreamController(
-      aCx, aStream, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm,
-      errorAlgorithm, highWaterMark, autoAllocateChunkSize, aRv);
 }
 
 }  // namespace mozilla::dom

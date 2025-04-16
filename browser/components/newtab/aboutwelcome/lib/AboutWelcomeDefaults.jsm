@@ -21,7 +21,7 @@ const DEFAULT_WELCOME_CONTENT = {
   template: "multistage",
   transitions: true,
   backdrop:
-    "#212121 url(chrome://activity-stream/content/data/content/assets/proton-bkg.avif) center/cover no-repeat fixed",
+    "#F9F9FB url('chrome://activity-stream/content/data/content/assets/fx100-noodles.svg') center/cover no-repeat fixed",
   screens: [
     {
       id: "AW_PIN_FIREFOX",
@@ -30,20 +30,21 @@ const DEFAULT_WELCOME_CONTENT = {
         position: "corner",
         logo: {},
         title: {
-          string_id: "mr1-onboarding-pin-header",
+          string_id: "onboarding-welcome-header",
+        },
+        subtitle: {
+          string_id: "fx100-thank-you-subtitle",
         },
         hero_text: {
-          string_id: "mr1-welcome-screen-hero-text",
-        },
-        help_text: {
-          text: {
-            string_id: "mr1-onboarding-welcome-image-caption",
-          },
+          string_id: "fx100-thank-you-hero-text",
+          color: "#321C64",
+          zap: true,
+          fontSize: "clamp(48px, 7vw, 137px)",
         },
         has_noodles: true,
         primary_button: {
           label: {
-            string_id: "mr1-onboarding-pin-primary-button-label",
+            string_id: "fx100-thank-you-pin-primary-button-label",
           },
           action: {
             navigate: true,
@@ -61,6 +62,7 @@ const DEFAULT_WELCOME_CONTENT = {
         secondary_button_top: {
           label: {
             string_id: "mr1-onboarding-sign-in-button-label",
+            color: "#321C64",
           },
           action: {
             data: {
@@ -73,8 +75,30 @@ const DEFAULT_WELCOME_CONTENT = {
       },
     },
     {
-      id: "AW_SET_DEFAULT",
+      id: "AW_LANGUAGE_MISMATCH",
       order: 1,
+      content: {
+        logo: {},
+        title: { string_id: "onboarding-live-language-header" },
+        has_noodles: true,
+        languageSwitcher: {
+          downloading: {
+            string_id: "onboarding-live-language-button-label-downloading",
+          },
+          cancel: {
+            string_id: "onboarding-live-language-secondary-cancel-download",
+          },
+          waiting: { string_id: "onboarding-live-language-waiting-button" },
+          skip: { string_id: "onboarding-live-language-skip-button-label" },
+          action: {
+            navigate: true,
+          },
+        },
+      },
+    },
+    {
+      id: "AW_SET_DEFAULT",
+      order: 2,
       content: {
         logo: {},
         title: {
@@ -97,35 +121,6 @@ const DEFAULT_WELCOME_CONTENT = {
           label: {
             string_id: "mr1-onboarding-set-default-secondary-button-label",
           },
-          action: {
-            navigate: true,
-          },
-        },
-      },
-    },
-    {
-      id: "AW_LANGUAGE_MISMATCH",
-      order: 2,
-      content: {
-        logo: {},
-        title: { string_id: "onboarding-live-language-header" },
-        subtitle: { string_id: "onboarding-live-language-subtitle" },
-        has_noodles: true,
-        languageSwitcher: {
-          switch: {
-            string_id: "onboarding-live-language-switch-button-label",
-          },
-          downloading: {
-            string_id: "onboarding-live-language-button-label-downloading",
-          },
-          cancel: {
-            string_id: "onboarding-live-language-secondary-cancel-download",
-          },
-          not_now: {
-            string_id: "onboarding-live-language-not-now-button-label",
-          },
-          waiting: { string_id: "onboarding-live-language-waiting-button" },
-          skip: { string_id: "onboarding-live-language-skip-button-label" },
           action: {
             navigate: true,
           },
@@ -441,25 +436,29 @@ async function prepareContentForReact(content) {
   if (Services.locale.appLocaleAsBCP47.split("-")[0] !== "en") {
     delete content.screens?.find(
       screen => screen.content?.help_text?.deleteIfNotEn
-    )?.content.help_text.text;
+    )?.content.help_text;
   }
 
+  let shouldRemoveLanguageMismatchScreen = true;
   if (content.languageMismatchEnabled) {
     const screen = content?.screens?.find(s => s.id === "AW_LANGUAGE_MISMATCH");
-    if (screen) {
+    if (screen && content.appAndSystemLocaleInfo.canLiveReload) {
       // Add the display names for the OS and Firefox languages, like "American English".
-      const { appAndSystemLocaleInfo } = content;
       function addMessageArgs(obj) {
         for (const value of Object.values(obj)) {
           if (value?.string_id) {
-            value.args = appAndSystemLocaleInfo.displayNames;
+            value.args = content.appAndSystemLocaleInfo.displayNames;
           }
         }
       }
+
       addMessageArgs(screen.content.languageSwitcher);
       addMessageArgs(screen.content);
+      shouldRemoveLanguageMismatchScreen = false;
     }
-  } else {
+  }
+
+  if (shouldRemoveLanguageMismatchScreen) {
     removeScreens(screen => screen.id === "AW_LANGUAGE_MISMATCH");
   }
 

@@ -183,7 +183,6 @@ module.exports = {
         // These are suitable as good first bugs, take one or two related lines
         // per bug.
         "caps/tests/unit/test_origin.js",
-        "caps/tests/unit/test_site_origin.js",
         "chrome/test/unit/test_no_remote_registration.js",
         "extensions/permissions/**",
         "image/test/unit/**",
@@ -539,38 +538,14 @@ module.exports = {
       },
     },
     {
-      // TODO: Bug 1609271 Fix all violations for ChromeUtils.import(..., null)
+      // Rules of Hooks broadly checks for camelCase "use" identifiers, so
+      // enable only for paths actually using React to avoid false positives.
+      extends: ["plugin:react-hooks/recommended"],
       files: [
-        "browser/base/content/test/sync/browser_fxa_web_channel.js",
-        "browser/components/migration/tests/unit/test_Edge_db_migration.js",
-        "browser/components/translation/test/unit/test_cld2.js",
-        "browser/extensions/formautofill/test/unit/test_sync.js",
-        "devtools/client/aboutdebugging/test/browser/browser_aboutdebugging_addons_debug_popup.js",
-        "dom/ipc/tests/browser_memory_distribution_telemetry.js",
-        "dom/push/test/xpcshell/head.js",
-        "dom/push/test/xpcshell/test_broadcast_success.js",
-        "dom/push/test/xpcshell/test_crypto.js",
-        "toolkit/components/cloudstorage/tests/unit/test_cloudstorage.js",
-        "toolkit/components/crashes/tests/xpcshell/test_crash_manager.js",
-        "toolkit/components/crashes/tests/xpcshell/test_crash_service.js",
-        "toolkit/components/crashes/tests/xpcshell/test_crash_store.js",
-        "toolkit/components/featuregates/test/unit/test_FeatureGate.js",
-        "toolkit/components/normandy/test/browser/browser_actions_ShowHeartbeatAction.js",
-        "toolkit/modules/subprocess/test/xpcshell/test_subprocess.js",
-        "toolkit/mozapps/extensions/internal/AddonTestUtils.jsm",
-        "toolkit/mozapps/extensions/test/browser/browser_gmpProvider.js",
-        "toolkit/mozapps/extensions/test/xpcshell/head_addons.js",
-        "toolkit/mozapps/extensions/test/xpcshell/test_gmpProvider.js",
-        "toolkit/mozapps/extensions/test/xpcshell/test_no_addons.js",
-        "toolkit/mozapps/extensions/test/xpcshell/test_permissions_prefs.js",
-        "toolkit/mozapps/extensions/test/xpcshell/test_signed_updatepref.js",
-        "toolkit/mozapps/extensions/test/xpcshell/test_signed_verify.js",
-        "toolkit/mozapps/extensions/test/xpcshell/test_webextension_events.js",
-        "toolkit/mozapps/extensions/test/xpcshell/test_XPIStates.js",
+        "browser/components/newtab/**",
+        "browser/components/pocket/**",
+        "devtools/**",
       ],
-      rules: {
-        "mozilla/reject-chromeutils-import-params": "warn",
-      },
     },
   ],
 };

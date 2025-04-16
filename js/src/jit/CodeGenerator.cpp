@@ -8077,11 +8077,12 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
   }
 
   if (reloadRegs) {
-    masm.loadPtr(Address(masm.getStackPointer(), WasmCallerTlsOffsetBeforeCall),
-                 WasmTlsReg);
-    masm.loadWasmPinnedRegsFromTls();
+    masm.loadPtr(
+        Address(masm.getStackPointer(), WasmCallerInstanceOffsetBeforeCall),
+        InstanceReg);
+    masm.loadWasmPinnedRegsFromInstance();
     if (switchRealm) {
-      masm.switchToWasmTlsRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
+      masm.switchToWasmInstanceRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
     }
   } else {
     MOZ_ASSERT(!switchRealm);
@@ -8093,9 +8094,9 @@ void CodeGenerator::visitWasmCall(LWasmCall* lir) {
     // WasmCall's WasmTryNote entryPoint below. To make exceptional control flow
     // easier to track, we set the entry point in this very call. The exception
     // handling mechanism takes care of reloading the WasmTlsData, leaving a
-    // thrown exception in TlsData::pendingException. After the call instruction
-    // is finished we check TlsData::pendingException to see if we returned
-    // normally or exceptionally, and branch accordingly.
+    // thrown exception in Instance::pendingException. After the call
+    // instruction is finished we check Instance::pendingException to see if we
+    // returned normally or exceptionally, and branch accordingly.
 
     wasm::WasmTryNoteVector& tryNotes = masm.tryNotes();
     wasm::WasmTryNote& tryNote = tryNotes[tryNoteIndex];
@@ -8177,9 +8178,24 @@ void CodeGenerator::visitWasmStoreSlot(LWasmStoreSlot* ins) {
   }
 }
 
+void CodeGenerator::visitWasmLoadTableElement(LWasmLoadTableElement* ins) {
+  Register elements = ToRegister(ins->elements());
+  Register index = ToRegister(ins->index());
+  Register output = ToRegister(ins->output());
+  masm.loadPtr(BaseIndex(elements, index, ScalePointer), output);
+}
+
 void CodeGenerator::visitWasmDerivedPointer(LWasmDerivedPointer* ins) {
   masm.movePtr(ToRegister(ins->base()), ToRegister(ins->output()));
   masm.addPtr(Imm32(int32_t(ins->offset())), ToRegister(ins->output()));
+}
+
+void CodeGenerator::visitWasmDerivedIndexPointer(
+    LWasmDerivedIndexPointer* ins) {
+  Register base = ToRegister(ins->base());
+  Register index = ToRegister(ins->index());
+  Register output = ToRegister(ins->output());
+  masm.computeEffectiveAddress(BaseIndex(base, index, ins->scale()), output);
 }
 
 void CodeGenerator::visitWasmStoreRef(LWasmStoreRef* ins) {
@@ -8608,7 +8624,7 @@ void CodeGenerator::visitModPowTwoD(LModPowTwoD* ins) {
 }
 
 void CodeGenerator::visitWasmBuiltinModD(LWasmBuiltinModD* ins) {
-  masm.Push(WasmTlsReg);
+  masm.Push(InstanceReg);
   int32_t framePushedAfterTls = masm.framePushed();
 
   FloatRegister lhs = ToFloatRegister(ins->lhs());
@@ -8624,7 +8640,7 @@ void CodeGenerator::visitWasmBuiltinModD(LWasmBuiltinModD* ins) {
   masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ModD,
                    mozilla::Some(tlsOffset), MoveOp::DOUBLE);
 
-  masm.Pop(WasmTlsReg);
+  masm.Pop(InstanceReg);
 }
 
 void CodeGenerator::visitBigIntAdd(LBigIntAdd* ins) {

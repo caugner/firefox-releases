@@ -413,26 +413,36 @@ static P* blendTextureLinearDispatch(S sampler, vec2 uv, int span,
                             swgl_LinearQuantizeScale)) -
         uv.x.x;
     if (uv_step.x > 0.0f && insideDist >= uv_step.x) {
-      int inside = int(end - buf);
+      int32_t inside = int(end - buf);
       if (filter == LINEAR_FILTER_DOWNSCALE) {
-        inside = clamp(int(insideDist * (0.5f / swgl_LinearQuantizeScale)) &
-                           ~(swgl_StepSize - 1),
-                       0, inside);
-        blendTextureLinearDownscale<BLEND>(sampler, uv, inside, min_uv, max_uv,
-                                           color, buf);
+        inside = min(int(insideDist * (0.5f / swgl_LinearQuantizeScale)) &
+                         ~(swgl_StepSize - 1),
+                     inside);
+        if (inside > 0) {
+          blendTextureLinearDownscale<BLEND>(sampler, uv, inside, min_uv,
+                                             max_uv, color, buf);
+          buf += inside;
+          uv.x += (inside / swgl_StepSize) * uv_step.x;
+        }
       } else if (filter == LINEAR_FILTER_UPSCALE) {
-        inside = clamp(int(insideDist / uv_step.x) * swgl_StepSize, 0, inside);
-        blendTextureLinearUpscale<BLEND>(sampler, uv, inside, uv_step, min_uv,
-                                         max_uv, color, buf);
+        inside = min(int(insideDist / uv_step.x) * swgl_StepSize, inside);
+        if (inside > 0) {
+          blendTextureLinearUpscale<BLEND>(sampler, uv, inside, uv_step, min_uv,
+                                           max_uv, color, buf);
+          buf += inside;
+          uv.x += (inside / swgl_StepSize) * uv_step.x;
+        }
       } else {
-        inside = clamp(int(insideDist * (1.0f / swgl_LinearQuantizeScale)) &
-                           ~(swgl_StepSize - 1),
-                       0, inside);
-        blendTextureLinearFast<BLEND>(sampler, uv, inside, min_uv, max_uv,
-                                      color, buf);
+        inside = min(int(insideDist * (1.0f / swgl_LinearQuantizeScale)) &
+                         ~(swgl_StepSize - 1),
+                     inside);
+        if (inside > 0) {
+          blendTextureLinearFast<BLEND>(sampler, uv, inside, min_uv, max_uv,
+                                        color, buf);
+          buf += inside;
+          uv.x += (inside / swgl_StepSize) * uv_step.x;
+        }
       }
-      buf += inside;
-      uv.x += (inside / swgl_StepSize) * uv_step.x;
     }
   }
   // If the fallback filter was requested, or if there are any samples left that
@@ -796,9 +806,9 @@ static int blendTextureNearestRepeat(S sampler, vec2 uv, int span,
   // greater than one pixel, we can still check if we don't move far enough from
   // the pixel center on that axis to hit the next pixel.
   if ((int(min_uv.x) + (REPEAT ? 1 : 0) >= int(max_uv.x) ||
-       (uv_step.x * span * (REPEAT ? uv_scale.x : 1.0f) < 0.5f)) &&
+       (abs(uv_step.x) * span * (REPEAT ? uv_scale.x : 1.0f) < 0.5f)) &&
       (int(min_uv.y) + (REPEAT ? 1 : 0) >= int(max_uv.y) ||
-       (uv_step.y * span * (REPEAT ? uv_scale.y : 1.0f) < 0.5f))) {
+       (abs(uv_step.y) * span * (REPEAT ? uv_scale.y : 1.0f) < 0.5f))) {
     vec2 repeated_uv = REPEAT
                            ? tileRepeatUV(uv, tile_repeat) * uv_scale + min_uv
                            : clamp(uv, min_uv, max_uv);
@@ -1019,7 +1029,7 @@ static int blendYUV(P* buf, int span, S0 sampler0, vec2 uv0,
   }
   LINEAR_QUANTIZE_UV(sampler0, uv0, uv_step0, uv_rect0, min_uv0, max_uv0);
   const auto rgb_from_ycbcr =
-      YUVMatrix::From(ycbcr_bias, rgb_from_debiased_ycbcr);
+      YUVMatrix::From(ycbcr_bias, rgb_from_debiased_ycbcr, rescaleFactor);
   auto c = packColor(buf, color);
   auto* end = buf + span;
   for (; buf < end; buf += swgl_StepSize, uv0 += uv_step0) {
@@ -1085,7 +1095,7 @@ static int blendYUV(P* buf, int span, S0 sampler0, vec2 uv0,
   LINEAR_QUANTIZE_UV(sampler0, uv0, uv_step0, uv_rect0, min_uv0, max_uv0);
   LINEAR_QUANTIZE_UV(sampler1, uv1, uv_step1, uv_rect1, min_uv1, max_uv1);
   const auto rgb_from_ycbcr =
-      YUVMatrix::From(ycbcr_bias, rgb_from_debiased_ycbcr);
+      YUVMatrix::From(ycbcr_bias, rgb_from_debiased_ycbcr, rescaleFactor);
   auto c = packColor(buf, color);
   auto* end = buf + span;
   for (; buf < end; buf += swgl_StepSize, uv0 += uv_step0, uv1 += uv_step1) {
@@ -1147,7 +1157,7 @@ static void blendYUVFallback(P* buf, int span, S0 sampler0, vec2 uv0,
                              const mat3_scalar& rgb_from_debiased_ycbcr,
                              int rescaleFactor, C color) {
   const auto rgb_from_ycbcr =
-      YUVMatrix::From(ycbcr_bias, rgb_from_debiased_ycbcr);
+      YUVMatrix::From(ycbcr_bias, rgb_from_debiased_ycbcr, rescaleFactor);
   for (auto* end = buf + span; buf < end; buf += swgl_StepSize, uv0 += uv_step0,
              uv1 += uv_step1, uv2 += uv_step2) {
     commit_blend_span<BLEND>(
@@ -1245,7 +1255,7 @@ static int blendYUV(uint32_t* buf, int span, sampler2DRect sampler0, vec2 uv0,
           (sampler0->format == TextureFormat::R16 ? 16 : 8) - rescaleFactor;
       // Finally, call the inner loop of CompositeYUV.
       const auto rgb_from_ycbcr =
-          YUVMatrix::From(ycbcr_bias, rgb_from_debiased_ycbcr);
+          YUVMatrix::From(ycbcr_bias, rgb_from_debiased_ycbcr, rescaleFactor);
       linear_row_yuv<BLEND>(
           buf, inside * swgl_StepSize, sampler0, force_scalar(uv0),
           uv_step0.x / swgl_StepSize, sampler1, sampler2, force_scalar(uv1),

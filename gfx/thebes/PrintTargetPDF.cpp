@@ -8,6 +8,8 @@
 #include "cairo.h"
 #include "cairo-pdf.h"
 #include "mozilla/AppShutdown.h"
+#include "nsContentUtils.h"
+#include "nsString.h"
 
 namespace mozilla::gfx {
 
@@ -47,10 +49,22 @@ PrintTargetPDF::~PrintTargetPDF() {
 /* static */
 already_AddRefed<PrintTargetPDF> PrintTargetPDF::CreateOrNull(
     nsIOutputStream* aStream, const IntSize& aSizeInPoints) {
+  if (NS_WARN_IF(!aStream)) {
+    return nullptr;
+  }
+
   cairo_surface_t* surface = cairo_pdf_surface_create_for_stream(
       write_func, (void*)aStream, aSizeInPoints.width, aSizeInPoints.height);
   if (cairo_surface_status(surface)) {
     return nullptr;
+  }
+
+  nsAutoString creatorName;
+  if (NS_SUCCEEDED(nsContentUtils::GetLocalizedString(
+          nsContentUtils::eBRAND_PROPERTIES, "brandFullName", creatorName)) &&
+      !creatorName.IsEmpty()) {
+    cairo_pdf_surface_set_metadata(surface, CAIRO_PDF_METADATA_CREATOR,
+                                   NS_ConvertUTF16toUTF8(creatorName).get());
   }
 
   // The new object takes ownership of our surface reference.

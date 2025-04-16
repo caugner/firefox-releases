@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ARIAMap.h"
+#include "CachedTableAccessible.h"
 #include "DocAccessible.h"
 #include "mozilla/a11y/DocAccessibleParent.h"
 #include "mozilla/a11y/DocManager.h"
@@ -17,6 +18,7 @@
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/gfx/Matrix.h"
+#include "mozilla/StaticPrefs_accessibility.h"
 #include "mozilla/Unused.h"
 #include "nsAccUtils.h"
 #include "nsTextEquivUtils.h"
@@ -47,6 +49,10 @@ void RemoteAccessibleBase<Derived>::Shutdown() {
       GetAccService()->GetCachedXPCDocument(Document());
   if (xpcDoc) {
     xpcDoc->NotifyOfShutdown(static_cast<Derived*>(this));
+  }
+
+  if (IsTable() || IsTableCell()) {
+    CachedTableAccessible::Invalidate(this);
   }
 
   // XXX Ideally  this wouldn't be necessary, but it seems OuterDoc accessibles
@@ -342,6 +348,26 @@ bool RemoteAccessibleBase<Derived>::ApplyTransform(nsRect& aBounds) const {
 }
 
 template <class Derived>
+void RemoteAccessibleBase<Derived>::ApplyScrollOffset(nsRect& aBounds) const {
+  Maybe<const nsTArray<int32_t>&> maybeScrollPosition =
+      mCachedFields->GetAttribute<nsTArray<int32_t>>(nsGkAtoms::scrollPosition);
+
+  if (!maybeScrollPosition || maybeScrollPosition->Length() != 2) {
+    return;
+  }
+  // Our retrieved value is in app units, so we don't need to do any
+  // unit conversion here.
+  const nsTArray<int32_t>& scrollPosition = *maybeScrollPosition;
+
+  // Scroll position is an inverse representation of scroll offset (since the
+  // further the scroll bar moves down the page, the further the page content
+  // moves up/closer to the origin).
+  nsPoint scrollOffset(-scrollPosition[0], -scrollPosition[1]);
+
+  aBounds.MoveBy(scrollOffset.x, scrollOffset.y);
+}
+
+template <class Derived>
 LayoutDeviceIntRect RemoteAccessibleBase<Derived>::Bounds() const {
   if (mCachedFields) {
     Maybe<nsRect> maybeBounds = RetrieveCachedBounds();
@@ -358,7 +384,7 @@ LayoutDeviceIntRect RemoteAccessibleBase<Derived>::Bounds() const {
       Unused << ApplyTransform(bounds);
 
       LayoutDeviceIntRect devPxBounds;
-      const Accessible* acc = this;
+      const Accessible* acc = Parent();
 
       while (acc) {
         if (LocalAccessible* localAcc =
@@ -384,12 +410,9 @@ LayoutDeviceIntRect RemoteAccessibleBase<Derived>::Bounds() const {
         }
 
         RemoteAccessible* remoteAcc = const_cast<Accessible*>(acc)->AsRemote();
-        // Verify that remoteAcc is not `this`, since `bounds` was
-        // initialised to include this->RetrieveCachedBounds()
-        Maybe<nsRect> maybeRemoteBounds =
-            (remoteAcc == this) ? Nothing() : remoteAcc->RetrieveCachedBounds();
 
-        if (maybeRemoteBounds) {
+        if (Maybe<nsRect> maybeRemoteBounds =
+                remoteAcc->RetrieveCachedBounds()) {
           nsRect remoteBounds = *maybeRemoteBounds;
           // We need to take into account a non-1 resolution set on the
           // presshell. This happens with async pinch zooming, among other
@@ -406,11 +429,19 @@ LayoutDeviceIntRect RemoteAccessibleBase<Derived>::Bounds() const {
             // be scaled relative to its parent doc.
             res = remoteAcc->AsDoc()->mCachedFields->GetAttribute<float>(
                 nsGkAtoms::resolution);
+            MOZ_ASSERT(res, "No cached document resolution found.");
             bounds.ScaleRoundOut(res.valueOr(1.0f));
           }
 
-          // We should offset `bounds` by the bounds retrieved above.
-          // This is how we build screen coordinates from relative coordinates.
+          // Apply scroll offset, if applicable. Only the contents of an
+          // element are affected by its scroll offset, which is why this call
+          // happens in this loop instead of both inside and outside of
+          // the loop (like ApplyTransform).
+          remoteAcc->ApplyScrollOffset(remoteBounds);
+
+          // Regardless of whether this is a doc, we should offset `bounds`
+          // by the bounds retrieved here. This is how we build screen
+          // coordinates from relative coordinates.
           bounds.MoveBy(remoteBounds.X(), remoteBounds.Y());
           Unused << remoteAcc->ApplyTransform(bounds);
         }
@@ -538,6 +569,18 @@ uint64_t RemoteAccessibleBase<Derived>::State() {
         state |= states::COLLAPSED;
       }
     }
+
+    // Fetch our current opacity value from the cache.
+    auto opacity = Opacity();
+    if (opacity && *opacity == 1.0f) {
+      state |= states::OPAQUE1;
+    } else {
+      // If we can't retrieve an opacity value, or if the value we retrieve
+      // is less than one, ensure the OPAQUE1 bit is cleared.
+      // It's possible this bit was set in the cached `rawState` vector, but
+      // we've since been notified of a style change invalidating that state.
+      state &= ~states::OPAQUE1;
+    }
   }
   auto* browser = static_cast<dom::BrowserParent*>(Document()->Manager());
   if (browser == dom::BrowserParent::GetFocused()) {
@@ -582,6 +625,20 @@ already_AddRefed<AccAttributes> RemoteAccessibleBase<Derived>::Attributes() {
     if (RefPtr<nsAtom> display = DisplayStyle()) {
       attributes->SetAttribute(nsGkAtoms::display, display);
     }
+
+    if (TableCellAccessibleBase* cell = AsTableCellBase()) {
+      TableAccessibleBase* table = cell->Table();
+      uint32_t row = cell->RowIdx();
+      uint32_t col = cell->ColIdx();
+      int32_t cellIdx = table->CellIndexAt(row, col);
+      if (cellIdx != -1) {
+        attributes->SetAttribute(nsGkAtoms::tableCellIndex, cellIdx);
+      }
+    }
+
+    if (bool layoutGuess = TableIsProbablyForLayout()) {
+      attributes->SetAttribute(nsGkAtoms::layout_guess, layoutGuess);
+    }
   }
 
   return attributes.forget();
@@ -609,6 +666,17 @@ already_AddRefed<nsAtom> RemoteAccessibleBase<Derived>::DisplayStyle() const {
     }
   }
   return nullptr;
+}
+
+template <class Derived>
+Maybe<float> RemoteAccessibleBase<Derived>::Opacity() const {
+  if (mCachedFields) {
+    // GetAttribute already returns a Maybe<float>, so we don't
+    // need to do any additional manipulation.
+    return mCachedFields->GetAttribute<float>(nsGkAtoms::opacity);
+  }
+
+  return Nothing();
 }
 
 template <class Derived>
@@ -900,6 +968,36 @@ void RemoteAccessibleBase<Derived>::TakeSelection() {
 template <class Derived>
 void RemoteAccessibleBase<Derived>::SetSelected(bool aSelect) {
   Unused << mDoc->SendSetSelected(mID, aSelect);
+}
+
+template <class Derived>
+TableAccessibleBase* RemoteAccessibleBase<Derived>::AsTableBase() {
+  MOZ_ASSERT(StaticPrefs::accessibility_cache_enabled_AtStartup());
+  if (IsTable()) {
+    return CachedTableAccessible::GetFrom(this);
+  }
+  return nullptr;
+}
+
+template <class Derived>
+TableCellAccessibleBase* RemoteAccessibleBase<Derived>::AsTableCellBase() {
+  MOZ_ASSERT(StaticPrefs::accessibility_cache_enabled_AtStartup());
+  if (IsTableCell()) {
+    return CachedTableCellAccessible::GetFrom(this);
+  }
+  return nullptr;
+}
+
+template <class Derived>
+bool RemoteAccessibleBase<Derived>::TableIsProbablyForLayout() {
+  MOZ_ASSERT(StaticPrefs::accessibility_cache_enabled_AtStartup());
+  if (mCachedFields) {
+    if (auto layoutGuess =
+            mCachedFields->GetAttribute<bool>(nsGkAtoms::layout_guess)) {
+      return *layoutGuess;
+    }
+  }
+  return false;
 }
 
 template class RemoteAccessibleBase<RemoteAccessible>;
