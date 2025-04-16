@@ -84,6 +84,10 @@ public class GeckoSystemStateListener
     @WrapForJNI(calledFrom = "gecko")
     // For prefers-reduced-motion media queries feature.
     private static boolean prefersReducedMotion() {
+        if (SysInfo.getVersion() < 17) {
+          return false;
+        }
+
         ContentResolver contentResolver = sApplicationContext.getContentResolver();
 
         return Settings.Global.getFloat(contentResolver,
@@ -98,8 +102,18 @@ public class GeckoSystemStateListener
         contentResolver.notifyChange(animationSetting, null);
     }
 
-    @WrapForJNI(calledFrom = "ui", dispatchTo = "gecko")
-    private static native void onDeviceChanged();
+    @WrapForJNI(stubName = "OnDeviceChanged", calledFrom = "ui", dispatchTo = "gecko")
+    private static native void nativeOnDeviceChanged();
+
+    private static void onDeviceChanged() {
+        if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
+            nativeOnDeviceChanged();
+        } else {
+            GeckoThread.queueNativeCallUntil(
+                    GeckoThread.State.PROFILE_READY, GeckoSystemStateListener.class,
+                    "nativeOnDeviceChanged");
+        }
+    }
 
     private void notifyDeviceChanged(int deviceId) {
         InputDevice device = InputDevice.getDevice(deviceId);
